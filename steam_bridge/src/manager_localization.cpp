@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "manager_localization.h"
+#include "language_fallback.h"
 
 #include "bridge_json.h"
 
@@ -119,20 +120,19 @@ std::size_t ManagerLocalization::Resolve(
     std::string_view requestedLanguage) const
 {
     if (catalogs_.empty()) return 0;
-    const std::string normalized = NormalizeLanguage(requestedLanguage);
-    for (std::size_t index = 0; index < catalogs_.size(); ++index)
+    std::vector<std::string> available;
+    available.reserve(catalogs_.size());
+    for (const Catalog& catalog : catalogs_)
+        available.push_back(catalog.language);
+    const std::string selected =
+        snowdesktop::localization::ResolveBestLanguage(
+            available, requestedLanguage);
+    if (!selected.empty())
     {
-        if (NormalizeLanguage(catalogs_[index].language) == normalized)
-            return index;
-    }
-    const std::string base = BaseLanguage(normalized);
-    if (!base.empty())
-    {
+        const std::string normalized = NormalizeLanguage(selected);
         for (std::size_t index = 0; index < catalogs_.size(); ++index)
-        {
-            if (BaseLanguage(catalogs_[index].language) == base)
+            if (NormalizeLanguage(catalogs_[index].language) == normalized)
                 return index;
-        }
     }
     for (std::size_t index = 0; index < catalogs_.size(); ++index)
     {

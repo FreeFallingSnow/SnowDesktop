@@ -75,7 +75,8 @@ local language = l10n.language()
 - `l10n.tr(key, arguments...)` reads a string from the active host language
   resource and replaces `{0}`, `{1}`, and later placeholders with the supplied
   values. A missing key is returned unchanged so the error remains visible.
-- `l10n.language()` returns the effective language such as `zh-CN` or `en-US`;
+- `l10n.language()` returns the effective language such as `zh-CN`, `zh-TW`,
+  `ja-JP`, or `en-US`;
   when the user chooses the system language, it returns the resolved language.
 - Language switching reloads Lua widgets. Compute localized top-level names,
   settings labels, presets, menus, and other cached strings with `l10n.tr`.

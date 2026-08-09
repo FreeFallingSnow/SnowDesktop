@@ -1376,9 +1376,17 @@ static const std::unordered_map<std::string, std::string>*
 SelectManifestLocale(const LuaWidgetManifest& manifest)
 {
     const std::string language = Locale::Instance().GetEffectiveLanguage();
-    auto catalog = manifest.locales.find(language);
-    if (catalog != manifest.locales.end())
-        return &catalog->second;
+    std::vector<std::string> available;
+    available.reserve(manifest.locales.size());
+    for (const auto& [code, catalog] : manifest.locales)
+    {
+        (void)catalog;
+        available.push_back(code);
+    }
+    const std::string selected =
+        snowdesktop::localization::ResolveBestLanguage(available, language);
+    auto catalog = manifest.locales.find(selected);
+    if (catalog != manifest.locales.end()) return &catalog->second;
     catalog = manifest.locales.find("en-US");
     if (catalog != manifest.locales.end())
         return &catalog->second;

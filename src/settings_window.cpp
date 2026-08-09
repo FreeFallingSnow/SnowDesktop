@@ -2030,7 +2030,15 @@ void SettingsWindow::DrawGeneralPage()
             Locale::Instance().GetAvailableLanguages())
         {
             langNames.push_back(language.code);
-            langLabels.push_back(language.displayName);
+            std::string label = language.displayName;
+            const std::string localizedName =
+                Locale::Instance().GetLocalizedLanguageName(language.code);
+            if (!localizedName.empty() &&
+                localizedName != language.displayName)
+            {
+                label += " (" + localizedName + ")";
+            }
+            langLabels.push_back(std::move(label));
         }
         std::vector<const char*> langLabelPointers;
         langLabelPointers.reserve(langLabels.size());
@@ -5698,7 +5706,7 @@ void SettingsWindow::CleanupSwapChain()
  *
  * 从 C:\\Windows\\Fonts\\msyh.ttc 加载微软雅黑字体，
  * 字体大小根据 DPI 缩放系数调整，
- * 并包含简体中文常用字形范围。
+ * 并包含简体中文常用字形和韩文字形范围。
  */
 void SettingsWindow::SetupFonts()
 {
@@ -5713,6 +5721,18 @@ void SettingsWindow::SetupFonts()
     else
     {
         io.Fonts->AddFontDefault();
+    }
+
+    const std::string koreanFontPath =
+        "C:\\Windows\\Fonts\\malgun.ttf";
+    if (FILE* f = fopen(koreanFontPath.c_str(), "rb"))
+    {
+        fclose(f);
+        ImFontConfig koreanConfig;
+        koreanConfig.MergeMode = true;
+        io.Fonts->AddFontFromFileTTF(koreanFontPath.c_str(),
+            16.0f * dpiScale_, &koreanConfig,
+            io.Fonts->GetGlyphRangesKorean());
     }
 
     HRSRC resource = FindResourceW(instance_, MAKEINTRESOURCEW(IDR_FA_FONT), RT_RCDATA);

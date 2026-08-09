@@ -155,7 +155,8 @@ Keep `defaultSize.columns` and `defaultSize.rows` between 1 and 8.
 - Treat `render()` as a hot path. Do not write storage or perform desktop queries repeatedly unless necessary.
 - Use literal keys with `l10n.tr("key", arguments...)`; placeholders use
   `{0}`, `{1}`, and so on. `l10n.language()` returns the effective language
-  (`zh-CN` or `en-US`) for behavior that truly varies by locale.
+  (for example, `zh-CN`, `zh-TW`, `ja-JP`, or `en-US`) for behavior that truly
+  varies by locale.
 - Keep the manifest `name` and `description` as English fallbacks and put their
   localized keys in `nameKey` and `descriptionKey`. Store all Lua translations
   in that same manifest's `locales` object.

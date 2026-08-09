@@ -83,6 +83,13 @@ void TestManagerLocalization()
     Check(std::string(localization.Translate("same", "内置中文")) ==
         "内置中文",
         "manager localization only consumes its own key namespace");
+    std::ofstream(languages / L"zh-TW.json", std::ios::binary) <<
+        R"({"workshop_manager.open":"開啟網頁工坊","unrelated":"不同"})";
+    Check(localization.Load(languages, "zh-HK", error),
+        "manager localization reloads after adding regional catalogs");
+    Check(std::string(localization.Translate("Open Workshop", "內置中文")) ==
+        "開啟網頁工坊",
+        "manager localization prefers traditional Chinese for Hong Kong");
     localization.SelectLanguage("en-US");
     Check(std::string(localization.Translate("Open Workshop", "内置中文")) ==
         "Open Workshop",

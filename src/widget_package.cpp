@@ -1,6 +1,7 @@
 #include "widget_package.h"
 
 #include "json_value.h"
+#include "language_fallback.h"
 
 #include <windows.h>
 #include <bcrypt.h>
@@ -584,35 +585,18 @@ PackageManifest LocalizedManifest(PackageManifest manifest,
 {
     if (requestedLocale.empty() || manifest.locales.empty()) return manifest;
     const LocalizedMetadata* selected = nullptr;
-    if (const auto exact = manifest.locales.find(requestedLocale);
-        exact != manifest.locales.end())
-        selected = &exact->second;
-    if (!selected)
+    std::vector<std::string> available;
+    available.reserve(manifest.locales.size());
+    for (const auto& [locale, metadata] : manifest.locales)
     {
-        const std::string normalized = Lower(requestedLocale);
-        for (const auto& [locale, metadata] : manifest.locales)
-        {
-            if (Lower(locale) == normalized)
-            {
-                selected = &metadata;
-                break;
-            }
-        }
+        (void)metadata;
+        available.push_back(locale);
     }
-    if (!selected)
-    {
-        const auto separator = requestedLocale.find('-');
-        const std::string language = Lower(requestedLocale.substr(0, separator));
-        for (const auto& [locale, metadata] : manifest.locales)
-        {
-            const auto localeSeparator = locale.find('-');
-            if (Lower(locale.substr(0, localeSeparator)) == language)
-            {
-                selected = &metadata;
-                break;
-            }
-        }
-    }
+    const std::string selectedLocale =
+        snowdesktop::localization::ResolveBestLanguage(
+            available, requestedLocale);
+    if (!selectedLocale.empty())
+        selected = &manifest.locales.at(selectedLocale);
     if (selected)
     {
         if (!selected->title.empty()) manifest.name = selected->title;
