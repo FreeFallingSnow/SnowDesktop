@@ -652,12 +652,12 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             const D2D1_COLOR_F rightFill =
                 rightPressed
                 ? ToD2DColor(
-                    t.tabActiveFill, 0.95f)
+                    t.tabActiveFill, 1.0f)
                 : rightHovered
                 ? ToD2DColor(
-                    t.tabHoverFill, 0.95f)
+                    t.tabHoverFill, 1.0f)
                 : ToD2DColor(
-                    t.tabDefaultFill, 0.80f);
+                    t.tabDefaultFill, 1.0f);
             const D2D1_COLOR_F rightStroke =
                 rightPressed
                 ? ToD2DColor(
@@ -666,7 +666,7 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                 ? ToD2DColor(
                     t.tabHoverStroke, 1.0f)
                 : ToD2DColor(
-                    t.tabDefaultStroke, 0.85f);
+                    t.tabDefaultStroke, 1.0f);
             DrawD2DRoundedRectangle(
                 ctx.Get(), rightBtn,
                 static_cast<float>(
@@ -678,7 +678,7 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                 ToD2DColor(
                     t.tabText,
                     rightHovered || rightPressed
-                        ? 1.0f : 0.85f));
+                        ? 1.0f : 1.0f));
 
             if (quickNavigationTabScrollOffset_ > 0)
             {
@@ -698,12 +698,12 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                 const D2D1_COLOR_F leftFill =
                     leftPressed
                     ? ToD2DColor(
-                        t.tabActiveFill, 0.95f)
+                        t.tabActiveFill, 1.0f)
                     : leftHovered
                     ? ToD2DColor(
-                        t.tabHoverFill, 0.95f)
+                        t.tabHoverFill, 1.0f)
                     : ToD2DColor(
-                        t.tabDefaultFill, 0.80f);
+                        t.tabDefaultFill, 1.0f);
                 const D2D1_COLOR_F leftStroke =
                     leftPressed
                     ? ToD2DColor(
@@ -712,7 +712,7 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                     ? ToD2DColor(
                         t.tabHoverStroke, 1.0f)
                     : ToD2DColor(
-                        t.tabDefaultStroke, 0.85f);
+                        t.tabDefaultStroke, 1.0f);
                 DrawD2DRoundedRectangle(
                     ctx.Get(), leftBtn,
                     static_cast<float>(
@@ -724,7 +724,7 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                     ToD2DColor(
                         t.tabText,
                         leftHovered || leftPressed
-                            ? 1.0f : 0.85f));
+                            ? 1.0f : 1.0f));
             }
         }
     }
