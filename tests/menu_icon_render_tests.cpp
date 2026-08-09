@@ -123,6 +123,32 @@ int CountPixelsDifferentFromColorInRect(const std::uint32_t* pixels,
     return matches;
 }
 
+RECT FindPixelsDifferentFromColorInRect(const std::uint32_t* pixels,
+    int width, int height, const RECT& bounds, COLORREF color)
+{
+    const int left = std::clamp(static_cast<int>(bounds.left), 0, width);
+    const int top = std::clamp(static_cast<int>(bounds.top), 0, height);
+    const int right = std::clamp(
+        static_cast<int>(bounds.right), left, width);
+    const int bottom = std::clamp(
+        static_cast<int>(bounds.bottom), top, height);
+    const std::uint32_t expected = PixelColor(color);
+    RECT result{ right, bottom, left, top };
+    for (int y = top; y < bottom; ++y)
+    {
+        for (int x = left; x < right; ++x)
+        {
+            if ((pixels[y * width + x] & 0x00FFFFFFu) == expected)
+                continue;
+            result.left = std::min<LONG>(result.left, x);
+            result.top = std::min<LONG>(result.top, y);
+            result.right = std::max<LONG>(result.right, x + 1);
+            result.bottom = std::max<LONG>(result.bottom, y + 1);
+        }
+    }
+    return result;
+}
+
 bool SavePreviewBitmap(const std::filesystem::path& path,
     const BITMAPINFOHEADER& info, const void* pixels, DWORD pixelBytes)
 {
@@ -248,6 +274,58 @@ int wmain(int argc, wchar_t** argv)
         "menu rows retain the Win11 minimum width");
     Expect(measured.cy == metrics96.rowHeight,
         "regular menu rows use the configured height");
+
+    for (const UINT alignmentDpi : std::array<UINT, 4>{ 96, 120, 144, 192 })
+    {
+        const auto alignmentMetrics =
+            snowdesktop::menu_icon::ResolveMetrics(alignmentDpi);
+        HFONT alignmentFont = CreateFontW(
+            -MulDiv(13, static_cast<int>(alignmentDpi), 96),
+            0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+            OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
+            DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+        Expect(alignmentFont != nullptr,
+            "DPI-specific menu text font is created");
+        const RECT dpiBounds{
+            0, 0, kWidth,
+            std::min(kHeight, alignmentMetrics.rowHeight),
+        };
+        const RECT dpiTextBounds{
+            alignmentMetrics.leftPadding + alignmentMetrics.iconColumnWidth +
+                alignmentMetrics.textGap,
+            dpiBounds.top,
+            kWidth - alignmentMetrics.rightPadding,
+            dpiBounds.bottom,
+        };
+        const std::array<const wchar_t*, 3> alignmentLabels{
+            L"显示设置", L"Settings", L"Ag",
+        };
+        for (size_t alignmentIndex = 0;
+             alignmentIndex < alignmentLabels.size(); ++alignmentIndex)
+        {
+            const wchar_t* alignmentLabel = alignmentLabels[alignmentIndex];
+            const snowdesktop::menu_icon::ItemView dpiItem{
+                alignmentLabel, L"", false, false, false,
+            };
+            std::fill_n(pixels, kWidth * kHeight, 0u);
+            snowdesktop::menu_icon::DrawItem(dc, alignmentFont, fluentFont,
+                dpiItem, dpiBounds, 0, light, alignmentMetrics);
+            const RECT dpiInk = FindPixelsDifferentFromColorInRect(
+                pixels, kWidth, kHeight, dpiTextBounds, light.background);
+            Expect(dpiInk.right > dpiInk.left &&
+                    dpiInk.bottom > dpiInk.top,
+                "menu label produces visible ink for alignment checks");
+            const int rowCenterTwice =
+                dpiBounds.top + dpiBounds.bottom - 1;
+            const int inkCenterTwice =
+                dpiInk.top + dpiInk.bottom - 1;
+            Expect(std::abs(rowCenterTwice - inkCenterTwice) <= 1,
+                alignmentIndex == 0
+                    ? "Chinese menu text stays vertically centered across DPI"
+                    : "Latin menu text stays vertically centered across DPI");
+        }
+        DeleteObject(alignmentFont);
+    }
 
     const RECT normalBounds{ 0, 0, kWidth, 34 };
     const RECT quickBounds{ 0, 111, kWidth, 167 };
@@ -423,6 +501,11 @@ int wmain(int argc, wchar_t** argv)
         moreOptionsIconBounds) == 0,
         "disabled more-options row does not retain a blue accent");
 
+    const std::array<const wchar_t*, 10> alignedMenuGlyphs{
+        L"\uF33A", L"\uF32B", L"\uF10C", L"\U000F0A39",
+        L"\uF3DD", L"\uF34C", L"\uF6A9", L"\uF21D",
+        L"\uF15B", L"\uF181",
+    };
     const std::array<UINT, 4> iconTestDpis{ 96, 120, 144, 192 };
     for (const UINT dpi : iconTestDpis)
     {
@@ -471,6 +554,30 @@ int wmain(int argc, wchar_t** argv)
             (dpiIconColumn.bottom - dpiIconColumn.top);
         Expect(iconInk > 0 && iconInk < iconArea / 2,
             "Fluent row icon keeps its outline instead of becoming a block");
+        for (const wchar_t* glyph : alignedMenuGlyphs)
+        {
+            const snowdesktop::menu_icon::ItemView alignedIconItem{
+                L"Settings", glyph, false, false, false,
+            };
+            std::fill_n(pixels, kWidth * kHeight, 0u);
+            Expect(snowdesktop::menu_icon::DrawItem(
+                dc, font, dpiFluentFont, alignedIconItem,
+                dpiRowBounds, 0, dark, dpiMetrics),
+                "common Fluent menu icon renders for alignment checks");
+            const RECT iconInkBounds =
+                FindPixelsDifferentFromColorInRect(
+                    pixels, kWidth, kHeight,
+                    dpiIconColumn, dark.background);
+            Expect(iconInkBounds.right > iconInkBounds.left &&
+                    iconInkBounds.bottom > iconInkBounds.top,
+                "common Fluent menu icon produces visible ink");
+            const int rowCenterTwice =
+                dpiRowBounds.top + dpiRowBounds.bottom - 1;
+            const int inkCenterTwice =
+                iconInkBounds.top + iconInkBounds.bottom - 1;
+            Expect(std::abs(rowCenterTwice - inkCenterTwice) <= 1,
+                "common Fluent menu icons stay vertically centered across DPI");
+        }
         DeleteObject(dpiFluentFont);
     }
 
