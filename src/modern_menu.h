@@ -27,13 +27,15 @@ enum class RootPlacement
     RightOfAnchorRect,
 };
 
-/** 右键菜单的独立模糊外观，不跟随组件主题。 */
+/** 右键菜单的独立外观，不跟随组件主题。 */
 enum class Appearance
 {
-    /** 根据 Windows 应用/菜单主题自动选择浅色或深色模糊。 */
+    /** 根据 Windows 应用/菜单主题和系统版本选择菜单外观。 */
     FollowSystem = 0,
     SystemLightBlur = 1,
     SystemDarkBlur = 2,
+    OpaqueLight = 3,
+    OpaqueDark = 4,
 };
 
 enum class IconFont

@@ -1,6 +1,7 @@
 #include "modern_menu.h"
 
 #include "menu_icon_render.h"
+#include "modern_menu_appearance_rules.h"
 
 #include <dwmapi.h>
 #include <imm.h>
@@ -40,20 +41,40 @@ bool IsSelectable(const Item& item)
     return !item.separator && !item.textInput && item.enabled;
 }
 
-bool ResolveLightTheme(const Options& options)
+struct WindowsVersion
 {
-    if (options.appearance == Appearance::SystemLightBlur)
-        return true;
-    if (options.appearance == Appearance::SystemDarkBlur)
-        return false;
-    return options.lightTheme;
+    DWORD major = 0;
+    DWORD build = 0;
+};
+
+WindowsVersion CurrentWindowsVersion()
+{
+    static const WindowsVersion current = [] {
+        using RtlGetVersionProc = LONG(WINAPI*)(OSVERSIONINFOW*);
+        const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+        const auto rtlGetVersion = ntdll
+            ? reinterpret_cast<RtlGetVersionProc>(
+                GetProcAddress(ntdll, "RtlGetVersion"))
+            : nullptr;
+        if (!rtlGetVersion)
+            return WindowsVersion{};
+
+        OSVERSIONINFOW version{};
+        version.dwOSVersionInfoSize = sizeof(version);
+        if (rtlGetVersion(&version) != 0)
+            return WindowsVersion{};
+        return WindowsVersion{
+            version.dwMajorVersion, version.dwBuildNumber };
+    }();
+    return current;
 }
 
-bool UsesSystemBlur(const Options& options)
+Appearance ResolveEffectiveAppearance(const Options& options)
 {
-    return options.appearance == Appearance::FollowSystem ||
-        options.appearance == Appearance::SystemLightBlur ||
-        options.appearance == Appearance::SystemDarkBlur;
+    const WindowsVersion version = CurrentWindowsVersion();
+    return appearance_rules::ResolveForWindows(
+        options.appearance, options.lightTheme,
+        version.major, version.build);
 }
 
 // SetWindowCompositionAttribute is intentionally resolved dynamically: it is
@@ -130,15 +151,17 @@ public:
     MenuController(const std::vector<Item>& rootItems,
         const Options& options)
         : rootItems_(rootItems), options_(options),
-          lightTheme_(ResolveLightTheme(options)),
-          blurEnabled_(UsesSystemBlur(options)),
+          effectiveAppearance_(ResolveEffectiveAppearance(options)),
+          lightTheme_(appearance_rules::IsLightTheme(
+              effectiveAppearance_, options.lightTheme)),
+          blurEnabled_(appearance_rules::UsesSystemBlur(
+              effectiveAppearance_)),
           palette_(menu_icon::ResolvePalette(lightTheme_)),
           metrics_(menu_icon::ResolveMetrics(options.dpi)),
           // Acrylic is composed for the complete HWND and does not respect an
           // inset alpha-only shadow margin.  Its window must therefore match
           // the panel bounds exactly; DWM supplies the material shadow.
-          shadowSize_(UsesSystemBlur(options)
-              ? 0 : Scale(12, options.dpi)),
+          shadowSize_(blurEnabled_ ? 0 : Scale(12, options.dpi)),
           panelPadding_(Scale(kSubmenuPanelPaddingDip, options.dpi)),
           panelRadius_(Scale(8, options.dpi))
     {
@@ -2064,7 +2087,7 @@ private:
         const float halfHeight = (panel.bottom - panel.top) * 0.5f;
         const float radius = static_cast<float>(panelRadius_);
         const float shadow = static_cast<float>(shadowSize_);
-        constexpr float solidPanelAlpha = 246.0f;
+        constexpr float opaquePanelAlpha = 255.0f;
         // The acrylic backdrop already supplies its own tint.  Keeping the
         // custom surface comparatively translucent lets the blurred desktop
         // remain visible instead of stacking two nearly opaque colour layers.
@@ -2098,7 +2121,7 @@ private:
                         (static_cast<std::uint32_t>(GetGValue(color)) << 8) |
                         (static_cast<std::uint32_t>(GetRValue(color)) << 16);
                 };
-                float surfaceAlpha = solidPanelAlpha;
+                float surfaceAlpha = opaquePanelAlpha;
                 if (blurEnabled_)
                 {
                     if (rgb == dibColor(palette_.background))
@@ -2198,13 +2221,28 @@ private:
         if (setDwmWindowAttribute)
             setDwmWindowAttribute(window, DWMWA_USE_IMMERSIVE_DARK_MODE,
                 &darkMode, sizeof(darkMode));
+        // Opaque menus already draw their rounded panel and shadow into the
+        // layered bitmap.  Letting DWM decorate the complete HWND would add
+        // a second outline around the transparent shadow margin.
         const DWM_WINDOW_CORNER_PREFERENCE corner = blurEnabled_
-            ? DWMWCP_ROUND : DWMWCP_ROUNDSMALL;
+            ? DWMWCP_ROUND : DWMWCP_DONOTROUND;
         if (setDwmWindowAttribute)
             setDwmWindowAttribute(window, DWMWA_WINDOW_CORNER_PREFERENCE,
                 &corner, sizeof(corner));
         if (!blurEnabled_)
+        {
+            if (setDwmWindowAttribute)
+            {
+                const DWMNCRENDERINGPOLICY ncRendering =
+                    DWMNCRP_DISABLED;
+                setDwmWindowAttribute(window, DWMWA_NCRENDERING_POLICY,
+                    &ncRendering, sizeof(ncRendering));
+                const COLORREF borderColor = DWMWA_COLOR_NONE;
+                setDwmWindowAttribute(window, DWMWA_BORDER_COLOR,
+                    &borderColor, sizeof(borderColor));
+            }
             return;
+        }
 
         const DWM_SYSTEMBACKDROP_TYPE backdrop = DWMSBT_TRANSIENTWINDOW;
         if (setDwmWindowAttribute)
@@ -2243,6 +2281,7 @@ private:
 
     std::vector<Item> rootItems_;
     Options options_;
+    Appearance effectiveAppearance_ = Appearance::FollowSystem;
     bool lightTheme_ = true;
     bool blurEnabled_ = false;
     menu_icon::Palette palette_;

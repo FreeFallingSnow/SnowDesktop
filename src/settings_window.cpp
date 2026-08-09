@@ -2990,7 +2990,9 @@ void SettingsWindow::DrawPersonalizationPage()
     const char* contextMenuStyleNames[] = {
         _L("app.settings.context_menu_follow_system"),
         _L("app.settings.context_menu_system_light_blur"),
-        _L("app.settings.context_menu_system_dark_blur")
+        _L("app.settings.context_menu_system_dark_blur"),
+        _L("app.settings.context_menu_opaque_light"),
+        _L("app.settings.context_menu_opaque_dark")
     };
     BeginSettingRow(_L("app.settings.context_menu_style"), controlW);
     ImGui::SetNextItemWidth(controlW);
@@ -2999,7 +3001,7 @@ void SettingsWindow::DrawPersonalizationPage()
         contextMenuStyleNames, IM_ARRAYSIZE(contextMenuStyleNames)))
     {
         personalization_.contextMenuStyle = std::clamp(
-            personalization_.contextMenuStyle, 0, 2);
+            personalization_.contextMenuStyle, 0, 4);
         markChanged(true);
     }
 

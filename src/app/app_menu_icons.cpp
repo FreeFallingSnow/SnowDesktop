@@ -323,12 +323,21 @@ void DesktopApp::PrepareMenuIconsForPoint(POINT screenPoint)
         LoadPersonalization(
             GetPersonalizationPath().c_str(), appearance);
     menuAppearanceStyle_ = std::clamp(
-        appearance.contextMenuStyle, 0, 2);
-    menuLightTheme_ = menuAppearanceStyle_ == 1
-        ? true
-        : menuAppearanceStyle_ == 2
-            ? false
-            : IsWindowsAppLightThemeEnabled();
+        appearance.contextMenuStyle, 0, 4);
+    switch (menuAppearanceStyle_)
+    {
+    case 1:
+    case 3:
+        menuLightTheme_ = true;
+        break;
+    case 2:
+    case 4:
+        menuLightTheme_ = false;
+        break;
+    default:
+        menuLightTheme_ = IsWindowsAppLightThemeEnabled();
+        break;
+    }
 }
 
 void DesktopApp::SetMenuItemIcon(

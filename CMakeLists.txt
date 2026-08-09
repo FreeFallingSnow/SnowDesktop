@@ -793,7 +793,7 @@ if (BUILD_TESTING)
     target_compile_features(SnowDesktopModernMenuPreview PRIVATE cxx_std_20)
     target_include_directories(SnowDesktopModernMenuPreview PRIVATE src)
     target_link_libraries(SnowDesktopModernMenuPreview PRIVATE
-        gdi32 user32)
+        gdi32 imm32 user32)
     if (MSVC)
         set_property(TARGET SnowDesktopModernMenuPreview PROPERTY
             MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
