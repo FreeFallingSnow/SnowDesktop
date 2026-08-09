@@ -3797,14 +3797,6 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         for (const auto& permission : pending.manifest.permissions)
             if (grantedPermissions.contains(permission))
                 pending.permissions.insert(permission);
-        const std::set<std::string> grantedDomains(
-            package->grantedNetworkDomains.begin(),
-            package->grantedNetworkDomains.end());
-        std::erase_if(pending.manifest.networkDomains,
-            [&](const std::string& domain)
-            {
-                return !grantedDomains.contains(domain);
-            });
     }
     else
     {
@@ -5806,7 +5798,7 @@ int WidgetEngine::RuntimeHttpRequest(const std::wstring& widgetId, HttpRequestOp
     int index = FindWidget(widgetId);
     if (index < 0 || !httpService_) return 0;
     options.widgetId = widgetId;
-    options.allowedDomains = widgets_[index].manifest.networkDomains;
+    options.allowAnyPublicHttpsHost = true;
     options.timeoutMs = std::clamp(options.timeoutMs, 1000, 30000);
     options.cacheSeconds = std::clamp(options.cacheSeconds, 0, 86400);
     if (options.body.size() > 64 * 1024) return 0;

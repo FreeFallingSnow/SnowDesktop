@@ -1981,34 +1981,17 @@ bool WidgetPackageManager::CommitStagedPackage(
         std::set<std::string> granted(
             existing->second.grantedPermissions.begin(),
             existing->second.grantedPermissions.end());
-        std::set<std::string> domains(
-            existing->second.grantedNetworkDomains.begin(),
-            existing->second.grantedNetworkDomains.end());
         if (granted.empty())
         {
             if (const auto current = Resolve(manifest.id))
                 granted.insert(current->manifest.permissions.begin(),
                     current->manifest.permissions.end());
         }
-        if (domains.empty())
-        {
-            if (const auto current = Resolve(manifest.id))
-                domains.insert(current->manifest.networkDomains.begin(),
-                    current->manifest.networkDomains.end());
-        }
         for (const auto& permission : manifest.permissions)
         {
             if (!granted.contains(permission))
             {
                 error = "update requests a new permission: " + permission;
-                return false;
-            }
-        }
-        for (const auto& domain : manifest.networkDomains)
-        {
-            if (!domains.contains(domain))
-            {
-                error = "update expands network access to: " + domain;
                 return false;
             }
         }

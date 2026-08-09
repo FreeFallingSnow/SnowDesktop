@@ -80,6 +80,5 @@
       "previewArticle3Title": "lua_widget.rss_reader.preview_article_3"
     }
   },
-  "permissions": ["network.http", "ui.input", "desktop.action", "ui.contextMenu"],
-  "networkDomains": ["www.ithome.com"]
+  "permissions": ["network.http", "ui.input", "desktop.action", "ui.contextMenu"]
 }

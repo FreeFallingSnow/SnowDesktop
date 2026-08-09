@@ -100,6 +100,25 @@ int main()
             test.message);
     }
 
+    Expect(IsAllowedHttpsUrlForDomains(
+            L"https://hnrss.org/frontpage", {}, true),
+        "widget HTTP mode accepts an arbitrary public HTTPS domain");
+    Expect(IsAllowedHttpsUrlForDomains(
+            L"https://feeds.example.net/rss", {"unrelated.example"}, true),
+        "widget HTTP mode bypasses the declared domain allowlist");
+    Expect(!IsAllowedHttpsUrlForDomains(
+            L"http://hnrss.org/frontpage", {}, true),
+        "widget HTTP mode still rejects plaintext HTTP");
+    Expect(!IsAllowedHttpsUrlForDomains(
+            L"https://localhost/feed", {}, true),
+        "widget HTTP mode still rejects localhost");
+    Expect(!IsAllowedHttpsUrlForDomains(
+            L"https://192.168.1.10/feed", {}, true),
+        "widget HTTP mode still rejects private IPv4 targets");
+    Expect(!IsAllowedHttpsUrlForDomains(
+            L"https://[fc00::1]/feed", {}, true),
+        "widget HTTP mode still rejects private IPv6 targets");
+
     if (failures == 0)
         std::cout << "HTTP security tests passed\n";
     return failures == 0 ? 0 : 1;

@@ -209,7 +209,8 @@ AsyncHttpService::~AsyncHttpService()
 
 bool snowdesktop::http_security::IsAllowedHttpsUrlForDomains(
     const std::wstring& url,
-    const std::vector<std::string>& domains)
+    const std::vector<std::string>& domains,
+    bool allowAnyPublicHttpsHost)
 {
     URL_COMPONENTS components{ sizeof(components) };
     wchar_t host[256]{};
@@ -240,6 +241,7 @@ bool snowdesktop::http_security::IsAllowedHttpsUrlForDomains(
     if (IsIpLiteral(actual) &&
         !IsAllowedRemoteIpLiteral(actual))
         return false;
+    if (allowAnyPublicHttpsHost) return true;
     for (const auto& raw : domains)
     {
         if (raw.empty() || std::any_of(
@@ -265,7 +267,8 @@ int AsyncHttpService::Submit(HttpRequestOptions options)
 {
     if (!snowdesktop::http_security::
             IsAllowedHttpsUrlForDomains(
-                options.url, options.allowedDomains))
+                options.url, options.allowedDomains,
+                options.allowAnyPublicHttpsHost))
         return 0;
     std::scoped_lock lock(mutex_);
     int activeForWidget = 0;
@@ -397,7 +400,8 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
     {
         if (!snowdesktop::http_security::
                 IsAllowedHttpsUrlForDomains(
-                    currentUrl, options.allowedDomains))
+                    currentUrl, options.allowedDomains,
+                    options.allowAnyPublicHttpsHost))
         {
             response.error = "Redirect domain is not allowed";
             break;
