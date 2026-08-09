@@ -748,13 +748,17 @@ private:
             pressedAction = std::nullopt,
         HWND pressedTarget = nullptr,
         std::optional<RECT> pressedAnchorScreen =
-            std::nullopt);
+            std::nullopt,
+        DockWindowTransitionCapturePolicy minimizeCapturePolicy =
+            DockWindowTransitionCapturePolicy::SnapshotPreferred);
     bool ActivateOrToggleDockWindow(HWND window,
         std::optional<snowdesktop::dock_window_rules::DockClickAction>
             pressedAction = std::nullopt,
         HWND pressedTarget = nullptr,
         std::optional<RECT> pressedAnchorScreen =
-            std::nullopt);
+            std::nullopt,
+        DockWindowTransitionCapturePolicy minimizeCapturePolicy =
+            DockWindowTransitionCapturePolicy::SnapshotPreferred);
     void ActivateDockWindowFromPreview(HWND window);
     void ActivateDockWindowFromPreviewAnimated(HWND window);
     bool HandleDockClickRelease(POINT point);

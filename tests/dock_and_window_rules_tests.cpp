@@ -1196,16 +1196,16 @@ int main()
         "a minimized elevated window must switch when its restore request is rejected");
     Check(!rules::NeedsDockWindowSwitchFallback(true, true),
         "an accepted minimized-window restore must not be issued twice");
-    Check(rules::MustCloseFloatingDockBeforeWindowCommand(
+    Check(rules::RequiresFloatingDockMinimizeCaptureIsolation(
             true, rules::DockClickAction::Minimize),
-        "screen-captured minimize commands must close the top-level Dock first");
-    Check(!rules::MustCloseFloatingDockBeforeWindowCommand(
+        "floating minimize animations must exclude the top-level Dock");
+    Check(!rules::RequiresFloatingDockMinimizeCaptureIsolation(
             false, rules::DockClickAction::Minimize) &&
-            !rules::MustCloseFloatingDockBeforeWindowCommand(
+            !rules::RequiresFloatingDockMinimizeCaptureIsolation(
                 true, rules::DockClickAction::Activate) &&
-            !rules::MustCloseFloatingDockBeforeWindowCommand(
+            !rules::RequiresFloatingDockMinimizeCaptureIsolation(
                 true, rules::DockClickAction::Restore) &&
-            !rules::MustCloseFloatingDockBeforeWindowCommand(
+            !rules::RequiresFloatingDockMinimizeCaptureIsolation(
                 true, rules::DockClickAction::Launch),
         "desktop-layer Docks, restore, foreground activation and launches must keep the floating Dock visible");
     Check(rules::ResolveDockRestoreShowCommand(
@@ -1341,6 +1341,16 @@ int main()
             false, false) ==
             DockWindowTransitionSurface::None,
         "a transition must stop safely when neither rendering surface is available");
+    Check(ResolveDockWindowTransitionSurface(
+            true, true,
+            DockWindowTransitionCapturePolicy::LiveThumbnailOnly) ==
+            DockWindowTransitionSurface::LiveThumbnail,
+        "floating minimize must prefer the target-only DWM thumbnail over a screen snapshot");
+    Check(ResolveDockWindowTransitionSurface(
+            true, false,
+            DockWindowTransitionCapturePolicy::LiveThumbnailOnly) ==
+            DockWindowTransitionSurface::None,
+        "floating minimize must reject a screen snapshot when no DWM thumbnail is available");
     Check(rules::ResolveDockWindowIconSource(
             true, true, false, true) ==
             rules::DockWindowIconSource::AppUserModel,

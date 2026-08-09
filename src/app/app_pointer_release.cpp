@@ -289,24 +289,40 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
 
     const auto dispatchWindowCommand =
         [this, pressedWindowAction](
-            std::function<void()> command) {
+            std::function<bool(
+                DockWindowTransitionCapturePolicy)> command) {
             if (!command)
                 return;
-            if (!snowdesktop::dock_window_rules::
-                    MustCloseFloatingDockBeforeWindowCommand(
+            const bool requiresFloatingDockClose =
+                snowdesktop::dock_window_rules::
+                    RequiresFloatingDockMinimizeCaptureIsolation(
                         floatingDockVisible_,
-                        pressedWindowAction))
+                        pressedWindowAction);
+            if (!requiresFloatingDockClose &&
+                !floatingDockClosePending_)
             {
-                command();
+                command(DockWindowTransitionCapturePolicy::
+                    SnapshotPreferred);
                 return;
             }
 
-            // Minimize starts only after the normal floating-to-desktop
-            // ownership hand-off has crossed both the Windows Composition
-            // and DirectComposition fences, so its screen snapshot cannot
-            // capture the floating Dock overlay.
+            // A DWM thumbnail contains only the target HWND, so it can animate
+            // minimize without hiding the floating Dock. If registration is
+            // unavailable, retain the proven close-and-snapshot path.
+            if (requiresFloatingDockClose &&
+                !floatingDockClosePending_ &&
+                command(DockWindowTransitionCapturePolicy::
+                    LiveThumbnailOnly))
+            {
+                return;
+            }
+
             CloseFloatingDockThen(
-                std::move(command), true,
+                [command = std::move(command)]() mutable {
+                    command(DockWindowTransitionCapturePolicy::
+                        SnapshotPreferred);
+                },
+                true,
                 FloatingDockCloseFocusPolicy::PreserveCurrent);
         };
 
@@ -321,11 +337,13 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
             const HWND runningWindow = running->window;
             dispatchWindowCommand(
                 [this, runningWindow, pressedWindowAction,
-                    pressedTargetWindow, pressedAnchorScreen]() {
-                    ActivateOrToggleDockWindow(
+                    pressedTargetWindow, pressedAnchorScreen](
+                    DockWindowTransitionCapturePolicy capturePolicy) {
+                    return ActivateOrToggleDockWindow(
                         runningWindow, pressedWindowAction,
                         pressedTargetWindow,
-                        pressedAnchorScreen);
+                        pressedAnchorScreen,
+                        capturePolicy);
                 });
         }
     }
@@ -333,11 +351,13 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
     {
         dispatchWindowCommand(
             [this, frequentItemIndex, pressedWindowAction,
-                pressedTargetWindow, pressedAnchorScreen]() {
-                ActivateOrToggleDockItem(
+                pressedTargetWindow, pressedAnchorScreen](
+                DockWindowTransitionCapturePolicy capturePolicy) {
+                return ActivateOrToggleDockItem(
                     frequentItemIndex, pressedWindowAction,
                     pressedTargetWindow,
-                    pressedAnchorScreen);
+                    pressedAnchorScreen,
+                    capturePolicy);
             });
     }
     else if (entryType == DockEntryType::Collection)
@@ -380,11 +400,13 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
         {
             dispatchWindowCommand(
                 [this, itemIndex, pressedWindowAction,
-                    pressedTargetWindow, pressedAnchorScreen]() {
-                    ActivateOrToggleDockItem(
+                    pressedTargetWindow, pressedAnchorScreen](
+                    DockWindowTransitionCapturePolicy capturePolicy) {
+                    return ActivateOrToggleDockItem(
                         itemIndex, pressedWindowAction,
                         pressedTargetWindow,
-                        pressedAnchorScreen);
+                        pressedAnchorScreen,
+                        capturePolicy);
                 });
         }
     }

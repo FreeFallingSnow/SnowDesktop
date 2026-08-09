@@ -265,12 +265,14 @@ bool DockWindowTransition::EnsureWindow()
 }
 
 bool DockWindowTransition::StartMinimize(
-    HWND sourceWindow, RECT dockRect)
+    HWND sourceWindow, RECT dockRect,
+    DockWindowTransitionCapturePolicy capturePolicy,
+    HWND keepBelowWindow)
 {
     return Start(
         sourceWindow, dockRect,
         DockWindowTransitionDirection::Minimize,
-        {});
+        {}, capturePolicy, keepBelowWindow);
 }
 
 bool DockWindowTransition::PrimeMinimizeSnapshot(
@@ -296,20 +298,25 @@ bool DockWindowTransition::PrimeMinimizeSnapshot(
 
 bool DockWindowTransition::StartRestore(
     HWND sourceWindow, RECT dockRect,
-    RestoreCallback restoreCallback)
+    RestoreCallback restoreCallback,
+    HWND keepBelowWindow)
 {
     if (!restoreCallback)
         return false;
     return Start(
         sourceWindow, dockRect,
         DockWindowTransitionDirection::Restore,
-        std::move(restoreCallback));
+        std::move(restoreCallback),
+        DockWindowTransitionCapturePolicy::SnapshotPreferred,
+        keepBelowWindow);
 }
 
 bool DockWindowTransition::Start(
     HWND sourceWindow, RECT dockRect,
     DockWindowTransitionDirection direction,
-    RestoreCallback restoreCallback)
+    RestoreCallback restoreCallback,
+    DockWindowTransitionCapturePolicy capturePolicy,
+    HWND keepBelowWindow)
 {
     if (!SystemWindowAnimationsEnabled() ||
         !sourceWindow || !IsWindow(sourceWindow) ||
@@ -405,10 +412,14 @@ bool DockWindowTransition::Start(
         static_cast<double>(
             kAnimationDurationMs);
 
-    const CachedSnapshot* snapshot =
-        PrepareSnapshot(
+    const CachedSnapshot* snapshot = nullptr;
+    if (capturePolicy !=
+        DockWindowTransitionCapturePolicy::LiveThumbnailOnly)
+    {
+        snapshot = PrepareSnapshot(
             sourceWindow_, windowRect,
             direction_, true);
+    }
     if (!EnsureWindow())
     {
         Cancel();
@@ -431,7 +442,8 @@ bool DockWindowTransition::Start(
     surface_ =
         ResolveDockWindowTransitionSurface(
             snapshotAvailable,
-            liveThumbnailAvailable);
+            liveThumbnailAvailable,
+            capturePolicy);
     if (surface_ ==
         DockWindowTransitionSurface::None)
     {
@@ -451,8 +463,15 @@ bool DockWindowTransition::Start(
     const int hostHeight = std::max(
         1L, snapshotHostRect_.bottom -
             snapshotHostRect_.top);
+    const HWND insertAfter =
+        keepBelowWindow && IsWindow(keepBelowWindow)
+        ? keepBelowWindow : HWND_TOPMOST;
+    // A topmost HWND used as hWndInsertAfter keeps the transition in the
+    // topmost band but directly behind that window. This lets the floating
+    // Dock and its owned preview remain readable while the application image
+    // travels to or from the Dock icon.
     SetWindowPos(
-        hwnd_, HWND_TOPMOST,
+        hwnd_, insertAfter,
         snapshotHostRect_.left,
         snapshotHostRect_.top,
         hostWidth, hostHeight,

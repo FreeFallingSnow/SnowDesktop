@@ -342,7 +342,8 @@ bool DesktopApp::ActivateOrToggleDockItem(
     std::optional<snowdesktop::dock_window_rules::DockClickAction>
         pressedAction,
     HWND pressedTarget,
-    std::optional<RECT> pressedAnchorScreen)
+    std::optional<RECT> pressedAnchorScreen,
+    DockWindowTransitionCapturePolicy minimizeCapturePolicy)
 {
     DismissDockWindowPreviewUntilLeave();
     if (itemIndex >= items_.size()) return false;
@@ -443,6 +444,10 @@ bool DesktopApp::ActivateOrToggleDockItem(
             ? DockClickAction::Restore
             : DockClickAction::Minimize;
     }
+    const HWND transitionKeepBelowWindow =
+        floatingDockVisible_ && floatingDockHwnd_ &&
+            IsWindowVisible(floatingDockHwnd_)
+        ? floatingDockHwnd_ : nullptr;
 
     // The action comes from the indicator under the pointer at button-down.
     // Do not infer it again from GetForegroundWindow() during button-up.
@@ -452,16 +457,27 @@ bool DesktopApp::ActivateOrToggleDockItem(
             transitionActiveForTarget &&
             activeTransitionDirection ==
                 DockWindowTransitionDirection::Restore;
-        if ((!IsIconic(target) ||
-                reverseRestore) &&
+        const bool shouldMinimize =
+            !IsIconic(target) || reverseRestore;
+        bool transitionStarted = false;
+        if (shouldMinimize &&
             dockWindowTransition_ &&
             pressedAnchorScreen)
         {
-            dockWindowTransition_->StartMinimize(
-                target, *pressedAnchorScreen);
+            transitionStarted =
+                dockWindowTransition_->StartMinimize(
+                    target, *pressedAnchorScreen,
+                    minimizeCapturePolicy,
+                    transitionKeepBelowWindow);
         }
-        if (!IsIconic(target) ||
-            reverseRestore)
+        if (shouldMinimize &&
+            minimizeCapturePolicy ==
+                DockWindowTransitionCapturePolicy::LiveThumbnailOnly &&
+            !transitionStarted)
+        {
+            return false;
+        }
+        if (shouldMinimize)
         {
             RequestDockWindowMinimize(target);
         }
@@ -484,7 +500,8 @@ bool DesktopApp::ActivateOrToggleDockItem(
                 [this](HWND restoreTarget) {
                     ActivateDockWindowFromPreview(
                         restoreTarget);
-                }))
+                },
+                transitionKeepBelowWindow))
         {
             InvalidateDockRects();
             return true;
@@ -535,7 +552,8 @@ bool DesktopApp::ActivateOrToggleDockWindow(
     std::optional<snowdesktop::dock_window_rules::DockClickAction>
         pressedAction,
     HWND pressedTarget,
-    std::optional<RECT> pressedAnchorScreen)
+    std::optional<RECT> pressedAnchorScreen,
+    DockWindowTransitionCapturePolicy minimizeCapturePolicy)
 {
     DismissDockWindowPreviewUntilLeave();
     HWND requestedTarget =
@@ -586,6 +604,10 @@ bool DesktopApp::ActivateOrToggleDockWindow(
             ? DockClickAction::Restore
             : DockClickAction::Minimize;
     }
+    const HWND transitionKeepBelowWindow =
+        floatingDockVisible_ && floatingDockHwnd_ &&
+            IsWindowVisible(floatingDockHwnd_)
+        ? floatingDockHwnd_ : nullptr;
     bool nowMinimized = false;
     bool nowForeground = false;
     if (action == DockClickAction::Minimize)
@@ -594,15 +616,27 @@ bool DesktopApp::ActivateOrToggleDockWindow(
             transitionActiveForTarget &&
             activeTransitionDirection ==
                 DockWindowTransitionDirection::Restore;
-        if ((!minimized || reverseRestore) &&
+        const bool shouldMinimize =
+            !minimized || reverseRestore;
+        bool transitionStarted = false;
+        if (shouldMinimize &&
             dockWindowTransition_ &&
             pressedAnchorScreen)
         {
-            dockWindowTransition_->StartMinimize(
-                target, *pressedAnchorScreen);
+            transitionStarted =
+                dockWindowTransition_->StartMinimize(
+                    target, *pressedAnchorScreen,
+                    minimizeCapturePolicy,
+                    transitionKeepBelowWindow);
         }
-        if (!minimized ||
-            reverseRestore)
+        if (shouldMinimize &&
+            minimizeCapturePolicy ==
+                DockWindowTransitionCapturePolicy::LiveThumbnailOnly &&
+            !transitionStarted)
+        {
+            return false;
+        }
+        if (shouldMinimize)
         {
             RequestDockWindowMinimize(target);
         }
@@ -627,7 +661,8 @@ bool DesktopApp::ActivateOrToggleDockWindow(
                 [this](HWND restoreTarget) {
                     ActivateDockWindowFromPreview(
                         restoreTarget);
-                }))
+                },
+                transitionKeepBelowWindow))
         {
             InvalidateDockRects();
             return true;
@@ -708,32 +743,50 @@ void DesktopApp::ActivateDockWindowFromPreviewAnimated(HWND window)
             ResolveDockWindowPreviewClickAction(
                 IsIconic(target) != FALSE,
                 windowForeground);
-    // Mirror the Dock-icon command path: only minimize closes the floating
-    // layer before its screen snapshot. Restore and plain foreground
+    // Mirror the Dock-icon command path: minimize first tries a target-only
+    // DWM thumbnail while keeping the floating layer visible, and closes it
+    // only when that path is unavailable. Restore and plain foreground
     // activation deliberately keep it visible. Closing the host dismisses
     // the preview and clears the stored anchor, so read the anchor first.
     const RECT anchor = dockWindowPreviewAnchorScreen_;
-    std::function<void()> command =
-        [this, window, action, anchor]() {
+    std::function<bool(DockWindowTransitionCapturePolicy)> command =
+        [this, window, action, anchor](
+            DockWindowTransitionCapturePolicy capturePolicy) {
             if (!window || !IsWindow(window))
-                return;
+                return false;
             if (!IsRectEmpty(&anchor) &&
                 ActivateOrToggleDockWindow(
-                    window, action, nullptr, anchor))
-                return;
+                    window, action, nullptr, anchor,
+                    capturePolicy))
+                return true;
             ActivateDockWindowFromPreview(window);
+            return true;
         };
-    if (snowdesktop::dock_window_rules::
-            MustCloseFloatingDockBeforeWindowCommand(
-                floatingDockVisible_, action) ||
+    const bool requiresFloatingDockClose =
+        snowdesktop::dock_window_rules::
+            RequiresFloatingDockMinimizeCaptureIsolation(
+                floatingDockVisible_, action);
+    if (requiresFloatingDockClose &&
+        !floatingDockClosePending_ &&
+        command(DockWindowTransitionCapturePolicy::
+            LiveThumbnailOnly))
+    {
+        return;
+    }
+    if (requiresFloatingDockClose ||
         floatingDockClosePending_)
     {
         CloseFloatingDockThen(
-            std::move(command), true,
+            [command = std::move(command)]() mutable {
+                command(DockWindowTransitionCapturePolicy::
+                    SnapshotPreferred);
+            },
+            true,
             FloatingDockCloseFocusPolicy::PreserveCurrent);
         return;
     }
-    command();
+    command(DockWindowTransitionCapturePolicy::
+        SnapshotPreferred);
 }
 
 void DesktopApp::ActivateDockWindowFromPreview(HWND window)
