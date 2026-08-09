@@ -552,6 +552,8 @@ private:
     void EnsureUiAnimationFrame();
     /** @brief 取消所有应用内 UI 动画轨道。 */
     void CancelUiAnimationFrame();
+    /** @brief 在 OLE 嵌套拖拽循环中同步呈现本次命中反馈。 */
+    void PresentOleDragInteractionFrame();
     /** @brief 隐藏 Explorer 原生桌面图标。 */
     void HideExplorerIcons();
     /** @brief 恢复 Explorer 原生桌面图标。 */

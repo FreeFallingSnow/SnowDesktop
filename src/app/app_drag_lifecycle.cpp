@@ -58,6 +58,19 @@ void DesktopApp::PresentDesktopPointerUpdate()
     EnsureUiAnimationFrame();
 }
 
+void DesktopApp::PresentOleDragInteractionFrame()
+{
+    OnPaint();
+    InvalidateFloatingDockWindow(true);
+
+    // A self drag reaches these callbacks from DoDragDrop's nested message
+    // loop. The outer application pump therefore cannot perform its normal
+    // end-of-message DComp flush until the complete drag has returned. Submit
+    // this frame here so leave/re-enter hit feedback never remains frozen at
+    // the last frame that was committed before crossing into another app.
+    FlushPendingCompositionCommit();
+}
+
 void DesktopApp::PresentPointerInteractionFrame()
 {
     const bool widgetPreviewActive =

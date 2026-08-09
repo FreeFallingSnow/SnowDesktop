@@ -27,8 +27,7 @@ HRESULT DesktopApp::HandleOleDragEnter(
         if (!suppressDesktopWidgetTargets && !UpdateDragPageNavigation(client))
         {
             *effect = DROPEFFECT_NONE;
-            OnPaint();
-            InvalidateFloatingDockWindow(true);
+            PresentOleDragInteractionFrame();
             return S_OK;
         }
 
@@ -74,8 +73,7 @@ HRESULT DesktopApp::HandleOleDragEnter(
         ShowDragHintWindowScreen({ point.x, point.y }, hint);
         *effect = targetRegion == HitRegion::Blocked
             ? DROPEFFECT_NONE : DROPEFFECT_COPY | DROPEFFECT_MOVE;
-        OnPaint();
-        InvalidateFloatingDockWindow(true);
+        PresentOleDragInteractionFrame();
         return S_OK;
     }
 
@@ -128,8 +126,7 @@ HRESULT DesktopApp::HandleOleDragEnter(
     if (!UpdateDragPageNavigation(client))
     {
         *effect = DROPEFFECT_NONE;
-        OnPaint();
-        InvalidateFloatingDockWindow(true);
+        PresentOleDragInteractionFrame();
         return S_OK;
     }
 
@@ -181,8 +178,7 @@ HRESULT DesktopApp::HandleOleDragEnter(
             ? snowdesktop::dock_drop_rules::
                 ChooseExternalMappingEffect(*effect)
             : ChooseDropEffect(keyState, *effect));
-    OnPaint();
-    InvalidateFloatingDockWindow(true);
+    PresentOleDragInteractionFrame();
     return S_OK;
 }
 
@@ -218,8 +214,7 @@ HRESULT DesktopApp::HandleOleDragOver(
         if (!suppressDesktopWidgetTargets && !UpdateDragPageNavigation(client))
         {
             *effect = DROPEFFECT_NONE;
-            OnPaint();
-            InvalidateFloatingDockWindow(true);
+            PresentOleDragInteractionFrame();
             return S_OK;
         }
 
@@ -265,8 +260,7 @@ HRESULT DesktopApp::HandleOleDragOver(
         ShowDragHintWindowScreen({ point.x, point.y }, hint);
         *effect = targetRegion == HitRegion::Blocked
             ? DROPEFFECT_NONE : DROPEFFECT_COPY | DROPEFFECT_MOVE;
-        OnPaint();
-        InvalidateFloatingDockWindow(true);
+        PresentOleDragInteractionFrame();
         return S_OK;
     }
 
@@ -283,8 +277,7 @@ HRESULT DesktopApp::HandleOleDragOver(
     if (!UpdateDragPageNavigation(client))
     {
         *effect = DROPEFFECT_NONE;
-        OnPaint();
-        InvalidateFloatingDockWindow(true);
+        PresentOleDragInteractionFrame();
         return S_OK;
     }
 
@@ -336,8 +329,7 @@ HRESULT DesktopApp::HandleOleDragOver(
             ? snowdesktop::dock_drop_rules::
                 ChooseExternalMappingEffect(*effect)
             : ChooseDropEffect(keyState, *effect));
-    OnPaint();
-    InvalidateFloatingDockWindow(true);
+    PresentOleDragInteractionFrame();
     return S_OK;
 }
 
@@ -363,15 +355,13 @@ HRESULT DesktopApp::HandleOleDragLeave()
             hwnd_, kCollectionGroupTabDwellTimerId);
         dragSession_.UpdateTarget(nullptr, nullptr, HitRegion::None);
         HideDragHintWindow();
-        OnPaint();
-        InvalidateFloatingDockWindow(true);
+        PresentOleDragInteractionFrame();
         return S_OK;
     }
     dragDropController_.EndExternalDrag();
     EndDragSession();
     HideDragHintWindow();
-    OnPaint();
-    InvalidateFloatingDockWindow(true);
+    PresentOleDragInteractionFrame();
     return S_OK;
 }
 

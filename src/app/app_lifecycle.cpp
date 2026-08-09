@@ -145,6 +145,7 @@ void DesktopApp::ResetDesktopWindowResources()
         StopRecycleBinWatcher();
         KillTimer(hwnd_, kCollectionPopupDwellTimerId);
         KillTimer(hwnd_, kCollectionGroupTabDwellTimerId);
+        KillTimer(hwnd_, kOleDragUiPumpTimerId);
         CancelUiAnimationFrame();
         if (pageNotifyFadeOutToken_)
             uiAnimationScheduler_.Cancel(pageNotifyFadeOutToken_);

@@ -242,6 +242,11 @@ constexpr int kDesktopPassthroughHotkeyId = 103;
 constexpr int kSettingsHotkeyProbeId = 104;
 constexpr UINT_PTR kDesktopPassthroughHoldTimerId = 20;
 constexpr UINT kDesktopPassthroughHoldIntervalMs = 16;
+// DoDragDrop owns a nested message loop, so the waitable animation timer in
+// the outer application pump needs a WM_TIMER bridge while a local drag is
+// visiting another process.
+constexpr UINT_PTR kOleDragUiPumpTimerId = 21;
+constexpr UINT kOleDragUiPumpIntervalMs = USER_TIMER_MINIMUM;
 constexpr UINT_PTR kFloatingDockEdgeSwipeTimerId = 16;
 constexpr UINT kFloatingDockEdgeSwipeIntervalMs = 20;
 constexpr DWORD kQuickNavigationEverythingResultBatchSize = 200;

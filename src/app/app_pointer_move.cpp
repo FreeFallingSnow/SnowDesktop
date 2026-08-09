@@ -521,6 +521,14 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
 
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 UpdateWindow(hwnd_);
+                FlushPendingCompositionCommit();
+
+                const bool oleUiPumpStarted =
+                    hwnd_ && IsWindow(hwnd_) &&
+                    SetTimer(
+                        hwnd_, kOleDragUiPumpTimerId,
+                        kOleDragUiPumpIntervalMs,
+                        nullptr) != 0;
 
                 DWORD oleEffect = DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
                 OleDragDropAdapter* oleAdapter =
@@ -530,6 +538,8 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                         static_cast<IDropSource*>(oleAdapter),
                         oleEffect, &oleEffect)
                     : E_OUTOFMEMORY;
+                if (oleUiPumpStarted && hwnd_ && IsWindow(hwnd_))
+                    KillTimer(hwnd_, kOleDragUiPumpTimerId);
                 dragDropController_.EndSelfDrag();
 
                 if (hr == DRAGDROP_S_DROP && oleEffect == DROPEFFECT_MOVE
