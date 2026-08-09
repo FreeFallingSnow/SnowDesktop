@@ -113,7 +113,11 @@ void DesktopApp::ShowFloatingDock()
             : E_UNEXPECTED;
     }
     if (SUCCEEDED(stageHr))
-        stageHr = dcompDevice_->Commit();
+    {
+        CommitCompositionAnimationFrame();
+        stageHr = FlushPendingCompositionCommit()
+            ? S_OK : E_FAIL;
+    }
     if (SUCCEEDED(stageHr) &&
         floatingDockBackdropCompositor_.IsAvailable())
     {
@@ -154,8 +158,7 @@ void DesktopApp::ShowFloatingDock()
     // timing domains. This barrier only installs the transparent target; the
     // currently visible desktop Dock remains the sole rendered copy.
     const bool presentationCompleted =
-        WaitForDCompCommitWithFallback(
-            L"Floating Dock transparent staging");
+        FlushPendingCompositionCommit();
     const bool retireDesktopCopy =
         snowdesktop::floating_dock_rules::
             ShouldRetireDesktopDockCopy(
@@ -223,7 +226,11 @@ void DesktopApp::ShowFloatingDock()
             SetOpacity(0.0f);
     }
     if (SUCCEEDED(revealHr))
-        revealHr = dcompDevice_->Commit();
+    {
+        CommitCompositionAnimationFrame();
+        revealHr = FlushPendingCompositionCommit()
+            ? S_OK : E_FAIL;
+    }
     if (FAILED(revealHr))
     {
         wchar_t message[176]{};
@@ -282,6 +289,15 @@ void DesktopApp::CloseFloatingDock(
     bool forceImmediate,
     FloatingDockCloseFocusPolicy focusPolicy)
 {
+    if (floatingDockHoverTailToken_)
+    {
+        uiAnimationScheduler_.Cancel(
+            floatingDockHoverTailToken_);
+        floatingDockHoverTailToken_ = 0;
+    }
+    floatingDockHoverTargetOwner_ = nullptr;
+    floatingDockHoverTargetIndex_ = 0;
+    floatingDockHoverTargetKind_ = 0;
     if (floatingDockKeyboardSessionActive_)
         EndFloatingDockKeyboardSession(focusPolicy);
     if (floatingDockClosePending_)
@@ -354,6 +370,12 @@ void DesktopApp::CloseFloatingDock(
         WriteDiagnosticLogEntry(
             L"Floating Dock close cache refresh unavailable");
     }
+    // The frame above is now the immutable hand-off cache. Consume any stale
+    // WM_PAINT queued by the pointer press so it cannot redraw the shared
+    // surface after the close transaction becomes pending.
+    if (floatingDockHwnd_ &&
+        IsWindow(floatingDockHwnd_))
+        ValidateRect(floatingDockHwnd_, nullptr);
 
     // Stage an invisible desktop glass panel, then exchange its opacity with
     // the floating root in the shared Windows Composition transaction. The
@@ -463,7 +485,11 @@ void DesktopApp::CompleteFloatingDockCloseHandoff()
             : E_UNEXPECTED;
     }
     if (SUCCEEDED(concealHr))
-        concealHr = dcompDevice_->Commit();
+    {
+        CommitCompositionAnimationFrame();
+        concealHr = FlushPendingCompositionCommit()
+            ? S_OK : E_FAIL;
+    }
     if (FAILED(concealHr))
     {
         wchar_t message[176]{};
@@ -472,9 +498,6 @@ void DesktopApp::CompleteFloatingDockCloseHandoff()
             static_cast<unsigned>(concealHr));
         WriteDiagnosticLogEntry(message);
     }
-    else
-        WaitForDCompCommitWithFallback(
-            L"Floating Dock cached conceal");
 
     floatingDockVisible_ = false;
     floatingDockPointerPresentPending_ = false;
@@ -527,10 +550,7 @@ void DesktopApp::CompleteFloatingDockCloseHandoff()
         }
     }
     if (desktopFrameSubmitted)
-    {
-        WaitForDCompCommitWithFallback(
-            L"Desktop Dock handoff");
-    }
+        FlushPendingCompositionCommit();
     FinalizeFloatingDockBackdropCleanup();
     floatingDockContainer_ = nullptr;
     floatingDockMonitor_ = nullptr;
@@ -556,7 +576,10 @@ void DesktopApp::ToggleFloatingDock()
 void DesktopApp::InvalidateFloatingDockWindow(
     bool immediate)
 {
-    if (floatingDockVisible_ &&
+    if (snowdesktop::floating_dock_rules::
+            ShouldRenderFloatingDockFrame(
+                floatingDockVisible_,
+                floatingDockClosePending_) &&
         floatingDockHwnd_ &&
         IsWindow(floatingDockHwnd_))
     {
@@ -667,9 +690,9 @@ CreateOrResizeFloatingDockCompositionSurface()
         surface.Get());
     if (FAILED(hr))
         return hr;
-    hr = dcompDevice_->Commit();
-    if (FAILED(hr))
-        return hr;
+    CommitCompositionAnimationFrame();
+    if (!FlushPendingCompositionCommit())
+        return E_FAIL;
     floatingDockDcompSurface_ = surface;
     floatingDockCompWidth_ = width;
     floatingDockCompHeight_ = height;

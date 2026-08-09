@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../desktop_hover_rules.h"
 #include "../widget_visibility_rules.h"
 
 // Middle-button behavior and pointer-move drag updates.
@@ -125,6 +126,7 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         }
         UpdateHostInputImePosition();
         InvalidateRect(hwnd_, nullptr, FALSE);
+        PresentDesktopPointerUpdate();
         return;
     }
 
@@ -138,6 +140,7 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         searchable->UpdateSearchPointerSelection(current);
         UpdateHostInputImePosition();
         InvalidateRect(hwnd_, nullptr, FALSE);
+        PresentDesktopPointerUpdate();
         return;
     }
 
@@ -171,6 +174,7 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         // the desktop marquee-selection state machine: a drag inside a Lua
         // widget has meaning only to the widget or its host input control.
         InvalidateRect(hwnd_, nullptr, FALSE);
+        PresentDesktopPointerUpdate();
         return;
     }
 
@@ -676,7 +680,10 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             else if (pageOffset_ < MaxPageOffset() && PtInRect(&nextRect, current)) navHoverSide_ = 1;
         }
         if (navHoverSide_ != oldHover)
+        {
             InvalidateRect(hwnd_, nullptr, FALSE);
+            PresentDesktopPointerUpdate();
+        }
     }
 
     if (oldMouse.x != current.x || oldMouse.y != current.y)
@@ -875,19 +882,19 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                 hwnd_,
                 IsRectEmptyRect(dirty) ? nullptr : &dirty,
                 FALSE);
-            if (dockHoverActive && !marqueeActive_)
+            if (!marqueeActive_ &&
+                snowdesktop::desktop_hover_rules::
+                    ShouldPresentSynchronously(
+                        hoverChanged,
+                        dockHoverActive))
             {
-                // Dock hover 必须同步提交：WM_MOUSEMOVE 的调度优先级高于
-                // WM_PAINT，只 InvalidateRect 会让放大效果在快速扫过时落后。
-                // f29a882 曾改成 pending + EnsureUiAnimationFrame()，正是
-                // 这次“不跟手”回归的来源。
-                if (!compositionPaintInProgress_)
-                    UpdateWindow(hwnd_);
-                else
-                {
-                    desktopPointerPresentPending_ = true;
-                    EnsureUiAnimationFrame();
-                }
+                // Hover state is pointer feedback, not an animation frame.
+                // WM_PAINT has lower queue priority than pointer and animated
+                // window traffic, so a plain invalidation can remain pending
+                // until Quick Navigation finishes and then replay stale
+                // transitions. Present each target change in this input
+                // message; Dock additionally needs continuous movement.
+                PresentDesktopPointerUpdate();
             }
         }
 

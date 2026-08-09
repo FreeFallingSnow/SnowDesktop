@@ -40,6 +40,24 @@ void DesktopApp::InvalidateDragStaticScene()
  * f29a882 曾这样改，密集鼠标事件下所有反馈都晚一帧。真实逐帧动画才走
  * UiAnimationScheduler。
  */
+void DesktopApp::PresentDesktopPointerUpdate()
+{
+    if (handlingFloatingDockInput_ ||
+        !hwnd_ || !IsWindow(hwnd_))
+        return;
+    if (!compositionPaintInProgress_)
+    {
+        UpdateWindow(hwnd_);
+        return;
+    }
+
+    // A nested paint cannot re-enter D2D/DComp. This is the only pointer path
+    // allowed to fall back to the scheduler; the normal path above presents
+    // before the current input message returns.
+    desktopPointerPresentPending_ = true;
+    EnsureUiAnimationFrame();
+}
+
 void DesktopApp::PresentPointerInteractionFrame()
 {
     const bool widgetPreviewActive =
@@ -55,27 +73,96 @@ void DesktopApp::PresentPointerInteractionFrame()
         hwnd_ && IsWindow(hwnd_))
     {
         InvalidateRect(hwnd_, nullptr, FALSE);
-        if (!compositionPaintInProgress_)
-            UpdateWindow(hwnd_);
-        else
-        {
-            // 同步绘制重入中不能再次 UpdateWindow，交给 scheduler 兜底补一帧。
-            desktopPointerPresentPending_ = true;
-            EnsureUiAnimationFrame();
-        }
+        PresentDesktopPointerUpdate();
     }
     if (floatingDockVisible_)
     {
+        const void* hoverOwner = nullptr;
+        size_t hoverIndex = 0;
+        int hoverKind = 0;
+        if (DockContainer* dock =
+                GetDockContainerAtPoint(lastMousePoint_);
+            dock && dock->ContainsInteractivePoint(
+                lastMousePoint_))
+        {
+            hoverOwner = dock;
+            if (DockEntryItem* entry =
+                    dock->EntryAtPoint(lastMousePoint_))
+            {
+                hoverKind = 1;
+                hoverIndex = entry->GetEntryIndex();
+            }
+            else if (DockRunningItem* running =
+                    dock->RunningItemAtPoint(lastMousePoint_))
+            {
+                hoverKind = 2;
+                hoverIndex = running->GetRunningIndex();
+            }
+            else if (DockFrequentItem* frequent =
+                    dock->FrequentItemAtPoint(lastMousePoint_))
+            {
+                hoverKind = 3;
+                hoverIndex = frequent->GetItemIndex();
+            }
+            else if (dock->IsWindowsButtonPoint(lastMousePoint_))
+                hoverKind = 4;
+            else if (dock->IsSearchPoint(lastMousePoint_))
+                hoverKind = 5;
+            else
+                hoverKind = 6;
+        }
+        const bool hoverTargetChanged =
+            hoverOwner != floatingDockHoverTargetOwner_ ||
+            hoverIndex != floatingDockHoverTargetIndex_ ||
+            hoverKind != floatingDockHoverTargetKind_;
+        floatingDockHoverTargetOwner_ = hoverOwner;
+        floatingDockHoverTargetIndex_ = hoverIndex;
+        floatingDockHoverTargetKind_ = hoverKind;
+
         const ULONGLONG now = GetTickCount64();
         const bool presentNow =
             snowdesktop::floating_dock_rules::
                 ShouldPresentPointerFrame(
                     now,
                     floatingDockLastPointerPresentTick_,
-                    immediateDesktopPresent);
+                    immediateDesktopPresent ||
+                        hoverTargetChanged);
         if (presentNow)
+        {
+            if (floatingDockHoverTailToken_)
+            {
+                uiAnimationScheduler_.Cancel(
+                    floatingDockHoverTailToken_);
+                floatingDockHoverTailToken_ = 0;
+            }
             floatingDockLastPointerPresentTick_ = now;
-        InvalidateFloatingDockWindow(presentNow);
+            InvalidateFloatingDockWindow(true);
+        }
+        else if (!floatingDockHoverTailToken_)
+        {
+            const UINT delay = std::max<UINT>(
+                1,
+                snowdesktop::floating_dock_rules::
+                    RemainingPointerFrameDelay(
+                        now,
+                        floatingDockLastPointerPresentTick_));
+            floatingDockHoverTailToken_ =
+                uiAnimationScheduler_.ScheduleOnce(
+                    delay,
+                    [this](snowdesktop::UiScheduleToken token) {
+                        if (floatingDockHoverTailToken_ != token)
+                            return;
+                        floatingDockHoverTailToken_ = 0;
+                        if (!floatingDockVisible_ ||
+                            floatingDockClosePending_ ||
+                            !floatingDockHwnd_ ||
+                            !IsWindow(floatingDockHwnd_))
+                            return;
+                        floatingDockLastPointerPresentTick_ =
+                            GetTickCount64();
+                        InvalidateFloatingDockWindow(true);
+                    });
+        }
     }
 }
 
@@ -113,6 +200,11 @@ void DesktopApp::CommitDragVisualEndBeforeShellOperation()
 {
     dragRenderCache_.Reset();
     PresentPassiveHoverVisualChange();
+    // The ordinary hover path must never wait for DWM. Shell operations are a
+    // real presentation boundary, though: submit the batched DComp work first
+    // and only then wait for the drag-end frame to reach the compositor.
+    FlushPendingCompositionCommit();
+    DwmFlush();
 }
 
 void DesktopApp::PresentPassiveHoverVisualChange()
@@ -122,18 +214,12 @@ void DesktopApp::PresentPassiveHoverVisualChange()
     // set, so stale blur pixels cannot outlive the content frame even if the
     // Windows Composition commit completes later.
     desktopBackdropFullCollectionPending_ = true;
-    bool frameSubmitted = false;
     if (hwnd_ && IsWindow(hwnd_))
     {
         InvalidateRect(hwnd_, nullptr, FALSE);
         if (!compositionPaintInProgress_)
-        {
             UpdateWindow(hwnd_);
-            frameSubmitted = true;
-        }
     }
-    if (frameSubmitted)
-        DwmFlush();
     InvalidateFloatingDockWindow(true);
 }
 

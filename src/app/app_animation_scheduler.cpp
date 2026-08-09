@@ -9,206 +9,134 @@ std::uint64_t AnimationTick(double nowMilliseconds)
 }
 }
 
+// Every independently visible object owns its scheduler token. A terminal
+// callback can therefore retire only its own track; it cannot accidentally
+// stop hover, another popup, or a transition that started in the same frame.
 void DesktopApp::EnsureUiAnimationFrame()
 {
-    if (uiAnimationFrameToken_)
-        return;
-    uiAnimationFrameToken_ = uiAnimationScheduler_.StartAnimation(
-        snowdesktop::UiAnimationSurface::Desktop,
-        [this](double nowMilliseconds) {
-            return AdvanceUiAnimationFrame(nowMilliseconds);
-        });
-}
-
-void DesktopApp::CancelUiAnimationFrame()
-{
-    if (uiAnimationFrameToken_)
-        uiAnimationScheduler_.Cancel(uiAnimationFrameToken_);
-    uiAnimationFrameToken_ = 0;
-}
-
-bool DesktopApp::AdvanceUiAnimationFrame(double nowMilliseconds)
-{
-    const std::uint64_t tick = AnimationTick(nowMilliseconds);
-    bool desktopCompositionChanged = false;
-
-    if (popupAnimation_.IsAnimating() &&
+    if (!popupAnimationFrameToken_ &&
+        popupAnimation_.IsAnimating() &&
         !popupAnimationCompositorDriven_)
     {
-        popupAnimation_.Advance(tick);
-        if (!popupAnimation_.IsAnimating() &&
-            popupAnimation_.IsHidden())
-        {
-            FinalizeCloseCollectionPopup();
-        }
-        else if (!popupAnimation_.IsAnimating())
-        {
-            RECT dirty = popupAnimationCacheRect_;
-            ResetCollectionPopupAnimationCache();
-            if (hwnd_ && IsWindow(hwnd_))
-                InvalidateRect(hwnd_, &dirty, FALSE);
-        }
-        else if (UpdateCollectionPopupCompositionAnimation(false))
-        {
-            desktopCompositionChanged = true;
-        }
-        else
-        {
-            InvalidateCollectionPopupAnimation();
-        }
+        popupAnimationFrameToken_ =
+            uiAnimationScheduler_.StartAnimation(
+                snowdesktop::UiAnimationSurface::Popup,
+                [this](double nowMilliseconds) {
+                    popupAnimation_.Advance(
+                        AnimationTick(nowMilliseconds));
+                    if (!popupAnimation_.IsAnimating() &&
+                        popupAnimation_.IsHidden())
+                    {
+                        FinalizeCloseCollectionPopup();
+                    }
+                    else if (!popupAnimation_.IsAnimating())
+                    {
+                        RECT dirty = popupAnimationCacheRect_;
+                        ResetCollectionPopupAnimationCache();
+                        if (hwnd_ && IsWindow(hwnd_))
+                            InvalidateRect(hwnd_, &dirty, FALSE);
+                    }
+                    else if (UpdateCollectionPopupCompositionAnimation(
+                            false))
+                    {
+                        CommitCompositionAnimationFrame();
+                    }
+                    else
+                    {
+                        InvalidateCollectionPopupAnimation();
+                    }
+
+                    const bool keep =
+                        popupAnimation_.IsAnimating() &&
+                        !popupAnimationCompositorDriven_;
+                    if (!keep)
+                        popupAnimationFrameToken_ = 0;
+                    return keep;
+                });
     }
 
-    if (luaWidgetPanelAnimation_.IsAnimating() &&
+    if (!luaPanelAnimationFrameToken_ &&
+        luaWidgetPanelAnimation_.IsAnimating() &&
         !luaWidgetPanelAnimationCompositorDriven_)
     {
-        luaWidgetPanelAnimation_.Advance(tick);
-        if (!luaWidgetPanelAnimation_.IsAnimating() &&
-            luaWidgetPanelAnimation_.IsHidden())
-        {
-            FinalizeCloseLuaWidgetPanel();
-        }
-        else if (hwnd_ && IsWindow(hwnd_))
-        {
-            if (!luaWidgetPanelAnimation_.IsAnimating())
-            {
-                RECT dirty =
-                    luaWidgetPanelAnimationCacheRect_;
-                ResetLuaWidgetPanelAnimationCache();
-                InvalidateRect(hwnd_, &dirty, FALSE);
-            }
-            else if (UpdateLuaWidgetPanelCompositionAnimation(false))
-            {
-                desktopCompositionChanged = true;
-            }
-            else
-            {
-                RECT dirty = GetLuaWidgetPanelRect();
-                InflateRect(&dirty, 3, 3);
-                InvalidateRect(hwnd_, &dirty, FALSE);
-            }
-        }
+        luaPanelAnimationFrameToken_ =
+            uiAnimationScheduler_.StartAnimation(
+                snowdesktop::UiAnimationSurface::Popup,
+                [this](double nowMilliseconds) {
+                    luaWidgetPanelAnimation_.Advance(
+                        AnimationTick(nowMilliseconds));
+                    if (!luaWidgetPanelAnimation_.IsAnimating() &&
+                        luaWidgetPanelAnimation_.IsHidden())
+                    {
+                        FinalizeCloseLuaWidgetPanel();
+                    }
+                    else if (hwnd_ && IsWindow(hwnd_))
+                    {
+                        if (!luaWidgetPanelAnimation_.IsAnimating())
+                        {
+                            RECT dirty =
+                                luaWidgetPanelAnimationCacheRect_;
+                            ResetLuaWidgetPanelAnimationCache();
+                            InvalidateRect(hwnd_, &dirty, FALSE);
+                        }
+                        else if (
+                            UpdateLuaWidgetPanelCompositionAnimation(false))
+                        {
+                            CommitCompositionAnimationFrame();
+                        }
+                        else
+                        {
+                            RECT dirty = GetLuaWidgetPanelRect();
+                            InflateRect(&dirty, 3, 3);
+                            InvalidateRect(hwnd_, &dirty, FALSE);
+                        }
+                    }
+
+                    const bool keep =
+                        luaWidgetPanelAnimation_.IsAnimating() &&
+                        !luaWidgetPanelAnimationCompositorDriven_;
+                    if (!keep)
+                        luaPanelAnimationFrameToken_ = 0;
+                    return keep;
+                });
     }
 
-    if (quickNavigationAnimation_.IsAnimating())
+    if (!quickNavigationAnimationFrameToken_ &&
+        quickNavigationAnimation_.IsAnimating())
     {
-        quickNavigationAnimation_.Advance(tick);
-        ApplyQuickNavigationAnimationFrame();
-        if (!quickNavigationAnimation_.IsAnimating() &&
-            quickNavigationAnimation_.IsHidden())
-        {
-            FinalizeCloseQuickNavigation();
-        }
+        quickNavigationAnimationFrameToken_ =
+            uiAnimationScheduler_.StartAnimation(
+                snowdesktop::UiAnimationSurface::QuickNavigation,
+                [this](double nowMilliseconds) {
+                    quickNavigationAnimation_.Advance(
+                        AnimationTick(nowMilliseconds));
+                    ApplyQuickNavigationAnimationFrame();
+                    if (!quickNavigationAnimation_.IsAnimating() &&
+                        quickNavigationAnimation_.IsHidden())
+                    {
+                        FinalizeCloseQuickNavigation();
+                    }
+                    const bool keep =
+                        quickNavigationAnimation_.IsAnimating();
+                    if (!keep)
+                        quickNavigationAnimationFrameToken_ = 0;
+                    return keep;
+                });
     }
 
-    if (!dockLaunchBounces_.empty())
-        OnDockLaunchBounceTimer();
-
-    if (pageNotifyActive_ &&
-        !pageNotifyCompositorDriven_)
+    if (!dockBounceAnimationFrameToken_ &&
+        !dockLaunchBounces_.empty())
     {
-        const DWORD elapsed =
-            GetTickCount() - pageNotifyStartTick_;
-        const RECT dirty = GetPageNotifyBounds();
-        if (elapsed >= kPageNotifyVisibleMs)
-        {
-            pageNotifyActive_ = false;
-            pageNotifyText_.clear();
-            ResetPageNotifyTextCache();
-            if (hwnd_ && IsWindow(hwnd_))
-            {
-                InvalidateRect(
-                    hwnd_, IsRectEmpty(&dirty) ? nullptr : &dirty,
-                    FALSE);
-            }
-        }
-        else if (hwnd_ && IsWindow(hwnd_))
-        {
-            float opacity = 1.0f;
-            if (elapsed < kPageNotifyFadeMs)
-            {
-                opacity = static_cast<float>(elapsed) /
-                    static_cast<float>(kPageNotifyFadeMs);
-            }
-            else if (elapsed >=
-                kPageNotifyVisibleMs - kPageNotifyFadeMs)
-            {
-                opacity = static_cast<float>(
-                    kPageNotifyVisibleMs - elapsed) /
-                    static_cast<float>(kPageNotifyFadeMs);
-            }
-            if (UpdatePageNotifyCompositionAnimation(opacity, false))
-            {
-                desktopCompositionChanged = true;
-            }
-            else
-            {
-                InvalidateRect(
-                    hwnd_, IsRectEmpty(&dirty) ? nullptr : &dirty,
-                    FALSE);
-            }
-        }
-    }
-
-    // 这两个 pending 只用于“同步提交被 WM_PAINT/合成绘制重入挡住”时的兜底
-    // 补帧，不是常规指针帧路径。不要把 PresentPointerInteractionFrame 或
-    // InvalidateFloatingDockWindow(true) 改成只置 pending +
-    // EnsureUiAnimationFrame()；f29a882 曾这样把拖拽/Dock hover 回归成
-    // “晚一帧”。指针反馈必须保持同步 UpdateWindow。
-    bool desktopFrameSubmitted = false;
-    if (desktopPointerPresentPending_ &&
-        (!hwnd_ || !IsWindow(hwnd_)))
-        desktopPointerPresentPending_ = false;
-    if (desktopPointerPresentPending_ &&
-        hwnd_ && IsWindow(hwnd_) &&
-        !compositionPaintInProgress_)
-    {
-        desktopPointerPresentPending_ = false;
-        RECT update{};
-        if (GetUpdateRect(hwnd_, &update, FALSE))
-        {
-            ValidateRect(hwnd_, &update);
-            OnPaint(&update);
-            desktopFrameSubmitted = true;
-        }
-    }
-
-    if (floatingDockPointerPresentPending_ &&
-        (!floatingDockVisible_ ||
-         !floatingDockHwnd_ ||
-         !IsWindow(floatingDockHwnd_)))
-        floatingDockPointerPresentPending_ = false;
-    if (floatingDockPointerPresentPending_ &&
-        floatingDockVisible_ &&
-        floatingDockHwnd_ && IsWindow(floatingDockHwnd_) &&
-        !floatingDockCompositionPaintInProgress_)
-    {
-        floatingDockPointerPresentPending_ = false;
-        RECT update{};
-        if (GetUpdateRect(floatingDockHwnd_, &update, FALSE))
-        {
-            ValidateRect(floatingDockHwnd_, &update);
-            if (!RenderFloatingDockCompositionFrame())
-            {
-                InvalidateRect(
-                    floatingDockHwnd_, nullptr, FALSE);
-                floatingDockPointerPresentPending_ = true;
-            }
-        }
-    }
-
-    if (desktopCompositionChanged &&
-        !desktopFrameSubmitted &&
-        !CommitCompositionAnimationFrame())
-    {
-        // A failed property-only commit falls back to the already recorded
-        // caches on the desktop surface. Keep the animation state itself so
-        // reversing and terminal cleanup retain their existing semantics.
-        ResetCompositionAnimationOverlay(popupAnimationOverlay_);
-        ResetCompositionAnimationOverlay(
-            luaWidgetPanelAnimationOverlay_);
-        ResetCompositionAnimationOverlay(pageNotifyAnimationOverlay_);
-        if (hwnd_ && IsWindow(hwnd_))
-            InvalidateRect(hwnd_, nullptr, FALSE);
+        dockBounceAnimationFrameToken_ =
+            uiAnimationScheduler_.StartAnimation(
+                snowdesktop::UiAnimationSurface::FloatingDock,
+                [this](double) {
+                    OnDockLaunchBounceTimer();
+                    const bool keep = !dockLaunchBounces_.empty();
+                    if (!keep)
+                        dockBounceAnimationFrameToken_ = 0;
+                    return keep;
+                });
     }
 
     const DWORD pageElapsed = pageNotifyActive_
@@ -217,19 +145,156 @@ bool DesktopApp::AdvanceUiAnimationFrame(double nowMilliseconds)
     const bool pageFadeActive = pageNotifyActive_ &&
         !pageNotifyCompositorDriven_ &&
         (pageElapsed < kPageNotifyFadeMs ||
-         pageElapsed >= kPageNotifyVisibleMs -
-             kPageNotifyFadeMs);
-    const bool keep =
-        (popupAnimation_.IsAnimating() &&
-            !popupAnimationCompositorDriven_) ||
-        (luaWidgetPanelAnimation_.IsAnimating() &&
-            !luaWidgetPanelAnimationCompositorDriven_) ||
-        quickNavigationAnimation_.IsAnimating() ||
-        !dockLaunchBounces_.empty() ||
-        pageFadeActive ||
-        desktopPointerPresentPending_ ||
-        floatingDockPointerPresentPending_;
-    if (!keep)
-        uiAnimationFrameToken_ = 0;
-    return keep;
+         pageElapsed >= kPageNotifyVisibleMs - kPageNotifyFadeMs);
+    if (!pageNotifyAnimationFrameToken_ && pageFadeActive)
+    {
+        pageNotifyAnimationFrameToken_ =
+            uiAnimationScheduler_.StartAnimation(
+                snowdesktop::UiAnimationSurface::Desktop,
+                [this](double) {
+                    if (!pageNotifyActive_ ||
+                        pageNotifyCompositorDriven_)
+                    {
+                        pageNotifyAnimationFrameToken_ = 0;
+                        return false;
+                    }
+
+                    const DWORD elapsed =
+                        GetTickCount() - pageNotifyStartTick_;
+                    const RECT dirty = GetPageNotifyBounds();
+                    if (elapsed >= kPageNotifyVisibleMs)
+                    {
+                        pageNotifyActive_ = false;
+                        pageNotifyText_.clear();
+                        ResetPageNotifyTextCache();
+                        if (hwnd_ && IsWindow(hwnd_))
+                        {
+                            InvalidateRect(
+                                hwnd_, IsRectEmpty(&dirty)
+                                    ? nullptr : &dirty,
+                                FALSE);
+                        }
+                    }
+                    else if (hwnd_ && IsWindow(hwnd_))
+                    {
+                        float opacity = 1.0f;
+                        if (elapsed < kPageNotifyFadeMs)
+                        {
+                            opacity = static_cast<float>(elapsed) /
+                                static_cast<float>(kPageNotifyFadeMs);
+                        }
+                        else if (elapsed >=
+                            kPageNotifyVisibleMs - kPageNotifyFadeMs)
+                        {
+                            opacity = static_cast<float>(
+                                kPageNotifyVisibleMs - elapsed) /
+                                static_cast<float>(kPageNotifyFadeMs);
+                        }
+                        if (UpdatePageNotifyCompositionAnimation(
+                                opacity, false))
+                        {
+                            CommitCompositionAnimationFrame();
+                        }
+                        else
+                        {
+                            InvalidateRect(
+                                hwnd_, IsRectEmpty(&dirty)
+                                    ? nullptr : &dirty,
+                                FALSE);
+                        }
+                    }
+
+                    const DWORD currentElapsed = pageNotifyActive_
+                        ? GetTickCount() - pageNotifyStartTick_
+                        : 0;
+                    const bool keep = pageNotifyActive_ &&
+                        !pageNotifyCompositorDriven_ &&
+                        (currentElapsed < kPageNotifyFadeMs ||
+                         currentElapsed >= kPageNotifyVisibleMs -
+                            kPageNotifyFadeMs);
+                    if (!keep)
+                        pageNotifyAnimationFrameToken_ = 0;
+                    return keep;
+                });
+    }
+
+    if (!pointerRecoveryFrameToken_ &&
+        (desktopPointerPresentPending_ ||
+         floatingDockPointerPresentPending_))
+    {
+        pointerRecoveryFrameToken_ =
+            uiAnimationScheduler_.StartAnimation(
+                snowdesktop::UiAnimationSurface::FloatingDock,
+                [this](double) {
+                    if (desktopPointerPresentPending_ &&
+                        (!hwnd_ || !IsWindow(hwnd_)))
+                        desktopPointerPresentPending_ = false;
+                    if (desktopPointerPresentPending_ &&
+                        hwnd_ && IsWindow(hwnd_) &&
+                        !compositionPaintInProgress_)
+                    {
+                        desktopPointerPresentPending_ = false;
+                        RECT update{};
+                        if (GetUpdateRect(hwnd_, &update, FALSE))
+                        {
+                            ValidateRect(hwnd_, &update);
+                            OnPaint(&update);
+                        }
+                    }
+
+                    if (floatingDockPointerPresentPending_ &&
+                        (!floatingDockVisible_ ||
+                         !floatingDockHwnd_ ||
+                         !IsWindow(floatingDockHwnd_)))
+                    {
+                        floatingDockPointerPresentPending_ = false;
+                    }
+                    if (floatingDockPointerPresentPending_ &&
+                        floatingDockVisible_ &&
+                        floatingDockHwnd_ &&
+                        IsWindow(floatingDockHwnd_) &&
+                        !floatingDockCompositionPaintInProgress_)
+                    {
+                        floatingDockPointerPresentPending_ = false;
+                        RECT update{};
+                        if (GetUpdateRect(
+                                floatingDockHwnd_, &update, FALSE))
+                        {
+                            ValidateRect(floatingDockHwnd_, &update);
+                            if (!RenderFloatingDockCompositionFrame())
+                            {
+                                InvalidateRect(
+                                    floatingDockHwnd_, nullptr, FALSE);
+                                floatingDockPointerPresentPending_ = true;
+                            }
+                        }
+                    }
+
+                    const bool keep =
+                        desktopPointerPresentPending_ ||
+                        floatingDockPointerPresentPending_;
+                    if (!keep)
+                        pointerRecoveryFrameToken_ = 0;
+                    return keep;
+                });
+    }
+}
+
+void DesktopApp::CancelUiAnimationFrame()
+{
+    snowdesktop::UiScheduleToken* const tracks[] = {
+        &popupAnimationFrameToken_,
+        &luaPanelAnimationFrameToken_,
+        &quickNavigationAnimationFrameToken_,
+        &dockBounceAnimationFrameToken_,
+        &pageNotifyAnimationFrameToken_,
+        &pointerRecoveryFrameToken_,
+        &floatingDockHoverTailToken_,
+    };
+    for (snowdesktop::UiScheduleToken* track : tracks)
+    {
+        if (*track)
+            uiAnimationScheduler_.Cancel(*track);
+        *track = 0;
+    }
 }

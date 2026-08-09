@@ -232,6 +232,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
         {
             KillTimer(hwnd_, kCollectionPopupDwellTimerId);
             OnMouseMove(0, MAKELPARAM(lastMousePoint_.x, lastMousePoint_.y));
+            PresentPointerInteractionFrame();
             InvalidateFloatingDockWindow(true);
         }
     }
@@ -258,6 +259,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
                 0, MAKELPARAM(
                     lastMousePoint_.x,
                     lastMousePoint_.y));
+            PresentPointerInteractionFrame();
             InvalidateFloatingDockWindow(true);
         }
     }
@@ -301,13 +303,17 @@ void DesktopApp::OnTimer(WPARAM timerId)
                 OpenDockFolderPopupAt(
                     entryIndex, dwellPoint);
                 if (!dragDropController_.IsExternalDragActive())
+                {
                     OnMouseMove(
                         0,
                         MAKELPARAM(
                             dwellPoint.x,
                             dwellPoint.y));
+                }
                 InvalidateRect(
                     hwnd_, nullptr, FALSE);
+                PresentPointerInteractionFrame();
+                PresentDesktopPointerUpdate();
                 InvalidateFloatingDockWindow(
                     true);
                 return;
@@ -316,9 +322,13 @@ void DesktopApp::OnTimer(WPARAM timerId)
             dockHandoffDwellReady_ = true;
             KillTimer(hwnd_, kDockHandoffDwellTimerId);
             if (!dragDropController_.IsExternalDragActive())
+            {
                 OnMouseMove(0, MAKELPARAM(
                     dragSession_.CurrentPoint().x, dragSession_.CurrentPoint().y));
+            }
             InvalidateRect(hwnd_, nullptr, FALSE);
+            PresentPointerInteractionFrame();
+            PresentDesktopPointerUpdate();
             InvalidateFloatingDockWindow(true);
         }
     }

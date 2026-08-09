@@ -221,17 +221,57 @@ public:
         }
 
         MSG message{};
-        while (!done_)
+        bool quitReceived = false;
+        while (!done_ && !quitReceived)
         {
-            const BOOL status = GetMessageW(&message, nullptr, 0, 0);
-            if (status <= 0)
-            {
-                if (status == 0)
-                    PostQuitMessage(static_cast<int>(message.wParam));
+            const HANDLE scheduledWork =
+                options_.eventPump.scheduledWorkHandle;
+            const DWORD handleCount = scheduledWork ? 1U : 0U;
+            const DWORD waitResult = MsgWaitForMultipleObjectsEx(
+                handleCount,
+                scheduledWork ? &scheduledWork : nullptr,
+                INFINITE,
+                QS_ALLINPUT,
+                MWMO_INPUTAVAILABLE);
+            if (waitResult == WAIT_FAILED)
                 break;
+            const bool scheduledWorkWasReady =
+                handleCount == 1 &&
+                waitResult == WAIT_OBJECT_0;
+
+            unsigned processedMessages = 0;
+            while (!done_ && processedMessages < 64 &&
+                PeekMessageW(
+                    &message, nullptr, 0, 0, PM_REMOVE))
+            {
+                if (message.message == WM_QUIT)
+                {
+                    PostQuitMessage(
+                        static_cast<int>(message.wParam));
+                    quitReceived = true;
+                    break;
+                }
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
+                if (options_.eventPump.flushPresentation)
+                    options_.eventPump.flushPresentation();
+                ++processedMessages;
             }
-            TranslateMessage(&message);
-            DispatchMessageW(&message);
+
+            // Pointer and window messages stay ahead of animation ticks. A
+            // nested menu loop must preserve the same ordering as the main
+            // application loop; otherwise a continuously-signalled animation
+            // can repeatedly jump ahead of hover and drag feedback.
+            if (scheduledWork &&
+                options_.eventPump.dispatchScheduledWork &&
+                (scheduledWorkWasReady ||
+                    WaitForSingleObject(scheduledWork, 0) ==
+                        WAIT_OBJECT_0))
+            {
+                options_.eventPump.dispatchScheduledWork();
+                if (options_.eventPump.flushPresentation)
+                    options_.eventPump.flushPresentation();
+            }
         }
 
         HWND expectedRoot = rootWindow;

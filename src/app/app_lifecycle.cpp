@@ -6,7 +6,13 @@
 DesktopApp::~DesktopApp()
 {
     uiAnimationScheduler_.CancelAll();
-    uiAnimationFrameToken_ = 0;
+    popupAnimationFrameToken_ = 0;
+    luaPanelAnimationFrameToken_ = 0;
+    quickNavigationAnimationFrameToken_ = 0;
+    dockBounceAnimationFrameToken_ = 0;
+    pageNotifyAnimationFrameToken_ = 0;
+    pointerRecoveryFrameToken_ = 0;
+    floatingDockHoverTailToken_ = 0;
     desktopPointerPresentPending_ = false;
     floatingDockPointerPresentPending_ = false;
     pageNotifyFadeOutToken_ = 0;

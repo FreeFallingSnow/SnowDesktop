@@ -100,23 +100,49 @@ int main()
 
     int firstFrames = 0;
     int secondFrames = 0;
+    double firstTimestamp = 0.0;
+    double secondTimestamp = 0.0;
     scheduler.StartAnimation(
         UiAnimationSurface::Desktop,
-        [&](double) {
+        [&](double timestamp) {
             ++firstFrames;
+            firstTimestamp = timestamp;
             return false;
         });
     scheduler.StartAnimation(
-        UiAnimationSurface::Desktop,
-        [&](double) {
+        UiAnimationSurface::QuickNavigation,
+        [&](double timestamp) {
             ++secondFrames;
+            secondTimestamp = timestamp;
             return false;
         });
     WaitAndDispatch(scheduler);
     Check(firstFrames == 1 && secondFrames == 1,
         "same-cycle animation callbacks share one scheduler wakeup");
+    Check(firstTimestamp == secondTimestamp,
+        "independent animation surfaces advance from one frame timestamp");
     Check(!scheduler.HasScheduledWork(),
         "completed frame callbacks leave no active request");
+
+    int deferredTrackFrames = 0;
+    scheduler.StartAnimation(
+        UiAnimationSurface::Popup,
+        [&](double) {
+            scheduler.StartAnimation(
+                UiAnimationSurface::FloatingDock,
+                [&](double) {
+                    ++deferredTrackFrames;
+                    return false;
+                });
+            return false;
+        });
+    WaitAndDispatch(scheduler);
+    Check(deferredTrackFrames == 0 &&
+            scheduler.HasScheduledWork(),
+        "an animation started during a frame joins the next snapshot instead of re-entering the current batch");
+    WaitAndDispatch(scheduler);
+    Check(deferredTrackFrames == 1,
+        "a newly started independent track advances on the next frame");
 
     int repeatCalls = 0;
     const auto repeating = scheduler.ScheduleInterval(

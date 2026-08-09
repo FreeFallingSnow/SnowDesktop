@@ -78,6 +78,17 @@ struct HoverInfo
     bool keyboard = false;
 };
 
+/**
+ * Allows the synchronous menu loop to keep the application's animation
+ * scheduler and presentation queue moving while the menu owns the UI thread.
+ */
+struct EventPump
+{
+    HANDLE scheduledWorkHandle = nullptr;
+    std::function<void()> dispatchScheduledWork;
+    std::function<void()> flushPresentation;
+};
+
 struct Options
 {
     /** 激活和菜单关闭后恢复焦点的窗口。 */
@@ -103,6 +114,8 @@ struct Options
         onTextChanged;
     /** 鼠标或键盘高亮项变化；command=0 表示当前没有可预览项。 */
     std::function<void(const HoverInfo&)> onHover;
+    /** Optional application event pump used by the nested modal loop. */
+    EventPump eventPump;
 };
 
 struct Result

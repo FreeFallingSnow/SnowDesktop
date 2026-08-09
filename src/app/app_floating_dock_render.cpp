@@ -86,17 +86,10 @@ bool DesktopApp::RenderFloatingDockCompositionFrame()
             L"EndDraw", hr);
         return false;
     }
-    const double commitStart =
-        snowdesktop::UiAnimationScheduler::
-            MonotonicMilliseconds();
-    hr = dcompDevice_->Commit();
-    uiAnimationScheduler_.RecordCommitDuration(
-        snowdesktop::UiAnimationScheduler::
-            MonotonicMilliseconds() - commitStart);
-    if (FAILED(hr))
+    if (!CommitCompositionAnimationFrame())
     {
         RecoverFloatingDockCompositionFailure(
-            L"Commit", hr);
+            L"Queue Commit", E_FAIL);
         return false;
     }
     floatingDockFrameReady_ = true;
@@ -112,10 +105,15 @@ void DesktopApp::PaintFloatingDockWindow(
     HDC dc = BeginPaint(hwnd, &paint);
     if (!dc)
         return;
-    const bool rendered =
+    const bool mayRender =
+        snowdesktop::floating_dock_rules::
+            ShouldRenderFloatingDockFrame(
+                floatingDockVisible_,
+                floatingDockClosePending_);
+    const bool rendered = mayRender &&
         RenderFloatingDockCompositionFrame();
     EndPaint(hwnd, &paint);
-    if (!rendered)
+    if (mayRender && !rendered)
         InvalidateRect(hwnd, nullptr, FALSE);
 }
 
@@ -144,7 +142,9 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
     case WM_MOUSEACTIVATE:
         return MA_NOACTIVATE;
     case WM_NCHITTEST:
-        return HTCLIENT;
+        return floatingDockVisible_ &&
+                !floatingDockClosePending_
+            ? HTCLIENT : HTTRANSPARENT;
     case WM_ERASEBKGND:
         return 1;
     case WM_PAINT:
@@ -235,7 +235,9 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         InvalidateFloatingDockWindow(true);
         return 0;
     case WM_MOUSEWHEEL:
+        handlingFloatingDockInput_ = true;
         OnMouseWheel(wp, lp);
+        handlingFloatingDockInput_ = false;
         UpdateFloatingDockWindowBounds();
         InvalidateFloatingDockWindow(true);
         return 0;

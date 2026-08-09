@@ -235,6 +235,7 @@ struct DesktopBackdropCompositor::Impl
     bool popupMode = false;
     bool popupTopmost = false;
     bool visible = true;
+    bool animationPathRegionExpanded = false;
 
     void SetError(const wchar_t* stage, HRESULT hr)
     {
@@ -369,11 +370,18 @@ struct DesktopBackdropCompositor::Impl
             return false;
         for (const PanelVisual& panel : panels)
         {
-            HRGN frameRegion = CreateRectRgn(
+            const int cornerDiameter = std::max(
+                2,
+                static_cast<int>(std::lround(
+                    static_cast<float>(
+                        panel.cornerRadius * 2))));
+            HRGN frameRegion = CreateRoundRectRgn(
                 panel.frame.left,
                 panel.frame.top,
-                panel.frame.right,
-                panel.frame.bottom);
+                panel.frame.right + 1,
+                panel.frame.bottom + 1,
+                cornerDiameter,
+                cornerDiameter);
             if (!frameRegion)
             {
                 DeleteObject(panelRegion);
@@ -402,6 +410,7 @@ struct DesktopBackdropCompositor::Impl
         if (unchanged)
         {
             DeleteObject(panelRegion);
+            animationPathRegionExpanded = false;
             return true;
         }
 
@@ -414,7 +423,23 @@ struct DesktopBackdropCompositor::Impl
             DeleteObject(panelRegion);
             return false;
         }
+        animationPathRegionExpanded = false;
         return true;
+    }
+
+    void SetAnimationPathRegionExpanded(bool expanded)
+    {
+        if (!available || !backdropWindow ||
+            !IsWindow(backdropWindow) ||
+            animationPathRegionExpanded == expanded)
+            return;
+        if (expanded)
+        {
+            if (SetWindowRgn(backdropWindow, nullptr, FALSE))
+                animationPathRegionExpanded = true;
+            return;
+        }
+        SyncPanelWindowRegion();
     }
 
     void RequestCommit() noexcept
@@ -518,6 +543,7 @@ struct DesktopBackdropCompositor::Impl
         popupMode = false;
         popupTopmost = false;
         visible = true;
+        animationPathRegionExpanded = false;
     }
 };
 
@@ -692,6 +718,8 @@ void DesktopBackdropCompositor::SetVisible(bool visible)
 {
     if (!impl_)
         return;
+    if (impl_->visible == visible)
+        return;
     impl_->visible = visible;
     if (!impl_->available || !impl_->backdropWindow ||
         !IsWindow(impl_->backdropWindow))
@@ -720,6 +748,11 @@ void DesktopBackdropCompositor::SetVisualTransform(
         impl_->root.Scale(wfn::float3{
             clampedScale, clampedScale, 1.0f });
         impl_->root.Opacity(clampedOpacity);
+        // Keep the whole animation path available without rebuilding a native
+        // HWND region every frame. The transition happens only when entering
+        // or leaving the transformed state.
+        impl_->SetAnimationPathRegionExpanded(
+            clampedScale < 0.9995f);
     }
     catch (const winrt::hresult_error& error)
     {

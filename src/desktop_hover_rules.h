@@ -24,4 +24,12 @@ constexpr bool CanClearPassiveHover(
         !dragActive &&
         !widgetInteractionActive;
 }
+
+constexpr bool ShouldPresentSynchronously(
+    bool hoverTargetChanged,
+    bool continuousPointerSurface)
+{
+    return hoverTargetChanged ||
+        continuousPointerSurface;
+}
 }

@@ -858,6 +858,17 @@ int main()
             floatingDockRect, floatingPopupRect,
             previewPanelRect),
         "a press on the thumbnail preview panel must keep the floating host open");
+    const RECT quickNavigationRect{ 600, 200, 1000, 700 };
+    Check(!floatingDock::ShouldDismissForPointerDown(
+            false, false, POINT{ 800, 300 },
+            floatingDockRect, floatingPopupRect,
+            previewPanelRect, quickNavigationRect),
+        "a press in Quick Navigation must keep its floating Dock host open");
+    Check(floatingDock::ShouldDismissForPointerDown(
+            false, false, POINT{ 800, 300 },
+            floatingDockRect, floatingPopupRect,
+            previewPanelRect),
+        "the floating Dock independently dismisses presses on another surface");
     Check(floatingDock::ShouldDismissForPointerDown(
             false, false, POINT{ 20, 20 },
             floatingDockRect, floatingPopupRect,
@@ -915,6 +926,13 @@ int main()
             !floatingDock::ShouldRetireDesktopDockCopy(
                 true, false),
         "the desktop Dock copy must survive until a valid floating frame crosses the presentation barrier");
+    Check(floatingDock::ShouldRenderFloatingDockFrame(
+            true, false) &&
+            !floatingDock::ShouldRenderFloatingDockFrame(
+                true, true) &&
+            !floatingDock::ShouldRenderFloatingDockFrame(
+                false, false),
+        "a pending close must freeze the floating Dock hand-off surface");
     Check(!floatingDock::
             ShouldInvalidateDesktopHover(true) &&
             floatingDock::
@@ -951,6 +969,13 @@ int main()
                 ShouldPresentPointerFrame(
                     100, 200, false),
         "passive floating Dock hover is rate-limited but pointer feedback stays synchronous");
+    Check(floatingDock::RemainingPointerFrameDelay(
+                1000, 996) == 4 &&
+            floatingDock::RemainingPointerFrameDelay(
+                1000, 992) == 0 &&
+            floatingDock::RemainingPointerFrameDelay(
+                100, 200) == 0,
+        "a throttled Dock hover sample schedules its final tail frame at the remaining deadline");
     Check(floatingDock::
             FloatingVisibilityChangesStaticScene(
                 false, true) &&

@@ -467,6 +467,7 @@ void DesktopApp::ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCommand)
     options.lightTheme = menuLightTheme_;
     options.appearance = static_cast<
         snowdesktop::modern_menu::Appearance>(menuAppearanceStyle_);
+    ConfigureModernMenuEventPump(options);
     options.onCommand = [&](UINT command, auto& currentItems) {
         if (!applyAdjustment(command))
             return false;
@@ -1164,6 +1165,7 @@ void DesktopApp::ShowAddWidgetMenu(POINT screenPoint)
     options.lightTheme = menuLightTheme_;
     options.appearance = static_cast<
         snowdesktop::modern_menu::Appearance>(menuAppearanceStyle_);
+    ConfigureModernMenuEventPump(options);
     options.onCommand = [&](UINT command, auto& currentItems) {
         if (showPreview(command)) return true;
         if (command >= kContextAddLuaWidgetFilterAll &&

@@ -37,10 +37,6 @@ void DesktopApp::OpenLuaWidgetPanel(
         }
         FinalizeCloseLuaWidgetPanel();
     }
-    if (IsCollectionPopupInteractive())
-        CloseCollectionPopup(false);
-    if (quickNavigationOpen_)
-        CloseQuickNavigation();
     luaWidgetPanelRequest_ = request;
     luaWidgetPanelAnchorPoint_ =
         lastMousePoint_;

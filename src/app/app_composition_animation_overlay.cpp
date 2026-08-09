@@ -216,13 +216,75 @@ bool DesktopApp::CommitCompositionAnimationFrame()
 {
     if (!dcompDevice_)
         return false;
+    compositionCommitPending_ = true;
+    return true;
+}
+
+bool DesktopApp::FlushPendingCompositionCommit()
+{
+    if (!compositionCommitPending_)
+        return true;
+    if (!dcompDevice_)
+    {
+        compositionCommitPending_ = false;
+        return false;
+    }
     const double commitStart =
         snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
     const HRESULT hr = dcompDevice_->Commit();
+    if (SUCCEEDED(hr))
+        compositionCommitPending_ = false;
     uiAnimationScheduler_.RecordCommitDuration(
         snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() -
         commitStart);
-    return SUCCEEDED(hr);
+    if (SUCCEEDED(hr))
+        return true;
+
+    // This device contains the desktop and floating-Dock trees. Recover those
+    // surfaces without touching Quick Navigation, which owns a separate DComp
+    // device specifically so its animation cannot block pointer presentation.
+    compositionCommitPending_ = false;
+    RecoverCompositionRenderFailure(
+        L"Batched DComp Commit", hr);
+    if (floatingDockVisible_)
+        RecoverFloatingDockCompositionFailure(
+            L"Batched DComp Commit", hr);
+    EnsureUiAnimationFrame();
+    return false;
+}
+
+bool DesktopApp::CommitQuickNavigationCompositionFrame()
+{
+    if (!quickNavDcompDevice_)
+        return false;
+    quickNavCompositionCommitPending_ = true;
+    return true;
+}
+
+bool DesktopApp::FlushPendingQuickNavigationCompositionCommit()
+{
+    if (!quickNavCompositionCommitPending_)
+        return true;
+    if (!quickNavDcompDevice_)
+    {
+        quickNavCompositionCommitPending_ = false;
+        return false;
+    }
+
+    const double commitStart =
+        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+    const HRESULT hr = quickNavDcompDevice_->Commit();
+    quickNavCompositionCommitPending_ = false;
+    uiAnimationScheduler_.RecordCommitDuration(
+        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() -
+        commitStart);
+    if (SUCCEEDED(hr))
+        return true;
+
+    RecoverQuickNavCompositionFailure(
+        L"Isolated DComp Commit", hr);
+    EnsureUiAnimationFrame();
+    return false;
 }
 
 void DesktopApp::ClearDesktopBehindCompositionAnimation(
@@ -352,9 +414,13 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
                 popupAnimation_.Advance(static_cast<std::uint64_t>(
                     snowdesktop::UiAnimationScheduler::
                         MonotonicMilliseconds()));
-                if (popupAnimation_.IsAnimating() &&
-                    StartCollectionPopupCompositionAnimation())
+                if (popupAnimation_.IsAnimating())
+                {
+                    if (StartCollectionPopupCompositionAnimation())
+                        return;
+                    EnsureUiAnimationFrame();
                     return;
+                }
                 if (popupAnimation_.IsHidden())
                 {
                     FinalizeCloseCollectionPopup();
@@ -423,9 +489,13 @@ bool DesktopApp::StartLuaWidgetPanelCompositionAnimation()
                     static_cast<std::uint64_t>(
                         snowdesktop::UiAnimationScheduler::
                             MonotonicMilliseconds()));
-                if (luaWidgetPanelAnimation_.IsAnimating() &&
-                    StartLuaWidgetPanelCompositionAnimation())
+                if (luaWidgetPanelAnimation_.IsAnimating())
+                {
+                    if (StartLuaWidgetPanelCompositionAnimation())
+                        return;
+                    EnsureUiAnimationFrame();
                     return;
+                }
                 if (luaWidgetPanelAnimation_.IsHidden())
                 {
                     FinalizeCloseLuaWidgetPanel();

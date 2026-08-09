@@ -117,7 +117,9 @@ void DesktopApp::FinalizeFloatingDockBackdropCleanup(
         // The target can release its last full-size surface only after the
         // backdrop ownership transaction has completed. Releasing it in the
         // close call raced WinComp and exposed a one-frame glass hole.
-        const HRESULT hr = dcompDevice_->Commit();
+        CommitCompositionAnimationFrame();
+        const HRESULT hr = FlushPendingCompositionCommit()
+            ? S_OK : E_FAIL;
         if (FAILED(hr))
         {
             wchar_t message[160]{};
@@ -129,35 +131,17 @@ void DesktopApp::FinalizeFloatingDockBackdropCleanup(
     }
 }
 
-bool DesktopApp::WaitForDCompCommitWithFallback(
-    const wchar_t* diagnosticContext)
-{
-    const double waitStart =
-        snowdesktop::UiAnimationScheduler::
-            MonotonicMilliseconds();
-    HRESULT completionHr = dcompDevice_
-        ? dcompDevice_->WaitForCommitCompletion()
-        : E_UNEXPECTED;
-    if (FAILED(completionHr))
-        completionHr = DwmFlush();
-    uiAnimationScheduler_.RecordCommitDuration(
-        snowdesktop::UiAnimationScheduler::
-            MonotonicMilliseconds() - waitStart);
-    if (SUCCEEDED(completionHr))
-        return true;
-
-    wchar_t message[192]{};
-    wsprintfW(
-        message,
-        L"%s composition completion FAILED hr=0x%08X",
-        diagnosticContext ? diagnosticContext : L"Floating Dock",
-        static_cast<unsigned>(completionHr));
-    WriteDiagnosticLogEntry(message);
-    return false;
-}
-
 void DesktopApp::DestroyFloatingDockWindow()
 {
+    if (floatingDockHoverTailToken_)
+    {
+        uiAnimationScheduler_.Cancel(
+            floatingDockHoverTailToken_);
+        floatingDockHoverTailToken_ = 0;
+    }
+    floatingDockHoverTargetOwner_ = nullptr;
+    floatingDockHoverTargetIndex_ = 0;
+    floatingDockHoverTargetKind_ = 0;
     EndFloatingDockKeyboardSession(
         FloatingDockCloseFocusPolicy::PreserveCurrent);
     ++floatingDockBackdropCommitToken_;
@@ -626,8 +610,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
             SetPopupTopmost(floatingLayerTopmost);
         floatingDockBackdropCompositor_.
             Reattach(floatingDockHwnd_);
-        WaitForDCompCommitWithFallback(
-            L"Floating Dock source rect reattach");
+        FlushPendingCompositionCommit();
     }
 
     if (!floatingDockBackdropCompositor_.IsAvailable())

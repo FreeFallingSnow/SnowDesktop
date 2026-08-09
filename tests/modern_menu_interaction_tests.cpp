@@ -323,13 +323,30 @@ int wmain()
     options.owner = owner;
     options.anchor = { 80, 80 };
     options.dpi = USER_DEFAULT_SCREEN_DPI;
+    HANDLE scheduledWork = CreateEventW(
+        nullptr, FALSE, FALSE, nullptr);
+    int scheduledWorkCalls = 0;
+    int presentationFlushes = 0;
+    options.eventPump.scheduledWorkHandle = scheduledWork;
+    options.eventPump.dispatchScheduledWork = [&]() {
+        ++scheduledWorkCalls;
+    };
+    options.eventPump.flushPresentation = [&]() {
+        ++presentationFlushes;
+    };
+    SetEvent(scheduledWork);
     const auto result = snowdesktop::modern_menu::Show(items, options);
+    options.eventPump = {};
+    CloseHandle(scheduledWork);
     KillTimer(owner, kWatchdogTimer);
 
     Expect(!gWatchdogFired, "cascaded popup did not time out");
     Expect(gInputPosted, "test input reached the cascaded popup");
     Expect(result.command == 7,
         "a command selected from a cascaded submenu is returned");
+    Expect(scheduledWorkCalls == 1 &&
+            presentationFlushes > 0,
+        "the synchronous menu loop pumps scheduled animation work and presentation flushes");
 
     const std::vector<Item> adjustmentItems{
         { 0, L"Current: 8 x 6", L"", false },

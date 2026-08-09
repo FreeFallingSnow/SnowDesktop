@@ -179,7 +179,8 @@ void DesktopApp::ToggleQuickNavigation()
     if (quickNavigationOpen_)
         CloseQuickNavigation();
     else
-        OpenQuickNavigation();
+        OpenQuickNavigation(
+            QuickNavigationInvocationSource::Hotkey);
 }
 
 /**
@@ -197,7 +198,9 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
     if (!PtInRect(&overlay, point))
     {
         CloseQuickNavigation();
-        return true;
+        // Outside dismissal is a notification, not ownership of the press.
+        // The same click must still be routed to the Dock/desktop target.
+        return false;
     }
 
     std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
@@ -314,18 +317,21 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
                 return true;
             }
 
-            const bool hasEverythingApp = FindQuickNavigationEverythingAppEntry() != nullptr;
-            if (hasEverythingApp)
+            const QuickNavigationAppEntry* everythingApp =
+                FindQuickNavigationEverythingAppEntry();
+            if (everythingApp)
             {
-                CloseQuickNavigation();
-                TryLaunchQuickNavigationEverythingApp();
+                CloseQuickNavigationThenLaunchApp(
+                    *everythingApp);
             }
             else
             {
-                CloseQuickNavigation();
-                ShellExecuteW(nullptr, L"open",
-                    L"https://www.voidtools.com/zh-cn/downloads/",
-                    nullptr, nullptr, SW_SHOWNORMAL);
+                CloseQuickNavigationThen(
+                    []() {
+                        ShellExecuteW(nullptr, L"open",
+                            L"https://www.voidtools.com/zh-cn/downloads/",
+                            nullptr, nullptr, SW_SHOWNORMAL);
+                    });
             }
             return true;
         }
@@ -341,8 +347,7 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
     if (TryGetQuickNavigationAppEntryAtPoint(point, appEntry) &&
         appEntry && appEntry->absolutePidl.get())
     {
-        CloseQuickNavigation();
-        LaunchQuickNavigationAppEntry(*appEntry);
+        CloseQuickNavigationThenLaunchApp(*appEntry);
         return true;
     }
 
@@ -350,9 +355,14 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
     if (TryGetQuickNavigationEverythingEntryAtPoint(point, everythingEntry) &&
         !everythingEntry.path.empty())
     {
-        CloseQuickNavigation();
-        ShellExecuteW(nullptr, L"open", everythingEntry.path.c_str(),
-            nullptr, nullptr, SW_SHOWNORMAL);
+        const std::wstring launchPath =
+            everythingEntry.path;
+        CloseQuickNavigationThen(
+            [launchPath]() {
+                ShellExecuteW(nullptr, L"open",
+                    launchPath.c_str(), nullptr, nullptr,
+                    SW_SHOWNORMAL);
+            });
         return true;
     }
 
@@ -366,15 +376,24 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
         if (clipped.bottom <= clipped.top || !PtInRect(&clipped, point)) continue;
 
         const QuickNavigationEntry entry = std::move(entries[i]);
-        CloseQuickNavigation();
         if (entry.kind == QuickNavigationEntry::Kind::DesktopItem &&
             entry.itemIndex != static_cast<size_t>(-1) && entry.itemIndex < items_.size())
         {
-            LaunchDesktopItem(entry.itemIndex, true);
+            const size_t itemIndex = entry.itemIndex;
+            CloseQuickNavigationThen(
+                [this, itemIndex]() {
+                    LaunchDesktopItem(itemIndex, true);
+                });
         }
         else if (entry.kind == QuickNavigationEntry::Kind::FolderEntry && !entry.path.empty())
         {
-            ShellExecuteW(nullptr, L"open", entry.path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            const std::wstring launchPath = entry.path;
+            CloseQuickNavigationThen(
+                [launchPath]() {
+                    ShellExecuteW(nullptr, L"open",
+                        launchPath.c_str(), nullptr, nullptr,
+                        SW_SHOWNORMAL);
+                });
         }
         return true;
     }
@@ -725,8 +744,7 @@ void DesktopApp::ShowQuickNavigationAppContextMenu(
     {
     case kAppOpen:
     {
-        CloseQuickNavigation();
-        LaunchQuickNavigationAppEntry(entry);
+        CloseQuickNavigationThenLaunchApp(entry);
         break;
     }
     case kAppCreateShortcut:
@@ -786,8 +804,16 @@ void DesktopApp::ShowQuickNavigationEverythingContextMenu(
     switch (command)
     {
     case kEverythingOpen:
-        ShellExecuteW(nullptr, L"open", entry.path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    {
+        const std::wstring launchPath = entry.path;
+        CloseQuickNavigationThen(
+            [launchPath]() {
+                ShellExecuteW(nullptr, L"open",
+                    launchPath.c_str(), nullptr, nullptr,
+                    SW_SHOWNORMAL);
+            });
         break;
+    }
     case kEverythingReveal:
         snowdesktop::item_location::Reveal(
             hwnd_, entry.path);
