@@ -1811,6 +1811,10 @@ private:
     bool FlushPendingQuickNavigationCompositionCommit();
     void ClearDesktopBehindCompositionAnimation(
         const RECT& bounds);
+    /** @brief 在撤下动画快照层前，将最终静态内容提交到桌面 surface。 */
+    void PrepareCompositionAnimationOverlayRetirement(
+        UiCompositionAnimationOverlay& overlay,
+        const RECT& bounds);
     void ResetCompositionAnimationOverlay(
         UiCompositionAnimationOverlay& overlay);
     bool UpdateCollectionPopupCompositionAnimation(

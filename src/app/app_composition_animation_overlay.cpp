@@ -301,6 +301,23 @@ void DesktopApp::ClearDesktopBehindCompositionAnimation(
     OnPaint(&update);
 }
 
+void DesktopApp::PrepareCompositionAnimationOverlayRetirement(
+    UiCompositionAnimationOverlay& overlay,
+    const RECT& bounds)
+{
+    if (!overlay.active)
+        return;
+
+    // The normal desktop renderer skips popup content while its snapshot
+    // overlay is active. Release only that logical suppression first, then
+    // paint the final static frame while the snapshot is still attached to
+    // the DComp tree. ResetCompositionAnimationOverlay can subsequently
+    // retire the snapshot in the same pending DComp transaction, so DWM
+    // never observes an empty frame between the two content owners.
+    overlay.active = false;
+    ClearDesktopBehindCompositionAnimation(bounds);
+}
+
 void DesktopApp::ResetCompositionAnimationOverlay(
     UiCompositionAnimationOverlay& overlay)
 {
@@ -427,6 +444,8 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
                     return;
                 }
                 const RECT dirty = popupAnimationCacheRect_;
+                PrepareCompositionAnimationOverlayRetirement(
+                    popupAnimationOverlay_, dirty);
                 ResetCollectionPopupAnimationCache();
                 if (hwnd_ && IsWindow(hwnd_))
                     InvalidateRect(hwnd_, &dirty, FALSE);
@@ -503,6 +522,8 @@ bool DesktopApp::StartLuaWidgetPanelCompositionAnimation()
                 }
                 const RECT dirty =
                     luaWidgetPanelAnimationCacheRect_;
+                PrepareCompositionAnimationOverlayRetirement(
+                    luaWidgetPanelAnimationOverlay_, dirty);
                 ResetLuaWidgetPanelAnimationCache();
                 if (hwnd_ && IsWindow(hwnd_))
                     InvalidateRect(hwnd_, &dirty, FALSE);

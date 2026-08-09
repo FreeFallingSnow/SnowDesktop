@@ -32,6 +32,8 @@ void DesktopApp::EnsureUiAnimationFrame()
                     else if (!popupAnimation_.IsAnimating())
                     {
                         RECT dirty = popupAnimationCacheRect_;
+                        PrepareCompositionAnimationOverlayRetirement(
+                            popupAnimationOverlay_, dirty);
                         ResetCollectionPopupAnimationCache();
                         if (hwnd_ && IsWindow(hwnd_))
                             InvalidateRect(hwnd_, &dirty, FALSE);
@@ -76,6 +78,8 @@ void DesktopApp::EnsureUiAnimationFrame()
                         {
                             RECT dirty =
                                 luaWidgetPanelAnimationCacheRect_;
+                            PrepareCompositionAnimationOverlayRetirement(
+                                luaWidgetPanelAnimationOverlay_, dirty);
                             ResetLuaWidgetPanelAnimationCache();
                             InvalidateRect(hwnd_, &dirty, FALSE);
                         }
