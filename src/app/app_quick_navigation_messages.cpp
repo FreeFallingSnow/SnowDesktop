@@ -37,6 +37,15 @@ bool IsWindowOwnedBy(
 
 LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    struct NativeMenuPresentationScope final
+    {
+        DesktopApp& app;
+        ~NativeMenuPresentationScope()
+        {
+            app.FlushNativeMenuPresentation();
+        }
+    } nativeMenuPresentationScope{ *this };
+
     // Shell context menus send owner-draw and submenu messages to the
     // TrackPopupMenu owner. Quick Navigation owns menus opened from its
     // entries so it can stay active while the menu is visible.

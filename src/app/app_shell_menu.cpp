@@ -45,10 +45,11 @@ void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& tar
     if (!newSub) { DestroyMenu(tmpMenu); return; }
 
     ctxMenu.As(&newMenuContextMenu_);
-    SetForegroundWindow(hwnd_);
+    const HWND menuOwner = ShellDialogOwnerHwnd();
+    SetForegroundWindow(menuOwner);
     ShellPopupMenuLayerGuard shellMenuLayer(*this);
     UINT cmd = TrackPopupMenuEx(newSub, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_LEFTBUTTON,
-        screenPoint.x, screenPoint.y, hwnd_, nullptr);
+        screenPoint.x, screenPoint.y, menuOwner, nullptr);
     newMenuContextMenu_.Reset();
 
     if (cmd != 0 && cmd >= 1)
@@ -84,10 +85,11 @@ void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& tar
  */
 void DesktopApp::ShowDesktopBackgroundContextMenu(POINT screenPoint)
 {
+    const HWND menuOwner = ShellDialogOwnerHwnd();
     snowdesktop::ShellContextMenuSite menuSite;
-    menuSite.Initialize(desktopFolder_.Get(), hwnd_);
+    menuSite.Initialize(desktopFolder_.Get(), menuOwner);
     HWND shellOwner = menuSite.HostWindow()
-        ? menuSite.HostWindow() : hwnd_;
+        ? menuSite.HostWindow() : menuOwner;
     ComPtr<IContextMenu> contextMenu;
     HRESULT hr = desktopFolder_->CreateViewObject(shellOwner, IID_IContextMenu,
         reinterpret_cast<void**>(contextMenu.GetAddressOf()));
@@ -107,10 +109,10 @@ void DesktopApp::ShowDesktopBackgroundContextMenu(POINT screenPoint)
     contextMenu.As(&activeContextMenu2_);
     contextMenu.As(&activeContextMenu3_);
 
-    SetForegroundWindow(hwnd_);
+    SetForegroundWindow(menuOwner);
     ShellPopupMenuLayerGuard shellMenuLayer(*this);
     UINT cmd = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
-        screenPoint.x, screenPoint.y, hwnd_, nullptr);
+        screenPoint.x, screenPoint.y, menuOwner, nullptr);
 
     activeContextMenu2_.Reset();
     activeContextMenu3_.Reset();
@@ -194,6 +196,10 @@ void DesktopApp::ApplyFloatingDockLayerPolicy()
 
 void DesktopApp::BeginShellPopupMenuLayer()
 {
+    // TrackPopupMenuEx enters a private modal loop, so flush the frame that
+    // opened the native menu before the normal application loop stops running.
+    FlushPendingCompositionCommit();
+    FlushPendingQuickNavigationCompositionCommit();
     ++shellPopupMenuLayerDepth_;
     ApplyFloatingDockLayerPolicy();
 }
@@ -206,6 +212,8 @@ void DesktopApp::EndShellPopupMenuLayer()
         shellPopupMenuLayerDepth_ = 0;
     ApplyFloatingDockLayerPolicy();
     RefocusFloatingDockKeyboardSession();
+    FlushPendingCompositionCommit();
+    FlushPendingQuickNavigationCompositionCommit();
 }
 
 /**
@@ -236,6 +244,7 @@ bool DesktopApp::IsProtectedDesktopIcon(const DesktopItem& item) const
  */
 void DesktopApp::ShowShellContextMenuForPath(const std::wstring& folderPath, POINT screenPoint)
 {
+    const HWND menuOwner = ShellDialogOwnerHwnd();
     PIDLIST_ABSOLUTE pidl = nullptr;
     if (FAILED(SHParseDisplayName(folderPath.c_str(), nullptr, &pidl, 0, nullptr)))
         return;
@@ -259,9 +268,9 @@ void DesktopApp::ShowShellContextMenuForPath(const std::wstring& folderPath, POI
     }
 
     snowdesktop::ShellContextMenuSite menuSite;
-    menuSite.Initialize(folder, hwnd_);
+    menuSite.Initialize(folder, menuOwner);
     HWND shellOwner = menuSite.HostWindow()
-        ? menuSite.HostWindow() : hwnd_;
+        ? menuSite.HostWindow() : menuOwner;
     ComPtr<IContextMenu> contextMenu;
     HRESULT hr = folder->CreateViewObject(shellOwner, IID_IContextMenu, reinterpret_cast<void**>(contextMenu.GetAddressOf()));
     if (SUCCEEDED(hr) && contextMenu)
@@ -292,10 +301,10 @@ void DesktopApp::ShowShellContextMenuForPath(const std::wstring& folderPath, POI
     contextMenu.As(&activeContextMenu2_);
     contextMenu.As(&activeContextMenu3_);
 
-    SetForegroundWindow(hwnd_);
+    SetForegroundWindow(menuOwner);
     ShellPopupMenuLayerGuard shellMenuLayer(*this);
     UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
-        screenPoint.x, screenPoint.y, hwnd_, nullptr);
+        screenPoint.x, screenPoint.y, menuOwner, nullptr);
 
     activeContextMenu2_.Reset();
     activeContextMenu3_.Reset();
@@ -328,6 +337,7 @@ ShowShellItemContextMenuForPath(
     const std::wstring& itemPath,
     POINT screenPoint)
 {
+    const HWND menuOwner = ShellDialogOwnerHwnd();
     PIDLIST_ABSOLUTE pidl = nullptr;
     if (FAILED(SHParseDisplayName(
             itemPath.c_str(), nullptr,
@@ -349,9 +359,9 @@ ShowShellItemContextMenuForPath(
     }
 
     snowdesktop::ShellContextMenuSite menuSite;
-    menuSite.Initialize(parentFolder, hwnd_);
+    menuSite.Initialize(parentFolder, menuOwner);
     HWND shellOwner = menuSite.HostWindow()
-        ? menuSite.HostWindow() : hwnd_;
+        ? menuSite.HostWindow() : menuOwner;
     ComPtr<IContextMenu> contextMenu;
     const HRESULT hr =
         parentFolder->GetUIObjectOf(
@@ -395,7 +405,7 @@ ShowShellItemContextMenuForPath(
         &activeContextMenu2_);
     contextMenu.As(
         &activeContextMenu3_);
-    SetForegroundWindow(hwnd_);
+    SetForegroundWindow(menuOwner);
     ShellPopupMenuLayerGuard shellMenuLayer(*this);
     const UINT command =
         TrackPopupMenuEx(
@@ -404,7 +414,7 @@ ShowShellItemContextMenuForPath(
                 TPM_RIGHTBUTTON,
             screenPoint.x,
             screenPoint.y,
-            hwnd_, nullptr);
+            menuOwner, nullptr);
     activeContextMenu2_.Reset();
     activeContextMenu3_.Reset();
 

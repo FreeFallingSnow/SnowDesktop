@@ -406,6 +406,20 @@ LRESULT CALLBACK DesktopApp::ControlWndProc(HWND hwnd, UINT msg, WPARAM wp, LPAR
  */
 LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    struct NativeMenuPresentationScope final
+    {
+        DesktopApp& app;
+        ~NativeMenuPresentationScope()
+        {
+            app.FlushNativeMenuPresentation();
+        }
+    } nativeMenuPresentationScope{ *this };
+
+    LRESULT shellMenuResult = 0;
+    if (HandleShellContextMenuMessage(
+            msg, wp, lp, shellMenuResult))
+        return shellMenuResult;
+
     if (systemTaskbarTaskViewStateMsg_ &&
         msg == systemTaskbarTaskViewStateMsg_)
     {

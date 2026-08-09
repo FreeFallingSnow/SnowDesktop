@@ -15,6 +15,7 @@
 #include "dock_settings_rules.h"
 #include "desktop_item_reference_migration.h"
 #include "app/desktop_backdrop_update_rules.h"
+#include "app/native_menu_presentation_rules.h"
 #include "desktop_window_discovery_rules.h"
 #include "floating_dock_rules.h"
 #include "display_topology_refresh.h"
@@ -81,6 +82,8 @@ int main()
         snowdesktop::display_topology_refresh;
     namespace backdropUpdate =
         snowdesktop::desktop_backdrop_update_rules;
+    namespace nativeMenuPresentation =
+        snowdesktop::native_menu_presentation_rules;
     namespace desktopWindowDiscovery =
         snowdesktop::desktop_window_discovery_rules;
 
@@ -96,6 +99,21 @@ int main()
         !desktopWindowDiscovery::IsExplorerDesktopViewProcess(
             4120, 0),
         "desktop discovery must reject transient in-process Shell views");
+
+    Check(
+        nativeMenuPresentation::ShouldFlushAfterOwnerMessage(
+            true, false, false, false),
+        "native Shell menu messages must flush pending composition commits");
+    Check(
+        !nativeMenuPresentation::ShouldFlushAfterOwnerMessage(
+            false, false, false, false) &&
+        !nativeMenuPresentation::ShouldFlushAfterOwnerMessage(
+            true, true, false, false) &&
+        !nativeMenuPresentation::ShouldFlushAfterOwnerMessage(
+            true, false, true, false) &&
+        !nativeMenuPresentation::ShouldFlushAfterOwnerMessage(
+            true, false, false, true),
+        "native Shell presentation must wait until every active surface exits BeginDraw");
 
     const RECT backdropClientRect{0, 0, 1920, 1080};
     const RECT fullBackdropUpdate{0, 0, 1920, 1080};

@@ -42,6 +42,15 @@ bool DesktopApp::HandleShellContextMenuMessage(
 
 LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    struct NativeMenuPresentationScope final
+    {
+        DesktopApp& app;
+        ~NativeMenuPresentationScope()
+        {
+            app.FlushNativeMenuPresentation();
+        }
+    } nativeMenuPresentationScope{ *this };
+
     LRESULT shellMenuResult = 0;
     if (HandleShellContextMenuMessage(
             msg, wp, lp, shellMenuResult))

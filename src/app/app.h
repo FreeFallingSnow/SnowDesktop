@@ -1271,6 +1271,16 @@ private:
     bool HandleShellContextMenuMessage(
         UINT message, WPARAM wParam, LPARAM lParam,
         LRESULT& result);
+    bool IsAdministratorRunnablePath(
+        const std::wstring& path) const;
+    void CopyPathsToClipboard(
+        const std::vector<std::wstring>& paths);
+    void RunPathAsAdministrator(
+        const std::wstring& path);
+    void ShowPathProperties(
+        const std::wstring& path);
+    /** @brief 原生 Shell 菜单的模态消息循环中及时提交 DComp 更新。 */
+    void FlushNativeMenuPresentation();
     /** @brief 清理旧菜单状态，并记录弹出点所在显示器的主题和 DPI。 */
     void PrepareMenuIconsForPoint(POINT screenPoint);
     enum class MenuIconFont

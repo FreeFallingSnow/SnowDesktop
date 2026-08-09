@@ -1,4 +1,5 @@
 #include "right_click_contract.h"
+#include "app/shell_item_action_rules.h"
 
 #include <iostream>
 #include <string>
@@ -187,6 +188,21 @@ void TestMenuFocusRestoreContract()
         "a newly started inline editor must retain focus");
 }
 
+void TestShellItemActionContract()
+{
+    namespace actions =
+        snowdesktop::shell_item_action_rules;
+    Check(
+        actions::IsAdministratorRunnableExtension(L".exe") &&
+        actions::IsAdministratorRunnableExtension(L".lnk") &&
+        actions::IsAdministratorRunnableExtension(L".cmd"),
+        "executable Shell items must expose the administrator action");
+    Check(
+        !actions::IsAdministratorRunnableExtension(L".txt") &&
+        !actions::IsAdministratorRunnableExtension(L""),
+        "ordinary documents must not expose the administrator action");
+}
+
 } // namespace
 
 int main()
@@ -195,6 +211,7 @@ int main()
     TestSlotItemMenuMatrix();
     TestSelectionContract();
     TestMenuFocusRestoreContract();
+    TestShellItemActionContract();
     if (failures != 0)
     {
         std::cerr << failures

@@ -43,6 +43,10 @@ void DesktopApp::ShowFolderEntryContextMenu(
         GetSelectedFolderEntryPaths();
     const bool hasSelection = !selectedPaths.empty();
     const bool singleSelection = selectedPaths.size() == 1;
+    const bool canRunAsAdministrator =
+        singleSelection &&
+        IsAdministratorRunnablePath(selectedPaths.front());
+    const bool canShowProperties = singleSelection;
     HWND menuOwner = keepQuickNavigationOpen &&
         quickNavigationHwnd_ &&
         IsWindow(quickNavigationHwnd_)
@@ -55,12 +59,26 @@ void DesktopApp::ShowFolderEntryContextMenu(
         hasSelection ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextOpenCommand, _LW("app.menu.open"));
     AppendMenuW(menu,
+        hasSelection ? MF_STRING : MF_STRING | MF_GRAYED,
+        kContextCopyPathCommand,
+        _LW("app.menu.copy_path"));
+    AppendMenuW(menu,
         singleSelection &&
                 snowdesktop::item_location::CanReveal(fullPath)
             ? MF_STRING
             : MF_STRING | MF_GRAYED,
         kContextRevealLocationCommand,
         _LW("app.menu.open_file_location"));
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu,
+        canRunAsAdministrator ? MF_STRING : MF_STRING | MF_GRAYED,
+        kContextRunAsAdministratorCommand,
+        _LW("app.menu.run_as_administrator"));
+    AppendMenuW(menu,
+        canShowProperties ? MF_STRING : MF_STRING | MF_GRAYED,
+        kContextPropertiesCommand,
+        _LW("app.menu.properties"));
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu,
         singleSelection ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextRenameCommand, _LW("app.menu.rename"));
@@ -81,6 +99,15 @@ void DesktopApp::ShowFolderEntryContextMenu(
 
     SetMenuItemIcon(menu, kContextOpenCommand, L"");
     SetMenuItemIcon(menu, kContextRevealLocationCommand, L"");
+    SetMenuItemIcon(menu, kContextCopyPathCommand,
+        snowdesktop::menu_fluent_glyphs::kCopy,
+        MenuIconFont::FluentRegular);
+    SetMenuItemIcon(menu, kContextRunAsAdministratorCommand,
+        snowdesktop::menu_fluent_glyphs::kShield,
+        MenuIconFont::FluentRegular);
+    SetMenuItemIcon(menu, kContextPropertiesCommand,
+        snowdesktop::menu_fluent_glyphs::kInfo,
+        MenuIconFont::FluentRegular);
     SetMenuItemIcon(menu, kContextRenameCommand, L"");
     SetMenuItemIcon(menu, kContextCutCommand, L"");
     SetMenuItemIcon(menu, kContextCopyCommand, L"");
@@ -112,6 +139,17 @@ void DesktopApp::ShowFolderEntryContextMenu(
         if (singleSelection)
             snowdesktop::item_location::Reveal(
                 hwnd_, fullPath);
+        break;
+    case kContextCopyPathCommand:
+        CopyPathsToClipboard(selectedPaths);
+        break;
+    case kContextRunAsAdministratorCommand:
+        if (canRunAsAdministrator)
+            RunPathAsAdministrator(selectedPaths.front());
+        break;
+    case kContextPropertiesCommand:
+        if (canShowProperties)
+            ShowPathProperties(selectedPaths.front());
         break;
     case kContextRenameCommand:
         if (singleSelection)

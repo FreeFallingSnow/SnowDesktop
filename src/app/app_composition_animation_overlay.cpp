@@ -1,4 +1,5 @@
 #include "app.h"
+#include "native_menu_presentation_rules.h"
 
 namespace
 {
@@ -314,6 +315,20 @@ bool DesktopApp::FlushPendingQuickNavigationCompositionCommit()
         L"Isolated DComp Commit", hr);
     EnsureUiAnimationFrame();
     return false;
+}
+
+void DesktopApp::FlushNativeMenuPresentation()
+{
+    if (!snowdesktop::native_menu_presentation_rules::
+            ShouldFlushAfterOwnerMessage(
+                shellPopupMenuLayerDepth_ > 0,
+                compositionPaintInProgress_,
+                quickNavCompositionPaintInProgress_,
+                floatingDockCompositionPaintInProgress_))
+        return;
+
+    FlushPendingCompositionCommit();
+    FlushPendingQuickNavigationCompositionCommit();
 }
 
 void DesktopApp::ClearDesktopBehindCompositionAnimation(
