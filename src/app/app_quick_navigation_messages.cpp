@@ -175,6 +175,8 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
                             maxTabScroll,
                             quickNavigationTabScrollOffset_ +
                                 QuickNavScale(80));
+                    quickNavTabScrollRightPressed_ = true;
+                    quickNavTabScrollLeftPressed_ = false;
                     InvalidateQuickNavigationWindow();
                     return 0;
                 }
@@ -190,6 +192,8 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
                                 0,
                                 quickNavigationTabScrollOffset_ -
                                     QuickNavScale(80));
+                        quickNavTabScrollLeftPressed_ = true;
+                        quickNavTabScrollRightPressed_ = false;
                         InvalidateQuickNavigationWindow();
                         return 0;
                     }
@@ -364,6 +368,13 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
     }
     case WM_LBUTTONUP:
     {
+        if (quickNavTabScrollLeftPressed_ ||
+            quickNavTabScrollRightPressed_)
+        {
+            quickNavTabScrollLeftPressed_ = false;
+            quickNavTabScrollRightPressed_ = false;
+            InvalidateQuickNavigationWindow();
+        }
         if (quickNavScrollbarDragging_)
         {
             ReleaseCapture();

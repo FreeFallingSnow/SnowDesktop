@@ -2824,6 +2824,8 @@ RECT GetQuickNavigationTabScrollButtonRect(bool left) const;
     size_t quickNavigationActiveWidgetIndex_ = static_cast<size_t>(-1);
     int quickNavigationScrollOffset_ = 0;
     int quickNavigationTabScrollOffset_ = 0;
+    bool quickNavTabScrollLeftPressed_ = false;
+    bool quickNavTabScrollRightPressed_ = false;
     bool quickNavigationInitialJumpOpen_ = false;
     size_t quickNavigationInitialJumpSelection_ = 0;
     POINT quickNavigationOpenPoint_{};

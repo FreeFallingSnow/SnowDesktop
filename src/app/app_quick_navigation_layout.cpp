@@ -121,7 +121,10 @@ RECT DesktopApp::GetQuickNavigationTabScrollButtonRect(bool left) const
 {
     const RECT tabs = GetQuickNavigationTabsRect(quickNavigationRect_);
     const int size = QuickNavScale(20);
-    const int y = tabs.top + (tabs.bottom - tabs.top - size) / 2;
+    // 高度与 tab 一致（与 tabInsetY 内缩相同），仅宽度为窄条。
+    const int tabInsetY = QuickNavScale(3);
+    const int y = tabs.top + tabInsetY;
+    const int h = tabs.bottom - tabs.top - tabInsetY * 2;
     if (left)
     {
         const int gap = QuickNavScale(8);
@@ -132,9 +135,9 @@ RECT DesktopApp::GetQuickNavigationTabScrollButtonRect(bool left) const
         const int scrollLeft =
             GetQuickNavigationTabsStart(quickNavigationRect_) +
             fixedWidth + sepGap + QuickNavScale(1) + gap;
-        return MakeRect(scrollLeft, y, scrollLeft + size, y + size);
+        return MakeRect(scrollLeft, y, scrollLeft + size, y + h);
     }
-    return MakeRect(tabs.right - size, y, tabs.right, y + size);
+    return MakeRect(tabs.right - size, y, tabs.right, y + h);
 }
 
 void DesktopApp::SetQuickNavigationDesktopViewMode(
