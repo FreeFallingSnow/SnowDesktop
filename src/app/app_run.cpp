@@ -522,6 +522,10 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         });
         settingsWindow_->SetPersonalizationChangedCallback([this]() {
             RefreshSystemTaskbarAppearance(false);
+            // 主题变更后同步刷新快捷搜索面板的亮暗/玻璃外观。
+            ApplyQuickNavigationAppearance();
+            if (quickNavigationOpen_)
+                InvalidateQuickNavigationWindow();
         });
         settingsWindow_->SetDisplaySettingsChangedCallback([this]() {
             SetIconSpacing(settingsWindow_->GetIconSpacingScale());
