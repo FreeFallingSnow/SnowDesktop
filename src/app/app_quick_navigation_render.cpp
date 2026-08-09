@@ -653,10 +653,10 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                     QuickNavScale(8)),
                 ToD2DColor(
                     t.tabHoverFill,
-                    rightHovered ? 0.85f : 0.55f),
+                    rightHovered ? 0.96f : 0.90f),
                 ToD2DColor(
                     t.tabDefaultStroke,
-                    rightHovered ? 0.9f : 0.6f));
+                    rightHovered ? 0.96f : 0.88f));
             DrawD2DText(
                 ctx.Get(), L"\u203A", rightBtn,
                 quickNavTabTextFormat_.Get(),
@@ -681,10 +681,10 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                         QuickNavScale(8)),
                     ToD2DColor(
                         t.tabHoverFill,
-                        leftHovered ? 0.85f : 0.55f),
+                        leftHovered ? 0.96f : 0.90f),
                     ToD2DColor(
                         t.tabDefaultStroke,
-                        leftHovered ? 0.9f : 0.6f));
+                        leftHovered ? 0.96f : 0.88f));
                 DrawD2DText(
                     ctx.Get(), L"\u2039", leftBtn,
                     quickNavTabTextFormat_.Get(),
