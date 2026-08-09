@@ -4,6 +4,8 @@
 #include "name_pinyin.h"
 #include "navigation_settings.h"
 
+#include <windows.h>
+
 #include <algorithm>
 #include <cstddef>
 #include <cwctype>
@@ -320,13 +322,32 @@ inline int TabStripMaxScrollOffset(
         0, contentWidth - available);
 }
 
-/**
- * Quick Navigation stays open while activation moves to one of its owned
- * interaction surfaces, such as a context menu or inline editor.
- */
 constexpr bool ShouldCloseOnDeactivate(
     bool activatedWithinInteractionSurface)
 {
     return !activatedWithinInteractionSurface;
+}
+
+constexpr bool ShouldOpenFromDockSearchPress(
+    bool dismissedBySamePress)
+{
+    return !dismissedBySamePress;
+}
+
+inline bool ShouldAcceptPointerHit(
+    bool open,
+    POINT desktopPoint,
+    const RECT& panelRect,
+    const RECT& animatedVisualRect)
+{
+    // The opening/closing visual travels between the invocation point and the
+    // final panel. Only the final panel owns input; otherwise the animated
+    // visual can temporarily cover the Dock/desktop and starve their hover
+    // messages until the animation finishes.
+    return open &&
+        !IsRectEmpty(&panelRect) &&
+        !IsRectEmpty(&animatedVisualRect) &&
+        PtInRect(&panelRect, desktopPoint) &&
+        PtInRect(&animatedVisualRect, desktopPoint);
 }
 }

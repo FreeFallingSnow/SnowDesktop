@@ -159,6 +159,13 @@ enum class FloatingDockCloseFocusPolicy
     PreserveCurrent,
 };
 
+enum class QuickNavigationInvocationSource
+{
+    Pointer,
+    DockSearch,
+    Hotkey,
+};
+
 enum class DockAppIdentityKind
 {
     None,
@@ -535,12 +542,12 @@ private:
     void RequestExit();
     /** @brief 请求重启应用程序，启动新实例后按正常流程退出当前实例。 */
     void RequestRestart();
-    /** @brief 确保统一 UI 动画帧调度已启动。 */
+    /** @brief 确保各个独立 UI 动画轨道均已启动。 */
     void EnsureUiAnimationFrame();
-    /** @brief 取消统一 UI 动画帧调度。 */
+    /** @brief 取消所有应用内 UI 动画轨道。 */
     void CancelUiAnimationFrame();
-    /** @brief 推进所有内置 UI 动画；仍有活动动画时返回 true。 */
-    bool AdvanceUiAnimationFrame(double nowMilliseconds);
+    /** @brief 在 OLE 嵌套拖拽循环中同步呈现本次命中反馈。 */
+    void PresentOleDragInteractionFrame();
     /** @brief 隐藏 Explorer 原生桌面图标。 */
     void HideExplorerIcons();
     /** @brief 恢复 Explorer 原生桌面图标。 */
@@ -668,19 +675,26 @@ private:
     DockContainer* GetDockContainerAtPoint(POINT point) const;
     void InvalidateDockContainers();
     void InvalidateDockRects(BOOL erase = FALSE);
-    /** @brief 按显示刷新节奏合并 Dock hover 与拖动交互帧。 */
+    /** @brief 在当前输入消息内同步呈现已失效的桌面指针反馈。 */
+    void PresentDesktopPointerUpdate();
+    /** @brief 同步呈现桌面拖动及浮动 Dock 指针反馈。 */
     void PresentPointerInteractionFrame();
-    void ClearDockBackdropForDragTransition(
-        POINT previousPointer, POINT currentPointer);
+    void PrepareDockBackdropForDragTransition();
     bool CreateFloatingDockWindow();
     void DestroyFloatingDockWindow();
     void ShowFloatingDock();
     void CloseFloatingDock(
         bool closeDockPopup = true,
-        bool forceImmediate = false,
+        FloatingDockCloseFocusPolicy focusPolicy =
+            FloatingDockCloseFocusPolicy::RestorePrevious);
+    /** @brief 完成悬浮 Dock 到桌面 Dock 的无闪烁交接后执行动作。 */
+    void CloseFloatingDockThen(
+        std::function<void()> action,
+        bool closeDockPopup = true,
         FloatingDockCloseFocusPolicy focusPolicy =
             FloatingDockCloseFocusPolicy::RestorePrevious);
     void CompleteFloatingDockCloseHandoff();
+    void FinishFloatingDockCloseHandoff();
     bool EnsureFloatingDockInputWindow();
     void BeginFloatingDockKeyboardSession();
     void RefocusFloatingDockKeyboardSession();
@@ -688,8 +702,6 @@ private:
         FloatingDockCloseFocusPolicy focusPolicy);
     void RestoreInteractionInputFocus();
     HWND ResolveDockSemanticForegroundWindow();
-    bool WaitForDCompCommitWithFallback(
-        const wchar_t* diagnosticContext);
     void ToggleFloatingDock();
     void ApplyFloatingDockHotkey();
     void UnregisterFloatingDockHotkey();
@@ -729,15 +741,43 @@ private:
             pressedAction = std::nullopt,
         HWND pressedTarget = nullptr,
         std::optional<RECT> pressedAnchorScreen =
-            std::nullopt);
+            std::nullopt,
+        DockWindowTransitionCapturePolicy minimizeCapturePolicy =
+            DockWindowTransitionCapturePolicy::SnapshotPreferred);
     bool ActivateOrToggleDockWindow(HWND window,
         std::optional<snowdesktop::dock_window_rules::DockClickAction>
             pressedAction = std::nullopt,
         HWND pressedTarget = nullptr,
         std::optional<RECT> pressedAnchorScreen =
-            std::nullopt);
+            std::nullopt,
+        DockWindowTransitionCapturePolicy minimizeCapturePolicy =
+            DockWindowTransitionCapturePolicy::SnapshotPreferred);
     void ActivateDockWindowFromPreview(HWND window);
     void ActivateDockWindowFromPreviewAnimated(HWND window);
+    struct DockWindowActivationOutcome
+    {
+        bool restored = false;
+        bool foreground = false;
+        bool synchronousActivationSafe = false;
+    };
+    DockWindowActivationOutcome RequestDockWindowActivation(
+        HWND target, bool wasMinimized);
+    DockWindowActivationOutcome ActivateDockWindowAfterShow(
+        HWND target, bool wasMinimized);
+    void BeginDockWindowActivationObservation(
+        HWND target, bool awaitingRestore);
+    void UpdateDockWindowActivationObservation(
+        HWND target,
+        const DockWindowActivationOutcome& outcome);
+    void CancelDockWindowActivationObservation(HWND target);
+    void CancelAllDockWindowActivationObservations();
+    void OnDockWindowActivationObservationTimer(
+        snowdesktop::UiScheduleToken token);
+    void HandleDockWindowRestoreTransition(
+        HWND window,
+        DockWindowRestoreTransitionPhase phase);
+    void UpdateDockWindowActivationState(
+        HWND target, bool restored, bool foreground);
     bool HandleDockClickRelease(POINT point);
     void ToggleWindowsStartMenu();
     DockAppIdentity ResolveDockAppIdentity(size_t itemIndex);
@@ -895,9 +935,13 @@ private:
     void ToggleQuickNavigation();
     /** @brief 打开快速导航面板。 */
     void OpenQuickNavigation(
-        bool fromDockSearch = false);
+        QuickNavigationInvocationSource source =
+            QuickNavigationInvocationSource::Pointer);
     /** @brief 关闭快速导航面板。 */
     void CloseQuickNavigation();
+    /** @brief 关闭动画完成后执行动作。 */
+    void CloseQuickNavigationThen(
+        std::function<void()> action);
     /** @brief 将快速导航动画的当前视觉状态同步到内容、毛玻璃和搜索框。 */
     void ApplyQuickNavigationAnimationFrame();
     /** @brief 动画结束后释放快速导航窗口和临时数据。 */
@@ -908,6 +952,8 @@ private:
     void DestroyQuickNavigationWindow();
     /** @brief 计算并设置快速导航窗口的位置。 */
     void PositionQuickNavigationWindow();
+    /** @brief 在动画路径区域与最终面板区域之间切换原生窗口裁剪。 */
+    void UpdateQuickNavigationWindowRegion(bool expanded);
     /** @brief 根据当前主题创建、同步或移除快捷导航原生毛玻璃层。 */
     void UpdateQuickNavigationBackdrop();
     /** @brief 同步切换快捷导航窗口族所在的 Z 序带。 */
@@ -956,6 +1002,8 @@ private:
         const QuickNavigationAppEntry& entry);
     bool LaunchQuickNavigationAppEntry(
         const QuickNavigationAppEntry& entry);
+    bool CloseQuickNavigationThenLaunchApp(
+        const QuickNavigationAppEntry& entry);
     std::vector<QuickNavigationKeyboardTarget> GetQuickNavigationKeyboardTargets() const;
     bool HandleQuickNavigationKeyboardInput(WPARAM key);
     bool IsQuickNavigationKeyboardTarget(
@@ -968,7 +1016,9 @@ private:
     bool CreateDesktopShortcutForShellLink(const std::wstring& displayName,
         PIDLIST_ABSOLUTE targetPidl, const std::wstring& targetPath, const std::wstring& workingDirectory);
     static std::wstring SanitizeShortcutFileStem(const std::wstring& name);
-    static bool IsApplicationsShellLinkTarget(IShellLinkW* shellLink);
+    static bool IsApplicationsShellLinkTarget(
+        IShellLinkW* shellLink,
+        const std::wstring& shortcutPath = {});
     QuickNavigationContentModel BuildQuickNavigationContentModel() const;
     RECT GetQuickNavigationSectionHeaderRect(
         const RECT& overlay, size_t sectionIndex,
@@ -1238,6 +1288,16 @@ private:
     bool HandleShellContextMenuMessage(
         UINT message, WPARAM wParam, LPARAM lParam,
         LRESULT& result);
+    bool IsAdministratorRunnablePath(
+        const std::wstring& path) const;
+    void CopyPathsToClipboard(
+        const std::vector<std::wstring>& paths);
+    void RunPathAsAdministrator(
+        const std::wstring& path);
+    void ShowPathProperties(
+        const std::wstring& path);
+    /** @brief 原生 Shell 菜单的模态消息循环中及时提交 DComp 更新。 */
+    void FlushNativeMenuPresentation();
     /** @brief 清理旧菜单状态，并记录弹出点所在显示器的主题和 DPI。 */
     void PrepareMenuIconsForPoint(POINT screenPoint);
     enum class MenuIconFont
@@ -1272,6 +1332,8 @@ private:
         std::function<void(UINT, const std::wstring&,
             std::vector<snowdesktop::modern_menu::Item>&)>
             onTextChanged = {});
+    void ConfigureModernMenuEventPump(
+        snowdesktop::modern_menu::Options& options);
     /** @brief 清除当前菜单使用的图标映射。 */
     void ClearMenuIcons();
     /** @brief 恢复桌面窗口层叠顺序。 */
@@ -1782,7 +1844,19 @@ private:
         float fromOpacity, float toOpacity,
         UINT durationMilliseconds);
     bool CommitCompositionAnimationFrame();
+    bool FlushPendingCompositionCommit();
+    /** @brief 提交并等待桌面/悬浮 Dock 的 DComp 状态真正越过呈现边界。 */
+    bool WaitForCompositionPresentation(
+        const wchar_t* diagnosticContext);
+    /** @brief 将快捷导航视觉更新排入其独立的 DComp 提交通道。 */
+    bool CommitQuickNavigationCompositionFrame();
+    /** @brief 提交快捷导航独立 DComp 通道中积累的视觉更新。 */
+    bool FlushPendingQuickNavigationCompositionCommit();
     void ClearDesktopBehindCompositionAnimation(
+        const RECT& bounds);
+    /** @brief 在撤下动画快照层前，将最终静态内容提交到桌面 surface。 */
+    void PrepareCompositionAnimationOverlayRetirement(
+        UiCompositionAnimationOverlay& overlay,
         const RECT& bounds);
     void ResetCompositionAnimationOverlay(
         UiCompositionAnimationOverlay& overlay);
@@ -2157,9 +2231,13 @@ private:
     /**
      * @brief 获取可见的集合项边界矩形。
      * @param itemIndex 项索引
+     * @param[out] visibilityWidgetIndex 实际显示该项的组件索引，可选
      * @return 边界矩形
      */
-    RECT GetVisibleCollectionItemBounds(size_t itemIndex) const;
+    RECT GetVisibleCollectionItemBounds(size_t itemIndex,
+        size_t* visibilityWidgetIndex = nullptr) const;
+    /** @brief 将分组子组件解析为实际显示并参与悬浮可见性的宿主组件。 */
+    size_t ResolveRenameVisibilityWidgetIndex(size_t widgetIndex) const;
     /**
      * @brief 查找当前选中的单个文件夹条目。
      * @param[out] widgetIndex 部件索引
@@ -2184,7 +2262,14 @@ private:
     /** @brief 应用程序实例句柄 */
     HINSTANCE instance_ = nullptr;
     snowdesktop::UiAnimationScheduler uiAnimationScheduler_;
-    snowdesktop::UiScheduleToken uiAnimationFrameToken_ = 0;
+    snowdesktop::UiScheduleToken popupAnimationFrameToken_ = 0;
+    snowdesktop::UiScheduleToken luaPanelAnimationFrameToken_ = 0;
+    snowdesktop::UiScheduleToken quickNavigationAnimationFrameToken_ = 0;
+    snowdesktop::UiScheduleToken dockBounceAnimationFrameToken_ = 0;
+    snowdesktop::UiScheduleToken pageNotifyAnimationFrameToken_ = 0;
+    snowdesktop::UiScheduleToken pointerRecoveryFrameToken_ = 0;
+    bool compositionCommitPending_ = false;
+    bool quickNavCompositionCommitPending_ = false;
     // 指针反馈同步提交的兜底：仅当当前 WM_PAINT/合成绘制重入时，才把帧交给
     // UiAnimationScheduler 补绘。常规指针路径必须直接 UpdateWindow，不能把
     // 拖拽/Dock hover 也改成异步调度（f29a882 曾引入该回归）。
@@ -2317,6 +2402,15 @@ private:
     std::unordered_map<std::wstring, DockWindowInfo> dockRunningWindows_;
     std::vector<DockRunningAppInfo> dockUnpinnedRunningApps_;
     std::unordered_map<HWND, ULONGLONG> dockPendingCloseWindows_;
+    struct DockWindowActivationObservation
+    {
+        bool awaitingRestore = false;
+        ULONGLONG activationRetryDeadline = 0;
+    };
+    std::unordered_map<HWND, DockWindowActivationObservation>
+        dockWindowActivationObservations_;
+    snowdesktop::UiScheduleToken
+        dockWindowActivationObservationToken_ = 0;
     std::unique_ptr<DockWindowPreview> dockWindowPreview_;
     std::unique_ptr<DockWindowTransition>
         dockWindowTransition_;
@@ -2481,12 +2575,18 @@ private:
     bool floatingDockFrameReady_ = false;
     bool floatingDockBackdropCleanupPending_ = false;
     bool floatingDockRevealCommitPending_ = false;
+    bool floatingDockDesktopCommitPending_ = false;
     bool floatingDockHoverHandoffPending_ = false;
     bool floatingDockClosePending_ = false;
+    std::function<void()> floatingDockPostCloseAction_;
     bool renderingFloatingDock_ = false;
     bool handlingFloatingDockInput_ = false;
     /** @brief 浮动 Dock 被动 hover 最近一次同步提交时刻（8ms 限频用）。 */
     ULONGLONG floatingDockLastPointerPresentTick_ = 0;
+    snowdesktop::UiScheduleToken floatingDockHoverTailToken_ = 0;
+    const void* floatingDockHoverTargetOwner_ = nullptr;
+    size_t floatingDockHoverTargetIndex_ = 0;
+    int floatingDockHoverTargetKind_ = 0;
     UINT_PTR floatingDockBackdropCommitToken_ = 0;
     PersonalizationSettings floatingDockPersonalization_ =
         PersonalizationSettings::DarkPreset();
@@ -2510,7 +2610,10 @@ private:
     HWND quickNavigationSearchEdit_ = nullptr;
     HFONT quickNavigationSearchFont_ = nullptr;
 
-    // 快捷导航 DComp 渲染资源（与桌面共享 d2dDevice_ / dcompDevice_）
+    // 快捷导航与桌面共享 D2D 渲染设备，但使用独立 DComp device。
+    // 否则面板的逐帧变换与桌面/Dock hover 会进入同一 Commit 批次，
+    // 在 DWM 合并事务时造成指针反馈的队头阻塞。
+    ComPtr<IDCompositionDesktopDevice> quickNavDcompDevice_;
     ComPtr<IDCompositionTarget> quickNavDcompTarget_;
     ComPtr<IDCompositionVisual2> quickNavDcompVisual_;
     ComPtr<IDCompositionEffectGroup> quickNavDcompEffect_;
@@ -2722,6 +2825,8 @@ private:
     std::wstring hintTextCache_;
     /** @brief 确保拖拽提示窗口已创建。 @return 成功返回 true */
     bool EnsureDragHintWindow();
+    /** @brief 同步拖拽提示与悬浮 Dock 的 owner 关系。 */
+    void SyncDragHintWindowOwner();
     /** @brief 在客户端坐标位置显示拖拽提示。 @param clientPoint 客户端坐标 @param text 提示文本 */
     void ShowDragHintWindow(POINT clientPoint, const std::wstring& text);
     /** @brief 在屏幕坐标位置显示拖拽提示。 @param screenPoint 屏幕坐标 @param text 提示文本 */
@@ -2812,11 +2917,9 @@ private:
     bool quickNavigationTopmost_ = true;
     snowdesktop::quick_navigation_animation_rules::State
         quickNavigationAnimation_;
-    snowdesktop::quick_navigation_animation_rules::AnchorMode
-        quickNavigationAnimationAnchorMode_ =
-            snowdesktop::
-                quick_navigation_animation_rules::
-                    AnchorMode::Pointer;
+    QuickNavigationInvocationSource quickNavigationInvocationSource_ =
+        QuickNavigationInvocationSource::Pointer;
+    std::function<void()> quickNavigationPostCloseAction_;
     RECT quickNavigationRenameItemRect_{};
     size_t quickNavigationActiveWidgetIndex_ = static_cast<size_t>(-1);
     int quickNavigationScrollOffset_ = 0;
@@ -2824,14 +2927,14 @@ private:
     bool quickNavigationInitialJumpOpen_ = false;
     size_t quickNavigationInitialJumpSelection_ = 0;
     POINT quickNavigationOpenPoint_{};
-    /** @brief 快速导航缩放动画锚点（app 坐标，通常为 Dock 搜索图标中心）。 */
+    /** @brief 快速导航缩放动画锚点（app 坐标；Dock 搜索入口固定到搜索图标中心）。 */
     POINT quickNavigationAnimationAnchorPoint_{};
-    RECT quickNavigationLastEditAnimationRect_{};
     BYTE quickNavigationLastEditAnimationOpacity_ = 0;
     bool quickNavigationHasLastEditAnimationFrame_ = false;
     RECT quickNavigationRect_{};
-    /** @brief 快速导航合成宿主范围，覆盖目标面板与 Dock 动画锚点。 */
+    /** @brief 快速导航合成宿主范围，覆盖目标面板与当前会话动画锚点。 */
     RECT quickNavigationHostRect_{};
+    bool quickNavigationWindowRegionExpanded_ = false;
     std::wstring quickNavigationSearchText_;
     std::wstring quickNavigationSearchCompositionText_;
     std::vector<QuickNavigationEverythingEntry> quickNavigationEverythingResults_;
@@ -2858,6 +2961,10 @@ private:
     int quickNavScrollbarDragThumbTop_ = 0;
     int quickNavScrollbarDragStartOffset_ = 0;
     bool quickNavScrollbarHovered_ = false;
+    // Quick Navigation is a separate pointer surface. Sharing lastMousePoint_
+    // with the desktop/Dock makes its animated HWND overwrite passive hover
+    // state and replay that transition after the window moves away.
+    POINT quickNavigationLastMousePoint_{ LONG_MIN, LONG_MIN };
     std::vector<QuickNavigationHoverRegion>
         quickNavigationHoverRegions_;
     QuickNavigationPointerTarget

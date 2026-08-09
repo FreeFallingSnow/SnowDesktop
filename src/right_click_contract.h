@@ -122,4 +122,12 @@ constexpr bool ShouldPreserveSelectionOnRightClick(
     return itemAlreadySelected;
 }
 
+constexpr bool ShouldRestoreInteractionFocusAfterMenu(
+    bool keepInteractionSurfaceOpen,
+    bool inlineEditorStarted)
+{
+    return !keepInteractionSurfaceOpen &&
+        !inlineEditorStarted;
+}
+
 } // namespace snowdesktop::right_click_contract

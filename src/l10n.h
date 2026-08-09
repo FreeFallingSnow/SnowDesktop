@@ -1,5 +1,7 @@
 #pragma once
 
+#include "language_fallback.h"
+
 #include <initializer_list>
 #include <string>
 #include <unordered_map>
@@ -23,6 +25,8 @@ public:
     bool IsSystemDefault() const { return currentLanguage_ == "system"; }
     const std::vector<LanguageInfo>& GetAvailableLanguages() const
     { return availableLanguages_; }
+    std::string GetLocalizedLanguageName(
+        const std::string& language) const;
     bool HasLanguage(const std::string& language) const;
 
     const char* Tr(const char* key) const;

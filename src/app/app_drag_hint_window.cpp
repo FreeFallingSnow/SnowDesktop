@@ -4,12 +4,37 @@
 
 bool DesktopApp::EnsureDragHintWindow()
 {
-    if (hintHwnd_) return true;
+    if (hintHwnd_ && IsWindow(hintHwnd_))
+        return true;
+    hintHwnd_ = nullptr;
+    const HWND owner =
+        floatingDockVisible_ && floatingDockHwnd_ &&
+            IsWindow(floatingDockHwnd_)
+        ? floatingDockHwnd_ : nullptr;
     hintHwnd_ = CreateWindowExW(
-        WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
+        WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE |
+            WS_EX_TRANSPARENT | WS_EX_TOPMOST,
         kHintWindowClassName, L"", WS_POPUP,
-        0, 0, 1, 1, nullptr, nullptr, instance_, nullptr);
+        0, 0, 1, 1, owner, nullptr, instance_, nullptr);
     return hintHwnd_ != nullptr;
+}
+
+void DesktopApp::SyncDragHintWindowOwner()
+{
+    if (!hintHwnd_ || !IsWindow(hintHwnd_))
+        return;
+    const HWND requestedOwner =
+        floatingDockVisible_ && floatingDockHwnd_ &&
+            IsWindow(floatingDockHwnd_)
+        ? floatingDockHwnd_ : nullptr;
+    const HWND currentOwner = reinterpret_cast<HWND>(
+        GetWindowLongPtrW(hintHwnd_, GWLP_HWNDPARENT));
+    if (currentOwner != requestedOwner)
+    {
+        SetWindowLongPtrW(
+            hintHwnd_, GWLP_HWNDPARENT,
+            reinterpret_cast<LONG_PTR>(requestedOwner));
+    }
 }
 
 /**
@@ -17,7 +42,9 @@ bool DesktopApp::EnsureDragHintWindow()
  */
 void DesktopApp::HideDragHintWindow()
 {
-    if (hintHwnd_) { ShowWindow(hintHwnd_, SW_HIDE); hintTextCache_.clear(); }
+    if (hintHwnd_ && IsWindow(hintHwnd_))
+        ShowWindow(hintHwnd_, SW_HIDE);
+    hintTextCache_.clear();
 }
 
 /**
@@ -25,7 +52,9 @@ void DesktopApp::HideDragHintWindow()
  */
 void DesktopApp::DestroyDragHintWindow()
 {
-    if (hintHwnd_) { DestroyWindow(hintHwnd_); hintHwnd_ = nullptr; }
+    if (hintHwnd_ && IsWindow(hintHwnd_))
+        DestroyWindow(hintHwnd_);
+    hintHwnd_ = nullptr;
 }
 
 /**
@@ -42,16 +71,17 @@ void DesktopApp::ShowDragHintWindow(POINT clientPoint, const std::wstring& text)
     }
 
     // Skip expensive GDI rebuild if text hasn't changed — just move the window
-    if (text == hintTextCache_)
+    if (text == hintTextCache_ &&
+        hintHwnd_ && IsWindow(hintHwnd_) &&
+        IsWindowVisible(hintHwnd_))
     {
-        if (hintHwnd_ && IsWindowVisible(hintHwnd_))
-        {
-            POINT screenPoint = clientPoint;
-            ClientToScreen(hwnd_, &screenPoint);
-            SetWindowPos(hintHwnd_, HWND_TOPMOST,
-                screenPoint.x + 48, screenPoint.y + 22,
-                0, 0, SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
-        }
+        SyncDragHintWindowOwner();
+        POINT screenPoint = clientPoint;
+        ClientToScreen(hwnd_, &screenPoint);
+        SetWindowPos(hintHwnd_, HWND_TOPMOST,
+            screenPoint.x + 48, screenPoint.y + 22,
+            0, 0, SWP_NOSIZE | SWP_NOACTIVATE |
+                SWP_NOOWNERZORDER | SWP_SHOWWINDOW);
         return;
     }
     hintTextCache_ = text;
@@ -61,6 +91,7 @@ void DesktopApp::ShowDragHintWindow(POINT clientPoint, const std::wstring& text)
         HideDragHintWindow();
         return;
     }
+    SyncDragHintWindowOwner();
 
     POINT screenPoint = clientPoint;
     ClientToScreen(hwnd_, &screenPoint);
@@ -145,8 +176,11 @@ void DesktopApp::ShowDragHintWindow(POINT clientPoint, const std::wstring& text)
     blend.SourceConstantAlpha = 255;
     blend.AlphaFormat = AC_SRC_ALPHA;
 
-    UpdateLayeredWindow(hintHwnd_, screenDc, &windowPos, &windowSize, memoryDc, &sourcePoint, 0, &blend, ULW_ALPHA);
-    ShowWindow(hintHwnd_, SW_SHOWNOACTIVATE);
+    UpdateLayeredWindow(hintHwnd_, screenDc, &windowPos, &windowSize,
+        memoryDc, &sourcePoint, 0, &blend, ULW_ALPHA);
+    SetWindowPos(hintHwnd_, HWND_TOPMOST, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
+            SWP_NOOWNERZORDER | SWP_SHOWWINDOW);
 
     SelectObject(memoryDc, oldMFont);
     SelectObject(memoryDc, oldBmp);
@@ -168,6 +202,7 @@ void DesktopApp::ShowDragHintWindowScreen(POINT screenPoint, const std::wstring&
         HideDragHintWindow();
         return;
     }
+    SyncDragHintWindowOwner();
 
     HDC screenDc = GetDC(nullptr);
     HFONT font = CreateFontW(-15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
@@ -249,8 +284,11 @@ void DesktopApp::ShowDragHintWindowScreen(POINT screenPoint, const std::wstring&
     blend.SourceConstantAlpha = 255;
     blend.AlphaFormat = AC_SRC_ALPHA;
 
-    UpdateLayeredWindow(hintHwnd_, screenDc, &windowPos, &windowSize, memoryDc, &sourcePoint, 0, &blend, ULW_ALPHA);
-    ShowWindow(hintHwnd_, SW_SHOWNOACTIVATE);
+    UpdateLayeredWindow(hintHwnd_, screenDc, &windowPos, &windowSize,
+        memoryDc, &sourcePoint, 0, &blend, ULW_ALPHA);
+    SetWindowPos(hintHwnd_, HWND_TOPMOST, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
+            SWP_NOOWNERZORDER | SWP_SHOWWINDOW);
 
     SelectObject(memoryDc, oldMFont);
     SelectObject(memoryDc, oldBmp);

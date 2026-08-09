@@ -4,6 +4,9 @@
 
 void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
 {
+    if (renameController_.BlocksScrolling())
+        return;
+
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     ScreenToClient(hwnd_, &pt);
     int currentMods = 0;
@@ -42,6 +45,7 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
             }
             UpdateHostInputImePosition();
             InvalidateRect(hwnd_, nullptr, FALSE);
+            PresentDesktopPointerUpdate();
             return;
         }
         return;
@@ -55,7 +59,7 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
             int delta = GET_WHEEL_DELTA_WPARAM(wp);
             if (quickNavigationInitialJumpOpen_)
             {
-                InvalidateQuickNavigationWindow();
+                InvalidateQuickNavigationWindow(true);
                 return;
             }
             RECT tabs = GetQuickNavigationTabsRect(overlay);
@@ -81,7 +85,7 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
                 int maxScroll = GetQuickNavigationMaxScrollOffset(overlay);
                 quickNavigationScrollOffset_ = std::clamp(quickNavigationScrollOffset_ - delta / 2, 0, maxScroll);
             }
-            InvalidateQuickNavigationWindow();
+            InvalidateQuickNavigationWindow(true);
             return;
         }
     }
@@ -105,6 +109,7 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         else
             UpdateHostInputImePosition();
         InvalidateRect(hwnd_, nullptr, FALSE);
+        PresentDesktopPointerUpdate();
         return;
     }
 
@@ -122,6 +127,7 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         {
             refreshDragAfterScroll();
             InvalidateRect(hwnd_, nullptr, FALSE);
+            PresentDesktopPointerUpdate();
             return;
         }
     }
@@ -150,6 +156,7 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
                 UpdateMarqueeSelection(pt);
             refreshDragAfterScroll();
             InvalidateRect(hwnd_, nullptr, FALSE);
+            PresentDesktopPointerUpdate();
             return;
         }
     }
@@ -180,6 +187,7 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
                 refreshDragAfterScroll();
                 SaveLayoutSlots();
                 InvalidateRect(hwnd_, nullptr, FALSE);
+                PresentDesktopPointerUpdate();
                 return;
             }
         }
@@ -203,6 +211,7 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         refreshDragAfterScroll();
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, FALSE);
+        PresentDesktopPointerUpdate();
         return;
     }
 }

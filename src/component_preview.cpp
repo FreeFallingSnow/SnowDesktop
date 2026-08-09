@@ -460,7 +460,7 @@ void Window::CreateFormats()
 
 bool Window::Show(const Model& model, const RECT& menuBounds,
     HWND owner, UINT dpi, bool lightTheme, ApplyHandler onApply,
-    const RECT& itemBounds)
+    const RECT& itemBounds, modern_menu::Appearance appearance)
 {
     if (model.Empty())
     {
@@ -495,7 +495,7 @@ bool Window::Show(const Model& model, const RECT& menuBounds,
 
 bool Window::ScheduleShow(const Model& model, const RECT& menuBounds,
     HWND owner, UINT dpi, bool lightTheme, ApplyHandler onApply,
-    const RECT& itemBounds)
+    const RECT& itemBounds, modern_menu::Appearance appearance)
 {
     if (model.Empty())
     {

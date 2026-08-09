@@ -7,8 +7,36 @@ bool DesktopApp::CanRenameWidget(
         widget.showTitle;
 }
 
-RECT DesktopApp::GetVisibleCollectionItemBounds(size_t itemIndex) const
+size_t DesktopApp::ResolveRenameVisibilityWidgetIndex(
+    size_t widgetIndex) const
 {
+    if (widgetIndex >= widgets_.size())
+        return RenameController::InvalidIndex;
+
+    const DesktopWidget& widget = widgets_[widgetIndex];
+    if (widget.type == DesktopWidgetType::Collection)
+    {
+        const size_t groupIndex =
+            FindCollectionGroupIndexForChild(widget.id);
+        if (groupIndex < widgets_.size())
+            return groupIndex;
+    }
+    if (widget.type == DesktopWidgetType::FileCategories ||
+        widget.type == DesktopWidgetType::FolderMapping)
+    {
+        const size_t groupIndex =
+            FindFileGroupIndexForChild(widget.id);
+        if (groupIndex < widgets_.size())
+            return groupIndex;
+    }
+    return widgetIndex;
+}
+
+RECT DesktopApp::GetVisibleCollectionItemBounds(
+    size_t itemIndex, size_t* visibilityWidgetIndex) const
+{
+    if (visibilityWidgetIndex)
+        *visibilityWidgetIndex = RenameController::InvalidIndex;
     if (itemIndex >= items_.size()) return {};
     std::wstring key = ToUpperInvariant(items_[itemIndex].layoutKey);
 
@@ -25,7 +53,16 @@ RECT DesktopApp::GetVisibleCollectionItemBounds(size_t itemIndex) const
         {
             if (ToUpperInvariant(keys[i]) != key) continue;
             RECT rect = GetCollectionPopupItemRect(popup, i);
-            if (RectsIntersect(rect, content)) return rect;
+            if (RectsIntersect(rect, content))
+            {
+                if (visibilityWidgetIndex)
+                {
+                    *visibilityWidgetIndex =
+                        ResolveRenameVisibilityWidgetIndex(
+                            popupWidgetIndex_);
+                }
+                return rect;
+            }
         }
     }
 
@@ -37,7 +74,18 @@ RECT DesktopApp::GetVisibleCollectionItemBounds(size_t itemIndex) const
         {
             auto* icon = dynamic_cast<DesktopIcon*>(slot->GetItem());
             if (icon && icon->GetDesktopItem() == &items_[itemIndex])
+            {
+                if (visibilityWidgetIndex)
+                {
+                    const DesktopWidget* widget =
+                        wc->GetWidgetData();
+                    *visibilityWidgetIndex = widget
+                        ? ResolveRenameVisibilityWidgetIndex(
+                            FindWidgetIndexById(widget->id))
+                        : RenameController::InvalidIndex;
+                }
                 return slot->GetBounds();
+            }
         }
     }
     return {};

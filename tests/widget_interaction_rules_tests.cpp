@@ -535,6 +535,10 @@ void TestHoverOnlyWidgetVisibility()
         "selected hover-only widget remains visible");
     Check(
         visibilityRules::ShouldRenderWidget(
+            true, false, false, false, false, true, false),
+        "retained inner rename reveals hover-only widget");
+    Check(
+        visibilityRules::ShouldRenderWidget(
             true, false, false, false, false, false, true),
         "pointer hover reveals hover-only widget");
 }
@@ -570,6 +574,18 @@ void TestDesktopHoverDeactivation()
         !hoverRules::CanClearPassiveHover(
             false, false, false, true),
         "widget move or resize must survive foreground changes");
+    Check(
+        hoverRules::ShouldPresentSynchronously(
+            true, false),
+        "a desktop hover target transition must present in its pointer message");
+    Check(
+        hoverRules::ShouldPresentSynchronously(
+            false, true),
+        "a continuous Dock pointer surface must present movement synchronously");
+    Check(
+        !hoverRules::ShouldPresentSynchronously(
+            false, false),
+        "unchanged passive hover must not force an extra desktop frame");
 }
 
 void TestNestedWidgetScrolling()

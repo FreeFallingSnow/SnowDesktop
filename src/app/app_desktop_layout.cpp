@@ -86,8 +86,7 @@ void DesktopApp::RebuildContainersAndItems()
     containers_.clear();
     items_oo_.clear();
 
-    // Collect keys of items that belong to widgets; desktop icons that are
-    // collected by a widget or the Dock are kept off the desktop.
+    // Collect keys of items that belong to widgets.
     RefreshCollectedKeysCache();
     const auto& collectedKeys = collectedKeysCache_;
 
@@ -150,7 +149,7 @@ void DesktopApp::RebuildContainersAndItems()
         if (floatingDockContainer_)
             UpdateFloatingDockWindowBounds();
         else
-            CloseFloatingDock(true, true);
+            CloseFloatingDock();
     }
     RebindDragSourceAfterRebuild();
     if (wasDragging && !dragSession_.IsActive())

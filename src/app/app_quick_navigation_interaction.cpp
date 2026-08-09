@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../shortcut_application_rules.h"
 #include "quick_navigation_helpers.h"
 #include "quick_navigation_rules.h"
 
@@ -179,7 +180,8 @@ void DesktopApp::ToggleQuickNavigation()
     if (quickNavigationOpen_)
         CloseQuickNavigation();
     else
-        OpenQuickNavigation();
+        OpenQuickNavigation(
+            QuickNavigationInvocationSource::Hotkey);
 }
 
 /**
@@ -197,7 +199,9 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
     if (!PtInRect(&overlay, point))
     {
         CloseQuickNavigation();
-        return true;
+        // Outside dismissal is a notification, not ownership of the press.
+        // The same click must still be routed to the Dock/desktop target.
+        return false;
     }
 
     std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
@@ -314,18 +318,21 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
                 return true;
             }
 
-            const bool hasEverythingApp = FindQuickNavigationEverythingAppEntry() != nullptr;
-            if (hasEverythingApp)
+            const QuickNavigationAppEntry* everythingApp =
+                FindQuickNavigationEverythingAppEntry();
+            if (everythingApp)
             {
-                CloseQuickNavigation();
-                TryLaunchQuickNavigationEverythingApp();
+                CloseQuickNavigationThenLaunchApp(
+                    *everythingApp);
             }
             else
             {
-                CloseQuickNavigation();
-                ShellExecuteW(nullptr, L"open",
-                    L"https://www.voidtools.com/zh-cn/downloads/",
-                    nullptr, nullptr, SW_SHOWNORMAL);
+                CloseQuickNavigationThen(
+                    []() {
+                        ShellExecuteW(nullptr, L"open",
+                            L"https://www.voidtools.com/zh-cn/downloads/",
+                            nullptr, nullptr, SW_SHOWNORMAL);
+                    });
             }
             return true;
         }
@@ -341,8 +348,7 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
     if (TryGetQuickNavigationAppEntryAtPoint(point, appEntry) &&
         appEntry && appEntry->absolutePidl.get())
     {
-        CloseQuickNavigation();
-        LaunchQuickNavigationAppEntry(*appEntry);
+        CloseQuickNavigationThenLaunchApp(*appEntry);
         return true;
     }
 
@@ -350,9 +356,14 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
     if (TryGetQuickNavigationEverythingEntryAtPoint(point, everythingEntry) &&
         !everythingEntry.path.empty())
     {
-        CloseQuickNavigation();
-        ShellExecuteW(nullptr, L"open", everythingEntry.path.c_str(),
-            nullptr, nullptr, SW_SHOWNORMAL);
+        const std::wstring launchPath =
+            everythingEntry.path;
+        CloseQuickNavigationThen(
+            [launchPath]() {
+                ShellExecuteW(nullptr, L"open",
+                    launchPath.c_str(), nullptr, nullptr,
+                    SW_SHOWNORMAL);
+            });
         return true;
     }
 
@@ -366,15 +377,24 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
         if (clipped.bottom <= clipped.top || !PtInRect(&clipped, point)) continue;
 
         const QuickNavigationEntry entry = std::move(entries[i]);
-        CloseQuickNavigation();
         if (entry.kind == QuickNavigationEntry::Kind::DesktopItem &&
             entry.itemIndex != static_cast<size_t>(-1) && entry.itemIndex < items_.size())
         {
-            LaunchDesktopItem(entry.itemIndex, true);
+            const size_t itemIndex = entry.itemIndex;
+            CloseQuickNavigationThen(
+                [this, itemIndex]() {
+                    LaunchDesktopItem(itemIndex, true);
+                });
         }
         else if (entry.kind == QuickNavigationEntry::Kind::FolderEntry && !entry.path.empty())
         {
-            ShellExecuteW(nullptr, L"open", entry.path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            const std::wstring launchPath = entry.path;
+            CloseQuickNavigationThen(
+                [launchPath]() {
+                    ShellExecuteW(nullptr, L"open",
+                        launchPath.c_str(), nullptr, nullptr,
+                        SW_SHOWNORMAL);
+                });
         }
         return true;
     }
@@ -536,51 +556,131 @@ std::wstring DesktopApp::SanitizeShortcutFileStem(const std::wstring& name)
     return stem;
 }
 
-bool DesktopApp::IsApplicationsShellLinkTarget(IShellLinkW* shellLink)
+bool DesktopApp::IsApplicationsShellLinkTarget(
+    IShellLinkW* shellLink,
+    const std::wstring& shortcutPath)
 {
     if (!shellLink)
         return false;
 
-    PIDLIST_ABSOLUTE rawPidl = nullptr;
-    if (FAILED(shellLink->GetIDList(&rawPidl)) || !rawPidl)
-        return false;
+    namespace shortcutRules =
+        snowdesktop::shortcut_application_rules;
 
-    Pidl targetPidl;
-    targetPidl.reset(rawPidl);
-
-    bool result = false;
-    const std::wstring appsClsid = ToUpperInvariant(kDesktopIconClsidApplications);
-    const SIGDN names[] = {
-        SIGDN_DESKTOPABSOLUTEPARSING,
-        SIGDN_PARENTRELATIVEPARSING,
-        SIGDN_NORMALDISPLAY,
+    auto readProperty = [](
+        IPropertyStore* propertyStore,
+        REFPROPERTYKEY propertyKey) -> std::wstring
+    {
+        if (!propertyStore)
+            return {};
+        PROPVARIANT value{};
+        PropVariantInit(&value);
+        std::wstring result;
+        if (SUCCEEDED(propertyStore->GetValue(propertyKey, &value)) &&
+            value.vt == VT_LPWSTR && value.pwszVal)
+            result = value.pwszVal;
+        PropVariantClear(&value);
+        return result;
     };
-    for (SIGDN nameKind : names)
+
+    std::wstring appUserModelId;
+    std::wstring targetParsingPath;
+    ComPtr<IPropertyStore> propertyStore;
+    if (SUCCEEDED(shellLink->QueryInterface(IID_PPV_ARGS(&propertyStore))) &&
+        propertyStore)
     {
-        PWSTR parsingName = nullptr;
-        if (SUCCEEDED(SHGetNameFromIDList(targetPidl.get(), nameKind, &parsingName)) &&
-            parsingName)
-        {
-            std::wstring normalized = ToUpperInvariant(parsingName);
-            result = normalized.find(L"SHELL:APPSFOLDER") != std::wstring::npos ||
-                normalized.find(L"APPSFOLDER") != std::wstring::npos ||
-                normalized.find(appsClsid) != std::wstring::npos;
-        }
-        if (parsingName)
-            CoTaskMemFree(parsingName);
-        if (result)
-            return true;
+        appUserModelId = readProperty(
+            propertyStore.Get(), PKEY_AppUserModel_ID);
+        targetParsingPath = readProperty(
+            propertyStore.Get(), PKEY_Link_TargetParsingPath);
     }
 
-    SHFILEINFOW info{};
-    if (SHGetFileInfoW(reinterpret_cast<LPCWSTR>(targetPidl.get()), 0, &info, sizeof(info),
-        SHGFI_PIDL | SHGFI_TYPENAME) && info.szTypeName[0])
+    if (!shortcutPath.empty() &&
+        (appUserModelId.empty() || targetParsingPath.empty()))
     {
-        std::wstring typeName = ToUpperInvariant(info.szTypeName);
-        result = typeName == L"APPLICATION" || typeName == L"APPLICATIONS" ||
-            typeName == _LW("app.nav.app_label") || typeName == _LW("app.interact.app_title");
+        ComPtr<IShellItem2> shortcutItem;
+        if (SUCCEEDED(SHCreateItemFromParsingName(
+                shortcutPath.c_str(), nullptr,
+                IID_PPV_ARGS(&shortcutItem))) && shortcutItem)
+        {
+            PWSTR value = nullptr;
+            if (appUserModelId.empty() &&
+                SUCCEEDED(shortcutItem->GetString(
+                    PKEY_AppUserModel_ID, &value)) && value)
+                appUserModelId = value;
+            if (value)
+            {
+                CoTaskMemFree(value);
+                value = nullptr;
+            }
+            if (targetParsingPath.empty() &&
+                SUCCEEDED(shortcutItem->GetString(
+                    PKEY_Link_TargetParsingPath, &value)) && value)
+                targetParsingPath = value;
+            if (value)
+                CoTaskMemFree(value);
+        }
     }
-    return result;
+
+    wchar_t resolvedPath[32768]{};
+    shellLink->GetPath(
+        resolvedPath, static_cast<int>(std::size(resolvedPath)),
+        nullptr, 0);
+    wchar_t arguments[32768]{};
+    shellLink->GetArguments(
+        arguments, static_cast<int>(std::size(arguments)));
+
+    PIDLIST_ABSOLUTE rawPidl = nullptr;
+    Pidl targetPidl;
+    bool applicationsPidlTarget = false;
+    if (SUCCEEDED(shellLink->GetIDList(&rawPidl)) && rawPidl)
+    {
+        targetPidl.reset(rawPidl);
+        const SIGDN names[] = {
+            SIGDN_DESKTOPABSOLUTEPARSING,
+            SIGDN_PARENTRELATIVEPARSING,
+            SIGDN_NORMALDISPLAY,
+        };
+        for (SIGDN nameKind : names)
+        {
+            PWSTR parsingName = nullptr;
+            if (SUCCEEDED(SHGetNameFromIDList(
+                    targetPidl.get(), nameKind, &parsingName)) &&
+                parsingName)
+            {
+                applicationsPidlTarget =
+                    shortcutRules::LooksLikeApplicationsParsingName(
+                        parsingName);
+            }
+            if (parsingName)
+                CoTaskMemFree(parsingName);
+            if (applicationsPidlTarget)
+                break;
+        }
+
+        if (!applicationsPidlTarget)
+        {
+            SHFILEINFOW info{};
+            if (SHGetFileInfoW(
+                    reinterpret_cast<LPCWSTR>(targetPidl.get()), 0,
+                    &info, sizeof(info),
+                    SHGFI_PIDL | SHGFI_TYPENAME) && info.szTypeName[0])
+            {
+                const std::wstring typeName =
+                    ToUpperInvariant(info.szTypeName);
+                applicationsPidlTarget =
+                    typeName == L"APPLICATION" ||
+                    typeName == L"APPLICATIONS" ||
+                    typeName == ToUpperInvariant(
+                        _LW("app.nav.app_label")) ||
+                    typeName == ToUpperInvariant(
+                        _LW("app.interact.app_title"));
+            }
+        }
+    }
+
+    return shortcutRules::IsApplicationsShellLinkTarget(
+        resolvedPath, arguments, appUserModelId,
+        targetParsingPath, applicationsPidlTarget);
 }
 
 bool DesktopApp::CreateDesktopShortcutForShellLink(const std::wstring& displayName,
@@ -725,8 +825,7 @@ void DesktopApp::ShowQuickNavigationAppContextMenu(
     {
     case kAppOpen:
     {
-        CloseQuickNavigation();
-        LaunchQuickNavigationAppEntry(entry);
+        CloseQuickNavigationThenLaunchApp(entry);
         break;
     }
     case kAppCreateShortcut:
@@ -786,8 +885,16 @@ void DesktopApp::ShowQuickNavigationEverythingContextMenu(
     switch (command)
     {
     case kEverythingOpen:
-        ShellExecuteW(nullptr, L"open", entry.path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    {
+        const std::wstring launchPath = entry.path;
+        CloseQuickNavigationThen(
+            [launchPath]() {
+                ShellExecuteW(nullptr, L"open",
+                    launchPath.c_str(), nullptr, nullptr,
+                    SW_SHOWNORMAL);
+            });
         break;
+    }
     case kEverythingReveal:
         snowdesktop::item_location::Reveal(
             hwnd_, entry.path);

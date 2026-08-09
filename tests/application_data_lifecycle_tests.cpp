@@ -391,7 +391,9 @@ int main()
     }
 
     const auto sourceV1 = root / L"source-v1";
-    MakePackage(sourceV1, "1.0.0");
+    MakePackage(sourceV1, "1.0.0",
+        "3af4c6ab-15d3-4f2a-8b8c-80e57600a87d",
+        "\"ui.input\", \"network.http\"", "\"api.example.com\"");
     WidgetPackageValidator validator;
     PackageManifest manifest;
     auto report = validator.ValidateDirectory(sourceV1, &manifest);
@@ -509,14 +511,17 @@ int main()
         "installed package can be re-enabled");
 
     const auto sourceV2 = root / L"source-v2";
-    MakePackage(sourceV2, "1.1.0");
+    MakePackage(sourceV2, "1.1.0",
+        "3af4c6ab-15d3-4f2a-8b8c-80e57600a87d",
+        "\"ui.input\", \"network.http\"", "\"feeds.example.net\"");
     error.clear();
     Expect(manager.InstallDirectory(sourceV2, { "other-provider", "remote-42" },
         false, installed, report, error) == false,
         "silent cross-provider update is rejected");
     error.clear();
     Expect(manager.InstallDirectory(sourceV2, { "local", "package-test" },
-        false, installed, report, error), "same-source update installs");
+        false, installed, report, error),
+        "domain metadata changes do not require permission expansion");
     Expect(manager.Resolve(manifest.id)->manifest.version == "1.1.0",
         "new version becomes active");
 

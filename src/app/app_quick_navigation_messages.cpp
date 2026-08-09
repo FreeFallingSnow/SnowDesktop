@@ -5,6 +5,15 @@
 
 namespace
 {
+bool IsCurrentProcessWindow(HWND candidate)
+{
+    if (!candidate)
+        return false;
+    DWORD processId = 0;
+    GetWindowThreadProcessId(candidate, &processId);
+    return processId == GetCurrentProcessId();
+}
+
 bool IsWindowOwnedBy(
     HWND candidate, HWND expectedOwner)
 {
@@ -28,6 +37,15 @@ bool IsWindowOwnedBy(
 
 LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    struct NativeMenuPresentationScope final
+    {
+        DesktopApp& app;
+        ~NativeMenuPresentationScope()
+        {
+            app.FlushNativeMenuPresentation();
+        }
+    } nativeMenuPresentationScope{ *this };
+
     // Shell context menus send owner-draw and submenu messages to the
     // TrackPopupMenu owner. Quick Navigation owns menus opened from its
     // entries so it can stay active while the menu is visible.
@@ -69,7 +87,12 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
                     quickNavigationRect_.bottom,
                     quickNavigationAnimationAnchorPoint_.y)
             };
-            if (!PtInRect(&visible, point))
+            if (!snowdesktop::quick_navigation_rules::
+                    ShouldAcceptPointerHit(
+                        quickNavigationOpen_,
+                        point,
+                        quickNavigationRect_,
+                        visible))
                 return HTTRANSPARENT;
         }
         break;
@@ -106,6 +129,9 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
             if (!quickNavigationInitialJumpOpen_ &&
                 PtInRect(&scrollCol, appPoint))
             {
+                if (renameController_.BlocksScrolling())
+                    return 0;
+
                 RECT track{}, thumb{};
                 int maxScroll = 0, contentHeight = 0;
                 if (GetQuickNavigationScrollbarGeometry(quickNavigationRect_,
@@ -200,7 +226,8 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
         POINT clientPoint = screenPoint;
         if (screenPoint.x == -1 && screenPoint.y == -1)
         {
-            clientPoint = lastMousePoint_;
+            clientPoint =
+                quickNavigationLastMousePoint_;
             screenPoint = clientPoint;
             screenPoint.x -=
                 quickNavigationHostRect_.left;
@@ -227,8 +254,9 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
             pt.x + quickNavigationHostRect_.left,
             pt.y + quickNavigationHostRect_.top
         };
-        POINT previousMouse = lastMousePoint_;
-        lastMousePoint_ = appPoint;
+        POINT previousMouse =
+            quickNavigationLastMousePoint_;
+        quickNavigationLastMousePoint_ = appPoint;
         const bool keyboardHoverCleared =
             (previousMouse.x != appPoint.x ||
                 previousMouse.y != appPoint.y) &&
@@ -320,7 +348,8 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
     }
     case WM_MOUSELEAVE:
     {
-        lastMousePoint_ = { -1000000, -1000000 };
+        quickNavigationLastMousePoint_ = {
+            LONG_MIN, LONG_MIN };
         quickNavScrollbarHovered_ = false;
         quickNavigationPointerTarget_ = {};
         InvalidateQuickNavigationWindow(true);
@@ -436,7 +465,8 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
                     activatedWindow) ||
                 IsWindowOwnedBy(
                     activatedWindow,
-                    quickNavigationHwnd_);
+                    quickNavigationHwnd_) ||
+                IsCurrentProcessWindow(activatedWindow);
             if (!snowdesktop::quick_navigation_rules::
                     ShouldCloseOnDeactivate(
                         retainedInteraction))
@@ -480,6 +510,39 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
     auto* app = reinterpret_cast<DesktopApp*>(refData);
     if (!app) return DefSubclassProc(hwnd, message, wParam, lParam);
 
+    if (message == WM_NCHITTEST)
+    {
+        if (app->quickNavigationAnimation_.IsAnimating())
+            return HTTRANSPARENT;
+        const POINT desktopPoint{
+            GET_X_LPARAM(lParam) - app->virtualLeft_,
+            GET_Y_LPARAM(lParam) - app->virtualTop_
+        };
+        const RECT search = app->GetQuickNavigationSearchRect(
+            app->quickNavigationRect_);
+        const RECT targetEdit{
+            search.left + app->QuickNavScale(4),
+            search.top + app->QuickNavScale(6),
+            search.right - app->QuickNavScale(4),
+            search.bottom - app->QuickNavScale(4)
+        };
+        RECT animatedEdit{};
+        GetWindowRect(hwnd, &animatedEdit);
+        OffsetRect(
+            &animatedEdit,
+            -app->virtualLeft_,
+            -app->virtualTop_);
+        if (!snowdesktop::quick_navigation_rules::
+                ShouldAcceptPointerHit(
+                    app->quickNavigationOpen_,
+                    desktopPoint,
+                    targetEdit,
+                    animatedEdit))
+        {
+            return HTTRANSPARENT;
+        }
+    }
+
     if (message == WM_ACTIVATE && LOWORD(wParam) == WA_INACTIVE)
     {
         const HWND activatedWindow = reinterpret_cast<HWND>(lParam);
@@ -489,7 +552,8 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
                 activatedWindow) ||
             IsWindowOwnedBy(
                 activatedWindow,
-                app->quickNavigationHwnd_);
+                app->quickNavigationHwnd_) ||
+            IsCurrentProcessWindow(activatedWindow);
         if (snowdesktop::quick_navigation_rules::
                 ShouldCloseOnDeactivate(
                     retainedInteraction))

@@ -60,8 +60,14 @@ void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t memberIndex)
             widgets_[widgetIndex].folderEntries[memberIndex].name,
             widgets_[widgetIndex].folderEntries[memberIndex].isDirectory));
     SetFocus(renameEdit_);
-    interactionPinnedWidgetId_ = widgets_[widgetIndex].id;
-    InvalidateRect(hwnd_, nullptr, FALSE);
+    const size_t visibilityWidgetIndex =
+        ResolveRenameVisibilityWidgetIndex(widgetIndex);
+    if (visibilityWidgetIndex < widgets_.size())
+    {
+        interactionPinnedWidgetId_ =
+            widgets_[visibilityWidgetIndex].id;
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    }
 }
 
 bool DesktopApp::BeginDockAnchoredRename(
@@ -298,6 +304,10 @@ LRESULT CALLBACK DesktopApp::RenameEditSubclassProc(
 
     switch (message)
     {
+    case WM_MOUSEWHEEL:
+        if (app->renameController_.BlocksScrolling())
+            return 0;
+        break;
     case WM_ACTIVATE:
         if (app->renameController_.
                 IsQuickNavigationPresentation() &&

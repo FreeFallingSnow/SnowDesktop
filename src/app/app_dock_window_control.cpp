@@ -50,6 +50,7 @@ bool DesktopApp::RequestTrackedDockWindowClose(
     if (!root)
         root = window;
 
+    CancelDockWindowActivationObservation(root);
     dockPendingCloseWindows_[root] = GetTickCount64();
     if (RequestDockWindowClose(root))
         return true;

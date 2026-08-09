@@ -87,6 +87,14 @@ void DesktopApp::FinalizeFloatingDockBackdropCleanup(
     UINT_PTR commitToken)
 {
     if (commitToken != 0 &&
+        floatingDockDesktopCommitPending_ &&
+        commitToken == floatingDockBackdropCommitToken_)
+    {
+        floatingDockDesktopCommitPending_ = false;
+        FinishFloatingDockCloseHandoff();
+        return;
+    }
+    if (commitToken != 0 &&
         floatingDockRevealCommitPending_ &&
         commitToken == floatingDockBackdropCommitToken_)
     {
@@ -102,7 +110,6 @@ void DesktopApp::FinalizeFloatingDockBackdropCleanup(
     if (commitToken != 0 && floatingDockClosePending_)
     {
         floatingDockBackdropCleanupPending_ = false;
-        floatingDockClosePending_ = false;
         CompleteFloatingDockCloseHandoff();
         return;
     }
@@ -117,7 +124,10 @@ void DesktopApp::FinalizeFloatingDockBackdropCleanup(
         // The target can release its last full-size surface only after the
         // backdrop ownership transaction has completed. Releasing it in the
         // close call raced WinComp and exposed a one-frame glass hole.
-        const HRESULT hr = dcompDevice_->Commit();
+        CommitCompositionAnimationFrame();
+        const HRESULT hr = WaitForCompositionPresentation(
+                L"Floating Dock release surface")
+            ? S_OK : E_FAIL;
         if (FAILED(hr))
         {
             wchar_t message[160]{};
@@ -129,41 +139,25 @@ void DesktopApp::FinalizeFloatingDockBackdropCleanup(
     }
 }
 
-bool DesktopApp::WaitForDCompCommitWithFallback(
-    const wchar_t* diagnosticContext)
-{
-    const double waitStart =
-        snowdesktop::UiAnimationScheduler::
-            MonotonicMilliseconds();
-    HRESULT completionHr = dcompDevice_
-        ? dcompDevice_->WaitForCommitCompletion()
-        : E_UNEXPECTED;
-    if (FAILED(completionHr))
-        completionHr = DwmFlush();
-    uiAnimationScheduler_.RecordCommitDuration(
-        snowdesktop::UiAnimationScheduler::
-            MonotonicMilliseconds() - waitStart);
-    if (SUCCEEDED(completionHr))
-        return true;
-
-    wchar_t message[192]{};
-    wsprintfW(
-        message,
-        L"%s composition completion FAILED hr=0x%08X",
-        diagnosticContext ? diagnosticContext : L"Floating Dock",
-        static_cast<unsigned>(completionHr));
-    WriteDiagnosticLogEntry(message);
-    return false;
-}
-
 void DesktopApp::DestroyFloatingDockWindow()
 {
+    if (floatingDockHoverTailToken_)
+    {
+        uiAnimationScheduler_.Cancel(
+            floatingDockHoverTailToken_);
+        floatingDockHoverTailToken_ = 0;
+    }
+    floatingDockHoverTargetOwner_ = nullptr;
+    floatingDockHoverTargetIndex_ = 0;
+    floatingDockHoverTargetKind_ = 0;
     EndFloatingDockKeyboardSession(
         FloatingDockCloseFocusPolicy::PreserveCurrent);
     ++floatingDockBackdropCommitToken_;
     floatingDockBackdropCleanupPending_ = false;
     floatingDockRevealCommitPending_ = false;
+    floatingDockDesktopCommitPending_ = false;
     floatingDockClosePending_ = false;
+    floatingDockPostCloseAction_ = {};
     floatingDockPointerPresentPending_ = false;
     shellPopupMenuLayerDepth_ = 0;
     floatingDockHoverHandoffPending_ = false;
@@ -461,7 +455,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     }
     if (IsRectEmpty(&floatingDockSourceRect_))
     {
-        CloseFloatingDock(true, true);
+        CloseFloatingDock();
         return;
     }
     const bool dockGeometryChanged =
@@ -626,7 +620,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
             SetPopupTopmost(floatingLayerTopmost);
         floatingDockBackdropCompositor_.
             Reattach(floatingDockHwnd_);
-        WaitForDCompCommitWithFallback(
+        WaitForCompositionPresentation(
             L"Floating Dock source rect reattach");
     }
 

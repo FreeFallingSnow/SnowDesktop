@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../quick_navigation_rules.h"
 
 // Primary-button press handling and drag-source initialization.
 
@@ -186,11 +187,16 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             CloseCollectionPopup();
     }
 
+    const bool quickNavigationWasOpen =
+        quickNavigationOpen_;
     if (HandleQuickNavigationClick(pt))
     {
         mouseDown_ = false;
         return;
     }
+    const bool quickNavigationDismissedByThisPress =
+        quickNavigationWasOpen &&
+        !quickNavigationOpen_;
 
     if (HandlePageNavClick(pt)) return;
 
@@ -399,22 +405,25 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             if (dock->IsWindowsButtonPoint(pt))
             {
                 mouseDown_ = false;
-                ToggleWindowsStartMenu();
-                if (floatingDockVisible_)
-                    CloseFloatingDock(
-                        true, false,
-                        FloatingDockCloseFocusPolicy::PreserveCurrent);
+                CloseFloatingDockThen(
+                    [this]() {
+                        ToggleWindowsStartMenu();
+                    },
+                    true,
+                    FloatingDockCloseFocusPolicy::PreserveCurrent);
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
             }
             if (dock->IsSearchPoint(pt))
             {
                 mouseDown_ = false;
-                OpenQuickNavigation(true);
-                if (floatingDockVisible_)
-                    CloseFloatingDock(
-                        true, false,
-                        FloatingDockCloseFocusPolicy::PreserveCurrent);
+                if (snowdesktop::quick_navigation_rules::
+                        ShouldOpenFromDockSearchPress(
+                            quickNavigationDismissedByThisPress))
+                {
+                    OpenQuickNavigation(
+                        QuickNavigationInvocationSource::DockSearch);
+                }
                 return;
             }
             if (DockEntryItem* dockItem = dock->EntryAtPoint(pt))

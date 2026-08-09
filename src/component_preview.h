@@ -7,6 +7,8 @@
 #include <windows.h>
 #include <wrl/client.h>
 
+#include "modern_menu.h"
+
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -110,11 +112,15 @@ public:
 
     bool Show(const Model& model, const RECT& menuBounds,
         HWND owner, UINT dpi, bool lightTheme,
-        ApplyHandler onApply = {}, const RECT& itemBounds = {});
+        ApplyHandler onApply = {}, const RECT& itemBounds = {},
+        modern_menu::Appearance appearance =
+            modern_menu::Appearance::FollowSystem);
     /** Use the same dwell delay as opening a real menu submenu. */
     bool ScheduleShow(const Model& model, const RECT& menuBounds,
         HWND owner, UINT dpi, bool lightTheme,
-        ApplyHandler onApply = {}, const RECT& itemBounds = {});
+        ApplyHandler onApply = {}, const RECT& itemBounds = {},
+        modern_menu::Appearance appearance =
+            modern_menu::Appearance::FollowSystem);
     /** Delay dismissal long enough for the pointer to cross the menu gap. */
     void ScheduleHide();
     void Hide();

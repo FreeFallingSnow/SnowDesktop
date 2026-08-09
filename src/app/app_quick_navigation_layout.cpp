@@ -867,6 +867,29 @@ bool DesktopApp::LaunchQuickNavigationAppEntry(
     return true;
 }
 
+bool DesktopApp::CloseQuickNavigationThenLaunchApp(
+    const QuickNavigationAppEntry& entry)
+{
+    if (!entry.absolutePidl.get())
+        return false;
+
+    auto pending =
+        std::make_shared<QuickNavigationAppEntry>();
+    pending->name = entry.name;
+    pending->parsingName = entry.parsingName;
+    pending->systemIconIndex = entry.systemIconIndex;
+    pending->absolutePidl.reset(
+        ILClone(entry.absolutePidl.get()));
+    if (!pending->absolutePidl.get())
+        return false;
+
+    CloseQuickNavigationThen(
+        [this, pending]() {
+            LaunchQuickNavigationAppEntry(*pending);
+        });
+    return true;
+}
+
 size_t DesktopApp::GetQuickNavigationVisibleAppResultCount() const
 {
     if (quickNavigationAppsExpanded_)

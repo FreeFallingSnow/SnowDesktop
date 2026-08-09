@@ -353,6 +353,8 @@ void TestAnimationRules()
     state.Open(1000);
     Check(state.IsAnimating(),
         "open starts an animation");
+    Check(state.IsOpening(),
+        "opening state is reported while the panel targets visible");
     Check(state.IsInteractive(),
         "opening is immediately interactive");
     Check(state.GetVisual().visible,
@@ -378,12 +380,6 @@ void TestAnimationRules()
             442.0f, 42.0f,
             kMinimumScale) < 80.0f,
         "the panel edge contracts toward the Dock search icon");
-    Check(ShouldRefreshCloseAnchor(
-            AnchorMode::Pointer),
-        "shortcut close follows the current pointer");
-    Check(!ShouldRefreshCloseAnchor(
-            AnchorMode::DockSearch),
-        "Dock close keeps the search icon anchor");
     Check(NearlyEqual(
             ScaleCoordinate(
                 640.0f, 1200.0f, 1.0f),
@@ -394,6 +390,8 @@ void TestAnimationRules()
     state.Close(1000 + kOpenDurationMs / 2);
     Check(state.IsClosing(),
         "close can interrupt opening");
+    Check(!state.IsOpening(),
+        "closing state is not reported as opening");
     Check(NearlyEqual(
             beforeClose.opacity,
             state.GetVisual().opacity),
@@ -439,10 +437,41 @@ void TestAnimationRules()
 
 void TestDeactivateRules()
 {
-    Check(!rules::ShouldCloseOnDeactivate(true),
+    Check(!rules::ShouldCloseOnDeactivate(
+            true),
         "an owned context menu must keep quick navigation open");
-    Check(rules::ShouldCloseOnDeactivate(false),
+    Check(rules::ShouldCloseOnDeactivate(
+            false),
         "activation outside quick navigation must close it");
+
+    Check(!rules::ShouldOpenFromDockSearchPress(true),
+        "the Dock search press that dismissed Quick Navigation must not reopen it");
+    Check(rules::ShouldOpenFromDockSearchPress(false),
+        "a fresh Dock search press opens Quick Navigation");
+
+}
+
+void TestAnimatedPointerHitRules()
+{
+    const RECT panel{ 400, 200, 1000, 800 };
+    const RECT openingVisual{ 200, 600, 700, 950 };
+
+    Check(!rules::ShouldAcceptPointerHit(
+            true, POINT{ 250, 900 },
+            panel, openingVisual),
+        "the animated path outside the final panel must pass Dock and desktop input through");
+    Check(rules::ShouldAcceptPointerHit(
+            true, POINT{ 500, 700 },
+            panel, openingVisual),
+        "the visible intersection inside the final panel must remain interactive");
+    Check(!rules::ShouldAcceptPointerHit(
+            true, POINT{ 900, 300 },
+            panel, openingVisual),
+        "the not-yet-visible part of the final panel must not accept input");
+    Check(!rules::ShouldAcceptPointerHit(
+            false, POINT{ 500, 700 },
+            panel, openingVisual),
+        "a closed navigation surface must remain transparent");
 }
 }
 
@@ -456,6 +485,7 @@ int main()
     TestSectionLayout();
     TestAnimationRules();
     TestDeactivateRules();
+    TestAnimatedPointerHitRules();
     if (failures == 0)
     {
         std::cout

@@ -10,6 +10,7 @@
 #include "utils.h"
 #include "resource.h"
 #include "data_paths.h"
+#include "desktop_window_discovery_rules.h"
 
 #include <commoncontrols.h>
 #include <shellapi.h>
@@ -42,9 +43,27 @@
 BOOL CALLBACK FindDefViewProc(HWND hwnd, LPARAM lParam)
 {
     auto* search = reinterpret_cast<DefViewSearch*>(lParam);
+    if (search == nullptr)
+        return TRUE;
+
     HWND defView = FindWindowExW(hwnd, nullptr, L"SHELLDLL_DefView", nullptr);
     if (defView != nullptr)
     {
+        DWORD candidateProcessId = 0;
+        GetWindowThreadProcessId(defView, &candidateProcessId);
+        // ShellContextMenuSite creates a short-lived DefView in this process
+        // to support cascaded verbs. On Windows 10 that owned popup can appear
+        // before Explorer's WorkerW in EnumWindows. Treating it as the desktop
+        // host reparents the overlay into the menu site, so closing the menu
+        // destroys the complete custom desktop window.
+        if (!snowdesktop::desktop_window_discovery_rules::
+                IsExplorerDesktopViewProcess(
+                    candidateProcessId,
+                    search->shellProcessId))
+        {
+            return TRUE;
+        }
+
         search->defView = defView;
         search->parent = hwnd;
         return FALSE;
@@ -358,11 +377,33 @@ DesktopWindows FindDesktopWindows()
     }
 
     DefViewSearch search{};
+    HWND shellProcessWindow = result.progman;
+    if (shellProcessWindow == nullptr)
+        shellProcessWindow = GetShellWindow();
+    if (shellProcessWindow == nullptr)
+        shellProcessWindow = FindWindowW(L"Shell_TrayWnd", nullptr);
+    if (shellProcessWindow != nullptr)
+    {
+        GetWindowThreadProcessId(
+            shellProcessWindow, &search.shellProcessId);
+    }
+
     if (result.progman != nullptr)
     {
-        search.defView = FindWindowExW(result.progman, nullptr, L"SHELLDLL_DefView", nullptr);
-        if (search.defView != nullptr)
+        HWND directDefView = FindWindowExW(
+            result.progman, nullptr, L"SHELLDLL_DefView", nullptr);
+        DWORD candidateProcessId = 0;
+        if (directDefView != nullptr)
         {
+            GetWindowThreadProcessId(
+                directDefView, &candidateProcessId);
+        }
+        if (snowdesktop::desktop_window_discovery_rules::
+                IsExplorerDesktopViewProcess(
+                    candidateProcessId,
+                    search.shellProcessId))
+        {
+            search.defView = directDefView;
             search.parent = result.progman;
         }
     }

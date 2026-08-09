@@ -375,6 +375,17 @@ void TestCatalogMatrix(
                 language +
                     ": unexpected translation key " + key);
         }
+        for (const auto& [key, fallback] : english->second)
+        {
+            if (fallback.find("SnowDesktop") == std::string::npos)
+                continue;
+            const auto translation = catalog.find(key);
+            Check(translation != catalog.end() &&
+                    translation->second.find("SnowDesktop") !=
+                        std::string::npos,
+                language + ": " + key +
+                    ": the SnowDesktop product name must remain unchanged");
+        }
     }
 }
 
@@ -1144,11 +1155,48 @@ void TestRuntimeCatalogMatrix(
     const fs::path& languageDirectory,
     const std::map<std::string, Catalog>& catalogs)
 {
+    const std::vector<std::string> chineseLanguages{
+        "en-US", "zh-CN", "zh-TW"
+    };
+    Check(snowdesktop::localization::ResolveBestLanguage(
+            chineseLanguages, "zh-HK") == "zh-TW",
+        "traditional Chinese regions must prefer zh-TW");
+    Check(snowdesktop::localization::ResolveBestLanguage(
+            chineseLanguages, "zh-MO") == "zh-TW",
+        "Macau Chinese must prefer zh-TW");
+    Check(snowdesktop::localization::ResolveBestLanguage(
+            chineseLanguages, "zh-Hans-SG") == "zh-CN",
+        "simplified Chinese regions must prefer zh-CN");
+
     Locale& locale = Locale::Instance();
     locale.Init(languageDirectory.c_str());
     Check(locale.GetAvailableLanguages().size() ==
             catalogs.size(),
         "Locale must load every valid language catalog");
+    Check(locale.GetAvailableLanguages().size() < 2 ||
+            locale.GetAvailableLanguages()[0].code == "en-US",
+        "English must be the first selectable language");
+    Check(locale.GetAvailableLanguages().size() < 2 ||
+            locale.GetAvailableLanguages()[1].code == "zh-CN",
+        "Simplified Chinese must be the second selectable language");
+
+    locale.SetLanguage("zh-CN");
+    for (const LanguageInfo& language :
+        locale.GetAvailableLanguages())
+    {
+        const std::string localizedName =
+            locale.GetLocalizedLanguageName(language.code);
+        Check(!localizedName.empty() && localizedName != "???",
+            language.code + ": language name must be available in the current language");
+    }
+    const std::string koreanLanguageName =
+        locale.GetLocalizedLanguageName("ko-KR");
+    Check(koreanLanguageName == "韩语",
+        "language names must be localized in the active language: got " +
+            koreanLanguageName);
+    Check(locale.GetAvailableLanguages().empty() ||
+            locale.GetAvailableLanguages().at(4).displayName == "한국어",
+        "Korean must use a stable native language name");
 
     constexpr const char* arguments[]{
         "ARG0", "ARG1", "ARG2",

@@ -323,12 +323,21 @@ void DesktopApp::PrepareMenuIconsForPoint(POINT screenPoint)
         LoadPersonalization(
             GetPersonalizationPath().c_str(), appearance);
     menuAppearanceStyle_ = std::clamp(
-        appearance.contextMenuStyle, 0, 2);
-    menuLightTheme_ = menuAppearanceStyle_ == 1
-        ? true
-        : menuAppearanceStyle_ == 2
-            ? false
-            : IsWindowsAppLightThemeEnabled();
+        appearance.contextMenuStyle, 0, 4);
+    switch (menuAppearanceStyle_)
+    {
+    case 1:
+    case 3:
+        menuLightTheme_ = true;
+        break;
+    case 2:
+    case 4:
+        menuLightTheme_ = false;
+        break;
+    default:
+        menuLightTheme_ = IsWindowsAppLightThemeEnabled();
+        break;
+    }
 }
 
 void DesktopApp::SetMenuItemIcon(
@@ -590,6 +599,7 @@ UINT DesktopApp::ShowModernMenu(
     options.onCommand = std::move(onCommand);
     options.onTextChanged = std::move(onTextChanged);
     options.onHover = std::move(onHover);
+    ConfigureModernMenuEventPump(options);
     if (floatingDockVisible_ &&
         floatingDockHwnd_ &&
         IsWindow(floatingDockHwnd_))
@@ -659,6 +669,20 @@ UINT DesktopApp::ShowModernMenu(
         gridAdjustmentMenuAnchorValid_ = true;
     }
     return result.command;
+}
+
+void DesktopApp::ConfigureModernMenuEventPump(
+    snowdesktop::modern_menu::Options& options)
+{
+    options.eventPump.scheduledWorkHandle =
+        uiAnimationScheduler_.WaitHandle();
+    options.eventPump.dispatchScheduledWork = [this]() {
+        uiAnimationScheduler_.DispatchDue();
+    };
+    options.eventPump.flushPresentation = [this]() {
+        FlushPendingCompositionCommit();
+        FlushPendingQuickNavigationCompositionCommit();
+    };
 }
 
 void DesktopApp::ClearMenuIcons()

@@ -519,32 +519,6 @@ inline bool RequestDockWindowMinimize(HWND window)
 }
 
 /**
- * @brief 有界等待窗口真正退出最小化状态。
- *
- * ShowWindowAsync 只完成异步投递，IsIconic 必须由目标进程处理恢复命令后
- * 才会清除。无响应进程（例如挂起的求解器）永远无法处理 SW_RESTORE，窗口
- * 会一直保持最小化；此函数在有限时间内轮询验证恢复是否真的发生，超时视为
- * 失败。用于避免把失败的最小化恢复误报为成功。
- */
-inline bool WaitForDockWindowRestoreCompletion(
-    HWND window, ULONGLONG timeoutMilliseconds = 120)
-{
-    if (!window || !IsWindow(window))
-        return false;
-    const ULONGLONG start = GetTickCount64();
-    for (;;)
-    {
-        if (!IsWindow(window))
-            return false;
-        if (!IsIconic(window))
-            return true;
-        if (GetTickCount64() - start >= timeoutMilliseconds)
-            return false;
-        Sleep(8);
-    }
-}
-
-/**
  * @brief 判断对目标窗口执行同步激活是否安全。
  *
  * BringWindowToTop / SwitchToThisWindow 通过 SetWindowPos 同步等待目标

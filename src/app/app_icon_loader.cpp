@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../shortcut_application_rules.h"
 
 // Asynchronous icon-loading lifecycle.
 
@@ -61,14 +62,16 @@ void DesktopApp::StartIconLoader()
             bool isApplicationShortcut = false;
             if (task.phase == IconLoadPhase::Phase1)
             {
-                std::wstring upper = task.parsingName;
-                for (auto& c : upper) c = static_cast<wchar_t>(towupper(c));
-                const bool isLnk = upper.size() > 4 && upper.compare(upper.size() - 4, 4, L".LNK") == 0;
-                const bool isUrl = upper.size() > 4 && upper.compare(upper.size() - 4, 4, L".URL") == 0;
+                namespace shortcutRules =
+                    snowdesktop::shortcut_application_rules;
+                const bool isLnk = shortcutRules::HasExtension(
+                    task.parsingName, L".lnk");
+                const bool isUrl = shortcutRules::HasExtension(
+                    task.parsingName, L".url");
                 isShortcut = isLnk || isUrl;
                 if (isLnk)
                 {
-                    wchar_t lnkPath[MAX_PATH]{};
+                    wchar_t lnkPath[32768]{};
                     if (SHGetPathFromIDListW(task.absolutePidl.get(), lnkPath))
                     {
                         ComPtr<IShellLinkW> shellLink;
@@ -79,16 +82,18 @@ void DesktopApp::StartIconLoader()
                             if (SUCCEEDED(shellLink.As(&persistFile)) &&
                                 SUCCEEDED(persistFile->Load(lnkPath, STGM_READ)))
                             {
-                                if (!IsApplicationsShellLinkTarget(shellLink.Get()))
+                                if (!IsApplicationsShellLinkTarget(
+                                        shellLink.Get(), lnkPath))
                                 {
-                                    wchar_t target[MAX_PATH]{};
-                                    if (SUCCEEDED(shellLink->GetPath(target, MAX_PATH, nullptr, 0)) &&
+                                    wchar_t target[32768]{};
+                                    if (SUCCEEDED(shellLink->GetPath(
+                                            target, static_cast<int>(std::size(target)),
+                                            nullptr, 0)) &&
                                         target[0] != L'\0')
                                     {
-                                        std::wstring t(target);
-                                        for (auto& c : t) c = static_cast<wchar_t>(towupper(c));
                                         isApplicationShortcut =
-                                            t.size() >= 4 && t.compare(t.size() - 4, 4, L".EXE") == 0;
+                                            shortcutRules::HasExtension(
+                                                target, L".exe");
                                     }
                                 }
                                 else
@@ -98,6 +103,16 @@ void DesktopApp::StartIconLoader()
                             }
                         }
                     }
+                }
+                else if (isUrl)
+                {
+                    wchar_t url[32768]{};
+                    GetPrivateProfileStringW(
+                        L"InternetShortcut", L"URL", L"", url,
+                        static_cast<DWORD>(std::size(url)),
+                        task.parsingName.c_str());
+                    isApplicationShortcut =
+                        shortcutRules::IsSteamApplicationUrl(url);
                 }
             }
 

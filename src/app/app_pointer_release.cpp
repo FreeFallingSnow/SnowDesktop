@@ -68,6 +68,16 @@ void DesktopApp::ReconcileDesktopHoverState()
 
     const DWORD foregroundTick =
         dockForegroundChangedTick_.load();
+    if (foregroundTick != 0 &&
+        foregroundTick != desktopHoverForegroundObservedTick_)
+    {
+        // Foreground/minimize transitions can make Explorer restack the
+        // desktop content child without its separate backdrop sibling. A
+        // later hover repaired this incidentally through BeginFrame's
+        // SyncWindowPlacement; repair the pair immediately on the actual
+        // foreground event so glass never depends on another pointer move.
+        desktopBackdropCompositor_.Reattach(hwnd_);
+    }
     POINT cursorPoint{};
     if (TryGetDesktopHoverPointFromCursor(cursorPoint))
     {
@@ -277,43 +287,78 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
         return true;
     }
 
-    const auto prepareFloatingDockForWindowCommand =
-        [&]() {
-            if (!snowdesktop::dock_window_rules::
-                    MustCloseFloatingDockBeforeWindowCommand(
-                        floatingDockVisible_,
-                        pressedWindowAction))
+    const auto dispatchWindowCommand =
+        [this, pressedWindowAction](
+            std::function<bool(
+                DockWindowTransitionCapturePolicy)> command) {
+            if (!command)
                 return;
-            CloseFloatingDock(
-                true, true,
+            const bool requiresFloatingDockClose =
+                snowdesktop::dock_window_rules::
+                    RequiresFloatingDockMinimizeCaptureIsolation(
+                        floatingDockVisible_,
+                        pressedWindowAction);
+            if (!requiresFloatingDockClose &&
+                !floatingDockClosePending_)
+            {
+                command(DockWindowTransitionCapturePolicy::
+                    SnapshotPreferred);
+                return;
+            }
+
+            // A DWM thumbnail contains only the target HWND, so it can animate
+            // minimize without hiding the floating Dock. If registration is
+            // unavailable, retain the proven close-and-snapshot path.
+            if (requiresFloatingDockClose &&
+                !floatingDockClosePending_ &&
+                command(DockWindowTransitionCapturePolicy::
+                    LiveThumbnailOnly))
+            {
+                return;
+            }
+
+            CloseFloatingDockThen(
+                [command = std::move(command)]() mutable {
+                    command(DockWindowTransitionCapturePolicy::
+                        SnapshotPreferred);
+                },
+                true,
                 FloatingDockCloseFocusPolicy::PreserveCurrent);
-            // ShowWindow(SW_HIDE) 与 DComp 提交不在同一个时序域。等待
-            // 顶层 Dock 真正退出合成场景后再抓屏，避免快照残留 Dock。
-            DwmFlush();
         };
 
     if (!runningAppKey.empty())
     {
-        prepareFloatingDockForWindowCommand();
         const auto running = std::find_if(dockUnpinnedRunningApps_.begin(),
             dockUnpinnedRunningApps_.end(), [&](const DockRunningAppInfo& app) {
                 return app.identityKey == runningAppKey;
             });
         if (running != dockUnpinnedRunningApps_.end())
         {
-            ActivateOrToggleDockWindow(
-                running->window, pressedWindowAction,
-                pressedTargetWindow,
-                pressedAnchorScreen);
+            const HWND runningWindow = running->window;
+            dispatchWindowCommand(
+                [this, runningWindow, pressedWindowAction,
+                    pressedTargetWindow, pressedAnchorScreen](
+                    DockWindowTransitionCapturePolicy capturePolicy) {
+                    return ActivateOrToggleDockWindow(
+                        runningWindow, pressedWindowAction,
+                        pressedTargetWindow,
+                        pressedAnchorScreen,
+                        capturePolicy);
+                });
         }
     }
     else if (frequentItemIndex < items_.size())
     {
-        prepareFloatingDockForWindowCommand();
-        ActivateOrToggleDockItem(
-            frequentItemIndex, pressedWindowAction,
-            pressedTargetWindow,
-            pressedAnchorScreen);
+        dispatchWindowCommand(
+            [this, frequentItemIndex, pressedWindowAction,
+                pressedTargetWindow, pressedAnchorScreen](
+                DockWindowTransitionCapturePolicy capturePolicy) {
+                return ActivateOrToggleDockItem(
+                    frequentItemIndex, pressedWindowAction,
+                    pressedTargetWindow,
+                    pressedAnchorScreen,
+                    capturePolicy);
+            });
     }
     else if (entryType == DockEntryType::Collection)
     {
@@ -350,14 +395,19 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
     }
     else
     {
-        prepareFloatingDockForWindowCommand();
         const size_t itemIndex = FindItemIndexByKey(reference);
         if (itemIndex < items_.size())
         {
-            ActivateOrToggleDockItem(
-                itemIndex, pressedWindowAction,
-                pressedTargetWindow,
-                pressedAnchorScreen);
+            dispatchWindowCommand(
+                [this, itemIndex, pressedWindowAction,
+                    pressedTargetWindow, pressedAnchorScreen](
+                    DockWindowTransitionCapturePolicy capturePolicy) {
+                    return ActivateOrToggleDockItem(
+                        itemIndex, pressedWindowAction,
+                        pressedTargetWindow,
+                        pressedAnchorScreen,
+                        capturePolicy);
+                });
         }
     }
     return true;

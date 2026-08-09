@@ -4,14 +4,93 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <fstream>
 #include <sstream>
+#include <string_view>
 #include <unordered_set>
 #include <vector>
 
 namespace
 {
+    bool EqualsAsciiInsensitive(const std::string& left,
+        const std::string& right);
+
+    struct LanguageNameSet
+    {
+        std::string_view code;
+        std::string_view nativeName;
+        std::array<std::string_view, 10> localizedNames;
+    };
+
+    constexpr std::array<LanguageNameSet, 10> kLanguageNames{{
+        { "en-US", "English", {
+            "English", "英语", "英文", "英語", "영어", "Englisch", // l10n-allow: language-name table
+            "anglais", "inglés", "inglés", "inglês" } },
+        { "zh-CN", "中文（简体）", { // l10n-allow: language-name table
+            "Simplified Chinese", "简体中文", "簡體中文", "簡体字中国語", // l10n-allow: language-name table
+            "중국어(간체)", "Chinesisch (vereinfacht)", // l10n-allow: language-name table
+            "chinois simplifié", "chino simplificado", "chino simplificado", // l10n-allow: language-name table
+            "chinês simplificado" } }, // l10n-allow: language-name table
+        { "zh-TW", "中文（繁體）", { // l10n-allow: language-name table
+            "Traditional Chinese", "繁体中文", "繁體中文", "繁体字中国語", // l10n-allow: language-name table
+            "중국어(번체)", "Chinesisch (traditionell)", // l10n-allow: language-name table
+            "chinois traditionnel", "chino tradicional", "chino tradicional", // l10n-allow: language-name table
+            "chinês tradicional" } }, // l10n-allow: language-name table
+        { "ja-JP", "日本語", { // l10n-allow: language-name table
+            "Japanese", "日语", "日文", "日本語", "일본어", "Japanisch", // l10n-allow: language-name table
+            "japonais", "japonés", "japonés", "japonês" } },
+        { "ko-KR", "한국어", { // l10n-allow: language-name table
+            "Korean", "韩语", "韓文", "韓国語", "한국어", "Koreanisch", // l10n-allow: language-name table
+            "coréen", "coreano", "coreano", "coreano" } },
+        { "de-DE", "Deutsch", {
+            "German", "德语", "德文", "ドイツ語", "독일어", "Deutsch", // l10n-allow: language-name table
+            "allemand", "alemán", "alemán", "alemão" } },
+        { "fr-FR", "français", {
+            "French", "法语", "法文", "フランス語", "프랑스어", "Französisch", // l10n-allow: language-name table
+            "français", "francés", "francés", "francês" } },
+        { "es-ES", "español（España）", {
+            "Spanish (Spain)", "西班牙语（西班牙）", "西班牙文（西班牙）", // l10n-allow: language-name table
+            "スペイン語（スペイン）", "스페인어(스페인)", "Spanisch (Spanien)", // l10n-allow: language-name table
+            "espagnol (Espagne)", "español (España)", "español (España)",
+            "espanhol (Espanha)" } },
+        { "es-419", "español（Latinoamérica）", {
+            "Spanish (Latin America)", "西班牙语（拉丁美洲）", "西班牙文（拉丁美洲）", // l10n-allow: language-name table
+            "スペイン語（ラテンアメリカ）", "스페인어(라틴 아메리카)", // l10n-allow: language-name table
+            "Spanisch (Lateinamerika)", "espagnol (Amérique latine)",
+            "español (Latinoamérica)", "español (Latinoamérica)",
+            "espanhol (América Latina)" } },
+        { "pt-BR", "português（Brasil）", {
+            "Portuguese (Brazil)", "葡萄牙语（巴西）", "葡萄牙文（巴西）", // l10n-allow: language-name table
+            "ポルトガル語（ブラジル）", "포르투갈어(브라질)", // l10n-allow: language-name table
+            "Portugiesisch (Brasilien)", "portugais (Brésil)",
+            "portugués (Brasil)", "portugués (Brasil)",
+            "português (Brasil)" } },
+    }};
+
+    const LanguageNameSet* FindLanguageNameSet(
+        const std::string& code)
+    {
+        for (const LanguageNameSet& names : kLanguageNames)
+        {
+            if (EqualsAsciiInsensitive(std::string(names.code), code))
+                return &names;
+        }
+        return nullptr;
+    }
+
+    size_t LanguageNameIndex(const std::string& code)
+    {
+        for (size_t index = 0; index < kLanguageNames.size(); ++index)
+        {
+            if (EqualsAsciiInsensitive(
+                    std::string(kLanguageNames[index].code), code))
+                return index;
+        }
+        return kLanguageNames.size();
+    }
+
     std::string ReadFileUtf8(const std::wstring& path)
     {
         std::ifstream file(path, std::ios::binary);
@@ -68,6 +147,9 @@ namespace
 
     std::string NativeLanguageName(const std::string& code)
     {
+        if (const LanguageNameSet* names = FindLanguageNameSet(code))
+            return std::string(names->nativeName);
+
         std::wstring wideCode = Utf8ToWideStatic(code);
         wchar_t displayName[LOCALE_NAME_MAX_LENGTH]{};
         if (!wideCode.empty() &&
@@ -77,6 +159,14 @@ namespace
             return WideToUtf8Static(displayName);
         }
         return code;
+    }
+
+    size_t LanguageSortRank(const std::string& code)
+    {
+        const size_t index = LanguageNameIndex(code);
+        if (index == 0) return 0;
+        if (index == 1) return 1;
+        return index < kLanguageNames.size() ? index + 1 : 1000;
     }
 
     bool EqualsAsciiInsensitive(const std::string& left, const std::string& right)
@@ -180,8 +270,33 @@ void Locale::LoadAllLanguages()
 
     std::sort(availableLanguages_.begin(), availableLanguages_.end(),
         [](const LanguageInfo& left, const LanguageInfo& right) {
+            const size_t leftRank = LanguageSortRank(left.code);
+            const size_t rightRank = LanguageSortRank(right.code);
+            if (leftRank != rightRank)
+                return leftRank < rightRank;
             return left.code < right.code;
         });
+}
+
+std::string Locale::GetLocalizedLanguageName(
+    const std::string& language) const
+{
+    const LanguageNameSet* names = FindLanguageNameSet(language);
+    if (!names)
+        return language;
+
+    const LanguageNameSet* current =
+        FindLanguageNameSet(GetEffectiveLanguage());
+    if (!current)
+        return std::string(names->nativeName);
+
+    const size_t currentIndex = LanguageNameIndex(std::string(current->code));
+    if (currentIndex >= kLanguageNames.size())
+        return std::string(names->nativeName);
+
+    if (currentIndex >= names->localizedNames.size())
+        return std::string(names->nativeName);
+    return std::string(names->localizedNames[currentIndex]);
 }
 
 void Locale::LoadLanguage(const char* language)
@@ -218,18 +333,15 @@ std::string Locale::DetectSystemLanguage() const
 std::string Locale::ResolveLanguage(const std::string& lang) const
 {
     const std::string requested = lang == "system" ? DetectSystemLanguage() : lang;
+    std::vector<std::string> available;
+    available.reserve(availableLanguages_.size());
     for (const LanguageInfo& info : availableLanguages_)
-        if (EqualsAsciiInsensitive(info.code, requested))
-            return info.code;
+        available.push_back(info.code);
 
-    const size_t separator = requested.find('-');
-    const std::string base = requested.substr(0, separator);
-    for (const LanguageInfo& info : availableLanguages_)
-    {
-        const size_t candidateSeparator = info.code.find('-');
-        if (EqualsAsciiInsensitive(info.code.substr(0, candidateSeparator), base))
-            return info.code;
-    }
+    const std::string selected =
+        snowdesktop::localization::ResolveBestLanguage(available, requested);
+    if (!selected.empty()) return selected;
+
     if (catalogs_.contains("en-US"))
         return "en-US";
     return availableLanguages_.empty() ? std::string{} : availableLanguages_.front().code;

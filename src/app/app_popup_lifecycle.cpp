@@ -307,8 +307,21 @@ void DesktopApp::InvalidateCollectionPopupAnimation(
     {
         if (invalidateStaticScene)
         {
-            InvalidateRect(
-                hwnd_, nullptr, FALSE);
+            RECT dirty = popupRect_;
+            if (!IsRectEmptyRect(popupAnimationCacheRect_))
+            {
+                if (IsRectEmptyRect(dirty))
+                    dirty = popupAnimationCacheRect_;
+                else
+                    UnionRect(
+                        &dirty, &dirty,
+                        &popupAnimationCacheRect_);
+            }
+            if (!IsRectEmptyRect(dirty))
+            {
+                InflateRect(&dirty, 6, 6);
+                InvalidateRect(hwnd_, &dirty, FALSE);
+            }
         }
         else if (!(popupAnchoredToDock_ &&
                    floatingDockDesktopCopySuppressed_) &&
@@ -329,6 +342,16 @@ void DesktopApp::InvalidateCollectionPopupAnimation(
 
 void DesktopApp::FinalizeCloseCollectionPopup()
 {
+    RECT dirty = popupRect_;
+    if (!IsRectEmptyRect(popupAnimationCacheRect_))
+    {
+        if (IsRectEmptyRect(dirty))
+            dirty = popupAnimationCacheRect_;
+        else
+            UnionRect(
+                &dirty, &dirty,
+                &popupAnimationCacheRect_);
+    }
     popupAnimation_.ResetHidden();
     ResetCollectionPopupAnimationCache();
     if (popupWidgetIndex_ == static_cast<size_t>(-1) &&
@@ -360,7 +383,12 @@ void DesktopApp::FinalizeCloseCollectionPopup()
         InvalidateFloatingDockWindow(true);
     }
     InvalidateDragStaticScene();
-    InvalidateRect(hwnd_, nullptr, TRUE);
+    if (hwnd_ && IsWindow(hwnd_) &&
+        !IsRectEmptyRect(dirty))
+    {
+        InflateRect(&dirty, 6, 6);
+        InvalidateRect(hwnd_, &dirty, FALSE);
+    }
 }
 
 void DesktopApp::CloseCollectionPopup(
