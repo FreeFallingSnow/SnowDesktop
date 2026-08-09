@@ -25,6 +25,35 @@ inline constexpr Appearance ResolveForWindows(
     return lightTheme ? Appearance::OpaqueLight : Appearance::OpaqueDark;
 }
 
+inline Appearance ResolveForCurrentWindows(
+    Appearance requested, bool lightTheme)
+{
+    struct WindowsVersion
+    {
+        DWORD major = 0;
+        DWORD build = 0;
+    };
+    static const WindowsVersion current = [] {
+        using RtlGetVersionProc = LONG(WINAPI*)(OSVERSIONINFOW*);
+        const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+        const auto rtlGetVersion = ntdll
+            ? reinterpret_cast<RtlGetVersionProc>(
+                GetProcAddress(ntdll, "RtlGetVersion"))
+            : nullptr;
+        if (!rtlGetVersion)
+            return WindowsVersion{};
+
+        OSVERSIONINFOW version{};
+        version.dwOSVersionInfoSize = sizeof(version);
+        if (rtlGetVersion(&version) != 0)
+            return WindowsVersion{};
+        return WindowsVersion{
+            version.dwMajorVersion, version.dwBuildNumber };
+    }();
+    return ResolveForWindows(
+        requested, lightTheme, current.major, current.build);
+}
+
 inline constexpr bool IsLightTheme(
     Appearance appearance, bool followSystemLightTheme)
 {

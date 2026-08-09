@@ -1,7 +1,7 @@
 #include "component_preview.h"
 
 #include "menu_icon_render.h"
-#include "modern_menu.h"
+#include "modern_menu_appearance_rules.h"
 
 #include <dwmapi.h>
 #include <windowsx.h>
@@ -340,7 +340,7 @@ bool Window::EnsureCreated(HWND owner)
 
 bool Window::Show(const Model& model, const RECT& menuBounds,
     HWND owner, UINT dpi, bool lightTheme, ApplyHandler onApply,
-    const RECT& itemBounds)
+    const RECT& itemBounds, modern_menu::Appearance appearance)
 {
     if (model.Empty())
     {
@@ -362,11 +362,17 @@ bool Window::Show(const Model& model, const RECT& menuBounds,
     menuBounds_ = menuBounds;
     itemBounds_ = itemBounds;
     dpi_ = dpi ? dpi : USER_DEFAULT_SCREEN_DPI;
-    lightTheme_ = lightTheme;
+    const modern_menu::Appearance effectiveAppearance =
+        modern_menu::appearance_rules::ResolveForCurrentWindows(
+            appearance, lightTheme);
+    lightTheme_ = modern_menu::appearance_rules::IsLightTheme(
+        effectiveAppearance, lightTheme);
+    blurEnabled_ = modern_menu::appearance_rules::UsesSystemBlur(
+        effectiveAppearance);
     onApply_ = std::move(onApply);
     componentHovered_ = false;
     currentCard_ = std::min(currentCard_, model_.cards.size() - 1);
-    ApplyWindowAppearance(lightTheme_);
+    ApplyWindowAppearance();
     if (!RenderCurrent())
         return false;
     ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
@@ -375,7 +381,7 @@ bool Window::Show(const Model& model, const RECT& menuBounds,
 
 bool Window::ScheduleShow(const Model& model, const RECT& menuBounds,
     HWND owner, UINT dpi, bool lightTheme, ApplyHandler onApply,
-    const RECT& itemBounds)
+    const RECT& itemBounds, modern_menu::Appearance appearance)
 {
     if (model.Empty())
     {
@@ -387,6 +393,21 @@ bool Window::ScheduleShow(const Model& model, const RECT& menuBounds,
     const std::wstring identity = ModelIdentity(model);
     if (IsWindowVisible(hwnd_) && identity == modelIdentity_)
     {
+        const modern_menu::Appearance effectiveAppearance =
+            modern_menu::appearance_rules::ResolveForCurrentWindows(
+                appearance, lightTheme);
+        const bool resolvedLightTheme =
+            modern_menu::appearance_rules::IsLightTheme(
+                effectiveAppearance, lightTheme);
+        const bool resolvedBlur =
+            modern_menu::appearance_rules::UsesSystemBlur(
+                effectiveAppearance);
+        if (resolvedLightTheme != lightTheme_ ||
+            resolvedBlur != blurEnabled_)
+        {
+            return Show(model, menuBounds, owner, dpi, lightTheme,
+                std::move(onApply), itemBounds, appearance);
+        }
         KillTimer(hwnd_, kOpenTimer);
         KillTimer(hwnd_, kHideTimer);
         menuBounds_ = menuBounds;
@@ -401,6 +422,7 @@ bool Window::ScheduleShow(const Model& model, const RECT& menuBounds,
     pendingOwner_ = owner;
     pendingDpi_ = dpi;
     pendingLightTheme_ = lightTheme;
+    pendingAppearance_ = appearance;
     pendingOnApply_ = std::move(onApply);
     // A sibling submenu keeps its old contents visible until the new frame
     // is ready.  Starting a close timer here used to hide the old preview
@@ -773,8 +795,10 @@ bool Window::RenderCurrent()
     if (glyphFont) DeleteObject(glyphFont);
 
     const int radius = Scale(10, dpi_);
-    constexpr unsigned contentAlpha = 246;
-    const unsigned materialAlpha = lightTheme_ ? 70u : 76u;
+    const unsigned contentAlpha = blurEnabled_ ? 246u : 255u;
+    const unsigned materialAlpha = blurEnabled_
+        ? (lightTheme_ ? 70u : 76u)
+        : 255u;
     for (int y = 0; y < height_; ++y)
     {
         for (int x = 0; x < width_; ++x)
@@ -861,7 +885,7 @@ bool Window::PointerInsideMenuOrPreview() const
         PtInRect(&previewBounds, point);
 }
 
-void Window::ApplyWindowAppearance(bool lightTheme)
+void Window::ApplyWindowAppearance()
 {
     if (!hwnd_) return;
     static const HMODULE dwmModule = LoadLibraryW(L"dwmapi.dll");
@@ -873,9 +897,11 @@ void Window::ApplyWindowAppearance(bool lightTheme)
         ? reinterpret_cast<DwmExtendFrameIntoClientAreaFn>(
             GetProcAddress(dwmModule, "DwmExtendFrameIntoClientArea"))
         : nullptr;
-    const BOOL darkMode = lightTheme ? FALSE : TRUE;
-    const DWM_WINDOW_CORNER_PREFERENCE corner = DWMWCP_ROUND;
-    const DWM_SYSTEMBACKDROP_TYPE backdrop = DWMSBT_TRANSIENTWINDOW;
+    const BOOL darkMode = lightTheme_ ? FALSE : TRUE;
+    const DWM_WINDOW_CORNER_PREFERENCE corner = blurEnabled_
+        ? DWMWCP_ROUND : DWMWCP_DONOTROUND;
+    const DWM_SYSTEMBACKDROP_TYPE backdrop = blurEnabled_
+        ? DWMSBT_TRANSIENTWINDOW : DWMSBT_NONE;
     if (setDwmWindowAttribute)
     {
         setDwmWindowAttribute(hwnd_, DWMWA_USE_IMMERSIVE_DARK_MODE,
@@ -884,8 +910,18 @@ void Window::ApplyWindowAppearance(bool lightTheme)
             &corner, sizeof(corner));
         setDwmWindowAttribute(hwnd_, DWMWA_SYSTEMBACKDROP_TYPE,
             &backdrop, sizeof(backdrop));
+        const DWMNCRENDERINGPOLICY ncRendering = blurEnabled_
+            ? DWMNCRP_ENABLED : DWMNCRP_DISABLED;
+        setDwmWindowAttribute(hwnd_, DWMWA_NCRENDERING_POLICY,
+            &ncRendering, sizeof(ncRendering));
+        const COLORREF borderColor = blurEnabled_
+            ? DWMWA_COLOR_DEFAULT : DWMWA_COLOR_NONE;
+        setDwmWindowAttribute(hwnd_, DWMWA_BORDER_COLOR,
+            &borderColor, sizeof(borderColor));
     }
-    const MARGINS margins{ -1, -1, -1, -1 };
+    const MARGINS margins = blurEnabled_
+        ? MARGINS{ -1, -1, -1, -1 }
+        : MARGINS{};
     if (extendDwmFrame) extendDwmFrame(hwnd_, &margins);
 
     static const auto setWindowCompositionAttribute =
@@ -893,8 +929,19 @@ void Window::ApplyWindowAppearance(bool lightTheme)
             GetProcAddress(GetModuleHandleW(L"user32.dll"),
                 "SetWindowCompositionAttribute"));
     if (!setWindowCompositionAttribute) return;
-    const COLORREF tint = menu_icon::ResolvePalette(lightTheme).background;
-    const DWORD tintAlpha = lightTheme ? 0x58 : 0x60;
+    if (!blurEnabled_)
+    {
+        AccentPolicy accent;
+        accent.state = AccentState::Disabled;
+        WindowCompositionAttributeData data;
+        data.data = &accent;
+        data.size = sizeof(accent);
+        setWindowCompositionAttribute(hwnd_, &data);
+        return;
+    }
+    const COLORREF tint =
+        menu_icon::ResolvePalette(lightTheme_).background;
+    const DWORD tintAlpha = lightTheme_ ? 0x58 : 0x60;
     AccentPolicy accent;
     accent.state = AccentState::AcrylicBlurBehind;
     accent.flags = 2;
@@ -1041,7 +1088,8 @@ LRESULT CALLBACK Window::WindowProc(
                 self->Show(model, self->pendingMenuBounds_,
                     self->pendingOwner_, self->pendingDpi_,
                     self->pendingLightTheme_, std::move(handler),
-                    self->pendingItemBounds_);
+                    self->pendingItemBounds_,
+                    self->pendingAppearance_);
             }
         }
         else if (wParam == kHideTimer)

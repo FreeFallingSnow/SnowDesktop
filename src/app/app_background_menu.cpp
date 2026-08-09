@@ -1153,7 +1153,9 @@ void DesktopApp::ShowAddWidgetMenu(POINT screenPoint)
             previewWindow.Show(previewCache,
                 previewAnchor.popupScreenRect, hwnd_, menuIconDpi_,
                 menuLightTheme_, applyPreview,
-                previewAnchor.itemScreenRect);
+                previewAnchor.itemScreenRect,
+                static_cast<snowdesktop::modern_menu::Appearance>(
+                    menuAppearanceStyle_));
         }
         return true;
     };
@@ -1658,7 +1660,9 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             previewWindow.Show(previewCache,
                 previewAnchor.popupScreenRect, hwnd_, menuIconDpi_,
                 menuLightTheme_, applyPreview,
-                previewAnchor.itemScreenRect);
+                previewAnchor.itemScreenRect,
+                static_cast<snowdesktop::modern_menu::Appearance>(
+                    menuAppearanceStyle_));
         }
         return true;
     };

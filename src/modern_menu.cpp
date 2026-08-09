@@ -41,40 +41,10 @@ bool IsSelectable(const Item& item)
     return !item.separator && !item.textInput && item.enabled;
 }
 
-struct WindowsVersion
-{
-    DWORD major = 0;
-    DWORD build = 0;
-};
-
-WindowsVersion CurrentWindowsVersion()
-{
-    static const WindowsVersion current = [] {
-        using RtlGetVersionProc = LONG(WINAPI*)(OSVERSIONINFOW*);
-        const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
-        const auto rtlGetVersion = ntdll
-            ? reinterpret_cast<RtlGetVersionProc>(
-                GetProcAddress(ntdll, "RtlGetVersion"))
-            : nullptr;
-        if (!rtlGetVersion)
-            return WindowsVersion{};
-
-        OSVERSIONINFOW version{};
-        version.dwOSVersionInfoSize = sizeof(version);
-        if (rtlGetVersion(&version) != 0)
-            return WindowsVersion{};
-        return WindowsVersion{
-            version.dwMajorVersion, version.dwBuildNumber };
-    }();
-    return current;
-}
-
 Appearance ResolveEffectiveAppearance(const Options& options)
 {
-    const WindowsVersion version = CurrentWindowsVersion();
-    return appearance_rules::ResolveForWindows(
-        options.appearance, options.lightTheme,
-        version.major, version.build);
+    return appearance_rules::ResolveForCurrentWindows(
+        options.appearance, options.lightTheme);
 }
 
 // SetWindowCompositionAttribute is intentionally resolved dynamically: it is
