@@ -605,7 +605,7 @@ bool DesktopApp::CreateDesktopOverlayWindow()
         : GetDesktopWindow();
 
     hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP | WS_EX_LAYERED,
-        L"SnowDesktopWindow", L"SnowDesktop",
+        L"SnowDesktopWindow", L"SparkDesktop",
         WS_POPUP, virtualLeft_, virtualTop_, virtualWidth_, virtualHeight_,
         nullptr, nullptr, instance_, this);
     if (!hwnd_)

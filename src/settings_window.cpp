@@ -60,7 +60,7 @@ constexpr UINT kSettingsHotkeyCaptureIntervalMs = 16;
 constexpr float kSettingControlWidthDip = 300.0f;
 constexpr wchar_t kAutoStartRunSubKey[] =
     L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-constexpr wchar_t kAutoStartRunValue[] = L"SnowDesktop";
+constexpr wchar_t kAutoStartRunValue[] = L"SparkDesktop";
 constexpr DWORD kPortableAutoStartQueryIntervalMs = 2000;
 
 std::string CodepointToUtf8(unsigned int codepoint)
@@ -2261,7 +2261,7 @@ void SettingsWindow::DrawSystemTaskbarPage()
     {
         if (!RestartWindowsExplorer())
             MessageBoxW(hwnd_, _LW("app.interact.restart_explorer_fail"),
-                L"SnowDesktop", MB_OK | MB_ICONWARNING);
+                L"SparkDesktop", MB_OK | MB_ICONWARNING);
     }
 }
 
@@ -4858,11 +4858,6 @@ void SettingsWindow::DrawAboutPage()
     ImGui::TextWrapped("%s", _L("app.settings.about_description"));
 
     ImGui::Spacing();
-    ImGui::SeparatorText(_L("app.settings.author"));
-    ImGui::Spacing();
-    ImGui::Text("    逍遥飘雪（郭云哲）"); // l10n-allow: author name is intentionally fixed
-    ImGui::Spacing();
-
     ImGui::SeparatorText(_L("app.settings.copyright"));
     ImGui::Spacing();
     ImGui::TextWrapped("    %s", _L("app.settings.copyright_notice"));
@@ -4884,31 +4879,8 @@ void SettingsWindow::DrawAboutPage()
         }
     };
 
-    ImGui::SeparatorText(_L("app.settings.personal_homepages"));
-    ImGui::Spacing();
-    LinkButton("Bilibili", "https://space.bilibili.com/32837853");
-    ImGui::Dummy(ImVec2(0, 2));
-    LinkButton("GitHub", "https://github.com/FreeFallingSnow/");
-    ImGui::Dummy(ImVec2(0, 2));
-    LinkButton(_L("app.settings.douyin"), "https://www.douyin.com/user/MS4wLjABAAAA-O94bwF3BK2sj9JOwM2R2zRlTOiYf4BbaSyIF9DZPyM");
-    ImGui::Dummy(ImVec2(0, 2));
-    LinkButton(_L("app.settings.xiaohongshu"), "https://www.xiaohongshu.com/user/profile/6819eed7000000000403bf0e");
-
-    ImGui::Spacing();
-    ImGui::SeparatorText(_L("app.settings.project_url"));
-    ImGui::Spacing();
-    LinkButton("GitHub (Release)", "https://github.com/FreeFallingSnow/SnowDesktop_Release");
-    ImGui::Dummy(ImVec2(0, 2));
-    LinkButton("GitHub (Source)", "https://github.com/FreeFallingSnow/SnowDesktop");
-
-    ImGui::Spacing();
-    ImGui::SeparatorText(_L("app.settings.community"));
-    ImGui::Spacing();
-    LinkButton(_L("app.settings.join_qq"), "https://qm.qq.com/q/HyazkCIRig");
-
-    ImGui::Spacing();
     ImGui::SeparatorText(_L("app.settings.version"));
-    ImGui::TextDisabled("SnowDesktop v" SNOWDESKTOP_VERSION);
+    ImGui::TextDisabled("SparkDesktop v" SNOWDESKTOP_VERSION);
     if (ImGui::IsItemClicked())
     {
         if (!debugUnlocked_)
@@ -5701,7 +5673,7 @@ bool SettingsWindow::IsAutoStartEnabled() const
     wchar_t value[256]{};
     DWORD size = sizeof(value);
     DWORD type = REG_SZ;
-    LONG result = RegQueryValueExW(key, L"SnowDesktop", nullptr, &type,
+    LONG result = RegQueryValueExW(key, L"SparkDesktop", nullptr, &type,
         reinterpret_cast<BYTE*>(value), &size);
     RegCloseKey(key);
     return result == ERROR_SUCCESS;

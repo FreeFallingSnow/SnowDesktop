@@ -58,8 +58,8 @@ set(SNOWDESKTOP_VERSION_RESOURCE_DIR
     "${CMAKE_BINARY_DIR}/generated/version")
 file(MAKE_DIRECTORY "${SNOWDESKTOP_VERSION_RESOURCE_DIR}")
 
-set(SNOWDESKTOP_FILE_DESCRIPTION "SnowDesktop")
-set(SNOWDESKTOP_ORIGINAL_FILENAME "SnowDesktop.exe")
+set(SNOWDESKTOP_FILE_DESCRIPTION "SparkDesktop")
+set(SNOWDESKTOP_ORIGINAL_FILENAME "SparkDesktop.exe")
 set(SNOWDESKTOP_FILE_TYPE "VFT_APP")
 set(SNOWDESKTOP_LEGAL_COPYRIGHT
     "Copyright (c) SnowDesktop contributors; portions copyright (c) TranslucentTB contributors")
@@ -82,7 +82,7 @@ configure_file(
     "${SNOWDESKTOP_TASKBAR_HOOK_VERSION_RESOURCE}"
     @ONLY)
 
-message(STATUS "SnowDesktop version: ${SNOWDESKTOP_VERSION}")
+message(STATUS "SparkDesktop version: ${SNOWDESKTOP_VERSION}")
 
 set(SNOWDESKTOP_SOURCES
     src/main.cpp
@@ -414,6 +414,7 @@ add_executable(SnowDesktop WIN32
     src/resource.rc
     "${SNOWDESKTOP_EXE_VERSION_RESOURCE}"
 )
+set_target_properties(SnowDesktop PROPERTIES OUTPUT_NAME "SparkDesktop")
 if (TARGET SnowDesktopTaskbarHook)
     add_dependencies(SnowDesktop SnowDesktopTaskbarHook SnowDesktopCppWinRT)
     target_include_directories(SnowDesktop PRIVATE "${CPPWINRT_OUTPUT_DIR}")

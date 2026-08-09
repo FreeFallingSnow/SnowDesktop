@@ -13,8 +13,8 @@ if not "%~1"=="" (
 )
 
 if defined RELOAD_SHELL (
-    echo WARNING: --reload-shell stops SnowDesktop and restarts Explorer.
-    taskkill /f /im SnowDesktop.exe >nul 2>&1
+    echo WARNING: --reload-shell stops SparkDesktop and restarts Explorer.
+    taskkill /f /im SparkDesktop.exe >nul 2>&1
     tasklist /fi "IMAGENAME eq explorer.exe" /nh 2>nul | find /i "explorer.exe" >nul
     if not errorlevel 1 (
         taskkill /f /im explorer.exe >nul 2>&1
@@ -24,9 +24,9 @@ if defined RELOAD_SHELL (
     goto configure
 )
 
-tasklist /fi "IMAGENAME eq SnowDesktop.exe" /nh 2>nul | find /i "SnowDesktop.exe" >nul
+tasklist /fi "IMAGENAME eq SparkDesktop.exe" /nh 2>nul | find /i "SparkDesktop.exe" >nul
 if not errorlevel 1 (
-    echo Build preflight stopped: SnowDesktop.exe is running.
+    echo Build preflight stopped: SparkDesktop.exe is running.
     echo Exit SnowDesktop normally before building.
     exit /b 3
 )
@@ -46,14 +46,14 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 echo.
-echo === Building SnowDesktop.exe (Debug) ===
+echo === Building SparkDesktop.exe (Debug) ===
 cmake --build --preset debug
 if %ERRORLEVEL% NEQ 0 (
-    echo SnowDesktop build FAILED
+    echo SparkDesktop build FAILED
     exit /b 1
 )
 
 echo.
 echo === Build complete ===
-echo SnowDesktop.exe: .build_debug\Debug\SnowDesktop.exe
+echo SparkDesktop.exe: .build_debug\Debug\SparkDesktop.exe
 exit /b 0

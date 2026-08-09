@@ -92,7 +92,7 @@ function Copy-Payload {
     param([Parameter(Mandatory = $true)][string]$Destination)
 
     $requiredFiles = @(
-        (Join-Path $buildOutput "SnowDesktop.exe"),
+        (Join-Path $buildOutput "SparkDesktop.exe"),
         (Join-Path $buildOutput "SnowDesktopTaskbarHook.dll"),
         (Join-Path $repositoryRoot "LICENSE"),
         (Join-Path $repositoryRoot "THIRD_PARTY_NOTICES.md"),

@@ -40,7 +40,7 @@ bool TrayIconController::Add(HWND owner, bool force)
     data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     data.uCallbackMessage = kTrayCallbackMessage;
     data.hIcon = icon_;
-    wcscpy_s(data.szTip, L"SnowDesktop");
+    wcscpy_s(data.szTip, L"SparkDesktop");
     if (!Shell_NotifyIconW(NIM_ADD, &data))
         return false;
 

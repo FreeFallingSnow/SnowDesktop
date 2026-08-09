@@ -7,9 +7,9 @@ REM folder under release\ (exe + hook DLL + docs + widgets + lang only; no
 REM intermediate build files). The release\ folder is git-ignored.
 
 REM -- Preflight: do not build while SnowDesktop is running --
-tasklist /fi "IMAGENAME eq SnowDesktop.exe" /nh 2>nul | find /i "SnowDesktop.exe" >nul
+tasklist /fi "IMAGENAME eq SparkDesktop.exe" /nh 2>nul | find /i "SparkDesktop.exe" >nul
 if not errorlevel 1 (
-    echo Build preflight stopped: SnowDesktop.exe is running.
+    echo Build preflight stopped: SparkDesktop.exe is running.
     echo Exit SnowDesktop normally before building.
     exit /b 3
 )
@@ -38,10 +38,10 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 echo.
-echo === Building SnowDesktop.exe and SnowDesktopTaskbarHook.dll (Release) ===
+echo === Building SparkDesktop.exe and SnowDesktopTaskbarHook.dll (Release) ===
 cmake --build .build --target SnowDesktop SnowDesktopTaskbarHook --parallel 2
 if %ERRORLEVEL% NEQ 0 (
-    echo SnowDesktop build FAILED
+    echo SparkDesktop build FAILED
     exit /b 1
 )
 
@@ -50,8 +50,8 @@ set "STAGE=release"
 if exist "%STAGE%" rmdir /s /q "%STAGE%"
 mkdir "%STAGE%\licenses" >nul
 
-copy /y ".build\SnowDesktop.exe" "%STAGE%\" >nul
-if %ERRORLEVEL% NEQ 0 ( echo Missing SnowDesktop.exe & exit /b 1 )
+copy /y ".build\SparkDesktop.exe" "%STAGE%\" >nul
+if %ERRORLEVEL% NEQ 0 ( echo Missing SparkDesktop.exe & exit /b 1 )
 copy /y ".build\SnowDesktopTaskbarHook.dll" "%STAGE%\" >nul
 if %ERRORLEVEL% NEQ 0 ( echo Missing SnowDesktopTaskbarHook.dll & exit /b 1 )
 
@@ -66,7 +66,7 @@ xcopy /e /i /y "skill" "%STAGE%\skill" >nul
 
 echo.
 echo === Release build complete ===
-echo SnowDesktop.exe:   %STAGE%\SnowDesktop.exe
+echo SparkDesktop.exe:   %STAGE%\SparkDesktop.exe
 echo Taskbar hook:     %STAGE%\SnowDesktopTaskbarHook.dll
 echo Widgets:          %STAGE%\widgets
 echo Languages:        %STAGE%\lang

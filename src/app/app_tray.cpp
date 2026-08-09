@@ -180,7 +180,7 @@ void DesktopApp::ShowTrayMenu(POINT screenPoint)
         if (!RestartWindowsExplorer())
             MessageBoxW(controlHwnd_ ? controlHwnd_ : hwnd_,
                 _LW("app.interact.restart_explorer_fail"),
-                L"SnowDesktop", MB_OK | MB_ICONWARNING);
+                L"SparkDesktop", MB_OK | MB_ICONWARNING);
         break;
     case kTrayExitCommand:
         if (settingsWindow_)

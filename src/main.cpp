@@ -379,7 +379,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
     {
         wchar_t diagnostic[160]{};
         swprintf_s(diagnostic,
-            L"SnowDesktop: single-instance lock failed (error %lu).\n",
+            L"SparkDesktop: single-instance lock failed (error %lu).\n",
             singleInstance.LastError());
         OutputDebugStringW(diagnostic);
         return static_cast<int>(singleInstance.LastError());

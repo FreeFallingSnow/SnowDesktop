@@ -136,7 +136,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     }
 
     hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP | WS_EX_LAYERED,
-        wc.lpszClassName, L"SnowDesktop",
+        wc.lpszClassName, L"SparkDesktop",
         WS_POPUP, virtualLeft_, virtualTop_, virtualWidth_, virtualHeight_,
         nullptr, nullptr, instance, this);
     if (!hwnd_) { WriteDiagnosticLogEntry(L"CreateWindow FAILED"); return __LINE__; }
