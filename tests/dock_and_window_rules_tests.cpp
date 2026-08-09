@@ -15,6 +15,7 @@
 #include "dock_settings_rules.h"
 #include "desktop_item_reference_migration.h"
 #include "app/desktop_backdrop_update_rules.h"
+#include "desktop_window_discovery_rules.h"
 #include "floating_dock_rules.h"
 #include "display_topology_refresh.h"
 #include "widget_spacing_rules.h"
@@ -80,6 +81,21 @@ int main()
         snowdesktop::display_topology_refresh;
     namespace backdropUpdate =
         snowdesktop::desktop_backdrop_update_rules;
+    namespace desktopWindowDiscovery =
+        snowdesktop::desktop_window_discovery_rules;
+
+    Check(
+        desktopWindowDiscovery::IsExplorerDesktopViewProcess(
+            4120, 4120),
+        "desktop discovery must accept Explorer-owned DefView windows");
+    Check(
+        !desktopWindowDiscovery::IsExplorerDesktopViewProcess(
+            7280, 4120) &&
+        !desktopWindowDiscovery::IsExplorerDesktopViewProcess(
+            0, 4120) &&
+        !desktopWindowDiscovery::IsExplorerDesktopViewProcess(
+            4120, 0),
+        "desktop discovery must reject transient in-process Shell views");
 
     const RECT backdropClientRect{0, 0, 1920, 1080};
     const RECT fullBackdropUpdate{0, 0, 1920, 1080};
