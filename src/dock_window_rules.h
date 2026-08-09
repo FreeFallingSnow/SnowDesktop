@@ -200,20 +200,20 @@ constexpr bool NeedsDockWindowSwitchFallback(
 }
 
 /**
- * @brief 顶层浮动 Dock 必须在窗口命令和抓帧之前退出合成场景。
+ * @brief 判断顶层浮动 Dock 是否必须在窗口命令和抓帧之前退出合成场景。
  *
  * 最小化会立即捕获目标窗口所在的屏幕区域。如果浮动 Dock 仍在顶层，
  * 它会作为覆盖层被写入快照。关闭并同步合成后再执行窗口命令，才能
- * 捕获被 Dock 遮挡位置下方的真实窗口内容。
+ * 捕获被 Dock 遮挡位置下方的真实窗口内容。恢复复用已有窗口快照或
+ * DWM 窗口缩略图，不会重新截取桌面；与单纯置前一样保持悬浮 Dock，
+ * 可以避免无意义的所有权交接和第二次玻璃重绘。
  */
 constexpr bool MustCloseFloatingDockBeforeWindowCommand(
     bool floatingDockVisible,
     DockClickAction action) noexcept
 {
     return floatingDockVisible &&
-        (action == DockClickAction::Activate ||
-         action == DockClickAction::Minimize ||
-         action == DockClickAction::Restore);
+        action == DockClickAction::Minimize;
 }
 
 /**

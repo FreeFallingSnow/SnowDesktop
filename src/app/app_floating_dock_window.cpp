@@ -87,6 +87,14 @@ void DesktopApp::FinalizeFloatingDockBackdropCleanup(
     UINT_PTR commitToken)
 {
     if (commitToken != 0 &&
+        floatingDockDesktopCommitPending_ &&
+        commitToken == floatingDockBackdropCommitToken_)
+    {
+        floatingDockDesktopCommitPending_ = false;
+        FinishFloatingDockCloseHandoff();
+        return;
+    }
+    if (commitToken != 0 &&
         floatingDockRevealCommitPending_ &&
         commitToken == floatingDockBackdropCommitToken_)
     {
@@ -102,7 +110,6 @@ void DesktopApp::FinalizeFloatingDockBackdropCleanup(
     if (commitToken != 0 && floatingDockClosePending_)
     {
         floatingDockBackdropCleanupPending_ = false;
-        floatingDockClosePending_ = false;
         CompleteFloatingDockCloseHandoff();
         return;
     }
@@ -118,7 +125,8 @@ void DesktopApp::FinalizeFloatingDockBackdropCleanup(
         // backdrop ownership transaction has completed. Releasing it in the
         // close call raced WinComp and exposed a one-frame glass hole.
         CommitCompositionAnimationFrame();
-        const HRESULT hr = FlushPendingCompositionCommit()
+        const HRESULT hr = WaitForCompositionPresentation(
+                L"Floating Dock release surface")
             ? S_OK : E_FAIL;
         if (FAILED(hr))
         {
@@ -147,7 +155,9 @@ void DesktopApp::DestroyFloatingDockWindow()
     ++floatingDockBackdropCommitToken_;
     floatingDockBackdropCleanupPending_ = false;
     floatingDockRevealCommitPending_ = false;
+    floatingDockDesktopCommitPending_ = false;
     floatingDockClosePending_ = false;
+    floatingDockPostCloseAction_ = {};
     floatingDockPointerPresentPending_ = false;
     shellPopupMenuLayerDepth_ = 0;
     floatingDockHoverHandoffPending_ = false;
@@ -445,7 +455,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     }
     if (IsRectEmpty(&floatingDockSourceRect_))
     {
-        CloseFloatingDock(true, true);
+        CloseFloatingDock();
         return;
     }
     const bool dockGeometryChanged =
@@ -610,7 +620,8 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
             SetPopupTopmost(floatingLayerTopmost);
         floatingDockBackdropCompositor_.
             Reattach(floatingDockHwnd_);
-        FlushPendingCompositionCommit();
+        WaitForCompositionPresentation(
+            L"Floating Dock source rect reattach");
     }
 
     if (!floatingDockBackdropCompositor_.IsAvailable())

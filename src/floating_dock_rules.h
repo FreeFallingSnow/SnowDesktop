@@ -354,6 +354,22 @@ inline bool ShouldRenderFloatingDockFrame(
 }
 
 /**
+ * @brief 仅当两个 Dock 之间已不存在任何可见或待完成的交接时执行后续动作。
+ *
+ * 最小化等延后命令会抓取或改变桌面画面；只检查逻辑 visible 会在
+ * 异步合成回调尚未完成时提前执行，因此还必须检查待完成状态与 HWND。
+ */
+inline bool CanRunPostCloseActionImmediately(
+    bool floatingDockVisible,
+    bool closePending,
+    bool floatingDockWindowVisible)
+{
+    return !floatingDockVisible &&
+        !closePending &&
+        !floatingDockWindowVisible;
+}
+
+/**
  * @brief 浮动层接收鼠标时，其 hover 帧只应提交到浮动窗口。
  *
  * 顶层 Dock 已替代对应的桌面 Dock；继续让每个浮动 WM_MOUSEMOVE 排队

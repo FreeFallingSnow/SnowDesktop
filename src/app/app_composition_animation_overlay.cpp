@@ -253,6 +253,35 @@ bool DesktopApp::FlushPendingCompositionCommit()
     return false;
 }
 
+bool DesktopApp::WaitForCompositionPresentation(
+    const wchar_t* diagnosticContext)
+{
+    if (!FlushPendingCompositionCommit())
+        return false;
+
+    const double waitStart =
+        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+    HRESULT completionHr = dcompDevice_
+        ? dcompDevice_->WaitForCommitCompletion()
+        : E_UNEXPECTED;
+    if (FAILED(completionHr))
+        completionHr = DwmFlush();
+    uiAnimationScheduler_.RecordCommitDuration(
+        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() -
+        waitStart);
+    if (SUCCEEDED(completionHr))
+        return true;
+
+    wchar_t message[192]{};
+    wsprintfW(
+        message,
+        L"%s composition completion FAILED hr=0x%08X",
+        diagnosticContext ? diagnosticContext : L"Dock handoff",
+        static_cast<unsigned>(completionHr));
+    WriteDiagnosticLogEntry(message);
+    return false;
+}
+
 bool DesktopApp::CommitQuickNavigationCompositionFrame()
 {
     if (!quickNavDcompDevice_)

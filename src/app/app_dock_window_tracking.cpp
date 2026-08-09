@@ -708,37 +708,59 @@ void DesktopApp::ActivateDockWindowFromPreviewAnimated(HWND window)
             ResolveDockWindowPreviewClickAction(
                 IsIconic(target) != FALSE,
                 windowForeground);
-    // Mirror the Dock-icon command path: the floating layer must leave the
-    // composition scene before any window command so activation snapshots
-    // and restore animations capture the desktop Dock copy instead of the
-    // floating overlay. Closing the host also dismisses the preview and
-    // clears the stored anchor, so the anchor snapshot must be read first.
+    // Mirror the Dock-icon command path: only minimize closes the floating
+    // layer before its screen snapshot. Restore and plain foreground
+    // activation deliberately keep it visible. Closing the host dismisses
+    // the preview and clears the stored anchor, so read the anchor first.
     const RECT anchor = dockWindowPreviewAnchorScreen_;
-    if (floatingDockVisible_)
-        CloseFloatingDock(
-            true, true,
+    std::function<void()> command =
+        [this, window, action, anchor]() {
+            if (!window || !IsWindow(window))
+                return;
+            if (!IsRectEmpty(&anchor) &&
+                ActivateOrToggleDockWindow(
+                    window, action, nullptr, anchor))
+                return;
+            ActivateDockWindowFromPreview(window);
+        };
+    if (snowdesktop::dock_window_rules::
+            MustCloseFloatingDockBeforeWindowCommand(
+                floatingDockVisible_, action) ||
+        floatingDockClosePending_)
+    {
+        CloseFloatingDockThen(
+            std::move(command), true,
             FloatingDockCloseFocusPolicy::PreserveCurrent);
-    if (!IsRectEmpty(&anchor) &&
-        ActivateOrToggleDockWindow(
-            window, action, nullptr, anchor))
         return;
-    ActivateDockWindowFromPreview(window);
+    }
+    command();
 }
 
 void DesktopApp::ActivateDockWindowFromPreview(HWND window)
 {
-    DismissDockWindowPreviewUntilLeave();
     if (!window || !IsWindow(window))
-        return;
-    if (snowdesktop::dock_window_rules::
-            ShouldSuppressDockWindowCommand(
-                IsDockWindowClosePending(window)))
         return;
     HWND target = GetAncestor(window, GA_ROOT);
     if (!target)
         target = window;
+    const bool restoring = IsIconic(target) != FALSE;
+    if (floatingDockClosePending_)
+    {
+        CloseFloatingDockThen(
+            [this, window]() {
+                ActivateDockWindowFromPreview(window);
+            },
+            true,
+            FloatingDockCloseFocusPolicy::PreserveCurrent);
+        return;
+    }
+    DismissDockWindowPreviewUntilLeave();
+    if (snowdesktop::dock_window_rules::
+            ShouldSuppressDockWindowCommand(
+                IsDockWindowClosePending(window)))
+        return;
 
-    const bool minimized = IsIconic(target) != FALSE;
+    const bool minimized = restoring;
     BOOL showAccepted = FALSE;
     if (minimized)
     {
@@ -771,10 +793,6 @@ void DesktopApp::ActivateDockWindowFromPreview(HWND window)
                 SwitchToThisWindow(activationTarget, TRUE);
         }
     }
-    if (floatingDockVisible_)
-        CloseFloatingDock(
-            true, false,
-            FloatingDockCloseFocusPolicy::PreserveCurrent);
     if (activationSafe)
         BringWindowToTop(activationTarget);
     SetForegroundWindow(activationTarget);

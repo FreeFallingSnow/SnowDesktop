@@ -243,10 +243,10 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         return 0;
     case WM_DISPLAYCHANGE:
     case WM_DPICHANGED:
-        CloseFloatingDock(true, true);
+        CloseFloatingDock();
         return 0;
     case WM_CLOSE:
-        CloseFloatingDock(true, true);
+        CloseFloatingDock();
         return 0;
     case WM_DESTROY:
         if (floatingDockHwnd_ == hwnd)

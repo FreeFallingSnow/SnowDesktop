@@ -692,10 +692,16 @@ private:
     void ShowFloatingDock();
     void CloseFloatingDock(
         bool closeDockPopup = true,
-        bool forceImmediate = false,
+        FloatingDockCloseFocusPolicy focusPolicy =
+            FloatingDockCloseFocusPolicy::RestorePrevious);
+    /** @brief 完成悬浮 Dock 到桌面 Dock 的无闪烁交接后执行动作。 */
+    void CloseFloatingDockThen(
+        std::function<void()> action,
+        bool closeDockPopup = true,
         FloatingDockCloseFocusPolicy focusPolicy =
             FloatingDockCloseFocusPolicy::RestorePrevious);
     void CompleteFloatingDockCloseHandoff();
+    void FinishFloatingDockCloseHandoff();
     bool EnsureFloatingDockInputWindow();
     void BeginFloatingDockKeyboardSession();
     void RefocusFloatingDockKeyboardSession();
@@ -1809,6 +1815,9 @@ private:
         UINT durationMilliseconds);
     bool CommitCompositionAnimationFrame();
     bool FlushPendingCompositionCommit();
+    /** @brief 提交并等待桌面/悬浮 Dock 的 DComp 状态真正越过呈现边界。 */
+    bool WaitForCompositionPresentation(
+        const wchar_t* diagnosticContext);
     /** @brief 将快捷导航视觉更新排入其独立的 DComp 提交通道。 */
     bool CommitQuickNavigationCompositionFrame();
     /** @brief 提交快捷导航独立 DComp 通道中积累的视觉更新。 */
@@ -2532,8 +2541,10 @@ private:
     bool floatingDockFrameReady_ = false;
     bool floatingDockBackdropCleanupPending_ = false;
     bool floatingDockRevealCommitPending_ = false;
+    bool floatingDockDesktopCommitPending_ = false;
     bool floatingDockHoverHandoffPending_ = false;
     bool floatingDockClosePending_ = false;
+    std::function<void()> floatingDockPostCloseAction_;
     bool renderingFloatingDock_ = false;
     bool handlingFloatingDockInput_ = false;
     /** @brief 浮动 Dock 被动 hover 最近一次同步提交时刻（8ms 限频用）。 */

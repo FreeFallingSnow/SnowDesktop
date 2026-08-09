@@ -933,6 +933,15 @@ int main()
             !floatingDock::ShouldRenderFloatingDockFrame(
                 false, false),
         "a pending close must freeze the floating Dock hand-off surface");
+    Check(floatingDock::CanRunPostCloseActionImmediately(
+            false, false, false) &&
+            !floatingDock::CanRunPostCloseActionImmediately(
+                true, false, true) &&
+            !floatingDock::CanRunPostCloseActionImmediately(
+                false, true, true) &&
+            !floatingDock::CanRunPostCloseActionImmediately(
+                false, false, true),
+        "window commands must wait until every floating Dock close layer is gone");
     Check(!floatingDock::
             ShouldInvalidateDesktopHover(true) &&
             floatingDock::
@@ -1188,17 +1197,17 @@ int main()
     Check(!rules::NeedsDockWindowSwitchFallback(true, true),
         "an accepted minimized-window restore must not be issued twice");
     Check(rules::MustCloseFloatingDockBeforeWindowCommand(
-            true, rules::DockClickAction::Minimize) &&
-            rules::MustCloseFloatingDockBeforeWindowCommand(
-                true, rules::DockClickAction::Restore) &&
-            rules::MustCloseFloatingDockBeforeWindowCommand(
-                true, rules::DockClickAction::Activate),
-        "the top-level Dock must leave composition before any running-window command");
+            true, rules::DockClickAction::Minimize),
+        "screen-captured minimize commands must close the top-level Dock first");
     Check(!rules::MustCloseFloatingDockBeforeWindowCommand(
             false, rules::DockClickAction::Minimize) &&
             !rules::MustCloseFloatingDockBeforeWindowCommand(
+                true, rules::DockClickAction::Activate) &&
+            !rules::MustCloseFloatingDockBeforeWindowCommand(
+                true, rules::DockClickAction::Restore) &&
+            !rules::MustCloseFloatingDockBeforeWindowCommand(
                 true, rules::DockClickAction::Launch),
-        "desktop-layer Docks and application launches must not add a capture synchronization");
+        "desktop-layer Docks, restore, foreground activation and launches must keep the floating Dock visible");
     Check(rules::ResolveDockRestoreShowCommand(
             WPF_RESTORETOMAXIMIZED,
             SW_SHOWMINIMIZED) == SW_SHOWMAXIMIZED,

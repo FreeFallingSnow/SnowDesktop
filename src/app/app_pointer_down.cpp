@@ -405,11 +405,12 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             if (dock->IsWindowsButtonPoint(pt))
             {
                 mouseDown_ = false;
-                ToggleWindowsStartMenu();
-                if (floatingDockVisible_)
-                    CloseFloatingDock(
-                        true, false,
-                        FloatingDockCloseFocusPolicy::PreserveCurrent);
+                CloseFloatingDockThen(
+                    [this]() {
+                        ToggleWindowsStartMenu();
+                    },
+                    true,
+                    FloatingDockCloseFocusPolicy::PreserveCurrent);
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
             }

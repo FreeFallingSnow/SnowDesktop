@@ -817,6 +817,14 @@ bool DesktopBackdropCompositor::AddPanel(const RECT& frame, float cornerRadius,
         existing->geometry.Size(panelSize);
         existing->geometry.CornerRadius(wfn::float2{
             static_cast<float>(cornerKey), static_cast<float>(cornerKey) });
+        // AddPanel represents an ordinarily rendered, visible panel. A
+        // floating-Dock hand-off can temporarily set an existing panel to
+        // zero opacity; reusing that same rectangle on the next desktop paint
+        // must retire the staging state even when hover geometry did not
+        // change. Handoff callers that need an invisible target explicitly
+        // call SetPanelOpacity(0) before EndFrame, so no intermediate visible
+        // commit is introduced here.
+        existing->visual.Opacity(1.0f);
         existing->seen = true;
         return true;
     }
@@ -928,7 +936,8 @@ CommitVisualChangesAndNotify(
         notifyWindow, message, token);
 }
 
-void DesktopBackdropCompositor::EndFrame()
+void DesktopBackdropCompositor::EndFrame(
+    bool requestCommit)
 {
     if (!impl_->available)
         return;
@@ -950,7 +959,8 @@ void DesktopBackdropCompositor::EndFrame()
             }
         }
         impl_->SyncPanelWindowRegion();
-        impl_->RequestCommit();
+        if (requestCommit)
+            impl_->RequestCommit();
     }
     catch (const winrt::hresult_error& error)
     {

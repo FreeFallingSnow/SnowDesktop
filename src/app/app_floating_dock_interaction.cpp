@@ -37,6 +37,7 @@ void DesktopApp::ShowFloatingDock()
     ++floatingDockBackdropCommitToken_;
     floatingDockBackdropCleanupPending_ = false;
     floatingDockRevealCommitPending_ = false;
+    floatingDockDesktopCommitPending_ = false;
     floatingDockClosePending_ = false;
     floatingDockCloseDesktopRect_ = {};
     floatingDockHoverHandoffPending_ = false;
@@ -90,7 +91,7 @@ void DesktopApp::ShowFloatingDock()
     {
         WriteDiagnosticLogEntry(
             L"Floating Dock first frame unavailable; desktop copy retained");
-        CloseFloatingDock(true, true);
+        CloseFloatingDock();
         MessageBeep(MB_ICONWARNING);
         return;
     }
@@ -135,7 +136,7 @@ void DesktopApp::ShowFloatingDock()
             L"Floating Dock transparent staging FAILED hr=0x%08X",
             static_cast<unsigned>(stageHr));
         WriteDiagnosticLogEntry(message);
-        CloseFloatingDock(true, true);
+        CloseFloatingDock();
         MessageBeep(MB_ICONWARNING);
         return;
     }
@@ -158,7 +159,8 @@ void DesktopApp::ShowFloatingDock()
     // timing domains. This barrier only installs the transparent target; the
     // currently visible desktop Dock remains the sole rendered copy.
     const bool presentationCompleted =
-        FlushPendingCompositionCommit();
+        WaitForCompositionPresentation(
+            L"Floating Dock transparent staging");
     const bool retireDesktopCopy =
         snowdesktop::floating_dock_rules::
             ShouldRetireDesktopDockCopy(
@@ -170,7 +172,7 @@ void DesktopApp::ShowFloatingDock()
         wsprintfW(message,
             L"Floating Dock transparent staging did not complete; desktop copy retained");
         WriteDiagnosticLogEntry(message);
-        CloseFloatingDock(true, true);
+        CloseFloatingDock();
         MessageBeep(MB_ICONWARNING);
         return;
     }
@@ -189,7 +191,7 @@ void DesktopApp::ShowFloatingDock()
             L"Floating Dock desktop cache staging FAILED hr=0x%08X",
             static_cast<unsigned>(cacheHr));
         WriteDiagnosticLogEntry(message);
-        CloseFloatingDock(true, true);
+        CloseFloatingDock();
         MessageBeep(MB_ICONWARNING);
         return;
     }
@@ -227,6 +229,10 @@ void DesktopApp::ShowFloatingDock()
     }
     if (SUCCEEDED(revealHr))
     {
+        // Submit the content exchange, but do not wait for it in isolation.
+        // The retained desktop glass is still the source underneath this
+        // frame; queue the shared WinComp glass exchange immediately below
+        // so DWM can present both ownership changes in one cycle.
         CommitCompositionAnimationFrame();
         revealHr = FlushPendingCompositionCommit()
             ? S_OK : E_FAIL;
@@ -240,7 +246,7 @@ void DesktopApp::ShowFloatingDock()
         WriteDiagnosticLogEntry(message);
         floatingDockDesktopCopySuppressed_ = false;
         InvalidateDragStaticScene();
-        CloseFloatingDock(true, true);
+        CloseFloatingDock();
         MessageBeep(MB_ICONWARNING);
         return;
     }
@@ -286,7 +292,6 @@ void DesktopApp::ShowFloatingDock()
 
 void DesktopApp::CloseFloatingDock(
     bool closeDockPopup,
-    bool forceImmediate,
     FloatingDockCloseFocusPolicy focusPolicy)
 {
     if (floatingDockHoverTailToken_)
@@ -301,16 +306,7 @@ void DesktopApp::CloseFloatingDock(
     if (floatingDockKeyboardSessionActive_)
         EndFloatingDockKeyboardSession(focusPolicy);
     if (floatingDockClosePending_)
-    {
-        if (!forceImmediate)
-            return;
-        ++floatingDockBackdropCommitToken_;
-        floatingDockBackdropCleanupPending_ = false;
-        floatingDockRevealCommitPending_ = false;
-        floatingDockClosePending_ = false;
-        CompleteFloatingDockCloseHandoff();
         return;
-    }
     if (!floatingDockVisible_ &&
         (!floatingDockHwnd_ ||
             !IsWindowVisible(floatingDockHwnd_)))
@@ -402,7 +398,10 @@ void DesktopApp::CloseFloatingDock(
                 glassSettings.glassBlurRadius) &&
             desktopBackdropCompositor_.SetPanelOpacity(
                 desktopDockPanelRect, 0.0f);
-        desktopBackdropCompositor_.EndFrame();
+        // This is only the invisible target staging step. Do not submit its
+        // zero opacity on its own; the desktop/floating opacity exchange below
+        // is the single shared-compositor commit for this hand-off.
+        desktopBackdropCompositor_.EndFrame(false);
         if (stagedDesktopGlass)
         {
             // Do not present the zero-opacity staging panel on its own. Queue
@@ -429,11 +428,13 @@ void DesktopApp::CloseFloatingDock(
                 deferBackdropHandoff;
             if (!deferBackdropHandoff)
             {
-                // On systems without a completion fence, keep submitting the
-                // opacity exchange but retain the zero-opacity helper until
-                // the next reveal or final app teardown.
+                // Older compositors do not expose a completion callback. Use
+                // the DWM barrier before beginning the DComp content hand-off
+                // so this compatibility path still cannot skip the glass
+                // ownership frame.
                 floatingDockBackdropCompositor_.
                     CommitVisualChanges();
+                DwmFlush();
             }
         }
         else
@@ -450,7 +451,7 @@ void DesktopApp::CloseFloatingDock(
 
     floatingDockRevealPending_ = false;
     floatingDockLastPointerPresentTick_ = 0;
-    if (deferBackdropHandoff && !forceImmediate)
+    if (deferBackdropHandoff)
     {
         // Keep the floating content and its old glass paired until WinComp
         // confirms that the desktop glass target is live. The completion
@@ -458,12 +459,30 @@ void DesktopApp::CloseFloatingDock(
         floatingDockClosePending_ = true;
         return;
     }
-    if (deferBackdropHandoff)
-    {
-        ++floatingDockBackdropCommitToken_;
-        floatingDockBackdropCleanupPending_ = false;
-    }
     CompleteFloatingDockCloseHandoff();
+}
+
+void DesktopApp::CloseFloatingDockThen(
+    std::function<void()> action,
+    bool closeDockPopup,
+    FloatingDockCloseFocusPolicy focusPolicy)
+{
+    const bool floatingWindowVisible =
+        floatingDockHwnd_ &&
+        IsWindowVisible(floatingDockHwnd_);
+    if (snowdesktop::floating_dock_rules::
+            CanRunPostCloseActionImmediately(
+                floatingDockVisible_,
+                floatingDockClosePending_,
+                floatingWindowVisible))
+    {
+        if (action)
+            action();
+        return;
+    }
+
+    floatingDockPostCloseAction_ = std::move(action);
+    CloseFloatingDock(closeDockPopup, focusPolicy);
 }
 
 void DesktopApp::CompleteFloatingDockCloseHandoff()
@@ -487,7 +506,8 @@ void DesktopApp::CompleteFloatingDockCloseHandoff()
     if (SUCCEEDED(concealHr))
     {
         CommitCompositionAnimationFrame();
-        concealHr = FlushPendingCompositionCommit()
+        concealHr = WaitForCompositionPresentation(
+                L"Floating Dock cached conceal")
             ? S_OK : E_FAIL;
     }
     if (FAILED(concealHr))
@@ -550,7 +570,47 @@ void DesktopApp::CompleteFloatingDockCloseHandoff()
         }
     }
     if (desktopFrameSubmitted)
-        FlushPendingCompositionCommit();
+    {
+        WaitForCompositionPresentation(
+            L"Desktop Dock handoff");
+    }
+
+    // OnPaint submits the ordinary desktop Dock content through DComp and
+    // its matching glass panel through Windows Composition. The DComp wait
+    // above cannot fence that second queue. Keep the close transaction
+    // pending until WinComp confirms the desktop glass frame, otherwise an
+    // immediately following SetForegroundWindow/ShowWindow can reorder the
+    // scene while the Dock still has no presented backdrop.
+    if (desktopBackdropCompositor_.IsAvailable())
+    {
+        const HWND notifyWindow =
+            controlHwnd_ && IsWindow(controlHwnd_)
+                ? controlHwnd_ : hwnd_;
+        const UINT_PTR commitToken =
+            ++floatingDockBackdropCommitToken_;
+        floatingDockClosePending_ = true;
+        floatingDockDesktopCommitPending_ =
+            desktopBackdropCompositor_.
+                CommitVisualChangesAndNotify(
+                    notifyWindow,
+                    kFloatingDockBackdropCommitMessage,
+                    commitToken);
+        if (floatingDockDesktopCommitPending_)
+            return;
+
+        // Compatibility path for systems without an asynchronous commit
+        // completion. Do not run the queued application command before the
+        // shared backdrop transaction has crossed a DWM presentation fence.
+        desktopBackdropCompositor_.CommitVisualChanges();
+        DwmFlush();
+    }
+    FinishFloatingDockCloseHandoff();
+}
+
+void DesktopApp::FinishFloatingDockCloseHandoff()
+{
+    floatingDockDesktopCommitPending_ = false;
+    floatingDockClosePending_ = false;
     FinalizeFloatingDockBackdropCleanup();
     floatingDockContainer_ = nullptr;
     floatingDockMonitor_ = nullptr;
@@ -560,6 +620,11 @@ void DesktopApp::CompleteFloatingDockCloseHandoff()
     floatingDockTooltipRect_ = {};
     floatingDockDesktopBackdropHandoffRect_ = {};
     floatingDockCloseDesktopRect_ = {};
+    std::function<void()> action =
+        std::move(floatingDockPostCloseAction_);
+    floatingDockPostCloseAction_ = {};
+    if (action)
+        action();
 }
 
 void DesktopApp::ToggleFloatingDock()
