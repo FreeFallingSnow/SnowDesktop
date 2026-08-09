@@ -989,7 +989,9 @@ private:
     bool CreateDesktopShortcutForShellLink(const std::wstring& displayName,
         PIDLIST_ABSOLUTE targetPidl, const std::wstring& targetPath, const std::wstring& workingDirectory);
     static std::wstring SanitizeShortcutFileStem(const std::wstring& name);
-    static bool IsApplicationsShellLinkTarget(IShellLinkW* shellLink);
+    static bool IsApplicationsShellLinkTarget(
+        IShellLinkW* shellLink,
+        const std::wstring& shortcutPath = {});
     QuickNavigationContentModel BuildQuickNavigationContentModel() const;
     RECT GetQuickNavigationSectionHeaderRect(
         const RECT& overlay, size_t sectionIndex,

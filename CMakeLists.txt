@@ -678,6 +678,13 @@ if (BUILD_TESTING)
         LABELS rules navigation)
 
     snowdesktop_add_test(
+        SnowDesktopShortcutApplicationRulesTests
+        shortcut_application_rules
+        SOURCES tests/shortcut_application_rules_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS rules shell)
+
+    snowdesktop_add_test(
         SnowDesktopItemLocationTests
         item_location
         SOURCES
