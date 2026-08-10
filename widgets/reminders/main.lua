@@ -76,21 +76,30 @@ local function saveOrder(ids)
 end
 
 local function loadTasks(includeCompleted)
-    local tasks = {}
+    local pendingTasks = {}
+    local completedTasks = {}
     for _, id in ipairs(loadOrder()) do
         local text = storage.get(taskTextKey(id))
         if text ~= nil then
             local done = storage.get(taskDoneKey(id)) == "1"
-            if includeCompleted or not done then
-                tasks[#tasks + 1] = {
-                    id = id,
-                    text = text,
-                    done = done,
-                }
+            local task = {
+                id = id,
+                text = text,
+                done = done,
+            }
+            if done then
+                if includeCompleted then
+                    completedTasks[#completedTasks + 1] = task
+                end
+            else
+                pendingTasks[#pendingTasks + 1] = task
             end
         end
     end
-    return tasks
+    for _, task in ipairs(completedTasks) do
+        pendingTasks[#pendingTasks + 1] = task
+    end
+    return pendingTasks
 end
 
 local function taskCounts()
