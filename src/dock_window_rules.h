@@ -267,6 +267,34 @@ constexpr bool ShouldRetryDockWindowForegroundActivation(
 }
 
 /**
+ * @brief 以前台请求优先、附加输入队列重试为后备激活一个 Dock 窗口。
+ *
+ * 两个请求都必须只操作最终激活窗口。普通路径不得先调用任务切换器或
+ * BringWindowToTop；否则根窗口、最后活动弹窗和目标窗口会连续进入前台，
+ * 改写无关应用之间的 Z-order。重试回调由平台层负责临时附加输入队列。
+ */
+template <typename IsForeground,
+    typename RequestForeground,
+    typename RetryForeground>
+bool ApplyDockWindowForegroundActivation(
+    bool synchronousActivationSafe,
+    IsForeground&& isForeground,
+    RequestForeground&& requestForeground,
+    RetryForeground&& retryForeground)
+{
+    if (isForeground())
+        return true;
+    requestForeground();
+    if (isForeground())
+        return true;
+    if (!ShouldRetryDockWindowForegroundActivation(
+            false, synchronousActivationSafe))
+        return false;
+    retryForeground();
+    return isForeground();
+}
+
+/**
  * @brief 根窗口与实际弹窗都可响应时，才允许执行同步置前操作。
  */
 constexpr bool IsDockWindowSynchronousActivationSafe(

@@ -1224,6 +1224,60 @@ int main()
             !rules::ShouldDispatchDockDoubleClickPress(true),
         "running-app double clicks must replay the missing second press while "
         "launch and folder double-click actions remain single-purpose");
+    int foregroundSequence = 0;
+    int foregroundChecks = 0;
+    int primaryForegroundStep = 0;
+    int retryForegroundStep = 0;
+    bool foregroundMatched = false;
+    const bool foregroundActivated =
+        rules::ApplyDockWindowForegroundActivation(
+            true,
+            [&]() {
+                ++foregroundChecks;
+                return foregroundMatched;
+            },
+            [&]() {
+                primaryForegroundStep = ++foregroundSequence;
+            },
+            [&]() {
+                retryForegroundStep = ++foregroundSequence;
+                foregroundMatched = true;
+            });
+    Check(foregroundActivated &&
+            foregroundChecks == 3 &&
+            primaryForegroundStep == 1 &&
+            retryForegroundStep == 2,
+        "Dock activation must try one foreground request before one attached-input retry");
+    int successfulPrimaryRequests = 0;
+    int successfulPrimaryRetries = 0;
+    bool primaryMatched = false;
+    Check(rules::ApplyDockWindowForegroundActivation(
+            true,
+            [&]() { return primaryMatched; },
+            [&]() {
+                ++successfulPrimaryRequests;
+                primaryMatched = true;
+            },
+            [&]() { ++successfulPrimaryRetries; }) &&
+            successfulPrimaryRequests == 1 &&
+            successfulPrimaryRetries == 0,
+        "a successful foreground request must not enter the attached-input retry");
+    int alreadyForegroundRequests = 0;
+    Check(rules::ApplyDockWindowForegroundActivation(
+            true,
+            []() { return true; },
+            [&]() { ++alreadyForegroundRequests; },
+            [&]() { ++alreadyForegroundRequests; }) &&
+            alreadyForegroundRequests == 0,
+        "an already foreground application must not mutate Z-order again");
+    int unsafeForegroundRetries = 0;
+    Check(!rules::ApplyDockWindowForegroundActivation(
+            false,
+            []() { return false; },
+            []() {},
+            [&]() { ++unsafeForegroundRetries; }) &&
+            unsafeForegroundRetries == 0,
+        "a hung activation target must not enter the attached-input retry");
     Check(rules::NeedsDockMinimizeSystemCommandFallback(false) &&
             !rules::NeedsDockMinimizeSystemCommandFallback(true),
         "a rejected asynchronous minimize must use the system-command fallback");

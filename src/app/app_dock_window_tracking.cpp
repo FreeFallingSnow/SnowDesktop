@@ -82,58 +82,35 @@ bool ActivateDockWindowForeground(
     if (!target || !IsWindow(target) ||
         !activationTarget || !IsWindow(activationTarget))
         return false;
-    if (IsDockWindowActivationForeground(
-            target, activationTarget))
-        return true;
-
-    // First use the ordinary task-switch path. It is sufficient when the
-    // Dock process received the most recent user input and avoids sharing
-    // input queues in the common case.
-    if (synchronousActivationSafe)
-    {
-        SwitchToThisWindow(target, FALSE);
-        if (activationTarget != target)
-            SwitchToThisWindow(activationTarget, FALSE);
-        BringWindowToTop(activationTarget);
-    }
-    SetForegroundWindow(activationTarget);
-    if (IsDockWindowActivationForeground(
-            target, activationTarget))
-        return true;
-    if (!snowdesktop::dock_window_rules::
-            ShouldRetryDockWindowForegroundActivation(
-                false, synchronousActivationSafe))
-        return false;
-
-    // A desktop-layer/no-activate Dock is not always the foreground process,
-    // so Windows may reject SetForegroundWindow even though the user clicked
-    // it. Temporarily share the caller, current foreground, and target input
-    // queues, then perform and verify the activation while their active-window
-    // and Z-order state is shared. RAII guarantees every successful attach is
-    // detached on all exits.
-    const DWORD currentThread = GetCurrentThreadId();
-    const HWND currentForeground = GetForegroundWindow();
-    const DWORD foregroundThread = currentForeground
-        ? GetWindowThreadProcessId(
-            currentForeground, nullptr)
-        : 0;
-    const DWORD targetThread = GetWindowThreadProcessId(
-        activationTarget, nullptr);
-    ScopedDockInputQueueAttachment foregroundAttachment(
-        currentThread, foregroundThread);
-    ScopedDockInputQueueAttachment targetAttachment(
-        currentThread, targetThread);
-
-    SetWindowPos(
-        activationTarget, HWND_TOP,
-        0, 0, 0, 0,
-        SWP_NOMOVE | SWP_NOSIZE |
-            SWP_SHOWWINDOW);
-    BringWindowToTop(activationTarget);
-    SetForegroundWindow(activationTarget);
-    SetActiveWindow(activationTarget);
-    return IsDockWindowActivationForeground(
-        target, activationTarget);
+    return snowdesktop::dock_window_rules::
+        ApplyDockWindowForegroundActivation(
+            synchronousActivationSafe,
+            [target, activationTarget]() {
+                return IsDockWindowActivationForeground(
+                    target, activationTarget);
+            },
+            [activationTarget]() {
+                SetForegroundWindow(activationTarget);
+            },
+            [activationTarget]() {
+                // A desktop-layer/no-activate Dock is not always the
+                // foreground process. Share only the input queues needed to
+                // retry the same final target, then detach on every exit.
+                const DWORD currentThread = GetCurrentThreadId();
+                const HWND currentForeground = GetForegroundWindow();
+                const DWORD foregroundThread = currentForeground
+                    ? GetWindowThreadProcessId(
+                        currentForeground, nullptr)
+                    : 0;
+                const DWORD targetThread =
+                    GetWindowThreadProcessId(
+                        activationTarget, nullptr);
+                ScopedDockInputQueueAttachment foregroundAttachment(
+                    currentThread, foregroundThread);
+                ScopedDockInputQueueAttachment targetAttachment(
+                    currentThread, targetThread);
+                SetForegroundWindow(activationTarget);
+            });
 }
 
 void RequestDockWindowShow(HWND target, bool wasMinimized)
