@@ -415,6 +415,54 @@ void TestDragSessionRejectsInvalidatedSlots()
         "container tree rebuilds must detach every target binding");
 }
 
+void TestListDragCanAnchorVisualAndLandingToPointer()
+{
+    ContractContainer source(BarStyle::HBar);
+    ContractItem item(RECT{100, 200, 500, 238});
+    DragSourceList sourceList;
+    sourceList.BindRuntimeOrigin(&source);
+
+    DragSession session;
+    session.Begin(
+        &source, {&item}, std::move(sourceList),
+        POINT{360, 219}, POINT{365, 224});
+    session.SetVisualItemBounds({item.GetBounds()});
+
+    // The row is 400 pixels wide, but its compact icon is centered at x=118.
+    // Anchoring that icon to a press in the text area must remove the permanent
+    // row-origin offset from both the landing coordinate and the ghost.
+    session.AnchorToPointer(POINT{118, 219});
+
+    const POINT current{700, 400};
+    const POINT target = session.ResolveTargetPoint(
+        POINT{100, 200}, current);
+    Check(target.x == current.x && target.y == current.y,
+        "pointer-anchored list drag must hit the cell under the pointer");
+
+    const RECT ghost = session.ResolveDraggedBounds(
+        0, item.GetBounds(), current);
+    const POINT ghostIconCenter{
+        ghost.left + 18,
+        ghost.top + 19
+    };
+    Check(ghostIconCenter.x == current.x &&
+            ghostIconCenter.y == current.y,
+        "pointer-anchored list drag must keep the icon ghost under the pointer");
+
+    session.End();
+
+    DragSourceList ordinarySourceList;
+    ordinarySourceList.BindRuntimeOrigin(&source);
+    session.Begin(
+        &source, {&item}, std::move(ordinarySourceList),
+        POINT{360, 219}, POINT{365, 224});
+    const POINT ordinaryTarget = session.ResolveTargetPoint(
+        POINT{100, 200}, current);
+    Check(ordinaryTarget.x == 440 &&
+            ordinaryTarget.y == 381,
+        "a new ordinary drag must restore the original grab-offset policy");
+}
+
 void TestEverySurfaceRetainsStableDragMetadata()
 {
     using Surface =
@@ -1121,6 +1169,7 @@ int main()
     TestHitRegionsUseContainerOrientation();
     TestExecuteDropDelegatesOnce();
     TestDragSessionRejectsInvalidatedSlots();
+    TestListDragCanAnchorVisualAndLandingToPointer();
     TestEverySurfaceRetainsStableDragMetadata();
     TestEveryRegisteredSurfaceOriginLifecycle();
     TestDropActionModifiers();

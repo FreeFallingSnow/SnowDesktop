@@ -103,6 +103,8 @@ public:
         visualMouseDownPoint_ = mouseDown;
         currentPoint_ = current;
         visualItemBounds_.clear();
+        pointerAnchored_ = false;
+        visualBoundsOffset_ = {};
         action_ = DropAction::Move;
         targetContainer_ = nullptr;
         targetSlot_ = nullptr;
@@ -124,6 +126,24 @@ public:
     void SetVisualItemBounds(std::vector<RECT> bounds)
     {
         visualItemBounds_ = std::move(bounds);
+    }
+
+    /**
+     * @brief 将拖拽逻辑落点重定向到指针，并把指定视觉热点吸附到指针。
+     * @param visualAnchor 拖拽开始时视觉热点的客户端坐标。
+     *
+     * 列表项的命中矩形包含整行文字，但拖拽态通常只绘制左侧图标。若继续
+     * 保留按下点相对整行左上角的偏移，从文字区起拖时图标虚影与桌面落点
+     * 都会固定偏离鼠标。该模式将逻辑落点改为真实指针，同时整体平移视觉
+     * 快照，使主项目的图标热点始终位于指针处。
+     */
+    void AnchorToPointer(POINT visualAnchor)
+    {
+        pointerAnchored_ = true;
+        visualBoundsOffset_ = {
+            mouseDownPoint_.x - visualAnchor.x,
+            mouseDownPoint_.y - visualAnchor.y
+        };
     }
 
     /**
@@ -158,6 +178,8 @@ public:
      */
     POINT ResolveTargetPoint(POINT groupOrigin, POINT current) const
     {
+        if (pointerAnchored_)
+            return current;
         return {
             groupOrigin.x + current.x - mouseDownPoint_.x,
             groupOrigin.y + current.y - mouseDownPoint_.y
@@ -185,10 +207,10 @@ public:
         const LONG dx = current.x - visualMouseDownPoint_.x;
         const LONG dy = current.y - visualMouseDownPoint_.y;
         return {
-            base.left + dx,
-            base.top + dy,
-            base.right + dx,
-            base.bottom + dy
+            base.left + visualBoundsOffset_.x + dx,
+            base.top + visualBoundsOffset_.y + dy,
+            base.right + visualBoundsOffset_.x + dx,
+            base.bottom + visualBoundsOffset_.y + dy
         };
     }
 
@@ -340,6 +362,8 @@ public:
         mouseDownPoint_ = {};
         visualMouseDownPoint_ = {};
         currentPoint_ = {};
+        pointerAnchored_ = false;
+        visualBoundsOffset_ = {};
         InvalidateStaticScene();
     }
 
@@ -362,6 +386,8 @@ private:
     POINT visualMouseDownPoint_{};           /**< 虚影固定使用的原始按下坐标 */
     POINT currentPoint_{};                   /**< 鼠标当前的屏幕坐标 */
     std::vector<RECT> visualItemBounds_;     /**< 拖拽开始时的虚影边界快照 */
+    bool pointerAnchored_ = false;           /**< 逻辑落点是否直接跟随真实指针 */
+    POINT visualBoundsOffset_{};             /**< 将主视觉热点吸附到指针的快照平移量 */
     DropAction action_ = DropAction::Move;   /**< 当前拖拽动作类型，默认为 Move */
     Container* targetContainer_ = nullptr;   /**< 目标容器指针 */
     Slot* targetSlot_ = nullptr;             /**< 目标插槽指针 */

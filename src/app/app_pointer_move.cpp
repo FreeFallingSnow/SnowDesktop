@@ -226,6 +226,30 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                 mouseDownPoint_, current);
             dragSession_.SetVisualItemBounds(
                 std::move(visualItemBounds));
+            auto* listSource =
+                dynamic_cast<ListContainer*>(source);
+            const bool listIconDrag =
+                listSource && listSource->SingleColumn() &&
+                (dynamic_cast<DesktopIcon*>(mouseDownHit_) ||
+                 dynamic_cast<FolderEntryIcon*>(mouseDownHit_));
+            if (listIconDrag)
+            {
+                const RECT pressedBounds =
+                    mouseDownHit_->GetBounds();
+                const RECT iconBounds =
+                    GetItemIconRect(pressedBounds);
+                if (!IsRectEmptyRect(iconBounds))
+                {
+                    dragSession_.AnchorToPointer({
+                        iconBounds.left +
+                            (iconBounds.right -
+                                iconBounds.left) / 2,
+                        iconBounds.top +
+                            (iconBounds.bottom -
+                                iconBounds.top) / 2
+                    });
+                }
+            }
             // From this point the drag session owns the logical interaction.
             // Do not retain the original wrapper pointer across object rebuilds.
             mouseDownHit_ = nullptr;
