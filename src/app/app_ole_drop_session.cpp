@@ -491,44 +491,15 @@ HRESULT DesktopApp::HandleOleDrop(
             }
             const std::vector<std::wstring> sourcePaths =
                 dragSession_.SourceList().FilePaths();
-            const bool recycleBinTarget =
-                targetDesktopItem &&
-                _wcsicmp(
-                    targetDesktopItem->desktopIconClsid.c_str(),
-                    kDesktopIconClsidRecycleBin) == 0;
+            const bool fullyPathBackedSource =
+                !sourcePaths.empty() &&
+                sourcePaths.size() ==
+                    dragSession_.SourceList().entries.size();
             const std::wstring targetPath =
                 targetItem ? targetItem->GetPath() : L"";
             const DWORD targetAttributes = targetPath.empty()
                 ? INVALID_FILE_ATTRIBUTES
                 : GetFileAttributesW(targetPath.c_str());
-            if (!sourcePaths.empty() && recycleBinTarget)
-            {
-                std::vector<snowdesktop::ShellFileOperationStep> steps;
-                steps.push_back({
-                    FO_DELETE,
-                    sourcePaths,
-                    {},
-                    static_cast<FILEOP_FLAGS>(
-                        FOF_ALLOWUNDO |
-                        FOF_NOCONFIRMATION) });
-                QueueShellFileOperation(
-                    std::move(steps),
-                    [this,
-                     dockFolderPopupSource,
-                     dockFolderPopupTarget](bool succeeded) {
-                        if (!succeeded)
-                            return;
-                        ReloadItems(false);
-                        if ((dockFolderPopupSource ||
-                             dockFolderPopupTarget) &&
-                            dockFolderPopupOpen_)
-                            RefreshDockFolderPopup();
-                    });
-                ClearSelection();
-                EndDragSession();
-                *effect = DROPEFFECT_MOVE;
-                return S_OK;
-            }
             if (!sourcePaths.empty() &&
                 targetAttributes != INVALID_FILE_ATTRIBUTES &&
                 (targetAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
@@ -558,23 +529,47 @@ HRESULT DesktopApp::HandleOleDrop(
                         dockFolderPopupOpen_)
                         RefreshDockFolderPopup();
                 };
-                if (action == DropAction::Link)
-                {
-                    const bool succeeded = MaterializeFilesToFolder(
-                        fileSources, targetPath, action, {});
-                    finished(succeeded);
-                }
-                else
-                {
-                    MaterializeFilesToFolder(
+                if (MaterializeFilesToFolder(
                         fileSources, targetPath, action,
-                        std::move(finished));
+                        std::move(finished)))
+                {
+                    ClearSelection();
+                    EndDragSession();
+                    *effect = selectedEffect;
+                    return S_OK;
                 }
+            }
+            if (fullyPathBackedSource && !targetPath.empty() &&
+                QueueShellDrop(
+                    sourcePaths,
+                    targetPath,
+                    keyState,
+                    point,
+                    DROPEFFECT_COPY | DROPEFFECT_MOVE |
+                        DROPEFFECT_LINK,
+                    [this,
+                     dockFolderPopupSource,
+                     dockFolderPopupTarget](bool succeeded) {
+                        if (!succeeded)
+                            return;
+                        if ((dockFolderPopupSource ||
+                             dockFolderPopupTarget) &&
+                            dockFolderPopupOpen_)
+                            RefreshDockFolderPopup();
+                    }))
+            {
                 ClearSelection();
                 EndDragSession();
-                *effect = selectedEffect;
+                *effect = ChooseDropEffect(
+                    keyState,
+                    DROPEFFECT_COPY | DROPEFFECT_MOVE |
+                        DROPEFFECT_LINK);
                 return S_OK;
             }
+            // This source does not support the Shell async-data protocol.
+            // Ensure the already-submitted drag-end frame reaches DWM before
+            // entering its unavoidable synchronous IDropTarget fallback.
+            DwmFlush();
             ComPtr<IDataObject> dataObj = CreateDataObjectForItems(dragSession_.Items());
             if (dataObj && targetItem)
             {
@@ -687,47 +682,36 @@ HRESULT DesktopApp::HandleOleDrop(
     dragSession_.DeactivateForDrop();
     CommitDragVisualEndBeforeShellOperation();
 
-    std::vector<std::wstring> dropPaths = dataObject ? GetDropPaths(dataObject) : std::vector<std::wstring>();
-    if (dropPaths.empty() && dataObject)
-        dropPaths = TryGetNonFileDropPaths(dataObject);
+    std::vector<std::wstring> dropPaths = dataObject
+        ? GetDropPaths(dataObject) : std::vector<std::wstring>();
 
     if (dragSession_.TargetRegion() == HitRegion::Handoff && dataObject)
     {
         // ── Handoff on item (desktop OR widget member) ──
         Item* targetItem = dragSession_.TargetSlot() ? dragSession_.TargetSlot()->GetItem() : nullptr;
-        auto* targetDesktopIcon =
-            dynamic_cast<DesktopIcon*>(targetItem);
-        DesktopItem* targetDesktopItem = targetDesktopIcon
-            ? targetDesktopIcon->GetDesktopItem() : nullptr;
-        const bool recycleBinTarget =
-            targetDesktopItem &&
-            _wcsicmp(
-                targetDesktopItem->desktopIconClsid.c_str(),
-                kDesktopIconClsidRecycleBin) == 0;
         const std::wstring targetPath =
             targetItem ? targetItem->GetPath() : L"";
         const DWORD targetAttributes = targetPath.empty()
             ? INVALID_FILE_ATTRIBUTES
             : GetFileAttributesW(targetPath.c_str());
-        if (!dropPaths.empty() && recycleBinTarget)
+        if (dropPaths.empty() && !targetPath.empty() &&
+            QueueAsyncShellDrop(
+                dataObject,
+                targetPath,
+                keyState,
+                point,
+                *effect,
+                {}))
         {
-            std::vector<snowdesktop::ShellFileOperationStep> steps;
-            steps.push_back({
-                FO_DELETE,
-                dropPaths,
-                {},
-                static_cast<FILEOP_FLAGS>(
-                    FOF_ALLOWUNDO |
-                    FOF_NOCONFIRMATION) });
-            QueueShellFileOperation(
-                std::move(steps),
-                [this](bool succeeded) {
-                    if (succeeded)
-                        ReloadItems(false);
-                });
-            *effect = DROPEFFECT_MOVE;
+            *effect = ChooseDropEffect(keyState, *effect);
             EndDragSession();
             return S_OK;
+        }
+        if (dropPaths.empty() &&
+            targetAttributes != INVALID_FILE_ATTRIBUTES &&
+            (targetAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+        {
+            dropPaths = TryGetNonFileDropPaths(dataObject);
         }
         if (!dropPaths.empty() &&
             targetAttributes != INVALID_FILE_ATTRIBUTES &&
@@ -735,6 +719,12 @@ HRESULT DesktopApp::HandleOleDrop(
         {
             const DWORD selectedEffect = ChooseDropEffect(
                 keyState, *effect);
+            if (selectedEffect == DROPEFFECT_NONE)
+            {
+                *effect = DROPEFFECT_NONE;
+                EndDragSession();
+                return S_OK;
+            }
             const DropAction action =
                 selectedEffect == DROPEFFECT_LINK
                     ? DropAction::Link
@@ -764,22 +754,49 @@ HRESULT DesktopApp::HandleOleDrop(
                 if (dockFolderPopupTarget && dockFolderPopupOpen_)
                     RefreshDockFolderPopup();
             };
-            if (action == DropAction::Link)
+            FileOperationCompletion asyncCompletion;
+            const bool sourceSupportsAsync =
+                PrepareOleAsyncFileOperation(
+                    dataObject,
+                    action == DropAction::Move
+                        ? DROPEFFECT_NONE : selectedEffect,
+                    finished, asyncCompletion);
+            if (!sourceSupportsAsync)
+                DwmFlush();
+            const bool handled = MaterializeFilesToFolder(
+                fileSources, targetPath, action,
+                sourceSupportsAsync
+                    ? std::move(asyncCompletion)
+                    : std::move(finished),
+                !sourceSupportsAsync);
+            if (!handled)
             {
-                const bool succeeded = MaterializeFilesToFolder(
-                    fileSources, targetPath, action, {});
-                finished(succeeded);
+                *effect = DROPEFFECT_NONE;
+                EndDragSession();
+                return S_OK;
             }
-            else
-            {
-                MaterializeFilesToFolder(
-                    fileSources, targetPath, action,
-                    std::move(finished));
-            }
-            *effect = selectedEffect;
+            *effect = !sourceSupportsAsync &&
+                    action == DropAction::Move
+                ? DROPEFFECT_NONE : selectedEffect;
             EndDragSession();
             return S_OK;
         }
+        if (!targetPath.empty() &&
+            QueueAsyncShellDrop(
+                dataObject,
+                targetPath,
+                keyState,
+                point,
+                *effect,
+                {}))
+        {
+            *effect = ChooseDropEffect(keyState, *effect);
+            EndDragSession();
+            return S_OK;
+        }
+        // Sources without IDataObjectAsyncCapability must remain synchronous
+        // so the returned effect is the operation that actually occurred.
+        DwmFlush();
         ComPtr<IDropTarget> dt;
         if (targetItem)
         {
@@ -820,7 +837,6 @@ HRESULT DesktopApp::HandleOleDrop(
             EndDragSession();
             if (dockFolderPopupTarget)
                 RefreshDockFolderPopup();
-            ReloadItems(false);
             return S_OK;
         }
     }
@@ -832,11 +848,36 @@ HRESULT DesktopApp::HandleOleDrop(
         dragSession_.TargetRegion() !=
             HitRegion::Blocked)
     {
+        if (dropPaths.empty() &&
+            !dockFolderPopupWidget_.sourceFolderPath.empty() &&
+            QueueAsyncShellDrop(
+                dataObject,
+                dockFolderPopupWidget_.sourceFolderPath,
+                keyState,
+                point,
+                *effect,
+                [this](bool succeeded) {
+                    if (succeeded && dockFolderPopupOpen_)
+                        RefreshDockFolderPopup();
+                }))
+        {
+            *effect = ChooseDropEffect(keyState, *effect);
+            EndDragSession();
+            return S_OK;
+        }
+        if (dropPaths.empty())
+            dropPaths = TryGetNonFileDropPaths(dataObject);
         if (!dropPaths.empty() &&
             !dockFolderPopupWidget_.sourceFolderPath.empty())
         {
             const DWORD selectedEffect = ChooseDropEffect(
                 keyState, *effect);
+            if (selectedEffect == DROPEFFECT_NONE)
+            {
+                *effect = DROPEFFECT_NONE;
+                EndDragSession();
+                return S_OK;
+            }
             const DropAction action =
                 selectedEffect == DROPEFFECT_LINK
                     ? DropAction::Link
@@ -861,23 +902,49 @@ HRESULT DesktopApp::HandleOleDrop(
                 if (dockFolderPopupOpen_)
                     RefreshDockFolderPopup();
             };
-            if (action == DropAction::Link)
+            FileOperationCompletion asyncCompletion;
+            const bool sourceSupportsAsync =
+                PrepareOleAsyncFileOperation(
+                    dataObject,
+                    action == DropAction::Move
+                        ? DROPEFFECT_NONE : selectedEffect,
+                    finished, asyncCompletion);
+            if (!sourceSupportsAsync)
+                DwmFlush();
+            const bool handled = MaterializeFilesToFolder(
+                fileSources,
+                dockFolderPopupWidget_.sourceFolderPath,
+                action,
+                sourceSupportsAsync
+                    ? std::move(asyncCompletion)
+                    : std::move(finished),
+                !sourceSupportsAsync);
+            if (!handled)
             {
-                const bool succeeded = MaterializeFilesToFolder(
-                    fileSources,
-                    dockFolderPopupWidget_.sourceFolderPath,
-                    action, {});
-                finished(succeeded);
+                *effect = DROPEFFECT_NONE;
+                EndDragSession();
+                return S_OK;
             }
-            else
-            {
-                MaterializeFilesToFolder(
-                    fileSources,
-                    dockFolderPopupWidget_.sourceFolderPath,
-                    action,
-                    std::move(finished));
-            }
-            *effect = selectedEffect;
+            *effect = !sourceSupportsAsync &&
+                    action == DropAction::Move
+                ? DROPEFFECT_NONE : selectedEffect;
+            EndDragSession();
+            return S_OK;
+        }
+        if (!dropPaths.empty() &&
+            !dockFolderPopupWidget_.sourceFolderPath.empty() &&
+            QueueAsyncShellDrop(
+                dataObject,
+                dockFolderPopupWidget_.sourceFolderPath,
+                keyState,
+                point,
+                *effect,
+                [this](bool succeeded) {
+                    if (succeeded && dockFolderPopupOpen_)
+                        RefreshDockFolderPopup();
+                }))
+        {
+            *effect = ChooseDropEffect(keyState, *effect);
             EndDragSession();
             return S_OK;
         }
@@ -897,6 +964,7 @@ HRESULT DesktopApp::HandleOleDrop(
         }
         if (folderDropTarget)
         {
+            DwmFlush();
             DWORD shellEffect = *effect;
             POINTL screenPoint{
                 point.x, point.y };
@@ -920,6 +988,9 @@ HRESULT DesktopApp::HandleOleDrop(
             }
         }
     }
+
+    if (dropPaths.empty() && dataObject)
+        dropPaths = TryGetNonFileDropPaths(dataObject);
 
     if (dataObject && !dropPaths.empty())
     {
@@ -970,20 +1041,32 @@ HRESULT DesktopApp::HandleOleDrop(
             desktopPreview.action =
                 snowdesktop::dock_drop_rules::
                     ExternalMappingAction();
+            auto finished = [this, existingKeys, insertIndex](
+                    bool succeeded) {
+                if (!succeeded)
+                    return;
+                AddExternalItemsToDock(
+                    NewDesktopKeysSince(existingKeys),
+                    insertIndex);
+                SaveLayoutSlots();
+                RebuildContainersAndItems();
+                LayoutItems();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            };
+            FileOperationCompletion asyncCompletion;
+            const bool sourceSupportsAsync =
+                PrepareOleAsyncFileOperation(
+                    dataObject, mappingEffect,
+                    finished, asyncCompletion);
+            if (!sourceSupportsAsync)
+                DwmFlush();
             bool executed = ExecuteDropPipeline(
                 sourceList,
                 desktopPreview,
-                [this, existingKeys, insertIndex](bool succeeded) {
-                    if (!succeeded)
-                        return;
-                    AddExternalItemsToDock(
-                        NewDesktopKeysSince(existingKeys),
-                        insertIndex);
-                    SaveLayoutSlots();
-                    RebuildContainersAndItems();
-                    LayoutItems();
-                    InvalidateRect(hwnd_, nullptr, FALSE);
-                });
+                sourceSupportsAsync
+                    ? std::move(asyncCompletion)
+                    : std::move(finished),
+                !sourceSupportsAsync);
             if (executed)
             {
                 EndDragSession();
@@ -1008,7 +1091,26 @@ HRESULT DesktopApp::HandleOleDrop(
             else
                 preview.action = DropAction::Copy;
         }
-        bool executed = ExecuteDropPipeline(sourceList, preview);
+        const DWORD performedEffect =
+            preview.action == DropAction::Move
+                ? DROPEFFECT_MOVE
+                : preview.action == DropAction::Link
+                    ? DROPEFFECT_LINK : DROPEFFECT_COPY;
+        FileOperationCompletion asyncCompletion;
+        const bool sourceSupportsAsync =
+            PrepareOleAsyncFileOperation(
+                dataObject,
+                preview.action == DropAction::Move
+                    ? DROPEFFECT_NONE : performedEffect,
+                {}, asyncCompletion);
+        if (!sourceSupportsAsync)
+            DwmFlush();
+        bool executed = ExecuteDropPipeline(
+            sourceList, preview,
+            sourceSupportsAsync
+                ? std::move(asyncCompletion)
+                : FileOperationCompletion{},
+            !sourceSupportsAsync);
         if (executed)
         {
             if (dockFolderPopupTarget)
@@ -1017,7 +1119,9 @@ HRESULT DesktopApp::HandleOleDrop(
             EndDragSession();
             RebuildContainersAndItems();
             InvalidateRect(hwnd_, nullptr, FALSE);
-            *effect = ChooseDropEffect(keyState, *effect);
+            *effect = !sourceSupportsAsync &&
+                    preview.action == DropAction::Move
+                ? DROPEFFECT_NONE : performedEffect;
             return S_OK;
         }
     }

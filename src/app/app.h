@@ -1639,7 +1639,8 @@ private:
     using FileOperationCompletion = std::function<void(bool)>;
     bool ExecuteDropPipeline(const DragSourceList& sourceList,
         const DropPreviewList& preview,
-        FileOperationCompletion completion = {});
+        FileOperationCompletion completion = {},
+        bool executeSynchronously = false);
     /**
      * @brief 执行内部拖拽放置计划。
      * @param sourceList 拖拽源列表
@@ -1655,7 +1656,8 @@ private:
      */
     bool ExecuteFileBackedDropPlan(const DragSourceList& sourceList,
         const DropPreviewList& preview,
-        FileOperationCompletion completion = {});
+        FileOperationCompletion completion = {},
+        bool executeSynchronously = false);
     /**
      * @brief 将文件实际写入桌面（从源列表物化）。
      * @param sourceList 拖拽源列表
@@ -1667,7 +1669,8 @@ private:
     bool MaterializeFilesToDesktop(const DragSourceList& sourceList, DropAction action,
         bool duplicateDesktopCopyNames,
         std::unordered_map<size_t, std::wstring>* createdPathsBySource,
-        FileOperationCompletion completion);
+        FileOperationCompletion completion,
+        bool executeSynchronously = false);
     /**
      * @brief 将文件写入指定的目标文件夹。
      * @param sourceList 拖拽源列表
@@ -1676,7 +1679,8 @@ private:
      * @return 操作是否成功
      */
     bool MaterializeFilesToFolder(const DragSourceList& sourceList, const std::wstring& folder,
-        DropAction action, FileOperationCompletion completion);
+        DropAction action, FileOperationCompletion completion,
+        bool executeSynchronously = false);
     /**
      * @brief 目标文件夹是否为某个源文件夹自身或其子目录（含 .lnk 解析）。
      *
@@ -1692,6 +1696,32 @@ private:
     bool QueueShellFileOperation(
         std::vector<snowdesktop::ShellFileOperationStep> steps,
         FileOperationCompletion completion);
+    /** @brief 将通用 Shell 文件操作请求加入独立 STA 队列。 */
+    bool QueueShellFileOperation(
+        snowdesktop::ShellFileOperationRequest request,
+        FileOperationCompletion completion);
+    /** @brief 将路径型 IDropTarget 放置加入独立 Shell STA 队列。 */
+    bool QueueShellDrop(
+        std::vector<std::wstring> sourcePaths,
+        std::wstring targetParsingName,
+        DWORD keyState,
+        POINTL screenPoint,
+        DWORD allowedEffects,
+        FileOperationCompletion completion);
+    /** @brief 按 OLE 异步协议将原始数据对象 marshal 到 Shell STA。 */
+    bool QueueAsyncShellDrop(
+        IDataObject* dataObject,
+        std::wstring targetParsingName,
+        DWORD keyState,
+        POINTL screenPoint,
+        DWORD allowedEffects,
+        FileOperationCompletion completion);
+    /** @brief 为路径型外部放置建立一次 OLE 异步完成通知。 */
+    bool PrepareOleAsyncFileOperation(
+        IDataObject* dataObject,
+        DWORD completionEffect,
+        FileOperationCompletion completion,
+        FileOperationCompletion& asyncCompletion);
     /** @brief 在 UI 线程处理 Shell 文件操作完成通知。 */
     void OnShellFileOperationCompleted(LPARAM lParam);
     /** @brief 停止文件操作线程并清理未投递的 UI 完成通知。 */
@@ -2586,6 +2616,12 @@ private:
     // Queued worker operations that have not yet reported completion on the
     // UI thread. The last completion restores the floating keyboard session.
     int shellFileOperationInFlight_ = 0;
+    // Shell notifications and operation completions share one quiet-period
+    // refresh. Never rebuild the complete desktop model while an operation is
+    // still producing change notifications.
+    bool shellReloadPending_ = false;
+    bool shellReloadLayoutFromDiskPending_ = false;
+    bool shellDockFolderPopupRefreshPending_ = false;
     // The top-level host may be visible for one hand-off frame while the
     // desktop copy is deliberately retained underneath it. Keep rendering
     // ownership separate from interaction visibility so either direction can

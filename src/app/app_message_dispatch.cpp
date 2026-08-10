@@ -629,6 +629,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             if (SHChangeNotification_Lock(notify, 1, &pidls, &eventId))
                 SHChangeNotification_Unlock(notify);
         }
+        shellReloadPending_ = true;
+        shellReloadLayoutFromDiskPending_ = true;
         SetTimer(hwnd_, kShellChangeTimerId, kShellChangeDebounceMs, nullptr);
         return 0;
     }

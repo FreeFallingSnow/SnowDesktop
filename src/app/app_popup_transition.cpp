@@ -444,6 +444,12 @@ void DesktopApp::ShowDockFolderPopupSortMenu(
 
 void DesktopApp::RefreshDockFolderPopup()
 {
+    if (shellFileOperationInFlight_ > 0)
+    {
+        shellDockFolderPopupRefreshPending_ = true;
+        return;
+    }
+    shellDockFolderPopupRefreshPending_ = false;
     if (!dockFolderPopupOpen_) return;
     PreserveDockFolderPopupDragSourceForTransition();
     dockFolderPopupDragItems_.clear();

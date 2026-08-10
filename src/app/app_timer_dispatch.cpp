@@ -153,8 +153,27 @@ void DesktopApp::OnTimer(WPARAM timerId)
     else if (timerId == kShellChangeTimerId)
     {
         KillTimer(hwnd_, kShellChangeTimerId);
-        if (!mouseDown_ && !reloading_)
-            ReloadItems();
+        if (shellFileOperationInFlight_ > 0)
+            return;
+        if (mouseDown_ || reloading_)
+        {
+            SetTimer(hwnd_, kShellChangeTimerId,
+                kShellChangeDebounceMs, nullptr);
+            return;
+        }
+        if (shellReloadPending_)
+        {
+            const bool reloadLayoutFromDisk =
+                shellReloadLayoutFromDiskPending_;
+            shellReloadPending_ = false;
+            shellReloadLayoutFromDiskPending_ = false;
+            ReloadItems(reloadLayoutFromDisk);
+        }
+        if (shellDockFolderPopupRefreshPending_)
+        {
+            shellDockFolderPopupRefreshPending_ = false;
+            RefreshDockFolderPopup();
+        }
     }
     else if (timerId == kRecycleBinPollTimerId)
     {

@@ -553,7 +553,18 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
 void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
 {
     extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
+    if (shellFileOperationInFlight_ > 0)
+    {
+        shellReloadPending_ = true;
+        shellReloadLayoutFromDiskPending_ =
+            shellReloadLayoutFromDiskPending_ || reloadLayoutFromDisk;
+        return;
+    }
     if (reloading_) return;
+    if (hwnd_ && IsWindow(hwnd_))
+        KillTimer(hwnd_, kShellChangeTimerId);
+    shellReloadPending_ = false;
+    shellReloadLayoutFromDiskPending_ = false;
     reloading_ = true;
     dockAppIdentityCache_.clear();
     dockRunningWindows_.clear();

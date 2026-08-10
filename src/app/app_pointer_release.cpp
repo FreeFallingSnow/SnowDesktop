@@ -858,43 +858,14 @@ void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
             }
             const std::vector<std::wstring> sourcePaths =
                 dragSession_.SourceList().FilePaths();
-            const bool recycleBinTarget =
-                targetDesktopItem &&
-                _wcsicmp(
-                    targetDesktopItem->desktopIconClsid.c_str(),
-                    kDesktopIconClsidRecycleBin) == 0;
+            const bool fullyPathBackedSource =
+                !sourcePaths.empty() &&
+                sourcePaths.size() ==
+                    dragSession_.SourceList().entries.size();
             const std::wstring targetPath = targetItem->GetPath();
             const DWORD targetAttributes = targetPath.empty()
                 ? INVALID_FILE_ATTRIBUTES
                 : GetFileAttributesW(targetPath.c_str());
-            if (!sourcePaths.empty() && recycleBinTarget)
-            {
-                std::vector<snowdesktop::ShellFileOperationStep> steps;
-                steps.push_back({
-                    FO_DELETE,
-                    sourcePaths,
-                    {},
-                    static_cast<FILEOP_FLAGS>(
-                        FOF_ALLOWUNDO |
-                        FOF_NOCONFIRMATION) });
-                QueueShellFileOperation(
-                    std::move(steps),
-                    [this,
-                     dockFolderPopupTarget,
-                     dockFolderPopupSource](bool succeeded) {
-                        if (!succeeded)
-                            return;
-                        ReloadItems(false);
-                        if ((dockFolderPopupTarget ||
-                             dockFolderPopupSource) &&
-                            dockFolderPopupOpen_)
-                            RefreshDockFolderPopup();
-                    });
-                SaveLayoutSlots();
-                ClearSelection();
-                EndDragSession();
-                goto cleanup;
-            }
             if (!sourcePaths.empty() &&
                 targetAttributes != INVALID_FILE_ATTRIBUTES &&
                 (targetAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
@@ -927,23 +898,52 @@ void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
                         dockFolderPopupOpen_)
                         RefreshDockFolderPopup();
                 };
-                if (action == DropAction::Link)
-                {
-                    const bool succeeded = MaterializeFilesToFolder(
-                        fileSources, targetPath, action, {});
-                    finished(succeeded);
-                }
-                else
-                {
-                    MaterializeFilesToFolder(
+                if (MaterializeFilesToFolder(
                         fileSources, targetPath, action,
-                        std::move(finished));
+                        std::move(finished)))
+                {
+                    SaveLayoutSlots();
+                    ClearSelection();
+                    EndDragSession();
+                    goto cleanup;
                 }
+            }
+            DWORD shellKeyState = MK_LBUTTON;
+            if (mods & MK_CONTROL) shellKeyState |= MK_CONTROL;
+            if (mods & MK_ALT) shellKeyState |= MK_ALT;
+            if (mods & MK_SHIFT) shellKeyState |= MK_SHIFT;
+            if (explicitDockFolderTarget &&
+                (mods & (MK_CONTROL | MK_ALT | MK_SHIFT)) == 0)
+                shellKeyState |= MK_SHIFT;
+            POINT shellPoint = dragSession_.CurrentPoint();
+            ClientToScreen(hwnd_, &shellPoint);
+            if (fullyPathBackedSource && !targetPath.empty() &&
+                QueueShellDrop(
+                    sourcePaths,
+                    targetPath,
+                    shellKeyState,
+                    POINTL{ shellPoint.x, shellPoint.y },
+                    DROPEFFECT_COPY | DROPEFFECT_MOVE |
+                        DROPEFFECT_LINK,
+                    [this,
+                     dockFolderPopupTarget,
+                     dockFolderPopupSource](bool succeeded) {
+                        if (!succeeded)
+                            return;
+                        if ((dockFolderPopupTarget ||
+                             dockFolderPopupSource) &&
+                            dockFolderPopupOpen_)
+                            RefreshDockFolderPopup();
+                    }))
+            {
                 SaveLayoutSlots();
                 ClearSelection();
                 EndDragSession();
                 goto cleanup;
             }
+            // Only non-path or queue-rejection compatibility cases reach this
+            // synchronous Shell fallback.
+            DwmFlush();
             ComPtr<IDataObject> dataObj = CreateDataObjectForItems(dragSession_.Items());
             if (dataObj)
             {
@@ -974,18 +974,13 @@ void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
                     ClientToScreen(hwnd_, &screen);
                     POINTL spl{ screen.x, screen.y };
                     DWORD effect = DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
-                    DWORD keyState = MK_LBUTTON;
-                    if (mods & MK_CONTROL) keyState |= MK_CONTROL;
-                    if (mods & MK_ALT)     keyState |= MK_ALT;
-                    if (mods & MK_SHIFT)   keyState |= MK_SHIFT;
-                    if (explicitDockFolderTarget &&
-                        (mods & (MK_CONTROL |
-                            MK_ALT | MK_SHIFT)) == 0)
-                        keyState |= MK_SHIFT;
-                    if (SUCCEEDED(dropTarget->DragEnter(dataObj.Get(), keyState, spl, &effect)))
+                    if (SUCCEEDED(dropTarget->DragEnter(
+                            dataObj.Get(), shellKeyState, spl, &effect)))
                     {
-                        dropTarget->DragOver(keyState, spl, &effect);
-                        dropTarget->Drop(dataObj.Get(), keyState, spl, &effect);
+                        dropTarget->DragOver(
+                            shellKeyState, spl, &effect);
+                        dropTarget->Drop(
+                            dataObj.Get(), shellKeyState, spl, &effect);
                     }
                 }
             }

@@ -214,10 +214,10 @@ void DesktopApp::CommitDragVisualEndBeforeShellOperation()
     dragRenderCache_.Reset();
     PresentPassiveHoverVisualChange();
     // The ordinary hover path must never wait for DWM. Shell operations are a
-    // real presentation boundary, though: submit the batched DComp work first
-    // and only then wait for the drag-end frame to reach the compositor.
+    // presentation boundary, but asynchronous handlers only need the batched
+    // DComp work submitted before they are queued. Synchronous compatibility
+    // fallbacks perform their own DwmFlush immediately before entering Shell.
     FlushPendingCompositionCommit();
-    DwmFlush();
 }
 
 void DesktopApp::PresentPassiveHoverVisualChange()
