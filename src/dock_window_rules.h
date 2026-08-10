@@ -194,16 +194,40 @@ constexpr bool NeedsDockCloseSystemCommandFallback(
 }
 
 /**
- * @brief 判断异步恢复请求失败后是否需要窗口切换器回退。
+ * @brief 判断异步恢复请求失败后是否需要系统命令回退。
  *
- * 此回退只负责发起一次恢复；真实窗口退出最小化后再执行置前，
- * 避免对从最大化状态最小化的窗口连续发送恢复命令。
+ * 高完整性窗口会通过 UIPI 拒绝普通进程的 ShowWindowAsync。
+ * 调用方应通过默认窗口过程执行一次 SC_RESTORE，真实窗口
+ * 退出最小化后再执行置前，避免重复恢复改变最大化状态。
  */
 constexpr bool NeedsDockRestoreRequestFallback(
     bool wasMinimized,
     bool showWindowAccepted) noexcept
 {
     return wasMinimized && !showWindowAccepted;
+}
+
+/**
+ * @brief 执行一次可验证的高完整性窗口恢复回退。
+ *
+ * 先通过默认窗口过程执行 SC_RESTORE；只有窗口仍处于最小化
+ * 状态时才调用窗口切换器，避免重复恢复改变原有最大化状态。
+ * 可调用对象由平台层注入，使调用顺序和系统命令可以直接回归测试。
+ */
+template <typename ExecuteSystemCommand,
+    typename IsWindowStillIconic,
+    typename ExecuteWindowSwitch>
+void ApplyDockRestoreRequestFallback(
+    bool fallbackRequired,
+    ExecuteSystemCommand&& executeSystemCommand,
+    IsWindowStillIconic&& isWindowStillIconic,
+    ExecuteWindowSwitch&& executeWindowSwitch)
+{
+    if (!fallbackRequired)
+        return;
+    executeSystemCommand(static_cast<WPARAM>(SC_RESTORE));
+    if (isWindowStillIconic())
+        executeWindowSwitch();
 }
 
 /**

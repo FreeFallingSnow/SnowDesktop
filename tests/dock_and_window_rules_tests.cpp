@@ -1230,7 +1230,49 @@ int main()
                 true, true) &&
             rules::NeedsDockRestoreRequestFallback(
                 true, false),
-        "only a rejected minimized-window restore may use the one-shot switch fallback");
+        "only a rejected minimized-window restore may use the one-shot system-command fallback");
+    int restoreFallbackSequence = 0;
+    int restoreSystemCommandStep = 0;
+    int restoreStateCheckStep = 0;
+    int restoreSwitchStep = 0;
+    WPARAM restoreSystemCommand = 0;
+    rules::ApplyDockRestoreRequestFallback(
+        true,
+        [&](WPARAM command) {
+            restoreSystemCommandStep = ++restoreFallbackSequence;
+            restoreSystemCommand = command;
+        },
+        [&]() {
+            restoreStateCheckStep = ++restoreFallbackSequence;
+            return true;
+        },
+        [&]() {
+            restoreSwitchStep = ++restoreFallbackSequence;
+        });
+    Check(restoreSystemCommand == SC_RESTORE &&
+            restoreSystemCommandStep == 1 &&
+            restoreStateCheckStep == 2 &&
+            restoreSwitchStep == 3,
+        "a rejected elevated-window restore must issue SC_RESTORE before the final task-switch fallback");
+    int completedRestoreSwitches = 0;
+    rules::ApplyDockRestoreRequestFallback(
+        true,
+        [](WPARAM) {},
+        []() { return false; },
+        [&]() { ++completedRestoreSwitches; });
+    Check(completedRestoreSwitches == 0,
+        "a completed system restore must not issue a duplicate task-switch restore");
+    int unnecessaryRestoreCallbacks = 0;
+    rules::ApplyDockRestoreRequestFallback(
+        false,
+        [&](WPARAM) { ++unnecessaryRestoreCallbacks; },
+        [&]() {
+            ++unnecessaryRestoreCallbacks;
+            return true;
+        },
+        [&]() { ++unnecessaryRestoreCallbacks; });
+    Check(unnecessaryRestoreCallbacks == 0,
+        "a successful asynchronous restore must not enter the system-command fallback");
     Check(rules::ShouldSwitchDockWindowAfterShow(
             false, true),
         "a visible background window must always switch to the foreground");

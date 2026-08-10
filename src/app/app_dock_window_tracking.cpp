@@ -145,14 +145,29 @@ void RequestDockWindowShow(HWND target, bool wasMinimized)
         wasMinimized
             ? DockRestoreShowCommand(target)
             : SW_SHOW);
-    if (snowdesktop::dock_window_rules::
+    const bool restoreFallbackRequired =
+        snowdesktop::dock_window_rules::
             NeedsDockRestoreRequestFallback(
                 wasMinimized,
                 showAccepted != FALSE) &&
-        !ShouldSkipSynchronousWindowActivation(target))
-    {
-        SwitchToThisWindow(target, FALSE);
-    }
+        !ShouldSkipSynchronousWindowActivation(target);
+    snowdesktop::dock_window_rules::
+        ApplyDockRestoreRequestFallback(
+            restoreFallbackRequired,
+            [target](WPARAM systemCommand) {
+                // Elevated windows reject ShowWindowAsync through UIPI.
+                // Unlike posting WM_SYSCOMMAND, the default window procedure
+                // remains usable from a normal-integrity Dock process.
+                DefWindowProcW(
+                    target, WM_SYSCOMMAND,
+                    systemCommand, 0);
+            },
+            [target]() {
+                return IsIconic(target) != FALSE;
+            },
+            [target]() {
+                SwitchToThisWindow(target, FALSE);
+            });
 }
 
 } // namespace
