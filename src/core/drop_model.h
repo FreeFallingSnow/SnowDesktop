@@ -489,6 +489,25 @@ struct PendingLandingEntry
 };
 
 /**
+ * @struct PendingFolderPlacement
+ * @brief 文件操作完成后需要恢复的文件夹成员插入位置。
+ *
+ * FolderMapping 和 Dock 文件夹弹窗不使用桌面 layoutKey。它们在目录
+ * 重新枚举后，通过操作前路径快照识别新增成员，再恢复拖放预览中的
+ * 插入边界。widgetId 标识持久化 FolderMapping；popupSourceId 标识没有
+ * 持久化组件的 Dock 文件夹入口。
+ */
+struct PendingFolderPlacement
+{
+    std::wstring widgetId;
+    std::wstring popupSourceId;
+    std::wstring sourceFolderPath;
+    size_t insertIndex = 0;
+    std::unordered_set<std::wstring> existingPaths;
+    std::vector<std::wstring> sourceNames;
+};
+
+/**
  * @struct PendingLandingCache
  * @brief 挂起的落地操作缓存
  *
@@ -507,6 +526,7 @@ struct PendingLandingEntry
 struct PendingLandingCache
 {
     std::vector<PendingLandingEntry> entries;
+    std::vector<PendingFolderPlacement> folderPlacements;
     std::unordered_set<std::wstring> existingDesktopKeys;
     bool active = false;
     DWORD tick = 0;
@@ -517,6 +537,7 @@ struct PendingLandingCache
     void Clear()
     {
         entries.clear();
+        folderPlacements.clear();
         existingDesktopKeys.clear();
         active = false;
         tick = 0;

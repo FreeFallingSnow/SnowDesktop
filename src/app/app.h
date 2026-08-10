@@ -1736,6 +1736,12 @@ private:
     void StorePendingLandingCache(const DragSourceList& sourceList, const DropPreviewList& preview,
         const std::unordered_set<std::wstring>& existingKeys,
         const std::unordered_map<size_t, std::wstring>* createdPathsBySource = nullptr);
+    PendingFolderPlacement BuildPendingFolderPlacement(
+        const DesktopWidget& targetWidget,
+        size_t insertIndex,
+        const DragSourceList* sourceList = nullptr) const;
+    void ActivatePendingFolderPlacement(
+        PendingFolderPlacement placement);
     /**
      * @brief 判断拖拽是否为基于文件的放置。
      * @param sourceList 拖拽源列表
@@ -2905,6 +2911,10 @@ private:
     static bool MatchPendingName(const std::wstring& itemName, const std::wstring& srcFileName);
     /** @brief 应用待处理的放置操作（外壳刷新后执行）。 */
     void ApplyPendingPlacement();
+    bool ApplyPendingFolderPlacements(
+        DesktopWidget& targetWidget,
+        const std::wstring& widgetId,
+        const std::wstring& popupSourceId = L"");
     /** @} */
 
     /** @name 集合弹出面板 */

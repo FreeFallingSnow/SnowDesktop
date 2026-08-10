@@ -818,6 +818,56 @@ void DesktopApp::StorePendingLandingCache(const DragSourceList& sourceList,
     pendingLandingCache_.active = !pendingLandingCache_.entries.empty();
 }
 
+PendingFolderPlacement DesktopApp::BuildPendingFolderPlacement(
+    const DesktopWidget& targetWidget,
+    size_t insertIndex,
+    const DragSourceList* sourceList) const
+{
+    PendingFolderPlacement placement;
+    placement.sourceFolderPath = targetWidget.sourceFolderPath;
+    placement.insertIndex = insertIndex;
+    for (const auto& entry : targetWidget.folderEntries)
+    {
+        if (!entry.fullPath.empty())
+            placement.existingPaths.insert(
+                ToUpperInvariant(entry.fullPath));
+    }
+
+    if (targetWidget.id == kDockFolderPopupWidgetId)
+    {
+        placement.widgetId = dockFolderPopupMappingWidgetId_;
+        placement.popupSourceId = dockFolderPopupSourceId_;
+    }
+    else
+    {
+        placement.widgetId = targetWidget.id;
+    }
+
+    if (sourceList)
+    {
+        placement.sourceNames.reserve(sourceList->entries.size());
+        for (const auto& entry : sourceList->entries)
+        {
+            std::wstring name = !entry.filePath.empty()
+                ? FileNameFromPath(entry.filePath)
+                : entry.displayName;
+            if (!name.empty())
+                placement.sourceNames.push_back(std::move(name));
+        }
+    }
+    return placement;
+}
+
+void DesktopApp::ActivatePendingFolderPlacement(
+    PendingFolderPlacement placement)
+{
+    pendingLandingCache_.Clear();
+    pendingLandingCache_.tick = GetTickCount();
+    pendingLandingCache_.folderPlacements.push_back(
+        std::move(placement));
+    pendingLandingCache_.active = true;
+}
+
 /**
  * @brief 执行基于文件系统的拖拽放置计划（复制/移动到桌面或文件夹映射）。
  * @param sourceList 拖拽源列表。
@@ -834,67 +884,30 @@ bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceList,
 
     if (preview.targetKind == DropTargetKind::FolderMapping && preview.targetWidget)
     {
-        const std::wstring targetWidgetId =
-            preview.targetWidget->id;
-        std::unordered_set<std::wstring> targetExistingPaths;
-        for (const auto& entry : preview.targetWidget->folderEntries)
-            targetExistingPaths.insert(
-                ToUpperInvariant(entry.fullPath));
-        const size_t targetInsertIndex = preview.insertIndex;
+        PendingLandingCache landingCache;
+        landingCache.folderPlacements.push_back(
+            BuildPendingFolderPlacement(
+                *preview.targetWidget,
+                preview.insertIndex,
+                &sourceList));
+        landingCache.active = true;
         const DropAction action = preview.action;
+        const std::wstring targetFolderPath =
+            preview.targetWidget->sourceFolderPath;
 
         auto operationCompletion = [this,
             action,
             desktopKeys,
-            targetWidgetId,
-            targetExistingPaths = std::move(targetExistingPaths),
-            targetInsertIndex,
+            landingCache = std::move(landingCache),
             completion = std::move(completion)](bool succeeded) mutable {
             if (succeeded)
             {
+                landingCache.tick = GetTickCount();
+                pendingLandingCache_ = std::move(landingCache);
                 if (action == DropAction::Move)
                     RemoveDesktopKeysFromWidgets(desktopKeys);
 
                 ReloadItems(false);
-                const size_t targetWidgetIndex =
-                    FindWidgetIndexById(targetWidgetId);
-                if (targetWidgetIndex < widgets_.size())
-                {
-                    auto& target = widgets_[targetWidgetIndex];
-                    std::vector<FolderEntry> inserted;
-                    for (auto it = target.folderEntries.begin();
-                        it != target.folderEntries.end();)
-                    {
-                        if (targetExistingPaths.contains(
-                                ToUpperInvariant(it->fullPath)))
-                        {
-                            ++it;
-                            continue;
-                        }
-                        inserted.push_back(std::move(*it));
-                        it = target.folderEntries.erase(it);
-                    }
-                    if (!inserted.empty())
-                    {
-                        const size_t insertAt = std::min(
-                            targetInsertIndex,
-                            target.folderEntries.size());
-                        target.folderEntries.insert(
-                            target.folderEntries.begin() +
-                                static_cast<std::ptrdiff_t>(insertAt),
-                            std::make_move_iterator(inserted.begin()),
-                            std::make_move_iterator(inserted.end()));
-                        target.itemKeys.clear();
-                        target.itemKeys.reserve(
-                            target.folderEntries.size());
-                        for (const auto& entry : target.folderEntries)
-                            target.itemKeys.push_back(entry.fullPath);
-                        SaveLayoutSlots();
-                        RebuildContainersAndItems();
-                        LayoutItems();
-                        InvalidateRect(hwnd_, nullptr, FALSE);
-                    }
-                }
                 if (dockFolderPopupOpen_)
                     RefreshDockFolderPopup();
             }
@@ -904,7 +917,7 @@ bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceList,
 
         const bool queued = MaterializeFilesToFolder(
             sourceList,
-            preview.targetWidget->sourceFolderPath,
+            targetFolderPath,
             action,
             operationCompletion,
             executeSynchronously);

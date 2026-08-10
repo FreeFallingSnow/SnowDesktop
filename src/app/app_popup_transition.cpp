@@ -489,6 +489,13 @@ void DesktopApp::RefreshDockFolderPopup()
     {
         EnumerateFolderMappingEntries(
             dockFolderPopupWidget_, true);
+        if (ApplyPendingFolderPlacements(
+                dockFolderPopupWidget_,
+                dockFolderPopupMappingWidgetId_,
+                dockFolderPopupSourceId_))
+        {
+            CommitDockFolderPopupStateToSource();
+        }
     }
     else
         dockFolderPopupWidget_.folderEntries.clear();

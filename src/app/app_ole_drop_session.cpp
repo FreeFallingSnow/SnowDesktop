@@ -848,6 +848,14 @@ HRESULT DesktopApp::HandleOleDrop(
         dragSession_.TargetRegion() !=
             HitRegion::Blocked)
     {
+        const size_t popupInsertIndex =
+            dockFolderPopupContainer_->GetDropInsertIndex(
+                dragSession_.TargetSlot(),
+                dragSession_.TargetRegion());
+        const PendingFolderPlacement popupPlacement =
+            BuildPendingFolderPlacement(
+                dockFolderPopupWidget_,
+                popupInsertIndex);
         if (dropPaths.empty() &&
             !dockFolderPopupWidget_.sourceFolderPath.empty() &&
             QueueAsyncShellDrop(
@@ -856,8 +864,12 @@ HRESULT DesktopApp::HandleOleDrop(
                 keyState,
                 point,
                 *effect,
-                [this](bool succeeded) {
-                    if (succeeded && dockFolderPopupOpen_)
+                [this, popupPlacement](bool succeeded) mutable {
+                    if (!succeeded)
+                        return;
+                    ActivatePendingFolderPlacement(
+                        std::move(popupPlacement));
+                    if (dockFolderPopupOpen_)
                         RefreshDockFolderPopup();
                 }))
         {
@@ -895,9 +907,18 @@ HRESULT DesktopApp::HandleOleDrop(
                 entry.displayName = FileNameFromPath(path);
                 fileSources.entries.push_back(std::move(entry));
             }
-            auto finished = [this](bool succeeded) {
+            PendingFolderPlacement folderPlacement =
+                BuildPendingFolderPlacement(
+                    dockFolderPopupWidget_,
+                    popupInsertIndex,
+                    &fileSources);
+            auto finished = [this,
+                folderPlacement = std::move(folderPlacement)](
+                    bool succeeded) mutable {
                 if (!succeeded)
                     return;
+                ActivatePendingFolderPlacement(
+                    std::move(folderPlacement));
                 ReloadItems(false);
                 if (dockFolderPopupOpen_)
                     RefreshDockFolderPopup();
@@ -939,8 +960,12 @@ HRESULT DesktopApp::HandleOleDrop(
                 keyState,
                 point,
                 *effect,
-                [this](bool succeeded) {
-                    if (succeeded && dockFolderPopupOpen_)
+                [this, popupPlacement](bool succeeded) mutable {
+                    if (!succeeded)
+                        return;
+                    ActivatePendingFolderPlacement(
+                        std::move(popupPlacement));
+                    if (dockFolderPopupOpen_)
                         RefreshDockFolderPopup();
                 }))
         {
@@ -977,12 +1002,18 @@ HRESULT DesktopApp::HandleOleDrop(
                 folderDropTarget->DragOver(
                     keyState, screenPoint,
                     &shellEffect);
-                folderDropTarget->Drop(
+                const HRESULT dropResult = folderDropTarget->Drop(
                     dataObject, keyState,
                     screenPoint,
                     &shellEffect);
                 *effect = shellEffect;
                 EndDragSession();
+                if (SUCCEEDED(dropResult) &&
+                    shellEffect != DROPEFFECT_NONE)
+                {
+                    ActivatePendingFolderPlacement(
+                        popupPlacement);
+                }
                 RefreshDockFolderPopup();
                 return S_OK;
             }

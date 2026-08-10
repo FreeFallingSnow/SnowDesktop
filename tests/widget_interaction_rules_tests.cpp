@@ -4,6 +4,7 @@
 #include "widget_visibility_rules.h"
 #include "widgets/widget_chrome_rules.h"
 #include "widgets/guide_widget_rules.h"
+#include "pending_drop_rules.h"
 
 #include <algorithm>
 #include <iostream>
@@ -227,6 +228,62 @@ void TestStableReorder()
             }
         }
     }
+}
+
+void TestPendingFilePlacementReconciliation()
+{
+    namespace pendingRules =
+        snowdesktop::pending_drop_rules;
+
+    std::vector<std::string> folderEntries{
+        "old-a", "new-b", "old-b", "new-a"
+    };
+    std::vector<std::string> inserted =
+        pendingRules::ExtractMatching(
+            folderEntries,
+            [](const std::string& value) {
+                return value.starts_with("new-");
+            });
+    Check(
+        folderEntries == std::vector<std::string>({
+            "old-a", "old-b"
+        }) &&
+        inserted == std::vector<std::string>({
+            "new-b", "new-a"
+        }),
+        "folder reconciliation must isolate newly enumerated members");
+    pendingRules::InsertAt(
+        folderEntries, 1, std::move(inserted));
+    Check(
+        folderEntries == std::vector<std::string>({
+            "old-a", "new-b", "new-a", "old-b"
+        }),
+        "new folder members must be restored at the preview boundary");
+
+    std::vector<std::string> autoCollected{
+        "old-a", "old-b", "new-a", "new-b"
+    };
+    std::vector<std::string> first =
+        pendingRules::ExtractMatching(
+            autoCollected,
+            [](const std::string& value) {
+                return value == "new-a";
+            });
+    pendingRules::InsertAt(
+        autoCollected, 1, std::move(first));
+    std::vector<std::string> second =
+        pendingRules::ExtractMatching(
+            autoCollected,
+            [](const std::string& value) {
+                return value == "new-b";
+            });
+    pendingRules::InsertAt(
+        autoCollected, 2, std::move(second));
+    Check(
+        autoCollected == std::vector<std::string>({
+            "old-a", "new-a", "new-b", "old-b"
+        }),
+        "multiple pending members must preserve their landing order");
 }
 
 void TestBottomBarWidthFollowsCornerAndHeight()
@@ -624,6 +681,7 @@ int main()
     TestBottomBarWidthFollowsCornerAndHeight();
     TestGuidePlaceholderLifecycle();
     TestStableReorder();
+    TestPendingFilePlacementReconciliation();
     TestFileGroupRules();
     TestGridPlacementInvariants();
     TestHoverOnlyWidgetVisibility();
