@@ -1153,6 +1153,12 @@ int main()
         "app windows must override no-activate exclusion");
     Check(rules::IsTaskWindowStyleEligible(WS_EX_APPWINDOW, true),
         "app windows must override owner exclusion");
+    Check(rules::IsTaskWindowPresentationEligible(true, false) &&
+            rules::IsTaskWindowPresentationEligible(true, true),
+        "visible normal and minimized windows must remain eligible");
+    Check(!rules::IsTaskWindowPresentationEligible(false, false) &&
+            !rules::IsTaskWindowPresentationEligible(false, true),
+        "hidden windows must stay out of the Dock even when still iconic");
     Check(rules::ResolveDockClickAction(false, false, false) ==
             rules::DockClickAction::Launch,
         "a closed application must keep the existing launch gesture");

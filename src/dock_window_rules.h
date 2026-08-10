@@ -367,6 +367,19 @@ constexpr bool IsTaskWindowStyleEligible(
 }
 
 /**
+ * @brief 判断顶层窗口当前是否仍应显示在任务栏/Dock。
+ *
+ * 普通最小化窗口仍保留 WS_VISIBLE，因此可以继续显示。部分托盘应用会在
+ * 处理 WM_CLOSE 时先最小化再隐藏窗口，此时 IsIconic 仍可能为真；隐藏状态
+ * 必须优先，不能因为窗口仍处于最小化态就把它重新加入 Dock。
+ */
+constexpr bool IsTaskWindowPresentationEligible(
+    bool visible, bool /*iconic*/) noexcept
+{
+    return visible;
+}
+
+/**
  * @brief 判断恢复窗口时是否播放图标到窗口的过渡动画。
  *
  * Dock 图标点击与预览缩略图点击共用同一条窗口命令路径：窗口最小化

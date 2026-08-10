@@ -469,7 +469,10 @@ inline bool IsDockTaskWindow(HWND window)
 {
     if (!window || GetAncestor(window, GA_ROOT) != window)
         return false;
-    if (!IsWindowVisible(window) && !IsIconic(window))
+    if (!snowdesktop::dock_window_rules::
+            IsTaskWindowPresentationEligible(
+                IsWindowVisible(window) != FALSE,
+                IsIconic(window) != FALSE))
         return false;
     wchar_t className[64]{};
     GetClassNameW(window, className, static_cast<int>(std::size(className)));
