@@ -330,7 +330,7 @@ HitRegion DesktopGrid::HitTestDrag(POINT pt, Slot*& outSlot)
  * @return 提示字符串，根据拖放类型和修饰键返回不同的中文提示
  * @details 根据以下情况生成合适的拖放提示：
  *          - Handoff 模式：提示交给目标应用处理
- *          - 外部拖放（origin 为空）：根据修饰键提示创建快捷方式/移动/复制/放置
+ *          - 外部拖放（origin 为空）：根据实际落地动作提示创建快捷方式/移动/复制
  *          - 内部拖放：根据修饰键和最佳放置位置提示创建快捷方式/复制/移动
  */
 std::wstring DesktopGrid::GetDragHint(Slot* slot, HitRegion region,
@@ -343,7 +343,6 @@ std::wstring DesktopGrid::GetDragHint(Slot* slot, HitRegion region,
 
     bool ctrlDown = (mods & MK_CONTROL) != 0;
     bool altDown  = (mods & MK_ALT) != 0;
-    bool shiftDown = (mods & MK_SHIFT) != 0;
 
     POINT dragPoint = app_->dragSession_.CurrentPoint();
 
@@ -359,13 +358,21 @@ std::wstring DesktopGrid::GetDragHint(Slot* slot, HitRegion region,
         }
     }
 
-    // External drag — simple hint
+    // 与 BuildDropPreviewList 的外部文件策略保持一致：默认复制，
+    // 修饰键可切换为移动或创建快捷方式，不再显示笼统的“放置”。
     if (!origin)
     {
-        if (altDown)   return _LW("core.drag.release_create_shortcut");
-        if (shiftDown) return _LW("core.drag.release_move_desktop");
-        if (ctrlDown)  return _LW("core.drag.release_copy_desktop");
-        return _LW("core.drag.release_place_desktop");
+        switch (DropActionFromMods(
+            mods, DropAction::Copy))
+        {
+        case DropAction::Link:
+            return _LW("core.drag.release_create_shortcut");
+        case DropAction::Copy:
+            return _LW("core.drag.release_copy_desktop");
+        case DropAction::Move:
+        default:
+            return _LW("core.drag.release_move_desktop");
+        }
     }
 
     const DragSourceList& sourceList =
