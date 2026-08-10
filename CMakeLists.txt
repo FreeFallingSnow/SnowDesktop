@@ -105,6 +105,7 @@ message(STATUS
 
 set(SNOWDESKTOP_SOURCES
     src/main.cpp
+    src/application_crash_watchdog.cpp
     src/app/app_bitmap_cache.cpp
     src/app/app_background_menu.cpp
     src/app/app_animation_scheduler.cpp
@@ -238,6 +239,7 @@ set(SNOWDESKTOP_SOURCES
     src/modern_menu.cpp
     src/search_match.cpp
     src/everything_search.cpp
+    src/lua_runtime.cpp
     src/widget_engine.cpp
     src/widget_package.cpp
     src/widget_package_paths.cpp
@@ -640,6 +642,32 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES shlwapi winhttp ws2_32
         LABELS contract security)
+
+    snowdesktop_add_test(
+        SnowDesktopLuaRuntimeTests
+        lua_runtime
+        SOURCES
+            tests/lua_runtime_tests.cpp
+            src/lua_runtime.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES SnowDesktopLua
+        LABELS contract lua widget)
+
+    snowdesktop_add_test(
+        SnowDesktopApplicationRestartPolicyTests
+        application_restart_policy
+        SOURCES
+            tests/application_restart_policy_tests.cpp
+            src/application_crash_watchdog.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS contract recovery)
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetLayoutContextTests
+        widget_layout_context
+        SOURCES tests/widget_layout_context_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS contract lua widget)
 
     snowdesktop_add_test(
         SnowDesktopCalendarServiceTests

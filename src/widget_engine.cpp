@@ -969,6 +969,65 @@ static void SetWidgetExecutionContext(D2DState* state, const std::wstring& widge
         state->engine->ActivateWidgetState(widgetId);
 }
 
+class WidgetExecutionContextGuard
+{
+public:
+    WidgetExecutionContextGuard(
+        D2DState* state, const std::wstring& widgetId)
+        : state_(state)
+    {
+        if (!state_)
+            return;
+        context_ = state_->ctx;
+        widgetRect_ = state_->widgetRect;
+        storagePrefix_ = state_->storagePrefix;
+        widgetId_ = state_->currentWidgetId;
+        gridColumns_ = state_->gridColumns;
+        gridRows_ = state_->gridRows;
+        layoutMetrics_ = snowdesktop::widget_runtime::
+            CaptureLayoutMetrics(*state_);
+        widgetClipDepth_ = state_->widgetClipDepth;
+        SetWidgetExecutionContext(state_, widgetId);
+    }
+
+    ~WidgetExecutionContextGuard()
+    {
+        if (!state_)
+            return;
+        state_->ctx = context_;
+        state_->widgetRect = widgetRect_;
+        state_->storagePrefix = std::move(storagePrefix_);
+        state_->currentWidgetId = std::move(widgetId_);
+        state_->gridColumns = gridColumns_;
+        state_->gridRows = gridRows_;
+        state_->widgetClipDepth = widgetClipDepth_;
+        snowdesktop::widget_runtime::RestoreLayoutMetrics(
+            *state_, layoutMetrics_, [this]() {
+                if (state_->engine)
+                {
+                    state_->engine->ActivateWidgetState(
+                        state_->currentWidgetId);
+                }
+            });
+    }
+
+    WidgetExecutionContextGuard(
+        const WidgetExecutionContextGuard&) = delete;
+    WidgetExecutionContextGuard& operator=(
+        const WidgetExecutionContextGuard&) = delete;
+
+private:
+    D2DState* state_ = nullptr;
+    ID2D1DeviceContext* context_ = nullptr;
+    D2D1_RECT_F widgetRect_{};
+    std::string storagePrefix_;
+    std::wstring widgetId_;
+    int gridColumns_ = 1;
+    int gridRows_ = 1;
+    snowdesktop::widget_runtime::LayoutMetrics layoutMetrics_;
+    int widgetClipDepth_ = 0;
+};
+
 static void SetWidgetRectContext(D2DState* state, RECT bounds)
 {
     if (!state || bounds.right <= bounds.left || bounds.bottom <= bounds.top) return;
@@ -3412,60 +3471,6 @@ static void* LuaQuotaAllocator(void* userData, void* pointer,
     return result;
 }
 
-static void LuaQuotaHook(lua_State* state, lua_Debug*)
-{
-    lua_getfield(state, LUA_REGISTRYINDEX, "__quota_ptr");
-    auto* quota = static_cast<LuaRuntimeQuota*>(
-        lua_touserdata(state, -1));
-    lua_pop(state, 1);
-    if (!quota) return;
-    quota->instructionsRemaining -= 10000;
-    if (quota->instructionsRemaining <= 0 ||
-        std::chrono::steady_clock::now() >= quota->deadline)
-    {
-        quota->executionExceeded = true;
-        luaL_error(state, "widget execution quota exceeded");
-    }
-}
-
-static void BeginLuaExecution(lua_State* state, LuaRuntimeQuota* quota,
-    std::int64_t instructionBudget = 500000,
-    std::chrono::milliseconds timeBudget = std::chrono::milliseconds(50))
-{
-    if (!state || !quota) return;
-    quota->instructionsRemaining = instructionBudget;
-    quota->deadline = std::chrono::steady_clock::now() + timeBudget;
-    quota->executionExceeded = false;
-    lua_sethook(state, LuaQuotaHook, LUA_MASKCOUNT, 10000);
-}
-
-static int LuaTraceback(lua_State* state)
-{
-    const char* message = lua_tostring(state, 1);
-    luaL_traceback(state, state, message ? message : "(Lua error)", 1);
-    return 1;
-}
-
-static int LuaProtectedCall(lua_State* state, int arguments, int results)
-{
-    const auto started = std::chrono::steady_clock::now();
-    const int functionIndex = lua_gettop(state) - arguments;
-    lua_pushcfunction(state, LuaTraceback);
-    lua_insert(state, functionIndex);
-    const int status = lua_pcall(state, arguments, results, functionIndex);
-    lua_remove(state, functionIndex);
-    lua_getfield(state, LUA_REGISTRYINDEX, "__quota_ptr");
-    if (auto* quota = static_cast<LuaRuntimeQuota*>(
-        lua_touserdata(state, -1)))
-    {
-        quota->lastExecutionMs =
-            std::chrono::duration<double, std::milli>(
-                std::chrono::steady_clock::now() - started).count();
-    }
-    lua_pop(state, 1);
-    return status;
-}
-
 WidgetEngine::~WidgetEngine()
 {
     Shutdown();
@@ -3573,7 +3578,6 @@ void WidgetEngine::Shutdown()
         }
     }
     widgets_.clear();
-    L_ = nullptr;
     delete d2dState_; d2dState_ = nullptr;
 }
 
@@ -3591,11 +3595,11 @@ void WidgetEngine::UnloadWidget(const std::wstring& widgetId)
     if (widgets_[idx].namedTimerId && widgetTimerKillCallback_)
         widgetTimerKillCallback_(widgets_[idx].namedTimerId);
     if (httpService_) httpService_->CancelWidget(widgetId);
-    L_ = widgets_[idx].state;
-    if (L_)
+    lua_State* state = widgets_[idx].state;
+    if (state)
     {
-        luaL_unref(L_, LUA_REGISTRYINDEX, widgets_[idx].ref);
-        lua_close(L_);
+        luaL_unref(state, LUA_REGISTRYINDEX, widgets_[idx].ref);
+        lua_close(state);
         widgets_[idx].state = nullptr;
     }
     widgets_.erase(widgets_.begin() + idx);
@@ -3634,33 +3638,41 @@ int WidgetEngine::FindWidget(const std::wstring& widgetId) const
 void WidgetEngine::ActivateWidgetState(const std::wstring& widgetId)
 {
     const int index = FindWidget(widgetId);
-    if (index < 0 || !widgets_[index].state) return;
-    L_ = widgets_[index].state;
-    BeginLuaExecution(L_, widgets_[index].quota.get());
+    if (index < 0 || !widgets_[index].state)
+        return;
+    const auto& widget = widgets_[index];
+    if (d2dState_)
+    {
+        snowdesktop::widget_runtime::ApplyLayoutMetrics(
+            *d2dState_, widget.layoutMetrics);
+    }
 }
 
 void WidgetEngine::InvokeSimpleCallback(LuaWidget& widget, const char* callbackName)
 {
-    L_ = widget.state;
-    if (!L_) return;
-    BeginLuaExecution(L_, widget.quota.get());
-    SetWidgetExecutionContext(d2dState_, widget.widgetId);
-    SetWidgetRectContext(d2dState_, widget.lastBounds);
-    lua_rawgeti(L_, LUA_REGISTRYINDEX, widget.ref);
-    if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return; }
-    lua_getfield(L_, -1, callbackName);
-    if (lua_isfunction(L_, -1))
+    lua_State* state = widget.state;
+    if (!state) return;
+    const std::wstring widgetId = widget.widgetId;
+    const int widgetRef = widget.ref;
+    const RECT bounds = widget.lastBounds;
+    WidgetExecutionContextGuard contextGuard(d2dState_, widgetId);
+    snowdesktop::lua_runtime::StackGuard stackGuard(state);
+    SetWidgetRectContext(d2dState_, bounds);
+    lua_rawgeti(state, LUA_REGISTRYINDEX, widgetRef);
+    if (!lua_istable(state, -1)) { lua_pop(state, 1); return; }
+    lua_getfield(state, -1, callbackName);
+    if (lua_isfunction(state, -1))
     {
-        if (LuaProtectedCall(L_, 0, 0) != LUA_OK)
+        if (snowdesktop::lua_runtime::ProtectedCall(state, 0, 0) != LUA_OK)
         {
-            const char* error = lua_tostring(L_, -1);
-            RuntimeRecordError(widget.widgetId, error ? error : "(callback error)");
-            lua_pop(L_, 1);
+            const char* error = lua_tostring(state, -1);
+            RuntimeRecordError(widgetId, error ? error : "(callback error)");
+            lua_pop(state, 1);
         }
     }
     else
-        lua_pop(L_, 1);
-    lua_pop(L_, 1);
+        lua_pop(state, 1);
+    lua_pop(state, 1);
 }
 
 static int LuaReadOnlyApiWrite(lua_State* state)
@@ -3826,112 +3838,113 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
             pending.permissions.insert(permission);
     }
 
+    WidgetExecutionContextGuard loadContext(d2dState_, widgetId);
     auto quota = std::make_unique<LuaRuntimeQuota>();
-    lua_State* newState = lua_newstate(LuaQuotaAllocator, quota.get());
-    if (!newState)
+    lua_State* state = lua_newstate(LuaQuotaAllocator, quota.get());
+    if (!state)
     {
         RuntimeRecordError(widgetId, "Cannot allocate isolated Lua state");
         return false;
     }
     std::unique_ptr<lua_State, decltype(&lua_close)> stateGuard(
-        newState, lua_close);
-    L_ = newState;
-    luaL_requiref(L_, "_G", luaopen_base, 1); lua_pop(L_, 1);
-    luaL_requiref(L_, LUA_TABLIBNAME, luaopen_table, 1); lua_pop(L_, 1);
-    luaL_requiref(L_, LUA_STRLIBNAME, luaopen_string, 1); lua_pop(L_, 1);
-    luaL_requiref(L_, LUA_MATHLIBNAME, luaopen_math, 1); lua_pop(L_, 1);
-    luaL_requiref(L_, LUA_UTF8LIBNAME, luaopen_utf8, 1); lua_pop(L_, 1);
-    RegisterDrawAPI(L_);
-    lua_pushlightuserdata(L_, d2dState_);
-    lua_setfield(L_, LUA_REGISTRYINDEX, "__d2d_ptr");
-    lua_pushlightuserdata(L_, quota.get());
-    lua_setfield(L_, LUA_REGISTRYINDEX, "__quota_ptr");
-    lua_pushstring(L_, WidgetWideToUtf8(widgetId).c_str());
-    lua_setfield(L_, LUA_REGISTRYINDEX, "__widget_id");
-    BeginLuaExecution(L_, quota.get(), 1000000, std::chrono::milliseconds(100));
+        state, lua_close);
+    luaL_requiref(state, "_G", luaopen_base, 1); lua_pop(state, 1);
+    luaL_requiref(state, LUA_TABLIBNAME, luaopen_table, 1); lua_pop(state, 1);
+    luaL_requiref(state, LUA_STRLIBNAME, luaopen_string, 1); lua_pop(state, 1);
+    luaL_requiref(state, LUA_MATHLIBNAME, luaopen_math, 1); lua_pop(state, 1);
+    luaL_requiref(state, LUA_UTF8LIBNAME, luaopen_utf8, 1); lua_pop(state, 1);
+    RegisterDrawAPI(state);
+    lua_pushlightuserdata(state, d2dState_);
+    lua_setfield(state, LUA_REGISTRYINDEX, "__d2d_ptr");
+    lua_pushlightuserdata(state, quota.get());
+    lua_setfield(state, LUA_REGISTRYINDEX, "__quota_ptr");
+    lua_pushstring(state, WidgetWideToUtf8(widgetId).c_str());
+    lua_setfield(state, LUA_REGISTRYINDEX, "__widget_id");
     if (d2dState_)
     {
         d2dState_->currentWidgetId = widgetId;
         d2dState_->storagePrefix = WidgetWideToUtf8(widgetId);
     }
-    L_ = newState;
-
     // Create a sandbox table with only the registered safe API surface.
-    PushSafeEnvironment(L_, pending);
+    PushSafeEnvironment(state, pending);
 
     // Load the chunk
-    if (luaL_loadstring(L_, source.c_str()) != LUA_OK)
+    if (luaL_loadstring(state, source.c_str()) != LUA_OK)
     {
-        const char* err = lua_tostring(L_, -1);
+        const char* err = lua_tostring(state, -1);
         RuntimeRecordError(widgetId, err ? err : "(load error)");
-        lua_pop(L_, 2);
+        lua_pop(state, 2);
         return false;
     }
 
     // Try to set the chunk's first upvalue (_ENV) to sandbox.
-    lua_pushvalue(L_, -2);
-    const char* envName = lua_setupvalue(L_, -2, 1);
+    lua_pushvalue(state, -2);
+    const char* envName = lua_setupvalue(state, -2, 1);
     if (envName == nullptr)
     {
         // Chunk has no _ENV upvalue - run directly in sandbox via alternative method
         // Pop the chunk, reload with explicit environment
-        lua_pop(L_, 2);  // pop sandbox copy and chunk, keep sandbox
+        lua_pop(state, 2);  // pop sandbox copy and chunk, keep sandbox
         // Wrap the source to use the sandbox explicitly
         std::string wrapped = "local _ENV = ...;\n" + source;
-        if (luaL_loadstring(L_, wrapped.c_str()) != LUA_OK)
+        if (luaL_loadstring(state, wrapped.c_str()) != LUA_OK)
         {
-            const char* err = lua_tostring(L_, -1);
+            const char* err = lua_tostring(state, -1);
             RuntimeRecordError(widgetId, err ? err : "(load error)");
-            lua_pop(L_, 2);
+            lua_pop(state, 2);
             return false;
         }
-        lua_pushvalue(L_, -2);  // push sandbox as argument
-        if (LuaProtectedCall(L_, 1, 0) != LUA_OK)
+        lua_pushvalue(state, -2);  // push sandbox as argument
+        if (snowdesktop::lua_runtime::ProtectedCall(
+                state, 1, 0, 1000000,
+                std::chrono::milliseconds(100)) != LUA_OK)
         {
-            const char* err = lua_tostring(L_, -1);
+            const char* err = lua_tostring(state, -1);
             RuntimeRecordError(widgetId, err ? err : "(pcall error)");
-            lua_pop(L_, 2);
+            lua_pop(state, 2);
             return false;
         }
     }
     else
     {
         // Execute the chunk
-        if (LuaProtectedCall(L_, 0, 0) != LUA_OK)
+        if (snowdesktop::lua_runtime::ProtectedCall(
+                state, 0, 0, 1000000,
+                std::chrono::milliseconds(100)) != LUA_OK)
         {
-            const char* err = lua_tostring(L_, -1);
+            const char* err = lua_tostring(state, -1);
             RuntimeRecordError(widgetId, err ? err : "(pcall error)");
-            lua_pop(L_, 2);
+            lua_pop(state, 2);
             return false;
         }
     }
 
     // sandbox now contains the script's globals (name, render, etc.)
-    int ref = luaL_ref(L_, LUA_REGISTRYINDEX);
+    int ref = luaL_ref(state, LUA_REGISTRYINDEX);
 
     std::string name = "Unnamed";
-    lua_rawgeti(L_, LUA_REGISTRYINDEX, ref);
-    lua_getfield(L_, -1, "name");
-    if (lua_isstring(L_, -1))
-        name = lua_tostring(L_, -1);
-    lua_pop(L_, 1);
+    lua_rawgeti(state, LUA_REGISTRYINDEX, ref);
+    lua_getfield(state, -1, "name");
+    if (lua_isstring(state, -1))
+        name = lua_tostring(state, -1);
+    lua_pop(state, 1);
 
     // Read customStyle flag
     bool customStyle = false;
-    lua_getfield(L_, -1, "useCustomStyle");
-    if (!lua_isnil(L_, -1))
-        customStyle = lua_toboolean(L_, -1) != 0;
-    lua_pop(L_, 1);
+    lua_getfield(state, -1, "useCustomStyle");
+    if (!lua_isnil(state, -1))
+        customStyle = lua_toboolean(state, -1) != 0;
+    lua_pop(state, 1);
 
     bool followPersonalizationDefault = false;
-    lua_getfield(L_, -1, "followPersonalizationDefault");
-    if (!lua_isnil(L_, -1))
-        followPersonalizationDefault = lua_toboolean(L_, -1) != 0;
-    lua_pop(L_, 1);
+    lua_getfield(state, -1, "followPersonalizationDefault");
+    if (!lua_isnil(state, -1))
+        followPersonalizationDefault = lua_toboolean(state, -1) != 0;
+    lua_pop(state, 1);
 
     std::vector<LuaWidgetManifest::Setting> scriptSettings;
     std::vector<LuaWidgetManifest::SettingPreset> scriptPresets;
-    ReadLuaDeclaredSettings(L_, -1, scriptSettings, scriptPresets);
+    ReadLuaDeclaredSettings(state, -1, scriptSettings, scriptPresets);
 
     const std::string storagePrefix = WidgetWideToUtf8(widgetId) + ".";
     const std::string dataVersionKey = storagePrefix + "__host.dataVersion";
@@ -3944,7 +3957,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     {
         RuntimeRecordError(widgetId,
             "Widget package dataVersion is older than the instance storage");
-        lua_pop(L_, 1);
+        lua_pop(state, 1);
         return false;
     }
     if (pending.manifest.dataVersion > storedDataVersion)
@@ -3953,28 +3966,28 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
             activeStorage;
         auto* parentOverlay = g_storageOverlay;
         g_storageOverlay = &migratedStorage;
-        lua_getfield(L_, -1, "migrateStorage");
-        if (lua_isfunction(L_, -1))
+        lua_getfield(state, -1, "migrateStorage");
+        if (lua_isfunction(state, -1))
         {
-            BeginLuaExecution(L_, quota.get(), 1000000,
-                std::chrono::milliseconds(100));
-            lua_pushinteger(L_, storedDataVersion);
-            lua_pushinteger(L_, pending.manifest.dataVersion);
-            if (LuaProtectedCall(L_, 2, 0) != LUA_OK)
+            lua_pushinteger(state, storedDataVersion);
+            lua_pushinteger(state, pending.manifest.dataVersion);
+            if (snowdesktop::lua_runtime::ProtectedCall(
+                    state, 2, 0, 1000000,
+                    std::chrono::milliseconds(100)) != LUA_OK)
             {
-                const char* migrationError = lua_tostring(L_, -1);
+                const char* migrationError = lua_tostring(state, -1);
                 const std::string message = migrationError
                     ? migrationError : "(storage migration error)";
-                lua_pop(L_, 1);
+                lua_pop(state, 1);
                 g_storageOverlay = parentOverlay;
                 RuntimeRecordError(widgetId,
                     "Widget storage migration failed: " + message);
-                lua_pop(L_, 1);
+                lua_pop(state, 1);
                 return false;
             }
         }
         else
-            lua_pop(L_, 1);
+            lua_pop(state, 1);
         migratedStorage[dataVersionKey] =
             std::to_string(pending.manifest.dataVersion);
         g_storageOverlay = parentOverlay;
@@ -3993,7 +4006,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         if (!g_storageOverlay) SaveStorageFile();
     }
 
-    lua_pop(L_, 1);  // pop table
+    lua_pop(state, 1);  // pop table
 
     LuaWidget w;
     w.widgetId = widgetId;
@@ -4057,10 +4070,13 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
     sharedGlassSettingsChanged = false;
     sharedGlassSettingsSaveRequested = false;
 
-    SetWidgetExecutionContext(d2dState_, widgetId);
     int idx = FindWidget(widgetId);
     int ref = (idx >= 0) ? widgets_[idx].ref : LUA_NOREF;
     if (ref == LUA_NOREF) return true;
+    lua_State* state = widgets_[idx].state;
+    if (!state) return true;
+    WidgetExecutionContextGuard contextGuard(d2dState_, widgetId);
+    snowdesktop::lua_runtime::StackGuard stackGuard(state);
     const std::string editorId = WidgetWideToUtf8(widgetId);
     ImGui::PushID(editorId.c_str());
 
@@ -4518,34 +4534,34 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
 
     flushStorageChanges();
 
-    lua_rawgeti(L_, LUA_REGISTRYINDEX, ref);
-    if (lua_istable(L_, -1))
+    lua_rawgeti(state, LUA_REGISTRYINDEX, ref);
+    if (lua_istable(state, -1))
     {
         // Inject widgetId global
         int wlen = WideCharToMultiByte(CP_UTF8, 0, widgetId.c_str(), (int)widgetId.size(), nullptr, 0, nullptr, nullptr);
         std::string widUtf8(wlen, '\0');
         WideCharToMultiByte(CP_UTF8, 0, widgetId.c_str(), (int)widgetId.size(), &widUtf8[0], wlen, nullptr, nullptr);
-        lua_pushstring(L_, widUtf8.c_str());
-        lua_setfield(L_, -2, "widgetId");
+        lua_pushstring(state, widUtf8.c_str());
+        lua_setfield(state, -2, "widgetId");
 
-        lua_getfield(L_, -1, "imguiRender");
-        if (lua_isfunction(L_, -1))
+        lua_getfield(state, -1, "imguiRender");
+        if (lua_isfunction(state, -1))
         {
             ImGui::Spacing();
             ImGui::PushID("ScriptImguiRender");
 
-            if (LuaProtectedCall(L_, 0, 0) != LUA_OK)
+            if (snowdesktop::lua_runtime::ProtectedCall(state, 0, 0) != LUA_OK)
             {
-                const char* err = lua_tostring(L_, -1);
+                const char* err = lua_tostring(state, -1);
                 RuntimeRecordError(widgetId, err ? err : "(imguiRender error)");
-                lua_pop(L_, 1);
+                lua_pop(state, 1);
             }
             ImGui::PopID();
         }
         else
-            lua_pop(L_, 1);
+            lua_pop(state, 1);
     }
-    lua_pop(L_, 1);
+    lua_pop(state, 1);
     ImGui::PopID();
     return true;
 }
@@ -4576,9 +4592,13 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     }
     if (!found->valid) return;
 
+    lua_State* state = found->state;
+    if (!state) return;
+    WidgetExecutionContextGuard contextGuard(d2dState_, widgetId);
+    snowdesktop::lua_runtime::StackGuard stackGuard(state);
+
     d2dState_->ctx = context;
     DrainShellIconResults(d2dState_);
-    SetWidgetExecutionContext(d2dState_, widgetId);
     found->lastBounds = bounds;
     d2dState_->gridColumns = std::max(1, columns);
     d2dState_->gridRows = std::max(1, rows);
@@ -4593,50 +4613,50 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     {
         found->lastColumns = std::max(1, columns);
         found->lastRows = std::max(1, rows);
-        lua_rawgeti(L_, LUA_REGISTRYINDEX, found->ref);
-        if (lua_istable(L_, -1))
+        lua_rawgeti(state, LUA_REGISTRYINDEX, found->ref);
+        if (lua_istable(state, -1))
         {
-            lua_getfield(L_, -1, "onSizeChanged");
-            if (lua_isfunction(L_, -1))
+            lua_getfield(state, -1, "onSizeChanged");
+            if (lua_isfunction(state, -1))
             {
-                lua_pushinteger(L_, found->lastColumns);
-                lua_pushinteger(L_, found->lastRows);
-                if (LuaProtectedCall(L_, 2, 0) != LUA_OK)
+                lua_pushinteger(state, found->lastColumns);
+                lua_pushinteger(state, found->lastRows);
+                if (snowdesktop::lua_runtime::ProtectedCall(state, 2, 0) != LUA_OK)
                 {
-                    const char* error = lua_tostring(L_, -1);
+                    const char* error = lua_tostring(state, -1);
                     RuntimeRecordError(widgetId, error ? error : "(onSizeChanged error)");
-                    lua_pop(L_, 1);
+                    lua_pop(state, 1);
                 }
             }
             else
-                lua_pop(L_, 1);
+                lua_pop(state, 1);
         }
-        lua_pop(L_, 1);
+        lua_pop(state, 1);
     }
     found->lastRenderTime = std::chrono::steady_clock::now();
     found->hostControls.clear();
     d2dState_->widgetClipDepth = 0;
 
-    lua_rawgeti(L_, LUA_REGISTRYINDEX, found->ref);
-    if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return; }
+    lua_rawgeti(state, LUA_REGISTRYINDEX, found->ref);
+    if (!lua_istable(state, -1)) { lua_pop(state, 1); return; }
 
     // Inject widgetId global
     {
         int wlen = WideCharToMultiByte(CP_UTF8, 0, widgetId.c_str(), (int)widgetId.size(), nullptr, 0, nullptr, nullptr);
         std::string widUtf8(wlen, '\0');
         WideCharToMultiByte(CP_UTF8, 0, widgetId.c_str(), (int)widgetId.size(), &widUtf8[0], wlen, nullptr, nullptr);
-        lua_pushstring(L_, widUtf8.c_str());
-        lua_setfield(L_, -2, "widgetId");
+        lua_pushstring(state, widUtf8.c_str());
+        lua_setfield(state, -2, "widgetId");
     }
 
-    lua_getfield(L_, -1, "render");
-    if (lua_isfunction(L_, -1))
+    lua_getfield(state, -1, "render");
+    if (lua_isfunction(state, -1))
     {
-        if (LuaProtectedCall(L_, 0, 0) != LUA_OK)
+        if (snowdesktop::lua_runtime::ProtectedCall(state, 0, 0) != LUA_OK)
         {
-            const char* err = lua_tostring(L_, -1);
+            const char* err = lua_tostring(state, -1);
             RuntimeRecordError(widgetId, err ? err : "(render error)");
-            lua_pop(L_, 1);
+            lua_pop(state, 1);
             while (d2dState_->widgetClipDepth > 0)
             {
                 d2dState_->ctx->PopAxisAlignedClip();
@@ -4680,21 +4700,25 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                 }
             }
             // mark invalid to avoid repeated attempts
-            found->valid = false;
-            lua_pop(L_, 1);
+            if (const int currentIndex = FindWidget(widgetId);
+                currentIndex >= 0)
+            {
+                widgets_[currentIndex].valid = false;
+            }
+            lua_pop(state, 1);
             return;
         }
     }
     else
     {
-        lua_pop(L_, 1);
+        lua_pop(state, 1);
     }
     while (d2dState_->widgetClipDepth > 0)
     {
         d2dState_->ctx->PopAxisAlignedClip();
         --d2dState_->widgetClipDepth;
     }
-    lua_pop(L_, 1);
+    lua_pop(state, 1);
 }
 
 bool WidgetEngine::RenderWidgetPanel(
@@ -4707,10 +4731,14 @@ bool WidgetEngine::RenderWidgetPanel(
     auto& widget = widgets_[index];
     if (!widget.valid)
         return false;
+    lua_State* state = widget.state;
+    if (!state)
+        return false;
+    WidgetExecutionContextGuard contextGuard(d2dState_, widgetId);
+    snowdesktop::lua_runtime::StackGuard stackGuard(state);
 
     d2dState_->ctx = context;
     DrainShellIconResults(d2dState_);
-    SetWidgetExecutionContext(d2dState_, widgetId);
     widget.lastBounds = bounds;
     SetWidgetRectContext(d2dState_, bounds);
     widget.lastRenderTime =
@@ -4718,34 +4746,34 @@ bool WidgetEngine::RenderWidgetPanel(
     widget.hostControls.clear();
     d2dState_->widgetClipDepth = 0;
 
-    lua_rawgeti(L_, LUA_REGISTRYINDEX, widget.ref);
-    if (!lua_istable(L_, -1))
+    lua_rawgeti(state, LUA_REGISTRYINDEX, widget.ref);
+    if (!lua_istable(state, -1))
     {
-        lua_pop(L_, 1);
+        lua_pop(state, 1);
         return false;
     }
-    lua_getfield(L_, -1, "renderPanel");
-    if (!lua_isfunction(L_, -1))
+    lua_getfield(state, -1, "renderPanel");
+    if (!lua_isfunction(state, -1))
     {
-        lua_pop(L_, 2);
+        lua_pop(state, 2);
         return false;
     }
     const bool succeeded =
-        LuaProtectedCall(L_, 0, 0) == LUA_OK;
+        snowdesktop::lua_runtime::ProtectedCall(state, 0, 0) == LUA_OK;
     if (!succeeded)
     {
-        const char* error = lua_tostring(L_, -1);
+        const char* error = lua_tostring(state, -1);
         RuntimeRecordError(
             widgetId,
             error ? error : "(renderPanel error)");
-        lua_pop(L_, 1);
+        lua_pop(state, 1);
     }
     while (d2dState_->widgetClipDepth > 0)
     {
         d2dState_->ctx->PopAxisAlignedClip();
         --d2dState_->widgetClipDepth;
     }
-    lua_pop(L_, 1);
+    lua_pop(state, 1);
     return succeeded;
 }
 
@@ -4790,34 +4818,40 @@ void WidgetEngine::TickRuntime()
             int index = FindWidget(response.widgetId);
             if (index < 0) continue;
             auto& widget = widgets_[index];
-            SetWidgetExecutionContext(d2dState_, widget.widgetId);
-            lua_rawgeti(L_, LUA_REGISTRYINDEX, widget.ref);
-            if (lua_istable(L_, -1))
+            lua_State* state = widget.state;
+            if (!state) continue;
+            const std::wstring widgetId = widget.widgetId;
+            WidgetExecutionContextGuard contextGuard(
+                d2dState_, widgetId);
+            snowdesktop::lua_runtime::StackGuard stackGuard(state);
+            SetWidgetRectContext(d2dState_, widget.lastBounds);
+            lua_rawgeti(state, LUA_REGISTRYINDEX, widget.ref);
+            if (lua_istable(state, -1))
             {
-                lua_getfield(L_, -1, "onHttpResponse");
-                if (lua_isfunction(L_, -1))
+                lua_getfield(state, -1, "onHttpResponse");
+                if (lua_isfunction(state, -1))
                 {
-                    lua_pushinteger(L_, response.id);
-                    lua_createtable(L_, 0, 5);
-                    lua_pushinteger(L_, response.status); lua_setfield(L_, -2, "status");
-                    lua_pushlstring(L_, response.body.data(), response.body.size()); lua_setfield(L_, -2, "body");
-                    lua_pushstring(L_, response.error.c_str()); lua_setfield(L_, -2, "error");
-                    lua_pushboolean(L_, response.fromCache); lua_setfield(L_, -2, "fromCache");
-                    lua_pushboolean(L_, response.error.empty() &&
+                    lua_pushinteger(state, response.id);
+                    lua_createtable(state, 0, 5);
+                    lua_pushinteger(state, response.status); lua_setfield(state, -2, "status");
+                    lua_pushlstring(state, response.body.data(), response.body.size()); lua_setfield(state, -2, "body");
+                    lua_pushstring(state, response.error.c_str()); lua_setfield(state, -2, "error");
+                    lua_pushboolean(state, response.fromCache); lua_setfield(state, -2, "fromCache");
+                    lua_pushboolean(state, response.error.empty() &&
                         response.status >= 200 && response.status < 300);
-                    lua_setfield(L_, -2, "ok");
-                    if (LuaProtectedCall(L_, 2, 0) != LUA_OK)
+                    lua_setfield(state, -2, "ok");
+                    if (snowdesktop::lua_runtime::ProtectedCall(state, 2, 0) != LUA_OK)
                     {
-                        const char* error = lua_tostring(L_, -1);
-                        RuntimeRecordError(widget.widgetId, error ? error : "(onHttpResponse error)");
-                        lua_pop(L_, 1);
+                        const char* error = lua_tostring(state, -1);
+                        RuntimeRecordError(widgetId, error ? error : "(onHttpResponse error)");
+                        lua_pop(state, 1);
                     }
-                    RuntimeInvalidateHost(widget.widgetId);
+                    RuntimeInvalidateHost(widgetId);
                 }
                 else
-                    lua_pop(L_, 1);
+                    lua_pop(state, 1);
             }
-            lua_pop(L_, 1);
+            lua_pop(state, 1);
         }
     }
 
@@ -4840,29 +4874,35 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
     int idx = FindWidget(widgetId);
     if (idx < 0) return;
     auto& widget = widgets_[idx];
+    lua_State* state = widget.state;
+    if (!state) return;
+    const std::wstring activeWidgetId = widget.widgetId;
+    WidgetExecutionContextGuard contextGuard(
+        d2dState_, activeWidgetId);
+    snowdesktop::lua_runtime::StackGuard stackGuard(state);
+    SetWidgetRectContext(d2dState_, widget.lastBounds);
 
     if (timerId == widget.refreshTimerId)
     {
-        SetWidgetExecutionContext(d2dState_, widget.widgetId);
-        lua_rawgeti(L_, LUA_REGISTRYINDEX, widget.ref);
-        if (lua_istable(L_, -1))
+        lua_rawgeti(state, LUA_REGISTRYINDEX, widget.ref);
+        if (lua_istable(state, -1))
         {
-            lua_getfield(L_, -1, "onTimer");
-            if (lua_isfunction(L_, -1))
+            lua_getfield(state, -1, "onTimer");
+            if (lua_isfunction(state, -1))
             {
-                lua_pushstring(L_, "refresh");
-                if (LuaProtectedCall(L_, 1, 0) != LUA_OK)
+                lua_pushstring(state, "refresh");
+                if (snowdesktop::lua_runtime::ProtectedCall(state, 1, 0) != LUA_OK)
                 {
-                    const char* error = lua_tostring(L_, -1);
-                    RuntimeRecordError(widget.widgetId, error ? error : "(onTimer refresh error)");
-                    lua_pop(L_, 1);
+                    const char* error = lua_tostring(state, -1);
+                    RuntimeRecordError(activeWidgetId, error ? error : "(onTimer refresh error)");
+                    lua_pop(state, 1);
                 }
             }
             else
-                lua_pop(L_, 1);
+                lua_pop(state, 1);
         }
-        lua_pop(L_, 1);
-        RuntimeInvalidateHost(widget.widgetId);
+        lua_pop(state, 1);
+        RuntimeInvalidateHost(activeWidgetId);
         return;
     }
 
@@ -4894,31 +4934,30 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
         else
             widget.timers.erase(it);
 
-        SetWidgetExecutionContext(d2dState_, widget.widgetId);
-        lua_rawgeti(L_, LUA_REGISTRYINDEX, widget.ref);
-        if (lua_istable(L_, -1))
+        lua_rawgeti(state, LUA_REGISTRYINDEX, widget.ref);
+        if (lua_istable(state, -1))
         {
-            lua_getfield(L_, -1, "onTimer");
-            if (lua_isfunction(L_, -1))
+            lua_getfield(state, -1, "onTimer");
+            if (lua_isfunction(state, -1))
             {
-                lua_pushstring(L_, name.c_str());
-                if (LuaProtectedCall(L_, 1, 0) != LUA_OK)
+                lua_pushstring(state, name.c_str());
+                if (snowdesktop::lua_runtime::ProtectedCall(state, 1, 0) != LUA_OK)
                 {
-                    const char* error = lua_tostring(L_, -1);
-                    RuntimeRecordError(widget.widgetId, error ? error : "(onTimer error)");
-                    lua_pop(L_, 1);
+                    const char* error = lua_tostring(state, -1);
+                    RuntimeRecordError(activeWidgetId, error ? error : "(onTimer error)");
+                    lua_pop(state, 1);
                 }
                 invoked = true;
             }
             else
-                lua_pop(L_, 1);
+                lua_pop(state, 1);
         }
-        lua_pop(L_, 1);
+        lua_pop(state, 1);
     }
 
     RescheduleNamedTimer(widget);
     if (invoked)
-        RuntimeInvalidateHost(widget.widgetId);
+        RuntimeInvalidateHost(activeWidgetId);
 }
 
 // ── Check if widget uses custom style ────────────────────────────
@@ -4930,26 +4969,9 @@ bool WidgetEngine::HasCustomStyle(const std::wstring& widgetId) const
 
 void WidgetEngine::InvokeOpen(const std::wstring& widgetId)
 {
-    SetWidgetExecutionContext(d2dState_, widgetId);
     int idx = FindWidget(widgetId);
     if (idx < 0) return;
-    auto& w = widgets_[idx];
-    SetWidgetRectContext(d2dState_, w.lastBounds);
-    lua_rawgeti(L_, LUA_REGISTRYINDEX, w.ref);
-    if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return; }
-    lua_getfield(L_, -1, "onOpen");
-    if (lua_isfunction(L_, -1))
-    {
-        if (LuaProtectedCall(L_, 0, 0) != LUA_OK)
-        {
-            const char* err = lua_tostring(L_, -1);
-            RuntimeRecordError(widgetId, err ? err : "(onOpen error)");
-            lua_pop(L_, 1);
-        }
-    }
-    else
-        lua_pop(L_, 1);
-    lua_pop(L_, 1);
+    InvokeSimpleCallback(widgets_[idx], "onOpen");
 }
 
 void WidgetEngine::InvokeSelected(const std::wstring& widgetId)
@@ -4968,32 +4990,37 @@ void WidgetEngine::InvokeMouseEvent(const std::wstring& widgetId, const char* ca
     int button, int delta)
 {
     if (!callbackName || !*callbackName) return;
-    SetWidgetExecutionContext(d2dState_, widgetId);
     int idx = FindWidget(widgetId);
     if (idx < 0) return;
     auto& w = widgets_[idx];
-    SetWidgetRectContext(d2dState_, w.lastBounds);
-    lua_rawgeti(L_, LUA_REGISTRYINDEX, w.ref);
-    if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return; }
-    lua_getfield(L_, -1, callbackName);
-    if (lua_isfunction(L_, -1))
+    lua_State* state = w.state;
+    if (!state) return;
+    const int widgetRef = w.ref;
+    const RECT bounds = w.lastBounds;
+    WidgetExecutionContextGuard contextGuard(d2dState_, widgetId);
+    snowdesktop::lua_runtime::StackGuard stackGuard(state);
+    SetWidgetRectContext(d2dState_, bounds);
+    lua_rawgeti(state, LUA_REGISTRYINDEX, widgetRef);
+    if (!lua_istable(state, -1)) { lua_pop(state, 1); return; }
+    lua_getfield(state, -1, callbackName);
+    if (lua_isfunction(state, -1))
     {
-        lua_pushinteger(L_, x);
-        lua_pushinteger(L_, y);
-        lua_pushinteger(L_, button);
-        lua_pushinteger(L_, delta);
-        if (LuaProtectedCall(L_, 4, 0) != LUA_OK)
+        lua_pushinteger(state, x);
+        lua_pushinteger(state, y);
+        lua_pushinteger(state, button);
+        lua_pushinteger(state, delta);
+        if (snowdesktop::lua_runtime::ProtectedCall(state, 4, 0) != LUA_OK)
         {
-            const char* err = lua_tostring(L_, -1);
+            const char* err = lua_tostring(state, -1);
             RuntimeRecordError(widgetId, err ? err : "(mouse callback error)");
-            lua_pop(L_, 1);
+            lua_pop(state, 1);
         }
     }
     else
     {
-        lua_pop(L_, 1);
+        lua_pop(state, 1);
     }
-    lua_pop(L_, 1);
+    lua_pop(state, 1);
 }
 
 std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(const std::wstring& widgetId)
@@ -5001,64 +5028,67 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(const std::wstring& 
     std::vector<LuaWidgetMenuItem> result;
     if (!RuntimeHasPermission(widgetId, "ui.contextMenu"))
         return result;
-    SetWidgetExecutionContext(d2dState_, widgetId);
     int idx = FindWidget(widgetId);
     if (idx < 0) return result;
     auto& w = widgets_[idx];
+    lua_State* state = w.state;
+    if (!state) return result;
+    WidgetExecutionContextGuard contextGuard(d2dState_, widgetId);
+    snowdesktop::lua_runtime::StackGuard stackGuard(state);
     SetWidgetRectContext(d2dState_, w.lastBounds);
-    lua_rawgeti(L_, LUA_REGISTRYINDEX, w.ref);
-    if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return result; }
-    lua_getfield(L_, -1, "getContextMenu");
-    if (lua_isfunction(L_, -1))
+    lua_rawgeti(state, LUA_REGISTRYINDEX, w.ref);
+    if (!lua_istable(state, -1)) { lua_pop(state, 1); return result; }
+    lua_getfield(state, -1, "getContextMenu");
+    if (lua_isfunction(state, -1))
     {
-        if (LuaProtectedCall(L_, 0, 1) == LUA_OK && lua_istable(L_, -1))
+        if (snowdesktop::lua_runtime::ProtectedCall(state, 0, 1) == LUA_OK && lua_istable(state, -1))
         {
-            int count = static_cast<int>(lua_rawlen(L_, -1));
+            int count = static_cast<int>(lua_rawlen(state, -1));
             for (int i = 1; i <= count; ++i)
             {
-                lua_rawgeti(L_, -1, i);
-                if (lua_istable(L_, -1))
+                lua_rawgeti(state, -1, i);
+                if (lua_istable(state, -1))
                 {
                     LuaWidgetMenuItem item;
-                    lua_getfield(L_, -1, "id");
-                    item.id = lua_isinteger(L_, -1) ? static_cast<int>(lua_tointeger(L_, -1)) : i;
-                    lua_pop(L_, 1);
-                    lua_getfield(L_, -1, "label");
-                    item.label = lua_isstring(L_, -1) ? lua_tostring(L_, -1) : "";
-                    lua_pop(L_, 1);
-                    lua_getfield(L_, -1, "icon");
-                    item.icon = lua_isstring(L_, -1) ? lua_tostring(L_, -1) : "";
-                    lua_pop(L_, 1);
-                    lua_getfield(L_, -1, "iconFont");
-                    item.iconFont = lua_isstring(L_, -1)
-                        ? lua_tostring(L_, -1) : "fa";
-                    lua_pop(L_, 1);
-                    lua_getfield(L_, -1, "enabled");
-                    item.enabled = lua_isnil(L_, -1) ? true : (lua_toboolean(L_, -1) != 0);
-                    lua_pop(L_, 1);
-                    lua_getfield(L_, -1, "separator");
-                    item.separator = lua_toboolean(L_, -1) != 0;
-                    lua_pop(L_, 1);
+                    lua_getfield(state, -1, "id");
+                    item.id = lua_isinteger(state, -1) ? static_cast<int>(lua_tointeger(state, -1)) : i;
+                    lua_pop(state, 1);
+                    lua_getfield(state, -1, "label");
+                    item.label = lua_isstring(state, -1) ? lua_tostring(state, -1) : "";
+                    lua_pop(state, 1);
+                    lua_getfield(state, -1, "icon");
+                    item.icon = lua_isstring(state, -1) ? lua_tostring(state, -1) : "";
+                    lua_pop(state, 1);
+                    lua_getfield(state, -1, "iconFont");
+                    item.iconFont = lua_isstring(state, -1)
+                        ? lua_tostring(state, -1) : "fa";
+                    lua_pop(state, 1);
+                    lua_getfield(state, -1, "enabled");
+                    item.enabled = lua_isnil(state, -1) ? true : (lua_toboolean(state, -1) != 0);
+                    lua_pop(state, 1);
+                    lua_getfield(state, -1, "separator");
+                    item.separator = lua_toboolean(state, -1) != 0;
+                    lua_pop(state, 1);
                     if (item.separator || !item.label.empty())
                         result.push_back(std::move(item));
                 }
-                lua_pop(L_, 1);
+                lua_pop(state, 1);
             }
-            lua_pop(L_, 1);
+            lua_pop(state, 1);
         }
         else
         {
-            const char* err = lua_tostring(L_, -1);
+            const char* err = lua_tostring(state, -1);
             if (err)
                 RuntimeRecordError(widgetId, err);
-            lua_pop(L_, 1);
+            lua_pop(state, 1);
         }
     }
     else
     {
-        lua_pop(L_, 1);
+        lua_pop(state, 1);
     }
-    lua_pop(L_, 1);
+    lua_pop(state, 1);
     return result;
 }
 
@@ -5066,29 +5096,32 @@ void WidgetEngine::InvokeMenu(const std::wstring& widgetId, int menuId)
 {
     if (!RuntimeHasPermission(widgetId, "ui.contextMenu"))
         return;
-    SetWidgetExecutionContext(d2dState_, widgetId);
     int idx = FindWidget(widgetId);
     if (idx < 0) return;
     auto& w = widgets_[idx];
+    lua_State* state = w.state;
+    if (!state) return;
+    WidgetExecutionContextGuard contextGuard(d2dState_, widgetId);
+    snowdesktop::lua_runtime::StackGuard stackGuard(state);
     SetWidgetRectContext(d2dState_, w.lastBounds);
-    lua_rawgeti(L_, LUA_REGISTRYINDEX, w.ref);
-    if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return; }
-    lua_getfield(L_, -1, "onMenu");
-    if (lua_isfunction(L_, -1))
+    lua_rawgeti(state, LUA_REGISTRYINDEX, w.ref);
+    if (!lua_istable(state, -1)) { lua_pop(state, 1); return; }
+    lua_getfield(state, -1, "onMenu");
+    if (lua_isfunction(state, -1))
     {
-        lua_pushinteger(L_, menuId);
-        if (LuaProtectedCall(L_, 1, 0) != LUA_OK)
+        lua_pushinteger(state, menuId);
+        if (snowdesktop::lua_runtime::ProtectedCall(state, 1, 0) != LUA_OK)
         {
-            const char* err = lua_tostring(L_, -1);
+            const char* err = lua_tostring(state, -1);
             RuntimeRecordError(widgetId, err ? err : "(onMenu error)");
-            lua_pop(L_, 1);
+            lua_pop(state, 1);
         }
     }
     else
     {
-        lua_pop(L_, 1);
+        lua_pop(state, 1);
     }
-    lua_pop(L_, 1);
+    lua_pop(state, 1);
 }
 
 void WidgetEngine::NotifyDesktopChanged(const std::string& reason)
@@ -5098,30 +5131,42 @@ void WidgetEngine::NotifyDesktopChanged(const std::string& reason)
         d2dState_->shellIconCache.clear();
         d2dState_->shellIconFailures.clear();
     }
+    std::vector<std::wstring> targets;
     for (const auto& widget : widgets_)
     {
         if (!widget.valid || !RuntimeHasPermission(widget.widgetId, "desktop.read"))
             continue;
-        SetWidgetExecutionContext(d2dState_, widget.widgetId);
-        SetWidgetRectContext(d2dState_, widget.lastBounds);
-        lua_rawgeti(L_, LUA_REGISTRYINDEX, widget.ref);
-        if (!lua_istable(L_, -1)) { lua_pop(L_, 1); continue; }
-        lua_getfield(L_, -1, "onDesktopChanged");
-        if (lua_isfunction(L_, -1))
+        targets.push_back(widget.widgetId);
+    }
+    for (const auto& widgetId : targets)
+    {
+        const int index = FindWidget(widgetId);
+        if (index < 0) continue;
+        lua_State* state = widgets_[index].state;
+        if (!state) continue;
+        const int widgetRef = widgets_[index].ref;
+        const RECT bounds = widgets_[index].lastBounds;
+        WidgetExecutionContextGuard contextGuard(d2dState_, widgetId);
+        snowdesktop::lua_runtime::StackGuard stackGuard(state);
+        SetWidgetRectContext(d2dState_, bounds);
+        lua_rawgeti(state, LUA_REGISTRYINDEX, widgetRef);
+        if (!lua_istable(state, -1)) { lua_pop(state, 1); continue; }
+        lua_getfield(state, -1, "onDesktopChanged");
+        if (lua_isfunction(state, -1))
         {
-            lua_pushstring(L_, reason.c_str());
-            if (LuaProtectedCall(L_, 1, 0) != LUA_OK)
+            lua_pushstring(state, reason.c_str());
+            if (snowdesktop::lua_runtime::ProtectedCall(state, 1, 0) != LUA_OK)
             {
-                const char* err = lua_tostring(L_, -1);
-                RuntimeRecordError(widget.widgetId, err ? err : "(onDesktopChanged error)");
-                lua_pop(L_, 1);
+                const char* err = lua_tostring(state, -1);
+                RuntimeRecordError(widgetId, err ? err : "(onDesktopChanged error)");
+                lua_pop(state, 1);
             }
         }
         else
         {
-            lua_pop(L_, 1);
+            lua_pop(state, 1);
         }
-        lua_pop(L_, 1);
+        lua_pop(state, 1);
     }
 }
 
@@ -5131,13 +5176,14 @@ bool WidgetEngine::ReadBoolFlag(const std::wstring& packageId, const char* flag,
     {
         if (w.valid && Utf8ToWideLocal(w.packageId) == packageId)
         {
-            const_cast<WidgetEngine*>(this)->L_ = w.state;
-            if (!L_) return defaultVal;
-            lua_rawgeti(L_, LUA_REGISTRYINDEX, w.ref);
-            if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return defaultVal; }
-            lua_getfield(L_, -1, flag);
-            bool result = lua_isnil(L_, -1) ? defaultVal : (lua_toboolean(L_, -1) != 0);
-            lua_pop(L_, 2);
+            lua_State* state = w.state;
+            if (!state) return defaultVal;
+            snowdesktop::lua_runtime::StackGuard stackGuard(state);
+            lua_rawgeti(state, LUA_REGISTRYINDEX, w.ref);
+            if (!lua_istable(state, -1)) { lua_pop(state, 1); return defaultVal; }
+            lua_getfield(state, -1, flag);
+            bool result = lua_isnil(state, -1) ? defaultVal : (lua_toboolean(state, -1) != 0);
+            lua_pop(state, 2);
             return result;
         }
     }
@@ -5152,31 +5198,32 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
     int idx = FindWidget(widgetId);
     if (idx < 0) return false;
     const auto& w = widgets_[idx];
-    const_cast<WidgetEngine*>(this)->L_ = w.state;
-    if (!L_) return false;
+    lua_State* state = w.state;
+    if (!state) return false;
+    snowdesktop::lua_runtime::StackGuard stackGuard(state);
 
-    lua_rawgeti(L_, LUA_REGISTRYINDEX, w.ref);
-    if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return false; }
+    lua_rawgeti(state, LUA_REGISTRYINDEX, w.ref);
+    if (!lua_istable(state, -1)) { lua_pop(state, 1); return false; }
 
             auto readHex = [&](const char* key, float& r, float& g, float& b, int def) {
-                lua_getfield(L_, -1, key);
-                int val = lua_isinteger(L_, -1) ? (int)lua_tointeger(L_, -1) : def;
-                lua_pop(L_, 1);
+                lua_getfield(state, -1, key);
+                int val = lua_isinteger(state, -1) ? (int)lua_tointeger(state, -1) : def;
+                lua_pop(state, 1);
                 r = ((val >> 16) & 0xFF) / 255.0f;
                 g = ((val >> 8) & 0xFF) / 255.0f;
                 b = (val & 0xFF) / 255.0f;
             };
 
             auto readFloat = [&](const char* key, float& out, float def) {
-                lua_getfield(L_, -1, key);
-                out = lua_isnumber(L_, -1) ? (float)lua_tonumber(L_, -1) : def;
-                lua_pop(L_, 1);
+                lua_getfield(state, -1, key);
+                out = lua_isnumber(state, -1) ? (float)lua_tonumber(state, -1) : def;
+                lua_pop(state, 1);
             };
 
             auto readBool = [&](const char* key, bool& out, bool def) {
-                lua_getfield(L_, -1, key);
-                out = lua_isnil(L_, -1) ? def : (lua_toboolean(L_, -1) != 0);
-                lua_pop(L_, 1);
+                lua_getfield(state, -1, key);
+                out = lua_isnil(state, -1) ? def : (lua_toboolean(state, -1) != 0);
+                lua_pop(state, 1);
             };
 
             readHex("bg", bgR, bgG, bgB, 0x151A21);
@@ -5213,7 +5260,7 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
             readStoredBool("glassEnabled", glassEnabled);
             readStoredBool("acrylicEnabled", acrylicEnabled);
 
-            lua_pop(L_, 1);
+            lua_pop(state, 1);
             return true;
 }
 
@@ -5253,6 +5300,8 @@ bool WidgetEngine::ReloadWidget(const std::wstring& widgetId)
 {
     int idx = FindWidget(widgetId);
     if (idx < 0) return false;
+    WidgetExecutionContextGuard reloadContext(d2dState_, widgetId);
+    const auto layoutMetrics = widgets_[idx].layoutMetrics;
     std::wstring path = ResolveWidgetPath(
         Utf8ToWideLocal(widgets_[idx].packageId));
     if (path.empty())
@@ -5264,6 +5313,10 @@ bool WidgetEngine::ReloadWidget(const std::wstring& widgetId)
             widgets_[idx].manifest.version);
         return false;
     }
+
+    // Loading appends the replacement VM. Preserve the host metrics that were
+    // already calculated for this instance before retiring the old VM.
+    widgets_.back().layoutMetrics = layoutMetrics;
 
     // The new VM is now fully loaded. Only then retire the last-known-good VM.
     LuaWidget& old = widgets_[oldIndex];
@@ -5377,46 +5430,56 @@ std::vector<LuaDesktopItemInfo> WidgetEngine::RuntimeDesktopSelection() const
 void WidgetEngine::NotifyCalendarChanged(
     const std::string& reason)
 {
+    std::vector<std::wstring> targets;
     for (const auto& widget : widgets_)
     {
         if (!widget.valid || widget.preview ||
             !RuntimeHasPermission(
                 widget.widgetId, "calendar.read"))
             continue;
-        SetWidgetExecutionContext(
-            d2dState_, widget.widgetId);
-        SetWidgetRectContext(
-            d2dState_, widget.lastBounds);
-        L_ = widget.state;
-        lua_rawgeti(L_, LUA_REGISTRYINDEX, widget.ref);
-        if (!lua_istable(L_, -1))
+        targets.push_back(widget.widgetId);
+    }
+    for (const auto& widgetId : targets)
+    {
+        const int index = FindWidget(widgetId);
+        if (index < 0) continue;
+        lua_State* state = widgets_[index].state;
+        if (!state) continue;
+        const int widgetRef = widgets_[index].ref;
+        const RECT bounds = widgets_[index].lastBounds;
+        WidgetExecutionContextGuard contextGuard(
+            d2dState_, widgetId);
+        snowdesktop::lua_runtime::StackGuard stackGuard(state);
+        SetWidgetRectContext(d2dState_, bounds);
+        lua_rawgeti(state, LUA_REGISTRYINDEX, widgetRef);
+        if (!lua_istable(state, -1))
         {
-            lua_pop(L_, 1);
+            lua_pop(state, 1);
             continue;
         }
-        lua_getfield(L_, -1, "onCalendarChanged");
-        if (lua_isfunction(L_, -1))
+        lua_getfield(state, -1, "onCalendarChanged");
+        if (lua_isfunction(state, -1))
         {
             lua_pushlstring(
-                L_, reason.data(), reason.size());
-            if (LuaProtectedCall(L_, 1, 0) != LUA_OK)
+                state, reason.data(), reason.size());
+            if (snowdesktop::lua_runtime::ProtectedCall(state, 1, 0) != LUA_OK)
             {
                 const char* error =
-                    lua_tostring(L_, -1);
+                    lua_tostring(state, -1);
                 RuntimeRecordError(
-                    widget.widgetId,
+                    widgetId,
                     error
                         ? error
                         : "(onCalendarChanged error)");
-                lua_pop(L_, 1);
+                lua_pop(state, 1);
             }
         }
         else
         {
-            lua_pop(L_, 1);
+            lua_pop(state, 1);
         }
-        lua_pop(L_, 1);
-        RuntimeInvalidateHost(widget.widgetId);
+        lua_pop(state, 1);
+        RuntimeInvalidateHost(widgetId);
     }
 }
 
@@ -6713,26 +6776,37 @@ bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int 
         if (it->type == LuaWidget::HostControl::Type::Button ||
             it->type == LuaWidget::HostControl::Type::Toggle)
         {
-            SetWidgetExecutionContext(d2dState_, widgetId);
-            lua_rawgeti(L_, LUA_REGISTRYINDEX, widget.ref);
-            if (lua_istable(L_, -1))
+            lua_State* state = widget.state;
+            if (!state) return false;
+            const int widgetRef = widget.ref;
+            const RECT bounds = widget.lastBounds;
+            const std::string controlId = it->id;
+            const bool controlValue =
+                it->type == LuaWidget::HostControl::Type::Toggle
+                    ? !it->value : true;
+            WidgetExecutionContextGuard contextGuard(
+                d2dState_, widgetId);
+            snowdesktop::lua_runtime::StackGuard stackGuard(state);
+            SetWidgetRectContext(d2dState_, bounds);
+            lua_rawgeti(state, LUA_REGISTRYINDEX, widgetRef);
+            if (lua_istable(state, -1))
             {
-                lua_getfield(L_, -1, "onUiAction");
-                if (lua_isfunction(L_, -1))
+                lua_getfield(state, -1, "onUiAction");
+                if (lua_isfunction(state, -1))
                 {
-                    lua_pushstring(L_, it->id.c_str());
-                    lua_pushboolean(L_, it->type == LuaWidget::HostControl::Type::Toggle ? !it->value : true);
-                    if (LuaProtectedCall(L_, 2, 0) != LUA_OK)
+                    lua_pushstring(state, controlId.c_str());
+                    lua_pushboolean(state, controlValue);
+                    if (snowdesktop::lua_runtime::ProtectedCall(state, 2, 0) != LUA_OK)
                     {
-                        const char* error = lua_tostring(L_, -1);
+                        const char* error = lua_tostring(state, -1);
                         RuntimeRecordError(widgetId, error ? error : "(onUiAction error)");
-                        lua_pop(L_, 1);
+                        lua_pop(state, 1);
                     }
                 }
                 else
-                    lua_pop(L_, 1);
+                    lua_pop(state, 1);
             }
-            lua_pop(L_, 1);
+            lua_pop(state, 1);
             RuntimeInvalidateHost(widgetId);
             return true;
         }
@@ -6753,39 +6827,18 @@ void WidgetEngine::SetWidgetTheme(const std::wstring& widgetId, const LuaWidgetT
         widgets_[idx].theme = theme;
 }
 
-void WidgetEngine::SetGridCellSize(int cellWidth, int cellHeight)
+void WidgetEngine::SetWidgetLayoutMetrics(
+    const std::wstring& widgetId,
+    int cellWidth, int cellHeight, int gapY, int barHeight,
+    DWRITE_FONT_WEIGHT fontWeight, float fontSizeScale)
 {
-    if (d2dState_)
-    {
-        d2dState_->gridCellW = std::max(4, cellWidth);
-        d2dState_->gridCellH = std::max(4, cellHeight);
-    }
-}
-
-void WidgetEngine::SetGridCellGap(int gapY)
-{
-    if (d2dState_)
-        d2dState_->gridGapY = std::max(0, gapY);
-}
-
-void WidgetEngine::SetBarHeight(int barHeight)
-{
-    if (d2dState_)
-        d2dState_->barHeight = barHeight;
-}
-
-void WidgetEngine::SetItemFontWeight(DWRITE_FONT_WEIGHT weight)
-{
-    if (!d2dState_) return;
-    if (d2dState_->itemFontWeight == weight) return;
-    d2dState_->itemFontWeight = weight;
-    d2dState_->textFormatCache.clear();
-}
-
-void WidgetEngine::SetItemFontSizeScale(float scale)
-{
-    if (!d2dState_) return;
-    d2dState_->itemFontSizeScale = std::max(0.5f, scale);
+    const int index = FindWidget(widgetId);
+    if (index < 0)
+        return;
+    widgets_[index].layoutMetrics =
+        snowdesktop::widget_runtime::NormalizeLayoutMetrics(
+            cellWidth, cellHeight, gapY, barHeight,
+            fontWeight, fontSizeScale);
 }
 
 void WidgetEngine::RuntimeOpenWidgetSettings(const std::wstring& widgetId)

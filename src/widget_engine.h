@@ -29,6 +29,8 @@
 #include "calendar_service.h"
 #include "widget_package.h"
 #include "steam_workshop_sync.h"
+#include "lua_runtime.h"
+#include "widget_layout_context.h"
 
 struct ImGuiContext;
 struct PersonalizationSettings;
@@ -53,17 +55,6 @@ extern "C" {
 using Microsoft::WRL::ComPtr;
 
 struct D2DState;
-
-struct LuaRuntimeQuota
-{
-    std::size_t memoryBytes = 0;
-    std::size_t memoryLimit = 16u * 1024u * 1024u;
-    std::int64_t instructionsRemaining = 0;
-    std::chrono::steady_clock::time_point deadline{};
-    bool memoryExceeded = false;
-    bool executionExceeded = false;
-    double lastExecutionMs = 0.0;
-};
 
 /**
  * @struct LuaWidgetManifest
@@ -302,6 +293,7 @@ struct LuaWidget
     RECT lastBounds{};                   ///< 最后一次渲染时的边界矩形
     int lastColumns = 1;
     int lastRows = 1;
+    snowdesktop::widget_runtime::LayoutMetrics layoutMetrics;
     bool hostVisible = false;
     bool usesSystemSnapshot = false;
     bool usesMediaSnapshot = false;
@@ -846,14 +838,13 @@ public:
      */
     void SetWidgetTheme(const std::wstring& widgetId, const LuaWidgetTheme& theme);
 
-    /**
-     * @brief 设置当前渲染上下文的网格单元格实际像素尺寸，供 layout.cellWidth/cellHeight 使用
+    /** Store host layout metrics for one widget without mutating an active
+     * callback belonging to another widget. The metrics are applied when the
+     * target widget's execution context is entered.
      */
-    void SetGridCellSize(int cellWidth, int cellHeight);
-    void SetGridCellGap(int gapY);
-    void SetBarHeight(int barHeight);
-    void SetItemFontWeight(DWRITE_FONT_WEIGHT weight);
-    void SetItemFontSizeScale(float scale);
+    void SetWidgetLayoutMetrics(const std::wstring& widgetId,
+        int cellWidth, int cellHeight, int gapY, int barHeight,
+        DWRITE_FONT_WEIGHT fontWeight, float fontSizeScale);
     void RuntimeOpenWidgetSettings(const std::wstring& widgetId);
     void RuntimeOpenWidgetPanel(const std::wstring& widgetId,
         std::wstring title, int width, int height);
@@ -947,7 +938,6 @@ private:
     void EnsureSystemSnapshotServiceStarted();
     void RescheduleNamedTimer(LuaWidget& widget);
 
-    lua_State* L_ = nullptr;                           ///< 全局 Lua 状态机指针
     D2DState* d2dState_ = nullptr;                     ///< Direct2D 渲染状态管理对象指针
     ComPtr<ID2D1DeviceContext> d2dContext_;            ///< Direct2D 设备上下文
     ComPtr<IDWriteFactory> dwriteFactory_;             ///< DirectWrite 工厂接口

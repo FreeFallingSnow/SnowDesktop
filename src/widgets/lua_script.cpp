@@ -256,24 +256,29 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
         {
             realPage = FindGridPage(
                 app_->gridPages_, data_->gridCell.pageId);
+            int cellWidth = 0;
+            int cellHeight = 0;
+            int gapY = 0;
             if (realPage)
             {
-                engine->SetGridCellSize(
-                    realPage->cellWidth, realPage->cellHeight);
-                engine->SetGridCellGap(realPage->gapY);
+                cellWidth = realPage->cellWidth;
+                cellHeight = realPage->cellHeight;
+                gapY = realPage->gapY;
             }
             else
             {
-                engine->SetGridCellSize(
+                cellWidth =
                     std::max(1, static_cast<int>(frame.right - frame.left) /
-                        std::max(1, data_->gridSpan.columns)),
+                        std::max(1, data_->gridSpan.columns));
+                cellHeight =
                     std::max(1, static_cast<int>(frame.bottom - frame.top) /
-                        std::max(1, data_->gridSpan.rows)));
-                engine->SetGridCellGap(Cu(8.0f));
+                        std::max(1, data_->gridSpan.rows));
+                gapY = Cu(8.0f);
             }
-            engine->SetBarHeight(static_cast<int>(GetBarHeight()));
-            engine->SetItemFontWeight(app_->GetItemFontWeight());
-            engine->SetItemFontSizeScale(
+            engine->SetWidgetLayoutMetrics(data_->id,
+                cellWidth, cellHeight, gapY,
+                static_cast<int>(GetBarHeight()),
+                app_->GetItemFontWeight(),
                 app_->itemFontSize_ / kItemFontSize);
         }
         else
@@ -286,11 +291,12 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
                 realPage = FindGridPage(app_->gridPages_, data_->gridCell.pageId);
             if (realPage)
             {
-                engine->SetGridCellSize(realPage->cellWidth, realPage->cellHeight);
-                engine->SetGridCellGap(realPage->gapY);
-                engine->SetBarHeight(static_cast<int>(GetBarHeight()));
-                engine->SetItemFontWeight(app_->GetItemFontWeight());
-                engine->SetItemFontSizeScale(app_->itemFontSize_ / kItemFontSize);
+                engine->SetWidgetLayoutMetrics(data_->id,
+                    realPage->cellWidth, realPage->cellHeight,
+                    realPage->gapY,
+                    static_cast<int>(GetBarHeight()),
+                    app_->GetItemFontWeight(),
+                    app_->itemFontSize_ / kItemFontSize);
                 if (data_->gridCell.pageId != realPage->id)
                 {
                     data_->gridCell.pageId = realPage->id;
