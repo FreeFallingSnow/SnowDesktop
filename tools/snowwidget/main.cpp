@@ -14,6 +14,8 @@ void PrintUsage()
 {
     std::cout
         << "SnowDesktop widget package tool\n"
+        << "  snowwidget --version\n"
+        << "  snowwidget capabilities\n"
         << "  snowwidget inspect <package-directory>\n"
         << "  snowwidget validate <package-directory>\n"
         << "  snowwidget pack <package-directory> <output.snowwidget>\n"
@@ -78,6 +80,23 @@ void WriteStringArray(std::ostream& output,
 int wmain(int argc, wchar_t** argv)
 {
     SetConsoleOutputCP(CP_UTF8);
+    if (argc == 2 && std::wstring_view(argv[1]) == L"--version")
+    {
+        std::cout << SNOWDESKTOP_VERSION << '\n';
+        return 0;
+    }
+    if (argc == 2 && std::wstring_view(argv[1]) == L"capabilities")
+    {
+        std::cout
+            << "{\"ok\":true,\"protocolVersion\":1,\"version\":"
+            << JsonEscape(SNOWDESKTOP_VERSION)
+            << ",\"format\":\"snowdesktop-widget\","
+               "\"authoringSkill\":{\"id\":\"snowdesktop-lua-widget\","
+               "\"revision\":1},\"commands\":["
+               "\"inspect\",\"validate\",\"pack\",\"publish-local\"]}"
+            << '\n';
+        return 0;
+    }
     if (argc < 3)
     {
         PrintUsage();

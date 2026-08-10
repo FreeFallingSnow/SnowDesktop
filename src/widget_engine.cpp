@@ -41,6 +41,7 @@
 #include <condition_variable>
 #include <cstring>
 #include <deque>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -221,6 +222,19 @@ GetWidgetPackageSources()
     }();
     (void)initialized;
     return sources;
+}
+
+struct SteamWorkshopPackageAssociationCache
+{
+    std::mutex mutex;
+    std::unordered_map<std::string, std::string> associations;
+};
+
+static SteamWorkshopPackageAssociationCache&
+GetSteamWorkshopPackageAssociationCache()
+{
+    static SteamWorkshopPackageAssociationCache cache;
+    return cache;
 }
 
 static std::wstring ResolveWidgetPath(const std::wstring& packageId)
@@ -4047,6 +4061,8 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
     int idx = FindWidget(widgetId);
     int ref = (idx >= 0) ? widgets_[idx].ref : LUA_NOREF;
     if (ref == LUA_NOREF) return true;
+    const std::string editorId = WidgetWideToUtf8(widgetId);
+    ImGui::PushID(editorId.c_str());
 
     const LuaWidget& widget = widgets_[idx];
     std::vector<LuaWidgetManifest::Setting> settings = widget.manifest.settings;
@@ -4194,8 +4210,15 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
             int selected = 0;
             for (size_t i = 0; i < setting.options.size(); ++i)
                 if (setting.options[i] == current) selected = static_cast<int>(i);
+            std::vector<std::string> optionLabels;
+            optionLabels.reserve(setting.options.size());
+            for (size_t i = 0; i < setting.options.size(); ++i)
+                optionLabels.push_back(setting.options[i] +
+                    "###SettingOption" + std::to_string(i));
             std::vector<const char*> labels;
-            for (const auto& option : setting.options) labels.push_back(option.c_str());
+            labels.reserve(optionLabels.size());
+            for (const auto& option : optionLabels)
+                labels.push_back(option.c_str());
             ImGui::SetNextItemWidth(beginEditorRow(setting.label.c_str(), kEditorControlWidth));
             if (ImGui::Combo("##Value", &selected, labels.data(),
                 static_cast<int>(labels.size())))
@@ -4287,13 +4310,20 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
             builtInThemeLabels.push_back(
                 _LF("engine.editor.global_theme_format", _L(key)));
 
+        std::vector<std::string> themeItemLabels;
+        themeItemLabels.reserve(builtInThemeCount + 1 + presets.size());
+        for (int i = 0; i < builtInThemeCount; ++i)
+            themeItemLabels.push_back(builtInThemeLabels[i] +
+                "###BuiltInTheme" + std::to_string(i));
+        themeItemLabels.push_back(std::string(_L("app.settings.custom")) +
+            "###CustomTheme");
+        for (size_t i = 0; i < presets.size(); ++i)
+            themeItemLabels.push_back(presets[i].label +
+                "###ComponentTheme" + std::to_string(i));
         std::vector<const char*> themeLabels;
-        themeLabels.reserve(builtInThemeCount + 1 + presets.size());
-        for (const std::string& label : builtInThemeLabels)
+        themeLabels.reserve(themeItemLabels.size());
+        for (const auto& label : themeItemLabels)
             themeLabels.push_back(label.c_str());
-        themeLabels.push_back(_L("app.settings.custom"));
-        for (const auto& preset : presets)
-            themeLabels.push_back(preset.label.c_str());
 
         std::string currentPreset = getStorage("__preset",
             defaultPresetIndex >= 0
@@ -4440,8 +4470,15 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
         int selectedPreset = 0;
         for (size_t i = 0; i < presets.size(); ++i)
             if (presets[i].id == currentPreset) selectedPreset = static_cast<int>(i);
+        std::vector<std::string> presetItemLabels;
+        presetItemLabels.reserve(presets.size());
+        for (size_t i = 0; i < presets.size(); ++i)
+            presetItemLabels.push_back(presets[i].label +
+                "###ComponentPreset" + std::to_string(i));
         std::vector<const char*> presetLabels;
-        for (const auto& preset : presets) presetLabels.push_back(preset.label.c_str());
+        presetLabels.reserve(presetItemLabels.size());
+        for (const auto& label : presetItemLabels)
+            presetLabels.push_back(label.c_str());
         ImGui::SetNextItemWidth(beginEditorRow(_L("app.settings.current_preview"), kEditorControlWidth));
         if (ImGui::Combo("##WidgetPreset", &selectedPreset, presetLabels.data(),
             static_cast<int>(presetLabels.size())))
@@ -4465,8 +4502,13 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
     if (!settings.empty())
     {
         ImGui::SeparatorText(_L("app.settings.script_settings"));
-        for (const auto& setting : settings)
-            renderSetting(setting);
+        for (size_t settingIndex = 0;
+            settingIndex < settings.size(); ++settingIndex)
+        {
+            ImGui::PushID(static_cast<int>(settingIndex));
+            renderSetting(settings[settingIndex]);
+            ImGui::PopID();
+        }
         const char* resetSettingsLabel = _L("app.settings.restore_default_settings");
         beginEditorRow(_L("app.settings.set_as_default"), editorButtonWidth(resetSettingsLabel));
         if (whiteTextButton(resetSettingsLabel))
@@ -4490,6 +4532,7 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
         if (lua_isfunction(L_, -1))
         {
             ImGui::Spacing();
+            ImGui::PushID("ScriptImguiRender");
 
             if (LuaProtectedCall(L_, 0, 0) != LUA_OK)
             {
@@ -4497,11 +4540,13 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
                 RuntimeRecordError(widgetId, err ? err : "(imguiRender error)");
                 lua_pop(L_, 1);
             }
+            ImGui::PopID();
         }
         else
             lua_pop(L_, 1);
     }
     lua_pop(L_, 1);
+    ImGui::PopID();
     return true;
 }
 
@@ -7428,23 +7473,131 @@ bool WidgetEngine::IsSteamWorkshopBridgeAvailable()
         (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0;
 }
 
+bool WidgetEngine::UnsubscribeSteamWorkshopItem(
+    const std::string& externalItemId, std::string& error)
+{
+    const auto source = GetWidgetPackageSources().find("steam-workshop");
+    if (source == GetWidgetPackageSources().end())
+    {
+        error = "Steam Workshop source is unavailable";
+        return false;
+    }
+    const auto workshop = std::dynamic_pointer_cast<
+        snowdesktop::widget::SteamWorkshopSource>(source->second);
+    if (!workshop)
+    {
+        error = "Steam Workshop source is incompatible";
+        return false;
+    }
+    return workshop->Unsubscribe(externalItemId, error);
+}
+
 snowdesktop::widget::SteamWorkshopSubscriptionSnapshot
-WidgetEngine::QuerySteamWorkshopSubscriptions(const std::string& locale)
+WidgetEngine::QuerySteamWorkshopSubscriptions(
+    const std::string& locale)
 {
     snowdesktop::widget::SteamWorkshopSubscriptionSnapshot snapshot;
-    if (!IsSteamWorkshopBridgeAvailable())
+    try
     {
-        snapshot.error = "SnowDesktopSteamBridge.exe is missing";
-        return snapshot;
+        snowdesktop::widget::SteamWorkshopSource source;
+        snowdesktop::widget::PackageQuery query;
+        query.locale = locale;
+        query.limit = std::numeric_limits<std::size_t>::max();
+        std::string error;
+        // Runtime subscription reconciliation is deliberately local-only.
+        // Steam's ACF is the subscription authority and content/<appid> is the
+        // download authority; SteamAPI is reserved for explicit user actions.
+        snapshot = source.QuerySubscriptions(query, error);
+        if (!error.empty()) snapshot.error = std::move(error);
+        if (snapshot.authoritative)
+        {
+            auto associations = snowdesktop::widget::
+                BuildSteamWorkshopPackageAssociations(snapshot);
+            auto& cache = GetSteamWorkshopPackageAssociationCache();
+            std::lock_guard lock(cache.mutex);
+            cache.associations = std::move(associations);
+        }
     }
-    snowdesktop::widget::SteamWorkshopSource source;
-    snowdesktop::widget::PackageQuery query;
-    query.locale = locale;
-    query.limit = std::numeric_limits<std::size_t>::max();
-    std::string error;
-    snapshot = source.QuerySubscriptions(query, error);
-    if (!error.empty()) snapshot.error = std::move(error);
+    catch (const std::exception& exception)
+    {
+        snapshot = {};
+        snapshot.error = "Steam Workshop subscription query failed: ";
+        snapshot.error += exception.what();
+    }
+    catch (...)
+    {
+        snapshot = {};
+        snapshot.error = "Steam Workshop subscription query failed";
+    }
     return snapshot;
+}
+
+snowdesktop::widget::SteamWorkshopSubscriptionHistory
+WidgetEngine::GetSteamWorkshopSubscriptionHistory()
+{
+    return GetWidgetPackageManager().SteamSubscriptionHistory();
+}
+
+void WidgetEngine::PrepareSteamWorkshopSubscriptionArtifacts(
+    snowdesktop::widget::SteamWorkshopSubscriptionSnapshot& snapshot,
+    const std::vector<snowdesktop::widget::InstalledPackage>& installed,
+    const std::filesystem::path& stagingRoot)
+{
+    if (!snapshot.authoritative) return;
+    const auto plan = snowdesktop::widget::BuildSteamWorkshopSyncPlan(
+        installed, snapshot);
+    if (plan.actions.empty()) return;
+
+    std::error_code filesystemError;
+    std::filesystem::create_directories(stagingRoot, filesystemError);
+    if (filesystemError)
+    {
+        snapshot.preparationErrors.push_back(
+            "cannot create local Workshop staging directory: " +
+            filesystemError.message());
+        return;
+    }
+
+    for (const auto& action : plan.actions)
+    {
+        if (action.kind == snowdesktop::widget::
+                SteamWorkshopSyncActionKind::Uninstall)
+            continue;
+        const std::string publishedFileId = snowdesktop::widget::
+            SteamPublishedFileId(action.externalItemId);
+        const auto artifact =
+            snapshot.localArtifacts.find(publishedFileId);
+        if (artifact == snapshot.localArtifacts.end())
+        {
+            snapshot.preparationErrors.push_back(action.packageId +
+                ": detected Workshop package has no local artifact");
+            continue;
+        }
+        const auto destination = stagingRoot /
+            Utf8ToWideLocal("workshop-" + action.packageId + "-" +
+                snowdesktop::widget::WidgetPackageManager::GenerateUuid() +
+                ".snowwidget");
+        filesystemError.clear();
+        std::filesystem::copy_file(artifact->second, destination,
+            std::filesystem::copy_options::overwrite_existing,
+            filesystemError);
+        if (filesystemError)
+        {
+            snapshot.preparationErrors.push_back(action.packageId +
+                ": cannot stage detected Workshop package: " +
+                filesystemError.message());
+            continue;
+        }
+        snapshot.preparedArtifacts[publishedFileId] = destination;
+    }
+}
+
+std::unordered_map<std::string, std::string>
+WidgetEngine::CachedSteamWorkshopPackageAssociations()
+{
+    auto& cache = GetSteamWorkshopPackageAssociationCache();
+    std::lock_guard lock(cache.mutex);
+    return cache.associations;
 }
 
 snowdesktop::widget::SteamWorkshopSyncResult
@@ -7456,6 +7609,8 @@ WidgetEngine::ApplySteamWorkshopSubscriptions(
         manager.ListPackages(), snapshot);
     snowdesktop::widget::SteamWorkshopSyncResult result;
     result.errors = plan.conflicts;
+    result.errors.insert(result.errors.end(),
+        snapshot.preparationErrors.begin(), snapshot.preparationErrors.end());
     for (const auto& action : plan.actions)
     {
         if (action.kind ==
@@ -7480,9 +7635,35 @@ WidgetEngine::ApplySteamWorkshopSubscriptions(
             continue;
         }
 
+        const std::string publishedFileId = snowdesktop::widget::
+            SteamPublishedFileId(action.externalItemId);
+        const auto prepared =
+            snapshot.preparedArtifacts.find(publishedFileId);
+        if (prepared == snapshot.preparedArtifacts.end())
+        {
+            result.errors.push_back(action.packageId +
+                ": detected Workshop package was not prepared locally");
+            continue;
+        }
+
+        std::optional<std::string> previousVersion;
+        if (const auto previous = manager.Resolve(action.packageId))
+            if (!previous->builtin && !previous->development)
+                previousVersion = previous->manifest.version;
+        snowdesktop::widget::InstalledPackage installed;
+        snowdesktop::widget::ValidationReport report;
+        std::string installError;
+        const snowdesktop::widget::PackageSourceRef sourceRef{
+            "steam-workshop", action.externalItemId };
+        const bool installedOk = manager.InstallArchive(prepared->second,
+            sourceRef, false, installed, report, installError, false,
+            &action.expectedManifest);
+        std::error_code cleanupError;
+        std::filesystem::remove(prepared->second, cleanupError);
         std::wstring error;
-        if (InstallAndVerifyWidgetPackageFromSource("steam-workshop",
-            action.externalItemId, action.version, error, false, false))
+        const bool verified = installedOk && VerifyInstalledWidgetPackage(
+            installed.manifest.id, previousVersion, error);
+        if (installedOk && verified)
         {
             if (action.kind ==
                 snowdesktop::widget::SteamWorkshopSyncActionKind::Install)
@@ -7492,8 +7673,33 @@ WidgetEngine::ApplySteamWorkshopSubscriptions(
         }
         else
         {
+            if (!installedOk)
+            {
+                error = Utf8ToWideLocal(installError);
+                if (!report.Ok())
+                    error += L"\n" + Utf8ToWideLocal(report.ToJson());
+            }
             result.errors.push_back(action.packageId + ": " +
                 WidgetWideToUtf8(error));
+        }
+    }
+    for (const auto& [publishedFileId, artifact] :
+        snapshot.preparedArtifacts)
+    {
+        (void)publishedFileId;
+        std::error_code cleanupError;
+        std::filesystem::remove(artifact, cleanupError);
+    }
+    if (snapshot.authoritative && result.errors.empty() &&
+        !snapshot.activeSteamAccountId.empty())
+    {
+        std::string historyError;
+        if (!manager.UpdateSteamSubscriptionHistory(
+                snapshot.activeSteamAccountId,
+                snapshot.subscribedPublishedFileIds, historyError))
+        {
+            result.errors.push_back(
+                "cannot save Steam subscription history: " + historyError);
         }
     }
     return result;
@@ -7619,6 +7825,43 @@ WidgetEngine::ListWidgetPackages()
     return GetWidgetPackageManager().ListPackages();
 }
 
+std::optional<snowdesktop::widget::PackageSourceRef>
+WidgetEngine::GetWidgetPackageSource(const std::wstring& packageId)
+{
+    const std::string requestedId = WidgetWideToUtf8(packageId);
+    if (requestedId.empty()) return std::nullopt;
+
+    std::optional<snowdesktop::widget::PackageSourceRef> fallback;
+    for (const auto& package : GetWidgetPackageManager().ListPackages())
+    {
+        if (package.manifest.id != requestedId ||
+            package.source.providerId.empty() ||
+            package.source.externalItemId.empty())
+            continue;
+        if (package.source.providerId == "steam-workshop" &&
+            !snowdesktop::widget::SteamPublishedFileId(
+                package.source.externalItemId).empty())
+            return package.source;
+        if (!fallback || (package.active && package.enabled))
+            fallback = package.source;
+    }
+    return fallback;
+}
+
+bool WidgetEngine::IsWidgetPackageAvailable(const std::wstring& packageId)
+{
+    return !packageId.empty() &&
+        GetWidgetPackageManager().ResolveEntry(
+            WidgetWideToUtf8(packageId)).has_value();
+}
+
+bool WidgetEngine::IsWidgetPackageInstalled(const std::wstring& packageId)
+{
+    const std::string requestedId = WidgetWideToUtf8(packageId);
+    return !requestedId.empty() &&
+        GetWidgetPackageManager().ContainsPackage(requestedId);
+}
+
 std::vector<snowdesktop::widget::LegacyPackage>
 WidgetEngine::ListLegacyWidgetPackages()
 {
@@ -7646,6 +7889,21 @@ bool WidgetEngine::SetWidgetPackageEnabled(const std::string& packageId,
     bool enabled, std::string& error)
 {
     return GetWidgetPackageManager().SetEnabled(packageId, enabled, error);
+}
+
+bool WidgetEngine::CreateWidgetDevelopmentProject(
+    const std::string& packageId, std::filesystem::path& projectRoot,
+    std::string& error)
+{
+    return GetWidgetPackageManager().CreateDevelopmentProject(
+        packageId, projectRoot, error);
+}
+
+bool WidgetEngine::SetWidgetDevelopmentOverride(
+    const std::string& packageId, bool active, std::string& error)
+{
+    return GetWidgetPackageManager().SetDevelopmentOverride(
+        packageId, active, error);
 }
 
 bool WidgetEngine::RollbackWidgetPackage(const std::string& packageId,
@@ -7695,7 +7953,8 @@ bool WidgetEngine::IsWidgetDefaultName(const std::wstring& filename,
         for (const std::string& key : managedKeys)
         {
             auto value = catalog.find(key);
-            if (value != catalog.end() && Utf8ToWideLocal(value->second) == title)
+            if (value != catalog.end() &&
+                Utf8ToWideLocal(value->second) == title)
                 return true;
         }
     }
@@ -8057,11 +8316,13 @@ static int lua_ImGuiCombo(lua_State* L)
     {
         for (int i = 0; i < count; ++i)
         {
+            ImGui::PushID(i);
             bool selected = (current == i + 1);
             if (ImGui::Selectable(items[(size_t)i].c_str(), selected))
                 current = i + 1;
             if (selected)
                 ImGui::SetItemDefaultFocus();
+            ImGui::PopID();
         }
         ImGui::EndCombo();
     }

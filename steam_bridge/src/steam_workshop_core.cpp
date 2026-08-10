@@ -6,6 +6,7 @@
 #endif
 #include <windows.h>
 
+#include "steam_app_identity.h"
 #include "steam_workshop_core.h"
 #include "publish_lifecycle.h"
 
@@ -104,7 +105,25 @@ bool ValidateFile(const std::filesystem::path& path, bool preview,
 #if SNOWDESKTOP_HAS_STEAMWORKS
 std::string ResultName(EResult result)
 {
-    return "Steam result " + std::to_string(static_cast<int>(result));
+    switch (result)
+    {
+    case k_EResultOK: return "ok";
+    case k_EResultFail: return "fail";
+    case k_EResultNoConnection: return "no_connection";
+    case k_EResultInvalidParam: return "invalid_param";
+    case k_EResultBusy: return "busy";
+    case k_EResultInvalidState: return "invalid_state";
+    case k_EResultAccessDenied: return "access_denied";
+    case k_EResultTimeout: return "timeout";
+    case k_EResultServiceUnavailable: return "service_unavailable";
+    case k_EResultNotLoggedOn: return "not_logged_on";
+    case k_EResultInsufficientPrivilege: return "insufficient_privilege";
+    case k_EResultLimitExceeded: return "limit_exceeded";
+    case k_EResultRateLimitExceeded: return "rate_limit_exceeded";
+    default:
+        return "steam_error_" +
+            std::to_string(static_cast<int>(result));
+    }
 }
 
 template<typename Result, typename Tick>
@@ -181,6 +200,15 @@ struct QueryGuard
     }
 };
 
+bool RequireLoggedOn(CoreError& error)
+{
+    ISteamUser* user = SteamUser();
+    if (user && user->BLoggedOn()) return true;
+    SetError(error, kSteamInitializationFailed, "steam_not_logged_on",
+        "Steam is offline or the current user is not logged on");
+    return false;
+}
+
 struct UploadDirectory
 {
     std::filesystem::path root;
@@ -198,6 +226,7 @@ struct UploadDirectory
 
 SteamWorkshopCore::SteamWorkshopCore()
 {
+    status_.expectedAppId = kSteamAppId;
 #if SNOWDESKTOP_HAS_STEAMWORKS
     status_.compiled = true;
 #else
@@ -215,9 +244,18 @@ SteamWorkshopCore::~SteamWorkshopCore()
 bool SteamWorkshopCore::Initialize(CoreError& error)
 {
     std::lock_guard lock(statusMutex_);
-    if (status_.initialized) return true;
 #if SNOWDESKTOP_HAS_STEAMWORKS
+    if (status_.initialized)
+    {
+        SteamAPI_RunCallbacks();
+        if (ISteamUser* user = SteamUser())
+            status_.loggedOn = user->BLoggedOn();
+        return true;
+    }
     status_.compiled = true;
+    status_.appId = 0;
+    status_.loggedOn = false;
+    status_.steamId.clear();
     SteamErrMsg message{};
     const ESteamAPIInitResult result = SteamAPI_InitEx(&message);
     status_.diagnostic = message;
@@ -230,14 +268,33 @@ bool SteamWorkshopCore::Initialize(CoreError& error)
         return false;
     }
     status_.initialized = true;
-    if (ISteamUser* user = SteamUser())
+    ISteamUtils* utils = SteamUtils();
+    ISteamUser* user = SteamUser();
+    if (!utils || !user)
     {
-        status_.loggedOn = user->BLoggedOn();
-        status_.steamId = std::to_string(
-            user->GetSteamID().ConvertToUint64());
+        status_.diagnostic =
+            "Steam interfaces were unavailable after initialization";
+        SteamAPI_Shutdown();
+        status_.initialized = false;
+        SetError(error, kSteamInitializationFailed,
+            "steam_interface_unavailable", status_.diagnostic);
+        return false;
     }
-    if (ISteamUtils* utils = SteamUtils())
-        status_.appId = utils->GetAppID();
+    status_.appId = utils->GetAppID();
+    if (!IsExpectedSteamAppId(status_.appId))
+    {
+        status_.diagnostic = SteamAppIdMismatchMessage(status_.appId);
+        SteamAPI_Shutdown();
+        status_.initialized = false;
+        SetError(error, kSteamInitializationFailed,
+            "steam_app_id_mismatch", status_.diagnostic);
+        return false;
+    }
+    status_.loggedOn = user->BLoggedOn();
+    status_.steamId = std::to_string(
+        user->GetSteamID().ConvertToUint64());
+    status_.diagnostic = status_.loggedOn ? std::string{} :
+        "Steam initialized, but the current user is offline";
     return true;
 #else
     status_.diagnostic = "external Steamworks SDK was not configured";
@@ -264,6 +321,7 @@ std::optional<PublishedPage> SteamWorkshopCore::ListPublished(
         return std::nullopt;
     }
 #if SNOWDESKTOP_HAS_STEAMWORKS
+    if (!RequireLoggedOn(error)) return std::nullopt;
     ISteamUGC* ugc = SteamUGC();
     ISteamUser* user = SteamUser();
     ISteamUtils* utils = SteamUtils();
@@ -273,7 +331,7 @@ std::optional<PublishedPage> SteamWorkshopCore::ListPublished(
             "steam_ugc_unavailable", "Steam UGC interfaces are unavailable");
         return std::nullopt;
     }
-    const AppId_t appId = utils->GetAppID();
+    const AppId_t appId = static_cast<AppId_t>(kSteamAppId);
     QueryGuard guard;
     guard.ugc = ugc;
     guard.handle = ugc->CreateQueryUserUGCRequest(
@@ -366,6 +424,7 @@ std::optional<WorkshopEulaStatus> SteamWorkshopCore::GetEulaStatus(
 {
     if (!Initialize(error)) return std::nullopt;
 #if SNOWDESKTOP_HAS_STEAMWORKS
+    if (!RequireLoggedOn(error)) return std::nullopt;
     ISteamUGC* ugc = SteamUGC();
     if (!ugc)
     {
@@ -381,16 +440,156 @@ std::optional<WorkshopEulaStatus> SteamWorkshopCore::GetEulaStatus(
         SetError(error, kSteamOperationTimedOut, "eula_query_failed", message);
         return std::nullopt;
     }
+    if (result.m_eResult == k_EResultInvalidParam)
+    {
+        // GetWorkshopEULAStatus has no caller-supplied parameters. After the
+        // App ID has already been validated, InvalidParam means Steam has no
+        // app-specific Workshop EULA status available for this application.
+        // Publishing callbacks remain authoritative for required agreement
+        // actions, so this optional preflight query must not block creators.
+        return WorkshopEulaStatus{};
+    }
     if (result.m_eResult != k_EResultOK)
     {
         SetError(error, kSteamOperationFailed, "eula_query_failed",
             ResultName(result.m_eResult));
         return std::nullopt;
     }
-    return WorkshopEulaStatus{ result.m_bAccepted, result.m_bNeedsAction,
-        result.m_unVersion, result.m_rtAction };
+    return WorkshopEulaStatus{ true, result.m_bAccepted,
+        result.m_bNeedsAction, result.m_unVersion, result.m_rtAction };
 #else
     return std::nullopt;
+#endif
+}
+
+bool SteamWorkshopCore::SetSubscribed(std::uint64_t publishedFileId,
+    bool subscribed, std::chrono::seconds timeout, CoreError& error)
+{
+    if (publishedFileId == 0)
+    {
+        SetError(error, kInvalidArguments, "invalid_item",
+            "PublishedFileId must be positive");
+        return false;
+    }
+    if (timeout <= std::chrono::seconds::zero())
+    {
+        SetError(error, kInvalidArguments, "invalid_timeout",
+            "timeout must be positive");
+        return false;
+    }
+    if (!Initialize(error)) return false;
+#if SNOWDESKTOP_HAS_STEAMWORKS
+    if (!RequireLoggedOn(error)) return false;
+    ISteamUGC* ugc = SteamUGC();
+    if (!ugc)
+    {
+        SetError(error, kSteamInitializationFailed,
+            "steam_ugc_unavailable", "ISteamUGC is unavailable");
+        return false;
+    }
+
+    std::string message;
+    PublishedFileId_t itemId =
+        static_cast<PublishedFileId_t>(publishedFileId);
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    auto remaining = [&]()
+    {
+        const auto value = std::chrono::duration_cast<
+            std::chrono::milliseconds>(deadline -
+                std::chrono::steady_clock::now());
+        return std::max(value, std::chrono::milliseconds::zero());
+    };
+
+    QueryGuard guard;
+    guard.ugc = ugc;
+    guard.handle = ugc->CreateQueryUGCDetailsRequest(&itemId, 1);
+    if (guard.handle == k_UGCQueryHandleInvalid)
+    {
+        SetError(error, kSteamOperationFailed, "item_query_create_failed",
+            "Steam rejected the Workshop item identity query");
+        return false;
+    }
+    SteamUGCQueryCompleted_t queryCompleted{};
+    if (remaining() == std::chrono::milliseconds::zero() ||
+        !WaitForCall(ugc->SendQueryUGCRequest(guard.handle), queryCompleted,
+            remaining(), message))
+    {
+        SetError(error,
+            message == "Steam operation timed out" || message.empty()
+                ? kSteamOperationTimedOut : kSteamOperationFailed,
+            "item_query_failed", message.empty()
+                ? "Steam operation timed out" : message);
+        return false;
+    }
+    SteamUGCDetails_t details{};
+    if (queryCompleted.m_eResult != k_EResultOK ||
+        queryCompleted.m_unNumResultsReturned != 1 ||
+        !ugc->GetQueryUGCResult(guard.handle, 0, &details) ||
+        details.m_eResult != k_EResultOK ||
+        details.m_nPublishedFileId != itemId)
+    {
+        SetError(error, kSteamOperationFailed, "item_query_failed",
+            queryCompleted.m_eResult == k_EResultOK
+                ? "Steam did not return the requested Workshop item"
+                : ResultName(queryCompleted.m_eResult));
+        return false;
+    }
+    if (!IsExpectedSteamAppId(details.m_nConsumerAppID))
+    {
+        SetError(error, kInvalidArguments, "item_app_id_mismatch",
+            "Workshop item does not belong to SnowDesktop");
+        return false;
+    }
+
+    EResult resultCode = k_EResultFail;
+    PublishedFileId_t resultItemId = 0;
+    bool completed = false;
+    if (subscribed)
+    {
+        RemoteStorageSubscribePublishedFileResult_t result{};
+        completed = remaining() != std::chrono::milliseconds::zero() &&
+            WaitForCall(ugc->SubscribeItem(itemId), result,
+                remaining(), message);
+        resultCode = result.m_eResult;
+        resultItemId = result.m_nPublishedFileId;
+    }
+    else
+    {
+        RemoteStorageUnsubscribePublishedFileResult_t result{};
+        completed = remaining() != std::chrono::milliseconds::zero() &&
+            WaitForCall(ugc->UnsubscribeItem(itemId), result,
+                remaining(), message);
+        resultCode = result.m_eResult;
+        resultItemId = result.m_nPublishedFileId;
+    }
+    const char* operation = subscribed ? "subscribe" : "unsubscribe";
+    if (!completed)
+    {
+        if (message.empty()) message = "Steam operation timed out";
+        SetError(error,
+            message == "Steam operation timed out" ?
+                kSteamOperationTimedOut : kSteamOperationFailed,
+            std::string(operation) + "_failed", message);
+        return false;
+    }
+    if (resultCode != k_EResultOK)
+    {
+        SetError(error, kSteamOperationFailed,
+            std::string(operation) + "_failed", ResultName(resultCode));
+        return false;
+    }
+    if (resultItemId != itemId)
+    {
+        SetError(error, kSteamOperationFailed,
+            std::string(operation) + "_failed",
+            "Steam returned a result for a different Workshop item");
+        return false;
+    }
+    return true;
+#else
+    (void)subscribed;
+    (void)timeout;
+    return false;
 #endif
 }
 
@@ -427,6 +626,7 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
     if (progress) progress(PublishProgress{ PublishStage::Preparing });
     if (!Initialize(error)) return std::nullopt;
 #if SNOWDESKTOP_HAS_STEAMWORKS
+    if (!RequireLoggedOn(error)) return std::nullopt;
     std::error_code ec;
     UploadDirectory upload;
     const auto temporaryRoot = std::filesystem::temp_directory_path(ec);
@@ -464,7 +664,7 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
             "steam_ugc_unavailable", "Steam UGC interfaces are unavailable");
         return std::nullopt;
     }
-    const AppId_t appId = utils->GetAppID();
+    const AppId_t appId = static_cast<AppId_t>(kSteamAppId);
     PublishedFileId_t itemId = request.publishedFileId.value_or(0);
     bool needsAgreement = false;
     std::string message;
@@ -656,4 +856,5 @@ std::string CommunityItemUrl(std::uint64_t publishedFileId)
     return "https://steamcommunity.com/sharedfiles/filedetails/?id=" +
         std::to_string(publishedFileId);
 }
+
 }

@@ -2,10 +2,9 @@
 
 // Desktop animation, dwell and maintenance timer dispatch.
 
-void DesktopApp::PollSteamWorkshopSubscriptions()
+void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
 {
-    if (!widgetEngine_ || !WidgetEngine::IsSteamWorkshopBridgeAvailable())
-        return;
+    if (!widgetEngine_) return;
 
     std::optional<snowdesktop::widget::SteamWorkshopSubscriptionSnapshot>
         ready;
@@ -55,25 +54,47 @@ void DesktopApp::PollSteamWorkshopSubscriptions()
         }
     }
 
+    if (steamWorkshopSubscriptionPollState_->queryInFlight.load())
+    {
+        if (bypassThrottle)
+            steamWorkshopSubscriptionPollState_->refreshPending.store(
+                true);
+        return;
+    }
+    bypassThrottle = bypassThrottle || steamWorkshopSubscriptionPollState_->
+        refreshPending.exchange(false);
     const DWORD now = GetTickCount();
-    if (steamWorkshopSubscriptionPollState_->queryInFlight.load() ||
-        (steamWorkshopSubscriptionLastQueryTick_ != 0 &&
-            now - steamWorkshopSubscriptionLastQueryTick_ <
-                kSteamWorkshopSubscriptionPollIntervalMs))
+    if (!bypassThrottle && steamWorkshopSubscriptionLastQueryTick_ != 0 &&
+        now - steamWorkshopSubscriptionLastQueryTick_ <
+            kSteamWorkshopSubscriptionFallbackPollIntervalMs)
         return;
     steamWorkshopSubscriptionLastQueryTick_ = now;
     const std::string locale = Locale::Instance().GetEffectiveLanguage();
+    const auto installedPackages = widgetEngine_->ListWidgetPackages();
+    const auto subscriptionHistory =
+        WidgetEngine::GetSteamWorkshopSubscriptionHistory();
+    const auto packageStaging =
+        WidgetEngine::GetWidgetPackagePaths().staging;
     const auto state = steamWorkshopSubscriptionPollState_;
+    const HWND notifyWindow = hwnd_;
     state->queryInFlight.store(true);
-    std::thread([state, locale]
+    std::thread([state, locale, notifyWindow,
+        installedPackages, subscriptionHistory, packageStaging]
     {
         auto snapshot =
             WidgetEngine::QuerySteamWorkshopSubscriptions(locale);
+        snowdesktop::widget::ResolveSteamWorkshopSubscriptionRemovals(
+            snapshot, subscriptionHistory);
+        WidgetEngine::PrepareSteamWorkshopSubscriptionArtifacts(snapshot,
+            installedPackages, packageStaging);
         {
             std::lock_guard lock(state->mutex);
             state->ready = std::move(snapshot);
         }
         state->queryInFlight.store(false);
+        if (notifyWindow)
+            PostMessageW(notifyWindow,
+                kSteamWorkshopSubscriptionReadyMessage, 0, 0);
     }).detach();
 }
 

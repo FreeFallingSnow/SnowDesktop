@@ -18,7 +18,7 @@
   "descriptionKey": "lua_widget.reminders.description",
   "locales": {
     "zh-CN": {
-      "lua_widget.reminders.name": "ToDo 清單",
+      "lua_widget.reminders.name": "ToDo 清单",
       "lua_widget.reminders.legacy_name": "提醒事项",
       "lua_widget.reminders.description": "可快速添加、勾选、编辑和筛选的本地 ToDo 清单。",
       "lua_widget.reminders.show_completed": "显示已完成待办",

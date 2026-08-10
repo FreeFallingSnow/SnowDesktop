@@ -19,6 +19,7 @@ DesktopApp::~DesktopApp()
     floatingDockPointerPresentPending_ = false;
     pageNotifyFadeOutToken_ = 0;
     StopShellFileOperationWorker();
+    StopSteamWorkshopWatcher();
     EndDesktopPassthroughHold(false);
     UnregisterDesktopPassthroughHotkey();
     ApplySystemTaskbarBackdrop(false, false,
@@ -146,6 +147,7 @@ void DesktopApp::ResetDesktopWindowResources()
         KillTimer(hwnd_, kRecycleBinPollTimerId);
         KillTimer(hwnd_, kWidgetRefreshTimerId);
         StopRecycleBinWatcher();
+        StopSteamWorkshopWatcher();
         KillTimer(hwnd_, kCollectionPopupDwellTimerId);
         KillTimer(hwnd_, kCollectionGroupTabDwellTimerId);
         KillTimer(hwnd_, kOleDragUiPumpTimerId);
@@ -655,6 +657,7 @@ bool DesktopApp::CreateDesktopOverlayWindow()
     ApplyFloatingDockHotkey();
     ApplyDesktopPassthroughHotkey();
     RegisterShellChangeNotifications();
+    StartSteamWorkshopWatcher();
     SetTimer(hwnd_, kRecycleBinPollTimerId, kRecycleBinPollIntervalMs, nullptr);
     SetTimer(hwnd_, kWidgetRefreshTimerId, kWidgetRefreshIntervalMs, nullptr);
     SetTimer(hwnd_, kTaskbarRevealGuardTimerId,
@@ -721,6 +724,7 @@ void DesktopApp::RecoverDesktopHostAfterExplorerRestart()
         RegisterOleDropTarget();
         RegisterShellChangeNotifications();
         StartRecycleBinWatcher();
+        StartSteamWorkshopWatcher();
     }
     else
     {
@@ -728,6 +732,7 @@ void DesktopApp::RecoverDesktopHostAfterExplorerRestart()
         if (!CreateDesktopOverlayWindow())
             return;
         StartRecycleBinWatcher();
+        StartSteamWorkshopWatcher();
     }
     explorerDesktopRecreatePending_ = false;
     GetWindowThreadProcessId(desktopWindows_.host,

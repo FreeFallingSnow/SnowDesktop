@@ -652,6 +652,12 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         FinalizeFloatingDockBackdropCleanup(
             static_cast<UINT_PTR>(wp));
         return 0;
+    case kSteamWorkshopSubscriptionReadyMessage:
+        PollSteamWorkshopSubscriptions();
+        return 0;
+    case kSteamWorkshopSubscriptionChangedMessage:
+        PollSteamWorkshopSubscriptions(true);
+        return 0;
     case WM_TIMER:
         OnTimer(wp);
         return 0;

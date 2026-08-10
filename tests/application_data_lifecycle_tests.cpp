@@ -270,6 +270,10 @@ int main()
             "{\"widgets\":[{\"id\":\"w\",\"page\":\"p\",\"x\":0,"
             "\"y\":0,\"showTitle\":\"yes\"}]}",
             "widgets[0].showTitle" },
+        { "widget package source URL type",
+            "{\"widgets\":[{\"id\":\"w\",\"page\":\"p\",\"x\":0,"
+            "\"y\":0,\"packageSourceUrl\":7}]}",
+            "widgets[0].packageSourceUrl" },
         { "nested string-array type",
             "{\"widgets\":[{\"id\":\"w\",\"page\":\"p\",\"x\":0,"
             "\"y\":0,\"items\":[\"a\",2]}]}",
@@ -309,6 +313,25 @@ int main()
             spacingLayout.componentSpacing.has_value() &&
             *spacingLayout.componentSpacing == 1.5f,
         "component spacing is decoded as an optional layout setting");
+    snowdesktop::layout_storage::Document packageSourceLayout;
+    Expect(snowdesktop::layout_storage::ParseDocument(
+            "{\"widgets\":[{\"id\":\"workshop-widget\","
+            "\"page\":\"page-a\",\"x\":1,\"y\":2,"
+            "\"type\":\"lua\",\"packageId\":\"package-a\","
+            "\"packageSourceProvider\":\"steam-workshop\","
+            "\"packageSourceExternalItemId\":\"3780926790@42\","
+            "\"packageSourceUrl\":\"https://steamcommunity.com/"
+            "sharedfiles/filedetails/?id=3780926790\"}]}",
+            packageSourceLayout, &layoutError) &&
+            packageSourceLayout.widgets.size() == 1 &&
+            packageSourceLayout.widgets[0].packageSourceProvider ==
+                "steam-workshop" &&
+            packageSourceLayout.widgets[0].packageSourceExternalItemId ==
+                "3780926790@42" &&
+            packageSourceLayout.widgets[0].packageSourceUrl ==
+                "https://steamcommunity.com/sharedfiles/filedetails/"
+                "?id=3780926790",
+        "layout preserves a Workshop source address for missing widgets");
     Expect(snowdesktop::layout_storage::SaveDocument(
             layoutPath, firstLayout, &layoutError),
         "first layout document is written atomically");
@@ -492,21 +515,82 @@ int main()
     std::filesystem::create_directories(managerPaths.builtin);
     std::filesystem::copy(sourceV1, managerPaths.builtin / L"package-test",
         std::filesystem::copy_options::recursive, ec);
+    std::filesystem::create_directories(managerPaths.development);
+    std::filesystem::copy(sourceV1,
+        managerPaths.development / L"package-test",
+        std::filesystem::copy_options::recursive, ec);
     WidgetPackageManager manager(managerPaths);
     Expect(manager.Initialize(error), "package manager initializes");
     Expect(manager.Resolve(manifest.id)->builtin,
-        "built-in package is the initial active source");
+        "a discovered development package is inactive by default");
+    const auto initialPackages = manager.ListPackages();
+    const auto initialDevelopment = std::find_if(
+        initialPackages.begin(), initialPackages.end(),
+        [&](const auto& package)
+        {
+            return package.development && package.manifest.id == manifest.id;
+        });
+    Expect(initialDevelopment != initialPackages.end() &&
+        !initialDevelopment->active,
+        "inactive development candidates remain visible to management UI");
+    Expect(manager.SetDevelopmentOverride(manifest.id, true, error) &&
+        manager.Resolve(manifest.id)->development,
+        "development source activates only after an explicit request");
+    Expect(manager.SetDevelopmentOverride(manifest.id, false, error) &&
+        manager.Resolve(manifest.id)->builtin,
+        "deactivating development restores the normal source");
     InstalledPackage installed;
     report = {};
     Expect(manager.InstallDirectory(sourceV1, { "local", "package-test" },
         false, installed, report, error), "folder package installs");
     Expect(manager.Resolve(manifest.id).has_value(), "installed package resolves");
+    Expect(manager.SetDevelopmentOverride(manifest.id, true, error) &&
+        manager.Resolve(manifest.id)->development,
+        "an explicitly activated development package overrides an install");
+    const auto shadowedPackages = manager.ListPackages();
+    const auto shadowedInstalled = std::find_if(
+        shadowedPackages.begin(), shadowedPackages.end(),
+        [&](const auto& package)
+        {
+            return package.manifest.id == manifest.id &&
+                !package.builtin && !package.development && package.selected;
+        });
+    Expect(shadowedInstalled != shadowedPackages.end() &&
+        !shadowedInstalled->active,
+        "an active development override keeps the selected install manageable");
+    WidgetPackageManager reloadedManager(managerPaths);
+    Expect(reloadedManager.Initialize(error) &&
+        reloadedManager.Resolve(manifest.id)->development,
+        "explicit development activation persists across manager restarts");
+    Expect(reloadedManager.SetDevelopmentOverride(
+            manifest.id, false, error) &&
+        !reloadedManager.Resolve(manifest.id)->development,
+        "deactivating development restores the installed version");
+    Expect(manager.SetDevelopmentOverride(manifest.id, false, error) &&
+        !manager.Resolve(manifest.id)->development,
+        "the primary manager continues with the installed source");
     Expect(manager.ResolveEntry(manifest.id).value_or(L"").filename() == L"main.lua",
         "entry resolves inside the package");
     Expect(manager.SetEnabled(manifest.id, false, error),
         "installed package can be disabled");
     Expect(!manager.Resolve(manifest.id).has_value(),
         "disabled package does not silently fall back to a built-in source");
+    Expect(manager.ContainsPackage(manifest.id),
+        "a disabled package remains physically installed for recovery UI");
+    Expect(manager.UpdateSteamSubscriptionHistory(
+            "111", { "100", "200" }, error),
+        "Steam subscription history is persisted per account");
+    const auto subscriptionHistory = manager.SteamSubscriptionHistory();
+    Expect(subscriptionHistory.contains("111") &&
+        subscriptionHistory.at("111") ==
+            std::vector<std::string>({ "100", "200" }),
+        "Steam subscription history is normalized for reconciliation");
+    WidgetPackageManager historyReloadedManager(managerPaths);
+    error.clear();
+    Expect(historyReloadedManager.Initialize(error) &&
+        historyReloadedManager.SteamSubscriptionHistory() ==
+            subscriptionHistory,
+        "Steam subscription history survives a manager restart");
     Expect(manager.SetEnabled(manifest.id, true, error),
         "installed package can be re-enabled");
 
@@ -557,8 +641,12 @@ int main()
     Expect(manager.ExportArchive(manifest.id, archive, artifact, report, error),
         "folder package exports to .snowwidget");
     Expect(!artifact.sha256.empty(), "export records SHA-256");
-    Expect(manager.ValidateArchive(archive).Ok(),
+    PackageManifest archiveManifest;
+    Expect(manager.ValidateArchive(archive, &archiveManifest).Ok(),
         "archive validation securely extracts and validates the package");
+    Expect(archiveManifest.id == manifest.id &&
+        archiveManifest.version == "1.0.0",
+        "full archive validation returns the package identity and version");
     const auto corruptArchive = root / L"exports" / L"corrupt.snowwidget";
     std::filesystem::copy_file(archive, corruptArchive,
         std::filesystem::copy_options::overwrite_existing, ec);
@@ -602,8 +690,50 @@ int main()
         "exported archive installs through staging");
     Expect(imported.manifest.id == manifest.id, "archive identity is preserved");
 
+    const auto developmentCopyPaths = TestPaths(root / L"development-copy");
+    WidgetPackageManager developmentCopyManager(developmentCopyPaths);
+    error.clear();
+    Expect(developmentCopyManager.Initialize(error),
+        "development-copy manager initializes");
+    InstalledPackage workshopInstalled;
+    Expect(developmentCopyManager.InstallDirectory(sourceV1,
+            { "steam-workshop", "5080330:123456789" }, false,
+            workshopInstalled, report, error),
+        "Workshop component installs before creating a development version");
+    std::filesystem::path developmentProject;
+    error.clear();
+    Expect(developmentCopyManager.CreateDevelopmentProject(
+            manifest.id, developmentProject, error),
+        "an installed Workshop component creates a development project");
+    Expect(developmentProject.parent_path() ==
+            developmentCopyPaths.development &&
+            std::filesystem::is_regular_file(
+                developmentProject / L"widget.json") &&
+            std::filesystem::is_regular_file(
+                developmentProject / L"main.lua"),
+        "the development project is a complete editable package directory");
+    const auto developmentPackages = developmentCopyManager.ListPackages();
+    const auto copiedDevelopment = std::find_if(
+        developmentPackages.begin(), developmentPackages.end(),
+        [&](const auto& package)
+        {
+            return package.development && package.manifest.id == manifest.id;
+        });
+    Expect(copiedDevelopment != developmentPackages.end() &&
+            !copiedDevelopment->active &&
+            developmentCopyManager.Resolve(manifest.id) &&
+            !developmentCopyManager.Resolve(manifest.id)->development,
+        "creating a development project keeps the installed version active");
+    std::filesystem::path duplicateDevelopmentProject;
+    error.clear();
+    Expect(!developmentCopyManager.CreateDevelopmentProject(
+            manifest.id, duplicateDevelopmentProject, error) &&
+            duplicateDevelopmentProject.empty(),
+        "a second development project cannot silently replace the first");
+
     WidgetPackageManager sourceTrustManager(
         TestPaths(root / L"source-trust"));
+    error.clear();
     Expect(sourceTrustManager.Initialize(error),
         "source trust test manager initializes");
     PackageDetails spoofedIdentity{

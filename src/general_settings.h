@@ -13,6 +13,8 @@
 
 struct GeneralSettings
 {
+    static constexpr int kAllAgentSkillTargetsMask = 0x3F;
+
     bool softwareDesktopEnabled = true;
     bool doubleClickHideDesktop = false;
     bool desktopPassthroughHotkeyEnabled = false;
@@ -20,6 +22,8 @@ struct GeneralSettings
     UINT desktopPassthroughHotkeyVirtualKey = VK_OEM_3;
     int quickNavTheme = 1;
     bool dockEnabled = false;
+    bool widgetDeveloperToolsEnabled = false;
+    int agentSkillTargetMask = kAllAgentSkillTargetsMask;
     char language[85] = "system";
 };
 

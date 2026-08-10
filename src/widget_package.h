@@ -12,6 +12,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace snowdesktop::widget
@@ -204,6 +205,10 @@ struct InstalledPackage
     bool builtin = false;
     bool development = false;
     bool enabled = true;
+    // Selected within its own source. A development override can temporarily
+    // make a selected managed package inactive without hiding its state from
+    // management UI.
+    bool selected = false;
     bool active = true;
 };
 
@@ -259,8 +264,8 @@ class WidgetPackageValidator
 public:
     ValidationReport ValidateDirectory(const std::filesystem::path& root,
         PackageManifest* manifest = nullptr) const;
-    ValidationReport ValidateArchive(const std::filesystem::path& archive,
-        PackageManifest* manifest = nullptr) const;
+    ValidationReport ValidateArchive(
+        const std::filesystem::path& archive) const;
     bool ReadManifest(const std::filesystem::path& manifestPath,
         PackageManifest& manifest, ValidationReport& report) const;
 
@@ -311,6 +316,12 @@ public:
     bool Initialize(std::string& error);
     const PackagePaths& Paths() const { return paths_; }
     std::vector<InstalledPackage> ListPackages() const;
+    bool ContainsPackage(const std::string& packageId) const;
+    std::unordered_map<std::string, std::vector<std::string>>
+        SteamSubscriptionHistory() const;
+    bool UpdateSteamSubscriptionHistory(const std::string& accountId,
+        const std::vector<std::string>& publishedFileIds,
+        std::string& error);
     std::optional<InstalledPackage> Resolve(const std::string& packageId) const;
     std::optional<std::filesystem::path> ResolveEntry(
         const std::string& packageId) const;
@@ -343,6 +354,10 @@ public:
         const std::filesystem::path& output, PackageArtifact& artifact,
         ValidationReport& report, std::string& error) const;
     bool SetEnabled(const std::string& packageId, bool enabled,
+        std::string& error);
+    bool CreateDevelopmentProject(const std::string& packageId,
+        std::filesystem::path& projectRoot, std::string& error);
+    bool SetDevelopmentOverride(const std::string& packageId, bool active,
         std::string& error);
     bool Rollback(const std::string& packageId, const std::string& version,
         std::string& error);
@@ -402,7 +417,10 @@ private:
     WidgetPackageValidator validator_;
     std::vector<InstalledPackage> packages_;
     std::unordered_map<std::string, RegistryEntry> registry_;
+    std::unordered_set<std::string> developmentOverrides_;
     std::unordered_map<std::string, std::string> legacyAliases_;
+    std::unordered_map<std::string, std::unordered_set<std::string>>
+        steamSubscriptionsByAccount_;
     std::vector<LegacyMigrationResult> automaticLegacyMigrationResults_;
 };
 

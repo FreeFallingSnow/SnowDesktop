@@ -23,6 +23,23 @@ if (SNOWDESKTOP_PACKAGE_FAMILY_NAME STREQUAL "")
         "packaging/store-identity.json contains an empty package family name")
 endif()
 
+file(READ
+    "${CMAKE_SOURCE_DIR}/packaging/steam-identity.json"
+    STEAM_IDENTITY_JSON)
+string(JSON SNOWDESKTOP_STEAM_APP_ID
+    GET "${STEAM_IDENTITY_JSON}" "appId")
+string(JSON SNOWDESKTOP_STEAM_WINDOWS_DEPOT_ID
+    GET "${STEAM_IDENTITY_JSON}" "windowsDepotId")
+foreach(STEAM_ID IN ITEMS
+        SNOWDESKTOP_STEAM_APP_ID
+        SNOWDESKTOP_STEAM_WINDOWS_DEPOT_ID)
+    if (NOT ${STEAM_ID} MATCHES "^[1-9][0-9]*$" OR
+        ${STEAM_ID} GREATER 4294967295)
+        message(FATAL_ERROR
+            "packaging/steam-identity.json contains an invalid Steam ID")
+    endif()
+endforeach()
+
 string(REPLACE "." ";" SNOWDESKTOP_VERSION_PARTS "${SNOWDESKTOP_VERSION}")
 list(LENGTH SNOWDESKTOP_VERSION_PARTS SNOWDESKTOP_VERSION_PART_COUNT)
 if (NOT SNOWDESKTOP_VERSION_PART_COUNT EQUAL 4)
@@ -83,6 +100,8 @@ configure_file(
     @ONLY)
 
 message(STATUS "SnowDesktop version: ${SNOWDESKTOP_VERSION}")
+message(STATUS
+    "SnowDesktop Steam App/Windows Depot: ${SNOWDESKTOP_STEAM_APP_ID}/${SNOWDESKTOP_STEAM_WINDOWS_DEPOT_ID}")
 
 set(SNOWDESKTOP_SOURCES
     src/main.cpp
@@ -172,6 +191,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/app_settings_apply.cpp
     src/app/app_text_render.cpp
     src/app/app_taskbar_integration.cpp
+    src/app/app_steam_workshop.cpp
     src/app/app_timer_dispatch.cpp
     src/app/app_tray.cpp
     src/app/app_window_dispatch.cpp
@@ -221,6 +241,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget_engine.cpp
     src/widget_package.cpp
     src/widget_package_paths.cpp
+    src/steam_workshop_cache.cpp
     src/steam_workshop_source.cpp
     src/steam_workshop_sync.cpp
     src/system_snapshot.cpp
@@ -435,6 +456,7 @@ if (MSVC)
         _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
         WINVER=0x0A00 _WIN32_WINNT=0x0A00
         SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}"
+        SNOWDESKTOP_STEAM_APP_ID=${SNOWDESKTOP_STEAM_APP_ID}
         SNOWDESKTOP_STORE_ID="${SNOWDESKTOP_STORE_ID}"
         SNOWDESKTOP_PACKAGE_FAMILY_NAME="${SNOWDESKTOP_PACKAGE_FAMILY_NAME}")
     target_precompile_headers(SnowDesktop PRIVATE
@@ -467,6 +489,7 @@ else()
     target_compile_definitions(SnowDesktop PRIVATE
         _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
         SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}"
+        SNOWDESKTOP_STEAM_APP_ID=${SNOWDESKTOP_STEAM_APP_ID}
         SNOWDESKTOP_STORE_ID="${SNOWDESKTOP_STORE_ID}"
         SNOWDESKTOP_PACKAGE_FAMILY_NAME="${SNOWDESKTOP_PACKAGE_FAMILY_NAME}")
 endif()
@@ -477,10 +500,6 @@ target_link_libraries(SnowDesktop PRIVATE
     advapi32 bcrypt imm32 iphlpapi ole32 pdh propsys runtimeobject shcore shell32 shlwapi urlmon user32 windowsapp windowscodecs uuid winhttp ws2_32
     version wbemuuid
 )
-
-# The Steam bridge is a separate MIT-licensed executable. It deliberately does
-# not link SnowDesktop or any other GPL target from this build.
-add_subdirectory(steam_bridge)
 
 add_custom_command(TARGET SnowDesktop POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -507,10 +526,29 @@ if (MSVC)
     target_compile_options(snowwidget PRIVATE
         /W4 /permissive- /EHsc /utf-8)
     target_compile_definitions(snowwidget PRIVATE
-        _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+        _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN
+        SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}")
 else()
     target_compile_options(snowwidget PRIVATE -Wall -Wextra -pedantic)
+    target_compile_definitions(snowwidget PRIVATE
+        SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}")
 endif()
+
+# The Steam bridge is a separate MIT-licensed executable. It deliberately does
+# not link SnowDesktop or any other GPL target from this build. Configure it
+# after snowwidget so its Agent Skill bundle can embed the CLI.
+add_subdirectory(steam_bridge)
+target_link_libraries(SnowDesktop PRIVATE
+    SnowDesktopWorkshopManagerSupport)
+
+add_dependencies(SnowDesktop snowwidget)
+add_custom_command(TARGET SnowDesktop POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:SnowDesktop>/widgets/snowdesktop-lua-widget/bin"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:snowwidget>"
+        "$<TARGET_FILE_DIR:SnowDesktop>/widgets/snowdesktop-lua-widget/bin/snowwidget.exe"
+    COMMENT "Embedding snowwidget CLI in the Agent Skill for SnowDesktop...")
 
 include(CTest)
 if (BUILD_TESTING)
@@ -622,6 +660,15 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS contract l10n)
+
+    snowdesktop_add_test(
+        SnowDesktopGeneralSettingsTests
+        general_settings
+        SOURCES
+            tests/general_settings_tests.cpp
+            src/general_settings.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS contract settings)
 
     snowdesktop_add_test(
         SnowDesktopSlotContractMatrixTests
@@ -774,9 +821,13 @@ if (BUILD_TESTING)
         steam_workshop_manager
         SOURCES
             tests/steam_workshop_manager_tests.cpp
+            src/steam_workshop_cache.cpp
             src/steam_workshop_sync.cpp
         INCLUDE_DIRECTORIES steam_bridge/src src
-        LINK_LIBRARIES SnowDesktopWorkshopManagerSupport
+        LINK_LIBRARIES
+            SnowDesktopWorkshopManagerSupport
+            SnowDesktopSteamAppIdentity
+            advapi32
         COMMAND_ARGUMENTS
             "$<TARGET_FILE:snowwidget>"
             "${CMAKE_CURRENT_SOURCE_DIR}"

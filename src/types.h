@@ -447,6 +447,9 @@ struct DesktopWidget
     bool folderSortAscending = true;
     std::wstring activeCategoryId;
     std::wstring packageId;        ///< Lua package UUID used by layouts/runtime
+    std::wstring packageSourceProvider; ///< Package provider captured for recovery
+    std::wstring packageSourceExternalItemId; ///< Provider item identity captured for recovery
+    std::wstring packageSourceUrl; ///< Human-facing package source page
     std::wstring legacyScriptPath; ///< Pending loose-script migration only
     bool showOnHoverOnly = false;
     bool keepWhenDesktopHidden = false;

@@ -24,6 +24,13 @@ Installed and development packages live under `data\widgets\installed` and
 
 ## Workflow
 
+This is an open Agent Skill and is not tied to a specific assistant. Resolve
+the directory containing this `SKILL.md`, then run its bundled
+`bin\snowwidget.exe capabilities`. The JSON response is the stable
+machine-readable contract for the available component CLI. SnowDesktop's
+**Component Developer Tools** page exposes the shared Agent Skills targets,
+development workspace, and ready-to-run validate and pack commands.
+
 1. Copy [assets/widget-template](assets/widget-template) as a new package directory.
 2. Generate a new UUID for `id`, choose a lowercase hyphenated `slug`, and keep the UUID forever across channels.
 3. Implement `render()` first using local widget coordinates starting at `(0, 0)`.
@@ -38,8 +45,10 @@ Installed and development packages live under `data\widgets\installed` and
 10. Test at multiple widget spans. Derive layout from `layout.width()` and `layout.height()` instead of assuming pixels.
 11. For repository development, run `scripts\widget-dev.bat widgets\my-widget`.
     The first run syncs the package into `.build\<Config>\data\widgets\dev`,
-    activates the development override, and then watches source files. Later
-    saves update the live package without rebuilding the host.
+    where it remains an inactive development candidate until the user selects
+    **Activate Development Version** on its **My Components** card. Later saves
+    update the candidate without rebuilding the host and hot-reload it while
+    the development version is active.
 12. Run `snowwidget validate <directory>` and `snowwidget pack <directory> <name.snowwidget>`.
 13. Check transactional hot reload after saving; a failed reload keeps the last-known-good VM.
 
@@ -228,13 +237,14 @@ For repository development:
 1. Save the package directory under the source `widgets` directory.
 2. Run `scripts/test.bat` to catch untranslated Lua strings and missing keys through the CTest localization contract.
 3. Build the host once, then run `scripts\widget-dev.bat widgets\my-widget`.
-   It validates and mirrors the source package into the active development
-   directory. When the override is first created, SnowDesktop restarts once to
-   discover it; subsequent `main.lua`, manifest, locale, module, and asset saves
-   are synced and trigger the host's transactional Lua hot reload.
+   It validates and mirrors the source package into the development-candidate
+   directory. When the candidate is first created, SnowDesktop restarts once to
+   discover it. Activate it explicitly from its **My Components** card;
+   subsequent `main.lua`, manifest, locale, module, and asset saves are synced
+   and trigger the host's transactional Lua hot reload while it is active.
 4. Use `-Once` for a one-time sync or `-RestartHost` when package discovery
-   needs to be forced. Stop watch mode with `Ctrl+C`; the development override
-   remains available for the next session.
+   needs to be forced. Stop watch mode with `Ctrl+C`; the development candidate
+   and its explicit activation choice remain available for the next session.
 5. Run `.build\Release\snowwidget.exe validate widgets\my-widget`.
 6. In SnowDesktop, right-click the desktop and choose **添加组件**, then select the manifest display name.
 7. Exercise click, double-click, wheel, editor, context-menu, and language-switch behavior as applicable.

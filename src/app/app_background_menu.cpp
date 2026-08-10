@@ -91,6 +91,24 @@ bool LuaWidgetMenuSourceMatches(
     }
 }
 
+std::optional<LuaWidgetMenuFilter> LuaWidgetMenuFilterForCommand(
+    UINT command)
+{
+    switch (command)
+    {
+    case kContextAddLuaWidgetFilterAll:
+        return LuaWidgetMenuFilter::All;
+    case kContextAddLuaWidgetFilterBuiltin:
+        return LuaWidgetMenuFilter::Builtin;
+    case kContextAddLuaWidgetFilterInstalled:
+        return LuaWidgetMenuFilter::Installed;
+    case kContextAddLuaWidgetFilterDevelopment:
+        return LuaWidgetMenuFilter::Development;
+    default:
+        return std::nullopt;
+    }
+}
+
 std::vector<LuaWidgetMenuEntry> FilterLuaWidgetMenuEntries(
     const std::vector<LuaWidgetMenuEntry>& entries,
     const std::wstring& search, LuaWidgetMenuFilter filter)
@@ -1170,11 +1188,10 @@ void DesktopApp::ShowAddWidgetMenu(POINT screenPoint)
     ConfigureModernMenuEventPump(options);
     options.onCommand = [&](UINT command, auto& currentItems) {
         if (showPreview(command)) return true;
-        if (command >= kContextAddLuaWidgetFilterAll &&
-            command <= kContextAddLuaWidgetFilterDevelopment)
+        if (const auto selectedFilter =
+            LuaWidgetMenuFilterForCommand(command))
         {
-            luaFilter = static_cast<LuaWidgetMenuFilter>(
-                command - kContextAddLuaWidgetFilterAll);
+            luaFilter = *selectedFilter;
             luaPage = 0;
             luaWidgets = FilterLuaWidgetMenuEntries(
                 allLuaWidgets, luaSearch, luaFilter);
@@ -1599,7 +1616,8 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         for (UINT i = 0; i < kLuaWidgetMenuPageSize; ++i)
         {
             SetMenuItemIcon(widgetMenu, kContextAddLuaWidgetFirst + i,
-                L"\uEE65", MenuIconFont::FluentRegular);
+                L"\uEE65",
+                MenuIconFont::FluentRegular);
         }
         SetMenuItemIcon(widgetMenu, kContextAddLuaWidgetPreviousPage,
             L"\uF15B", MenuIconFont::FluentRegular);
@@ -1668,11 +1686,10 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     };
     auto changeLuaWidgetPage = [&](UINT command, auto& rootItems) {
         if (showPreview(command)) return true;
-        if (command >= kContextAddLuaWidgetFilterAll &&
-            command <= kContextAddLuaWidgetFilterDevelopment)
+        if (const auto selectedFilter =
+            LuaWidgetMenuFilterForCommand(command))
         {
-            luaFilter = static_cast<LuaWidgetMenuFilter>(
-                command - kContextAddLuaWidgetFilterAll);
+            luaFilter = *selectedFilter;
             luaPage = 0;
             luaWidgets = FilterLuaWidgetMenuEntries(
                 allLuaWidgets, luaSearch, luaFilter);

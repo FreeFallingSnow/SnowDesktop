@@ -147,6 +147,7 @@ struct RecycleBinPollState {
 };
 struct SteamWorkshopSubscriptionPollState {
     std::atomic<bool> queryInFlight{ false };
+    std::atomic<bool> refreshPending{ false };
     std::mutex mutex;
     std::optional<snowdesktop::widget::SteamWorkshopSubscriptionSnapshot>
         ready;
@@ -1150,7 +1151,10 @@ private:
     void ScrollWidgetToMember(size_t widgetIndex, int memberIndex);
     /** @brief 处理定时器事件。 @param timerId 定时器标识 */
     void OnTimer(WPARAM timerId);
-    void PollSteamWorkshopSubscriptions();
+    void PollSteamWorkshopSubscriptions(bool bypassThrottle = false);
+    void StartSteamWorkshopWatcher();
+    void StopSteamWorkshopWatcher();
+    static DWORD WINAPI SteamWorkshopWatcherThreadProc(LPVOID param);
     /** @brief 更新集合弹出面板的悬停停留计时。 @param point 当前鼠标位置 */
     void UpdateCollectionPopupDwell(POINT point);
     /** @brief 拖动条目时更新集合组标签的悬停切换计时。 */
@@ -1963,6 +1967,7 @@ private:
     bool CanRenameWidget(const DesktopWidget& widget) const;
     /** @brief 根据组件类型或 Lua 清单初始化网格尺寸限制。 */
     void ConfigureWidgetGridLimits(DesktopWidget& widget) const;
+    void CaptureWidgetPackageSource(DesktopWidget& widget) const;
     /** @brief 将组件跨度限制在组件声明和当前页面允许的范围内。 */
     GridSpan ClampWidgetGridSpan(const DesktopWidget& widget, GridSpan span,
         int availableColumns, int availableRows) const;
@@ -2363,6 +2368,9 @@ private:
             std::make_shared<SteamWorkshopSubscriptionPollState>();
     DWORD steamWorkshopSubscriptionLastQueryTick_ = 0;
     std::string steamWorkshopSubscriptionLastError_;
+    HANDLE steamWorkshopWatcherThread_ = nullptr;
+    HANDLE steamWorkshopWatcherStopEvent_ = nullptr;
+    std::atomic<bool> steamWorkshopWatcherActive_{ false };
     NavigationSettings navigationSettings_;
     GeneralSettings generalSettings_;
     DockSettings dockSettings_;

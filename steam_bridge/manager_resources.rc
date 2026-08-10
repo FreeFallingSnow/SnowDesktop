@@ -1,0 +1,4 @@
+#include "../src/resource.h"
+
+IDI_APPICON       ICON   "../assets/icon/icon.ico"
+IDI_APPICON_SMALL ICON   "../assets/icon/icon_small.ico"

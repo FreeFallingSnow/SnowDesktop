@@ -305,6 +305,15 @@ bool DecodeWidgets(const JsonValue& root, Document& document,
                 error) ||
             !ReadString(object, "packageId", path + ".packageId",
                 record.packageId, error) ||
+            !ReadString(object, "packageSourceProvider",
+                path + ".packageSourceProvider",
+                record.packageSourceProvider, error) ||
+            !ReadString(object, "packageSourceExternalItemId",
+                path + ".packageSourceExternalItemId",
+                record.packageSourceExternalItemId, error) ||
+            !ReadString(object, "packageSourceUrl",
+                path + ".packageSourceUrl",
+                record.packageSourceUrl, error) ||
             !ReadString(object, "scriptPath", path + ".scriptPath",
                 record.scriptPath, error) ||
             !ReadString(object, "legacyScriptPath",

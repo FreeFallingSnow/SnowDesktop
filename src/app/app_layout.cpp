@@ -218,6 +218,11 @@ void DesktopApp::LoadLayoutSlots()
         widget.type = WidgetTypeFromJson(Utf8ToWide(saved.type));
         widget.sourceFolderPath = Utf8ToWide(saved.sourceFolderPath);
         widget.packageId = Utf8ToWide(saved.packageId);
+        widget.packageSourceProvider = Utf8ToWide(
+            saved.packageSourceProvider);
+        widget.packageSourceExternalItemId = Utf8ToWide(
+            saved.packageSourceExternalItemId);
+        widget.packageSourceUrl = Utf8ToWide(saved.packageSourceUrl);
         if (widget.packageId.empty())
             widget.legacyScriptPath = Utf8ToWide(scriptUtf8);
         if (widget.packageId.empty() &&
@@ -232,6 +237,7 @@ void DesktopApp::LoadLayoutSlots()
                 legacyWidgetLayoutMigrationPending_ = true;
             }
         }
+        CaptureWidgetPackageSource(widget);
 
         if (titleUtf8.empty())
         {
@@ -734,6 +740,8 @@ void DesktopApp::SaveLayoutSlots()
     }
     if (!firstItem) file << "\n";
     file << "  ],\n  \"widgets\": [\n";
+    for (auto& widget : widgets_)
+        CaptureWidgetPackageSource(widget);
     for (size_t i = 0; i < widgets_.size(); ++i)
     {
         const DesktopWidget& w = widgets_[i];
@@ -745,6 +753,12 @@ void DesktopApp::SaveLayoutSlots()
              << "\", \"customTitle\": \"" << JsonEscapeUtf8(w.customTitle)
              << "\", \"sourceFolderPath\": \"" << JsonEscapeUtf8(w.sourceFolderPath)
              << "\", \"packageId\": \"" << JsonEscapeUtf8(w.packageId)
+             << "\", \"packageSourceProvider\": \""
+             << JsonEscapeUtf8(w.packageSourceProvider)
+             << "\", \"packageSourceExternalItemId\": \""
+             << JsonEscapeUtf8(w.packageSourceExternalItemId)
+             << "\", \"packageSourceUrl\": \""
+             << JsonEscapeUtf8(w.packageSourceUrl)
              << "\", \"legacyScriptPath\": \"" << JsonEscapeUtf8(w.legacyScriptPath)
              << "\", \"activeCategory\": \"" << JsonEscapeUtf8(w.activeCategoryId)
              << "\", \"page\": \"" << JsonEscapeUtf8(w.gridCell.pageId)

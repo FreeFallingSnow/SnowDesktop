@@ -645,8 +645,18 @@ public:
             const snowdesktop::widget::PackageQuery& query,
             std::string& error);
     static bool IsSteamWorkshopBridgeAvailable();
+    static bool UnsubscribeSteamWorkshopItem(
+        const std::string& externalItemId, std::string& error);
     static snowdesktop::widget::SteamWorkshopSubscriptionSnapshot
         QuerySteamWorkshopSubscriptions(const std::string& locale);
+    static snowdesktop::widget::SteamWorkshopSubscriptionHistory
+        GetSteamWorkshopSubscriptionHistory();
+    static void PrepareSteamWorkshopSubscriptionArtifacts(
+        snowdesktop::widget::SteamWorkshopSubscriptionSnapshot& snapshot,
+        const std::vector<snowdesktop::widget::InstalledPackage>& installed,
+        const std::filesystem::path& stagingRoot);
+    static std::unordered_map<std::string, std::string>
+        CachedSteamWorkshopPackageAssociations();
     snowdesktop::widget::SteamWorkshopSyncResult
         ApplySteamWorkshopSubscriptions(
             const snowdesktop::widget::SteamWorkshopSubscriptionSnapshot&
@@ -670,6 +680,10 @@ public:
     static snowdesktop::widget::PackagePaths GetWidgetPackagePaths();
     static std::vector<snowdesktop::widget::InstalledPackage>
         ListWidgetPackages();
+    static std::optional<snowdesktop::widget::PackageSourceRef>
+        GetWidgetPackageSource(const std::wstring& packageId);
+    static bool IsWidgetPackageAvailable(const std::wstring& packageId);
+    static bool IsWidgetPackageInstalled(const std::wstring& packageId);
     static std::vector<snowdesktop::widget::LegacyPackage>
         ListLegacyWidgetPackages();
     static std::optional<std::wstring> ResolveLegacyWidgetPackage(
@@ -678,6 +692,10 @@ public:
         const snowdesktop::widget::LegacyPackage& legacy);
     static bool SetWidgetPackageEnabled(const std::string& packageId,
         bool enabled, std::string& error);
+    static bool CreateWidgetDevelopmentProject(const std::string& packageId,
+        std::filesystem::path& projectRoot, std::string& error);
+    static bool SetWidgetDevelopmentOverride(const std::string& packageId,
+        bool active, std::string& error);
     static bool RollbackWidgetPackage(const std::string& packageId,
         const std::string& version, std::string& error);
     static bool UninstallWidgetPackage(const std::string& packageId,

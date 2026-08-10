@@ -309,6 +309,69 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
         SafeRenderWidget(data_->id, data_->packageId, engine, context, frame,
             data_->gridSpan.columns, data_->gridSpan.rows);
     }
+    else if (!preview &&
+        !WidgetEngine::IsWidgetPackageInstalled(data_->packageId))
+    {
+        const std::string publishedFileId =
+            data_->packageSourceProvider == L"steam-workshop"
+            ? snowdesktop::widget::SteamPublishedFileId(
+                WideToUtf8(data_->packageSourceExternalItemId))
+            : std::string{};
+        const bool canRecoverFromWorkshop = !publishedFileId.empty();
+        const int centerY = frame.top +
+            (frame.bottom - frame.top) / 2;
+        const int horizontalPadding = Cu(14.0f);
+        RECT titleRect{
+            frame.left + horizontalPadding,
+            centerY - Cu(36.0f),
+            frame.right - horizontalPadding,
+            centerY - Cu(7.0f),
+        };
+        const std::wstring title = data_->title.empty()
+            ? _LW("app.widget.missing_component")
+            : data_->title;
+        app_->DrawD2DText(context, title, titleRect,
+            GetCuTextFormatWeight(16.0f,
+                DWRITE_FONT_WEIGHT_SEMI_BOLD, true),
+            lightTheme
+                ? D2D1::ColorF(0.09f, 0.12f, 0.17f, 0.92f)
+                : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.94f));
+
+        RECT actionRect{
+            frame.left + horizontalPadding,
+            centerY,
+            frame.right - horizontalPadding,
+            centerY + Cu(31.0f),
+        };
+        if (canRecoverFromWorkshop)
+        {
+            app_->DrawD2DRoundedRectangle(context, actionRect,
+                static_cast<float>(Cu(8.0f)),
+                hovered
+                    ? D2D1::ColorF(0.22f, 0.50f, 0.96f, 0.28f)
+                    : D2D1::ColorF(0.22f, 0.50f, 0.96f, 0.16f),
+                D2D1::ColorF(0.30f, 0.58f, 1.0f,
+                    hovered ? 0.72f : 0.46f));
+        }
+        app_->DrawD2DText(context,
+            canRecoverFromWorkshop
+                ? _LW("app.widget.missing_workshop_action")
+                : _LW("app.widget.missing_local_hint"),
+            actionRect,
+            GetCuTextFormatWeight(12.5f,
+                canRecoverFromWorkshop
+                    ? DWRITE_FONT_WEIGHT_SEMI_BOLD
+                    : DWRITE_FONT_WEIGHT_NORMAL,
+                true),
+            canRecoverFromWorkshop
+                ? (lightTheme
+                    ? D2D1::ColorF(0.08f, 0.31f, 0.72f, 0.98f)
+                    : D2D1::ColorF(0.63f, 0.79f, 1.0f, 0.98f))
+                : (lightTheme
+                    ? D2D1::ColorF(0.20f, 0.23f, 0.29f, 0.68f)
+                    : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.64f)),
+            DWRITE_WORD_WRAPPING_WRAP);
+    }
     context->PopAxisAlignedClip();
 
     if (engine && widgetOk)

@@ -19,6 +19,12 @@ The shared core owns the Steamworks boundary for both roles:
   Workshop item from one validated `.snowwidget` artifact and a primary
   preview image.
 
+The production Steam identity is App ID `5080330` with Windows depot
+`5080331`. `packaging/steam-identity.json` is the repository source of truth.
+Every SDK-enabled process verifies the runtime App ID before querying,
+downloading, creating, or updating Workshop content; placeholder or foreign
+App IDs fail closed.
+
 SnowDesktop must never execute Lua directly from a Steam install directory.
 The main application copies `package.snowwidget` into its normal staging area,
 validates it, compares permissions and network domains, and only then activates
@@ -59,6 +65,36 @@ Valve, outside version control and outside release artifacts. Production
 commands must run from the application's Steam launch context under the same
 Windows user as the Steam client.
 
+After an SDK-enabled Release build, use the guarded development launcher from
+the repository root instead of creating the file manually:
+
+```powershell
+scripts\steam-dev.bat manager
+scripts\steam-dev.bat bridge status
+scripts\steam-dev.bat bridge workshop list-published --page 1
+```
+
+The launcher checks the compiled App/depot identity, creates
+`.build\Release\steam_appid.txt` only while the selected process runs, and
+removes only the file it created. The packaging pipeline independently rejects
+the file. The Manager automatically connects to Steam and loads the current
+author's first Workshop page at startup; Diagnostics exposes expected and
+runtime App IDs for troubleshooting.
+
+The Manager is intentionally limited to Steam Workshop work: selecting a local
+project for upload, validating and packaging the upload, managing published
+items, handling the Workshop agreement, and showing Steam diagnostics. The
+The component development flow lives in SnowDesktop's **Component Developer Tools**
+page. Built-in components are never imported as publishable projects; only
+`data\widgets\dev` and explicitly added external component directories appear
+in the local project list.
+
+The Bridge and Manager intentionally do not call
+`SteamAPI_RestartAppIfNecessary`: that API relaunches the product's configured
+primary executable rather than the helper that called it. Steam distributions
+inherit the launch context from `SnowDesktop.exe`; local helper development uses
+the guarded launcher above.
+
 Before testing uploads, enable ISteamUGC file transfer for the app and publish
 a nonzero Steam Cloud byte/file quota for Workshop preview images in Steamworks
 App Admin. Workshop visibility is configured and published separately there.
@@ -66,21 +102,32 @@ App Admin. Workshop visibility is configured and published separately there.
 ## Consumer commands
 
 ```powershell
+SnowDesktopSteamBridge.exe configuration
 SnowDesktopSteamBridge.exe status
 SnowDesktopSteamBridge.exe workshop list-subscribed --details
 SnowDesktopSteamBridge.exe workshop item-details --item 1234567890
 SnowDesktopSteamBridge.exe workshop item-state --item 1234567890
+SnowDesktopSteamBridge.exe workshop subscribe --item 1234567890
+SnowDesktopSteamBridge.exe workshop unsubscribe --item 1234567890
 SnowDesktopSteamBridge.exe workshop download --item 1234567890
 SnowDesktopSteamBridge.exe workshop install-info --item 1234567890
 SnowDesktopSteamBridge.exe workshop eula-status
 ```
 
-Discovery, subscription, unsubscription, voting, comments, and moderation stay
-on the Steam Workshop website. SnowDesktop periodically reconciles a successful
-subscription snapshot: subscribing installs the validated package, updates follow
-the published package version, and unsubscribing removes the managed package.
-Layouts and per-instance storage are retained across unsubscription. Failed Steam
-queries and items that are still downloading never trigger automatic removal.
+Discovery, voting, comments, and moderation stay on the Steam Workshop website.
+The explicit `subscribe` and `unsubscribe` commands are available to developer
+tooling and agent automation. The resident SnowDesktop process reconciles
+subscriptions from Steam's local `appworkshop_<AppId>.acf` cache and Workshop
+content directories; its periodic check never starts SteamAPI or the Bridge, so
+it does not repeatedly mark the application as running in Steam. The Bridge is
+started only for an actual Steam operation or creator-identity verification.
+Subscribing installs the validated package, updates follow the published package
+version, and an item removed from the same Steam account's previous subscription
+snapshot removes the managed package. Subscription history is stored per Steam
+`ActiveUser`, so switching to a newly observed account cannot remove another
+account's components, and a component remembered by any account remains local.
+Layouts and per-instance storage are retained across unsubscription. Missing,
+partially written, or in-progress cache states never trigger automatic removal.
 
 ## Publisher command
 
@@ -102,6 +149,7 @@ The CLI remains available for automation.
 Validate and pack with the normal channel-independent tool first:
 
 ```powershell
+snowwidget capabilities
 snowwidget validate D:\widgets\my-widget
 snowwidget pack D:\widgets\my-widget D:\out\my-widget.snowwidget
 ```

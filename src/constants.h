@@ -192,6 +192,8 @@ constexpr UINT kCommitRenameMessage = WM_APP + 5;
 constexpr UINT kShellFileOperationCompletedMessage = WM_APP + 7;
 constexpr UINT kForegroundInteractionChangedMessage = WM_APP + 8;
 constexpr UINT kFloatingDockBackdropCommitMessage = WM_APP + 9;
+constexpr UINT kSteamWorkshopSubscriptionReadyMessage = WM_APP + 10;
+constexpr UINT kSteamWorkshopSubscriptionChangedMessage = WM_APP + 11;
 constexpr UINT_PTR kShellChangeTimerId = 2;
 constexpr UINT kShellChangeDebounceMs = 500;
 
@@ -206,7 +208,7 @@ constexpr UINT_PTR kDesktopHostWatchTimerId = 4;
 constexpr UINT kDesktopHostWatchIntervalMs = 2000;
 constexpr UINT_PTR kWidgetRefreshTimerId = 5;
 constexpr UINT kWidgetRefreshIntervalMs = 1000;
-constexpr DWORD kSteamWorkshopSubscriptionPollIntervalMs = 15000;
+constexpr DWORD kSteamWorkshopSubscriptionFallbackPollIntervalMs = 60000;
 constexpr UINT_PTR kCollectionPopupDwellTimerId = 6;
 constexpr UINT kCollectionPopupDwellIntervalMs = 50;
 constexpr DWORD kCollectionPopupDwellDelayMs = 600;

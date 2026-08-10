@@ -41,6 +41,9 @@ struct WidgetRecord
     std::optional<std::string> titleMode;
     std::string sourceFolderPath;
     std::string packageId;
+    std::string packageSourceProvider;
+    std::string packageSourceExternalItemId;
+    std::string packageSourceUrl;
     std::string scriptPath;
     std::string legacyScriptPath;
     std::string activeCategory;

@@ -45,6 +45,7 @@ namespace
 
     bool ReadStringField(const std::string& text, const char* field, char* out, size_t outSize)
     {
+        if (!out || outSize == 0) return false;
         std::string marker = "\"" + std::string(field) + "\"";
         size_t p = text.find(marker);
         if (p == std::string::npos) return false;
@@ -55,8 +56,9 @@ namespace
         size_t end = text.find('"', p + 1);
         if (end == std::string::npos) return false;
         std::string value = text.substr(p + 1, end - p - 1);
-        std::strncpy(out, value.c_str(), outSize - 1);
-        out[outSize - 1] = '\0';
+        const size_t copyLength = std::min(value.size(), outSize - 1);
+        std::memcpy(out, value.data(), copyLength);
+        out[copyLength] = '\0';
         return true;
     }
 
@@ -83,6 +85,8 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
         settings.doubleClickHideDesktop = val;
     if (ReadBoolField(text, "desktopPassthroughHotkeyEnabled", val))
         settings.desktopPassthroughHotkeyEnabled = val;
+    if (ReadBoolField(text, "widgetDeveloperToolsEnabled", val))
+        settings.widgetDeveloperToolsEnabled = val;
     int hotkeyValue = 0;
     if (ReadIntField(text, "desktopPassthroughHotkeyModifiers",
         hotkeyValue))
@@ -104,6 +108,13 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
         if (theme >= 4) theme -= 2;
         settings.quickNavTheme = std::clamp(theme, 0, 3);
     }
+    int agentSkillTargetMask = 0;
+    if (ReadIntField(text, "agentSkillTargetMask", agentSkillTargetMask) &&
+        agentSkillTargetMask >= 0 &&
+        agentSkillTargetMask <= GeneralSettings::kAllAgentSkillTargetsMask)
+    {
+        settings.agentSkillTargetMask = agentSkillTargetMask;
+    }
     ReadStringField(text, "language", settings.language, sizeof(settings.language));
     return true;
 }
@@ -124,6 +135,11 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
     file << "  \"desktopPassthroughHotkeyVirtualKey\": "
          << settings.desktopPassthroughHotkeyVirtualKey << ",\n";
     file << "  \"quickNavTheme\": " << settings.quickNavTheme << ",\n";
+    file << "  \"widgetDeveloperToolsEnabled\": "
+         << (settings.widgetDeveloperToolsEnabled ? "true" : "false")
+         << ",\n";
+    file << "  \"agentSkillTargetMask\": "
+         << settings.agentSkillTargetMask << ",\n";
     file << "  \"language\": \"" << settings.language << "\"\n";
     file << "}\n";
     return true;

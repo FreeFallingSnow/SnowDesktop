@@ -1,7 +1,35 @@
 #include "app.h"
 #include "../desktop_hover_rules.h"
+#include "../steam_app_identity.h"
 
 // Pointer leave, Dock click release and primary-button drag completion.
+
+namespace
+{
+bool OpenMissingWidgetWorkshopPage(HWND owner,
+    const DesktopWidget& widget)
+{
+    if (widget.packageSourceProvider != L"steam-workshop")
+        return false;
+    const std::string publishedFileId = snowdesktop::widget::
+        SteamPublishedFileId(
+            WideToUtf8(widget.packageSourceExternalItemId));
+    if (publishedFileId.empty()) return false;
+
+    const std::wstring clientUrl = snowdesktop::
+        SnowDesktopSteamCommunityItemClientUrl(publishedFileId);
+    const HINSTANCE opened = ShellExecuteW(owner, L"open",
+        clientUrl.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    if (reinterpret_cast<INT_PTR>(opened) <= 32)
+    {
+        const std::wstring webUrl = snowdesktop::
+            SnowDesktopSteamCommunityItemUrl(publishedFileId);
+        ShellExecuteW(owner, L"open", webUrl.c_str(), nullptr, nullptr,
+            SW_SHOWNORMAL);
+    }
+    return true;
+}
+}
 
 void DesktopApp::OnMouseLeave()
 {
@@ -637,27 +665,40 @@ void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
             widgetEngine_)
         {
             RECT frame = GetStandaloneWidgetFrameRect(widgets_[mouseDownWidgetIndex_]);
-            widgetEngine_->EnsureWidgetLoaded(widgets_[mouseDownWidgetIndex_].id,
+            const bool loaded = widgetEngine_->EnsureWidgetLoaded(
+                widgets_[mouseDownWidgetIndex_].id,
                 widgets_[mouseDownWidgetIndex_].packageId);
-            const bool hostInputHandled =
-                widgetEngine_->HandleHostInputPointerUp(
-                    widgets_[mouseDownWidgetIndex_].id,
-                    upPoint.x - frame.left,
-                    upPoint.y - frame.top);
-            if (hostInputHandled)
-                UpdateHostInputImePosition();
-            if (!hostInputHandled &&
+            const bool contentClicked =
                 HitTestStandaloneWidget(mouseDownWidgetIndex_,
-                    upPoint) == WidgetHit::Content)
+                    upPoint) == WidgetHit::Content;
+            const bool packageMissing = !WidgetEngine::
+                IsWidgetPackageInstalled(
+                    widgets_[mouseDownWidgetIndex_].packageId);
+            if (!loaded && packageMissing && contentClicked)
             {
-                widgetEngine_->InvokeMouseEvent(
-                    widgets_[mouseDownWidgetIndex_].id,
-                    "onMouseUp", upPoint.x - frame.left,
-                    upPoint.y - frame.top, 1, 0);
-                widgetEngine_->InvokeClick(
-                    widgets_[mouseDownWidgetIndex_].id,
-                    upPoint.x - frame.left,
-                    upPoint.y - frame.top);
+                OpenMissingWidgetWorkshopPage(hwnd_,
+                    widgets_[mouseDownWidgetIndex_]);
+            }
+            else if (loaded)
+            {
+                const bool hostInputHandled =
+                    widgetEngine_->HandleHostInputPointerUp(
+                        widgets_[mouseDownWidgetIndex_].id,
+                        upPoint.x - frame.left,
+                        upPoint.y - frame.top);
+                if (hostInputHandled)
+                    UpdateHostInputImePosition();
+                if (!hostInputHandled && contentClicked)
+                {
+                    widgetEngine_->InvokeMouseEvent(
+                        widgets_[mouseDownWidgetIndex_].id,
+                        "onMouseUp", upPoint.x - frame.left,
+                        upPoint.y - frame.top, 1, 0);
+                    widgetEngine_->InvokeClick(
+                        widgets_[mouseDownWidgetIndex_].id,
+                        upPoint.x - frame.left,
+                        upPoint.y - frame.top);
+                }
             }
         }
         if (pendingCtrlToggleDesktopIndex_ < items_.size())

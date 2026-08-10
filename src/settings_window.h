@@ -22,6 +22,7 @@
 #include "category_settings.h"
 #include "full_data_backup.h"
 #include "widget_package.h"
+#include "authoring_toolchain.h"
 #include "../widget_spacing_rules.h"
 
 #include <algorithm>
@@ -29,6 +30,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 using Microsoft::WRL::ComPtr;
@@ -230,6 +232,13 @@ public:
     { componentSpacingMaximumProvider_ = std::move(provider); }
 
     void SetCategorySettingsChangedCallback(std::function<void()> callback) { categorySettingsChangedCallback_ = std::move(callback); }
+
+    /** @brief 设置从组件库向桌面添加 Lua 组件的回调。 */
+    void SetAddWidgetToDesktopCallback(
+        std::function<bool(const std::wstring&)> callback)
+    {
+        addWidgetToDesktopCallback_ = std::move(callback);
+    }
 
     /** @brief 设置原生毛玻璃状态文本提供者（设置界面只读状态行）。 */
     void SetGlassStatusProvider(std::function<std::wstring()> provider) { glassStatusProvider_ = std::move(provider); }
@@ -481,6 +490,7 @@ private:
     void DrawCategorySettingsPage();
     void DrawWidgetPackagesPage();
     void DrawWidgetDeveloperTools();
+    void RefreshAgentSkillStatuses();
 
     /**
      * @brief 绘制小组件编辑器页面（脚本编辑与保存）
@@ -623,30 +633,27 @@ private:
     /// 系统 DPI 缩放比例，用于字体和界面缩放适配
     float dpiScale_ = 1.0f;
 
-    /// 当前活动页面索引（8 = Lua 组件包与迁移）
+    /// 当前活动页面索引（8 = 组件管理，9 = 组件创作）
     int activePage_ = 0;
     std::string widgetPackageStatus_;
     std::string pendingWidgetPackageUninstall_;
-    std::filesystem::path widgetCatalogPath_;
-    std::string widgetPackageSourceId_;
-    std::vector<snowdesktop::widget::PackageDetails> widgetCatalogEntries_;
-    char widgetCatalogSearch_[128] = {};
-    bool widgetCatalogInitialized_ = false;
-    std::string widgetCatalogLocale_;
+    std::string pendingWidgetPackageUninstallWorkshopItem_;
     int widgetPackageFilter_ = 0;
+    char widgetPackageSearch_[160] = {};
+    std::vector<snowdesktop::steam_bridge::SkillInstallStatus>
+        agentSkillStatuses_;
+    std::string agentSkillStatusError_;
+    std::string agentSkillActionStatus_;
     enum class PendingWidgetInstallKind
     {
         None,
         Local,
-        StaticCatalog,
     };
     PendingWidgetInstallKind pendingWidgetInstallKind_ =
         PendingWidgetInstallKind::None;
     std::wstring pendingWidgetInstallPath_;
-    std::string pendingWidgetInstallExternalId_;
-    std::string pendingWidgetInstallVersion_;
-    std::string pendingWidgetInstallProviderId_;
     std::wstring pendingWidgetInstallReason_;
+    std::string pendingWidgetInstallDevelopmentId_;
 
     /// 备份名称输入缓冲区
     char backupNameBuf_[128] = {};
@@ -761,6 +768,9 @@ private:
 
     /// 分类设置变更回调
     std::function<void()> categorySettingsChangedCallback_;
+
+    /// 从组件库卡片把指定包添加到桌面。
+    std::function<bool(const std::wstring&)> addWidgetToDesktopCallback_;
 
     /// 原生毛玻璃状态文本提供者
     std::function<std::wstring()> glassStatusProvider_;

@@ -142,6 +142,15 @@ std::string Lower(std::string value)
     return value;
 }
 
+bool DecimalIdentifier(std::string_view value)
+{
+    return !value.empty() && std::all_of(value.begin(), value.end(),
+        [](unsigned char character)
+        {
+            return character >= '0' && character <= '9';
+        });
+}
+
 bool StartsWithPath(const std::filesystem::path& child,
     const std::filesystem::path& root)
 {
@@ -1559,7 +1568,7 @@ ValidationReport WidgetPackageValidator::ValidateDirectory(
 }
 
 ValidationReport WidgetPackageValidator::ValidateArchive(
-    const std::filesystem::path& archive, PackageManifest* manifest) const
+    const std::filesystem::path& archive) const
 {
     ValidationReport report;
     std::error_code ec;
@@ -1575,7 +1584,6 @@ ValidationReport WidgetPackageValidator::ValidateArchive(
             "package archive must use the .snowwidget extension");
     // Full entry validation happens during secure extraction. This function
     // deliberately never invokes the Windows shell ZIP handler.
-    if (manifest) *manifest = {};
     return report;
 }
 
@@ -1606,7 +1614,9 @@ bool WidgetPackageManager::Initialize(std::string& error)
 bool WidgetPackageManager::LoadRegistry(std::string& error)
 {
     registry_.clear();
+    developmentOverrides_.clear();
     legacyAliases_.clear();
+    steamSubscriptionsByAccount_.clear();
     std::error_code ec;
     if (!std::filesystem::exists(paths_.registry, ec)) return true;
     std::string text;
@@ -1651,6 +1661,14 @@ bool WidgetPackageManager::LoadRegistry(std::string& error)
                 registry_[entry.packageId] = std::move(entry);
         }
     }
+    if (const JsonValue* overrides = root.Find("developmentOverrides");
+        overrides && overrides->IsArray())
+    {
+        for (const auto& value : overrides->array)
+            if (value.IsString() &&
+                WidgetPackageValidator::IsUuid(value.string))
+                developmentOverrides_.insert(value.string);
+    }
     if (const JsonValue* aliases = root.Find("legacyAliases");
         aliases && aliases->IsObject())
     {
@@ -1658,6 +1676,19 @@ bool WidgetPackageManager::LoadRegistry(std::string& error)
             if (value.IsString() &&
                 WidgetPackageValidator::IsUuid(value.string))
                 legacyAliases_[name] = value.string;
+    }
+    if (const JsonValue* history = root.Find(
+            "steamSubscriptionsByAccount");
+        history && history->IsObject())
+    {
+        for (const auto& [accountId, value] : history->object)
+        {
+            if (!DecimalIdentifier(accountId) || !value.IsArray()) continue;
+            auto& subscriptions = steamSubscriptionsByAccount_[accountId];
+            for (const auto& item : value.array)
+                if (item.IsString() && DecimalIdentifier(item.string))
+                    subscriptions.insert(item.string);
+        }
     }
     return true;
 }
@@ -1698,6 +1729,16 @@ bool WidgetPackageManager::SaveRegistry(std::string& error) const
         out << "]}";
     }
     if (!entries.empty()) out << '\n';
+    out << "  ],\n  \"developmentOverrides\": [";
+    std::vector<std::string> developmentOverrides(
+        developmentOverrides_.begin(), developmentOverrides_.end());
+    std::sort(developmentOverrides.begin(), developmentOverrides.end());
+    for (std::size_t i = 0; i < developmentOverrides.size(); ++i)
+    {
+        if (i) out << ',';
+        out << "\n    \"" << JsonEscape(developmentOverrides[i]) << '"';
+    }
+    if (!developmentOverrides.empty()) out << '\n';
     out << "  ],\n  \"legacyAliases\": {";
     std::vector<std::pair<std::string, std::string>> aliases(
         legacyAliases_.begin(), legacyAliases_.end());
@@ -1709,6 +1750,33 @@ bool WidgetPackageManager::SaveRegistry(std::string& error) const
             << JsonEscape(aliases[i].second) << '"';
     }
     if (!aliases.empty()) out << '\n';
+    out << "  },\n  \"steamSubscriptionsByAccount\": {";
+    std::vector<std::string> accounts;
+    accounts.reserve(steamSubscriptionsByAccount_.size());
+    for (const auto& [accountId, subscriptions] :
+        steamSubscriptionsByAccount_)
+    {
+        (void)subscriptions;
+        accounts.push_back(accountId);
+    }
+    std::sort(accounts.begin(), accounts.end());
+    for (std::size_t account = 0; account < accounts.size(); ++account)
+    {
+        if (account) out << ',';
+        const auto& accountId = accounts[account];
+        std::vector<std::string> subscriptions(
+            steamSubscriptionsByAccount_.at(accountId).begin(),
+            steamSubscriptionsByAccount_.at(accountId).end());
+        std::sort(subscriptions.begin(), subscriptions.end());
+        out << "\n    \"" << JsonEscape(accountId) << "\":[";
+        for (std::size_t item = 0; item < subscriptions.size(); ++item)
+        {
+            if (item) out << ',';
+            out << '\"' << JsonEscape(subscriptions[item]) << '\"';
+        }
+        out << ']';
+    }
+    if (!accounts.empty()) out << '\n';
     out << "  }\n}\n";
     return AtomicWrite(paths_.registry, out.str(), error);
 }
@@ -1741,7 +1809,9 @@ bool WidgetPackageManager::Refresh(std::string& error)
                 package.grantedNetworkDomains =
                     package.manifest.networkDomains;
                 package.enabled = true;
-                package.active = true;
+                package.active = builtin ||
+                    developmentOverrides_.contains(package.manifest.id);
+                package.selected = package.active;
                 packages_.push_back(std::move(package));
                 continue;
             }
@@ -1762,6 +1832,7 @@ bool WidgetPackageManager::Refresh(std::string& error)
                 const auto registryIt = registry_.find(id);
                 package.active = registryIt != registry_.end() &&
                     registryIt->second.activeVersion == package.manifest.version;
+                package.selected = package.active;
                 package.enabled = registryIt == registry_.end() ||
                     registryIt->second.enabled;
                 if (registryIt != registry_.end())
@@ -1793,10 +1864,12 @@ bool WidgetPackageManager::Refresh(std::string& error)
     scanRoot(paths_.installed, false, false);
     scanRoot(paths_.development, false, true);
 
-    // A development package shadows the installed or built-in copy explicitly.
+    // Development packages are inert candidates until the user explicitly
+    // activates an override for the shared package UUID.
     std::set<std::string> developmentIds;
     for (const auto& package : packages_)
-        if (package.development) developmentIds.insert(package.manifest.id);
+        if (package.development && package.active)
+            developmentIds.insert(package.manifest.id);
     for (auto& package : packages_)
         if (!package.development && developmentIds.contains(package.manifest.id))
             package.active = false;
@@ -1816,11 +1889,63 @@ std::vector<InstalledPackage> WidgetPackageManager::ListPackages() const
     return packages_;
 }
 
+bool WidgetPackageManager::ContainsPackage(const std::string& packageId) const
+{
+    return std::any_of(packages_.begin(), packages_.end(),
+        [&](const auto& package)
+        {
+            return package.manifest.id == packageId;
+        });
+}
+
+std::unordered_map<std::string, std::vector<std::string>>
+WidgetPackageManager::SteamSubscriptionHistory() const
+{
+    std::unordered_map<std::string, std::vector<std::string>> result;
+    for (const auto& [accountId, subscriptions] :
+        steamSubscriptionsByAccount_)
+    {
+        auto& values = result[accountId];
+        values.assign(subscriptions.begin(), subscriptions.end());
+        std::sort(values.begin(), values.end());
+    }
+    return result;
+}
+
+bool WidgetPackageManager::UpdateSteamSubscriptionHistory(
+    const std::string& accountId,
+    const std::vector<std::string>& publishedFileIds, std::string& error)
+{
+    if (!DecimalIdentifier(accountId) ||
+        !std::all_of(publishedFileIds.begin(), publishedFileIds.end(),
+            DecimalIdentifier))
+    {
+        error = "invalid Steam subscription history identity";
+        return false;
+    }
+
+    const auto previous = steamSubscriptionsByAccount_.find(accountId);
+    const bool existed = previous != steamSubscriptionsByAccount_.end();
+    std::unordered_set<std::string> previousSubscriptions;
+    if (existed) previousSubscriptions = previous->second;
+    steamSubscriptionsByAccount_[accountId] =
+        std::unordered_set<std::string>(publishedFileIds.begin(),
+            publishedFileIds.end());
+    if (SaveRegistry(error)) return true;
+    if (existed)
+        steamSubscriptionsByAccount_[accountId] =
+            std::move(previousSubscriptions);
+    else
+        steamSubscriptionsByAccount_.erase(accountId);
+    return false;
+}
+
 std::optional<InstalledPackage> WidgetPackageManager::Resolve(
     const std::string& packageId) const
 {
     if (const auto registry = registry_.find(packageId);
-        registry != registry_.end() && !registry->second.enabled)
+        registry != registry_.end() && !registry->second.enabled &&
+        !developmentOverrides_.contains(packageId))
         return std::nullopt;
     const InstalledPackage* builtinFallback = nullptr;
     for (const auto& package : packages_)
@@ -2272,7 +2397,10 @@ bool WidgetPackageManager::InstallFromSource(IWidgetPackageSource& source,
     if (artifact->packageId != details->manifest.id ||
         !WidgetPackageValidator::IsUuid(artifact->packageId))
     {
-        error = "provider returned an invalid package identity";
+        error = "provider returned an invalid package identity: artifact=" +
+            (artifact->packageId.empty() ? "<empty>" : artifact->packageId) +
+            ", expected=" +
+            (details->manifest.id.empty() ? "<empty>" : details->manifest.id);
         quarantineOrRemove();
         return false;
     }
@@ -2283,7 +2411,14 @@ bool WidgetPackageManager::InstallFromSource(IWidgetPackageSource& source,
         return false;
     }
 
-    const PackageSourceRef sourceRef{ source.ProviderId(), externalItemId };
+    const PackageSourceRef sourceRef = details->source;
+    if (sourceRef.providerId != source.ProviderId() ||
+        sourceRef.externalItemId.empty())
+    {
+        error = "provider returned an invalid source identity";
+        quarantineOrRemove();
+        return false;
+    }
     const bool ok = std::filesystem::is_directory(artifact->localPath, ec)
         ? InstallDirectory(artifact->localPath, sourceRef, allowSourceChange,
             installed, report, error, allowPermissionExpansion,
@@ -2383,6 +2518,166 @@ bool WidgetPackageManager::SetEnabled(const std::string& packageId,
     found->second.enabled = enabled;
     if (!SaveRegistry(error)) return false;
     return Refresh(error);
+}
+
+bool WidgetPackageManager::CreateDevelopmentProject(
+    const std::string& packageId, std::filesystem::path& projectRoot,
+    std::string& error)
+{
+    projectRoot.clear();
+    const auto existingDevelopment = std::find_if(
+        packages_.begin(), packages_.end(), [&](const auto& package)
+        {
+            return package.development && package.manifest.id == packageId;
+        });
+    if (existingDevelopment != packages_.end())
+    {
+        error = "a development project already exists for this component";
+        return false;
+    }
+
+    const auto installed = std::find_if(
+        packages_.begin(), packages_.end(), [&](const auto& package)
+        {
+            return package.manifest.id == packageId && package.active &&
+                !package.builtin && !package.development;
+        });
+    if (installed == packages_.end())
+    {
+        error = "the installed component is unavailable";
+        return false;
+    }
+
+    PackageManifest sourceManifest;
+    const ValidationReport sourceReport = validator_.ValidateDirectory(
+        installed->root, &sourceManifest);
+    if (!sourceReport.Ok() || sourceManifest.id != packageId)
+    {
+        error = "the installed component failed validation";
+        return false;
+    }
+
+    const std::filesystem::path staging =
+        CreateStagingPath("development");
+    std::error_code ec;
+    auto discardStaging = [&]
+    {
+        std::error_code cleanupError;
+        std::filesystem::remove_all(staging, cleanupError);
+    };
+    if (!CopyPackageTree(installed->root, staging, error))
+    {
+        discardStaging();
+        return false;
+    }
+
+    PackageManifest copiedManifest;
+    const ValidationReport copiedReport = validator_.ValidateDirectory(
+        staging, &copiedManifest);
+    if (!copiedReport.Ok() || copiedManifest.id != sourceManifest.id ||
+        copiedManifest.version != sourceManifest.version)
+    {
+        discardStaging();
+        error = "the development copy failed validation";
+        return false;
+    }
+
+    const std::wstring baseName = Utf8ToWide(
+        copiedManifest.slug.empty() ? copiedManifest.id : copiedManifest.slug);
+    std::filesystem::path destination = paths_.development / baseName;
+    for (unsigned suffix = 2; std::filesystem::exists(destination, ec);
+        ++suffix)
+    {
+        if (suffix > 10000)
+        {
+            destination = paths_.development /
+                (baseName + L"-" + Utf8ToWide(GenerateUuid()));
+            break;
+        }
+        destination = paths_.development /
+            (baseName + L"-" + std::to_wstring(suffix));
+    }
+    if (ec)
+    {
+        discardStaging();
+        error = "cannot inspect the development workspace: " + ec.message();
+        return false;
+    }
+
+    std::filesystem::rename(staging, destination, ec);
+    if (ec)
+    {
+        discardStaging();
+        error = "cannot create the development project: " + ec.message();
+        return false;
+    }
+    if (!Refresh(error))
+    {
+        std::error_code cleanupError;
+        std::filesystem::remove_all(destination, cleanupError);
+        std::string refreshError;
+        Refresh(refreshError);
+        return false;
+    }
+
+    const auto created = std::find_if(
+        packages_.begin(), packages_.end(), [&](const auto& package)
+        {
+            return package.development && package.manifest.id == packageId &&
+                package.root == destination;
+        });
+    if (created == packages_.end())
+    {
+        std::filesystem::remove_all(destination, ec);
+        std::string refreshError;
+        Refresh(refreshError);
+        error = "the development project could not be loaded";
+        return false;
+    }
+    projectRoot = destination;
+    return true;
+}
+
+bool WidgetPackageManager::SetDevelopmentOverride(
+    const std::string& packageId, bool active, std::string& error)
+{
+    const bool developmentExists = std::any_of(
+        packages_.begin(), packages_.end(), [&](const auto& package)
+        {
+            return package.development &&
+                package.manifest.id == packageId;
+        });
+    if (active && !developmentExists)
+    {
+        error = "development package is unavailable";
+        return false;
+    }
+
+    const bool previous = developmentOverrides_.contains(packageId);
+    if (active)
+        developmentOverrides_.insert(packageId);
+    else
+        developmentOverrides_.erase(packageId);
+    if (!SaveRegistry(error))
+    {
+        if (previous)
+            developmentOverrides_.insert(packageId);
+        else
+            developmentOverrides_.erase(packageId);
+        return false;
+    }
+    if (Refresh(error)) return true;
+
+    const std::string refreshError = error;
+    if (previous)
+        developmentOverrides_.insert(packageId);
+    else
+        developmentOverrides_.erase(packageId);
+    std::string rollbackError;
+    SaveRegistry(rollbackError);
+    Refresh(rollbackError);
+    error = refreshError;
+    return false;
 }
 
 bool WidgetPackageManager::Rollback(const std::string& packageId,

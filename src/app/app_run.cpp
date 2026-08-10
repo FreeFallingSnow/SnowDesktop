@@ -545,6 +545,12 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         settingsWindow_->SetCategorySettingsChangedCallback([this]() {
             LoadCategorySettingsAndApply();
         });
+        settingsWindow_->SetAddWidgetToDesktopCallback(
+            [this](const std::wstring& packageId) {
+                const size_t previousCount = widgets_.size();
+                AddLuaWidgetAt(POINT{ -32000, -32000 }, packageId);
+                return widgets_.size() > previousCount;
+            });
         settingsWindow_->SetComponentSpacingMaximumProvider([this]() {
             return GetMaximumComponentSpacingScale();
         });
@@ -733,6 +739,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     {
         widgetEngine_.reset();
     }
+    StartSteamWorkshopWatcher();
 
     // Expose the tray menu only after SettingsWindow and all of its callbacks
     // are ready. Otherwise a click during startup can reach the temporary
