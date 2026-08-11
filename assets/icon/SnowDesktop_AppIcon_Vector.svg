@@ -91,9 +91,9 @@
 
   <!-- 圆角底板以外不绘制任何像素，导出 PNG/ICO 时保持完全透明 -->
   <g id="01 App Icon Plate">
-    <rect x="64" y="64" width="896" height="896" rx="168" fill="url(#plateGradient)"/>
-    <rect x="64" y="64" width="896" height="896" rx="168" fill="url(#plateGlow)"/>
-    <rect x="68" y="68" width="888" height="888" rx="164" fill="none" stroke="#FFFFFF" stroke-opacity="0.78" stroke-width="4"/>
+    <rect width="1024" height="1024" rx="192" fill="url(#plateGradient)"/>
+    <rect width="1024" height="1024" rx="192" fill="url(#plateGlow)"/>
+    <rect x="4" y="4" width="1016" height="1016" rx="188" fill="none" stroke="#FFFFFF" stroke-opacity="0.78" stroke-width="4"/>
   </g>
 
   <!-- 主视觉放大 5%，并向左微调 6 px、向上保持视觉居中 -->
