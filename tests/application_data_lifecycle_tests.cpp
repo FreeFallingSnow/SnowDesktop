@@ -286,6 +286,9 @@ int main()
         { "icon beautify shape type",
             "{\"iconBeautifyShape\":\"circle\"}",
             "iconBeautifyShape" },
+        { "icon beautify preset type",
+            "{\"iconBeautifyPreset\":\"classic\"}",
+            "iconBeautifyPreset" },
         { "icon beautify finish type",
             "{\"iconBeautifyFinish\":true}",
             "iconBeautifyFinish" },
@@ -330,13 +333,15 @@ int main()
             "{\"iconBeautifyEnabled\":true,\"iconBeautifyMode\":0}",
             legacyBeautifyLayout, &layoutError) &&
             legacyBeautifyLayout.iconBeautifyEnabled.value_or(false) &&
+            !legacyBeautifyLayout.iconBeautifyPreset.has_value() &&
             !legacyBeautifyLayout.iconBeautifyShape.has_value() &&
             !legacyBeautifyLayout.iconBeautifyFinish.has_value() &&
             !legacyBeautifyLayout.iconBeautifyContentScale.has_value(),
         "legacy icon beautify layouts keep new fields optional");
     snowdesktop::layout_storage::Document iconBeautifyLayout;
     Expect(snowdesktop::layout_storage::ParseDocument(
-            "{\"iconBeautifyShape\":10,"
+            "{\"iconBeautifyPreset\":5,"
+            "\"iconBeautifyShape\":10,"
             "\"iconBeautifyContentScale\":0.73,"
             "\"iconBeautifyFinish\":2,"
             "\"iconBeautifyOutlineMode\":2,"
@@ -347,6 +352,7 @@ int main()
             "\"iconBeautifyOutlineB\":0.3,"
             "\"iconBeautifyShadowStrength\":0.42}",
             iconBeautifyLayout, &layoutError) &&
+            iconBeautifyLayout.iconBeautifyPreset.value_or(-1) == 5 &&
             iconBeautifyLayout.iconBeautifyShape.value_or(-1) == 10 &&
             iconBeautifyLayout.iconBeautifyContentScale.value_or(0.0f) == 0.73f &&
             iconBeautifyLayout.iconBeautifyFinish.value_or(-1) == 2 &&

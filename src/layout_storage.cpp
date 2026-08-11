@@ -451,6 +451,8 @@ bool DecodeDocument(const JsonValue& root, Document& document,
             decoded.shortcutArrowMode, error) ||
         !ReadOptionalRootBoolean(root, "iconBeautifyEnabled",
             decoded.iconBeautifyEnabled, error) ||
+        !ReadOptionalInteger(root, "iconBeautifyPreset", "iconBeautifyPreset",
+            decoded.iconBeautifyPreset, error) ||
         !ReadOptionalInteger(root, "iconBeautifyMode", "iconBeautifyMode",
             decoded.iconBeautifyMode, error) ||
         !ReadOptionalFloat(root, "iconBeautifyBgOpacity",

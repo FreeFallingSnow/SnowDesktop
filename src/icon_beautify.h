@@ -42,21 +42,23 @@ enum class IconBeautifyUpdateKind : int
     Commit = 1,
 };
 
+enum class IconBeautifyPreset : int
+{
+    None = 0,
+    ClassicRounded = 1,
+    AppleGlass = 2,
+    CircleSticker = 3,
+    PebbleGloss = 4,
+    Custom = 5,
+};
+
 namespace icon_beautify
 {
 enum class InteractionAction : int
 {
     None = 0,
     Preview,
-    Restore,
     Commit,
-};
-
-struct HoverPreviewState
-{
-    int candidate = -1;
-    std::uint32_t startedTick = 0;
-    bool previewApplied = false;
 };
 
 struct ContinuousPreviewState
@@ -64,8 +66,6 @@ struct ContinuousPreviewState
     std::uint32_t lastPreviewTick = 0;
 };
 
-InteractionAction AdvanceHoverPreview(HoverPreviewState& state,
-    int hoveredCandidate, int clickedCandidate, std::uint32_t now);
 InteractionAction AdvanceContinuousPreview(ContinuousPreviewState& state,
     bool changed, bool deactivatedAfterEdit, std::uint32_t now);
 }
@@ -73,6 +73,7 @@ InteractionAction AdvanceContinuousPreview(ContinuousPreviewState& state,
 struct IconBeautifySettings
 {
     bool enabled = false;
+    IconBeautifyPreset preset = IconBeautifyPreset::None;
     int mode = 0;
     float backgroundOpacity = 0.65f;
     bool gradientEnabled = false;
@@ -108,6 +109,8 @@ struct EdgeColor
 IconBeautifySettings Normalize(IconBeautifySettings settings);
 bool Equal(const IconBeautifySettings& lhs, const IconBeautifySettings& rhs);
 bool UsesLegacyGeometryDefaults(const IconBeautifySettings& settings);
+IconBeautifySettings MakePreset(IconBeautifyPreset preset);
+IconBeautifyPreset IdentifyPreset(const IconBeautifySettings& settings);
 
 std::uint8_t ShapeMaskAlpha(IconBeautifyShape shape, int x, int y,
     int width, int height, float inset = 0.0f);

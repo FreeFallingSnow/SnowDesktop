@@ -92,6 +92,7 @@ struct Document
     std::optional<float> componentSpacing;
     std::optional<int> shortcutArrowMode;
     std::optional<bool> iconBeautifyEnabled;
+    std::optional<int> iconBeautifyPreset;
     std::optional<int> iconBeautifyMode;
     std::optional<float> iconBeautifyBgOpacity;
     std::optional<bool> iconBeautifyGradientEnabled;

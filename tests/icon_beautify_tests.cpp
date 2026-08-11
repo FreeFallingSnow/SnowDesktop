@@ -68,6 +68,7 @@ int main()
 {
     using snowdesktop::IconBeautifyFinish;
     using snowdesktop::IconBeautifyOutlineMode;
+    using snowdesktop::IconBeautifyPreset;
     using snowdesktop::IconBeautifySettings;
     using snowdesktop::IconBeautifyShape;
     using snowdesktop::IconBeautifyUpdateKind;
@@ -80,23 +81,10 @@ int main()
         static_cast<int>(IconBeautifyFinish::Flat) == 0 &&
         static_cast<int>(IconBeautifyFinish::Sticker) == 3 &&
         static_cast<int>(IconBeautifyOutlineMode::None) == 0 &&
-        static_cast<int>(IconBeautifyOutlineMode::Custom) == 2,
+        static_cast<int>(IconBeautifyOutlineMode::Custom) == 2 &&
+        static_cast<int>(IconBeautifyPreset::None) == 0 &&
+        static_cast<int>(IconBeautifyPreset::Custom) == 5,
         "persisted beautification enums have stable values");
-
-    beautify::HoverPreviewState hoverState;
-    Check(beautify::AdvanceHoverPreview(hoverState, 3, -1, 1000) ==
-            beautify::InteractionAction::None &&
-        beautify::AdvanceHoverPreview(hoverState, 3, -1, 1089) ==
-            beautify::InteractionAction::None &&
-        beautify::AdvanceHoverPreview(hoverState, 3, -1, 1090) ==
-            beautify::InteractionAction::Preview,
-        "card hover previews only after the 90 ms dwell");
-    Check(beautify::AdvanceHoverPreview(hoverState, -1, -1, 1100) ==
-            beautify::InteractionAction::Restore,
-        "leaving a previewed card restores committed settings");
-    Check(beautify::AdvanceHoverPreview(hoverState, 5, 5, 1200) ==
-            beautify::InteractionAction::Commit,
-        "clicking a card commits instead of leaving a hover preview");
 
     beautify::ContinuousPreviewState continuousState;
     Check(beautify::AdvanceContinuousPreview(
@@ -112,6 +100,24 @@ int main()
             continuousState, false, true, 1101) ==
             beautify::InteractionAction::Commit,
         "continuous controls throttle previews and commit only on release");
+
+    constexpr std::array<IconBeautifyPreset, 5> builtInPresets{
+        IconBeautifyPreset::None,
+        IconBeautifyPreset::ClassicRounded,
+        IconBeautifyPreset::AppleGlass,
+        IconBeautifyPreset::CircleSticker,
+        IconBeautifyPreset::PebbleGloss,
+    };
+    for (IconBeautifyPreset preset : builtInPresets)
+    {
+        const auto presetSettings = beautify::MakePreset(preset);
+        Check(beautify::IdentifyPreset(presetSettings) == preset,
+            "built-in icon beautify presets round-trip through identification");
+    }
+    auto customPreset = beautify::MakePreset(IconBeautifyPreset::ClassicRounded);
+    customPreset.contentScale = 0.71f;
+    Check(beautify::IdentifyPreset(customPreset) == IconBeautifyPreset::Custom,
+        "edited preset settings are identified as custom");
 
     constexpr std::array<IconBeautifyShape, 11> shapes{
         IconBeautifyShape::LegacyRounded,
@@ -151,7 +157,8 @@ int main()
         "bookmark keeps its bottom notch");
 
     IconBeautifySettings defaults;
-    Check(defaults.shape == IconBeautifyShape::LegacyRounded,
+    Check(defaults.preset == IconBeautifyPreset::None &&
+        defaults.shape == IconBeautifyShape::LegacyRounded,
         "legacy rounded is the compatibility shape default");
     Check(defaults.contentScale == 0.68f &&
         defaults.finish == IconBeautifyFinish::Flat &&
@@ -163,6 +170,7 @@ int main()
 
     IconBeautifySettings invalid = defaults;
     invalid.mode = 9;
+    invalid.preset = static_cast<IconBeautifyPreset>(99);
     invalid.contentScale = -2.0f;
     invalid.outlineWidth = 99.0f;
     invalid.outlineOpacity = -1.0f;
@@ -171,7 +179,8 @@ int main()
     invalid.finish = static_cast<IconBeautifyFinish>(99);
     invalid.outlineMode = static_cast<IconBeautifyOutlineMode>(99);
     const IconBeautifySettings normalized = beautify::Normalize(invalid);
-    Check(normalized.mode == 1 && normalized.contentScale == 0.50f &&
+    Check(normalized.preset == IconBeautifyPreset::Custom &&
+        normalized.mode == 1 && normalized.contentScale == 0.50f &&
         normalized.outlineWidth == 4.0f && normalized.outlineOpacity == 0.0f &&
         normalized.shadowStrength == 1.0f &&
         normalized.shape == IconBeautifyShape::Pebble &&
@@ -247,6 +256,15 @@ int main()
         Check(smart.size() == source.size(),
             "smart recognition uses the shared compositor for every shape");
     }
+    settings.shape = IconBeautifyShape::Apple;
+    settings.contentScale = 0.50f;
+    const auto smartCompact = beautify::Render(source, 64, 64, settings,
+        beautify::EdgeColor{240, 240, 240});
+    settings.contentScale = 0.90f;
+    const auto smartLarge = beautify::Render(source, 64, 64, settings,
+        beautify::EdgeColor{240, 240, 240});
+    Check(smartCompact == smartLarge,
+        "smart recognition clips the original icon without content scaling");
 
     if (failures != 0)
     {

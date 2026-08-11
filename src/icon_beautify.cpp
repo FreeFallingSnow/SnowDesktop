@@ -13,31 +13,6 @@
 
 namespace snowdesktop::icon_beautify
 {
-InteractionAction AdvanceHoverPreview(HoverPreviewState& state,
-    int hoveredCandidate, int clickedCandidate, std::uint32_t now)
-{
-    if (clickedCandidate >= 0)
-    {
-        state = {};
-        return InteractionAction::Commit;
-    }
-    if (hoveredCandidate != state.candidate)
-    {
-        const bool restore = state.previewApplied;
-        state.candidate = hoveredCandidate;
-        state.startedTick = now;
-        state.previewApplied = false;
-        return restore ? InteractionAction::Restore : InteractionAction::None;
-    }
-    if (hoveredCandidate >= 0 && !state.previewApplied &&
-        now - state.startedTick >= 90)
-    {
-        state.previewApplied = true;
-        return InteractionAction::Preview;
-    }
-    return InteractionAction::None;
-}
-
 InteractionAction AdvanceContinuousPreview(ContinuousPreviewState& state,
     bool changed, bool deactivatedAfterEdit, std::uint32_t now)
 {
@@ -557,6 +532,8 @@ void ApplyOutline(std::vector<std::uint32_t>& output, int width, int height,
 
 IconBeautifySettings Normalize(IconBeautifySettings settings)
 {
+    settings.preset = static_cast<IconBeautifyPreset>(
+        std::clamp(static_cast<int>(settings.preset), 0, 5));
     settings.mode = std::clamp(settings.mode, 0, 1);
     settings.backgroundOpacity = std::clamp(settings.backgroundOpacity, 0.0f, 1.0f);
     settings.gradientDirection = std::clamp(settings.gradientDirection, 0, 3);
@@ -585,7 +562,8 @@ bool Equal(const IconBeautifySettings& lhs, const IconBeautifySettings& rhs)
     const IconBeautifySettings a = Normalize(lhs);
     const IconBeautifySettings b = Normalize(rhs);
     auto eq = [](float x, float y) { return std::abs(x - y) <= 0.0005f; };
-    return a.enabled == b.enabled && a.mode == b.mode &&
+    return a.enabled == b.enabled && a.preset == b.preset &&
+        a.mode == b.mode &&
         eq(a.backgroundOpacity, b.backgroundOpacity) &&
         a.gradientEnabled == b.gradientEnabled &&
         a.gradientDirection == b.gradientDirection &&
@@ -612,6 +590,95 @@ bool UsesLegacyGeometryDefaults(const IconBeautifySettings& settings)
         std::abs(s.outlineOpacity - 1.0f) <= 0.0005f &&
         std::abs(s.contentScale - 0.68f) <= 0.0005f &&
         std::abs(s.shadowStrength - 0.35f) <= 0.0005f;
+}
+
+IconBeautifySettings MakePreset(IconBeautifyPreset preset)
+{
+    IconBeautifySettings settings{};
+    settings.preset = preset;
+    switch (preset)
+    {
+    case IconBeautifyPreset::None:
+        return settings;
+    case IconBeautifyPreset::AppleGlass:
+        settings.enabled = true;
+        settings.shape = IconBeautifyShape::Apple;
+        settings.finish = IconBeautifyFinish::Glass;
+        settings.backgroundOpacity = 0.82f;
+        settings.gradientEnabled = true;
+        settings.gradientDirection = 2;
+        settings.backgroundStartR = 156.0f / 255.0f;
+        settings.backgroundStartG = 216.0f / 255.0f;
+        settings.backgroundStartB = 1.0f;
+        settings.backgroundEndR = 74.0f / 255.0f;
+        settings.backgroundEndG = 128.0f / 255.0f;
+        settings.backgroundEndB = 1.0f;
+        settings.outlineOpacity = 0.78f;
+        settings.shadowStrength = 0.30f;
+        return settings;
+    case IconBeautifyPreset::CircleSticker:
+        settings.enabled = true;
+        settings.shape = IconBeautifyShape::Circle;
+        settings.finish = IconBeautifyFinish::Sticker;
+        settings.contentScale = 0.72f;
+        settings.backgroundOpacity = 0.92f;
+        settings.gradientEnabled = false;
+        settings.backgroundStartR = 1.0f;
+        settings.backgroundStartG = 1.0f;
+        settings.backgroundStartB = 1.0f;
+        settings.backgroundEndR = 1.0f;
+        settings.backgroundEndG = 1.0f;
+        settings.backgroundEndB = 1.0f;
+        settings.outlineWidth = 1.5f;
+        settings.outlineOpacity = 0.85f;
+        settings.shadowStrength = 0.22f;
+        return settings;
+    case IconBeautifyPreset::PebbleGloss:
+        settings.enabled = true;
+        settings.shape = IconBeautifyShape::Pebble;
+        settings.finish = IconBeautifyFinish::Gloss;
+        settings.contentScale = 0.70f;
+        settings.backgroundOpacity = 0.78f;
+        settings.gradientEnabled = true;
+        settings.gradientDirection = 3;
+        settings.backgroundStartR = 1.0f;
+        settings.backgroundStartG = 218.0f / 255.0f;
+        settings.backgroundStartB = 138.0f / 255.0f;
+        settings.backgroundEndR = 1.0f;
+        settings.backgroundEndG = 122.0f / 255.0f;
+        settings.backgroundEndB = 164.0f / 255.0f;
+        settings.outlineOpacity = 0.72f;
+        settings.shadowStrength = 0.40f;
+        return settings;
+    case IconBeautifyPreset::ClassicRounded:
+    case IconBeautifyPreset::Custom:
+    default:
+        settings.enabled = true;
+        return settings;
+    }
+}
+
+IconBeautifyPreset IdentifyPreset(const IconBeautifySettings& settings)
+{
+    const IconBeautifySettings normalized = Normalize(settings);
+    if (!normalized.enabled)
+        return IconBeautifyPreset::None;
+    if (normalized.preset == IconBeautifyPreset::Custom)
+        return IconBeautifyPreset::Custom;
+    constexpr std::array<IconBeautifyPreset, 4> presets{
+        IconBeautifyPreset::ClassicRounded,
+        IconBeautifyPreset::AppleGlass,
+        IconBeautifyPreset::CircleSticker,
+        IconBeautifyPreset::PebbleGloss,
+    };
+    for (IconBeautifyPreset preset : presets)
+    {
+        IconBeautifySettings candidate = MakePreset(preset);
+        candidate.preset = normalized.preset;
+        if (Equal(normalized, candidate))
+            return preset;
+    }
+    return IconBeautifyPreset::Custom;
 }
 
 std::uint8_t ShapeMaskAlpha(IconBeautifyShape shape, int x, int y,
@@ -657,36 +724,10 @@ std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
     {
         const EdgeColor edge = *detectedEdgeFill;
         const std::uint32_t background = PackPremultiplied(edge.r, edge.g, edge.b, 255);
-        if (legacyExact)
-        {
-            for (size_t i = 0; i < output.size(); ++i)
-                output[i] = ScalePixel(SourceOver(source[i], background), mask[i]);
-        }
-        else
-        {
-            for (size_t i = 0; i < output.size(); ++i)
-                output[i] = ScalePixel(background, mask[i]);
-            const int destW = std::max(1, static_cast<int>(std::round(
-                width * settings.contentScale)));
-            const int destH = std::max(1, static_cast<int>(std::round(
-                height * settings.contentScale)));
-            const int destLeft = (width - destW) / 2;
-            const int destTop = (height - destH) / 2;
-            for (int y = 0; y < destH; ++y)
-                for (int x = 0; x < destW; ++x)
-                {
-                    const float sx = ((static_cast<float>(x) + 0.5f) /
-                        destW) * width - 0.5f;
-                    const float sy = ((static_cast<float>(y) + 0.5f) /
-                        destH) * height - 0.5f;
-                    const int outX = destLeft + x;
-                    const int outY = destTop + y;
-                    const size_t index = static_cast<size_t>(outY) * width + outX;
-                    output[index] = ScalePixel(SourceOver(
-                        SampleBilinear(source, width, height, sx, sy),
-                        background), mask[index]);
-                }
-        }
+        // Smart recognition only clips the original icon to the selected shape.
+        // Content scaling is reserved for the explicit shrink-and-background mode.
+        for (size_t i = 0; i < output.size(); ++i)
+            output[i] = ScalePixel(SourceOver(source[i], background), mask[i]);
         ApplyFinish(output, width, height, settings);
         if (legacyExact)
         {

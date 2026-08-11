@@ -140,6 +140,9 @@ void DesktopApp::LoadLayoutSlots()
     iconBeautifySettings_ = snowdesktop::IconBeautifySettings{};
     if (document.iconBeautifyEnabled)
         iconBeautifySettings_.enabled = *document.iconBeautifyEnabled;
+    if (document.iconBeautifyPreset)
+        iconBeautifySettings_.preset = static_cast<snowdesktop::IconBeautifyPreset>(
+            *document.iconBeautifyPreset);
 
     if (document.iconBeautifyMode)
         iconBeautifySettings_.mode = *document.iconBeautifyMode;
@@ -190,6 +193,9 @@ void DesktopApp::LoadLayoutSlots()
         iconBeautifySettings_.shadowStrength = *document.iconBeautifyShadowStrength;
     iconBeautifySettings_ = snowdesktop::icon_beautify::Normalize(
         iconBeautifySettings_);
+    if (!document.iconBeautifyPreset)
+        iconBeautifySettings_.preset = snowdesktop::icon_beautify::IdentifyPreset(
+            iconBeautifySettings_);
 
     for (const auto& page : document.pages)
     {
@@ -705,6 +711,7 @@ void DesktopApp::SaveLayoutSlots()
          << ",\n  \"componentSpacing\": " << componentSpacingScale_
          << ",\n  \"shortcutArrowMode\": " << shortcutArrowMode_
          << ",\n  \"iconBeautifyEnabled\": " << (iconBeautifySettings_.enabled ? "true" : "false")
+         << ",\n  \"iconBeautifyPreset\": " << static_cast<int>(iconBeautifySettings_.preset)
          << ",\n  \"iconBeautifyMode\": " << iconBeautifySettings_.mode
          << ",\n  \"iconBeautifyBgOpacity\": " << iconBeautifySettings_.backgroundOpacity
          << ",\n  \"iconBeautifyGradientEnabled\": " << (iconBeautifySettings_.gradientEnabled ? "true" : "false")
