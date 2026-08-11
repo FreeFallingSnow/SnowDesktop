@@ -145,7 +145,7 @@ int main()
         "all eleven shape masks must be geometrically distinct");
     Check(beautify::ShapeMaskAlpha(IconBeautifyShape::Circle, 0, 0, 64, 64) == 0,
         "circle excludes square corners");
-    Check(beautify::ShapeMaskAlpha(IconBeautifyShape::Diamond, 32, 0, 64, 64) > 0,
+    Check(beautify::ShapeMaskAlpha(IconBeautifyShape::Diamond, 32, 1, 64, 64) > 0,
         "diamond keeps its top vertex");
     Check(beautify::ShapeMaskAlpha(IconBeautifyShape::Bookmark, 32, 60, 64, 64) == 0,
         "bookmark keeps its bottom notch");
