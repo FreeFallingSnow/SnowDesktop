@@ -22,11 +22,110 @@
   - 评论中应提醒后续 Pull Request 不要直接以 `main` 为目标。
 - 合入版本分支时应保留贡献者提交及作者信息。需要补充修改时，使用独立提交，不改写贡献者原提交。
 
+## Commit 信息规范
+
+### 通用要求
+
+- 由维护者或 Agent 新建的 Commit 必须同时提供中文和英文信息；中英文必须表达同一事实范围，
+  不得在其中一种语言中省略风险、限制或未验证状态。
+- 首行摘要应简洁、具体，不写“修复问题”“更新代码”“一些调整”“fix bug”等无法识别改动
+  对象的笼统描述，不以句号结尾。
+- Commit 只能描述该提交实际包含的改动和已经达到的验证状态。视觉、交互、兼容性等未完成实际
+  复现验证的改动，只能作为明确标记的 `try` Commit 保存，不得使用 `fix` 类型或“修复 / 解决 /
+  resolved / fixed”等结论性措辞。
+- 非平凡改动应在正文中分别说明中文内容、英文内容和实际验证；中英文说明必须对应，验证命令
+  及结果只记录真实执行过的内容。
+- 推荐正文格式：
+
+  ```text
+  中文：
+  - 说明改动及影响范围
+
+  English:
+  - Describe the change and its impact
+
+  验证 / Validation:
+  - scripts/test.bat（26/26 通过 / 26/26 passed）
+  - scripts/build.bat（Release 构建通过 / Release build passed）
+  ```
+
+- 纯文档、注释或无需完整构建的改动，应如实写明实际检查方式，不得虚构测试或省略“未运行”的
+  原因。存在已知限制时，使用 `限制 / Limitations` 段落中英双语说明。
+- 外部贡献者的既有 Commit 不得仅为符合本规范而改写；维护者新增的补充 Commit、版本分支 PR
+  标题和最终版本 Commit 仍须遵守本规范。
+
+### 版本开发分支 Commit
+
+- `release/vA.B.C.D` 上的每个开发 Commit 使用以下首行格式：
+
+  ```text
+  <type>(<scope>): <中文摘要> / <English summary>
+  ```
+
+- `<scope>` 可省略；使用稳定、简短的英文模块名，例如 `icon`、`dock`、`widget`、`build`、
+  `release`、`l10n`。
+- `<type>` 使用以下类型：
+  - `feat`：经过验证的新功能；
+  - `fix`：已经复现并验证解决的缺陷；
+  - `perf`：经过测量或明确验证的性能改进；
+  - `refactor`：不改变外部行为的代码重构；
+  - `test`：测试新增或调整；
+  - `docs`：文档或注释；
+  - `build`：构建系统或依赖；
+  - `ci`：持续集成配置；
+  - `chore`：不属于以上类别的维护工作；
+  - `try`：编译已经通过、但目标场景尚未完成实际验证的独立尝试；
+  - `verify`：对一个或多个 `try` Commit 完成实际场景验证，并记录结论和证据；
+  - `revert`：撤销已有 Commit，并在正文注明被撤销的哈希和原因。
+- 示例：
+
+  ```text
+  test(icon): 增加图标尺寸选择规则测试 / Add icon size selection rule tests
+  docs(agent): 规范双语提交信息 / Define bilingual commit message conventions
+  ```
+
+- 每个编译成功的代码尝试都必须独立提交，且必须在继续下一轮代码修改前创建 Commit；不得把多个
+  已经分别编译通过的尝试压成一个版本分支 Commit。编译失败的中间状态不得提交，应继续修改到
+  下一次编译通过后再创建一个 `try` Commit。
+- `try` Commit 的首行必须同时包含“编译通过，待验证”和
+  `build passed, validation pending`，例如：
+
+  ```text
+  try(icon): 尝试调整高分辨率图标加载（编译通过，待验证） / Try adjusting high-resolution icon loading (build passed, validation pending)
+  ```
+
+- `try` Commit 正文必须写明：实际通过的编译命令、已运行的测试、尚未运行的目标场景验证、已知
+  限制。只通过定向目标编译时必须写出目标名，不得笼统写成 Release 构建通过。
+- 一个尝试后续完成实际验证且无需再改代码时，使用独立的 `verify` Commit 记录验证对象、步骤、
+  结果以及对应的 `try` Commit 哈希；允许使用空 Commit 作为纯验证记录。验证失败时也应使用
+  `verify` Commit 如实记录失败结论，再由后续 `try` Commit 保存下一次编译通过的调整。
+- `fix`、`feat` 或 `perf` 仅用于该 Commit 本身包含最终改动，并且提交前已经完成对应缺陷复现、
+  功能验收或性能测量的情况。不得事后改写已有 `try` Commit 来伪装其在创建时已经验证。
+
+### `main` 版本 Commit
+
+- 版本分支通过 **Squash and merge** 合入 `main` 时，唯一版本 Commit 的首行格式为：
+
+  ```text
+  vA.B.C.D - <中文简要更新> / <Brief English update>
+  ```
+
+- 中文和英文摘要应概括该版本最重要、已经验证的用户可见变化，不罗列内部实现细节，不使用
+  Conventional Commit 的 `feat:`、`fix:` 等前缀。
+- Commit 正文按“中文 / English / 验证”格式列出主要更新和发布验证；发布说明可更详细，但不得
+  把未验证内容写成已完成结果。
+- 示例：
+
+  ```text
+  v1.0.4.0 - 改进图标显示与 Dock 稳定性 / Improve icon rendering and Dock stability
+  ```
+- Pull Request 标题若将作为 GitHub Squash Commit 的默认标题，应在合并前调整为上述双语版本格式。
+
 ## 版本发布
 
 - 一个版本的所有功能、修复和资源更新先在对应的 `release/vA.B.C.D` 分支完成并验证。
 - 从版本分支发布到 `main` 时必须使用 **Squash and merge**，确保 `main` 每个版本只新增一条提交。
-- `main` 上的版本提交建议命名为 `vA.B.C.D - 简要更新说明`。
+- `main` 上的版本提交必须遵守“`main` 版本 Commit”规范，使用中英双语摘要。
 - 版本分支压缩合入 `main` 并完成发布后：
   - 在 `main` 对应提交上创建 `vA.B.C.D` 标签；
   - 不继续复用旧版本分支；
@@ -57,6 +156,13 @@
   聚合目标是测试可执行文件的唯一清单。新增测试不得在批处理脚本中再维护一份目标列表。
 - CTest 使用 `contract`、`integration`、`rules` 等标签支持定向验证；Agent 可在开发中
   按标签执行，但交付前仍需运行完整测试。
+- 创建 `fix`、`feat`、`perf` 或 `verify` Commit 前，必须对其所声称的结果完成与问题性质相匹配的
+  实际验证。对于视觉、交互、兼容性等无法仅由自动化测试证明的问题，必须使用用户提供的复现
+  对象、原始场景或等价的可观察证据验证；仅凭代码推断、构建成功或通用测试通过，不得宣称问题
+  已经修复。
+- 未完成实际验证、但编译已经通过的改动必须按“版本开发分支 Commit”规范及时创建 `try`
+  Commit。其提交信息必须使用“尝试”“调整”“待验证”等中性表述，并明确区分“编译通过”与
+  “目标问题验证通过”，不得包含表示问题已经确认解决的措辞。
 
 ## 仓库内容边界
 
