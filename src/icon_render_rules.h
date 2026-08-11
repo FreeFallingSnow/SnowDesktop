@@ -39,11 +39,17 @@ constexpr bool ShouldBeautify(bool beautificationEnabled, bool thumbnailRepresen
     return beautificationEnabled && !thumbnailRepresentation;
 }
 
-/** Full-quality Shell loads request previews only for non-application, non-folder items. */
+/** Full-quality Shell loads request previews for every non-application item, including folders. */
 constexpr bool ShouldRequestShellThumbnail(
-    bool fullQualityPhase, bool applicationLike, bool folder)
+    bool fullQualityPhase, bool applicationLike)
 {
-    return fullQualityPhase && !applicationLike && !folder;
+    return fullQualityPhase && !applicationLike;
+}
+
+/** Folder previews remain beautifiable; only content/media thumbnails bypass beautification. */
+constexpr bool IsMediaThumbnail(bool shellThumbnail, bool shellFolder)
+{
+    return shellThumbnail && !shellFolder;
 }
 
 struct FittedSize

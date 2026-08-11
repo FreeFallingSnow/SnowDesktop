@@ -14,7 +14,7 @@ void DesktopApp::EnumerateFolderMappingEntries(
         bool shortcutArrow = false;
         bool isShortcut = false;
         bool isApplicationShortcut = false;
-        bool iconIsThumbnail = false;
+        bool iconIsMediaThumbnail = false;
         IconState iconState = IconState::Loading;
     };
     std::unordered_map<std::wstring, OldFolderIcon> oldFolderIconCache;
@@ -29,7 +29,7 @@ void DesktopApp::EnumerateFolderMappingEntries(
             old.shortcutArrow = entry.shortcutArrow;
             old.isShortcut = entry.isShortcut;
             old.isApplicationShortcut = entry.isApplicationShortcut;
-            old.iconIsThumbnail = entry.iconIsThumbnail;
+            old.iconIsMediaThumbnail = entry.iconIsMediaThumbnail;
             old.iconState = entry.iconState;
             oldFolderIconCache.emplace(ToUpperInvariant(entry.fullPath), std::move(old));
             entry.iconBitmap = nullptr;
@@ -82,7 +82,7 @@ void DesktopApp::EnumerateFolderMappingEntries(
             entry.shortcutArrow = oldIt->second.shortcutArrow;
             entry.isShortcut = oldIt->second.isShortcut;
             entry.isApplicationShortcut = oldIt->second.isApplicationShortcut;
-            entry.iconIsThumbnail = oldIt->second.iconIsThumbnail;
+            entry.iconIsMediaThumbnail = oldIt->second.iconIsMediaThumbnail;
             entry.iconState = oldIt->second.iconState;
             oldIt->second.bitmap = nullptr;
             oldFolderIconCache.erase(oldIt);

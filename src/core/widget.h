@@ -263,7 +263,7 @@ public:
     void DrawListItem(ID2D1DeviceContext* context, RECT cell,
         HBITMAP iconBitmap, int sysIconIndex,
         const std::wstring& name, bool selected,
-        bool iconIsThumbnail) const;
+        bool iconIsMediaThumbnail) const;
 
     void DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RECT rect,
         const std::wstring& name, bool isDir, bool showLabel = true) const;

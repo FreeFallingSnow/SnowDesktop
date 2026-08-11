@@ -236,7 +236,7 @@ struct IconLoadResult {
     bool shortcutArrow = false;
     bool isShortcut = false;
     bool isApplicationShortcut = false;
-    bool iconIsThumbnail = false;
+    bool iconIsMediaThumbnail = false;
     IconLoadPhase phase = IconLoadPhase::Phase1;
     bool isDesktopItem = true;
     std::wstring folderPath;
@@ -1943,10 +1943,10 @@ private:
         RECT destination, float opacity = 1.0f);
     std::uintptr_t GetD2DIconCacheKey(HBITMAP hbm, bool beautified) const;
     void EraseD2DIconCacheForBitmap(HBITMAP hbm);
-    bool ShouldBeautifyIconBitmap(bool iconIsThumbnail) const
+    bool ShouldBeautifyIconBitmap(bool iconIsMediaThumbnail) const
     {
         return snowdesktop::icon_render_rules::ShouldBeautify(
-            iconBeautifySettings_.enabled, iconIsThumbnail);
+            iconBeautifySettings_.enabled, iconIsMediaThumbnail);
     }
 
     /**

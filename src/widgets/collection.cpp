@@ -350,7 +350,7 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
     {
         ID2D1Bitmap1* bmp = app_->GetOrCreateD2DBitmap(
             item.iconBitmap,
-            app_->ShouldBeautifyIconBitmap(item.iconIsThumbnail));
+            app_->ShouldBeautifyIconBitmap(item.iconIsMediaThumbnail));
         if (bmp)
         {
             D2D1_RECT_F dst = D2D1::RectF(static_cast<float>(iconX), static_cast<float>(iconY),
@@ -439,7 +439,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 else
                     DrawListItem(context, cell, di.iconBitmap,
                         di.sysIconIndex, di.name, di.selected,
-                        di.iconIsThumbnail);
+                        di.iconIsMediaThumbnail);
             }
         }
         context->PopAxisAlignedClip();

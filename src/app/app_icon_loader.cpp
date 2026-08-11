@@ -76,7 +76,7 @@ void DesktopApp::StartIconLoader()
             const bool allowThumbnail =
                 snowdesktop::icon_render_rules::ShouldRequestShellThumbnail(
                     task.phase == IconLoadPhase::Phase2,
-                    applicationLike, shellFolder);
+                    applicationLike);
             const bool forShortcut =
                 snowdesktop::shortcut_application_rules::HasExtension(
                     representationName, L".lnk") ||
@@ -160,7 +160,9 @@ void DesktopApp::StartIconLoader()
                 result->isShortcut = isShortcut;
                 result->isApplicationShortcut = isApplicationShortcut;
                 result->shortcutArrow = isShortcut && !isApplicationShortcut;
-                result->iconIsThumbnail = iconIsThumbnail;
+                result->iconIsMediaThumbnail =
+                    snowdesktop::icon_render_rules::IsMediaThumbnail(
+                        iconIsThumbnail, shellFolder);
                 result->phase = task.phase;
                 result->isDesktopItem = task.isDesktopItem;
                 result->folderPath = std::move(task.folderPath);

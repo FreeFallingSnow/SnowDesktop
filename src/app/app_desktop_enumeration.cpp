@@ -13,7 +13,7 @@ void DesktopApp::LoadDesktopItems()
         bool shortcutArrow = false;
         bool isShortcut = false;
         bool isApplicationShortcut = false;
-        bool iconIsThumbnail = false;
+        bool iconIsMediaThumbnail = false;
         IconState iconState = IconState::Loading;
     };
     std::unordered_map<std::wstring, OldIcon> oldIconCache;
@@ -26,7 +26,7 @@ void DesktopApp::LoadDesktopItems()
             old.shortcutArrow = item.shortcutArrow;
             old.isShortcut = item.isShortcut;
             old.isApplicationShortcut = item.isApplicationShortcut;
-            old.iconIsThumbnail = item.iconIsThumbnail;
+            old.iconIsMediaThumbnail = item.iconIsMediaThumbnail;
             old.iconState = item.iconState;
             oldIconCache.emplace(ToUpperInvariant(item.layoutKey), std::move(old));
             item.iconBitmap = nullptr;
@@ -155,7 +155,7 @@ auto oldIt = oldIconCache.find(ToUpperInvariant(item.layoutKey));
             item.shortcutArrow = oldIt->second.shortcutArrow;
             item.isShortcut = oldIt->second.isShortcut;
             item.isApplicationShortcut = oldIt->second.isApplicationShortcut;
-            item.iconIsThumbnail = oldIt->second.iconIsThumbnail;
+            item.iconIsMediaThumbnail = oldIt->second.iconIsMediaThumbnail;
             item.iconState = oldIt->second.iconState;
             oldIt->second.bitmap = nullptr;
             oldIconCache.erase(oldIt);

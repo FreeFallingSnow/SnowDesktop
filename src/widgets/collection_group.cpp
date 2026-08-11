@@ -1144,7 +1144,7 @@ void CollectionGroup::DrawContent(
                 DrawListItem(
                     context, row, item->iconBitmap,
                     item->sysIconIndex, item->name,
-                    item->selected, item->iconIsThumbnail);
+                    item->selected, item->iconIsMediaThumbnail);
         }
         else if (privacyActive)
         {

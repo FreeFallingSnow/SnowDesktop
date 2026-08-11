@@ -901,7 +901,8 @@ void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                     if (item.iconBitmap) { EraseD2DIconCacheForBitmap(item.iconBitmap); DeleteObject(item.iconBitmap); }
                     item.iconBitmap = result->bitmap;
                     item.iconBitmapSize = result->bitmapSize;
-                    item.iconIsThumbnail = result->iconIsThumbnail;
+                    item.iconIsMediaThumbnail =
+                        result->iconIsMediaThumbnail;
                     result->bitmap = nullptr;
                 }
                 matched = true;
@@ -950,7 +951,8 @@ void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                         if (entry.iconBitmap) { EraseD2DIconCacheForBitmap(entry.iconBitmap); DeleteObject(entry.iconBitmap); }
                         entry.iconBitmap = result->bitmap;
                         entry.iconBitmapSize = result->bitmapSize;
-                        entry.iconIsThumbnail = result->iconIsThumbnail;
+                        entry.iconIsMediaThumbnail =
+                            result->iconIsMediaThumbnail;
                         result->bitmap = nullptr;
                     }
                     matched = true;

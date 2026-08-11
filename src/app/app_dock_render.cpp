@@ -152,7 +152,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         else if (ID2D1Bitmap1* bitmap = GetOrCreateD2DBitmap(
                 item.iconBitmap,
                 !recycleBin &&
-                    ShouldBeautifyIconBitmap(item.iconIsThumbnail)))
+                    ShouldBeautifyIconBitmap(item.iconIsMediaThumbnail)))
             DrawIconBitmap(ctx, bitmap, bitmapTarget, alpha);
         else
             DrawPlaceholderIcon(ctx, item.sysIconIndex, bitmapTarget, alpha, !recycleBin);

@@ -1284,7 +1284,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
             else
                 DrawListItem(context, itemRect, di.iconBitmap,
                     di.sysIconIndex, di.name, di.selected,
-                    di.iconIsThumbnail);
+                    di.iconIsMediaThumbnail);
         }
         context->PopAxisAlignedClip();
         return;
@@ -1387,7 +1387,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
         else
             DrawListItem(context, itemRect, di.iconBitmap,
                 di.sysIconIndex, di.name, di.selected,
-                di.iconIsThumbnail);
+                di.iconIsMediaThumbnail);
     }
     context->PopAxisAlignedClip();
 }

@@ -44,14 +44,18 @@ int main()
     Check(!rules::ShouldBeautify(false, false),
         "ordinary icons remain untouched when beautification is disabled");
 
-    Check(rules::ShouldRequestShellThumbnail(true, false, false),
-        "full-quality media loads may request a Shell thumbnail");
-    Check(!rules::ShouldRequestShellThumbnail(true, false, true),
-        "folders keep their ordinary icon representation");
-    Check(!rules::ShouldRequestShellThumbnail(true, true, false),
+    Check(rules::ShouldRequestShellThumbnail(true, false),
+        "full-quality non-application loads may request a Shell thumbnail");
+    Check(!rules::ShouldRequestShellThumbnail(true, true),
         "application-like items keep their ordinary icon representation");
-    Check(!rules::ShouldRequestShellThumbnail(false, false, false),
+    Check(!rules::ShouldRequestShellThumbnail(false, false),
         "the fast first phase never requests thumbnails");
+    Check(rules::IsMediaThumbnail(true, false),
+        "content thumbnails bypass beautification");
+    Check(!rules::IsMediaThumbnail(true, true),
+        "folder thumbnails remain eligible for beautification");
+    Check(!rules::IsMediaThumbnail(false, false),
+        "ordinary icons are not classified as media thumbnails");
 
     const auto downscaled = rules::FitWithoutUpscaling(96, 96, 65, 65);
     Check(downscaled.width == 65 && downscaled.height == 65,
