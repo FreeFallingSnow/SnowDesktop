@@ -2515,12 +2515,12 @@ void SettingsWindow::DrawDisplayPage()
     ImGui::Spacing();
     const char* presetNames[] = {
         _L("app.settings.beautify_preset_none"),
-        _L("app.settings.beautify_preset_classic"),
+        _L("app.settings.beautify_preset_default"),
         _L("app.settings.custom"),
     };
     constexpr snowdesktop::IconBeautifyPreset presetIds[] = {
         snowdesktop::IconBeautifyPreset::None,
-        snowdesktop::IconBeautifyPreset::ClassicRounded,
+        snowdesktop::IconBeautifyPreset::DefaultBeautify,
         snowdesktop::IconBeautifyPreset::Custom,
     };
     int presetIndex = 0;

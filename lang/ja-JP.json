@@ -233,7 +233,7 @@
   "app.settings.arrow_show_all": "すべて表示",
     "app.settings.icon_beautify": "アイコン美化",
     "app.settings.beautify_preset_none": "美化しない",
-    "app.settings.beautify_preset_classic": "クラシック角丸",
+    "app.settings.beautify_preset_default": "標準の美化",
     "app.settings.beautify_shape": "形状",
     "app.settings.beautify_shape_legacy": "クラシック角丸",
     "app.settings.beautify_shape_continuous_rounded": "連続角丸",

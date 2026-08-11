@@ -233,7 +233,7 @@
     "app.settings.arrow_show_all": "Show All",
     "app.settings.icon_beautify": "Icon beautification",
     "app.settings.beautify_preset_none": "No beautification",
-    "app.settings.beautify_preset_classic": "Classic rounded",
+    "app.settings.beautify_preset_default": "Default beautification",
     "app.settings.beautify_shape": "Shape",
     "app.settings.beautify_shape_legacy": "Classic rounded",
     "app.settings.beautify_shape_continuous_rounded": "Continuous rounded",

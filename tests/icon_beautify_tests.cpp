@@ -94,7 +94,7 @@ int main()
         static_cast<int>(IconBeautifyFinish::Flat) == 0 &&
         static_cast<int>(IconBeautifyFinish::Sticker) == 3 &&
         static_cast<int>(IconBeautifyPreset::None) == 0 &&
-        static_cast<int>(IconBeautifyPreset::ClassicRounded) == 1 &&
+        static_cast<int>(IconBeautifyPreset::DefaultBeautify) == 1 &&
         static_cast<int>(IconBeautifyPreset::Custom) == 5,
         "persisted beautification enums have stable values");
 
@@ -115,7 +115,7 @@ int main()
 
     constexpr std::array<IconBeautifyPreset, 3> builtInPresets{
         IconBeautifyPreset::None,
-        IconBeautifyPreset::ClassicRounded,
+        IconBeautifyPreset::DefaultBeautify,
         IconBeautifyPreset::Custom,
     };
     for (IconBeautifyPreset preset : builtInPresets)
@@ -124,16 +124,16 @@ int main()
         Check(beautify::IdentifyPreset(presetSettings) == preset,
             "built-in icon beautify presets round-trip through identification");
     }
-    auto customPreset = beautify::MakePreset(IconBeautifyPreset::ClassicRounded);
+    auto customPreset = beautify::MakePreset(IconBeautifyPreset::DefaultBeautify);
     customPreset.contentScale = 0.71f;
     Check(beautify::IdentifyPreset(customPreset) == IconBeautifyPreset::Custom,
         "edited preset settings are identified as custom");
-    auto inheritedClassic = beautify::MakePreset(IconBeautifyPreset::ClassicRounded);
-    inheritedClassic.preset = IconBeautifyPreset::Custom;
-    Check(inheritedClassic.enabled && !inheritedClassic.outlineEnabled &&
-        inheritedClassic.shape == IconBeautifyShape::ContinuousRounded &&
-        inheritedClassic.contentScale == 0.68f,
-        "switching classic to custom can retain the complete preset parameters");
+    auto inheritedDefault = beautify::MakePreset(IconBeautifyPreset::DefaultBeautify);
+    inheritedDefault.preset = IconBeautifyPreset::Custom;
+    Check(inheritedDefault.enabled && !inheritedDefault.outlineEnabled &&
+        inheritedDefault.shape == IconBeautifyShape::ContinuousRounded &&
+        inheritedDefault.contentScale == 0.68f,
+        "switching default beautification to custom retains all preset parameters");
 
     constexpr std::array<IconBeautifyShape, 5> shapes{
         IconBeautifyShape::LegacyRounded,

@@ -233,7 +233,7 @@
   "app.settings.arrow_show_all": "全部顯示",
     "app.settings.icon_beautify": "圖示美化",
     "app.settings.beautify_preset_none": "不美化",
-    "app.settings.beautify_preset_classic": "經典圓角",
+    "app.settings.beautify_preset_default": "預設美化",
     "app.settings.beautify_shape": "形狀",
     "app.settings.beautify_shape_legacy": "經典圓角",
     "app.settings.beautify_shape_continuous_rounded": "連續圓角",

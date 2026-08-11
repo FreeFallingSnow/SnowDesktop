@@ -56,11 +56,11 @@ void DesktopApp::StartIconLoader()
                 !task.parsingName.empty()
                 ? std::wstring_view(task.parsingName)
                 : std::wstring_view(task.folderPath);
-            const bool applicationLike =
+            const bool nameLooksApplicationLike =
                 snowdesktop::shortcut_application_rules::
                     ShouldUseShellIconOnly(representationName);
             bool shellFolder = false;
-            if (task.phase == IconLoadPhase::Phase2 && !applicationLike)
+            if (task.phase == IconLoadPhase::Phase2)
             {
                 ComPtr<IShellItem> shellItem;
                 if (SUCCEEDED(SHCreateItemFromIDList(
@@ -76,7 +76,9 @@ void DesktopApp::StartIconLoader()
             const bool allowThumbnail =
                 snowdesktop::icon_render_rules::ShouldRequestShellThumbnail(
                     task.phase == IconLoadPhase::Phase2,
-                    applicationLike);
+                    nameLooksApplicationLike, shellFolder);
+            const bool preferDirectIconExtraction =
+                nameLooksApplicationLike && !shellFolder;
             const bool forShortcut =
                 snowdesktop::shortcut_application_rules::HasExtension(
                     representationName, L".lnk") ||
@@ -85,7 +87,8 @@ void DesktopApp::StartIconLoader()
             bool iconIsThumbnail = false;
             HBITMAP bitmap = GetHighResolutionShellIconBitmap(
                 task.absolutePidl.get(), task.sysIconIndex, bitmapSize,
-                allowThumbnail, task.requestedSize, applicationLike,
+                allowThumbnail, task.requestedSize,
+                preferDirectIconExtraction,
                 forShortcut, representationName, &iconIsThumbnail);
             if (task.phase == IconLoadPhase::Phase1 && bitmap)
                 ClampAlphaToColorKey(bitmap, kTransparentKey);

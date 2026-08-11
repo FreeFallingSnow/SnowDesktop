@@ -229,9 +229,9 @@ void DesktopApp::LoadLayoutSlots()
         iconBeautifySettings_);
     if (document.iconBeautifyPreset &&
         iconBeautifySettings_.preset ==
-            snowdesktop::IconBeautifyPreset::ClassicRounded)
+            snowdesktop::IconBeautifyPreset::DefaultBeautify)
         iconBeautifySettings_ = snowdesktop::icon_beautify::MakePreset(
-            snowdesktop::IconBeautifyPreset::ClassicRounded);
+            snowdesktop::IconBeautifyPreset::DefaultBeautify);
     else if (!document.iconBeautifyPreset)
         iconBeautifySettings_.preset = snowdesktop::icon_beautify::IdentifyPreset(
             iconBeautifySettings_);

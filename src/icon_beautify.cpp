@@ -562,7 +562,7 @@ IconBeautifySettings Normalize(IconBeautifySettings settings)
 {
     const int preset = static_cast<int>(settings.preset);
     if (preset != static_cast<int>(IconBeautifyPreset::None) &&
-        preset != static_cast<int>(IconBeautifyPreset::ClassicRounded) &&
+        preset != static_cast<int>(IconBeautifyPreset::DefaultBeautify) &&
         preset != static_cast<int>(IconBeautifyPreset::Custom))
         settings.preset = IconBeautifyPreset::Custom;
     settings.mode = std::clamp(settings.mode, 0, 1);
@@ -665,8 +665,8 @@ IconBeautifySettings MakePreset(IconBeautifyPreset preset)
     case IconBeautifyPreset::None:
         settings.preset = IconBeautifyPreset::None;
         return settings;
-    case IconBeautifyPreset::ClassicRounded:
-        settings.preset = IconBeautifyPreset::ClassicRounded;
+    case IconBeautifyPreset::DefaultBeautify:
+        settings.preset = IconBeautifyPreset::DefaultBeautify;
         settings.enabled = true;
         settings.shape = IconBeautifyShape::ContinuousRounded;
         settings.outlineEnabled = false;
@@ -717,7 +717,7 @@ IconBeautifyPreset IdentifyPreset(const IconBeautifySettings& settings)
     if (normalized.preset == IconBeautifyPreset::Custom)
         return IconBeautifyPreset::Custom;
     constexpr std::array<IconBeautifyPreset, 1> presets{
-        IconBeautifyPreset::ClassicRounded,
+        IconBeautifyPreset::DefaultBeautify,
     };
     for (IconBeautifyPreset preset : presets)
     {

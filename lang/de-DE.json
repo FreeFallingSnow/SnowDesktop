@@ -233,7 +233,7 @@
   "app.settings.arrow_show_all": "Alle anzeigen",
     "app.settings.icon_beautify": "Symbolverschönerung",
     "app.settings.beautify_preset_none": "Keine Verschönerung",
-    "app.settings.beautify_preset_classic": "Klassisch abgerundet",
+    "app.settings.beautify_preset_default": "Standardverschönerung",
     "app.settings.beautify_shape": "Form",
     "app.settings.beautify_shape_legacy": "Klassisch abgerundet",
     "app.settings.beautify_shape_continuous_rounded": "Stetig abgerundet",

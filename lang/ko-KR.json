@@ -233,7 +233,7 @@
   "app.settings.arrow_show_all": "모두 표시",
     "app.settings.icon_beautify": "아이콘 꾸미기",
     "app.settings.beautify_preset_none": "꾸미지 않음",
-    "app.settings.beautify_preset_classic": "클래식 둥근 모서리",
+    "app.settings.beautify_preset_default": "기본 꾸미기",
     "app.settings.beautify_shape": "모양",
     "app.settings.beautify_shape_legacy": "클래식 둥근 모서리",
     "app.settings.beautify_shape_continuous_rounded": "연속 둥근 모서리",

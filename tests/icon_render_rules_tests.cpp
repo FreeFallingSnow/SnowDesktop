@@ -40,15 +40,17 @@ int main()
     Check(rules::ShouldBeautify(true, false),
         "ordinary icons participate when beautification is enabled");
     Check(!rules::ShouldBeautify(true, true),
-        "Shell thumbnails bypass icon beautification");
+        "content/media thumbnails bypass icon beautification");
     Check(!rules::ShouldBeautify(false, false),
         "ordinary icons remain untouched when beautification is disabled");
 
-    Check(rules::ShouldRequestShellThumbnail(true, false),
+    Check(rules::ShouldRequestShellThumbnail(true, false, false),
         "full-quality non-application loads may request a Shell thumbnail");
-    Check(!rules::ShouldRequestShellThumbnail(true, true),
+    Check(!rules::ShouldRequestShellThumbnail(true, true, false),
         "application-like items keep their ordinary icon representation");
-    Check(!rules::ShouldRequestShellThumbnail(false, false),
+    Check(rules::ShouldRequestShellThumbnail(true, true, true),
+        "folders request thumbnails even when their names look application-like");
+    Check(!rules::ShouldRequestShellThumbnail(false, false, true),
         "the fast first phase never requests thumbnails");
     Check(rules::IsMediaThumbnail(true, false),
         "content thumbnails bypass beautification");

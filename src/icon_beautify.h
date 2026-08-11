@@ -33,7 +33,7 @@ enum class IconBeautifyUpdateKind : int
 enum class IconBeautifyPreset : int
 {
     None = 0,
-    ClassicRounded = 1,
+    DefaultBeautify = 1,
     Custom = 5,
 };
 

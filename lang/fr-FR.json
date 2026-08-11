@@ -233,7 +233,7 @@
   "app.settings.arrow_show_all": "Afficher tout",
     "app.settings.icon_beautify": "Embellissement des icônes",
     "app.settings.beautify_preset_none": "Aucun embellissement",
-    "app.settings.beautify_preset_classic": "Arrondi classique",
+    "app.settings.beautify_preset_default": "Embellissement par défaut",
     "app.settings.beautify_shape": "Forme",
     "app.settings.beautify_shape_legacy": "Arrondi classique",
     "app.settings.beautify_shape_continuous_rounded": "Arrondi continu",

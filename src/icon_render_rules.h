@@ -33,17 +33,17 @@ constexpr bool SourceLongEdgeCoversTarget(
         SourcePixelsForTarget(targetPixels);
 }
 
-/** Shell thumbnails preserve their original media preview instead of receiving an icon plate. */
-constexpr bool ShouldBeautify(bool beautificationEnabled, bool thumbnailRepresentation)
+/** Content/media thumbnails preserve their preview instead of receiving an icon plate. */
+constexpr bool ShouldBeautify(bool beautificationEnabled, bool mediaThumbnail)
 {
-    return beautificationEnabled && !thumbnailRepresentation;
+    return beautificationEnabled && !mediaThumbnail;
 }
 
-/** Full-quality Shell loads request previews for every non-application item, including folders. */
+/** Full-quality loads always request folder previews; application files stay icon-only. */
 constexpr bool ShouldRequestShellThumbnail(
-    bool fullQualityPhase, bool applicationLike)
+    bool fullQualityPhase, bool applicationLike, bool shellFolder)
 {
-    return fullQualityPhase && !applicationLike;
+    return fullQualityPhase && (shellFolder || !applicationLike);
 }
 
 /** Folder previews remain beautifiable; only content/media thumbnails bypass beautification. */
