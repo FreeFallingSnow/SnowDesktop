@@ -1,0 +1,204 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="plateGradient" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.58" stop-color="#FAFBFF"/>
+      <stop offset="1" stop-color="#F0F3FB"/>
+    </linearGradient>
+    <radialGradient id="plateGlow" cx="48%" cy="18%" r="78%">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#E9EDFA" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="blueGradient" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2C96FF" stop-opacity="0.90"/>
+      <stop offset="0.46" stop-color="#147EFB" stop-opacity="0.88"/>
+      <stop offset="1" stop-color="#026CE9" stop-opacity="0.92"/>
+    </linearGradient>
+    <radialGradient id="blueSheen" cx="30%" cy="12%" r="76%">
+      <stop offset="0" stop-color="#ECFCFF" stop-opacity="0.08"/>
+      <stop offset="0.62" stop-color="#A9E8FF" stop-opacity="0.01"/>
+      <stop offset="1" stop-color="#147EFB" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="frontGradient" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1886F4" stop-opacity="0.90"/>
+      <stop offset="0.46" stop-color="#006EDC" stop-opacity="0.88"/>
+      <stop offset="1" stop-color="#005CC8" stop-opacity="0.92"/>
+    </linearGradient>
+    <radialGradient id="frontSheen" cx="30%" cy="12%" r="76%">
+      <stop offset="0" stop-color="#EAF8FF" stop-opacity="0.075"/>
+      <stop offset="0.62" stop-color="#8CD5FF" stop-opacity="0.01"/>
+      <stop offset="1" stop-color="#006EDC" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="purpleGradient" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4BC5FE" stop-opacity="0.89"/>
+      <stop offset="0.48" stop-color="#32ADE6" stop-opacity="0.87"/>
+      <stop offset="1" stop-color="#209BD4" stop-opacity="0.91"/>
+    </linearGradient>
+    <radialGradient id="purpleSheen" cx="26%" cy="10%" r="82%">
+      <stop offset="0" stop-color="#F0FCFF" stop-opacity="0.075"/>
+      <stop offset="0.58" stop-color="#B9ECFF" stop-opacity="0.01"/>
+      <stop offset="1" stop-color="#32ADE6" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- 边缘反光采用两端渐隐的路径渐变，避免出现一整条等强度白边 -->
+    <linearGradient id="blueTopReflection" gradientUnits="userSpaceOnUse" x1="296" y1="216" x2="722" y2="320">
+      <stop offset="0" stop-color="#F7FEFF" stop-opacity="0"/>
+      <stop offset="0.22" stop-color="#F7FEFF" stop-opacity="0.10"/>
+      <stop offset="0.58" stop-color="#F7FEFF" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#F7FEFF" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="purpleTopReflection" gradientUnits="userSpaceOnUse" x1="486" y1="340" x2="850" y2="450">
+      <stop offset="0" stop-color="#FFF9FF" stop-opacity="0"/>
+      <stop offset="0.20" stop-color="#FFF9FF" stop-opacity="0.09"/>
+      <stop offset="0.58" stop-color="#FFF9FF" stop-opacity="0.13"/>
+      <stop offset="1" stop-color="#FFF9FF" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="sCurveReflection" gradientUnits="userSpaceOnUse" x1="184" y1="466" x2="732" y2="690">
+      <stop offset="0" stop-color="#D9F5FF" stop-opacity="0"/>
+      <stop offset="0.16" stop-color="#D9F5FF" stop-opacity="0.05"/>
+      <stop offset="0.48" stop-color="#EAFBFF" stop-opacity="0.11"/>
+      <stop offset="0.78" stop-color="#D9F5FF" stop-opacity="0.05"/>
+      <stop offset="1" stop-color="#D9F5FF" stop-opacity="0"/>
+    </linearGradient>
+
+    <filter id="blueShadow" x="-18%" y="-18%" width="146%" height="152%">
+      <feDropShadow dx="0" dy="8" stdDeviation="11" flood-color="#1748BE" flood-opacity="0.19"/>
+    </filter>
+    <filter id="purpleShadow" x="-20%" y="-20%" width="150%" height="156%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#167FAB" flood-opacity="0.18"/>
+    </filter>
+    <filter id="crossingShadow" x="-18%" y="-24%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="-3" stdDeviation="5" flood-color="#1169C5" flood-opacity="0.12"/>
+      <feDropShadow dx="0" dy="5" stdDeviation="7" flood-color="#0055B8" flood-opacity="0.15"/>
+    </filter>
+    <!-- 对下层颜色做真实高斯模糊，再裁剪进上层玻璃轮廓 -->
+    <filter id="glassBlur" x="-22%" y="-22%" width="144%" height="144%">
+      <feGaussianBlur stdDeviation="7"/>
+    </filter>
+    <filter id="softReflection" x="-10%" y="-20%" width="120%" height="140%">
+      <feGaussianBlur stdDeviation="1.4"/>
+    </filter>
+    <clipPath id="purpleClip">
+      <path d="M486 332H724A118 118 0 0 1 842 450V708A118 118 0 0 1 724 826H486A118 118 0 0 1 368 708V450A118 118 0 0 1 486 332Z"/>
+    </clipPath>
+    <clipPath id="blueFrontClip">
+      <path d="M184 466A112 112 0 0 0 296 578H620A112 112 0 0 1 732 690V758A112 112 0 0 1 620 870H296A112 112 0 0 1 184 758Z"/>
+    </clipPath>
+  </defs>
+
+  <!-- 圆角底板以外不绘制任何像素，导出 PNG/ICO 时保持完全透明 -->
+  <g id="01 App Icon Plate">
+    <rect x="64" y="64" width="896" height="896" rx="168" fill="url(#plateGradient)"/>
+    <rect x="64" y="64" width="896" height="896" rx="168" fill="url(#plateGlow)"/>
+    <rect x="68" y="68" width="888" height="888" rx="164" fill="none" stroke="#FFFFFF" stroke-opacity="0.78" stroke-width="4"/>
+  </g>
+
+  <!-- 主视觉放大 5%，并向左微调 6 px、向上保持视觉居中 -->
+  <g id="02-04 Centered Glass Mark" transform="matrix(1.05 0 0 1.05 -31.6 -53.6)">
+  <g id="02 Blue Rear Body" filter="url(#blueShadow)">
+    <!-- 最底层是完整蓝色圆角块，全部圆角统一为 R112 -->
+    <path fill="url(#blueGradient)" stroke="#D9F5FF" stroke-opacity="0.12" stroke-width="3" d="
+      M 296 208 H 620
+      A 112 112 0 0 1 732 320
+      V 758
+      A 112 112 0 0 1 620 870
+      H 296
+      A 112 112 0 0 1 184 758
+      V 320
+      A 112 112 0 0 1 296 208 Z"/>
+    <path fill="url(#blueSheen)" d="
+      M 296 208 H 620
+      A 112 112 0 0 1 732 320
+      V 758
+      A 112 112 0 0 1 620 870
+      H 296
+      A 112 112 0 0 1 184 758
+      V 320
+      A 112 112 0 0 1 296 208 Z"/>
+    <path d="M 296 216 H 618 A 104 104 0 0 1 722 320"
+      fill="none" stroke="url(#blueTopReflection)" stroke-width="6"
+      stroke-linecap="round" filter="url(#softReflection)"/>
+  </g>
+
+  <g id="03 Cyan Middle Layer" filter="url(#purpleShadow)">
+    <!-- 模糊复制完整蓝色底层，模拟青色玻璃对下方内容的折射与散射 -->
+    <g clip-path="url(#purpleClip)" opacity="0.42" filter="url(#glassBlur)">
+      <path fill="url(#blueGradient)" d="
+        M 296 208 H 620
+        A 112 112 0 0 1 732 320
+        V 758
+        A 112 112 0 0 1 620 870
+        H 296
+        A 112 112 0 0 1 184 758
+        V 320
+        A 112 112 0 0 1 296 208 Z"/>
+    </g>
+    <path fill="url(#purpleGradient)" stroke="#F4E7FF" stroke-opacity="0.11" stroke-width="3" d="
+      M 486 332 H 724
+      A 118 118 0 0 1 842 450
+      V 708
+      A 118 118 0 0 1 724 826
+      H 486
+      A 118 118 0 0 1 368 708
+      V 450
+      A 118 118 0 0 1 486 332 Z"/>
+    <path fill="url(#purpleSheen)" d="
+      M 486 332 H 724
+      A 118 118 0 0 1 842 450
+      V 708
+      A 118 118 0 0 1 724 826
+      H 486
+      A 118 118 0 0 1 368 708
+      V 450
+      A 118 118 0 0 1 486 332 Z"/>
+    <path d="M 486 340 H 722 A 110 110 0 0 1 832 450"
+      fill="none" stroke="url(#purpleTopReflection)" stroke-width="6"
+      stroke-linecap="round" filter="url(#softReflection)"/>
+  </g>
+
+  <g id="04 Blue Foreground Return" filter="url(#crossingShadow)">
+    <!-- 模糊复制青色中层，模拟深蓝前景玻璃覆盖中层时的背景模糊 -->
+    <g clip-path="url(#blueFrontClip)" opacity="0.36" filter="url(#glassBlur)">
+      <path fill="url(#purpleGradient)" d="
+        M 486 332 H 724
+        A 118 118 0 0 1 842 450
+        V 708
+        A 118 118 0 0 1 724 826
+        H 486
+        A 118 118 0 0 1 368 708
+        V 450
+        A 118 118 0 0 1 486 332 Z"/>
+    </g>
+    <path fill="url(#frontGradient)" stroke="#D9F5FF" stroke-opacity="0.12" stroke-width="3" d="
+      M 184 466
+      A 112 112 0 0 0 296 578
+      H 620
+      A 112 112 0 0 1 732 690
+      V 758
+      A 112 112 0 0 1 620 870
+      H 296
+      A 112 112 0 0 1 184 758 Z"/>
+    <path fill="url(#frontSheen)" d="
+      M 184 466
+      A 112 112 0 0 0 296 578
+      H 620
+      A 112 112 0 0 1 732 690
+      V 758
+      A 112 112 0 0 1 620 870
+      H 296
+      A 112 112 0 0 1 184 758 Z"/>
+    <!-- 仅在两个转角保留低强度反光，避免形成贯穿式白线 -->
+    <path d="M 184 466 A 112 112 0 0 0 296 578 H 360"
+      fill="none" stroke="url(#sCurveReflection)" stroke-width="5"
+      stroke-linecap="round" stroke-linejoin="round" filter="url(#softReflection)"/>
+    <path d="M 570 578 H 620 A 112 112 0 0 1 732 690"
+      fill="none" stroke="url(#sCurveReflection)" stroke-width="5"
+      stroke-linecap="round" stroke-linejoin="round" filter="url(#softReflection)"/>
+    <path d="M 200 758 A 96 96 0 0 0 296 854 H 616"
+      fill="none" stroke="#0055B8" stroke-opacity="0.11" stroke-width="5" stroke-linecap="round"/>
+  </g>
+  </g>
+</svg>
