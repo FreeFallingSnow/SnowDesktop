@@ -78,11 +78,7 @@ struct IconBeautifySettings
     float textureShadeStrength = 0.0f;
     float textureEdgeHighlight = 0.0f;
     bool filterEnabled = false;
-    float filterHue = 0.0f;
-    float filterSaturation = 1.0f;
-    float filterBrightness = 0.0f;
-    float filterContrast = 1.0f;
-    float filterTintStrength = 0.25f;
+    float filterStrength = 1.0f;
     float filterTintR = 90.0f / 255.0f;
     float filterTintG = 140.0f / 255.0f;
     float filterTintB = 1.0f;

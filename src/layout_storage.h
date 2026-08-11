@@ -113,11 +113,7 @@ struct Document
     std::optional<float> iconBeautifyTextureShadeStrength;
     std::optional<float> iconBeautifyTextureEdgeHighlight;
     std::optional<bool> iconBeautifyFilterEnabled;
-    std::optional<float> iconBeautifyFilterHue;
-    std::optional<float> iconBeautifyFilterSaturation;
-    std::optional<float> iconBeautifyFilterBrightness;
-    std::optional<float> iconBeautifyFilterContrast;
-    std::optional<float> iconBeautifyFilterTintStrength;
+    std::optional<float> iconBeautifyFilterStrength;
     std::optional<float> iconBeautifyFilterTintR;
     std::optional<float> iconBeautifyFilterTintG;
     std::optional<float> iconBeautifyFilterTintB;

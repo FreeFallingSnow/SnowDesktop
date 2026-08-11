@@ -2702,58 +2702,7 @@ void SettingsWindow::DrawDisplayPage()
         notifyIconBeautify(snowdesktop::IconBeautifyUpdateKind::Commit);
     if (iconBeautifySettings_.filterEnabled)
     {
-        BeginSettingRow(_L("app.settings.beautify_filter_hue"), sliderW);
-        ImGui::SetNextItemWidth(sliderW);
-        int filterHue = static_cast<int>(std::round(
-            iconBeautifySettings_.filterHue));
-        if (ImGui::SliderInt("##IconBeautifyFilterHue",
-                &filterHue, -180, 180, "%d°"))
-        {
-            iconBeautifySettings_.filterHue = static_cast<float>(filterHue);
-            previewIconBeautify();
-        }
-        commitContinuousIconBeautify();
-
-        BeginSettingRow(_L("app.settings.beautify_filter_saturation"), sliderW);
-        ImGui::SetNextItemWidth(sliderW);
-        int filterSaturationPercent = static_cast<int>(std::round(
-            iconBeautifySettings_.filterSaturation * 100.0f));
-        if (ImGui::SliderInt("##IconBeautifyFilterSaturation",
-                &filterSaturationPercent, 0, 200, "%d%%"))
-        {
-            iconBeautifySettings_.filterSaturation =
-                filterSaturationPercent / 100.0f;
-            previewIconBeautify();
-        }
-        commitContinuousIconBeautify();
-
-        BeginSettingRow(_L("app.settings.beautify_filter_brightness"), sliderW);
-        ImGui::SetNextItemWidth(sliderW);
-        int filterBrightnessPercent = static_cast<int>(std::round(
-            iconBeautifySettings_.filterBrightness * 100.0f));
-        if (ImGui::SliderInt("##IconBeautifyFilterBrightness",
-                &filterBrightnessPercent, -100, 100, "%+d%%"))
-        {
-            iconBeautifySettings_.filterBrightness =
-                filterBrightnessPercent / 100.0f;
-            previewIconBeautify();
-        }
-        commitContinuousIconBeautify();
-
-        BeginSettingRow(_L("app.settings.beautify_filter_contrast"), sliderW);
-        ImGui::SetNextItemWidth(sliderW);
-        int filterContrastPercent = static_cast<int>(std::round(
-            iconBeautifySettings_.filterContrast * 100.0f));
-        if (ImGui::SliderInt("##IconBeautifyFilterContrast",
-                &filterContrastPercent, 0, 200, "%d%%"))
-        {
-            iconBeautifySettings_.filterContrast =
-                filterContrastPercent / 100.0f;
-            previewIconBeautify();
-        }
-        commitContinuousIconBeautify();
-
-        BeginSettingRow(_L("app.settings.beautify_filter_tint"),
+        BeginSettingRow(_L("app.settings.beautify_filter_color"),
             ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
         float filterTint[3] = {
             iconBeautifySettings_.filterTintR,
@@ -2769,15 +2718,15 @@ void SettingsWindow::DrawDisplayPage()
         }
         commitContinuousIconBeautify();
 
-        BeginSettingRow(_L("app.settings.beautify_filter_tint_strength"), sliderW);
+        BeginSettingRow(_L("app.settings.beautify_filter_strength"), sliderW);
         ImGui::SetNextItemWidth(sliderW);
-        int filterTintPercent = static_cast<int>(std::round(
-            iconBeautifySettings_.filterTintStrength * 100.0f));
-        if (ImGui::SliderInt("##IconBeautifyFilterTintStrength",
-                &filterTintPercent, 0, 100, "%d%%"))
+        int filterStrengthPercent = static_cast<int>(std::round(
+            iconBeautifySettings_.filterStrength * 100.0f));
+        if (ImGui::SliderInt("##IconBeautifyFilterStrength",
+                &filterStrengthPercent, 0, 100, "%d%%"))
         {
-            iconBeautifySettings_.filterTintStrength =
-                filterTintPercent / 100.0f;
+            iconBeautifySettings_.filterStrength =
+                filterStrengthPercent / 100.0f;
             previewIconBeautify();
         }
         commitContinuousIconBeautify();

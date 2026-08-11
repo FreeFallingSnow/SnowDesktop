@@ -505,20 +505,9 @@ bool DecodeDocument(const JsonValue& root, Document& document,
             decoded.iconBeautifyTextureEdgeHighlight, error) ||
         !ReadOptionalRootBoolean(root, "iconBeautifyFilterEnabled",
             decoded.iconBeautifyFilterEnabled, error) ||
-        !ReadOptionalFloat(root, "iconBeautifyFilterHue",
-            "iconBeautifyFilterHue", decoded.iconBeautifyFilterHue, error) ||
-        !ReadOptionalFloat(root, "iconBeautifyFilterSaturation",
-            "iconBeautifyFilterSaturation",
-            decoded.iconBeautifyFilterSaturation, error) ||
-        !ReadOptionalFloat(root, "iconBeautifyFilterBrightness",
-            "iconBeautifyFilterBrightness",
-            decoded.iconBeautifyFilterBrightness, error) ||
-        !ReadOptionalFloat(root, "iconBeautifyFilterContrast",
-            "iconBeautifyFilterContrast", decoded.iconBeautifyFilterContrast,
+        !ReadOptionalFloat(root, "iconBeautifyFilterStrength",
+            "iconBeautifyFilterStrength", decoded.iconBeautifyFilterStrength,
             error) ||
-        !ReadOptionalFloat(root, "iconBeautifyFilterTintStrength",
-            "iconBeautifyFilterTintStrength",
-            decoded.iconBeautifyFilterTintStrength, error) ||
         !ReadOptionalFloat(root, "iconBeautifyFilterTintR",
             "iconBeautifyFilterTintR", decoded.iconBeautifyFilterTintR,
             error) ||

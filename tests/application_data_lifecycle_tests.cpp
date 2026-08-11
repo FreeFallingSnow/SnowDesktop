@@ -298,6 +298,9 @@ int main()
         { "icon beautify filter enabled type",
             "{\"iconBeautifyFilterEnabled\":1}",
             "iconBeautifyFilterEnabled" },
+        { "icon beautify filter strength type",
+            "{\"iconBeautifyFilterStrength\":\"full\"}",
+            "iconBeautifyFilterStrength" },
         { "icon beautify content scale type",
             "{\"iconBeautifyContentScale\":\"large\"}",
             "iconBeautifyContentScale" },
@@ -347,6 +350,7 @@ int main()
             !legacyBeautifyLayout.iconBeautifyFinish.has_value() &&
             !legacyBeautifyLayout.iconBeautifyTextureHighlightStrength.has_value() &&
             !legacyBeautifyLayout.iconBeautifyFilterEnabled.has_value() &&
+            !legacyBeautifyLayout.iconBeautifyFilterStrength.has_value() &&
             !legacyBeautifyLayout.iconBeautifyContentScale.has_value(),
         "legacy icon beautify layouts keep new fields optional");
     snowdesktop::layout_storage::Document iconBeautifyLayout;
@@ -361,11 +365,7 @@ int main()
             "\"iconBeautifyTextureShadeStrength\":0.2,"
             "\"iconBeautifyTextureEdgeHighlight\":0.5,"
             "\"iconBeautifyFilterEnabled\":true,"
-            "\"iconBeautifyFilterHue\":45,"
-            "\"iconBeautifyFilterSaturation\":1.2,"
-            "\"iconBeautifyFilterBrightness\":-0.1,"
-            "\"iconBeautifyFilterContrast\":1.3,"
-            "\"iconBeautifyFilterTintStrength\":0.6,"
+            "\"iconBeautifyFilterStrength\":0.85,"
             "\"iconBeautifyFilterTintR\":0.7,"
             "\"iconBeautifyFilterTintG\":0.8,"
             "\"iconBeautifyFilterTintB\":0.9,"
@@ -387,11 +387,7 @@ int main()
             iconBeautifyLayout.iconBeautifyTextureShadeStrength.value_or(0.0f) == 0.2f &&
             iconBeautifyLayout.iconBeautifyTextureEdgeHighlight.value_or(0.0f) == 0.5f &&
             iconBeautifyLayout.iconBeautifyFilterEnabled.value_or(false) &&
-            iconBeautifyLayout.iconBeautifyFilterHue.value_or(0.0f) == 45.0f &&
-            iconBeautifyLayout.iconBeautifyFilterSaturation.value_or(0.0f) == 1.2f &&
-            iconBeautifyLayout.iconBeautifyFilterBrightness.value_or(0.0f) == -0.1f &&
-            iconBeautifyLayout.iconBeautifyFilterContrast.value_or(0.0f) == 1.3f &&
-            iconBeautifyLayout.iconBeautifyFilterTintStrength.value_or(0.0f) == 0.6f &&
+            iconBeautifyLayout.iconBeautifyFilterStrength.value_or(0.0f) == 0.85f &&
             iconBeautifyLayout.iconBeautifyFilterTintR.value_or(0.0f) == 0.7f &&
             iconBeautifyLayout.iconBeautifyFilterTintG.value_or(0.0f) == 0.8f &&
             iconBeautifyLayout.iconBeautifyFilterTintB.value_or(0.0f) == 0.9f &&

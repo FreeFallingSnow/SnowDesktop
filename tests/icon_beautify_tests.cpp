@@ -51,6 +51,17 @@ std::vector<std::uint32_t> TestIcon(int size)
     return pixels;
 }
 
+std::vector<std::uint32_t> TwoColorIcon(int size)
+{
+    std::vector<std::uint32_t> pixels(static_cast<size_t>(size) * size, 0);
+    for (int y = size / 4; y < size - size / 4; ++y)
+        for (int x = size / 4; x < size - size / 4; ++x)
+            pixels[static_cast<size_t>(y) * size + x] = x < size / 2
+                ? Premultiplied(220, 40, 30, 255)
+                : Premultiplied(20, 130, 40, 255);
+    return pixels;
+}
+
 int CountPartiallyCovered(snowdesktop::IconBeautifyShape shape)
 {
     int count = 0;
@@ -158,6 +169,7 @@ int main()
         defaults.textureHighlightStrength == 0.0f &&
         defaults.textureShadeStrength == 0.0f &&
         defaults.textureEdgeHighlight == 0.0f && !defaults.filterEnabled &&
+        defaults.filterStrength == 1.0f &&
         !defaults.outlineEnabled &&
         defaults.outlineWidth == 1.0f && defaults.shadowStrength == 0.35f,
         "new settings retain the locked compatibility defaults");
@@ -177,11 +189,7 @@ int main()
     invalid.textureHighlightAngle = 2.0f;
     invalid.textureShadeStrength = -1.0f;
     invalid.textureEdgeHighlight = 2.0f;
-    invalid.filterHue = 999.0f;
-    invalid.filterSaturation = -1.0f;
-    invalid.filterBrightness = 2.0f;
-    invalid.filterContrast = 3.0f;
-    invalid.filterTintStrength = 2.0f;
+    invalid.filterStrength = 2.0f;
     const IconBeautifySettings normalized = beautify::Normalize(invalid);
     Check(normalized.preset == IconBeautifyPreset::Custom &&
         normalized.mode == 1 && normalized.contentScale == 0.50f &&
@@ -193,11 +201,7 @@ int main()
         normalized.textureHighlightAngle == 1.0f &&
         normalized.textureShadeStrength == 0.0f &&
         normalized.textureEdgeHighlight == 1.0f &&
-        normalized.filterHue == 180.0f &&
-        normalized.filterSaturation == 0.0f &&
-        normalized.filterBrightness == 1.0f &&
-        normalized.filterContrast == 2.0f &&
-        normalized.filterTintStrength == 1.0f,
+        normalized.filterStrength == 1.0f,
         "settings normalization clamps persisted values to stable ranges");
     IconBeautifySettings removedShape = defaults;
     removedShape.shape = static_cast<IconBeautifyShape>(4);
@@ -255,24 +259,31 @@ int main()
         "legacy finish presets migrate into numeric texture controls");
 
     settings.textureEdgeHighlight = 0.0f;
-    settings.filterHue = 120.0f;
-    settings.filterTintStrength = 1.0f;
+    settings.filterStrength = 0.0f;
     settings.filterTintR = 0.0f;
     settings.filterTintG = 0.2f;
     settings.filterTintB = 1.0f;
-    const auto disabledFilter = beautify::Render(source, 64, 64, settings);
     settings.filterEnabled = true;
-    settings.filterTintStrength = 0.0f;
-    const auto hueFiltered = beautify::Render(source, 64, 64, settings);
-    settings.filterHue = 0.0f;
-    settings.filterTintStrength = 1.0f;
-    const auto tintFiltered = beautify::Render(source, 64, 64, settings);
-    Check(disabledFilter == flat &&
-        HashPixels(flat) != HashPixels(hueFiltered) &&
-        HashPixels(hueFiltered) != HashPixels(tintFiltered),
-        "color filters are disabled by default and support hue and tint changes");
+    const auto zeroStrengthFilter = beautify::Render(source, 64, 64, settings);
+    settings.filterStrength = 1.0f;
+    settings.shape = IconBeautifyShape::LegacyRounded;
+    const auto twoColorSource = TwoColorIcon(64);
+    const auto unifiedFilter = beautify::Render(twoColorSource, 64, 64, settings,
+        beautify::EdgeColor{0, 0, 0});
+    const std::uint32_t leftFiltered = unifiedFilter[32 * 64 + 20];
+    const std::uint32_t rightFiltered = unifiedFilter[32 * 64 + 44];
+    auto channel = [](std::uint32_t pixel, int shift) {
+        return static_cast<int>((pixel >> shift) & 0xff);
+    };
+    Check(zeroStrengthFilter == flat &&
+        HashPixels(unifiedFilter) != HashPixels(twoColorSource) &&
+        channel(leftFiltered, 0) > channel(leftFiltered, 8) &&
+        channel(leftFiltered, 0) > channel(leftFiltered, 16) &&
+        channel(rightFiltered, 0) > channel(rightFiltered, 8) &&
+        channel(rightFiltered, 0) > channel(rightFiltered, 16) &&
+        leftFiltered != rightFiltered,
+        "full-strength filtering unifies icon hues while preserving luminance detail");
     settings.filterEnabled = false;
-    settings.filterTintStrength = 0.0f;
 
     settings.outlineEnabled = false;
     const auto noOutline = beautify::Render(source, 64, 64, settings);

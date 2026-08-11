@@ -402,46 +402,82 @@ void FillPlate(std::vector<std::uint32_t>& output, int width, int height,
     }
 }
 
+struct HslColor
+{
+    float h = 0.0f;
+    float s = 0.0f;
+    float l = 0.0f;
+};
+
+HslColor ToHsl(float r, float g, float b)
+{
+    const float maximum = std::max({r, g, b});
+    const float minimum = std::min({r, g, b});
+    const float delta = maximum - minimum;
+    HslColor result{};
+    result.l = (maximum + minimum) * 0.5f;
+    if (delta <= 0.00001f)
+        return result;
+    result.s = delta / (1.0f - std::abs(2.0f * result.l - 1.0f));
+    if (maximum == r)
+        result.h = std::fmod((g - b) / delta, 6.0f) / 6.0f;
+    else if (maximum == g)
+        result.h = ((b - r) / delta + 2.0f) / 6.0f;
+    else
+        result.h = ((r - g) / delta + 4.0f) / 6.0f;
+    if (result.h < 0.0f) result.h += 1.0f;
+    return result;
+}
+
+float HueChannel(float p, float q, float t)
+{
+    if (t < 0.0f) t += 1.0f;
+    if (t > 1.0f) t -= 1.0f;
+    if (t < 1.0f / 6.0f) return p + (q - p) * 6.0f * t;
+    if (t < 0.5f) return q;
+    if (t < 2.0f / 3.0f) return p + (q - p) * (2.0f / 3.0f - t) * 6.0f;
+    return p;
+}
+
+void FromHsl(const HslColor& color, float& r, float& g, float& b)
+{
+    if (color.s <= 0.00001f)
+    {
+        r = g = b = color.l;
+        return;
+    }
+    const float q = color.l < 0.5f
+        ? color.l * (1.0f + color.s)
+        : color.l + color.s - color.l * color.s;
+    const float p = 2.0f * color.l - q;
+    r = HueChannel(p, q, color.h + 1.0f / 3.0f);
+    g = HueChannel(p, q, color.h);
+    b = HueChannel(p, q, color.h - 1.0f / 3.0f);
+}
+
 std::uint32_t ApplyFilter(std::uint32_t pixel,
     const IconBeautifySettings& settings)
 {
     if (!settings.filterEnabled || PixelA(pixel) == 0)
         return pixel;
-    if (std::abs(settings.filterHue) <= 0.0005f &&
-        std::abs(settings.filterSaturation - 1.0f) <= 0.0005f &&
-        std::abs(settings.filterBrightness) <= 0.0005f &&
-        std::abs(settings.filterContrast - 1.0f) <= 0.0005f &&
-        settings.filterTintStrength <= 0.0005f)
+    if (settings.filterStrength <= 0.0005f)
         return pixel;
 
     const int alpha = PixelA(pixel);
     float r = static_cast<float>((pixel >> 16) & 0xff) / alpha;
     float g = static_cast<float>((pixel >> 8) & 0xff) / alpha;
     float b = static_cast<float>(pixel & 0xff) / alpha;
-
-    const float y = r * 0.299f + g * 0.587f + b * 0.114f;
-    float i = r * 0.596f - g * 0.274f - b * 0.322f;
-    float q = r * 0.211f - g * 0.523f + b * 0.312f;
-    constexpr float pi = 3.14159265358979323846f;
-    const float hueRadians = settings.filterHue * pi / 180.0f;
-    const float hueCos = std::cos(hueRadians);
-    const float hueSin = std::sin(hueRadians);
-    const float rotatedI = i * hueCos - q * hueSin;
-    const float rotatedQ = i * hueSin + q * hueCos;
-    r = y + rotatedI * 0.956f + rotatedQ * 0.621f;
-    g = y - rotatedI * 0.272f - rotatedQ * 0.647f;
-    b = y - rotatedI * 1.106f + rotatedQ * 1.703f;
-
-    const float luma = r * 0.299f + g * 0.587f + b * 0.114f;
-    r = luma + (r - luma) * settings.filterSaturation;
-    g = luma + (g - luma) * settings.filterSaturation;
-    b = luma + (b - luma) * settings.filterSaturation;
-    r = (r - 0.5f) * settings.filterContrast + 0.5f + settings.filterBrightness;
-    g = (g - 0.5f) * settings.filterContrast + 0.5f + settings.filterBrightness;
-    b = (b - 0.5f) * settings.filterContrast + 0.5f + settings.filterBrightness;
-    r += (settings.filterTintR - r) * settings.filterTintStrength;
-    g += (settings.filterTintG - g) * settings.filterTintStrength;
-    b += (settings.filterTintB - b) * settings.filterTintStrength;
+    const float originalR = r;
+    const float originalG = g;
+    const float originalB = b;
+    const HslColor sourceColor = ToHsl(r, g, b);
+    HslColor unifiedColor = ToHsl(
+        settings.filterTintR, settings.filterTintG, settings.filterTintB);
+    unifiedColor.l = sourceColor.l;
+    FromHsl(unifiedColor, r, g, b);
+    r = originalR + (r - originalR) * settings.filterStrength;
+    g = originalG + (g - originalG) * settings.filterStrength;
+    b = originalB + (b - originalB) * settings.filterStrength;
     return PackPremultiplied(
         static_cast<int>(std::round(std::clamp(r, 0.0f, 1.0f) * 255.0f)),
         static_cast<int>(std::round(std::clamp(g, 0.0f, 1.0f) * 255.0f)),
@@ -550,11 +586,7 @@ IconBeautifySettings Normalize(IconBeautifySettings settings)
         settings.textureShadeStrength, 0.0f, 1.0f);
     settings.textureEdgeHighlight = std::clamp(
         settings.textureEdgeHighlight, 0.0f, 1.0f);
-    settings.filterHue = std::clamp(settings.filterHue, -180.0f, 180.0f);
-    settings.filterSaturation = std::clamp(settings.filterSaturation, 0.0f, 2.0f);
-    settings.filterBrightness = std::clamp(settings.filterBrightness, -1.0f, 1.0f);
-    settings.filterContrast = std::clamp(settings.filterContrast, 0.0f, 2.0f);
-    settings.filterTintStrength = std::clamp(settings.filterTintStrength, 0.0f, 1.0f);
+    settings.filterStrength = std::clamp(settings.filterStrength, 0.0f, 1.0f);
     settings.filterTintR = std::clamp(settings.filterTintR, 0.0f, 1.0f);
     settings.filterTintG = std::clamp(settings.filterTintG, 0.0f, 1.0f);
     settings.filterTintB = std::clamp(settings.filterTintB, 0.0f, 1.0f);
@@ -590,11 +622,7 @@ bool Equal(const IconBeautifySettings& lhs, const IconBeautifySettings& rhs)
         eq(a.textureShadeStrength, b.textureShadeStrength) &&
         eq(a.textureEdgeHighlight, b.textureEdgeHighlight) &&
         a.filterEnabled == b.filterEnabled &&
-        eq(a.filterHue, b.filterHue) &&
-        eq(a.filterSaturation, b.filterSaturation) &&
-        eq(a.filterBrightness, b.filterBrightness) &&
-        eq(a.filterContrast, b.filterContrast) &&
-        eq(a.filterTintStrength, b.filterTintStrength) &&
+        eq(a.filterStrength, b.filterStrength) &&
         eq(a.filterTintR, b.filterTintR) &&
         eq(a.filterTintG, b.filterTintG) && eq(a.filterTintB, b.filterTintB) &&
         a.outlineEnabled == b.outlineEnabled &&

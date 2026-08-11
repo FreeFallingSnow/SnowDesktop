@@ -194,20 +194,9 @@ void DesktopApp::LoadLayoutSlots()
     if (document.iconBeautifyFilterEnabled)
         iconBeautifySettings_.filterEnabled =
             *document.iconBeautifyFilterEnabled;
-    if (document.iconBeautifyFilterHue)
-        iconBeautifySettings_.filterHue = *document.iconBeautifyFilterHue;
-    if (document.iconBeautifyFilterSaturation)
-        iconBeautifySettings_.filterSaturation =
-            *document.iconBeautifyFilterSaturation;
-    if (document.iconBeautifyFilterBrightness)
-        iconBeautifySettings_.filterBrightness =
-            *document.iconBeautifyFilterBrightness;
-    if (document.iconBeautifyFilterContrast)
-        iconBeautifySettings_.filterContrast =
-            *document.iconBeautifyFilterContrast;
-    if (document.iconBeautifyFilterTintStrength)
-        iconBeautifySettings_.filterTintStrength =
-            *document.iconBeautifyFilterTintStrength;
+    if (document.iconBeautifyFilterStrength)
+        iconBeautifySettings_.filterStrength =
+            *document.iconBeautifyFilterStrength;
     if (document.iconBeautifyFilterTintR)
         iconBeautifySettings_.filterTintR = *document.iconBeautifyFilterTintR;
     if (document.iconBeautifyFilterTintG)
@@ -780,11 +769,7 @@ void DesktopApp::SaveLayoutSlots()
          << ",\n  \"iconBeautifyTextureShadeStrength\": " << iconBeautifySettings_.textureShadeStrength
          << ",\n  \"iconBeautifyTextureEdgeHighlight\": " << iconBeautifySettings_.textureEdgeHighlight
          << ",\n  \"iconBeautifyFilterEnabled\": " << (iconBeautifySettings_.filterEnabled ? "true" : "false")
-         << ",\n  \"iconBeautifyFilterHue\": " << iconBeautifySettings_.filterHue
-         << ",\n  \"iconBeautifyFilterSaturation\": " << iconBeautifySettings_.filterSaturation
-         << ",\n  \"iconBeautifyFilterBrightness\": " << iconBeautifySettings_.filterBrightness
-         << ",\n  \"iconBeautifyFilterContrast\": " << iconBeautifySettings_.filterContrast
-         << ",\n  \"iconBeautifyFilterTintStrength\": " << iconBeautifySettings_.filterTintStrength
+         << ",\n  \"iconBeautifyFilterStrength\": " << iconBeautifySettings_.filterStrength
          << ",\n  \"iconBeautifyFilterTintR\": " << iconBeautifySettings_.filterTintR
          << ",\n  \"iconBeautifyFilterTintG\": " << iconBeautifySettings_.filterTintG
          << ",\n  \"iconBeautifyFilterTintB\": " << iconBeautifySettings_.filterTintB
