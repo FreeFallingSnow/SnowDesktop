@@ -265,11 +265,13 @@ HBITMAP CreateAlphaBitmapFromIcon(HICON icon, int width, int height, SIZE& size)
  * @param bitmapSize [out] 返回位图的实际尺寸
  * @param allowThumbnail 是否允许 Shell 返回缩略图；为 false 时强制原生图标表示
  * @param requestedSize 目标源位图长边，内部会归一化到 64..256 像素档位
+ * @param suppressOuterFrameArtifact 是否保守清除高分辨率应用图标的中性灰外框伪影
  * @return 成功返回 DIB 位图句柄，失败返回 nullptr
  */
 HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl,
     int fallbackIndex, SIZE& bitmapSize, bool allowThumbnail = false,
-    int requestedSize = kIconBitmapSize);
+    int requestedSize = kIconBitmapSize,
+    bool suppressOuterFrameArtifact = false);
 
 /**
  * @brief 从坐标值创建 RECT 结构

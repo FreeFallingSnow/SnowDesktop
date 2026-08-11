@@ -281,7 +281,7 @@ inline HBITMAP CreateDockShellIconBitmap(
         *systemIconIndex = fallbackIndex;
 
     HBITMAP bitmap = GetHighResolutionShellIconBitmap(
-        pidl, fallbackIndex, bitmapSize, false, requestedSize);
+        pidl, fallbackIndex, bitmapSize, false, requestedSize, true);
     CoTaskMemFree(pidl);
     return bitmap;
 }

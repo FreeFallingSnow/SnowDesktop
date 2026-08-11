@@ -1062,15 +1062,28 @@ HBITMAP CreateAlphaBitmapFromIcon(HICON icon, int width, int height, SIZE& size)
  * @param bitmapSize [out] 输出位图的尺寸。
  * @param allowThumbnail 是否允许 Shell 返回缩略图表示。
  * @param requestedSize 目标源位图长边。
+ * @param suppressOuterFrameArtifact 是否保守清除高分辨率应用图标的中性灰外框伪影。
  * @return 成功时返回带有 Alpha 通道的 HBITMAP，失败时返回 nullptr。
  */
 HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl,
     int fallbackIndex, SIZE& bitmapSize, bool allowThumbnail,
-    int requestedSize)
+    int requestedSize, bool suppressOuterFrameArtifact)
 {
     bitmapSize = {};
     const int sourceSize =
         snowdesktop::icon_render_rules::SourcePixelsForTarget(requestedSize);
+    const auto suppressFrame = [&](HBITMAP bitmap)
+    {
+        if (!bitmap || !suppressOuterFrameArtifact)
+            return;
+        BITMAP info{};
+        if (GetObjectW(bitmap, sizeof(info), &info) == 0 ||
+            info.bmBitsPixel != 32 || !info.bmBits)
+            return;
+        snowdesktop::icon_render_rules::SuppressOuterFrameArtifact(
+            static_cast<std::uint32_t*>(info.bmBits), info.bmWidth,
+            std::abs(info.bmHeight));
+    };
     ComPtr<IShellItemImageFactory> imageFactory;
     if (SUCCEEDED(SHCreateItemFromIDList(pidl, IID_PPV_ARGS(&imageFactory))) && imageFactory)
     {
@@ -1085,6 +1098,7 @@ HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl,
             DeleteObject(bitmap);
             if (alphaBitmap != nullptr)
             {
+                suppressFrame(alphaBitmap);
                 return alphaBitmap;
             }
         }
@@ -1114,6 +1128,7 @@ HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl,
             DestroyIcon(icon);
             if (bitmap != nullptr)
             {
+                suppressFrame(bitmap);
                 return bitmap;
             }
         }
@@ -1132,6 +1147,7 @@ HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl,
         HBITMAP bitmap = CreateAlphaBitmapFromIcon(
             icon, sourceSize, sourceSize, bitmapSize);
         DestroyIcon(icon);
+        suppressFrame(bitmap);
         return bitmap;
     }
 
