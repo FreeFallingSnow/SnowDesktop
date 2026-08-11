@@ -540,6 +540,33 @@ bool DrawSettingCheckbox(const char* label, const char* id, bool* value,
     return ImGui::Checkbox(id, value);
 }
 
+bool DrawSettingColorEdit3(const char* label, const char* id, float color[3])
+{
+    const float buttonSize = ImGui::GetFrameHeight();
+    BeginSettingRow(label, buttonSize);
+
+    bool changed = false;
+    ImGui::PushID(id);
+    if (ImGui::ColorButton("##Button",
+            ImVec4(color[0], color[1], color[2], 1.0f),
+            ImGuiColorEditFlags_NoAlpha |
+                ImGuiColorEditFlags_NoDragDrop,
+            ImVec2(buttonSize, buttonSize)))
+    {
+        ImGui::OpenPopup("##PickerPopup");
+    }
+    if (ImGui::BeginPopup("##PickerPopup"))
+    {
+        ImGui::SetNextItemWidth(buttonSize * 12.0f);
+        changed = ImGui::ColorPicker3("##Picker", color,
+            ImGuiColorEditFlags_NoLabel |
+                ImGuiColorEditFlags_NoAlpha);
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
+    return changed;
+}
+
 void DrawSettingValue(const char* label, const char* value)
 {
     const float valueWidth = ImGui::CalcTextSize(value).x;
@@ -2528,14 +2555,12 @@ void SettingsWindow::DrawDisplayPage()
             beautifyModeNames, IM_ARRAYSIZE(beautifyModeNames)))
         notifyIconBeautify(snowdesktop::IconBeautifyUpdateKind::Commit);
 
-    BeginSettingRow(_L("app.settings.default_bg"),
-        ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
     float bgStart[3] = {
         iconBeautifySettings_.backgroundStartR,
         iconBeautifySettings_.backgroundStartG,
         iconBeautifySettings_.backgroundStartB };
-    if (ImGui::ColorEdit3("##IconBeautifyBgStart", bgStart,
-            ImGuiColorEditFlags_NoInputs))
+    if (DrawSettingColorEdit3(_L("app.settings.default_bg"),
+            "##IconBeautifyBgStart", bgStart))
     {
         iconBeautifySettings_.backgroundStartR = bgStart[0];
         iconBeautifySettings_.backgroundStartG = bgStart[1];
@@ -2563,14 +2588,12 @@ void SettingsWindow::DrawDisplayPage()
         notifyIconBeautify(snowdesktop::IconBeautifyUpdateKind::Commit);
 
     ImGui::BeginDisabled(!iconBeautifySettings_.gradientEnabled);
-    BeginSettingRow(_L("app.settings.gradient_end_color"),
-        ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
     float bgEnd[3] = {
         iconBeautifySettings_.backgroundEndR,
         iconBeautifySettings_.backgroundEndG,
         iconBeautifySettings_.backgroundEndB };
-    if (ImGui::ColorEdit3("##IconBeautifyBgEnd", bgEnd,
-            ImGuiColorEditFlags_NoInputs))
+    if (DrawSettingColorEdit3(_L("app.settings.gradient_end_color"),
+            "##IconBeautifyBgEnd", bgEnd))
     {
         iconBeautifySettings_.backgroundEndR = bgEnd[0];
         iconBeautifySettings_.backgroundEndG = bgEnd[1];
@@ -2702,14 +2725,12 @@ void SettingsWindow::DrawDisplayPage()
         notifyIconBeautify(snowdesktop::IconBeautifyUpdateKind::Commit);
     if (iconBeautifySettings_.filterEnabled)
     {
-        BeginSettingRow(_L("app.settings.beautify_filter_color"),
-            ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
         float filterTint[3] = {
             iconBeautifySettings_.filterTintR,
             iconBeautifySettings_.filterTintG,
             iconBeautifySettings_.filterTintB };
-        if (ImGui::ColorEdit3("##IconBeautifyFilterTint", filterTint,
-                ImGuiColorEditFlags_NoInputs))
+        if (DrawSettingColorEdit3(_L("app.settings.beautify_filter_color"),
+                "##IconBeautifyFilterTint", filterTint))
         {
             iconBeautifySettings_.filterTintR = filterTint[0];
             iconBeautifySettings_.filterTintG = filterTint[1];
@@ -2770,14 +2791,12 @@ void SettingsWindow::DrawDisplayPage()
         }
         commitContinuousIconBeautify();
 
-        BeginSettingRow(_L("app.settings.beautify_outline_color"),
-            ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
         float outlineColor[3] = {
             iconBeautifySettings_.outlineR,
             iconBeautifySettings_.outlineG,
             iconBeautifySettings_.outlineB };
-        if (ImGui::ColorEdit3("##IconBeautifyOutlineColor", outlineColor,
-                ImGuiColorEditFlags_NoInputs))
+        if (DrawSettingColorEdit3(_L("app.settings.beautify_outline_color"),
+                "##IconBeautifyOutlineColor", outlineColor))
         {
             iconBeautifySettings_.outlineR = outlineColor[0];
             iconBeautifySettings_.outlineG = outlineColor[1];
@@ -3097,9 +3116,9 @@ void SettingsWindow::DrawPersonalizationPage()
         quickNavThemeNames, IM_ARRAYSIZE(quickNavThemeNames)))
         generalSettingsDirty_ = true;
 
-    BeginSettingRow(_L("app.settings.component_bg"), ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
     float bgColor[3] = { personalization_.widgetBgR, personalization_.widgetBgG, personalization_.widgetBgB };
-    if (ImGui::ColorEdit3("##WidgetBgColor", bgColor, ImGuiColorEditFlags_NoInputs))
+    if (DrawSettingColorEdit3(_L("app.settings.component_bg"),
+            "##WidgetBgColor", bgColor))
     {
         personalization_.widgetBgR = bgColor[0]; personalization_.widgetBgG = bgColor[1];
         personalization_.widgetBgB = bgColor[2];
@@ -3108,9 +3127,9 @@ void SettingsWindow::DrawPersonalizationPage()
     if (ImGui::IsItemDeactivatedAfterEdit() && personalizationDirty_)
         personalizationSaveRequested_ = true;
 
-    BeginSettingRow(_L("app.settings.component_border"), ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
     float borderColor[3] = { personalization_.widgetBorderR, personalization_.widgetBorderG, personalization_.widgetBorderB };
-    if (ImGui::ColorEdit3("##WidgetBorderColor", borderColor, ImGuiColorEditFlags_NoInputs))
+    if (DrawSettingColorEdit3(_L("app.settings.component_border"),
+            "##WidgetBorderColor", borderColor))
     {
         personalization_.widgetBorderR = borderColor[0]; personalization_.widgetBorderG = borderColor[1];
         personalization_.widgetBorderB = borderColor[2];
@@ -3325,8 +3344,8 @@ void SettingsWindow::DrawPersonalizationPage()
         ImGui::Spacing();
         ImGui::Indent(8.0f * dpiScale_);
         float background[3] = { style.widgetBgR, style.widgetBgG, style.widgetBgB };
-            BeginSettingRow(_L("app.settings.bg_color"), ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
-            if (ImGui::ColorEdit3("##Background", background, ImGuiColorEditFlags_NoInputs))
+            if (DrawSettingColorEdit3(_L("app.settings.bg_color"),
+                    "##Background", background))
             {
                 style.widgetBgR = background[0];
                 style.widgetBgG = background[1];
@@ -3335,8 +3354,8 @@ void SettingsWindow::DrawPersonalizationPage()
             }
 
             float border[3] = { style.widgetBorderR, style.widgetBorderG, style.widgetBorderB };
-            BeginSettingRow(_L("app.settings.border_color"), ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
-            if (ImGui::ColorEdit3("##Border", border, ImGuiColorEditFlags_NoInputs))
+            if (DrawSettingColorEdit3(_L("app.settings.border_color"),
+                    "##Border", border))
             {
                 style.widgetBorderR = border[0];
                 style.widgetBorderG = border[1];

@@ -33,6 +33,12 @@ constexpr bool SourceLongEdgeCoversTarget(
         SourcePixelsForTarget(targetPixels);
 }
 
+/** Shell thumbnails preserve their original media preview instead of receiving an icon plate. */
+constexpr bool ShouldBeautify(bool beautificationEnabled, bool thumbnailRepresentation)
+{
+    return beautificationEnabled && !thumbnailRepresentation;
+}
+
 struct FittedSize
 {
     int width = 0;

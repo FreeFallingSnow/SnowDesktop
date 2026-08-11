@@ -186,6 +186,7 @@ struct DesktopItem
     bool shortcutArrow = false;
     bool isShortcut = false;
     bool isApplicationShortcut = false;
+    bool iconIsThumbnail = false;
     bool isCut = false;
     IconState iconState = IconState::Loading;
 
@@ -210,6 +211,7 @@ struct DesktopItem
           shortcutArrow(other.shortcutArrow),
           isShortcut(other.isShortcut),
           isApplicationShortcut(other.isApplicationShortcut),
+          iconIsThumbnail(other.iconIsThumbnail),
           isCut(other.isCut),
           iconState(other.iconState)
     {
@@ -244,6 +246,7 @@ struct DesktopItem
             shortcutArrow = other.shortcutArrow;
             isShortcut = other.isShortcut;
             isApplicationShortcut = other.isApplicationShortcut;
+            iconIsThumbnail = other.iconIsThumbnail;
             isCut = other.isCut;
             iconState = other.iconState;
             other.iconBitmap = nullptr;
@@ -281,6 +284,7 @@ struct FolderEntry
     bool shortcutArrow = false;
     bool isShortcut = false;
     bool isApplicationShortcut = false;
+    bool iconIsThumbnail = false;
     IconState iconState = IconState::Loading;
 
     FolderEntry() = default;
@@ -298,6 +302,7 @@ struct FolderEntry
           shortcutArrow(other.shortcutArrow),
           isShortcut(other.isShortcut),
           isApplicationShortcut(other.isApplicationShortcut),
+          iconIsThumbnail(other.iconIsThumbnail),
           iconState(other.iconState)
     {
         if (other.iconBitmap != nullptr)
@@ -327,6 +332,7 @@ struct FolderEntry
             shortcutArrow = other.shortcutArrow;
             isShortcut = other.isShortcut;
             isApplicationShortcut = other.isApplicationShortcut;
+            iconIsThumbnail = other.iconIsThumbnail;
             iconState = other.iconState;
             if (other.iconBitmap != nullptr)
             {
@@ -381,6 +387,7 @@ public:
           shortcutArrow(other.shortcutArrow),
           isShortcut(other.isShortcut),
           isApplicationShortcut(other.isApplicationShortcut),
+          iconIsThumbnail(other.iconIsThumbnail),
           iconState(other.iconState)
     {
         other.iconBitmap = nullptr;
@@ -407,6 +414,7 @@ public:
             shortcutArrow = other.shortcutArrow;
             isShortcut = other.isShortcut;
             isApplicationShortcut = other.isApplicationShortcut;
+            iconIsThumbnail = other.iconIsThumbnail;
             iconState = other.iconState;
             other.iconBitmap = nullptr;
             other.iconBitmapSize = {};

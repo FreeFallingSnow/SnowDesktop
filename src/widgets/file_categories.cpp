@@ -1282,8 +1282,9 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
             if (privacyActive)
                 DrawPrivacyPlaceholder(context, itemRect, di.name, false);
             else
-                DrawListItem(context, itemRect, di.iconBitmap, di.sysIconIndex,
-                    di.name, di.selected);
+                DrawListItem(context, itemRect, di.iconBitmap,
+                    di.sysIconIndex, di.name, di.selected,
+                    di.iconIsThumbnail);
         }
         context->PopAxisAlignedClip();
         return;
@@ -1384,8 +1385,9 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
         if (privacyActive)
             DrawPrivacyPlaceholder(context, itemRect, di.name, false);
         else
-            DrawListItem(context, itemRect, di.iconBitmap, di.sysIconIndex,
-                di.name, di.selected);
+            DrawListItem(context, itemRect, di.iconBitmap,
+                di.sysIconIndex, di.name, di.selected,
+                di.iconIsThumbnail);
     }
     context->PopAxisAlignedClip();
 }

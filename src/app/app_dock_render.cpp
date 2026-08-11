@@ -149,9 +149,10 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         const float alpha = item.isCut ? 0.4f : 1.0f;
         if (item.iconState == IconState::Loading)
             DrawPlaceholderIcon(ctx, item.sysIconIndex, bitmapTarget, alpha, !recycleBin);
-        else if (ID2D1Bitmap1* bitmap = recycleBin
-            ? GetOrCreateD2DBitmap(item.iconBitmap, false)
-            : GetOrCreateD2DBitmap(item.iconBitmap))
+        else if (ID2D1Bitmap1* bitmap = GetOrCreateD2DBitmap(
+                item.iconBitmap,
+                !recycleBin &&
+                    ShouldBeautifyIconBitmap(item.iconIsThumbnail)))
             DrawIconBitmap(ctx, bitmap, bitmapTarget, alpha);
         else
             DrawPlaceholderIcon(ctx, item.sysIconIndex, bitmapTarget, alpha, !recycleBin);

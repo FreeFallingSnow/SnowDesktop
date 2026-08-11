@@ -1038,7 +1038,8 @@ ID2D1Bitmap1* DesktopApp::GetOrCreateD2DBitmap(HBITMAP hbm, bool beautify)
     return result;
 }
 
-ID2D1Bitmap* DesktopApp::GetOrCreateD2DBitmap(ID2D1RenderTarget* target, HBITMAP hbm)
+ID2D1Bitmap* DesktopApp::GetOrCreateD2DBitmap(
+    ID2D1RenderTarget* target, HBITMAP hbm, bool beautify)
 {
     if (!target || !hbm) return nullptr;
 
@@ -1047,7 +1048,7 @@ ID2D1Bitmap* DesktopApp::GetOrCreateD2DBitmap(ID2D1RenderTarget* target, HBITMAP
     ComPtr<ID2D1DeviceContext> deviceContext;
     if (FAILED(target->QueryInterface(IID_PPV_ARGS(&deviceContext))) || !deviceContext)
         return nullptr;
-    return GetOrCreateD2DBitmap(hbm);
+    return GetOrCreateD2DBitmap(hbm, beautify);
 }
 
 void DesktopApp::DrawIconBitmap(ID2D1RenderTarget* target,

@@ -1218,7 +1218,7 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
             DrawPrivacyPlaceholder(context, cell, entry.name, entry.isDirectory);
         else
             DrawListItem(context, cell, entry.iconBitmap, entry.sysIconIndex,
-                entry.name, entry.selected);
+                entry.name, entry.selected, entry.iconIsThumbnail);
     }
     context->PopAxisAlignedClip();
 }

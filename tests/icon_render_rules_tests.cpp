@@ -37,6 +37,13 @@ int main()
     Check(rules::SourceLongEdgeCoversTarget(96, 64, 65),
         "a non-square thumbnail is covered by its long edge");
 
+    Check(rules::ShouldBeautify(true, false),
+        "ordinary icons participate when beautification is enabled");
+    Check(!rules::ShouldBeautify(true, true),
+        "Shell thumbnails bypass icon beautification");
+    Check(!rules::ShouldBeautify(false, false),
+        "ordinary icons remain untouched when beautification is disabled");
+
     const auto downscaled = rules::FitWithoutUpscaling(96, 96, 65, 65);
     Check(downscaled.width == 65 && downscaled.height == 65,
         "large square sources fit the requested target exactly");

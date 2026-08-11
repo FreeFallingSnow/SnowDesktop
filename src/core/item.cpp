@@ -150,7 +150,9 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
     }
     else
     {
-        ID2D1Bitmap* bmp = app_->GetOrCreateD2DBitmap(context, item_->iconBitmap);
+        ID2D1Bitmap* bmp = app_->GetOrCreateD2DBitmap(
+            context, item_->iconBitmap,
+            app_->ShouldBeautifyIconBitmap(item_->iconIsThumbnail));
         if (bmp)
         {
             app_->DrawIconBitmap(context, bmp, iconRect, alpha);
@@ -303,7 +305,9 @@ void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, boo
     }
     else
     {
-        ID2D1Bitmap* bmp = app_->GetOrCreateD2DBitmap(context, entry_->iconBitmap);
+        ID2D1Bitmap* bmp = app_->GetOrCreateD2DBitmap(
+            context, entry_->iconBitmap,
+            app_->ShouldBeautifyIconBitmap(entry_->iconIsThumbnail));
         if (bmp)
         {
             app_->DrawIconBitmap(context, bmp, iconRect, opacity);

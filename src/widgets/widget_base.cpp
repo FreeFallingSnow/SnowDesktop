@@ -1641,10 +1641,12 @@ void ScrollingItemWidget::DrawListItemTitle(ID2D1DeviceContext* context,
  * @param sysIconIndex 系统图标索引，用于位图不可用时的回退绘制
  * @param name 项目名称
  * @param selected 是否选中
+ * @param iconIsThumbnail 当前位图是否为 Shell 缩略图表示
  */
 void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
     HBITMAP iconBitmap, int sysIconIndex,
-    const std::wstring& name, bool selected) const
+    const std::wstring& name, bool selected,
+    bool iconIsThumbnail) const
 {
     if (!app_ || !context || IsRectEmptyRect(cell)) return;
 
@@ -1667,7 +1669,9 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
     RECT iconRect = MakeRect(cell.left + Cu(4.0f), cell.top + (itemH - iconSz) / 2,
         cell.left + Cu(4.0f) + iconSz, cell.top + (itemH + iconSz) / 2);
 
-    if (ID2D1Bitmap1* bmp = app_->GetOrCreateD2DBitmap(iconBitmap))
+    if (ID2D1Bitmap1* bmp = app_->GetOrCreateD2DBitmap(
+            iconBitmap,
+            app_->ShouldBeautifyIconBitmap(iconIsThumbnail)))
     {
         context->DrawBitmap(bmp, app_->ToD2DRect(iconRect), 1.0f,
             D2D1_INTERPOLATION_MODE_LINEAR);

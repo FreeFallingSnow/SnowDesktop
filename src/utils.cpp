@@ -1169,14 +1169,18 @@ HBITMAP ExtractShellLinkSourceIcon(std::wstring_view sourcePath,
  * @param preferDirectIconExtraction 是否优先绕过 ImageFactory 直接提取 HICON。
  * @param forShortcut 是否按快捷方式语义请求未叠加箭头的源图标。
  * @param sourcePath Shell 项的文件系统路径。
+ * @param returnedThumbnail [out] 实际返回缩略图时写入 true，普通图标或失败时写入 false。
  * @return 成功时返回带有 Alpha 通道的 HBITMAP，失败时返回 nullptr。
  */
 HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl,
     int fallbackIndex, SIZE& bitmapSize, bool allowThumbnail,
     int requestedSize, bool preferDirectIconExtraction,
-    bool forShortcut, std::wstring_view sourcePath)
+    bool forShortcut, std::wstring_view sourcePath,
+    bool* returnedThumbnail)
 {
     bitmapSize = {};
+    if (returnedThumbnail)
+        *returnedThumbnail = false;
     const int sourceSize =
         snowdesktop::icon_render_rules::SourcePixelsForTarget(requestedSize);
     if (forShortcut)
@@ -1245,20 +1249,30 @@ HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl,
     ComPtr<IShellItemImageFactory> imageFactory;
     if (SUCCEEDED(SHCreateItemFromIDList(pidl, IID_PPV_ARGS(&imageFactory))) && imageFactory)
     {
-        SIZE size{ sourceSize, sourceSize };
-        HBITMAP bitmap = nullptr;
-        const UINT flags = allowThumbnail
-            ? SIIGBF_RESIZETOFIT
-            : SIIGBF_ICONONLY;
-        if (SUCCEEDED(imageFactory->GetImage(size, flags, &bitmap)) && bitmap != nullptr)
+        const auto tryImageFactory = [&](UINT flags, bool thumbnail) -> HBITMAP
         {
-            HBITMAP alphaBitmap = CopyBitmapToAlphaDib(bitmap, bitmapSize);
+            SIZE size{ sourceSize, sourceSize };
+            HBITMAP bitmap = nullptr;
+            if (FAILED(imageFactory->GetImage(size, flags, &bitmap)) ||
+                bitmap == nullptr)
+                return nullptr;
+
+            HBITMAP alphaBitmap = CopyBitmapToAlphaDib(
+                bitmap, bitmapSize);
             DeleteObject(bitmap);
-            if (alphaBitmap != nullptr)
-            {
-                return alphaBitmap;
-            }
+            if (alphaBitmap && returnedThumbnail)
+                *returnedThumbnail = thumbnail;
+            return alphaBitmap;
+        };
+
+        if (allowThumbnail)
+        {
+            if (HBITMAP thumbnail = tryImageFactory(
+                    SIIGBF_THUMBNAILONLY, true))
+                return thumbnail;
         }
+        if (HBITMAP icon = tryImageFactory(SIIGBF_ICONONLY, false))
+            return icon;
     }
 
     ComPtr<IImageList> imageList;

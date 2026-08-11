@@ -236,6 +236,7 @@ struct IconLoadResult {
     bool shortcutArrow = false;
     bool isShortcut = false;
     bool isApplicationShortcut = false;
+    bool iconIsThumbnail = false;
     IconLoadPhase phase = IconLoadPhase::Phase1;
     bool isDesktopItem = true;
     std::wstring folderPath;
@@ -1936,12 +1937,18 @@ private:
      */
     ID2D1Bitmap1* GetOrCreateD2DBitmap(HBITMAP hbm);
     ID2D1Bitmap1* GetOrCreateD2DBitmap(HBITMAP hbm, bool beautify);
-    ID2D1Bitmap* GetOrCreateD2DBitmap(ID2D1RenderTarget* target, HBITMAP hbm);
+    ID2D1Bitmap* GetOrCreateD2DBitmap(
+        ID2D1RenderTarget* target, HBITMAP hbm, bool beautify);
     ComPtr<ID2D1Bitmap1> CreateD2DBitmapFromHBitmap(HBITMAP hbm, bool beautify);
     void DrawIconBitmap(ID2D1RenderTarget* target, ID2D1Bitmap* bitmap,
         RECT destination, float opacity = 1.0f);
     std::uintptr_t GetD2DIconCacheKey(HBITMAP hbm, bool beautified) const;
     void EraseD2DIconCacheForBitmap(HBITMAP hbm);
+    bool ShouldBeautifyIconBitmap(bool iconIsThumbnail) const
+    {
+        return snowdesktop::icon_render_rules::ShouldBeautify(
+            iconBeautifySettings_.enabled, iconIsThumbnail);
+    }
 
     /**
      * @brief 在指定矩形上绘制快捷方式箭头叠加层。

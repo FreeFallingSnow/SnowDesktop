@@ -67,10 +67,11 @@ void DesktopApp::StartIconLoader()
                     representationName, L".lnk") ||
                 snowdesktop::shortcut_application_rules::HasExtension(
                     representationName, L".url");
+            bool iconIsThumbnail = false;
             HBITMAP bitmap = GetHighResolutionShellIconBitmap(
                 task.absolutePidl.get(), task.sysIconIndex, bitmapSize,
                 allowThumbnail, task.requestedSize, applicationLike,
-                forShortcut, representationName);
+                forShortcut, representationName, &iconIsThumbnail);
             if (task.phase == IconLoadPhase::Phase1 && bitmap)
                 ClampAlphaToColorKey(bitmap, kTransparentKey);
 
@@ -144,6 +145,7 @@ void DesktopApp::StartIconLoader()
                 result->isShortcut = isShortcut;
                 result->isApplicationShortcut = isApplicationShortcut;
                 result->shortcutArrow = isShortcut && !isApplicationShortcut;
+                result->iconIsThumbnail = iconIsThumbnail;
                 result->phase = task.phase;
                 result->isDesktopItem = task.isDesktopItem;
                 result->folderPath = std::move(task.folderPath);

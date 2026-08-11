@@ -1834,6 +1834,7 @@ void FileGroup::DrawContent(
                 continue;
             Item* item = slot->GetItem();
             bool isDirectory = false;
+            bool iconIsThumbnail = false;
             int sysIconIndex = -1;
             if (auto* desktop =
                     dynamic_cast<DesktopIcon*>(item))
@@ -1841,8 +1842,12 @@ void FileGroup::DrawContent(
                 DesktopItem* sourceItem =
                     desktop->GetDesktopItem();
                 if (sourceItem)
+                {
                     sysIconIndex =
                         sourceItem->sysIconIndex;
+                    iconIsThumbnail =
+                        sourceItem->iconIsThumbnail;
+                }
             }
             else if (auto* folder =
                          dynamic_cast<
@@ -1856,6 +1861,8 @@ void FileGroup::DrawContent(
                         sourceEntry->isDirectory;
                     sysIconIndex =
                         sourceEntry->sysIconIndex;
+                    iconIsThumbnail =
+                        sourceEntry->iconIsThumbnail;
                 }
             }
             if (privacyActive)
@@ -1868,7 +1875,8 @@ void FileGroup::DrawContent(
                     item->GetIconBitmap(),
                     sysIconIndex,
                     item->GetTitle(),
-                    item->IsSelected());
+                    item->IsSelected(),
+                    iconIsThumbnail);
             else
             {
                 const bool hovered =
