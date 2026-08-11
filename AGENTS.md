@@ -63,6 +63,13 @@
 - `widgets/` 同时包含内置 Lua 组件与面向用户提供的
   `snowdesktop-lua-widget` Agent Skill；后者是产品的组件开发功能，必须继续随软件分发，
   不得当作临时 Agent 文件删除。
+- `snowdesktop-lua-widget` Agent Skill 是提供给 SnowDesktop 用户开发、调试和打包 Lua
+  组件的产品能力，不是本仓库常规开发工作的默认操作指南。排查或修改宿主原生代码、Dock、
+  拖放、构建、测试、发布流程，以及维护该 Skill 自身的文档或分发文件时，不得仅因仓库中存在
+  该 Skill、任务提到组件或路径位于 `widgets/` 就自动加载它。
+- 只有用户明确要求使用 `snowdesktop-lua-widget`，或当前任务确实是在创建、修改、调试、验证
+  或打包一个 SnowDesktop Lua 组件包时，才允许加载该 Skill；加载前应先确认任务对象是 Lua
+  组件包而不是宿主功能。
 - `tests/` 仅保存测试源码，测试目标统一在 `CMakeLists.txt` 注册。
 - `scripts/` 保存人工与自动化入口；根目录不再新增脚本副本。
 - `.build/`、`.build_debug/`、`artifacts/` 和 `docs/html/` 是生成目录，不得提交。
