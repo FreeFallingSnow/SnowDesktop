@@ -32,11 +32,7 @@ namespace
 constexpr float kLegacyCornerRadiusRatio = 0.35f;
 constexpr float kLegacyCornerExponent = 4.0f;
 
-struct Point
-{
-    float x = 0.0f;
-    float y = 0.0f;
-};
+using Point = ShapePoint;
 
 struct Bounds
 {
@@ -149,6 +145,65 @@ std::vector<Point> ContinuousRoundedOutline()
     return points;
 }
 
+std::vector<Point> LegacyRoundedOutline()
+{
+    constexpr float radius = kLegacyCornerRadiusRatio;
+    constexpr float coordinatePower = 2.0f / kLegacyCornerExponent;
+    constexpr float pi = 3.14159265358979323846f;
+    constexpr int cornerSegments = 12;
+    std::vector<Point> points;
+    points.reserve(cornerSegments * 4 + 4);
+    auto cornerPoint = [=](float centerX, float centerY, float angle) {
+        const float cosine = std::cos(angle);
+        const float sine = std::sin(angle);
+        return Point{
+            centerX + radius * std::copysign(
+                std::pow(std::abs(cosine), coordinatePower), cosine),
+            centerY + radius * std::copysign(
+                std::pow(std::abs(sine), coordinatePower), sine),
+        };
+    };
+    auto addCorner = [&](float centerX, float centerY,
+        float startAngle, float endAngle) {
+        for (int index = 1; index <= cornerSegments; ++index)
+        {
+            const float t = static_cast<float>(index) /
+                static_cast<float>(cornerSegments);
+            points.push_back(cornerPoint(centerX, centerY,
+                startAngle + (endAngle - startAngle) * t));
+        }
+    };
+
+    points.push_back({ radius, 0.0f });
+    points.push_back({ 1.0f - radius, 0.0f });
+    addCorner(1.0f - radius, radius, -pi * 0.5f, 0.0f);
+    points.push_back({ 1.0f, 1.0f - radius });
+    addCorner(1.0f - radius, 1.0f - radius, 0.0f, pi * 0.5f);
+    points.push_back({ radius, 1.0f });
+    addCorner(radius, 1.0f - radius, pi * 0.5f, pi);
+    points.push_back({ 0.0f, radius });
+    addCorner(radius, radius, pi, pi * 1.5f);
+    return points;
+}
+
+std::vector<Point> CircleOutline()
+{
+    constexpr float pi = 3.14159265358979323846f;
+    constexpr int segments = 64;
+    std::vector<Point> points;
+    points.reserve(segments);
+    for (int index = 0; index < segments; ++index)
+    {
+        const float angle = -pi * 0.5f + 2.0f * pi *
+            static_cast<float>(index) / static_cast<float>(segments);
+        points.push_back({
+            0.5f + std::cos(angle) * 0.5f,
+            0.5f + std::sin(angle) * 0.5f,
+        });
+    }
+    return points;
+}
+
 std::vector<Point> FourCubicOutline(Point start,
     const std::array<std::array<Point, 3>, 4>& curves)
 {
@@ -165,7 +220,9 @@ std::vector<Point> FourCubicOutline(Point start,
 
 const std::vector<Point>& OutlineFor(IconBeautifyShape shape)
 {
+    static const std::vector<Point> legacyRounded = LegacyRoundedOutline();
     static const std::vector<Point> continuousRounded = ContinuousRoundedOutline();
+    static const std::vector<Point> circle = CircleOutline();
     static const std::vector<Point> softRounded = FourCubicOutline(
         { 0.5f, 0.0f }, {{
             {{{0.1f,0.0f},{0.0f,0.1f},{0.0f,0.5f}}},
@@ -182,10 +239,12 @@ const std::vector<Point>& OutlineFor(IconBeautifyShape shape)
         }});
     switch (shape)
     {
+    case IconBeautifyShape::LegacyRounded: return legacyRounded;
     case IconBeautifyShape::ContinuousRounded: return continuousRounded;
+    case IconBeautifyShape::Circle: return circle;
     case IconBeautifyShape::SoftRounded: return softRounded;
     case IconBeautifyShape::Pebble: return pebble;
-    default: return continuousRounded;
+    default: return legacyRounded;
     }
 }
 
@@ -492,6 +551,11 @@ void ApplyOutline(std::vector<std::uint32_t>& output, int width, int height,
             output[i] = SourceOver(PackPremultiplied(stroke.r, stroke.g, stroke.b, alpha), output[i]);
     }
 }
+}
+
+const std::vector<ShapePoint>& ShapeOutline(IconBeautifyShape shape)
+{
+    return OutlineFor(shape);
 }
 
 IconBeautifySettings Normalize(IconBeautifySettings settings)

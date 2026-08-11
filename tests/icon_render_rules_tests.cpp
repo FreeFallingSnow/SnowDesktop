@@ -44,6 +44,15 @@ int main()
     Check(!rules::ShouldBeautify(false, false),
         "ordinary icons remain untouched when beautification is disabled");
 
+    Check(rules::ShouldRequestShellThumbnail(true, false, false),
+        "full-quality media loads may request a Shell thumbnail");
+    Check(!rules::ShouldRequestShellThumbnail(true, false, true),
+        "folders keep their ordinary icon representation");
+    Check(!rules::ShouldRequestShellThumbnail(true, true, false),
+        "application-like items keep their ordinary icon representation");
+    Check(!rules::ShouldRequestShellThumbnail(false, false, false),
+        "the fast first phase never requests thumbnails");
+
     const auto downscaled = rules::FitWithoutUpscaling(96, 96, 65, 65);
     Check(downscaled.width == 65 && downscaled.height == 65,
         "large square sources fit the requested target exactly");

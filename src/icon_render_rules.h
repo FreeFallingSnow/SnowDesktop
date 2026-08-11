@@ -39,6 +39,13 @@ constexpr bool ShouldBeautify(bool beautificationEnabled, bool thumbnailRepresen
     return beautificationEnabled && !thumbnailRepresentation;
 }
 
+/** Full-quality Shell loads request previews only for non-application, non-folder items. */
+constexpr bool ShouldRequestShellThumbnail(
+    bool fullQualityPhase, bool applicationLike, bool folder)
+{
+    return fullQualityPhase && !applicationLike && !folder;
+}
+
 struct FittedSize
 {
     int width = 0;

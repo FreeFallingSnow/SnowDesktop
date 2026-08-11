@@ -136,12 +136,6 @@ void DesktopApp::DrawShortcutArrowOverlay(ID2D1RenderTarget* ctx, RECT iconRect,
     ctx->DrawBitmap(arrowBitmap, dst, alpha, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
 }
 
-float DesktopApp::GetBeautifiedIconCornerRadius(int width, int height)
-{
-    return std::max(6.0f,
-        static_cast<float>(std::min(width, height)) * kIconBeautifyCornerRadiusRatio);
-}
-
 void DesktopApp::DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
     D2D1_COLOR_F fill, D2D1_COLOR_F border, float strokeWidth)
 {
@@ -160,37 +154,22 @@ void DesktopApp::DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
     const float top = static_cast<float>(rect.top);
     const float right = static_cast<float>(rect.right);
     const float bottom = static_cast<float>(rect.bottom);
-    const float radius = std::min(GetBeautifiedIconCornerRadius(
-        rect.right - rect.left, rect.bottom - rect.top),
-        std::min(right - left, bottom - top) * 0.5f);
-    constexpr int kCornerSegments = 12;
-    const float coordinatePower = 2.0f / kIconBeautifyCornerExponent;
-    auto cornerPoint = [&](float centerX, float centerY, float angle) {
-        const float cosine = std::cos(angle);
-        const float sine = std::sin(angle);
-        const float x = std::copysign(std::pow(std::abs(cosine), coordinatePower), cosine);
-        const float y = std::copysign(std::pow(std::abs(sine), coordinatePower), sine);
-        return D2D1::Point2F(centerX + radius * x, centerY + radius * y);
+    const float width = right - left;
+    const float height = bottom - top;
+    const auto shape = iconBeautifySettings_.enabled
+        ? iconBeautifySettings_.shape
+        : snowdesktop::IconBeautifyShape::LegacyRounded;
+    const auto& outline = snowdesktop::icon_beautify::ShapeOutline(shape);
+    if (outline.empty())
+        return;
+    const auto toPoint = [&](const snowdesktop::icon_beautify::ShapePoint& point) {
+        return D2D1::Point2F(
+            left + point.x * width,
+            top + point.y * height);
     };
-    auto addCorner = [&](float centerX, float centerY, float startAngle, float endAngle) {
-        for (int i = 1; i <= kCornerSegments; ++i)
-        {
-            const float t = static_cast<float>(i) / static_cast<float>(kCornerSegments);
-            sink->AddLine(cornerPoint(centerX, centerY,
-                startAngle + (endAngle - startAngle) * t));
-        }
-    };
-
-    constexpr float kPi = 3.14159265358979323846f;
-    sink->BeginFigure(D2D1::Point2F(left + radius, top), D2D1_FIGURE_BEGIN_FILLED);
-    sink->AddLine(D2D1::Point2F(right - radius, top));
-    addCorner(right - radius, top + radius, -kPi * 0.5f, 0.0f);
-    sink->AddLine(D2D1::Point2F(right, bottom - radius));
-    addCorner(right - radius, bottom - radius, 0.0f, kPi * 0.5f);
-    sink->AddLine(D2D1::Point2F(left + radius, bottom));
-    addCorner(left + radius, bottom - radius, kPi * 0.5f, kPi);
-    sink->AddLine(D2D1::Point2F(left, top + radius));
-    addCorner(left + radius, top + radius, kPi, kPi * 1.5f);
+    sink->BeginFigure(toPoint(outline.front()), D2D1_FIGURE_BEGIN_FILLED);
+    for (size_t index = 1; index < outline.size(); ++index)
+        sink->AddLine(toPoint(outline[index]));
     sink->EndFigure(D2D1_FIGURE_END_CLOSED);
     if (FAILED(sink->Close())) return;
 

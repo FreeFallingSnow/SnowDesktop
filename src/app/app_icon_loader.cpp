@@ -59,9 +59,24 @@ void DesktopApp::StartIconLoader()
             const bool applicationLike =
                 snowdesktop::shortcut_application_rules::
                     ShouldUseShellIconOnly(representationName);
+            bool shellFolder = false;
+            if (task.phase == IconLoadPhase::Phase2 && !applicationLike)
+            {
+                ComPtr<IShellItem> shellItem;
+                if (SUCCEEDED(SHCreateItemFromIDList(
+                        task.absolutePidl.get(), IID_PPV_ARGS(&shellItem))) &&
+                    shellItem)
+                {
+                    SFGAOF attributes = 0;
+                    if (SUCCEEDED(shellItem->GetAttributes(
+                            SFGAO_FOLDER, &attributes)))
+                        shellFolder = (attributes & SFGAO_FOLDER) != 0;
+                }
+            }
             const bool allowThumbnail =
-                task.phase == IconLoadPhase::Phase2 &&
-                !applicationLike;
+                snowdesktop::icon_render_rules::ShouldRequestShellThumbnail(
+                    task.phase == IconLoadPhase::Phase2,
+                    applicationLike, shellFolder);
             const bool forShortcut =
                 snowdesktop::shortcut_application_rules::HasExtension(
                     representationName, L".lnk") ||

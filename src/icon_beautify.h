@@ -100,6 +100,12 @@ struct EdgeColor
     int b = 0;
 };
 
+struct ShapePoint
+{
+    float x = 0.0f;
+    float y = 0.0f;
+};
+
 IconBeautifySettings Normalize(IconBeautifySettings settings);
 bool Equal(const IconBeautifySettings& lhs, const IconBeautifySettings& rhs);
 bool UsesLegacyGeometryDefaults(const IconBeautifySettings& settings);
@@ -110,6 +116,9 @@ void ApplyLegacyFinish(IconBeautifySettings& settings,
 
 std::uint8_t ShapeMaskAlpha(IconBeautifyShape shape, int x, int y,
     int width, int height, float inset = 0.0f);
+
+/** Normalized closed outline shared by vector UI plates and bitmap masks. */
+const std::vector<ShapePoint>& ShapeOutline(IconBeautifyShape shape);
 
 std::vector<std::uint32_t> Render(
     const std::vector<std::uint32_t>& source,

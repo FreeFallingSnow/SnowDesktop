@@ -1,6 +1,7 @@
 #include "icon_beautify.h"
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <iostream>
 #include <set>
@@ -143,6 +144,7 @@ int main()
     };
 
     std::set<std::uint64_t> maskHashes;
+    std::set<std::uint64_t> outlineHashes;
     for (IconBeautifyShape shape : shapes)
     {
         std::vector<std::uint32_t> mask;
@@ -155,9 +157,30 @@ int main()
             "every shape must contain its center");
         Check(CountPartiallyCovered(shape) > 0,
             "every shape must expose anti-aliased boundary coverage");
+
+        const auto& outline = beautify::ShapeOutline(shape);
+        std::vector<std::uint32_t> outlineCoordinates;
+        outlineCoordinates.reserve(outline.size());
+        bool normalizedOutline = !outline.empty();
+        for (const auto& point : outline)
+        {
+            normalizedOutline = normalizedOutline &&
+                point.x >= 0.0f && point.x <= 1.0f &&
+                point.y >= 0.0f && point.y <= 1.0f;
+            const auto x = static_cast<std::uint32_t>(
+                std::round(point.x * 65535.0f));
+            const auto y = static_cast<std::uint32_t>(
+                std::round(point.y * 65535.0f));
+            outlineCoordinates.push_back((x << 16) | y);
+        }
+        Check(normalizedOutline,
+            "every vector plate outline stays in normalized bounds");
+        outlineHashes.insert(HashPixels(outlineCoordinates));
     }
     Check(maskHashes.size() == shapes.size(),
         "all five exposed shape masks must be geometrically distinct");
+    Check(outlineHashes.size() == shapes.size(),
+        "all five vector plate outlines must be geometrically distinct");
     Check(beautify::ShapeMaskAlpha(IconBeautifyShape::Circle, 0, 0, 64, 64) == 0,
         "circle excludes square corners");
 
