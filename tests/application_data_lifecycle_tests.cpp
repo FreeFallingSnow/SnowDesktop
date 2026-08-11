@@ -295,6 +295,9 @@ int main()
         { "icon beautify content scale type",
             "{\"iconBeautifyContentScale\":\"large\"}",
             "iconBeautifyContentScale" },
+        { "icon beautify outline enabled type",
+            "{\"iconBeautifyOutlineEnabled\":1}",
+            "iconBeautifyOutlineEnabled" },
         { "icon beautify outline color type",
             "{\"iconBeautifyOutlineR\":[]}",
             "iconBeautifyOutlineR" },
@@ -344,7 +347,7 @@ int main()
             "\"iconBeautifyShape\":10,"
             "\"iconBeautifyContentScale\":0.73,"
             "\"iconBeautifyFinish\":2,"
-            "\"iconBeautifyOutlineMode\":2,"
+            "\"iconBeautifyOutlineEnabled\":true,"
             "\"iconBeautifyOutlineWidth\":2.5,"
             "\"iconBeautifyOutlineOpacity\":0.6,"
             "\"iconBeautifyOutlineR\":0.1,"
@@ -356,7 +359,8 @@ int main()
             iconBeautifyLayout.iconBeautifyShape.value_or(-1) == 10 &&
             iconBeautifyLayout.iconBeautifyContentScale.value_or(0.0f) == 0.73f &&
             iconBeautifyLayout.iconBeautifyFinish.value_or(-1) == 2 &&
-            iconBeautifyLayout.iconBeautifyOutlineMode.value_or(-1) == 2 &&
+            iconBeautifyLayout.iconBeautifyOutlineEnabled.value_or(false) &&
+            !iconBeautifyLayout.iconBeautifyOutlineMode.has_value() &&
             iconBeautifyLayout.iconBeautifyOutlineWidth.value_or(0.0f) == 2.5f &&
             iconBeautifyLayout.iconBeautifyOutlineOpacity.value_or(0.0f) == 0.6f &&
             iconBeautifyLayout.iconBeautifyOutlineR.value_or(0.0f) == 0.1f &&
@@ -364,6 +368,13 @@ int main()
             iconBeautifyLayout.iconBeautifyOutlineB.value_or(0.0f) == 0.3f &&
             iconBeautifyLayout.iconBeautifyShadowStrength.value_or(0.0f) == 0.42f,
         "all icon beautify fields decode into the typed layout model");
+    snowdesktop::layout_storage::Document legacyOutlineLayout;
+    Expect(snowdesktop::layout_storage::ParseDocument(
+            "{\"iconBeautifyOutlineMode\":2}",
+            legacyOutlineLayout, &layoutError) &&
+            !legacyOutlineLayout.iconBeautifyOutlineEnabled.has_value() &&
+            legacyOutlineLayout.iconBeautifyOutlineMode.value_or(-1) == 2,
+        "legacy outline mode remains available for bool migration");
     snowdesktop::layout_storage::Document packageSourceLayout;
     Expect(snowdesktop::layout_storage::ParseDocument(
             "{\"widgets\":[{\"id\":\"workshop-widget\","

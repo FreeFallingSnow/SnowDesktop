@@ -2489,17 +2489,11 @@ void SettingsWindow::DrawDisplayPage()
     const char* presetNames[] = {
         _L("app.settings.beautify_preset_none"),
         _L("app.settings.beautify_preset_classic"),
-        _L("app.settings.beautify_preset_apple_glass"),
-        _L("app.settings.beautify_preset_circle_sticker"),
-        _L("app.settings.beautify_preset_pebble_gloss"),
         _L("app.settings.custom"),
     };
     constexpr snowdesktop::IconBeautifyPreset presetIds[] = {
         snowdesktop::IconBeautifyPreset::None,
         snowdesktop::IconBeautifyPreset::ClassicRounded,
-        snowdesktop::IconBeautifyPreset::AppleGlass,
-        snowdesktop::IconBeautifyPreset::CircleSticker,
-        snowdesktop::IconBeautifyPreset::PebbleGloss,
         snowdesktop::IconBeautifyPreset::Custom,
     };
     int presetIndex = 0;
@@ -2523,6 +2517,81 @@ void SettingsWindow::DrawDisplayPage()
     {
     ImGui::Spacing();
     ImGui::Indent(8.0f * dpiScale_);
+
+    const char* beautifyModeNames[] = {
+        _L("app.settings.beautify_smart"),
+        _L("app.settings.beautify_shrink_bg"),
+    };
+    BeginSettingRow(_L("app.settings.beautify_mode"), controlW);
+    ImGui::SetNextItemWidth(controlW);
+    if (ImGui::Combo("##IconBeautifyMode", &iconBeautifySettings_.mode,
+            beautifyModeNames, IM_ARRAYSIZE(beautifyModeNames)))
+        notifyIconBeautify(snowdesktop::IconBeautifyUpdateKind::Commit);
+
+    BeginSettingRow(_L("app.settings.default_bg"),
+        ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
+    float bgStart[3] = {
+        iconBeautifySettings_.backgroundStartR,
+        iconBeautifySettings_.backgroundStartG,
+        iconBeautifySettings_.backgroundStartB };
+    if (ImGui::ColorEdit3("##IconBeautifyBgStart", bgStart,
+            ImGuiColorEditFlags_NoInputs))
+    {
+        iconBeautifySettings_.backgroundStartR = bgStart[0];
+        iconBeautifySettings_.backgroundStartG = bgStart[1];
+        iconBeautifySettings_.backgroundStartB = bgStart[2];
+        previewIconBeautify();
+    }
+    commitContinuousIconBeautify();
+
+    BeginSettingRow(_L("app.settings.bg_opacity_val"), sliderW);
+    ImGui::SetNextItemWidth(sliderW);
+    int backgroundOpacityPercent = static_cast<int>(std::round(
+        iconBeautifySettings_.backgroundOpacity * 100.0f));
+    if (ImGui::SliderInt("##IconBeautifyBgOpacity",
+            &backgroundOpacityPercent, 0, 100, "%d%%"))
+    {
+        iconBeautifySettings_.backgroundOpacity =
+            backgroundOpacityPercent / 100.0f;
+        previewIconBeautify();
+    }
+    commitContinuousIconBeautify();
+
+    if (DrawSettingCheckbox(_L("app.settings.enable_gradient_bg"),
+            "##IconBeautifyGradient",
+            &iconBeautifySettings_.gradientEnabled))
+        notifyIconBeautify(snowdesktop::IconBeautifyUpdateKind::Commit);
+
+    ImGui::BeginDisabled(!iconBeautifySettings_.gradientEnabled);
+    BeginSettingRow(_L("app.settings.gradient_end_color"),
+        ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
+    float bgEnd[3] = {
+        iconBeautifySettings_.backgroundEndR,
+        iconBeautifySettings_.backgroundEndG,
+        iconBeautifySettings_.backgroundEndB };
+    if (ImGui::ColorEdit3("##IconBeautifyBgEnd", bgEnd,
+            ImGuiColorEditFlags_NoInputs))
+    {
+        iconBeautifySettings_.backgroundEndR = bgEnd[0];
+        iconBeautifySettings_.backgroundEndG = bgEnd[1];
+        iconBeautifySettings_.backgroundEndB = bgEnd[2];
+        previewIconBeautify();
+    }
+    commitContinuousIconBeautify();
+
+    const char* directionNames[] = {
+        _L("app.settings.beautify_gradient_updown"),
+        _L("app.settings.beautify_gradient_leftright"),
+        _L("app.settings.beautify_gradient_topleft_bottomright"),
+        _L("app.settings.beautify_gradient_bottomleft_topright"),
+    };
+    BeginSettingRow(_L("app.settings.beautify_gradient_dir"), controlW);
+    ImGui::SetNextItemWidth(controlW);
+    if (ImGui::Combo("##IconBeautifyGradientDirection",
+            &iconBeautifySettings_.gradientDirection,
+            directionNames, IM_ARRAYSIZE(directionNames)))
+        notifyIconBeautify(snowdesktop::IconBeautifyUpdateKind::Commit);
+    ImGui::EndDisabled();
 
     const char* shapeNames[] = {
         _L("app.settings.beautify_shape_legacy"),
@@ -2565,16 +2634,6 @@ void SettingsWindow::DrawDisplayPage()
         notifyIconBeautify(snowdesktop::IconBeautifyUpdateKind::Commit);
     }
 
-    const char* beautifyModeNames[] = {
-        _L("app.settings.beautify_smart"),
-        _L("app.settings.beautify_shrink_bg"),
-    };
-    BeginSettingRow(_L("app.settings.beautify_mode"), controlW);
-    ImGui::SetNextItemWidth(controlW);
-    if (ImGui::Combo("##IconBeautifyMode", &iconBeautifySettings_.mode,
-            beautifyModeNames, IM_ARRAYSIZE(beautifyModeNames)))
-        notifyIconBeautify(snowdesktop::IconBeautifyUpdateKind::Commit);
-
     BeginSettingRow(_L("app.settings.beautify_content_scale"), sliderW);
     ImGui::SetNextItemWidth(sliderW);
     int contentScalePercent = static_cast<int>(std::round(
@@ -2599,22 +2658,11 @@ void SettingsWindow::DrawDisplayPage()
     }
     commitContinuousIconBeautify();
 
-    const char* outlineModeNames[] = {
-        _L("app.settings.beautify_outline_none"),
-        _L("app.settings.beautify_outline_auto"),
-        _L("app.settings.beautify_outline_custom"),
-    };
-    int outlineMode = static_cast<int>(iconBeautifySettings_.outlineMode);
-    BeginSettingRow(_L("app.settings.beautify_outline"), controlW);
-    ImGui::SetNextItemWidth(controlW);
-    if (ImGui::Combo("##IconBeautifyOutlineMode", &outlineMode,
-            outlineModeNames, IM_ARRAYSIZE(outlineModeNames)))
-    {
-        iconBeautifySettings_.outlineMode =
-            static_cast<snowdesktop::IconBeautifyOutlineMode>(outlineMode);
+    if (DrawSettingCheckbox(_L("app.settings.beautify_outline"),
+            "##IconBeautifyOutlineEnabled",
+            &iconBeautifySettings_.outlineEnabled))
         notifyIconBeautify(snowdesktop::IconBeautifyUpdateKind::Commit);
-    }
-    if (iconBeautifySettings_.outlineMode != snowdesktop::IconBeautifyOutlineMode::None)
+    if (iconBeautifySettings_.outlineEnabled)
     {
         BeginSettingRow(_L("app.settings.beautify_outline_width"), sliderW);
         ImGui::SetNextItemWidth(sliderW);
@@ -2636,92 +2684,21 @@ void SettingsWindow::DrawDisplayPage()
         }
         commitContinuousIconBeautify();
 
-        if (iconBeautifySettings_.outlineMode == snowdesktop::IconBeautifyOutlineMode::Custom)
+        BeginSettingRow(_L("app.settings.beautify_outline_color"),
+            ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
+        float outlineColor[3] = {
+            iconBeautifySettings_.outlineR,
+            iconBeautifySettings_.outlineG,
+            iconBeautifySettings_.outlineB };
+        if (ImGui::ColorEdit3("##IconBeautifyOutlineColor", outlineColor,
+                ImGuiColorEditFlags_NoInputs))
         {
-            BeginSettingRow(_L("app.settings.beautify_outline_color"),
-                ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
-            float outlineColor[3] = {
-                iconBeautifySettings_.outlineR,
-                iconBeautifySettings_.outlineG,
-                iconBeautifySettings_.outlineB };
-            if (ImGui::ColorEdit3("##IconBeautifyOutlineColor", outlineColor,
-                    ImGuiColorEditFlags_NoInputs))
-            {
-                iconBeautifySettings_.outlineR = outlineColor[0];
-                iconBeautifySettings_.outlineG = outlineColor[1];
-                iconBeautifySettings_.outlineB = outlineColor[2];
-                previewIconBeautify();
-            }
-            commitContinuousIconBeautify();
+            iconBeautifySettings_.outlineR = outlineColor[0];
+            iconBeautifySettings_.outlineG = outlineColor[1];
+            iconBeautifySettings_.outlineB = outlineColor[2];
+            previewIconBeautify();
         }
-    }
-
-    if (ImGui::CollapsingHeader(_L("app.settings.beautify_advanced")))
-    {
-            BeginSettingRow(_L("app.settings.default_bg"),
-                ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
-            float bgStart[3] = {
-                iconBeautifySettings_.backgroundStartR,
-                iconBeautifySettings_.backgroundStartG,
-                iconBeautifySettings_.backgroundStartB };
-            if (ImGui::ColorEdit3("##IconBeautifyBgStart", bgStart,
-                    ImGuiColorEditFlags_NoInputs))
-            {
-                iconBeautifySettings_.backgroundStartR = bgStart[0];
-                iconBeautifySettings_.backgroundStartG = bgStart[1];
-                iconBeautifySettings_.backgroundStartB = bgStart[2];
-                previewIconBeautify();
-            }
-            commitContinuousIconBeautify();
-
-            BeginSettingRow(_L("app.settings.bg_opacity_val"), sliderW);
-            ImGui::SetNextItemWidth(sliderW);
-            int backgroundOpacityPercent = static_cast<int>(std::round(
-                iconBeautifySettings_.backgroundOpacity * 100.0f));
-            if (ImGui::SliderInt("##IconBeautifyBgOpacity",
-                    &backgroundOpacityPercent, 0, 100, "%d%%"))
-            {
-                iconBeautifySettings_.backgroundOpacity =
-                    backgroundOpacityPercent / 100.0f;
-                previewIconBeautify();
-            }
-            commitContinuousIconBeautify();
-
-            if (DrawSettingCheckbox(_L("app.settings.enable_gradient_bg"),
-                    "##IconBeautifyGradient",
-                    &iconBeautifySettings_.gradientEnabled))
-                notifyIconBeautify(snowdesktop::IconBeautifyUpdateKind::Commit);
-
-            ImGui::BeginDisabled(!iconBeautifySettings_.gradientEnabled);
-            BeginSettingRow(_L("app.settings.gradient_end_color"),
-                ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
-            float bgEnd[3] = {
-                iconBeautifySettings_.backgroundEndR,
-                iconBeautifySettings_.backgroundEndG,
-                iconBeautifySettings_.backgroundEndB };
-            if (ImGui::ColorEdit3("##IconBeautifyBgEnd", bgEnd,
-                    ImGuiColorEditFlags_NoInputs))
-            {
-                iconBeautifySettings_.backgroundEndR = bgEnd[0];
-                iconBeautifySettings_.backgroundEndG = bgEnd[1];
-                iconBeautifySettings_.backgroundEndB = bgEnd[2];
-                previewIconBeautify();
-            }
-            commitContinuousIconBeautify();
-
-            const char* directionNames[] = {
-                _L("app.settings.beautify_gradient_updown"),
-                _L("app.settings.beautify_gradient_leftright"),
-                _L("app.settings.beautify_gradient_topleft_bottomright"),
-                _L("app.settings.beautify_gradient_bottomleft_topright"),
-            };
-            BeginSettingRow(_L("app.settings.beautify_gradient_dir"), controlW);
-            ImGui::SetNextItemWidth(controlW);
-            if (ImGui::Combo("##IconBeautifyGradientDirection",
-                    &iconBeautifySettings_.gradientDirection,
-                    directionNames, IM_ARRAYSIZE(directionNames)))
-                notifyIconBeautify(snowdesktop::IconBeautifyUpdateKind::Commit);
-            ImGui::EndDisabled();
+        commitContinuousIconBeautify();
     }
     ImGui::Unindent(8.0f * dpiScale_);
     }

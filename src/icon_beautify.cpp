@@ -504,19 +504,12 @@ void ApplyFinish(std::vector<std::uint32_t>& output, int width, int height,
 }
 
 void ApplyOutline(std::vector<std::uint32_t>& output, int width, int height,
-    const IconBeautifySettings& settings, std::optional<EdgeColor> edgeFill)
+    const IconBeautifySettings& settings)
 {
-    if (settings.outlineMode == IconBeautifyOutlineMode::None || settings.outlineWidth <= 0.0f)
+    if (!settings.outlineEnabled || settings.outlineWidth <= 0.0f)
         return;
-    EdgeColor stroke{};
-    if (settings.outlineMode == IconBeautifyOutlineMode::Custom)
-        stroke = ColorFromFloats(settings.outlineR, settings.outlineG, settings.outlineB);
-    else if (edgeFill)
-        stroke = Luma(*edgeFill) >= 128 ? EdgeColor{160, 170, 188} : EdgeColor{218, 225, 238};
-    else
-        stroke = AutoOutline(
-            ColorFromFloats(settings.backgroundStartR, settings.backgroundStartG, settings.backgroundStartB),
-            ColorFromFloats(settings.backgroundEndR, settings.backgroundEndG, settings.backgroundEndB));
+    const EdgeColor stroke = ColorFromFloats(
+        settings.outlineR, settings.outlineG, settings.outlineB);
     const auto& mask = CachedMask(settings.shape, width, height, 0.0f);
     const auto& inner = CachedMask(settings.shape, width, height, settings.outlineWidth);
     const int opacity = static_cast<int>(std::round(settings.outlineOpacity * 255.0f));
@@ -532,8 +525,11 @@ void ApplyOutline(std::vector<std::uint32_t>& output, int width, int height,
 
 IconBeautifySettings Normalize(IconBeautifySettings settings)
 {
-    settings.preset = static_cast<IconBeautifyPreset>(
-        std::clamp(static_cast<int>(settings.preset), 0, 5));
+    const int preset = static_cast<int>(settings.preset);
+    if (preset != static_cast<int>(IconBeautifyPreset::None) &&
+        preset != static_cast<int>(IconBeautifyPreset::ClassicRounded) &&
+        preset != static_cast<int>(IconBeautifyPreset::Custom))
+        settings.preset = IconBeautifyPreset::Custom;
     settings.mode = std::clamp(settings.mode, 0, 1);
     settings.backgroundOpacity = std::clamp(settings.backgroundOpacity, 0.0f, 1.0f);
     settings.gradientDirection = std::clamp(settings.gradientDirection, 0, 3);
@@ -546,8 +542,6 @@ IconBeautifySettings Normalize(IconBeautifySettings settings)
     settings.shape = static_cast<IconBeautifyShape>(std::clamp(static_cast<int>(settings.shape), 0, 10));
     settings.contentScale = std::clamp(settings.contentScale, 0.50f, 0.90f);
     settings.finish = static_cast<IconBeautifyFinish>(std::clamp(static_cast<int>(settings.finish), 0, 3));
-    settings.outlineMode = static_cast<IconBeautifyOutlineMode>(
-        std::clamp(static_cast<int>(settings.outlineMode), 0, 2));
     settings.outlineWidth = std::clamp(settings.outlineWidth, 0.0f, 4.0f);
     settings.outlineOpacity = std::clamp(settings.outlineOpacity, 0.0f, 1.0f);
     settings.outlineR = std::clamp(settings.outlineR, 0.0f, 1.0f);
@@ -574,7 +568,7 @@ bool Equal(const IconBeautifySettings& lhs, const IconBeautifySettings& rhs)
         eq(a.backgroundEndG, b.backgroundEndG) &&
         eq(a.backgroundEndB, b.backgroundEndB) &&
         a.shape == b.shape && eq(a.contentScale, b.contentScale) &&
-        a.finish == b.finish && a.outlineMode == b.outlineMode &&
+        a.finish == b.finish && a.outlineEnabled == b.outlineEnabled &&
         eq(a.outlineWidth, b.outlineWidth) &&
         eq(a.outlineOpacity, b.outlineOpacity) &&
         eq(a.outlineR, b.outlineR) && eq(a.outlineG, b.outlineG) &&
@@ -585,7 +579,7 @@ bool UsesLegacyGeometryDefaults(const IconBeautifySettings& settings)
 {
     const IconBeautifySettings s = Normalize(settings);
     return s.shape == IconBeautifyShape::LegacyRounded && s.finish == IconBeautifyFinish::Flat &&
-        s.outlineMode == IconBeautifyOutlineMode::Automatic &&
+        !s.outlineEnabled &&
         std::abs(s.outlineWidth - 1.0f) <= 0.0005f &&
         std::abs(s.outlineOpacity - 1.0f) <= 0.0005f &&
         std::abs(s.contentScale - 0.68f) <= 0.0005f &&
@@ -595,64 +589,19 @@ bool UsesLegacyGeometryDefaults(const IconBeautifySettings& settings)
 IconBeautifySettings MakePreset(IconBeautifyPreset preset)
 {
     IconBeautifySettings settings{};
-    settings.preset = preset;
     switch (preset)
     {
     case IconBeautifyPreset::None:
-        return settings;
-    case IconBeautifyPreset::AppleGlass:
-        settings.enabled = true;
-        settings.shape = IconBeautifyShape::Apple;
-        settings.finish = IconBeautifyFinish::Glass;
-        settings.backgroundOpacity = 0.82f;
-        settings.gradientEnabled = true;
-        settings.gradientDirection = 2;
-        settings.backgroundStartR = 156.0f / 255.0f;
-        settings.backgroundStartG = 216.0f / 255.0f;
-        settings.backgroundStartB = 1.0f;
-        settings.backgroundEndR = 74.0f / 255.0f;
-        settings.backgroundEndG = 128.0f / 255.0f;
-        settings.backgroundEndB = 1.0f;
-        settings.outlineOpacity = 0.78f;
-        settings.shadowStrength = 0.30f;
-        return settings;
-    case IconBeautifyPreset::CircleSticker:
-        settings.enabled = true;
-        settings.shape = IconBeautifyShape::Circle;
-        settings.finish = IconBeautifyFinish::Sticker;
-        settings.contentScale = 0.72f;
-        settings.backgroundOpacity = 0.92f;
-        settings.gradientEnabled = false;
-        settings.backgroundStartR = 1.0f;
-        settings.backgroundStartG = 1.0f;
-        settings.backgroundStartB = 1.0f;
-        settings.backgroundEndR = 1.0f;
-        settings.backgroundEndG = 1.0f;
-        settings.backgroundEndB = 1.0f;
-        settings.outlineWidth = 1.5f;
-        settings.outlineOpacity = 0.85f;
-        settings.shadowStrength = 0.22f;
-        return settings;
-    case IconBeautifyPreset::PebbleGloss:
-        settings.enabled = true;
-        settings.shape = IconBeautifyShape::Pebble;
-        settings.finish = IconBeautifyFinish::Gloss;
-        settings.contentScale = 0.70f;
-        settings.backgroundOpacity = 0.78f;
-        settings.gradientEnabled = true;
-        settings.gradientDirection = 3;
-        settings.backgroundStartR = 1.0f;
-        settings.backgroundStartG = 218.0f / 255.0f;
-        settings.backgroundStartB = 138.0f / 255.0f;
-        settings.backgroundEndR = 1.0f;
-        settings.backgroundEndG = 122.0f / 255.0f;
-        settings.backgroundEndB = 164.0f / 255.0f;
-        settings.outlineOpacity = 0.72f;
-        settings.shadowStrength = 0.40f;
+        settings.preset = IconBeautifyPreset::None;
         return settings;
     case IconBeautifyPreset::ClassicRounded:
+        settings.preset = IconBeautifyPreset::ClassicRounded;
+        settings.enabled = true;
+        settings.outlineEnabled = false;
+        return settings;
     case IconBeautifyPreset::Custom:
     default:
+        settings.preset = IconBeautifyPreset::Custom;
         settings.enabled = true;
         return settings;
     }
@@ -665,11 +614,8 @@ IconBeautifyPreset IdentifyPreset(const IconBeautifySettings& settings)
         return IconBeautifyPreset::None;
     if (normalized.preset == IconBeautifyPreset::Custom)
         return IconBeautifyPreset::Custom;
-    constexpr std::array<IconBeautifyPreset, 4> presets{
+    constexpr std::array<IconBeautifyPreset, 1> presets{
         IconBeautifyPreset::ClassicRounded,
-        IconBeautifyPreset::AppleGlass,
-        IconBeautifyPreset::CircleSticker,
-        IconBeautifyPreset::PebbleGloss,
     };
     for (IconBeautifyPreset preset : presets)
     {
@@ -729,21 +675,7 @@ std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
         for (size_t i = 0; i < output.size(); ++i)
             output[i] = ScalePixel(SourceOver(source[i], background), mask[i]);
         ApplyFinish(output, width, height, settings);
-        if (legacyExact)
-        {
-            if (Luma(edge) >= 232)
-            {
-                IconBeautifySettings legacyOutline = settings;
-                legacyOutline.outlineMode = IconBeautifyOutlineMode::Custom;
-                legacyOutline.outlineR = 190.0f / 255.0f;
-                legacyOutline.outlineG = 199.0f / 255.0f;
-                legacyOutline.outlineB = 214.0f / 255.0f;
-                legacyOutline.outlineOpacity = 150.0f / 255.0f;
-                ApplyOutline(output, width, height, legacyOutline, edge);
-            }
-        }
-        else
-            ApplyOutline(output, width, height, settings, edge);
+        ApplyOutline(output, width, height, settings);
         return output;
     }
 
@@ -815,8 +747,7 @@ std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
         }
 
     ApplyFinish(output, width, height, settings);
-    if (!legacyExact)
-        ApplyOutline(output, width, height, settings, std::nullopt);
+    ApplyOutline(output, width, height, settings);
     return output;
 }
 }

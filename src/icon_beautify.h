@@ -29,13 +29,6 @@ enum class IconBeautifyFinish : int
     Sticker = 3,
 };
 
-enum class IconBeautifyOutlineMode : int
-{
-    None = 0,
-    Automatic = 1,
-    Custom = 2,
-};
-
 enum class IconBeautifyUpdateKind : int
 {
     Preview = 0,
@@ -46,9 +39,6 @@ enum class IconBeautifyPreset : int
 {
     None = 0,
     ClassicRounded = 1,
-    AppleGlass = 2,
-    CircleSticker = 3,
-    PebbleGloss = 4,
     Custom = 5,
 };
 
@@ -88,7 +78,7 @@ struct IconBeautifySettings
     IconBeautifyShape shape = IconBeautifyShape::LegacyRounded;
     float contentScale = 0.68f;
     IconBeautifyFinish finish = IconBeautifyFinish::Flat;
-    IconBeautifyOutlineMode outlineMode = IconBeautifyOutlineMode::Automatic;
+    bool outlineEnabled = false;
     float outlineWidth = 1.0f;
     float outlineOpacity = 1.0f;
     float outlineR = 190.0f / 255.0f;

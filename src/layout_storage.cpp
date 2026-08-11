@@ -488,6 +488,8 @@ bool DecodeDocument(const JsonValue& root, Document& document,
             error) ||
         !ReadOptionalInteger(root, "iconBeautifyFinish",
             "iconBeautifyFinish", decoded.iconBeautifyFinish, error) ||
+        !ReadOptionalRootBoolean(root, "iconBeautifyOutlineEnabled",
+            decoded.iconBeautifyOutlineEnabled, error) ||
         !ReadOptionalInteger(root, "iconBeautifyOutlineMode",
             "iconBeautifyOutlineMode", decoded.iconBeautifyOutlineMode,
             error) ||

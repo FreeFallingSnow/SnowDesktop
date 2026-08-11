@@ -175,10 +175,16 @@ void DesktopApp::LoadLayoutSlots()
     if (document.iconBeautifyFinish)
         iconBeautifySettings_.finish = static_cast<snowdesktop::IconBeautifyFinish>(
             *document.iconBeautifyFinish);
-    if (document.iconBeautifyOutlineMode)
-        iconBeautifySettings_.outlineMode =
-            static_cast<snowdesktop::IconBeautifyOutlineMode>(
-                *document.iconBeautifyOutlineMode);
+    if (document.iconBeautifyOutlineEnabled)
+        iconBeautifySettings_.outlineEnabled =
+            *document.iconBeautifyOutlineEnabled;
+    else if (document.iconBeautifyOutlineMode)
+    {
+        // Only the former custom mode represented an explicit user outline.
+        // The removed automatic mode migrates to the new disabled state.
+        iconBeautifySettings_.outlineEnabled =
+            *document.iconBeautifyOutlineMode == 2;
+    }
     if (document.iconBeautifyOutlineWidth)
         iconBeautifySettings_.outlineWidth = *document.iconBeautifyOutlineWidth;
     if (document.iconBeautifyOutlineOpacity)
@@ -725,7 +731,7 @@ void DesktopApp::SaveLayoutSlots()
          << ",\n  \"iconBeautifyShape\": " << static_cast<int>(iconBeautifySettings_.shape)
          << ",\n  \"iconBeautifyContentScale\": " << iconBeautifySettings_.contentScale
          << ",\n  \"iconBeautifyFinish\": " << static_cast<int>(iconBeautifySettings_.finish)
-         << ",\n  \"iconBeautifyOutlineMode\": " << static_cast<int>(iconBeautifySettings_.outlineMode)
+         << ",\n  \"iconBeautifyOutlineEnabled\": " << (iconBeautifySettings_.outlineEnabled ? "true" : "false")
          << ",\n  \"iconBeautifyOutlineWidth\": " << iconBeautifySettings_.outlineWidth
          << ",\n  \"iconBeautifyOutlineOpacity\": " << iconBeautifySettings_.outlineOpacity
          << ",\n  \"iconBeautifyOutlineR\": " << iconBeautifySettings_.outlineR

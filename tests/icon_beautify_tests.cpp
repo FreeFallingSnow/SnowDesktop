@@ -67,7 +67,6 @@ int CountPartiallyCovered(snowdesktop::IconBeautifyShape shape)
 int main()
 {
     using snowdesktop::IconBeautifyFinish;
-    using snowdesktop::IconBeautifyOutlineMode;
     using snowdesktop::IconBeautifyPreset;
     using snowdesktop::IconBeautifySettings;
     using snowdesktop::IconBeautifyShape;
@@ -80,9 +79,8 @@ int main()
         static_cast<int>(IconBeautifyShape::Pebble) == 10 &&
         static_cast<int>(IconBeautifyFinish::Flat) == 0 &&
         static_cast<int>(IconBeautifyFinish::Sticker) == 3 &&
-        static_cast<int>(IconBeautifyOutlineMode::None) == 0 &&
-        static_cast<int>(IconBeautifyOutlineMode::Custom) == 2 &&
         static_cast<int>(IconBeautifyPreset::None) == 0 &&
+        static_cast<int>(IconBeautifyPreset::ClassicRounded) == 1 &&
         static_cast<int>(IconBeautifyPreset::Custom) == 5,
         "persisted beautification enums have stable values");
 
@@ -101,12 +99,10 @@ int main()
             beautify::InteractionAction::Commit,
         "continuous controls throttle previews and commit only on release");
 
-    constexpr std::array<IconBeautifyPreset, 5> builtInPresets{
+    constexpr std::array<IconBeautifyPreset, 3> builtInPresets{
         IconBeautifyPreset::None,
         IconBeautifyPreset::ClassicRounded,
-        IconBeautifyPreset::AppleGlass,
-        IconBeautifyPreset::CircleSticker,
-        IconBeautifyPreset::PebbleGloss,
+        IconBeautifyPreset::Custom,
     };
     for (IconBeautifyPreset preset : builtInPresets)
     {
@@ -118,6 +114,12 @@ int main()
     customPreset.contentScale = 0.71f;
     Check(beautify::IdentifyPreset(customPreset) == IconBeautifyPreset::Custom,
         "edited preset settings are identified as custom");
+    auto inheritedClassic = beautify::MakePreset(IconBeautifyPreset::ClassicRounded);
+    inheritedClassic.preset = IconBeautifyPreset::Custom;
+    Check(inheritedClassic.enabled && !inheritedClassic.outlineEnabled &&
+        inheritedClassic.shape == IconBeautifyShape::LegacyRounded &&
+        inheritedClassic.contentScale == 0.68f,
+        "switching classic to custom can retain the complete preset parameters");
 
     constexpr std::array<IconBeautifyShape, 11> shapes{
         IconBeautifyShape::LegacyRounded,
@@ -162,7 +164,7 @@ int main()
         "legacy rounded is the compatibility shape default");
     Check(defaults.contentScale == 0.68f &&
         defaults.finish == IconBeautifyFinish::Flat &&
-        defaults.outlineMode == IconBeautifyOutlineMode::Automatic &&
+        !defaults.outlineEnabled &&
         defaults.outlineWidth == 1.0f && defaults.shadowStrength == 0.35f,
         "new settings retain the locked compatibility defaults");
     Check(beautify::UsesLegacyGeometryDefaults(defaults),
@@ -177,16 +179,23 @@ int main()
     invalid.shadowStrength = 2.0f;
     invalid.shape = static_cast<IconBeautifyShape>(99);
     invalid.finish = static_cast<IconBeautifyFinish>(99);
-    invalid.outlineMode = static_cast<IconBeautifyOutlineMode>(99);
     const IconBeautifySettings normalized = beautify::Normalize(invalid);
     Check(normalized.preset == IconBeautifyPreset::Custom &&
         normalized.mode == 1 && normalized.contentScale == 0.50f &&
         normalized.outlineWidth == 4.0f && normalized.outlineOpacity == 0.0f &&
         normalized.shadowStrength == 1.0f &&
         normalized.shape == IconBeautifyShape::Pebble &&
-        normalized.finish == IconBeautifyFinish::Sticker &&
-        normalized.outlineMode == IconBeautifyOutlineMode::Custom,
+        normalized.finish == IconBeautifyFinish::Sticker,
         "settings normalization clamps persisted values to stable ranges");
+    IconBeautifySettings removedPreset = defaults;
+    removedPreset.preset = static_cast<IconBeautifyPreset>(2);
+    removedPreset.shape = IconBeautifyShape::Apple;
+    removedPreset.outlineEnabled = true;
+    const IconBeautifySettings migratedPreset = beautify::Normalize(removedPreset);
+    Check(migratedPreset.preset == IconBeautifyPreset::Custom &&
+        migratedPreset.shape == IconBeautifyShape::Apple &&
+        migratedPreset.outlineEnabled,
+        "removed presets migrate to custom without losing their parameters");
 
     const auto source = TestIcon(64);
     Check(beautify::Render(source, 64, 64, defaults) == source,
@@ -204,7 +213,7 @@ int main()
         "each shape changes the composite output");
 
     settings.shape = IconBeautifyShape::Pebble;
-    settings.outlineMode = IconBeautifyOutlineMode::None;
+    settings.outlineEnabled = false;
     settings.finish = IconBeautifyFinish::Flat;
     const auto flat = beautify::Render(source, 64, 64, settings);
     settings.finish = IconBeautifyFinish::Gloss;
@@ -220,9 +229,9 @@ int main()
         "flat, gloss, glass, and sticker finishes are semantically distinct");
 
     settings.finish = IconBeautifyFinish::Flat;
-    settings.outlineMode = IconBeautifyOutlineMode::None;
+    settings.outlineEnabled = false;
     const auto noOutline = beautify::Render(source, 64, 64, settings);
-    settings.outlineMode = IconBeautifyOutlineMode::Custom;
+    settings.outlineEnabled = true;
     settings.outlineWidth = 3.0f;
     settings.outlineOpacity = 1.0f;
     settings.outlineR = 0.0f;
@@ -232,7 +241,7 @@ int main()
     Check(HashPixels(noOutline) != HashPixels(customOutline),
         "custom outline changes edge pixels");
 
-    settings.outlineMode = IconBeautifyOutlineMode::None;
+    settings.outlineEnabled = false;
     settings.shadowStrength = 0.0f;
     const auto noShadow = beautify::Render(source, 64, 64, settings);
     settings.shadowStrength = 1.0f;

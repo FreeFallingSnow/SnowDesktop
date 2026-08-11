@@ -106,6 +106,8 @@ struct Document
     std::optional<int> iconBeautifyShape;
     std::optional<float> iconBeautifyContentScale;
     std::optional<int> iconBeautifyFinish;
+    std::optional<bool> iconBeautifyOutlineEnabled;
+    // Legacy migration input. New layouts persist iconBeautifyOutlineEnabled.
     std::optional<int> iconBeautifyOutlineMode;
     std::optional<float> iconBeautifyOutlineWidth;
     std::optional<float> iconBeautifyOutlineOpacity;
