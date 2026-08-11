@@ -9,18 +9,13 @@ namespace snowdesktop
 enum class IconBeautifyShape : int
 {
     LegacyRounded = 0,
-    Apple = 1,
+    ContinuousRounded = 1,
     Circle = 2,
-    Samsung = 3,
-    RoundedSquare = 4,
-    Teardrop = 5,
-    Bookmark = 6,
-    Lemon = 7,
-    Diamond = 8,
-    Flower = 9,
+    SoftRounded = 3,
     Pebble = 10,
 };
 
+// Retained only to migrate layouts written by the former finish presets.
 enum class IconBeautifyFinish : int
 {
     Flat = 0,
@@ -77,7 +72,20 @@ struct IconBeautifySettings
 
     IconBeautifyShape shape = IconBeautifyShape::LegacyRounded;
     float contentScale = 0.68f;
-    IconBeautifyFinish finish = IconBeautifyFinish::Flat;
+    float textureHighlightStrength = 0.0f;
+    float textureHighlightSize = 0.55f;
+    float textureHighlightAngle = 0.0f;
+    float textureShadeStrength = 0.0f;
+    float textureEdgeHighlight = 0.0f;
+    bool filterEnabled = false;
+    float filterHue = 0.0f;
+    float filterSaturation = 1.0f;
+    float filterBrightness = 0.0f;
+    float filterContrast = 1.0f;
+    float filterTintStrength = 0.25f;
+    float filterTintR = 90.0f / 255.0f;
+    float filterTintG = 140.0f / 255.0f;
+    float filterTintB = 1.0f;
     bool outlineEnabled = false;
     float outlineWidth = 1.0f;
     float outlineOpacity = 1.0f;
@@ -101,6 +109,8 @@ bool Equal(const IconBeautifySettings& lhs, const IconBeautifySettings& rhs);
 bool UsesLegacyGeometryDefaults(const IconBeautifySettings& settings);
 IconBeautifySettings MakePreset(IconBeautifyPreset preset);
 IconBeautifyPreset IdentifyPreset(const IconBeautifySettings& settings);
+void ApplyLegacyFinish(IconBeautifySettings& settings,
+    IconBeautifyFinish finish);
 
 std::uint8_t ShapeMaskAlpha(IconBeautifyShape shape, int x, int y,
     int width, int height, float inset = 0.0f);

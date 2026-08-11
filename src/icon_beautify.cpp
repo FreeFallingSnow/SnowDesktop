@@ -109,10 +109,10 @@ void SampleCubic(std::vector<Point>& points, Point p0, Point c1,
     }
 }
 
-std::vector<Point> AppleOutline()
+std::vector<Point> ContinuousRoundedOutline()
 {
-    // The continuous-corner curve uses the public iOS control points also used
-    // by DeskMakeover. Coordinates are normalized to the unit square.
+    // The continuous-corner curve uses normalized control points from the
+    // DeskMakeover shape catalog.
     constexpr float r = 0.225f;
     auto tl = [](float x, float y) { return Point{ x * r, y * r }; };
     auto tr = [](float x, float y) { return Point{ 1.0f - x * r, y * r }; };
@@ -165,48 +165,14 @@ std::vector<Point> FourCubicOutline(Point start,
 
 const std::vector<Point>& OutlineFor(IconBeautifyShape shape)
 {
-    static const std::vector<Point> apple = AppleOutline();
-    static const std::vector<Point> samsung = FourCubicOutline(
+    static const std::vector<Point> continuousRounded = ContinuousRoundedOutline();
+    static const std::vector<Point> softRounded = FourCubicOutline(
         { 0.5f, 0.0f }, {{
             {{{0.1f,0.0f},{0.0f,0.1f},{0.0f,0.5f}}},
             {{{0.0f,0.9f},{0.1f,1.0f},{0.5f,1.0f}}},
             {{{0.9f,1.0f},{1.0f,0.9f},{1.0f,0.5f}}},
             {{{1.0f,0.1f},{0.9f,0.0f},{0.5f,0.0f}}},
         }});
-    static const std::vector<Point> teardrop = FourCubicOutline(
-        { 0.50f, 0.02f }, {{
-            {{{0.72f,0.12f},{0.98f,0.34f},{0.98f,0.58f}}},
-            {{{0.98f,0.84f},{0.78f,0.98f},{0.52f,0.98f}}},
-            {{{0.22f,0.98f},{0.04f,0.80f},{0.04f,0.56f}}},
-            {{{0.04f,0.34f},{0.25f,0.12f},{0.50f,0.02f}}},
-        }});
-    static const std::vector<Point> lemon = FourCubicOutline(
-        { 0.12f, 0.12f }, {{
-            {{{0.38f,-0.02f},{0.82f,0.05f},{0.95f,0.36f}}},
-            {{{1.04f,0.58f},{0.91f,0.90f},{0.72f,0.96f}}},
-            {{{0.42f,1.06f},{0.08f,0.88f},{0.03f,0.62f}}},
-            {{{-0.02f,0.38f},{0.02f,0.22f},{0.12f,0.12f}}},
-        }});
-    static const std::vector<Point> flower = [] {
-        std::vector<Point> p;
-        Point cur{0.5f, 0.0f}; p.push_back(cur);
-        const std::array<std::array<Point, 3>, 12> curves{{
-            {{{.606f,0},{.699f,.053f},{.756f,.135f}}},
-            {{{.7856f,.1781f},{.8229f,.2154f},{.866f,.245f}}},
-            {{{.95f,.3027f},{1.0001f,.3981f},{1,.5f}}},
-            {{{1,.606f},{.947f,.699f},{.865f,.756f}}},
-            {{{.8219f,.7856f},{.7846f,.8229f},{.755f,.866f}}},
-            {{{.6973f,.95f},{.6019f,1.0001f},{.5f,1}}},
-            {{{.394f,1},{.301f,.947f},{.244f,.865f}}},
-            {{{.2144f,.8219f},{.1771f,.7846f},{.134f,.755f}}},
-            {{{.05f,.6973f},{-.0001f,.6019f},{0,.5f}}},
-            {{{0,.394f},{.053f,.301f},{.135f,.244f}}},
-            {{{.1781f,.2144f},{.2154f,.1771f},{.245f,.134f}}},
-            {{{.3027f,.05f},{.3981f,-.0001f},{.5f,0}}},
-        }};
-        for (const auto& c : curves) { SampleCubic(p, cur, c[0], c[1], c[2]); cur = c[2]; }
-        return p;
-    }();
     static const std::vector<Point> pebble = FourCubicOutline(
         { 0.55f, 0.0f }, {{
             {{{0.25f,0.0f},{0.0f,0.25f},{0.0f,0.5f}}},
@@ -214,24 +180,12 @@ const std::vector<Point>& OutlineFor(IconBeautifyShape shape)
             {{{0.85f,1.0f},{1.0f,0.85f},{1.0f,0.58f}}},
             {{{1.0f,0.30f},{0.86f,0.0f},{0.55f,0.0f}}},
         }});
-    static const std::vector<Point> bookmark{
-        {.12f,.04f},{.88f,.04f},{.94f,.10f},{.94f,.94f},
-        {.50f,.72f},{.06f,.94f},{.06f,.10f}
-    };
-    static const std::vector<Point> diamond{
-        {.50f,.02f},{.98f,.50f},{.50f,.98f},{.02f,.50f}
-    };
     switch (shape)
     {
-    case IconBeautifyShape::Apple: return apple;
-    case IconBeautifyShape::Samsung: return samsung;
-    case IconBeautifyShape::Teardrop: return teardrop;
-    case IconBeautifyShape::Bookmark: return bookmark;
-    case IconBeautifyShape::Lemon: return lemon;
-    case IconBeautifyShape::Diamond: return diamond;
-    case IconBeautifyShape::Flower: return flower;
+    case IconBeautifyShape::ContinuousRounded: return continuousRounded;
+    case IconBeautifyShape::SoftRounded: return softRounded;
     case IconBeautifyShape::Pebble: return pebble;
-    default: return apple;
+    default: return continuousRounded;
     }
 }
 
@@ -260,13 +214,6 @@ bool Contains(IconBeautifyShape shape, float x, float y)
         const float dx = (x - 0.5f) * 2.0f;
         const float dy = (y - 0.5f) * 2.0f;
         return dx * dx + dy * dy <= 1.0f;
-    }
-    if (shape == IconBeautifyShape::RoundedSquare)
-    {
-        constexpr float radius = 0.12f;
-        const float dx = std::max(std::abs(x - 0.5f) - (0.5f - radius), 0.0f);
-        const float dy = std::max(std::abs(y - 0.5f) - (0.5f - radius), 0.0f);
-        return dx * dx + dy * dy <= radius * radius;
     }
     return PointInPolygon(OutlineFor(shape), x, y);
 }
@@ -455,13 +402,62 @@ void FillPlate(std::vector<std::uint32_t>& output, int width, int height,
     }
 }
 
-void ApplyFinish(std::vector<std::uint32_t>& output, int width, int height,
+std::uint32_t ApplyFilter(std::uint32_t pixel,
     const IconBeautifySettings& settings)
 {
-    if (settings.finish == IconBeautifyFinish::Flat) return;
+    if (!settings.filterEnabled || PixelA(pixel) == 0)
+        return pixel;
+    if (std::abs(settings.filterHue) <= 0.0005f &&
+        std::abs(settings.filterSaturation - 1.0f) <= 0.0005f &&
+        std::abs(settings.filterBrightness) <= 0.0005f &&
+        std::abs(settings.filterContrast - 1.0f) <= 0.0005f &&
+        settings.filterTintStrength <= 0.0005f)
+        return pixel;
+
+    const int alpha = PixelA(pixel);
+    float r = static_cast<float>((pixel >> 16) & 0xff) / alpha;
+    float g = static_cast<float>((pixel >> 8) & 0xff) / alpha;
+    float b = static_cast<float>(pixel & 0xff) / alpha;
+
+    const float y = r * 0.299f + g * 0.587f + b * 0.114f;
+    float i = r * 0.596f - g * 0.274f - b * 0.322f;
+    float q = r * 0.211f - g * 0.523f + b * 0.312f;
+    constexpr float pi = 3.14159265358979323846f;
+    const float hueRadians = settings.filterHue * pi / 180.0f;
+    const float hueCos = std::cos(hueRadians);
+    const float hueSin = std::sin(hueRadians);
+    const float rotatedI = i * hueCos - q * hueSin;
+    const float rotatedQ = i * hueSin + q * hueCos;
+    r = y + rotatedI * 0.956f + rotatedQ * 0.621f;
+    g = y - rotatedI * 0.272f - rotatedQ * 0.647f;
+    b = y - rotatedI * 1.106f + rotatedQ * 1.703f;
+
+    const float luma = r * 0.299f + g * 0.587f + b * 0.114f;
+    r = luma + (r - luma) * settings.filterSaturation;
+    g = luma + (g - luma) * settings.filterSaturation;
+    b = luma + (b - luma) * settings.filterSaturation;
+    r = (r - 0.5f) * settings.filterContrast + 0.5f + settings.filterBrightness;
+    g = (g - 0.5f) * settings.filterContrast + 0.5f + settings.filterBrightness;
+    b = (b - 0.5f) * settings.filterContrast + 0.5f + settings.filterBrightness;
+    r += (settings.filterTintR - r) * settings.filterTintStrength;
+    g += (settings.filterTintG - g) * settings.filterTintStrength;
+    b += (settings.filterTintB - b) * settings.filterTintStrength;
+    return PackPremultiplied(
+        static_cast<int>(std::round(std::clamp(r, 0.0f, 1.0f) * 255.0f)),
+        static_cast<int>(std::round(std::clamp(g, 0.0f, 1.0f) * 255.0f)),
+        static_cast<int>(std::round(std::clamp(b, 0.0f, 1.0f) * 255.0f)),
+        alpha);
+}
+
+void ApplyTexture(std::vector<std::uint32_t>& output, int width, int height,
+    const IconBeautifySettings& settings)
+{
+    if (settings.textureHighlightStrength <= 0.0005f &&
+        settings.textureShadeStrength <= 0.0005f &&
+        settings.textureEdgeHighlight <= 0.0005f)
+        return;
     const auto& mask = CachedMask(settings.shape, width, height, 0.0f);
-    const auto& inner = CachedMask(settings.shape, width, height,
-        settings.finish == IconBeautifyFinish::Sticker ? 2.5f : 1.25f);
+    const auto& inner = CachedMask(settings.shape, width, height, 1.5f);
     for (int y = 0; y < height; ++y)
     {
         const float yt = (static_cast<float>(y) + 0.5f) / height;
@@ -470,29 +466,21 @@ void ApplyFinish(std::vector<std::uint32_t>& output, int width, int height,
             const size_t index = static_cast<size_t>(y) * width + x;
             if (mask[index] == 0) continue;
             const float xt = (static_cast<float>(x) + 0.5f) / width;
-            int whiteAlpha = 0;
-            int darkAlpha = 0;
-            switch (settings.finish)
-            {
-            case IconBeautifyFinish::Gloss:
-            {
-                const float sweep = std::clamp(1.0f - (yt * 1.6f + xt * 0.32f), 0.0f, 1.0f);
-                whiteAlpha = static_cast<int>(std::round(sweep * sweep * 72.0f));
-                break;
-            }
-            case IconBeautifyFinish::Glass:
-                whiteAlpha = static_cast<int>(std::round(
-                    std::clamp((0.52f - yt) / 0.52f, 0.0f, 1.0f) * 50.0f));
-                darkAlpha = static_cast<int>(std::round(
-                    std::clamp((yt - 0.48f) / 0.52f, 0.0f, 1.0f) * 24.0f));
-                whiteAlpha += std::clamp<int>(mask[index] - inner[index], 0, 255) * 42 / 255;
-                break;
-            case IconBeautifyFinish::Sticker:
-                whiteAlpha = std::clamp<int>(mask[index] - inner[index], 0, 255) * 228 / 255;
-                break;
-            default:
-                break;
-            }
+            const float highlightPosition = yt +
+                (xt - 0.5f) * settings.textureHighlightAngle * 0.5f;
+            const float highlight = std::clamp(
+                (settings.textureHighlightSize - highlightPosition) /
+                    settings.textureHighlightSize,
+                0.0f, 1.0f);
+            int whiteAlpha = static_cast<int>(std::round(
+                highlight * highlight * settings.textureHighlightStrength * 255.0f));
+            whiteAlpha += static_cast<int>(std::round(
+                std::clamp<int>(mask[index] - inner[index], 0, 255) *
+                settings.textureEdgeHighlight));
+            whiteAlpha = std::clamp(whiteAlpha, 0, 255);
+            const float shade = std::clamp((yt - 0.5f) * 2.0f, 0.0f, 1.0f);
+            int darkAlpha = static_cast<int>(std::round(
+                shade * settings.textureShadeStrength * 255.0f));
             whiteAlpha = whiteAlpha * mask[index] / 255;
             darkAlpha = darkAlpha * mask[index] / 255;
             if (darkAlpha > 0)
@@ -539,9 +527,37 @@ IconBeautifySettings Normalize(IconBeautifySettings settings)
     settings.backgroundEndR = std::clamp(settings.backgroundEndR, 0.0f, 1.0f);
     settings.backgroundEndG = std::clamp(settings.backgroundEndG, 0.0f, 1.0f);
     settings.backgroundEndB = std::clamp(settings.backgroundEndB, 0.0f, 1.0f);
-    settings.shape = static_cast<IconBeautifyShape>(std::clamp(static_cast<int>(settings.shape), 0, 10));
+    switch (settings.shape)
+    {
+    case IconBeautifyShape::LegacyRounded:
+    case IconBeautifyShape::ContinuousRounded:
+    case IconBeautifyShape::Circle:
+    case IconBeautifyShape::SoftRounded:
+    case IconBeautifyShape::Pebble:
+        break;
+    default:
+        settings.shape = IconBeautifyShape::LegacyRounded;
+        break;
+    }
     settings.contentScale = std::clamp(settings.contentScale, 0.50f, 0.90f);
-    settings.finish = static_cast<IconBeautifyFinish>(std::clamp(static_cast<int>(settings.finish), 0, 3));
+    settings.textureHighlightStrength = std::clamp(
+        settings.textureHighlightStrength, 0.0f, 1.0f);
+    settings.textureHighlightSize = std::clamp(
+        settings.textureHighlightSize, 0.10f, 1.0f);
+    settings.textureHighlightAngle = std::clamp(
+        settings.textureHighlightAngle, -1.0f, 1.0f);
+    settings.textureShadeStrength = std::clamp(
+        settings.textureShadeStrength, 0.0f, 1.0f);
+    settings.textureEdgeHighlight = std::clamp(
+        settings.textureEdgeHighlight, 0.0f, 1.0f);
+    settings.filterHue = std::clamp(settings.filterHue, -180.0f, 180.0f);
+    settings.filterSaturation = std::clamp(settings.filterSaturation, 0.0f, 2.0f);
+    settings.filterBrightness = std::clamp(settings.filterBrightness, -1.0f, 1.0f);
+    settings.filterContrast = std::clamp(settings.filterContrast, 0.0f, 2.0f);
+    settings.filterTintStrength = std::clamp(settings.filterTintStrength, 0.0f, 1.0f);
+    settings.filterTintR = std::clamp(settings.filterTintR, 0.0f, 1.0f);
+    settings.filterTintG = std::clamp(settings.filterTintG, 0.0f, 1.0f);
+    settings.filterTintB = std::clamp(settings.filterTintB, 0.0f, 1.0f);
     settings.outlineWidth = std::clamp(settings.outlineWidth, 0.0f, 4.0f);
     settings.outlineOpacity = std::clamp(settings.outlineOpacity, 0.0f, 1.0f);
     settings.outlineR = std::clamp(settings.outlineR, 0.0f, 1.0f);
@@ -568,7 +584,20 @@ bool Equal(const IconBeautifySettings& lhs, const IconBeautifySettings& rhs)
         eq(a.backgroundEndG, b.backgroundEndG) &&
         eq(a.backgroundEndB, b.backgroundEndB) &&
         a.shape == b.shape && eq(a.contentScale, b.contentScale) &&
-        a.finish == b.finish && a.outlineEnabled == b.outlineEnabled &&
+        eq(a.textureHighlightStrength, b.textureHighlightStrength) &&
+        eq(a.textureHighlightSize, b.textureHighlightSize) &&
+        eq(a.textureHighlightAngle, b.textureHighlightAngle) &&
+        eq(a.textureShadeStrength, b.textureShadeStrength) &&
+        eq(a.textureEdgeHighlight, b.textureEdgeHighlight) &&
+        a.filterEnabled == b.filterEnabled &&
+        eq(a.filterHue, b.filterHue) &&
+        eq(a.filterSaturation, b.filterSaturation) &&
+        eq(a.filterBrightness, b.filterBrightness) &&
+        eq(a.filterContrast, b.filterContrast) &&
+        eq(a.filterTintStrength, b.filterTintStrength) &&
+        eq(a.filterTintR, b.filterTintR) &&
+        eq(a.filterTintG, b.filterTintG) && eq(a.filterTintB, b.filterTintB) &&
+        a.outlineEnabled == b.outlineEnabled &&
         eq(a.outlineWidth, b.outlineWidth) &&
         eq(a.outlineOpacity, b.outlineOpacity) &&
         eq(a.outlineR, b.outlineR) && eq(a.outlineG, b.outlineG) &&
@@ -578,7 +607,10 @@ bool Equal(const IconBeautifySettings& lhs, const IconBeautifySettings& rhs)
 bool UsesLegacyGeometryDefaults(const IconBeautifySettings& settings)
 {
     const IconBeautifySettings s = Normalize(settings);
-    return s.shape == IconBeautifyShape::LegacyRounded && s.finish == IconBeautifyFinish::Flat &&
+    return s.shape == IconBeautifyShape::LegacyRounded &&
+        s.textureHighlightStrength <= 0.0005f &&
+        s.textureShadeStrength <= 0.0005f &&
+        s.textureEdgeHighlight <= 0.0005f && !s.filterEnabled &&
         !s.outlineEnabled &&
         std::abs(s.outlineWidth - 1.0f) <= 0.0005f &&
         std::abs(s.outlineOpacity - 1.0f) <= 0.0005f &&
@@ -597,6 +629,7 @@ IconBeautifySettings MakePreset(IconBeautifyPreset preset)
     case IconBeautifyPreset::ClassicRounded:
         settings.preset = IconBeautifyPreset::ClassicRounded;
         settings.enabled = true;
+        settings.shape = IconBeautifyShape::ContinuousRounded;
         settings.outlineEnabled = false;
         return settings;
     case IconBeautifyPreset::Custom:
@@ -604,6 +637,36 @@ IconBeautifySettings MakePreset(IconBeautifyPreset preset)
         settings.preset = IconBeautifyPreset::Custom;
         settings.enabled = true;
         return settings;
+    }
+}
+
+void ApplyLegacyFinish(IconBeautifySettings& settings,
+    IconBeautifyFinish finish)
+{
+    settings.textureHighlightStrength = 0.0f;
+    settings.textureHighlightSize = 0.55f;
+    settings.textureHighlightAngle = 0.0f;
+    settings.textureShadeStrength = 0.0f;
+    settings.textureEdgeHighlight = 0.0f;
+    switch (finish)
+    {
+    case IconBeautifyFinish::Gloss:
+        settings.textureHighlightStrength = 72.0f / 255.0f;
+        settings.textureHighlightSize = 0.65f;
+        settings.textureHighlightAngle = 0.40f;
+        break;
+    case IconBeautifyFinish::Glass:
+        settings.textureHighlightStrength = 50.0f / 255.0f;
+        settings.textureHighlightSize = 0.52f;
+        settings.textureShadeStrength = 24.0f / 255.0f;
+        settings.textureEdgeHighlight = 42.0f / 255.0f;
+        break;
+    case IconBeautifyFinish::Sticker:
+        settings.textureEdgeHighlight = 228.0f / 255.0f;
+        break;
+    case IconBeautifyFinish::Flat:
+    default:
+        break;
     }
 }
 
@@ -673,8 +736,9 @@ std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
         // Smart recognition only clips the original icon to the selected shape.
         // Content scaling is reserved for the explicit shrink-and-background mode.
         for (size_t i = 0; i < output.size(); ++i)
-            output[i] = ScalePixel(SourceOver(source[i], background), mask[i]);
-        ApplyFinish(output, width, height, settings);
+            output[i] = ScalePixel(SourceOver(
+                ApplyFilter(source[i], settings), background), mask[i]);
+        ApplyTexture(output, width, height, settings);
         ApplyOutline(output, width, height, settings);
         return output;
     }
@@ -741,12 +805,13 @@ std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
             const int ox = destLeft + x;
             const int oy = destTop + y;
             const size_t index = static_cast<size_t>(oy) * width + ox;
-            const std::uint32_t sampled = ScalePixel(
-                SampleBilinear(source, width, height, sx, sy), mask[index]);
+            const std::uint32_t sampled = ScalePixel(ApplyFilter(
+                SampleBilinear(source, width, height, sx, sy), settings),
+                mask[index]);
             output[index] = SourceOver(sampled, output[index]);
         }
 
-    ApplyFinish(output, width, height, settings);
+    ApplyTexture(output, width, height, settings);
     ApplyOutline(output, width, height, settings);
     return output;
 }

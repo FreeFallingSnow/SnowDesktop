@@ -105,7 +105,22 @@ struct Document
     std::optional<float> iconBeautifyBgEndB;
     std::optional<int> iconBeautifyShape;
     std::optional<float> iconBeautifyContentScale;
+    // Legacy migration input. New layouts persist numeric texture controls.
     std::optional<int> iconBeautifyFinish;
+    std::optional<float> iconBeautifyTextureHighlightStrength;
+    std::optional<float> iconBeautifyTextureHighlightSize;
+    std::optional<float> iconBeautifyTextureHighlightAngle;
+    std::optional<float> iconBeautifyTextureShadeStrength;
+    std::optional<float> iconBeautifyTextureEdgeHighlight;
+    std::optional<bool> iconBeautifyFilterEnabled;
+    std::optional<float> iconBeautifyFilterHue;
+    std::optional<float> iconBeautifyFilterSaturation;
+    std::optional<float> iconBeautifyFilterBrightness;
+    std::optional<float> iconBeautifyFilterContrast;
+    std::optional<float> iconBeautifyFilterTintStrength;
+    std::optional<float> iconBeautifyFilterTintR;
+    std::optional<float> iconBeautifyFilterTintG;
+    std::optional<float> iconBeautifyFilterTintB;
     std::optional<bool> iconBeautifyOutlineEnabled;
     // Legacy migration input. New layouts persist iconBeautifyOutlineEnabled.
     std::optional<int> iconBeautifyOutlineMode;

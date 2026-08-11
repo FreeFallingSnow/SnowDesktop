@@ -76,6 +76,8 @@ int main()
         static_cast<int>(IconBeautifyUpdateKind::Commit) == 1,
         "preview and commit update kinds have stable values");
     Check(static_cast<int>(IconBeautifyShape::LegacyRounded) == 0 &&
+        static_cast<int>(IconBeautifyShape::ContinuousRounded) == 1 &&
+        static_cast<int>(IconBeautifyShape::SoftRounded) == 3 &&
         static_cast<int>(IconBeautifyShape::Pebble) == 10 &&
         static_cast<int>(IconBeautifyFinish::Flat) == 0 &&
         static_cast<int>(IconBeautifyFinish::Sticker) == 3 &&
@@ -117,21 +119,15 @@ int main()
     auto inheritedClassic = beautify::MakePreset(IconBeautifyPreset::ClassicRounded);
     inheritedClassic.preset = IconBeautifyPreset::Custom;
     Check(inheritedClassic.enabled && !inheritedClassic.outlineEnabled &&
-        inheritedClassic.shape == IconBeautifyShape::LegacyRounded &&
+        inheritedClassic.shape == IconBeautifyShape::ContinuousRounded &&
         inheritedClassic.contentScale == 0.68f,
         "switching classic to custom can retain the complete preset parameters");
 
-    constexpr std::array<IconBeautifyShape, 11> shapes{
+    constexpr std::array<IconBeautifyShape, 5> shapes{
         IconBeautifyShape::LegacyRounded,
-        IconBeautifyShape::Apple,
+        IconBeautifyShape::ContinuousRounded,
         IconBeautifyShape::Circle,
-        IconBeautifyShape::Samsung,
-        IconBeautifyShape::RoundedSquare,
-        IconBeautifyShape::Teardrop,
-        IconBeautifyShape::Bookmark,
-        IconBeautifyShape::Lemon,
-        IconBeautifyShape::Diamond,
-        IconBeautifyShape::Flower,
+        IconBeautifyShape::SoftRounded,
         IconBeautifyShape::Pebble,
     };
 
@@ -150,20 +146,18 @@ int main()
             "every shape must expose anti-aliased boundary coverage");
     }
     Check(maskHashes.size() == shapes.size(),
-        "all eleven shape masks must be geometrically distinct");
+        "all five exposed shape masks must be geometrically distinct");
     Check(beautify::ShapeMaskAlpha(IconBeautifyShape::Circle, 0, 0, 64, 64) == 0,
         "circle excludes square corners");
-    Check(beautify::ShapeMaskAlpha(IconBeautifyShape::Diamond, 32, 1, 64, 64) > 0,
-        "diamond keeps its top vertex");
-    Check(beautify::ShapeMaskAlpha(IconBeautifyShape::Bookmark, 32, 60, 64, 64) == 0,
-        "bookmark keeps its bottom notch");
 
     IconBeautifySettings defaults;
     Check(defaults.preset == IconBeautifyPreset::None &&
         defaults.shape == IconBeautifyShape::LegacyRounded,
         "legacy rounded is the compatibility shape default");
     Check(defaults.contentScale == 0.68f &&
-        defaults.finish == IconBeautifyFinish::Flat &&
+        defaults.textureHighlightStrength == 0.0f &&
+        defaults.textureShadeStrength == 0.0f &&
+        defaults.textureEdgeHighlight == 0.0f && !defaults.filterEnabled &&
         !defaults.outlineEnabled &&
         defaults.outlineWidth == 1.0f && defaults.shadowStrength == 0.35f,
         "new settings retain the locked compatibility defaults");
@@ -178,22 +172,45 @@ int main()
     invalid.outlineOpacity = -1.0f;
     invalid.shadowStrength = 2.0f;
     invalid.shape = static_cast<IconBeautifyShape>(99);
-    invalid.finish = static_cast<IconBeautifyFinish>(99);
+    invalid.textureHighlightStrength = 2.0f;
+    invalid.textureHighlightSize = 0.0f;
+    invalid.textureHighlightAngle = 2.0f;
+    invalid.textureShadeStrength = -1.0f;
+    invalid.textureEdgeHighlight = 2.0f;
+    invalid.filterHue = 999.0f;
+    invalid.filterSaturation = -1.0f;
+    invalid.filterBrightness = 2.0f;
+    invalid.filterContrast = 3.0f;
+    invalid.filterTintStrength = 2.0f;
     const IconBeautifySettings normalized = beautify::Normalize(invalid);
     Check(normalized.preset == IconBeautifyPreset::Custom &&
         normalized.mode == 1 && normalized.contentScale == 0.50f &&
         normalized.outlineWidth == 4.0f && normalized.outlineOpacity == 0.0f &&
         normalized.shadowStrength == 1.0f &&
-        normalized.shape == IconBeautifyShape::Pebble &&
-        normalized.finish == IconBeautifyFinish::Sticker,
+        normalized.shape == IconBeautifyShape::LegacyRounded &&
+        normalized.textureHighlightStrength == 1.0f &&
+        normalized.textureHighlightSize == 0.10f &&
+        normalized.textureHighlightAngle == 1.0f &&
+        normalized.textureShadeStrength == 0.0f &&
+        normalized.textureEdgeHighlight == 1.0f &&
+        normalized.filterHue == 180.0f &&
+        normalized.filterSaturation == 0.0f &&
+        normalized.filterBrightness == 1.0f &&
+        normalized.filterContrast == 2.0f &&
+        normalized.filterTintStrength == 1.0f,
         "settings normalization clamps persisted values to stable ranges");
+    IconBeautifySettings removedShape = defaults;
+    removedShape.shape = static_cast<IconBeautifyShape>(4);
+    Check(beautify::Normalize(removedShape).shape ==
+        IconBeautifyShape::LegacyRounded,
+        "removed shape values migrate to an exposed rounded shape");
     IconBeautifySettings removedPreset = defaults;
     removedPreset.preset = static_cast<IconBeautifyPreset>(2);
-    removedPreset.shape = IconBeautifyShape::Apple;
+    removedPreset.shape = IconBeautifyShape::ContinuousRounded;
     removedPreset.outlineEnabled = true;
     const IconBeautifySettings migratedPreset = beautify::Normalize(removedPreset);
     Check(migratedPreset.preset == IconBeautifyPreset::Custom &&
-        migratedPreset.shape == IconBeautifyShape::Apple &&
+        migratedPreset.shape == IconBeautifyShape::ContinuousRounded &&
         migratedPreset.outlineEnabled,
         "removed presets migrate to custom without losing their parameters");
 
@@ -214,21 +231,49 @@ int main()
 
     settings.shape = IconBeautifyShape::Pebble;
     settings.outlineEnabled = false;
-    settings.finish = IconBeautifyFinish::Flat;
     const auto flat = beautify::Render(source, 64, 64, settings);
-    settings.finish = IconBeautifyFinish::Gloss;
-    const auto gloss = beautify::Render(source, 64, 64, settings);
-    settings.finish = IconBeautifyFinish::Glass;
-    const auto glass = beautify::Render(source, 64, 64, settings);
-    settings.finish = IconBeautifyFinish::Sticker;
-    const auto sticker = beautify::Render(source, 64, 64, settings);
-    Check(HashPixels(flat) != HashPixels(gloss) &&
-        HashPixels(flat) != HashPixels(glass) &&
-        HashPixels(flat) != HashPixels(sticker) &&
-        HashPixels(gloss) != HashPixels(glass),
-        "flat, gloss, glass, and sticker finishes are semantically distinct");
+    settings.textureHighlightStrength = 0.45f;
+    const auto highlighted = beautify::Render(source, 64, 64, settings);
+    settings.textureHighlightAngle = 0.8f;
+    const auto angledHighlight = beautify::Render(source, 64, 64, settings);
+    settings.textureHighlightStrength = 0.0f;
+    settings.textureShadeStrength = 0.45f;
+    const auto shaded = beautify::Render(source, 64, 64, settings);
+    settings.textureShadeStrength = 0.0f;
+    settings.textureEdgeHighlight = 0.65f;
+    const auto edgeHighlighted = beautify::Render(source, 64, 64, settings);
+    Check(HashPixels(flat) != HashPixels(highlighted) &&
+        HashPixels(highlighted) != HashPixels(angledHighlight) &&
+        HashPixels(flat) != HashPixels(shaded) &&
+        HashPixels(flat) != HashPixels(edgeHighlighted),
+        "numeric texture controls independently change the composite output");
+    IconBeautifySettings legacyGlass = defaults;
+    beautify::ApplyLegacyFinish(legacyGlass, IconBeautifyFinish::Glass);
+    Check(legacyGlass.textureHighlightStrength > 0.0f &&
+        legacyGlass.textureShadeStrength > 0.0f &&
+        legacyGlass.textureEdgeHighlight > 0.0f,
+        "legacy finish presets migrate into numeric texture controls");
 
-    settings.finish = IconBeautifyFinish::Flat;
+    settings.textureEdgeHighlight = 0.0f;
+    settings.filterHue = 120.0f;
+    settings.filterTintStrength = 1.0f;
+    settings.filterTintR = 0.0f;
+    settings.filterTintG = 0.2f;
+    settings.filterTintB = 1.0f;
+    const auto disabledFilter = beautify::Render(source, 64, 64, settings);
+    settings.filterEnabled = true;
+    settings.filterTintStrength = 0.0f;
+    const auto hueFiltered = beautify::Render(source, 64, 64, settings);
+    settings.filterHue = 0.0f;
+    settings.filterTintStrength = 1.0f;
+    const auto tintFiltered = beautify::Render(source, 64, 64, settings);
+    Check(disabledFilter == flat &&
+        HashPixels(flat) != HashPixels(hueFiltered) &&
+        HashPixels(hueFiltered) != HashPixels(tintFiltered),
+        "color filters are disabled by default and support hue and tint changes");
+    settings.filterEnabled = false;
+    settings.filterTintStrength = 0.0f;
+
     settings.outlineEnabled = false;
     const auto noOutline = beautify::Render(source, 64, 64, settings);
     settings.outlineEnabled = true;
@@ -265,7 +310,7 @@ int main()
         Check(smart.size() == source.size(),
             "smart recognition uses the shared compositor for every shape");
     }
-    settings.shape = IconBeautifyShape::Apple;
+    settings.shape = IconBeautifyShape::ContinuousRounded;
     settings.contentScale = 0.50f;
     const auto smartCompact = beautify::Render(source, 64, 64, settings,
         beautify::EdgeColor{240, 240, 240});

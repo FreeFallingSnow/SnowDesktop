@@ -173,8 +173,47 @@ void DesktopApp::LoadLayoutSlots()
     if (document.iconBeautifyContentScale)
         iconBeautifySettings_.contentScale = *document.iconBeautifyContentScale;
     if (document.iconBeautifyFinish)
-        iconBeautifySettings_.finish = static_cast<snowdesktop::IconBeautifyFinish>(
-            *document.iconBeautifyFinish);
+        snowdesktop::icon_beautify::ApplyLegacyFinish(
+            iconBeautifySettings_, static_cast<snowdesktop::IconBeautifyFinish>(
+                *document.iconBeautifyFinish));
+    if (document.iconBeautifyTextureHighlightStrength)
+        iconBeautifySettings_.textureHighlightStrength =
+            *document.iconBeautifyTextureHighlightStrength;
+    if (document.iconBeautifyTextureHighlightSize)
+        iconBeautifySettings_.textureHighlightSize =
+            *document.iconBeautifyTextureHighlightSize;
+    if (document.iconBeautifyTextureHighlightAngle)
+        iconBeautifySettings_.textureHighlightAngle =
+            *document.iconBeautifyTextureHighlightAngle;
+    if (document.iconBeautifyTextureShadeStrength)
+        iconBeautifySettings_.textureShadeStrength =
+            *document.iconBeautifyTextureShadeStrength;
+    if (document.iconBeautifyTextureEdgeHighlight)
+        iconBeautifySettings_.textureEdgeHighlight =
+            *document.iconBeautifyTextureEdgeHighlight;
+    if (document.iconBeautifyFilterEnabled)
+        iconBeautifySettings_.filterEnabled =
+            *document.iconBeautifyFilterEnabled;
+    if (document.iconBeautifyFilterHue)
+        iconBeautifySettings_.filterHue = *document.iconBeautifyFilterHue;
+    if (document.iconBeautifyFilterSaturation)
+        iconBeautifySettings_.filterSaturation =
+            *document.iconBeautifyFilterSaturation;
+    if (document.iconBeautifyFilterBrightness)
+        iconBeautifySettings_.filterBrightness =
+            *document.iconBeautifyFilterBrightness;
+    if (document.iconBeautifyFilterContrast)
+        iconBeautifySettings_.filterContrast =
+            *document.iconBeautifyFilterContrast;
+    if (document.iconBeautifyFilterTintStrength)
+        iconBeautifySettings_.filterTintStrength =
+            *document.iconBeautifyFilterTintStrength;
+    if (document.iconBeautifyFilterTintR)
+        iconBeautifySettings_.filterTintR = *document.iconBeautifyFilterTintR;
+    if (document.iconBeautifyFilterTintG)
+        iconBeautifySettings_.filterTintG = *document.iconBeautifyFilterTintG;
+    if (document.iconBeautifyFilterTintB)
+        iconBeautifySettings_.filterTintB = *document.iconBeautifyFilterTintB;
     if (document.iconBeautifyOutlineEnabled)
         iconBeautifySettings_.outlineEnabled =
             *document.iconBeautifyOutlineEnabled;
@@ -199,7 +238,12 @@ void DesktopApp::LoadLayoutSlots()
         iconBeautifySettings_.shadowStrength = *document.iconBeautifyShadowStrength;
     iconBeautifySettings_ = snowdesktop::icon_beautify::Normalize(
         iconBeautifySettings_);
-    if (!document.iconBeautifyPreset)
+    if (document.iconBeautifyPreset &&
+        iconBeautifySettings_.preset ==
+            snowdesktop::IconBeautifyPreset::ClassicRounded)
+        iconBeautifySettings_ = snowdesktop::icon_beautify::MakePreset(
+            snowdesktop::IconBeautifyPreset::ClassicRounded);
+    else if (!document.iconBeautifyPreset)
         iconBeautifySettings_.preset = snowdesktop::icon_beautify::IdentifyPreset(
             iconBeautifySettings_);
 
@@ -730,7 +774,20 @@ void DesktopApp::SaveLayoutSlots()
          << ",\n  \"iconBeautifyBgEndB\": " << iconBeautifySettings_.backgroundEndB
          << ",\n  \"iconBeautifyShape\": " << static_cast<int>(iconBeautifySettings_.shape)
          << ",\n  \"iconBeautifyContentScale\": " << iconBeautifySettings_.contentScale
-         << ",\n  \"iconBeautifyFinish\": " << static_cast<int>(iconBeautifySettings_.finish)
+         << ",\n  \"iconBeautifyTextureHighlightStrength\": " << iconBeautifySettings_.textureHighlightStrength
+         << ",\n  \"iconBeautifyTextureHighlightSize\": " << iconBeautifySettings_.textureHighlightSize
+         << ",\n  \"iconBeautifyTextureHighlightAngle\": " << iconBeautifySettings_.textureHighlightAngle
+         << ",\n  \"iconBeautifyTextureShadeStrength\": " << iconBeautifySettings_.textureShadeStrength
+         << ",\n  \"iconBeautifyTextureEdgeHighlight\": " << iconBeautifySettings_.textureEdgeHighlight
+         << ",\n  \"iconBeautifyFilterEnabled\": " << (iconBeautifySettings_.filterEnabled ? "true" : "false")
+         << ",\n  \"iconBeautifyFilterHue\": " << iconBeautifySettings_.filterHue
+         << ",\n  \"iconBeautifyFilterSaturation\": " << iconBeautifySettings_.filterSaturation
+         << ",\n  \"iconBeautifyFilterBrightness\": " << iconBeautifySettings_.filterBrightness
+         << ",\n  \"iconBeautifyFilterContrast\": " << iconBeautifySettings_.filterContrast
+         << ",\n  \"iconBeautifyFilterTintStrength\": " << iconBeautifySettings_.filterTintStrength
+         << ",\n  \"iconBeautifyFilterTintR\": " << iconBeautifySettings_.filterTintR
+         << ",\n  \"iconBeautifyFilterTintG\": " << iconBeautifySettings_.filterTintG
+         << ",\n  \"iconBeautifyFilterTintB\": " << iconBeautifySettings_.filterTintB
          << ",\n  \"iconBeautifyOutlineEnabled\": " << (iconBeautifySettings_.outlineEnabled ? "true" : "false")
          << ",\n  \"iconBeautifyOutlineWidth\": " << iconBeautifySettings_.outlineWidth
          << ",\n  \"iconBeautifyOutlineOpacity\": " << iconBeautifySettings_.outlineOpacity

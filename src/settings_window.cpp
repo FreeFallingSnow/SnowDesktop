@@ -2595,42 +2595,27 @@ void SettingsWindow::DrawDisplayPage()
 
     const char* shapeNames[] = {
         _L("app.settings.beautify_shape_legacy"),
-        _L("app.settings.beautify_shape_apple"),
+        _L("app.settings.beautify_shape_continuous_rounded"),
+        _L("app.settings.beautify_shape_soft_rounded"),
         _L("app.settings.beautify_shape_circle"),
-        _L("app.settings.beautify_shape_samsung"),
-        _L("app.settings.beautify_shape_rounded_square"),
-        _L("app.settings.beautify_shape_teardrop"),
-        _L("app.settings.beautify_shape_bookmark"),
-        _L("app.settings.beautify_shape_lemon"),
-        _L("app.settings.beautify_shape_diamond"),
-        _L("app.settings.beautify_shape_flower"),
         _L("app.settings.beautify_shape_pebble"),
     };
-    int shape = static_cast<int>(iconBeautifySettings_.shape);
+    constexpr snowdesktop::IconBeautifyShape shapeIds[] = {
+        snowdesktop::IconBeautifyShape::LegacyRounded,
+        snowdesktop::IconBeautifyShape::ContinuousRounded,
+        snowdesktop::IconBeautifyShape::SoftRounded,
+        snowdesktop::IconBeautifyShape::Circle,
+        snowdesktop::IconBeautifyShape::Pebble,
+    };
+    int shapeIndex = 0;
+    for (int i = 0; i < IM_ARRAYSIZE(shapeIds); ++i)
+        if (shapeIds[i] == iconBeautifySettings_.shape) { shapeIndex = i; break; }
     BeginSettingRow(_L("app.settings.beautify_shape"), controlW);
     ImGui::SetNextItemWidth(controlW);
-    if (ImGui::Combo("##IconBeautifyShape", &shape,
+    if (ImGui::Combo("##IconBeautifyShape", &shapeIndex,
             shapeNames, IM_ARRAYSIZE(shapeNames)))
     {
-        iconBeautifySettings_.shape =
-            static_cast<snowdesktop::IconBeautifyShape>(shape);
-        notifyIconBeautify(snowdesktop::IconBeautifyUpdateKind::Commit);
-    }
-
-    const char* finishNames[] = {
-        _L("app.settings.beautify_finish_flat"),
-        _L("app.settings.beautify_finish_gloss"),
-        _L("app.settings.beautify_finish_glass"),
-        _L("app.settings.beautify_finish_sticker"),
-    };
-    int finish = static_cast<int>(iconBeautifySettings_.finish);
-    BeginSettingRow(_L("app.settings.beautify_finish"), controlW);
-    ImGui::SetNextItemWidth(controlW);
-    if (ImGui::Combo("##IconBeautifyFinish", &finish,
-            finishNames, IM_ARRAYSIZE(finishNames)))
-    {
-        iconBeautifySettings_.finish =
-            static_cast<snowdesktop::IconBeautifyFinish>(finish);
+        iconBeautifySettings_.shape = shapeIds[shapeIndex];
         notifyIconBeautify(snowdesktop::IconBeautifyUpdateKind::Commit);
     }
 
@@ -2645,6 +2630,158 @@ void SettingsWindow::DrawDisplayPage()
         previewIconBeautify();
     }
     commitContinuousIconBeautify();
+
+    BeginSettingRow(_L("app.settings.beautify_texture_highlight"), sliderW);
+    ImGui::SetNextItemWidth(sliderW);
+    int textureHighlightPercent = static_cast<int>(std::round(
+        iconBeautifySettings_.textureHighlightStrength * 100.0f));
+    if (ImGui::SliderInt("##IconBeautifyTextureHighlight",
+            &textureHighlightPercent, 0, 100, "%d%%"))
+    {
+        iconBeautifySettings_.textureHighlightStrength =
+            textureHighlightPercent / 100.0f;
+        previewIconBeautify();
+    }
+    commitContinuousIconBeautify();
+
+    BeginSettingRow(_L("app.settings.beautify_texture_highlight_size"), sliderW);
+    ImGui::SetNextItemWidth(sliderW);
+    int textureHighlightSizePercent = static_cast<int>(std::round(
+        iconBeautifySettings_.textureHighlightSize * 100.0f));
+    if (ImGui::SliderInt("##IconBeautifyTextureHighlightSize",
+            &textureHighlightSizePercent, 10, 100, "%d%%"))
+    {
+        iconBeautifySettings_.textureHighlightSize =
+            textureHighlightSizePercent / 100.0f;
+        previewIconBeautify();
+    }
+    commitContinuousIconBeautify();
+
+    BeginSettingRow(_L("app.settings.beautify_texture_highlight_angle"), sliderW);
+    ImGui::SetNextItemWidth(sliderW);
+    int textureHighlightAngle = static_cast<int>(std::round(
+        iconBeautifySettings_.textureHighlightAngle * 45.0f));
+    if (ImGui::SliderInt("##IconBeautifyTextureHighlightAngle",
+            &textureHighlightAngle, -45, 45, "%d°"))
+    {
+        iconBeautifySettings_.textureHighlightAngle =
+            textureHighlightAngle / 45.0f;
+        previewIconBeautify();
+    }
+    commitContinuousIconBeautify();
+
+    BeginSettingRow(_L("app.settings.beautify_texture_shade"), sliderW);
+    ImGui::SetNextItemWidth(sliderW);
+    int textureShadePercent = static_cast<int>(std::round(
+        iconBeautifySettings_.textureShadeStrength * 100.0f));
+    if (ImGui::SliderInt("##IconBeautifyTextureShade",
+            &textureShadePercent, 0, 100, "%d%%"))
+    {
+        iconBeautifySettings_.textureShadeStrength =
+            textureShadePercent / 100.0f;
+        previewIconBeautify();
+    }
+    commitContinuousIconBeautify();
+
+    BeginSettingRow(_L("app.settings.beautify_texture_edge"), sliderW);
+    ImGui::SetNextItemWidth(sliderW);
+    int textureEdgePercent = static_cast<int>(std::round(
+        iconBeautifySettings_.textureEdgeHighlight * 100.0f));
+    if (ImGui::SliderInt("##IconBeautifyTextureEdge",
+            &textureEdgePercent, 0, 100, "%d%%"))
+    {
+        iconBeautifySettings_.textureEdgeHighlight =
+            textureEdgePercent / 100.0f;
+        previewIconBeautify();
+    }
+    commitContinuousIconBeautify();
+
+    if (DrawSettingCheckbox(_L("app.settings.beautify_filter"),
+            "##IconBeautifyFilterEnabled",
+            &iconBeautifySettings_.filterEnabled))
+        notifyIconBeautify(snowdesktop::IconBeautifyUpdateKind::Commit);
+    if (iconBeautifySettings_.filterEnabled)
+    {
+        BeginSettingRow(_L("app.settings.beautify_filter_hue"), sliderW);
+        ImGui::SetNextItemWidth(sliderW);
+        int filterHue = static_cast<int>(std::round(
+            iconBeautifySettings_.filterHue));
+        if (ImGui::SliderInt("##IconBeautifyFilterHue",
+                &filterHue, -180, 180, "%d°"))
+        {
+            iconBeautifySettings_.filterHue = static_cast<float>(filterHue);
+            previewIconBeautify();
+        }
+        commitContinuousIconBeautify();
+
+        BeginSettingRow(_L("app.settings.beautify_filter_saturation"), sliderW);
+        ImGui::SetNextItemWidth(sliderW);
+        int filterSaturationPercent = static_cast<int>(std::round(
+            iconBeautifySettings_.filterSaturation * 100.0f));
+        if (ImGui::SliderInt("##IconBeautifyFilterSaturation",
+                &filterSaturationPercent, 0, 200, "%d%%"))
+        {
+            iconBeautifySettings_.filterSaturation =
+                filterSaturationPercent / 100.0f;
+            previewIconBeautify();
+        }
+        commitContinuousIconBeautify();
+
+        BeginSettingRow(_L("app.settings.beautify_filter_brightness"), sliderW);
+        ImGui::SetNextItemWidth(sliderW);
+        int filterBrightnessPercent = static_cast<int>(std::round(
+            iconBeautifySettings_.filterBrightness * 100.0f));
+        if (ImGui::SliderInt("##IconBeautifyFilterBrightness",
+                &filterBrightnessPercent, -100, 100, "%+d%%"))
+        {
+            iconBeautifySettings_.filterBrightness =
+                filterBrightnessPercent / 100.0f;
+            previewIconBeautify();
+        }
+        commitContinuousIconBeautify();
+
+        BeginSettingRow(_L("app.settings.beautify_filter_contrast"), sliderW);
+        ImGui::SetNextItemWidth(sliderW);
+        int filterContrastPercent = static_cast<int>(std::round(
+            iconBeautifySettings_.filterContrast * 100.0f));
+        if (ImGui::SliderInt("##IconBeautifyFilterContrast",
+                &filterContrastPercent, 0, 200, "%d%%"))
+        {
+            iconBeautifySettings_.filterContrast =
+                filterContrastPercent / 100.0f;
+            previewIconBeautify();
+        }
+        commitContinuousIconBeautify();
+
+        BeginSettingRow(_L("app.settings.beautify_filter_tint"),
+            ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
+        float filterTint[3] = {
+            iconBeautifySettings_.filterTintR,
+            iconBeautifySettings_.filterTintG,
+            iconBeautifySettings_.filterTintB };
+        if (ImGui::ColorEdit3("##IconBeautifyFilterTint", filterTint,
+                ImGuiColorEditFlags_NoInputs))
+        {
+            iconBeautifySettings_.filterTintR = filterTint[0];
+            iconBeautifySettings_.filterTintG = filterTint[1];
+            iconBeautifySettings_.filterTintB = filterTint[2];
+            previewIconBeautify();
+        }
+        commitContinuousIconBeautify();
+
+        BeginSettingRow(_L("app.settings.beautify_filter_tint_strength"), sliderW);
+        ImGui::SetNextItemWidth(sliderW);
+        int filterTintPercent = static_cast<int>(std::round(
+            iconBeautifySettings_.filterTintStrength * 100.0f));
+        if (ImGui::SliderInt("##IconBeautifyFilterTintStrength",
+                &filterTintPercent, 0, 100, "%d%%"))
+        {
+            iconBeautifySettings_.filterTintStrength =
+                filterTintPercent / 100.0f;
+            previewIconBeautify();
+        }
+        commitContinuousIconBeautify();
+    }
 
     BeginSettingRow(_L("app.settings.beautify_shadow_strength"), sliderW);
     ImGui::SetNextItemWidth(sliderW);

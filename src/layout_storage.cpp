@@ -488,6 +488,46 @@ bool DecodeDocument(const JsonValue& root, Document& document,
             error) ||
         !ReadOptionalInteger(root, "iconBeautifyFinish",
             "iconBeautifyFinish", decoded.iconBeautifyFinish, error) ||
+        !ReadOptionalFloat(root, "iconBeautifyTextureHighlightStrength",
+            "iconBeautifyTextureHighlightStrength",
+            decoded.iconBeautifyTextureHighlightStrength, error) ||
+        !ReadOptionalFloat(root, "iconBeautifyTextureHighlightSize",
+            "iconBeautifyTextureHighlightSize",
+            decoded.iconBeautifyTextureHighlightSize, error) ||
+        !ReadOptionalFloat(root, "iconBeautifyTextureHighlightAngle",
+            "iconBeautifyTextureHighlightAngle",
+            decoded.iconBeautifyTextureHighlightAngle, error) ||
+        !ReadOptionalFloat(root, "iconBeautifyTextureShadeStrength",
+            "iconBeautifyTextureShadeStrength",
+            decoded.iconBeautifyTextureShadeStrength, error) ||
+        !ReadOptionalFloat(root, "iconBeautifyTextureEdgeHighlight",
+            "iconBeautifyTextureEdgeHighlight",
+            decoded.iconBeautifyTextureEdgeHighlight, error) ||
+        !ReadOptionalRootBoolean(root, "iconBeautifyFilterEnabled",
+            decoded.iconBeautifyFilterEnabled, error) ||
+        !ReadOptionalFloat(root, "iconBeautifyFilterHue",
+            "iconBeautifyFilterHue", decoded.iconBeautifyFilterHue, error) ||
+        !ReadOptionalFloat(root, "iconBeautifyFilterSaturation",
+            "iconBeautifyFilterSaturation",
+            decoded.iconBeautifyFilterSaturation, error) ||
+        !ReadOptionalFloat(root, "iconBeautifyFilterBrightness",
+            "iconBeautifyFilterBrightness",
+            decoded.iconBeautifyFilterBrightness, error) ||
+        !ReadOptionalFloat(root, "iconBeautifyFilterContrast",
+            "iconBeautifyFilterContrast", decoded.iconBeautifyFilterContrast,
+            error) ||
+        !ReadOptionalFloat(root, "iconBeautifyFilterTintStrength",
+            "iconBeautifyFilterTintStrength",
+            decoded.iconBeautifyFilterTintStrength, error) ||
+        !ReadOptionalFloat(root, "iconBeautifyFilterTintR",
+            "iconBeautifyFilterTintR", decoded.iconBeautifyFilterTintR,
+            error) ||
+        !ReadOptionalFloat(root, "iconBeautifyFilterTintG",
+            "iconBeautifyFilterTintG", decoded.iconBeautifyFilterTintG,
+            error) ||
+        !ReadOptionalFloat(root, "iconBeautifyFilterTintB",
+            "iconBeautifyFilterTintB", decoded.iconBeautifyFilterTintB,
+            error) ||
         !ReadOptionalRootBoolean(root, "iconBeautifyOutlineEnabled",
             decoded.iconBeautifyOutlineEnabled, error) ||
         !ReadOptionalInteger(root, "iconBeautifyOutlineMode",
