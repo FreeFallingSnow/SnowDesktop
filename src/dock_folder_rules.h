@@ -59,6 +59,20 @@ constexpr InsertRange GroupInsertRange(
         : InsertRange{ 0, mainCount };
 }
 
+constexpr bool OpenPopupNeedsRefreshAfterDrop(
+    bool popupOpen,
+    bool targetContainerIsPopup,
+    bool targetItemContainerIsPopup,
+    bool targetMatchesDockEntry,
+    bool targetMatchesFolderPath)
+{
+    return popupOpen &&
+        (targetContainerIsPopup ||
+         targetItemContainerIsPopup ||
+         targetMatchesDockEntry ||
+         targetMatchesFolderPath);
+}
+
 constexpr long long SharedScrollableExtent(
     std::size_t mainCount,
     std::size_t runningCount,

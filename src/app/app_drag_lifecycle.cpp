@@ -180,19 +180,28 @@ void DesktopApp::PresentPointerInteractionFrame()
 }
 
 /**
+ * @brief 停止 Dock 驻留计时并清空当前驻留目标。
+ */
+void DesktopApp::ResetDockHandoffDwell()
+{
+    if (hwnd_)
+        KillTimer(hwnd_, kDockHandoffDwellTimerId);
+    dockHandoffDwellIndex_ = static_cast<size_t>(-1);
+    dockHandoffDwellStartTick_ = 0;
+    dockHandoffDwellReady_ = false;
+}
+
+/**
  * @brief 结束当前拖拽会话，重置拖拽渲染缓存
  */
 void DesktopApp::EndDragSession()
 {
+    ResetDockHandoffDwell();
     if (hwnd_)
     {
-        KillTimer(hwnd_, kDockHandoffDwellTimerId);
         KillTimer(
             hwnd_, kCollectionGroupTabDwellTimerId);
     }
-    dockHandoffDwellIndex_ = static_cast<size_t>(-1);
-    dockHandoffDwellStartTick_ = 0;
-    dockHandoffDwellReady_ = false;
     collectionGroupTabDwellWidgetIndex_ =
         static_cast<size_t>(-1);
     collectionGroupTabDwellId_.clear();

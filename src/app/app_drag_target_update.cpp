@@ -375,6 +375,13 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
     targetContainer = popupContainer;
     targetSlot = nullptr;
     targetRegion = HitRegion::None;
+    if (!CanCurrentDragUseCollectionPopup())
+    {
+        // The popup is the foreground surface, so consume the hit without
+        // exposing a placement slot or passing through to the Dock below it.
+        targetRegion = HitRegion::Blocked;
+        return true;
+    }
     if (!PtInRect(&content, client))
         return true;
 

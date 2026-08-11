@@ -343,6 +343,7 @@ HRESULT DesktopApp::HandleOleDragLeave()
     navAutoFlipTick_ = 0;
     if (dragDropController_.IsSelfDragActive())
     {
+        ResetDockHandoffDwell();
         popupDwellController_.Reset();
         KillTimer(hwnd_, kCollectionPopupDwellTimerId);
         collectionGroupTabDwellWidgetIndex_ =
@@ -397,9 +398,11 @@ HRESULT DesktopApp::HandleOleDrop(
             dragSession_.Source() ==
                 dockFolderPopupContainer_.get();
         const bool dockFolderPopupTarget =
-            dockFolderPopupOpen_ &&
-            dragSession_.TargetContainer() ==
-                dockFolderPopupContainer_.get();
+            IsOpenDockFolderPopupDropTarget(
+                dragSession_.TargetContainer(),
+                dragSession_.TargetSlot()
+                    ? dragSession_.TargetSlot()->GetItem()
+                    : nullptr);
         auto refreshDockFolderPopup =
             [&]() {
                 if ((dockFolderPopupSource ||
@@ -689,6 +692,16 @@ HRESULT DesktopApp::HandleOleDrop(
     {
         // ── Handoff on item (desktop OR widget member) ──
         Item* targetItem = dragSession_.TargetSlot() ? dragSession_.TargetSlot()->GetItem() : nullptr;
+        const bool dockFolderPopupTarget =
+            IsOpenDockFolderPopupDropTarget(
+                dragSession_.TargetContainer(),
+                targetItem);
+        const auto refreshTargetPopup =
+            [this, dockFolderPopupTarget](bool succeeded) {
+                if (succeeded && dockFolderPopupTarget &&
+                    dockFolderPopupOpen_)
+                    RefreshDockFolderPopup();
+            };
         const std::wstring targetPath =
             targetItem ? targetItem->GetPath() : L"";
         const DWORD targetAttributes = targetPath.empty()
@@ -701,7 +714,7 @@ HRESULT DesktopApp::HandleOleDrop(
                 keyState,
                 point,
                 *effect,
-                {}))
+                refreshTargetPopup))
         {
             *effect = ChooseDropEffect(keyState, *effect);
             EndDragSession();
@@ -742,10 +755,6 @@ HRESULT DesktopApp::HandleOleDrop(
                 entry.displayName = FileNameFromPath(path);
                 fileSources.entries.push_back(std::move(entry));
             }
-            const bool dockFolderPopupTarget =
-                dockFolderPopupOpen_ && targetItem &&
-                targetItem->GetContainer() ==
-                    dockFolderPopupContainer_.get();
             auto finished = [this,
                 dockFolderPopupTarget](bool succeeded) {
                 if (!succeeded)
@@ -788,7 +797,7 @@ HRESULT DesktopApp::HandleOleDrop(
                 keyState,
                 point,
                 *effect,
-                {}))
+                refreshTargetPopup))
         {
             *effect = ChooseDropEffect(keyState, *effect);
             EndDragSession();
@@ -823,11 +832,6 @@ HRESULT DesktopApp::HandleOleDrop(
 
         if (dt)
         {
-            const bool dockFolderPopupTarget =
-                dockFolderPopupOpen_ &&
-                targetItem &&
-                targetItem->GetContainer() ==
-                    dockFolderPopupContainer_.get();
             DWORD le = *effect;
             POINTL spl{ point.x, point.y };
             dt->DragEnter(dataObject, keyState, spl, &le);
@@ -1110,9 +1114,11 @@ HRESULT DesktopApp::HandleOleDrop(
         DropPreviewList preview = BuildDropPreviewList(sourceList, target,
             dragSession_.TargetContainer() ? dragSession_.TargetSlot() : nullptr, targetRegion, mods, clientPoint);
         const bool dockFolderPopupTarget =
-            dockFolderPopupOpen_ &&
-            target ==
-                dockFolderPopupContainer_.get();
+            IsOpenDockFolderPopupDropTarget(
+                target,
+                dragSession_.TargetSlot()
+                    ? dragSession_.TargetSlot()->GetItem()
+                    : nullptr);
         if (dockFolderPopupTarget)
         {
             if ((*effect & DROPEFFECT_MOVE) != 0)

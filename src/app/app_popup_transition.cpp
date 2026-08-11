@@ -442,6 +442,57 @@ void DesktopApp::ShowDockFolderPopupSortMenu(
 
 
 
+bool DesktopApp::IsOpenDockFolderPopupDropTarget(
+    const Container* targetContainer,
+    const Item* targetItem) const
+{
+    const bool targetContainerIsPopup =
+        targetContainer &&
+        targetContainer == dockFolderPopupContainer_.get();
+    const bool targetItemContainerIsPopup =
+        targetItem &&
+        targetItem->GetContainer() ==
+            dockFolderPopupContainer_.get();
+
+    bool targetMatchesDockEntry = false;
+    if (const auto* dockTarget =
+            dynamic_cast<const DockEntryItem*>(targetItem))
+    {
+        const size_t entryIndex =
+            dockTarget->GetEntryIndex();
+        if (entryIndex < dockEntries_.size() &&
+            IsFolderDockEntry(dockEntries_[entryIndex]))
+        {
+            const DockEntry& entry =
+                dockEntries_[entryIndex];
+            const std::wstring sourceId =
+                std::to_wstring(
+                    static_cast<int>(entry.type)) +
+                L":" +
+                ToUpperInvariant(entry.reference);
+            targetMatchesDockEntry =
+                sourceId == dockFolderPopupSourceId_;
+        }
+    }
+
+    const std::wstring targetPath =
+        targetItem ? targetItem->GetPath() : L"";
+    const bool targetMatchesFolderPath =
+        !targetPath.empty() &&
+        !dockFolderPopupWidget_.sourceFolderPath.empty() &&
+        PathsEqualInsensitive(
+            targetPath,
+            dockFolderPopupWidget_.sourceFolderPath);
+
+    return snowdesktop::dock_folder_rules::
+        OpenPopupNeedsRefreshAfterDrop(
+            dockFolderPopupOpen_,
+            targetContainerIsPopup,
+            targetItemContainerIsPopup,
+            targetMatchesDockEntry,
+            targetMatchesFolderPath);
+}
+
 void DesktopApp::RefreshDockFolderPopup()
 {
     if (shellFileOperationInFlight_ > 0)

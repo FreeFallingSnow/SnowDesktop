@@ -36,4 +36,49 @@ inline bool ShouldDrawSortableInsertionIndicator(
     return !fixedPlacementSource;
 }
 
+// Reordering owns the icon center only while a Dock drag stays inside the
+// same visual group. Crossing between main and folder entries must leave the
+// center available for the target item's handoff action.
+inline bool ShouldPreferMetadataReorder(
+    bool sourceIsDock,
+    bool sourceFoldersOnly,
+    bool targetIsFolder) noexcept
+{
+    return sourceIsDock &&
+        sourceFoldersOnly == targetIsFolder;
+}
+
+// Widget entries are layout objects rather than file payloads. A folder
+// mapping can still hand its resolved path to an ordinary Shell target, but
+// neither a filesystem folder nor a Collection can consume the widget object
+// through their current drop pipelines.
+inline bool SupportsHandoffTarget(
+    bool sourceHasWidgets,
+    bool targetIsFolder,
+    bool targetIsCollection) noexcept
+{
+    return !sourceHasWidgets ||
+        (!targetIsFolder && !targetIsCollection);
+}
+
+// A Collection popup uses the same item-placement pipeline as its Collection.
+// Widget and grouped-entry payloads are not executable there, so they must not
+// arm the dwell opener or expose insertion slots inside an already-open popup.
+// External OLE drags have no DragSourceList entries until drop materialization,
+// but remain valid Collection payloads while their controller session is active.
+inline bool CanUseCollectionPopup(
+    bool dragActive,
+    bool externalDragActive,
+    bool sourceEmpty,
+    bool sourceHasWidgets,
+    bool sourceHasCollectionGroupEntries,
+    bool sourceHasFileGroupEntries) noexcept
+{
+    if (!dragActive || sourceHasWidgets ||
+        sourceHasCollectionGroupEntries ||
+        sourceHasFileGroupEntries)
+        return false;
+    return externalDragActive || !sourceEmpty;
+}
+
 } // namespace snowdesktop::dock_drop_rules

@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../ole_drag_rules.h"
 
 // OLE surface classification, effect choice and coordinate conversion.
 
@@ -91,10 +92,14 @@ bool DesktopApp::IsExternalDropWindowAt(POINT clientPoint) const
     POINT screenPoint = clientPoint;
     ClientToScreen(hwnd_, &screenPoint);
     HWND hit = WindowFromPoint(screenPoint);
-    if (!hit || IsKnownDesktopSurfaceWindow(hit)) return false;
+    if (!hit) return false;
     HWND root = GetAncestor(hit, GA_ROOT);
     if (!root) root = hit;
-    return IsWindowVisible(root) != FALSE;
+    return snowdesktop::ole_drag_rules::
+        IsExternalDropSurface(
+            true,
+            IsDesktopInteractionSurfaceWindow(hit),
+            IsWindowVisible(root) != FALSE);
 }
 
 /**

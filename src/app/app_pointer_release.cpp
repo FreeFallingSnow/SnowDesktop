@@ -51,14 +51,11 @@ void DesktopApp::OnMouseLeave()
         static_cast<size_t>(-1);
     collectionGroupTabDwellId_.clear();
     collectionGroupTabDwellTick_ = 0;
-    dockHandoffDwellIndex_ = static_cast<size_t>(-1);
-    dockHandoffDwellStartTick_ = 0;
-    dockHandoffDwellReady_ = false;
+    ResetDockHandoffDwell();
     if (hwnd_)
     {
         KillTimer(hwnd_, kCollectionPopupDwellTimerId);
         KillTimer(hwnd_, kCollectionGroupTabDwellTimerId);
-        KillTimer(hwnd_, kDockHandoffDwellTimerId);
     }
 
     // Capture-based dragging continues to receive coordinates outside the
@@ -789,9 +786,9 @@ void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         {
             Item* targetItem = dragSession_.TargetSlot()->GetItem();
             const bool dockFolderPopupTarget =
-                dockFolderPopupOpen_ &&
-                targetItem->GetContainer() ==
-                    dockFolderPopupContainer_.get();
+                IsOpenDockFolderPopupDropTarget(
+                    dragSession_.TargetContainer(),
+                    targetItem);
             const bool dockFolderPopupSource =
                 dockFolderPopupOpen_ &&
                 dragSession_.Source() ==
@@ -997,9 +994,11 @@ void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         Container* targetContainer = dragSession_.TargetContainer();
         bool needsReload = targetContainer->NeedsShellReloadAfterDrop();
         const bool dockFolderPopupTarget =
-            dockFolderPopupOpen_ &&
-            targetContainer ==
-                dockFolderPopupContainer_.get();
+            IsOpenDockFolderPopupDropTarget(
+                targetContainer,
+                dragSession_.TargetSlot()
+                    ? dragSession_.TargetSlot()->GetItem()
+                    : nullptr);
         const bool dockFolderPopupSource =
             dockFolderPopupOpen_ &&
             dragSession_.Source() ==

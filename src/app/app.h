@@ -644,6 +644,8 @@ private:
     void GetNavButtonRects(RECT& outPrev, RECT& outNext) const;
     /** @brief 使拖拽静态场景缓存失效，下次拖拽时重建缓存。 */
     void InvalidateDragStaticScene();
+    /** @brief 停止 Dock 驻留计时并清空当前驻留目标。 */
+    void ResetDockHandoffDwell();
     /** @brief 结束当前拖拽会话，清理拖拽状态。 */
     void EndDragSession();
     /** @brief 在同步 Shell 放置前提交拖拽结束帧并移除已隐藏组件的毛玻璃。 */
@@ -1155,6 +1157,8 @@ private:
     void StartSteamWorkshopWatcher();
     void StopSteamWorkshopWatcher();
     static DWORD WINAPI SteamWorkshopWatcherThreadProc(LPVOID param);
+    /** @brief 当前拖拽载荷是否能由集合弹窗的放置管线处理。 */
+    bool CanCurrentDragUseCollectionPopup() const;
     /** @brief 更新集合弹出面板的悬停停留计时。 @param point 当前鼠标位置 */
     void UpdateCollectionPopupDwell(POINT point);
     /** @brief 拖动条目时更新集合组标签的悬停切换计时。 */
@@ -2109,6 +2113,10 @@ private:
     size_t GetPopupItemCount(const DesktopWidget& widget) const;
     std::vector<Item*>
         GetDockFolderPopupSelectedItems();
+    /** @brief 判断放置目标是否会改变当前打开的 Dock 文件夹弹窗。 */
+    bool IsOpenDockFolderPopupDropTarget(
+        const Container* targetContainer,
+        const Item* targetItem) const;
     /**
      * @brief 在替换 Dock 文件夹弹窗运行时对象前保存活动拖拽来源。
      * @return 当前拖拽来源来自该弹窗且已完成稳定重绑定或安全结束时返回 true。

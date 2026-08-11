@@ -3,15 +3,25 @@
 
 // Collection/file-group dwell activation and popup tab switching.
 
+bool DesktopApp::CanCurrentDragUseCollectionPopup() const
+{
+    const DragSourceList& sourceList =
+        dragSession_.SourceList();
+    return snowdesktop::dock_drop_rules::
+        CanUseCollectionPopup(
+            dragSession_.IsActive(),
+            dragDropController_.IsExternalDragActive(),
+            sourceList.Empty(),
+            sourceList.hasWidgets,
+            sourceList.hasCollectionGroupEntries,
+            sourceList.hasFileGroupEntries);
+}
+
 void DesktopApp::UpdateCollectionPopupDwell(POINT point)
 {
     lastMousePoint_ = point;
-    if (!dragSession_.IsActive() ||
-        SuppressDesktopWidgetDragTargets() ||
-        (dragSession_.SourceList().
-                hasCollectionGroupEntries ||
-            dragSession_.SourceList().
-                hasFileGroupEntries))
+    if (!CanCurrentDragUseCollectionPopup() ||
+        SuppressDesktopWidgetDragTargets())
     {
         popupDwellController_.Reset();
         KillTimer(hwnd_, kCollectionPopupDwellTimerId);
@@ -88,8 +98,13 @@ void DesktopApp::UpdateCollectionPopupDwell(POINT point)
  */
 bool DesktopApp::TryOpenDwellCollectionPopup(DWORD now)
 {
-    if (SuppressDesktopWidgetDragTargets())
+    if (!CanCurrentDragUseCollectionPopup() ||
+        SuppressDesktopWidgetDragTargets())
+    {
+        popupDwellController_.Reset();
+        KillTimer(hwnd_, kCollectionPopupDwellTimerId);
         return false;
+    }
     // Recheck at timer delivery so a candidate captured before another popup
     // opened cannot replace it through the foreground popup.
     if (popupDwellController_.CancelIfOccluded(

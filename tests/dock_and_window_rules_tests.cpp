@@ -18,6 +18,7 @@
 #include "app/native_menu_presentation_rules.h"
 #include "desktop_window_discovery_rules.h"
 #include "floating_dock_rules.h"
+#include "ole_drag_rules.h"
 #include "display_topology_refresh.h"
 #include "widget_spacing_rules.h"
 
@@ -86,6 +87,8 @@ int main()
         snowdesktop::native_menu_presentation_rules;
     namespace desktopWindowDiscovery =
         snowdesktop::desktop_window_discovery_rules;
+    namespace oleDrag =
+        snowdesktop::ole_drag_rules;
 
     Check(
         desktopWindowDiscovery::IsExplorerDesktopViewProcess(
@@ -99,6 +102,28 @@ int main()
         !desktopWindowDiscovery::IsExplorerDesktopViewProcess(
             4120, 0),
         "desktop discovery must reject transient in-process Shell views");
+
+    Check(
+        !oleDrag::IsExternalDropSurface(
+            true, true, true) &&
+        !oleDrag::IsExternalDropSurface(
+            false, false, true) &&
+        !oleDrag::IsExternalDropSurface(
+            true, false, false) &&
+        oleDrag::IsExternalDropSurface(
+            true, false, true),
+        "OLE drag routing must keep fixed and floating Dock surfaces internal");
+    Check(
+        oleDrag::SelectDwellTargetRefreshRoute(
+            false, false) ==
+            oleDrag::DwellTargetRefreshRoute::NativePointer &&
+        oleDrag::SelectDwellTargetRefreshRoute(
+            true, false) ==
+            oleDrag::DwellTargetRefreshRoute::SelfOleDragOver &&
+        oleDrag::SelectDwellTargetRefreshRoute(
+            false, true) ==
+            oleDrag::DwellTargetRefreshRoute::AwaitExternalOleCallback,
+        "Dock dwell must not re-enter native drag handling from an OLE loop");
 
     Check(
         nativeMenuPresentation::ShouldFlushAfterOwnerMessage(
@@ -731,6 +756,65 @@ int main()
             folderRange.begin == 3 &&
             folderRange.end == 8,
         "Dock insertion ranges must isolate main and folder ordering");
+    Check(
+        dockDrop::ShouldPreferMetadataReorder(
+            true, false, false) &&
+        dockDrop::ShouldPreferMetadataReorder(
+            true, true, true) &&
+        !dockDrop::ShouldPreferMetadataReorder(
+            true, false, true) &&
+        !dockDrop::ShouldPreferMetadataReorder(
+            true, true, false) &&
+        !dockDrop::ShouldPreferMetadataReorder(
+            false, false, false),
+        "Dock handoff must remain available when a drag crosses entry groups");
+    Check(
+        dockDrop::SupportsHandoffTarget(
+            false, true, false) &&
+        dockDrop::SupportsHandoffTarget(
+            false, false, true) &&
+        dockDrop::SupportsHandoffTarget(
+            true, false, false) &&
+        !dockDrop::SupportsHandoffTarget(
+            true, true, false) &&
+        !dockDrop::SupportsHandoffTarget(
+            true, false, true),
+        "Dock handoff feedback must only advertise executable widget targets");
+    Check(
+        dockDrop::CanUseCollectionPopup(
+            true, false, false,
+            false, false, false) &&
+        dockDrop::CanUseCollectionPopup(
+            true, true, true,
+            false, false, false) &&
+        !dockDrop::CanUseCollectionPopup(
+            false, false, false,
+            false, false, false) &&
+        !dockDrop::CanUseCollectionPopup(
+            true, false, true,
+            false, false, false) &&
+        !dockDrop::CanUseCollectionPopup(
+            true, false, false,
+            true, false, false) &&
+        !dockDrop::CanUseCollectionPopup(
+            true, false, false,
+            false, true, false) &&
+        !dockDrop::CanUseCollectionPopup(
+            true, false, false,
+            false, false, true),
+        "Collection popup dwell and insertion must share payload compatibility");
+    Check(
+        folderRules::OpenPopupNeedsRefreshAfterDrop(
+            true, false, false, true, false) &&
+        folderRules::OpenPopupNeedsRefreshAfterDrop(
+            true, false, false, false, true) &&
+        folderRules::OpenPopupNeedsRefreshAfterDrop(
+            true, true, false, false, false) &&
+        !folderRules::OpenPopupNeedsRefreshAfterDrop(
+            false, true, true, true, true) &&
+        !folderRules::OpenPopupNeedsRefreshAfterDrop(
+            true, false, false, false, false),
+        "open Dock folder popups must refresh for matching icon and path drops");
     Check(folderRules::SharedScrollableExtent(
             2, 1, 1, 3, 80, 18) ==
             7 * 80 + 3 * 18,

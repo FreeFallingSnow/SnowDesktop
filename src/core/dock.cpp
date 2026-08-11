@@ -2218,10 +2218,7 @@ HitRegion DockContainer::HitTestDrag(POINT pt, Slot*& outSlot)
 {
     auto resetDwell = [&]() {
         if (!app_) return;
-        app_->dockHandoffDwellIndex_ = static_cast<size_t>(-1);
-        app_->dockHandoffDwellStartTick_ = 0;
-        app_->dockHandoffDwellReady_ = false;
-        if (app_->hwnd_) KillTimer(app_->hwnd_, kDockHandoffDwellTimerId);
+        app_->ResetDockHandoffDwell();
     };
     outSlot = nullptr;
     RECT dockBounds = GetBounds();
@@ -2285,9 +2282,6 @@ HitRegion DockContainer::HitTestDrag(POINT pt, Slot*& outSlot)
                 targetItem) != sourceItems.end();
             return isDragSource ? HitRegion::None : HitRegion::Handoff;
         }
-        const bool dockMetadataReorder =
-            dynamic_cast<DockContainer*>(
-                app_->dragSession_.Source()) != nullptr;
         const auto* folderDockItem =
             dynamic_cast<DockEntryItem*>(
                 targetItem);
@@ -2299,11 +2293,25 @@ HitRegion DockContainer::HitTestDrag(POINT pt, Slot*& outSlot)
                 app_->dockEntries_[
                     folderDockItem->
                         GetEntryIndex()]);
+        const bool dockMetadataReorder =
+            snowdesktop::dock_drop_rules::
+                ShouldPreferMetadataReorder(
+                    dynamic_cast<DockContainer*>(
+                        app_->dragSession_.Source()) != nullptr,
+                    HasOnlyFolderDragSource(),
+                    folderTarget);
+        const bool collectionTarget =
+            folderDockItem &&
+            folderDockItem->GetEntryType() ==
+                DockEntryType::Collection;
         const bool canHandoff = !dockMetadataReorder &&
             targetItem && !targetItem->IsSelected() &&
-            !(folderTarget &&
-                app_->dragSession_.SourceList().
-                    hasWidgets) &&
+            snowdesktop::dock_drop_rules::
+                SupportsHandoffTarget(
+                    app_->dragSession_.SourceList().
+                        hasWidgets,
+                    folderTarget,
+                    collectionTarget) &&
             PtInRect(&handoffRect, pt);
         if (canHandoff && app_)
         {

@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../ole_drag_rules.h"
 
 // Desktop animation, dwell and maintenance timer dispatch.
 
@@ -330,14 +331,57 @@ void DesktopApp::OnTimer(WPARAM timerId)
     {
         if (!dragSession_.IsActive() || dockHandoffDwellIndex_ == static_cast<size_t>(-1))
         {
-            KillTimer(hwnd_, kDockHandoffDwellTimerId);
-            dockHandoffDwellReady_ = false;
+            ResetDockHandoffDwell();
             return;
         }
         if (GetTickCount() - dockHandoffDwellStartTick_ >= kDockHandoffDwellDelayMs)
         {
             const POINT dwellPoint =
                 dragSession_.CurrentPoint();
+            const auto refreshDwellTarget =
+                [this](POINT clientPoint) {
+                    using snowdesktop::ole_drag_rules::
+                        DwellTargetRefreshRoute;
+                    const DwellTargetRefreshRoute route =
+                        snowdesktop::ole_drag_rules::
+                            SelectDwellTargetRefreshRoute(
+                                dragDropController_.
+                                    IsSelfDragActive(),
+                                dragDropController_.
+                                    IsExternalDragActive());
+                    if (route ==
+                        DwellTargetRefreshRoute::NativePointer)
+                    {
+                        OnMouseMove(
+                            0,
+                            MAKELPARAM(
+                                clientPoint.x,
+                                clientPoint.y));
+                        return;
+                    }
+                    if (route !=
+                        DwellTargetRefreshRoute::SelfOleDragOver)
+                        return;
+
+                    DWORD keyState = MK_LBUTTON;
+                    if (GetAsyncKeyState(VK_CONTROL) & 0x8000)
+                        keyState |= MK_CONTROL;
+                    if (GetAsyncKeyState(VK_MENU) & 0x8000)
+                        keyState |= MK_ALT;
+                    if (GetAsyncKeyState(VK_SHIFT) & 0x8000)
+                        keyState |= MK_SHIFT;
+                    POINT screenPoint = clientPoint;
+                    ClientToScreen(hwnd_, &screenPoint);
+                    DWORD effect = DROPEFFECT_COPY |
+                        DROPEFFECT_MOVE |
+                        DROPEFFECT_LINK;
+                    HandleOleDragOver(
+                        keyState,
+                        POINTL{
+                            screenPoint.x,
+                            screenPoint.y },
+                        &effect);
+                };
             DockContainer* dock =
                 GetDockContainerAtPoint(
                     dwellPoint);
@@ -356,23 +400,10 @@ void DesktopApp::OnTimer(WPARAM timerId)
                 IsFolderDockEntry(
                     dockEntries_[entryIndex]))
             {
-                dockHandoffDwellIndex_ =
-                    static_cast<size_t>(-1);
-                dockHandoffDwellStartTick_ = 0;
-                dockHandoffDwellReady_ = false;
-                KillTimer(
-                    hwnd_,
-                    kDockHandoffDwellTimerId);
+                ResetDockHandoffDwell();
                 OpenDockFolderPopupAt(
                     entryIndex, dwellPoint);
-                if (!dragDropController_.IsExternalDragActive())
-                {
-                    OnMouseMove(
-                        0,
-                        MAKELPARAM(
-                            dwellPoint.x,
-                            dwellPoint.y));
-                }
+                refreshDwellTarget(dwellPoint);
                 InvalidateRect(
                     hwnd_, nullptr, FALSE);
                 PresentPointerInteractionFrame();
@@ -384,11 +415,8 @@ void DesktopApp::OnTimer(WPARAM timerId)
 
             dockHandoffDwellReady_ = true;
             KillTimer(hwnd_, kDockHandoffDwellTimerId);
-            if (!dragDropController_.IsExternalDragActive())
-            {
-                OnMouseMove(0, MAKELPARAM(
-                    dragSession_.CurrentPoint().x, dragSession_.CurrentPoint().y));
-            }
+            refreshDwellTarget(
+                dragSession_.CurrentPoint());
             InvalidateRect(hwnd_, nullptr, FALSE);
             PresentPointerInteractionFrame();
             PresentDesktopPointerUpdate();
