@@ -40,6 +40,7 @@
 #include "popup_animation_rules.h"
 #include "quick_navigation_animation_rules.h"
 #include "item_layout_rules.h"
+#include "../icon_render_rules.h"
 #include "dock_window_rules.h"
 #include "dock_window_preview.h"
 #include "dock_window_transition.h"
@@ -139,6 +140,7 @@ struct IconLoadTask {
     bool isDesktopItem = true;
     std::wstring folderPath;
     IconLoadPhase phase = IconLoadPhase::Phase1;
+    int requestedSize = 0;
 };
 struct RecycleBinPollState {
     std::atomic<int64_t> hasItems{ -1 };   ///< -1 未知，0 空，1 非空
@@ -217,6 +219,7 @@ struct DockRunningAppInfo
     HWND window = nullptr;
     HBITMAP iconBitmap = nullptr;
     SIZE iconBitmapSize{};
+    int iconRequestedSize = 0;
     bool minimized = false;
     bool foreground = false;
     bool selected = false;
@@ -1941,6 +1944,8 @@ private:
     ID2D1Bitmap1* GetOrCreateD2DBitmap(HBITMAP hbm, bool beautify);
     ID2D1Bitmap* GetOrCreateD2DBitmap(ID2D1RenderTarget* target, HBITMAP hbm);
     ComPtr<ID2D1Bitmap1> CreateD2DBitmapFromHBitmap(HBITMAP hbm, bool beautify);
+    void DrawIconBitmap(ID2D1RenderTarget* target, ID2D1Bitmap* bitmap,
+        RECT destination, float opacity = 1.0f);
     std::uintptr_t GetD2DIconCacheKey(HBITMAP hbm, bool beautified) const;
     void EraseD2DIconCacheForBitmap(HBITMAP hbm);
 
@@ -1956,6 +1961,9 @@ private:
     void StartIconLoader();
     void StopIconLoader();
     void BeginIconLoadGeneration();
+    int GetShellIconBitmapSizeForPage(const std::wstring& pageId) const;
+    int GetMaximumShellIconBitmapSize() const;
+    void RefreshIconBitmapResolution();
     void EnqueueIconLoad(IconLoadTask task);
     void OnIconLoaded(WPARAM wParam, LPARAM lParam);
     void DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex, RECT iconRect,
@@ -2697,8 +2705,8 @@ private:
     ComPtr<IDWriteTextFormat> quickNavItemTextFormat_;
     ComPtr<IDWriteTextFormat> quickNavPathTextFormat_;
     ComPtr<IDWriteTextFormat> quickNavFluentTextFormat_;
-    /** @brief 快捷导航应用/Everything 行图标的 D2D 位图缓存（按 sysIconIndex）。 */
-    std::unordered_map<int, ComPtr<ID2D1Bitmap>> quickNavSysIconCache_;
+    /** @brief 快捷导航应用/Everything 行图标的 D2D 位图缓存（按索引和源尺寸）。 */
+    std::unordered_map<std::uint64_t, ComPtr<ID2D1Bitmap>> quickNavSysIconCache_;
     std::vector<int> quickNavTabWidths_;
     static LRESULT CALLBACK ControlWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     LRESULT HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);

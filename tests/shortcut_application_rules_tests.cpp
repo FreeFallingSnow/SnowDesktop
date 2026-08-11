@@ -62,6 +62,23 @@ int main()
         "document shortcuts must not be classified as Applications targets");
 
     Check(
+        rules::ShouldUseShellIconOnly(L"C:\\Apps\\Editor.EXE"),
+        "executables must avoid the Shell thumbnail representation");
+    Check(
+        rules::ShouldUseShellIconOnly(L"C:\\Desktop\\Editor.lnk"),
+        "shortcuts must keep the native icon representation");
+    Check(
+        rules::ShouldUseShellIconOnly(
+            L"shell:AppsFolder\\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App"),
+        "Applications items must keep the native icon representation");
+    Check(
+        !rules::ShouldUseShellIconOnly(L"C:\\Pictures\\mountain.png"),
+        "media files must remain eligible for Shell thumbnails");
+    Check(
+        !rules::ShouldUseShellIconOnly(L"C:\\Docs\\report.pdf"),
+        "ordinary documents must remain eligible for Shell thumbnails");
+
+    Check(
         rules::IsSteamApplicationUrl(L"steam://rungameid/730"),
         "Steam rungameid URLs must identify application shortcuts");
     Check(

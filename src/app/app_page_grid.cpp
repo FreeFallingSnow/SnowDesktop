@@ -69,6 +69,7 @@ void DesktopApp::AdjustGridRows(int delta)
     RelayoutDisplacedItems();
     SaveLayoutSlots();
     LayoutItems();
+    RefreshIconBitmapResolution();
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
@@ -101,6 +102,7 @@ void DesktopApp::AdjustGridColumns(int delta)
     RelayoutDisplacedItems();
     SaveLayoutSlots();
     LayoutItems();
+    RefreshIconBitmapResolution();
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
@@ -145,6 +147,7 @@ void DesktopApp::SetGridDimensions(int columns, int rows)
     RelayoutDisplacedItems();
     SaveLayoutSlots();
     LayoutItems();
+    RefreshIconBitmapResolution();
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
@@ -265,6 +268,7 @@ void DesktopApp::SetIconSpacing(float value)
             componentSpacingScale_, GetMaximumComponentSpacingScale());
     ApplyDockWorkAreaReservation();
     LayoutItems();
+    RefreshIconBitmapResolution();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
@@ -355,6 +359,7 @@ void DesktopApp::SetItemFontSize(float value)
     // the Dock keeps drawing its previous-size slots until another interaction.
     ApplyDockWorkAreaReservation();
     LayoutItems();
+    RefreshIconBitmapResolution();
     InvalidateDockContainers();
     InvalidateDragStaticScene();
     SaveLayoutSlots();
@@ -1074,6 +1079,7 @@ void DesktopApp::ApplyPageMapping()
     // geometry, so refresh the reservation before LayoutItems() rebuilds the
     // Dock containers from dockAreas_.
     ApplyDockWorkAreaReservation();
+    RefreshIconBitmapResolution();
 }
 
 /**

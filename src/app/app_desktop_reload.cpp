@@ -826,13 +826,42 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
 
 void DesktopApp::EnqueueIconLoad(IconLoadTask task)
 {
+    if (task.requestedSize <= 0)
+    {
+        if (task.isDesktopItem)
+        {
+            task.requestedSize = GetMaximumShellIconBitmapSize();
+        }
+        else
+        {
+            std::wstring pageId;
+            if (task.widgetId == kDockFolderPopupWidgetId &&
+                dockFolderPopupOpen_)
+            {
+                pageId = popupPageId_;
+            }
+            else
+            {
+                for (const auto& widget : widgets_)
+                {
+                    if (widget.id == task.widgetId)
+                    {
+                        pageId = widget.gridCell.pageId;
+                        break;
+                    }
+                }
+            }
+            task.requestedSize = GetShellIconBitmapSizeForPage(pageId);
+        }
+    }
     if (task.requestKey.empty())
     {
         const std::wstring& identity = task.isDesktopItem ? task.layoutKey : task.folderPath;
         task.requestKey = std::to_wstring(task.serial) + L"\n" +
             (task.isDesktopItem ? L"D\n" : L"F\n") + task.widgetId + L"\n" +
             ToUpperInvariant(identity) + L"\n" +
-            (task.phase == IconLoadPhase::Phase1 ? L"1" : L"2");
+            (task.phase == IconLoadPhase::Phase1 ? L"1" : L"2") + L"\n" +
+            std::to_wstring(task.requestedSize);
     }
     {
         std::lock_guard<std::mutex> lock(iconLoaderMutex_);

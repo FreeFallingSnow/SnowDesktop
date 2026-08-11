@@ -307,8 +307,15 @@ void DesktopApp::DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex,
         return;
     auto& cache = placeholderIconCache_;
     const bool beautify = allowBeautify && iconBeautifyEnabled_;
+    const int targetSize = std::max(
+        iconRect.right - iconRect.left,
+        iconRect.bottom - iconRect.top);
+    const int sourceSize = snowdesktop::icon_render_rules::
+        SourcePixelsForTarget(targetSize);
     const std::uint64_t cacheKey =
-        (static_cast<std::uint64_t>(static_cast<std::uint32_t>(sysIconIndex)) << 1) |
+        (static_cast<std::uint64_t>(
+            static_cast<std::uint32_t>(sysIconIndex)) << 32) |
+        (static_cast<std::uint64_t>(sourceSize) << 1) |
         static_cast<std::uint64_t>(beautify ? 1 : 0);
 
     auto cached = cache.find(cacheKey);
@@ -339,7 +346,7 @@ void DesktopApp::DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex,
 
         SIZE bitmapSize{};
         HBITMAP alphaBitmap = CreateAlphaBitmapFromIcon(
-            icon, kIconBitmapSize, kIconBitmapSize, bitmapSize);
+            icon, sourceSize, sourceSize, bitmapSize);
         DestroyIcon(icon);
         if (!alphaBitmap)
             return;
@@ -358,10 +365,7 @@ void DesktopApp::DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex,
         cached = cache.emplace(cacheKey, std::move(bitmap)).first;
     }
 
-    D2D1_RECT_F dst = D2D1::RectF(
-        static_cast<float>(iconRect.left), static_cast<float>(iconRect.top),
-        static_cast<float>(iconRect.right), static_cast<float>(iconRect.bottom));
-    ctx->DrawBitmap(cached->second.Get(), dst, alpha, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    DrawIconBitmap(ctx, cached->second.Get(), iconRect, alpha);
 }
 
 void DesktopApp::DrawQuickNavSysIcon(ID2D1RenderTarget* ctx, int sysIconIndex, RECT dstRect)
@@ -371,10 +375,20 @@ void DesktopApp::DrawQuickNavSysIcon(ID2D1RenderTarget* ctx, int sysIconIndex, R
     ComPtr<ID2D1DeviceContext> dc;
     if (FAILED(ctx->QueryInterface(IID_PPV_ARGS(&dc))) || !dc) return;
 
-    auto cached = quickNavSysIconCache_.find(sysIconIndex);
+    const int targetSize = std::max(
+        dstRect.right - dstRect.left,
+        dstRect.bottom - dstRect.top);
+    const int sourceSize = snowdesktop::icon_render_rules::
+        SourcePixelsForTarget(targetSize);
+    const std::uint64_t cacheKey =
+        (static_cast<std::uint64_t>(
+            static_cast<std::uint32_t>(sysIconIndex)) << 32) |
+        static_cast<std::uint64_t>(sourceSize);
+    auto cached = quickNavSysIconCache_.find(cacheKey);
     if (cached == quickNavSysIconCache_.end())
     {
-        // 用 EXTRALARGE(48px) 源：内容填满画布，避免 JUMBO 部分图标的透明留白导致缩放后偏小/偏角。
+        // EXTRALARGE avoids the transparent padding used by some JUMBO icons;
+        // DrawIconEx then rasterizes it into the layout-aware source bucket.
         ComPtr<IImageList> imageList;
         HRESULT hr = SHGetImageList(SHIL_EXTRALARGE, IID_IImageList,
             reinterpret_cast<void**>(imageList.GetAddressOf()));
@@ -391,9 +405,9 @@ void DesktopApp::DrawQuickNavSysIcon(ID2D1RenderTarget* ctx, int sysIconIndex, R
                 ILD_TRANSPARENT | ILD_PRESERVEALPHA, &icon)) || !icon)
             return;
 
-        const int srcSize = 48;
         SIZE bitmapSize{};
-        HBITMAP alphaBitmap = CreateAlphaBitmapFromIcon(icon, srcSize, srcSize, bitmapSize);
+        HBITMAP alphaBitmap = CreateAlphaBitmapFromIcon(
+            icon, sourceSize, sourceSize, bitmapSize);
         DestroyIcon(icon);
         if (!alphaBitmap) return;
 
@@ -409,13 +423,11 @@ void DesktopApp::DrawQuickNavSysIcon(ID2D1RenderTarget* ctx, int sysIconIndex, R
         if (FAILED(iconBitmap.As(&bitmap)) || !bitmap)
             return;
 
-        cached = quickNavSysIconCache_.emplace(sysIconIndex, std::move(bitmap)).first;
+        cached = quickNavSysIconCache_.emplace(
+            cacheKey, std::move(bitmap)).first;
     }
 
-    D2D1_RECT_F dst = D2D1::RectF(
-        static_cast<float>(dstRect.left), static_cast<float>(dstRect.top),
-        static_cast<float>(dstRect.right), static_cast<float>(dstRect.bottom));
-    ctx->DrawBitmap(cached->second.Get(), dst, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    DrawIconBitmap(ctx, cached->second.Get(), dstRect);
 }
 
 /**

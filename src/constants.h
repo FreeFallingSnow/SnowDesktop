@@ -22,7 +22,9 @@ constexpr COLORREF kTransparentKey = RGB(1, 2, 3);
 
 // ── 图标与网格布局 ────────────────────────────
 constexpr int kIconSize = 64;
-constexpr int kIconBitmapSize = 64;
+// Baseline source resolution for call sites that do not have a concrete
+// destination yet. Layout-aware loaders choose a 64..256 pixel bucket.
+constexpr int kIconBitmapSize = 96;
 constexpr int kCellWidth = 92;
 constexpr int kMinCellHeight = 116;
 constexpr int kGridMarginX = 6;

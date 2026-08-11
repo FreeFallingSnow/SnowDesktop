@@ -95,10 +95,11 @@ RECT DesktopApp::GetItemIconRect(RECT bounds) const
     const int cellH = bounds.bottom - bounds.top;
     if (cellH < static_cast<int>(std::round(50.0f * layoutScale)))
     {
-        const int iconSz = std::max(1, std::min({
+        const int iconSz = std::clamp(std::min({
             static_cast<int>(std::round(32.0f * layoutScale)),
             std::max(1, cellW - inset * 2),
-            std::max(1, cellH - inset * 2) }));
+            std::max(1, cellH - inset * 2) }), 1,
+            snowdesktop::icon_render_rules::kMaximumSourcePixels);
         return MakeRect(
             bounds.left + inset,
             bounds.top + (cellH - iconSz) / 2,
@@ -113,7 +114,9 @@ RECT DesktopApp::GetItemIconRect(RECT bounds) const
                 titleGap, textHeight);
     // The title owns the bottom text band. Let the icon fill the remaining
     // square area instead of capping it at the old fixed 64-pixel size.
-    const int iconSz = std::max(1, std::min(maxIconW, maxIconH));
+    const int iconSz = std::clamp(
+        std::min(maxIconW, maxIconH), 1,
+        snowdesktop::icon_render_rules::kMaximumSourcePixels);
     const int iconX = bounds.left + (cellW - iconSz) / 2;
     const int iconY = bounds.top + topInset;
     return MakeRect(iconX, iconY, iconX + iconSz, iconY + iconSz);

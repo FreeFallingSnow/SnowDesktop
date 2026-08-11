@@ -760,6 +760,13 @@ if (BUILD_TESTING)
         LABELS rules shell)
 
     snowdesktop_add_test(
+        SnowDesktopIconRenderRulesTests
+        icon_render_rules
+        SOURCES tests/icon_render_rules_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS rules shell ui)
+
+    snowdesktop_add_test(
         SnowDesktopItemLocationTests
         item_location
         SOURCES

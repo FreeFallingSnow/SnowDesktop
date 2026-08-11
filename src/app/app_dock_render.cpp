@@ -152,8 +152,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         else if (ID2D1Bitmap1* bitmap = recycleBin
             ? GetOrCreateD2DBitmap(item.iconBitmap, false)
             : GetOrCreateD2DBitmap(item.iconBitmap))
-            ctx->DrawBitmap(bitmap, ToD2DRect(bitmapTarget), alpha,
-                D2D1_INTERPOLATION_MODE_LINEAR);
+            DrawIconBitmap(ctx, bitmap, bitmapTarget, alpha);
         else
             DrawPlaceholderIcon(ctx, item.sysIconIndex, bitmapTarget, alpha, !recycleBin);
         if (ShouldDrawShortcutArrow(item.isShortcut, item.isApplicationShortcut) &&
@@ -352,8 +351,7 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
     };
     const bool lt = IsLightContentTheme();
     if (ID2D1Bitmap1* bitmap = GetOrCreateD2DBitmap(app.iconBitmap))
-        ctx->DrawBitmap(bitmap, ToD2DRect(iconRect), 1.0f,
-            D2D1_INTERPOLATION_MODE_LINEAR);
+        DrawIconBitmap(ctx, bitmap, iconRect);
     else
         DrawPlaceholderIcon(ctx, -1, iconRect, 1.0f, true);
     if (state == 2)

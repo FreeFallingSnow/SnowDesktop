@@ -153,10 +153,7 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
         ID2D1Bitmap* bmp = app_->GetOrCreateD2DBitmap(context, item_->iconBitmap);
         if (bmp)
         {
-            D2D1_RECT_F dst = D2D1::RectF(
-                static_cast<float>(iconRect.left), static_cast<float>(iconRect.top),
-                static_cast<float>(iconRect.right), static_cast<float>(iconRect.bottom));
-            context->DrawBitmap(bmp, dst, alpha, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+            app_->DrawIconBitmap(context, bmp, iconRect, alpha);
         }
         else
         {
@@ -309,10 +306,7 @@ void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, boo
         ID2D1Bitmap* bmp = app_->GetOrCreateD2DBitmap(context, entry_->iconBitmap);
         if (bmp)
         {
-            D2D1_RECT_F dst = D2D1::RectF(
-                static_cast<float>(iconRect.left), static_cast<float>(iconRect.top),
-                static_cast<float>(iconRect.right), static_cast<float>(iconRect.bottom));
-            context->DrawBitmap(bmp, dst, opacity, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+            app_->DrawIconBitmap(context, bmp, iconRect, opacity);
         }
         else
         {

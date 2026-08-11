@@ -259,6 +259,7 @@ inline std::wstring QueryDockWindowAppUserModelId(HWND window)
 
 inline HBITMAP CreateDockShellIconBitmap(
     const std::wstring& parsingName, SIZE& bitmapSize,
+    int requestedSize,
     int* systemIconIndex = nullptr)
 {
     if (systemIconIndex)
@@ -280,7 +281,7 @@ inline HBITMAP CreateDockShellIconBitmap(
         *systemIconIndex = fallbackIndex;
 
     HBITMAP bitmap = GetHighResolutionShellIconBitmap(
-        pidl, fallbackIndex, bitmapSize, false);
+        pidl, fallbackIndex, bitmapSize, false, requestedSize);
     CoTaskMemFree(pidl);
     return bitmap;
 }
@@ -302,7 +303,7 @@ inline int QueryDockGenericExecutableIconIndex()
 }
 
 inline HBITMAP CreateDockWindowProvidedIconBitmap(
-    HWND window, SIZE& bitmapSize)
+    HWND window, SIZE& bitmapSize, int requestedSize)
 {
     if (!window || !IsWindow(window))
         return nullptr;
@@ -329,13 +330,14 @@ inline HBITMAP CreateDockWindowProvidedIconBitmap(
     if (!icon)
         return nullptr;
     return CreateAlphaBitmapFromIcon(
-        icon, kIconBitmapSize, kIconBitmapSize,
+        icon, requestedSize, requestedSize,
         bitmapSize);
 }
 
 inline HBITMAP CreateDockWindowIconBitmap(
     HWND window, const std::wstring& executablePath,
-    const std::wstring& appUserModelId, SIZE& bitmapSize)
+    const std::wstring& appUserModelId, SIZE& bitmapSize,
+    int requestedSize)
 {
     // Prefer stable high-resolution application identity icons. Some classic
     // Win32 hosts (for example Creo's xtop.exe) expose only the generic
@@ -344,7 +346,8 @@ inline HBITMAP CreateDockWindowIconBitmap(
     if (!appUserModelId.empty())
     {
         if (HBITMAP bitmap = CreateDockShellIconBitmap(
-                L"shell:AppsFolder\\" + appUserModelId, bitmapSize))
+                L"shell:AppsFolder\\" + appUserModelId, bitmapSize,
+                requestedSize))
             return bitmap;
     }
 
@@ -352,7 +355,7 @@ inline HBITMAP CreateDockWindowIconBitmap(
     SIZE executableBitmapSize{};
     HBITMAP executableBitmap =
         CreateDockShellIconBitmap(
-            executablePath, executableBitmapSize,
+            executablePath, executableBitmapSize, requestedSize,
             &executableIconIndex);
     const int genericExecutableIconIndex =
         QueryDockGenericExecutableIconIndex();
@@ -375,7 +378,7 @@ inline HBITMAP CreateDockWindowIconBitmap(
     SIZE windowBitmapSize{};
     HBITMAP windowBitmap =
         CreateDockWindowProvidedIconBitmap(
-            window, windowBitmapSize);
+            window, windowBitmapSize, requestedSize);
     const auto source =
         snowdesktop::dock_window_rules::
             ResolveDockWindowIconSource(

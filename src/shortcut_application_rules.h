@@ -77,6 +77,38 @@ inline bool LooksLikeApplicationsParsingName(std::wstring_view value)
             value, L"{4234D49B-0245-4DF3-B780-3893943456E1}");
 }
 
+/**
+ * Shell thumbnail providers can wrap application artwork in a neutral frame
+ * at large requested sizes. Keep icon-bearing application entries on the
+ * ICONONLY path while allowing ordinary documents and media to use previews.
+ */
+inline bool ShouldUseShellIconOnly(std::wstring_view parsingName)
+{
+    parsingName = Trim(parsingName);
+    if (LooksLikeApplicationsParsingName(parsingName))
+        return true;
+
+    constexpr std::array iconOnlyExtensions{
+        std::wstring_view(L".EXE"),
+        std::wstring_view(L".COM"),
+        std::wstring_view(L".BAT"),
+        std::wstring_view(L".CMD"),
+        std::wstring_view(L".CPL"),
+        std::wstring_view(L".MSC"),
+        std::wstring_view(L".SCR"),
+        std::wstring_view(L".LNK"),
+        std::wstring_view(L".URL"),
+        std::wstring_view(L".APPREF-MS"),
+        std::wstring_view(L".APPLICATION"),
+    };
+    for (const std::wstring_view extension : iconOnlyExtensions)
+    {
+        if (HasExtension(parsingName, extension))
+            return true;
+    }
+    return false;
+}
+
 inline bool LooksLikeAppUserModelId(std::wstring_view value)
 {
     value = Trim(value);

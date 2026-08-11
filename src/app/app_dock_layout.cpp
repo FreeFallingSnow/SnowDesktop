@@ -75,17 +75,19 @@ int DesktopApp::GetGridPageItemIconSize(const GridPage& page) const
     const int inset = std::max(1, static_cast<int>(std::round(2.0f * layoutScale)));
     if (page.cellHeight < static_cast<int>(std::round(50.0f * layoutScale)))
     {
-        return std::max(1, std::min({
+        return std::clamp(std::min({
             static_cast<int>(std::round(32.0f * layoutScale)),
             std::max(1, page.cellWidth - inset * 2),
-            std::max(1, page.cellHeight - inset * 2) }));
+            std::max(1, page.cellHeight - inset * 2) }), 1,
+            snowdesktop::icon_render_rules::kMaximumSourcePixels);
     }
     const float lineHeight = itemFontSize_ * 7.0f / 6.0f * layoutScale;
     const int textHeight = std::max(1,
         static_cast<int>(std::floor(lineHeight * 2.0f)) - 1);
-    return std::max(1, std::min(
+    return std::clamp(std::min(
         std::max(1, page.cellWidth - inset * 2),
-        std::max(1, page.cellHeight - textHeight - inset * 2)));
+        std::max(1, page.cellHeight - textHeight - inset * 2)),
+        1, snowdesktop::icon_render_rules::kMaximumSourcePixels);
 }
 
 void DesktopApp::ApplyDockWorkAreaReservation()

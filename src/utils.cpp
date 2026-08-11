@@ -11,6 +11,7 @@
 #include "resource.h"
 #include "data_paths.h"
 #include "desktop_window_discovery_rules.h"
+#include "icon_render_rules.h"
 
 #include <commoncontrols.h>
 #include <shellapi.h>
@@ -1059,17 +1060,25 @@ HBITMAP CreateAlphaBitmapFromIcon(HICON icon, int width, int height, SIZE& size)
  * @param pidl Shell 项的绝对 PIDL。
  * @param fallbackIndex 图像列表中的回退索引。
  * @param bitmapSize [out] 输出位图的尺寸。
+ * @param allowThumbnail 是否允许 Shell 返回缩略图表示。
+ * @param requestedSize 目标源位图长边。
  * @return 成功时返回带有 Alpha 通道的 HBITMAP，失败时返回 nullptr。
  */
-HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl, int fallbackIndex, SIZE& bitmapSize, bool fullQuality)
+HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl,
+    int fallbackIndex, SIZE& bitmapSize, bool allowThumbnail,
+    int requestedSize)
 {
     bitmapSize = {};
+    const int sourceSize =
+        snowdesktop::icon_render_rules::SourcePixelsForTarget(requestedSize);
     ComPtr<IShellItemImageFactory> imageFactory;
     if (SUCCEEDED(SHCreateItemFromIDList(pidl, IID_PPV_ARGS(&imageFactory))) && imageFactory)
     {
-        SIZE size{ kIconBitmapSize, kIconBitmapSize };
+        SIZE size{ sourceSize, sourceSize };
         HBITMAP bitmap = nullptr;
-        UINT flags = fullQuality ? SIIGBF_RESIZETOFIT : SIIGBF_ICONONLY;
+        const UINT flags = allowThumbnail
+            ? SIIGBF_RESIZETOFIT
+            : SIIGBF_ICONONLY;
         if (SUCCEEDED(imageFactory->GetImage(size, flags, &bitmap)) && bitmap != nullptr)
         {
             HBITMAP alphaBitmap = CopyBitmapToAlphaDib(bitmap, bitmapSize);
@@ -1100,7 +1109,8 @@ HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl, int fallbackInd
         imageList->GetIcon(fallbackIndex, ILD_TRANSPARENT | ILD_PRESERVEALPHA, &icon);
         if (icon != nullptr)
         {
-            HBITMAP bitmap = CreateAlphaBitmapFromIcon(icon, kIconBitmapSize, kIconBitmapSize, bitmapSize);
+            HBITMAP bitmap = CreateAlphaBitmapFromIcon(
+                icon, sourceSize, sourceSize, bitmapSize);
             DestroyIcon(icon);
             if (bitmap != nullptr)
             {
@@ -1119,7 +1129,8 @@ HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl, int fallbackInd
     icon = iconInfo.hIcon;
     if (icon != nullptr)
     {
-        HBITMAP bitmap = CreateAlphaBitmapFromIcon(icon, kIconBitmapSize, kIconBitmapSize, bitmapSize);
+        HBITMAP bitmap = CreateAlphaBitmapFromIcon(
+            icon, sourceSize, sourceSize, bitmapSize);
         DestroyIcon(icon);
         return bitmap;
     }

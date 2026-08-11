@@ -52,9 +52,17 @@ void DesktopApp::StartIconLoader()
             }
 
             SIZE bitmapSize{};
+            const std::wstring_view representationName =
+                !task.parsingName.empty()
+                ? std::wstring_view(task.parsingName)
+                : std::wstring_view(task.folderPath);
+            const bool allowThumbnail =
+                task.phase == IconLoadPhase::Phase2 &&
+                !snowdesktop::shortcut_application_rules::
+                    ShouldUseShellIconOnly(representationName);
             HBITMAP bitmap = GetHighResolutionShellIconBitmap(
                 task.absolutePidl.get(), task.sysIconIndex, bitmapSize,
-                task.phase == IconLoadPhase::Phase2);
+                allowThumbnail, task.requestedSize);
             if (task.phase == IconLoadPhase::Phase1 && bitmap)
                 ClampAlphaToColorKey(bitmap, kTransparentKey);
 
@@ -149,6 +157,101 @@ void DesktopApp::StartIconLoader()
         }
         CoUninitialize();
     });
+}
+
+int DesktopApp::GetShellIconBitmapSizeForPage(
+    const std::wstring& pageId) const
+{
+    const GridPage* selected = nullptr;
+    for (const auto& page : gridPages_)
+    {
+        if (page.id == pageId)
+        {
+            selected = &page;
+            break;
+        }
+    }
+    if (!selected && !gridPages_.empty())
+        selected = &gridPages_.front();
+
+    const int targetSize = selected
+        ? GetGridPageItemIconSize(*selected)
+        : kIconSize;
+    return snowdesktop::icon_render_rules::
+        SourcePixelsForTarget(targetSize);
+}
+
+int DesktopApp::GetMaximumShellIconBitmapSize() const
+{
+    int targetSize = kIconSize;
+    for (const auto& page : gridPages_)
+        targetSize = std::max(targetSize,
+            GetGridPageItemIconSize(page));
+    return snowdesktop::icon_render_rules::
+        SourcePixelsForTarget(targetSize);
+}
+
+void DesktopApp::RefreshIconBitmapResolution()
+{
+    const int desktopRequired = GetMaximumShellIconBitmapSize();
+    for (auto& item : items_)
+    {
+        if (item.iconState == IconState::Loading ||
+            snowdesktop::icon_render_rules::SourceLongEdgeCoversTarget(
+                item.iconBitmapSize.cx, item.iconBitmapSize.cy,
+                desktopRequired) || !item.absolutePidl.get())
+            continue;
+
+        IconLoadTask task;
+        task.serial = iconLoadSerial_;
+        task.layoutKey = item.layoutKey;
+        task.absolutePidl.reset(ILClone(item.absolutePidl.get()));
+        task.sysIconIndex = item.sysIconIndex;
+        task.parsingName = item.parsingName;
+        task.isDesktopItem = true;
+        task.phase = IconLoadPhase::Phase2;
+        task.requestedSize = desktopRequired;
+        EnqueueIconLoad(std::move(task));
+    }
+
+    const auto refreshFolderEntries =
+        [&](DesktopWidget& widget, const std::wstring& pageId)
+    {
+        if (widget.folderEntries.empty())
+            return;
+        const int required = GetShellIconBitmapSizeForPage(pageId);
+        for (auto& entry : widget.folderEntries)
+        {
+            if (entry.iconState == IconState::Loading ||
+                snowdesktop::icon_render_rules::SourceLongEdgeCoversTarget(
+                    entry.iconBitmapSize.cx, entry.iconBitmapSize.cy,
+                    required))
+                continue;
+
+            PIDLIST_ABSOLUTE pidl = nullptr;
+            if (FAILED(SHParseDisplayName(entry.fullPath.c_str(), nullptr,
+                    &pidl, 0, nullptr)) || !pidl)
+                continue;
+
+            IconLoadTask task;
+            task.serial = iconLoadSerial_;
+            task.widgetId = widget.id;
+            task.folderPath = entry.fullPath;
+            task.absolutePidl.reset(pidl);
+            task.sysIconIndex = entry.sysIconIndex;
+            task.isDesktopItem = false;
+            task.phase = IconLoadPhase::Phase2;
+            task.requestedSize = required;
+            EnqueueIconLoad(std::move(task));
+        }
+    };
+
+    for (auto& widget : widgets_)
+    {
+        refreshFolderEntries(widget, widget.gridCell.pageId);
+    }
+    if (dockFolderPopupOpen_)
+        refreshFolderEntries(dockFolderPopupWidget_, popupPageId_);
 }
 
 void DesktopApp::StopIconLoader()

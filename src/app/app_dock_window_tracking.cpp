@@ -601,6 +601,7 @@ void DesktopApp::RefreshDockRunningWindows(
 
     std::vector<DockRunningAppInfo> runningApps;
     runningApps.reserve(runningCandidates.size());
+    const int requiredIconSize = GetMaximumShellIconBitmapSize();
     std::vector<bool> reused(dockUnpinnedRunningApps_.size(), false);
     for (RunningWindowCandidate& candidate : runningCandidates)
     {
@@ -616,17 +617,31 @@ void DesktopApp::RefreshDockRunningWindows(
         {
             DockRunningAppInfo& old = dockUnpinnedRunningApps_[i];
             if (reused[i] || old.identityKey != info.identityKey) continue;
-            info.iconBitmap = old.iconBitmap;
-            info.iconBitmapSize = old.iconBitmapSize;
+            if (old.iconBitmap &&
+                (old.iconRequestedSize >= requiredIconSize ||
+                 snowdesktop::icon_render_rules::
+                    SourceLongEdgeCoversTarget(
+                        old.iconBitmapSize.cx,
+                        old.iconBitmapSize.cy,
+                        requiredIconSize)))
+            {
+                info.iconBitmap = old.iconBitmap;
+                info.iconBitmapSize = old.iconBitmapSize;
+                info.iconRequestedSize =
+                    old.iconRequestedSize;
+                old.iconBitmap = nullptr;
+            }
             info.selected = old.selected;
-            old.iconBitmap = nullptr;
             reused[i] = true;
             break;
         }
         if (!info.iconBitmap)
+        {
+            info.iconRequestedSize = requiredIconSize;
             info.iconBitmap = CreateDockWindowIconBitmap(
                 info.window, info.executablePath, info.appUserModelId,
-                info.iconBitmapSize);
+                info.iconBitmapSize, requiredIconSize);
+        }
         runningApps.push_back(std::move(info));
     }
 

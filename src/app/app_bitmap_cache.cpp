@@ -1051,3 +1051,39 @@ ID2D1Bitmap* DesktopApp::GetOrCreateD2DBitmap(ID2D1RenderTarget* target, HBITMAP
         return nullptr;
     return GetOrCreateD2DBitmap(hbm);
 }
+
+void DesktopApp::DrawIconBitmap(ID2D1RenderTarget* target,
+    ID2D1Bitmap* bitmap, RECT destination, float opacity)
+{
+    if (!target || !bitmap || IsRectEmptyRect(destination))
+        return;
+
+    const D2D1_SIZE_U source = bitmap->GetPixelSize();
+    const auto fitted = snowdesktop::icon_render_rules::FitWithoutUpscaling(
+        static_cast<int>(source.width), static_cast<int>(source.height),
+        destination.right - destination.left,
+        destination.bottom - destination.top);
+    if (fitted.width <= 0 || fitted.height <= 0)
+        return;
+
+    const int left = destination.left +
+        (destination.right - destination.left - fitted.width) / 2;
+    const int top = destination.top +
+        (destination.bottom - destination.top - fitted.height) / 2;
+    const D2D1_RECT_F dst = D2D1::RectF(
+        static_cast<float>(left), static_cast<float>(top),
+        static_cast<float>(left + fitted.width),
+        static_cast<float>(top + fitted.height));
+
+    ComPtr<ID2D1DeviceContext> deviceContext;
+    if (SUCCEEDED(target->QueryInterface(IID_PPV_ARGS(&deviceContext))) &&
+        deviceContext)
+    {
+        deviceContext->DrawBitmap(bitmap, &dst, opacity,
+            D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
+            nullptr, nullptr);
+        return;
+    }
+    target->DrawBitmap(bitmap, dst, opacity,
+        D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+}
