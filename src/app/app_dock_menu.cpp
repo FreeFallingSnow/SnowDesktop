@@ -117,8 +117,11 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint)
         {
             settingsWindow_->SyncDockEnabled(generalSettings_.dockEnabled);
             settingsWindow_->SyncDockSettings(dockSettings_);
-            settingsWindow_->ShowDockSettings();
+            if (!settingsWindow_->ShowDockSettings())
+                ShowSettingsWindow();
         }
+        else
+            ShowSettingsWindow();
         return;
     default:
         RestoreDesktopWindowLayer();

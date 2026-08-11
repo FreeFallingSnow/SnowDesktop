@@ -255,7 +255,10 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     StartDockForegroundMonitor();
 
     settingsWindow_ = std::make_unique<SettingsWindow>();
-    if (settingsWindow_->Init(instance, d3dDevice_.Get()))
+    if (!settingsWindow_->Init(instance, d3dDevice_.Get()))
+        WriteDiagnosticLogEntry(
+            L"SettingsWindow startup initialization deferred");
+    if (settingsWindow_)
     {
         settingsWindow_->SetReloadCallback([this]() {
             bool migratedLayout = false;
@@ -555,10 +558,6 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             iconBeautifySettings_);
         settingsWindow_->SyncDockEnabled(generalSettings_.dockEnabled);
     }
-    else
-    {
-        settingsWindow_.reset();
-    }
 
     widgetEngine_ = std::make_unique<WidgetEngine>();
     if (widgetEngine_->Init(d2dContext_.Get(), dwriteFactory_.Get()))
@@ -732,15 +731,11 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     StartSteamWorkshopWatcher();
 
     // Expose the tray menu only after SettingsWindow and all of its callbacks
-    // are ready. Otherwise a click during startup can reach the temporary
-    // settingsWindow_ == nullptr state and appear to require a second click.
+    // are configured. Activation requests received during startup remain
+    // pending until this point, including when native initialization is retried.
     startupInitializationComplete_ = true;
     AddTrayIcon();
-    if (showSettingsPending_ && settingsWindow_)
-    {
-        showSettingsPending_ = false;
-        settingsWindow_->Show();
-    }
+    TryShowPendingSettingsWindow();
     SetSoftwareDesktopEnabled(customDesktopVisible_, false);
     if (customDesktopVisible_)
     {

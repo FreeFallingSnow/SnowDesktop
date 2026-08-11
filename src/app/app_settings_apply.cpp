@@ -4,15 +4,45 @@
 
 void DesktopApp::ShowSettingsWindow()
 {
-    if (settingsWindow_)
+    settingsWindowOpenRequest_.Request();
+    TryShowPendingSettingsWindow();
+}
+
+void DesktopApp::TryShowPendingSettingsWindow()
+{
+    if (!settingsWindowOpenRequest_.Pending() ||
+        !startupInitializationComplete_)
+        return;
+
+    if (settingsWindow_ && settingsWindow_->Show())
     {
-        showSettingsPending_ = false;
-        settingsWindow_->Show();
+        settingsWindowOpenRequest_.MarkShown();
+        if (controlHwnd_ && IsWindow(controlHwnd_))
+            KillTimer(controlHwnd_, kSettingsWindowRetryTimerId);
+        WriteDiagnosticLogEntry(L"SettingsWindow shown");
+        return;
     }
-    else
+
+    if (settingsWindowOpenRequest_.RecordFailure(
+            kSettingsWindowMaximumAutomaticRetries) &&
+        controlHwnd_ && IsWindow(controlHwnd_))
     {
-        showSettingsPending_ = true;
+        if (SetTimer(controlHwnd_, kSettingsWindowRetryTimerId,
+                kSettingsWindowRetryIntervalMs, nullptr) != 0)
+        {
+            WriteDiagnosticLogEntry(
+                L"SettingsWindow show failed; retry scheduled");
+            return;
+        }
+        wchar_t message[192]{};
+        swprintf_s(message,
+            L"SettingsWindow retry timer failed (error=%lu)",
+            GetLastError());
+        WriteDiagnosticLogEntry(message);
     }
+
+    WriteDiagnosticLogEntry(
+        L"SettingsWindow show failed; request remains pending");
 }
 
 /**

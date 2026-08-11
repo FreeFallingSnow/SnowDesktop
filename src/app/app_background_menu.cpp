@@ -1847,9 +1847,8 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         case kContextFontWeightFine: SetItemFontWeight(DWRITE_FONT_WEIGHT_NORMAL); break;
         case kContextDisplayAppearanceMore:
             needsDesktopFocus = false;
-            if (settingsWindow_)
-                settingsWindow_->ShowAppearanceSettings();
-            else
+            if (!settingsWindow_ ||
+                !settingsWindow_->ShowAppearanceSettings())
                 ShowSettingsWindow();
             break;
         case kContextPagePrev: NavigatePageOffset(-1); break;

@@ -37,6 +37,7 @@
 using Microsoft::WRL::ComPtr;
 
 struct ImFont;
+struct ImGuiContext;
 class AsyncHttpService;
 
 /**
@@ -113,15 +114,16 @@ public:
 
     /**
      * @brief 显示设置窗口（将隐藏窗口设为可见并置前）
+     * @return 窗口已经完成初始化并变为可见时返回 true
      */
-    void Show();
+    bool Show();
     void ApplyLanguageChange();
 
     /** @brief 显示设置窗口并直接切换到 Dock 页面。 */
-    void ShowDockSettings();
+    bool ShowDockSettings();
     /** @brief 显示设置窗口并直接切换到外观页面。 */
-    void ShowAppearanceSettings();
-    void ShowWidgetMigration();
+    bool ShowAppearanceSettings();
+    bool ShowWidgetMigration();
 
     /**
      * @brief 检查窗口当前是否可见
@@ -292,7 +294,7 @@ public:
     /**
      * @brief 显示退出确认弹窗（模态对话框）
      */
-    void ShowExitConfirm();
+    bool ShowExitConfirm();
 
     /**
      * @brief 设置小组件引擎指针
@@ -559,6 +561,11 @@ private:
 
     /// SwapChain 的后缓冲区 RenderTargetView
     ComPtr<ID3D11RenderTargetView> rtv_;
+
+    /// SettingsWindow 独占的 ImGui 上下文及后端初始化阶段。
+    ImGuiContext* imguiContext_ = nullptr;
+    bool imguiWin32Initialized_ = false;
+    bool imguiDx11Initialized_ = false;
 
     /** @} */
 

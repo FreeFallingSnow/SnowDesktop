@@ -700,6 +700,13 @@ if (BUILD_TESTING)
         LABELS contract settings)
 
     snowdesktop_add_test(
+        SnowDesktopSettingsWindowOpenRulesTests
+        settings_window_open_rules
+        SOURCES tests/settings_window_open_rules_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS contract settings)
+
+    snowdesktop_add_test(
         SnowDesktopSlotContractMatrixTests
         slot_contract_matrix
         SOURCES tests/slot_contract_matrix_tests.cpp

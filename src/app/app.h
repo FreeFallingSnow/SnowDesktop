@@ -26,6 +26,7 @@
 #include "drag_session.h"
 #include "drag_target_resolver.h"
 #include "settings_window.h"
+#include "settings_window_open_rules.h"
 #include "navigation_settings.h"
 #include "general_settings.h"
 #include "display_topology_refresh.h"
@@ -859,6 +860,8 @@ private:
     size_t FindWidgetIndexById(const std::wstring& id) const;
     /** @brief 显示设置窗口。 */
     void ShowSettingsWindow();
+    /** @brief 尝试完成一个已经登记的设置窗口打开请求。 */
+    void TryShowPendingSettingsWindow();
     /** @brief 加载导航设置并应用（注册热键等）。 */
     void LoadNavigationSettingsAndApply();
     /** @brief 加载通用设置。 */
@@ -2712,7 +2715,8 @@ private:
     bool exitRequested_ = false;
     bool startupInitializationComplete_ = false;
     bool legacyWidgetLayoutMigrationPending_ = false;
-    bool showSettingsPending_ = false;
+    snowdesktop::settings_window_open_rules::RequestState
+        settingsWindowOpenRequest_;
     bool customDesktopVisible_ = true;
     bool desktopPassthroughHotkeyRegistered_ = false;
     bool desktopPassthroughHoldActive_ = false;

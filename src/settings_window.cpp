@@ -23,6 +23,7 @@
 #include "resource.h"
 #include "crashlog.h"
 #include "data_paths.h"
+#include "diagnostic_log.h"
 #include "deployment_context.h"
 #include "full_data_backup.h"
 #include "http_runtime.h"
@@ -65,6 +66,22 @@ constexpr wchar_t kAutoStartRunSubKey[] =
     L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 constexpr wchar_t kAutoStartRunValue[] = L"SnowDesktop";
 constexpr DWORD kPortableAutoStartQueryIntervalMs = 2000;
+
+void LogSettingsWindowFailure(const wchar_t* stage, HRESULT result)
+{
+    wchar_t message[256]{};
+    swprintf_s(message,
+        L"SettingsWindow %s failed (hr=0x%08X)",
+        stage ? stage : L"operation",
+        static_cast<unsigned>(result));
+    WriteDiagnosticLogEntry(message);
+}
+
+HRESULT LastSettingsWindowError()
+{
+    const DWORD error = GetLastError();
+    return HRESULT_FROM_WIN32(error ? error : ERROR_GEN_FAILURE);
+}
 
 std::string CodepointToUtf8(unsigned int codepoint)
 {
@@ -670,9 +687,27 @@ SettingsWindow::~SettingsWindow()
  */
 bool SettingsWindow::Init(HINSTANCE instance, ID3D11Device* device)
 {
+    if (!instance || !device)
+    {
+        LogSettingsWindowFailure(L"Init arguments", E_POINTER);
+        return false;
+    }
+    if (hwnd_ && IsWindow(hwnd_) && swapChain_ && rtv_ &&
+        imguiContext_ && imguiWin32Initialized_ &&
+        imguiDx11Initialized_)
+        return true;
+    if (hwnd_ || swapChain_ || rtv_ || imguiContext_)
+        Shutdown();
+
     instance_ = instance;
     device_ = device;
+    context_.Reset();
     device_->GetImmediateContext(&context_);
+    if (!context_)
+    {
+        LogSettingsWindowFailure(L"GetImmediateContext", E_FAIL);
+        return false;
+    }
 
     WNDCLASSEXW wc = {};
     wc.cbSize = sizeof(wc);
@@ -684,7 +719,14 @@ bool SettingsWindow::Init(HINSTANCE instance, ID3D11Device* device)
         IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED));
     wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
     wc.lpszClassName = L"SnowDesktopSettingsWindow";
-    RegisterClassExW(&wc);
+    if (!RegisterClassExW(&wc) &&
+        GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
+    {
+        LogSettingsWindowFailure(
+            L"RegisterClassExW",
+            LastSettingsWindowError());
+        return false;
+    }
 
     // Get DPI for initial sizing
     UINT dpi = GetDpiForSystem();
@@ -709,23 +751,60 @@ bool SettingsWindow::Init(HINSTANCE instance, ID3D11Device* device)
         windowWidth_, windowHeight_,
         nullptr, nullptr, instance, this);
 
-    if (hwnd_ == nullptr) return false;
+    if (hwnd_ == nullptr)
+    {
+        LogSettingsWindowFailure(
+            L"CreateWindowExW",
+            LastSettingsWindowError());
+        return false;
+    }
     if (wc.hIcon)
         SendMessageW(hwnd_, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(wc.hIcon));
     if (wc.hIconSm)
         SendMessageW(hwnd_, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(wc.hIconSm));
 
-    if (!CreateSwapChain()) return false;
+    if (!CreateSwapChain())
+    {
+        Shutdown();
+        return false;
+    }
 
     IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
+    imguiContext_ = ImGui::CreateContext();
+    if (!imguiContext_)
+    {
+        LogSettingsWindowFailure(L"ImGui::CreateContext", E_OUTOFMEMORY);
+        Shutdown();
+        return false;
+    }
+    ImGui::SetCurrentContext(imguiContext_);
 
     SetupLightTheme();
 
-    ImGui_ImplWin32_Init(hwnd_);
-    ImGui_ImplDX11_Init(device_.Get(), context_.Get());
+    imguiWin32Initialized_ = ImGui_ImplWin32_Init(hwnd_);
+    if (!imguiWin32Initialized_)
+    {
+        LogSettingsWindowFailure(L"ImGui Win32 backend", E_FAIL);
+        Shutdown();
+        return false;
+    }
+    imguiDx11Initialized_ =
+        ImGui_ImplDX11_Init(device_.Get(), context_.Get());
+    if (!imguiDx11Initialized_)
+    {
+        LogSettingsWindowFailure(L"ImGui DX11 backend", E_FAIL);
+        Shutdown();
+        return false;
+    }
 
     SetupFonts();
+    if (!ImGui_ImplDX11_CreateDeviceObjects())
+    {
+        LogSettingsWindowFailure(
+            L"ImGui DX11 device objects", E_FAIL);
+        Shutdown();
+        return false;
+    }
 
     bool categorizedTabFontSizeLoaded = false;
     LoadPersonalization(
@@ -769,6 +848,7 @@ bool SettingsWindow::Init(HINSTANCE instance, ID3D11Device* device)
         (screenH - (rc.bottom - rc.top)) / 2,
         0, 0, SWP_NOSIZE | SWP_NOZORDER);
 
+    WriteDiagnosticLogEntry(L"SettingsWindow initialized");
     return true;
 }
 
@@ -812,12 +892,30 @@ void SettingsWindow::Shutdown()
         if (categorySettingsChangedCallback_)
             categorySettingsChangedCallback_();
     }
-    g_settingsWindow = nullptr;
-    ImGui_ImplDX11_Shutdown();
-    ImGui_ImplWin32_Shutdown();
-    ImGui::DestroyContext();
+    if (g_settingsWindow == this)
+        g_settingsWindow = nullptr;
+    if (imguiContext_)
+    {
+        ImGuiContext* previousContext = ImGui::GetCurrentContext();
+        ImGui::SetCurrentContext(imguiContext_);
+        if (imguiDx11Initialized_)
+            ImGui_ImplDX11_Shutdown();
+        if (imguiWin32Initialized_)
+            ImGui_ImplWin32_Shutdown();
+        ImGui::DestroyContext(imguiContext_);
+        if (previousContext && previousContext != imguiContext_)
+            ImGui::SetCurrentContext(previousContext);
+    }
+    imguiContext_ = nullptr;
+    imguiDx11Initialized_ = false;
+    imguiWin32Initialized_ = false;
+    faDebugFont_ = nullptr;
+    fluentDebugFont_ = nullptr;
+    faDebugCodepoints_.clear();
+    fluentDebugCodepoints_.clear();
     CleanupSwapChain();
     if (hwnd_ != nullptr) { DestroyWindow(hwnd_); hwnd_ = nullptr; }
+    pendingClose_ = false;
     renderRequested_ = false;
 }
 
@@ -826,15 +924,19 @@ void SettingsWindow::Shutdown()
  *
  * 将窗口置于前台并设置焦点。
  */
-void SettingsWindow::Show()
+bool SettingsWindow::Show()
 {
     if (snowdesktop::deployment::IsPackaged())
         packagedAutoStartStateKnown_ = false;
 
-    if (hwnd_ == nullptr)
+    pendingClose_ = false;
+    if (!hwnd_ || !IsWindow(hwnd_) || !swapChain_ || !rtv_ ||
+        !imguiContext_ || !imguiWin32Initialized_ ||
+        !imguiDx11Initialized_)
     {
+        Shutdown();
         if (!Init(instance_, device_.Get()))
-            return;
+            return false;
     }
     dockSettings_.systemTaskbarAutoHide = IsSystemTaskbarAutoHideEnabled();
     dockSettings_.systemTaskbarAlignment = IsSystemTaskbarAlignmentCentered() ? 1 : 0;
@@ -844,6 +946,7 @@ void SettingsWindow::Show()
     BringWindowToTop(hwnd_);
     SetForegroundWindow(hwnd_);
     SetFocus(hwnd_);
+    return IsWindowVisible(hwnd_) != FALSE;
 }
 
 void SettingsWindow::ApplyLanguageChange()
@@ -875,22 +978,22 @@ void SettingsWindow::ApplyLanguageChange()
     renderRequested_ = true;
 }
 
-void SettingsWindow::ShowDockSettings()
+bool SettingsWindow::ShowDockSettings()
 {
     activePage_ = 0;
-    Show();
+    return Show();
 }
 
-void SettingsWindow::ShowAppearanceSettings()
+bool SettingsWindow::ShowAppearanceSettings()
 {
     activePage_ = 1;
-    Show();
+    return Show();
 }
 
-void SettingsWindow::ShowWidgetMigration()
+bool SettingsWindow::ShowWidgetMigration()
 {
     activePage_ = 8;
-    Show();
+    return Show();
 }
 
 /**
@@ -899,10 +1002,10 @@ void SettingsWindow::ShowWidgetMigration()
  * 设置 showExitConfirm_ 标记后调用 Show()，
  * 在下一帧 Render() 中弹出模态确认框。
  */
-void SettingsWindow::ShowExitConfirm()
+bool SettingsWindow::ShowExitConfirm()
 {
     showExitConfirm_ = true;
-    Show();
+    return Show();
 }
 
 /**
@@ -946,6 +1049,8 @@ void SettingsWindow::Render()
 {
     if (hwnd_ == nullptr || !IsWindowVisible(hwnd_) || IsIconic(hwnd_)) return;
     if (swapChain_ == nullptr) return;
+    if (!imguiContext_) return;
+    ImGui::SetCurrentContext(imguiContext_);
     if (renderInProgress_)
     {
         renderRequested_ = true;
@@ -6240,12 +6345,29 @@ bool SettingsWindow::DeleteBackup(const std::wstring& filename)
 bool SettingsWindow::CreateSwapChain()
 {
     RECT cr;
-    GetClientRect(hwnd_, &cr);
+    if (!hwnd_ || !GetClientRect(hwnd_, &cr))
+    {
+        LogSettingsWindowFailure(
+            L"GetClientRect",
+            LastSettingsWindowError());
+        return false;
+    }
     windowWidth_ = (cr.right - cr.left > 1) ? (cr.right - cr.left) : 1;
     windowHeight_ = (cr.bottom - cr.top > 1) ? (cr.bottom - cr.top) : 1;
 
+    if (!device_)
+    {
+        LogSettingsWindowFailure(L"CreateSwapChain device", E_POINTER);
+        return false;
+    }
     if (!context_)
         device_->GetImmediateContext(&context_);
+    if (!context_)
+    {
+        LogSettingsWindowFailure(
+            L"CreateSwapChain context", E_FAIL);
+        return false;
+    }
     context_->OMSetRenderTargets(0, nullptr, nullptr);
     rtv_.Reset();
 
@@ -6255,17 +6377,36 @@ bool SettingsWindow::CreateSwapChain()
             static_cast<UINT>(windowWidth_), static_cast<UINT>(windowHeight_),
             DXGI_FORMAT_UNKNOWN, 0);
         if (FAILED(resizeResult))
+        {
+            LogSettingsWindowFailure(
+                L"ResizeBuffers", resizeResult);
             swapChain_.Reset();
+        }
     }
 
     if (!swapChain_)
     {
         ComPtr<IDXGIDevice> dxgiDevice;
-        if (FAILED(device_.As(&dxgiDevice))) return false;
+        HRESULT result = device_.As(&dxgiDevice);
+        if (FAILED(result))
+        {
+            LogSettingsWindowFailure(L"Query IDXGIDevice", result);
+            return false;
+        }
         ComPtr<IDXGIAdapter> adapter;
-        if (FAILED(dxgiDevice->GetAdapter(&adapter))) return false;
+        result = dxgiDevice->GetAdapter(&adapter);
+        if (FAILED(result))
+        {
+            LogSettingsWindowFailure(L"GetAdapter", result);
+            return false;
+        }
         ComPtr<IDXGIFactory2> factory;
-        if (FAILED(adapter->GetParent(IID_PPV_ARGS(&factory)))) return false;
+        result = adapter->GetParent(IID_PPV_ARGS(&factory));
+        if (FAILED(result))
+        {
+            LogSettingsWindowFailure(L"Get DXGI factory", result);
+            return false;
+        }
 
         DXGI_SWAP_CHAIN_DESC1 desc = {};
         desc.Width = static_cast<UINT>(windowWidth_);
@@ -6276,17 +6417,35 @@ bool SettingsWindow::CreateSwapChain()
         desc.BufferCount = 2;
         desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 
-        if (FAILED(factory->CreateSwapChainForHwnd(device_.Get(), hwnd_,
-                &desc, nullptr, nullptr, &swapChain_)))
+        result = factory->CreateSwapChainForHwnd(device_.Get(), hwnd_,
+            &desc, nullptr, nullptr, &swapChain_);
+        if (FAILED(result))
+        {
+            LogSettingsWindowFailure(
+                L"CreateSwapChainForHwnd", result);
             return false;
+        }
     }
 
     ComPtr<ID3D11Texture2D> backBuffer;
-    if (FAILED(swapChain_->GetBuffer(0, IID_PPV_ARGS(&backBuffer)))) return false;
-    if (FAILED(device_->CreateRenderTargetView(backBuffer.Get(), nullptr, &rtv_))) return false;
-
-    if (ImGui::GetCurrentContext() != nullptr)
+    HRESULT result = swapChain_->GetBuffer(
+        0, IID_PPV_ARGS(&backBuffer));
+    if (FAILED(result))
     {
+        LogSettingsWindowFailure(L"Get swap-chain buffer", result);
+        return false;
+    }
+    result = device_->CreateRenderTargetView(
+        backBuffer.Get(), nullptr, &rtv_);
+    if (FAILED(result))
+    {
+        LogSettingsWindowFailure(L"CreateRenderTargetView", result);
+        return false;
+    }
+
+    if (imguiContext_)
+    {
+        ImGui::SetCurrentContext(imguiContext_);
         auto& io = ImGui::GetIO();
         io.DisplaySize = ImVec2(static_cast<float>(windowWidth_), static_cast<float>(windowHeight_));
     }

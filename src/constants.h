@@ -254,6 +254,9 @@ constexpr UINT kDesktopPassthroughHoldIntervalMs = 16;
 // visiting another process.
 constexpr UINT_PTR kOleDragUiPumpTimerId = 21;
 constexpr UINT kOleDragUiPumpIntervalMs = USER_TIMER_MINIMUM;
+constexpr UINT_PTR kSettingsWindowRetryTimerId = 22;
+constexpr UINT kSettingsWindowRetryIntervalMs = 250;
+constexpr unsigned kSettingsWindowMaximumAutomaticRetries = 3;
 constexpr UINT_PTR kFloatingDockEdgeSwipeTimerId = 16;
 constexpr UINT kFloatingDockEdgeSwipeIntervalMs = 20;
 constexpr DWORD kQuickNavigationEverythingResultBatchSize = 200;

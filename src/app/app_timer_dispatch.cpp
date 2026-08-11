@@ -101,6 +101,14 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
 
 void DesktopApp::OnTimer(WPARAM timerId)
 {
+    if (timerId == kSettingsWindowRetryTimerId)
+    {
+        if (controlHwnd_ && IsWindow(controlHwnd_))
+            KillTimer(controlHwnd_, kSettingsWindowRetryTimerId);
+        TryShowPendingSettingsWindow();
+        return;
+    }
+
     if (timerId == kOleDragUiPumpTimerId)
     {
         if (!dragDropController_.IsSelfDragActive())

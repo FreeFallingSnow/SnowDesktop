@@ -6,6 +6,7 @@
  */
 
 #pragma once
+#include "diagnostic_log.h"
 #include "types.h"
 
 #include <wrl/client.h>
@@ -373,14 +374,3 @@ std::string JsonEscapeUtf8(const std::wstring& value);
  * @return 成功解析返回 true，格式错误返回 false
  */
 bool ParseJsonStringAt(const std::string& text, size_t quote, std::string& value, size_t& end);
-
-enum class DiagnosticLogLevel
-{
-    Debug,
-    Info,
-    Warning,
-    Error,
-};
-
-void WriteDiagnosticLogEntry(const wchar_t* message,
-    DiagnosticLogLevel level = DiagnosticLogLevel::Info);
