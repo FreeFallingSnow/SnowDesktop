@@ -1050,6 +1050,110 @@ HBITMAP CreateAlphaBitmapFromIcon(HICON icon, int width, int height, SIZE& size)
     return bitmap;
 }
 
+namespace
+{
+std::wstring ExpandIconResourcePath(std::wstring_view path)
+{
+    if (path.empty())
+        return {};
+
+    std::wstring value(path);
+    if (value.size() >= 2 && value.front() == L'"' && value.back() == L'"')
+        value = value.substr(1, value.size() - 2);
+
+    const DWORD required = ExpandEnvironmentStringsW(
+        value.c_str(), nullptr, 0);
+    if (required == 0)
+        return value;
+
+    std::vector<wchar_t> expanded(required);
+    if (ExpandEnvironmentStringsW(value.c_str(), expanded.data(),
+            required) == 0)
+        return value;
+    return expanded.data();
+}
+
+std::wstring ResolveRelativeIconResourcePath(
+    const std::wstring& shortcutPath, std::wstring iconPath)
+{
+    if (iconPath.empty() || !PathIsRelativeW(iconPath.c_str()))
+        return iconPath;
+
+    const size_t separator = shortcutPath.find_last_of(L"\\/");
+    if (separator == std::wstring::npos)
+        return iconPath;
+    return shortcutPath.substr(0, separator + 1) + iconPath;
+}
+
+HBITMAP ExtractIconResourceBitmap(const std::wstring& resourcePath,
+    int iconIndex, int sourceSize, SIZE& bitmapSize)
+{
+    if (resourcePath.empty() ||
+        GetFileAttributesW(resourcePath.c_str()) == INVALID_FILE_ATTRIBUTES)
+        return nullptr;
+
+    HICON icon = nullptr;
+    const HRESULT result = SHDefExtractIconW(resourcePath.c_str(),
+        iconIndex, 0, &icon, nullptr, MAKELONG(sourceSize, 0));
+    if (FAILED(result) || !icon)
+    {
+        if (icon)
+            DestroyIcon(icon);
+        return nullptr;
+    }
+
+    HBITMAP bitmap = CreateAlphaBitmapFromIcon(
+        icon, sourceSize, sourceSize, bitmapSize);
+    DestroyIcon(icon);
+    return bitmap;
+}
+
+HBITMAP ExtractShellLinkSourceIcon(std::wstring_view sourcePath,
+    int sourceSize, SIZE& bitmapSize)
+{
+    if (sourcePath.empty())
+        return nullptr;
+
+    const std::wstring shortcutPath(sourcePath);
+    ComPtr<IShellLinkW> shellLink;
+    if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr,
+            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&shellLink))) || !shellLink)
+        return nullptr;
+
+    ComPtr<IPersistFile> persistFile;
+    if (FAILED(shellLink.As(&persistFile)) ||
+        FAILED(persistFile->Load(shortcutPath.c_str(), STGM_READ)))
+        return nullptr;
+
+    std::vector<wchar_t> iconLocation(32768, L'\0');
+    int iconIndex = 0;
+    if (SUCCEEDED(shellLink->GetIconLocation(iconLocation.data(),
+            static_cast<int>(iconLocation.size()), &iconIndex)) &&
+        iconLocation[0] != L'\0')
+    {
+        std::wstring iconPath = ResolveRelativeIconResourcePath(
+            shortcutPath, ExpandIconResourcePath(iconLocation.data()));
+        if (HBITMAP bitmap = ExtractIconResourceBitmap(
+                iconPath, iconIndex, sourceSize, bitmapSize))
+            return bitmap;
+    }
+
+    std::vector<wchar_t> targetPath(32768, L'\0');
+    if (SUCCEEDED(shellLink->GetPath(targetPath.data(),
+            static_cast<int>(targetPath.size()), nullptr, SLGP_RAWPATH)) &&
+        targetPath[0] != L'\0')
+    {
+        std::wstring expandedTarget =
+            ExpandIconResourcePath(targetPath.data());
+        if (HBITMAP bitmap = ExtractIconResourceBitmap(
+                expandedTarget, 0, sourceSize, bitmapSize))
+            return bitmap;
+    }
+
+    return nullptr;
+}
+} // namespace
+
 /**
  * @brief 获取 Shell 项的高分辨率图标位图。
  *
@@ -1064,16 +1168,23 @@ HBITMAP CreateAlphaBitmapFromIcon(HICON icon, int width, int height, SIZE& size)
  * @param requestedSize 目标源位图长边。
  * @param preferDirectIconExtraction 是否优先绕过 ImageFactory 直接提取 HICON。
  * @param forShortcut 是否按快捷方式语义请求未叠加箭头的源图标。
+ * @param sourcePath Shell 项的文件系统路径。
  * @return 成功时返回带有 Alpha 通道的 HBITMAP，失败时返回 nullptr。
  */
 HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl,
     int fallbackIndex, SIZE& bitmapSize, bool allowThumbnail,
     int requestedSize, bool preferDirectIconExtraction,
-    bool forShortcut)
+    bool forShortcut, std::wstring_view sourcePath)
 {
     bitmapSize = {};
     const int sourceSize =
         snowdesktop::icon_render_rules::SourcePixelsForTarget(requestedSize);
+    if (forShortcut)
+    {
+        if (HBITMAP bitmap = ExtractShellLinkSourceIcon(
+                sourcePath, sourceSize, bitmapSize))
+            return bitmap;
+    }
     if (preferDirectIconExtraction)
     {
         ComPtr<IShellFolder> parentFolder;

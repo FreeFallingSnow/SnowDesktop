@@ -14,6 +14,7 @@
 #include <dwrite.h>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 
 using Microsoft::WRL::ComPtr;
@@ -267,13 +268,15 @@ HBITMAP CreateAlphaBitmapFromIcon(HICON icon, int width, int height, SIZE& size)
  * @param requestedSize 目标源位图长边，内部会归一化到 64..256 像素档位
  * @param preferDirectIconExtraction 是否优先绕过 ImageFactory 直接提取 HICON
  * @param forShortcut 是否按快捷方式语义请求未叠加箭头的源图标
+ * @param sourcePath Shell 项的文件系统路径，用于从快捷方式源文件直接提取图标
  * @return 成功返回 DIB 位图句柄，失败返回 nullptr
  */
 HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl,
     int fallbackIndex, SIZE& bitmapSize, bool allowThumbnail = false,
     int requestedSize = kIconBitmapSize,
     bool preferDirectIconExtraction = false,
-    bool forShortcut = false);
+    bool forShortcut = false,
+    std::wstring_view sourcePath = {});
 
 /**
  * @brief 从坐标值创建 RECT 结构

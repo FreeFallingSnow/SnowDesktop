@@ -70,7 +70,7 @@ void DesktopApp::StartIconLoader()
             HBITMAP bitmap = GetHighResolutionShellIconBitmap(
                 task.absolutePidl.get(), task.sysIconIndex, bitmapSize,
                 allowThumbnail, task.requestedSize, applicationLike,
-                forShortcut);
+                forShortcut, representationName);
             if (task.phase == IconLoadPhase::Phase1 && bitmap)
                 ClampAlphaToColorKey(bitmap, kTransparentKey);
 
