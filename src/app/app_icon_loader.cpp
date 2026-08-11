@@ -62,9 +62,15 @@ void DesktopApp::StartIconLoader()
             const bool allowThumbnail =
                 task.phase == IconLoadPhase::Phase2 &&
                 !applicationLike;
+            const bool forShortcut =
+                snowdesktop::shortcut_application_rules::HasExtension(
+                    representationName, L".lnk") ||
+                snowdesktop::shortcut_application_rules::HasExtension(
+                    representationName, L".url");
             HBITMAP bitmap = GetHighResolutionShellIconBitmap(
                 task.absolutePidl.get(), task.sysIconIndex, bitmapSize,
-                allowThumbnail, task.requestedSize, applicationLike);
+                allowThumbnail, task.requestedSize, applicationLike,
+                forShortcut);
             if (task.phase == IconLoadPhase::Phase1 && bitmap)
                 ClampAlphaToColorKey(bitmap, kTransparentKey);
 

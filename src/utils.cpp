@@ -1062,28 +1062,75 @@ HBITMAP CreateAlphaBitmapFromIcon(HICON icon, int width, int height, SIZE& size)
  * @param bitmapSize [out] 输出位图的尺寸。
  * @param allowThumbnail 是否允许 Shell 返回缩略图表示。
  * @param requestedSize 目标源位图长边。
- * @param suppressOuterFrameArtifact 是否保守清除高分辨率应用图标的中性灰外框伪影。
+ * @param preferDirectIconExtraction 是否优先绕过 ImageFactory 直接提取 HICON。
+ * @param forShortcut 是否按快捷方式语义请求未叠加箭头的源图标。
  * @return 成功时返回带有 Alpha 通道的 HBITMAP，失败时返回 nullptr。
  */
 HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl,
     int fallbackIndex, SIZE& bitmapSize, bool allowThumbnail,
-    int requestedSize, bool suppressOuterFrameArtifact)
+    int requestedSize, bool preferDirectIconExtraction,
+    bool forShortcut)
 {
     bitmapSize = {};
     const int sourceSize =
         snowdesktop::icon_render_rules::SourcePixelsForTarget(requestedSize);
-    const auto suppressFrame = [&](HBITMAP bitmap)
+    if (preferDirectIconExtraction)
     {
-        if (!bitmap || !suppressOuterFrameArtifact)
-            return;
-        BITMAP info{};
-        if (GetObjectW(bitmap, sizeof(info), &info) == 0 ||
-            info.bmBitsPixel != 32 || !info.bmBits)
-            return;
-        snowdesktop::icon_render_rules::SuppressOuterFrameArtifact(
-            static_cast<std::uint32_t*>(info.bmBits), info.bmWidth,
-            std::abs(info.bmHeight));
-    };
+        ComPtr<IShellFolder> parentFolder;
+        PCUITEMID_CHILD child = nullptr;
+        if (SUCCEEDED(SHBindToParent(pidl, IID_PPV_ARGS(&parentFolder),
+                &child)) && parentFolder && child)
+        {
+            PCUITEMID_CHILD children[]{ child };
+            ComPtr<IExtractIconW> extractor;
+            if (SUCCEEDED(parentFolder->GetUIObjectOf(nullptr, 1,
+                    children, IID_IExtractIconW, nullptr,
+                    reinterpret_cast<void**>(extractor.GetAddressOf()))) &&
+                extractor)
+            {
+                std::vector<wchar_t> iconFile(32768, L'\0');
+                int iconIndex = 0;
+                UINT iconFlags = 0;
+                const UINT locationFlags = GIL_FORSHELL |
+                    (forShortcut ? GIL_FORSHORTCUT : 0u);
+                const HRESULT locationResult = extractor->GetIconLocation(
+                    locationFlags, iconFile.data(),
+                    static_cast<UINT>(iconFile.size()),
+                    &iconIndex, &iconFlags);
+                if (locationResult == S_OK)
+                {
+                    HICON icon = nullptr;
+                    HRESULT extractResult = extractor->Extract(
+                        iconFile.data(), static_cast<UINT>(iconIndex),
+                        &icon, nullptr, MAKELONG(sourceSize, 0));
+                    if (extractResult == S_FALSE && iconFile[0] != L'\0')
+                    {
+                        if (icon)
+                        {
+                            DestroyIcon(icon);
+                            icon = nullptr;
+                        }
+                        extractResult = SHDefExtractIconW(
+                            iconFile.data(), iconIndex,
+                            iconFlags & GIL_SIMULATEDOC,
+                            &icon, nullptr, MAKELONG(sourceSize, 0));
+                    }
+                    if (SUCCEEDED(extractResult) && icon)
+                    {
+                        HBITMAP bitmap = CreateAlphaBitmapFromIcon(
+                            icon, sourceSize, sourceSize, bitmapSize);
+                        DestroyIcon(icon);
+                        if (bitmap)
+                            return bitmap;
+                    }
+                    else if (icon)
+                    {
+                        DestroyIcon(icon);
+                    }
+                }
+            }
+        }
+    }
     ComPtr<IShellItemImageFactory> imageFactory;
     if (SUCCEEDED(SHCreateItemFromIDList(pidl, IID_PPV_ARGS(&imageFactory))) && imageFactory)
     {
@@ -1098,7 +1145,6 @@ HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl,
             DeleteObject(bitmap);
             if (alphaBitmap != nullptr)
             {
-                suppressFrame(alphaBitmap);
                 return alphaBitmap;
             }
         }
@@ -1128,7 +1174,6 @@ HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl,
             DestroyIcon(icon);
             if (bitmap != nullptr)
             {
-                suppressFrame(bitmap);
                 return bitmap;
             }
         }
@@ -1147,7 +1192,6 @@ HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl,
         HBITMAP bitmap = CreateAlphaBitmapFromIcon(
             icon, sourceSize, sourceSize, bitmapSize);
         DestroyIcon(icon);
-        suppressFrame(bitmap);
         return bitmap;
     }
 
