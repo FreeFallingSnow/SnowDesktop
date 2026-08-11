@@ -136,40 +136,60 @@ void DesktopApp::LoadLayoutSlots()
         shortcutArrowMode_ = std::clamp(
             *document.shortcutArrowMode, 0, 2);
 
+    // Missing beautification fields are the compatibility path for old layouts.
+    iconBeautifySettings_ = snowdesktop::IconBeautifySettings{};
     if (document.iconBeautifyEnabled)
-        iconBeautifyEnabled_ = *document.iconBeautifyEnabled;
+        iconBeautifySettings_.enabled = *document.iconBeautifyEnabled;
 
     if (document.iconBeautifyMode)
-        iconBeautifyMode_ = std::clamp(
-            *document.iconBeautifyMode, 0, 1);
+        iconBeautifySettings_.mode = *document.iconBeautifyMode;
 
     if (document.iconBeautifyBgOpacity)
-        iconBeautifyBgOpacity_ = std::clamp(
-            *document.iconBeautifyBgOpacity, 0.0f, 1.0f);
+        iconBeautifySettings_.backgroundOpacity = *document.iconBeautifyBgOpacity;
     if (document.iconBeautifyGradientEnabled)
-        iconBeautifyGradientEnabled_ =
+        iconBeautifySettings_.gradientEnabled =
             *document.iconBeautifyGradientEnabled;
     if (document.iconBeautifyGradientDirection)
-        iconBeautifyGradientDirection_ = std::clamp(
-            *document.iconBeautifyGradientDirection, 0, 3);
+        iconBeautifySettings_.gradientDirection =
+            *document.iconBeautifyGradientDirection;
     if (document.iconBeautifyBgStartR)
-        iconBeautifyBgStartR_ = std::clamp(
-            *document.iconBeautifyBgStartR, 0.0f, 1.0f);
+        iconBeautifySettings_.backgroundStartR = *document.iconBeautifyBgStartR;
     if (document.iconBeautifyBgStartG)
-        iconBeautifyBgStartG_ = std::clamp(
-            *document.iconBeautifyBgStartG, 0.0f, 1.0f);
+        iconBeautifySettings_.backgroundStartG = *document.iconBeautifyBgStartG;
     if (document.iconBeautifyBgStartB)
-        iconBeautifyBgStartB_ = std::clamp(
-            *document.iconBeautifyBgStartB, 0.0f, 1.0f);
+        iconBeautifySettings_.backgroundStartB = *document.iconBeautifyBgStartB;
     if (document.iconBeautifyBgEndR)
-        iconBeautifyBgEndR_ = std::clamp(
-            *document.iconBeautifyBgEndR, 0.0f, 1.0f);
+        iconBeautifySettings_.backgroundEndR = *document.iconBeautifyBgEndR;
     if (document.iconBeautifyBgEndG)
-        iconBeautifyBgEndG_ = std::clamp(
-            *document.iconBeautifyBgEndG, 0.0f, 1.0f);
+        iconBeautifySettings_.backgroundEndG = *document.iconBeautifyBgEndG;
     if (document.iconBeautifyBgEndB)
-        iconBeautifyBgEndB_ = std::clamp(
-            *document.iconBeautifyBgEndB, 0.0f, 1.0f);
+        iconBeautifySettings_.backgroundEndB = *document.iconBeautifyBgEndB;
+    if (document.iconBeautifyShape)
+        iconBeautifySettings_.shape = static_cast<snowdesktop::IconBeautifyShape>(
+            *document.iconBeautifyShape);
+    if (document.iconBeautifyContentScale)
+        iconBeautifySettings_.contentScale = *document.iconBeautifyContentScale;
+    if (document.iconBeautifyFinish)
+        iconBeautifySettings_.finish = static_cast<snowdesktop::IconBeautifyFinish>(
+            *document.iconBeautifyFinish);
+    if (document.iconBeautifyOutlineMode)
+        iconBeautifySettings_.outlineMode =
+            static_cast<snowdesktop::IconBeautifyOutlineMode>(
+                *document.iconBeautifyOutlineMode);
+    if (document.iconBeautifyOutlineWidth)
+        iconBeautifySettings_.outlineWidth = *document.iconBeautifyOutlineWidth;
+    if (document.iconBeautifyOutlineOpacity)
+        iconBeautifySettings_.outlineOpacity = *document.iconBeautifyOutlineOpacity;
+    if (document.iconBeautifyOutlineR)
+        iconBeautifySettings_.outlineR = *document.iconBeautifyOutlineR;
+    if (document.iconBeautifyOutlineG)
+        iconBeautifySettings_.outlineG = *document.iconBeautifyOutlineG;
+    if (document.iconBeautifyOutlineB)
+        iconBeautifySettings_.outlineB = *document.iconBeautifyOutlineB;
+    if (document.iconBeautifyShadowStrength)
+        iconBeautifySettings_.shadowStrength = *document.iconBeautifyShadowStrength;
+    iconBeautifySettings_ = snowdesktop::icon_beautify::Normalize(
+        iconBeautifySettings_);
 
     for (const auto& page : document.pages)
     {
@@ -684,17 +704,27 @@ void DesktopApp::SaveLayoutSlots()
          << ",\n  \"iconSpacing\": " << iconSpacingScale_
          << ",\n  \"componentSpacing\": " << componentSpacingScale_
          << ",\n  \"shortcutArrowMode\": " << shortcutArrowMode_
-         << ",\n  \"iconBeautifyEnabled\": " << (iconBeautifyEnabled_ ? "true" : "false")
-         << ",\n  \"iconBeautifyMode\": " << iconBeautifyMode_
-         << ",\n  \"iconBeautifyBgOpacity\": " << iconBeautifyBgOpacity_
-         << ",\n  \"iconBeautifyGradientEnabled\": " << (iconBeautifyGradientEnabled_ ? "true" : "false")
-         << ",\n  \"iconBeautifyGradientDirection\": " << iconBeautifyGradientDirection_
-         << ",\n  \"iconBeautifyBgStartR\": " << iconBeautifyBgStartR_
-         << ",\n  \"iconBeautifyBgStartG\": " << iconBeautifyBgStartG_
-         << ",\n  \"iconBeautifyBgStartB\": " << iconBeautifyBgStartB_
-         << ",\n  \"iconBeautifyBgEndR\": " << iconBeautifyBgEndR_
-         << ",\n  \"iconBeautifyBgEndG\": " << iconBeautifyBgEndG_
-         << ",\n  \"iconBeautifyBgEndB\": " << iconBeautifyBgEndB_
+         << ",\n  \"iconBeautifyEnabled\": " << (iconBeautifySettings_.enabled ? "true" : "false")
+         << ",\n  \"iconBeautifyMode\": " << iconBeautifySettings_.mode
+         << ",\n  \"iconBeautifyBgOpacity\": " << iconBeautifySettings_.backgroundOpacity
+         << ",\n  \"iconBeautifyGradientEnabled\": " << (iconBeautifySettings_.gradientEnabled ? "true" : "false")
+         << ",\n  \"iconBeautifyGradientDirection\": " << iconBeautifySettings_.gradientDirection
+         << ",\n  \"iconBeautifyBgStartR\": " << iconBeautifySettings_.backgroundStartR
+         << ",\n  \"iconBeautifyBgStartG\": " << iconBeautifySettings_.backgroundStartG
+         << ",\n  \"iconBeautifyBgStartB\": " << iconBeautifySettings_.backgroundStartB
+         << ",\n  \"iconBeautifyBgEndR\": " << iconBeautifySettings_.backgroundEndR
+         << ",\n  \"iconBeautifyBgEndG\": " << iconBeautifySettings_.backgroundEndG
+         << ",\n  \"iconBeautifyBgEndB\": " << iconBeautifySettings_.backgroundEndB
+         << ",\n  \"iconBeautifyShape\": " << static_cast<int>(iconBeautifySettings_.shape)
+         << ",\n  \"iconBeautifyContentScale\": " << iconBeautifySettings_.contentScale
+         << ",\n  \"iconBeautifyFinish\": " << static_cast<int>(iconBeautifySettings_.finish)
+         << ",\n  \"iconBeautifyOutlineMode\": " << static_cast<int>(iconBeautifySettings_.outlineMode)
+         << ",\n  \"iconBeautifyOutlineWidth\": " << iconBeautifySettings_.outlineWidth
+         << ",\n  \"iconBeautifyOutlineOpacity\": " << iconBeautifySettings_.outlineOpacity
+         << ",\n  \"iconBeautifyOutlineR\": " << iconBeautifySettings_.outlineR
+         << ",\n  \"iconBeautifyOutlineG\": " << iconBeautifySettings_.outlineG
+         << ",\n  \"iconBeautifyOutlineB\": " << iconBeautifySettings_.outlineB
+         << ",\n  \"iconBeautifyShadowStrength\": " << iconBeautifySettings_.shadowStrength
          << ",\n  \"pages\": [\n";
     for (size_t i = 0; i < pagesToWrite.size(); ++i)
     {

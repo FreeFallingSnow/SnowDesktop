@@ -479,6 +479,31 @@ bool DecodeDocument(const JsonValue& root, Document& document,
         !ReadOptionalFloat(root, "iconBeautifyBgEndB",
             "iconBeautifyBgEndB", decoded.iconBeautifyBgEndB,
             error) ||
+        !ReadOptionalInteger(root, "iconBeautifyShape",
+            "iconBeautifyShape", decoded.iconBeautifyShape, error) ||
+        !ReadOptionalFloat(root, "iconBeautifyContentScale",
+            "iconBeautifyContentScale", decoded.iconBeautifyContentScale,
+            error) ||
+        !ReadOptionalInteger(root, "iconBeautifyFinish",
+            "iconBeautifyFinish", decoded.iconBeautifyFinish, error) ||
+        !ReadOptionalInteger(root, "iconBeautifyOutlineMode",
+            "iconBeautifyOutlineMode", decoded.iconBeautifyOutlineMode,
+            error) ||
+        !ReadOptionalFloat(root, "iconBeautifyOutlineWidth",
+            "iconBeautifyOutlineWidth", decoded.iconBeautifyOutlineWidth,
+            error) ||
+        !ReadOptionalFloat(root, "iconBeautifyOutlineOpacity",
+            "iconBeautifyOutlineOpacity", decoded.iconBeautifyOutlineOpacity,
+            error) ||
+        !ReadOptionalFloat(root, "iconBeautifyOutlineR",
+            "iconBeautifyOutlineR", decoded.iconBeautifyOutlineR, error) ||
+        !ReadOptionalFloat(root, "iconBeautifyOutlineG",
+            "iconBeautifyOutlineG", decoded.iconBeautifyOutlineG, error) ||
+        !ReadOptionalFloat(root, "iconBeautifyOutlineB",
+            "iconBeautifyOutlineB", decoded.iconBeautifyOutlineB, error) ||
+        !ReadOptionalFloat(root, "iconBeautifyShadowStrength",
+            "iconBeautifyShadowStrength", decoded.iconBeautifyShadowStrength,
+            error) ||
         !DecodePages(root, decoded, error) ||
         !DecodeItems(root, decoded, error) ||
         !DecodeWidgets(root, decoded, error) ||

@@ -106,6 +106,7 @@ message(STATUS
 set(SNOWDESKTOP_SOURCES
     src/main.cpp
     src/application_crash_watchdog.cpp
+    src/icon_beautify.cpp
     src/app/app_bitmap_cache.cpp
     src/app/app_background_menu.cpp
     src/app/app_animation_scheduler.cpp
@@ -765,6 +766,15 @@ if (BUILD_TESTING)
         SOURCES tests/icon_render_rules_tests.cpp
         INCLUDE_DIRECTORIES src
         LABELS rules shell ui)
+
+    snowdesktop_add_test(
+        SnowDesktopIconBeautifyTests
+        icon_beautify
+        SOURCES
+            tests/icon_beautify_tests.cpp
+            src/icon_beautify.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS rules icon ui)
 
     snowdesktop_add_test(
         SnowDesktopItemLocationTests

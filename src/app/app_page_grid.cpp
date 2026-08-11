@@ -417,71 +417,24 @@ bool DesktopApp::ShouldDrawShortcutArrow(bool isShortcut, bool isApplicationShor
 
 void DesktopApp::SetIconBeautifyEnabled(bool enabled)
 {
-    SetIconBeautifySettings(enabled,
-        iconBeautifyMode_,
-        iconBeautifyBgOpacity_,
-        iconBeautifyGradientEnabled_,
-        iconBeautifyBgStartR_,
-        iconBeautifyBgStartG_,
-        iconBeautifyBgStartB_,
-        iconBeautifyBgEndR_,
-        iconBeautifyBgEndG_,
-        iconBeautifyBgEndB_,
-        iconBeautifyGradientDirection_);
+    auto settings = iconBeautifySettings_;
+    settings.enabled = enabled;
+    SetIconBeautifySettings(settings);
 }
 
-void DesktopApp::SetIconBeautifySettings(bool enabled,
-    int beautifyMode,
-    float backgroundOpacity,
-    bool gradientEnabled,
-    float backgroundStartR,
-    float backgroundStartG,
-    float backgroundStartB,
-    float backgroundEndR,
-    float backgroundEndG,
-    float backgroundEndB,
-    int gradientDirection)
+void DesktopApp::SetIconBeautifySettings(
+    const snowdesktop::IconBeautifySettings& rawSettings,
+    snowdesktop::IconBeautifyUpdateKind updateKind)
 {
-    beautifyMode = std::clamp(beautifyMode, 0, 1);
-    backgroundOpacity = std::clamp(backgroundOpacity, 0.0f, 1.0f);
-    backgroundStartR = std::clamp(backgroundStartR, 0.0f, 1.0f);
-    backgroundStartG = std::clamp(backgroundStartG, 0.0f, 1.0f);
-    backgroundStartB = std::clamp(backgroundStartB, 0.0f, 1.0f);
-    backgroundEndR = std::clamp(backgroundEndR, 0.0f, 1.0f);
-    backgroundEndG = std::clamp(backgroundEndG, 0.0f, 1.0f);
-    backgroundEndB = std::clamp(backgroundEndB, 0.0f, 1.0f);
-    gradientDirection = std::clamp(gradientDirection, 0, 3);
-
-    auto differs = [](float lhs, float rhs) {
-        return std::fabs(lhs - rhs) > 0.0005f;
-    };
-
-    if (enabled == iconBeautifyEnabled_ &&
-        beautifyMode == iconBeautifyMode_ &&
-        gradientEnabled == iconBeautifyGradientEnabled_ &&
-        !differs(backgroundOpacity, iconBeautifyBgOpacity_) &&
-        !differs(backgroundStartR, iconBeautifyBgStartR_) &&
-        !differs(backgroundStartG, iconBeautifyBgStartG_) &&
-        !differs(backgroundStartB, iconBeautifyBgStartB_) &&
-        !differs(backgroundEndR, iconBeautifyBgEndR_) &&
-        !differs(backgroundEndG, iconBeautifyBgEndG_) &&
-        !differs(backgroundEndB, iconBeautifyBgEndB_) &&
-        gradientDirection == iconBeautifyGradientDirection_)
+    const auto settings = snowdesktop::icon_beautify::Normalize(rawSettings);
+    if (snowdesktop::icon_beautify::Equal(settings, iconBeautifySettings_))
     {
+        if (updateKind == snowdesktop::IconBeautifyUpdateKind::Commit)
+            SaveLayoutSlots();
         return;
     }
 
-    iconBeautifyEnabled_ = enabled;
-    iconBeautifyMode_ = beautifyMode;
-    iconBeautifyBgOpacity_ = backgroundOpacity;
-    iconBeautifyGradientEnabled_ = gradientEnabled;
-    iconBeautifyBgStartR_ = backgroundStartR;
-    iconBeautifyBgStartG_ = backgroundStartG;
-    iconBeautifyBgStartB_ = backgroundStartB;
-    iconBeautifyBgEndR_ = backgroundEndR;
-    iconBeautifyBgEndG_ = backgroundEndG;
-    iconBeautifyBgEndB_ = backgroundEndB;
-    iconBeautifyGradientDirection_ = gradientDirection;
+    iconBeautifySettings_ = settings;
 
     d2dIconCache_.clear();
     placeholderIconCache_.clear();
@@ -489,7 +442,8 @@ void DesktopApp::SetIconBeautifySettings(bool enabled,
     privacyFileIconBitmap_.Reset();
     privacyFolderIconBitmap_.Reset();
     InvalidateDragStaticScene();
-    SaveLayoutSlots();
+    if (updateKind == snowdesktop::IconBeautifyUpdateKind::Commit)
+        SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
     if (quickNavigationOpen_)
         InvalidateQuickNavigationWindow();

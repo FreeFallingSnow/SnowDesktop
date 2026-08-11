@@ -530,18 +530,12 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             SetItemFontSize(settingsWindow_->GetItemFontSizeD());
             SetItemFontWeight(static_cast<DWRITE_FONT_WEIGHT>(static_cast<int>(settingsWindow_->GetItemFontWeightD())));
             SetShortcutArrowMode(settingsWindow_->GetShortcutArrowMode());
-            SetIconBeautifySettings(settingsWindow_->GetIconBeautifyEnabled(),
-                settingsWindow_->GetIconBeautifyMode(),
-                settingsWindow_->GetIconBeautifyBgOpacity(),
-                settingsWindow_->GetIconBeautifyGradientEnabled(),
-                settingsWindow_->GetIconBeautifyBgStartR(),
-                settingsWindow_->GetIconBeautifyBgStartG(),
-                settingsWindow_->GetIconBeautifyBgStartB(),
-                settingsWindow_->GetIconBeautifyBgEndR(),
-                settingsWindow_->GetIconBeautifyBgEndG(),
-                settingsWindow_->GetIconBeautifyBgEndB(),
-                settingsWindow_->GetIconBeautifyGradientDirection());
         });
+        settingsWindow_->SetIconBeautifySettingsChangedCallback(
+            [this](snowdesktop::IconBeautifyUpdateKind updateKind) {
+                SetIconBeautifySettings(
+                    settingsWindow_->GetIconBeautifySettings(), updateKind);
+            });
         settingsWindow_->SetCategorySettingsChangedCallback([this]() {
             LoadCategorySettingsAndApply();
         });
@@ -557,12 +551,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
 
         settingsWindow_->SyncDisplaySettings(iconSpacingScale_,
             componentSpacingScale_, itemFontSize_,
-            static_cast<float>(itemFontWeight_), shortcutArrowMode_, iconBeautifyEnabled_,
-            iconBeautifyMode_,
-            iconBeautifyBgOpacity_, iconBeautifyGradientEnabled_,
-            iconBeautifyBgStartR_, iconBeautifyBgStartG_, iconBeautifyBgStartB_,
-            iconBeautifyBgEndR_, iconBeautifyBgEndG_, iconBeautifyBgEndB_,
-            iconBeautifyGradientDirection_);
+            static_cast<float>(itemFontWeight_), shortcutArrowMode_,
+            iconBeautifySettings_);
         settingsWindow_->SyncDockEnabled(generalSettings_.dockEnabled);
     }
     else

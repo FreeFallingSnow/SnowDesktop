@@ -41,6 +41,7 @@
 #include "quick_navigation_animation_rules.h"
 #include "item_layout_rules.h"
 #include "../icon_render_rules.h"
+#include "../icon_beautify.h"
 #include "dock_window_rules.h"
 #include "dock_window_preview.h"
 #include "dock_window_transition.h"
@@ -1430,19 +1431,12 @@ private:
     DWRITE_FONT_WEIGHT GetItemFontWeight() const;
     void SetShortcutArrowMode(int mode);
     bool ShouldDrawShortcutArrow(bool isShortcut, bool isApplicationShortcut) const;
-    /** @brief 设置是否统一图标为圆角底板样式。 */
+    /** @brief 设置是否开启全局图标美化。 */
     void SetIconBeautifyEnabled(bool enabled);
-    void SetIconBeautifySettings(bool enabled,
-        int beautifyMode,
-        float backgroundOpacity,
-        bool gradientEnabled,
-        float backgroundStartR,
-        float backgroundStartG,
-        float backgroundStartB,
-        float backgroundEndR,
-        float backgroundEndG,
-        float backgroundEndB,
-        int gradientDirection);
+    void SetIconBeautifySettings(
+        const snowdesktop::IconBeautifySettings& settings,
+        snowdesktop::IconBeautifyUpdateKind updateKind =
+            snowdesktop::IconBeautifyUpdateKind::Commit);
     /** @brief 应用页面到显示器的映射关系（编排清理/补齐/重排/映射）。 */
     void ApplyPageMapping();
     /** @brief 清理溢出区空页（保留前 N-1 槽位页与末屏当前显示的空页）。 */
@@ -2566,17 +2560,7 @@ private:
     float itemFontSize_ = kItemFontSize;
     DWRITE_FONT_WEIGHT itemFontWeight_ = DWRITE_FONT_WEIGHT_SEMI_BOLD;
     int shortcutArrowMode_ = 0;
-    bool iconBeautifyEnabled_ = false;
-    int iconBeautifyMode_ = 0;
-    float iconBeautifyBgOpacity_ = 0.65f;
-    bool iconBeautifyGradientEnabled_ = false;
-    int iconBeautifyGradientDirection_ = 0;
-    float iconBeautifyBgStartR_ = 232.0f / 255.0f;
-    float iconBeautifyBgStartG_ = 236.0f / 255.0f;
-    float iconBeautifyBgStartB_ = 244.0f / 255.0f;
-    float iconBeautifyBgEndR_ = 222.0f / 255.0f;
-    float iconBeautifyBgEndG_ = 228.0f / 255.0f;
-    float iconBeautifyBgEndB_ = 240.0f / 255.0f;
+    snowdesktop::IconBeautifySettings iconBeautifySettings_{};
     std::wstring primaryMonitorId_;
     std::wstring firstPageMonitorId_;   // 持久化：锁定显示首屏的显示器
     std::wstring lastPageMonitorId_;    // 持久化：锁定显示末屏/翻页区的显示器

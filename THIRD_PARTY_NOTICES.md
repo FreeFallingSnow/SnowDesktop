@@ -13,6 +13,7 @@ under `steam_bridge/` is licensed under the MIT License.
 | pinyin-data | bundled data | MIT | Copyright (c) 2016 mozillazg; <https://github.com/mozillazg/pinyin-data> |
 | Font Awesome 6 Free Solid | 6.5.2 font | SIL Open Font License 1.1 | Copyright (c) Font Awesome; <https://fontawesome.com/license/free> |
 | Fluent System Icons Regular | upstream commit `21d5d02f724be2aaf586564775fff73a18a76eb6` | MIT | Copyright (c) 2020 Microsoft Corporation; <https://github.com/microsoft/fluentui-system-icons> |
+| DeskMakeover shape catalog | upstream `main` as referenced in 2026 | MIT | Copyright (c) 2026 Jinming Yang; <https://github.com/nicepkg/deskmakeover> |
 | TranslucentTB-derived portions | upstream commit `322e2b7395a51975150126276308b415970e080b` | GPL-3.0-only | Copyright (c) TranslucentTB contributors; <https://github.com/TranslucentTB/TranslucentTB/tree/322e2b7395a51975150126276308b415970e080b> |
 
 The complete MIT notices are retained in the corresponding bundled source
@@ -41,6 +42,37 @@ The affected files are:
 The complete GPL v3 license text is retained in the repository root `LICENSE`.
 The upstream source and history remain available at the pinned TranslucentTB
 commit linked above.
+
+## DeskMakeover-derived shape geometry
+
+`src/icon_beautify.cpp` adapts normalized shape control points and continuous
+corner geometry from DeskMakeover's `dm-icon-core` shape catalog. The upstream
+visual-language reference is available at
+<https://github.com/nicepkg/deskmakeover/blob/main/docs/specs/02-visual-language.md>
+and the upstream project source is available at
+<https://github.com/nicepkg/deskmakeover>.
+
+DeskMakeover is distributed under the following MIT License:
+
+Copyright (c) 2026 Jinming Yang
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 ## Optional Steamworks dependency
 

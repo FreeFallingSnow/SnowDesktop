@@ -7,7 +7,7 @@ void DesktopApp::DrawShortcutArrowOverlay(ID2D1RenderTarget* ctx, RECT iconRect,
 {
     if (!ctx) return;
 
-    if (iconBeautifyEnabled_)
+    if (iconBeautifySettings_.enabled)
     {
         const int iconHeight = std::max(1, static_cast<int>(iconRect.bottom - iconRect.top));
         const float scale = static_cast<float>(iconHeight) / 64.0f;
@@ -279,13 +279,17 @@ void DesktopApp::DrawPrivacyFaIcon(
         return;
     }
 
-    const float luminance = iconBeautifyBgStartR_ * 0.2126f +
-        iconBeautifyBgStartG_ * 0.7152f + iconBeautifyBgStartB_ * 0.0722f;
-    const D2D1_COLOR_F fill = D2D1::ColorF(iconBeautifyBgStartR_,
-        iconBeautifyBgStartG_, iconBeautifyBgStartB_, iconBeautifyBgOpacity_);
+    const float luminance = iconBeautifySettings_.backgroundStartR * 0.2126f +
+        iconBeautifySettings_.backgroundStartG * 0.7152f +
+        iconBeautifySettings_.backgroundStartB * 0.0722f;
+    const D2D1_COLOR_F fill = D2D1::ColorF(
+        iconBeautifySettings_.backgroundStartR,
+        iconBeautifySettings_.backgroundStartG,
+        iconBeautifySettings_.backgroundStartB,
+        iconBeautifySettings_.backgroundOpacity);
     const D2D1_COLOR_F border = luminance > 0.58f
-        ? D2D1::ColorF(0.62f, 0.66f, 0.72f, iconBeautifyBgOpacity_)
-        : D2D1::ColorF(0.78f, 0.82f, 0.90f, iconBeautifyBgOpacity_);
+        ? D2D1::ColorF(0.62f, 0.66f, 0.72f, iconBeautifySettings_.backgroundOpacity)
+        : D2D1::ColorF(0.78f, 0.82f, 0.90f, iconBeautifySettings_.backgroundOpacity);
     DrawBeautifiedIconPlate(ctx, rect, fill, border, 1.0f);
     ComPtr<IDWriteTextFormat> format;
     format.Attach(CreateFaTextFormat(dwriteFactory_.Get(),
@@ -306,7 +310,7 @@ void DesktopApp::DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex,
     if (FAILED(ctx->QueryInterface(IID_PPV_ARGS(&deviceContext))) || !deviceContext || !d2dContext_)
         return;
     auto& cache = placeholderIconCache_;
-    const bool beautify = allowBeautify && iconBeautifyEnabled_;
+    const bool beautify = allowBeautify && iconBeautifySettings_.enabled;
     const int targetSize = std::max(
         iconRect.right - iconRect.left,
         iconRect.bottom - iconRect.top);
@@ -412,7 +416,7 @@ void DesktopApp::DrawQuickNavSysIcon(ID2D1RenderTarget* ctx, int sysIconIndex, R
         if (!alphaBitmap) return;
 
         ComPtr<ID2D1Bitmap1> iconBitmap = CreateD2DBitmapFromHBitmap(
-            alphaBitmap, iconBeautifyEnabled_);
+            alphaBitmap, iconBeautifySettings_.enabled);
         DeleteObject(alphaBitmap);
         if (!iconBitmap)
         {

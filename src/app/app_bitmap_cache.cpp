@@ -978,22 +978,20 @@ ComPtr<ID2D1Bitmap1> DesktopApp::CreateD2DBitmapFromHBitmap(
 
     if (beautify)
     {
-        IconBackgroundPaint backgroundPaint{};
-        backgroundPaint.start = IconColorFromFloats(
-            iconBeautifyBgStartR_, iconBeautifyBgStartG_, iconBeautifyBgStartB_);
-        backgroundPaint.end = IconColorFromFloats(
-            iconBeautifyBgEndR_, iconBeautifyBgEndG_, iconBeautifyBgEndB_);
-        backgroundPaint.border = AutoIconBorderColor(backgroundPaint.start, backgroundPaint.end);
-        backgroundPaint.opacity = std::clamp(
-            static_cast<int>(std::round(iconBeautifyBgOpacity_ * 255.0f)), 0, 255);
-        backgroundPaint.gradient = iconBeautifyGradientEnabled_;
-        backgroundPaint.gradientDirection = iconBeautifyGradientDirection_;
-        if (!backgroundPaint.gradient)
-            backgroundPaint.end = backgroundPaint.start;
-        buffer.pixels = BeautifyIconPixels(
-            buffer.pixels, buffer.width, buffer.height, backgroundPaint,
-            GetBeautifiedIconCornerRadius(buffer.width, buffer.height),
-            iconBeautifyMode_ == 0);
+        std::optional<snowdesktop::icon_beautify::EdgeColor> edgeFill;
+        if (iconBeautifySettings_.mode == 0)
+        {
+            IconBackgroundColor detected{};
+            if (DetectSolidEdgeBackground(
+                    buffer.pixels, buffer.width, buffer.height, detected))
+            {
+                edgeFill = snowdesktop::icon_beautify::EdgeColor{
+                    detected.r, detected.g, detected.b };
+            }
+        }
+        buffer.pixels = snowdesktop::icon_beautify::Render(
+            buffer.pixels, buffer.width, buffer.height,
+            iconBeautifySettings_, edgeFill);
     }
 
     D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
@@ -1021,7 +1019,7 @@ ComPtr<ID2D1Bitmap1> DesktopApp::CreateD2DBitmapFromHBitmap(
  */
 ID2D1Bitmap1* DesktopApp::GetOrCreateD2DBitmap(HBITMAP hbm)
 {
-    return GetOrCreateD2DBitmap(hbm, iconBeautifyEnabled_);
+    return GetOrCreateD2DBitmap(hbm, iconBeautifySettings_.enabled);
 }
 
 ID2D1Bitmap1* DesktopApp::GetOrCreateD2DBitmap(HBITMAP hbm, bool beautify)

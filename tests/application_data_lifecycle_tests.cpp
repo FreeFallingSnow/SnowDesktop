@@ -283,6 +283,18 @@ int main()
             "dockEntries[0].ref" },
         { "navigation array type", "{\"navTabOrder\":[\"w\",false]}",
             "navTabOrder[1]" },
+        { "icon beautify shape type",
+            "{\"iconBeautifyShape\":\"circle\"}",
+            "iconBeautifyShape" },
+        { "icon beautify finish type",
+            "{\"iconBeautifyFinish\":true}",
+            "iconBeautifyFinish" },
+        { "icon beautify content scale type",
+            "{\"iconBeautifyContentScale\":\"large\"}",
+            "iconBeautifyContentScale" },
+        { "icon beautify outline color type",
+            "{\"iconBeautifyOutlineR\":[]}",
+            "iconBeautifyOutlineR" },
     };
     for (const auto& invalid : invalidLayoutCases)
     {
@@ -313,6 +325,39 @@ int main()
             spacingLayout.componentSpacing.has_value() &&
             *spacingLayout.componentSpacing == 1.5f,
         "component spacing is decoded as an optional layout setting");
+    snowdesktop::layout_storage::Document legacyBeautifyLayout;
+    Expect(snowdesktop::layout_storage::ParseDocument(
+            "{\"iconBeautifyEnabled\":true,\"iconBeautifyMode\":0}",
+            legacyBeautifyLayout, &layoutError) &&
+            legacyBeautifyLayout.iconBeautifyEnabled.value_or(false) &&
+            !legacyBeautifyLayout.iconBeautifyShape.has_value() &&
+            !legacyBeautifyLayout.iconBeautifyFinish.has_value() &&
+            !legacyBeautifyLayout.iconBeautifyContentScale.has_value(),
+        "legacy icon beautify layouts keep new fields optional");
+    snowdesktop::layout_storage::Document iconBeautifyLayout;
+    Expect(snowdesktop::layout_storage::ParseDocument(
+            "{\"iconBeautifyShape\":10,"
+            "\"iconBeautifyContentScale\":0.73,"
+            "\"iconBeautifyFinish\":2,"
+            "\"iconBeautifyOutlineMode\":2,"
+            "\"iconBeautifyOutlineWidth\":2.5,"
+            "\"iconBeautifyOutlineOpacity\":0.6,"
+            "\"iconBeautifyOutlineR\":0.1,"
+            "\"iconBeautifyOutlineG\":0.2,"
+            "\"iconBeautifyOutlineB\":0.3,"
+            "\"iconBeautifyShadowStrength\":0.42}",
+            iconBeautifyLayout, &layoutError) &&
+            iconBeautifyLayout.iconBeautifyShape.value_or(-1) == 10 &&
+            iconBeautifyLayout.iconBeautifyContentScale.value_or(0.0f) == 0.73f &&
+            iconBeautifyLayout.iconBeautifyFinish.value_or(-1) == 2 &&
+            iconBeautifyLayout.iconBeautifyOutlineMode.value_or(-1) == 2 &&
+            iconBeautifyLayout.iconBeautifyOutlineWidth.value_or(0.0f) == 2.5f &&
+            iconBeautifyLayout.iconBeautifyOutlineOpacity.value_or(0.0f) == 0.6f &&
+            iconBeautifyLayout.iconBeautifyOutlineR.value_or(0.0f) == 0.1f &&
+            iconBeautifyLayout.iconBeautifyOutlineG.value_or(0.0f) == 0.2f &&
+            iconBeautifyLayout.iconBeautifyOutlineB.value_or(0.0f) == 0.3f &&
+            iconBeautifyLayout.iconBeautifyShadowStrength.value_or(0.0f) == 0.42f,
+        "all icon beautify fields decode into the typed layout model");
     snowdesktop::layout_storage::Document packageSourceLayout;
     Expect(snowdesktop::layout_storage::ParseDocument(
             "{\"widgets\":[{\"id\":\"workshop-widget\","

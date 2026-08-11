@@ -24,6 +24,7 @@
 #include "widget_package.h"
 #include "authoring_toolchain.h"
 #include "../widget_spacing_rules.h"
+#include "icon_beautify.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -226,6 +227,9 @@ public:
     { navigationSettings_ = settings; }
 
     void SetDisplaySettingsChangedCallback(std::function<void()> callback) { displaySettingsChangedCallback_ = std::move(callback); }
+    void SetIconBeautifySettingsChangedCallback(
+        std::function<void(snowdesktop::IconBeautifyUpdateKind)> callback)
+    { iconBeautifySettingsChangedCallback_ = std::move(callback); }
 
     void SetComponentSpacingMaximumProvider(
         std::function<float()> provider)
@@ -256,17 +260,7 @@ public:
     void SyncDisplaySettings(float spacingScale, float componentSpacingScale,
         float fontSize, float fontWeight,
         int shortcutArrowMode,
-        bool iconBeautifyEnabled,
-        int iconBeautifyMode,
-        float iconBeautifyBgOpacity,
-        bool iconBeautifyGradientEnabled,
-        float iconBeautifyBgStartR,
-        float iconBeautifyBgStartG,
-        float iconBeautifyBgStartB,
-        float iconBeautifyBgEndR,
-        float iconBeautifyBgEndG,
-        float iconBeautifyBgEndB,
-        int iconBeautifyGradientDirection)
+        const snowdesktop::IconBeautifySettings& iconBeautifySettings)
     {
         iconSpacingScale_ = std::clamp(
             spacingScale,
@@ -281,32 +275,23 @@ public:
         itemFontSize_ = fontSize;
         itemFontWeight_ = fontWeight;
         shortcutArrowMode_ = std::clamp(shortcutArrowMode, 0, 2);
-        iconBeautifyEnabled_ = iconBeautifyEnabled;
-        iconBeautifyMode_ = std::clamp(iconBeautifyMode, 0, 1);
-        iconBeautifyBgOpacity_ = iconBeautifyBgOpacity;
-        iconBeautifyGradientEnabled_ = iconBeautifyGradientEnabled;
-        iconBeautifyBgStartR_ = iconBeautifyBgStartR;
-        iconBeautifyBgStartG_ = iconBeautifyBgStartG;
-        iconBeautifyBgStartB_ = iconBeautifyBgStartB;
-        iconBeautifyBgEndR_ = iconBeautifyBgEndR;
-        iconBeautifyBgEndG_ = iconBeautifyBgEndG;
-        iconBeautifyBgEndB_ = iconBeautifyBgEndB;
-        iconBeautifyGradientDirection_ = std::clamp(iconBeautifyGradientDirection, 0, 3);
+        iconBeautifySettings_ = snowdesktop::icon_beautify::Normalize(
+            iconBeautifySettings);
         auto closeEnough = [](float value, float expected) {
             return value >= expected - 0.001f && value <= expected + 0.001f;
         };
         auto matchesPreset = [&](float opacity, bool gradient,
             float startR, float startG, float startB,
             float endR, float endG, float endB, int direction) {
-            return closeEnough(iconBeautifyBgOpacity_, opacity) &&
-                iconBeautifyGradientEnabled_ == gradient &&
-                closeEnough(iconBeautifyBgStartR_, startR) &&
-                closeEnough(iconBeautifyBgStartG_, startG) &&
-                closeEnough(iconBeautifyBgStartB_, startB) &&
-                closeEnough(iconBeautifyBgEndR_, endR) &&
-                closeEnough(iconBeautifyBgEndG_, endG) &&
-                closeEnough(iconBeautifyBgEndB_, endB) &&
-                iconBeautifyGradientDirection_ == direction;
+            return closeEnough(iconBeautifySettings_.backgroundOpacity, opacity) &&
+                iconBeautifySettings_.gradientEnabled == gradient &&
+                closeEnough(iconBeautifySettings_.backgroundStartR, startR) &&
+                closeEnough(iconBeautifySettings_.backgroundStartG, startG) &&
+                closeEnough(iconBeautifySettings_.backgroundStartB, startB) &&
+                closeEnough(iconBeautifySettings_.backgroundEndR, endR) &&
+                closeEnough(iconBeautifySettings_.backgroundEndG, endG) &&
+                closeEnough(iconBeautifySettings_.backgroundEndB, endB) &&
+                iconBeautifySettings_.gradientDirection == direction;
         };
         if (matchesPreset(0.65f, false,
             232.0f / 255.0f, 236.0f / 255.0f, 244.0f / 255.0f,
@@ -378,17 +363,11 @@ public:
     float GetItemFontSizeD() const { return itemFontSize_; }
     float GetItemFontWeightD() const { return itemFontWeight_; }
     int GetShortcutArrowMode() const { return shortcutArrowMode_; }
-    bool GetIconBeautifyEnabled() const { return iconBeautifyEnabled_; }
-    int GetIconBeautifyMode() const { return iconBeautifyMode_; }
-    float GetIconBeautifyBgOpacity() const { return iconBeautifyBgOpacity_; }
-    bool GetIconBeautifyGradientEnabled() const { return iconBeautifyGradientEnabled_; }
-    float GetIconBeautifyBgStartR() const { return iconBeautifyBgStartR_; }
-    float GetIconBeautifyBgStartG() const { return iconBeautifyBgStartG_; }
-    float GetIconBeautifyBgStartB() const { return iconBeautifyBgStartB_; }
-    float GetIconBeautifyBgEndR() const { return iconBeautifyBgEndR_; }
-    float GetIconBeautifyBgEndG() const { return iconBeautifyBgEndG_; }
-    float GetIconBeautifyBgEndB() const { return iconBeautifyBgEndB_; }
-    int GetIconBeautifyGradientDirection() const { return iconBeautifyGradientDirection_; }
+    const snowdesktop::IconBeautifySettings& GetIconBeautifySettings() const
+    {
+        return iconBeautifyPreviewActive_
+            ? iconBeautifyPreviewSettings_ : iconBeautifySettings_;
+    }
 
     /** @} */
 
@@ -764,6 +743,9 @@ private:
 
     /// 显示设置变更回调
     std::function<void()> displaySettingsChangedCallback_;
+    /// 图标美化预览/提交回调；false 仅刷新，true 持久化。
+    std::function<void(snowdesktop::IconBeautifyUpdateKind)>
+        iconBeautifySettingsChangedCallback_;
     std::function<float()> componentSpacingMaximumProvider_;
 
     /// 分类设置变更回调
@@ -833,20 +815,15 @@ private:
 
     int shortcutArrowMode_ = 0;
 
-    /// 是否统一图标为圆角矩形底板
-    bool iconBeautifyEnabled_ = false;
-
-    int iconBeautifyMode_ = 0;
-    float iconBeautifyBgOpacity_ = 0.65f;
-    bool iconBeautifyGradientEnabled_ = false;
-    int iconBeautifyGradientDirection_ = 0;
+    /// 全局图标美化设置。
+    snowdesktop::IconBeautifySettings iconBeautifySettings_{};
     int iconBeautifyBgPreset_ = 1;
-    float iconBeautifyBgStartR_ = 232.0f / 255.0f;
-    float iconBeautifyBgStartG_ = 236.0f / 255.0f;
-    float iconBeautifyBgStartB_ = 244.0f / 255.0f;
-    float iconBeautifyBgEndR_ = 222.0f / 255.0f;
-    float iconBeautifyBgEndG_ = 228.0f / 255.0f;
-    float iconBeautifyBgEndB_ = 240.0f / 255.0f;
+    snowdesktop::icon_beautify::HoverPreviewState
+        iconBeautifyHoverState_{};
+    bool iconBeautifyPreviewActive_ = false;
+    snowdesktop::IconBeautifySettings iconBeautifyPreviewSettings_{};
+    snowdesktop::icon_beautify::ContinuousPreviewState
+        iconBeautifyContinuousState_{};
 
     int displaySpacingPct_ = 100;
     int componentSpacingPct_ = 100;

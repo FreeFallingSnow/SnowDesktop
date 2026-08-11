@@ -102,6 +102,16 @@ struct Document
     std::optional<float> iconBeautifyBgEndR;
     std::optional<float> iconBeautifyBgEndG;
     std::optional<float> iconBeautifyBgEndB;
+    std::optional<int> iconBeautifyShape;
+    std::optional<float> iconBeautifyContentScale;
+    std::optional<int> iconBeautifyFinish;
+    std::optional<int> iconBeautifyOutlineMode;
+    std::optional<float> iconBeautifyOutlineWidth;
+    std::optional<float> iconBeautifyOutlineOpacity;
+    std::optional<float> iconBeautifyOutlineR;
+    std::optional<float> iconBeautifyOutlineG;
+    std::optional<float> iconBeautifyOutlineB;
+    std::optional<float> iconBeautifyShadowStrength;
     std::vector<PageRecord> pages;
     std::vector<ItemRecord> items;
     std::vector<WidgetRecord> widgets;

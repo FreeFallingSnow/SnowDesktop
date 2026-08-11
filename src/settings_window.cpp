@@ -2394,65 +2394,85 @@ void SettingsWindow::DrawDisplayPage()
             displaySettingsChangedCallback_();
     };
 
+    auto notifyIconBeautify = [&](snowdesktop::IconBeautifyUpdateKind updateKind) {
+        if (iconBeautifySettingsChangedCallback_)
+            iconBeautifySettingsChangedCallback_(updateKind);
+    };
+    auto previewIconBeautify = [&]() {
+        const auto action = snowdesktop::icon_beautify::
+            AdvanceContinuousPreview(iconBeautifyContinuousState_,
+                true, false, GetTickCount());
+        if (action == snowdesktop::icon_beautify::InteractionAction::Preview)
+            notifyIconBeautify(snowdesktop::IconBeautifyUpdateKind::Preview);
+    };
+    auto commitContinuousIconBeautify = [&]() {
+        const auto action = snowdesktop::icon_beautify::
+            AdvanceContinuousPreview(iconBeautifyContinuousState_,
+                false, ImGui::IsItemDeactivatedAfterEdit(), GetTickCount());
+        if (action == snowdesktop::icon_beautify::InteractionAction::Commit)
+            notifyIconBeautify(snowdesktop::IconBeautifyUpdateKind::Commit);
+    };
+
     auto applyIconBeautifyPreset = [&](int preset) {
         iconBeautifyBgPreset_ = preset;
+        auto& settings = iconBeautifySettings_;
         switch (preset)
         {
         case 2:
-            iconBeautifyBgOpacity_ = 0.50f;
-            iconBeautifyGradientEnabled_ = false;
-            iconBeautifyGradientDirection_ = 0;
-            iconBeautifyBgStartR_ = 255.0f / 255.0f;
-            iconBeautifyBgStartG_ = 255.0f / 255.0f;
-            iconBeautifyBgStartB_ = 255.0f / 255.0f;
-            iconBeautifyBgEndR_ = iconBeautifyBgStartR_;
-            iconBeautifyBgEndG_ = iconBeautifyBgStartG_;
-            iconBeautifyBgEndB_ = iconBeautifyBgStartB_;
+            settings.backgroundOpacity = 0.50f;
+            settings.gradientEnabled = false;
+            settings.gradientDirection = 0;
+            settings.backgroundStartR = 1.0f;
+            settings.backgroundStartG = 1.0f;
+            settings.backgroundStartB = 1.0f;
+            settings.backgroundEndR = settings.backgroundStartR;
+            settings.backgroundEndG = settings.backgroundStartG;
+            settings.backgroundEndB = settings.backgroundStartB;
             break;
         case 3:
-            iconBeautifyBgOpacity_ = 0.82f;
-            iconBeautifyGradientEnabled_ = true;
-            iconBeautifyGradientDirection_ = 2;
-            iconBeautifyBgStartR_ = 156.0f / 255.0f;
-            iconBeautifyBgStartG_ = 216.0f / 255.0f;
-            iconBeautifyBgStartB_ = 255.0f / 255.0f;
-            iconBeautifyBgEndR_ = 74.0f / 255.0f;
-            iconBeautifyBgEndG_ = 128.0f / 255.0f;
-            iconBeautifyBgEndB_ = 255.0f / 255.0f;
+            settings.backgroundOpacity = 0.82f;
+            settings.gradientEnabled = true;
+            settings.gradientDirection = 2;
+            settings.backgroundStartR = 156.0f / 255.0f;
+            settings.backgroundStartG = 216.0f / 255.0f;
+            settings.backgroundStartB = 1.0f;
+            settings.backgroundEndR = 74.0f / 255.0f;
+            settings.backgroundEndG = 128.0f / 255.0f;
+            settings.backgroundEndB = 1.0f;
             break;
         case 4:
-            iconBeautifyBgOpacity_ = 0.78f;
-            iconBeautifyGradientEnabled_ = true;
-            iconBeautifyGradientDirection_ = 3;
-            iconBeautifyBgStartR_ = 255.0f / 255.0f;
-            iconBeautifyBgStartG_ = 218.0f / 255.0f;
-            iconBeautifyBgStartB_ = 138.0f / 255.0f;
-            iconBeautifyBgEndR_ = 255.0f / 255.0f;
-            iconBeautifyBgEndG_ = 122.0f / 255.0f;
-            iconBeautifyBgEndB_ = 164.0f / 255.0f;
+            settings.backgroundOpacity = 0.78f;
+            settings.gradientEnabled = true;
+            settings.gradientDirection = 3;
+            settings.backgroundStartR = 1.0f;
+            settings.backgroundStartG = 218.0f / 255.0f;
+            settings.backgroundStartB = 138.0f / 255.0f;
+            settings.backgroundEndR = 1.0f;
+            settings.backgroundEndG = 122.0f / 255.0f;
+            settings.backgroundEndB = 164.0f / 255.0f;
             break;
         case 5:
-            iconBeautifyBgOpacity_ = 0.70f;
-            iconBeautifyGradientEnabled_ = true;
-            iconBeautifyGradientDirection_ = 1;
-            iconBeautifyBgStartR_ = 24.0f / 255.0f;
-            iconBeautifyBgStartG_ = 32.0f / 255.0f;
-            iconBeautifyBgStartB_ = 48.0f / 255.0f;
-            iconBeautifyBgEndR_ = 87.0f / 255.0f;
-            iconBeautifyBgEndG_ = 105.0f / 255.0f;
-            iconBeautifyBgEndB_ = 135.0f / 255.0f;
+            settings.backgroundOpacity = 0.70f;
+            settings.gradientEnabled = true;
+            settings.gradientDirection = 1;
+            settings.backgroundStartR = 24.0f / 255.0f;
+            settings.backgroundStartG = 32.0f / 255.0f;
+            settings.backgroundStartB = 48.0f / 255.0f;
+            settings.backgroundEndR = 87.0f / 255.0f;
+            settings.backgroundEndG = 105.0f / 255.0f;
+            settings.backgroundEndB = 135.0f / 255.0f;
             break;
         default:
             iconBeautifyBgPreset_ = 1;
-            iconBeautifyBgOpacity_ = 0.65f;
-            iconBeautifyGradientEnabled_ = false;
-            iconBeautifyGradientDirection_ = 0;
-            iconBeautifyBgStartR_ = 232.0f / 255.0f;
-            iconBeautifyBgStartG_ = 236.0f / 255.0f;
-            iconBeautifyBgStartB_ = 244.0f / 255.0f;
-            iconBeautifyBgEndR_ = 222.0f / 255.0f;
-            iconBeautifyBgEndG_ = 228.0f / 255.0f;
-            iconBeautifyBgEndB_ = 240.0f / 255.0f;
+            settings.backgroundOpacity = 0.65f;
+            settings.gradientEnabled = false;
+            settings.gradientDirection = 0;
+            settings.backgroundStartR = 232.0f / 255.0f;
+            settings.backgroundStartG = 236.0f / 255.0f;
+            settings.backgroundStartB = 244.0f / 255.0f;
+            settings.backgroundEndR = 222.0f / 255.0f;
+            settings.backgroundEndG = 228.0f / 255.0f;
+            settings.backgroundEndB = 240.0f / 255.0f;
             break;
         }
     };
@@ -2530,109 +2550,379 @@ void SettingsWindow::DrawDisplayPage()
     }
 
     ImGui::Spacing();
-    if (DrawSettingCheckbox(_L("app.settings.icon_beautify"), "##IconBeautifyEnabled",
-        &iconBeautifyEnabled_))
-        markChanged();
+    if (DrawSettingCheckbox(_L("app.settings.icon_beautify"),
+            "##IconBeautifyEnabled", &iconBeautifySettings_.enabled))
+        notifyIconBeautify(snowdesktop::IconBeautifyUpdateKind::Commit);
 
-    ImGui::BeginDisabled(!iconBeautifyEnabled_);
-    const char* beautifyModeNames[] = {
-        _L("app.settings.beautify_smart"),
-        _L("app.settings.beautify_shrink_bg"),
+    ImGui::BeginDisabled(!iconBeautifySettings_.enabled);
+    ImGui::TextUnformatted(_L("app.settings.beautify_shape"));
+
+    int hoveredCandidate = -1;
+    int clickedCandidate = -1;
+    const float cardWidth = 132.0f * dpiScale_;
+    const float cardHeight = 84.0f * dpiScale_;
+    const float cardSpacing = ImGui::GetStyle().ItemSpacing.x;
+    const int cardColumns = std::max(2, static_cast<int>(
+        (ImGui::GetContentRegionAvail().x + cardSpacing) /
+        (cardWidth + cardSpacing)));
+    int cardIndex = 0;
+
+    auto drawBeautifyCard = [&](int candidate, const char* label,
+        snowdesktop::IconBeautifyShape shape,
+        snowdesktop::IconBeautifyFinish finish, bool selected) {
+        ImGui::PushID(candidate);
+        const ImVec2 topLeft = ImGui::GetCursorScreenPos();
+        const bool clicked = ImGui::InvisibleButton(
+            "##IconBeautifyCard", ImVec2(cardWidth, cardHeight));
+        const bool hovered = ImGui::IsItemHovered();
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        const ImU32 cardFill = ImGui::GetColorU32(selected
+            ? ImVec4(0.18f, 0.42f, 0.76f, 0.28f)
+            : hovered ? ImVec4(0.30f, 0.36f, 0.46f, 0.25f)
+                      : ImVec4(0.16f, 0.18f, 0.22f, 0.18f));
+        const ImU32 cardBorder = ImGui::GetColorU32(selected
+            ? ImVec4(0.36f, 0.66f, 1.0f, 0.95f)
+            : ImVec4(0.48f, 0.52f, 0.60f, hovered ? 0.72f : 0.38f));
+        draw->AddRectFilled(topLeft,
+            ImVec2(topLeft.x + cardWidth, topLeft.y + cardHeight),
+            cardFill, 7.0f * dpiScale_);
+        draw->AddRect(topLeft,
+            ImVec2(topLeft.x + cardWidth, topLeft.y + cardHeight),
+            cardBorder, 7.0f * dpiScale_, 0, selected ? 2.0f : 1.0f);
+
+        constexpr int previewSize = 24;
+        const float pixelSize = 1.35f * dpiScale_;
+        const float previewWidth = previewSize * pixelSize;
+        const ImVec2 previewTopLeft(
+            topLeft.x + (cardWidth - previewWidth) * 0.5f,
+            topLeft.y + 7.0f * dpiScale_);
+        static const std::vector<std::uint32_t> previewSource = [] {
+            constexpr int size = 24;
+            std::vector<std::uint32_t> pixels(size * size, 0);
+            for (int y = 5; y < 19; ++y)
+                for (int x = 5; x < 19; ++x)
+                    if ((x >= 9 && x <= 14) || (y >= 9 && y <= 14))
+                        pixels[static_cast<size_t>(y) * size + x] =
+                            0xfff4516cu;
+            return pixels;
+        }();
+        auto previewSettings = iconBeautifySettings_;
+        previewSettings.enabled = true;
+        previewSettings.shape = shape;
+        previewSettings.finish = finish;
+        const auto previewPixels = snowdesktop::icon_beautify::Render(
+            previewSource, previewSize, previewSize, previewSettings);
+        for (int y = 0; y < previewSize; ++y)
+        {
+            for (int x = 0; x < previewSize; ++x)
+            {
+                const std::uint32_t pixel = previewPixels[
+                    static_cast<size_t>(y) * previewSize + x];
+                const int alpha = static_cast<int>((pixel >> 24) & 0xff);
+                if (alpha <= 0) continue;
+                const int r = std::clamp((static_cast<int>(
+                    (pixel >> 16) & 0xff) * 255 + alpha / 2) / alpha, 0, 255);
+                const int g = std::clamp((static_cast<int>(
+                    (pixel >> 8) & 0xff) * 255 + alpha / 2) / alpha, 0, 255);
+                const int b = std::clamp((static_cast<int>(
+                    pixel & 0xff) * 255 + alpha / 2) / alpha, 0, 255);
+                draw->AddRectFilled(
+                    ImVec2(previewTopLeft.x + x * pixelSize,
+                        previewTopLeft.y + y * pixelSize),
+                    ImVec2(previewTopLeft.x + (x + 1) * pixelSize + 0.35f,
+                        previewTopLeft.y + (y + 1) * pixelSize + 0.35f),
+                    IM_COL32(r, g, b, alpha));
+            }
+        }
+        const float wrapWidth = cardWidth - 10.0f * dpiScale_;
+        const ImVec2 textSize = ImGui::CalcTextSize(
+            label, nullptr, false, wrapWidth);
+        draw->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(
+            topLeft.x + std::max(4.0f, (cardWidth - textSize.x) * 0.5f),
+            topLeft.y + cardHeight - textSize.y - 5.0f * dpiScale_),
+            ImGui::GetColorU32(ImGuiCol_Text), label, nullptr, wrapWidth);
+        if (hovered) hoveredCandidate = candidate;
+        if (clicked) clickedCandidate = candidate;
+        ImGui::PopID();
+        ++cardIndex;
+        if (cardIndex % cardColumns != 0)
+            ImGui::SameLine();
     };
-    BeginSettingRow(_L("app.settings.beautify_mode"), controlW);
-    ImGui::SetNextItemWidth(controlW);
-    if (ImGui::Combo("##IconBeautifyMode", &iconBeautifyMode_,
-        beautifyModeNames, static_cast<int>(sizeof(beautifyModeNames) / sizeof(beautifyModeNames[0]))))
+
+    struct ShapeCard
     {
-        markChanged();
+        snowdesktop::IconBeautifyShape shape;
+        const char* key;
+    };
+    const ShapeCard commonShapes[] = {
+        { snowdesktop::IconBeautifyShape::LegacyRounded, "app.settings.beautify_shape_legacy" },
+        { snowdesktop::IconBeautifyShape::Apple, "app.settings.beautify_shape_apple" },
+        { snowdesktop::IconBeautifyShape::Circle, "app.settings.beautify_shape_circle" },
+        { snowdesktop::IconBeautifyShape::Samsung, "app.settings.beautify_shape_samsung" },
+        { snowdesktop::IconBeautifyShape::RoundedSquare, "app.settings.beautify_shape_rounded_square" },
+        { snowdesktop::IconBeautifyShape::Pebble, "app.settings.beautify_shape_pebble" },
+    };
+    const ShapeCard moreShapes[] = {
+        { snowdesktop::IconBeautifyShape::Teardrop, "app.settings.beautify_shape_teardrop" },
+        { snowdesktop::IconBeautifyShape::Bookmark, "app.settings.beautify_shape_bookmark" },
+        { snowdesktop::IconBeautifyShape::Lemon, "app.settings.beautify_shape_lemon" },
+        { snowdesktop::IconBeautifyShape::Diamond, "app.settings.beautify_shape_diamond" },
+        { snowdesktop::IconBeautifyShape::Flower, "app.settings.beautify_shape_flower" },
+    };
+    for (const auto& card : commonShapes)
+    {
+        drawBeautifyCard(static_cast<int>(card.shape), _L(card.key), card.shape,
+            iconBeautifySettings_.finish,
+            iconBeautifySettings_.shape == card.shape);
+    }
+    if (cardIndex % cardColumns != 0) ImGui::NewLine();
+    if (ImGui::TreeNodeEx(_L("app.settings.beautify_more_shapes"),
+            ImGuiTreeNodeFlags_SpanAvailWidth))
+    {
+        cardIndex = 0;
+        for (const auto& card : moreShapes)
+        {
+            drawBeautifyCard(static_cast<int>(card.shape), _L(card.key), card.shape,
+                iconBeautifySettings_.finish,
+                iconBeautifySettings_.shape == card.shape);
+        }
+        if (cardIndex % cardColumns != 0) ImGui::NewLine();
+        ImGui::TreePop();
     }
 
-    const char* presetNames[] = {
-        _L("app.settings.beautify_preset_default_gray"),
-        _L("app.settings.beautify_preset_white_glow"),
-        _L("app.settings.beautify_preset_blue_gradient"),
-        _L("app.settings.beautify_preset_warm_gradient"),
-        _L("app.settings.beautify_preset_dark_glass"),
-        _L("app.settings.custom"),
-    };
-    constexpr int presetValues[] = { 1, 2, 3, 4, 5, 0 };
-    int presetSelection = 0;
-    for (int i = 0; i < IM_ARRAYSIZE(presetValues); ++i)
+    ImGui::Spacing();
+    ImGui::TextUnformatted(_L("app.settings.beautify_finish"));
+    struct FinishCard
     {
-        if (presetValues[i] == iconBeautifyBgPreset_)
+        snowdesktop::IconBeautifyFinish finish;
+        const char* key;
+    };
+    const FinishCard finishes[] = {
+        { snowdesktop::IconBeautifyFinish::Flat, "app.settings.beautify_finish_flat" },
+        { snowdesktop::IconBeautifyFinish::Gloss, "app.settings.beautify_finish_gloss" },
+        { snowdesktop::IconBeautifyFinish::Glass, "app.settings.beautify_finish_glass" },
+        { snowdesktop::IconBeautifyFinish::Sticker, "app.settings.beautify_finish_sticker" },
+    };
+    cardIndex = 0;
+    for (const auto& card : finishes)
+    {
+        const int candidate = 100 + static_cast<int>(card.finish);
+        drawBeautifyCard(candidate, _L(card.key), iconBeautifySettings_.shape,
+            card.finish, iconBeautifySettings_.finish == card.finish);
+    }
+    if (cardIndex % cardColumns != 0) ImGui::NewLine();
+
+    auto applyCardCandidate = [](snowdesktop::IconBeautifySettings& settings,
+        int candidate) {
+        if (candidate >= 100)
+            settings.finish = static_cast<snowdesktop::IconBeautifyFinish>(candidate - 100);
+        else if (candidate >= 0)
+            settings.shape = static_cast<snowdesktop::IconBeautifyShape>(candidate);
+    };
+    const auto hoverAction = snowdesktop::icon_beautify::AdvanceHoverPreview(
+        iconBeautifyHoverState_, hoveredCandidate, clickedCandidate,
+        GetTickCount());
+    if (hoverAction == snowdesktop::icon_beautify::InteractionAction::Commit)
+    {
+        applyCardCandidate(iconBeautifySettings_, clickedCandidate);
+        notifyIconBeautify(snowdesktop::IconBeautifyUpdateKind::Commit);
+    }
+    else if (hoverAction == snowdesktop::icon_beautify::InteractionAction::Restore)
+    {
+        notifyIconBeautify(snowdesktop::IconBeautifyUpdateKind::Preview);
+    }
+    else if (hoverAction == snowdesktop::icon_beautify::InteractionAction::Preview)
+    {
+        iconBeautifyPreviewSettings_ = iconBeautifySettings_;
+        applyCardCandidate(iconBeautifyPreviewSettings_, hoveredCandidate);
+        iconBeautifyPreviewActive_ = true;
+        notifyIconBeautify(snowdesktop::IconBeautifyUpdateKind::Preview);
+        iconBeautifyPreviewActive_ = false;
+    }
+
+    BeginSettingRow(_L("app.settings.beautify_content_scale"), sliderW);
+    ImGui::SetNextItemWidth(sliderW);
+    int contentScalePercent = static_cast<int>(std::round(
+        iconBeautifySettings_.contentScale * 100.0f));
+    if (ImGui::SliderInt("##IconBeautifyContentScale",
+            &contentScalePercent, 50, 90, "%d%%"))
+    {
+        iconBeautifySettings_.contentScale = contentScalePercent / 100.0f;
+        previewIconBeautify();
+    }
+    commitContinuousIconBeautify();
+
+    BeginSettingRow(_L("app.settings.beautify_shadow_strength"), sliderW);
+    ImGui::SetNextItemWidth(sliderW);
+    int shadowPercent = static_cast<int>(std::round(
+        iconBeautifySettings_.shadowStrength * 100.0f));
+    if (ImGui::SliderInt("##IconBeautifyShadowStrength",
+            &shadowPercent, 0, 100, "%d%%"))
+    {
+        iconBeautifySettings_.shadowStrength = shadowPercent / 100.0f;
+        previewIconBeautify();
+    }
+    commitContinuousIconBeautify();
+
+    const char* outlineModeNames[] = {
+        _L("app.settings.beautify_outline_none"),
+        _L("app.settings.beautify_outline_auto"),
+        _L("app.settings.beautify_outline_custom"),
+    };
+    int outlineMode = static_cast<int>(iconBeautifySettings_.outlineMode);
+    BeginSettingRow(_L("app.settings.beautify_outline"), controlW);
+    ImGui::SetNextItemWidth(controlW);
+    if (ImGui::Combo("##IconBeautifyOutlineMode", &outlineMode,
+            outlineModeNames, IM_ARRAYSIZE(outlineModeNames)))
+    {
+        iconBeautifySettings_.outlineMode =
+            static_cast<snowdesktop::IconBeautifyOutlineMode>(outlineMode);
+        notifyIconBeautify(snowdesktop::IconBeautifyUpdateKind::Commit);
+    }
+    if (iconBeautifySettings_.outlineMode != snowdesktop::IconBeautifyOutlineMode::None)
+    {
+        BeginSettingRow(_L("app.settings.beautify_outline_width"), sliderW);
+        ImGui::SetNextItemWidth(sliderW);
+        if (ImGui::SliderFloat("##IconBeautifyOutlineWidth",
+                &iconBeautifySettings_.outlineWidth, 0.0f, 4.0f, "%.1f px"))
+            previewIconBeautify();
+        commitContinuousIconBeautify();
+
+        BeginSettingRow(_L("app.settings.beautify_outline_opacity"), sliderW);
+        ImGui::SetNextItemWidth(sliderW);
+        int outlineOpacityPercent = static_cast<int>(std::round(
+            iconBeautifySettings_.outlineOpacity * 100.0f));
+        if (ImGui::SliderInt("##IconBeautifyOutlineOpacity",
+                &outlineOpacityPercent, 0, 100, "%d%%"))
         {
-            presetSelection = i;
-            break;
+            iconBeautifySettings_.outlineOpacity =
+                outlineOpacityPercent / 100.0f;
+            previewIconBeautify();
+        }
+        commitContinuousIconBeautify();
+
+        if (iconBeautifySettings_.outlineMode == snowdesktop::IconBeautifyOutlineMode::Custom)
+        {
+            BeginSettingRow(_L("app.settings.beautify_outline_color"),
+                ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
+            float outlineColor[3] = {
+                iconBeautifySettings_.outlineR,
+                iconBeautifySettings_.outlineG,
+                iconBeautifySettings_.outlineB };
+            if (ImGui::ColorEdit3("##IconBeautifyOutlineColor", outlineColor,
+                    ImGuiColorEditFlags_NoInputs))
+            {
+                iconBeautifySettings_.outlineR = outlineColor[0];
+                iconBeautifySettings_.outlineG = outlineColor[1];
+                iconBeautifySettings_.outlineB = outlineColor[2];
+                previewIconBeautify();
+            }
+            commitContinuousIconBeautify();
         }
     }
-    BeginSettingRow(_L("app.settings.beautify_bg_preset"), controlW);
-    ImGui::SetNextItemWidth(controlW);
-    if (ImGui::Combo("##IconBeautifyBgPreset", &presetSelection,
-        presetNames, static_cast<int>(sizeof(presetNames) / sizeof(presetNames[0]))))
-    {
-        iconBeautifyBgPreset_ = presetValues[presetSelection];
-        if (iconBeautifyBgPreset_ > 0)
-            applyIconBeautifyPreset(iconBeautifyBgPreset_);
-        markChanged();
-    }
 
-    if (iconBeautifyBgPreset_ == 0)
+    if (ImGui::CollapsingHeader(_L("app.settings.beautify_advanced")))
     {
-    BeginSettingRow(_L("app.settings.default_bg"), ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
-    float bgStart[3] = { iconBeautifyBgStartR_, iconBeautifyBgStartG_, iconBeautifyBgStartB_ };
-    if (ImGui::ColorEdit3("##IconBeautifyBgStart", bgStart, ImGuiColorEditFlags_NoInputs))
-    {
-        iconBeautifyBgPreset_ = 0;
-        iconBeautifyBgStartR_ = bgStart[0];
-        iconBeautifyBgStartG_ = bgStart[1];
-        iconBeautifyBgStartB_ = bgStart[2];
-        markChanged();
-    }
+        const char* beautifyModeNames[] = {
+            _L("app.settings.beautify_smart"),
+            _L("app.settings.beautify_shrink_bg"),
+        };
+        BeginSettingRow(_L("app.settings.beautify_mode"), controlW);
+        ImGui::SetNextItemWidth(controlW);
+        if (ImGui::Combo("##IconBeautifyMode", &iconBeautifySettings_.mode,
+                beautifyModeNames, IM_ARRAYSIZE(beautifyModeNames)))
+            notifyIconBeautify(snowdesktop::IconBeautifyUpdateKind::Commit);
 
-    BeginSettingRow(_L("app.settings.bg_opacity_val"), sliderW);
-    ImGui::SetNextItemWidth(sliderW);
-    int bgOpacityPercent = static_cast<int>(std::round(iconBeautifyBgOpacity_ * 100.0f));
-    if (ImGui::SliderInt("##IconBeautifyBgOpacity", &bgOpacityPercent, 0, 100, "%d%%"))
-    {
-        iconBeautifyBgOpacity_ = bgOpacityPercent / 100.0f;
-        iconBeautifyBgPreset_ = 0;
-        markChanged();
-    }
+        const char* presetNames[] = {
+            _L("app.settings.beautify_preset_default_gray"),
+            _L("app.settings.beautify_preset_white_glow"),
+            _L("app.settings.beautify_preset_blue_gradient"),
+            _L("app.settings.beautify_preset_warm_gradient"),
+            _L("app.settings.beautify_preset_dark_glass"),
+            _L("app.settings.custom"),
+        };
+        constexpr int presetValues[] = { 1, 2, 3, 4, 5, 0 };
+        int presetSelection = 0;
+        for (int i = 0; i < IM_ARRAYSIZE(presetValues); ++i)
+            if (presetValues[i] == iconBeautifyBgPreset_) { presetSelection = i; break; }
+        BeginSettingRow(_L("app.settings.beautify_bg_preset"), controlW);
+        ImGui::SetNextItemWidth(controlW);
+        if (ImGui::Combo("##IconBeautifyBgPreset", &presetSelection,
+                presetNames, IM_ARRAYSIZE(presetNames)))
+        {
+            iconBeautifyBgPreset_ = presetValues[presetSelection];
+            if (iconBeautifyBgPreset_ > 0)
+                applyIconBeautifyPreset(iconBeautifyBgPreset_);
+            notifyIconBeautify(snowdesktop::IconBeautifyUpdateKind::Commit);
+        }
 
-    if (DrawSettingCheckbox(_L("app.settings.enable_gradient_bg"), "##IconBeautifyGradient",
-        &iconBeautifyGradientEnabled_))
-    {
-        iconBeautifyBgPreset_ = 0;
-        markChanged();
-    }
+        if (iconBeautifyBgPreset_ == 0)
+        {
+            BeginSettingRow(_L("app.settings.default_bg"),
+                ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
+            float bgStart[3] = {
+                iconBeautifySettings_.backgroundStartR,
+                iconBeautifySettings_.backgroundStartG,
+                iconBeautifySettings_.backgroundStartB };
+            if (ImGui::ColorEdit3("##IconBeautifyBgStart", bgStart,
+                    ImGuiColorEditFlags_NoInputs))
+            {
+                iconBeautifySettings_.backgroundStartR = bgStart[0];
+                iconBeautifySettings_.backgroundStartG = bgStart[1];
+                iconBeautifySettings_.backgroundStartB = bgStart[2];
+                previewIconBeautify();
+            }
+            commitContinuousIconBeautify();
 
-    BeginSettingRow(_L("app.settings.gradient_end_color"), ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
-    ImGui::BeginDisabled(!iconBeautifyGradientEnabled_);
-    float bgEnd[3] = { iconBeautifyBgEndR_, iconBeautifyBgEndG_, iconBeautifyBgEndB_ };
-    if (ImGui::ColorEdit3("##IconBeautifyBgEnd", bgEnd, ImGuiColorEditFlags_NoInputs))
-    {
-        iconBeautifyBgPreset_ = 0;
-        iconBeautifyBgEndR_ = bgEnd[0];
-        iconBeautifyBgEndG_ = bgEnd[1];
-        iconBeautifyBgEndB_ = bgEnd[2];
-        markChanged();
-    }
+            BeginSettingRow(_L("app.settings.bg_opacity_val"), sliderW);
+            ImGui::SetNextItemWidth(sliderW);
+            int backgroundOpacityPercent = static_cast<int>(std::round(
+                iconBeautifySettings_.backgroundOpacity * 100.0f));
+            if (ImGui::SliderInt("##IconBeautifyBgOpacity",
+                    &backgroundOpacityPercent, 0, 100, "%d%%"))
+            {
+                iconBeautifySettings_.backgroundOpacity =
+                    backgroundOpacityPercent / 100.0f;
+                previewIconBeautify();
+            }
+            commitContinuousIconBeautify();
 
-    const char* directionNames[] = {
-        _L("app.settings.beautify_gradient_updown"),
-        _L("app.settings.beautify_gradient_leftright"),
-        _L("app.settings.beautify_gradient_topleft_bottomright"),
-        _L("app.settings.beautify_gradient_bottomleft_topright"),
-    };
-    BeginSettingRow(_L("app.settings.beautify_gradient_dir"), controlW);
-    ImGui::SetNextItemWidth(controlW);
-    if (ImGui::Combo("##IconBeautifyGradientDirection", &iconBeautifyGradientDirection_,
-        directionNames, static_cast<int>(sizeof(directionNames) / sizeof(directionNames[0]))))
-    {
-        iconBeautifyBgPreset_ = 0;
-        markChanged();
-    }
-    ImGui::EndDisabled();
+            if (DrawSettingCheckbox(_L("app.settings.enable_gradient_bg"),
+                    "##IconBeautifyGradient",
+                    &iconBeautifySettings_.gradientEnabled))
+                notifyIconBeautify(snowdesktop::IconBeautifyUpdateKind::Commit);
+
+            ImGui::BeginDisabled(!iconBeautifySettings_.gradientEnabled);
+            BeginSettingRow(_L("app.settings.gradient_end_color"),
+                ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x);
+            float bgEnd[3] = {
+                iconBeautifySettings_.backgroundEndR,
+                iconBeautifySettings_.backgroundEndG,
+                iconBeautifySettings_.backgroundEndB };
+            if (ImGui::ColorEdit3("##IconBeautifyBgEnd", bgEnd,
+                    ImGuiColorEditFlags_NoInputs))
+            {
+                iconBeautifySettings_.backgroundEndR = bgEnd[0];
+                iconBeautifySettings_.backgroundEndG = bgEnd[1];
+                iconBeautifySettings_.backgroundEndB = bgEnd[2];
+                previewIconBeautify();
+            }
+            commitContinuousIconBeautify();
+
+            const char* directionNames[] = {
+                _L("app.settings.beautify_gradient_updown"),
+                _L("app.settings.beautify_gradient_leftright"),
+                _L("app.settings.beautify_gradient_topleft_bottomright"),
+                _L("app.settings.beautify_gradient_bottomleft_topright"),
+            };
+            BeginSettingRow(_L("app.settings.beautify_gradient_dir"), controlW);
+            ImGui::SetNextItemWidth(controlW);
+            if (ImGui::Combo("##IconBeautifyGradientDirection",
+                    &iconBeautifySettings_.gradientDirection,
+                    directionNames, IM_ARRAYSIZE(directionNames)))
+                notifyIconBeautify(snowdesktop::IconBeautifyUpdateKind::Commit);
+            ImGui::EndDisabled();
+        }
     }
     ImGui::EndDisabled();
 }
