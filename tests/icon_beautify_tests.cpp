@@ -270,8 +270,12 @@ int main()
     const auto twoColorSource = TwoColorIcon(64);
     const auto unifiedFilter = beautify::Render(twoColorSource, 64, 64, settings,
         beautify::EdgeColor{0, 0, 0});
+    const auto unifiedWhiteFill = beautify::Render(
+        twoColorSource, 64, 64, settings,
+        beautify::EdgeColor{255, 255, 255});
     const std::uint32_t leftFiltered = unifiedFilter[32 * 64 + 20];
     const std::uint32_t rightFiltered = unifiedFilter[32 * 64 + 44];
+    const std::uint32_t filteredFill = unifiedWhiteFill[32 * 64 + 10];
     auto channel = [](std::uint32_t pixel, int shift) {
         return static_cast<int>((pixel >> shift) & 0xff);
     };
@@ -283,6 +287,10 @@ int main()
         channel(rightFiltered, 0) > channel(rightFiltered, 16) &&
         leftFiltered != rightFiltered,
         "full-strength filtering unifies icon hues while preserving luminance detail");
+    Check(channel(filteredFill, 0) > channel(filteredFill, 8) &&
+        channel(filteredFill, 0) > channel(filteredFill, 16) &&
+        channel(filteredFill, 16) < 32,
+        "smart recognition applies unified coloring to detected solid fills");
     settings.filterEnabled = false;
 
     settings.outlineEnabled = false;

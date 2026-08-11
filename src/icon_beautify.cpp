@@ -473,7 +473,10 @@ std::uint32_t ApplyFilter(std::uint32_t pixel,
     const HslColor sourceColor = ToHsl(r, g, b);
     HslColor unifiedColor = ToHsl(
         settings.filterTintR, settings.filterTintG, settings.filterTintB);
-    unifiedColor.l = sourceColor.l;
+    // Keep source light/dark ordering while ensuring even white solid fills
+    // receive the selected color instead of remaining neutral white.
+    unifiedColor.l = std::clamp(unifiedColor.l *
+        (0.35f + sourceColor.l * 0.65f), 0.0f, 1.0f);
     FromHsl(unifiedColor, r, g, b);
     r = originalR + (r - originalR) * settings.filterStrength;
     g = originalG + (g - originalG) * settings.filterStrength;
@@ -760,7 +763,8 @@ std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
     if (detectedEdgeFill)
     {
         const EdgeColor edge = *detectedEdgeFill;
-        const std::uint32_t background = PackPremultiplied(edge.r, edge.g, edge.b, 255);
+        const std::uint32_t background = ApplyFilter(
+            PackPremultiplied(edge.r, edge.g, edge.b, 255), settings);
         // Smart recognition only clips the original icon to the selected shape.
         // Content scaling is reserved for the explicit shrink-and-background mode.
         for (size_t i = 0; i < output.size(); ++i)
