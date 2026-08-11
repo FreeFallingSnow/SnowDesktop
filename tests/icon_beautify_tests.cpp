@@ -57,8 +57,8 @@ std::vector<std::uint32_t> TwoColorIcon(int size)
     for (int y = size / 4; y < size - size / 4; ++y)
         for (int x = size / 4; x < size - size / 4; ++x)
             pixels[static_cast<size_t>(y) * size + x] = x < size / 2
-                ? Premultiplied(220, 40, 30, 255)
-                : Premultiplied(20, 130, 40, 255);
+                ? Premultiplied(255, 0, 0, 255)
+                : Premultiplied(0, 130, 0, 255);
     return pixels;
 }
 
@@ -285,8 +285,8 @@ int main()
         channel(leftFiltered, 0) > channel(leftFiltered, 16) &&
         channel(rightFiltered, 0) > channel(rightFiltered, 8) &&
         channel(rightFiltered, 0) > channel(rightFiltered, 16) &&
-        leftFiltered != rightFiltered,
-        "full-strength filtering unifies icon hues while preserving luminance detail");
+        leftFiltered == rightFiltered && filteredFill != leftFiltered,
+        "equal-luminance source colors become the same grayscale-derived tint");
     Check(channel(filteredFill, 0) > channel(filteredFill, 8) &&
         channel(filteredFill, 0) > channel(filteredFill, 16) &&
         channel(filteredFill, 16) < 32,

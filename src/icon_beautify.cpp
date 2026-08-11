@@ -402,59 +402,6 @@ void FillPlate(std::vector<std::uint32_t>& output, int width, int height,
     }
 }
 
-struct HslColor
-{
-    float h = 0.0f;
-    float s = 0.0f;
-    float l = 0.0f;
-};
-
-HslColor ToHsl(float r, float g, float b)
-{
-    const float maximum = std::max({r, g, b});
-    const float minimum = std::min({r, g, b});
-    const float delta = maximum - minimum;
-    HslColor result{};
-    result.l = (maximum + minimum) * 0.5f;
-    if (delta <= 0.00001f)
-        return result;
-    result.s = delta / (1.0f - std::abs(2.0f * result.l - 1.0f));
-    if (maximum == r)
-        result.h = std::fmod((g - b) / delta, 6.0f) / 6.0f;
-    else if (maximum == g)
-        result.h = ((b - r) / delta + 2.0f) / 6.0f;
-    else
-        result.h = ((r - g) / delta + 4.0f) / 6.0f;
-    if (result.h < 0.0f) result.h += 1.0f;
-    return result;
-}
-
-float HueChannel(float p, float q, float t)
-{
-    if (t < 0.0f) t += 1.0f;
-    if (t > 1.0f) t -= 1.0f;
-    if (t < 1.0f / 6.0f) return p + (q - p) * 6.0f * t;
-    if (t < 0.5f) return q;
-    if (t < 2.0f / 3.0f) return p + (q - p) * (2.0f / 3.0f - t) * 6.0f;
-    return p;
-}
-
-void FromHsl(const HslColor& color, float& r, float& g, float& b)
-{
-    if (color.s <= 0.00001f)
-    {
-        r = g = b = color.l;
-        return;
-    }
-    const float q = color.l < 0.5f
-        ? color.l * (1.0f + color.s)
-        : color.l + color.s - color.l * color.s;
-    const float p = 2.0f * color.l - q;
-    r = HueChannel(p, q, color.h + 1.0f / 3.0f);
-    g = HueChannel(p, q, color.h);
-    b = HueChannel(p, q, color.h - 1.0f / 3.0f);
-}
-
 std::uint32_t ApplyFilter(std::uint32_t pixel,
     const IconBeautifySettings& settings)
 {
@@ -470,14 +417,11 @@ std::uint32_t ApplyFilter(std::uint32_t pixel,
     const float originalR = r;
     const float originalG = g;
     const float originalB = b;
-    const HslColor sourceColor = ToHsl(r, g, b);
-    HslColor unifiedColor = ToHsl(
-        settings.filterTintR, settings.filterTintG, settings.filterTintB);
-    // Keep source light/dark ordering while ensuring even white solid fills
-    // receive the selected color instead of remaining neutral white.
-    unifiedColor.l = std::clamp(unifiedColor.l *
-        (0.35f + sourceColor.l * 0.65f), 0.0f, 1.0f);
-    FromHsl(unifiedColor, r, g, b);
+    const float gray = std::clamp(
+        r * 0.299f + g * 0.587f + b * 0.114f, 0.0f, 1.0f);
+    r = settings.filterTintR * gray;
+    g = settings.filterTintG * gray;
+    b = settings.filterTintB * gray;
     r = originalR + (r - originalR) * settings.filterStrength;
     g = originalG + (g - originalG) * settings.filterStrength;
     b = originalB + (b - originalB) * settings.filterStrength;
