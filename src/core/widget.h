@@ -330,10 +330,15 @@ public:
     std::vector<int> BuildCategorizedTabWidths(
         const std::vector<std::wstring>& labels,
         int availableWidth) const;
-    /** @brief 绘制统一样式的单个分类标签。 */
+    /**
+     * @brief 绘制统一样式的单个分类标签。
+     * @param visibleTabRect 裁剪后的背景与命中矩形。
+     * @param layoutTabRect 未裁剪的文字布局矩形。
+     */
     void DrawCategorizedTab(
         ID2D1DeviceContext* context,
-        RECT tabRect,
+        RECT visibleTabRect,
+        RECT layoutTabRect,
         const std::wstring& label,
         bool active,
         bool hovered) const;

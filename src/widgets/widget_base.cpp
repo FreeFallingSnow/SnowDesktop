@@ -769,17 +769,19 @@ ScrollingItemWidget::BuildCategorizedTabWidths(
 
 void ScrollingItemWidget::DrawCategorizedTab(
     ID2D1DeviceContext* context,
-    RECT tabRect,
+    RECT visibleTabRect,
+    RECT layoutTabRect,
     const std::wstring& label,
     bool active,
     bool hovered) const
 {
     if (!context || !app_ ||
-        IsRectEmptyRect(tabRect))
+        IsRectEmptyRect(visibleTabRect) ||
+        IsRectEmptyRect(layoutTabRect))
         return;
     const bool light = app_->IsLightContentTheme();
     app_->DrawD2DRoundedRectangle(
-        context, tabRect,
+        context, visibleTabRect,
         static_cast<float>(Cu(8.0f)),
         active
             ? (light
@@ -810,7 +812,10 @@ void ScrollingItemWidget::DrawCategorizedTab(
                 : D2D1::ColorF(
                     1.0f, 1.0f, 1.0f, 0.20f)));
 
-    RECT textRect = tabRect;
+    // The background follows the visible segment so its remaining corners stay
+    // rounded. Text keeps the full tab geometry and is clipped by the tab strip,
+    // preventing a partially visible label from being re-centered.
+    RECT textRect = layoutTabRect;
     InflateRect(&textRect, -Cu(7.0f), 0);
     IDWriteTextFormat* tabFormat =
         GetCuTextFormat(

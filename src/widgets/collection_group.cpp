@@ -1095,6 +1095,7 @@ void CollectionGroup::DrawContent(
                 PtInRect(&hitTab, app_->lastMousePoint_) != FALSE;
             DrawCategorizedTab(
                 context,
+                hitTab,
                 layoutTab,
                 CollectionGroupTabDisplayText(
                     this, i),

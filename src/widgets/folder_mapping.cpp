@@ -364,7 +364,8 @@ static int FolderMappingTabTotalWidth(const std::vector<int>& widths)
     return total;
 }
 
-static RECT FolderMappingTabRect(FolderMapping* widget, size_t index)
+static RECT FolderMappingTabLayoutRect(
+    FolderMapping* widget, size_t index)
 {
     if (!widget) return {};
     widget->GetVisibleEntryIndices();
@@ -398,6 +399,15 @@ static RECT FolderMappingTabRect(FolderMapping* widget, size_t index)
     RECT rect = MakeRect(startX, tabsRect.top,
         startX + widths[index], tabsRect.bottom);
     InflateRect(&rect, -widget->Cu(2.0f), -widget->Cu(2.0f));
+    return rect;
+}
+
+static RECT FolderMappingTabRect(
+    FolderMapping* widget, size_t index)
+{
+    RECT rect = FolderMappingTabLayoutRect(widget, index);
+    if (IsRectEmptyRect(rect)) return {};
+    RECT tabsRect = FolderMappingTabsRect(widget);
     const auto clipped =
         snowdesktop::collection_group_rules::
             ClipToViewport(
@@ -1113,13 +1123,17 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
                 app_->ToD2DRect(tabsRect), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
             for (size_t i = 0; i < visibleCategoryIds_.size(); ++i)
             {
+                RECT layoutTab =
+                    FolderMappingTabLayoutRect(this, i);
                 RECT tab = FolderMappingTabRect(this, i);
-                if (IsRectEmptyRect(tab)) continue;
+                if (IsRectEmptyRect(layoutTab) ||
+                    IsRectEmptyRect(tab))
+                    continue;
                 bool active = visibleCategoryIds_[i] == activeCategory;
                 bool hovered = !IsPreviewRendering() &&
                     PtInRect(&tab, app_->lastMousePoint_) != FALSE;
                 DrawCategorizedTab(
-                    context, tab,
+                    context, tab, layoutTab,
                     FolderMappingTabDisplayText(this, visibleCategoryIds_[i]),
                     active, hovered);
             }

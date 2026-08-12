@@ -100,7 +100,7 @@ int TotalTabWidth(const std::vector<int>& widths)
     return total;
 }
 
-RECT FileGroupSourceTabRect(
+RECT FileGroupSourceTabLayoutRect(
     FileGroup* group, size_t tabIndex)
 {
     if (!group || !group->GetWidgetData()) return {};
@@ -127,6 +127,16 @@ RECT FileGroupSourceTabRect(
         left + widths[tabIndex], tabs.bottom);
     InflateRect(
         &result, -group->Cu(2.0f), -group->Cu(2.0f));
+    return result;
+}
+
+RECT FileGroupSourceTabRect(
+    FileGroup* group, size_t tabIndex)
+{
+    RECT result = FileGroupSourceTabLayoutRect(
+        group, tabIndex);
+    if (IsRectEmptyRect(result)) return {};
+    RECT tabs = FileGroupSourceTabsRect(group);
     const auto clipped =
         snowdesktop::collection_group_rules::ClipToViewport(
             {
@@ -1927,10 +1937,14 @@ void FileGroup::DrawContent(
         D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     for (size_t i = 0; i < sources.size(); ++i)
     {
+        RECT layoutTab =
+            FileGroupSourceTabLayoutRect(this, i);
         RECT tab = FileGroupSourceTabRect(this, i);
-        if (IsRectEmptyRect(tab)) continue;
+        if (IsRectEmptyRect(layoutTab) ||
+            IsRectEmptyRect(tab))
+            continue;
         DrawCategorizedTab(
-            context, tab,
+            context, tab, layoutTab,
             FileGroupSourceTabText(this, i),
             sources[i] == active,
             !IsPreviewRendering() &&

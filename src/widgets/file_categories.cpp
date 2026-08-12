@@ -1331,7 +1331,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
                 PtInRect(&hitTab, app_->lastMousePoint_) != FALSE;
             std::wstring label = FileCategoryTabDisplayText(this, categoryIds[i]);
             DrawCategorizedTab(
-                context, layoutTab, label,
+                context, hitTab, layoutTab, label,
                 active, hovered);
         }
         context->PopAxisAlignedClip();
