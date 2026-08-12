@@ -218,6 +218,7 @@ void DesktopApp::ApplyDesktopPassthroughHotkey()
 void DesktopApp::LoadGeneralSettingsAndApply()
 {
     const bool dockEnabled = generalSettings_.dockEnabled;
+    const bool demoModeEnabled = generalSettings_.demoModeEnabled;
     GeneralSettings settings;
     LoadGeneralSettings(GetGeneralSettingsPath().c_str(), settings);
     generalSettings_ = settings;
@@ -233,6 +234,14 @@ void DesktopApp::LoadGeneralSettingsAndApply()
     generalSettings_.quickNavTheme = std::clamp(generalSettings_.quickNavTheme, 0, 3);
     SetSoftwareDesktopEnabled(generalSettings_.softwareDesktopEnabled, false);
     ApplyQuickNavigationAppearance();
+    if (demoModeEnabled != generalSettings_.demoModeEnabled)
+    {
+        InvalidateDragStaticScene();
+        InvalidateDockContainers();
+        if (hwnd_ && IsWindow(hwnd_))
+            InvalidateRect(hwnd_, nullptr, TRUE);
+        InvalidateFloatingDockWindow(false);
+    }
 }
 
 void DesktopApp::ApplyQuickNavigationAppearance()

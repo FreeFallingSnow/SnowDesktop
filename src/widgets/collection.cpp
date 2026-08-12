@@ -340,11 +340,22 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
         std::max(1, std::min(width, height)));
     const int iconX = rect.left + (width - iconSize) / 2;
     const int iconY = rect.top + (height - iconSize) / 2;
+    const RECT iconRect = {
+        iconX, iconY, iconX + iconSize, iconY + iconSize
+    };
+    const bool useDemoIdentity = app_->ShouldUseDemoIdentity(item);
+    const std::wstring_view demoIdentity = item.layoutKey.empty()
+        ? std::wstring_view(item.parsingName)
+        : std::wstring_view(item.layoutKey);
 
-    if (item.iconState == IconState::Loading)
+    if (useDemoIdentity)
     {
-        RECT placeholderRect = { iconX, iconY, iconX + iconSize, iconY + iconSize };
-        app_->DrawPlaceholderIcon(context, item.sysIconIndex, placeholderRect, 1.0f);
+        app_->DrawDemoIdentityIcon(
+            context, demoIdentity, iconRect, 1.0f);
+    }
+    else if (item.iconState == IconState::Loading)
+    {
+        app_->DrawPlaceholderIcon(context, item.sysIconIndex, iconRect, 1.0f);
     }
     else
     {
@@ -359,16 +370,15 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
         }
         else
         {
-            RECT placeholderRect = { iconX, iconY, iconX + iconSize, iconY + iconSize };
-            app_->DrawPlaceholderIcon(context, item.sysIconIndex, placeholderRect, 1.0f);
+            app_->DrawPlaceholderIcon(context, item.sysIconIndex, iconRect, 1.0f);
         }
     }
 
-    if (app_->ShouldDrawShortcutArrow(item.isShortcut, item.isApplicationShortcut) &&
+    if (!useDemoIdentity &&
+        app_->ShouldDrawShortcutArrow(item.isShortcut, item.isApplicationShortcut) &&
         item.iconState != IconState::Loading)
     {
-        RECT arrowRect = { iconX, iconY, iconX + iconSize, iconY + iconSize };
-        app_->DrawShortcutArrowOverlay(context, arrowRect, 1.0f);
+        app_->DrawShortcutArrowOverlay(context, iconRect, 1.0f);
     }
 }
 

@@ -1435,6 +1435,10 @@ private:
     DWRITE_FONT_WEIGHT GetItemFontWeight() const;
     void SetShortcutArrowMode(int mode);
     bool ShouldDrawShortcutArrow(bool isShortcut, bool isApplicationShortcut) const;
+    bool ShouldUseDemoIdentity(const DesktopItem& item) const;
+    std::wstring GetDemoIdentityTitle(std::wstring_view identity) const;
+    void DrawDemoIdentityIcon(ID2D1RenderTarget* context,
+        std::wstring_view identity, RECT iconRect, float opacity = 1.0f);
     /** @brief 设置是否开启全局图标美化。 */
     void SetIconBeautifyEnabled(bool enabled);
     void SetIconBeautifySettings(

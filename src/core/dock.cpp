@@ -18,8 +18,16 @@ DockRunningItem::DockRunningItem(
 
 std::wstring DockRunningItem::GetTitle() const
 {
-    return app_ && runningIndex_ < app_->dockUnpinnedRunningApps_.size()
-        ? app_->dockUnpinnedRunningApps_[runningIndex_].title : L"";
+    if (!app_ || runningIndex_ >= app_->dockUnpinnedRunningApps_.size())
+        return L"";
+    const DockRunningAppInfo& running =
+        app_->dockUnpinnedRunningApps_[runningIndex_];
+    if (!app_->generalSettings_.demoModeEnabled)
+        return running.title;
+    const std::wstring_view identity = running.identityKey.empty()
+        ? std::wstring_view(running.executablePath)
+        : std::wstring_view(running.identityKey);
+    return app_->GetDemoIdentityTitle(identity);
 }
 
 std::wstring DockRunningItem::GetPath() const
@@ -70,8 +78,15 @@ DockFrequentItem::DockFrequentItem(
 
 std::wstring DockFrequentItem::GetTitle() const
 {
-    return app_ && itemIndex_ < app_->items_.size()
-        ? app_->items_[itemIndex_].name : L"";
+    if (!app_ || itemIndex_ >= app_->items_.size())
+        return L"";
+    const DesktopItem& item = app_->items_[itemIndex_];
+    if (!app_->ShouldUseDemoIdentity(item))
+        return item.name;
+    const std::wstring_view identity = item.layoutKey.empty()
+        ? std::wstring_view(item.parsingName)
+        : std::wstring_view(item.layoutKey);
+    return app_->GetDemoIdentityTitle(identity);
 }
 
 std::wstring DockFrequentItem::GetPath() const
@@ -152,11 +167,23 @@ std::wstring DockEntryItem::GetTitle() const
     if (entry->type == DockEntryType::DesktopItem)
     {
         size_t index = app_->FindItemIndexByKey(entry->reference);
-        return index < app_->items_.size() ? app_->items_[index].name : L"";
+        if (index >= app_->items_.size()) return L"";
+        const DesktopItem& item = app_->items_[index];
+        if (!app_->ShouldUseDemoIdentity(item))
+            return item.name;
+        const std::wstring_view identity = item.layoutKey.empty()
+            ? std::wstring_view(item.parsingName)
+            : std::wstring_view(item.layoutKey);
+        return app_->GetDemoIdentityTitle(identity);
     }
     auto it = std::find_if(app_->widgets_.begin(), app_->widgets_.end(),
         [&](const DesktopWidget& widget) { return widget.id == entry->reference; });
-    return it != app_->widgets_.end() ? it->title : _LW("widget.collection");
+    if (it == app_->widgets_.end())
+        return _LW("widget.collection");
+    if (entry->type == DockEntryType::Collection &&
+        app_->generalSettings_.demoModeEnabled)
+        return app_->GetDemoIdentityTitle(entry->reference);
+    return it->title;
 }
 
 std::wstring DockEntryItem::GetPath() const

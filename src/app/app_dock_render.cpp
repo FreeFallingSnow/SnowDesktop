@@ -147,7 +147,14 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
             InflateRect(&bitmapTarget, -inset, -inset);
         }
         const float alpha = item.isCut ? 0.4f : 1.0f;
-        if (item.iconState == IconState::Loading)
+        const bool useDemoIdentity = ShouldUseDemoIdentity(item);
+        const std::wstring_view demoIdentity = item.layoutKey.empty()
+            ? std::wstring_view(item.parsingName)
+            : std::wstring_view(item.layoutKey);
+        if (useDemoIdentity)
+            DrawDemoIdentityIcon(
+                ctx, demoIdentity, bitmapTarget, alpha);
+        else if (item.iconState == IconState::Loading)
             DrawPlaceholderIcon(ctx, item.sysIconIndex, bitmapTarget, alpha, !recycleBin);
         else if (ID2D1Bitmap1* bitmap = GetOrCreateD2DBitmap(
                 item.iconBitmap,
@@ -156,7 +163,8 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
             DrawIconBitmap(ctx, bitmap, bitmapTarget, alpha);
         else
             DrawPlaceholderIcon(ctx, item.sysIconIndex, bitmapTarget, alpha, !recycleBin);
-        if (ShouldDrawShortcutArrow(item.isShortcut, item.isApplicationShortcut) &&
+        if (!useDemoIdentity &&
+            ShouldDrawShortcutArrow(item.isShortcut, item.isApplicationShortcut) &&
             item.iconState != IconState::Loading)
             DrawShortcutArrowOverlay(ctx, bitmapTarget, alpha);
     };
@@ -351,7 +359,14 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
         rect.top + (rect.bottom - rect.top + iconSize) / 2
     };
     const bool lt = IsLightContentTheme();
-    if (ID2D1Bitmap1* bitmap = GetOrCreateD2DBitmap(app.iconBitmap))
+    if (generalSettings_.demoModeEnabled)
+    {
+        const std::wstring_view identity = app.identityKey.empty()
+            ? std::wstring_view(app.executablePath)
+            : std::wstring_view(app.identityKey);
+        DrawDemoIdentityIcon(ctx, identity, iconRect);
+    }
+    else if (ID2D1Bitmap1* bitmap = GetOrCreateD2DBitmap(app.iconBitmap))
         DrawIconBitmap(ctx, bitmap, iconRect);
     else
         DrawPlaceholderIcon(ctx, -1, iconRect, 1.0f, true);

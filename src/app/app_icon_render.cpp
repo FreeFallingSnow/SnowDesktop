@@ -1,7 +1,65 @@
 #include "app.h"
+#include "../demo_mode_rules.h"
 #include <commoncontrols.h>
 
 // Shell-icon decoration, privacy placeholders and quick-navigation icons.
+
+bool DesktopApp::ShouldUseDemoIdentity(const DesktopItem& item) const
+{
+    return snowdesktop::demo_mode_rules::ShouldMaskApplication(
+        generalSettings_.demoModeEnabled, item.isApplicationShortcut);
+}
+
+std::wstring DesktopApp::GetDemoIdentityTitle(
+    std::wstring_view identity) const
+{
+    const auto& visual = snowdesktop::demo_mode_rules::
+        ResolveVisualIdentity(identity);
+    return _LW(visual.titleKey);
+}
+
+void DesktopApp::DrawDemoIdentityIcon(ID2D1RenderTarget* context,
+    std::wstring_view identity, RECT iconRect, float opacity)
+{
+    if (!context || IsRectEmptyRect(iconRect) || opacity <= 0.0f)
+        return;
+
+    const auto& visual = snowdesktop::demo_mode_rules::
+        ResolveVisualIdentity(identity);
+    const float red = static_cast<float>(
+        (visual.backgroundRgb >> 16U) & 0xFFU) / 255.0f;
+    const float green = static_cast<float>(
+        (visual.backgroundRgb >> 8U) & 0xFFU) / 255.0f;
+    const float blue = static_cast<float>(
+        visual.backgroundRgb & 0xFFU) / 255.0f;
+    const int shortSide = std::max(1L, std::min(
+        iconRect.right - iconRect.left,
+        iconRect.bottom - iconRect.top));
+    const float radius = std::max(3.0f, shortSide * 0.22f);
+    DrawD2DRoundedRectangle(context, iconRect, radius,
+        D2D1::ColorF(red, green, blue, opacity),
+        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f * opacity),
+        std::max(1.0f, shortSide * 0.018f));
+
+    if (!fluentIconTextFormat_)
+        return;
+
+    D2D1_MATRIX_3X2_F previousTransform{};
+    context->GetTransform(&previousTransform);
+    const float glyphScale = std::clamp(
+        static_cast<float>(shortSide) * 0.50f / 14.0f,
+        0.72f, 3.0f);
+    const D2D1_POINT_2F center = D2D1::Point2F(
+        (iconRect.left + iconRect.right) * 0.5f,
+        (iconRect.top + iconRect.bottom) * 0.5f);
+    context->SetTransform(
+        D2D1::Matrix3x2F::Scale(glyphScale, glyphScale, center) *
+        previousTransform);
+    DrawD2DText(context, std::wstring(visual.glyph), iconRect,
+        fluentIconTextFormat_.Get(),
+        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f * opacity));
+    context->SetTransform(previousTransform);
+}
 
 void DesktopApp::DrawShortcutArrowOverlay(ID2D1RenderTarget* ctx, RECT iconRect, float alpha)
 {

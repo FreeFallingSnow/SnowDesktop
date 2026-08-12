@@ -81,6 +81,8 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
     bool val = false;
     if (ReadBoolField(text, "softwareDesktopEnabled", val))
         settings.softwareDesktopEnabled = val;
+    if (ReadBoolField(text, "demoModeEnabled", val))
+        settings.demoModeEnabled = val;
     if (ReadBoolField(text, "doubleClickHideDesktop", val))
         settings.doubleClickHideDesktop = val;
     if (ReadBoolField(text, "desktopPassthroughHotkeyEnabled", val))
@@ -126,6 +128,8 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
     file << "{\n";
     file << "  \"softwareDesktopEnabled\": "
          << (settings.softwareDesktopEnabled ? "true" : "false") << ",\n";
+    file << "  \"demoModeEnabled\": "
+         << (settings.demoModeEnabled ? "true" : "false") << ",\n";
     file << "  \"doubleClickHideDesktop\": " << (settings.doubleClickHideDesktop ? "true" : "false") << ",\n";
     file << "  \"desktopPassthroughHotkeyEnabled\": "
          << (settings.desktopPassthroughHotkeyEnabled ? "true" : "false")

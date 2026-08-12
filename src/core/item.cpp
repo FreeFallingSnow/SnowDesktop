@@ -129,6 +129,11 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
     RECT iconRect = quickNavLayout
         ? app_->GetQuickNavItemIconRect(rect)
         : app_->GetItemIconRect(rect);
+    const bool useDemoIdentity = !quickNavLayout &&
+        app_->ShouldUseDemoIdentity(*item_);
+    const std::wstring_view demoIdentity = item_->layoutKey.empty()
+        ? std::wstring_view(item_->parsingName)
+        : std::wstring_view(item_->layoutKey);
 
     if (selected && !dragged)
     {
@@ -144,7 +149,11 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
                        : D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.55f * alpha));
     }
 
-    if (item_->iconState == IconState::Loading)
+    if (useDemoIdentity)
+    {
+        app_->DrawDemoIdentityIcon(context, demoIdentity, iconRect, alpha);
+    }
+    else if (item_->iconState == IconState::Loading)
     {
         app_->DrawPlaceholderIcon(context, item_->sysIconIndex, iconRect, alpha);
     }
@@ -163,12 +172,18 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
         }
     }
 
-    if (app_->ShouldDrawShortcutArrow(item_->isShortcut, item_->isApplicationShortcut) &&
+    if (!useDemoIdentity &&
+        app_->ShouldDrawShortcutArrow(item_->isShortcut, item_->isApplicationShortcut) &&
         item_->iconState != IconState::Loading)
         app_->DrawShortcutArrowOverlay(context, iconRect, alpha);
 
     if (!dragged && drawText)
-        app_->DrawItemText(context, rect, item_->name, selected, alpha, lightTheme);
+    {
+        const std::wstring title = useDemoIdentity
+            ? app_->GetDemoIdentityTitle(demoIdentity)
+            : item_->name;
+        app_->DrawItemText(context, rect, title, selected, alpha, lightTheme);
+    }
 }
 
 /**

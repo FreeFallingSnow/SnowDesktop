@@ -33,6 +33,7 @@ int main()
     std::filesystem::remove(path, error);
 
     GeneralSettings saved;
+    saved.demoModeEnabled = true;
     saved.widgetDeveloperToolsEnabled = true;
     saved.agentSkillTargetMask = 0x15;
     strcpy_s(saved.language, "zh-CN");
@@ -42,10 +43,11 @@ int main()
     GeneralSettings loaded;
     Check(LoadGeneralSettings(path.c_str(), loaded),
         "general settings load succeeds");
-    Check(loaded.widgetDeveloperToolsEnabled &&
+    Check(loaded.demoModeEnabled &&
+        loaded.widgetDeveloperToolsEnabled &&
         loaded.agentSkillTargetMask == 0x15 &&
         std::strcmp(loaded.language, "zh-CN") == 0,
-        "developer tools visibility and Agent Skill targets persist");
+        "demo mode, developer tools visibility, and Agent Skill targets persist");
 
     {
         std::ofstream legacy(path, std::ios::binary | std::ios::trunc);
@@ -54,10 +56,11 @@ int main()
     GeneralSettings migrated;
     Check(LoadGeneralSettings(path.c_str(), migrated),
         "legacy general settings still load");
-    Check(!migrated.widgetDeveloperToolsEnabled &&
+    Check(!migrated.demoModeEnabled &&
+        !migrated.widgetDeveloperToolsEnabled &&
         migrated.agentSkillTargetMask ==
             GeneralSettings::kAllAgentSkillTargetsMask,
-        "legacy settings default to hidden developer tools and all Skill targets selected");
+        "legacy settings default to demo mode off, hidden developer tools, and all Skill targets selected");
 
     std::filesystem::remove(path, error);
     if (failures == 0)

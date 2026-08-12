@@ -2205,6 +2205,13 @@ void SettingsWindow::DrawGeneralPage()
         &generalSettings_.softwareDesktopEnabled))
         generalSettingsDirty_ = true;
 
+    if (DrawSettingCheckbox(_L("app.settings.demo_mode"), "##DemoModeEnabled",
+        &generalSettings_.demoModeEnabled))
+        generalSettingsDirty_ = true;
+    ImGui::Indent();
+    ImGui::TextDisabled("%s", _L("app.settings.demo_mode_hint"));
+    ImGui::Unindent();
+
     ImGui::Spacing();
 
     {

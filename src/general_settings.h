@@ -16,6 +16,7 @@ struct GeneralSettings
     static constexpr int kAllAgentSkillTargetsMask = 0x3F;
 
     bool softwareDesktopEnabled = true;
+    bool demoModeEnabled = false;
     bool doubleClickHideDesktop = false;
     bool desktopPassthroughHotkeyEnabled = false;
     UINT desktopPassthroughHotkeyModifiers = MOD_CONTROL | MOD_ALT;
