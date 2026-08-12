@@ -1646,7 +1646,7 @@ void ScrollingItemWidget::DrawListItemTitle(ID2D1DeviceContext* context,
 void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
     HBITMAP iconBitmap, int sysIconIndex,
     const std::wstring& name, bool selected,
-    bool iconIsMediaThumbnail) const
+    bool iconIsMediaThumbnail, std::wstring_view demoIdentity) const
 {
     if (!app_ || !context || IsRectEmptyRect(cell)) return;
 
@@ -1669,7 +1669,11 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
     RECT iconRect = MakeRect(cell.left + Cu(4.0f), cell.top + (itemH - iconSz) / 2,
         cell.left + Cu(4.0f) + iconSz, cell.top + (itemH + iconSz) / 2);
 
-    if (ID2D1Bitmap1* bmp = app_->GetOrCreateD2DBitmap(
+    if (!demoIdentity.empty())
+    {
+        app_->DrawDemoIdentityIcon(context, demoIdentity, iconRect);
+    }
+    else if (ID2D1Bitmap1* bmp = app_->GetOrCreateD2DBitmap(
             iconBitmap,
             app_->ShouldBeautifyIconBitmap(iconIsMediaThumbnail)))
     {
@@ -1681,7 +1685,10 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
         app_->DrawPlaceholderIcon(context, sysIconIndex, iconRect, 1.0f);
     }
 
-    DrawListItemTitle(context, cell, iconRect, name);
+    const std::wstring title = demoIdentity.empty()
+        ? name
+        : app_->GetDemoIdentityTitle(demoIdentity);
+    DrawListItemTitle(context, cell, iconRect, title);
 }
 
 void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RECT rect,

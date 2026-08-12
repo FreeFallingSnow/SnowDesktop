@@ -447,9 +447,18 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 if (privacyActive)
                     DrawPrivacyPlaceholder(context, cell, di.name, false);
                 else
+                {
+                    const bool useDemoIdentity =
+                        app_->ShouldUseDemoIdentity(di);
+                    const std::wstring_view demoIdentity =
+                        !useDemoIdentity ? std::wstring_view{} :
+                        (di.layoutKey.empty()
+                            ? std::wstring_view(di.parsingName)
+                            : std::wstring_view(di.layoutKey));
                     DrawListItem(context, cell, di.iconBitmap,
                         di.sysIconIndex, di.name, di.selected,
-                        di.iconIsMediaThumbnail);
+                        di.iconIsMediaThumbnail, demoIdentity);
+                }
             }
         }
         context->PopAxisAlignedClip();
