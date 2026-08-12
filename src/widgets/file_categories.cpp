@@ -654,7 +654,8 @@ void FileCategories::ApplyMarqueeSelection(const RECT& contentRect)
  * @param index 标签页索引（从 0 开始）。
  * @return 标签页矩形，如果索引超出范围或组件无效则返回空矩形。
  */
-static RECT FileCategoryTabRect(FileCategories* widget, size_t index)
+static RECT FileCategoryTabLayoutRect(
+    FileCategories* widget, size_t index)
 {
     if (!widget) return {};
     DesktopWidget* data = widget->GetWidgetData();
@@ -678,6 +679,15 @@ static RECT FileCategoryTabRect(FileCategories* widget, size_t index)
         startX + tabLeftOffset + widths[index],
         tabsRect.bottom);
     InflateRect(&rect, -widget->Cu(2.0f), -widget->Cu(2.0f));
+    return rect;
+}
+
+static RECT FileCategoryTabRect(
+    FileCategories* widget, size_t index)
+{
+    RECT rect = FileCategoryTabLayoutRect(widget, index);
+    if (IsRectEmptyRect(rect)) return {};
+    RECT tabsRect = FileCategoryTabsRect(widget);
     const auto clipped =
         snowdesktop::collection_group_rules::
             ClipToViewport(
@@ -1310,15 +1320,18 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
         context->PushAxisAlignedClip(app_->ToD2DRect(tabsRect), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         for (size_t i = 0; i < categoryIds.size(); ++i)
         {
-            RECT tab = FileCategoryTabRect(this, i);
-            if (IsRectEmptyRect(tab)) continue;
+            RECT layoutTab = FileCategoryTabLayoutRect(this, i);
+            RECT hitTab = FileCategoryTabRect(this, i);
+            if (IsRectEmptyRect(layoutTab) ||
+                IsRectEmptyRect(hitTab))
+                continue;
 
             bool active = categoryIds[i] == activeCategory;
             bool hovered = !IsPreviewRendering() &&
-                PtInRect(&tab, app_->lastMousePoint_) != FALSE;
+                PtInRect(&hitTab, app_->lastMousePoint_) != FALSE;
             std::wstring label = FileCategoryTabDisplayText(this, categoryIds[i]);
             DrawCategorizedTab(
-                context, tab, label,
+                context, layoutTab, label,
                 active, hovered);
         }
         context->PopAxisAlignedClip();

@@ -150,7 +150,8 @@ int CollectionGroupTabsTotalWidth(
     return total;
 }
 
-RECT CollectionGroupTabRect(CollectionGroup* widget, size_t tabIndex)
+RECT CollectionGroupTabLayoutRect(
+    CollectionGroup* widget, size_t tabIndex)
 {
     if (!widget || !widget->GetWidgetData()) return {};
     const auto& children = widget->GetVisibleCollectionIds();
@@ -178,6 +179,16 @@ RECT CollectionGroupTabRect(CollectionGroup* widget, size_t tabIndex)
         &result,
         -widget->Cu(2.0f),
         -widget->Cu(2.0f));
+    return result;
+}
+
+RECT CollectionGroupTabRect(
+    CollectionGroup* widget, size_t tabIndex)
+{
+    RECT result = CollectionGroupTabLayoutRect(
+        widget, tabIndex);
+    if (IsRectEmptyRect(result)) return {};
+    RECT tabs = CollectionGroupTabsRect(widget);
     const auto clipped =
         snowdesktop::collection_group_rules::
             ClipToViewport(
@@ -1072,16 +1083,19 @@ void CollectionGroup::DrawContent(
             D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         for (size_t i = 0; i < tabCount; ++i)
         {
-            RECT tab = CollectionGroupTabRect(this, i);
-            if (IsRectEmptyRect(tab)) continue;
+            RECT layoutTab = CollectionGroupTabLayoutRect(this, i);
+            RECT hitTab = CollectionGroupTabRect(this, i);
+            if (IsRectEmptyRect(layoutTab) ||
+                IsRectEmptyRect(hitTab))
+                continue;
             const std::wstring& id = children[i];
             const bool selected = id == active;
             const bool hovered =
                 !IsPreviewRendering() &&
-                PtInRect(&tab, app_->lastMousePoint_) != FALSE;
+                PtInRect(&hitTab, app_->lastMousePoint_) != FALSE;
             DrawCategorizedTab(
                 context,
-                tab,
+                layoutTab,
                 CollectionGroupTabDisplayText(
                     this, i),
                 selected, hovered);
