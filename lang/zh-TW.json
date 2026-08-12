@@ -171,7 +171,7 @@
   "app.settings.auto_start_portable_conflict": "攜帶版已設定開機自動啟動：\n{0}\n\n啟用安裝版前，請先在 Windows「啟動應用程式」中停用攜帶版。要立即開啟「啟動應用程式」嗎？",
   "app.settings.software_desktop": "是否啟用軟體桌面",
   "app.settings.demo_mode": "展示模式",
-  "app.settings.demo_mode_hint": "將桌面與 Dock 中的應用程式捷徑名稱及圖示替換為虛擬內容。檔案與資料夾維持原樣，所有操作仍套用至原始項目。",
+  "app.settings.demo_mode_hint": "僅供開發偵錯：從儲存庫 developer_assets/demo_icons 目錄載入虛擬圖示，並取代桌面與 Dock 中應用程式捷徑的名稱與圖示。正式發行套件不包含這些資源；檔案和資料夾維持原樣，所有操作仍套用至原始項目。",
   "app.demo_identity.projects": "專案",
   "app.demo_identity.design": "設計",
   "app.demo_identity.focus": "專注",

@@ -171,7 +171,7 @@
     "app.settings.auto_start_portable_conflict": "The portable version is configured to start automatically:\n{0}\n\nDisable it in Windows Startup Apps before enabling the installed version. Open Startup Apps now?",
     "app.settings.software_desktop": "Enable Software Desktop",
     "app.settings.demo_mode": "Demo mode",
-    "app.settings.demo_mode_hint": "Replaces application shortcut names and icons on the desktop and Dock with fictional visuals. Files and folders stay unchanged, and all actions still use the original items.",
+    "app.settings.demo_mode_hint": "Development and debugging only: loads fictional icons from the repository developer_assets/demo_icons directory and replaces application shortcut names and icons on the desktop and Dock. Release packages exclude these assets; files and folders stay unchanged, and all actions still use the original items.",
     "app.demo_identity.projects": "Projects",
     "app.demo_identity.design": "Design",
     "app.demo_identity.focus": "Focus",

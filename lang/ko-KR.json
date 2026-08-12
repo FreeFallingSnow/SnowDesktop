@@ -171,7 +171,7 @@
   "app.settings.auto_start_portable_conflict": "휴대용 버전은 자동으로 시작되도록 구성됩니다.\n{0}\n\n설치된 버전을 활성화하기 전에 Windows 시작 앱에서 비활성화하십시오. 지금 시작 앱을 여시겠습니까?",
   "app.settings.software_desktop": "소프트웨어 데스크탑 활성화",
   "app.settings.demo_mode": "데모 모드",
-  "app.settings.demo_mode_hint": "데스크톱과 Dock의 앱 바로 가기 이름과 아이콘을 가상 항목으로 바꿉니다. 파일과 폴더는 그대로 유지되며 모든 작업은 원래 항목에 적용됩니다.",
+  "app.settings.demo_mode_hint": "개발 및 디버깅 전용: 저장소의 developer_assets/demo_icons 폴더에서 가상 아이콘을 불러와 데스크톱과 Dock의 앱 바로 가기 이름 및 아이콘을 바꿉니다. 릴리스 패키지에는 이 리소스가 포함되지 않으며, 파일과 폴더는 그대로 유지되고 모든 작업은 원래 항목에 적용됩니다.",
   "app.demo_identity.projects": "프로젝트",
   "app.demo_identity.design": "디자인",
   "app.demo_identity.focus": "집중",

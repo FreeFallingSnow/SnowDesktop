@@ -88,6 +88,19 @@ function Copy-Directory {
     Copy-Item -LiteralPath $Source -Destination $Destination -Recurse -Force
 }
 
+function Assert-NoDeveloperAssets {
+    param([Parameter(Mandatory = $true)][string]$Destination)
+
+    $forbidden = @(Get-ChildItem -LiteralPath $Destination -Recurse -Force |
+        Where-Object {
+            $_.FullName.Substring($Destination.Length).TrimStart('\') `
+                -match '(^|\\)developer_assets(\\|$)'
+        })
+    if ($forbidden.Count -ne 0) {
+        throw "Release payload contains developer-only assets: $($forbidden.FullName -join ', ')"
+    }
+}
+
 function Copy-Payload {
     param([Parameter(Mandatory = $true)][string]$Destination)
 
@@ -125,6 +138,7 @@ function Copy-Payload {
         -Source (Join-Path $repositoryRoot "lang") `
         -Destination (Join-Path $Destination "lang")
 
+    Assert-NoDeveloperAssets -Destination $Destination
 }
 
 function Write-Logo {

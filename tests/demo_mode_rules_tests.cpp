@@ -1,9 +1,11 @@
 #include "demo_mode_rules.h"
 #include "demo_collection_rules.h"
+#include "demo_asset_paths.h"
 
 #include <array>
 #include <iostream>
 #include <set>
+#include <filesystem>
 #include <vector>
 
 namespace rules = snowdesktop::demo_mode_rules;
@@ -139,6 +141,21 @@ int main()
     Check(collectionRules::PresentationForSlot(creative, 0, 3).visualIndex ==
             collectionRules::PresentationForSlot(creative, 3).visualIndex,
         "later peer collections must continue from the prior visible subject range");
+
+    const auto repositoryRoot = std::filesystem::path(__FILE__).parent_path().parent_path();
+    const auto demoAssetDirectory = repositoryRoot /
+        L"developer_assets" / L"demo_icons";
+    const auto demoAssetPaths = snowdesktop::demo_asset_paths::
+        EnumerateIcons<rules::kDemoIconAssetCount>(demoAssetDirectory);
+    Check(snowdesktop::demo_asset_paths::HasRequiredIcons(demoAssetPaths),
+        "the developer demo icon directory must contain every stable visual index");
+    Check(snowdesktop::demo_asset_paths::ResolveDirectory(
+            repositoryRoot / L".build" / L"Release") == demoAssetDirectory,
+        "release build output must find the repository developer icon directory");
+    Check(snowdesktop::demo_asset_paths::ResolveDirectory(
+            repositoryRoot / L"not-a-build", demoAssetDirectory) ==
+            std::filesystem::absolute(demoAssetDirectory),
+        "an explicit development icon directory must override relative discovery");
 
     if (failures != 0)
     {

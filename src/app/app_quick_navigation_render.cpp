@@ -966,7 +966,8 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                         rowRectApp.top + (rowH - iconSz) / 2,
                         rowRectApp.left + QuickNavScale(12) + iconSz,
                         rowRectApp.top + (rowH + iconSz) / 2);
-                    if (generalSettings_.demoModeEnabled)
+                    if (generalSettings_.demoModeEnabled &&
+                        AreDemoIdentityAssetsAvailable())
                         DrawDemoIdentityIcon(ctx.Get(), entry.parsingName,
                             iconRect);
                     else
@@ -986,7 +987,9 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                     typeRect.top += QuickNavScale(24);
                     typeRect.bottom -= QuickNavScale(5);
 
-                    const std::wstring appName = generalSettings_.demoModeEnabled
+                    const std::wstring appName =
+                        generalSettings_.demoModeEnabled &&
+                        AreDemoIdentityAssetsAvailable()
                         ? GetDemoIdentityTitle(entry.parsingName)
                         : entry.name;
                     DrawD2DTextEllipsis(ctx.Get(), appName, nameRect,

@@ -2,19 +2,22 @@
 #include "../demo_mode_rules.h"
 #include "../demo_collection_rules.h"
 #include <commoncontrols.h>
+#include <cstdlib>
 
 // Shell-icon decoration, privacy placeholders and quick-navigation icons.
 
 bool DesktopApp::ShouldUseDemoIdentity(const DesktopItem& item) const
 {
     return snowdesktop::demo_mode_rules::ShouldMaskApplication(
-        generalSettings_.demoModeEnabled, item.isApplicationShortcut);
+        generalSettings_.demoModeEnabled && AreDemoIdentityAssetsAvailable(),
+        item.isApplicationShortcut);
 }
 
 bool DesktopApp::ShouldUseDemoCollectionIdentity(
     const DesktopWidget* collection) const
 {
-    return generalSettings_.demoModeEnabled && collection &&
+    return generalSettings_.demoModeEnabled &&
+        AreDemoIdentityAssetsAvailable() && collection &&
         collection->type == DesktopWidgetType::Collection;
 }
 
@@ -104,6 +107,41 @@ DemoCollectionPresentation(const Entry& entry,
 }
 }
 
+const std::filesystem::path& DesktopApp::GetDemoIdentityIconDirectory() const
+{
+    if (demoIdentityIconDirectoryResolved_)
+        return demoIdentityIconDirectory_;
+
+    demoIdentityIconDirectoryResolved_ = true;
+    std::filesystem::path configured;
+    if (const wchar_t* value = _wgetenv(
+            snowdesktop::demo_asset_paths::kEnvironmentVariable);
+        value && *value)
+        configured = value;
+    demoIdentityIconDirectory_ = snowdesktop::demo_asset_paths::
+        ResolveDirectory(GetExecutableDirectoryPath(), configured);
+    demoIdentityIconPaths_ = snowdesktop::demo_asset_paths::
+        EnumerateIcons<snowdesktop::demo_mode_rules::kDemoIconAssetCount>(
+            demoIdentityIconDirectory_);
+    return demoIdentityIconDirectory_;
+}
+
+bool DesktopApp::AreDemoIdentityAssetsAvailable() const
+{
+    GetDemoIdentityIconDirectory();
+    return snowdesktop::demo_asset_paths::HasRequiredIcons(
+        demoIdentityIconPaths_);
+}
+
+const std::filesystem::path& DesktopApp::GetDemoIdentityIconPath(
+    size_t visualIndex) const
+{
+    GetDemoIdentityIconDirectory();
+    static const std::filesystem::path empty;
+    return visualIndex < demoIdentityIconPaths_.size()
+        ? demoIdentityIconPaths_[visualIndex] : empty;
+}
+
 std::wstring DesktopApp::GetDemoIdentityTitle(
     std::wstring_view identity) const
 {
@@ -139,20 +177,10 @@ ID2D1Bitmap1* DesktopApp::GetDemoIdentityBitmap(size_t visualIndex)
     if (cached)
         return cached.Get();
 
-    const int resourceId = IDR_DEMO_ICON_PROJECTS +
-        static_cast<int>(visualIndex);
-    HMODULE module = GetModuleHandleW(nullptr);
-    HRSRC resource = FindResourceW(
-        module, MAKEINTRESOURCEW(resourceId), RT_RCDATA);
-    if (!resource)
-        return nullptr;
-    HGLOBAL resourceData = LoadResource(module, resource);
-    void* bytes = resourceData ? LockResource(resourceData) : nullptr;
-    const DWORD byteCount = SizeofResource(module, resource);
-    if (!bytes || byteCount == 0)
+    const auto& iconPath = GetDemoIdentityIconPath(visualIndex);
+    if (iconPath.empty())
         return nullptr;
 
-    ComPtr<IWICStream> stream;
     ComPtr<IWICBitmapDecoder> decoder;
     ComPtr<IWICBitmapFrameDecode> frame;
     ComPtr<IWICFormatConverter> converter;
@@ -161,11 +189,8 @@ ID2D1Bitmap1* DesktopApp::GetDemoIdentityBitmap(size_t visualIndex)
             CLSCTX_INPROC_SERVER,
             IID_PPV_ARGS(&demoIdentityWicFactory_))))
         return nullptr;
-    if (FAILED(demoIdentityWicFactory_->CreateStream(&stream)) ||
-        FAILED(stream->InitializeFromMemory(
-            static_cast<BYTE*>(bytes), byteCount)) ||
-        FAILED(demoIdentityWicFactory_->CreateDecoderFromStream(
-            stream.Get(), nullptr,
+    if (FAILED(demoIdentityWicFactory_->CreateDecoderFromFilename(
+            iconPath.c_str(), nullptr, GENERIC_READ,
             WICDecodeMetadataCacheOnLoad, &decoder)) ||
         FAILED(decoder->GetFrame(0, &frame)) ||
         FAILED(demoIdentityWicFactory_->CreateFormatConverter(&converter)) ||
@@ -215,7 +240,8 @@ ID2D1Bitmap1* DesktopApp::GetDemoIdentityBitmap(size_t visualIndex)
 
 void DesktopApp::PreloadDemoIdentityBitmaps()
 {
-    if (!d2dContext_ || !generalSettings_.demoModeEnabled)
+    if (!d2dContext_ || !generalSettings_.demoModeEnabled ||
+        !AreDemoIdentityAssetsAvailable())
         return;
     for (size_t index = 0; index < demoIdentityIconBitmaps_.size(); ++index)
         GetDemoIdentityBitmap(index);

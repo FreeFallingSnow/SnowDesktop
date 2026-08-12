@@ -22,7 +22,8 @@ std::wstring DockRunningItem::GetTitle() const
         return L"";
     const DockRunningAppInfo& running =
         app_->dockUnpinnedRunningApps_[runningIndex_];
-    if (!app_->generalSettings_.demoModeEnabled)
+    if (!app_->generalSettings_.demoModeEnabled ||
+        !app_->AreDemoIdentityAssetsAvailable())
         return running.title;
     const std::wstring_view identity = running.identityKey.empty()
         ? std::wstring_view(running.executablePath)
@@ -181,7 +182,7 @@ std::wstring DockEntryItem::GetTitle() const
     if (it == app_->widgets_.end())
         return _LW("widget.collection");
     if (entry->type == DockEntryType::Collection &&
-        app_->generalSettings_.demoModeEnabled)
+        app_->ShouldUseDemoCollectionIdentity(&*it))
         return app_->GetDemoCollectionCategoryTitle(*it);
     return it->title;
 }

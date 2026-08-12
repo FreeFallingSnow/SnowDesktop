@@ -2205,15 +2205,6 @@ void SettingsWindow::DrawGeneralPage()
         &generalSettings_.softwareDesktopEnabled))
         generalSettingsDirty_ = true;
 
-    if (DrawSettingCheckbox(_L("app.settings.demo_mode"), "##DemoModeEnabled",
-        &generalSettings_.demoModeEnabled))
-        generalSettingsDirty_ = true;
-    ImGui::Indent();
-    ImGui::TextDisabled("%s", _L("app.settings.demo_mode_hint"));
-    ImGui::Unindent();
-
-    ImGui::Spacing();
-
     {
         const float controlW = kSettingControlWidthDip * dpiScale_;
         BeginSettingRow(_L("app.settings.language"), controlW);
@@ -5438,6 +5429,15 @@ void SettingsWindow::DrawDebugPage()
     ImGui::PopStyleVar();
 
     ImGui::Text("%s", _L("app.settings.debug_page"));
+    ImGui::Separator();
+    ImGui::Spacing();
+    if (DrawSettingCheckbox(_L("app.settings.demo_mode"),
+            "##DemoModeEnabled", &generalSettings_.demoModeEnabled))
+        generalSettingsDirty_ = true;
+    ImGui::Indent();
+    ImGui::TextDisabled("%s", _L("app.settings.demo_mode_hint"));
+    ImGui::Unindent();
+    ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
     if (ImGui::Checkbox(

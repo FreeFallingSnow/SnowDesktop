@@ -171,7 +171,7 @@
   "app.settings.auto_start_portable_conflict": "La versión portátil está configurada para iniciarse automáticamente:\n{0}\n\nDesactívala en las aplicaciones de inicio de Windows antes de activar la versión instalada. ¿Abrir ahora las aplicaciones de inicio?",
   "app.settings.software_desktop": "Habilitar software de escritorio",
   "app.settings.demo_mode": "Modo de demostración",
-  "app.settings.demo_mode_hint": "Reemplaza los nombres y los íconos de los accesos directos de aplicaciones del escritorio y del Dock por elementos ficticios. Los archivos y las carpetas no cambian, y todas las acciones siguen usando los elementos originales.",
+  "app.settings.demo_mode_hint": "Solo para desarrollo y depuración: carga íconos ficticios desde la carpeta developer_assets/demo_icons del repositorio y reemplaza los nombres y los íconos de los accesos directos de aplicaciones del escritorio y el Dock. Los paquetes de lanzamiento excluyen estos recursos; los archivos y las carpetas no cambian y todas las acciones siguen usando los elementos originales.",
   "app.demo_identity.projects": "Proyectos",
   "app.demo_identity.design": "Diseño",
   "app.demo_identity.focus": "Enfoque",

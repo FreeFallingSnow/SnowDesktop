@@ -171,7 +171,7 @@
   "app.settings.auto_start_portable_conflict": "ポータブル バージョンは自動的に起動するように構成されています。\n{0}\n\nインストールされているバージョンを有効にする前に、Windows スタートアップ アプリで無効にしてください。今すぐスタートアップアプリを開いてください?",
   "app.settings.software_desktop": "ソフトウェア デスクトップを有効にする",
   "app.settings.demo_mode": "デモモード",
-  "app.settings.demo_mode_hint": "デスクトップと Dock にあるアプリのショートカット名とアイコンを架空の表示に置き換えます。ファイルとフォルダーは変更されず、すべての操作は元の項目に対して実行されます。",
+  "app.settings.demo_mode_hint": "開発およびデバッグ専用です。リポジトリの developer_assets/demo_icons フォルダーから架空のアイコンを読み込み、デスクトップと Dock にあるアプリのショートカット名とアイコンを置き換えます。リリース パッケージにはこれらの素材は含まれません。ファイルとフォルダーは変更されず、すべての操作は元の項目に対して実行されます。",
   "app.demo_identity.projects": "プロジェクト",
   "app.demo_identity.design": "デザイン",
   "app.demo_identity.focus": "集中",

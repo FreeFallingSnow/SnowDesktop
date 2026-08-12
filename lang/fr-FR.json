@@ -171,7 +171,7 @@
   "app.settings.auto_start_portable_conflict": "La version portable est configurée pour démarrer automatiquement :\n{0}\n\nDésactivez-le dans les applications de démarrage Windows avant d'activer la version installée. Ouvrir les applications de démarrage maintenant ?",
   "app.settings.software_desktop": "Activer le bureau logiciel",
   "app.settings.demo_mode": "Mode démonstration",
-  "app.settings.demo_mode_hint": "Remplace les noms et les icônes des raccourcis d’application sur le bureau et dans le Dock par des éléments fictifs. Les fichiers et dossiers restent inchangés et toutes les actions utilisent toujours les éléments d’origine.",
+  "app.settings.demo_mode_hint": "Réservé au développement et au débogage : charge des icônes fictives depuis le dossier developer_assets/demo_icons du dépôt et remplace les noms et icônes des raccourcis d’application sur le bureau et dans le Dock. Les packages de publication excluent ces ressources ; les fichiers et dossiers restent inchangés et toutes les actions utilisent toujours les éléments d’origine.",
   "app.demo_identity.projects": "Projets",
   "app.demo_identity.design": "Création",
   "app.demo_identity.focus": "Concentration",

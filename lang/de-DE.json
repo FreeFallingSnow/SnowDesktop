@@ -171,7 +171,7 @@
   "app.settings.auto_start_portable_conflict": "Die tragbare Version ist so konfiguriert, dass sie automatisch startet:\n{0}\n\nDeaktivieren Sie den Autostart in den Windows-Apps mit Autostart, bevor Sie die installierte Version aktivieren. Autostart-Apps jetzt öffnen?",
   "app.settings.software_desktop": "Software-Desktop aktivieren",
   "app.settings.demo_mode": "Demomodus",
-  "app.settings.demo_mode_hint": "Ersetzt Namen und Symbole von Anwendungsverknüpfungen auf dem Desktop und im Dock durch fiktive Darstellungen. Dateien und Ordner bleiben unverändert; alle Aktionen verwenden weiterhin die ursprünglichen Einträge.",
+  "app.settings.demo_mode_hint": "Nur für Entwicklung und Debugging: Lädt fiktive Symbole aus dem Repository-Ordner developer_assets/demo_icons und ersetzt Namen und Symbole von Anwendungsverknüpfungen auf dem Desktop und im Dock. Veröffentlichungspakete enthalten diese Ressourcen nicht; Dateien und Ordner bleiben unverändert und alle Aktionen verwenden weiterhin die ursprünglichen Einträge.",
   "app.demo_identity.projects": "Projekte",
   "app.demo_identity.design": "Design",
   "app.demo_identity.focus": "Fokus",

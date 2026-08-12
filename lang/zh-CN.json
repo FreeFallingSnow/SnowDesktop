@@ -171,7 +171,7 @@
     "app.settings.auto_start_portable_conflict": "检测到携带版已设置开机自启：\n{0}\n\n请先在 Windows“启动应用”设置中关闭携带版，再启用安装版。是否现在打开？",
     "app.settings.software_desktop": "是否启用软件桌面",
     "app.settings.demo_mode": "演示模式",
-    "app.settings.demo_mode_hint": "将桌面和 Dock 中的应用快捷方式名称与图标替换为虚拟内容。文件和文件夹保持原样，所有操作仍作用于原始条目。",
+    "app.settings.demo_mode_hint": "仅供开发调试：从仓库 developer_assets/demo_icons 目录加载虚拟图标，并替换桌面和 Dock 中应用快捷方式的名称与图标。正式发行包不包含这些资源；文件和文件夹保持原样，所有操作仍作用于原始条目。",
     "app.demo_identity.projects": "项目",
     "app.demo_identity.design": "设计",
     "app.demo_identity.focus": "专注",

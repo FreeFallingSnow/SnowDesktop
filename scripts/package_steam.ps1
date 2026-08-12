@@ -125,6 +125,14 @@ Copy-Item -LiteralPath (Join-Path $repositoryRoot "widgets") `
     -Destination (Join-Path $payload "widgets") -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "lang") `
     -Destination (Join-Path $payload "lang") -Recurse -Force
+$developerAssets = @(Get-ChildItem -LiteralPath $payload -Recurse -Force |
+    Where-Object {
+        $_.FullName.Substring($payload.Length).TrimStart('\') `
+            -match '(^|\\)developer_assets(\\|$)'
+    })
+if ($developerAssets.Count -ne 0) {
+    throw "Steam payload contains developer-only assets: $($developerAssets.FullName -join ', ')"
+}
 $payloadSkillBin = Join-Path $payload `
     "widgets\snowdesktop-lua-widget\bin"
 New-Item -ItemType Directory -Path $payloadSkillBin -Force | Out-Null

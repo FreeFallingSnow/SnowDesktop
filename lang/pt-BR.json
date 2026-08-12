@@ -171,7 +171,7 @@
   "app.settings.auto_start_portable_conflict": "A versão portátil está configurada para iniciar automaticamente:\n{0}\n\nDesative-o nos aplicativos de inicialização do Windows antes de ativar a versão instalada. Abrir aplicativos de inicialização agora?",
   "app.settings.software_desktop": "Habilitar área de trabalho de software",
   "app.settings.demo_mode": "Modo de demonstração",
-  "app.settings.demo_mode_hint": "Substitui os nomes e ícones dos atalhos de aplicativos na área de trabalho e no Dock por elementos fictícios. Arquivos e pastas permanecem inalterados, e todas as ações continuam usando os itens originais.",
+  "app.settings.demo_mode_hint": "Somente para desenvolvimento e depuração: carrega ícones fictícios da pasta developer_assets/demo_icons do repositório e substitui os nomes e ícones dos atalhos de aplicativos na área de trabalho e no Dock. Os pacotes de lançamento excluem esses recursos; arquivos e pastas permanecem inalterados, e todas as ações continuam usando os itens originais.",
   "app.demo_identity.projects": "Projetos",
   "app.demo_identity.design": "Design",
   "app.demo_identity.focus": "Foco",

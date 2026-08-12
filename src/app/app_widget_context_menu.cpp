@@ -211,7 +211,8 @@ void DesktopApp::ShowWidgetContextMenu(
     if (widget.type == DesktopWidgetType::Collection)
     {
         AppendMenuW(menu, MF_STRING, kContextWidgetOpen, _LW("app.interact.open_all"));
-        if (generalSettings_.demoModeEnabled)
+        if (generalSettings_.demoModeEnabled &&
+            AreDemoIdentityAssetsAvailable())
         {
             demoCategoryMenu = CreatePopupMenu();
             if (demoCategoryMenu)

@@ -44,6 +44,7 @@
 #include "../icon_render_rules.h"
 #include "../icon_beautify.h"
 #include "../demo_collection_rules.h"
+#include "../demo_asset_paths.h"
 #include "dock_window_rules.h"
 #include "dock_window_preview.h"
 #include "dock_window_transition.h"
@@ -1448,6 +1449,10 @@ private:
     std::wstring GetDemoCollectionIdentityTitle(
         const DesktopWidget& collection, std::wstring_view identity) const;
     ID2D1Bitmap1* GetDemoIdentityBitmap(size_t visualIndex);
+    bool AreDemoIdentityAssetsAvailable() const;
+    const std::filesystem::path& GetDemoIdentityIconDirectory() const;
+    const std::filesystem::path& GetDemoIdentityIconPath(
+        size_t visualIndex) const;
     void PreloadDemoIdentityBitmaps();
     void DrawDemoIdentityIcon(ID2D1RenderTarget* context,
         std::wstring_view identity, RECT iconRect, float opacity = 1.0f);
@@ -3093,7 +3098,7 @@ private:
 
     /** @brief D2D 位图缓存 */
     std::unordered_map<std::uintptr_t, ComPtr<ID2D1Bitmap1>> d2dIconCache_;
-    /** @brief 演示模式内嵌虚拟应用图标（按稳定视觉身份索引）。 */
+    /** @brief 从开发资源目录加载的演示应用图标（按稳定视觉身份索引）。 */
     std::array<ComPtr<ID2D1Bitmap1>,
         snowdesktop::demo_mode_rules::kDemoIconAssetCount>
         demoIdentityIconBitmaps_{};
@@ -3106,7 +3111,12 @@ private:
     };
     mutable std::unordered_map<std::wstring,
         DemoCollectionIdentityCacheEntry> demoCollectionIdentityCache_;
-    /** @brief 演示图标资源解码复用的 WIC 工厂。 */
+    mutable bool demoIdentityIconDirectoryResolved_ = false;
+    mutable std::filesystem::path demoIdentityIconDirectory_;
+    mutable std::array<std::filesystem::path,
+        snowdesktop::demo_mode_rules::kDemoIconAssetCount>
+        demoIdentityIconPaths_{};
+    /** @brief 演示图标文件解码复用的 WIC 工厂。 */
     ComPtr<IWICImagingFactory> demoIdentityWicFactory_;
     /** @brief 快捷方式箭头图标的 D2D 位图缓存（惰性初始化） */
     ComPtr<ID2D1Bitmap> shortcutArrowBitmap_;
