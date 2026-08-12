@@ -134,7 +134,8 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
     const RECT indicatorIconRect = iconRect;
     const bool lt = IsLightContentTheme();
 
-    auto drawDesktopItem = [&](const DesktopItem& item, RECT target) {
+    auto drawDesktopItem = [&](const DesktopItem& item, RECT target,
+        const DesktopWidget* demoCollection = nullptr) {
         RECT bitmapTarget = target;
         const bool recycleBin = _wcsicmp(item.desktopIconClsid.c_str(),
             kDesktopIconClsidRecycleBin) == 0;
@@ -152,8 +153,15 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
             ? std::wstring_view(item.parsingName)
             : std::wstring_view(item.layoutKey);
         if (useDemoIdentity)
-            DrawDemoIdentityIcon(
-                ctx, demoIdentity, bitmapTarget, alpha);
+        {
+            if (demoCollection)
+                DrawDemoCollectionIdentityIcon(
+                    ctx, *demoCollection, demoIdentity,
+                    bitmapTarget, alpha);
+            else
+                DrawDemoIdentityIcon(
+                    ctx, demoIdentity, bitmapTarget, alpha);
+        }
         else if (item.iconState == IconState::Loading)
             DrawPlaceholderIcon(ctx, item.sysIconIndex, bitmapTarget, alpha, !recycleBin);
         else if (ID2D1Bitmap1* bitmap = GetOrCreateD2DBitmap(
@@ -338,7 +346,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                 CellRect(
                     collectionLayout,
                     col, row);
-        drawDesktopItem(items_[itemIndex], cell);
+        drawDesktopItem(items_[itemIndex], cell, &widget);
     }
     if (state == 2)
         DrawDockSelectionIndicator(ctx, iconRect, lt);

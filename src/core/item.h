@@ -86,6 +86,7 @@ public:
 /** @struct DesktopItem
  *  @brief 桌面项数据模型（完整定义见 types.h） */
 struct DesktopItem;
+struct DesktopWidget;
 
 /** @struct FolderEntry
  *  @brief 文件夹条目数据模型（完整定义见 types.h） */
@@ -116,8 +117,10 @@ public:
     void SetSelected(bool selected) override;
     Container* GetContainer() const override;
     void Draw(ID2D1DeviceContext* context, RECT rect, int state) override;
-    void Draw(ID2D1RenderTarget* context, RECT rect, int state, bool lightTheme = false,
-        bool drawText = true, bool quickNavLayout = false);
+    void Draw(ID2D1RenderTarget* context, RECT rect, int state,
+        bool lightTheme = false, bool drawText = true,
+        bool quickNavLayout = false,
+        const DesktopWidget* demoCollection = nullptr);
     ComPtr<IDataObject> CreateDataObject() override;
     DesktopItem* GetDesktopItem() const { return item_; }
     DesktopApp* GetApp() const { return app_; }

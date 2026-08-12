@@ -350,8 +350,8 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
 
     if (useDemoIdentity)
     {
-        app_->DrawDemoIdentityIcon(
-            context, demoIdentity, iconRect, 1.0f);
+        app_->DrawDemoCollectionIdentityIcon(
+            context, *data_, demoIdentity, iconRect, 1.0f);
     }
     else if (item.iconState == IconState::Loading)
     {
@@ -439,7 +439,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 {
                     bool hovered = !preview && !di.selected && PtInRect(&cell, app_->lastMousePoint_) && PtInRect(&content, app_->lastMousePoint_);
                     icon->Draw(context, cell, di.selected ? 2 : (hovered ? 1 : 0),
-                        app_->IsLightContentTheme());
+                        app_->IsLightContentTheme(), true, false, data_);
                 }
             }
             else
@@ -457,7 +457,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                             : std::wstring_view(di.layoutKey));
                     DrawListItem(context, cell, di.iconBitmap,
                         di.sysIconIndex, di.name, di.selected,
-                        di.iconIsMediaThumbnail, demoIdentity);
+                        di.iconIsMediaThumbnail, demoIdentity, data_);
                 }
             }
         }
@@ -497,7 +497,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 RECT bodyRect = GetBodyRect();
                 bool hovered = !preview && PtInRect(&slotRect, app_->lastMousePoint_) != FALSE && !di.selected && PtInRect(&bodyRect, app_->lastMousePoint_);
                 icon->Draw(context, slotRect, di.selected ? 2 : (hovered ? 1 : 0),
-                    app_->IsLightContentTheme());
+                    app_->IsLightContentTheme(), true, false, data_);
             }
         }
     }

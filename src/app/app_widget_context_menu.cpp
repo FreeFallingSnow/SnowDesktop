@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../demo_collection_rules.h"
 #include "../menu_fluent_glyphs.h"
 #include "../widgets/collection_group_rules.h"
 
@@ -205,10 +206,43 @@ void DesktopApp::ShowWidgetContextMenu(
             ? _LW("app.interact.popup_container")
             : _LW("app.interact.large_folder"));
     std::vector<LuaWidgetMenuItem> luaMenuItems;
+    HMENU demoCategoryMenu = nullptr;
 
     if (widget.type == DesktopWidgetType::Collection)
     {
         AppendMenuW(menu, MF_STRING, kContextWidgetOpen, _LW("app.interact.open_all"));
+        if (generalSettings_.demoModeEnabled)
+        {
+            demoCategoryMenu = CreatePopupMenu();
+            if (demoCategoryMenu)
+            {
+                UINT flags = MF_STRING;
+                if (widget.demoIconCategory.empty()) flags |= MF_CHECKED;
+                AppendMenuW(demoCategoryMenu, flags,
+                    kContextWidgetDemoCategoryFirst,
+                    _LW("app.demo_category.auto"));
+                for (size_t index = 0;
+                    index < snowdesktop::demo_collection_rules::
+                        kCategories.size(); ++index)
+                {
+                    const auto& category =
+                        snowdesktop::demo_collection_rules::
+                            kCategories[index];
+                    flags = MF_STRING;
+                    if (snowdesktop::demo_collection_rules::
+                            EqualsAsciiInsensitive(
+                                widget.demoIconCategory, category.id))
+                        flags |= MF_CHECKED;
+                    AppendMenuW(demoCategoryMenu, flags,
+                        kContextWidgetDemoCategoryFirst + 1 +
+                            static_cast<UINT>(index),
+                        _LW(category.titleKey));
+                }
+                AppendMenuW(menu, MF_POPUP,
+                    reinterpret_cast<UINT_PTR>(demoCategoryMenu),
+                    _LW("app.demo_category.icon_category"));
+            }
+        }
         const bool compactCollection =
             widget.gridSpan.columns <= 1 && widget.gridSpan.rows <= 1;
         if (!compactCollection)
@@ -536,6 +570,9 @@ void DesktopApp::ShowWidgetContextMenu(
     if (widget.type == DesktopWidgetType::Collection)
         setFluentIcon(menu, kContextWidgetToggleCollectionMode,
             snowdesktop::menu_fluent_glyphs::kCollection);
+    if (demoCategoryMenu)
+        setFluentIcon(menu,
+            reinterpret_cast<UINT_PTR>(demoCategoryMenu), L"\uF18B");
 
     SetForegroundWindow(hwnd_);
     UINT command = ShowModernMenu(
@@ -551,6 +588,33 @@ void DesktopApp::ShowWidgetContextMenu(
             widgetEngine_->InvokeMenu(widgets_[widgetIndex].id, luaMenuItems[itemIndex].id);
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
+        RestoreDesktopWindowLayer();
+        RestoreInteractionInputFocus();
+        return;
+    }
+
+    if (command >= kContextWidgetDemoCategoryFirst &&
+        command <= kContextWidgetDemoCategoryLast)
+    {
+        if (command == kContextWidgetDemoCategoryFirst)
+        {
+            widgets_[widgetIndex].demoIconCategory.clear();
+        }
+        else
+        {
+            const size_t categoryIndex = static_cast<size_t>(
+                command - kContextWidgetDemoCategoryFirst - 1);
+            if (categoryIndex < snowdesktop::demo_collection_rules::
+                    kCategories.size())
+            {
+                widgets_[widgetIndex].demoIconCategory =
+                    snowdesktop::demo_collection_rules::
+                        kCategories[categoryIndex].id;
+            }
+        }
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        InvalidateFloatingDockWindow(false);
         RestoreDesktopWindowLayer();
         RestoreInteractionInputFocus();
         return;

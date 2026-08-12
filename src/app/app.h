@@ -43,6 +43,7 @@
 #include "item_layout_rules.h"
 #include "../icon_render_rules.h"
 #include "../icon_beautify.h"
+#include "../demo_collection_rules.h"
 #include "dock_window_rules.h"
 #include "dock_window_preview.h"
 #include "dock_window_transition.h"
@@ -1437,9 +1438,16 @@ private:
     bool ShouldDrawShortcutArrow(bool isShortcut, bool isApplicationShortcut) const;
     bool ShouldUseDemoIdentity(const DesktopItem& item) const;
     std::wstring GetDemoIdentityTitle(std::wstring_view identity) const;
+    std::wstring GetDemoCollectionIdentityTitle(
+        const DesktopWidget& collection, std::wstring_view identity) const;
+    std::wstring GetDemoCollectionCategoryTitle(
+        const DesktopWidget& collection) const;
     ID2D1Bitmap1* GetDemoIdentityBitmap(size_t visualIndex);
     void DrawDemoIdentityIcon(ID2D1RenderTarget* context,
         std::wstring_view identity, RECT iconRect, float opacity = 1.0f);
+    void DrawDemoCollectionIdentityIcon(ID2D1RenderTarget* context,
+        const DesktopWidget& collection, std::wstring_view identity,
+        RECT iconRect, float opacity = 1.0f);
     /** @brief 设置是否开启全局图标美化。 */
     void SetIconBeautifyEnabled(bool enabled);
     void SetIconBeautifySettings(
@@ -3078,7 +3086,9 @@ private:
     /** @brief D2D 位图缓存 */
     std::unordered_map<std::uintptr_t, ComPtr<ID2D1Bitmap1>> d2dIconCache_;
     /** @brief 演示模式内嵌虚拟应用图标（按稳定视觉身份索引）。 */
-    std::array<ComPtr<ID2D1Bitmap1>, 16> demoIdentityIconBitmaps_{};
+    std::array<ComPtr<ID2D1Bitmap1>,
+        snowdesktop::demo_mode_rules::kDemoIconAssetCount>
+        demoIdentityIconBitmaps_{};
     /** @brief 快捷方式箭头图标的 D2D 位图缓存（惰性初始化） */
     ComPtr<ID2D1Bitmap> shortcutArrowBitmap_;
     SIZE shortcutArrowBitmapSize_{};

@@ -37,6 +37,35 @@ inline constexpr std::array<VisualIdentity, 16> kVisualIdentities{
     VisualIdentity{ "app.demo_identity.data", L"\uEECC", 0x54854D },
 };
 
+inline constexpr std::array<VisualIdentity, 12> kCategoryVisualIdentities{
+    VisualIdentity{ "app.demo_identity.notes", L"\uE8A5", 0x397FE7 },
+    VisualIdentity{ "app.demo_identity.projects", L"\uE650", 0xE98A24 },
+    VisualIdentity{ "app.demo_identity.data", L"\uEA44", 0x20A384 },
+    VisualIdentity{ "app.demo_identity.mail", L"\uE8BD", 0x4B8EDB },
+    VisualIdentity{ "app.demo_identity.media", L"\uF4B0", 0x835BC8 },
+    VisualIdentity{ "app.demo_identity.tools", L"\uE15F", 0xD88A24 },
+    VisualIdentity{ "app.demo_identity.ideas", L"\uE128", 0x5051A5 },
+    VisualIdentity{ "app.demo_identity.explore", L"\uE16B", 0x4A58B5 },
+    VisualIdentity{ "app.demo_identity.tools", L"\uF1BE", 0x3A596C },
+    VisualIdentity{ "app.demo_identity.code", L"\uE756", 0x454953 },
+    VisualIdentity{ "app.demo_identity.explore", L"\uE774", 0x238ED2 },
+    VisualIdentity{ "app.demo_identity.archive", L"\uE753", 0x6983DD },
+};
+
+inline constexpr std::size_t kDemoIconAssetCount =
+    kVisualIdentities.size() + kCategoryVisualIdentities.size();
+
+inline const VisualIdentity& VisualIdentityAt(
+    std::size_t index) noexcept
+{
+    if (index < kVisualIdentities.size())
+        return kVisualIdentities[index];
+    const std::size_t categoryIndex = index - kVisualIdentities.size();
+    return categoryIndex < kCategoryVisualIdentities.size()
+        ? kCategoryVisualIdentities[categoryIndex]
+        : kVisualIdentities.front();
+}
+
 inline constexpr bool ShouldMaskApplication(
     bool demoModeEnabled, bool isApplicationShortcut) noexcept
 {

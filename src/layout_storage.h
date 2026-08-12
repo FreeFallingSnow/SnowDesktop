@@ -39,6 +39,7 @@ struct WidgetRecord
     std::optional<std::string> title;
     std::optional<std::string> customTitle;
     std::optional<std::string> titleMode;
+    std::string demoIconCategory;
     std::string sourceFolderPath;
     std::string packageId;
     std::string packageSourceProvider;

@@ -265,7 +265,8 @@ public:
         HBITMAP iconBitmap, int sysIconIndex,
         const std::wstring& name, bool selected,
         bool iconIsMediaThumbnail,
-        std::wstring_view demoIdentity = {}) const;
+        std::wstring_view demoIdentity = {},
+        const DesktopWidget* demoCollection = nullptr) const;
 
     void DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RECT rect,
         const std::wstring& name, bool isDir, bool showLabel = true) const;

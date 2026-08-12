@@ -182,7 +182,7 @@ std::wstring DockEntryItem::GetTitle() const
         return _LW("widget.collection");
     if (entry->type == DockEntryType::Collection &&
         app_->generalSettings_.demoModeEnabled)
-        return app_->GetDemoIdentityTitle(entry->reference);
+        return app_->GetDemoCollectionCategoryTitle(*it);
     return it->title;
 }
 

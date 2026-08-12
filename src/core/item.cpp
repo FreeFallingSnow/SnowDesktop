@@ -101,7 +101,8 @@ void DesktopIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 }
 
 void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool lightTheme,
-    bool drawText, bool quickNavLayout)
+    bool drawText, bool quickNavLayout,
+    const DesktopWidget* demoCollection)
 {
     if (!app_ || !item_) return;
     if (rect.left >= rect.right || rect.top >= rect.bottom) return;
@@ -151,7 +152,11 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
 
     if (useDemoIdentity)
     {
-        app_->DrawDemoIdentityIcon(context, demoIdentity, iconRect, alpha);
+        if (demoCollection)
+            app_->DrawDemoCollectionIdentityIcon(
+                context, *demoCollection, demoIdentity, iconRect, alpha);
+        else
+            app_->DrawDemoIdentityIcon(context, demoIdentity, iconRect, alpha);
     }
     else if (item_->iconState == IconState::Loading)
     {
@@ -180,7 +185,10 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
     if (!dragged && drawText)
     {
         const std::wstring title = useDemoIdentity
-            ? app_->GetDemoIdentityTitle(demoIdentity)
+            ? (demoCollection
+                ? app_->GetDemoCollectionIdentityTitle(
+                    *demoCollection, demoIdentity)
+                : app_->GetDemoIdentityTitle(demoIdentity))
             : item_->name;
         app_->DrawItemText(context, rect, title, selected, alpha, lightTheme);
     }

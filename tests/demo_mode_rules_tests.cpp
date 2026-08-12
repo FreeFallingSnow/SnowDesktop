@@ -1,10 +1,13 @@
 #include "demo_mode_rules.h"
+#include "demo_collection_rules.h"
 
 #include <array>
 #include <iostream>
 #include <set>
+#include <vector>
 
 namespace rules = snowdesktop::demo_mode_rules;
+namespace collectionRules = snowdesktop::demo_collection_rules;
 
 namespace
 {
@@ -51,6 +54,30 @@ int main()
     }
     Check(variants.size() >= 4,
         "representative identities should not collapse to one visual");
+
+    Check(rules::kDemoIconAssetCount == 28,
+        "the embedded demo icon pool must include category visuals");
+    const std::vector<std::wstring> creativeItems{
+        L"Photoshop.lnk", L"DaVinci Resolve.lnk", L"Blender.lnk" };
+    const auto& creative = collectionRules::ResolveCategory(
+        L"", L"creative", creativeItems);
+    Check(creative.id == L"creative",
+        "creative collections must be inferred from title and contents");
+    const std::vector<std::wstring> officeItems{
+        L"Word.lnk", L"PowerPoint.lnk", L"Excel.lnk" };
+    const auto& office = collectionRules::ResolveCategory(
+        L"", L"office", officeItems);
+    Check(office.id == L"office",
+        "office collections must be inferred from title and contents");
+    const auto& manual = collectionRules::ResolveCategory(
+        L"gaming", L"office", officeItems);
+    Check(manual.id == L"gaming",
+        "an explicit category binding must override inference");
+    Check(collectionRules::VisualIndex(creative, L"one") <
+            rules::kDemoIconAssetCount &&
+        collectionRules::VisualIndex(creative, L"one") ==
+            collectionRules::VisualIndex(creative, L"one"),
+        "category visual mappings must be stable and in range");
 
     if (failures != 0)
     {

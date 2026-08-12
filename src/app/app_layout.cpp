@@ -281,6 +281,8 @@ void DesktopApp::LoadLayoutSlots()
         DesktopWidget widget;
         widget.id = Utf8ToWide(saved.id);
         widget.type = WidgetTypeFromJson(Utf8ToWide(saved.type));
+        widget.demoIconCategory = Utf8ToWide(
+            saved.demoIconCategory);
         widget.sourceFolderPath = Utf8ToWide(saved.sourceFolderPath);
         widget.packageId = Utf8ToWide(saved.packageId);
         widget.packageSourceProvider = Utf8ToWide(
@@ -836,6 +838,8 @@ void DesktopApp::SaveLayoutSlots()
              << "\", \"title\": \"" << JsonEscapeUtf8(w.title)
              << "\", \"titleMode\": \"" << (hasCustomTitle ? "custom" : "auto")
              << "\", \"customTitle\": \"" << JsonEscapeUtf8(w.customTitle)
+             << "\", \"demoIconCategory\": \""
+             << JsonEscapeUtf8(w.demoIconCategory)
              << "\", \"sourceFolderPath\": \"" << JsonEscapeUtf8(w.sourceFolderPath)
              << "\", \"packageId\": \"" << JsonEscapeUtf8(w.packageId)
              << "\", \"packageSourceProvider\": \""

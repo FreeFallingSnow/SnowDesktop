@@ -300,6 +300,9 @@ bool DecodeWidgets(const JsonValue& root, Document& document,
                 path + ".customTitle", record.customTitle, error) ||
             !ReadOptionalString(object, "titleMode", path + ".titleMode",
                 record.titleMode, error) ||
+            !ReadString(object, "demoIconCategory",
+                path + ".demoIconCategory", record.demoIconCategory,
+                error) ||
             !ReadString(object, "sourceFolderPath",
                 path + ".sourceFolderPath", record.sourceFolderPath,
                 error) ||

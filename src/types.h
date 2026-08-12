@@ -435,6 +435,8 @@ struct DesktopWidget
     std::wstring title;
     std::wstring customTitle;
     std::wstring scriptTitle;
+    // Empty means Demo Mode infers a category from the collection contents.
+    std::wstring demoIconCategory;
     std::wstring sourceFolderPath;
     GridCell gridCell;
     GridSpan gridSpan;

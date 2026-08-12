@@ -1,5 +1,6 @@
 #include "app.h"
 #include "../demo_mode_rules.h"
+#include "../demo_collection_rules.h"
 #include <commoncontrols.h>
 
 // Shell-icon decoration, privacy placeholders and quick-navigation icons.
@@ -16,6 +17,27 @@ std::wstring DesktopApp::GetDemoIdentityTitle(
     const auto& visual = snowdesktop::demo_mode_rules::
         ResolveVisualIdentity(identity);
     return _LW(visual.titleKey);
+}
+
+std::wstring DesktopApp::GetDemoCollectionIdentityTitle(
+    const DesktopWidget& collection, std::wstring_view identity) const
+{
+    const auto& category = snowdesktop::demo_collection_rules::
+        ResolveCategory(collection.demoIconCategory,
+            collection.title, collection.itemKeys);
+    const size_t visualIndex = snowdesktop::demo_collection_rules::
+        VisualIndex(category, identity);
+    return _LW(snowdesktop::demo_mode_rules::
+        VisualIdentityAt(visualIndex).titleKey);
+}
+
+std::wstring DesktopApp::GetDemoCollectionCategoryTitle(
+    const DesktopWidget& collection) const
+{
+    const auto& category = snowdesktop::demo_collection_rules::
+        ResolveCategory(collection.demoIconCategory,
+            collection.title, collection.itemKeys);
+    return _LW(category.titleKey);
 }
 
 ID2D1Bitmap1* DesktopApp::GetDemoIdentityBitmap(size_t visualIndex)
@@ -58,14 +80,64 @@ ID2D1Bitmap1* DesktopApp::GetDemoIdentityBitmap(size_t visualIndex)
         FAILED(converter->Initialize(frame.Get(),
             GUID_WICPixelFormat32bppPBGRA,
             WICBitmapDitherTypeNone, nullptr, 0.0,
-            WICBitmapPaletteTypeCustom)) ||
-        FAILED(d2dContext_->CreateBitmapFromWicBitmap(
-            converter.Get(), nullptr, &cached)))
+            WICBitmapPaletteTypeCustom)))
     {
         cached.Reset();
         return nullptr;
     }
+
+    UINT width = 0;
+    UINT height = 0;
+    if (FAILED(converter->GetSize(&width, &height)) ||
+        width == 0 || height == 0 ||
+        width > static_cast<UINT>(std::numeric_limits<int>::max()) ||
+        height > static_cast<UINT>(std::numeric_limits<int>::max()))
+        return nullptr;
+
+    BITMAPINFO bitmapInfo{};
+    bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bitmapInfo.bmiHeader.biWidth = static_cast<LONG>(width);
+    bitmapInfo.bmiHeader.biHeight = -static_cast<LONG>(height);
+    bitmapInfo.bmiHeader.biPlanes = 1;
+    bitmapInfo.bmiHeader.biBitCount = 32;
+    bitmapInfo.bmiHeader.biCompression = BI_RGB;
+    void* pixels = nullptr;
+    HBITMAP bitmap = CreateDIBSection(
+        nullptr, &bitmapInfo, DIB_RGB_COLORS, &pixels, nullptr, 0);
+    if (!bitmap || !pixels)
+    {
+        if (bitmap) DeleteObject(bitmap);
+        return nullptr;
+    }
+    const UINT stride = width * 4U;
+    const HRESULT copyResult = converter->CopyPixels(
+        nullptr, stride, stride * height, static_cast<BYTE*>(pixels));
+    if (SUCCEEDED(copyResult))
+        cached = CreateD2DBitmapFromHBitmap(
+            bitmap, iconBeautifySettings_.enabled);
+    DeleteObject(bitmap);
+    if (!cached)
+        return nullptr;
     return cached.Get();
+}
+
+void DesktopApp::DrawDemoCollectionIdentityIcon(
+    ID2D1RenderTarget* context, const DesktopWidget& collection,
+    std::wstring_view identity, RECT iconRect, float opacity)
+{
+    if (!context || IsRectEmptyRect(iconRect) || opacity <= 0.0f)
+        return;
+    const auto& category = snowdesktop::demo_collection_rules::
+        ResolveCategory(collection.demoIconCategory,
+            collection.title, collection.itemKeys);
+    const size_t visualIndex = snowdesktop::demo_collection_rules::
+        VisualIndex(category, identity);
+    if (ID2D1Bitmap1* bitmap = GetDemoIdentityBitmap(visualIndex))
+    {
+        DrawIconBitmap(context, bitmap, iconRect, opacity);
+        return;
+    }
+    DrawDemoIdentityIcon(context, identity, iconRect, opacity);
 }
 
 void DesktopApp::DrawDemoIdentityIcon(ID2D1RenderTarget* context,
@@ -77,7 +149,7 @@ void DesktopApp::DrawDemoIdentityIcon(ID2D1RenderTarget* context,
     const size_t visualIndex = snowdesktop::demo_mode_rules::
         VisualIdentityIndex(identity);
     const auto& visual = snowdesktop::demo_mode_rules::
-        kVisualIdentities[visualIndex];
+        VisualIdentityAt(visualIndex);
     if (ID2D1Bitmap1* bitmap = GetDemoIdentityBitmap(visualIndex))
     {
         DrawIconBitmap(context, bitmap, iconRect, opacity);
