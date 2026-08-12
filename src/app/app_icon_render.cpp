@@ -23,30 +23,62 @@ namespace
 template <typename Cache>
 const typename Cache::mapped_type& ResolveDemoCollectionIdentityCached(
     const DesktopWidget& collection,
+    std::span<const DesktopWidget> widgets,
     Cache& cache)
 {
+    const auto* category = &snowdesktop::demo_collection_rules::
+        ResolveCategory(collection.demoIconCategory,
+            collection.title, collection.itemKeys);
     std::uint64_t signature = snowdesktop::demo_mode_rules::
-        StableIdentityHash(collection.demoIconCategory);
+        StableIdentityHash(category->id);
     auto mix = [&](std::wstring_view value) {
         signature ^= snowdesktop::demo_mode_rules::StableIdentityHash(value) +
             0x9e3779b97f4a7c15ULL + (signature << 6U) +
             (signature >> 2U);
     };
     mix(collection.title);
-    signature ^= static_cast<std::uint64_t>(collection.itemKeys.size());
-    if (!collection.itemKeys.empty())
+    mix(collection.gridCell.pageId);
+    signature ^= static_cast<std::uint64_t>(collection.gridCell.column) << 8U;
+    signature ^= static_cast<std::uint64_t>(collection.gridCell.row) << 16U;
+    signature ^= static_cast<std::uint64_t>(collection.gridSpan.columns) << 24U;
+    signature ^= static_cast<std::uint64_t>(collection.gridSpan.rows) << 32U;
+    for (const auto& itemKey : collection.itemKeys)
+        mix(itemKey);
+
+    std::size_t subjectSlotOffset = 0;
+    for (const auto& peer : widgets)
     {
-        mix(collection.itemKeys.front());
-        mix(collection.itemKeys.back());
+        if (peer.type != DesktopWidgetType::Collection ||
+            peer.gridCell.pageId != collection.gridCell.pageId)
+            continue;
+        const auto& peerCategory = snowdesktop::demo_collection_rules::
+            ResolveCategory(peer.demoIconCategory,
+                peer.title, peer.itemKeys);
+        if (peerCategory.id != category->id)
+            continue;
+
+        mix(peer.id);
+        signature ^= static_cast<std::uint64_t>(peer.itemKeys.size()) << 40U;
+        signature ^= static_cast<std::uint64_t>(peer.gridCell.column) << 48U;
+        signature ^= static_cast<std::uint64_t>(peer.gridCell.row) << 56U;
+
+        const bool precedes = peer.gridCell.row < collection.gridCell.row ||
+            (peer.gridCell.row == collection.gridCell.row &&
+                (peer.gridCell.column < collection.gridCell.column ||
+                    (peer.gridCell.column == collection.gridCell.column &&
+                        peer.id < collection.id)));
+        if (precedes)
+            subjectSlotOffset += snowdesktop::demo_collection_rules::
+                ExposedItemCount(peer.itemKeys.size(),
+                    peer.gridSpan.columns, peer.gridSpan.rows);
     }
 
     auto& entry = cache[collection.id];
-    if (!entry.category || entry.signature != signature)
+    if (entry.category != category || entry.signature != signature)
     {
-        entry.category = &snowdesktop::demo_collection_rules::
-            ResolveCategory(collection.demoIconCategory,
-                collection.title, collection.itemKeys);
+        entry.category = category;
         entry.signature = signature;
+        entry.subjectSlotOffset = subjectSlotOffset;
         entry.identitySlots.clear();
         entry.identitySlots.reserve(collection.itemKeys.size());
         for (std::size_t index = 0; index < collection.itemKeys.size(); ++index)
@@ -68,7 +100,7 @@ DemoCollectionPresentation(const Entry& entry,
         : static_cast<std::size_t>(
             snowdesktop::demo_mode_rules::StableIdentityHash(identity));
     return snowdesktop::demo_collection_rules::PresentationForSlot(
-        *entry.category, slot);
+        *entry.category, slot, entry.subjectSlotOffset);
 }
 }
 
@@ -84,7 +116,7 @@ std::wstring DesktopApp::GetDemoCollectionIdentityTitle(
     const DesktopWidget& collection, std::wstring_view identity) const
 {
     const auto& entry = ResolveDemoCollectionIdentityCached(
-        collection, demoCollectionIdentityCache_);
+        collection, widgets_, demoCollectionIdentityCache_);
     return std::wstring(DemoCollectionPresentation(
         entry, identity).title);
 }
@@ -93,7 +125,7 @@ std::wstring DesktopApp::GetDemoCollectionCategoryTitle(
     const DesktopWidget& collection) const
 {
     const auto& entry = ResolveDemoCollectionIdentityCached(
-        collection, demoCollectionIdentityCache_);
+        collection, widgets_, demoCollectionIdentityCache_);
     return _LW(entry.category->titleKey);
 }
 
@@ -196,7 +228,7 @@ void DesktopApp::DrawDemoCollectionIdentityIcon(
     if (!context || IsRectEmptyRect(iconRect) || opacity <= 0.0f)
         return;
     const auto& entry = ResolveDemoCollectionIdentityCached(
-        collection, demoCollectionIdentityCache_);
+        collection, widgets_, demoCollectionIdentityCache_);
     const auto presentation = DemoCollectionPresentation(
         entry, identity);
     if (ID2D1Bitmap1* bitmap = GetDemoIdentityBitmap(

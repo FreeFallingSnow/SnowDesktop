@@ -37,11 +37,11 @@ inline constexpr std::array<VisualIdentity, 16> kVisualIdentities{
     VisualIdentity{ L"Atlas Data", L"\uEECC", 0x54854D },
 };
 
-// Indices 16..63 are reserved for collection categories. Every category owns
-// four exclusive identities, so demo collections can show four real entries
-// without repeating an icon either within a collection or across categories.
-// The array order mirrors the contiguous RCDATA resource IDs in resource.h.
-inline constexpr std::array<VisualIdentity, 48> kCategoryVisualIdentities{
+// Indices 16..114 are reserved for collection categories. Categories own
+// disjoint subject icons, and the larger pools cover the entries exposed by
+// inline collection slots plus the compact "all" mosaic before badges repeat
+// a subject. The array order mirrors the contiguous RCDATA resource IDs.
+inline constexpr std::array<VisualIdentity, 99> kCategoryVisualIdentities{
     VisualIdentity{ L"Atlas Library", L"\uE8A5", 0x397FE7 },
     VisualIdentity{ L"Luma Present", L"\uE650", 0xE98A24 },
     VisualIdentity{ L"Ledger Pro", L"\uEA44", 0x20A384 },
@@ -90,6 +90,57 @@ inline constexpr std::array<VisualIdentity, 48> kCategoryVisualIdentities{
     VisualIdentity{ L"Quest Compass", L"\uE81B", 0x71449B },
     VisualIdentity{ L"Stackyard", L"\uE7B8", 0x315274 },
     VisualIdentity{ L"Skyfetch", L"\uE896", 0x3C8DD1 },
+    VisualIdentity{ L"Harbor Archive", L"\uE8A5", 0x356FC1 },
+    VisualIdentity{ L"Papertrail Vault", L"\uE72E", 0x365AA5 },
+    VisualIdentity{ L"Northstar Drive", L"\uE8A5", 0x4C75BB },
+    VisualIdentity{ L"Clearpath Sync", L"\uE895", 0x5B59C6 },
+    VisualIdentity{ L"Fieldnote Docs", L"\uE8A5", 0x5872B1 },
+    VisualIdentity{ L"Waypoint Cabinet", L"\uE8A5", 0x4D6298 },
+    VisualIdentity{ L"Luma Transfer", L"\uE8AB", 0x566BC6 },
+    VisualIdentity{ L"TuneUp Center", L"\uF82F", 0x5647AA },
+    VisualIdentity{ L"Beacon Tools", L"\uE74D", 0x9A526B },
+    VisualIdentity{ L"Canvas North", L"\uF357", 0x8C59BF },
+    VisualIdentity{ L"Storyline", L"\uE768", 0xC35C8A },
+    VisualIdentity{ L"Motion Deck", L"\uE714", 0x3B79BE },
+    VisualIdentity{ L"Code Harbor", L"\uE968", 0x426DB6 },
+    VisualIdentity{ L"Stackline", L"\uE90F", 0x394EAA },
+    VisualIdentity{ L"Debug Desk", L"\uE7BA", 0x4B6599 },
+    VisualIdentity{ L"Buildcraft", L"\uF166", 0x7854B8 },
+    VisualIdentity{ L"Commit Grove", L"\uE9D9", 0x386EA6 },
+    VisualIdentity{ L"Runtime Lab", L"\uE768", 0x7654C8 },
+    VisualIdentity{ L"SourcePilot", L"\uE950", 0x456BAA },
+    VisualIdentity{ L"Northstar Sheets", L"\uEA44", 0x287EB5 },
+    VisualIdentity{ L"Briefcase", L"\uE821", 0x6151B2 },
+    VisualIdentity{ L"Meeting Notes", L"\uE70B", 0x3876A8 },
+    VisualIdentity{ L"Slideworks", L"\uE650", 0xD3705F },
+    VisualIdentity{ L"Signal Room", L"\uE8BD", 0x4B8EDB },
+    VisualIdentity{ L"Courier Desk", L"\uE8AA", 0x3A87D6 },
+    VisualIdentity{ L"Talkline", L"\uE720", 0x5968D8 },
+    VisualIdentity{ L"Tempo Video", L"\uE768", 0x7654C8 },
+    VisualIdentity{ L"Soundstage", L"\uE720", 0xA64683 },
+    VisualIdentity{ L"Framebox", L"\uEDB9", 0x7259B3 },
+    VisualIdentity{ L"Vector Works", L"\uE15F", 0x3979B4 },
+    VisualIdentity{ L"Model Harbor", L"\uE9D2", 0x3F6CA5 },
+    VisualIdentity{ L"Simulate Pro", L"\uF1C3", 0x6556AE },
+    VisualIdentity{ L"Blueprint Desk", L"\uE8A5", 0x2E76B8 },
+    VisualIdentity{ L"Measure Lab", L"\uE9D2", 0x475EA5 },
+    VisualIdentity{ L"Assembly Bay", L"\uE90F", 0x5063A8 },
+    VisualIdentity{ L"Field Solver", L"\uE945", 0x3A78B5 },
+    VisualIdentity{ L"Design Grid", L"\uE950", 0x315875 },
+    VisualIdentity{ L"Prototype Room", L"\uF1C3", 0x5E56B2 },
+    VisualIdentity{ L"Model Studio", L"\uE128", 0x6C53C0 },
+    VisualIdentity{ L"Insight Engine", L"\uE8B6", 0x4F74B8 },
+    VisualIdentity{ L"Reasoning Lab", L"\uE945", 0x765BCC },
+    VisualIdentity{ L"Playforge", L"\uE7FC", 0x6B4DB7 },
+    VisualIdentity{ L"Game Harbor", L"\uE7FC", 0x4A58B5 },
+    VisualIdentity{ L"Level Studio", L"\uE81B", 0x71449B },
+    VisualIdentity{ L"Party Relay", L"\uE716", 0x7654C8 },
+    VisualIdentity{ L"Victory Lane", L"\uE7FC", 0x3A69A8 },
+    VisualIdentity{ L"Server Desk", L"\uE968", 0x355B79 },
+    VisualIdentity{ L"Deploy Lane", L"\uE895", 0x5953A7 },
+    VisualIdentity{ L"Cluster View", L"\uE968", 0x3A6C8C },
+    VisualIdentity{ L"Service Monitor", L"\uE9D9", 0x455369 },
+    VisualIdentity{ L"Runbook", L"\uE8A5", 0x315274 },
 };
 
 inline constexpr std::size_t kDemoIconAssetCount =

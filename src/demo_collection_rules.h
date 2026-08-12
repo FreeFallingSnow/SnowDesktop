@@ -2,6 +2,7 @@
 
 #include "demo_mode_rules.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cwctype>
@@ -31,28 +32,28 @@ struct IdentityPresentation
 inline constexpr std::size_t kIdentityVariantCount = 5;
 inline constexpr std::size_t kIdentityCountPerCategory = 20;
 
-inline constexpr std::array<std::size_t, 4> kFilesVisuals{
-    16, 28, 29, 52 };
-inline constexpr std::array<std::size_t, 4> kUtilitiesVisuals{
-    27, 30, 31, 53 };
-inline constexpr std::array<std::size_t, 4> kCreativeVisuals{
-    17, 32, 33, 54 };
-inline constexpr std::array<std::size_t, 4> kDevelopmentVisuals{
-    25, 34, 35, 55 };
-inline constexpr std::array<std::size_t, 4> kOfficeVisuals{
-    18, 36, 37, 56 };
-inline constexpr std::array<std::size_t, 4> kCommunicationVisuals{
-    19, 38, 39, 57 };
-inline constexpr std::array<std::size_t, 4> kMediaVisuals{
-    20, 40, 41, 58 };
-inline constexpr std::array<std::size_t, 4> kEngineeringVisuals{
-    21, 42, 43, 59 };
-inline constexpr std::array<std::size_t, 4> kAiVisuals{
-    22, 44, 45, 60 };
-inline constexpr std::array<std::size_t, 4> kGamingVisuals{
-    23, 46, 47, 61 };
-inline constexpr std::array<std::size_t, 4> kOperationsVisuals{
-    24, 48, 49, 62 };
+inline constexpr std::array<std::size_t, 11> kFilesVisuals{
+    16, 28, 29, 52, 64, 65, 66, 67, 68, 69, 70 };
+inline constexpr std::array<std::size_t, 6> kUtilitiesVisuals{
+    27, 30, 31, 53, 71, 72 };
+inline constexpr std::array<std::size_t, 7> kCreativeVisuals{
+    17, 32, 33, 54, 73, 74, 75 };
+inline constexpr std::array<std::size_t, 11> kDevelopmentVisuals{
+    25, 34, 35, 55, 76, 77, 78, 79, 80, 81, 82 };
+inline constexpr std::array<std::size_t, 8> kOfficeVisuals{
+    18, 36, 37, 56, 83, 84, 85, 86 };
+inline constexpr std::array<std::size_t, 7> kCommunicationVisuals{
+    19, 38, 39, 57, 87, 88, 89 };
+inline constexpr std::array<std::size_t, 7> kMediaVisuals{
+    20, 40, 41, 58, 90, 91, 92 };
+inline constexpr std::array<std::size_t, 13> kEngineeringVisuals{
+    21, 42, 43, 59, 93, 94, 95, 96, 97, 98, 99, 100, 101 };
+inline constexpr std::array<std::size_t, 7> kAiVisuals{
+    22, 44, 45, 60, 102, 103, 104 };
+inline constexpr std::array<std::size_t, 9> kGamingVisuals{
+    23, 46, 47, 61, 105, 106, 107, 108, 109 };
+inline constexpr std::array<std::size_t, 9> kOperationsVisuals{
+    24, 48, 49, 62, 110, 111, 112, 113, 114 };
 inline constexpr std::array<std::size_t, 4> kWebVisuals{
     26, 50, 51, 63 };
 
@@ -271,7 +272,8 @@ inline std::size_t VisualIndex(
 }
 
 inline IdentityPresentation PresentationForSlot(
-    const Category& category, std::size_t slot) noexcept
+    const Category& category, std::size_t slot,
+    std::size_t subjectOffset = 0) noexcept
 {
     const std::size_t titleCount = category.identityTitles.empty()
         ? 1 : category.identityTitles.size();
@@ -279,16 +281,32 @@ inline IdentityPresentation PresentationForSlot(
     const std::size_t visualCount = category.visualIndices.empty()
         ? demo_mode_rules::kVisualIdentities.size()
         : category.visualIndices.size();
+    const std::size_t subjectSlot = slot + subjectOffset;
     const std::size_t visualIndex = category.visualIndices.empty()
-        ? slot % visualCount
-        : category.visualIndices[slot % visualCount];
+        ? subjectSlot % visualCount
+        : category.visualIndices[subjectSlot % visualCount];
     return {
         visualIndex,
-        (slot / visualCount) % kIdentityVariantCount,
+        (subjectSlot / visualCount) % kIdentityVariantCount,
         category.identityTitles.empty()
             ? demo_mode_rules::VisualIdentityAt(visualIndex).title
             : category.identityTitles[slot]
     };
+}
+
+inline std::size_t ExposedItemCount(
+    std::size_t itemCount, int columns, int rows) noexcept
+{
+    columns = std::max(1, columns);
+    rows = std::max(1, rows);
+    if (columns <= 1 && rows <= 1)
+        return std::min<std::size_t>(itemCount, 4);
+
+    const std::size_t inlineCapacity =
+        static_cast<std::size_t>(columns * rows - 1);
+    if (itemCount <= inlineCapacity)
+        return itemCount;
+    return std::min(itemCount, inlineCapacity + 4);
 }
 
 inline std::size_t ItemOrdinal(

@@ -55,8 +55,8 @@ int main()
     Check(variants.size() >= 4,
         "representative identities should not collapse to one visual");
 
-    Check(rules::kDemoIconAssetCount == 64,
-        "the embedded demo icon pool must include category visuals");
+    Check(rules::kDemoIconAssetCount == 115,
+        "the embedded demo icon pool must include expanded category subjects");
     const std::vector<std::wstring> creativeItems{
         L"Photoshop.lnk", L"DaVinci Resolve.lnk", L"Blender.lnk" };
     const auto& creative = collectionRules::ResolveCategory(
@@ -83,10 +83,16 @@ int main()
     for (const auto& visual : rules::kVisualIdentities)
         Check(demoTitles.insert(visual.title).second,
             "standalone demo titles must be unique");
-    for (const auto& category : collectionRules::kCategories)
+    constexpr std::array<std::size_t, 12> minimumVisibleSubjects{
+        11, 6, 7, 11, 8, 5, 4, 13, 7, 9, 6, 4 };
+    for (std::size_t categoryIndex = 0;
+        categoryIndex < collectionRules::kCategories.size();
+        ++categoryIndex)
     {
-        Check(category.visualIndices.size() == 4,
-            "each demo category must expose four generated seed icons");
+        const auto& category = collectionRules::kCategories[categoryIndex];
+        Check(category.visualIndices.size() >=
+                minimumVisibleSubjects[categoryIndex],
+            "each demo category must cover its visible collection subjects");
         Check(category.identityTitles.size() ==
                 collectionRules::kIdentityCountPerCategory,
             "each demo category must expose the full presentation pool");
@@ -126,6 +132,13 @@ int main()
     Check(collectionRules::PresentationForSlot(creative, 20).title ==
             collectionRules::PresentationForSlot(creative, 0).title,
         "large collections must wrap presentation only after twenty entries");
+    Check(collectionRules::ExposedItemCount(12, 4, 2) == 11 &&
+            collectionRules::ExposedItemCount(13, 1, 1) == 4 &&
+            collectionRules::ExposedItemCount(3, 3, 1) == 3,
+        "visible subject counts must include the all-button mosaic only on overflow");
+    Check(collectionRules::PresentationForSlot(creative, 0, 3).visualIndex ==
+            collectionRules::PresentationForSlot(creative, 3).visualIndex,
+        "later peer collections must continue from the prior visible subject range");
 
     if (failures != 0)
     {

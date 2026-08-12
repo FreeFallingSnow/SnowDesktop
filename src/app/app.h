@@ -3101,6 +3101,7 @@ private:
     {
         std::uint64_t signature = 0;
         const snowdesktop::demo_collection_rules::Category* category = nullptr;
+        std::size_t subjectSlotOffset = 0;
         std::unordered_map<std::wstring, std::size_t> identitySlots;
     };
     mutable std::unordered_map<std::wstring,
