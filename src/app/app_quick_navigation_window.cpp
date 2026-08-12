@@ -614,6 +614,8 @@ std::wstring DesktopApp::GetQuickNavTabLabel(size_t tab) const
     std::vector<size_t> ci = GetQuickNavigationCollectionIndices();
     if (tab - 2 >= ci.size()) return L"";
     const DesktopWidget& widget = widgets_[ci[tab - 2]];
+    if (ShouldUseDemoCollectionIdentity(&widget))
+        return GetDemoCollectionCategoryTitle(widget);
     if (!widget.title.empty())
         return widget.title;
     if (widget.type == DesktopWidgetType::FileCategories)
