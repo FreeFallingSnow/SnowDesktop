@@ -23,7 +23,7 @@ std::wstring DockRunningItem::GetTitle() const
     const DockRunningAppInfo& running =
         app_->dockUnpinnedRunningApps_[runningIndex_];
     if (!app_->generalSettings_.demoModeEnabled ||
-        !app_->AreDemoIdentityAssetsAvailable())
+        !app_->demoIdentityAssetsAvailable_)
         return running.title;
     const std::wstring_view identity = running.identityKey.empty()
         ? std::wstring_view(running.executablePath)

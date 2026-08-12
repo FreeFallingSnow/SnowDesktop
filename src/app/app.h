@@ -245,6 +245,21 @@ struct IconLoadResult {
     std::wstring folderPath;
 };
 
+struct DemoIconDecodeResult {
+    std::uint64_t generation = 0;
+    std::size_t visualIndex = 0;
+    int width = 0;
+    int height = 0;
+    std::vector<std::uint32_t> pixels;
+};
+
+struct DemoIconLoadTask {
+    std::uint64_t generation = 0;
+    std::size_t visualIndex = 0;
+    std::filesystem::path path;
+    snowdesktop::IconBeautifySettings beautify;
+};
+
 /**
  * @brief 拖拽渲染缓存，用于缓存拖拽操作期间的静态场景位图。
  *
@@ -1453,7 +1468,11 @@ private:
     const std::filesystem::path& GetDemoIdentityIconDirectory() const;
     const std::filesystem::path& GetDemoIdentityIconPath(
         size_t visualIndex) const;
-    void PreloadDemoIdentityBitmaps();
+    void StartDemoIconLoader();
+    void StopDemoIconLoader();
+    void ResetDemoIconLoader();
+    void QueueDemoIdentityBitmap(size_t visualIndex);
+    void OnDemoIconDecoded(LPARAM lParam);
     void DrawDemoIdentityIcon(ID2D1RenderTarget* context,
         std::wstring_view identity, RECT iconRect, float opacity = 1.0f);
     void DrawDemoCollectionIdentityIcon(ID2D1RenderTarget* context,
@@ -3112,12 +3131,22 @@ private:
     mutable std::unordered_map<std::wstring,
         DemoCollectionIdentityCacheEntry> demoCollectionIdentityCache_;
     mutable bool demoIdentityIconDirectoryResolved_ = false;
+    mutable bool demoIdentityAssetsAvailable_ = false;
     mutable std::filesystem::path demoIdentityIconDirectory_;
     mutable std::array<std::filesystem::path,
         snowdesktop::demo_mode_rules::kDemoIconAssetCount>
         demoIdentityIconPaths_{};
-    /** @brief 演示图标文件解码复用的 WIC 工厂。 */
-    ComPtr<IWICImagingFactory> demoIdentityWicFactory_;
+    /** @brief 外部演示 PNG 在后台解码、美化，UI 线程只上传 GPU 位图。 */
+    std::thread demoIconLoaderThread_;
+    std::mutex demoIconLoaderMutex_;
+    std::condition_variable demoIconLoaderCv_;
+    std::deque<DemoIconLoadTask> demoIconLoaderQueue_;
+    std::array<bool, snowdesktop::demo_mode_rules::kDemoIconAssetCount>
+        demoIconLoaderPending_{};
+    std::array<bool, snowdesktop::demo_mode_rules::kDemoIconAssetCount>
+        demoIconLoaderFailed_{};
+    std::atomic<bool> demoIconLoaderRunning_{ false };
+    std::uint64_t demoIconLoadGeneration_ = 1;
     /** @brief 快捷方式箭头图标的 D2D 位图缓存（惰性初始化） */
     ComPtr<ID2D1Bitmap> shortcutArrowBitmap_;
     SIZE shortcutArrowBitmapSize_{};

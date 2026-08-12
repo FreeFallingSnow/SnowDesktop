@@ -248,7 +248,7 @@ void DesktopApp::RefreshQuickNavigationAppResults()
         const QuickNavigationAppEntry& entry = quickNavigationAppEntries_[i];
         const std::wstring displayName =
             generalSettings_.demoModeEnabled &&
-            AreDemoIdentityAssetsAvailable()
+            demoIdentityAssetsAvailable_
             ? GetDemoIdentityTitle(entry.parsingName)
             : entry.name;
         if (!NameMatchesQuery(displayName, query))
@@ -261,7 +261,7 @@ void DesktopApp::RefreshQuickNavigationAppResults()
             const auto displayName = [&](size_t index) {
                 const auto& entry = quickNavigationAppEntries_[index];
                 return generalSettings_.demoModeEnabled &&
-                    AreDemoIdentityAssetsAvailable()
+                    demoIdentityAssetsAvailable_
                     ? GetDemoIdentityTitle(entry.parsingName)
                     : entry.name;
             };
@@ -432,7 +432,7 @@ DesktopApp::BuildQuickNavigationContentModel() const
         if (key.empty() || seenDesktop.contains(key)) return;
         if (demoCollectionIndex >= widgets_.size() &&
             generalSettings_.demoModeEnabled &&
-            AreDemoIdentityAssetsAvailable())
+            demoIdentityAssetsAvailable_)
         {
             for (size_t widgetIndex = 0;
                 widgetIndex < widgets_.size(); ++widgetIndex)

@@ -236,8 +236,6 @@ void DesktopApp::LoadGeneralSettingsAndApply()
     ApplyQuickNavigationAppearance();
     if (demoModeEnabled != generalSettings_.demoModeEnabled)
     {
-        if (generalSettings_.demoModeEnabled)
-            PreloadDemoIdentityBitmaps();
         InvalidateDragStaticScene();
         InvalidateDockContainers();
         if (hwnd_ && IsWindow(hwnd_))

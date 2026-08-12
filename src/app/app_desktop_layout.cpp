@@ -69,6 +69,7 @@ void DesktopApp::LayoutItems()
  */
 void DesktopApp::RebuildContainersAndItems()
 {
+    demoCollectionIdentityCache_.clear();
     const bool wasDragging = dragSession_.IsActive();
     if (wasDragging)
         dragSession_.DetachRuntimeBindings();

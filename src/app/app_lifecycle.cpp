@@ -29,6 +29,7 @@ DesktopApp::~DesktopApp()
     UnregisterFloatingDockHotkey();
     DestroyFloatingDockWindow();
     StopQuickNavigationAppIndexing();
+    StopDemoIconLoader();
     StopIconLoader();
     ClearQuickNavigationEverythingResults();
     widgetEngine_.reset();
@@ -657,6 +658,7 @@ bool DesktopApp::CreateDesktopOverlayWindow()
     ApplyFloatingDockHotkey();
     ApplyDesktopPassthroughHotkey();
     RegisterShellChangeNotifications();
+    StartDemoIconLoader();
     StartSteamWorkshopWatcher();
     SetTimer(hwnd_, kRecycleBinPollTimerId, kRecycleBinPollIntervalMs, nullptr);
     SetTimer(hwnd_, kWidgetRefreshTimerId, kWidgetRefreshIntervalMs, nullptr);
@@ -825,6 +827,7 @@ void DesktopApp::RequestExit()
     exitRequested_ = true;
     StopShellFileOperationWorker();
     StopQuickNavigationAppIndexing();
+    StopDemoIconLoader();
     StopIconLoader();
     RestoreExplorerIcons();
     if (hwnd_ && IsWindow(hwnd_))

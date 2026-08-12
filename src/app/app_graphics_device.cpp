@@ -161,9 +161,7 @@ void DesktopApp::ResetCompositionRenderCaches()
     privacyFileIconBitmap_.Reset();
     privacyFolderIconBitmap_.Reset();
     d2dIconCache_.clear();
-    for (auto& bitmap : demoIdentityIconBitmaps_)
-        bitmap.Reset();
-    demoIdentityWicFactory_.Reset();
+    ResetDemoIconLoader();
     placeholderIconCache_.clear();
     shortcutArrowBitmap_.Reset();
     shortcutArrowBitmapSize_ = {};

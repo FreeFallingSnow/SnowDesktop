@@ -212,7 +212,7 @@ void DesktopApp::ShowWidgetContextMenu(
     {
         AppendMenuW(menu, MF_STRING, kContextWidgetOpen, _LW("app.interact.open_all"));
         if (generalSettings_.demoModeEnabled &&
-            AreDemoIdentityAssetsAvailable())
+            demoIdentityAssetsAvailable_)
         {
             demoCategoryMenu = CreatePopupMenu();
             if (demoCategoryMenu)
@@ -613,6 +613,7 @@ void DesktopApp::ShowWidgetContextMenu(
                         kCategories[categoryIndex].id;
             }
         }
+        demoCollectionIdentityCache_.clear();
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
         InvalidateFloatingDockWindow(false);

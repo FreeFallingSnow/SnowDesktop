@@ -637,6 +637,9 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case kIconLoadedMessage:
         OnIconLoaded(wp, lp);
         return 0;
+    case kDemoIconDecodedMessage:
+        OnDemoIconDecoded(lp);
+        return 0;
     case kQuickNavigationAppsIndexedMessage:
         OnQuickNavigationAppsIndexed(wp, lp);
         return 0;
@@ -670,6 +673,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         RequestExit();
         return 0;
     case WM_DESTROY:
+        StopDemoIconLoader();
         if (luaInlineEdit_)
             CommitLuaInlineTextEdit(false);
         UnregisterNavigationHotkey();

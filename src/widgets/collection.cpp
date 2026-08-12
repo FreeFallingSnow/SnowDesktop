@@ -765,6 +765,8 @@ void Collection::ReorderMembers(const std::vector<size_t>& indices, size_t inser
     if (adjusted > data_->itemKeys.size()) adjusted = data_->itemKeys.size();
     for (auto it = moving.rbegin(); it != moving.rend(); ++it)
         data_->itemKeys.insert(data_->itemKeys.begin() + static_cast<std::ptrdiff_t>(adjusted++), *it);
+    if (app_)
+        app_->demoCollectionIdentityCache_.erase(data_->id);
     InvalidateSlots();
 }
 

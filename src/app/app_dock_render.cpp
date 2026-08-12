@@ -370,7 +370,7 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
     };
     const bool lt = IsLightContentTheme();
     if (generalSettings_.demoModeEnabled &&
-        AreDemoIdentityAssetsAvailable())
+        demoIdentityAssetsAvailable_)
     {
         const std::wstring_view identity = app.identityKey.empty()
             ? std::wstring_view(app.executablePath)

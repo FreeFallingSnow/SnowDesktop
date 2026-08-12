@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <mutex>
 #include <tuple>
@@ -854,5 +855,117 @@ std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
     ApplyTexture(output, width, height, settings);
     ApplyOutline(output, width, height, settings);
     return output;
+}
+
+std::optional<EdgeColor> DetectEdgeFill(
+    const std::vector<std::uint32_t>& pixels, int width, int height)
+{
+    if (width <= 2 || height <= 2 ||
+        pixels.size() != static_cast<std::size_t>(width) * height)
+        return std::nullopt;
+
+    constexpr int kAlphaThreshold = 16;
+    constexpr int kReliableAlpha = 160;
+    constexpr int kBucketSize = 24;
+    constexpr int kToleranceSq = 30 * 30 * 3;
+    constexpr float kMinimumDominantRatio = 0.86f;
+    constexpr int kMinimumSectors = 7;
+    constexpr int kSectorCount = 8;
+
+    struct Bucket
+    {
+        int count = 0;
+        int red = 0;
+        int green = 0;
+        int blue = 0;
+        unsigned sectors = 0;
+    };
+    std::unordered_map<int, Bucket> buckets;
+    int reliableSamples = 0;
+    auto sample = [&](int x, int y, int sector) {
+        const std::uint32_t pixel = pixels[static_cast<std::size_t>(y) * width + x];
+        const int alpha = static_cast<int>((pixel >> 24) & 0xff);
+        if (alpha < kReliableAlpha) return;
+        const int red = std::clamp(
+            (static_cast<int>((pixel >> 16) & 0xff) * 255 + alpha / 2) / alpha,
+            0, 255);
+        const int green = std::clamp(
+            (static_cast<int>((pixel >> 8) & 0xff) * 255 + alpha / 2) / alpha,
+            0, 255);
+        const int blue = std::clamp(
+            (static_cast<int>(pixel & 0xff) * 255 + alpha / 2) / alpha,
+            0, 255);
+        const int key = (red / kBucketSize) << 16 |
+            (green / kBucketSize) << 8 | (blue / kBucketSize);
+        auto& bucket = buckets[key];
+        ++bucket.count;
+        bucket.red += red;
+        bucket.green += green;
+        bucket.blue += blue;
+        bucket.sectors |= 1u << sector;
+        ++reliableSamples;
+    };
+
+    for (int x = 0; x < width; ++x)
+    {
+        const int sector = std::min(kSectorCount - 1,
+            x * kSectorCount / std::max(1, width));
+        sample(x, 0, sector);
+        sample(x, height - 1, sector);
+    }
+    for (int y = 1; y + 1 < height; ++y)
+    {
+        const int sector = std::min(kSectorCount - 1,
+            y * kSectorCount / std::max(1, height));
+        sample(0, y, sector);
+        sample(width - 1, y, sector);
+    }
+    if (reliableSamples == 0) return std::nullopt;
+
+    const Bucket* dominant = nullptr;
+    for (const auto& [_, bucket] : buckets)
+        if (!dominant || bucket.count > dominant->count)
+            dominant = &bucket;
+    if (!dominant ||
+        static_cast<float>(dominant->count) / reliableSamples <
+            kMinimumDominantRatio ||
+        std::popcount(dominant->sectors) < kMinimumSectors)
+        return std::nullopt;
+
+    const EdgeColor average{
+        dominant->red / dominant->count,
+        dominant->green / dominant->count,
+        dominant->blue / dominant->count };
+    int matching = 0;
+    auto matches = [&](std::uint32_t pixel) {
+        const int alpha = static_cast<int>((pixel >> 24) & 0xff);
+        if (alpha <= kAlphaThreshold) return false;
+        const int red = std::clamp(
+            (static_cast<int>((pixel >> 16) & 0xff) * 255 + alpha / 2) / alpha,
+            0, 255);
+        const int green = std::clamp(
+            (static_cast<int>((pixel >> 8) & 0xff) * 255 + alpha / 2) / alpha,
+            0, 255);
+        const int blue = std::clamp(
+            (static_cast<int>(pixel & 0xff) * 255 + alpha / 2) / alpha,
+            0, 255);
+        const int dr = red - average.r;
+        const int dg = green - average.g;
+        const int db = blue - average.b;
+        return dr * dr + dg * dg + db * db <= kToleranceSq;
+    };
+    const int perimeter = width * 2 + std::max(0, height - 2) * 2;
+    for (int x = 0; x < width; ++x)
+    {
+        matching += matches(pixels[x]);
+        matching += matches(pixels[static_cast<std::size_t>(height - 1) * width + x]);
+    }
+    for (int y = 1; y + 1 < height; ++y)
+    {
+        matching += matches(pixels[static_cast<std::size_t>(y) * width]);
+        matching += matches(pixels[static_cast<std::size_t>(y) * width + width - 1]);
+    }
+    return static_cast<float>(matching) / std::max(1, perimeter) >= 0.86f
+        ? std::optional<EdgeColor>(average) : std::nullopt;
 }
 }

@@ -126,5 +126,9 @@ std::vector<std::uint32_t> Render(
     int height,
     const IconBeautifySettings& settings,
     std::optional<EdgeColor> detectedEdgeFill = std::nullopt);
+
+/** Detect a solid application-icon plate that smart beautification should clip. */
+std::optional<EdgeColor> DetectEdgeFill(
+    const std::vector<std::uint32_t>& pixels, int width, int height);
 }
 }

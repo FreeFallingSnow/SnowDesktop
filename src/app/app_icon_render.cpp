@@ -9,7 +9,7 @@
 bool DesktopApp::ShouldUseDemoIdentity(const DesktopItem& item) const
 {
     return snowdesktop::demo_mode_rules::ShouldMaskApplication(
-        generalSettings_.demoModeEnabled && AreDemoIdentityAssetsAvailable(),
+        generalSettings_.demoModeEnabled && demoIdentityAssetsAvailable_,
         item.isApplicationShortcut);
 }
 
@@ -17,7 +17,7 @@ bool DesktopApp::ShouldUseDemoCollectionIdentity(
     const DesktopWidget* collection) const
 {
     return generalSettings_.demoModeEnabled &&
-        AreDemoIdentityAssetsAvailable() && collection &&
+        demoIdentityAssetsAvailable_ && collection &&
         collection->type == DesktopWidgetType::Collection;
 }
 
@@ -29,6 +29,10 @@ const typename Cache::mapped_type& ResolveDemoCollectionIdentityCached(
     std::span<const DesktopWidget> widgets,
     Cache& cache)
 {
+    const auto cached = cache.find(collection.id);
+    if (cached != cache.end() && cached->second.category)
+        return cached->second;
+
     const auto* category = &snowdesktop::demo_collection_rules::
         ResolveCategory(collection.demoIconCategory,
             collection.title, collection.itemKeys);
@@ -77,17 +81,14 @@ const typename Cache::mapped_type& ResolveDemoCollectionIdentityCached(
     }
 
     auto& entry = cache[collection.id];
-    if (entry.category != category || entry.signature != signature)
-    {
-        entry.category = category;
-        entry.signature = signature;
-        entry.subjectSlotOffset = subjectSlotOffset;
-        entry.identitySlots.clear();
-        entry.identitySlots.reserve(collection.itemKeys.size());
-        for (std::size_t index = 0; index < collection.itemKeys.size(); ++index)
-            entry.identitySlots.try_emplace(
-                ToUpperInvariant(collection.itemKeys[index]), index);
-    }
+    entry.category = category;
+    entry.signature = signature;
+    entry.subjectSlotOffset = subjectSlotOffset;
+    entry.identitySlots.clear();
+    entry.identitySlots.reserve(collection.itemKeys.size());
+    for (std::size_t index = 0; index < collection.itemKeys.size(); ++index)
+        entry.identitySlots.try_emplace(
+            ToUpperInvariant(collection.itemKeys[index]), index);
     return entry;
 }
 
@@ -123,14 +124,15 @@ const std::filesystem::path& DesktopApp::GetDemoIdentityIconDirectory() const
     demoIdentityIconPaths_ = snowdesktop::demo_asset_paths::
         EnumerateIcons<snowdesktop::demo_mode_rules::kDemoIconAssetCount>(
             demoIdentityIconDirectory_);
+    demoIdentityAssetsAvailable_ = snowdesktop::demo_asset_paths::
+        HasRequiredIcons(demoIdentityIconPaths_);
     return demoIdentityIconDirectory_;
 }
 
 bool DesktopApp::AreDemoIdentityAssetsAvailable() const
 {
     GetDemoIdentityIconDirectory();
-    return snowdesktop::demo_asset_paths::HasRequiredIcons(
-        demoIdentityIconPaths_);
+    return demoIdentityAssetsAvailable_;
 }
 
 const std::filesystem::path& DesktopApp::GetDemoIdentityIconPath(
@@ -176,75 +178,8 @@ ID2D1Bitmap1* DesktopApp::GetDemoIdentityBitmap(size_t visualIndex)
         demoIdentityIconBitmaps_[visualIndex];
     if (cached)
         return cached.Get();
-
-    const auto& iconPath = GetDemoIdentityIconPath(visualIndex);
-    if (iconPath.empty())
-        return nullptr;
-
-    ComPtr<IWICBitmapDecoder> decoder;
-    ComPtr<IWICBitmapFrameDecode> frame;
-    ComPtr<IWICFormatConverter> converter;
-    if (!demoIdentityWicFactory_ &&
-        FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
-            CLSCTX_INPROC_SERVER,
-            IID_PPV_ARGS(&demoIdentityWicFactory_))))
-        return nullptr;
-    if (FAILED(demoIdentityWicFactory_->CreateDecoderFromFilename(
-            iconPath.c_str(), nullptr, GENERIC_READ,
-            WICDecodeMetadataCacheOnLoad, &decoder)) ||
-        FAILED(decoder->GetFrame(0, &frame)) ||
-        FAILED(demoIdentityWicFactory_->CreateFormatConverter(&converter)) ||
-        FAILED(converter->Initialize(frame.Get(),
-            GUID_WICPixelFormat32bppPBGRA,
-            WICBitmapDitherTypeNone, nullptr, 0.0,
-            WICBitmapPaletteTypeCustom)))
-    {
-        cached.Reset();
-        return nullptr;
-    }
-
-    UINT width = 0;
-    UINT height = 0;
-    if (FAILED(converter->GetSize(&width, &height)) ||
-        width == 0 || height == 0 ||
-        width > static_cast<UINT>(std::numeric_limits<int>::max()) ||
-        height > static_cast<UINT>(std::numeric_limits<int>::max()))
-        return nullptr;
-
-    BITMAPINFO bitmapInfo{};
-    bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bitmapInfo.bmiHeader.biWidth = static_cast<LONG>(width);
-    bitmapInfo.bmiHeader.biHeight = -static_cast<LONG>(height);
-    bitmapInfo.bmiHeader.biPlanes = 1;
-    bitmapInfo.bmiHeader.biBitCount = 32;
-    bitmapInfo.bmiHeader.biCompression = BI_RGB;
-    void* pixels = nullptr;
-    HBITMAP bitmap = CreateDIBSection(
-        nullptr, &bitmapInfo, DIB_RGB_COLORS, &pixels, nullptr, 0);
-    if (!bitmap || !pixels)
-    {
-        if (bitmap) DeleteObject(bitmap);
-        return nullptr;
-    }
-    const UINT stride = width * 4U;
-    const HRESULT copyResult = converter->CopyPixels(
-        nullptr, stride, stride * height, static_cast<BYTE*>(pixels));
-    if (SUCCEEDED(copyResult))
-        cached = CreateD2DBitmapFromHBitmap(
-            bitmap, iconBeautifySettings_.enabled);
-    DeleteObject(bitmap);
-    if (!cached)
-        return nullptr;
-    return cached.Get();
-}
-
-void DesktopApp::PreloadDemoIdentityBitmaps()
-{
-    if (!d2dContext_ || !generalSettings_.demoModeEnabled ||
-        !AreDemoIdentityAssetsAvailable())
-        return;
-    for (size_t index = 0; index < demoIdentityIconBitmaps_.size(); ++index)
-        GetDemoIdentityBitmap(index);
+    QueueDemoIdentityBitmap(visualIndex);
+    return nullptr;
 }
 
 void DesktopApp::DrawDemoCollectionIdentityIcon(

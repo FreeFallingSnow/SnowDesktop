@@ -217,7 +217,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     }
 
     LoadCategorySettingsAndApply();
-    PreloadDemoIdentityBitmaps();
+    GetDemoIdentityIconDirectory();
+    StartDemoIconLoader();
 
     // Use the same placement pipeline as runtime refreshes so a desktop that
     // already contains more items than the visible grids can create virtual

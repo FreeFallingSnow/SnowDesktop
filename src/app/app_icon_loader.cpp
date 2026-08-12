@@ -25,6 +25,215 @@ void ClampAlphaToColorKey(HBITMAP bitmap, COLORREF key)
     }
     (void)key;
 }
+
+bool DecodeDemoIconPixels(const std::filesystem::path& path,
+    int targetPixels, std::vector<std::uint32_t>& pixels,
+    int& width, int& height)
+{
+    ComPtr<IWICImagingFactory> factory;
+    ComPtr<IWICBitmapDecoder> decoder;
+    ComPtr<IWICBitmapFrameDecode> frame;
+    ComPtr<IWICBitmapScaler> scaler;
+    ComPtr<IWICFormatConverter> converter;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) ||
+        FAILED(factory->CreateDecoderFromFilename(path.c_str(), nullptr,
+            GENERIC_READ, WICDecodeMetadataCacheOnLoad, &decoder)) ||
+        FAILED(decoder->GetFrame(0, &frame)))
+        return false;
+
+    UINT sourceWidth = 0;
+    UINT sourceHeight = 0;
+    if (FAILED(frame->GetSize(&sourceWidth, &sourceHeight)) ||
+        sourceWidth == 0 || sourceHeight == 0)
+        return false;
+    const double scale = std::min({ 1.0,
+        static_cast<double>(targetPixels) / sourceWidth,
+        static_cast<double>(targetPixels) / sourceHeight });
+    const UINT scaledWidth = std::max(1U,
+        static_cast<UINT>(std::lround(sourceWidth * scale)));
+    const UINT scaledHeight = std::max(1U,
+        static_cast<UINT>(std::lround(sourceHeight * scale)));
+    IWICBitmapSource* source = frame.Get();
+    if (scaledWidth != sourceWidth || scaledHeight != sourceHeight)
+    {
+        if (FAILED(factory->CreateBitmapScaler(&scaler)) ||
+            FAILED(scaler->Initialize(frame.Get(), scaledWidth, scaledHeight,
+                WICBitmapInterpolationModeFant)))
+            return false;
+        source = scaler.Get();
+    }
+    if (FAILED(factory->CreateFormatConverter(&converter)) ||
+        FAILED(converter->Initialize(source, GUID_WICPixelFormat32bppPBGRA,
+            WICBitmapDitherTypeNone, nullptr, 0.0,
+            WICBitmapPaletteTypeCustom)))
+        return false;
+
+    width = static_cast<int>(scaledWidth);
+    height = static_cast<int>(scaledHeight);
+    pixels.resize(static_cast<std::size_t>(width) * height);
+    const UINT stride = scaledWidth * sizeof(std::uint32_t);
+    return SUCCEEDED(converter->CopyPixels(nullptr, stride,
+        stride * scaledHeight, reinterpret_cast<BYTE*>(pixels.data())));
+}
+}
+
+void DesktopApp::StartDemoIconLoader()
+{
+    {
+        std::lock_guard lock(demoIconLoaderMutex_);
+        if (demoIconLoaderRunning_ || demoIconLoaderThread_.joinable())
+            return;
+        demoIconLoaderRunning_ = true;
+    }
+    demoIconLoaderThread_ = std::thread([this]() {
+        CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        while (true)
+        {
+            DemoIconLoadTask task;
+            {
+                std::unique_lock lock(demoIconLoaderMutex_);
+                demoIconLoaderCv_.wait(lock, [this] {
+                    return !demoIconLoaderQueue_.empty() ||
+                        !demoIconLoaderRunning_;
+                });
+                if (!demoIconLoaderRunning_)
+                    break;
+                task = std::move(demoIconLoaderQueue_.front());
+                demoIconLoaderQueue_.pop_front();
+            }
+
+            auto result = std::make_unique<DemoIconDecodeResult>();
+            result->generation = task.generation;
+            result->visualIndex = task.visualIndex;
+            constexpr int kDemoSourcePixels = 96;
+            if (DecodeDemoIconPixels(task.path, kDemoSourcePixels,
+                    result->pixels, result->width, result->height) &&
+                task.beautify.enabled)
+            {
+                const auto edge = task.beautify.mode == 0
+                    ? snowdesktop::icon_beautify::DetectEdgeFill(
+                        result->pixels, result->width, result->height)
+                    : std::nullopt;
+                result->pixels = snowdesktop::icon_beautify::Render(
+                    result->pixels, result->width, result->height,
+                    task.beautify, edge);
+            }
+            if (result->pixels.empty())
+            {
+                std::lock_guard lock(demoIconLoaderMutex_);
+                if (task.generation == demoIconLoadGeneration_)
+                {
+                    demoIconLoaderPending_[task.visualIndex] = false;
+                    demoIconLoaderFailed_[task.visualIndex] = true;
+                }
+                continue;
+            }
+            if (!PostMessageW(hwnd_, kDemoIconDecodedMessage, 0,
+                    reinterpret_cast<LPARAM>(result.get())))
+            {
+                std::lock_guard lock(demoIconLoaderMutex_);
+                if (task.generation == demoIconLoadGeneration_)
+                    demoIconLoaderPending_[task.visualIndex] = false;
+                continue;
+            }
+            result.release();
+        }
+        CoUninitialize();
+    });
+}
+
+void DesktopApp::StopDemoIconLoader()
+{
+    {
+        std::lock_guard lock(demoIconLoaderMutex_);
+        demoIconLoaderRunning_ = false;
+        demoIconLoaderQueue_.clear();
+        demoIconLoaderPending_.fill(false);
+        demoIconLoaderFailed_.fill(false);
+    }
+    demoIconLoaderCv_.notify_all();
+    if (demoIconLoaderThread_.joinable())
+        demoIconLoaderThread_.join();
+    if (hwnd_)
+    {
+        MSG message{};
+        while (PeekMessageW(&message, hwnd_, kDemoIconDecodedMessage,
+                kDemoIconDecodedMessage, PM_REMOVE))
+            delete reinterpret_cast<DemoIconDecodeResult*>(message.lParam);
+    }
+}
+
+void DesktopApp::ResetDemoIconLoader()
+{
+    {
+        std::lock_guard lock(demoIconLoaderMutex_);
+        ++demoIconLoadGeneration_;
+        demoIconLoaderQueue_.clear();
+        demoIconLoaderPending_.fill(false);
+        demoIconLoaderFailed_.fill(false);
+    }
+    for (auto& bitmap : demoIdentityIconBitmaps_)
+        bitmap.Reset();
+}
+
+void DesktopApp::QueueDemoIdentityBitmap(std::size_t visualIndex)
+{
+    if (!demoIdentityAssetsAvailable_ ||
+        visualIndex >= demoIdentityIconPaths_.size() ||
+        demoIdentityIconPaths_[visualIndex].empty())
+        return;
+    {
+        std::lock_guard lock(demoIconLoaderMutex_);
+        if (!demoIconLoaderRunning_)
+            return;
+        if (demoIconLoaderPending_[visualIndex] ||
+            demoIconLoaderFailed_[visualIndex])
+            return;
+        demoIconLoaderPending_[visualIndex] = true;
+        demoIconLoaderQueue_.push_back(DemoIconLoadTask{
+            demoIconLoadGeneration_, visualIndex,
+            demoIdentityIconPaths_[visualIndex], iconBeautifySettings_ });
+    }
+    demoIconLoaderCv_.notify_one();
+}
+
+void DesktopApp::OnDemoIconDecoded(LPARAM lParam)
+{
+    std::unique_ptr<DemoIconDecodeResult> result(
+        reinterpret_cast<DemoIconDecodeResult*>(lParam));
+    if (!result || result->visualIndex >= demoIdentityIconBitmaps_.size())
+        return;
+    {
+        std::lock_guard lock(demoIconLoaderMutex_);
+        if (result->generation != demoIconLoadGeneration_)
+            return;
+        demoIconLoaderPending_[result->visualIndex] = false;
+    }
+    if (!d2dContext_ || result->width <= 0 || result->height <= 0 ||
+        result->pixels.size() != static_cast<std::size_t>(result->width) *
+            result->height)
+        return;
+
+    const D2D1_BITMAP_PROPERTIES1 properties = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_NONE,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
+            D2D1_ALPHA_MODE_PREMULTIPLIED));
+    ComPtr<ID2D1Bitmap1> bitmap;
+    if (FAILED(d2dContext_->CreateBitmap(
+            D2D1::SizeU(static_cast<UINT32>(result->width),
+                static_cast<UINT32>(result->height)),
+            result->pixels.data(),
+            static_cast<UINT32>(result->width * sizeof(std::uint32_t)),
+            &properties, &bitmap)))
+        return;
+    demoIdentityIconBitmaps_[result->visualIndex] = std::move(bitmap);
+    InvalidateDragStaticScene();
+    if (hwnd_ && IsWindow(hwnd_))
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    InvalidateFloatingDockWindow(false);
+    if (quickNavigationOpen_)
+        InvalidateQuickNavigationWindow();
 }
 
 void DesktopApp::StartIconLoader()

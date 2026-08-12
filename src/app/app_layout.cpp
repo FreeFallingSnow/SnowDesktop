@@ -697,6 +697,7 @@ void DesktopApp::LoadLayoutSlots()
  */
 void DesktopApp::SaveLayoutSlots()
 {
+    demoCollectionIdentityCache_.clear();
     extern inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const std::wstring& pageId);
     layoutRecords_.clear();
     for (const auto& item : items_)
