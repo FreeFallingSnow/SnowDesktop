@@ -18,14 +18,71 @@ std::wstring DesktopApp::GetDemoIdentityTitle(
     return _LW(visual.titleKey);
 }
 
+ID2D1Bitmap1* DesktopApp::GetDemoIdentityBitmap(size_t visualIndex)
+{
+    if (!d2dContext_ || visualIndex >= demoIdentityIconBitmaps_.size())
+        return nullptr;
+
+    ComPtr<ID2D1Bitmap1>& cached =
+        demoIdentityIconBitmaps_[visualIndex];
+    if (cached)
+        return cached.Get();
+
+    const int resourceId = IDR_DEMO_ICON_PROJECTS +
+        static_cast<int>(visualIndex);
+    HMODULE module = GetModuleHandleW(nullptr);
+    HRSRC resource = FindResourceW(
+        module, MAKEINTRESOURCEW(resourceId), RT_RCDATA);
+    if (!resource)
+        return nullptr;
+    HGLOBAL resourceData = LoadResource(module, resource);
+    void* bytes = resourceData ? LockResource(resourceData) : nullptr;
+    const DWORD byteCount = SizeofResource(module, resource);
+    if (!bytes || byteCount == 0)
+        return nullptr;
+
+    ComPtr<IWICImagingFactory> factory;
+    ComPtr<IWICStream> stream;
+    ComPtr<IWICBitmapDecoder> decoder;
+    ComPtr<IWICBitmapFrameDecode> frame;
+    ComPtr<IWICFormatConverter> converter;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) ||
+        FAILED(factory->CreateStream(&stream)) ||
+        FAILED(stream->InitializeFromMemory(
+            static_cast<BYTE*>(bytes), byteCount)) ||
+        FAILED(factory->CreateDecoderFromStream(stream.Get(), nullptr,
+            WICDecodeMetadataCacheOnLoad, &decoder)) ||
+        FAILED(decoder->GetFrame(0, &frame)) ||
+        FAILED(factory->CreateFormatConverter(&converter)) ||
+        FAILED(converter->Initialize(frame.Get(),
+            GUID_WICPixelFormat32bppPBGRA,
+            WICBitmapDitherTypeNone, nullptr, 0.0,
+            WICBitmapPaletteTypeCustom)) ||
+        FAILED(d2dContext_->CreateBitmapFromWicBitmap(
+            converter.Get(), nullptr, &cached)))
+    {
+        cached.Reset();
+        return nullptr;
+    }
+    return cached.Get();
+}
+
 void DesktopApp::DrawDemoIdentityIcon(ID2D1RenderTarget* context,
     std::wstring_view identity, RECT iconRect, float opacity)
 {
     if (!context || IsRectEmptyRect(iconRect) || opacity <= 0.0f)
         return;
 
+    const size_t visualIndex = snowdesktop::demo_mode_rules::
+        VisualIdentityIndex(identity);
     const auto& visual = snowdesktop::demo_mode_rules::
-        ResolveVisualIdentity(identity);
+        kVisualIdentities[visualIndex];
+    if (ID2D1Bitmap1* bitmap = GetDemoIdentityBitmap(visualIndex))
+    {
+        DrawIconBitmap(context, bitmap, iconRect, opacity);
+        return;
+    }
     const float red = static_cast<float>(
         (visual.backgroundRgb >> 16U) & 0xFFU) / 255.0f;
     const float green = static_cast<float>(

@@ -8,3 +8,21 @@ IDR_FA_FONT RCDATA "../assets/fonts/fa-solid-900.ttf"
 
 // Microsoft Fluent System Icons Regular, embedded under the MIT license
 IDR_FLUENT_REGULAR_FONT RCDATA "../assets/fonts/FluentSystemIcons-Regular.ttf"
+
+// Fictional application icons for privacy-safe store screenshots.
+IDR_DEMO_ICON_PROJECTS  RCDATA "../assets/demo_icons/projects.png"
+IDR_DEMO_ICON_DESIGN    RCDATA "../assets/demo_icons/design.png"
+IDR_DEMO_ICON_FOCUS     RCDATA "../assets/demo_icons/focus.png"
+IDR_DEMO_ICON_WORKSPACE RCDATA "../assets/demo_icons/workspace.png"
+IDR_DEMO_ICON_NOTES     RCDATA "../assets/demo_icons/notes.png"
+IDR_DEMO_ICON_ARCHIVE   RCDATA "../assets/demo_icons/archive.png"
+IDR_DEMO_ICON_MEDIA     RCDATA "../assets/demo_icons/media.png"
+IDR_DEMO_ICON_MAIL      RCDATA "../assets/demo_icons/mail.png"
+IDR_DEMO_ICON_CALENDAR  RCDATA "../assets/demo_icons/calendar.png"
+IDR_DEMO_ICON_TOOLS     RCDATA "../assets/demo_icons/tools.png"
+IDR_DEMO_ICON_IDEAS     RCDATA "../assets/demo_icons/ideas.png"
+IDR_DEMO_ICON_EXPLORE   RCDATA "../assets/demo_icons/explore.png"
+IDR_DEMO_ICON_PHOTOS    RCDATA "../assets/demo_icons/photos.png"
+IDR_DEMO_ICON_MUSIC     RCDATA "../assets/demo_icons/music.png"
+IDR_DEMO_ICON_CODE      RCDATA "../assets/demo_icons/code.png"
+IDR_DEMO_ICON_DATA      RCDATA "../assets/demo_icons/data.png"

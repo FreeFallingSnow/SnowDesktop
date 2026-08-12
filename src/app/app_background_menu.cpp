@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../demo_mode_rules.h"
 #include "../menu_fluent_glyphs.h"
 #include "../modern_menu.h"
 #include "../search_match.h"
@@ -705,7 +706,8 @@ DesktopApp::BuildAddWidgetMenuPreview(
         for (int i = 0; i < 12; ++i)
         {
             const std::wstring glyph(
-                1, static_cast<wchar_t>(L'A' + i));
+                snowdesktop::demo_mode_rules::
+                    kVisualIdentities[static_cast<size_t>(i)].glyph);
             snowdesktop::WidgetPreviewItem item;
             item.key = L"__preview_item_" + glyph;
             item.glyph = glyph;

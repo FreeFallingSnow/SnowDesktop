@@ -68,6 +68,11 @@ int wmain()
     Expect(scene.FindFolderEntry(L"sample-a") != nullptr &&
             scene.FindFolderEntry(L"sample-a")->iconBitmap != nullptr,
         "preview scene materializes a real folder entry with generated icon");
+    BITMAP previewIcon{};
+    Expect(GetObjectW(scene.FindDesktopItem(L"sample-a")->iconBitmap,
+               sizeof(previewIcon), &previewIcon) != 0 &&
+            previewIcon.bmBitsPixel == 32,
+        "preview placeholder uses a 32-bit icon bitmap");
     Expect(scene.FindWidget(L"child") != nullptr,
         "preview scene resolves temporary child widgets");
     Expect(scene.FindWidget(L"missing") == nullptr,
