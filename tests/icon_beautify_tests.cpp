@@ -131,9 +131,9 @@ int main()
     auto inheritedDefault = beautify::MakePreset(IconBeautifyPreset::DefaultBeautify);
     inheritedDefault.preset = IconBeautifyPreset::Custom;
     Check(inheritedDefault.enabled && !inheritedDefault.outlineEnabled &&
-        inheritedDefault.shape == IconBeautifyShape::ContinuousRounded &&
+        inheritedDefault.shape == IconBeautifyShape::LegacyRounded &&
         inheritedDefault.contentScale == 0.68f,
-        "switching default beautification to custom retains all preset parameters");
+        "default beautification uses classic rounded and retains all preset parameters");
 
     constexpr std::array<IconBeautifyShape, 5> shapes{
         IconBeautifyShape::LegacyRounded,

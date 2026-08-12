@@ -668,7 +668,7 @@ IconBeautifySettings MakePreset(IconBeautifyPreset preset)
     case IconBeautifyPreset::DefaultBeautify:
         settings.preset = IconBeautifyPreset::DefaultBeautify;
         settings.enabled = true;
-        settings.shape = IconBeautifyShape::ContinuousRounded;
+        settings.shape = IconBeautifyShape::LegacyRounded;
         settings.outlineEnabled = false;
         return settings;
     case IconBeautifyPreset::Custom:
