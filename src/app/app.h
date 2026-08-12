@@ -497,9 +497,6 @@ public:
     /** @brief 判断集合是否应在演示模式中使用虚拟身份。 */
     bool ShouldUseDemoCollectionIdentity(
         const DesktopWidget* collection) const;
-    /** @brief 获取演示集合可安全展示且不重复的条目数。 */
-    size_t GetDemoCollectionVisibleItemCount(
-        const DesktopWidget& collection) const;
     /** @brief 获取演示集合的本地化分类显示名。 */
     std::wstring GetDemoCollectionCategoryTitle(
         const DesktopWidget& collection) const;
@@ -1451,11 +1448,14 @@ private:
     std::wstring GetDemoCollectionIdentityTitle(
         const DesktopWidget& collection, std::wstring_view identity) const;
     ID2D1Bitmap1* GetDemoIdentityBitmap(size_t visualIndex);
+    void PreloadDemoIdentityBitmaps();
     void DrawDemoIdentityIcon(ID2D1RenderTarget* context,
         std::wstring_view identity, RECT iconRect, float opacity = 1.0f);
     void DrawDemoCollectionIdentityIcon(ID2D1RenderTarget* context,
         const DesktopWidget& collection, std::wstring_view identity,
         RECT iconRect, float opacity = 1.0f);
+    void DrawDemoIdentityVariantBadge(ID2D1RenderTarget* context,
+        size_t variantIndex, RECT iconRect, float opacity);
     /** @brief 设置是否开启全局图标美化。 */
     void SetIconBeautifyEnabled(bool enabled);
     void SetIconBeautifySettings(
@@ -3097,13 +3097,16 @@ private:
     std::array<ComPtr<ID2D1Bitmap1>,
         snowdesktop::demo_mode_rules::kDemoIconAssetCount>
         demoIdentityIconBitmaps_{};
-    struct DemoCollectionCategoryCacheEntry
+    struct DemoCollectionIdentityCacheEntry
     {
         std::uint64_t signature = 0;
         const snowdesktop::demo_collection_rules::Category* category = nullptr;
+        std::unordered_map<std::wstring, std::size_t> identitySlots;
     };
     mutable std::unordered_map<std::wstring,
-        DemoCollectionCategoryCacheEntry> demoCollectionCategoryCache_;
+        DemoCollectionIdentityCacheEntry> demoCollectionIdentityCache_;
+    /** @brief 演示图标资源解码复用的 WIC 工厂。 */
+    ComPtr<IWICImagingFactory> demoIdentityWicFactory_;
     /** @brief 快捷方式箭头图标的 D2D 位图缓存（惰性初始化） */
     ComPtr<ID2D1Bitmap> shortcutArrowBitmap_;
     SIZE shortcutArrowBitmapSize_{};

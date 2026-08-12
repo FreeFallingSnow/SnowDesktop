@@ -439,6 +439,7 @@ void DesktopApp::SetIconBeautifySettings(
     d2dIconCache_.clear();
     for (auto& bitmap : demoIdentityIconBitmaps_)
         bitmap.Reset();
+    PreloadDemoIdentityBitmaps();
     placeholderIconCache_.clear();
     quickNavSysIconCache_.clear();
     privacyFileIconBitmap_.Reset();

@@ -24,12 +24,10 @@
 
 static RECT CollectionItemRect(Collection* widget, size_t linearIndex);
 
-static size_t CollectionDisplayItemCount(Collection* widget)
+static size_t CollectionItemCount(Collection* widget)
 {
     DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
-    DesktopApp* app = widget ? widget->GetApp() : nullptr;
-    if (!data || !app) return 0;
-    return app->GetDemoCollectionVisibleItemCount(*data);
+    return data ? data->itemKeys.size() : 0;
 }
 
 // ── Scroll container helpers (shared with draw/slot code) ─────
@@ -109,7 +107,7 @@ static int CollectionScrollMaxOffset(Collection* widget)
     RECT content = CollectionScrollContentRect(widget);
     int visibleHeight = std::max<int>(1, content.bottom - content.top);
     return std::max(0, CollectionScrollContentHeight(widget,
-        CollectionDisplayItemCount(widget)) -
+        CollectionItemCount(widget)) -
         visibleHeight + widget->Cu(kMinCellHeight / 2.0f));
 }
 
@@ -478,7 +476,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
     // ── Original: large folder / compact grid mode ────────────
     bool compact = data_->gridSpan.columns <= 1 && data_->gridSpan.rows <= 1;
     auto& slots = GetSlots();
-    const size_t displayItemCount = CollectionDisplayItemCount(this);
+    const size_t displayItemCount = CollectionItemCount(this);
     size_t inlineCapacity = std::min(
         GetCollectionInlineCapacity(*data_), displayItemCount);
 
@@ -605,7 +603,7 @@ std::vector<std::unique_ptr<Slot>> Collection::BuildSlots()
     {
         const auto [firstIndex, lastIndex] =
             CollectionVisibleIndexRange(
-                this, CollectionDisplayItemCount(this));
+                this, CollectionItemCount(this));
         slots.reserve(lastIndex - firstIndex);
         for (size_t idx = firstIndex; idx < lastIndex; ++idx)
         {
@@ -623,7 +621,7 @@ std::vector<std::unique_ptr<Slot>> Collection::BuildSlots()
     // ── Original: large folder mode ─────────────────────────
     size_t inlineCap = GetCollectionInlineCapacity(*data_);
     size_t visible = std::min(
-        inlineCap, CollectionDisplayItemCount(this));
+        inlineCap, CollectionItemCount(this));
     RECT body = GetBodyRect();
     for (size_t idx = 0; idx < visible; ++idx)
     {
@@ -651,12 +649,12 @@ size_t Collection::GetSlotCount() const
     if (data_->itemKeys.empty()) return 0;
 
     if (data_->scrollContainerMode)
-        return CollectionDisplayItemCount(
+        return CollectionItemCount(
             const_cast<Collection*>(this));
 
     size_t inlineCap = GetCollectionInlineCapacity(*data_);
     size_t visible = std::min(inlineCap,
-        CollectionDisplayItemCount(const_cast<Collection*>(this)));
+        CollectionItemCount(const_cast<Collection*>(this)));
 
     return visible;
 }
@@ -672,7 +670,7 @@ size_t Collection::GetSlotCount() const
 Item* Collection::GetSlotItem(size_t idx) const
 {
     if (!data_ || !app_ ||
-        idx >= CollectionDisplayItemCount(const_cast<Collection*>(this)))
+        idx >= CollectionItemCount(const_cast<Collection*>(this)))
         return nullptr;
     if (!data_->scrollContainerMode && idx >= GetCollectionInlineCapacity(*data_)) return nullptr;
     if (auto* scene = GetPreviewScene())
@@ -828,7 +826,7 @@ RECT Collection::GetAllButtonRect() const
     }
     size_t allSlot = GetCollectionAllButtonSlot(*data_);
     if (allSlot == static_cast<size_t>(-1)) return {};
-    if (CollectionDisplayItemCount(const_cast<Collection*>(this)) <=
+    if (CollectionItemCount(const_cast<Collection*>(this)) <=
         GetCollectionInlineCapacity(*data_))
         return {};
     return GetCollectionSlotRect(this, allSlot, body);
@@ -880,7 +878,7 @@ WidgetHit Collection::HitTestWidget(POINT pt) const
 
     size_t allSlot = GetCollectionAllButtonSlot(*data_);
     if (allSlot != static_cast<size_t>(-1) &&
-        CollectionDisplayItemCount(const_cast<Collection*>(this)) >
+        CollectionItemCount(const_cast<Collection*>(this)) >
             GetCollectionInlineCapacity(*data_))
     {
         RECT allRect = GetCollectionSlotRect(this, allSlot, GetBodyRect());
@@ -955,7 +953,7 @@ int Collection::GetTotalContentHeight() const
 {
     if (!data_ || !data_->scrollContainerMode) return 0;
     return CollectionScrollContentHeight(const_cast<Collection*>(this),
-        CollectionDisplayItemCount(const_cast<Collection*>(this)));
+        CollectionItemCount(const_cast<Collection*>(this)));
 }
 
 int Collection::GetVisibleContentHeight() const

@@ -163,6 +163,7 @@ void DesktopApp::ResetCompositionRenderCaches()
     d2dIconCache_.clear();
     for (auto& bitmap : demoIdentityIconBitmaps_)
         bitmap.Reset();
+    demoIdentityWicFactory_.Reset();
     placeholderIconCache_.clear();
     shortcutArrowBitmap_.Reset();
     shortcutArrowBitmapSize_ = {};

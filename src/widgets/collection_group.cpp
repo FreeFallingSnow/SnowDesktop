@@ -111,10 +111,8 @@ size_t CollectionGroupTabItemCount(
     if (DesktopWidget* child = FindCollectionWidget(
             widget, children[tabIndex]))
     {
-        const size_t count = widget->GetApp()->
-            GetDemoCollectionVisibleItemCount(*child);
-        for (size_t index = 0; index < count; ++index)
-            keys.insert(ToUpperInvariant(child->itemKeys[index]));
+        for (const auto& itemKey : child->itemKeys)
+            keys.insert(ToUpperInvariant(itemKey));
     }
     return keys.size();
 }
@@ -434,9 +432,7 @@ CollectionGroup::GetVisibleItemKeys() const
             ? *child : app_->widgets_[childIndex];
         const auto& itemKeys = child
             ? child->itemKeys : app_->widgets_[childIndex].itemKeys;
-        const size_t itemCount = app_->
-            GetDemoCollectionVisibleItemCount(activeCollection);
-        for (size_t rawIndex = 0; rawIndex < itemCount; ++rawIndex)
+        for (size_t rawIndex = 0; rawIndex < itemKeys.size(); ++rawIndex)
         {
             const auto& rawKey = itemKeys[rawIndex];
             const std::wstring key =

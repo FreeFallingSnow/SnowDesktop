@@ -2,7 +2,6 @@
 
 #include "demo_mode_rules.h"
 
-#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cwctype>
@@ -18,8 +17,19 @@ struct Category
     std::wstring_view id;
     const char* titleKey;
     std::span<const std::size_t> visualIndices;
+    std::span<const std::wstring_view> identityTitles;
     std::span<const std::wstring_view> keywords;
 };
+
+struct IdentityPresentation
+{
+    std::size_t visualIndex = 0;
+    std::size_t variantIndex = 0;
+    std::wstring_view title;
+};
+
+inline constexpr std::size_t kIdentityVariantCount = 5;
+inline constexpr std::size_t kIdentityCountPerCategory = 20;
 
 inline constexpr std::array<std::size_t, 4> kFilesVisuals{
     16, 28, 29, 52 };
@@ -45,6 +55,91 @@ inline constexpr std::array<std::size_t, 4> kOperationsVisuals{
     24, 48, 49, 62 };
 inline constexpr std::array<std::size_t, 4> kWebVisuals{
     26, 50, 51, 63 };
+
+inline constexpr std::array<std::wstring_view, kIdentityCountPerCategory>
+    kFilesTitles{
+        L"Atlas Library", L"Cedar Files", L"Safekeep Backup", L"Dropzone",
+        L"Harbor Archive", L"Papertrail Vault", L"Northstar Drive", L"Clearpath Sync",
+        L"Fieldnote Docs", L"Waypoint Cabinet", L"Luma Transfer", L"Bridgebox",
+        L"QuietStore", L"Parcel Desk", L"Openleaf Records", L"Homebase Files",
+        L"Bluegate Share", L"Kindred Archive", L"Daymark Storage", L"Relay Folders" };
+inline constexpr std::array<std::wstring_view, kIdentityCountPerCategory>
+    kUtilitiesTitles{
+        L"CloudGate", L"Pulse Monitor", L"Sentinel Guard", L"Relay Remote",
+        L"TuneUp Center", L"Beacon Tools", L"Northstar Control", L"QuickPanel",
+        L"Clearview Monitor", L"Switchboard", L"Tasklight", L"Keysmith",
+        L"Orbit Settings", L"Portwatch", L"QuietMode", L"Signal Desk",
+        L"Device Harbor", L"App Compass", L"System Lens", L"Control Bay" };
+inline constexpr std::array<std::wstring_view, kIdentityCountPerCategory>
+    kCreativeTitles{
+        L"Luma Present", L"Luma Sketch", L"FrameForge", L"Chroma Studio",
+        L"Canvas North", L"Storyline", L"Motion Deck", L"Palette Works",
+        L"Render Room", L"Studio Relay", L"Facet Design", L"Inkstone",
+        L"SceneCraft", L"Colorway", L"Layout Lab", L"Clipmaker",
+        L"Visual Foundry", L"Storyboard", L"Shape House", L"Creative Bay" };
+inline constexpr std::array<std::wstring_view, kIdentityCountPerCategory>
+    kDevelopmentTitles{
+        L"Branchline Terminal", L"Northstar IDE", L"MergePath", L"DataForge",
+        L"Code Harbor", L"Stackline", L"Debug Desk", L"Buildcraft",
+        L"Commit Grove", L"Runtime Lab", L"SourcePilot", L"Dev Relay",
+        L"Module Works", L"Compile Bay", L"Syntax Studio", L"Testbench",
+        L"Package Yard", L"API Compass", L"Query Desk", L"Release Lane" };
+inline constexpr std::array<std::wstring_view, kIdentityCountPerCategory>
+    kOfficeTitles{
+        L"Ledger Pro", L"Papertrail Reader", L"Taskboard", L"Quill Writer",
+        L"Northstar Sheets", L"Briefcase", L"Meeting Notes", L"Slideworks",
+        L"Daymark Planner", L"Formcraft", L"Office Relay", L"Draftroom",
+        L"Report Studio", L"Tableline", L"Agenda Desk", L"Document Bay",
+        L"Worklog", L"Outline Pro", L"Review Board", L"Project Ledger" };
+inline constexpr std::array<std::wstring_view, kIdentityCountPerCategory>
+    kCommunicationTitles{
+        L"Relay Chat", L"Huddle Meet", L"PeopleHub", L"Postbox Mail",
+        L"Signal Room", L"Courier Desk", L"Talkline", L"Team Beacon",
+        L"Message Bay", L"Inbox Pilot", L"Callbridge", L"Contact Grove",
+        L"Meeting Point", L"Channel Desk", L"Voice Relay", L"Mailroom",
+        L"GroupLink", L"Conversation Hub", L"Connect Center", L"Briefing Room" };
+inline constexpr std::array<std::wstring_view, kIdentityCountPerCategory>
+    kMediaTitles{
+        L"ReelView", L"Echo Player", L"Airwave", L"Prism Photos",
+        L"Tempo Video", L"Soundstage", L"Framebox", L"Media Harbor",
+        L"Playlist Room", L"Screenlight", L"Audio Grove", L"Clip Library",
+        L"Photo Desk", L"Stream Relay", L"Waveform", L"Gallery Works",
+        L"Playback Studio", L"Album House", L"Cinema Bay", L"Studio Player" };
+inline constexpr std::array<std::wstring_view, kIdentityCountPerCategory>
+    kEngineeringTitles{
+        L"Axis Draft", L"ForgeCAD", L"CircuitLab", L"MeshFlow",
+        L"Vector Works", L"Model Harbor", L"Simulate Pro", L"Blueprint Desk",
+        L"Measure Lab", L"Assembly Bay", L"Field Solver", L"Design Grid",
+        L"Prototype Room", L"Structure Studio", L"Motion Analysis", L"Toolpath",
+        L"Material Desk", L"System Model", L"Test Rig", L"Engineering Hub" };
+inline constexpr std::array<std::wstring_view, kIdentityCountPerCategory>
+    kAiTitles{
+        L"Mosaic AI", L"Neural Desk", L"FlowMind", L"Prompt Harbor",
+        L"Model Studio", L"Insight Engine", L"Reasoning Lab", L"Agent Grove",
+        L"Context Desk", L"Vector Mind", L"Inference Bay", L"Data Pilot",
+        L"Tensor Works", L"Idea Relay", L"Research Copilot", L"Knowledge Loom",
+        L"Pattern Lab", L"Signal AI", L"Model Foundry", L"Prompt Studio" };
+inline constexpr std::array<std::wstring_view, kIdentityCountPerCategory>
+    kGamingTitles{
+        L"Arcade Hub", L"Pixel Deck", L"Apex Racing", L"Quest Compass",
+        L"Playforge", L"Game Harbor", L"Level Studio", L"Party Relay",
+        L"Victory Lane", L"Checkpoint", L"Circuit Play", L"Arena Desk",
+        L"Worldbuilder", L"Controller Bay", L"Match Point", L"Replay Room",
+        L"Adventure Map", L"Co-op Corner", L"Game Library", L"Launcher Works" };
+inline constexpr std::array<std::wstring_view, kIdentityCountPerCategory>
+    kOperationsTitles{
+        L"Harbor Ops", L"Network Watch", L"LogScope", L"Stackyard",
+        L"Server Desk", L"Deploy Lane", L"Cluster View", L"Service Monitor",
+        L"Runbook", L"Incident Room", L"Metric Bay", L"Pipeline Ops",
+        L"Host Control", L"Tracepoint", L"Container Yard", L"Uptime Desk",
+        L"Release Watch", L"System Harbor", L"Cloud Operations", L"Response Center" };
+inline constexpr std::array<std::wstring_view, kIdentityCountPerCategory>
+    kWebTitles{
+        L"Orbit Browser", L"WebCanvas", L"Cloud Portal", L"Skyfetch",
+        L"Pagecraft", L"Link Harbor", L"Site Studio", L"Tabspace",
+        L"Bookmark Bay", L"Web Relay", L"Portal Desk", L"Cloudline",
+        L"Browse North", L"Launch Page", L"Domain Works", L"Request Lab",
+        L"Web Compass", L"Online Studio", L"Gateway", L"Frontend Desk" };
 
 inline constexpr std::array<std::wstring_view, 13> kFilesKeywords{
     L"\u6587\u4ef6", L"\u4e0b\u8f7d", L"\u6587\u6863", L"\u56fe\u7247", L"\u89c6\u9891", L"\u97f3\u4e50",
@@ -85,18 +180,18 @@ inline constexpr std::array<std::wstring_view, 11> kWebKeywords{
     L"internet", L"website", L"cloud", L"online" };
 
 inline constexpr std::array<Category, 12> kCategories{
-    Category{ L"files", "app.demo_category.files", kFilesVisuals, kFilesKeywords },
-    Category{ L"utilities", "app.demo_category.utilities", kUtilitiesVisuals, kUtilitiesKeywords },
-    Category{ L"creative", "app.demo_category.creative", kCreativeVisuals, kCreativeKeywords },
-    Category{ L"development", "app.demo_category.development", kDevelopmentVisuals, kDevelopmentKeywords },
-    Category{ L"office", "app.demo_category.office", kOfficeVisuals, kOfficeKeywords },
-    Category{ L"communication", "app.demo_category.communication", kCommunicationVisuals, kCommunicationKeywords },
-    Category{ L"media", "app.demo_category.media", kMediaVisuals, kMediaKeywords },
-    Category{ L"engineering", "app.demo_category.engineering", kEngineeringVisuals, kEngineeringKeywords },
-    Category{ L"ai", "app.demo_category.ai", kAiVisuals, kAiKeywords },
-    Category{ L"gaming", "app.demo_category.gaming", kGamingVisuals, kGamingKeywords },
-    Category{ L"operations", "app.demo_category.operations", kOperationsVisuals, kOperationsKeywords },
-    Category{ L"web", "app.demo_category.web", kWebVisuals, kWebKeywords },
+    Category{ L"files", "app.demo_category.files", kFilesVisuals, kFilesTitles, kFilesKeywords },
+    Category{ L"utilities", "app.demo_category.utilities", kUtilitiesVisuals, kUtilitiesTitles, kUtilitiesKeywords },
+    Category{ L"creative", "app.demo_category.creative", kCreativeVisuals, kCreativeTitles, kCreativeKeywords },
+    Category{ L"development", "app.demo_category.development", kDevelopmentVisuals, kDevelopmentTitles, kDevelopmentKeywords },
+    Category{ L"office", "app.demo_category.office", kOfficeVisuals, kOfficeTitles, kOfficeKeywords },
+    Category{ L"communication", "app.demo_category.communication", kCommunicationVisuals, kCommunicationTitles, kCommunicationKeywords },
+    Category{ L"media", "app.demo_category.media", kMediaVisuals, kMediaTitles, kMediaKeywords },
+    Category{ L"engineering", "app.demo_category.engineering", kEngineeringVisuals, kEngineeringTitles, kEngineeringKeywords },
+    Category{ L"ai", "app.demo_category.ai", kAiVisuals, kAiTitles, kAiKeywords },
+    Category{ L"gaming", "app.demo_category.gaming", kGamingVisuals, kGamingTitles, kGamingKeywords },
+    Category{ L"operations", "app.demo_category.operations", kOperationsVisuals, kOperationsTitles, kOperationsKeywords },
+    Category{ L"web", "app.demo_category.web", kWebVisuals, kWebTitles, kWebKeywords },
 };
 
 inline bool EqualsAsciiInsensitive(
@@ -175,18 +270,25 @@ inline std::size_t VisualIndex(
         category.visualIndices.size()];
 }
 
-inline std::size_t VisualIndexForOrdinal(
-    const Category& category, std::size_t ordinal) noexcept
+inline IdentityPresentation PresentationForSlot(
+    const Category& category, std::size_t slot) noexcept
 {
-    if (category.visualIndices.empty())
-        return ordinal % demo_mode_rules::kVisualIdentities.size();
-    return category.visualIndices[ordinal % category.visualIndices.size()];
-}
-
-inline std::size_t VisibleItemCount(
-    const Category& category, std::size_t itemCount) noexcept
-{
-    return std::min(itemCount, category.visualIndices.size());
+    const std::size_t titleCount = category.identityTitles.empty()
+        ? 1 : category.identityTitles.size();
+    slot %= titleCount;
+    const std::size_t visualCount = category.visualIndices.empty()
+        ? demo_mode_rules::kVisualIdentities.size()
+        : category.visualIndices.size();
+    const std::size_t visualIndex = category.visualIndices.empty()
+        ? slot % visualCount
+        : category.visualIndices[slot % visualCount];
+    return {
+        visualIndex,
+        (slot / visualCount) % kIdentityVariantCount,
+        category.identityTitles.empty()
+            ? demo_mode_rules::VisualIdentityAt(visualIndex).title
+            : category.identityTitles[slot]
+    };
 }
 
 inline std::size_t ItemOrdinal(

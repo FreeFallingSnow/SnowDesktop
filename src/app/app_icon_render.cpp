@@ -20,10 +20,10 @@ bool DesktopApp::ShouldUseDemoCollectionIdentity(
 
 namespace
 {
-const snowdesktop::demo_collection_rules::Category&
-ResolveDemoCollectionCategoryCached(
+template <typename Cache>
+const typename Cache::mapped_type& ResolveDemoCollectionIdentityCached(
     const DesktopWidget& collection,
-    auto& cache)
+    Cache& cache)
 {
     std::uint64_t signature = snowdesktop::demo_mode_rules::
         StableIdentityHash(collection.demoIconCategory);
@@ -47,33 +47,29 @@ ResolveDemoCollectionCategoryCached(
             ResolveCategory(collection.demoIconCategory,
                 collection.title, collection.itemKeys);
         entry.signature = signature;
+        entry.identitySlots.clear();
+        entry.identitySlots.reserve(collection.itemKeys.size());
+        for (std::size_t index = 0; index < collection.itemKeys.size(); ++index)
+            entry.identitySlots.try_emplace(
+                ToUpperInvariant(collection.itemKeys[index]), index);
     }
-    return *entry.category;
+    return entry;
 }
 
-std::size_t DemoCollectionVisualIndex(
-    const DesktopWidget& collection,
-    const snowdesktop::demo_collection_rules::Category& category,
+template <typename Entry>
+snowdesktop::demo_collection_rules::IdentityPresentation
+DemoCollectionPresentation(const Entry& entry,
     std::wstring_view identity)
 {
-    const std::size_t ordinal = snowdesktop::demo_collection_rules::
-        ItemOrdinal(collection.itemKeys, identity);
-    return ordinal == static_cast<std::size_t>(-1)
-        ? snowdesktop::demo_collection_rules::VisualIndex(category, identity)
-        : snowdesktop::demo_collection_rules::VisualIndexForOrdinal(
-            category, ordinal);
+    const auto found = entry.identitySlots.find(
+        ToUpperInvariant(std::wstring(identity)));
+    const std::size_t slot = found != entry.identitySlots.end()
+        ? found->second
+        : static_cast<std::size_t>(
+            snowdesktop::demo_mode_rules::StableIdentityHash(identity));
+    return snowdesktop::demo_collection_rules::PresentationForSlot(
+        *entry.category, slot);
 }
-}
-
-size_t DesktopApp::GetDemoCollectionVisibleItemCount(
-    const DesktopWidget& collection) const
-{
-    if (!ShouldUseDemoCollectionIdentity(&collection))
-        return collection.itemKeys.size();
-    const auto& category = ResolveDemoCollectionCategoryCached(
-        collection, demoCollectionCategoryCache_);
-    return snowdesktop::demo_collection_rules::VisibleItemCount(
-        category, collection.itemKeys.size());
 }
 
 std::wstring DesktopApp::GetDemoIdentityTitle(
@@ -87,20 +83,18 @@ std::wstring DesktopApp::GetDemoIdentityTitle(
 std::wstring DesktopApp::GetDemoCollectionIdentityTitle(
     const DesktopWidget& collection, std::wstring_view identity) const
 {
-    const auto& category = ResolveDemoCollectionCategoryCached(
-        collection, demoCollectionCategoryCache_);
-    const size_t visualIndex = DemoCollectionVisualIndex(
-        collection, category, identity);
-    return std::wstring(snowdesktop::demo_mode_rules::
-        VisualIdentityAt(visualIndex).title);
+    const auto& entry = ResolveDemoCollectionIdentityCached(
+        collection, demoCollectionIdentityCache_);
+    return std::wstring(DemoCollectionPresentation(
+        entry, identity).title);
 }
 
 std::wstring DesktopApp::GetDemoCollectionCategoryTitle(
     const DesktopWidget& collection) const
 {
-    const auto& category = ResolveDemoCollectionCategoryCached(
-        collection, demoCollectionCategoryCache_);
-    return _LW(category.titleKey);
+    const auto& entry = ResolveDemoCollectionIdentityCached(
+        collection, demoCollectionIdentityCache_);
+    return _LW(entry.category->titleKey);
 }
 
 ID2D1Bitmap1* DesktopApp::GetDemoIdentityBitmap(size_t visualIndex)
@@ -126,20 +120,23 @@ ID2D1Bitmap1* DesktopApp::GetDemoIdentityBitmap(size_t visualIndex)
     if (!bytes || byteCount == 0)
         return nullptr;
 
-    ComPtr<IWICImagingFactory> factory;
     ComPtr<IWICStream> stream;
     ComPtr<IWICBitmapDecoder> decoder;
     ComPtr<IWICBitmapFrameDecode> frame;
     ComPtr<IWICFormatConverter> converter;
-    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
-            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) ||
-        FAILED(factory->CreateStream(&stream)) ||
+    if (!demoIdentityWicFactory_ &&
+        FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+            CLSCTX_INPROC_SERVER,
+            IID_PPV_ARGS(&demoIdentityWicFactory_))))
+        return nullptr;
+    if (FAILED(demoIdentityWicFactory_->CreateStream(&stream)) ||
         FAILED(stream->InitializeFromMemory(
             static_cast<BYTE*>(bytes), byteCount)) ||
-        FAILED(factory->CreateDecoderFromStream(stream.Get(), nullptr,
+        FAILED(demoIdentityWicFactory_->CreateDecoderFromStream(
+            stream.Get(), nullptr,
             WICDecodeMetadataCacheOnLoad, &decoder)) ||
         FAILED(decoder->GetFrame(0, &frame)) ||
-        FAILED(factory->CreateFormatConverter(&converter)) ||
+        FAILED(demoIdentityWicFactory_->CreateFormatConverter(&converter)) ||
         FAILED(converter->Initialize(frame.Get(),
             GUID_WICPixelFormat32bppPBGRA,
             WICBitmapDitherTypeNone, nullptr, 0.0,
@@ -184,22 +181,70 @@ ID2D1Bitmap1* DesktopApp::GetDemoIdentityBitmap(size_t visualIndex)
     return cached.Get();
 }
 
+void DesktopApp::PreloadDemoIdentityBitmaps()
+{
+    if (!d2dContext_ || !generalSettings_.demoModeEnabled)
+        return;
+    for (size_t index = 0; index < demoIdentityIconBitmaps_.size(); ++index)
+        GetDemoIdentityBitmap(index);
+}
+
 void DesktopApp::DrawDemoCollectionIdentityIcon(
     ID2D1RenderTarget* context, const DesktopWidget& collection,
     std::wstring_view identity, RECT iconRect, float opacity)
 {
     if (!context || IsRectEmptyRect(iconRect) || opacity <= 0.0f)
         return;
-    const auto& category = ResolveDemoCollectionCategoryCached(
-        collection, demoCollectionCategoryCache_);
-    const size_t visualIndex = DemoCollectionVisualIndex(
-        collection, category, identity);
-    if (ID2D1Bitmap1* bitmap = GetDemoIdentityBitmap(visualIndex))
+    const auto& entry = ResolveDemoCollectionIdentityCached(
+        collection, demoCollectionIdentityCache_);
+    const auto presentation = DemoCollectionPresentation(
+        entry, identity);
+    if (ID2D1Bitmap1* bitmap = GetDemoIdentityBitmap(
+            presentation.visualIndex))
     {
         DrawIconBitmap(context, bitmap, iconRect, opacity);
+        DrawDemoIdentityVariantBadge(
+            context, presentation.variantIndex, iconRect, opacity);
         return;
     }
     DrawDemoIdentityIcon(context, identity, iconRect, opacity);
+}
+
+void DesktopApp::DrawDemoIdentityVariantBadge(
+    ID2D1RenderTarget* context, size_t variantIndex,
+    RECT iconRect, float opacity)
+{
+    if (!context || variantIndex == 0 || opacity <= 0.0f ||
+        IsRectEmptyRect(iconRect))
+        return;
+
+    static constexpr std::array<std::wstring_view, 5> kVariantGlyphs{
+        L"", L"\uE73E", L"\uE73A", L"\uE8FB", L"\uE945" };
+    variantIndex %= kVariantGlyphs.size();
+    if (variantIndex == 0)
+        return;
+
+    const int shortSide = std::max(1L, std::min(
+        iconRect.right - iconRect.left,
+        iconRect.bottom - iconRect.top));
+    const int badgeSize = std::clamp(
+        static_cast<int>(std::round(shortSide * 0.34f)),
+        10, std::max(10, shortSide));
+    const int inset = std::max(1,
+        static_cast<int>(std::round(shortSide * 0.03f)));
+    const RECT badgeRect = MakeRect(
+        iconRect.right - badgeSize - inset,
+        iconRect.bottom - badgeSize - inset,
+        iconRect.right - inset,
+        iconRect.bottom - inset);
+    DrawD2DRoundedRectangle(context, badgeRect, badgeSize * 0.34f,
+        D2D1::ColorF(0.96f, 0.97f, 0.99f, 0.96f * opacity),
+        D2D1::ColorF(0.13f, 0.18f, 0.28f, 0.30f * opacity),
+        std::max(1.0f, shortSide * 0.012f));
+    if (fluentIconTextFormat_)
+        DrawD2DText(context, std::wstring(kVariantGlyphs[variantIndex]),
+            badgeRect, fluentIconTextFormat_.Get(),
+            D2D1::ColorF(0.14f, 0.26f, 0.48f, 0.94f * opacity));
 }
 
 void DesktopApp::DrawDemoIdentityIcon(ID2D1RenderTarget* context,

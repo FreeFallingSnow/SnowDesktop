@@ -86,7 +86,14 @@ int main()
     for (const auto& category : collectionRules::kCategories)
     {
         Check(category.visualIndices.size() == 4,
-            "each demo category must expose four visible identities");
+            "each demo category must expose four generated seed icons");
+        Check(category.identityTitles.size() ==
+                collectionRules::kIdentityCountPerCategory,
+            "each demo category must expose the full presentation pool");
+        std::set<std::wstring_view> categoryTitles;
+        for (const auto title : category.identityTitles)
+            Check(categoryTitles.insert(title).second,
+                "demo presentation titles must be unique within a category");
         for (const auto visualIndex : category.visualIndices)
         {
             Check(visualIndex < rules::kDemoIconAssetCount,
@@ -98,11 +105,27 @@ int main()
                 "all visible demo titles must be unique");
         }
     }
-    Check(collectionRules::VisibleItemCount(creative, 12) == 4,
-        "demo collections must hide entries beyond their unique icon pool");
-    Check(collectionRules::VisualIndexForOrdinal(creative, 0) !=
-            collectionRules::VisualIndexForOrdinal(creative, 1),
-        "visible entries in one collection must receive unique icons");
+    std::set<std::pair<std::size_t, std::size_t>> presentations;
+    std::set<std::wstring_view> presentationTitles;
+    for (std::size_t index = 0;
+        index < collectionRules::kIdentityCountPerCategory; ++index)
+    {
+        const auto presentation =
+            collectionRules::PresentationForSlot(creative, index);
+        Check(presentation.visualIndex < rules::kDemoIconAssetCount,
+            "demo presentation visual index must stay in range");
+        Check(presentation.variantIndex <
+                collectionRules::kIdentityVariantCount,
+            "demo presentation variant index must stay in range");
+        Check(presentations.insert({ presentation.visualIndex,
+                presentation.variantIndex }).second,
+            "presentation variants must be unique before the pool wraps");
+        Check(presentationTitles.insert(presentation.title).second,
+            "presentation titles must be unique before the pool wraps");
+    }
+    Check(collectionRules::PresentationForSlot(creative, 20).title ==
+            collectionRules::PresentationForSlot(creative, 0).title,
+        "large collections must wrap presentation only after twenty entries");
 
     if (failures != 0)
     {
