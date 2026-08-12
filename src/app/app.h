@@ -376,6 +376,7 @@ public:
         Kind kind = Kind::DesktopItem;            /**< 条目来源类型 */
         size_t itemIndex = static_cast<size_t>(-1);   /**< 在桌面项列表中的索引（DesktopItem 类型时有效） */
         size_t widgetIndex = static_cast<size_t>(-1); /**< 所在部件的索引 */
+        size_t demoCollectionIndex = static_cast<size_t>(-1); /**< 演示模式下提供虚拟身份的集合 */
         size_t folderEntryIndex = static_cast<size_t>(-1); /**< 在文件夹条目列表中的索引（FolderEntry 类型时有效） */
         std::wstring name;           /**< 显示名称 */
         std::wstring path;           /**< 完整路径 */
@@ -493,6 +494,15 @@ public:
     std::vector<DesktopWidget>& GetWidgets() { return widgets_; }
     /** @brief 获取所有部件的常量引用。 @return DesktopWidget vector 的 const 引用 */
     const std::vector<DesktopWidget>& GetWidgets() const { return widgets_; }
+    /** @brief 判断集合是否应在演示模式中使用虚拟身份。 */
+    bool ShouldUseDemoCollectionIdentity(
+        const DesktopWidget* collection) const;
+    /** @brief 获取演示集合可安全展示且不重复的条目数。 */
+    size_t GetDemoCollectionVisibleItemCount(
+        const DesktopWidget& collection) const;
+    /** @brief 获取演示集合的本地化分类显示名。 */
+    std::wstring GetDemoCollectionCategoryTitle(
+        const DesktopWidget& collection) const;
     /** @brief 使整个桌面窗口失效并触发重绘。 */
     void InvalidateDesktop() { ::InvalidateRect(hwnd_, nullptr, TRUE); }
 
@@ -1440,8 +1450,6 @@ private:
     std::wstring GetDemoIdentityTitle(std::wstring_view identity) const;
     std::wstring GetDemoCollectionIdentityTitle(
         const DesktopWidget& collection, std::wstring_view identity) const;
-    std::wstring GetDemoCollectionCategoryTitle(
-        const DesktopWidget& collection) const;
     ID2D1Bitmap1* GetDemoIdentityBitmap(size_t visualIndex);
     void DrawDemoIdentityIcon(ID2D1RenderTarget* context,
         std::wstring_view identity, RECT iconRect, float opacity = 1.0f);
@@ -3089,6 +3097,13 @@ private:
     std::array<ComPtr<ID2D1Bitmap1>,
         snowdesktop::demo_mode_rules::kDemoIconAssetCount>
         demoIdentityIconBitmaps_{};
+    struct DemoCollectionCategoryCacheEntry
+    {
+        std::uint64_t signature = 0;
+        const snowdesktop::demo_collection_rules::Category* category = nullptr;
+    };
+    mutable std::unordered_map<std::wstring,
+        DemoCollectionCategoryCacheEntry> demoCollectionCategoryCache_;
     /** @brief 快捷方式箭头图标的 D2D 位图缓存（惰性初始化） */
     ComPtr<ID2D1Bitmap> shortcutArrowBitmap_;
     SIZE shortcutArrowBitmapSize_{};

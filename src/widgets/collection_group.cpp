@@ -95,7 +95,10 @@ std::wstring CollectionGroupTabTitle(
     if (tabIndex >= children.size()) return L"";
     DesktopWidget* child = FindCollectionWidget(
         widget, children[tabIndex]);
-    return child ? child->title : L"";
+    if (!child) return L"";
+    return widget->GetApp()->ShouldUseDemoCollectionIdentity(child)
+        ? widget->GetApp()->GetDemoCollectionCategoryTitle(*child)
+        : child->title;
 }
 
 size_t CollectionGroupTabItemCount(
@@ -108,8 +111,10 @@ size_t CollectionGroupTabItemCount(
     if (DesktopWidget* child = FindCollectionWidget(
             widget, children[tabIndex]))
     {
-        for (const auto& key : child->itemKeys)
-            keys.insert(ToUpperInvariant(key));
+        const size_t count = widget->GetApp()->
+            GetDemoCollectionVisibleItemCount(*child);
+        for (size_t index = 0; index < count; ++index)
+            keys.insert(ToUpperInvariant(child->itemKeys[index]));
     }
     return keys.size();
 }
@@ -425,11 +430,15 @@ CollectionGroup::GetVisibleItemKeys() const
         : app_->FindWidgetIndexById(active);
     if (child || (!previewScene && childIndex < app_->widgets_.size()))
     {
+        const DesktopWidget& activeCollection = child
+            ? *child : app_->widgets_[childIndex];
         const auto& itemKeys = child
             ? child->itemKeys : app_->widgets_[childIndex].itemKeys;
-        for (const auto& rawKey :
-            itemKeys)
+        const size_t itemCount = app_->
+            GetDemoCollectionVisibleItemCount(activeCollection);
+        for (size_t rawIndex = 0; rawIndex < itemCount; ++rawIndex)
         {
+            const auto& rawKey = itemKeys[rawIndex];
             const std::wstring key =
                 ToUpperInvariant(rawKey);
             if (!seen.insert(key).second) continue;
@@ -444,8 +453,13 @@ CollectionGroup::GetVisibleItemKeys() const
             {
                 const size_t itemIndex = app_->FindItemIndexByKey(key);
                 if (itemIndex >= app_->items_.size()) continue;
+                const std::wstring displayName =
+                    app_->ShouldUseDemoCollectionIdentity(&activeCollection)
+                    ? app_->GetDemoCollectionIdentityTitle(
+                        activeCollection, rawKey)
+                    : app_->items_[itemIndex].name;
                 if (!query.empty() &&
-                    !NameMatchesQuery(app_->items_[itemIndex].name, query))
+                    !NameMatchesQuery(displayName, query))
                     continue;
             }
             visibleItemKeys_.push_back(rawKey);
@@ -1156,7 +1170,7 @@ void CollectionGroup::DrawContent(
             else
             {
                 const bool useDemoIdentity =
-                    app_->ShouldUseDemoIdentity(*item);
+                    app_->ShouldUseDemoCollectionIdentity(activeCollection);
                 const std::wstring_view demoIdentity =
                     !useDemoIdentity ? std::wstring_view{} :
                     (item->layoutKey.empty()

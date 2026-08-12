@@ -28,7 +28,11 @@ std::vector<Item*> DesktopApp::GetDockFolderPopupSelectedItems()
 std::vector<std::wstring> DesktopApp::GetPopupItemKeys(const DesktopWidget& widget) const
 {
     if (widget.type == DesktopWidgetType::Collection)
-        return widget.itemKeys;
+    {
+        const size_t count = GetDemoCollectionVisibleItemCount(widget);
+        return std::vector<std::wstring>(widget.itemKeys.begin(),
+            widget.itemKeys.begin() + static_cast<std::ptrdiff_t>(count));
+    }
     return {};
 }
 

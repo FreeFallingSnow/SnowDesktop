@@ -24,6 +24,14 @@
 
 static RECT CollectionItemRect(Collection* widget, size_t linearIndex);
 
+static size_t CollectionDisplayItemCount(Collection* widget)
+{
+    DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
+    DesktopApp* app = widget ? widget->GetApp() : nullptr;
+    if (!data || !app) return 0;
+    return app->GetDemoCollectionVisibleItemCount(*data);
+}
+
 // ── Scroll container helpers (shared with draw/slot code) ─────
 
 /**
@@ -100,7 +108,8 @@ static int CollectionScrollMaxOffset(Collection* widget)
     if (!data || !data->scrollContainerMode) return 0;
     RECT content = CollectionScrollContentRect(widget);
     int visibleHeight = std::max<int>(1, content.bottom - content.top);
-    return std::max(0, CollectionScrollContentHeight(widget, data->itemKeys.size()) -
+    return std::max(0, CollectionScrollContentHeight(widget,
+        CollectionDisplayItemCount(widget)) -
         visibleHeight + widget->Cu(kMinCellHeight / 2.0f));
 }
 
@@ -343,7 +352,8 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
     const RECT iconRect = {
         iconX, iconY, iconX + iconSize, iconY + iconSize
     };
-    const bool useDemoIdentity = app_->ShouldUseDemoIdentity(item);
+    const bool useDemoIdentity =
+        app_->ShouldUseDemoCollectionIdentity(data_);
     const std::wstring_view demoIdentity = item.layoutKey.empty()
         ? std::wstring_view(item.parsingName)
         : std::wstring_view(item.layoutKey);
@@ -449,7 +459,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 else
                 {
                     const bool useDemoIdentity =
-                        app_->ShouldUseDemoIdentity(di);
+                        app_->ShouldUseDemoCollectionIdentity(data_);
                     const std::wstring_view demoIdentity =
                         !useDemoIdentity ? std::wstring_view{} :
                         (di.layoutKey.empty()
@@ -468,7 +478,9 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
     // ── Original: large folder / compact grid mode ────────────
     bool compact = data_->gridSpan.columns <= 1 && data_->gridSpan.rows <= 1;
     auto& slots = GetSlots();
-    size_t inlineCapacity = std::min(GetCollectionInlineCapacity(*data_), data_->itemKeys.size());
+    const size_t displayItemCount = CollectionDisplayItemCount(this);
+    size_t inlineCapacity = std::min(
+        GetCollectionInlineCapacity(*data_), displayItemCount);
 
     for (size_t i = 0; i < inlineCapacity && i < slots.size(); ++i)
     {
@@ -504,7 +516,8 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
 
     // "All" button: 2×2 mosaic of remaining items
     size_t allSlot = GetCollectionAllButtonSlot(*data_);
-    if (allSlot != static_cast<size_t>(-1) && !compact)
+    if (allSlot != static_cast<size_t>(-1) && !compact &&
+        displayItemCount > inlineCapacity)
     {
         RECT allRect = GetCollectionSlotRect(this, allSlot, body);
         if (!IsRectEmptyRect(allRect))
@@ -513,7 +526,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
             for (size_t j = 0; j < 4; ++j)
             {
                 size_t keyIdx = inlineCapacity + j;
-                if (keyIdx < data_->itemKeys.size() &&
+                if (keyIdx < displayItemCount &&
                     resolveItem(data_->itemKeys[keyIdx]) != nullptr)
                 {
                     hasRemainingIcon = true;
@@ -530,7 +543,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                     static_cast<size_t>(j), mosaicRect, 0);
 
                 size_t keyIdx = inlineCapacity + (size_t)j;
-                if (keyIdx < data_->itemKeys.size())
+                if (keyIdx < displayItemCount)
                 {
                     if (DesktopItem* item =
                             resolveItem(data_->itemKeys[keyIdx]))
@@ -554,8 +567,11 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 }
             }
 
-            const std::wstring collectionTitle = data_->title.empty()
-                ? _LW("widget.collection") : data_->title;
+            const std::wstring collectionTitle =
+                app_->ShouldUseDemoCollectionIdentity(data_)
+                ? app_->GetDemoCollectionCategoryTitle(*data_)
+                : (data_->title.empty()
+                    ? _LW("widget.collection") : data_->title);
             app_->DrawItemText(context, allRect, collectionTitle, false, 1.0f,
                 app_->IsLightContentTheme());
         }
@@ -589,7 +605,7 @@ std::vector<std::unique_ptr<Slot>> Collection::BuildSlots()
     {
         const auto [firstIndex, lastIndex] =
             CollectionVisibleIndexRange(
-                this, data_->itemKeys.size());
+                this, CollectionDisplayItemCount(this));
         slots.reserve(lastIndex - firstIndex);
         for (size_t idx = firstIndex; idx < lastIndex; ++idx)
         {
@@ -606,7 +622,8 @@ std::vector<std::unique_ptr<Slot>> Collection::BuildSlots()
 
     // ── Original: large folder mode ─────────────────────────
     size_t inlineCap = GetCollectionInlineCapacity(*data_);
-    size_t visible = std::min(inlineCap, data_->itemKeys.size());
+    size_t visible = std::min(
+        inlineCap, CollectionDisplayItemCount(this));
     RECT body = GetBodyRect();
     for (size_t idx = 0; idx < visible; ++idx)
     {
@@ -634,10 +651,12 @@ size_t Collection::GetSlotCount() const
     if (data_->itemKeys.empty()) return 0;
 
     if (data_->scrollContainerMode)
-        return data_->itemKeys.size();
+        return CollectionDisplayItemCount(
+            const_cast<Collection*>(this));
 
     size_t inlineCap = GetCollectionInlineCapacity(*data_);
-    size_t visible = std::min(inlineCap, data_->itemKeys.size());
+    size_t visible = std::min(inlineCap,
+        CollectionDisplayItemCount(const_cast<Collection*>(this)));
 
     return visible;
 }
@@ -652,7 +671,9 @@ size_t Collection::GetSlotCount() const
  */
 Item* Collection::GetSlotItem(size_t idx) const
 {
-    if (!data_ || idx >= data_->itemKeys.size() || !app_) return nullptr;
+    if (!data_ || !app_ ||
+        idx >= CollectionDisplayItemCount(const_cast<Collection*>(this)))
+        return nullptr;
     if (!data_->scrollContainerMode && idx >= GetCollectionInlineCapacity(*data_)) return nullptr;
     if (auto* scene = GetPreviewScene())
     {
@@ -807,6 +828,9 @@ RECT Collection::GetAllButtonRect() const
     }
     size_t allSlot = GetCollectionAllButtonSlot(*data_);
     if (allSlot == static_cast<size_t>(-1)) return {};
+    if (CollectionDisplayItemCount(const_cast<Collection*>(this)) <=
+        GetCollectionInlineCapacity(*data_))
+        return {};
     return GetCollectionSlotRect(this, allSlot, body);
 }
 
@@ -855,7 +879,9 @@ WidgetHit Collection::HitTestWidget(POINT pt) const
         return base == WidgetHit::Content ? WidgetHit::CollectionOpenBtn : base;
 
     size_t allSlot = GetCollectionAllButtonSlot(*data_);
-    if (allSlot != static_cast<size_t>(-1))
+    if (allSlot != static_cast<size_t>(-1) &&
+        CollectionDisplayItemCount(const_cast<Collection*>(this)) >
+            GetCollectionInlineCapacity(*data_))
     {
         RECT allRect = GetCollectionSlotRect(this, allSlot, GetBodyRect());
         if (PtInRect(&allRect, pt)) return WidgetHit::CollectionOpenBtn;
@@ -928,7 +954,8 @@ int Collection::GetMaxScrollOffset() const
 int Collection::GetTotalContentHeight() const
 {
     if (!data_ || !data_->scrollContainerMode) return 0;
-    return CollectionScrollContentHeight(const_cast<Collection*>(this), data_->itemKeys.size());
+    return CollectionScrollContentHeight(const_cast<Collection*>(this),
+        CollectionDisplayItemCount(const_cast<Collection*>(this)));
 }
 
 int Collection::GetVisibleContentHeight() const

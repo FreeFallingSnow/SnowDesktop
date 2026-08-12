@@ -246,15 +246,24 @@ void DesktopApp::RefreshQuickNavigationAppResults()
     for (size_t i = 0; i < quickNavigationAppEntries_.size(); ++i)
     {
         const QuickNavigationAppEntry& entry = quickNavigationAppEntries_[i];
-        if (!NameMatchesQuery(entry.name, query))
+        const std::wstring displayName = generalSettings_.demoModeEnabled
+            ? GetDemoIdentityTitle(entry.parsingName)
+            : entry.name;
+        if (!NameMatchesQuery(displayName, query))
             continue;
         quickNavigationAppResultIndices_.push_back(i);
     }
 
     std::stable_sort(quickNavigationAppResultIndices_.begin(), quickNavigationAppResultIndices_.end(),
         [&](size_t a, size_t b) {
-            return NameSearchMatchRank(quickNavigationAppEntries_[a].name, query) <
-                NameSearchMatchRank(quickNavigationAppEntries_[b].name, query);
+            const auto displayName = [&](size_t index) {
+                const auto& entry = quickNavigationAppEntries_[index];
+                return generalSettings_.demoModeEnabled
+                    ? GetDemoIdentityTitle(entry.parsingName)
+                    : entry.name;
+            };
+            return NameSearchMatchRank(displayName(a), query) <
+                NameSearchMatchRank(displayName(b), query);
         });
 
     if (quickNavigationAppResultIndices_.size() > kQuickNavigationAppResultLimit)
@@ -342,8 +351,10 @@ std::vector<std::wstring> DesktopApp::GetQuickNavigationItemKeys() const
         for (size_t ci : collectionIndices)
         {
             if (widgets_[ci].type == DesktopWidgetType::FolderMapping) continue;
-            for (const auto& key : widgets_[ci].itemKeys)
-                appendKey(key);
+            const auto& widget = widgets_[ci];
+            const size_t count = GetDemoCollectionVisibleItemCount(widget);
+            for (size_t index = 0; index < count; ++index)
+                appendKey(widget.itemKeys[index]);
         }
         return result;
     }
@@ -363,8 +374,10 @@ std::vector<std::wstring> DesktopApp::GetQuickNavigationItemKeys() const
         (widgets_[quickNavigationActiveWidgetIndex_].type == DesktopWidgetType::Collection ||
          widgets_[quickNavigationActiveWidgetIndex_].type == DesktopWidgetType::FileCategories))
     {
-        for (const auto& key : widgets_[quickNavigationActiveWidgetIndex_].itemKeys)
-            appendKey(key);
+        const auto& widget = widgets_[quickNavigationActiveWidgetIndex_];
+        const size_t count = GetDemoCollectionVisibleItemCount(widget);
+        for (size_t index = 0; index < count; ++index)
+            appendKey(widget.itemKeys[index]);
         return result;
     }
     if (quickNavigationActiveWidgetIndex_ < widgets_.size() &&
@@ -385,8 +398,10 @@ std::vector<std::wstring> DesktopApp::GetQuickNavigationItemKeys() const
         }
         else
         {
-            for (const auto& key : widgets_[ci].itemKeys)
-                appendKey(key);
+            const auto& widget = widgets_[ci];
+            const size_t count = GetDemoCollectionVisibleItemCount(widget);
+            for (size_t index = 0; index < count; ++index)
+                appendKey(widget.itemKeys[index]);
         }
     }
     return result;
@@ -409,18 +424,56 @@ DesktopApp::BuildQuickNavigationContentModel() const
     };
     auto appendDesktop = [&](
         std::vector<QuickNavigationEntry>& destination,
-        size_t itemIndex, const std::wstring& source) {
+        size_t itemIndex, const std::wstring& source,
+        size_t demoCollectionIndex = static_cast<size_t>(-1)) {
         if (itemIndex >= items_.size()) return;
         const DesktopItem& item = items_[itemIndex];
         std::wstring key = ToUpperInvariant(item.layoutKey.empty() ? item.parsingName : item.layoutKey);
         if (key.empty() || seenDesktop.contains(key)) return;
-        if (!matches(item.name)) return;
+        if (demoCollectionIndex >= widgets_.size() &&
+            generalSettings_.demoModeEnabled)
+        {
+            for (size_t widgetIndex = 0;
+                widgetIndex < widgets_.size(); ++widgetIndex)
+            {
+                const auto& candidate = widgets_[widgetIndex];
+                if (candidate.type != DesktopWidgetType::Collection)
+                    continue;
+                const size_t visibleCount =
+                    GetDemoCollectionVisibleItemCount(candidate);
+                auto itemIt = std::find_if(candidate.itemKeys.begin(),
+                    candidate.itemKeys.end(), [&](const auto& candidateKey) {
+                        return ToUpperInvariant(candidateKey) == key;
+                    });
+                if (itemIt == candidate.itemKeys.end())
+                    continue;
+                const size_t ordinal = static_cast<size_t>(
+                    std::distance(candidate.itemKeys.begin(), itemIt));
+                if (ordinal >= visibleCount)
+                    return;
+                demoCollectionIndex = widgetIndex;
+                break;
+            }
+        }
+        const std::wstring_view identity = item.layoutKey.empty()
+            ? std::wstring_view(item.parsingName)
+            : std::wstring_view(item.layoutKey);
+        const DesktopWidget* demoCollection =
+            demoCollectionIndex < widgets_.size()
+            ? &widgets_[demoCollectionIndex] : nullptr;
+        const std::wstring displayName =
+            ShouldUseDemoCollectionIdentity(demoCollection)
+            ? GetDemoCollectionIdentityTitle(*demoCollection, identity)
+            : (ShouldUseDemoIdentity(item)
+                ? GetDemoIdentityTitle(identity) : item.name);
+        if (!matches(displayName)) return;
         seenDesktop.insert(std::move(key));
 
         QuickNavigationEntry entry;
         entry.kind = QuickNavigationEntry::Kind::DesktopItem;
         entry.itemIndex = itemIndex;
-        entry.name = item.name;
+        entry.demoCollectionIndex = demoCollectionIndex;
+        entry.name = displayName;
         entry.path = item.parsingName;
         entry.source = source;
         destination.push_back(std::move(entry));
@@ -450,6 +503,8 @@ DesktopApp::BuildQuickNavigationContentModel() const
             {label, first, model.entries.size() - first});
     };
     auto widgetTitle = [&](const DesktopWidget& widget) {
+        if (ShouldUseDemoCollectionIdentity(&widget))
+            return GetDemoCollectionCategoryTitle(widget);
         if (!widget.title.empty()) return widget.title;
         if (widget.type ==
             DesktopWidgetType::FileCategories)
@@ -519,16 +574,21 @@ DesktopApp::BuildQuickNavigationContentModel() const
                         sourceWidgets.size();
                     ++sourceIndex)
                 {
-                    for (const auto& key :
-                        widgets_[
-                            sourceWidgets[
-                                sourceIndex]].
-                            itemKeys)
+                    const auto& sourceWidget = widgets_[
+                        sourceWidgets[sourceIndex]];
+                    const size_t visibleCount =
+                        GetDemoCollectionVisibleItemCount(sourceWidget);
+                    for (size_t visibleIndex = 0;
+                        visibleIndex < visibleCount; ++visibleIndex)
+                    {
+                        const auto& key =
+                            sourceWidget.itemKeys[visibleIndex];
                         sourceKeys[
                             sourceIndex + 1].
                             push_back(
                                 ToUpperInvariant(
                                     key));
+                    }
                 }
                 const std::vector<int> owners =
                     snowdesktop::
@@ -571,9 +631,13 @@ DesktopApp::BuildQuickNavigationContentModel() const
                     std::vector<
                         QuickNavigationEntry>
                         entries;
-                    for (const auto& key :
-                        widget.itemKeys)
+                    const size_t visibleCount =
+                        GetDemoCollectionVisibleItemCount(widget);
+                    for (size_t visibleIndex = 0;
+                        visibleIndex < visibleCount; ++visibleIndex)
                     {
+                        const auto& key =
+                            widget.itemKeys[visibleIndex];
                         const size_t itemIndex =
                             FindItemIndexByKey(key);
                         if (itemIndex <
@@ -583,7 +647,7 @@ DesktopApp::BuildQuickNavigationContentModel() const
                                     sourceIndex + 1))
                             appendDesktop(
                                 entries, itemIndex,
-                                widgetTitle(widget));
+                                widgetTitle(widget), widgetIndex);
                     }
                     appendSection(
                         widgetTitle(widget),
@@ -776,7 +840,10 @@ DesktopApp::BuildQuickNavigationContentModel() const
             appendDesktop(
                 model.entries,
                 FindItemIndexByKey(key),
-                _LW("widget.collection"));
+                _LW("widget.collection"),
+                quickNavigationActiveWidgetIndex_ < widgets_.size()
+                    ? quickNavigationActiveWidgetIndex_
+                    : static_cast<size_t>(-1));
         return model;
     }
 
@@ -790,11 +857,17 @@ DesktopApp::BuildQuickNavigationContentModel() const
     {
         const DesktopWidget& widget = widgets_[ci];
         if (widget.type == DesktopWidgetType::FolderMapping) continue;
-        std::wstring source = widget.title.empty() ? _LW("widget.collection") : widget.title;
-        for (const auto& key : widget.itemKeys)
+        std::wstring source = widgetTitle(widget);
+        const size_t visibleCount =
+            GetDemoCollectionVisibleItemCount(widget);
+        for (size_t visibleIndex = 0;
+            visibleIndex < visibleCount; ++visibleIndex)
+        {
+            const auto& key = widget.itemKeys[visibleIndex];
             appendDesktop(
                 model.entries,
-                FindItemIndexByKey(key), source);
+                FindItemIndexByKey(key), source, ci);
+        }
     }
 
     for (size_t wi = 0; wi < widgets_.size(); ++wi)

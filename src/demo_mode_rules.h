@@ -10,7 +10,7 @@ namespace snowdesktop::demo_mode_rules
 
 struct VisualIdentity
 {
-    const char* titleKey;
+    std::wstring_view title;
     std::wstring_view glyph;
     std::uint32_t backgroundRgb;
 };
@@ -19,37 +19,77 @@ struct VisualIdentity
 // Their titles are localized at the presentation boundary, while the stable
 // identity hash keeps the same real shortcut visually consistent everywhere.
 inline constexpr std::array<VisualIdentity, 16> kVisualIdentities{
-    VisualIdentity{ "app.demo_identity.projects", L"\uE1EB", 0x5968D8 },
-    VisualIdentity{ "app.demo_identity.design", L"\uF357", 0xC75B7A },
-    VisualIdentity{ "app.demo_identity.focus", L"\uF07D", 0xD2873E },
-    VisualIdentity{ "app.demo_identity.workspace", L"\uE487", 0x477FC1 },
-    VisualIdentity{ "app.demo_identity.notes", L"\uEED9", 0x7A68B8 },
-    VisualIdentity{ "app.demo_identity.archive", L"\uE066", 0x66758C },
-    VisualIdentity{ "app.demo_identity.media", L"\uEDF0", 0xA85291 },
-    VisualIdentity{ "app.demo_identity.mail", L"\uF506", 0x3F8EAE },
-    VisualIdentity{ "app.demo_identity.calendar", L"\uE238", 0xC5634F },
-    VisualIdentity{ "app.demo_identity.tools", L"\uF82F", 0x4D8C65 },
-    VisualIdentity{ "app.demo_identity.ideas", L"\uEB34", 0xB48A34 },
-    VisualIdentity{ "app.demo_identity.explore", L"\uE6B2", 0x3D8D88 },
-    VisualIdentity{ "app.demo_identity.photos", L"\uE719", 0xB65C65 },
-    VisualIdentity{ "app.demo_identity.music", L"\uE855", 0x7562A8 },
-    VisualIdentity{ "app.demo_identity.code", L"\uEFBE", 0x3F78A8 },
-    VisualIdentity{ "app.demo_identity.data", L"\uEECC", 0x54854D },
+    VisualIdentity{ L"Northstar Projects", L"\uE1EB", 0x5968D8 },
+    VisualIdentity{ L"Luma Canvas", L"\uF357", 0xC75B7A },
+    VisualIdentity{ L"QuietFocus", L"\uF07D", 0xD2873E },
+    VisualIdentity{ L"Orbit Workspace", L"\uE487", 0x477FC1 },
+    VisualIdentity{ L"Quill Notes", L"\uEED9", 0x7A68B8 },
+    VisualIdentity{ L"Cedar Vault", L"\uE066", 0x66758C },
+    VisualIdentity{ L"Vista Player", L"\uEDF0", 0xA85291 },
+    VisualIdentity{ L"Courier Mail", L"\uF506", 0x3F8EAE },
+    VisualIdentity{ L"Daymark Calendar", L"\uE238", 0xC5634F },
+    VisualIdentity{ L"Pulse Utilities", L"\uF82F", 0x4D8C65 },
+    VisualIdentity{ L"Sparkboard", L"\uEB34", 0xB48A34 },
+    VisualIdentity{ L"Wayfinder", L"\uE6B2", 0x3D8D88 },
+    VisualIdentity{ L"Facet Photos", L"\uE719", 0xB65C65 },
+    VisualIdentity{ L"Tempo Music", L"\uE855", 0x7562A8 },
+    VisualIdentity{ L"Branchline IDE", L"\uEFBE", 0x3F78A8 },
+    VisualIdentity{ L"Atlas Data", L"\uEECC", 0x54854D },
 };
 
-inline constexpr std::array<VisualIdentity, 12> kCategoryVisualIdentities{
-    VisualIdentity{ "app.demo_identity.notes", L"\uE8A5", 0x397FE7 },
-    VisualIdentity{ "app.demo_identity.projects", L"\uE650", 0xE98A24 },
-    VisualIdentity{ "app.demo_identity.data", L"\uEA44", 0x20A384 },
-    VisualIdentity{ "app.demo_identity.mail", L"\uE8BD", 0x4B8EDB },
-    VisualIdentity{ "app.demo_identity.media", L"\uF4B0", 0x835BC8 },
-    VisualIdentity{ "app.demo_identity.tools", L"\uE15F", 0xD88A24 },
-    VisualIdentity{ "app.demo_identity.ideas", L"\uE128", 0x5051A5 },
-    VisualIdentity{ "app.demo_identity.explore", L"\uE16B", 0x4A58B5 },
-    VisualIdentity{ "app.demo_identity.tools", L"\uF1BE", 0x3A596C },
-    VisualIdentity{ "app.demo_identity.code", L"\uE756", 0x454953 },
-    VisualIdentity{ "app.demo_identity.explore", L"\uE774", 0x238ED2 },
-    VisualIdentity{ "app.demo_identity.archive", L"\uE753", 0x6983DD },
+// Indices 16..63 are reserved for collection categories. Every category owns
+// four exclusive identities, so demo collections can show four real entries
+// without repeating an icon either within a collection or across categories.
+// The array order mirrors the contiguous RCDATA resource IDs in resource.h.
+inline constexpr std::array<VisualIdentity, 48> kCategoryVisualIdentities{
+    VisualIdentity{ L"Atlas Library", L"\uE8A5", 0x397FE7 },
+    VisualIdentity{ L"Luma Present", L"\uE650", 0xE98A24 },
+    VisualIdentity{ L"Ledger Pro", L"\uEA44", 0x20A384 },
+    VisualIdentity{ L"Relay Chat", L"\uE8BD", 0x4B8EDB },
+    VisualIdentity{ L"ReelView", L"\uF4B0", 0x835BC8 },
+    VisualIdentity{ L"Axis Draft", L"\uE15F", 0xD88A24 },
+    VisualIdentity{ L"Mosaic AI", L"\uE128", 0x5051A5 },
+    VisualIdentity{ L"Arcade Hub", L"\uE16B", 0x4A58B5 },
+    VisualIdentity{ L"Harbor Ops", L"\uF1BE", 0x3A596C },
+    VisualIdentity{ L"Branchline Terminal", L"\uE756", 0x454953 },
+    VisualIdentity{ L"Orbit Browser", L"\uE774", 0x238ED2 },
+    VisualIdentity{ L"CloudGate", L"\uE753", 0x6983DD },
+    VisualIdentity{ L"Cedar Files", L"\uE8A5", 0x397FE7 },
+    VisualIdentity{ L"Safekeep Backup", L"\uE8B7", 0x2467C9 },
+    VisualIdentity{ L"Pulse Monitor", L"\uE9D9", 0x354A66 },
+    VisualIdentity{ L"Sentinel Guard", L"\uEA18", 0x4255C8 },
+    VisualIdentity{ L"Luma Sketch", L"\uE70F", 0xD76685 },
+    VisualIdentity{ L"FrameForge", L"\uE768", 0x7654C8 },
+    VisualIdentity{ L"Northstar IDE", L"\uE943", 0x276EBE },
+    VisualIdentity{ L"MergePath", L"\uE8AB", 0x566BC6 },
+    VisualIdentity{ L"Papertrail Reader", L"\uE8A5", 0xD9554F },
+    VisualIdentity{ L"Taskboard", L"\uE762", 0x258B7A },
+    VisualIdentity{ L"Huddle Meet", L"\uE8AA", 0x3A87D6 },
+    VisualIdentity{ L"PeopleHub", L"\uE716", 0x2F9DB6 },
+    VisualIdentity{ L"Echo Player", L"\uE768", 0x714DB4 },
+    VisualIdentity{ L"Airwave", L"\uE720", 0xA64683 },
+    VisualIdentity{ L"ForgeCAD", L"\uE71A", 0x2B72B9 },
+    VisualIdentity{ L"CircuitLab", L"\uE950", 0x315875 },
+    VisualIdentity{ L"Neural Desk", L"\uE945", 0x765BCC },
+    VisualIdentity{ L"FlowMind", L"\uE8ED", 0x4F82BF },
+    VisualIdentity{ L"Pixel Deck", L"\uE7FC", 0x4B54B7 },
+    VisualIdentity{ L"Apex Racing", L"\uE7FC", 0x343941 },
+    VisualIdentity{ L"Network Watch", L"\uE968", 0x27537B },
+    VisualIdentity{ L"LogScope", L"\uE9D9", 0x455369 },
+    VisualIdentity{ L"WebCanvas", L"\uE774", 0x2C91CE },
+    VisualIdentity{ L"Cloud Portal", L"\uE753", 0x6E81D4 },
+    VisualIdentity{ L"Dropzone", L"\uE896", 0x2C7FD2 },
+    VisualIdentity{ L"Relay Remote", L"\uE8AF", 0x3A78BD },
+    VisualIdentity{ L"Chroma Studio", L"\uE790", 0xC96B63 },
+    VisualIdentity{ L"DataForge", L"\uE8CE", 0x4766B9 },
+    VisualIdentity{ L"Quill Writer", L"\uE70F", 0x397FD2 },
+    VisualIdentity{ L"Postbox Mail", L"\uE715", 0x347FC2 },
+    VisualIdentity{ L"Prism Photos", L"\uEB9F", 0x7065BD },
+    VisualIdentity{ L"MeshFlow", L"\uE9D2", 0x3479BB },
+    VisualIdentity{ L"Prompt Harbor", L"\uE8BD", 0x7C57C7 },
+    VisualIdentity{ L"Quest Compass", L"\uE81B", 0x71449B },
+    VisualIdentity{ L"Stackyard", L"\uE7B8", 0x315274 },
+    VisualIdentity{ L"Skyfetch", L"\uE896", 0x3C8DD1 },
 };
 
 inline constexpr std::size_t kDemoIconAssetCount =

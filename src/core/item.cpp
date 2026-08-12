@@ -130,8 +130,9 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
     RECT iconRect = quickNavLayout
         ? app_->GetQuickNavItemIconRect(rect)
         : app_->GetItemIconRect(rect);
-    const bool useDemoIdentity = !quickNavLayout &&
-        app_->ShouldUseDemoIdentity(*item_);
+    const bool useDemoIdentity = demoCollection
+        ? app_->ShouldUseDemoCollectionIdentity(demoCollection)
+        : app_->ShouldUseDemoIdentity(*item_);
     const std::wstring_view demoIdentity = item_->layoutKey.empty()
         ? std::wstring_view(item_->parsingName)
         : std::wstring_view(item_->layoutKey);

@@ -11,32 +11,95 @@ bool DesktopApp::ShouldUseDemoIdentity(const DesktopItem& item) const
         generalSettings_.demoModeEnabled, item.isApplicationShortcut);
 }
 
+bool DesktopApp::ShouldUseDemoCollectionIdentity(
+    const DesktopWidget* collection) const
+{
+    return generalSettings_.demoModeEnabled && collection &&
+        collection->type == DesktopWidgetType::Collection;
+}
+
+namespace
+{
+const snowdesktop::demo_collection_rules::Category&
+ResolveDemoCollectionCategoryCached(
+    const DesktopWidget& collection,
+    auto& cache)
+{
+    std::uint64_t signature = snowdesktop::demo_mode_rules::
+        StableIdentityHash(collection.demoIconCategory);
+    auto mix = [&](std::wstring_view value) {
+        signature ^= snowdesktop::demo_mode_rules::StableIdentityHash(value) +
+            0x9e3779b97f4a7c15ULL + (signature << 6U) +
+            (signature >> 2U);
+    };
+    mix(collection.title);
+    signature ^= static_cast<std::uint64_t>(collection.itemKeys.size());
+    if (!collection.itemKeys.empty())
+    {
+        mix(collection.itemKeys.front());
+        mix(collection.itemKeys.back());
+    }
+
+    auto& entry = cache[collection.id];
+    if (!entry.category || entry.signature != signature)
+    {
+        entry.category = &snowdesktop::demo_collection_rules::
+            ResolveCategory(collection.demoIconCategory,
+                collection.title, collection.itemKeys);
+        entry.signature = signature;
+    }
+    return *entry.category;
+}
+
+std::size_t DemoCollectionVisualIndex(
+    const DesktopWidget& collection,
+    const snowdesktop::demo_collection_rules::Category& category,
+    std::wstring_view identity)
+{
+    const std::size_t ordinal = snowdesktop::demo_collection_rules::
+        ItemOrdinal(collection.itemKeys, identity);
+    return ordinal == static_cast<std::size_t>(-1)
+        ? snowdesktop::demo_collection_rules::VisualIndex(category, identity)
+        : snowdesktop::demo_collection_rules::VisualIndexForOrdinal(
+            category, ordinal);
+}
+}
+
+size_t DesktopApp::GetDemoCollectionVisibleItemCount(
+    const DesktopWidget& collection) const
+{
+    if (!ShouldUseDemoCollectionIdentity(&collection))
+        return collection.itemKeys.size();
+    const auto& category = ResolveDemoCollectionCategoryCached(
+        collection, demoCollectionCategoryCache_);
+    return snowdesktop::demo_collection_rules::VisibleItemCount(
+        category, collection.itemKeys.size());
+}
+
 std::wstring DesktopApp::GetDemoIdentityTitle(
     std::wstring_view identity) const
 {
     const auto& visual = snowdesktop::demo_mode_rules::
         ResolveVisualIdentity(identity);
-    return _LW(visual.titleKey);
+    return std::wstring(visual.title);
 }
 
 std::wstring DesktopApp::GetDemoCollectionIdentityTitle(
     const DesktopWidget& collection, std::wstring_view identity) const
 {
-    const auto& category = snowdesktop::demo_collection_rules::
-        ResolveCategory(collection.demoIconCategory,
-            collection.title, collection.itemKeys);
-    const size_t visualIndex = snowdesktop::demo_collection_rules::
-        VisualIndex(category, identity);
-    return _LW(snowdesktop::demo_mode_rules::
-        VisualIdentityAt(visualIndex).titleKey);
+    const auto& category = ResolveDemoCollectionCategoryCached(
+        collection, demoCollectionCategoryCache_);
+    const size_t visualIndex = DemoCollectionVisualIndex(
+        collection, category, identity);
+    return std::wstring(snowdesktop::demo_mode_rules::
+        VisualIdentityAt(visualIndex).title);
 }
 
 std::wstring DesktopApp::GetDemoCollectionCategoryTitle(
     const DesktopWidget& collection) const
 {
-    const auto& category = snowdesktop::demo_collection_rules::
-        ResolveCategory(collection.demoIconCategory,
-            collection.title, collection.itemKeys);
+    const auto& category = ResolveDemoCollectionCategoryCached(
+        collection, demoCollectionCategoryCache_);
     return _LW(category.titleKey);
 }
 
@@ -127,11 +190,10 @@ void DesktopApp::DrawDemoCollectionIdentityIcon(
 {
     if (!context || IsRectEmptyRect(iconRect) || opacity <= 0.0f)
         return;
-    const auto& category = snowdesktop::demo_collection_rules::
-        ResolveCategory(collection.demoIconCategory,
-            collection.title, collection.itemKeys);
-    const size_t visualIndex = snowdesktop::demo_collection_rules::
-        VisualIndex(category, identity);
+    const auto& category = ResolveDemoCollectionCategoryCached(
+        collection, demoCollectionCategoryCache_);
+    const size_t visualIndex = DemoCollectionVisualIndex(
+        collection, category, identity);
     if (ID2D1Bitmap1* bitmap = GetDemoIdentityBitmap(visualIndex))
     {
         DrawIconBitmap(context, bitmap, iconRect, opacity);

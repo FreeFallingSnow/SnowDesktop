@@ -2019,7 +2019,12 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     if (showHandle)
     {
         // Title text (with shadow)
-        if (!data_->title.empty() && data_->showTitle)
+        const bool demoCollectionTitle =
+            app_->ShouldUseDemoCollectionIdentity(data_);
+        const std::wstring displayTitle = demoCollectionTitle
+            ? app_->GetDemoCollectionCategoryTitle(*data_)
+            : data_->title;
+        if (!displayTitle.empty() && data_->showTitle)
         {
             RECT titleRect = GetTitleRect();
             LONG tw = titleRect.right - titleRect.left;
@@ -2033,8 +2038,8 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                 if (fmt)
                 {
                     ComPtr<IDWriteTextLayout> layout;
-                    dwrite->CreateTextLayout(data_->title.c_str(),
-                        static_cast<UINT32>(data_->title.size()), fmt,
+                    dwrite->CreateTextLayout(displayTitle.c_str(),
+                        static_cast<UINT32>(displayTitle.size()), fmt,
                         (float)tw, (float)th, &layout);
                     if (layout)
                     {

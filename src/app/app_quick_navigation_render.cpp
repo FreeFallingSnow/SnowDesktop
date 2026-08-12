@@ -880,9 +880,13 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             if (entry.kind == QuickNavigationEntry::Kind::DesktopItem &&
                 entry.itemIndex < items_.size())
             {
+                const DesktopWidget* demoCollection =
+                    entry.demoCollectionIndex < widgets_.size()
+                    ? &widgets_[entry.demoCollectionIndex] : nullptr;
                 DesktopIcon icon(&items_[entry.itemIndex], nullptr, this);
-                icon.Draw(ctx.Get(), itemRectApp, state, quickNavLightTheme_, false, true);
-                DrawQuickNavItemText(ctx.Get(), itemRectApp, items_[entry.itemIndex].name,
+                icon.Draw(ctx.Get(), itemRectApp, state,
+                    quickNavLightTheme_, false, true, demoCollection);
+                DrawQuickNavItemText(ctx.Get(), itemRectApp, entry.name,
                     false, quickNavLightTheme_);
             }
             else if (entry.kind == QuickNavigationEntry::Kind::FolderEntry &&
@@ -962,7 +966,12 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                         rowRectApp.top + (rowH - iconSz) / 2,
                         rowRectApp.left + QuickNavScale(12) + iconSz,
                         rowRectApp.top + (rowH + iconSz) / 2);
-                    DrawQuickNavSysIcon(ctx.Get(), entry.systemIconIndex, iconRect);
+                    if (generalSettings_.demoModeEnabled)
+                        DrawDemoIdentityIcon(ctx.Get(), entry.parsingName,
+                            iconRect);
+                    else
+                        DrawQuickNavSysIcon(ctx.Get(),
+                            entry.systemIconIndex, iconRect);
 
                     const int textLeft = iconRect.right + QuickNavScale(10);
                     RECT nameRect = rowRectApp;
@@ -977,7 +986,10 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                     typeRect.top += QuickNavScale(24);
                     typeRect.bottom -= QuickNavScale(5);
 
-                    DrawD2DTextEllipsis(ctx.Get(), entry.name, nameRect,
+                    const std::wstring appName = generalSettings_.demoModeEnabled
+                        ? GetDemoIdentityTitle(entry.parsingName)
+                        : entry.name;
+                    DrawD2DTextEllipsis(ctx.Get(), appName, nameRect,
                         quickNavItemTextFormat_.Get(), ToD2DColor(t.appNameText),
                         DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                     DrawD2DTextEllipsis(ctx.Get(), _LW("app.nav.app_label"), typeRect,

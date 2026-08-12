@@ -48,14 +48,14 @@ int main()
     {
         const auto& visual = rules::ResolveVisualIdentity(sample);
         variants.insert(rules::VisualIdentityIndex(sample));
-        Check(visual.titleKey != nullptr && visual.titleKey[0] != '\0' &&
+        Check(!visual.title.empty() &&
                 !visual.glyph.empty(),
             "every demo identity must provide a title and glyph");
     }
     Check(variants.size() >= 4,
         "representative identities should not collapse to one visual");
 
-    Check(rules::kDemoIconAssetCount == 28,
+    Check(rules::kDemoIconAssetCount == 64,
         "the embedded demo icon pool must include category visuals");
     const std::vector<std::wstring> creativeItems{
         L"Photoshop.lnk", L"DaVinci Resolve.lnk", L"Blender.lnk" };
@@ -78,6 +78,31 @@ int main()
         collectionRules::VisualIndex(creative, L"one") ==
             collectionRules::VisualIndex(creative, L"one"),
         "category visual mappings must be stable and in range");
+    std::set<std::size_t> categoryVisuals;
+    std::set<std::wstring_view> demoTitles;
+    for (const auto& visual : rules::kVisualIdentities)
+        Check(demoTitles.insert(visual.title).second,
+            "standalone demo titles must be unique");
+    for (const auto& category : collectionRules::kCategories)
+    {
+        Check(category.visualIndices.size() == 4,
+            "each demo category must expose four visible identities");
+        for (const auto visualIndex : category.visualIndices)
+        {
+            Check(visualIndex < rules::kDemoIconAssetCount,
+                "category visual index must stay in range");
+            Check(categoryVisuals.insert(visualIndex).second,
+                "different demo categories must not reuse an icon");
+            Check(demoTitles.insert(
+                    rules::VisualIdentityAt(visualIndex).title).second,
+                "all visible demo titles must be unique");
+        }
+    }
+    Check(collectionRules::VisibleItemCount(creative, 12) == 4,
+        "demo collections must hide entries beyond their unique icon pool");
+    Check(collectionRules::VisualIndexForOrdinal(creative, 0) !=
+            collectionRules::VisualIndexForOrdinal(creative, 1),
+        "visible entries in one collection must receive unique icons");
 
     if (failures != 0)
     {

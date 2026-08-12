@@ -82,7 +82,10 @@ void DesktopApp::DrawCollectionPopup(
         titleRect.right =
             GetDockFolderPopupSortButtonRect(
                 popupRect_).left - 10;
-    std::wstring title = widget.title.empty() ? _LW("app.overlay.collection_default") : widget.title;
+    std::wstring title = ShouldUseDemoCollectionIdentity(&widget)
+        ? GetDemoCollectionCategoryTitle(widget)
+        : (widget.title.empty()
+            ? _LW("app.overlay.collection_default") : widget.title);
     DrawD2DTextEllipsis(
         ctx, title, titleRect,
         itemTextFormat_.Get(),

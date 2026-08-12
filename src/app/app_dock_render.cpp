@@ -148,7 +148,9 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
             InflateRect(&bitmapTarget, -inset, -inset);
         }
         const float alpha = item.isCut ? 0.4f : 1.0f;
-        const bool useDemoIdentity = ShouldUseDemoIdentity(item);
+        const bool useDemoIdentity = demoCollection
+            ? ShouldUseDemoCollectionIdentity(demoCollection)
+            : ShouldUseDemoIdentity(item);
         const std::wstring_view demoIdentity = item.layoutKey.empty()
             ? std::wstring_view(item.parsingName)
             : std::wstring_view(item.layoutKey);

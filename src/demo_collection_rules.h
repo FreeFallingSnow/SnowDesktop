@@ -2,6 +2,7 @@
 
 #include "demo_mode_rules.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cwctype>
@@ -20,30 +21,30 @@ struct Category
     std::span<const std::wstring_view> keywords;
 };
 
-inline constexpr std::array<std::size_t, 6> kFilesVisuals{
-    4, 5, 15, 16, 18, 27 };
-inline constexpr std::array<std::size_t, 6> kUtilitiesVisuals{
-    3, 9, 11, 24, 25, 27 };
-inline constexpr std::array<std::size_t, 7> kCreativeVisuals{
-    1, 6, 10, 12, 17, 20, 23 };
-inline constexpr std::array<std::size_t, 7> kDevelopmentVisuals{
-    2, 3, 14, 15, 22, 25, 26 };
-inline constexpr std::array<std::size_t, 7> kOfficeVisuals{
-    4, 7, 8, 15, 16, 17, 18 };
-inline constexpr std::array<std::size_t, 6> kCommunicationVisuals{
-    7, 8, 11, 19, 26, 27 };
-inline constexpr std::array<std::size_t, 6> kMediaVisuals{
-    6, 10, 12, 13, 20, 23 };
-inline constexpr std::array<std::size_t, 6> kEngineeringVisuals{
-    3, 14, 15, 18, 21, 25 };
-inline constexpr std::array<std::size_t, 6> kAiVisuals{
-    2, 3, 14, 15, 22, 25 };
-inline constexpr std::array<std::size_t, 5> kGamingVisuals{
-    6, 13, 19, 20, 23 };
-inline constexpr std::array<std::size_t, 6> kOperationsVisuals{
-    3, 9, 15, 24, 25, 27 };
-inline constexpr std::array<std::size_t, 6> kWebVisuals{
-    7, 11, 19, 25, 26, 27 };
+inline constexpr std::array<std::size_t, 4> kFilesVisuals{
+    16, 28, 29, 52 };
+inline constexpr std::array<std::size_t, 4> kUtilitiesVisuals{
+    27, 30, 31, 53 };
+inline constexpr std::array<std::size_t, 4> kCreativeVisuals{
+    17, 32, 33, 54 };
+inline constexpr std::array<std::size_t, 4> kDevelopmentVisuals{
+    25, 34, 35, 55 };
+inline constexpr std::array<std::size_t, 4> kOfficeVisuals{
+    18, 36, 37, 56 };
+inline constexpr std::array<std::size_t, 4> kCommunicationVisuals{
+    19, 38, 39, 57 };
+inline constexpr std::array<std::size_t, 4> kMediaVisuals{
+    20, 40, 41, 58 };
+inline constexpr std::array<std::size_t, 4> kEngineeringVisuals{
+    21, 42, 43, 59 };
+inline constexpr std::array<std::size_t, 4> kAiVisuals{
+    22, 44, 45, 60 };
+inline constexpr std::array<std::size_t, 4> kGamingVisuals{
+    23, 46, 47, 61 };
+inline constexpr std::array<std::size_t, 4> kOperationsVisuals{
+    24, 48, 49, 62 };
+inline constexpr std::array<std::size_t, 4> kWebVisuals{
+    26, 50, 51, 63 };
 
 inline constexpr std::array<std::wstring_view, 13> kFilesKeywords{
     L"\u6587\u4ef6", L"\u4e0b\u8f7d", L"\u6587\u6863", L"\u56fe\u7247", L"\u89c6\u9891", L"\u97f3\u4e50",
@@ -172,6 +173,30 @@ inline std::size_t VisualIndex(
     return category.visualIndices[
         demo_mode_rules::StableIdentityHash(identity) %
         category.visualIndices.size()];
+}
+
+inline std::size_t VisualIndexForOrdinal(
+    const Category& category, std::size_t ordinal) noexcept
+{
+    if (category.visualIndices.empty())
+        return ordinal % demo_mode_rules::kVisualIdentities.size();
+    return category.visualIndices[ordinal % category.visualIndices.size()];
+}
+
+inline std::size_t VisibleItemCount(
+    const Category& category, std::size_t itemCount) noexcept
+{
+    return std::min(itemCount, category.visualIndices.size());
+}
+
+inline std::size_t ItemOrdinal(
+    std::span<const std::wstring> itemKeys,
+    std::wstring_view identity) noexcept
+{
+    for (std::size_t index = 0; index < itemKeys.size(); ++index)
+        if (EqualsAsciiInsensitive(itemKeys[index], identity))
+            return index;
+    return static_cast<std::size_t>(-1);
 }
 
 } // namespace snowdesktop::demo_collection_rules
