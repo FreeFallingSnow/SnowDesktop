@@ -1123,6 +1123,19 @@ void CollectionGroup::DrawContent(
         app_->ToD2DRect(content),
         D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
+    const std::wstring activeCollectionId =
+        CollectionGroupActiveCategory(this);
+    const DesktopWidget* activeCollection = nullptr;
+    if (auto* scene = GetPreviewScene())
+        activeCollection = scene->FindWidget(activeCollectionId);
+    else
+    {
+        const size_t activeIndex = app_->FindWidgetIndexById(
+            activeCollectionId);
+        if (activeIndex < app_->widgets_.size())
+            activeCollection = &app_->widgets_[activeIndex];
+    }
+
     for (const auto& slot : GetSlots())
     {
         if (!slot || !slot->GetItem()) continue;
@@ -1141,10 +1154,20 @@ void CollectionGroup::DrawContent(
                 DrawPrivacyPlaceholder(
                     context, row, item->name, false);
             else
+            {
+                const bool useDemoIdentity =
+                    app_->ShouldUseDemoIdentity(*item);
+                const std::wstring_view demoIdentity =
+                    !useDemoIdentity ? std::wstring_view{} :
+                    (item->layoutKey.empty()
+                        ? std::wstring_view(item->parsingName)
+                        : std::wstring_view(item->layoutKey));
                 DrawListItem(
                     context, row, item->iconBitmap,
                     item->sysIconIndex, item->name,
-                    item->selected, item->iconIsMediaThumbnail);
+                    item->selected, item->iconIsMediaThumbnail,
+                    demoIdentity, activeCollection);
+            }
         }
         else if (privacyActive)
         {
@@ -1166,7 +1189,7 @@ void CollectionGroup::DrawContent(
                 item->selected
                     ? 2
                     : (hovered ? 1 : 0),
-                light);
+                light, true, false, activeCollection);
         }
     }
     context->PopAxisAlignedClip();

@@ -181,7 +181,10 @@ void DesktopApp::DrawCollectionPopup(
                 PtInRect(&itemRect, lastMousePoint_);
             DesktopIcon icon(&items_[itemIndex], nullptr, this);
             icon.Draw(ctx, itemRect,
-                items_[itemIndex].selected ? 2 : (hovered ? 1 : 0));
+                items_[itemIndex].selected ? 2 : (hovered ? 1 : 0),
+                false, true, false,
+                widget.type == DesktopWidgetType::Collection
+                    ? &widget : nullptr);
         }
     }
     ctx->PopAxisAlignedClip();
