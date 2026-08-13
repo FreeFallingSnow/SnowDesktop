@@ -331,7 +331,7 @@ static std::wstring FolderMappingTabDisplayText(
         widget->GetCategorySettingsForDisplay();
     std::wstring label =
         GetCategoryLabel(settings, categoryId);
-    if (!settings.showItemCounts)
+    if (!widget->ShowCategoryTabItemCounts())
         return label;
     size_t count = 0;
     if (data)
@@ -368,7 +368,7 @@ static std::vector<int> FolderMappingTabWidths(
         auto countIt = counts.find(categoryId);
         if (countIt == counts.end() || countIt->second == 0) continue;
         std::wstring label = GetCategoryLabel(settings, categoryId);
-        if (settings.showItemCounts)
+        if (widget->ShowCategoryTabItemCounts())
             label += L" " + std::to_wstring(countIt->second);
         labels.push_back(std::move(label));
     }

@@ -340,7 +340,7 @@
   "app.settings.category_extensions": "Extensiones",
   "app.settings.category_hint": "Separe las extensiones con espacios, comas o punto y coma. El prefijo de punto es opcional y se normalizará al guardar.",
   "app.settings.category_rules": "Reglas de categoría",
-  "app.settings.tab_height": "Altura de la pestaña Categoría",
+  "app.settings.tab_height": "Altura de pestañas y cuadro de búsqueda",
   "app.settings.category_show_count": "Mostrar el número de archivos en las pestañas",
   "app.settings.add_category": "Agregar tipo de categoría",
   "app.settings.new_category": "Nueva categoría",

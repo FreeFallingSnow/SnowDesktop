@@ -340,7 +340,7 @@
   "app.settings.category_extensions": "拡張機能",
   "app.settings.category_hint": "拡張子はスペース、カンマ、またはセミコロンで区切ります。ドット接頭辞はオプションであり、保存時に正規化されます。",
   "app.settings.category_rules": "カテゴリのルール",
-  "app.settings.tab_height": "カテゴリタブの高さ",
+  "app.settings.tab_height": "タブと検索ボックスの高さ",
   "app.settings.category_show_count": "タブにファイル数を表示",
   "app.settings.add_category": "カテゴリ タイプを追加",
   "app.settings.new_category": "新しいカテゴリー",

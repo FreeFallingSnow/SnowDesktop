@@ -361,6 +361,8 @@ public:
     float GetCategorizedTabRowPitch() const;
     /** @brief 搜索框高度（cu），= 标签条高度 − 4。 */
     float GetCategorizedSearchBoxHeight() const;
+    /** @brief 分类标签（桌面文件/映射文件夹）是否显示文件数量。 */
+    bool ShowCategoryTabItemCounts() const;
     /** @brief 按共同字号测量并分配标签宽度。 */
     std::vector<int> BuildCategorizedTabWidths(
         const std::vector<std::wstring>& labels,
@@ -528,7 +530,6 @@ public:
     bool IsPointInTabsRect(POINT pt) const;
     bool TryScrollTabs(POINT pt, int delta) override;
     std::wstring GetCategoryDisplayLabel(const std::wstring& categoryId) const;
-    bool ShowCategoryItemCounts() const;
     void InvalidateCategoryCache();
     std::vector<Item*> GetSelectedItems() const override;
     bool NeedsShellReloadAfterDrop() const override { return false; }

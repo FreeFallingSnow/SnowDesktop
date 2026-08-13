@@ -340,7 +340,7 @@
   "app.settings.category_extensions": "Extensões",
   "app.settings.category_hint": "Separe as extensões com espaços, vírgulas ou ponto e vírgula. O prefixo de ponto é opcional e será normalizado ao salvar.",
   "app.settings.category_rules": "Regras da categoria",
-  "app.settings.tab_height": "Altura da guia Categoria",
+  "app.settings.tab_height": "Altura de guias e caixa de pesquisa",
   "app.settings.category_show_count": "Mostrar contagem de arquivos nas guias",
   "app.settings.add_category": "Adicionar tipo de categoria",
   "app.settings.new_category": "Nova categoria",

@@ -734,6 +734,15 @@ float ScrollingItemWidget::
     return GetCategorizedTabHeight() - 4.0f;
 }
 
+bool ScrollingItemWidget::
+    ShowCategoryTabItemCounts() const
+{
+    if (app_ && app_->settingsWindow_)
+        return app_->settingsWindow_->GetPersonalization().
+            showCategoryTabCounts;
+    return true;
+}
+
 std::vector<int>
 ScrollingItemWidget::BuildCategorizedTabWidths(
     const std::vector<std::wstring>& labels,

@@ -340,7 +340,7 @@
     "app.settings.category_extensions": "扩展名",
     "app.settings.category_hint": "扩展名用空格、逗号或分号分隔；可省略点号，保存时会自动规范。",
     "app.settings.category_rules": "分类规则",
-    "app.settings.tab_height": "分类标签高度",
+    "app.settings.tab_height": "标签与搜索框高度",
     "app.settings.category_show_count": "标签显示文件数量",
     "app.settings.add_category": "新增分类类型",
     "app.settings.new_category": "新分类",

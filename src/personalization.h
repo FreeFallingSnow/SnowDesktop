@@ -78,6 +78,12 @@ struct PersonalizationSettings
      */
     float categorizedTabHeight = 34.0f;
 
+    /**
+     * @brief 分类标签（桌面文件、映射文件夹）是否显示文件数量。
+     * @details 属于组件布局，不随主题预设切换。
+     */
+    bool showCategoryTabCounts = true;
+
     int backgroundPreset = 0;
     /** @brief 独立的组件圆角半径，不属于主题预设。 */
     float cornerRadius = 12.0f;

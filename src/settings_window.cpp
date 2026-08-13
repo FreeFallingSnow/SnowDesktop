@@ -2993,11 +2993,6 @@ void SettingsWindow::DrawCategorySettingsPage()
     ImGui::SeparatorText(_L("app.settings.category_settings"));
     ImGui::Spacing();
 
-    if (DrawSettingCheckbox(_L("app.settings.category_show_count"),
-            "##CategoryShowCount", &categorySettings_.showItemCounts))
-        markChanged();
-    ImGui::Spacing();
-
     drawSubsectionLabel(_L("app.settings.category_type"),
         _L("app.settings.category_hint"));
     ImGui::Indent(subsectionContentIndent);
@@ -3198,6 +3193,8 @@ void SettingsWindow::DrawPersonalizationPage()
         const float barHeight = personalization_.barHeight;
         const float categorizedTabHeight =
             personalization_.categorizedTabHeight;
+        const bool showCategoryTabCounts =
+            personalization_.showCategoryTabCounts;
         const int contextMenuStyle =
             personalization_.contextMenuStyle;
         if (presetIds[presetIndex] == kAppearancePresetCustom)
@@ -3220,6 +3217,8 @@ void SettingsWindow::DrawPersonalizationPage()
         personalization_.barHeight = barHeight;
         personalization_.categorizedTabHeight =
             categorizedTabHeight;
+        personalization_.showCategoryTabCounts =
+            showCategoryTabCounts;
         personalization_.contextMenuStyle = contextMenuStyle;
         markChanged(true);
     }
@@ -3452,6 +3451,11 @@ void SettingsWindow::DrawPersonalizationPage()
         personalization_.categorizedTabHeight = 34.0f;
         markChanged(true);
     }
+
+    if (DrawSettingCheckbox(_L("app.settings.category_show_count"),
+            "##CategoryShowCount",
+            &personalization_.showCategoryTabCounts))
+        markChanged(true);
 
     auto presetSelectionForId = [&](int presetId) {
         const int normalized = NormalizeAppearancePresetId(presetId);

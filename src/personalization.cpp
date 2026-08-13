@@ -326,6 +326,9 @@ bool LoadPersonalization(
     if (ReadDoubleField(text, "contentTheme", v)) s.contentTheme = std::clamp(static_cast<int>(v), 0, 1);
     bool b2 = false;
     if (ReadBoolField(text, "acrylicEnabled", b2)) s.acrylicEnabled = b2;
+    bool b3 = false;
+    if (ReadBoolField(text, "showCategoryTabCounts", b3))
+        s.showCategoryTabCounts = b3;
     // Presets are immutable choices in the UI. Refresh persisted acrylic
     // values so palette refinements and the old placeholder migration are
     // applied without requiring users to reselect the theme.
@@ -336,12 +339,16 @@ bool LoadPersonalization(
         const float barHeight = s.barHeight;
         const float categorizedTabHeight =
             s.categorizedTabHeight;
+        const bool showCategoryTabCounts =
+            s.showCategoryTabCounts;
         const int contextMenuStyle = s.contextMenuStyle;
         s = MakeAppearancePreset(s.backgroundPreset);
         s.cornerRadius = cornerRadius;
         s.barHeight = barHeight;
         s.categorizedTabHeight =
             categorizedTabHeight;
+        s.showCategoryTabCounts =
+            showCategoryTabCounts;
         s.contextMenuStyle = contextMenuStyle;
     }
     return true;
@@ -378,6 +385,8 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
                 s.categorizedTabHeight,
                 24.0f, 48.0f)
          << ",\n";
+    file << "  \"showCategoryTabCounts\": "
+         << (s.showCategoryTabCounts ? "true" : "false") << ",\n";
     file << "  \"backgroundPreset\": " << s.backgroundPreset << ",\n";
     file << "  \"cornerRadius\": " << s.cornerRadius << ",\n";
     file << "  \"contextMenuStyle\": "

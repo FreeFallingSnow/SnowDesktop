@@ -483,12 +483,6 @@ std::wstring FileCategories::GetCategoryDisplayLabel(const std::wstring& categor
     return GetCategoryLabel(app_->GetCategorySettings(), categoryId);
 }
 
-bool FileCategories::ShowCategoryItemCounts() const
-{
-    return app_ &&
-        app_->GetCategorySettings().showItemCounts;
-}
-
 /**
  * @brief 收集顶级桌面项目中可收录的项到 widget 的 itemKeys 中。
  *        跳过已在其他组件中的项目以及已存在的 key。
@@ -610,7 +604,7 @@ static std::wstring FileCategoryTabDisplayText(FileCategories* widget, const std
 {
     if (!widget || !widget->GetApp()) return categoryId;
     std::wstring label = widget->GetCategoryDisplayLabel(categoryId);
-    if (widget->ShowCategoryItemCounts())
+    if (widget->ShowCategoryTabItemCounts())
         label += L" " + std::to_wstring(
             widget->CachedCategoryKeys(categoryId).size());
     return label;
