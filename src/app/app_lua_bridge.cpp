@@ -221,8 +221,8 @@ bool DesktopApp::LuaOpenPath(const std::wstring& path)
                 return true;
         }
     }
-    HINSTANCE result = ShellExecuteW(hwnd_, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-    return reinterpret_cast<INT_PTR>(result) > 32;
+    return snowdesktop::shell_execute::OpenPathAsync(
+        hwnd_, path);
 }
 
 /**

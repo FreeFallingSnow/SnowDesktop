@@ -300,11 +300,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                         CloseCollectionPopup();
                         ClearSelection();
                         if (target.available)
-                            ShellExecuteW(
-                                hwnd_, L"open",
-                                target.path.c_str(),
-                                nullptr, nullptr,
-                                SW_SHOWNORMAL);
+                            snowdesktop::shell_execute::OpenPathAsync(
+                                hwnd_, target.path);
                         InvalidateRect(
                             hwnd_, &dockBounds, FALSE);
                         specialDoubleClickHandled = true;
@@ -442,9 +439,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     const std::wstring path =
                         dockFolderPopupWidget_.
                             folderEntries[i].fullPath;
-                    ShellExecuteW(
-                        hwnd_, L"open", path.c_str(),
-                        nullptr, nullptr, SW_SHOWNORMAL);
+                    snowdesktop::shell_execute::OpenPathAsync(
+                        hwnd_, path);
                     CloseCollectionPopup();
                     return 0;
                 }
@@ -531,8 +527,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     FolderEntry* entry = folderIcon->GetFolderEntry();
                     if (entry)
                     {
-                        ShellExecuteW(nullptr, L"open", entry->fullPath.c_str(),
-                            nullptr, nullptr, SW_SHOWNORMAL);
+                        snowdesktop::shell_execute::OpenPathAsync(
+                            hwnd_, entry->fullPath);
                         return 0;
                     }
                 }

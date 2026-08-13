@@ -637,9 +637,8 @@ void DesktopApp::ShowWidgetContextMenu(
         if (effectiveSource.type ==
                 DesktopWidgetType::FolderMapping &&
             !effectiveSource.sourceFolderPath.empty())
-            ShellExecuteW(hwnd_, L"open",
-                effectiveSource.sourceFolderPath.c_str(),
-                nullptr, nullptr, SW_SHOWNORMAL);
+            snowdesktop::shell_execute::OpenPathAsync(
+                hwnd_, effectiveSource.sourceFolderPath);
         break;
     case kContextWidgetToggleListMode:
         widgets_[widgetIndex].listMode = !widgets_[widgetIndex].listMode;

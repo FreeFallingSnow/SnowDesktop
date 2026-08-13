@@ -52,6 +52,7 @@
 #include "dock_rename_layout.h"
 #include "floating_dock_rules.h"
 #include "../desktop_hover_rules.h"
+#include "../shell_execute.h"
 #include "desktop_item_reference_migration.h"
 #include "category_settings.h"
 #include "../menu_quick_icon.h"

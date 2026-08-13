@@ -400,11 +400,8 @@ void DesktopApp::OpenWidgetMember(size_t widgetIndex, int memberIndex)
                 }
                 else if (item &&
                          !item->GetPath().empty())
-                    ShellExecuteW(
-                        nullptr, L"open",
-                        item->GetPath().c_str(),
-                        nullptr, nullptr,
-                        SW_SHOWNORMAL);
+                    snowdesktop::shell_execute::OpenPathAsync(
+                        hwnd_, item->GetPath());
                 break;
             }
             const auto keys =
@@ -441,10 +438,8 @@ void DesktopApp::OpenWidgetMember(size_t widgetIndex, int memberIndex)
                         activeData->
                             folderEntries[entryIndex];
                     if (!entry.fullPath.empty())
-                        ShellExecuteW(nullptr, L"open",
-                            entry.fullPath.c_str(),
-                            nullptr, nullptr,
-                            SW_SHOWNORMAL);
+                        snowdesktop::shell_execute::OpenPathAsync(
+                            hwnd_, entry.fullPath);
                 }
             }
             break;
@@ -456,8 +451,8 @@ void DesktopApp::OpenWidgetMember(size_t widgetIndex, int memberIndex)
         {
             const auto& entry = widget.folderEntries[static_cast<size_t>(memberIndex)];
             if (!entry.fullPath.empty())
-                ShellExecuteW(nullptr, L"open", entry.fullPath.c_str(),
-                    nullptr, nullptr, SW_SHOWNORMAL);
+                snowdesktop::shell_execute::OpenPathAsync(
+                    hwnd_, entry.fullPath);
         }
     }
     else if (!widget.itemKeys.empty() &&
