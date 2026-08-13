@@ -30,8 +30,7 @@ struct Metrics
     int textGap = 7;
     int rightPadding = 9;
     int arrowColumnWidth = 16;
-    int submenuArrowStrokeWidth = 2;
-    int submenuArrowStrokeCoverage = 191;
+    int submenuArrowFontHeight = 16;
     int quickActionHeight = 52;
     int quickActionMinimumWidth = 46;
     int quickActionMaximumWidth = 64;
@@ -77,7 +76,8 @@ SIZE MeasureItem(HDC dc, HFONT textFont, const ItemView& item,
 /** @brief 绘制完整菜单项，包括背景、文字、图标、勾选和子菜单箭头。 */
 bool DrawItem(HDC dc, HFONT textFont, HFONT iconFont,
     const ItemView& item, const RECT& bounds, UINT itemState,
-    const Palette& palette, const Metrics& metrics);
+    const Palette& palette, const Metrics& metrics,
+    HFONT submenuArrowFont = nullptr);
 
 /** @brief 绘制顶部快捷操作按钮；标签由菜单项用于键盘和辅助说明。 */
 bool DrawQuickAction(HDC dc, HFONT textFont, HFONT iconFont,

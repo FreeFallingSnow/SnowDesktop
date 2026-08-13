@@ -137,6 +137,7 @@ public:
     {
         const int textHeight = -metrics_.textFontHeight;
         const int iconHeight = -metrics_.iconFontHeight;
+        const int submenuArrowHeight = -metrics_.submenuArrowFontHeight;
         const int quickTextHeight = -metrics_.quickActionTextFontHeight;
         const int quickIconHeight = -metrics_.quickActionFontHeight;
         textFont_ = CreateFontW(textHeight, 0, 0, 0, FW_NORMAL,
@@ -150,6 +151,11 @@ public:
             FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_TT_ONLY_PRECIS,
             CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
             DEFAULT_PITCH | FF_DONTCARE, L"FluentSystemIcons-Regular");
+        submenuArrowFont_ = CreateFontW(submenuArrowHeight, 0, 0, 0,
+            FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+            OUT_TT_ONLY_PRECIS, CLIP_DEFAULT_PRECIS,
+            ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
+            L"FluentSystemIcons-Regular");
         fontAwesomeIconFont_ = CreateFontW(iconHeight, 0, 0, 0, FW_NORMAL,
             FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
             CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
@@ -176,6 +182,8 @@ public:
         CloseFromDepth(0);
         if (fontAwesomeIconFont_)
             DeleteObject(fontAwesomeIconFont_);
+        if (submenuArrowFont_)
+            DeleteObject(submenuArrowFont_);
         if (fluentIconFont_)
             DeleteObject(fluentIconFont_);
         if (quickFontAwesomeIconFont_)
@@ -547,7 +555,7 @@ public:
             else
             {
                 menu_icon::DrawItem(memoryDc, textFont_, iconFont, view,
-                    row, state, palette_, metrics_);
+                    row, state, palette_, metrics_, submenuArrowFont_);
             }
             RestoreDC(memoryDc, savedRowDc);
         }
@@ -571,7 +579,7 @@ public:
                 };
                 menu_icon::DrawItem(memoryDc, textFont_,
                     fluentIconFont_, separatorView, separator, 0,
-                    palette_, metrics_);
+                    palette_, metrics_, submenuArrowFont_);
             }
         }
         RestoreDC(memoryDc, savedDc);
@@ -2261,6 +2269,7 @@ private:
     int panelRadius_ = 0;
     HFONT textFont_ = nullptr;
     HFONT fluentIconFont_ = nullptr;
+    HFONT submenuArrowFont_ = nullptr;
     HFONT fontAwesomeIconFont_ = nullptr;
     HFONT quickTextFont_ = nullptr;
     HFONT quickFluentIconFont_ = nullptr;

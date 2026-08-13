@@ -1,5 +1,7 @@
 #include "menu_icon_render.h"
 
+#include "menu_fluent_glyphs.h"
+
 #include <algorithm>
 #include <cstdint>
 #include <cwchar>
@@ -43,21 +45,6 @@ void FillRoundedRect(HDC dc, const RECT& bounds, int radius,
     SelectObject(dc, oldPen);
     SelectObject(dc, oldBrush);
     DeleteObject(brush);
-}
-
-COLORREF BlendColor(COLORREF background, COLORREF foreground,
-    int foregroundCoverage)
-{
-    const int coverage = std::clamp(foregroundCoverage, 0, 255);
-    const auto blendChannel = [coverage](int backgroundChannel,
-                                  int foregroundChannel) {
-        return (backgroundChannel * (255 - coverage) +
-            foregroundChannel * coverage + 127) / 255;
-    };
-    return RGB(
-        blendChannel(GetRValue(background), GetRValue(foreground)),
-        blendChannel(GetGValue(background), GetGValue(foreground)),
-        blendChannel(GetBValue(background), GetBValue(foreground)));
 }
 
 const wchar_t* ResolveQuickGlyph(
@@ -667,26 +654,23 @@ void DrawCheckmark(HDC dc, const RECT& bounds, const Metrics& metrics,
     DeleteObject(pen);
 }
 
-void DrawSubmenuArrow(HDC dc, const RECT& bounds,
-    const Metrics& metrics, COLORREF color, COLORREF background)
+void DrawSubmenuArrow(HDC dc, HFONT arrowFont, const RECT& bounds,
+    const Metrics& metrics, COLORREF color)
 {
-    const int centerX = bounds.right - metrics.rightPadding -
-        metrics.arrowColumnWidth / 2;
-    const int centerY = (bounds.top + bounds.bottom) / 2;
-    const int halfWidth = std::max(2, metrics.arrowColumnWidth / 8);
-    const int halfHeight = std::max(3, metrics.arrowColumnWidth / 4);
-    const COLORREF strokeColor = BlendColor(
-        background, color, metrics.submenuArrowStrokeCoverage);
-    HPEN pen = CreatePen(PS_SOLID,
-        metrics.submenuArrowStrokeWidth, strokeColor);
-    if (!pen)
+    if (!dc || !arrowFont)
         return;
-    HGDIOBJ oldPen = SelectObject(dc, pen);
-    MoveToEx(dc, centerX - halfWidth, centerY - halfHeight, nullptr);
-    LineTo(dc, centerX + halfWidth, centerY);
-    LineTo(dc, centerX - halfWidth, centerY + halfHeight);
-    SelectObject(dc, oldPen);
-    DeleteObject(pen);
+    HGDIOBJ oldFont = SelectObject(dc, arrowFont);
+    if (!oldFont || oldFont == HGDI_ERROR)
+        return;
+    const RECT arrowBounds{
+        bounds.right - metrics.rightPadding - metrics.arrowColumnWidth,
+        bounds.top,
+        bounds.right - metrics.rightPadding,
+        bounds.bottom,
+    };
+    DrawGlyphLayer(dc, menu_fluent_glyphs::kChevronRight,
+        arrowBounds, color, &bounds);
+    SelectObject(dc, oldFont);
 }
 
 } // namespace
@@ -717,16 +701,6 @@ Palette ResolvePalette(bool lightTheme)
 Metrics ResolveMetrics(UINT dpi)
 {
     const UINT effectiveDpi = dpi > 0 ? dpi : USER_DEFAULT_SCREEN_DPI;
-    // GDI accepts integer geometric pen widths only. Use the ceiling of the
-    // desired 1.5-DIP stroke and reduce foreground coverage proportionally,
-    // yielding an equivalent fractional visual weight at each monitor DPI.
-    constexpr int strokeDenominator = 2 * USER_DEFAULT_SCREEN_DPI;
-    const int strokeNumerator = 3 * static_cast<int>(effectiveDpi);
-    const int submenuArrowStrokeWidth = std::max(1,
-        (strokeNumerator + strokeDenominator - 1) / strokeDenominator);
-    const int submenuArrowStrokeCoverage = std::clamp(MulDiv(
-        strokeNumerator, 255,
-        strokeDenominator * submenuArrowStrokeWidth), 1, 255);
     return {
         Scale(32, effectiveDpi),
         Scale(8, effectiveDpi),
@@ -739,8 +713,7 @@ Metrics ResolveMetrics(UINT dpi)
         Scale(7, effectiveDpi),
         Scale(9, effectiveDpi),
         Scale(16, effectiveDpi),
-        submenuArrowStrokeWidth,
-        submenuArrowStrokeCoverage,
+        Scale(16, effectiveDpi),
         Scale(52, effectiveDpi),
         Scale(46, effectiveDpi),
         Scale(64, effectiveDpi),
@@ -789,7 +762,7 @@ SIZE MeasureItem(HDC dc, HFONT textFont, const ItemView& item,
 
 bool DrawItem(HDC dc, HFONT textFont, HFONT iconFont,
     const ItemView& item, const RECT& bounds, UINT itemState,
-    const Palette& palette, const Metrics& metrics)
+    const Palette& palette, const Metrics& metrics, HFONT submenuArrowFont)
 {
     if (!dc || bounds.right <= bounds.left || bounds.bottom <= bounds.top)
         return false;
@@ -889,11 +862,9 @@ bool DrawItem(HDC dc, HFONT textFont, HFONT iconFont,
         SelectObject(dc, oldFont);
 
     if (item.hasSubmenu)
-    {
-        const COLORREF arrowBackground = selected && !disabled
-            ? palette.hoverBackground : palette.background;
-        DrawSubmenuArrow(dc, bounds, metrics, foreground, arrowBackground);
-    }
+        DrawSubmenuArrow(dc,
+            submenuArrowFont ? submenuArrowFont : iconFont,
+            bounds, metrics, foreground);
 
     SetTextColor(dc, oldTextColor);
     SetBkMode(dc, oldBackgroundMode);

@@ -215,16 +215,11 @@ int wmain(int argc, wchar_t** argv)
     Expect(metrics96.textFontHeight == 14 &&
             metrics96.quickActionTextFontHeight == 12,
         "96-DPI menu text keeps a readable minimum size");
-    Expect(metrics96.submenuArrowStrokeWidth == 2 &&
-            metrics96.submenuArrowStrokeCoverage == 191,
-        "96-DPI submenu chevron uses an effective 1.5-pixel stroke");
-    Expect(metrics120.submenuArrowStrokeWidth == 2 &&
-            metrics120.submenuArrowStrokeCoverage == 239 &&
-            metrics144.submenuArrowStrokeWidth == 3 &&
-            metrics144.submenuArrowStrokeCoverage == 191 &&
-            metrics192.submenuArrowStrokeWidth == 3 &&
-            metrics192.submenuArrowStrokeCoverage == 255,
-        "fractional submenu chevron weight scales across common DPIs");
+    Expect(metrics96.submenuArrowFontHeight == 16 &&
+            metrics120.submenuArrowFontHeight == 20 &&
+            metrics144.submenuArrowFontHeight == 24 &&
+            metrics192.submenuArrowFontHeight == 32,
+        "Fluent submenu chevron font follows monitor DPI");
     Expect(metrics192.textFontHeight ==
             metrics96.textFontHeight * 2 &&
             metrics192.quickActionTextFontHeight ==
@@ -272,6 +267,13 @@ int wmain(int argc, wchar_t** argv)
         CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE, L"FluentSystemIcons-Regular");
     Expect(fluentFont != nullptr, "test Fluent icon font is created");
+    HFONT submenuArrowFont = CreateFontW(-metrics96.submenuArrowFontHeight,
+        0, 0, 0, FW_NORMAL,
+        FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_TT_ONLY_PRECIS,
+        CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"FluentSystemIcons-Regular");
+    Expect(submenuArrowFont != nullptr,
+        "test Fluent submenu chevron font is created");
 
     const snowdesktop::menu_icon::ItemView normal{
         L"Open", L"O", false, false, false,
@@ -299,7 +301,8 @@ int wmain(int argc, wchar_t** argv)
     const RECT arrowOnlyBounds{ 0, 0, kWidth, metrics96.rowHeight };
     std::fill_n(pixels, kWidth * kHeight, 0u);
     Expect(snowdesktop::menu_icon::DrawItem(dc, font, fluentFont,
-        arrowOnlySubmenu, arrowOnlyBounds, 0, light, metrics96),
+        arrowOnlySubmenu, arrowOnlyBounds, 0, light, metrics96,
+        submenuArrowFont),
         "submenu chevron renders for geometry checks");
     const RECT arrowColumn{
         kWidth - metrics96.rightPadding - metrics96.arrowColumnWidth,
@@ -309,30 +312,21 @@ int wmain(int argc, wchar_t** argv)
     };
     const RECT arrowInk = FindPixelsDifferentFromColorInRect(
         pixels, kWidth, kHeight, arrowColumn, light.background);
-    const auto blendChannel = [](int background, int foreground,
-                                  int coverage) {
-        return (background * (255 - coverage) +
-            foreground * coverage + 127) / 255;
-    };
-    const COLORREF expectedArrowColor = RGB(
-        blendChannel(GetRValue(light.background), GetRValue(light.text),
-            metrics96.submenuArrowStrokeCoverage),
-        blendChannel(GetGValue(light.background), GetGValue(light.text),
-            metrics96.submenuArrowStrokeCoverage),
-        blendChannel(GetBValue(light.background), GetBValue(light.text),
-            metrics96.submenuArrowStrokeCoverage));
-    Expect(CountColorInRect(pixels, kWidth, kHeight,
-            arrowColumn, expectedArrowColor) > 0,
-        "submenu chevron applies fractional foreground coverage");
+    const int arrowInkPixels = CountPixelsDifferentFromColorInRect(
+        pixels, kWidth, kHeight, arrowColumn, light.background);
+    const int solidArrowPixels = CountColorInRect(
+        pixels, kWidth, kHeight, arrowColumn, light.text);
+    Expect(arrowInkPixels > solidArrowPixels,
+        "Fluent submenu chevron includes anti-aliased edge coverage");
     Expect(arrowInk.right - arrowInk.left >= 4 &&
             arrowInk.bottom - arrowInk.top >= 7,
         "96-DPI submenu chevron keeps a complete visible shape");
-    const int arrowInkTopExtent =
-        metrics96.rowHeight / 2 - arrowInk.top;
-    const int arrowInkBottomExtent =
-        arrowInk.bottom - 1 - metrics96.rowHeight / 2;
-    Expect(arrowInkTopExtent == arrowInkBottomExtent,
-        "submenu chevron keeps symmetric top and bottom raster extents");
+    const int arrowRowCenterTwice =
+        arrowOnlyBounds.top + arrowOnlyBounds.bottom - 1;
+    const int arrowInkCenterTwice =
+        arrowInk.top + arrowInk.bottom - 1;
+    Expect(std::abs(arrowRowCenterTwice - arrowInkCenterTwice) <= 1,
+        "Fluent submenu chevron stays vertically centered");
     Expect(arrowInk.right < arrowOnlyBounds.right - metrics96.rightPadding,
         "submenu chevron keeps a safe inset from the row edge");
 
@@ -404,7 +398,8 @@ int wmain(int argc, wchar_t** argv)
         disabledBounds, ODS_DISABLED | ODS_GRAYED, light, metrics96),
         "disabled owner-draw menu item renders");
     Expect(snowdesktop::menu_icon::DrawItem(dc, font, font, submenu,
-        selectedBounds, ODS_SELECTED, light, metrics96),
+        selectedBounds, ODS_SELECTED, light, metrics96,
+        submenuArrowFont),
         "hovered owner-draw menu item renders");
     Expect(snowdesktop::menu_icon::DrawItem(dc, font, font, separator,
         separatorBounds, 0, light, metrics96),
@@ -667,6 +662,7 @@ int wmain(int argc, wchar_t** argv)
             "menu preview bitmap is written");
     }
 
+    DeleteObject(submenuArrowFont);
     DeleteObject(fluentFont);
     DeleteObject(font);
     SelectObject(dc, oldBitmap);
