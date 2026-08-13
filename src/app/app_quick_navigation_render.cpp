@@ -83,6 +83,7 @@ void DesktopApp::ResetQuickNavCompositionResources()
     brushCache_.clear();
     brushCacheContext_ = nullptr;
     quickNavSysIconCache_.clear();
+    quickNavAppIconCache_.clear();
     if (quickNavDcompVisual_)
         quickNavDcompVisual_->SetContent(nullptr);
     quickNavDcompSurface_.Reset();
@@ -971,8 +972,8 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                         DrawDemoIdentityIcon(ctx.Get(), entry.parsingName,
                             iconRect);
                     else
-                        DrawQuickNavSysIcon(ctx.Get(),
-                            entry.systemIconIndex, iconRect);
+                        DrawQuickNavAppIcon(
+                            ctx.Get(), entry, iconRect);
 
                     const int textLeft = iconRect.right + QuickNavScale(10);
                     RECT nameRect = rowRectApp;

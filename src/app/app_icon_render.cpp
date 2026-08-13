@@ -700,6 +700,43 @@ void DesktopApp::DrawQuickNavSysIcon(ID2D1RenderTarget* ctx, int sysIconIndex, R
     DrawIconBitmap(ctx, cached->second.Get(), dstRect);
 }
 
+void DesktopApp::DrawQuickNavAppIcon(
+    ID2D1RenderTarget* ctx,
+    const QuickNavigationAppEntry& entry,
+    RECT dstRect)
+{
+    if (ctx && entry.iconBitmap &&
+        !entry.iconCacheIdentity.empty())
+    {
+        auto cached = quickNavAppIconCache_.find(
+            entry.iconCacheIdentity);
+        if (cached == quickNavAppIconCache_.end())
+        {
+            ComPtr<ID2D1Bitmap1> iconBitmap =
+                CreateD2DBitmapFromHBitmap(
+                    entry.iconBitmap,
+                    iconBeautifySettings_.enabled);
+            ComPtr<ID2D1Bitmap> bitmap;
+            if (iconBitmap &&
+                SUCCEEDED(iconBitmap.As(&bitmap)) && bitmap)
+            {
+                cached = quickNavAppIconCache_.emplace(
+                    entry.iconCacheIdentity,
+                    std::move(bitmap)).first;
+            }
+        }
+        if (cached != quickNavAppIconCache_.end())
+        {
+            DrawIconBitmap(
+                ctx, cached->second.Get(), dstRect);
+            return;
+        }
+    }
+
+    DrawQuickNavSysIcon(
+        ctx, entry.systemIconIndex, dstRect);
+}
+
 /**
  * @brief 触发换页通知（记录文本与时间戳，启动重绘定时器）。
  * @param text 通知文本（如"第3页"）。

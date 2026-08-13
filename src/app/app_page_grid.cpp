@@ -440,6 +440,7 @@ void DesktopApp::SetIconBeautifySettings(
     ResetDemoIconLoader();
     placeholderIconCache_.clear();
     quickNavSysIconCache_.clear();
+    quickNavAppIconCache_.clear();
     privacyFileIconBitmap_.Reset();
     privacyFolderIconBitmap_.Reset();
     InvalidateDragStaticScene();

@@ -163,6 +163,8 @@ void DesktopApp::ResetCompositionRenderCaches()
     d2dIconCache_.clear();
     ResetDemoIconLoader();
     placeholderIconCache_.clear();
+    quickNavSysIconCache_.clear();
+    quickNavAppIconCache_.clear();
     shortcutArrowBitmap_.Reset();
     shortcutArrowBitmapSize_ = {};
     itemTextShadowCache_.clear();

@@ -433,8 +433,57 @@ public:
     {
         std::wstring name;
         std::wstring parsingName;
+        std::wstring iconCacheIdentity;
         Pidl absolutePidl;
+        HBITMAP iconBitmap = nullptr;
+        SIZE iconBitmapSize{};
         int systemIconIndex = -1;
+
+        QuickNavigationAppEntry() = default;
+        QuickNavigationAppEntry(const QuickNavigationAppEntry&) = delete;
+        QuickNavigationAppEntry& operator=(
+            const QuickNavigationAppEntry&) = delete;
+
+        QuickNavigationAppEntry(
+            QuickNavigationAppEntry&& other) noexcept
+            : name(std::move(other.name)),
+              parsingName(std::move(other.parsingName)),
+              iconCacheIdentity(
+                  std::move(other.iconCacheIdentity)),
+              absolutePidl(std::move(other.absolutePidl)),
+              iconBitmap(other.iconBitmap),
+              iconBitmapSize(other.iconBitmapSize),
+              systemIconIndex(other.systemIconIndex)
+        {
+            other.iconBitmap = nullptr;
+            other.iconBitmapSize = {};
+        }
+
+        QuickNavigationAppEntry& operator=(
+            QuickNavigationAppEntry&& other) noexcept
+        {
+            if (this == &other)
+                return *this;
+            if (iconBitmap)
+                DeleteObject(iconBitmap);
+            name = std::move(other.name);
+            parsingName = std::move(other.parsingName);
+            iconCacheIdentity =
+                std::move(other.iconCacheIdentity);
+            absolutePidl = std::move(other.absolutePidl);
+            iconBitmap = other.iconBitmap;
+            iconBitmapSize = other.iconBitmapSize;
+            systemIconIndex = other.systemIconIndex;
+            other.iconBitmap = nullptr;
+            other.iconBitmapSize = {};
+            return *this;
+        }
+
+        ~QuickNavigationAppEntry()
+        {
+            if (iconBitmap)
+                DeleteObject(iconBitmap);
+        }
     };
 
     struct QuickNavigationAppIndexResult
@@ -1074,7 +1123,8 @@ private:
     void StopQuickNavigationAppIndexing();
     void OnQuickNavigationAppsIndexed(WPARAM wParam, LPARAM lParam);
     static std::vector<QuickNavigationAppEntry> BuildQuickNavigationAppIndex(
-        HWND ownerHwnd, HIMAGELIST& systemImageListSmall);
+        HWND ownerHwnd, HIMAGELIST& systemImageListSmall,
+        int iconSourceSize);
     void RefreshQuickNavigationAppResults();
     size_t GetQuickNavigationVisibleAppResultCount() const;
     bool HasQuickNavigationAppExpandButton() const;
@@ -2059,6 +2109,9 @@ private:
     void OnIconLoaded(WPARAM wParam, LPARAM lParam);
     void DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex, RECT iconRect,
         float alpha, bool allowBeautify = true);
+    /** @brief 绘制与应用稳定身份绑定的快捷导航应用图标快照。 */
+    void DrawQuickNavAppIcon(ID2D1RenderTarget* ctx,
+        const QuickNavigationAppEntry& entry, RECT dstRect);
     /** @brief 绘制快捷导航行内系统图标（EXTRALARGE 源，缩放填满 dstRect）。 */
     void DrawQuickNavSysIcon(ID2D1RenderTarget* ctx, int sysIconIndex, RECT dstRect);
 
@@ -2799,6 +2852,8 @@ private:
     ComPtr<IDWriteTextFormat> quickNavFluentTextFormat_;
     /** @brief 快捷导航应用/Everything 行图标的 D2D 位图缓存（按索引和源尺寸）。 */
     std::unordered_map<std::uint64_t, ComPtr<ID2D1Bitmap>> quickNavSysIconCache_;
+    /** @brief 应用图标快照的 D2D 缓存；键为 AppsFolder 稳定解析身份。 */
+    std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap>> quickNavAppIconCache_;
     std::vector<int> quickNavTabWidths_;
     static LRESULT CALLBACK ControlWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     LRESULT HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);

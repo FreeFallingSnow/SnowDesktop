@@ -200,6 +200,31 @@ void TestPinyinInitials()
         "initial sort must use pinyin and preserve stable ties");
 }
 
+void TestApplicationIconCacheIdentity()
+{
+    const std::wstring first =
+        rules::ApplicationIconCacheIdentity(
+            L"shell:AppsFolder\\Vendor.First_app!Main",
+            L"Shared name");
+    const std::wstring second =
+        rules::ApplicationIconCacheIdentity(
+            L"shell:AppsFolder\\Vendor.Second_app!Main",
+            L"Shared name");
+    Check(
+        first != second,
+        "app icon cache identities must not collapse distinct AppsFolder items");
+    Check(
+        first == rules::ApplicationIconCacheIdentity(
+            L"SHELL:APPSFOLDER\\VENDOR.FIRST_APP!MAIN",
+            L"Renamed display value"),
+        "app icon cache identities must be case-insensitive and independent of display names");
+    Check(
+        rules::ApplicationIconCacheIdentity(
+            L"", L"Fallback App") ==
+            L"FALLBACK APP",
+        "display names must provide a stable fallback cache identity");
+}
+
 void TestSourceOwnership()
 {
     const std::vector<std::wstring> items = {
@@ -480,6 +505,7 @@ int main()
     TestViewModePersistenceValues();
     TestViewModeFilePersistence();
     TestPinyinInitials();
+    TestApplicationIconCacheIdentity();
     TestSourceOwnership();
     TestMappingSectionsFollowTabOrder();
     TestSectionLayout();

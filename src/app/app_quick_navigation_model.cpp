@@ -2,6 +2,7 @@
 #include "quick_navigation_helpers.h"
 #include "quick_navigation_rules.h"
 #include "search_match.h"
+#include <commoncontrols.h>
 
 // Quick-navigation search caches, app indexing and content-model construction.
 
@@ -55,10 +56,25 @@ std::vector<EverythingSearchResult> DesktopApp::SearchEverythingCached(
 }
 
 std::vector<DesktopApp::QuickNavigationAppEntry>
-DesktopApp::BuildQuickNavigationAppIndex(HWND ownerHwnd, HIMAGELIST& systemImageListSmall)
+DesktopApp::BuildQuickNavigationAppIndex(HWND ownerHwnd,
+    HIMAGELIST& systemImageListSmall, int iconSourceSize)
 {
     std::vector<QuickNavigationAppEntry> entries;
     systemImageListSmall = nullptr;
+    iconSourceSize = snowdesktop::icon_render_rules::
+        SourcePixelsForTarget(iconSourceSize);
+
+    ComPtr<IImageList> iconImageList;
+    HRESULT imageListHr = SHGetImageList(
+        SHIL_EXTRALARGE, IID_IImageList,
+        reinterpret_cast<void**>(iconImageList.GetAddressOf()));
+    if (FAILED(imageListHr) || !iconImageList)
+    {
+        iconImageList.Reset();
+        SHGetImageList(
+            SHIL_LARGE, IID_IImageList,
+            reinterpret_cast<void**>(iconImageList.GetAddressOf()));
+    }
 
     PIDLIST_ABSOLUTE rawAppsPidl = nullptr;
     if (FAILED(SHParseDisplayName(L"shell:AppsFolder", nullptr, &rawAppsPidl, 0, nullptr)) ||
@@ -116,8 +132,26 @@ DesktopApp::BuildQuickNavigationAppIndex(HWND ownerHwnd, HIMAGELIST& systemImage
         QuickNavigationAppEntry entry;
         entry.name = std::move(name);
         entry.parsingName = std::move(parsingName);
+        entry.iconCacheIdentity =
+            snowdesktop::quick_navigation_rules::
+                ApplicationIconCacheIdentity(
+                    entry.parsingName, entry.name);
         entry.absolutePidl.reset(absolute);
         entry.systemIconIndex = imageList ? info.iIcon : -1;
+        if (iconImageList && entry.systemIconIndex >= 0)
+        {
+            HICON icon = nullptr;
+            if (SUCCEEDED(iconImageList->GetIcon(
+                    entry.systemIconIndex,
+                    ILD_TRANSPARENT | ILD_PRESERVEALPHA,
+                    &icon)) && icon)
+            {
+                entry.iconBitmap = CreateAlphaBitmapFromIcon(
+                    icon, iconSourceSize, iconSourceSize,
+                    entry.iconBitmapSize);
+                DestroyIcon(icon);
+            }
+        }
         entries.push_back(std::move(entry));
 
         ILFree(child);
@@ -150,9 +184,11 @@ void DesktopApp::StartQuickNavigationAppIndexing()
     }
 
     const uint64_t serial = ++quickNavigationAppIndexSerial_;
+    const int iconTargetSize = QuickNavScale(28);
     try
     {
-        quickNavigationAppIndexThread_ = std::thread([this, targetHwnd, serial]() {
+        quickNavigationAppIndexThread_ = std::thread(
+            [this, targetHwnd, serial, iconTargetSize]() {
             auto* result = new QuickNavigationAppIndexResult();
             result->serial = serial;
 
@@ -160,7 +196,9 @@ void DesktopApp::StartQuickNavigationAppIndexing()
             const bool coInitialized = SUCCEEDED(coHr);
             if (coInitialized)
             {
-                result->entries = BuildQuickNavigationAppIndex(targetHwnd, result->systemImageListSmall);
+                result->entries = BuildQuickNavigationAppIndex(
+                    targetHwnd, result->systemImageListSmall,
+                    iconTargetSize);
                 CoUninitialize();
             }
 
@@ -170,7 +208,7 @@ void DesktopApp::StartQuickNavigationAppIndexing()
                 delete result;
                 quickNavigationAppIndexing_ = false;
             }
-        });
+            });
     }
     catch (...)
     {
@@ -214,6 +252,7 @@ void DesktopApp::OnQuickNavigationAppsIndexed(WPARAM /*wParam*/, LPARAM lParam)
     if (!result || result->serial != quickNavigationAppIndexSerial_)
         return;
 
+    quickNavAppIconCache_.clear();
     quickNavigationAppEntries_ = std::move(result->entries);
     if (result->systemImageListSmall)
         quickNavigationSystemImageListSmall_ = result->systemImageListSmall;
