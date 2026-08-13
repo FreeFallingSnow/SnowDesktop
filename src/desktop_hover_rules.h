@@ -29,6 +29,16 @@ constexpr bool ShouldRetainHoverAcrossMouseLeave(
         pointerOnPairedBackdropWindow;
 }
 
+constexpr bool ShouldResamplePassiveMouseMove(
+    bool mouseDown,
+    bool dragActive,
+    bool widgetInteractionActive)
+{
+    return !mouseDown &&
+        !dragActive &&
+        !widgetInteractionActive;
+}
+
 constexpr bool HasForegroundSettled(
     bool foregroundChangeKnown,
     std::uint32_t elapsedMs)

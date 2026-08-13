@@ -616,6 +616,16 @@ void TestDesktopHoverDeactivation()
                 false, false),
         "content and paired backdrop windows must form one logical hover surface");
     Check(
+        hoverRules::ShouldResamplePassiveMouseMove(
+            false, false, false) &&
+            !hoverRules::ShouldResamplePassiveMouseMove(
+                true, false, false) &&
+            !hoverRules::ShouldResamplePassiveMouseMove(
+                false, true, false) &&
+            !hoverRules::ShouldResamplePassiveMouseMove(
+                false, false, true),
+        "only passive mouse moves may replace queued message coordinates with the live cursor");
+    Check(
         hoverRules::ShouldReconcileFromSurfaceSample(
             false, false, false) &&
             hoverRules::ShouldReconcileFromSurfaceSample(
