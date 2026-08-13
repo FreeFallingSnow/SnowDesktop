@@ -392,6 +392,8 @@ bool LoadCategorySettings(const wchar_t* path, CategorySettings& settings)
     double number = 0;
     if (ReadDoubleField(text, "tabFontSize", number))
         settings.tabFontSize = std::clamp(static_cast<float>(number), 10.0f, 22.0f);
+    if (ReadDoubleField(text, "showItemCounts", number))
+        settings.showItemCounts = number != 0.0;
 
     std::vector<CategoryRule> loadedRules;
     if (LoadRulesArray(text, loadedRules))
@@ -431,6 +433,8 @@ bool SaveCategorySettings(const wchar_t* path, const CategorySettings& settings)
 
     file << "{\n";
     file << "  \"tabFontSize\": " << normalized.tabFontSize << ",\n";
+    file << "  \"showItemCounts\": "
+         << (normalized.showItemCounts ? "true" : "false") << ",\n";
     file << "  \"rules\": [\n";
     for (size_t i = 0; i < normalized.rules.size(); ++i)
     {

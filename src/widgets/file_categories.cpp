@@ -483,6 +483,12 @@ std::wstring FileCategories::GetCategoryDisplayLabel(const std::wstring& categor
     return GetCategoryLabel(app_->GetCategorySettings(), categoryId);
 }
 
+bool FileCategories::ShowCategoryItemCounts() const
+{
+    return app_ &&
+        app_->GetCategorySettings().showItemCounts;
+}
+
 /**
  * @brief 收集顶级桌面项目中可收录的项到 widget 的 itemKeys 中。
  *        跳过已在其他组件中的项目以及已存在的 key。
@@ -594,7 +600,7 @@ static RECT FileCategoryContentRect(FileCategories* widget)
                 tabs.bottom,
                 !IsRectEmptyRect(search), search.bottom,
                 widget->GetCategorizedTabRowOffset(),
-                widget->Cu(38.0f),
+                widget->Cu(widget->GetCategorizedTabRowPitch()),
                 widget->Cu(8.0f),
                 widget->Cu(4.0f)));
     return widget->ApplyDetailsHeaderToViewport(body);
@@ -603,8 +609,11 @@ static RECT FileCategoryContentRect(FileCategories* widget)
 static std::wstring FileCategoryTabDisplayText(FileCategories* widget, const std::wstring& categoryId)
 {
     if (!widget || !widget->GetApp()) return categoryId;
-    return widget->GetCategoryDisplayLabel(categoryId) + L" " +
-        std::to_wstring(widget->CachedCategoryKeys(categoryId).size());
+    std::wstring label = widget->GetCategoryDisplayLabel(categoryId);
+    if (widget->ShowCategoryItemCounts())
+        label += L" " + std::to_wstring(
+            widget->CachedCategoryKeys(categoryId).size());
+    return label;
 }
 
 static std::vector<int> FileCategoryTabWidths(FileCategories* widget, int availableWidth)

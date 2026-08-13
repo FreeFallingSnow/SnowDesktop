@@ -162,13 +162,13 @@ static RECT FolderMappingContentRect(FolderMapping* widget)
                 body.bottom,
                 search.bottom + widget->Cu(4.0f) +
                     widget->GetCategorizedTabRowOffset() *
-                        widget->Cu(38.0f));
+                        widget->Cu(widget->GetCategorizedTabRowPitch()));
         else if (widget->GetCategorizedTabRowOffset() > 0)
             body.top = std::min<LONG>(
                 body.bottom,
                 body.top +
                     widget->GetCategorizedTabRowOffset() *
-                        widget->Cu(38.0f));
+                        widget->Cu(widget->GetCategorizedTabRowPitch()));
     }
     return widget->ApplyDetailsHeaderToViewport(body);
 }
@@ -327,11 +327,15 @@ static std::wstring FolderMappingTabDisplayText(
     if (!widget || !widget->GetApp()) return categoryId;
     widget->GetVisibleEntryIndices();
     DesktopWidget* data = widget->GetWidgetData();
+    const CategorySettings& settings =
+        widget->GetCategorySettingsForDisplay();
+    std::wstring label =
+        GetCategoryLabel(settings, categoryId);
+    if (!settings.showItemCounts)
+        return label;
     size_t count = 0;
     if (data)
     {
-        const CategorySettings& settings =
-            widget->GetCategorySettingsForDisplay();
         for (const auto& entry : data->folderEntries)
         {
             if (categoryId == L"all" ||
@@ -339,8 +343,7 @@ static std::wstring FolderMappingTabDisplayText(
                 ++count;
         }
     }
-    return GetCategoryLabel(widget->GetCategorySettingsForDisplay(), categoryId) +
-        L" " + std::to_wstring(count);
+    return label + L" " + std::to_wstring(count);
 }
 
 static std::vector<int> FolderMappingTabWidths(
@@ -364,10 +367,10 @@ static std::vector<int> FolderMappingTabWidths(
     {
         auto countIt = counts.find(categoryId);
         if (countIt == counts.end() || countIt->second == 0) continue;
-        labels.push_back(
-            GetCategoryLabel(settings, categoryId) +
-            L" " +
-            std::to_wstring(countIt->second));
+        std::wstring label = GetCategoryLabel(settings, categoryId);
+        if (settings.showItemCounts)
+            label += L" " + std::to_wstring(countIt->second);
+        labels.push_back(std::move(label));
     }
     return widget->BuildCategorizedTabWidths(
         labels, availableWidth);

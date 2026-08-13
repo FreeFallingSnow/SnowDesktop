@@ -73,11 +73,7 @@ std::wstring FileGroupSourceTabText(
     const DesktopWidget* child = FindFileGroupSource(
         group, sources[tabIndex]);
     if (!child) return L"";
-    const size_t count =
-        child->type == DesktopWidgetType::FolderMapping
-            ? child->folderEntries.size()
-            : child->itemKeys.size();
-    return child->title + L" " + std::to_wstring(count);
+    return child->title;
 }
 
 std::vector<int> FileGroupSourceTabWidths(

@@ -1034,15 +1034,15 @@ private:
     void ApplyLanguageChange();
     /** @brief 获取当前分类设置。 */
     const CategorySettings& GetCategorySettings() const { return categorySettings_; }
-    /** @brief 获取三类滚动分类组件共用的标签字号。 */
-    float GetCategorizedWidgetTabFontSize() const
+    /** @brief 获取三类滚动分类组件共用的分类标签条高度。 */
+    float GetCategorizedWidgetTabHeight() const
     {
         return settingsWindow_
             ? std::clamp(
                 settingsWindow_->GetPersonalization().
-                    categorizedTabFontSize,
-                10.0f, 22.0f)
-            : 14.0f;
+                    categorizedTabHeight,
+                24.0f, 48.0f)
+            : 34.0f;
     }
     /** @brief 切换桌面图标可见性（双击空白处隐藏/恢复）。 */
     void ToggleDesktopIconsVisibility();

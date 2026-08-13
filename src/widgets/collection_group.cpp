@@ -101,28 +101,10 @@ std::wstring CollectionGroupTabTitle(
         : child->title;
 }
 
-size_t CollectionGroupTabItemCount(
-    CollectionGroup* widget, size_t tabIndex)
-{
-    if (!widget || !widget->GetApp()) return 0;
-    std::unordered_set<std::wstring> keys;
-    const auto& children = widget->GetVisibleCollectionIds();
-    if (tabIndex >= children.size()) return 0;
-    if (DesktopWidget* child = FindCollectionWidget(
-            widget, children[tabIndex]))
-    {
-        for (const auto& itemKey : child->itemKeys)
-            keys.insert(ToUpperInvariant(itemKey));
-    }
-    return keys.size();
-}
-
 std::wstring CollectionGroupTabDisplayText(
     CollectionGroup* widget, size_t tabIndex)
 {
-    return
-        CollectionGroupTabTitle(widget, tabIndex) + L" " +
-        std::to_wstring(CollectionGroupTabItemCount(widget, tabIndex));
+    return CollectionGroupTabTitle(widget, tabIndex);
 }
 
 std::vector<int> CollectionGroupTabWidths(

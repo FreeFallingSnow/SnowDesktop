@@ -668,7 +668,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
         std::to_wstring(appearance.widgetBorderAlpha) + L":" +
         std::to_wstring(appearance.cornerRadius) + L":" +
         std::to_wstring(appearance.barHeight) + L":" +
-        std::to_wstring(appearance.categorizedTabFontSize) + L":" +
+        std::to_wstring(appearance.categorizedTabHeight) + L":" +
         std::to_wstring(appearance.glassEnabled) + L":" +
         std::to_wstring(appearance.acrylicEnabled) + L":" +
         std::to_wstring(appearance.contentTheme);

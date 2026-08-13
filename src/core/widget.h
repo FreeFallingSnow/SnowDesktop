@@ -353,8 +353,14 @@ public:
     RECT GetCategorizedSearchBoxRect(bool visible) const;
     /** @brief 分类滚动组件共用的标签区布局。 */
     RECT GetCategorizedTabsRect(bool visible) const;
-    /** @brief 分类滚动组件共用的标签字号。 */
+    /** @brief 分类滚动组件共用的标签条高度（cu）。 */
+    float GetCategorizedTabHeight() const;
+    /** @brief 按标签条高度联动的标签字号（cu）。 */
     float GetCategorizedTabFontSize() const;
+    /** @brief 标签行距（cu），= 标签条高度 + 4。 */
+    float GetCategorizedTabRowPitch() const;
+    /** @brief 搜索框高度（cu），= 标签条高度 − 4。 */
+    float GetCategorizedSearchBoxHeight() const;
     /** @brief 按共同字号测量并分配标签宽度。 */
     std::vector<int> BuildCategorizedTabWidths(
         const std::vector<std::wstring>& labels,
@@ -522,6 +528,7 @@ public:
     bool IsPointInTabsRect(POINT pt) const;
     bool TryScrollTabs(POINT pt, int delta) override;
     std::wstring GetCategoryDisplayLabel(const std::wstring& categoryId) const;
+    bool ShowCategoryItemCounts() const;
     void InvalidateCategoryCache();
     std::vector<Item*> GetSelectedItems() const override;
     bool NeedsShellReloadAfterDrop() const override { return false; }

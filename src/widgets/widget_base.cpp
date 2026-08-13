@@ -648,7 +648,7 @@ RECT ScrollingItemWidget::GetCategorizedSearchBoxRect(
     InflateRect(&body, -Cu(2.0f), 0);
     if (IsRectEmptyRect(body)) return {};
     const LONG bottom = std::min<LONG>(
-        body.bottom, body.top + Cu(30.0f));
+        body.bottom, body.top + Cu(GetCategorizedSearchBoxHeight()));
     return bottom > body.top
         ? MakeRect(
             body.left, body.top,
@@ -669,9 +669,9 @@ RECT ScrollingItemWidget::GetCategorizedTabsRect(
     LONG top = IsRectEmptyRect(search)
         ? body.top
         : search.bottom + Cu(5.0f);
-    top += categorizedTabRowOffset_ * Cu(38.0f);
+    top += categorizedTabRowOffset_ * Cu(GetCategorizedTabRowPitch());
     const LONG bottom = std::min<LONG>(
-        body.bottom, top + Cu(34.0f));
+        body.bottom, top + Cu(GetCategorizedTabHeight()));
     return bottom > top
         ? MakeRect(body.left, top, body.right, bottom)
         : RECT{};
@@ -708,11 +708,30 @@ void ScrollingItemWidget::ClearCategorizedHostOptions()
 }
 
 float ScrollingItemWidget::
-    GetCategorizedTabFontSize() const
+    GetCategorizedTabHeight() const
 {
     return app_
-        ? app_->GetCategorizedWidgetTabFontSize()
-        : 15.0f;
+        ? app_->GetCategorizedWidgetTabHeight()
+        : 34.0f;
+}
+
+float ScrollingItemWidget::
+    GetCategorizedTabFontSize() const
+{
+    // 默认标签条高度 34 cu 对应默认字号 15 cu，按比例联动。
+    return GetCategorizedTabHeight() * 15.0f / 34.0f;
+}
+
+float ScrollingItemWidget::
+    GetCategorizedTabRowPitch() const
+{
+    return GetCategorizedTabHeight() + 4.0f;
+}
+
+float ScrollingItemWidget::
+    GetCategorizedSearchBoxHeight() const
+{
+    return GetCategorizedTabHeight() - 4.0f;
 }
 
 std::vector<int>
@@ -1285,7 +1304,7 @@ bool ScrollingItemWidget::GetSearchCaretRect(
         searchRect.right - Cu(10.0f), searchRect.bottom);
     IDWriteFactory* dwrite = app_->GetDWriteFactory();
     IDWriteTextFormat* format =
-        GetCuTextFormat(15.0f, false, false);
+        GetCuTextFormat(GetCategorizedTabFontSize(), false, false);
     if (!dwrite || !format)
         return false;
 
@@ -1339,7 +1358,7 @@ bool ScrollingItemWidget::GetSearchCaretRect(
     rect.bottom = rect.top +
         std::max<LONG>(1,
             static_cast<LONG>(std::lround(
-                std::max(metrics.height, FontCu(15.0f)))));
+                std::max(metrics.height, FontCu(GetCategorizedTabFontSize())))));
     return true;
 }
 
@@ -1381,7 +1400,7 @@ void ScrollingItemWidget::DrawSearchBox(ID2D1DeviceContext* context)
                 : (light ? 0.14f : 0.20f)));
 
     IDWriteTextFormat* format =
-        GetCuTextFormat(15.0f, false, false);
+        GetCuTextFormat(GetCategorizedTabFontSize(), false, false);
     IDWriteFactory* dwrite = app_->GetDWriteFactory();
     if (!format || !dwrite)
         return;

@@ -806,11 +806,11 @@ bool SettingsWindow::Init(HINSTANCE instance, ID3D11Device* device)
         return false;
     }
 
-    bool categorizedTabFontSizeLoaded = false;
+    bool categorizedTabHeightLoaded = false;
     LoadPersonalization(
         GetPersonalizationPath().c_str(),
         personalization_,
-        &categorizedTabFontSizeLoaded);
+        &categorizedTabHeightLoaded);
     LoadDockSettings(GetDockSettingsPath().c_str(), dockSettings_);
     LoadNavigationSettings(GetNavigationSettingsPath().c_str(), navigationSettings_);
     LoadGeneralSettings(GetGeneralSettingsPath().c_str(), generalSettings_);
@@ -823,14 +823,15 @@ bool SettingsWindow::Init(HINSTANCE instance, ID3D11Device* device)
     }
     categorySettings_ = CategorySettings::Defaults();
     LoadCategorySettings(GetCategorySettingsPath().c_str(), categorySettings_);
-    if (!categorizedTabFontSizeLoaded)
+    if (!categorizedTabHeightLoaded)
     {
-        // 1.0.1.0 之前该值保存在分类设置中。迁移一次后由外观设置持有，
+        // 1.0.1.0 之前该值以字号形式保存在分类设置中。迁移一次后由外观设置持有，
         // 避免重置分类规则时意外重置三类组件的共同外观。
-        personalization_.categorizedTabFontSize =
+        // 默认字号 15 对应默认标签条高度 34。
+        personalization_.categorizedTabHeight =
             std::clamp(
-                categorySettings_.tabFontSize,
-                10.0f, 22.0f);
+                categorySettings_.tabFontSize * 34.0f / 15.0f,
+                24.0f, 48.0f);
         SavePersonalization(
             GetPersonalizationPath().c_str(),
             personalization_);
@@ -2992,6 +2993,11 @@ void SettingsWindow::DrawCategorySettingsPage()
     ImGui::SeparatorText(_L("app.settings.category_settings"));
     ImGui::Spacing();
 
+    if (DrawSettingCheckbox(_L("app.settings.category_show_count"),
+            "##CategoryShowCount", &categorySettings_.showItemCounts))
+        markChanged();
+    ImGui::Spacing();
+
     drawSubsectionLabel(_L("app.settings.category_type"),
         _L("app.settings.category_hint"));
     ImGui::Indent(subsectionContentIndent);
@@ -3190,8 +3196,8 @@ void SettingsWindow::DrawPersonalizationPage()
         const int previousPreset = personalization_.backgroundPreset;
         const float cornerRadius = personalization_.cornerRadius;
         const float barHeight = personalization_.barHeight;
-        const float categorizedTabFontSize =
-            personalization_.categorizedTabFontSize;
+        const float categorizedTabHeight =
+            personalization_.categorizedTabHeight;
         const int contextMenuStyle =
             personalization_.contextMenuStyle;
         if (presetIds[presetIndex] == kAppearancePresetCustom)
@@ -3212,8 +3218,8 @@ void SettingsWindow::DrawPersonalizationPage()
         }
         personalization_.cornerRadius = cornerRadius;
         personalization_.barHeight = barHeight;
-        personalization_.categorizedTabFontSize =
-            categorizedTabFontSize;
+        personalization_.categorizedTabHeight =
+            categorizedTabHeight;
         personalization_.contextMenuStyle = contextMenuStyle;
         markChanged(true);
     }
@@ -3425,13 +3431,13 @@ void SettingsWindow::DrawPersonalizationPage()
     }
 
     BeginSettingRow(
-        _L("app.settings.tab_font_size"),
+        _L("app.settings.tab_height"),
         sliderActionW);
     ImGui::SetNextItemWidth(actionSliderW);
     if (ImGui::SliderFloat(
-            "##CategorizedTabFontSize",
-            &personalization_.categorizedTabFontSize,
-            10.0f, 22.0f, "%.0f cu"))
+            "##CategorizedTabHeight",
+            &personalization_.categorizedTabHeight,
+            24.0f, 48.0f, "%.0f cu"))
         markChanged(false);
     if (ImGui::IsItemDeactivatedAfterEdit() &&
         personalizationDirty_)
@@ -3440,10 +3446,10 @@ void SettingsWindow::DrawPersonalizationPage()
     if (BlueButton(
             (std::string(
                 _L("app.settings.restore_default")) +
-                "##CategorizedTabFontSizeDefault").c_str(),
+                "##CategorizedTabHeightDefault").c_str(),
             ImVec2(resetW, 0)))
     {
-        personalization_.categorizedTabFontSize = 15.0f;
+        personalization_.categorizedTabHeight = 34.0f;
         markChanged(true);
     }
 
