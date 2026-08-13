@@ -61,6 +61,9 @@ struct WidgetRecord
     std::optional<float> detailModifiedWidth;
     std::optional<float> detailTypeWidth;
     std::optional<float> detailSizeWidth;
+    std::optional<float> detailModifiedPosition;
+    std::optional<float> detailTypePosition;
+    std::optional<float> detailSizePosition;
     std::string contentSortColumn = "none";
     bool contentSortAscending = true;
     bool dateHeaders = false;

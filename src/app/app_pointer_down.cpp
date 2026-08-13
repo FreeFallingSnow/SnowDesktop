@@ -723,28 +723,30 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                  wh == WidgetHit::DetailsTypeDivider ||
                  wh == WidgetHit::DetailsSizeDivider)
         {
+            auto* list = dynamic_cast<ScrollingItemWidget*>(wc);
+            if (!list) return;
+            const RECT header = list->GetDetailsHeaderRectFromViewport(
+                list->GetContentViewportRect());
+            if (IsRectEmptyRect(header)) return;
             detailColumnResizeActive_ = true;
             if (wh == WidgetHit::DetailsModifiedDivider)
             {
                 detailColumnResizeColumn_ =
                     snowdesktop::list_detail_rules::Column::Modified;
-                detailColumnResizeStartWidth_ =
-                    widgets_[wi].detailModifiedWidth;
             }
             else if (wh == WidgetHit::DetailsTypeDivider)
             {
                 detailColumnResizeColumn_ =
                     snowdesktop::list_detail_rules::Column::Type;
-                detailColumnResizeStartWidth_ =
-                    widgets_[wi].detailTypeWidth;
             }
             else
             {
                 detailColumnResizeColumn_ =
                     snowdesktop::list_detail_rules::Column::Size;
-                detailColumnResizeStartWidth_ =
-                    widgets_[wi].detailSizeWidth;
             }
+            detailColumnResizeHeaderLeft_ = header.left;
+            detailColumnResizeHeaderWidth_ = std::max<int>(
+                1, header.right - header.left);
             mouseDownWidgetIndex_ = wi;
             mouseDownHit_ = nullptr;
             SetCapture(hwnd_);

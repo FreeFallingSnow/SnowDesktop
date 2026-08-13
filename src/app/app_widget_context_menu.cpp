@@ -733,22 +733,59 @@ void DesktopApp::ShowWidgetContextMenu(
     case kContextWidgetDetailModified:
     case kContextWidgetDetailType:
     case kContextWidgetDetailSize:
+    {
         if (!widgets_[widgetIndex].listMode) break;
+        auto& detailWidget = widgets_[widgetIndex];
+        auto column = snowdesktop::list_detail_rules::Column::Modified;
+        bool enabling = false;
         if (command == kContextWidgetDetailModified)
-            widgets_[widgetIndex].detailShowModified =
-                !widgets_[widgetIndex].detailShowModified;
+        {
+            enabling = !detailWidget.detailShowModified;
+            detailWidget.detailShowModified = enabling;
+        }
         else if (command == kContextWidgetDetailType)
-            widgets_[widgetIndex].detailShowType =
-                !widgets_[widgetIndex].detailShowType;
+        {
+            column = snowdesktop::list_detail_rules::Column::Type;
+            enabling = !detailWidget.detailShowType;
+            detailWidget.detailShowType = enabling;
+        }
         else
-            widgets_[widgetIndex].detailShowSize =
-                !widgets_[widgetIndex].detailShowSize;
-        widgets_[widgetIndex].showDetails =
+        {
+            column = snowdesktop::list_detail_rules::Column::Size;
+            enabling = !detailWidget.detailShowSize;
+            detailWidget.detailShowSize = enabling;
+        }
+        if (enabling)
+        {
+            const snowdesktop::list_detail_rules::DividerPositions positions{
+                detailWidget.detailModifiedPosition,
+                detailWidget.detailTypePosition,
+                detailWidget.detailSizePosition };
+            const float adjusted = snowdesktop::list_detail_rules::
+                ClampDraggedPosition(
+                    column,
+                    column == snowdesktop::list_detail_rules::Column::Modified
+                        ? detailWidget.detailModifiedPosition
+                        : column == snowdesktop::list_detail_rules::Column::Type
+                            ? detailWidget.detailTypePosition
+                            : detailWidget.detailSizePosition,
+                    detailWidget.detailShowModified,
+                    detailWidget.detailShowType,
+                    detailWidget.detailShowSize,
+                    positions);
+            if (column == snowdesktop::list_detail_rules::Column::Modified)
+                detailWidget.detailModifiedPosition = adjusted;
+            else if (column == snowdesktop::list_detail_rules::Column::Type)
+                detailWidget.detailTypePosition = adjusted;
+            else
+                detailWidget.detailSizePosition = adjusted;
+        }
+        detailWidget.showDetails =
             snowdesktop::list_detail_rules::HasMetadataColumns(
-                widgets_[widgetIndex].detailShowModified,
-                widgets_[widgetIndex].detailShowType,
-                widgets_[widgetIndex].detailShowSize);
-        widgets_[widgetIndex].scrollOffset = 0;
+                detailWidget.detailShowModified,
+                detailWidget.detailShowType,
+                detailWidget.detailShowSize);
+        detailWidget.scrollOffset = 0;
         for (auto& container : containers_)
         {
             auto* widgetContainer =
@@ -768,6 +805,7 @@ void DesktopApp::ShowWidgetContextMenu(
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
         break;
+    }
     case kContextWidgetToggleAutoCollect:
         if (effectiveSourceIndex >= widgets_.size() ||
             widgets_[effectiveSourceIndex].type !=

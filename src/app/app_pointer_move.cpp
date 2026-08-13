@@ -154,22 +154,30 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         if (mouseDownWidgetIndex_ < widgets_.size())
         {
             auto& widget = widgets_[mouseDownWidgetIndex_];
-            const float scale = std::max(0.01f, widget.cellScale);
-            const float delta = static_cast<float>(
-                mouseDownPoint_.x - current.x) / scale;
-            const float width = snowdesktop::list_detail_rules::
-                ClampPreferredWidth(
-                    detailColumnResizeStartWidth_ + delta);
+            const float proposed = static_cast<float>(
+                current.x - detailColumnResizeHeaderLeft_) /
+                static_cast<float>(detailColumnResizeHeaderWidth_);
+            const snowdesktop::list_detail_rules::DividerPositions positions{
+                widget.detailModifiedPosition,
+                widget.detailTypePosition,
+                widget.detailSizePosition };
+            const float position = snowdesktop::list_detail_rules::
+                ClampDraggedPosition(
+                    detailColumnResizeColumn_, proposed,
+                    widget.detailShowModified,
+                    widget.detailShowType,
+                    widget.detailShowSize,
+                    positions);
             switch (detailColumnResizeColumn_)
             {
             case snowdesktop::list_detail_rules::Column::Modified:
-                widget.detailModifiedWidth = width;
+                widget.detailModifiedPosition = position;
                 break;
             case snowdesktop::list_detail_rules::Column::Type:
-                widget.detailTypeWidth = width;
+                widget.detailTypePosition = position;
                 break;
             case snowdesktop::list_detail_rules::Column::Size:
-                widget.detailSizeWidth = width;
+                widget.detailSizePosition = position;
                 break;
             default:
                 break;

@@ -752,27 +752,39 @@ void TestListDetailRules()
         "row height applies the same formula at component scale");
 
     const auto nameOnly = details::BuildColumns(
-        299, 140, false, false, false, 160, 120, 90);
+        299, false, false, false,
+        details::kDefaultModifiedPosition,
+        details::kDefaultTypePosition,
+        details::kDefaultSizePosition);
     Check(nameOnly.nameWidth == 299 &&
             !nameOnly.showModified && !nameOnly.showType &&
             !nameOnly.showSize &&
             !details::HasMetadataColumns(false, false, false),
         "name-only list mode uses the full width without a detail header");
     const auto modified = details::BuildColumns(
-        300, 140, true, false, false, 160, 120, 90);
-    Check(modified.nameWidth == 140 &&
-            modified.modifiedWidth == 160 &&
+        300, true, false, false,
+        details::kDefaultModifiedPosition,
+        details::kDefaultTypePosition,
+        details::kDefaultSizePosition);
+    Check(modified.nameWidth == 82 &&
+            modified.modifiedWidth == 218 &&
             modified.showModified && !modified.showType &&
             !modified.showSize,
-        "individually enabled modified columns retain their preferred width");
+        "a lone detail divider keeps its percentage position");
     const auto sizeOnly = details::BuildColumns(
-        230, 140, false, false, true, 160, 120, 90);
-    Check(sizeOnly.nameWidth == 140 && sizeOnly.sizeWidth == 90 &&
+        230, false, false, true,
+        details::kDefaultModifiedPosition,
+        details::kDefaultTypePosition,
+        details::kDefaultSizePosition);
+    Check(sizeOnly.nameWidth == 189 && sizeOnly.sizeWidth == 41 &&
             !sizeOnly.showModified && !sizeOnly.showType &&
             sizeOnly.showSize,
-        "detail columns are selected independently of component width");
+        "individually selected columns use their own divider percentage");
     const auto all = details::BuildColumns(
-        510, 140, true, true, true, 160, 120, 90);
+        510, true, true, true,
+        details::kDefaultModifiedPosition,
+        details::kDefaultTypePosition,
+        details::kDefaultSizePosition);
     Check(all.nameWidth == 140 && all.showModified &&
             all.showType && all.showSize,
         "all selected detail columns fit at their baseline widths");
@@ -791,21 +803,52 @@ void TestListDetailRules()
                 details::Column::None,
         "detail header dividers take priority within their resize tolerance");
     const auto custom = details::BuildColumns(
-        650, 140, true, true, true, 200, 110, 75);
-    Check(custom.nameWidth == 265 && custom.modifiedWidth == 200 &&
-            custom.typeWidth == 110 && custom.sizeWidth == 75,
-        "custom detail widths leave the remaining space to the name column");
+        600, true, true, true, 0.25f, 0.55f, 0.80f);
+    Check(custom.nameWidth == 150 && custom.modifiedWidth == 180 &&
+            custom.typeWidth == 150 && custom.sizeWidth == 120,
+        "custom divider percentages scale directly with component width");
     const auto constrained = details::BuildColumns(
-        300, 140, true, true, true, 160, 120, 90);
-    Check(constrained.nameWidth >= 140 &&
-            constrained.modifiedWidth == 69 &&
-            constrained.typeWidth == 51 &&
-            constrained.sizeWidth == 38,
-        "narrow components proportionally constrain selected detail columns");
-    Check(details::ClampPreferredWidth(12.0f) == 50.0f &&
-            details::ClampPreferredWidth(210.0f) == 210.0f &&
-            details::ClampPreferredWidth(900.0f) == 480.0f,
-        "dragged detail widths stay within persisted limits");
+        300, true, true, true,
+        details::kDefaultModifiedPosition,
+        details::kDefaultTypePosition,
+        details::kDefaultSizePosition);
+    Check(constrained.nameWidth == 82 &&
+            constrained.modifiedWidth == 94 &&
+            constrained.typeWidth == 71 &&
+            constrained.sizeWidth == 53,
+        "narrow components preserve divider percentages without auto-sizing");
+    const details::DividerPositions defaults;
+    const float movedType = details::ClampDraggedPosition(
+        details::Column::Type, 0.70f,
+        true, true, true, defaults);
+    const auto moved = details::BuildColumns(
+        1000, true, true, true,
+        defaults.modified, movedType, defaults.size);
+    Check(moved.nameWidth == 275 && moved.modifiedWidth == 425 &&
+            moved.typeWidth == 124 && moved.sizeWidth == 176,
+        "dragging one divider leaves every other divider percentage fixed");
+    Check(details::ClampDraggedPosition(
+                details::Column::Modified, 0.90f,
+                true, true, true, defaults) ==
+            defaults.type - details::kMinimumDividerGap &&
+            details::ClampDraggedPosition(
+                details::Column::Type, 0.10f,
+                true, true, true, defaults) ==
+            defaults.modified + details::kMinimumDividerGap &&
+            details::ClampDraggedPosition(
+                details::Column::Size, 0.10f,
+                true, true, true, defaults) ==
+            defaults.type + details::kMinimumDividerGap,
+        "dragged dividers stop at adjacent visible dividers without moving them");
+    const auto legacyPositions = details::LegacyWidthsToPositions(
+        160.0f, 120.0f, 90.0f);
+    Check(std::abs(legacyPositions.modified -
+                details::kDefaultModifiedPosition) < 0.0001f &&
+            std::abs(legacyPositions.type -
+                details::kDefaultTypePosition) < 0.0001f &&
+            std::abs(legacyPositions.size -
+                details::kDefaultSizePosition) < 0.0001f,
+        "legacy saved widths migrate to the equivalent baseline percentages");
     Check(details::DefaultAscending(details::Column::Name) &&
             details::DefaultAscending(details::Column::Type) &&
             !details::DefaultAscending(details::Column::Modified) &&

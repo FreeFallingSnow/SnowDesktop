@@ -103,6 +103,8 @@ void DesktopApp::LoadLayoutSlots()
         document.widgetContentOptionsSchemaVersion.value_or(0) >= 1;
     const bool hasTrustedDetailColumns =
         document.widgetContentOptionsSchemaVersion.value_or(0) >= 3;
+    const bool hasTrustedDetailPositions =
+        document.widgetContentOptionsSchemaVersion.value_or(0) >= 4;
 
     if (document.firstPageMonitor)
         firstPageMonitorId_ = Utf8ToWide(*document.firstPageMonitor);
@@ -359,15 +361,33 @@ void DesktopApp::LoadLayoutSlots()
             widget.detailShowType = true;
             widget.detailShowSize = true;
         }
-        widget.detailModifiedWidth =
-            snowdesktop::list_detail_rules::ClampPreferredWidth(
-                saved.detailModifiedWidth.value_or(160.0f));
-        widget.detailTypeWidth =
-            snowdesktop::list_detail_rules::ClampPreferredWidth(
-                saved.detailTypeWidth.value_or(120.0f));
-        widget.detailSizeWidth =
-            snowdesktop::list_detail_rules::ClampPreferredWidth(
-                saved.detailSizeWidth.value_or(90.0f));
+        snowdesktop::list_detail_rules::DividerPositions positions;
+        if (hasTrustedDetailPositions)
+        {
+            positions.modified = saved.detailModifiedPosition.value_or(
+                snowdesktop::list_detail_rules::
+                    kDefaultModifiedPosition);
+            positions.type = saved.detailTypePosition.value_or(
+                snowdesktop::list_detail_rules::kDefaultTypePosition);
+            positions.size = saved.detailSizePosition.value_or(
+                snowdesktop::list_detail_rules::kDefaultSizePosition);
+        }
+        else
+        {
+            positions = snowdesktop::list_detail_rules::
+                LegacyWidthsToPositions(
+                    saved.detailModifiedWidth.value_or(160.0f),
+                    saved.detailTypeWidth.value_or(120.0f),
+                    saved.detailSizeWidth.value_or(90.0f));
+        }
+        positions = snowdesktop::list_detail_rules::NormalizePositions(
+            widget.detailShowModified,
+            widget.detailShowType,
+            widget.detailShowSize,
+            positions);
+        widget.detailModifiedPosition = positions.modified;
+        widget.detailTypePosition = positions.type;
+        widget.detailSizePosition = positions.size;
         widget.showDetails = snowdesktop::list_detail_rules::
             HasMetadataColumns(
                 widget.detailShowModified,
@@ -788,7 +808,7 @@ void DesktopApp::SaveLayoutSlots()
 
     file << "{\n  \"layoutSchemaVersion\": 1"
          << ",\n  \"widgetTitleSchemaVersion\": 1"
-         << ",\n  \"widgetContentOptionsSchemaVersion\": 3"
+         << ",\n  \"widgetContentOptionsSchemaVersion\": 4"
          << ",\n  \"firstPageMonitor\": \"" << JsonEscapeUtf8(firstPageMonitorId_)
          << "\",\n  \"lastPageMonitor\": \""  << JsonEscapeUtf8(lastPageMonitorId_)
          << "\",\n  \"dockEnabled\": " << (generalSettings_.dockEnabled ? "true" : "false")
@@ -916,12 +936,12 @@ void DesktopApp::SaveLayoutSlots()
              << (w.detailShowType ? "true" : "false")
              << ", \"detailShowSize\": "
              << (w.detailShowSize ? "true" : "false")
-             << ", \"detailModifiedWidth\": "
-             << w.detailModifiedWidth
-             << ", \"detailTypeWidth\": "
-             << w.detailTypeWidth
-             << ", \"detailSizeWidth\": "
-             << w.detailSizeWidth
+             << ", \"detailModifiedPosition\": "
+             << w.detailModifiedPosition
+             << ", \"detailTypePosition\": "
+             << w.detailTypePosition
+             << ", \"detailSizePosition\": "
+             << w.detailSizePosition
              << ", \"contentSortColumn\": \""
              << snowdesktop::list_detail_rules::ToString(
                     w.contentSortColumn)

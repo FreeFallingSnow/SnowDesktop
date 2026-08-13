@@ -100,9 +100,24 @@ struct Columns
     bool showSize = false;
 };
 
-inline constexpr float ClampPreferredWidth(float width)
+inline constexpr float kDefaultModifiedPosition = 140.0f / 510.0f;
+inline constexpr float kDefaultTypePosition = 300.0f / 510.0f;
+inline constexpr float kDefaultSizePosition = 420.0f / 510.0f;
+inline constexpr float kMinimumDividerPosition = 0.05f;
+inline constexpr float kMaximumDividerPosition = 0.95f;
+inline constexpr float kMinimumDividerGap = 0.04f;
+
+struct DividerPositions
 {
-    return std::clamp(width, 50.0f, 480.0f);
+    float modified = kDefaultModifiedPosition;
+    float type = kDefaultTypePosition;
+    float size = kDefaultSizePosition;
+};
+
+inline constexpr float ClampStoredPosition(float position)
+{
+    return std::clamp(position,
+        kMinimumDividerPosition, kMaximumDividerPosition);
 }
 
 inline constexpr bool HasMetadataColumns(
@@ -113,46 +128,157 @@ inline constexpr bool HasMetadataColumns(
 
 inline Columns BuildColumns(
     int availableWidth,
-    int minimumNameWidth,
     bool showModified,
     bool showType,
     bool showSize,
-    int modifiedWidth,
-    int typeWidth,
-    int sizeWidth)
+    float modifiedPosition,
+    float typePosition,
+    float sizePosition)
 {
     Columns result;
     availableWidth = std::max(1, availableWidth);
     result.showModified = showModified;
     result.showType = showType;
     result.showSize = showSize;
-    const int requestedModified = showModified
-        ? std::max(1, modifiedWidth) : 0;
-    const int requestedType = showType
-        ? std::max(1, typeWidth) : 0;
-    const int requestedSize = showSize
-        ? std::max(1, sizeWidth) : 0;
-    const int requestedTotal = requestedModified +
-        requestedType + requestedSize;
-    const int reservedName = std::min(
-        std::max(1, minimumNameWidth), availableWidth);
-    const int metadataBudget = std::max(
-        0, availableWidth - reservedName);
-    const float scale = requestedTotal > metadataBudget &&
-            requestedTotal > 0
-        ? static_cast<float>(metadataBudget) /
-            static_cast<float>(requestedTotal)
-        : 1.0f;
-    result.modifiedWidth = showModified
-        ? static_cast<int>(std::floor(requestedModified * scale)) : 0;
-    result.typeWidth = showType
-        ? static_cast<int>(std::floor(requestedType * scale)) : 0;
-    result.sizeWidth = showSize
-        ? static_cast<int>(std::floor(requestedSize * scale)) : 0;
-    result.nameWidth = std::max(1,
-        availableWidth - result.modifiedWidth -
-            result.typeWidth - result.sizeWidth);
+
+    struct VisibleDivider
+    {
+        Column column;
+        int position;
+    };
+    VisibleDivider dividers[3]{};
+    size_t count = 0;
+    const auto append = [&](Column column, bool visible, float position) {
+        if (!visible) return;
+        const int pixel = static_cast<int>(std::lround(
+            static_cast<float>(availableWidth) *
+                ClampStoredPosition(position)));
+        dividers[count++] = {
+            column, std::clamp(pixel, 0, availableWidth) };
+    };
+    append(Column::Modified, showModified, modifiedPosition);
+    append(Column::Type, showType, typePosition);
+    append(Column::Size, showSize, sizePosition);
+
+    if (count == 0)
+    {
+        result.nameWidth = availableWidth;
+        return result;
+    }
+
+    result.nameWidth = dividers[0].position;
+    for (size_t index = 0; index < count; ++index)
+    {
+        const int right = index + 1 < count
+            ? dividers[index + 1].position
+            : availableWidth;
+        const int width = std::max(0,
+            right - dividers[index].position);
+        switch (dividers[index].column)
+        {
+        case Column::Modified:
+            result.modifiedWidth = width;
+            break;
+        case Column::Type:
+            result.typeWidth = width;
+            break;
+        case Column::Size:
+            result.sizeWidth = width;
+            break;
+        default:
+            break;
+        }
+    }
     return result;
+}
+
+inline DividerPositions NormalizePositions(
+    bool showModified, bool showType, bool showSize,
+    DividerPositions positions)
+{
+    positions.modified = ClampStoredPosition(positions.modified);
+    positions.type = ClampStoredPosition(positions.type);
+    positions.size = ClampStoredPosition(positions.size);
+
+    const int afterModified = static_cast<int>(showType) +
+        static_cast<int>(showSize);
+    if (showModified)
+    {
+        positions.modified = std::clamp(
+            positions.modified,
+            kMinimumDividerPosition,
+            kMaximumDividerPosition -
+                kMinimumDividerGap * afterModified);
+    }
+    if (showType)
+    {
+        const float lower = showModified
+            ? positions.modified + kMinimumDividerGap
+            : kMinimumDividerPosition;
+        const float upper = kMaximumDividerPosition -
+            (showSize ? kMinimumDividerGap : 0.0f);
+        positions.type = std::clamp(
+            positions.type, lower, upper);
+    }
+    if (showSize)
+    {
+        const float lower = showType
+            ? positions.type + kMinimumDividerGap
+            : showModified
+                ? positions.modified + kMinimumDividerGap
+                : kMinimumDividerPosition;
+        positions.size = std::clamp(
+            positions.size, lower, kMaximumDividerPosition);
+    }
+    return positions;
+}
+
+inline float ClampDraggedPosition(
+    Column column, float proposed,
+    bool showModified, bool showType, bool showSize,
+    const DividerPositions& positions)
+{
+    float lower = kMinimumDividerPosition;
+    float upper = kMaximumDividerPosition;
+    switch (column)
+    {
+    case Column::Modified:
+        if (showType)
+            upper = positions.type - kMinimumDividerGap;
+        else if (showSize)
+            upper = positions.size - kMinimumDividerGap;
+        break;
+    case Column::Type:
+        if (showModified)
+            lower = positions.modified + kMinimumDividerGap;
+        if (showSize)
+            upper = positions.size - kMinimumDividerGap;
+        break;
+    case Column::Size:
+        if (showType)
+            lower = positions.type + kMinimumDividerGap;
+        else if (showModified)
+            lower = positions.modified + kMinimumDividerGap;
+        break;
+    default:
+        return ClampStoredPosition(proposed);
+    }
+    if (lower > upper) return (lower + upper) * 0.5f;
+    return std::clamp(proposed, lower, upper);
+}
+
+inline DividerPositions LegacyWidthsToPositions(
+    float modifiedWidth, float typeWidth, float sizeWidth,
+    float baselineWidth = 510.0f)
+{
+    baselineWidth = std::max(1.0f, baselineWidth);
+    DividerPositions positions;
+    positions.modified = 1.0f -
+        (modifiedWidth + typeWidth + sizeWidth) / baselineWidth;
+    positions.type = 1.0f -
+        (typeWidth + sizeWidth) / baselineWidth;
+    positions.size = 1.0f - sizeWidth / baselineWidth;
+    return NormalizePositions(true, true, true, positions);
 }
 
 inline Column HitDivider(

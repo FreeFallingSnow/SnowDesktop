@@ -470,9 +470,12 @@ struct DesktopWidget
     bool detailShowModified = false;
     bool detailShowType = false;
     bool detailShowSize = false;
-    float detailModifiedWidth = 160.0f;
-    float detailTypeWidth = 120.0f;
-    float detailSizeWidth = 90.0f;
+    float detailModifiedPosition =
+        snowdesktop::list_detail_rules::kDefaultModifiedPosition;
+    float detailTypePosition =
+        snowdesktop::list_detail_rules::kDefaultTypePosition;
+    float detailSizePosition =
+        snowdesktop::list_detail_rules::kDefaultSizePosition;
     snowdesktop::list_detail_rules::Column contentSortColumn =
         snowdesktop::list_detail_rules::Column::None;
     bool contentSortAscending = true;

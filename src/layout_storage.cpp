@@ -360,6 +360,15 @@ bool DecodeWidgets(const JsonValue& root, Document& document,
             !ReadOptionalFloat(object, "detailSizeWidth",
                 path + ".detailSizeWidth",
                 record.detailSizeWidth, error) ||
+            !ReadOptionalFloat(object, "detailModifiedPosition",
+                path + ".detailModifiedPosition",
+                record.detailModifiedPosition, error) ||
+            !ReadOptionalFloat(object, "detailTypePosition",
+                path + ".detailTypePosition",
+                record.detailTypePosition, error) ||
+            !ReadOptionalFloat(object, "detailSizePosition",
+                path + ".detailSizePosition",
+                record.detailSizePosition, error) ||
             !ReadString(object, "contentSortColumn",
                 path + ".contentSortColumn",
                 record.contentSortColumn, error) ||

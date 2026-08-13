@@ -1643,13 +1643,15 @@ ScrollingItemWidget::GetDetailsColumns(
 {
     return snowdesktop::list_detail_rules::BuildColumns(
         std::max(1, availableWidth),
-        Cu(140.0f),
         data_ && data_->detailShowModified,
         data_ && data_->detailShowType,
         data_ && data_->detailShowSize,
-        Cu(data_ ? data_->detailModifiedWidth : 160.0f),
-        Cu(data_ ? data_->detailTypeWidth : 120.0f),
-        Cu(data_ ? data_->detailSizeWidth : 90.0f));
+        data_ ? data_->detailModifiedPosition :
+            snowdesktop::list_detail_rules::kDefaultModifiedPosition,
+        data_ ? data_->detailTypePosition :
+            snowdesktop::list_detail_rules::kDefaultTypePosition,
+        data_ ? data_->detailSizePosition :
+            snowdesktop::list_detail_rules::kDefaultSizePosition);
 }
 
 const DesktopWidget* ScrollingItemWidget::GetDetailsSortData() const

@@ -2948,7 +2948,8 @@ private:
     bool detailColumnResizeActive_ = false;
     snowdesktop::list_detail_rules::Column detailColumnResizeColumn_ =
         snowdesktop::list_detail_rules::Column::None;
-    float detailColumnResizeStartWidth_ = 0.0f;
+    int detailColumnResizeHeaderLeft_ = 0;
+    int detailColumnResizeHeaderWidth_ = 1;
     GridCell widgetDragOriginalCell_{};
     GridSpan widgetDragOriginalSpan_{};
     GridCell widgetPreviewCell_{};

@@ -705,7 +705,8 @@ void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         detailColumnResizeActive_ = false;
         detailColumnResizeColumn_ =
             snowdesktop::list_detail_rules::Column::None;
-        detailColumnResizeStartWidth_ = 0.0f;
+        detailColumnResizeHeaderLeft_ = 0;
+        detailColumnResizeHeaderWidth_ = 1;
         mouseDown_ = false;
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ = static_cast<size_t>(-1);

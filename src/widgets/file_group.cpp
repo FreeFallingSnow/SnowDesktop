@@ -235,9 +235,9 @@ public:
         savedDetailShowModified_ = sourceData_->detailShowModified;
         savedDetailShowType_ = sourceData_->detailShowType;
         savedDetailShowSize_ = sourceData_->detailShowSize;
-        savedDetailModifiedWidth_ = sourceData_->detailModifiedWidth;
-        savedDetailTypeWidth_ = sourceData_->detailTypeWidth;
-        savedDetailSizeWidth_ = sourceData_->detailSizeWidth;
+        savedDetailModifiedPosition_ = sourceData_->detailModifiedPosition;
+        savedDetailTypePosition_ = sourceData_->detailTypePosition;
+        savedDetailSizePosition_ = sourceData_->detailSizePosition;
         savedDateHeaders_ = sourceData_->dateHeaders;
         savedShowCategories_ = sourceData_->showFileCategories;
         savedShowSearch_ = sourceData_->showSearchBox;
@@ -267,9 +267,9 @@ public:
         sourceData_->detailShowModified = groupData_->detailShowModified;
         sourceData_->detailShowType = groupData_->detailShowType;
         sourceData_->detailShowSize = groupData_->detailShowSize;
-        sourceData_->detailModifiedWidth = groupData_->detailModifiedWidth;
-        sourceData_->detailTypeWidth = groupData_->detailTypeWidth;
-        sourceData_->detailSizeWidth = groupData_->detailSizeWidth;
+        sourceData_->detailModifiedPosition = groupData_->detailModifiedPosition;
+        sourceData_->detailTypePosition = groupData_->detailTypePosition;
+        sourceData_->detailSizePosition = groupData_->detailSizePosition;
         sourceData_->dateHeaders = groupData_->dateHeaders;
         sourceData_->showFileCategories =
             groupData_->showFileCategories;
@@ -324,9 +324,9 @@ public:
         sourceData_->detailShowModified = savedDetailShowModified_;
         sourceData_->detailShowType = savedDetailShowType_;
         sourceData_->detailShowSize = savedDetailShowSize_;
-        sourceData_->detailModifiedWidth = savedDetailModifiedWidth_;
-        sourceData_->detailTypeWidth = savedDetailTypeWidth_;
-        sourceData_->detailSizeWidth = savedDetailSizeWidth_;
+        sourceData_->detailModifiedPosition = savedDetailModifiedPosition_;
+        sourceData_->detailTypePosition = savedDetailTypePosition_;
+        sourceData_->detailSizePosition = savedDetailSizePosition_;
         sourceData_->dateHeaders = savedDateHeaders_;
         sourceData_->showFileCategories = savedShowCategories_;
         sourceData_->showSearchBox = savedShowSearch_;
@@ -358,9 +358,12 @@ private:
     bool savedDetailShowModified_ = false;
     bool savedDetailShowType_ = false;
     bool savedDetailShowSize_ = false;
-    float savedDetailModifiedWidth_ = 160.0f;
-    float savedDetailTypeWidth_ = 120.0f;
-    float savedDetailSizeWidth_ = 90.0f;
+    float savedDetailModifiedPosition_ =
+        snowdesktop::list_detail_rules::kDefaultModifiedPosition;
+    float savedDetailTypePosition_ =
+        snowdesktop::list_detail_rules::kDefaultTypePosition;
+    float savedDetailSizePosition_ =
+        snowdesktop::list_detail_rules::kDefaultSizePosition;
     bool savedDateHeaders_ = false;
     bool savedShowCategories_ = false;
     bool savedShowSearch_ = false;
