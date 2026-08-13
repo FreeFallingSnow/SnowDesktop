@@ -554,12 +554,17 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
                 landing.pageId = requested.pageId;
                 landing.column = startSlot / std::max(1, targetPage->rows);
                 landing.row = startSlot % std::max(1, targetPage->rows);
-                // 命中格被占用（或跨距越界）时不再寻找其他可选位置，直接不绘制落点。
+                RECT bounds = GetGridRect(app_->gridPages_, landing, span);
+                // 命中格被占用（或跨距越界）时不再寻找其他可选位置，绘制红色禁止框。
                 if (!GridAreaFitsPage(*targetPage, landing, span) ||
                     app_->AreGridSlotsMarked(usedSlots, landing, span))
+                {
+                    app_->DrawD2DRoundedRectangle(ctx, bounds, 8.0f,
+                        D2D1::ColorF(1.0f, 0.30f, 0.30f, 0.18f),
+                        D2D1::ColorF(1.0f, 0.25f, 0.25f, 0.85f), 2.0f);
                     continue;
+                }
 
-                RECT bounds = GetGridRect(app_->gridPages_, landing, span);
                 app_->DrawD2DRoundedRectangle(ctx, bounds, 8.0f,
                     D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.15f),
                     D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.78f), 2.0f);
