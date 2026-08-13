@@ -741,7 +741,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     SetSoftwareDesktopEnabled(customDesktopVisible_, false);
     if (customDesktopVisible_)
     {
-        ReconcileDesktopHoverState();
+        ReconcileDesktopHoverState(
+            snowdesktop::desktop_hover_rules::
+                ReconcileMode::AllowActivation);
         UpdateWindow(hwnd_);
         FlushPendingCompositionCommit();
     }

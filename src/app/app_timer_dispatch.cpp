@@ -224,9 +224,13 @@ void DesktopApp::OnTimer(WPARAM timerId)
     else if (timerId == kWidgetRefreshTimerId)
     {
         // Foreground WinEvent delivery is normally immediate. This periodic
-        // reconciliation also repairs hover state after a missed/late Shell
-        // transition without waiting for another mouse message.
-        ReconcileDesktopHoverState();
+        // sample runs after the transition has normally settled, so it may
+        // restore hover after a missed mouse message. The immediate foreground
+        // callback remains deactivation-only because WindowFromPoint can still
+        // report Explorer briefly while a new application window is appearing.
+        ReconcileDesktopHoverState(
+            snowdesktop::desktop_hover_rules::
+                ReconcileMode::AllowActivation);
         // Keep display hot-plug recovery independent from the hidden control
         // window's host-watch timer. Some display-driver paths leave that
         // timer alive but do not deliver its low-priority WM_TIMER promptly.

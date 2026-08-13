@@ -113,7 +113,8 @@ void DesktopApp::EndDesktopPassthroughHold(
 
     ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
     desktopBackdropCompositor_.SetVisible(true);
-    ReconcileDesktopHoverState();
+    ReconcileDesktopHoverState(
+        snowdesktop::desktop_hover_rules::ReconcileMode::AllowActivation);
     InvalidateRect(hwnd_, nullptr, FALSE);
     UpdateWindow(hwnd_);
 }

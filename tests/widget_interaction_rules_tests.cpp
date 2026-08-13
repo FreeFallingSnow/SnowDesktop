@@ -602,6 +602,7 @@ void TestHoverOnlyWidgetVisibility()
 
 void TestDesktopHoverDeactivation()
 {
+    using hoverRules::ReconcileMode;
     Check(
         !hoverRules::OwnsInteractionCapture(0, 1, 0),
         "two null window handles must not imply owned capture");
@@ -643,6 +644,20 @@ void TestDesktopHoverDeactivation()
         !hoverRules::ShouldPresentSynchronously(
             false, false),
         "unchanged passive hover must not force an extra desktop frame");
+    Check(
+        !hoverRules::ShouldActivateFromSurfaceSample(
+            true, true, ReconcileMode::DeactivateOnly),
+        "a transient desktop hit after a foreground change must not reactivate hover");
+    Check(
+        hoverRules::ShouldActivateFromSurfaceSample(
+            true, true, ReconcileMode::AllowActivation),
+        "a settled or explicit desktop sample may restore cleared hover");
+    Check(
+        !hoverRules::ShouldActivateFromSurfaceSample(
+            false, true, ReconcileMode::AllowActivation) &&
+            !hoverRules::ShouldActivateFromSurfaceSample(
+                true, false, ReconcileMode::AllowActivation),
+        "hover restoration requires both a desktop surface and a cleared state");
 }
 
 void TestNestedWidgetScrolling()

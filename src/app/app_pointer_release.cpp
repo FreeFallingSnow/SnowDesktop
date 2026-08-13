@@ -86,7 +86,8 @@ void DesktopApp::OnMouseLeave()
         InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
-void DesktopApp::ReconcileDesktopHoverState()
+void DesktopApp::ReconcileDesktopHoverState(
+    snowdesktop::desktop_hover_rules::ReconcileMode mode)
 {
     if (!hwnd_ || !IsWindow(hwnd_))
         return;
@@ -107,8 +108,12 @@ void DesktopApp::ReconcileDesktopHoverState()
     if (TryGetDesktopHoverPointFromCursor(cursorPoint))
     {
         desktopHoverForegroundObservedTick_ = foregroundTick;
-        if (lastMousePoint_.x == LONG_MIN &&
-            lastMousePoint_.y == LONG_MIN)
+        const bool passiveHoverCleared =
+            lastMousePoint_.x == LONG_MIN &&
+            lastMousePoint_.y == LONG_MIN;
+        if (snowdesktop::desktop_hover_rules::
+                ShouldActivateFromSurfaceSample(
+                    true, passiveHoverCleared, mode))
         {
             lastMousePoint_ = cursorPoint;
             PresentPassiveHoverVisualChange();

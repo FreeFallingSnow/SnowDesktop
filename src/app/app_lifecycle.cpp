@@ -667,7 +667,8 @@ bool DesktopApp::CreateDesktopOverlayWindow()
     StartDockForegroundMonitor();
 
     ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
-    ReconcileDesktopHoverState();
+    ReconcileDesktopHoverState(
+        snowdesktop::desktop_hover_rules::ReconcileMode::AllowActivation);
     InvalidateRect(hwnd_, nullptr, TRUE);
     UpdateWindow(hwnd_);
     return true;

@@ -51,6 +51,7 @@
 #include "dock_launch_animation.h"
 #include "dock_rename_layout.h"
 #include "floating_dock_rules.h"
+#include "../desktop_hover_rules.h"
 #include "desktop_item_reference_migration.h"
 #include "category_settings.h"
 #include "../menu_quick_icon.h"
@@ -840,7 +841,9 @@ private:
     void HideDockWindowPreview();
     void DismissDockWindowPreviewUntilLeave();
     /** @brief 根据当前指针所在窗口清理不应继续显示的桌面悬浮状态。 */
-    void ReconcileDesktopHoverState();
+    void ReconcileDesktopHoverState(
+        snowdesktop::desktop_hover_rules::ReconcileMode mode =
+            snowdesktop::desktop_hover_rules::ReconcileMode::DeactivateOnly);
     void StartDockForegroundMonitor();
     void StopDockForegroundMonitor();
     void UpdateSystemTaskbarRevealGuard();

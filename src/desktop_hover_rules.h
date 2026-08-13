@@ -2,6 +2,12 @@
 
 namespace snowdesktop::desktop_hover_rules
 {
+enum class ReconcileMode
+{
+    DeactivateOnly,
+    AllowActivation,
+};
+
 template<typename Handle>
 constexpr bool OwnsInteractionCapture(
     Handle captureWindow,
@@ -31,5 +37,15 @@ constexpr bool ShouldPresentSynchronously(
 {
     return hoverTargetChanged ||
         continuousPointerSurface;
+}
+
+constexpr bool ShouldActivateFromSurfaceSample(
+    bool pointerOnDesktopSurface,
+    bool passiveHoverCleared,
+    ReconcileMode mode)
+{
+    return pointerOnDesktopSurface &&
+        passiveHoverCleared &&
+        mode == ReconcileMode::AllowActivation;
 }
 }

@@ -587,7 +587,8 @@ void DesktopApp::SetSoftwareDesktopEnabled(bool enabled, bool persist)
         }
     }
     desktopBackdropCompositor_.SetVisible(true);
-    ReconcileDesktopHoverState();
+    ReconcileDesktopHoverState(
+        snowdesktop::desktop_hover_rules::ReconcileMode::AllowActivation);
     if (inputHwnd_ && IsWindow(inputHwnd_))
         ShowWindow(inputHwnd_, SW_SHOWNA);
     if (controlHwnd_ && IsWindow(controlHwnd_))
