@@ -387,21 +387,20 @@ void DesktopApp::MoveDockItemsToDesktop(
         }
         // 组件定位不再在被占用时寻找其他可选位置：仅当命中格的跨距
         // 完全空闲且不越界时才放置，否则拒绝放置，不自动寻找替代落点。
-        const GridPage* exactPage = FindGridPage(gridPages_, targetCell.pageId);
         GridCell freeCell;
         freeCell.pageId = targetCell.pageId;
-        if (!exactPage)
+        if (!targetPage)
         {
             freeCell.column = 0;
             freeCell.row = 0;
         }
         else
         {
-            freeCell.column = startSlot / std::max(1, exactPage->rows);
-            freeCell.row = startSlot % std::max(1, exactPage->rows);
+            freeCell.column = startSlot / std::max(1, targetPage->rows);
+            freeCell.row = startSlot % std::max(1, targetPage->rows);
         }
-        if (!exactPage ||
-            !GridAreaFitsPage(*exactPage, freeCell, span) ||
+        if (!targetPage ||
+            !GridAreaFitsPage(*targetPage, freeCell, span) ||
             AreGridSlotsMarked(usedSlots, freeCell, span))
             continue;
         MarkGridArea(usedSlots, freeCell, span);
