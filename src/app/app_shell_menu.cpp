@@ -212,6 +212,12 @@ void DesktopApp::EndShellPopupMenuLayer()
         shellPopupMenuLayerDepth_ = 0;
     ApplyFloatingDockLayerPolicy();
     RefocusFloatingDockKeyboardSession();
+    if (shellPopupMenuLayerDepth_ == 0)
+    {
+        ReconcileDesktopHoverState(
+            snowdesktop::desktop_hover_rules::
+                ReconcileMode::AllowImmediateActivation);
+    }
     FlushPendingCompositionCommit();
     FlushPendingQuickNavigationCompositionCommit();
 }

@@ -21,6 +21,12 @@ constexpr bool HasForegroundSettled(
         elapsedMs >= kActivationSettleMs;
 }
 
+constexpr bool ShouldReconcileFromSurfaceSample(
+    bool nativeShellModalSessionActive)
+{
+    return !nativeShellModalSessionActive;
+}
+
 template<typename Handle>
 constexpr bool OwnsInteractionCapture(
     Handle captureWindow,

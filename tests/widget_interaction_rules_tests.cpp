@@ -604,6 +604,10 @@ void TestDesktopHoverDeactivation()
 {
     using hoverRules::ReconcileMode;
     Check(
+        hoverRules::ShouldReconcileFromSurfaceSample(false) &&
+            !hoverRules::ShouldReconcileFromSurfaceSample(true),
+        "native Shell modal sessions must suspend sampled hover reconciliation");
+    Check(
         hoverRules::HasForegroundSettled(false, 0) &&
             !hoverRules::HasForegroundSettled(
                 true, hoverRules::kActivationSettleMs - 1) &&
