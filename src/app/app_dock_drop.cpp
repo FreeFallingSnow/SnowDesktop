@@ -68,24 +68,22 @@ void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
             });
     if (folderEntriesOnly)
     {
+        if (!targetDock->HasCapacity(sourceItems.size()))
+        {
+            MessageBeep(MB_ICONWARNING);
+            return;
+        }
         DragSourceList sourceList =
             BuildDragSourceList(sourceItems, origin);
-        const auto existingKeys =
-            SnapshotDesktopKeys();
         DropPreviewList preview =
             BuildDropPreviewList(
                 sourceList, GetDesktopGrid(),
                 nullptr, HitRegion::Empty,
                 mods, dragSession_.CurrentPoint());
         preview.action = DropAction::Link;
-        if (ExecuteDropPipeline(
-                sourceList, preview))
-        {
-            AddExternalItemsToDock(
-                NewDesktopKeysSince(existingKeys),
-                insertIndex);
-            SaveLayoutSlots();
-        }
+        preview.pinMaterializedItemsToDock = true;
+        preview.dockInsertIndex = insertIndex;
+        ExecuteDropPipeline(sourceList, preview);
         return;
     }
 
@@ -233,21 +231,26 @@ void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
     InvalidateDragStaticScene();
 }
 
-void DesktopApp::AddExternalItemsToDock(
-    const std::vector<std::wstring>& newKeys, size_t insertIndex)
+bool DesktopApp::AddMaterializedItemsToDock(
+    const std::vector<std::wstring>& createdPaths,
+    size_t insertIndex)
 {
     bool hasDock = false;
     for (const auto& container : containers_)
     {
-        auto* dock = dynamic_cast<DockContainer*>(container.get());
+        auto* dock =
+            dynamic_cast<DockContainer*>(container.get());
         if (!dock) continue;
         hasDock = true;
-        if (!dock->HasCapacity(newKeys.size())) return;
+        if (!dock->HasCapacity(createdPaths.size()))
+            return false;
     }
-    if (!hasDock) return;
-    for (const std::wstring& key : newKeys)
+    if (!hasDock) return false;
+
+    bool changed = false;
+    for (const std::wstring& path : createdPaths)
     {
-        const std::wstring upper = ToUpperInvariant(key);
+        const std::wstring upper = ToUpperInvariant(path);
         if (upper.empty() ||
             snowdesktop::
                 shell_item_visibility::
@@ -257,7 +260,7 @@ void DesktopApp::AddExternalItemsToDock(
             [&](const DockEntry& entry) {
                 return entry.type == DockEntryType::DesktopItem &&
                     ToUpperInvariant(entry.reference) == upper;
-            });
+        });
         if (exists) continue;
         auto recycleBin = std::find_if(dockEntries_.begin(), dockEntries_.end(),
             [this](const DockEntry& entry) { return IsRecycleBinDockEntry(entry); });
@@ -266,13 +269,14 @@ void DesktopApp::AddExternalItemsToDock(
         dockEntries_.insert(dockEntries_.begin() + static_cast<std::ptrdiff_t>(insertIndex),
             DockEntry{ DockEntryType::DesktopItem, upper, false });
         ++insertIndex;
-        size_t itemIndex = FindItemIndexByKey(upper);
-        if (itemIndex < items_.size()) items_[itemIndex].gridCell = { kDockPageId, 0, 0 };
+        changed = true;
     }
+    if (!changed) return false;
     NormalizeDockRecycleBinPosition();
     RefreshCollectedKeysCache();
-    RebuildContainersAndItems();
-    LayoutItems();
+    InvalidateDockContainers();
+    InvalidateDragStaticScene();
+    return true;
 }
 
 bool DesktopApp::FindDockReturnCell(

@@ -908,6 +908,30 @@ int main()
     Check(dockDrop::ExternalMappingAction() ==
             DropAction::Link,
         "external resources dropped on Dock must create a link mapping");
+    using snowdesktop::item_location::FolderTargetKind;
+    Check(
+        dockDrop::IsFolderSourceTarget(
+            FolderTargetKind::Directory) &&
+        dockDrop::IsFolderSourceTarget(
+            FolderTargetKind::Shortcut) &&
+        !dockDrop::IsFolderSourceTarget(
+            FolderTargetKind::None),
+        "mapped folder entries must route directories and folder shortcuts to the Dock file area");
+    const std::unordered_map<size_t, std::wstring>
+        materializedPaths{
+            { 0, L"C:\\Desktop\\first.lnk" },
+            { 2, L"C:\\Desktop\\third.lnk" },
+            { 1, L"C:\\Desktop\\second.lnk" },
+        };
+    const auto orderedMaterializedPaths =
+        dockDrop::OrderedMaterializedPaths(
+            { 2, 0, 4, 1 }, materializedPaths);
+    Check(orderedMaterializedPaths ==
+            std::vector<std::wstring>{
+                L"C:\\Desktop\\third.lnk",
+                L"C:\\Desktop\\first.lnk",
+                L"C:\\Desktop\\second.lnk" },
+        "Dock completion must use exact created paths in source order without a desktop snapshot diff");
     Check(dockDrop::ChooseExternalMappingEffect(
             DROPEFFECT_COPY | DROPEFFECT_MOVE |
                 DROPEFFECT_LINK) == DROPEFFECT_LINK,

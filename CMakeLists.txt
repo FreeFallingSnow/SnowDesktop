@@ -824,9 +824,10 @@ if (BUILD_TESTING)
         shell_file_operation_worker
         SOURCES
             tests/shell_file_operation_worker_tests.cpp
+            src/item_location.cpp
             src/shell_file_operation_worker.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES ole32 shell32
+        LINK_LIBRARIES ole32 shell32 shlwapi uuid
         LABELS integration shell interaction)
 
     snowdesktop_add_test(

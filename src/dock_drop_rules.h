@@ -1,8 +1,12 @@
 #pragma once
 
 #include "core/drop_model.h"
+#include "item_location.h"
 
 #include <windows.h>
+
+#include <unordered_map>
+#include <vector>
 
 namespace snowdesktop::dock_drop_rules
 {
@@ -34,6 +38,28 @@ inline bool ShouldDrawSortableInsertionIndicator(
     bool fixedPlacementSource) noexcept
 {
     return !fixedPlacementSource;
+}
+
+inline bool IsFolderSourceTarget(
+    snowdesktop::item_location::FolderTargetKind kind) noexcept
+{
+    return kind !=
+        snowdesktop::item_location::FolderTargetKind::None;
+}
+
+inline std::vector<std::wstring> OrderedMaterializedPaths(
+    const std::vector<size_t>& sourceOrder,
+    const std::unordered_map<size_t, std::wstring>& pathsBySource)
+{
+    std::vector<std::wstring> paths;
+    paths.reserve(sourceOrder.size());
+    for (const size_t sourceIndex : sourceOrder)
+    {
+        const auto found = pathsBySource.find(sourceIndex);
+        if (found != pathsBySource.end() && !found->second.empty())
+            paths.push_back(found->second);
+    }
+    return paths;
 }
 
 // Reordering owns the icon center only while a Dock drag stays inside the

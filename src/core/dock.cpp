@@ -428,6 +428,15 @@ bool DockContainer::HasOnlyFolderDragSource() const
                     probe).kind !=
                         snowdesktop::item_location::FolderTargetKind::None;
             }
+            if (auto* folderEntry =
+                    dynamic_cast<FolderEntryIcon*>(source))
+            {
+                return snowdesktop::dock_drop_rules::
+                    IsFolderSourceTarget(
+                        snowdesktop::item_location::
+                            ResolveFolderTarget(
+                                folderEntry->GetPath()).kind);
+            }
             return false;
         });
 }

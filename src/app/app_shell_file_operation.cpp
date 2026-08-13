@@ -353,10 +353,13 @@ void DesktopApp::OnShellFileOperationCompleted(LPARAM lParam)
         reinterpret_cast<ShellFileOperationUiCompletion*>(lParam));
     if (!result || exitRequested_)
         return;
-    if (result->callback)
-        result->callback(result->succeeded);
     if (shellFileOperationInFlight_ > 0)
         --shellFileOperationInFlight_;
+    // The completed request must no longer block its own callback from
+    // reloading Shell state.  Other queued requests still keep the counter
+    // non-zero and preserve the existing debounce behavior.
+    if (result->callback)
+        result->callback(result->succeeded);
     if (shellFileOperationInFlight_ > 0)
         return;
 

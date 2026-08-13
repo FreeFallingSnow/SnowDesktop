@@ -586,12 +586,35 @@ bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceList,
             std::wstring dst = makeUniqueShortcutPath(path);
             if (dst.empty())
                 continue;
-            request.shortcuts.push_back({
-                path, dst, desktopPath });
+            const auto folderTarget =
+                snowdesktop::item_location::
+                    ResolveFolderTarget(path);
+            if (folderTarget.kind ==
+                snowdesktop::item_location::
+                    FolderTargetKind::Shortcut)
+            {
+                // Preserve a folder shortcut as a shortcut file. Creating a
+                // new link whose target is the source .lnk produces a nested
+                // link that no longer classifies as a Dock folder.
+                request.steps.push_back({
+                    FO_COPY,
+                    { path },
+                    dst,
+                    static_cast<FILEOP_FLAGS>(
+                        FOF_NOCONFIRMATION |
+                        FOF_NOCONFIRMMKDIR |
+                        FOF_NOERRORUI |
+                        FOF_RENAMEONCOLLISION) });
+            }
+            else
+            {
+                request.shortcuts.push_back({
+                    path, dst, desktopPath });
+            }
             if (createdPathsBySource)
                 (*createdPathsBySource)[source.sourceIndex] = dst;
         }
-        if (request.shortcuts.empty())
+        if (request.steps.empty() && request.shortcuts.empty())
             return false;
         if (executeSynchronously)
         {
@@ -933,21 +956,45 @@ bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceList,
         !sourceList.hasExternalFiles;
     const std::unordered_set<std::wstring> existingKeys =
         SnapshotDesktopKeys();
-    std::unordered_map<size_t, std::wstring> createdPathsBySource;
     const DropAction action = preview.action;
 
     if (action == DropAction::Link)
     {
+        auto createdPathsBySource = std::make_shared<
+            std::unordered_map<size_t, std::wstring>>();
+        std::vector<size_t> sourceOrder;
+        sourceOrder.reserve(sourceList.entries.size());
+        for (const auto& entry : sourceList.entries)
+            sourceOrder.push_back(entry.sourceIndex);
         auto landingCache =
             std::make_shared<PendingLandingCache>();
         auto operationCompletion = [this,
+            pinToDock = preview.pinMaterializedItemsToDock,
+            dockInsertIndex = preview.dockInsertIndex,
+            sourceOrder = std::move(sourceOrder),
+            createdPathsBySource,
             landingCache,
             completion = std::move(completion)](
                 bool succeeded) mutable {
             if (succeeded)
             {
-                landingCache->tick = GetTickCount();
-                pendingLandingCache_ = std::move(*landingCache);
+                if (pinToDock)
+                {
+                    pendingLandingCache_.Clear();
+                    const std::vector<std::wstring> createdPaths =
+                        snowdesktop::dock_drop_rules::
+                            OrderedMaterializedPaths(
+                                sourceOrder,
+                                *createdPathsBySource);
+                    if (AddMaterializedItemsToDock(
+                            createdPaths, dockInsertIndex))
+                        SaveLayoutSlots();
+                }
+                else
+                {
+                    landingCache->tick = GetTickCount();
+                    pendingLandingCache_ = std::move(*landingCache);
+                }
                 ReloadItems(false);
                 if (dockFolderPopupOpen_)
                     RefreshDockFolderPopup();
@@ -961,7 +1008,7 @@ bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceList,
         };
         const bool executed = MaterializeFilesToDesktop(
             sourceList, action, duplicateCopyNames,
-            &createdPathsBySource,
+            createdPathsBySource.get(),
             executeSynchronously
                 ? FileOperationCompletion{}
                 : operationCompletion,
@@ -970,7 +1017,7 @@ bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceList,
         {
             StorePendingLandingCache(
                 sourceList, preview, existingKeys,
-                &createdPathsBySource);
+                createdPathsBySource.get());
             *landingCache = std::move(pendingLandingCache_);
             pendingLandingCache_.Clear();
         }

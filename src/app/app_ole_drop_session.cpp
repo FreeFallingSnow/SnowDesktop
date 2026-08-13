@@ -673,6 +673,21 @@ HRESULT DesktopApp::HandleOleDrop(
     }
 
     // ── External drop ──────────────────────────────────────────
+    DockContainer* externalDropDock =
+        dynamic_cast<DockContainer*>(
+            dragSession_.TargetContainer());
+    const bool externalDockMappingTarget =
+        externalDropDock &&
+        dragSession_.TargetRegion() != HitRegion::Handoff &&
+        dragSession_.TargetRegion() != HitRegion::Blocked;
+    // Resolve the insertion boundary while the external summary still owns
+    // the folder-only classification used by the Dock's split ranges.
+    const size_t externalDockInsertIndex =
+        externalDockMappingTarget
+            ? externalDropDock->GetDropInsertIndex(
+                dragSession_.TargetSlot(),
+                dragSession_.TargetRegion())
+            : 0;
     dragDropController_.EndExternalDrag();
     if (desktopIconsHidden_ &&
         !IsRetainedContainer(
@@ -1048,7 +1063,8 @@ HRESULT DesktopApp::HandleOleDrop(
         HitRegion targetRegion = dragSession_.TargetRegion() != HitRegion::None ? dragSession_.TargetRegion() : HitRegion::Empty;
 
         if (auto* dock = dynamic_cast<DockContainer*>(target);
-            dock && targetRegion != HitRegion::Handoff)
+            dock && externalDockMappingTarget &&
+            dock == externalDropDock)
         {
             if (!dock->HasCapacity(sourceItems.size()))
             {
@@ -1068,31 +1084,19 @@ HRESULT DesktopApp::HandleOleDrop(
                 return S_OK;
             }
 
-            const size_t insertIndex = dock->GetDropInsertIndex(
-                dragSession_.TargetSlot(), targetRegion);
-            const auto existingKeys = SnapshotDesktopKeys();
             DropPreviewList desktopPreview = BuildDropPreviewList(sourceList, GetDesktopGrid(),
                 nullptr, HitRegion::Empty, mods, clientPoint);
             desktopPreview.action =
                 snowdesktop::dock_drop_rules::
                     ExternalMappingAction();
-            auto finished = [this, existingKeys, insertIndex](
-                    bool succeeded) {
-                if (!succeeded)
-                    return;
-                AddExternalItemsToDock(
-                    NewDesktopKeysSince(existingKeys),
-                    insertIndex);
-                SaveLayoutSlots();
-                RebuildContainersAndItems();
-                LayoutItems();
-                InvalidateRect(hwnd_, nullptr, FALSE);
-            };
+            desktopPreview.pinMaterializedItemsToDock = true;
+            desktopPreview.dockInsertIndex =
+                externalDockInsertIndex;
             FileOperationCompletion asyncCompletion;
             const bool sourceSupportsAsync =
                 PrepareOleAsyncFileOperation(
                     dataObject, mappingEffect,
-                    finished, asyncCompletion);
+                    {}, asyncCompletion);
             if (!sourceSupportsAsync)
                 DwmFlush();
             bool executed = ExecuteDropPipeline(
@@ -1100,7 +1104,7 @@ HRESULT DesktopApp::HandleOleDrop(
                 desktopPreview,
                 sourceSupportsAsync
                     ? std::move(asyncCompletion)
-                    : std::move(finished),
+                    : FileOperationCompletion{},
                 !sourceSupportsAsync);
             if (executed)
             {

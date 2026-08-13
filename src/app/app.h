@@ -859,7 +859,9 @@ private:
         DockContainer* targetDock, size_t insertIndex, int mods);
     void MoveDockItemsToDesktop(const std::vector<Item*>& sourceItems, GridCell targetCell);
     void RestoreDockEntriesToDesktop();
-    void AddExternalItemsToDock(const std::vector<std::wstring>& newKeys, size_t insertIndex);
+    bool AddMaterializedItemsToDock(
+        const std::vector<std::wstring>& createdPaths,
+        size_t insertIndex);
     bool LaunchDesktopItem(
         size_t itemIndex, bool animateDockLaunch = false);
     bool StartDockLaunchBounce(size_t itemIndex);
@@ -1746,12 +1748,6 @@ private:
     void RemoveDesktopKeysFromWidgets(const std::vector<std::wstring>& keys);
     /** @brief 快照当前桌面键值集合。 @return 桌面键值集合 */
     std::unordered_set<std::wstring> SnapshotDesktopKeys() const;
-    /**
-     * @brief 计算自快照以来新增的桌面键值。
-     * @param existingKeys 之前的键值快照
-     * @return 新增的键值列表
-     */
-    std::vector<std::wstring> NewDesktopKeysSince(const std::unordered_set<std::wstring>& existingKeys) const;
     /**
      * @brief 构建拖拽源列表。
      * @param sourceItems 源项指针列表

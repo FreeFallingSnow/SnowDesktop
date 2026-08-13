@@ -1,4 +1,5 @@
 #include "shell_file_operation_worker.h"
+#include "item_location.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -41,6 +42,10 @@ std::filesystem::path CreateTemporaryDirectory()
 
 int wmain()
 {
+    const HRESULT comResult =
+        CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    Expect(SUCCEEDED(comResult),
+        "COM initializes for copied folder-shortcut validation");
     const std::filesystem::path root = CreateTemporaryDirectory();
     const std::filesystem::path sourceDirectory = root / L"source";
     const std::filesystem::path firstDirectory = root / L"first";
@@ -56,6 +61,8 @@ int wmain()
         root / L"none-effect";
     const std::filesystem::path shortcutDirectory =
         root / L"shortcuts";
+    const std::filesystem::path folderShortcutTarget =
+        root / L"folder-shortcut-target";
     std::filesystem::create_directories(sourceDirectory);
     std::filesystem::create_directories(firstDirectory);
     std::filesystem::create_directories(secondDirectory);
@@ -65,6 +72,7 @@ int wmain()
     std::filesystem::create_directories(rejectedHandoffDirectory);
     std::filesystem::create_directories(noneEffectDirectory);
     std::filesystem::create_directories(shortcutDirectory);
+    std::filesystem::create_directories(folderShortcutTarget);
 
     const std::filesystem::path source =
         sourceDirectory / L"payload.txt";
@@ -147,6 +155,23 @@ int wmain()
         handoffSource.wstring(),
         (root / L"missing-directory" / L"failed.lnk").wstring(),
         shortcutDirectory.wstring() });
+    const std::filesystem::path sourceFolderShortcut =
+        shortcutDirectory / L"source-folder.lnk";
+    const std::filesystem::path copiedFolderShortcut =
+        shortcutDirectory / L"copied-folder.lnk";
+    snowdesktop::ShellFileOperationRequest
+        createFolderShortcutRequest;
+    createFolderShortcutRequest.shortcuts.push_back({
+        folderShortcutTarget.wstring(),
+        sourceFolderShortcut.wstring(),
+        shortcutDirectory.wstring() });
+    snowdesktop::ShellFileOperationRequest
+        copyFolderShortcutRequest;
+    copyFolderShortcutRequest.steps.push_back({
+        FO_COPY,
+        { sourceFolderShortcut.wstring() },
+        copiedFolderShortcut.wstring(),
+        kTestFlags });
 
     snowdesktop::ShellFileOperationWorker worker;
     std::promise<bool> copyPromise;
@@ -157,6 +182,8 @@ int wmain()
     std::promise<bool> noneEffectPromise;
     std::promise<bool> shortcutPromise;
     std::promise<bool> partialShortcutPromise;
+    std::promise<bool> createFolderShortcutPromise;
+    std::promise<bool> copyFolderShortcutPromise;
     auto copyFuture = copyPromise.get_future();
     auto moveFuture = movePromise.get_future();
     auto handoffFuture = handoffPromise.get_future();
@@ -166,6 +193,10 @@ int wmain()
     auto shortcutFuture = shortcutPromise.get_future();
     auto partialShortcutFuture =
         partialShortcutPromise.get_future();
+    auto createFolderShortcutFuture =
+        createFolderShortcutPromise.get_future();
+    auto copyFolderShortcutFuture =
+        copyFolderShortcutPromise.get_future();
 
     const auto enqueueStart = std::chrono::steady_clock::now();
     Expect(worker.Enqueue(
@@ -216,6 +247,18 @@ int wmain()
                 partialShortcutPromise.set_value(succeeded);
             }),
         "partial shortcut request is accepted for failure reporting");
+    Expect(worker.Enqueue(
+            std::move(createFolderShortcutRequest),
+            [&createFolderShortcutPromise](bool succeeded) {
+                createFolderShortcutPromise.set_value(succeeded);
+            }),
+        "folder shortcut creation is accepted");
+    Expect(worker.Enqueue(
+            std::move(copyFolderShortcutRequest),
+            [&copyFolderShortcutPromise](bool succeeded) {
+                copyFolderShortcutPromise.set_value(succeeded);
+            }),
+        "folder shortcut preservation copy is accepted");
     Expect(std::chrono::steady_clock::now() - enqueueStart <
             std::chrono::seconds(1),
         "enqueueing file operations does not wait for Shell completion");
@@ -245,6 +288,16 @@ int wmain()
             std::future_status::ready &&
             !partialShortcutFuture.get(),
         "a partially failed shortcut batch reports failure");
+    Expect(createFolderShortcutFuture.wait_for(
+            std::chrono::seconds(15)) ==
+            std::future_status::ready &&
+            createFolderShortcutFuture.get(),
+        "folder shortcut creation completes successfully");
+    Expect(copyFolderShortcutFuture.wait_for(
+            std::chrono::seconds(15)) ==
+            std::future_status::ready &&
+            copyFolderShortcutFuture.get(),
+        "folder shortcut preservation copy completes successfully");
     worker.Stop();
 
     Expect(std::filesystem::exists(source),
@@ -275,10 +328,25 @@ int wmain()
         "Shell shortcut creation writes the link file");
     Expect(std::filesystem::exists(partialShortcutPath),
         "a partial shortcut batch may retain successful files");
+    const auto copiedFolderTarget =
+        snowdesktop::item_location::ResolveFolderTarget(
+            copiedFolderShortcut.wstring());
+    std::error_code equivalentError;
+    Expect(copiedFolderTarget.available &&
+            copiedFolderTarget.kind ==
+                snowdesktop::item_location::
+                    FolderTargetKind::Shortcut &&
+            std::filesystem::equivalent(
+                copiedFolderTarget.path,
+                folderShortcutTarget,
+                equivalentError) &&
+            !equivalentError,
+        "copied folder shortcut still resolves directly to its original folder");
 
     std::error_code cleanupError;
     std::filesystem::remove_all(root, cleanupError);
     Expect(!cleanupError, "worker-test directory is removed");
+    CoUninitialize();
 
     std::cout << "shell file-operation worker tests passed\n";
     return 0;

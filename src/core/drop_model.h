@@ -457,6 +457,12 @@ struct DropPreviewList
     size_t insertIndex = 0;
     bool fileBacked = false;
     bool consumeDockSource = false;
+    // File-backed Dock drops first materialize a managed desktop entry, then
+    // pin that exact created path.  Keeping the intent in the preview lets the
+    // asynchronous completion commit the Dock entry without diffing a stale
+    // desktop-item snapshot.
+    bool pinMaterializedItemsToDock = false;
+    size_t dockInsertIndex = 0;
     std::vector<DropLanding> landings;
 
     bool Empty() const { return landings.empty(); }

@@ -224,24 +224,6 @@ std::unordered_set<std::wstring> DesktopApp::SnapshotDesktopKeys() const
 }
 
 /**
- * @brief 获取自快照以来新增的桌面项布局键。
- * @param existingKeys 之前的键快照。
- * @return 新增的键列表。
- */
-std::vector<std::wstring> DesktopApp::NewDesktopKeysSince(
-    const std::unordered_set<std::wstring>& existingKeys) const
-{
-    std::vector<std::wstring> keys;
-    for (const auto& item : items_)
-    {
-        std::wstring key = ToUpperInvariant(item.layoutKey);
-        if (!key.empty() && !existingKeys.contains(key))
-            keys.push_back(key);
-    }
-    return keys;
-}
-
-/**
  * @brief 构建桌面放置列表，为拖拽源中的每个条目分配网格位置。
  * @param sourceList 拖拽源列表。
  * @param targetCell 目标网格单元格。
