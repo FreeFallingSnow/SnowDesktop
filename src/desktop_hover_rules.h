@@ -22,8 +22,13 @@ constexpr bool HasForegroundSettled(
 }
 
 constexpr bool ShouldReconcileFromSurfaceSample(
-    bool nativeShellModalSessionActive)
+    bool nativeShellPopupLayerActive,
+    bool shellDialogOwnerAvailable,
+    bool shellDialogOwnerEnabled)
 {
+    const bool nativeShellModalSessionActive =
+        nativeShellPopupLayerActive ||
+        (shellDialogOwnerAvailable && !shellDialogOwnerEnabled);
     return !nativeShellModalSessionActive;
 }
 

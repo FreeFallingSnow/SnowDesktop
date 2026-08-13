@@ -108,16 +108,24 @@ void DesktopApp::ReconcileDesktopHoverState(
         // foreground event so glass never depends on another pointer move.
         desktopBackdropCompositor_.Reattach(hwnd_);
     }
+    const HWND shellDialogOwner = ShellDialogOwnerHwnd();
+    const bool shellDialogOwnerAvailable =
+        shellDialogOwner && IsWindow(shellDialogOwner);
     if (!snowdesktop::desktop_hover_rules::
             ShouldReconcileFromSurfaceSample(
-                shellPopupMenuLayerDepth_ > 0))
+                shellPopupMenuLayerDepth_ > 0,
+                shellDialogOwnerAvailable,
+                !shellDialogOwnerAvailable ||
+                    IsWindowEnabled(shellDialogOwner)))
     {
         // TrackPopupMenuEx and a synchronously invoked Shell command run a
         // private modal loop. Real pointer leave messages remain authoritative,
         // but WindowFromPoint can alternate between a menu/dialog shadow and
         // the desktop while those Shell-owned windows are being restacked.
         // Do not let foreground notifications or the periodic fallback replay
-        // passive hover until the complete native modal session has unwound.
+        // passive hover until both the popup layer has unwound and the Shell
+        // dialog owner has been re-enabled. The latter tracks Task Dialogs
+        // whose visible lifetime outlasts IContextMenu::InvokeCommand.
         desktopHoverForegroundObservedTick_ = foregroundTick;
         return;
     }
