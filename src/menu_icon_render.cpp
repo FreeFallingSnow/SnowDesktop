@@ -716,6 +716,8 @@ Metrics ResolveMetrics(UINT dpi)
         Scale(64, effectiveDpi),
         Scale(20, effectiveDpi),
         Scale(1, effectiveDpi),
+        Scale(14, effectiveDpi),
+        Scale(12, effectiveDpi),
         Scale(18, effectiveDpi),
         Scale(18, effectiveDpi),
     };

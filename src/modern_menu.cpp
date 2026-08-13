@@ -135,9 +135,9 @@ public:
           panelPadding_(Scale(kSubmenuPanelPaddingDip, options.dpi)),
           panelRadius_(Scale(8, options.dpi))
     {
-        const int textHeight = -Scale(13, options.dpi);
+        const int textHeight = -metrics_.textFontHeight;
         const int iconHeight = -metrics_.iconFontHeight;
-        const int quickTextHeight = -Scale(10, options.dpi);
+        const int quickTextHeight = -metrics_.quickActionTextFontHeight;
         const int quickIconHeight = -metrics_.quickActionFontHeight;
         textFont_ = CreateFontW(textHeight, 0, 0, 0, FW_NORMAL,
             FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,

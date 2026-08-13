@@ -212,6 +212,14 @@ int wmain(int argc, wchar_t** argv)
     Expect(metrics192.quickActionMaximumWidth ==
             metrics96.quickActionMaximumWidth * 2,
         "quick-action width limit follows monitor DPI");
+    Expect(metrics96.textFontHeight == 14 &&
+            metrics96.quickActionTextFontHeight == 12,
+        "96-DPI menu text keeps a readable minimum size");
+    Expect(metrics192.textFontHeight ==
+            metrics96.textFontHeight * 2 &&
+            metrics192.quickActionTextFontHeight ==
+                metrics96.quickActionTextFontHeight * 2,
+        "menu text sizes follow monitor DPI");
     Expect(metrics96.iconFontHeight == 18 &&
             metrics96.quickActionFontHeight == 18,
         "96-DPI Fluent icons use the compact menu size");
