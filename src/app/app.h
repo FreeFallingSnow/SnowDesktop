@@ -1547,9 +1547,9 @@ private:
     float GetMaximumComponentSpacingScale() const;
     /** @brief 调整图标间距比例。 @param delta 间距增量 */
     void AdjustIconSpacing(float delta);
-    /** @brief 设置图标标题字号（CU）。 @param valueCu CU 字号 */
+    /** @brief 设置图标标题字号（cu）。 @param valueCu cu 字号 */
     void SetItemFontSize(float valueCu);
-    /** @brief 设置组件列表字号（CU）。 @param valueCu CU 字号 */
+    /** @brief 设置组件列表字号（cu）。 @param valueCu cu 字号 */
     void SetListItemFontSize(float valueCu);
     float GetListItemFontSize() const { return listItemFontSizeCu_; }
     /** @brief 设置图标标题字体粗细（粗/中/细）。 @param weight DWRITE_FONT_WEIGHT */

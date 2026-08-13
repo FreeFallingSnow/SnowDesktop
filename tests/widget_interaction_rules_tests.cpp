@@ -742,11 +742,11 @@ void TestListDetailRules()
     Check(details::ResolveFontSize(15.0f, 18.0f) == 15.0f,
         "new layouts retain their independent list font size");
     Check(details::RowHeight(36, 38, 10.0f, 15.0f) == 36,
-        "10 CU list text preserves the minimum compatible row height");
+        "10 cu list text preserves the minimum compatible row height");
     Check(details::RowHeight(36, 38, 15.0f, 15.0f) == 38,
-        "15 CU list text preserves the legacy row height");
+        "15 cu list text preserves the legacy row height");
     Check(details::RowHeight(36, 38, 24.0f, 15.0f) == 49,
-        "24 CU list text expands rows by the scaled line-height delta");
+        "24 cu list text expands rows by the scaled line-height delta");
     Check(details::RowHeight(54, 57, 36.0f,
             22.5f) == 73,
         "row height applies the same formula at component scale");

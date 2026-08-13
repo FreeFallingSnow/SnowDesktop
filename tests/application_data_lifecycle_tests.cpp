@@ -256,9 +256,9 @@ int main()
             "itemFontSize" },
         { "list font size type", "{\"listItemFontSize\":\"15\"}",
             "listItemFontSize" },
-        { "CU title font size type", "{\"itemFontSizeCu\":\"16\"}",
+        { "cu title font size type", "{\"itemFontSizeCu\":\"16\"}",
             "itemFontSizeCu" },
-        { "CU list font size type", "{\"listItemFontSizeCu\":\"15\"}",
+        { "cu list font size type", "{\"listItemFontSizeCu\":\"15\"}",
             "listItemFontSizeCu" },
         { "component spacing type", "{\"componentSpacing\":\"1.5\"}",
             "componentSpacing" },
@@ -374,7 +374,7 @@ int main()
             legacyFontLayout.listItemFontSize.value_or(0.0f) == 16.0f &&
             !legacyFontLayout.itemFontSizeCu.has_value() &&
             !legacyFontLayout.listItemFontSizeCu.has_value(),
-        "legacy font fields remain available as CU migration inputs");
+        "legacy font fields remain available as cu migration inputs");
     const std::string detailsLayoutText =
         "{\"layoutSchemaVersion\":1,"
         "\"widgetContentOptionsSchemaVersion\":4,"

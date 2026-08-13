@@ -70,9 +70,9 @@ void TestFontCuUsesOnlyTheLocalCellScale()
     using snowdesktop::font_cu_rules::Scale;
     Expect(Scale(15.0f, 1.0f) == 15.0f &&
             Scale(15.0f, 1.5f) == 22.5f,
-        "font CU follows only the local grid or component scale");
+        "font cu follows only the local grid or component scale");
     Expect(Scale(10.0f, 0.5f) == 9.0f,
-        "font CU preserves the shared minimum readable pixel size");
+        "font cu preserves the shared minimum readable pixel size");
 }
 }
 

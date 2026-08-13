@@ -778,10 +778,10 @@ private:
     float iconSpacingScale_ = 1.0f;
     float componentSpacingScale_ = 1.0f;
 
-    /// 当前桌面项目字号（CU）
+    /// 当前桌面项目字号（cu）
     float itemFontSizeCu_ = 15.0f;
 
-    /// 当前内置列表项目字号（CU）
+    /// 当前内置列表项目字号（cu）
     float listItemFontSizeCu_ = 15.0f;
 
     /// 当前桌面项目字体粗细 (DWRITE_FONT_WEIGHT)
