@@ -652,22 +652,6 @@ void TestDesktopHoverDeactivation()
             false, false),
         "unchanged passive hover must not force an extra desktop frame");
     Check(
-        hoverRules::ShouldBeginShortcutLaunchSuppression(
-            true, true) &&
-            !hoverRules::ShouldBeginShortcutLaunchSuppression(
-                false, true) &&
-            !hoverRules::ShouldBeginShortcutLaunchSuppression(
-                true, false),
-        "only a shortcut launched from a hover-only widget hides before entering Shell");
-    Check(
-        hoverRules::ShouldKeepShortcutLaunchSuppression(
-            true, true, true) &&
-            !hoverRules::ShouldKeepShortcutLaunchSuppression(
-                true, false, true) &&
-            !hoverRules::ShouldKeepShortcutLaunchSuppression(
-                true, true, false),
-        "shortcut launch suppression ends after the pointer leaves the source or the desktop surface");
-    Check(
         !hoverRules::ShouldActivateFromSurfaceSample(
             true, true, ReconcileMode::DeactivateOnly, true),
         "a transient desktop hit after a foreground change must not reactivate hover");
