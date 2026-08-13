@@ -283,6 +283,28 @@ int wmain(int argc, wchar_t** argv)
     Expect(measured.cy == metrics96.rowHeight,
         "regular menu rows use the configured height");
 
+    const snowdesktop::menu_icon::ItemView arrowOnlySubmenu{
+        L"", L"", false, true, false,
+    };
+    const RECT arrowOnlyBounds{ 0, 0, kWidth, metrics96.rowHeight };
+    std::fill_n(pixels, kWidth * kHeight, 0u);
+    Expect(snowdesktop::menu_icon::DrawItem(dc, font, fluentFont,
+        arrowOnlySubmenu, arrowOnlyBounds, 0, light, metrics96),
+        "submenu chevron renders for geometry checks");
+    const RECT arrowColumn{
+        kWidth - metrics96.rightPadding - metrics96.arrowColumnWidth,
+        0,
+        kWidth - metrics96.rightPadding,
+        metrics96.rowHeight,
+    };
+    const RECT arrowInk = FindPixelsDifferentFromColorInRect(
+        pixels, kWidth, kHeight, arrowColumn, light.background);
+    Expect(arrowInk.right - arrowInk.left >= 4 &&
+            arrowInk.bottom - arrowInk.top >= 7,
+        "96-DPI submenu chevron keeps a complete visible shape");
+    Expect(arrowInk.right < arrowOnlyBounds.right - metrics96.rightPadding,
+        "submenu chevron keeps a safe inset from the row edge");
+
     for (const UINT alignmentDpi : std::array<UINT, 4>{ 96, 120, 144, 192 })
     {
         const auto alignmentMetrics =

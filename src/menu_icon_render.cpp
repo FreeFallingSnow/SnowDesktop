@@ -658,15 +658,16 @@ void DrawSubmenuArrow(HDC dc, const RECT& bounds,
     const int centerX = bounds.right - metrics.rightPadding -
         metrics.arrowColumnWidth / 2;
     const int centerY = (bounds.top + bounds.bottom) / 2;
-    const int halfHeight = std::max(2, metrics.arrowColumnWidth / 5);
+    const int halfWidth = std::max(2, metrics.arrowColumnWidth / 8);
+    const int halfHeight = std::max(3, metrics.arrowColumnWidth / 4);
     HPEN pen = CreatePen(PS_SOLID,
         std::max(1, metrics.rowHeight / 24), color);
     if (!pen)
         return;
     HGDIOBJ oldPen = SelectObject(dc, pen);
-    MoveToEx(dc, centerX - halfHeight / 2, centerY - halfHeight, nullptr);
-    LineTo(dc, centerX + halfHeight / 2, centerY);
-    LineTo(dc, centerX - halfHeight / 2, centerY + halfHeight);
+    MoveToEx(dc, centerX - halfWidth, centerY - halfHeight, nullptr);
+    LineTo(dc, centerX + halfWidth, centerY);
+    LineTo(dc, centerX - halfWidth, centerY + halfHeight);
     SelectObject(dc, oldPen);
     DeleteObject(pen);
 }
