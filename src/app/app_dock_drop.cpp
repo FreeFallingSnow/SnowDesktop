@@ -385,8 +385,24 @@ void DesktopApp::MoveDockItemsToDesktop(
             size_t widgetIndex = FindWidgetIndexById(entry.reference);
             if (widgetIndex < widgets_.size()) span = widgets_[widgetIndex].gridSpan;
         }
+        // 组件定位不再在被占用时寻找其他可选位置：仅当命中格的跨距
+        // 完全空闲且不越界时才放置，否则拒绝放置，不自动寻找替代落点。
+        const GridPage* exactPage = FindGridPage(gridPages_, targetCell.pageId);
         GridCell freeCell;
-        if (!FindDockReturnCell(usedSlots, targetCell.pageId, startSlot, span, freeCell))
+        freeCell.pageId = targetCell.pageId;
+        if (!exactPage)
+        {
+            freeCell.column = 0;
+            freeCell.row = 0;
+        }
+        else
+        {
+            freeCell.column = startSlot / std::max(1, exactPage->rows);
+            freeCell.row = startSlot % std::max(1, exactPage->rows);
+        }
+        if (!exactPage ||
+            !GridAreaFitsPage(*exactPage, freeCell, span) ||
+            AreGridSlotsMarked(usedSlots, freeCell, span))
             continue;
         MarkGridArea(usedSlots, freeCell, span);
         ++startSlot;

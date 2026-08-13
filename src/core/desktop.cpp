@@ -551,8 +551,12 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
                 span.rows = std::max(1, span.rows);
 
                 GridCell landing;
-                if (!app_->TryFindFreeCell(span, usedSlots, landing,
-                    requested.pageId, startSlot))
+                landing.pageId = requested.pageId;
+                landing.column = startSlot / std::max(1, targetPage->rows);
+                landing.row = startSlot % std::max(1, targetPage->rows);
+                // 命中格被占用（或跨距越界）时不再寻找其他可选位置，直接不绘制落点。
+                if (!GridAreaFitsPage(*targetPage, landing, span) ||
+                    app_->AreGridSlotsMarked(usedSlots, landing, span))
                     continue;
 
                 RECT bounds = GetGridRect(app_->gridPages_, landing, span);
