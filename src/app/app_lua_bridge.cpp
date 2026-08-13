@@ -193,34 +193,12 @@ std::vector<LuaDesktopItemInfo> DesktopApp::BuildLuaEverythingSearch(const std::
 }
 
 /**
- * @brief Lua 调用：通过 ShellExecute 打开指定路径
+ * @brief Lua 调用：将指定路径提交给 Shell 启动工作线程
  * @param path 要打开的文件或文件夹路径
- * @return 是否成功打开
+ * @return 是否成功提交打开请求
  */
 bool DesktopApp::LuaOpenPath(const std::wstring& path)
 {
-    if (path.empty()) return false;
-    if (path.size() >= 6 &&
-        _wcsnicmp(path.c_str(), L"shell:", 6) == 0)
-    {
-        PIDLIST_ABSOLUTE rawPidl = nullptr;
-        if (SUCCEEDED(SHParseDisplayName(
-                path.c_str(), nullptr, &rawPidl,
-                0, nullptr)) &&
-            rawPidl)
-        {
-            Pidl pidl;
-            pidl.reset(rawPidl);
-            SHELLEXECUTEINFOW executeInfo{};
-            executeInfo.cbSize = sizeof(executeInfo);
-            executeInfo.fMask = SEE_MASK_IDLIST;
-            executeInfo.hwnd = hwnd_;
-            executeInfo.lpIDList = pidl.get();
-            executeInfo.nShow = SW_SHOWNORMAL;
-            if (ShellExecuteExW(&executeInfo))
-                return true;
-        }
-    }
     return shellLaunchWorker_.Enqueue(
         hwnd_, path);
 }

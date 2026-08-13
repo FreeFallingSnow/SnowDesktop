@@ -2334,7 +2334,7 @@ private:
         const std::string& query, int maxResults);
     std::vector<LuaDesktopItemInfo> BuildLuaEverythingSearch(const std::string& query, int maxResults) const;
     std::vector<EverythingSearchResult> SearchEverythingCached(const std::wstring& query, DWORD maxResults) const;
-    /** @brief 通过 Lua 脚本打开指定路径。 @param path 要打开的路径 @return 操作是否成功 */
+    /** @brief 通过 Lua 脚本提交路径打开请求。 @param path 要打开的路径 @return 请求是否已接受 */
     bool LuaOpenPath(const std::wstring& path);
     /** @brief 通过 Lua 脚本在资源管理器中显示指定路径。 @param path 路径 @return 操作是否成功 */
     bool LuaRevealPath(const std::wstring& path);

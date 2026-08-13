@@ -542,7 +542,8 @@ local revealed = desktop.reveal(itemOrPath)
 desktop.refresh()
 ```
 
-`desktop.open` and `desktop.reveal` return booleans.
+`desktop.open` returns whether the host accepted the asynchronous open request.
+`desktop.reveal` returns whether the reveal operation succeeded.
 
 ## Everything search
 

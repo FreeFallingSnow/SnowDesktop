@@ -2,6 +2,7 @@
 
 #include <objbase.h>
 #include <shellapi.h>
+#include <shlobj.h>
 
 #include <utility>
 
@@ -88,11 +89,40 @@ bool ShellLaunchWorker::Execute(
     if (path.empty())
         return false;
 
+    constexpr ULONG launchMask =
+        SEE_MASK_NOASYNC | SEE_MASK_FLAG_LOG_USAGE;
+    if (path.size() >= 6 &&
+        _wcsnicmp(path.c_str(), L"shell:", 6) == 0)
+    {
+        PIDLIST_ABSOLUTE rawPidl = nullptr;
+        const HRESULT parseResult = SHParseDisplayName(
+            path.c_str(), nullptr, &rawPidl, 0, nullptr);
+        if (SUCCEEDED(parseResult) && rawPidl)
+        {
+            SHELLEXECUTEINFOW namespaceExecuteInfo{};
+            namespaceExecuteInfo.cbSize = sizeof(namespaceExecuteInfo);
+            namespaceExecuteInfo.fMask = launchMask | SEE_MASK_IDLIST;
+            namespaceExecuteInfo.hwnd =
+                owner && IsWindow(owner) ? owner : nullptr;
+            namespaceExecuteInfo.lpIDList = rawPidl;
+            namespaceExecuteInfo.nShow = showCommand;
+            const bool opened =
+                ShellExecuteExW(&namespaceExecuteInfo) != FALSE;
+            CoTaskMemFree(rawPidl);
+            if (opened)
+                return true;
+        }
+        else if (rawPidl)
+        {
+            CoTaskMemFree(rawPidl);
+        }
+    }
+
     SHELLEXECUTEINFOW executeInfo{};
     executeInfo.cbSize = sizeof(executeInfo);
     // This thread has no message pump. Complete DDE and execution-delegate
     // handoffs here instead of borrowing the desktop UI thread's message pump.
-    executeInfo.fMask = SEE_MASK_NOASYNC | SEE_MASK_FLAG_LOG_USAGE;
+    executeInfo.fMask = launchMask;
     executeInfo.hwnd = owner && IsWindow(owner) ? owner : nullptr;
     executeInfo.lpVerb = L"open";
     executeInfo.lpFile = path.c_str();

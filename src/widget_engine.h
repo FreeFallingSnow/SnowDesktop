@@ -770,7 +770,7 @@ public:
     /**
      * @brief 通过宿主打开指定路径
      * @param path 要打开的路径
-     * @return 操作成功返回 true
+     * @return 宿主接受打开请求时返回 true
      */
     bool RuntimeOpenDesktopPath(const std::wstring& path);
 
