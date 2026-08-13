@@ -604,6 +604,10 @@ void TestDesktopHoverDeactivation()
 {
     using hoverRules::ReconcileMode;
     Check(
+        hoverRules::ShellPopupCloseReconcileMode() ==
+            ReconcileMode::DeactivateOnly,
+        "closing a Shell popup must not reactivate hover from the menu's last cursor position");
+    Check(
         hoverRules::ShouldReconcileFromSurfaceSample(
             false, false, false) &&
             hoverRules::ShouldReconcileFromSurfaceSample(

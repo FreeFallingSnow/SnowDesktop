@@ -255,6 +255,7 @@ void DesktopApp::BeginShellHoverTrace()
     shellHoverTraceWriteIndex_ = 0;
     shellHoverTraceCount_ = 0;
     shellHoverTraceStartTick_ = GetTickCount64();
+    shellHoverTraceMenuEndTick_ = 0;
     shellHoverTraceWrapped_ = false;
     shellHoverTraceObservedDisabledOwner_ = false;
     shellHoverTraceActive_ = true;
@@ -319,6 +320,22 @@ void DesktopApp::RecordShellHoverTrace(
     {
         shellHoverTraceWrapped_ = true;
     }
+
+    const bool menuEnded =
+        shellPopupMenuLayerDepth_ == 0 &&
+        shellHoverTraceMenuEndTick_ != 0;
+    const bool observedModalOwnerFinished =
+        shellHoverTraceObservedDisabledOwner_ &&
+        ownerEnabled;
+    const bool postMenuTraceTimedOut =
+        menuEnded &&
+        entry.tick - shellHoverTraceMenuEndTick_ >= 10000;
+    if (menuEnded &&
+        (observedModalOwnerFinished ||
+            postMenuTraceTimedOut))
+    {
+        FlushShellHoverTrace();
+    }
 }
 
 void DesktopApp::FlushShellHoverTrace()
@@ -326,8 +343,7 @@ void DesktopApp::FlushShellHoverTrace()
     if (!shellHoverTraceActive_)
         return;
     shellHoverTraceActive_ = false;
-    if (!shellHoverTraceObservedDisabledOwner_ ||
-        shellHoverTraceCount_ == 0)
+    if (shellHoverTraceCount_ == 0)
         return;
 
     const auto eventName = [](ShellHoverTraceEvent event) {
@@ -358,6 +374,9 @@ void DesktopApp::FlushShellHoverTrace()
         std::to_wstring(shellHoverTraceCount_) +
         L" wrapped=" +
         std::to_wstring(shellHoverTraceWrapped_ ? 1 : 0) +
+        L" ownerDisabled=" +
+        std::to_wstring(
+            shellHoverTraceObservedDisabledOwner_ ? 1 : 0) +
         L"\r\n";
     const size_t first = shellHoverTraceWrapped_
         ? shellHoverTraceWriteIndex_ : 0;

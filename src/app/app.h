@@ -2723,6 +2723,7 @@ private:
     size_t shellHoverTraceWriteIndex_ = 0;
     size_t shellHoverTraceCount_ = 0;
     ULONGLONG shellHoverTraceStartTick_ = 0;
+    ULONGLONG shellHoverTraceMenuEndTick_ = 0;
     bool shellHoverTraceActive_ = false;
     bool shellHoverTraceWrapped_ = false;
     bool shellHoverTraceObservedDisabledOwner_ = false;

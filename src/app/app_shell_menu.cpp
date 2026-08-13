@@ -202,7 +202,11 @@ void DesktopApp::BeginShellPopupMenuLayer()
     FlushPendingQuickNavigationCompositionCommit();
     ++shellPopupMenuLayerDepth_;
     if (shellPopupMenuLayerDepth_ == 1)
+    {
+        if (shellHoverTraceActive_)
+            FlushShellHoverTrace();
         BeginShellHoverTrace();
+    }
     RecordShellHoverTrace(
         ShellHoverTraceEvent::MenuBegin);
     ApplyFloatingDockLayerPolicy();
@@ -216,14 +220,15 @@ void DesktopApp::EndShellPopupMenuLayer()
         --shellPopupMenuLayerDepth_;
     else
         shellPopupMenuLayerDepth_ = 0;
+    if (shellPopupMenuLayerDepth_ == 0)
+        shellHoverTraceMenuEndTick_ = GetTickCount64();
     ApplyFloatingDockLayerPolicy();
     RefocusFloatingDockKeyboardSession();
     if (shellPopupMenuLayerDepth_ == 0)
     {
         ReconcileDesktopHoverState(
             snowdesktop::desktop_hover_rules::
-                ReconcileMode::AllowImmediateActivation);
-        FlushShellHoverTrace();
+                ShellPopupCloseReconcileMode());
     }
     FlushPendingCompositionCommit();
     FlushPendingQuickNavigationCompositionCommit();

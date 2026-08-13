@@ -13,6 +13,14 @@ enum class ReconcileMode
     AllowActivationAfterForegroundSettle,
 };
 
+constexpr ReconcileMode ShellPopupCloseReconcileMode()
+{
+    // A Shell verb may return before its asynchronous confirmation dialog is
+    // created. The menu's final cursor position therefore cannot prove that
+    // the pointer has returned to the desktop interaction surface.
+    return ReconcileMode::DeactivateOnly;
+}
+
 constexpr bool HasForegroundSettled(
     bool foregroundChangeKnown,
     std::uint32_t elapsedMs)
