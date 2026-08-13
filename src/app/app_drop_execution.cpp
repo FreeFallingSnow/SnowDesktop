@@ -508,6 +508,8 @@ bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceList,
     };
 
     std::unordered_set<std::wstring> reservedDestinations;
+    auto materializedPathReservations =
+        std::make_shared<std::vector<std::wstring>>();
     auto makeUniqueCopyPath = [&](const std::wstring& path) {
         const wchar_t* fileName = PathFindFileNameW(path.c_str());
         DWORD attrs = GetFileAttributesW(path.c_str());
@@ -564,10 +566,12 @@ bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceList,
             const std::wstring candidate = dst;
             if (GetFileAttributesW(dst) == INVALID_FILE_ATTRIBUTES &&
                 !reservedDestinations.contains(
-                    ToUpperInvariant(candidate)))
+                    ToUpperInvariant(candidate)) &&
+                pendingDesktopMaterializedPaths_.TryReserve(candidate))
             {
                 reservedDestinations.insert(
                     ToUpperInvariant(candidate));
+                materializedPathReservations->push_back(candidate);
                 return candidate;
             }
         }
@@ -596,37 +600,49 @@ bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceList,
                 // Preserve a folder shortcut as a shortcut file. Creating a
                 // new link whose target is the source .lnk produces a nested
                 // link that no longer classifies as a Dock folder.
-                request.steps.push_back({
-                    FO_COPY,
-                    { path },
-                    dst,
-                    static_cast<FILEOP_FLAGS>(
-                        FOF_NOCONFIRMATION |
-                        FOF_NOCONFIRMMKDIR |
-                        FOF_NOERRORUI |
-                        FOF_RENAMEONCOLLISION) });
+                request.exactFileCopies.push_back({ path, dst });
             }
             else
             {
                 request.shortcuts.push_back({
-                    path, dst, desktopPath });
+                    path, dst, desktopPath, true });
             }
             if (createdPathsBySource)
                 (*createdPathsBySource)[source.sourceIndex] = dst;
         }
-        if (request.steps.empty() && request.shortcuts.empty())
+        if (request.steps.empty() && request.exactFileCopies.empty() &&
+            request.shortcuts.empty())
+        {
+            pendingDesktopMaterializedPaths_.Release(
+                *materializedPathReservations);
             return false;
+        }
         if (executeSynchronously)
         {
             operated = snowdesktop::ShellFileOperationWorker::
                 Execute(request);
+            pendingDesktopMaterializedPaths_.Release(
+                *materializedPathReservations);
             if (completion)
                 completion(operated);
         }
         else
         {
+            auto reservationCompletion = [this,
+                materializedPathReservations,
+                completion = std::move(completion)](
+                    bool succeeded) mutable {
+                pendingDesktopMaterializedPaths_.Release(
+                    *materializedPathReservations);
+                if (completion)
+                    completion(succeeded);
+            };
             operated = QueueShellFileOperation(
-                std::move(request), std::move(completion));
+                std::move(request),
+                std::move(reservationCompletion));
+            if (!operated)
+                pendingDesktopMaterializedPaths_.Release(
+                    *materializedPathReservations);
         }
     }
     else if (action == DropAction::Copy)

@@ -6,6 +6,7 @@
 #include <windows.h>
 
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace snowdesktop::dock_drop_rules
@@ -61,6 +62,46 @@ inline std::vector<std::wstring> OrderedMaterializedPaths(
     }
     return paths;
 }
+
+// Desktop shortcut creation is asynchronous. Keep names selected by queued
+// requests unavailable to later requests until their completion callback runs,
+// otherwise two same-name drops can both choose the same not-yet-created path.
+class MaterializedPathReservations
+{
+public:
+    bool TryReserve(const std::wstring& path)
+    {
+        return !path.empty() &&
+            paths_.insert(Normalize(path)).second;
+    }
+
+    bool Contains(const std::wstring& path) const
+    {
+        return !path.empty() &&
+            paths_.contains(Normalize(path));
+    }
+
+    void Release(const std::vector<std::wstring>& paths)
+    {
+        for (const auto& path : paths)
+            paths_.erase(Normalize(path));
+    }
+
+private:
+    static std::wstring Normalize(const std::wstring& path)
+    {
+        std::wstring normalized = path;
+        if (!normalized.empty())
+        {
+            CharUpperBuffW(
+                normalized.data(),
+                static_cast<DWORD>(normalized.size()));
+        }
+        return normalized;
+    }
+
+    std::unordered_set<std::wstring> paths_;
+};
 
 // Reordering owns the icon center only while a Dock drag stays inside the
 // same visual group. Crossing between main and folder entries must leave the

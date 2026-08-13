@@ -2619,6 +2619,8 @@ private:
         dockFolderTargetCache_;
     mutable std::unordered_map<std::wstring, int>
         dockFolderIconIndexCache_;
+    snowdesktop::dock_drop_rules::MaterializedPathReservations
+        pendingDesktopMaterializedPaths_;
     std::unordered_map<std::wstring, DockUsageRecord> dockUsageStats_;
     std::unordered_map<std::wstring, DockAppIdentity> dockAppIdentityCache_;
     std::unordered_map<std::wstring, DockWindowInfo> dockRunningWindows_;

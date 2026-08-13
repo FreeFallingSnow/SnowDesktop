@@ -469,7 +469,8 @@ ShellFileOperationWorker::~ShellFileOperationWorker()
 bool ShellFileOperationWorker::Enqueue(
     ShellFileOperationRequest request, Completion completion)
 {
-    if (request.steps.empty() && request.shortcuts.empty())
+    if (request.steps.empty() && request.exactFileCopies.empty() &&
+        request.shortcuts.empty())
         return false;
 
     Task pending{ std::move(request), std::move(completion) };
@@ -612,6 +613,17 @@ bool ShellFileOperationWorker::Execute(
         if (result != 0 || operation.fAnyOperationsAborted)
             allSucceeded = false;
     }
+    for (const auto& copy : request.exactFileCopies)
+    {
+        if (copy.source.empty() || copy.destination.empty())
+            continue;
+        attempted = true;
+        // The destination was selected before the request was queued. Never
+        // let Shell collision renaming make the completion path inaccurate.
+        if (!CopyFileW(
+                copy.source.c_str(), copy.destination.c_str(), TRUE))
+            allSucceeded = false;
+    }
     for (const auto& shortcut : request.shortcuts)
     {
         if (shortcut.source.empty() || shortcut.destination.empty())
@@ -640,10 +652,34 @@ bool ShellFileOperationWorker::Execute(
         }
 
         ComPtr<IPersistFile> persistFile;
-        if (FAILED(shellLink.As(&persistFile)) || !persistFile ||
-            FAILED(persistFile->Save(
-                shortcut.destination.c_str(), TRUE)))
+        if (FAILED(shellLink.As(&persistFile)) || !persistFile)
+        {
             allSucceeded = false;
+            continue;
+        }
+
+        bool destinationClaimed = false;
+        if (shortcut.failIfDestinationExists)
+        {
+            HANDLE destination = CreateFileW(
+                shortcut.destination.c_str(), GENERIC_WRITE, 0, nullptr,
+                CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (destination == INVALID_HANDLE_VALUE)
+            {
+                allSucceeded = false;
+                continue;
+            }
+            CloseHandle(destination);
+            destinationClaimed = true;
+        }
+
+        if (FAILED(persistFile->Save(
+                shortcut.destination.c_str(), TRUE)))
+        {
+            if (destinationClaimed)
+                DeleteFileW(shortcut.destination.c_str());
+            allSucceeded = false;
+        }
     }
     return attempted && allSucceeded;
 }

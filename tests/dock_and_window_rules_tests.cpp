@@ -932,6 +932,22 @@ int main()
                 L"C:\\Desktop\\first.lnk",
                 L"C:\\Desktop\\second.lnk" },
         "Dock completion must use exact created paths in source order without a desktop snapshot diff");
+    dockDrop::MaterializedPathReservations pathReservations;
+    Check(pathReservations.TryReserve(
+              L"C:\\Desktop\\same-name.lnk") &&
+            pathReservations.Contains(
+                L"c:\\desktop\\SAME-NAME.LNK") &&
+            !pathReservations.TryReserve(
+                L"c:\\desktop\\same-name.lnk") &&
+            pathReservations.TryReserve(
+                L"C:\\Desktop\\same-name (2).lnk"),
+        "queued Dock materializations must reserve shortcut names across requests");
+    pathReservations.Release({
+        L"C:\\Desktop\\same-name.lnk",
+        L"C:\\Desktop\\same-name (2).lnk" });
+    Check(pathReservations.TryReserve(
+              L"C:\\Desktop\\same-name.lnk"),
+        "completed Dock materializations must release their path reservations");
     Check(dockDrop::ChooseExternalMappingEffect(
             DROPEFFECT_COPY | DROPEFFECT_MOVE |
                 DROPEFFECT_LINK) == DROPEFFECT_LINK,

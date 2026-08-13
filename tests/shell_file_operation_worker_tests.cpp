@@ -63,6 +63,8 @@ int wmain()
         root / L"shortcuts";
     const std::filesystem::path folderShortcutTarget =
         root / L"folder-shortcut-target";
+    const std::filesystem::path secondFolderShortcutTarget =
+        root / L"second-folder-shortcut-target";
     std::filesystem::create_directories(sourceDirectory);
     std::filesystem::create_directories(firstDirectory);
     std::filesystem::create_directories(secondDirectory);
@@ -73,6 +75,7 @@ int wmain()
     std::filesystem::create_directories(noneEffectDirectory);
     std::filesystem::create_directories(shortcutDirectory);
     std::filesystem::create_directories(folderShortcutTarget);
+    std::filesystem::create_directories(secondFolderShortcutTarget);
 
     const std::filesystem::path source =
         sourceDirectory / L"payload.txt";
@@ -167,11 +170,23 @@ int wmain()
         shortcutDirectory.wstring() });
     snowdesktop::ShellFileOperationRequest
         copyFolderShortcutRequest;
-    copyFolderShortcutRequest.steps.push_back({
-        FO_COPY,
-        { sourceFolderShortcut.wstring() },
-        copiedFolderShortcut.wstring(),
-        kTestFlags });
+    copyFolderShortcutRequest.exactFileCopies.push_back({
+        sourceFolderShortcut.wstring(),
+        copiedFolderShortcut.wstring() });
+    const std::filesystem::path atomicShortcutPath =
+        shortcutDirectory / L"atomic-folder.lnk";
+    snowdesktop::ShellFileOperationRequest
+        firstAtomicShortcutRequest;
+    firstAtomicShortcutRequest.shortcuts.push_back({
+        folderShortcutTarget.wstring(),
+        atomicShortcutPath.wstring(),
+        shortcutDirectory.wstring(), true });
+    snowdesktop::ShellFileOperationRequest
+        collidingAtomicShortcutRequest;
+    collidingAtomicShortcutRequest.shortcuts.push_back({
+        secondFolderShortcutTarget.wstring(),
+        atomicShortcutPath.wstring(),
+        shortcutDirectory.wstring(), true });
 
     snowdesktop::ShellFileOperationWorker worker;
     std::promise<bool> copyPromise;
@@ -184,6 +199,8 @@ int wmain()
     std::promise<bool> partialShortcutPromise;
     std::promise<bool> createFolderShortcutPromise;
     std::promise<bool> copyFolderShortcutPromise;
+    std::promise<bool> firstAtomicShortcutPromise;
+    std::promise<bool> collidingAtomicShortcutPromise;
     auto copyFuture = copyPromise.get_future();
     auto moveFuture = movePromise.get_future();
     auto handoffFuture = handoffPromise.get_future();
@@ -197,6 +214,10 @@ int wmain()
         createFolderShortcutPromise.get_future();
     auto copyFolderShortcutFuture =
         copyFolderShortcutPromise.get_future();
+    auto firstAtomicShortcutFuture =
+        firstAtomicShortcutPromise.get_future();
+    auto collidingAtomicShortcutFuture =
+        collidingAtomicShortcutPromise.get_future();
 
     const auto enqueueStart = std::chrono::steady_clock::now();
     Expect(worker.Enqueue(
@@ -259,6 +280,18 @@ int wmain()
                 copyFolderShortcutPromise.set_value(succeeded);
             }),
         "folder shortcut preservation copy is accepted");
+    Expect(worker.Enqueue(
+            std::move(firstAtomicShortcutRequest),
+            [&firstAtomicShortcutPromise](bool succeeded) {
+                firstAtomicShortcutPromise.set_value(succeeded);
+            }),
+        "first exact-name shortcut request is accepted");
+    Expect(worker.Enqueue(
+            std::move(collidingAtomicShortcutRequest),
+            [&collidingAtomicShortcutPromise](bool succeeded) {
+                collidingAtomicShortcutPromise.set_value(succeeded);
+            }),
+        "colliding exact-name shortcut request is accepted");
     Expect(std::chrono::steady_clock::now() - enqueueStart <
             std::chrono::seconds(1),
         "enqueueing file operations does not wait for Shell completion");
@@ -298,6 +331,16 @@ int wmain()
             std::future_status::ready &&
             copyFolderShortcutFuture.get(),
         "folder shortcut preservation copy completes successfully");
+    Expect(firstAtomicShortcutFuture.wait_for(
+            std::chrono::seconds(15)) ==
+            std::future_status::ready &&
+            firstAtomicShortcutFuture.get(),
+        "the first exact-name shortcut request succeeds");
+    Expect(collidingAtomicShortcutFuture.wait_for(
+            std::chrono::seconds(15)) ==
+            std::future_status::ready &&
+            !collidingAtomicShortcutFuture.get(),
+        "a queued same-name shortcut cannot overwrite the first result");
     worker.Stop();
 
     Expect(std::filesystem::exists(source),
@@ -342,6 +385,20 @@ int wmain()
                 equivalentError) &&
             !equivalentError,
         "copied folder shortcut still resolves directly to its original folder");
+    const auto atomicFolderTarget =
+        snowdesktop::item_location::ResolveFolderTarget(
+            atomicShortcutPath.wstring());
+    equivalentError.clear();
+    Expect(atomicFolderTarget.available &&
+            atomicFolderTarget.kind ==
+                snowdesktop::item_location::
+                    FolderTargetKind::Shortcut &&
+            std::filesystem::equivalent(
+                atomicFolderTarget.path,
+                folderShortcutTarget,
+                equivalentError) &&
+            !equivalentError,
+        "a colliding queued shortcut leaves the first target unchanged");
 
     std::error_code cleanupError;
     std::filesystem::remove_all(root, cleanupError);

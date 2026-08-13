@@ -32,11 +32,22 @@ struct ShellShortcutOperationStep
     std::wstring source;
     std::wstring destination;
     std::wstring workingDirectory;
+    // Atomically claim a previously selected path before saving. A collision
+    // fails instead of overwriting a shortcut created by an earlier request.
+    bool failIfDestinationExists = false;
+};
+
+/** @brief One exact-path file copy that must not rename or overwrite. */
+struct ShellExactFileCopyOperationStep
+{
+    std::wstring source;
+    std::wstring destination;
 };
 
 struct ShellFileOperationRequest
 {
     std::vector<ShellFileOperationStep> steps;
+    std::vector<ShellExactFileCopyOperationStep> exactFileCopies;
     std::vector<ShellShortcutOperationStep> shortcuts;
 };
 

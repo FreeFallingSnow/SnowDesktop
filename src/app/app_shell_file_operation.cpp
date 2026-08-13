@@ -107,7 +107,8 @@ bool DesktopApp::QueueShellFileOperation(
     HWND completionWindow = controlHwnd_ && IsWindow(controlHwnd_)
         ? controlHwnd_ : hwnd_;
     if (!completionWindow || !IsWindow(completionWindow) ||
-        (request.steps.empty() && request.shortcuts.empty()))
+        (request.steps.empty() && request.exactFileCopies.empty() &&
+         request.shortcuts.empty()))
         return false;
 
     auto* result = new (std::nothrow)
