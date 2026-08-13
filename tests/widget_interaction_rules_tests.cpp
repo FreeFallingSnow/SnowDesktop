@@ -608,6 +608,14 @@ void TestDesktopHoverDeactivation()
             ReconcileMode::DeactivateOnly,
         "closing a Shell popup must not reactivate hover from the menu's last cursor position");
     Check(
+        hoverRules::ShouldRetainHoverAcrossMouseLeave(
+            true, false) &&
+            hoverRules::ShouldRetainHoverAcrossMouseLeave(
+                false, true) &&
+            !hoverRules::ShouldRetainHoverAcrossMouseLeave(
+                false, false),
+        "content and paired backdrop windows must form one logical hover surface");
+    Check(
         hoverRules::ShouldReconcileFromSurfaceSample(
             false, false, false) &&
             hoverRules::ShouldReconcileFromSurfaceSample(

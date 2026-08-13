@@ -21,6 +21,14 @@ constexpr ReconcileMode ShellPopupCloseReconcileMode()
     return ReconcileMode::DeactivateOnly;
 }
 
+constexpr bool ShouldRetainHoverAcrossMouseLeave(
+    bool pointerOnContentWindow,
+    bool pointerOnPairedBackdropWindow)
+{
+    return pointerOnContentWindow ||
+        pointerOnPairedBackdropWindow;
+}
+
 constexpr bool HasForegroundSettled(
     bool foregroundChangeKnown,
     std::uint32_t elapsedMs)

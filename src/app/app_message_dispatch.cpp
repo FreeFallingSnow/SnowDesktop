@@ -162,6 +162,39 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     }
     case WM_MOUSELEAVE:
+    {
+        // The native backdrop is a sibling HWND behind the D2D content HWND.
+        // Updating its region when a hover-only glass widget appears can make
+        // TrackMouseEvent report a leave even though the pointer is still on
+        // the same logical desktop surface. Clearing hover here removes that
+        // region again and creates a show/leave/hide/move feedback loop.
+        // Re-sample only the paired desktop content/backdrop windows before
+        // accepting the leave; external dialogs and unrelated SnowDesktop
+        // popups remain genuine leave targets.
+        POINT cursorScreen{};
+        if (GetCursorPos(&cursorScreen))
+        {
+            const HWND hitWindow =
+                WindowFromPoint(cursorScreen);
+            const bool pointerOnContentWindow =
+                IsSameWindowTree(hwnd_, hitWindow);
+            const bool pointerOnPairedBackdropWindow =
+                desktopBackdropCompositor_.
+                    IsBackdropWindow(hitWindow);
+            if (snowdesktop::desktop_hover_rules::
+                    ShouldRetainHoverAcrossMouseLeave(
+                        pointerOnContentWindow,
+                        pointerOnPairedBackdropWindow))
+            {
+                POINT cursorClient = cursorScreen;
+                if (ScreenToClient(
+                        hwnd_, &cursorClient))
+                {
+                    lastMousePoint_ = cursorClient;
+                }
+                return 0;
+            }
+        }
         if (floatingDockHoverHandoffPending_)
         {
             POINT cursorPoint{};
@@ -202,6 +235,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         }
         OnMouseLeave();
         return 0;
+    }
     case WM_LBUTTONUP:
     {
         const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
