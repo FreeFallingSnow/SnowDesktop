@@ -73,6 +73,77 @@ void DesktopApp::PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell target
         }
     }
 
+    // 本次放置批内新建的虚拟溢出页及其下一个空闲槽位
+    std::unordered_map<std::wstring, int> newPageSlots;
+    // Quick-lookup of page IDs currently visible in gridPages_
+    std::unordered_set<std::wstring> visiblePageIds;
+    for (const auto& gp : gridPages_)
+        visiblePageIds.insert(gp.id);
+
+    // 兜底安置：已保存的离屏页 → 本批新建页（从记录的下一个槽位顺序填满）→
+    // 所有现有页都满时在末屏新建虚拟溢出页，并从 slot 0 开始占满。
+    auto placeOnSavedOrNewPage = [&](const GridSpan& span, GridCell& found) -> bool {
+        for (const auto& pageId : savedPageIds_)
+        {
+            if (visiblePageIds.count(pageId)) continue;
+            if (!savedPageColumns_.count(pageId) || !savedPageRows_.count(pageId)) continue;
+            const int cols = savedPageColumns_[pageId];
+            const int rows = savedPageRows_[pageId];
+            const int capacity = std::max(1, cols * rows);
+            for (int slot = 0; slot < capacity; ++slot)
+            {
+                GridCell candidate;
+                candidate.pageId = pageId;
+                candidate.column = slot / std::max(1, rows);
+                candidate.row    = slot % std::max(1, rows);
+                if (candidate.column + span.columns <= cols &&
+                    candidate.row + span.rows <= rows &&
+                    !AreGridSlotsMarked(usedSlots, candidate, span))
+                {
+                    found = candidate;
+                    return true;
+                }
+            }
+        }
+
+        // 本次批内已创建的新页：从记录的下一个槽位继续顺序填满
+        for (auto& [pageId, nextSlot] : newPageSlots)
+        {
+            const int cols = savedPageColumns_.count(pageId) ? savedPageColumns_[pageId] : 1;
+            const int rows = savedPageRows_.count(pageId) ? savedPageRows_[pageId] : 1;
+            const int capacity = std::max(1, cols * rows);
+            for (int slot = nextSlot; slot < capacity; ++slot)
+            {
+                GridCell candidate;
+                candidate.pageId = pageId;
+                candidate.column = slot / std::max(1, rows);
+                candidate.row    = slot % std::max(1, rows);
+                if (candidate.column + span.columns <= cols &&
+                    candidate.row + span.rows <= rows &&
+                    !AreGridSlotsMarked(usedSlots, candidate, span))
+                {
+                    found = candidate;
+                    nextSlot = slot + 1;
+                    return true;
+                }
+            }
+        }
+
+        // 所有现有页都满 → 在末屏新建虚拟溢出页
+        std::vector<size_t> monitorOrder = BuildMonitorRenderOrder();
+        if (monitorOrder.empty()) return false;
+        const GridPage& lastPage = gridPages_[monitorOrder.back()];
+
+        const std::wstring newPageId = GeneratePageId();
+        RememberSavedPageId(newPageId);
+        savedPageColumns_[newPageId] = lastPage.columns;
+        savedPageRows_[newPageId]    = lastPage.rows;
+
+        found = { newPageId, 0, 0 };
+        newPageSlots[newPageId] = 1; // slot 0 taken
+        return true;
+    };
+
     if (isMove)
     {
         // For move: displaced items go to the widget's old position area
@@ -87,11 +158,6 @@ void DesktopApp::PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell target
 
         widgets_[widgetIndex].gridCell = targetCell;
         widgets_[widgetIndex].gridSpan = targetSpan;
-
-        // Quick-lookup of visible page IDs
-        std::unordered_set<std::wstring> visiblePageIds;
-        for (const auto& gp : gridPages_)
-            visiblePageIds.insert(gp.id);
 
         int oldAreaSlot = SlotFromCell(gridPages_, oldCell);
         for (size_t idx : displaced)
@@ -111,33 +177,13 @@ void DesktopApp::PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell target
             }
             else
             {
-                // No visible cell — search all saved pages at other offsets
-                bool foundAny = false;
-                for (const auto& pageId : savedPageIds_)
+                // 无可见空位 — 已存离屏页 → 本批新建页 → 新建虚拟溢出页并占满
+                GridCell landing;
+                if (placeOnSavedOrNewPage(items_[idx].gridSpan, landing))
                 {
-                    if (visiblePageIds.count(pageId)) continue;
-                    if (!savedPageColumns_.count(pageId) || !savedPageRows_.count(pageId)) continue;
-                    int cols = savedPageColumns_[pageId];
-                    int rows = savedPageRows_[pageId];
-                    int capacity = std::max(1, cols * rows);
-                    for (int slot = 0; slot < capacity; ++slot)
-                    {
-                        GridCell candidate;
-                        candidate.pageId = pageId;
-                        candidate.column = slot / std::max(1, rows);
-                        candidate.row    = slot % std::max(1, rows);
-                        if (candidate.column + items_[idx].gridSpan.columns <= cols &&
-                            candidate.row + items_[idx].gridSpan.rows <= rows &&
-                            !AreGridSlotsMarked(usedSlots, candidate, items_[idx].gridSpan))
-                        {
-                            items_[idx].gridCell = candidate;
-                            items_[idx].slot = SlotFromCell(gridPages_, candidate);
-                            MarkGridArea(usedSlots, candidate, items_[idx].gridSpan);
-                            foundAny = true;
-                            break;
-                        }
-                    }
-                    if (foundAny) break;
+                    items_[idx].gridCell = landing;
+                    items_[idx].slot = SlotFromCell(gridPages_, landing);
+                    MarkGridArea(usedSlots, landing, items_[idx].gridSpan);
                 }
             }
         }
@@ -157,11 +203,6 @@ void DesktopApp::PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell target
         widgets_[widgetIndex].gridCell = targetCell;
         widgets_[widgetIndex].gridSpan = targetSpan;
 
-        // Quick-lookup of visible page IDs
-        std::unordered_set<std::wstring> visiblePageIds;
-        for (const auto& gp : gridPages_)
-            visiblePageIds.insert(gp.id);
-
         int searchStart = SlotFromCell(gridPages_, targetCell) + std::max(1, targetSpan.rows);
         for (size_t idx : displaced)
         {
@@ -174,33 +215,13 @@ void DesktopApp::PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell target
             }
             else
             {
-                // No visible cell — search all saved pages at other offsets
-                bool foundAny = false;
-                for (const auto& pageId : savedPageIds_)
+                // 无可见空位 — 已存离屏页 → 本批新建页 → 新建虚拟溢出页并占满
+                GridCell landing;
+                if (placeOnSavedOrNewPage(items_[idx].gridSpan, landing))
                 {
-                    if (visiblePageIds.count(pageId)) continue;
-                    if (!savedPageColumns_.count(pageId) || !savedPageRows_.count(pageId)) continue;
-                    int cols = savedPageColumns_[pageId];
-                    int rows = savedPageRows_[pageId];
-                    int capacity = std::max(1, cols * rows);
-                    for (int slot = 0; slot < capacity; ++slot)
-                    {
-                        GridCell candidate;
-                        candidate.pageId = pageId;
-                        candidate.column = slot / std::max(1, rows);
-                        candidate.row    = slot % std::max(1, rows);
-                        if (candidate.column + items_[idx].gridSpan.columns <= cols &&
-                            candidate.row + items_[idx].gridSpan.rows <= rows &&
-                            !AreGridSlotsMarked(usedSlots, candidate, items_[idx].gridSpan))
-                        {
-                            items_[idx].gridCell = candidate;
-                            items_[idx].slot = SlotFromCell(gridPages_, candidate);
-                            MarkGridArea(usedSlots, candidate, items_[idx].gridSpan);
-                            foundAny = true;
-                            break;
-                        }
-                    }
-                    if (foundAny) break;
+                    items_[idx].gridCell = landing;
+                    items_[idx].slot = SlotFromCell(gridPages_, landing);
+                    MarkGridArea(usedSlots, landing, items_[idx].gridSpan);
                 }
             }
         }
