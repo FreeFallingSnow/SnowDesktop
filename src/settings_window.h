@@ -25,6 +25,7 @@
 #include "authoring_toolchain.h"
 #include "../widget_spacing_rules.h"
 #include "icon_beautify.h"
+#include "constants.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -779,10 +780,10 @@ private:
     float componentSpacingScale_ = 1.0f;
 
     /// 当前桌面项目字号（cu）
-    float itemFontSizeCu_ = 15.0f;
+    float itemFontSizeCu_ = kDefaultItemFontSizeCu;
 
     /// 当前内置列表项目字号（cu）
-    float listItemFontSizeCu_ = 15.0f;
+    float listItemFontSizeCu_ = kDefaultItemFontSizeCu;
 
     /// 当前桌面项目字体粗细 (DWRITE_FONT_WEIGHT)
     float itemFontWeight_ = 600.0f;

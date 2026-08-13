@@ -1612,7 +1612,7 @@ int ScrollingItemWidget::GetListRowHeight() const
 {
     const float currentFont = app_
         ? FontCu(app_->listItemFontSizeCu_)
-        : FontCu(kItemFontSize);
+        : FontCu(kDefaultItemFontSizeCu);
     const float defaultFont = FontCu(kItemFontSize);
     return snowdesktop::list_detail_rules::RowHeight(
         Cu(36.0f), Cu(38.0f), currentFont, defaultFont);
@@ -1622,7 +1622,7 @@ int ScrollingItemWidget::GetDetailsHeaderHeight() const
 {
     const float currentFont = app_
         ? FontCu(app_->listItemFontSizeCu_)
-        : FontCu(kItemFontSize);
+        : FontCu(kDefaultItemFontSizeCu);
     return snowdesktop::list_detail_rules::HeaderHeight(
         Cu(28.0f), Cu(10.0f), currentFont);
 }

@@ -79,6 +79,27 @@ void TestFontCuUsesOnlyTheLocalCellScale()
     Expect(Scale(10.0f, 0.5f) == 9.0f,
         "font cu preserves the shared minimum readable pixel size");
 }
+
+void TestLegacyPointSizesMigrateToCuOnce()
+{
+    using snowdesktop::font_cu_rules::LegacyPointsToCu;
+    using snowdesktop::font_cu_rules::ResolveStoredSize;
+    Expect(kDefaultItemFontSizeCu == 18.0f,
+        "new layouts default both configurable font sizes to 18 cu");
+    Expect(LegacyPointsToCu(15.0f) == 20.0f,
+        "legacy point sizes convert through the 96/72 ratio");
+    Expect(LegacyPointsToCu(24.0f) == 24.0f,
+        "converted legacy point sizes respect the supported cu maximum");
+
+    const auto nativeCu = ResolveStoredSize(18.0f, 15.0f);
+    Expect(nativeCu && *nativeCu == 18.0f,
+        "native cu fields take precedence and are not converted again");
+    const auto migrated = ResolveStoredSize(std::nullopt, 15.0f);
+    Expect(migrated && *migrated == 20.0f,
+        "legacy point fields migrate when native cu fields are absent");
+    Expect(!ResolveStoredSize(std::nullopt, 9.0f).has_value(),
+        "invalid legacy point fields fall back to the caller default");
+}
 }
 
 int main()
@@ -86,6 +107,7 @@ int main()
     TestNestedWidgetMetricsRestoreInOrder();
     TestMetricsAreNormalizedPerWidget();
     TestFontCuUsesOnlyTheLocalCellScale();
+    TestLegacyPointSizesMigrateToCuOnce();
     if (failures == 0)
         std::cout << "Widget layout context tests passed\n";
     return failures == 0 ? 0 : 1;

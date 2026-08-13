@@ -2579,26 +2579,26 @@ void SettingsWindow::DrawDisplayPage()
     BeginSettingRow(_L("app.settings.title_font_size"), sliderActionW);
     ImGui::SetNextItemWidth(actionSliderW);
     if (ImGui::SliderFloat("##ItemFontSize", &itemFontSizeCu_,
-        10.0f, 24.0f, "%.1f cu"))
+        kMinimumItemFontSizeCu, kMaximumItemFontSizeCu, "%.1f cu"))
         markChanged();
     ImGui::SameLine();
     if (BlueButton((std::string(_L("app.settings.restore_default")) +
         "##ItemFontSizeDefault").c_str(), ImVec2(resetW, 0)))
     {
-        itemFontSizeCu_ = 15.0f;
+        itemFontSizeCu_ = kDefaultItemFontSizeCu;
         markChanged();
     }
 
     BeginSettingRow(_L("app.settings.list_font_size"), sliderActionW);
     ImGui::SetNextItemWidth(actionSliderW);
     if (ImGui::SliderFloat("##ListItemFontSize", &listItemFontSizeCu_,
-        10.0f, 24.0f, "%.1f cu"))
+        kMinimumItemFontSizeCu, kMaximumItemFontSizeCu, "%.1f cu"))
         markChanged();
     ImGui::SameLine();
     if (BlueButton((std::string(_L("app.settings.restore_default")) +
         "##ListItemFontSizeDefault").c_str(), ImVec2(resetW, 0)))
     {
-        listItemFontSizeCu_ = 15.0f;
+        listItemFontSizeCu_ = kDefaultItemFontSizeCu;
         markChanged();
     }
 

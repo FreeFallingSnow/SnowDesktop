@@ -99,8 +99,8 @@ struct Document
     std::optional<std::string> firstPageMonitor;
     std::optional<std::string> lastPageMonitor;
     std::optional<bool> dockEnabled;
-    // cu-native font sizes. The fields without the Cu suffix are read-only
-    // compatibility inputs from layouts written before cu was explicit.
+    // cu-native font sizes. The fields without the Cu suffix are legacy point
+    // values that are converted once when older layouts are loaded.
     std::optional<float> itemFontSizeCu;
     std::optional<float> listItemFontSizeCu;
     std::optional<float> itemFontSize;

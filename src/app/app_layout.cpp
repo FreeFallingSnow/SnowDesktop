@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../font_cu_rules.h"
 #include "../widgets/collection_group_rules.h"
 
 #include "../layout_storage.h"
@@ -116,20 +117,16 @@ void DesktopApp::LoadLayoutSlots()
         generalSettings_.dockEnabled = *document.dockEnabled;
 
     const std::optional<float> savedItemFontSizeCu =
-        document.itemFontSizeCu
-            ? document.itemFontSizeCu
-            : document.itemFontSize;
-    if (savedItemFontSizeCu &&
-        *savedItemFontSizeCu >= 10.0f &&
-        *savedItemFontSizeCu <= 24.0f)
-        itemFontSizeCu_ = *savedItemFontSizeCu;
+        snowdesktop::font_cu_rules::ResolveStoredSize(
+            document.itemFontSizeCu, document.itemFontSize);
+    itemFontSizeCu_ = savedItemFontSizeCu.value_or(
+        kDefaultItemFontSizeCu);
 
     const std::optional<float> savedListFontSizeCu =
-        document.listItemFontSizeCu
-            ? document.listItemFontSizeCu
-            : document.listItemFontSize;
-    listItemFontSizeCu_ = snowdesktop::list_detail_rules::ResolveFontSize(
-        savedListFontSizeCu, itemFontSizeCu_);
+        snowdesktop::font_cu_rules::ResolveStoredSize(
+            document.listItemFontSizeCu, document.listItemFontSize);
+    listItemFontSizeCu_ = savedListFontSizeCu.value_or(
+        itemFontSizeCu_);
 
     if (document.itemFontWeight &&
         *document.itemFontWeight >= 100 &&

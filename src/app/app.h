@@ -2717,8 +2717,8 @@ private:
     RECT layoutWorkArea_{};
     float iconSpacingScale_ = 1.0f;
     float componentSpacingScale_ = 1.0f;
-    float itemFontSizeCu_ = kItemFontSize;
-    float listItemFontSizeCu_ = kItemFontSize;
+    float itemFontSizeCu_ = kDefaultItemFontSizeCu;
+    float listItemFontSizeCu_ = kDefaultItemFontSizeCu;
     DWRITE_FONT_WEIGHT itemFontWeight_ = DWRITE_FONT_WEIGHT_SEMI_BOLD;
     int shortcutArrowMode_ = 0;
     snowdesktop::IconBeautifySettings iconBeautifySettings_{};

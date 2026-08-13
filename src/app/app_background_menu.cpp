@@ -1376,8 +1376,8 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
                 AppendMenuW(fontSizeMenu, flags, id, label);
             };
             addFontSizeItem(kContextFontSizeSmall, _LW("app.menu.font_small"), 12);
-            addFontSizeItem(kContextFontSizeMedium, _LW("app.menu.font_medium"), 15);
-            addFontSizeItem(kContextFontSizeLarge, _LW("app.menu.font_large"), 16);
+            addFontSizeItem(kContextFontSizeMedium, _LW("app.menu.font_medium"), 18);
+            addFontSizeItem(kContextFontSizeLarge, _LW("app.menu.font_large"), 24);
             const std::wstring fontSizeLabel = _LFW("app.menu.title_font_size_cu",
                 std::to_wstring(currentFontSize));
             AppendMenuW(displaySettingsMenu, MF_POPUP,
@@ -1398,9 +1398,9 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             addFontSizeItem(kContextListFontSizeSmall,
                 _LW("app.menu.font_small"), 12);
             addFontSizeItem(kContextListFontSizeMedium,
-                _LW("app.menu.font_medium"), 15);
+                _LW("app.menu.font_medium"), 18);
             addFontSizeItem(kContextListFontSizeLarge,
-                _LW("app.menu.font_large"), 16);
+                _LW("app.menu.font_large"), 24);
             const std::wstring fontSizeLabel = _LFW(
                 "app.menu.list_font_size_cu",
                 std::to_wstring(currentFontSize));
@@ -1868,11 +1868,11 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             needsDesktopFocus = false;
             ShowSettingsWindow(); break;
         case kContextFontSizeSmall: SetItemFontSize(12.0f); break;
-        case kContextFontSizeMedium: SetItemFontSize(15.0f); break;
-        case kContextFontSizeLarge: SetItemFontSize(16.0f); break;
+        case kContextFontSizeMedium: SetItemFontSize(18.0f); break;
+        case kContextFontSizeLarge: SetItemFontSize(24.0f); break;
         case kContextListFontSizeSmall: SetListItemFontSize(12.0f); break;
-        case kContextListFontSizeMedium: SetListItemFontSize(15.0f); break;
-        case kContextListFontSizeLarge: SetListItemFontSize(16.0f); break;
+        case kContextListFontSizeMedium: SetListItemFontSize(18.0f); break;
+        case kContextListFontSizeLarge: SetListItemFontSize(24.0f); break;
         case kContextFontWeightBold: SetItemFontWeight(DWRITE_FONT_WEIGHT_BOLD); break;
         case kContextFontWeightMedium: SetItemFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD); break;
         case kContextFontWeightFine: SetItemFontWeight(DWRITE_FONT_WEIGHT_NORMAL); break;

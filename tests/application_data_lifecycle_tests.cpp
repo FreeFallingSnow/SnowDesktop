@@ -374,7 +374,7 @@ int main()
             legacyFontLayout.listItemFontSize.value_or(0.0f) == 16.0f &&
             !legacyFontLayout.itemFontSizeCu.has_value() &&
             !legacyFontLayout.listItemFontSizeCu.has_value(),
-        "legacy font fields remain available as cu migration inputs");
+        "legacy point font fields remain available as migration inputs");
     const std::string detailsLayoutText =
         "{\"layoutSchemaVersion\":1,"
         "\"widgetContentOptionsSchemaVersion\":4,"

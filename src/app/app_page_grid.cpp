@@ -349,7 +349,8 @@ float DesktopApp::GetMaximumComponentSpacingScale() const
  */
 void DesktopApp::SetItemFontSize(float valueCu)
 {
-    valueCu = std::clamp(valueCu, 10.0f, 24.0f);
+    valueCu = std::clamp(valueCu,
+        kMinimumItemFontSizeCu, kMaximumItemFontSizeCu);
     if (valueCu == itemFontSizeCu_) return;
     itemFontSizeCu_ = valueCu;
     RecreateItemTextFormat();
@@ -373,7 +374,8 @@ void DesktopApp::SetItemFontSize(float valueCu)
 
 void DesktopApp::SetListItemFontSize(float valueCu)
 {
-    valueCu = std::clamp(valueCu, 10.0f, 24.0f);
+    valueCu = std::clamp(valueCu,
+        kMinimumItemFontSizeCu, kMaximumItemFontSizeCu);
     if (valueCu == listItemFontSizeCu_) return;
     listItemFontSizeCu_ = valueCu;
     RecreateComponentListTextFormat();

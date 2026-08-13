@@ -32,7 +32,12 @@ constexpr int kGridMarginY = 6;
 constexpr int kMarginX = kGridMarginX;
 constexpr int kMarginY = 6;
 constexpr int kTextTop = 70;
-constexpr float kItemFontSize = 15.0f; // cu at the baseline desktop grid.
+// The 15 cu baseline keeps legacy row-height geometry stable. New layouts and
+// reset actions use the separate 18 cu configurable default below.
+constexpr float kItemFontSize = 15.0f;
+constexpr float kDefaultItemFontSizeCu = 18.0f;
+constexpr float kMinimumItemFontSizeCu = 10.0f;
+constexpr float kMaximumItemFontSizeCu = 24.0f;
 constexpr float kItemLineHeight = kItemFontSize * 7.0f / 6.0f;
 constexpr float kItemBaseline = kItemFontSize * 5.0f / 6.0f;
 constexpr int kTextCollapsedHeight = 28;
