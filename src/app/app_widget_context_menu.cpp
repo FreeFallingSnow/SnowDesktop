@@ -206,16 +206,33 @@ void DesktopApp::ShowWidgetContextMenu(
         widget.listMode
             ? _LW("app.interact.list_view_state")
             : _LW("app.interact.icon_view_state"));
-    const std::wstring detailsVisibilityLabel = statusLabel(
-        _LW("app.interact.show_details"),
-        widget.showDetails
-            ? _LW("app.interact.on")
-            : _LW("app.interact.off"));
-    const auto appendDetailsToggle = [&]() {
+    HMENU detailsMenu = nullptr;
+    const auto appendDetailsMenu = [&]() {
+        detailsMenu = CreatePopupMenu();
+        if (!detailsMenu) return;
+        AppendMenuW(detailsMenu,
+            MF_STRING | MF_CHECKED | MF_GRAYED,
+            kContextWidgetDetailName,
+            _LW("widget.details.name"));
+        AppendMenuW(detailsMenu,
+            MF_STRING |
+                (widget.detailShowModified ? MF_CHECKED : 0),
+            kContextWidgetDetailModified,
+            _LW("widget.details.modified"));
+        AppendMenuW(detailsMenu,
+            MF_STRING |
+                (widget.detailShowType ? MF_CHECKED : 0),
+            kContextWidgetDetailType,
+            _LW("widget.details.type"));
+        AppendMenuW(detailsMenu,
+            MF_STRING |
+                (widget.detailShowSize ? MF_CHECKED : 0),
+            kContextWidgetDetailSize,
+            _LW("widget.details.size"));
         AppendMenuW(menu,
-            MF_STRING | (widget.listMode ? 0 : MF_GRAYED),
-            kContextWidgetToggleDetails,
-            detailsVisibilityLabel.c_str());
+            MF_POPUP | (widget.listMode ? 0 : MF_GRAYED),
+            reinterpret_cast<UINT_PTR>(detailsMenu),
+            _LW("app.interact.show_details"));
     };
     const std::wstring categoryVisibilityLabel = visibilityLabel(
         _LW("app.interact.file_categories"),
@@ -281,7 +298,7 @@ void DesktopApp::ShowWidgetContextMenu(
             {
                 AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode,
                     displayTypeLabel.c_str());
-                appendDetailsToggle();
+                appendDetailsMenu();
             }
         }
     }
@@ -290,7 +307,7 @@ void DesktopApp::ShowWidgetContextMenu(
         AppendMenuW(menu, MF_STRING,
             kContextWidgetToggleListMode,
             displayTypeLabel.c_str());
-        appendDetailsToggle();
+        appendDetailsMenu();
         AppendMenuW(menu, MF_STRING,
             kContextWidgetToggleSearchBox,
             searchVisibilityLabel.c_str());
@@ -333,7 +350,7 @@ void DesktopApp::ShowWidgetContextMenu(
         AppendMenuW(menu, MF_STRING,
             kContextWidgetToggleListMode,
             displayTypeLabel.c_str());
-        appendDetailsToggle();
+        appendDetailsMenu();
         AppendMenuW(menu, MF_STRING,
             kContextWidgetToggleFileCategories,
             categoryVisibilityLabel.c_str());
@@ -372,7 +389,7 @@ void DesktopApp::ShowWidgetContextMenu(
             autoCollectLabel.c_str());
         AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode,
             displayTypeLabel.c_str());
-        appendDetailsToggle();
+        appendDetailsMenu();
         AppendMenuW(menu, MF_STRING,
             kContextWidgetToggleFileCategories,
             categoryVisibilityLabel.c_str());
@@ -391,7 +408,7 @@ void DesktopApp::ShowWidgetContextMenu(
             kContextPasteCommand, _LW("app.menu.paste"));
         AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode,
             displayTypeLabel.c_str());
-        appendDetailsToggle();
+        appendDetailsMenu();
         AppendMenuW(menu, MF_STRING,
             kContextWidgetToggleFileCategories,
             categoryVisibilityLabel.c_str());
@@ -537,7 +554,9 @@ void DesktopApp::ShowWidgetContextMenu(
         snowdesktop::menu_fluent_glyphs::kAutoCollect);
     setFluentIcon(menu, kContextWidgetToggleListMode,
         snowdesktop::menu_fluent_glyphs::kContentLayout);
-    setFluentIcon(menu, kContextWidgetToggleDetails, L"\uF168");
+    if (detailsMenu)
+        setFluentIcon(menu,
+            reinterpret_cast<UINT_PTR>(detailsMenu), L"\uF168");
     setFluentIcon(menu, kContextWidgetToggleDateGroup,
         snowdesktop::menu_fluent_glyphs::kDateHeader);
     setFluentIcon(menu, kContextWidgetOpenFolder, L"\uF42E");
@@ -711,10 +730,24 @@ void DesktopApp::ShowWidgetContextMenu(
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
         break;
-    case kContextWidgetToggleDetails:
+    case kContextWidgetDetailModified:
+    case kContextWidgetDetailType:
+    case kContextWidgetDetailSize:
         if (!widgets_[widgetIndex].listMode) break;
+        if (command == kContextWidgetDetailModified)
+            widgets_[widgetIndex].detailShowModified =
+                !widgets_[widgetIndex].detailShowModified;
+        else if (command == kContextWidgetDetailType)
+            widgets_[widgetIndex].detailShowType =
+                !widgets_[widgetIndex].detailShowType;
+        else
+            widgets_[widgetIndex].detailShowSize =
+                !widgets_[widgetIndex].detailShowSize;
         widgets_[widgetIndex].showDetails =
-            !widgets_[widgetIndex].showDetails;
+            snowdesktop::list_detail_rules::HasMetadataColumns(
+                widgets_[widgetIndex].detailShowModified,
+                widgets_[widgetIndex].detailShowType,
+                widgets_[widgetIndex].detailShowSize);
         widgets_[widgetIndex].scrollOffset = 0;
         for (auto& container : containers_)
         {

@@ -719,6 +719,38 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             InvalidateRect(hwnd_, &widgets_[wi].bounds, FALSE);
             return;
         }
+        else if (wh == WidgetHit::DetailsModifiedDivider ||
+                 wh == WidgetHit::DetailsTypeDivider ||
+                 wh == WidgetHit::DetailsSizeDivider)
+        {
+            detailColumnResizeActive_ = true;
+            if (wh == WidgetHit::DetailsModifiedDivider)
+            {
+                detailColumnResizeColumn_ =
+                    snowdesktop::list_detail_rules::Column::Modified;
+                detailColumnResizeStartWidth_ =
+                    widgets_[wi].detailModifiedWidth;
+            }
+            else if (wh == WidgetHit::DetailsTypeDivider)
+            {
+                detailColumnResizeColumn_ =
+                    snowdesktop::list_detail_rules::Column::Type;
+                detailColumnResizeStartWidth_ =
+                    widgets_[wi].detailTypeWidth;
+            }
+            else
+            {
+                detailColumnResizeColumn_ =
+                    snowdesktop::list_detail_rules::Column::Size;
+                detailColumnResizeStartWidth_ =
+                    widgets_[wi].detailSizeWidth;
+            }
+            mouseDownWidgetIndex_ = wi;
+            mouseDownHit_ = nullptr;
+            SetCapture(hwnd_);
+            SetCursor(LoadCursorW(nullptr, IDC_SIZEWE));
+            return;
+        }
         else if (wh == WidgetHit::DetailsNameHeader ||
                  wh == WidgetHit::DetailsModifiedHeader ||
                  wh == WidgetHit::DetailsTypeHeader ||

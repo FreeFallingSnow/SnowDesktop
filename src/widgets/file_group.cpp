@@ -232,6 +232,12 @@ public:
         savedCellScale_ = sourceData_->cellScale;
         savedListMode_ = sourceData_->listMode;
         savedShowDetails_ = sourceData_->showDetails;
+        savedDetailShowModified_ = sourceData_->detailShowModified;
+        savedDetailShowType_ = sourceData_->detailShowType;
+        savedDetailShowSize_ = sourceData_->detailShowSize;
+        savedDetailModifiedWidth_ = sourceData_->detailModifiedWidth;
+        savedDetailTypeWidth_ = sourceData_->detailTypeWidth;
+        savedDetailSizeWidth_ = sourceData_->detailSizeWidth;
         savedDateHeaders_ = sourceData_->dateHeaders;
         savedShowCategories_ = sourceData_->showFileCategories;
         savedShowSearch_ = sourceData_->showSearchBox;
@@ -258,6 +264,12 @@ public:
         sourceData_->cellScale = groupData_->cellScale;
         sourceData_->listMode = groupData_->listMode;
         sourceData_->showDetails = groupData_->showDetails;
+        sourceData_->detailShowModified = groupData_->detailShowModified;
+        sourceData_->detailShowType = groupData_->detailShowType;
+        sourceData_->detailShowSize = groupData_->detailShowSize;
+        sourceData_->detailModifiedWidth = groupData_->detailModifiedWidth;
+        sourceData_->detailTypeWidth = groupData_->detailTypeWidth;
+        sourceData_->detailSizeWidth = groupData_->detailSizeWidth;
         sourceData_->dateHeaders = groupData_->dateHeaders;
         sourceData_->showFileCategories =
             groupData_->showFileCategories;
@@ -309,6 +321,12 @@ public:
         sourceData_->cellScale = savedCellScale_;
         sourceData_->listMode = savedListMode_;
         sourceData_->showDetails = savedShowDetails_;
+        sourceData_->detailShowModified = savedDetailShowModified_;
+        sourceData_->detailShowType = savedDetailShowType_;
+        sourceData_->detailShowSize = savedDetailShowSize_;
+        sourceData_->detailModifiedWidth = savedDetailModifiedWidth_;
+        sourceData_->detailTypeWidth = savedDetailTypeWidth_;
+        sourceData_->detailSizeWidth = savedDetailSizeWidth_;
         sourceData_->dateHeaders = savedDateHeaders_;
         sourceData_->showFileCategories = savedShowCategories_;
         sourceData_->showSearchBox = savedShowSearch_;
@@ -337,6 +355,12 @@ private:
     float savedCellScale_ = 1.0f;
     bool savedListMode_ = false;
     bool savedShowDetails_ = false;
+    bool savedDetailShowModified_ = false;
+    bool savedDetailShowType_ = false;
+    bool savedDetailShowSize_ = false;
+    float savedDetailModifiedWidth_ = 160.0f;
+    float savedDetailTypeWidth_ = 120.0f;
+    float savedDetailSizeWidth_ = 90.0f;
     bool savedDateHeaders_ = false;
     bool savedShowCategories_ = false;
     bool savedShowSearch_ = false;
@@ -1569,7 +1593,10 @@ WidgetHit FileGroup::HitTestWidget(POINT pt) const
                 childHit == WidgetHit::DetailsNameHeader ||
                 childHit == WidgetHit::DetailsModifiedHeader ||
                 childHit == WidgetHit::DetailsTypeHeader ||
-                childHit == WidgetHit::DetailsSizeHeader)
+                childHit == WidgetHit::DetailsSizeHeader ||
+                childHit == WidgetHit::DetailsModifiedDivider ||
+                childHit == WidgetHit::DetailsTypeDivider ||
+                childHit == WidgetHit::DetailsSizeDivider)
                 return childHit;
         }
     }

@@ -1610,7 +1610,11 @@ int ScrollingItemWidget::GetDetailsHeaderHeight() const
 
 bool ScrollingItemWidget::IsDetailsVisible() const
 {
-    return data_ && data_->listMode && data_->showDetails;
+    return data_ && data_->listMode &&
+        snowdesktop::list_detail_rules::HasMetadataColumns(
+            data_->detailShowModified,
+            data_->detailShowType,
+            data_->detailShowSize);
 }
 
 RECT ScrollingItemWidget::ApplyDetailsHeaderToViewport(
@@ -1639,8 +1643,13 @@ ScrollingItemWidget::GetDetailsColumns(
 {
     return snowdesktop::list_detail_rules::BuildColumns(
         std::max(1, availableWidth),
-        Cu(300.0f), Cu(390.0f), Cu(510.0f),
-        Cu(160.0f), Cu(120.0f), Cu(90.0f));
+        Cu(140.0f),
+        data_ && data_->detailShowModified,
+        data_ && data_->detailShowType,
+        data_ && data_->detailShowSize,
+        Cu(data_ ? data_->detailModifiedWidth : 160.0f),
+        Cu(data_ ? data_->detailTypeWidth : 120.0f),
+        Cu(data_ ? data_->detailSizeWidth : 90.0f));
 }
 
 const DesktopWidget* ScrollingItemWidget::GetDetailsSortData() const
@@ -1656,12 +1665,6 @@ void ScrollingItemWidget::DrawDetailsHeader(
     if (IsRectEmptyRect(header)) return;
 
     const bool light = app_->IsLightContentTheme();
-    app_->DrawD2DFilledRectangle(
-        context, header,
-        light
-            ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f)
-            : D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.12f),
-        D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
     RECT separator = MakeRect(
         header.left, header.bottom - 1,
         header.right, header.bottom);
@@ -1691,6 +1694,22 @@ void ScrollingItemWidget::DrawDetailsHeader(
     RECT size = columns.showSize
         ? MakeRect(left, header.top, header.right, header.bottom)
         : RECT{};
+
+    const D2D1_COLOR_F separatorColor = light
+        ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.12f)
+        : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.14f);
+    const auto drawDivider = [&](const RECT& column) {
+        if (IsRectEmptyRect(column)) return;
+        const RECT divider = MakeRect(
+            column.left, header.top + Cu(5.0f),
+            column.left + 1, header.bottom - Cu(5.0f));
+        app_->DrawD2DFilledRectangle(
+            context, divider, separatorColor,
+            D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+    };
+    drawDivider(modified);
+    drawDivider(type);
+    drawDivider(size);
 
     const DesktopWidget* sortData = GetDetailsSortData();
     const auto sorted = sortData
@@ -1722,7 +1741,7 @@ void ScrollingItemWidget::DrawDetailsHeader(
             snowdesktop::list_detail_rules::Column::Name),
         name, format, color,
         DWRITE_TEXT_ALIGNMENT_LEADING,
-        DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        DWRITE_PARAGRAPH_ALIGNMENT_CENTER, false);
     if (!IsRectEmptyRect(modified))
     {
         modified.left += pad;
@@ -1733,7 +1752,7 @@ void ScrollingItemWidget::DrawDetailsHeader(
                 snowdesktop::list_detail_rules::Column::Modified),
             modified, format, color,
             DWRITE_TEXT_ALIGNMENT_LEADING,
-            DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            DWRITE_PARAGRAPH_ALIGNMENT_CENTER, false);
     }
     if (!IsRectEmptyRect(type))
     {
@@ -1745,7 +1764,7 @@ void ScrollingItemWidget::DrawDetailsHeader(
                 snowdesktop::list_detail_rules::Column::Type),
             type, format, color,
             DWRITE_TEXT_ALIGNMENT_LEADING,
-            DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            DWRITE_PARAGRAPH_ALIGNMENT_CENTER, false);
     }
     if (!IsRectEmptyRect(size))
     {
@@ -1757,7 +1776,7 @@ void ScrollingItemWidget::DrawDetailsHeader(
                 snowdesktop::list_detail_rules::Column::Size),
             size, format, color,
             DWRITE_TEXT_ALIGNMENT_TRAILING,
-            DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            DWRITE_PARAGRAPH_ALIGNMENT_CENTER, false);
     }
 }
 
@@ -1770,6 +1789,18 @@ WidgetHit ScrollingItemWidget::HitTestDetailsHeader(
         return WidgetHit::None;
     const auto columns = GetDetailsColumns(
         header.right - header.left);
+    switch (snowdesktop::list_detail_rules::HitDivider(
+        columns, point.x - header.left, Cu(4.0f)))
+    {
+    case snowdesktop::list_detail_rules::Column::Modified:
+        return WidgetHit::DetailsModifiedDivider;
+    case snowdesktop::list_detail_rules::Column::Type:
+        return WidgetHit::DetailsTypeDivider;
+    case snowdesktop::list_detail_rules::Column::Size:
+        return WidgetHit::DetailsSizeDivider;
+    default:
+        break;
+    }
     switch (snowdesktop::list_detail_rules::HitColumn(
         columns, point.x - header.left))
     {
@@ -1989,7 +2020,7 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
             context, FormatListModifiedTime(details.modifiedTime),
             modified, format, color,
             DWRITE_TEXT_ALIGNMENT_LEADING,
-            DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            DWRITE_PARAGRAPH_ALIGNMENT_CENTER, false);
     }
     if (!IsRectEmptyRect(type))
     {
@@ -1999,7 +2030,7 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
             context, details.typeName,
             type, format, color,
             DWRITE_TEXT_ALIGNMENT_LEADING,
-            DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            DWRITE_PARAGRAPH_ALIGNMENT_CENTER, false);
     }
     if (!IsRectEmptyRect(size))
     {
@@ -2010,7 +2041,7 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
                 ? L"" : FormatListFileSize(details.fileSize),
             size, format, color,
             DWRITE_TEXT_ALIGNMENT_TRAILING,
-            DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            DWRITE_PARAGRAPH_ALIGNMENT_CENTER, false);
     }
 }
 

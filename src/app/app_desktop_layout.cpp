@@ -157,6 +157,9 @@ void DesktopApp::RebuildContainersAndItems()
     {
         mouseDown_ = false;
         mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+        detailColumnResizeActive_ = false;
+        detailColumnResizeColumn_ =
+            snowdesktop::list_detail_rules::Column::None;
         HideDragHintWindow();
         ReleaseCapture();
     }

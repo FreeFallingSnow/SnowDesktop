@@ -2945,6 +2945,10 @@ private:
     enum class WidgetAction { None, PendingMove, PendingResize, Move, Resize };
     WidgetAction widgetAction_ = WidgetAction::None;
     bool middleButtonWidgetMove_ = false;
+    bool detailColumnResizeActive_ = false;
+    snowdesktop::list_detail_rules::Column detailColumnResizeColumn_ =
+        snowdesktop::list_detail_rules::Column::None;
+    float detailColumnResizeStartWidth_ = 0.0f;
     GridCell widgetDragOriginalCell_{};
     GridSpan widgetDragOriginalSpan_{};
     GridCell widgetPreviewCell_{};

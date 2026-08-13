@@ -69,6 +69,9 @@ enum class WidgetHit {
     DetailsModifiedHeader, ///< 详细信息：修改日期列表头
     DetailsTypeHeader,  ///< 详细信息：类型列表头
     DetailsSizeHeader,  ///< 详细信息：大小列表头
+    DetailsModifiedDivider, ///< 详细信息：修改日期列宽分隔线
+    DetailsTypeDivider, ///< 详细信息：类型列宽分隔线
+    DetailsSizeDivider, ///< 详细信息：大小列宽分隔线
 };
 
 /**

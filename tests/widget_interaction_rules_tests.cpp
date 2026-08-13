@@ -751,31 +751,61 @@ void TestListDetailRules()
             22.5f) == 73,
         "row height applies the same formula at component scale");
 
-    const auto narrow = details::BuildColumns(
-        299, 300, 390, 510, 160, 120, 90);
-    Check(narrow.nameWidth == 299 && !narrow.showModified &&
-            !narrow.showType && !narrow.showSize,
-        "detail widths below 300 CU show only the name column");
-    const auto medium = details::BuildColumns(
-        300, 300, 390, 510, 160, 120, 90);
-    Check(medium.nameWidth == 140 && medium.showModified &&
-            !medium.showType && !medium.showSize,
-        "300 CU detail widths show name and modified columns");
-    const auto wide = details::BuildColumns(
-        390, 300, 390, 510, 160, 120, 90);
-    Check(wide.nameWidth == 140 && wide.showModified &&
-            !wide.showType && wide.showSize,
-        "390 CU detail widths add size while keeping type hidden");
+    const auto nameOnly = details::BuildColumns(
+        299, 140, false, false, false, 160, 120, 90);
+    Check(nameOnly.nameWidth == 299 &&
+            !nameOnly.showModified && !nameOnly.showType &&
+            !nameOnly.showSize &&
+            !details::HasMetadataColumns(false, false, false),
+        "name-only list mode uses the full width without a detail header");
+    const auto modified = details::BuildColumns(
+        300, 140, true, false, false, 160, 120, 90);
+    Check(modified.nameWidth == 140 &&
+            modified.modifiedWidth == 160 &&
+            modified.showModified && !modified.showType &&
+            !modified.showSize,
+        "individually enabled modified columns retain their preferred width");
+    const auto sizeOnly = details::BuildColumns(
+        230, 140, false, false, true, 160, 120, 90);
+    Check(sizeOnly.nameWidth == 140 && sizeOnly.sizeWidth == 90 &&
+            !sizeOnly.showModified && !sizeOnly.showType &&
+            sizeOnly.showSize,
+        "detail columns are selected independently of component width");
     const auto all = details::BuildColumns(
-        510, 300, 390, 510, 160, 120, 90);
+        510, 140, true, true, true, 160, 120, 90);
     Check(all.nameWidth == 140 && all.showModified &&
             all.showType && all.showSize,
-        "510 CU detail widths show all four columns");
+        "all selected detail columns fit at their baseline widths");
     Check(details::HitColumn(all, 20) == details::Column::Name &&
             details::HitColumn(all, 200) == details::Column::Modified &&
             details::HitColumn(all, 330) == details::Column::Type &&
             details::HitColumn(all, 460) == details::Column::Size,
         "fixed detail headers route clicks to the visible column");
+    Check(details::HitDivider(all, 140, 3) ==
+                details::Column::Modified &&
+            details::HitDivider(all, 300, 3) ==
+                details::Column::Type &&
+            details::HitDivider(all, 420, 3) ==
+                details::Column::Size &&
+            details::HitDivider(all, 250, 3) ==
+                details::Column::None,
+        "detail header dividers take priority within their resize tolerance");
+    const auto custom = details::BuildColumns(
+        650, 140, true, true, true, 200, 110, 75);
+    Check(custom.nameWidth == 265 && custom.modifiedWidth == 200 &&
+            custom.typeWidth == 110 && custom.sizeWidth == 75,
+        "custom detail widths leave the remaining space to the name column");
+    const auto constrained = details::BuildColumns(
+        300, 140, true, true, true, 160, 120, 90);
+    Check(constrained.nameWidth >= 140 &&
+            constrained.modifiedWidth == 69 &&
+            constrained.typeWidth == 51 &&
+            constrained.sizeWidth == 38,
+        "narrow components proportionally constrain selected detail columns");
+    Check(details::ClampPreferredWidth(12.0f) == 50.0f &&
+            details::ClampPreferredWidth(210.0f) == 210.0f &&
+            details::ClampPreferredWidth(900.0f) == 480.0f,
+        "dragged detail widths stay within persisted limits");
     Check(details::DefaultAscending(details::Column::Name) &&
             details::DefaultAscending(details::Column::Type) &&
             !details::DefaultAscending(details::Column::Modified) &&

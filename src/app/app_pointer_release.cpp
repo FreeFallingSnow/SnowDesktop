@@ -78,6 +78,7 @@ void DesktopApp::OnMouseLeave()
             dragSession_.IsActive(),
             widgetAction_ != WidgetAction::None ||
                 middleButtonWidgetMove_ ||
+                detailColumnResizeActive_ ||
                 luaWidgetPanelMouseDown_);
     if (canClearPassiveHover)
     {
@@ -183,6 +184,7 @@ void DesktopApp::ReconcileDesktopHoverState(
             dragSession_.IsActive(),
             widgetAction_ != WidgetAction::None ||
                 middleButtonWidgetMove_ ||
+                detailColumnResizeActive_ ||
                 luaWidgetPanelMouseDown_))
     {
         // Do not mark this foreground state as reconciled. The periodic
@@ -696,6 +698,23 @@ void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
     int dropPreviewMods = 0;
     bool commitVisualBeforeDrop = false;
     HideDragHintWindow();
+
+    if (detailColumnResizeActive_)
+    {
+        const size_t widgetIndex = mouseDownWidgetIndex_;
+        detailColumnResizeActive_ = false;
+        detailColumnResizeColumn_ =
+            snowdesktop::list_detail_rules::Column::None;
+        detailColumnResizeStartWidth_ = 0.0f;
+        mouseDown_ = false;
+        mouseDownHit_ = nullptr;
+        mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+        ReleaseCapture();
+        SaveLayoutSlots();
+        if (widgetIndex < widgets_.size())
+            InvalidateRect(hwnd_, &widgets_[widgetIndex].bounds, FALSE);
+        return;
+    }
 
     if (luaWidgetPanelMouseDown_ &&
         !luaWidgetPanelRequest_.widgetId.empty())

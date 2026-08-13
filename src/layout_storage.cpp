@@ -342,6 +342,24 @@ bool DecodeWidgets(const JsonValue& root, Document& document,
                 record.listMode, error) ||
             !ReadBoolean(object, "showDetails", path + ".showDetails",
                 record.showDetails, error) ||
+            !ReadBoolean(object, "detailShowModified",
+                path + ".detailShowModified",
+                record.detailShowModified, error) ||
+            !ReadBoolean(object, "detailShowType",
+                path + ".detailShowType",
+                record.detailShowType, error) ||
+            !ReadBoolean(object, "detailShowSize",
+                path + ".detailShowSize",
+                record.detailShowSize, error) ||
+            !ReadOptionalFloat(object, "detailModifiedWidth",
+                path + ".detailModifiedWidth",
+                record.detailModifiedWidth, error) ||
+            !ReadOptionalFloat(object, "detailTypeWidth",
+                path + ".detailTypeWidth",
+                record.detailTypeWidth, error) ||
+            !ReadOptionalFloat(object, "detailSizeWidth",
+                path + ".detailSizeWidth",
+                record.detailSizeWidth, error) ||
             !ReadString(object, "contentSortColumn",
                 path + ".contentSortColumn",
                 record.contentSortColumn, error) ||

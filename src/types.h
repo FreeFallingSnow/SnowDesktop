@@ -467,6 +467,12 @@ struct DesktopWidget
     bool autoCollect = false;
     bool listMode = false;
     bool showDetails = false;
+    bool detailShowModified = false;
+    bool detailShowType = false;
+    bool detailShowSize = false;
+    float detailModifiedWidth = 160.0f;
+    float detailTypeWidth = 120.0f;
+    float detailSizeWidth = 90.0f;
     snowdesktop::list_detail_rules::Column contentSortColumn =
         snowdesktop::list_detail_rules::Column::None;
     bool contentSortAscending = true;

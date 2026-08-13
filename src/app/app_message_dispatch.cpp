@@ -77,6 +77,38 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         }
         break;
     }
+    case WM_SETCURSOR:
+    {
+        if (LOWORD(lp) != HTCLIENT) break;
+        bool resizeCursor = detailColumnResizeActive_;
+        POINT point{};
+        if (!resizeCursor && GetCursorPos(&point) &&
+            ScreenToClient(hwnd_, &point))
+        {
+            for (auto it = containers_.rbegin();
+                 it != containers_.rend(); ++it)
+            {
+                if (desktopIconsHidden_ &&
+                    !IsRetainedContainer(it->get()))
+                    continue;
+                auto* widget =
+                    dynamic_cast<WidgetContainer*>(it->get());
+                if (!widget) continue;
+                const WidgetHit hit = widget->HitTestWidget(point);
+                resizeCursor =
+                    hit == WidgetHit::DetailsModifiedDivider ||
+                    hit == WidgetHit::DetailsTypeDivider ||
+                    hit == WidgetHit::DetailsSizeDivider;
+                if (resizeCursor || hit != WidgetHit::None) break;
+            }
+        }
+        if (resizeCursor)
+        {
+            SetCursor(LoadCursorW(nullptr, IDC_SIZEWE));
+            return TRUE;
+        }
+        break;
+    }
     case WM_CTLCOLOREDIT:
         if (reinterpret_cast<HWND>(lp) == luaInlineEdit_)
         {
@@ -145,6 +177,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         const bool widgetInteractionActive =
             middleButtonWidgetMove_ ||
             widgetAction_ != WidgetAction::None ||
+            detailColumnResizeActive_ ||
             luaWidgetPanelMouseDown_;
         if (snowdesktop::desktop_hover_rules::
                 ShouldResamplePassiveMouseMove(

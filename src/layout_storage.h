@@ -55,6 +55,12 @@ struct WidgetRecord
     bool autoCollect = false;
     bool listMode = false;
     bool showDetails = false;
+    bool detailShowModified = false;
+    bool detailShowType = false;
+    bool detailShowSize = false;
+    std::optional<float> detailModifiedWidth;
+    std::optional<float> detailTypeWidth;
+    std::optional<float> detailSizeWidth;
     std::string contentSortColumn = "none";
     bool contentSortAscending = true;
     bool dateHeaders = false;

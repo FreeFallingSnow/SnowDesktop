@@ -101,6 +101,8 @@ void DesktopApp::LoadLayoutSlots()
     const bool hasTrustedWidgetTitleMode = widgetTitleSchemaVersion >= 1;
     const bool hasTrustedWidgetContentOptions =
         document.widgetContentOptionsSchemaVersion.value_or(0) >= 1;
+    const bool hasTrustedDetailColumns =
+        document.widgetContentOptionsSchemaVersion.value_or(0) >= 3;
 
     if (document.firstPageMonitor)
         firstPageMonitorId_ = Utf8ToWide(*document.firstPageMonitor);
@@ -345,7 +347,32 @@ void DesktopApp::LoadLayoutSlots()
         widget.gridSpan.rows = std::max(1, saved.height);
         widget.autoCollect = saved.autoCollect;
         widget.listMode = saved.listMode;
-        widget.showDetails = saved.showDetails;
+        if (hasTrustedDetailColumns)
+        {
+            widget.detailShowModified = saved.detailShowModified;
+            widget.detailShowType = saved.detailShowType;
+            widget.detailShowSize = saved.detailShowSize;
+        }
+        else if (saved.showDetails)
+        {
+            widget.detailShowModified = true;
+            widget.detailShowType = true;
+            widget.detailShowSize = true;
+        }
+        widget.detailModifiedWidth =
+            snowdesktop::list_detail_rules::ClampPreferredWidth(
+                saved.detailModifiedWidth.value_or(160.0f));
+        widget.detailTypeWidth =
+            snowdesktop::list_detail_rules::ClampPreferredWidth(
+                saved.detailTypeWidth.value_or(120.0f));
+        widget.detailSizeWidth =
+            snowdesktop::list_detail_rules::ClampPreferredWidth(
+                saved.detailSizeWidth.value_or(90.0f));
+        widget.showDetails = snowdesktop::list_detail_rules::
+            HasMetadataColumns(
+                widget.detailShowModified,
+                widget.detailShowType,
+                widget.detailShowSize);
         widget.dateHeaders =
             widget.type == DesktopWidgetType::CollectionGroup
                 ? false : saved.dateHeaders;
@@ -761,7 +788,7 @@ void DesktopApp::SaveLayoutSlots()
 
     file << "{\n  \"layoutSchemaVersion\": 1"
          << ",\n  \"widgetTitleSchemaVersion\": 1"
-         << ",\n  \"widgetContentOptionsSchemaVersion\": 2"
+         << ",\n  \"widgetContentOptionsSchemaVersion\": 3"
          << ",\n  \"firstPageMonitor\": \"" << JsonEscapeUtf8(firstPageMonitorId_)
          << "\",\n  \"lastPageMonitor\": \""  << JsonEscapeUtf8(lastPageMonitorId_)
          << "\",\n  \"dockEnabled\": " << (generalSettings_.dockEnabled ? "true" : "false")
@@ -877,7 +904,24 @@ void DesktopApp::SaveLayoutSlots()
              << ", \"h\": " << std::max(1, w.gridSpan.rows)
              << ", \"autoCollect\": " << (w.autoCollect ? "true" : "false")
              << ", \"listMode\": " << (w.listMode ? "true" : "false")
-             << ", \"showDetails\": " << (w.showDetails ? "true" : "false")
+             << ", \"showDetails\": "
+             << (snowdesktop::list_detail_rules::HasMetadataColumns(
+                    w.detailShowModified,
+                    w.detailShowType,
+                    w.detailShowSize)
+                    ? "true" : "false")
+             << ", \"detailShowModified\": "
+             << (w.detailShowModified ? "true" : "false")
+             << ", \"detailShowType\": "
+             << (w.detailShowType ? "true" : "false")
+             << ", \"detailShowSize\": "
+             << (w.detailShowSize ? "true" : "false")
+             << ", \"detailModifiedWidth\": "
+             << w.detailModifiedWidth
+             << ", \"detailTypeWidth\": "
+             << w.detailTypeWidth
+             << ", \"detailSizeWidth\": "
+             << w.detailSizeWidth
              << ", \"contentSortColumn\": \""
              << snowdesktop::list_detail_rules::ToString(
                     w.contentSortColumn)

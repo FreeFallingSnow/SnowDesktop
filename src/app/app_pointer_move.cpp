@@ -149,6 +149,38 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         return;
     }
 
+    if (detailColumnResizeActive_)
+    {
+        if (mouseDownWidgetIndex_ < widgets_.size())
+        {
+            auto& widget = widgets_[mouseDownWidgetIndex_];
+            const float scale = std::max(0.01f, widget.cellScale);
+            const float delta = static_cast<float>(
+                mouseDownPoint_.x - current.x) / scale;
+            const float width = snowdesktop::list_detail_rules::
+                ClampPreferredWidth(
+                    detailColumnResizeStartWidth_ + delta);
+            switch (detailColumnResizeColumn_)
+            {
+            case snowdesktop::list_detail_rules::Column::Modified:
+                widget.detailModifiedWidth = width;
+                break;
+            case snowdesktop::list_detail_rules::Column::Type:
+                widget.detailTypeWidth = width;
+                break;
+            case snowdesktop::list_detail_rules::Column::Size:
+                widget.detailSizeWidth = width;
+                break;
+            default:
+                break;
+            }
+            InvalidateRect(hwnd_, &widget.bounds, FALSE);
+        }
+        SetCursor(LoadCursorW(nullptr, IDC_SIZEWE));
+        PresentDesktopPointerUpdate();
+        return;
+    }
+
     if (!dragSession_.IsActive() && widgetAction_ == WidgetAction::None &&
         mouseDownWidgetIndex_ < widgets_.size() &&
         widgets_[mouseDownWidgetIndex_].type == DesktopWidgetType::LuaScript &&
