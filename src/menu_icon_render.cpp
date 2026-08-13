@@ -45,6 +45,21 @@ void FillRoundedRect(HDC dc, const RECT& bounds, int radius,
     DeleteObject(brush);
 }
 
+COLORREF BlendColor(COLORREF background, COLORREF foreground,
+    int foregroundCoverage)
+{
+    const int coverage = std::clamp(foregroundCoverage, 0, 255);
+    const auto blendChannel = [coverage](int backgroundChannel,
+                                  int foregroundChannel) {
+        return (backgroundChannel * (255 - coverage) +
+            foregroundChannel * coverage + 127) / 255;
+    };
+    return RGB(
+        blendChannel(GetRValue(background), GetRValue(foreground)),
+        blendChannel(GetGValue(background), GetGValue(foreground)),
+        blendChannel(GetBValue(background), GetBValue(foreground)));
+}
+
 const wchar_t* ResolveQuickGlyph(
     MenuQuickIcon icon, const wchar_t* fallback)
 {
@@ -653,15 +668,17 @@ void DrawCheckmark(HDC dc, const RECT& bounds, const Metrics& metrics,
 }
 
 void DrawSubmenuArrow(HDC dc, const RECT& bounds,
-    const Metrics& metrics, COLORREF color)
+    const Metrics& metrics, COLORREF color, COLORREF background)
 {
     const int centerX = bounds.right - metrics.rightPadding -
         metrics.arrowColumnWidth / 2;
     const int centerY = (bounds.top + bounds.bottom) / 2;
     const int halfWidth = std::max(2, metrics.arrowColumnWidth / 8);
     const int halfHeight = std::max(3, metrics.arrowColumnWidth / 4);
+    const COLORREF strokeColor = BlendColor(
+        background, color, metrics.submenuArrowStrokeCoverage);
     HPEN pen = CreatePen(PS_SOLID,
-        metrics.submenuArrowStrokeWidth, color);
+        metrics.submenuArrowStrokeWidth, strokeColor);
     if (!pen)
         return;
     HGDIOBJ oldPen = SelectObject(dc, pen);
@@ -700,6 +717,16 @@ Palette ResolvePalette(bool lightTheme)
 Metrics ResolveMetrics(UINT dpi)
 {
     const UINT effectiveDpi = dpi > 0 ? dpi : USER_DEFAULT_SCREEN_DPI;
+    // GDI accepts integer geometric pen widths only. Use the ceiling of the
+    // desired 1.5-DIP stroke and reduce foreground coverage proportionally,
+    // yielding an equivalent fractional visual weight at each monitor DPI.
+    constexpr int strokeDenominator = 2 * USER_DEFAULT_SCREEN_DPI;
+    const int strokeNumerator = 3 * static_cast<int>(effectiveDpi);
+    const int submenuArrowStrokeWidth = std::max(1,
+        (strokeNumerator + strokeDenominator - 1) / strokeDenominator);
+    const int submenuArrowStrokeCoverage = std::clamp(MulDiv(
+        strokeNumerator, 255,
+        strokeDenominator * submenuArrowStrokeWidth), 1, 255);
     return {
         Scale(32, effectiveDpi),
         Scale(8, effectiveDpi),
@@ -712,7 +739,8 @@ Metrics ResolveMetrics(UINT dpi)
         Scale(7, effectiveDpi),
         Scale(9, effectiveDpi),
         Scale(16, effectiveDpi),
-        Scale(2, effectiveDpi),
+        submenuArrowStrokeWidth,
+        submenuArrowStrokeCoverage,
         Scale(52, effectiveDpi),
         Scale(46, effectiveDpi),
         Scale(64, effectiveDpi),
@@ -861,7 +889,11 @@ bool DrawItem(HDC dc, HFONT textFont, HFONT iconFont,
         SelectObject(dc, oldFont);
 
     if (item.hasSubmenu)
-        DrawSubmenuArrow(dc, bounds, metrics, foreground);
+    {
+        const COLORREF arrowBackground = selected && !disabled
+            ? palette.hoverBackground : palette.background;
+        DrawSubmenuArrow(dc, bounds, metrics, foreground, arrowBackground);
+    }
 
     SetTextColor(dc, oldTextColor);
     SetBkMode(dc, oldBackgroundMode);

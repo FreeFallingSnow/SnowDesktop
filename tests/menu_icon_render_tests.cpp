@@ -216,8 +216,15 @@ int wmain(int argc, wchar_t** argv)
             metrics96.quickActionTextFontHeight == 12,
         "96-DPI menu text keeps a readable minimum size");
     Expect(metrics96.submenuArrowStrokeWidth == 2 &&
-            metrics192.submenuArrowStrokeWidth == 4,
-        "submenu chevron keeps a readable DPI-scaled stroke weight");
+            metrics96.submenuArrowStrokeCoverage == 191,
+        "96-DPI submenu chevron uses an effective 1.5-pixel stroke");
+    Expect(metrics120.submenuArrowStrokeWidth == 2 &&
+            metrics120.submenuArrowStrokeCoverage == 239 &&
+            metrics144.submenuArrowStrokeWidth == 3 &&
+            metrics144.submenuArrowStrokeCoverage == 191 &&
+            metrics192.submenuArrowStrokeWidth == 3 &&
+            metrics192.submenuArrowStrokeCoverage == 255,
+        "fractional submenu chevron weight scales across common DPIs");
     Expect(metrics192.textFontHeight ==
             metrics96.textFontHeight * 2 &&
             metrics192.quickActionTextFontHeight ==
@@ -302,6 +309,21 @@ int wmain(int argc, wchar_t** argv)
     };
     const RECT arrowInk = FindPixelsDifferentFromColorInRect(
         pixels, kWidth, kHeight, arrowColumn, light.background);
+    const auto blendChannel = [](int background, int foreground,
+                                  int coverage) {
+        return (background * (255 - coverage) +
+            foreground * coverage + 127) / 255;
+    };
+    const COLORREF expectedArrowColor = RGB(
+        blendChannel(GetRValue(light.background), GetRValue(light.text),
+            metrics96.submenuArrowStrokeCoverage),
+        blendChannel(GetGValue(light.background), GetGValue(light.text),
+            metrics96.submenuArrowStrokeCoverage),
+        blendChannel(GetBValue(light.background), GetBValue(light.text),
+            metrics96.submenuArrowStrokeCoverage));
+    Expect(CountColorInRect(pixels, kWidth, kHeight,
+            arrowColumn, expectedArrowColor) > 0,
+        "submenu chevron applies fractional foreground coverage");
     Expect(arrowInk.right - arrowInk.left >= 4 &&
             arrowInk.bottom - arrowInk.top >= 7,
         "96-DPI submenu chevron keeps a complete visible shape");
