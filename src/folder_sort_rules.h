@@ -73,9 +73,10 @@ inline void StableSort(
         [mode, ascending](
             const Entry& a,
             const Entry& b) {
-            // Folder stacks always keep directories before files. The
-            // requested direction only applies inside each group.
-            if (a.isDirectory != b.isDirectory)
+            // Name and type views keep directories grouped before files.
+            // Modified-time views compare every entry on the same timeline.
+            if (mode != kModified &&
+                a.isDirectory != b.isDirectory)
                 return a.isDirectory;
 
             int comparison = 0;

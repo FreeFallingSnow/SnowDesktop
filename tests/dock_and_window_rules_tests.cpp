@@ -695,16 +695,40 @@ int main()
         "folder popup name sort must keep directories first");
     folderSort::StableSort(
         sortEntries,
-        folderSort::kModified, false);
+        folderSort::kName, false);
     Check(
         sortEntries[0].name == L"folder-b" &&
             sortEntries[1].name ==
                 L"folder-a" &&
             sortEntries[2].name ==
+                L"zeta.txt" &&
+            sortEntries[3].name ==
+                L"alpha.png",
+        "folder popup descending name sort must keep directories first");
+    folderSort::StableSort(
+        sortEntries,
+        folderSort::kModified, false);
+    Check(
+        sortEntries[0].name == L"folder-b" &&
+            sortEntries[1].name ==
+                L"alpha.png" &&
+            sortEntries[2].name ==
+                L"zeta.txt" &&
+            sortEntries[3].name ==
+                L"folder-a",
+        "folder popup descending date sort must mix files and directories by cached time");
+    folderSort::StableSort(
+        sortEntries,
+        folderSort::kModified, true);
+    Check(
+        sortEntries[0].name == L"folder-a" &&
+            sortEntries[1].name ==
+                L"zeta.txt" &&
+            sortEntries[2].name ==
                 L"alpha.png" &&
             sortEntries[3].name ==
-                L"zeta.txt",
-        "folder popup date sort must use cached times and preserve directory grouping");
+                L"folder-b",
+        "folder popup ascending date sort must mix files and directories by cached time");
     folderSort::StableSort(
         sortEntries,
         folderSort::kType, true);
@@ -716,6 +740,18 @@ int main()
             sortEntries[3].name ==
                 L"zeta.txt",
         "folder popup type sort must compare extensions within the file group");
+    folderSort::StableSort(
+        sortEntries,
+        folderSort::kType, false);
+    Check(
+        sortEntries[0].name == L"folder-b" &&
+            sortEntries[1].name ==
+                L"folder-a" &&
+            sortEntries[2].name ==
+                L"zeta.txt" &&
+            sortEntries[3].name ==
+                L"alpha.png",
+        "folder popup descending type sort must keep directories first");
     Check(
         folderSort::NormalizeMode(99) ==
             folderSort::kManual,
