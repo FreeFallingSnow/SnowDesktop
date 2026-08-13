@@ -97,6 +97,14 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
     }
 
     POINT current{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+    if (KeepHoverOnlyShortcutLaunchSuppression(current))
+    {
+        // Synthetic or small in-frame mouse moves can arrive while a slow
+        // ShellExecute call is handing off to the target. Keep the source
+        // widget hidden until the pointer actually leaves its frame.
+        lastMousePoint_ = { LONG_MIN, LONG_MIN };
+        return;
+    }
     POINT oldMouse = lastMousePoint_;
     lastMousePoint_ = current;
     UpdateSystemTaskbarRevealGuard();

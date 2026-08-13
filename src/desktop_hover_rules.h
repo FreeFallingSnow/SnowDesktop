@@ -52,6 +52,23 @@ constexpr bool ShouldPresentSynchronously(
         continuousPointerSurface;
 }
 
+constexpr bool ShouldBeginShortcutLaunchSuppression(
+    bool showOnHoverOnly,
+    bool shortcutPath)
+{
+    return showOnHoverOnly && shortcutPath;
+}
+
+constexpr bool ShouldKeepShortcutLaunchSuppression(
+    bool suppressionActive,
+    bool pointerOnDesktopSurface,
+    bool pointerInsideSourceFrame)
+{
+    return suppressionActive &&
+        pointerOnDesktopSurface &&
+        pointerInsideSourceFrame;
+}
+
 constexpr bool ShouldActivateFromSurfaceSample(
     bool pointerOnDesktopSurface,
     bool passiveHoverCleared,

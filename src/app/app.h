@@ -683,6 +683,12 @@ private:
     void CommitDragVisualEndBeforeShellOperation();
     /** @brief 同步呈现被动悬浮可见性变化。 */
     void PresentPassiveHoverVisualChange();
+    /** @brief 在悬浮组件启动快捷方式前隐藏内容，避免同步 Shell 启动阻塞视觉响应。 */
+    void BeginHoverOnlyShortcutLaunchSuppression(const RECT& sourceFrame);
+    /** @brief 快捷方式启动失败时恢复启动前的悬浮状态。 */
+    void CancelHoverOnlyShortcutLaunchSuppression();
+    /** @brief 判断启动抑制在当前桌面指针位置是否仍应保持。 */
+    bool KeepHoverOnlyShortcutLaunchSuppression(POINT pointerPoint);
     /** @brief 在控件重建后重新绑定拖拽源。 */
     void RebindDragSourceAfterRebuild();
     /**
@@ -2784,6 +2790,9 @@ private:
     // the real cursor. Treating the zero-initialized point as input makes the
     // first frame spuriously hover whatever happens to occupy (0, 0).
     POINT lastMousePoint_{ LONG_MIN, LONG_MIN };
+    bool hoverOnlyShortcutLaunchSuppressed_ = false;
+    RECT hoverOnlyShortcutLaunchSourceFrame_{};
+    POINT hoverOnlyShortcutLaunchRestorePoint_{ LONG_MIN, LONG_MIN };
     SelectionController selectionController_;
     // 组件统一调度令牌：token -> widgetId（manifest 刷新与命名定时器共用）
     std::unordered_map<UINT_PTR, std::wstring> widgetTimerIds_;

@@ -531,8 +531,34 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     FolderEntry* entry = folderIcon->GetFolderEntry();
                     if (entry)
                     {
-                        ShellExecuteW(nullptr, L"open", entry->fullPath.c_str(),
+                        const DesktopWidget* widget =
+                            wc->GetWidgetData();
+                        const wchar_t* extension =
+                            PathFindExtensionW(
+                                entry->fullPath.c_str());
+                        const bool suppressHover =
+                            snowdesktop::desktop_hover_rules::
+                                ShouldBeginShortcutLaunchSuppression(
+                                    widget &&
+                                        widget->showOnHoverOnly,
+                                    extension &&
+                                        _wcsicmp(
+                                            extension,
+                                            L".lnk") == 0);
+                        if (suppressHover)
+                        {
+                            BeginHoverOnlyShortcutLaunchSuppression(
+                                GetStandaloneWidgetFrameRect(
+                                    *widget));
+                        }
+                        const HINSTANCE opened = ShellExecuteW(
+                            nullptr, L"open", entry->fullPath.c_str(),
                             nullptr, nullptr, SW_SHOWNORMAL);
+                        if (suppressHover &&
+                            reinterpret_cast<INT_PTR>(opened) <= 32)
+                        {
+                            CancelHoverOnlyShortcutLaunchSuppression();
+                        }
                         return 0;
                     }
                 }

@@ -33,6 +33,9 @@ bool OpenMissingWidgetWorkshopPage(HWND owner,
 
 void DesktopApp::OnMouseLeave()
 {
+    hoverOnlyShortcutLaunchSuppressed_ = false;
+    hoverOnlyShortcutLaunchSourceFrame_ = {};
+    hoverOnlyShortcutLaunchRestorePoint_ = { LONG_MIN, LONG_MIN };
     POINT cursorScreen{};
     GetCursorPos(&cursorScreen);
     const bool pointerStillInteractsWithDockPreview =
@@ -86,6 +89,53 @@ void DesktopApp::OnMouseLeave()
         InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
+void DesktopApp::BeginHoverOnlyShortcutLaunchSuppression(
+    const RECT& sourceFrame)
+{
+    hoverOnlyShortcutLaunchSuppressed_ = true;
+    hoverOnlyShortcutLaunchSourceFrame_ = sourceFrame;
+    hoverOnlyShortcutLaunchRestorePoint_ = lastMousePoint_;
+    lastMousePoint_ = { LONG_MIN, LONG_MIN };
+    // ShellExecute may synchronously wait for DDE or shortcut resolution. Paint
+    // the hidden content before entering Shell so non-glass pixels do not wait
+    // for the target application's foreground window.
+    PresentPassiveHoverVisualChange();
+}
+
+void DesktopApp::CancelHoverOnlyShortcutLaunchSuppression()
+{
+    if (!hoverOnlyShortcutLaunchSuppressed_)
+        return;
+    hoverOnlyShortcutLaunchSuppressed_ = false;
+    hoverOnlyShortcutLaunchSourceFrame_ = {};
+    lastMousePoint_ = hoverOnlyShortcutLaunchRestorePoint_;
+    hoverOnlyShortcutLaunchRestorePoint_ = { LONG_MIN, LONG_MIN };
+    PresentPassiveHoverVisualChange();
+}
+
+bool DesktopApp::KeepHoverOnlyShortcutLaunchSuppression(
+    POINT pointerPoint)
+{
+    if (!hoverOnlyShortcutLaunchSuppressed_)
+        return false;
+    const bool keep = snowdesktop::desktop_hover_rules::
+        ShouldKeepShortcutLaunchSuppression(
+            true,
+            true,
+            PtInRect(
+                &hoverOnlyShortcutLaunchSourceFrame_,
+                pointerPoint) != FALSE);
+    if (!keep)
+    {
+        hoverOnlyShortcutLaunchSuppressed_ = false;
+        hoverOnlyShortcutLaunchSourceFrame_ = {};
+        hoverOnlyShortcutLaunchRestorePoint_ = {
+            LONG_MIN, LONG_MIN
+        };
+    }
+    return keep;
+}
+
 void DesktopApp::ReconcileDesktopHoverState(
     snowdesktop::desktop_hover_rules::ReconcileMode mode)
 {
@@ -112,12 +162,17 @@ void DesktopApp::ReconcileDesktopHoverState(
     if (TryGetDesktopHoverPointFromCursor(cursorPoint))
     {
         desktopHoverForegroundObservedTick_ = foregroundTick;
+        const bool shortcutLaunchSuppressed =
+            KeepHoverOnlyShortcutLaunchSuppression(cursorPoint);
         const bool passiveHoverCleared =
             lastMousePoint_.x == LONG_MIN &&
             lastMousePoint_.y == LONG_MIN;
         if (snowdesktop::desktop_hover_rules::
                 ShouldActivateFromSurfaceSample(
-                    true, passiveHoverCleared, mode,
+                    true,
+                    passiveHoverCleared &&
+                        !shortcutLaunchSuppressed,
+                    mode,
                     foregroundSettled))
         {
             lastMousePoint_ = cursorPoint;
