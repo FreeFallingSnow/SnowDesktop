@@ -1,4 +1,5 @@
 #include "widget_layout_context.h"
+#include "font_cu_rules.h"
 
 #include <iostream>
 
@@ -21,7 +22,6 @@ struct TestRenderState
     int gridGapY = 0;
     int barHeight = 0;
     DWRITE_FONT_WEIGHT itemFontWeight = DWRITE_FONT_WEIGHT_NORMAL;
-    float itemFontSizeScale = 1.0f;
 };
 
 void TestNestedWidgetMetricsRestoreInOrder()
@@ -29,11 +29,11 @@ void TestNestedWidgetMetricsRestoreInOrder()
     using namespace snowdesktop::widget_runtime;
     TestRenderState state;
     const LayoutMetrics widgetA = NormalizeLayoutMetrics(
-        92, 116, 8, 24, DWRITE_FONT_WEIGHT_NORMAL, 1.0f);
+        92, 116, 8, 24, DWRITE_FONT_WEIGHT_NORMAL);
     const LayoutMetrics widgetB = NormalizeLayoutMetrics(
-        144, 168, 12, 32, DWRITE_FONT_WEIGHT_BOLD, 1.4f);
+        144, 168, 12, 32, DWRITE_FONT_WEIGHT_BOLD);
     const LayoutMetrics widgetC = NormalizeLayoutMetrics(
-        60, 72, 4, 18, DWRITE_FONT_WEIGHT_LIGHT, 0.8f);
+        60, 72, 4, 18, DWRITE_FONT_WEIGHT_LIGHT);
 
     ApplyLayoutMetrics(state, widgetA);
     const LayoutMetrics outerSnapshot = CaptureLayoutMetrics(state);
@@ -59,12 +59,20 @@ void TestMetricsAreNormalizedPerWidget()
 {
     using namespace snowdesktop::widget_runtime;
     const LayoutMetrics metrics = NormalizeLayoutMetrics(
-        1, -10, -2, 17, DWRITE_FONT_WEIGHT_MEDIUM, 0.1f);
+        1, -10, -2, 17, DWRITE_FONT_WEIGHT_MEDIUM);
     Expect(metrics.gridCellWidth == 4 &&
         metrics.gridCellHeight == 4 && metrics.gridGapY == 0,
         "invalid grid metrics are clamped before storage");
-    Expect(metrics.itemFontSizeScale == 0.5f,
-        "invalid font scale is clamped before storage");
+}
+
+void TestFontCuUsesOnlyTheLocalCellScale()
+{
+    using snowdesktop::font_cu_rules::Scale;
+    Expect(Scale(15.0f, 1.0f) == 15.0f &&
+            Scale(15.0f, 1.5f) == 22.5f,
+        "font CU follows only the local grid or component scale");
+    Expect(Scale(10.0f, 0.5f) == 9.0f,
+        "font CU preserves the shared minimum readable pixel size");
 }
 }
 
@@ -72,6 +80,7 @@ int main()
 {
     TestNestedWidgetMetricsRestoreInOrder();
     TestMetricsAreNormalizedPerWidget();
+    TestFontCuUsesOnlyTheLocalCellScale();
     if (failures == 0)
         std::cout << "Widget layout context tests passed\n";
     return failures == 0 ? 0 : 1;

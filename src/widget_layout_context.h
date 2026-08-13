@@ -15,14 +15,13 @@ struct LayoutMetrics
     int barHeight = 24;
     DWRITE_FONT_WEIGHT itemFontWeight =
         DWRITE_FONT_WEIGHT_SEMI_BOLD;
-    float itemFontSizeScale = 1.0f;
 
     bool operator==(const LayoutMetrics&) const = default;
 };
 
 inline LayoutMetrics NormalizeLayoutMetrics(
     int cellWidth, int cellHeight, int gapY, int barHeight,
-    DWRITE_FONT_WEIGHT fontWeight, float fontSizeScale)
+    DWRITE_FONT_WEIGHT fontWeight)
 {
     return {
         std::max(4, cellWidth),
@@ -30,7 +29,6 @@ inline LayoutMetrics NormalizeLayoutMetrics(
         std::max(0, gapY),
         barHeight,
         fontWeight,
-        std::max(0.5f, fontSizeScale),
     };
 }
 
@@ -43,7 +41,6 @@ LayoutMetrics CaptureLayoutMetrics(const State& state)
         state.gridGapY,
         state.barHeight,
         state.itemFontWeight,
-        state.itemFontSizeScale,
     };
 }
 
@@ -55,7 +52,6 @@ void ApplyLayoutMetrics(State& state, const LayoutMetrics& metrics)
     state.gridGapY = metrics.gridGapY;
     state.barHeight = metrics.barHeight;
     state.itemFontWeight = metrics.itemFontWeight;
-    state.itemFontSizeScale = metrics.itemFontSizeScale;
 }
 
 template<typename State, typename Activate>

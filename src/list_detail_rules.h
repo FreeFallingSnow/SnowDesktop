@@ -56,13 +56,13 @@ inline constexpr Column FromLegacyFolderSortMode(int mode)
 }
 
 inline float ResolveFontSize(
-    const std::optional<float>& savedListSize,
-    float iconTitleSize)
+    const std::optional<float>& savedListSizeCu,
+    float iconTitleSizeCu)
 {
-    return savedListSize && *savedListSize >= 10.0f &&
-            *savedListSize <= 24.0f
-        ? *savedListSize
-        : iconTitleSize;
+    return savedListSizeCu && *savedListSizeCu >= 10.0f &&
+            *savedListSizeCu <= 24.0f
+        ? *savedListSizeCu
+        : iconTitleSizeCu;
 }
 
 inline int RowHeight(

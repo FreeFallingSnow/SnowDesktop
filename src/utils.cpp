@@ -8,6 +8,7 @@
  */
 
 #include "utils.h"
+#include "font_cu_rules.h"
 #include "resource.h"
 #include "data_paths.h"
 #include "desktop_window_discovery_rules.h"
@@ -697,9 +698,9 @@ int ScaleWidgetCu(float value, float cellScale)
     return std::max(1, static_cast<int>(std::round(value * cellScale)));
 }
 
-float ScaleWidgetFontCu(float value, float cellScale)
+float ScaleWidgetFontCu(float valueCu, float cellScale)
 {
-    return std::max(9.0f, value * cellScale);
+    return snowdesktop::font_cu_rules::Scale(valueCu, cellScale);
 }
 
 /**

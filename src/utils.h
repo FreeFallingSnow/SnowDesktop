@@ -214,7 +214,7 @@ bool AreExplorerHiddenItemsVisible();
 
 float CalculateWidgetCellScale(int cellWidth, int cellHeight);
 int ScaleWidgetCu(float value, float cellScale);
-float ScaleWidgetFontCu(float value, float cellScale);
+float ScaleWidgetFontCu(float valueCu, float cellScale);
 
 /**
  * @brief 创建自顶向下的 32 位 DIB 位图

@@ -278,8 +278,7 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
             engine->SetWidgetLayoutMetrics(data_->id,
                 cellWidth, cellHeight, gapY,
                 static_cast<int>(GetBarHeight()),
-                app_->GetItemFontWeight(),
-                app_->itemFontSize_ / kItemFontSize);
+                app_->GetItemFontWeight());
         }
         else
         {
@@ -295,8 +294,7 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
                     realPage->cellWidth, realPage->cellHeight,
                     realPage->gapY,
                     static_cast<int>(GetBarHeight()),
-                    app_->GetItemFontWeight(),
-                    app_->itemFontSize_ / kItemFontSize);
+                    app_->GetItemFontWeight());
                 if (data_->gridCell.pageId != realPage->id)
                 {
                     data_->gridCell.pageId = realPage->id;

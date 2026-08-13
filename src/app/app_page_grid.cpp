@@ -347,10 +347,11 @@ float DesktopApp::GetMaximumComponentSpacingScale() const
  * @brief 设置图标标题字号，重新创建文本格式并刷新。
  * @param value 新的字号。
  */
-void DesktopApp::SetItemFontSize(float value)
+void DesktopApp::SetItemFontSize(float valueCu)
 {
-    if (value == itemFontSize_) return;
-    itemFontSize_ = value;
+    valueCu = std::clamp(valueCu, 10.0f, 24.0f);
+    if (valueCu == itemFontSizeCu_) return;
+    itemFontSizeCu_ = valueCu;
     RecreateItemTextFormat();
 
     // Dock icon geometry is derived from the grid icon size, which in turn
@@ -370,11 +371,11 @@ void DesktopApp::SetItemFontSize(float value)
     InvalidateDockRects(TRUE);
 }
 
-void DesktopApp::SetListItemFontSize(float value)
+void DesktopApp::SetListItemFontSize(float valueCu)
 {
-    value = std::clamp(value, 10.0f, 24.0f);
-    if (value == listItemFontSize_) return;
-    listItemFontSize_ = value;
+    valueCu = std::clamp(valueCu, 10.0f, 24.0f);
+    if (valueCu == listItemFontSizeCu_) return;
+    listItemFontSizeCu_ = valueCu;
     RecreateComponentListTextFormat();
     for (auto& container : containers_)
     {

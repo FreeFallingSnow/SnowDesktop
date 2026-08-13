@@ -256,6 +256,10 @@ int main()
             "itemFontSize" },
         { "list font size type", "{\"listItemFontSize\":\"15\"}",
             "listItemFontSize" },
+        { "CU title font size type", "{\"itemFontSizeCu\":\"16\"}",
+            "itemFontSizeCu" },
+        { "CU list font size type", "{\"listItemFontSizeCu\":\"15\"}",
+            "listItemFontSizeCu" },
         { "component spacing type", "{\"componentSpacing\":\"1.5\"}",
             "componentSpacing" },
         { "integer exactness", "{\"shortcutArrowMode\":1.5}",
@@ -362,10 +366,19 @@ int main()
             spacingLayout.componentSpacing.has_value() &&
             *spacingLayout.componentSpacing == 1.5f,
         "component spacing is decoded as an optional layout setting");
+    snowdesktop::layout_storage::Document legacyFontLayout;
+    Expect(snowdesktop::layout_storage::ParseDocument(
+            "{\"itemFontSize\":18,\"listItemFontSize\":16}",
+            legacyFontLayout, &layoutError) &&
+            legacyFontLayout.itemFontSize.value_or(0.0f) == 18.0f &&
+            legacyFontLayout.listItemFontSize.value_or(0.0f) == 16.0f &&
+            !legacyFontLayout.itemFontSizeCu.has_value() &&
+            !legacyFontLayout.listItemFontSizeCu.has_value(),
+        "legacy font fields remain available as CU migration inputs");
     const std::string detailsLayoutText =
         "{\"layoutSchemaVersion\":1,"
         "\"widgetContentOptionsSchemaVersion\":4,"
-        "\"itemFontSize\":18,\"listItemFontSize\":16,"
+        "\"itemFontSizeCu\":18,\"listItemFontSizeCu\":16,"
         "\"widgets\":[{\"id\":\"details-widget\",\"page\":\"page-a\","
         "\"x\":0,\"y\":0,\"type\":\"folderMapping\","
         "\"showDetails\":true,\"detailShowModified\":true,"
@@ -378,7 +391,8 @@ int main()
     Expect(snowdesktop::layout_storage::ParseDocument(
             detailsLayoutText, detailsLayout, &layoutError) &&
             detailsLayout.widgetContentOptionsSchemaVersion.value_or(0) == 4 &&
-            detailsLayout.listItemFontSize.value_or(0.0f) == 16.0f &&
+            detailsLayout.itemFontSizeCu.value_or(0.0f) == 18.0f &&
+            detailsLayout.listItemFontSizeCu.value_or(0.0f) == 16.0f &&
             detailsLayout.widgets.size() == 1 &&
             detailsLayout.widgets[0].showDetails &&
             detailsLayout.widgets[0].detailShowModified &&
@@ -404,7 +418,8 @@ int main()
             detailsLayoutPath, loadedDetailsLayout);
     Expect(detailsLayoutLoad.status ==
             snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
-            loadedDetailsLayout.listItemFontSize.value_or(0.0f) == 16.0f &&
+            loadedDetailsLayout.itemFontSizeCu.value_or(0.0f) == 18.0f &&
+            loadedDetailsLayout.listItemFontSizeCu.value_or(0.0f) == 16.0f &&
             loadedDetailsLayout.widgets.size() == 1 &&
             loadedDetailsLayout.widgets[0].showDetails &&
             loadedDetailsLayout.widgets[0].detailShowModified &&

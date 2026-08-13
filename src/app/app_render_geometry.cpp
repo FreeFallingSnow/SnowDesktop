@@ -84,7 +84,8 @@ RECT DesktopApp::GetItemIconRect(RECT bounds) const
     const float layoutScale = GetItemLayoutScale(bounds);
     const int inset = std::max(1, static_cast<int>(std::round(2.0f * layoutScale)));
     const int topInset = std::max(1, static_cast<int>(std::round(2.0f * layoutScale)));
-    const float lineHeight = itemFontSize_ * 7.0f / 6.0f * layoutScale;
+    const float fontSize = ScaleWidgetFontCu(itemFontSizeCu_, layoutScale);
+    const float lineHeight = fontSize * 7.0f / 6.0f;
     const int textHeight =
         snowdesktop::item_layout_rules::
             CollapsedTextHeight(lineHeight);
@@ -149,7 +150,8 @@ RECT DesktopApp::GetItemTextRect(RECT bounds, bool expanded) const
     const int textTop = iconRect.bottom +
         snowdesktop::item_layout_rules::
             TitleGap(layoutScale);
-    const float lineHeight = itemFontSize_ * 7.0f / 6.0f * layoutScale;
+    const float fontSize = ScaleWidgetFontCu(itemFontSizeCu_, layoutScale);
+    const float lineHeight = fontSize * 7.0f / 6.0f;
     const int textH = expanded
         ? std::max(
             static_cast<int>(std::round(kTextExpandedHeight * layoutScale)),

@@ -1592,7 +1592,7 @@ void ScrollingItemWidget::DrawSearchBox(ID2D1DeviceContext* context)
 int ScrollingItemWidget::GetListRowHeight() const
 {
     const float currentFont = app_
-        ? FontCu(app_->listItemFontSize_)
+        ? FontCu(app_->listItemFontSizeCu_)
         : FontCu(kItemFontSize);
     const float defaultFont = FontCu(kItemFontSize);
     return snowdesktop::list_detail_rules::RowHeight(
@@ -1602,7 +1602,7 @@ int ScrollingItemWidget::GetListRowHeight() const
 int ScrollingItemWidget::GetDetailsHeaderHeight() const
 {
     const float currentFont = app_
-        ? FontCu(app_->listItemFontSize_)
+        ? FontCu(app_->listItemFontSizeCu_)
         : FontCu(kItemFontSize);
     return snowdesktop::list_detail_rules::HeaderHeight(
         Cu(28.0f), Cu(10.0f), currentFont);
@@ -1729,7 +1729,7 @@ void ScrollingItemWidget::DrawDetailsHeader(
     };
 
     IDWriteTextFormat* format = GetCuTextFormatWeight(
-        app_->listItemFontSize_, DWRITE_FONT_WEIGHT_SEMI_BOLD, false);
+        app_->listItemFontSizeCu_, DWRITE_FONT_WEIGHT_SEMI_BOLD, false);
     if (!format) format = app_->componentListTextFormat_.Get();
     const D2D1_COLOR_F color = light
         ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f)
@@ -1867,7 +1867,7 @@ void ScrollingItemWidget::DrawListItemTitle(ID2D1DeviceContext* context,
     const float height = static_cast<float>(
         std::max<LONG>(1, textRect.bottom - textRect.top));
     const float layoutScale = GetCellScale();
-    const float fontSize = FontCu(app_->listItemFontSize_);
+    const float fontSize = FontCu(app_->listItemFontSizeCu_);
     const int scaleKey = static_cast<int>(std::round(layoutScale * 1000.0f));
     std::wstring layoutKey = L"list\x1f" + title + L"\x1f" +
         std::to_wstring(textRect.right - textRect.left) + L"x" +
@@ -2007,7 +2007,7 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
         : RECT{};
 
     IDWriteTextFormat* format = GetCuTextFormatWeight(
-        app_->listItemFontSize_, app_->itemFontWeight_, false);
+        app_->listItemFontSizeCu_, app_->itemFontWeight_, false);
     if (!format) format = app_->componentListTextFormat_.Get();
     const bool light = app_->IsLightContentTheme();
     const D2D1_COLOR_F color = light

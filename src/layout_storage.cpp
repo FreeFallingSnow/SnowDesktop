@@ -477,6 +477,10 @@ bool DecodeDocument(const JsonValue& root, Document& document,
             decoded.lastPageMonitor, error) ||
         !ReadOptionalRootBoolean(root, "dockEnabled",
             decoded.dockEnabled, error) ||
+        !ReadOptionalFloat(root, "itemFontSizeCu", "itemFontSizeCu",
+            decoded.itemFontSizeCu, error) ||
+        !ReadOptionalFloat(root, "listItemFontSizeCu", "listItemFontSizeCu",
+            decoded.listItemFontSizeCu, error) ||
         !ReadOptionalFloat(root, "itemFontSize", "itemFontSize",
             decoded.itemFontSize, error) ||
         !ReadOptionalFloat(root, "listItemFontSize", "listItemFontSize",

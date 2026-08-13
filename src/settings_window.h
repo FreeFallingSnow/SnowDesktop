@@ -260,7 +260,7 @@ public:
     { animationDiagnosticsToggleCallback_ = std::move(callback); }
 
     void SyncDisplaySettings(float spacingScale, float componentSpacingScale,
-        float fontSize, float listFontSize, float fontWeight,
+        float fontSizeCu, float listFontSizeCu, float fontWeight,
         int shortcutArrowMode,
         const snowdesktop::IconBeautifySettings& iconBeautifySettings)
     {
@@ -274,8 +274,8 @@ public:
                 : snowdesktop::widget_spacing_rules::kMaximumComponentScale;
         componentSpacingScale_ = snowdesktop::widget_spacing_rules::
             ClampComponentScale(componentSpacingScale, componentSpacingMaximum);
-        itemFontSize_ = fontSize;
-        listItemFontSize_ = listFontSize;
+        itemFontSizeCu_ = fontSizeCu;
+        listItemFontSizeCu_ = listFontSizeCu;
         itemFontWeight_ = fontWeight;
         shortcutArrowMode_ = std::clamp(shortcutArrowMode, 0, 2);
         iconBeautifySettings_ = snowdesktop::icon_beautify::Normalize(
@@ -328,8 +328,8 @@ public:
 
     float GetIconSpacingScale() const { return iconSpacingScale_; }
     float GetComponentSpacingScale() const { return componentSpacingScale_; }
-    float GetItemFontSizeD() const { return itemFontSize_; }
-    float GetListItemFontSizeD() const { return listItemFontSize_; }
+    float GetItemFontSizeCu() const { return itemFontSizeCu_; }
+    float GetListItemFontSizeCu() const { return listItemFontSizeCu_; }
     float GetItemFontWeightD() const { return itemFontWeight_; }
     int GetShortcutArrowMode() const { return shortcutArrowMode_; }
     const snowdesktop::IconBeautifySettings& GetIconBeautifySettings() const
@@ -778,11 +778,11 @@ private:
     float iconSpacingScale_ = 1.0f;
     float componentSpacingScale_ = 1.0f;
 
-    /// 当前桌面项目字号
-    float itemFontSize_ = 15.0f;
+    /// 当前桌面项目字号（CU）
+    float itemFontSizeCu_ = 15.0f;
 
-    /// 当前内置列表项目字号
-    float listItemFontSize_ = 15.0f;
+    /// 当前内置列表项目字号（CU）
+    float listItemFontSizeCu_ = 15.0f;
 
     /// 当前桌面项目字体粗细 (DWRITE_FONT_WEIGHT)
     float itemFontWeight_ = 600.0f;

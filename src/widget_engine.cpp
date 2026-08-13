@@ -20,6 +20,7 @@
 #include "system_snapshot.h"
 #include "constants.h"
 #include "utils.h"
+#include "font_cu_rules.h"
 #include "search_match.h"
 #include "personalization.h"
 #include "widget_package.h"
@@ -656,7 +657,6 @@ struct D2DState
     int gridGapY = 8;
     int barHeight = 24;
     DWRITE_FONT_WEIGHT itemFontWeight = DWRITE_FONT_WEIGHT_SEMI_BOLD;
-    float itemFontSizeScale = 1.0f;
     int widgetClipDepth = 0;
     ComPtr<ID2D1Device> bitmapDevice;
     std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>> imageCache;
@@ -6830,7 +6830,7 @@ void WidgetEngine::SetWidgetTheme(const std::wstring& widgetId, const LuaWidgetT
 void WidgetEngine::SetWidgetLayoutMetrics(
     const std::wstring& widgetId,
     int cellWidth, int cellHeight, int gapY, int barHeight,
-    DWRITE_FONT_WEIGHT fontWeight, float fontSizeScale)
+    DWRITE_FONT_WEIGHT fontWeight)
 {
     const int index = FindWidget(widgetId);
     if (index < 0)
@@ -6838,7 +6838,7 @@ void WidgetEngine::SetWidgetLayoutMetrics(
     widgets_[index].layoutMetrics =
         snowdesktop::widget_runtime::NormalizeLayoutMetrics(
             cellWidth, cellHeight, gapY, barHeight,
-            fontWeight, fontSizeScale);
+            fontWeight);
 }
 
 void WidgetEngine::RuntimeOpenWidgetSettings(const std::wstring& widgetId)
@@ -8517,8 +8517,8 @@ static int lua_LayoutFontCu(lua_State* L)
     auto* s = GetD2D(L);
     const int cellWidth = s ? std::max(4, s->gridCellW) : kCellWidth;
     const int cellHeight = s ? std::max(4, s->gridCellH) : kMinCellHeight;
-    const float fontScale = s ? s->itemFontSizeScale : 1.0f;
-    lua_pushnumber(L, std::max(9.0f, value * CalculateWidgetCellScale(cellWidth, cellHeight) * fontScale));
+    lua_pushnumber(L, snowdesktop::font_cu_rules::Scale(
+        value, CalculateWidgetCellScale(cellWidth, cellHeight)));
     return 1;
 }
 

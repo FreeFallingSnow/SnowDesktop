@@ -209,6 +209,8 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
     float th = static_cast<float>(std::max<LONG>(1, textRect.bottom - textRect.top));
 
     const float layoutScale = GetItemLayoutScale(bounds);
+    const float fontSize = ScaleWidgetFontCu(
+        itemFontSizeCu_, layoutScale);
     const int scaleKey = static_cast<int>(std::round(layoutScale * 1000.0f));
     std::wstring layoutKey = L"grid\x1f" + text + L"\x1f" +
         std::to_wstring(textRect.right - textRect.left) + L"x" +
@@ -244,7 +246,7 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
                     layoutText.size())
             };
             result->SetFontSize(
-                itemFontSize_ * layoutScale,
+                fontSize,
                 range);
             if (lightTheme)
             {
@@ -261,10 +263,8 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
             }
             result->SetLineSpacing(
                 DWRITE_LINE_SPACING_METHOD_UNIFORM,
-                itemFontSize_ * 7.0f /
-                    6.0f * layoutScale,
-                itemFontSize_ * 5.0f /
-                    6.0f * layoutScale);
+                fontSize * 7.0f / 6.0f,
+                fontSize * 5.0f / 6.0f);
             return true;
         };
 
@@ -330,7 +330,7 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
                             text.size())
                     };
                 measureLayout->SetFontSize(
-                    itemFontSize_ * layoutScale,
+                    fontSize,
                     measureRange);
                 DWRITE_TEXT_METRICS m{};
                 measureLayout->GetMetrics(&m);
@@ -355,7 +355,7 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
         {
             const DWRITE_TEXT_RANGE fullRange{
                 0, static_cast<UINT32>(text.size()) };
-            measureLayout->SetFontSize(itemFontSize_ * layoutScale, fullRange);
+            measureLayout->SetFontSize(fontSize, fullRange);
             DWRITE_TEXT_METRICS m{};
             measureLayout->GetMetrics(&m);
             isSingleLine = (m.widthIncludingTrailingWhitespace <= tw + 2.0f);

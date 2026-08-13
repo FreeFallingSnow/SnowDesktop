@@ -42,7 +42,8 @@ void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t memberIndex)
 
     if (renameFont_) DeleteObject(renameFont_);
     const float renameScale = GetItemLayoutScale(rect);
-    renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(itemFontSize_ * renameScale))),
+    renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(
+        ScaleWidgetFontCu(itemFontSizeCu_, renameScale)))),
         0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
         CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
@@ -131,7 +132,7 @@ bool DesktopApp::BeginDockAnchoredRename(
         DeleteObject(renameFont_);
     const int fontHeight = std::max(
         12, MulDiv(
-            static_cast<int>(std::round(itemFontSize_)),
+            static_cast<int>(std::round(itemFontSizeCu_)),
             static_cast<int>(dpiX), 96));
     renameFont_ = CreateFontW(
         -fontHeight, 0, 0, 0, FW_NORMAL,
@@ -240,8 +241,8 @@ BeginRenameDockFolderPopupEntry(
         -std::max(
             1, static_cast<int>(
                 std::round(
-                    itemFontSize_ *
-                    renameScale))),
+                    ScaleWidgetFontCu(
+                        itemFontSizeCu_, renameScale)))),
         0, 0, 0, FW_NORMAL,
         FALSE, FALSE, FALSE,
         DEFAULT_CHARSET,

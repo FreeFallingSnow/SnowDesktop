@@ -1369,7 +1369,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         HMENU fontSizeMenu = CreatePopupMenu();
         if (fontSizeMenu)
         {
-            const int currentFontSize = static_cast<int>(std::round(itemFontSize_));
+            const int currentFontSize = static_cast<int>(std::round(itemFontSizeCu_));
             auto addFontSizeItem = [&](UINT id, const wchar_t* label, int size) {
                 UINT flags = MF_STRING;
                 if (currentFontSize == size) flags |= MF_CHECKED;
@@ -1378,7 +1378,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             addFontSizeItem(kContextFontSizeSmall, _LW("app.menu.font_small"), 12);
             addFontSizeItem(kContextFontSizeMedium, _LW("app.menu.font_medium"), 15);
             addFontSizeItem(kContextFontSizeLarge, _LW("app.menu.font_large"), 16);
-            const std::wstring fontSizeLabel = _LFW("app.menu.title_font_size_pt",
+            const std::wstring fontSizeLabel = _LFW("app.menu.title_font_size_cu",
                 std::to_wstring(currentFontSize));
             AppendMenuW(displaySettingsMenu, MF_POPUP,
                 reinterpret_cast<UINT_PTR>(fontSizeMenu), fontSizeLabel.c_str());
@@ -1389,7 +1389,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         if (listFontSizeMenu)
         {
             const int currentFontSize = static_cast<int>(
-                std::round(listItemFontSize_));
+                std::round(listItemFontSizeCu_));
             auto addFontSizeItem = [&](UINT id, const wchar_t* label, int size) {
                 UINT flags = MF_STRING;
                 if (currentFontSize == size) flags |= MF_CHECKED;
@@ -1402,7 +1402,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             addFontSizeItem(kContextListFontSizeLarge,
                 _LW("app.menu.font_large"), 16);
             const std::wstring fontSizeLabel = _LFW(
-                "app.menu.list_font_size_pt",
+                "app.menu.list_font_size_cu",
                 std::to_wstring(currentFontSize));
             AppendMenuW(displaySettingsMenu, MF_POPUP,
                 reinterpret_cast<UINT_PTR>(listFontSizeMenu),

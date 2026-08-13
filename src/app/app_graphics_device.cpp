@@ -135,7 +135,7 @@ void DesktopApp::RecreateItemTextFormat()
     if (!dwriteFactory_) return;
     itemTextLayoutCache_.clear();
     itemTextShadowCache_.clear();
-    float fontSize = itemFontSize_;
+    float fontSize = itemFontSizeCu_;
     float lineHeight = fontSize * 7.0f / 6.0f;
     float baseline = fontSize * 5.0f / 6.0f;
     dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr, itemFontWeight_,
@@ -156,12 +156,12 @@ void DesktopApp::RecreateComponentListTextFormat()
     componentListTextLayoutCache_.clear();
     componentListTextShadowCache_.clear();
     componentListTextFormat_.Reset();
-    const float lineHeight = listItemFontSize_ * 7.0f / 6.0f;
-    const float baseline = listItemFontSize_ * 5.0f / 6.0f;
+    const float lineHeight = listItemFontSizeCu_ * 7.0f / 6.0f;
+    const float baseline = listItemFontSizeCu_ * 5.0f / 6.0f;
     dwriteFactory_->CreateTextFormat(
         L"Segoe UI", nullptr, itemFontWeight_,
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-        listItemFontSize_, L"", &componentListTextFormat_);
+        listItemFontSizeCu_, L"", &componentListTextFormat_);
     if (!componentListTextFormat_) return;
     componentListTextFormat_->SetTextAlignment(
         DWRITE_TEXT_ALIGNMENT_LEADING);

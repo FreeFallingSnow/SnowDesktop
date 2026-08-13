@@ -115,13 +115,21 @@ void DesktopApp::LoadLayoutSlots()
     if (document.dockEnabled)
         generalSettings_.dockEnabled = *document.dockEnabled;
 
-    if (document.itemFontSize &&
-        *document.itemFontSize >= 10.0f &&
-        *document.itemFontSize <= 24.0f)
-        itemFontSize_ = *document.itemFontSize;
+    const std::optional<float> savedItemFontSizeCu =
+        document.itemFontSizeCu
+            ? document.itemFontSizeCu
+            : document.itemFontSize;
+    if (savedItemFontSizeCu &&
+        *savedItemFontSizeCu >= 10.0f &&
+        *savedItemFontSizeCu <= 24.0f)
+        itemFontSizeCu_ = *savedItemFontSizeCu;
 
-    listItemFontSize_ = snowdesktop::list_detail_rules::ResolveFontSize(
-        document.listItemFontSize, itemFontSize_);
+    const std::optional<float> savedListFontSizeCu =
+        document.listItemFontSizeCu
+            ? document.listItemFontSizeCu
+            : document.listItemFontSize;
+    listItemFontSizeCu_ = snowdesktop::list_detail_rules::ResolveFontSize(
+        savedListFontSizeCu, itemFontSizeCu_);
 
     if (document.itemFontWeight &&
         *document.itemFontWeight >= 100 &&
@@ -812,8 +820,8 @@ void DesktopApp::SaveLayoutSlots()
          << ",\n  \"firstPageMonitor\": \"" << JsonEscapeUtf8(firstPageMonitorId_)
          << "\",\n  \"lastPageMonitor\": \""  << JsonEscapeUtf8(lastPageMonitorId_)
          << "\",\n  \"dockEnabled\": " << (generalSettings_.dockEnabled ? "true" : "false")
-         << ",\n  \"itemFontSize\": " << itemFontSize_
-         << ",\n  \"listItemFontSize\": " << listItemFontSize_
+         << ",\n  \"itemFontSizeCu\": " << itemFontSizeCu_
+         << ",\n  \"listItemFontSizeCu\": " << listItemFontSizeCu_
          << ",\n  \"itemFontWeight\": " << static_cast<int>(itemFontWeight_)
          << ",\n  \"iconSpacing\": " << iconSpacingScale_
          << ",\n  \"componentSpacing\": " << componentSpacingScale_

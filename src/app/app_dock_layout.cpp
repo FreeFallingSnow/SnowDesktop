@@ -81,7 +81,8 @@ int DesktopApp::GetGridPageItemIconSize(const GridPage& page) const
             std::max(1, page.cellHeight - inset * 2) }), 1,
             snowdesktop::icon_render_rules::kMaximumSourcePixels);
     }
-    const float lineHeight = itemFontSize_ * 7.0f / 6.0f * layoutScale;
+    const float fontSize = ScaleWidgetFontCu(itemFontSizeCu_, layoutScale);
+    const float lineHeight = fontSize * 7.0f / 6.0f;
     const int textHeight = std::max(1,
         static_cast<int>(std::floor(lineHeight * 2.0f)) - 1);
     return std::clamp(std::min(

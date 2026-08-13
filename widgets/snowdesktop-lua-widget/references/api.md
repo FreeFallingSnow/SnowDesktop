@@ -344,7 +344,7 @@ local cellH = layout.cellHeight()    -- grid cell height (DPI-aware, px)
 local gapY = layout.cellGap()        -- grid vertical gap (DPI-aware, px)
 local barH = layout.barHeight()      -- bottom bar height in cu (default 24, range 16-48)
 local scale = layout.cellScale()     -- min(cellW / 92, cellH / 116)
-local fontSize = layout.cu(15)       -- 15 design units converted to px
+local fontSize = layout.fontCu(15)   -- 15 font design units converted to px
 ```
 
 `cellWidth` and `cellHeight` return the current monitor's DPI-scaled grid cell
@@ -354,9 +354,12 @@ dimensions — the same values used to size desktop icons and collection items.
 between 16 and 48 in settings. Use `layout.cu(layout.barHeight())` to get the
 pixel height for layout calculations.
 `cellScale` returns the component scale relative to the standard `92 x 116`
-grid cell. `cu(value)` converts a design value to current pixels. Existing
-`draw.text` sizes remain pixel values, so use `draw.text(..., layout.cu(15))`
-when a widget should scale with its grid cell.
+grid cell. `cu(value)` converts a design value to current pixels. `fontCu(value)`
+does the same for text while enforcing the minimum readable font size. Both use
+only the widget's own cell scale and are independent of the desktop icon-title
+and list font-size settings. Existing `draw.text` sizes remain pixel values, so
+use `draw.text(..., layout.fontCu(15))` when widget text should scale with its
+grid cell.
 
 Cached system snapshots require `system.read`:
 

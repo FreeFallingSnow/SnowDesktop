@@ -844,7 +844,7 @@ public:
      */
     void SetWidgetLayoutMetrics(const std::wstring& widgetId,
         int cellWidth, int cellHeight, int gapY, int barHeight,
-        DWRITE_FONT_WEIGHT fontWeight, float fontSizeScale);
+        DWRITE_FONT_WEIGHT fontWeight);
     void RuntimeOpenWidgetSettings(const std::wstring& widgetId);
     void RuntimeOpenWidgetPanel(const std::wstring& widgetId,
         std::wstring title, int width, int height);
