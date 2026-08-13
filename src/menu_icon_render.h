@@ -36,7 +36,7 @@ struct Metrics
     int quickActionMaximumWidth = 64;
     int quickActionIconHeight = 20;
     int quickActionLabelGap = 1;
-    int textFontHeight = 14;
+    int textFontHeight = 13;
     int quickActionTextFontHeight = 12;
     int iconFontHeight = 18;
     int quickActionFontHeight = 18;

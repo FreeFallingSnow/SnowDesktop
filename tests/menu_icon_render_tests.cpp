@@ -212,9 +212,9 @@ int wmain(int argc, wchar_t** argv)
     Expect(metrics192.quickActionMaximumWidth ==
             metrics96.quickActionMaximumWidth * 2,
         "quick-action width limit follows monitor DPI");
-    Expect(metrics96.textFontHeight == 14 &&
+    Expect(metrics96.textFontHeight == 13 &&
             metrics96.quickActionTextFontHeight == 12,
-        "96-DPI menu text keeps a readable minimum size");
+        "96-DPI regular and quick-action text use their configured sizes");
     Expect(metrics96.submenuArrowFontHeight == 16 &&
             metrics120.submenuArrowFontHeight == 20 &&
             metrics144.submenuArrowFontHeight == 24 &&
@@ -256,7 +256,8 @@ int wmain(int argc, wchar_t** argv)
     Expect(dc != nullptr, "test device context is created");
     HGDIOBJ oldBitmap = SelectObject(dc, bitmap);
     Expect(oldBitmap != nullptr, "test bitmap is selected");
-    HFONT font = CreateFontW(-14, 0, 0, 0, FW_NORMAL,
+    HFONT font = CreateFontW(-metrics96.textFontHeight,
+        0, 0, 0, FW_NORMAL,
         FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
         CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
@@ -335,7 +336,7 @@ int wmain(int argc, wchar_t** argv)
         const auto alignmentMetrics =
             snowdesktop::menu_icon::ResolveMetrics(alignmentDpi);
         HFONT alignmentFont = CreateFontW(
-            -MulDiv(13, static_cast<int>(alignmentDpi), 96),
+            -alignmentMetrics.textFontHeight,
             0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
             DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
