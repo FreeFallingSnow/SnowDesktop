@@ -5,6 +5,7 @@
 #include "widgets/widget_chrome_rules.h"
 #include "widgets/guide_widget_rules.h"
 #include "pending_drop_rules.h"
+#include "list_detail_rules.h"
 
 #include <algorithm>
 #include <iostream>
@@ -732,6 +733,59 @@ void TestNestedWidgetScrolling()
             precisionWheel.offset < 20,
         "precision touchpad wheel deltas still scroll");
 }
+
+void TestListDetailRules()
+{
+    namespace details = snowdesktop::list_detail_rules;
+    Check(details::ResolveFontSize(std::nullopt, 18.0f) == 18.0f,
+        "legacy layouts inherit the saved icon title font size");
+    Check(details::ResolveFontSize(15.0f, 18.0f) == 15.0f,
+        "new layouts retain their independent list font size");
+    Check(details::RowHeight(36, 38, 10.0f, 15.0f) == 36,
+        "10pt list text preserves the minimum compatible row height");
+    Check(details::RowHeight(36, 38, 15.0f, 15.0f) == 38,
+        "15pt list text preserves the legacy row height");
+    Check(details::RowHeight(36, 38, 24.0f, 15.0f) == 49,
+        "24pt list text expands rows by the scaled line-height delta");
+    Check(details::RowHeight(54, 57, 36.0f,
+            22.5f) == 73,
+        "row height applies the same formula at component scale");
+
+    const auto narrow = details::BuildColumns(
+        299, 300, 390, 510, 160, 120, 90);
+    Check(narrow.nameWidth == 299 && !narrow.showModified &&
+            !narrow.showType && !narrow.showSize,
+        "detail widths below 300 CU show only the name column");
+    const auto medium = details::BuildColumns(
+        300, 300, 390, 510, 160, 120, 90);
+    Check(medium.nameWidth == 140 && medium.showModified &&
+            !medium.showType && !medium.showSize,
+        "300 CU detail widths show name and modified columns");
+    const auto wide = details::BuildColumns(
+        390, 300, 390, 510, 160, 120, 90);
+    Check(wide.nameWidth == 140 && wide.showModified &&
+            !wide.showType && wide.showSize,
+        "390 CU detail widths add size while keeping type hidden");
+    const auto all = details::BuildColumns(
+        510, 300, 390, 510, 160, 120, 90);
+    Check(all.nameWidth == 140 && all.showModified &&
+            all.showType && all.showSize,
+        "510 CU detail widths show all four columns");
+    Check(details::HitColumn(all, 20) == details::Column::Name &&
+            details::HitColumn(all, 200) == details::Column::Modified &&
+            details::HitColumn(all, 330) == details::Column::Type &&
+            details::HitColumn(all, 460) == details::Column::Size,
+        "fixed detail headers route clicks to the visible column");
+    Check(details::DefaultAscending(details::Column::Name) &&
+            details::DefaultAscending(details::Column::Type) &&
+            !details::DefaultAscending(details::Column::Modified) &&
+            !details::DefaultAscending(details::Column::Size),
+        "detail columns use Explorer-style initial directions");
+    Check(details::FromLegacyFolderSortMode(2) ==
+            details::Column::Modified &&
+            details::FromLegacyFolderSortMode(3) == details::Column::Size,
+        "legacy folder sorting migrates to detail column state");
+}
 }
 
 int main()
@@ -749,6 +803,7 @@ int main()
     TestHoverOnlyWidgetVisibility();
     TestDesktopHoverDeactivation();
     TestNestedWidgetScrolling();
+    TestListDetailRules();
     if (failures != 0)
     {
         std::cerr << failures

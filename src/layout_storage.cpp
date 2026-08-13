@@ -340,6 +340,14 @@ bool DecodeWidgets(const JsonValue& root, Document& document,
                 record.autoCollect, error) ||
             !ReadBoolean(object, "listMode", path + ".listMode",
                 record.listMode, error) ||
+            !ReadBoolean(object, "showDetails", path + ".showDetails",
+                record.showDetails, error) ||
+            !ReadString(object, "contentSortColumn",
+                path + ".contentSortColumn",
+                record.contentSortColumn, error) ||
+            !ReadBoolean(object, "contentSortAscending",
+                path + ".contentSortAscending",
+                record.contentSortAscending, error) ||
             !ReadBoolean(object, "dateHeaders", path + ".dateHeaders",
                 record.dateHeaders, error) ||
             !ReadBoolean(object, "showFileCategories",
@@ -444,6 +452,8 @@ bool DecodeDocument(const JsonValue& root, Document& document,
             decoded.dockEnabled, error) ||
         !ReadOptionalFloat(root, "itemFontSize", "itemFontSize",
             decoded.itemFontSize, error) ||
+        !ReadOptionalFloat(root, "listItemFontSize", "listItemFontSize",
+            decoded.listItemFontSize, error) ||
         !ReadOptionalFloat(root, "itemFontWeight", "itemFontWeight",
             decoded.itemFontWeight, error) ||
         !ReadOptionalFloat(root, "iconSpacing", "iconSpacing",

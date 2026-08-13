@@ -667,6 +667,8 @@ private:
     bool InitGraphics();
     /** @brief 重建图标标题文本格式（字号变更时调用）。 */
     void RecreateItemTextFormat();
+    /** @brief 重建组件列表文本格式。 */
+    void RecreateComponentListTextFormat();
     /** @brief 创建或调整 DirectComposition 表面的大小。 @return S_OK 成功，否则为 HRESULT 错误码 */
     HRESULT CreateOrResizeCompositionSurface();
     /** @brief 清理绑定到当前 D2D/DComp 目标的缓存资源。 */
@@ -1547,6 +1549,9 @@ private:
     void AdjustIconSpacing(float delta);
     /** @brief 设置图标标题字号（12/14/16）。 @param value 字号 */
     void SetItemFontSize(float value);
+    /** @brief 设置组件列表字号。 @param value 字号 */
+    void SetListItemFontSize(float value);
+    float GetListItemFontSize() const { return listItemFontSize_; }
     /** @brief 设置图标标题字体粗细（粗/中/细）。 @param weight DWRITE_FONT_WEIGHT */
     void SetItemFontWeight(DWRITE_FONT_WEIGHT weight);
     DWRITE_FONT_WEIGHT GetItemFontWeight() const;
@@ -1966,7 +1971,7 @@ private:
         IDWriteTextLayout* layout, const std::wstring& shadowKey,
         D2D1_POINT_2F origin, D2D1_SIZE_F layoutSize,
         float layoutScale, float opacity = 1.0f,
-        bool lightTheme = false);
+        bool lightTheme = false, bool componentList = false);
     /**
      * @brief 使用指定格式绘制 D2D 文字。
      * @param ctx D2D 上下文
@@ -2520,6 +2525,7 @@ private:
     bool nativeGlassPanelReadyLogged_ = false;
     ComPtr<IDWriteFactory> dwriteFactory_;
     ComPtr<IDWriteTextFormat> itemTextFormat_;
+    ComPtr<IDWriteTextFormat> componentListTextFormat_;
     ComPtr<IDWriteTextFormat> listItemTextFormat_;
     ComPtr<IDWriteTextFormat> navTabTextFormat_;
     ComPtr<IDWriteTextFormat> fileCategoryTabTextFormat_;
@@ -2535,6 +2541,10 @@ private:
     ComPtr<ID2D1Bitmap1> privacyFolderIconBitmap_;
     std::unordered_map<std::wstring, ComPtr<IDWriteTextLayout>> itemTextLayoutCache_;
     std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>> itemTextShadowCache_;
+    std::unordered_map<std::wstring, ComPtr<IDWriteTextLayout>>
+        componentListTextLayoutCache_;
+    std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>>
+        componentListTextShadowCache_;
     HANDLE faFontHandle_ = nullptr;
     HANDLE fluentIconFontHandle_ = nullptr;
     UINT menuIconDpi_ = USER_DEFAULT_SCREEN_DPI;
@@ -2708,6 +2718,7 @@ private:
     float iconSpacingScale_ = 1.0f;
     float componentSpacingScale_ = 1.0f;
     float itemFontSize_ = kItemFontSize;
+    float listItemFontSize_ = kItemFontSize;
     DWRITE_FONT_WEIGHT itemFontWeight_ = DWRITE_FONT_WEIGHT_SEMI_BOLD;
     int shortcutArrowMode_ = 0;
     snowdesktop::IconBeautifySettings iconBeautifySettings_{};

@@ -231,6 +231,7 @@ public:
         savedBounds_ = sourceData_->bounds;
         savedCellScale_ = sourceData_->cellScale;
         savedListMode_ = sourceData_->listMode;
+        savedShowDetails_ = sourceData_->showDetails;
         savedDateHeaders_ = sourceData_->dateHeaders;
         savedShowCategories_ = sourceData_->showFileCategories;
         savedShowSearch_ = sourceData_->showSearchBox;
@@ -256,6 +257,7 @@ public:
         sourceData_->bounds = groupData_->bounds;
         sourceData_->cellScale = groupData_->cellScale;
         sourceData_->listMode = groupData_->listMode;
+        sourceData_->showDetails = groupData_->showDetails;
         sourceData_->dateHeaders = groupData_->dateHeaders;
         sourceData_->showFileCategories =
             groupData_->showFileCategories;
@@ -306,6 +308,7 @@ public:
         sourceData_->bounds = savedBounds_;
         sourceData_->cellScale = savedCellScale_;
         sourceData_->listMode = savedListMode_;
+        sourceData_->showDetails = savedShowDetails_;
         sourceData_->dateHeaders = savedDateHeaders_;
         sourceData_->showFileCategories = savedShowCategories_;
         sourceData_->showSearchBox = savedShowSearch_;
@@ -333,6 +336,7 @@ private:
     RECT savedBounds_{};
     float savedCellScale_ = 1.0f;
     bool savedListMode_ = false;
+    bool savedShowDetails_ = false;
     bool savedDateHeaders_ = false;
     bool savedShowCategories_ = false;
     bool savedShowSearch_ = false;
@@ -382,7 +386,7 @@ int FileGroupSearchContentHeight(
     if (!data) return 0;
     if (data->listMode)
         return static_cast<int>(count) *
-            group->Cu(38.0f);
+            group->GetListRowHeight();
     const int columns =
         std::max(1, data->gridSpan.columns);
     const int rows = static_cast<int>(
@@ -403,7 +407,7 @@ RECT FileGroupSearchItemRect(
         group->GetMaxScrollOffset());
     if (data->listMode)
     {
-        const int height = group->Cu(38.0f);
+        const int height = group->GetListRowHeight();
         RECT result = MakeRect(
             content.left,
             content.top +
@@ -750,6 +754,95 @@ FileGroup::GetGroupSearchResults() const
             }
         }
     }
+    if (data_->contentSortColumn !=
+        snowdesktop::list_detail_rules::Column::None)
+    {
+        struct SortValue
+        {
+            std::wstring name;
+            std::wstring type;
+            std::optional<FILETIME> modified;
+            std::optional<std::uint64_t> size;
+        };
+        const auto valueFor = [this](const SearchResultRef& result) {
+            SortValue value;
+            if (!result.folderMapping)
+            {
+                const size_t itemIndex =
+                    app_->FindItemIndexByKey(result.desktopKey);
+                if (itemIndex < app_->items_.size())
+                {
+                    const DesktopItem& item = app_->items_[itemIndex];
+                    value.name = item.name;
+                    value.type = item.typeName;
+                    value.modified = item.modifiedTime;
+                    value.size = item.fileSize;
+                }
+                return value;
+            }
+            const size_t sourceIndex =
+                app_->FindWidgetIndexById(result.sourceId);
+            if (sourceIndex < app_->widgets_.size() &&
+                result.folderEntryIndex <
+                    app_->widgets_[sourceIndex].folderEntries.size())
+            {
+                const FolderEntry& entry = app_->widgets_[sourceIndex].
+                    folderEntries[result.folderEntryIndex];
+                value.name = entry.name;
+                value.type = entry.typeName;
+                value.modified = entry.lastWriteTime;
+                value.size = entry.fileSize;
+            }
+            return value;
+        };
+        const auto column = data_->contentSortColumn;
+        const bool ascending = data_->contentSortAscending;
+        std::stable_sort(groupSearchResults_.begin(),
+            groupSearchResults_.end(),
+            [&](const SearchResultRef& left,
+                const SearchResultRef& right) {
+                const SortValue a = valueFor(left);
+                const SortValue b = valueFor(right);
+                int comparison = 0;
+                if (column == snowdesktop::list_detail_rules::Column::Name)
+                {
+                    comparison = _wcsicmp(
+                        a.name.c_str(), b.name.c_str());
+                }
+                else if (column == snowdesktop::list_detail_rules::Column::Type)
+                {
+                    const bool hasA = !a.type.empty();
+                    const bool hasB = !b.type.empty();
+                    if (hasA != hasB) return hasA;
+                    comparison = _wcsicmp(
+                        a.type.c_str(), b.type.c_str());
+                }
+                else if (column == snowdesktop::list_detail_rules::Column::Modified)
+                {
+                    const bool hasA = a.modified.has_value();
+                    const bool hasB = b.modified.has_value();
+                    if (hasA != hasB) return hasA;
+                    if (hasA)
+                        comparison = CompareFileTime(
+                            &*a.modified, &*b.modified);
+                }
+                else if (column == snowdesktop::list_detail_rules::Column::Size)
+                {
+                    const bool hasA = a.size.has_value();
+                    const bool hasB = b.size.has_value();
+                    if (hasA != hasB) return hasA;
+                    if (hasA && *a.size != *b.size)
+                        comparison = *a.size < *b.size ? -1 : 1;
+                }
+                if (comparison != 0)
+                    return ascending
+                        ? comparison < 0
+                        : comparison > 0;
+                comparison = _wcsicmp(
+                    a.name.c_str(), b.name.c_str());
+                return comparison < 0;
+            });
+    }
     return groupSearchResults_;
 }
 
@@ -970,7 +1063,7 @@ std::vector<std::unique_ptr<Slot>> FileGroup::BuildSlots()
         if (data_->listMode)
         {
             const int height = std::max(
-                1, Cu(38.0f));
+                1, GetListRowHeight());
             first = static_cast<size_t>(
                 std::max(0, scroll / height - 1));
             last = std::min(
@@ -1058,14 +1151,14 @@ int FileGroup::GetItemHeight() const
 {
     if (IsGroupSearchActive())
         return data_ && data_->listMode
-            ? Cu(38.0f)
+            ? GetListRowHeight()
             : FileGroupSearchCellHeight(
                 const_cast<FileGroup*>(this));
     auto* source = GetActiveSourceContainer();
-    if (!source) return Cu(38.0f);
+    if (!source) return GetListRowHeight();
     HostedFileSourceScope hosted(
         const_cast<FileGroup*>(this), source);
-    return hosted ? source->GetItemHeight() : Cu(38.0f);
+    return hosted ? source->GetItemHeight() : GetListRowHeight();
 }
 
 int FileGroup::GetItemWidth() const
@@ -1315,7 +1408,7 @@ RECT FileGroup::GetContentViewportRect() const
             body.top = std::min<LONG>(
                 body.bottom,
                 search.bottom + Cu(4.0f));
-        return body;
+        return ApplyDetailsHeaderToViewport(body);
     }
     auto* source = GetActiveSourceContainer();
     if (!source)
@@ -1332,13 +1425,24 @@ RECT FileGroup::GetContentViewportRect() const
         if (!IsRectEmptyRect(tabs))
             body.top = std::min<LONG>(
                 body.bottom, tabs.bottom + Cu(8.0f));
-        return body;
+        return ApplyDetailsHeaderToViewport(body);
     }
     HostedFileSourceScope hosted(
         const_cast<FileGroup*>(this), source);
     return hosted
         ? source->GetContentViewportRect()
         : RECT{};
+}
+
+const DesktopWidget* FileGroup::GetDetailsSortData() const
+{
+    if (!data_ || !app_ || IsGroupSearchActive())
+        return data_;
+    const size_t index = app_->FindWidgetIndexById(
+        GetActiveSourceId());
+    return index < app_->widgets_.size()
+        ? &app_->widgets_[index]
+        : data_;
 }
 
 void FileGroup::ApplyMarqueeSelection(
@@ -1443,6 +1547,13 @@ WidgetHit FileGroup::HitTestWidget(POINT pt) const
     if (!SourceIdAtPoint(pt).empty())
         return WidgetHit::SourceTab;
 
+    if (IsGroupSearchActive())
+    {
+        const WidgetHit details = HitTestDetailsHeader(
+            pt, GetContentViewportRect());
+        if (details != WidgetHit::None) return details;
+    }
+
     auto* source = GetActiveSourceContainer();
     if (source)
     {
@@ -1454,7 +1565,11 @@ WidgetHit FileGroup::HitTestWidget(POINT pt) const
             if (childHit == WidgetHit::CategoryTab ||
                 childHit == WidgetHit::DateHeaderToggleBtn ||
                 childHit == WidgetHit::ListToggleBtn ||
-                childHit == WidgetHit::OpenFolderBtn)
+                childHit == WidgetHit::OpenFolderBtn ||
+                childHit == WidgetHit::DetailsNameHeader ||
+                childHit == WidgetHit::DetailsModifiedHeader ||
+                childHit == WidgetHit::DetailsTypeHeader ||
+                childHit == WidgetHit::DetailsSizeHeader)
                 return childHit;
         }
     }
@@ -1803,6 +1918,7 @@ void FileGroup::DrawContent(
         const auto& results =
             GetGroupSearchResults();
         RECT content = GetContentViewportRect();
+        DrawDetailsHeader(context, content);
         const bool light =
             app_->IsLightContentTheme();
         if (results.empty())
@@ -1846,6 +1962,7 @@ void FileGroup::DrawContent(
             bool isDirectory = false;
             bool iconIsMediaThumbnail = false;
             int sysIconIndex = -1;
+            ListItemDetails details;
             if (auto* desktop =
                     dynamic_cast<DesktopIcon*>(item))
             {
@@ -1857,6 +1974,9 @@ void FileGroup::DrawContent(
                         sourceItem->sysIconIndex;
                     iconIsMediaThumbnail =
                         sourceItem->iconIsMediaThumbnail;
+                    details.typeName = sourceItem->typeName;
+                    details.modifiedTime = sourceItem->modifiedTime;
+                    details.fileSize = sourceItem->fileSize;
                 }
             }
             else if (auto* folder =
@@ -1873,6 +1993,10 @@ void FileGroup::DrawContent(
                         sourceEntry->sysIconIndex;
                     iconIsMediaThumbnail =
                         sourceEntry->iconIsMediaThumbnail;
+                    details.typeName = sourceEntry->typeName;
+                    details.modifiedTime = sourceEntry->lastWriteTime;
+                    details.fileSize = sourceEntry->fileSize;
+                    details.isDirectory = sourceEntry->isDirectory;
                 }
             }
             if (privacyActive)
@@ -1886,7 +2010,8 @@ void FileGroup::DrawContent(
                     sysIconIndex,
                     item->GetTitle(),
                     item->IsSelected(),
-                    iconIsMediaThumbnail);
+                    iconIsMediaThumbnail,
+                    {}, nullptr, details);
             else
             {
                 const bool hovered =
@@ -1915,6 +2040,7 @@ void FileGroup::DrawContent(
     {
         DrawSearchBox(context);
         RECT content = GetContentViewportRect();
+        DrawDetailsHeader(context, content);
         IDWriteTextFormat* centered =
             GetCuTextFormat(13.0f, false, true);
         app_->DrawD2DText(

@@ -170,7 +170,7 @@ static RECT FolderMappingContentRect(FolderMapping* widget)
                     widget->GetCategorizedTabRowOffset() *
                         widget->Cu(38.0f));
     }
-    return body;
+    return widget->ApplyDetailsHeaderToViewport(body);
 }
 
 void FolderMapping::EnsureCategorySnapshot() const
@@ -273,8 +273,22 @@ const std::vector<size_t>& FolderMapping::GetVisibleEntryIndices() const
     }
     if (data_->dateHeaders && query.empty())
     {
+        if (data_->contentSortColumn ==
+            snowdesktop::list_detail_rules::Column::None)
+        {
+            std::stable_sort(visibleEntryIndices_.begin(),
+                visibleEntryIndices_.end(), [this](size_t lhs, size_t rhs) {
+                    return _wcsicmp(
+                        data_->folderEntries[lhs].name.c_str(),
+                        data_->folderEntries[rhs].name.c_str()) < 0;
+                });
+        }
+        const bool reverseGroups =
+            data_->contentSortColumn ==
+                snowdesktop::list_detail_rules::Column::Modified &&
+            data_->contentSortAscending;
         std::stable_sort(visibleEntryIndices_.begin(), visibleEntryIndices_.end(),
-            [this](size_t lhs, size_t rhs)
+            [this, reverseGroups](size_t lhs, size_t rhs)
             {
                 if (lhs >= data_->folderEntries.size() ||
                     rhs >= data_->folderEntries.size())
@@ -283,8 +297,11 @@ const std::vector<size_t>& FolderMapping::GetVisibleEntryIndices() const
                 const FolderEntry& right = data_->folderEntries[rhs];
                 size_t leftRank = FolderEntryDateGroupRank(left);
                 size_t rightRank = FolderEntryDateGroupRank(right);
-                if (leftRank != rightRank) return leftRank < rightRank;
-                return _wcsicmp(left.name.c_str(), right.name.c_str()) < 0;
+                if (leftRank != rightRank)
+                    return reverseGroups
+                        ? leftRank > rightRank
+                        : leftRank < rightRank;
+                return false;
             });
     }
     return visibleEntryIndices_;
@@ -511,20 +528,24 @@ void FolderMapping::EnsureDateLayout() const
     }
 
     const auto& visibleEntries = GetVisibleEntryIndices();
+    const int currentItemHeight = data_->listMode
+        ? GetListRowHeight()
+        : FolderMappingCellHeight(
+            const_cast<FolderMapping*>(this));
     if (dateLayoutSource_ == visibleEntries &&
         dateLayoutListMode_ == data_->listMode &&
+        dateLayoutItemHeight_ == currentItemHeight &&
         !dateLayoutCache_.empty())
         return;
 
     dateLayoutCache_.clear();
     dateLayoutSource_ = visibleEntries;
     dateLayoutListMode_ = data_->listMode;
+    dateLayoutItemHeight_ = currentItemHeight;
     if (visibleEntries.empty()) return;
 
     const int headerHeight = data_->listMode ? Cu(28.0f) : Cu(36.0f);
-    const int itemHeight = data_->listMode
-        ? Cu(38.0f)
-        : FolderMappingCellHeight(const_cast<FolderMapping*>(this));
+    const int itemHeight = currentItemHeight;
     const int columns = data_->listMode
         ? 1
         : std::max(1, data_->gridSpan.columns);
@@ -593,7 +614,7 @@ static int FolderMappingContentHeight(FolderMapping* widget, size_t itemCount)
             : static_cast<int>(segments.back().y + segments.back().height);
     }
     if (data->listMode)
-        return static_cast<int>(itemCount) * widget->Cu(38.0f);
+        return static_cast<int>(itemCount) * widget->GetListRowHeight();
     int columns = std::max(1, data->gridSpan.columns);
     int rows = static_cast<int>((itemCount + static_cast<size_t>(columns) - 1) / static_cast<size_t>(columns));
     if (rows <= 0) return 0;
@@ -662,7 +683,7 @@ static RECT FolderMappingItemRect(FolderMapping* widget, size_t linearIndex)
             size_t localIndex = linearIndex - itemSegment->firstItemIndex;
             if (data->listMode)
             {
-                const int itemHeight = widget->Cu(38.0f);
+                const int itemHeight = widget->GetListRowHeight();
                 RECT rect = MakeRect(content.left,
                     content.top + itemSegment->y +
                         static_cast<LONG>(localIndex * itemHeight) - scroll,
@@ -693,7 +714,7 @@ static RECT FolderMappingItemRect(FolderMapping* widget, size_t linearIndex)
     }
     if (data->listMode)
     {
-        const int itemHeight = widget->Cu(38.0f);
+        const int itemHeight = widget->GetListRowHeight();
         RECT rect = MakeRect(content.left,
             content.top + static_cast<LONG>(linearIndex * itemHeight) - scroll,
             content.right,
@@ -781,7 +802,7 @@ std::vector<std::unique_ptr<Slot>> FolderMapping::BuildSlots()
         const int columns = data_->listMode
             ? 1 : std::max(1, data_->gridSpan.columns);
         const int itemHeight = data_->listMode
-            ? std::max(1, Cu(38.0f))
+            ? std::max(1, GetListRowHeight())
             : std::max(1, FolderMappingCellHeight(this));
 
         for (const auto& segment : dateLayoutCache_)
@@ -862,7 +883,7 @@ std::vector<std::unique_ptr<Slot>> FolderMapping::BuildSlots()
         if (data_->listMode)
         {
             const int itemHeight =
-                std::max(1, Cu(38.0f));
+                std::max(1, GetListRowHeight());
             const int firstRow = std::max(
                 0, scroll / itemHeight - 1);
             const int lastRow =
@@ -977,6 +998,8 @@ void FolderMapping::ReorderMembers(const std::vector<size_t>& indices, size_t in
         data_->itemKeys.push_back(entry.fullPath);
     data_->folderSortMode =
         snowdesktop::folder_sort_rules::kManual;
+    data_->contentSortColumn =
+        snowdesktop::list_detail_rules::Column::None;
     InvalidateSlots();
 }
 
@@ -1009,7 +1032,7 @@ size_t FolderMapping::GetSlotCount() const
 int FolderMapping::GetItemHeight() const
 {
     return (data_ && data_->listMode)
-        ? Cu(38.0f)
+        ? GetListRowHeight()
         : FolderMappingCellHeight(const_cast<FolderMapping*>(this));
 }
 
@@ -1097,6 +1120,7 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
     const bool lt = app_->IsLightContentTheme();
 
     DrawSearchBox(context);
+    DrawDetailsHeader(context, FolderMappingContentRect(this));
 
     if (data_->folderEntries.empty())
     {
@@ -1232,7 +1256,10 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
             DrawPrivacyPlaceholder(context, cell, entry.name, entry.isDirectory);
         else
             DrawListItem(context, cell, entry.iconBitmap, entry.sysIconIndex,
-                entry.name, entry.selected, entry.iconIsMediaThumbnail);
+                entry.name, entry.selected, entry.iconIsMediaThumbnail,
+                {}, nullptr,
+                { entry.typeName, entry.lastWriteTime,
+                  entry.fileSize, entry.isDirectory });
     }
     context->PopAxisAlignedClip();
 }
@@ -1357,6 +1384,9 @@ WidgetHit FolderMapping::HitTestWidget(POINT pt) const
     RECT searchRect = GetSearchBoxRect();
     if (!IsRectEmptyRect(searchRect) && PtInRect(&searchRect, pt))
         return WidgetHit::SearchBox;
+    const WidgetHit details = HitTestDetailsHeader(
+        pt, GetContentViewportRect());
+    if (details != WidgetHit::None) return details;
     if (base != WidgetHit::MoveHandle) return base;
 
     RECT handle = GetMoveHandleRect();

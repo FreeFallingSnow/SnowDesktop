@@ -54,6 +54,9 @@ struct WidgetRecord
     bool folderSortAscending = true;
     bool autoCollect = false;
     bool listMode = false;
+    bool showDetails = false;
+    std::string contentSortColumn = "none";
+    bool contentSortAscending = true;
     bool dateHeaders = false;
     bool showFileCategories = false;
     bool showSearchBox = false;
@@ -88,6 +91,7 @@ struct Document
     std::optional<std::string> lastPageMonitor;
     std::optional<bool> dockEnabled;
     std::optional<float> itemFontSize;
+    std::optional<float> listItemFontSize;
     std::optional<float> itemFontWeight;
     std::optional<float> iconSpacing;
     std::optional<float> componentSpacing;

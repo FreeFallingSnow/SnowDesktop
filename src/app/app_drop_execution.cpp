@@ -447,6 +447,8 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
                 items_[itemIndex].gridCell = preview.targetWidget->gridCell;
         }
         if (originWidget) originWidget->InvalidateSlots();
+        preview.targetWidget->contentSortColumn =
+            snowdesktop::list_detail_rules::Column::None;
         targetWidget->InvalidateSlots();
         if (GetDesktopGrid()) GetDesktopGrid()->InvalidateSlots();
         RefreshCollectedKeysCache();

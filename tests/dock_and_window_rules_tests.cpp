@@ -651,8 +651,10 @@ int main()
     {
         std::wstring name;
         std::wstring fullPath;
+        std::wstring typeName;
         bool isDirectory = false;
         FILETIME lastWriteTime{};
+        std::optional<std::uint64_t> fileSize;
     };
     auto makeSortEntry = [](
         const wchar_t* name,
@@ -664,6 +666,13 @@ int main()
             std::wstring(L"C:\\stack\\") +
             name;
         entry.isDirectory = directory;
+        entry.typeName = directory
+            ? L"File folder"
+            : (std::wstring(name).ends_with(L".png")
+                ? L"PNG image" : L"Text document");
+        if (!directory)
+            entry.fileSize = std::wstring(name).ends_with(L".png")
+                ? 300u : 20u;
         entry.lastWriteTime.dwLowDateTime =
             static_cast<DWORD>(modified);
         entry.lastWriteTime.dwHighDateTime =
@@ -739,19 +748,37 @@ int main()
                 L"alpha.png" &&
             sortEntries[3].name ==
                 L"zeta.txt",
-        "folder popup type sort must compare extensions within the file group");
+        "folder popup type sort must compare cached system type names");
     folderSort::StableSort(
         sortEntries,
         folderSort::kType, false);
     Check(
-        sortEntries[0].name == L"folder-b" &&
+        sortEntries[0].name == L"folder-a" &&
             sortEntries[1].name ==
-                L"folder-a" &&
+                L"folder-b" &&
             sortEntries[2].name ==
                 L"zeta.txt" &&
             sortEntries[3].name ==
                 L"alpha.png",
-        "folder popup descending type sort must keep directories first");
+        "descending type sort keeps directories first and uses stable names for ties");
+    folderSort::StableSort(
+        sortEntries,
+        folderSort::kSize, true);
+    Check(
+        sortEntries[0].name == L"zeta.txt" &&
+            sortEntries[1].name == L"alpha.png" &&
+            sortEntries[2].name == L"folder-a" &&
+            sortEntries[3].name == L"folder-b",
+        "ascending size sort keeps entries with missing sizes last");
+    folderSort::StableSort(
+        sortEntries,
+        folderSort::kSize, false);
+    Check(
+        sortEntries[0].name == L"alpha.png" &&
+            sortEntries[1].name == L"zeta.txt" &&
+            sortEntries[2].name == L"folder-a" &&
+            sortEntries[3].name == L"folder-b",
+        "descending size sort keeps entries with missing sizes last");
     Check(
         folderSort::NormalizeMode(99) ==
             folderSort::kManual,

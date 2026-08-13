@@ -73,7 +73,7 @@ RECT CollectionGroupContentRect(CollectionGroup* widget)
     if (!IsRectEmptyRect(tabs))
         body.top = std::min<LONG>(
             body.bottom, tabs.bottom + widget->Cu(8.0f));
-    return body;
+    return widget->ApplyDetailsHeaderToViewport(body);
 }
 
 std::wstring CollectionGroupActiveCategory(CollectionGroup* widget)
@@ -246,7 +246,7 @@ RECT CollectionGroupItemRect(CollectionGroup* widget, size_t index)
 
     if (data->listMode)
     {
-        const int itemHeight = widget->Cu(38.0f);
+        const int itemHeight = widget->GetListRowHeight();
         RECT result = MakeRect(
             content.left,
             content.top +
@@ -285,7 +285,7 @@ int CollectionGroupContentHeight(
     if (!data) return 0;
     if (data->listMode)
         return static_cast<int>(itemCount) *
-            widget->Cu(38.0f);
+            widget->GetListRowHeight();
     const int columns =
         std::max(1, data->gridSpan.columns);
     const int rows = static_cast<int>(
@@ -503,6 +503,12 @@ RECT CollectionGroup::GetContentViewportRect() const
         const_cast<CollectionGroup*>(this));
 }
 
+const DesktopWidget* CollectionGroup::GetDetailsSortData() const
+{
+    return CollectionGroupActiveCollection(
+        const_cast<CollectionGroup*>(this));
+}
+
 std::wstring CollectionGroup::CategoryIdAtPoint(POINT pt) const
 {
     const size_t tabIndex =
@@ -613,7 +619,7 @@ size_t CollectionGroup::GetSlotCount() const
 int CollectionGroup::GetItemHeight() const
 {
     if (!data_ || data_->listMode)
-        return Cu(38.0f);
+        return GetListRowHeight();
     return CollectionGroupCellHeight(
         const_cast<CollectionGroup*>(this));
 }
@@ -678,7 +684,7 @@ CollectionGroup::BuildSlots()
 
     if (data_->listMode)
     {
-        const int height = Cu(38.0f);
+        const int height = GetListRowHeight();
         const int firstRow =
             std::max(0, scroll / height - 1);
         const int lastRow =
@@ -932,6 +938,9 @@ WidgetHit CollectionGroup::HitTestWidget(POINT pt) const
         return WidgetHit::SearchBox;
     if (!CategoryIdAtPoint(pt).empty())
         return WidgetHit::CategoryTab;
+    const WidgetHit details = HitTestDetailsHeader(
+        pt, GetContentViewportRect());
+    if (details != WidgetHit::None) return details;
     if (base == WidgetHit::MoveHandle)
     {
         RECT listToggle =
@@ -1105,6 +1114,7 @@ void CollectionGroup::DrawContent(
     }
 
     RECT content = GetContentViewportRect();
+    DrawDetailsHeader(context, content);
     if (children.empty())
     {
         IDWriteTextFormat* centered =
@@ -1191,7 +1201,9 @@ void CollectionGroup::DrawContent(
                     context, row, item->iconBitmap,
                     item->sysIconIndex, item->name,
                     item->selected, item->iconIsMediaThumbnail,
-                    demoIdentity, activeCollection);
+                    demoIdentity, activeCollection,
+                    { item->typeName, item->modifiedTime,
+                      item->fileSize, false });
             }
         }
         else if (privacyActive)

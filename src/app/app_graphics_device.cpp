@@ -66,6 +66,7 @@ bool DesktopApp::InitGraphics()
         reinterpret_cast<IUnknown**>(dwriteFactory_.GetAddressOf()));
     if (FAILED(hr)) return false;
     RecreateItemTextFormat();
+    RecreateComponentListTextFormat();
 
     dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 13.0f, L"", &listItemTextFormat_);
@@ -149,6 +150,30 @@ void DesktopApp::RecreateItemTextFormat()
     }
 }
 
+void DesktopApp::RecreateComponentListTextFormat()
+{
+    if (!dwriteFactory_) return;
+    componentListTextLayoutCache_.clear();
+    componentListTextShadowCache_.clear();
+    componentListTextFormat_.Reset();
+    const float lineHeight = listItemFontSize_ * 7.0f / 6.0f;
+    const float baseline = listItemFontSize_ * 5.0f / 6.0f;
+    dwriteFactory_->CreateTextFormat(
+        L"Segoe UI", nullptr, itemFontWeight_,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+        listItemFontSize_, L"", &componentListTextFormat_);
+    if (!componentListTextFormat_) return;
+    componentListTextFormat_->SetTextAlignment(
+        DWRITE_TEXT_ALIGNMENT_LEADING);
+    componentListTextFormat_->SetParagraphAlignment(
+        DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    componentListTextFormat_->SetWordWrapping(
+        DWRITE_WORD_WRAPPING_NO_WRAP);
+    componentListTextFormat_->SetLineSpacing(
+        DWRITE_LINE_SPACING_METHOD_UNIFORM,
+        lineHeight, baseline);
+}
+
 void DesktopApp::ResetCompositionRenderCaches()
 {
     dragRenderCache_.Reset();
@@ -168,6 +193,7 @@ void DesktopApp::ResetCompositionRenderCaches()
     shortcutArrowBitmap_.Reset();
     shortcutArrowBitmapSize_ = {};
     itemTextShadowCache_.clear();
+    componentListTextShadowCache_.clear();
     itemTextEffectContext_.Reset();
 }
 

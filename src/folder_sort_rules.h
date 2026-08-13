@@ -15,10 +15,11 @@ constexpr int kManual = -1;
 constexpr int kName = 0;
 constexpr int kType = 1;
 constexpr int kModified = 2;
+constexpr int kSize = 3;
 
 inline int NormalizeMode(int mode)
 {
-    return mode >= kName && mode <= kModified
+    return mode >= kName && mode <= kSize
         ? mode
         : kManual;
 }
@@ -75,19 +76,28 @@ inline void StableSort(
             const Entry& b) {
             // Name and type views keep directories grouped before files.
             // Modified-time views compare every entry on the same timeline.
-            if (mode != kModified &&
+            if ((mode == kName || mode == kType) &&
                 a.isDirectory != b.isDirectory)
                 return a.isDirectory;
 
             int comparison = 0;
             if (mode == kType)
             {
-                const std::wstring_view extensionA =
-                    ExtensionOf(a.name);
-                const std::wstring_view extensionB =
-                    ExtensionOf(b.name);
-                comparison = CompareInsensitive(
-                    extensionA, extensionB);
+                if constexpr (requires { a.typeName; b.typeName; })
+                {
+                    const bool hasA = !a.typeName.empty();
+                    const bool hasB = !b.typeName.empty();
+                    if (hasA != hasB)
+                        return hasA;
+                    comparison = CompareInsensitive(
+                        a.typeName, b.typeName);
+                }
+                else
+                {
+                    comparison = CompareInsensitive(
+                        ExtensionOf(a.name),
+                        ExtensionOf(b.name));
+                }
             }
             else if (mode == kModified)
             {
@@ -99,16 +109,34 @@ inline void StableSort(
                     timeA < timeB ? -1 :
                     timeA > timeB ? 1 : 0;
             }
+            else if (mode == kSize)
+            {
+                if constexpr (requires { a.fileSize; b.fileSize; })
+                {
+                    const bool hasA = a.fileSize.has_value();
+                    const bool hasB = b.fileSize.has_value();
+                    if (hasA != hasB)
+                        return hasA;
+                    if (hasA)
+                    {
+                        comparison =
+                            *a.fileSize < *b.fileSize ? -1 :
+                            *a.fileSize > *b.fileSize ? 1 : 0;
+                    }
+                }
+            }
 
-            if (comparison == 0)
-                comparison = CompareInsensitive(
-                    a.name, b.name);
+            if (comparison != 0)
+                return ascending
+                    ? comparison < 0
+                    : comparison > 0;
+            comparison = CompareInsensitive(a.name, b.name);
             if (comparison == 0)
                 comparison = CompareInsensitive(
                     a.fullPath, b.fullPath);
-            return ascending
-                ? comparison < 0
-                : comparison > 0;
+            return mode == kName && !ascending
+                ? comparison > 0
+                : comparison < 0;
         });
 }
 

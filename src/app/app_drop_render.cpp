@@ -88,6 +88,8 @@ bool DesktopApp::ApplyPendingFolderPlacements(
                 targetWidget.itemKeys);
             targetWidget.folderSortMode =
                 snowdesktop::folder_sort_rules::kManual;
+            targetWidget.contentSortColumn =
+                snowdesktop::list_detail_rules::Column::None;
             changed = true;
         }
         // A successful file operation gets exactly one reconciliation pass.

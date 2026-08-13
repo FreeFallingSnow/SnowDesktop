@@ -172,6 +172,21 @@ void DesktopApp::ShowWidgetContextMenu(
     }
     const DesktopWidget& effectiveSource =
         widgets_[effectiveSourceIndex];
+    size_t contentSortTargetIndex = effectiveSourceIndex;
+    if (widget.type == DesktopWidgetType::FileGroup)
+    {
+        for (const auto& container : containers_)
+        {
+            const auto* group = dynamic_cast<const FileGroup*>(
+                container.get());
+            if (group && group->GetWidgetData() == &widget &&
+                group->IsGroupSearchActive())
+            {
+                contentSortTargetIndex = widgetIndex;
+                break;
+            }
+        }
+    }
     const auto statusLabel = [](const wchar_t* title,
                                 const wchar_t* status) {
         std::wstring label = title;
@@ -191,6 +206,17 @@ void DesktopApp::ShowWidgetContextMenu(
         widget.listMode
             ? _LW("app.interact.list_view_state")
             : _LW("app.interact.icon_view_state"));
+    const std::wstring detailsVisibilityLabel = statusLabel(
+        _LW("app.interact.show_details"),
+        widget.showDetails
+            ? _LW("app.interact.on")
+            : _LW("app.interact.off"));
+    const auto appendDetailsToggle = [&]() {
+        AppendMenuW(menu,
+            MF_STRING | (widget.listMode ? 0 : MF_GRAYED),
+            kContextWidgetToggleDetails,
+            detailsVisibilityLabel.c_str());
+    };
     const std::wstring categoryVisibilityLabel = visibilityLabel(
         _LW("app.interact.file_categories"),
         widget.showFileCategories);
@@ -255,6 +281,7 @@ void DesktopApp::ShowWidgetContextMenu(
             {
                 AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode,
                     displayTypeLabel.c_str());
+                appendDetailsToggle();
             }
         }
     }
@@ -263,6 +290,7 @@ void DesktopApp::ShowWidgetContextMenu(
         AppendMenuW(menu, MF_STRING,
             kContextWidgetToggleListMode,
             displayTypeLabel.c_str());
+        appendDetailsToggle();
         AppendMenuW(menu, MF_STRING,
             kContextWidgetToggleSearchBox,
             searchVisibilityLabel.c_str());
@@ -305,6 +333,7 @@ void DesktopApp::ShowWidgetContextMenu(
         AppendMenuW(menu, MF_STRING,
             kContextWidgetToggleListMode,
             displayTypeLabel.c_str());
+        appendDetailsToggle();
         AppendMenuW(menu, MF_STRING,
             kContextWidgetToggleFileCategories,
             categoryVisibilityLabel.c_str());
@@ -343,6 +372,7 @@ void DesktopApp::ShowWidgetContextMenu(
             autoCollectLabel.c_str());
         AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode,
             displayTypeLabel.c_str());
+        appendDetailsToggle();
         AppendMenuW(menu, MF_STRING,
             kContextWidgetToggleFileCategories,
             categoryVisibilityLabel.c_str());
@@ -361,6 +391,7 @@ void DesktopApp::ShowWidgetContextMenu(
             kContextPasteCommand, _LW("app.menu.paste"));
         AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode,
             displayTypeLabel.c_str());
+        appendDetailsToggle();
         AppendMenuW(menu, MF_STRING,
             kContextWidgetToggleFileCategories,
             categoryVisibilityLabel.c_str());
@@ -409,15 +440,13 @@ void DesktopApp::ShowWidgetContextMenu(
         }
     }
 
-    HMENU sortMenu = nullptr, wNameMenu = nullptr, wTypeMenu = nullptr, wDateMenu = nullptr;
+    HMENU sortMenu = nullptr, wNameMenu = nullptr, wTypeMenu = nullptr,
+        wDateMenu = nullptr, wSizeMenu = nullptr;
     if ((widget.type == DesktopWidgetType::FileCategories ||
         widget.type == DesktopWidgetType::FolderMapping ||
         widget.type == DesktopWidgetType::Collection ||
         widget.type == DesktopWidgetType::CollectionGroup ||
-        widget.type == DesktopWidgetType::FileGroup) &&
-        (widget.type == DesktopWidgetType::CollectionGroup ||
-            widget.type == DesktopWidgetType::FileGroup ||
-            !widget.dateHeaders))
+        widget.type == DesktopWidgetType::FileGroup))
     {
         sortMenu = CreatePopupMenu();
         if (sortMenu)
@@ -442,6 +471,17 @@ void DesktopApp::ShowWidgetContextMenu(
                 AppendMenuW(wDateMenu, MF_STRING, kContextWidgetSortByDate, _LW("app.menu.sort_asc"));
                 AppendMenuW(wDateMenu, MF_STRING, kContextWidgetSortByDateDesc, _LW("app.menu.sort_desc"));
                 AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(wDateMenu), _LW("app.interact.sort_date"));
+            }
+            wSizeMenu = CreatePopupMenu();
+            if (wSizeMenu)
+            {
+                AppendMenuW(wSizeMenu, MF_STRING,
+                    kContextWidgetSortBySize, _LW("app.menu.sort_asc"));
+                AppendMenuW(wSizeMenu, MF_STRING,
+                    kContextWidgetSortBySizeDesc, _LW("app.menu.sort_desc"));
+                AppendMenuW(sortMenu, MF_POPUP,
+                    reinterpret_cast<UINT_PTR>(wSizeMenu),
+                    _LW("app.menu.sort_size"));
             }
             AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sortMenu), _LW("app.menu.sort_by"));
         }
@@ -497,6 +537,7 @@ void DesktopApp::ShowWidgetContextMenu(
         snowdesktop::menu_fluent_glyphs::kAutoCollect);
     setFluentIcon(menu, kContextWidgetToggleListMode,
         snowdesktop::menu_fluent_glyphs::kContentLayout);
+    setFluentIcon(menu, kContextWidgetToggleDetails, L"\uF168");
     setFluentIcon(menu, kContextWidgetToggleDateGroup,
         snowdesktop::menu_fluent_glyphs::kDateHeader);
     setFluentIcon(menu, kContextWidgetOpenFolder, L"\uF42E");
@@ -566,6 +607,18 @@ void DesktopApp::ShowWidgetContextMenu(
             setFluentIcon(wDateMenu,
                 kContextWidgetSortByDateDesc,
                 snowdesktop::menu_fluent_glyphs::kSortDateDescending);
+        }
+        if (wSizeMenu)
+        {
+            setFluentIcon(sortMenu,
+                reinterpret_cast<UINT_PTR>(wSizeMenu),
+                snowdesktop::menu_fluent_glyphs::kSort);
+            setFluentIcon(wSizeMenu,
+                kContextWidgetSortBySize,
+                snowdesktop::menu_fluent_glyphs::kSortNameAscending);
+            setFluentIcon(wSizeMenu,
+                kContextWidgetSortBySizeDesc,
+                snowdesktop::menu_fluent_glyphs::kSortNameDescending);
         }
     }
     if (widget.type == DesktopWidgetType::Collection)
@@ -652,6 +705,30 @@ void DesktopApp::ShowWidgetContextMenu(
                     group->InvalidateHostedView();
                 else
                     wc->InvalidateSlots();
+                break;
+            }
+        }
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        break;
+    case kContextWidgetToggleDetails:
+        if (!widgets_[widgetIndex].listMode) break;
+        widgets_[widgetIndex].showDetails =
+            !widgets_[widgetIndex].showDetails;
+        widgets_[widgetIndex].scrollOffset = 0;
+        for (auto& container : containers_)
+        {
+            auto* widgetContainer =
+                dynamic_cast<WidgetContainer*>(container.get());
+            if (widgetContainer &&
+                widgetContainer->GetWidgetData() ==
+                    &widgets_[widgetIndex])
+            {
+                if (auto* group =
+                        dynamic_cast<FileGroup*>(widgetContainer))
+                    group->InvalidateHostedView();
+                else
+                    widgetContainer->InvalidateSlots();
                 break;
             }
         }
@@ -932,22 +1009,28 @@ void DesktopApp::ShowWidgetContextMenu(
         }
         break;
     case kContextWidgetSortByName:
-        SortWidgetContents(effectiveSourceIndex, 0, true);
+        SortWidgetContents(contentSortTargetIndex, 0, true);
         break;
     case kContextWidgetSortByNameDesc:
-        SortWidgetContents(effectiveSourceIndex, 0, false);
+        SortWidgetContents(contentSortTargetIndex, 0, false);
         break;
     case kContextWidgetSortByType:
-        SortWidgetContents(effectiveSourceIndex, 1, true);
+        SortWidgetContents(contentSortTargetIndex, 1, true);
         break;
     case kContextWidgetSortByTypeDesc:
-        SortWidgetContents(effectiveSourceIndex, 1, false);
+        SortWidgetContents(contentSortTargetIndex, 1, false);
         break;
     case kContextWidgetSortByDate:
-        SortWidgetContents(effectiveSourceIndex, 2, true);
+        SortWidgetContents(contentSortTargetIndex, 2, true);
         break;
     case kContextWidgetSortByDateDesc:
-        SortWidgetContents(effectiveSourceIndex, 2, false);
+        SortWidgetContents(contentSortTargetIndex, 2, false);
+        break;
+    case kContextWidgetSortBySize:
+        SortWidgetContents(contentSortTargetIndex, 3, true);
+        break;
+    case kContextWidgetSortBySizeDesc:
+        SortWidgetContents(contentSortTargetIndex, 3, false);
         break;
     case kContextWidgetShowOnHoverOn:
         widgets_[widgetIndex].showOnHoverOnly = true;

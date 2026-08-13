@@ -6,7 +6,8 @@
 void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
     IDWriteTextLayout* layout, const std::wstring& shadowKey,
     D2D1_POINT_2F origin, D2D1_SIZE_F layoutSize,
-    float layoutScale, float opacity, bool lightTheme)
+    float layoutScale, float opacity, bool lightTheme,
+    bool componentList)
 {
     if (!context || !layout || shadowKey.empty()) return;
     if (context != brushCacheContext_ || brushCache_.size() >= 512)
@@ -55,8 +56,11 @@ void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
     // one bitmap draw per label.
     if (supportsEffects && itemTextEffectContext_ && !lightTheme)
     {
-        auto shadowIt = itemTextShadowCache_.find(shadowKey);
-        if (shadowIt == itemTextShadowCache_.end())
+        auto& shadowCache = componentList
+            ? componentListTextShadowCache_
+            : itemTextShadowCache_;
+        auto shadowIt = shadowCache.find(shadowKey);
+        if (shadowIt == shadowCache.end())
         {
             const UINT shadowPadding =
                 static_cast<UINT>(std::max(1.0f, std::ceil(6.0f * shadowScale)));
@@ -150,7 +154,7 @@ void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
                         itemTextEffectContext_->SetTarget(nullptr);
                         if (SUCCEEDED(shadowHr))
                         {
-                            shadowIt = itemTextShadowCache_.emplace(
+                            shadowIt = shadowCache.emplace(
                                 shadowKey, std::move(shadowBitmap)).first;
                         }
                     }
@@ -158,7 +162,7 @@ void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
             }
         }
 
-        if (shadowIt != itemTextShadowCache_.end() && shadowIt->second)
+        if (shadowIt != shadowCache.end() && shadowIt->second)
         {
             const float shadowPadding =
                 std::max(1.0f, std::ceil(6.0f * shadowScale));

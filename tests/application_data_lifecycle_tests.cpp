@@ -254,6 +254,8 @@ int main()
             "dockEnabled" },
         { "top-level number type", "{\"itemFontSize\":\"16\"}",
             "itemFontSize" },
+        { "list font size type", "{\"listItemFontSize\":\"15\"}",
+            "listItemFontSize" },
         { "component spacing type", "{\"componentSpacing\":\"1.5\"}",
             "componentSpacing" },
         { "integer exactness", "{\"shortcutArrowMode\":1.5}",
@@ -270,6 +272,14 @@ int main()
             "{\"widgets\":[{\"id\":\"w\",\"page\":\"p\",\"x\":0,"
             "\"y\":0,\"showTitle\":\"yes\"}]}",
             "widgets[0].showTitle" },
+        { "widget details type",
+            "{\"widgets\":[{\"id\":\"w\",\"page\":\"p\",\"x\":0,"
+            "\"y\":0,\"showDetails\":\"yes\"}]}",
+            "widgets[0].showDetails" },
+        { "widget content sort type",
+            "{\"widgets\":[{\"id\":\"w\",\"page\":\"p\",\"x\":0,"
+            "\"y\":0,\"contentSortColumn\":2}]}",
+            "widgets[0].contentSortColumn" },
         { "widget package source URL type",
             "{\"widgets\":[{\"id\":\"w\",\"page\":\"p\",\"x\":0,"
             "\"y\":0,\"packageSourceUrl\":7}]}",
@@ -340,6 +350,40 @@ int main()
             spacingLayout.componentSpacing.has_value() &&
             *spacingLayout.componentSpacing == 1.5f,
         "component spacing is decoded as an optional layout setting");
+    const std::string detailsLayoutText =
+        "{\"layoutSchemaVersion\":1,"
+        "\"widgetContentOptionsSchemaVersion\":2,"
+        "\"itemFontSize\":18,\"listItemFontSize\":16,"
+        "\"widgets\":[{\"id\":\"details-widget\",\"page\":\"page-a\","
+        "\"x\":0,\"y\":0,\"type\":\"folderMapping\","
+        "\"showDetails\":true,\"contentSortColumn\":\"size\","
+        "\"contentSortAscending\":false}]}";
+    snowdesktop::layout_storage::Document detailsLayout;
+    Expect(snowdesktop::layout_storage::ParseDocument(
+            detailsLayoutText, detailsLayout, &layoutError) &&
+            detailsLayout.widgetContentOptionsSchemaVersion.value_or(0) == 2 &&
+            detailsLayout.listItemFontSize.value_or(0.0f) == 16.0f &&
+            detailsLayout.widgets.size() == 1 &&
+            detailsLayout.widgets[0].showDetails &&
+            detailsLayout.widgets[0].contentSortColumn == "size" &&
+            !detailsLayout.widgets[0].contentSortAscending,
+        "list font and detail view state decode into the typed layout model");
+    const auto detailsLayoutPath =
+        root / L"layout-storage" / L"details.layout.json";
+    Expect(snowdesktop::layout_storage::SaveDocument(
+            detailsLayoutPath, detailsLayoutText, &layoutError),
+        "detail view layout fields save through the validated storage path");
+    snowdesktop::layout_storage::Document loadedDetailsLayout;
+    const auto detailsLayoutLoad =
+        snowdesktop::layout_storage::LoadDocument(
+            detailsLayoutPath, loadedDetailsLayout);
+    Expect(detailsLayoutLoad.status ==
+            snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
+            loadedDetailsLayout.listItemFontSize.value_or(0.0f) == 16.0f &&
+            loadedDetailsLayout.widgets.size() == 1 &&
+            loadedDetailsLayout.widgets[0].showDetails &&
+            loadedDetailsLayout.widgets[0].contentSortColumn == "size",
+        "list font and detail view fields round-trip through layout storage");
     snowdesktop::layout_storage::Document legacyBeautifyLayout;
     Expect(snowdesktop::layout_storage::ParseDocument(
             "{\"iconBeautifyEnabled\":true,\"iconBeautifyMode\":0}",

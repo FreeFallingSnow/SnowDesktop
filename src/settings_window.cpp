@@ -2588,6 +2588,19 @@ void SettingsWindow::DrawDisplayPage()
         markChanged();
     }
 
+    BeginSettingRow(_L("app.settings.list_font_size"), sliderActionW);
+    ImGui::SetNextItemWidth(actionSliderW);
+    if (ImGui::SliderFloat("##ListItemFontSize", &listItemFontSize_,
+        10.0f, 24.0f, "%.1f pt"))
+        markChanged();
+    ImGui::SameLine();
+    if (BlueButton((std::string(_L("app.settings.restore_default")) +
+        "##ListItemFontSizeDefault").c_str(), ImVec2(resetW, 0)))
+    {
+        listItemFontSize_ = 15.0f;
+        markChanged();
+    }
+
     BeginSettingRow(_L("app.settings.title_font_weight"), sliderActionW);
     ImGui::SetNextItemWidth(actionSliderW);
     if (ImGui::SliderFloat("##ItemFontWeight", &itemFontWeight_,

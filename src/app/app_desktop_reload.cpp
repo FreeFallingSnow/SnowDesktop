@@ -575,6 +575,8 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
     if (reloadLayoutFromDisk)
     {
         LoadLayoutSlots();
+        RecreateItemTextFormat();
+        RecreateComponentListTextFormat();
         // The file has just populated savedPageColumns_/savedPageRows_. Do not
         // overwrite those restored values with the pre-reload runtime grid.
         UpdateLayoutWorkArea(false);

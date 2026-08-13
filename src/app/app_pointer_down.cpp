@@ -719,6 +719,39 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             InvalidateRect(hwnd_, &widgets_[wi].bounds, FALSE);
             return;
         }
+        else if (wh == WidgetHit::DetailsNameHeader ||
+                 wh == WidgetHit::DetailsModifiedHeader ||
+                 wh == WidgetHit::DetailsTypeHeader ||
+                 wh == WidgetHit::DetailsSizeHeader)
+        {
+            auto* list = dynamic_cast<ScrollingItemWidget*>(wc);
+            if (!list) return;
+            auto column = snowdesktop::list_detail_rules::Column::Name;
+            int mode = snowdesktop::folder_sort_rules::kName;
+            if (wh == WidgetHit::DetailsModifiedHeader)
+            {
+                column = snowdesktop::list_detail_rules::Column::Modified;
+                mode = snowdesktop::folder_sort_rules::kModified;
+            }
+            else if (wh == WidgetHit::DetailsTypeHeader)
+            {
+                column = snowdesktop::list_detail_rules::Column::Type;
+                mode = snowdesktop::folder_sort_rules::kType;
+            }
+            else if (wh == WidgetHit::DetailsSizeHeader)
+            {
+                column = snowdesktop::list_detail_rules::Column::Size;
+                mode = snowdesktop::folder_sort_rules::kSize;
+            }
+            const DesktopWidget* sortData = list->GetDetailsSortData();
+            const bool ascending = sortData &&
+                sortData->contentSortColumn == column
+                ? !sortData->contentSortAscending
+                : snowdesktop::list_detail_rules::
+                    DefaultAscending(column);
+            SortWidgetContents(wi, mode, ascending);
+            return;
+        }
         else if (wh == WidgetHit::Content)
         {
             Item* memberItem = nullptr;

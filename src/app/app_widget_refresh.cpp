@@ -71,9 +71,17 @@ void DesktopApp::EnumerateFolderMappingEntries(
         entry.fullPath = widget.sourceFolderPath + L"\\" + fd.cFileName;
         entry.isDirectory = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
         entry.lastWriteTime = fd.ftLastWriteTime;
+        if (!entry.isDirectory)
+        {
+            entry.fileSize =
+                (static_cast<std::uint64_t>(fd.nFileSizeHigh) << 32) |
+                static_cast<std::uint64_t>(fd.nFileSizeLow);
+        }
         SHFILEINFOW info{};
-        SHGetFileInfoW(entry.fullPath.c_str(), 0, &info, sizeof(info), SHGFI_SYSICONINDEX);
+        SHGetFileInfoW(entry.fullPath.c_str(), 0, &info, sizeof(info),
+            SHGFI_SYSICONINDEX | SHGFI_TYPENAME);
         entry.sysIconIndex = info.iIcon;
+        entry.typeName = info.szTypeName;
 
         auto oldIt = oldFolderIconCache.find(ToUpperInvariant(entry.fullPath));
         if (oldIt != oldFolderIconCache.end() && oldIt->second.sysIconIndex == entry.sysIconIndex) {

@@ -533,6 +533,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             SetComponentSpacing(
                 settingsWindow_->GetComponentSpacingScale());
             SetItemFontSize(settingsWindow_->GetItemFontSizeD());
+            SetListItemFontSize(
+                settingsWindow_->GetListItemFontSizeD());
             SetItemFontWeight(static_cast<DWRITE_FONT_WEIGHT>(static_cast<int>(settingsWindow_->GetItemFontWeightD())));
             SetShortcutArrowMode(settingsWindow_->GetShortcutArrowMode());
         });
@@ -555,7 +557,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         });
 
         settingsWindow_->SyncDisplaySettings(iconSpacingScale_,
-            componentSpacingScale_, itemFontSize_,
+            componentSpacingScale_, itemFontSize_, listItemFontSize_,
             static_cast<float>(itemFontWeight_), shortcutArrowMode_,
             iconBeautifySettings_);
         settingsWindow_->SyncDockEnabled(generalSettings_.dockEnabled);

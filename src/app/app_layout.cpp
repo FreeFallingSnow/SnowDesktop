@@ -116,6 +116,9 @@ void DesktopApp::LoadLayoutSlots()
         *document.itemFontSize <= 24.0f)
         itemFontSize_ = *document.itemFontSize;
 
+    listItemFontSize_ = snowdesktop::list_detail_rules::ResolveFontSize(
+        document.listItemFontSize, itemFontSize_);
+
     if (document.itemFontWeight &&
         *document.itemFontWeight >= 100 &&
         *document.itemFontWeight <= 950)
@@ -342,6 +345,7 @@ void DesktopApp::LoadLayoutSlots()
         widget.gridSpan.rows = std::max(1, saved.height);
         widget.autoCollect = saved.autoCollect;
         widget.listMode = saved.listMode;
+        widget.showDetails = saved.showDetails;
         widget.dateHeaders =
             widget.type == DesktopWidgetType::CollectionGroup
                 ? false : saved.dateHeaders;
@@ -444,6 +448,20 @@ void DesktopApp::LoadLayoutSlots()
         widget.folderSortMode = snowdesktop::folder_sort_rules::NormalizeMode(
             saved.folderSortMode);
         widget.folderSortAscending = saved.folderSortAscending;
+        widget.contentSortColumn =
+            snowdesktop::list_detail_rules::FromString(
+                saved.contentSortColumn);
+        widget.contentSortAscending = saved.contentSortAscending;
+        if (widget.contentSortColumn ==
+                snowdesktop::list_detail_rules::Column::None &&
+            widget.type == DesktopWidgetType::FolderMapping &&
+            widget.folderSortMode >=
+                snowdesktop::folder_sort_rules::kName)
+        {
+            widget.contentSortColumn = snowdesktop::list_detail_rules::
+                FromLegacyFolderSortMode(widget.folderSortMode);
+            widget.contentSortAscending = widget.folderSortAscending;
+        }
         widget.activeCategoryId = Utf8ToWide(saved.activeCategory);
         widget.itemKeys.reserve(saved.items.size());
         for (const auto& key : saved.items)
@@ -743,11 +761,12 @@ void DesktopApp::SaveLayoutSlots()
 
     file << "{\n  \"layoutSchemaVersion\": 1"
          << ",\n  \"widgetTitleSchemaVersion\": 1"
-         << ",\n  \"widgetContentOptionsSchemaVersion\": 1"
+         << ",\n  \"widgetContentOptionsSchemaVersion\": 2"
          << ",\n  \"firstPageMonitor\": \"" << JsonEscapeUtf8(firstPageMonitorId_)
          << "\",\n  \"lastPageMonitor\": \""  << JsonEscapeUtf8(lastPageMonitorId_)
          << "\",\n  \"dockEnabled\": " << (generalSettings_.dockEnabled ? "true" : "false")
          << ",\n  \"itemFontSize\": " << itemFontSize_
+         << ",\n  \"listItemFontSize\": " << listItemFontSize_
          << ",\n  \"itemFontWeight\": " << static_cast<int>(itemFontWeight_)
          << ",\n  \"iconSpacing\": " << iconSpacingScale_
          << ",\n  \"componentSpacing\": " << componentSpacingScale_
@@ -858,6 +877,12 @@ void DesktopApp::SaveLayoutSlots()
              << ", \"h\": " << std::max(1, w.gridSpan.rows)
              << ", \"autoCollect\": " << (w.autoCollect ? "true" : "false")
              << ", \"listMode\": " << (w.listMode ? "true" : "false")
+             << ", \"showDetails\": " << (w.showDetails ? "true" : "false")
+             << ", \"contentSortColumn\": \""
+             << snowdesktop::list_detail_rules::ToString(
+                    w.contentSortColumn)
+             << "\", \"contentSortAscending\": "
+             << (w.contentSortAscending ? "true" : "false")
              << ", \"dateHeaders\": " << (w.dateHeaders ? "true" : "false")
              << ", \"showFileCategories\": " << (w.showFileCategories ? "true" : "false")
              << ", \"showSearchBox\": " << (w.showSearchBox ? "true" : "false")

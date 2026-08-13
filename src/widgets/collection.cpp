@@ -40,7 +40,7 @@ static RECT CollectionScrollContentRect(Collection* widget)
     if (!widget) return {};
     RECT body = widget->GetBodyRect();
     InflateRect(&body, -widget->Cu(4.0f), -widget->Cu(8.0f));
-    return body;
+    return widget->ApplyDetailsHeaderToViewport(body);
 }
 
 /**
@@ -88,7 +88,7 @@ static int CollectionScrollContentHeight(Collection* widget, size_t itemCount)
     DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
     if (!data || !data->scrollContainerMode) return 0;
     if (data->listMode)
-        return static_cast<int>(itemCount) * widget->Cu(38.0f);
+        return static_cast<int>(itemCount) * widget->GetListRowHeight();
     int columns = std::max(1, data->gridSpan.columns);
     int rows = static_cast<int>((itemCount + static_cast<size_t>(columns) - 1) / static_cast<size_t>(columns));
     if (rows <= 0) return 0;
@@ -122,7 +122,7 @@ static RECT CollectionItemRect(Collection* widget, size_t linearIndex)
     int scroll = std::clamp(data->scrollOffset, 0, CollectionScrollMaxOffset(widget));
     if (data->listMode)
     {
-        const int itemHeight = widget->Cu(38.0f);
+        const int itemHeight = widget->GetListRowHeight();
         RECT rect = MakeRect(content.left,
             content.top + static_cast<LONG>(linearIndex * itemHeight) - scroll,
             content.right,
@@ -159,7 +159,7 @@ static std::pair<size_t, size_t> CollectionVisibleIndexRange(
 
     if (data->listMode)
     {
-        const int itemHeight = std::max(1, widget->Cu(38.0f));
+        const int itemHeight = std::max(1, widget->GetListRowHeight());
         const int firstRow = std::max(
             0, scroll / itemHeight - 1);
         const int lastRow =
@@ -403,7 +403,12 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
 void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
 {
     if (!data_ || !app_) return;
-    if (data_->itemKeys.empty()) return;
+    if (data_->itemKeys.empty())
+    {
+        if (data_->scrollContainerMode)
+            DrawDetailsHeader(context, GetContentViewportRect());
+        return;
+    }
     const bool preview = IsPreviewRendering();
     auto resolveItem = [&](const std::wstring& key) -> DesktopItem* {
         if (auto* scene = GetPreviewScene())
@@ -423,6 +428,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
     if (data_->scrollContainerMode)
     {
         RECT content = GetContentViewportRect();
+        DrawDetailsHeader(context, content);
         context->PushAxisAlignedClip(app_->ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
         auto& slots = GetSlots();
@@ -465,7 +471,9 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                             : std::wstring_view(di.layoutKey));
                     DrawListItem(context, cell, di.iconBitmap,
                         di.sysIconIndex, di.name, di.selected,
-                        di.iconIsMediaThumbnail, demoIdentity, data_);
+                        di.iconIsMediaThumbnail, demoIdentity, data_,
+                        { di.typeName, di.modifiedTime,
+                          di.fileSize, false });
                 }
             }
         }
@@ -765,6 +773,8 @@ void Collection::ReorderMembers(const std::vector<size_t>& indices, size_t inser
     if (adjusted > data_->itemKeys.size()) adjusted = data_->itemKeys.size();
     for (auto it = moving.rbegin(); it != moving.rend(); ++it)
         data_->itemKeys.insert(data_->itemKeys.begin() + static_cast<std::ptrdiff_t>(adjusted++), *it);
+    data_->contentSortColumn =
+        snowdesktop::list_detail_rules::Column::None;
     if (app_)
         app_->demoCollectionIdentityCache_.erase(data_->id);
     InvalidateSlots();
@@ -854,6 +864,9 @@ WidgetHit Collection::HitTestWidget(POINT pt) const
 
     if (data_->scrollContainerMode)
     {
+        const WidgetHit details = HitTestDetailsHeader(
+            pt, GetContentViewportRect());
+        if (details != WidgetHit::None) return details;
         if (base == WidgetHit::MoveHandle)
         {
             RECT handle = GetMoveHandleRect();
@@ -979,7 +992,9 @@ BarStyle Collection::GetInsertionStyle() const
 int Collection::GetItemHeight() const
 {
     if (!data_ || !data_->scrollContainerMode) return Cu(136.0f);
-    return data_->listMode ? Cu(38.0f) : CollectionCellHeight(const_cast<Collection*>(this));
+    return data_->listMode
+        ? GetListRowHeight()
+        : CollectionCellHeight(const_cast<Collection*>(this));
 }
 
 int Collection::GetItemWidth() const

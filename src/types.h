@@ -10,7 +10,10 @@
 
 #include "constants.h"
 #include "folder_sort_rules.h"
+#include "list_detail_rules.h"
 
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -173,6 +176,8 @@ struct DesktopItem
     std::wstring layoutKey;
     std::wstring desktopIconClsid;
     std::wstring typeName;
+    std::optional<FILETIME> modifiedTime;
+    std::optional<std::uint64_t> fileSize;
     Pidl absolutePidl;
     Pidl childPidl;
     HBITMAP iconBitmap = nullptr;
@@ -198,6 +203,8 @@ struct DesktopItem
           layoutKey(std::move(other.layoutKey)),
           desktopIconClsid(std::move(other.desktopIconClsid)),
           typeName(std::move(other.typeName)),
+          modifiedTime(other.modifiedTime),
+          fileSize(other.fileSize),
           absolutePidl(std::move(other.absolutePidl)),
           childPidl(std::move(other.childPidl)),
           iconBitmap(other.iconBitmap),
@@ -233,6 +240,8 @@ struct DesktopItem
             layoutKey = std::move(other.layoutKey);
             desktopIconClsid = std::move(other.desktopIconClsid);
             typeName = std::move(other.typeName);
+            modifiedTime = other.modifiedTime;
+            fileSize = other.fileSize;
             absolutePidl = std::move(other.absolutePidl);
             childPidl = std::move(other.childPidl);
             iconBitmap = other.iconBitmap;
@@ -274,8 +283,10 @@ struct FolderEntry
 {
     std::wstring name;
     std::wstring fullPath;
+    std::wstring typeName;
     bool isDirectory = false;
     FILETIME lastWriteTime{};
+    std::optional<std::uint64_t> fileSize;
     int sysIconIndex = -1;
     HBITMAP iconBitmap = nullptr;
     SIZE iconBitmapSize{};
@@ -292,8 +303,10 @@ struct FolderEntry
     FolderEntry(const FolderEntry& other)
         : name(other.name),
           fullPath(other.fullPath),
+          typeName(other.typeName),
           isDirectory(other.isDirectory),
           lastWriteTime(other.lastWriteTime),
+          fileSize(other.fileSize),
           sysIconIndex(other.sysIconIndex),
           iconBitmap(nullptr),
           iconBitmapSize(other.iconBitmapSize),
@@ -323,8 +336,10 @@ struct FolderEntry
             }
             name = other.name;
             fullPath = other.fullPath;
+            typeName = other.typeName;
             isDirectory = other.isDirectory;
             lastWriteTime = other.lastWriteTime;
+            fileSize = other.fileSize;
             sysIconIndex = other.sysIconIndex;
             iconBitmapSize = other.iconBitmapSize;
             selected = other.selected;
@@ -377,8 +392,10 @@ public:
     FolderEntry(FolderEntry&& other) noexcept
         : name(std::move(other.name)),
           fullPath(std::move(other.fullPath)),
+          typeName(std::move(other.typeName)),
           isDirectory(other.isDirectory),
           lastWriteTime(other.lastWriteTime),
+          fileSize(other.fileSize),
           sysIconIndex(other.sysIconIndex),
           iconBitmap(other.iconBitmap),
           iconBitmapSize(other.iconBitmapSize),
@@ -404,8 +421,10 @@ public:
             }
             name = std::move(other.name);
             fullPath = std::move(other.fullPath);
+            typeName = std::move(other.typeName);
             isDirectory = other.isDirectory;
             lastWriteTime = other.lastWriteTime;
+            fileSize = other.fileSize;
             sysIconIndex = other.sysIconIndex;
             iconBitmap = other.iconBitmap;
             iconBitmapSize = other.iconBitmapSize;
@@ -447,6 +466,10 @@ struct DesktopWidget
     bool selected = false;
     bool autoCollect = false;
     bool listMode = false;
+    bool showDetails = false;
+    snowdesktop::list_detail_rules::Column contentSortColumn =
+        snowdesktop::list_detail_rules::Column::None;
+    bool contentSortAscending = true;
     bool showTitle = false;
     bool bottomBarHover = true;
     int scrollOffset = 0;

@@ -36,6 +36,8 @@ items_.clear();
     itemIndexByKeyCache_.clear();
     itemTextLayoutCache_.clear();
     itemTextShadowCache_.clear();
+    componentListTextLayoutCache_.clear();
+    componentListTextShadowCache_.clear();
     WriteDiagnosticLogEntry(L"LoadItems start");
 
     HRESULT hr = SHGetDesktopFolder(&desktopFolder_);
@@ -145,6 +147,23 @@ items_.clear();
         item.name = info.szDisplayName[0] ? info.szDisplayName
             : StrRetToString(desktopFolder_.Get(), reinterpret_cast<PCUITEMID_CHILD>(item.childPidl.get()), SHGDN_NORMAL);
         item.typeName = info.szTypeName;
+        WIN32_FILE_ATTRIBUTE_DATA fileAttributes{};
+        if (!item.parsingName.empty() &&
+            GetFileAttributesExW(
+                item.parsingName.c_str(), GetFileExInfoStandard,
+                &fileAttributes))
+        {
+            item.modifiedTime = fileAttributes.ftLastWriteTime;
+            if ((fileAttributes.dwFileAttributes &
+                    FILE_ATTRIBUTE_DIRECTORY) == 0)
+            {
+                item.fileSize =
+                    (static_cast<std::uint64_t>(
+                        fileAttributes.nFileSizeHigh) << 32) |
+                    static_cast<std::uint64_t>(
+                        fileAttributes.nFileSizeLow);
+            }
+        }
         item.sysIconIndex = info.iIcon;
         item.layoutKey = GetStableLayoutKey(item.absolutePidl.get(), item.parsingName, item.desktopIconClsid);
 

@@ -25,6 +25,8 @@
 #include <dwrite.h>
 #include <wrl/client.h>
 #include <algorithm>
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -63,6 +65,10 @@ enum class WidgetHit {
     CollectionOpenBtn,  ///< Collection：紧凑模式主体 / "全部" 马赛克按钮
     GuideAddWidgetBtn,  ///< Guide：打开“添加组件”菜单
     GuideDetailsBtn,    ///< Guide：展开或收起分页说明
+    DetailsNameHeader,  ///< 详细信息：名称列表头
+    DetailsModifiedHeader, ///< 详细信息：修改日期列表头
+    DetailsTypeHeader,  ///< 详细信息：类型列表头
+    DetailsSizeHeader,  ///< 详细信息：大小列表头
 };
 
 /**
@@ -250,6 +256,14 @@ protected:
  * 滚动相关接口（GetScrollOffset、GetMaxScrollOffset 等）在此声明，
  * 由子类提供具体实现。滚动条绘制由 WidgetContainer::DrawScrollbar 统一处理。
  */
+struct ListItemDetails
+{
+    std::wstring typeName;
+    std::optional<FILETIME> modifiedTime;
+    std::optional<std::uint64_t> fileSize;
+    bool isDirectory = false;
+};
+
 class ScrollingItemWidget : public WidgetContainer
 {
 public:
@@ -266,7 +280,19 @@ public:
         const std::wstring& name, bool selected,
         bool iconIsMediaThumbnail,
         std::wstring_view demoIdentity = {},
-        const DesktopWidget* demoCollection = nullptr) const;
+        const DesktopWidget* demoCollection = nullptr,
+        const ListItemDetails& details = {}) const;
+
+    int GetListRowHeight() const;
+    int GetDetailsHeaderHeight() const;
+    bool IsDetailsVisible() const;
+    RECT ApplyDetailsHeaderToViewport(RECT viewport) const;
+    RECT GetDetailsHeaderRectFromViewport(RECT viewport) const;
+    void DrawDetailsHeader(
+        ID2D1DeviceContext* context, RECT itemViewport) const;
+    WidgetHit HitTestDetailsHeader(
+        POINT point, RECT itemViewport) const;
+    virtual const DesktopWidget* GetDetailsSortData() const;
 
     void DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RECT rect,
         const std::wstring& name, bool isDir, bool showLabel = true) const;
@@ -385,6 +411,8 @@ private:
         size_t& compositionLength) const;
     void DrawListItemTitle(ID2D1DeviceContext* context, RECT cell,
         RECT iconRect, const std::wstring& title) const;
+    snowdesktop::list_detail_rules::Columns GetDetailsColumns(
+        int availableWidth) const;
     int categorizedTabRowOffset_ = 0;
     bool categorizedSearchVisibilityOverrideActive_ = false;
     bool categorizedSearchVisible_ = false;
@@ -548,6 +576,7 @@ private:
     mutable std::vector<LayoutSegment> layoutCache_;
     mutable std::wstring layoutCacheCategory_;
     mutable bool layoutCacheListMode_ = false;
+    mutable int layoutCacheItemHeight_ = 0;
     mutable std::vector<std::wstring> searchResultCache_;
 };
 
@@ -639,6 +668,7 @@ private:
     mutable std::vector<DateLayoutSegment> dateLayoutCache_;
     mutable std::vector<size_t> dateLayoutSource_;
     mutable bool dateLayoutListMode_ = false;
+    mutable int dateLayoutItemHeight_ = 0;
 };
 
 /**
@@ -713,6 +743,7 @@ public:
     int GetVisibleContentHeight() const override;
     RECT GetContentViewportRect() const override;
     RECT GetSearchBoxRect() const override;
+    const DesktopWidget* GetDetailsSortData() const override;
     std::wstring CategoryIdAtPoint(POINT pt) const override;
     bool TryScrollTabs(POINT pt, int delta) override;
     void ApplyMarqueeSelection(const RECT& contentRect) override;
@@ -809,6 +840,7 @@ public:
     int GetVisibleContentHeight() const override;
     RECT GetContentViewportRect() const override;
     RECT GetSearchBoxRect() const override;
+    const DesktopWidget* GetDetailsSortData() const override;
     std::wstring CategoryIdAtPoint(POINT pt) const override;
     bool TryScrollTabs(POINT pt, int delta) override;
     void ApplyMarqueeSelection(const RECT& contentRect) override;

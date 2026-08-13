@@ -370,6 +370,25 @@ void DesktopApp::SetItemFontSize(float value)
     InvalidateDockRects(TRUE);
 }
 
+void DesktopApp::SetListItemFontSize(float value)
+{
+    value = std::clamp(value, 10.0f, 24.0f);
+    if (value == listItemFontSize_) return;
+    listItemFontSize_ = value;
+    RecreateComponentListTextFormat();
+    for (auto& container : containers_)
+    {
+        if (auto* widget =
+                dynamic_cast<WidgetContainer*>(container.get()))
+            widget->InvalidateSlots();
+    }
+    InvalidateDragStaticScene();
+    SaveLayoutSlots();
+    if (hwnd_)
+        InvalidateRect(hwnd_, nullptr, TRUE);
+    InvalidateFloatingDockWindow(false);
+}
+
 DWRITE_FONT_WEIGHT DesktopApp::GetItemFontWeight() const
 {
     return itemFontWeight_;
@@ -380,6 +399,7 @@ void DesktopApp::SetItemFontWeight(DWRITE_FONT_WEIGHT weight)
     if (weight == itemFontWeight_) return;
     itemFontWeight_ = weight;
     RecreateItemTextFormat();
+    RecreateComponentListTextFormat();
     InvalidateDragStaticScene();
     SaveLayoutSlots();
     if (hwnd_)
