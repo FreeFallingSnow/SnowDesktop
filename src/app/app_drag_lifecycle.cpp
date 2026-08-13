@@ -231,6 +231,8 @@ void DesktopApp::CommitDragVisualEndBeforeShellOperation()
 
 void DesktopApp::PresentPassiveHoverVisualChange()
 {
+    RecordShellHoverTrace(
+        ShellHoverTraceEvent::PassivePresent);
     // Content and backdrop are collected from the same full render pass. The
     // backdrop compositor constrains its helper HWND to the resulting panel
     // set, so stale blur pixels cannot outlive the content frame even if the

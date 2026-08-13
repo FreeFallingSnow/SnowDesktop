@@ -5,6 +5,8 @@
 
 void DesktopApp::OnPaint(const RECT* updateRect)
     {
+        RecordShellHoverTrace(
+            ShellHoverTraceEvent::PaintBegin);
         // COM calls made while resolving glass wallpaper sources may dispatch a
         // nested WM_PAINT on this same UI thread. D2D/DComp drawing is not
         // re-entrant, so defer that invalidation until the active frame ends.
@@ -137,4 +139,6 @@ void DesktopApp::OnPaint(const RECT* updateRect)
             return;
         }
         compositionRenderRecoveryPending_ = false;
+        RecordShellHoverTrace(
+            ShellHoverTraceEvent::PaintEnd);
     }

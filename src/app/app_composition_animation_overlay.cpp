@@ -218,6 +218,8 @@ bool DesktopApp::CommitCompositionAnimationFrame()
     if (!dcompDevice_)
         return false;
     compositionCommitPending_ = true;
+    RecordShellHoverTrace(
+        ShellHoverTraceEvent::CommitQueued);
     return true;
 }
 
@@ -235,6 +237,8 @@ bool DesktopApp::FlushPendingCompositionCommit()
     const HRESULT hr = dcompDevice_->Commit();
     if (SUCCEEDED(hr))
         compositionCommitPending_ = false;
+    RecordShellHoverTrace(
+        ShellHoverTraceEvent::CommitFlushed);
     uiAnimationScheduler_.RecordCommitDuration(
         snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() -
         commitStart);

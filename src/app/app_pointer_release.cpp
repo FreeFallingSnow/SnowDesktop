@@ -1,6 +1,7 @@
 #include "app.h"
 #include "../desktop_hover_rules.h"
 #include "../steam_app_identity.h"
+#include "../widget_visibility_rules.h"
 
 // Pointer leave, Dock click release and primary-button drag completion.
 
@@ -33,6 +34,8 @@ bool OpenMissingWidgetWorkshopPage(HWND owner,
 
 void DesktopApp::OnMouseLeave()
 {
+    RecordShellHoverTrace(
+        ShellHoverTraceEvent::MouseLeaveBegin);
     POINT cursorScreen{};
     GetCursorPos(&cursorScreen);
     const bool pointerStillInteractsWithDockPreview =
@@ -80,15 +83,21 @@ void DesktopApp::OnMouseLeave()
     {
         lastMousePoint_ = { LONG_MIN, LONG_MIN };
         PresentPassiveHoverVisualChange();
+        RecordShellHoverTrace(
+            ShellHoverTraceEvent::MouseLeaveEnd);
         return;
     }
     if (hwnd_)
         InvalidateRect(hwnd_, nullptr, FALSE);
+    RecordShellHoverTrace(
+        ShellHoverTraceEvent::MouseLeaveEnd);
 }
 
 void DesktopApp::ReconcileDesktopHoverState(
     snowdesktop::desktop_hover_rules::ReconcileMode mode)
 {
+    RecordShellHoverTrace(
+        ShellHoverTraceEvent::ReconcileBegin);
     if (!hwnd_ || !IsWindow(hwnd_))
         return;
 
@@ -127,6 +136,8 @@ void DesktopApp::ReconcileDesktopHoverState(
         // dialog owner has been re-enabled. The latter tracks Task Dialogs
         // whose visible lifetime outlasts IContextMenu::InvokeCommand.
         desktopHoverForegroundObservedTick_ = foregroundTick;
+        RecordShellHoverTrace(
+            ShellHoverTraceEvent::ReconcileSuspended);
         return;
     }
     POINT cursorPoint{};
@@ -143,6 +154,15 @@ void DesktopApp::ReconcileDesktopHoverState(
         {
             lastMousePoint_ = cursorPoint;
             PresentPassiveHoverVisualChange();
+            RecordShellHoverTrace(
+                ShellHoverTraceEvent::ReconcileActivate,
+                cursorPoint);
+        }
+        else
+        {
+            RecordShellHoverTrace(
+                ShellHoverTraceEvent::ReconcileNoChange,
+                cursorPoint);
         }
         return;
     }
@@ -192,6 +212,186 @@ void DesktopApp::ReconcileDesktopHoverState(
     // old screen rectangle still contains the cursor.
     HideDockWindowPreview();
     OnMouseLeave();
+    RecordShellHoverTrace(
+        ShellHoverTraceEvent::ReconcileClear);
+}
+
+std::uint64_t DesktopApp::HoverOnlyVisibleMask() const
+{
+    std::uint64_t mask = 0;
+    size_t bit = 0;
+    for (size_t widgetIndex = 0;
+         widgetIndex < widgets_.size() && bit < 64;
+         ++widgetIndex)
+    {
+        const auto& widget = widgets_[widgetIndex];
+        if (!widget.showOnHoverOnly)
+            continue;
+        const bool interactionRetained =
+            popupWidgetIndex_ == widgetIndex ||
+            (!interactionPinnedWidgetId_.empty() &&
+                interactionPinnedWidgetId_ == widget.id);
+        const RECT frame =
+            GetStandaloneWidgetFrameRect(widget);
+        if (snowdesktop::widget_visibility_rules::
+                ShouldRenderWidget(
+                    true,
+                    dragSession_.IsActive(),
+                    dragDropController_.IsExternalDragActive(),
+                    widgetAction_ == WidgetAction::Move,
+                    widget.selected,
+                    interactionRetained,
+                    PtInRect(&frame, lastMousePoint_) != FALSE))
+        {
+            mask |= std::uint64_t{ 1 } << bit;
+        }
+        ++bit;
+    }
+    return mask;
+}
+
+void DesktopApp::BeginShellHoverTrace()
+{
+    shellHoverTraceWriteIndex_ = 0;
+    shellHoverTraceCount_ = 0;
+    shellHoverTraceStartTick_ = GetTickCount64();
+    shellHoverTraceWrapped_ = false;
+    shellHoverTraceObservedDisabledOwner_ = false;
+    shellHoverTraceActive_ = true;
+}
+
+void DesktopApp::RecordShellHoverTrace(
+    ShellHoverTraceEvent event,
+    POINT eventPoint)
+{
+    if (!shellHoverTraceActive_)
+        return;
+
+    const HWND owner = ShellDialogOwnerHwnd();
+    const bool ownerAvailable =
+        owner && IsWindow(owner);
+    const bool ownerEnabled =
+        !ownerAvailable || IsWindowEnabled(owner);
+    shellHoverTraceObservedDisabledOwner_ =
+        shellHoverTraceObservedDisabledOwner_ ||
+        (ownerAvailable && !ownerEnabled);
+
+    ShellHoverTraceEntry entry{};
+    entry.tick = GetTickCount64();
+    entry.event = event;
+    entry.eventPoint = eventPoint;
+    entry.lastMousePoint = lastMousePoint_;
+    GetCursorPos(&entry.cursorScreen);
+    entry.hoverOnlyVisibleMask =
+        HoverOnlyVisibleMask();
+    entry.foregroundWindow = GetForegroundWindow();
+    entry.captureWindow = GetCapture();
+    entry.popupDepth = shellPopupMenuLayerDepth_;
+    if (compositionCommitPending_)
+        entry.flags |= 1u << 0;
+    if (desktopBackdropFullCollectionPending_)
+        entry.flags |= 1u << 1;
+    if (compositionPaintInProgress_)
+        entry.flags |= 1u << 2;
+    if (ownerAvailable)
+        entry.flags |= 1u << 3;
+    if (ownerEnabled)
+        entry.flags |= 1u << 4;
+    if (lastMousePoint_.x != LONG_MIN &&
+        lastMousePoint_.y != LONG_MIN)
+        entry.flags |= 1u << 5;
+    if (entry.captureWindow)
+        entry.flags |= 1u << 6;
+    if (mouseDown_)
+        entry.flags |= 1u << 7;
+
+    shellHoverTrace_[shellHoverTraceWriteIndex_] =
+        entry;
+    shellHoverTraceWriteIndex_ =
+        (shellHoverTraceWriteIndex_ + 1) %
+        kShellHoverTraceCapacity;
+    if (shellHoverTraceCount_ <
+        kShellHoverTraceCapacity)
+    {
+        ++shellHoverTraceCount_;
+    }
+    else
+    {
+        shellHoverTraceWrapped_ = true;
+    }
+}
+
+void DesktopApp::FlushShellHoverTrace()
+{
+    if (!shellHoverTraceActive_)
+        return;
+    shellHoverTraceActive_ = false;
+    if (!shellHoverTraceObservedDisabledOwner_ ||
+        shellHoverTraceCount_ == 0)
+        return;
+
+    const auto eventName = [](ShellHoverTraceEvent event) {
+        switch (event)
+        {
+        case ShellHoverTraceEvent::MenuBegin: return L"menu-begin";
+        case ShellHoverTraceEvent::MouseMoveBegin: return L"move-begin";
+        case ShellHoverTraceEvent::MouseMoveEnd: return L"move-end";
+        case ShellHoverTraceEvent::MouseLeaveBegin: return L"leave-begin";
+        case ShellHoverTraceEvent::MouseLeaveEnd: return L"leave-end";
+        case ShellHoverTraceEvent::ReconcileBegin: return L"reconcile-begin";
+        case ShellHoverTraceEvent::ReconcileSuspended: return L"reconcile-suspended";
+        case ShellHoverTraceEvent::ReconcileActivate: return L"reconcile-activate";
+        case ShellHoverTraceEvent::ReconcileClear: return L"reconcile-clear";
+        case ShellHoverTraceEvent::ReconcileNoChange: return L"reconcile-no-change";
+        case ShellHoverTraceEvent::PaintBegin: return L"paint-begin";
+        case ShellHoverTraceEvent::PaintEnd: return L"paint-end";
+        case ShellHoverTraceEvent::PassivePresent: return L"passive-present";
+        case ShellHoverTraceEvent::CommitQueued: return L"commit-queued";
+        case ShellHoverTraceEvent::CommitFlushed: return L"commit-flushed";
+        case ShellHoverTraceEvent::MenuEnd: return L"menu-end";
+        }
+        return L"unknown";
+    };
+
+    std::wstring report =
+        L"Shell hover trace begin: entries=" +
+        std::to_wstring(shellHoverTraceCount_) +
+        L" wrapped=" +
+        std::to_wstring(shellHoverTraceWrapped_ ? 1 : 0) +
+        L"\r\n";
+    const size_t first = shellHoverTraceWrapped_
+        ? shellHoverTraceWriteIndex_ : 0;
+    for (size_t offset = 0;
+         offset < shellHoverTraceCount_;
+         ++offset)
+    {
+        const auto& entry = shellHoverTrace_[
+            (first + offset) %
+            kShellHoverTraceCapacity];
+        wchar_t line[384]{};
+        swprintf_s(
+            line,
+            L"+%llu %ls event=(%ld,%ld) last=(%ld,%ld) cursor=(%ld,%ld) mask=0x%016llX fg=%p cap=%p depth=%d flags=0x%04X\r\n",
+            entry.tick - shellHoverTraceStartTick_,
+            eventName(entry.event),
+            entry.eventPoint.x,
+            entry.eventPoint.y,
+            entry.lastMousePoint.x,
+            entry.lastMousePoint.y,
+            entry.cursorScreen.x,
+            entry.cursorScreen.y,
+            static_cast<unsigned long long>(
+                entry.hoverOnlyVisibleMask),
+            entry.foregroundWindow,
+            entry.captureWindow,
+            entry.popupDepth,
+            static_cast<unsigned>(entry.flags));
+        report += line;
+    }
+    report += L"Shell hover trace end";
+    WriteDiagnosticLogEntry(
+        report.c_str(),
+        DiagnosticLogLevel::Debug);
 }
 
 bool DesktopApp::HandleDockClickRelease(POINT point)

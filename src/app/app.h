@@ -684,6 +684,45 @@ private:
     void CommitDragVisualEndBeforeShellOperation();
     /** @brief 同步呈现被动悬浮可见性变化。 */
     void PresentPassiveHoverVisualChange();
+    enum class ShellHoverTraceEvent : std::uint8_t
+    {
+        MenuBegin,
+        MouseMoveBegin,
+        MouseMoveEnd,
+        MouseLeaveBegin,
+        MouseLeaveEnd,
+        ReconcileBegin,
+        ReconcileSuspended,
+        ReconcileActivate,
+        ReconcileClear,
+        ReconcileNoChange,
+        PaintBegin,
+        PaintEnd,
+        PassivePresent,
+        CommitQueued,
+        CommitFlushed,
+        MenuEnd,
+    };
+    struct ShellHoverTraceEntry
+    {
+        ULONGLONG tick = 0;
+        ShellHoverTraceEvent event =
+            ShellHoverTraceEvent::MenuBegin;
+        POINT eventPoint{ LONG_MIN, LONG_MIN };
+        POINT lastMousePoint{ LONG_MIN, LONG_MIN };
+        POINT cursorScreen{};
+        std::uint64_t hoverOnlyVisibleMask = 0;
+        HWND foregroundWindow = nullptr;
+        HWND captureWindow = nullptr;
+        int popupDepth = 0;
+        std::uint16_t flags = 0;
+    };
+    void BeginShellHoverTrace();
+    void RecordShellHoverTrace(
+        ShellHoverTraceEvent event,
+        POINT eventPoint = { LONG_MIN, LONG_MIN });
+    void FlushShellHoverTrace();
+    std::uint64_t HoverOnlyVisibleMask() const;
     /** @brief 在控件重建后重新绑定拖拽源。 */
     void RebindDragSourceAfterRebuild();
     /**
@@ -2678,6 +2717,15 @@ private:
     bool floatingDockKeyboardSessionActive_ = false;
     HWND floatingDockLogicalForegroundWindow_ = nullptr;
     int shellPopupMenuLayerDepth_ = 0;
+    static constexpr size_t kShellHoverTraceCapacity = 2048;
+    std::array<ShellHoverTraceEntry,
+        kShellHoverTraceCapacity> shellHoverTrace_{};
+    size_t shellHoverTraceWriteIndex_ = 0;
+    size_t shellHoverTraceCount_ = 0;
+    ULONGLONG shellHoverTraceStartTick_ = 0;
+    bool shellHoverTraceActive_ = false;
+    bool shellHoverTraceWrapped_ = false;
+    bool shellHoverTraceObservedDisabledOwner_ = false;
     // Queued worker operations that have not yet reported completion on the
     // UI thread. The last completion restores the floating keyboard session.
     int shellFileOperationInFlight_ = 0;

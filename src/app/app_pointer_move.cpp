@@ -87,6 +87,11 @@ void DesktopApp::OnMiddleButtonUp(WPARAM wp, LPARAM lp)
 void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
 {
     (void)wp;
+    const POINT tracePoint{
+        GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+    RecordShellHoverTrace(
+        ShellHoverTraceEvent::MouseMoveBegin,
+        tracePoint);
     if (!handlingFloatingDockInput_)
     {
         TRACKMOUSEEVENT mouseTrack{};
@@ -973,4 +978,7 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                 PresentPassiveHoverVisualChange();
         }
     }
+    RecordShellHoverTrace(
+        ShellHoverTraceEvent::MouseMoveEnd,
+        current);
 }
