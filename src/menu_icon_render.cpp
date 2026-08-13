@@ -661,7 +661,7 @@ void DrawSubmenuArrow(HDC dc, const RECT& bounds,
     const int halfWidth = std::max(2, metrics.arrowColumnWidth / 8);
     const int halfHeight = std::max(3, metrics.arrowColumnWidth / 4);
     HPEN pen = CreatePen(PS_SOLID,
-        std::max(1, metrics.rowHeight / 24), color);
+        metrics.submenuArrowStrokeWidth, color);
     if (!pen)
         return;
     HGDIOBJ oldPen = SelectObject(dc, pen);
@@ -712,6 +712,7 @@ Metrics ResolveMetrics(UINT dpi)
         Scale(7, effectiveDpi),
         Scale(9, effectiveDpi),
         Scale(16, effectiveDpi),
+        Scale(2, effectiveDpi),
         Scale(52, effectiveDpi),
         Scale(46, effectiveDpi),
         Scale(64, effectiveDpi),

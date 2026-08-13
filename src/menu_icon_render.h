@@ -30,6 +30,7 @@ struct Metrics
     int textGap = 7;
     int rightPadding = 9;
     int arrowColumnWidth = 16;
+    int submenuArrowStrokeWidth = 2;
     int quickActionHeight = 52;
     int quickActionMinimumWidth = 46;
     int quickActionMaximumWidth = 64;

@@ -215,6 +215,9 @@ int wmain(int argc, wchar_t** argv)
     Expect(metrics96.textFontHeight == 14 &&
             metrics96.quickActionTextFontHeight == 12,
         "96-DPI menu text keeps a readable minimum size");
+    Expect(metrics96.submenuArrowStrokeWidth == 2 &&
+            metrics192.submenuArrowStrokeWidth == 4,
+        "submenu chevron keeps a readable DPI-scaled stroke weight");
     Expect(metrics192.textFontHeight ==
             metrics96.textFontHeight * 2 &&
             metrics192.quickActionTextFontHeight ==
@@ -302,6 +305,12 @@ int wmain(int argc, wchar_t** argv)
     Expect(arrowInk.right - arrowInk.left >= 4 &&
             arrowInk.bottom - arrowInk.top >= 7,
         "96-DPI submenu chevron keeps a complete visible shape");
+    const int arrowInkTopExtent =
+        metrics96.rowHeight / 2 - arrowInk.top;
+    const int arrowInkBottomExtent =
+        arrowInk.bottom - 1 - metrics96.rowHeight / 2;
+    Expect(arrowInkTopExtent == arrowInkBottomExtent,
+        "submenu chevron keeps symmetric top and bottom raster extents");
     Expect(arrowInk.right < arrowOnlyBounds.right - metrics96.rightPadding,
         "submenu chevron keeps a safe inset from the row edge");
 
