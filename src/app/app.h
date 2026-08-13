@@ -52,7 +52,7 @@
 #include "dock_rename_layout.h"
 #include "floating_dock_rules.h"
 #include "../desktop_hover_rules.h"
-#include "../shell_execute.h"
+#include "../shell_launch_worker.h"
 #include "desktop_item_reference_migration.h"
 #include "category_settings.h"
 #include "../menu_quick_icon.h"
@@ -2653,6 +2653,7 @@ private:
         bool succeeded = false;
         FileOperationCompletion callback;
     };
+    snowdesktop::ShellLaunchWorker shellLaunchWorker_;
     snowdesktop::ShellFileOperationWorker shellFileOperationWorker_;
     HWND inputHwnd_ = nullptr;
     HWND floatingDockInputHwnd_ = nullptr;

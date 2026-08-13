@@ -739,7 +739,7 @@ ShowDockFolderPopupContextMenu(
     case kContextOpenCommand:
         for (const auto& path :
              GetSelectedFolderEntryPaths())
-            snowdesktop::shell_execute::OpenPathAsync(
+            shellLaunchWorker_.Enqueue(
                 hwnd_, path);
         break;
     case kContextRevealLocationCommand:

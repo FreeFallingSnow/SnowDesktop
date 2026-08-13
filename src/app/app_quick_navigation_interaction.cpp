@@ -359,10 +359,9 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
         const std::wstring launchPath =
             everythingEntry.path;
         CloseQuickNavigationThen(
-            [launchPath]() {
-                ShellExecuteW(nullptr, L"open",
-                    launchPath.c_str(), nullptr, nullptr,
-                    SW_SHOWNORMAL);
+            [this, launchPath]() {
+                shellLaunchWorker_.Enqueue(
+                    nullptr, launchPath);
             });
         return true;
     }
@@ -390,10 +389,9 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
         {
             const std::wstring launchPath = entry.path;
             CloseQuickNavigationThen(
-                [launchPath]() {
-                    ShellExecuteW(nullptr, L"open",
-                        launchPath.c_str(), nullptr, nullptr,
-                        SW_SHOWNORMAL);
+                [this, launchPath]() {
+                    shellLaunchWorker_.Enqueue(
+                        nullptr, launchPath);
                 });
         }
         return true;
@@ -888,10 +886,9 @@ void DesktopApp::ShowQuickNavigationEverythingContextMenu(
     {
         const std::wstring launchPath = entry.path;
         CloseQuickNavigationThen(
-            [launchPath]() {
-                ShellExecuteW(nullptr, L"open",
-                    launchPath.c_str(), nullptr, nullptr,
-                    SW_SHOWNORMAL);
+            [this, launchPath]() {
+                shellLaunchWorker_.Enqueue(
+                    nullptr, launchPath);
             });
         break;
     }

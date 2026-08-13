@@ -221,7 +221,7 @@ bool DesktopApp::LuaOpenPath(const std::wstring& path)
                 return true;
         }
     }
-    return snowdesktop::shell_execute::OpenPathAsync(
+    return shellLaunchWorker_.Enqueue(
         hwnd_, path);
 }
 

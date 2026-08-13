@@ -155,6 +155,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/app_menu_icons.cpp
     src/app/app_message_dispatch.cpp
     src/shell_context_menu_site.cpp
+    src/shell_launch_worker.cpp
     src/shell_file_operation_worker.cpp
     src/app/app_navigation_render.cpp
     src/app/app_ole_drop_routing.cpp
@@ -807,6 +808,16 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 shell32
         LABELS contract shell)
+
+    snowdesktop_add_test(
+        SnowDesktopShellLaunchWorkerTests
+        shell_launch_worker
+        SOURCES
+            tests/shell_launch_worker_tests.cpp
+            src/shell_launch_worker.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES ole32 shell32 user32
+        LABELS integration shell interaction)
 
     snowdesktop_add_test(
         SnowDesktopShellFileOperationWorkerTests

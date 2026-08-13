@@ -18,6 +18,7 @@ DesktopApp::~DesktopApp()
     desktopPointerPresentPending_ = false;
     floatingDockPointerPresentPending_ = false;
     pageNotifyFadeOutToken_ = 0;
+    shellLaunchWorker_.Stop();
     StopShellFileOperationWorker();
     StopSteamWorkshopWatcher();
     EndDesktopPassthroughHold(false);
@@ -827,6 +828,7 @@ void DesktopApp::RequestExit()
     if (exitRequested_)
         return;
     exitRequested_ = true;
+    shellLaunchWorker_.Stop();
     StopShellFileOperationWorker();
     StopQuickNavigationAppIndexing();
     StopDemoIconLoader();

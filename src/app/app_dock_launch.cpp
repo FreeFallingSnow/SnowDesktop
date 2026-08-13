@@ -206,7 +206,7 @@ bool DesktopApp::LaunchDesktopItem(
     const bool wasClosed =
         GetDockWindowVisualState(itemIndex) ==
             DockWindowVisualState::Closed;
-    if (!snowdesktop::shell_execute::OpenPathAsync(
+    if (!shellLaunchWorker_.Enqueue(
             hwnd_, items_[itemIndex].parsingName))
         return false;
     RecordDockItemUsage(itemIndex);

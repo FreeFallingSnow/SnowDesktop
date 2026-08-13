@@ -2,7 +2,6 @@
 #include "desktop_hover_rules.h"
 #include "widget_scroll_rules.h"
 #include "widget_visibility_rules.h"
-#include "shell_execute.h"
 #include "widgets/widget_chrome_rules.h"
 #include "widgets/guide_widget_rules.h"
 #include "pending_drop_rules.h"
@@ -604,12 +603,6 @@ void TestHoverOnlyWidgetVisibility()
 void TestDesktopHoverDeactivation()
 {
     using hoverRules::ReconcileMode;
-    Check(
-        (snowdesktop::shell_execute::kInteractiveOpenMask &
-            SEE_MASK_ASYNCOK) != 0 &&
-            (snowdesktop::shell_execute::kInteractiveOpenMask &
-                SEE_MASK_NOASYNC) == 0,
-        "interactive Shell opens must not synchronously occupy the desktop UI thread");
     Check(
         hoverRules::HasForegroundSettled(false, 0) &&
             !hoverRules::HasForegroundSettled(

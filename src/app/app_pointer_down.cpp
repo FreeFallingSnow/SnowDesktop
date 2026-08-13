@@ -839,7 +839,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     DesktopWidgetType::FolderMapping &&
                 !folder->sourceFolderPath.empty())
             {
-                snowdesktop::shell_execute::OpenPathAsync(
+                shellLaunchWorker_.Enqueue(
                     hwnd_, folder->sourceFolderPath);
             }
             return;

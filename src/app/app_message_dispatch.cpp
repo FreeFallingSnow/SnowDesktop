@@ -300,7 +300,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                         CloseCollectionPopup();
                         ClearSelection();
                         if (target.available)
-                            snowdesktop::shell_execute::OpenPathAsync(
+                            shellLaunchWorker_.Enqueue(
                                 hwnd_, target.path);
                         InvalidateRect(
                             hwnd_, &dockBounds, FALSE);
@@ -439,7 +439,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     const std::wstring path =
                         dockFolderPopupWidget_.
                             folderEntries[i].fullPath;
-                    snowdesktop::shell_execute::OpenPathAsync(
+                    shellLaunchWorker_.Enqueue(
                         hwnd_, path);
                     CloseCollectionPopup();
                     return 0;
@@ -527,7 +527,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     FolderEntry* entry = folderIcon->GetFolderEntry();
                     if (entry)
                     {
-                        snowdesktop::shell_execute::OpenPathAsync(
+                        shellLaunchWorker_.Enqueue(
                             hwnd_, entry->fullPath);
                         return 0;
                     }
