@@ -67,7 +67,12 @@ void TestMetricsAreNormalizedPerWidget()
 
 void TestFontCuUsesOnlyTheLocalCellScale()
 {
+    using snowdesktop::font_cu_rules::CellScale;
     using snowdesktop::font_cu_rules::Scale;
+    Expect(CellScale(92, 116) == 1.0f,
+        "the baseline grid cell defines one cu scale");
+    Expect(CellScale(85, 124) == 85.0f / 92.0f,
+        "standard cu excludes inter-cell grid spacing");
     Expect(Scale(15.0f, 1.0f) == 15.0f &&
             Scale(15.0f, 1.5f) == 22.5f,
         "font cu follows only the local grid or component scale");

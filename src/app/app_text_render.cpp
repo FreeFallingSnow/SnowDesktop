@@ -208,10 +208,11 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
     float tw = static_cast<float>(std::max<LONG>(1, textRect.right - textRect.left));
     float th = static_cast<float>(std::max<LONG>(1, textRect.bottom - textRect.top));
 
-    const float layoutScale = GetItemLayoutScale(bounds);
+    const float fontScale = GetGridCuScaleForBounds(
+        gridPages_, bounds);
     const float fontSize = ScaleWidgetFontCu(
-        itemFontSizeCu_, layoutScale);
-    const int scaleKey = static_cast<int>(std::round(layoutScale * 1000.0f));
+        itemFontSizeCu_, fontScale);
+    const int scaleKey = static_cast<int>(std::round(fontScale * 1000.0f));
     std::wstring layoutKey = L"grid\x1f" + text + L"\x1f" +
         std::to_wstring(textRect.right - textRect.left) + L"x" +
         std::to_wstring(textRect.bottom - textRect.top) + L"@" +
@@ -248,19 +249,6 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
             result->SetFontSize(
                 fontSize,
                 range);
-            if (lightTheme)
-            {
-                const auto weight =
-                    static_cast<
-                        DWRITE_FONT_WEIGHT>(
-                        std::max<int>(
-                            100,
-                            static_cast<int>(
-                                itemFontWeight_) -
-                                200));
-                result->SetFontWeight(
-                    weight, range);
-            }
             result->SetLineSpacing(
                 DWRITE_LINE_SPACING_METHOD_UNIFORM,
                 fontSize * 7.0f / 6.0f,
@@ -371,7 +359,7 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
     DrawStyledItemTextLayout(
         context, layoutIt->second.Get(), layoutIt->first,
         D2D1::Point2F(static_cast<float>(textRect.left), ty),
-        D2D1::SizeF(tw, th), layoutScale, opacity, lightTheme);
+        D2D1::SizeF(tw, th), fontScale, opacity, lightTheme);
 }
 
 void DesktopApp::DrawQuickNavItemText(ID2D1RenderTarget* ctx, RECT bounds,

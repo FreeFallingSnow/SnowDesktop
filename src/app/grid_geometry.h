@@ -37,6 +37,33 @@ inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const st
 }
 
 /**
+ * @brief 获取页面不含网格间距的标准 cu 缩放比例。
+ */
+inline float GetGridPageCuScale(const GridPage& page)
+{
+    return CalculateWidgetCellScale(
+        page.cellWidth, page.cellHeight);
+}
+
+/**
+ * @brief 根据项目边界获取所在页面的标准 cu 缩放比例。
+ */
+inline float GetGridCuScaleForBounds(
+    const std::vector<GridPage>& pages, RECT bounds)
+{
+    const POINT center = {
+        bounds.left + (bounds.right - bounds.left) / 2,
+        bounds.top + (bounds.bottom - bounds.top) / 2
+    };
+    for (const auto& page : pages)
+    {
+        if (PtInRect(&page.bounds, center))
+            return GetGridPageCuScale(page);
+    }
+    return 1.0f;
+}
+
+/**
  * @brief 获取网格轴上指定索引的偏移像素值。
  * @param page 网格页面。
  * @param index 索引。

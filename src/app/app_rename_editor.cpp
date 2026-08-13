@@ -41,7 +41,8 @@ void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t memberIndex)
     }
 
     if (renameFont_) DeleteObject(renameFont_);
-    const float renameScale = GetItemLayoutScale(rect);
+    const float renameScale = GetGridCuScaleForBounds(
+        gridPages_, rect);
     renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(
         ScaleWidgetFontCu(itemFontSizeCu_, renameScale)))),
         0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
@@ -236,7 +237,7 @@ BeginRenameDockFolderPopupEntry(
     if (renameFont_)
         DeleteObject(renameFont_);
     const float renameScale =
-        GetItemLayoutScale(itemRect);
+        GetGridCuScaleForBounds(gridPages_, itemRect);
     renameFont_ = CreateFontW(
         -std::max(
             1, static_cast<int>(

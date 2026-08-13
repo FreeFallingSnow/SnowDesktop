@@ -185,7 +185,8 @@ void DesktopApp::BeginRenameSelected(
         }
 
         if (renameFont_) DeleteObject(renameFont_);
-        const float renameScale = GetItemLayoutScale(frame);
+        const float renameScale = GetGridCuScaleForBounds(
+            gridPages_, frame);
         renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(
             ScaleWidgetFontCu(itemFontSizeCu_, renameScale)))),
             0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
@@ -286,7 +287,8 @@ void DesktopApp::BeginRenameSelected(
     }
 
     if (renameFont_) DeleteObject(renameFont_);
-    const float renameScale = GetItemLayoutScale(itemBounds);
+    const float renameScale = GetGridCuScaleForBounds(
+        gridPages_, itemBounds);
     renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(
         ScaleWidgetFontCu(itemFontSizeCu_, renameScale)))),
         0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,

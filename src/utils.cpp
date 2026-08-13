@@ -688,9 +688,8 @@ bool AreExplorerHiddenItemsVisible()
 
 float CalculateWidgetCellScale(int cellWidth, int cellHeight)
 {
-    return std::max(0.1f, std::min(
-        static_cast<float>(std::max(1, cellWidth)) / static_cast<float>(kCellWidth),
-        static_cast<float>(std::max(1, cellHeight)) / static_cast<float>(kMinCellHeight)));
+    return snowdesktop::font_cu_rules::CellScale(
+        cellWidth, cellHeight);
 }
 
 int ScaleWidgetCu(float value, float cellScale)
