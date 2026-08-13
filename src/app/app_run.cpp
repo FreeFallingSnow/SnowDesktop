@@ -743,7 +743,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     {
         ReconcileDesktopHoverState(
             snowdesktop::desktop_hover_rules::
-                ReconcileMode::AllowActivation);
+                ReconcileMode::AllowImmediateActivation);
         UpdateWindow(hwnd_);
         FlushPendingCompositionCommit();
     }

@@ -1,12 +1,25 @@
 #pragma once
 
+#include <cstdint>
+
 namespace snowdesktop::desktop_hover_rules
 {
+inline constexpr std::uint32_t kActivationSettleMs = 150;
+
 enum class ReconcileMode
 {
     DeactivateOnly,
-    AllowActivation,
+    AllowImmediateActivation,
+    AllowActivationAfterForegroundSettle,
 };
+
+constexpr bool HasForegroundSettled(
+    bool foregroundChangeKnown,
+    std::uint32_t elapsedMs)
+{
+    return !foregroundChangeKnown ||
+        elapsedMs >= kActivationSettleMs;
+}
 
 template<typename Handle>
 constexpr bool OwnsInteractionCapture(
@@ -42,10 +55,15 @@ constexpr bool ShouldPresentSynchronously(
 constexpr bool ShouldActivateFromSurfaceSample(
     bool pointerOnDesktopSurface,
     bool passiveHoverCleared,
-    ReconcileMode mode)
+    ReconcileMode mode,
+    bool foregroundSettled)
 {
+    const bool activationAllowed =
+        mode == ReconcileMode::AllowImmediateActivation ||
+        (mode == ReconcileMode::AllowActivationAfterForegroundSettle &&
+            foregroundSettled);
     return pointerOnDesktopSurface &&
         passiveHoverCleared &&
-        mode == ReconcileMode::AllowActivation;
+        activationAllowed;
 }
 }

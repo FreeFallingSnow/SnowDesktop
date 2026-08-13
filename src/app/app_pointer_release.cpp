@@ -94,6 +94,10 @@ void DesktopApp::ReconcileDesktopHoverState(
 
     const DWORD foregroundTick =
         dockForegroundChangedTick_.load();
+    const bool foregroundSettled =
+        snowdesktop::desktop_hover_rules::HasForegroundSettled(
+            foregroundTick != 0,
+            GetTickCount() - foregroundTick);
     if (foregroundTick != 0 &&
         foregroundTick != desktopHoverForegroundObservedTick_)
     {
@@ -113,7 +117,8 @@ void DesktopApp::ReconcileDesktopHoverState(
             lastMousePoint_.y == LONG_MIN;
         if (snowdesktop::desktop_hover_rules::
                 ShouldActivateFromSurfaceSample(
-                    true, passiveHoverCleared, mode))
+                    true, passiveHoverCleared, mode,
+                    foregroundSettled))
         {
             lastMousePoint_ = cursorPoint;
             PresentPassiveHoverVisualChange();

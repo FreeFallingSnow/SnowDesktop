@@ -604,6 +604,13 @@ void TestDesktopHoverDeactivation()
 {
     using hoverRules::ReconcileMode;
     Check(
+        hoverRules::HasForegroundSettled(false, 0) &&
+            !hoverRules::HasForegroundSettled(
+                true, hoverRules::kActivationSettleMs - 1) &&
+            hoverRules::HasForegroundSettled(
+                true, hoverRules::kActivationSettleMs),
+        "foreground settling must allow startup and enforce the activation delay boundary");
+    Check(
         !hoverRules::OwnsInteractionCapture(0, 1, 0),
         "two null window handles must not imply owned capture");
     Check(
@@ -646,17 +653,25 @@ void TestDesktopHoverDeactivation()
         "unchanged passive hover must not force an extra desktop frame");
     Check(
         !hoverRules::ShouldActivateFromSurfaceSample(
-            true, true, ReconcileMode::DeactivateOnly),
+            true, true, ReconcileMode::DeactivateOnly, true),
         "a transient desktop hit after a foreground change must not reactivate hover");
     Check(
         hoverRules::ShouldActivateFromSurfaceSample(
-            true, true, ReconcileMode::AllowActivation),
-        "a settled or explicit desktop sample may restore cleared hover");
+            true, true, ReconcileMode::AllowImmediateActivation, false),
+        "an explicit desktop restoration may activate hover without waiting for foreground settling");
     Check(
         !hoverRules::ShouldActivateFromSurfaceSample(
-            false, true, ReconcileMode::AllowActivation) &&
+            true, true,
+            ReconcileMode::AllowActivationAfterForegroundSettle, false) &&
+            hoverRules::ShouldActivateFromSurfaceSample(
+                true, true,
+                ReconcileMode::AllowActivationAfterForegroundSettle, true),
+        "a periodic desktop sample may activate hover only after the foreground transition settles");
+    Check(
+        !hoverRules::ShouldActivateFromSurfaceSample(
+            false, true, ReconcileMode::AllowImmediateActivation, true) &&
             !hoverRules::ShouldActivateFromSurfaceSample(
-                true, false, ReconcileMode::AllowActivation),
+                true, false, ReconcileMode::AllowImmediateActivation, true),
         "hover restoration requires both a desktop surface and a cleared state");
 }
 
