@@ -102,13 +102,15 @@ WidgetConsentDialogPresentation BuildWidgetConsentDialogPresentation(
 
 WidgetConsentChoice ShowWidgetConsentDialog(
     const WidgetConsentDialogPresentation& presentation,
-    HWND resultWindow, std::uint64_t sessionId)
+    HWND resultWindow, std::uint64_t sessionId,
+    POINT anchorScreenPoint)
 {
     struct CallbackContext
     {
         HWND resultWindow = nullptr;
         std::uint64_t sessionId = 0;
-    } callbackContext{ resultWindow, sessionId };
+        POINT anchorScreenPoint{};
+    } callbackContext{ resultWindow, sessionId, anchorScreenPoint };
     const auto callback = +[](HWND dialogWindow, UINT notification,
         WPARAM, LPARAM, LONG_PTR rawContext) -> HRESULT {
         if (notification != TDN_CREATED) return S_OK;
@@ -123,14 +125,38 @@ WidgetConsentChoice ShowWidgetConsentDialog(
         }
 
         // The consent dialog intentionally has no owner so its modal loop
-        // cannot disable the desktop UI thread. Bring the independent window
-        // above the desktop once, then immediately remove the topmost style.
+        // cannot disable the desktop UI thread. An ownerless dialog otherwise
+        // defaults to the primary monitor and SetForegroundWindow may be
+        // rejected for this worker thread. Place it on the monitor where the
+        // user clicked and retain topmost until the user closes it.
+        int x = 0;
+        int y = 0;
+        UINT positionFlags = SWP_NOSIZE | SWP_SHOWWINDOW;
+        RECT dialogRect{};
+        MONITORINFO monitorInfo{ sizeof(monitorInfo) };
+        const HMONITOR monitor = MonitorFromPoint(
+            context ? context->anchorScreenPoint : POINT{},
+            MONITOR_DEFAULTTONEAREST);
+        if (GetWindowRect(dialogWindow, &dialogRect) && monitor &&
+            GetMonitorInfoW(monitor, &monitorInfo))
+        {
+            const auto position = snowdesktop::widget_runtime::
+                CenterConsentDialogInWorkArea(
+                    monitorInfo.rcWork.left, monitorInfo.rcWork.top,
+                    monitorInfo.rcWork.right, monitorInfo.rcWork.bottom,
+                    dialogRect.right - dialogRect.left,
+                    dialogRect.bottom - dialogRect.top);
+            x = position.x;
+            y = position.y;
+        }
+        else
+        {
+            positionFlags |= SWP_NOMOVE;
+        }
         ShowWindow(dialogWindow, SW_SHOWNORMAL);
-        SetWindowPos(dialogWindow, HWND_TOPMOST, 0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+        SetWindowPos(dialogWindow, HWND_TOPMOST, x, y, 0, 0,
+            positionFlags);
         SetForegroundWindow(dialogWindow);
-        SetWindowPos(dialogWindow, HWND_NOTOPMOST, 0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
         return S_OK;
     };
     std::vector<TASKDIALOG_BUTTON> buttons;
@@ -175,15 +201,18 @@ WidgetConsentChoice ShowWidgetConsentDialog(
 
 void StartWidgetConsentDialog(HWND resultWindow,
     std::uint64_t sessionId,
-    WidgetConsentDialogPresentation presentation)
+    WidgetConsentDialogPresentation presentation,
+    POINT anchorScreenPoint)
 {
     std::thread([resultWindow, sessionId,
-                    presentation = std::move(presentation)]() {
+                    presentation = std::move(presentation),
+                    anchorScreenPoint]() {
         const HRESULT initialized = CoInitializeEx(
             nullptr, COINIT_APARTMENTTHREADED);
         const WidgetConsentChoice choice =
             ShowWidgetConsentDialog(
-                presentation, resultWindow, sessionId);
+                presentation, resultWindow, sessionId,
+                anchorScreenPoint);
         PostMessageW(resultWindow, kWidgetConsentResolvedMessage,
             static_cast<WPARAM>(choice),
             static_cast<LPARAM>(sessionId));
@@ -1472,8 +1501,6 @@ void DesktopApp::BeginLuaWidgetConsent(POINT screenPoint,
             SetWindowPos(dialogWindow, HWND_TOPMOST, 0, 0, 0, 0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
             SetForegroundWindow(dialogWindow);
-            SetWindowPos(dialogWindow, HWND_NOTOPMOST, 0, 0, 0, 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
             return;
         }
         if (sessionAction == snowdesktop::widget_runtime::
@@ -1512,7 +1539,7 @@ void DesktopApp::BeginLuaWidgetConsent(POINT screenPoint,
         package->manifest.optionalPermissions,
         package->manifest.networkDomains, GetTickCount64(), nullptr };
     StartWidgetConsentDialog(
-        hwnd_, sessionId, std::move(presentation));
+        hwnd_, sessionId, std::move(presentation), screenPoint);
 }
 
 void DesktopApp::NotifyLuaWidgetConsentDialogOpened(

@@ -33,6 +33,36 @@ enum class WidgetConsentSessionAction
     ReplaceStale,
 };
 
+struct WidgetConsentDialogPosition
+{
+    int x = 0;
+    int y = 0;
+};
+
+constexpr WidgetConsentDialogPosition CenterConsentDialogInWorkArea(
+    int workLeft, int workTop, int workRight, int workBottom,
+    int dialogWidth, int dialogHeight) noexcept
+{
+    const int workWidth = workRight > workLeft
+        ? workRight - workLeft : 0;
+    const int workHeight = workBottom > workTop
+        ? workBottom - workTop : 0;
+    const int width = dialogWidth > 0 ? dialogWidth : 0;
+    const int height = dialogHeight > 0 ? dialogHeight : 0;
+    const int centeredX = workLeft + (workWidth - width) / 2;
+    const int centeredY = workTop + (workHeight - height) / 2;
+    const int maxX = workRight - width;
+    const int maxY = workBottom - height;
+    return {
+        width >= workWidth ? workLeft
+            : (centeredX < workLeft ? workLeft
+                : (centeredX > maxX ? maxX : centeredX)),
+        height >= workHeight ? workTop
+            : (centeredY < workTop ? workTop
+                : (centeredY > maxY ? maxY : centeredY)),
+    };
+}
+
 constexpr WidgetConsentSessionAction ConsentSessionActionFor(
     bool hasPendingSession, bool windowPublished, bool windowAlive,
     std::uint64_t elapsedMilliseconds,

@@ -6,6 +6,7 @@
 namespace
 {
 using snowdesktop::widget_runtime::ClassifyWidgetRuntimeFailure;
+using snowdesktop::widget_runtime::CenterConsentDialogInWorkArea;
 using snowdesktop::widget_runtime::ConsentSessionActionFor;
 using snowdesktop::widget_runtime::HostActionFor;
 using snowdesktop::widget_runtime::ShowsHostPlaceholder;
@@ -76,6 +77,19 @@ void TestConsentSessionRecovery()
                 WidgetConsentSessionAction::ReplaceStale,
         "missing or destroyed consent windows must not swallow retry clicks");
 }
+
+void TestConsentDialogPlacement()
+{
+    const auto secondary = CenterConsentDialogInWorkArea(
+        1920, 40, 4480, 1560, 640, 480);
+    Check(secondary.x == 2880 && secondary.y == 560,
+        "consent dialogs must center inside the selected monitor work area");
+
+    const auto oversized = CenterConsentDialogInWorkArea(
+        -1280, 0, 0, 720, 1600, 900);
+    Check(oversized.x == -1280 && oversized.y == 0,
+        "oversized consent dialogs must remain anchored to the work area");
+}
 }
 
 int main()
@@ -83,6 +97,7 @@ int main()
     TestPlaceholderActions();
     TestRuntimeFailureClassification();
     TestConsentSessionRecovery();
+    TestConsentDialogPlacement();
     std::cout << "widget host state tests passed\n";
     return 0;
 }
