@@ -208,6 +208,8 @@ void TestVersionedRegistration()
 void TestV2Contract()
 {
     Check(snowdesktop::widget_api::SupportsFeature("draw.immediate") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "system.environment") &&
             !snowdesktop::widget_api::SupportsFeature("view.tree"),
         "host feature lookup must distinguish supported features");
     const std::vector<std::string> required = {
@@ -251,6 +253,27 @@ void TestV2Contract()
             snowdesktop::widget_api::IsDefinedWidget(state, -1),
         "widget.define must mark a valid immediate descriptor");
     lua_pop(state, 2);
+
+    constexpr FunctionDescriptor systemFunctions[] = {
+        { "capabilities",
+            snowdesktop::widget_api::LuaSystemCapabilities, 2 },
+    };
+    snowdesktop::widget_api::RegisterLibrary(
+        state, "system", systemFunctions, 2);
+    lua_getglobal(state, "system");
+    lua_getfield(state, -1, "capabilities");
+    lua_pushliteral(state, "view.tree");
+    Check(lua_pcall(state, 1, 1, 0) == LUA_OK &&
+            lua_istable(state, -1),
+        "system.capabilities must return a status object");
+    lua_getfield(state, -1, "available");
+    const bool unavailable = lua_toboolean(state, -1) == 0;
+    lua_pop(state, 1);
+    lua_getfield(state, -1, "reason");
+    Check(unavailable && lua_isstring(state, -1) &&
+            std::string(lua_tostring(state, -1)) == "unsupported",
+        "unsupported capabilities must return a stable reason");
+    lua_pop(state, 3);
 }
 
 void TestCatalogValidation()

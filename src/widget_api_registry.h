@@ -78,6 +78,7 @@ std::vector<std::string> MissingFeatures(
 int LuaDefineWidget(lua_State* state);
 int LuaApiInfo(lua_State* state);
 int LuaHasFeature(lua_State* state);
+int LuaSystemCapabilities(lua_State* state);
 bool IsDefinedWidget(lua_State* state, int index) noexcept;
 
 /**

@@ -2733,6 +2733,78 @@ static int lua_TimeParts(lua_State* L)
     return 1;
 }
 
+static const char* ProcessArchitectureName()
+{
+#if defined(_M_ARM64)
+    return "arm64";
+#elif defined(_M_X64)
+    return "x64";
+#elif defined(_M_IX86)
+    return "x86";
+#else
+    return "unknown";
+#endif
+}
+
+static const char* NativeArchitectureName()
+{
+    SYSTEM_INFO info{};
+    GetNativeSystemInfo(&info);
+    switch (info.wProcessorArchitecture)
+    {
+    case PROCESSOR_ARCHITECTURE_AMD64:
+        return "x64";
+    case PROCESSOR_ARCHITECTURE_ARM64:
+        return "arm64";
+    case PROCESSOR_ARCHITECTURE_INTEL:
+        return "x86";
+    default:
+        return "unknown";
+    }
+}
+
+static DWORD WindowsBuildNumber()
+{
+    using RtlGetVersionFn = LONG(WINAPI*)(OSVERSIONINFOW*);
+    const HMODULE module = GetModuleHandleW(L"ntdll.dll");
+    const auto function = module
+        ? reinterpret_cast<RtlGetVersionFn>(
+            GetProcAddress(module, "RtlGetVersion"))
+        : nullptr;
+    OSVERSIONINFOW version{};
+    version.dwOSVersionInfoSize = sizeof(version);
+    return function && function(&version) == 0
+        ? version.dwBuildNumber : 0;
+}
+
+static int lua_SystemInfoV2(lua_State* L)
+{
+    const bool packaged = snowdesktop::deployment::IsPackaged();
+    lua_createtable(L, 0, 9);
+    lua_pushliteral(L, "windows"); lua_setfield(L, -2, "osFamily");
+    const DWORD build = WindowsBuildNumber();
+    if (build != 0)
+    {
+        lua_pushinteger(L, static_cast<lua_Integer>(build));
+        lua_setfield(L, -2, "osBuild");
+    }
+    lua_pushstring(L, ProcessArchitectureName());
+    lua_setfield(L, -2, "processArchitecture");
+    lua_pushstring(L, NativeArchitectureName());
+    lua_setfield(L, -2, "nativeArchitecture");
+    lua_pushliteral(L, SNOWDESKTOP_VERSION);
+    lua_setfield(L, -2, "hostVersion");
+    lua_pushinteger(L, snowdesktop::widget::kHostApiVersion);
+    lua_setfield(L, -2, "apiVersion");
+    lua_pushboolean(L, packaged ? 1 : 0);
+    lua_setfield(L, -2, "packaged");
+    lua_pushboolean(L, packaged ? 0 : 1);
+    lua_setfield(L, -2, "portable");
+    lua_pushstring(L, packaged ? "packaged" : "portable");
+    lua_setfield(L, -2, "deploymentMode");
+    return 1;
+}
+
 static int lua_WidgetHasPermission(lua_State* L)
 {
     const char* permission = luaL_checkstring(L, 1);
@@ -3800,7 +3872,7 @@ void WidgetEngine::PushSafeEnvironment(lua_State* L, const LuaWidget& widget)
     };
     static const char* v2Libraries[] = {
         "string", "table", "math", "utf8", "draw", "layout", "storage",
-        "widget", "time"
+        "widget", "system", "time"
     };
     const std::span<const char* const> libraries =
         widget.manifest.apiVersion >= 2
@@ -9058,6 +9130,11 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "monotonic", lua_TimeMonotonic, 2 },
         { "parts", lua_TimeParts, 2 },
     };
+    static constexpr FunctionDescriptor systemV2[] = {
+        { "info", lua_SystemInfoV2, 2 },
+        { "capabilities",
+            snowdesktop::widget_api::LuaSystemCapabilities, 2 },
+    };
     static constexpr FunctionDescriptor media[] = {
         { "current", lua_MediaCurrent, 1, "media.read" },
         { "playPause", lua_MediaPlayPause, 1, "media.action" },
@@ -9151,6 +9228,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         DescribeLibrary("draw", draw),
         DescribeLibrary("widget", widget),
         DescribeLibrary("sys", system),
+        DescribeLibrary("system", systemV2),
         DescribeLibrary("time", time),
         DescribeLibrary("media", media),
         DescribeLibrary("http", http),

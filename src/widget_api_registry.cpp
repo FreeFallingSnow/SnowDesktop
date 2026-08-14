@@ -16,9 +16,10 @@ namespace snowdesktop::widget_api
 namespace
 {
 constexpr std::uint32_t kCurrentApiVersion = 2;
-constexpr std::array<std::string_view, 3> kHostFeatures = {
+constexpr std::array<std::string_view, 4> kHostFeatures = {
     "draw.immediate",
     "l10n.basic",
+    "system.environment",
     "time.basic",
 };
 char kDefinedWidgetMarker = 0;
@@ -135,6 +136,52 @@ int LuaHasFeature(lua_State* state)
     const char* feature = luaL_checklstring(state, 1, &length);
     lua_pushboolean(state,
         SupportsFeature(std::string_view(feature, length)) ? 1 : 0);
+    return 1;
+}
+
+int LuaSystemCapabilities(lua_State* state)
+{
+    if (!lua_isnoneornil(state, 1))
+    {
+        std::size_t length = 0;
+        const char* value = luaL_checklstring(state, 1, &length);
+        const std::string_view feature(value, length);
+        const bool available = SupportsFeature(feature);
+        lua_createtable(state, 0, 3);
+        lua_pushlstring(state, feature.data(), feature.size());
+        lua_setfield(state, -2, "id");
+        lua_pushboolean(state, available ? 1 : 0);
+        lua_setfield(state, -2, "available");
+        if (available)
+        {
+            lua_pushinteger(state, 1);
+            lua_setfield(state, -2, "version");
+        }
+        else
+        {
+            lua_pushliteral(state, "unsupported");
+            lua_setfield(state, -2, "reason");
+        }
+        return 1;
+    }
+
+    lua_createtable(state, 0, 2);
+    lua_pushinteger(state, kCurrentApiVersion);
+    lua_setfield(state, -2, "apiVersion");
+    lua_createtable(state, static_cast<int>(kHostFeatures.size()), 0);
+    int index = 1;
+    for (const auto feature : kHostFeatures)
+    {
+        lua_createtable(state, 0, 3);
+        lua_pushlstring(state, feature.data(), feature.size());
+        lua_setfield(state, -2, "id");
+        lua_pushboolean(state, 1);
+        lua_setfield(state, -2, "available");
+        lua_pushinteger(state, 1);
+        lua_setfield(state, -2, "version");
+        lua_rawseti(state, -2, index++);
+    }
+    lua_setfield(state, -2, "features");
     return 1;
 }
 
