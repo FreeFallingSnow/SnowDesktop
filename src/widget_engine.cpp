@@ -1776,6 +1776,7 @@ constexpr char kSystemPowerPermission[] = "system.power.read";
 constexpr char kSystemNetworkPermission[] = "system.network.read";
 constexpr char kSystemStoragePermission[] = "system.storage.read";
 constexpr char kSystemDisplayPermission[] = "system.display.read";
+constexpr char kAudioOutputReadPermission[] = "audio.output.read";
 
 static void SetNumberField(lua_State* L, const char* key, lua_Number value)
 {
@@ -2278,6 +2279,32 @@ static void PushDataSnapshotEnvelope(lua_State* state,
     {
         PushDisplayDataValue(state, snapshot->displayCurrent);
         lua_setfield(state, -2, "display");
+    }
+    else if (snapshot->topic == "audio.output.default")
+    {
+        lua_pushlstring(state, snapshot->audioOutputDefault.id.data(),
+            snapshot->audioOutputDefault.id.size());
+        lua_setfield(state, -2, "id");
+        lua_pushlstring(state, snapshot->audioOutputDefault.name.data(),
+            snapshot->audioOutputDefault.name.size());
+        lua_setfield(state, -2, "name");
+        lua_pushlstring(state, snapshot->audioOutputDefault.state.data(),
+            snapshot->audioOutputDefault.state.size());
+        lua_setfield(state, -2, "state");
+    }
+    else if (snapshot->topic == "audio.output.volume")
+    {
+        lua_pushlstring(state, snapshot->audioOutputVolume.endpointId.data(),
+            snapshot->audioOutputVolume.endpointId.size());
+        lua_setfield(state, -2, "endpointId");
+        lua_pushnumber(state, snapshot->audioOutputVolume.volume);
+        lua_setfield(state, -2, "volume");
+        lua_pushboolean(state, snapshot->audioOutputVolume.muted);
+        lua_setfield(state, -2, "muted");
+        lua_pushnumber(state, 0.0);
+        lua_setfield(state, -2, "minimum");
+        lua_pushnumber(state, 1.0);
+        lua_setfield(state, -2, "maximum");
     }
     lua_setfield(state, -2, "value");
 }
@@ -4967,6 +4994,14 @@ void WidgetEngine::InitializeWidgetDataBroker()
     (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
         "system.display.current", kSystemDisplayPermission,
         2000ms, 10000ms, 2000ms, false, false }, error);
+    error.clear();
+    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
+        "audio.output.default", kAudioOutputReadPermission,
+        1000ms, 5000ms, 2000ms, false, false }, error);
+    error.clear();
+    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
+        "audio.output.volume", kAudioOutputReadPermission,
+        1000ms, 5000ms, 2000ms, false, false }, error);
 
     if (previewOnly_)
         widgetSystemDataProvider_.reset();
@@ -7658,6 +7693,22 @@ WidgetEngine::RuntimeGetDataSnapshot(
                 144, 144, 1.5, 60.0, "landscape",
                 true, true, false };
         }
+        else if (result.topic == "audio.output.default")
+        {
+            result.audioOutputDefault.available = true;
+            result.audioOutputDefault.id = "audio-output-preview";
+            result.audioOutputDefault.name = "Preview Speakers";
+            result.audioOutputDefault.state = "active";
+            result.audioOutputDefault.timestampMs = timestampNow;
+        }
+        else if (result.topic == "audio.output.volume")
+        {
+            result.audioOutputVolume.available = true;
+            result.audioOutputVolume.endpointId = "audio-output-preview";
+            result.audioOutputVolume.volume = 0.68;
+            result.audioOutputVolume.muted = false;
+            result.audioOutputVolume.timestampMs = timestampNow;
+        }
         return result;
     }
     if (!binding->options.permissionGranted)
@@ -7826,6 +7877,30 @@ WidgetEngine::RuntimeGetDataSnapshot(
                     result.error = "currentDisplayUnavailable";
                 }
             }
+        }
+    }
+    else if (result.topic == "audio.output.default")
+    {
+        const auto snapshot =
+            widgetSystemDataProvider_->AudioOutputDefault();
+        if (snapshot)
+        {
+            result.audioOutputDefault = *snapshot;
+            result.available = snapshot->available;
+            result.error = snapshot->error;
+            setFreshness(snapshot->timestampMs);
+        }
+    }
+    else if (result.topic == "audio.output.volume")
+    {
+        const auto snapshot =
+            widgetSystemDataProvider_->AudioOutputVolume();
+        if (snapshot)
+        {
+            result.audioOutputVolume = *snapshot;
+            result.available = snapshot->available;
+            result.error = snapshot->error;
+            setFreshness(snapshot->timestampMs);
         }
     }
     if (result.error.empty())

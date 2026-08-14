@@ -440,6 +440,18 @@ function schedule.cancel(id) end
 ---@class SnowDisplayCurrentDataValue
 ---@field display SnowDisplayDataValue Display containing this widget surface.
 
+---@class SnowAudioOutputDefaultDataValue
+---@field id string Opaque default render endpoint identifier.
+---@field name string User-visible endpoint name when Windows provides one.
+---@field state 'active'|'disabled'|'unplugged'|'notPresent'|'unknown'
+
+---@class SnowAudioOutputVolumeDataValue
+---@field endpointId string Opaque endpoint identifier matching audio.output.default.
+---@field volume number Master volume scalar in the minimum..maximum range.
+---@field muted boolean
+---@field minimum number Currently 0.0.
+---@field maximum number Currently 1.0.
+
 ---@class SnowDataSnapshot<T>
 ---@field available boolean
 ---@field value? T
@@ -466,6 +478,8 @@ data = {}
 ---@overload fun(topic: 'system.storage.io', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowStorageIoDataValue>
 ---@overload fun(topic: 'system.display.topology', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowDisplayTopologyDataValue>
 ---@overload fun(topic: 'system.display.current', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowDisplayCurrentDataValue>
+---@overload fun(topic: 'audio.output.default', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowAudioOutputDefaultDataValue>
+---@overload fun(topic: 'audio.output.volume', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowAudioOutputVolumeDataValue>
 ---@param topic string
 ---@param options? SnowDataSubscribeOptions
 ---@return SnowDataSubscription<table>

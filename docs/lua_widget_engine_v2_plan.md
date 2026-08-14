@@ -588,7 +588,8 @@ local snapshot = cpu:value()
 `data.system.gpu`、`data.system.power`，以及相互独立的 `data.system.network.status` /
 `data.system.network.traffic`、`data.system.storage.volumes`、
 `data.system.storage.io`、`data.system.display.topology` 和
-`data.system.display.current` feature。
+`data.system.display.current`，以及 `data.audio.output.default`、
+`data.audio.output.volume` feature。
 Lua 订阅句柄已接通 `WidgetDataBroker` 与独立工作线程 provider：首个合格订阅按需
 启动对应 topic，多实例共享有效采样率，数据变化只使依赖实例失效，隐藏状态进入
 pause/throttle，最后订阅进入 idle grace，卸载、热重载和关闭自动释放。CPU 冷启动
@@ -611,6 +612,12 @@ provider 能力收敛为隐藏 throttle。
 原始 GDI 设备名只在宿主内部用于 DisplayConfig 映射，不作为稳定标识公开。
 `system.display.current` 复用同一采样模型，但由引擎使用订阅所属实例的 surface
 边界匹配显示器；匹配失败时返回稳定不可用状态，不擅自回退主显示器。
+
+`audio.output.default` 与 `audio.output.volume` 已接入默认 multimedia render
+endpoint，分别返回不透明 endpoint ID、友好名称/状态和有界主音量/静音值；只有
+存在合格订阅时才访问 Core Audio，不会启动 loopback 或暴露原生设备 ID。当前先
+使用低频兜底采样，IMMNotificationClient 与 IAudioEndpointVolumeCallback 事件接入
+仍属于本数据域的后续工作。
 
 ```text
 Stopped

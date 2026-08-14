@@ -2,8 +2,13 @@
 
 #include <windows.h>
 #include <dxgi1_6.h>
+#include <endpointvolume.h>
+#include <propkeydef.h>
+#include <functiondiscoverykeys_devpkey.h>
+#include <mmdeviceapi.h>
 #include <pdh.h>
 #include <pdhmsg.h>
+#include <propvarutil.h>
 #include <shellscalingapi.h>
 #include <wrl/client.h>
 #include <ws2def.h>
@@ -33,6 +38,8 @@ constexpr std::string_view StorageVolumesTopic = "system.storage.volumes";
 constexpr std::string_view StorageIoTopic = "system.storage.io";
 constexpr std::string_view DisplayTopologyTopic = "system.display.topology";
 constexpr std::string_view DisplayCurrentTopic = "system.display.current";
+constexpr std::string_view AudioOutputDefaultTopic = "audio.output.default";
+constexpr std::string_view AudioOutputVolumeTopic = "audio.output.volume";
 
 std::uint64_t FileTimeValue(const FILETIME& value)
 {
@@ -227,6 +234,61 @@ std::string OpaqueDisplayId(std::wstring_view deviceName)
     return "display-" + std::to_string(hash);
 }
 
+std::string OpaqueAudioEndpointId(std::wstring_view endpointId)
+{
+    constexpr std::uint64_t offset = 14695981039346656037ull;
+    constexpr std::uint64_t prime = 1099511628211ull;
+    std::uint64_t hash = offset;
+    for (const wchar_t character : endpointId)
+    {
+        hash ^= static_cast<std::uint16_t>(character);
+        hash *= prime;
+    }
+    return "audio-output-" + std::to_string(hash);
+}
+
+std::string AudioDeviceState(DWORD state)
+{
+    if ((state & DEVICE_STATE_ACTIVE) != 0) return "active";
+    if ((state & DEVICE_STATE_DISABLED) != 0) return "disabled";
+    if ((state & DEVICE_STATE_UNPLUGGED) != 0) return "unplugged";
+    if ((state & DEVICE_STATE_NOTPRESENT) != 0) return "notPresent";
+    return "unknown";
+}
+
+Microsoft::WRL::ComPtr<IMMDevice> DefaultRenderEndpoint(
+    std::string& error)
+{
+    error.clear();
+    Microsoft::WRL::ComPtr<IMMDeviceEnumerator> enumerator;
+    if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
+            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&enumerator))))
+    {
+        error = "audioEnumeratorUnavailable";
+        return {};
+    }
+    Microsoft::WRL::ComPtr<IMMDevice> endpoint;
+    const HRESULT status = enumerator->GetDefaultAudioEndpoint(
+        eRender, eMultimedia, &endpoint);
+    if (FAILED(status) || !endpoint)
+    {
+        error = status == HRESULT_FROM_WIN32(ERROR_NOT_FOUND)
+            ? "notPresent" : "audioEndpointUnavailable";
+        return {};
+    }
+    return endpoint;
+}
+
+std::string OpaqueEndpointId(IMMDevice* endpoint)
+{
+    if (!endpoint) return {};
+    LPWSTR rawId = nullptr;
+    if (FAILED(endpoint->GetId(&rawId)) || !rawId) return {};
+    const std::string result = OpaqueAudioEndpointId(rawId);
+    CoTaskMemFree(rawId);
+    return result;
+}
+
 struct DisplayTargetMetadata
 {
     std::wstring friendlyName;
@@ -356,7 +418,8 @@ bool WidgetSystemDataProvider::SupportsTopic(
         topic == PowerTopic || topic == NetworkStatusTopic ||
         topic == NetworkTrafficTopic || topic == GpuTopic ||
         topic == StorageVolumesTopic || topic == StorageIoTopic ||
-        topic == DisplayTopologyTopic || topic == DisplayCurrentTopic;
+        topic == DisplayTopologyTopic || topic == DisplayCurrentTopic ||
+        topic == AudioOutputDefaultTopic || topic == AudioOutputVolumeTopic;
 }
 
 bool WidgetSystemDataProvider::StartTopic(
@@ -536,6 +599,20 @@ WidgetSystemDataProvider::DisplayCurrent() const
     return displayCurrent_;
 }
 
+std::optional<WidgetAudioOutputDefaultDataSnapshot>
+WidgetSystemDataProvider::AudioOutputDefault() const
+{
+    std::scoped_lock lock(mutex_);
+    return audioOutputDefault_;
+}
+
+std::optional<WidgetAudioOutputVolumeDataSnapshot>
+WidgetSystemDataProvider::AudioOutputVolume() const
+{
+    std::scoped_lock lock(mutex_);
+    return audioOutputVolume_;
+}
+
 std::vector<std::string>
 WidgetSystemDataProvider::DrainChangedTopics()
 {
@@ -643,6 +720,10 @@ void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
                 PublishDisplayTopology(SampleDisplayTopology());
             else if (topic == DisplayCurrentTopic)
                 PublishDisplayCurrent(SampleDisplayTopology());
+            else if (topic == AudioOutputDefaultTopic)
+                PublishAudioOutputDefault(SampleAudioOutputDefault());
+            else if (topic == AudioOutputVolumeTopic)
+                PublishAudioOutputVolume(SampleAudioOutputVolume());
         }
     }
     CloseGpuQuery();
@@ -1328,6 +1409,85 @@ WidgetSystemDataProvider::SampleDisplayTopology()
     return snapshot;
 }
 
+WidgetAudioOutputDefaultDataSnapshot
+WidgetSystemDataProvider::SampleAudioOutputDefault()
+{
+    WidgetAudioOutputDefaultDataSnapshot snapshot;
+    snapshot.timestampMs = TimestampMilliseconds();
+    std::string error;
+    auto endpoint = DefaultRenderEndpoint(error);
+    if (!endpoint)
+    {
+        snapshot.error = std::move(error);
+        return snapshot;
+    }
+    snapshot.id = OpaqueEndpointId(endpoint.Get());
+    DWORD state = 0;
+    if (FAILED(endpoint->GetState(&state)))
+    {
+        snapshot.error = "audioEndpointStateUnavailable";
+        return snapshot;
+    }
+    snapshot.state = AudioDeviceState(state);
+
+    Microsoft::WRL::ComPtr<IPropertyStore> properties;
+    if (SUCCEEDED(endpoint->OpenPropertyStore(STGM_READ, &properties)) &&
+        properties)
+    {
+        PROPVARIANT value{};
+        PropVariantInit(&value);
+        if (SUCCEEDED(properties->GetValue(
+                PKEY_Device_FriendlyName, &value)) &&
+            value.vt == VT_LPWSTR && value.pwszVal)
+        {
+            snapshot.name = WideToUtf8(value.pwszVal);
+        }
+        PropVariantClear(&value);
+    }
+    snapshot.available = !snapshot.id.empty();
+    if (!snapshot.available)
+        snapshot.error = "audioEndpointIdentityUnavailable";
+    return snapshot;
+}
+
+WidgetAudioOutputVolumeDataSnapshot
+WidgetSystemDataProvider::SampleAudioOutputVolume()
+{
+    WidgetAudioOutputVolumeDataSnapshot snapshot;
+    snapshot.timestampMs = TimestampMilliseconds();
+    std::string error;
+    auto endpoint = DefaultRenderEndpoint(error);
+    if (!endpoint)
+    {
+        snapshot.error = std::move(error);
+        return snapshot;
+    }
+    snapshot.endpointId = OpaqueEndpointId(endpoint.Get());
+    Microsoft::WRL::ComPtr<IAudioEndpointVolume> volume;
+    if (FAILED(endpoint->Activate(__uuidof(IAudioEndpointVolume),
+            CLSCTX_INPROC_SERVER, nullptr,
+            reinterpret_cast<void**>(volume.GetAddressOf()))) || !volume)
+    {
+        snapshot.error = "audioVolumeUnavailable";
+        return snapshot;
+    }
+    float scalar = 0.0f;
+    BOOL muted = FALSE;
+    if (FAILED(volume->GetMasterVolumeLevelScalar(&scalar)) ||
+        FAILED(volume->GetMute(&muted)))
+    {
+        snapshot.error = "audioVolumeUnavailable";
+        return snapshot;
+    }
+    snapshot.available = !snapshot.endpointId.empty();
+    snapshot.volume = std::clamp(
+        static_cast<double>(scalar), 0.0, 1.0);
+    snapshot.muted = muted != FALSE;
+    if (!snapshot.available)
+        snapshot.error = "audioEndpointIdentityUnavailable";
+    return snapshot;
+}
+
 void WidgetSystemDataProvider::PublishCpu(
     WidgetCpuDataSnapshot snapshot)
 {
@@ -1428,5 +1588,27 @@ void WidgetSystemDataProvider::PublishDisplayCurrent(
         ? displayCurrent_->revision + 1 : 1;
     displayCurrent_ = std::move(snapshot);
     changedTopics_.insert(std::string(DisplayCurrentTopic));
+}
+
+void WidgetSystemDataProvider::PublishAudioOutputDefault(
+    WidgetAudioOutputDefaultDataSnapshot snapshot)
+{
+    std::scoped_lock lock(mutex_);
+    if (!schedules_.contains(std::string(AudioOutputDefaultTopic))) return;
+    snapshot.revision = audioOutputDefault_
+        ? audioOutputDefault_->revision + 1 : 1;
+    audioOutputDefault_ = std::move(snapshot);
+    changedTopics_.insert(std::string(AudioOutputDefaultTopic));
+}
+
+void WidgetSystemDataProvider::PublishAudioOutputVolume(
+    WidgetAudioOutputVolumeDataSnapshot snapshot)
+{
+    std::scoped_lock lock(mutex_);
+    if (!schedules_.contains(std::string(AudioOutputVolumeTopic))) return;
+    snapshot.revision = audioOutputVolume_
+        ? audioOutputVolume_->revision + 1 : 1;
+    audioOutputVolume_ = std::move(snapshot);
+    changedTopics_.insert(std::string(AudioOutputVolumeTopic));
 }
 }

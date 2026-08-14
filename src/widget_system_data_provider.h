@@ -180,6 +180,28 @@ struct WidgetDisplayTopologyDataSnapshot
     std::string error;
 };
 
+struct WidgetAudioOutputDefaultDataSnapshot
+{
+    bool available = false;
+    std::string id;
+    std::string name;
+    std::string state;
+    std::int64_t timestampMs = 0;
+    std::uint64_t revision = 0;
+    std::string error;
+};
+
+struct WidgetAudioOutputVolumeDataSnapshot
+{
+    bool available = false;
+    std::string endpointId;
+    double volume = 0.0;
+    bool muted = false;
+    std::int64_t timestampMs = 0;
+    std::uint64_t revision = 0;
+    std::string error;
+};
+
 std::optional<WidgetDisplayDataSnapshot> MatchDisplayByPixelBounds(
     const WidgetDisplayTopologyDataSnapshot& topology,
     const WidgetDisplayPixelRectDataSnapshot& bounds);
@@ -215,6 +237,10 @@ public:
     std::optional<WidgetStorageIoDataSnapshot> StorageIo() const;
     std::optional<WidgetDisplayTopologyDataSnapshot> DisplayTopology() const;
     std::optional<WidgetDisplayTopologyDataSnapshot> DisplayCurrent() const;
+    std::optional<WidgetAudioOutputDefaultDataSnapshot>
+        AudioOutputDefault() const;
+    std::optional<WidgetAudioOutputVolumeDataSnapshot>
+        AudioOutputVolume() const;
     std::vector<std::string> DrainChangedTopics();
 
     bool Running() const noexcept;
@@ -240,6 +266,8 @@ private:
     WidgetStorageVolumesDataSnapshot SampleStorageVolumes();
     WidgetStorageIoDataSnapshot SampleStorageIo();
     WidgetDisplayTopologyDataSnapshot SampleDisplayTopology();
+    WidgetAudioOutputDefaultDataSnapshot SampleAudioOutputDefault();
+    WidgetAudioOutputVolumeDataSnapshot SampleAudioOutputVolume();
     void PublishCpu(WidgetCpuDataSnapshot snapshot);
     void PublishMemory(WidgetMemoryDataSnapshot snapshot);
     void PublishPower(WidgetPowerDataSnapshot snapshot);
@@ -250,6 +278,10 @@ private:
     void PublishStorageIo(WidgetStorageIoDataSnapshot snapshot);
     void PublishDisplayTopology(WidgetDisplayTopologyDataSnapshot snapshot);
     void PublishDisplayCurrent(WidgetDisplayTopologyDataSnapshot snapshot);
+    void PublishAudioOutputDefault(
+        WidgetAudioOutputDefaultDataSnapshot snapshot);
+    void PublishAudioOutputVolume(
+        WidgetAudioOutputVolumeDataSnapshot snapshot);
     bool InitializeGpuQuery();
     void CloseGpuQuery();
     bool InitializeStorageIoQuery();
@@ -269,6 +301,8 @@ private:
     std::optional<WidgetStorageIoDataSnapshot> storageIo_;
     std::optional<WidgetDisplayTopologyDataSnapshot> displayTopology_;
     std::optional<WidgetDisplayTopologyDataSnapshot> displayCurrent_;
+    std::optional<WidgetAudioOutputDefaultDataSnapshot> audioOutputDefault_;
+    std::optional<WidgetAudioOutputVolumeDataSnapshot> audioOutputVolume_;
     std::uint64_t configurationGeneration_ = 0;
     std::jthread worker_;
     std::atomic<bool> resetCpuBaseline_{ true };

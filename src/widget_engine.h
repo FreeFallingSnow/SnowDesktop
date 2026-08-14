@@ -292,6 +292,10 @@ struct LuaWidgetDataSnapshot
     snowdesktop::widget_runtime::WidgetDisplayTopologyDataSnapshot
         displayTopology;
     snowdesktop::widget_runtime::WidgetDisplayDataSnapshot displayCurrent;
+    snowdesktop::widget_runtime::WidgetAudioOutputDefaultDataSnapshot
+        audioOutputDefault;
+    snowdesktop::widget_runtime::WidgetAudioOutputVolumeDataSnapshot
+        audioOutputVolume;
 };
 
 /**

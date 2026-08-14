@@ -207,7 +207,11 @@ void TestVersionedRegistration()
 
 void TestV2Contract()
 {
-    Check(snowdesktop::widget_api::SupportsFeature("data.subscribe") &&
+    Check(snowdesktop::widget_api::SupportsFeature(
+                "data.audio.output.default") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "data.audio.output.volume") &&
+            snowdesktop::widget_api::SupportsFeature("data.subscribe") &&
             snowdesktop::widget_api::SupportsFeature("data.system.cpu") &&
             snowdesktop::widget_api::SupportsFeature(
                 "data.system.display.topology") &&

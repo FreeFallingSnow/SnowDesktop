@@ -38,7 +38,7 @@ bool WaitFor(Predicate predicate)
 void TestTopicLifecycleAndSampling()
 {
     WidgetSystemDataProvider provider;
-    Check(!provider.StartTopic("audio.output.default", 20ms) &&
+    Check(!provider.StartTopic("media.current", 20ms) &&
             !provider.StartTopic("system.memory", 1ms),
         "unsupported topics and invalid intervals must be rejected");
     Check(provider.StartTopic("system.memory", 20ms) &&
@@ -215,6 +215,37 @@ void TestTopicLifecycleAndSampling()
     Check(provider.StopTopic("system.display.current") &&
             provider.ActiveTopicCount() == 2,
         "stopping current-display sampling must preserve other topics");
+    Check(provider.StartTopic("audio.output.default", 20ms) &&
+            provider.StartTopic("audio.output.volume", 20ms) &&
+            provider.ActiveTopicCount() == 4,
+        "default audio endpoint and volume must start as independent topics");
+    Check(WaitFor([&] {
+            const auto endpoint = provider.AudioOutputDefault();
+            const auto volume = provider.AudioOutputVolume();
+            return endpoint && endpoint->revision > 0 &&
+                volume && volume->revision > 0;
+        }),
+        "audio output topics must publish endpoint and volume revisions");
+    const auto audioEndpoint = provider.AudioOutputDefault();
+    const auto audioVolume = provider.AudioOutputVolume();
+    Check(audioEndpoint && audioEndpoint->timestampMs > 0 &&
+            (audioEndpoint->available || !audioEndpoint->error.empty()) &&
+            (!audioEndpoint->available ||
+                (audioEndpoint->id.starts_with("audio-output-") &&
+                    !audioEndpoint->state.empty())),
+        "default audio output must expose an opaque endpoint or stable error");
+    Check(audioVolume && audioVolume->timestampMs > 0 &&
+            (audioVolume->available || !audioVolume->error.empty()) &&
+            (!audioVolume->available ||
+                (audioVolume->endpointId.starts_with("audio-output-") &&
+                    audioVolume->volume >= 0.0 &&
+                    audioVolume->volume <= 1.0)),
+        "audio volume must expose a bounded scalar or stable error");
+    Check(provider.StopTopic("audio.output.default") &&
+            provider.ActiveTopicCount() == 3 &&
+            provider.StopTopic("audio.output.volume") &&
+            provider.ActiveTopicCount() == 2,
+        "audio output topics must stop independently from other sources");
 
     Check(provider.StopTopic("system.memory") && provider.Running() &&
             provider.ActiveTopicCount() == 1,

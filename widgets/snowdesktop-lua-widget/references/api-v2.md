@@ -94,9 +94,10 @@ ID 为 1–128 字节，每个实例最多 32 个计划；周期请求范围是 
 
 ### `data`
 
-当前公开十个按需系统数据源：`system.cpu`、`system.memory`、`system.gpu`、`system.power`、
+当前公开十二个按需数据源：`system.cpu`、`system.memory`、`system.gpu`、`system.power`、
 `system.network.status`、`system.network.traffic`、`system.storage.volumes`、
-`system.storage.io`、`system.display.topology` 和 `system.display.current`。在 `setup` 或模块
+`system.storage.io`、`system.display.topology`、`system.display.current`、
+`audio.output.default` 和 `audio.output.volume`。在 `setup` 或模块
 入口创建订阅，不要在每次 `render` 中重复订阅：
 
 ```lua
@@ -122,7 +123,8 @@ end
 
 `data.subscribe(topic, options?)` 返回句柄。`options.maxAgeMs` 为 1–86400000，
 同时表达请求采样周期与快照过期阈值；CPU 最快 500 ms，内存最快 1000 ms，
-电源、存储卷和显示拓扑最快 2000 ms，存储 I/O 最快 1000 ms。`whenHidden` 可为
+电源、存储卷和显示拓扑最快 2000 ms；存储 I/O、默认音频端点和主音量最快
+1000 ms。`whenHidden` 可为
 `pause`、`throttle`（默认）或 `continue`；
 当前系统 provider 不承诺后台 continue，因此会收敛为隐藏 throttle。
 `handle:value()` 返回
@@ -169,9 +171,16 @@ Windows 无法报告高级颜色状态时 `hdrKnown=false`，不能把两个 fal
 移动后宿主会在下一次拓扑快照匹配新显示器；匹配前返回
 `available=false,error="currentDisplayUnavailable"`，不会错误回退到主显示器。
 
+`audio.output.default` value 包含默认 multimedia render endpoint 的不透明 `id`、
+Windows 友好 `name` 和 `state`；`audio.output.volume` 包含匹配的 `endpointId`、
+0–1 主音量 `volume`、`muted` 和 `minimum/maximum`。没有输出设备时返回
+`available=false,error="notPresent"`。这两个 topic 只读取 endpoint 元数据与主音量，
+不会启动 loopback、取得 PCM 或暴露原生 endpoint ID；预览使用固定模拟设备。
+
 CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.power.read` 保护，
 两个网络 topic 受 `system.network.read` 保护，两个存储 topic 受
 `system.storage.read` 保护，显示拓扑受 `system.display.read` 保护。
+两个音频输出 topic 受 `audio.output.read` 保护。
 需要无权限降级的组件应把对应权限声明在 `optionalPermissions`，并处理
 `available=false,error="permissionDenied"`；预览返回稳定模拟值且不会读取本机
 状态。对应 feature ID 是 `data.subscribe`、`data.system.cpu`、
@@ -179,7 +188,8 @@ CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.pow
 `data.system.network.status` 和
 `data.system.network.traffic`、`data.system.storage.volumes` 和
 `data.system.storage.io`、`data.system.display.topology` 和
-`data.system.display.current`。
+`data.system.display.current`，以及 `data.audio.output.default`、
+`data.audio.output.volume`。
 
 ### `draw`
 
