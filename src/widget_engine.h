@@ -305,6 +305,9 @@ struct LuaWidgetDataSnapshot
         mediaCurrent;
     snowdesktop::widget_runtime::WidgetMediaTimelineDataSnapshot
         mediaTimeline;
+    std::vector<LuaDesktopItemInfo> desktopItems;
+    std::uint64_t desktopRevision = 0;
+    std::string desktopChangeReason;
 };
 
 /**
@@ -1079,6 +1082,9 @@ private:
         widgetSystemDataProvider_;
     std::unique_ptr<snowdesktop::widget_runtime::WidgetAudioAnalysisProvider>
         widgetAudioAnalysisProvider_;
+    std::uint64_t desktopDataRevision_ = 0;
+    std::int64_t desktopDataTimestampMs_ = 0;
+    std::string desktopDataChangeReason_ = "initial";
     std::unique_ptr<
         snowdesktop::calendar::CalendarService>
         calendarService_;

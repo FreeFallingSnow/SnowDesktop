@@ -504,6 +504,25 @@ function schedule.cancel(id) end
 ---@class SnowMediaTimelineDataValue
 ---@field timeline SnowMediaTimelineValue
 
+---@class SnowDesktopItemDataValue
+---@field id string Stable host reference; never an absolute path.
+---@field title string
+---@field source string
+---@field type string
+---@field selected boolean
+
+---@class SnowDesktopItemsDataValue
+---@field items SnowDesktopItemDataValue[] At most 2048 entries.
+---@field revision integer
+
+---@class SnowDesktopSelectionDataValue
+---@field items SnowDesktopItemDataValue[] At most 512 entries.
+---@field revision integer
+
+---@class SnowDesktopChangesDataValue
+---@field revision integer
+---@field reason string Bounded host change reason.
+
 ---@class SnowDataSnapshot<T>
 ---@field available boolean
 ---@field value? T
@@ -536,6 +555,9 @@ data = {}
 ---@overload fun(topic: 'media.sessions', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowMediaSessionsDataValue>
 ---@overload fun(topic: 'media.current', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowMediaCurrentDataValue>
 ---@overload fun(topic: 'media.timeline', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowMediaTimelineDataValue>
+---@overload fun(topic: 'desktop.items', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowDesktopItemsDataValue>
+---@overload fun(topic: 'desktop.selection', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowDesktopSelectionDataValue>
+---@overload fun(topic: 'desktop.changes', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowDesktopChangesDataValue>
 ---@param topic string
 ---@param options? SnowDataSubscribeOptions
 ---@return SnowDataSubscription<table>

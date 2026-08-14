@@ -214,6 +214,12 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "data.audio.output.volume") &&
             snowdesktop::widget_api::SupportsFeature(
+                "data.desktop.items") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "data.desktop.selection") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "data.desktop.changes") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "data.media.sessions") &&
             snowdesktop::widget_api::SupportsFeature(
                 "data.media.current") &&

@@ -94,11 +94,12 @@ ID 为 1–128 字节，每个实例最多 32 个计划；周期请求范围是 
 
 ### `data`
 
-当前公开十六个按需数据源：`system.cpu`、`system.memory`、`system.gpu`、`system.power`、
+当前公开十九个按需数据源：`system.cpu`、`system.memory`、`system.gpu`、`system.power`、
 `system.network.status`、`system.network.traffic`、`system.storage.volumes`、
 `system.storage.io`、`system.display.topology`、`system.display.current`、
 `audio.output.default`、`audio.output.volume`、`audio.output.analysis`、
-`media.sessions`、`media.current` 和 `media.timeline`。在 `setup` 或模块
+`media.sessions`、`media.current`、`media.timeline`、`desktop.items`、
+`desktop.selection` 和 `desktop.changes`。在 `setup` 或模块
 入口创建订阅，不要在每次 `render` 中重复订阅：
 
 ```lua
@@ -193,6 +194,12 @@ value 通过 `session` 返回当前会话，`media.timeline` value 通过 `timel
 和 timeline 返回 `available=false,error="notPresent"`，会话列表则是可用的空数组。
 这些只读订阅不会执行播放动作或取得封面原图，预览使用一个固定模拟会话。
 
+三个桌面 topic 受 `desktop.read` 保护且由宿主变更事件驱动，不启动轮询线程。
+`desktop.items` 返回最多 2048 项，`desktop.selection` 返回最多 512 项；每项只有
+稳定宿主引用 `id` 和 `title/source/type/selected` 展示字段，不向 v2 返回绝对路径。
+`desktop.changes` 返回单调 `revision` 与最长 64 字节的宿主 `reason`，用于判断何时
+重新读取列表。预览使用固定项目；取消最后订阅时没有后台 worker 或系统句柄残留。
+
 CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.power.read` 保护，
 两个网络 topic 受 `system.network.read` 保护，两个存储 topic 受
 `system.storage.read` 保护，显示拓扑受 `system.display.read` 保护。
@@ -210,6 +217,8 @@ CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.pow
 `data.system.display.current`，以及 `data.audio.output.default`、
 `data.audio.output.volume` 和 `data.audio.output.analysis`，以及
 `data.media.sessions`、`data.media.current` 和 `data.media.timeline`。
+桌面 topic 对应 `data.desktop.items`、`data.desktop.selection` 和
+`data.desktop.changes`。
 
 ### `draw`
 

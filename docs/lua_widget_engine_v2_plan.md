@@ -590,7 +590,8 @@ local snapshot = cpu:value()
 `data.system.storage.io`、`data.system.display.topology` 和
 `data.system.display.current`，以及 `data.audio.output.default`、
 `data.audio.output.volume`、`data.audio.output.analysis`，和
-`data.media.sessions/current/timeline` feature。
+`data.media.sessions/current/timeline`、
+`data.desktop.items/selection/changes` feature。
 Lua 订阅句柄已接通 `WidgetDataBroker` 与独立工作线程 provider：首个合格订阅按需
 启动对应 topic，多实例共享有效采样率，数据变化只使依赖实例失效，隐藏状态进入
 pause/throttle，最后订阅进入 idle grace，卸载、热重载和关闭自动释放。CPU 冷启动
@@ -631,6 +632,12 @@ endpoint，分别返回不透明 endpoint ID、友好名称/状态和有界主�
 逐动作 `can*`，同一轮到期的三个 topic 只查询一次 Windows 会话管理器。列表为空是
 正常可用状态，current/timeline 使用稳定 `notPresent`；预览不读取开发机媒体状态。
 封面 resource handle 和通过 task/action broker 执行的媒体控制仍属于后续工作。
+
+`desktop.items`、`desktop.selection` 和 `desktop.changes` 已作为无轮询的宿主事件
+数据源接入 broker；列表分别限制为 2048/512 项，只返回稳定宿主引用和展示元数据，
+不把 v1 快照中的绝对路径带入 v2。宿主 reload/application 变化推进单调 revision
+并只使订阅实例失效，预览返回固定数据；更细的 added/removed/modified 差分和完整
+选择变化通知仍待桌面模型的统一 revision 源收口。
 
 ```text
 Stopped

@@ -1779,6 +1779,7 @@ constexpr char kSystemDisplayPermission[] = "system.display.read";
 constexpr char kAudioOutputReadPermission[] = "audio.output.read";
 constexpr char kAudioOutputAnalyzePermission[] = "audio.output.analyze";
 constexpr char kMediaReadPermission[] = "media.read";
+constexpr char kDesktopReadPermission[] = "desktop.read";
 
 static void SetNumberField(lua_State* L, const char* key, lua_Number value)
 {
@@ -2157,6 +2158,22 @@ static void PushMediaSessionDataValue(lua_State* state,
     lua_setfield(state, -2, "timeline");
 }
 
+static void PushDesktopDataItemValue(
+    lua_State* state, const LuaDesktopItemInfo& item)
+{
+    lua_createtable(state, 0, 6);
+    lua_pushlstring(state, item.id.data(), item.id.size());
+    lua_setfield(state, -2, "id");
+    lua_pushlstring(state, item.title.data(), item.title.size());
+    lua_setfield(state, -2, "title");
+    lua_pushlstring(state, item.source.data(), item.source.size());
+    lua_setfield(state, -2, "source");
+    lua_pushlstring(state, item.type.data(), item.type.size());
+    lua_setfield(state, -2, "type");
+    lua_pushboolean(state, item.selected);
+    lua_setfield(state, -2, "selected");
+}
+
 static void PushDataSnapshotEnvelope(lua_State* state,
     const std::optional<LuaWidgetDataSnapshot>& snapshot,
     const char* missingError = "unsubscribed")
@@ -2438,6 +2455,31 @@ static void PushDataSnapshotEnvelope(lua_State* state,
     {
         PushMediaTimelineDataValue(state, snapshot->mediaTimeline);
         lua_setfield(state, -2, "timeline");
+    }
+    else if (snapshot->topic == "desktop.items" ||
+        snapshot->topic == "desktop.selection")
+    {
+        lua_createtable(state,
+            static_cast<int>(snapshot->desktopItems.size()), 0);
+        int itemIndex = 1;
+        for (const auto& item : snapshot->desktopItems)
+        {
+            PushDesktopDataItemValue(state, item);
+            lua_rawseti(state, -2, itemIndex++);
+        }
+        lua_setfield(state, -2, "items");
+        lua_pushinteger(state, static_cast<lua_Integer>(
+            snapshot->desktopRevision));
+        lua_setfield(state, -2, "revision");
+    }
+    else if (snapshot->topic == "desktop.changes")
+    {
+        lua_pushinteger(state, static_cast<lua_Integer>(
+            snapshot->desktopRevision));
+        lua_setfield(state, -2, "revision");
+        lua_pushlstring(state, snapshot->desktopChangeReason.data(),
+            snapshot->desktopChangeReason.size());
+        lua_setfield(state, -2, "reason");
     }
     lua_setfield(state, -2, "value");
 }
@@ -5087,6 +5129,11 @@ void WidgetEngine::InitializeWidgetDataBroker()
 
     dataBroker_ = std::make_unique<
         snowdesktop::widget_runtime::WidgetDataBroker>();
+    desktopDataRevision_ = 0;
+    desktopDataChangeReason_ = "initial";
+    desktopDataTimestampMs_ =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
     std::string error;
     (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
         "system.cpu", kSystemPerformancePermission,
@@ -5151,6 +5198,18 @@ void WidgetEngine::InitializeWidgetDataBroker()
     (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
         "media.timeline", kMediaReadPermission,
         500ms, 2000ms, 2000ms, false, false }, error);
+    error.clear();
+    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
+        "desktop.items", kDesktopReadPermission,
+        100ms, 1000ms, 0ms, false, true }, error);
+    error.clear();
+    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
+        "desktop.selection", kDesktopReadPermission,
+        100ms, 1000ms, 0ms, false, true }, error);
+    error.clear();
+    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
+        "desktop.changes", kDesktopReadPermission,
+        100ms, 1000ms, 0ms, false, true }, error);
 
     if (previewOnly_)
     {
@@ -5174,11 +5233,17 @@ void WidgetEngine::ApplyWidgetDataBrokerActions()
     {
         const bool audioAnalysis =
             action.topic == "audio.output.analysis";
+        const bool hostEventData =
+            action.topic == "desktop.items" ||
+            action.topic == "desktop.selection" ||
+            action.topic == "desktop.changes";
         switch (action.type)
         {
         case DataBrokerActionType::Start:
         {
-            const bool started = audioAnalysis
+            const bool started = hostEventData
+                ? true
+                : audioAnalysis
                 ? widgetAudioAnalysisProvider_ &&
                     widgetAudioAnalysisProvider_->Start(
                         action.effectiveInterval)
@@ -5190,7 +5255,12 @@ void WidgetEngine::ApplyWidgetDataBrokerActions()
             break;
         }
         case DataBrokerActionType::Reconfigure:
-            if (audioAnalysis)
+            if (hostEventData)
+            {
+                // Event-backed desktop topics have no polling resource to
+                // reconfigure. The broker still owns their lifecycle.
+            }
+            else if (audioAnalysis)
             {
                 if (widgetAudioAnalysisProvider_)
                     (void)widgetAudioAnalysisProvider_->Start(
@@ -5203,7 +5273,11 @@ void WidgetEngine::ApplyWidgetDataBrokerActions()
             }
             break;
         case DataBrokerActionType::Stop:
-            if (audioAnalysis)
+            if (hostEventData)
+            {
+                // No worker or OS handle is retained for these topics.
+            }
+            else if (audioAnalysis)
             {
                 if (widgetAudioAnalysisProvider_)
                     widgetAudioAnalysisProvider_->Stop();
@@ -7415,6 +7489,13 @@ void WidgetEngine::InvokeMenu(const std::wstring& widgetId, int menuId)
 
 void WidgetEngine::NotifyDesktopChanged(const std::string& reason)
 {
+    ++desktopDataRevision_;
+    desktopDataTimestampMs_ =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+    desktopDataChangeReason_ = reason.substr(0, 64);
+    if (desktopDataChangeReason_.empty())
+        desktopDataChangeReason_ = "changed";
     if (d2dState_)
     {
         d2dState_->shellIconCache.clear();
@@ -7456,6 +7537,17 @@ void WidgetEngine::NotifyDesktopChanged(const std::string& reason)
             lua_pop(state, 1);
         }
         lua_pop(state, 1);
+        const bool subscribed = dataBroker_ && std::any_of(
+            widgets_[index].dataSubscriptions.begin(),
+            widgets_[index].dataSubscriptions.end(),
+            [this](const auto& entry) {
+                if (!entry.second.starts_with("desktop.")) return false;
+                const auto binding =
+                    dataBroker_->SubscriptionSnapshot(entry.first);
+                return binding && binding->eligible;
+            });
+        if (subscribed)
+            RuntimeInvalidateHost(widgetId);
     }
 }
 
@@ -7973,6 +8065,22 @@ WidgetEngine::RuntimeGetDataSnapshot(
                 result.mediaTimeline = session.timeline;
             }
         }
+        else if (result.topic == "desktop.items" ||
+            result.topic == "desktop.selection")
+        {
+            result.desktopItems = result.topic == "desktop.items"
+                ? RuntimeDesktopItems() : RuntimeDesktopSelection();
+            const std::size_t maximum = result.topic == "desktop.items"
+                ? 2048u : 512u;
+            if (result.desktopItems.size() > maximum)
+                result.desktopItems.resize(maximum);
+            result.desktopRevision = 1;
+        }
+        else if (result.topic == "desktop.changes")
+        {
+            result.desktopRevision = 1;
+            result.desktopChangeReason = "preview";
+        }
         return result;
     }
     if (!binding->options.permissionGranted)
@@ -8217,6 +8325,26 @@ WidgetEngine::RuntimeGetDataSnapshot(
             result.error = snapshot->error;
             setFreshness(snapshot->timestampMs);
         }
+    }
+    else if (result.topic == "desktop.items" ||
+        result.topic == "desktop.selection")
+    {
+        result.desktopItems = result.topic == "desktop.items"
+            ? RuntimeDesktopItems() : RuntimeDesktopSelection();
+        const std::size_t maximum = result.topic == "desktop.items"
+            ? 2048u : 512u;
+        if (result.desktopItems.size() > maximum)
+            result.desktopItems.resize(maximum);
+        result.desktopRevision = desktopDataRevision_;
+        result.available = true;
+        setFreshness(timestampNow);
+    }
+    else if (result.topic == "desktop.changes")
+    {
+        result.desktopRevision = desktopDataRevision_;
+        result.desktopChangeReason = desktopDataChangeReason_;
+        result.available = true;
+        setFreshness(desktopDataTimestampMs_);
     }
     if (result.error.empty())
     {
