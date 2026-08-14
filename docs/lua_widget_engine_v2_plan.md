@@ -592,7 +592,7 @@ local snapshot = cpu:value()
 `data.audio.output.volume`、`data.audio.output.analysis`，和
 `data.media.sessions/current/timeline`、
 `data.desktop.items/selection/changes`、
-`data.calendar.events/selectedDate` feature。
+`data.calendar.events/selectedDate`、`data.app.indexStatus` feature。
 Lua 订阅句柄已接通 `WidgetDataBroker` 与独立工作线程 provider：首个合格订阅按需
 启动对应 topic，多实例共享有效采样率，数据变化只使依赖实例失效，隐藏状态进入
 pause/throttle，最后订阅进入 idle grace，卸载、热重载和关闭自动释放。CPU 冷启动
@@ -645,6 +645,11 @@ endpoint，分别返回不透明 endpoint ID、友好名称/状态和有界主�
 未指定时围绕当前选中日期取前后各 62 天；每次最多返回 512 项并显式报告
 `truncated`。事件修改与选择变化分别推进 revision，预览使用固定日期和事件。
 calendar 写入仍需后续 task/action broker，不能借只读订阅直接调用。
+
+`app.indexStatus` 已作为宿主应用索引事件的轻量状态订阅接入，返回
+`ready/unavailable + revision`，不在每次变化时复制完整应用目录；预览固定为 ready。
+当前索引器没有独立暴露 indexing/error 阶段，宿主后续增加这些状态时可在冻结枚举内
+扩展，不改变订阅形状。应用结果检索仍必须进入有界 `app.search` 任务。
 
 ```text
 Stopped

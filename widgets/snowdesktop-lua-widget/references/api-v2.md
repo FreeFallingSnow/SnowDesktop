@@ -94,13 +94,13 @@ ID 为 1–128 字节，每个实例最多 32 个计划；周期请求范围是 
 
 ### `data`
 
-当前公开二十一个按需数据源：`system.cpu`、`system.memory`、`system.gpu`、`system.power`、
+当前公开二十二个按需数据源：`system.cpu`、`system.memory`、`system.gpu`、`system.power`、
 `system.network.status`、`system.network.traffic`、`system.storage.volumes`、
 `system.storage.io`、`system.display.topology`、`system.display.current`、
 `audio.output.default`、`audio.output.volume`、`audio.output.analysis`、
 `media.sessions`、`media.current`、`media.timeline`、`desktop.items`、
 `desktop.selection`、`desktop.changes`、`calendar.events` 和
-`calendar.selectedDate`。在 `setup` 或模块
+`calendar.selectedDate`，以及 `app.indexStatus`。在 `setup` 或模块
 入口创建订阅，不要在每次 `render` 中重复订阅：
 
 ```lua
@@ -210,6 +210,11 @@ value 通过 `session` 返回当前会话，`media.timeline` value 通过 `timel
 selectedDate value 返回 `date/revision`。创建、修改、删除或选择日期仍不由这些只读
 topic 执行；预览返回固定日期和事件。
 
+`app.indexStatus` 受 `app.discovery` 保护，value 返回 `state/revision`。当前宿主
+应用搜索提供者就绪时为 `ready`，缺失时以 `available=false` 和
+`state="unavailable",error="providerUnavailable"` 明确报告；应用索引变更推进
+revision。该 topic 不携带完整应用目录，搜索结果仍应由后续有界任务获取。
+
 CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.power.read` 保护，
 两个网络 topic 受 `system.network.read` 保护，两个存储 topic 受
 `system.storage.read` 保护，显示拓扑受 `system.display.read` 保护。
@@ -230,6 +235,7 @@ CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.pow
 桌面 topic 对应 `data.desktop.items`、`data.desktop.selection` 和
 `data.desktop.changes`。
 日历 topic 对应 `data.calendar.events` 和 `data.calendar.selectedDate`。
+应用索引状态对应 `data.app.indexStatus`。
 
 ### `draw`
 

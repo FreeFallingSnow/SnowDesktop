@@ -314,6 +314,8 @@ struct LuaWidgetDataSnapshot
     std::string calendarRangeEnd;
     std::uint64_t calendarRevision = 0;
     bool calendarTruncated = false;
+    std::string appIndexState;
+    std::uint64_t appIndexRevision = 0;
 };
 
 /**
@@ -1094,6 +1096,7 @@ private:
     std::string desktopDataChangeReason_ = "initial";
     std::uint64_t calendarEventsRevision_ = 0;
     std::uint64_t calendarSelectionRevision_ = 0;
+    std::uint64_t appIndexRevision_ = 0;
     std::unique_ptr<
         snowdesktop::calendar::CalendarService>
         calendarService_;

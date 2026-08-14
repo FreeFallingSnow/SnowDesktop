@@ -208,6 +208,8 @@ void TestVersionedRegistration()
 void TestV2Contract()
 {
     Check(snowdesktop::widget_api::SupportsFeature(
+                "data.app.indexStatus") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "data.audio.output.analysis") &&
             snowdesktop::widget_api::SupportsFeature(
                 "data.audio.output.default") &&

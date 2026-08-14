@@ -549,6 +549,10 @@ function schedule.cancel(id) end
 ---@field date string YYYY-MM-DD.
 ---@field revision integer
 
+---@class SnowAppIndexStatusDataValue
+---@field state 'ready'|'indexing'|'error'|'unavailable'
+---@field revision integer
+
 ---@class SnowDataSnapshot<T>
 ---@field available boolean
 ---@field value? T
@@ -586,6 +590,7 @@ data = {}
 ---@overload fun(topic: 'desktop.changes', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowDesktopChangesDataValue>
 ---@overload fun(topic: 'calendar.events', options?: SnowCalendarEventsSubscribeOptions): SnowDataSubscription<SnowCalendarEventsDataValue>
 ---@overload fun(topic: 'calendar.selectedDate', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowCalendarSelectedDateDataValue>
+---@overload fun(topic: 'app.indexStatus', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowAppIndexStatusDataValue>
 ---@param topic string
 ---@param options? SnowDataSubscribeOptions
 ---@return SnowDataSubscription<table>

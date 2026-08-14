@@ -1781,6 +1781,7 @@ constexpr char kAudioOutputAnalyzePermission[] = "audio.output.analyze";
 constexpr char kMediaReadPermission[] = "media.read";
 constexpr char kDesktopReadPermission[] = "desktop.read";
 constexpr char kCalendarReadPermission[] = "calendar.read";
+constexpr char kAppDiscoveryPermission[] = "app.discovery";
 
 static void SetNumberField(lua_State* L, const char* key, lua_Number value)
 {
@@ -2536,6 +2537,15 @@ static void PushDataSnapshotEnvelope(lua_State* state,
         lua_setfield(state, -2, "date");
         lua_pushinteger(state, static_cast<lua_Integer>(
             snapshot->calendarRevision));
+        lua_setfield(state, -2, "revision");
+    }
+    else if (snapshot->topic == "app.indexStatus")
+    {
+        lua_pushlstring(state, snapshot->appIndexState.data(),
+            snapshot->appIndexState.size());
+        lua_setfield(state, -2, "state");
+        lua_pushinteger(state, static_cast<lua_Integer>(
+            snapshot->appIndexRevision));
         lua_setfield(state, -2, "revision");
     }
     lua_setfield(state, -2, "value");
@@ -5233,6 +5243,7 @@ void WidgetEngine::InitializeWidgetDataBroker()
             std::chrono::system_clock::now().time_since_epoch()).count();
     calendarEventsRevision_ = 0;
     calendarSelectionRevision_ = 0;
+    appIndexRevision_ = 0;
     std::string error;
     (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
         "system.cpu", kSystemPerformancePermission,
@@ -5317,6 +5328,10 @@ void WidgetEngine::InitializeWidgetDataBroker()
     (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
         "calendar.selectedDate", kCalendarReadPermission,
         100ms, 1000ms, 0ms, false, true }, error);
+    error.clear();
+    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
+        "app.indexStatus", kAppDiscoveryPermission,
+        100ms, 1000ms, 0ms, false, true }, error);
 
     if (previewOnly_)
     {
@@ -5345,7 +5360,8 @@ void WidgetEngine::ApplyWidgetDataBrokerActions()
             action.topic == "desktop.selection" ||
             action.topic == "desktop.changes" ||
             action.topic == "calendar.events" ||
-            action.topic == "calendar.selectedDate";
+            action.topic == "calendar.selectedDate" ||
+            action.topic == "app.indexStatus";
         switch (action.type)
         {
         case DataBrokerActionType::Start:
@@ -7605,6 +7621,28 @@ void WidgetEngine::NotifyDesktopChanged(const std::string& reason)
     desktopDataChangeReason_ = reason.substr(0, 64);
     if (desktopDataChangeReason_.empty())
         desktopDataChangeReason_ = "changed";
+    if (reason == "applications")
+    {
+        ++appIndexRevision_;
+        for (const auto& widget : widgets_)
+        {
+            if (!widget.valid || widget.preview || !dataBroker_ ||
+                !RuntimeHasPermission(
+                    widget.widgetId, kAppDiscoveryPermission))
+                continue;
+            const bool subscribed = std::any_of(
+                widget.dataSubscriptions.begin(),
+                widget.dataSubscriptions.end(),
+                [this](const auto& entry) {
+                    if (entry.second != "app.indexStatus") return false;
+                    const auto binding =
+                        dataBroker_->SubscriptionSnapshot(entry.first);
+                    return binding && binding->eligible;
+                });
+            if (subscribed)
+                RuntimeInvalidateHost(widget.widgetId);
+        }
+    }
     if (d2dState_)
     {
         d2dState_->shellIconCache.clear();
@@ -8220,6 +8258,11 @@ WidgetEngine::RuntimeGetDataSnapshot(
             result.calendarSelectedDate = "2026-08-02";
             result.calendarRevision = 1;
         }
+        else if (result.topic == "app.indexStatus")
+        {
+            result.appIndexState = "ready";
+            result.appIndexRevision = 1;
+        }
         return result;
     }
     if (!binding->options.permissionGranted)
@@ -8529,6 +8572,17 @@ WidgetEngine::RuntimeGetDataSnapshot(
         result.available = !result.calendarSelectedDate.empty();
         if (!result.available)
             result.error = "notPresent";
+        setFreshness(timestampNow);
+    }
+    else if (result.topic == "app.indexStatus")
+    {
+        result.appIndexState = applicationSearchProvider_
+            ? "ready" : "unavailable";
+        result.appIndexRevision = appIndexRevision_;
+        result.available = applicationSearchProvider_
+            ? true : false;
+        if (!result.available)
+            result.error = "providerUnavailable";
         setFreshness(timestampNow);
     }
     if (result.error.empty())
