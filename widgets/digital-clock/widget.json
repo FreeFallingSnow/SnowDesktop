@@ -1,8 +1,8 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "b731dc11-92fa-404b-abf7-34741cd25277",
   "slug": "digital-clock",
-  "apiVersion": 1,
+  "apiVersion": 2,
   "dataVersion": 1,
   "entry": "main.lua",
   "minHostVersion": "1.0.1.0",
@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "Digital Clock",
   "nameKey": "lua_widget.digital_clock.name",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "description": "Displays a responsive digital clock with date and weekday.",
   "descriptionKey": "lua_widget.digital_clock.description",
   "locales": {
@@ -220,7 +220,10 @@
     "rows": 2
   },
   "refreshIntervalMs": 1000,
-  "permissions": [
-    "ui.input"
-  ]
+  "permissions": [],
+  "requiredFeatures": [
+    "draw.immediate",
+    "time.basic"
+  ],
+  "optionalFeatures": []
 }

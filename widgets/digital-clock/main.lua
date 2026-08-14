@@ -1,20 +1,13 @@
--- digital_clock.lua - 数字时钟
-name = l10n.tr("lua_widget.digital_clock.name")
-useCustomStyle = true
+-- digital_clock.lua - API v2 数字时钟
+local showWeekday = true
+local showDate = true
+local showSeconds = true
+local textColor = 0xFFFFFF
+local textOpacity = 1.0
+local clockScale = 1.0
+local descriptor
 
-bg = 0x000000
-border = 0x000000
-alpha = 0.0
-gradientEndA = 0.0
-
-showWeekday = true
-showDate = true
-showSeconds = true
-textColor = 0xFFFFFF
-textOpacity = 1.0
-clockScale = 1.0
-
-settings = {
+local settings = {
     presets = {
         {
             id = "transparent",
@@ -41,22 +34,18 @@ settings = {
     }
 }
 
-function onVisible()
-    loadConfig()
-end
-
-function loadConfig()
-    bg = tonumber(storage.get("bg")) or bg
-    border = bg
-    alpha = tonumber(storage.get("alpha")) or alpha
-    gradientEndA = tonumber(storage.get("gradientEndA")) or gradientEndA
+local function loadConfig()
+    descriptor.bg = tonumber(storage.get("bg")) or descriptor.bg
+    descriptor.border = descriptor.bg
+    descriptor.alpha = tonumber(storage.get("alpha")) or descriptor.alpha
+    descriptor.gradientEndA = tonumber(storage.get("gradientEndA")) or descriptor.gradientEndA
     showWeekday = storage.get("showWeekday") ~= "0"
     showDate = storage.get("showDate") ~= "0"
     showSeconds = storage.get("showSeconds") ~= "0"
     textColor = tonumber(storage.get("textColor")) or textColor
     textOpacity = math.max(0.0, math.min(1.0, tonumber(storage.get("textOpacity")) or textOpacity))
     clockScale = tonumber(storage.get("scale")) or clockScale
-    followPersonalization = storage.get("followPersonalization") == "1"
+    local followPersonalization = storage.get("followPersonalization") == "1"
     if followPersonalization then
         local theme = widget.theme()
         if theme then
@@ -65,9 +54,9 @@ function loadConfig()
     end
 end
 
-function render()
+local function render()
     loadConfig()
-    local t = sys.getTime()
+    local t = time.parts(time.now())
     local w = layout.width()
     local h = layout.height()
     local timeStr
@@ -145,3 +134,15 @@ function render()
         end
     end
 end
+
+descriptor = {
+    useCustomStyle = true,
+    bg = 0x000000,
+    border = 0x000000,
+    alpha = 0.0,
+    gradientEndA = 0.0,
+    settings = settings,
+    render = render,
+}
+
+return widget.define(descriptor)
