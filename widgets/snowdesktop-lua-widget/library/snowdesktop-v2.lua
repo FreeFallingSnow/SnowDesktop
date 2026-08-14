@@ -330,6 +330,46 @@ function schedule.after(id, milliseconds) end
 ---@return boolean
 function schedule.cancel(id) end
 
+---@alias SnowDataHiddenPolicy 'pause'|'throttle'|'continue'
+
+---@class SnowDataSubscribeOptions
+---@field maxAgeMs? integer Requested sampling interval and stale threshold.
+---@field whenHidden? SnowDataHiddenPolicy
+
+---@class SnowCpuDataValue
+---@field usagePercent number
+---@field logicalProcessors integer
+---@field name string
+
+---@class SnowMemoryDataValue
+---@field totalBytes integer
+---@field usedBytes integer
+---@field freeBytes integer
+---@field usagePercent number
+
+---@class SnowDataSnapshot<T>
+---@field available boolean
+---@field value? T
+---@field timestamp integer Epoch milliseconds, or zero before a sample exists.
+---@field stale boolean
+---@field warmingUp boolean
+---@field error? string
+
+---@class SnowDataSubscription<T>
+---@field value fun(self: SnowDataSubscription<T>): SnowDataSnapshot<T>
+---@field unsubscribe fun(self: SnowDataSubscription<T>): boolean
+
+---@class snow.data
+data = {}
+
+---Subscribe to a host-shared on-demand data topic.
+---@overload fun(topic: 'system.cpu', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowCpuDataValue>
+---@overload fun(topic: 'system.memory', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowMemoryDataValue>
+---@param topic string
+---@param options? SnowDataSubscribeOptions
+---@return SnowDataSubscription<table>
+function data.subscribe(topic, options) end
+
 ---Compatibility editor retained by the host; new v2 widgets should wait for
 ---the declarative control tree instead of building new interaction on it.
 ---@param storageKey string

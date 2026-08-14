@@ -36,6 +36,8 @@
 #include "widget_host_state.h"
 #include "widget_runtime_scheduler.h"
 #include "widget_lua_lifecycle.h"
+#include "widget_data_broker.h"
+#include "widget_system_data_provider.h"
 
 struct ImGuiContext;
 struct PersonalizationSettings;
@@ -268,6 +270,18 @@ struct LuaWidgetContextState
     bool selected = false;
 };
 
+struct LuaWidgetDataSnapshot
+{
+    std::string topic;
+    bool available = false;
+    bool stale = true;
+    bool warmingUp = false;
+    std::int64_t timestampMs = 0;
+    std::string error;
+    snowdesktop::widget_runtime::WidgetCpuDataSnapshot cpu;
+    snowdesktop::widget_runtime::WidgetMemoryDataSnapshot memory;
+};
+
 /**
  * @struct LuaWidget
  * @brief 运行时小部件实例的完整状态描述
@@ -332,6 +346,7 @@ struct LuaWidget
     snowdesktop::widget_runtime::NamedTimerSchedule namedTimers;
     std::vector<HostControl> hostControls;
     std::unordered_map<std::string, int> scrollOffsets;
+    std::unordered_map<std::uint64_t, std::string> dataSubscriptions;
     bool preview = false;
     std::unordered_map<std::string, std::string> previewStorage;
     snowdesktop::widget_runtime::WidgetLuaLifecycle lifecycle;
@@ -764,6 +779,15 @@ public:
      */
     void RuntimeRecordError(const std::wstring& widgetId, const std::string& message);
 
+    snowdesktop::widget_runtime::DataSubscriptionResult
+        RuntimeSubscribeData(
+            const std::wstring& widgetId, std::string topic,
+            std::chrono::milliseconds maxAge,
+            snowdesktop::widget_runtime::DataHiddenPolicy whenHidden);
+    bool RuntimeUnsubscribeData(std::uint64_t subscriptionId);
+    std::optional<LuaWidgetDataSnapshot> RuntimeGetDataSnapshot(
+        std::uint64_t subscriptionId) const;
+
     /**
      * @brief 添加一条运行时日志
      * @param widgetId 小部件实例 ID
@@ -987,6 +1011,9 @@ private:
     bool InvokeLifecycleEvent(LuaWidget& widget, const char* kind,
         const std::function<void(lua_State*)>& pushFields);
     void DisposeWidgetLifecycle(LuaWidget& widget, const char* reason);
+    void InitializeWidgetDataBroker();
+    void ApplyWidgetDataBrokerActions();
+    void ReleaseWidgetDataSubscriptions(LuaWidget& widget);
     void EnsureSystemSnapshotServiceStarted();
     void RescheduleNamedTimer(LuaWidget& widget);
 
@@ -1018,6 +1045,10 @@ private:
     WidgetTimerRequestCallback widgetTimerRequestCallback_; ///< 请求宿主为 widget 开独立 timer
     WidgetTimerKillCallback widgetTimerKillCallback_;   ///< 请求宿主关闭 widget 独立 timer
     std::unique_ptr<SystemSnapshotService> systemSnapshotService_;
+    std::unique_ptr<snowdesktop::widget_runtime::WidgetDataBroker>
+        dataBroker_;
+    std::unique_ptr<snowdesktop::widget_runtime::WidgetSystemDataProvider>
+        widgetSystemDataProvider_;
     std::unique_ptr<
         snowdesktop::calendar::CalendarService>
         calendarService_;

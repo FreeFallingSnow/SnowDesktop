@@ -91,6 +91,47 @@ ID 为 1–128 字节，每个实例最多 32 个计划；周期请求范围是 
 timeline；传入第三个 options 参数会明确报错。API v1 继续使用 `onTimer` 兼容
 路径，清单 `refreshIntervalMs` 的 v2 过渡事件仍使用 `event.kind == "timer"`。
 
+### `data`
+
+当前公开两个按需系统数据源：`system.cpu` 和 `system.memory`。在 `setup` 或模块
+入口创建订阅，不要在每次 `render` 中重复订阅：
+
+```lua
+local cpu
+
+local function setup()
+    cpu = data.subscribe("system.cpu", {
+        maxAgeMs = 1000,
+        whenHidden = "throttle",
+    })
+end
+
+local function render()
+    local snapshot = cpu:value()
+    if snapshot.available then
+        draw.text(12, 12, string.format("CPU %.1f%%",
+            snapshot.value.usagePercent))
+    elseif snapshot.warmingUp then
+        draw.text(12, 12, "CPU …")
+    end
+end
+```
+
+`data.subscribe(topic, options?)` 返回句柄。`options.maxAgeMs` 为 1–86400000，
+同时表达请求采样周期与快照过期阈值；CPU 最快 500 ms，内存最快 1000 ms。
+`whenHidden` 可为 `pause`、`throttle`（默认）或 `continue`；当前两个 provider 不
+承诺后台 continue，因此会收敛为 5000 ms throttle。`handle:value()` 返回
+`available/value/timestamp/stale/warmingUp/error` 包络，CPU value 包含
+`usagePercent/logicalProcessors/name`，内存 value 包含
+`totalBytes/usedBytes/freeBytes/usagePercent`。CPU 首次差分采样可能暂时
+`warmingUp=true`。`handle:unsubscribe()` 主动释放；卸载、热重载和关闭也会自动
+释放。
+
+两者都受 `system.performance.read` 保护。需要无权限降级的组件应把它声明在
+`optionalPermissions`，并处理 `available=false,error="permissionDenied"`；预览
+返回稳定模拟值且不会读取本机状态。对应 feature ID 是 `data.subscribe`、
+`data.system.cpu` 和 `data.system.memory`。
+
 ### `draw`
 
 即时绘制坐标以组件左上角为 `(0, 0)`：
@@ -221,6 +262,6 @@ local display = resource.font("display")
 ## 当前明确未开放
 
 API v2 暂未向沙箱提供声明式 `view` 控件树、元素事件/hover/独立右键菜单、
-`desktop`、`media`、HTTP、系统性能、网络状态、音频分析、剪贴板、文件选择和
-应用启动库。它们将在对应宿主实现、配额与按需生命周期完成后再加入 feature
-目录和 LuaLS 定义；不要根据权限词汇自行推测函数名。
+`desktop`、`media`、HTTP、CPU/内存以外的系统性能、网络状态、音频分析、
+剪贴板、文件选择和应用启动库。它们将在对应宿主实现、配额与按需生命周期完成后
+再加入 feature 目录和 LuaLS 定义；不要根据权限词汇自行推测函数名。

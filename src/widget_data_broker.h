@@ -99,6 +99,15 @@ struct DataProviderSnapshot
     std::string lastError;
 };
 
+struct DataSubscriptionSnapshot
+{
+    std::uint64_t id = 0;
+    std::string instanceId;
+    std::string topic;
+    DataSubscriptionOptions options;
+    bool eligible = false;
+};
+
 class WidgetDataBroker
 {
 public:
@@ -128,6 +137,8 @@ public:
 
     std::optional<DataProviderSnapshot> Snapshot(
         std::string_view topic) const;
+    std::optional<DataSubscriptionSnapshot> SubscriptionSnapshot(
+        std::uint64_t subscriptionId) const;
     std::vector<DataBrokerAction> DrainActions();
     std::size_t SubscriptionCount() const noexcept;
 

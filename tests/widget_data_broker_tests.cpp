@@ -92,6 +92,11 @@ void TestRegistrationAndSharedSampling()
             snapshot->subscriptionCount == 2 &&
             snapshot->eligibleCount == 2 && snapshot->shared,
         "provider diagnostics must report shared active subscriptions");
+    const auto binding = broker.SubscriptionSnapshot(second.id);
+    Check(binding && binding->instanceId == "widget-b" &&
+            binding->topic == "system.cpu" && binding->eligible &&
+            binding->options.requestedInterval == 500ms,
+        "subscription diagnostics must expose normalized instance options");
 }
 
 void TestVisibilityAndIdleGrace()

@@ -207,7 +207,10 @@ void TestVersionedRegistration()
 
 void TestV2Contract()
 {
-    Check(snowdesktop::widget_api::SupportsFeature("draw.immediate") &&
+    Check(snowdesktop::widget_api::SupportsFeature("data.subscribe") &&
+            snowdesktop::widget_api::SupportsFeature("data.system.cpu") &&
+            snowdesktop::widget_api::SupportsFeature("data.system.memory") &&
+            snowdesktop::widget_api::SupportsFeature("draw.immediate") &&
             snowdesktop::widget_api::SupportsFeature("l10n.format") &&
             snowdesktop::widget_api::SupportsFeature("module.package") &&
             snowdesktop::widget_api::SupportsFeature("resource.package") &&

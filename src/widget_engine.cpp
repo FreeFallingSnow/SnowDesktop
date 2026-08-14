@@ -1985,6 +1985,193 @@ static int lua_ScheduleCancel(lua_State* state)
     return 1;
 }
 
+struct LuaDataSubscriptionHandle
+{
+    WidgetEngine* engine = nullptr;
+    std::uint64_t id = 0;
+};
+
+constexpr char kDataSubscriptionHandleMetatable[] =
+    "SnowDesktop.DataSubscriptionHandle";
+
+static LuaDataSubscriptionHandle* CheckDataSubscriptionHandle(
+    lua_State* state, int index)
+{
+    return static_cast<LuaDataSubscriptionHandle*>(luaL_checkudata(
+        state, index, kDataSubscriptionHandleMetatable));
+}
+
+static void PushDataSnapshotEnvelope(lua_State* state,
+    const std::optional<LuaWidgetDataSnapshot>& snapshot,
+    const char* missingError = "unsubscribed")
+{
+    lua_createtable(state, 0, 7);
+    const bool available = snapshot && snapshot->available;
+    lua_pushboolean(state, available);
+    lua_setfield(state, -2, "available");
+    lua_pushboolean(state, !snapshot || snapshot->stale);
+    lua_setfield(state, -2, "stale");
+    lua_pushboolean(state, snapshot && snapshot->warmingUp);
+    lua_setfield(state, -2, "warmingUp");
+    lua_pushinteger(state, snapshot
+        ? static_cast<lua_Integer>(snapshot->timestampMs) : 0);
+    lua_setfield(state, -2, "timestamp");
+
+    const std::string error = snapshot
+        ? snapshot->error : std::string(missingError);
+    if (!error.empty())
+    {
+        lua_pushlstring(state, error.data(), error.size());
+        lua_setfield(state, -2, "error");
+    }
+    if (!available) return;
+
+    lua_createtable(state, 0, 6);
+    if (snapshot->topic == "system.cpu")
+    {
+        lua_pushnumber(state, snapshot->cpu.usagePercent);
+        lua_setfield(state, -2, "usagePercent");
+        lua_pushinteger(state,
+            static_cast<lua_Integer>(snapshot->cpu.logicalProcessors));
+        lua_setfield(state, -2, "logicalProcessors");
+        lua_pushlstring(state, snapshot->cpu.name.data(),
+            snapshot->cpu.name.size());
+        lua_setfield(state, -2, "name");
+    }
+    else if (snapshot->topic == "system.memory")
+    {
+        lua_pushinteger(state,
+            static_cast<lua_Integer>(snapshot->memory.totalBytes));
+        lua_setfield(state, -2, "totalBytes");
+        lua_pushinteger(state,
+            static_cast<lua_Integer>(snapshot->memory.usedBytes));
+        lua_setfield(state, -2, "usedBytes");
+        lua_pushinteger(state,
+            static_cast<lua_Integer>(snapshot->memory.freeBytes));
+        lua_setfield(state, -2, "freeBytes");
+        lua_pushnumber(state, snapshot->memory.usagePercent);
+        lua_setfield(state, -2, "usagePercent");
+    }
+    lua_setfield(state, -2, "value");
+}
+
+static int lua_DataSubscriptionValue(lua_State* state)
+{
+    auto* handle = CheckDataSubscriptionHandle(state, 1);
+    if (!handle->engine || handle->id == 0)
+    {
+        PushDataSnapshotEnvelope(state, std::nullopt);
+        return 1;
+    }
+    PushDataSnapshotEnvelope(
+        state, handle->engine->RuntimeGetDataSnapshot(handle->id));
+    return 1;
+}
+
+static int lua_DataSubscriptionUnsubscribe(lua_State* state)
+{
+    auto* handle = CheckDataSubscriptionHandle(state, 1);
+    bool removed = false;
+    if (handle->engine && handle->id != 0)
+        removed = handle->engine->RuntimeUnsubscribeData(handle->id);
+    handle->id = 0;
+    lua_pushboolean(state, removed);
+    return 1;
+}
+
+static int lua_DataSubscriptionGc(lua_State* state)
+{
+    auto* handle = static_cast<LuaDataSubscriptionHandle*>(
+        luaL_testudata(state, 1, kDataSubscriptionHandleMetatable));
+    if (handle && handle->engine && handle->id != 0)
+        (void)handle->engine->RuntimeUnsubscribeData(handle->id);
+    if (handle) handle->id = 0;
+    return 0;
+}
+
+static void RegisterDataSubscriptionHandle(lua_State* state)
+{
+    if (luaL_newmetatable(state, kDataSubscriptionHandleMetatable))
+    {
+        lua_newtable(state);
+        lua_pushcfunction(state, lua_DataSubscriptionValue);
+        lua_setfield(state, -2, "value");
+        lua_pushcfunction(state, lua_DataSubscriptionUnsubscribe);
+        lua_setfield(state, -2, "unsubscribe");
+        lua_setfield(state, -2, "__index");
+        lua_pushcfunction(state, lua_DataSubscriptionGc);
+        lua_setfield(state, -2, "__gc");
+        lua_pushliteral(state, "data subscription handle");
+        lua_setfield(state, -2, "__metatable");
+    }
+    lua_pop(state, 1);
+}
+
+static int lua_DataSubscribe(lua_State* state)
+{
+    size_t topicLength = 0;
+    const char* topic = luaL_checklstring(state, 1, &topicLength);
+    if (topicLength == 0 || topicLength > 128)
+        return luaL_error(state,
+            "data.subscribe: topic must contain 1 to 128 bytes");
+    if (lua_gettop(state) > 2)
+        return luaL_error(state,
+            "data.subscribe: expected topic and optional options");
+
+    lua_Integer maxAgeMs = 1000;
+    auto hiddenPolicy =
+        snowdesktop::widget_runtime::DataHiddenPolicy::Throttle;
+    if (!lua_isnoneornil(state, 2))
+    {
+        luaL_checktype(state, 2, LUA_TTABLE);
+        lua_getfield(state, 2, "maxAgeMs");
+        if (!lua_isnil(state, -1))
+        {
+            int isInteger = 0;
+            maxAgeMs = lua_tointegerx(state, -1, &isInteger);
+            if (!isInteger || maxAgeMs <= 0 || maxAgeMs > 86400000)
+                return luaL_error(state,
+                    "data.subscribe: maxAgeMs must be an integer from 1 to 86400000");
+        }
+        lua_pop(state, 1);
+
+        lua_getfield(state, 2, "whenHidden");
+        if (!lua_isnil(state, -1))
+        {
+            size_t policyLength = 0;
+            const char* policy = luaL_checklstring(
+                state, -1, &policyLength);
+            const std::string_view value(policy, policyLength);
+            if (value == "pause")
+                hiddenPolicy = snowdesktop::widget_runtime::DataHiddenPolicy::Pause;
+            else if (value == "throttle")
+                hiddenPolicy = snowdesktop::widget_runtime::DataHiddenPolicy::Throttle;
+            else if (value == "continue")
+                hiddenPolicy = snowdesktop::widget_runtime::DataHiddenPolicy::Continue;
+            else
+                return luaL_error(state,
+                    "data.subscribe: whenHidden must be 'pause', 'throttle', or 'continue'");
+        }
+        lua_pop(state, 1);
+    }
+
+    auto* d2d = GetD2D(state);
+    if (!d2d || !d2d->engine)
+        return luaL_error(state, "data.subscribe: host is unavailable");
+    auto result = d2d->engine->RuntimeSubscribeData(
+        BoundWidgetId(state), std::string(topic, topicLength),
+        std::chrono::milliseconds(maxAgeMs), hiddenPolicy);
+    if (!result)
+        return luaL_error(state, "data.subscribe: %s", result.error.c_str());
+
+    auto* handle = static_cast<LuaDataSubscriptionHandle*>(
+        lua_newuserdata(state, sizeof(LuaDataSubscriptionHandle)));
+    *handle = { d2d->engine, result.id };
+    luaL_getmetatable(state, kDataSubscriptionHandleMetatable);
+    lua_setmetatable(state, -2);
+    return 1;
+}
+
 static int lua_HttpRequest(lua_State* L)
 {
     if (!RequirePermission(L, "network.http")) return 0;
@@ -4506,6 +4693,75 @@ WidgetEngine::~WidgetEngine()
     Shutdown();
 }
 
+void WidgetEngine::InitializeWidgetDataBroker()
+{
+    using namespace std::chrono_literals;
+    using snowdesktop::widget_runtime::DataProviderDescriptor;
+
+    dataBroker_ = std::make_unique<
+        snowdesktop::widget_runtime::WidgetDataBroker>();
+    std::string error;
+    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
+        "system.cpu", kSystemPerformancePermission,
+        500ms, 5000ms, 2000ms, false, false }, error);
+    error.clear();
+    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
+        "system.memory", kSystemPerformancePermission,
+        1000ms, 5000ms, 2000ms, false, false }, error);
+
+    if (previewOnly_)
+        widgetSystemDataProvider_.reset();
+    else
+        widgetSystemDataProvider_ = std::make_unique<
+            snowdesktop::widget_runtime::WidgetSystemDataProvider>();
+}
+
+void WidgetEngine::ApplyWidgetDataBrokerActions()
+{
+    using snowdesktop::widget_runtime::DataBrokerActionType;
+    if (!dataBroker_) return;
+    for (const auto& action : dataBroker_->DrainActions())
+    {
+        switch (action.type)
+        {
+        case DataBrokerActionType::Start:
+        {
+            const bool started = widgetSystemDataProvider_ &&
+                widgetSystemDataProvider_->StartTopic(
+                    action.topic, action.effectiveInterval);
+            (void)dataBroker_->MarkStarted(action.topic, started,
+                started ? std::string{} : "data provider failed to start");
+            break;
+        }
+        case DataBrokerActionType::Reconfigure:
+            if (widgetSystemDataProvider_)
+            {
+                (void)widgetSystemDataProvider_->StartTopic(
+                    action.topic, action.effectiveInterval);
+            }
+            break;
+        case DataBrokerActionType::Stop:
+            if (widgetSystemDataProvider_)
+                (void)widgetSystemDataProvider_->StopTopic(action.topic);
+            break;
+        }
+    }
+}
+
+void WidgetEngine::ReleaseWidgetDataSubscriptions(LuaWidget& widget)
+{
+    if (!dataBroker_)
+    {
+        widget.dataSubscriptions.clear();
+        return;
+    }
+    const auto now = snowdesktop::widget_runtime::WidgetDataBroker::Clock::now();
+    for (const auto& [subscriptionId, _] : widget.dataSubscriptions)
+        (void)dataBroker_->Unsubscribe(subscriptionId, now);
+    widget.dataSubscriptions.clear();
+    ApplyWidgetDataBrokerActions();
+}
+
 bool WidgetEngine::Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFactory)
 {
     previewOnly_ = false;
@@ -4552,6 +4808,7 @@ bool WidgetEngine::Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFa
     (void)calendarService_->Load();
     systemSnapshotService_ = std::make_unique<SystemSnapshotService>();
     httpService_ = std::make_unique<AsyncHttpService>();
+    InitializeWidgetDataBroker();
     return true;
 }
 
@@ -4568,6 +4825,7 @@ bool WidgetEngine::InitPreview(
     // storage, calendar, system snapshots and HTTP workers are deliberately
     // absent in this render-only engine.
     (void)GetWidgetPackageManager();
+    InitializeWidgetDataBroker();
     return d2dState_ != nullptr;
 }
 
@@ -4581,6 +4839,7 @@ void WidgetEngine::Shutdown()
         if (widget.valid && widget.hostVisible)
             InvokeSimpleCallback(widget, "onHidden");
         DisposeWidgetLifecycle(widget, "shutdown");
+        ReleaseWidgetDataSubscriptions(widget);
         if (widget.refreshTimerId && widgetTimerKillCallback_)
             widgetTimerKillCallback_(widget.refreshTimerId);
         if (widget.namedTimerId && widgetTimerKillCallback_)
@@ -4610,7 +4869,17 @@ void WidgetEngine::Shutdown()
             widget.state = nullptr;
         }
     }
+    if (dataBroker_)
+    {
+        dataBroker_->Shutdown(
+            snowdesktop::widget_runtime::WidgetDataBroker::Clock::now());
+        ApplyWidgetDataBrokerActions();
+    }
+    if (widgetSystemDataProvider_)
+        widgetSystemDataProvider_->StopAll();
     widgets_.clear();
+    widgetSystemDataProvider_.reset();
+    dataBroker_.reset();
     widgetHostFailures_.clear();
     delete d2dState_; d2dState_ = nullptr;
 }
@@ -4626,6 +4895,7 @@ void WidgetEngine::UnloadWidget(const std::wstring& widgetId)
     if (widgets_[idx].hostVisible)
         InvokeSimpleCallback(widgets_[idx], "onHidden");
     DisposeWidgetLifecycle(widgets_[idx], "unload");
+    ReleaseWidgetDataSubscriptions(widgets_[idx]);
     if (widgets_[idx].refreshTimerId && widgetTimerKillCallback_)
         widgetTimerKillCallback_(widgets_[idx].refreshTimerId);
     if (widgets_[idx].namedTimerId && widgetTimerKillCallback_)
@@ -4896,7 +5166,7 @@ void WidgetEngine::PushSafeEnvironment(lua_State* L, const LuaWidget& widget)
     static const char* v2Libraries[] = {
         "string", "table", "math", "utf8", "draw", "layout", "storage",
         "state", "schedule", "widget", "system", "time", "module",
-        "resource"
+        "resource", "data"
     };
     const std::span<const char* const> libraries =
         widget.manifest.apiVersion >= 2
@@ -5375,6 +5645,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         !InitializeWidgetLifecycle(widgets_.back()))
     {
         LuaWidget& failed = widgets_.back();
+        ReleaseWidgetDataSubscriptions(failed);
         if (failed.state)
         {
             failed.lifecycle.Release(failed.state);
@@ -5964,6 +6235,13 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     if (!found->hostVisible)
     {
         found->hostVisible = true;
+        if (dataBroker_)
+        {
+            (void)dataBroker_->SetInstanceVisible(
+                WidgetWideToUtf8(found->widgetId), true,
+                snowdesktop::widget_runtime::WidgetDataBroker::Clock::now());
+            ApplyWidgetDataBrokerActions();
+        }
         InvokeSimpleCallback(*found, "onVisible");
     }
     if (found->lastColumns != columns || found->lastRows != rows)
@@ -6188,6 +6466,37 @@ bool WidgetEngine::RenderWidgetPanel(
 
 void WidgetEngine::TickRuntime()
 {
+    const auto runtimeNow =
+        snowdesktop::widget_runtime::WidgetDataBroker::Clock::now();
+    if (dataBroker_)
+    {
+        dataBroker_->Tick(runtimeNow);
+        ApplyWidgetDataBrokerActions();
+    }
+    if (widgetSystemDataProvider_)
+    {
+        const auto changedTopics =
+            widgetSystemDataProvider_->DrainChangedTopics();
+        if (!changedTopics.empty())
+        {
+            std::unordered_set<std::wstring> dirtyWidgets;
+            for (const auto& widget : widgets_)
+            {
+                if (!widget.valid || widget.preview) continue;
+                for (const auto& [_, topic] : widget.dataSubscriptions)
+                {
+                    if (std::find(changedTopics.begin(), changedTopics.end(),
+                            topic) != changedTopics.end())
+                    {
+                        dirtyWidgets.insert(widget.widgetId);
+                        break;
+                    }
+                }
+            }
+            for (const auto& widgetId : dirtyWidgets)
+                RuntimeInvalidateHost(widgetId);
+        }
+    }
     if (calendarService_)
         calendarService_->Tick();
     const bool eventsChanged =
@@ -6264,14 +6573,19 @@ void WidgetEngine::TickRuntime()
         }
     }
 
-    const auto now = std::chrono::steady_clock::now();
     for (auto& widget : widgets_)
     {
         if (!widget.valid || widget.preview) continue;
         if (widget.hostVisible && widget.lastRenderTime.time_since_epoch().count() > 0 &&
-            now - widget.lastRenderTime > std::chrono::milliseconds(2500))
+            runtimeNow - widget.lastRenderTime > std::chrono::milliseconds(2500))
         {
             widget.hostVisible = false;
+            if (dataBroker_)
+            {
+                (void)dataBroker_->SetInstanceVisible(
+                    WidgetWideToUtf8(widget.widgetId), false, runtimeNow);
+                ApplyWidgetDataBrokerActions();
+            }
             InvokeSimpleCallback(widget, "onHidden");
         }
 
@@ -6802,6 +7116,7 @@ bool WidgetEngine::ReloadWidget(const std::wstring& widgetId)
     if (old.hostVisible)
         InvokeSimpleCallback(old, "onHidden");
     DisposeWidgetLifecycle(old, "hotReload");
+    ReleaseWidgetDataSubscriptions(old);
     if (old.refreshTimerId && widgetTimerKillCallback_)
         widgetTimerKillCallback_(old.refreshTimerId);
     if (old.namedTimerId && widgetTimerKillCallback_)
@@ -6894,6 +7209,149 @@ bool WidgetEngine::RuntimeHasPermission(const std::wstring& widgetId, const char
     const auto& perms = widgets_[idx].permissions;
     return snowdesktop::widget::WidgetPermissionBroker::
         AllowsPermission(perms, permission);
+}
+
+snowdesktop::widget_runtime::DataSubscriptionResult
+WidgetEngine::RuntimeSubscribeData(
+    const std::wstring& widgetId, std::string topic,
+    std::chrono::milliseconds maxAge,
+    snowdesktop::widget_runtime::DataHiddenPolicy whenHidden)
+{
+    using snowdesktop::widget_runtime::DataSubscriptionOptions;
+    if (!dataBroker_)
+        return { 0, "data broker is not initialized" };
+    const int index = FindWidget(widgetId);
+    if (index < 0)
+        return { 0, "widget instance is not loaded" };
+
+    LuaWidget& widget = widgets_[index];
+    DataSubscriptionOptions options;
+    options.requestedInterval = maxAge;
+    options.whenHidden = whenHidden;
+    options.visible = widget.hostVisible;
+    options.permissionGranted = RuntimeHasPermission(
+        widgetId, kSystemPerformancePermission);
+    options.preview = widget.preview;
+    auto result = dataBroker_->Subscribe(
+        WidgetWideToUtf8(widgetId), topic, options,
+        snowdesktop::widget_runtime::WidgetDataBroker::Clock::now());
+    if (result)
+    {
+        widget.dataSubscriptions.emplace(result.id, std::move(topic));
+        ApplyWidgetDataBrokerActions();
+    }
+    return result;
+}
+
+bool WidgetEngine::RuntimeUnsubscribeData(
+    std::uint64_t subscriptionId)
+{
+    if (subscriptionId == 0 || !dataBroker_) return false;
+    bool owned = false;
+    for (auto& widget : widgets_)
+    {
+        if (widget.dataSubscriptions.erase(subscriptionId) > 0)
+        {
+            owned = true;
+            break;
+        }
+    }
+    if (!owned) return false;
+    const bool removed = dataBroker_->Unsubscribe(subscriptionId,
+        snowdesktop::widget_runtime::WidgetDataBroker::Clock::now());
+    ApplyWidgetDataBrokerActions();
+    return removed;
+}
+
+std::optional<LuaWidgetDataSnapshot>
+WidgetEngine::RuntimeGetDataSnapshot(
+    std::uint64_t subscriptionId) const
+{
+    if (subscriptionId == 0 || !dataBroker_) return std::nullopt;
+    const auto binding = dataBroker_->SubscriptionSnapshot(subscriptionId);
+    if (!binding) return std::nullopt;
+
+    LuaWidgetDataSnapshot result;
+    result.topic = binding->topic;
+    const auto timestampNow =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+    if (binding->options.preview)
+    {
+        result.available = true;
+        result.stale = false;
+        result.timestampMs = timestampNow;
+        if (result.topic == "system.cpu")
+        {
+            result.cpu.available = true;
+            result.cpu.warmingUp = false;
+            result.cpu.usagePercent = 42.0;
+            result.cpu.logicalProcessors = 12;
+            result.cpu.name = "Preview CPU";
+            result.cpu.timestampMs = timestampNow;
+        }
+        else if (result.topic == "system.memory")
+        {
+            result.memory.available = true;
+            result.memory.totalBytes = 16ull * 1024 * 1024 * 1024;
+            result.memory.usedBytes = 9ull * 1024 * 1024 * 1024;
+            result.memory.freeBytes = 7ull * 1024 * 1024 * 1024;
+            result.memory.usagePercent = 56.25;
+            result.memory.timestampMs = timestampNow;
+        }
+        return result;
+    }
+    if (!binding->options.permissionGranted)
+    {
+        result.error = "permissionDenied";
+        return result;
+    }
+    if (!widgetSystemDataProvider_)
+    {
+        result.error = "providerUnavailable";
+        return result;
+    }
+
+    const auto setFreshness = [&](std::int64_t timestamp) {
+        result.timestampMs = timestamp;
+        result.stale = timestamp <= 0 || timestampNow < timestamp ||
+            timestampNow - timestamp >
+                binding->options.requestedInterval.count();
+    };
+    if (result.topic == "system.cpu")
+    {
+        const auto snapshot = widgetSystemDataProvider_->Cpu();
+        if (snapshot)
+        {
+            result.cpu = *snapshot;
+            result.available = snapshot->available;
+            result.warmingUp = snapshot->warmingUp;
+            result.error = snapshot->error;
+            setFreshness(snapshot->timestampMs);
+        }
+        else
+        {
+            result.warmingUp = true;
+        }
+    }
+    else if (result.topic == "system.memory")
+    {
+        const auto snapshot = widgetSystemDataProvider_->Memory();
+        if (snapshot)
+        {
+            result.memory = *snapshot;
+            result.available = snapshot->available;
+            result.error = snapshot->error;
+            setFreshness(snapshot->timestampMs);
+        }
+    }
+    if (result.error.empty())
+    {
+        const auto provider = dataBroker_->Snapshot(result.topic);
+        if (provider && !provider->lastError.empty())
+            result.error = provider->lastError;
+    }
+    return result;
 }
 
 void WidgetEngine::RuntimeRecordError(const std::wstring& widgetId, const std::string& message)
@@ -10728,6 +11186,9 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "after", lua_ScheduleAfter, 2 },
         { "cancel", lua_ScheduleCancel, 2 },
     };
+    static constexpr FunctionDescriptor data[] = {
+        { "subscribe", lua_DataSubscribe, 2 },
+    };
     static constexpr FunctionDescriptor imgui[] = {
         { "text", lua_ImGuiText },
         { "textWrapped", lua_ImGuiTextWrapped },
@@ -10769,9 +11230,12 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         DescribeLibrary("storage", storage),
         DescribeLibrary("state", state),
         DescribeLibrary("schedule", schedule),
+        DescribeLibrary("data", data),
         DescribeLibrary("imgui", imgui),
     };
 
+    if (apiVersion >= 2)
+        RegisterDataSubscriptionHandle(L);
     RegisterLibraries(L,
         std::span<const LibraryDescriptor>(libraries),
         static_cast<std::uint32_t>(std::max(1, apiVersion)));

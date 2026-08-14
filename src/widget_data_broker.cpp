@@ -223,6 +223,33 @@ std::optional<DataProviderSnapshot> WidgetDataBroker::Snapshot(
     };
 }
 
+std::optional<DataSubscriptionSnapshot>
+WidgetDataBroker::SubscriptionSnapshot(
+    std::uint64_t subscriptionId) const
+{
+    auto subscription = subscriptions_.find(subscriptionId);
+    if (subscription == subscriptions_.end()) return std::nullopt;
+    auto provider = providers_.find(subscription->second.topic);
+    if (provider == providers_.end()) return std::nullopt;
+    const auto& options = subscription->second.options;
+    bool eligible = !options.preview &&
+        (options.permissionGranted ||
+            provider->second.descriptor.requiredPermission.empty());
+    if (eligible && !options.visible &&
+        (provider->second.descriptor.highRisk ||
+            options.whenHidden == DataHiddenPolicy::Pause))
+    {
+        eligible = false;
+    }
+    return DataSubscriptionSnapshot{
+        subscription->second.id,
+        subscription->second.instanceId,
+        subscription->second.topic,
+        options,
+        eligible,
+    };
+}
+
 std::vector<DataBrokerAction> WidgetDataBroker::DrainActions()
 {
     return std::exchange(actions_, {});
