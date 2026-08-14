@@ -1778,6 +1778,7 @@ constexpr char kSystemStoragePermission[] = "system.storage.read";
 constexpr char kSystemDisplayPermission[] = "system.display.read";
 constexpr char kAudioOutputReadPermission[] = "audio.output.read";
 constexpr char kAudioOutputAnalyzePermission[] = "audio.output.analyze";
+constexpr char kMediaReadPermission[] = "media.read";
 
 static void SetNumberField(lua_State* L, const char* key, lua_Number value)
 {
@@ -2087,6 +2088,75 @@ static void PushDisplayDataValue(lua_State* state,
     lua_setfield(state, -2, "hdrEnabled");
 }
 
+static void PushMediaTimelineDataValue(lua_State* state,
+    const snowdesktop::widget_runtime::WidgetMediaTimelineDataSnapshot& value)
+{
+    lua_createtable(state, 0, 6);
+    lua_pushlstring(state, value.sessionId.data(), value.sessionId.size());
+    lua_setfield(state, -2, "sessionId");
+    lua_pushinteger(state, static_cast<lua_Integer>(value.positionMs));
+    lua_setfield(state, -2, "positionMs");
+    lua_pushinteger(state, static_cast<lua_Integer>(value.durationMs));
+    lua_setfield(state, -2, "durationMs");
+    lua_pushinteger(state, static_cast<lua_Integer>(value.minimumSeekMs));
+    lua_setfield(state, -2, "minimumSeekMs");
+    lua_pushinteger(state, static_cast<lua_Integer>(value.maximumSeekMs));
+    lua_setfield(state, -2, "maximumSeekMs");
+    lua_pushinteger(state, static_cast<lua_Integer>(value.updatedAtMs));
+    lua_setfield(state, -2, "updatedAtMs");
+}
+
+static void PushMediaControlsDataValue(lua_State* state,
+    const snowdesktop::widget_runtime::WidgetMediaControlsDataSnapshot& value)
+{
+    lua_createtable(state, 0, 10);
+    lua_pushboolean(state, value.canPlay);
+    lua_setfield(state, -2, "canPlay");
+    lua_pushboolean(state, value.canPause);
+    lua_setfield(state, -2, "canPause");
+    lua_pushboolean(state, value.canPlayPause);
+    lua_setfield(state, -2, "canPlayPause");
+    lua_pushboolean(state, value.canStop);
+    lua_setfield(state, -2, "canStop");
+    lua_pushboolean(state, value.canNext);
+    lua_setfield(state, -2, "canNext");
+    lua_pushboolean(state, value.canPrevious);
+    lua_setfield(state, -2, "canPrevious");
+    lua_pushboolean(state, value.canSeek);
+    lua_setfield(state, -2, "canSeek");
+    lua_pushboolean(state, value.canChangePlaybackRate);
+    lua_setfield(state, -2, "canChangePlaybackRate");
+    lua_pushboolean(state, value.canToggleShuffle);
+    lua_setfield(state, -2, "canToggleShuffle");
+    lua_pushboolean(state, value.canChangeRepeatMode);
+    lua_setfield(state, -2, "canChangeRepeatMode");
+}
+
+static void PushMediaSessionDataValue(lua_State* state,
+    const snowdesktop::widget_runtime::WidgetMediaSessionDataSnapshot& value)
+{
+    lua_createtable(state, 0, 10);
+    lua_pushlstring(state, value.id.data(), value.id.size());
+    lua_setfield(state, -2, "id");
+    lua_pushlstring(state, value.sourceName.data(), value.sourceName.size());
+    lua_setfield(state, -2, "sourceName");
+    lua_pushlstring(state, value.title.data(), value.title.size());
+    lua_setfield(state, -2, "title");
+    lua_pushlstring(state, value.artist.data(), value.artist.size());
+    lua_setfield(state, -2, "artist");
+    lua_pushlstring(state, value.album.data(), value.album.size());
+    lua_setfield(state, -2, "album");
+    lua_pushlstring(state, value.playbackStatus.data(),
+        value.playbackStatus.size());
+    lua_setfield(state, -2, "playbackStatus");
+    lua_pushboolean(state, value.current);
+    lua_setfield(state, -2, "current");
+    PushMediaControlsDataValue(state, value.controls);
+    lua_setfield(state, -2, "controls");
+    PushMediaTimelineDataValue(state, value.timeline);
+    lua_setfield(state, -2, "timeline");
+}
+
 static void PushDataSnapshotEnvelope(lua_State* state,
     const std::optional<LuaWidgetDataSnapshot>& snapshot,
     const char* missingError = "unsubscribed")
@@ -2342,6 +2412,32 @@ static void PushDataSnapshotEnvelope(lua_State* state,
         lua_setfield(state, -2, "sampleRate");
         lua_pushinteger(state, snapshot->audioAnalysis.channels);
         lua_setfield(state, -2, "channels");
+    }
+    else if (snapshot->topic == "media.sessions")
+    {
+        lua_pushlstring(state,
+            snapshot->mediaSessions.currentSessionId.data(),
+            snapshot->mediaSessions.currentSessionId.size());
+        lua_setfield(state, -2, "currentSessionId");
+        lua_createtable(state,
+            static_cast<int>(snapshot->mediaSessions.sessions.size()), 0);
+        int sessionIndex = 1;
+        for (const auto& session : snapshot->mediaSessions.sessions)
+        {
+            PushMediaSessionDataValue(state, session);
+            lua_rawseti(state, -2, sessionIndex++);
+        }
+        lua_setfield(state, -2, "sessions");
+    }
+    else if (snapshot->topic == "media.current")
+    {
+        PushMediaSessionDataValue(state, snapshot->mediaCurrent.session);
+        lua_setfield(state, -2, "session");
+    }
+    else if (snapshot->topic == "media.timeline")
+    {
+        PushMediaTimelineDataValue(state, snapshot->mediaTimeline);
+        lua_setfield(state, -2, "timeline");
     }
     lua_setfield(state, -2, "value");
 }
@@ -5043,6 +5139,18 @@ void WidgetEngine::InitializeWidgetDataBroker()
     (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
         "audio.output.analysis", kAudioOutputAnalyzePermission,
         16ms, 1000ms, 0ms, true, false }, error);
+    error.clear();
+    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
+        "media.sessions", kMediaReadPermission,
+        500ms, 2000ms, 2000ms, false, false }, error);
+    error.clear();
+    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
+        "media.current", kMediaReadPermission,
+        500ms, 2000ms, 2000ms, false, false }, error);
+    error.clear();
+    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
+        "media.timeline", kMediaReadPermission,
+        500ms, 2000ms, 2000ms, false, false }, error);
 
     if (previewOnly_)
     {
@@ -7824,6 +7932,47 @@ WidgetEngine::RuntimeGetDataSnapshot(
                     std::exp(-static_cast<double>(index) / 14.0);
             }
         }
+        else if (result.topic == "media.sessions" ||
+            result.topic == "media.current" ||
+            result.topic == "media.timeline")
+        {
+            snowdesktop::widget_runtime::WidgetMediaSessionDataSnapshot
+                session;
+            session.id = "media-session-preview";
+            session.sourceName = "Preview Player";
+            session.title = "Preview Track";
+            session.artist = "SnowDesktop";
+            session.album = "Widget API v2";
+            session.playbackStatus = "playing";
+            session.current = true;
+            session.controls = { true, true, true, true, true, true,
+                true, true, true, true };
+            session.timeline.available = true;
+            session.timeline.sessionId = session.id;
+            session.timeline.positionMs = 62000;
+            session.timeline.durationMs = 215000;
+            session.timeline.minimumSeekMs = 0;
+            session.timeline.maximumSeekMs = 215000;
+            session.timeline.updatedAtMs = timestampNow;
+            session.timeline.timestampMs = timestampNow;
+            if (result.topic == "media.sessions")
+            {
+                result.mediaSessions.available = true;
+                result.mediaSessions.currentSessionId = session.id;
+                result.mediaSessions.sessions = { session };
+                result.mediaSessions.timestampMs = timestampNow;
+            }
+            else if (result.topic == "media.current")
+            {
+                result.mediaCurrent.available = true;
+                result.mediaCurrent.session = session;
+                result.mediaCurrent.timestampMs = timestampNow;
+            }
+            else
+            {
+                result.mediaTimeline = session.timeline;
+            }
+        }
         return result;
     }
     if (!binding->options.permissionGranted)
@@ -8034,6 +8183,39 @@ WidgetEngine::RuntimeGetDataSnapshot(
         else
         {
             result.warmingUp = true;
+        }
+    }
+    else if (result.topic == "media.sessions")
+    {
+        const auto snapshot = widgetSystemDataProvider_->MediaSessions();
+        if (snapshot)
+        {
+            result.mediaSessions = *snapshot;
+            result.available = snapshot->available;
+            result.error = snapshot->error;
+            setFreshness(snapshot->timestampMs);
+        }
+    }
+    else if (result.topic == "media.current")
+    {
+        const auto snapshot = widgetSystemDataProvider_->MediaCurrent();
+        if (snapshot)
+        {
+            result.mediaCurrent = *snapshot;
+            result.available = snapshot->available;
+            result.error = snapshot->error;
+            setFreshness(snapshot->timestampMs);
+        }
+    }
+    else if (result.topic == "media.timeline")
+    {
+        const auto snapshot = widgetSystemDataProvider_->MediaTimeline();
+        if (snapshot)
+        {
+            result.mediaTimeline = *snapshot;
+            result.available = snapshot->available;
+            result.error = snapshot->error;
+            setFreshness(snapshot->timestampMs);
         }
     }
     if (result.error.empty())

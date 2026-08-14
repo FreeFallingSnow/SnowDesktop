@@ -94,10 +94,11 @@ ID 为 1–128 字节，每个实例最多 32 个计划；周期请求范围是 
 
 ### `data`
 
-当前公开十三个按需数据源：`system.cpu`、`system.memory`、`system.gpu`、`system.power`、
+当前公开十六个按需数据源：`system.cpu`、`system.memory`、`system.gpu`、`system.power`、
 `system.network.status`、`system.network.traffic`、`system.storage.volumes`、
 `system.storage.io`、`system.display.topology`、`system.display.current`、
-`audio.output.default`、`audio.output.volume` 和 `audio.output.analysis`。在 `setup` 或模块
+`audio.output.default`、`audio.output.volume`、`audio.output.analysis`、
+`media.sessions`、`media.current` 和 `media.timeline`。在 `setup` 或模块
 入口创建订阅，不要在每次 `render` 中重复订阅：
 
 ```lua
@@ -124,7 +125,7 @@ end
 `data.subscribe(topic, options?)` 返回句柄。`options.maxAgeMs` 为 1–86400000，
 同时表达请求采样周期与快照过期阈值；CPU 最快 500 ms，内存最快 1000 ms，
 电源、存储卷和显示拓扑最快 2000 ms；存储 I/O、默认音频端点和主音量最快
-1000 ms，音频分析最快 16 ms。`whenHidden` 可为
+1000 ms，媒体三个 topic 最快 500 ms，音频分析最快 16 ms。`whenHidden` 可为
 `pause`、`throttle`（默认）或 `continue`；
 当前系统 provider 不承诺后台 continue，因此会收敛为隐藏 throttle。
 `handle:value()` 返回
@@ -184,6 +185,14 @@ Windows 友好 `name` 和 `state`；`audio.output.volume` 包含匹配的 `endpo
 `maxAgeMs` 选择 16–1000 ms 发布周期，点数和特征选择仍固定，后续再开放有上限的
 `features/waveformPoints/spectrumBins/updateHz` 选项。
 
+三个媒体 topic 受 `media.read` 保护，并在同一 provider 采样周期内合并读取：
+`media.sessions` value 返回最多 32 个会话和当前会话的不透明 ID，`media.current`
+value 通过 `session` 返回当前会话，`media.timeline` value 通过 `timeline` 返回当前
+时间线。每个会话包含受限到 4096 字节的 `sourceName/title/artist/album`、播放状态、
+逐动作 `can*`、相对 `positionMs/durationMs` 和 seek 范围；没有当前会话时 current
+和 timeline 返回 `available=false,error="notPresent"`，会话列表则是可用的空数组。
+这些只读订阅不会执行播放动作或取得封面原图，预览使用一个固定模拟会话。
+
 CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.power.read` 保护，
 两个网络 topic 受 `system.network.read` 保护，两个存储 topic 受
 `system.storage.read` 保护，显示拓扑受 `system.display.read` 保护。
@@ -199,7 +208,8 @@ CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.pow
 `data.system.network.traffic`、`data.system.storage.volumes` 和
 `data.system.storage.io`、`data.system.display.topology` 和
 `data.system.display.current`，以及 `data.audio.output.default`、
-`data.audio.output.volume` 和 `data.audio.output.analysis`。
+`data.audio.output.volume` 和 `data.audio.output.analysis`，以及
+`data.media.sessions`、`data.media.current` 和 `data.media.timeline`。
 
 ### `draw`
 

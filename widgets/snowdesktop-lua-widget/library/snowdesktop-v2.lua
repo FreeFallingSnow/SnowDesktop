@@ -463,6 +463,47 @@ function schedule.cancel(id) end
 ---@field sampleRate integer
 ---@field channels integer Source mix channel count; waveform is always downmixed.
 
+---@class SnowMediaControlsDataValue
+---@field canPlay boolean
+---@field canPause boolean
+---@field canPlayPause boolean
+---@field canStop boolean
+---@field canNext boolean
+---@field canPrevious boolean
+---@field canSeek boolean
+---@field canChangePlaybackRate boolean
+---@field canToggleShuffle boolean
+---@field canChangeRepeatMode boolean
+
+---@class SnowMediaTimelineValue
+---@field sessionId string Opaque media session identifier.
+---@field positionMs integer Position relative to the session start.
+---@field durationMs integer Bounded non-negative duration.
+---@field minimumSeekMs integer
+---@field maximumSeekMs integer
+---@field updatedAtMs integer Epoch milliseconds reported by Windows.
+
+---@class SnowMediaSessionValue
+---@field id string Opaque media session identifier.
+---@field sourceName string Bounded source display identity supplied by Windows.
+---@field title string
+---@field artist string
+---@field album string
+---@field playbackStatus 'closed'|'open'|'changing'|'stopped'|'playing'|'paused'
+---@field current boolean
+---@field controls SnowMediaControlsDataValue
+---@field timeline SnowMediaTimelineValue
+
+---@class SnowMediaSessionsDataValue
+---@field currentSessionId string Empty when Windows has no current session.
+---@field sessions SnowMediaSessionValue[] At most 32 entries.
+
+---@class SnowMediaCurrentDataValue
+---@field session SnowMediaSessionValue
+
+---@class SnowMediaTimelineDataValue
+---@field timeline SnowMediaTimelineValue
+
 ---@class SnowDataSnapshot<T>
 ---@field available boolean
 ---@field value? T
@@ -492,6 +533,9 @@ data = {}
 ---@overload fun(topic: 'audio.output.default', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowAudioOutputDefaultDataValue>
 ---@overload fun(topic: 'audio.output.volume', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowAudioOutputVolumeDataValue>
 ---@overload fun(topic: 'audio.output.analysis', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowAudioOutputAnalysisDataValue>
+---@overload fun(topic: 'media.sessions', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowMediaSessionsDataValue>
+---@overload fun(topic: 'media.current', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowMediaCurrentDataValue>
+---@overload fun(topic: 'media.timeline', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowMediaTimelineDataValue>
 ---@param topic string
 ---@param options? SnowDataSubscribeOptions
 ---@return SnowDataSubscription<table>

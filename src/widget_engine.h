@@ -299,6 +299,12 @@ struct LuaWidgetDataSnapshot
         audioOutputVolume;
     snowdesktop::widget_runtime::WidgetAudioAnalysisDataSnapshot
         audioAnalysis;
+    snowdesktop::widget_runtime::WidgetMediaSessionsDataSnapshot
+        mediaSessions;
+    snowdesktop::widget_runtime::WidgetMediaCurrentDataSnapshot
+        mediaCurrent;
+    snowdesktop::widget_runtime::WidgetMediaTimelineDataSnapshot
+        mediaTimeline;
 };
 
 /**

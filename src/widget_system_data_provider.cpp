@@ -17,6 +17,7 @@
 #include <netioapi.h>
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Foundation.Collections.h>
+#include <winrt/Windows.Media.Control.h>
 #include <winrt/Windows.Networking.Connectivity.h>
 
 #include <algorithm>
@@ -40,6 +41,11 @@ constexpr std::string_view DisplayTopologyTopic = "system.display.topology";
 constexpr std::string_view DisplayCurrentTopic = "system.display.current";
 constexpr std::string_view AudioOutputDefaultTopic = "audio.output.default";
 constexpr std::string_view AudioOutputVolumeTopic = "audio.output.volume";
+constexpr std::string_view MediaSessionsTopic = "media.sessions";
+constexpr std::string_view MediaCurrentTopic = "media.current";
+constexpr std::string_view MediaTimelineTopic = "media.timeline";
+constexpr std::size_t MaximumMediaSessions = 32;
+constexpr std::size_t MaximumMediaStringBytes = 4096;
 
 std::uint64_t FileTimeValue(const FILETIME& value)
 {
@@ -247,6 +253,59 @@ std::string OpaqueAudioEndpointId(std::wstring_view endpointId)
     return "audio-output-" + std::to_string(hash);
 }
 
+std::string OpaqueMediaSessionId(
+    std::wstring_view sourceId, std::size_t occurrence)
+{
+    constexpr std::uint64_t offset = 14695981039346656037ull;
+    constexpr std::uint64_t prime = 1099511628211ull;
+    std::uint64_t hash = offset;
+    for (const wchar_t character : sourceId)
+    {
+        hash ^= static_cast<std::uint16_t>(character);
+        hash *= prime;
+    }
+    hash ^= occurrence;
+    hash *= prime;
+    return "media-session-" + std::to_string(hash);
+}
+
+std::string BoundedMediaString(std::wstring_view value)
+{
+    const std::wstring copy(value);
+    std::string result = WideToUtf8(copy.c_str());
+    if (result.size() <= MaximumMediaStringBytes) return result;
+    std::size_t end = MaximumMediaStringBytes;
+    while (end > 0 &&
+        (static_cast<unsigned char>(result[end]) & 0xc0) == 0x80)
+    {
+        --end;
+    }
+    result.resize(end);
+    return result;
+}
+
+std::string MediaPlaybackStatus(
+    winrt::Windows::Media::Control::
+        GlobalSystemMediaTransportControlsSessionPlaybackStatus status)
+{
+    using Status = winrt::Windows::Media::Control::
+        GlobalSystemMediaTransportControlsSessionPlaybackStatus;
+    switch (status)
+    {
+    case Status::Opened: return "open";
+    case Status::Changing: return "changing";
+    case Status::Stopped: return "stopped";
+    case Status::Playing: return "playing";
+    case Status::Paused: return "paused";
+    default: return "closed";
+    }
+}
+
+std::int64_t TimeSpanMilliseconds(winrt::Windows::Foundation::TimeSpan value)
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(value).count();
+}
+
 std::string AudioDeviceState(DWORD state)
 {
     if ((state & DEVICE_STATE_ACTIVE) != 0) return "active";
@@ -419,7 +478,9 @@ bool WidgetSystemDataProvider::SupportsTopic(
         topic == NetworkTrafficTopic || topic == GpuTopic ||
         topic == StorageVolumesTopic || topic == StorageIoTopic ||
         topic == DisplayTopologyTopic || topic == DisplayCurrentTopic ||
-        topic == AudioOutputDefaultTopic || topic == AudioOutputVolumeTopic;
+        topic == AudioOutputDefaultTopic || topic == AudioOutputVolumeTopic ||
+        topic == MediaSessionsTopic || topic == MediaCurrentTopic ||
+        topic == MediaTimelineTopic;
 }
 
 bool WidgetSystemDataProvider::StartTopic(
@@ -613,6 +674,27 @@ WidgetSystemDataProvider::AudioOutputVolume() const
     return audioOutputVolume_;
 }
 
+std::optional<WidgetMediaSessionsDataSnapshot>
+WidgetSystemDataProvider::MediaSessions() const
+{
+    std::scoped_lock lock(mutex_);
+    return mediaSessions_;
+}
+
+std::optional<WidgetMediaCurrentDataSnapshot>
+WidgetSystemDataProvider::MediaCurrent() const
+{
+    std::scoped_lock lock(mutex_);
+    return mediaCurrent_;
+}
+
+std::optional<WidgetMediaTimelineDataSnapshot>
+WidgetSystemDataProvider::MediaTimeline() const
+{
+    std::scoped_lock lock(mutex_);
+    return mediaTimeline_;
+}
+
 std::vector<std::string>
 WidgetSystemDataProvider::DrainChangedTopics()
 {
@@ -697,6 +779,12 @@ void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
             }
         }
 
+        const bool mediaDue = std::any_of(
+            dueTopics.begin(), dueTopics.end(), [](const auto& topic) {
+                return topic == MediaSessionsTopic ||
+                    topic == MediaCurrentTopic ||
+                    topic == MediaTimelineTopic;
+            });
         for (const std::string& topic : dueTopics)
         {
             if (stopToken.stop_requested()) break;
@@ -724,6 +812,19 @@ void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
                 PublishAudioOutputDefault(SampleAudioOutputDefault());
             else if (topic == AudioOutputVolumeTopic)
                 PublishAudioOutputVolume(SampleAudioOutputVolume());
+        }
+        if (mediaDue && !stopToken.stop_requested())
+        {
+            const auto snapshot = SampleMediaSessions();
+            if (std::find(dueTopics.begin(), dueTopics.end(),
+                    MediaSessionsTopic) != dueTopics.end())
+                PublishMediaSessions(snapshot);
+            if (std::find(dueTopics.begin(), dueTopics.end(),
+                    MediaCurrentTopic) != dueTopics.end())
+                PublishMediaCurrent(snapshot);
+            if (std::find(dueTopics.begin(), dueTopics.end(),
+                    MediaTimelineTopic) != dueTopics.end())
+                PublishMediaTimeline(snapshot);
         }
     }
     CloseGpuQuery();
@@ -1488,6 +1589,114 @@ WidgetSystemDataProvider::SampleAudioOutputVolume()
     return snapshot;
 }
 
+WidgetMediaSessionsDataSnapshot
+WidgetSystemDataProvider::SampleMediaSessions()
+{
+    using namespace winrt::Windows::Media::Control;
+    WidgetMediaSessionsDataSnapshot snapshot;
+    snapshot.timestampMs = TimestampMilliseconds();
+    try
+    {
+        thread_local GlobalSystemMediaTransportControlsSessionManager manager{
+            nullptr };
+        if (!manager)
+        {
+            manager = GlobalSystemMediaTransportControlsSessionManager::
+                RequestAsync().get();
+        }
+        if (!manager)
+        {
+            snapshot.error = "mediaSessionManagerUnavailable";
+            return snapshot;
+        }
+
+        const auto currentSession = manager.GetCurrentSession();
+        const auto sessions = manager.GetSessions();
+        std::unordered_map<std::wstring, std::size_t> sourceOccurrences;
+        const auto appendSession = [&](const auto& session, bool current) {
+            if (!session || snapshot.sessions.size() >= MaximumMediaSessions)
+                return;
+            WidgetMediaSessionDataSnapshot value;
+            const std::wstring sourceId =
+                session.SourceAppUserModelId().c_str();
+            const std::size_t occurrence = sourceOccurrences[sourceId]++;
+            value.id = OpaqueMediaSessionId(sourceId, occurrence);
+            value.sourceName = BoundedMediaString(sourceId);
+            value.current = current;
+
+            const auto playback = session.GetPlaybackInfo();
+            value.playbackStatus = MediaPlaybackStatus(
+                playback.PlaybackStatus());
+            const auto controls = playback.Controls();
+            value.controls.canPlay = controls.IsPlayEnabled();
+            value.controls.canPause = controls.IsPauseEnabled();
+            value.controls.canPlayPause =
+                controls.IsPlayPauseToggleEnabled();
+            value.controls.canStop = controls.IsStopEnabled();
+            value.controls.canNext = controls.IsNextEnabled();
+            value.controls.canPrevious = controls.IsPreviousEnabled();
+            value.controls.canSeek = controls.IsPlaybackPositionEnabled();
+            value.controls.canChangePlaybackRate =
+                controls.IsPlaybackRateEnabled();
+            value.controls.canToggleShuffle = controls.IsShuffleEnabled();
+            value.controls.canChangeRepeatMode = controls.IsRepeatEnabled();
+
+            const auto timeline = session.GetTimelineProperties();
+            const std::int64_t start = TimeSpanMilliseconds(
+                timeline.StartTime());
+            const std::int64_t end = TimeSpanMilliseconds(
+                timeline.EndTime());
+            const std::int64_t position = TimeSpanMilliseconds(
+                timeline.Position());
+            value.timeline.available = true;
+            value.timeline.sessionId = value.id;
+            value.timeline.durationMs = std::max<std::int64_t>(0, end - start);
+            value.timeline.positionMs = std::clamp<std::int64_t>(
+                position - start, 0, value.timeline.durationMs);
+            value.timeline.minimumSeekMs = std::max<std::int64_t>(0,
+                TimeSpanMilliseconds(timeline.MinSeekTime()) - start);
+            value.timeline.maximumSeekMs = std::max<std::int64_t>(
+                value.timeline.minimumSeekMs,
+                TimeSpanMilliseconds(timeline.MaxSeekTime()) - start);
+            value.timeline.updatedAtMs =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    winrt::clock::to_sys(timeline.LastUpdatedTime())
+                        .time_since_epoch()).count();
+            value.timeline.timestampMs = snapshot.timestampMs;
+
+            try
+            {
+                const auto properties =
+                    session.TryGetMediaPropertiesAsync().get();
+                value.title = BoundedMediaString(properties.Title());
+                value.artist = BoundedMediaString(properties.Artist());
+                value.album = BoundedMediaString(properties.AlbumTitle());
+            }
+            catch (...)
+            {
+                // One source may withhold metadata without invalidating the
+                // session list, playback state, controls, or timeline.
+            }
+            if (current) snapshot.currentSessionId = value.id;
+            snapshot.sessions.push_back(std::move(value));
+        };
+
+        if (currentSession) appendSession(currentSession, true);
+        for (const auto& session : sessions)
+        {
+            if (snapshot.sessions.size() >= MaximumMediaSessions) break;
+            if (currentSession && session == currentSession) continue;
+            appendSession(session, false);
+        }
+        snapshot.available = true;
+    }
+    catch (...)
+    {
+        snapshot.error = "mediaSessionQueryFailed";
+    }
+    return snapshot;
+}
+
 void WidgetSystemDataProvider::PublishCpu(
     WidgetCpuDataSnapshot snapshot)
 {
@@ -1610,5 +1819,82 @@ void WidgetSystemDataProvider::PublishAudioOutputVolume(
         ? audioOutputVolume_->revision + 1 : 1;
     audioOutputVolume_ = std::move(snapshot);
     changedTopics_.insert(std::string(AudioOutputVolumeTopic));
+}
+
+void WidgetSystemDataProvider::PublishMediaSessions(
+    WidgetMediaSessionsDataSnapshot snapshot)
+{
+    std::scoped_lock lock(mutex_);
+    if (!schedules_.contains(std::string(MediaSessionsTopic))) return;
+    snapshot.revision = mediaSessions_ ? mediaSessions_->revision + 1 : 1;
+    mediaSessions_ = std::move(snapshot);
+    changedTopics_.insert(std::string(MediaSessionsTopic));
+}
+
+void WidgetSystemDataProvider::PublishMediaCurrent(
+    const WidgetMediaSessionsDataSnapshot& snapshot)
+{
+    std::scoped_lock lock(mutex_);
+    if (!schedules_.contains(std::string(MediaCurrentTopic))) return;
+    WidgetMediaCurrentDataSnapshot current;
+    current.timestampMs = snapshot.timestampMs;
+    current.revision = mediaCurrent_ ? mediaCurrent_->revision + 1 : 1;
+    if (!snapshot.available)
+    {
+        current.error = snapshot.error.empty()
+            ? "mediaSessionQueryFailed" : snapshot.error;
+    }
+    else
+    {
+        const auto match = std::find_if(snapshot.sessions.begin(),
+            snapshot.sessions.end(), [](const auto& session) {
+                return session.current;
+            });
+        if (match == snapshot.sessions.end())
+            current.error = "notPresent";
+        else
+        {
+            current.available = true;
+            current.session = *match;
+        }
+    }
+    mediaCurrent_ = std::move(current);
+    changedTopics_.insert(std::string(MediaCurrentTopic));
+}
+
+void WidgetSystemDataProvider::PublishMediaTimeline(
+    const WidgetMediaSessionsDataSnapshot& snapshot)
+{
+    std::scoped_lock lock(mutex_);
+    if (!schedules_.contains(std::string(MediaTimelineTopic))) return;
+    WidgetMediaTimelineDataSnapshot timeline;
+    timeline.timestampMs = snapshot.timestampMs;
+    timeline.revision = mediaTimeline_ ? mediaTimeline_->revision + 1 : 1;
+    if (!snapshot.available)
+    {
+        timeline.error = snapshot.error.empty()
+            ? "mediaSessionQueryFailed" : snapshot.error;
+    }
+    else
+    {
+        const auto match = std::find_if(snapshot.sessions.begin(),
+            snapshot.sessions.end(), [](const auto& session) {
+                return session.current;
+            });
+        if (match == snapshot.sessions.end() ||
+            !match->timeline.available)
+        {
+            timeline.error = "notPresent";
+        }
+        else
+        {
+            timeline = match->timeline;
+            timeline.revision = mediaTimeline_
+                ? mediaTimeline_->revision + 1 : 1;
+            timeline.timestampMs = snapshot.timestampMs;
+        }
+    }
+    mediaTimeline_ = std::move(timeline);
+    changedTopics_.insert(std::string(MediaTimelineTopic));
 }
 }

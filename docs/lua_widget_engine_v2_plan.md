@@ -559,7 +559,7 @@ local snapshot = cpu:value()
 - `system.storage.volumes`
 - `system.storage.io`
 - `system.display.current`
-- `media.sessions`
+- `media.sessions` / `media.current` / `media.timeline`
 - `media.current`
 - `media.timeline`
 - `media.artwork`
@@ -589,7 +589,8 @@ local snapshot = cpu:value()
 `data.system.network.traffic`、`data.system.storage.volumes`、
 `data.system.storage.io`、`data.system.display.topology` 和
 `data.system.display.current`，以及 `data.audio.output.default`、
-`data.audio.output.volume`、`data.audio.output.analysis` feature。
+`data.audio.output.volume`、`data.audio.output.analysis`，和
+`data.media.sessions/current/timeline` feature。
 Lua 订阅句柄已接通 `WidgetDataBroker` 与独立工作线程 provider：首个合格订阅按需
 启动对应 topic，多实例共享有效采样率，数据变化只使依赖实例失效，隐藏状态进入
 pause/throttle，最后订阅进入 idle grace，卸载、热重载和关闭自动释放。CPU 冷启动
@@ -624,6 +625,12 @@ endpoint，分别返回不透明 endpoint ID、友好名称/状态和有界主�
 已授权可见订阅启动，最后一个可见订阅消失、权限撤销或卸载时立即停止并清空快照，
 不使用 idle grace。多订阅由 broker 合并为一条捕获管线，预览使用确定性模拟数据；
 点数/特征/updateHz 的逐订阅配置与运行状态指示仍待后续收口。
+
+`media.sessions`、`media.current` 和 `media.timeline` 已接入同一按需 WinRT GSMTC
+采样路径：最多返回 32 个会话、不透明 session ID、受限元数据、播放状态、时间线和
+逐动作 `can*`，同一轮到期的三个 topic 只查询一次 Windows 会话管理器。列表为空是
+正常可用状态，current/timeline 使用稳定 `notPresent`；预览不读取开发机媒体状态。
+封面 resource handle 和通过 task/action broker 执行的媒体控制仍属于后续工作。
 
 ```text
 Stopped

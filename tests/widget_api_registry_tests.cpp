@@ -213,6 +213,12 @@ void TestV2Contract()
                 "data.audio.output.default") &&
             snowdesktop::widget_api::SupportsFeature(
                 "data.audio.output.volume") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "data.media.sessions") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "data.media.current") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "data.media.timeline") &&
             snowdesktop::widget_api::SupportsFeature("data.subscribe") &&
             snowdesktop::widget_api::SupportsFeature("data.system.cpu") &&
             snowdesktop::widget_api::SupportsFeature(

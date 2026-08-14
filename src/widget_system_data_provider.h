@@ -202,6 +202,66 @@ struct WidgetAudioOutputVolumeDataSnapshot
     std::string error;
 };
 
+struct WidgetMediaControlsDataSnapshot
+{
+    bool canPlay = false;
+    bool canPause = false;
+    bool canPlayPause = false;
+    bool canStop = false;
+    bool canNext = false;
+    bool canPrevious = false;
+    bool canSeek = false;
+    bool canChangePlaybackRate = false;
+    bool canToggleShuffle = false;
+    bool canChangeRepeatMode = false;
+};
+
+struct WidgetMediaTimelineDataSnapshot
+{
+    bool available = false;
+    std::string sessionId;
+    std::int64_t positionMs = 0;
+    std::int64_t durationMs = 0;
+    std::int64_t minimumSeekMs = 0;
+    std::int64_t maximumSeekMs = 0;
+    std::int64_t updatedAtMs = 0;
+    std::int64_t timestampMs = 0;
+    std::uint64_t revision = 0;
+    std::string error;
+};
+
+struct WidgetMediaSessionDataSnapshot
+{
+    std::string id;
+    std::string sourceName;
+    std::string title;
+    std::string artist;
+    std::string album;
+    std::string playbackStatus = "closed";
+    bool current = false;
+    WidgetMediaControlsDataSnapshot controls;
+    WidgetMediaTimelineDataSnapshot timeline;
+};
+
+struct WidgetMediaSessionsDataSnapshot
+{
+    bool available = false;
+    std::string currentSessionId;
+    std::vector<WidgetMediaSessionDataSnapshot> sessions;
+    std::int64_t timestampMs = 0;
+    std::uint64_t revision = 0;
+    std::string error;
+};
+
+struct WidgetMediaCurrentDataSnapshot
+{
+    bool available = false;
+    WidgetMediaSessionDataSnapshot session;
+    std::int64_t timestampMs = 0;
+    std::uint64_t revision = 0;
+    std::string error;
+};
+
 std::optional<WidgetDisplayDataSnapshot> MatchDisplayByPixelBounds(
     const WidgetDisplayTopologyDataSnapshot& topology,
     const WidgetDisplayPixelRectDataSnapshot& bounds);
@@ -241,6 +301,9 @@ public:
         AudioOutputDefault() const;
     std::optional<WidgetAudioOutputVolumeDataSnapshot>
         AudioOutputVolume() const;
+    std::optional<WidgetMediaSessionsDataSnapshot> MediaSessions() const;
+    std::optional<WidgetMediaCurrentDataSnapshot> MediaCurrent() const;
+    std::optional<WidgetMediaTimelineDataSnapshot> MediaTimeline() const;
     std::vector<std::string> DrainChangedTopics();
 
     bool Running() const noexcept;
@@ -268,6 +331,7 @@ private:
     WidgetDisplayTopologyDataSnapshot SampleDisplayTopology();
     WidgetAudioOutputDefaultDataSnapshot SampleAudioOutputDefault();
     WidgetAudioOutputVolumeDataSnapshot SampleAudioOutputVolume();
+    WidgetMediaSessionsDataSnapshot SampleMediaSessions();
     void PublishCpu(WidgetCpuDataSnapshot snapshot);
     void PublishMemory(WidgetMemoryDataSnapshot snapshot);
     void PublishPower(WidgetPowerDataSnapshot snapshot);
@@ -282,6 +346,9 @@ private:
         WidgetAudioOutputDefaultDataSnapshot snapshot);
     void PublishAudioOutputVolume(
         WidgetAudioOutputVolumeDataSnapshot snapshot);
+    void PublishMediaSessions(WidgetMediaSessionsDataSnapshot snapshot);
+    void PublishMediaCurrent(const WidgetMediaSessionsDataSnapshot& snapshot);
+    void PublishMediaTimeline(const WidgetMediaSessionsDataSnapshot& snapshot);
     bool InitializeGpuQuery();
     void CloseGpuQuery();
     bool InitializeStorageIoQuery();
@@ -303,6 +370,9 @@ private:
     std::optional<WidgetDisplayTopologyDataSnapshot> displayCurrent_;
     std::optional<WidgetAudioOutputDefaultDataSnapshot> audioOutputDefault_;
     std::optional<WidgetAudioOutputVolumeDataSnapshot> audioOutputVolume_;
+    std::optional<WidgetMediaSessionsDataSnapshot> mediaSessions_;
+    std::optional<WidgetMediaCurrentDataSnapshot> mediaCurrent_;
+    std::optional<WidgetMediaTimelineDataSnapshot> mediaTimeline_;
     std::uint64_t configurationGeneration_ = 0;
     std::jthread worker_;
     std::atomic<bool> resetCpuBaseline_{ true };

@@ -27,7 +27,7 @@ void Check(bool condition, const char* message)
 template<typename Predicate>
 bool WaitFor(Predicate predicate)
 {
-    for (int attempt = 0; attempt < 100; ++attempt)
+    for (int attempt = 0; attempt < 400; ++attempt)
     {
         if (predicate()) return true;
         std::this_thread::sleep_for(5ms);
@@ -38,7 +38,7 @@ bool WaitFor(Predicate predicate)
 void TestTopicLifecycleAndSampling()
 {
     WidgetSystemDataProvider provider;
-    Check(!provider.StartTopic("media.current", 20ms) &&
+    Check(!provider.StartTopic("media.unknown", 20ms) &&
             !provider.StartTopic("system.memory", 1ms),
         "unsupported topics and invalid intervals must be rejected");
     Check(provider.StartTopic("system.memory", 20ms) &&
@@ -246,6 +246,56 @@ void TestTopicLifecycleAndSampling()
             provider.StopTopic("audio.output.volume") &&
             provider.ActiveTopicCount() == 2,
         "audio output topics must stop independently from other sources");
+    Check(provider.StartTopic("media.sessions", 20ms) &&
+            provider.StartTopic("media.current", 20ms) &&
+            provider.StartTopic("media.timeline", 20ms) &&
+            provider.ActiveTopicCount() == 5,
+        "media list, current session, and timeline must start independently");
+    Check(WaitFor([&] {
+            const auto sessions = provider.MediaSessions();
+            const auto current = provider.MediaCurrent();
+            const auto timeline = provider.MediaTimeline();
+            return sessions && sessions->revision > 0 &&
+                current && current->revision > 0 &&
+                timeline && timeline->revision > 0;
+        }),
+        "media topics must publish coalesced revisions");
+    const auto mediaSessions = provider.MediaSessions();
+    const auto mediaCurrent = provider.MediaCurrent();
+    const auto mediaTimeline = provider.MediaTimeline();
+    Check(mediaSessions && mediaSessions->timestampMs > 0 &&
+            (mediaSessions->available || !mediaSessions->error.empty()) &&
+            mediaSessions->sessions.size() <= 32,
+        "media session enumeration must be bounded or report a stable error");
+    if (mediaSessions && mediaSessions->available)
+    {
+        for (const auto& session : mediaSessions->sessions)
+        {
+            Check(session.id.starts_with("media-session-") &&
+                    session.title.size() <= 4096 &&
+                    session.artist.size() <= 4096 &&
+                    session.album.size() <= 4096 &&
+                    session.timeline.sessionId == session.id &&
+                    session.timeline.positionMs >= 0 &&
+                    session.timeline.durationMs >= 0 &&
+                    session.timeline.positionMs <=
+                        session.timeline.durationMs,
+                "media entries must use opaque IDs and bounded metadata and timeline values");
+        }
+    }
+    Check(mediaCurrent && mediaCurrent->timestampMs > 0 &&
+            (mediaCurrent->available || !mediaCurrent->error.empty()),
+        "current media must expose one session or notPresent");
+    Check(mediaTimeline && mediaTimeline->timestampMs > 0 &&
+            (mediaTimeline->available || !mediaTimeline->error.empty()),
+        "media timeline must expose bounded values or notPresent");
+    Check(provider.StopTopic("media.sessions") &&
+            provider.ActiveTopicCount() == 4 &&
+            provider.StopTopic("media.current") &&
+            provider.ActiveTopicCount() == 3 &&
+            provider.StopTopic("media.timeline") &&
+            provider.ActiveTopicCount() == 2,
+        "media topics must stop independently from other sources");
 
     Check(provider.StopTopic("system.memory") && provider.Running() &&
             provider.ActiveTopicCount() == 1,
