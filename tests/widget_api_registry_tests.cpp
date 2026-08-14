@@ -322,6 +322,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature("schedule.basic") &&
             snowdesktop::widget_api::SupportsFeature("schedule.visibility") &&
             snowdesktop::widget_api::SupportsFeature(
+                "settings.appSearch") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "settings.select.localizedOptions") &&
             snowdesktop::widget_api::SupportsFeature("lifecycle.event") &&
             snowdesktop::widget_api::SupportsFeature("lifecycle.model") &&

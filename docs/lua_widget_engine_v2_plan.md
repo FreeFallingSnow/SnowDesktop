@@ -842,7 +842,7 @@ API v2 不把 Win32、COM 或 WinRT 原样暴露给 Lua，而是固定为四个�
 
 | 任务/动作 | v2.0 契约 | 权限/手势 |
 |---|---|---|
-| `network.request` | 第 9 节的精确 origin、重定向、DNS/连接地址复查、请求/响应额度和取消 | `network.internet` / `network.local` |
+| `network.request` | 任意公网 HTTPS；可选精确域名收窄；逐跳重定向、DNS/连接地址复查、请求/响应额度和取消 | `network.internet` |
 | `notification.show/update/dismiss/schedule/cancel` | 宿主生成 notification ID；文本、包资源图、有限按钮和进度；动作回传到实例，实例不存在时安全丢弃或进入宿主处理 | `notification.post`；频控，紧急/闹钟场景另行批准 |
 | `clipboard.read` | 只读明确请求的 text/image/file-reference 类型，限制大小，不枚举历史 | `clipboard.read` + 当前用户手势 |
 | `clipboard.write/clear` | 写入白名单格式和有限数据；来源可诊断 | `clipboard.write` + 当前用户手势；禁止后台循环覆盖 |
@@ -1314,6 +1314,8 @@ v2.0 不开放：真实文件 move/copy/delete、组件嵌套、把 Lua 组件�
 - 分组、说明、校验、依赖和 `showWhen`
 
 普通配置值进入类型化实例存储；secret、file/folder handle 和宿主 item/app reference 只保存绑定/授权记录，不进入普通字符串存储和预览。entity selector 由宿主展示，组件只取得用户最终选择的 opaque reference；组件若自行枚举候选，仍需对应 read/discovery 权限。
+
+当前过渡实现已提供 `settings.appSearch`：搜索文字与已选显示名分别存储，候选匹配复用宿主应用索引并在 worker 执行，媒体控制组件已接入。它解决设置页动态搜索和选择交互，但尚不是最终的持久 `appReference` binding；后者仍按上段要求进入宿主管理的 opaque reference 存储。
 
 ### 15.2 包内模块
 

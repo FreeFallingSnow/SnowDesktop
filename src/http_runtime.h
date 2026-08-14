@@ -18,7 +18,8 @@ namespace snowdesktop::http_security
 bool IsAllowedRemoteIpLiteral(std::wstring_view address);
 bool IsAllowedUrlForDomains(const std::wstring& url,
     const std::vector<std::string>& domains,
-    bool allowAnyHttpOrHttpsUrl = false);
+    bool allowAnyHttpOrHttpsUrl = false,
+    bool allowAnyPublicHttpsUrl = false);
 bool IsAllowedPublicHttpsUrl(const std::wstring& url);
 }
 
@@ -34,6 +35,7 @@ struct HttpRequestOptions
     std::uint32_t maximumResponseBytes = 1024 * 1024;
     std::vector<std::string> allowedDomains;
     bool allowAnyHttpOrHttpsUrl = false;
+    bool allowAnyPublicHttpsUrl = false;
 };
 
 struct HttpResponse

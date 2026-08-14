@@ -516,10 +516,12 @@ local updateId, err = task.start("calendar.update", {
 `permissionDenied`、`userGestureRequired` 和 `previewReadOnly`。
 
 `network.request` 要求 `network.internet`，当前只提供无凭据、无 Cookie、无自定义头部和
-请求体的 HTTPS `GET`。清单必须在 `networkDomains` 中逐项声明精确主机名；不支持通配符、
-子域继承、localhost、局域网地址或 IP 重定向。每实例该任务最多并发 2 个，参数只接受：
+请求体的公网 HTTPS `GET`。默认可访问任意公网 HTTPS 主机；如果组件功能固定依赖少数服务，
+可以在 `networkDomains` 中逐项声明精确主机名，主动把自身网络范围收窄。域名限制不支持
+通配符或子域继承；无论是否收窄，localhost、局域网地址和指向非公网地址的解析或重定向
+都被拒绝。每实例该任务最多并发 2 个，参数只接受：
 
-- `url`：1–2048 字节有效 UTF-8，主机必须命中清单；
+- `url`：1–2048 字节有效 UTF-8 公网 HTTPS URL；清单声明了 `networkDomains` 时主机必须精确命中；
 - `timeoutMs`：1000–30000，默认 15000；
 - `cacheSeconds`：0–86400，默认 0，缓存按实例、请求与响应上限隔离；
 - `maxBytes`：4096–1048576，默认 524288。
@@ -536,11 +538,12 @@ local requestId, err = task.start("network.request", {
 -- HTTP 响应失败时：event.error == "httpStatus"，event.status 可用
 ```
 
-重定向的每一跳都重新检查 HTTPS、精确清单域名、DNS 解析地址和实际连接地址。响应在
+重定向的每一跳都重新检查 HTTPS、可选的精确域名范围、DNS 解析地址和实际连接地址。响应在
 worker 中读取，超限立即失败，不会把慢网络 I/O 放进 UI/render 线程。稳定完成错误包括
 `requestRejected`、`networkError`、`redirectRejected`、`responseTooLarge`、
 `httpStatus`、`permissionRevoked` 和 `canceled`。预览返回确定性的最小 RSS mock，不发起
-网络连接。动态设置如果指向未声明主机，会得到 `requestRejected`，组件不能据此扩大权限。
+网络连接。声明了 `networkDomains` 的组件如果请求范围外主机，会得到 `requestRejected`；
+RSS、Webhook 阅读器等允许用户填写地址的组件不应声明固定域名范围。
 
 `shell.openUri` 要求 `shell.launch` 和当前可信用户手势，只接受不含用户名/密码的公网
 HTTPS URL；`http:`、`file:`、自定义 scheme、localhost、局域网和 IP 内网地址均被拒绝。
@@ -656,6 +659,12 @@ metatable、混合数组/对象以及超出深度、节点、字符串或 256-ke
 声明式 `select` 设置可用稳定的 `options` 值，并用等长的 `optionLabels` 提供当前语言
 显示文本；宿主保存值而不是翻译，切换语言不会使现有设置失效。对应 feature 为
 `settings.select.localizedOptions`。
+
+`appSearch` 设置使用 `key` 保存用户选中的应用显示名，使用 `searchKey` 保存搜索文字；
+宿主复用应用索引并在后台完成匹配，在设置页直接显示候选项。`emptyLabel` 和
+`noResultsLabel` 必须使用组件清单中的本地化文本。该控件只负责设置交互；组件运行时仍应
+通过 `app.search` 获取当前实例的 opaque `ref`，并在可信用户动作中用 `app.launch` 启动。
+对应 feature 为 `settings.appSearch`。
 
 ### `l10n`
 

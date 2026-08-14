@@ -210,7 +210,8 @@ AsyncHttpService::~AsyncHttpService()
 bool snowdesktop::http_security::IsAllowedUrlForDomains(
     const std::wstring& url,
     const std::vector<std::string>& domains,
-    bool allowAnyHttpOrHttpsUrl)
+    bool allowAnyHttpOrHttpsUrl,
+    bool allowAnyPublicHttpsUrl)
 {
     URL_COMPONENTS components{ sizeof(components) };
     wchar_t host[256]{};
@@ -221,6 +222,8 @@ bool snowdesktop::http_security::IsAllowedUrlForDomains(
     const bool isHttps = components.nScheme == INTERNET_SCHEME_HTTPS;
     if (allowAnyHttpOrHttpsUrl)
         return (isHttp || isHttps) && components.dwHostNameLength > 0;
+    if (allowAnyPublicHttpsUrl)
+        return IsAllowedPublicHttpsUrl(url);
     if (!isHttps) return false;
     std::wstring actual = NormalizeHostname(
         std::wstring(host, components.dwHostNameLength));
@@ -297,7 +300,8 @@ int AsyncHttpService::Submit(HttpRequestOptions options)
     if (!snowdesktop::http_security::
             IsAllowedUrlForDomains(
                 options.url, options.allowedDomains,
-                options.allowAnyHttpOrHttpsUrl))
+                options.allowAnyHttpOrHttpsUrl,
+                options.allowAnyPublicHttpsUrl))
         return 0;
     std::scoped_lock lock(mutex_);
     int activeForWidget = 0;
@@ -431,7 +435,8 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
         if (!snowdesktop::http_security::
                 IsAllowedUrlForDomains(
                     currentUrl, options.allowedDomains,
-                    options.allowAnyHttpOrHttpsUrl))
+                    options.allowAnyHttpOrHttpsUrl,
+                    options.allowAnyPublicHttpsUrl))
         {
             response.error = "Redirect URL is not allowed";
             break;

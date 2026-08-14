@@ -129,6 +129,27 @@ int main()
             L"not a URL", {}, true),
         "widget HTTP mode rejects malformed URLs");
 
+    Expect(IsAllowedUrlForDomains(
+            L"https://hnrss.org/frontpage", {}, false, true),
+        "v2 public HTTPS mode accepts an arbitrary public HTTPS host");
+    Expect(IsAllowedUrlForDomains(
+            L"https://feeds.example.net/rss", {"unrelated.example"},
+            false, true),
+        "v2 public HTTPS mode is independent of optional domain narrowing");
+    Expect(!IsAllowedUrlForDomains(
+            L"http://hnrss.org/frontpage", {}, false, true),
+        "v2 public HTTPS mode rejects plaintext HTTP");
+    Expect(!IsAllowedUrlForDomains(
+            L"https://localhost/feed", {}, false, true) &&
+            !IsAllowedUrlForDomains(
+                L"https://192.168.1.10/feed", {}, false, true) &&
+            !IsAllowedUrlForDomains(
+                L"https://[fc00::1]/feed", {}, false, true),
+        "v2 public HTTPS mode rejects local and private targets");
+    Expect(!IsAllowedUrlForDomains(
+            L"https://user@example.com/feed", {}, false, true),
+        "v2 public HTTPS mode rejects embedded credentials");
+
     Expect(IsAllowedPublicHttpsUrl(L"https://example.com/article?id=1"),
         "shell HTTPS policy accepts a public URL");
     Expect(!IsAllowedPublicHttpsUrl(L"http://example.com/article"),

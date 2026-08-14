@@ -128,11 +128,13 @@ synchronous native context menu.
   `task.start("calendar.create"|"calendar.update"|"calendar.remove", args)`
   and match `task.complete`. Preserve event `id/revision`, handle `conflict`,
   and start remove only from a direct trusted action or menu command.
-- Fetch public HTTPS data with `task.start("network.request", args)`, declare
-  `network.internet`, and list every exact hostname in `networkDomains`. Keep
-  requests as bounded GETs, match the returned task ID, handle stable failure
-  codes, and cancel outstanding work in `dispose`; never restore v1 `http` in
-  an API v2 widget.
+- Fetch public HTTPS data with `task.start("network.request", args)` and declare
+  `network.internet`. Leave `networkDomains` absent when a user setting may
+  point at arbitrary public HTTPS hosts; add exact hostnames only when the
+  package intentionally narrows its own network scope. Keep requests as
+  bounded GETs, match the returned task ID, handle stable failure codes, and
+  cancel outstanding work in `dispose`; never restore v1 `http` in an API v2
+  widget.
 - Open an article or other external public HTTPS URL only with
   `task.start("shell.openUri", { url = value })` from a direct trusted action
   or menu command. Declare `shell.launch` as optional when opening links is not

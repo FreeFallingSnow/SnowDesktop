@@ -26,10 +26,14 @@ local palettes = {
 local settings = {
     fields = {
         {
-            key = "launcherSearch",
+            key = "launcherTitle",
+            searchKey = "launcherSearch",
             label = l10n.tr("lua_widget.media_control.select_launcher"),
-            type = "text",
+            type = "appSearch",
             default = "",
+            emptyLabel = l10n.tr("lua_widget.media_control.not_set"),
+            noResultsLabel =
+                l10n.tr("lua_widget.media_control.no_search_results"),
         },
     },
 }
@@ -330,11 +334,25 @@ local function syncLauncher(model)
         end
         model.launcherQuery = query
         model.selectedLauncherTitle = ""
-        if storage.get("launcherTitle") then
-            storage.remove("launcherTitle")
-        end
         clearLauncherResults(model)
         model.searchRetryPending = true
+    end
+
+    local selectedTitle = storage.get("launcherTitle") or ""
+    if selectedTitle ~= model.selectedLauncherTitle then
+        model.selectedLauncherTitle = selectedTitle
+        model.launcherRef = nil
+        model.launcherDisplayTitle = ""
+        for _, item in ipairs(model.launcherResults) do
+            if item.title == selectedTitle then
+                model.launcherRef = item.ref
+                model.launcherDisplayTitle = item.title or ""
+                break
+            end
+        end
+        if selectedTitle ~= "" and not model.launcherRef then
+            model.searchRetryPending = true
+        end
     end
 
     if appIndexStatus then

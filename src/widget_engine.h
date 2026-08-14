@@ -84,6 +84,9 @@ struct LuaWidgetManifest
         std::string label;
         std::string type;
         std::string defaultValue;
+        std::string searchKey;
+        std::string emptyLabel;
+        std::string noResultsLabel;
         double minValue = 0.0;
         double maxValue = 100.0;
         std::vector<std::string> options;
@@ -117,7 +120,7 @@ struct LuaWidgetManifest
     int maxColumns = 0;                ///< 最多占据列数，0 表示不限制
     int maxRows = 0;                   ///< 最多占据行数，0 表示不限制
     int refreshIntervalMs = 0;          ///< manifest 声明的自动刷新间隔（ms），0 = 不自动刷新
-    std::vector<std::string> networkDomains; ///< 兼容保留的网络域名元数据
+    std::vector<std::string> networkDomains; ///< 可选的精确公网域名收窄范围
     std::vector<std::string> requiredFeatures; ///< 激活前必须满足的 v2 宿主特性
     std::vector<std::string> optionalFeatures; ///< 可由脚本探测并降级的 v2 宿主特性
     std::unordered_map<std::string, snowdesktop::widget::PackageResource>
@@ -1205,6 +1208,20 @@ private:
     std::unique_ptr<
         snowdesktop::widget_runtime::WidgetExternalSearchTaskExecutor>
         externalItemTaskExecutor_;
+    struct SettingsAppSearchState
+    {
+        std::uint64_t taskId = 0;
+        std::string query;
+        std::string error;
+        bool completed = false;
+        std::vector<snowdesktop::widget_runtime::WidgetAppSearchResult>
+            results;
+    };
+    snowdesktop::widget_runtime::WidgetAppTaskExecutor
+        settingsAppTaskExecutor_;
+    std::unordered_map<std::string, SettingsAppSearchState>
+        settingsAppSearchStates_;
+    std::uint64_t nextSettingsAppSearchTaskId_ = 0;
     std::unordered_map<std::uint64_t,
         snowdesktop::widget_runtime::WidgetAppSearchCompletion>
         appSearchCompletions_;

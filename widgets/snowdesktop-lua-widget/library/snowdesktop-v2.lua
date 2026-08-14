@@ -88,8 +88,11 @@
 ---@class SnowSettingField
 ---@field key string
 ---@field label string
----@field type 'text'|'bool'|'int'|'float'|'select'|'color'
+---@field type 'text'|'bool'|'int'|'float'|'select'|'color'|'appSearch'
 ---@field default? string|number|boolean
+---@field searchKey? string Required by appSearch; stores the user's query separately from the selected display title.
+---@field emptyLabel? string Localized label used to clear an appSearch selection.
+---@field noResultsLabel? string Localized label shown after an appSearch returns no applications.
 ---@field min? number
 ---@field max? number
 ---@field options? string[]
@@ -777,7 +780,7 @@ function data.subscribe(topic, options) end
 ---@field revision integer New revision for create/update; zero for remove.
 
 ---@class SnowNetworkRequestArguments
----@field url string Public HTTPS URL whose exact hostname is declared in widget.json networkDomains.
+---@field url string Public HTTPS URL; optional widget.json networkDomains narrows it to exact declared hostnames.
 ---@field timeoutMs? integer 1000 through 30000; defaults to 15000.
 ---@field cacheSeconds? integer 0 through 86400; defaults to 0.
 ---@field maxBytes? integer 4096 through 1048576; defaults to 524288.

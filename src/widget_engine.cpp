@@ -903,6 +903,10 @@ static LuaWidgetManifest::Setting ReadLuaSettingTable(lua_State* L, int tableInd
     setting.label = LuaReadStorageField(L, tableIndex, "label");
     setting.type = LuaReadStorageField(L, tableIndex, "type");
     setting.defaultValue = LuaReadStorageField(L, tableIndex, "default");
+    setting.searchKey = LuaReadStorageField(L, tableIndex, "searchKey");
+    setting.emptyLabel = LuaReadStorageField(L, tableIndex, "emptyLabel");
+    setting.noResultsLabel =
+        LuaReadStorageField(L, tableIndex, "noResultsLabel");
 
     lua_getfield(L, tableIndex, "min");
     if (lua_isnumber(L, -1)) setting.minValue = lua_tonumber(L, -1);
@@ -7357,6 +7361,8 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 static_cast<std::uint32_t>(maximumBytes);
             options.allowedDomains = owner->manifest.networkDomains;
             options.allowAnyHttpOrHttpsUrl = false;
+            options.allowAnyPublicHttpsUrl =
+                owner->manifest.networkDomains.empty();
             const int requestId = httpService_->Submit(std::move(options));
             if (requestId <= 0)
             {
@@ -8877,6 +8883,26 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
     sharedGlassSettingsChanged = false;
     sharedGlassSettingsSaveRequested = false;
 
+    for (auto& completion :
+        settingsAppTaskExecutor_.DrainCompletions())
+    {
+        for (auto& [key, search] : settingsAppSearchStates_)
+        {
+            (void)key;
+            if (search.taskId != completion.id)
+                continue;
+            search.taskId = 0;
+            search.completed = completion.ok;
+            search.error = completion.ok
+                ? std::string{} : completion.error;
+            search.results = completion.ok
+                ? std::move(completion.items)
+                : std::vector<snowdesktop::widget_runtime::
+                    WidgetAppSearchResult>{};
+            break;
+        }
+    }
+
     int idx = FindWidget(widgetId);
     int ref = (idx >= 0) ? widgets_[idx].ref : LUA_NOREF;
     if (ref == LUA_NOREF) return true;
@@ -8972,6 +8998,68 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
     };
     constexpr float kEditorControlWidth = 300.0f;
     constexpr float kEditorSliderWidth = kEditorControlWidth;
+    auto alignEditorControl = [](float requestedWidth) {
+        const float rowStart = ImGui::GetCursorPosX();
+        const float availableWidth = ImGui::GetContentRegionAvail().x;
+        const float maximumWidth = std::max(
+            ImGui::GetFrameHeight(), availableWidth * 0.58f);
+        const float controlWidth = std::min(
+            requestedWidth, maximumWidth);
+        ImGui::SetCursorPosX(std::max(
+            rowStart, rowStart + availableWidth - controlWidth));
+        return controlWidth;
+    };
+    auto startSettingsAppSearch = [&](SettingsAppSearchState& search,
+        const std::string& query) {
+        if (search.taskId != 0)
+            (void)settingsAppTaskExecutor_.Cancel(search.taskId);
+        search.taskId = 0;
+        search.query = query;
+        search.error.clear();
+        search.completed = false;
+        search.results.clear();
+        if (query.empty()) return;
+        if (!applicationCatalogProvider_)
+        {
+            search.error = "providerUnavailable";
+            return;
+        }
+
+        LuaApplicationCatalogSnapshot catalog;
+        try
+        {
+            catalog = applicationCatalogProvider_();
+        }
+        catch (...)
+        {
+            search.error = "providerFailed";
+            return;
+        }
+        if (catalog.state != "ready")
+        {
+            search.error = catalog.state == "indexing"
+                ? "appIndexNotReady" : "providerUnavailable";
+            return;
+        }
+
+        const std::wstring queryWide = Utf8ToWideLocal(query);
+        const std::string foldedQuery = WidgetWideToUtf8(
+            ToUpperInvariant(queryWide));
+        const std::string pinyinQuery =
+            BuildNamePinyinFullKey(queryWide);
+        std::uint64_t taskId = ++nextSettingsAppSearchTaskId_;
+        if (taskId == 0)
+            taskId = ++nextSettingsAppSearchTaskId_;
+        if (foldedQuery.empty() ||
+            !settingsAppTaskExecutor_.StartSearch(
+                taskId, foldedQuery, pinyinQuery, 0, 8,
+                appIndexRevision_, std::move(catalog.entries)))
+        {
+            search.error = "taskExecutorUnavailable";
+            return;
+        }
+        search.taskId = taskId;
+    };
     auto renderSetting = [&](const LuaWidgetManifest::Setting& setting) {
         if (setting.key.empty() || IsHostStructureSettingKey(setting.key) ||
             IsHostAppearanceSettingKey(setting.key))
@@ -9056,6 +9144,92 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
                 changed = true;
             }
         }
+        else if (setting.type == "appSearch" &&
+            !setting.searchKey.empty())
+        {
+            std::string query = getStorage(setting.searchKey);
+            char buffer[512]{};
+            strncpy_s(buffer, query.c_str(), _TRUNCATE);
+            ImGui::SetNextItemWidth(beginEditorRow(
+                setting.label.c_str(), kEditorControlWidth));
+            if (ImGui::InputText("##Search", buffer,
+                    sizeof(buffer)))
+            {
+                query = buffer;
+                setStorage(setting.searchKey, query);
+                setStorage(setting.key, "");
+            }
+
+            const std::string stateKey = editorId + "\n" +
+                setting.key;
+            SettingsAppSearchState& search =
+                settingsAppSearchStates_[stateKey];
+            bool shouldStart = search.query != query;
+            if (!shouldStart && search.taskId == 0 &&
+                search.error == "appIndexNotReady" &&
+                applicationIndexStatusProvider_)
+            {
+                try
+                {
+                    shouldStart =
+                        applicationIndexStatusProvider_() == "ready";
+                }
+                catch (...)
+                {
+                    shouldStart = false;
+                }
+            }
+            if (shouldStart)
+                startSettingsAppSearch(search, query);
+
+            const float listWidth = alignEditorControl(
+                kEditorControlWidth);
+            const float rowHeight = ImGui::GetTextLineHeightWithSpacing();
+            const int visibleRows = std::clamp(
+                static_cast<int>(search.results.size()) + 1, 2, 6);
+            if (ImGui::BeginListBox("##Results", ImVec2(
+                    listWidth, rowHeight * visibleRows +
+                        ImGui::GetStyle().FramePadding.y * 2.0f)))
+            {
+                const std::string emptyLabel =
+                    setting.emptyLabel.empty()
+                    ? std::string("-") : setting.emptyLabel;
+                if (ImGui::Selectable(emptyLabel.c_str(),
+                        current.empty()))
+                {
+                    next.clear();
+                    changed = true;
+                }
+                for (std::size_t resultIndex = 0;
+                    resultIndex < search.results.size(); ++resultIndex)
+                {
+                    const auto& result = search.results[resultIndex];
+                    const std::string itemLabel = result.title +
+                        "###AppSearchResult" +
+                        std::to_string(resultIndex);
+                    if (ImGui::Selectable(itemLabel.c_str(),
+                            current == result.title))
+                    {
+                        next = result.title;
+                        changed = true;
+                    }
+                }
+                if (!query.empty() && search.results.empty())
+                {
+                    const std::string statusLabel =
+                        search.taskId != 0 ||
+                            search.error == "appIndexNotReady"
+                        ? std::string("...")
+                        : (setting.noResultsLabel.empty()
+                            ? std::string("-")
+                            : setting.noResultsLabel);
+                    ImGui::BeginDisabled();
+                    ImGui::Selectable(statusLabel.c_str(), false);
+                    ImGui::EndDisabled();
+                }
+                ImGui::EndListBox();
+            }
+        }
         else
         {
             char buffer[512]{};
@@ -9100,6 +9274,9 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
                     value = it->second;
             }
             setStorage(setting.key, value);
+            if (setting.type == "appSearch" &&
+                !setting.searchKey.empty())
+                setStorage(setting.searchKey, "");
         }
     };
 
@@ -13703,6 +13880,10 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
             readString(object, "key", setting.key);
             readString(object, "label", setting.label);
             readString(object, "type", setting.type);
+            readString(object, "searchKey", setting.searchKey);
+            readString(object, "emptyLabel", setting.emptyLabel);
+            readString(object, "noResultsLabel",
+                setting.noResultsLabel);
             if (const JsonValue* defaultValue = object.Find("default"))
                 setting.defaultValue = valueString(*defaultValue);
             readNumber(object, "min", setting.minValue);
