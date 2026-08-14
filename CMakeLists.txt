@@ -251,6 +251,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget_media_task_executor.cpp
     src/widget_system_data_provider.cpp
     src/widget_audio_analysis_provider.cpp
+    src/widget_interaction_region.cpp
     src/widget_lua_lifecycle.cpp
     src/widget_runtime_diagnostics.cpp
     src/widget_runtime_scheduler.cpp
@@ -900,6 +901,15 @@ if (BUILD_TESTING)
         SOURCES tests/widget_interaction_rules_tests.cpp
         INCLUDE_DIRECTORIES src
         LABELS rules widget)
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetInteractionRegionTests
+        widget_interaction_region
+        SOURCES
+            tests/widget_interaction_region_tests.cpp
+            src/widget_interaction_region.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS contract interaction lua widget)
 
     snowdesktop_add_test(
         SnowDesktopFolderSelfDropRulesTests
