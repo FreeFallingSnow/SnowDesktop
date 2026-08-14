@@ -947,6 +947,10 @@ int main()
         "disabled package does not silently fall back to a built-in source");
     Expect(manager.ContainsPackage(manifest.id),
         "a disabled package remains physically installed for recovery UI");
+    error.clear();
+    Expect(manager.SetPermissionDecision(manifest.id,
+            PermissionDecisionState::Denied, {}, {}, error),
+        "permissions remain manageable while an installed package is disabled");
     Expect(manager.UpdateSteamSubscriptionHistory(
             "111", { "100", "200" }, error),
         "Steam subscription history is persisted per account");
@@ -961,8 +965,10 @@ int main()
         historyReloadedManager.SteamSubscriptionHistory() ==
             subscriptionHistory,
         "Steam subscription history survives a manager restart");
-    Expect(manager.SetEnabled(manifest.id, true, error),
-        "installed package can be re-enabled");
+    Expect(manager.SetEnabled(manifest.id, true, error) &&
+            manager.Resolve(manifest.id)->permissionState ==
+                PermissionDecisionState::Denied,
+        "a disabled package can be re-enabled without losing its permission decision");
 
     const auto sourceV2 = root / L"source-v2";
     MakePackage(sourceV2, "1.1.0",

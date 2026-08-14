@@ -2810,7 +2810,31 @@ bool WidgetPackageManager::SetPermissionDecision(
     const std::vector<std::string>& grantedNetworkDomains,
     std::string& error)
 {
-    const auto package = Resolve(packageId);
+    std::optional<InstalledPackage> package = Resolve(packageId);
+    if (!package)
+    {
+        if (const auto registered = registry_.find(packageId);
+            registered != registry_.end())
+        {
+            const auto managed = std::find_if(packages_.begin(),
+                packages_.end(), [&](const auto& candidate) {
+                    return candidate.manifest.id == packageId &&
+                        candidate.manifest.version ==
+                            registered->second.activeVersion &&
+                        candidate.source == registered->second.source;
+                });
+            if (managed != packages_.end()) package = *managed;
+        }
+    }
+    if (!package)
+    {
+        const auto selected = std::find_if(packages_.begin(),
+            packages_.end(), [&](const auto& candidate) {
+                return candidate.manifest.id == packageId &&
+                    candidate.active;
+            });
+        if (selected != packages_.end()) package = *selected;
+    }
     if (!package)
     {
         error = "package is unavailable";

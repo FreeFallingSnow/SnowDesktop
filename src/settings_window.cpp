@@ -19,6 +19,7 @@
 #include "steam_app_identity.h"
 #include "steam_child_environment.h"
 #include "widget_engine.h"
+#include "widget_permission_broker.h"
 #include "l10n.h"
 #include "resource.h"
 #include "crashlog.h"
@@ -4030,6 +4031,28 @@ void SettingsWindow::DrawWidgetPackagesPage()
         }
         return _L("app.settings.widgets_permission_state_pending");
     };
+    auto effectivePermissionStateLabel = [&](const auto& package)
+    {
+        const auto grant = snowdesktop::widget::WidgetPermissionBroker::
+            Evaluate(package.permissionState,
+                package.manifest.permissions,
+                package.manifest.optionalPermissions,
+                package.manifest.networkDomains,
+                package.grantedPermissions,
+                package.grantedNetworkDomains);
+        if (grant.runtimeBlock == snowdesktop::widget::
+                PermissionRuntimeBlock::MissingRequired)
+        {
+            return _L(
+                "app.settings.widgets_permission_state_missing_required");
+        }
+        return permissionStateLabel(package.permissionState);
+    };
+    auto canManagePermissions = [](const auto& package)
+    {
+        return !snowdesktop::widget::DeclaredPermissions(
+            package.manifest).empty();
+    };
     auto canRevokePermissions = [](const auto& package)
     {
         using snowdesktop::widget::PermissionDecisionState;
@@ -4060,6 +4083,35 @@ void SettingsWindow::DrawWidgetPackagesPage()
         else
             widgetPackageStatus_ = error;
         return revoked;
+    };
+    bool openPermissionEditorRequested = false;
+    auto openPermissionEditor = [&](const auto& package)
+    {
+        using snowdesktop::widget::PermissionDecisionState;
+        widgetPermissionEditorPackageId_ = package.manifest.id;
+        widgetPermissionEditorPackageVersion_ = package.manifest.version;
+        widgetPermissionEditorSource_ = package.source;
+        widgetPermissionEditorScopeFingerprint_ =
+            snowdesktop::widget::WidgetPermissionBroker::ScopeFingerprint(
+                package.manifest.permissions,
+                package.manifest.optionalPermissions,
+                package.manifest.networkDomains);
+        widgetPermissionEditorGrants_ = package.grantedPermissions;
+        if (package.permissionState == PermissionDecisionState::Pending ||
+            package.permissionState == PermissionDecisionState::Denied)
+        {
+            widgetPermissionEditorGrants_ = package.manifest.permissions;
+            for (const auto& permission :
+                package.manifest.optionalPermissions)
+            {
+                if (!snowdesktop::widget::PermissionRequiresConsent(
+                        permission))
+                {
+                    widgetPermissionEditorGrants_.push_back(permission);
+                }
+            }
+        }
+        openPermissionEditorRequested = true;
     };
     auto needsInstallConfirmation = [](const std::wstring& message)
     {
@@ -4451,7 +4503,7 @@ void SettingsWindow::DrawWidgetPackagesPage()
                 permissionSummary(permissions);
             ImGui::TextDisabled("%s: %s",
                 _L("app.settings.widgets_permission_state"),
-                permissionStateLabel(package->permissionState));
+                effectivePermissionStateLabel(*package));
             if (permissionsText.empty())
                 ImGui::TextDisabled("%s",
                     _L("app.settings.widgets_no_permissions"));
@@ -4487,7 +4539,7 @@ void SettingsWindow::DrawWidgetPackagesPage()
                         : package->source.providerId.c_str());
                 ImGui::TextDisabled("%s: %s",
                     _L("app.settings.widgets_permission_state"),
-                    permissionStateLabel(package->permissionState));
+                    effectivePermissionStateLabel(*package));
                 if (!permissionsText.empty())
                 {
                     ImGui::PushTextWrapPos(
@@ -4497,18 +4549,15 @@ void SettingsWindow::DrawWidgetPackagesPage()
                         permissionsText.c_str());
                     ImGui::PopTextWrapPos();
                 }
-                if (canRevokePermissions(*package))
+                if (canManagePermissions(*package))
                 {
                     ImGui::Separator();
-                    ImGui::PushStyleColor(ImGuiCol_Text,
-                        ImVec4(0.86f, 0.44f, 0.12f, 1.0f));
                     if (ImGui::MenuItem(_L(
-                            "app.settings.widgets_revoke_permissions")))
+                            "app.settings.widgets_manage_permissions")))
                     {
-                        revokePermissions(*package);
+                        openPermissionEditor(*package);
                         ImGui::CloseCurrentPopup();
                     }
-                    ImGui::PopStyleColor();
                 }
                 if (group.managed)
                 {
@@ -4808,27 +4857,27 @@ void SettingsWindow::DrawWidgetPackagesPage()
                 }
                 ImGui::TextDisabled("%s: %s",
                     _L("app.settings.widgets_permission_state"),
-                    permissionStateLabel(package->permissionState));
-                const bool canRevoke = canRevokePermissions(*package);
-                const float revokeWidth = canRevoke
-                    ? std::min(132.0f * dpiScale_,
+                    effectivePermissionStateLabel(*package));
+                const bool canManage = canManagePermissions(*package);
+                const float manageWidth = canManage
+                    ? std::min(160.0f * dpiScale_,
                         ImGui::CalcTextSize(_L(
-                            "app.settings.widgets_revoke_permissions")).x +
+                            "app.settings.widgets_manage_permissions")).x +
                             24.0f * dpiScale_)
                     : 0.0f;
-                const float actionGap = canRevoke
+                const float actionGap = canManage
                     ? ImGui::GetStyle().ItemSpacing.x : 0.0f;
                 ImGui::SetCursorPos(ImVec2(
                     ImGui::GetWindowContentRegionMax().x - addWidth -
-                        revokeWidth - actionGap,
+                        manageWidth - actionGap,
                     (rowHeight - ImGui::GetFrameHeight()) * 0.5f));
-                if (canRevoke && SecondaryButton(
-                        _L("app.settings.widgets_revoke_permissions"),
-                        ImVec2(revokeWidth, 0)))
+                if (canManage && SecondaryButton(
+                        _L("app.settings.widgets_manage_permissions"),
+                        ImVec2(manageWidth, 0)))
                 {
-                    revokePermissions(*package);
+                    openPermissionEditor(*package);
                 }
-                if (canRevoke) ImGui::SameLine();
+                if (canManage) ImGui::SameLine();
                 ImGui::BeginDisabled(!addWidgetToDesktopCallback_);
                 if (SecondaryButton(
                         _L("app.widget_preview.add_to_desktop"),
@@ -4848,6 +4897,204 @@ void SettingsWindow::DrawWidgetPackagesPage()
     }
 
     ImGui::EndChild();
+
+    const std::string permissionEditorPopup =
+        std::string(_L("app.settings.widgets_manage_permissions")) +
+        "##WidgetPermissionEditor";
+    if (openPermissionEditorRequested)
+        ImGui::OpenPopup(permissionEditorPopup.c_str());
+    ImGui::SetNextWindowSize(
+        ImVec2(560.0f * dpiScale_, 0.0f), ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal(permissionEditorPopup.c_str(), nullptr,
+            ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        const auto permissionPackage = std::find_if(
+            packages.begin(), packages.end(), [&](const auto& candidate) {
+                return candidate.manifest.id ==
+                        widgetPermissionEditorPackageId_ &&
+                    candidate.manifest.version ==
+                        widgetPermissionEditorPackageVersion_ &&
+                    candidate.source == widgetPermissionEditorSource_ &&
+                    candidate.selected;
+            });
+        if (permissionPackage == packages.end())
+        {
+            ImGui::TextWrapped("%s",
+                _L("app.settings.widgets_permissions_scope_changed"));
+            if (SecondaryButton(_L("app.settings.cancel")))
+            {
+                widgetPermissionEditorPackageId_.clear();
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        else
+        {
+            const auto manifest = localizedManifest(
+                permissionPackage->manifest);
+            const std::string currentFingerprint =
+                snowdesktop::widget::WidgetPermissionBroker::
+                    ScopeFingerprint(
+                        permissionPackage->manifest.permissions,
+                        permissionPackage->manifest.optionalPermissions,
+                        permissionPackage->manifest.networkDomains);
+            const bool scopeChanged =
+                currentFingerprint !=
+                    widgetPermissionEditorScopeFingerprint_;
+            ImGui::TextUnformatted(manifest.name.c_str());
+            ImGui::TextDisabled("%s: %s",
+                _L("app.settings.widgets_permission_state"),
+                effectivePermissionStateLabel(*permissionPackage));
+            ImGui::Spacing();
+
+            auto drawPermissionToggle = [&](const std::string& permission,
+                std::string_view idPrefix)
+            {
+                bool selected = std::find(
+                    widgetPermissionEditorGrants_.begin(),
+                    widgetPermissionEditorGrants_.end(), permission) !=
+                    widgetPermissionEditorGrants_.end();
+                std::string label = permissionLabel(permission);
+                label += "##";
+                label += idPrefix;
+                label += permission;
+                if (ImGui::Checkbox(label.c_str(), &selected))
+                {
+                    if (selected)
+                    {
+                        widgetPermissionEditorGrants_.push_back(
+                            permission);
+                    }
+                    else
+                    {
+                        std::erase(widgetPermissionEditorGrants_,
+                            permission);
+                    }
+                }
+            };
+
+            if (!permissionPackage->manifest.permissions.empty())
+            {
+                ImGui::TextUnformatted(_L(
+                    "app.widget_permission.permissions_required_heading"));
+                ImGui::TextDisabled("%s", _L(
+                    "app.settings.widgets_permission_required_notice"));
+                for (const auto& permission :
+                    permissionPackage->manifest.permissions)
+                {
+                    drawPermissionToggle(permission, "required-");
+                }
+            }
+            if (!permissionPackage->manifest.optionalPermissions.empty())
+            {
+                ImGui::Spacing();
+                ImGui::TextUnformatted(_L(
+                    "app.widget_permission.permissions_optional_heading"));
+                for (const auto& permission :
+                    permissionPackage->manifest.optionalPermissions)
+                {
+                    drawPermissionToggle(permission, "optional-");
+                }
+            }
+            if (!permissionPackage->manifest.networkDomains.empty())
+            {
+                ImGui::Spacing();
+                ImGui::TextUnformatted(_L(
+                    "app.widget_permission.domains_heading"));
+                for (const auto& domain :
+                    permissionPackage->manifest.networkDomains)
+                {
+                    ImGui::BulletText("%s", domain.c_str());
+                }
+            }
+            if (scopeChanged)
+            {
+                ImGui::Spacing();
+                ImGui::PushStyleColor(ImGuiCol_Text,
+                    ImVec4(0.86f, 0.44f, 0.12f, 1.0f));
+                ImGui::TextWrapped("%s", _L(
+                    "app.settings.widgets_permissions_scope_changed"));
+                ImGui::PopStyleColor();
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            ImGui::BeginDisabled(scopeChanged);
+            if (BlueButton(_L("app.settings.apply")))
+            {
+                std::vector<std::string> grantedPermissions;
+                for (const auto& permission :
+                    snowdesktop::widget::DeclaredPermissions(
+                        permissionPackage->manifest))
+                {
+                    if (std::find(widgetPermissionEditorGrants_.begin(),
+                            widgetPermissionEditorGrants_.end(),
+                            permission) !=
+                        widgetPermissionEditorGrants_.end())
+                    {
+                        grantedPermissions.push_back(permission);
+                    }
+                }
+                std::vector<std::string> grantedDomains;
+                if (std::find(grantedPermissions.begin(),
+                        grantedPermissions.end(), "network.http") !=
+                    grantedPermissions.end())
+                {
+                    grantedDomains =
+                        permissionPackage->manifest.networkDomains;
+                }
+                std::string permissionError;
+                const std::wstring packageId = Utf8ToWide(
+                    permissionPackage->manifest.id);
+                const bool applied = widgetEngine_
+                    ? widgetEngine_->ApplyWidgetPermissionDecision(
+                        packageId,
+                        snowdesktop::widget::PermissionDecisionState::
+                            Granted,
+                        grantedPermissions, grantedDomains,
+                        permissionError)
+                    : WidgetEngine::SetWidgetPermissionDecision(
+                        packageId,
+                        snowdesktop::widget::PermissionDecisionState::
+                            Granted,
+                        grantedPermissions, grantedDomains,
+                        permissionError);
+                if (applied)
+                {
+                    widgetPackageStatus_ = _L(
+                        "app.settings.widgets_permissions_updated_ok");
+                    widgetPermissionEditorPackageId_.clear();
+                    if (reloadCallback_) reloadCallback_();
+                    ImGui::CloseCurrentPopup();
+                }
+                else
+                {
+                    widgetPackageStatus_ = permissionError;
+                }
+            }
+            ImGui::EndDisabled();
+            if (canRevokePermissions(*permissionPackage))
+            {
+                ImGui::SameLine();
+                if (SecondaryButton(_L(
+                        "app.settings.widgets_revoke_permissions")))
+                {
+                    if (revokePermissions(*permissionPackage))
+                    {
+                        widgetPermissionEditorPackageId_.clear();
+                        ImGui::CloseCurrentPopup();
+                    }
+                }
+            }
+            ImGui::SameLine();
+            if (SecondaryButton(_L("app.settings.cancel")))
+            {
+                widgetPermissionEditorPackageId_.clear();
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        ImGui::EndPopup();
+    }
 
     if (pendingWidgetInstallKind_ != PendingWidgetInstallKind::None)
         ImGui::OpenPopup("##ConfirmWidgetPackageInstall");

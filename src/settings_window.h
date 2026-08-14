@@ -591,6 +591,11 @@ private:
     std::string pendingWidgetPackageUninstallWorkshopItem_;
     int widgetPackageFilter_ = 0;
     char widgetPackageSearch_[160] = {};
+    std::string widgetPermissionEditorPackageId_;
+    std::string widgetPermissionEditorPackageVersion_;
+    snowdesktop::widget::PackageSourceRef widgetPermissionEditorSource_;
+    std::string widgetPermissionEditorScopeFingerprint_;
+    std::vector<std::string> widgetPermissionEditorGrants_;
     std::vector<snowdesktop::steam_bridge::SkillInstallStatus>
         agentSkillStatuses_;
     std::string agentSkillStatusError_;
