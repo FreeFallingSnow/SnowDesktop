@@ -568,6 +568,8 @@ local snapshot = cpu:value()
 
 所有提供者采用引用计数生命周期，而不是应用启动即常驻：
 
+当前已实现内部 `WidgetDataBroker` 状态机及契约测试，覆盖 provider 注册、实例级订阅上限、共享有效采样率、可见性切换、权限撤销、预览隔离、idle grace 和关闭回收。该阶段尚未把 `data.subscribe` 暴露给 Lua，也尚未接入 CPU、内存或音频等真实 provider；只有真实 provider、不可变快照投递和实例作用域清理接通后，才会把对应 topic 写入公开 API 元数据。
+
 ```text
 Stopped
   -> Starting       first eligible subscription
