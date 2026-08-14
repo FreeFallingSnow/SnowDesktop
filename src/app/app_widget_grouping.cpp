@@ -1374,12 +1374,22 @@ void DesktopApp::AddLuaWidgetAt(POINT screenPoint, const std::wstring& packageId
         std::string error;
         const bool grant = decision ==
             snowdesktop::widget::PermissionDecisionState::Granted;
-        if (!WidgetEngine::SetWidgetPermissionDecision(packageId, decision,
+        const bool applied = widgetEngine_
+            ? widgetEngine_->ApplyWidgetPermissionDecision(
+                packageId, decision,
                 grant ? package->manifest.permissions :
                     std::vector<std::string>{},
                 grant ? package->manifest.networkDomains :
                     std::vector<std::string>{},
-                error))
+                error)
+            : WidgetEngine::SetWidgetPermissionDecision(
+                packageId, decision,
+                grant ? package->manifest.permissions :
+                    std::vector<std::string>{},
+                grant ? package->manifest.networkDomains :
+                    std::vector<std::string>{},
+                error);
+        if (!applied)
         {
             ShowWidgetPermissionErrorAsync(
                 _LW("app.widget_permission.title"),
@@ -1433,13 +1443,20 @@ void DesktopApp::CompleteLuaWidgetConsent(
         ? snowdesktop::widget::PermissionDecisionState::Granted
         : snowdesktop::widget::PermissionDecisionState::Denied;
     std::string error;
-    if (!WidgetEngine::SetWidgetPermissionDecision(
+    const bool applied = widgetEngine_
+        ? widgetEngine_->ApplyWidgetPermissionDecision(
             pending.packageId, decision,
             grant ? pending.requestedPermissions :
                 std::vector<std::string>{},
             grant ? pending.requestedNetworkDomains :
+                std::vector<std::string>{}, error)
+        : WidgetEngine::SetWidgetPermissionDecision(
+            pending.packageId, decision,
+            grant ? pending.requestedPermissions :
                 std::vector<std::string>{},
-            error))
+            grant ? pending.requestedNetworkDomains :
+                std::vector<std::string>{}, error);
+    if (!applied)
     {
         ShowWidgetPermissionErrorAsync(
             _LW("app.widget_permission.title"),

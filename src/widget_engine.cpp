@@ -7860,6 +7860,31 @@ bool WidgetEngine::SetWidgetPermissionDecision(
         grantedNetworkDomains, error);
 }
 
+bool WidgetEngine::ApplyWidgetPermissionDecision(
+    const std::wstring& packageId,
+    snowdesktop::widget::PermissionDecisionState state,
+    const std::vector<std::string>& grantedPermissions,
+    const std::vector<std::string>& grantedNetworkDomains,
+    std::string& error)
+{
+    if (!SetWidgetPermissionDecision(packageId, state,
+            grantedPermissions, grantedNetworkDomains, error))
+        return false;
+    const std::string requestedId = WidgetWideToUtf8(packageId);
+    std::vector<std::wstring> instances;
+    for (const auto& widget : widgets_)
+        if (widget.packageId == requestedId)
+            instances.push_back(widget.widgetId);
+    for (const auto& instance : instances)
+        UnloadWidget(instance);
+    if (state == snowdesktop::widget::PermissionDecisionState::Granted)
+    {
+        for (const auto& instance : instances)
+            (void)EnsureWidgetLoaded(instance, packageId);
+    }
+    return true;
+}
+
 std::optional<snowdesktop::widget::PackageSourceRef>
 WidgetEngine::GetWidgetPackageSource(const std::wstring& packageId)
 {

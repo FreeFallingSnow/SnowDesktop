@@ -4006,6 +4006,53 @@ void SettingsWindow::DrawWidgetPackagesPage()
         }
         return summary;
     };
+    auto permissionStateLabel = [](snowdesktop::widget::
+            PermissionDecisionState state)
+    {
+        using snowdesktop::widget::PermissionDecisionState;
+        switch (state)
+        {
+        case PermissionDecisionState::LegacyImplicit:
+            return _L("app.settings.widgets_permission_state_legacy");
+        case PermissionDecisionState::Pending:
+            return _L("app.settings.widgets_permission_state_pending");
+        case PermissionDecisionState::Granted:
+            return _L("app.settings.widgets_permission_state_granted");
+        case PermissionDecisionState::Denied:
+            return _L("app.settings.widgets_permission_state_denied");
+        }
+        return _L("app.settings.widgets_permission_state_pending");
+    };
+    auto canRevokePermissions = [](const auto& package)
+    {
+        using snowdesktop::widget::PermissionDecisionState;
+        const auto state = package.permissionState;
+        return (state == PermissionDecisionState::Granted ||
+                state == PermissionDecisionState::LegacyImplicit) &&
+            !snowdesktop::widget::PermissionsRequiringConsent(
+                package.manifest.permissions).empty();
+    };
+    auto revokePermissions = [&](const auto& package)
+    {
+        std::string error;
+        const std::wstring packageId = Utf8ToWide(package.manifest.id);
+        const bool revoked = widgetEngine_
+            ? widgetEngine_->ApplyWidgetPermissionDecision(packageId,
+                snowdesktop::widget::PermissionDecisionState::Denied,
+                {}, {}, error)
+            : WidgetEngine::SetWidgetPermissionDecision(packageId,
+                snowdesktop::widget::PermissionDecisionState::Denied,
+                {}, {}, error);
+        if (revoked)
+        {
+            widgetPackageStatus_ = _L(
+                "app.settings.widgets_permissions_revoked_ok");
+            if (reloadCallback_) reloadCallback_();
+        }
+        else
+            widgetPackageStatus_ = error;
+        return revoked;
+    };
     auto needsInstallConfirmation = [](const std::wstring& message)
     {
         return message.find(L"requires explicit confirmation") !=
@@ -4394,6 +4441,9 @@ void SettingsWindow::DrawWidgetPackagesPage()
             const auto& permissions = package->grantedPermissions;
             const std::string permissionsText =
                 permissionSummary(permissions);
+            ImGui::TextDisabled("%s: %s",
+                _L("app.settings.widgets_permission_state"),
+                permissionStateLabel(package->permissionState));
             if (permissionsText.empty())
                 ImGui::TextDisabled("%s",
                     _L("app.settings.widgets_no_permissions"));
@@ -4427,6 +4477,9 @@ void SettingsWindow::DrawWidgetPackagesPage()
                     package->source.providerId.empty()
                         ? _L("app.settings.widgets_source_local")
                         : package->source.providerId.c_str());
+                ImGui::TextDisabled("%s: %s",
+                    _L("app.settings.widgets_permission_state"),
+                    permissionStateLabel(package->permissionState));
                 if (!permissionsText.empty())
                 {
                     ImGui::PushTextWrapPos(
@@ -4435,6 +4488,19 @@ void SettingsWindow::DrawWidgetPackagesPage()
                         _L("app.settings.widgets_permissions"),
                         permissionsText.c_str());
                     ImGui::PopTextWrapPos();
+                }
+                if (canRevokePermissions(*package))
+                {
+                    ImGui::Separator();
+                    ImGui::PushStyleColor(ImGuiCol_Text,
+                        ImVec4(0.86f, 0.44f, 0.12f, 1.0f));
+                    if (ImGui::MenuItem(_L(
+                            "app.settings.widgets_revoke_permissions")))
+                    {
+                        revokePermissions(*package);
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::PopStyleColor();
                 }
                 if (group.managed)
                 {
@@ -4712,7 +4778,7 @@ void SettingsWindow::DrawWidgetPackagesPage()
                 if (!package) continue;
                 const auto manifest = localizedManifest(package->manifest);
                 ImGui::PushID(("builtin-" + group->id).c_str());
-                const float rowHeight = 54.0f * dpiScale_;
+                const float rowHeight = 70.0f * dpiScale_;
                 ImGui::BeginChild("##BuiltinWidgetRow",
                     ImVec2(0, rowHeight), ImGuiChildFlags_None);
                 const float addWidth = std::min(
@@ -4732,9 +4798,29 @@ void SettingsWindow::DrawWidgetPackagesPage()
                     ImGui::TextDisabled("%s", manifest.description.c_str());
                     ImGui::PopTextWrapPos();
                 }
+                ImGui::TextDisabled("%s: %s",
+                    _L("app.settings.widgets_permission_state"),
+                    permissionStateLabel(package->permissionState));
+                const bool canRevoke = canRevokePermissions(*package);
+                const float revokeWidth = canRevoke
+                    ? std::min(132.0f * dpiScale_,
+                        ImGui::CalcTextSize(_L(
+                            "app.settings.widgets_revoke_permissions")).x +
+                            24.0f * dpiScale_)
+                    : 0.0f;
+                const float actionGap = canRevoke
+                    ? ImGui::GetStyle().ItemSpacing.x : 0.0f;
                 ImGui::SetCursorPos(ImVec2(
-                    ImGui::GetWindowContentRegionMax().x - addWidth,
+                    ImGui::GetWindowContentRegionMax().x - addWidth -
+                        revokeWidth - actionGap,
                     (rowHeight - ImGui::GetFrameHeight()) * 0.5f));
+                if (canRevoke && SecondaryButton(
+                        _L("app.settings.widgets_revoke_permissions"),
+                        ImVec2(revokeWidth, 0)))
+                {
+                    revokePermissions(*package);
+                }
+                if (canRevoke) ImGui::SameLine();
                 ImGui::BeginDisabled(!addWidgetToDesktopCallback_);
                 if (SecondaryButton(
                         _L("app.widget_preview.add_to_desktop"),

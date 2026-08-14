@@ -670,6 +670,12 @@ public:
         const std::vector<std::string>& grantedPermissions,
         const std::vector<std::string>& grantedNetworkDomains,
         std::string& error);
+    bool ApplyWidgetPermissionDecision(
+        const std::wstring& packageId,
+        snowdesktop::widget::PermissionDecisionState state,
+        const std::vector<std::string>& grantedPermissions,
+        const std::vector<std::string>& grantedNetworkDomains,
+        std::string& error);
     static std::optional<snowdesktop::widget::PackageSourceRef>
         GetWidgetPackageSource(const std::wstring& packageId);
     static bool IsWidgetPackageAvailable(const std::wstring& packageId);
