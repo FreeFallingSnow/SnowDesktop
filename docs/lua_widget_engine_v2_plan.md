@@ -269,6 +269,12 @@ return widget.define({
 - `view` 返回视图树，或 v2 组件改用兼容 `render` 即时绘制；一个表面只能选择一种模式。
 - 所有宿主资源绑定到实例作用域，卸载时自动取消。
 
+当前过渡实现已经接通即时绘制组件的 `setup(context) -> model -> render(context,
+model) -> dispose(context, model, reason)` 路径，并将其作为 `lifecycle.model`
+feature 发布。setup 失败不会替换热重载前的可用 VM，dispose 在卸载、热重载和
+宿主关闭时至多执行一次。`event`、`menu` 和声明式 `view` 尚未接通，继续在
+`widget.define` 阶段拒绝。
+
 ## 7. 生命周期状态机
 
 ### 7.1 状态

@@ -4520,6 +4520,7 @@ void WidgetEngine::Shutdown()
     {
         if (widget.valid && widget.hostVisible)
             InvokeSimpleCallback(widget, "onHidden");
+        DisposeWidgetLifecycle(widget, "shutdown");
         if (widget.refreshTimerId && widgetTimerKillCallback_)
             widgetTimerKillCallback_(widget.refreshTimerId);
         if (widget.namedTimerId && widgetTimerKillCallback_)
@@ -4543,6 +4544,8 @@ void WidgetEngine::Shutdown()
     {
         if (widget.state)
         {
+            widget.lifecycle.Release(widget.state);
+            luaL_unref(widget.state, LUA_REGISTRYINDEX, widget.ref);
             lua_close(widget.state);
             widget.state = nullptr;
         }
@@ -4562,6 +4565,7 @@ void WidgetEngine::UnloadWidget(const std::wstring& widgetId)
         focusedHostInput_ = {};
     if (widgets_[idx].hostVisible)
         InvokeSimpleCallback(widgets_[idx], "onHidden");
+    DisposeWidgetLifecycle(widgets_[idx], "unload");
     if (widgets_[idx].refreshTimerId && widgetTimerKillCallback_)
         widgetTimerKillCallback_(widgets_[idx].refreshTimerId);
     if (widgets_[idx].namedTimerId && widgetTimerKillCallback_)
@@ -4570,6 +4574,7 @@ void WidgetEngine::UnloadWidget(const std::wstring& widgetId)
     lua_State* state = widgets_[idx].state;
     if (state)
     {
+        widgets_[idx].lifecycle.Release(state);
         luaL_unref(state, LUA_REGISTRYINDEX, widgets_[idx].ref);
         lua_close(state);
         widgets_[idx].state = nullptr;
@@ -4606,7 +4611,7 @@ void WidgetEngine::DeleteWidgetInstance(const std::wstring& widgetId)
 
 int WidgetEngine::FindWidget(const std::wstring& widgetId) const
 {
-    for (int i = 0; i < (int)widgets_.size(); ++i)
+    for (int i = static_cast<int>(widgets_.size()) - 1; i >= 0; --i)
     {
         if (widgets_[i].widgetId == widgetId)
             return i;
@@ -4660,6 +4665,56 @@ void WidgetEngine::InvokeSimpleCallback(LuaWidget& widget, const char* callbackN
     lua_pop(state, 1);
     if (stateChanged)
         RuntimeInvalidateHost(widgetId);
+}
+
+bool WidgetEngine::InitializeWidgetLifecycle(LuaWidget& widget)
+{
+    if (widget.manifest.apiVersion < 2) return true;
+    lua_State* state = widget.state;
+    if (!state) return false;
+    PreviewExecutionScope previewScope(
+        widget.preview ? &widget.previewStorage : nullptr);
+    WidgetExecutionContextGuard contextGuard(d2dState_, widget.widgetId);
+    snowdesktop::lua_runtime::StackGuard stackGuard(state);
+    SetWidgetRectContext(d2dState_, widget.lastBounds);
+    std::string error;
+    const auto pushContext = +[](lua_State* lifecycleState) {
+        (void)lua_WidgetContext(lifecycleState);
+    };
+    if (widget.lifecycle.Setup(
+            state, widget.ref, pushContext, error))
+    {
+        (void)snowdesktop::widget_api::ConsumeTransientStateDirty(state);
+        return true;
+    }
+    RuntimeRecordError(widget.widgetId,
+        error.empty() ? "Widget setup failed" : error);
+    RecordWidgetHostFailure(widget.widgetId,
+        error.empty() ? "Widget setup failed" : error,
+        widget.quota && (widget.quota->memoryExceeded ||
+            widget.quota->executionExceeded));
+    return false;
+}
+
+void WidgetEngine::DisposeWidgetLifecycle(
+    LuaWidget& widget, const char* reason)
+{
+    if (widget.manifest.apiVersion < 2 || !widget.state) return;
+    PreviewExecutionScope previewScope(
+        widget.preview ? &widget.previewStorage : nullptr);
+    WidgetExecutionContextGuard contextGuard(d2dState_, widget.widgetId);
+    snowdesktop::lua_runtime::StackGuard stackGuard(widget.state);
+    SetWidgetRectContext(d2dState_, widget.lastBounds);
+    std::string error;
+    const auto pushContext = +[](lua_State* lifecycleState) {
+        (void)lua_WidgetContext(lifecycleState);
+    };
+    if (!widget.lifecycle.Dispose(widget.state, widget.ref,
+            pushContext, reason, error) && !error.empty())
+    {
+        RuntimeRecordError(widget.widgetId, error);
+    }
+    (void)snowdesktop::widget_api::ConsumeTransientStateDirty(widget.state);
 }
 
 static int LuaReadOnlyApiWrite(lua_State* state)
@@ -5183,6 +5238,20 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     if (GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &attr))
         w.lastModified = attr.ftLastWriteTime;
     widgets_.push_back(std::move(w));
+    if (currentContract &&
+        !InitializeWidgetLifecycle(widgets_.back()))
+    {
+        LuaWidget& failed = widgets_.back();
+        if (failed.state)
+        {
+            failed.lifecycle.Release(failed.state);
+            luaL_unref(failed.state, LUA_REGISTRYINDEX, failed.ref);
+            lua_close(failed.state);
+            failed.state = nullptr;
+        }
+        widgets_.pop_back();
+        return false;
+    }
     widgetHostFailures_.erase(widgetId);
 
     auto& loadedStorage = ActiveStorage();
@@ -5807,7 +5876,25 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     lua_getfield(state, -1, "render");
     if (lua_isfunction(state, -1))
     {
-        if (snowdesktop::lua_runtime::ProtectedCall(state, 0, 0) != LUA_OK)
+        int argumentCount = 0;
+        if (found->manifest.apiVersion >= 2)
+        {
+            const auto pushContext = +[](lua_State* lifecycleState) {
+                (void)lua_WidgetContext(lifecycleState);
+            };
+            if (!found->lifecycle.PushRenderArguments(
+                    state, pushContext))
+            {
+                lua_pop(state, 2);
+                RuntimeRecordError(widgetId,
+                    "Widget lifecycle is not initialized");
+                found->valid = false;
+                return;
+            }
+            argumentCount = 2;
+        }
+        if (snowdesktop::lua_runtime::ProtectedCall(
+                state, argumentCount, 0) != LUA_OK)
         {
             const char* err = lua_tostring(state, -1);
             RuntimeRecordError(widgetId, err ? err : "(render error)");
@@ -5915,8 +6002,23 @@ bool WidgetEngine::RenderWidgetPanel(
         lua_pop(state, 2);
         return false;
     }
-    const bool succeeded =
-        snowdesktop::lua_runtime::ProtectedCall(state, 0, 0) == LUA_OK;
+    int argumentCount = 0;
+    if (widget.manifest.apiVersion >= 2)
+    {
+        const auto pushContext = +[](lua_State* lifecycleState) {
+            (void)lua_WidgetContext(lifecycleState);
+        };
+        if (!widget.lifecycle.PushRenderArguments(state, pushContext))
+        {
+            lua_pop(state, 2);
+            RuntimeRecordError(widgetId,
+                "Widget lifecycle is not initialized");
+            return false;
+        }
+        argumentCount = 2;
+    }
+    const bool succeeded = snowdesktop::lua_runtime::ProtectedCall(
+        state, argumentCount, 0) == LUA_OK;
     if (!succeeded)
     {
         const char* error = lua_tostring(state, -1);
@@ -6472,6 +6574,7 @@ bool WidgetEngine::ReloadWidget(const std::wstring& widgetId)
     LuaWidget& old = widgets_[oldIndex];
     if (old.hostVisible)
         InvokeSimpleCallback(old, "onHidden");
+    DisposeWidgetLifecycle(old, "hotReload");
     if (old.refreshTimerId && widgetTimerKillCallback_)
         widgetTimerKillCallback_(old.refreshTimerId);
     if (old.namedTimerId && widgetTimerKillCallback_)
@@ -6479,6 +6582,7 @@ bool WidgetEngine::ReloadWidget(const std::wstring& widgetId)
     if (httpService_) httpService_->CancelWidget(widgetId);
     if (old.state)
     {
+        old.lifecycle.Release(old.state);
         luaL_unref(old.state, LUA_REGISTRYINDEX, old.ref);
         lua_close(old.state);
         old.state = nullptr;

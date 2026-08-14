@@ -211,6 +211,7 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature("l10n.format") &&
             snowdesktop::widget_api::SupportsFeature("module.package") &&
             snowdesktop::widget_api::SupportsFeature("resource.package") &&
+            snowdesktop::widget_api::SupportsFeature("lifecycle.model") &&
             snowdesktop::widget_api::SupportsFeature("state.transient") &&
             snowdesktop::widget_api::SupportsFeature("system.uptime") &&
             snowdesktop::widget_api::SupportsFeature("time.calendar") &&
@@ -256,9 +257,24 @@ void TestV2Contract()
     lua_newtable(state);
     lua_pushcfunction(state, Noop);
     lua_setfield(state, -2, "render");
+    lua_pushcfunction(state, Noop);
+    lua_setfield(state, -2, "setup");
+    lua_pushcfunction(state, Noop);
+    lua_setfield(state, -2, "dispose");
     Check(lua_pcall(state, 1, 1, 0) == LUA_OK &&
             snowdesktop::widget_api::IsDefinedWidget(state, -1),
-        "widget.define must mark a valid immediate descriptor");
+        "widget.define must accept the setup-model-dispose lifecycle");
+    lua_pop(state, 2);
+
+    lua_getglobal(state, "widget");
+    lua_getfield(state, -1, "define");
+    lua_newtable(state);
+    lua_pushcfunction(state, Noop);
+    lua_setfield(state, -2, "render");
+    lua_pushcfunction(state, Noop);
+    lua_setfield(state, -2, "event");
+    Check(lua_pcall(state, 1, 1, 0) != LUA_OK,
+        "widget.define must keep event callbacks gated until dispatch exists");
     lua_pop(state, 2);
 
     constexpr FunctionDescriptor systemFunctions[] = {

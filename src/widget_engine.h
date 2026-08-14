@@ -35,6 +35,7 @@
 #include "widget_runtime_health.h"
 #include "widget_host_state.h"
 #include "widget_runtime_scheduler.h"
+#include "widget_lua_lifecycle.h"
 
 struct ImGuiContext;
 struct PersonalizationSettings;
@@ -333,6 +334,7 @@ struct LuaWidget
     std::unordered_map<std::string, int> scrollOffsets;
     bool preview = false;
     std::unordered_map<std::string, std::string> previewStorage;
+    snowdesktop::widget_runtime::WidgetLuaLifecycle lifecycle;
 };
 
 /**
@@ -981,6 +983,8 @@ private:
         const std::string& message, bool quotaExceeded = false,
         bool circuitOpen = false);
     void InvokeSimpleCallback(LuaWidget& widget, const char* callbackName);
+    bool InitializeWidgetLifecycle(LuaWidget& widget);
+    void DisposeWidgetLifecycle(LuaWidget& widget, const char* reason);
     void EnsureSystemSnapshotServiceStarted();
     void RescheduleNamedTimer(LuaWidget& widget);
 

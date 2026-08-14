@@ -106,7 +106,9 @@
 
 ---@class SnowWidgetDefinition
 ---@field name? string
----@field render fun() Exactly one of render or view is required in API v2; view is not available yet.
+---@field render fun(context: SnowWidgetContext, model: any) Exactly one of render or view is required in API v2; view is not available yet.
+---@field setup? fun(context: SnowWidgetContext): any Runs once and returns the instance model passed to render and dispose.
+---@field dispose? fun(context: SnowWidgetContext, model: any, reason: 'unload'|'hotReload'|'shutdown'|string) Runs at most once before the instance VM is released.
 ---@field useCustomStyle? boolean
 ---@field followPersonalizationDefault? boolean
 ---@field showTitle? boolean

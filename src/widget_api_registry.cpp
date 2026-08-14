@@ -20,8 +20,9 @@ namespace snowdesktop::widget_api
 namespace
 {
 constexpr std::uint32_t kCurrentApiVersion = 2;
-constexpr std::array<std::string_view, 11> kHostFeatures = {
+constexpr std::array<std::string_view, 12> kHostFeatures = {
     "draw.immediate",
+    "lifecycle.model",
     "l10n.basic",
     "l10n.format",
     "module.package",
@@ -364,7 +365,7 @@ int LuaDefineWidget(lua_State* state)
         return luaL_error(state,
             "widget.define: unsupported host feature 'view.tree'");
     }
-    for (const char* pending : { "setup", "event", "dispose", "menu" })
+    for (const char* pending : { "event", "menu" })
     {
         if (HasNonNilField(state, descriptor, pending))
         {

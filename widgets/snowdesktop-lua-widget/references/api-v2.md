@@ -10,27 +10,45 @@
 ## 入口契约
 
 `main.lua` 必须返回 `widget.define({...})` 的结果，并且当前版本必须提供
-`render`：
+`render`。宿主会把当前上下文和实例 model 传给 `render`：
 
 ```lua
-local function render()
-    draw.text(layout.cu(12), layout.cu(12), "Hello")
+local function setup(context)
+    return { createdOn = context.surface }
+end
+
+local function render(context, model)
+    draw.text(layout.cu(12), layout.cu(12),
+        "Hello from " .. model.createdOn)
+end
+
+local function dispose(context, model, reason)
+    -- Optional. Host resources are released automatically after this returns.
 end
 
 return widget.define({
     name = l10n.tr("lua_widget.example.name"),
+    setup = setup,
     render = render,
+    dispose = dispose,
 })
 ```
 
-`view`、`setup`、`event`、`dispose` 和 `menu` 是后续声明式视图与生命周期契约
-预留项，当前宿主会拒绝使用。不要把 API v1 的全局回调迁入 v2 描述符。
+`setup(context)` 最多执行一次，返回值作为实例 model 传给每次 `render(context,
+model)` 和最终的 `dispose(context, model, reason)`。没有 `setup` 时 model 为
+`nil`；没有 `dispose` 时宿主仍会自动回收实例资源。`reason` 当前可能是
+`unload`、`hotReload` 或 `shutdown`。setup 失败时新 VM 不会替换热重载前的可用
+VM。
+
+`view`、`event` 和 `menu` 仍是后续声明式视图与事件契约预留项，当前宿主会拒绝
+使用。不要把 API v1 的全局回调迁入 v2 描述符。
 
 ## 已实现能力
 
 ### `widget`
 
-- `widget.define(definition)`：校验并返回 v2 描述符。当前必需 `render`。
+- `widget.define(definition)`：校验并返回 v2 描述符。当前必需 `render`，可选
+  `setup` 和 `dispose`。
 - `widget.apiInfo()`：返回当前 API 版本、支持版本和 feature ID。
 - `widget.hasFeature(id)`：探测 feature。
 - `widget.context()`：返回逻辑/像素尺寸、DPI、网格跨度、显示器范围、主题、
@@ -42,8 +60,8 @@ return widget.define({
 - `widget.openSettings()`、`widget.openPanel(options)`、`widget.closePanel()`。
 - `widget.editText(...)`：旧宿主编辑器兼容调用，不建议新 v2 组件依赖。
 
-定时器会触发宿主已有的 `onTimer` 调用路径，但 v2 生命周期描述符尚未定稿；
-新模板不依赖定时器回调，直到统一的 `setup/event/dispose` 契约开放。
+定时器仍会触发宿主已有的 `onTimer` 兼容路径；统一的 v2 `event` 分发尚未开放，
+新模板暂不依赖定时器回调。
 
 ### `draw`
 
@@ -159,7 +177,7 @@ local display = resource.font("display")
   "license": "MIT",
   "description": "A short English fallback.",
   "descriptionKey": "lua_widget.my_widget.description",
-  "requiredFeatures": ["draw.immediate", "l10n.basic"],
+  "requiredFeatures": ["draw.immediate", "lifecycle.model", "l10n.basic"],
   "optionalFeatures": [],
   "resources": {},
   "permissions": [],

@@ -247,6 +247,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget_time.cpp
     src/widget_preview_context.cpp
     src/widget_data_broker.cpp
+    src/widget_lua_lifecycle.cpp
     src/widget_runtime_diagnostics.cpp
     src/widget_runtime_scheduler.cpp
     src/widget_engine.cpp
@@ -736,6 +737,17 @@ if (BUILD_TESTING)
             src/widget_data_broker.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract data lua widget)
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetLuaLifecycleTests
+        widget_lua_lifecycle
+        SOURCES
+            tests/widget_lua_lifecycle_tests.cpp
+            src/widget_lua_lifecycle.cpp
+            src/lua_runtime.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES SnowDesktopLua
+        LABELS contract lifecycle lua widget)
 
     snowdesktop_add_test(
         SnowDesktopWidgetRuntimeSchedulerTests

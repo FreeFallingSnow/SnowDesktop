@@ -6,9 +6,8 @@ local function readConfig()
     }
 end
 
-local function render()
+local function render(context, _model)
     local config = readConfig()
-    local context = widget.context()
     local width = layout.width()
     local height = layout.height()
     local padding = layout.cu(12)
