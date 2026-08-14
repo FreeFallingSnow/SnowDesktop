@@ -3297,7 +3297,154 @@ static int lua_TaskStart(lua_State* state)
         }
     }
 
-    if (taskName == "app.search" || taskName == "desktop.search" ||
+    if (snowdesktop::widget_runtime::WidgetMediaTaskExecutor::
+            SupportsAction(taskName))
+    {
+        const bool requiresValue = taskName == "media.seek" ||
+            taskName == "media.setRate" ||
+            taskName == "media.setShuffle" ||
+            taskName == "media.setRepeat";
+        if (requiresValue && !hasArguments)
+            return luaL_error(state,
+                "task.start: %s requires an arguments table",
+                taskName.c_str());
+        if (hasArguments)
+        {
+            lua_pushnil(state);
+            while (lua_next(state, 2) != 0)
+            {
+                if (lua_type(state, -2) != LUA_TSTRING)
+                {
+                    lua_pop(state, 2);
+                    return luaL_error(state,
+                        "task.start: media argument keys must be strings");
+                }
+                size_t keyLength = 0;
+                const char* keyValue = lua_tolstring(
+                    state, -2, &keyLength);
+                const std::string_view key(
+                    keyValue ? keyValue : "", keyLength);
+                const bool allowed = key == "sessionId" ||
+                    (taskName == "media.seek" && key == "positionMs") ||
+                    (taskName == "media.setRate" && key == "rate") ||
+                    (taskName == "media.setShuffle" && key == "shuffle") ||
+                    (taskName == "media.setRepeat" && key == "mode");
+                if (!allowed)
+                {
+                    lua_pop(state, 2);
+                    return luaL_error(state,
+                        "task.start: %s received an unknown argument",
+                        taskName.c_str());
+                }
+                lua_pop(state, 1);
+            }
+
+            lua_getfield(state, 2, "sessionId");
+            if (!lua_isnil(state, -1))
+            {
+                if (lua_type(state, -1) != LUA_TSTRING)
+                {
+                    lua_pop(state, 1);
+                    return luaL_error(state,
+                        "task.start: media sessionId must be a string");
+                }
+                size_t length = 0;
+                const char* value = lua_tolstring(state, -1, &length);
+                std::string sessionId(value ? value : "", length);
+                lua_pop(state, 1);
+                if (sessionId.empty() || sessionId.size() > 128 ||
+                    sessionId.find('\0') != std::string::npos ||
+                    !IsValidUtf8Local(sessionId))
+                {
+                    return luaL_error(state,
+                        "task.start: media sessionId must contain 1 to 128 bytes of valid UTF-8");
+                }
+                arguments.emplace("sessionId", std::move(sessionId));
+            }
+            else
+            {
+                lua_pop(state, 1);
+            }
+        }
+
+        if (taskName == "media.seek")
+        {
+            lua_getfield(state, 2, "positionMs");
+            if (!lua_isinteger(state, -1))
+            {
+                lua_pop(state, 1);
+                return luaL_error(state,
+                    "task.start: media.seek positionMs must be an integer");
+            }
+            const lua_Integer position = lua_tointeger(state, -1);
+            lua_pop(state, 1);
+            if (position < 0 || static_cast<std::uint64_t>(position) >
+                    static_cast<std::uint64_t>(
+                        std::numeric_limits<std::int64_t>::max() / 10000))
+            {
+                return luaL_error(state,
+                    "task.start: media.seek positionMs is out of range");
+            }
+            arguments.emplace("positionMs", std::to_string(position));
+        }
+        else if (taskName == "media.setRate")
+        {
+            lua_getfield(state, 2, "rate");
+            if (lua_type(state, -1) != LUA_TNUMBER)
+            {
+                lua_pop(state, 1);
+                return luaL_error(state,
+                    "task.start: media.setRate rate must be a number");
+            }
+            const double rate = lua_tonumber(state, -1);
+            lua_pop(state, 1);
+            if (!std::isfinite(rate) || rate <= 0.0)
+                return luaL_error(state,
+                    "task.start: media.setRate rate must be finite and positive");
+            std::array<char, 64> buffer{};
+            const auto converted = std::to_chars(
+                buffer.data(), buffer.data() + buffer.size(), rate,
+                std::chars_format::general,
+                std::numeric_limits<double>::max_digits10);
+            if (converted.ec != std::errc{})
+                return luaL_error(state,
+                    "task.start: media.setRate rate cannot be represented");
+            arguments.emplace("rate", std::string(
+                buffer.data(), converted.ptr));
+        }
+        else if (taskName == "media.setShuffle")
+        {
+            lua_getfield(state, 2, "shuffle");
+            if (!lua_isboolean(state, -1))
+            {
+                lua_pop(state, 1);
+                return luaL_error(state,
+                    "task.start: media.setShuffle shuffle must be a boolean");
+            }
+            const bool shuffle = lua_toboolean(state, -1) != 0;
+            lua_pop(state, 1);
+            arguments.emplace("shuffle", shuffle ? "1" : "0");
+        }
+        else if (taskName == "media.setRepeat")
+        {
+            lua_getfield(state, 2, "mode");
+            if (lua_type(state, -1) != LUA_TSTRING)
+            {
+                lua_pop(state, 1);
+                return luaL_error(state,
+                    "task.start: media.setRepeat mode must be a string");
+            }
+            size_t length = 0;
+            const char* value = lua_tolstring(state, -1, &length);
+            std::string mode(value ? value : "", length);
+            lua_pop(state, 1);
+            if (mode != "none" && mode != "track" && mode != "list")
+                return luaL_error(state,
+                    "task.start: media.setRepeat mode must be none, track, or list");
+            arguments.emplace("mode", std::move(mode));
+        }
+    }
+    else if (taskName == "app.search" || taskName == "desktop.search" ||
         taskName == "everything.search")
     {
         const std::string& searchName = taskName;
@@ -6925,6 +7072,27 @@ void WidgetEngine::InitializeWidgetTaskBroker()
         "media.previous", kMediaActionPermission, true, 1 }, error);
     error.clear();
     (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "media.play", kMediaActionPermission, true, 1 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "media.pause", kMediaActionPermission, true, 1 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "media.stop", kMediaActionPermission, true, 1 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "media.seek", kMediaActionPermission, true, 1 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "media.setRate", kMediaActionPermission, true, 1 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "media.setShuffle", kMediaActionPermission, true, 1 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "media.setRepeat", kMediaActionPermission, true, 1 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
         "app.search", kAppDiscoveryPermission, false, 2 }, error);
     error.clear();
     (void)taskBroker_->RegisterTask(TaskDescriptor{
@@ -7618,8 +7786,71 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             (void)taskBroker_->Complete(action.id, true);
             continue;
         }
+        snowdesktop::widget_runtime::WidgetMediaTaskRequest mediaRequest;
+        mediaRequest.action = action.name;
+        if (const auto value = action.arguments.find("sessionId");
+            value != action.arguments.end())
+            mediaRequest.sessionId = value->second;
+        bool validMediaRequest = true;
+        if (action.name == "media.seek")
+        {
+            const auto value = action.arguments.find("positionMs");
+            std::int64_t position = 0;
+            if (value == action.arguments.end())
+                validMediaRequest = false;
+            else
+            {
+                const char* begin = value->second.data();
+                const char* end = begin + value->second.size();
+                const auto parsed = std::from_chars(begin, end, position);
+                validMediaRequest = parsed.ec == std::errc{} &&
+                    parsed.ptr == end;
+                if (validMediaRequest) mediaRequest.positionMs = position;
+            }
+        }
+        else if (action.name == "media.setRate")
+        {
+            const auto value = action.arguments.find("rate");
+            double rate = 0.0;
+            if (value == action.arguments.end())
+                validMediaRequest = false;
+            else
+            {
+                const char* begin = value->second.data();
+                const char* end = begin + value->second.size();
+                const auto parsed = std::from_chars(begin, end, rate,
+                    std::chars_format::general);
+                validMediaRequest = parsed.ec == std::errc{} &&
+                    parsed.ptr == end;
+                if (validMediaRequest) mediaRequest.rate = rate;
+            }
+        }
+        else if (action.name == "media.setShuffle")
+        {
+            const auto value = action.arguments.find("shuffle");
+            validMediaRequest = value != action.arguments.end() &&
+                (value->second == "0" || value->second == "1");
+            if (validMediaRequest)
+                mediaRequest.shuffle = value->second == "1";
+        }
+        else if (action.name == "media.setRepeat")
+        {
+            const auto value = action.arguments.find("mode");
+            validMediaRequest = value != action.arguments.end();
+            if (validMediaRequest) mediaRequest.repeatMode = value->second;
+        }
+        validMediaRequest = validMediaRequest &&
+            snowdesktop::widget_runtime::WidgetMediaTaskExecutor::
+                ValidateRequest(mediaRequest);
+        if (!validMediaRequest)
+        {
+            (void)taskBroker_->Complete(
+                action.id, false, "invalidArguments");
+            continue;
+        }
         if (!mediaTaskExecutor_ ||
-            !mediaTaskExecutor_->Start(action.id, action.name))
+            !mediaTaskExecutor_->Start(
+                action.id, std::move(mediaRequest)))
         {
             (void)taskBroker_->Complete(
                 action.id, false, "taskExecutorUnavailable");

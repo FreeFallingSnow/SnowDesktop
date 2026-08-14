@@ -110,7 +110,11 @@ end
 
 local function startMediaAction(model, taskName, pendingState)
     if not widget.hasPermission("media.action") then return end
-    local taskId, err = task.start(taskName)
+    local session = currentSession()
+    if not session then return end
+    local taskId, err = task.start(taskName, {
+        sessionId = session.id,
+    })
     if taskId then
         model.mediaTasks[tostring(taskId)] = taskName
         model.pendingState = pendingState

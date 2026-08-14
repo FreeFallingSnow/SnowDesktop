@@ -11,6 +11,7 @@ namespace
 {
 using namespace std::chrono_literals;
 using snowdesktop::widget_runtime::WidgetMediaTaskExecutor;
+using snowdesktop::widget_runtime::WidgetMediaTaskRequest;
 using snowdesktop::widget_runtime::WidgetMediaTaskRunResult;
 
 void Check(bool condition, const char* message)
@@ -36,21 +37,52 @@ bool WaitUntil(Predicate predicate)
 
 void TestActionValidationAndCompletion()
 {
-    Check(WidgetMediaTaskExecutor::SupportsAction("media.toggle") &&
+    Check(WidgetMediaTaskExecutor::SupportsAction("media.play") &&
+            WidgetMediaTaskExecutor::SupportsAction("media.pause") &&
+            WidgetMediaTaskExecutor::SupportsAction("media.toggle") &&
+            WidgetMediaTaskExecutor::SupportsAction("media.stop") &&
             WidgetMediaTaskExecutor::SupportsAction("media.next") &&
             WidgetMediaTaskExecutor::SupportsAction("media.previous") &&
-            !WidgetMediaTaskExecutor::SupportsAction("media.stop"),
-        "the executor must expose only implemented media actions");
+            WidgetMediaTaskExecutor::SupportsAction("media.seek") &&
+            WidgetMediaTaskExecutor::SupportsAction("media.setRate") &&
+            WidgetMediaTaskExecutor::SupportsAction("media.setShuffle") &&
+            WidgetMediaTaskExecutor::SupportsAction("media.setRepeat") &&
+            !WidgetMediaTaskExecutor::SupportsAction("media.unknown"),
+        "the executor must expose the complete bounded media action set");
+
+    Check(WidgetMediaTaskExecutor::ValidateRequest(
+            { .action = "media.play" }) &&
+            WidgetMediaTaskExecutor::ValidateRequest(
+                { .action = "media.seek", .positionMs = 1234 }) &&
+            WidgetMediaTaskExecutor::ValidateRequest(
+                { .action = "media.setRate", .rate = 1.25 }) &&
+            WidgetMediaTaskExecutor::ValidateRequest(
+                { .action = "media.setShuffle", .shuffle = false }) &&
+            WidgetMediaTaskExecutor::ValidateRequest(
+                { .action = "media.setRepeat", .repeatMode = "list" }) &&
+            !WidgetMediaTaskExecutor::ValidateRequest(
+                { .action = "media.seek" }) &&
+            !WidgetMediaTaskExecutor::ValidateRequest(
+                { .action = "media.play", .positionMs = 0 }) &&
+            !WidgetMediaTaskExecutor::ValidateRequest(
+                { .action = "media.setRate", .rate = 0.0 }) &&
+            !WidgetMediaTaskExecutor::ValidateRequest(
+                { .action = "media.setRepeat", .repeatMode = "all" }),
+        "media action payloads must be typed and action-specific");
 
     WidgetMediaTaskExecutor executor(
-        [](std::string_view action) -> WidgetMediaTaskRunResult {
-            if (action == "media.next") return { true, {} };
+        [](const WidgetMediaTaskRequest& request)
+            -> WidgetMediaTaskRunResult {
+            if (request.action == "media.next" &&
+                request.sessionId == "media-session-7")
+                return { true, {} };
             return { false, "actionRejected" };
         });
-    Check(!executor.Start(0, "media.next") &&
-            !executor.Start(1, "media.stop") &&
-            executor.Start(1, "media.next") &&
-            !executor.Start(1, "media.next"),
+    Check(!executor.Start(0, { .action = "media.next" }) &&
+            !executor.Start(1, { .action = "media.seek" }) &&
+            executor.Start(1, { .action = "media.next",
+                .sessionId = "media-session-7" }) &&
+            !executor.Start(1, { .action = "media.next" }),
         "invalid and duplicate task requests must be rejected");
 
     std::vector<snowdesktop::widget_runtime::WidgetMediaTaskCompletion>
@@ -73,14 +105,14 @@ void TestCancellationOverridesLateResult()
     bool entered = false;
     bool release = false;
     WidgetMediaTaskExecutor executor(
-        [&](std::string_view) -> WidgetMediaTaskRunResult {
+        [&](const WidgetMediaTaskRequest&) -> WidgetMediaTaskRunResult {
             std::unique_lock lock(mutex);
             entered = true;
             condition.notify_all();
             condition.wait(lock, [&] { return release; });
             return { true, {} };
         });
-    Check(executor.Start(9, "media.toggle"),
+    Check(executor.Start(9, { .action = "media.toggle" }),
         "a valid media task must enter the worker queue");
     {
         std::unique_lock lock(mutex);

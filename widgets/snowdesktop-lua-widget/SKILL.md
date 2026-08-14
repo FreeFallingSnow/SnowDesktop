@@ -145,10 +145,13 @@ menu.
   or menu command. Declare `shell.launch` as optional when opening links is not
   the widget's core function, and do not accept file, command, or custom-scheme
   targets.
-- Start `media.toggle`, `media.next`, and `media.previous` with `task.start`
-  only inside a direct trusted gesture callback, then match the returned ID
-  in `event.kind == "task.complete"`. Never loop media actions from the
-  completion event; it intentionally has no trusted-gesture activation.
+- Start `media.play/pause/toggle/stop/next/previous/seek/setRate/setShuffle/setRepeat`
+  with `task.start` only inside a direct trusted gesture callback. Pass the
+  opaque `sessionId` from `media.sessions/current` when the widget displays or
+  controls a specific session; omit it to target the current Windows session.
+  Match the returned ID in `event.kind == "task.complete"`. Never loop media
+  actions from the completion event; it intentionally has no trusted-gesture
+  activation.
 - Search applications with the bounded `task.start("app.search", { query,
   limit, offset })` task and retain only its opaque `ref` values. Launch one
   with `task.start("app.launch", { ref = item.ref })` inside the direct click

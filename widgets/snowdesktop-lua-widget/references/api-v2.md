@@ -452,7 +452,7 @@ CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.pow
 
 ### `task`
 
-当前公开异步媒体动作 `media.toggle`、`media.next`、`media.previous`，应用任务
+当前公开异步媒体动作 `media.play/pause/toggle/stop/next/previous/seek/setRate/setShuffle/setRepeat`，应用任务
 `app.search`、`app.launch`，桌面项目任务 `desktop.search`、`everything.search`、
 `shell.openItem`、`shell.revealItem`、`desktop.refresh`，一次性通知任务
 `notification.show`，以及本地日历写入任务 `calendar.create/update/remove`、公网读取
@@ -465,7 +465,9 @@ feature ID `task.start`、`task.media.control`、`task.app.search`、`task.app.l
 标记来源的打开回调同步调用栈内启动：
 
 ```lua
-local taskId, err = task.start("media.toggle")
+local taskId, err = task.start("media.toggle", {
+    sessionId = session.id,
+})
 if not taskId then
     widget.log("warn", "media task rejected: " .. tostring(err))
 end
@@ -626,6 +628,15 @@ HTTPS URL；`http:`、`file:`、自定义 scheme、localhost、局域网和 IP �
 `invalidUrl`、`openRejected`、`permissionDenied`、`userGestureRequired` 和 `canceled`。
 阅读器等非核心打开场景应把 `shell.launch` 放入 `optionalPermissions`，无授权时仍显示内容。
 
+六个直接动作 `play/pause/toggle/stop/next/previous` 的参数表可省略，也可只传
+`sessionId`。`seek` 需要非负整数 `positionMs`，其含义是相对媒体时间线起点的位置；
+`setRate` 需要有限正数 `rate`；`setShuffle` 需要布尔 `shuffle`；`setRepeat` 需要
+`mode="none"|"track"|"list"`。所有动作都可选传入 `media.sessions/current` 返回的
+不透明 `sessionId`，不传时控制 Windows 当前会话。目标会话已经消失时返回
+`notAvailable`；宿主在执行前检查该会话对应的 `can*` 能力，时间线越界返回
+`seekOutOfRange`，不支持的控制返回 `actionUnsupported`。会话 ID 仅用于当前快照和
+后续短时交互，不应解析或持久化。
+
 启动成功只表示任务进入宿主队列。WinRT 媒体调用在独立工作线程执行；完成后由
 `event.kind == "task.complete"` 串行投递，事件包含 `taskId/task/ok`。成功时
 `event.value.accepted == true`；失败时 `event.error` 为稳定错误码，例如
@@ -636,8 +647,7 @@ HTTPS URL；`http:`、`file:`、自定义 scheme、localhost、局域网和 IP �
 `task.cancel(taskId)` 只接受当前 Lua VM 自己持有的任务。卸载、热重载、撤权和
 宿主关闭会自动取消；热重载使用 VM owner token，旧任务结果不会投递给新 VM。
 预览不会访问系统媒体会话或系统通知，而是异步返回确定性的 `accepted=true` mock。
-三个媒体动作不接受参数，第二个参数只能省略、为 nil 或空表；其他任务拒绝
-未知字段、错误类型和越界数值。API v1 的
+媒体参数表只接受上述动作对应字段；其他任务同样拒绝未知字段、错误类型和越界数值。API v1 的
 `media.playPause/next/previous` 不会注册进 v2 VM，不能绕过任务的手势门禁。
 
 ### `draw`

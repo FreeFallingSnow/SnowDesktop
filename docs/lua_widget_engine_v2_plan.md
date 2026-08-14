@@ -739,12 +739,13 @@ local request = task.start("network.request", {
 -- event.taskId, event.ok, event.value, event.error
 ```
 
-当前已公开 `media.toggle/media.next/media.previous`，以及有界分页的
-`app.search` 与引用化 `app.launch`。媒体动作不接受参数，必须从可信用户手势同步
-调用栈启动，并由同一个通用完成事件返回：
+当前已公开 `media.play/pause/toggle/stop/next/previous/seek/setRate/setShuffle/setRepeat`，
+以及有界分页的 `app.search` 与引用化 `app.launch`。媒体动作必须从可信用户手势同步
+调用栈启动，并由同一个通用完成事件返回。可传入 `media.sessions/current` 提供的
+不透明 `sessionId` 精确控制组件正在展示的会话；省略时控制 Windows 当前会话：
 
 ```lua
-local taskId, err = task.start("media.toggle")
+local taskId, err = task.start("media.toggle", { sessionId = session.id })
 -- 后续 event.kind == "task.complete" 且 event.taskId == taskId
 ```
 
@@ -758,8 +759,8 @@ local taskId, err = task.start("media.toggle")
 当前已公开 `task.start`、`task.cancel`、`task.media.control`、`task.app.search`、
 `task.app.launch`、`task.notification.show`、`task.calendar.write`、
 `task.network.request`、`task.shell.openUri`、`task.desktop.search`、
-`task.everything.search`、`task.shell.item` 和 `task.desktop.refresh` feature，三个媒体
-动作、两个应用任务、一次性通知、本地日历 create/update/remove、公网 HTTPS GET、
+`task.everything.search`、`task.shell.item` 和 `task.desktop.refresh` feature，完整媒体
+控制动作、两个应用任务、一次性通知、本地日历 create/update/remove、公网 HTTPS GET、
 可信手势外链、桌面/Everything 项目搜索及受控打开、定位和刷新任务。
 `WidgetTaskBroker` 生命周期内核负责任务描述符注册、全局/实例/
 任务类型并发上限、权限和可信手势门禁、preview 标记、显式取消、撤权取消、实例
@@ -767,7 +768,8 @@ dispose 与 shutdown 原因，以及执行器完成确认均有独立契约测�
 持有独立 broker，点击、指针按下/抬起、滚轮、菜单命令、宿主按钮以及由调用方明确
 标记来源的打开回调使用仅限同步调用栈的可信手势作用域；任务还携带 Lua VM owner
 token，避免热重载时同名实例的旧任务完成事件误投给新 VM。媒体执行器在独立 MTA
-工作线程调用 GSMTC，返回 accepted 或稳定错误码；预览只产生确定性 mock。API v1
+工作线程调用 GSMTC，按目标会话 `can*` 能力执行，并返回 accepted 或稳定错误码；
+seek 以时间线起点为基准且受最小/最大可跳转范围约束，预览只产生确定性 mock。API v1
 同步 `media.playPause/next/previous` 已通过函数版本上限从 v2 VM 隐藏，不能绕过
 手势门禁。应用搜索从 UI 线程复制宿主索引为不可变、有上限的目录快照，在独立任务
 线程完成名称/拼音排序与分页，只向 Lua 返回展示字段和实例作用域的不透明引用；

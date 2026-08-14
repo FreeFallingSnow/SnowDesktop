@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "Media Controls",
   "nameKey": "lua_widget.media_control.name",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "Displays and controls the current Windows media session.",
   "descriptionKey": "lua_widget.media_control.description",
   "locales": {

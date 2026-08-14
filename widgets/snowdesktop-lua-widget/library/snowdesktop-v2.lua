@@ -321,7 +321,7 @@
 ---@field topic? string Updated data subscription topic for data.change.
 ---@field revision? integer Monotonic provider revision for data.change.
 ---@field taskId? integer
----@field task? 'media.toggle'|'media.next'|'media.previous'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'|string
+---@field task? 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'|string
 ---@field ok? boolean
 ---@field value? SnowMediaTaskValue|SnowAppSearchTaskValue|SnowItemSearchTaskValue|SnowCalendarMutationTaskValue|SnowNetworkTaskValue|SnowStateValue
 ---@field error? string
@@ -849,6 +849,21 @@ function data.subscribe(topic, options) end
 ---@class SnowMediaTaskValue
 ---@field accepted boolean The OS media action accepted the request, or true for the deterministic preview mock.
 
+---@class SnowMediaSessionArguments
+---@field sessionId? string Opaque ID from media.sessions/current; omit to target the current Windows session.
+
+---@class SnowMediaSeekArguments: SnowMediaSessionArguments
+---@field positionMs integer Non-negative position relative to the session timeline start.
+
+---@class SnowMediaRateArguments: SnowMediaSessionArguments
+---@field rate number Finite positive playback rate supported by the target session.
+
+---@class SnowMediaShuffleArguments: SnowMediaSessionArguments
+---@field shuffle boolean Requested shuffle state.
+
+---@class SnowMediaRepeatArguments: SnowMediaSessionArguments
+---@field mode 'none'|'track'|'list' Requested repeat mode.
+
 ---@class SnowAppSearchArguments
 ---@field query string UTF-8 query containing 1 to 256 bytes.
 ---@field limit? integer Result count from 1 through 100; defaults to 50.
@@ -934,6 +949,11 @@ task = {}
 ---create/update, and network tasks do not require a gesture. Launch, open,
 ---reveal, refresh, media controls, shell.openUri, and calendar removal do.
 ---Runtime rejections return nil plus a stable error code.
+---@overload fun(name: 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous', arguments?: SnowMediaSessionArguments): taskId: integer?, error: string?
+---@overload fun(name: 'media.seek', arguments: SnowMediaSeekArguments): taskId: integer?, error: string?
+---@overload fun(name: 'media.setRate', arguments: SnowMediaRateArguments): taskId: integer?, error: string?
+---@overload fun(name: 'media.setShuffle', arguments: SnowMediaShuffleArguments): taskId: integer?, error: string?
+---@overload fun(name: 'media.setRepeat', arguments: SnowMediaRepeatArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'app.search', arguments: SnowAppSearchArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'app.launch', arguments: SnowAppLaunchArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'desktop.search', arguments: SnowItemSearchArguments): taskId: integer?, error: string?
@@ -947,8 +967,8 @@ task = {}
 ---@overload fun(name: 'calendar.remove', arguments: SnowCalendarRemoveArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'network.request', arguments: SnowNetworkRequestArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'shell.openUri', arguments: SnowShellOpenUriArguments): taskId: integer?, error: string?
----@param name 'media.toggle'|'media.next'|'media.previous'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'
----@param arguments? table Must be omitted or empty for media tasks.
+---@param name 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'
+---@param arguments? table Strict task-specific argument table.
 ---@return integer? taskId
 ---@return string? error
 function task.start(name, arguments) end

@@ -1,4 +1,5 @@
 #include "widget_system_data_provider.h"
+#include "widget_media_contract.h"
 
 #include <windows.h>
 #include <dxgi1_6.h>
@@ -44,7 +45,6 @@ constexpr std::string_view AudioOutputVolumeTopic = "audio.output.volume";
 constexpr std::string_view MediaSessionsTopic = "media.sessions";
 constexpr std::string_view MediaCurrentTopic = "media.current";
 constexpr std::string_view MediaTimelineTopic = "media.timeline";
-constexpr std::size_t MaximumMediaSessions = 32;
 constexpr std::size_t MaximumMediaStringBytes = 4096;
 
 std::uint64_t FileTimeValue(const FILETIME& value)
@@ -251,22 +251,6 @@ std::string OpaqueAudioEndpointId(std::wstring_view endpointId)
         hash *= prime;
     }
     return "audio-output-" + std::to_string(hash);
-}
-
-std::string OpaqueMediaSessionId(
-    std::wstring_view sourceId, std::size_t occurrence)
-{
-    constexpr std::uint64_t offset = 14695981039346656037ull;
-    constexpr std::uint64_t prime = 1099511628211ull;
-    std::uint64_t hash = offset;
-    for (const wchar_t character : sourceId)
-    {
-        hash ^= static_cast<std::uint16_t>(character);
-        hash *= prime;
-    }
-    hash ^= occurrence;
-    hash *= prime;
-    return "media-session-" + std::to_string(hash);
 }
 
 std::string BoundedMediaString(std::wstring_view value)
@@ -1614,7 +1598,8 @@ WidgetSystemDataProvider::SampleMediaSessions()
         const auto sessions = manager.GetSessions();
         std::unordered_map<std::wstring, std::size_t> sourceOccurrences;
         const auto appendSession = [&](const auto& session, bool current) {
-            if (!session || snapshot.sessions.size() >= MaximumMediaSessions)
+            if (!session || snapshot.sessions.size() >=
+                    MaximumExposedMediaSessions)
                 return;
             WidgetMediaSessionDataSnapshot value;
             const std::wstring sourceId =
@@ -1684,7 +1669,8 @@ WidgetSystemDataProvider::SampleMediaSessions()
         if (currentSession) appendSession(currentSession, true);
         for (const auto& session : sessions)
         {
-            if (snapshot.sessions.size() >= MaximumMediaSessions) break;
+            if (snapshot.sessions.size() >=
+                MaximumExposedMediaSessions) break;
             if (currentSession && session == currentSession) continue;
             appendSession(session, false);
         }
