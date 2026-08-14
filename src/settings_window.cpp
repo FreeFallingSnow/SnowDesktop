@@ -3942,6 +3942,10 @@ void SettingsWindow::DrawWidgetPackagesPage()
     };
     auto permissionLabel = [](const std::string& permission)
     {
+        if (permission == "calendar.read")
+            return _L("app.settings.widgets_permission_calendar_read");
+        if (permission == "calendar.write")
+            return _L("app.settings.widgets_permission_calendar_write");
         if (permission == "desktop.action")
             return _L("app.settings.widgets_permission_desktop_action");
         if (permission == "desktop.read")

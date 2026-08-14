@@ -2,7 +2,115 @@
 #include "../widgets/collection_group_rules.h"
 #include "../steam_app_identity.h"
 
+#include <commctrl.h>
+
 // Widget creation, collection/file-group membership and release operations.
+
+namespace
+{
+const wchar_t* WidgetPermissionLabel(std::string_view permission)
+{
+    if (permission == "calendar.read")
+        return _LW("app.settings.widgets_permission_calendar_read");
+    if (permission == "calendar.write")
+        return _LW("app.settings.widgets_permission_calendar_write");
+    if (permission == "desktop.action")
+        return _LW("app.settings.widgets_permission_desktop_action");
+    if (permission == "desktop.read")
+        return _LW("app.settings.widgets_permission_desktop_read");
+    if (permission == "everything.search")
+        return _LW("app.settings.widgets_permission_everything_search");
+    if (permission == "media.action")
+        return _LW("app.settings.widgets_permission_media_action");
+    if (permission == "media.read")
+        return _LW("app.settings.widgets_permission_media_read");
+    if (permission == "network.http")
+        return _LW("app.settings.widgets_permission_network_http");
+    if (permission == "system.read")
+        return _LW("app.settings.widgets_permission_system_read");
+    if (permission == "ui.notify")
+        return _LW("app.settings.widgets_permission_ui_notify");
+    static thread_local std::wstring fallback;
+    fallback = Utf8ToWide(std::string(permission));
+    return fallback.c_str();
+}
+
+enum class WidgetConsentChoice
+{
+    Allow,
+    Deny,
+    Cancel,
+};
+
+WidgetConsentChoice ShowWidgetConsentDialog(HWND owner,
+    const snowdesktop::widget::InstalledPackage& package,
+    const std::wstring& displayName,
+    std::span<const std::string> requestedPermissions)
+{
+    std::wstring content;
+    if (package.builtin)
+        content = _LW("app.widget_permission.source_builtin");
+    else if (package.development)
+        content = _LW("app.widget_permission.source_development");
+    else
+        content = _LFW("app.widget_permission.source_external",
+            Utf8ToWide(package.source.providerId));
+    content += L"\n\n";
+    content += _LW("app.widget_permission.permissions_heading");
+    for (const auto& permission : requestedPermissions)
+    {
+        content += L"\n  • ";
+        content += WidgetPermissionLabel(permission);
+    }
+    if (!package.manifest.networkDomains.empty())
+    {
+        content += L"\n\n";
+        content += _LW("app.widget_permission.domains_heading");
+        for (const auto& domain : package.manifest.networkDomains)
+        {
+            content += L"\n  • ";
+            content += Utf8ToWide(domain);
+        }
+    }
+    content += L"\n\n";
+    content += _LW("app.widget_permission.runtime_notice");
+
+    const std::wstring instruction = _LFW(
+        "app.widget_permission.instruction", displayName);
+    const TASKDIALOG_BUTTON buttons[] = {
+        { 100, _LW("app.widget_permission.allow") },
+        { 101, _LW("app.widget_permission.deny") },
+    };
+    TASKDIALOGCONFIG dialog{};
+    dialog.cbSize = sizeof(dialog);
+    dialog.hwndParent = owner;
+    dialog.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION |
+        TDF_SIZE_TO_CONTENT | TDF_USE_COMMAND_LINKS;
+    dialog.dwCommonButtons = TDCBF_CANCEL_BUTTON;
+    dialog.pszWindowTitle = _LW("app.widget_permission.title");
+    dialog.pszMainIcon = TD_SHIELD_ICON;
+    dialog.pszMainInstruction = instruction.c_str();
+    dialog.pszContent = content.c_str();
+    dialog.cButtons = static_cast<UINT>(std::size(buttons));
+    dialog.pButtons = buttons;
+    dialog.nDefaultButton = 101;
+
+    int selected = IDCANCEL;
+    if (SUCCEEDED(TaskDialogIndirect(
+            &dialog, &selected, nullptr, nullptr)))
+    {
+        if (selected == 100) return WidgetConsentChoice::Allow;
+        if (selected == 101) return WidgetConsentChoice::Deny;
+        return WidgetConsentChoice::Cancel;
+    }
+    const int fallback = MessageBoxW(owner, content.c_str(),
+        instruction.c_str(), MB_ICONWARNING | MB_YESNOCANCEL |
+            MB_DEFBUTTON2);
+    if (fallback == IDYES) return WidgetConsentChoice::Allow;
+    if (fallback == IDNO) return WidgetConsentChoice::Deny;
+    return WidgetConsentChoice::Cancel;
+}
+}
 
 std::wstring DesktopApp::MakeNewWidgetId() const
 {
@@ -1174,6 +1282,49 @@ void DesktopApp::AddFolderMappingWidgetAt(POINT screenPoint)
 void DesktopApp::AddLuaWidgetAt(POINT screenPoint, const std::wstring& packageId)
 {
     if (packageId.empty()) return;
+    const auto package = WidgetEngine::GetWidgetPackage(packageId);
+    if (!package) return;
+    const auto consentPermissions =
+        snowdesktop::widget::PermissionsRequiringConsent(
+            package->manifest.permissions);
+    const bool alreadyGranted = package->permissionState ==
+        snowdesktop::widget::PermissionDecisionState::Granted;
+    snowdesktop::widget::PermissionDecisionState decision =
+        snowdesktop::widget::PermissionDecisionState::Granted;
+    bool shouldPersistDecision = !alreadyGranted;
+    if (!alreadyGranted && !consentPermissions.empty())
+    {
+        const std::wstring displayName =
+            WidgetEngine::GetWidgetDisplayName(packageId);
+        const WidgetConsentChoice choice = ShowWidgetConsentDialog(
+            controlHwnd_ ? controlHwnd_ : hwnd_, *package,
+            displayName.empty() ? packageId : displayName,
+            consentPermissions);
+        if (choice == WidgetConsentChoice::Cancel) return;
+        if (choice == WidgetConsentChoice::Deny)
+            decision = snowdesktop::widget::PermissionDecisionState::Denied;
+    }
+    if (shouldPersistDecision)
+    {
+        std::string error;
+        const bool grant = decision ==
+            snowdesktop::widget::PermissionDecisionState::Granted;
+        if (!WidgetEngine::SetWidgetPermissionDecision(packageId, decision,
+                grant ? package->manifest.permissions :
+                    std::vector<std::string>{},
+                grant ? package->manifest.networkDomains :
+                    std::vector<std::string>{},
+                error))
+        {
+            MessageBoxW(controlHwnd_ ? controlHwnd_ : hwnd_,
+                _LFW("app.widget_permission.save_failed",
+                    Utf8ToWide(error)).c_str(),
+                _LW("app.widget_permission.title"),
+                MB_OK | MB_ICONERROR);
+            return;
+        }
+        if (!grant) return;
+    }
     int defaultColumns = 1;
     int defaultRows = 1;
     WidgetEngine::GetWidgetDefaultSpan(packageId, defaultColumns, defaultRows);

@@ -7834,6 +7834,32 @@ WidgetEngine::ListWidgetPackages()
     return GetWidgetPackageManager().ListPackages();
 }
 
+std::optional<snowdesktop::widget::InstalledPackage>
+WidgetEngine::GetWidgetPackage(const std::wstring& packageId)
+{
+    const std::string requestedId = WidgetWideToUtf8(packageId);
+    if (requestedId.empty()) return std::nullopt;
+    return GetWidgetPackageManager().Resolve(requestedId);
+}
+
+bool WidgetEngine::SetWidgetPermissionDecision(
+    const std::wstring& packageId,
+    snowdesktop::widget::PermissionDecisionState state,
+    const std::vector<std::string>& grantedPermissions,
+    const std::vector<std::string>& grantedNetworkDomains,
+    std::string& error)
+{
+    const std::string requestedId = WidgetWideToUtf8(packageId);
+    if (requestedId.empty())
+    {
+        error = "package id is empty";
+        return false;
+    }
+    return GetWidgetPackageManager().SetPermissionDecision(
+        requestedId, state, grantedPermissions,
+        grantedNetworkDomains, error);
+}
+
 std::optional<snowdesktop::widget::PackageSourceRef>
 WidgetEngine::GetWidgetPackageSource(const std::wstring& packageId)
 {
