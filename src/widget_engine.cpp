@@ -9171,8 +9171,8 @@ static int lua_L10nFormatDuration(lua_State* L)
         if (!lua_isnil(L, -1))
         {
             size_t length = 0;
-            const char* value = luaL_checklstring(L, -1, &length);
-            style.assign(value, length);
+            const char* styleValue = luaL_checklstring(L, -1, &length);
+            style.assign(styleValue, length);
         }
         lua_pop(L, 1);
     }
