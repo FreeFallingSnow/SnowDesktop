@@ -582,7 +582,13 @@ local snapshot = cpu:value()
 
 所有提供者采用引用计数生命周期，而不是应用启动即常驻：
 
-当前已实现内部 `WidgetDataBroker` 状态机及契约测试，覆盖 provider 注册、实例级订阅上限、共享有效采样率、可见性切换、权限撤销、预览隔离、idle grace 和关闭回收。该阶段尚未把 `data.subscribe` 暴露给 Lua，也尚未接入 CPU、内存或音频等真实 provider；只有真实 provider、不可变快照投递和实例作用域清理接通后，才会把对应 topic 写入公开 API 元数据。
+当前已实现内部 `WidgetDataBroker` 状态机及契约测试，覆盖 provider 注册、实例级订阅上限、共享有效采样率、可见性切换、权限撤销、预览隔离、idle grace 和关闭回收。broker 尚未连接任何真实 provider，也未把 `data.subscribe` 暴露给 Lua；只有不可变快照投递和实例作用域清理接通后，才会把对应 topic 写入公开 API 元数据。
+
+`system.cpu` 与 `system.memory` 的独立工作线程 provider 已完成第一阶段实现：首个
+topic 启动、同线程按各自周期采样、CPU 冷启动差分、不可变 revision/timestamp、
+changed-topic drain、单 topic 停止和最后 topic 同步 join 均有契约测试。它尚未
+接入 broker action 和 Lua subscription handle，因此本阶段仍不发布
+`data.subscribe` feature。
 
 ```text
 Stopped
