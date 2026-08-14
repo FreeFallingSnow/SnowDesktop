@@ -1565,7 +1565,7 @@ v2.0 资源契约：
 - 音频分析分别记录 1/5/10 个订阅下的捕获线程数、CPU、内存、FFT 耗时和发布丢帧；实例数增长不得线性增加捕获客户端。
 - 图片解码、字体解析和 GPU 上传必须计入独立资源预算；缓存不得绕过 Lua 实例内存限制形成无上限宿主内存占用。
 
-当前过渡实现（2026-08-15）发布 `view.tree.core`，支持 `box/row/column/stack/text/button/spacer`、
+当前过渡实现（2026-08-15）发布 `view.tree.core`，支持 `box/row/column/stack/text/button/icon/iconButton/shape/progressBar/progressRing/spacer`、
 稳定全树 key、基础线性布局、基础文本/边框样式、宿主 hover/pressed 视觉、元素 click/
 doubleClick/pointer/contextMenu action，以及“先完整校验布局、后原子提交；失败保留上一成功树”。
 其额度为 512 节点、32 层、单节点 4 KiB 文本、全树 64 KiB 文本和 256 个交互元素；未知字段、
@@ -1608,7 +1608,7 @@ doubleClick/pointer/contextMenu action，以及“先完整校验布局、后原
 | A：基础绘制 | `digital-clock` | 无 | `view.tree.core`、可见性作用域、时间线调度、本地化和尺寸响应 | 时间、日期、语言、休眠恢复正确；树失败保留上一帧 |
 | B：状态与输入 | `sticky-note` | 无 | 有界宿主文本编辑、可信手势焦点/IME、菜单动作 | 旧便笺内容保留；中文 IME、撤销和重启恢复通过 |
 | B：状态与输入 | `reminders` | 无 | 稳定 key 集合、事务存储、编辑动作和可访问语义 | 旧任务顺序/完成状态保留；键盘与 Narrator 可用 |
-| B：状态与输入 | `pomodoro` | 可选 `notification.post` | 宿主调度、后台合并、通知可选权限、动作状态机 | 休眠恢复不补发多次；拒绝通知仍可计时 |
+| B：状态与输入 | `pomodoro` | 可选 `notification.post` | `view.tree.core` 进度环/图标按钮、宿主调度、后台合并、通知可选权限、动作状态机 | hover/pressed/点击/元素菜单可用；休眠恢复不补发多次；拒绝通知仍可计时 |
 | C：数据订阅 | `system-monitor` | 必需 `system.performance.read`；可选 `system.power.read`、`system.network.read` | 拆分 topic 的共享采样、可见性节流、v2 draw 与实例滚动 | 每类授权可分别拒绝/撤销；多实例不重复昂贵采样；无订阅即停 |
 | C：数据订阅 | `media-controls` | 必需 `media.read`；可选 `media.action`、`app.discovery`、`app.launch` | 媒体订阅、用户手势动作、应用搜索/不透明引用启动降级 | 播放器切换/退出恢复；分别拒绝媒体读取/控制和应用发现/启动权限 |
 | D：日历集合 | `month-calendar` | 可选 `calendar.read` | 日历订阅、月视图稳定 key、无权限日期计算和本地共享选择 | 跨月/时区/区域格式正确；拒绝读取仍可使用月视图 |

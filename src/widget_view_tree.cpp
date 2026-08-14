@@ -29,6 +29,27 @@ float TextIntrinsicWidth(const ViewNode& node) noexcept
         node.padding * 2.0f;
 }
 
+bool IsIconNode(ViewNodeType type) noexcept
+{
+    return type == ViewNodeType::Icon ||
+        type == ViewNodeType::IconButton;
+}
+
+bool IsButtonNode(ViewNodeType type) noexcept
+{
+    return type == ViewNodeType::Button ||
+        type == ViewNodeType::IconButton;
+}
+
+bool IsLeafNode(ViewNodeType type) noexcept
+{
+    return type == ViewNodeType::Text || IsButtonNode(type) ||
+        type == ViewNodeType::Icon || type == ViewNodeType::Shape ||
+        type == ViewNodeType::ProgressBar ||
+        type == ViewNodeType::ProgressRing ||
+        type == ViewNodeType::Spacer;
+}
+
 float IntrinsicWidth(const ViewNode& node);
 float IntrinsicHeight(const ViewNode& node);
 
@@ -39,6 +60,12 @@ float IntrinsicWidth(const ViewNode& node)
     if (node.type == ViewNodeType::Text ||
         node.type == ViewNodeType::Button)
         return TextIntrinsicWidth(node);
+    if (IsIconNode(node.type))
+        return node.fontSize * 1.4f + node.padding * 2.0f;
+    if (node.type == ViewNodeType::ProgressRing)
+        return 32.0f + node.padding * 2.0f;
+    if (node.type == ViewNodeType::Shape)
+        return 8.0f + node.padding * 2.0f;
     if (node.type == ViewNodeType::Spacer)
         return 0.0f;
     float result = 0.0f;
@@ -71,6 +98,17 @@ float IntrinsicHeight(const ViewNode& node)
     if (node.type == ViewNodeType::Button)
         return std::max(32.0f, node.fontSize * 1.8f) +
             node.padding * 2.0f;
+    if (node.type == ViewNodeType::IconButton)
+        return std::max(32.0f, node.fontSize * 1.4f) +
+            node.padding * 2.0f;
+    if (node.type == ViewNodeType::Icon)
+        return node.fontSize * 1.4f + node.padding * 2.0f;
+    if (node.type == ViewNodeType::ProgressBar)
+        return std::max(4.0f, node.thickness) + node.padding * 2.0f;
+    if (node.type == ViewNodeType::ProgressRing)
+        return 32.0f + node.padding * 2.0f;
+    if (node.type == ViewNodeType::Shape)
+        return 8.0f + node.padding * 2.0f;
     if (node.type == ViewNodeType::Spacer)
         return 0.0f;
     float result = 0.0f;
@@ -275,6 +313,10 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         !FiniteInRange(node.gap, 0.0f, 4096.0f) ||
         !FiniteInRange(node.flexGrow, 0.0f, 1000.0f) ||
         !FiniteInRange(node.fontSize, 1.0f, 512.0f) ||
+        !FiniteInRange(node.value, 0.0f, 1.0f) ||
+        !FiniteInRange(node.thickness, 0.5f, 4096.0f) ||
+        !FiniteInRange(node.trackOpacity, 0.0f, 1.0f) ||
+        !FiniteInRange(node.fillOpacity, 0.0f, 1.0f) ||
         !validStyle(node.style) || !validStyle(node.hoverStyle) ||
         !validStyle(node.pressedStyle))
     {
@@ -289,10 +331,7 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         return false;
     }
     textBytes += node.text.size();
-    if ((node.type == ViewNodeType::Text ||
-            node.type == ViewNodeType::Button ||
-            node.type == ViewNodeType::Spacer) &&
-        !node.children.empty())
+    if (IsLeafNode(node.type) && !node.children.empty())
     {
         error = std::string(ViewNodeTypeName(node.type)) +
             " nodes cannot have children";
@@ -301,6 +340,18 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
     if (node.type == ViewNodeType::Button && node.text.empty())
     {
         error = "button nodes require label text";
+        return false;
+    }
+    if (IsIconNode(node.type) && node.text.empty())
+    {
+        error = std::string(ViewNodeTypeName(node.type)) +
+            " nodes require a glyph";
+        return false;
+    }
+    if (node.type == ViewNodeType::IconButton &&
+        node.accessibilityLabel.empty())
+    {
+        error = "iconButton nodes require accessibility.label";
         return false;
     }
     for (const auto& [eventName, action] : node.events)
@@ -329,7 +380,7 @@ bool CollectRegions(const ViewNode& node,
     std::vector<InteractionRegion>& regions, std::string& error)
 {
     if (!node.visible) return true;
-    if (!node.events.empty() || node.type == ViewNodeType::Button)
+    if (!node.events.empty() || IsButtonNode(node.type))
     {
         if (node.frame.width <= 0.0f || node.frame.height <= 0.0f)
         {
@@ -338,21 +389,35 @@ bool CollectRegions(const ViewNode& node,
         }
         InteractionRegion region;
         region.key = node.key;
-        region.shape.type = node.style.cornerRadius.value_or(0.0f) > 0.0f
-            ? InteractionShapeType::RoundedRect
-            : InteractionShapeType::Rect;
-        region.shape.x = node.frame.x;
-        region.shape.y = node.frame.y;
-        region.shape.width = node.frame.width;
-        region.shape.height = node.frame.height;
-        region.shape.radius = node.style.cornerRadius.value_or(0.0f);
+        if (node.type == ViewNodeType::Shape &&
+            node.shapeKind == ViewShapeKind::Circle)
+        {
+            region.shape.type = InteractionShapeType::Circle;
+            region.shape.x = node.frame.x + node.frame.width * 0.5f;
+            region.shape.y = node.frame.y + node.frame.height * 0.5f;
+            region.shape.radius = std::min(
+                node.frame.width, node.frame.height) * 0.5f;
+        }
+        else
+        {
+            region.shape.type =
+                node.style.cornerRadius.value_or(0.0f) > 0.0f
+                ? InteractionShapeType::RoundedRect
+                : InteractionShapeType::Rect;
+            region.shape.x = node.frame.x;
+            region.shape.y = node.frame.y;
+            region.shape.width = node.frame.width;
+            region.shape.height = node.frame.height;
+            region.shape.radius =
+                node.style.cornerRadius.value_or(0.0f);
+        }
         region.cursor = node.cursor.empty() &&
-            (node.type == ViewNodeType::Button ||
+            (IsButtonNode(node.type) ||
                 node.events.contains("click"))
             ? "hand" : node.cursor;
         region.events = node.events;
         region.accessibilityRole = node.accessibilityRole.empty() &&
-            node.type == ViewNodeType::Button
+            IsButtonNode(node.type)
             ? "button" : node.accessibilityRole;
         region.accessibilityLabel = node.accessibilityLabel.empty()
             ? node.text : node.accessibilityLabel;
@@ -409,6 +474,11 @@ const char* ViewNodeTypeName(ViewNodeType type) noexcept
     case ViewNodeType::Stack: return "stack";
     case ViewNodeType::Text: return "text";
     case ViewNodeType::Button: return "button";
+    case ViewNodeType::Icon: return "icon";
+    case ViewNodeType::IconButton: return "iconButton";
+    case ViewNodeType::Shape: return "shape";
+    case ViewNodeType::ProgressBar: return "progressBar";
+    case ViewNodeType::ProgressRing: return "progressRing";
     case ViewNodeType::Spacer: return "spacer";
     }
     return "unknown";

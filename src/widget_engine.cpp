@@ -9577,11 +9577,64 @@ static snowdesktop::widget_runtime::ViewStyle ResolveViewStyle(
     return result;
 }
 
+static void DrawWidgetProgressRing(D2DState* state,
+    const D2D1_RECT_F& rect, float value, float thickness,
+    std::uint32_t trackColor, float trackOpacity,
+    std::uint32_t fillColor, float fillOpacity)
+{
+    if (!state || !state->ctx) return;
+    const float radius = std::max(0.0f,
+        std::min(rect.right - rect.left, rect.bottom - rect.top) * 0.5f -
+            thickness * 0.5f);
+    if (radius <= 0.0f) return;
+    const D2D1_POINT_2F center = D2D1::Point2F(
+        (rect.left + rect.right) * 0.5f,
+        (rect.top + rect.bottom) * 0.5f);
+    const D2D1_ELLIPSE ellipse = D2D1::Ellipse(center, radius, radius);
+    if (ID2D1SolidColorBrush* track = GetCachedBrush(state,
+            static_cast<int>(trackColor), trackOpacity))
+        state->ctx->DrawEllipse(ellipse, track, thickness);
+    if (value <= 0.0f) return;
+    ID2D1SolidColorBrush* fill = GetCachedBrush(state,
+        static_cast<int>(fillColor), fillOpacity);
+    if (!fill) return;
+    if (value >= 0.9999f)
+    {
+        state->ctx->DrawEllipse(ellipse, fill, thickness);
+        return;
+    }
+
+    ComPtr<ID2D1Factory> factory;
+    state->ctx->GetFactory(&factory);
+    if (!factory) return;
+    ComPtr<ID2D1PathGeometry> geometry;
+    if (FAILED(factory->CreatePathGeometry(&geometry)) || !geometry)
+        return;
+    ComPtr<ID2D1GeometrySink> sink;
+    if (FAILED(geometry->Open(&sink)) || !sink) return;
+    constexpr float Pi = 3.14159265358979323846f;
+    const float angle = value * 2.0f * Pi;
+    const D2D1_POINT_2F start = D2D1::Point2F(
+        center.x, center.y - radius);
+    const D2D1_POINT_2F end = D2D1::Point2F(
+        center.x + std::sin(angle) * radius,
+        center.y - std::cos(angle) * radius);
+    sink->BeginFigure(start, D2D1_FIGURE_BEGIN_HOLLOW);
+    sink->AddArc(D2D1::ArcSegment(end, D2D1::SizeF(radius, radius),
+        0.0f, D2D1_SWEEP_DIRECTION_CLOCKWISE,
+        value > 0.5f ? D2D1_ARC_SIZE_LARGE : D2D1_ARC_SIZE_SMALL));
+    sink->EndFigure(D2D1_FIGURE_END_OPEN);
+    if (SUCCEEDED(sink->Close()))
+        state->ctx->DrawGeometry(geometry.Get(), fill, thickness);
+}
+
 static void DrawWidgetViewNode(D2DState* state,
     const snowdesktop::widget_runtime::ViewNode& node,
     const snowdesktop::widget_runtime::WidgetInteractionRegions& regions)
 {
     using snowdesktop::widget_runtime::ViewNodeType;
+    using snowdesktop::widget_runtime::ViewShapeKind;
+    using snowdesktop::widget_runtime::ViewIconFont;
     using snowdesktop::widget_runtime::ViewTextAlignment;
     if (!state || !state->ctx || !node.visible ||
         node.frame.width <= 0.0f || node.frame.height <= 0.0f)
@@ -9600,12 +9653,19 @@ static void DrawWidgetViewNode(D2DState* state,
         state->widgetRect.left + node.frame.x + node.frame.width,
         state->widgetRect.top + node.frame.y + node.frame.height);
 
-    const bool implicitButtonBackground = !style.background &&
-        node.type == ViewNodeType::Button;
+    const bool buttonNode = node.type == ViewNodeType::Button ||
+        node.type == ViewNodeType::IconButton;
+    const bool iconNode = node.type == ViewNodeType::Icon ||
+        node.type == ViewNodeType::IconButton;
+    const bool specialGeometry = node.type == ViewNodeType::Shape ||
+        node.type == ViewNodeType::ProgressBar ||
+        node.type == ViewNodeType::ProgressRing ||
+        node.type == ViewNodeType::Icon;
+    const bool implicitButtonBackground = !style.background && buttonNode;
     std::optional<std::uint32_t> background = style.background;
-    if (!background && node.type == ViewNodeType::Button)
+    if (!background && buttonNode)
         background = 0xFFFFFF;
-    if (background)
+    if (background && !specialGeometry)
     {
         const float defaultButtonAlpha =
             implicitButtonBackground ? 0.12f : 1.0f;
@@ -9622,7 +9682,7 @@ static void DrawWidgetViewNode(D2DState* state,
     }
     const float borderWidth = std::max(0.0f,
         style.borderWidth.value_or(0.0f));
-    if (borderWidth > 0.0f && style.borderColor)
+    if (borderWidth > 0.0f && style.borderColor && !specialGeometry)
     {
         ID2D1SolidColorBrush* brush = GetCachedBrush(state,
             static_cast<int>(*style.borderColor), opacity);
@@ -9637,15 +9697,100 @@ static void DrawWidgetViewNode(D2DState* state,
         }
     }
 
+    if (node.type == ViewNodeType::Shape)
+    {
+        const bool ellipse = node.shapeKind == ViewShapeKind::Circle ||
+            node.shapeKind == ViewShapeKind::Ellipse;
+        const float centerX = (rect.left + rect.right) * 0.5f;
+        const float centerY = (rect.top + rect.bottom) * 0.5f;
+        float radiusX = (rect.right - rect.left) * 0.5f;
+        float radiusY = (rect.bottom - rect.top) * 0.5f;
+        if (node.shapeKind == ViewShapeKind::Circle)
+            radiusX = radiusY = std::min(radiusX, radiusY);
+        const D2D1_ELLIPSE ellipseGeometry = D2D1::Ellipse(
+            D2D1::Point2F(centerX, centerY), radiusX, radiusY);
+        const float shapeRadius = node.shapeKind ==
+                ViewShapeKind::RoundedRectangle
+            ? std::max(0.0f, style.cornerRadius.value_or(4.0f))
+            : radius;
+        if (style.background)
+        {
+            if (ID2D1SolidColorBrush* brush = GetCachedBrush(state,
+                    static_cast<int>(*style.background), opacity))
+            {
+                if (ellipse) state->ctx->FillEllipse(ellipseGeometry, brush);
+                else if (shapeRadius > 0.0f)
+                    state->ctx->FillRoundedRectangle(
+                        D2D1::RoundedRect(rect, shapeRadius, shapeRadius),
+                        brush);
+                else state->ctx->FillRectangle(rect, brush);
+            }
+        }
+        if (borderWidth > 0.0f && style.borderColor)
+        {
+            if (ID2D1SolidColorBrush* brush = GetCachedBrush(state,
+                    static_cast<int>(*style.borderColor), opacity))
+            {
+                if (ellipse)
+                    state->ctx->DrawEllipse(
+                        ellipseGeometry, brush, borderWidth);
+                else if (shapeRadius > 0.0f)
+                    state->ctx->DrawRoundedRectangle(
+                        D2D1::RoundedRect(rect, shapeRadius, shapeRadius),
+                        brush, borderWidth);
+                else state->ctx->DrawRectangle(rect, brush, borderWidth);
+            }
+        }
+    }
+    else if (node.type == ViewNodeType::ProgressBar)
+    {
+        const std::uint32_t trackColor =
+            style.background.value_or(0xFFFFFF);
+        const std::uint32_t fillColor =
+            style.foreground.value_or(0xFFFFFF);
+        const float barRadius = std::max(0.0f,
+            style.cornerRadius.value_or(
+                (rect.bottom - rect.top) * 0.5f));
+        if (ID2D1SolidColorBrush* track = GetCachedBrush(state,
+                static_cast<int>(trackColor),
+                opacity * node.trackOpacity))
+            state->ctx->FillRoundedRectangle(
+                D2D1::RoundedRect(rect, barRadius, barRadius), track);
+        if (node.value > 0.0f)
+        {
+            D2D1_RECT_F fillRect = rect;
+            fillRect.right = fillRect.left +
+                (fillRect.right - fillRect.left) * node.value;
+            if (ID2D1SolidColorBrush* fill = GetCachedBrush(state,
+                    static_cast<int>(fillColor),
+                    opacity * node.fillOpacity))
+                state->ctx->FillRoundedRectangle(
+                    D2D1::RoundedRect(
+                        fillRect, barRadius, barRadius), fill);
+        }
+    }
+    else if (node.type == ViewNodeType::ProgressRing)
+    {
+        DrawWidgetProgressRing(state, rect, node.value,
+            std::min(node.thickness,
+                std::min(node.frame.width, node.frame.height)),
+            style.background.value_or(0xFFFFFF),
+            opacity * node.trackOpacity,
+            style.foreground.value_or(0xFFFFFF),
+            opacity * node.fillOpacity);
+    }
+
     if ((node.type == ViewNodeType::Text ||
-            node.type == ViewNodeType::Button) &&
+            node.type == ViewNodeType::Button || iconNode) &&
         !node.text.empty() && state->dwrite)
     {
         IDWriteTextFormat* format = GetCachedTextFormat(state,
             node.fontSize,
             node.bold ? DWRITE_FONT_WEIGHT_BOLD : state->itemFontWeight,
-            false, DWRITE_WORD_WRAPPING_NO_WRAP,
-            false, false, false, nullptr);
+            iconNode, DWRITE_WORD_WRAPPING_NO_WRAP,
+            iconNode && node.iconFont == ViewIconFont::FontAwesome,
+            iconNode,
+            iconNode && node.iconFont == ViewIconFont::Fluent, nullptr);
         const std::uint32_t foreground =
             style.foreground.value_or(0xFFFFFF);
         ID2D1SolidColorBrush* brush = GetCachedBrush(state,
@@ -9666,7 +9811,7 @@ static void DrawWidgetViewNode(D2DState* state,
                     format, textWidth, textHeight,
                     &layout)) && layout)
             {
-                if (node.textAlign == ViewTextAlignment::Center)
+                if (iconNode || node.textAlign == ViewTextAlignment::Center)
                     layout->SetTextAlignment(
                         DWRITE_TEXT_ALIGNMENT_CENTER);
                 else if (node.textAlign == ViewTextAlignment::End)
@@ -9684,10 +9829,18 @@ static void DrawWidgetViewNode(D2DState* state,
                 if (SUCCEEDED(state->dwrite->CreateEllipsisTrimmingSign(
                         format, &ellipsis)) && ellipsis)
                     layout->SetTrimming(&trimming, ellipsis.Get());
-                state->ctx->DrawTextLayout(
-                    D2D1::Point2F(
-                        rect.left + textInset, rect.top + textInset),
-                    layout.Get(), brush);
+                D2D1_POINT_2F origin = D2D1::Point2F(
+                    rect.left + textInset, rect.top + textInset);
+                if (iconNode)
+                {
+                    DWRITE_OVERHANG_METRICS overhang{};
+                    if (SUCCEEDED(layout->GetOverhangMetrics(&overhang)))
+                    {
+                        origin.x -= (overhang.right - overhang.left) * 0.5f;
+                        origin.y -= (overhang.bottom - overhang.top) * 0.5f;
+                    }
+                }
+                state->ctx->DrawTextLayout(origin, layout.Get(), brush);
             }
         }
     }
@@ -16233,6 +16386,11 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "stack", snowdesktop::widget_runtime::LuaViewStack, 2 },
         { "text", snowdesktop::widget_runtime::LuaViewText, 2 },
         { "button", snowdesktop::widget_runtime::LuaViewButton, 2 },
+        { "icon", snowdesktop::widget_runtime::LuaViewIcon, 2 },
+        { "iconButton", snowdesktop::widget_runtime::LuaViewIconButton, 2 },
+        { "shape", snowdesktop::widget_runtime::LuaViewShape, 2 },
+        { "progressBar", snowdesktop::widget_runtime::LuaViewProgressBar, 2 },
+        { "progressRing", snowdesktop::widget_runtime::LuaViewProgressRing, 2 },
         { "spacer", snowdesktop::widget_runtime::LuaViewSpacer, 2 },
     };
     static constexpr FunctionDescriptor widget[] = {

@@ -80,10 +80,11 @@ supports optional `setup(context)` and `dispose(context, model, reason)`;
 `setup` runs once and its return value is passed to `render` or `view`, `event`, and
 `dispose`. Optional `event(context, model, event)` receives host surface events;
 immediate-mode elements use `interaction.region`. The transitional
-`view.tree.core` subset supports box/row/column/stack/text/button/spacer nodes,
-stable element actions, hover/pressed styles, and per-element context-menu
-bindings; it does not yet provide keyboard focus, UI Automation, resources,
-collections, or the complete `view.tree` contract. Optional
+`view.tree.core` subset supports box/row/column/stack/text/button/icon/iconButton/
+shape/progressBar/progressRing/spacer nodes, stable element actions,
+hover/pressed styles, and per-element context-menu bindings; it does not yet
+provide keyboard focus, UI Automation, resource nodes, collections, or the
+complete `view.tree` contract. Optional
 `menu(context, model, request)` builds an element's synchronous native context
 menu.
 

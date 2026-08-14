@@ -19,5 +19,10 @@ int LuaViewColumn(lua_State* state);
 int LuaViewStack(lua_State* state);
 int LuaViewText(lua_State* state);
 int LuaViewButton(lua_State* state);
+int LuaViewIcon(lua_State* state);
+int LuaViewIconButton(lua_State* state);
+int LuaViewShape(lua_State* state);
+int LuaViewProgressBar(lua_State* state);
+int LuaViewProgressRing(lua_State* state);
 int LuaViewSpacer(lua_State* state);
 }

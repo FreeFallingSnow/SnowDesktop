@@ -572,8 +572,51 @@ bool ParseNodeType(std::string_view type, ViewNodeType& result)
     else if (type == "stack") result = ViewNodeType::Stack;
     else if (type == "text") result = ViewNodeType::Text;
     else if (type == "button") result = ViewNodeType::Button;
+    else if (type == "icon") result = ViewNodeType::Icon;
+    else if (type == "iconButton") result = ViewNodeType::IconButton;
+    else if (type == "shape") result = ViewNodeType::Shape;
+    else if (type == "progressBar") result = ViewNodeType::ProgressBar;
+    else if (type == "progressRing") result = ViewNodeType::ProgressRing;
     else if (type == "spacer") result = ViewNodeType::Spacer;
     else return false;
+    return true;
+}
+
+bool ReadShapeKindField(lua_State* state, int table,
+    ViewShapeKind& value, std::string& error)
+{
+    std::string text;
+    if (!ReadStringField(state, table, "shape", text, false, error))
+        return false;
+    if (text.empty() || text == "rectangle")
+        value = ViewShapeKind::Rectangle;
+    else if (text == "roundedRectangle")
+        value = ViewShapeKind::RoundedRectangle;
+    else if (text == "circle") value = ViewShapeKind::Circle;
+    else if (text == "ellipse") value = ViewShapeKind::Ellipse;
+    else
+    {
+        error = "view field 'shape' has an unsupported value";
+        return false;
+    }
+    return true;
+}
+
+bool ReadIconFontField(lua_State* state, int table,
+    ViewIconFont& value, std::string& error)
+{
+    std::string text;
+    if (!ReadStringField(state, table, "iconFont", text, false, error))
+        return false;
+    if (text.empty() || text == "fa")
+        value = ViewIconFont::FontAwesome;
+    else if (text == "fluent" || text == "fluent-regular")
+        value = ViewIconFont::Fluent;
+    else
+    {
+        error = "view field 'iconFont' has an unsupported value";
+        return false;
+    }
     return true;
 }
 
@@ -593,7 +636,9 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         return false;
     }
     if (!ValidateObjectFields(state, index,
-            { "type", "key", "text", "label", "width", "height",
+            { "type", "key", "text", "label", "glyph", "iconFont",
+                "shape", "value", "thickness", "trackOpacity",
+                "fillOpacity", "width", "height",
                 "padding", "gap", "flexGrow", "fontSize", "bold",
                 "visible", "enabled", "cursor", "alignItems",
                 "alignSelf", "justifyContent", "textAlign", "style",
@@ -607,30 +652,63 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         if (error.empty()) error = "unsupported view node type: " + type;
         return false;
     }
-    if (node.type == ViewNodeType::Button &&
-        FieldPresent(state, index, "text"))
+    const bool buttonNode = node.type == ViewNodeType::Button ||
+        node.type == ViewNodeType::IconButton;
+    const bool iconNode = node.type == ViewNodeType::Icon ||
+        node.type == ViewNodeType::IconButton;
+    const bool progressNode = node.type == ViewNodeType::ProgressBar ||
+        node.type == ViewNodeType::ProgressRing;
+    if (buttonNode && !iconNode &&
+        (FieldPresent(state, index, "text") ||
+            FieldPresent(state, index, "glyph")))
     {
-        error = "button nodes use 'label', not 'text'";
+        error = "button nodes use 'label', not 'text' or 'glyph'";
         return false;
     }
-    if (node.type != ViewNodeType::Button &&
+    if (iconNode && (FieldPresent(state, index, "text") ||
+            FieldPresent(state, index, "label")))
+    {
+        error = "icon nodes use 'glyph', not 'text' or 'label'";
+        return false;
+    }
+    if (!buttonNode &&
         (FieldPresent(state, index, "label") ||
             FieldPresent(state, index, "action")))
     {
         error = "only button nodes accept 'label' and 'action'";
         return false;
     }
-    if (node.type != ViewNodeType::Text &&
-        node.type != ViewNodeType::Button &&
+    if (node.type != ViewNodeType::Text && !buttonNode && !iconNode &&
         FieldPresent(state, index, "text"))
     {
         error = "only text nodes accept 'text'";
         return false;
     }
+    if (!iconNode && (FieldPresent(state, index, "glyph") ||
+            FieldPresent(state, index, "iconFont")))
+    {
+        error = "only icon nodes accept 'glyph' and 'iconFont'";
+        return false;
+    }
+    if (node.type != ViewNodeType::Shape &&
+        FieldPresent(state, index, "shape"))
+    {
+        error = "only shape nodes accept 'shape'";
+        return false;
+    }
+    if (!progressNode && (FieldPresent(state, index, "value") ||
+            FieldPresent(state, index, "thickness") ||
+            FieldPresent(state, index, "trackOpacity") ||
+            FieldPresent(state, index, "fillOpacity")))
+    {
+        error = "only progress nodes accept progress fields";
+        return false;
+    }
     if (!ReadStringField(state, index, "key", node.key, true, error))
         return false;
-    if (!ReadStringField(state, index,
-            node.type == ViewNodeType::Button ? "label" : "text",
+    const char* contentField = iconNode ? "glyph" :
+        (buttonNode ? "label" : "text");
+    if (!ReadStringField(state, index, contentField,
             node.text, false, error) ||
         !ReadLengthField(state, index, "width", node.width, error) ||
         !ReadLengthField(state, index, "height", node.height, error) ||
@@ -638,6 +716,12 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadFloatField(state, index, "gap", node.gap, error) ||
         !ReadFloatField(state, index, "flexGrow", node.flexGrow, error) ||
         !ReadFloatField(state, index, "fontSize", node.fontSize, error) ||
+        !ReadFloatField(state, index, "value", node.value, error) ||
+        !ReadFloatField(state, index, "thickness", node.thickness, error) ||
+        !ReadFloatField(state, index, "trackOpacity",
+            node.trackOpacity, error) ||
+        !ReadFloatField(state, index, "fillOpacity",
+            node.fillOpacity, error) ||
         !ReadBoolField(state, index, "bold", node.bold, error) ||
         !ReadBoolField(state, index, "visible", node.visible, error) ||
         !ReadBoolField(state, index, "enabled", node.enabled, error) ||
@@ -649,6 +733,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadJustificationField(state, index,
             node.justifyContent, error) ||
         !ReadTextAlignmentField(state, index, node.textAlign, error) ||
+        !ReadShapeKindField(state, index, node.shapeKind, error) ||
+        !ReadIconFontField(state, index, node.iconFont, error) ||
         !ReadStyleField(state, index, "style", node.style, error) ||
         !ReadStyleField(state, index, "hoverStyle",
             node.hoverStyle, error) ||
@@ -716,7 +802,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     }
     lua_pop(state, 1);
 
-    if (node.type == ViewNodeType::Button)
+    if (buttonNode)
     {
         lua_getfield(state, index, "action");
         if (!lua_isnil(state, -1))
@@ -806,5 +892,19 @@ int LuaViewColumn(lua_State* state) { return MakeNode(state, "column"); }
 int LuaViewStack(lua_State* state) { return MakeNode(state, "stack"); }
 int LuaViewText(lua_State* state) { return MakeNode(state, "text"); }
 int LuaViewButton(lua_State* state) { return MakeNode(state, "button"); }
+int LuaViewIcon(lua_State* state) { return MakeNode(state, "icon"); }
+int LuaViewIconButton(lua_State* state)
+{
+    return MakeNode(state, "iconButton");
+}
+int LuaViewShape(lua_State* state) { return MakeNode(state, "shape"); }
+int LuaViewProgressBar(lua_State* state)
+{
+    return MakeNode(state, "progressBar");
+}
+int LuaViewProgressRing(lua_State* state)
+{
+    return MakeNode(state, "progressRing");
+}
 int LuaViewSpacer(lua_State* state) { return MakeNode(state, "spacer"); }
 }

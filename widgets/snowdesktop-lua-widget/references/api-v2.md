@@ -84,7 +84,8 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 
 ### `view.tree.core` 声明式视图
 
-当前过渡 feature `view.tree.core` 提供 `view.box/row/column/stack/text/button/spacer`。
+当前过渡 feature `view.tree.core` 提供 `view.box/row/column/stack/text/button/icon/
+iconButton/shape/progressBar/progressRing/spacer`。
 每次 `view(context, model)` 返回一棵完整树；所有节点必须提供全树唯一、1–128 字节的
 稳定 `key`。宿主先完整解析、校验和布局，再原子替换上一棵成功树；回调或校验失败时
 继续显示上一棵树，不留下半棵树或空白交互区。
@@ -131,12 +132,18 @@ end
 hover/pressed 覆盖。按钮 `action` 是 click 简写；events 还支持 pointer enter/leave/
 down/up、doubleClick 和 contextMenu，动作通过 `event.kind == "action"` 投递。
 
+`shape` 支持 rectangle、roundedRectangle、circle 和 ellipse；填充与描边来自 style。
+`icon`/`iconButton` 的 `glyph` 使用宿主 Font Awesome 或 Fluent 字体，`iconButton` 必须
+提供 `accessibility.label`。`progressBar`/`progressRing` 接受 0–1 的 `value`、正数
+`thickness`、track/fill opacity，并分别使用 style.background/foreground 作为轨道和
+进度色。这些节点均由宿主直接绘制，不开放路径、字体文件或原生绘图对象。
+
 树限制为 512 节点、32 层、单节点 4 KiB 文本、全树 64 KiB 文本和最多 256 个交互
 区域。未知字段、错误枚举、非连续 children、重复 key、NaN/Infinity 和越界值会拒绝
 整次提交。桌面树只布局在底部标题栏之上的内容区。
 
-该 feature 不是完整 `view.tree`：当前每帧重建树，尚无 grid/scroll/list/image/icon/
-shape/input/progress/chart/slot 节点，也没有键盘焦点、UIA 输出、RTL、文本换行、主题
+该 feature 不是完整 `view.tree`：当前每帧重建树，尚无 grid/scroll/list/image/
+input/chart/slot 节点，也没有键盘焦点、UIA 输出、RTL、文本换行、主题
 token、差量资源复用或声明式 panel。需要这些能力的组件应继续使用 v2 即时绘制或等待
 对应 feature；不得把 `view.tree.core` 当作稳定完整控件集声明。
 

@@ -20,7 +20,26 @@ enum class ViewNodeType
     Stack,
     Text,
     Button,
+    Icon,
+    IconButton,
+    Shape,
+    ProgressBar,
+    ProgressRing,
     Spacer,
+};
+
+enum class ViewShapeKind
+{
+    Rectangle,
+    RoundedRectangle,
+    Circle,
+    Ellipse,
+};
+
+enum class ViewIconFont
+{
+    FontAwesome,
+    Fluent,
 };
 
 enum class ViewLengthKind
@@ -92,7 +111,13 @@ struct ViewNode
     ViewAlignment alignSelf = ViewAlignment::Auto;
     ViewJustification justifyContent = ViewJustification::Start;
     ViewTextAlignment textAlign = ViewTextAlignment::Start;
+    ViewShapeKind shapeKind = ViewShapeKind::Rectangle;
+    ViewIconFont iconFont = ViewIconFont::FontAwesome;
     float fontSize = 15.0f;
+    float value = 0.0f;
+    float thickness = 4.0f;
+    float trackOpacity = 1.0f;
+    float fillOpacity = 1.0f;
     bool bold = false;
     bool visible = true;
     bool enabled = true;

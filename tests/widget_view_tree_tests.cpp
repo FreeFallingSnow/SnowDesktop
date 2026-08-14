@@ -108,6 +108,23 @@ void TestValidationFailures()
     Check(!ValidateAndLayoutViewTree(leaf, 100.0f, 100.0f, error) &&
             error.find("cannot have children") != std::string::npos,
         "leaf nodes must reject children rather than silently ignoring them");
+
+    ViewNode invalidProgress;
+    invalidProgress.type = ViewNodeType::ProgressRing;
+    invalidProgress.key = "progress";
+    invalidProgress.value = 1.1f;
+    Check(!ValidateAndLayoutViewTree(
+            invalidProgress, 100.0f, 100.0f, error),
+        "progress nodes must reject values outside the normalized range");
+
+    ViewNode unlabeledIconButton;
+    unlabeledIconButton.type = ViewNodeType::IconButton;
+    unlabeledIconButton.key = "icon-action";
+    unlabeledIconButton.text = ">";
+    Check(!ValidateAndLayoutViewTree(
+            unlabeledIconButton, 100.0f, 100.0f, error) &&
+            error.find("accessibility.label") != std::string::npos,
+        "iconButton must require an accessible label");
 }
 
 void RegisterViewLibrary(lua_State* state)
@@ -124,6 +141,11 @@ void RegisterViewLibrary(lua_State* state)
         { "stack", LuaViewStack },
         { "text", LuaViewText },
         { "button", LuaViewButton },
+        { "icon", LuaViewIcon },
+        { "iconButton", LuaViewIconButton },
+        { "shape", LuaViewShape },
+        { "progressBar", LuaViewProgressBar },
+        { "progressRing", LuaViewProgressRing },
         { "spacer", LuaViewSpacer },
     };
     for (const auto& entry : entries)
@@ -215,6 +237,82 @@ void TestLuaParsing()
         "view parsing must reject unknown fields instead of hiding typos");
     lua_close(state);
 }
+
+void TestVisualNodeParsing()
+{
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "Lua state must be available");
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    Check(luaL_dostring(state, R"lua(
+        return view.row({
+            key = "visuals",
+            gap = 4,
+            children = {
+                view.shape({
+                    key = "dot",
+                    shape = "circle",
+                    width = 8,
+                    height = 8,
+                    style = { background = 0xFF0000, opacity = 0.5 },
+                }),
+                view.progressBar({
+                    key = "bar",
+                    width = 80,
+                    value = 0.25,
+                    thickness = 6,
+                    trackOpacity = 0.2,
+                    fillOpacity = 0.9,
+                }),
+                view.progressRing({
+                    key = "ring",
+                    width = 40,
+                    height = 40,
+                    value = 0.75,
+                    thickness = 5,
+                }),
+                view.icon({
+                    key = "glyph",
+                    glyph = ">",
+                    iconFont = "fluent",
+                    fontSize = 18,
+                }),
+                view.iconButton({
+                    key = "next",
+                    glyph = ">",
+                    iconFont = "fa",
+                    width = 32,
+                    height = 32,
+                    action = { id = "next" },
+                    accessibility = { label = "Next" },
+                }),
+            },
+        })
+    )lua") == LUA_OK,
+        "visual-node Lua fixture must evaluate");
+    ViewNode root;
+    std::string error;
+    Check(ParseLuaViewTree(state, -1, root, error) &&
+            root.children.size() == 5 &&
+            root.children[0].type == ViewNodeType::Shape &&
+            root.children[0].shapeKind == ViewShapeKind::Circle &&
+            root.children[1].type == ViewNodeType::ProgressBar &&
+            Near(root.children[1].value, 0.25f) &&
+            Near(root.children[1].trackOpacity, 0.2f) &&
+            root.children[2].type == ViewNodeType::ProgressRing &&
+            root.children[3].iconFont == ViewIconFont::Fluent &&
+            root.children[4].type == ViewNodeType::IconButton,
+        "shape, progress, and icon nodes must retain typed fields");
+    Check(ValidateAndLayoutViewTree(root, 320.0f, 80.0f, error),
+        "visual nodes must validate and lay out together");
+    std::vector<InteractionRegion> regions;
+    Check(CollectViewInteractionRegions(root, regions, error) &&
+            regions.size() == 1 && regions[0].key == "next" &&
+            regions[0].events.at("click").id == "next" &&
+            regions[0].accessibilityRole == "button",
+        "iconButton must produce an actionable semantic region");
+    lua_close(state);
+}
 }
 
 int main()
@@ -222,6 +320,7 @@ int main()
     TestLayoutAndRegions();
     TestValidationFailures();
     TestLuaParsing();
+    TestVisualNodeParsing();
     std::cout << "Widget view tree tests passed\n";
     return 0;
 }

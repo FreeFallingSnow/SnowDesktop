@@ -141,6 +141,13 @@
 ---@field key string Globally unique stable key in the returned tree.
 ---@field text? string Used by text nodes.
 ---@field label? string Required by button nodes.
+---@field glyph? string Required by icon and iconButton nodes.
+---@field iconFont? 'fa'|'fluent'|'fluent-regular'
+---@field shape? 'rectangle'|'roundedRectangle'|'circle'|'ellipse'
+---@field value? number Progress value between 0 and 1.
+---@field thickness? number Progress stroke or intrinsic bar thickness.
+---@field trackOpacity? number Progress track opacity between 0 and 1.
+---@field fillOpacity? number Progress fill opacity between 0 and 1.
 ---@field width? SnowViewLength
 ---@field height? SnowViewLength
 ---@field padding? number
@@ -164,7 +171,7 @@
 ---@field children? SnowViewNode[]
 
 ---@class SnowViewNode: SnowViewNodeOptions
----@field type 'box'|'row'|'column'|'stack'|'text'|'button'|'spacer'
+---@field type 'box'|'row'|'column'|'stack'|'text'|'button'|'icon'|'iconButton'|'shape'|'progressBar'|'progressRing'|'spacer'
 
 ---@class SnowInteractionShape
 ---@field type 'rect'|'roundedRect'|'circle'
@@ -454,6 +461,26 @@ function view.text(options) end
 ---@param options SnowViewNodeOptions
 ---@return SnowViewNode
 function view.button(options) end
+
+---@param options SnowViewNodeOptions
+---@return SnowViewNode
+function view.icon(options) end
+
+---@param options SnowViewNodeOptions
+---@return SnowViewNode
+function view.iconButton(options) end
+
+---@param options SnowViewNodeOptions
+---@return SnowViewNode
+function view.shape(options) end
+
+---@param options SnowViewNodeOptions
+---@return SnowViewNode
+function view.progressBar(options) end
+
+---@param options SnowViewNodeOptions
+---@return SnowViewNode
+function view.progressRing(options) end
 
 ---@param options SnowViewNodeOptions
 ---@return SnowViewNode

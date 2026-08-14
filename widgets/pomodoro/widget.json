@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "Pomodoro",
   "nameKey": "lua_widget.pomodoro.name",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "A Pomodoro timer with focus and break cycles, pause and resume, and customizable durations and colors.",
   "descriptionKey": "lua_widget.pomodoro.description",
   "previewData": {
@@ -332,16 +332,14 @@
     "notification.post"
   ],
   "requiredFeatures": [
-    "draw.immediate",
     "interaction.contextMenu",
-    "interaction.pointerActions",
-    "interaction.region",
     "lifecycle.event",
     "lifecycle.model",
     "l10n.basic",
     "schedule.basic",
     "schedule.visibility",
-    "time.basic"
+    "time.basic",
+    "view.tree.core"
   ],
   "optionalFeatures": [
     "task.notification.show",
