@@ -242,6 +242,17 @@ void TestPermissionBrokerSnapshot()
     Check(denied.runtimeBlock == PermissionRuntimeBlock::Denied &&
             denied.permissions.empty() && denied.networkDomains.empty(),
         "denied decisions must block activation and expose no scopes");
+
+    const std::vector<std::string> empty;
+    const auto staleEmptyPending = WidgetPermissionBroker::Evaluate(
+        PermissionDecisionState::Pending, empty, empty, empty, empty, empty);
+    const auto staleEmptyDenied = WidgetPermissionBroker::Evaluate(
+        PermissionDecisionState::Denied, empty, empty, empty, empty, empty);
+    Check(staleEmptyPending.runtimeBlock == PermissionRuntimeBlock::None &&
+            staleEmptyDenied.runtimeBlock == PermissionRuntimeBlock::None &&
+            staleEmptyPending.permissions.empty() &&
+            staleEmptyDenied.permissions.empty(),
+        "stale decisions must not block a package with no declared scopes");
 }
 
 void TestRequiredAndOptionalPermissionSemantics()

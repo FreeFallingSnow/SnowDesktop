@@ -119,7 +119,13 @@ PermissionGrantSnapshot WidgetPermissionBroker::Evaluate(
             declaredPermissions.push_back(permission);
 
     PermissionGrantSnapshot result;
-    result.runtimeBlock = ActivationBlock(state);
+    // A stale decision from an older package version must not keep blocking a
+    // package after the author removes every permission and domain. There is
+    // nothing the user can authorize in that state.
+    const bool hasDeclaredScopes = !declaredPermissions.empty() ||
+        !declaredNetworkDomains.empty();
+    result.runtimeBlock = hasDeclaredScopes
+        ? ActivationBlock(state) : PermissionRuntimeBlock::None;
     result.permissions = EffectiveScopes(state,
         declaredPermissions, storedGrantedPermissions);
     result.networkDomains = EffectiveScopes(state,

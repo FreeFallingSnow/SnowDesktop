@@ -1033,6 +1033,16 @@ int main()
             PermissionDecisionState::Pending &&
             changedBuiltin->grantedPermissions.empty(),
         "an in-place built-in scope change cannot fall back to implicit permission");
+    MakePackage(changedBuiltinRoot, "1.0.0", changedBuiltinId, "");
+    WidgetPackageManager permissionFreeBuiltinReloaded(changedBuiltinPaths);
+    const auto permissionFreeBuiltin =
+        permissionFreeBuiltinReloaded.Initialize(error)
+        ? permissionFreeBuiltinReloaded.Resolve(changedBuiltinId)
+        : std::nullopt;
+    Expect(permissionFreeBuiltin && permissionFreeBuiltin->permissionState ==
+            PermissionDecisionState::Granted &&
+            permissionFreeBuiltin->grantedPermissions.empty(),
+        "removing every permission clears a stale built-in consent block");
     Expect(manager.ResolveEntry(manifest.id).value_or(L"").filename() == L"main.lua",
         "entry resolves inside the package");
     Expect(manager.SetEnabled(manifest.id, false, error),

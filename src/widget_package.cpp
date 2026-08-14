@@ -2118,6 +2118,17 @@ bool WidgetPackageManager::Refresh(std::string& error)
     const auto applyScopeMismatchBlock = [](
         InstalledPackage& package, ExplicitDecisionResult result) {
         if (result != ExplicitDecisionResult::ScopeMismatch) return;
+        const auto declaredPermissions = DeclaredPermissions(
+            package.manifest);
+        const bool requiresConsent = !PermissionsRequiringConsent(
+            declaredPermissions).empty();
+        if (!requiresConsent)
+        {
+            package.permissionState = PermissionDecisionState::Granted;
+            package.grantedPermissions = declaredPermissions;
+            package.grantedNetworkDomains = package.manifest.networkDomains;
+            return;
+        }
         package.permissionState = PermissionDecisionState::Pending;
         package.grantedPermissions.clear();
         package.grantedNetworkDomains.clear();
