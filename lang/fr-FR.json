@@ -97,6 +97,8 @@
   "app.widget.placeholder.load_failed": "Le composant n’a pas pu être chargé.",
   "app.widget.placeholder.reload": "Recharger",
   "app.settings.widgets_filter_empty": "Aucun composant",
+  "app.settings.widgets_invalid_components": "Composants non valides",
+  "app.settings.widgets_invalid_component": "Composant non valide",
   "app.settings.widgets_advanced": "Options avancées",
   "app.settings.widgets_developer_tools": "Outils de développement de composants",
   "app.settings.widgets_self_develop": "Développer soi-même",

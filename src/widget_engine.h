@@ -669,6 +669,8 @@ public:
     static snowdesktop::widget::PackagePaths GetWidgetPackagePaths();
     static std::vector<snowdesktop::widget::InstalledPackage>
         ListWidgetPackages();
+    static std::vector<snowdesktop::widget::InvalidPackage>
+        ListInvalidWidgetPackages();
     static std::optional<snowdesktop::widget::InstalledPackage>
         GetWidgetPackage(const std::wstring& packageId);
     static bool SetWidgetPermissionDecision(

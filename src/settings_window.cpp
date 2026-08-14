@@ -3928,6 +3928,7 @@ void SettingsWindow::DrawWidgetPackagesPage()
     ImGui::PopStyleVar();
 
     const auto packages = WidgetEngine::ListWidgetPackages();
+    const auto invalidPackages = WidgetEngine::ListInvalidWidgetPackages();
     const bool steamBridgeAvailable =
         WidgetEngine::IsSteamWorkshopBridgeAvailable();
     const bool workshopPublisherAvailable =
@@ -4303,6 +4304,22 @@ void SettingsWindow::DrawWidgetPackagesPage()
         return foldSearchText(std::move(searchable)).find(searchText) !=
             std::string::npos;
     };
+    auto invalidMatchesSearch = [&](const snowdesktop::widget::InvalidPackage&
+            package)
+    {
+        if (searchText.empty()) return true;
+        const auto manifest = localizedManifest(package.manifest);
+        std::string searchable = manifest.name + "\n" +
+            manifest.description + "\n" + manifest.author + "\n" +
+            manifest.id + "\n" + manifest.version + "\n" +
+            WideToUtf8(package.root.filename().wstring());
+        for (const auto& issue : package.report.issues)
+        {
+            searchable += "\n" + issue.code + "\n" + issue.message;
+        }
+        return foldSearchText(std::move(searchable)).find(searchText) !=
+            std::string::npos;
+    };
 
     int listedPackageCount = 0;
     int builtinPackageCount = 0;
@@ -4315,6 +4332,14 @@ void SettingsWindow::DrawWidgetPackagesPage()
         if (group.managed) ++installedPackageCount;
         if (group.development) ++developmentPackageCount;
         if (group.builtin && !userPackage) ++builtinPackageCount;
+    }
+    for (const auto& package : invalidPackages)
+    {
+        ++listedPackageCount;
+        if (package.development)
+            ++developmentPackageCount;
+        else if (!package.builtin)
+            ++installedPackageCount;
     }
     if ((widgetPackageFilter_ == 1 && installedPackageCount == 0) ||
         (widgetPackageFilter_ == 2 && developmentPackageCount == 0) ||
@@ -4377,10 +4402,21 @@ void SettingsWindow::DrawWidgetPackagesPage()
         if (!matchesSearch(group)) continue;
         visiblePackageGroups.push_back(&group);
     }
-    if (visiblePackageGroups.empty())
+    std::vector<const snowdesktop::widget::InvalidPackage*>
+        visibleInvalidPackages;
+    for (const auto& package : invalidPackages)
+    {
+        if (widgetPackageFilter_ == 1 &&
+            (package.builtin || package.development))
+            continue;
+        if (widgetPackageFilter_ == 2 && !package.development) continue;
+        if (!invalidMatchesSearch(package)) continue;
+        visibleInvalidPackages.push_back(&package);
+    }
+    if (visiblePackageGroups.empty() && visibleInvalidPackages.empty())
         ImGui::TextDisabled("%s",
             _L("app.settings.widgets_filter_empty"));
-    else
+    if (!visiblePackageGroups.empty())
     {
         const float availableWidth = ImGui::GetContentRegionAvail().x;
         const float cardGap = 10.0f * dpiScale_;
@@ -4809,6 +4845,69 @@ void SettingsWindow::DrawWidgetPackagesPage()
         ImGui::SetCursorPos(ImVec2(
             gridStart.x, gridStart.y + std::max(0.0f, gridHeight)));
         ImGui::Dummy(ImVec2(0, 0));
+    }
+
+    if (!visibleInvalidPackages.empty())
+    {
+        ImGui::Spacing();
+        std::string invalidHeader =
+            _L("app.settings.widgets_invalid_components");
+        invalidHeader += " ";
+        invalidHeader += std::to_string(visibleInvalidPackages.size());
+        invalidHeader += "###InvalidWidgetPackages";
+        ImGui::TextColored(ImVec4(0.82f, 0.30f, 0.27f, 1.0f), "%s",
+            invalidHeader.c_str());
+        for (const auto* package : visibleInvalidPackages)
+        {
+            const auto manifest = localizedManifest(package->manifest);
+            std::string name = manifest.name;
+            if (name.empty() && !manifest.id.empty()) name = manifest.id;
+            if (name.empty())
+            {
+                const auto fallback = !package->builtin &&
+                        !package->development
+                    ? package->root.parent_path().filename()
+                    : package->root.filename();
+                name = WideToUtf8(fallback.wstring());
+            }
+            const char* sourceLabel = package->builtin
+                ? _L("app.settings.widgets_filter_builtin")
+                : package->development
+                    ? _L("app.settings.widgets_filter_development")
+                    : package->source.providerId == "steam-workshop"
+                        ? _L("app.settings.widgets_source_steam")
+                        : _L("app.settings.widgets_source_local");
+            ImGui::PushID(WideToUtf8(package->root.wstring()).c_str());
+            ImGui::BeginChild("##InvalidWidgetPackage",
+                ImVec2(0, 100.0f * dpiScale_), ImGuiChildFlags_Borders |
+                    ImGuiChildFlags_AlwaysUseWindowPadding);
+            ImGui::TextUnformatted(name.c_str());
+            if (!manifest.version.empty())
+            {
+                ImGui::SameLine();
+                ImGui::TextDisabled(_L("app.settings.widgets_version"),
+                    manifest.version.c_str());
+            }
+            ImGui::TextColored(ImVec4(0.82f, 0.30f, 0.27f, 1.0f),
+                "%s · %s", _L("app.settings.widgets_invalid_component"),
+                sourceLabel);
+            const auto issue = std::find_if(package->report.issues.begin(),
+                package->report.issues.end(), [](const auto& candidate)
+                {
+                    return candidate.severity == snowdesktop::widget::
+                        ValidationSeverity::Error;
+                });
+            if (issue != package->report.issues.end())
+            {
+                ImGui::PushTextWrapPos();
+                ImGui::TextDisabled("[%s] %s", issue->code.c_str(),
+                    issue->message.c_str());
+                ImGui::PopTextWrapPos();
+            }
+            ImGui::EndChild();
+            ImGui::Spacing();
+            ImGui::PopID();
+        }
     }
 
     std::vector<const PackageGroup*> visibleBuiltinGroups;

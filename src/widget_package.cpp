@@ -1954,6 +1954,7 @@ bool WidgetPackageManager::SaveRegistry(std::string& error) const
 bool WidgetPackageManager::Refresh(std::string& error)
 {
     packages_.clear();
+    invalidPackages_.clear();
     enum class ExplicitDecisionResult
     {
         NotFound,
@@ -2035,7 +2036,30 @@ bool WidgetPackageManager::Refresh(std::string& error)
                 PackageManifest manifest;
                 const auto report = validator_.ValidateDirectory(
                     it->path(), &manifest);
-                if (!report.Ok()) continue;
+                if (!report.Ok())
+                {
+                    // The bundled Agent Skill intentionally shares the
+                    // built-in root without being a component package.
+                    if (!builtin || std::filesystem::is_regular_file(
+                            it->path() / L"widget.json", ec))
+                    {
+                        InvalidPackage invalid;
+                        invalid.manifest = std::move(manifest);
+                        invalid.root = it->path();
+                        invalid.report = report;
+                        invalid.builtin = builtin;
+                        invalid.development = development;
+                        invalid.source = {
+                            builtin ? "builtin" : "local-directory",
+                            PathUtf8(it->path().filename()) };
+                        invalid.selected = builtin ||
+                            developmentOverrides_.contains(
+                                invalid.manifest.id);
+                        invalidPackages_.push_back(std::move(invalid));
+                    }
+                    ec.clear();
+                    continue;
+                }
                 InstalledPackage package;
                 package.manifest = std::move(manifest);
                 package.root = it->path();
@@ -2068,7 +2092,28 @@ bool WidgetPackageManager::Refresh(std::string& error)
                 PackageManifest manifest;
                 const auto report = validator_.ValidateDirectory(
                     versionIt->path(), &manifest);
-                if (!report.Ok() || manifest.id != id) continue;
+                if (!report.Ok() || manifest.id != id)
+                {
+                    InvalidPackage invalid;
+                    invalid.manifest = std::move(manifest);
+                    invalid.root = versionIt->path();
+                    invalid.report = report;
+                    const auto registryIt = registry_.find(id);
+                    invalid.source = registryIt != registry_.end()
+                        ? registryIt->second.source
+                        : PackageSourceRef{ "local", id };
+                    invalid.selected = registryIt != registry_.end() &&
+                        registryIt->second.activeVersion ==
+                            invalid.manifest.version;
+                    if (report.Ok() && invalid.manifest.id != id)
+                    {
+                        invalid.report.Add(ValidationSeverity::Error,
+                            "package.idDirectory", versionIt->path(),
+                            "manifest id does not match the installed package directory");
+                    }
+                    invalidPackages_.push_back(std::move(invalid));
+                    continue;
+                }
                 InstalledPackage package;
                 package.manifest = std::move(manifest);
                 package.root = versionIt->path();
@@ -2138,6 +2183,11 @@ bool WidgetPackageManager::Refresh(std::string& error)
 std::vector<InstalledPackage> WidgetPackageManager::ListPackages() const
 {
     return packages_;
+}
+
+std::vector<InvalidPackage> WidgetPackageManager::ListInvalidPackages() const
+{
+    return invalidPackages_;
 }
 
 bool WidgetPackageManager::ContainsPackage(const std::string& packageId) const

@@ -8004,6 +8004,12 @@ WidgetEngine::ListWidgetPackages()
     return GetWidgetPackageManager().ListPackages();
 }
 
+std::vector<snowdesktop::widget::InvalidPackage>
+WidgetEngine::ListInvalidWidgetPackages()
+{
+    return GetWidgetPackageManager().ListInvalidPackages();
+}
+
 std::optional<snowdesktop::widget::InstalledPackage>
 WidgetEngine::GetWidgetPackage(const std::wstring& packageId)
 {

@@ -97,6 +97,8 @@
     "app.widget.placeholder.load_failed": "The component could not be loaded.",
     "app.widget.placeholder.reload": "Reload",
     "app.settings.widgets_filter_empty": "No components",
+    "app.settings.widgets_invalid_components": "Invalid components",
+    "app.settings.widgets_invalid_component": "Component invalid",
     "app.settings.widgets_advanced": "Advanced Options",
     "app.settings.widgets_developer_tools": "Component Developer Tools",
     "app.settings.widgets_self_develop": "Develop Your Own",

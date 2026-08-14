@@ -218,6 +218,17 @@ struct InstalledPackage
     bool active = true;
 };
 
+struct InvalidPackage
+{
+    PackageManifest manifest;
+    PackageSourceRef source;
+    std::filesystem::path root;
+    ValidationReport report;
+    bool builtin = false;
+    bool development = false;
+    bool selected = false;
+};
+
 struct LegacyPackage
 {
     std::filesystem::path scriptPath;
@@ -322,6 +333,7 @@ public:
     bool Initialize(std::string& error);
     const PackagePaths& Paths() const { return paths_; }
     std::vector<InstalledPackage> ListPackages() const;
+    std::vector<InvalidPackage> ListInvalidPackages() const;
     bool ContainsPackage(const std::string& packageId) const;
     std::unordered_map<std::string, std::vector<std::string>>
         SteamSubscriptionHistory() const;
@@ -442,6 +454,7 @@ private:
     PackagePaths paths_;
     WidgetPackageValidator validator_;
     std::vector<InstalledPackage> packages_;
+    std::vector<InvalidPackage> invalidPackages_;
     std::unordered_map<std::string, RegistryEntry> registry_;
     std::unordered_map<std::string, PermissionDecisionRecord>
         permissionDecisions_;

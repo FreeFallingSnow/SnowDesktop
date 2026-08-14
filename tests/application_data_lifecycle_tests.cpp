@@ -682,6 +682,42 @@ int main()
         "\"system.read\"");
     Expect(!validator.ValidateDirectory(wildcardSystemPackage).Ok(),
         "the legacy system.read wildcard is rejected");
+    const auto invalidScanPaths = TestPaths(root / L"invalid-package-scan");
+    const std::string invalidScanId =
+        "68be1e3c-c07f-4ad6-a787-91de0d60725d";
+    MakePackage(invalidScanPaths.installed /
+            std::filesystem::path(invalidScanId) / L"1.0.0", "1.0.0",
+        invalidScanId, "\"system.read\"");
+    MakePackage(invalidScanPaths.development / L"invalid-development",
+        "1.0.0", invalidScanId, "\"system.read\"");
+    Write(invalidScanPaths.registry,
+        "{\n  \"schemaVersion\": 1,\n  \"packages\": [\n"
+        "    {\"packageId\":\"" + invalidScanId +
+        "\",\"activeVersion\":\"1.0.0\","
+        "\"providerId\":\"steam-workshop\","
+        "\"externalItemId\":\"invalid-test\","
+        "\"permissionState\":\"granted\",\"enabled\":true,"
+        "\"grantedPermissions\":[\"system.read\"],"
+        "\"grantedNetworkDomains\":[]}\n  ]\n}\n");
+    WidgetPackageManager invalidScanManager(invalidScanPaths);
+    std::string invalidScanError;
+    Expect(invalidScanManager.Initialize(invalidScanError),
+        "package manager initializes while invalid packages are present");
+    const auto invalidScanned = invalidScanManager.ListInvalidPackages();
+    Expect(invalidScanned.size() == 2 &&
+            invalidScanManager.ListPackages().empty(),
+        "invalid installed and development packages are retained separately from loadable packages");
+    const auto invalidInstalled = std::find_if(invalidScanned.begin(),
+        invalidScanned.end(), [](const auto& package)
+        {
+            return !package.builtin && !package.development;
+        });
+    Expect(invalidInstalled != invalidScanned.end() &&
+            invalidInstalled->manifest.id == invalidScanId &&
+            invalidInstalled->selected &&
+            invalidInstalled->source.providerId == "steam-workshop" &&
+            !invalidInstalled->report.Ok(),
+        "an invalid active installed package retains its identity, source, and validation report");
     const auto optionalPermissionPackage =
         root / L"optional-permission-package";
     MakePackage(optionalPermissionPackage, "1.0.0",
