@@ -779,6 +779,9 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case kWidgetConsentResolvedMessage:
         CompleteLuaWidgetConsent(wp, lp);
         return 0;
+    case kWidgetConsentOpenedMessage:
+        NotifyLuaWidgetConsentDialogOpened(wp, lp);
+        return 0;
     case kQuickNavigationAppsIndexedMessage:
         OnQuickNavigationAppsIndexed(wp, lp);
         return 0;

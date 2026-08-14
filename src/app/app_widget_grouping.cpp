@@ -101,8 +101,38 @@ WidgetConsentDialogPresentation BuildWidgetConsentDialogPresentation(
 }
 
 WidgetConsentChoice ShowWidgetConsentDialog(
-    const WidgetConsentDialogPresentation& presentation)
+    const WidgetConsentDialogPresentation& presentation,
+    HWND resultWindow, std::uint64_t sessionId)
 {
+    struct CallbackContext
+    {
+        HWND resultWindow = nullptr;
+        std::uint64_t sessionId = 0;
+    } callbackContext{ resultWindow, sessionId };
+    const auto callback = +[](HWND dialogWindow, UINT notification,
+        WPARAM, LPARAM, LONG_PTR rawContext) -> HRESULT {
+        if (notification != TDN_CREATED) return S_OK;
+        const auto* context = reinterpret_cast<const CallbackContext*>(
+            rawContext);
+        if (context && context->resultWindow)
+        {
+            PostMessageW(context->resultWindow,
+                kWidgetConsentOpenedMessage,
+                static_cast<WPARAM>(context->sessionId),
+                reinterpret_cast<LPARAM>(dialogWindow));
+        }
+
+        // The consent dialog intentionally has no owner so its modal loop
+        // cannot disable the desktop UI thread. Bring the independent window
+        // above the desktop once, then immediately remove the topmost style.
+        ShowWindow(dialogWindow, SW_SHOWNORMAL);
+        SetWindowPos(dialogWindow, HWND_TOPMOST, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+        SetForegroundWindow(dialogWindow);
+        SetWindowPos(dialogWindow, HWND_NOTOPMOST, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+        return S_OK;
+    };
     std::vector<TASKDIALOG_BUTTON> buttons;
     buttons.push_back({ 100, presentation.allowAllLabel.c_str() });
     if (presentation.showRequiredOnly)
@@ -121,6 +151,9 @@ WidgetConsentChoice ShowWidgetConsentDialog(
     dialog.cButtons = static_cast<UINT>(buttons.size());
     dialog.pButtons = buttons.data();
     dialog.nDefaultButton = 101;
+    dialog.pfCallback = callback;
+    dialog.lpCallbackData = reinterpret_cast<LONG_PTR>(
+        &callbackContext);
 
     int selected = IDCANCEL;
     if (SUCCEEDED(TaskDialogIndirect(
@@ -149,7 +182,8 @@ void StartWidgetConsentDialog(HWND resultWindow,
         const HRESULT initialized = CoInitializeEx(
             nullptr, COINIT_APARTMENTTHREADED);
         const WidgetConsentChoice choice =
-            ShowWidgetConsentDialog(presentation);
+            ShowWidgetConsentDialog(
+                presentation, resultWindow, sessionId);
         PostMessageW(resultWindow, kWidgetConsentResolvedMessage,
             static_cast<WPARAM>(choice),
             static_cast<LPARAM>(sessionId));
@@ -1419,7 +1453,38 @@ void DesktopApp::BeginLuaWidgetConsent(POINT screenPoint,
     const std::wstring& packageId,
     const std::wstring& targetWidgetId)
 {
-    if (pendingLuaWidgetConsent_ || targetWidgetId.empty()) return;
+    if (targetWidgetId.empty()) return;
+    if (pendingLuaWidgetConsent_)
+    {
+        const HWND dialogWindow =
+            pendingLuaWidgetConsent_->dialogWindow;
+        constexpr ULONGLONG ConsentOpeningTimeoutMs = 3000;
+        const ULONGLONG elapsed = GetTickCount64() -
+            pendingLuaWidgetConsent_->startedAt;
+        const auto sessionAction = snowdesktop::widget_runtime::
+            ConsentSessionActionFor(true, dialogWindow != nullptr,
+                dialogWindow && IsWindow(dialogWindow), elapsed,
+                ConsentOpeningTimeoutMs);
+        if (sessionAction == snowdesktop::widget_runtime::
+                WidgetConsentSessionAction::ActivateWindow)
+        {
+            ShowWindow(dialogWindow, SW_SHOWNORMAL);
+            SetWindowPos(dialogWindow, HWND_TOPMOST, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+            SetForegroundWindow(dialogWindow);
+            SetWindowPos(dialogWindow, HWND_NOTOPMOST, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+            return;
+        }
+        if (sessionAction == snowdesktop::widget_runtime::
+                WidgetConsentSessionAction::WaitForWindow)
+            return;
+
+        // The worker failed to publish a live window or a former dialog was
+        // destroyed without delivering its result. Retire that session so an
+        // explicit retry click cannot be swallowed indefinitely.
+        pendingLuaWidgetConsent_.reset();
+    }
     const auto package = WidgetEngine::GetWidgetPackage(packageId);
     if (!package) return;
     const auto requiredConsentPermissions =
@@ -1445,9 +1510,22 @@ void DesktopApp::BeginLuaWidgetConsent(POINT screenPoint,
         sessionId, screenPoint, packageId, targetWidgetId,
         package->source, package->manifest.permissions,
         package->manifest.optionalPermissions,
-        package->manifest.networkDomains };
+        package->manifest.networkDomains, GetTickCount64(), nullptr };
     StartWidgetConsentDialog(
         hwnd_, sessionId, std::move(presentation));
+}
+
+void DesktopApp::NotifyLuaWidgetConsentDialogOpened(
+    WPARAM rawSessionId, LPARAM rawDialogWindow)
+{
+    const std::uint64_t sessionId =
+        static_cast<std::uint64_t>(rawSessionId);
+    const HWND dialogWindow = reinterpret_cast<HWND>(rawDialogWindow);
+    if (!pendingLuaWidgetConsent_ ||
+        pendingLuaWidgetConsent_->sessionId != sessionId ||
+        !dialogWindow || !IsWindow(dialogWindow))
+        return;
+    pendingLuaWidgetConsent_->dialogWindow = dialogWindow;
 }
 
 void DesktopApp::CompleteLuaWidgetConsent(
@@ -1503,7 +1581,10 @@ void DesktopApp::CompleteLuaWidgetConsent(
         }
         if (std::find(grantedPermissions.begin(),
                 grantedPermissions.end(), "network.http") !=
-            grantedPermissions.end())
+                grantedPermissions.end() ||
+            std::find(grantedPermissions.begin(),
+                grantedPermissions.end(), "network.internet") !=
+                grantedPermissions.end())
         {
             grantedNetworkDomains =
                 pending.requestedNetworkDomains;

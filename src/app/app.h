@@ -2184,6 +2184,8 @@ private:
     void BeginLuaWidgetConsent(POINT screenPoint,
         const std::wstring& packageId,
         const std::wstring& targetWidgetId);
+    void NotifyLuaWidgetConsentDialogOpened(
+        WPARAM sessionId, LPARAM dialogWindow);
     void CompleteLuaWidgetConsent(WPARAM choice, LPARAM sessionId);
     /**
      * @brief 放置部件并位移冲突项。
@@ -2582,6 +2584,8 @@ private:
         std::vector<std::string> requestedPermissions;
         std::vector<std::string> requestedOptionalPermissions;
         std::vector<std::string> requestedNetworkDomains;
+        ULONGLONG startedAt = 0;
+        HWND dialogWindow = nullptr;
     };
     std::optional<PendingLuaWidgetConsent> pendingLuaWidgetConsent_;
     std::uint64_t nextLuaWidgetConsentSessionId_ = 0;

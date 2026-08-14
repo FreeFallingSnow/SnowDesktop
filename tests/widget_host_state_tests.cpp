@@ -6,8 +6,10 @@
 namespace
 {
 using snowdesktop::widget_runtime::ClassifyWidgetRuntimeFailure;
+using snowdesktop::widget_runtime::ConsentSessionActionFor;
 using snowdesktop::widget_runtime::HostActionFor;
 using snowdesktop::widget_runtime::ShowsHostPlaceholder;
+using snowdesktop::widget_runtime::WidgetConsentSessionAction;
 using snowdesktop::widget_runtime::WidgetHostAction;
 using snowdesktop::widget_runtime::WidgetHostStateKind;
 
@@ -55,12 +57,32 @@ void TestRuntimeFailureClassification()
             "syntax error") == WidgetHostStateKind::LoadFailed,
         "ordinary failures must use the generic load failure state");
 }
+
+void TestConsentSessionRecovery()
+{
+    constexpr std::uint64_t timeout = 3000;
+    Check(ConsentSessionActionFor(false, false, false, 0, timeout) ==
+            WidgetConsentSessionAction::Start,
+        "a consent request without a pending session must start");
+    Check(ConsentSessionActionFor(true, false, false, 2999, timeout) ==
+            WidgetConsentSessionAction::WaitForWindow,
+        "a newly launched consent worker must get time to publish its window");
+    Check(ConsentSessionActionFor(true, true, true, 60000, timeout) ==
+            WidgetConsentSessionAction::ActivateWindow,
+        "a repeated consent click must reactivate the live dialog");
+    Check(ConsentSessionActionFor(true, false, false, timeout, timeout) ==
+            WidgetConsentSessionAction::ReplaceStale &&
+            ConsentSessionActionFor(true, true, false, 1, timeout) ==
+                WidgetConsentSessionAction::ReplaceStale,
+        "missing or destroyed consent windows must not swallow retry clicks");
+}
 }
 
 int main()
 {
     TestPlaceholderActions();
     TestRuntimeFailureClassification();
+    TestConsentSessionRecovery();
     std::cout << "widget host state tests passed\n";
     return 0;
 }

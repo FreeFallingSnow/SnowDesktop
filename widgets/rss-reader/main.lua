@@ -129,7 +129,7 @@ local function fetch(model, bypassCache)
         url = cfg.url,
         timeoutMs = 15000,
         cacheSeconds = bypassCache and 0 or 120,
-        maxBytes = 512 * 1024,
+        maxBytes = 1024 * 1024,
     })
     if requestId then
         model.requestId = requestId

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <string_view>
 
@@ -23,6 +24,27 @@ enum class WidgetHostAction
     RequestPermission,
     Reload,
 };
+
+enum class WidgetConsentSessionAction
+{
+    Start,
+    WaitForWindow,
+    ActivateWindow,
+    ReplaceStale,
+};
+
+constexpr WidgetConsentSessionAction ConsentSessionActionFor(
+    bool hasPendingSession, bool windowPublished, bool windowAlive,
+    std::uint64_t elapsedMilliseconds,
+    std::uint64_t openingTimeoutMilliseconds) noexcept
+{
+    if (!hasPendingSession) return WidgetConsentSessionAction::Start;
+    if (windowAlive) return WidgetConsentSessionAction::ActivateWindow;
+    if (!windowPublished &&
+        elapsedMilliseconds < openingTimeoutMilliseconds)
+        return WidgetConsentSessionAction::WaitForWindow;
+    return WidgetConsentSessionAction::ReplaceStale;
+}
 
 struct WidgetHostState
 {
