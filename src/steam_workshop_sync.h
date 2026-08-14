@@ -15,6 +15,14 @@
 
 namespace snowdesktop::widget
 {
+struct SteamWorkshopInstallFailure
+{
+    std::string packageId;
+    std::string externalItemId;
+    PackageManifest manifest;
+    std::string error;
+};
+
 struct SteamWorkshopSubscriptionSnapshot
 {
     bool authoritative = false;
@@ -29,6 +37,7 @@ struct SteamWorkshopSubscriptionSnapshot
     std::unordered_map<std::string, std::filesystem::path> localArtifacts;
     std::unordered_map<std::string, std::filesystem::path> preparedArtifacts;
     std::vector<std::string> preparationErrors;
+    std::vector<SteamWorkshopInstallFailure> discoveryFailures;
     std::string error;
 };
 
@@ -56,14 +65,6 @@ struct SteamWorkshopSyncPlan
 {
     std::vector<SteamWorkshopSyncAction> actions;
     std::vector<std::string> conflicts;
-};
-
-struct SteamWorkshopInstallFailure
-{
-    std::string packageId;
-    std::string externalItemId;
-    PackageManifest manifest;
-    std::string error;
 };
 
 struct SteamWorkshopSyncResult

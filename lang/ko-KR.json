@@ -52,6 +52,7 @@
   "app.settings.widgets_open_workshop_item": "창작마당 페이지 열기",
   "app.settings.widgets_workshop_install_failed": "설치 실패",
   "app.settings.widgets_retry_install": "설치 다시 시도",
+  "app.settings.widgets_workshop_detected_item": "창작마당 항목 %s",
   "app.settings.widgets_publisher_launch_failed": "Steam Workshop Creator Manager를 시작할 수 없습니다. Steam 도구가 설치되어 있는지 확인하세요.",
   "app.settings.widgets_open_catalog": "오프라인 구성요소 카탈로그 로드...",
   "app.settings.widgets_offline_catalog_help": "테스트 또는 개인 배포를 위해 이 장치에서 오프라인 구성 요소 목록을 로드합니다.",

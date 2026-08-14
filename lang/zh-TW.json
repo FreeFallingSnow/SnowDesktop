@@ -52,6 +52,7 @@
   "app.settings.widgets_open_workshop_item": "開啟創意工坊頁面",
   "app.settings.widgets_workshop_install_failed": "安裝失敗",
   "app.settings.widgets_retry_install": "重試安裝",
+  "app.settings.widgets_workshop_detected_item": "創意工坊項目 %s",
   "app.settings.widgets_publisher_launch_failed": "無法啟動 Steam 創意工坊創作者管理器，請檢查 Steam 版工具是否已完整安裝。",
   "app.settings.widgets_open_catalog": "載入離線元件目錄…",
   "app.settings.widgets_offline_catalog_help": "從本機載入離線元件列表，適合測試或私人分發。",

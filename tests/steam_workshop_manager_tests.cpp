@@ -185,6 +185,17 @@ void TestSteamSubscriptionSyncPlan()
     Check(!associations.contains("package-a"),
         "duplicate subscribed package UUIDs are never associated arbitrarily");
     snapshot.installable.pop_back();
+    SteamWorkshopSubscriptionSnapshot failedSnapshot;
+    failedSnapshot.authoritative = true;
+    PackageManifest failedManifest;
+    failedManifest.id = "package-failed";
+    failedManifest.name = "Failed package";
+    failedSnapshot.discoveryFailures.push_back({ "package-failed",
+        "300@42", std::move(failedManifest), "validation failed" });
+    associations = BuildSteamWorkshopPackageAssociations(failedSnapshot);
+    Check(associations.size() == 1 &&
+        associations["package-failed"] == "300@42",
+        "a discovered invalid Workshop package retains its item association");
     auto plan = BuildSteamWorkshopSyncPlan({}, snapshot);
     Check(plan.actions.size() == 1 && plan.actions[0].kind ==
         SteamWorkshopSyncActionKind::Install,

@@ -7825,6 +7825,11 @@ WidgetEngine::ApplySteamWorkshopSubscriptions(
         manager.ListPackages(), snapshot);
     snowdesktop::widget::SteamWorkshopSyncResult result;
     result.errors = plan.conflicts;
+    result.installFailures = snapshot.discoveryFailures;
+    for (const auto& failure : snapshot.discoveryFailures)
+    {
+        result.errors.push_back(failure.packageId + ": " + failure.error);
+    }
     result.errors.insert(result.errors.end(),
         snapshot.preparationErrors.begin(), snapshot.preparationErrors.end());
     for (const auto& action : plan.actions)
@@ -8016,13 +8021,17 @@ bool WidgetEngine::InstallAndVerifyWidgetPackageFromSource(
         return false;
     }
     std::string sourceError;
-    const auto details = source->second->GetVersionDetails(
-        externalItemId, version, sourceError);
+    const auto details = version.empty()
+        ? source->second->GetDetails(externalItemId, sourceError)
+        : source->second->GetVersionDetails(
+            externalItemId, version, sourceError);
     if (!details)
     {
         error = Utf8ToWideLocal(sourceError);
         return false;
     }
+    const std::string requestedVersion = version.empty()
+        ? details->manifest.version : version;
     std::optional<std::string> previousVersion;
     auto& manager = GetWidgetPackageManager();
     if (const auto previous = manager.Resolve(details->manifest.id))
@@ -8030,7 +8039,8 @@ bool WidgetEngine::InstallAndVerifyWidgetPackageFromSource(
             previousVersion = previous->manifest.version;
     snowdesktop::widget::InstalledPackage installed;
     snowdesktop::widget::ValidationReport report;
-    if (!manager.InstallFromSource(*source->second, externalItemId, version,
+    if (!manager.InstallFromSource(*source->second, externalItemId,
+        requestedVersion,
         allowSourceChange, installed, report, sourceError,
         allowPermissionExpansion))
     {

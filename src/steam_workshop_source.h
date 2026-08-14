@@ -56,7 +56,8 @@ private:
         std::string& error) const;
     std::optional<ResolvedItem> ResolveInstalledFolder(
         const std::string& publishedFileId, const std::string& ownerSteamId,
-        const std::filesystem::path& folder, std::string& error) const;
+        const std::filesystem::path& folder, std::string& error,
+        PackageManifest* detectedManifest = nullptr) const;
 
     std::filesystem::path bridgeExecutable_;
     ProviderStatus cachedStatus_;

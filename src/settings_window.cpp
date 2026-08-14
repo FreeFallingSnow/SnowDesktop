@@ -4496,7 +4496,7 @@ void SettingsWindow::DrawWidgetPackagesPage()
                 : displayInvalid
                     ? displayInvalid->manifest
                     : group.workshopInstallFailures.front()->manifest);
-            const std::string displayName = !manifest.name.empty()
+            std::string displayName = !manifest.name.empty()
                 ? manifest.name : group.id;
             std::vector<const snowdesktop::widget::InstalledPackage*>
                 olderVersions;
@@ -4536,6 +4536,15 @@ void SettingsWindow::DrawWidgetPackagesPage()
             const auto* workshopInstallFailure =
                 group.workshopInstallFailures.empty()
                 ? nullptr : group.workshopInstallFailures.front();
+            if (manifest.name.empty() && workshopInstallFailure &&
+                !workshopItemId.empty())
+            {
+                char detectedItemName[256]{};
+                std::snprintf(detectedItemName, sizeof(detectedItemName),
+                    _L("app.settings.widgets_workshop_detected_item"),
+                    workshopItemId.c_str());
+                displayName = detectedItemName;
+            }
             const auto openWorkshopItem = [&]()
             {
                 if (workshopItemId.empty()) return;
@@ -4579,11 +4588,18 @@ void SettingsWindow::DrawWidgetPackagesPage()
             if (SecondaryButton("...", ImVec2(moreButtonWidth, 0)))
                 ImGui::OpenPopup("##WidgetPackageMore");
 
-            char versionText[128]{};
-            std::snprintf(versionText, sizeof(versionText),
-                _L("app.settings.widgets_version"),
-                manifest.version.c_str());
-            ImGui::TextDisabled("%s", versionText);
+            if (!manifest.version.empty())
+            {
+                char versionText[128]{};
+                std::snprintf(versionText, sizeof(versionText),
+                    _L("app.settings.widgets_version"),
+                    manifest.version.c_str());
+                ImGui::TextDisabled("%s", versionText);
+            }
+            else
+            {
+                ImGui::Spacing();
+            }
 
             ImGui::BeginChild("##Description", ImVec2(0,
                     ImGui::GetTextLineHeightWithSpacing() * 2.0f),
@@ -4659,12 +4675,23 @@ void SettingsWindow::DrawWidgetPackagesPage()
                 _L("app.settings.widgets_filter_development"));
             for (const auto* failure : group.workshopInstallFailures)
             {
-                ImGui::TextColored(
-                    ImVec4(0.82f, 0.30f, 0.27f, 1.0f),
-                    "%s · %s · %s",
-                    _L("app.settings.widgets_source_steam"),
-                    failure->manifest.version.c_str(),
-                    _L("app.settings.widgets_workshop_install_failed"));
+                if (failure->manifest.version.empty())
+                {
+                    ImGui::TextColored(
+                        ImVec4(0.82f, 0.30f, 0.27f, 1.0f),
+                        "%s · %s",
+                        _L("app.settings.widgets_source_steam"),
+                        _L("app.settings.widgets_workshop_install_failed"));
+                }
+                else
+                {
+                    ImGui::TextColored(
+                        ImVec4(0.82f, 0.30f, 0.27f, 1.0f),
+                        "%s · %s · %s",
+                        _L("app.settings.widgets_source_steam"),
+                        failure->manifest.version.c_str(),
+                        _L("app.settings.widgets_workshop_install_failed"));
+                }
                 if (!failure->error.empty())
                     ImGui::TextDisabled("%s", failure->error.c_str());
             }

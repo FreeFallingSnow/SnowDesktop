@@ -52,6 +52,7 @@
     "app.settings.widgets_open_workshop_item": "Open Workshop Page",
     "app.settings.widgets_workshop_install_failed": "Installation failed",
     "app.settings.widgets_retry_install": "Retry installation",
+    "app.settings.widgets_workshop_detected_item": "Workshop item %s",
     "app.settings.widgets_publisher_launch_failed": "Unable to start the Steam Workshop Creator Manager. Check that the Steam tools are installed.",
     "app.settings.widgets_open_catalog": "Load Offline Component Catalog...",
     "app.settings.widgets_offline_catalog_help": "Load an offline component list from this device for testing or private distribution.",

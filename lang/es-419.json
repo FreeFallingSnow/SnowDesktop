@@ -52,6 +52,7 @@
   "app.settings.widgets_open_workshop_item": "Abrir la página del Workshop",
   "app.settings.widgets_workshop_install_failed": "Error de instalación",
   "app.settings.widgets_retry_install": "Reintentar instalación",
+  "app.settings.widgets_workshop_detected_item": "Elemento del Workshop %s",
   "app.settings.widgets_publisher_launch_failed": "No se puede iniciar Steam Workshop Creator Manager. Compruebe que las herramientas Steam estén instaladas.",
   "app.settings.widgets_open_catalog": "Cargar catálogo de componentes sin conexión...",
   "app.settings.widgets_offline_catalog_help": "Cargue una lista de componentes sin conexión desde este dispositivo para realizar pruebas o distribución privada.",

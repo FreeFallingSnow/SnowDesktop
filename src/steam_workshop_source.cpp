@@ -436,7 +436,8 @@ ProviderStatus SteamWorkshopSource::Status()
 std::optional<SteamWorkshopSource::ResolvedItem>
 SteamWorkshopSource::ResolveInstalledFolder(
     const std::string& publishedFileId, const std::string& ownerSteamId,
-    const std::filesystem::path& folder, std::string& error) const
+    const std::filesystem::path& folder, std::string& error,
+    PackageManifest* detectedManifest) const
 {
     std::error_code filesystemError;
     const auto absoluteFolder = std::filesystem::absolute(
@@ -484,6 +485,7 @@ SteamWorkshopSource::ResolveInstalledFolder(
     PackageManifest manifest;
     const ValidationReport validation =
         validationManager.ValidateArchive(artifact, &manifest);
+    if (detectedManifest) *detectedManifest = manifest;
     if (!validation.Ok())
     {
         error = "Workshop component package failed validation: " +
@@ -629,9 +631,20 @@ SteamWorkshopSubscriptionSnapshot SteamWorkshopSource::QuerySubscriptions(
     for (const auto& item : cache.readyItems)
     {
         std::string itemError;
+        PackageManifest detectedManifest;
         auto resolved = ResolveInstalledFolder(
-            item.publishedFileId, {}, item.contentDirectory, itemError);
-        if (!resolved) continue;
+            item.publishedFileId, {}, item.contentDirectory, itemError,
+            &detectedManifest);
+        if (!resolved)
+        {
+            const std::string packageId = detectedManifest.id.empty()
+                ? "steam-workshop:" + item.publishedFileId
+                : detectedManifest.id;
+            snapshot.discoveryFailures.push_back({ packageId,
+                item.publishedFileId, std::move(detectedManifest),
+                std::move(itemError) });
+            continue;
+        }
         snapshot.localArtifacts[item.publishedFileId] = resolved->artifact;
         resolved->details.manifest = LocalizePackageManifest(
             std::move(resolved->details.manifest), query.locale);
@@ -709,9 +722,20 @@ SteamWorkshopSource::QuerySubscriptionsOnline(
         if (!DigitsOnly(ownerSteamId)) continue;
 
         std::string itemError;
+        PackageManifest detectedManifest;
         auto resolved = ResolveInstalledFolder(
-            publishedFileId, ownerSteamId, *wideFolder, itemError);
-        if (!resolved) continue;
+            publishedFileId, ownerSteamId, *wideFolder, itemError,
+            &detectedManifest);
+        if (!resolved)
+        {
+            const std::string packageId = detectedManifest.id.empty()
+                ? "steam-workshop:" + publishedFileId
+                : detectedManifest.id;
+            snapshot.discoveryFailures.push_back({ packageId,
+                BoundExternalItemId(publishedFileId, ownerSteamId),
+                std::move(detectedManifest), std::move(itemError) });
+            continue;
+        }
         snapshot.localArtifacts[publishedFileId] = resolved->artifact;
         resolved->details.manifest = LocalizePackageManifest(
             std::move(resolved->details.manifest), query.locale);

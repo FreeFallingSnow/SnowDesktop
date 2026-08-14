@@ -36,19 +36,26 @@ BuildSteamWorkshopPackageAssociations(
     std::unordered_map<std::string, std::string> associations;
     if (!snapshot.authoritative) return associations;
     std::unordered_set<std::string> ambiguousPackages;
-    for (const auto& item : snapshot.installable)
+    const auto append = [&](const std::string& packageId,
+                            const std::string& externalItemId)
     {
-        if (item.manifest.id.empty() ||
-            SteamPublishedFileId(item.source.externalItemId).empty() ||
-            ambiguousPackages.contains(item.manifest.id))
-            continue;
+        if (packageId.empty() ||
+            SteamPublishedFileId(externalItemId).empty() ||
+            ambiguousPackages.contains(packageId))
+            return;
         const auto [found, inserted] = associations.emplace(
-            item.manifest.id, item.source.externalItemId);
-        if (!inserted && found->second != item.source.externalItemId)
+            packageId, externalItemId);
+        if (!inserted && found->second != externalItemId)
         {
             associations.erase(found);
-            ambiguousPackages.insert(item.manifest.id);
+            ambiguousPackages.insert(packageId);
         }
+    };
+    for (const auto& item : snapshot.installable)
+        append(item.manifest.id, item.source.externalItemId);
+    for (const auto& failure : snapshot.discoveryFailures)
+    {
+        append(failure.packageId, failure.externalItemId);
     }
     return associations;
 }
