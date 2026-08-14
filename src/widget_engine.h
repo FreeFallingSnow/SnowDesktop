@@ -356,6 +356,13 @@ struct LuaWidget
         std::uint64_t catalogRevision = 0;
     };
 
+    struct ItemReference
+    {
+        std::string target;
+        std::string sourceTask;
+        std::uint64_t revision = 0;
+    };
+
     struct HostControl
     {
         enum class Type { Button, Toggle, Input, Scroll };
@@ -412,6 +419,7 @@ struct LuaWidget
     std::unordered_set<std::uint64_t> taskIds;
     std::unordered_map<std::string, ApplicationReference>
         applicationReferences;
+    std::unordered_map<std::string, ItemReference> itemReferences;
     snowdesktop::widget_runtime::WidgetInteractionRegions interactionRegions;
     bool panelFrameOpen = false;
     std::uint64_t runtimeToken = 0;
@@ -934,6 +942,9 @@ public:
      * @return 操作成功返回 true
      */
     bool RuntimeRevealDesktopPath(const std::wstring& path);
+    std::optional<std::wstring> RuntimeResolveItemReference(
+        const std::wstring& widgetId, std::uint64_t ownerToken,
+        const std::string& reference) const;
     std::optional<std::wstring> RuntimeResolvePackageAsset(
         const std::wstring& widgetId, const std::wstring& relativePath) const;
 
@@ -1188,9 +1199,18 @@ private:
     std::unique_ptr<
         snowdesktop::widget_runtime::WidgetAppTaskExecutor>
         appTaskExecutor_;
+    std::unique_ptr<
+        snowdesktop::widget_runtime::WidgetAppTaskExecutor>
+        desktopTaskExecutor_;
+    std::unique_ptr<
+        snowdesktop::widget_runtime::WidgetExternalSearchTaskExecutor>
+        externalItemTaskExecutor_;
     std::unordered_map<std::uint64_t,
         snowdesktop::widget_runtime::WidgetAppSearchCompletion>
         appSearchCompletions_;
+    std::unordered_map<std::uint64_t,
+        snowdesktop::widget_runtime::WidgetAppSearchCompletion>
+        itemSearchCompletions_;
     std::unordered_map<std::uint64_t,
         snowdesktop::calendar::MutationResult>
         calendarMutationCompletions_;

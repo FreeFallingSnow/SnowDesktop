@@ -147,6 +147,11 @@ synchronous native context menu.
   with `task.start("app.launch", { ref = item.ref })` inside the direct click
   action. Never persist or invent refs, and never substitute a path, command
   line, or working directory.
+- Search SnowDesktop items or the local Everything index with bounded
+  `desktop.search` / `everything.search` tasks. Render their opaque refs with
+  `draw.icon`, and use `shell.openItem` / `shell.revealItem` only inside a
+  direct trusted action. `desktop.refresh` is also gesture-gated. Never expose,
+  persist, parse, or replace these refs with filesystem paths.
 - Post background completion notices only with
   `task.start("notification.show", { title, message })`, declare
   `notification.post` as optional when the widget can keep working without it,
@@ -181,10 +186,11 @@ synchronous native context menu.
   process APIs; the sandbox does not expose them.
 - Do not invent v2 APIs from old v1 documentation. The synchronous `media`
   library remains v1-only; v2 media reads use `data.subscribe` and the three
-  implemented controls use `task`. The absence of `desktop`, `http`, `sys`,
-  legacy `ui` controls and other action libraries is intentional until the
-  corresponding v2 capability is implemented. `ui.menu` is the only current
-  v2 `ui` entry and is valid only as the result of the descriptor menu callback.
+  implemented controls use `task`. API v2 intentionally omits the synchronous
+  `desktop`, `everything`, `http`, `sys`, and legacy `ui` libraries; their
+  implemented replacements are scoped data subscriptions and bounded tasks.
+  `ui.menu` is the only current v2 `ui` entry and is valid only as the result
+  of the descriptor menu callback.
 
 ## Verification
 

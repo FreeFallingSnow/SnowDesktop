@@ -9,7 +9,9 @@ namespace
 {
 using snowdesktop::widget_runtime::WidgetAppCatalogEntry;
 using snowdesktop::widget_runtime::WidgetAppTaskExecutor;
+using snowdesktop::widget_runtime::WidgetExternalSearchTaskExecutor;
 using snowdesktop::widget_runtime::MakeWidgetAppReference;
+using snowdesktop::widget_runtime::MakeWidgetItemReference;
 
 void Check(bool condition, const char* message)
 {
@@ -22,6 +24,18 @@ void Check(bool condition, const char* message)
 
 std::vector<snowdesktop::widget_runtime::WidgetAppSearchCompletion>
 WaitFor(WidgetAppTaskExecutor& executor)
+{
+    for (int attempt = 0; attempt < 200; ++attempt)
+    {
+        auto results = executor.DrainCompletions();
+        if (!results.empty()) return results;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    return {};
+}
+
+std::vector<snowdesktop::widget_runtime::WidgetAppSearchCompletion>
+WaitFor(WidgetExternalSearchTaskExecutor& executor)
 {
     for (int attempt = 0; attempt < 200; ++attempt)
     {
@@ -129,6 +143,72 @@ void TestOpaqueReferences()
         "application references must be stable, opaque, and identity-specific");
     Check(MakeWidgetAppReference({}).empty(),
         "empty catalog identities must not create usable references");
+    const std::string item = MakeWidgetItemReference(
+        "desktop.search", "C:\\Users\\Maya\\Notes.txt");
+    Check(item.starts_with("item:") && item.size() == 37 &&
+            item.find("Maya") == std::string::npos &&
+            item != MakeWidgetItemReference(
+                "everything.search", "C:\\Users\\Maya\\Notes.txt"),
+        "item references must hide identities and remain source-scoped");
+    Check(MakeWidgetItemReference({}, "item").empty() &&
+            MakeWidgetItemReference("desktop.search", {}).empty(),
+        "item references require a source scope and identity");
+}
+
+void TestExternalSearchPaginationAndCancellation()
+{
+    WidgetExternalSearchTaskExecutor executor;
+    auto provider = [](const std::string& query, std::size_t maximum) {
+        if (query == "cancel")
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        std::vector<snowdesktop::widget_runtime::WidgetAppSearchResult>
+            items;
+        for (std::size_t index = 0; index < maximum; ++index)
+        {
+            items.push_back({ query + std::to_string(index),
+                "Result " + std::to_string(index),
+                "C:\\Result" + std::to_string(index),
+                "Everything", "file" });
+        }
+        return items;
+    };
+    Check(executor.StartSearch(31, "snow", 2, 3, provider),
+        "bounded external search must start");
+    auto page = WaitFor(executor);
+    Check(page.size() == 1 && page[0].ok &&
+            page[0].items.size() == 3 &&
+            page[0].items[0].id == "snow2" &&
+            page[0].nextOffset == 5 && page[0].hasMore,
+        "external search must paginate provider results");
+
+    Check(executor.StartSearch(32, "cancel", 0, 10, provider) &&
+            executor.Cancel(32),
+        "external search must accept cancellation");
+    auto canceled = WaitFor(executor);
+    Check(canceled.size() == 1 && !canceled[0].ok &&
+            canceled[0].error == "canceled" &&
+            canceled[0].items.empty(),
+        "external search cancellation must suppress provider results");
+
+    Check(!executor.StartSearch(0, "snow", 0, 10, provider) &&
+            !executor.StartSearch(33, "", 0, 10, provider) &&
+            !executor.StartSearch(34, "snow", 101, 10, provider) &&
+            !executor.StartSearch(35, "snow", 0, 101, provider) &&
+            !executor.StartSearch(36, "snow", 0, 10, {}),
+        "external searches must enforce task, query, pagination, and provider bounds");
+
+    Check(executor.StartSearch(37, "failure", 0, 10,
+            [](const std::string&, std::size_t)
+                -> std::vector<snowdesktop::widget_runtime::
+                    WidgetAppSearchResult> {
+                throw 7;
+            }),
+        "external provider failures must remain asynchronous");
+    auto failed = WaitFor(executor);
+    Check(failed.size() == 1 && !failed[0].ok &&
+            failed[0].error == "providerFailed" &&
+            failed[0].items.empty(),
+        "external provider exceptions must become stable task failures");
 }
 }
 
@@ -138,6 +218,7 @@ int main()
     TestPinyinAndCancellation();
     TestInputLimits();
     TestOpaqueReferences();
+    TestExternalSearchPaginationAndCancellation();
     std::cout << "widget app task executor tests passed\n";
     return 0;
 }

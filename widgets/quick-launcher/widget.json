@@ -1,16 +1,16 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "5b22d9ef-3802-48a3-8632-dcf9a3c41668",
   "slug": "quick-launcher",
-  "apiVersion": 1,
+  "apiVersion": 2,
   "dataVersion": 1,
   "entry": "main.lua",
-  "minHostVersion": "1.0.1.0",
+  "minHostVersion": "1.0.4.0",
   "author": "SnowDesktop",
   "license": "GPL-3.0-only",
   "name": "Quick Launcher",
   "nameKey": "lua_widget.quick_launcher.name",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Searches SnowDesktop items and quickly opens or locates them.",
   "descriptionKey": "lua_widget.quick_launcher.description",
   "locales": {
@@ -228,10 +228,39 @@
     }
   },
   "permissions": [
-    "desktop.read",
+    "desktop.read"
+  ],
+  "optionalPermissions": [
     "desktop.action",
     "everything.search",
-    "ui.contextMenu",
-    "ui.input"
-  ]
+    "app.discovery",
+    "app.launch"
+  ],
+  "requiredFeatures": [
+    "control.focus",
+    "control.textInput",
+    "data.desktop.changes",
+    "data.subscribe",
+    "draw.immediate",
+    "interaction.contextMenu",
+    "interaction.pointerActions",
+    "interaction.region",
+    "interaction.scroll",
+    "lifecycle.event",
+    "lifecycle.model",
+    "l10n.basic",
+    "schedule.basic",
+    "schedule.visibility",
+    "task.desktop.search",
+    "task.start"
+  ],
+  "optionalFeatures": [
+    "data.app.indexStatus",
+    "task.app.launch",
+    "task.app.search",
+    "task.desktop.refresh",
+    "task.everything.search",
+    "task.shell.item"
+  ],
+  "resources": {}
 }

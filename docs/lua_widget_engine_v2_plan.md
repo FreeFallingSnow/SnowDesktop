@@ -3,7 +3,8 @@
 - 状态：设计基线
 - 制定日期：2026-08-14
 - 适用范围：SnowDesktop Lua 组件宿主、组件包、组件管理、预览、作者工具、全部内置组件迁移及 WebView 类组件可行性评估
-- 当前基线：SnowDesktop 1.0.4.0、组件包 schema v1、Lua API v1
+- 当前实现基线：SnowDesktop 1.0.4.0、11 个内置组件的 schema/API v2 代码迁移已完成；
+  真实桌面验收、声明式视图完整面和 v1 执行入口移除仍未完成
 
 ## 1. 结论与执行摘要
 
@@ -754,8 +755,10 @@ local taskId, err = task.start("media.toggle")
 
 当前已公开 `task.start`、`task.cancel`、`task.media.control`、`task.app.search`、
 `task.app.launch`、`task.notification.show`、`task.calendar.write`、
-`task.network.request` 和 `task.shell.openUri` feature，三个媒体动作、两个应用任务、
-一次性通知任务、本地日历 create/update/remove、公网 HTTPS GET 和可信手势外链任务。
+`task.network.request`、`task.shell.openUri`、`task.desktop.search`、
+`task.everything.search`、`task.shell.item` 和 `task.desktop.refresh` feature，三个媒体
+动作、两个应用任务、一次性通知、本地日历 create/update/remove、公网 HTTPS GET、
+可信手势外链、桌面/Everything 项目搜索及受控打开、定位和刷新任务。
 `WidgetTaskBroker` 生命周期内核负责任务描述符注册、全局/实例/
 任务类型并发上限、权限和可信手势门禁、preview 标记、显式取消、撤权取消、实例
 dispose 与 shutdown 原因，以及执行器完成确认均有独立契约测试。实时与预览引擎均
@@ -770,7 +773,11 @@ token，避免热重载时同名实例的旧任务完成事件误投给新 VM。
 不接受路径、参数或工作目录。公开 feature 为 `task.app.search/task.app.launch`，
 预览使用确定性引用与结果。日历任务复用本地 `CalendarService` 的 revision 冲突和稳定
 错误，Lua 只收到异步完成事件；create/update 不要求手势，remove 要求直接指针或菜单
-来源。网络等后续任务仍须先完成各自参数/作用域模型后再注册。
+来源。`desktop.search` 从 UI 线程取得最多 2048 项的不可变桌面快照，再由独立执行器
+完成有界名称/拼音检索；`everything.search` 在 worker 中执行并与进程级 Everything
+SDK 的其他调用串行。两类搜索都只返回实例作用域的不透明项目引用；v2 `draw.icon`、
+`shell.openItem/revealItem` 只解析该引用，Lua 不取得路径。项目动作和 `desktop.refresh`
+再次检查 `desktop.action` 与可信手势；桌面 revision 改变会使旧桌面引用失效。
 
 ### 12.5 系统 API 缺口审计与分层
 
@@ -1567,13 +1574,10 @@ v2.0 资源契约：
 
 ### 19.1 发布硬门槛
 
-当前仓库有 11 个内置组件；`analog-clock`、`digital-clock`、`media-controls`、
-`system-monitor`、`pomodoro`、`month-calendar`、`sticky-note`、`reminders` 与
-`agenda`、`rss-reader` 已切到 schema/API v2，仅 `quick-launcher` 仍待迁移。这十个
-组件仍需完成真实
-桌面的多 DPI、主题、隐藏唤醒、系统数据、滚动、媒体控制、元素菜单与应用启动验收，
-因此只能计为代码迁移完成，不能计为最终验证完成。只有全部内置组件完成迁移和验收
-后才能宣布稳定。
+当前仓库 11 个内置组件均已完成 schema/API v2 代码迁移。它们仍需逐个完成真实桌面的
+多 DPI、主题、隐藏唤醒、系统数据、滚动、媒体控制、元素菜单、应用/项目启动和权限
+拒绝降级验收，因此当前只能计为代码迁移完成，不能计为最终验证完成。只有全部内置
+组件完成第 19.3 节验收后才能宣布稳定。
 
 统一迁移规则：
 
@@ -1599,8 +1603,8 @@ v2.0 资源契约：
 | C：数据订阅 | `media-controls` | 必需 `media.read`；可选 `media.action`、`app.discovery`、`app.launch` | 媒体订阅、用户手势动作、应用搜索/不透明引用启动降级 | 播放器切换/退出恢复；分别拒绝媒体读取/控制和应用发现/启动权限 |
 | D：日历集合 | `month-calendar` | 可选 `calendar.read` | 日历订阅、月视图稳定 key、无权限日期计算和本地共享选择 | 跨月/时区/区域格式正确；拒绝读取仍可使用月视图 |
 | D：日历集合 | `agenda` | `calendar.read`、`calendar.write` | 复杂集合、编辑面板、异步日历任务、作用域清理 | 现有功能逐项回归；修改权限拒绝时保留只读日程 |
-| E：网络 | `rss-reader` | `network.internet`、`shell.launch` | 精确 HTTPS origin、网络任务、缓存/错误状态、受控打开链接动作 | 首次联网/打开链接授权；重定向/离线/撤权/恶意 feed 测试通过 |
-| E：桌面高权限 | `quick-launcher` | `desktop.read`、`desktop.action`、`app.discovery`、`app.launch`、`everything.search` | 桌面/应用/Everything 搜索任务、虚拟列表、引用化启动/定位和最小权限降级 | 三类搜索与启动分别授权；大结果集、IME、撤权和索引变化通过 |
+| E：网络 | `rss-reader` | 必需 `network.internet`；可选 `shell.launch` | 精确 HTTPS origin、网络任务、缓存/错误状态、受控打开链接动作 | 首次联网/打开链接授权；重定向/离线/撤权/恶意 feed 测试通过 |
+| E：桌面高权限 | `quick-launcher` | 必需 `desktop.read`；可选 `desktop.action`、`app.discovery`、`app.launch`、`everything.search` | 桌面/应用/Everything 搜索任务、虚拟列表、引用化启动/定位和最小权限降级 | 三类搜索与启动分别授权；大结果集、IME、撤权和索引变化通过 |
 
 执行顺序是 A → B → C → D → E。每一波先迁一个代表组件，补齐缺失的 v2 契约和测试，再完成同波其余组件；不得为迁移某个组件临时增加只对该组件生效的隐式 API。
 

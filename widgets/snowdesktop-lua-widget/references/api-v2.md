@@ -378,12 +378,14 @@ CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.pow
 ### `task`
 
 当前公开异步媒体动作 `media.toggle`、`media.next`、`media.previous`，应用任务
-`app.search`、`app.launch`，一次性通知任务 `notification.show`，以及本地日历写入
-任务 `calendar.create/update/remove`、公网读取任务 `network.request` 和外部链接动作
-`shell.openUri`。它们对应
+`app.search`、`app.launch`，桌面项目任务 `desktop.search`、`everything.search`、
+`shell.openItem`、`shell.revealItem`、`desktop.refresh`，一次性通知任务
+`notification.show`，以及本地日历写入任务 `calendar.create/update/remove`、公网读取
+任务 `network.request` 和外部链接动作 `shell.openUri`。它们对应
 feature ID `task.start`、`task.media.control`、`task.app.search`、`task.app.launch`
 、`task.notification.show`、`task.calendar.write`、`task.network.request` 和
-`task.shell.openUri`。媒体动作要求 `media.action` 权限，而且只能在
+`task.shell.openUri`，以及 `task.desktop.search`、`task.everything.search`、
+`task.shell.item`、`task.desktop.refresh`。媒体动作要求 `media.action` 权限，而且只能在
 `click/doubleClick/pointerDown/pointerUp/wheel`、宿主按钮、菜单命令或由宿主明确
 标记来源的打开回调同步调用栈内启动：
 
@@ -427,6 +429,46 @@ Lua 不会取得可执行文件路径、参数、Shell verb 或工作目录，�
 引用。应用目录 revision 改变后旧引用返回 `staleReference`；未知、被回收或跨实例
 引用返回 `invalidReference`。成功值与媒体动作一样为 `accepted=true`，只表示宿主的
 Shell 启动队列已接受请求，不代表目标进程最终成功启动。
+
+`desktop.search` 与 `everything.search` 提供有界、可取消的项目搜索。两者都接受
+`query/limit/offset` 严格参数；query 为 1–256 字节有效 UTF-8，limit 范围 1–100，
+offset 范围 0–100。`desktop.search` 要求 `desktop.read`：宿主最多复制 2048 个当前
+桌面项目为不可变快照，实际名称/拼音匹配在任务线程完成。`everything.search` 要求
+`everything.search` 权限，每实例最多一个并发任务，在后台调用本机 Everything
+索引；宿主把进程级 Everything SDK 调用串行化，避免与 SnowDesktop 自身搜索互相覆盖。
+
+```lua
+local desktopTask = task.start("desktop.search", {
+    query = "report", limit = 50, offset = 0,
+})
+local everythingTask = task.start("everything.search", {
+    query = "report", limit = 50, offset = 0,
+})
+
+-- 两者的 task.complete 成功值结构相同：
+-- event.value.items[i] = { ref, title, source, type }
+-- event.value.nextOffset / hasMore / revision
+```
+
+结果只含展示字段和当前组件实例可用的不透明 `ref`，不含文件系统路径。组件可将该
+ref 直接传给 `draw.icon(ref, ...)`；不得持久化、解析或自行构造。桌面 revision 变化
+后旧桌面引用返回 `staleReference`；未知、已回收或跨实例引用返回
+`invalidReference`。取消 Everything 搜索会抑制结果投递，但不能保证中断已经进入
+Everything IPC 的一次查询。
+
+项目打开、定位和桌面刷新要求 `desktop.action`，并且只能在直接指针动作或菜单命令
+的可信手势调用栈中启动。`shell.openItem/revealItem` 只接受同一实例先前由
+`desktop.search/everything.search` 返回的 ref；`desktop.refresh` 不接受参数：
+
+```lua
+local openTask = task.start("shell.openItem", { ref = item.ref })
+local revealTask = task.start("shell.revealItem", { ref = item.ref })
+local refreshTask = task.start("desktop.refresh")
+```
+
+成功值为 `{ accepted = true }`。稳定错误包括 `invalidReference`、`staleReference`、
+`openRejected`、`revealRejected`、`permissionDenied`、`userGestureRequired` 和
+`canceled`。应用 ref 仍只能交给 `app.launch`，项目 ref 不能交给 `app.launch`。
 
 `notification.show` 要求 `notification.post` 权限，但不要求用户手势，因此可以从
 `schedule` 到期事件启动。参数是只允许 `title/message` 两个字段的严格普通表：标题为
@@ -531,8 +573,9 @@ HTTPS URL；`http:`、`file:`、自定义 scheme、localhost、局域网和 IP �
 - `draw.pushClip(x, y, width, height)`、`draw.popClip()`
 - `draw.fa(...)`、`draw.fluent(...)`
 - `draw.image(imageHandle, x, y, width, height, alpha?)`
-- `draw.icon(...)`：当前仍要求 `desktop.read`，但 v2 尚未开放 desktop 查询库；
-  不应作为新 v2 组件的基础能力。
+- `draw.icon(ref, x, y, size?, alpha?)`：要求 `desktop.read`，只接受当前实例由
+  `app.search`、`desktop.search` 或 `everything.search` 返回且仍有效的不透明 ref；
+  不接受路径、v1 项目表或其他实例的引用。
 
 颜色是 `0xRRGGBB`，透明度单独传入。`draw.image` 在 v2 中只接受
 `resource.image()` 返回的不透明句柄；字体句柄可传给 `draw.text` 和

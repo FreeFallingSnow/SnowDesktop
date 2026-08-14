@@ -246,9 +246,9 @@
 ---@field topic? string Updated data subscription topic for data.change.
 ---@field revision? integer Monotonic provider revision for data.change.
 ---@field taskId? integer
----@field task? 'media.toggle'|'media.next'|'media.previous'|'app.search'|'app.launch'|'notification.show'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'|string
+---@field task? 'media.toggle'|'media.next'|'media.previous'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'|string
 ---@field ok? boolean
----@field value? SnowMediaTaskValue|SnowAppSearchTaskValue|SnowCalendarMutationTaskValue|SnowNetworkTaskValue|SnowStateValue
+---@field value? SnowMediaTaskValue|SnowAppSearchTaskValue|SnowItemSearchTaskValue|SnowCalendarMutationTaskValue|SnowNetworkTaskValue|SnowStateValue
 ---@field error? string
 ---@field currentRevision? integer Latest revision returned by a failed calendar update conflict.
 ---@field status? integer HTTP status returned by a failed network.request after a response was received.
@@ -732,6 +732,26 @@ function data.subscribe(topic, options) end
 ---@class SnowAppLaunchArguments
 ---@field ref string An opaque ref returned by app.search for this widget instance.
 
+---@class SnowItemSearchArguments
+---@field query string UTF-8 query containing 1 to 256 bytes.
+---@field limit? integer Result count from 1 through 100; defaults to 50.
+---@field offset? integer Result offset from 0 through 100; defaults to 0.
+
+---@class SnowItemSearchItem
+---@field ref string Opaque, instance-scoped item reference accepted by shell.openItem and shell.revealItem.
+---@field title string
+---@field source string
+---@field type string
+
+---@class SnowItemSearchTaskValue
+---@field items SnowItemSearchItem[]
+---@field nextOffset integer
+---@field hasMore boolean
+---@field revision integer
+
+---@class SnowItemReferenceArguments
+---@field ref string An opaque ref returned by desktop.search or everything.search for this widget instance.
+
 ---@class SnowNotificationShowArguments
 ---@field title string Valid UTF-8 containing 1 to 256 bytes.
 ---@field message string Valid UTF-8 containing 1 to 2048 bytes.
@@ -773,19 +793,24 @@ function data.subscribe(topic, options) end
 ---@class snow.task
 task = {}
 
----Start an asynchronous one-shot task. app.search, notification.show,
----calendar create/update, and network.request do not require a gesture;
----app.launch, shell.openUri, media controls, and calendar removal do.
+---Start an asynchronous one-shot task. Search, notification, calendar
+---create/update, and network tasks do not require a gesture. Launch, open,
+---reveal, refresh, media controls, shell.openUri, and calendar removal do.
 ---Runtime rejections return nil plus a stable error code.
 ---@overload fun(name: 'app.search', arguments: SnowAppSearchArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'app.launch', arguments: SnowAppLaunchArguments): taskId: integer?, error: string?
+---@overload fun(name: 'desktop.search', arguments: SnowItemSearchArguments): taskId: integer?, error: string?
+---@overload fun(name: 'everything.search', arguments: SnowItemSearchArguments): taskId: integer?, error: string?
+---@overload fun(name: 'shell.openItem', arguments: SnowItemReferenceArguments): taskId: integer?, error: string?
+---@overload fun(name: 'shell.revealItem', arguments: SnowItemReferenceArguments): taskId: integer?, error: string?
+---@overload fun(name: 'desktop.refresh'): taskId: integer?, error: string?
 ---@overload fun(name: 'notification.show', arguments: SnowNotificationShowArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'calendar.create', arguments: SnowCalendarEventArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'calendar.update', arguments: SnowCalendarUpdateArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'calendar.remove', arguments: SnowCalendarRemoveArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'network.request', arguments: SnowNetworkRequestArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'shell.openUri', arguments: SnowShellOpenUriArguments): taskId: integer?, error: string?
----@param name 'media.toggle'|'media.next'|'media.previous'|'app.search'|'app.launch'|'notification.show'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'
+---@param name 'media.toggle'|'media.next'|'media.previous'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'
 ---@param arguments? table Must be omitted or empty for media tasks.
 ---@return integer? taskId
 ---@return string? error
@@ -1036,14 +1061,14 @@ function draw.fa(glyph, x, y, size, color) end
 ---@param color? integer
 function draw.fluent(glyph, x, y, size, color) end
 
----Requires desktop.read. This compatibility call is present in the current
----v2 draw table, but desktop query APIs are not exposed to the v2 sandbox yet.
----@param itemOrPath SnowDesktopIcon|string
+---Draw the Shell icon for an opaque ref returned by app.search,
+---desktop.search, or everything.search. Requires desktop.read.
+---@param reference string
 ---@param x number
 ---@param y number
 ---@param size? number
 ---@param alpha? number
-function draw.icon(itemOrPath, x, y, size, alpha) end
+function draw.icon(reference, x, y, size, alpha) end
 
 ---@class snow.interaction
 interaction = {}

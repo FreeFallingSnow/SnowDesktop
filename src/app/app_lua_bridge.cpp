@@ -223,7 +223,22 @@ std::vector<LuaDesktopItemInfo> DesktopApp::BuildLuaEverythingSearch(const std::
         return result;
     std::unordered_set<std::wstring> seenPaths;
     DWORD limit = static_cast<DWORD>(std::clamp(maxResults, 1, 200));
-    for (const auto& entry : SearchEverythingCached(queryWide, limit))
+    EverythingSearchClient search;
+    std::vector<EverythingSearchResult> entries =
+        search.Search(queryWide, limit);
+    const std::wstring normalizedQuery = ToUpperInvariant(queryWide);
+    std::stable_sort(entries.begin(), entries.end(),
+        [&normalizedQuery](const EverythingSearchResult& left,
+            const EverythingSearchResult& right) {
+            const int leftRank = NameSearchMatchRank(
+                left.name, normalizedQuery);
+            const int rightRank = NameSearchMatchRank(
+                right.name, normalizedQuery);
+            if (leftRank != rightRank) return leftRank < rightRank;
+            return ToUpperInvariant(left.name) <
+                ToUpperInvariant(right.name);
+        });
+    for (const auto& entry : entries)
     {
         std::wstring normalizedPath = ToUpperInvariant(entry.path);
         if (normalizedPath.empty() || seenPaths.contains(normalizedPath))

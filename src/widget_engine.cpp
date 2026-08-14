@@ -1854,6 +1854,8 @@ constexpr char kAudioOutputAnalyzePermission[] = "audio.output.analyze";
 constexpr char kMediaReadPermission[] = "media.read";
 constexpr char kMediaActionPermission[] = "media.action";
 constexpr char kDesktopReadPermission[] = "desktop.read";
+constexpr char kDesktopActionPermission[] = "desktop.action";
+constexpr char kEverythingSearchPermission[] = "everything.search";
 constexpr char kCalendarReadPermission[] = "calendar.read";
 constexpr char kCalendarWritePermission[] = "calendar.write";
 constexpr char kNetworkInternetPermission[] = "network.internet";
@@ -3279,11 +3281,16 @@ static int lua_TaskStart(lua_State* state)
         }
     }
 
-    if (taskName == "app.search")
+    if (taskName == "app.search" || taskName == "desktop.search" ||
+        taskName == "everything.search")
     {
+        const std::string& searchName = taskName;
+        const lua_Integer maximumOffset =
+            taskName == "app.search" ? 10000 : 100;
         if (!hasArguments)
             return luaL_error(state,
-                "task.start: app.search requires an arguments table");
+                "task.start: %s requires an arguments table",
+                searchName.c_str());
         lua_pushnil(state);
         while (lua_next(state, 2) != 0)
         {
@@ -3291,7 +3298,8 @@ static int lua_TaskStart(lua_State* state)
             {
                 lua_pop(state, 2);
                 return luaL_error(state,
-                    "task.start: app.search argument keys must be strings");
+                    "task.start: %s argument keys must be strings",
+                    searchName.c_str());
             }
             size_t keyLength = 0;
             const char* keyValue = lua_tolstring(state, -2, &keyLength);
@@ -3300,7 +3308,8 @@ static int lua_TaskStart(lua_State* state)
             {
                 lua_pop(state, 2);
                 return luaL_error(state,
-                    "task.start: app.search received an unknown argument");
+                    "task.start: %s received an unknown argument",
+                    searchName.c_str());
             }
             lua_pop(state, 1);
         }
@@ -3310,7 +3319,8 @@ static int lua_TaskStart(lua_State* state)
         {
             lua_pop(state, 1);
             return luaL_error(state,
-                "task.start: app.search query must be a string");
+                "task.start: %s query must be a string",
+                searchName.c_str());
         }
         size_t queryLength = 0;
         const char* queryValue = lua_tolstring(state, -1, &queryLength);
@@ -3320,7 +3330,8 @@ static int lua_TaskStart(lua_State* state)
             !IsValidUtf8Local(query))
         {
             return luaL_error(state,
-                "task.start: app.search query must contain 1 to 256 bytes of valid UTF-8");
+                "task.start: %s query must contain 1 to 256 bytes of valid UTF-8",
+                searchName.c_str());
         }
         arguments.emplace("query", std::move(query));
 
@@ -3332,14 +3343,16 @@ static int lua_TaskStart(lua_State* state)
             {
                 lua_pop(state, 1);
                 return luaL_error(state,
-                    "task.start: app.search limit must be an integer");
+                    "task.start: %s limit must be an integer",
+                    searchName.c_str());
             }
             limit = lua_tointeger(state, -1);
         }
         lua_pop(state, 1);
         if (limit < 1 || limit > 100)
             return luaL_error(state,
-                "task.start: app.search limit must be between 1 and 100");
+                "task.start: %s limit must be between 1 and 100",
+                searchName.c_str());
         arguments.emplace("limit", std::to_string(limit));
 
         lua_Integer offset = 0;
@@ -3350,21 +3363,28 @@ static int lua_TaskStart(lua_State* state)
             {
                 lua_pop(state, 1);
                 return luaL_error(state,
-                    "task.start: app.search offset must be an integer");
+                    "task.start: %s offset must be an integer",
+                    searchName.c_str());
             }
             offset = lua_tointeger(state, -1);
         }
         lua_pop(state, 1);
-        if (offset < 0 || offset > 10000)
+        if (offset < 0 || offset > maximumOffset)
             return luaL_error(state,
-                "task.start: app.search offset must be between 0 and 10000");
+                "task.start: %s offset must be between 0 and %lld",
+                searchName.c_str(),
+                static_cast<long long>(maximumOffset));
         arguments.emplace("offset", std::to_string(offset));
     }
-    else if (taskName == "app.launch")
+    else if (taskName == "app.launch" ||
+        taskName == "shell.openItem" ||
+        taskName == "shell.revealItem")
     {
+        const std::string& actionName = taskName;
         if (!hasArguments)
             return luaL_error(state,
-                "task.start: app.launch requires an arguments table");
+                "task.start: %s requires an arguments table",
+                actionName.c_str());
         lua_pushnil(state);
         while (lua_next(state, 2) != 0)
         {
@@ -3372,7 +3392,8 @@ static int lua_TaskStart(lua_State* state)
             {
                 lua_pop(state, 2);
                 return luaL_error(state,
-                    "task.start: app.launch argument keys must be strings");
+                    "task.start: %s argument keys must be strings",
+                    actionName.c_str());
             }
             size_t keyLength = 0;
             const char* keyValue = lua_tolstring(state, -2, &keyLength);
@@ -3380,7 +3401,8 @@ static int lua_TaskStart(lua_State* state)
             {
                 lua_pop(state, 2);
                 return luaL_error(state,
-                    "task.start: app.launch received an unknown argument");
+                    "task.start: %s received an unknown argument",
+                    actionName.c_str());
             }
             lua_pop(state, 1);
         }
@@ -3389,7 +3411,8 @@ static int lua_TaskStart(lua_State* state)
         {
             lua_pop(state, 1);
             return luaL_error(state,
-                "task.start: app.launch ref must be a string");
+                "task.start: %s ref must be a string",
+                actionName.c_str());
         }
         size_t refLength = 0;
         const char* refValue = lua_tolstring(state, -1, &refLength);
@@ -3397,7 +3420,8 @@ static int lua_TaskStart(lua_State* state)
         lua_pop(state, 1);
         if (reference.empty() || reference.size() > 128)
             return luaL_error(state,
-                "task.start: app.launch ref must contain 1 to 128 bytes");
+                "task.start: %s ref must contain 1 to 128 bytes",
+                actionName.c_str());
         arguments.emplace("ref", std::move(reference));
     }
     else if (taskName == "notification.show")
@@ -6582,12 +6606,31 @@ static void DrawSimulatedPreviewIcon(D2DState* state,
 static int lua_DrawIcon(lua_State* L)
 {
     if (!RequirePermission(L, "desktop.read")) return 0;
-    std::wstring path = ReadLuaPathArg(L, 1);
+    auto* s = GetD2D(L);
+    std::wstring path;
+    if (BoundWidgetApiVersion(L) >= 2)
+    {
+        std::size_t length = 0;
+        const char* raw = luaL_checklstring(L, 1, &length);
+        const std::string reference(raw ? raw : "", length);
+        if (reference.empty() || reference.size() > 128)
+            return luaL_error(L,
+                "draw.icon: reference must contain 1 to 128 bytes");
+        if (s && s->engine)
+        {
+            const auto resolved = s->engine->RuntimeResolveItemReference(
+                BoundWidgetId(L), BoundWidgetRuntimeToken(L), reference);
+            if (resolved) path = *resolved;
+        }
+    }
+    else
+    {
+        path = ReadLuaPathArg(L, 1);
+    }
     float x = static_cast<float>(luaL_checknumber(L, 2));
     float y = static_cast<float>(luaL_checknumber(L, 3));
     float size = static_cast<float>(luaL_optnumber(L, 4, 32));
     float alpha = static_cast<float>(luaL_optnumber(L, 5, 1.0));
-    auto* s = GetD2D(L);
     if (!s || !s->ctx || path.empty()) return 0;
 
     if (s->engine && s->engine->IsPreviewOnly())
@@ -6888,10 +6931,27 @@ void WidgetEngine::InitializeWidgetTaskBroker()
     error.clear();
     (void)taskBroker_->RegisterTask(TaskDescriptor{
         "shell.openUri", kShellLaunchPermission, true, 1 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "desktop.search", kDesktopReadPermission, false, 2 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "everything.search", kEverythingSearchPermission, false, 1 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "shell.openItem", kDesktopActionPermission, true, 1 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "shell.revealItem", kDesktopActionPermission, true, 1 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "desktop.refresh", kDesktopActionPermission, true, 1 }, error);
     if (previewOnly_)
     {
         mediaTaskExecutor_.reset();
         appTaskExecutor_.reset();
+        desktopTaskExecutor_.reset();
+        externalItemTaskExecutor_.reset();
     }
     else
     {
@@ -6899,6 +6959,10 @@ void WidgetEngine::InitializeWidgetTaskBroker()
             snowdesktop::widget_runtime::WidgetMediaTaskExecutor>();
         appTaskExecutor_ = std::make_unique<
             snowdesktop::widget_runtime::WidgetAppTaskExecutor>();
+        desktopTaskExecutor_ = std::make_unique<
+            snowdesktop::widget_runtime::WidgetAppTaskExecutor>();
+        externalItemTaskExecutor_ = std::make_unique<
+            snowdesktop::widget_runtime::WidgetExternalSearchTaskExecutor>();
     }
 }
 
@@ -6930,6 +6994,37 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 id, ok, std::move(error));
         }
     }
+    if (desktopTaskExecutor_)
+    {
+        for (auto& completion : desktopTaskExecutor_->DrainCompletions())
+        {
+            const std::uint64_t id = completion.id;
+            const bool ok = completion.ok;
+            std::string error = completion.error;
+            if (ok)
+                itemSearchCompletions_.insert_or_assign(
+                    id, std::move(completion));
+            else
+                itemSearchCompletions_.erase(id);
+            (void)taskBroker_->Complete(id, ok, std::move(error));
+        }
+    }
+    if (externalItemTaskExecutor_)
+    {
+        for (auto& completion :
+            externalItemTaskExecutor_->DrainCompletions())
+        {
+            const std::uint64_t id = completion.id;
+            const bool ok = completion.ok;
+            std::string error = completion.error;
+            if (ok)
+                itemSearchCompletions_.insert_or_assign(
+                    id, std::move(completion));
+            else
+                itemSearchCompletions_.erase(id);
+            (void)taskBroker_->Complete(id, ok, std::move(error));
+        }
+    }
     for (const auto& action : taskBroker_->DrainActions())
     {
         if (action.type == TaskBrokerActionType::Cancel)
@@ -6938,7 +7033,12 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 (void)mediaTaskExecutor_->Cancel(action.id);
             if (appTaskExecutor_)
                 (void)appTaskExecutor_->Cancel(action.id);
+            if (desktopTaskExecutor_)
+                (void)desktopTaskExecutor_->Cancel(action.id);
+            if (externalItemTaskExecutor_)
+                (void)externalItemTaskExecutor_->Cancel(action.id);
             appSearchCompletions_.erase(action.id);
+            itemSearchCompletions_.erase(action.id);
             calendarMutationCompletions_.erase(action.id);
             if (const auto request = networkTaskRequests_.find(action.id);
                 request != networkTaskRequests_.end())
@@ -7056,6 +7156,153 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             {
                 (void)taskBroker_->Complete(
                     action.id, false, "taskExecutorUnavailable");
+            }
+            continue;
+        }
+
+        if (action.name == "desktop.search" ||
+            action.name == "everything.search")
+        {
+            const auto query = action.arguments.find("query");
+            const auto limitValue = action.arguments.find("limit");
+            const auto offsetValue = action.arguments.find("offset");
+            std::size_t limit = 0;
+            std::size_t offset = 0;
+            const auto parseNumber = [](const std::string& text,
+                std::size_t& value) {
+                const char* begin = text.data();
+                const char* end = begin + text.size();
+                const auto parsed = std::from_chars(begin, end, value);
+                return parsed.ec == std::errc{} && parsed.ptr == end;
+            };
+            if (query == action.arguments.end() ||
+                limitValue == action.arguments.end() ||
+                offsetValue == action.arguments.end() ||
+                !parseNumber(limitValue->second, limit) ||
+                !parseNumber(offsetValue->second, offset))
+            {
+                (void)taskBroker_->Complete(
+                    action.id, false, "invalidArguments");
+                continue;
+            }
+
+            if (action.preview)
+            {
+                snowdesktop::widget_runtime::WidgetAppSearchCompletion
+                    completion;
+                completion.id = action.id;
+                completion.catalogRevision = 1;
+                completion.ok = true;
+                if (offset == 0 && limit > 0)
+                {
+                    const bool desktop = action.name == "desktop.search";
+                    completion.items.push_back({
+                        desktop ? "preview-desktop" : "preview-everything",
+                        desktop
+                            ? _L("app.widget_preview.api.desktop_document")
+                            : _L("app.widget_preview.api.search_result"),
+                        desktop
+                            ? "C:\\Users\\Maya\\Desktop\\Preview.txt"
+                            : "C:\\Users\\Maya\\Documents\\Preview.txt",
+                        desktop ? "Desktop" : "Everything",
+                        "file" });
+                }
+                completion.nextOffset =
+                    offset + completion.items.size();
+                itemSearchCompletions_.insert_or_assign(
+                    action.id, std::move(completion));
+                (void)taskBroker_->Complete(action.id, true);
+                continue;
+            }
+
+            if (action.name == "desktop.search")
+            {
+                if (!desktopTaskExecutor_ || !desktopSnapshotProvider_)
+                {
+                    (void)taskBroker_->Complete(
+                        action.id, false, "providerUnavailable");
+                    continue;
+                }
+                std::vector<LuaDesktopItemInfo> snapshot;
+                try
+                {
+                    snapshot = RuntimeDesktopItems();
+                }
+                catch (...)
+                {
+                    (void)taskBroker_->Complete(
+                        action.id, false, "providerFailed");
+                    continue;
+                }
+                if (snapshot.size() > 2048) snapshot.resize(2048);
+                std::vector<snowdesktop::widget_runtime::
+                    WidgetAppCatalogEntry> catalog;
+                catalog.reserve(snapshot.size());
+                for (const auto& item : snapshot)
+                {
+                    if (item.title.empty() || item.path.empty()) continue;
+                    snowdesktop::widget_runtime::WidgetAppCatalogEntry entry;
+                    entry.id = item.id.empty() ? item.path : item.id;
+                    entry.title = item.title;
+                    entry.launchTarget = item.path;
+                    const std::wstring titleWide =
+                        Utf8ToWideLocal(item.title);
+                    entry.foldedTitle = WidgetWideToUtf8(
+                        ToUpperInvariant(titleWide));
+                    entry.pinyinFull = BuildNamePinyinFullKey(titleWide);
+                    entry.pinyinInitials =
+                        BuildNamePinyinInitialKey(titleWide);
+                    entry.source = item.source;
+                    entry.type = item.type;
+                    if (!entry.id.empty() && !entry.foldedTitle.empty())
+                        catalog.push_back(std::move(entry));
+                }
+                const std::wstring queryWide =
+                    Utf8ToWideLocal(query->second);
+                const std::string foldedQuery = WidgetWideToUtf8(
+                    ToUpperInvariant(queryWide));
+                const std::string pinyinQuery =
+                    BuildNamePinyinFullKey(queryWide);
+                if (foldedQuery.empty() ||
+                    !desktopTaskExecutor_->StartSearch(
+                        action.id, foldedQuery, pinyinQuery,
+                        offset, limit, desktopDataRevision_,
+                        std::move(catalog)))
+                {
+                    (void)taskBroker_->Complete(action.id, false,
+                        "taskExecutorUnavailable");
+                }
+                continue;
+            }
+
+            if (!externalItemTaskExecutor_ || !everythingSearchProvider_)
+            {
+                (void)taskBroker_->Complete(
+                    action.id, false, "providerUnavailable");
+                continue;
+            }
+            const auto provider = [this](const std::string& searchQuery,
+                std::size_t maximumResults) {
+                std::vector<snowdesktop::widget_runtime::
+                    WidgetAppSearchResult> result;
+                const std::vector<LuaDesktopItemInfo> items =
+                    RuntimeEverythingSearch(searchQuery,
+                        static_cast<int>(maximumResults));
+                result.reserve(items.size());
+                for (const auto& item : items)
+                {
+                    if (item.path.empty() || item.title.empty()) continue;
+                    result.push_back({
+                        item.id.empty() ? item.path : item.id,
+                        item.title, item.path, item.source, item.type });
+                }
+                return result;
+            };
+            if (!externalItemTaskExecutor_->StartSearch(
+                    action.id, query->second, offset, limit, provider))
+            {
+                (void)taskBroker_->Complete(action.id, false,
+                    "taskExecutorUnavailable");
             }
             continue;
         }
@@ -7275,6 +7522,55 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             continue;
         }
 
+        if (action.name == "shell.openItem" ||
+            action.name == "shell.revealItem")
+        {
+            const auto refValue = action.arguments.find("ref");
+            if (refValue == action.arguments.end())
+            {
+                (void)taskBroker_->Complete(
+                    action.id, false, "invalidArguments");
+                continue;
+            }
+            const auto reference = owner->itemReferences.find(
+                refValue->second);
+            if (reference == owner->itemReferences.end())
+            {
+                (void)taskBroker_->Complete(
+                    action.id, false, "invalidReference");
+                continue;
+            }
+            if (action.preview)
+            {
+                (void)taskBroker_->Complete(action.id, true);
+                continue;
+            }
+            if (reference->second.sourceTask == "desktop.search" &&
+                reference->second.revision != desktopDataRevision_)
+            {
+                (void)taskBroker_->Complete(
+                    action.id, false, "staleReference");
+                continue;
+            }
+            const std::wstring target = Utf8ToWideLocal(
+                reference->second.target);
+            const bool reveal = action.name == "shell.revealItem";
+            const bool accepted = !target.empty() &&
+                (reveal ? RuntimeRevealDesktopPath(target)
+                        : RuntimeOpenDesktopPath(target));
+            (void)taskBroker_->Complete(action.id, accepted,
+                accepted ? std::string{} :
+                    (reveal ? "revealRejected" : "openRejected"));
+            continue;
+        }
+
+        if (action.name == "desktop.refresh")
+        {
+            if (!action.preview) RuntimeRefreshDesktop();
+            (void)taskBroker_->Complete(action.id, true);
+            continue;
+        }
+
         if (action.name == "shell.openUri")
         {
             const auto url = action.arguments.find("url");
@@ -7320,6 +7616,8 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             });
         const auto searchCompletion =
             appSearchCompletions_.find(completion.id);
+        const auto itemSearchCompletion =
+            itemSearchCompletions_.find(completion.id);
         const auto calendarCompletion =
             calendarMutationCompletions_.find(completion.id);
         const auto networkCompletion =
@@ -7329,6 +7627,8 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
         {
             if (searchCompletion != appSearchCompletions_.end())
                 appSearchCompletions_.erase(searchCompletion);
+            if (itemSearchCompletion != itemSearchCompletions_.end())
+                itemSearchCompletions_.erase(itemSearchCompletion);
             if (calendarCompletion != calendarMutationCompletions_.end())
                 calendarMutationCompletions_.erase(calendarCompletion);
             if (networkCompletion != networkTaskCompletions_.end())
@@ -7354,6 +7654,15 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
         const bool networkTask = completion.name == "network.request";
         if (completion.ok && networkTask &&
             networkCompletion == networkTaskCompletions_.end())
+        {
+            completion.ok = false;
+            completion.error = "taskResultUnavailable";
+        }
+        const bool itemSearchTask =
+            completion.name == "desktop.search" ||
+            completion.name == "everything.search";
+        if (completion.ok && itemSearchTask &&
+            itemSearchCompletion == itemSearchCompletions_.end())
         {
             completion.ok = false;
             completion.error = "taskResultUnavailable";
@@ -7411,6 +7720,58 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             nextOffset = searchCompletion->second.nextOffset;
             hasMore = searchCompletion->second.hasMore;
         }
+        else if (completion.ok && itemSearchTask)
+        {
+            constexpr std::size_t MaximumReferences = 4096;
+            catalogRevision =
+                itemSearchCompletion->second.catalogRevision;
+            if (completion.name == "desktop.search")
+            {
+                std::erase_if(widget->itemReferences,
+                    [&completion, catalogRevision](const auto& entry) {
+                        return entry.second.sourceTask == completion.name &&
+                            entry.second.revision != catalogRevision;
+                    });
+            }
+            if (widget->itemReferences.size() +
+                    itemSearchCompletion->second.items.size() >
+                MaximumReferences)
+            {
+                widget->itemReferences.clear();
+            }
+            publicItems.reserve(
+                itemSearchCompletion->second.items.size());
+            for (const auto& item :
+                itemSearchCompletion->second.items)
+            {
+                const std::string baseReference =
+                    snowdesktop::widget_runtime::MakeWidgetItemReference(
+                        completion.name + ":" +
+                            std::to_string(widget->runtimeToken),
+                        item.id);
+                if (baseReference.empty()) continue;
+                std::string reference = baseReference;
+                for (std::size_t suffix = 1;; ++suffix)
+                {
+                    const auto collision =
+                        widget->itemReferences.find(reference);
+                    if (collision == widget->itemReferences.end() ||
+                        (collision->second.sourceTask == completion.name &&
+                            collision->second.target == item.launchTarget))
+                        break;
+                    reference = baseReference + ":" +
+                        std::to_string(suffix);
+                }
+                widget->itemReferences.insert_or_assign(reference,
+                    LuaWidget::ItemReference{ item.launchTarget,
+                        completion.name, catalogRevision });
+                publicItems.push_back({ std::move(reference), item.title,
+                    item.source, item.type });
+            }
+            nextOffset = itemSearchCompletion->second.nextOffset;
+            hasMore = itemSearchCompletion->second.hasMore &&
+                nextOffset <= 100;
+        }
         const snowdesktop::calendar::MutationResult* calendarResult =
             calendarCompletion != calendarMutationCompletions_.end()
             ? &calendarCompletion->second : nullptr;
@@ -7421,7 +7782,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             trustedGestureState_, false);
         (void)InvokeLifecycleEvent(*widget, "task.complete",
             [&completion, &publicItems, nextOffset, hasMore,
-                catalogRevision, calendarTask,
+                catalogRevision, calendarTask, itemSearchTask,
                 calendarResult, networkTask,
                 networkResult](lua_State* eventState) {
                 lua_pushinteger(eventState,
@@ -7434,7 +7795,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 lua_setfield(eventState, -2, "ok");
                 if (completion.ok)
                 {
-                    if (completion.name == "app.search")
+                    if (completion.name == "app.search" || itemSearchTask)
                     {
                         lua_createtable(eventState, 0, 4);
                         lua_createtable(eventState,
@@ -7465,7 +7826,9 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                         lua_setfield(eventState, -2, "hasMore");
                         lua_pushinteger(eventState,
                             static_cast<lua_Integer>(catalogRevision));
-                        lua_setfield(eventState, -2, "catalogRevision");
+                        lua_setfield(eventState, -2,
+                            itemSearchTask ? "revision" :
+                                "catalogRevision");
                     }
                     else if (calendarTask)
                     {
@@ -7520,6 +7883,8 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             });
         if (searchCompletion != appSearchCompletions_.end())
             appSearchCompletions_.erase(searchCompletion);
+        if (itemSearchCompletion != itemSearchCompletions_.end())
+            itemSearchCompletions_.erase(itemSearchCompletion);
         if (calendarCompletion != calendarMutationCompletions_.end())
             calendarMutationCompletions_.erase(calendarCompletion);
         if (networkCompletion != networkTaskCompletions_.end())
@@ -7542,7 +7907,12 @@ void WidgetEngine::ReleaseWidgetTasks(LuaWidget& widget,
             (void)mediaTaskExecutor_->Cancel(taskId);
         if (appTaskExecutor_)
             (void)appTaskExecutor_->Cancel(taskId);
+        if (desktopTaskExecutor_)
+            (void)desktopTaskExecutor_->Cancel(taskId);
+        if (externalItemTaskExecutor_)
+            (void)externalItemTaskExecutor_->Cancel(taskId);
         appSearchCompletions_.erase(taskId);
+        itemSearchCompletions_.erase(taskId);
         calendarMutationCompletions_.erase(taskId);
         networkTaskCompletions_.erase(taskId);
     }
@@ -7678,7 +8048,10 @@ void WidgetEngine::Shutdown()
     dataBroker_.reset();
     mediaTaskExecutor_.reset();
     appTaskExecutor_.reset();
+    desktopTaskExecutor_.reset();
+    externalItemTaskExecutor_.reset();
     appSearchCompletions_.clear();
+    itemSearchCompletions_.clear();
     calendarMutationCompletions_.clear();
     networkTaskCompletions_.clear();
     networkTaskRequests_.clear();
@@ -11225,6 +11598,42 @@ bool WidgetEngine::RuntimeRevealDesktopPath(const std::wstring& path)
     return desktopRevealCallback_ ? desktopRevealCallback_(path) : false;
 }
 
+std::optional<std::wstring> WidgetEngine::RuntimeResolveItemReference(
+    const std::wstring& widgetId, std::uint64_t ownerToken,
+    const std::string& reference) const
+{
+    if (reference.empty() || ownerToken == 0) return std::nullopt;
+    const auto widget = std::find_if(widgets_.begin(), widgets_.end(),
+        [&widgetId, ownerToken](const LuaWidget& candidate) {
+            return candidate.widgetId == widgetId &&
+                candidate.runtimeToken == ownerToken;
+        });
+    if (widget == widgets_.end()) return std::nullopt;
+    if (const auto item = widget->itemReferences.find(reference);
+        item != widget->itemReferences.end())
+    {
+        if (!previewOnly_ &&
+            item->second.sourceTask == "desktop.search" &&
+            item->second.revision != desktopDataRevision_)
+            return std::nullopt;
+        const std::wstring target = Utf8ToWideLocal(item->second.target);
+        return target.empty()
+            ? std::nullopt : std::optional<std::wstring>(target);
+    }
+    if (const auto app = widget->applicationReferences.find(reference);
+        app != widget->applicationReferences.end())
+    {
+        if (!previewOnly_ &&
+            app->second.catalogRevision != appIndexRevision_)
+            return std::nullopt;
+        const std::wstring target = Utf8ToWideLocal(
+            app->second.launchTarget);
+        return target.empty()
+            ? std::nullopt : std::optional<std::wstring>(target);
+    }
+    return std::nullopt;
+}
+
 void WidgetEngine::RuntimeRefreshDesktop()
 {
     if (snowdesktop::widget_runtime::IsDryLoad()) return;
@@ -11632,8 +12041,14 @@ bool WidgetEngine::RuntimeCancelTask(
         (void)mediaTaskExecutor_->Cancel(taskId);
     if (canceled && appTaskExecutor_)
         (void)appTaskExecutor_->Cancel(taskId);
+    if (canceled && desktopTaskExecutor_)
+        (void)desktopTaskExecutor_->Cancel(taskId);
+    if (canceled && externalItemTaskExecutor_)
+        (void)externalItemTaskExecutor_->Cancel(taskId);
     if (canceled)
         appSearchCompletions_.erase(taskId);
+    if (canceled)
+        itemSearchCompletions_.erase(taskId);
     if (canceled)
         calendarMutationCompletions_.erase(taskId);
     if (canceled)

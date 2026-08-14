@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -15,6 +16,9 @@ namespace snowdesktop::widget_runtime
 {
 /** Builds a stable opaque reference without exposing the catalog identity. */
 std::string MakeWidgetAppReference(std::string_view catalogId);
+/** Builds a scoped opaque item reference without exposing a filesystem path. */
+std::string MakeWidgetItemReference(
+    std::string_view scope, std::string_view identity);
 
 struct WidgetAppCatalogEntry
 {
@@ -82,6 +86,49 @@ private:
 
     static int MatchRank(const WidgetAppCatalogEntry& entry,
         const Request& request) noexcept;
+    void WorkerMain(std::stop_token stopToken);
+
+    mutable std::mutex mutex_;
+    std::condition_variable condition_;
+    std::deque<Request> requests_;
+    std::unordered_set<std::uint64_t> active_;
+    std::unordered_set<std::uint64_t> canceled_;
+    std::vector<WidgetAppSearchCompletion> completions_;
+    std::jthread worker_;
+    bool stopping_ = false;
+};
+
+/** Runs bounded external item searches away from the desktop UI thread. */
+class WidgetExternalSearchTaskExecutor
+{
+public:
+    using Provider = std::function<std::vector<WidgetAppSearchResult>(
+        const std::string& query, std::size_t maximumResults)>;
+
+    WidgetExternalSearchTaskExecutor() = default;
+    ~WidgetExternalSearchTaskExecutor();
+
+    WidgetExternalSearchTaskExecutor(
+        const WidgetExternalSearchTaskExecutor&) = delete;
+    WidgetExternalSearchTaskExecutor& operator=(
+        const WidgetExternalSearchTaskExecutor&) = delete;
+
+    bool StartSearch(std::uint64_t id, std::string query,
+        std::size_t offset, std::size_t limit, Provider provider);
+    bool Cancel(std::uint64_t id);
+    std::vector<WidgetAppSearchCompletion> DrainCompletions();
+    std::size_t ActiveCount() const;
+
+private:
+    struct Request
+    {
+        std::uint64_t id = 0;
+        std::string query;
+        std::size_t offset = 0;
+        std::size_t limit = 0;
+        Provider provider;
+    };
+
     void WorkerMain(std::stop_token stopToken);
 
     mutable std::mutex mutex_;

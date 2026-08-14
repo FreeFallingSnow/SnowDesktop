@@ -134,8 +134,17 @@ void TestApplicationTaskGesturePolicy()
                 { "calendar.remove", "calendar.write", true, 1 },
                 error) &&
             broker.RegisterTask(
-                { "shell.openUri", "shell.launch", true, 1 }, error),
-        "application, notification, calendar, and shell tasks must register independently");
+                { "shell.openUri", "shell.launch", true, 1 }, error) &&
+            broker.RegisterTask(
+                { "desktop.search", "desktop.read", false, 2 }, error) &&
+            broker.RegisterTask(
+                { "everything.search", "everything.search", false, 1 },
+                error) &&
+            broker.RegisterTask(
+                { "shell.openItem", "desktop.action", true, 1 }, error) &&
+            broker.RegisterTask(
+                { "desktop.refresh", "desktop.action", true, 1 }, error),
+        "application, notification, calendar, search, and shell tasks must register independently");
     TaskStartOptions options;
     options.ownerToken = 250;
     options.permissionGranted = true;
@@ -216,6 +225,34 @@ void TestApplicationTaskGesturePolicy()
             shellActions[0].arguments.at("url") ==
                 "https://example.com/article",
         "external URI opening must preserve only the validated URL");
+    Check(broker.Complete(opened.id, true),
+        "external URI completion must release its task slot");
+    broker.DrainCompletions();
+
+    options.arguments = { { "query", "notes" }, { "limit", "20" },
+        { "offset", "0" } };
+    options.trustedGesture = false;
+    const auto desktopSearch = broker.Start(
+        "widget", "desktop.search", options);
+    Check(static_cast<bool>(desktopSearch),
+        "desktop search must be allowed without a user gesture");
+    broker.DrainActions();
+    Check(broker.Complete(desktopSearch.id, true),
+        "desktop search completion must release its task slot");
+    broker.DrainCompletions();
+
+    options.arguments = { { "ref", "item:opaque" } };
+    Check(!broker.Start("widget", "shell.openItem", options),
+        "item opening must reject background calls");
+    options.trustedGesture = true;
+    const auto itemOpen = broker.Start(
+        "widget", "shell.openItem", options);
+    Check(static_cast<bool>(itemOpen),
+        "item opening must accept an authorized trusted gesture");
+    broker.DrainActions();
+    Check(broker.Complete(itemOpen.id, true),
+        "item opening completion must release its task slot");
+    broker.DrainCompletions();
 }
 
 void TestInstanceAndShutdownCleanup()
