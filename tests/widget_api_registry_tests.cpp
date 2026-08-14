@@ -266,6 +266,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "data.audio.output.volume") &&
             snowdesktop::widget_api::SupportsFeature(
+                "task.audio.output.control") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "calendar.dateMath") &&
             snowdesktop::widget_api::SupportsFeature(
                 "calendar.selection") &&

@@ -756,7 +756,8 @@ local taskId, err = task.start("media.toggle", { sessionId = session.id })
 - `dispose`、权限撤销或包更新自动取消未完成任务。
 - v2 首版不引入隐式 Promise；协程封装可在稳定任务契约之上后续增加。
 
-当前已公开 `task.start`、`task.cancel`、`task.media.control`、`task.app.search`、
+当前已公开 `task.start`、`task.cancel`、`task.media.control`、
+`task.audio.output.control`、`task.app.search`、
 `task.app.launch`、`task.notification.show`、`task.calendar.write`、
 `task.network.request`、`task.shell.openUri`、`task.desktop.search`、
 `task.everything.search`、`task.shell.item` 和 `task.desktop.refresh` feature，完整媒体
@@ -769,7 +770,10 @@ dispose 与 shutdown 原因，以及执行器完成确认均有独立契约测�
 标记来源的打开回调使用仅限同步调用栈的可信手势作用域；任务还携带 Lua VM owner
 token，避免热重载时同名实例的旧任务完成事件误投给新 VM。媒体执行器在独立 MTA
 工作线程调用 GSMTC，按目标会话 `can*` 能力执行，并返回 accepted 或稳定错误码；
-seek 以时间线起点为基准且受最小/最大可跳转范围约束，预览只产生确定性 mock。API v1
+seek 以时间线起点为基准且受最小/最大可跳转范围约束，预览只产生确定性 mock。
+默认音频输出控制只接受 `setVolume/setMute`，始终在独立 COM MTA 线程重新解析当前
+multimedia render endpoint；音量钳制到 0–1，Core Audio 调用携带 SnowDesktop 来源
+GUID，同一实例以 100 ms 最小间隔限速，不开放逐进程或非默认设备控制。API v1
 同步 `media.playPause/next/previous` 已通过函数版本上限从 v2 VM 隐藏，不能绕过
 手势门禁。应用搜索从 UI 线程复制宿主索引为不可变、有上限的目录快照，在独立任务
 线程完成名称/拼音排序与分页，只向 Lua 返回展示字段和实例作用域的不透明引用；

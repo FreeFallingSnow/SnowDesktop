@@ -152,6 +152,10 @@ menu.
   Match the returned ID in `event.kind == "task.complete"`. Never loop media
   actions from the completion event; it intentionally has no trusted-gesture
   activation.
+- Change only the current default audio endpoint with
+  `audio.output.setVolume` or `audio.output.setMute` from a direct trusted
+  gesture. Declare `audio.output.control`, treat `rateLimited` as a normal
+  rejection, and never emulate per-process or non-default-device control.
 - Search applications with the bounded `task.start("app.search", { query,
   limit, offset })` task and retain only its opaque `ref` values. Launch one
   with `task.start("app.launch", { ref = item.ref })` inside the direct click

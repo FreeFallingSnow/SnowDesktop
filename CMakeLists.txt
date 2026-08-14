@@ -249,6 +249,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget_data_broker.cpp
     src/widget_task_broker.cpp
     src/widget_media_task_executor.cpp
+    src/widget_audio_output_task_executor.cpp
     src/widget_app_task_executor.cpp
     src/widget_system_data_provider.cpp
     src/widget_audio_analysis_provider.cpp
@@ -766,6 +767,16 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES windowsapp
         LABELS integration media task lua widget)
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetAudioOutputTaskExecutorTests
+        widget_audio_output_task_executor
+        SOURCES
+            tests/widget_audio_output_task_executor_tests.cpp
+            src/widget_audio_output_task_executor.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES ole32
+        LABELS contract audio task lua widget)
 
     snowdesktop_add_test(
         SnowDesktopWidgetAppTaskExecutorTests

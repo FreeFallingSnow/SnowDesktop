@@ -1812,6 +1812,7 @@ constexpr char kSystemStoragePermission[] = "system.storage.read";
 constexpr char kSystemDisplayPermission[] = "system.display.read";
 constexpr char kAudioOutputReadPermission[] = "audio.output.read";
 constexpr char kAudioOutputAnalyzePermission[] = "audio.output.analyze";
+constexpr char kAudioOutputControlPermission[] = "audio.output.control";
 constexpr char kMediaReadPermission[] = "media.read";
 constexpr char kMediaActionPermission[] = "media.action";
 constexpr char kDesktopReadPermission[] = "desktop.read";
@@ -3442,6 +3443,78 @@ static int lua_TaskStart(lua_State* state)
                 return luaL_error(state,
                     "task.start: media.setRepeat mode must be none, track, or list");
             arguments.emplace("mode", std::move(mode));
+        }
+    }
+    else if (snowdesktop::widget_runtime::WidgetAudioOutputTaskExecutor::
+            SupportsAction(taskName))
+    {
+        if (!hasArguments)
+            return luaL_error(state,
+                "task.start: %s requires an arguments table",
+                taskName.c_str());
+        const std::string_view expectedKey =
+            taskName == "audio.output.setVolume" ? "volume" : "muted";
+        lua_pushnil(state);
+        while (lua_next(state, 2) != 0)
+        {
+            if (lua_type(state, -2) != LUA_TSTRING)
+            {
+                lua_pop(state, 2);
+                return luaL_error(state,
+                    "task.start: audio output argument keys must be strings");
+            }
+            size_t keyLength = 0;
+            const char* keyValue = lua_tolstring(
+                state, -2, &keyLength);
+            const std::string_view key(
+                keyValue ? keyValue : "", keyLength);
+            if (key != expectedKey)
+            {
+                lua_pop(state, 2);
+                return luaL_error(state,
+                    "task.start: %s accepts only %s",
+                    taskName.c_str(), expectedKey.data());
+            }
+            lua_pop(state, 1);
+        }
+
+        if (taskName == "audio.output.setVolume")
+        {
+            lua_getfield(state, 2, "volume");
+            if (lua_type(state, -1) != LUA_TNUMBER)
+            {
+                lua_pop(state, 1);
+                return luaL_error(state,
+                    "task.start: audio.output.setVolume volume must be a number");
+            }
+            const double volume = lua_tonumber(state, -1);
+            lua_pop(state, 1);
+            if (!std::isfinite(volume))
+                return luaL_error(state,
+                    "task.start: audio.output.setVolume volume must be finite");
+            std::array<char, 64> buffer{};
+            const auto converted = std::to_chars(
+                buffer.data(), buffer.data() + buffer.size(), volume,
+                std::chars_format::general,
+                std::numeric_limits<double>::max_digits10);
+            if (converted.ec != std::errc{})
+                return luaL_error(state,
+                    "task.start: audio.output.setVolume volume cannot be represented");
+            arguments.emplace("volume", std::string(
+                buffer.data(), converted.ptr));
+        }
+        else
+        {
+            lua_getfield(state, 2, "muted");
+            if (!lua_isboolean(state, -1))
+            {
+                lua_pop(state, 1);
+                return luaL_error(state,
+                    "task.start: audio.output.setMute muted must be a boolean");
+            }
+            const bool muted = lua_toboolean(state, -1) != 0;
+            lua_pop(state, 1);
+            arguments.emplace("muted", muted ? "1" : "0");
         }
     }
     else if (taskName == "app.search" || taskName == "desktop.search" ||
@@ -7093,6 +7166,14 @@ void WidgetEngine::InitializeWidgetTaskBroker()
         "media.setRepeat", kMediaActionPermission, true, 1 }, error);
     error.clear();
     (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "audio.output.setVolume", kAudioOutputControlPermission,
+        true, 1 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "audio.output.setMute", kAudioOutputControlPermission,
+        true, 1 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
         "app.search", kAppDiscoveryPermission, false, 2 }, error);
     error.clear();
     (void)taskBroker_->RegisterTask(TaskDescriptor{
@@ -7133,6 +7214,7 @@ void WidgetEngine::InitializeWidgetTaskBroker()
     if (previewOnly_)
     {
         mediaTaskExecutor_.reset();
+        audioOutputTaskExecutor_.reset();
         appTaskExecutor_.reset();
         desktopTaskExecutor_.reset();
         externalItemTaskExecutor_.reset();
@@ -7141,6 +7223,8 @@ void WidgetEngine::InitializeWidgetTaskBroker()
     {
         mediaTaskExecutor_ = std::make_unique<
             snowdesktop::widget_runtime::WidgetMediaTaskExecutor>();
+        audioOutputTaskExecutor_ = std::make_unique<
+            snowdesktop::widget_runtime::WidgetAudioOutputTaskExecutor>();
         appTaskExecutor_ = std::make_unique<
             snowdesktop::widget_runtime::WidgetAppTaskExecutor>();
         desktopTaskExecutor_ = std::make_unique<
@@ -7157,6 +7241,15 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
     if (mediaTaskExecutor_)
     {
         for (auto& completion : mediaTaskExecutor_->DrainCompletions())
+        {
+            (void)taskBroker_->Complete(completion.id,
+                completion.accepted, std::move(completion.error));
+        }
+    }
+    if (audioOutputTaskExecutor_)
+    {
+        for (auto& completion :
+            audioOutputTaskExecutor_->DrainCompletions())
         {
             (void)taskBroker_->Complete(completion.id,
                 completion.accepted, std::move(completion.error));
@@ -7215,6 +7308,8 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
         {
             if (mediaTaskExecutor_)
                 (void)mediaTaskExecutor_->Cancel(action.id);
+            if (audioOutputTaskExecutor_)
+                (void)audioOutputTaskExecutor_->Cancel(action.id);
             if (appTaskExecutor_)
                 (void)appTaskExecutor_->Cancel(action.id);
             if (desktopTaskExecutor_)
@@ -7786,6 +7881,64 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             (void)taskBroker_->Complete(action.id, true);
             continue;
         }
+        if (snowdesktop::widget_runtime::WidgetAudioOutputTaskExecutor::
+                SupportsAction(action.name))
+        {
+            snowdesktop::widget_runtime::WidgetAudioOutputTaskRequest
+                audioRequest;
+            audioRequest.action = action.name;
+            bool validAudioRequest = true;
+            if (action.name == "audio.output.setVolume")
+            {
+                const auto value = action.arguments.find("volume");
+                double volume = 0.0;
+                if (value == action.arguments.end())
+                    validAudioRequest = false;
+                else
+                {
+                    const char* begin = value->second.data();
+                    const char* end = begin + value->second.size();
+                    const auto parsed = std::from_chars(
+                        begin, end, volume, std::chars_format::general);
+                    validAudioRequest = parsed.ec == std::errc{} &&
+                        parsed.ptr == end;
+                    if (validAudioRequest) audioRequest.volume = volume;
+                }
+            }
+            else
+            {
+                const auto value = action.arguments.find("muted");
+                validAudioRequest = value != action.arguments.end() &&
+                    (value->second == "0" || value->second == "1");
+                if (validAudioRequest)
+                    audioRequest.muted = value->second == "1";
+            }
+            validAudioRequest = validAudioRequest &&
+                snowdesktop::widget_runtime::
+                    WidgetAudioOutputTaskExecutor::ValidateRequest(
+                        audioRequest);
+            if (!validAudioRequest)
+            {
+                (void)taskBroker_->Complete(
+                    action.id, false, "invalidArguments");
+                continue;
+            }
+            if (!audioOutputTaskExecutor_)
+            {
+                (void)taskBroker_->Complete(
+                    action.id, false, "taskExecutorUnavailable");
+                continue;
+            }
+            auto start = audioOutputTaskExecutor_->Start(
+                action.id, action.instanceId, std::move(audioRequest));
+            if (!start)
+            {
+                (void)taskBroker_->Complete(action.id, false,
+                    start.error.empty()
+                        ? "taskExecutorUnavailable" : start.error);
+            }
+            continue;
+        }
         snowdesktop::widget_runtime::WidgetMediaTaskRequest mediaRequest;
         mediaRequest.action = action.name;
         if (const auto value = action.arguments.find("sessionId");
@@ -8154,6 +8307,8 @@ void WidgetEngine::ReleaseWidgetTasks(LuaWidget& widget,
         (void)taskBroker_->Cancel(taskId, reason);
         if (mediaTaskExecutor_)
             (void)mediaTaskExecutor_->Cancel(taskId);
+        if (audioOutputTaskExecutor_)
+            (void)audioOutputTaskExecutor_->Cancel(taskId);
         if (appTaskExecutor_)
             (void)appTaskExecutor_->Cancel(taskId);
         if (desktopTaskExecutor_)
@@ -8165,6 +8320,9 @@ void WidgetEngine::ReleaseWidgetTasks(LuaWidget& widget,
         calendarMutationCompletions_.erase(taskId);
         networkTaskCompletions_.erase(taskId);
     }
+    if (audioOutputTaskExecutor_)
+        audioOutputTaskExecutor_->ForgetInstance(
+            WidgetWideToUtf8(widget.widgetId));
     widget.taskIds.clear();
 }
 
@@ -8296,6 +8454,7 @@ void WidgetEngine::Shutdown()
     widgetAudioAnalysisProvider_.reset();
     dataBroker_.reset();
     mediaTaskExecutor_.reset();
+    audioOutputTaskExecutor_.reset();
     appTaskExecutor_.reset();
     desktopTaskExecutor_.reset();
     externalItemTaskExecutor_.reset();
@@ -12967,6 +13126,8 @@ bool WidgetEngine::RuntimeCancelTask(
     const bool canceled = taskBroker_->Cancel(taskId);
     if (canceled && mediaTaskExecutor_)
         (void)mediaTaskExecutor_->Cancel(taskId);
+    if (canceled && audioOutputTaskExecutor_)
+        (void)audioOutputTaskExecutor_->Cancel(taskId);
     if (canceled && appTaskExecutor_)
         (void)appTaskExecutor_->Cancel(taskId);
     if (canceled && desktopTaskExecutor_)

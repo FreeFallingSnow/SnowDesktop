@@ -39,6 +39,7 @@
 #include "widget_data_broker.h"
 #include "widget_task_broker.h"
 #include "widget_media_task_executor.h"
+#include "widget_audio_output_task_executor.h"
 #include "widget_app_task_executor.h"
 #include "widget_trusted_gesture.h"
 #include "widget_system_data_provider.h"
@@ -1208,6 +1209,9 @@ private:
     std::unique_ptr<
         snowdesktop::widget_runtime::WidgetMediaTaskExecutor>
         mediaTaskExecutor_;
+    std::unique_ptr<
+        snowdesktop::widget_runtime::WidgetAudioOutputTaskExecutor>
+        audioOutputTaskExecutor_;
     std::unique_ptr<
         snowdesktop::widget_runtime::WidgetAppTaskExecutor>
         appTaskExecutor_;
