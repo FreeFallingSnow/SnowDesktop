@@ -40,6 +40,7 @@
 #include "widget_task_broker.h"
 #include "widget_media_task_executor.h"
 #include "widget_audio_output_task_executor.h"
+#include "widget_clipboard_task_executor.h"
 #include "widget_app_task_executor.h"
 #include "widget_trusted_gesture.h"
 #include "widget_system_data_provider.h"
@@ -1213,6 +1214,9 @@ private:
         snowdesktop::widget_runtime::WidgetAudioOutputTaskExecutor>
         audioOutputTaskExecutor_;
     std::unique_ptr<
+        snowdesktop::widget_runtime::WidgetClipboardTaskExecutor>
+        clipboardTaskExecutor_;
+    std::unique_ptr<
         snowdesktop::widget_runtime::WidgetAppTaskExecutor>
         appTaskExecutor_;
     std::unique_ptr<
@@ -1246,6 +1250,9 @@ private:
         calendarMutationCompletions_;
     std::unordered_map<std::uint64_t, HttpResponse>
         networkTaskCompletions_;
+    std::unordered_map<std::uint64_t,
+        snowdesktop::widget_runtime::WidgetClipboardTaskCompletion>
+        clipboardTaskCompletions_;
     std::unordered_map<std::uint64_t, int> networkTaskRequests_;
     std::unordered_map<int, std::uint64_t> networkRequestTasks_;
     snowdesktop::widget_runtime::WidgetTrustedGestureState

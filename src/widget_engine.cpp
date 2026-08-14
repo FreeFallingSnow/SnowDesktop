@@ -1826,6 +1826,8 @@ constexpr char kShellLaunchPermission[] = "shell.launch";
 constexpr char kAppDiscoveryPermission[] = "app.discovery";
 constexpr char kAppLaunchPermission[] = "app.launch";
 constexpr char kNotificationPostPermission[] = "notification.post";
+constexpr char kClipboardReadPermission[] = "clipboard.read";
+constexpr char kClipboardWritePermission[] = "clipboard.write";
 
 static bool ReadInteractionValue(lua_State* state, int index,
     snowdesktop::widget_runtime::InteractionValue& output,
@@ -3550,6 +3552,84 @@ static int lua_TaskStart(lua_State* state)
             return luaL_error(state,
                 "task.start: system.openSettings page is not supported");
         arguments.emplace("page", page);
+    }
+    else if (snowdesktop::widget_runtime::WidgetClipboardTaskExecutor::
+            SupportsAction(taskName))
+    {
+        const bool clear = taskName == "clipboard.clear";
+        const bool write = taskName == "clipboard.write";
+        if (!clear && !hasArguments)
+            return luaL_error(state,
+                "task.start: %s requires an arguments table",
+                taskName.c_str());
+        if (hasArguments)
+        {
+            lua_pushnil(state);
+            while (lua_next(state, 2) != 0)
+            {
+                if (lua_type(state, -2) != LUA_TSTRING)
+                {
+                    lua_pop(state, 2);
+                    return luaL_error(state,
+                        "task.start: clipboard argument keys must be strings");
+                }
+                size_t keyLength = 0;
+                const char* keyValue = lua_tolstring(
+                    state, -2, &keyLength);
+                const std::string_view key(
+                    keyValue ? keyValue : "", keyLength);
+                const bool allowed = !clear &&
+                    (key == "format" || (write && key == "text"));
+                if (!allowed)
+                {
+                    lua_pop(state, 2);
+                    return luaL_error(state,
+                        "task.start: %s received an unknown argument",
+                        taskName.c_str());
+                }
+                lua_pop(state, 1);
+            }
+        }
+        if (!clear)
+        {
+            lua_getfield(state, 2, "format");
+            size_t formatLength = 0;
+            const char* formatValue = lua_type(state, -1) == LUA_TSTRING
+                ? lua_tolstring(state, -1, &formatLength) : nullptr;
+            if (!formatValue ||
+                std::string_view(formatValue, formatLength) != "text")
+            {
+                lua_pop(state, 1);
+                return luaL_error(state,
+                    "task.start: %s currently supports only format text",
+                    taskName.c_str());
+            }
+            lua_pop(state, 1);
+            arguments.emplace("format", "text");
+        }
+        if (write)
+        {
+            lua_getfield(state, 2, "text");
+            if (lua_type(state, -1) != LUA_TSTRING)
+            {
+                lua_pop(state, 1);
+                return luaL_error(state,
+                    "task.start: clipboard.write text must be a string");
+            }
+            size_t length = 0;
+            const char* value = lua_tolstring(state, -1, &length);
+            std::string text(value ? value : "", length);
+            lua_pop(state, 1);
+            if (text.size() > snowdesktop::widget_runtime::
+                    WidgetClipboardTaskExecutor::MaximumTextBytes ||
+                text.find('\0') != std::string::npos ||
+                (!text.empty() && !IsValidUtf8Local(text)))
+            {
+                return luaL_error(state,
+                    "task.start: clipboard.write text must be at most 262144 bytes of valid UTF-8 without NUL");
+            }
+            arguments.emplace("text", std::move(text));
+        }
     }
     else if (taskName == "app.search" || taskName == "desktop.search" ||
         taskName == "everything.search")
@@ -7235,6 +7315,15 @@ void WidgetEngine::InitializeWidgetTaskBroker()
         "system.openSettings", kShellLaunchPermission, true, 1 }, error);
     error.clear();
     (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "clipboard.read", kClipboardReadPermission, true, 1 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "clipboard.write", kClipboardWritePermission, true, 1 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "clipboard.clear", kClipboardWritePermission, true, 1 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
         "desktop.search", kDesktopReadPermission, false, 2 }, error);
     error.clear();
     (void)taskBroker_->RegisterTask(TaskDescriptor{
@@ -7252,6 +7341,7 @@ void WidgetEngine::InitializeWidgetTaskBroker()
     {
         mediaTaskExecutor_.reset();
         audioOutputTaskExecutor_.reset();
+        clipboardTaskExecutor_.reset();
         appTaskExecutor_.reset();
         desktopTaskExecutor_.reset();
         externalItemTaskExecutor_.reset();
@@ -7262,6 +7352,8 @@ void WidgetEngine::InitializeWidgetTaskBroker()
             snowdesktop::widget_runtime::WidgetMediaTaskExecutor>();
         audioOutputTaskExecutor_ = std::make_unique<
             snowdesktop::widget_runtime::WidgetAudioOutputTaskExecutor>();
+        clipboardTaskExecutor_ = std::make_unique<
+            snowdesktop::widget_runtime::WidgetClipboardTaskExecutor>();
         appTaskExecutor_ = std::make_unique<
             snowdesktop::widget_runtime::WidgetAppTaskExecutor>();
         desktopTaskExecutor_ = std::make_unique<
@@ -7290,6 +7382,22 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
         {
             (void)taskBroker_->Complete(completion.id,
                 completion.accepted, std::move(completion.error));
+        }
+    }
+    if (clipboardTaskExecutor_)
+    {
+        for (auto& completion :
+            clipboardTaskExecutor_->DrainCompletions())
+        {
+            const std::uint64_t id = completion.id;
+            const bool ok = completion.ok;
+            std::string error = completion.error;
+            if (ok && completion.action == "clipboard.read")
+                clipboardTaskCompletions_.insert_or_assign(
+                    id, std::move(completion));
+            else
+                clipboardTaskCompletions_.erase(id);
+            (void)taskBroker_->Complete(id, ok, std::move(error));
         }
     }
     if (appTaskExecutor_)
@@ -7347,6 +7455,8 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 (void)mediaTaskExecutor_->Cancel(action.id);
             if (audioOutputTaskExecutor_)
                 (void)audioOutputTaskExecutor_->Cancel(action.id);
+            if (clipboardTaskExecutor_)
+                (void)clipboardTaskExecutor_->Cancel(action.id);
             if (appTaskExecutor_)
                 (void)appTaskExecutor_->Cancel(action.id);
             if (desktopTaskExecutor_)
@@ -7356,6 +7466,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             appSearchCompletions_.erase(action.id);
             itemSearchCompletions_.erase(action.id);
             calendarMutationCompletions_.erase(action.id);
+            clipboardTaskCompletions_.erase(action.id);
             if (const auto request = networkTaskRequests_.find(action.id);
                 request != networkTaskRequests_.end())
             {
@@ -7938,6 +8049,56 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             continue;
         }
 
+        if (snowdesktop::widget_runtime::WidgetClipboardTaskExecutor::
+                SupportsAction(action.name))
+        {
+            snowdesktop::widget_runtime::WidgetClipboardTaskRequest
+                clipboardRequest;
+            clipboardRequest.action = action.name;
+            if (const auto format = action.arguments.find("format");
+                format != action.arguments.end())
+                clipboardRequest.format = format->second;
+            if (const auto text = action.arguments.find("text");
+                text != action.arguments.end())
+                clipboardRequest.text = text->second;
+            if (!snowdesktop::widget_runtime::WidgetClipboardTaskExecutor::
+                    ValidateRequest(clipboardRequest))
+            {
+                (void)taskBroker_->Complete(
+                    action.id, false, "invalidArguments");
+                continue;
+            }
+            if (action.preview)
+            {
+                if (action.name == "clipboard.read")
+                {
+                    clipboardTaskCompletions_.insert_or_assign(action.id,
+                        snowdesktop::widget_runtime::
+                            WidgetClipboardTaskCompletion{
+                                action.id, action.name, true, "text",
+                                "Preview clipboard", {} });
+                }
+                (void)taskBroker_->Complete(action.id, true);
+                continue;
+            }
+            if (!clipboardTaskExecutor_)
+            {
+                (void)taskBroker_->Complete(
+                    action.id, false, "taskExecutorUnavailable");
+                continue;
+            }
+            auto start = clipboardTaskExecutor_->Start(
+                action.id, action.instanceId,
+                std::move(clipboardRequest));
+            if (!start)
+            {
+                (void)taskBroker_->Complete(action.id, false,
+                    start.error.empty()
+                        ? "taskExecutorUnavailable" : start.error);
+            }
+            continue;
+        }
+
         if (action.preview)
         {
             (void)taskBroker_->Complete(action.id, true);
@@ -8086,6 +8247,8 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             calendarMutationCompletions_.find(completion.id);
         const auto networkCompletion =
             networkTaskCompletions_.find(completion.id);
+        const auto clipboardCompletion =
+            clipboardTaskCompletions_.find(completion.id);
         if (widget == widgets_.end() ||
             widget->taskIds.erase(completion.id) == 0)
         {
@@ -8097,6 +8260,8 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 calendarMutationCompletions_.erase(calendarCompletion);
             if (networkCompletion != networkTaskCompletions_.end())
                 networkTaskCompletions_.erase(networkCompletion);
+            if (clipboardCompletion != clipboardTaskCompletions_.end())
+                clipboardTaskCompletions_.erase(clipboardCompletion);
             continue;
         }
         if (completion.ok && completion.name == "app.search" &&
@@ -8118,6 +8283,14 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
         const bool networkTask = completion.name == "network.request";
         if (completion.ok && networkTask &&
             networkCompletion == networkTaskCompletions_.end())
+        {
+            completion.ok = false;
+            completion.error = "taskResultUnavailable";
+        }
+        const bool clipboardReadTask =
+            completion.name == "clipboard.read";
+        if (completion.ok && clipboardReadTask &&
+            clipboardCompletion == clipboardTaskCompletions_.end())
         {
             completion.ok = false;
             completion.error = "taskResultUnavailable";
@@ -8242,13 +8415,18 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
         const HttpResponse* networkResult =
             networkCompletion != networkTaskCompletions_.end()
             ? &networkCompletion->second : nullptr;
+        const snowdesktop::widget_runtime::WidgetClipboardTaskCompletion*
+            clipboardResult =
+                clipboardCompletion != clipboardTaskCompletions_.end()
+                ? &clipboardCompletion->second : nullptr;
         snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(
             trustedGestureState_, false);
         (void)InvokeLifecycleEvent(*widget, "task.complete",
             [&completion, &publicItems, nextOffset, hasMore,
                 catalogRevision, calendarTask, itemSearchTask,
                 calendarResult, networkTask,
-                networkResult](lua_State* eventState) {
+                networkResult, clipboardReadTask,
+                clipboardResult](lua_State* eventState) {
                 lua_pushinteger(eventState,
                     static_cast<lua_Integer>(completion.id));
                 lua_setfield(eventState, -2, "taskId");
@@ -8318,6 +8496,18 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                             networkResult->fromCache ? 1 : 0);
                         lua_setfield(eventState, -2, "fromCache");
                     }
+                    else if (clipboardReadTask)
+                    {
+                        lua_createtable(eventState, 0, 2);
+                        lua_pushlstring(eventState,
+                            clipboardResult->format.data(),
+                            clipboardResult->format.size());
+                        lua_setfield(eventState, -2, "format");
+                        lua_pushlstring(eventState,
+                            clipboardResult->text.data(),
+                            clipboardResult->text.size());
+                        lua_setfield(eventState, -2, "text");
+                    }
                     else
                     {
                         lua_createtable(eventState, 0, 1);
@@ -8353,6 +8543,8 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             calendarMutationCompletions_.erase(calendarCompletion);
         if (networkCompletion != networkTaskCompletions_.end())
             networkTaskCompletions_.erase(networkCompletion);
+        if (clipboardCompletion != clipboardTaskCompletions_.end())
+            clipboardTaskCompletions_.erase(clipboardCompletion);
     }
 }
 
@@ -8371,6 +8563,8 @@ void WidgetEngine::ReleaseWidgetTasks(LuaWidget& widget,
             (void)mediaTaskExecutor_->Cancel(taskId);
         if (audioOutputTaskExecutor_)
             (void)audioOutputTaskExecutor_->Cancel(taskId);
+        if (clipboardTaskExecutor_)
+            (void)clipboardTaskExecutor_->Cancel(taskId);
         if (appTaskExecutor_)
             (void)appTaskExecutor_->Cancel(taskId);
         if (desktopTaskExecutor_)
@@ -8381,9 +8575,13 @@ void WidgetEngine::ReleaseWidgetTasks(LuaWidget& widget,
         itemSearchCompletions_.erase(taskId);
         calendarMutationCompletions_.erase(taskId);
         networkTaskCompletions_.erase(taskId);
+        clipboardTaskCompletions_.erase(taskId);
     }
     if (audioOutputTaskExecutor_)
         audioOutputTaskExecutor_->ForgetInstance(
+            WidgetWideToUtf8(widget.widgetId));
+    if (clipboardTaskExecutor_)
+        clipboardTaskExecutor_->ForgetInstance(
             WidgetWideToUtf8(widget.widgetId));
     widget.taskIds.clear();
 }
@@ -8517,6 +8715,7 @@ void WidgetEngine::Shutdown()
     dataBroker_.reset();
     mediaTaskExecutor_.reset();
     audioOutputTaskExecutor_.reset();
+    clipboardTaskExecutor_.reset();
     appTaskExecutor_.reset();
     desktopTaskExecutor_.reset();
     externalItemTaskExecutor_.reset();
@@ -8524,6 +8723,7 @@ void WidgetEngine::Shutdown()
     itemSearchCompletions_.clear();
     calendarMutationCompletions_.clear();
     networkTaskCompletions_.clear();
+    clipboardTaskCompletions_.clear();
     networkTaskRequests_.clear();
     networkRequestTasks_.clear();
     taskBroker_.reset();
@@ -13190,6 +13390,8 @@ bool WidgetEngine::RuntimeCancelTask(
         (void)mediaTaskExecutor_->Cancel(taskId);
     if (canceled && audioOutputTaskExecutor_)
         (void)audioOutputTaskExecutor_->Cancel(taskId);
+    if (canceled && clipboardTaskExecutor_)
+        (void)clipboardTaskExecutor_->Cancel(taskId);
     if (canceled && appTaskExecutor_)
         (void)appTaskExecutor_->Cancel(taskId);
     if (canceled && desktopTaskExecutor_)
@@ -13204,6 +13406,8 @@ bool WidgetEngine::RuntimeCancelTask(
         calendarMutationCompletions_.erase(taskId);
     if (canceled)
         networkTaskCompletions_.erase(taskId);
+    if (canceled)
+        clipboardTaskCompletions_.erase(taskId);
     return canceled;
 }
 

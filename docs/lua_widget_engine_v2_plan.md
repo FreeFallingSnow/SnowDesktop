@@ -760,7 +760,8 @@ local taskId, err = task.start("media.toggle", { sessionId = session.id })
 `task.audio.output.control`、`task.app.search`、
 `task.app.launch`、`task.notification.show`、`task.calendar.write`、
 `task.network.request`、`task.shell.openUri`、`task.desktop.search`、
-`task.everything.search`、`task.shell.item`、`task.system.openSettings` 和
+`task.everything.search`、`task.shell.item`、`task.system.openSettings`、
+`task.clipboard.text` 和
 `task.desktop.refresh` feature，完整媒体
 控制动作、两个应用任务、一次性通知、本地日历 create/update/remove、公网 HTTPS GET、
 可信手势外链、桌面/Everything 项目搜索及受控打开、定位和刷新任务。
@@ -777,7 +778,10 @@ multimedia render endpoint；音量钳制到 0–1，Core Audio 调用携带 Sno
 GUID，同一实例以 100 ms 最小间隔限速，不开放逐进程或非默认设备控制。
 `system.openSettings` 只接受宿主枚举的 notifications/audio/display/network/
 bluetooth/power/storage/apps/personalization 页面，并在可信手势和 `shell.launch` 权限下
-映射为固定 `ms-settings:` URI；Lua 不能传 scheme、查询参数或原始 URI。API v1
+映射为固定 `ms-settings:` URI；Lua 不能传 scheme、查询参数或原始 URI。
+文本剪贴板首批公开 `clipboard.read/write/clear`：读取和修改分别要求独立权限，三者
+均要求可信手势、256 KiB UTF-8 上限、100 ms 每实例限速、异步取消和确定性预览；
+当前不开放图片、文件引用或历史，也不允许把文本路径冒充文件句柄。API v1
 同步 `media.playPause/next/previous` 已通过函数版本上限从 v2 VM 隐藏，不能绕过
 手势门禁。应用搜索从 UI 线程复制宿主索引为不可变、有上限的目录快照，在独立任务
 线程完成名称/拼音排序与分页，只向 Lua 返回展示字段和实例作用域的不透明引用；

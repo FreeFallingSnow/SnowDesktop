@@ -321,9 +321,9 @@
 ---@field topic? string Updated data subscription topic for data.change.
 ---@field revision? integer Monotonic provider revision for data.change.
 ---@field taskId? integer
----@field task? 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'system.openSettings'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'|string
+---@field task? 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'|string
 ---@field ok? boolean
----@field value? SnowMediaTaskValue|SnowAudioOutputTaskValue|SnowSystemSettingsTaskValue|SnowAppSearchTaskValue|SnowItemSearchTaskValue|SnowCalendarMutationTaskValue|SnowNetworkTaskValue|SnowStateValue
+---@field value? SnowMediaTaskValue|SnowAudioOutputTaskValue|SnowSystemSettingsTaskValue|SnowClipboardReadTaskValue|SnowAppSearchTaskValue|SnowItemSearchTaskValue|SnowCalendarMutationTaskValue|SnowNetworkTaskValue|SnowStateValue
 ---@field error? string
 ---@field currentRevision? integer Latest revision returned by a failed calendar update conflict.
 ---@field status? integer HTTP status returned by a failed network.request after a response was received.
@@ -879,6 +879,17 @@ function data.subscribe(topic, options) end
 ---@class SnowSystemSettingsTaskValue
 ---@field accepted boolean Whether Windows accepted the settings URI, or true for the deterministic preview mock.
 
+---@class SnowClipboardReadArguments
+---@field format 'text' The only clipboard format currently exposed by v2.
+
+---@class SnowClipboardWriteArguments
+---@field format 'text' The only clipboard format currently exposed by v2.
+---@field text string Valid UTF-8 containing at most 262144 bytes and no NUL.
+
+---@class SnowClipboardReadTaskValue
+---@field format 'text'
+---@field text string Bounded UTF-8 clipboard text.
+
 ---@class SnowAppSearchArguments
 ---@field query string UTF-8 query containing 1 to 256 bytes.
 ---@field limit? integer Result count from 1 through 100; defaults to 50.
@@ -972,6 +983,9 @@ task = {}
 ---@overload fun(name: 'audio.output.setVolume', arguments: SnowAudioOutputVolumeArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'audio.output.setMute', arguments: SnowAudioOutputMuteArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'system.openSettings', arguments: SnowSystemSettingsArguments): taskId: integer?, error: string?
+---@overload fun(name: 'clipboard.read', arguments: SnowClipboardReadArguments): taskId: integer?, error: string?
+---@overload fun(name: 'clipboard.write', arguments: SnowClipboardWriteArguments): taskId: integer?, error: string?
+---@overload fun(name: 'clipboard.clear'): taskId: integer?, error: string?
 ---@overload fun(name: 'app.search', arguments: SnowAppSearchArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'app.launch', arguments: SnowAppLaunchArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'desktop.search', arguments: SnowItemSearchArguments): taskId: integer?, error: string?
@@ -985,7 +999,7 @@ task = {}
 ---@overload fun(name: 'calendar.remove', arguments: SnowCalendarRemoveArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'network.request', arguments: SnowNetworkRequestArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'shell.openUri', arguments: SnowShellOpenUriArguments): taskId: integer?, error: string?
----@param name 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'system.openSettings'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'
+---@param name 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'
 ---@param arguments? table Strict task-specific argument table.
 ---@return integer? taskId
 ---@return string? error

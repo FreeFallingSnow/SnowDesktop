@@ -457,11 +457,11 @@ CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.pow
 `app.search`、`app.launch`，桌面项目任务 `desktop.search`、`everything.search`、
 `shell.openItem`、`shell.revealItem`、`desktop.refresh`，一次性通知任务
 `notification.show`，以及本地日历写入任务 `calendar.create/update/remove`、公网读取
-任务 `network.request`、外部链接动作 `shell.openUri` 和受控设置动作
-`system.openSettings`。它们对应
+任务 `network.request`、外部链接动作 `shell.openUri`、受控设置动作
+`system.openSettings` 和文本剪贴板任务 `clipboard.read/write/clear`。它们对应
 feature ID `task.start`、`task.media.control`、`task.audio.output.control`、`task.app.search`、`task.app.launch`
 、`task.notification.show`、`task.calendar.write`、`task.network.request` 和
-`task.shell.openUri`、`task.system.openSettings`，以及 `task.desktop.search`、`task.everything.search`、
+`task.shell.openUri`、`task.system.openSettings`、`task.clipboard.text`，以及 `task.desktop.search`、`task.everything.search`、
 `task.shell.item`、`task.desktop.refresh`。媒体动作要求 `media.action` 权限，而且只能在
 `click/doubleClick/pointerDown/pointerUp/wheel`、宿主按钮、菜单命令或由宿主明确
 标记来源的打开回调同步调用栈内启动：
@@ -504,6 +504,28 @@ local settingsTask = task.start("system.openSettings", {
 成功值为 `{ accepted = true }`，表示 Windows 接受打开请求；稳定错误包括
 `openRejected`、`permissionDenied`、`userGestureRequired` 和 `canceled`。预览只返回
 确定性成功结果，不启动 Windows 设置。
+
+文本剪贴板任务都要求当前可信用户手势，并按读取与修改分别检查 `clipboard.read` 和
+`clipboard.write`。读取必须显式请求 `{ format = "text" }`；写入需要同一 format 和
+最多 262144 字节、无 NUL 的有效 UTF-8 `text`；清空不接受参数：
+
+```lua
+local readTask = task.start("clipboard.read", { format = "text" })
+local writeTask = task.start("clipboard.write", {
+    format = "text",
+    text = "SnowDesktop",
+})
+local clearTask = task.start("clipboard.clear")
+
+-- readTask 成功：event.value = { format = "text", text = "..." }
+-- write/clear 成功：event.value = { accepted = true }
+```
+
+任务在独立 worker 访问 Win32 剪贴板，同一实例最短间隔 100 ms；稳定错误包括
+`rateLimited`、`clipboardBusy`、`formatUnavailable`、`clipboardTooLarge`、
+`clipboardReadFailed`、`clipboardWriteFailed`、`permissionRevoked` 和 `canceled`。
+预览读取固定 mock，不访问真实剪贴板。当前 feature 只代表文本；图片、文件引用和
+剪贴板历史尚未开放，组件不得用文本路径代替文件句柄。
 
 `app.search` 要求 `app.discovery`，不要求用户手势；参数是严格的普通表：`query`
 为 1–256 字节有效 UTF-8，`limit` 默认为 50、范围 1–100，`offset` 默认为 0、范围
@@ -678,7 +700,7 @@ HTTPS URL；`http:`、`file:`、自定义 scheme、localhost、局域网和 IP �
 
 `task.cancel(taskId)` 只接受当前 Lua VM 自己持有的任务。卸载、热重载、撤权和
 宿主关闭会自动取消；热重载使用 VM owner token，旧任务结果不会投递给新 VM。
-预览不会访问系统媒体会话、音频端点、Windows 设置或系统通知，而是异步返回确定性的 `accepted=true` mock。
+预览不会访问系统媒体会话、音频端点、Windows 设置、真实剪贴板或系统通知，而是异步返回确定性 mock。
 媒体参数表只接受上述动作对应字段；其他任务同样拒绝未知字段、错误类型和越界数值。API v1 的
 `media.playPause/next/previous` 不会注册进 v2 VM，不能绕过任务的手势门禁。
 

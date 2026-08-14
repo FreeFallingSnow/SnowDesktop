@@ -159,6 +159,10 @@ menu.
 - Open Windows Settings only with `system.openSettings` and one documented
   page name. Declare `shell.launch`, start it from a direct trusted gesture,
   and never accept or construct a raw `ms-settings:` URI in widget code.
+- Read, write, or clear clipboard text only through `clipboard.read/write/clear`
+  from a direct trusted gesture. Declare `clipboard.read` separately from
+  `clipboard.write`, keep text within 256 KiB, and do not claim image, file
+  reference, or history access until those feature probes are published.
 - Search applications with the bounded `task.start("app.search", { query,
   limit, offset })` task and retain only its opaque `ref` values. Launch one
   with `task.start("app.launch", { ref = item.ref })` inside the direct click
