@@ -23,6 +23,19 @@ enum class PermissionRuntimeBlock
     Denied,
 };
 
+enum class PermissionRiskClass
+{
+    Basic,
+    SystemStatus,
+    PersonalData,
+    ExternalCommunication,
+    ElevatedRead,
+    Modification,
+    UserScoped,
+    Sensor,
+    Unknown,
+};
+
 const char* PermissionDecisionStateName(
     PermissionDecisionState state) noexcept;
 std::optional<PermissionDecisionState> ParsePermissionDecisionState(
@@ -31,6 +44,12 @@ bool PermissionStateAllowsRuntime(
     PermissionDecisionState state) noexcept;
 PermissionRuntimeBlock PermissionRuntimeBlockFor(
     PermissionDecisionState state) noexcept;
+
+PermissionRiskClass ClassifyPermissionRisk(
+    std::string_view permission) noexcept;
+bool PermissionRequiresConsent(std::string_view permission) noexcept;
+std::vector<std::string> PermissionsRequiringConsent(
+    std::span<const std::string> permissions);
 
 std::vector<std::string> ResolveGrantedScopes(
     PermissionDecisionState state,

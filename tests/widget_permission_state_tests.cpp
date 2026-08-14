@@ -8,6 +8,7 @@
 namespace
 {
 using snowdesktop::widget::PermissionDecisionState;
+using snowdesktop::widget::PermissionRiskClass;
 using snowdesktop::widget::PermissionRuntimeBlock;
 
 void Check(bool condition, const char* message)
@@ -91,6 +92,51 @@ void TestRuntimeEligibility()
                 PermissionRuntimeBlock::Denied,
         "pending and denied activation blocks must remain distinguishable");
 }
+
+void TestPermissionRiskClassification()
+{
+    using snowdesktop::widget::ClassifyPermissionRisk;
+    Check(ClassifyPermissionRisk("ui.input") == PermissionRiskClass::Basic &&
+            ClassifyPermissionRisk("ui.contextMenu") ==
+                PermissionRiskClass::Basic,
+        "surface input permissions must remain basic capabilities");
+    Check(ClassifyPermissionRisk("system.read") ==
+                PermissionRiskClass::SystemStatus &&
+            ClassifyPermissionRisk("system.performance.read") ==
+                PermissionRiskClass::SystemStatus,
+        "legacy and v2 system reads must require system-status consent");
+    Check(ClassifyPermissionRisk("desktop.read") ==
+                PermissionRiskClass::PersonalData &&
+            ClassifyPermissionRisk("network.internet") ==
+                PermissionRiskClass::ExternalCommunication &&
+            ClassifyPermissionRisk("everything.search") ==
+                PermissionRiskClass::ElevatedRead &&
+            ClassifyPermissionRisk("calendar.write") ==
+                PermissionRiskClass::Modification,
+        "sensitive permissions must retain their consent categories");
+    Check(ClassifyPermissionRisk("future.unregistered") ==
+            PermissionRiskClass::Unknown,
+        "unknown permissions must remain distinguishable and fail closed");
+}
+
+void TestConsentSelection()
+{
+    const std::vector<std::string> declared = {
+        "ui.input", "desktop.read", "ui.contextMenu",
+        "calendar.write", "future.unregistered"
+    };
+    const std::vector<std::string> expected = {
+        "desktop.read", "calendar.write", "future.unregistered"
+    };
+    Check(snowdesktop::widget::PermissionsRequiringConsent(declared) ==
+            expected,
+        "consent selection must preserve manifest order and omit only basic permissions");
+    Check(!snowdesktop::widget::PermissionRequiresConsent("ui.input") &&
+            snowdesktop::widget::PermissionRequiresConsent("network.http") &&
+            snowdesktop::widget::PermissionRequiresConsent(
+                "future.unregistered"),
+        "basic capabilities may activate silently while sensitive and unknown capabilities require consent");
+}
 }
 
 int main()
@@ -98,6 +144,8 @@ int main()
     TestStableNamesAndParsing();
     TestExplicitEmptyGrantDoesNotFallBack();
     TestRuntimeEligibility();
+    TestPermissionRiskClassification();
+    TestConsentSelection();
     std::cout << "widget permission state tests passed\n";
     return 0;
 }

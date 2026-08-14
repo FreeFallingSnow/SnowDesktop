@@ -56,6 +56,72 @@ PermissionRuntimeBlock PermissionRuntimeBlockFor(
     return PermissionRuntimeBlock::PendingConsent;
 }
 
+PermissionRiskClass ClassifyPermissionRisk(
+    std::string_view permission) noexcept
+{
+    if (permission == "ui.input" || permission == "ui.contextMenu")
+        return PermissionRiskClass::Basic;
+
+    if (permission == "system.read" ||
+        permission == "system.performance.read" ||
+        permission == "system.power.read" ||
+        permission == "system.storage.read" ||
+        permission == "system.network.read" ||
+        permission == "system.display.read" ||
+        permission == "audio.output.read")
+        return PermissionRiskClass::SystemStatus;
+
+    if (permission == "media.read" || permission == "desktop.read" ||
+        permission == "app.discovery" || permission == "calendar.read")
+        return PermissionRiskClass::PersonalData;
+
+    if (permission == "network.http" ||
+        permission == "network.internet" ||
+        permission == "ui.notify" || permission == "notification.post")
+        return PermissionRiskClass::ExternalCommunication;
+
+    if (permission == "network.local" ||
+        permission == "everything.search" ||
+        permission == "clipboard.read" ||
+        permission == "process.summary.read" ||
+        permission == "audio.output.analyze")
+        return PermissionRiskClass::ElevatedRead;
+
+    if (permission == "desktop.action" || permission == "app.launch" ||
+        permission == "shell.launch" || permission == "calendar.write" ||
+        permission == "media.action" ||
+        permission == "audio.output.control" ||
+        permission == "clipboard.write")
+        return PermissionRiskClass::Modification;
+
+    if (permission == "filesystem.userSelected.read" ||
+        permission == "filesystem.userSelected.write" ||
+        permission == "filesystem.userSelected.watch")
+        return PermissionRiskClass::UserScoped;
+
+    if (permission == "audio.microphone.capture" ||
+        permission == "camera.capture" || permission == "location.read")
+        return PermissionRiskClass::Sensor;
+
+    return PermissionRiskClass::Unknown;
+}
+
+bool PermissionRequiresConsent(std::string_view permission) noexcept
+{
+    return ClassifyPermissionRisk(permission) != PermissionRiskClass::Basic;
+}
+
+std::vector<std::string> PermissionsRequiringConsent(
+    std::span<const std::string> permissions)
+{
+    std::vector<std::string> result;
+    result.reserve(permissions.size());
+    for (const auto& permission : permissions)
+        if (PermissionRequiresConsent(permission))
+            result.push_back(permission);
+    return result;
+}
+
 std::vector<std::string> ResolveGrantedScopes(
     PermissionDecisionState state,
     std::span<const std::string> declared,
