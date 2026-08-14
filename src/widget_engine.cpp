@@ -2052,6 +2052,23 @@ static void PushDataSnapshotEnvelope(lua_State* state,
         lua_pushnumber(state, snapshot->memory.usagePercent);
         lua_setfield(state, -2, "usagePercent");
     }
+    else if (snapshot->topic == "system.power")
+    {
+        lua_pushboolean(state, snapshot->power.acPower);
+        lua_setfield(state, -2, "acPower");
+        lua_pushboolean(state, snapshot->power.charging);
+        lua_setfield(state, -2, "charging");
+        lua_pushboolean(state, snapshot->power.saver);
+        lua_setfield(state, -2, "saver");
+        lua_pushnumber(state, snapshot->power.batteryPercent);
+        lua_setfield(state, -2, "batteryPercent");
+        if (snapshot->power.estimatedRemainingSeconds >= 0)
+        {
+            lua_pushinteger(state, static_cast<lua_Integer>(
+                snapshot->power.estimatedRemainingSeconds));
+            lua_setfield(state, -2, "estimatedRemainingSeconds");
+        }
+    }
     lua_setfield(state, -2, "value");
 }
 
@@ -4708,6 +4725,10 @@ void WidgetEngine::InitializeWidgetDataBroker()
     (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
         "system.memory", kSystemPerformancePermission,
         1000ms, 5000ms, 2000ms, false, false }, error);
+    error.clear();
+    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
+        "system.power", kSystemPowerPermission,
+        2000ms, 10000ms, 2000ms, false, false }, error);
 
     if (previewOnly_)
         widgetSystemDataProvider_.reset();
@@ -7229,8 +7250,11 @@ WidgetEngine::RuntimeSubscribeData(
     options.requestedInterval = maxAge;
     options.whenHidden = whenHidden;
     options.visible = widget.hostVisible;
-    options.permissionGranted = RuntimeHasPermission(
-        widgetId, kSystemPerformancePermission);
+    const auto requiredPermission =
+        dataBroker_->RequiredPermission(topic);
+    options.permissionGranted = requiredPermission &&
+        (requiredPermission->empty() || RuntimeHasPermission(
+            widgetId, requiredPermission->c_str()));
     options.preview = widget.preview;
     auto result = dataBroker_->Subscribe(
         WidgetWideToUtf8(widgetId), topic, options,
@@ -7299,6 +7323,16 @@ WidgetEngine::RuntimeGetDataSnapshot(
             result.memory.usagePercent = 56.25;
             result.memory.timestampMs = timestampNow;
         }
+        else if (result.topic == "system.power")
+        {
+            result.power.available = true;
+            result.power.acPower = false;
+            result.power.charging = false;
+            result.power.saver = false;
+            result.power.batteryPercent = 73.0;
+            result.power.estimatedRemainingSeconds = 10800;
+            result.power.timestampMs = timestampNow;
+        }
         return result;
     }
     if (!binding->options.permissionGranted)
@@ -7340,6 +7374,17 @@ WidgetEngine::RuntimeGetDataSnapshot(
         if (snapshot)
         {
             result.memory = *snapshot;
+            result.available = snapshot->available;
+            result.error = snapshot->error;
+            setFreshness(snapshot->timestampMs);
+        }
+    }
+    else if (result.topic == "system.power")
+    {
+        const auto snapshot = widgetSystemDataProvider_->Power();
+        if (snapshot)
+        {
+            result.power = *snapshot;
             result.available = snapshot->available;
             result.error = snapshot->error;
             setFreshness(snapshot->timestampMs);

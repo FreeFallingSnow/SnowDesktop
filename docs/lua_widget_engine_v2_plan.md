@@ -582,12 +582,14 @@ local snapshot = cpu:value()
 
 所有提供者采用引用计数生命周期，而不是应用启动即常驻：
 
-当前已发布 `data.subscribe`、`data.system.cpu` 和 `data.system.memory` feature。
+当前已发布 `data.subscribe`、`data.system.cpu`、`data.system.memory` 和
+`data.system.power` feature。
 Lua 订阅句柄已接通 `WidgetDataBroker` 与独立工作线程 provider：首个合格订阅按需
 启动对应 topic，多实例共享有效采样率，数据变化只使依赖实例失效，隐藏状态进入
 pause/throttle，最后订阅进入 idle grace，卸载、热重载和关闭自动释放。CPU 冷启动
-差分通过 `warmingUp` 表达；预览只返回固定模拟快照，不启动真实 provider。当前
-`continue` 对这两个数据源会按 provider 能力收敛为隐藏 5000 ms throttle。
+差分通过 `warmingUp` 表达；电源快照区分电池不存在、暂不可用和采样失败；预览只
+返回固定模拟快照，不启动真实 provider。当前 `continue` 对这些数据源会按
+provider 能力收敛为隐藏 throttle。
 
 ```text
 Stopped

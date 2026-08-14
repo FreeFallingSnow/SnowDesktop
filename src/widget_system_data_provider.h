@@ -40,6 +40,19 @@ struct WidgetMemoryDataSnapshot
     std::string error;
 };
 
+struct WidgetPowerDataSnapshot
+{
+    bool available = false;
+    bool acPower = false;
+    bool charging = false;
+    bool saver = false;
+    double batteryPercent = 0.0;
+    std::int64_t estimatedRemainingSeconds = -1;
+    std::int64_t timestampMs = 0;
+    std::uint64_t revision = 0;
+    std::string error;
+};
+
 class WidgetSystemDataProvider
 {
 public:
@@ -63,6 +76,7 @@ public:
 
     std::optional<WidgetCpuDataSnapshot> Cpu() const;
     std::optional<WidgetMemoryDataSnapshot> Memory() const;
+    std::optional<WidgetPowerDataSnapshot> Power() const;
     std::vector<std::string> DrainChangedTopics();
 
     bool Running() const noexcept;
@@ -79,8 +93,10 @@ private:
     void WorkerMain(std::stop_token stopToken);
     WidgetCpuDataSnapshot SampleCpu();
     WidgetMemoryDataSnapshot SampleMemory();
+    WidgetPowerDataSnapshot SamplePower();
     void PublishCpu(WidgetCpuDataSnapshot snapshot);
     void PublishMemory(WidgetMemoryDataSnapshot snapshot);
+    void PublishPower(WidgetPowerDataSnapshot snapshot);
 
     mutable std::mutex mutex_;
     std::condition_variable condition_;
@@ -88,6 +104,7 @@ private:
     std::unordered_set<std::string> changedTopics_;
     std::optional<WidgetCpuDataSnapshot> cpu_;
     std::optional<WidgetMemoryDataSnapshot> memory_;
+    std::optional<WidgetPowerDataSnapshot> power_;
     std::uint64_t configurationGeneration_ = 0;
     std::jthread worker_;
     std::atomic<bool> resetCpuBaseline_{ true };

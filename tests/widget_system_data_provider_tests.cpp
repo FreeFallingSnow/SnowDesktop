@@ -64,6 +64,21 @@ void TestTopicLifecycleAndSampling()
             return snapshot && snapshot->revision >= 2;
         }),
         "CPU sampling must publish warming and differential revisions");
+    Check(provider.StartTopic("system.power", 20ms) &&
+            provider.ActiveTopicCount() == 3,
+        "power sampling must start independently on the shared worker");
+    Check(WaitFor([&] {
+            const auto snapshot = provider.Power();
+            return snapshot && snapshot->revision > 0;
+        }),
+        "power sampling must publish an immutable revision");
+    const auto power = provider.Power();
+    Check(power && power->timestampMs > 0 &&
+            (power->available || !power->error.empty()),
+        "power snapshots must distinguish battery data from unavailability");
+    Check(provider.StopTopic("system.power") && provider.Running() &&
+            provider.ActiveTopicCount() == 2,
+        "stopping power sampling must preserve CPU and memory topics");
 
     Check(provider.StopTopic("system.memory") && provider.Running() &&
             provider.ActiveTopicCount() == 1,

@@ -11,6 +11,7 @@ namespace
 {
 constexpr std::string_view CpuTopic = "system.cpu";
 constexpr std::string_view MemoryTopic = "system.memory";
+constexpr std::string_view PowerTopic = "system.power";
 
 std::uint64_t FileTimeValue(const FILETIME& value)
 {
@@ -59,7 +60,8 @@ WidgetSystemDataProvider::~WidgetSystemDataProvider()
 bool WidgetSystemDataProvider::SupportsTopic(
     std::string_view topic) noexcept
 {
-    return topic == CpuTopic || topic == MemoryTopic;
+    return topic == CpuTopic || topic == MemoryTopic ||
+        topic == PowerTopic;
 }
 
 bool WidgetSystemDataProvider::StartTopic(
@@ -155,6 +157,13 @@ WidgetSystemDataProvider::Memory() const
     return memory_;
 }
 
+std::optional<WidgetPowerDataSnapshot>
+WidgetSystemDataProvider::Power() const
+{
+    std::scoped_lock lock(mutex_);
+    return power_;
+}
+
 std::vector<std::string>
 WidgetSystemDataProvider::DrainChangedTopics()
 {
@@ -223,6 +232,8 @@ void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
                 PublishCpu(SampleCpu());
             else if (topic == MemoryTopic)
                 PublishMemory(SampleMemory());
+            else if (topic == PowerTopic)
+                PublishPower(SamplePower());
         }
     }
 }
@@ -292,6 +303,40 @@ WidgetMemoryDataSnapshot WidgetSystemDataProvider::SampleMemory()
     return snapshot;
 }
 
+WidgetPowerDataSnapshot WidgetSystemDataProvider::SamplePower()
+{
+    WidgetPowerDataSnapshot snapshot;
+    snapshot.timestampMs = TimestampMilliseconds();
+    SYSTEM_POWER_STATUS status{};
+    if (!GetSystemPowerStatus(&status))
+    {
+        snapshot.error = "Power sampling failed";
+        return snapshot;
+    }
+    snapshot.acPower = status.ACLineStatus == 1;
+    snapshot.charging = (status.BatteryFlag & 8) != 0;
+    snapshot.saver = status.SystemStatusFlag != 0;
+    if (status.BatteryFlag == 128)
+    {
+        snapshot.error = "notPresent";
+        return snapshot;
+    }
+    if (status.BatteryLifePercent == 255)
+    {
+        snapshot.error = "temporarilyUnavailable";
+        return snapshot;
+    }
+    snapshot.available = true;
+    snapshot.batteryPercent = std::clamp(
+        static_cast<double>(status.BatteryLifePercent), 0.0, 100.0);
+    if (status.BatteryLifeTime != static_cast<DWORD>(-1))
+    {
+        snapshot.estimatedRemainingSeconds =
+            static_cast<std::int64_t>(status.BatteryLifeTime);
+    }
+    return snapshot;
+}
+
 void WidgetSystemDataProvider::PublishCpu(
     WidgetCpuDataSnapshot snapshot)
 {
@@ -310,5 +355,15 @@ void WidgetSystemDataProvider::PublishMemory(
     snapshot.revision = memory_ ? memory_->revision + 1 : 1;
     memory_ = std::move(snapshot);
     changedTopics_.insert(std::string(MemoryTopic));
+}
+
+void WidgetSystemDataProvider::PublishPower(
+    WidgetPowerDataSnapshot snapshot)
+{
+    std::scoped_lock lock(mutex_);
+    if (!schedules_.contains(std::string(PowerTopic))) return;
+    snapshot.revision = power_ ? power_->revision + 1 : 1;
+    power_ = std::move(snapshot);
+    changedTopics_.insert(std::string(PowerTopic));
 }
 }

@@ -61,6 +61,10 @@ void TestRegistrationAndSharedSampling()
         "a valid provider must register");
     Check(!broker.RegisterProvider(CpuProvider(), error),
         "duplicate provider topics must be rejected");
+    const auto permission = broker.RequiredPermission("system.cpu");
+    Check(permission && *permission == "system.performance.read" &&
+            !broker.RequiredPermission("system.unknown"),
+        "registered topics must expose their required permission");
 
     const WidgetDataBroker::TimePoint start{};
     DataSubscriptionOptions slow;

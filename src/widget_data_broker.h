@@ -137,6 +137,8 @@ public:
 
     std::optional<DataProviderSnapshot> Snapshot(
         std::string_view topic) const;
+    std::optional<std::string> RequiredPermission(
+        std::string_view topic) const;
     std::optional<DataSubscriptionSnapshot> SubscriptionSnapshot(
         std::uint64_t subscriptionId) const;
     std::vector<DataBrokerAction> DrainActions();

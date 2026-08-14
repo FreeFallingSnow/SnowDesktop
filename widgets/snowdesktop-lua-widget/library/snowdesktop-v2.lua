@@ -347,6 +347,13 @@ function schedule.cancel(id) end
 ---@field freeBytes integer
 ---@field usagePercent number
 
+---@class SnowPowerDataValue
+---@field acPower boolean
+---@field charging boolean
+---@field saver boolean
+---@field batteryPercent number
+---@field estimatedRemainingSeconds? integer
+
 ---@class SnowDataSnapshot<T>
 ---@field available boolean
 ---@field value? T
@@ -365,6 +372,7 @@ data = {}
 ---Subscribe to a host-shared on-demand data topic.
 ---@overload fun(topic: 'system.cpu', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowCpuDataValue>
 ---@overload fun(topic: 'system.memory', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowMemoryDataValue>
+---@overload fun(topic: 'system.power', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowPowerDataValue>
 ---@param topic string
 ---@param options? SnowDataSubscribeOptions
 ---@return SnowDataSubscription<table>

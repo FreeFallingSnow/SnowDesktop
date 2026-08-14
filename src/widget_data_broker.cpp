@@ -223,6 +223,14 @@ std::optional<DataProviderSnapshot> WidgetDataBroker::Snapshot(
     };
 }
 
+std::optional<std::string> WidgetDataBroker::RequiredPermission(
+    std::string_view topic) const
+{
+    auto provider = providers_.find(std::string(topic));
+    if (provider == providers_.end()) return std::nullopt;
+    return provider->second.descriptor.requiredPermission;
+}
+
 std::optional<DataSubscriptionSnapshot>
 WidgetDataBroker::SubscriptionSnapshot(
     std::uint64_t subscriptionId) const

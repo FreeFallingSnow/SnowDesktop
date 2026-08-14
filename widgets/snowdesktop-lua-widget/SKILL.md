@@ -108,7 +108,7 @@ it does not yet represent individual declarative elements.
   `event.kind == "schedule"`; do not add new `widget.setTimer` usage.
 - Create `data.subscribe` handles once in `setup` or module scope, read their
   immutable envelopes during render, and declare `system.performance.read`
-  as optional when CPU or memory data can degrade gracefully.
+  or `system.power.read` as optional when system data can degrade gracefully.
 - Create `resource.image/font` handles at entry scope. Use `resource.status`
   when diagnostics are needed.
 - Use `draw.measureText`, clipping, explicit `maxWidth`, and separate opacity.
