@@ -32,6 +32,7 @@
 #include "lua_runtime.h"
 #include "widget_layout_context.h"
 #include "widget_runtime_diagnostics.h"
+#include "widget_runtime_health.h"
 
 struct ImGuiContext;
 struct PersonalizationSettings;
@@ -294,8 +295,7 @@ struct LuaWidget
     bool usesSystemSnapshot = false;
     bool usesMediaSnapshot = false;
     double lastCallbackMs = 0.0;
-    std::uint32_t consecutiveErrors = 0;
-    bool circuitOpen = false;
+    snowdesktop::widget_runtime::RuntimeHealth health;
     std::chrono::steady_clock::time_point notificationWindow{};
     std::uint32_t notificationsInWindow = 0;
     std::chrono::steady_clock::time_point lastRenderTime{};

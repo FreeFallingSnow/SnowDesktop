@@ -5345,12 +5345,8 @@ void WidgetEngine::RuntimeRecordError(const std::wstring& widgetId, const std::s
     if (index >= 0)
     {
         auto& widget = widgets_[index];
-        ++widget.consecutiveErrors;
-        if (widget.consecutiveErrors >= 5)
-        {
-            widget.circuitOpen = true;
+        if (widget.health.RecordError())
             widget.valid = false;
-        }
     }
     RuntimeAddLog(widgetId, "error", message);
 }
@@ -6843,7 +6839,7 @@ std::vector<WidgetDiagnosticEntry> WidgetEngine::GetWidgetDiagnostics() const
             entry.executionQuotaExceeded = widget.quota->executionExceeded;
             entry.memoryQuotaExceeded = widget.quota->memoryExceeded;
         }
-        entry.circuitOpen = widget.circuitOpen;
+        entry.circuitOpen = widget.health.CircuitOpen();
         std::string errorKey = WidgetWideToUtf8(widget.widgetId) + ".lastError";
         auto errIt = g_storage.find(errorKey);
         if (errIt != g_storage.end())

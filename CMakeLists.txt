@@ -687,6 +687,13 @@ if (BUILD_TESTING)
         LABELS contract lua preview widget)
 
     snowdesktop_add_test(
+        SnowDesktopWidgetRuntimeHealthTests
+        widget_runtime_health
+        SOURCES tests/widget_runtime_health_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS contract lua widget)
+
+    snowdesktop_add_test(
         SnowDesktopApplicationRestartPolicyTests
         application_restart_policy
         SOURCES
