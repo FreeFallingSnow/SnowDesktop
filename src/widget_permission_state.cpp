@@ -36,8 +36,24 @@ std::optional<PermissionDecisionState> ParsePermissionDecisionState(
 bool PermissionStateAllowsRuntime(
     PermissionDecisionState state) noexcept
 {
-    return state == PermissionDecisionState::LegacyImplicit ||
-        state == PermissionDecisionState::Granted;
+    return PermissionRuntimeBlockFor(state) ==
+        PermissionRuntimeBlock::None;
+}
+
+PermissionRuntimeBlock PermissionRuntimeBlockFor(
+    PermissionDecisionState state) noexcept
+{
+    switch (state)
+    {
+    case PermissionDecisionState::LegacyImplicit:
+    case PermissionDecisionState::Granted:
+        return PermissionRuntimeBlock::None;
+    case PermissionDecisionState::Pending:
+        return PermissionRuntimeBlock::PendingConsent;
+    case PermissionDecisionState::Denied:
+        return PermissionRuntimeBlock::Denied;
+    }
+    return PermissionRuntimeBlock::PendingConsent;
 }
 
 std::vector<std::string> ResolveGrantedScopes(

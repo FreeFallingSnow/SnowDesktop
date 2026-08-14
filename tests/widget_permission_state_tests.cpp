@@ -8,6 +8,7 @@
 namespace
 {
 using snowdesktop::widget::PermissionDecisionState;
+using snowdesktop::widget::PermissionRuntimeBlock;
 
 void Check(bool condition, const char* message)
 {
@@ -75,6 +76,20 @@ void TestRuntimeEligibility()
             !snowdesktop::widget::PermissionStateAllowsRuntime(
                 PermissionDecisionState::Denied),
         "pending and denied records must not be runtime-eligible");
+    Check(snowdesktop::widget::PermissionRuntimeBlockFor(
+            PermissionDecisionState::LegacyImplicit) ==
+                PermissionRuntimeBlock::None &&
+            snowdesktop::widget::PermissionRuntimeBlockFor(
+                PermissionDecisionState::Granted) ==
+                PermissionRuntimeBlock::None,
+        "runtime-eligible states must have no activation block");
+    Check(snowdesktop::widget::PermissionRuntimeBlockFor(
+            PermissionDecisionState::Pending) ==
+                PermissionRuntimeBlock::PendingConsent &&
+            snowdesktop::widget::PermissionRuntimeBlockFor(
+                PermissionDecisionState::Denied) ==
+                PermissionRuntimeBlock::Denied,
+        "pending and denied activation blocks must remain distinguishable");
 }
 }
 

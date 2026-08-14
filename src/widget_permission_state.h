@@ -16,11 +16,20 @@ enum class PermissionDecisionState
     Denied,
 };
 
+enum class PermissionRuntimeBlock
+{
+    None,
+    PendingConsent,
+    Denied,
+};
+
 const char* PermissionDecisionStateName(
     PermissionDecisionState state) noexcept;
 std::optional<PermissionDecisionState> ParsePermissionDecisionState(
     std::string_view value) noexcept;
 bool PermissionStateAllowsRuntime(
+    PermissionDecisionState state) noexcept;
+PermissionRuntimeBlock PermissionRuntimeBlockFor(
     PermissionDecisionState state) noexcept;
 
 std::vector<std::string> ResolveGrantedScopes(

@@ -3794,6 +3794,20 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     if (const auto package =
         GetWidgetPackageManager().Resolve(pending.packageId))
     {
+        switch (snowdesktop::widget::PermissionRuntimeBlockFor(
+            package->permissionState))
+        {
+        case snowdesktop::widget::PermissionRuntimeBlock::PendingConsent:
+            RuntimeRecordError(widgetId,
+                "Widget permission consent is pending");
+            return false;
+        case snowdesktop::widget::PermissionRuntimeBlock::Denied:
+            RuntimeRecordError(widgetId,
+                "Widget permission consent was denied");
+            return false;
+        case snowdesktop::widget::PermissionRuntimeBlock::None:
+            break;
+        }
         const std::set<std::string> grantedPermissions(
             package->grantedPermissions.begin(),
             package->grantedPermissions.end());
