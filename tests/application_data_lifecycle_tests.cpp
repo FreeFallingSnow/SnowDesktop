@@ -670,6 +670,18 @@ int main()
         "\"calendar.read\", \"calendar.write\"");
     Expect(validator.ValidateDirectory(calendarPackage).Ok(),
         "calendar permissions are accepted");
+    const auto splitSystemPackage = root / L"split-system-permissions";
+    MakePackage(splitSystemPackage, "1.0.0",
+        "aed3b5fb-c90d-49d0-9f05-f59a5cdab519",
+        "\"system.performance.read\", \"system.power.read\", \"system.network.read\"");
+    Expect(validator.ValidateDirectory(splitSystemPackage).Ok(),
+        "fine-grained system snapshot permissions are accepted");
+    const auto wildcardSystemPackage = root / L"wildcard-system-permission";
+    MakePackage(wildcardSystemPackage, "1.0.0",
+        "68be1e3c-c07f-4ad6-a787-91de0d60725d",
+        "\"system.read\"");
+    Expect(!validator.ValidateDirectory(wildcardSystemPackage).Ok(),
+        "the legacy system.read wildcard is rejected");
     const auto optionalPermissionPackage =
         root / L"optional-permission-package";
     MakePackage(optionalPermissionPackage, "1.0.0",
@@ -901,6 +913,32 @@ int main()
     Expect(Read(optionalManagerPaths.registry).find(
             "\"requestedOptionalPermissions\"") != std::string::npos,
         "source-bound permission decisions persist optional scope metadata");
+
+    const auto changedBuiltinPaths =
+        TestPaths(root / L"changed-builtin-scope-manager");
+    const auto changedBuiltinRoot =
+        changedBuiltinPaths.builtin / L"changed-scope";
+    const std::string changedBuiltinId =
+        "65440c4d-d6e9-42f2-92e7-bacdd6390069";
+    MakePackage(changedBuiltinRoot, "1.0.0", changedBuiltinId,
+        "\"desktop.read\"");
+    WidgetPackageManager changedBuiltinManager(changedBuiltinPaths);
+    error.clear();
+    Expect(changedBuiltinManager.Initialize(error) &&
+            changedBuiltinManager.SetPermissionDecision(changedBuiltinId,
+                PermissionDecisionState::Granted,
+                { "desktop.read" }, {}, error),
+        "a source-bound built-in decision is stored before a scope change");
+    MakePackage(changedBuiltinRoot, "1.0.0", changedBuiltinId,
+        "\"desktop.read\", \"calendar.read\"");
+    WidgetPackageManager changedBuiltinReloaded(changedBuiltinPaths);
+    const auto changedBuiltin = changedBuiltinReloaded.Initialize(error)
+        ? changedBuiltinReloaded.Resolve(changedBuiltinId)
+        : std::nullopt;
+    Expect(changedBuiltin && changedBuiltin->permissionState ==
+            PermissionDecisionState::Pending &&
+            changedBuiltin->grantedPermissions.empty(),
+        "an in-place built-in scope change cannot fall back to implicit permission");
     Expect(manager.ResolveEntry(manifest.id).value_or(L"").filename() == L"main.lua",
         "entry resolves inside the package");
     Expect(manager.SetEnabled(manifest.id, false, error),

@@ -32,6 +32,13 @@ const wchar_t* WidgetPermissionLabel(std::string_view permission)
         return _LW("app.settings.widgets_permission_network_http");
     if (permission == "system.read")
         return _LW("app.settings.widgets_permission_system_read");
+    if (permission == "system.performance.read")
+        return _LW(
+            "app.settings.widgets_permission_system_performance_read");
+    if (permission == "system.power.read")
+        return _LW("app.settings.widgets_permission_system_power_read");
+    if (permission == "system.network.read")
+        return _LW("app.settings.widgets_permission_system_network_read");
     if (permission == "ui.notify")
         return _LW("app.settings.widgets_permission_ui_notify");
     static thread_local std::wstring fallback;

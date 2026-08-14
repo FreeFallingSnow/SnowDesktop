@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "System Monitor",
   "nameKey": "lua_widget.system_monitor.name",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Displays CPU, memory, network, and battery status.",
   "descriptionKey": "lua_widget.system_monitor.description",
   "locales": {
@@ -234,8 +234,12 @@
     "rows": 1
   },
   "permissions": [
-    "system.read",
+    "system.performance.read",
     "ui.input",
     "ui.contextMenu"
+  ],
+  "optionalPermissions": [
+    "system.power.read",
+    "system.network.read"
   ]
 }

@@ -104,6 +104,10 @@ void TestPermissionRiskClassification()
     Check(ClassifyPermissionRisk("system.read") ==
                 PermissionRiskClass::SystemStatus &&
             ClassifyPermissionRisk("system.performance.read") ==
+                PermissionRiskClass::SystemStatus &&
+            ClassifyPermissionRisk("system.power.read") ==
+                PermissionRiskClass::SystemStatus &&
+            ClassifyPermissionRisk("system.network.read") ==
                 PermissionRiskClass::SystemStatus,
         "legacy and v2 system reads must require system-status consent");
     Check(ClassifyPermissionRisk("desktop.read") ==

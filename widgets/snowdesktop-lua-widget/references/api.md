@@ -258,7 +258,9 @@ draw.image(relativePath, x, y, width, height, alpha?)
 draw.icon(pathOrDesktopItem, x, y, size?, alpha?)
 ```
 
-- `draw.image` accepts only a path relative to the root executable `widgets` directory.
+- `draw.image` accepts only a path relative to the current component package
+  root. Absolute paths, parent traversal, and reparse-point escapes are
+  rejected by the host.
 - Supported image decoding is provided by Windows Imaging Component.
 - `draw.icon` resolves a Windows shell icon and requires `desktop.read`.
 - Resolved shell icons are cached across frames and refreshed after desktop
@@ -273,6 +275,10 @@ local info = widget.info()
 -- info.id, info.width, info.height, info.selected
 -- info.selectedPackageId is the package UUID of the one selected
 -- Lua widget, or an empty string when that is not applicable
+
+if widget.hasPermission("system.power.read") then
+    -- Optional power features may be used safely.
+end
 
 widget.setTitle("新标题")
 widget.invalidate()
@@ -361,7 +367,8 @@ and list font-size settings. Existing `draw.text` sizes remain pixel values, so
 use `draw.text(..., layout.fontCu(15))` when widget text should scale with its
 grid cell.
 
-Cached system snapshots require `system.read`:
+Cached system snapshots use separate permissions so users can authorize and
+revoke each data category independently:
 
 ```lua
 local cpu = sys.cpu()
@@ -376,6 +383,12 @@ local network = sys.network()
 local gpu = sys.gpu()
 -- available, name, usagePercent, vramTotalBytes, vramUsedBytes
 ```
+
+- `system.performance.read`: `sys.cpu()`, `sys.memory()`, and `sys.gpu()`.
+- `system.power.read`: `sys.battery()`.
+- `system.network.read`: `sys.network()`.
+
+The former `system.read` wildcard is no longer accepted by package validation.
 
 Media requires `media.read`; controls require `media.action`:
 
@@ -774,7 +787,9 @@ restoring saved layouts, and reacting to grid changes.
 | `desktop.read` | `desktop.items`, `selection`, `find`, `draw.icon`, desktop-change callback |
 | `desktop.action` | `desktop.open`, `reveal`, `refresh` |
 | `everything.search` | `everything.search(query, maxResults)` |
-| `system.read` | `sys.cpu`, `memory`, `battery`, `network`, `gpu` |
+| `system.performance.read` | `sys.cpu`, `memory`, `gpu` |
+| `system.power.read` | `sys.battery` |
+| `system.network.read` | `sys.network` |
 | `media.read` | `media.current` |
 | `media.action` | Media playback controls |
 | `network.http` | `http.request`, `http.cancel` |
@@ -784,9 +799,11 @@ restoring saved layouts, and reacting to grid changes.
 `permissions` lists capabilities required to start the component.
 `optionalPermissions` lists features that may degrade independently. The user
 can grant only the required set; a missing optional permission does not block
-the Lua VM, but its guarded API reports a permission error. A permission cannot
-appear in both arrays. Missing context-menu and desktop-change capabilities
-also cause their callbacks to be skipped by the host.
+the Lua VM. Check `widget.hasPermission(name)` before using an optional API;
+calling a guarded API without its permission reports a permission error. A
+permission cannot appear in both arrays. Missing context-menu and
+desktop-change capabilities also cause their callbacks to be skipped by the
+host.
 
 Declarative setting types are `text`, `bool`, `int`, `float`, `select`, and `color`.
 Values are stored in the same per-instance string storage used by `storage`.

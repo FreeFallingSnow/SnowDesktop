@@ -164,8 +164,10 @@ function render()
 
     local cpu = sys.cpu()
     local memory = sys.memory()
-    local battery = sys.battery()
-    local network = sys.network()
+    local battery = widget.hasPermission("system.power.read")
+        and sys.battery() or { available = false }
+    local network = widget.hasPermission("system.network.read")
+        and sys.network() or nil
     local gpu = sys.gpu and sys.gpu() or nil
     local w = layout.width()
     local h = layout.height()
@@ -225,7 +227,7 @@ function render()
         })
     end
 
-    if showCard("network") then
+    if showCard("network") and network then
         table.insert(cards, {
             title = l10n.tr("lua_widget.system_monitor.network"),
             color = pal.netDown,

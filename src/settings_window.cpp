@@ -3960,6 +3960,13 @@ void SettingsWindow::DrawWidgetPackagesPage()
             return _L("app.settings.widgets_permission_network_http");
         if (permission == "system.read")
             return _L("app.settings.widgets_permission_system_read");
+        if (permission == "system.performance.read")
+            return _L(
+                "app.settings.widgets_permission_system_performance_read");
+        if (permission == "system.power.read")
+            return _L("app.settings.widgets_permission_system_power_read");
+        if (permission == "system.network.read")
+            return _L("app.settings.widgets_permission_system_network_read");
         if (permission == "ui.contextMenu")
             return _L("app.settings.widgets_permission_ui_context_menu");
         if (permission == "ui.input")

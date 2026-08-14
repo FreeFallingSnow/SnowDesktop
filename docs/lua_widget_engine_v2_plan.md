@@ -1498,7 +1498,7 @@ M7 切换完成后，发布运行时必须删除 API v1 注册和执行分支。
 
 ### M2：权限代理和首次授权
 
-当前实现进度（2026-08-14）：已落地集中权限代理、来源绑定范围指纹、非阻塞首次授权、受阻占位卡及恢复入口；当前 schema v1 过渡字段以 `permissions` 表示必需权限、`optionalPermissions` 表示可选权限。细粒度 v2 权限名、用户选择文件句柄和更新差异页仍属于本里程碑后续工作。
+当前实现进度（2026-08-14）：已落地集中权限代理、来源绑定范围指纹、非阻塞首次授权、受阻占位卡及恢复入口；当前 schema v1 过渡字段以 `permissions` 表示必需权限、`optionalPermissions` 表示可选权限。现有 CPU/内存/GPU、电源/电池和网络快照已分别映射到 `system.performance.read`、`system.power.read`、`system.network.read`，并提供 `widget.hasPermission()` 供可选能力降级；storage/display/audio output、用户选择文件句柄和更新差异页仍属于本里程碑后续工作。
 
 交付物：
 

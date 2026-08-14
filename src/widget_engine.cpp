@@ -1506,6 +1506,11 @@ static std::string FindDeclaredDefaultValue(const LuaWidget& widget, const std::
 
 static bool RequirePermission(lua_State* L, const char* permission);
 
+constexpr char kSystemPerformancePermission[] =
+    "system.performance.read";
+constexpr char kSystemPowerPermission[] = "system.power.read";
+constexpr char kSystemNetworkPermission[] = "system.network.read";
+
 static void SetNumberField(lua_State* L, const char* key, lua_Number value)
 {
     lua_pushnumber(L, value);
@@ -1520,7 +1525,7 @@ static void SetBooleanField(lua_State* L, const char* key, bool value)
 
 static int lua_SystemCpu(lua_State* L)
 {
-    if (!RequirePermission(L, "system.read")) return 0;
+    if (!RequirePermission(L, kSystemPerformancePermission)) return 0;
     auto* s = GetD2D(L);
     CpuSnapshot snapshot = s && s->engine
         ? s->engine->RuntimeGetCpuSnapshot(BoundWidgetId(L)) : CpuSnapshot{};
@@ -1534,7 +1539,7 @@ static int lua_SystemCpu(lua_State* L)
 
 static int lua_SystemMemory(lua_State* L)
 {
-    if (!RequirePermission(L, "system.read")) return 0;
+    if (!RequirePermission(L, kSystemPerformancePermission)) return 0;
     auto* s = GetD2D(L);
     MemorySnapshot snapshot = s && s->engine
         ? s->engine->RuntimeGetMemorySnapshot(BoundWidgetId(L)) : MemorySnapshot{};
@@ -1549,7 +1554,7 @@ static int lua_SystemMemory(lua_State* L)
 
 static int lua_SystemBattery(lua_State* L)
 {
-    if (!RequirePermission(L, "system.read")) return 0;
+    if (!RequirePermission(L, kSystemPowerPermission)) return 0;
     auto* s = GetD2D(L);
     BatterySnapshot snapshot = s && s->engine
         ? s->engine->RuntimeGetBatterySnapshot(BoundWidgetId(L)) : BatterySnapshot{};
@@ -1564,7 +1569,7 @@ static int lua_SystemBattery(lua_State* L)
 
 static int lua_SystemNetwork(lua_State* L)
 {
-    if (!RequirePermission(L, "system.read")) return 0;
+    if (!RequirePermission(L, kSystemNetworkPermission)) return 0;
     auto* s = GetD2D(L);
     NetworkSnapshot snapshot = s && s->engine
         ? s->engine->RuntimeGetNetworkSnapshot(BoundWidgetId(L)) : NetworkSnapshot{};
@@ -1580,7 +1585,7 @@ static int lua_SystemNetwork(lua_State* L)
 
 static int lua_SystemGpu(lua_State* L)
 {
-    if (!RequirePermission(L, "system.read")) return 0;
+    if (!RequirePermission(L, kSystemPerformancePermission)) return 0;
     auto* s = GetD2D(L);
     GpuSnapshot snapshot = s && s->engine
         ? s->engine->RuntimeGetGpuSnapshot(BoundWidgetId(L)) : GpuSnapshot{};
@@ -2640,6 +2645,23 @@ static int lua_WidgetInfo(lua_State* L)
     lua_pushstring(
         L, WidgetWideToUtf8(selectedPackageId).c_str());
     lua_setfield(L, -2, "selectedPackageId");
+    return 1;
+}
+
+static int lua_WidgetHasPermission(lua_State* L)
+{
+    const char* permission = luaL_checkstring(L, 1);
+    lua_getfield(L, LUA_REGISTRYINDEX, "__widget_permissions");
+    if (!lua_istable(L, -1))
+    {
+        lua_pop(L, 1);
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    lua_getfield(L, -1, permission ? permission : "");
+    const bool granted = lua_toboolean(L, -1) != 0;
+    lua_pop(L, 2);
+    lua_pushboolean(L, granted);
     return 1;
 }
 
@@ -3879,6 +3901,14 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     lua_setfield(state, LUA_REGISTRYINDEX, "__quota_ptr");
     lua_pushstring(state, WidgetWideToUtf8(widgetId).c_str());
     lua_setfield(state, LUA_REGISTRYINDEX, "__widget_id");
+    lua_createtable(state, 0,
+        static_cast<int>(pending.permissions.size()));
+    for (const auto& permission : pending.permissions)
+    {
+        lua_pushboolean(state, true);
+        lua_setfield(state, -2, permission.c_str());
+    }
+    lua_setfield(state, LUA_REGISTRYINDEX, "__widget_permissions");
     if (d2dState_)
     {
         d2dState_->currentWidgetId = widgetId;
@@ -8768,6 +8798,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     };
     static constexpr FunctionDescriptor widget[] = {
         { "info", lua_WidgetInfo },
+        { "hasPermission", lua_WidgetHasPermission },
         { "setTitle", lua_WidgetSetTitle },
         { "openSettings", lua_WidgetOpenSettings },
         { "openPanel", lua_WidgetOpenPanel },
@@ -8782,11 +8813,13 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     static constexpr FunctionDescriptor system[] = {
         { "getTime", lua_GetTime },
         { "notify", lua_Notify, 1, "ui.notify" },
-        { "cpu", lua_SystemCpu, 1, "system.read" },
-        { "memory", lua_SystemMemory, 1, "system.read" },
-        { "battery", lua_SystemBattery, 1, "system.read" },
-        { "network", lua_SystemNetwork, 1, "system.read" },
-        { "gpu", lua_SystemGpu, 1, "system.read" },
+        { "cpu", lua_SystemCpu, 1, kSystemPerformancePermission },
+        { "memory", lua_SystemMemory, 1,
+            kSystemPerformancePermission },
+        { "battery", lua_SystemBattery, 1, kSystemPowerPermission },
+        { "network", lua_SystemNetwork, 1,
+            kSystemNetworkPermission },
+        { "gpu", lua_SystemGpu, 1, kSystemPerformancePermission },
     };
     static constexpr FunctionDescriptor media[] = {
         { "current", lua_MediaCurrent, 1, "media.read" },

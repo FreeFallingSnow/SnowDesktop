@@ -147,7 +147,9 @@ Valid permissions:
 - `ui.notify`: enable rate-limited host notifications.
 - `desktop.read`: enable desktop queries and `draw.icon`.
 - `desktop.action`: enable open, reveal, and desktop refresh actions.
-- `system.read`: enable cached CPU, memory, battery, and network snapshots.
+- `system.performance.read`: enable cached CPU, memory, and GPU snapshots.
+- `system.power.read`: enable the cached battery and power snapshot.
+- `system.network.read`: enable the cached network snapshot and transfer rates.
 - `media.read`: read the current Windows media session.
 - `media.action`: play/pause, skip next, and skip previous.
 - `network.http`: enable asynchronous requests to arbitrary HTTP and HTTPS
@@ -158,7 +160,8 @@ Valid permissions:
 Put capabilities required for the component to start in `permissions`. Put
 degradable features in `optionalPermissions`; the user may grant only the
 required set, and guarded optional APIs will then remain unavailable. Never
-declare the same capability in both arrays.
+declare the same capability in both arrays. Use `widget.hasPermission(name)`
+before calling an optional guarded API.
 
 Keep `defaultSize.columns` and `defaultSize.rows` between 1 and 8.
 

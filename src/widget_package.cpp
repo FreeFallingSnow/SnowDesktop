@@ -531,7 +531,9 @@ bool IsKnownPermission(const std::string& permission)
     static const std::set<std::string> permissions = {
         "calendar.read", "calendar.write",
         "desktop.action", "desktop.read", "everything.search",
-        "media.action", "media.read", "network.http", "system.read",
+        "media.action", "media.read", "network.http",
+        "system.network.read", "system.performance.read",
+        "system.power.read",
         "ui.contextMenu", "ui.input", "ui.notify",
     };
     return permissions.contains(permission);
@@ -1952,12 +1954,19 @@ bool WidgetPackageManager::SaveRegistry(std::string& error) const
 bool WidgetPackageManager::Refresh(std::string& error)
 {
     packages_.clear();
+    enum class ExplicitDecisionResult
+    {
+        NotFound,
+        Applied,
+        ScopeMismatch,
+    };
     const auto applyExplicitDecision = [&](InstalledPackage& package) {
         const std::string key = package.manifest.id + "\n" +
             package.source.providerId + "\n" +
             package.source.externalItemId;
         const auto decision = permissionDecisions_.find(key);
-        if (decision == permissionDecisions_.end()) return false;
+        if (decision == permissionDecisions_.end())
+            return ExplicitDecisionResult::NotFound;
         const std::set<std::string> requestedPermissions(
             decision->second.requestedPermissions.begin(),
             decision->second.requestedPermissions.end());
@@ -1993,7 +2002,7 @@ bool WidgetPackageManager::Refresh(std::string& error)
                 declaredOptionalPermissions ||
             requestedDomains != declaredDomains ||
             requestedScopeFingerprint != declaredScopeFingerprint)
-            return false;
+            return ExplicitDecisionResult::ScopeMismatch;
         package.permissionState = decision->second.state;
         const auto grant = WidgetPermissionBroker::Evaluate(
             package.permissionState,
@@ -2004,7 +2013,14 @@ bool WidgetPackageManager::Refresh(std::string& error)
             decision->second.grantedNetworkDomains);
         package.grantedPermissions = grant.permissions;
         package.grantedNetworkDomains = grant.networkDomains;
-        return true;
+        return ExplicitDecisionResult::Applied;
+    };
+    const auto applyScopeMismatchBlock = [](
+        InstalledPackage& package, ExplicitDecisionResult result) {
+        if (result != ExplicitDecisionResult::ScopeMismatch) return;
+        package.permissionState = PermissionDecisionState::Pending;
+        package.grantedPermissions.clear();
+        package.grantedNetworkDomains.clear();
     };
     auto scanRoot = [&](const std::filesystem::path& root, bool builtin,
         bool development) {
@@ -2034,7 +2050,8 @@ bool WidgetPackageManager::Refresh(std::string& error)
                 package.grantedNetworkDomains =
                     package.manifest.networkDomains;
                 package.enabled = true;
-                applyExplicitDecision(package);
+                applyScopeMismatchBlock(
+                    package, applyExplicitDecision(package));
                 package.active = builtin ||
                     developmentOverrides_.contains(package.manifest.id);
                 package.selected = package.active;
@@ -2075,7 +2092,8 @@ bool WidgetPackageManager::Refresh(std::string& error)
                         registryIt->second.grantedNetworkDomains);
                     package.grantedPermissions = grant.permissions;
                     package.grantedNetworkDomains = grant.networkDomains;
-                    applyExplicitDecision(package);
+                    applyScopeMismatchBlock(
+                        package, applyExplicitDecision(package));
                 }
                 else
                 {
