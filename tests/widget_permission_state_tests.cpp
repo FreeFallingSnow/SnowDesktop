@@ -3,6 +3,7 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -124,6 +125,53 @@ void TestPermissionRiskClassification()
         "unknown permissions must remain distinguishable and fail closed");
 }
 
+void TestPermissionDescriptorContract()
+{
+    const auto descriptors =
+        snowdesktop::widget::WidgetPermissionDescriptors();
+    Check(descriptors.size() == 31,
+        "the v2 permission declaration vocabulary must remain explicit");
+    std::set<std::string_view> ids;
+    std::set<std::string_view> labelKeys;
+    for (const auto& descriptor : descriptors)
+    {
+        Check(!descriptor.id.empty() &&
+                descriptor.risk != PermissionRiskClass::Unknown &&
+                descriptor.labelLocalizationKey &&
+                std::string_view(descriptor.labelLocalizationKey).starts_with(
+                    "app.settings.widgets_permission_"),
+            "every public permission needs an ID, risk class, and localization key");
+        Check(ids.insert(descriptor.id).second,
+            "public permission IDs must be unique");
+        Check(labelKeys.insert(descriptor.labelLocalizationKey).second,
+            "public permission labels must not be accidentally shared");
+        Check(snowdesktop::widget::IsKnownWidgetPermission(descriptor.id) &&
+                snowdesktop::widget::FindWidgetPermissionDescriptor(
+                    descriptor.id) == &descriptor &&
+                snowdesktop::widget::WidgetPermissionLabelLocalizationKey(
+                    descriptor.id) == descriptor.labelLocalizationKey,
+            "permission lookup, validation, risk, and presentation must use the same descriptor");
+    }
+    Check(snowdesktop::widget::IsKnownWidgetPermission(
+            "system.storage.read") &&
+            snowdesktop::widget::IsKnownWidgetPermission(
+                "system.display.read") &&
+            snowdesktop::widget::IsKnownWidgetPermission(
+                "audio.output.analyze") &&
+            snowdesktop::widget::IsKnownWidgetPermission(
+                "filesystem.userSelected.watch"),
+        "M2 system, audio, and user-selected file scopes must be declarable");
+    Check(!snowdesktop::widget::IsKnownWidgetPermission("system.read") &&
+            snowdesktop::widget::WidgetPermissionLabelLocalizationKey(
+                "system.read") != nullptr,
+        "the removed system.read wildcard must remain migration-readable but not declarable");
+    Check(!snowdesktop::widget::IsKnownWidgetPermission(
+            "future.unregistered") &&
+            snowdesktop::widget::WidgetPermissionLabelLocalizationKey(
+                "future.unregistered") == nullptr,
+        "unknown permissions must fail closed without a fabricated label");
+}
+
 void TestConsentSelection()
 {
     const std::vector<std::string> declared = {
@@ -243,6 +291,7 @@ int main()
     TestExplicitEmptyGrantDoesNotFallBack();
     TestRuntimeEligibility();
     TestPermissionRiskClassification();
+    TestPermissionDescriptorContract();
     TestConsentSelection();
     TestPermissionBrokerSnapshot();
     TestRequiredAndOptionalPermissionSemantics();

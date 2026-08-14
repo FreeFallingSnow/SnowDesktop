@@ -3946,37 +3946,9 @@ void SettingsWindow::DrawWidgetPackagesPage()
     };
     auto permissionLabel = [](const std::string& permission)
     {
-        if (permission == "calendar.read")
-            return _L("app.settings.widgets_permission_calendar_read");
-        if (permission == "calendar.write")
-            return _L("app.settings.widgets_permission_calendar_write");
-        if (permission == "desktop.action")
-            return _L("app.settings.widgets_permission_desktop_action");
-        if (permission == "desktop.read")
-            return _L("app.settings.widgets_permission_desktop_read");
-        if (permission == "everything.search")
-            return _L("app.settings.widgets_permission_everything_search");
-        if (permission == "media.action")
-            return _L("app.settings.widgets_permission_media_action");
-        if (permission == "media.read")
-            return _L("app.settings.widgets_permission_media_read");
-        if (permission == "network.http")
-            return _L("app.settings.widgets_permission_network_http");
-        if (permission == "system.read")
-            return _L("app.settings.widgets_permission_system_read");
-        if (permission == "system.performance.read")
-            return _L(
-                "app.settings.widgets_permission_system_performance_read");
-        if (permission == "system.power.read")
-            return _L("app.settings.widgets_permission_system_power_read");
-        if (permission == "system.network.read")
-            return _L("app.settings.widgets_permission_system_network_read");
-        if (permission == "ui.contextMenu")
-            return _L("app.settings.widgets_permission_ui_context_menu");
-        if (permission == "ui.input")
-            return _L("app.settings.widgets_permission_ui_input");
-        if (permission == "ui.notify")
-            return _L("app.settings.widgets_permission_ui_notify");
+        if (const char* key = snowdesktop::widget::
+                WidgetPermissionLabelLocalizationKey(permission))
+            return _L(key);
         return permission.c_str();
     };
     auto permissionSummary = [&](

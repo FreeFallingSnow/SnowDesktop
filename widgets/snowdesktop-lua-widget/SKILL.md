@@ -157,6 +157,11 @@ Valid permissions:
 - `calendar.read`: read shared local calendar dates and events.
 - `calendar.write`: select a shared date and create, edit, or delete events.
 
+The package validator also reserves the fine-grained v2 permission vocabulary
+for migration work. Those reserved names do not enable new APIs in an API v1
+component and are intentionally omitted from the list above. Do not declare a
+reserved v2 permission until the corresponding v2 runtime API is documented.
+
 Put capabilities required for the component to start in `permissions`. Put
 degradable features in `optionalPermissions`; the user may grant only the
 required set, and guarded optional APIs will then remain unavailable. Never

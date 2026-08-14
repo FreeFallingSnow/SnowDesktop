@@ -796,6 +796,12 @@ restoring saved layouts, and reacting to grid changes.
 | `calendar.read` | selected date, date helpers, event queries, calendar-change callback |
 | `calendar.write` | shared date selection and event create/update/delete |
 
+The validator recognizes additional reserved v2 permission names so packages
+can be migrated against a stable consent vocabulary. API v1 does not expose
+the corresponding system, audio, network, clipboard, app-launch, or
+user-selected-file APIs; declaring a reserved name only requests consent and
+must not be treated as proof that an API exists.
+
 `permissions` lists capabilities required to start the component.
 `optionalPermissions` lists features that may degrade independently. The user
 can grant only the required set; a missing optional permission does not block

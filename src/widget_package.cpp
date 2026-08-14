@@ -528,15 +528,7 @@ bool WriteStoreZip(const std::filesystem::path& root,
 
 bool IsKnownPermission(const std::string& permission)
 {
-    static const std::set<std::string> permissions = {
-        "calendar.read", "calendar.write",
-        "desktop.action", "desktop.read", "everything.search",
-        "media.action", "media.read", "network.http",
-        "system.network.read", "system.performance.read",
-        "system.power.read",
-        "ui.contextMenu", "ui.input", "ui.notify",
-    };
-    return permissions.contains(permission);
+    return IsKnownWidgetPermission(permission);
 }
 
 bool IsExplicitDnsName(const std::string& domain)

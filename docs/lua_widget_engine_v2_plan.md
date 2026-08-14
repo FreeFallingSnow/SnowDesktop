@@ -1498,7 +1498,7 @@ M7 切换完成后，发布运行时必须删除 API v1 注册和执行分支。
 
 ### M2：权限代理和首次授权
 
-当前实现进度（2026-08-14）：已落地集中权限代理、来源绑定范围指纹、非阻塞首次授权、受阻占位卡及恢复入口；当前 schema v1 过渡字段以 `permissions` 表示必需权限、`optionalPermissions` 表示可选权限。现有 CPU/内存/GPU、电源/电池和网络快照已分别映射到 `system.performance.read`、`system.power.read`、`system.network.read`，并提供 `widget.hasPermission()` 供可选能力降级；组件管理页可查询并逐项调整授权，撤销必需权限会让实例进入可恢复的暂停占位。storage/display/audio output、用户选择文件句柄和更新差异页仍属于本里程碑后续工作。
+当前实现进度（2026-08-14）：已落地集中权限代理、来源绑定范围指纹、非阻塞首次授权、受阻占位卡及恢复入口；当前 schema v1 过渡字段以 `permissions` 表示必需权限、`optionalPermissions` 表示可选权限。现有 CPU/内存/GPU、电源/电池和网络快照已分别映射到 `system.performance.read`、`system.power.read`、`system.network.read`，并提供 `widget.hasPermission()` 供可选能力降级；组件管理页可查询并逐项调整授权，撤销必需权限会让实例进入可恢复的暂停占位。M2 公开权限词表已集中到单一 descriptor 契约，包校验、风险分类、首次授权和管理页标签共同使用该契约；`system.storage.read`、`system.display.read`、`audio.output.read/analyze/control`、v2 网络/通知/剪贴板/应用动作和用户选择文件范围已可声明并分别授权，但对应 M3/M4/M5 API 尚未因此提前启用。用户选择文件句柄的持久实现和更新权限差异页仍属于本里程碑后续工作。
 
 交付物：
 

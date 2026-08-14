@@ -37,6 +37,13 @@ enum class PermissionRiskClass
     Unknown,
 };
 
+struct WidgetPermissionDescriptor
+{
+    std::string_view id;
+    PermissionRiskClass risk = PermissionRiskClass::Unknown;
+    const char* labelLocalizationKey = nullptr;
+};
+
 const char* PermissionDecisionStateName(
     PermissionDecisionState state) noexcept;
 std::optional<PermissionDecisionState> ParsePermissionDecisionState(
@@ -47,6 +54,13 @@ PermissionRuntimeBlock PermissionRuntimeBlockFor(
     PermissionDecisionState state) noexcept;
 
 PermissionRiskClass ClassifyPermissionRisk(
+    std::string_view permission) noexcept;
+std::span<const WidgetPermissionDescriptor>
+WidgetPermissionDescriptors() noexcept;
+const WidgetPermissionDescriptor* FindWidgetPermissionDescriptor(
+    std::string_view permission) noexcept;
+bool IsKnownWidgetPermission(std::string_view permission) noexcept;
+const char* WidgetPermissionLabelLocalizationKey(
     std::string_view permission) noexcept;
 bool PermissionRequiresConsent(std::string_view permission) noexcept;
 std::vector<std::string> PermissionsRequiringConsent(

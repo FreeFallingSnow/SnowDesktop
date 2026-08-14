@@ -676,6 +676,21 @@ int main()
         "\"system.performance.read\", \"system.power.read\", \"system.network.read\"");
     Expect(validator.ValidateDirectory(splitSystemPackage).Ok(),
         "fine-grained system snapshot permissions are accepted");
+    const auto v2PermissionVocabularyPackage =
+        root / L"v2-permission-vocabulary";
+    MakePackage(v2PermissionVocabularyPackage, "1.0.0",
+        "403e9f91-33dd-4c20-9b11-c476074e3a3a",
+        "\"system.storage.read\", \"system.display.read\", "
+        "\"audio.output.read\", \"audio.output.analyze\", "
+        "\"audio.output.control\", \"app.discovery\", \"app.launch\", "
+        "\"shell.launch\", \"network.internet\", \"network.local\", "
+        "\"notification.post\", \"clipboard.read\", "
+        "\"clipboard.write\", \"process.summary.read\", "
+        "\"filesystem.userSelected.read\", "
+        "\"filesystem.userSelected.write\", "
+        "\"filesystem.userSelected.watch\"");
+    Expect(validator.ValidateDirectory(v2PermissionVocabularyPackage).Ok(),
+        "the complete M2 permission vocabulary is accepted by package validation");
     const auto wildcardSystemPackage = root / L"wildcard-system-permission";
     MakePackage(wildcardSystemPackage, "1.0.0",
         "68be1e3c-c07f-4ad6-a787-91de0d60725d",

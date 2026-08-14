@@ -14,33 +14,9 @@ namespace
 {
 const wchar_t* WidgetPermissionLabel(std::string_view permission)
 {
-    if (permission == "calendar.read")
-        return _LW("app.settings.widgets_permission_calendar_read");
-    if (permission == "calendar.write")
-        return _LW("app.settings.widgets_permission_calendar_write");
-    if (permission == "desktop.action")
-        return _LW("app.settings.widgets_permission_desktop_action");
-    if (permission == "desktop.read")
-        return _LW("app.settings.widgets_permission_desktop_read");
-    if (permission == "everything.search")
-        return _LW("app.settings.widgets_permission_everything_search");
-    if (permission == "media.action")
-        return _LW("app.settings.widgets_permission_media_action");
-    if (permission == "media.read")
-        return _LW("app.settings.widgets_permission_media_read");
-    if (permission == "network.http")
-        return _LW("app.settings.widgets_permission_network_http");
-    if (permission == "system.read")
-        return _LW("app.settings.widgets_permission_system_read");
-    if (permission == "system.performance.read")
-        return _LW(
-            "app.settings.widgets_permission_system_performance_read");
-    if (permission == "system.power.read")
-        return _LW("app.settings.widgets_permission_system_power_read");
-    if (permission == "system.network.read")
-        return _LW("app.settings.widgets_permission_system_network_read");
-    if (permission == "ui.notify")
-        return _LW("app.settings.widgets_permission_ui_notify");
+    if (const char* key = snowdesktop::widget::
+            WidgetPermissionLabelLocalizationKey(permission))
+        return _LW(key);
     static thread_local std::wstring fallback;
     fallback = Utf8ToWide(std::string(permission));
     return fallback.c_str();
