@@ -81,6 +81,27 @@ struct WidgetNetworkTrafficDataSnapshot
     std::string error;
 };
 
+struct WidgetGpuAdapterDataSnapshot
+{
+    std::string id;
+    std::string name;
+    double usagePercent = 0.0;
+    std::uint64_t dedicatedMemoryBytes = 0;
+    std::uint64_t dedicatedUsedBytes = 0;
+    std::uint64_t sharedMemoryBytes = 0;
+    std::uint64_t sharedUsedBytes = 0;
+};
+
+struct WidgetGpuDataSnapshot
+{
+    bool available = false;
+    bool warmingUp = true;
+    std::vector<WidgetGpuAdapterDataSnapshot> adapters;
+    std::int64_t timestampMs = 0;
+    std::uint64_t revision = 0;
+    std::string error;
+};
+
 class WidgetSystemDataProvider
 {
 public:
@@ -107,9 +128,11 @@ public:
     std::optional<WidgetPowerDataSnapshot> Power() const;
     std::optional<WidgetNetworkStatusDataSnapshot> NetworkStatus() const;
     std::optional<WidgetNetworkTrafficDataSnapshot> NetworkTraffic() const;
+    std::optional<WidgetGpuDataSnapshot> Gpu() const;
     std::vector<std::string> DrainChangedTopics();
 
     bool Running() const noexcept;
+    bool GpuResourcesActive() const noexcept;
     std::size_t ActiveTopicCount() const;
     static bool SupportsTopic(std::string_view topic) noexcept;
 
@@ -126,11 +149,15 @@ private:
     WidgetPowerDataSnapshot SamplePower();
     WidgetNetworkStatusDataSnapshot SampleNetworkStatus();
     WidgetNetworkTrafficDataSnapshot SampleNetworkTraffic();
+    WidgetGpuDataSnapshot SampleGpu();
     void PublishCpu(WidgetCpuDataSnapshot snapshot);
     void PublishMemory(WidgetMemoryDataSnapshot snapshot);
     void PublishPower(WidgetPowerDataSnapshot snapshot);
     void PublishNetworkStatus(WidgetNetworkStatusDataSnapshot snapshot);
     void PublishNetworkTraffic(WidgetNetworkTrafficDataSnapshot snapshot);
+    void PublishGpu(WidgetGpuDataSnapshot snapshot);
+    bool InitializeGpuQuery();
+    void CloseGpuQuery();
 
     mutable std::mutex mutex_;
     std::condition_variable condition_;
@@ -141,10 +168,14 @@ private:
     std::optional<WidgetPowerDataSnapshot> power_;
     std::optional<WidgetNetworkStatusDataSnapshot> networkStatus_;
     std::optional<WidgetNetworkTrafficDataSnapshot> networkTraffic_;
+    std::optional<WidgetGpuDataSnapshot> gpu_;
     std::uint64_t configurationGeneration_ = 0;
     std::jthread worker_;
     std::atomic<bool> resetCpuBaseline_{ true };
     std::atomic<bool> resetNetworkBaseline_{ true };
+    std::atomic<bool> resetGpuBaseline_{ true };
+    std::atomic<bool> closeGpuRequested_{ false };
+    std::atomic<bool> gpuResourcesActive_{ false };
 
     std::uint64_t previousIdle_ = 0;
     std::uint64_t previousKernel_ = 0;
@@ -152,5 +183,7 @@ private:
     std::uint64_t previousReceived_ = 0;
     std::uint64_t previousSent_ = 0;
     Clock::time_point previousNetworkSample_{};
+    void* gpuQuery_ = nullptr;
+    void* gpuUtilizationCounter_ = nullptr;
 };
 }

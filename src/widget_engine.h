@@ -285,6 +285,7 @@ struct LuaWidgetDataSnapshot
         networkStatus;
     snowdesktop::widget_runtime::WidgetNetworkTrafficDataSnapshot
         networkTraffic;
+    snowdesktop::widget_runtime::WidgetGpuDataSnapshot gpu;
 };
 
 /**

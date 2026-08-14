@@ -2122,6 +2122,36 @@ static void PushDataSnapshotEnvelope(lua_State* state,
             snapshot->networkTraffic.uploadBytesPerSecond));
         lua_setfield(state, -2, "uploadBytesPerSecond");
     }
+    else if (snapshot->topic == "system.gpu")
+    {
+        lua_createtable(state,
+            static_cast<int>(snapshot->gpu.adapters.size()), 0);
+        int adapterIndex = 1;
+        for (const auto& adapter : snapshot->gpu.adapters)
+        {
+            lua_createtable(state, 0, 7);
+            lua_pushlstring(state, adapter.id.data(), adapter.id.size());
+            lua_setfield(state, -2, "id");
+            lua_pushlstring(state, adapter.name.data(), adapter.name.size());
+            lua_setfield(state, -2, "name");
+            lua_pushnumber(state, adapter.usagePercent);
+            lua_setfield(state, -2, "usagePercent");
+            lua_pushinteger(state, static_cast<lua_Integer>(
+                adapter.dedicatedMemoryBytes));
+            lua_setfield(state, -2, "dedicatedMemoryBytes");
+            lua_pushinteger(state, static_cast<lua_Integer>(
+                adapter.dedicatedUsedBytes));
+            lua_setfield(state, -2, "dedicatedUsedBytes");
+            lua_pushinteger(state, static_cast<lua_Integer>(
+                adapter.sharedMemoryBytes));
+            lua_setfield(state, -2, "sharedMemoryBytes");
+            lua_pushinteger(state, static_cast<lua_Integer>(
+                adapter.sharedUsedBytes));
+            lua_setfield(state, -2, "sharedUsedBytes");
+            lua_rawseti(state, -2, adapterIndex++);
+        }
+        lua_setfield(state, -2, "adapters");
+    }
     lua_setfield(state, -2, "value");
 }
 
@@ -4790,6 +4820,10 @@ void WidgetEngine::InitializeWidgetDataBroker()
     (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
         "system.network.traffic", kSystemNetworkPermission,
         1000ms, 5000ms, 2000ms, false, false }, error);
+    error.clear();
+    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
+        "system.gpu", kSystemPerformancePermission,
+        1000ms, 5000ms, 2000ms, false, false }, error);
 
     if (previewOnly_)
         widgetSystemDataProvider_.reset();
@@ -7423,6 +7457,19 @@ WidgetEngine::RuntimeGetDataSnapshot(
             result.networkTraffic.uploadBytesPerSecond = 32768;
             result.networkTraffic.timestampMs = timestampNow;
         }
+        else if (result.topic == "system.gpu")
+        {
+            result.gpu.available = true;
+            result.gpu.warmingUp = false;
+            result.gpu.timestampMs = timestampNow;
+            result.gpu.adapters = {
+                { "adapter-1", "Preview GPU", 38.0,
+                    8ull * 1024 * 1024 * 1024,
+                    3ull * 1024 * 1024 * 1024,
+                    8ull * 1024 * 1024 * 1024,
+                    1ull * 1024 * 1024 * 1024 }
+            };
+        }
         return result;
     }
     if (!binding->options.permissionGranted)
@@ -7497,6 +7544,22 @@ WidgetEngine::RuntimeGetDataSnapshot(
         if (snapshot)
         {
             result.networkTraffic = *snapshot;
+            result.available = snapshot->available;
+            result.warmingUp = snapshot->warmingUp;
+            result.error = snapshot->error;
+            setFreshness(snapshot->timestampMs);
+        }
+        else
+        {
+            result.warmingUp = true;
+        }
+    }
+    else if (result.topic == "system.gpu")
+    {
+        const auto snapshot = widgetSystemDataProvider_->Gpu();
+        if (snapshot)
+        {
+            result.gpu = *snapshot;
             result.available = snapshot->available;
             result.warmingUp = snapshot->warmingUp;
             result.error = snapshot->error;

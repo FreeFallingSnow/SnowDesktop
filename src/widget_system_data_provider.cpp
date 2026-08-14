@@ -1,6 +1,10 @@
 #include "widget_system_data_provider.h"
 
 #include <windows.h>
+#include <dxgi1_6.h>
+#include <pdh.h>
+#include <pdhmsg.h>
+#include <wrl/client.h>
 #include <ws2def.h>
 #include <ws2ipdef.h>
 #include <iphlpapi.h>
@@ -10,6 +14,7 @@
 #include <winrt/Windows.Networking.Connectivity.h>
 
 #include <algorithm>
+#include <unordered_map>
 #include <utility>
 
 namespace snowdesktop::widget_runtime
@@ -21,6 +26,7 @@ constexpr std::string_view MemoryTopic = "system.memory";
 constexpr std::string_view PowerTopic = "system.power";
 constexpr std::string_view NetworkStatusTopic = "system.network.status";
 constexpr std::string_view NetworkTrafficTopic = "system.network.traffic";
+constexpr std::string_view GpuTopic = "system.gpu";
 
 std::uint64_t FileTimeValue(const FILETIME& value)
 {
@@ -103,6 +109,39 @@ std::string TransportName(std::uint32_t ianaType)
         return "other";
     }
 }
+
+std::string WideToUtf8(const wchar_t* value)
+{
+    if (!value || !*value) return {};
+    const int length = WideCharToMultiByte(
+        CP_UTF8, 0, value, -1, nullptr, 0, nullptr, nullptr);
+    if (length <= 1) return {};
+    std::string result(static_cast<std::size_t>(length), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, value, -1,
+        result.data(), length, nullptr, nullptr);
+    result.resize(static_cast<std::size_t>(length - 1));
+    return result;
+}
+
+std::uint64_t LuidKey(const LUID& luid)
+{
+    return (static_cast<std::uint64_t>(
+                static_cast<std::uint32_t>(luid.HighPart)) << 32) |
+        static_cast<std::uint32_t>(luid.LowPart);
+}
+
+std::optional<std::uint64_t> ParseGpuLuid(const wchar_t* instance)
+{
+    if (!instance) return std::nullopt;
+    const wchar_t* marker = wcsstr(instance, L"luid_0x");
+    if (!marker) return std::nullopt;
+    unsigned long high = 0;
+    unsigned long low = 0;
+    if (swscanf_s(marker, L"luid_0x%lx_0x%lx", &high, &low) != 2)
+        return std::nullopt;
+    return (static_cast<std::uint64_t>(high) << 32) |
+        static_cast<std::uint32_t>(low);
+}
 }
 
 WidgetSystemDataProvider::~WidgetSystemDataProvider()
@@ -115,7 +154,7 @@ bool WidgetSystemDataProvider::SupportsTopic(
 {
     return topic == CpuTopic || topic == MemoryTopic ||
         topic == PowerTopic || topic == NetworkStatusTopic ||
-        topic == NetworkTrafficTopic;
+        topic == NetworkTrafficTopic || topic == GpuTopic;
 }
 
 bool WidgetSystemDataProvider::StartTopic(
@@ -137,6 +176,11 @@ bool WidgetSystemDataProvider::StartTopic(
             if (topic == CpuTopic) resetCpuBaseline_.store(true);
             if (topic == NetworkTrafficTopic)
                 resetNetworkBaseline_.store(true);
+            if (topic == GpuTopic)
+            {
+                resetGpuBaseline_.store(true);
+                closeGpuRequested_.store(false);
+            }
         }
         else
         {
@@ -168,6 +212,8 @@ bool WidgetSystemDataProvider::StopTopic(std::string_view topic)
         if (topic == CpuTopic) resetCpuBaseline_.store(true);
         if (topic == NetworkTrafficTopic)
             resetNetworkBaseline_.store(true);
+        if (topic == GpuTopic)
+            closeGpuRequested_.store(true);
         ++configurationGeneration_;
         stopWorker = schedules_.empty();
     }
@@ -191,6 +237,8 @@ void WidgetSystemDataProvider::StopAll()
     }
     resetCpuBaseline_.store(true);
     resetNetworkBaseline_.store(true);
+    resetGpuBaseline_.store(true);
+    closeGpuRequested_.store(true);
     if (worker_.joinable())
     {
         worker_.request_stop();
@@ -203,6 +251,7 @@ void WidgetSystemDataProvider::StopAll()
     previousReceived_ = 0;
     previousSent_ = 0;
     previousNetworkSample_ = {};
+    CloseGpuQuery();
 }
 
 std::optional<WidgetCpuDataSnapshot>
@@ -240,6 +289,13 @@ WidgetSystemDataProvider::NetworkTraffic() const
     return networkTraffic_;
 }
 
+std::optional<WidgetGpuDataSnapshot>
+WidgetSystemDataProvider::Gpu() const
+{
+    std::scoped_lock lock(mutex_);
+    return gpu_;
+}
+
 std::vector<std::string>
 WidgetSystemDataProvider::DrainChangedTopics()
 {
@@ -254,6 +310,11 @@ WidgetSystemDataProvider::DrainChangedTopics()
 bool WidgetSystemDataProvider::Running() const noexcept
 {
     return worker_.joinable();
+}
+
+bool WidgetSystemDataProvider::GpuResourcesActive() const noexcept
+{
+    return gpuResourcesActive_.load();
 }
 
 std::size_t WidgetSystemDataProvider::ActiveTopicCount() const
@@ -275,6 +336,8 @@ void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
     }
     while (!stopToken.stop_requested())
     {
+        if (closeGpuRequested_.exchange(false))
+            CloseGpuQuery();
         std::vector<std::string> dueTopics;
         {
             std::unique_lock lock(mutex_);
@@ -323,8 +386,11 @@ void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
                 PublishNetworkStatus(SampleNetworkStatus());
             else if (topic == NetworkTrafficTopic)
                 PublishNetworkTraffic(SampleNetworkTraffic());
+            else if (topic == GpuTopic)
+                PublishGpu(SampleGpu());
         }
     }
+    CloseGpuQuery();
     if (apartmentInitialized)
         winrt::uninit_apartment();
 }
@@ -535,6 +601,176 @@ WidgetSystemDataProvider::SampleNetworkTraffic()
     return snapshot;
 }
 
+bool WidgetSystemDataProvider::InitializeGpuQuery()
+{
+    CloseGpuQuery();
+    HQUERY query = nullptr;
+    if (PdhOpenQueryW(nullptr, 0, &query) != ERROR_SUCCESS)
+        return false;
+    HCOUNTER counter = nullptr;
+    if (PdhAddEnglishCounterW(query,
+            L"\\GPU Engine(*)\\Utilization Percentage",
+            0, &counter) != ERROR_SUCCESS)
+    {
+        PdhCloseQuery(query);
+        return false;
+    }
+    if (PdhCollectQueryData(query) != ERROR_SUCCESS)
+    {
+        PdhRemoveCounter(counter);
+        PdhCloseQuery(query);
+        return false;
+    }
+    gpuQuery_ = query;
+    gpuUtilizationCounter_ = counter;
+    gpuResourcesActive_.store(true);
+    return true;
+}
+
+void WidgetSystemDataProvider::CloseGpuQuery()
+{
+    if (gpuUtilizationCounter_)
+    {
+        PdhRemoveCounter(
+            reinterpret_cast<HCOUNTER>(gpuUtilizationCounter_));
+        gpuUtilizationCounter_ = nullptr;
+    }
+    if (gpuQuery_)
+    {
+        PdhCloseQuery(reinterpret_cast<HQUERY>(gpuQuery_));
+        gpuQuery_ = nullptr;
+    }
+    gpuResourcesActive_.store(false);
+}
+
+WidgetGpuDataSnapshot WidgetSystemDataProvider::SampleGpu()
+{
+    struct AdapterEntry
+    {
+        std::uint64_t luid = 0;
+        WidgetGpuAdapterDataSnapshot snapshot;
+    };
+
+    WidgetGpuDataSnapshot snapshot;
+    snapshot.timestampMs = TimestampMilliseconds();
+    std::vector<AdapterEntry> adapters;
+    Microsoft::WRL::ComPtr<IDXGIFactory6> factory;
+    if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))))
+    {
+        snapshot.error = "GPU adapter enumeration failed";
+        snapshot.warmingUp = false;
+        return snapshot;
+    }
+    for (UINT index = 0; ; ++index)
+    {
+        Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter;
+        if (factory->EnumAdapters1(index, &adapter) == DXGI_ERROR_NOT_FOUND)
+            break;
+        if (!adapter) continue;
+        DXGI_ADAPTER_DESC1 description{};
+        if (FAILED(adapter->GetDesc1(&description)) ||
+            (description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0)
+            continue;
+
+        AdapterEntry entry;
+        entry.luid = LuidKey(description.AdapterLuid);
+        entry.snapshot.id = "adapter-" +
+            std::to_string(adapters.size() + 1);
+        entry.snapshot.name = WideToUtf8(description.Description);
+        entry.snapshot.dedicatedMemoryBytes =
+            description.DedicatedVideoMemory;
+        entry.snapshot.sharedMemoryBytes =
+            description.SharedSystemMemory;
+        Microsoft::WRL::ComPtr<IDXGIAdapter3> adapter3;
+        if (SUCCEEDED(adapter.As(&adapter3)))
+        {
+            DXGI_QUERY_VIDEO_MEMORY_INFO local{};
+            if (SUCCEEDED(adapter3->QueryVideoMemoryInfo(
+                    0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &local)))
+            {
+                entry.snapshot.dedicatedUsedBytes = local.CurrentUsage;
+            }
+            DXGI_QUERY_VIDEO_MEMORY_INFO nonLocal{};
+            if (SUCCEEDED(adapter3->QueryVideoMemoryInfo(
+                    0, DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL, &nonLocal)))
+            {
+                entry.snapshot.sharedUsedBytes = nonLocal.CurrentUsage;
+            }
+        }
+        adapters.push_back(std::move(entry));
+    }
+    if (adapters.empty())
+    {
+        snapshot.error = "notPresent";
+        snapshot.warmingUp = false;
+        return snapshot;
+    }
+    snapshot.available = true;
+
+    const bool initializeQuery = resetGpuBaseline_.exchange(false) ||
+        !gpuQuery_ || !gpuUtilizationCounter_;
+    if (initializeQuery)
+    {
+        if (!InitializeGpuQuery())
+        {
+            snapshot.error = "GPU utilization sampling unavailable";
+            snapshot.warmingUp = false;
+        }
+    }
+    else if (PdhCollectQueryData(
+                 reinterpret_cast<HQUERY>(gpuQuery_)) == ERROR_SUCCESS)
+    {
+        DWORD bufferBytes = 0;
+        DWORD itemCount = 0;
+        PDH_STATUS status = PdhGetFormattedCounterArrayW(
+            reinterpret_cast<HCOUNTER>(gpuUtilizationCounter_),
+            PDH_FMT_DOUBLE, &bufferBytes, &itemCount, nullptr);
+        if (status == PDH_MORE_DATA && bufferBytes > 0)
+        {
+            std::vector<std::byte> buffer(bufferBytes);
+            auto* items = reinterpret_cast<
+                PPDH_FMT_COUNTERVALUE_ITEM_W>(buffer.data());
+            status = PdhGetFormattedCounterArrayW(
+                reinterpret_cast<HCOUNTER>(gpuUtilizationCounter_),
+                PDH_FMT_DOUBLE, &bufferBytes, &itemCount, items);
+            if (status == ERROR_SUCCESS)
+            {
+                std::unordered_map<std::uint64_t, double> usageByLuid;
+                for (DWORD index = 0; index < itemCount; ++index)
+                {
+                    if (items[index].FmtValue.CStatus !=
+                            PDH_CSTATUS_VALID_DATA &&
+                        items[index].FmtValue.CStatus !=
+                            PDH_CSTATUS_NEW_DATA)
+                        continue;
+                    const auto luid = ParseGpuLuid(items[index].szName);
+                    if (!luid) continue;
+                    usageByLuid[*luid] +=
+                        items[index].FmtValue.doubleValue;
+                }
+                for (auto& entry : adapters)
+                {
+                    entry.snapshot.usagePercent = std::clamp(
+                        usageByLuid[entry.luid], 0.0, 100.0);
+                }
+                snapshot.warmingUp = false;
+            }
+        }
+        if (snapshot.warmingUp)
+            snapshot.error = "GPU utilization sampling unavailable";
+    }
+    else
+    {
+        snapshot.error = "GPU utilization sampling failed";
+        snapshot.warmingUp = false;
+    }
+
+    snapshot.adapters.reserve(adapters.size());
+    for (auto& entry : adapters)
+        snapshot.adapters.push_back(std::move(entry.snapshot));
+    return snapshot;
+}
+
 void WidgetSystemDataProvider::PublishCpu(
     WidgetCpuDataSnapshot snapshot)
 {
@@ -583,5 +819,15 @@ void WidgetSystemDataProvider::PublishNetworkTraffic(
     snapshot.revision = networkTraffic_ ? networkTraffic_->revision + 1 : 1;
     networkTraffic_ = std::move(snapshot);
     changedTopics_.insert(std::string(NetworkTrafficTopic));
+}
+
+void WidgetSystemDataProvider::PublishGpu(
+    WidgetGpuDataSnapshot snapshot)
+{
+    std::scoped_lock lock(mutex_);
+    if (!schedules_.contains(std::string(GpuTopic))) return;
+    snapshot.revision = gpu_ ? gpu_->revision + 1 : 1;
+    gpu_ = std::move(snapshot);
+    changedTopics_.insert(std::string(GpuTopic));
 }
 }

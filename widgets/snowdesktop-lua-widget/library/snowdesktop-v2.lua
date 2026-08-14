@@ -352,6 +352,18 @@ function schedule.cancel(id) end
 ---@field freeBytes integer
 ---@field usagePercent number
 
+---@class SnowGpuAdapterDataValue
+---@field id string Opaque adapter identifier.
+---@field name string
+---@field usagePercent number
+---@field dedicatedMemoryBytes integer
+---@field dedicatedUsedBytes integer
+---@field sharedMemoryBytes integer
+---@field sharedUsedBytes integer
+
+---@class SnowGpuDataValue
+---@field adapters SnowGpuAdapterDataValue[]
+
 ---@class SnowPowerDataValue
 ---@field acPower boolean
 ---@field charging boolean
@@ -392,6 +404,7 @@ data = {}
 ---Subscribe to a host-shared on-demand data topic.
 ---@overload fun(topic: 'system.cpu', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowCpuDataValue>
 ---@overload fun(topic: 'system.memory', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowMemoryDataValue>
+---@overload fun(topic: 'system.gpu', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowGpuDataValue>
 ---@overload fun(topic: 'system.power', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowPowerDataValue>
 ---@overload fun(topic: 'system.network.status', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowNetworkStatusDataValue>
 ---@overload fun(topic: 'system.network.traffic', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowNetworkTrafficDataValue>

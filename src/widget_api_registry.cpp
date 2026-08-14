@@ -20,9 +20,10 @@ namespace snowdesktop::widget_api
 namespace
 {
 constexpr std::uint32_t kCurrentApiVersion = 2;
-constexpr std::array<std::string_view, 21> kHostFeatures = {
+constexpr std::array<std::string_view, 22> kHostFeatures = {
     "data.subscribe",
     "data.system.cpu",
+    "data.system.gpu",
     "data.system.memory",
     "data.system.network.status",
     "data.system.network.traffic",

@@ -94,7 +94,7 @@ ID 为 1–128 字节，每个实例最多 32 个计划；周期请求范围是 
 
 ### `data`
 
-当前公开五个按需系统数据源：`system.cpu`、`system.memory`、`system.power`、
+当前公开六个按需系统数据源：`system.cpu`、`system.memory`、`system.gpu`、`system.power`、
 `system.network.status` 和 `system.network.traffic`。在 `setup` 或模块
 入口创建订阅，不要在每次 `render` 中重复订阅：
 
@@ -132,6 +132,12 @@ end
 `available=false,error="notPresent"`。`handle:unsubscribe()` 主动释放；卸载、
 热重载和关闭也会自动释放。
 
+GPU value 的 `adapters` 是数组；每项包含不透明 `id`、显示 `name`、
+`usagePercent`、`dedicatedMemoryBytes/dedicatedUsedBytes` 和
+`sharedMemoryBytes/sharedUsedBytes`。宿主不会只返回第一块 GPU；首次 PDH 差分
+样本为 `warmingUp=true`。最后一个 GPU 订阅释放后会关闭 PDH query，不会因 CPU、
+内存或网络仍有订阅而继续采样 GPU。
+
 网络 status value 包含 `connectivity`（`none/local/internet`）、`transport`
 （`none/ethernet/wifi/cellular/other`）、`costKnown/metered/roaming/overLimit`。
 traffic value 包含 `connected/receivedBytes/sentBytes/downloadBytesPerSecond/
@@ -139,12 +145,13 @@ uploadBytesPerSecond`，首次差分样本为 `warmingUp=true`。状态和流量
 topic；只订阅状态不会启动流量差分采样。两者都不会返回 IP、MAC、SSID、BSSID
 或主机名。
 
-CPU 和内存受 `system.performance.read` 保护，电源受 `system.power.read` 保护，
+CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.power.read` 保护，
 两个网络 topic 受 `system.network.read` 保护。
 需要无权限降级的组件应把对应权限声明在 `optionalPermissions`，并处理
 `available=false,error="permissionDenied"`；预览返回稳定模拟值且不会读取本机
 状态。对应 feature ID 是 `data.subscribe`、`data.system.cpu`、
-`data.system.memory`、`data.system.power`、`data.system.network.status` 和
+`data.system.memory`、`data.system.gpu`、`data.system.power`、
+`data.system.network.status` 和
 `data.system.network.traffic`。
 
 ### `draw`

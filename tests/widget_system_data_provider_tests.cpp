@@ -34,7 +34,7 @@ bool WaitFor(Predicate predicate)
 void TestTopicLifecycleAndSampling()
 {
     WidgetSystemDataProvider provider;
-    Check(!provider.StartTopic("system.gpu", 20ms) &&
+    Check(!provider.StartTopic("system.storage.io", 20ms) &&
             !provider.StartTopic("system.memory", 1ms),
         "unsupported topics and invalid intervals must be rejected");
     Check(provider.StartTopic("system.memory", 20ms) &&
@@ -103,6 +103,23 @@ void TestTopicLifecycleAndSampling()
             provider.StopTopic("system.network.traffic") &&
             provider.ActiveTopicCount() == 2,
         "network topics must stop independently without stopping CPU or memory");
+    Check(provider.StartTopic("system.gpu", 20ms) &&
+            provider.ActiveTopicCount() == 3,
+        "GPU sampling must start as its own topic");
+    Check(WaitFor([&] {
+            const auto snapshot = provider.Gpu();
+            return snapshot && snapshot->revision >= 2;
+        }),
+        "GPU sampling must publish warming and measured revisions");
+    const auto gpu = provider.Gpu();
+    Check(gpu && gpu->timestampMs > 0 &&
+            (gpu->available || !gpu->error.empty()) &&
+            (!gpu->available || !gpu->adapters.empty()),
+        "GPU snapshots must expose all discovered adapters or a stable error");
+    Check(provider.StopTopic("system.gpu") &&
+            provider.ActiveTopicCount() == 2 &&
+            WaitFor([&] { return !provider.GpuResourcesActive(); }),
+        "the final GPU subscription must close PDH resources while the worker remains active");
 
     Check(provider.StopTopic("system.memory") && provider.Running() &&
             provider.ActiveTopicCount() == 1,
