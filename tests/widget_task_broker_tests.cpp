@@ -55,6 +55,7 @@ void TestRegistrationAndStartGuards()
     Check(!broker.Start("widget", "media.toggle", options),
         "gesture-required tasks must reject background starts");
     options.trustedGesture = true;
+    options.arguments.emplace("query", "snow");
     const auto started = broker.Start("widget", "media.toggle", options);
     Check(started && broker.ActiveCount() == 1,
         "an authorized trusted gesture must start one task");
@@ -62,8 +63,9 @@ void TestRegistrationAndStartGuards()
     Check(actions.size() == 1 &&
             actions[0].type == TaskBrokerActionType::Start &&
             actions[0].id == started.id &&
-            actions[0].ownerToken == 101 && !actions[0].preview,
-        "task start actions must preserve identity and preview isolation");
+            actions[0].ownerToken == 101 && !actions[0].preview &&
+            actions[0].arguments.at("query") == "snow",
+        "task start actions must preserve identity, arguments, and preview isolation");
     Check(!broker.Start("widget", "media.toggle", options),
         "descriptor concurrency must reject duplicate active actions");
     Check(broker.Complete(started.id, true) &&

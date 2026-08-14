@@ -38,6 +38,7 @@ struct TaskStartOptions
     bool permissionGranted = false;
     bool trustedGesture = false;
     bool preview = false;
+    std::unordered_map<std::string, std::string> arguments;
 };
 
 struct TaskStartResult
@@ -61,6 +62,7 @@ struct TaskBrokerAction
     std::string instanceId;
     std::string name;
     bool preview = false;
+    std::unordered_map<std::string, std::string> arguments;
 };
 
 struct TaskCompletion
@@ -116,6 +118,7 @@ private:
         std::string name;
         bool preview = false;
         bool cancelRequested = false;
+        std::unordered_map<std::string, std::string> arguments;
         TaskBrokerCancelReason cancelReason =
             TaskBrokerCancelReason::Requested;
     };

@@ -68,11 +68,11 @@ TaskStartResult WidgetTaskBroker::Start(
     if (id == 0) id = ++nextId_;
     Task task{ id, options.ownerToken, std::move(instanceId),
         std::string(name),
-        options.preview };
+        options.preview, false, std::move(options.arguments) };
     actions_.push_back({ TaskBrokerActionType::Start,
         TaskBrokerCancelReason::Requested, id, task.ownerToken,
         task.instanceId,
-        task.name, task.preview });
+        task.name, task.preview, task.arguments });
     tasks_.emplace(id, std::move(task));
     return { id, {} };
 }
@@ -88,7 +88,7 @@ bool WidgetTaskBroker::Cancel(
     actions_.push_back({ TaskBrokerActionType::Cancel, reason, id,
         found->second.ownerToken, found->second.instanceId,
         found->second.name,
-        found->second.preview });
+        found->second.preview, found->second.arguments });
     return true;
 }
 
