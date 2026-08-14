@@ -984,6 +984,8 @@ private:
         bool circuitOpen = false);
     void InvokeSimpleCallback(LuaWidget& widget, const char* callbackName);
     bool InitializeWidgetLifecycle(LuaWidget& widget);
+    bool InvokeLifecycleEvent(LuaWidget& widget, const char* kind,
+        const std::function<void(lua_State*)>& pushFields);
     void DisposeWidgetLifecycle(LuaWidget& widget, const char* reason);
     void EnsureSystemSnapshotServiceStarted();
     void RescheduleNamedTimer(LuaWidget& widget);

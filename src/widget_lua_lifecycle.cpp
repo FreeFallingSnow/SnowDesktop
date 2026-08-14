@@ -107,9 +107,62 @@ bool WidgetLuaLifecycle::Setup(lua_State* state, int definitionRef,
 bool WidgetLuaLifecycle::PushRenderArguments(lua_State* state,
     PushContext pushContext) const
 {
-    if (!state || !pushContext || !setupCompleted_) return false;
+    if (!state || !pushContext || !setupCompleted_ || disposeInvoked_)
+        return false;
     pushContext(state);
     PushModel(state, modelRef_);
+    return true;
+}
+
+bool WidgetLuaLifecycle::Event(lua_State* state, int definitionRef,
+    PushContext pushContext, int eventIndex, bool& invoked,
+    std::string& error) const
+{
+    invoked = false;
+    error.clear();
+    if (!state || !pushContext || !setupCompleted_ || disposeInvoked_ ||
+        definitionRef == LUA_NOREF || definitionRef == LUA_REFNIL ||
+        !lua_istable(state, eventIndex))
+    {
+        error = "invalid widget lifecycle event context";
+        return false;
+    }
+
+    eventIndex = lua_absindex(state, eventIndex);
+    const int entryTop = lua_gettop(state);
+    lua_rawgeti(state, LUA_REGISTRYINDEX, definitionRef);
+    if (!lua_istable(state, -1))
+    {
+        lua_settop(state, entryTop);
+        error = "widget lifecycle definition is unavailable";
+        return false;
+    }
+    lua_getfield(state, -1, "event");
+    if (lua_isnil(state, -1))
+    {
+        lua_settop(state, entryTop);
+        return true;
+    }
+    if (!lua_isfunction(state, -1))
+    {
+        lua_settop(state, entryTop);
+        error = "widget lifecycle event must be a function";
+        return false;
+    }
+
+    pushContext(state);
+    PushModel(state, modelRef_);
+    lua_pushvalue(state, eventIndex);
+    invoked = true;
+    if (snowdesktop::lua_runtime::ProtectedCall(
+            state, 3, 0, LifecycleInstructionBudget,
+            LifecycleTimeBudget) != LUA_OK)
+    {
+        error = PopLuaError(state, "widget event failed");
+        lua_settop(state, entryTop);
+        return false;
+    }
+    lua_settop(state, entryTop);
     return true;
 }
 

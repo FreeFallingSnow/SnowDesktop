@@ -108,6 +108,7 @@
 ---@field name? string
 ---@field render fun(context: SnowWidgetContext, model: any) Exactly one of render or view is required in API v2; view is not available yet.
 ---@field setup? fun(context: SnowWidgetContext): any Runs once and returns the instance model passed to render and dispose.
+---@field event? fun(context: SnowWidgetContext, model: any, event: SnowWidgetEvent) Receives host surface events; declarative node events are not available yet.
 ---@field dispose? fun(context: SnowWidgetContext, model: any, reason: 'unload'|'hotReload'|'shutdown'|string) Runs at most once before the instance VM is released.
 ---@field useCustomStyle? boolean
 ---@field followPersonalizationDefault? boolean
@@ -120,6 +121,22 @@
 ---@field gradientEndA? number
 ---@field glassEnabled? boolean
 ---@field settings? SnowWidgetSettings
+
+---@class SnowWidgetEvent
+---@field kind 'visibility'|'resize'|'pointer'|'timer'|'action'|'selection'|'environment'|'panel'
+---@field action? 'click'|'doubleClick'|'pointerDown'|'pointerMove'|'pointerUp'|'wheel'|'opened'|'closed'|string
+---@field id? string
+---@field name? string
+---@field visible? boolean
+---@field selected? boolean
+---@field columns? integer
+---@field rows? integer
+---@field x? integer
+---@field y? integer
+---@field button? integer
+---@field delta? integer
+---@field surface? 'desktop'|'panel'
+---@field reason? string
 
 ---@class SnowApiInfo
 ---@field current integer

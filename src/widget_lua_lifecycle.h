@@ -24,6 +24,9 @@ public:
         PushContext pushContext, std::string& error);
     bool PushRenderArguments(lua_State* state,
         PushContext pushContext) const;
+    bool Event(lua_State* state, int definitionRef,
+        PushContext pushContext, int eventIndex,
+        bool& invoked, std::string& error) const;
     bool Dispose(lua_State* state, int definitionRef,
         PushContext pushContext, const char* reason,
         std::string& error);

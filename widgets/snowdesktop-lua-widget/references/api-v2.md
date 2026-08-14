@@ -26,29 +26,42 @@ local function dispose(context, model, reason)
     -- Optional. Host resources are released automatically after this returns.
 end
 
+local function event(context, model, value)
+    if value.kind == "timer" and value.name == "refresh" then
+        state.set("lastRefresh", time.monotonic())
+    end
+end
+
 return widget.define({
     name = l10n.tr("lua_widget.example.name"),
     setup = setup,
     render = render,
+    event = event,
     dispose = dispose,
 })
 ```
 
 `setup(context)` 最多执行一次，返回值作为实例 model 传给每次 `render(context,
-model)` 和最终的 `dispose(context, model, reason)`。没有 `setup` 时 model 为
+model)`、`event(context, model, event)` 和最终的 `dispose(context, model,
+reason)`。没有 `setup` 时 model 为
 `nil`；没有 `dispose` 时宿主仍会自动回收实例资源。`reason` 当前可能是
 `unload`、`hotReload` 或 `shutdown`。setup 失败时新 VM 不会替换热重载前的可用
 VM。
 
-`view`、`event` 和 `menu` 仍是后续声明式视图与事件契约预留项，当前宿主会拒绝
-使用。不要把 API v1 的全局回调迁入 v2 描述符。
+当前 event 只覆盖宿主 surface 级事件：`visibility`、`resize`、`pointer`、
+`timer`、`action`、`selection`、`environment` 和 `panel`。指针事件包含
+`action`、`surface`、`x/y`、`button` 和 `delta`；计时器包含 `name`。声明式
+元素的 hover、pressed、focus、元素 click 和独立右键菜单尚未开放。
+
+`view` 和 `menu` 仍是后续声明式视图与元素菜单契约预留项，当前宿主会拒绝使用。
+不要把 API v1 的全局回调迁入 v2 描述符。
 
 ## 已实现能力
 
 ### `widget`
 
 - `widget.define(definition)`：校验并返回 v2 描述符。当前必需 `render`，可选
-  `setup` 和 `dispose`。
+  `setup`、`event` 和 `dispose`。
 - `widget.apiInfo()`：返回当前 API 版本、支持版本和 feature ID。
 - `widget.hasFeature(id)`：探测 feature。
 - `widget.context()`：返回逻辑/像素尺寸、DPI、网格跨度、显示器范围、主题、
@@ -60,8 +73,8 @@ VM。
 - `widget.openSettings()`、`widget.openPanel(options)`、`widget.closePanel()`。
 - `widget.editText(...)`：旧宿主编辑器兼容调用，不建议新 v2 组件依赖。
 
-定时器仍会触发宿主已有的 `onTimer` 兼容路径；统一的 v2 `event` 分发尚未开放，
-新模板暂不依赖定时器回调。
+v2 定时器通过 `event.kind == "timer"` 分发；API v1 继续使用 `onTimer` 兼容
+路径。新模板暂不创建后台计时器。
 
 ### `draw`
 

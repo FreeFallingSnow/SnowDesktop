@@ -4634,6 +4634,45 @@ void WidgetEngine::ActivateWidgetState(const std::wstring& widgetId)
 
 void WidgetEngine::InvokeSimpleCallback(LuaWidget& widget, const char* callbackName)
 {
+    if (widget.manifest.apiVersion >= 2)
+    {
+        if (std::strcmp(callbackName, "onVisible") == 0 ||
+            std::strcmp(callbackName, "onHidden") == 0)
+        {
+            const bool visible = std::strcmp(
+                callbackName, "onVisible") == 0;
+            (void)InvokeLifecycleEvent(widget, "visibility",
+                [visible](lua_State* state) {
+                    lua_pushboolean(state, visible ? 1 : 0);
+                    lua_setfield(state, -2, "visible");
+                });
+        }
+        else if (std::strcmp(callbackName, "onOpen") == 0)
+        {
+            (void)InvokeLifecycleEvent(widget, "action",
+                [](lua_State* state) {
+                    lua_pushliteral(state, "open");
+                    lua_setfield(state, -2, "id");
+                });
+        }
+        else if (std::strcmp(callbackName, "onSelected") == 0)
+        {
+            (void)InvokeLifecycleEvent(widget, "selection",
+                [](lua_State* state) {
+                    lua_pushboolean(state, 1);
+                    lua_setfield(state, -2, "selected");
+                });
+        }
+        else if (std::strcmp(callbackName, "onLanguageChanged") == 0)
+        {
+            (void)InvokeLifecycleEvent(widget, "environment",
+                [](lua_State* state) {
+                    lua_pushliteral(state, "language");
+                    lua_setfield(state, -2, "reason");
+                });
+        }
+        return;
+    }
     lua_State* state = widget.state;
     if (!state) return;
     const std::wstring widgetId = widget.widgetId;
@@ -4694,6 +4733,39 @@ bool WidgetEngine::InitializeWidgetLifecycle(LuaWidget& widget)
         widget.quota && (widget.quota->memoryExceeded ||
             widget.quota->executionExceeded));
     return false;
+}
+
+bool WidgetEngine::InvokeLifecycleEvent(LuaWidget& widget,
+    const char* kind,
+    const std::function<void(lua_State*)>& pushFields)
+{
+    if (widget.manifest.apiVersion < 2 || !widget.state ||
+        !kind || !*kind)
+        return false;
+    PreviewExecutionScope previewScope(
+        widget.preview ? &widget.previewStorage : nullptr);
+    WidgetExecutionContextGuard contextGuard(d2dState_, widget.widgetId);
+    snowdesktop::lua_runtime::StackGuard stackGuard(widget.state);
+    SetWidgetRectContext(d2dState_, widget.lastBounds);
+    lua_createtable(widget.state, 0, 10);
+    lua_pushstring(widget.state, kind);
+    lua_setfield(widget.state, -2, "kind");
+    if (pushFields) pushFields(widget.state);
+
+    bool invoked = false;
+    std::string error;
+    const auto pushContext = +[](lua_State* lifecycleState) {
+        (void)lua_WidgetContext(lifecycleState);
+    };
+    const bool succeeded = widget.lifecycle.Event(
+        widget.state, widget.ref, pushContext, -1, invoked, error);
+    if (!succeeded && !error.empty())
+        RuntimeRecordError(widget.widgetId, error);
+    const bool stateChanged = snowdesktop::widget_api::
+        ConsumeTransientStateDirty(widget.state);
+    if ((succeeded && invoked) || stateChanged)
+        RuntimeInvalidateHost(widget.widgetId);
+    return succeeded && invoked;
 }
 
 void WidgetEngine::DisposeWidgetLifecycle(
@@ -5837,25 +5909,42 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     {
         found->lastColumns = std::max(1, columns);
         found->lastRows = std::max(1, rows);
-        lua_rawgeti(state, LUA_REGISTRYINDEX, found->ref);
-        if (lua_istable(state, -1))
+        if (found->manifest.apiVersion >= 2)
         {
-            lua_getfield(state, -1, "onSizeChanged");
-            if (lua_isfunction(state, -1))
-            {
-                lua_pushinteger(state, found->lastColumns);
-                lua_pushinteger(state, found->lastRows);
-                if (snowdesktop::lua_runtime::ProtectedCall(state, 2, 0) != LUA_OK)
-                {
-                    const char* error = lua_tostring(state, -1);
-                    RuntimeRecordError(widgetId, error ? error : "(onSizeChanged error)");
-                    lua_pop(state, 1);
-                }
-            }
-            else
-                lua_pop(state, 1);
+            const int currentColumns = found->lastColumns;
+            const int currentRows = found->lastRows;
+            (void)InvokeLifecycleEvent(*found, "resize",
+                [currentColumns, currentRows](lua_State* eventState) {
+                    lua_pushinteger(eventState, currentColumns);
+                    lua_setfield(eventState, -2, "columns");
+                    lua_pushinteger(eventState, currentRows);
+                    lua_setfield(eventState, -2, "rows");
+                });
         }
-        lua_pop(state, 1);
+        else
+        {
+            lua_rawgeti(state, LUA_REGISTRYINDEX, found->ref);
+            if (lua_istable(state, -1))
+            {
+                lua_getfield(state, -1, "onSizeChanged");
+                if (lua_isfunction(state, -1))
+                {
+                    lua_pushinteger(state, found->lastColumns);
+                    lua_pushinteger(state, found->lastRows);
+                    if (snowdesktop::lua_runtime::ProtectedCall(
+                            state, 2, 0) != LUA_OK)
+                    {
+                        const char* error = lua_tostring(state, -1);
+                        RuntimeRecordError(widgetId,
+                            error ? error : "(onSizeChanged error)");
+                        lua_pop(state, 1);
+                    }
+                }
+                else
+                    lua_pop(state, 1);
+            }
+            lua_pop(state, 1);
+        }
     }
     found->lastRenderTime = std::chrono::steady_clock::now();
     found->hostControls.clear();
@@ -6143,6 +6232,16 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
 
     if (timerId == widget.refreshTimerId)
     {
+        if (widget.manifest.apiVersion >= 2)
+        {
+            (void)InvokeLifecycleEvent(widget, "timer",
+                [](lua_State* eventState) {
+                    lua_pushliteral(eventState, "refresh");
+                    lua_setfield(eventState, -2, "name");
+                });
+            RuntimeInvalidateHost(activeWidgetId);
+            return;
+        }
         lua_rawgeti(state, LUA_REGISTRYINDEX, widget.ref);
         if (lua_istable(state, -1))
         {
@@ -6182,6 +6281,17 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
     {
         if (!widget.namedTimers.ConsumeDue(name, now))
             continue;
+
+        if (widget.manifest.apiVersion >= 2)
+        {
+            invoked = InvokeLifecycleEvent(widget, "timer",
+                [&name](lua_State* eventState) {
+                    lua_pushlstring(eventState,
+                        name.data(), name.size());
+                    lua_setfield(eventState, -2, "name");
+                }) || invoked;
+            continue;
+        }
 
         lua_rawgeti(state, LUA_REGISTRYINDEX, widget.ref);
         if (lua_istable(state, -1))
@@ -6247,6 +6357,55 @@ void WidgetEngine::InvokeMouseEvent(const std::wstring& widgetId, const char* ca
     auto& w = widgets_[idx];
     lua_State* state = w.state;
     if (!state) return;
+    if (w.manifest.apiVersion >= 2)
+    {
+        const bool panel = std::strstr(callbackName, "Panel") != nullptr;
+        const char* kind = "pointer";
+        const char* action = callbackName;
+        if (std::strcmp(callbackName, "onClick") == 0 ||
+            std::strcmp(callbackName, "onPanelClick") == 0)
+            action = "click";
+        else if (std::strcmp(callbackName, "onDoubleClick") == 0)
+            action = "doubleClick";
+        else if (std::strcmp(callbackName, "onMouseDown") == 0 ||
+            std::strcmp(callbackName, "onPanelMouseDown") == 0)
+            action = "pointerDown";
+        else if (std::strcmp(callbackName, "onMouseMove") == 0 ||
+            std::strcmp(callbackName, "onPanelMouseMove") == 0)
+            action = "pointerMove";
+        else if (std::strcmp(callbackName, "onMouseUp") == 0 ||
+            std::strcmp(callbackName, "onPanelMouseUp") == 0)
+            action = "pointerUp";
+        else if (std::strcmp(callbackName, "onWheel") == 0 ||
+            std::strcmp(callbackName, "onPanelWheel") == 0)
+            action = "wheel";
+        else if (std::strcmp(callbackName, "onPanelOpened") == 0)
+        {
+            kind = "panel";
+            action = "opened";
+        }
+        else if (std::strcmp(callbackName, "onPanelClosed") == 0)
+        {
+            kind = "panel";
+            action = "closed";
+        }
+        (void)InvokeLifecycleEvent(w, kind,
+            [action, panel, x, y, button, delta](lua_State* eventState) {
+                lua_pushstring(eventState, action);
+                lua_setfield(eventState, -2, "action");
+                lua_pushstring(eventState, panel ? "panel" : "desktop");
+                lua_setfield(eventState, -2, "surface");
+                lua_pushinteger(eventState, x);
+                lua_setfield(eventState, -2, "x");
+                lua_pushinteger(eventState, y);
+                lua_setfield(eventState, -2, "y");
+                lua_pushinteger(eventState, button);
+                lua_setfield(eventState, -2, "button");
+                lua_pushinteger(eventState, delta);
+                lua_setfield(eventState, -2, "delta");
+            });
+        return;
+    }
     const int widgetRef = w.ref;
     const RECT bounds = w.lastBounds;
     WidgetExecutionContextGuard contextGuard(d2dState_, widgetId);

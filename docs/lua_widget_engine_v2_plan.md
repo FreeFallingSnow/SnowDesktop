@@ -272,8 +272,10 @@ return widget.define({
 当前过渡实现已经接通即时绘制组件的 `setup(context) -> model -> render(context,
 model) -> dispose(context, model, reason)` 路径，并将其作为 `lifecycle.model`
 feature 发布。setup 失败不会替换热重载前的可用 VM，dispose 在卸载、热重载和
-宿主关闭时至多执行一次。`event`、`menu` 和声明式 `view` 尚未接通，继续在
-`widget.define` 阶段拒绝。
+宿主关闭时至多执行一次。surface 级 `event` 已接通可见性、尺寸、指针、计时器、
+动作、选择、环境与面板事件，并作为 `lifecycle.event` feature 发布；它不代表
+声明式元素事件。`menu` 和声明式 `view` 尚未接通，继续在 `widget.define` 阶段
+拒绝。
 
 ## 7. 生命周期状态机
 

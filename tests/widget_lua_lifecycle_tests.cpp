@@ -14,6 +14,7 @@ using snowdesktop::widget_runtime::WidgetLuaLifecycle;
 
 int setupCalls = 0;
 int disposeCalls = 0;
+int eventCalls = 0;
 
 void Check(bool condition, const char* message)
 {
@@ -61,15 +62,34 @@ int DisposeModel(lua_State* state)
     return 0;
 }
 
+int HandleEvent(lua_State* state)
+{
+    lua_getfield(state, 1, "token");
+    const bool contextMatches = lua_tointeger(state, -1) == 42;
+    lua_pop(state, 1);
+    lua_getfield(state, 2, "status");
+    const bool modelMatches = lua_isstring(state, -1) &&
+        std::string(lua_tostring(state, -1)) == "ready";
+    lua_pop(state, 1);
+    lua_getfield(state, 3, "kind");
+    const bool eventMatches = lua_isstring(state, -1) &&
+        std::string(lua_tostring(state, -1)) == "timer";
+    lua_pop(state, 1);
+    Check(contextMatches && modelMatches && eventMatches,
+        "event must receive context, the retained model, and payload");
+    ++eventCalls;
+    return 0;
+}
+
 int SetupFailure(lua_State* state)
 {
     return luaL_error(state, "setup exploded");
 }
 
 int StoreDefinition(lua_State* state, lua_CFunction setup,
-    lua_CFunction dispose)
+    lua_CFunction dispose, lua_CFunction event = nullptr)
 {
-    lua_createtable(state, 0, 2);
+    lua_createtable(state, 0, 3);
     if (setup)
     {
         lua_pushcfunction(state, setup);
@@ -80,6 +100,11 @@ int StoreDefinition(lua_State* state, lua_CFunction setup,
         lua_pushcfunction(state, dispose);
         lua_setfield(state, -2, "dispose");
     }
+    if (event)
+    {
+        lua_pushcfunction(state, event);
+        lua_setfield(state, -2, "event");
+    }
     return luaL_ref(state, LUA_REGISTRYINDEX);
 }
 
@@ -88,7 +113,7 @@ void TestSetupModelRenderAndDispose()
     lua_State* state = luaL_newstate();
     Check(state != nullptr, "Lua state must be created");
     const int definition = StoreDefinition(
-        state, SetupModel, DisposeModel);
+        state, SetupModel, DisposeModel, HandleEvent);
     WidgetLuaLifecycle lifecycle;
     std::string error;
     Check(lifecycle.Setup(state, definition, PushContext, error) &&
@@ -107,6 +132,15 @@ void TestSetupModelRenderAndDispose()
     Check(std::string(lua_tostring(state, -1)) == "ready",
         "render must receive the retained setup model");
     lua_settop(state, entryTop);
+
+    lua_createtable(state, 0, 1);
+    lua_pushliteral(state, "timer");
+    lua_setfield(state, -2, "kind");
+    bool eventInvoked = false;
+    Check(lifecycle.Event(state, definition, PushContext, -1,
+            eventInvoked, error) && eventInvoked && eventCalls == 1,
+        "event must execute with the retained setup model");
+    lua_pop(state, 1);
 
     Check(lifecycle.Dispose(state, definition, PushContext,
             "unload", error) && disposeCalls == 1 &&
@@ -135,6 +169,12 @@ void TestNoSetupAndSetupFailure()
             lua_isnil(state, -1),
         "render must receive nil when setup is absent");
     lua_settop(state, entryTop);
+    lua_createtable(state, 0, 0);
+    bool eventInvoked = true;
+    Check(empty.Event(state, definition, PushContext, -1,
+            eventInvoked, error) && !eventInvoked,
+        "a missing optional event callback must be accepted");
+    lua_pop(state, 1);
     Check(empty.Dispose(state, definition, PushContext,
             "unload", error),
         "a missing optional dispose callback must be accepted");

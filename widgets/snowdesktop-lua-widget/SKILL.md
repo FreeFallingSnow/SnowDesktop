@@ -75,9 +75,11 @@ return widget.define({
 
 Do not define API v1 globals such as top-level `render`, `onClick`,
 `getContextMenu`, `imguiRender`, or `onHttpResponse`. The v2 descriptor reserves
-`view/event/menu` until those contracts are implemented. The current host
+`view/menu` until those contracts are implemented. The current host
 supports optional `setup(context)` and `dispose(context, model, reason)`;
-`setup` runs once and its return value is passed to `render` and `dispose`.
+`setup` runs once and its return value is passed to `render`, `event`, and
+`dispose`. Optional `event(context, model, event)` receives host surface events;
+it does not yet represent individual declarative elements.
 
 ## Manifest rules
 

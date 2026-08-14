@@ -211,6 +211,7 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature("l10n.format") &&
             snowdesktop::widget_api::SupportsFeature("module.package") &&
             snowdesktop::widget_api::SupportsFeature("resource.package") &&
+            snowdesktop::widget_api::SupportsFeature("lifecycle.event") &&
             snowdesktop::widget_api::SupportsFeature("lifecycle.model") &&
             snowdesktop::widget_api::SupportsFeature("state.transient") &&
             snowdesktop::widget_api::SupportsFeature("system.uptime") &&
@@ -273,8 +274,20 @@ void TestV2Contract()
     lua_setfield(state, -2, "render");
     lua_pushcfunction(state, Noop);
     lua_setfield(state, -2, "event");
+    Check(lua_pcall(state, 1, 1, 0) == LUA_OK &&
+            snowdesktop::widget_api::IsDefinedWidget(state, -1),
+        "widget.define must accept event callbacks when dispatch exists");
+    lua_pop(state, 2);
+
+    lua_getglobal(state, "widget");
+    lua_getfield(state, -1, "define");
+    lua_newtable(state);
+    lua_pushcfunction(state, Noop);
+    lua_setfield(state, -2, "render");
+    lua_pushcfunction(state, Noop);
+    lua_setfield(state, -2, "menu");
     Check(lua_pcall(state, 1, 1, 0) != LUA_OK,
-        "widget.define must keep event callbacks gated until dispatch exists");
+        "widget.define must keep menu callbacks gated until dispatch exists");
     lua_pop(state, 2);
 
     constexpr FunctionDescriptor systemFunctions[] = {
