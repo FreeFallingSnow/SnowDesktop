@@ -2945,6 +2945,133 @@ static int lua_SystemUptime(lua_State* L)
     return 1;
 }
 
+static char kModuleLoadingMarker = 0;
+
+static void ClearModuleCacheEntry(lua_State* L, int cache,
+    const std::string& key)
+{
+    lua_pushnil(L);
+    lua_setfield(L, cache, key.c_str());
+}
+
+static int lua_ModuleRequire(lua_State* L)
+{
+    size_t pathLength = 0;
+    const char* pathRaw = luaL_checklstring(L, 1, &pathLength);
+    if (pathLength == 0 || pathLength > 512)
+        return luaL_error(L, "module.require: path length is invalid");
+
+    lua_getfield(L, LUA_REGISTRYINDEX, "__widget_loading");
+    const bool loading = lua_toboolean(L, -1) != 0;
+    lua_pop(L, 1);
+    if (!loading)
+    {
+        return luaL_error(L,
+            "module.require: modules can only be loaded while the entry script is loading");
+    }
+
+    const std::wstring relativePath = Utf8ToWideLocal(
+        std::string(pathRaw, pathLength));
+    if (relativePath.empty() ||
+        _wcsicmp(std::filesystem::path(relativePath).extension().c_str(),
+            L".lua") != 0)
+        return luaL_error(L, "module.require: path must name a .lua file");
+    auto* state = GetD2D(L);
+    if (!state || !state->engine)
+        return luaL_error(L, "module.require: host context is unavailable");
+    const auto fullPath = state->engine->RuntimeResolvePackageAsset(
+        BoundWidgetId(L), relativePath);
+    if (!fullPath)
+        return luaL_error(L, "module.require: path is outside the component package");
+
+    std::error_code fileError;
+    const auto fileSize = std::filesystem::file_size(*fullPath, fileError);
+    if (fileError || fileSize > snowdesktop::widget::kMaxEntryLuaBytes)
+    {
+        return luaL_error(L,
+            "module.require: module is missing or exceeds the 1 MiB limit");
+    }
+    const std::string cacheKey = WidgetWideToUtf8(*fullPath);
+    lua_getfield(L, LUA_REGISTRYINDEX, "__widget_module_cache");
+    if (!lua_istable(L, -1))
+    {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushvalue(L, -1);
+        lua_setfield(L, LUA_REGISTRYINDEX, "__widget_module_cache");
+    }
+    const int cache = lua_absindex(L, -1);
+    lua_getfield(L, cache, cacheKey.c_str());
+    if (lua_touserdata(L, -1) == &kModuleLoadingMarker)
+        return luaL_error(L, "module.require: circular dependency detected");
+    if (!lua_isnil(L, -1))
+    {
+        lua_remove(L, cache);
+        return 1;
+    }
+    lua_pop(L, 1);
+
+    lua_getfield(L, LUA_REGISTRYINDEX, "__widget_module_count");
+    const lua_Integer moduleCount = lua_tointeger(L, -1);
+    lua_pop(L, 1);
+    lua_getfield(L, LUA_REGISTRYINDEX, "__widget_module_bytes");
+    const lua_Integer moduleBytes = lua_tointeger(L, -1);
+    lua_pop(L, 1);
+    if (moduleCount >= 64 || moduleBytes < 0 ||
+        moduleBytes > 4 * 1024 * 1024 ||
+        fileSize > 4ull * 1024ull * 1024ull -
+            static_cast<std::uint64_t>(moduleBytes))
+    {
+        return luaL_error(L,
+            "module.require: per-instance module count or byte quota exceeded");
+    }
+
+    lua_pushlightuserdata(L, &kModuleLoadingMarker);
+    lua_setfield(L, cache, cacheKey.c_str());
+    std::ifstream file(*fullPath, std::ios::binary);
+    std::string source(static_cast<std::size_t>(fileSize), '\0');
+    if (!file || (fileSize > 0 &&
+        !file.read(source.data(), static_cast<std::streamsize>(fileSize))))
+    {
+        ClearModuleCacheEntry(L, cache, cacheKey);
+        return luaL_error(L, "module.require: module could not be read");
+    }
+    const std::string chunkName = "@module/" +
+        WidgetWideToUtf8(std::filesystem::path(relativePath).
+            lexically_normal().generic_wstring());
+    if (luaL_loadbuffer(L, source.data(), source.size(),
+            chunkName.c_str()) != LUA_OK)
+    {
+        ClearModuleCacheEntry(L, cache, cacheKey);
+        return lua_error(L);
+    }
+    lua_getfield(L, LUA_REGISTRYINDEX, "__widget_environment");
+    if (!lua_istable(L, -1) || lua_setupvalue(L, -2, 1) == nullptr)
+    {
+        if (lua_isnil(L, -1)) lua_pop(L, 1);
+        ClearModuleCacheEntry(L, cache, cacheKey);
+        return luaL_error(L, "module.require: sandbox environment is unavailable");
+    }
+    if (snowdesktop::lua_runtime::ProtectedCall(L, 0, 1) != LUA_OK)
+    {
+        ClearModuleCacheEntry(L, cache, cacheKey);
+        return lua_error(L);
+    }
+    if (lua_isnil(L, -1))
+    {
+        lua_pop(L, 1);
+        lua_pushboolean(L, 1);
+    }
+    lua_pushvalue(L, -1);
+    lua_setfield(L, cache, cacheKey.c_str());
+    lua_pushinteger(L, moduleCount + 1);
+    lua_setfield(L, LUA_REGISTRYINDEX, "__widget_module_count");
+    lua_pushinteger(L, moduleBytes + static_cast<lua_Integer>(fileSize));
+    lua_setfield(L, LUA_REGISTRYINDEX, "__widget_module_bytes");
+    lua_remove(L, cache);
+    return 1;
+}
+
 static int lua_WidgetHasPermission(lua_State* L)
 {
     const char* permission = luaL_checkstring(L, 1);
@@ -4012,7 +4139,7 @@ void WidgetEngine::PushSafeEnvironment(lua_State* L, const LuaWidget& widget)
     };
     static const char* v2Libraries[] = {
         "string", "table", "math", "utf8", "draw", "layout", "storage",
-        "widget", "system", "time"
+        "widget", "system", "time", "module"
     };
     const std::span<const char* const> libraries =
         widget.manifest.apiVersion >= 2
@@ -4234,6 +4361,8 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     luaL_requiref(state, LUA_MATHLIBNAME, luaopen_math, 1); lua_pop(state, 1);
     luaL_requiref(state, LUA_UTF8LIBNAME, luaopen_utf8, 1); lua_pop(state, 1);
     RegisterDrawAPI(state, pending.manifest.apiVersion);
+    lua_pushinteger(state, pending.manifest.apiVersion);
+    lua_setfield(state, LUA_REGISTRYINDEX, "__widget_api_version");
     lua_pushlightuserdata(state, d2dState_);
     lua_setfield(state, LUA_REGISTRYINDEX, "__d2d_ptr");
     lua_pushlightuserdata(state, quota.get());
@@ -4248,6 +4377,8 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         lua_setfield(state, -2, permission.c_str());
     }
     lua_setfield(state, LUA_REGISTRYINDEX, "__widget_permissions");
+    lua_pushboolean(state, 1);
+    lua_setfield(state, LUA_REGISTRYINDEX, "__widget_loading");
     if (d2dState_)
     {
         d2dState_->currentWidgetId = widgetId;
@@ -4255,6 +4386,8 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     }
     // Create a sandbox table with only the registered safe API surface.
     PushSafeEnvironment(state, pending);
+    lua_pushvalue(state, -1);
+    lua_setfield(state, LUA_REGISTRYINDEX, "__widget_environment");
 
     // Load the chunk
     if (luaL_loadstring(state, source.c_str()) != LUA_OK)
@@ -4317,6 +4450,9 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
             return false;
         }
     }
+
+    lua_pushboolean(state, 0);
+    lua_setfield(state, LUA_REGISTRYINDEX, "__widget_loading");
 
     int ref = LUA_NOREF;
     if (currentContract)
@@ -9517,6 +9653,9 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
             snowdesktop::widget_api::LuaSystemCapabilities, 2 },
         { "uptime", lua_SystemUptime, 2 },
     };
+    static constexpr FunctionDescriptor module[] = {
+        { "require", lua_ModuleRequire, 2 },
+    };
     static constexpr FunctionDescriptor media[] = {
         { "current", lua_MediaCurrent, 1, "media.read" },
         { "playPause", lua_MediaPlayPause, 1, "media.action" },
@@ -9612,6 +9751,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         DescribeLibrary("sys", system),
         DescribeLibrary("system", systemV2),
         DescribeLibrary("time", time),
+        DescribeLibrary("module", module),
         DescribeLibrary("media", media),
         DescribeLibrary("http", http),
         DescribeLibrary("ui", ui),
