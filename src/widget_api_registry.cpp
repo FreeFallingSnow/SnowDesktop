@@ -51,6 +51,53 @@ const char* DescribeValidationError(
     return "unknown validation error";
 }
 
+CatalogValidationResult ValidateCatalog(
+    std::span<const LibraryDescriptor> libraries) noexcept
+{
+    for (std::size_t index = 0; index < libraries.size(); ++index)
+    {
+        const LibraryDescriptor& library = libraries[index];
+        const LibraryValidationError libraryError =
+            ValidateLibrary(library.name, library.functions);
+        if (libraryError != LibraryValidationError::None)
+        {
+            return {
+                CatalogValidationError::InvalidLibrary,
+                index,
+                libraryError,
+            };
+        }
+        for (std::size_t previous = 0; previous < index; ++previous)
+        {
+            if (std::string_view(libraries[previous].name) ==
+                library.name)
+            {
+                return {
+                    CatalogValidationError::DuplicateLibraryName,
+                    index,
+                    LibraryValidationError::None,
+                };
+            }
+        }
+    }
+    return {};
+}
+
+const char* DescribeValidationError(
+    CatalogValidationError error) noexcept
+{
+    switch (error)
+    {
+    case CatalogValidationError::None:
+        return "none";
+    case CatalogValidationError::InvalidLibrary:
+        return "invalid library";
+    case CatalogValidationError::DuplicateLibraryName:
+        return "duplicate library name";
+    }
+    return "unknown validation error";
+}
+
 void RegisterLibrary(
     lua_State* state,
     const char* libraryName,
@@ -85,6 +132,44 @@ void RegisterLibrary(
         lua_settop(state, entryTop);
         throw std::logic_error(
             "widget API registration did not preserve the Lua stack");
+    }
+}
+
+void RegisterLibraries(
+    lua_State* state,
+    std::span<const LibraryDescriptor> libraries)
+{
+    if (!state)
+        throw std::invalid_argument(
+            "cannot register a widget API catalog on a null Lua state");
+
+    const CatalogValidationResult validation =
+        ValidateCatalog(libraries);
+    if (validation.error != CatalogValidationError::None)
+    {
+        const LibraryDescriptor& library =
+            libraries[validation.libraryIndex];
+        std::string message =
+            std::string("invalid widget API catalog at library '") +
+            (library.name ? library.name : "") + "': " +
+            DescribeValidationError(validation.error);
+        if (validation.libraryError != LibraryValidationError::None)
+        {
+            message += ": ";
+            message += DescribeValidationError(validation.libraryError);
+        }
+        throw std::invalid_argument(message);
+    }
+
+    const int entryTop = lua_gettop(state);
+    for (const LibraryDescriptor& library : libraries)
+        RegisterLibrary(state, library.name, library.functions);
+
+    if (lua_gettop(state) != entryTop)
+    {
+        lua_settop(state, entryTop);
+        throw std::logic_error(
+            "widget API catalog registration did not preserve the Lua stack");
     }
 }
 }

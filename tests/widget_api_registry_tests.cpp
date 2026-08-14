@@ -13,6 +13,8 @@ extern "C" {
 namespace
 {
 using snowdesktop::widget_api::FunctionDescriptor;
+using snowdesktop::widget_api::CatalogValidationError;
+using snowdesktop::widget_api::LibraryDescriptor;
 using snowdesktop::widget_api::LibraryValidationError;
 
 void Check(bool condition, const char* message)
@@ -160,6 +162,99 @@ void TestRegistration()
         "registration must preserve existing stack values");
 }
 
+void TestCatalogValidation()
+{
+    static constexpr FunctionDescriptor firstFunctions[] = {
+        { "answer", ReturnFortyTwo },
+    };
+    static constexpr FunctionDescriptor secondFunctions[] = {
+        { "add", Add },
+    };
+    static constexpr LibraryDescriptor valid[] = {
+        snowdesktop::widget_api::DescribeLibrary(
+            "first", firstFunctions),
+        snowdesktop::widget_api::DescribeLibrary(
+            "second", secondFunctions),
+    };
+    Check(
+        snowdesktop::widget_api::ValidateCatalog(valid).error ==
+            CatalogValidationError::None,
+        "valid catalog must pass validation");
+
+    static constexpr LibraryDescriptor duplicateLibraries[] = {
+        snowdesktop::widget_api::DescribeLibrary(
+            "sample", firstFunctions),
+        snowdesktop::widget_api::DescribeLibrary(
+            "sample", secondFunctions),
+    };
+    const auto duplicateResult =
+        snowdesktop::widget_api::ValidateCatalog(duplicateLibraries);
+    Check(
+        duplicateResult.error ==
+            CatalogValidationError::DuplicateLibraryName &&
+            duplicateResult.libraryIndex == 1,
+        "duplicate library names must identify the later library");
+
+    static constexpr FunctionDescriptor invalidFunctions[] = {
+        { nullptr, ReturnFortyTwo },
+    };
+    static constexpr LibraryDescriptor invalidLibrary[] = {
+        snowdesktop::widget_api::DescribeLibrary(
+            "sample", invalidFunctions),
+    };
+    const auto invalidResult =
+        snowdesktop::widget_api::ValidateCatalog(invalidLibrary);
+    Check(
+        invalidResult.error == CatalogValidationError::InvalidLibrary &&
+            invalidResult.libraryIndex == 0 &&
+            invalidResult.libraryError ==
+                LibraryValidationError::MissingFunctionName,
+        "catalog validation must preserve library validation details");
+}
+
+void TestCatalogRegistration()
+{
+    LuaState state;
+    static constexpr FunctionDescriptor firstFunctions[] = {
+        { "answer", ReturnFortyTwo },
+    };
+    static constexpr FunctionDescriptor secondFunctions[] = {
+        { "add", Add },
+    };
+    static constexpr LibraryDescriptor libraries[] = {
+        snowdesktop::widget_api::DescribeLibrary(
+            "first", firstFunctions),
+        snowdesktop::widget_api::DescribeLibrary(
+            "second", secondFunctions),
+    };
+
+    lua_pushliteral(state, "sentinel");
+    const int entryTop = lua_gettop(state);
+    snowdesktop::widget_api::RegisterLibraries(state, libraries);
+    Check(
+        lua_gettop(state) == entryTop,
+        "catalog registration must preserve stack height");
+    lua_getglobal(state, "first");
+    lua_getfield(state, -1, "answer");
+    Check(
+        lua_pcall(state, 0, 1, 0) == LUA_OK &&
+            lua_tointeger(state, -1) == 42,
+        "first catalog library must be callable");
+    lua_pop(state, 2);
+    lua_getglobal(state, "second");
+    lua_getfield(state, -1, "add");
+    lua_pushinteger(state, 20);
+    lua_pushinteger(state, 22);
+    Check(
+        lua_pcall(state, 2, 1, 0) == LUA_OK &&
+            lua_tointeger(state, -1) == 42,
+        "second catalog library must be callable");
+    lua_pop(state, 2);
+    Check(
+        lua_gettop(state) == entryTop,
+        "catalog test cleanup must restore stack height");
+}
+
 void TestInvalidRegistrationIsAtomic()
 {
     LuaState state;
@@ -204,13 +299,57 @@ void TestInvalidRegistrationIsAtomic()
     }
     Check(threw, "null Lua state must throw");
 }
+
+
+void TestInvalidCatalogRegistrationIsAtomic()
+{
+    LuaState state;
+    static constexpr FunctionDescriptor validFunctions[] = {
+        { "answer", ReturnFortyTwo },
+    };
+    static constexpr FunctionDescriptor invalidFunctions[] = {
+        { nullptr, Add },
+    };
+    static constexpr LibraryDescriptor libraries[] = {
+        snowdesktop::widget_api::DescribeLibrary(
+            "wouldPublish", validFunctions),
+        snowdesktop::widget_api::DescribeLibrary(
+            "invalid", invalidFunctions),
+    };
+
+    lua_pushinteger(state, 7);
+    const int entryTop = lua_gettop(state);
+    bool threw = false;
+    try
+    {
+        snowdesktop::widget_api::RegisterLibraries(
+            state, libraries);
+    }
+    catch (const std::invalid_argument&)
+    {
+        threw = true;
+    }
+    Check(threw, "invalid catalog registration must throw");
+    Check(
+        lua_gettop(state) == entryTop &&
+            lua_tointeger(state, -1) == 7,
+        "invalid catalog registration must preserve the stack");
+    lua_getglobal(state, "wouldPublish");
+    Check(
+        lua_isnil(state, -1),
+        "catalog must be fully validated before publishing globals");
+    lua_pop(state, 1);
+}
 }
 
 int main()
 {
     TestValidation();
     TestRegistration();
+    TestCatalogValidation();
+    TestCatalogRegistration();
     TestInvalidRegistrationIsAtomic();
+    TestInvalidCatalogRegistrationIsAtomic();
     std::cout << "widget API registry tests passed\n";
     return 0;
 }

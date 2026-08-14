@@ -8601,8 +8601,10 @@ static void PushWidgetL10nAPI(lua_State* L, const LuaWidgetManifest& manifest)
 
 void WidgetEngine::RegisterDrawAPI(lua_State* L)
 {
+    using snowdesktop::widget_api::DescribeLibrary;
     using snowdesktop::widget_api::FunctionDescriptor;
-    using snowdesktop::widget_api::RegisterLibrary;
+    using snowdesktop::widget_api::LibraryDescriptor;
+    using snowdesktop::widget_api::RegisterLibraries;
 
     static constexpr FunctionDescriptor draw[] = {
         { "text", lua_DrawText },
@@ -8726,17 +8728,20 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
         { "beginDisabled", lua_ImGuiBeginDisabled },
         { "endDisabled", lua_ImGuiEndDisabled },
     };
+    static constexpr LibraryDescriptor libraries[] = {
+        DescribeLibrary("draw", draw),
+        DescribeLibrary("widget", widget),
+        DescribeLibrary("sys", system),
+        DescribeLibrary("media", media),
+        DescribeLibrary("http", http),
+        DescribeLibrary("ui", ui),
+        DescribeLibrary("desktop", desktop),
+        DescribeLibrary("everything", everything),
+        DescribeLibrary("calendar", calendar),
+        DescribeLibrary("layout", layout),
+        DescribeLibrary("storage", storage),
+        DescribeLibrary("imgui", imgui),
+    };
 
-    RegisterLibrary(L, "draw", draw);
-    RegisterLibrary(L, "widget", widget);
-    RegisterLibrary(L, "sys", system);
-    RegisterLibrary(L, "media", media);
-    RegisterLibrary(L, "http", http);
-    RegisterLibrary(L, "ui", ui);
-    RegisterLibrary(L, "desktop", desktop);
-    RegisterLibrary(L, "everything", everything);
-    RegisterLibrary(L, "calendar", calendar);
-    RegisterLibrary(L, "layout", layout);
-    RegisterLibrary(L, "storage", storage);
-    RegisterLibrary(L, "imgui", imgui);
+    RegisterLibraries(L, libraries);
 }
