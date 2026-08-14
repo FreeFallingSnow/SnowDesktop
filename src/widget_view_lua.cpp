@@ -1,0 +1,810 @@
+#include "widget_view_lua.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <cstring>
+#include <initializer_list>
+#include <unordered_set>
+
+extern "C" {
+#include <lauxlib.h>
+}
+
+namespace snowdesktop::widget_runtime
+{
+namespace
+{
+bool ValidateObjectFields(lua_State* state, int index,
+    std::initializer_list<std::string_view> allowed,
+    std::string_view context, std::string& error)
+{
+    index = lua_absindex(state, index);
+    if (lua_getmetatable(state, index) != 0)
+    {
+        lua_pop(state, 1);
+        error = std::string(context) + " cannot have a metatable";
+        return false;
+    }
+    lua_pushnil(state);
+    while (lua_next(state, index) != 0)
+    {
+        if (lua_type(state, -2) != LUA_TSTRING)
+        {
+            lua_pop(state, 2);
+            error = std::string(context) + " keys must be strings";
+            return false;
+        }
+        std::size_t length = 0;
+        const char* key = lua_tolstring(state, -2, &length);
+        const std::string_view field(key ? key : "", length);
+        if (std::find(allowed.begin(), allowed.end(), field) ==
+            allowed.end())
+        {
+            lua_pop(state, 2);
+            error = std::string(context) + " has unsupported field '" +
+                std::string(field) + "'";
+            return false;
+        }
+        lua_pop(state, 1);
+    }
+    return true;
+}
+
+bool ValidateArray(lua_State* state, int index,
+    std::string_view context, std::string& error)
+{
+    index = lua_absindex(state, index);
+    if (lua_getmetatable(state, index) != 0)
+    {
+        lua_pop(state, 1);
+        error = std::string(context) + " cannot have a metatable";
+        return false;
+    }
+    const std::size_t length = lua_rawlen(state, index);
+    std::size_t count = 0;
+    lua_pushnil(state);
+    while (lua_next(state, index) != 0)
+    {
+        ++count;
+        const bool validKey = lua_isinteger(state, -2) &&
+            lua_tointeger(state, -2) > 0 &&
+            static_cast<std::size_t>(lua_tointeger(state, -2)) <= length;
+        lua_pop(state, 1);
+        if (!validKey)
+        {
+            lua_pop(state, 1);
+            error = std::string(context) +
+                " must use contiguous integer keys";
+            return false;
+        }
+    }
+    if (count != length)
+    {
+        error = std::string(context) +
+            " must use contiguous integer keys";
+        return false;
+    }
+    return true;
+}
+
+bool FieldPresent(lua_State* state, int index, const char* field)
+{
+    index = lua_absindex(state, index);
+    lua_getfield(state, index, field);
+    const bool present = !lua_isnil(state, -1);
+    lua_pop(state, 1);
+    return present;
+}
+
+bool ReadActionValue(lua_State* state, int index,
+    InteractionValue& output, std::size_t depth, std::size_t& nodes,
+    std::size_t& stringBytes, std::unordered_set<const void*>& ancestors,
+    std::string& error)
+{
+    using Value = InteractionValue;
+    index = lua_absindex(state, index);
+    if (++nodes > 256 || depth > 8)
+    {
+        error = "view action value exceeds its size or depth limit";
+        return false;
+    }
+    switch (lua_type(state, index))
+    {
+    case LUA_TNIL:
+        output.type = Value::Type::Null;
+        return true;
+    case LUA_TBOOLEAN:
+        output.type = Value::Type::Boolean;
+        output.boolean = lua_toboolean(state, index) != 0;
+        return true;
+    case LUA_TNUMBER:
+        if (lua_isinteger(state, index))
+        {
+            output.type = Value::Type::Integer;
+            output.integer = static_cast<long long>(lua_tointeger(state, index));
+        }
+        else
+        {
+            output.type = Value::Type::Number;
+            output.number = static_cast<double>(lua_tonumber(state, index));
+            if (!std::isfinite(output.number))
+            {
+                error = "view action numbers must be finite";
+                return false;
+            }
+        }
+        return true;
+    case LUA_TSTRING:
+    {
+        std::size_t length = 0;
+        const char* value = lua_tolstring(state, index, &length);
+        if (length > 16 * 1024 || stringBytes > 16 * 1024 - length)
+        {
+            error = "view action strings exceed 16 KiB";
+            return false;
+        }
+        stringBytes += length;
+        output.type = Value::Type::String;
+        output.string.assign(value ? value : "", length);
+        return true;
+    }
+    case LUA_TTABLE:
+        break;
+    default:
+        error = "view action values must be serializable";
+        return false;
+    }
+
+    if (lua_getmetatable(state, index) != 0)
+    {
+        lua_pop(state, 1);
+        error = "view action tables cannot have metatables";
+        return false;
+    }
+    const void* identity = lua_topointer(state, index);
+    if (!ancestors.insert(identity).second)
+    {
+        error = "view action values cannot be cyclic";
+        return false;
+    }
+
+    bool integerKeys = false;
+    bool stringKeys = false;
+    std::size_t count = 0;
+    std::size_t maximumIndex = 0;
+    lua_pushnil(state);
+    while (lua_next(state, index) != 0)
+    {
+        ++count;
+        if (lua_isinteger(state, -2))
+        {
+            const lua_Integer key = lua_tointeger(state, -2);
+            if (key <= 0 || key > 256)
+            {
+                lua_pop(state, 2);
+                ancestors.erase(identity);
+                error = "view action array keys must be contiguous";
+                return false;
+            }
+            integerKeys = true;
+            maximumIndex = std::max(maximumIndex,
+                static_cast<std::size_t>(key));
+        }
+        else if (lua_type(state, -2) == LUA_TSTRING)
+            stringKeys = true;
+        else
+        {
+            lua_pop(state, 2);
+            ancestors.erase(identity);
+            error = "view action object keys must be strings";
+            return false;
+        }
+        lua_pop(state, 1);
+    }
+    if ((integerKeys && stringKeys) ||
+        (integerKeys && maximumIndex != count))
+    {
+        ancestors.erase(identity);
+        error = "view action tables must be arrays or objects";
+        return false;
+    }
+
+    if (integerKeys)
+    {
+        output.type = Value::Type::Array;
+        output.array.resize(count);
+        for (std::size_t item = 0; item < count; ++item)
+        {
+            lua_rawgeti(state, index, static_cast<lua_Integer>(item + 1));
+            if (!ReadActionValue(state, -1, output.array[item], depth + 1,
+                    nodes, stringBytes, ancestors, error))
+            {
+                lua_pop(state, 1);
+                ancestors.erase(identity);
+                return false;
+            }
+            lua_pop(state, 1);
+        }
+    }
+    else
+    {
+        output.type = Value::Type::Object;
+        lua_pushnil(state);
+        while (lua_next(state, index) != 0)
+        {
+            std::size_t keyLength = 0;
+            const char* key = lua_tolstring(state, -2, &keyLength);
+            if (!key || keyLength == 0 || keyLength > 128 ||
+                stringBytes > 16 * 1024 - keyLength)
+            {
+                lua_pop(state, 2);
+                ancestors.erase(identity);
+                error = "view action object key is invalid";
+                return false;
+            }
+            stringBytes += keyLength;
+            Value child;
+            if (!ReadActionValue(state, -1, child, depth + 1,
+                    nodes, stringBytes, ancestors, error))
+            {
+                lua_pop(state, 2);
+                ancestors.erase(identity);
+                return false;
+            }
+            output.object.emplace(std::string(key, keyLength),
+                std::move(child));
+            lua_pop(state, 1);
+        }
+    }
+    ancestors.erase(identity);
+    return true;
+}
+
+bool ReadStringField(lua_State* state, int table, const char* field,
+    std::string& value, bool required, std::string& error)
+{
+    table = lua_absindex(state, table);
+    lua_getfield(state, table, field);
+    if (lua_isnil(state, -1))
+    {
+        lua_pop(state, 1);
+        if (required)
+        {
+            error = std::string("view node requires string field '") +
+                field + "'";
+            return false;
+        }
+        return true;
+    }
+    if (!lua_isstring(state, -1))
+    {
+        lua_pop(state, 1);
+        error = std::string("view field '") + field + "' must be a string";
+        return false;
+    }
+    std::size_t length = 0;
+    const char* text = lua_tolstring(state, -1, &length);
+    value.assign(text ? text : "", length);
+    lua_pop(state, 1);
+    return true;
+}
+
+bool ReadFloatField(lua_State* state, int table, const char* field,
+    float& value, std::string& error)
+{
+    table = lua_absindex(state, table);
+    lua_getfield(state, table, field);
+    if (lua_isnil(state, -1))
+    {
+        lua_pop(state, 1);
+        return true;
+    }
+    if (!lua_isnumber(state, -1))
+    {
+        lua_pop(state, 1);
+        error = std::string("view field '") + field + "' must be a number";
+        return false;
+    }
+    value = static_cast<float>(lua_tonumber(state, -1));
+    lua_pop(state, 1);
+    if (!std::isfinite(value))
+    {
+        error = std::string("view field '") + field + "' must be finite";
+        return false;
+    }
+    return true;
+}
+
+bool ReadBoolField(lua_State* state, int table, const char* field,
+    bool& value, std::string& error)
+{
+    table = lua_absindex(state, table);
+    lua_getfield(state, table, field);
+    if (lua_isnil(state, -1))
+    {
+        lua_pop(state, 1);
+        return true;
+    }
+    if (!lua_isboolean(state, -1))
+    {
+        lua_pop(state, 1);
+        error = std::string("view field '") + field + "' must be boolean";
+        return false;
+    }
+    value = lua_toboolean(state, -1) != 0;
+    lua_pop(state, 1);
+    return true;
+}
+
+bool ReadLengthField(lua_State* state, int table, const char* field,
+    ViewLength& length, std::string& error)
+{
+    table = lua_absindex(state, table);
+    lua_getfield(state, table, field);
+    if (lua_isnil(state, -1))
+    {
+        lua_pop(state, 1);
+        return true;
+    }
+    if (lua_isnumber(state, -1))
+    {
+        length.kind = ViewLengthKind::Fixed;
+        length.value = static_cast<float>(lua_tonumber(state, -1));
+        lua_pop(state, 1);
+        return true;
+    }
+    if (lua_isstring(state, -1))
+    {
+        const char* value = lua_tostring(state, -1);
+        if (value && std::strcmp(value, "fill") == 0)
+            length.kind = ViewLengthKind::Fill;
+        else if (value && std::strcmp(value, "auto") == 0)
+            length.kind = ViewLengthKind::Auto;
+        else
+        {
+            lua_pop(state, 1);
+            error = std::string("view field '") + field +
+                "' must be a number, 'auto', or 'fill'";
+            return false;
+        }
+        lua_pop(state, 1);
+        return true;
+    }
+    lua_pop(state, 1);
+    error = std::string("view field '") + field +
+        "' must be a number, 'auto', or 'fill'";
+    return false;
+}
+
+bool ReadOptionalColor(lua_State* state, int table, const char* field,
+    std::optional<std::uint32_t>& value, std::string& error)
+{
+    table = lua_absindex(state, table);
+    lua_getfield(state, table, field);
+    if (lua_isnil(state, -1))
+    {
+        lua_pop(state, 1);
+        return true;
+    }
+    if (!lua_isinteger(state, -1))
+    {
+        lua_pop(state, 1);
+        error = std::string("view style field '") + field +
+            "' must be an integer color";
+        return false;
+    }
+    const lua_Integer color = lua_tointeger(state, -1);
+    lua_pop(state, 1);
+    if (color < 0 || color > 0xFFFFFF)
+    {
+        error = std::string("view style field '") + field +
+            "' must be between 0 and 0xFFFFFF";
+        return false;
+    }
+    value = static_cast<std::uint32_t>(color);
+    return true;
+}
+
+bool ReadOptionalFloat(lua_State* state, int table, const char* field,
+    std::optional<float>& value, std::string& error)
+{
+    table = lua_absindex(state, table);
+    lua_getfield(state, table, field);
+    if (lua_isnil(state, -1))
+    {
+        lua_pop(state, 1);
+        return true;
+    }
+    if (!lua_isnumber(state, -1))
+    {
+        lua_pop(state, 1);
+        error = std::string("view style field '") + field +
+            "' must be a number";
+        return false;
+    }
+    const float parsed = static_cast<float>(lua_tonumber(state, -1));
+    lua_pop(state, 1);
+    if (!std::isfinite(parsed))
+    {
+        error = std::string("view style field '") + field +
+            "' must be finite";
+        return false;
+    }
+    value = parsed;
+    return true;
+}
+
+bool ReadStyle(lua_State* state, int table, ViewStyle& style,
+    std::string& error)
+{
+    return ValidateObjectFields(state, table,
+            { "background", "foreground", "borderColor", "borderWidth",
+                "cornerRadius", "opacity" }, "view style", error) &&
+        ReadOptionalColor(state, table, "background", style.background,
+            error) &&
+        ReadOptionalColor(state, table, "foreground", style.foreground,
+            error) &&
+        ReadOptionalColor(state, table, "borderColor", style.borderColor,
+            error) &&
+        ReadOptionalFloat(state, table, "borderWidth", style.borderWidth,
+            error) &&
+        ReadOptionalFloat(state, table, "cornerRadius", style.cornerRadius,
+            error) &&
+        ReadOptionalFloat(state, table, "opacity", style.opacity, error);
+}
+
+bool ReadStyleField(lua_State* state, int table, const char* field,
+    ViewStyle& style, std::string& error)
+{
+    table = lua_absindex(state, table);
+    lua_getfield(state, table, field);
+    if (lua_isnil(state, -1))
+    {
+        lua_pop(state, 1);
+        return true;
+    }
+    if (!lua_istable(state, -1))
+    {
+        lua_pop(state, 1);
+        error = std::string("view field '") + field + "' must be a table";
+        return false;
+    }
+    const bool ok = ReadStyle(state, -1, style, error);
+    lua_pop(state, 1);
+    return ok;
+}
+
+bool ParseAlignment(std::string_view value, ViewAlignment& result)
+{
+    if (value == "start") result = ViewAlignment::Start;
+    else if (value == "center") result = ViewAlignment::Center;
+    else if (value == "end") result = ViewAlignment::End;
+    else if (value == "stretch") result = ViewAlignment::Stretch;
+    else return false;
+    return true;
+}
+
+bool ReadAlignmentField(lua_State* state, int table, const char* field,
+    ViewAlignment& value, bool allowAuto, std::string& error)
+{
+    std::string text;
+    if (!ReadStringField(state, table, field, text, false, error))
+        return false;
+    if (text.empty()) return true;
+    if (allowAuto && text == "auto")
+        value = ViewAlignment::Auto;
+    else if (!ParseAlignment(text, value))
+    {
+        error = std::string("view field '") + field +
+            "' has an unsupported alignment";
+        return false;
+    }
+    return true;
+}
+
+bool ReadJustificationField(lua_State* state, int table,
+    ViewJustification& value, std::string& error)
+{
+    std::string text;
+    if (!ReadStringField(state, table, "justifyContent", text, false, error))
+        return false;
+    if (text.empty()) return true;
+    if (text == "start") value = ViewJustification::Start;
+    else if (text == "center") value = ViewJustification::Center;
+    else if (text == "end") value = ViewJustification::End;
+    else if (text == "spaceBetween")
+        value = ViewJustification::SpaceBetween;
+    else
+    {
+        error = "view field 'justifyContent' has an unsupported value";
+        return false;
+    }
+    return true;
+}
+
+bool ReadTextAlignmentField(lua_State* state, int table,
+    ViewTextAlignment& value, std::string& error)
+{
+    std::string text;
+    if (!ReadStringField(state, table, "textAlign", text, false, error))
+        return false;
+    if (text.empty()) return true;
+    if (text == "start") value = ViewTextAlignment::Start;
+    else if (text == "center") value = ViewTextAlignment::Center;
+    else if (text == "end") value = ViewTextAlignment::End;
+    else
+    {
+        error = "view field 'textAlign' has an unsupported value";
+        return false;
+    }
+    return true;
+}
+
+bool ParseAction(lua_State* state, int index, InteractionAction& action,
+    std::string& error)
+{
+    index = lua_absindex(state, index);
+    if (!lua_istable(state, index))
+    {
+        error = "view actions must be tables";
+        return false;
+    }
+    if (!ValidateObjectFields(state, index, { "id", "value" },
+            "view action", error) ||
+        !ReadStringField(state, index, "id", action.id, true, error))
+        return false;
+    lua_getfield(state, index, "value");
+    std::size_t nodes = 0;
+    std::size_t stringBytes = 0;
+    std::unordered_set<const void*> ancestors;
+    const bool ok = ReadActionValue(state, -1, action.value, 0,
+        nodes, stringBytes, ancestors, error);
+    lua_pop(state, 1);
+    return ok;
+}
+
+bool ParseNodeType(std::string_view type, ViewNodeType& result)
+{
+    if (type == "box") result = ViewNodeType::Box;
+    else if (type == "row") result = ViewNodeType::Row;
+    else if (type == "column") result = ViewNodeType::Column;
+    else if (type == "stack") result = ViewNodeType::Stack;
+    else if (type == "text") result = ViewNodeType::Text;
+    else if (type == "button") result = ViewNodeType::Button;
+    else if (type == "spacer") result = ViewNodeType::Spacer;
+    else return false;
+    return true;
+}
+
+bool ParseNode(lua_State* state, int index, ViewNode& node,
+    std::size_t depth, std::size_t& parsedNodes, std::string& error)
+{
+    index = lua_absindex(state, index);
+    if (!lua_istable(state, index))
+    {
+        error = "view nodes must be tables";
+        return false;
+    }
+    if (++parsedNodes > ViewTreeLimits::MaximumNodes ||
+        depth > ViewTreeLimits::MaximumDepth)
+    {
+        error = "view tree exceeds its node or depth limit";
+        return false;
+    }
+    if (!ValidateObjectFields(state, index,
+            { "type", "key", "text", "label", "width", "height",
+                "padding", "gap", "flexGrow", "fontSize", "bold",
+                "visible", "enabled", "cursor", "alignItems",
+                "alignSelf", "justifyContent", "textAlign", "style",
+                "hoverStyle", "pressedStyle", "accessibility", "events",
+                "action", "children" }, "view node", error))
+        return false;
+    std::string type;
+    if (!ReadStringField(state, index, "type", type, true, error) ||
+        !ParseNodeType(type, node.type))
+    {
+        if (error.empty()) error = "unsupported view node type: " + type;
+        return false;
+    }
+    if (node.type == ViewNodeType::Button &&
+        FieldPresent(state, index, "text"))
+    {
+        error = "button nodes use 'label', not 'text'";
+        return false;
+    }
+    if (node.type != ViewNodeType::Button &&
+        (FieldPresent(state, index, "label") ||
+            FieldPresent(state, index, "action")))
+    {
+        error = "only button nodes accept 'label' and 'action'";
+        return false;
+    }
+    if (node.type != ViewNodeType::Text &&
+        node.type != ViewNodeType::Button &&
+        FieldPresent(state, index, "text"))
+    {
+        error = "only text nodes accept 'text'";
+        return false;
+    }
+    if (!ReadStringField(state, index, "key", node.key, true, error))
+        return false;
+    if (!ReadStringField(state, index,
+            node.type == ViewNodeType::Button ? "label" : "text",
+            node.text, false, error) ||
+        !ReadLengthField(state, index, "width", node.width, error) ||
+        !ReadLengthField(state, index, "height", node.height, error) ||
+        !ReadFloatField(state, index, "padding", node.padding, error) ||
+        !ReadFloatField(state, index, "gap", node.gap, error) ||
+        !ReadFloatField(state, index, "flexGrow", node.flexGrow, error) ||
+        !ReadFloatField(state, index, "fontSize", node.fontSize, error) ||
+        !ReadBoolField(state, index, "bold", node.bold, error) ||
+        !ReadBoolField(state, index, "visible", node.visible, error) ||
+        !ReadBoolField(state, index, "enabled", node.enabled, error) ||
+        !ReadStringField(state, index, "cursor", node.cursor, false, error) ||
+        !ReadAlignmentField(state, index, "alignItems",
+            node.alignItems, false, error) ||
+        !ReadAlignmentField(state, index, "alignSelf",
+            node.alignSelf, true, error) ||
+        !ReadJustificationField(state, index,
+            node.justifyContent, error) ||
+        !ReadTextAlignmentField(state, index, node.textAlign, error) ||
+        !ReadStyleField(state, index, "style", node.style, error) ||
+        !ReadStyleField(state, index, "hoverStyle",
+            node.hoverStyle, error) ||
+        !ReadStyleField(state, index, "pressedStyle",
+            node.pressedStyle, error))
+        return false;
+
+    lua_getfield(state, index, "accessibility");
+    if (lua_istable(state, -1))
+    {
+        if (!ValidateObjectFields(state, -1, { "role", "label" },
+                "view accessibility", error) ||
+            !ReadStringField(state, -1, "role",
+                node.accessibilityRole, false, error) ||
+            !ReadStringField(state, -1, "label",
+                node.accessibilityLabel, false, error))
+        {
+            lua_pop(state, 1);
+            return false;
+        }
+    }
+    else if (!lua_isnil(state, -1))
+    {
+        lua_pop(state, 1);
+        error = "view accessibility must be a table";
+        return false;
+    }
+    lua_pop(state, 1);
+
+    lua_getfield(state, index, "events");
+    if (lua_istable(state, -1))
+    {
+        const int events = lua_absindex(state, -1);
+        if (!ValidateObjectFields(state, events,
+                { "pointerEnter", "pointerLeave", "pointerDown",
+                    "pointerUp", "click", "doubleClick", "contextMenu" },
+                "view events", error))
+        {
+            lua_pop(state, 1);
+            return false;
+        }
+        for (const char* eventName : { "pointerEnter", "pointerLeave",
+            "pointerDown", "pointerUp", "click", "doubleClick",
+            "contextMenu" })
+        {
+            lua_getfield(state, events, eventName);
+            if (!lua_isnil(state, -1))
+            {
+                InteractionAction action;
+                if (!ParseAction(state, -1, action, error))
+                {
+                    lua_pop(state, 2);
+                    return false;
+                }
+                node.events.emplace(eventName, std::move(action));
+            }
+            lua_pop(state, 1);
+        }
+    }
+    else if (!lua_isnil(state, -1))
+    {
+        lua_pop(state, 1);
+        error = "view events must be a table";
+        return false;
+    }
+    lua_pop(state, 1);
+
+    if (node.type == ViewNodeType::Button)
+    {
+        lua_getfield(state, index, "action");
+        if (!lua_isnil(state, -1))
+        {
+            InteractionAction action;
+            if (!ParseAction(state, -1, action, error))
+            {
+                lua_pop(state, 1);
+                return false;
+            }
+            node.events.insert_or_assign("click", std::move(action));
+        }
+        lua_pop(state, 1);
+    }
+
+    lua_getfield(state, index, "children");
+    if (lua_istable(state, -1))
+    {
+        if (!ValidateArray(state, -1, "view children", error))
+        {
+            lua_pop(state, 1);
+            return false;
+        }
+        const std::size_t count = lua_rawlen(state, -1);
+        if (count > ViewTreeLimits::MaximumNodes)
+        {
+            lua_pop(state, 1);
+            error = "view child array exceeds the node limit";
+            return false;
+        }
+        node.children.reserve(count);
+        for (std::size_t child = 0; child < count; ++child)
+        {
+            lua_rawgeti(state, -1, static_cast<lua_Integer>(child + 1));
+            ViewNode parsed;
+            if (!ParseNode(state, -1, parsed, depth + 1,
+                    parsedNodes, error))
+            {
+                lua_pop(state, 2);
+                return false;
+            }
+            node.children.push_back(std::move(parsed));
+            lua_pop(state, 1);
+        }
+    }
+    else if (!lua_isnil(state, -1))
+    {
+        lua_pop(state, 1);
+        error = "view children must be an array";
+        return false;
+    }
+    lua_pop(state, 1);
+    return true;
+}
+
+int MakeNode(lua_State* state, const char* type)
+{
+    luaL_checktype(state, 1, LUA_TTABLE);
+    const int source = lua_absindex(state, 1);
+    lua_newtable(state);
+    const int result = lua_absindex(state, -1);
+    lua_pushnil(state);
+    while (lua_next(state, source) != 0)
+    {
+        lua_pushvalue(state, -2);
+        lua_pushvalue(state, -2);
+        lua_rawset(state, result);
+        lua_pop(state, 1);
+    }
+    lua_pushstring(state, type);
+    lua_setfield(state, result, "type");
+    return 1;
+}
+}
+
+bool ParseLuaViewTree(lua_State* state, int index, ViewNode& root,
+    std::string& error)
+{
+    error.clear();
+    std::size_t parsedNodes = 0;
+    return ParseNode(state, index, root, 0, parsedNodes, error);
+}
+
+int LuaViewBox(lua_State* state) { return MakeNode(state, "box"); }
+int LuaViewRow(lua_State* state) { return MakeNode(state, "row"); }
+int LuaViewColumn(lua_State* state) { return MakeNode(state, "column"); }
+int LuaViewStack(lua_State* state) { return MakeNode(state, "stack"); }
+int LuaViewText(lua_State* state) { return MakeNode(state, "text"); }
+int LuaViewButton(lua_State* state) { return MakeNode(state, "button"); }
+int LuaViewSpacer(lua_State* state) { return MakeNode(state, "spacer"); }
+}

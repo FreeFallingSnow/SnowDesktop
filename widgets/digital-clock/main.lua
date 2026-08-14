@@ -58,11 +58,9 @@ local function loadConfig()
     end
 end
 
-local function render()
+local function buildView(context)
     loadConfig()
     local t = time.parts(time.now())
-    local w = layout.width()
-    local h = layout.height()
     local timeStr
     if showSeconds then
         timeStr = string.format("%02d:%02d:%02d", t.hour, t.min, t.sec)
@@ -83,60 +81,74 @@ local function render()
     local weekdayStr = l10n.tr("lua_widget.digital_clock.weekday_format",
         weekDays[t.wday or 1])
 
-    local timeBaseSize = layout.fontCu(28)
-    local secondaryBaseSize = layout.fontCu(9)
-    local innerWidth = math.max(layout.cu(80), w - layout.cu(24))
-    local gap = math.max(layout.cu(2), math.floor(h * 0.015))
-    local lines = {
-        { text = timeStr, size = timeBaseSize },
+    local width = math.max(1, context.logicalSize.width)
+    local contentHeight = math.max(1,
+        context.logicalSize.height - layout.barHeight())
+    local padding = math.max(layout.cu(8), width * 0.06)
+    local availableWidth = math.max(1, width - padding * 2)
+    local timeSize = math.min(
+        layout.fontCu(28) * clockScale,
+        availableWidth / math.max(1, #timeStr * 0.55),
+        contentHeight * 0.42)
+    timeSize = math.max(layout.fontCu(12), timeSize)
+    local secondarySize = math.max(layout.fontCu(7),
+        math.min(layout.fontCu(10) * clockScale, timeSize * 0.42))
+
+    local children = {
+        view.text({
+            key = "clock.time",
+            text = timeStr,
+            width = "fill",
+            fontSize = timeSize,
+            bold = true,
+            textAlign = "center",
+            accessibility = {
+                role = "text",
+                label = timeStr,
+            },
+            style = {
+                foreground = textColor,
+                opacity = textOpacity,
+            },
+        }),
     }
 
     local secondaryParts = {}
     if showDate then table.insert(secondaryParts, dateStr) end
     if showWeekday then table.insert(secondaryParts, weekdayStr) end
     if #secondaryParts > 0 then
-        table.insert(lines, { text = table.concat(secondaryParts, "  "), size = secondaryBaseSize })
+        local secondaryText = table.concat(secondaryParts, "  ")
+        children[#children + 1] = view.text({
+            key = "clock.secondary",
+            text = secondaryText,
+            width = "fill",
+            fontSize = secondarySize,
+            textAlign = "center",
+            accessibility = {
+                role = "text",
+                label = secondaryText,
+            },
+            style = {
+                foreground = textColor,
+                opacity = textOpacity,
+            },
+        })
     end
 
-    local widest = 1
-    local totalBaseHeight = 0
-    for i = 1, #lines do
-        lines[i].probe = draw.measureText(lines[i].text, lines[i].size, 0, true)
-        widest = math.max(widest, lines[i].probe.width)
-        totalBaseHeight = totalBaseHeight + lines[i].probe.height
-    end
-
-    local innerHeight = math.max(layout.cu(40), h - layout.cu(24))
-    local widthScale = innerWidth / math.max(1, widest)
-    local heightScale = (innerHeight - gap * math.max(0, #lines - 1)) / math.max(1, totalBaseHeight)
-    local scale = math.max(0.7, math.min(widthScale, heightScale)) * clockScale
-
-    for i = 1, #lines do
-        lines[i].size = lines[i].size * scale
-        lines[i].metrics = draw.measureText(lines[i].text, lines[i].size, 0, true)
-    end
-
-    local blockH = 0
-    for i = 1, #lines do
-        blockH = blockH + lines[i].metrics.height
-        if i > 1 then blockH = blockH + gap end
-    end
-
-    local top = (h - blockH) * 0.5
-    local y = top
-    local secondaryGap = math.max(layout.cu(1), math.floor(gap * 0.35))
-
-    for i = 1, #lines do
-        local line = lines[i]
-        local drawMaxW = math.max(1, line.metrics.width + 2)
-        draw.text((w - line.metrics.width) * 0.5, y, line.text, line.size,
-            textColor, drawMaxW, true, false, 0, textOpacity)
-        if i == 1 and #lines > 1 then
-            y = y + line.metrics.height + secondaryGap
-        else
-            y = y + line.metrics.height + gap
-        end
-    end
+    return view.column({
+        key = "clock.root",
+        width = "fill",
+        height = "fill",
+        padding = padding,
+        gap = math.max(layout.cu(2), contentHeight * 0.015),
+        alignItems = "stretch",
+        justifyContent = "center",
+        accessibility = {
+            role = "group",
+            label = l10n.tr("lua_widget.digital_clock.name"),
+        },
+        children = children,
+    })
 end
 
 descriptor = {
@@ -147,7 +159,7 @@ descriptor = {
     gradientEndA = 0.0,
     settings = settings,
     setup = setup,
-    render = render,
+    view = buildView,
 }
 
 return widget.define(descriptor)

@@ -112,6 +112,60 @@
 ---@field id string Stable action identifier delivered through event.kind == 'action'.
 ---@field value? SnowStateValue Deep-copied JSON-like payload.
 
+---@alias SnowViewLength number|'auto'|'fill'
+---@alias SnowViewAlignment 'start'|'center'|'end'|'stretch'
+---@alias SnowViewSelfAlignment 'auto'|'start'|'center'|'end'|'stretch'
+
+---@class SnowViewStyle
+---@field background? integer RGB color.
+---@field foreground? integer RGB color.
+---@field borderColor? integer RGB color.
+---@field borderWidth? number
+---@field cornerRadius? number
+---@field opacity? number Between 0 and 1.
+
+---@class SnowViewAccessibility
+---@field role? string Transitional semantic role; core trees do not expose UI Automation yet.
+---@field label? string
+
+---@class SnowViewEvents
+---@field pointerEnter? SnowInteractionAction
+---@field pointerLeave? SnowInteractionAction
+---@field pointerDown? SnowInteractionAction
+---@field pointerUp? SnowInteractionAction
+---@field click? SnowInteractionAction
+---@field doubleClick? SnowInteractionAction
+---@field contextMenu? SnowInteractionAction
+
+---@class SnowViewNodeOptions
+---@field key string Globally unique stable key in the returned tree.
+---@field text? string Used by text nodes.
+---@field label? string Required by button nodes.
+---@field width? SnowViewLength
+---@field height? SnowViewLength
+---@field padding? number
+---@field gap? number
+---@field flexGrow? number
+---@field alignItems? SnowViewAlignment
+---@field alignSelf? SnowViewSelfAlignment
+---@field justifyContent? 'start'|'center'|'end'|'spaceBetween'
+---@field fontSize? number
+---@field bold? boolean
+---@field textAlign? 'start'|'center'|'end'
+---@field visible? boolean
+---@field enabled? boolean
+---@field cursor? string
+---@field style? SnowViewStyle
+---@field hoverStyle? SnowViewStyle
+---@field pressedStyle? SnowViewStyle
+---@field accessibility? SnowViewAccessibility
+---@field events? SnowViewEvents
+---@field action? SnowInteractionAction Button click shorthand.
+---@field children? SnowViewNode[]
+
+---@class SnowViewNode: SnowViewNodeOptions
+---@field type 'box'|'row'|'column'|'stack'|'text'|'button'|'spacer'
+
 ---@class SnowInteractionShape
 ---@field type 'rect'|'roundedRect'|'circle'
 ---@field x number Left coordinate for rectangles; center X for circles.
@@ -207,10 +261,11 @@
 
 ---@class SnowWidgetDefinition
 ---@field name? string
----@field render fun(context: SnowWidgetContext, model: any) Exactly one of render or view is required in API v2; view is not available yet.
+---@field render? fun(context: SnowWidgetContext, model: any) Exactly one of render or view is required in API v2.
+---@field view? fun(context: SnowWidgetContext, model: any): SnowViewNode Exactly one of view or render is required; requires view.tree.core for the current node subset.
 ---@field panel? fun(context: SnowWidgetContext, model: any) Renders the host-owned auxiliary panel surface opened with widget.openPanel.
 ---@field setup? fun(context: SnowWidgetContext): any Runs once and returns the instance model passed to render and dispose.
----@field event? fun(context: SnowWidgetContext, model: any, event: SnowWidgetEvent) Receives host surface events; declarative node events are not available yet.
+---@field event? fun(context: SnowWidgetContext, model: any, event: SnowWidgetEvent) Receives host surface and declarative action events.
 ---@field menu? fun(context: SnowWidgetContext, model: any, request: SnowMenuRequest): SnowMenuModel? Builds an immediate-region context menu synchronously.
 ---@field dispose? fun(context: SnowWidgetContext, model: any, reason: 'unload'|'hotReload'|'shutdown'|string) Runs at most once before the instance VM is released.
 ---@field migrateStorage? fun(oldVersion: integer, newVersion: integer) Runs before setup when persisted storage must be upgraded.
@@ -373,10 +428,41 @@
 ---@field width number
 ---@field height number
 
+---@class snow.view
+view = {}
+
+---@param options SnowViewNodeOptions
+---@return SnowViewNode
+function view.box(options) end
+
+---@param options SnowViewNodeOptions
+---@return SnowViewNode
+function view.row(options) end
+
+---@param options SnowViewNodeOptions
+---@return SnowViewNode
+function view.column(options) end
+
+---@param options SnowViewNodeOptions
+---@return SnowViewNode
+function view.stack(options) end
+
+---@param options SnowViewNodeOptions
+---@return SnowViewNode
+function view.text(options) end
+
+---@param options SnowViewNodeOptions
+---@return SnowViewNode
+function view.button(options) end
+
+---@param options SnowViewNodeOptions
+---@return SnowViewNode
+function view.spacer(options) end
+
 ---@class snow.widget
 widget = {}
 
----Validate and freeze an API v2 immediate-render definition.
+---Validate and freeze an API v2 widget definition.
 ---@param definition SnowWidgetDefinition
 ---@return SnowWidgetDefinition
 function widget.define(definition) end

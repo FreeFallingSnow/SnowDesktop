@@ -244,6 +244,7 @@ void TestV2Contract()
             v2Libraries.end();
     };
     Check(hasV2Library("control") && hasV2Library("interaction") &&
+            hasV2Library("view") &&
             hasV2Library("task") && hasV2Library("calendar") &&
             hasV2Library("ui") && hasV2Library("l10n") &&
             !hasV2Library("http") && !hasV2Library("desktop"),
@@ -359,6 +360,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature("widget.panel") &&
             snowdesktop::widget_api::SupportsFeature(
                 "system.environment") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "view.tree.core") &&
             !snowdesktop::widget_api::SupportsFeature("view.tree"),
         "host feature lookup must distinguish supported features");
     const std::vector<std::string> required = {
@@ -441,6 +444,16 @@ void TestV2Contract()
     Check(lua_pcall(state, 1, 1, 0) == LUA_OK &&
             snowdesktop::widget_api::IsDefinedWidget(state, -1),
         "widget.define must accept a panel surface callback");
+    lua_pop(state, 2);
+
+    lua_getglobal(state, "widget");
+    lua_getfield(state, -1, "define");
+    lua_newtable(state);
+    lua_pushcfunction(state, Noop);
+    lua_setfield(state, -2, "view");
+    Check(lua_pcall(state, 1, 1, 0) == LUA_OK &&
+            snowdesktop::widget_api::IsDefinedWidget(state, -1),
+        "widget.define must accept core declarative view callbacks");
     lua_pop(state, 2);
 
     constexpr FunctionDescriptor systemFunctions[] = {

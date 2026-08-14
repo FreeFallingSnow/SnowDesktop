@@ -44,6 +44,7 @@
 #include "widget_system_data_provider.h"
 #include "widget_audio_analysis_provider.h"
 #include "widget_interaction_region.h"
+#include "widget_view_tree.h"
 
 struct ImGuiContext;
 struct PersonalizationSettings;
@@ -424,6 +425,7 @@ struct LuaWidget
         applicationReferences;
     std::unordered_map<std::string, ItemReference> itemReferences;
     snowdesktop::widget_runtime::WidgetInteractionRegions interactionRegions;
+    std::optional<snowdesktop::widget_runtime::ViewNode> viewTree;
     bool panelFrameOpen = false;
     std::uint64_t runtimeToken = 0;
     bool preview = false;

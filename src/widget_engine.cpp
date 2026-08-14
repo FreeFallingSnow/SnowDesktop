@@ -32,6 +32,8 @@
 #include "widget_permission_broker.h"
 #include "widget_preview_context.h"
 #include "widget_interaction_region.h"
+#include "widget_view_lua.h"
+#include "widget_view_tree.h"
 #include "widget_text_input_rules.h"
 #include "widget_storage_transaction.h"
 
@@ -9556,6 +9558,144 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
     return true;
 }
 
+static snowdesktop::widget_runtime::ViewStyle ResolveViewStyle(
+    const snowdesktop::widget_runtime::ViewNode& node,
+    bool hovered, bool pressed)
+{
+    using snowdesktop::widget_runtime::ViewStyle;
+    ViewStyle result = node.style;
+    const auto overlay = [&result](const ViewStyle& style) {
+        if (style.background) result.background = style.background;
+        if (style.foreground) result.foreground = style.foreground;
+        if (style.borderColor) result.borderColor = style.borderColor;
+        if (style.borderWidth) result.borderWidth = style.borderWidth;
+        if (style.cornerRadius) result.cornerRadius = style.cornerRadius;
+        if (style.opacity) result.opacity = style.opacity;
+    };
+    if (hovered) overlay(node.hoverStyle);
+    if (pressed) overlay(node.pressedStyle);
+    return result;
+}
+
+static void DrawWidgetViewNode(D2DState* state,
+    const snowdesktop::widget_runtime::ViewNode& node,
+    const snowdesktop::widget_runtime::WidgetInteractionRegions& regions)
+{
+    using snowdesktop::widget_runtime::ViewNodeType;
+    using snowdesktop::widget_runtime::ViewTextAlignment;
+    if (!state || !state->ctx || !node.visible ||
+        node.frame.width <= 0.0f || node.frame.height <= 0.0f)
+        return;
+
+    const bool hovered = regions.IsHovered(node.key);
+    const bool pressed = regions.IsPressed(node.key);
+    const auto style = ResolveViewStyle(node, hovered, pressed);
+    const float opacity = std::clamp(
+        style.opacity.value_or(1.0f), 0.0f, 1.0f);
+    const float radius = std::max(0.0f,
+        style.cornerRadius.value_or(0.0f));
+    const D2D1_RECT_F rect = D2D1::RectF(
+        state->widgetRect.left + node.frame.x,
+        state->widgetRect.top + node.frame.y,
+        state->widgetRect.left + node.frame.x + node.frame.width,
+        state->widgetRect.top + node.frame.y + node.frame.height);
+
+    const bool implicitButtonBackground = !style.background &&
+        node.type == ViewNodeType::Button;
+    std::optional<std::uint32_t> background = style.background;
+    if (!background && node.type == ViewNodeType::Button)
+        background = 0xFFFFFF;
+    if (background)
+    {
+        const float defaultButtonAlpha =
+            implicitButtonBackground ? 0.12f : 1.0f;
+        ID2D1SolidColorBrush* brush = GetCachedBrush(state,
+            static_cast<int>(*background), opacity * defaultButtonAlpha);
+        if (brush)
+        {
+            if (radius > 0.0f)
+                state->ctx->FillRoundedRectangle(
+                    D2D1::RoundedRect(rect, radius, radius), brush);
+            else
+                state->ctx->FillRectangle(rect, brush);
+        }
+    }
+    const float borderWidth = std::max(0.0f,
+        style.borderWidth.value_or(0.0f));
+    if (borderWidth > 0.0f && style.borderColor)
+    {
+        ID2D1SolidColorBrush* brush = GetCachedBrush(state,
+            static_cast<int>(*style.borderColor), opacity);
+        if (brush)
+        {
+            if (radius > 0.0f)
+                state->ctx->DrawRoundedRectangle(
+                    D2D1::RoundedRect(rect, radius, radius), brush,
+                    borderWidth);
+            else
+                state->ctx->DrawRectangle(rect, brush, borderWidth);
+        }
+    }
+
+    if ((node.type == ViewNodeType::Text ||
+            node.type == ViewNodeType::Button) &&
+        !node.text.empty() && state->dwrite)
+    {
+        IDWriteTextFormat* format = GetCachedTextFormat(state,
+            node.fontSize,
+            node.bold ? DWRITE_FONT_WEIGHT_BOLD : state->itemFontWeight,
+            false, DWRITE_WORD_WRAPPING_NO_WRAP,
+            false, false, false, nullptr);
+        const std::uint32_t foreground =
+            style.foreground.value_or(0xFFFFFF);
+        ID2D1SolidColorBrush* brush = GetCachedBrush(state,
+            static_cast<int>(foreground), opacity);
+        const std::wstring text = Utf8ToWideLocal(node.text);
+        if (format && brush && !text.empty())
+        {
+            const float textInset = std::min(node.padding,
+                std::max(0.0f, std::min(
+                    node.frame.width, node.frame.height) * 0.5f));
+            const float textWidth = std::max(0.0f,
+                node.frame.width - textInset * 2.0f);
+            const float textHeight = std::max(0.0f,
+                node.frame.height - textInset * 2.0f);
+            ComPtr<IDWriteTextLayout> layout;
+            if (SUCCEEDED(state->dwrite->CreateTextLayout(
+                    text.data(), static_cast<UINT32>(text.size()),
+                    format, textWidth, textHeight,
+                    &layout)) && layout)
+            {
+                if (node.textAlign == ViewTextAlignment::Center)
+                    layout->SetTextAlignment(
+                        DWRITE_TEXT_ALIGNMENT_CENTER);
+                else if (node.textAlign == ViewTextAlignment::End)
+                    layout->SetTextAlignment(
+                        DWRITE_TEXT_ALIGNMENT_TRAILING);
+                else
+                    layout->SetTextAlignment(
+                        DWRITE_TEXT_ALIGNMENT_LEADING);
+                layout->SetParagraphAlignment(
+                    DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                DWRITE_TRIMMING trimming{};
+                trimming.granularity =
+                    DWRITE_TRIMMING_GRANULARITY_CHARACTER;
+                ComPtr<IDWriteInlineObject> ellipsis;
+                if (SUCCEEDED(state->dwrite->CreateEllipsisTrimmingSign(
+                        format, &ellipsis)) && ellipsis)
+                    layout->SetTrimming(&trimming, ellipsis.Get());
+                state->ctx->DrawTextLayout(
+                    D2D1::Point2F(
+                        rect.left + textInset, rect.top + textInset),
+                    layout.Get(), brush);
+            }
+        }
+    }
+
+    for (const auto& child : node.children)
+        DrawWidgetViewNode(state, child, regions);
+}
+
 void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring& scriptPath,
     ID2D1DeviceContext* context, RECT bounds, int columns, int rows)
 {
@@ -9677,6 +9817,122 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
         lua_pushstring(state, widUtf8.c_str());
         lua_setfield(state, -2, "widgetId");
     }
+
+    lua_getfield(state, -1, "view");
+    if (lua_isfunction(state, -1))
+    {
+        const auto pushContext = +[](lua_State* lifecycleState) {
+            (void)lua_WidgetContext(lifecycleState);
+        };
+        bool accepted = false;
+        std::string viewError;
+        if (!found->lifecycle.PushRenderArguments(state, pushContext))
+        {
+            lua_pop(state, 1);
+            viewError = "Widget lifecycle is not initialized";
+        }
+        else if (snowdesktop::lua_runtime::ProtectedCall(
+                state, 2, 1) != LUA_OK)
+        {
+            const char* error = lua_tostring(state, -1);
+            viewError = error ? error : "Widget view evaluation failed";
+            lua_pop(state, 1);
+        }
+        else
+        {
+            snowdesktop::widget_runtime::ViewNode candidate;
+            std::vector<snowdesktop::widget_runtime::InteractionRegion>
+                regions;
+            if (!snowdesktop::widget_runtime::ParseLuaViewTree(
+                    state, -1, candidate, viewError))
+            {
+                viewError = "view(): " + viewError;
+            }
+            else if (!snowdesktop::widget_runtime::
+                    ValidateAndLayoutViewTree(candidate,
+                        d2dState_->widgetRect.right -
+                            d2dState_->widgetRect.left,
+                        std::max(1.0f,
+                            d2dState_->widgetRect.bottom -
+                                d2dState_->widgetRect.top -
+                                (std::strcmp(d2dState_->surfaceKind,
+                                    "panel") == 0
+                                    ? 0.0f
+                                    : static_cast<float>(
+                                        d2dState_->barHeight))),
+                        viewError))
+            {
+                viewError = "view(): " + viewError;
+            }
+            else if (!snowdesktop::widget_runtime::
+                    CollectViewInteractionRegions(candidate,
+                        regions, viewError))
+            {
+                viewError = "view(): " + viewError;
+            }
+            else
+            {
+                accepted = true;
+                for (auto& region : regions)
+                {
+                    if (!found->interactionRegions.Submit(
+                            std::move(region), viewError))
+                    {
+                        accepted = false;
+                        viewError = "view(): " + viewError;
+                        break;
+                    }
+                }
+            }
+            lua_pop(state, 1);
+            if (accepted)
+            {
+                const int currentIndex = FindWidget(widgetId);
+                if (currentIndex >= 0)
+                {
+                    found = &widgets_[currentIndex];
+                    found->viewTree = std::move(candidate);
+                }
+                else
+                    accepted = false;
+            }
+        }
+
+        if (!accepted)
+        {
+            found->interactionRegions.AbortFrame();
+            if (!viewError.empty())
+                RuntimeRecordError(widgetId, viewError);
+        }
+        else
+        {
+            const auto transition =
+                found->interactionRegions.CommitFrame();
+            if (transition.Changed())
+            {
+                float pointerX = 0.0f;
+                float pointerY = 0.0f;
+                found->interactionRegions.LastPointer(pointerX, pointerY);
+                DispatchInteractionTransition(*found, transition,
+                    static_cast<int>(pointerX),
+                    static_cast<int>(pointerY));
+                RuntimeInvalidateHost(widgetId);
+            }
+        }
+        if (snowdesktop::widget_api::ConsumeTransientStateDirty(state))
+            RuntimeInvalidateHost(widgetId);
+        if (found->viewTree)
+            DrawWidgetViewNode(d2dState_, *found->viewTree,
+                found->interactionRegions);
+        while (d2dState_->widgetClipDepth > 0)
+        {
+            d2dState_->ctx->PopAxisAlignedClip();
+            --d2dState_->widgetClipDepth;
+        }
+        lua_pop(state, 1);
+        return;
+    }
+    lua_pop(state, 1);
 
     lua_getfield(state, -1, "render");
     if (lua_isfunction(state, -1))
@@ -15970,6 +16226,15 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "scroll", lua_InteractionScroll, 2 },
         { "setScrollOffset", lua_InteractionSetScrollOffset, 2 },
     };
+    static constexpr FunctionDescriptor view[] = {
+        { "box", snowdesktop::widget_runtime::LuaViewBox, 2 },
+        { "row", snowdesktop::widget_runtime::LuaViewRow, 2 },
+        { "column", snowdesktop::widget_runtime::LuaViewColumn, 2 },
+        { "stack", snowdesktop::widget_runtime::LuaViewStack, 2 },
+        { "text", snowdesktop::widget_runtime::LuaViewText, 2 },
+        { "button", snowdesktop::widget_runtime::LuaViewButton, 2 },
+        { "spacer", snowdesktop::widget_runtime::LuaViewSpacer, 2 },
+    };
     static constexpr FunctionDescriptor widget[] = {
         { "info", lua_WidgetInfo },
         { "context", lua_WidgetContext, 2 },
@@ -16144,6 +16409,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
     static constexpr LibraryDescriptor libraries[] = {
         DescribeLibrary("draw", draw),
         DescribeLibrary("interaction", interaction),
+        DescribeLibrary("view", view),
         DescribeLibrary("widget", widget),
         DescribeLibrary("sys", system),
         DescribeLibrary("system", systemV2),

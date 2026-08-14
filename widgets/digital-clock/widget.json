@@ -5,12 +5,12 @@
   "apiVersion": 2,
   "dataVersion": 1,
   "entry": "main.lua",
-  "minHostVersion": "1.0.1.0",
+  "minHostVersion": "1.0.4.0",
   "author": "SnowDesktop",
   "license": "GPL-3.0-only",
   "name": "Digital Clock",
   "nameKey": "lua_widget.digital_clock.name",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Displays a responsive digital clock with date and weekday.",
   "descriptionKey": "lua_widget.digital_clock.description",
   "locales": {
@@ -221,11 +221,11 @@
   },
   "permissions": [],
   "requiredFeatures": [
-    "draw.immediate",
     "lifecycle.model",
     "schedule.basic",
     "schedule.visibility",
-    "time.basic"
+    "time.basic",
+    "view.tree.core"
   ],
   "optionalFeatures": []
 }

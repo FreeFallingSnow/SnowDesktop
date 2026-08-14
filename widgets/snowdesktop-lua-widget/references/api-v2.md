@@ -9,8 +9,8 @@
 
 ## 入口契约
 
-`main.lua` 必须返回 `widget.define({...})` 的结果，并且当前版本必须提供
-`render`。宿主会把当前上下文和实例 model 传给 `render`：
+`main.lua` 必须返回 `widget.define({...})` 的结果，并且必须且只能提供
+`render` 或 `view`。宿主会把当前上下文和实例 model 传给所选回调：
 
 ```lua
 local function setup(context)
@@ -59,15 +59,14 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 事件驱动的数据 topic 发生变更时，持有对应订阅的组件收到 `data.change`，其中包含
 `topic/revision`；组件可在该事件中重建依赖日期范围等参数的订阅。
 
-`menu(context, model, request)` 已用于即时绘制 region 的独立右键菜单；`view`
-仍是后续声明式视图契约预留项，当前宿主会拒绝使用。
+`menu(context, model, request)` 同时用于即时绘制 region 和声明式节点的独立右键菜单。
 不要把 API v1 的全局回调迁入 v2 描述符。
 
 ## 已实现能力
 
 ### `widget`
 
-- `widget.define(definition)`：校验并返回 v2 描述符。当前必需 `render`，可选
+- `widget.define(definition)`：校验并返回 v2 描述符。`render` 与 `view` 必须二选一，可选
   `setup`、`panel`、`event`、`menu` 和 `dispose`。`panel` 只在
   `widget.openPanel` 打开的宿主辅助面板中绘制，收到的 `context.surface` 为
   `panel`；面板中的 `control.textInput/textArea` 与桌面 surface 使用同一套
@@ -82,6 +81,64 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 - `widget.setTimer`、`widget.cancelTimer`：API v1 兼容入口；新 v2 组件使用
   `schedule`。
 - `widget.openSettings()`、`widget.openPanel(options)`、`widget.closePanel()`。
+
+### `view.tree.core` 声明式视图
+
+当前过渡 feature `view.tree.core` 提供 `view.box/row/column/stack/text/button/spacer`。
+每次 `view(context, model)` 返回一棵完整树；所有节点必须提供全树唯一、1–128 字节的
+稳定 `key`。宿主先完整解析、校验和布局，再原子替换上一棵成功树；回调或校验失败时
+继续显示上一棵树，不留下半棵树或空白交互区。
+
+```lua
+local function buildView(context, model)
+    return view.column({
+        key = "root",
+        width = "fill",
+        height = "fill",
+        padding = 12,
+        gap = 8,
+        alignItems = "stretch",
+        justifyContent = "center",
+        children = {
+            view.text({
+                key = "status",
+                text = model.status,
+                width = "fill",
+                textAlign = "center",
+                fontSize = 18,
+                style = { foreground = 0xFFFFFF },
+            }),
+            view.button({
+                key = "refresh",
+                label = l10n.tr("lua_widget.example.refresh"),
+                height = 36,
+                action = { id = "refresh" },
+                events = {
+                    contextMenu = { id = "refresh.menu" },
+                },
+                style = { background = 0x365F86, cornerRadius = 8 },
+                hoverStyle = { background = 0x477FB5 },
+                pressedStyle = { background = 0x315F8F },
+            }),
+        },
+    })
+end
+```
+
+尺寸接受有限非负数字、`auto` 或 `fill`；线性布局支持 `padding`、`gap`、
+`flexGrow`、`alignItems/alignSelf` 和 `justifyContent`。文本支持 `fontSize`、`bold`、
+`textAlign`；基础样式支持 RGB 前景/背景/边框、边框宽度、圆角、0–1 opacity 及
+hover/pressed 覆盖。按钮 `action` 是 click 简写；events 还支持 pointer enter/leave/
+down/up、doubleClick 和 contextMenu，动作通过 `event.kind == "action"` 投递。
+
+树限制为 512 节点、32 层、单节点 4 KiB 文本、全树 64 KiB 文本和最多 256 个交互
+区域。未知字段、错误枚举、非连续 children、重复 key、NaN/Infinity 和越界值会拒绝
+整次提交。桌面树只布局在底部标题栏之上的内容区。
+
+该 feature 不是完整 `view.tree`：当前每帧重建树，尚无 grid/scroll/list/image/icon/
+shape/input/progress/chart/slot 节点，也没有键盘焦点、UIA 输出、RTL、文本换行、主题
+token、差量资源复用或声明式 panel。需要这些能力的组件应继续使用 v2 即时绘制或等待
+对应 feature；不得把 `view.tree.core` 当作稳定完整控件集声明。
 
 ### `interaction` 与元素级菜单
 
@@ -169,7 +226,7 @@ end
 `control.textInput(spec)` 和 `control.textArea(spec)` 是当前即时绘制 surface 的
 宿主管理文本编辑器。组件在每次 `render` 中提交稳定描述符，宿主继续使用 Direct2D
 绘制透明背景、光标、选择、占位文本和 IME 组合下划线；输入值绑定到实例
-`storageKey`，函数返回当前字符串。它们不是尚未实现的声明式 `view` 树节点，也不向
+`storageKey`，函数返回当前字符串。它们不是 `view.tree.core` 节点，也不向
 Lua 暴露剪贴板内容或原生窗口句柄。
 
 ```lua
@@ -737,7 +794,7 @@ local display = resource.font("display")
 
 ## 当前明确未开放
 
-API v2 暂未向沙箱提供声明式 `view` 控件树、通用即时 region 的键盘焦点/UIA 输出、
+API v2 暂未向沙箱提供完整 `view.tree`、通用即时 region/`view.tree.core` 的键盘焦点/UIA 输出、
 受控二级菜单、`desktop`、旧的同步 `media` 库、HTTP、尚未列出的系统状态、
 通用剪贴板、文件选择和应用启动库。`control.textInput/textArea` 只在聚焦的
 宿主管理编辑器内部代理标准剪贴板操作，不允许 Lua 读取剪贴板。其余能力将在对应宿主实现、配额与按需生命周期完成后

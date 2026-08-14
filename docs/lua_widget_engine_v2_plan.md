@@ -201,7 +201,7 @@ src/widget_runtime/
 local info = widget.apiInfo()
 -- info.current = 2
 -- info.supported = { 2 }
--- info.features = { "view.tree", "data.subscribe", ... }
+-- info.features = { "view.tree.core", "data.subscribe", ... }
 
 if widget.hasFeature("draw.path") then
     -- optional enhancement
@@ -270,13 +270,13 @@ return widget.define({
 - `view` 返回视图树，或 v2 组件改用兼容 `render` 即时绘制；一个表面只能选择一种模式。
 - 所有宿主资源绑定到实例作用域，卸载时自动取消。
 
-当前过渡实现已经接通即时绘制组件的 `setup(context) -> model -> render(context,
+当前过渡实现已经接通组件的 `setup(context) -> model -> render/view(context,
 model) -> dispose(context, model, reason)` 路径，并将其作为 `lifecycle.model`
 feature 发布。setup 失败不会替换热重载前的可用 VM，dispose 在卸载、热重载和
 宿主关闭时至多执行一次。surface 级 `event` 已接通可见性、尺寸、指针、计时器、
 动作、选择、环境与面板事件，并作为 `lifecycle.event` feature 发布；它不代表
-声明式元素事件。`menu` 和声明式 `view` 尚未接通，继续在 `widget.define` 阶段
-拒绝。
+声明式元素事件。`menu` 已接通即时 region 和 `view.tree.core` 元素；完整
+`view.tree` 尚未接通，仍在 feature negotiation 阶段明确拒绝。
 
 ## 7. 生命周期状态机
 
@@ -1565,6 +1565,14 @@ v2.0 资源契约：
 - 音频分析分别记录 1/5/10 个订阅下的捕获线程数、CPU、内存、FFT 耗时和发布丢帧；实例数增长不得线性增加捕获客户端。
 - 图片解码、字体解析和 GPU 上传必须计入独立资源预算；缓存不得绕过 Lua 实例内存限制形成无上限宿主内存占用。
 
+当前过渡实现（2026-08-15）发布 `view.tree.core`，支持 `box/row/column/stack/text/button/spacer`、
+稳定全树 key、基础线性布局、基础文本/边框样式、宿主 hover/pressed 视觉、元素 click/
+doubleClick/pointer/contextMenu action，以及“先完整校验布局、后原子提交；失败保留上一成功树”。
+其额度为 512 节点、32 层、单节点 4 KiB 文本、全树 64 KiB 文本和 256 个交互元素；未知字段、
+重复 key、非连续 children、错误枚举和越界数值拒绝整次提交。它尚不包含完整必选节点矩阵、
+键盘焦点、UIA、RTL、文本换行、集合/虚拟化、资源节点、差量资源复用和声明式 panel，因此只发布
+细粒度 feature，不发布 `view.tree`，也不计作 M6 完成。
+
 ### 18.9 最终验证入口
 
 - 开发中可以使用定向 CTest 标签和诊断构建。
@@ -1597,7 +1605,7 @@ v2.0 资源契约：
 | 波次 | 组件 | v2 目标权限 | v2 迁移重点 | 主要验收 |
 |---|---|---|---|---|
 | A：基础绘制 | `analog-clock` | 无 | `widget.define`、环境上下文、按秒/分钟调度、v2 即时绘制 | 多 DPI/尺寸/主题截图一致；隐藏时无持续帧 |
-| A：基础绘制 | `digital-clock` | 无 | 可见性作用域、时间线调度、本地化和尺寸响应 | 12/24 小时、日期、语言、休眠恢复正确 |
+| A：基础绘制 | `digital-clock` | 无 | `view.tree.core`、可见性作用域、时间线调度、本地化和尺寸响应 | 时间、日期、语言、休眠恢复正确；树失败保留上一帧 |
 | B：状态与输入 | `sticky-note` | 无 | 有界宿主文本编辑、可信手势焦点/IME、菜单动作 | 旧便笺内容保留；中文 IME、撤销和重启恢复通过 |
 | B：状态与输入 | `reminders` | 无 | 稳定 key 集合、事务存储、编辑动作和可访问语义 | 旧任务顺序/完成状态保留；键盘与 Narrator 可用 |
 | B：状态与输入 | `pomodoro` | 可选 `notification.post` | 宿主调度、后台合并、通知可选权限、动作状态机 | 休眠恢复不补发多次；拒绝通知仍可计时 |

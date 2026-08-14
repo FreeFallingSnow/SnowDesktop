@@ -30,8 +30,9 @@ development packages live under `data\widgets\installed` and
 2. Copy `assets/widget-template` as a complete package directory.
 3. Generate a new UUID for `id`, choose a lowercase hyphenated `slug`, and keep
    the UUID across all versions and channels.
-4. Keep `schemaVersion` and `apiVersion` at `2`. Implement a local `render`
-   function and return `widget.define({ render = render, ... })` from `main.lua`.
+4. Keep `schemaVersion` and `apiVersion` at `2`. Implement exactly one local
+   `render` or `view` function and return it through `widget.define(...)` from
+   `main.lua`. Require `view.tree.core` when using the declarative subset.
 5. Put every user-visible string behind a literal `l10n.tr("key")`. Add every
    key to every locale catalog in `widget.json`; never put component strings in
    the host `lang/` directory.
@@ -74,14 +75,17 @@ return widget.define({
 ```
 
 Do not define API v1 globals such as top-level `render`, `onClick`,
-`getContextMenu`, `imguiRender`, or `onHttpResponse`. The v2 descriptor reserves
-`view` until that contract is implemented. The current host
+`getContextMenu`, `imguiRender`, or `onHttpResponse`. The current host
 supports optional `setup(context)` and `dispose(context, model, reason)`;
-`setup` runs once and its return value is passed to `render`, `event`, and
+`setup` runs once and its return value is passed to `render` or `view`, `event`, and
 `dispose`. Optional `event(context, model, event)` receives host surface events;
-immediate-mode elements use `interaction.region`, while declarative elements
-remain unavailable. Optional `menu(context, model, request)` builds a region's
-synchronous native context menu.
+immediate-mode elements use `interaction.region`. The transitional
+`view.tree.core` subset supports box/row/column/stack/text/button/spacer nodes,
+stable element actions, hover/pressed styles, and per-element context-menu
+bindings; it does not yet provide keyboard focus, UI Automation, resources,
+collections, or the complete `view.tree` contract. Optional
+`menu(context, model, request)` builds an element's synchronous native context
+menu.
 
 ## Manifest rules
 
@@ -102,8 +106,8 @@ synchronous native context menu.
 
 ## Implementation rules
 
-- Treat `render` as a hot path. Do not write storage, create resource handles,
-  load modules, or perform future data queries during every render.
+- Treat `render` and `view` as hot paths. Do not write storage, create resource
+  handles, load modules, or perform future data queries during every frame.
 - `state.set` deep-copies JSON-like data and requests another frame only when
   the value changes. Do not use it as persistent storage.
 - Group related persistent string writes with `storage.transaction`; access

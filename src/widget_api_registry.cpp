@@ -20,7 +20,7 @@ namespace snowdesktop::widget_api
 namespace
 {
 constexpr std::uint32_t kCurrentApiVersion = 2;
-constexpr std::array<std::string_view, 63> kHostFeatures = {
+constexpr std::array<std::string_view, 64> kHostFeatures = {
     "calendar.dateMath",
     "calendar.selection",
     "control.focus",
@@ -84,17 +84,18 @@ constexpr std::array<std::string_view, 63> kHostFeatures = {
     "time.calendar",
     "widget.context",
     "widget.panel",
+    "view.tree.core",
 };
 constexpr std::array<std::string_view, 15> kV1SandboxLibraries = {
     "string", "table", "math", "utf8", "draw", "sys", "layout",
     "storage", "widget", "desktop", "media", "http", "ui",
     "everything", "calendar",
 };
-constexpr std::array<std::string_view, 21> kV2SandboxLibraries = {
+constexpr std::array<std::string_view, 22> kV2SandboxLibraries = {
     "string", "table", "math", "utf8", "draw", "layout", "storage",
     "state", "schedule", "widget", "system", "time", "module",
     "resource", "data", "task", "interaction", "control", "calendar",
-    "ui", "l10n",
+    "ui", "l10n", "view",
 };
 char kDefinedWidgetMarker = 0;
 char kTransientStateTableKey = 0;
@@ -431,7 +432,8 @@ int LuaDefineWidget(lua_State* state)
         return luaL_error(state,
             "widget.define: choose exactly one of 'render' or 'view'");
     }
-    if (hasView && !SupportsFeature("view.tree"))
+    if (hasView && !SupportsFeature("view.tree") &&
+        !SupportsFeature("view.tree.core"))
     {
         return luaL_error(state,
             "widget.define: unsupported host feature 'view.tree'");
