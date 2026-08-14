@@ -1,4 +1,5 @@
 #include "widget_view_lua.h"
+#include "widget_resource_lua.h"
 
 #include <algorithm>
 #include <cmath>
@@ -475,6 +476,40 @@ bool ReadStyleField(lua_State* state, int table, const char* field,
     return ok;
 }
 
+bool ReadResourceField(lua_State* state, int table, const char* field,
+    LuaResourceType expected, bool required, std::string& name,
+    std::string& error)
+{
+    table = lua_absindex(state, table);
+    lua_getfield(state, table, field);
+    if (lua_isnil(state, -1))
+    {
+        lua_pop(state, 1);
+        if (!required) return true;
+        error = std::string("view field '") + field +
+            "' requires a package resource handle";
+        return false;
+    }
+    const auto* handle = TestResourceHandle(state, -1);
+    if (!handle || handle->type != expected)
+    {
+        lua_pop(state, 1);
+        error = std::string("view field '") + field +
+            "' has the wrong package resource type";
+        return false;
+    }
+    name.assign(handle->name,
+        std::char_traits<char>::length(handle->name));
+    lua_pop(state, 1);
+    if (name.empty() || name.size() > 64)
+    {
+        error = std::string("view field '") + field +
+            "' has an invalid package resource name";
+        return false;
+    }
+    return true;
+}
+
 bool ParseAlignment(std::string_view value, ViewAlignment& result)
 {
     if (value == "start") result = ViewAlignment::Start;
@@ -541,6 +576,61 @@ bool ReadTextAlignmentField(lua_State* state, int table,
     return true;
 }
 
+bool ReadImageFitField(lua_State* state, int table,
+    ViewImageFit& value, std::string& error)
+{
+    std::string text;
+    if (!ReadStringField(state, table, "fit", text, false, error))
+        return false;
+    if (text.empty() || text == "contain") value = ViewImageFit::Contain;
+    else if (text == "fill") value = ViewImageFit::Fill;
+    else if (text == "cover") value = ViewImageFit::Cover;
+    else if (text == "none") value = ViewImageFit::None;
+    else
+    {
+        error = "view field 'fit' has an unsupported value";
+        return false;
+    }
+    return true;
+}
+
+bool ReadImageAlignmentField(lua_State* state, int table,
+    ViewImageAlignment& value, std::string& error)
+{
+    std::string text;
+    if (!ReadStringField(state, table, "alignment", text, false, error))
+        return false;
+    if (text.empty() || text == "center")
+        value = ViewImageAlignment::Center;
+    else if (text == "start") value = ViewImageAlignment::Start;
+    else if (text == "end") value = ViewImageAlignment::End;
+    else
+    {
+        error = "view field 'alignment' has an unsupported value";
+        return false;
+    }
+    return true;
+}
+
+bool ReadImageInterpolationField(lua_State* state, int table,
+    ViewImageInterpolation& value, std::string& error)
+{
+    std::string text;
+    if (!ReadStringField(state, table, "interpolation", text, false,
+            error))
+        return false;
+    if (text.empty() || text == "linear")
+        value = ViewImageInterpolation::Linear;
+    else if (text == "nearest")
+        value = ViewImageInterpolation::Nearest;
+    else
+    {
+        error = "view field 'interpolation' has an unsupported value";
+        return false;
+    }
+    return true;
+}
+
 bool ParseAction(lua_State* state, int index, InteractionAction& action,
     std::string& error)
 {
@@ -571,6 +661,7 @@ bool ParseNodeType(std::string_view type, ViewNodeType& result)
     else if (type == "column") result = ViewNodeType::Column;
     else if (type == "stack") result = ViewNodeType::Stack;
     else if (type == "text") result = ViewNodeType::Text;
+    else if (type == "image") result = ViewNodeType::Image;
     else if (type == "button") result = ViewNodeType::Button;
     else if (type == "icon") result = ViewNodeType::Icon;
     else if (type == "iconButton") result = ViewNodeType::IconButton;
@@ -637,6 +728,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     }
     if (!ValidateObjectFields(state, index,
             { "type", "key", "text", "label", "glyph", "iconFont",
+                "source", "font", "fit", "alignment", "interpolation",
+                "alt",
                 "shape", "value", "thickness", "trackOpacity",
                 "fillOpacity", "width", "height",
                 "padding", "gap", "flexGrow", "fontSize", "bold",
@@ -658,6 +751,9 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         node.type == ViewNodeType::IconButton;
     const bool progressNode = node.type == ViewNodeType::ProgressBar ||
         node.type == ViewNodeType::ProgressRing;
+    const bool imageNode = node.type == ViewNodeType::Image;
+    const bool textResourceNode = node.type == ViewNodeType::Text ||
+        node.type == ViewNodeType::Button;
     if (buttonNode && !iconNode &&
         (FieldPresent(state, index, "text") ||
             FieldPresent(state, index, "glyph")))
@@ -704,12 +800,41 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         error = "only progress nodes accept progress fields";
         return false;
     }
+    if (!imageNode && (FieldPresent(state, index, "source") ||
+            FieldPresent(state, index, "fit") ||
+            FieldPresent(state, index, "alignment") ||
+            FieldPresent(state, index, "interpolation") ||
+            FieldPresent(state, index, "alt")))
+    {
+        error = "only image nodes accept image resource fields";
+        return false;
+    }
+    if (!textResourceNode && FieldPresent(state, index, "font"))
+    {
+        error = "only text and button nodes accept a font resource";
+        return false;
+    }
+    if (imageNode && !FieldPresent(state, index, "alt"))
+    {
+        error = "image nodes require an explicit 'alt' field";
+        return false;
+    }
     if (!ReadStringField(state, index, "key", node.key, true, error))
         return false;
     const char* contentField = iconNode ? "glyph" :
         (buttonNode ? "label" : "text");
     if (!ReadStringField(state, index, contentField,
             node.text, false, error) ||
+        !ReadResourceField(state, index, "source", LuaResourceType::Image,
+            imageNode, node.imageResourceName, error) ||
+        !ReadResourceField(state, index, "font", LuaResourceType::Font,
+            false, node.fontResourceName, error) ||
+        !ReadStringField(state, index, "alt", node.alt, false, error) ||
+        !ReadImageFitField(state, index, node.imageFit, error) ||
+        !ReadImageAlignmentField(state, index,
+            node.imageAlignment, error) ||
+        !ReadImageInterpolationField(state, index,
+            node.imageInterpolation, error) ||
         !ReadLengthField(state, index, "width", node.width, error) ||
         !ReadLengthField(state, index, "height", node.height, error) ||
         !ReadFloatField(state, index, "padding", node.padding, error) ||
@@ -891,6 +1016,7 @@ int LuaViewRow(lua_State* state) { return MakeNode(state, "row"); }
 int LuaViewColumn(lua_State* state) { return MakeNode(state, "column"); }
 int LuaViewStack(lua_State* state) { return MakeNode(state, "stack"); }
 int LuaViewText(lua_State* state) { return MakeNode(state, "text"); }
+int LuaViewImage(lua_State* state) { return MakeNode(state, "image"); }
 int LuaViewButton(lua_State* state) { return MakeNode(state, "button"); }
 int LuaViewIcon(lua_State* state) { return MakeNode(state, "icon"); }
 int LuaViewIconButton(lua_State* state)

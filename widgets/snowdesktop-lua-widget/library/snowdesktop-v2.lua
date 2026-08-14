@@ -115,6 +115,9 @@
 ---@alias SnowViewLength number|'auto'|'fill'
 ---@alias SnowViewAlignment 'start'|'center'|'end'|'stretch'
 ---@alias SnowViewSelfAlignment 'auto'|'start'|'center'|'end'|'stretch'
+---@alias SnowViewImageFit 'fill'|'contain'|'cover'|'none'
+---@alias SnowViewImageAlignment 'start'|'center'|'end'
+---@alias SnowViewImageInterpolation 'nearest'|'linear'
 
 ---@class SnowViewStyle
 ---@field background? integer RGB color.
@@ -142,6 +145,12 @@
 ---@field text? string Used by text nodes.
 ---@field label? string Required by button nodes.
 ---@field glyph? string Required by icon and iconButton nodes.
+---@field source? SnowImageResource Required by image nodes.
+---@field font? SnowFontResource Package-private font for text and button nodes.
+---@field fit? SnowViewImageFit Image scaling mode; defaults to contain.
+---@field alignment? SnowViewImageAlignment Image alignment on both axes; defaults to center.
+---@field interpolation? SnowViewImageInterpolation Image sampling mode; defaults to linear.
+---@field alt? string Required by image nodes; use an empty string for decorative images.
 ---@field iconFont? 'fa'|'fluent'|'fluent-regular'
 ---@field shape? 'rectangle'|'roundedRectangle'|'circle'|'ellipse'
 ---@field value? number Progress value between 0 and 1.
@@ -171,7 +180,7 @@
 ---@field children? SnowViewNode[]
 
 ---@class SnowViewNode: SnowViewNodeOptions
----@field type 'box'|'row'|'column'|'stack'|'text'|'button'|'icon'|'iconButton'|'shape'|'progressBar'|'progressRing'|'spacer'
+---@field type 'box'|'row'|'column'|'stack'|'text'|'image'|'button'|'icon'|'iconButton'|'shape'|'progressBar'|'progressRing'|'spacer'
 
 ---@class SnowInteractionShape
 ---@field type 'rect'|'roundedRect'|'circle'
@@ -457,6 +466,10 @@ function view.stack(options) end
 ---@param options SnowViewNodeOptions
 ---@return SnowViewNode
 function view.text(options) end
+
+---@param options SnowViewNodeOptions
+---@return SnowViewNode
+function view.image(options) end
 
 ---@param options SnowViewNodeOptions
 ---@return SnowViewNode

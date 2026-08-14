@@ -1,5 +1,6 @@
 #include "widget_view_lua.h"
 #include "widget_view_tree.h"
+#include "widget_resource_lua.h"
 
 #include <cmath>
 #include <cstdlib>
@@ -140,6 +141,7 @@ void RegisterViewLibrary(lua_State* state)
         { "column", LuaViewColumn },
         { "stack", LuaViewStack },
         { "text", LuaViewText },
+        { "image", LuaViewImage },
         { "button", LuaViewButton },
         { "icon", LuaViewIcon },
         { "iconButton", LuaViewIconButton },
@@ -244,6 +246,10 @@ void TestVisualNodeParsing()
     Check(state != nullptr, "Lua state must be available");
     luaL_openlibs(state);
     RegisterViewLibrary(state);
+    PushResourceHandle(state, LuaResourceType::Image, "logo");
+    lua_setglobal(state, "logoResource");
+    PushResourceHandle(state, LuaResourceType::Font, "display");
+    lua_setglobal(state, "displayFont");
     Check(luaL_dostring(state, R"lua(
         return view.row({
             key = "visuals",
@@ -286,6 +292,22 @@ void TestVisualNodeParsing()
                     action = { id = "next" },
                     accessibility = { label = "Next" },
                 }),
+                view.image({
+                    key = "logo",
+                    source = logoResource,
+                    alt = "SnowDesktop",
+                    width = 48,
+                    height = 32,
+                    fit = "cover",
+                    alignment = "end",
+                    interpolation = "nearest",
+                }),
+                view.text({
+                    key = "brand",
+                    text = "SnowDesktop",
+                    font = displayFont,
+                    fontSize = 16,
+                }),
             },
         })
     )lua") == LUA_OK,
@@ -293,7 +315,7 @@ void TestVisualNodeParsing()
     ViewNode root;
     std::string error;
     Check(ParseLuaViewTree(state, -1, root, error) &&
-            root.children.size() == 5 &&
+            root.children.size() == 7 &&
             root.children[0].type == ViewNodeType::Shape &&
             root.children[0].shapeKind == ViewShapeKind::Circle &&
             root.children[1].type == ViewNodeType::ProgressBar &&
@@ -301,8 +323,16 @@ void TestVisualNodeParsing()
             Near(root.children[1].trackOpacity, 0.2f) &&
             root.children[2].type == ViewNodeType::ProgressRing &&
             root.children[3].iconFont == ViewIconFont::Fluent &&
-            root.children[4].type == ViewNodeType::IconButton,
-        "shape, progress, and icon nodes must retain typed fields");
+            root.children[4].type == ViewNodeType::IconButton &&
+            root.children[5].type == ViewNodeType::Image &&
+            root.children[5].imageResourceName == "logo" &&
+            root.children[5].alt == "SnowDesktop" &&
+            root.children[5].imageFit == ViewImageFit::Cover &&
+            root.children[5].imageAlignment == ViewImageAlignment::End &&
+            root.children[5].imageInterpolation ==
+                ViewImageInterpolation::Nearest &&
+            root.children[6].fontResourceName == "display",
+        "visual and package resource nodes must retain typed fields");
     Check(ValidateAndLayoutViewTree(root, 320.0f, 80.0f, error),
         "visual nodes must validate and lay out together");
     std::vector<InteractionRegion> regions;
@@ -311,6 +341,23 @@ void TestVisualNodeParsing()
             regions[0].events.at("click").id == "next" &&
             regions[0].accessibilityRole == "button",
         "iconButton must produce an actionable semantic region");
+
+    lua_pop(state, lua_gettop(state));
+    PushResourceHandle(state, LuaResourceType::Font, "display");
+    lua_setglobal(state, "wrongImageResource");
+    Check(luaL_dostring(state, R"lua(
+        return view.image({
+            key = "invalid-image",
+            source = wrongImageResource,
+            alt = "Invalid",
+        })
+    )lua") == LUA_OK,
+        "wrong-resource-type fixture must evaluate");
+    ViewNode invalid;
+    error.clear();
+    Check(!ParseLuaViewTree(state, -1, invalid, error) &&
+            error.find("wrong package resource type") != std::string::npos,
+        "image nodes must reject font handles as their source");
     lua_close(state);
 }
 }

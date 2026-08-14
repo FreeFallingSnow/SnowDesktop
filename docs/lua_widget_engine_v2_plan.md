@@ -1565,12 +1565,12 @@ v2.0 资源契约：
 - 音频分析分别记录 1/5/10 个订阅下的捕获线程数、CPU、内存、FFT 耗时和发布丢帧；实例数增长不得线性增加捕获客户端。
 - 图片解码、字体解析和 GPU 上传必须计入独立资源预算；缓存不得绕过 Lua 实例内存限制形成无上限宿主内存占用。
 
-当前过渡实现（2026-08-15）发布 `view.tree.core`，支持 `box/row/column/stack/text/button/icon/iconButton/shape/progressBar/progressRing/spacer`、
+当前过渡实现（2026-08-15）发布 `view.tree.core`，支持 `box/row/column/stack/text/image/button/icon/iconButton/shape/progressBar/progressRing/spacer`、
 稳定全树 key、基础线性布局、基础文本/边框样式、宿主 hover/pressed 视觉、元素 click/
 doubleClick/pointer/contextMenu action，以及“先完整校验布局、后原子提交；失败保留上一成功树”。
 其额度为 512 节点、32 层、单节点 4 KiB 文本、全树 64 KiB 文本和 256 个交互元素；未知字段、
 重复 key、非连续 children、错误枚举和越界数值拒绝整次提交。它尚不包含完整必选节点矩阵、
-键盘焦点、UIA、RTL、文本换行、集合/虚拟化、资源节点、差量资源复用和声明式 panel，因此只发布
+键盘焦点、UIA、RTL、文本换行、集合/虚拟化、差量资源复用和声明式 panel，因此只发布
 细粒度 feature，不发布 `view.tree`，也不计作 M6 完成。
 
 ### 18.9 最终验证入口

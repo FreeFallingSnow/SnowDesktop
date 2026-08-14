@@ -360,6 +360,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature("widget.panel") &&
             snowdesktop::widget_api::SupportsFeature(
                 "system.environment") &&
+            snowdesktop::widget_api::SupportsFeature("view.font") &&
+            snowdesktop::widget_api::SupportsFeature("view.image") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.tree.core") &&
             !snowdesktop::widget_api::SupportsFeature("view.tree"),

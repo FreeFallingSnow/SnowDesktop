@@ -43,7 +43,8 @@ bool IsButtonNode(ViewNodeType type) noexcept
 
 bool IsLeafNode(ViewNodeType type) noexcept
 {
-    return type == ViewNodeType::Text || IsButtonNode(type) ||
+    return type == ViewNodeType::Text || type == ViewNodeType::Image ||
+        IsButtonNode(type) ||
         type == ViewNodeType::Icon || type == ViewNodeType::Shape ||
         type == ViewNodeType::ProgressBar ||
         type == ViewNodeType::ProgressRing ||
@@ -60,6 +61,8 @@ float IntrinsicWidth(const ViewNode& node)
     if (node.type == ViewNodeType::Text ||
         node.type == ViewNodeType::Button)
         return TextIntrinsicWidth(node);
+    if (node.type == ViewNodeType::Image)
+        return 48.0f + node.padding * 2.0f;
     if (IsIconNode(node.type))
         return node.fontSize * 1.4f + node.padding * 2.0f;
     if (node.type == ViewNodeType::ProgressRing)
@@ -95,6 +98,8 @@ float IntrinsicHeight(const ViewNode& node)
         return node.height.value;
     if (node.type == ViewNodeType::Text)
         return node.fontSize * 1.4f + node.padding * 2.0f;
+    if (node.type == ViewNodeType::Image)
+        return 48.0f + node.padding * 2.0f;
     if (node.type == ViewNodeType::Button)
         return std::max(32.0f, node.fontSize * 1.8f) +
             node.padding * 2.0f;
@@ -279,7 +284,8 @@ void LayoutNode(ViewNode& node, const ViewRect& frame)
 
 bool ValidateNode(const ViewNode& node, std::size_t depth,
     std::size_t& nodes, std::size_t& textBytes,
-    std::unordered_set<std::string>& keys, std::string& error)
+    std::unordered_set<std::string>& keys,
+    std::unordered_set<std::string>& resources, std::string& error)
 {
     if (++nodes > ViewTreeLimits::MaximumNodes)
     {
@@ -324,13 +330,42 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         return false;
     }
     if (node.text.size() > ViewTreeLimits::MaximumTextBytes ||
-        textBytes + node.text.size() >
+        node.alt.size() > ViewTreeLimits::MaximumTextBytes ||
+        textBytes + node.text.size() + node.alt.size() >
             ViewTreeLimits::MaximumTotalTextBytes)
     {
         error = "view tree text limit exceeded";
         return false;
     }
-    textBytes += node.text.size();
+    textBytes += node.text.size() + node.alt.size();
+    if (node.type == ViewNodeType::Image &&
+        node.imageResourceName.empty())
+    {
+        error = "image nodes require an image resource handle";
+        return false;
+    }
+    if (node.type != ViewNodeType::Image &&
+        !node.imageResourceName.empty())
+    {
+        error = "only image nodes can retain an image resource";
+        return false;
+    }
+    if (!node.fontResourceName.empty() &&
+        node.type != ViewNodeType::Text &&
+        node.type != ViewNodeType::Button)
+    {
+        error = "only text and button nodes can retain a font resource";
+        return false;
+    }
+    if (!node.imageResourceName.empty())
+        resources.insert("image:" + node.imageResourceName);
+    if (!node.fontResourceName.empty())
+        resources.insert("font:" + node.fontResourceName);
+    if (resources.size() > ViewTreeLimits::MaximumResources)
+    {
+        error = "view tree resource limit exceeded (64)";
+        return false;
+    }
     if (IsLeafNode(node.type) && !node.children.empty())
     {
         error = std::string(ViewNodeTypeName(node.type)) +
@@ -372,7 +407,7 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
     }
     for (const auto& child : node.children)
         if (!ValidateNode(child, depth + 1, nodes, textBytes,
-                keys, error)) return false;
+                keys, resources, error)) return false;
     return true;
 }
 
@@ -443,7 +478,8 @@ bool ValidateAndLayoutViewTree(ViewNode& root, float width, float height,
     std::size_t nodes = 0;
     std::size_t textBytes = 0;
     std::unordered_set<std::string> keys;
-    if (!ValidateNode(root, 0, nodes, textBytes, keys, error))
+    std::unordered_set<std::string> resources;
+    if (!ValidateNode(root, 0, nodes, textBytes, keys, resources, error))
         return false;
     LayoutNode(root, { 0.0f, 0.0f, width, height });
     return true;
@@ -473,6 +509,7 @@ const char* ViewNodeTypeName(ViewNodeType type) noexcept
     case ViewNodeType::Column: return "column";
     case ViewNodeType::Stack: return "stack";
     case ViewNodeType::Text: return "text";
+    case ViewNodeType::Image: return "image";
     case ViewNodeType::Button: return "button";
     case ViewNodeType::Icon: return "icon";
     case ViewNodeType::IconButton: return "iconButton";

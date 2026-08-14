@@ -19,6 +19,7 @@ enum class ViewNodeType
     Column,
     Stack,
     Text,
+    Image,
     Button,
     Icon,
     IconButton,
@@ -79,6 +80,27 @@ enum class ViewTextAlignment
     End,
 };
 
+enum class ViewImageFit
+{
+    Fill,
+    Contain,
+    Cover,
+    None,
+};
+
+enum class ViewImageAlignment
+{
+    Start,
+    Center,
+    End,
+};
+
+enum class ViewImageInterpolation
+{
+    Nearest,
+    Linear,
+};
+
 struct ViewRect
 {
     float x = 0.0f;
@@ -102,6 +124,9 @@ struct ViewNode
     ViewNodeType type = ViewNodeType::Box;
     std::string key;
     std::string text;
+    std::string imageResourceName;
+    std::string fontResourceName;
+    std::string alt;
     ViewLength width{ ViewLengthKind::Fill, 0.0f };
     ViewLength height{};
     float padding = 0.0f;
@@ -111,6 +136,10 @@ struct ViewNode
     ViewAlignment alignSelf = ViewAlignment::Auto;
     ViewJustification justifyContent = ViewJustification::Start;
     ViewTextAlignment textAlign = ViewTextAlignment::Start;
+    ViewImageFit imageFit = ViewImageFit::Contain;
+    ViewImageAlignment imageAlignment = ViewImageAlignment::Center;
+    ViewImageInterpolation imageInterpolation =
+        ViewImageInterpolation::Linear;
     ViewShapeKind shapeKind = ViewShapeKind::Rectangle;
     ViewIconFont iconFont = ViewIconFont::FontAwesome;
     float fontSize = 15.0f;
@@ -138,6 +167,7 @@ struct ViewTreeLimits
     static constexpr std::size_t MaximumDepth = 32;
     static constexpr std::size_t MaximumTextBytes = 4096;
     static constexpr std::size_t MaximumTotalTextBytes = 64 * 1024;
+    static constexpr std::size_t MaximumResources = 64;
 };
 
 bool ValidateAndLayoutViewTree(ViewNode& root, float width, float height,

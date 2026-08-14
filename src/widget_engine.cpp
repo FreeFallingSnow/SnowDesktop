@@ -34,6 +34,7 @@
 #include "widget_interaction_region.h"
 #include "widget_view_lua.h"
 #include "widget_view_tree.h"
+#include "widget_resource_lua.h"
 #include "widget_text_input_rules.h"
 #include "widget_storage_transaction.h"
 
@@ -1266,55 +1267,9 @@ static void SetWidgetRectContext(D2DState* state, RECT bounds)
         static_cast<float>(bounds.right), static_cast<float>(bounds.bottom));
 }
 
-enum class LuaResourceType : unsigned char
-{
-    Image,
-    Font,
-};
-
-struct LuaResourceHandle
-{
-    LuaResourceType type = LuaResourceType::Image;
-    char name[65]{};
-};
-
-constexpr char kResourceHandleMetatable[] =
-    "SnowDesktop.PackageResourceHandle";
-
-static LuaResourceHandle* TestResourceHandle(lua_State* L, int index)
-{
-    return static_cast<LuaResourceHandle*>(
-        luaL_testudata(L, index, kResourceHandleMetatable));
-}
-
-static int lua_ResourceHandleToString(lua_State* L)
-{
-    const auto* handle = TestResourceHandle(L, 1);
-    if (!handle) return luaL_error(L, "invalid package resource handle");
-    const char* type = handle->type == LuaResourceType::Image
-        ? "image" : "font";
-    lua_pushfstring(L, "resource.%s(%s)", type, handle->name);
-    return 1;
-}
-
-static void PushResourceHandle(lua_State* L, LuaResourceType type,
-    const std::string& name)
-{
-    auto* handle = static_cast<LuaResourceHandle*>(
-        lua_newuserdata(L, sizeof(LuaResourceHandle)));
-    *handle = {};
-    handle->type = type;
-    std::memcpy(handle->name, name.data(),
-        std::min(name.size(), sizeof(handle->name) - 1));
-    if (luaL_newmetatable(L, kResourceHandleMetatable))
-    {
-        lua_pushcfunction(L, lua_ResourceHandleToString);
-        lua_setfield(L, -2, "__tostring");
-        lua_pushliteral(L, "package resource handle");
-        lua_setfield(L, -2, "__metatable");
-    }
-    lua_setmetatable(L, -2);
-}
+using snowdesktop::widget_runtime::LuaResourceType;
+using snowdesktop::widget_runtime::PushResourceHandle;
+using snowdesktop::widget_runtime::TestResourceHandle;
 
 static std::optional<std::wstring> ResolveResourceHandlePath(
     lua_State* L, int index, LuaResourceType expected)
@@ -9635,6 +9590,9 @@ static void DrawWidgetViewNode(D2DState* state,
     using snowdesktop::widget_runtime::ViewNodeType;
     using snowdesktop::widget_runtime::ViewShapeKind;
     using snowdesktop::widget_runtime::ViewIconFont;
+    using snowdesktop::widget_runtime::ViewImageAlignment;
+    using snowdesktop::widget_runtime::ViewImageFit;
+    using snowdesktop::widget_runtime::ViewImageInterpolation;
     using snowdesktop::widget_runtime::ViewTextAlignment;
     if (!state || !state->ctx || !node.visible ||
         node.frame.width <= 0.0f || node.frame.height <= 0.0f)
@@ -9779,18 +9737,110 @@ static void DrawWidgetViewNode(D2DState* state,
             style.foreground.value_or(0xFFFFFF),
             opacity * node.fillOpacity);
     }
+    else if (node.type == ViewNodeType::Image && state->engine)
+    {
+        const auto path = state->engine->RuntimeResolvePackageResource(
+            state->currentWidgetId, node.imageResourceName, "image");
+        ID2D1Bitmap1* bitmap = path
+            ? LoadImageBitmap(state, *path) : nullptr;
+        if (bitmap)
+        {
+            const float inset = std::min(
+                node.padding + borderWidth,
+                std::max(0.0f, std::min(
+                    node.frame.width, node.frame.height) * 0.5f));
+            D2D1_RECT_F destination = D2D1::RectF(
+                rect.left + inset, rect.top + inset,
+                rect.right - inset, rect.bottom - inset);
+            const D2D1_SIZE_F size = bitmap->GetSize();
+            D2D1_RECT_F source = D2D1::RectF(
+                0.0f, 0.0f, size.width, size.height);
+            const float targetWidth = std::max(
+                0.0f, destination.right - destination.left);
+            const float targetHeight = std::max(
+                0.0f, destination.bottom - destination.top);
+            const auto offset = [alignment = node.imageAlignment](
+                    float available, float used) {
+                if (alignment == ViewImageAlignment::Center)
+                    return std::max(0.0f, (available - used) * 0.5f);
+                if (alignment == ViewImageAlignment::End)
+                    return std::max(0.0f, available - used);
+                return 0.0f;
+            };
+            if (size.width > 0.0f && size.height > 0.0f &&
+                targetWidth > 0.0f && targetHeight > 0.0f)
+            {
+                if (node.imageFit == ViewImageFit::Contain)
+                {
+                    const float scale = std::min(
+                        targetWidth / size.width,
+                        targetHeight / size.height);
+                    const float width = size.width * scale;
+                    const float height = size.height * scale;
+                    destination.left += offset(targetWidth, width);
+                    destination.top += offset(targetHeight, height);
+                    destination.right = destination.left + width;
+                    destination.bottom = destination.top + height;
+                }
+                else if (node.imageFit == ViewImageFit::Cover)
+                {
+                    const float targetAspect = targetWidth / targetHeight;
+                    const float sourceAspect = size.width / size.height;
+                    if (sourceAspect > targetAspect)
+                    {
+                        const float width = size.height * targetAspect;
+                        source.left = offset(size.width, width);
+                        source.right = source.left + width;
+                    }
+                    else
+                    {
+                        const float height = size.width / targetAspect;
+                        source.top = offset(size.height, height);
+                        source.bottom = source.top + height;
+                    }
+                }
+                else if (node.imageFit == ViewImageFit::None)
+                {
+                    const float width = std::min(size.width, targetWidth);
+                    const float height = std::min(size.height, targetHeight);
+                    destination.left += offset(targetWidth, width);
+                    destination.top += offset(targetHeight, height);
+                    destination.right = destination.left + width;
+                    destination.bottom = destination.top + height;
+                    source.right = width;
+                    source.bottom = height;
+                }
+                state->ctx->DrawBitmap(bitmap, destination, opacity,
+                    node.imageInterpolation ==
+                            ViewImageInterpolation::Nearest
+                        ? D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR
+                        : D2D1_INTERPOLATION_MODE_LINEAR,
+                    source);
+            }
+        }
+    }
 
     if ((node.type == ViewNodeType::Text ||
             node.type == ViewNodeType::Button || iconNode) &&
         !node.text.empty() && state->dwrite)
     {
-        IDWriteTextFormat* format = GetCachedTextFormat(state,
+        std::optional<std::wstring> privateFontPath;
+        if (!node.fontResourceName.empty() && state->engine)
+        {
+            privateFontPath = state->engine->RuntimeResolvePackageResource(
+                state->currentWidgetId, node.fontResourceName, "font");
+        }
+        IDWriteTextFormat* format = node.fontResourceName.empty() ||
+                privateFontPath
+            ? GetCachedTextFormat(state,
             node.fontSize,
             node.bold ? DWRITE_FONT_WEIGHT_BOLD : state->itemFontWeight,
             iconNode, DWRITE_WORD_WRAPPING_NO_WRAP,
             iconNode && node.iconFont == ViewIconFont::FontAwesome,
             iconNode,
-            iconNode && node.iconFont == ViewIconFont::Fluent, nullptr);
+            iconNode && node.iconFont == ViewIconFont::Fluent,
+            privateFontPath ? &*privateFontPath : nullptr)
+            : nullptr;
         const std::uint32_t foreground =
             style.foreground.value_or(0xFFFFFF);
         ID2D1SolidColorBrush* brush = GetCachedBrush(state,
@@ -14051,6 +14101,22 @@ std::optional<std::wstring> WidgetEngine::RuntimeResolvePackageAsset(
         widgets_[index].packageRoot, relativePath);
 }
 
+std::optional<std::wstring> WidgetEngine::RuntimeResolvePackageResource(
+    const std::wstring& widgetId, std::string_view name,
+    std::string_view expectedType) const
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0 || name.empty() || expectedType.empty())
+        return std::nullopt;
+    const auto resource = widgets_[index].manifest.resources.find(
+        std::string(name));
+    if (resource == widgets_[index].manifest.resources.end() ||
+        resource->second.type != expectedType)
+        return std::nullopt;
+    return ResolvePackageAssetWithinRoot(widgets_[index].packageRoot,
+        Utf8ToWideLocal(resource->second.path));
+}
+
 LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
 {
     LuaWidgetManifest manifest;
@@ -16385,6 +16451,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "column", snowdesktop::widget_runtime::LuaViewColumn, 2 },
         { "stack", snowdesktop::widget_runtime::LuaViewStack, 2 },
         { "text", snowdesktop::widget_runtime::LuaViewText, 2 },
+        { "image", snowdesktop::widget_runtime::LuaViewImage, 2 },
         { "button", snowdesktop::widget_runtime::LuaViewButton, 2 },
         { "icon", snowdesktop::widget_runtime::LuaViewIcon, 2 },
         { "iconButton", snowdesktop::widget_runtime::LuaViewIconButton, 2 },

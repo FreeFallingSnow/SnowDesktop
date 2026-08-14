@@ -952,6 +952,9 @@ public:
         const std::string& reference) const;
     std::optional<std::wstring> RuntimeResolvePackageAsset(
         const std::wstring& widgetId, const std::wstring& relativePath) const;
+    std::optional<std::wstring> RuntimeResolvePackageResource(
+        const std::wstring& widgetId, std::string_view name,
+        std::string_view expectedType) const;
 
     /**
      * @brief 请求宿主刷新桌面内容
