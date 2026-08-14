@@ -20,7 +20,7 @@ namespace snowdesktop::widget_api
 namespace
 {
 constexpr std::uint32_t kCurrentApiVersion = 2;
-constexpr std::array<std::string_view, 53> kHostFeatures = {
+constexpr std::array<std::string_view, 54> kHostFeatures = {
     "calendar.dateMath",
     "calendar.selection",
     "control.focus",
@@ -64,6 +64,7 @@ constexpr std::array<std::string_view, 53> kHostFeatures = {
     "schedule.visibility",
     "settings.select.localizedOptions",
     "state.transient",
+    "storage.transaction",
     "system.environment",
     "system.uptime",
     "task.media.control",
@@ -74,6 +75,17 @@ constexpr std::array<std::string_view, 53> kHostFeatures = {
     "time.basic",
     "time.calendar",
     "widget.context",
+};
+constexpr std::array<std::string_view, 15> kV1SandboxLibraries = {
+    "string", "table", "math", "utf8", "draw", "sys", "layout",
+    "storage", "widget", "desktop", "media", "http", "ui",
+    "everything", "calendar",
+};
+constexpr std::array<std::string_view, 21> kV2SandboxLibraries = {
+    "string", "table", "math", "utf8", "draw", "layout", "storage",
+    "state", "schedule", "widget", "system", "time", "module",
+    "resource", "data", "task", "interaction", "control", "calendar",
+    "ui", "l10n",
 };
 char kDefinedWidgetMarker = 0;
 char kTransientStateTableKey = 0;
@@ -364,6 +376,14 @@ bool SupportsFeature(std::string_view feature) noexcept
 {
     return std::find(kHostFeatures.begin(), kHostFeatures.end(), feature) !=
         kHostFeatures.end();
+}
+
+std::span<const std::string_view> SandboxLibraries(
+    std::uint32_t apiVersion) noexcept
+{
+    return apiVersion >= 2
+        ? std::span<const std::string_view>(kV2SandboxLibraries)
+        : std::span<const std::string_view>(kV1SandboxLibraries);
 }
 
 std::vector<std::string> MissingFeatures(

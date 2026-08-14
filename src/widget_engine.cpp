@@ -33,6 +33,7 @@
 #include "widget_preview_context.h"
 #include "widget_interaction_region.h"
 #include "widget_text_input_rules.h"
+#include "widget_storage_transaction.h"
 
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -7379,24 +7380,14 @@ void WidgetEngine::PushSafeEnvironment(lua_State* L, const LuaWidget& widget)
         lua_getglobal(L, name);
         lua_setfield(L, -2, name);
     }
-    static const char* v1Libraries[] = {
-        "string", "table", "math", "utf8", "draw", "sys", "layout",
-        "storage", "widget", "desktop", "media", "http", "ui",
-        "everything", "calendar"
-    };
-    static const char* v2Libraries[] = {
-        "string", "table", "math", "utf8", "draw", "layout", "storage",
-        "state", "schedule", "widget", "system", "time", "module",
-        "resource", "data"
-    };
-    const std::span<const char* const> libraries =
-        widget.manifest.apiVersion >= 2
-            ? std::span<const char* const>(v2Libraries)
-            : std::span<const char* const>(v1Libraries);
-    for (const char* name : libraries)
+    for (const std::string_view name :
+        snowdesktop::widget_api::SandboxLibraries(
+            static_cast<std::uint32_t>(widget.manifest.apiVersion)))
     {
-        PushReadOnlyGlobal(L, name);
-        lua_setfield(L, -2, name);
+        if (name == "l10n") continue;
+        const std::string libraryName(name);
+        PushReadOnlyGlobal(L, libraryName.c_str());
+        lua_setfield(L, -2, libraryName.c_str());
     }
     PushWidgetL10nAPI(L, widget.manifest);
     PushReadOnlyProxyForTopTable(L);
@@ -10759,6 +10750,14 @@ std::string WidgetEngine::InteractionCursorAt(
         static_cast<float>(x), static_cast<float>(y));
 }
 
+bool WidgetEngine::RuntimeCanWriteWidgetStorage(
+    const std::wstring& widgetId) const
+{
+    const int index = FindWidget(widgetId);
+    return index < 0 || widgets_[index].manifest.apiVersion < 2 ||
+        !widgets_[index].interactionRegions.FrameOpen();
+}
+
 std::string WidgetEngine::RuntimeGetStorageValue(const std::wstring& widgetId, const std::string& key) const
 {
     std::string fullKey = WidgetWideToUtf8(widgetId) + "." + key;
@@ -13783,8 +13782,177 @@ static int lua_DrawFluent(lua_State* L)
     return LuaDrawFontGlyph(L, true);
 }
 
+namespace
+{
+constexpr char kStorageTransactionMetatable[] =
+    "SnowDesktop.StorageTransaction";
+char kActiveStorageTransactionRegistryKey = 0;
+
+struct LuaStorageTransactionHandle
+{
+    snowdesktop::widget_runtime::WidgetStorageTransaction* transaction =
+        nullptr;
+};
+
+static snowdesktop::widget_runtime::WidgetStorageTransaction*
+ActiveLuaStorageTransaction(lua_State* state)
+{
+    lua_rawgetp(state, LUA_REGISTRYINDEX,
+        &kActiveStorageTransactionRegistryKey);
+    auto* transaction = static_cast<
+        snowdesktop::widget_runtime::WidgetStorageTransaction*>(
+            lua_touserdata(state, -1));
+    lua_pop(state, 1);
+    return transaction;
+}
+
+static void SetActiveLuaStorageTransaction(lua_State* state,
+    snowdesktop::widget_runtime::WidgetStorageTransaction* transaction)
+{
+    if (transaction)
+        lua_pushlightuserdata(state, transaction);
+    else
+        lua_pushnil(state);
+    lua_rawsetp(state, LUA_REGISTRYINDEX,
+        &kActiveStorageTransactionRegistryKey);
+}
+
+static std::string ReadExactStorageString(
+    lua_State* state, int index, const char* field)
+{
+    if (lua_type(state, index) != LUA_TSTRING)
+    {
+        luaL_error(state, "storage.transaction: %s must be a string",
+            field);
+        return {};
+    }
+    std::size_t length = 0;
+    const char* value = lua_tolstring(state, index, &length);
+    return std::string(value ? value : "", length);
+}
+
+static LuaStorageTransactionHandle* CheckStorageTransactionHandle(
+    lua_State* state)
+{
+    auto* handle = static_cast<LuaStorageTransactionHandle*>(
+        luaL_checkudata(state, 1, kStorageTransactionMetatable));
+    if (!handle || !handle->transaction ||
+        ActiveLuaStorageTransaction(state) != handle->transaction)
+    {
+        luaL_error(state, "storage transaction is closed");
+        return nullptr;
+    }
+    return handle;
+}
+
+static bool IsReservedStorageTransactionKey(const std::string& key)
+{
+    return IsRemovedPanelEffectSettingKey(key);
+}
+
+static int lua_StorageTransactionGet(lua_State* state)
+{
+    auto* handle = CheckStorageTransactionHandle(state);
+    const std::string key = ReadExactStorageString(state, 2, "key");
+    if (IsReservedStorageTransactionKey(key))
+        return luaL_error(state, "storage.transaction: key is reserved");
+    std::string error;
+    const auto value = handle->transaction->Get(key, error);
+    if (!error.empty())
+        return luaL_error(state, "storage.transaction: %s", error.c_str());
+    if (value)
+        lua_pushlstring(state, value->data(), value->size());
+    else
+        lua_pushnil(state);
+    return 1;
+}
+
+static int lua_StorageTransactionSet(lua_State* state)
+{
+    auto* handle = CheckStorageTransactionHandle(state);
+    std::string key = ReadExactStorageString(state, 2, "key");
+    std::string value = ReadExactStorageString(state, 3, "value");
+    if (IsReservedStorageTransactionKey(key))
+        return luaL_error(state, "storage.transaction: key is reserved");
+    bool changed = false;
+    std::string error;
+    if (!handle->transaction->Set(
+            std::move(key), std::move(value), changed, error))
+        return luaL_error(state, "storage.transaction: %s", error.c_str());
+    lua_pushboolean(state, changed ? 1 : 0);
+    return 1;
+}
+
+static int lua_StorageTransactionRemove(lua_State* state)
+{
+    auto* handle = CheckStorageTransactionHandle(state);
+    const std::string key = ReadExactStorageString(state, 2, "key");
+    if (IsReservedStorageTransactionKey(key))
+        return luaL_error(state, "storage.transaction: key is reserved");
+    bool changed = false;
+    std::string error;
+    if (!handle->transaction->Remove(key, changed, error))
+        return luaL_error(state, "storage.transaction: %s", error.c_str());
+    lua_pushboolean(state, changed ? 1 : 0);
+    return 1;
+}
+
+static void PushStorageTransactionHandle(lua_State* state,
+    snowdesktop::widget_runtime::WidgetStorageTransaction* transaction)
+{
+    auto* handle = static_cast<LuaStorageTransactionHandle*>(
+        lua_newuserdatauv(state, sizeof(LuaStorageTransactionHandle), 0));
+    handle->transaction = transaction;
+    if (luaL_newmetatable(state, kStorageTransactionMetatable) != 0)
+    {
+        lua_newtable(state);
+        lua_pushcfunction(state, lua_StorageTransactionGet);
+        lua_setfield(state, -2, "get");
+        lua_pushcfunction(state, lua_StorageTransactionSet);
+        lua_setfield(state, -2, "set");
+        lua_pushcfunction(state, lua_StorageTransactionRemove);
+        lua_setfield(state, -2, "remove");
+        lua_setfield(state, -2, "__index");
+        lua_pushboolean(state, 0);
+        lua_setfield(state, -2, "__metatable");
+    }
+    lua_setmetatable(state, -2);
+}
+
+static int RejectStorageAccessInsideTransaction(lua_State* state,
+    const char* api)
+{
+    if (BoundWidgetApiVersion(state) >= 2 &&
+        ActiveLuaStorageTransaction(state))
+    {
+        return luaL_error(state,
+            "%s cannot be used inside storage.transaction; use tx instead",
+            api);
+    }
+    return 0;
+}
+
+static int RejectStorageWriteDuringRender(lua_State* state,
+    const char* api)
+{
+    if (BoundWidgetApiVersion(state) < 2) return 0;
+    auto* d2d = GetD2D(state);
+    if (d2d && d2d->engine &&
+        !d2d->engine->RuntimeCanWriteWidgetStorage(
+            BoundWidgetId(state)))
+    {
+        return luaL_error(state,
+            "%s cannot write persistent storage during render", api);
+    }
+    return 0;
+}
+}
+
 static int lua_StorageGet(lua_State* L)
 {
+    if (const int rejected = RejectStorageAccessInsideTransaction(
+            L, "storage.get"))
+        return rejected;
     const char* key = luaL_checkstring(L, 1);
     auto* s = GetD2D(L);
     if (!s) { lua_pushnil(L); return 1; }
@@ -13832,6 +14000,12 @@ static bool StorageWriteWithinQuota(const std::string& prefix,
 
 static int lua_StorageSet(lua_State* L)
 {
+    if (const int rejected = RejectStorageAccessInsideTransaction(
+            L, "storage.set"))
+        return rejected;
+    if (const int rejected = RejectStorageWriteDuringRender(
+            L, "storage.set"))
+        return rejected;
     const char* key = luaL_checkstring(L, 1);
     const char* value = luaL_checkstring(L, 2);
     auto* s = GetD2D(L);
@@ -14072,6 +14246,12 @@ static int lua_ImGuiEndDisabled(lua_State* L)
 
 static int lua_StorageRemove(lua_State* L)
 {
+    if (const int rejected = RejectStorageAccessInsideTransaction(
+            L, "storage.remove"))
+        return rejected;
+    if (const int rejected = RejectStorageWriteDuringRender(
+            L, "storage.remove"))
+        return rejected;
     const char* key = luaL_checkstring(L, 1);
     auto* s = GetD2D(L);
     if (!s) return 0;
@@ -14082,6 +14262,9 @@ static int lua_StorageRemove(lua_State* L)
 
 static int lua_StorageKeys(lua_State* L)
 {
+    if (const int rejected = RejectStorageAccessInsideTransaction(
+            L, "storage.keys"))
+        return rejected;
     auto* s = GetD2D(L);
     std::string prefix = s ? BoundStoragePrefix(L) + "." : "";
     lua_newtable(L);
@@ -14220,6 +14403,52 @@ static int lua_L10nLanguage(lua_State* L)
 {
     const std::string language = Locale::Instance().GetEffectiveLanguage();
     lua_pushlstring(L, language.data(), language.size());
+    return 1;
+}
+
+static int lua_StorageTransaction(lua_State* state)
+{
+    if (lua_gettop(state) != 1 || !lua_isfunction(state, 1))
+        return luaL_error(state,
+            "storage.transaction: expected one callback function");
+    if (ActiveLuaStorageTransaction(state))
+        return luaL_error(state,
+            "storage.transaction: nested transactions are not supported");
+    if (const int rejected = RejectStorageWriteDuringRender(
+            state, "storage.transaction"))
+        return rejected;
+
+    auto& activeStorage = ActiveStorage();
+    snowdesktop::widget_runtime::WidgetStorageTransaction transaction(
+        activeStorage, BoundStoragePrefix(state));
+    SetActiveLuaStorageTransaction(state, &transaction);
+    lua_pushvalue(state, 1);
+    PushStorageTransactionHandle(state, &transaction);
+    const int callbackResult = lua_pcall(state, 1, 0, 0);
+    SetActiveLuaStorageTransaction(state, nullptr);
+    if (callbackResult != LUA_OK)
+        return lua_error(state);
+
+    std::string error;
+    if (!transaction.ValidateCommit(error))
+        return luaL_error(state, "storage.transaction: %s", error.c_str());
+    const bool changed = transaction.Changed();
+    if (!changed)
+    {
+        lua_pushboolean(state, 0);
+        return 1;
+    }
+
+    auto candidate = transaction.TakeCandidate();
+    activeStorage.swap(candidate);
+    if (!snowdesktop::widget_runtime::HasStorageOverlay() &&
+        !SaveStorageFile())
+    {
+        activeStorage.swap(candidate);
+        return luaL_error(state,
+            "storage.transaction: failed to persist storage");
+    }
+    lua_pushboolean(state, 1);
     return 1;
 }
 
@@ -14619,8 +14848,8 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "setSelectedDate", lua_CalendarSetSelectedDate, 1,
             "calendar.write", 1 },
         { "selectDate", lua_CalendarSelectDate, 2 },
-        { "dateInfo", lua_CalendarDateInfo, 1, "calendar.read" },
-        { "addDays", lua_CalendarAddDays, 1, "calendar.read" },
+        { "dateInfo", lua_CalendarDateInfo, 1 },
+        { "addDays", lua_CalendarAddDays, 1 },
         { "events", lua_CalendarEvents, 1, "calendar.read", 1 },
         { "create", lua_CalendarCreate, 1, "calendar.write", 1 },
         { "update", lua_CalendarUpdate, 1, "calendar.write", 1 },
@@ -14645,6 +14874,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "set", lua_StorageSet },
         { "remove", lua_StorageRemove },
         { "keys", lua_StorageKeys },
+        { "transaction", lua_StorageTransaction, 2 },
     };
     static constexpr FunctionDescriptor state[] = {
         { "get", snowdesktop::widget_api::LuaTransientStateGet, 2 },

@@ -106,6 +106,10 @@ synchronous native context menu.
   load modules, or perform future data queries during every render.
 - `state.set` deep-copies JSON-like data and requests another frame only when
   the value changes. Do not use it as persistent storage.
+- Group related persistent string writes with `storage.transaction`; access
+  storage only through its `tx` argument until the callback returns. A callback
+  error or final quota failure rolls back the complete change. Never write
+  persistent storage from `render`.
 - Use `schedule.every/after/cancel` for v2 timers and handle
   `event.kind == "schedule"`; do not add new `widget.setTimer` usage.
 - Set `whenHidden` deliberately: prefer `pause` for purely visual clocks and

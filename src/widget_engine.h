@@ -963,6 +963,8 @@ public:
     void ClearInteractionHover();
     std::string InteractionCursorAt(const std::wstring& widgetId,
         int x, int y) const;
+    bool RuntimeCanWriteWidgetStorage(
+        const std::wstring& widgetId) const;
 
     void ReloadStorage();
 

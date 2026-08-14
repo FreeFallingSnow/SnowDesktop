@@ -254,6 +254,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget_audio_analysis_provider.cpp
     src/widget_interaction_region.cpp
     src/widget_text_input_rules.cpp
+    src/widget_storage_transaction.cpp
     src/widget_lua_lifecycle.cpp
     src/widget_runtime_diagnostics.cpp
     src/widget_runtime_scheduler.cpp
@@ -930,6 +931,15 @@ if (BUILD_TESTING)
             src/widget_text_input_rules.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract interaction lua widget)
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetStorageTransactionTests
+        widget_storage_transaction
+        SOURCES
+            tests/widget_storage_transaction_tests.cpp
+            src/widget_storage_transaction.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS contract lua storage widget)
 
     snowdesktop_add_test(
         SnowDesktopFolderSelfDropRulesTests

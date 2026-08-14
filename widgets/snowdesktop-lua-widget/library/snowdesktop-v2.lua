@@ -1105,6 +1105,25 @@ function layout.barHeight() end
 ---@class snow.storage
 storage = {}
 
+---@class SnowStorageTransaction
+local SnowStorageTransaction = {}
+
+---Read the current staged string value. Missing keys return nil.
+---@param key string
+---@return string?
+function SnowStorageTransaction:get(key) end
+
+---Stage a string value. The final snapshot is quota-checked at commit.
+---@param key string
+---@param value string
+---@return boolean changed
+function SnowStorageTransaction:set(key, value) end
+
+---Stage removal of a key.
+---@param key string
+---@return boolean changed
+function SnowStorageTransaction:remove(key) end
+
 ---@param key string
 ---@return string?
 function storage.get(key) end
@@ -1118,6 +1137,12 @@ function storage.remove(key) end
 
 ---@return string[]
 function storage.keys() end
+
+---Atomically commit staged string writes after the callback succeeds.
+---The transaction is rolled back on callback error, quota failure, or disk failure.
+---@param callback fun(transaction: SnowStorageTransaction)
+---@return boolean changed
+function storage.transaction(callback) end
 
 ---@class snow.state
 state = {}

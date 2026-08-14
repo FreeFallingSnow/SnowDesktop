@@ -73,6 +73,8 @@ const FunctionDescriptor* FindFunction(
 
 std::span<const std::string_view> HostFeatures() noexcept;
 bool SupportsFeature(std::string_view feature) noexcept;
+std::span<const std::string_view> SandboxLibraries(
+    std::uint32_t apiVersion) noexcept;
 std::vector<std::string> MissingFeatures(
     std::span<const std::string> requiredFeatures);
 

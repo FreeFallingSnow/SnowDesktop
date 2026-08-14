@@ -484,6 +484,27 @@ local notificationId, err = task.start("notification.show", {
 - `storage.get(key) -> string?`
 - `storage.set(key, value)`：`value` 必须是字符串，并立即持久化。
 - `storage.remove(key)`、`storage.keys()`。
+- `storage.transaction(function(tx) ... end) -> changed`：一次原子提交多个字符串
+  写入；事务对象提供 `tx:get/set/remove`。
+
+```lua
+storage.transaction(function(tx)
+    tx:set("item.42.title", "Book tickets")
+    tx:set("order", "17,42")
+    tx:remove("draft")
+end)
+```
+
+事务内必须通过 `tx` 访问存储，不能嵌套事务，也不能混用全局
+`storage.get/set/remove/keys`。回调抛错、最终快照超过配额或写盘失败时不会暴露部分
+修改；配额在最终快照上检查，因此允许先暂存新键再在同一事务删除旧键。事务最多
+1024 次操作；每实例最多 256 个键、每键 128 个有效 UTF-8 字节、每值 64 KiB、
+总量 1 MiB。`storage.transaction` 对应 feature 为 `storage.transaction`。
+
+API v2 的 `storage.set/remove/transaction` 不能在 `render` 内调用；持久化只允许在
+setup、事件、菜单动作或迁移回调等副作用阶段执行。预览和迁移使用隔离覆盖层，成功
+后再由宿主决定是否持久化。当前事务值仍是字符串；计划中的 JSON-like 类型化持久值
+和 secret reference 尚未开放。
 
 只在值变化时写入；数值和布尔值应显式序列化，并用 `tonumber` 或明确规则读取。
 

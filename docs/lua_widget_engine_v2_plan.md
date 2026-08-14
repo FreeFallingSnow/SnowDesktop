@@ -457,11 +457,13 @@ storage.setJson("settings", settings)
 
 ### 10.2 规则
 
-当前过渡实现（2026-08-14）已开放 `state.get/set/remove/has/keys/clear` 和
+当前过渡实现（2026-08-15）已开放 `state.get/set/remove/has/keys/clear` 和
 `state.transient` feature。状态按实例 Lua VM 隔离，set/get 都进行受配额的
 JSON-like 深拷贝；循环、metatable、混合数组/对象、非有限数和超限值会被拒绝，
-同值写入不会重复触发失效，多个真实变化折叠为 dirty 信号。类型化持久 storage
-transaction、render 写入保护和 secret reference 仍属于 M4 后续工作。
+同值写入不会重复触发失效，多个真实变化折叠为 dirty 信号。字符串持久存储已开放
+`storage.transaction`：回调使用隔离快照读写，回调错误、最终配额失败或写盘失败时
+整批回滚，最终快照一次原子替换；v2 的直接写入和事务均禁止从 `render` 调用。
+JSON-like 类型化持久值、写入频率预算和 secret reference 仍属于 M4 后续工作。
 
 - `state.set` 在同一事件周期内批量合并，只触发一次视图更新。
 - `storage` 支持 string、number、boolean、null、array 和 object，序列化语义固定。
@@ -1557,8 +1559,8 @@ v2.0 资源契约：
 ### 19.1 发布硬门槛
 
 当前仓库有 11 个内置组件；`analog-clock`、`digital-clock`、`media-controls`、
-`system-monitor`、`pomodoro`、`month-calendar` 与 `sticky-note` 已切到 schema/API v2，
-其余 4 个仍待迁移。这七个组件仍需完成真实
+`system-monitor`、`pomodoro`、`month-calendar`、`sticky-note` 与 `reminders` 已切到
+schema/API v2，其余 3 个仍待迁移。这八个组件仍需完成真实
 桌面的多 DPI、主题、隐藏唤醒、系统数据、滚动、媒体控制、元素菜单与应用启动验收，
 因此只能计为代码迁移完成，不能计为最终验证完成。只有全部内置组件完成迁移和验收
 后才能宣布稳定。

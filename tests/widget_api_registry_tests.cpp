@@ -1,9 +1,11 @@
 #include "widget_api_registry.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 extern "C" {
 #include <lauxlib.h>
@@ -235,6 +237,25 @@ void TestVersionedRegistration()
 
 void TestV2Contract()
 {
+    const auto v2Libraries =
+        snowdesktop::widget_api::SandboxLibraries(2);
+    const auto hasV2Library = [&](std::string_view name) {
+        return std::find(v2Libraries.begin(), v2Libraries.end(), name) !=
+            v2Libraries.end();
+    };
+    Check(hasV2Library("control") && hasV2Library("interaction") &&
+            hasV2Library("task") && hasV2Library("calendar") &&
+            hasV2Library("ui") && hasV2Library("l10n") &&
+            !hasV2Library("http") && !hasV2Library("desktop"),
+        "API v2 sandbox must expose implemented libraries and hide legacy ones");
+    const auto v1Libraries =
+        snowdesktop::widget_api::SandboxLibraries(1);
+    Check(std::find(v1Libraries.begin(), v1Libraries.end(), "http") !=
+            v1Libraries.end() &&
+            std::find(v1Libraries.begin(), v1Libraries.end(), "control") ==
+                v1Libraries.end(),
+        "API v1 sandbox library catalog must remain isolated from v2");
+
     Check(snowdesktop::widget_api::SupportsFeature(
                 "data.app.indexStatus") &&
             snowdesktop::widget_api::SupportsFeature(
@@ -305,6 +326,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature("lifecycle.event") &&
             snowdesktop::widget_api::SupportsFeature("lifecycle.model") &&
             snowdesktop::widget_api::SupportsFeature("state.transient") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "storage.transaction") &&
             snowdesktop::widget_api::SupportsFeature("system.uptime") &&
             snowdesktop::widget_api::SupportsFeature(
                 "task.media.control") &&
