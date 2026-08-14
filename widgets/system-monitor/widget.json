@@ -1,16 +1,16 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "7d6803f2-63fd-428d-b947-6e07437ead2a",
   "slug": "system-monitor",
-  "apiVersion": 1,
+  "apiVersion": 2,
   "dataVersion": 1,
   "entry": "main.lua",
-  "minHostVersion": "1.0.1.0",
+  "minHostVersion": "1.0.4.0",
   "author": "SnowDesktop",
   "license": "GPL-3.0-only",
   "name": "System Monitor",
   "nameKey": "lua_widget.system_monitor.name",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "description": "Displays CPU, memory, network, and battery status.",
   "descriptionKey": "lua_widget.system_monitor.description",
   "locales": {
@@ -233,13 +233,32 @@
     "columns": 2,
     "rows": 1
   },
+  "resources": {},
   "permissions": [
-    "system.performance.read",
-    "ui.input",
-    "ui.contextMenu"
+    "system.performance.read"
   ],
   "optionalPermissions": [
     "system.power.read",
     "system.network.read"
+  ],
+  "requiredFeatures": [
+    "data.subscribe",
+    "data.system.cpu",
+    "data.system.gpu",
+    "data.system.memory",
+    "draw.immediate",
+    "interaction.contextMenu",
+    "interaction.pointerActions",
+    "interaction.region",
+    "interaction.scroll",
+    "lifecycle.event",
+    "lifecycle.model",
+    "l10n.basic",
+    "schedule.basic",
+    "schedule.visibility"
+  ],
+  "optionalFeatures": [
+    "data.system.network.traffic",
+    "data.system.power"
   ]
 }

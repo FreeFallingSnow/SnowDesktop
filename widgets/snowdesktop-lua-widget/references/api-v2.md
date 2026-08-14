@@ -113,6 +113,28 @@ shape 首版支持 `rect`、`roundedRect` 和 `circle`；cursor 支持 `default`
 动作 `value` 会被深拷贝，只允许 nil、布尔、有限数字、字符串、连续数组和字符串键
 对象，限制 8 层、256 个节点和合计 16 KiB 字符串。普通 hover/click 不需要权限。
 
+即时绘制的纵向滚动区域使用 `interaction.scroll(spec)`，不要调用 v1
+`ui.scrollArea`：
+
+```lua
+local scroll = interaction.scroll({
+    key = "items",
+    shape = { type = "rect", x = 0, y = 0,
+        width = layout.width(), height = layout.height() },
+    contentHeight = 1200,
+})
+draw.pushClip(0, 0, layout.width(), layout.height())
+-- 使用 scroll.offset 把内容坐标换算为视口坐标后绘制。
+draw.popClip()
+```
+
+scroll key 同样是实例内稳定的 1–128 字节 UTF-8 字符串；只接受正尺寸 rect，
+`contentHeight` 上限为 1,000,000 逻辑单位。返回值包含 `offset`、`maximum`、
+`viewportHeight` 和 `contentHeight`。宿主处理滚轮和触控板 wheel 增量、钳制偏移、重绘及
+滚动条；组件必须用成对的 `draw.pushClip/popClip` 裁剪内容。
+`interaction.setScrollOffset(key, offset)` 只在当前 render 已注册同 key 区域后设置并
+返回实际偏移。滚动不需要 `ui.input` 权限，对应 feature 为 `interaction.scroll`。
+
 右键命中带 `contextMenu` 绑定的 region 后，宿主同步调用 descriptor 的 `menu`：
 
 ```lua

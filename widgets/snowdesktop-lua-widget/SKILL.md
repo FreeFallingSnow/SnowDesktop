@@ -132,6 +132,9 @@ synchronous native context menu.
   handle serialized region actions in `event`; never synthesize click from raw
   down/up callbacks. Build an element menu only through `widget.define.menu`
   and `ui.menu`, keeping the callback synchronous and I/O-free.
+- Register vertical immediate-mode overflow with `interaction.scroll`, translate
+  content by its returned offset, and pair the viewport with
+  `draw.pushClip/popClip`. Do not use the v1 `ui.scrollArea` compatibility API.
 - Keep colors in `0xRRGGBB`.
 - Respect `widget.context().accessibility`, theme, DPI, visibility and preview
   state. Do not request permission for an ordinary pointer clock or static UI.

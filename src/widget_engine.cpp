@@ -2154,6 +2154,117 @@ static int lua_InteractionIsPressed(lua_State* state)
     return 1;
 }
 
+static int lua_InteractionScroll(lua_State* state)
+{
+    luaL_checktype(state, 1, LUA_TTABLE);
+    lua_settop(state, 1);
+    const int descriptor = lua_absindex(state, 1);
+    const std::string key = ReadRequiredStringField(
+        state, descriptor, "key");
+    if (key.size() > 128 || key.find('\0') != std::string::npos ||
+        !IsValidUtf8Local(key))
+    {
+        return luaL_error(state,
+            "interaction.scroll: key must contain 1 to 128 bytes of valid UTF-8");
+    }
+
+    lua_getfield(state, descriptor, "shape");
+    luaL_checktype(state, -1, LUA_TTABLE);
+    const int shape = lua_absindex(state, -1);
+    if (ReadRequiredStringField(state, shape, "type") != "rect")
+        return luaL_error(state,
+            "interaction.scroll: shape type must be 'rect'");
+    const auto readNumber = [&](const char* field) {
+        lua_getfield(state, shape, field);
+        const double value = luaL_checknumber(state, -1);
+        lua_pop(state, 1);
+        return value;
+    };
+    const double x = readNumber("x");
+    const double y = readNumber("y");
+    const double width = readNumber("width");
+    const double height = readNumber("height");
+    lua_pop(state, 1);
+    if (!std::isfinite(x) || !std::isfinite(y) ||
+        !std::isfinite(width) || !std::isfinite(height) ||
+        std::abs(x) > 1'000'000.0 || std::abs(y) > 1'000'000.0 ||
+        width <= 0.0 || height <= 0.0 ||
+        width > 1'000'000.0 || height > 1'000'000.0)
+    {
+        return luaL_error(state,
+            "interaction.scroll: shape geometry must be finite, positive, and bounded");
+    }
+
+    lua_getfield(state, descriptor, "contentHeight");
+    const lua_Integer requestedContentHeight =
+        luaL_checkinteger(state, -1);
+    lua_pop(state, 1);
+    if (requestedContentHeight < 0 ||
+        requestedContentHeight > 1'000'000)
+    {
+        return luaL_error(state,
+            "interaction.scroll: contentHeight must be from 0 to 1000000");
+    }
+
+    auto* d2d = GetD2D(state);
+    if (!d2d || !d2d->engine)
+        return luaL_error(state,
+            "interaction.scroll: host context is unavailable");
+    const int viewportHeight = std::max(
+        1, static_cast<int>(std::lround(height)));
+    const int contentHeight = std::max(
+        viewportHeight, static_cast<int>(requestedContentHeight));
+    LuaWidget::HostControl control;
+    control.type = LuaWidget::HostControl::Type::Scroll;
+    control.id = key;
+    control.contentHeight = contentHeight;
+    control.viewportHeight = viewportHeight;
+    control.rect = {
+        static_cast<LONG>(std::lround(x)),
+        static_cast<LONG>(std::lround(y)),
+        static_cast<LONG>(std::lround(x + width)),
+        static_cast<LONG>(std::lround(y + height)),
+    };
+    d2d->engine->RuntimeRegisterHostControl(
+        BoundWidgetId(state), std::move(control));
+    const int offset = d2d->engine->RuntimeGetScrollOffset(
+        BoundWidgetId(state), key);
+    lua_createtable(state, 0, 4);
+    lua_pushinteger(state, offset);
+    lua_setfield(state, -2, "offset");
+    lua_pushinteger(state, std::max(0, contentHeight - viewportHeight));
+    lua_setfield(state, -2, "maximum");
+    lua_pushinteger(state, viewportHeight);
+    lua_setfield(state, -2, "viewportHeight");
+    lua_pushinteger(state, contentHeight);
+    lua_setfield(state, -2, "contentHeight");
+    return 1;
+}
+
+static int lua_InteractionSetScrollOffset(lua_State* state)
+{
+    std::size_t keyLength = 0;
+    const char* keyValue = luaL_checklstring(state, 1, &keyLength);
+    const std::string key(keyValue ? keyValue : "", keyLength);
+    if (key.size() > 128 || key.find('\0') != std::string::npos ||
+        !IsValidUtf8Local(key))
+    {
+        return luaL_error(state,
+            "interaction.setScrollOffset: key must contain 1 to 128 bytes of valid UTF-8");
+    }
+    const lua_Integer requested = luaL_checkinteger(state, 2);
+    auto* d2d = GetD2D(state);
+    if (!d2d || !d2d->engine)
+        return luaL_error(state,
+            "interaction.setScrollOffset: host context is unavailable");
+    d2d->engine->RuntimeSetScrollOffset(BoundWidgetId(state), key,
+        static_cast<int>(std::clamp<lua_Integer>(
+            requested, 0, 1'000'000)));
+    lua_pushinteger(state, d2d->engine->RuntimeGetScrollOffset(
+        BoundWidgetId(state), key));
+    return 1;
+}
+
 static int lua_UiMenu(lua_State* state)
 {
     luaL_checktype(state, 1, LUA_TTABLE);
@@ -13734,6 +13845,8 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "region", lua_InteractionRegion, 2 },
         { "isHovered", lua_InteractionIsHovered, 2 },
         { "isPressed", lua_InteractionIsPressed, 2 },
+        { "scroll", lua_InteractionScroll, 2 },
+        { "setScrollOffset", lua_InteractionSetScrollOffset, 2 },
     };
     static constexpr FunctionDescriptor widget[] = {
         { "info", lua_WidgetInfo },

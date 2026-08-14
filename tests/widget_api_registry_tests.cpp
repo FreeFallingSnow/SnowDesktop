@@ -283,6 +283,8 @@ void TestV2Contract()
                 "interaction.contextMenu") &&
             snowdesktop::widget_api::SupportsFeature(
                 "interaction.region") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "interaction.scroll") &&
             snowdesktop::widget_api::SupportsFeature("l10n.format") &&
             snowdesktop::widget_api::SupportsFeature("module.package") &&
             snowdesktop::widget_api::SupportsFeature("resource.package") &&

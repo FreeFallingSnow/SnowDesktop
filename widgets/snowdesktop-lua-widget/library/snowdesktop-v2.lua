@@ -139,6 +139,17 @@
 ---@field accessibility? SnowInteractionAccessibility
 ---@field enabled? boolean
 
+---@class SnowInteractionScrollDescriptor
+---@field key string Stable instance-scoped key, 1..128 UTF-8 bytes.
+---@field shape SnowInteractionShape Must be a positive rect viewport.
+---@field contentHeight integer Logical content height from 0..1000000.
+
+---@class SnowInteractionScrollState
+---@field offset integer Current logical vertical offset.
+---@field maximum integer Maximum logical vertical offset.
+---@field viewportHeight integer Rounded logical viewport height.
+---@field contentHeight integer Effective content height, never below viewportHeight.
+
 ---@class SnowMenuRequest
 ---@field id string The region contextMenu binding ID.
 ---@field value? SnowStateValue The region contextMenu binding payload.
@@ -937,6 +948,18 @@ function interaction.isHovered(key) end
 ---@param key string
 ---@return boolean
 function interaction.isPressed(key) end
+
+---Register a vertical scroll viewport for the current render and return its
+---instance-scoped position. Pair it with draw.pushClip/popClip while drawing.
+---@param descriptor SnowInteractionScrollDescriptor
+---@return SnowInteractionScrollState
+function interaction.scroll(descriptor) end
+
+---Set a scroll viewport after it has been registered in the current render.
+---@param key string
+---@param offset integer
+---@return integer actualOffset
+function interaction.setScrollOffset(key, offset) end
 
 ---@class snow.ui
 ui = {}
