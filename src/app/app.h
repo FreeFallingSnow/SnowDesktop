@@ -2181,6 +2181,9 @@ private:
     void AddFolderMappingWidgetAt(POINT screenPoint);
     /** @brief 在指定屏幕位置创建 Lua 脚本部件。 @param screenPoint 屏幕坐标 @param scriptFilename 脚本文件名 */
     void AddLuaWidgetAt(POINT screenPoint, const std::wstring& scriptFilename);
+    void BeginLuaWidgetConsent(POINT screenPoint,
+        const std::wstring& packageId,
+        const std::wstring& targetWidgetId);
     void CompleteLuaWidgetConsent(WPARAM choice, LPARAM sessionId);
     /**
      * @brief 放置部件并位移冲突项。
@@ -2389,6 +2392,7 @@ private:
      * @return 框架矩形
     */
     RECT GetStandaloneWidgetFrameRect(const DesktopWidget& widget) const;
+    RECT GetLuaWidgetHostActionRect(const DesktopWidget& widget) const;
     float GetWidgetCellScale(const DesktopWidget& widget) const;
     int GetComponentEdgeMargin(const GridPage& page, bool vertical) const;
     /**
@@ -2571,6 +2575,7 @@ private:
         std::uint64_t sessionId = 0;
         POINT screenPoint{};
         std::wstring packageId;
+        std::wstring targetWidgetId;
         snowdesktop::widget::PackageSourceRef source;
         std::vector<std::string> requestedPermissions;
         std::vector<std::string> requestedNetworkDomains;

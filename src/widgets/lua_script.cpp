@@ -70,16 +70,17 @@ bool LuaScript::SafeRenderWidget(const std::wstring& id, const std::wstring& scr
     int columns, int rows)
 {
     if (!engine) return false;
+    bool rendered = false;
     __try
     {
         engine->RenderWidget(id, scriptPath, context, frame, columns, rows);
-        return true;
+        rendered = true;
     }
     __except (EXCEPTION_EXECUTE_HANDLER)
     {
         OutputDebugStringA("SnowDesktop: LuaScript::Draw RenderWidget crash\n");
-        return false;
     }
+    return rendered;
 }
 
 bool LuaScript::SafeReadFlags(WidgetEngine* engine,
@@ -310,10 +311,17 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
                 }
             }
         }
-        SafeRenderWidget(data_->id, data_->packageId, engine, context, frame,
+        widgetOk = SafeRenderWidget(
+            data_->id, data_->packageId, engine, context, frame,
             data_->gridSpan.columns, data_->gridSpan.rows);
+        if (widgetOk)
+        {
+            widgetOk = engine->GetWidgetHostState(
+                data_->id, data_->packageId).kind ==
+                snowdesktop::widget_runtime::WidgetHostStateKind::Ready;
+        }
     }
-    else if (!preview &&
+    if (!preview && !widgetOk &&
         !WidgetEngine::IsWidgetPackageInstalled(data_->packageId))
     {
         const std::string publishedFileId =
@@ -341,21 +349,19 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
                 ? D2D1::ColorF(0.09f, 0.12f, 0.17f, 0.92f)
                 : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.94f));
 
-        RECT actionRect{
-            frame.left + horizontalPadding,
-            centerY,
-            frame.right - horizontalPadding,
-            centerY + Cu(31.0f),
-        };
+        const RECT actionRect =
+            app_->GetLuaWidgetHostActionRect(*data_);
+        const bool actionHovered =
+            PtInRect(&actionRect, renderPointer) != FALSE;
         if (canRecoverFromWorkshop)
         {
             app_->DrawD2DRoundedRectangle(context, actionRect,
                 static_cast<float>(Cu(8.0f)),
-                hovered
+                actionHovered
                     ? D2D1::ColorF(0.22f, 0.50f, 0.96f, 0.28f)
                     : D2D1::ColorF(0.22f, 0.50f, 0.96f, 0.16f),
                 D2D1::ColorF(0.30f, 0.58f, 1.0f,
-                    hovered ? 0.72f : 0.46f));
+                    actionHovered ? 0.72f : 0.46f));
         }
         app_->DrawD2DText(context,
             canRecoverFromWorkshop
@@ -375,6 +381,97 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
                     ? D2D1::ColorF(0.20f, 0.23f, 0.29f, 0.68f)
                     : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.64f)),
             DWRITE_WORD_WRAPPING_WRAP);
+    }
+    else if (!preview && !widgetOk)
+    {
+        using snowdesktop::widget_runtime::WidgetHostStateKind;
+        const auto hostState = engine
+            ? engine->GetWidgetHostState(data_->id, data_->packageId)
+            : snowdesktop::widget_runtime::WidgetHostState{
+                WidgetHostStateKind::LoadFailed, {} };
+        std::wstring title;
+        std::wstring body;
+        std::wstring action;
+        switch (hostState.kind)
+        {
+        case WidgetHostStateKind::PermissionPending:
+            title = _LW("app.widget.placeholder.permission_title");
+            body = _LW("app.widget.placeholder.permission_pending");
+            action = _LW("app.widget.placeholder.reauthorize");
+            break;
+        case WidgetHostStateKind::PermissionDenied:
+            title = _LW("app.widget.placeholder.permission_title");
+            body = _LW("app.widget.placeholder.permission_denied");
+            action = _LW("app.widget.placeholder.reauthorize");
+            break;
+        case WidgetHostStateKind::QuotaExceeded:
+            title = _LW("app.widget.placeholder.quota_title");
+            body = _LW("app.widget.placeholder.quota_body");
+            action = _LW("app.widget.placeholder.reload");
+            break;
+        case WidgetHostStateKind::RuntimeSuspended:
+            title = _LW("app.widget.placeholder.runtime_title");
+            body = _LW("app.widget.placeholder.runtime_suspended");
+            action = _LW("app.widget.placeholder.reload");
+            break;
+        case WidgetHostStateKind::LoadFailed:
+        default:
+            title = _LW("app.widget.placeholder.runtime_title");
+            body = _LW("app.widget.placeholder.load_failed");
+            action = _LW("app.widget.placeholder.reload");
+            break;
+        }
+
+        const int horizontalPadding = Cu(14.0f);
+        const RECT actionRect =
+            app_->GetLuaWidgetHostActionRect(*data_);
+        const bool actionHovered =
+            PtInRect(&actionRect, renderPointer) != FALSE;
+        RECT titleRect{
+            frame.left + horizontalPadding,
+            frame.top + Cu(13.0f),
+            frame.right - horizontalPadding,
+            std::min<LONG>(actionRect.top - Cu(4.0f),
+                frame.top + Cu(39.0f)),
+        };
+        RECT bodyRect{
+            titleRect.left,
+            titleRect.bottom + Cu(2.0f),
+            titleRect.right,
+            actionRect.top - Cu(7.0f),
+        };
+        if (titleRect.bottom > titleRect.top)
+        {
+            app_->DrawD2DText(context, title, titleRect,
+                GetCuTextFormatWeight(16.0f,
+                    DWRITE_FONT_WEIGHT_SEMI_BOLD, false),
+                lightTheme
+                    ? D2D1::ColorF(0.09f, 0.12f, 0.17f, 0.94f)
+                    : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f));
+        }
+        if (bodyRect.bottom > bodyRect.top)
+        {
+            app_->DrawD2DText(context, body, bodyRect,
+                GetCuTextFormatWeight(12.0f,
+                    DWRITE_FONT_WEIGHT_NORMAL, false),
+                lightTheme
+                    ? D2D1::ColorF(0.20f, 0.23f, 0.29f, 0.72f)
+                    : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.68f),
+                DWRITE_WORD_WRAPPING_WRAP);
+        }
+        app_->DrawD2DRoundedRectangle(context, actionRect,
+            static_cast<float>(Cu(8.0f)),
+            actionHovered
+                ? D2D1::ColorF(0.22f, 0.50f, 0.96f, 0.28f)
+                : D2D1::ColorF(0.22f, 0.50f, 0.96f, 0.16f),
+            D2D1::ColorF(0.30f, 0.58f, 1.0f,
+                actionHovered ? 0.72f : 0.46f));
+        app_->DrawD2DText(context, action, actionRect,
+            GetCuTextFormatWeight(12.5f,
+                DWRITE_FONT_WEIGHT_SEMI_BOLD, true),
+            lightTheme
+                ? D2D1::ColorF(0.08f, 0.31f, 0.72f, 0.98f)
+                : D2D1::ColorF(0.63f, 0.79f, 1.0f, 0.98f));
     }
     context->PopAxisAlignedClip();
 

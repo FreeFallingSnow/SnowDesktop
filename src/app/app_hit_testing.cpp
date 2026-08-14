@@ -90,6 +90,27 @@ RECT DesktopApp::GetStandaloneWidgetFrameRect(const DesktopWidget& widget) const
     return rect;
 }
 
+RECT DesktopApp::GetLuaWidgetHostActionRect(
+    const DesktopWidget& widget) const
+{
+    const RECT frame = GetStandaloneWidgetFrameRect(widget);
+    const float cellScale = GetWidgetCellScale(widget);
+    const int horizontalInset = ScaleWidgetCu(14.0f, cellScale);
+    const int buttonHeight = ScaleWidgetCu(31.0f, cellScale);
+    const int bottomInset = ScaleWidgetCu(14.0f, cellScale);
+    const RECT moveHandle = GetStandaloneWidgetMoveHandleRect(widget);
+    const LONG contentBottom = std::max<LONG>(frame.top,
+        moveHandle.top - ScaleWidgetCu(5.0f, cellScale));
+    const LONG bottom = std::max<LONG>(frame.top + buttonHeight,
+        contentBottom - bottomInset);
+    return {
+        frame.left + horizontalInset,
+        bottom - buttonHeight,
+        frame.right - horizontalInset,
+        bottom
+    };
+}
+
 /**
  * @brief 获取独立窗口小部件的移动手柄矩形
  * @param widget 桌面小部件引用

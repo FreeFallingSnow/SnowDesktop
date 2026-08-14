@@ -33,6 +33,7 @@
 #include "widget_layout_context.h"
 #include "widget_runtime_diagnostics.h"
 #include "widget_runtime_health.h"
+#include "widget_host_state.h"
 #include "widget_runtime_scheduler.h"
 
 struct ImGuiContext;
@@ -435,6 +436,11 @@ public:
      * @return 重载成功返回 true，否则返回 false
      */
     bool ReloadWidget(const std::wstring& widgetId);
+    bool RetryWidget(const std::wstring& widgetId,
+        const std::wstring& packageId);
+    snowdesktop::widget_runtime::WidgetHostState GetWidgetHostState(
+        const std::wstring& widgetId,
+        const std::wstring& packageId) const;
     void NotifyLanguageChanged(const std::wstring& widgetId);
 
     /**
@@ -938,6 +944,9 @@ private:
      * @return 找到返回索引，否则返回 -1
      */
     int FindWidget(const std::wstring& widgetId) const;
+    void RecordWidgetHostFailure(const std::wstring& widgetId,
+        const std::string& message, bool quotaExceeded = false,
+        bool circuitOpen = false);
     void InvokeSimpleCallback(LuaWidget& widget, const char* callbackName);
     void EnsureSystemSnapshotServiceStarted();
     void RescheduleNamedTimer(LuaWidget& widget);
@@ -946,6 +955,9 @@ private:
     ComPtr<ID2D1DeviceContext> d2dContext_;            ///< Direct2D 设备上下文
     ComPtr<IDWriteFactory> dwriteFactory_;             ///< DirectWrite 工厂接口
     std::vector<LuaWidget> widgets_;                   ///< 已加载的小部件实例列表
+    std::unordered_map<std::wstring,
+        snowdesktop::widget_runtime::WidgetHostState>
+        widgetHostFailures_;
     DesktopSnapshotProvider desktopSnapshotProvider_;  ///< 桌面快照提供者回调
     DesktopSnapshotProvider selectionProvider_;        ///< 当前选中项提供者回调
     WidgetSelectedProvider widgetSelectedProvider_;    ///< 当前组件选中状态提供者回调

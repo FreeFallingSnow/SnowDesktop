@@ -1346,48 +1346,41 @@ void DesktopApp::AddLuaWidgetAt(POINT screenPoint, const std::wstring& packageId
             package->manifest.permissions);
     const bool alreadyGranted = package->permissionState ==
         snowdesktop::widget::PermissionDecisionState::Granted;
-    snowdesktop::widget::PermissionDecisionState decision =
-        snowdesktop::widget::PermissionDecisionState::Granted;
-    bool shouldPersistDecision = !alreadyGranted;
     if (!alreadyGranted && !consentPermissions.empty())
     {
         if (pendingLuaWidgetConsent_) return;
-        const std::wstring displayName =
-            WidgetEngine::GetWidgetDisplayName(packageId);
-        WidgetConsentDialogPresentation presentation =
-            BuildWidgetConsentDialogPresentation(*package,
-            displayName.empty() ? packageId : displayName,
-            consentPermissions);
-        std::uint64_t sessionId = ++nextLuaWidgetConsentSessionId_;
-        if (sessionId == 0)
-            sessionId = ++nextLuaWidgetConsentSessionId_;
-        pendingLuaWidgetConsent_ = PendingLuaWidgetConsent{
-            sessionId, screenPoint, packageId, package->source,
-            package->manifest.permissions,
-            package->manifest.networkDomains };
-        StartWidgetConsentDialog(
-            hwnd_, sessionId, std::move(presentation));
+        int defaultColumns = 1;
+        int defaultRows = 1;
+        WidgetEngine::GetWidgetDefaultSpan(
+            packageId, defaultColumns, defaultRows);
+        snowdesktop::component_preview::ApplySettings settings;
+        settings.kind =
+            snowdesktop::component_preview::ApplyKind::LuaScript;
+        settings.packageId = packageId;
+        settings.columns = defaultColumns;
+        settings.rows = defaultRows;
+        const size_t previousCount = widgets_.size();
+        ApplyWidgetPreviewSettings(screenPoint, settings);
+        if (widgets_.size() <= previousCount) return;
+        BeginLuaWidgetConsent(screenPoint, packageId,
+            widgets_.back().id);
         return;
     }
-    if (shouldPersistDecision)
+    if (!alreadyGranted)
     {
         std::string error;
-        const bool grant = decision ==
-            snowdesktop::widget::PermissionDecisionState::Granted;
         const bool applied = widgetEngine_
             ? widgetEngine_->ApplyWidgetPermissionDecision(
-                packageId, decision,
-                grant ? package->manifest.permissions :
-                    std::vector<std::string>{},
-                grant ? package->manifest.networkDomains :
-                    std::vector<std::string>{},
+                packageId,
+                snowdesktop::widget::PermissionDecisionState::Granted,
+                package->manifest.permissions,
+                package->manifest.networkDomains,
                 error)
             : WidgetEngine::SetWidgetPermissionDecision(
-                packageId, decision,
-                grant ? package->manifest.permissions :
-                    std::vector<std::string>{},
-                grant ? package->manifest.networkDomains :
-                    std::vector<std::string>{},
+                packageId,
+                snowdesktop::widget::PermissionDecisionState::Granted,
+                package->manifest.permissions,
+                package->manifest.networkDomains,
                 error);
         if (!applied)
         {
@@ -1397,7 +1390,6 @@ void DesktopApp::AddLuaWidgetAt(POINT screenPoint, const std::wstring& packageId
                     Utf8ToWide(error)));
             return;
         }
-        if (!grant) return;
     }
     int defaultColumns = 1;
     int defaultRows = 1;
@@ -1408,6 +1400,35 @@ void DesktopApp::AddLuaWidgetAt(POINT screenPoint, const std::wstring& packageId
     settings.columns = defaultColumns;
     settings.rows = defaultRows;
     ApplyWidgetPreviewSettings(screenPoint, settings);
+}
+
+void DesktopApp::BeginLuaWidgetConsent(POINT screenPoint,
+    const std::wstring& packageId,
+    const std::wstring& targetWidgetId)
+{
+    if (pendingLuaWidgetConsent_ || targetWidgetId.empty()) return;
+    const auto package = WidgetEngine::GetWidgetPackage(packageId);
+    if (!package) return;
+    const auto consentPermissions =
+        snowdesktop::widget::PermissionsRequiringConsent(
+            package->manifest.permissions);
+    if (consentPermissions.empty()) return;
+
+    const std::wstring displayName =
+        WidgetEngine::GetWidgetDisplayName(packageId);
+    WidgetConsentDialogPresentation presentation =
+        BuildWidgetConsentDialogPresentation(*package,
+            displayName.empty() ? packageId : displayName,
+            consentPermissions);
+    std::uint64_t sessionId = ++nextLuaWidgetConsentSessionId_;
+    if (sessionId == 0)
+        sessionId = ++nextLuaWidgetConsentSessionId_;
+    pendingLuaWidgetConsent_ = PendingLuaWidgetConsent{
+        sessionId, screenPoint, packageId, targetWidgetId,
+        package->source, package->manifest.permissions,
+        package->manifest.networkDomains };
+    StartWidgetConsentDialog(
+        hwnd_, sessionId, std::move(presentation));
 }
 
 void DesktopApp::CompleteLuaWidgetConsent(
@@ -1434,7 +1455,8 @@ void DesktopApp::CompleteLuaWidgetConsent(
         !SameStringSet(package->manifest.networkDomains,
             pending.requestedNetworkDomains))
     {
-        AddLuaWidgetAt(pending.screenPoint, pending.packageId);
+        BeginLuaWidgetConsent(pending.screenPoint,
+            pending.packageId, pending.targetWidgetId);
         return;
     }
 
@@ -1464,8 +1486,12 @@ void DesktopApp::CompleteLuaWidgetConsent(
                 Utf8ToWide(error)));
         return;
     }
-    if (grant)
-        AddLuaWidgetAt(pending.screenPoint, pending.packageId);
+    if (grant && widgetEngine_)
+    {
+        (void)widgetEngine_->RetryWidget(
+            pending.targetWidgetId, pending.packageId);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    }
 }
 
 /**

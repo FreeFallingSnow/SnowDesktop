@@ -938,13 +938,40 @@ void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
             const bool contentClicked =
                 HitTestStandaloneWidget(mouseDownWidgetIndex_,
                     upPoint) == WidgetHit::Content;
-            const bool packageMissing = !WidgetEngine::
-                IsWidgetPackageInstalled(
-                    widgets_[mouseDownWidgetIndex_].packageId);
-            if (!loaded && packageMissing && contentClicked)
+            const auto hostState = widgetEngine_->GetWidgetHostState(
+                widgets_[mouseDownWidgetIndex_].id,
+                widgets_[mouseDownWidgetIndex_].packageId);
+            const auto hostAction = snowdesktop::widget_runtime::
+                HostActionFor(hostState.kind);
+            const RECT hostActionRect = GetLuaWidgetHostActionRect(
+                widgets_[mouseDownWidgetIndex_]);
+            const bool hostActionClicked = contentClicked &&
+                PtInRect(&hostActionRect, mouseDownPoint_) &&
+                PtInRect(&hostActionRect, upPoint);
+            if (!loaded && hostActionClicked &&
+                hostAction == snowdesktop::widget_runtime::
+                    WidgetHostAction::OpenPackageSource)
             {
                 OpenMissingWidgetWorkshopPage(hwnd_,
                     widgets_[mouseDownWidgetIndex_]);
+            }
+            else if (!loaded && hostActionClicked &&
+                hostAction == snowdesktop::widget_runtime::
+                    WidgetHostAction::RequestPermission)
+            {
+                POINT screenPoint = upPoint;
+                ClientToScreen(hwnd_, &screenPoint);
+                BeginLuaWidgetConsent(screenPoint,
+                    widgets_[mouseDownWidgetIndex_].packageId,
+                    widgets_[mouseDownWidgetIndex_].id);
+            }
+            else if (!loaded && hostActionClicked &&
+                hostAction == snowdesktop::widget_runtime::
+                    WidgetHostAction::Reload)
+            {
+                (void)widgetEngine_->RetryWidget(
+                    widgets_[mouseDownWidgetIndex_].id,
+                    widgets_[mouseDownWidgetIndex_].packageId);
             }
             else if (loaded)
             {

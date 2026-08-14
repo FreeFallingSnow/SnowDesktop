@@ -698,6 +698,13 @@ if (BUILD_TESTING)
         LABELS contract lua widget)
 
     snowdesktop_add_test(
+        SnowDesktopWidgetHostStateTests
+        widget_host_state
+        SOURCES tests/widget_host_state_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS contract lua widget)
+
+    snowdesktop_add_test(
         SnowDesktopWidgetRuntimeSchedulerTests
         widget_runtime_scheduler
         SOURCES

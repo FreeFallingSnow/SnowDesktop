@@ -3546,6 +3546,7 @@ void WidgetEngine::Shutdown()
         }
     }
     widgets_.clear();
+    widgetHostFailures_.clear();
     delete d2dState_; d2dState_ = nullptr;
 }
 
@@ -3581,6 +3582,7 @@ void WidgetEngine::UnloadWidget(const std::wstring& widgetId)
 void WidgetEngine::DeleteWidgetInstance(const std::wstring& widgetId)
 {
     UnloadWidget(widgetId);
+    widgetHostFailures_.erase(widgetId);
     std::string prefix = WidgetWideToUtf8(widgetId) + ".";
     auto& storage = ActiveStorage();
     auto it = storage.begin();
@@ -3706,7 +3708,8 @@ void WidgetEngine::PushSafeEnvironment(lua_State* L, const LuaWidget& widget)
 
 bool WidgetEngine::EnsureWidgetLoaded(const std::wstring& widgetId, const std::wstring& packageId)
 {
-    if (FindWidget(widgetId) >= 0) return true;
+    if (const int index = FindWidget(widgetId); index >= 0)
+        return widgets_[index].valid;
     const std::wstring path = ResolveWidgetPath(packageId);
     if (path.empty())
     {
@@ -3748,7 +3751,12 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         previewStorageOverrides)
 {
     std::string source = ReadTextFile(path);
-    if (source.empty()) return false;
+    if (source.empty())
+    {
+        RuntimeRecordError(widgetId,
+            "Widget entry script is empty or cannot be read");
+        return false;
+    }
 
     LuaWidget pending;
     pending.widgetId = widgetId;
@@ -3827,6 +3835,8 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     if (!state)
     {
         RuntimeRecordError(widgetId, "Cannot allocate isolated Lua state");
+        RecordWidgetHostFailure(widgetId,
+            "Cannot allocate isolated Lua state", quota->memoryExceeded);
         return false;
     }
     std::unique_ptr<lua_State, decltype(&lua_close)> stateGuard(
@@ -3856,6 +3866,8 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     {
         const char* err = lua_tostring(state, -1);
         RuntimeRecordError(widgetId, err ? err : "(load error)");
+        RecordWidgetHostFailure(widgetId, err ? err : "(load error)",
+            quota->memoryExceeded || quota->executionExceeded);
         lua_pop(state, 2);
         return false;
     }
@@ -3874,6 +3886,9 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         {
             const char* err = lua_tostring(state, -1);
             RuntimeRecordError(widgetId, err ? err : "(load error)");
+            RecordWidgetHostFailure(widgetId,
+                err ? err : "(load error)",
+                quota->memoryExceeded || quota->executionExceeded);
             lua_pop(state, 2);
             return false;
         }
@@ -3884,6 +3899,9 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         {
             const char* err = lua_tostring(state, -1);
             RuntimeRecordError(widgetId, err ? err : "(pcall error)");
+            RecordWidgetHostFailure(widgetId,
+                err ? err : "(pcall error)",
+                quota->memoryExceeded || quota->executionExceeded);
             lua_pop(state, 2);
             return false;
         }
@@ -3897,6 +3915,9 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         {
             const char* err = lua_tostring(state, -1);
             RuntimeRecordError(widgetId, err ? err : "(pcall error)");
+            RecordWidgetHostFailure(widgetId,
+                err ? err : "(pcall error)",
+                quota->memoryExceeded || quota->executionExceeded);
             lua_pop(state, 2);
             return false;
         }
@@ -3976,6 +3997,9 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         {
             RuntimeRecordError(widgetId,
                 "Widget storage migration failed: " + migrationFailure);
+            RecordWidgetHostFailure(widgetId,
+                "Widget storage migration failed: " + migrationFailure,
+                quota->memoryExceeded || quota->executionExceeded);
             lua_pop(state, 1);
             return false;
         }
@@ -4020,6 +4044,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     if (GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &attr))
         w.lastModified = attr.ftLastWriteTime;
     widgets_.push_back(std::move(w));
+    widgetHostFailures_.erase(widgetId);
 
     auto& loadedStorage = ActiveStorage();
     const std::string staleErrorKey =
@@ -5317,6 +5342,58 @@ bool WidgetEngine::ReloadWidget(const std::wstring& widgetId)
     return true;
 }
 
+bool WidgetEngine::RetryWidget(const std::wstring& widgetId,
+    const std::wstring& packageId)
+{
+    widgetHostFailures_.erase(widgetId);
+    if (FindWidget(widgetId) >= 0)
+        return ReloadWidget(widgetId);
+    return EnsureWidgetLoaded(widgetId, packageId);
+}
+
+snowdesktop::widget_runtime::WidgetHostState
+WidgetEngine::GetWidgetHostState(const std::wstring& widgetId,
+    const std::wstring& packageId) const
+{
+    using snowdesktop::widget_runtime::WidgetHostStateKind;
+
+    if (!IsWidgetPackageInstalled(packageId))
+        return { WidgetHostStateKind::PackageMissing, {} };
+    const auto package = GetWidgetPackage(packageId);
+    if (!package)
+        return { WidgetHostStateKind::LoadFailed, {} };
+    switch (snowdesktop::widget::PermissionRuntimeBlockFor(
+        package->permissionState))
+    {
+    case snowdesktop::widget::PermissionRuntimeBlock::PendingConsent:
+        return { WidgetHostStateKind::PermissionPending, {} };
+    case snowdesktop::widget::PermissionRuntimeBlock::Denied:
+        return { WidgetHostStateKind::PermissionDenied, {} };
+    case snowdesktop::widget::PermissionRuntimeBlock::None:
+        break;
+    }
+
+    const int index = FindWidget(widgetId);
+    if (index >= 0)
+    {
+        const LuaWidget& widget = widgets_[index];
+        if (widget.valid)
+            return { WidgetHostStateKind::Ready, {} };
+        const bool quotaExceeded = widget.quota &&
+            (widget.quota->memoryExceeded ||
+                widget.quota->executionExceeded);
+        if (quotaExceeded)
+            return { WidgetHostStateKind::QuotaExceeded, {} };
+        if (widget.health.CircuitOpen())
+            return { WidgetHostStateKind::RuntimeSuspended, {} };
+    }
+
+    if (const auto failure = widgetHostFailures_.find(widgetId);
+        failure != widgetHostFailures_.end())
+        return failure->second;
+    return { WidgetHostStateKind::LoadFailed, {} };
+}
+
 void WidgetEngine::NotifyLanguageChanged(const std::wstring& widgetId)
 {
     int index = FindWidget(widgetId);
@@ -5350,8 +5427,26 @@ void WidgetEngine::RuntimeRecordError(const std::wstring& widgetId, const std::s
         auto& widget = widgets_[index];
         if (widget.health.RecordError())
             widget.valid = false;
+        const bool quotaExceeded = widget.quota &&
+            (widget.quota->memoryExceeded ||
+                widget.quota->executionExceeded);
+        RecordWidgetHostFailure(widgetId, message, quotaExceeded,
+            widget.health.CircuitOpen());
     }
+    else
+        RecordWidgetHostFailure(widgetId, message);
     RuntimeAddLog(widgetId, "error", message);
+}
+
+void WidgetEngine::RecordWidgetHostFailure(
+    const std::wstring& widgetId, const std::string& message,
+    bool quotaExceeded, bool circuitOpen)
+{
+    widgetHostFailures_[widgetId] = {
+        snowdesktop::widget_runtime::ClassifyWidgetRuntimeFailure(
+            quotaExceeded, circuitOpen, message),
+        message
+    };
 }
 
 void WidgetEngine::RuntimeAddLog(const std::wstring& widgetId, const std::string& level, const std::string& message)
