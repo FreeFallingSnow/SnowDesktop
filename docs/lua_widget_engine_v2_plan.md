@@ -587,7 +587,7 @@ local snapshot = cpu:value()
 当前已发布 `data.subscribe`、`data.system.cpu`、`data.system.memory` 和
 `data.system.gpu`、`data.system.power`，以及相互独立的 `data.system.network.status` /
 `data.system.network.traffic`、`data.system.storage.volumes` 和
-`data.system.storage.io` feature。
+`data.system.storage.io`、`data.system.display.topology` feature。
 Lua 订阅句柄已接通 `WidgetDataBroker` 与独立工作线程 provider：首个合格订阅按需
 启动对应 topic，多实例共享有效采样率，数据变化只使依赖实例失效，隐藏状态进入
 pause/throttle，最后订阅进入 idle grace，卸载、热重载和关闭自动释放。CPU 冷启动
@@ -604,6 +604,10 @@ provider 能力收敛为隐藏 throttle。
 `system.storage.io` 使用独立 PDH query 读取物理磁盘聚合读写速率与忙碌度，
 冷启动通过 `warmingUp` 表达，不公开磁盘序列号或文件路径；最后一个 I/O 订阅
 释放时即使共享 worker 仍在运行也会关闭该 query。
+
+`system.display.topology` 枚举全部活动显示器，返回不透明 ID、用户可见名称、
+逻辑/像素边界及工作区、有效 DPI/scale、刷新率、方向和可用时的 HDR 状态；
+原始 GDI 设备名只在宿主内部用于 DisplayConfig 映射，不作为稳定标识公开。
 
 ```text
 Stopped

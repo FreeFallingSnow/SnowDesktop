@@ -136,6 +136,50 @@ struct WidgetStorageIoDataSnapshot
     std::string error;
 };
 
+struct WidgetDisplayRectDataSnapshot
+{
+    double x = 0.0;
+    double y = 0.0;
+    double width = 0.0;
+    double height = 0.0;
+};
+
+struct WidgetDisplayPixelRectDataSnapshot
+{
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+};
+
+struct WidgetDisplayDataSnapshot
+{
+    std::string id;
+    std::string name;
+    bool primary = false;
+    WidgetDisplayRectDataSnapshot bounds;
+    WidgetDisplayRectDataSnapshot workArea;
+    WidgetDisplayPixelRectDataSnapshot pixelBounds;
+    WidgetDisplayPixelRectDataSnapshot pixelWorkArea;
+    unsigned int dpiX = 96;
+    unsigned int dpiY = 96;
+    double scale = 1.0;
+    double refreshHz = 0.0;
+    std::string orientation;
+    bool hdrKnown = false;
+    bool hdrSupported = false;
+    bool hdrEnabled = false;
+};
+
+struct WidgetDisplayTopologyDataSnapshot
+{
+    bool available = false;
+    std::vector<WidgetDisplayDataSnapshot> displays;
+    std::int64_t timestampMs = 0;
+    std::uint64_t revision = 0;
+    std::string error;
+};
+
 class WidgetSystemDataProvider
 {
 public:
@@ -165,6 +209,7 @@ public:
     std::optional<WidgetGpuDataSnapshot> Gpu() const;
     std::optional<WidgetStorageVolumesDataSnapshot> StorageVolumes() const;
     std::optional<WidgetStorageIoDataSnapshot> StorageIo() const;
+    std::optional<WidgetDisplayTopologyDataSnapshot> DisplayTopology() const;
     std::vector<std::string> DrainChangedTopics();
 
     bool Running() const noexcept;
@@ -189,6 +234,7 @@ private:
     WidgetGpuDataSnapshot SampleGpu();
     WidgetStorageVolumesDataSnapshot SampleStorageVolumes();
     WidgetStorageIoDataSnapshot SampleStorageIo();
+    WidgetDisplayTopologyDataSnapshot SampleDisplayTopology();
     void PublishCpu(WidgetCpuDataSnapshot snapshot);
     void PublishMemory(WidgetMemoryDataSnapshot snapshot);
     void PublishPower(WidgetPowerDataSnapshot snapshot);
@@ -197,6 +243,7 @@ private:
     void PublishGpu(WidgetGpuDataSnapshot snapshot);
     void PublishStorageVolumes(WidgetStorageVolumesDataSnapshot snapshot);
     void PublishStorageIo(WidgetStorageIoDataSnapshot snapshot);
+    void PublishDisplayTopology(WidgetDisplayTopologyDataSnapshot snapshot);
     bool InitializeGpuQuery();
     void CloseGpuQuery();
     bool InitializeStorageIoQuery();
@@ -214,6 +261,7 @@ private:
     std::optional<WidgetGpuDataSnapshot> gpu_;
     std::optional<WidgetStorageVolumesDataSnapshot> storageVolumes_;
     std::optional<WidgetStorageIoDataSnapshot> storageIo_;
+    std::optional<WidgetDisplayTopologyDataSnapshot> displayTopology_;
     std::uint64_t configurationGeneration_ = 0;
     std::jthread worker_;
     std::atomic<bool> resetCpuBaseline_{ true };

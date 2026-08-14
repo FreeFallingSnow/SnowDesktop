@@ -4,6 +4,7 @@
 #include <dxgi1_6.h>
 #include <pdh.h>
 #include <pdhmsg.h>
+#include <shellscalingapi.h>
 #include <wrl/client.h>
 #include <ws2def.h>
 #include <ws2ipdef.h>
@@ -30,6 +31,7 @@ constexpr std::string_view NetworkTrafficTopic = "system.network.traffic";
 constexpr std::string_view GpuTopic = "system.gpu";
 constexpr std::string_view StorageVolumesTopic = "system.storage.volumes";
 constexpr std::string_view StorageIoTopic = "system.storage.io";
+constexpr std::string_view DisplayTopologyTopic = "system.display.topology";
 
 std::uint64_t FileTimeValue(const FILETIME& value)
 {
@@ -199,6 +201,129 @@ bool IsMappedNetworkRoot(const wchar_t* root)
     }
     return false;
 }
+
+std::wstring LowerWide(std::wstring value)
+{
+    std::transform(value.begin(), value.end(), value.begin(),
+        [](wchar_t character) {
+            return static_cast<wchar_t>(
+                towlower(static_cast<wint_t>(character)));
+        });
+    return value;
+}
+
+std::string OpaqueDisplayId(std::wstring_view deviceName)
+{
+    constexpr std::uint64_t offset = 14695981039346656037ull;
+    constexpr std::uint64_t prime = 1099511628211ull;
+    std::uint64_t hash = offset;
+    for (const wchar_t character : deviceName)
+    {
+        hash ^= static_cast<std::uint16_t>(
+            towlower(static_cast<wint_t>(character)));
+        hash *= prime;
+    }
+    return "display-" + std::to_string(hash);
+}
+
+struct DisplayTargetMetadata
+{
+    std::wstring friendlyName;
+    bool hdrKnown = false;
+    bool hdrSupported = false;
+    bool hdrEnabled = false;
+};
+
+std::unordered_map<std::wstring, DisplayTargetMetadata>
+LoadDisplayTargetMetadata()
+{
+    std::unordered_map<std::wstring, DisplayTargetMetadata> result;
+    for (int attempt = 0; attempt < 3; ++attempt)
+    {
+        UINT32 pathCount = 0;
+        UINT32 modeCount = 0;
+        if (GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS,
+                &pathCount, &modeCount) != ERROR_SUCCESS)
+            return result;
+        std::vector<DISPLAYCONFIG_PATH_INFO> paths(pathCount);
+        std::vector<DISPLAYCONFIG_MODE_INFO> modes(modeCount);
+        const LONG query = QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS,
+            &pathCount, paths.data(), &modeCount, modes.data(), nullptr);
+        if (query == ERROR_INSUFFICIENT_BUFFER) continue;
+        if (query != ERROR_SUCCESS) return result;
+        paths.resize(pathCount);
+        for (const auto& path : paths)
+        {
+            DISPLAYCONFIG_SOURCE_DEVICE_NAME source{};
+            source.header.type =
+                DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
+            source.header.size = sizeof(source);
+            source.header.adapterId = path.sourceInfo.adapterId;
+            source.header.id = path.sourceInfo.id;
+            if (DisplayConfigGetDeviceInfo(&source.header) != ERROR_SUCCESS)
+                continue;
+
+            DisplayTargetMetadata metadata;
+            DISPLAYCONFIG_TARGET_DEVICE_NAME target{};
+            target.header.type =
+                DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME;
+            target.header.size = sizeof(target);
+            target.header.adapterId = path.targetInfo.adapterId;
+            target.header.id = path.targetInfo.id;
+            if (DisplayConfigGetDeviceInfo(&target.header) == ERROR_SUCCESS)
+                metadata.friendlyName = target.monitorFriendlyDeviceName;
+
+            DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO_2 color2{};
+            color2.header.type =
+                DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO_2;
+            color2.header.size = sizeof(color2);
+            color2.header.adapterId = path.targetInfo.adapterId;
+            color2.header.id = path.targetInfo.id;
+            if (DisplayConfigGetDeviceInfo(&color2.header) == ERROR_SUCCESS)
+            {
+                metadata.hdrKnown = true;
+                metadata.hdrSupported =
+                    color2.highDynamicRangeSupported != 0;
+                metadata.hdrEnabled =
+                    color2.highDynamicRangeUserEnabled != 0;
+            }
+            else
+            {
+                DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO color{};
+                color.header.type =
+                    DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO;
+                color.header.size = sizeof(color);
+                color.header.adapterId = path.targetInfo.adapterId;
+                color.header.id = path.targetInfo.id;
+                if (DisplayConfigGetDeviceInfo(
+                        &color.header) == ERROR_SUCCESS)
+                {
+                    metadata.hdrKnown = true;
+                    metadata.hdrSupported =
+                        color.advancedColorSupported != 0;
+                    metadata.hdrEnabled =
+                        color.advancedColorEnabled != 0;
+                }
+            }
+            result[LowerWide(source.viewGdiDeviceName)] =
+                std::move(metadata);
+        }
+        return result;
+    }
+    return result;
+}
+
+std::string DisplayOrientation(DWORD orientation)
+{
+    switch (orientation)
+    {
+    case DMDO_DEFAULT: return "landscape";
+    case DMDO_90: return "portrait";
+    case DMDO_180: return "landscapeFlipped";
+    case DMDO_270: return "portraitFlipped";
+    default: return "unknown";
+    }
+}
 }
 
 WidgetSystemDataProvider::~WidgetSystemDataProvider()
@@ -212,7 +337,8 @@ bool WidgetSystemDataProvider::SupportsTopic(
     return topic == CpuTopic || topic == MemoryTopic ||
         topic == PowerTopic || topic == NetworkStatusTopic ||
         topic == NetworkTrafficTopic || topic == GpuTopic ||
-        topic == StorageVolumesTopic || topic == StorageIoTopic;
+        topic == StorageVolumesTopic || topic == StorageIoTopic ||
+        topic == DisplayTopologyTopic;
 }
 
 bool WidgetSystemDataProvider::StartTopic(
@@ -378,6 +504,13 @@ WidgetSystemDataProvider::StorageIo() const
     return storageIo_;
 }
 
+std::optional<WidgetDisplayTopologyDataSnapshot>
+WidgetSystemDataProvider::DisplayTopology() const
+{
+    std::scoped_lock lock(mutex_);
+    return displayTopology_;
+}
+
 std::vector<std::string>
 WidgetSystemDataProvider::DrainChangedTopics()
 {
@@ -481,6 +614,8 @@ void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
                 PublishStorageVolumes(SampleStorageVolumes());
             else if (topic == StorageIoTopic)
                 PublishStorageIo(SampleStorageIo());
+            else if (topic == DisplayTopologyTopic)
+                PublishDisplayTopology(SampleDisplayTopology());
         }
     }
     CloseGpuQuery();
@@ -1056,6 +1191,116 @@ WidgetStorageIoDataSnapshot WidgetSystemDataProvider::SampleStorageIo()
     return snapshot;
 }
 
+WidgetDisplayTopologyDataSnapshot
+WidgetSystemDataProvider::SampleDisplayTopology()
+{
+    struct EnumContext
+    {
+        WidgetDisplayTopologyDataSnapshot* snapshot = nullptr;
+        const std::unordered_map<std::wstring,
+            DisplayTargetMetadata>* metadata = nullptr;
+    };
+
+    WidgetDisplayTopologyDataSnapshot snapshot;
+    snapshot.timestampMs = TimestampMilliseconds();
+    const auto metadata = LoadDisplayTargetMetadata();
+    EnumContext context{ &snapshot, &metadata };
+    const auto callback = [](HMONITOR monitor, HDC, LPRECT,
+                              LPARAM parameter) -> BOOL {
+        auto* context = reinterpret_cast<EnumContext*>(parameter);
+        if (!context || !context->snapshot) return FALSE;
+        MONITORINFOEXW info{};
+        info.cbSize = sizeof(info);
+        if (!GetMonitorInfoW(monitor, &info)) return TRUE;
+
+        WidgetDisplayDataSnapshot display;
+        display.id = OpaqueDisplayId(info.szDevice);
+        display.name = WideToUtf8(info.szDevice);
+        display.primary = (info.dwFlags & MONITORINFOF_PRIMARY) != 0;
+        display.pixelBounds = { info.rcMonitor.left, info.rcMonitor.top,
+            info.rcMonitor.right - info.rcMonitor.left,
+            info.rcMonitor.bottom - info.rcMonitor.top };
+        display.pixelWorkArea = { info.rcWork.left, info.rcWork.top,
+            info.rcWork.right - info.rcWork.left,
+            info.rcWork.bottom - info.rcWork.top };
+        UINT dpiX = 96;
+        UINT dpiY = 96;
+        if (FAILED(GetDpiForMonitor(
+                monitor, MDT_EFFECTIVE_DPI, &dpiX, &dpiY)))
+        {
+            dpiX = dpiY = 96;
+        }
+        display.dpiX = dpiX;
+        display.dpiY = dpiY;
+        display.scale = static_cast<double>(dpiX) / 96.0;
+        const double xScale = std::max(
+            0.01, static_cast<double>(dpiX) / 96.0);
+        const double yScale = std::max(
+            0.01, static_cast<double>(dpiY) / 96.0);
+        display.bounds = {
+            static_cast<double>(info.rcMonitor.left) / xScale,
+            static_cast<double>(info.rcMonitor.top) / yScale,
+            static_cast<double>(display.pixelBounds.width) / xScale,
+            static_cast<double>(display.pixelBounds.height) / yScale };
+        display.workArea = {
+            static_cast<double>(info.rcWork.left) / xScale,
+            static_cast<double>(info.rcWork.top) / yScale,
+            static_cast<double>(display.pixelWorkArea.width) / xScale,
+            static_cast<double>(display.pixelWorkArea.height) / yScale };
+
+        DEVMODEW mode{};
+        mode.dmSize = sizeof(mode);
+        if (EnumDisplaySettingsExW(
+                info.szDevice, ENUM_CURRENT_SETTINGS, &mode, 0))
+        {
+            display.refreshHz = mode.dmDisplayFrequency > 1
+                ? static_cast<double>(mode.dmDisplayFrequency) : 0.0;
+            display.orientation = DisplayOrientation(
+                mode.dmDisplayOrientation);
+        }
+        else
+        {
+            display.orientation = "unknown";
+        }
+
+        const auto found = context->metadata->find(
+            LowerWide(info.szDevice));
+        if (found != context->metadata->end())
+        {
+            if (!found->second.friendlyName.empty())
+                display.name = WideToUtf8(
+                    found->second.friendlyName.c_str());
+            display.hdrKnown = found->second.hdrKnown;
+            display.hdrSupported = found->second.hdrSupported;
+            display.hdrEnabled = found->second.hdrEnabled;
+        }
+        context->snapshot->displays.push_back(std::move(display));
+        return TRUE;
+    };
+    if (!EnumDisplayMonitors(nullptr, nullptr, callback,
+            reinterpret_cast<LPARAM>(&context)))
+    {
+        snapshot.error = "display enumeration failed";
+        return snapshot;
+    }
+    if (snapshot.displays.empty())
+    {
+        snapshot.error = "notPresent";
+        return snapshot;
+    }
+    std::sort(snapshot.displays.begin(), snapshot.displays.end(),
+        [](const auto& left, const auto& right) {
+            if (left.primary != right.primary) return left.primary;
+            if (left.pixelBounds.x != right.pixelBounds.x)
+                return left.pixelBounds.x < right.pixelBounds.x;
+            if (left.pixelBounds.y != right.pixelBounds.y)
+                return left.pixelBounds.y < right.pixelBounds.y;
+            return left.id < right.id;
+        });
+    snapshot.available = true;
+    return snapshot;
+}
+
 void WidgetSystemDataProvider::PublishCpu(
     WidgetCpuDataSnapshot snapshot)
 {
@@ -1134,5 +1379,16 @@ void WidgetSystemDataProvider::PublishStorageIo(
     snapshot.revision = storageIo_ ? storageIo_->revision + 1 : 1;
     storageIo_ = std::move(snapshot);
     changedTopics_.insert(std::string(StorageIoTopic));
+}
+
+void WidgetSystemDataProvider::PublishDisplayTopology(
+    WidgetDisplayTopologyDataSnapshot snapshot)
+{
+    std::scoped_lock lock(mutex_);
+    if (!schedules_.contains(std::string(DisplayTopologyTopic))) return;
+    snapshot.revision = displayTopology_
+        ? displayTopology_->revision + 1 : 1;
+    displayTopology_ = std::move(snapshot);
+    changedTopics_.insert(std::string(DisplayTopologyTopic));
 }
 }

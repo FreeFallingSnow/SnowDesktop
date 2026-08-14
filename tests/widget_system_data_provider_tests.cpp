@@ -34,7 +34,7 @@ bool WaitFor(Predicate predicate)
 void TestTopicLifecycleAndSampling()
 {
     WidgetSystemDataProvider provider;
-    Check(!provider.StartTopic("system.display.topology", 20ms) &&
+    Check(!provider.StartTopic("audio.output.default", 20ms) &&
             !provider.StartTopic("system.memory", 1ms),
         "unsupported topics and invalid intervals must be rejected");
     Check(provider.StartTopic("system.memory", 20ms) &&
@@ -165,6 +165,35 @@ void TestTopicLifecycleAndSampling()
             provider.ActiveTopicCount() == 2 &&
             WaitFor([&] { return !provider.StorageIoResourcesActive(); }),
         "the final storage I/O subscription must close PDH resources while the worker remains active");
+    Check(provider.StartTopic("system.display.topology", 20ms) &&
+            provider.ActiveTopicCount() == 3,
+        "display topology sampling must start as an independent topic");
+    Check(WaitFor([&] {
+            const auto snapshot = provider.DisplayTopology();
+            return snapshot && snapshot->revision > 0;
+        }),
+        "display topology sampling must publish an immutable revision");
+    const auto displays = provider.DisplayTopology();
+    Check(displays && displays->timestampMs > 0 &&
+            (displays->available || !displays->error.empty()) &&
+            (!displays->available || !displays->displays.empty()),
+        "display topology must expose active displays or a stable error");
+    if (displays && displays->available && !displays->displays.empty())
+    {
+        const auto& display = displays->displays.front();
+        Check(display.id.starts_with("display-") &&
+                !display.name.empty() && display.dpiX > 0 &&
+                display.dpiY > 0 && display.scale > 0.0 &&
+                display.pixelBounds.width > 0 &&
+                display.pixelBounds.height > 0 &&
+                display.bounds.width > 0.0 &&
+                display.bounds.height > 0.0 &&
+                !display.orientation.empty(),
+            "display entries must use opaque IDs and complete geometry metadata");
+    }
+    Check(provider.StopTopic("system.display.topology") &&
+            provider.ActiveTopicCount() == 2,
+        "stopping topology sampling must preserve CPU and memory topics");
 
     Check(provider.StopTopic("system.memory") && provider.Running() &&
             provider.ActiveTopicCount() == 1,

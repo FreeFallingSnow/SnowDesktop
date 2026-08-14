@@ -405,6 +405,38 @@ function schedule.cancel(id) end
 ---@field writeBytesPerSecond integer Aggregate physical-disk write rate.
 ---@field busyPercent number Aggregate physical-disk busy percentage, clamped to 0..100.
 
+---@class SnowDisplayRect
+---@field x number
+---@field y number
+---@field width number
+---@field height number
+
+---@class SnowDisplayPixelRect
+---@field x integer
+---@field y integer
+---@field width integer
+---@field height integer
+
+---@class SnowDisplayDataValue
+---@field id string Opaque display identifier.
+---@field name string User-visible display name when Windows provides one.
+---@field primary boolean
+---@field bounds SnowDisplayRect Logical bounds.
+---@field workArea SnowDisplayRect Logical work area.
+---@field pixelBounds SnowDisplayPixelRect Physical-pixel bounds.
+---@field pixelWorkArea SnowDisplayPixelRect Physical-pixel work area.
+---@field dpiX integer
+---@field dpiY integer
+---@field scale number Effective DPI divided by 96.
+---@field refreshHz number Zero when unavailable.
+---@field orientation 'landscape'|'portrait'|'landscapeFlipped'|'portraitFlipped'|'unknown'
+---@field hdrKnown boolean
+---@field hdrSupported boolean
+---@field hdrEnabled boolean
+
+---@class SnowDisplayTopologyDataValue
+---@field displays SnowDisplayDataValue[]
+
 ---@class SnowDataSnapshot<T>
 ---@field available boolean
 ---@field value? T
@@ -429,6 +461,7 @@ data = {}
 ---@overload fun(topic: 'system.network.traffic', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowNetworkTrafficDataValue>
 ---@overload fun(topic: 'system.storage.volumes', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowStorageVolumesDataValue>
 ---@overload fun(topic: 'system.storage.io', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowStorageIoDataValue>
+---@overload fun(topic: 'system.display.topology', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowDisplayTopologyDataValue>
 ---@param topic string
 ---@param options? SnowDataSubscribeOptions
 ---@return SnowDataSubscription<table>

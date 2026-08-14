@@ -209,6 +209,8 @@ void TestV2Contract()
 {
     Check(snowdesktop::widget_api::SupportsFeature("data.subscribe") &&
             snowdesktop::widget_api::SupportsFeature("data.system.cpu") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "data.system.display.topology") &&
             snowdesktop::widget_api::SupportsFeature("data.system.gpu") &&
             snowdesktop::widget_api::SupportsFeature("data.system.memory") &&
             snowdesktop::widget_api::SupportsFeature(

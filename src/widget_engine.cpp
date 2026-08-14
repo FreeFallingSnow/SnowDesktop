@@ -1775,6 +1775,7 @@ constexpr char kSystemPerformancePermission[] =
 constexpr char kSystemPowerPermission[] = "system.power.read";
 constexpr char kSystemNetworkPermission[] = "system.network.read";
 constexpr char kSystemStoragePermission[] = "system.storage.read";
+constexpr char kSystemDisplayPermission[] = "system.display.read";
 
 static void SetNumberField(lua_State* L, const char* key, lua_Number value)
 {
@@ -2197,6 +2198,75 @@ static void PushDataSnapshotEnvelope(lua_State* state,
         lua_setfield(state, -2, "writeBytesPerSecond");
         lua_pushnumber(state, snapshot->storageIo.busyPercent);
         lua_setfield(state, -2, "busyPercent");
+    }
+    else if (snapshot->topic == "system.display.topology")
+    {
+        const auto pushRect = [state](
+                const snowdesktop::widget_runtime::
+                    WidgetDisplayRectDataSnapshot& rect) {
+            lua_createtable(state, 0, 4);
+            lua_pushnumber(state, rect.x);
+            lua_setfield(state, -2, "x");
+            lua_pushnumber(state, rect.y);
+            lua_setfield(state, -2, "y");
+            lua_pushnumber(state, rect.width);
+            lua_setfield(state, -2, "width");
+            lua_pushnumber(state, rect.height);
+            lua_setfield(state, -2, "height");
+        };
+        const auto pushPixelRect = [state](
+                const snowdesktop::widget_runtime::
+                    WidgetDisplayPixelRectDataSnapshot& rect) {
+            lua_createtable(state, 0, 4);
+            lua_pushinteger(state, rect.x);
+            lua_setfield(state, -2, "x");
+            lua_pushinteger(state, rect.y);
+            lua_setfield(state, -2, "y");
+            lua_pushinteger(state, rect.width);
+            lua_setfield(state, -2, "width");
+            lua_pushinteger(state, rect.height);
+            lua_setfield(state, -2, "height");
+        };
+        lua_createtable(state,
+            static_cast<int>(snapshot->displayTopology.displays.size()), 0);
+        int displayIndex = 1;
+        for (const auto& display : snapshot->displayTopology.displays)
+        {
+            lua_createtable(state, 0, 15);
+            lua_pushlstring(state, display.id.data(), display.id.size());
+            lua_setfield(state, -2, "id");
+            lua_pushlstring(state, display.name.data(), display.name.size());
+            lua_setfield(state, -2, "name");
+            lua_pushboolean(state, display.primary);
+            lua_setfield(state, -2, "primary");
+            pushRect(display.bounds);
+            lua_setfield(state, -2, "bounds");
+            pushRect(display.workArea);
+            lua_setfield(state, -2, "workArea");
+            pushPixelRect(display.pixelBounds);
+            lua_setfield(state, -2, "pixelBounds");
+            pushPixelRect(display.pixelWorkArea);
+            lua_setfield(state, -2, "pixelWorkArea");
+            lua_pushinteger(state, display.dpiX);
+            lua_setfield(state, -2, "dpiX");
+            lua_pushinteger(state, display.dpiY);
+            lua_setfield(state, -2, "dpiY");
+            lua_pushnumber(state, display.scale);
+            lua_setfield(state, -2, "scale");
+            lua_pushnumber(state, display.refreshHz);
+            lua_setfield(state, -2, "refreshHz");
+            lua_pushlstring(state, display.orientation.data(),
+                display.orientation.size());
+            lua_setfield(state, -2, "orientation");
+            lua_pushboolean(state, display.hdrKnown);
+            lua_setfield(state, -2, "hdrKnown");
+            lua_pushboolean(state, display.hdrSupported);
+            lua_setfield(state, -2, "hdrSupported");
+            lua_pushboolean(state, display.hdrEnabled);
+            lua_setfield(state, -2, "hdrEnabled");
+            lua_rawseti(state, -2, displayIndex++);
+        }
+        lua_setfield(state, -2, "displays");
     }
     lua_setfield(state, -2, "value");
 }
@@ -4878,6 +4948,10 @@ void WidgetEngine::InitializeWidgetDataBroker()
     (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
         "system.storage.io", kSystemStoragePermission,
         1000ms, 5000ms, 2000ms, false, false }, error);
+    error.clear();
+    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
+        "system.display.topology", kSystemDisplayPermission,
+        2000ms, 10000ms, 2000ms, false, false }, error);
 
     if (previewOnly_)
         widgetSystemDataProvider_.reset();
@@ -7546,6 +7620,19 @@ WidgetEngine::RuntimeGetDataSnapshot(
             result.storageIo.busyPercent = 27.5;
             result.storageIo.timestampMs = timestampNow;
         }
+        else if (result.topic == "system.display.topology")
+        {
+            result.displayTopology.available = true;
+            result.displayTopology.timestampMs = timestampNow;
+            result.displayTopology.displays = {
+                { "display-preview-primary", "Preview Display", true,
+                    { 0.0, 0.0, 1280.0, 720.0 },
+                    { 0.0, 0.0, 1280.0, 680.0 },
+                    { 0, 0, 1920, 1080 }, { 0, 0, 1920, 1020 },
+                    144, 144, 1.5, 60.0, "landscape",
+                    true, true, false }
+            };
+        }
         return result;
     }
     if (!binding->options.permissionGranted)
@@ -7672,6 +7759,18 @@ WidgetEngine::RuntimeGetDataSnapshot(
         else
         {
             result.warmingUp = true;
+        }
+    }
+    else if (result.topic == "system.display.topology")
+    {
+        const auto snapshot =
+            widgetSystemDataProvider_->DisplayTopology();
+        if (snapshot)
+        {
+            result.displayTopology = *snapshot;
+            result.available = snapshot->available;
+            result.error = snapshot->error;
+            setFreshness(snapshot->timestampMs);
         }
     }
     if (result.error.empty())
