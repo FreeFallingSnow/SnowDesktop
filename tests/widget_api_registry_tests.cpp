@@ -210,6 +210,10 @@ void TestV2Contract()
     Check(snowdesktop::widget_api::SupportsFeature("data.subscribe") &&
             snowdesktop::widget_api::SupportsFeature("data.system.cpu") &&
             snowdesktop::widget_api::SupportsFeature("data.system.memory") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "data.system.network.status") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "data.system.network.traffic") &&
             snowdesktop::widget_api::SupportsFeature("data.system.power") &&
             snowdesktop::widget_api::SupportsFeature("draw.immediate") &&
             snowdesktop::widget_api::SupportsFeature("l10n.format") &&

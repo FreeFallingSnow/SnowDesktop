@@ -1,6 +1,13 @@
 #include "widget_system_data_provider.h"
 
 #include <windows.h>
+#include <ws2def.h>
+#include <ws2ipdef.h>
+#include <iphlpapi.h>
+#include <netioapi.h>
+#include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Foundation.Collections.h>
+#include <winrt/Windows.Networking.Connectivity.h>
 
 #include <algorithm>
 #include <utility>
@@ -12,6 +19,8 @@ namespace
 constexpr std::string_view CpuTopic = "system.cpu";
 constexpr std::string_view MemoryTopic = "system.memory";
 constexpr std::string_view PowerTopic = "system.power";
+constexpr std::string_view NetworkStatusTopic = "system.network.status";
+constexpr std::string_view NetworkTrafficTopic = "system.network.traffic";
 
 std::uint64_t FileTimeValue(const FILETIME& value)
 {
@@ -50,6 +59,50 @@ std::string CpuName()
     name.resize(static_cast<std::size_t>(length - 1));
     return name;
 }
+
+std::string ConnectivityName(
+    winrt::Windows::Networking::Connectivity::NetworkConnectivityLevel level)
+{
+    using Level = winrt::Windows::Networking::Connectivity::
+        NetworkConnectivityLevel;
+    switch (level)
+    {
+    case Level::InternetAccess:
+        return "internet";
+    case Level::LocalAccess:
+    case Level::ConstrainedInternetAccess:
+        return "local";
+    default:
+        return "none";
+    }
+}
+
+int ConnectivityRank(
+    winrt::Windows::Networking::Connectivity::NetworkConnectivityLevel level)
+{
+    const std::string name = ConnectivityName(level);
+    if (name == "internet") return 2;
+    if (name == "local") return 1;
+    return 0;
+}
+
+std::string TransportName(std::uint32_t ianaType)
+{
+    switch (ianaType)
+    {
+    case IF_TYPE_ETHERNET_CSMACD:
+        return "ethernet";
+    case IF_TYPE_IEEE80211:
+        return "wifi";
+    case 243:
+    case 244:
+        return "cellular";
+    case 0:
+        return "none";
+    default:
+        return "other";
+    }
+}
 }
 
 WidgetSystemDataProvider::~WidgetSystemDataProvider()
@@ -61,7 +114,8 @@ bool WidgetSystemDataProvider::SupportsTopic(
     std::string_view topic) noexcept
 {
     return topic == CpuTopic || topic == MemoryTopic ||
-        topic == PowerTopic;
+        topic == PowerTopic || topic == NetworkStatusTopic ||
+        topic == NetworkTrafficTopic;
 }
 
 bool WidgetSystemDataProvider::StartTopic(
@@ -81,6 +135,8 @@ bool WidgetSystemDataProvider::StartTopic(
         {
             schedules_.emplace(key, TopicSchedule{ interval, now });
             if (topic == CpuTopic) resetCpuBaseline_.store(true);
+            if (topic == NetworkTrafficTopic)
+                resetNetworkBaseline_.store(true);
         }
         else
         {
@@ -110,6 +166,8 @@ bool WidgetSystemDataProvider::StopTopic(std::string_view topic)
         removed = schedules_.erase(std::string(topic)) > 0;
         if (!removed) return false;
         if (topic == CpuTopic) resetCpuBaseline_.store(true);
+        if (topic == NetworkTrafficTopic)
+            resetNetworkBaseline_.store(true);
         ++configurationGeneration_;
         stopWorker = schedules_.empty();
     }
@@ -132,6 +190,7 @@ void WidgetSystemDataProvider::StopAll()
         ++configurationGeneration_;
     }
     resetCpuBaseline_.store(true);
+    resetNetworkBaseline_.store(true);
     if (worker_.joinable())
     {
         worker_.request_stop();
@@ -141,6 +200,9 @@ void WidgetSystemDataProvider::StopAll()
     previousIdle_ = 0;
     previousKernel_ = 0;
     previousUser_ = 0;
+    previousReceived_ = 0;
+    previousSent_ = 0;
+    previousNetworkSample_ = {};
 }
 
 std::optional<WidgetCpuDataSnapshot>
@@ -162,6 +224,20 @@ WidgetSystemDataProvider::Power() const
 {
     std::scoped_lock lock(mutex_);
     return power_;
+}
+
+std::optional<WidgetNetworkStatusDataSnapshot>
+WidgetSystemDataProvider::NetworkStatus() const
+{
+    std::scoped_lock lock(mutex_);
+    return networkStatus_;
+}
+
+std::optional<WidgetNetworkTrafficDataSnapshot>
+WidgetSystemDataProvider::NetworkTraffic() const
+{
+    std::scoped_lock lock(mutex_);
+    return networkTraffic_;
 }
 
 std::vector<std::string>
@@ -188,6 +264,15 @@ std::size_t WidgetSystemDataProvider::ActiveTopicCount() const
 
 void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
 {
+    bool apartmentInitialized = false;
+    try
+    {
+        winrt::init_apartment(winrt::apartment_type::multi_threaded);
+        apartmentInitialized = true;
+    }
+    catch (...)
+    {
+    }
     while (!stopToken.stop_requested())
     {
         std::vector<std::string> dueTopics;
@@ -234,8 +319,14 @@ void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
                 PublishMemory(SampleMemory());
             else if (topic == PowerTopic)
                 PublishPower(SamplePower());
+            else if (topic == NetworkStatusTopic)
+                PublishNetworkStatus(SampleNetworkStatus());
+            else if (topic == NetworkTrafficTopic)
+                PublishNetworkTraffic(SampleNetworkTraffic());
         }
     }
+    if (apartmentInitialized)
+        winrt::uninit_apartment();
 }
 
 WidgetCpuDataSnapshot WidgetSystemDataProvider::SampleCpu()
@@ -337,6 +428,113 @@ WidgetPowerDataSnapshot WidgetSystemDataProvider::SamplePower()
     return snapshot;
 }
 
+WidgetNetworkStatusDataSnapshot
+WidgetSystemDataProvider::SampleNetworkStatus()
+{
+    using namespace winrt::Windows::Networking::Connectivity;
+    WidgetNetworkStatusDataSnapshot snapshot;
+    snapshot.timestampMs = TimestampMilliseconds();
+    try
+    {
+        ConnectionProfile selected{ nullptr };
+        int selectedRank = -1;
+        for (const auto& profile : NetworkInformation::GetConnectionProfiles())
+        {
+            const int rank = ConnectivityRank(
+                profile.GetNetworkConnectivityLevel());
+            if (rank > selectedRank)
+            {
+                selected = profile;
+                selectedRank = rank;
+            }
+        }
+        snapshot.available = true;
+        if (!selected)
+            return snapshot;
+
+        snapshot.connectivity = ConnectivityName(
+            selected.GetNetworkConnectivityLevel());
+        if (const auto adapter = selected.NetworkAdapter())
+            snapshot.transport = TransportName(adapter.IanaInterfaceType());
+        const auto cost = selected.GetConnectionCost();
+        if (cost)
+        {
+            const auto type = cost.NetworkCostType();
+            snapshot.costKnown = type != NetworkCostType::Unknown;
+            snapshot.metered = type == NetworkCostType::Fixed ||
+                type == NetworkCostType::Variable;
+            snapshot.roaming = cost.Roaming();
+            snapshot.overLimit = cost.OverDataLimit();
+        }
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        snapshot.error = "Network status sampling failed: " +
+            winrt::to_string(error.message());
+    }
+    catch (...)
+    {
+        snapshot.error = "Network status sampling failed";
+    }
+    return snapshot;
+}
+
+WidgetNetworkTrafficDataSnapshot
+WidgetSystemDataProvider::SampleNetworkTraffic()
+{
+    WidgetNetworkTrafficDataSnapshot snapshot;
+    snapshot.timestampMs = TimestampMilliseconds();
+    const auto sampleTime = Clock::now();
+    if (resetNetworkBaseline_.exchange(false))
+    {
+        previousReceived_ = 0;
+        previousSent_ = 0;
+        previousNetworkSample_ = {};
+    }
+
+    PMIB_IF_TABLE2 table = nullptr;
+    if (GetIfTable2(&table) != NO_ERROR || !table)
+    {
+        snapshot.error = "Network traffic sampling failed";
+        return snapshot;
+    }
+    snapshot.available = true;
+    for (ULONG index = 0; index < table->NumEntries; ++index)
+    {
+        const auto& row = table->Table[index];
+        if (row.Type == IF_TYPE_SOFTWARE_LOOPBACK ||
+            row.OperStatus != IfOperStatusUp ||
+            row.MediaConnectState != MediaConnectStateConnected)
+            continue;
+        snapshot.connected = true;
+        snapshot.receivedBytes += row.InOctets;
+        snapshot.sentBytes += row.OutOctets;
+    }
+    FreeMibTable(table);
+
+    if (previousNetworkSample_.time_since_epoch().count() != 0)
+    {
+        const double seconds = std::chrono::duration<double>(
+            sampleTime - previousNetworkSample_).count();
+        if (seconds > 0.0 &&
+            snapshot.receivedBytes >= previousReceived_ &&
+            snapshot.sentBytes >= previousSent_)
+        {
+            snapshot.warmingUp = false;
+            snapshot.downloadBytesPerSecond =
+                static_cast<std::uint64_t>(
+                    (snapshot.receivedBytes - previousReceived_) / seconds);
+            snapshot.uploadBytesPerSecond =
+                static_cast<std::uint64_t>(
+                    (snapshot.sentBytes - previousSent_) / seconds);
+        }
+    }
+    previousReceived_ = snapshot.receivedBytes;
+    previousSent_ = snapshot.sentBytes;
+    previousNetworkSample_ = sampleTime;
+    return snapshot;
+}
+
 void WidgetSystemDataProvider::PublishCpu(
     WidgetCpuDataSnapshot snapshot)
 {
@@ -365,5 +563,25 @@ void WidgetSystemDataProvider::PublishPower(
     snapshot.revision = power_ ? power_->revision + 1 : 1;
     power_ = std::move(snapshot);
     changedTopics_.insert(std::string(PowerTopic));
+}
+
+void WidgetSystemDataProvider::PublishNetworkStatus(
+    WidgetNetworkStatusDataSnapshot snapshot)
+{
+    std::scoped_lock lock(mutex_);
+    if (!schedules_.contains(std::string(NetworkStatusTopic))) return;
+    snapshot.revision = networkStatus_ ? networkStatus_->revision + 1 : 1;
+    networkStatus_ = std::move(snapshot);
+    changedTopics_.insert(std::string(NetworkStatusTopic));
+}
+
+void WidgetSystemDataProvider::PublishNetworkTraffic(
+    WidgetNetworkTrafficDataSnapshot snapshot)
+{
+    std::scoped_lock lock(mutex_);
+    if (!schedules_.contains(std::string(NetworkTrafficTopic))) return;
+    snapshot.revision = networkTraffic_ ? networkTraffic_->revision + 1 : 1;
+    networkTraffic_ = std::move(snapshot);
+    changedTopics_.insert(std::string(NetworkTrafficTopic));
 }
 }

@@ -746,7 +746,7 @@ if (BUILD_TESTING)
             tests/widget_system_data_provider_tests.cpp
             src/widget_system_data_provider.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES advapi32
+        LINK_LIBRARIES advapi32 iphlpapi runtimeobject windowsapp
         LABELS contract data system widget)
 
     snowdesktop_add_test(

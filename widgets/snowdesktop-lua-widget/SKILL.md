@@ -111,7 +111,8 @@ it does not yet represent individual declarative elements.
   deadlines must remain active while the component is hidden.
 - Create `data.subscribe` handles once in `setup` or module scope, read their
   immutable envelopes during render, and declare `system.performance.read`
-  or `system.power.read` as optional when system data can degrade gracefully.
+  `system.power.read`, or `system.network.read` as optional when system data
+  can degrade gracefully.
 - Create `resource.image/font` handles at entry scope. Use `resource.status`
   when diagnostics are needed.
 - Use `draw.measureText`, clipping, explicit `maxWidth`, and separate opacity.

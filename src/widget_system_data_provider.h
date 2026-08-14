@@ -53,6 +53,34 @@ struct WidgetPowerDataSnapshot
     std::string error;
 };
 
+struct WidgetNetworkStatusDataSnapshot
+{
+    bool available = false;
+    std::string connectivity = "none";
+    std::string transport = "none";
+    bool costKnown = false;
+    bool metered = false;
+    bool roaming = false;
+    bool overLimit = false;
+    std::int64_t timestampMs = 0;
+    std::uint64_t revision = 0;
+    std::string error;
+};
+
+struct WidgetNetworkTrafficDataSnapshot
+{
+    bool available = false;
+    bool connected = false;
+    bool warmingUp = true;
+    std::uint64_t receivedBytes = 0;
+    std::uint64_t sentBytes = 0;
+    std::uint64_t downloadBytesPerSecond = 0;
+    std::uint64_t uploadBytesPerSecond = 0;
+    std::int64_t timestampMs = 0;
+    std::uint64_t revision = 0;
+    std::string error;
+};
+
 class WidgetSystemDataProvider
 {
 public:
@@ -77,6 +105,8 @@ public:
     std::optional<WidgetCpuDataSnapshot> Cpu() const;
     std::optional<WidgetMemoryDataSnapshot> Memory() const;
     std::optional<WidgetPowerDataSnapshot> Power() const;
+    std::optional<WidgetNetworkStatusDataSnapshot> NetworkStatus() const;
+    std::optional<WidgetNetworkTrafficDataSnapshot> NetworkTraffic() const;
     std::vector<std::string> DrainChangedTopics();
 
     bool Running() const noexcept;
@@ -94,9 +124,13 @@ private:
     WidgetCpuDataSnapshot SampleCpu();
     WidgetMemoryDataSnapshot SampleMemory();
     WidgetPowerDataSnapshot SamplePower();
+    WidgetNetworkStatusDataSnapshot SampleNetworkStatus();
+    WidgetNetworkTrafficDataSnapshot SampleNetworkTraffic();
     void PublishCpu(WidgetCpuDataSnapshot snapshot);
     void PublishMemory(WidgetMemoryDataSnapshot snapshot);
     void PublishPower(WidgetPowerDataSnapshot snapshot);
+    void PublishNetworkStatus(WidgetNetworkStatusDataSnapshot snapshot);
+    void PublishNetworkTraffic(WidgetNetworkTrafficDataSnapshot snapshot);
 
     mutable std::mutex mutex_;
     std::condition_variable condition_;
@@ -105,12 +139,18 @@ private:
     std::optional<WidgetCpuDataSnapshot> cpu_;
     std::optional<WidgetMemoryDataSnapshot> memory_;
     std::optional<WidgetPowerDataSnapshot> power_;
+    std::optional<WidgetNetworkStatusDataSnapshot> networkStatus_;
+    std::optional<WidgetNetworkTrafficDataSnapshot> networkTraffic_;
     std::uint64_t configurationGeneration_ = 0;
     std::jthread worker_;
     std::atomic<bool> resetCpuBaseline_{ true };
+    std::atomic<bool> resetNetworkBaseline_{ true };
 
     std::uint64_t previousIdle_ = 0;
     std::uint64_t previousKernel_ = 0;
     std::uint64_t previousUser_ = 0;
+    std::uint64_t previousReceived_ = 0;
+    std::uint64_t previousSent_ = 0;
+    Clock::time_point previousNetworkSample_{};
 };
 }

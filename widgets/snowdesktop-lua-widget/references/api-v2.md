@@ -94,7 +94,8 @@ ID 为 1–128 字节，每个实例最多 32 个计划；周期请求范围是 
 
 ### `data`
 
-当前公开三个按需系统数据源：`system.cpu`、`system.memory` 和 `system.power`。在 `setup` 或模块
+当前公开五个按需系统数据源：`system.cpu`、`system.memory`、`system.power`、
+`system.network.status` 和 `system.network.traffic`。在 `setup` 或模块
 入口创建订阅，不要在每次 `render` 中重复订阅：
 
 ```lua
@@ -131,11 +132,20 @@ end
 `available=false,error="notPresent"`。`handle:unsubscribe()` 主动释放；卸载、
 热重载和关闭也会自动释放。
 
-CPU 和内存受 `system.performance.read` 保护，电源受 `system.power.read` 保护。
+网络 status value 包含 `connectivity`（`none/local/internet`）、`transport`
+（`none/ethernet/wifi/cellular/other`）、`costKnown/metered/roaming/overLimit`。
+traffic value 包含 `connected/receivedBytes/sentBytes/downloadBytesPerSecond/
+uploadBytesPerSecond`，首次差分样本为 `warmingUp=true`。状态和流量是两个独立
+topic；只订阅状态不会启动流量差分采样。两者都不会返回 IP、MAC、SSID、BSSID
+或主机名。
+
+CPU 和内存受 `system.performance.read` 保护，电源受 `system.power.read` 保护，
+两个网络 topic 受 `system.network.read` 保护。
 需要无权限降级的组件应把对应权限声明在 `optionalPermissions`，并处理
 `available=false,error="permissionDenied"`；预览返回稳定模拟值且不会读取本机
 状态。对应 feature ID 是 `data.subscribe`、`data.system.cpu`、
-`data.system.memory` 和 `data.system.power`。
+`data.system.memory`、`data.system.power`、`data.system.network.status` 和
+`data.system.network.traffic`。
 
 ### `draw`
 
@@ -267,6 +277,6 @@ local display = resource.font("display")
 ## 当前明确未开放
 
 API v2 暂未向沙箱提供声明式 `view` 控件树、元素事件/hover/独立右键菜单、
-`desktop`、`media`、HTTP、CPU/内存/电源以外的系统状态、网络状态、音频分析、
+`desktop`、`media`、HTTP、上述五个 topic 以外的系统状态、音频分析、
 剪贴板、文件选择和应用启动库。它们将在对应宿主实现、配额与按需生命周期完成后
 再加入 feature 目录和 LuaLS 定义；不要根据权限词汇自行推测函数名。

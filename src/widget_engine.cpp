@@ -2088,6 +2088,40 @@ static void PushDataSnapshotEnvelope(lua_State* state,
             lua_setfield(state, -2, "estimatedRemainingSeconds");
         }
     }
+    else if (snapshot->topic == "system.network.status")
+    {
+        lua_pushlstring(state, snapshot->networkStatus.connectivity.data(),
+            snapshot->networkStatus.connectivity.size());
+        lua_setfield(state, -2, "connectivity");
+        lua_pushlstring(state, snapshot->networkStatus.transport.data(),
+            snapshot->networkStatus.transport.size());
+        lua_setfield(state, -2, "transport");
+        lua_pushboolean(state, snapshot->networkStatus.costKnown);
+        lua_setfield(state, -2, "costKnown");
+        lua_pushboolean(state, snapshot->networkStatus.metered);
+        lua_setfield(state, -2, "metered");
+        lua_pushboolean(state, snapshot->networkStatus.roaming);
+        lua_setfield(state, -2, "roaming");
+        lua_pushboolean(state, snapshot->networkStatus.overLimit);
+        lua_setfield(state, -2, "overLimit");
+    }
+    else if (snapshot->topic == "system.network.traffic")
+    {
+        lua_pushboolean(state, snapshot->networkTraffic.connected);
+        lua_setfield(state, -2, "connected");
+        lua_pushinteger(state, static_cast<lua_Integer>(
+            snapshot->networkTraffic.receivedBytes));
+        lua_setfield(state, -2, "receivedBytes");
+        lua_pushinteger(state, static_cast<lua_Integer>(
+            snapshot->networkTraffic.sentBytes));
+        lua_setfield(state, -2, "sentBytes");
+        lua_pushinteger(state, static_cast<lua_Integer>(
+            snapshot->networkTraffic.downloadBytesPerSecond));
+        lua_setfield(state, -2, "downloadBytesPerSecond");
+        lua_pushinteger(state, static_cast<lua_Integer>(
+            snapshot->networkTraffic.uploadBytesPerSecond));
+        lua_setfield(state, -2, "uploadBytesPerSecond");
+    }
     lua_setfield(state, -2, "value");
 }
 
@@ -4748,6 +4782,14 @@ void WidgetEngine::InitializeWidgetDataBroker()
     (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
         "system.power", kSystemPowerPermission,
         2000ms, 10000ms, 2000ms, false, false }, error);
+    error.clear();
+    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
+        "system.network.status", kSystemNetworkPermission,
+        2000ms, 10000ms, 2000ms, false, false }, error);
+    error.clear();
+    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
+        "system.network.traffic", kSystemNetworkPermission,
+        1000ms, 5000ms, 2000ms, false, false }, error);
 
     if (previewOnly_)
         widgetSystemDataProvider_.reset();
@@ -7362,6 +7404,25 @@ WidgetEngine::RuntimeGetDataSnapshot(
             result.power.estimatedRemainingSeconds = 10800;
             result.power.timestampMs = timestampNow;
         }
+        else if (result.topic == "system.network.status")
+        {
+            result.networkStatus.available = true;
+            result.networkStatus.connectivity = "internet";
+            result.networkStatus.transport = "wifi";
+            result.networkStatus.costKnown = true;
+            result.networkStatus.timestampMs = timestampNow;
+        }
+        else if (result.topic == "system.network.traffic")
+        {
+            result.networkTraffic.available = true;
+            result.networkTraffic.connected = true;
+            result.networkTraffic.warmingUp = false;
+            result.networkTraffic.receivedBytes = 987654321;
+            result.networkTraffic.sentBytes = 123456789;
+            result.networkTraffic.downloadBytesPerSecond = 245760;
+            result.networkTraffic.uploadBytesPerSecond = 32768;
+            result.networkTraffic.timestampMs = timestampNow;
+        }
         return result;
     }
     if (!binding->options.permissionGranted)
@@ -7417,6 +7478,33 @@ WidgetEngine::RuntimeGetDataSnapshot(
             result.available = snapshot->available;
             result.error = snapshot->error;
             setFreshness(snapshot->timestampMs);
+        }
+    }
+    else if (result.topic == "system.network.status")
+    {
+        const auto snapshot = widgetSystemDataProvider_->NetworkStatus();
+        if (snapshot)
+        {
+            result.networkStatus = *snapshot;
+            result.available = snapshot->available;
+            result.error = snapshot->error;
+            setFreshness(snapshot->timestampMs);
+        }
+    }
+    else if (result.topic == "system.network.traffic")
+    {
+        const auto snapshot = widgetSystemDataProvider_->NetworkTraffic();
+        if (snapshot)
+        {
+            result.networkTraffic = *snapshot;
+            result.available = snapshot->available;
+            result.warmingUp = snapshot->warmingUp;
+            result.error = snapshot->error;
+            setFreshness(snapshot->timestampMs);
+        }
+        else
+        {
+            result.warmingUp = true;
         }
     }
     if (result.error.empty())

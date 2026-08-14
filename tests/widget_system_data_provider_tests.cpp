@@ -79,6 +79,30 @@ void TestTopicLifecycleAndSampling()
     Check(provider.StopTopic("system.power") && provider.Running() &&
             provider.ActiveTopicCount() == 2,
         "stopping power sampling must preserve CPU and memory topics");
+    Check(provider.StartTopic("system.network.status", 20ms) &&
+            provider.StartTopic("system.network.traffic", 20ms) &&
+            provider.ActiveTopicCount() == 4,
+        "network status and traffic must start as independent topics");
+    Check(WaitFor([&] {
+            const auto status = provider.NetworkStatus();
+            const auto traffic = provider.NetworkTraffic();
+            return status && status->revision > 0 &&
+                traffic && traffic->revision >= 2;
+        }),
+        "network topics must publish status and differential traffic revisions");
+    const auto networkStatus = provider.NetworkStatus();
+    const auto networkTraffic = provider.NetworkTraffic();
+    Check(networkStatus && networkStatus->timestampMs > 0 &&
+            (networkStatus->available || !networkStatus->error.empty()),
+        "network status must publish availability or a stable error");
+    Check(networkTraffic && networkTraffic->timestampMs > 0 &&
+            (networkTraffic->available || !networkTraffic->error.empty()),
+        "network traffic must publish availability or a stable error");
+    Check(provider.StopTopic("system.network.status") &&
+            provider.ActiveTopicCount() == 3 &&
+            provider.StopTopic("system.network.traffic") &&
+            provider.ActiveTopicCount() == 2,
+        "network topics must stop independently without stopping CPU or memory");
 
     Check(provider.StopTopic("system.memory") && provider.Running() &&
             provider.ActiveTopicCount() == 1,
