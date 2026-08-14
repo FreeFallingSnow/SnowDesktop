@@ -752,6 +752,13 @@ if (BUILD_TESTING)
         LABELS rules folder)
 
     snowdesktop_add_test(
+        SnowDesktopFolderMappingRulesTests
+        folder_mapping_rules
+        SOURCES tests/folder_mapping_rules_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS rules folder widget)
+
+    snowdesktop_add_test(
         SnowDesktopRightClickContractTests
         right_click_contract
         SOURCES tests/right_click_contract_tests.cpp

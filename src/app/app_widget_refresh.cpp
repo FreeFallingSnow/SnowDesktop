@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../folder_mapping_rules.h"
 
 // Folder-mapping enumeration and automatic file-category collection.
 
@@ -48,7 +49,13 @@ void DesktopApp::EnumerateFolderMappingEntries(
         }
         return;
     }
-    std::wstring search = widget.sourceFolderPath + L"\\*";
+    // 磁盘根目录（如 "C:\"）自身以反斜杠结尾：直接拼接会生成 "C:\\名称"
+    // 这种双反斜杠路径，SHParseDisplayName 对其返回 E_INVALIDARG，
+    // 图标加载任务因此永远无法入队，条目只能停留在占位图标。
+    // ChildPath 先剥离尾部分隔符，再用单一反斜杠拼接搜索串与条目路径。
+    std::wstring search =
+        snowdesktop::folder_mapping_rules::ChildPath(
+            widget.sourceFolderPath, L"*");
     WIN32_FIND_DATAW fd{};
     HANDLE hFind = FindFirstFileW(search.c_str(), &fd);
     if (hFind == INVALID_HANDLE_VALUE) {
@@ -68,7 +75,9 @@ void DesktopApp::EnumerateFolderMappingEntries(
         if (!showHiddenItems && (fd.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN)) continue;
         FolderEntry entry;
         entry.name = fd.cFileName;
-        entry.fullPath = widget.sourceFolderPath + L"\\" + fd.cFileName;
+        entry.fullPath =
+            snowdesktop::folder_mapping_rules::ChildPath(
+                widget.sourceFolderPath, fd.cFileName);
         entry.isDirectory = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
         entry.lastWriteTime = fd.ftLastWriteTime;
         if (!entry.isDirectory)
