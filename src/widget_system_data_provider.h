@@ -180,6 +180,10 @@ struct WidgetDisplayTopologyDataSnapshot
     std::string error;
 };
 
+std::optional<WidgetDisplayDataSnapshot> MatchDisplayByPixelBounds(
+    const WidgetDisplayTopologyDataSnapshot& topology,
+    const WidgetDisplayPixelRectDataSnapshot& bounds);
+
 class WidgetSystemDataProvider
 {
 public:
@@ -210,6 +214,7 @@ public:
     std::optional<WidgetStorageVolumesDataSnapshot> StorageVolumes() const;
     std::optional<WidgetStorageIoDataSnapshot> StorageIo() const;
     std::optional<WidgetDisplayTopologyDataSnapshot> DisplayTopology() const;
+    std::optional<WidgetDisplayTopologyDataSnapshot> DisplayCurrent() const;
     std::vector<std::string> DrainChangedTopics();
 
     bool Running() const noexcept;
@@ -244,6 +249,7 @@ private:
     void PublishStorageVolumes(WidgetStorageVolumesDataSnapshot snapshot);
     void PublishStorageIo(WidgetStorageIoDataSnapshot snapshot);
     void PublishDisplayTopology(WidgetDisplayTopologyDataSnapshot snapshot);
+    void PublishDisplayCurrent(WidgetDisplayTopologyDataSnapshot snapshot);
     bool InitializeGpuQuery();
     void CloseGpuQuery();
     bool InitializeStorageIoQuery();
@@ -262,6 +268,7 @@ private:
     std::optional<WidgetStorageVolumesDataSnapshot> storageVolumes_;
     std::optional<WidgetStorageIoDataSnapshot> storageIo_;
     std::optional<WidgetDisplayTopologyDataSnapshot> displayTopology_;
+    std::optional<WidgetDisplayTopologyDataSnapshot> displayCurrent_;
     std::uint64_t configurationGeneration_ = 0;
     std::jthread worker_;
     std::atomic<bool> resetCpuBaseline_{ true };

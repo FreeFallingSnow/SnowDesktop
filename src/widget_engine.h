@@ -291,6 +291,7 @@ struct LuaWidgetDataSnapshot
     snowdesktop::widget_runtime::WidgetStorageIoDataSnapshot storageIo;
     snowdesktop::widget_runtime::WidgetDisplayTopologyDataSnapshot
         displayTopology;
+    snowdesktop::widget_runtime::WidgetDisplayDataSnapshot displayCurrent;
 };
 
 /**

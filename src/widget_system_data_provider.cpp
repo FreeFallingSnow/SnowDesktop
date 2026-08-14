@@ -32,6 +32,7 @@ constexpr std::string_view GpuTopic = "system.gpu";
 constexpr std::string_view StorageVolumesTopic = "system.storage.volumes";
 constexpr std::string_view StorageIoTopic = "system.storage.io";
 constexpr std::string_view DisplayTopologyTopic = "system.display.topology";
+constexpr std::string_view DisplayCurrentTopic = "system.display.current";
 
 std::uint64_t FileTimeValue(const FILETIME& value)
 {
@@ -326,6 +327,23 @@ std::string DisplayOrientation(DWORD orientation)
 }
 }
 
+std::optional<WidgetDisplayDataSnapshot> MatchDisplayByPixelBounds(
+    const WidgetDisplayTopologyDataSnapshot& topology,
+    const WidgetDisplayPixelRectDataSnapshot& bounds)
+{
+    const auto display = std::find_if(
+        topology.displays.begin(), topology.displays.end(),
+        [&](const auto& candidate) {
+            return candidate.pixelBounds.x == bounds.x &&
+                candidate.pixelBounds.y == bounds.y &&
+                candidate.pixelBounds.width == bounds.width &&
+                candidate.pixelBounds.height == bounds.height;
+        });
+    return display == topology.displays.end()
+        ? std::nullopt
+        : std::optional<WidgetDisplayDataSnapshot>(*display);
+}
+
 WidgetSystemDataProvider::~WidgetSystemDataProvider()
 {
     StopAll();
@@ -338,7 +356,7 @@ bool WidgetSystemDataProvider::SupportsTopic(
         topic == PowerTopic || topic == NetworkStatusTopic ||
         topic == NetworkTrafficTopic || topic == GpuTopic ||
         topic == StorageVolumesTopic || topic == StorageIoTopic ||
-        topic == DisplayTopologyTopic;
+        topic == DisplayTopologyTopic || topic == DisplayCurrentTopic;
 }
 
 bool WidgetSystemDataProvider::StartTopic(
@@ -511,6 +529,13 @@ WidgetSystemDataProvider::DisplayTopology() const
     return displayTopology_;
 }
 
+std::optional<WidgetDisplayTopologyDataSnapshot>
+WidgetSystemDataProvider::DisplayCurrent() const
+{
+    std::scoped_lock lock(mutex_);
+    return displayCurrent_;
+}
+
 std::vector<std::string>
 WidgetSystemDataProvider::DrainChangedTopics()
 {
@@ -616,6 +641,8 @@ void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
                 PublishStorageIo(SampleStorageIo());
             else if (topic == DisplayTopologyTopic)
                 PublishDisplayTopology(SampleDisplayTopology());
+            else if (topic == DisplayCurrentTopic)
+                PublishDisplayCurrent(SampleDisplayTopology());
         }
     }
     CloseGpuQuery();
@@ -1390,5 +1417,16 @@ void WidgetSystemDataProvider::PublishDisplayTopology(
         ? displayTopology_->revision + 1 : 1;
     displayTopology_ = std::move(snapshot);
     changedTopics_.insert(std::string(DisplayTopologyTopic));
+}
+
+void WidgetSystemDataProvider::PublishDisplayCurrent(
+    WidgetDisplayTopologyDataSnapshot snapshot)
+{
+    std::scoped_lock lock(mutex_);
+    if (!schedules_.contains(std::string(DisplayCurrentTopic))) return;
+    snapshot.revision = displayCurrent_
+        ? displayCurrent_->revision + 1 : 1;
+    displayCurrent_ = std::move(snapshot);
+    changedTopics_.insert(std::string(DisplayCurrentTopic));
 }
 }

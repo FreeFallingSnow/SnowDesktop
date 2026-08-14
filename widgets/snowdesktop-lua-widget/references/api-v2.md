@@ -94,9 +94,9 @@ ID 为 1–128 字节，每个实例最多 32 个计划；周期请求范围是 
 
 ### `data`
 
-当前公开九个按需系统数据源：`system.cpu`、`system.memory`、`system.gpu`、`system.power`、
+当前公开十个按需系统数据源：`system.cpu`、`system.memory`、`system.gpu`、`system.power`、
 `system.network.status`、`system.network.traffic`、`system.storage.volumes`、
-`system.storage.io` 和 `system.display.topology`。在 `setup` 或模块
+`system.storage.io`、`system.display.topology` 和 `system.display.current`。在 `setup` 或模块
 入口创建订阅，不要在每次 `render` 中重复订阅：
 
 ```lua
@@ -164,6 +164,11 @@ topic；只订阅状态不会启动流量差分采样。两者都不会返回 IP
 Windows 无法报告高级颜色状态时 `hdrKnown=false`，不能把两个 false 当成设备明确
 不支持 HDR。预览返回单个固定显示器，不读取开发机拓扑。
 
+`system.display.current` 使用同一份共享显示元数据，但按订阅所属实例的 surface
+边界选择当前显示器，value 通过 `display` 返回单项 `SnowDisplayDataValue`。组件跨屏
+移动后宿主会在下一次拓扑快照匹配新显示器；匹配前返回
+`available=false,error="currentDisplayUnavailable"`，不会错误回退到主显示器。
+
 CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.power.read` 保护，
 两个网络 topic 受 `system.network.read` 保护，两个存储 topic 受
 `system.storage.read` 保护，显示拓扑受 `system.display.read` 保护。
@@ -173,7 +178,8 @@ CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.pow
 `data.system.memory`、`data.system.gpu`、`data.system.power`、
 `data.system.network.status` 和
 `data.system.network.traffic`、`data.system.storage.volumes` 和
-`data.system.storage.io`、`data.system.display.topology`。
+`data.system.storage.io`、`data.system.display.topology` 和
+`data.system.display.current`。
 
 ### `draw`
 

@@ -10,6 +10,10 @@ namespace
 {
 using namespace std::chrono_literals;
 using snowdesktop::widget_runtime::WidgetSystemDataProvider;
+using snowdesktop::widget_runtime::WidgetDisplayDataSnapshot;
+using snowdesktop::widget_runtime::WidgetDisplayTopologyDataSnapshot;
+using snowdesktop::widget_runtime::WidgetDisplayPixelRectDataSnapshot;
+using snowdesktop::widget_runtime::MatchDisplayByPixelBounds;
 
 void Check(bool condition, const char* message)
 {
@@ -194,6 +198,23 @@ void TestTopicLifecycleAndSampling()
     Check(provider.StopTopic("system.display.topology") &&
             provider.ActiveTopicCount() == 2,
         "stopping topology sampling must preserve CPU and memory topics");
+    Check(provider.StartTopic("system.display.current", 20ms) &&
+            provider.ActiveTopicCount() == 3,
+        "current-display source sampling must start independently");
+    Check(WaitFor([&] {
+            const auto snapshot = provider.DisplayCurrent();
+            return snapshot && snapshot->revision > 0;
+        }),
+        "current-display source must publish active monitor metadata");
+    const auto currentDisplay = provider.DisplayCurrent();
+    Check(currentDisplay && currentDisplay->timestampMs > 0 &&
+            (currentDisplay->available || !currentDisplay->error.empty()) &&
+            (!currentDisplay->available ||
+                !currentDisplay->displays.empty()),
+        "current-display source must expose matchable topology or a stable error");
+    Check(provider.StopTopic("system.display.current") &&
+            provider.ActiveTopicCount() == 2,
+        "stopping current-display sampling must preserve other topics");
 
     Check(provider.StopTopic("system.memory") && provider.Running() &&
             provider.ActiveTopicCount() == 1,
@@ -203,6 +224,28 @@ void TestTopicLifecycleAndSampling()
         "stopping the final topic must join the provider worker");
     Check(!provider.StopTopic("system.cpu"),
         "stopping an inactive topic must report no change");
+}
+
+void TestCurrentDisplayMatching()
+{
+    WidgetDisplayTopologyDataSnapshot topology;
+    WidgetDisplayDataSnapshot primary;
+    primary.id = "display-primary";
+    primary.primary = true;
+    primary.pixelBounds = { 0, 0, 1920, 1080 };
+    WidgetDisplayDataSnapshot secondary;
+    secondary.id = "display-secondary";
+    secondary.pixelBounds = { 1920, 0, 2560, 1440 };
+    topology.displays = { primary, secondary };
+
+    const auto match = MatchDisplayByPixelBounds(
+        topology, WidgetDisplayPixelRectDataSnapshot{
+            1920, 0, 2560, 1440 });
+    Check(match && match->id == "display-secondary",
+        "current-display matching must select exact surface monitor bounds");
+    Check(!MatchDisplayByPixelBounds(topology,
+            WidgetDisplayPixelRectDataSnapshot{ 10, 10, 100, 100 }),
+        "current-display matching must not silently fall back to primary");
 }
 
 void TestStopAll()
@@ -219,6 +262,7 @@ void TestStopAll()
 
 int main()
 {
+    TestCurrentDisplayMatching();
     TestTopicLifecycleAndSampling();
     TestStopAll();
     std::cout << "widget system data provider tests passed\n";
