@@ -26,6 +26,7 @@
 #include "widget_package.h"
 #include "steam_workshop_source.h"
 #include "widget_api_registry.h"
+#include "widget_preview_context.h"
 
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -304,9 +305,6 @@ static std::wstring ManifestPathForScriptFile(const std::wstring& fullScriptPath
 
 // ── Storage (shared localStorage for Lua widgets) ────────────────
 static std::unordered_map<std::string, std::string> g_storage;
-static thread_local std::unordered_map<std::string, std::string>*
-    g_storageOverlay = nullptr;
-static thread_local bool g_widgetDryLoad = false;
 static std::wstring g_storagePath;
 static snowdesktop::widget_runtime::DiagnosticsLog g_widgetDiagnostics;
 static bool StorageWriteWithinQuota(const std::string& prefix,
@@ -324,43 +322,12 @@ static bool IsRemovedPanelEffectSettingKey(const std::string& key)
 
 static std::unordered_map<std::string, std::string>& ActiveStorage()
 {
-    return g_storageOverlay ? *g_storageOverlay : g_storage;
+    return snowdesktop::widget_runtime::ActiveStorage(g_storage);
 }
 
-class PreviewExecutionScope final
-{
-public:
-    explicit PreviewExecutionScope(LuaWidget* widget)
-        : previousOverlay_(g_storageOverlay), previousDryLoad_(g_widgetDryLoad)
-    {
-        if (widget && widget->preview)
-        {
-            g_storageOverlay = &widget->previewStorage;
-            g_widgetDryLoad = true;
-        }
-    }
-
-    explicit PreviewExecutionScope(
-        std::unordered_map<std::string, std::string>* previewStorage)
-        : previousOverlay_(g_storageOverlay), previousDryLoad_(g_widgetDryLoad)
-    {
-        if (previewStorage)
-        {
-            g_storageOverlay = previewStorage;
-            g_widgetDryLoad = true;
-        }
-    }
-
-    ~PreviewExecutionScope()
-    {
-        g_storageOverlay = previousOverlay_;
-        g_widgetDryLoad = previousDryLoad_;
-    }
-
-private:
-    std::unordered_map<std::string, std::string>* previousOverlay_;
-    bool previousDryLoad_;
-};
+using snowdesktop::widget_runtime::DryLoadScope;
+using snowdesktop::widget_runtime::PreviewExecutionScope;
+using snowdesktop::widget_runtime::StorageOverlayScope;
 
 static std::string EscapeStorageJson(std::string_view value)
 {
@@ -3586,7 +3553,8 @@ void WidgetEngine::UnloadWidget(const std::wstring& widgetId)
 {
     int idx = FindWidget(widgetId);
     if (idx < 0) return;
-    PreviewExecutionScope previewScope(&widgets_[idx]);
+    PreviewExecutionScope previewScope(
+        widgets_[idx].preview ? &widgets_[idx].previewStorage : nullptr);
     if (focusedHostInput_.active && focusedHostInput_.widgetId == widgetId)
         focusedHostInput_ = {};
     if (widgets_[idx].hostVisible)
@@ -3623,7 +3591,7 @@ void WidgetEngine::DeleteWidgetInstance(const std::wstring& widgetId)
         else
             ++it;
     }
-    if (!g_storageOverlay) SaveStorageFile();
+    if (!snowdesktop::widget_runtime::HasStorageOverlay()) SaveStorageFile();
 }
 
 int WidgetEngine::FindWidget(const std::wstring& widgetId) const
@@ -3965,33 +3933,40 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     {
         std::unordered_map<std::string, std::string> migratedStorage =
             activeStorage;
-        auto* parentOverlay = g_storageOverlay;
-        g_storageOverlay = &migratedStorage;
-        lua_getfield(state, -1, "migrateStorage");
-        if (lua_isfunction(state, -1))
+        auto* parentOverlay =
+            snowdesktop::widget_runtime::CurrentStorageOverlay();
+        bool migrationFailed = false;
+        std::string migrationFailure;
         {
-            lua_pushinteger(state, storedDataVersion);
-            lua_pushinteger(state, pending.manifest.dataVersion);
-            if (snowdesktop::lua_runtime::ProtectedCall(
-                    state, 2, 0, 1000000,
-                    std::chrono::milliseconds(100)) != LUA_OK)
+            StorageOverlayScope migrationScope(&migratedStorage);
+            lua_getfield(state, -1, "migrateStorage");
+            if (lua_isfunction(state, -1))
             {
-                const char* migrationError = lua_tostring(state, -1);
-                const std::string message = migrationError
-                    ? migrationError : "(storage migration error)";
-                lua_pop(state, 1);
-                g_storageOverlay = parentOverlay;
-                RuntimeRecordError(widgetId,
-                    "Widget storage migration failed: " + message);
-                lua_pop(state, 1);
-                return false;
+                lua_pushinteger(state, storedDataVersion);
+                lua_pushinteger(state, pending.manifest.dataVersion);
+                if (snowdesktop::lua_runtime::ProtectedCall(
+                        state, 2, 0, 1000000,
+                        std::chrono::milliseconds(100)) != LUA_OK)
+                {
+                    migrationFailed = true;
+                    const char* migrationError = lua_tostring(state, -1);
+                    migrationFailure = migrationError
+                        ? migrationError : "(storage migration error)";
+                    lua_pop(state, 1);
+                }
             }
+            else
+                lua_pop(state, 1);
         }
-        else
+        if (migrationFailed)
+        {
+            RuntimeRecordError(widgetId,
+                "Widget storage migration failed: " + migrationFailure);
             lua_pop(state, 1);
+            return false;
+        }
         migratedStorage[dataVersionKey] =
             std::to_string(pending.manifest.dataVersion);
-        g_storageOverlay = parentOverlay;
         if (parentOverlay)
             *parentOverlay = std::move(migratedStorage);
         else
@@ -4004,7 +3979,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     {
         activeStorage[dataVersionKey] =
             std::to_string(pending.manifest.dataVersion);
-        if (!g_storageOverlay) SaveStorageFile();
+        if (!snowdesktop::widget_runtime::HasStorageOverlay()) SaveStorageFile();
     }
 
     lua_pop(state, 1);  // pop table
@@ -4036,7 +4011,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     const std::string staleErrorKey =
         WidgetWideToUtf8(widgetId) + ".lastError";
     if (loadedStorage.erase(staleErrorKey) > 0 &&
-        !g_storageOverlay)
+        !snowdesktop::widget_runtime::HasStorageOverlay())
     {
         SaveStorageFile();
     }
@@ -4575,7 +4550,8 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     int idx = FindWidget(widgetId);
     if (idx < 0) return;
     LuaWidget* found = &widgets_[idx];
-    PreviewExecutionScope previewScope(found);
+    PreviewExecutionScope previewScope(
+        found && found->preview ? &found->previewStorage : nullptr);
 
     // Hot-reload: check if file changed or deleted
     if (!found->preview)
@@ -5360,7 +5336,7 @@ void WidgetEngine::RuntimeRecordError(const std::wstring& widgetId, const std::s
 {
     std::string idUtf8 = WidgetWideToUtf8(widgetId);
     const int index = FindWidget(widgetId);
-    if (!g_widgetDryLoad &&
+    if (!snowdesktop::widget_runtime::IsDryLoad() &&
         (index < 0 || !widgets_[index].preview))
     {
         g_storage[idUtf8 + ".lastError"] = message;
@@ -5387,7 +5363,7 @@ void WidgetEngine::RuntimeAddLog(const std::wstring& widgetId, const std::string
 
 std::vector<LuaDesktopItemInfo> WidgetEngine::RuntimeDesktopItems() const
 {
-    if (g_widgetDryLoad || previewOnly_)
+    if (snowdesktop::widget_runtime::IsDryLoad() || previewOnly_)
     {
         const std::string document =
             _L("app.widget_preview.api.desktop_document");
@@ -5412,7 +5388,7 @@ std::vector<LuaDesktopItemInfo> WidgetEngine::RuntimeDesktopItems() const
 
 std::vector<LuaDesktopItemInfo> WidgetEngine::RuntimeDesktopSelection() const
 {
-    if (g_widgetDryLoad || previewOnly_)
+    if (snowdesktop::widget_runtime::IsDryLoad() || previewOnly_)
     {
         const std::string document =
             _L("app.widget_preview.api.desktop_document");
@@ -5482,7 +5458,7 @@ void WidgetEngine::NotifyCalendarChanged(
 std::vector<LuaDesktopItemInfo> WidgetEngine::RuntimeApplicationSearch(
     const std::string& query, int maxResults) const
 {
-    if ((g_widgetDryLoad || previewOnly_) &&
+    if ((snowdesktop::widget_runtime::IsDryLoad() || previewOnly_) &&
         !query.empty() && maxResults > 0)
         return { { "preview-app",
             _L("app.widget_preview.api.application"),
@@ -5495,7 +5471,7 @@ std::vector<LuaDesktopItemInfo> WidgetEngine::RuntimeApplicationSearch(
 
 std::vector<LuaDesktopItemInfo> WidgetEngine::RuntimeEverythingSearch(const std::string& query, int maxResults) const
 {
-    if ((g_widgetDryLoad || previewOnly_) &&
+    if ((snowdesktop::widget_runtime::IsDryLoad() || previewOnly_) &&
         !query.empty() && maxResults > 0)
     {
         const std::string title =
@@ -5511,33 +5487,33 @@ std::vector<LuaDesktopItemInfo> WidgetEngine::RuntimeEverythingSearch(const std:
 
 bool WidgetEngine::RuntimeOpenDesktopPath(const std::wstring& path)
 {
-    if (g_widgetDryLoad || path.empty()) return false;
+    if (snowdesktop::widget_runtime::IsDryLoad() || path.empty()) return false;
     return desktopOpenCallback_ ? desktopOpenCallback_(path) : false;
 }
 
 bool WidgetEngine::RuntimeRevealDesktopPath(const std::wstring& path)
 {
-    if (g_widgetDryLoad || path.empty()) return false;
+    if (snowdesktop::widget_runtime::IsDryLoad() || path.empty()) return false;
     return desktopRevealCallback_ ? desktopRevealCallback_(path) : false;
 }
 
 void WidgetEngine::RuntimeRefreshDesktop()
 {
-    if (g_widgetDryLoad) return;
+    if (snowdesktop::widget_runtime::IsDryLoad()) return;
     if (desktopRefreshCallback_)
         desktopRefreshCallback_();
 }
 
 void WidgetEngine::RuntimeSetWidgetTitle(const std::wstring& widgetId, const std::wstring& title)
 {
-    if (g_widgetDryLoad) return;
+    if (snowdesktop::widget_runtime::IsDryLoad()) return;
     if (setWidgetTitleCallback_)
         setWidgetTitleCallback_(widgetId, title);
 }
 
 void WidgetEngine::RuntimeInvalidateHost(const std::wstring& widgetId)
 {
-    if (g_widgetDryLoad) return;
+    if (snowdesktop::widget_runtime::IsDryLoad()) return;
     if (invalidateCallback_)
         invalidateCallback_(widgetId);
 }
@@ -5576,7 +5552,7 @@ void WidgetEngine::RuntimeSetStorageValue(const std::wstring& widgetId, const st
         return;
     }
     ActiveStorage()[prefix + "." + key] = value;
-    if (!g_storageOverlay) SaveStorageFile();
+    if (!snowdesktop::widget_runtime::HasStorageOverlay()) SaveStorageFile();
 }
 
 void WidgetEngine::ReloadStorage()
@@ -5586,7 +5562,7 @@ void WidgetEngine::ReloadStorage()
 
 void WidgetEngine::RuntimeBeginInlineTextEdit(const LuaInlineTextEditRequest& request)
 {
-    if (g_widgetDryLoad) return;
+    if (snowdesktop::widget_runtime::IsDryLoad()) return;
     if (inlineTextEditCallback_)
         inlineTextEditCallback_(request);
 }
@@ -5594,7 +5570,7 @@ void WidgetEngine::RuntimeBeginInlineTextEdit(const LuaInlineTextEditRequest& re
 void WidgetEngine::RuntimeNotify(const std::wstring& widgetId,
     const std::wstring& title, const std::wstring& message)
 {
-    if (g_widgetDryLoad) return;
+    if (snowdesktop::widget_runtime::IsDryLoad()) return;
     const int index = FindWidget(widgetId);
     if (index < 0) return;
     auto& widget = widgets_[index];
@@ -5629,7 +5605,7 @@ void WidgetEngine::EnsureSystemSnapshotServiceStarted()
 
 CpuSnapshot WidgetEngine::RuntimeGetCpuSnapshot(const std::wstring& widgetId)
 {
-    if (g_widgetDryLoad || IsPreviewWidget(widgetId))
+    if (snowdesktop::widget_runtime::IsDryLoad() || IsPreviewWidget(widgetId))
         return { true, 42.0, 12,
             _L("app.widget_preview.api.cpu") };
     EnsureSystemSnapshotServiceStarted();
@@ -5640,7 +5616,7 @@ CpuSnapshot WidgetEngine::RuntimeGetCpuSnapshot(const std::wstring& widgetId)
 
 MemorySnapshot WidgetEngine::RuntimeGetMemorySnapshot(const std::wstring& widgetId)
 {
-    if (g_widgetDryLoad || IsPreviewWidget(widgetId))
+    if (snowdesktop::widget_runtime::IsDryLoad() || IsPreviewWidget(widgetId))
         return { true, 16ull * 1024 * 1024 * 1024,
             9ull * 1024 * 1024 * 1024,
             7ull * 1024 * 1024 * 1024, 56.25 };
@@ -5652,7 +5628,7 @@ MemorySnapshot WidgetEngine::RuntimeGetMemorySnapshot(const std::wstring& widget
 
 BatterySnapshot WidgetEngine::RuntimeGetBatterySnapshot(const std::wstring& widgetId)
 {
-    if (g_widgetDryLoad || IsPreviewWidget(widgetId))
+    if (snowdesktop::widget_runtime::IsDryLoad() || IsPreviewWidget(widgetId))
         return { true, 78.0, true, true, false };
     EnsureSystemSnapshotServiceStarted();
     if (int index = FindWidget(widgetId); index >= 0)
@@ -5662,7 +5638,7 @@ BatterySnapshot WidgetEngine::RuntimeGetBatterySnapshot(const std::wstring& widg
 
 NetworkSnapshot WidgetEngine::RuntimeGetNetworkSnapshot(const std::wstring& widgetId)
 {
-    if (g_widgetDryLoad || IsPreviewWidget(widgetId))
+    if (snowdesktop::widget_runtime::IsDryLoad() || IsPreviewWidget(widgetId))
         return { true, true, 3ull * 1024 * 1024,
             640ull * 1024, 8ull * 1024 * 1024 * 1024,
             2ull * 1024 * 1024 * 1024 };
@@ -5674,7 +5650,7 @@ NetworkSnapshot WidgetEngine::RuntimeGetNetworkSnapshot(const std::wstring& widg
 
 GpuSnapshot WidgetEngine::RuntimeGetGpuSnapshot(const std::wstring& widgetId)
 {
-    if (g_widgetDryLoad || IsPreviewWidget(widgetId))
+    if (snowdesktop::widget_runtime::IsDryLoad() || IsPreviewWidget(widgetId))
         return { true, _L("app.widget_preview.api.gpu"), 36.0,
             8ull * 1024 * 1024 * 1024,
             3ull * 1024 * 1024 * 1024 };
@@ -5686,7 +5662,7 @@ GpuSnapshot WidgetEngine::RuntimeGetGpuSnapshot(const std::wstring& widgetId)
 
 MediaSnapshot WidgetEngine::RuntimeGetMediaSnapshot(const std::wstring& widgetId)
 {
-    if (g_widgetDryLoad || IsPreviewWidget(widgetId))
+    if (snowdesktop::widget_runtime::IsDryLoad() || IsPreviewWidget(widgetId))
         return { true,
             _LW("app.widget_preview.api.media_title"),
             _LW("app.widget_preview.api.media_artist"),
@@ -5701,21 +5677,21 @@ MediaSnapshot WidgetEngine::RuntimeGetMediaSnapshot(const std::wstring& widgetId
 
 bool WidgetEngine::RuntimeMediaPlayPause()
 {
-    if (g_widgetDryLoad) return false;
+    if (snowdesktop::widget_runtime::IsDryLoad()) return false;
     EnsureSystemSnapshotServiceStarted();
     return systemSnapshotService_ && systemSnapshotService_->RequestMediaPlayPause();
 }
 
 bool WidgetEngine::RuntimeMediaNext()
 {
-    if (g_widgetDryLoad) return false;
+    if (snowdesktop::widget_runtime::IsDryLoad()) return false;
     EnsureSystemSnapshotServiceStarted();
     return systemSnapshotService_ && systemSnapshotService_->RequestMediaNext();
 }
 
 bool WidgetEngine::RuntimeMediaPrevious()
 {
-    if (g_widgetDryLoad) return false;
+    if (snowdesktop::widget_runtime::IsDryLoad()) return false;
     EnsureSystemSnapshotServiceStarted();
     return systemSnapshotService_ && systemSnapshotService_->RequestMediaPrevious();
 }
@@ -5723,7 +5699,7 @@ bool WidgetEngine::RuntimeMediaPrevious()
 bool WidgetEngine::RuntimeSetTimer(const std::wstring& widgetId, const std::string& name,
     int intervalMs, bool repeat)
 {
-    if (g_widgetDryLoad) return false;
+    if (snowdesktop::widget_runtime::IsDryLoad()) return false;
     int index = FindWidget(widgetId);
     if (index < 0 || name.empty()) return false;
     if (!widgets_[index].timers.contains(name) &&
@@ -5742,7 +5718,7 @@ bool WidgetEngine::RuntimeSetTimer(const std::wstring& widgetId, const std::stri
 
 std::string WidgetEngine::RuntimeCalendarSelectedDate() const
 {
-    if (g_widgetDryLoad) return "2026-08-02";
+    if (snowdesktop::widget_runtime::IsDryLoad()) return "2026-08-02";
     return calendarService_
         ? calendarService_->SelectedDate()
         : std::string();
@@ -5751,7 +5727,7 @@ std::string WidgetEngine::RuntimeCalendarSelectedDate() const
 bool WidgetEngine::RuntimeCalendarSetSelectedDate(
     const std::string& date)
 {
-    if (g_widgetDryLoad)
+    if (snowdesktop::widget_runtime::IsDryLoad())
         return snowdesktop::calendar::CalendarService::GetDateInfo(date).has_value();
     return calendarService_ &&
         calendarService_->SetSelectedDate(date);
@@ -5778,7 +5754,7 @@ WidgetEngine::RuntimeCalendarEvents(
     const std::string& fromDate,
     const std::string& toDate) const
 {
-    if (g_widgetDryLoad)
+    if (snowdesktop::widget_runtime::IsDryLoad())
     {
         const std::vector<snowdesktop::calendar::CalendarEvent> samples = {
             { "preview-1", 1,
@@ -5805,7 +5781,7 @@ snowdesktop::calendar::MutationResult
 WidgetEngine::RuntimeCalendarCreate(
     snowdesktop::calendar::CalendarEvent event)
 {
-    if (g_widgetDryLoad)
+    if (snowdesktop::widget_runtime::IsDryLoad())
         return { false, {}, 0,
             _L("app.widget_preview.api.read_only") };
     return calendarService_
@@ -5821,7 +5797,7 @@ WidgetEngine::RuntimeCalendarUpdate(
     int expectedRevision,
     snowdesktop::calendar::CalendarEvent event)
 {
-    if (g_widgetDryLoad)
+    if (snowdesktop::widget_runtime::IsDryLoad())
         return { false, id, 0,
             _L("app.widget_preview.api.read_only") };
     return calendarService_
@@ -5836,7 +5812,7 @@ snowdesktop::calendar::MutationResult
 WidgetEngine::RuntimeCalendarRemove(
     const std::string& id)
 {
-    if (g_widgetDryLoad)
+    if (snowdesktop::widget_runtime::IsDryLoad())
         return { false, id, 0,
             _L("app.widget_preview.api.read_only") };
     return calendarService_
@@ -5906,7 +5882,7 @@ void WidgetEngine::RescheduleNamedTimer(LuaWidget& widget)
 
 int WidgetEngine::RuntimeHttpRequest(const std::wstring& widgetId, HttpRequestOptions options)
 {
-    if (g_widgetDryLoad) return 0;
+    if (snowdesktop::widget_runtime::IsDryLoad()) return 0;
     int index = FindWidget(widgetId);
     if (index < 0 || !httpService_) return 0;
     options.widgetId = widgetId;
@@ -6839,7 +6815,7 @@ void WidgetEngine::SetWidgetLayoutMetrics(
 
 void WidgetEngine::RuntimeOpenWidgetSettings(const std::wstring& widgetId)
 {
-    if (g_widgetDryLoad) return;
+    if (snowdesktop::widget_runtime::IsDryLoad()) return;
     if (openWidgetSettingsCallback_)
         openWidgetSettingsCallback_(widgetId, L"");
 }
@@ -6902,7 +6878,7 @@ void WidgetEngine::RuntimeOpenWidgetPanel(
     const std::wstring& widgetId, std::wstring title,
     int width, int height)
 {
-    if (g_widgetDryLoad || !openWidgetPanelCallback_)
+    if (snowdesktop::widget_runtime::IsDryLoad() || !openWidgetPanelCallback_)
         return;
     LuaWidgetPanelRequest request;
     request.widgetId = widgetId;
@@ -6915,7 +6891,7 @@ void WidgetEngine::RuntimeOpenWidgetPanel(
 void WidgetEngine::RuntimeCloseWidgetPanel(
     const std::wstring& widgetId)
 {
-    if (!g_widgetDryLoad && closeWidgetPanelCallback_)
+    if (!snowdesktop::widget_runtime::IsDryLoad() && closeWidgetPanelCallback_)
         closeWidgetPanelCallback_(widgetId);
 }
 
@@ -7346,7 +7322,7 @@ bool WidgetEngine::InstallWidgetPackage(const std::wstring& manifestPath,
 bool WidgetEngine::VerifyInstalledWidgetPackage(const std::string& packageId,
     const std::optional<std::string>& previousVersion, std::wstring& error)
 {
-    if (g_storageOverlay)
+    if (snowdesktop::widget_runtime::HasStorageOverlay())
     {
         error = L"Another component storage migration is already running.";
         return false;
@@ -7358,45 +7334,46 @@ bool WidgetEngine::VerifyInstalledWidgetPackage(const std::string& packageId,
             liveInstances.push_back(widget.widgetId);
 
     std::unordered_map<std::string, std::string> migratedStorage = g_storage;
-    g_storageOverlay = &migratedStorage;
     std::vector<std::wstring> updatedInstances;
     bool ok = true;
     std::string failure;
-
-    if (liveInstances.empty())
     {
-        const std::wstring dryId = Utf8ToWideLocal(
-            "__package_dry_load_" +
-            snowdesktop::widget::WidgetPackageManager::GenerateUuid());
-        const std::wstring path = ResolveWidgetPath(Utf8ToWideLocal(packageId));
-        g_widgetDryLoad = true;
-        ok = !path.empty() && LoadWidget(path, dryId);
-        g_widgetDryLoad = false;
-        if (!ok)
+        StorageOverlayScope migrationScope(&migratedStorage);
+        if (liveInstances.empty())
         {
-            const auto stored = g_storage.find(
-                WidgetWideToUtf8(dryId) + ".lastError");
-            if (stored != g_storage.end()) failure = stored->second;
-        }
-        DeleteWidgetInstance(dryId);
-    }
-    else
-    {
-        for (const auto& widgetId : liveInstances)
-        {
-            if (!ReloadWidget(widgetId))
+            const std::wstring dryId = Utf8ToWideLocal(
+                "__package_dry_load_" +
+                snowdesktop::widget::WidgetPackageManager::GenerateUuid());
+            const std::wstring path =
+                ResolveWidgetPath(Utf8ToWideLocal(packageId));
             {
-                ok = false;
-                const auto stored = g_storage.find(
-                    WidgetWideToUtf8(widgetId) + ".lastError");
-                if (stored != g_storage.end()) failure = stored->second;
-                break;
+                DryLoadScope dryLoadScope;
+                ok = !path.empty() && LoadWidget(path, dryId);
             }
-            updatedInstances.push_back(widgetId);
+            if (!ok)
+            {
+                const auto stored = g_storage.find(
+                    WidgetWideToUtf8(dryId) + ".lastError");
+                if (stored != g_storage.end()) failure = stored->second;
+            }
+            DeleteWidgetInstance(dryId);
+        }
+        else
+        {
+            for (const auto& widgetId : liveInstances)
+            {
+                if (!ReloadWidget(widgetId))
+                {
+                    ok = false;
+                    const auto stored = g_storage.find(
+                        WidgetWideToUtf8(widgetId) + ".lastError");
+                    if (stored != g_storage.end()) failure = stored->second;
+                    break;
+                }
+                updatedInstances.push_back(widgetId);
+            }
         }
     }
-
-    g_storageOverlay = nullptr;
     if (ok)
     {
         g_storage = std::move(migratedStorage);
@@ -8177,7 +8154,7 @@ static int lua_StorageSet(lua_State* L)
     if (!StorageWriteWithinQuota(prefix, key, value))
         return luaL_error(L, "widget storage quota exceeded");
     ActiveStorage()[prefix + "." + key] = value;
-    if (!g_storageOverlay) SaveStorageFile();
+    if (!snowdesktop::widget_runtime::HasStorageOverlay()) SaveStorageFile();
     return 0;
 }
 
@@ -8413,7 +8390,7 @@ static int lua_StorageRemove(lua_State* L)
     auto* s = GetD2D(L);
     if (!s) return 0;
     ActiveStorage().erase(BoundStoragePrefix(L) + "." + key);
-    if (!g_storageOverlay) SaveStorageFile();
+    if (!snowdesktop::widget_runtime::HasStorageOverlay()) SaveStorageFile();
     return 0;
 }
 
