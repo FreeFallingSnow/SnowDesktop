@@ -8618,7 +8618,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
         { "fa", lua_DrawFa },
         { "fluent", lua_DrawFluent },
         { "image", lua_DrawImage },
-        { "icon", lua_DrawIcon },
+        { "icon", lua_DrawIcon, 1, "desktop.read" },
     };
     static constexpr FunctionDescriptor widget[] = {
         { "info", lua_WidgetInfo },
@@ -8635,22 +8635,22 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     };
     static constexpr FunctionDescriptor system[] = {
         { "getTime", lua_GetTime },
-        { "notify", lua_Notify },
-        { "cpu", lua_SystemCpu },
-        { "memory", lua_SystemMemory },
-        { "battery", lua_SystemBattery },
-        { "network", lua_SystemNetwork },
-        { "gpu", lua_SystemGpu },
+        { "notify", lua_Notify, 1, "ui.notify" },
+        { "cpu", lua_SystemCpu, 1, "system.read" },
+        { "memory", lua_SystemMemory, 1, "system.read" },
+        { "battery", lua_SystemBattery, 1, "system.read" },
+        { "network", lua_SystemNetwork, 1, "system.read" },
+        { "gpu", lua_SystemGpu, 1, "system.read" },
     };
     static constexpr FunctionDescriptor media[] = {
-        { "current", lua_MediaCurrent },
-        { "playPause", lua_MediaPlayPause },
-        { "next", lua_MediaNext },
-        { "previous", lua_MediaPrevious },
+        { "current", lua_MediaCurrent, 1, "media.read" },
+        { "playPause", lua_MediaPlayPause, 1, "media.action" },
+        { "next", lua_MediaNext, 1, "media.action" },
+        { "previous", lua_MediaPrevious, 1, "media.action" },
     };
     static constexpr FunctionDescriptor http[] = {
-        { "request", lua_HttpRequest },
-        { "cancel", lua_HttpCancel },
+        { "request", lua_HttpRequest, 1, "network.http" },
+        { "cancel", lua_HttpCancel, 1, "network.http" },
     };
     static constexpr FunctionDescriptor ui[] = {
         { "textInput", lua_UiTextInput },
@@ -8664,26 +8664,29 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
         { "setScrollOffset", lua_UiSetScrollOffset },
     };
     static constexpr FunctionDescriptor desktop[] = {
-        { "items", lua_DesktopItems },
-        { "selection", lua_DesktopSelection },
-        { "find", lua_DesktopFind },
-        { "findApplications", lua_DesktopFindApplications },
-        { "open", lua_DesktopOpen },
-        { "reveal", lua_DesktopReveal },
-        { "refresh", lua_DesktopRefresh },
+        { "items", lua_DesktopItems, 1, "desktop.read" },
+        { "selection", lua_DesktopSelection, 1, "desktop.read" },
+        { "find", lua_DesktopFind, 1, "desktop.read" },
+        { "findApplications", lua_DesktopFindApplications, 1,
+            "desktop.read" },
+        { "open", lua_DesktopOpen, 1, "desktop.action" },
+        { "reveal", lua_DesktopReveal, 1, "desktop.action" },
+        { "refresh", lua_DesktopRefresh, 1, "desktop.action" },
     };
     static constexpr FunctionDescriptor everything[] = {
-        { "search", lua_EverythingSearch },
+        { "search", lua_EverythingSearch, 1, "everything.search" },
     };
     static constexpr FunctionDescriptor calendar[] = {
-        { "selectedDate", lua_CalendarSelectedDate },
-        { "setSelectedDate", lua_CalendarSetSelectedDate },
-        { "dateInfo", lua_CalendarDateInfo },
-        { "addDays", lua_CalendarAddDays },
-        { "events", lua_CalendarEvents },
-        { "create", lua_CalendarCreate },
-        { "update", lua_CalendarUpdate },
-        { "remove", lua_CalendarRemove },
+        { "selectedDate", lua_CalendarSelectedDate, 1,
+            "calendar.read" },
+        { "setSelectedDate", lua_CalendarSetSelectedDate, 1,
+            "calendar.write" },
+        { "dateInfo", lua_CalendarDateInfo, 1, "calendar.read" },
+        { "addDays", lua_CalendarAddDays, 1, "calendar.read" },
+        { "events", lua_CalendarEvents, 1, "calendar.read" },
+        { "create", lua_CalendarCreate, 1, "calendar.write" },
+        { "update", lua_CalendarUpdate, 1, "calendar.write" },
+        { "remove", lua_CalendarRemove, 1, "calendar.write" },
     };
     static constexpr FunctionDescriptor layout[] = {
         { "width", lua_LayoutWidth },

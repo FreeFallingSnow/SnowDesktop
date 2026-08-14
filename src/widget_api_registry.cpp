@@ -20,6 +20,13 @@ LibraryValidationError ValidateLibrary(
             return LibraryValidationError::MissingFunctionName;
         if (!function.callback)
             return LibraryValidationError::MissingCallback;
+        if (function.sinceApi == 0)
+            return LibraryValidationError::InvalidApiVersion;
+        if (function.requiredPermission &&
+            function.requiredPermission[0] == '\0')
+        {
+            return LibraryValidationError::EmptyRequiredPermission;
+        }
         for (std::size_t previous = 0; previous < index; ++previous)
         {
             if (std::string_view(functions[previous].name) ==
@@ -45,6 +52,10 @@ const char* DescribeValidationError(
         return "missing function name";
     case LibraryValidationError::MissingCallback:
         return "missing callback";
+    case LibraryValidationError::InvalidApiVersion:
+        return "invalid API version";
+    case LibraryValidationError::EmptyRequiredPermission:
+        return "empty required permission";
     case LibraryValidationError::DuplicateFunctionName:
         return "duplicate function name";
     }
@@ -96,6 +107,31 @@ const char* DescribeValidationError(
         return "duplicate library name";
     }
     return "unknown validation error";
+}
+
+const FunctionDescriptor* FindFunction(
+    std::span<const LibraryDescriptor> libraries,
+    std::string_view libraryName,
+    std::string_view functionName) noexcept
+{
+    if (libraryName.empty() || functionName.empty())
+        return nullptr;
+
+    for (const LibraryDescriptor& library : libraries)
+    {
+        if (!library.name || std::string_view(library.name) != libraryName)
+            continue;
+        for (const FunctionDescriptor& function : library.functions)
+        {
+            if (function.name &&
+                std::string_view(function.name) == functionName)
+            {
+                return &function;
+            }
+        }
+        return nullptr;
+    }
+    return nullptr;
 }
 
 void RegisterLibrary(

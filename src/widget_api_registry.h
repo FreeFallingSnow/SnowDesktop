@@ -1,7 +1,9 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <span>
+#include <string_view>
 
 extern "C" {
 #include <lua.h>
@@ -13,6 +15,8 @@ struct FunctionDescriptor
 {
     const char* name = nullptr;
     lua_CFunction callback = nullptr;
+    std::uint32_t sinceApi = 1;
+    const char* requiredPermission = nullptr;
 };
 
 struct LibraryDescriptor
@@ -27,6 +31,8 @@ enum class LibraryValidationError
     MissingLibraryName,
     MissingFunctionName,
     MissingCallback,
+    InvalidApiVersion,
+    EmptyRequiredPermission,
     DuplicateFunctionName,
 };
 
@@ -56,6 +62,11 @@ CatalogValidationResult ValidateCatalog(
 
 const char* DescribeValidationError(
     CatalogValidationError error) noexcept;
+
+const FunctionDescriptor* FindFunction(
+    std::span<const LibraryDescriptor> libraries,
+    std::string_view libraryName,
+    std::string_view functionName) noexcept;
 
 /**
  * Registers a table of C callbacks as one Lua global library.

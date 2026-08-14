@@ -103,6 +103,24 @@ void TestValidation()
                 LibraryValidationError::MissingCallback,
         "missing callback must be rejected");
 
+    constexpr FunctionDescriptor invalidApiVersion[] = {
+        { "answer", ReturnFortyTwo, 0 },
+    };
+    Check(
+        snowdesktop::widget_api::ValidateLibrary(
+            "sample", invalidApiVersion) ==
+                LibraryValidationError::InvalidApiVersion,
+        "API version zero must be rejected");
+
+    constexpr FunctionDescriptor emptyPermission[] = {
+        { "answer", ReturnFortyTwo, 1, "" },
+    };
+    Check(
+        snowdesktop::widget_api::ValidateLibrary(
+            "sample", emptyPermission) ==
+                LibraryValidationError::EmptyRequiredPermission,
+        "empty required permission must be rejected");
+
     constexpr FunctionDescriptor duplicate[] = {
         { "answer", ReturnFortyTwo },
         { "answer", Add },
@@ -210,6 +228,23 @@ void TestCatalogValidation()
             invalidResult.libraryError ==
                 LibraryValidationError::MissingFunctionName,
         "catalog validation must preserve library validation details");
+
+    const FunctionDescriptor* found =
+        snowdesktop::widget_api::FindFunction(
+            valid, "second", "add");
+    Check(
+        found == &secondFunctions[0] &&
+            found->sinceApi == 1 &&
+            found->requiredPermission == nullptr,
+        "catalog lookup must return function contract metadata");
+    Check(
+        snowdesktop::widget_api::FindFunction(
+            valid, "missing", "add") == nullptr &&
+            snowdesktop::widget_api::FindFunction(
+                valid, "second", "missing") == nullptr &&
+            snowdesktop::widget_api::FindFunction(
+                valid, "", "add") == nullptr,
+        "catalog lookup must reject missing or empty names");
 }
 
 void TestCatalogRegistration()
