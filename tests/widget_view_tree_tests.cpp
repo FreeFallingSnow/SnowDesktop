@@ -189,8 +189,10 @@ void TestLuaParsing()
             root.children[1].type == ViewNodeType::Button &&
             root.children[1].events.at("click").id == "open" &&
             root.children[1].events.at("contextMenu").id == "open.menu" &&
-            root.children[1].style.background == 0x123456 &&
-            root.children[1].hoverStyle.background == 0x345678 &&
+            root.children[1].style.background ==
+                std::uint32_t{ 0x123456 } &&
+            root.children[1].hoverStyle.background ==
+                std::uint32_t{ 0x345678 } &&
             root.children[1].accessibilityLabel ==
                 "Open the selected item",
         "Lua parsing must retain typed nodes, styles, actions, and semantics");
