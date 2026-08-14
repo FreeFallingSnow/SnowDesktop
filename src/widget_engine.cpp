@@ -1780,6 +1780,7 @@ constexpr char kAudioOutputReadPermission[] = "audio.output.read";
 constexpr char kAudioOutputAnalyzePermission[] = "audio.output.analyze";
 constexpr char kMediaReadPermission[] = "media.read";
 constexpr char kDesktopReadPermission[] = "desktop.read";
+constexpr char kCalendarReadPermission[] = "calendar.read";
 
 static void SetNumberField(lua_State* L, const char* key, lua_Number value)
 {
@@ -2174,6 +2175,30 @@ static void PushDesktopDataItemValue(
     lua_setfield(state, -2, "selected");
 }
 
+static void PushCalendarDataEventValue(lua_State* state,
+    const snowdesktop::calendar::CalendarEvent& event)
+{
+    lua_createtable(state, 0, 9);
+    lua_pushlstring(state, event.id.data(), event.id.size());
+    lua_setfield(state, -2, "id");
+    lua_pushinteger(state, event.revision);
+    lua_setfield(state, -2, "revision");
+    lua_pushlstring(state, event.title.data(), event.title.size());
+    lua_setfield(state, -2, "title");
+    lua_pushlstring(state, event.date.data(), event.date.size());
+    lua_setfield(state, -2, "date");
+    lua_pushboolean(state, event.allDay);
+    lua_setfield(state, -2, "allDay");
+    lua_pushinteger(state, event.startMinutes);
+    lua_setfield(state, -2, "startMinutes");
+    lua_pushinteger(state, event.endMinutes);
+    lua_setfield(state, -2, "endMinutes");
+    lua_pushlstring(state, event.notes.data(), event.notes.size());
+    lua_setfield(state, -2, "notes");
+    lua_pushinteger(state, event.reminderMinutes);
+    lua_setfield(state, -2, "reminderMinutes");
+}
+
 static void PushDataSnapshotEnvelope(lua_State* state,
     const std::optional<LuaWidgetDataSnapshot>& snapshot,
     const char* missingError = "unsubscribed")
@@ -2481,6 +2506,38 @@ static void PushDataSnapshotEnvelope(lua_State* state,
             snapshot->desktopChangeReason.size());
         lua_setfield(state, -2, "reason");
     }
+    else if (snapshot->topic == "calendar.events")
+    {
+        lua_createtable(state,
+            static_cast<int>(snapshot->calendarEvents.size()), 0);
+        int eventIndex = 1;
+        for (const auto& event : snapshot->calendarEvents)
+        {
+            PushCalendarDataEventValue(state, event);
+            lua_rawseti(state, -2, eventIndex++);
+        }
+        lua_setfield(state, -2, "events");
+        lua_pushlstring(state, snapshot->calendarRangeStart.data(),
+            snapshot->calendarRangeStart.size());
+        lua_setfield(state, -2, "fromDate");
+        lua_pushlstring(state, snapshot->calendarRangeEnd.data(),
+            snapshot->calendarRangeEnd.size());
+        lua_setfield(state, -2, "toDate");
+        lua_pushinteger(state, static_cast<lua_Integer>(
+            snapshot->calendarRevision));
+        lua_setfield(state, -2, "revision");
+        lua_pushboolean(state, snapshot->calendarTruncated);
+        lua_setfield(state, -2, "truncated");
+    }
+    else if (snapshot->topic == "calendar.selectedDate")
+    {
+        lua_pushlstring(state, snapshot->calendarSelectedDate.data(),
+            snapshot->calendarSelectedDate.size());
+        lua_setfield(state, -2, "date");
+        lua_pushinteger(state, static_cast<lua_Integer>(
+            snapshot->calendarRevision));
+        lua_setfield(state, -2, "revision");
+    }
     lua_setfield(state, -2, "value");
 }
 
@@ -2548,6 +2605,9 @@ static int lua_DataSubscribe(lua_State* state)
             "data.subscribe: expected topic and optional options");
 
     lua_Integer maxAgeMs = 1000;
+    const std::string topicValue(topic, topicLength);
+    std::string rangeStart;
+    std::string rangeEnd;
     auto hiddenPolicy =
         snowdesktop::widget_runtime::DataHiddenPolicy::Throttle;
     if (!lua_isnoneornil(state, 2))
@@ -2582,14 +2642,51 @@ static int lua_DataSubscribe(lua_State* state)
                     "data.subscribe: whenHidden must be 'pause', 'throttle', or 'continue'");
         }
         lua_pop(state, 1);
+
+        const auto readDateOption = [&](const char* name,
+                                        std::string& output) {
+            lua_getfield(state, 2, name);
+            if (!lua_isnil(state, -1))
+            {
+                size_t length = 0;
+                const char* value = luaL_checklstring(
+                    state, -1, &length);
+                output.assign(value, length);
+            }
+            lua_pop(state, 1);
+        };
+        readDateOption("fromDate", rangeStart);
+        readDateOption("toDate", rangeEnd);
+    }
+
+    if (!rangeStart.empty() || !rangeEnd.empty())
+    {
+        if (topicValue != "calendar.events" || rangeStart.empty() ||
+            rangeEnd.empty() || rangeEnd < rangeStart ||
+            !snowdesktop::calendar::CalendarService::
+                GetDateInfo(rangeStart) ||
+            !snowdesktop::calendar::CalendarService::
+                GetDateInfo(rangeEnd))
+        {
+            return luaL_error(state,
+                "data.subscribe: fromDate/toDate require a valid calendar.events range");
+        }
+        const auto maximumEnd = snowdesktop::calendar::CalendarService::
+            AddDays(rangeStart, 366);
+        if (!maximumEnd || rangeEnd > *maximumEnd)
+        {
+            return luaL_error(state,
+                "data.subscribe: calendar.events range cannot exceed 366 days");
+        }
     }
 
     auto* d2d = GetD2D(state);
     if (!d2d || !d2d->engine)
         return luaL_error(state, "data.subscribe: host is unavailable");
     auto result = d2d->engine->RuntimeSubscribeData(
-        BoundWidgetId(state), std::string(topic, topicLength),
-        std::chrono::milliseconds(maxAgeMs), hiddenPolicy);
+        BoundWidgetId(state), topicValue,
+        std::chrono::milliseconds(maxAgeMs), hiddenPolicy,
+        std::move(rangeStart), std::move(rangeEnd));
     if (!result)
         return luaL_error(state, "data.subscribe: %s", result.error.c_str());
 
@@ -5134,6 +5231,8 @@ void WidgetEngine::InitializeWidgetDataBroker()
     desktopDataTimestampMs_ =
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
+    calendarEventsRevision_ = 0;
+    calendarSelectionRevision_ = 0;
     std::string error;
     (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
         "system.cpu", kSystemPerformancePermission,
@@ -5210,6 +5309,14 @@ void WidgetEngine::InitializeWidgetDataBroker()
     (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
         "desktop.changes", kDesktopReadPermission,
         100ms, 1000ms, 0ms, false, true }, error);
+    error.clear();
+    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
+        "calendar.events", kCalendarReadPermission,
+        100ms, 1000ms, 0ms, false, true }, error);
+    error.clear();
+    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
+        "calendar.selectedDate", kCalendarReadPermission,
+        100ms, 1000ms, 0ms, false, true }, error);
 
     if (previewOnly_)
     {
@@ -5236,7 +5343,9 @@ void WidgetEngine::ApplyWidgetDataBrokerActions()
         const bool hostEventData =
             action.topic == "desktop.items" ||
             action.topic == "desktop.selection" ||
-            action.topic == "desktop.changes";
+            action.topic == "desktop.changes" ||
+            action.topic == "calendar.events" ||
+            action.topic == "calendar.selectedDate";
         switch (action.type)
         {
         case DataBrokerActionType::Start:
@@ -7803,7 +7912,8 @@ snowdesktop::widget_runtime::DataSubscriptionResult
 WidgetEngine::RuntimeSubscribeData(
     const std::wstring& widgetId, std::string topic,
     std::chrono::milliseconds maxAge,
-    snowdesktop::widget_runtime::DataHiddenPolicy whenHidden)
+    snowdesktop::widget_runtime::DataHiddenPolicy whenHidden,
+    std::string rangeStart, std::string rangeEnd)
 {
     using snowdesktop::widget_runtime::DataSubscriptionOptions;
     if (!dataBroker_)
@@ -7823,6 +7933,8 @@ WidgetEngine::RuntimeSubscribeData(
         (requiredPermission->empty() || RuntimeHasPermission(
             widgetId, requiredPermission->c_str()));
     options.preview = widget.preview;
+    options.rangeStart = std::move(rangeStart);
+    options.rangeEnd = std::move(rangeEnd);
     auto result = dataBroker_->Subscribe(
         WidgetWideToUtf8(widgetId), topic, options,
         snowdesktop::widget_runtime::WidgetDataBroker::Clock::now());
@@ -8080,6 +8192,33 @@ WidgetEngine::RuntimeGetDataSnapshot(
         {
             result.desktopRevision = 1;
             result.desktopChangeReason = "preview";
+        }
+        else if (result.topic == "calendar.events")
+        {
+            result.calendarRangeStart = binding->options.rangeStart.empty()
+                ? "2026-06-01" : binding->options.rangeStart;
+            result.calendarRangeEnd = binding->options.rangeEnd.empty()
+                ? "2026-10-03" : binding->options.rangeEnd;
+            const std::vector<snowdesktop::calendar::CalendarEvent> samples = {
+                { "preview-1", 1, "Preview Review", "2026-08-02",
+                    false, 600, 660, "Preview notes", 15, {} },
+                { "preview-2", 1, "Preview Publish", "2026-08-03",
+                    true, 0, 0, {}, -1, {} },
+            };
+            for (const auto& event : samples)
+            {
+                if (event.date >= result.calendarRangeStart &&
+                    event.date <= result.calendarRangeEnd)
+                {
+                    result.calendarEvents.push_back(event);
+                }
+            }
+            result.calendarRevision = 1;
+        }
+        else if (result.topic == "calendar.selectedDate")
+        {
+            result.calendarSelectedDate = "2026-08-02";
+            result.calendarRevision = 1;
         }
         return result;
     }
@@ -8344,7 +8483,53 @@ WidgetEngine::RuntimeGetDataSnapshot(
         result.desktopRevision = desktopDataRevision_;
         result.desktopChangeReason = desktopDataChangeReason_;
         result.available = true;
-        setFreshness(desktopDataTimestampMs_);
+        result.timestampMs = desktopDataTimestampMs_;
+        result.stale = false;
+    }
+    else if (result.topic == "calendar.events")
+    {
+        result.calendarRangeStart = binding->options.rangeStart;
+        result.calendarRangeEnd = binding->options.rangeEnd;
+        if (result.calendarRangeStart.empty())
+        {
+            const std::string selected = RuntimeCalendarSelectedDate();
+            const auto start = snowdesktop::calendar::CalendarService::
+                AddDays(selected, -62);
+            const auto end = snowdesktop::calendar::CalendarService::
+                AddDays(selected, 62);
+            if (start && end)
+            {
+                result.calendarRangeStart = *start;
+                result.calendarRangeEnd = *end;
+            }
+        }
+        if (result.calendarRangeStart.empty() ||
+            result.calendarRangeEnd.empty())
+        {
+            result.error = "calendarRangeUnavailable";
+        }
+        else
+        {
+            result.calendarEvents = RuntimeCalendarEvents(
+                result.calendarRangeStart, result.calendarRangeEnd);
+            constexpr std::size_t MaximumEvents = 512;
+            result.calendarTruncated =
+                result.calendarEvents.size() > MaximumEvents;
+            if (result.calendarTruncated)
+                result.calendarEvents.resize(MaximumEvents);
+            result.calendarRevision = calendarEventsRevision_;
+            result.available = true;
+            setFreshness(timestampNow);
+        }
+    }
+    else if (result.topic == "calendar.selectedDate")
+    {
+        result.calendarSelectedDate = RuntimeCalendarSelectedDate();
+        result.calendarRevision = calendarSelectionRevision_;
+        result.available = !result.calendarSelectedDate.empty();
+        if (!result.available)
+            result.error = "notPresent";
+        setFreshness(timestampNow);
     }
     if (result.error.empty())
     {
@@ -8439,6 +8624,14 @@ std::vector<LuaDesktopItemInfo> WidgetEngine::RuntimeDesktopSelection() const
 void WidgetEngine::NotifyCalendarChanged(
     const std::string& reason)
 {
+    if (reason == "selection")
+    {
+        ++calendarSelectionRevision_;
+    }
+    else
+    {
+        ++calendarEventsRevision_;
+    }
     std::vector<std::wstring> targets;
     for (const auto& widget : widgets_)
     {

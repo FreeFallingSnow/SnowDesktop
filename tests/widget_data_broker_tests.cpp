@@ -70,6 +70,17 @@ void TestRegistrationAndSharedSampling()
     DataSubscriptionOptions slow;
     slow.requestedInterval = 1000ms;
     slow.permissionGranted = true;
+    DataSubscriptionOptions incompleteRange = slow;
+    incompleteRange.rangeStart = "2026-08-01";
+    Check(!broker.Subscribe("widget-range", "system.cpu",
+            incompleteRange, start),
+        "subscription ranges must provide both bounded endpoints");
+    DataSubscriptionOptions oversizedRange = slow;
+    oversizedRange.rangeStart = "2026-08-001";
+    oversizedRange.rangeEnd = "2026-08-02";
+    Check(!broker.Subscribe("widget-range", "system.cpu",
+            oversizedRange, start),
+        "subscription range endpoints must remain bounded");
     const auto first = broker.Subscribe(
         "widget-a", "system.cpu", slow, start);
     Check(static_cast<bool>(first),

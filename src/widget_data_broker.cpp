@@ -61,6 +61,11 @@ DataSubscriptionResult WidgetDataBroker::Subscribe(
     {
         return { 0, "requested interval is invalid" };
     }
+    if (options.rangeStart.size() > 10 || options.rangeEnd.size() > 10 ||
+        options.rangeStart.empty() != options.rangeEnd.empty())
+    {
+        return { 0, "data range is invalid" };
+    }
     if (subscriptions_.size() >= MaxSubscriptions)
         return { 0, "global data subscription limit exceeded" };
     const std::size_t instanceCount = static_cast<std::size_t>(

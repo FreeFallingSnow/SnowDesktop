@@ -591,7 +591,8 @@ local snapshot = cpu:value()
 `data.system.display.current`，以及 `data.audio.output.default`、
 `data.audio.output.volume`、`data.audio.output.analysis`，和
 `data.media.sessions/current/timeline`、
-`data.desktop.items/selection/changes` feature。
+`data.desktop.items/selection/changes`、
+`data.calendar.events/selectedDate` feature。
 Lua 订阅句柄已接通 `WidgetDataBroker` 与独立工作线程 provider：首个合格订阅按需
 启动对应 topic，多实例共享有效采样率，数据变化只使依赖实例失效，隐藏状态进入
 pause/throttle，最后订阅进入 idle grace，卸载、热重载和关闭自动释放。CPU 冷启动
@@ -638,6 +639,12 @@ endpoint，分别返回不透明 endpoint ID、友好名称/状态和有界主�
 不把 v1 快照中的绝对路径带入 v2。宿主 reload/application 变化推进单调 revision
 并只使订阅实例失效，预览返回固定数据；更细的 added/removed/modified 差分和完整
 选择变化通知仍待桌面模型的统一 revision 源收口。
+
+`calendar.events` 和 `calendar.selectedDate` 已接入现有本地 CalendarService 的事件
+回调，不增加轮询线程。events 支持可选、成对的 ISO 日期闭区间并限制在 366 天，
+未指定时围绕当前选中日期取前后各 62 天；每次最多返回 512 项并显式报告
+`truncated`。事件修改与选择变化分别推进 revision，预览使用固定日期和事件。
+calendar 写入仍需后续 task/action broker，不能借只读订阅直接调用。
 
 ```text
 Stopped

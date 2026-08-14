@@ -341,6 +341,10 @@ function schedule.cancel(id) end
 ---@field maxAgeMs? integer Requested sampling interval and stale threshold.
 ---@field whenHidden? SnowDataHiddenPolicy
 
+---@class SnowCalendarEventsSubscribeOptions: SnowDataSubscribeOptions
+---@field fromDate? string YYYY-MM-DD; must be paired with toDate.
+---@field toDate? string YYYY-MM-DD; range is limited to 366 days.
+
 ---@class SnowCpuDataValue
 ---@field usagePercent number
 ---@field logicalProcessors integer
@@ -523,6 +527,28 @@ function schedule.cancel(id) end
 ---@field revision integer
 ---@field reason string Bounded host change reason.
 
+---@class SnowCalendarEventDataValue
+---@field id string
+---@field revision integer
+---@field title string
+---@field date string YYYY-MM-DD.
+---@field allDay boolean
+---@field startMinutes integer
+---@field endMinutes integer
+---@field notes string
+---@field reminderMinutes integer Negative when disabled.
+
+---@class SnowCalendarEventsDataValue
+---@field events SnowCalendarEventDataValue[] At most 512 entries.
+---@field fromDate string Inclusive range start.
+---@field toDate string Inclusive range end.
+---@field revision integer
+---@field truncated boolean
+
+---@class SnowCalendarSelectedDateDataValue
+---@field date string YYYY-MM-DD.
+---@field revision integer
+
 ---@class SnowDataSnapshot<T>
 ---@field available boolean
 ---@field value? T
@@ -558,6 +584,8 @@ data = {}
 ---@overload fun(topic: 'desktop.items', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowDesktopItemsDataValue>
 ---@overload fun(topic: 'desktop.selection', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowDesktopSelectionDataValue>
 ---@overload fun(topic: 'desktop.changes', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowDesktopChangesDataValue>
+---@overload fun(topic: 'calendar.events', options?: SnowCalendarEventsSubscribeOptions): SnowDataSubscription<SnowCalendarEventsDataValue>
+---@overload fun(topic: 'calendar.selectedDate', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowCalendarSelectedDateDataValue>
 ---@param topic string
 ---@param options? SnowDataSubscribeOptions
 ---@return SnowDataSubscription<table>

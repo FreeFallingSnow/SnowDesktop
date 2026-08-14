@@ -63,6 +63,8 @@ struct DataSubscriptionOptions
     bool visible = true;
     bool permissionGranted = false;
     bool preview = false;
+    std::string rangeStart;
+    std::string rangeEnd;
 };
 
 struct DataSubscriptionResult

@@ -94,12 +94,13 @@ ID 为 1–128 字节，每个实例最多 32 个计划；周期请求范围是 
 
 ### `data`
 
-当前公开十九个按需数据源：`system.cpu`、`system.memory`、`system.gpu`、`system.power`、
+当前公开二十一个按需数据源：`system.cpu`、`system.memory`、`system.gpu`、`system.power`、
 `system.network.status`、`system.network.traffic`、`system.storage.volumes`、
 `system.storage.io`、`system.display.topology`、`system.display.current`、
 `audio.output.default`、`audio.output.volume`、`audio.output.analysis`、
 `media.sessions`、`media.current`、`media.timeline`、`desktop.items`、
-`desktop.selection` 和 `desktop.changes`。在 `setup` 或模块
+`desktop.selection`、`desktop.changes`、`calendar.events` 和
+`calendar.selectedDate`。在 `setup` 或模块
 入口创建订阅，不要在每次 `render` 中重复订阅：
 
 ```lua
@@ -126,7 +127,8 @@ end
 `data.subscribe(topic, options?)` 返回句柄。`options.maxAgeMs` 为 1–86400000，
 同时表达请求采样周期与快照过期阈值；CPU 最快 500 ms，内存最快 1000 ms，
 电源、存储卷和显示拓扑最快 2000 ms；存储 I/O、默认音频端点和主音量最快
-1000 ms，媒体三个 topic 最快 500 ms，音频分析最快 16 ms。`whenHidden` 可为
+1000 ms，媒体三个 topic 最快 500 ms，桌面和日历事件 topic 最快 100 ms，
+音频分析最快 16 ms。`whenHidden` 可为
 `pause`、`throttle`（默认）或 `continue`；
 当前系统 provider 不承诺后台 continue，因此会收敛为隐藏 throttle。
 `handle:value()` 返回
@@ -200,6 +202,14 @@ value 通过 `session` 返回当前会话，`media.timeline` value 通过 `timel
 `desktop.changes` 返回单调 `revision` 与最长 64 字节的宿主 `reason`，用于判断何时
 重新读取列表。预览使用固定项目；取消最后订阅时没有后台 worker 或系统句柄残留。
 
+`calendar.events` 和 `calendar.selectedDate` 受 `calendar.read` 保护，同样不启动
+轮询线程。events 可在订阅选项中同时传入 `fromDate/toDate`（ISO `YYYY-MM-DD`、
+闭区间、最长 366 天）；未传时使用当前选中日期前后各 62 天。value 返回实际
+`fromDate/toDate`、最多 512 个本地事件、`revision` 和 `truncated`，事件包含
+`id/revision/title/date/allDay/startMinutes/endMinutes/notes/reminderMinutes`。
+selectedDate value 返回 `date/revision`。创建、修改、删除或选择日期仍不由这些只读
+topic 执行；预览返回固定日期和事件。
+
 CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.power.read` 保护，
 两个网络 topic 受 `system.network.read` 保护，两个存储 topic 受
 `system.storage.read` 保护，显示拓扑受 `system.display.read` 保护。
@@ -219,6 +229,7 @@ CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.pow
 `data.media.sessions`、`data.media.current` 和 `data.media.timeline`。
 桌面 topic 对应 `data.desktop.items`、`data.desktop.selection` 和
 `data.desktop.changes`。
+日历 topic 对应 `data.calendar.events` 和 `data.calendar.selectedDate`。
 
 ### `draw`
 

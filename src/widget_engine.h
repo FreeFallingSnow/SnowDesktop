@@ -308,6 +308,12 @@ struct LuaWidgetDataSnapshot
     std::vector<LuaDesktopItemInfo> desktopItems;
     std::uint64_t desktopRevision = 0;
     std::string desktopChangeReason;
+    std::vector<snowdesktop::calendar::CalendarEvent> calendarEvents;
+    std::string calendarSelectedDate;
+    std::string calendarRangeStart;
+    std::string calendarRangeEnd;
+    std::uint64_t calendarRevision = 0;
+    bool calendarTruncated = false;
 };
 
 /**
@@ -811,7 +817,8 @@ public:
         RuntimeSubscribeData(
             const std::wstring& widgetId, std::string topic,
             std::chrono::milliseconds maxAge,
-            snowdesktop::widget_runtime::DataHiddenPolicy whenHidden);
+            snowdesktop::widget_runtime::DataHiddenPolicy whenHidden,
+            std::string rangeStart = {}, std::string rangeEnd = {});
     bool RuntimeUnsubscribeData(std::uint64_t subscriptionId);
     std::optional<LuaWidgetDataSnapshot> RuntimeGetDataSnapshot(
         std::uint64_t subscriptionId) const;
@@ -1085,6 +1092,8 @@ private:
     std::uint64_t desktopDataRevision_ = 0;
     std::int64_t desktopDataTimestampMs_ = 0;
     std::string desktopDataChangeReason_ = "initial";
+    std::uint64_t calendarEventsRevision_ = 0;
+    std::uint64_t calendarSelectionRevision_ = 0;
     std::unique_ptr<
         snowdesktop::calendar::CalendarService>
         calendarService_;
