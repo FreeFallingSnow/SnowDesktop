@@ -4854,7 +4854,6 @@ void SettingsWindow::DrawWidgetPackagesPage()
             _L("app.settings.widgets_invalid_components");
         invalidHeader += " ";
         invalidHeader += std::to_string(visibleInvalidPackages.size());
-        invalidHeader += "###InvalidWidgetPackages";
         ImGui::TextColored(ImVec4(0.82f, 0.30f, 0.27f, 1.0f), "%s",
             invalidHeader.c_str());
         for (const auto* package : visibleInvalidPackages)
