@@ -23,6 +23,9 @@ void TestLimitsAndReplacement()
     const Schedule::TimePoint now{};
     Check(!schedule.Set("", 1000, true, now),
         "empty timer names must be rejected");
+    Check(!schedule.Set(std::string(Schedule::MaxNameBytes + 1, 'x'),
+            1000, true, now),
+        "oversized timer names must be rejected");
     for (std::size_t index = 0; index < Schedule::MaxTimers; ++index)
     {
         Check(schedule.Set(
@@ -51,12 +54,14 @@ void TestDueConsumption()
         start + std::chrono::milliseconds(250));
     Check(due.size() == 2,
         "all elapsed timers must appear in the due snapshot");
-    Check(schedule.ConsumeDue(
-            "once", start + std::chrono::milliseconds(250)),
+    const auto once = schedule.ConsumeDueInfo(
+        "once", start + std::chrono::milliseconds(250));
+    Check(once && once->missed == 0 && !once->coalesced,
         "one-shot timer must be consumable");
-    Check(schedule.ConsumeDue(
-            "repeat", start + std::chrono::milliseconds(250)),
-        "repeating timer must be consumable");
+    const auto repeat = schedule.ConsumeDueInfo(
+        "repeat", start + std::chrono::milliseconds(250));
+    Check(repeat && repeat->missed == 1 && repeat->coalesced,
+        "repeating timer must report coalesced elapsed deadlines");
     Check(schedule.Size() == 1 &&
             !schedule.Cancel("once") && schedule.Cancel("repeat"),
         "one-shot timers must be removed and repeating timers retained");

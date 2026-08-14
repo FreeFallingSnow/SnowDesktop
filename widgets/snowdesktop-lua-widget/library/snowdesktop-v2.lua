@@ -123,10 +123,12 @@
 ---@field settings? SnowWidgetSettings
 
 ---@class SnowWidgetEvent
----@field kind 'visibility'|'resize'|'pointer'|'timer'|'action'|'selection'|'environment'|'panel'
+---@field kind 'visibility'|'resize'|'pointer'|'timer'|'schedule'|'action'|'selection'|'environment'|'panel'
 ---@field action? 'click'|'doubleClick'|'pointerDown'|'pointerMove'|'pointerUp'|'wheel'|'opened'|'closed'|string
 ---@field id? string
 ---@field name? string
+---@field missed? integer
+---@field coalesced? boolean
 ---@field visible? boolean
 ---@field selected? boolean
 ---@field columns? integer
@@ -308,6 +310,25 @@ function widget.setTimer(name, intervalMilliseconds, repeatTimer) end
 ---@param name string
 ---@return boolean
 function widget.cancelTimer(name) end
+
+---@class snow.schedule
+schedule = {}
+
+---Create or replace a coalescing repeating schedule.
+---@param id string
+---@param milliseconds integer
+---@return boolean
+function schedule.every(id, milliseconds) end
+
+---Create or replace a one-shot schedule.
+---@param id string
+---@param milliseconds integer
+---@return boolean
+function schedule.after(id, milliseconds) end
+
+---@param id string
+---@return boolean
+function schedule.cancel(id) end
 
 ---Compatibility editor retained by the host; new v2 widgets should wait for
 ---the declarative control tree instead of building new interaction on it.

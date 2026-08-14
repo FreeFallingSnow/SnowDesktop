@@ -1925,6 +1925,66 @@ static int lua_WidgetCancelTimer(lua_State* L)
     return 1;
 }
 
+static int LuaScheduleSet(lua_State* state, bool repeat,
+    const char* functionName)
+{
+    size_t nameLength = 0;
+    const char* name = luaL_checklstring(state, 1, &nameLength);
+    if (nameLength == 0 || nameLength >
+        snowdesktop::widget_runtime::NamedTimerSchedule::MaxNameBytes)
+    {
+        return luaL_error(state,
+            "%s: id must contain 1 to 128 bytes", functionName);
+    }
+    const lua_Integer delay = luaL_checkinteger(state, 2);
+    if (delay <= 0 || delay >
+        snowdesktop::widget_runtime::NamedTimerSchedule::MaxIntervalMs)
+    {
+        return luaL_error(state,
+            "%s: milliseconds must be between 1 and 86400000",
+            functionName);
+    }
+    if (!lua_isnoneornil(state, 3))
+    {
+        return luaL_error(state,
+            "%s: options are not available with schedule.basic",
+            functionName);
+    }
+    auto* d2d = GetD2D(state);
+    lua_pushboolean(state, d2d && d2d->engine &&
+        d2d->engine->RuntimeSetTimer(BoundWidgetId(state),
+            std::string(name, nameLength), static_cast<int>(delay),
+            repeat));
+    return 1;
+}
+
+static int lua_ScheduleEvery(lua_State* state)
+{
+    return LuaScheduleSet(state, true, "schedule.every");
+}
+
+static int lua_ScheduleAfter(lua_State* state)
+{
+    return LuaScheduleSet(state, false, "schedule.after");
+}
+
+static int lua_ScheduleCancel(lua_State* state)
+{
+    size_t nameLength = 0;
+    const char* name = luaL_checklstring(state, 1, &nameLength);
+    if (nameLength == 0 || nameLength >
+        snowdesktop::widget_runtime::NamedTimerSchedule::MaxNameBytes)
+    {
+        return luaL_error(state,
+            "schedule.cancel: id must contain 1 to 128 bytes");
+    }
+    auto* d2d = GetD2D(state);
+    lua_pushboolean(state, d2d && d2d->engine &&
+        d2d->engine->RuntimeCancelTimer(BoundWidgetId(state),
+            std::string(name, nameLength)));
+    return 1;
+}
+
 static int lua_HttpRequest(lua_State* L)
 {
     if (!RequirePermission(L, "network.http")) return 0;
@@ -4835,7 +4895,8 @@ void WidgetEngine::PushSafeEnvironment(lua_State* L, const LuaWidget& widget)
     };
     static const char* v2Libraries[] = {
         "string", "table", "math", "utf8", "draw", "layout", "storage",
-        "state", "widget", "system", "time", "module", "resource"
+        "state", "schedule", "widget", "system", "time", "module",
+        "resource"
     };
     const std::span<const char* const> libraries =
         widget.manifest.apiVersion >= 2
@@ -6279,16 +6340,23 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
     bool invoked = false;
     for (const auto& name : dueNames)
     {
-        if (!widget.namedTimers.ConsumeDue(name, now))
+        const auto fire = widget.namedTimers.ConsumeDueInfo(name, now);
+        if (!fire)
             continue;
 
         if (widget.manifest.apiVersion >= 2)
         {
-            invoked = InvokeLifecycleEvent(widget, "timer",
-                [&name](lua_State* eventState) {
+            invoked = InvokeLifecycleEvent(widget, "schedule",
+                [&fire](lua_State* eventState) {
                     lua_pushlstring(eventState,
-                        name.data(), name.size());
-                    lua_setfield(eventState, -2, "name");
+                        fire->name.data(), fire->name.size());
+                    lua_setfield(eventState, -2, "id");
+                    lua_pushinteger(eventState,
+                        static_cast<lua_Integer>(fire->missed));
+                    lua_setfield(eventState, -2, "missed");
+                    lua_pushboolean(eventState,
+                        fire->coalesced ? 1 : 0);
+                    lua_setfield(eventState, -2, "coalesced");
                 }) || invoked;
             continue;
         }
@@ -10655,6 +10723,11 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "keys", snowdesktop::widget_api::LuaTransientStateKeys, 2 },
         { "clear", snowdesktop::widget_api::LuaTransientStateClear, 2 },
     };
+    static constexpr FunctionDescriptor schedule[] = {
+        { "every", lua_ScheduleEvery, 2 },
+        { "after", lua_ScheduleAfter, 2 },
+        { "cancel", lua_ScheduleCancel, 2 },
+    };
     static constexpr FunctionDescriptor imgui[] = {
         { "text", lua_ImGuiText },
         { "textWrapped", lua_ImGuiTextWrapped },
@@ -10695,6 +10768,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         DescribeLibrary("layout", layout),
         DescribeLibrary("storage", storage),
         DescribeLibrary("state", state),
+        DescribeLibrary("schedule", schedule),
         DescribeLibrary("imgui", imgui),
     };
 

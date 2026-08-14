@@ -12,7 +12,7 @@ bool NamedTimerSchedule::Set(
     bool repeat,
     TimePoint now)
 {
-    if (name.empty() ||
+    if (name.empty() || name.size() > MaxNameBytes ||
         (!timers_.contains(name) && timers_.size() >= MaxTimers))
     {
         return false;
@@ -49,25 +49,37 @@ bool NamedTimerSchedule::ConsumeDue(
     std::string_view name,
     TimePoint now)
 {
+    return ConsumeDueInfo(name, now).has_value();
+}
+
+std::optional<NamedTimerSchedule::Fire>
+NamedTimerSchedule::ConsumeDueInfo(
+    std::string_view name, TimePoint now)
+{
     auto timer = timers_.find(std::string(name));
-    if (timer == timers_.end())
-        return false;
+    if (timer == timers_.end() || now < timer->second.due)
+        return std::nullopt;
+
+    Fire result;
+    result.name = timer->first;
 
     if (!timer->second.repeat)
     {
         timers_.erase(timer);
-        return true;
+        return result;
     }
 
     auto nextDue = timer->second.due +
         std::chrono::milliseconds(timer->second.intervalMs);
     while (nextDue <= now)
     {
+        ++result.missed;
         nextDue +=
             std::chrono::milliseconds(timer->second.intervalMs);
     }
     timer->second.due = nextDue;
-    return true;
+    result.coalesced = result.missed > 0;
+    return result;
 }
 
 std::optional<std::chrono::milliseconds>

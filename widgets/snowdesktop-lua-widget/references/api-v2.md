@@ -14,6 +14,7 @@
 
 ```lua
 local function setup(context)
+    schedule.every("refresh", 60000)
     return { createdOn = context.surface }
 end
 
@@ -27,7 +28,7 @@ local function dispose(context, model, reason)
 end
 
 local function event(context, model, value)
-    if value.kind == "timer" and value.name == "refresh" then
+    if value.kind == "schedule" and value.id == "refresh" then
         state.set("lastRefresh", time.monotonic())
     end
 end
@@ -49,8 +50,9 @@ reason)`。没有 `setup` 时 model 为
 VM。
 
 当前 event 只覆盖宿主 surface 级事件：`visibility`、`resize`、`pointer`、
-`timer`、`action`、`selection`、`environment` 和 `panel`。指针事件包含
-`action`、`surface`、`x/y`、`button` 和 `delta`；计时器包含 `name`。声明式
+`timer`、`schedule`、`action`、`selection`、`environment` 和 `panel`。指针事件包含
+`action`、`surface`、`x/y`、`button` 和 `delta`；schedule 事件包含 `id`、
+`missed` 和 `coalesced`。声明式
 元素的 hover、pressed、focus、元素 click 和独立右键菜单尚未开放。
 
 `view` 和 `menu` 仍是后续声明式视图与元素菜单契约预留项，当前宿主会拒绝使用。
@@ -69,12 +71,25 @@ VM。
 - `widget.info()`、`widget.theme()`：兼容的实例与外观快照。
 - `widget.hasPermission(name)`：查询当前实例已授予权限。
 - `widget.setTitle(text)`、`widget.invalidate()`、`widget.log(level, text)`。
-- `widget.setTimer(name, milliseconds, repeat)`、`widget.cancelTimer(name)`。
+- `widget.setTimer`、`widget.cancelTimer`：API v1 兼容入口；新 v2 组件使用
+  `schedule`。
 - `widget.openSettings()`、`widget.openPanel(options)`、`widget.closePanel()`。
 - `widget.editText(...)`：旧宿主编辑器兼容调用，不建议新 v2 组件依赖。
 
-v2 定时器通过 `event.kind == "timer"` 分发；API v1 继续使用 `onTimer` 兼容
-路径。新模板暂不创建后台计时器。
+### `schedule`
+
+- `schedule.every(id, milliseconds)`：创建或替换一个重复计划。
+- `schedule.after(id, milliseconds)`：创建或替换一个单次计划。
+- `schedule.cancel(id)`：取消计划，存在并取消时返回 `true`。
+
+ID 为 1–128 字节，每个实例最多 32 个计划；周期请求范围是 1 ms–24 小时，
+宿主最小实际周期为 100 ms。跨过多个重复截止时间时只分发一个
+`event.kind == "schedule"` 事件，并通过 `missed` 和 `coalesced` 报告合并结果。
+卸载、热重载和关闭会自动取消实例计划。
+
+当前 `schedule.basic` 尚不支持 options、隐藏 pause/throttle、绝对时间 `at` 或
+timeline；传入第三个 options 参数会明确报错。API v1 继续使用 `onTimer` 兼容
+路径，清单 `refreshIntervalMs` 的 v2 过渡事件仍使用 `event.kind == "timer"`。
 
 ### `draw`
 
@@ -190,7 +205,8 @@ local display = resource.font("display")
   "license": "MIT",
   "description": "A short English fallback.",
   "descriptionKey": "lua_widget.my_widget.description",
-  "requiredFeatures": ["draw.immediate", "lifecycle.model", "l10n.basic"],
+  "requiredFeatures": ["draw.immediate", "lifecycle.event", "lifecycle.model",
+    "l10n.basic", "schedule.basic"],
   "optionalFeatures": [],
   "resources": {},
   "permissions": [],

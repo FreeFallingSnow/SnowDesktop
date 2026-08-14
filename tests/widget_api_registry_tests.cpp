@@ -211,6 +211,7 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature("l10n.format") &&
             snowdesktop::widget_api::SupportsFeature("module.package") &&
             snowdesktop::widget_api::SupportsFeature("resource.package") &&
+            snowdesktop::widget_api::SupportsFeature("schedule.basic") &&
             snowdesktop::widget_api::SupportsFeature("lifecycle.event") &&
             snowdesktop::widget_api::SupportsFeature("lifecycle.model") &&
             snowdesktop::widget_api::SupportsFeature("state.transient") &&

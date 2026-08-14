@@ -514,6 +514,12 @@ schedule.timeline("agenda", {
 - 预览禁止注册真实计时器，使用固定虚拟时钟。
 - 内置组件迁移时必须把 `refreshIntervalMs` 和 `widget.setTimer` 显式改为 v2 schedule，不在发布运行时保留隐式适配。
 
+当前过渡实现已发布 `schedule.basic`：`schedule.every(id, ms)`、
+`schedule.after(id, ms)` 和 `schedule.cancel(id)` 复用宿主截止时间队列，限制每实例
+32 个、ID 128 字节、最小实际周期 100 ms，并通过 `event.kind="schedule"` 返回
+`id/missed/coalesced`。卸载、热重载和关闭自动取消。options、隐藏
+pause/throttle、绝对 `at` 和 timeline 尚未实现，不能计入完整调度契约。
+
 ## 12. 数据订阅与任务
 
 ### 12.1 数据订阅
