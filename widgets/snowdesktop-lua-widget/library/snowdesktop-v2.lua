@@ -104,11 +104,65 @@
 ---@field fields? SnowSettingField[]
 ---@field presets? SnowSettingPreset[]
 
+---@class SnowInteractionAction
+---@field id string Stable action identifier delivered through event.kind == 'action'.
+---@field value? SnowStateValue Deep-copied JSON-like payload.
+
+---@class SnowInteractionShape
+---@field type 'rect'|'roundedRect'|'circle'
+---@field x number Left coordinate for rectangles; center X for circles.
+---@field y number Top coordinate for rectangles; center Y for circles.
+---@field width? number Required for rect and roundedRect.
+---@field height? number Required for rect and roundedRect.
+---@field radius? number Required for circle; optional corner radius for roundedRect.
+
+---@class SnowInteractionEvents
+---@field pointerEnter? SnowInteractionAction
+---@field pointerLeave? SnowInteractionAction
+---@field pointerDown? SnowInteractionAction
+---@field pointerUp? SnowInteractionAction
+---@field pointerMove? SnowInteractionAction
+---@field click? SnowInteractionAction
+---@field doubleClick? SnowInteractionAction
+---@field wheel? SnowInteractionAction
+---@field contextMenu? SnowInteractionAction
+
+---@class SnowInteractionAccessibility
+---@field role? string
+---@field label? string
+
+---@class SnowInteractionRegion
+---@field key string Stable key, 1..128 UTF-8 bytes.
+---@field shape SnowInteractionShape
+---@field cursor? 'default'|'hand'|'text'|'crosshair'
+---@field events? SnowInteractionEvents
+---@field accessibility? SnowInteractionAccessibility
+---@field enabled? boolean
+
+---@class SnowMenuRequest
+---@field id string The region contextMenu binding ID.
+---@field value? SnowStateValue The region contextMenu binding payload.
+---@field targetKey string
+---@field surface 'desktop'
+---@field source 'pointer'
+
+---@class SnowMenuItem
+---@field id? string Required except for separators.
+---@field label? string Required except for separators.
+---@field type? 'separator'
+---@field enabled? boolean
+---@field checked? boolean
+---@field icon? string Optional host glyph.
+---@field iconFont? 'fa'|'fluent'|'fluent-regular'
+
+---@alias SnowMenuModel SnowMenuItem[]
+
 ---@class SnowWidgetDefinition
 ---@field name? string
 ---@field render fun(context: SnowWidgetContext, model: any) Exactly one of render or view is required in API v2; view is not available yet.
 ---@field setup? fun(context: SnowWidgetContext): any Runs once and returns the instance model passed to render and dispose.
 ---@field event? fun(context: SnowWidgetContext, model: any, event: SnowWidgetEvent) Receives host surface events; declarative node events are not available yet.
+---@field menu? fun(context: SnowWidgetContext, model: any, request: SnowMenuRequest): SnowMenuModel? Builds an immediate-region context menu synchronously.
 ---@field dispose? fun(context: SnowWidgetContext, model: any, reason: 'unload'|'hotReload'|'shutdown'|string) Runs at most once before the instance VM is released.
 ---@field useCustomStyle? boolean
 ---@field followPersonalizationDefault? boolean
@@ -137,12 +191,15 @@
 ---@field y? integer
 ---@field button? integer
 ---@field delta? integer
+---@field targetKey? string Stable immediate interaction region key.
+---@field clickCount? integer
+---@field trustedGesture? boolean
 ---@field surface? 'desktop'|'panel'
 ---@field reason? string
 ---@field taskId? integer
 ---@field task? 'media.toggle'|'media.next'|'media.previous'|string
 ---@field ok? boolean
----@field value? SnowMediaTaskValue
+---@field value? SnowMediaTaskValue|SnowStateValue
 ---@field error? string
 
 ---@class SnowApiInfo
@@ -842,6 +899,30 @@ function draw.fluent(glyph, x, y, size, color) end
 ---@param size? number
 ---@param alpha? number
 function draw.icon(itemOrPath, x, y, size, alpha) end
+
+---@class snow.interaction
+interaction = {}
+
+---Submit one semantic hit region for the current successful desktop render.
+---The complete active set is atomically replaced after render returns.
+---@param region SnowInteractionRegion
+function interaction.region(region) end
+
+---@param key string
+---@return boolean
+function interaction.isHovered(key) end
+
+---@param key string
+---@return boolean
+function interaction.isPressed(key) end
+
+---@class snow.ui
+ui = {}
+
+---Return a synchronous menu model from widget.define.menu.
+---@param items SnowMenuModel
+---@return SnowMenuModel
+function ui.menu(items) end
 
 ---@class snow.layout
 layout = {}

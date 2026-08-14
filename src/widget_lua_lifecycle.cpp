@@ -166,6 +166,59 @@ bool WidgetLuaLifecycle::Event(lua_State* state, int definitionRef,
     return true;
 }
 
+bool WidgetLuaLifecycle::Menu(lua_State* state, int definitionRef,
+    PushContext pushContext, int requestIndex, bool& invoked,
+    std::string& error) const
+{
+    invoked = false;
+    error.clear();
+    if (!state || !pushContext || !setupCompleted_ || disposeInvoked_ ||
+        definitionRef == LUA_NOREF || definitionRef == LUA_REFNIL ||
+        !lua_istable(state, requestIndex))
+    {
+        error = "invalid widget lifecycle menu context";
+        return false;
+    }
+
+    requestIndex = lua_absindex(state, requestIndex);
+    const int entryTop = lua_gettop(state);
+    lua_rawgeti(state, LUA_REGISTRYINDEX, definitionRef);
+    if (!lua_istable(state, -1))
+    {
+        lua_settop(state, entryTop);
+        error = "widget lifecycle definition is unavailable";
+        return false;
+    }
+    lua_getfield(state, -1, "menu");
+    if (lua_isnil(state, -1))
+    {
+        lua_settop(state, entryTop);
+        return true;
+    }
+    if (!lua_isfunction(state, -1))
+    {
+        lua_settop(state, entryTop);
+        error = "widget lifecycle menu must be a function";
+        return false;
+    }
+
+    pushContext(state);
+    PushModel(state, modelRef_);
+    lua_pushvalue(state, requestIndex);
+    invoked = true;
+    if (snowdesktop::lua_runtime::ProtectedCall(
+            state, 3, 1, LifecycleInstructionBudget,
+            LifecycleTimeBudget) != LUA_OK)
+    {
+        error = PopLuaError(state, "widget menu failed");
+        lua_settop(state, entryTop);
+        return false;
+    }
+    // Remove the definition table while retaining the callback result.
+    lua_remove(state, entryTop + 1);
+    return true;
+}
+
 bool WidgetLuaLifecycle::Dispose(lua_State* state, int definitionRef,
     PushContext pushContext, const char* reason, std::string& error)
 {

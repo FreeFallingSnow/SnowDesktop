@@ -42,6 +42,7 @@
 #include "widget_trusted_gesture.h"
 #include "widget_system_data_provider.h"
 #include "widget_audio_analysis_provider.h"
+#include "widget_interaction_region.h"
 
 struct ImGuiContext;
 struct PersonalizationSettings;
@@ -169,7 +170,13 @@ struct LuaWidgetMenuItem
     std::string icon;          ///< 可选图标字符
     std::string iconFont = "fa"; ///< "fa"（兼容默认）或 "fluent"
     bool enabled = true;       ///< 是否可用（灰显）
+    bool checked = false;      ///< 是否显示选中标记
     bool separator = false;    ///< 是否为分隔线（为 true 时忽略其他字段）
+    bool v2Action = false;
+    std::string actionId;
+    std::string targetKey;
+    snowdesktop::widget_runtime::InteractionValue contextValue;
+    std::uint64_t interactionGeneration = 0;
 };
 
 /**
@@ -387,6 +394,7 @@ struct LuaWidget
     std::unordered_map<std::string, int> scrollOffsets;
     std::unordered_map<std::uint64_t, std::string> dataSubscriptions;
     std::unordered_set<std::uint64_t> taskIds;
+    snowdesktop::widget_runtime::WidgetInteractionRegions interactionRegions;
     std::uint64_t runtimeToken = 0;
     bool preview = false;
     std::unordered_map<std::string, std::string> previewStorage;
@@ -599,7 +607,8 @@ public:
      * @param widgetId 小部件实例 ID
      * @return 菜单项数组
      */
-    std::vector<LuaWidgetMenuItem> GetContextMenu(const std::wstring& widgetId);
+    std::vector<LuaWidgetMenuItem> GetContextMenu(
+        const std::wstring& widgetId, int x = -1, int y = -1);
 
     /**
      * @brief 触发小部件的菜单项点击回调
@@ -607,6 +616,8 @@ public:
      * @param menuId 菜单项标识符
      */
     void InvokeMenu(const std::wstring& widgetId, int menuId);
+    void InvokeMenu(const std::wstring& widgetId,
+        const LuaWidgetMenuItem& menuItem);
 
     /**
      * @brief 通知引擎桌面内容已变更
@@ -907,6 +918,17 @@ public:
      * @brief 请求宿主重绘画布
      */
     void RuntimeInvalidateHost(const std::wstring& widgetId = {});
+    bool RuntimeSubmitInteractionRegion(const std::wstring& widgetId,
+        snowdesktop::widget_runtime::InteractionRegion region,
+        std::string& error);
+    bool RuntimeInteractionHovered(const std::wstring& widgetId,
+        std::string_view key) const;
+    bool RuntimeInteractionPressed(const std::wstring& widgetId,
+        std::string_view key) const;
+    void UpdateInteractionHover(const std::wstring& widgetId, int x, int y);
+    void ClearInteractionHover();
+    std::string InteractionCursorAt(const std::wstring& widgetId,
+        int x, int y) const;
 
     void ReloadStorage();
 
@@ -1062,6 +1084,13 @@ private:
     bool InitializeWidgetLifecycle(LuaWidget& widget);
     bool InvokeLifecycleEvent(LuaWidget& widget, const char* kind,
         const std::function<void(lua_State*)>& pushFields);
+    void DispatchInteractionAction(LuaWidget& widget,
+        const std::string& targetKey, const char* eventName,
+        int x, int y, int button, int delta, int clickCount = 0,
+        bool includeRetired = false);
+    void DispatchInteractionTransition(LuaWidget& widget,
+        const snowdesktop::widget_runtime::InteractionHoverTransition& transition,
+        int x, int y);
     void DisposeWidgetLifecycle(LuaWidget& widget, const char* reason);
     void InitializeWidgetDataBroker();
     void ApplyWidgetDataBrokerActions();

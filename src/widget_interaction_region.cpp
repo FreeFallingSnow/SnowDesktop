@@ -142,8 +142,16 @@ InteractionHoverTransition WidgetInteractionRegions::CommitFrame()
     if (!frameOpen_) return {};
     frameOpen_ = false;
     const std::string previousHover = hoveredKey_;
+    retiredHoverRegion_.reset();
+    if (!previousHover.empty())
+    {
+        if (const InteractionRegion* previous = Find(previousHover))
+            retiredHoverRegion_ = *previous;
+    }
+    const bool semanticSetChanged = active_ != staging_;
     active_ = std::move(staging_);
     staging_.clear();
+    if (semanticSetChanged) ++generation_;
 
     if (!ContainsKey(pressedKey_))
     {
@@ -169,6 +177,7 @@ InteractionHoverTransition WidgetInteractionRegions::UpdateHover(
     float x, float y)
 {
     pointerKnown_ = true;
+    retiredHoverRegion_.reset();
     pointerX_ = x;
     pointerY_ = y;
     const std::string previous = hoveredKey_;
@@ -180,6 +189,7 @@ InteractionHoverTransition WidgetInteractionRegions::UpdateHover(
 InteractionHoverTransition WidgetInteractionRegions::ClearHover()
 {
     pointerKnown_ = false;
+    retiredHoverRegion_.reset();
     const std::string previous = hoveredKey_;
     hoveredKey_.clear();
     return { previous, {} };
@@ -250,6 +260,18 @@ const InteractionAction* WidgetInteractionRegions::FindAction(
     return action == region->events.end() ? nullptr : &action->second;
 }
 
+const InteractionAction* WidgetInteractionRegions::FindTransitionAction(
+    std::string_view key, std::string_view eventName) const noexcept
+{
+    if (const InteractionAction* action = FindAction(key, eventName))
+        return action;
+    if (!retiredHoverRegion_ || retiredHoverRegion_->key != key)
+        return nullptr;
+    const auto action = retiredHoverRegion_->events.find(eventName);
+    return action == retiredHoverRegion_->events.end()
+        ? nullptr : &action->second;
+}
+
 const InteractionAction* WidgetInteractionRegions::ActionAt(
     float x, float y, std::string_view eventName,
     std::string* targetKey) const noexcept
@@ -281,6 +303,19 @@ const std::string& WidgetInteractionRegions::PressedKey() const noexcept
     return pressedKey_;
 }
 
+bool WidgetInteractionRegions::LastPointer(float& x, float& y) const noexcept
+{
+    if (!pointerKnown_) return false;
+    x = pointerX_;
+    y = pointerY_;
+    return true;
+}
+
+std::uint64_t WidgetInteractionRegions::Generation() const noexcept
+{
+    return generation_;
+}
+
 std::string WidgetInteractionRegions::CursorAt(float x, float y) const
 {
     const InteractionRegion* region = HitTest(x, y);
@@ -301,7 +336,9 @@ void WidgetInteractionRegions::Reset() noexcept
     hoveredKey_.clear();
     pressedKey_.clear();
     clickCandidateKey_.clear();
+    retiredHoverRegion_.reset();
     pressedButton_ = -1;
+    ++generation_;
 }
 
 const InteractionRegion* WidgetInteractionRegions::HitTest(

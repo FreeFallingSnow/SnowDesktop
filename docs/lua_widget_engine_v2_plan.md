@@ -918,6 +918,15 @@ end
 - 指针状态变化自动请求重绘；自绘 hover/pressed 的视觉由组件产生，因此需要 Lua 下一帧，但命中、click 合成、菜单、焦点和用户手势证明仍由宿主处理。
 - region 和即时绘制语义使用同一 key，作者工具对可点击但无无障碍信息、重叠歧义和超出组件边界的区域发出警告。
 
+当前过渡实现（2026-08-15）已开放 `interaction.region/isHovered/isPressed`，支持
+rect、roundedRect、circle、稳定 key、反向绘制顺序命中、宿主 click 配对、
+pointer enter/leave/down/up/move、click、doubleClick、wheel 动作以及 region 独立
+原生右键菜单。成功 render 原子提交，失败 render 保留上一成功集合；菜单选择按
+region generation 校验，旧菜单不会落到新一代 region。普通区域交互和菜单本身不
+要求权限，菜单内触发的启动、媒体控制等动作仍由各自 broker 校验权限与可信手势。
+当前只覆盖 desktop 即时绘制 surface；焦点、键盘、触控长按、UIA 语义输出、受控
+submenu、包内菜单图标和声明式 scene tree 仍按 M6 后续交付物推进。
+
 ### 13.3 参考优先级与完整性边界
 
 SnowDesktop 不照搬某一个框架，参考优先级如下：
@@ -1551,15 +1560,15 @@ v2.0 资源契约：
 |---|---|---|---|---|
 | A：基础绘制 | `analog-clock` | `ui.input` | `widget.define`、环境上下文、按秒/分钟调度、v2 即时绘制 | 多 DPI/尺寸/主题截图一致；隐藏时无持续帧 |
 | A：基础绘制 | `digital-clock` | `ui.input` | 可见性作用域、时间线调度、本地化和尺寸响应 | 12/24 小时、日期、语言、休眠恢复正确 |
-| B：状态与输入 | `sticky-note` | `ui.input`、`ui.contextMenu` | 类型化存储、声明式文本编辑、焦点/IME、菜单动作 | 旧便笺内容保留；中文 IME、撤销和重启恢复通过 |
-| B：状态与输入 | `reminders` | `ui.input`、`ui.contextMenu` | 稳定 key 集合、事务存储、编辑动作和可访问语义 | 旧任务顺序/完成状态保留；键盘与 Narrator 可用 |
-| B：状态与输入 | `pomodoro` | `ui.input`、`ui.contextMenu`、`notification.post` | 宿主调度、后台合并、通知可选权限、动作状态机 | 休眠恢复不补发多次；拒绝通知仍可计时 |
-| C：数据订阅 | `system-monitor` | `system.performance.read`、`system.power.read`、`system.network.read`、`ui.input`、`ui.contextMenu` | 拆分 topic 的共享采样、可见性节流、图表节点或 v2 draw | 每类授权可分别拒绝/撤销；多实例不重复昂贵采样；无订阅即停 |
+| B：状态与输入 | `sticky-note` | `ui.input` | 类型化存储、声明式文本编辑、焦点/IME、菜单动作 | 旧便笺内容保留；中文 IME、撤销和重启恢复通过 |
+| B：状态与输入 | `reminders` | `ui.input` | 稳定 key 集合、事务存储、编辑动作和可访问语义 | 旧任务顺序/完成状态保留；键盘与 Narrator 可用 |
+| B：状态与输入 | `pomodoro` | `ui.input`、`notification.post` | 宿主调度、后台合并、通知可选权限、动作状态机 | 休眠恢复不补发多次；拒绝通知仍可计时 |
+| C：数据订阅 | `system-monitor` | `system.performance.read`、`system.power.read`、`system.network.read`、`ui.input` | 拆分 topic 的共享采样、可见性节流、图表节点或 v2 draw | 每类授权可分别拒绝/撤销；多实例不重复昂贵采样；无订阅即停 |
 | C：数据订阅 | `media-controls` | `media.read`、`media.action`、`app.discovery`、`app.launch`、`ui.input` | 媒体订阅、封面资源、用户手势动作、应用搜索/启动降级 | 播放器切换/退出恢复；分别拒绝媒体读取/控制和应用发现/启动权限 |
-| D：日历集合 | `month-calendar` | `calendar.read`、`calendar.write`、`ui.input`、`ui.contextMenu` | 日历订阅、月视图稳定 key、写操作手势与权限拆分 | 跨月/时区/区域格式正确；只读模式完整可用 |
-| D：日历集合 | `agenda` | `calendar.read`、`calendar.write`、`ui.input`、`ui.contextMenu` | 复杂集合、编辑面板、异步日历任务、作用域清理 | 现有功能逐项回归；修改权限拒绝时保留只读日程 |
-| E：网络 | `rss-reader` | `network.internet`、`shell.launch`、`ui.input`、`ui.contextMenu` | 精确 HTTPS origin、网络任务、缓存/错误状态、受控打开链接动作 | 首次联网/打开链接授权；重定向/离线/撤权/恶意 feed 测试通过 |
-| E：桌面高权限 | `quick-launcher` | `desktop.read`、`desktop.action`、`app.discovery`、`app.launch`、`everything.search`、`ui.contextMenu`、`ui.input` | 桌面/应用/Everything 搜索任务、虚拟列表、引用化启动/定位和最小权限降级 | 三类搜索与启动分别授权；大结果集、IME、撤权和索引变化通过 |
+| D：日历集合 | `month-calendar` | `calendar.read`、`calendar.write`、`ui.input` | 日历订阅、月视图稳定 key、写操作手势与权限拆分 | 跨月/时区/区域格式正确；只读模式完整可用 |
+| D：日历集合 | `agenda` | `calendar.read`、`calendar.write`、`ui.input` | 复杂集合、编辑面板、异步日历任务、作用域清理 | 现有功能逐项回归；修改权限拒绝时保留只读日程 |
+| E：网络 | `rss-reader` | `network.internet`、`shell.launch`、`ui.input` | 精确 HTTPS origin、网络任务、缓存/错误状态、受控打开链接动作 | 首次联网/打开链接授权；重定向/离线/撤权/恶意 feed 测试通过 |
+| E：桌面高权限 | `quick-launcher` | `desktop.read`、`desktop.action`、`app.discovery`、`app.launch`、`everything.search`、`ui.input` | 桌面/应用/Everything 搜索任务、虚拟列表、引用化启动/定位和最小权限降级 | 三类搜索与启动分别授权；大结果集、IME、撤权和索引变化通过 |
 
 执行顺序是 A → B → C → D → E。每一波先迁一个代表组件，补齐缺失的 v2 契约和测试，再完成同波其余组件；不得为迁移某个组件临时增加只对该组件生效的隐式 API。
 

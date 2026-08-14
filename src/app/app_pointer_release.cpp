@@ -83,6 +83,8 @@ void DesktopApp::OnMouseLeave()
     if (canClearPassiveHover)
     {
         lastMousePoint_ = { LONG_MIN, LONG_MIN };
+        if (widgetEngine_)
+            widgetEngine_->ClearInteractionHover();
         PresentPassiveHoverVisualChange();
         RecordShellHoverTrace(
             ShellHoverTraceEvent::MouseLeaveEnd);

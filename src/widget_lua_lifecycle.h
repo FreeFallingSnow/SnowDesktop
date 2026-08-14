@@ -27,6 +27,9 @@ public:
     bool Event(lua_State* state, int definitionRef,
         PushContext pushContext, int eventIndex,
         bool& invoked, std::string& error) const;
+    bool Menu(lua_State* state, int definitionRef,
+        PushContext pushContext, int requestIndex,
+        bool& invoked, std::string& error) const;
     bool Dispose(lua_State* state, int definitionRef,
         PushContext pushContext, const char* reason,
         std::string& error);

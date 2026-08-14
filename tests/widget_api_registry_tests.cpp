@@ -277,6 +277,12 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "data.system.storage.io") &&
             snowdesktop::widget_api::SupportsFeature("draw.immediate") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "interaction.pointerActions") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "interaction.contextMenu") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "interaction.region") &&
             snowdesktop::widget_api::SupportsFeature("l10n.format") &&
             snowdesktop::widget_api::SupportsFeature("module.package") &&
             snowdesktop::widget_api::SupportsFeature("resource.package") &&
@@ -360,8 +366,9 @@ void TestV2Contract()
     lua_setfield(state, -2, "render");
     lua_pushcfunction(state, Noop);
     lua_setfield(state, -2, "menu");
-    Check(lua_pcall(state, 1, 1, 0) != LUA_OK,
-        "widget.define must keep menu callbacks gated until dispatch exists");
+    Check(lua_pcall(state, 1, 1, 0) == LUA_OK &&
+            snowdesktop::widget_api::IsDefinedWidget(state, -1),
+        "widget.define must accept menu callbacks when dispatch exists");
     lua_pop(state, 2);
 
     constexpr FunctionDescriptor systemFunctions[] = {

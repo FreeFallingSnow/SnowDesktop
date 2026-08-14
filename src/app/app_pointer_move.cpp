@@ -107,6 +107,35 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
     UpdateSystemTaskbarRevealGuard();
     UpdateDockWindowPreview(current);
 
+    if (widgetEngine_)
+    {
+        bool interactionHoverRouted = false;
+        if (luaWidgetPanelRequest_.widgetId.empty())
+        {
+            const size_t interactionWidget =
+                HitTestStandaloneWidgetIndex(current);
+            if (interactionWidget < widgets_.size() &&
+                widgets_[interactionWidget].type ==
+                    DesktopWidgetType::LuaScript &&
+                HitTestStandaloneWidget(interactionWidget, current) ==
+                    WidgetHit::Content)
+            {
+                const RECT frame = GetStandaloneWidgetFrameRect(
+                    widgets_[interactionWidget]);
+                widgetEngine_->EnsureWidgetLoaded(
+                    widgets_[interactionWidget].id,
+                    widgets_[interactionWidget].packageId);
+                widgetEngine_->UpdateInteractionHover(
+                    widgets_[interactionWidget].id,
+                    current.x - frame.left,
+                    current.y - frame.top);
+                interactionHoverRouted = true;
+            }
+        }
+        if (!interactionHoverRouted)
+            widgetEngine_->ClearInteractionHover();
+    }
+
     if (luaWidgetPanelMouseDown_ &&
         !luaWidgetPanelRequest_.widgetId.empty() &&
         widgetEngine_)

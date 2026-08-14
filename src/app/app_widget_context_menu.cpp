@@ -426,7 +426,12 @@ void DesktopApp::ShowWidgetContextMenu(
         if (widgetEngine_)
         {
             widgetEngine_->EnsureWidgetLoaded(widget.id, widget.packageId);
-            luaMenuItems = widgetEngine_->GetContextMenu(widget.id);
+            POINT clientPoint = screenPoint;
+            ScreenToClient(hwnd_, &clientPoint);
+            const RECT frame = GetStandaloneWidgetFrameRect(widget);
+            luaMenuItems = widgetEngine_->GetContextMenu(widget.id,
+                clientPoint.x - frame.left,
+                clientPoint.y - frame.top);
             for (size_t i = 0; i < luaMenuItems.size() &&
                 kContextLuaWidgetMenuFirst + static_cast<UINT>(i) <= kContextLuaWidgetMenuLast; ++i)
             {
@@ -436,7 +441,8 @@ void DesktopApp::ShowWidgetContextMenu(
                     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
                     continue;
                 }
-                UINT flags = MF_STRING | (item.enabled ? 0 : MF_GRAYED);
+                UINT flags = MF_STRING | (item.enabled ? 0 : MF_GRAYED) |
+                    (item.checked ? MF_CHECKED : 0);
                 AppendMenuW(menu, flags,
                     kContextLuaWidgetMenuFirst + static_cast<UINT>(i),
                     Utf8ToWide(item.label).c_str());
@@ -658,7 +664,8 @@ void DesktopApp::ShowWidgetContextMenu(
         size_t itemIndex = static_cast<size_t>(command - kContextLuaWidgetMenuFirst);
         if (itemIndex < luaMenuItems.size() && widgetEngine_)
         {
-            widgetEngine_->InvokeMenu(widgets_[widgetIndex].id, luaMenuItems[itemIndex].id);
+            widgetEngine_->InvokeMenu(
+                widgets_[widgetIndex].id, luaMenuItems[itemIndex]);
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
         RestoreDesktopWindowLayer();

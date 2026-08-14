@@ -20,7 +20,7 @@ namespace snowdesktop::widget_api
 namespace
 {
 constexpr std::uint32_t kCurrentApiVersion = 2;
-constexpr std::array<std::string_view, 40> kHostFeatures = {
+constexpr std::array<std::string_view, 43> kHostFeatures = {
     "data.app.indexStatus",
     "data.audio.output.analysis",
     "data.audio.output.default",
@@ -45,6 +45,9 @@ constexpr std::array<std::string_view, 40> kHostFeatures = {
     "data.system.storage.volumes",
     "data.system.storage.io",
     "draw.immediate",
+    "interaction.pointerActions",
+    "interaction.contextMenu",
+    "interaction.region",
     "lifecycle.event",
     "lifecycle.model",
     "l10n.basic",
@@ -393,16 +396,6 @@ int LuaDefineWidget(lua_State* state)
         return luaL_error(state,
             "widget.define: unsupported host feature 'view.tree'");
     }
-    for (const char* pending : { "menu" })
-    {
-        if (HasNonNilField(state, descriptor, pending))
-        {
-            return luaL_error(state,
-                "widget.define: lifecycle callback '%s' is not available in this host build",
-                pending);
-        }
-    }
-
     lua_pushlightuserdata(state, &kDefinedWidgetMarker);
     lua_pushboolean(state, 1);
     lua_rawset(state, descriptor);

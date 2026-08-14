@@ -1,6 +1,7 @@
 #pragma once
 
 #include <map>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -28,12 +29,16 @@ struct InteractionValue
     std::string string;
     std::vector<InteractionValue> array;
     std::map<std::string, InteractionValue, std::less<>> object;
+
+    bool operator==(const InteractionValue&) const = default;
 };
 
 struct InteractionAction
 {
     std::string id;
     InteractionValue value;
+
+    bool operator==(const InteractionAction&) const = default;
 };
 
 enum class InteractionShapeType
@@ -53,6 +58,7 @@ struct InteractionShape
     float radius = 0.0f;
 
     bool Contains(float pointX, float pointY) const noexcept;
+    bool operator==(const InteractionShape&) const = default;
 };
 
 struct InteractionRegion
@@ -64,6 +70,8 @@ struct InteractionRegion
     std::string accessibilityRole;
     std::string accessibilityLabel;
     bool enabled = true;
+
+    bool operator==(const InteractionRegion&) const = default;
 };
 
 struct InteractionHoverTransition
@@ -108,6 +116,8 @@ public:
     const InteractionRegion* Find(std::string_view key) const noexcept;
     const InteractionAction* FindAction(
         std::string_view key, std::string_view eventName) const noexcept;
+    const InteractionAction* FindTransitionAction(
+        std::string_view key, std::string_view eventName) const noexcept;
     const InteractionAction* ActionAt(
         float x, float y, std::string_view eventName,
         std::string* targetKey = nullptr) const noexcept;
@@ -116,6 +126,8 @@ public:
     bool IsPressed(std::string_view key) const noexcept;
     const std::string& HoveredKey() const noexcept;
     const std::string& PressedKey() const noexcept;
+    bool LastPointer(float& x, float& y) const noexcept;
+    std::uint64_t Generation() const noexcept;
     std::string CursorAt(float x, float y) const;
     bool Empty() const noexcept;
     void Reset() noexcept;
@@ -133,6 +145,8 @@ private:
     std::string hoveredKey_;
     std::string pressedKey_;
     std::string clickCandidateKey_;
+    std::optional<InteractionRegion> retiredHoverRegion_;
     int pressedButton_ = -1;
+    std::uint64_t generation_ = 0;
 };
 }

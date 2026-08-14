@@ -81,10 +81,12 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     {
         if (LOWORD(lp) != HTCLIENT) break;
         bool resizeCursor = detailColumnResizeActive_;
+        bool cursorPointAvailable = false;
         POINT point{};
         if (!resizeCursor && GetCursorPos(&point) &&
             ScreenToClient(hwnd_, &point))
         {
+            cursorPointAvailable = true;
             for (auto it = containers_.rbegin();
                  it != containers_.rend(); ++it)
             {
@@ -106,6 +108,34 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         {
             SetCursor(LoadCursorW(nullptr, IDC_SIZEWE));
             return TRUE;
+        }
+        if (widgetEngine_ && cursorPointAvailable)
+        {
+            const size_t widgetIndex =
+                HitTestStandaloneWidgetIndex(point);
+            if (widgetIndex < widgets_.size() &&
+                widgets_[widgetIndex].type ==
+                    DesktopWidgetType::LuaScript &&
+                HitTestStandaloneWidget(widgetIndex, point) ==
+                    WidgetHit::Content)
+            {
+                const RECT frame = GetStandaloneWidgetFrameRect(
+                    widgets_[widgetIndex]);
+                const std::string cursor =
+                    widgetEngine_->InteractionCursorAt(
+                        widgets_[widgetIndex].id,
+                        point.x - frame.left,
+                        point.y - frame.top);
+                LPCWSTR cursorId = nullptr;
+                if (cursor == "hand") cursorId = IDC_HAND;
+                else if (cursor == "text") cursorId = IDC_IBEAM;
+                else if (cursor == "crosshair") cursorId = IDC_CROSS;
+                if (cursorId)
+                {
+                    SetCursor(LoadCursorW(nullptr, cursorId));
+                    return TRUE;
+                }
+            }
         }
         break;
     }

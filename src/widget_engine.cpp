@@ -30,6 +30,7 @@
 #include "widget_time.h"
 #include "widget_permission_broker.h"
 #include "widget_preview_context.h"
+#include "widget_interaction_region.h"
 
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -1792,6 +1793,363 @@ constexpr char kMediaActionPermission[] = "media.action";
 constexpr char kDesktopReadPermission[] = "desktop.read";
 constexpr char kCalendarReadPermission[] = "calendar.read";
 constexpr char kAppDiscoveryPermission[] = "app.discovery";
+
+static bool ReadInteractionValue(lua_State* state, int index,
+    snowdesktop::widget_runtime::InteractionValue& output,
+    std::size_t depth, std::size_t& nodes, std::size_t& stringBytes,
+    std::unordered_set<const void*>& ancestors, std::string& error)
+{
+    using Value = snowdesktop::widget_runtime::InteractionValue;
+    index = lua_absindex(state, index);
+    if (++nodes > 256 || depth > 8)
+    {
+        error = "interaction action value exceeds its size or depth limit";
+        return false;
+    }
+    switch (lua_type(state, index))
+    {
+    case LUA_TNIL:
+        output.type = Value::Type::Null;
+        return true;
+    case LUA_TBOOLEAN:
+        output.type = Value::Type::Boolean;
+        output.boolean = lua_toboolean(state, index) != 0;
+        return true;
+    case LUA_TNUMBER:
+        if (lua_isinteger(state, index))
+        {
+            output.type = Value::Type::Integer;
+            output.integer = static_cast<long long>(lua_tointeger(state, index));
+        }
+        else
+        {
+            output.type = Value::Type::Number;
+            output.number = static_cast<double>(lua_tonumber(state, index));
+            if (!std::isfinite(output.number))
+            {
+                error = "interaction action numbers must be finite";
+                return false;
+            }
+        }
+        return true;
+    case LUA_TSTRING:
+    {
+        std::size_t length = 0;
+        const char* value = lua_tolstring(state, index, &length);
+        if (length > 16 * 1024 || stringBytes > 16 * 1024 - length)
+        {
+            error = "interaction action strings exceed 16 KiB";
+            return false;
+        }
+        stringBytes += length;
+        output.type = Value::Type::String;
+        output.string.assign(value ? value : "", length);
+        return true;
+    }
+    case LUA_TTABLE:
+        break;
+    default:
+        error = "interaction action values must be serializable";
+        return false;
+    }
+
+    if (lua_getmetatable(state, index) != 0)
+    {
+        lua_pop(state, 1);
+        error = "interaction action tables cannot have metatables";
+        return false;
+    }
+    const void* identity = lua_topointer(state, index);
+    if (!ancestors.insert(identity).second)
+    {
+        error = "interaction action values cannot be cyclic";
+        return false;
+    }
+
+    bool integerKeys = false;
+    bool stringKeys = false;
+    std::size_t count = 0;
+    std::size_t maximumIndex = 0;
+    lua_pushnil(state);
+    while (lua_next(state, index) != 0)
+    {
+        ++count;
+        if (lua_isinteger(state, -2))
+        {
+            const lua_Integer key = lua_tointeger(state, -2);
+            if (key <= 0 || key > 256)
+            {
+                lua_pop(state, 2);
+                ancestors.erase(identity);
+                error = "interaction action array keys must be contiguous";
+                return false;
+            }
+            integerKeys = true;
+            maximumIndex = std::max(maximumIndex,
+                static_cast<std::size_t>(key));
+        }
+        else if (lua_type(state, -2) == LUA_TSTRING)
+            stringKeys = true;
+        else
+        {
+            lua_pop(state, 2);
+            ancestors.erase(identity);
+            error = "interaction action object keys must be strings";
+            return false;
+        }
+        lua_pop(state, 1);
+    }
+    if ((integerKeys && stringKeys) ||
+        (integerKeys && maximumIndex != count))
+    {
+        ancestors.erase(identity);
+        error = "interaction action tables must be arrays or objects";
+        return false;
+    }
+
+    if (integerKeys)
+    {
+        output.type = Value::Type::Array;
+        output.array.resize(count);
+        for (std::size_t item = 0; item < count; ++item)
+        {
+            lua_rawgeti(state, index, static_cast<lua_Integer>(item + 1));
+            if (!ReadInteractionValue(state, -1, output.array[item],
+                    depth + 1, nodes, stringBytes, ancestors, error))
+            {
+                lua_pop(state, 1);
+                ancestors.erase(identity);
+                return false;
+            }
+            lua_pop(state, 1);
+        }
+    }
+    else
+    {
+        output.type = Value::Type::Object;
+        lua_pushnil(state);
+        while (lua_next(state, index) != 0)
+        {
+            std::size_t keyLength = 0;
+            const char* key = lua_tolstring(state, -2, &keyLength);
+            if (!key || keyLength == 0 || keyLength > 128 ||
+                stringBytes > 16 * 1024 - keyLength)
+            {
+                lua_pop(state, 2);
+                ancestors.erase(identity);
+                error = "interaction action object key is invalid";
+                return false;
+            }
+            stringBytes += keyLength;
+            Value child;
+            if (!ReadInteractionValue(state, -1, child, depth + 1,
+                    nodes, stringBytes, ancestors, error))
+            {
+                lua_pop(state, 2);
+                ancestors.erase(identity);
+                return false;
+            }
+            output.object.emplace(std::string(key, keyLength),
+                std::move(child));
+            lua_pop(state, 1);
+        }
+    }
+    ancestors.erase(identity);
+    return true;
+}
+
+static void PushInteractionValue(lua_State* state,
+    const snowdesktop::widget_runtime::InteractionValue& value)
+{
+    using Type = snowdesktop::widget_runtime::InteractionValue::Type;
+    switch (value.type)
+    {
+    case Type::Null:
+        lua_pushnil(state);
+        break;
+    case Type::Boolean:
+        lua_pushboolean(state, value.boolean ? 1 : 0);
+        break;
+    case Type::Integer:
+        lua_pushinteger(state, static_cast<lua_Integer>(value.integer));
+        break;
+    case Type::Number:
+        lua_pushnumber(state, static_cast<lua_Number>(value.number));
+        break;
+    case Type::String:
+        lua_pushlstring(state, value.string.data(), value.string.size());
+        break;
+    case Type::Array:
+        lua_createtable(state, static_cast<int>(value.array.size()), 0);
+        for (std::size_t index = 0; index < value.array.size(); ++index)
+        {
+            PushInteractionValue(state, value.array[index]);
+            lua_rawseti(state, -2, static_cast<lua_Integer>(index + 1));
+        }
+        break;
+    case Type::Object:
+        lua_createtable(state, 0, static_cast<int>(value.object.size()));
+        for (const auto& [key, child] : value.object)
+        {
+            PushInteractionValue(state, child);
+            lua_setfield(state, -2, key.c_str());
+        }
+        break;
+    }
+}
+
+static std::string ReadRequiredStringField(lua_State* state, int table,
+    const char* field)
+{
+    table = lua_absindex(state, table);
+    lua_getfield(state, table, field);
+    std::size_t length = 0;
+    const char* value = luaL_checklstring(state, -1, &length);
+    std::string result(value ? value : "", length);
+    lua_pop(state, 1);
+    return result;
+}
+
+static int lua_InteractionRegion(lua_State* state)
+{
+    using namespace snowdesktop::widget_runtime;
+    luaL_checktype(state, 1, LUA_TTABLE);
+    const int descriptor = lua_absindex(state, 1);
+    InteractionRegion region;
+    region.key = ReadRequiredStringField(state, descriptor, "key");
+
+    lua_getfield(state, descriptor, "shape");
+    luaL_checktype(state, -1, LUA_TTABLE);
+    const int shape = lua_absindex(state, -1);
+    const std::string type = ReadRequiredStringField(state, shape, "type");
+    if (type == "rect")
+        region.shape.type = InteractionShapeType::Rect;
+    else if (type == "roundedRect")
+        region.shape.type = InteractionShapeType::RoundedRect;
+    else if (type == "circle")
+        region.shape.type = InteractionShapeType::Circle;
+    else
+        return luaL_error(state, "interaction.region: unsupported shape type");
+    lua_getfield(state, shape, "x");
+    region.shape.x = static_cast<float>(luaL_checknumber(state, -1));
+    lua_pop(state, 1);
+    lua_getfield(state, shape, "y");
+    region.shape.y = static_cast<float>(luaL_checknumber(state, -1));
+    lua_pop(state, 1);
+    if (region.shape.type == InteractionShapeType::Circle)
+    {
+        lua_getfield(state, shape, "radius");
+        region.shape.radius = static_cast<float>(luaL_checknumber(state, -1));
+        lua_pop(state, 1);
+    }
+    else
+    {
+        lua_getfield(state, shape, "width");
+        region.shape.width = static_cast<float>(luaL_checknumber(state, -1));
+        lua_pop(state, 1);
+        lua_getfield(state, shape, "height");
+        region.shape.height = static_cast<float>(luaL_checknumber(state, -1));
+        lua_pop(state, 1);
+        lua_getfield(state, shape, "radius");
+        if (!lua_isnil(state, -1))
+            region.shape.radius = static_cast<float>(luaL_checknumber(state, -1));
+        lua_pop(state, 1);
+    }
+    lua_pop(state, 1);
+
+    lua_getfield(state, descriptor, "cursor");
+    if (!lua_isnil(state, -1))
+        region.cursor = luaL_checkstring(state, -1);
+    lua_pop(state, 1);
+    lua_getfield(state, descriptor, "enabled");
+    region.enabled = lua_isnil(state, -1) || lua_toboolean(state, -1) != 0;
+    lua_pop(state, 1);
+
+    lua_getfield(state, descriptor, "accessibility");
+    if (lua_istable(state, -1))
+    {
+        lua_getfield(state, -1, "role");
+        if (!lua_isnil(state, -1))
+            region.accessibilityRole = luaL_checkstring(state, -1);
+        lua_pop(state, 1);
+        lua_getfield(state, -1, "label");
+        if (!lua_isnil(state, -1))
+            region.accessibilityLabel = luaL_checkstring(state, -1);
+        lua_pop(state, 1);
+    }
+    lua_pop(state, 1);
+
+    lua_getfield(state, descriptor, "events");
+    if (lua_istable(state, -1))
+    {
+        const int events = lua_absindex(state, -1);
+        for (const char* eventName : { "pointerEnter", "pointerLeave",
+            "pointerDown", "pointerUp", "pointerMove", "click",
+            "doubleClick", "wheel", "contextMenu" })
+        {
+            lua_getfield(state, events, eventName);
+            if (lua_isnil(state, -1))
+            {
+                lua_pop(state, 1);
+                continue;
+            }
+            luaL_checktype(state, -1, LUA_TTABLE);
+            const int actionTable = lua_absindex(state, -1);
+            InteractionAction action;
+            action.id = ReadRequiredStringField(state, actionTable, "id");
+            lua_getfield(state, actionTable, "value");
+            std::size_t nodes = 0;
+            std::size_t bytes = 0;
+            std::unordered_set<const void*> ancestors;
+            std::string error;
+            if (!ReadInteractionValue(state, -1, action.value, 0,
+                    nodes, bytes, ancestors, error))
+                return luaL_error(state, "interaction.region: %s", error.c_str());
+            lua_pop(state, 1);
+            region.events.emplace(eventName, std::move(action));
+            lua_pop(state, 1);
+        }
+    }
+    lua_pop(state, 1);
+
+    auto* d2d = GetD2D(state);
+    std::string error;
+    if (!d2d || !d2d->engine ||
+        !d2d->engine->RuntimeSubmitInteractionRegion(
+            BoundWidgetId(state), std::move(region), error))
+    {
+        return luaL_error(state, "interaction.region: %s",
+            error.empty() ? "host context is unavailable" : error.c_str());
+    }
+    return 0;
+}
+
+static int lua_InteractionIsHovered(lua_State* state)
+{
+    const char* key = luaL_checkstring(state, 1);
+    auto* d2d = GetD2D(state);
+    lua_pushboolean(state, d2d && d2d->engine &&
+        d2d->engine->RuntimeInteractionHovered(
+            BoundWidgetId(state), key ? key : ""));
+    return 1;
+}
+
+static int lua_InteractionIsPressed(lua_State* state)
+{
+    const char* key = luaL_checkstring(state, 1);
+    auto* d2d = GetD2D(state);
+    lua_pushboolean(state, d2d && d2d->engine &&
+        d2d->engine->RuntimeInteractionPressed(
+            BoundWidgetId(state), key ? key : ""));
+    return 1;
+}
+
+static int lua_UiMenu(lua_State* state)
+{
+    luaL_checktype(state, 1, LUA_TTABLE);
+    lua_settop(state, 1);
+    return 1;
+}
 
 static void SetNumberField(lua_State* L, const char* key, lua_Number value)
 {
@@ -7162,10 +7520,18 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     }
     found->lastRenderTime = std::chrono::steady_clock::now();
     found->hostControls.clear();
+    if (found->manifest.apiVersion >= 2)
+        found->interactionRegions.BeginFrame();
     d2dState_->widgetClipDepth = 0;
 
     lua_rawgeti(state, LUA_REGISTRYINDEX, found->ref);
-    if (!lua_istable(state, -1)) { lua_pop(state, 1); return; }
+    if (!lua_istable(state, -1))
+    {
+        if (found->manifest.apiVersion >= 2)
+            found->interactionRegions.AbortFrame();
+        lua_pop(state, 1);
+        return;
+    }
 
     // Inject widgetId global
     {
@@ -7191,6 +7557,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                 lua_pop(state, 2);
                 RuntimeRecordError(widgetId,
                     "Widget lifecycle is not initialized");
+                found->interactionRegions.AbortFrame();
                 found->valid = false;
                 return;
             }
@@ -7248,6 +7615,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             if (const int currentIndex = FindWidget(widgetId);
                 currentIndex >= 0)
             {
+                widgets_[currentIndex].interactionRegions.AbortFrame();
                 widgets_[currentIndex].valid = false;
             }
             lua_pop(state, 1);
@@ -7255,9 +7623,30 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
         }
         if (snowdesktop::widget_api::ConsumeTransientStateDirty(state))
             RuntimeInvalidateHost(widgetId);
+        if (const int currentIndex = FindWidget(widgetId);
+            currentIndex >= 0 &&
+            widgets_[currentIndex].manifest.apiVersion >= 2)
+        {
+            auto& current = widgets_[currentIndex];
+            const auto transition =
+                current.interactionRegions.CommitFrame();
+            if (transition.Changed())
+            {
+                float pointerX = 0.0f;
+                float pointerY = 0.0f;
+                current.interactionRegions.LastPointer(
+                    pointerX, pointerY);
+                DispatchInteractionTransition(current, transition,
+                    static_cast<int>(pointerX),
+                    static_cast<int>(pointerY));
+                RuntimeInvalidateHost(widgetId);
+            }
+        }
     }
     else
     {
+        if (found->manifest.apiVersion >= 2)
+            found->interactionRegions.AbortFrame();
         lua_pop(state, 1);
     }
     while (d2dState_->widgetClipDepth > 0)
@@ -7673,8 +8062,44 @@ void WidgetEngine::InvokeMouseEvent(const std::wstring& widgetId, const char* ca
             kind = "panel";
             action = "closed";
         }
+        std::string targetKey;
+        if (!panel && std::strcmp(kind, "pointer") == 0)
+        {
+            const auto transition = w.interactionRegions.UpdateHover(
+                static_cast<float>(x), static_cast<float>(y));
+            if (transition.Changed())
+            {
+                DispatchInteractionTransition(w, transition, x, y);
+                RuntimeInvalidateHost(widgetId);
+            }
+            if (std::strcmp(action, "pointerDown") == 0)
+            {
+                targetKey = w.interactionRegions.PointerDown(x, y, button).
+                    targetKey;
+                RuntimeInvalidateHost(widgetId);
+            }
+            else if (std::strcmp(action, "pointerUp") == 0)
+            {
+                targetKey = w.interactionRegions.PointerUp(x, y, button).
+                    targetKey;
+                RuntimeInvalidateHost(widgetId);
+            }
+            else if (std::strcmp(action, "click") == 0)
+            {
+                targetKey = w.interactionRegions.ConsumeClickTarget(x, y);
+            }
+            else
+            {
+                targetKey = w.interactionRegions.TargetAt(x, y);
+            }
+            DispatchInteractionAction(w, targetKey, action, x, y,
+                button, delta,
+                std::strcmp(action, "doubleClick") == 0 ? 2 :
+                    (std::strcmp(action, "click") == 0 ? 1 : 0));
+        }
         (void)InvokeLifecycleEvent(w, kind,
-            [action, panel, x, y, button, delta](lua_State* eventState) {
+            [action, panel, x, y, button, delta, trustedGesture,
+                &targetKey](lua_State* eventState) {
                 lua_pushstring(eventState, action);
                 lua_setfield(eventState, -2, "action");
                 lua_pushstring(eventState, panel ? "panel" : "desktop");
@@ -7687,6 +8112,14 @@ void WidgetEngine::InvokeMouseEvent(const std::wstring& widgetId, const char* ca
                 lua_setfield(eventState, -2, "button");
                 lua_pushinteger(eventState, delta);
                 lua_setfield(eventState, -2, "delta");
+                if (!targetKey.empty())
+                {
+                    lua_pushlstring(eventState, targetKey.data(),
+                        targetKey.size());
+                    lua_setfield(eventState, -2, "targetKey");
+                }
+                lua_pushboolean(eventState, trustedGesture ? 1 : 0);
+                lua_setfield(eventState, -2, "trustedGesture");
             });
         return;
     }
@@ -7718,16 +8151,124 @@ void WidgetEngine::InvokeMouseEvent(const std::wstring& widgetId, const char* ca
     lua_pop(state, 1);
 }
 
-std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(const std::wstring& widgetId)
+std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
+    const std::wstring& widgetId, int x, int y)
 {
     std::vector<LuaWidgetMenuItem> result;
-    if (!RuntimeHasPermission(widgetId, "ui.contextMenu"))
-        return result;
     int idx = FindWidget(widgetId);
     if (idx < 0) return result;
     auto& w = widgets_[idx];
     lua_State* state = w.state;
     if (!state) return result;
+
+    if (w.manifest.apiVersion >= 2)
+    {
+        std::string targetKey;
+        const auto* requestActionPointer =
+            w.interactionRegions.ActionAt(x, y, "contextMenu", &targetKey);
+        if (!requestActionPointer || targetKey.empty()) return result;
+        const auto requestAction = *requestActionPointer;
+        const std::uint64_t generation =
+            w.interactionRegions.Generation();
+        WidgetExecutionContextGuard contextGuard(d2dState_, widgetId);
+        snowdesktop::lua_runtime::StackGuard stackGuard(state);
+        SetWidgetRectContext(d2dState_, w.lastBounds);
+        lua_createtable(state, 0, 5);
+        lua_pushlstring(state, requestAction.id.data(),
+            requestAction.id.size());
+        lua_setfield(state, -2, "id");
+        PushInteractionValue(state, requestAction.value);
+        lua_setfield(state, -2, "value");
+        lua_pushlstring(state, targetKey.data(), targetKey.size());
+        lua_setfield(state, -2, "targetKey");
+        lua_pushliteral(state, "desktop");
+        lua_setfield(state, -2, "surface");
+        lua_pushliteral(state, "pointer");
+        lua_setfield(state, -2, "source");
+
+        bool invoked = false;
+        std::string error;
+        const auto pushContext = +[](lua_State* lifecycleState) {
+            (void)lua_WidgetContext(lifecycleState);
+        };
+        if (!w.lifecycle.Menu(state, w.ref, pushContext, -1,
+                invoked, error))
+        {
+            if (!error.empty()) RuntimeRecordError(widgetId, error);
+            return result;
+        }
+        if (!invoked) return result;
+        if (!lua_istable(state, -1))
+        {
+            if (!lua_isnil(state, -1))
+                RuntimeRecordError(widgetId,
+                    "Widget menu callback must return ui.menu(...) or nil");
+            return result;
+        }
+
+        std::unordered_set<std::string> ids;
+        const int count = std::min<int>(
+            static_cast<int>(lua_rawlen(state, -1)), 64);
+        for (int itemIndex = 1; itemIndex <= count; ++itemIndex)
+        {
+            lua_rawgeti(state, -1, itemIndex);
+            if (!lua_istable(state, -1))
+            {
+                lua_pop(state, 1);
+                continue;
+            }
+            LuaWidgetMenuItem item;
+            lua_getfield(state, -1, "type");
+            item.separator = lua_isstring(state, -1) &&
+                std::strcmp(lua_tostring(state, -1), "separator") == 0;
+            lua_pop(state, 1);
+            if (!item.separator)
+            {
+                lua_getfield(state, -1, "id");
+                if (lua_isstring(state, -1))
+                    item.actionId = lua_tostring(state, -1);
+                lua_pop(state, 1);
+                lua_getfield(state, -1, "label");
+                if (lua_isstring(state, -1))
+                    item.label = lua_tostring(state, -1);
+                lua_pop(state, 1);
+                lua_getfield(state, -1, "icon");
+                if (lua_isstring(state, -1))
+                    item.icon = lua_tostring(state, -1);
+                lua_pop(state, 1);
+                lua_getfield(state, -1, "iconFont");
+                if (lua_isstring(state, -1))
+                    item.iconFont = lua_tostring(state, -1);
+                lua_pop(state, 1);
+                lua_getfield(state, -1, "enabled");
+                item.enabled = lua_isnil(state, -1) ||
+                    lua_toboolean(state, -1) != 0;
+                lua_pop(state, 1);
+                lua_getfield(state, -1, "checked");
+                item.checked = lua_toboolean(state, -1) != 0;
+                lua_pop(state, 1);
+                if (item.actionId.empty() || item.actionId.size() > 128 ||
+                    item.label.empty() || item.label.size() > 512 ||
+                    !ids.insert(item.actionId).second)
+                {
+                    lua_pop(state, 1);
+                    continue;
+                }
+                item.v2Action = true;
+                item.targetKey = targetKey;
+                item.contextValue = requestAction.value;
+                item.interactionGeneration = generation;
+            }
+            result.push_back(std::move(item));
+            lua_pop(state, 1);
+        }
+        if (snowdesktop::widget_api::ConsumeTransientStateDirty(state))
+            RuntimeInvalidateHost(widgetId);
+        return result;
+    }
+
+    if (!RuntimeHasPermission(widgetId, "ui.contextMenu"))
+        return result;
     WidgetExecutionContextGuard contextGuard(d2dState_, widgetId);
     snowdesktop::lua_runtime::StackGuard stackGuard(state);
     SetWidgetRectContext(d2dState_, w.lastBounds);
@@ -7819,6 +8360,43 @@ void WidgetEngine::InvokeMenu(const std::wstring& widgetId, int menuId)
         lua_pop(state, 1);
     }
     lua_pop(state, 1);
+}
+
+void WidgetEngine::InvokeMenu(const std::wstring& widgetId,
+    const LuaWidgetMenuItem& menuItem)
+{
+    if (!menuItem.v2Action)
+    {
+        InvokeMenu(widgetId, menuItem.id);
+        return;
+    }
+    const int index = FindWidget(widgetId);
+    if (index < 0) return;
+    auto& widget = widgets_[index];
+    if (widget.manifest.apiVersion < 2 || menuItem.actionId.empty() ||
+        widget.interactionRegions.Generation() !=
+            menuItem.interactionGeneration ||
+        !widget.interactionRegions.Find(menuItem.targetKey))
+        return;
+    snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(
+        trustedGestureState_, true);
+    (void)InvokeLifecycleEvent(widget, "action",
+        [&menuItem](lua_State* eventState) {
+            lua_pushlstring(eventState, menuItem.actionId.data(),
+                menuItem.actionId.size());
+            lua_setfield(eventState, -2, "id");
+            PushInteractionValue(eventState, menuItem.contextValue);
+            lua_setfield(eventState, -2, "value");
+            lua_pushlstring(eventState, menuItem.targetKey.data(),
+                menuItem.targetKey.size());
+            lua_setfield(eventState, -2, "targetKey");
+            lua_pushliteral(eventState, "contextMenu");
+            lua_setfield(eventState, -2, "source");
+            lua_pushliteral(eventState, "desktop");
+            lua_setfield(eventState, -2, "surface");
+            lua_pushboolean(eventState, 1);
+            lua_setfield(eventState, -2, "trustedGesture");
+        });
 }
 
 void WidgetEngine::NotifyDesktopChanged(const std::string& reason)
@@ -9011,6 +9589,131 @@ void WidgetEngine::RuntimeInvalidateHost(const std::wstring& widgetId)
     if (snowdesktop::widget_runtime::IsDryLoad()) return;
     if (invalidateCallback_)
         invalidateCallback_(widgetId);
+}
+
+bool WidgetEngine::RuntimeSubmitInteractionRegion(
+    const std::wstring& widgetId,
+    snowdesktop::widget_runtime::InteractionRegion region,
+    std::string& error)
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0 || widgets_[index].manifest.apiVersion < 2)
+    {
+        error = "interaction regions require API v2";
+        return false;
+    }
+    return widgets_[index].interactionRegions.Submit(
+        std::move(region), error);
+}
+
+bool WidgetEngine::RuntimeInteractionHovered(
+    const std::wstring& widgetId, std::string_view key) const
+{
+    const int index = FindWidget(widgetId);
+    return index >= 0 &&
+        widgets_[index].interactionRegions.IsHovered(key);
+}
+
+bool WidgetEngine::RuntimeInteractionPressed(
+    const std::wstring& widgetId, std::string_view key) const
+{
+    const int index = FindWidget(widgetId);
+    return index >= 0 &&
+        widgets_[index].interactionRegions.IsPressed(key);
+}
+
+void WidgetEngine::DispatchInteractionAction(LuaWidget& widget,
+    const std::string& targetKey, const char* eventName,
+    int x, int y, int button, int delta, int clickCount,
+    bool includeRetired)
+{
+    if (targetKey.empty() || !eventName || !*eventName) return;
+    const auto* actionPointer = includeRetired
+        ? widget.interactionRegions.FindTransitionAction(targetKey, eventName)
+        : widget.interactionRegions.FindAction(targetKey, eventName);
+    if (!actionPointer) return;
+    const auto action = *actionPointer;
+    (void)InvokeLifecycleEvent(widget, "action",
+        [&action, &targetKey, eventName, x, y, button, delta,
+            clickCount](lua_State* eventState) {
+            lua_pushlstring(eventState, action.id.data(), action.id.size());
+            lua_setfield(eventState, -2, "id");
+            PushInteractionValue(eventState, action.value);
+            lua_setfield(eventState, -2, "value");
+            lua_pushlstring(eventState, targetKey.data(), targetKey.size());
+            lua_setfield(eventState, -2, "targetKey");
+            lua_pushstring(eventState, eventName);
+            lua_setfield(eventState, -2, "action");
+            lua_pushliteral(eventState, "pointer");
+            lua_setfield(eventState, -2, "source");
+            lua_pushliteral(eventState, "desktop");
+            lua_setfield(eventState, -2, "surface");
+            lua_pushinteger(eventState, x);
+            lua_setfield(eventState, -2, "x");
+            lua_pushinteger(eventState, y);
+            lua_setfield(eventState, -2, "y");
+            lua_pushinteger(eventState, button);
+            lua_setfield(eventState, -2, "button");
+            lua_pushinteger(eventState, delta);
+            lua_setfield(eventState, -2, "delta");
+            lua_pushinteger(eventState, clickCount);
+            lua_setfield(eventState, -2, "clickCount");
+        });
+}
+
+void WidgetEngine::DispatchInteractionTransition(LuaWidget& widget,
+    const snowdesktop::widget_runtime::InteractionHoverTransition& transition,
+    int x, int y)
+{
+    if (!transition.leftKey.empty() &&
+        transition.leftKey != transition.enteredKey)
+    {
+        DispatchInteractionAction(widget, transition.leftKey,
+            "pointerLeave", x, y, 0, 0, 0, true);
+    }
+    if (!transition.enteredKey.empty() &&
+        transition.enteredKey != transition.leftKey)
+    {
+        DispatchInteractionAction(widget, transition.enteredKey,
+            "pointerEnter", x, y, 0, 0);
+    }
+}
+
+void WidgetEngine::UpdateInteractionHover(
+    const std::wstring& widgetId, int x, int y)
+{
+    for (auto& widget : widgets_)
+    {
+        if (widget.manifest.apiVersion < 2) continue;
+        const auto transition = widget.widgetId == widgetId
+            ? widget.interactionRegions.UpdateHover(
+                static_cast<float>(x), static_cast<float>(y))
+            : widget.interactionRegions.ClearHover();
+        if (!transition.Changed()) continue;
+        DispatchInteractionTransition(widget, transition, x, y);
+        RuntimeInvalidateHost(widget.widgetId);
+    }
+}
+
+void WidgetEngine::ClearInteractionHover()
+{
+    for (auto& widget : widgets_)
+    {
+        if (widget.manifest.apiVersion < 2) continue;
+        const auto transition = widget.interactionRegions.ClearHover();
+        if (!transition.Changed()) continue;
+        DispatchInteractionTransition(widget, transition, 0, 0);
+        RuntimeInvalidateHost(widget.widgetId);
+    }
+}
+
+std::string WidgetEngine::InteractionCursorAt(
+    const std::wstring& widgetId, int x, int y) const
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0) return {};
+    return widgets_[index].interactionRegions.CursorAt(
+        static_cast<float>(x), static_cast<float>(y));
 }
 
 std::string WidgetEngine::RuntimeGetStorageValue(const std::wstring& widgetId, const std::string& key) const
@@ -12596,6 +13299,11 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "image", lua_DrawImage },
         { "icon", lua_DrawIcon, 1, "desktop.read" },
     };
+    static constexpr FunctionDescriptor interaction[] = {
+        { "region", lua_InteractionRegion, 2 },
+        { "isHovered", lua_InteractionIsHovered, 2 },
+        { "isPressed", lua_InteractionIsPressed, 2 },
+    };
     static constexpr FunctionDescriptor widget[] = {
         { "info", lua_WidgetInfo },
         { "context", lua_WidgetContext, 2 },
@@ -12661,15 +13369,16 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "cancel", lua_HttpCancel, 1, "network.http" },
     };
     static constexpr FunctionDescriptor ui[] = {
-        { "textInput", lua_UiTextInput },
-        { "textArea", lua_UiTextArea },
-        { "focusInput", lua_UiFocusInput },
-        { "button", lua_UiButton },
-        { "toggle", lua_UiToggle },
-        { "progress", lua_UiProgress },
-        { "scrollArea", lua_UiScrollArea },
-        { "virtualList", lua_UiVirtualList },
-        { "setScrollOffset", lua_UiSetScrollOffset },
+        { "menu", lua_UiMenu, 2 },
+        { "textInput", lua_UiTextInput, 1, nullptr, 1 },
+        { "textArea", lua_UiTextArea, 1, nullptr, 1 },
+        { "focusInput", lua_UiFocusInput, 1, nullptr, 1 },
+        { "button", lua_UiButton, 1, nullptr, 1 },
+        { "toggle", lua_UiToggle, 1, nullptr, 1 },
+        { "progress", lua_UiProgress, 1, nullptr, 1 },
+        { "scrollArea", lua_UiScrollArea, 1, nullptr, 1 },
+        { "virtualList", lua_UiVirtualList, 1, nullptr, 1 },
+        { "setScrollOffset", lua_UiSetScrollOffset, 1, nullptr, 1 },
     };
     static constexpr FunctionDescriptor desktop[] = {
         { "items", lua_DesktopItems, 1, "desktop.read" },
@@ -12761,6 +13470,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
     };
     static constexpr LibraryDescriptor libraries[] = {
         DescribeLibrary("draw", draw),
+        DescribeLibrary("interaction", interaction),
         DescribeLibrary("widget", widget),
         DescribeLibrary("sys", system),
         DescribeLibrary("system", systemV2),

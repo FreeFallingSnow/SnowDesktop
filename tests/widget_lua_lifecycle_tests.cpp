@@ -15,6 +15,7 @@ using snowdesktop::widget_runtime::WidgetLuaLifecycle;
 int setupCalls = 0;
 int disposeCalls = 0;
 int eventCalls = 0;
+int menuCalls = 0;
 
 void Check(bool condition, const char* message)
 {
@@ -81,15 +82,42 @@ int HandleEvent(lua_State* state)
     return 0;
 }
 
+int BuildMenu(lua_State* state)
+{
+    lua_getfield(state, 1, "token");
+    const bool contextMatches = lua_tointeger(state, -1) == 42;
+    lua_pop(state, 1);
+    lua_getfield(state, 2, "status");
+    const bool modelMatches = lua_isstring(state, -1) &&
+        std::string(lua_tostring(state, -1)) == "ready";
+    lua_pop(state, 1);
+    lua_getfield(state, 3, "id");
+    const bool requestMatches = lua_isstring(state, -1) &&
+        std::string(lua_tostring(state, -1)) == "item.menu";
+    lua_pop(state, 1);
+    Check(contextMatches && modelMatches && requestMatches,
+        "menu must receive context, the retained model, and request");
+    ++menuCalls;
+    lua_createtable(state, 1, 0);
+    lua_createtable(state, 0, 2);
+    lua_pushliteral(state, "item.open");
+    lua_setfield(state, -2, "id");
+    lua_pushliteral(state, "Open");
+    lua_setfield(state, -2, "label");
+    lua_rawseti(state, -2, 1);
+    return 1;
+}
+
 int SetupFailure(lua_State* state)
 {
     return luaL_error(state, "setup exploded");
 }
 
 int StoreDefinition(lua_State* state, lua_CFunction setup,
-    lua_CFunction dispose, lua_CFunction event = nullptr)
+    lua_CFunction dispose, lua_CFunction event = nullptr,
+    lua_CFunction menu = nullptr)
 {
-    lua_createtable(state, 0, 3);
+    lua_createtable(state, 0, 4);
     if (setup)
     {
         lua_pushcfunction(state, setup);
@@ -105,6 +133,11 @@ int StoreDefinition(lua_State* state, lua_CFunction setup,
         lua_pushcfunction(state, event);
         lua_setfield(state, -2, "event");
     }
+    if (menu)
+    {
+        lua_pushcfunction(state, menu);
+        lua_setfield(state, -2, "menu");
+    }
     return luaL_ref(state, LUA_REGISTRYINDEX);
 }
 
@@ -113,7 +146,7 @@ void TestSetupModelRenderAndDispose()
     lua_State* state = luaL_newstate();
     Check(state != nullptr, "Lua state must be created");
     const int definition = StoreDefinition(
-        state, SetupModel, DisposeModel, HandleEvent);
+        state, SetupModel, DisposeModel, HandleEvent, BuildMenu);
     WidgetLuaLifecycle lifecycle;
     std::string error;
     Check(lifecycle.Setup(state, definition, PushContext, error) &&
@@ -141,6 +174,16 @@ void TestSetupModelRenderAndDispose()
             eventInvoked, error) && eventInvoked && eventCalls == 1,
         "event must execute with the retained setup model");
     lua_pop(state, 1);
+
+    lua_createtable(state, 0, 1);
+    lua_pushliteral(state, "item.menu");
+    lua_setfield(state, -2, "id");
+    bool menuInvoked = false;
+    Check(lifecycle.Menu(state, definition, PushContext, -1,
+            menuInvoked, error) && menuInvoked && menuCalls == 1 &&
+            lua_istable(state, -1) && lua_rawlen(state, -1) == 1,
+        "menu must return its synchronous menu model on the Lua stack");
+    lua_pop(state, 2);
 
     Check(lifecycle.Dispose(state, definition, PushContext,
             "unload", error) && disposeCalls == 1 &&

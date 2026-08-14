@@ -50,6 +50,15 @@ void TestFrameTransactionAndStableState()
     Check(entered.leftKey.empty() && entered.enteredKey == "second" &&
             regions.IsHovered("second"),
         "hover must enter the topmost region");
+    const std::uint64_t firstGeneration = regions.Generation();
+
+    regions.BeginFrame();
+    Check(regions.Submit(Rect("first", 0, 0, 50, 50), error) &&
+            regions.Submit(Rect("second", 25, 25, 50, 50), error),
+        "identical semantic frame must stage");
+    regions.CommitFrame();
+    Check(regions.Generation() == firstGeneration,
+        "identical successful renders must retain the menu generation");
 
     regions.BeginFrame();
     Check(regions.Submit(Rect("first", 0, 0, 50, 50), error),
@@ -65,6 +74,8 @@ void TestFrameTransactionAndStableState()
     Check(replaced.leftKey == "second" && replaced.enteredKey == "first" &&
             regions.IsHovered("first"),
         "commit must reconcile hover against new geometry atomically");
+    Check(regions.Generation() != firstGeneration,
+        "semantic region changes must invalidate the prior menu generation");
 }
 
 void TestPointerPairingAndActions()
@@ -73,6 +84,8 @@ void TestPointerPairingAndActions()
     std::string error;
     auto left = Rect("left", 0, 0, 40, 40);
     left.events.emplace("click", InteractionAction{ "left.open", {} });
+    left.events.emplace("pointerLeave",
+        InteractionAction{ "left.leave", {} });
     regions.BeginFrame();
     Check(regions.Submit(std::move(left), error),
         "action region must stage");
@@ -96,6 +109,17 @@ void TestPointerPairingAndActions()
     const auto* action = regions.FindAction("left", "click");
     Check(action && action->id == "left.open",
         "serialized action must remain attached to the stable region");
+
+    regions.UpdateHover(10, 10);
+    regions.BeginFrame();
+    Check(regions.Submit(Rect("right", 50, 0, 40, 40), error),
+        "replacement without hovered key must stage");
+    const auto removed = regions.CommitFrame();
+    const auto* leave = regions.FindTransitionAction(
+        removed.leftKey, "pointerLeave");
+    Check(removed.leftKey == "left" && removed.enteredKey.empty() &&
+            leave && leave->id == "left.leave",
+        "removed hovered region must retain its leave action for dispatch");
 }
 
 void TestShapesAndValidation()

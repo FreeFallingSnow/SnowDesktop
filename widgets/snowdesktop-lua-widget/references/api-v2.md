@@ -49,13 +49,15 @@ reason)`。没有 `setup` 时 model 为
 `unload`、`hotReload` 或 `shutdown`。setup 失败时新 VM 不会替换热重载前的可用
 VM。
 
-当前 event 只覆盖宿主 surface 级事件：`visibility`、`resize`、`pointer`、
-`timer`、`schedule`、`action`、`selection`、`environment` 和 `panel`。指针事件包含
-`action`、`surface`、`x/y`、`button` 和 `delta`；schedule 事件包含 `id`、
-`missed` 和 `coalesced`。声明式
-元素的 hover、pressed、focus、元素 click 和独立右键菜单尚未开放。
+event 覆盖宿主 surface 级事件：`visibility`、`resize`、`pointer`、`timer`、
+`schedule`、`action`、`selection`、`environment`、`panel` 和 `task.complete`。
+指针事件包含 `action`、`surface`、`x/y`、`button`、`delta`，命中即时绘制
+region 时还包含 `targetKey`；schedule 事件包含 `id`、`missed` 和 `coalesced`。
+region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择统一以
+`event.kind == "action"` 投递。
 
-`view` 和 `menu` 仍是后续声明式视图与元素菜单契约预留项，当前宿主会拒绝使用。
+`menu(context, model, request)` 已用于即时绘制 region 的独立右键菜单；`view`
+仍是后续声明式视图契约预留项，当前宿主会拒绝使用。
 不要把 API v1 的全局回调迁入 v2 描述符。
 
 ## 已实现能力
@@ -63,7 +65,7 @@ VM。
 ### `widget`
 
 - `widget.define(definition)`：校验并返回 v2 描述符。当前必需 `render`，可选
-  `setup`、`event` 和 `dispose`。
+  `setup`、`event`、`menu` 和 `dispose`。
 - `widget.apiInfo()`：返回当前 API 版本、支持版本和 feature ID。
 - `widget.hasFeature(id)`：探测 feature。
 - `widget.context()`：返回逻辑/像素尺寸、DPI、网格跨度、显示器范围、主题、
@@ -74,6 +76,64 @@ VM。
 - `widget.setTimer`、`widget.cancelTimer`：API v1 兼容入口；新 v2 组件使用
   `schedule`。
 - `widget.openSettings()`、`widget.openPanel(options)`、`widget.closePanel()`。
+
+### `interaction` 与元素级菜单
+
+即时绘制没有宿主可识别的元素。`interaction.region(spec)` 在 `render` 内为当前
+桌面 surface 提交语义命中区域；一次成功 render 会原子替换上一成功帧的完整集合，
+render 抛错时继续使用上一集合。首版最多 256 个 region，稳定 `key` 为 1 到 128
+个 UTF-8 字节，后提交的重叠区域位于上层。
+
+```lua
+local function render(context, model)
+    local key = "primary-action"
+    local hovered = interaction.isHovered(key)
+    local pressed = interaction.isPressed(key)
+    draw.rect(12, 12, 120, 36,
+        pressed and 0x315F8F or (hovered and 0x477FB5 or 0x365F86), 8)
+    draw.text(28, 20, "Open", 15, 0xFFFFFF)
+    interaction.region({
+        key = key,
+        shape = { type = "roundedRect", x = 12, y = 12,
+            width = 120, height = 36, radius = 8 },
+        cursor = "hand",
+        events = {
+            click = { id = "item.open", value = { itemId = "primary" } },
+            contextMenu = { id = "item.menu",
+                value = { itemId = "primary" } },
+        },
+        accessibility = { role = "button", label = "Open" },
+    })
+end
+```
+
+shape 首版支持 `rect`、`roundedRect` 和 `circle`；cursor 支持 `default`、`hand`、
+`text`、`crosshair`。events 支持 `pointerEnter`、`pointerLeave`、`pointerDown`、
+`pointerUp`、`pointerMove`、`click`、`doubleClick`、`wheel` 和 `contextMenu`。
+动作 `value` 会被深拷贝，只允许 nil、布尔、有限数字、字符串、连续数组和字符串键
+对象，限制 8 层、256 个节点和合计 16 KiB 字符串。普通 hover/click 不需要权限。
+
+右键命中带 `contextMenu` 绑定的 region 后，宿主同步调用 descriptor 的 `menu`：
+
+```lua
+local function menu(_context, _model, request)
+    if request.id ~= "item.menu" then return nil end
+    return ui.menu({
+        { id = "item.open", label = "Open" },
+        { id = "item.pin", label = "Pin", checked = false },
+        { type = "separator" },
+        { id = "item.remove", label = "Remove" },
+    })
+end
+```
+
+首版菜单项支持唯一字符串 `id`、`label`、`enabled`、`checked`、separator 和宿主
+字体 glyph。回调必须同步、快速且不执行 I/O，最多读取 64 项。用户选择后收到
+`event.kind == "action"`，其中 `id` 为菜单项 ID，`source == "contextMenu"`，并带
+原 region 的 `targetKey` 与 `value`。菜单打开后只要 region 集合产生新一代提交，
+旧菜单动作就会失效，避免重排或复用 key 后误操作。SnowDesktop 的设置、授权、
+诊断和移除入口始终保留。该 API 不要求 `ui.contextMenu` 权限；对应 feature 为
+`interaction.region`、`interaction.pointerActions` 和 `interaction.contextMenu`。
 - `widget.editText(...)`：旧宿主编辑器兼容调用，不建议新 v2 组件依赖。
 
 ### `schedule`
@@ -393,7 +453,7 @@ local display = resource.font("display")
 
 ## 当前明确未开放
 
-API v2 暂未向沙箱提供声明式 `view` 控件树、元素事件/hover/独立右键菜单、
-`desktop`、旧的同步 `media` 库、HTTP、尚未列出的系统状态、
+API v2 暂未向沙箱提供声明式 `view` 控件树、即时 region 的键盘焦点/UIA 输出、
+受控二级菜单、`desktop`、旧的同步 `media` 库、HTTP、尚未列出的系统状态、
 剪贴板、文件选择和应用启动库。它们将在对应宿主实现、配额与按需生命周期完成后
 再加入 feature 目录和 LuaLS 定义；不要根据权限词汇自行推测函数名。

@@ -75,11 +75,13 @@ return widget.define({
 
 Do not define API v1 globals such as top-level `render`, `onClick`,
 `getContextMenu`, `imguiRender`, or `onHttpResponse`. The v2 descriptor reserves
-`view/menu` until those contracts are implemented. The current host
+`view` until that contract is implemented. The current host
 supports optional `setup(context)` and `dispose(context, model, reason)`;
 `setup` runs once and its return value is passed to `render`, `event`, and
 `dispose`. Optional `event(context, model, event)` receives host surface events;
-it does not yet represent individual declarative elements.
+immediate-mode elements use `interaction.region`, while declarative elements
+remain unavailable. Optional `menu(context, model, request)` builds a region's
+synchronous native context menu.
 
 ## Manifest rules
 
@@ -120,6 +122,11 @@ it does not yet represent individual declarative elements.
 - Create `resource.image/font` handles at entry scope. Use `resource.status`
   when diagnostics are needed.
 - Use `draw.measureText`, clipping, explicit `maxWidth`, and separate opacity.
+- Submit every immediate-mode hit target with a stable `interaction.region`
+  key during render. Read `interaction.isHovered/isPressed` for visuals and
+  handle serialized region actions in `event`; never synthesize click from raw
+  down/up callbacks. Build an element menu only through `widget.define.menu`
+  and `ui.menu`, keeping the callback synchronous and I/O-free.
 - Keep colors in `0xRRGGBB`.
 - Respect `widget.context().accessibility`, theme, DPI, visibility and preview
   state. Do not request permission for an ordinary pointer clock or static UI.
@@ -131,8 +138,9 @@ it does not yet represent individual declarative elements.
 - Do not invent v2 APIs from old v1 documentation. The synchronous `media`
   library remains v1-only; v2 media reads use `data.subscribe` and the three
   implemented controls use `task`. The absence of `desktop`, `http`, `sys`,
-  `ui` and other action libraries is intentional until the corresponding v2
-  capability is implemented.
+  legacy `ui` controls and other action libraries is intentional until the
+  corresponding v2 capability is implemented. `ui.menu` is the only current
+  v2 `ui` entry and is valid only as the result of the descriptor menu callback.
 
 ## Verification
 
@@ -148,6 +156,6 @@ For every package change:
 5. Activate the development candidate and verify hot reload. A failed reload
    must keep the last-known-good VM.
 
-Do not claim pointer interaction, declarative element events, resource visuals,
+Do not claim pointer interaction, context-menu interaction, declarative element events, resource visuals,
 multi-monitor DPI or permission UX is verified from validation/build alone;
 those require an observable desktop run.
