@@ -678,7 +678,9 @@ int main()
     Expect(validator.ValidateDirectory(
             nestedSource, &nestedManifest).Ok(),
         "a package-relative nested Lua entry validates");
-    WidgetPackageManager nestedManager(TestPaths(root / L"nested-manager"));
+    const auto nestedManagerPaths =
+        TestPaths(root / L"nested-manager");
+    WidgetPackageManager nestedManager(nestedManagerPaths);
     Expect(nestedManager.Initialize(error),
         "nested-entry package manager initializes");
     InstalledPackage nestedInstalled;
@@ -686,6 +688,49 @@ int main()
             { "local", "nested-entry" }, false,
             nestedInstalled, report, error),
         "nested-entry package installs");
+    Expect(nestedInstalled.permissionState ==
+            PermissionDecisionState::Granted,
+        "new package records an explicit granted permission state");
+    const std::string explicitEmptyRegistry =
+        "{\n  \"schemaVersion\": 1,\n  \"packages\": [\n"
+        "    {\"packageId\":\"" + nestedManifest.id +
+        "\",\"activeVersion\":\"" + nestedManifest.version +
+        "\",\"providerId\":\"local\","
+        "\"externalItemId\":\"nested-entry\","
+        "\"permissionState\":\"granted\",\"enabled\":true,"
+        "\"grantedPermissions\":[],"
+        "\"grantedNetworkDomains\":[]}\n  ]\n}\n";
+    Write(nestedManagerPaths.registry, explicitEmptyRegistry);
+    WidgetPackageManager explicitEmptyManager(nestedManagerPaths);
+    Expect(explicitEmptyManager.Initialize(error),
+        "package manager reloads an explicit empty permission grant");
+    const auto explicitEmpty =
+        explicitEmptyManager.Resolve(nestedManifest.id);
+    Expect(explicitEmpty &&
+            explicitEmpty->permissionState ==
+                PermissionDecisionState::Granted &&
+            explicitEmpty->grantedPermissions.empty(),
+        "explicit empty grants do not fall back to manifest permissions");
+
+    const std::string legacyEmptyRegistry =
+        "{\n  \"schemaVersion\": 1,\n  \"packages\": [\n"
+        "    {\"packageId\":\"" + nestedManifest.id +
+        "\",\"activeVersion\":\"" + nestedManifest.version +
+        "\",\"providerId\":\"local\","
+        "\"externalItemId\":\"nested-entry\",\"enabled\":true,"
+        "\"grantedPermissions\":[],"
+        "\"grantedNetworkDomains\":[]}\n  ]\n}\n";
+    Write(nestedManagerPaths.registry, legacyEmptyRegistry);
+    WidgetPackageManager legacyEmptyManager(nestedManagerPaths);
+    Expect(legacyEmptyManager.Initialize(error),
+        "package manager reloads a legacy permission record");
+    const auto legacyEmpty = legacyEmptyManager.Resolve(nestedManifest.id);
+    Expect(legacyEmpty &&
+            legacyEmpty->permissionState ==
+                PermissionDecisionState::LegacyImplicit &&
+            legacyEmpty->grantedPermissions ==
+                nestedManifest.permissions,
+        "legacy empty grants retain compatibility until migration");
     const auto nestedEntry =
         nestedManager.ResolveEntry(nestedManifest.id);
     const auto nestedResolved = nestedEntry

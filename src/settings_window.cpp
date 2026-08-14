@@ -4387,8 +4387,7 @@ void SettingsWindow::DrawWidgetPackagesPage()
                 ImGui::TextDisabled("%s: %s",
                     _L("app.settings.author"), manifest.author.c_str());
             }
-            const auto& permissions = package->grantedPermissions.empty()
-                ? manifest.permissions : package->grantedPermissions;
+            const auto& permissions = package->grantedPermissions;
             const std::string permissionsText =
                 permissionSummary(permissions);
             if (permissionsText.empty())

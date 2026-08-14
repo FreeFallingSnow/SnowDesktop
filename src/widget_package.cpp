@@ -1648,6 +1648,16 @@ bool WidgetPackageManager::LoadRegistry(std::string& error)
             ReadString(value, "activeVersion", entry.activeVersion);
             ReadString(value, "providerId", entry.source.providerId);
             ReadString(value, "externalItemId", entry.source.externalItemId);
+            if (const JsonValue* permissionState =
+                    value.Find("permissionState");
+                permissionState)
+            {
+                const auto parsed = permissionState->IsString()
+                    ? ParsePermissionDecisionState(permissionState->string)
+                    : std::nullopt;
+                entry.permissionState = parsed.value_or(
+                    PermissionDecisionState::Pending);
+            }
             bool arraysValid = true;
             entry.grantedPermissions =
                 ReadStringArray(value, "grantedPermissions", arraysValid);
@@ -1711,6 +1721,8 @@ bool WidgetPackageManager::SaveRegistry(std::string& error) const
             << "\",\"providerId\":\"" << JsonEscape(entry.source.providerId)
             << "\",\"externalItemId\":\""
             << JsonEscape(entry.source.externalItemId)
+            << "\",\"permissionState\":\""
+            << PermissionDecisionStateName(entry.permissionState)
             << "\",\"enabled\":" << (entry.enabled ? "true" : "false")
             << ",\"grantedPermissions\":[";
         for (std::size_t permission = 0;
@@ -1805,6 +1817,8 @@ bool WidgetPackageManager::Refresh(std::string& error)
                 package.development = development;
                 package.source = { builtin ? "builtin" : "local-directory",
                     PathUtf8(it->path().filename()) };
+                package.permissionState =
+                    PermissionDecisionState::LegacyImplicit;
                 package.grantedPermissions = package.manifest.permissions;
                 package.grantedNetworkDomains =
                     package.manifest.networkDomains;
@@ -1838,18 +1852,22 @@ bool WidgetPackageManager::Refresh(std::string& error)
                 if (registryIt != registry_.end())
                 {
                     package.source = registryIt->second.source;
-                    package.grantedPermissions =
-                        registryIt->second.grantedPermissions.empty()
-                        ? package.manifest.permissions
-                        : registryIt->second.grantedPermissions;
-                    package.grantedNetworkDomains =
-                        registryIt->second.grantedNetworkDomains.empty()
-                        ? package.manifest.networkDomains
-                        : registryIt->second.grantedNetworkDomains;
+                    package.permissionState =
+                        registryIt->second.permissionState;
+                    package.grantedPermissions = ResolveGrantedScopes(
+                        package.permissionState,
+                        package.manifest.permissions,
+                        registryIt->second.grantedPermissions);
+                    package.grantedNetworkDomains = ResolveGrantedScopes(
+                        package.permissionState,
+                        package.manifest.networkDomains,
+                        registryIt->second.grantedNetworkDomains);
                 }
                 else
                 {
                     package.source = { "local", id };
+                    package.permissionState =
+                        PermissionDecisionState::LegacyImplicit;
                     package.grantedPermissions = package.manifest.permissions;
                     package.grantedNetworkDomains =
                         package.manifest.networkDomains;
@@ -2087,15 +2105,15 @@ bool WidgetPackageManager::CommitStagedPackage(
     }
     if (existing != registry_.end() && !allowPermissionExpansion)
     {
-        std::set<std::string> granted(
-            existing->second.grantedPermissions.begin(),
-            existing->second.grantedPermissions.end());
-        if (granted.empty())
-        {
-            if (const auto current = Resolve(manifest.id))
-                granted.insert(current->manifest.permissions.begin(),
-                    current->manifest.permissions.end());
-        }
+        std::vector<std::string> currentDeclared;
+        if (const auto current = Resolve(manifest.id))
+            currentDeclared = current->manifest.permissions;
+        const auto effectiveGranted = ResolveGrantedScopes(
+            existing->second.permissionState,
+            currentDeclared,
+            existing->second.grantedPermissions);
+        const std::set<std::string> granted(
+            effectiveGranted.begin(), effectiveGranted.end());
         for (const auto& permission : manifest.permissions)
         {
             if (!granted.contains(permission))
@@ -2129,6 +2147,7 @@ bool WidgetPackageManager::CommitStagedPackage(
     entry.packageId = manifest.id;
     entry.activeVersion = manifest.version;
     entry.source = sourceRef;
+    entry.permissionState = PermissionDecisionState::Granted;
     entry.grantedPermissions = manifest.permissions;
     entry.grantedNetworkDomains = manifest.networkDomains;
     entry.enabled = true;

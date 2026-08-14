@@ -14,6 +14,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include "widget_permission_state.h"
 
 namespace snowdesktop::widget
 {
@@ -200,6 +201,8 @@ struct InstalledPackage
     PackageSourceRef source;
     std::filesystem::path root;
     std::string sha256;
+    PermissionDecisionState permissionState =
+        PermissionDecisionState::LegacyImplicit;
     std::vector<std::string> grantedPermissions;
     std::vector<std::string> grantedNetworkDomains;
     bool builtin = false;
@@ -386,6 +389,8 @@ private:
         std::string packageId;
         std::string activeVersion;
         PackageSourceRef source;
+        PermissionDecisionState permissionState =
+            PermissionDecisionState::LegacyImplicit;
         std::vector<std::string> grantedPermissions;
         std::vector<std::string> grantedNetworkDomains;
         bool enabled = true;

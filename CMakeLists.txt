@@ -247,6 +247,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget_runtime_diagnostics.cpp
     src/widget_runtime_scheduler.cpp
     src/widget_engine.cpp
+    src/widget_permission_state.cpp
     src/widget_package.cpp
     src/widget_package_paths.cpp
     src/steam_workshop_cache.cpp
@@ -524,7 +525,8 @@ add_custom_command(TARGET SnowDesktop POST_BUILD
 
 add_executable(snowwidget
     tools/snowwidget/main.cpp
-    src/widget_package.cpp)
+    src/widget_package.cpp
+    src/widget_permission_state.cpp)
 target_compile_features(snowwidget PRIVATE cxx_std_20)
 target_include_directories(snowwidget PRIVATE src)
 target_link_libraries(snowwidget PRIVATE bcrypt ole32)
@@ -633,6 +635,7 @@ if (BUILD_TESTING)
             src/full_data_backup.cpp
             src/layout_storage.cpp
             src/widget_package.cpp
+            src/widget_permission_state.cpp
             src/portable_data_migration.cpp
             src/single_instance.cpp
         INCLUDE_DIRECTORIES src
@@ -702,6 +705,15 @@ if (BUILD_TESTING)
             src/widget_runtime_scheduler.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract lua widget)
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetPermissionStateTests
+        widget_permission_state
+        SOURCES
+            tests/widget_permission_state_tests.cpp
+            src/widget_permission_state.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS contract security widget)
 
     snowdesktop_add_test(
         SnowDesktopApplicationRestartPolicyTests
