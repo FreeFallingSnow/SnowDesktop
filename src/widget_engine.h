@@ -108,6 +108,8 @@ struct LuaWidgetManifest
     int maxRows = 0;                   ///< 最多占据行数，0 表示不限制
     int refreshIntervalMs = 0;          ///< manifest 声明的自动刷新间隔（ms），0 = 不自动刷新
     std::vector<std::string> networkDomains; ///< 兼容保留的网络域名元数据
+    std::vector<std::string> requiredFeatures; ///< 激活前必须满足的 v2 宿主特性
+    std::vector<std::string> optionalFeatures; ///< 可由脚本探测并降级的 v2 宿主特性
     std::vector<Setting> settings;        ///< 宿主生成的声明式设置
     std::vector<SettingPreset> presets;   ///< 宿主生成的声明式预设
     std::string publisher;
@@ -934,7 +936,7 @@ private:
      * @brief 向 Lua 状态机注册绘制 API
      * @param L Lua 状态机指针
      */
-    void RegisterDrawAPI(lua_State* L);
+    void RegisterDrawAPI(lua_State* L, int apiVersion);
 
     /**
      * @brief 推入一个安全的沙箱环境表

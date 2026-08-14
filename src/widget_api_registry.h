@@ -3,7 +3,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <string>
 #include <string_view>
+#include <vector>
 
 extern "C" {
 #include <lua.h>
@@ -68,6 +70,16 @@ const FunctionDescriptor* FindFunction(
     std::string_view libraryName,
     std::string_view functionName) noexcept;
 
+std::span<const std::string_view> HostFeatures() noexcept;
+bool SupportsFeature(std::string_view feature) noexcept;
+std::vector<std::string> MissingFeatures(
+    std::span<const std::string> requiredFeatures);
+
+int LuaDefineWidget(lua_State* state);
+int LuaApiInfo(lua_State* state);
+int LuaHasFeature(lua_State* state);
+bool IsDefinedWidget(lua_State* state, int index) noexcept;
+
 /**
  * Registers a table of C callbacks as one Lua global library.
  *
@@ -79,6 +91,12 @@ void RegisterLibrary(
     lua_State* state,
     const char* libraryName,
     std::span<const FunctionDescriptor> functions);
+
+void RegisterLibrary(
+    lua_State* state,
+    const char* libraryName,
+    std::span<const FunctionDescriptor> functions,
+    std::uint32_t apiVersion);
 
 template<std::size_t N>
 void RegisterLibrary(
@@ -106,6 +124,11 @@ constexpr LibraryDescriptor DescribeLibrary(
 void RegisterLibraries(
     lua_State* state,
     std::span<const LibraryDescriptor> libraries);
+
+void RegisterLibraries(
+    lua_State* state,
+    std::span<const LibraryDescriptor> libraries,
+    std::uint32_t apiVersion);
 
 template<std::size_t N>
 void RegisterLibraries(

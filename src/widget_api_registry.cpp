@@ -1,11 +1,154 @@
 #include "widget_api_registry.h"
 
+#include <algorithm>
+#include <array>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 
+extern "C" {
+#include <lauxlib.h>
+}
+
 namespace snowdesktop::widget_api
 {
+namespace
+{
+constexpr std::uint32_t kCurrentApiVersion = 2;
+constexpr std::array<std::string_view, 3> kHostFeatures = {
+    "draw.immediate",
+    "l10n.basic",
+    "time.basic",
+};
+char kDefinedWidgetMarker = 0;
+
+bool FieldIsNilOrFunction(lua_State* state, int tableIndex,
+    const char* field)
+{
+    lua_getfield(state, tableIndex, field);
+    const bool valid = lua_isnil(state, -1) || lua_isfunction(state, -1);
+    lua_pop(state, 1);
+    return valid;
+}
+
+bool HasNonNilField(lua_State* state, int tableIndex, const char* field)
+{
+    lua_getfield(state, tableIndex, field);
+    const bool present = !lua_isnil(state, -1);
+    lua_pop(state, 1);
+    return present;
+}
+}
+
+std::span<const std::string_view> HostFeatures() noexcept
+{
+    return kHostFeatures;
+}
+
+bool SupportsFeature(std::string_view feature) noexcept
+{
+    return std::find(kHostFeatures.begin(), kHostFeatures.end(), feature) !=
+        kHostFeatures.end();
+}
+
+std::vector<std::string> MissingFeatures(
+    std::span<const std::string> requiredFeatures)
+{
+    std::vector<std::string> result;
+    for (const auto& feature : requiredFeatures)
+    {
+        if (!SupportsFeature(feature) &&
+            std::find(result.begin(), result.end(), feature) == result.end())
+            result.push_back(feature);
+    }
+    return result;
+}
+
+int LuaDefineWidget(lua_State* state)
+{
+    luaL_checktype(state, 1, LUA_TTABLE);
+    const int descriptor = lua_absindex(state, 1);
+    for (const char* callback : {
+        "render", "view", "setup", "event", "dispose", "menu" })
+    {
+        if (!FieldIsNilOrFunction(state, descriptor, callback))
+        {
+            return luaL_error(state,
+                "widget.define: '%s' must be a function when present",
+                callback);
+        }
+    }
+
+    const bool hasRender = HasNonNilField(state, descriptor, "render");
+    const bool hasView = HasNonNilField(state, descriptor, "view");
+    if (hasRender == hasView)
+    {
+        return luaL_error(state,
+            "widget.define: choose exactly one of 'render' or 'view'");
+    }
+    if (hasView && !SupportsFeature("view.tree"))
+    {
+        return luaL_error(state,
+            "widget.define: unsupported host feature 'view.tree'");
+    }
+    for (const char* pending : { "setup", "event", "dispose", "menu" })
+    {
+        if (HasNonNilField(state, descriptor, pending))
+        {
+            return luaL_error(state,
+                "widget.define: lifecycle callback '%s' is not available in this host build",
+                pending);
+        }
+    }
+
+    lua_pushlightuserdata(state, &kDefinedWidgetMarker);
+    lua_pushboolean(state, 1);
+    lua_rawset(state, descriptor);
+    lua_settop(state, 1);
+    return 1;
+}
+
+int LuaApiInfo(lua_State* state)
+{
+    lua_createtable(state, 0, 3);
+    lua_pushinteger(state, kCurrentApiVersion);
+    lua_setfield(state, -2, "current");
+    lua_createtable(state, 1, 0);
+    lua_pushinteger(state, kCurrentApiVersion);
+    lua_rawseti(state, -2, 1);
+    lua_setfield(state, -2, "supported");
+    lua_createtable(state, static_cast<int>(kHostFeatures.size()), 0);
+    int index = 1;
+    for (const auto feature : kHostFeatures)
+    {
+        lua_pushlstring(state, feature.data(), feature.size());
+        lua_rawseti(state, -2, index++);
+    }
+    lua_setfield(state, -2, "features");
+    return 1;
+}
+
+int LuaHasFeature(lua_State* state)
+{
+    std::size_t length = 0;
+    const char* feature = luaL_checklstring(state, 1, &length);
+    lua_pushboolean(state,
+        SupportsFeature(std::string_view(feature, length)) ? 1 : 0);
+    return 1;
+}
+
+bool IsDefinedWidget(lua_State* state, int index) noexcept
+{
+    if (!state || !lua_istable(state, index)) return false;
+    index = lua_absindex(state, index);
+    lua_pushlightuserdata(state, &kDefinedWidgetMarker);
+    lua_rawget(state, index);
+    const bool defined = lua_toboolean(state, -1) != 0;
+    lua_pop(state, 1);
+    return defined;
+}
+
 LibraryValidationError ValidateLibrary(
     const char* libraryName,
     std::span<const FunctionDescriptor> functions) noexcept
@@ -139,6 +282,16 @@ void RegisterLibrary(
     const char* libraryName,
     std::span<const FunctionDescriptor> functions)
 {
+    RegisterLibrary(state, libraryName, functions,
+        (std::numeric_limits<std::uint32_t>::max)());
+}
+
+void RegisterLibrary(
+    lua_State* state,
+    const char* libraryName,
+    std::span<const FunctionDescriptor> functions,
+    std::uint32_t apiVersion)
+{
     if (!state)
         throw std::invalid_argument(
             "cannot register a widget API library on a null Lua state");
@@ -154,10 +307,14 @@ void RegisterLibrary(
     }
 
     const int entryTop = lua_gettop(state);
-    lua_createtable(
-        state, 0, static_cast<int>(functions.size()));
+    const auto exposed = std::count_if(functions.begin(), functions.end(),
+        [apiVersion](const FunctionDescriptor& function) {
+            return function.sinceApi <= apiVersion;
+        });
+    lua_createtable(state, 0, static_cast<int>(exposed));
     for (const FunctionDescriptor& function : functions)
     {
+        if (function.sinceApi > apiVersion) continue;
         lua_pushcfunction(state, function.callback);
         lua_setfield(state, -2, function.name);
     }
@@ -174,6 +331,15 @@ void RegisterLibrary(
 void RegisterLibraries(
     lua_State* state,
     std::span<const LibraryDescriptor> libraries)
+{
+    RegisterLibraries(state, libraries,
+        (std::numeric_limits<std::uint32_t>::max)());
+}
+
+void RegisterLibraries(
+    lua_State* state,
+    std::span<const LibraryDescriptor> libraries,
+    std::uint32_t apiVersion)
 {
     if (!state)
         throw std::invalid_argument(
@@ -199,7 +365,7 @@ void RegisterLibraries(
 
     const int entryTop = lua_gettop(state);
     for (const LibraryDescriptor& library : libraries)
-        RegisterLibrary(state, library.name, library.functions);
+        RegisterLibrary(state, library.name, library.functions, apiVersion);
 
     if (lua_gettop(state) != entryTop)
     {

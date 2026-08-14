@@ -105,17 +105,21 @@ void MakePackage(const std::filesystem::path& root, std::string version,
     std::string permissions = "\"ui.input\"",
     std::string networkDomains = "",
     std::string entry = "main.lua",
-    std::string optionalPermissions = "")
+    std::string optionalPermissions = "",
+    int schemaVersion = 1,
+    int apiVersion = 1,
+    std::string requiredFeatures = "",
+    std::string optionalFeatures = "")
 {
     Write(root / std::filesystem::path(entry), "function render() end\n");
     Write(root / L"assets" / L"label.txt", "asset");
     Write(root / L"widget.json",
         "{\n"
-        "  \"schemaVersion\": 1,\n"
+        "  \"schemaVersion\": " + std::to_string(schemaVersion) + ",\n"
         "  \"id\": \"" + id + "\",\n"
         "  \"slug\": \"package-test\",\n"
         "  \"version\": \"" + version + "\",\n"
-        "  \"apiVersion\": 1,\n"
+        "  \"apiVersion\": " + std::to_string(apiVersion) + ",\n"
         "  \"dataVersion\": 1,\n"
         "  \"entry\": \"" + entry + "\",\n"
         "  \"minHostVersion\": \"1.0.1.0\",\n"
@@ -127,7 +131,9 @@ void MakePackage(const std::filesystem::path& root, std::string version,
         "  \"previewData\": {\"introduction\": \"Multiple sizes\", \"introductionKey\": \"preview.intro\", \"storage\": {\"message\": \"Preview\", \"count\": 3}, \"storageKeys\": {\"message\": \"preview.message\"}, \"variants\": [{\"id\": \"compact\", \"title\": \"Compact\", \"titleKey\": \"preview.compact\", \"description\": \"Compact hint\", \"descriptionKey\": \"preview.compact_hint\", \"size\": {\"columns\": 1, \"rows\": 1}, \"storage\": {\"mode\": \"compact\"}, \"storageKeys\": {\"mode\": \"preview.compact_mode\"}}, {\"id\": \"wide\", \"title\": \"Wide\", \"description\": \"Wide hint\", \"size\": {\"columns\": 2, \"rows\": 1}}]},\n"
         "  \"permissions\": [" + permissions + "],\n"
         "  \"optionalPermissions\": [" + optionalPermissions + "],\n"
-        "  \"networkDomains\": [" + networkDomains + "]\n"
+        "  \"networkDomains\": [" + networkDomains + "],\n"
+        "  \"requiredFeatures\": [" + requiredFeatures + "],\n"
+        "  \"optionalFeatures\": [" + optionalFeatures + "]\n"
         "}\n");
 }
 
@@ -651,6 +657,34 @@ int main()
         "package metadata falls back to the requested language family");
     Expect(LocalizePackageManifest(manifest, "fr-FR").name == manifest.name,
         "unknown package locale keeps the English manifest fallback");
+
+    const auto contractV2Package = root / L"contract-v2";
+    MakePackage(contractV2Package, "2.0.0",
+        "ecffdc71-2600-44c2-b0f5-9941a583dc81", "", "", "main.lua",
+        "", 2, 2, "\"draw.immediate\"", "\"view.tree\"");
+    PackageManifest manifestV2;
+    report = validator.ValidateDirectory(contractV2Package, &manifestV2);
+    Expect(report.Ok() && manifestV2.schemaVersion == 2 &&
+            manifestV2.apiVersion == 2 &&
+            manifestV2.requiredFeatures ==
+                std::vector<std::string>{ "draw.immediate" } &&
+            manifestV2.optionalFeatures ==
+                std::vector<std::string>{ "view.tree" },
+        "schema/API v2 package features are parsed and accepted");
+
+    const auto mismatchedContract = root / L"mismatched-contract";
+    MakePackage(mismatchedContract, "2.0.0",
+        "24dc465a-33e7-4189-bc1e-2cb9005de950", "", "", "main.lua",
+        "", 2, 1);
+    Expect(!validator.ValidateDirectory(mismatchedContract).Ok(),
+        "schema and API versions must move to v2 together");
+
+    const auto invalidFeature = root / L"invalid-feature";
+    MakePackage(invalidFeature, "2.0.0",
+        "f9312831-8944-41c3-a6fb-d3f6a0918fc2", "", "", "main.lua",
+        "", 2, 2, "\"View.Tree\"");
+    Expect(!validator.ValidateDirectory(invalidFeature).Ok(),
+        "feature identifiers must use the stable lowercase dotted form");
 
     const auto badSource = root / L"bad";
     MakePackage(badSource, "1.0.0",

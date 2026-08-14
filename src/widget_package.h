@@ -18,8 +18,10 @@
 
 namespace snowdesktop::widget
 {
-inline constexpr int kPackageSchemaVersion = 1;
-inline constexpr int kHostApiVersion = 1;
+inline constexpr int kLegacyPackageSchemaVersion = 1;
+inline constexpr int kLegacyApiVersion = 1;
+inline constexpr int kPackageSchemaVersion = 2;
+inline constexpr int kHostApiVersion = 2;
 inline constexpr std::uint64_t kMaxArchiveBytes = 20ull * 1024ull * 1024ull;
 inline constexpr std::uint64_t kMaxExtractedBytes = 64ull * 1024ull * 1024ull;
 inline constexpr std::uint64_t kMaxEntryLuaBytes = 1ull * 1024ull * 1024ull;
@@ -105,6 +107,8 @@ struct PackageManifest
     std::vector<std::string> permissions;
     std::vector<std::string> optionalPermissions;
     std::vector<std::string> networkDomains;
+    std::vector<std::string> requiredFeatures;
+    std::vector<std::string> optionalFeatures;
     std::unordered_map<std::string, LocalizedMetadata> locales;
 };
 

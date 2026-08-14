@@ -43,6 +43,7 @@
 #include <cctype>
 #include <cmath>
 #include <condition_variable>
+#include <ctime>
 #include <cstring>
 #include <deque>
 #include <exception>
@@ -51,6 +52,7 @@
 #include <limits>
 #include <mutex>
 #include <set>
+#include <span>
 #include <cstdlib>
 #include <sstream>
 #include <thread>
@@ -2677,6 +2679,60 @@ static int lua_WidgetInfo(lua_State* L)
     return 1;
 }
 
+static int lua_TimeNow(lua_State* L)
+{
+    const auto milliseconds = std::chrono::duration_cast<
+        std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+    lua_pushinteger(L, static_cast<lua_Integer>(milliseconds));
+    return 1;
+}
+
+static int lua_TimeMonotonic(lua_State* L)
+{
+    const auto milliseconds = std::chrono::duration_cast<
+        std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+    lua_pushinteger(L, static_cast<lua_Integer>(milliseconds));
+    return 1;
+}
+
+static int lua_TimeParts(lua_State* L)
+{
+    const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    const auto milliseconds = lua_isnoneornil(L, 1)
+        ? now : static_cast<long long>(luaL_checkinteger(L, 1));
+    const char* zone = luaL_optstring(L, 2, "local");
+    const bool utc = _stricmp(zone, "utc") == 0;
+    if (!utc && _stricmp(zone, "local") != 0)
+        return luaL_error(L, "time.parts: time zone must be 'local' or 'utc'");
+
+    const std::time_t seconds = static_cast<std::time_t>(milliseconds / 1000);
+    std::tm parts{};
+    const errno_t result = utc
+        ? gmtime_s(&parts, &seconds)
+        : localtime_s(&parts, &seconds);
+    if (result != 0)
+        return luaL_error(L, "time.parts: timestamp is out of range");
+
+    lua_createtable(L, 0, 9);
+    lua_pushinteger(L, parts.tm_year + 1900); lua_setfield(L, -2, "year");
+    lua_pushinteger(L, parts.tm_mon + 1); lua_setfield(L, -2, "month");
+    lua_pushinteger(L, parts.tm_mday); lua_setfield(L, -2, "day");
+    lua_pushinteger(L, parts.tm_wday + 1); lua_setfield(L, -2, "wday");
+    lua_pushinteger(L, parts.tm_hour); lua_setfield(L, -2, "hour");
+    lua_pushinteger(L, parts.tm_min); lua_setfield(L, -2, "min");
+    lua_pushinteger(L, parts.tm_sec); lua_setfield(L, -2, "sec");
+    auto remainder = milliseconds % 1000;
+    if (remainder < 0) remainder += 1000;
+    lua_pushinteger(L, static_cast<lua_Integer>(remainder));
+    lua_setfield(L, -2, "millisecond");
+    lua_pushstring(L, utc ? "utc" : "local");
+    lua_setfield(L, -2, "timeZone");
+    return 1;
+}
+
 static int lua_WidgetHasPermission(lua_State* L)
 {
     const char* permission = luaL_checkstring(L, 1);
@@ -3737,9 +3793,20 @@ void WidgetEngine::PushSafeEnvironment(lua_State* L, const LuaWidget& widget)
         lua_getglobal(L, name);
         lua_setfield(L, -2, name);
     }
-    for (const char* name : { "string", "table", "math", "utf8", "draw",
-        "sys", "layout", "storage", "widget", "desktop", "media", "http",
-        "ui", "everything", "calendar" })
+    static const char* v1Libraries[] = {
+        "string", "table", "math", "utf8", "draw", "sys", "layout",
+        "storage", "widget", "desktop", "media", "http", "ui",
+        "everything", "calendar"
+    };
+    static const char* v2Libraries[] = {
+        "string", "table", "math", "utf8", "draw", "layout", "storage",
+        "widget", "time"
+    };
+    const std::span<const char* const> libraries =
+        widget.manifest.apiVersion >= 2
+            ? std::span<const char* const>(v2Libraries)
+            : std::span<const char* const>(v1Libraries);
+    for (const char* name : libraries)
     {
         PushReadOnlyGlobal(L, name);
         lua_setfield(L, -2, name);
@@ -3748,7 +3815,8 @@ void WidgetEngine::PushSafeEnvironment(lua_State* L, const LuaWidget& widget)
     PushReadOnlyProxyForTopTable(L);
     lua_setfield(L, -2, "l10n");
 
-    if (widget.permissions.contains("ui.input"))
+    if (widget.manifest.apiVersion == 1 &&
+        widget.permissions.contains("ui.input"))
     {
         PushReadOnlyGlobal(L, "imgui");
         lua_setfield(L, -2, "imgui");
@@ -3916,6 +3984,36 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
             "Cannot allocate isolated Lua state", quota->memoryExceeded);
         return false;
     }
+    const bool legacyContract = pending.manifest.schemaVersion ==
+            snowdesktop::widget::kLegacyPackageSchemaVersion &&
+        pending.manifest.apiVersion == snowdesktop::widget::kLegacyApiVersion;
+    const bool currentContract = pending.manifest.schemaVersion ==
+            snowdesktop::widget::kPackageSchemaVersion &&
+        pending.manifest.apiVersion == snowdesktop::widget::kHostApiVersion;
+    if (!legacyContract && !currentContract)
+    {
+        RuntimeRecordError(widgetId,
+            "Widget schema/API contract is not supported by this host");
+        return false;
+    }
+    if (currentContract)
+    {
+        const auto missing = snowdesktop::widget_api::MissingFeatures(
+            pending.manifest.requiredFeatures);
+        if (!missing.empty())
+        {
+            std::string message = "Widget requires unsupported host feature";
+            if (missing.size() > 1) message += "s";
+            message += ": ";
+            for (std::size_t index = 0; index < missing.size(); ++index)
+            {
+                if (index) message += ", ";
+                message += missing[index];
+            }
+            RuntimeRecordError(widgetId, message);
+            return false;
+        }
+    }
     std::unique_ptr<lua_State, decltype(&lua_close)> stateGuard(
         state, lua_close);
     luaL_requiref(state, "_G", luaopen_base, 1); lua_pop(state, 1);
@@ -3923,7 +4021,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     luaL_requiref(state, LUA_STRLIBNAME, luaopen_string, 1); lua_pop(state, 1);
     luaL_requiref(state, LUA_MATHLIBNAME, luaopen_math, 1); lua_pop(state, 1);
     luaL_requiref(state, LUA_UTF8LIBNAME, luaopen_utf8, 1); lua_pop(state, 1);
-    RegisterDrawAPI(state);
+    RegisterDrawAPI(state, pending.manifest.apiVersion);
     lua_pushlightuserdata(state, d2dState_);
     lua_setfield(state, LUA_REGISTRYINDEX, "__d2d_ptr");
     lua_pushlightuserdata(state, quota.get());
@@ -3979,7 +4077,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         }
         lua_pushvalue(state, -2);  // push sandbox as argument
         if (snowdesktop::lua_runtime::ProtectedCall(
-                state, 1, 0, 1000000,
+                state, 1, currentContract ? 1 : 0, 1000000,
                 std::chrono::milliseconds(100)) != LUA_OK)
         {
             const char* err = lua_tostring(state, -1);
@@ -3995,7 +4093,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     {
         // Execute the chunk
         if (snowdesktop::lua_runtime::ProtectedCall(
-                state, 0, 0, 1000000,
+                state, 0, currentContract ? 1 : 0, 1000000,
                 std::chrono::milliseconds(100)) != LUA_OK)
         {
             const char* err = lua_tostring(state, -1);
@@ -4008,10 +4106,28 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         }
     }
 
-    // sandbox now contains the script's globals (name, render, etc.)
-    int ref = luaL_ref(state, LUA_REGISTRYINDEX);
+    int ref = LUA_NOREF;
+    if (currentContract)
+    {
+        if (!snowdesktop::widget_api::IsDefinedWidget(state, -1))
+        {
+            RuntimeRecordError(widgetId,
+                "API v2 entry must return widget.define({...})");
+            lua_pop(state, 2);
+            return false;
+        }
+        ref = luaL_ref(state, LUA_REGISTRYINDEX);
+        lua_pop(state, 1); // sandbox
+    }
+    else
+    {
+        // API v1 stores callbacks as globals in the sandbox. This branch is
+        // retained only while bundled components are migrated to v2.
+        ref = luaL_ref(state, LUA_REGISTRYINDEX);
+    }
 
-    std::string name = "Unnamed";
+    std::string name = pending.manifest.name.empty()
+        ? "Unnamed" : pending.manifest.name;
     lua_rawgeti(state, LUA_REGISTRYINDEX, ref);
     lua_getfield(state, -1, "name");
     if (lua_isstring(state, -1))
@@ -7318,6 +7434,8 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
     manifest.optionalPermissions =
         readStringArray(root, "optionalPermissions");
     manifest.networkDomains = readStringArray(root, "networkDomains");
+    manifest.requiredFeatures = readStringArray(root, "requiredFeatures");
+    manifest.optionalFeatures = readStringArray(root, "optionalFeatures");
     double refreshMs = 0;
     if (readNumber(root, "refreshIntervalMs", refreshMs) &&
         std::isfinite(refreshMs) && refreshMs > 0)
@@ -8886,7 +9004,7 @@ static void PushWidgetL10nAPI(lua_State* L, const LuaWidgetManifest& manifest)
     lua_setfield(L, -2, "language");
 }
 
-void WidgetEngine::RegisterDrawAPI(lua_State* L)
+void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
 {
     using snowdesktop::widget_api::DescribeLibrary;
     using snowdesktop::widget_api::FunctionDescriptor;
@@ -8920,6 +9038,9 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
         { "editText", lua_WidgetEditText },
         { "setTimer", lua_WidgetSetTimer },
         { "cancelTimer", lua_WidgetCancelTimer },
+        { "define", snowdesktop::widget_api::LuaDefineWidget, 2 },
+        { "apiInfo", snowdesktop::widget_api::LuaApiInfo, 2 },
+        { "hasFeature", snowdesktop::widget_api::LuaHasFeature, 2 },
     };
     static constexpr FunctionDescriptor system[] = {
         { "getTime", lua_GetTime },
@@ -8931,6 +9052,11 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
         { "network", lua_SystemNetwork, 1,
             kSystemNetworkPermission },
         { "gpu", lua_SystemGpu, 1, kSystemPerformancePermission },
+    };
+    static constexpr FunctionDescriptor time[] = {
+        { "now", lua_TimeNow, 2 },
+        { "monotonic", lua_TimeMonotonic, 2 },
+        { "parts", lua_TimeParts, 2 },
     };
     static constexpr FunctionDescriptor media[] = {
         { "current", lua_MediaCurrent, 1, "media.read" },
@@ -9025,6 +9151,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
         DescribeLibrary("draw", draw),
         DescribeLibrary("widget", widget),
         DescribeLibrary("sys", system),
+        DescribeLibrary("time", time),
         DescribeLibrary("media", media),
         DescribeLibrary("http", http),
         DescribeLibrary("ui", ui),
@@ -9036,5 +9163,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
         DescribeLibrary("imgui", imgui),
     };
 
-    RegisterLibraries(L, libraries);
+    RegisterLibraries(L,
+        std::span<const LibraryDescriptor>(libraries),
+        static_cast<std::uint32_t>(std::max(1, apiVersion)));
 }

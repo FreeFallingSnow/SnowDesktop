@@ -40,6 +40,11 @@ int Add(lua_State* state)
     return 1;
 }
 
+int Noop(lua_State*)
+{
+    return 0;
+}
+
 class LuaState
 {
 public:
@@ -178,6 +183,74 @@ void TestRegistration()
     Check(
         std::string(lua_tostring(state, -1)) == "sentinel",
         "registration must preserve existing stack values");
+}
+
+void TestVersionedRegistration()
+{
+    LuaState state;
+    constexpr FunctionDescriptor functions[] = {
+        { "answer", ReturnFortyTwo, 1 },
+        { "add", Add, 2 },
+    };
+    snowdesktop::widget_api::RegisterLibrary(
+        state, "sample", functions, 1);
+    lua_getglobal(state, "sample");
+    lua_getfield(state, -1, "answer");
+    Check(lua_isfunction(state, -1),
+        "API v1 registration must expose v1 functions");
+    lua_pop(state, 1);
+    lua_getfield(state, -1, "add");
+    Check(lua_isnil(state, -1),
+        "API v1 registration must not expose v2 functions");
+    lua_pop(state, 2);
+}
+
+void TestV2Contract()
+{
+    Check(snowdesktop::widget_api::SupportsFeature("draw.immediate") &&
+            !snowdesktop::widget_api::SupportsFeature("view.tree"),
+        "host feature lookup must distinguish supported features");
+    const std::vector<std::string> required = {
+        "draw.immediate", "view.tree", "view.tree"
+    };
+    const auto missing = snowdesktop::widget_api::MissingFeatures(required);
+    Check(missing.size() == 1 && missing[0] == "view.tree",
+        "missing feature diagnostics must be stable and deduplicated");
+
+    LuaState state;
+    constexpr FunctionDescriptor functions[] = {
+        { "define", snowdesktop::widget_api::LuaDefineWidget, 2 },
+        { "apiInfo", snowdesktop::widget_api::LuaApiInfo, 2 },
+        { "hasFeature", snowdesktop::widget_api::LuaHasFeature, 2 },
+    };
+    snowdesktop::widget_api::RegisterLibrary(
+        state, "widget", functions, 2);
+
+    lua_getglobal(state, "widget");
+    lua_getfield(state, -1, "apiInfo");
+    Check(lua_pcall(state, 0, 1, 0) == LUA_OK &&
+            lua_istable(state, -1),
+        "widget.apiInfo must return the API contract table");
+    lua_getfield(state, -1, "current");
+    Check(lua_tointeger(state, -1) == 2,
+        "widget.apiInfo current version must be v2");
+    lua_pop(state, 2);
+
+    lua_getfield(state, -1, "hasFeature");
+    lua_pushliteral(state, "draw.immediate");
+    Check(lua_pcall(state, 1, 1, 0) == LUA_OK &&
+            lua_toboolean(state, -1) != 0,
+        "widget.hasFeature must expose the host feature catalog");
+    lua_pop(state, 1);
+
+    lua_getfield(state, -1, "define");
+    lua_newtable(state);
+    lua_pushcfunction(state, Noop);
+    lua_setfield(state, -2, "render");
+    Check(lua_pcall(state, 1, 1, 0) == LUA_OK &&
+            snowdesktop::widget_api::IsDefinedWidget(state, -1),
+        "widget.define must mark a valid immediate descriptor");
+    lua_pop(state, 2);
 }
 
 void TestCatalogValidation()
@@ -381,6 +454,8 @@ int main()
 {
     TestValidation();
     TestRegistration();
+    TestVersionedRegistration();
+    TestV2Contract();
     TestCatalogValidation();
     TestCatalogRegistration();
     TestInvalidRegistrationIsAtomic();

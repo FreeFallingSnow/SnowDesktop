@@ -305,6 +305,10 @@ std::string ManifestJson(const PackageManifest& manifest)
     appendArray(out, manifest.optionalPermissions);
     out << ",\n  \"networkDomains\": ";
     appendArray(out, manifest.networkDomains);
+    out << ",\n  \"requiredFeatures\": ";
+    appendArray(out, manifest.requiredFeatures);
+    out << ",\n  \"optionalFeatures\": ";
+    appendArray(out, manifest.optionalFeatures);
     out << "\n}\n";
     return out.str();
 }
@@ -556,6 +560,32 @@ bool IsExplicitDnsName(const std::string& domain)
         begin = end + 1;
     }
     return hasLetter;
+}
+
+bool IsFeatureId(const std::string& feature)
+{
+    if (feature.size() < 3 || feature.size() > 96 ||
+        feature != Lower(feature) || feature.find('.') == std::string::npos)
+        return false;
+    std::size_t begin = 0;
+    while (begin < feature.size())
+    {
+        const auto end = feature.find('.', begin);
+        const auto length = (end == std::string::npos
+            ? feature.size() : end) - begin;
+        if (length == 0 || length > 32 ||
+            !std::isalpha(static_cast<unsigned char>(feature[begin])))
+            return false;
+        for (std::size_t index = begin; index < begin + length; ++index)
+        {
+            const unsigned char ch = feature[index];
+            if (!(std::islower(ch) || std::isdigit(ch) || ch == '-'))
+                return false;
+        }
+        if (end == std::string::npos) break;
+        begin = end + 1;
+    }
+    return true;
 }
 
 bool IsBcp47Tag(const std::string& locale)
@@ -838,6 +868,17 @@ bool MatchesExpectedManifest(const PackageManifest& actual,
         error = "package version does not match the source metadata";
         return false;
     }
+    if (expected.schemaVersion > 0 &&
+        actual.schemaVersion != expected.schemaVersion)
+    {
+        error = "package schema version does not match the source metadata";
+        return false;
+    }
+    if (expected.apiVersion > 0 && actual.apiVersion != expected.apiVersion)
+    {
+        error = "package API version does not match the source metadata";
+        return false;
+    }
     const std::set<std::string> actualPermissions(
         actual.permissions.begin(), actual.permissions.end());
     const std::set<std::string> expectedPermissions(
@@ -865,6 +906,24 @@ bool MatchesExpectedManifest(const PackageManifest& actual,
     if (actualDomains != expectedDomains)
     {
         error = "package network domains do not match the source metadata";
+        return false;
+    }
+    const std::set<std::string> actualRequiredFeatures(
+        actual.requiredFeatures.begin(), actual.requiredFeatures.end());
+    const std::set<std::string> expectedRequiredFeatures(
+        expected.requiredFeatures.begin(), expected.requiredFeatures.end());
+    if (actualRequiredFeatures != expectedRequiredFeatures)
+    {
+        error = "package required features do not match the source metadata";
+        return false;
+    }
+    const std::set<std::string> actualOptionalFeatures(
+        actual.optionalFeatures.begin(), actual.optionalFeatures.end());
+    const std::set<std::string> expectedOptionalFeatures(
+        expected.optionalFeatures.begin(), expected.optionalFeatures.end());
+    if (actualOptionalFeatures != expectedOptionalFeatures)
+    {
+        error = "package optional features do not match the source metadata";
         return false;
     }
     return true;
@@ -1355,6 +1414,10 @@ bool WidgetPackageValidator::ReadManifest(
         ReadStringArray(root, "optionalPermissions", arraysValid);
     manifest.networkDomains =
         ReadStringArray(root, "networkDomains", arraysValid);
+    manifest.requiredFeatures =
+        ReadStringArray(root, "requiredFeatures", arraysValid);
+    manifest.optionalFeatures =
+        ReadStringArray(root, "optionalFeatures", arraysValid);
 
     if (const JsonValue* locales = root.Find("locales");
         locales && locales->IsObject())
@@ -1400,9 +1463,16 @@ bool WidgetPackageValidator::ReadManifest(
             manifest.locales.emplace(locale, std::move(localized));
         }
     }
-    if (manifest.schemaVersion != kPackageSchemaVersion)
+    const bool legacyContract =
+        manifest.schemaVersion == kLegacyPackageSchemaVersion &&
+        manifest.apiVersion == kLegacyApiVersion;
+    const bool currentContract =
+        manifest.schemaVersion == kPackageSchemaVersion &&
+        manifest.apiVersion == kHostApiVersion;
+    if (manifest.schemaVersion != kLegacyPackageSchemaVersion &&
+        manifest.schemaVersion != kPackageSchemaVersion)
         report.Add(ValidationSeverity::Error, "manifest.schemaVersion",
-            manifestPath, "schemaVersion must be 1");
+            manifestPath, "schemaVersion must be 1 or 2");
     if (!IsUuid(manifest.id))
         report.Add(ValidationSeverity::Error, "manifest.id", manifestPath,
             "id must be an immutable UUID");
@@ -1416,9 +1486,20 @@ bool WidgetPackageValidator::ReadManifest(
     if (!IsSemVer(manifest.version))
         report.Add(ValidationSeverity::Error, "manifest.version", manifestPath,
             "version must be SemVer");
-    if (manifest.apiVersion != kHostApiVersion)
+    if (manifest.apiVersion != kLegacyApiVersion &&
+        manifest.apiVersion != kHostApiVersion)
         report.Add(ValidationSeverity::Error, "manifest.apiVersion",
             manifestPath, "apiVersion is not supported by this host");
+    if (!legacyContract && !currentContract &&
+        (manifest.schemaVersion == kLegacyPackageSchemaVersion ||
+            manifest.schemaVersion == kPackageSchemaVersion) &&
+        (manifest.apiVersion == kLegacyApiVersion ||
+            manifest.apiVersion == kHostApiVersion))
+    {
+        report.Add(ValidationSeverity::Error, "manifest.contractVersion",
+            manifestPath,
+            "schemaVersion and apiVersion must both be 1 or both be 2");
+    }
     if (manifest.dataVersion < 1)
         report.Add(ValidationSeverity::Error, "manifest.dataVersion",
             manifestPath, "dataVersion must be a positive integer");
@@ -1453,7 +1534,7 @@ bool WidgetPackageValidator::ReadManifest(
     }
     if (!arraysValid)
         report.Add(ValidationSeverity::Error, "manifest.array", manifestPath,
-            "permissions, optionalPermissions, and networkDomains must be string arrays");
+            "permissions, domains, and feature declarations must be string arrays");
     std::set<std::string> uniquePermissions;
     for (const auto& permission : manifest.permissions)
     {
@@ -1491,6 +1572,32 @@ bool WidgetPackageValidator::ReadManifest(
                 "manifest.networkDomainDuplicate", manifestPath,
                 "duplicate network domain: " + domain);
     }
+    std::set<std::string> uniqueFeatures;
+    for (const auto& feature : manifest.requiredFeatures)
+    {
+        if (!IsFeatureId(feature))
+            report.Add(ValidationSeverity::Error, "manifest.feature",
+                manifestPath, "invalid required feature id: " + feature);
+        if (!uniqueFeatures.insert(feature).second)
+            report.Add(ValidationSeverity::Error,
+                "manifest.featureDuplicate", manifestPath,
+                "duplicate feature: " + feature);
+    }
+    for (const auto& feature : manifest.optionalFeatures)
+    {
+        if (!IsFeatureId(feature))
+            report.Add(ValidationSeverity::Error,
+                "manifest.optionalFeature", manifestPath,
+                "invalid optional feature id: " + feature);
+        if (!uniqueFeatures.insert(feature).second)
+            report.Add(ValidationSeverity::Error,
+                "manifest.featureDuplicate", manifestPath,
+                "required and optional features must be unique: " + feature);
+    }
+    if (legacyContract && !uniqueFeatures.empty())
+        report.Add(ValidationSeverity::Error, "manifest.featureVersion",
+            manifestPath,
+            "feature negotiation is only available to schema/API v2 packages");
     return report.Ok();
 }
 
@@ -3488,7 +3595,9 @@ LegacyMigrationResult WidgetPackageManager::MigrateLegacy(
         result.error = "legacy manifest is missing or invalid";
         return result;
     }
-    manifest.schemaVersion = kPackageSchemaVersion;
+    // Loose legacy scripts remain migration input until their entry point is
+    // rewritten to the API v2 descriptor contract.
+    manifest.schemaVersion = kLegacyPackageSchemaVersion;
     manifest.id = preferredId && WidgetPackageValidator::IsUuid(*preferredId)
         ? *preferredId : GenerateUuid();
     manifest.slug = Lower(WideToUtf8(legacy.scriptPath.stem().wstring()));
@@ -3500,7 +3609,7 @@ LegacyMigrationResult WidgetPackageManager::MigrateLegacy(
     ReadString(root, "version", manifest.version);
     if (!WidgetPackageValidator::IsSemVer(manifest.version))
         manifest.version = "1.0.0";
-    manifest.apiVersion = kHostApiVersion;
+    manifest.apiVersion = kLegacyApiVersion;
     manifest.dataVersion = 1;
     manifest.entry = "main.lua";
     ReadString(root, "minHostVersion", manifest.minHostVersion);
@@ -3837,6 +3946,7 @@ bool StaticCatalogSource::ReadCatalog(std::vector<PackageDetails>& entries,
         ReadString(value, "author", detail.manifest.author);
         ReadString(value, "license", detail.manifest.license);
         ReadString(value, "minHostVersion", detail.manifest.minHostVersion);
+        ReadInteger(value, "schemaVersion", detail.manifest.schemaVersion);
         ReadInteger(value, "apiVersion", detail.manifest.apiVersion);
         ReadInteger(value, "dataVersion", detail.manifest.dataVersion);
         bool arraysValid = true;
@@ -3846,6 +3956,10 @@ bool StaticCatalogSource::ReadCatalog(std::vector<PackageDetails>& entries,
             ReadStringArray(value, "optionalPermissions", arraysValid);
         detail.manifest.networkDomains =
             ReadStringArray(value, "networkDomains", arraysValid);
+        detail.manifest.requiredFeatures =
+            ReadStringArray(value, "requiredFeatures", arraysValid);
+        detail.manifest.optionalFeatures =
+            ReadStringArray(value, "optionalFeatures", arraysValid);
         if (const JsonValue* locales = value.Find("locales");
             locales && locales->IsObject())
         {
@@ -4072,11 +4186,14 @@ PublishResult LocalCatalogPublisher::Publish(const PublishRequest& request)
         std::string author;
         std::string license;
         std::string minHostVersion;
+        int schemaVersion = 0;
         int apiVersion = 0;
         int dataVersion = 0;
         std::vector<std::string> permissions;
         std::vector<std::string> optionalPermissions;
         std::vector<std::string> networkDomains;
+        std::vector<std::string> requiredFeatures;
+        std::vector<std::string> optionalFeatures;
         std::unordered_map<std::string, LocalizedMetadata> locales;
         std::vector<std::string> tags;
         std::string changeNotes;
@@ -4106,6 +4223,7 @@ PublishResult LocalCatalogPublisher::Publish(const PublishRequest& request)
                 ReadString(value, "author", record.author);
                 ReadString(value, "license", record.license);
                 ReadString(value, "minHostVersion", record.minHostVersion);
+                ReadInteger(value, "schemaVersion", record.schemaVersion);
                 ReadInteger(value, "apiVersion", record.apiVersion);
                 ReadInteger(value, "dataVersion", record.dataVersion);
                 bool arraysValid = true;
@@ -4116,6 +4234,10 @@ PublishResult LocalCatalogPublisher::Publish(const PublishRequest& request)
                         arraysValid);
                 record.networkDomains =
                     ReadStringArray(value, "networkDomains", arraysValid);
+                record.requiredFeatures =
+                    ReadStringArray(value, "requiredFeatures", arraysValid);
+                record.optionalFeatures =
+                    ReadStringArray(value, "optionalFeatures", arraysValid);
                 if (const JsonValue* locales = value.Find("locales");
                     locales && locales->IsObject())
                 {
@@ -4150,10 +4272,13 @@ PublishResult LocalCatalogPublisher::Publish(const PublishRequest& request)
         publishedManifest.slug, request.artifact.version, externalId,
         request.title, request.description, publishedManifest.author,
         publishedManifest.license, publishedManifest.minHostVersion,
+        publishedManifest.schemaVersion,
         publishedManifest.apiVersion, publishedManifest.dataVersion,
         publishedManifest.permissions,
         publishedManifest.optionalPermissions,
         publishedManifest.networkDomains,
+        publishedManifest.requiredFeatures,
+        publishedManifest.optionalFeatures,
         publishedManifest.locales, request.tags, request.changeNotes,
         PathUtf8(relative), actualSha256 });
     std::sort(records.begin(), records.end(),
@@ -4178,7 +4303,8 @@ PublishResult LocalCatalogPublisher::Publish(const PublishRequest& request)
             << "\",\"license\":\"" << JsonEscape(record.license)
             << "\",\"minHostVersion\":\""
             << JsonEscape(record.minHostVersion)
-            << "\",\"apiVersion\":" << record.apiVersion
+            << "\",\"schemaVersion\":" << record.schemaVersion
+            << ",\"apiVersion\":" << record.apiVersion
             << ",\"dataVersion\":" << record.dataVersion
             << ",\"permissions\":[";
         for (std::size_t permission = 0;
@@ -4201,6 +4327,20 @@ PublishResult LocalCatalogPublisher::Publish(const PublishRequest& request)
         {
             if (domain) out << ',';
             out << '"' << JsonEscape(record.networkDomains[domain]) << '"';
+        }
+        out << "],\"requiredFeatures\":[";
+        for (std::size_t feature = 0;
+            feature < record.requiredFeatures.size(); ++feature)
+        {
+            if (feature) out << ',';
+            out << '"' << JsonEscape(record.requiredFeatures[feature]) << '"';
+        }
+        out << "],\"optionalFeatures\":[";
+        for (std::size_t feature = 0;
+            feature < record.optionalFeatures.size(); ++feature)
+        {
+            if (feature) out << ',';
+            out << '"' << JsonEscape(record.optionalFeatures[feature]) << '"';
         }
         out << "],\"locales\":{";
         std::vector<std::string> localeNames;
