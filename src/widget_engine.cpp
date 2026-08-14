@@ -3710,6 +3710,17 @@ bool WidgetEngine::EnsureWidgetLoaded(const std::wstring& widgetId, const std::w
 {
     if (const int index = FindWidget(widgetId); index >= 0)
         return widgets_[index].valid;
+    if (widgetHostFailures_.contains(widgetId))
+        return false;
+    if (const auto package = GetWidgetPackage(packageId))
+    {
+        if (snowdesktop::widget::PermissionRuntimeBlockFor(
+                package->permissionState) !=
+            snowdesktop::widget::PermissionRuntimeBlock::None)
+        {
+            return false;
+        }
+    }
     const std::wstring path = ResolveWidgetPath(packageId);
     if (path.empty())
     {
