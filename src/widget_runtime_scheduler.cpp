@@ -30,6 +30,37 @@ bool NamedTimerSchedule::Set(
         repeat,
         hiddenPolicy,
         now + std::chrono::milliseconds(effectiveInterval),
+        -1,
+    };
+    return true;
+}
+
+bool NamedTimerSchedule::SetAt(
+    std::string name,
+    std::int64_t epochMilliseconds,
+    TimePoint now,
+    WallTimePoint wallNow,
+    ScheduleHiddenPolicy hiddenPolicy)
+{
+    if (name.empty() || name.size() > MaxNameBytes ||
+        (!timers_.contains(name) && timers_.size() >= MaxTimers) ||
+        epochMilliseconds < 0)
+    {
+        return false;
+    }
+    const std::int64_t wallNowMilliseconds =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            wallNow.time_since_epoch()).count();
+    if (epochMilliseconds > wallNowMilliseconds + MaxAbsoluteDelayMs)
+        return false;
+    const std::int64_t remaining = std::max<std::int64_t>(
+        0, epochMilliseconds - wallNowMilliseconds);
+    timers_[std::move(name)] = {
+        MinIntervalMs,
+        false,
+        hiddenPolicy,
+        now + std::chrono::milliseconds(remaining),
+        epochMilliseconds,
     };
     return true;
 }
@@ -45,6 +76,8 @@ bool NamedTimerSchedule::SetVisible(bool visible, TimePoint now)
     visible_ = visible;
     for (auto& [_, timer] : timers_)
     {
+        if (timer.absoluteEpochMilliseconds >= 0)
+            continue;
         if (timer.hiddenPolicy != ScheduleHiddenPolicy::Throttle)
             continue;
         const int effectiveInterval = visible_
@@ -59,6 +92,19 @@ bool NamedTimerSchedule::SetVisible(bool visible, TimePoint now)
     return true;
 }
 
+NamedTimerSchedule::TimePoint NamedTimerSchedule::EffectiveDue(
+    const Timer& timer, TimePoint now, WallTimePoint wallNow) noexcept
+{
+    if (timer.absoluteEpochMilliseconds < 0)
+        return timer.due;
+    const std::int64_t wallNowMilliseconds =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            wallNow.time_since_epoch()).count();
+    const std::int64_t remaining = std::max<std::int64_t>(0,
+        timer.absoluteEpochMilliseconds - wallNowMilliseconds);
+    return now + std::chrono::milliseconds(remaining);
+}
+
 bool NamedTimerSchedule::Eligible(const Timer& timer) const noexcept
 {
     return visible_ ||
@@ -68,10 +114,16 @@ bool NamedTimerSchedule::Eligible(const Timer& timer) const noexcept
 std::vector<std::string> NamedTimerSchedule::DueNames(
     TimePoint now) const
 {
+    return DueNames(now, WallClock::now());
+}
+
+std::vector<std::string> NamedTimerSchedule::DueNames(
+    TimePoint now, WallTimePoint wallNow) const
+{
     std::vector<std::string> result;
     for (const auto& [name, timer] : timers_)
     {
-        if (Eligible(timer) && now >= timer.due)
+        if (Eligible(timer) && now >= EffectiveDue(timer, now, wallNow))
             result.push_back(name);
     }
     return result;
@@ -88,9 +140,16 @@ std::optional<NamedTimerSchedule::Fire>
 NamedTimerSchedule::ConsumeDueInfo(
     std::string_view name, TimePoint now)
 {
+    return ConsumeDueInfo(name, now, WallClock::now());
+}
+
+std::optional<NamedTimerSchedule::Fire>
+NamedTimerSchedule::ConsumeDueInfo(
+    std::string_view name, TimePoint now, WallTimePoint wallNow)
+{
     auto timer = timers_.find(std::string(name));
     if (timer == timers_.end() || !Eligible(timer->second) ||
-        now < timer->second.due)
+        now < EffectiveDue(timer->second, now, wallNow))
         return std::nullopt;
 
     Fire result;
@@ -122,6 +181,13 @@ NamedTimerSchedule::ConsumeDueInfo(
 std::optional<std::chrono::milliseconds>
 NamedTimerSchedule::NextDelay(TimePoint now) const
 {
+    return NextDelay(now, WallClock::now());
+}
+
+std::optional<std::chrono::milliseconds>
+NamedTimerSchedule::NextDelay(
+    TimePoint now, WallTimePoint wallNow) const
+{
     if (timers_.empty())
         return std::nullopt;
 
@@ -129,8 +195,9 @@ NamedTimerSchedule::NextDelay(TimePoint now) const
     for (const auto& [_, timer] : timers_)
     {
         if (!Eligible(timer)) continue;
-        if (!nextDue || timer.due < *nextDue)
-            nextDue = timer.due;
+        const TimePoint due = EffectiveDue(timer, now, wallNow);
+        if (!nextDue || due < *nextDue)
+            nextDue = due;
     }
     if (!nextDue) return std::nullopt;
 

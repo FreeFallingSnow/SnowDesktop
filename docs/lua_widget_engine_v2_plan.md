@@ -487,11 +487,11 @@ schedule.every("clock", 60000, {
     coalesce = true
 })
 
-schedule.at("market-open", "2026-08-17T09:30:00+08:00")
+schedule.at("market-open", time.add(time.now(), { hours = 1 }))
 
 schedule.timeline("agenda", {
-    { at = "2026-08-14T09:00:00+08:00", value = "meeting" },
-    { at = "2026-08-14T10:00:00+08:00", value = "available" }
+    { at = time.add(time.now(), { hours = 1 }), value = "meeting" },
+    { at = time.add(time.now(), { hours = 2 }), value = "available" }
 }, { reload = "atEnd" })
 ```
 
@@ -503,7 +503,7 @@ schedule.timeline("agenda", {
     id = "clock",
     missed = 3,
     coalesced = true,
-    now = "2026-08-14T09:03:00+08:00"
+    now = 1786669380000 -- UTC epoch milliseconds
 }
 ```
 
@@ -518,12 +518,14 @@ schedule.timeline("agenda", {
 - 内置组件迁移时必须把 `refreshIntervalMs` 和 `widget.setTimer` 显式改为 v2 schedule，不在发布运行时保留隐式适配。
 
 当前过渡实现已发布 `schedule.basic`：`schedule.every(id, ms)`、
-`schedule.after(id, ms)` 和 `schedule.cancel(id)` 复用宿主截止时间队列，限制每实例
+`schedule.after(id, ms)`、`schedule.at(id, epochMilliseconds)` 和
+`schedule.cancel(id)` 复用宿主截止时间队列，限制每实例
 32 个、ID 128 字节、最小实际周期 100 ms，并通过 `event.kind="schedule"` 返回
 `id/missed/coalesced`。`schedule.visibility` 已增加第三个
 `{ whenHidden="pause"|"throttle"|"continue" }` 参数，默认 throttle；pause 在恢复
 可见时合并错过的截止时间，throttle 使用 5000 ms 隐藏下限。卸载、热重载和关闭
-自动取消。绝对 `at`、timeline 和预览虚拟时钟尚未实现，不能计入完整调度契约。
+自动取消。`schedule.absolute` 将最远 366 天的 UTC 绝对截止时间重新投影到单调时钟，
+过去截止时间在下一宿主唤醒合并触发；timeline 和预览虚拟时钟尚未实现，不能计入完整调度契约。
 
 ## 12. 数据订阅与任务
 

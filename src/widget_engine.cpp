@@ -2495,6 +2495,61 @@ static int LuaScheduleSet(lua_State* state, bool repeat,
     return 1;
 }
 
+static int lua_ScheduleAt(lua_State* state)
+{
+    size_t nameLength = 0;
+    const char* name = luaL_checklstring(state, 1, &nameLength);
+    if (nameLength == 0 || nameLength >
+        snowdesktop::widget_runtime::NamedTimerSchedule::MaxNameBytes)
+    {
+        return luaL_error(state,
+            "schedule.at: id must contain 1 to 128 bytes");
+    }
+    const lua_Integer epochMilliseconds = luaL_checkinteger(state, 2);
+    const auto wallNow = std::chrono::system_clock::now();
+    const auto wallNowMilliseconds =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            wallNow.time_since_epoch()).count();
+    if (epochMilliseconds < 0 ||
+        epochMilliseconds > wallNowMilliseconds +
+            snowdesktop::widget_runtime::NamedTimerSchedule::
+                MaxAbsoluteDelayMs)
+    {
+        return luaL_error(state,
+            "schedule.at: epochMilliseconds must be a non-negative UTC timestamp no more than 366 days in the future");
+    }
+    auto hiddenPolicy =
+        snowdesktop::widget_runtime::ScheduleHiddenPolicy::Throttle;
+    if (!lua_isnoneornil(state, 3))
+    {
+        luaL_checktype(state, 3, LUA_TTABLE);
+        lua_getfield(state, 3, "whenHidden");
+        if (!lua_isnil(state, -1))
+        {
+            size_t valueLength = 0;
+            const char* raw = luaL_checklstring(
+                state, -1, &valueLength);
+            const std::string_view value(raw, valueLength);
+            if (value == "pause")
+                hiddenPolicy = snowdesktop::widget_runtime::ScheduleHiddenPolicy::Pause;
+            else if (value == "throttle")
+                hiddenPolicy = snowdesktop::widget_runtime::ScheduleHiddenPolicy::Throttle;
+            else if (value == "continue")
+                hiddenPolicy = snowdesktop::widget_runtime::ScheduleHiddenPolicy::Continue;
+            else
+                return luaL_error(state,
+                    "schedule.at: whenHidden must be 'pause', 'throttle', or 'continue'");
+        }
+        lua_pop(state, 1);
+    }
+    auto* d2d = GetD2D(state);
+    lua_pushboolean(state, d2d && d2d->engine &&
+        d2d->engine->RuntimeSetTimerAt(BoundWidgetId(state),
+            std::string(name, nameLength),
+            static_cast<std::int64_t>(epochMilliseconds), hiddenPolicy));
+    return 1;
+}
+
 static int lua_ScheduleEvery(lua_State* state)
 {
     return LuaScheduleSet(state, true, "schedule.every");
@@ -10560,6 +10615,9 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
     widget.namedTimerId = 0;
 
     const auto now = std::chrono::steady_clock::now();
+    const auto wallNowMilliseconds =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
     const std::vector<std::string> dueNames =
         widget.namedTimers.DueNames(now);
 
@@ -10573,10 +10631,13 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
         if (widget.manifest.apiVersion >= 2)
         {
             (void)InvokeLifecycleEvent(widget, "schedule",
-                [&fire](lua_State* eventState) {
+                [&fire, wallNowMilliseconds](lua_State* eventState) {
                     lua_pushlstring(eventState,
                         fire->name.data(), fire->name.size());
                     lua_setfield(eventState, -2, "id");
+                    lua_pushinteger(eventState,
+                        static_cast<lua_Integer>(wallNowMilliseconds));
+                    lua_setfield(eventState, -2, "now");
                     lua_pushinteger(eventState,
                         static_cast<lua_Integer>(fire->missed));
                     lua_setfield(eventState, -2, "missed");
@@ -12864,6 +12925,23 @@ void WidgetEngine::RescheduleNamedTimer(LuaWidget& widget)
         return;
     widget.namedTimerId = widgetTimerRequestCallback_(
         widget.widgetId, static_cast<UINT>(delay->count()));
+}
+
+bool WidgetEngine::RuntimeSetTimerAt(const std::wstring& widgetId,
+    const std::string& name, std::int64_t epochMilliseconds,
+    snowdesktop::widget_runtime::ScheduleHiddenPolicy hiddenPolicy)
+{
+    if (snowdesktop::widget_runtime::IsDryLoad()) return false;
+    int index = FindWidget(widgetId);
+    if (index < 0 || name.empty()) return false;
+    if (!widgets_[index].namedTimers.SetAt(name, epochMilliseconds,
+            std::chrono::steady_clock::now(),
+            std::chrono::system_clock::now(), hiddenPolicy))
+    {
+        return false;
+    }
+    RescheduleNamedTimer(widgets_[index]);
+    return true;
 }
 
 int WidgetEngine::RuntimeHttpRequest(const std::wstring& widgetId, HttpRequestOptions options)
@@ -16599,6 +16677,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
     static constexpr FunctionDescriptor schedule[] = {
         { "every", lua_ScheduleEvery, 2 },
         { "after", lua_ScheduleAfter, 2 },
+        { "at", lua_ScheduleAt, 2 },
         { "cancel", lua_ScheduleCancel, 2 },
     };
     static constexpr FunctionDescriptor data[] = {

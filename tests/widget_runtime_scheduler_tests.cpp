@@ -150,6 +150,57 @@ void TestVisibilityPolicies()
                 std::chrono::milliseconds(5000),
         "hidden throttle must preserve its floor after every firing");
 }
+
+void TestAbsoluteDeadlines()
+{
+    const Schedule::TimePoint steadyStart{};
+    const Schedule::WallTimePoint wallStart{
+        std::chrono::milliseconds(1'000'000) };
+    Schedule schedule;
+    Check(schedule.SetAt("absolute", 1'000'500,
+              steadyStart, wallStart, HiddenPolicy::Continue),
+        "an absolute deadline within the bounded horizon must be accepted");
+    Check(schedule.NextDelay(steadyStart, wallStart) ==
+            std::chrono::milliseconds(500),
+        "an absolute deadline must project onto the steady host clock");
+    Check(schedule.DueNames(
+            steadyStart + std::chrono::milliseconds(499),
+            wallStart + std::chrono::milliseconds(499)).empty(),
+        "an absolute deadline must not fire early");
+    const auto due = schedule.DueNames(
+        steadyStart + std::chrono::milliseconds(500),
+        wallStart + std::chrono::milliseconds(500));
+    Check(due.size() == 1 && due[0] == "absolute" &&
+            schedule.ConsumeDueInfo("absolute",
+                steadyStart + std::chrono::milliseconds(500),
+                wallStart + std::chrono::milliseconds(500)).has_value() &&
+            schedule.Size() == 0,
+        "an absolute deadline must fire once and retire itself");
+
+    Check(schedule.SetAt("past", 900'000,
+              steadyStart, wallStart) &&
+            schedule.NextDelay(steadyStart, wallStart) ==
+                std::chrono::milliseconds(Schedule::MinIntervalMs),
+        "a past absolute deadline must coalesce into the next host wakeup");
+    Check(!schedule.SetAt("too-far",
+              1'000'000 + Schedule::MaxAbsoluteDelayMs + 1,
+              steadyStart, wallStart),
+        "absolute deadlines beyond 366 days must be rejected");
+
+    Schedule paused;
+    Check(paused.SetVisible(false, steadyStart) &&
+            paused.SetAt("paused-at", 1'000'100,
+                steadyStart, wallStart, HiddenPolicy::Pause) &&
+            paused.DueNames(
+                steadyStart + std::chrono::milliseconds(200),
+                wallStart + std::chrono::milliseconds(200)).empty() &&
+            paused.SetVisible(true,
+                steadyStart + std::chrono::milliseconds(200)) &&
+            paused.DueNames(
+                steadyStart + std::chrono::milliseconds(200),
+                wallStart + std::chrono::milliseconds(200)).size() == 1,
+        "a hidden paused absolute deadline must coalesce on resume");
+}
 }
 
 int main()
@@ -158,6 +209,7 @@ int main()
     TestDueConsumption();
     TestDelayClampingAndRounding();
     TestVisibilityPolicies();
+    TestAbsoluteDeadlines();
     std::cout << "widget runtime scheduler tests passed\n";
     return 0;
 }

@@ -304,6 +304,7 @@
 ---@field name? string
 ---@field missed? integer
 ---@field coalesced? boolean
+---@field now? integer UTC epoch milliseconds when a schedule event is dispatched.
 ---@field visible? boolean
 ---@field selected? boolean
 ---@field columns? integer
@@ -572,6 +573,13 @@ function schedule.every(id, milliseconds, options) end
 ---@param options? SnowScheduleOptions
 ---@return boolean
 function schedule.after(id, milliseconds, options) end
+
+---Create or replace a one-shot schedule at a UTC epoch timestamp.
+---@param id string
+---@param epochMilliseconds integer No more than 366 days in the future.
+---@param options? SnowScheduleOptions
+---@return boolean
+function schedule.at(id, epochMilliseconds, options) end
 
 ---@param id string
 ---@return boolean
