@@ -1614,6 +1614,7 @@ bool WidgetPackageManager::Initialize(std::string& error)
 bool WidgetPackageManager::LoadRegistry(std::string& error)
 {
     registry_.clear();
+    permissionDecisions_.clear();
     developmentOverrides_.clear();
     legacyAliases_.clear();
     steamSubscriptionsByAccount_.clear();
@@ -1669,6 +1670,44 @@ bool WidgetPackageManager::LoadRegistry(std::string& error)
             if (WidgetPackageValidator::IsUuid(entry.packageId) &&
                 WidgetPackageValidator::IsSemVer(entry.activeVersion))
                 registry_[entry.packageId] = std::move(entry);
+        }
+    }
+    if (const JsonValue* decisions = root.Find("permissionDecisions");
+        decisions && decisions->IsArray())
+    {
+        for (const auto& value : decisions->array)
+        {
+            if (!value.IsObject()) continue;
+            PermissionDecisionRecord record;
+            ReadString(value, "packageId", record.packageId);
+            ReadString(value, "providerId", record.source.providerId);
+            ReadString(value, "externalItemId",
+                record.source.externalItemId);
+            if (const JsonValue* state = value.Find("state"); state)
+            {
+                const auto parsed = state->IsString()
+                    ? ParsePermissionDecisionState(state->string)
+                    : std::nullopt;
+                record.state = parsed.value_or(
+                    PermissionDecisionState::Pending);
+            }
+            bool arraysValid = true;
+            record.requestedPermissions =
+                ReadStringArray(value, "requestedPermissions", arraysValid);
+            record.requestedNetworkDomains =
+                ReadStringArray(value, "requestedNetworkDomains", arraysValid);
+            record.grantedPermissions =
+                ReadStringArray(value, "grantedPermissions", arraysValid);
+            record.grantedNetworkDomains =
+                ReadStringArray(value, "grantedNetworkDomains", arraysValid);
+            if (!WidgetPackageValidator::IsUuid(record.packageId) ||
+                record.source.providerId.empty() ||
+                record.source.externalItemId.empty())
+                continue;
+            const std::string key = record.packageId + "\n" +
+                record.source.providerId + "\n" +
+                record.source.externalItemId;
+            permissionDecisions_[key] = std::move(record);
         }
     }
     if (const JsonValue* overrides = root.Find("developmentOverrides");
@@ -1751,6 +1790,68 @@ bool WidgetPackageManager::SaveRegistry(std::string& error) const
         out << "\n    \"" << JsonEscape(developmentOverrides[i]) << '"';
     }
     if (!developmentOverrides.empty()) out << '\n';
+    out << "  ],\n  \"permissionDecisions\": [";
+    std::vector<const PermissionDecisionRecord*> decisions;
+    decisions.reserve(permissionDecisions_.size());
+    for (const auto& [key, decision] : permissionDecisions_)
+    {
+        (void)key;
+        decisions.push_back(&decision);
+    }
+    std::sort(decisions.begin(), decisions.end(),
+        [](const auto* a, const auto* b) {
+            return std::tie(a->packageId, a->source.providerId,
+                       a->source.externalItemId) <
+                std::tie(b->packageId, b->source.providerId,
+                       b->source.externalItemId);
+        });
+    for (std::size_t i = 0; i < decisions.size(); ++i)
+    {
+        if (i) out << ',';
+        const auto& decision = *decisions[i];
+        out << "\n    {\"packageId\":\""
+            << JsonEscape(decision.packageId)
+            << "\",\"providerId\":\""
+            << JsonEscape(decision.source.providerId)
+            << "\",\"externalItemId\":\""
+            << JsonEscape(decision.source.externalItemId)
+            << "\",\"state\":\""
+            << PermissionDecisionStateName(decision.state)
+            << "\",\"requestedPermissions\":[";
+        for (std::size_t permission = 0;
+            permission < decision.requestedPermissions.size(); ++permission)
+        {
+            if (permission) out << ',';
+            out << '"' << JsonEscape(
+                decision.requestedPermissions[permission]) << '"';
+        }
+        out << "],\"requestedNetworkDomains\":[";
+        for (std::size_t domain = 0;
+            domain < decision.requestedNetworkDomains.size(); ++domain)
+        {
+            if (domain) out << ',';
+            out << '"' << JsonEscape(
+                decision.requestedNetworkDomains[domain]) << '"';
+        }
+        out << "],\"grantedPermissions\":[";
+        for (std::size_t permission = 0;
+            permission < decision.grantedPermissions.size(); ++permission)
+        {
+            if (permission) out << ',';
+            out << '"' << JsonEscape(
+                decision.grantedPermissions[permission]) << '"';
+        }
+        out << "],\"grantedNetworkDomains\":[";
+        for (std::size_t domain = 0;
+            domain < decision.grantedNetworkDomains.size(); ++domain)
+        {
+            if (domain) out << ',';
+            out << '"' << JsonEscape(
+                decision.grantedNetworkDomains[domain]) << '"';
+        }
+        out << "]}";
+    }
+    if (!decisions.empty()) out << '\n';
     out << "  ],\n  \"legacyAliases\": {";
     std::vector<std::pair<std::string, std::string>> aliases(
         legacyAliases_.begin(), legacyAliases_.end());
@@ -1796,6 +1897,36 @@ bool WidgetPackageManager::SaveRegistry(std::string& error) const
 bool WidgetPackageManager::Refresh(std::string& error)
 {
     packages_.clear();
+    const auto applyExplicitDecision = [&](InstalledPackage& package) {
+        const std::string key = package.manifest.id + "\n" +
+            package.source.providerId + "\n" +
+            package.source.externalItemId;
+        const auto decision = permissionDecisions_.find(key);
+        if (decision == permissionDecisions_.end()) return false;
+        const std::set<std::string> requestedPermissions(
+            decision->second.requestedPermissions.begin(),
+            decision->second.requestedPermissions.end());
+        const std::set<std::string> declaredPermissions(
+            package.manifest.permissions.begin(),
+            package.manifest.permissions.end());
+        const std::set<std::string> requestedDomains(
+            decision->second.requestedNetworkDomains.begin(),
+            decision->second.requestedNetworkDomains.end());
+        const std::set<std::string> declaredDomains(
+            package.manifest.networkDomains.begin(),
+            package.manifest.networkDomains.end());
+        if (requestedPermissions != declaredPermissions ||
+            requestedDomains != declaredDomains)
+            return false;
+        package.permissionState = decision->second.state;
+        package.grantedPermissions = ResolveGrantedScopes(
+            package.permissionState, package.manifest.permissions,
+            decision->second.grantedPermissions);
+        package.grantedNetworkDomains = ResolveGrantedScopes(
+            package.permissionState, package.manifest.networkDomains,
+            decision->second.grantedNetworkDomains);
+        return true;
+    };
     auto scanRoot = [&](const std::filesystem::path& root, bool builtin,
         bool development) {
         std::error_code ec;
@@ -1823,6 +1954,7 @@ bool WidgetPackageManager::Refresh(std::string& error)
                 package.grantedNetworkDomains =
                     package.manifest.networkDomains;
                 package.enabled = true;
+                applyExplicitDecision(package);
                 package.active = builtin ||
                     developmentOverrides_.contains(package.manifest.id);
                 package.selected = package.active;
@@ -1862,6 +1994,7 @@ bool WidgetPackageManager::Refresh(std::string& error)
                         package.permissionState,
                         package.manifest.networkDomains,
                         registryIt->second.grantedNetworkDomains);
+                    applyExplicitDecision(package);
                 }
                 else
                 {
@@ -2106,19 +2239,29 @@ bool WidgetPackageManager::CommitStagedPackage(
     if (existing != registry_.end() && !allowPermissionExpansion)
     {
         std::vector<std::string> currentDeclared;
+        std::vector<std::string> currentDomains;
         if (const auto current = Resolve(manifest.id))
+        {
             currentDeclared = current->manifest.permissions;
-        const auto effectiveGranted = ResolveGrantedScopes(
-            existing->second.permissionState,
-            currentDeclared,
-            existing->second.grantedPermissions);
-        const std::set<std::string> granted(
-            effectiveGranted.begin(), effectiveGranted.end());
+            currentDomains = current->manifest.networkDomains;
+        }
+        const std::set<std::string> previouslyRequested(
+            currentDeclared.begin(), currentDeclared.end());
         for (const auto& permission : manifest.permissions)
         {
-            if (!granted.contains(permission))
+            if (!previouslyRequested.contains(permission))
             {
                 error = "update requests a new permission: " + permission;
+                return false;
+            }
+        }
+        const std::set<std::string> previouslyRequestedDomains(
+            currentDomains.begin(), currentDomains.end());
+        for (const auto& domain : manifest.networkDomains)
+        {
+            if (!previouslyRequestedDomains.contains(domain))
+            {
+                error = "update requests a new network domain: " + domain;
                 return false;
             }
         }
@@ -2147,9 +2290,16 @@ bool WidgetPackageManager::CommitStagedPackage(
     entry.packageId = manifest.id;
     entry.activeVersion = manifest.version;
     entry.source = sourceRef;
-    entry.permissionState = PermissionDecisionState::Granted;
-    entry.grantedPermissions = manifest.permissions;
-    entry.grantedNetworkDomains = manifest.networkDomains;
+    const bool requiresConsent = !PermissionsRequiringConsent(
+        manifest.permissions).empty();
+    entry.permissionState = requiresConsent
+        ? PermissionDecisionState::Pending
+        : PermissionDecisionState::Granted;
+    if (!requiresConsent)
+    {
+        entry.grantedPermissions = manifest.permissions;
+        entry.grantedNetworkDomains = manifest.networkDomains;
+    }
     entry.enabled = true;
     const auto oldEntry = registry_.find(manifest.id);
     const std::optional<RegistryEntry> previous = oldEntry == registry_.end()
@@ -2537,6 +2687,93 @@ bool WidgetPackageManager::SetEnabled(const std::string& packageId,
     found->second.enabled = enabled;
     if (!SaveRegistry(error)) return false;
     return Refresh(error);
+}
+
+bool WidgetPackageManager::SetPermissionDecision(
+    const std::string& packageId, PermissionDecisionState state,
+    const std::vector<std::string>& grantedPermissions,
+    const std::vector<std::string>& grantedNetworkDomains,
+    std::string& error)
+{
+    const auto package = Resolve(packageId);
+    if (!package)
+    {
+        error = "package is unavailable";
+        return false;
+    }
+    if (state == PermissionDecisionState::LegacyImplicit)
+    {
+        error = "legacy implicit permission state cannot be user-authored";
+        return false;
+    }
+    if ((state == PermissionDecisionState::Pending ||
+            state == PermissionDecisionState::Denied) &&
+        (!grantedPermissions.empty() || !grantedNetworkDomains.empty()))
+    {
+        error = "pending or denied decisions cannot retain granted scopes";
+        return false;
+    }
+    const std::set<std::string> declaredPermissions(
+        package->manifest.permissions.begin(),
+        package->manifest.permissions.end());
+    const std::set<std::string> declaredDomains(
+        package->manifest.networkDomains.begin(),
+        package->manifest.networkDomains.end());
+    if (!std::all_of(grantedPermissions.begin(), grantedPermissions.end(),
+            [&](const auto& permission) {
+                return declaredPermissions.contains(permission);
+            }) ||
+        !std::all_of(grantedNetworkDomains.begin(),
+            grantedNetworkDomains.end(), [&](const auto& domain) {
+                return declaredDomains.contains(domain);
+            }))
+    {
+        error = "granted scopes must be declared by the active package";
+        return false;
+    }
+
+    PermissionDecisionRecord record;
+    record.packageId = packageId;
+    record.source = package->source;
+    record.state = state;
+    record.requestedPermissions = package->manifest.permissions;
+    record.requestedNetworkDomains = package->manifest.networkDomains;
+    record.grantedPermissions = grantedPermissions;
+    record.grantedNetworkDomains = grantedNetworkDomains;
+    const std::string key = packageId + "\n" +
+        record.source.providerId + "\n" + record.source.externalItemId;
+    const auto previousDecision = permissionDecisions_.find(key);
+    const std::optional<PermissionDecisionRecord> oldDecision =
+        previousDecision == permissionDecisions_.end()
+        ? std::nullopt
+        : std::optional<PermissionDecisionRecord>(previousDecision->second);
+    const auto registry = registry_.find(packageId);
+    const bool updateRegistry = registry != registry_.end() &&
+        registry->second.source == package->source;
+    const std::optional<RegistryEntry> oldRegistry = updateRegistry
+        ? std::optional<RegistryEntry>(registry->second)
+        : std::nullopt;
+
+    permissionDecisions_[key] = record;
+    if (updateRegistry)
+    {
+        registry->second.permissionState = state;
+        registry->second.grantedPermissions = grantedPermissions;
+        registry->second.grantedNetworkDomains = grantedNetworkDomains;
+    }
+    if (SaveRegistry(error) && Refresh(error)) return true;
+
+    const std::string originalError = error;
+    if (oldDecision)
+        permissionDecisions_[key] = *oldDecision;
+    else
+        permissionDecisions_.erase(key);
+    if (oldRegistry) registry_[packageId] = *oldRegistry;
+    std::string rollbackError;
+    SaveRegistry(rollbackError);
+    Refresh(rollbackError);
+    error = originalError;
+    return false;
 }
 
 bool WidgetPackageManager::CreateDevelopmentProject(

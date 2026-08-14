@@ -751,8 +751,21 @@ int main()
         std::filesystem::copy_options::recursive, ec);
     WidgetPackageManager manager(managerPaths);
     Expect(manager.Initialize(error), "package manager initializes");
-    Expect(manager.Resolve(manifest.id)->builtin,
+    Expect(manager.Resolve(manifest.id)->builtin &&
+            manager.Resolve(manifest.id)->permissionState ==
+                PermissionDecisionState::LegacyImplicit,
         "a discovered development package is inactive by default");
+    Expect(manager.SetPermissionDecision(manifest.id,
+            PermissionDecisionState::Granted, manifest.permissions,
+            manifest.networkDomains, error) &&
+            manager.Resolve(manifest.id)->permissionState ==
+                PermissionDecisionState::Granted,
+        "an explicit built-in permission grant applies before activation");
+    WidgetPackageManager builtInGrantReloaded(managerPaths);
+    Expect(builtInGrantReloaded.Initialize(error) &&
+            builtInGrantReloaded.Resolve(manifest.id)->permissionState ==
+                PermissionDecisionState::Granted,
+        "a source-bound built-in grant survives a manager restart");
     const auto initialPackages = manager.ListPackages();
     const auto initialDevelopment = std::find_if(
         initialPackages.begin(), initialPackages.end(),
@@ -764,16 +777,24 @@ int main()
         !initialDevelopment->active,
         "inactive development candidates remain visible to management UI");
     Expect(manager.SetDevelopmentOverride(manifest.id, true, error) &&
-        manager.Resolve(manifest.id)->development,
-        "development source activates only after an explicit request");
+            manager.Resolve(manifest.id)->development &&
+            manager.Resolve(manifest.id)->permissionState ==
+                PermissionDecisionState::LegacyImplicit,
+        "development source activation does not inherit a built-in grant");
     Expect(manager.SetDevelopmentOverride(manifest.id, false, error) &&
-        manager.Resolve(manifest.id)->builtin,
-        "deactivating development restores the normal source");
+            manager.Resolve(manifest.id)->builtin &&
+            manager.Resolve(manifest.id)->permissionState ==
+                PermissionDecisionState::Granted,
+        "deactivating development restores the source-bound built-in grant");
     InstalledPackage installed;
     report = {};
     Expect(manager.InstallDirectory(sourceV1, { "local", "package-test" },
         false, installed, report, error), "folder package installs");
-    Expect(manager.Resolve(manifest.id).has_value(), "installed package resolves");
+    Expect(manager.Resolve(manifest.id).has_value() &&
+            manager.Resolve(manifest.id)->permissionState ==
+                PermissionDecisionState::Pending &&
+            manager.Resolve(manifest.id)->grantedPermissions.empty(),
+        "new sensitive package installs without receiving runtime permission");
     Expect(manager.SetDevelopmentOverride(manifest.id, true, error) &&
         manager.Resolve(manifest.id)->development,
         "an explicitly activated development package overrides an install");
@@ -799,6 +820,17 @@ int main()
     Expect(manager.SetDevelopmentOverride(manifest.id, false, error) &&
         !manager.Resolve(manifest.id)->development,
         "the primary manager continues with the installed source");
+    Expect(manager.SetPermissionDecision(manifest.id,
+            PermissionDecisionState::Granted, manifest.permissions,
+            manifest.networkDomains, error) &&
+            manager.Resolve(manifest.id)->permissionState ==
+                PermissionDecisionState::Granted,
+        "an installed package becomes runnable only after explicit consent");
+    WidgetPackageManager installedGrantReloaded(managerPaths);
+    Expect(installedGrantReloaded.Initialize(error) &&
+            installedGrantReloaded.Resolve(manifest.id)->permissionState ==
+                PermissionDecisionState::Granted,
+        "an installed package grant survives a manager restart");
     Expect(manager.ResolveEntry(manifest.id).value_or(L"").filename() == L"main.lua",
         "entry resolves inside the package");
     Expect(manager.SetEnabled(manifest.id, false, error),
@@ -833,11 +865,19 @@ int main()
         false, installed, report, error) == false,
         "silent cross-provider update is rejected");
     error.clear();
-    Expect(manager.InstallDirectory(sourceV2, { "local", "package-test" },
+    Expect(!manager.InstallDirectory(sourceV2, { "local", "package-test" },
         false, installed, report, error),
-        "domain metadata changes do not require permission expansion");
+        "network origin expansion requires confirmation");
+    error.clear();
+    Expect(manager.InstallDirectory(sourceV2, { "local", "package-test" },
+        false, installed, report, error, true),
+        "confirmed network origin expansion installs pending consent");
     Expect(manager.Resolve(manifest.id)->manifest.version == "1.1.0",
         "new version becomes active");
+    Expect(manager.Resolve(manifest.id)->permissionState ==
+            PermissionDecisionState::Pending &&
+            manager.Resolve(manifest.id)->grantedPermissions.empty(),
+        "a changed permission scope invalidates the previous grant");
 
     const auto sourceV3 = root / L"source-v3";
     MakePackage(sourceV3, "1.2.0",
@@ -857,8 +897,9 @@ int main()
     Expect(manager.InstallDirectory(sourceV3, { "local", "package-test" },
         false, installed, report, error, true),
         "confirmed permission expansion installs");
-    Expect(installed.grantedPermissions.size() == 2,
-        "permission snapshot is persisted");
+    Expect(installed.permissionState == PermissionDecisionState::Pending &&
+            installed.grantedPermissions.empty(),
+        "install confirmation does not substitute for runtime consent");
     error.clear();
     Expect(manager.Rollback(manifest.id, "1.0.0", error),
         "known-good version can be restored");

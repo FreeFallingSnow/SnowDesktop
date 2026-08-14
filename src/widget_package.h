@@ -358,6 +358,11 @@ public:
         ValidationReport& report, std::string& error) const;
     bool SetEnabled(const std::string& packageId, bool enabled,
         std::string& error);
+    bool SetPermissionDecision(const std::string& packageId,
+        PermissionDecisionState state,
+        const std::vector<std::string>& grantedPermissions,
+        const std::vector<std::string>& grantedNetworkDomains,
+        std::string& error);
     bool CreateDevelopmentProject(const std::string& packageId,
         std::filesystem::path& projectRoot, std::string& error);
     bool SetDevelopmentOverride(const std::string& packageId, bool active,
@@ -396,6 +401,17 @@ private:
         bool enabled = true;
     };
 
+    struct PermissionDecisionRecord
+    {
+        std::string packageId;
+        PackageSourceRef source;
+        PermissionDecisionState state = PermissionDecisionState::Pending;
+        std::vector<std::string> requestedPermissions;
+        std::vector<std::string> requestedNetworkDomains;
+        std::vector<std::string> grantedPermissions;
+        std::vector<std::string> grantedNetworkDomains;
+    };
+
     bool Refresh(std::string& error);
     bool LoadRegistry(std::string& error);
     bool SaveRegistry(std::string& error) const;
@@ -422,6 +438,8 @@ private:
     WidgetPackageValidator validator_;
     std::vector<InstalledPackage> packages_;
     std::unordered_map<std::string, RegistryEntry> registry_;
+    std::unordered_map<std::string, PermissionDecisionRecord>
+        permissionDecisions_;
     std::unordered_set<std::string> developmentOverrides_;
     std::unordered_map<std::string, std::string> legacyAliases_;
     std::unordered_map<std::string, std::unordered_set<std::string>>
