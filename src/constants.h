@@ -213,6 +213,7 @@ constexpr UINT kFloatingDockBackdropCommitMessage = WM_APP + 9;
 constexpr UINT kSteamWorkshopSubscriptionReadyMessage = WM_APP + 10;
 constexpr UINT kSteamWorkshopSubscriptionChangedMessage = WM_APP + 11;
 constexpr UINT kDemoIconDecodedMessage = WM_APP + 12;
+constexpr UINT kWidgetConsentResolvedMessage = WM_APP + 13;
 constexpr UINT_PTR kShellChangeTimerId = 2;
 constexpr UINT kShellChangeDebounceMs = 500;
 

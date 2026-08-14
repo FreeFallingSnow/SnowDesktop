@@ -2181,6 +2181,7 @@ private:
     void AddFolderMappingWidgetAt(POINT screenPoint);
     /** @brief 在指定屏幕位置创建 Lua 脚本部件。 @param screenPoint 屏幕坐标 @param scriptFilename 脚本文件名 */
     void AddLuaWidgetAt(POINT screenPoint, const std::wstring& scriptFilename);
+    void CompleteLuaWidgetConsent(WPARAM choice, LPARAM sessionId);
     /**
      * @brief 放置部件并位移冲突项。
      * @param widgetIndex 部件索引
@@ -2565,6 +2566,17 @@ private:
     std::vector<std::unique_ptr<MenuIconEntry>> menuIconPool_;
     std::unique_ptr<SettingsWindow> settingsWindow_;
     std::unique_ptr<WidgetEngine> widgetEngine_;
+    struct PendingLuaWidgetConsent
+    {
+        std::uint64_t sessionId = 0;
+        POINT screenPoint{};
+        std::wstring packageId;
+        snowdesktop::widget::PackageSourceRef source;
+        std::vector<std::string> requestedPermissions;
+        std::vector<std::string> requestedNetworkDomains;
+    };
+    std::optional<PendingLuaWidgetConsent> pendingLuaWidgetConsent_;
+    std::uint64_t nextLuaWidgetConsentSessionId_ = 0;
     std::shared_ptr<SteamWorkshopSubscriptionPollState>
         steamWorkshopSubscriptionPollState_ =
             std::make_shared<SteamWorkshopSubscriptionPollState>();

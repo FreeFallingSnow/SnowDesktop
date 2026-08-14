@@ -3,6 +3,10 @@
 #include "../steam_app_identity.h"
 
 #include <commctrl.h>
+#include <objbase.h>
+
+#include <set>
+#include <thread>
 
 // Widget creation, collection/file-group membership and release operations.
 
@@ -42,11 +46,26 @@ enum class WidgetConsentChoice
     Cancel,
 };
 
-WidgetConsentChoice ShowWidgetConsentDialog(HWND owner,
+struct WidgetConsentDialogPresentation
+{
+    std::wstring title;
+    std::wstring instruction;
+    std::wstring content;
+    std::wstring allowLabel;
+    std::wstring denyLabel;
+};
+
+WidgetConsentDialogPresentation BuildWidgetConsentDialogPresentation(
     const snowdesktop::widget::InstalledPackage& package,
     const std::wstring& displayName,
     std::span<const std::string> requestedPermissions)
 {
+    WidgetConsentDialogPresentation presentation;
+    presentation.title = _LW("app.widget_permission.title");
+    presentation.instruction = _LFW(
+        "app.widget_permission.instruction", displayName);
+    presentation.allowLabel = _LW("app.widget_permission.allow");
+    presentation.denyLabel = _LW("app.widget_permission.deny");
     std::wstring content;
     if (package.builtin)
         content = _LW("app.widget_permission.source_builtin");
@@ -74,23 +93,26 @@ WidgetConsentChoice ShowWidgetConsentDialog(HWND owner,
     }
     content += L"\n\n";
     content += _LW("app.widget_permission.runtime_notice");
+    presentation.content = std::move(content);
+    return presentation;
+}
 
-    const std::wstring instruction = _LFW(
-        "app.widget_permission.instruction", displayName);
+WidgetConsentChoice ShowWidgetConsentDialog(
+    const WidgetConsentDialogPresentation& presentation)
+{
     const TASKDIALOG_BUTTON buttons[] = {
-        { 100, _LW("app.widget_permission.allow") },
-        { 101, _LW("app.widget_permission.deny") },
+        { 100, presentation.allowLabel.c_str() },
+        { 101, presentation.denyLabel.c_str() },
     };
     TASKDIALOGCONFIG dialog{};
     dialog.cbSize = sizeof(dialog);
-    dialog.hwndParent = owner;
     dialog.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION |
         TDF_SIZE_TO_CONTENT | TDF_USE_COMMAND_LINKS;
     dialog.dwCommonButtons = TDCBF_CANCEL_BUTTON;
-    dialog.pszWindowTitle = _LW("app.widget_permission.title");
+    dialog.pszWindowTitle = presentation.title.c_str();
     dialog.pszMainIcon = TD_SHIELD_ICON;
-    dialog.pszMainInstruction = instruction.c_str();
-    dialog.pszContent = content.c_str();
+    dialog.pszMainInstruction = presentation.instruction.c_str();
+    dialog.pszContent = presentation.content.c_str();
     dialog.cButtons = static_cast<UINT>(std::size(buttons));
     dialog.pButtons = buttons;
     dialog.nDefaultButton = 101;
@@ -103,12 +125,47 @@ WidgetConsentChoice ShowWidgetConsentDialog(HWND owner,
         if (selected == 101) return WidgetConsentChoice::Deny;
         return WidgetConsentChoice::Cancel;
     }
-    const int fallback = MessageBoxW(owner, content.c_str(),
-        instruction.c_str(), MB_ICONWARNING | MB_YESNOCANCEL |
+    const int fallback = MessageBoxW(nullptr,
+        presentation.content.c_str(), presentation.instruction.c_str(),
+        MB_ICONWARNING | MB_YESNOCANCEL |
             MB_DEFBUTTON2);
     if (fallback == IDYES) return WidgetConsentChoice::Allow;
     if (fallback == IDNO) return WidgetConsentChoice::Deny;
     return WidgetConsentChoice::Cancel;
+}
+
+void StartWidgetConsentDialog(HWND resultWindow,
+    std::uint64_t sessionId,
+    WidgetConsentDialogPresentation presentation)
+{
+    std::thread([resultWindow, sessionId,
+                    presentation = std::move(presentation)]() {
+        const HRESULT initialized = CoInitializeEx(
+            nullptr, COINIT_APARTMENTTHREADED);
+        const WidgetConsentChoice choice =
+            ShowWidgetConsentDialog(presentation);
+        PostMessageW(resultWindow, kWidgetConsentResolvedMessage,
+            static_cast<WPARAM>(choice),
+            static_cast<LPARAM>(sessionId));
+        if (SUCCEEDED(initialized)) CoUninitialize();
+    }).detach();
+}
+
+void ShowWidgetPermissionErrorAsync(
+    std::wstring title, std::wstring message)
+{
+    std::thread([title = std::move(title),
+                    message = std::move(message)]() {
+        MessageBoxW(nullptr, message.c_str(), title.c_str(),
+            MB_OK | MB_ICONERROR);
+    }).detach();
+}
+
+bool SameStringSet(const std::vector<std::string>& left,
+    const std::vector<std::string>& right)
+{
+    return std::set<std::string>(left.begin(), left.end()) ==
+        std::set<std::string>(right.begin(), right.end());
 }
 }
 
@@ -1294,15 +1351,23 @@ void DesktopApp::AddLuaWidgetAt(POINT screenPoint, const std::wstring& packageId
     bool shouldPersistDecision = !alreadyGranted;
     if (!alreadyGranted && !consentPermissions.empty())
     {
+        if (pendingLuaWidgetConsent_) return;
         const std::wstring displayName =
             WidgetEngine::GetWidgetDisplayName(packageId);
-        const WidgetConsentChoice choice = ShowWidgetConsentDialog(
-            controlHwnd_ ? controlHwnd_ : hwnd_, *package,
+        WidgetConsentDialogPresentation presentation =
+            BuildWidgetConsentDialogPresentation(*package,
             displayName.empty() ? packageId : displayName,
             consentPermissions);
-        if (choice == WidgetConsentChoice::Cancel) return;
-        if (choice == WidgetConsentChoice::Deny)
-            decision = snowdesktop::widget::PermissionDecisionState::Denied;
+        std::uint64_t sessionId = ++nextLuaWidgetConsentSessionId_;
+        if (sessionId == 0)
+            sessionId = ++nextLuaWidgetConsentSessionId_;
+        pendingLuaWidgetConsent_ = PendingLuaWidgetConsent{
+            sessionId, screenPoint, packageId, package->source,
+            package->manifest.permissions,
+            package->manifest.networkDomains };
+        StartWidgetConsentDialog(
+            hwnd_, sessionId, std::move(presentation));
+        return;
     }
     if (shouldPersistDecision)
     {
@@ -1316,11 +1381,10 @@ void DesktopApp::AddLuaWidgetAt(POINT screenPoint, const std::wstring& packageId
                     std::vector<std::string>{},
                 error))
         {
-            MessageBoxW(controlHwnd_ ? controlHwnd_ : hwnd_,
-                _LFW("app.widget_permission.save_failed",
-                    Utf8ToWide(error)).c_str(),
+            ShowWidgetPermissionErrorAsync(
                 _LW("app.widget_permission.title"),
-                MB_OK | MB_ICONERROR);
+                _LFW("app.widget_permission.save_failed",
+                    Utf8ToWide(error)));
             return;
         }
         if (!grant) return;
@@ -1334,6 +1398,57 @@ void DesktopApp::AddLuaWidgetAt(POINT screenPoint, const std::wstring& packageId
     settings.columns = defaultColumns;
     settings.rows = defaultRows;
     ApplyWidgetPreviewSettings(screenPoint, settings);
+}
+
+void DesktopApp::CompleteLuaWidgetConsent(
+    WPARAM rawChoice, LPARAM rawSessionId)
+{
+    const std::uint64_t sessionId =
+        static_cast<std::uint64_t>(rawSessionId);
+    if (!pendingLuaWidgetConsent_ ||
+        pendingLuaWidgetConsent_->sessionId != sessionId)
+        return;
+    PendingLuaWidgetConsent pending =
+        std::move(*pendingLuaWidgetConsent_);
+    pendingLuaWidgetConsent_.reset();
+
+    const WidgetConsentChoice choice =
+        static_cast<WidgetConsentChoice>(rawChoice);
+    if (choice == WidgetConsentChoice::Cancel) return;
+    const auto package = WidgetEngine::GetWidgetPackage(
+        pending.packageId);
+    if (!package) return;
+    if (package->source != pending.source ||
+        !SameStringSet(package->manifest.permissions,
+            pending.requestedPermissions) ||
+        !SameStringSet(package->manifest.networkDomains,
+            pending.requestedNetworkDomains))
+    {
+        AddLuaWidgetAt(pending.screenPoint, pending.packageId);
+        return;
+    }
+
+    const bool grant = choice == WidgetConsentChoice::Allow;
+    const auto decision = grant
+        ? snowdesktop::widget::PermissionDecisionState::Granted
+        : snowdesktop::widget::PermissionDecisionState::Denied;
+    std::string error;
+    if (!WidgetEngine::SetWidgetPermissionDecision(
+            pending.packageId, decision,
+            grant ? pending.requestedPermissions :
+                std::vector<std::string>{},
+            grant ? pending.requestedNetworkDomains :
+                std::vector<std::string>{},
+            error))
+    {
+        ShowWidgetPermissionErrorAsync(
+            _LW("app.widget_permission.title"),
+            _LFW("app.widget_permission.save_failed",
+                Utf8ToWide(error)));
+        return;
+    }
+    if (grant)
+        AddLuaWidgetAt(pending.screenPoint, pending.packageId);
 }
 
 /**
