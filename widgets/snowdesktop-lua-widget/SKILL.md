@@ -1,279 +1,132 @@
 ---
 name: snowdesktop-lua-widget
-description: Create, modify, debug, validate, and package Lua desktop widget folders for SnowDesktop. Use when writing a widget package with widget.json and main.lua, adding drawing or mouse behavior, using widget storage and settings UI, querying desktop items, declaring permissions, or diagnosing a SnowDesktop Lua widget that does not load or render.
+description: Create, modify, debug, validate, and package SnowDesktop API v2 Lua desktop widget folders with widget.json and main.lua, package resources, localization, storage, drawing, context, and the snowwidget CLI.
 ---
 
 # SnowDesktop Lua Widget
 
-Create widgets against SnowDesktop's built-in sandboxed Lua API. Every runnable component is one package directory:
+Create widgets against the sandboxed API v2 contract. A runnable widget is one
+validated package directory, never a loose `.lua + .widget.json` pair:
 
 ```text
-widgets/
-└── my-widget/
-    ├── widget.json
-    ├── main.lua
-    ├── assets/
-    ├── modules/
-    └── locales/
+my-widget/
+├── widget.json
+├── main.lua
+├── assets/
+├── modules/
+└── LICENSE
 ```
 
-SnowDesktop discovers validated package folders, never loose `.lua + .widget.json`
-pairs. Built-ins live under the read-only executable `widgets` directory.
-Installed and development packages live under `data\widgets\installed` and
+Built-ins live under the executable `widgets` directory. Installed and
+development packages live under `data\widgets\installed` and
 `data\widgets\dev`. Layouts store the immutable package UUID, not a path.
 
 ## Workflow
 
-This is an open Agent Skill and is not tied to a specific assistant. Resolve
-the directory containing this `SKILL.md`, then run its bundled
-`bin\snowwidget.exe capabilities`. The JSON response is the stable
-machine-readable contract for the available component CLI. SnowDesktop's
-**Component Developer Tools** page exposes the shared Agent Skills targets,
-development workspace, and ready-to-run validate and pack commands.
+1. Resolve this Skill directory and run `bin\snowwidget.exe capabilities`.
+   Treat the returned JSON as the available CLI contract. If that bundled CLI
+   predates API v2, use the repository/runtime v2 contract and refresh the CLI
+   before distributing the Skill.
+2. Copy `assets/widget-template` as a complete package directory.
+3. Generate a new UUID for `id`, choose a lowercase hyphenated `slug`, and keep
+   the UUID across all versions and channels.
+4. Keep `schemaVersion` and `apiVersion` at `2`. Implement a local `render`
+   function and return `widget.define({ render = render, ... })` from `main.lua`.
+5. Put every user-visible string behind a literal `l10n.tr("key")`. Add every
+   key to every locale catalog in `widget.json`; never put component strings in
+   the host `lang/` directory.
+6. Derive geometry from `layout.width/height`, `layout.cu/fontCu`, and
+   `widget.context()`. Test multiple spans, DPI values and preview mode.
+7. Declare package images/fonts in `resources`, create their handles while the
+   entry script loads, and pass only handles to v2 draw functions.
+8. Load package modules only with `module.require("modules/name.lua")` while the
+   entry script is loading.
+9. Add only features and permissions used by the component. Basic time,
+   context, drawing, localization and package resources require no high-risk
+   permission.
+10. Persist strings only. Write with `storage.set` only when a value changes.
+11. Run `snowwidget validate <directory>` and
+    `snowwidget pack <directory> <name.snowwidget>`.
+12. In the repository, also run `scripts\test.bat`, the standard Release build,
+    and `scripts\widget-dev.bat <directory>` for transactional hot reload.
 
-1. Copy [assets/widget-template](assets/widget-template) as a new package directory.
-2. Generate a new UUID for `id`, choose a lowercase hyphenated `slug`, and keep the UUID forever across channels.
-3. Implement `render()` first using local widget coordinates starting at `(0, 0)`.
-4. Put every user-visible string behind `l10n.tr("literal.key")`, including the
-   script name, settings, menus, placeholders, status text, and notifications.
-5. Add `nameKey` and `descriptionKey` to the manifest.
-6. Add every new translation key to each language under the manifest's
-   `locales` object. Lua widget text must not be added to the host `lang/*.json`.
-7. Add only the callbacks required by the behavior.
-8. Declare every privileged API in the manifest. Keep unused permissions out.
-9. Store persistent values as strings and parse them with `tonumber` or explicit boolean conversion.
-10. Test at multiple widget spans. Derive layout from `layout.width()` and `layout.height()` instead of assuming pixels.
-11. For repository development, run `scripts\widget-dev.bat widgets\my-widget`.
-    The first run syncs the package into `.build\<Config>\data\widgets\dev`,
-    where it remains an inactive development candidate until the user selects
-    **Activate Development Version** on its **My Components** card. Later saves
-    update the candidate without rebuilding the host and hot-reload it while
-    the development version is active.
-12. Run `snowwidget validate <directory>` and `snowwidget pack <directory> <name.snowwidget>`.
-13. Check transactional hot reload after saving; a failed reload keeps the last-known-good VM.
+Read `references/api-v2.md` completely before implementing API calls, features,
+resources or troubleshooting. Use `library/snowdesktop-v2.lua` as the LuaLS
+library. Read `references/package-v1.md` only when diagnosing or migrating an
+old schema/API v1 package; do not create new v1 packages.
 
-Read [references/api.md](references/api.md) whenever using callbacks, permissions, drawing arguments, desktop integration, settings controls, or troubleshooting.
-
-## Required structure
-
-Every script should define:
+## Required entry
 
 ```lua
-name = l10n.tr("lua_widget.my_widget.name")
-
-function render()
-    local w = layout.width()
-    local pad = layout.cu(12)
-    draw.text(pad, pad, l10n.tr("lua_widget.my_widget.hello"),
-        layout.cu(15), 0xFFFFFF, w - pad * 2)
+local function render()
+    local padding = layout.cu(12)
+    draw.text(padding, padding,
+        l10n.tr("lua_widget.my_widget.hello"),
+        layout.fontCu(15), 0xFFFFFF,
+        layout.width() - padding * 2)
 end
+
+return widget.define({
+    name = l10n.tr("lua_widget.my_widget.name"),
+    render = render,
+})
 ```
 
-Use these optional top-level flags and appearance globals:
+Do not define API v1 globals such as top-level `render`, `onClick`,
+`getContextMenu`, `imguiRender`, or `onHttpResponse`. The v2 descriptor reserves
+`view/setup/event/dispose/menu`, but the current host intentionally rejects
+them until those contracts are implemented.
 
-- `useCustomStyle = true`: enable Lua-controlled background appearance and the
-  host's unified **外观** settings panel for this widget.
-- `followPersonalizationDefault = true`: make a new instance follow the global
-  appearance until the user explicitly changes its follow state.
-- When `followPersonalizationDefault = true`, omit `settings.presets` that only
-  repeat the global default, dark/light, transparent, or standard appearance.
-  Keep presets only when they provide a component-specific visual mode, such
-  as sticky-note paper colors or a materially different clock face.
-- `showTitle = true`: show the host title and enable host rename actions. When
-  false or omitted, the host hides **重命名** and ignores F2 for the widget.
-- `bottomBarHover = false`: keep the bottom bar from using the default hover-only behavior.
-- `bg`, `border`: `0xRRGGBB`.
-- `alpha`, `borderAlpha`, `gradientEndA`: decimal values from `0.0` to `1.0`.
-- `glassEnabled`: per-widget frosted backdrop switch. Blur radius is owned by
-  the global appearance page.
+## Manifest rules
 
-For `useCustomStyle` widgets, prefer declarative `settings.presets` for visual
-presets and `settings.fields` for behavior. Presets should stay appearance-only:
-put colors, alpha, and glass there;
-keep data sources, intervals, toggles, durations, and other behavior in fields.
-The host displays one independent **跟随全局** checkbox and one **主题** selector.
-The selector contains the four host themes, **自定义**, and all manifest/script
-presets. Theme changes never change the follow checkbox, and presets must not
-contain `followPersonalization`.
-
-## Manifest
-
-Create a matching manifest even when no permission is needed:
-
-```json
-{
-  "schemaVersion": 1,
-  "id": "f527797f-a986-4ad1-a58d-250ef91f53d3",
-  "slug": "my-widget",
-  "name": "My Widget",
-  "nameKey": "lua_widget.my_widget.name",
-  "version": "1.0.0",
-  "apiVersion": 1,
-  "dataVersion": 1,
-  "entry": "main.lua",
-  "minHostVersion": "1.0.1.0",
-  "author": "Your Name",
-  "license": "MIT",
-  "description": "A short English fallback description.",
-  "descriptionKey": "lua_widget.my_widget.description",
-  "locales": {
-    "zh-CN": {
-      "lua_widget.my_widget.name": "我的组件",
-      "lua_widget.my_widget.description": "一句话说明组件用途。",
-      "lua_widget.my_widget.hello": "你好"
-    },
-    "en-US": {
-      "lua_widget.my_widget.name": "My Widget",
-      "lua_widget.my_widget.description": "A short description.",
-      "lua_widget.my_widget.hello": "Hello"
-    }
-  },
-  "defaultSize": { "columns": 1, "rows": 1 },
-  "minSize": { "columns": 1, "rows": 1 },
-  "maxSize": { "columns": 4, "rows": 3 },
-  "permissions": [],
-  "optionalPermissions": []
-}
-```
-
-`minSize` and `maxSize` are optional. When omitted, the widget has no declared
-size restriction beyond the desktop grid itself (effective minimum `1 x 1`).
-Each `maxSize` dimension may also be `0` to mean unrestricted.
-
-Valid permissions:
-
-- `ui.input`: expose `imgui` and support settings-editor controls.
-- `ui.contextMenu`: enable `getContextMenu()` and `onMenu(id)`.
-- `ui.notify`: enable rate-limited host notifications.
-- `desktop.read`: enable desktop queries and `draw.icon`.
-- `desktop.action`: enable open, reveal, and desktop refresh actions.
-- `system.performance.read`: enable cached CPU, memory, and GPU snapshots.
-- `system.power.read`: enable the cached battery and power snapshot.
-- `system.network.read`: enable the cached network snapshot and transfer rates.
-- `media.read`: read the current Windows media session.
-- `media.action`: play/pause, skip next, and skip previous.
-- `network.http`: enable asynchronous requests to arbitrary HTTP and HTTPS
-  URLs. The host does not enforce a per-domain or public-network allowlist.
-- `calendar.read`: read shared local calendar dates and events.
-- `calendar.write`: select a shared date and create, edit, or delete events.
-
-The package validator also reserves the fine-grained v2 permission vocabulary
-for migration work. Those reserved names do not enable new APIs in an API v1
-component and are intentionally omitted from the list above. Do not declare a
-reserved v2 permission until the corresponding v2 runtime API is documented.
-
-Put capabilities required for the component to start in `permissions`. Put
-degradable features in `optionalPermissions`; the user may grant only the
-required set, and guarded optional APIs will then remain unavailable. Never
-declare the same capability in both arrays. Use `widget.hasPermission(name)`
-before calling an optional guarded API.
-
-Keep `defaultSize.columns` and `defaultSize.rows` between 1 and 8.
+- `schemaVersion: 2` and `apiVersion: 2` must match.
+- `id` is an immutable UUID; `version` is SemVer; `dataVersion` is positive.
+- `name` and `description` are English fallbacks; localized values use
+  `nameKey`, `descriptionKey`, and manifest `locales`.
+- `requiredFeatures` must be supported for activation. Put degradable feature
+  IDs in `optionalFeatures` and probe them before use.
+- Use `resources` for package images and fonts. Keep resource names stable;
+  use package-relative files and include font license metadata.
+- Keep `permissions` empty unless a currently documented guarded v2 call needs
+  one. Reserved permission vocabulary does not make an API available.
+- Keep size dimensions from 1 through 8; a max dimension of `0` means
+  unrestricted where the manifest schema permits it.
+- Never include DLLs, executables, absolute paths, parent traversal, symlinks,
+  junctions, reparse points or files outside the package.
 
 ## Implementation rules
 
-- SnowDesktop uses a **design unit** system where `layout.cu(15)` converts grid-cell-relative
-  design values to DPI-scaled pixels. Prefer `layout.cu()` over hardcoded pixel values so widgets
-  scale correctly across monitors and DPI settings. See [references/api.md](references/api.md) for the full layout API.
-- Treat `render()` as a hot path. Do not write storage or perform desktop queries repeatedly unless necessary.
-- Use literal keys with `l10n.tr("key", arguments...)`; placeholders use
-  `{0}`, `{1}`, and so on. `l10n.language()` returns the effective language
-  (for example, `zh-CN`, `zh-TW`, `ja-JP`, or `en-US`) for behavior that truly
-  varies by locale.
-- Keep the manifest `name` and `description` as English fallbacks and put their
-  localized keys in `nameKey` and `descriptionKey`. Store all Lua translations
-  in that same manifest's `locales` object.
-- Put state-dependent localized title keys in the manifest `titleKeys` array
-  and refresh those titles in `onLanguageChanged()`.
-- Use `storage.set` only when a value changes; it persists immediately to disk.
-- Use `draw.measureText` for centering or fitting text.
-- Use `maxWidth` with `singleLine = true` to get single-line ellipsis.
-- Treat the bottom 24px as a host-reserved move/resize area. Do not place clickable
-  controls there, even when the bottom bar is visually hidden or hover-only.
-- Pass image paths relative to the current package directory. Absolute paths,
-  parent traversal, symlinks, junctions, and reparse points are rejected.
-- Pass desktop item tables directly to `draw.icon`, `desktop.open`, or `desktop.reveal`.
-- Add `ui.input` before defining `imguiRender`; otherwise `imgui` is absent from the sandbox.
-- Add `ui.contextMenu` before defining custom menu callbacks; otherwise the host ignores them.
-- Context-menu items may set `icon` to a Font Awesome 6 Free Solid glyph, for
-  example `{ id = 1, label = "刷新", icon = "" }`. They may instead set
-  `iconFont = "fluent"` and use a Fluent System Icons Regular glyph. The default
-  remains Font Awesome for compatibility; leave `icon` out for no icon.
-- Use `draw.fluent(glyph, x, y, size, color)` for matching in-component Fluent
-  controls; `draw.fa` remains available for existing component compatibility.
-- To unlock the debug page, open **设置 → 关于** and click the version number
-  five times. Then open **调试 → Font Awesome 图标字符** or
-  **Fluent System Icons Regular 图标字符**; clicking an icon copies it to the
-  clipboard.
-- Use `imguiRender()` for the host **详细设置** panel.
-- Prefer declarative manifest `settings` for simple text, bool, integer, float,
-  select, and color fields; keep `imguiRender()` for custom editors.
-- The host wraps `imguiRender()` in a scrollable editor area. For
-  `useCustomStyle` widgets, manual appearance controls are shown only when the
-  host **主题** selector is set to **自定义**. **恢复默认设置** restores declarative
-  behavior fields.
-- Lua scripts may also declare `settings = { presets = {...}, fields = {...} }`
-  directly. The host merges manifest and script declarations into the same
-  settings panel.
-- Do not expose `cornerRadius` or `barHeight` as Lua settings or preset values.
-  They are host-owned layout settings; read them through `widget.theme()` and
-  `layout.barHeight()` only when alignment requires it.
-- Use `widget.setTimer()` instead of frame-count timing. Stop unnecessary timers
-  in `onHidden()` and restart them in `onVisible()`.
-- Use `ui.button`, `ui.toggle`, `ui.textInput`, `ui.textArea`, `ui.progress`,
-  `ui.scrollArea`, and `ui.virtualList` when host-managed interaction or
-  scrolling is sufficient. `ui.textInput` and `ui.textArea` are
-  Direct2D-rendered and transparent like the desktop file search field; do not
-  layer a native text editor over them. `ui.textArea` provides wrapped
-  multiline input and wheel scrolling. Both controls provide host-managed
-  caret placement, mouse-drag text selection, selection highlighting, and
-  standard keyboard/clipboard replacement behavior.
-- Treat `widget.editText` as a legacy compatibility API. It opens the old
-  system-style editor and is not recommended for new or updated widgets. Use
-  `ui.textInput` for one line and `ui.textArea` for multiple lines.
-- Use `onSelected()` when a widget should react as soon as the desktop selects
-  it. For search-oriented widgets, call `ui.focusInput(id)` there so the
-  host-rendered input is ready for typing immediately.
-- Use `widget.openPanel()` plus `renderPanel()` for form-heavy editors or
-  details that do not fit the component's normal grid span. Keep the primary
-  component useful while the host-owned transient panel is open.
-- Never call `http.request()` unconditionally from `render()`. Start requests
-  from lifecycle, timer, menu, or UI callbacks and consume them in
-  `onHttpResponse`. Redirect targets may use HTTP or HTTPS.
-- Do not use `io`, `os`, `require`, `package`, `load`, or arbitrary filesystem/process APIs. They are not exposed.
-- Keep colors in `0xRRGGBB`; pass opacity separately where supported.
-- Log recoverable diagnostics with `widget.log("info"|"warn"|"error"|"debug", message)`.
+- Treat `render` as a hot path. Do not write storage, create resource handles,
+  load modules, or perform future data queries during every render.
+- Create `resource.image/font` handles at entry scope. Use `resource.status`
+  when diagnostics are needed.
+- Use `draw.measureText`, clipping, explicit `maxWidth`, and separate opacity.
+- Keep colors in `0xRRGGBB`.
+- Respect `widget.context().accessibility`, theme, DPI, visibility and preview
+  state. Do not request permission for an ordinary pointer clock or static UI.
+- Treat the bottom host bar as reserved movement/resize space.
+- Use `widget.log("debug"|"info"|"warn"|"error", message)` for recoverable
+  diagnostics.
+- Never use `io`, `os`, `require`, `package`, `load`, arbitrary filesystem or
+  process APIs; the sandbox does not expose them.
+- Do not invent v2 APIs from old v1 documentation. The absence of `desktop`,
+  `media`, `http`, `sys`, `ui` or audio libraries is intentional until the
+  corresponding v2 capability is implemented.
 
 ## Verification
 
-For repository development:
+For every package change:
 
-1. Save the package directory under the source `widgets` directory.
-2. Run `scripts/test.bat` to catch untranslated Lua strings and missing keys through the CTest localization contract.
-3. Build the host once, then run `scripts\widget-dev.bat widgets\my-widget`.
-   It validates and mirrors the source package into the development-candidate
-   directory. When the candidate is first created, SnowDesktop restarts once to
-   discover it. Activate it explicitly from its **My Components** card;
-   subsequent `main.lua`, manifest, locale, module, and asset saves are synced
-   and trigger the host's transactional Lua hot reload while it is active.
-4. Use `-Once` for a one-time sync or `-RestartHost` when package discovery
-   needs to be forced. Stop watch mode with `Ctrl+C`; the development candidate
-   and its explicit activation choice remain available for the next session.
-5. Run `.build\Release\snowwidget.exe validate widgets\my-widget`.
-6. In SnowDesktop, right-click the desktop and choose **添加组件**, then select the manifest display name.
-7. Exercise click, double-click, wheel, editor, context-menu, and language-switch behavior as applicable.
-8. Run `scripts\build.bat` only for final delivery verification. The release process
-   copies the complete built `widgets` tree, including this skill and its
-   resources, into `release\widgets`.
+1. Validate the directory with `snowwidget validate` and resolve every error.
+   API v1 migration warnings are expected only for legacy input, never for a
+   new package.
+2. Pack it with `snowwidget pack`, then validate the resulting `.snowwidget`.
+3. Run the repository localization and contract tests.
+4. Preview compact and expanded spans; check text clipping, theme, DPI and
+   resource rendering.
+5. Activate the development candidate and verify hot reload. A failed reload
+   must keep the last-known-good VM.
 
-Before finishing, verify:
-
-- The package contains `widget.json` and its declared `main.lua` entry.
-- `id` is a stable UUID; `version` is SemVer; `apiVersion` is supported.
-- JSON is valid UTF-8.
-- `defaultSize` falls within any declared `minSize` / `maxSize`.
-- Every used privileged API has its permission.
-- Every network request uses an HTTP or HTTPS URL.
-- Timers and HTTP requests are not started repeatedly from `render()`.
-- `render()` works at the manifest's default span and at a resized span.
-- No storage write occurs unconditionally on every frame.
+Do not claim pointer interaction, declarative element events, resource visuals,
+multi-monitor DPI or permission UX is verified from validation/build alone;
+those require an observable desktop run.

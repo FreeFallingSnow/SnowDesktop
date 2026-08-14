@@ -534,7 +534,7 @@ void TestAuthoringToolchain(const std::filesystem::path& repositoryRoot,
         auto status = InspectAgentSkill(
             bundled, snowwidget, target, error);
         Check(status.state == SkillInstallState::NotInstalled &&
-            status.bundledRevision == 1,
+            status.bundledRevision == 2,
             "each supported agent reports a clean not-installed state");
         Check(InstallOrUpdateAgentSkill(status, error),
             "Agent Skill installs transactionally into every selected root");
@@ -576,8 +576,10 @@ void TestRealPackageTool(const std::filesystem::path& executable,
         Check(capabilitiesExit == 0 &&
             ParseJson(capabilitiesText, capabilities, capabilitiesError) &&
             JsonUnsigned(capabilities, "protocolVersion") == 1u &&
+            JsonUnsigned(capabilities, "recommendedSchemaVersion") == 2u &&
+            JsonUnsigned(capabilities, "recommendedApiVersion") == 2u &&
             JsonString(capabilities, "format") == "snowdesktop-widget",
-            "snowwidget capabilities exposes a versioned JSON contract");
+            "snowwidget capabilities exposes a versioned API v2 authoring contract");
     }
     WidgetInspection inspection;
     PackagedWidget package;

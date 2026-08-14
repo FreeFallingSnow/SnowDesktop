@@ -1,4 +1,8 @@
-# SnowDesktop Lua Widget API
+# SnowDesktop Lua Widget API v1（迁移参考）
+
+> 本页只记录旧 schema/API v1。新组件与迁移目标请使用
+> [API v2](api-v2.md) 和 `library/snowdesktop-v2.lua`。v1 运行时是内置组件迁移
+> 期间的过渡层，不是新组件的开发目标。
 
 ## Contents
 

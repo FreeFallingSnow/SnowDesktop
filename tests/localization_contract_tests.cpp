@@ -1299,8 +1299,13 @@ int wmain(int argc, wchar_t* argv[])
         SortedFiles(
             widgetDirectory,
             [](const fs::path& path) {
-                return LowerAscii(
-                    path.extension().string()) == ".lua";
+                if (LowerAscii(path.extension().string()) != ".lua")
+                    return false;
+                const std::string normalized = LowerAscii(
+                    path.lexically_normal().generic_string());
+                return normalized.find(
+                    "/snowdesktop-lua-widget/library/") ==
+                    std::string::npos;
             });
     const std::vector<fs::path> manifestFiles =
         SortedFiles(

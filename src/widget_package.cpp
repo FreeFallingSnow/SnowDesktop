@@ -1795,6 +1795,12 @@ bool WidgetPackageValidator::ReadManifest(
     const bool currentContract =
         manifest.schemaVersion == kPackageSchemaVersion &&
         manifest.apiVersion == kHostApiVersion;
+    if (legacyContract)
+    {
+        report.Add(ValidationSeverity::Warning,
+            "migration.apiV1", manifestPath,
+            "schema/API v1 is a transitional compatibility contract; migrate the entry to schema/API v2 and return widget.define({...})");
+    }
     if (manifest.schemaVersion != kLegacyPackageSchemaVersion &&
         manifest.schemaVersion != kPackageSchemaVersion)
         report.Add(ValidationSeverity::Error, "manifest.schemaVersion",

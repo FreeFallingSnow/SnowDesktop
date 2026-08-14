@@ -616,6 +616,12 @@ int main()
     PackageManifest manifest;
     auto report = validator.ValidateDirectory(sourceV1, &manifest);
     Expect(report.Ok(), "valid folder package is accepted");
+    Expect(std::any_of(report.issues.begin(), report.issues.end(),
+            [](const ValidationIssue& issue) {
+                return issue.severity == ValidationSeverity::Warning &&
+                    issue.code == "migration.apiV1";
+            }),
+        "legacy package validation emits an explicit API v2 migration diagnostic");
     Expect(manifest.entry == "main.lua", "entry is parsed");
     Expect(manifest.previewStorage["message"] == "Preview" &&
             manifest.previewStorage["count"] == "3" &&

@@ -92,7 +92,9 @@ int wmain(int argc, wchar_t** argv)
             << JsonEscape(SNOWDESKTOP_VERSION)
             << ",\"format\":\"snowdesktop-widget\","
                "\"authoringSkill\":{\"id\":\"snowdesktop-lua-widget\","
-               "\"revision\":1},\"commands\":["
+               "\"revision\":2},\"recommendedSchemaVersion\":2,"
+               "\"recommendedApiVersion\":2,\"supportedSchemaVersions\":[1,2],"
+               "\"supportedApiVersions\":[1,2],\"commands\":["
                "\"inspect\",\"validate\",\"pack\",\"publish-local\"]}"
             << '\n';
         return 0;
@@ -135,7 +137,12 @@ int wmain(int argc, wchar_t** argv)
         WriteStringArray(std::cout, manifest.permissions);
         std::cout << ",\"networkDomains\":";
         WriteStringArray(std::cout, manifest.networkDomains);
-        std::cout << "},\"validation\":" << report.ToJson() << "}\n";
+        std::cout << "},\"migration\":{\"required\":"
+            << (manifest.schemaVersion < 2 || manifest.apiVersion < 2
+                ? "true" : "false")
+            << ",\"targetSchemaVersion\":2,\"targetApiVersion\":2,"
+               "\"entryContract\":\"return widget.define({...})\"},"
+               "\"validation\":" << report.ToJson() << "}\n";
         return report.Ok() ? 0 : 1;
     }
 
