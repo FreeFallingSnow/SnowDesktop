@@ -209,6 +209,8 @@ void TestV2Contract()
 {
     Check(snowdesktop::widget_api::SupportsFeature("draw.immediate") &&
             snowdesktop::widget_api::SupportsFeature("l10n.format") &&
+            snowdesktop::widget_api::SupportsFeature("system.uptime") &&
+            snowdesktop::widget_api::SupportsFeature("time.calendar") &&
             snowdesktop::widget_api::SupportsFeature(
                 "system.environment") &&
             !snowdesktop::widget_api::SupportsFeature("view.tree"),

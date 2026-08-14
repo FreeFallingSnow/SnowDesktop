@@ -82,6 +82,29 @@ void TestDurationFormatting()
         "unsupported duration styles must be rejected");
 }
 
+void TestRelativeTimeFormatting()
+{
+    using snowdesktop::widget_l10n::FormatRelativeTime;
+    constexpr std::int64_t minute = 60 * 1000;
+    constexpr std::int64_t day = 24 * 60 * minute;
+    CheckEqual(FormatRelativeTime(-90 * minute, "en-US"),
+        "2 hours ago", "relative time must select and round an automatic unit");
+    CheckEqual(FormatRelativeTime(day, "zh-CN"), "明天",
+        "Chinese automatic relative time must use calendar terms");
+    CheckEqual(FormatRelativeTime(-day, "de-DE"), "gestern",
+        "German automatic relative time must use calendar terms");
+    CheckEqual(FormatRelativeTime(2 * day, "pt-BR", "day", "always"),
+        "em 2 dias", "numeric relative time must localize grammar and units");
+    CheckEqual(FormatRelativeTime(2 * day, "zh-TW", "day", "always"),
+        "2天後", "Traditional Chinese relative time must use traditional suffixes");
+    CheckEqual(FormatRelativeTime(0, "en-US", "auto", "always"),
+        "in 0 seconds", "numeric always must not replace zero with now");
+    Check(FormatRelativeTime(0, "en-US", "quarter", "auto").empty(),
+        "unsupported relative units must be rejected");
+    Check(FormatRelativeTime(0, "en-US", "auto", "sometimes").empty(),
+        "unsupported numeric modes must be rejected");
+}
+
 void TestListFormatting()
 {
     using snowdesktop::widget_l10n::FormatList;
@@ -105,6 +128,7 @@ int main()
     TestNumberFormatting();
     TestByteFormatting();
     TestDurationFormatting();
+    TestRelativeTimeFormatting();
     TestListFormatting();
     std::cout << "widget l10n format tests passed\n";
     return 0;

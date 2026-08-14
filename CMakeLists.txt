@@ -244,6 +244,7 @@ set(SNOWDESKTOP_SOURCES
     src/lua_runtime.cpp
     src/widget_api_registry.cpp
     src/widget_l10n_format.cpp
+    src/widget_time.cpp
     src/widget_preview_context.cpp
     src/widget_runtime_diagnostics.cpp
     src/widget_runtime_scheduler.cpp
@@ -684,6 +685,15 @@ if (BUILD_TESTING)
             src/widget_l10n_format.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract l10n lua widget)
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetTimeTests
+        widget_time
+        SOURCES
+            tests/widget_time_tests.cpp
+            src/widget_time.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS contract l10n lua time widget)
 
     snowdesktop_add_test(
         SnowDesktopWidgetRuntimeDiagnosticsTests

@@ -124,6 +124,237 @@ DurationUnits UnitsFor(std::string_view locale)
     if (language == "pt") return { "h", "min", "s" };
     return { "h", "min", "s" };
 }
+
+enum class RelativeUnit
+{
+    Second,
+    Minute,
+    Hour,
+    Day,
+    Week,
+    Month,
+    Year,
+};
+
+std::uint64_t Magnitude(std::int64_t value)
+{
+    return value < 0
+        ? static_cast<std::uint64_t>(-(value + 1)) + 1
+        : static_cast<std::uint64_t>(value);
+}
+
+std::uint64_t RoundedUnits(std::uint64_t milliseconds,
+    std::uint64_t unitMilliseconds)
+{
+    const std::uint64_t whole = milliseconds / unitMilliseconds;
+    const std::uint64_t remainder = milliseconds % unitMilliseconds;
+    return whole + (remainder >= (unitMilliseconds + 1) / 2 ? 1 : 0);
+}
+
+bool ParseRelativeUnit(std::string_view value, RelativeUnit& unit)
+{
+    if (value == "second") unit = RelativeUnit::Second;
+    else if (value == "minute") unit = RelativeUnit::Minute;
+    else if (value == "hour") unit = RelativeUnit::Hour;
+    else if (value == "day") unit = RelativeUnit::Day;
+    else if (value == "week") unit = RelativeUnit::Week;
+    else if (value == "month") unit = RelativeUnit::Month;
+    else if (value == "year") unit = RelativeUnit::Year;
+    else return false;
+    return true;
+}
+
+RelativeUnit SelectRelativeUnit(std::uint64_t milliseconds)
+{
+    constexpr std::uint64_t second = 1000;
+    constexpr std::uint64_t minute = 60 * second;
+    constexpr std::uint64_t hour = 60 * minute;
+    constexpr std::uint64_t day = 24 * hour;
+    if (milliseconds < minute) return RelativeUnit::Second;
+    if (milliseconds < hour) return RelativeUnit::Minute;
+    if (milliseconds < day) return RelativeUnit::Hour;
+    if (milliseconds < 7 * day) return RelativeUnit::Day;
+    if (milliseconds < 30 * day) return RelativeUnit::Week;
+    if (milliseconds < 365 * day) return RelativeUnit::Month;
+    return RelativeUnit::Year;
+}
+
+std::uint64_t RelativeUnitMilliseconds(RelativeUnit unit)
+{
+    constexpr std::uint64_t second = 1000;
+    constexpr std::uint64_t minute = 60 * second;
+    constexpr std::uint64_t hour = 60 * minute;
+    constexpr std::uint64_t day = 24 * hour;
+    switch (unit)
+    {
+    case RelativeUnit::Second: return second;
+    case RelativeUnit::Minute: return minute;
+    case RelativeUnit::Hour: return hour;
+    case RelativeUnit::Day: return day;
+    case RelativeUnit::Week: return 7 * day;
+    case RelativeUnit::Month: return 30 * day;
+    case RelativeUnit::Year: return 365 * day;
+    }
+    return second;
+}
+
+std::string RelativeSpecial(std::string_view locale, RelativeUnit unit,
+    std::int64_t direction, std::uint64_t count)
+{
+    const std::string language = Language(locale);
+    if (unit == RelativeUnit::Second && count == 0)
+    {
+        if (language == "zh")
+        {
+            const bool traditional = locale.find("TW") != std::string_view::npos ||
+                locale.find("tw") != std::string_view::npos;
+            return traditional ? "現在" : "现在"; // l10n-allow: relative-time term
+        }
+        if (language == "ja") return "今"; // l10n-allow: relative-time term
+        if (language == "ko") return "지금"; // l10n-allow: relative-time term
+        if (language == "de") return "jetzt"; // l10n-allow: relative-time term
+        if (language == "fr") return "maintenant"; // l10n-allow: relative-time term
+        if (language == "es") return "ahora"; // l10n-allow: relative-time term
+        if (language == "pt") return "agora"; // l10n-allow: relative-time term
+        return "now";
+    }
+    if (unit != RelativeUnit::Day || count > 1) return {};
+
+    const int offset = count == 0 ? 0 : (direction < 0 ? -1 : 1);
+    if (language == "zh")
+    {
+        static constexpr std::array terms = {
+            "昨天", "今天", "明天" // l10n-allow: relative-time terms
+        };
+        return terms[static_cast<std::size_t>(offset + 1)];
+    }
+    if (language == "ja")
+    {
+        static constexpr std::array terms = {
+            "昨日", "今日", "明日" // l10n-allow: relative-time terms
+        };
+        return terms[static_cast<std::size_t>(offset + 1)];
+    }
+    if (language == "ko")
+    {
+        static constexpr std::array terms = {
+            "어제", "오늘", "내일" // l10n-allow: relative-time terms
+        };
+        return terms[static_cast<std::size_t>(offset + 1)];
+    }
+    if (language == "de")
+    {
+        static constexpr std::array terms = {
+            "gestern", "heute", "morgen" // l10n-allow: relative-time terms
+        };
+        return terms[static_cast<std::size_t>(offset + 1)];
+    }
+    if (language == "fr")
+    {
+        static constexpr std::array terms = {
+            "hier", "aujourd'hui", "demain" // l10n-allow: relative-time terms
+        };
+        return terms[static_cast<std::size_t>(offset + 1)];
+    }
+    if (language == "es")
+    {
+        static constexpr std::array terms = {
+            "ayer", "hoy", "mañana" // l10n-allow: relative-time terms
+        };
+        return terms[static_cast<std::size_t>(offset + 1)];
+    }
+    if (language == "pt")
+    {
+        static constexpr std::array terms = {
+            "ontem", "hoje", "amanhã" // l10n-allow: relative-time terms
+        };
+        return terms[static_cast<std::size_t>(offset + 1)];
+    }
+    static constexpr std::array terms = {
+        "yesterday", "today", "tomorrow"
+    };
+    return terms[static_cast<std::size_t>(offset + 1)];
+}
+
+std::string RelativeUnitName(std::string_view locale, RelativeUnit unit,
+    bool plural)
+{
+    const std::string language = Language(locale);
+    const std::size_t index = static_cast<std::size_t>(unit);
+    if (language == "zh")
+    {
+        const bool traditional = locale.find("TW") != std::string_view::npos ||
+            locale.find("tw") != std::string_view::npos;
+        static constexpr std::array simplified = {
+            "秒", "分钟", "小时", "天", "周", "个月", "年" // l10n-allow: relative-time units
+        };
+        static constexpr std::array traditionalUnits = {
+            "秒", "分鐘", "小時", "天", "週", "個月", "年" // l10n-allow: relative-time units
+        };
+        return traditional ? traditionalUnits[index] : simplified[index];
+    }
+    if (language == "ja")
+    {
+        static constexpr std::array units = {
+            "秒", "分", "時間", "日", "週間", "か月", "年" // l10n-allow: relative-time units
+        };
+        return units[index];
+    }
+    if (language == "ko")
+    {
+        static constexpr std::array units = {
+            "초", "분", "시간", "일", "주", "개월", "년" // l10n-allow: relative-time units
+        };
+        return units[index];
+    }
+    if (language == "de")
+    {
+        static constexpr std::array singular = {
+            "Sekunde", "Minute", "Stunde", "Tag", "Woche", "Monat", "Jahr" // l10n-allow: relative-time units
+        };
+        static constexpr std::array pluralUnits = {
+            "Sekunden", "Minuten", "Stunden", "Tagen", "Wochen", "Monaten", "Jahren" // l10n-allow: relative-time units
+        };
+        return plural ? pluralUnits[index] : singular[index];
+    }
+    if (language == "fr")
+    {
+        static constexpr std::array singular = {
+            "seconde", "minute", "heure", "jour", "semaine", "mois", "an" // l10n-allow: relative-time units
+        };
+        static constexpr std::array pluralUnits = {
+            "secondes", "minutes", "heures", "jours", "semaines", "mois", "ans" // l10n-allow: relative-time units
+        };
+        return plural ? pluralUnits[index] : singular[index];
+    }
+    if (language == "es")
+    {
+        static constexpr std::array singular = {
+            "segundo", "minuto", "hora", "día", "semana", "mes", "año" // l10n-allow: relative-time units
+        };
+        static constexpr std::array pluralUnits = {
+            "segundos", "minutos", "horas", "días", "semanas", "meses", "años" // l10n-allow: relative-time units
+        };
+        return plural ? pluralUnits[index] : singular[index];
+    }
+    if (language == "pt")
+    {
+        static constexpr std::array singular = {
+            "segundo", "minuto", "hora", "dia", "semana", "mês", "ano" // l10n-allow: relative-time units
+        };
+        static constexpr std::array pluralUnits = {
+            "segundos", "minutos", "horas", "dias", "semanas", "meses", "anos" // l10n-allow: relative-time units
+        };
+        return plural ? pluralUnits[index] : singular[index];
+    }
+    static constexpr std::array singular = {
+        "second", "minute", "hour", "day", "week", "month", "year"
+    };
+    static constexpr std::array pluralUnits = {
+        "seconds", "minutes", "hours", "days", "weeks", "months", "years"
+    };
+    return plural ? pluralUnits[index] : singular[index];
+}
 }
 
 std::string FormatNumber(double value, std::string_view locale,
@@ -246,6 +477,55 @@ std::string FormatDuration(std::int64_t milliseconds,
         parts.push_back(FormatNumber(static_cast<double>(seconds), locale,
             integers) + " " + units.second);
     return Join(parts, " ");
+}
+
+std::string FormatRelativeTime(std::int64_t deltaMilliseconds,
+    std::string_view locale, std::string_view unit,
+    std::string_view numeric)
+{
+    if (numeric != "auto" && numeric != "always") return {};
+    const std::uint64_t magnitude = Magnitude(deltaMilliseconds);
+    RelativeUnit resolvedUnit{};
+    if (unit == "auto")
+        resolvedUnit = SelectRelativeUnit(magnitude);
+    else if (!ParseRelativeUnit(unit, resolvedUnit))
+        return {};
+
+    const std::uint64_t count = RoundedUnits(
+        magnitude, RelativeUnitMilliseconds(resolvedUnit));
+    if (numeric == "auto")
+    {
+        const std::string special = RelativeSpecial(locale, resolvedUnit,
+            deltaMilliseconds < 0 ? -1 : (deltaMilliseconds > 0 ? 1 : 0),
+            count);
+        if (!special.empty()) return special;
+    }
+
+    const std::string number = FormatNumber(static_cast<double>(count),
+        locale, { 0, 0, true });
+    const std::string unitName = RelativeUnitName(
+        locale, resolvedUnit, count != 1);
+    const std::string language = Language(locale);
+    const bool future = deltaMilliseconds >= 0;
+    if (language == "zh")
+    {
+        const bool traditional = locale.find("TW") != std::string_view::npos ||
+            locale.find("tw") != std::string_view::npos;
+        return number + unitName +
+            (future ? (traditional ? "後" : "后") : "前"); // l10n-allow: relative-time suffix
+    }
+    if (language == "ja")
+        return number + unitName + (future ? "後" : "前"); // l10n-allow: relative-time suffix
+    if (language == "ko")
+        return number + unitName + (future ? " 후" : " 전"); // l10n-allow: relative-time suffix
+    const std::string value = number + " " + unitName;
+    if (language == "de") return future ? "in " + value : "vor " + value;
+    if (language == "fr")
+        return future ? "dans " + value : "il y a " + value;
+    if (language == "es")
+        return future ? "dentro de " + value : "hace " + value;
+    if (language == "pt") return future ? "em " + value : "há " + value;
+    return future ? "in " + value : value + " ago";
 }
 
 std::string FormatList(const std::vector<std::string>& values,

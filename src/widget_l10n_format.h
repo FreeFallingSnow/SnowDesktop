@@ -23,6 +23,10 @@ std::string FormatBytes(double bytes, std::string_view locale,
 std::string FormatDuration(std::int64_t milliseconds,
     std::string_view locale, std::string_view style = "short");
 
+std::string FormatRelativeTime(std::int64_t deltaMilliseconds,
+    std::string_view locale, std::string_view unit = "auto",
+    std::string_view numeric = "auto");
+
 std::string FormatList(const std::vector<std::string>& values,
     std::string_view locale);
 }
