@@ -589,7 +589,7 @@ local snapshot = cpu:value()
 `data.system.network.traffic`、`data.system.storage.volumes`、
 `data.system.storage.io`、`data.system.display.topology` 和
 `data.system.display.current`，以及 `data.audio.output.default`、
-`data.audio.output.volume` feature。
+`data.audio.output.volume`、`data.audio.output.analysis` feature。
 Lua 订阅句柄已接通 `WidgetDataBroker` 与独立工作线程 provider：首个合格订阅按需
 启动对应 topic，多实例共享有效采样率，数据变化只使依赖实例失效，隐藏状态进入
 pause/throttle，最后订阅进入 idle grace，卸载、热重载和关闭自动释放。CPU 冷启动
@@ -618,6 +618,12 @@ endpoint，分别返回不透明 endpoint ID、友好名称/状态和有界主�
 存在合格订阅时才访问 Core Audio，不会启动 loopback 或暴露原生设备 ID。当前先
 使用低频兜底采样，IMMNotificationClient 与 IAudioEndpointVolumeCallback 事件接入
 仍属于本数据域的后续工作。
+
+`audio.output.analysis` 已使用独立 WASAPI loopback 捕获线程，向 Lua 只发布固定
+128 点 mono waveform、64 个归一化频谱 bin、RMS/peak/静音和设备变化状态；首个
+已授权可见订阅启动，最后一个可见订阅消失、权限撤销或卸载时立即停止并清空快照，
+不使用 idle grace。多订阅由 broker 合并为一条捕获管线，预览使用确定性模拟数据；
+点数/特征/updateHz 的逐订阅配置与运行状态指示仍待后续收口。
 
 ```text
 Stopped

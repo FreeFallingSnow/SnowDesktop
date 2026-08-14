@@ -452,6 +452,17 @@ function schedule.cancel(id) end
 ---@field minimum number Currently 0.0.
 ---@field maximum number Currently 1.0.
 
+---@class SnowAudioOutputAnalysisDataValue
+---@field waveform number[] 128 normalized mono points in -1.0..1.0.
+---@field spectrum number[] 64 normalized magnitude bins in 0.0..1.0.
+---@field rms number Normalized RMS level in 0.0..1.0.
+---@field peak number Normalized peak level in 0.0..1.0.
+---@field silent boolean
+---@field deviceChanged boolean
+---@field endpointId string Opaque endpoint identifier.
+---@field sampleRate integer
+---@field channels integer Source mix channel count; waveform is always downmixed.
+
 ---@class SnowDataSnapshot<T>
 ---@field available boolean
 ---@field value? T
@@ -480,6 +491,7 @@ data = {}
 ---@overload fun(topic: 'system.display.current', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowDisplayCurrentDataValue>
 ---@overload fun(topic: 'audio.output.default', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowAudioOutputDefaultDataValue>
 ---@overload fun(topic: 'audio.output.volume', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowAudioOutputVolumeDataValue>
+---@overload fun(topic: 'audio.output.analysis', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowAudioOutputAnalysisDataValue>
 ---@param topic string
 ---@param options? SnowDataSubscribeOptions
 ---@return SnowDataSubscription<table>

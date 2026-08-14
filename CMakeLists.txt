@@ -248,6 +248,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget_preview_context.cpp
     src/widget_data_broker.cpp
     src/widget_system_data_provider.cpp
+    src/widget_audio_analysis_provider.cpp
     src/widget_lua_lifecycle.cpp
     src/widget_runtime_diagnostics.cpp
     src/widget_runtime_scheduler.cpp
@@ -748,6 +749,16 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES advapi32 dxgi dxguid iphlpapi ole32 pdh propsys runtimeobject shcore user32 windowsapp
         LABELS contract data system widget)
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetAudioAnalysisProviderTests
+        widget_audio_analysis_provider
+        SOURCES
+            tests/widget_audio_analysis_provider_tests.cpp
+            src/widget_audio_analysis_provider.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES ole32
+        LABELS contract data audio widget)
 
     snowdesktop_add_test(
         SnowDesktopWidgetLuaLifecycleTests

@@ -38,6 +38,7 @@
 #include "widget_lua_lifecycle.h"
 #include "widget_data_broker.h"
 #include "widget_system_data_provider.h"
+#include "widget_audio_analysis_provider.h"
 
 struct ImGuiContext;
 struct PersonalizationSettings;
@@ -296,6 +297,8 @@ struct LuaWidgetDataSnapshot
         audioOutputDefault;
     snowdesktop::widget_runtime::WidgetAudioOutputVolumeDataSnapshot
         audioOutputVolume;
+    snowdesktop::widget_runtime::WidgetAudioAnalysisDataSnapshot
+        audioAnalysis;
 };
 
 /**
@@ -1068,6 +1071,8 @@ private:
         dataBroker_;
     std::unique_ptr<snowdesktop::widget_runtime::WidgetSystemDataProvider>
         widgetSystemDataProvider_;
+    std::unique_ptr<snowdesktop::widget_runtime::WidgetAudioAnalysisProvider>
+        widgetAudioAnalysisProvider_;
     std::unique_ptr<
         snowdesktop::calendar::CalendarService>
         calendarService_;

@@ -94,10 +94,10 @@ ID 为 1–128 字节，每个实例最多 32 个计划；周期请求范围是 
 
 ### `data`
 
-当前公开十二个按需数据源：`system.cpu`、`system.memory`、`system.gpu`、`system.power`、
+当前公开十三个按需数据源：`system.cpu`、`system.memory`、`system.gpu`、`system.power`、
 `system.network.status`、`system.network.traffic`、`system.storage.volumes`、
 `system.storage.io`、`system.display.topology`、`system.display.current`、
-`audio.output.default` 和 `audio.output.volume`。在 `setup` 或模块
+`audio.output.default`、`audio.output.volume` 和 `audio.output.analysis`。在 `setup` 或模块
 入口创建订阅，不要在每次 `render` 中重复订阅：
 
 ```lua
@@ -124,7 +124,7 @@ end
 `data.subscribe(topic, options?)` 返回句柄。`options.maxAgeMs` 为 1–86400000，
 同时表达请求采样周期与快照过期阈值；CPU 最快 500 ms，内存最快 1000 ms，
 电源、存储卷和显示拓扑最快 2000 ms；存储 I/O、默认音频端点和主音量最快
-1000 ms。`whenHidden` 可为
+1000 ms，音频分析最快 16 ms。`whenHidden` 可为
 `pause`、`throttle`（默认）或 `continue`；
 当前系统 provider 不承诺后台 continue，因此会收敛为隐藏 throttle。
 `handle:value()` 返回
@@ -177,10 +177,20 @@ Windows 友好 `name` 和 `state`；`audio.output.volume` 包含匹配的 `endpo
 `available=false,error="notPresent"`。这两个 topic 只读取 endpoint 元数据与主音量，
 不会启动 loopback、取得 PCM 或暴露原生 endpoint ID；预览使用固定模拟设备。
 
+`audio.output.analysis` 使用独立 WASAPI loopback 线程，value 返回固定 128 点
+`waveform`、64 个 `spectrum` bin、`rms/peak/silent/deviceChanged`、不透明
+`endpointId` 及源 `sampleRate/channels`。waveform 已下混为 mono 且限制在 -1–1，
+频谱和电平限制在 0–1；Lua 不取得 PCM、无限历史或每进程音频。当前配置通过
+`maxAgeMs` 选择 16–1000 ms 发布周期，点数和特征选择仍固定，后续再开放有上限的
+`features/waveformPoints/spectrumBins/updateHz` 选项。
+
 CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.power.read` 保护，
 两个网络 topic 受 `system.network.read` 保护，两个存储 topic 受
 `system.storage.read` 保护，显示拓扑受 `system.display.read` 保护。
-两个音频输出 topic 受 `audio.output.read` 保护。
+基础两个音频输出 topic 受 `audio.output.read` 保护；分析 topic 单独受
+`audio.output.analyze` 保护。分析是高风险 provider：只有已授权且可见的实例持有
+订阅时运行，隐藏、撤销、卸载或取消最后一个订阅会立即停止并清空，忽略
+`whenHidden="continue"`；预览只返回确定性模拟波形。
 需要无权限降级的组件应把对应权限声明在 `optionalPermissions`，并处理
 `available=false,error="permissionDenied"`；预览返回稳定模拟值且不会读取本机
 状态。对应 feature ID 是 `data.subscribe`、`data.system.cpu`、
@@ -189,7 +199,7 @@ CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.pow
 `data.system.network.traffic`、`data.system.storage.volumes` 和
 `data.system.storage.io`、`data.system.display.topology` 和
 `data.system.display.current`，以及 `data.audio.output.default`、
-`data.audio.output.volume`。
+`data.audio.output.volume` 和 `data.audio.output.analysis`。
 
 ### `draw`
 

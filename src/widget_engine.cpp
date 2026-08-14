@@ -1777,6 +1777,7 @@ constexpr char kSystemNetworkPermission[] = "system.network.read";
 constexpr char kSystemStoragePermission[] = "system.storage.read";
 constexpr char kSystemDisplayPermission[] = "system.display.read";
 constexpr char kAudioOutputReadPermission[] = "audio.output.read";
+constexpr char kAudioOutputAnalyzePermission[] = "audio.output.analyze";
 
 static void SetNumberField(lua_State* L, const char* key, lua_Number value)
 {
@@ -2305,6 +2306,42 @@ static void PushDataSnapshotEnvelope(lua_State* state,
         lua_setfield(state, -2, "minimum");
         lua_pushnumber(state, 1.0);
         lua_setfield(state, -2, "maximum");
+    }
+    else if (snapshot->topic == "audio.output.analysis")
+    {
+        lua_createtable(state,
+            static_cast<int>(snapshot->audioAnalysis.waveform.size()), 0);
+        int waveformIndex = 1;
+        for (const double value : snapshot->audioAnalysis.waveform)
+        {
+            lua_pushnumber(state, value);
+            lua_rawseti(state, -2, waveformIndex++);
+        }
+        lua_setfield(state, -2, "waveform");
+        lua_createtable(state,
+            static_cast<int>(snapshot->audioAnalysis.spectrum.size()), 0);
+        int spectrumIndex = 1;
+        for (const double value : snapshot->audioAnalysis.spectrum)
+        {
+            lua_pushnumber(state, value);
+            lua_rawseti(state, -2, spectrumIndex++);
+        }
+        lua_setfield(state, -2, "spectrum");
+        lua_pushnumber(state, snapshot->audioAnalysis.rms);
+        lua_setfield(state, -2, "rms");
+        lua_pushnumber(state, snapshot->audioAnalysis.peak);
+        lua_setfield(state, -2, "peak");
+        lua_pushboolean(state, snapshot->audioAnalysis.silent);
+        lua_setfield(state, -2, "silent");
+        lua_pushboolean(state, snapshot->audioAnalysis.deviceChanged);
+        lua_setfield(state, -2, "deviceChanged");
+        lua_pushlstring(state, snapshot->audioAnalysis.endpointId.data(),
+            snapshot->audioAnalysis.endpointId.size());
+        lua_setfield(state, -2, "endpointId");
+        lua_pushinteger(state, snapshot->audioAnalysis.sampleRate);
+        lua_setfield(state, -2, "sampleRate");
+        lua_pushinteger(state, snapshot->audioAnalysis.channels);
+        lua_setfield(state, -2, "channels");
     }
     lua_setfield(state, -2, "value");
 }
@@ -5002,12 +5039,23 @@ void WidgetEngine::InitializeWidgetDataBroker()
     (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
         "audio.output.volume", kAudioOutputReadPermission,
         1000ms, 5000ms, 2000ms, false, false }, error);
+    error.clear();
+    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
+        "audio.output.analysis", kAudioOutputAnalyzePermission,
+        16ms, 1000ms, 0ms, true, false }, error);
 
     if (previewOnly_)
+    {
         widgetSystemDataProvider_.reset();
+        widgetAudioAnalysisProvider_.reset();
+    }
     else
+    {
         widgetSystemDataProvider_ = std::make_unique<
             snowdesktop::widget_runtime::WidgetSystemDataProvider>();
+        widgetAudioAnalysisProvider_ = std::make_unique<
+            snowdesktop::widget_runtime::WidgetAudioAnalysisProvider>();
+    }
 }
 
 void WidgetEngine::ApplyWidgetDataBrokerActions()
@@ -5016,26 +5064,43 @@ void WidgetEngine::ApplyWidgetDataBrokerActions()
     if (!dataBroker_) return;
     for (const auto& action : dataBroker_->DrainActions())
     {
+        const bool audioAnalysis =
+            action.topic == "audio.output.analysis";
         switch (action.type)
         {
         case DataBrokerActionType::Start:
         {
-            const bool started = widgetSystemDataProvider_ &&
-                widgetSystemDataProvider_->StartTopic(
-                    action.topic, action.effectiveInterval);
+            const bool started = audioAnalysis
+                ? widgetAudioAnalysisProvider_ &&
+                    widgetAudioAnalysisProvider_->Start(
+                        action.effectiveInterval)
+                : widgetSystemDataProvider_ &&
+                    widgetSystemDataProvider_->StartTopic(
+                        action.topic, action.effectiveInterval);
             (void)dataBroker_->MarkStarted(action.topic, started,
                 started ? std::string{} : "data provider failed to start");
             break;
         }
         case DataBrokerActionType::Reconfigure:
-            if (widgetSystemDataProvider_)
+            if (audioAnalysis)
+            {
+                if (widgetAudioAnalysisProvider_)
+                    (void)widgetAudioAnalysisProvider_->Start(
+                        action.effectiveInterval);
+            }
+            else if (widgetSystemDataProvider_)
             {
                 (void)widgetSystemDataProvider_->StartTopic(
                     action.topic, action.effectiveInterval);
             }
             break;
         case DataBrokerActionType::Stop:
-            if (widgetSystemDataProvider_)
+            if (audioAnalysis)
+            {
+                if (widgetAudioAnalysisProvider_)
+                    widgetAudioAnalysisProvider_->Stop();
+            }
+            else if (widgetSystemDataProvider_)
                 (void)widgetSystemDataProvider_->StopTopic(action.topic);
             break;
         }
@@ -5171,8 +5236,11 @@ void WidgetEngine::Shutdown()
     }
     if (widgetSystemDataProvider_)
         widgetSystemDataProvider_->StopAll();
+    if (widgetAudioAnalysisProvider_)
+        widgetAudioAnalysisProvider_->Stop();
     widgets_.clear();
     widgetSystemDataProvider_.reset();
+    widgetAudioAnalysisProvider_.reset();
     dataBroker_.reset();
     widgetHostFailures_.clear();
     delete d2dState_; d2dState_ = nullptr;
@@ -6798,6 +6866,22 @@ void WidgetEngine::TickRuntime()
                 RuntimeInvalidateHost(widgetId);
         }
     }
+    if (widgetAudioAnalysisProvider_ &&
+        widgetAudioAnalysisProvider_->DrainChanged())
+    {
+        for (const auto& widget : widgets_)
+        {
+            if (!widget.valid || widget.preview) continue;
+            const bool subscribed = std::any_of(
+                widget.dataSubscriptions.begin(),
+                widget.dataSubscriptions.end(),
+                [](const auto& entry) {
+                    return entry.second == "audio.output.analysis";
+                });
+            if (subscribed)
+                RuntimeInvalidateHost(widget.widgetId);
+        }
+    }
     if (calendarService_)
         calendarService_->Tick();
     const bool eventsChanged =
@@ -7709,6 +7793,37 @@ WidgetEngine::RuntimeGetDataSnapshot(
             result.audioOutputVolume.muted = false;
             result.audioOutputVolume.timestampMs = timestampNow;
         }
+        else if (result.topic == "audio.output.analysis")
+        {
+            result.audioAnalysis.available = true;
+            result.audioAnalysis.warmingUp = false;
+            result.audioAnalysis.silent = false;
+            result.audioAnalysis.endpointId = "audio-output-preview";
+            result.audioAnalysis.sampleRate = 48000;
+            result.audioAnalysis.channels = 2;
+            result.audioAnalysis.rms = 0.42;
+            result.audioAnalysis.peak = 0.78;
+            result.audioAnalysis.timestampMs = timestampNow;
+            result.audioAnalysis.waveform.resize(
+                snowdesktop::widget_runtime::
+                    WidgetAudioAnalysisProvider::WaveformPoints);
+            for (std::size_t index = 0;
+                index < result.audioAnalysis.waveform.size(); ++index)
+            {
+                result.audioAnalysis.waveform[index] =
+                    0.62 * std::sin(
+                        static_cast<double>(index) * 0.22);
+            }
+            result.audioAnalysis.spectrum.resize(
+                snowdesktop::widget_runtime::
+                    WidgetAudioAnalysisProvider::SpectrumBins);
+            for (std::size_t index = 0;
+                index < result.audioAnalysis.spectrum.size(); ++index)
+            {
+                result.audioAnalysis.spectrum[index] =
+                    std::exp(-static_cast<double>(index) / 14.0);
+            }
+        }
         return result;
     }
     if (!binding->options.permissionGranted)
@@ -7901,6 +8016,24 @@ WidgetEngine::RuntimeGetDataSnapshot(
             result.available = snapshot->available;
             result.error = snapshot->error;
             setFreshness(snapshot->timestampMs);
+        }
+    }
+    else if (result.topic == "audio.output.analysis")
+    {
+        const auto snapshot = widgetAudioAnalysisProvider_
+            ? widgetAudioAnalysisProvider_->Snapshot()
+            : std::nullopt;
+        if (snapshot)
+        {
+            result.audioAnalysis = *snapshot;
+            result.available = snapshot->available;
+            result.warmingUp = snapshot->warmingUp;
+            result.error = snapshot->error;
+            setFreshness(snapshot->timestampMs);
+        }
+        else
+        {
+            result.warmingUp = true;
         }
     }
     if (result.error.empty())
