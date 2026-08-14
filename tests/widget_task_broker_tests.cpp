@@ -126,8 +126,14 @@ void TestApplicationTaskGesturePolicy()
                 { "app.launch", "app.launch", true, 1 }, error) &&
             broker.RegisterTask(
                 { "notification.show", "notification.post", false, 2 },
+                error) &&
+            broker.RegisterTask(
+                { "calendar.create", "calendar.write", false, 1 },
+                error) &&
+            broker.RegisterTask(
+                { "calendar.remove", "calendar.write", true, 1 },
                 error),
-        "application and notification task descriptors must register independently");
+        "application, notification, and calendar task descriptors must register independently");
     TaskStartOptions options;
     options.ownerToken = 250;
     options.permissionGranted = true;
@@ -169,6 +175,26 @@ void TestApplicationTaskGesturePolicy()
             notificationActions[0].arguments.at("title") == "Timer" &&
             notificationActions[0].arguments.at("message") == "Complete",
         "notification tasks must preserve only their validated text payload");
+    Check(broker.Complete(notification.id, true),
+        "notification completion must release its task slot");
+    broker.DrainCompletions();
+
+    options.arguments = { { "title", "Review" } };
+    const auto create = broker.Start(
+        "widget", "calendar.create", options);
+    Check(static_cast<bool>(create),
+        "authorized calendar creation must not require a gesture");
+    Check(broker.Complete(create.id, true),
+        "calendar creation completion must release its task slot");
+    broker.DrainActions();
+    broker.DrainCompletions();
+    options.arguments = { { "id", "event-id" } };
+    Check(!broker.Start("widget", "calendar.remove", options),
+        "calendar deletion must reject background calls");
+    options.trustedGesture = true;
+    Check(static_cast<bool>(broker.Start(
+            "widget", "calendar.remove", options)),
+        "calendar deletion must accept an authorized trusted gesture");
 }
 
 void TestInstanceAndShutdownCleanup()

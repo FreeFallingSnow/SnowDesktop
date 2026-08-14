@@ -413,6 +413,7 @@ struct LuaWidget
     std::unordered_map<std::string, ApplicationReference>
         applicationReferences;
     snowdesktop::widget_runtime::WidgetInteractionRegions interactionRegions;
+    bool panelFrameOpen = false;
     std::uint64_t runtimeToken = 0;
     bool preview = false;
     std::unordered_map<std::string, std::string> previewStorage;
@@ -1190,6 +1191,9 @@ private:
     std::unordered_map<std::uint64_t,
         snowdesktop::widget_runtime::WidgetAppSearchCompletion>
         appSearchCompletions_;
+    std::unordered_map<std::uint64_t,
+        snowdesktop::calendar::MutationResult>
+        calendarMutationCompletions_;
     snowdesktop::widget_runtime::WidgetTrustedGestureState
         trustedGestureState_;
     std::uint64_t nextWidgetRuntimeToken_ = 0;

@@ -673,6 +673,7 @@ struct D2DState
     WidgetEngine* engine = nullptr;
     std::string storagePrefix;
     std::wstring currentWidgetId;
+    const char* surfaceKind = "desktop";
     int gridColumns = 1;
     int gridRows = 1;
     int gridCellW = 92;
@@ -1178,6 +1179,7 @@ public:
         widgetRect_ = state_->widgetRect;
         storagePrefix_ = state_->storagePrefix;
         widgetId_ = state_->currentWidgetId;
+        surfaceKind_ = state_->surfaceKind;
         gridColumns_ = state_->gridColumns;
         gridRows_ = state_->gridRows;
         layoutMetrics_ = snowdesktop::widget_runtime::
@@ -1194,6 +1196,7 @@ public:
         state_->widgetRect = widgetRect_;
         state_->storagePrefix = std::move(storagePrefix_);
         state_->currentWidgetId = std::move(widgetId_);
+        state_->surfaceKind = surfaceKind_;
         state_->gridColumns = gridColumns_;
         state_->gridRows = gridRows_;
         state_->widgetClipDepth = widgetClipDepth_;
@@ -1218,10 +1221,35 @@ private:
     D2D1_RECT_F widgetRect_{};
     std::string storagePrefix_;
     std::wstring widgetId_;
+    const char* surfaceKind_ = "desktop";
     int gridColumns_ = 1;
     int gridRows_ = 1;
     snowdesktop::widget_runtime::LayoutMetrics layoutMetrics_;
     int widgetClipDepth_ = 0;
+};
+
+class WidgetSurfaceScope
+{
+public:
+    WidgetSurfaceScope(D2DState* state, const char* surfaceKind)
+        : state_(state)
+    {
+        if (!state_) return;
+        previous_ = state_->surfaceKind;
+        state_->surfaceKind = surfaceKind ? surfaceKind : "desktop";
+    }
+
+    ~WidgetSurfaceScope()
+    {
+        if (state_) state_->surfaceKind = previous_;
+    }
+
+    WidgetSurfaceScope(const WidgetSurfaceScope&) = delete;
+    WidgetSurfaceScope& operator=(const WidgetSurfaceScope&) = delete;
+
+private:
+    D2DState* state_ = nullptr;
+    const char* previous_ = "desktop";
 };
 
 static void SetWidgetRectContext(D2DState* state, RECT bounds)
@@ -1827,6 +1855,7 @@ constexpr char kMediaReadPermission[] = "media.read";
 constexpr char kMediaActionPermission[] = "media.action";
 constexpr char kDesktopReadPermission[] = "desktop.read";
 constexpr char kCalendarReadPermission[] = "calendar.read";
+constexpr char kCalendarWritePermission[] = "calendar.write";
 constexpr char kAppDiscoveryPermission[] = "app.discovery";
 constexpr char kAppLaunchPermission[] = "app.launch";
 constexpr char kNotificationPostPermission[] = "notification.post";
@@ -3422,6 +3451,156 @@ static int lua_TaskStart(lua_State* state)
         arguments.emplace("title", std::move(title));
         arguments.emplace("message", std::move(message));
     }
+    else if (taskName == "calendar.create" ||
+        taskName == "calendar.update" ||
+        taskName == "calendar.remove")
+    {
+        if (!hasArguments)
+            return luaL_error(state,
+                "task.start: %s requires an arguments table",
+                taskName.c_str());
+        const bool update = taskName == "calendar.update";
+        const bool remove = taskName == "calendar.remove";
+        lua_pushnil(state);
+        while (lua_next(state, 2) != 0)
+        {
+            if (lua_type(state, -2) != LUA_TSTRING)
+            {
+                lua_pop(state, 2);
+                return luaL_error(state,
+                    "task.start: calendar argument keys must be strings");
+            }
+            size_t keyLength = 0;
+            const char* keyValue = lua_tolstring(state, -2, &keyLength);
+            const std::string_view key(
+                keyValue ? keyValue : "", keyLength);
+            const bool known = key == "id" ||
+                (!remove && (key == "title" || key == "date" ||
+                    key == "allDay" || key == "startMinutes" ||
+                    key == "endMinutes" || key == "notes" ||
+                    key == "reminderMinutes" ||
+                    key == "expectedRevision"));
+            const bool allowed = known &&
+                (update || key != "expectedRevision") &&
+                ((update || remove) || key != "id");
+            if (!allowed)
+            {
+                lua_pop(state, 2);
+                return luaL_error(state,
+                    "task.start: %s received an unknown argument",
+                    taskName.c_str());
+            }
+            lua_pop(state, 1);
+        }
+
+        const auto readText = [&](const char* field,
+            std::size_t maximum, bool allowEmpty,
+            std::string& output) -> bool {
+            lua_getfield(state, 2, field);
+            if (lua_type(state, -1) != LUA_TSTRING)
+            {
+                lua_pop(state, 1);
+                return false;
+            }
+            size_t length = 0;
+            const char* value = lua_tolstring(state, -1, &length);
+            output.assign(value ? value : "", length);
+            lua_pop(state, 1);
+            return output.size() <= maximum &&
+                (allowEmpty || !output.empty()) &&
+                output.find('\0') == std::string::npos &&
+                (output.empty() || IsValidUtf8Local(output));
+        };
+        const auto readInteger = [&](const char* field,
+            lua_Integer& output) -> bool {
+            lua_getfield(state, 2, field);
+            const bool valid = lua_isinteger(state, -1);
+            if (valid) output = lua_tointeger(state, -1);
+            lua_pop(state, 1);
+            return valid;
+        };
+
+        if (update || remove)
+        {
+            std::string id;
+            if (!readText("id", 128, false, id))
+                return luaL_error(state,
+                    "task.start: %s id must contain 1 to 128 bytes of valid UTF-8",
+                    taskName.c_str());
+            arguments.emplace("id", std::move(id));
+        }
+        if (!remove)
+        {
+            std::string title;
+            std::string date;
+            std::string notes;
+            if (!readText("title", 512, false, title))
+                return luaL_error(state,
+                    "task.start: calendar title must contain 1 to 512 bytes of valid UTF-8");
+            if (!readText("date", 10, false, date) ||
+                !snowdesktop::calendar::CalendarService::GetDateInfo(date))
+                return luaL_error(state,
+                    "task.start: calendar date must be a valid YYYY-MM-DD date");
+            if (!readText("notes", 8192, true, notes))
+                return luaL_error(state,
+                    "task.start: calendar notes must contain at most 8192 bytes of valid UTF-8");
+
+            lua_getfield(state, 2, "allDay");
+            if (!lua_isboolean(state, -1))
+            {
+                lua_pop(state, 1);
+                return luaL_error(state,
+                    "task.start: calendar allDay must be a boolean");
+            }
+            const bool allDay = lua_toboolean(state, -1) != 0;
+            lua_pop(state, 1);
+
+            lua_Integer startMinutes = 0;
+            lua_Integer endMinutes = 0;
+            lua_Integer reminderMinutes = -1;
+            if (!readInteger("startMinutes", startMinutes) ||
+                startMinutes < 0 || startMinutes > 1439 ||
+                !readInteger("endMinutes", endMinutes) ||
+                endMinutes < 0 || endMinutes > 1439 ||
+                (!allDay && endMinutes < startMinutes))
+            {
+                return luaL_error(state,
+                    "task.start: calendar time range is invalid");
+            }
+            if (!readInteger("reminderMinutes", reminderMinutes) ||
+                (reminderMinutes != -1 && reminderMinutes != 0 &&
+                    reminderMinutes != 5 && reminderMinutes != 15 &&
+                    reminderMinutes != 30 && reminderMinutes != 60 &&
+                    reminderMinutes != 1440))
+            {
+                return luaL_error(state,
+                    "task.start: calendar reminderMinutes is unsupported");
+            }
+
+            arguments.emplace("title", std::move(title));
+            arguments.emplace("date", std::move(date));
+            arguments.emplace("notes", std::move(notes));
+            arguments.emplace("allDay", allDay ? "1" : "0");
+            arguments.emplace("startMinutes", std::to_string(startMinutes));
+            arguments.emplace("endMinutes", std::to_string(endMinutes));
+            arguments.emplace("reminderMinutes",
+                std::to_string(reminderMinutes));
+
+            if (update)
+            {
+                lua_Integer expectedRevision = 0;
+                if (!readInteger("expectedRevision", expectedRevision) ||
+                    expectedRevision <= 0 ||
+                    expectedRevision > std::numeric_limits<int>::max())
+                {
+                    return luaL_error(state,
+                        "task.start: calendar expectedRevision must be a positive integer");
+                }
+                arguments.emplace("expectedRevision",
+                    std::to_string(expectedRevision));
+            }
+        }
+    }
     else if (hasArguments)
     {
         lua_pushnil(state);
@@ -4972,7 +5151,8 @@ static int lua_WidgetContext(lua_State* L)
     lua_pushboolean(L, state.preview); lua_setfield(L, -2, "preview");
     lua_pushboolean(L, state.focused); lua_setfield(L, -2, "focused");
     lua_pushboolean(L, state.selected); lua_setfield(L, -2, "selected");
-    lua_pushstring(L, state.preview ? "preview" : "desktop");
+    lua_pushstring(L, state.preview ? "preview" :
+        (d2d && d2d->surfaceKind ? d2d->surfaceKind : "desktop"));
     lua_setfield(L, -2, "surface");
     return 1;
 }
@@ -6572,6 +6752,15 @@ void WidgetEngine::InitializeWidgetTaskBroker()
     error.clear();
     (void)taskBroker_->RegisterTask(TaskDescriptor{
         "notification.show", kNotificationPostPermission, false, 2 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "calendar.create", kCalendarWritePermission, false, 1 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "calendar.update", kCalendarWritePermission, false, 1 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "calendar.remove", kCalendarWritePermission, true, 1 }, error);
     if (previewOnly_)
     {
         mediaTaskExecutor_.reset();
@@ -6622,6 +6811,8 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 (void)mediaTaskExecutor_->Cancel(action.id);
             if (appTaskExecutor_)
                 (void)appTaskExecutor_->Cancel(action.id);
+            appSearchCompletions_.erase(action.id);
+            calendarMutationCompletions_.erase(action.id);
             continue;
         }
         const auto snapshot = taskBroker_->Snapshot(action.id);
@@ -6731,6 +6922,96 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             continue;
         }
 
+        if (action.name == "calendar.create" ||
+            action.name == "calendar.update" ||
+            action.name == "calendar.remove")
+        {
+            snowdesktop::calendar::MutationResult result;
+            if (action.preview)
+            {
+                result.error = "previewReadOnly";
+            }
+            else if (action.name == "calendar.remove")
+            {
+                const auto id = action.arguments.find("id");
+                result = id != action.arguments.end()
+                    ? RuntimeCalendarRemove(id->second)
+                    : snowdesktop::calendar::MutationResult{
+                        false, {}, 0, "invalidArguments" };
+            }
+            else
+            {
+                const auto title = action.arguments.find("title");
+                const auto date = action.arguments.find("date");
+                const auto notes = action.arguments.find("notes");
+                const auto allDay = action.arguments.find("allDay");
+                const auto start = action.arguments.find("startMinutes");
+                const auto end = action.arguments.find("endMinutes");
+                const auto reminder =
+                    action.arguments.find("reminderMinutes");
+                const auto parseInteger = [](const std::string& text,
+                    int& value) {
+                    const char* begin = text.data();
+                    const char* finish = begin + text.size();
+                    const auto parsed = std::from_chars(
+                        begin, finish, value);
+                    return parsed.ec == std::errc{} &&
+                        parsed.ptr == finish;
+                };
+                snowdesktop::calendar::CalendarEvent event;
+                bool valid = title != action.arguments.end() &&
+                    date != action.arguments.end() &&
+                    notes != action.arguments.end() &&
+                    allDay != action.arguments.end() &&
+                    start != action.arguments.end() &&
+                    end != action.arguments.end() &&
+                    reminder != action.arguments.end();
+                if (valid)
+                {
+                    event.title = title->second;
+                    event.date = date->second;
+                    event.notes = notes->second;
+                    event.allDay = allDay->second == "1";
+                    valid = parseInteger(
+                        start->second, event.startMinutes) &&
+                        parseInteger(end->second, event.endMinutes) &&
+                        parseInteger(reminder->second,
+                            event.reminderMinutes);
+                }
+                if (!valid)
+                {
+                    result.error = "invalidArguments";
+                }
+                else if (action.name == "calendar.create")
+                {
+                    result = RuntimeCalendarCreate(std::move(event));
+                }
+                else
+                {
+                    const auto id = action.arguments.find("id");
+                    const auto revision =
+                        action.arguments.find("expectedRevision");
+                    int expectedRevision = 0;
+                    if (id == action.arguments.end() ||
+                        revision == action.arguments.end() ||
+                        !parseInteger(revision->second, expectedRevision))
+                    {
+                        result.error = "invalidArguments";
+                    }
+                    else
+                    {
+                        result = RuntimeCalendarUpdate(id->second,
+                            expectedRevision, std::move(event));
+                    }
+                }
+            }
+            calendarMutationCompletions_.insert_or_assign(
+                action.id, result);
+            (void)taskBroker_->Complete(
+                action.id, result.ok, result.error);
+            continue;
+        }
+
         if (action.name == "notification.show")
         {
             const auto title = action.arguments.find("title");
@@ -6815,15 +7096,29 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             });
         const auto searchCompletion =
             appSearchCompletions_.find(completion.id);
+        const auto calendarCompletion =
+            calendarMutationCompletions_.find(completion.id);
         if (widget == widgets_.end() ||
             widget->taskIds.erase(completion.id) == 0)
         {
             if (searchCompletion != appSearchCompletions_.end())
                 appSearchCompletions_.erase(searchCompletion);
+            if (calendarCompletion != calendarMutationCompletions_.end())
+                calendarMutationCompletions_.erase(calendarCompletion);
             continue;
         }
         if (completion.ok && completion.name == "app.search" &&
             searchCompletion == appSearchCompletions_.end())
+        {
+            completion.ok = false;
+            completion.error = "taskResultUnavailable";
+        }
+        const bool calendarTask =
+            completion.name == "calendar.create" ||
+            completion.name == "calendar.update" ||
+            completion.name == "calendar.remove";
+        if (calendarTask &&
+            calendarCompletion == calendarMutationCompletions_.end())
         {
             completion.ok = false;
             completion.error = "taskResultUnavailable";
@@ -6881,11 +7176,15 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             nextOffset = searchCompletion->second.nextOffset;
             hasMore = searchCompletion->second.hasMore;
         }
+        const snowdesktop::calendar::MutationResult* calendarResult =
+            calendarCompletion != calendarMutationCompletions_.end()
+            ? &calendarCompletion->second : nullptr;
         snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(
             trustedGestureState_, false);
         (void)InvokeLifecycleEvent(*widget, "task.complete",
             [&completion, &publicItems, nextOffset, hasMore,
-                catalogRevision](lua_State* eventState) {
+                catalogRevision, calendarTask,
+                calendarResult](lua_State* eventState) {
                 lua_pushinteger(eventState,
                     static_cast<lua_Integer>(completion.id));
                 lua_setfield(eventState, -2, "taskId");
@@ -6929,6 +7228,17 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                             static_cast<lua_Integer>(catalogRevision));
                         lua_setfield(eventState, -2, "catalogRevision");
                     }
+                    else if (calendarTask)
+                    {
+                        lua_createtable(eventState, 0, 2);
+                        lua_pushlstring(eventState,
+                            calendarResult->id.data(),
+                            calendarResult->id.size());
+                        lua_setfield(eventState, -2, "id");
+                        lua_pushinteger(eventState,
+                            calendarResult->revision);
+                        lua_setfield(eventState, -2, "revision");
+                    }
                     else
                     {
                         lua_createtable(eventState, 0, 1);
@@ -6942,10 +7252,19 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                     lua_pushlstring(eventState, completion.error.data(),
                         completion.error.size());
                     lua_setfield(eventState, -2, "error");
+                    if (calendarTask && calendarResult &&
+                        calendarResult->revision > 0)
+                    {
+                        lua_pushinteger(eventState,
+                            calendarResult->revision);
+                        lua_setfield(eventState, -2, "currentRevision");
+                    }
                 }
             });
         if (searchCompletion != appSearchCompletions_.end())
             appSearchCompletions_.erase(searchCompletion);
+        if (calendarCompletion != calendarMutationCompletions_.end())
+            calendarMutationCompletions_.erase(calendarCompletion);
     }
 }
 
@@ -6965,6 +7284,7 @@ void WidgetEngine::ReleaseWidgetTasks(LuaWidget& widget,
         if (appTaskExecutor_)
             (void)appTaskExecutor_->Cancel(taskId);
         appSearchCompletions_.erase(taskId);
+        calendarMutationCompletions_.erase(taskId);
     }
     widget.taskIds.clear();
 }
@@ -7099,6 +7419,7 @@ void WidgetEngine::Shutdown()
     mediaTaskExecutor_.reset();
     appTaskExecutor_.reset();
     appSearchCompletions_.clear();
+    calendarMutationCompletions_.clear();
     taskBroker_.reset();
     widgetHostFailures_.clear();
     delete d2dState_; d2dState_ = nullptr;
@@ -8452,6 +8773,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     lua_State* state = found->state;
     if (!state) return;
     WidgetExecutionContextGuard contextGuard(d2dState_, widgetId);
+    WidgetSurfaceScope surfaceScope(d2dState_, "desktop");
     snowdesktop::lua_runtime::StackGuard stackGuard(state);
 
     d2dState_->ctx = context;
@@ -8672,6 +8994,7 @@ bool WidgetEngine::RenderWidgetPanel(
     if (!state)
         return false;
     WidgetExecutionContextGuard contextGuard(d2dState_, widgetId);
+    WidgetSurfaceScope surfaceScope(d2dState_, "panel");
     snowdesktop::lua_runtime::StackGuard stackGuard(state);
 
     d2dState_->ctx = context;
@@ -8689,7 +9012,8 @@ bool WidgetEngine::RenderWidgetPanel(
         lua_pop(state, 1);
         return false;
     }
-    lua_getfield(state, -1, "renderPanel");
+    lua_getfield(state, -1,
+        widget.manifest.apiVersion >= 2 ? "panel" : "renderPanel");
     if (!lua_isfunction(state, -1))
     {
         lua_pop(state, 2);
@@ -8710,14 +9034,17 @@ bool WidgetEngine::RenderWidgetPanel(
         }
         argumentCount = 2;
     }
+    if (widget.manifest.apiVersion >= 2)
+        widget.panelFrameOpen = true;
     const bool succeeded = snowdesktop::lua_runtime::ProtectedCall(
         state, argumentCount, 0) == LUA_OK;
+    widget.panelFrameOpen = false;
     if (!succeeded)
     {
         const char* error = lua_tostring(state, -1);
         RuntimeRecordError(
             widgetId,
-            error ? error : "(renderPanel error)");
+            error ? error : "(panel render error)");
         lua_pop(state, 1);
     }
     while (d2dState_->widgetClipDepth > 0)
@@ -9034,6 +9361,8 @@ void WidgetEngine::InvokeMouseEvent(const std::wstring& widgetId, const char* ca
     if (w.manifest.apiVersion >= 2)
     {
         const bool panel = std::strstr(callbackName, "Panel") != nullptr;
+        WidgetSurfaceScope surfaceScope(
+            d2dState_, panel ? "panel" : "desktop");
         const char* kind = "pointer";
         const char* action = callbackName;
         if (std::strcmp(callbackName, "onClick") == 0 ||
@@ -10755,7 +11084,8 @@ bool WidgetEngine::RuntimeCanWriteWidgetStorage(
 {
     const int index = FindWidget(widgetId);
     return index < 0 || widgets_[index].manifest.apiVersion < 2 ||
-        !widgets_[index].interactionRegions.FrameOpen();
+        (!widgets_[index].interactionRegions.FrameOpen() &&
+            !widgets_[index].panelFrameOpen);
 }
 
 std::string WidgetEngine::RuntimeGetStorageValue(const std::wstring& widgetId, const std::string& key) const
@@ -11012,6 +11342,8 @@ bool WidgetEngine::RuntimeCancelTask(
         (void)appTaskExecutor_->Cancel(taskId);
     if (canceled)
         appSearchCompletions_.erase(taskId);
+    if (canceled)
+        calendarMutationCompletions_.erase(taskId);
     return canceled;
 }
 
@@ -11241,9 +11573,9 @@ bool WidgetEngine::RuntimeRegisterV2HostControl(
         error = "host text controls require API v2";
         return false;
     }
-    if (!widget.interactionRegions.FrameOpen())
+    if (!widget.interactionRegions.FrameOpen() && !widget.panelFrameOpen)
     {
-        error = "host text controls may only be submitted during render";
+        error = "host text controls may only be submitted during render or panel";
         return false;
     }
     if (widget.hostControls.size() >= 128)

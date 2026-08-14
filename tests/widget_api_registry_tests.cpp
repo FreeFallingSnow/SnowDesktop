@@ -337,9 +337,12 @@ void TestV2Contract()
                 "task.app.launch") &&
             snowdesktop::widget_api::SupportsFeature(
                 "task.app.search") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "task.calendar.write") &&
             snowdesktop::widget_api::SupportsFeature("task.start") &&
             snowdesktop::widget_api::SupportsFeature("time.calendar") &&
             snowdesktop::widget_api::SupportsFeature("widget.context") &&
+            snowdesktop::widget_api::SupportsFeature("widget.panel") &&
             snowdesktop::widget_api::SupportsFeature(
                 "system.environment") &&
             !snowdesktop::widget_api::SupportsFeature("view.tree"),
@@ -412,6 +415,18 @@ void TestV2Contract()
     Check(lua_pcall(state, 1, 1, 0) == LUA_OK &&
             snowdesktop::widget_api::IsDefinedWidget(state, -1),
         "widget.define must accept menu callbacks when dispatch exists");
+    lua_pop(state, 2);
+
+    lua_getglobal(state, "widget");
+    lua_getfield(state, -1, "define");
+    lua_newtable(state);
+    lua_pushcfunction(state, Noop);
+    lua_setfield(state, -2, "render");
+    lua_pushcfunction(state, Noop);
+    lua_setfield(state, -2, "panel");
+    Check(lua_pcall(state, 1, 1, 0) == LUA_OK &&
+            snowdesktop::widget_api::IsDefinedWidget(state, -1),
+        "widget.define must accept a panel surface callback");
     lua_pop(state, 2);
 
     constexpr FunctionDescriptor systemFunctions[] = {

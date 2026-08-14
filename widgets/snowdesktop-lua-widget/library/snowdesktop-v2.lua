@@ -1,7 +1,7 @@
 ---@meta SnowDesktop API v2
 
 ---@alias SnowWidgetSizeClass 'small'|'medium'|'large'
----@alias SnowWidgetSurfaceKind 'desktop'|'preview'
+---@alias SnowWidgetSurfaceKind 'desktop'|'panel'|'preview'
 ---@alias SnowResourceState 'pending'|'ready'|'error'
 ---@alias SnowDateStyle 'none'|'short'|'long'
 ---@alias SnowTimeStyle 'none'|'short'|'long'
@@ -205,6 +205,7 @@
 ---@class SnowWidgetDefinition
 ---@field name? string
 ---@field render fun(context: SnowWidgetContext, model: any) Exactly one of render or view is required in API v2; view is not available yet.
+---@field panel? fun(context: SnowWidgetContext, model: any) Renders the host-owned auxiliary panel surface opened with widget.openPanel.
 ---@field setup? fun(context: SnowWidgetContext): any Runs once and returns the instance model passed to render and dispose.
 ---@field event? fun(context: SnowWidgetContext, model: any, event: SnowWidgetEvent) Receives host surface events; declarative node events are not available yet.
 ---@field menu? fun(context: SnowWidgetContext, model: any, request: SnowMenuRequest): SnowMenuModel? Builds an immediate-region context menu synchronously.
@@ -245,10 +246,11 @@
 ---@field topic? string Updated data subscription topic for data.change.
 ---@field revision? integer Monotonic provider revision for data.change.
 ---@field taskId? integer
----@field task? 'media.toggle'|'media.next'|'media.previous'|'app.search'|'app.launch'|'notification.show'|string
+---@field task? 'media.toggle'|'media.next'|'media.previous'|'app.search'|'app.launch'|'notification.show'|'calendar.create'|'calendar.update'|'calendar.remove'|string
 ---@field ok? boolean
----@field value? SnowMediaTaskValue|SnowAppSearchTaskValue|SnowStateValue
+---@field value? SnowMediaTaskValue|SnowAppSearchTaskValue|SnowCalendarMutationTaskValue|SnowStateValue
 ---@field error? string
+---@field currentRevision? integer Latest revision returned by a failed calendar update conflict.
 
 ---@class SnowApiInfo
 ---@field current integer
@@ -733,6 +735,26 @@ function data.subscribe(topic, options) end
 ---@field title string Valid UTF-8 containing 1 to 256 bytes.
 ---@field message string Valid UTF-8 containing 1 to 2048 bytes.
 
+---@class SnowCalendarEventArguments
+---@field title string Valid UTF-8 containing 1 to 512 bytes.
+---@field date string Valid YYYY-MM-DD date.
+---@field allDay boolean
+---@field startMinutes integer 0 through 1439.
+---@field endMinutes integer 0 through 1439 and not before startMinutes for timed events.
+---@field notes string Valid UTF-8 containing at most 8192 bytes.
+---@field reminderMinutes -1|0|5|15|30|60|1440
+
+---@class SnowCalendarUpdateArguments: SnowCalendarEventArguments
+---@field id string Host-issued event ID.
+---@field expectedRevision integer Positive revision from calendar.events.
+
+---@class SnowCalendarRemoveArguments
+---@field id string Host-issued event ID.
+
+---@class SnowCalendarMutationTaskValue
+---@field id string Host-issued event ID; preserved for update/remove.
+---@field revision integer New revision for create/update; zero for remove.
+
 ---@class snow.task
 task = {}
 
@@ -742,7 +764,10 @@ task = {}
 ---@overload fun(name: 'app.search', arguments: SnowAppSearchArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'app.launch', arguments: SnowAppLaunchArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'notification.show', arguments: SnowNotificationShowArguments): taskId: integer?, error: string?
----@param name 'media.toggle'|'media.next'|'media.previous'|'app.search'|'app.launch'|'notification.show'
+---@overload fun(name: 'calendar.create', arguments: SnowCalendarEventArguments): taskId: integer?, error: string?
+---@overload fun(name: 'calendar.update', arguments: SnowCalendarUpdateArguments): taskId: integer?, error: string?
+---@overload fun(name: 'calendar.remove', arguments: SnowCalendarRemoveArguments): taskId: integer?, error: string?
+---@param name 'media.toggle'|'media.next'|'media.previous'|'app.search'|'app.launch'|'notification.show'|'calendar.create'|'calendar.update'|'calendar.remove'
 ---@param arguments? table Must be omitted or empty for media tasks.
 ---@return integer? taskId
 ---@return string? error

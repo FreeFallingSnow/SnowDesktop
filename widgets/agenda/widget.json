@@ -1,16 +1,16 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "4a1577fc-1fe4-4a91-9fa5-8ce400ede1e3",
   "slug": "agenda",
-  "apiVersion": 1,
+  "apiVersion": 2,
   "dataVersion": 1,
   "entry": "main.lua",
-  "minHostVersion": "1.0.1.0",
+  "minHostVersion": "1.0.4.0",
   "author": "SnowDesktop",
   "license": "GPL-3.0-only",
   "name": "Schedule",
   "nameKey": "lua_widget.agenda.name",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "A local schedule linked with the month calendar, including notes and reminders.",
   "descriptionKey": "lua_widget.agenda.description",
   "locales": {
@@ -537,10 +537,35 @@
     "columns": 4,
     "rows": 4
   },
+  "resources": {},
   "permissions": [
-    "calendar.read",
-    "calendar.write",
-    "ui.input",
-    "ui.contextMenu"
-  ]
+    "calendar.read"
+  ],
+  "optionalPermissions": [
+    "calendar.write"
+  ],
+  "requiredFeatures": [
+    "calendar.dateMath",
+    "calendar.selection",
+    "control.textArea",
+    "control.textInput",
+    "data.calendar.events",
+    "data.calendar.selectedDate",
+    "data.subscribe",
+    "draw.immediate",
+    "interaction.contextMenu",
+    "interaction.pointerActions",
+    "interaction.region",
+    "interaction.scroll",
+    "lifecycle.event",
+    "lifecycle.model",
+    "l10n.basic",
+    "settings.select.localizedOptions",
+    "storage.transaction",
+    "task.calendar.write",
+    "task.start",
+    "time.basic",
+    "widget.panel"
+  ],
+  "optionalFeatures": []
 }

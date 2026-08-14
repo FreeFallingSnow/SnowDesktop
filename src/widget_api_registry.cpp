@@ -20,7 +20,7 @@ namespace snowdesktop::widget_api
 namespace
 {
 constexpr std::uint32_t kCurrentApiVersion = 2;
-constexpr std::array<std::string_view, 54> kHostFeatures = {
+constexpr std::array<std::string_view, 56> kHostFeatures = {
     "calendar.dateMath",
     "calendar.selection",
     "control.focus",
@@ -71,10 +71,12 @@ constexpr std::array<std::string_view, 54> kHostFeatures = {
     "task.notification.show",
     "task.app.launch",
     "task.app.search",
+    "task.calendar.write",
     "task.start",
     "time.basic",
     "time.calendar",
     "widget.context",
+    "widget.panel",
 };
 constexpr std::array<std::string_view, 15> kV1SandboxLibraries = {
     "string", "table", "math", "utf8", "draw", "sys", "layout",
@@ -404,7 +406,8 @@ int LuaDefineWidget(lua_State* state)
     luaL_checktype(state, 1, LUA_TTABLE);
     const int descriptor = lua_absindex(state, 1);
     for (const char* callback : {
-        "render", "view", "setup", "event", "dispose", "menu" })
+        "render", "view", "setup", "event", "dispose", "menu",
+        "panel" })
     {
         if (!FieldIsNilOrFunction(state, descriptor, callback))
         {

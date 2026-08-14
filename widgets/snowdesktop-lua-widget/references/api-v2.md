@@ -43,7 +43,7 @@ return widget.define({
 ```
 
 `setup(context)` 最多执行一次，返回值作为实例 model 传给每次 `render(context,
-model)`、`event(context, model, event)` 和最终的 `dispose(context, model,
+model)`、`panel(context, model)`、`event(context, model, event)` 和最终的 `dispose(context, model,
 reason)`。没有 `setup` 时 model 为
 `nil`；没有 `dispose` 时宿主仍会自动回收实例资源。`reason` 当前可能是
 `unload`、`hotReload` 或 `shutdown`。setup 失败时新 VM 不会替换热重载前的可用
@@ -68,7 +68,10 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 ### `widget`
 
 - `widget.define(definition)`：校验并返回 v2 描述符。当前必需 `render`，可选
-  `setup`、`event`、`menu` 和 `dispose`。
+  `setup`、`panel`、`event`、`menu` 和 `dispose`。`panel` 只在
+  `widget.openPanel` 打开的宿主辅助面板中绘制，收到的 `context.surface` 为
+  `panel`；面板中的 `control.textInput/textArea` 与桌面 surface 使用同一套
+  storage-bound 输入契约。
 - `widget.apiInfo()`：返回当前 API 版本、支持版本和 feature ID。
 - `widget.hasFeature(id)`：探测 feature。
 - `widget.context()`：返回逻辑/像素尺寸、DPI、网格跨度、显示器范围、主题、
@@ -375,9 +378,10 @@ CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.pow
 ### `task`
 
 当前公开异步媒体动作 `media.toggle`、`media.next`、`media.previous`，应用任务
-`app.search`、`app.launch`，以及一次性通知任务 `notification.show`。它们对应
+`app.search`、`app.launch`，一次性通知任务 `notification.show`，以及本地日历写入
+任务 `calendar.create/update/remove`。它们对应
 feature ID `task.start`、`task.media.control`、`task.app.search`、`task.app.launch`
-和 `task.notification.show`。媒体动作要求 `media.action` 权限，而且只能在
+、`task.notification.show` 和 `task.calendar.write`。媒体动作要求 `media.action` 权限，而且只能在
 `click/doubleClick/pointerDown/pointerUp/wheel`、宿主按钮、菜单命令或由宿主明确
 标记来源的打开回调同步调用栈内启动：
 
@@ -439,6 +443,33 @@ local notificationId, err = task.start("notification.show", {
 `canceled` 外，通知还可能返回 `quotaExceeded`、`providerUnavailable` 或
 `notificationFailed`。当前 v2 只开放一次性 `show`；更新、关闭、预约和操作按钮仍在
 后续计划内，不得使用 API v1 `system.notify` 代替。
+
+`calendar.create/update/remove` 要求 `calendar.write`，参数只接受严格字段。
+create/update 共用 `title/date/allDay/startMinutes/endMinutes/notes/reminderMinutes`；
+update 另需宿主事件 `id` 和正整数 `expectedRevision`，remove 只接受 `id`。提醒值
+限定为 `-1/0/5/15/30/60/1440`，日期必须是有效 `YYYY-MM-DD`，文本和时间范围在
+进入日历服务前完成边界检查。新增和更新不要求手势；删除必须从直接指针动作或菜单
+命令的可信调用栈启动：
+
+```lua
+local updateId, err = task.start("calendar.update", {
+    id = item.id,
+    expectedRevision = item.revision,
+    title = item.title,
+    date = item.date,
+    allDay = item.allDay,
+    startMinutes = item.startMinutes,
+    endMinutes = item.endMinutes,
+    notes = item.notes or "",
+    reminderMinutes = item.reminderMinutes,
+})
+```
+
+成功结果为 `{ id, revision }`；删除的 revision 为 0。更新冲突返回
+`error="conflict"`，并在完成事件的 `currentRevision` 给出宿主当前 revision。
+其他稳定错误包括 `not_found`、`title_required`、`text_too_long`、`invalid_date`、
+`invalid_time`、`invalid_reminder`、`event_limit`、`save_failed`、
+`permissionDenied`、`userGestureRequired` 和 `previewReadOnly`。
 
 启动成功只表示任务进入宿主队列。WinRT 媒体调用在独立工作线程执行；完成后由
 `event.kind == "task.complete"` 串行投递，事件包含 `taskId/task/ok`。成功时

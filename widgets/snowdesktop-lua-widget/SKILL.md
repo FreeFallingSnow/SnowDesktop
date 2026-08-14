@@ -124,6 +124,10 @@ synchronous native context menu.
   `calendar.dateInfo/addDays/selectDate` for date math and SnowDesktop's shared
   selection. Rebuild range subscriptions from `event.kind == "data.change"`,
   and do not request `calendar.write` unless event records are mutated.
+- Mutate local calendar records through
+  `task.start("calendar.create"|"calendar.update"|"calendar.remove", args)`
+  and match `task.complete`. Preserve event `id/revision`, handle `conflict`,
+  and start remove only from a direct trusted action or menu command.
 - Start `media.toggle`, `media.next`, and `media.previous` with `task.start`
   only inside a direct trusted gesture callback, then match the returned ID
   in `event.kind == "task.complete"`. Never loop media actions from the
@@ -153,6 +157,10 @@ synchronous native context menu.
   render. Keep keys stable, set an explicit practical `maxBytes`, and call
   `control.focus` only inside a direct trusted action or menu callback. Ordinary
   editing does not require `ui.input`; Lua never receives clipboard contents.
+- Put an auxiliary editor in the optional `widget.define.panel` callback and
+  open it with `widget.openPanel`; its context surface is `panel`, it accepts
+  the same storage-bound controls, and persistent writes still belong in
+  events rather than the panel render callback.
 - Keep colors in `0xRRGGBB`.
 - Respect `widget.context().accessibility`, theme, DPI, visibility and preview
   state. Do not request permission for an ordinary pointer clock or static UI.

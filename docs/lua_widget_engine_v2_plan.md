@@ -753,8 +753,8 @@ local taskId, err = task.start("media.toggle")
 - v2 首版不引入隐式 Promise；协程封装可在稳定任务契约之上后续增加。
 
 当前已公开 `task.start`、`task.cancel`、`task.media.control`、`task.app.search`、
-`task.app.launch`、`task.notification.show` feature，三个媒体动作、两个应用任务和
-一次性通知任务。
+`task.app.launch`、`task.notification.show`、`task.calendar.write` feature，三个
+媒体动作、两个应用任务、一次性通知任务和本地日历 create/update/remove 任务。
 `WidgetTaskBroker` 生命周期内核负责任务描述符注册、全局/实例/
 任务类型并发上限、权限和可信手势门禁、preview 标记、显式取消、撤权取消、实例
 dispose 与 shutdown 原因，以及执行器完成确认均有独立契约测试。实时与预览引擎均
@@ -767,7 +767,9 @@ token，避免热重载时同名实例的旧任务完成事件误投给新 VM。
 线程完成名称/拼音排序与分页，只向 Lua 返回展示字段和实例作用域的不透明引用；
 `app.launch` 只接受该引用并再次检查目录 revision、`app.launch` 权限与可信用户手势，
 不接受路径、参数或工作目录。公开 feature 为 `task.app.search/task.app.launch`，
-预览使用确定性引用与结果。网络等后续任务仍须先完成各自参数/作用域模型后再注册。
+预览使用确定性引用与结果。日历任务复用本地 `CalendarService` 的 revision 冲突和稳定
+错误，Lua 只收到异步完成事件；create/update 不要求手势，remove 要求直接指针或菜单
+来源。网络等后续任务仍须先完成各自参数/作用域模型后再注册。
 
 ### 12.5 系统 API 缺口审计与分层
 
@@ -946,6 +948,12 @@ key 隔离，宿主负责 wheel、钳制、重绘和滚动条，组件使用 `dr
 完整声明式 view tree 到来前迁移现有编辑型组件，不把 `ui.input` 当成普通文本编辑的
 高风险权限，也不向 Lua 开放通用剪贴板读取。通用 region 键盘焦点、Tab 顺序和 UIA
 输出仍未完成，不能把此过渡控件计作第 13.4 节声明式控件全集完成。
+
+`widget.define.panel(context, model)` 已接入 `widget.openPanel` 创建的宿主辅助 surface，
+其 `context.surface` 为 `panel`，可提交同一套 storage-bound 文本控件和滚动区域；面板
+render 与桌面 render 一样禁止持久存储写入。面板按钮暂由序列化 raw panel pointer
+事件驱动，尚未接入独立 region 集合、键盘语义树和 UIA，因此它是迁移 agenda 编辑器
+的过渡 surface，不代表 M6 面板控件树完成。
 
 ### 13.3 参考优先级与完整性边界
 
@@ -1559,8 +1567,8 @@ v2.0 资源契约：
 ### 19.1 发布硬门槛
 
 当前仓库有 11 个内置组件；`analog-clock`、`digital-clock`、`media-controls`、
-`system-monitor`、`pomodoro`、`month-calendar`、`sticky-note` 与 `reminders` 已切到
-schema/API v2，其余 3 个仍待迁移。这八个组件仍需完成真实
+`system-monitor`、`pomodoro`、`month-calendar`、`sticky-note`、`reminders` 与
+`agenda` 已切到 schema/API v2，其余 2 个仍待迁移。这九个组件仍需完成真实
 桌面的多 DPI、主题、隐藏唤醒、系统数据、滚动、媒体控制、元素菜单与应用启动验收，
 因此只能计为代码迁移完成，不能计为最终验证完成。只有全部内置组件完成迁移和验收
 后才能宣布稳定。
