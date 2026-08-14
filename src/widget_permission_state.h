@@ -21,6 +21,7 @@ enum class PermissionRuntimeBlock
     None,
     PendingConsent,
     Denied,
+    MissingRequired,
 };
 
 enum class PermissionRiskClass

@@ -4030,7 +4030,8 @@ void SettingsWindow::DrawWidgetPackagesPage()
         return (state == PermissionDecisionState::Granted ||
                 state == PermissionDecisionState::LegacyImplicit) &&
             !snowdesktop::widget::PermissionsRequiringConsent(
-                package.manifest.permissions).empty();
+                snowdesktop::widget::DeclaredPermissions(
+                    package.manifest)).empty();
     };
     auto revokePermissions = [&](const auto& package)
     {

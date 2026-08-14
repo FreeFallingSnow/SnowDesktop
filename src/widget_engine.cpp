@@ -3715,8 +3715,14 @@ bool WidgetEngine::EnsureWidgetLoaded(const std::wstring& widgetId, const std::w
         return false;
     if (const auto package = GetWidgetPackage(packageId))
     {
-        if (snowdesktop::widget::WidgetPermissionBroker::ActivationBlock(
-                package->permissionState) !=
+        const auto grant = snowdesktop::widget::WidgetPermissionBroker::
+            Evaluate(package->permissionState,
+                package->manifest.permissions,
+                package->manifest.optionalPermissions,
+                package->manifest.networkDomains,
+                package->grantedPermissions,
+                package->grantedNetworkDomains);
+        if (grant.runtimeBlock !=
             snowdesktop::widget::PermissionRuntimeBlock::None)
         {
             return false;
@@ -3817,6 +3823,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         const auto grant = snowdesktop::widget::WidgetPermissionBroker::
             Evaluate(package->permissionState,
                 pending.manifest.permissions,
+                pending.manifest.optionalPermissions,
                 pending.manifest.networkDomains,
                 package->grantedPermissions,
                 package->grantedNetworkDomains);
@@ -3830,6 +3837,10 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
             RuntimeRecordError(widgetId,
                 "Widget permission consent was denied");
             return false;
+        case snowdesktop::widget::PermissionRuntimeBlock::MissingRequired:
+            RuntimeRecordError(widgetId,
+                "Widget required permissions are not granted");
+            return false;
         case snowdesktop::widget::PermissionRuntimeBlock::None:
             break;
         }
@@ -3839,6 +3850,8 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     else
     {
         for (const auto& permission : pending.manifest.permissions)
+            pending.permissions.insert(permission);
+        for (const auto& permission : pending.manifest.optionalPermissions)
             pending.permissions.insert(permission);
     }
 
@@ -5375,12 +5388,19 @@ WidgetEngine::GetWidgetHostState(const std::wstring& widgetId,
     const auto package = GetWidgetPackage(packageId);
     if (!package)
         return { WidgetHostStateKind::LoadFailed, {} };
-    switch (snowdesktop::widget::WidgetPermissionBroker::ActivationBlock(
-        package->permissionState))
+    const auto grant = snowdesktop::widget::WidgetPermissionBroker::Evaluate(
+        package->permissionState,
+        package->manifest.permissions,
+        package->manifest.optionalPermissions,
+        package->manifest.networkDomains,
+        package->grantedPermissions,
+        package->grantedNetworkDomains);
+    switch (grant.runtimeBlock)
     {
     case snowdesktop::widget::PermissionRuntimeBlock::PendingConsent:
         return { WidgetHostStateKind::PermissionPending, {} };
     case snowdesktop::widget::PermissionRuntimeBlock::Denied:
+    case snowdesktop::widget::PermissionRuntimeBlock::MissingRequired:
         return { WidgetHostStateKind::PermissionDenied, {} };
     case snowdesktop::widget::PermissionRuntimeBlock::None:
         break;
@@ -6931,6 +6951,15 @@ std::vector<WidgetDiagnosticEntry> WidgetEngine::GetWidgetDiagnostics() const
         entry.valid = widget.valid;
         entry.hasManifest = widget.manifest.hasManifest;
         entry.permissions = widget.manifest.permissions;
+        for (const auto& permission : widget.manifest.optionalPermissions)
+        {
+            if (std::find(entry.permissions.begin(),
+                    entry.permissions.end(), permission) ==
+                entry.permissions.end())
+            {
+                entry.permissions.push_back(permission);
+            }
+        }
         if (widget.quota)
         {
             entry.memoryBytes = widget.quota->memoryBytes;
@@ -7227,6 +7256,8 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
     readString(root, "entry", manifest.entry);
     readString(root, "signature", manifest.signature);
     manifest.permissions = readStringArray(root, "permissions");
+    manifest.optionalPermissions =
+        readStringArray(root, "optionalPermissions");
     manifest.networkDomains = readStringArray(root, "networkDomains");
     double refreshMs = 0;
     if (readNumber(root, "refreshIntervalMs", refreshMs) &&

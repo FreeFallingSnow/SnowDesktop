@@ -301,6 +301,8 @@ std::string ManifestJson(const PackageManifest& manifest)
         << ", \"rows\": " << manifest.maxRows << "},\n"
         << "  \"permissions\": ";
     appendArray(out, manifest.permissions);
+    out << ",\n  \"optionalPermissions\": ";
+    appendArray(out, manifest.optionalPermissions);
     out << ",\n  \"networkDomains\": ";
     appendArray(out, manifest.networkDomains);
     out << "\n}\n";
@@ -851,6 +853,17 @@ bool MatchesExpectedManifest(const PackageManifest& actual,
         error = "package permissions do not match the source metadata";
         return false;
     }
+    const std::set<std::string> actualOptionalPermissions(
+        actual.optionalPermissions.begin(),
+        actual.optionalPermissions.end());
+    const std::set<std::string> expectedOptionalPermissions(
+        expected.optionalPermissions.begin(),
+        expected.optionalPermissions.end());
+    if (actualOptionalPermissions != expectedOptionalPermissions)
+    {
+        error = "package optional permissions do not match the source metadata";
+        return false;
+    }
     const std::set<std::string> actualDomains(
         actual.networkDomains.begin(), actual.networkDomains.end());
     const std::set<std::string> expectedDomains(
@@ -868,6 +881,17 @@ PackageManifest LocalizePackageManifest(PackageManifest manifest,
     const std::string& requestedLocale)
 {
     return LocalizedManifest(std::move(manifest), requestedLocale);
+}
+
+std::vector<std::string> DeclaredPermissions(
+    const PackageManifest& manifest)
+{
+    std::vector<std::string> result = manifest.permissions;
+    for (const auto& permission : manifest.optionalPermissions)
+        if (std::find(result.begin(), result.end(), permission) ==
+            result.end())
+            result.push_back(permission);
+    return result;
 }
 
 std::optional<PackageDetails> IWidgetPackageSource::GetVersionDetails(
@@ -1333,6 +1357,8 @@ bool WidgetPackageValidator::ReadManifest(
     ReadSize(root, "maxSize", manifest.maxColumns, manifest.maxRows);
     bool arraysValid = true;
     manifest.permissions = ReadStringArray(root, "permissions", arraysValid);
+    manifest.optionalPermissions =
+        ReadStringArray(root, "optionalPermissions", arraysValid);
     manifest.networkDomains =
         ReadStringArray(root, "networkDomains", arraysValid);
 
@@ -1433,7 +1459,7 @@ bool WidgetPackageValidator::ReadManifest(
     }
     if (!arraysValid)
         report.Add(ValidationSeverity::Error, "manifest.array", manifestPath,
-            "permissions and networkDomains must be string arrays");
+            "permissions, optionalPermissions, and networkDomains must be string arrays");
     std::set<std::string> uniquePermissions;
     for (const auto& permission : manifest.permissions)
     {
@@ -1443,6 +1469,18 @@ bool WidgetPackageValidator::ReadManifest(
         if (!uniquePermissions.insert(permission).second)
             report.Add(ValidationSeverity::Error, "manifest.permissionDuplicate",
                 manifestPath, "duplicate permission: " + permission);
+    }
+    for (const auto& permission : manifest.optionalPermissions)
+    {
+        if (!IsKnownPermission(permission))
+            report.Add(ValidationSeverity::Error,
+                "manifest.optionalPermission", manifestPath,
+                "unknown optional permission: " + permission);
+        if (!uniquePermissions.insert(permission).second)
+            report.Add(ValidationSeverity::Error,
+                "manifest.permissionDuplicate", manifestPath,
+                "required and optional permissions must be unique: " +
+                    permission);
     }
     if (!manifest.networkDomains.empty() &&
         !uniquePermissions.contains("network.http"))
@@ -1695,6 +1733,9 @@ bool WidgetPackageManager::LoadRegistry(std::string& error)
             bool arraysValid = true;
             record.requestedPermissions =
                 ReadStringArray(value, "requestedPermissions", arraysValid);
+            record.requestedOptionalPermissions =
+                ReadStringArray(value, "requestedOptionalPermissions",
+                    arraysValid);
             record.requestedNetworkDomains =
                 ReadStringArray(value, "requestedNetworkDomains", arraysValid);
             ReadString(value, "requestedScopeFingerprint",
@@ -1830,6 +1871,15 @@ bool WidgetPackageManager::SaveRegistry(std::string& error) const
             out << '"' << JsonEscape(
                 decision.requestedPermissions[permission]) << '"';
         }
+        out << "],\"requestedOptionalPermissions\":[";
+        for (std::size_t permission = 0;
+            permission < decision.requestedOptionalPermissions.size();
+            ++permission)
+        {
+            if (permission) out << ',';
+            out << '"' << JsonEscape(
+                decision.requestedOptionalPermissions[permission]) << '"';
+        }
         out << "],\"requestedNetworkDomains\":[";
         for (std::size_t domain = 0;
             domain < decision.requestedNetworkDomains.size(); ++domain)
@@ -1914,6 +1964,12 @@ bool WidgetPackageManager::Refresh(std::string& error)
         const std::set<std::string> declaredPermissions(
             package.manifest.permissions.begin(),
             package.manifest.permissions.end());
+        const std::set<std::string> requestedOptionalPermissions(
+            decision->second.requestedOptionalPermissions.begin(),
+            decision->second.requestedOptionalPermissions.end());
+        const std::set<std::string> declaredOptionalPermissions(
+            package.manifest.optionalPermissions.begin(),
+            package.manifest.optionalPermissions.end());
         const std::set<std::string> requestedDomains(
             decision->second.requestedNetworkDomains.begin(),
             decision->second.requestedNetworkDomains.end());
@@ -1924,13 +1980,17 @@ bool WidgetPackageManager::Refresh(std::string& error)
             decision->second.requestedScopeFingerprint.empty()
             ? WidgetPermissionBroker::ScopeFingerprint(
                 decision->second.requestedPermissions,
+                decision->second.requestedOptionalPermissions,
                 decision->second.requestedNetworkDomains)
             : decision->second.requestedScopeFingerprint;
         const std::string declaredScopeFingerprint =
             WidgetPermissionBroker::ScopeFingerprint(
                 package.manifest.permissions,
+                package.manifest.optionalPermissions,
                 package.manifest.networkDomains);
         if (requestedPermissions != declaredPermissions ||
+            requestedOptionalPermissions !=
+                declaredOptionalPermissions ||
             requestedDomains != declaredDomains ||
             requestedScopeFingerprint != declaredScopeFingerprint)
             return false;
@@ -1938,6 +1998,7 @@ bool WidgetPackageManager::Refresh(std::string& error)
         const auto grant = WidgetPermissionBroker::Evaluate(
             package.permissionState,
             package.manifest.permissions,
+            package.manifest.optionalPermissions,
             package.manifest.networkDomains,
             decision->second.grantedPermissions,
             decision->second.grantedNetworkDomains);
@@ -1968,7 +2029,8 @@ bool WidgetPackageManager::Refresh(std::string& error)
                     PathUtf8(it->path().filename()) };
                 package.permissionState =
                     PermissionDecisionState::LegacyImplicit;
-                package.grantedPermissions = package.manifest.permissions;
+                package.grantedPermissions =
+                    DeclaredPermissions(package.manifest);
                 package.grantedNetworkDomains =
                     package.manifest.networkDomains;
                 package.enabled = true;
@@ -2007,6 +2069,7 @@ bool WidgetPackageManager::Refresh(std::string& error)
                     const auto grant = WidgetPermissionBroker::Evaluate(
                         package.permissionState,
                         package.manifest.permissions,
+                        package.manifest.optionalPermissions,
                         package.manifest.networkDomains,
                         registryIt->second.grantedPermissions,
                         registryIt->second.grantedNetworkDomains);
@@ -2019,7 +2082,8 @@ bool WidgetPackageManager::Refresh(std::string& error)
                     package.source = { "local", id };
                     package.permissionState =
                         PermissionDecisionState::LegacyImplicit;
-                    package.grantedPermissions = package.manifest.permissions;
+                    package.grantedPermissions =
+                        DeclaredPermissions(package.manifest);
                     package.grantedNetworkDomains =
                         package.manifest.networkDomains;
                 }
@@ -2256,20 +2320,34 @@ bool WidgetPackageManager::CommitStagedPackage(
     }
     if (existing != registry_.end() && !allowPermissionExpansion)
     {
+        std::vector<std::string> currentRequired;
         std::vector<std::string> currentDeclared;
         std::vector<std::string> currentDomains;
         if (const auto current = Resolve(manifest.id))
         {
-            currentDeclared = current->manifest.permissions;
+            currentRequired = current->manifest.permissions;
+            currentDeclared = DeclaredPermissions(current->manifest);
             currentDomains = current->manifest.networkDomains;
         }
+        const std::set<std::string> previouslyRequired(
+            currentRequired.begin(), currentRequired.end());
         const std::set<std::string> previouslyRequested(
             currentDeclared.begin(), currentDeclared.end());
         for (const auto& permission : manifest.permissions)
         {
+            if (!previouslyRequired.contains(permission))
+            {
+                error = "update requests a new required permission: " +
+                    permission;
+                return false;
+            }
+        }
+        for (const auto& permission : manifest.optionalPermissions)
+        {
             if (!previouslyRequested.contains(permission))
             {
-                error = "update requests a new permission: " + permission;
+                error = "update requests a new optional permission: " +
+                    permission;
                 return false;
             }
         }
@@ -2308,14 +2386,15 @@ bool WidgetPackageManager::CommitStagedPackage(
     entry.packageId = manifest.id;
     entry.activeVersion = manifest.version;
     entry.source = sourceRef;
+    const auto declaredPermissions = DeclaredPermissions(manifest);
     const bool requiresConsent = !PermissionsRequiringConsent(
-        manifest.permissions).empty();
+        declaredPermissions).empty();
     entry.permissionState = requiresConsent
         ? PermissionDecisionState::Pending
         : PermissionDecisionState::Granted;
     if (!requiresConsent)
     {
-        entry.grantedPermissions = manifest.permissions;
+        entry.grantedPermissions = declaredPermissions;
         entry.grantedNetworkDomains = manifest.networkDomains;
     }
     entry.enabled = true;
@@ -2731,9 +2810,11 @@ bool WidgetPackageManager::SetPermissionDecision(
         error = "pending or denied decisions cannot retain granted scopes";
         return false;
     }
+    const std::vector<std::string> allDeclaredPermissions =
+        DeclaredPermissions(package->manifest);
     const std::set<std::string> declaredPermissions(
-        package->manifest.permissions.begin(),
-        package->manifest.permissions.end());
+        allDeclaredPermissions.begin(),
+        allDeclaredPermissions.end());
     const std::set<std::string> declaredDomains(
         package->manifest.networkDomains.begin(),
         package->manifest.networkDomains.end());
@@ -2755,10 +2836,13 @@ bool WidgetPackageManager::SetPermissionDecision(
     record.source = package->source;
     record.state = state;
     record.requestedPermissions = package->manifest.permissions;
+    record.requestedOptionalPermissions =
+        package->manifest.optionalPermissions;
     record.requestedNetworkDomains = package->manifest.networkDomains;
     record.requestedScopeFingerprint =
         WidgetPermissionBroker::ScopeFingerprint(
             record.requestedPermissions,
+            record.requestedOptionalPermissions,
             record.requestedNetworkDomains);
     record.grantedPermissions = grantedPermissions;
     record.grantedNetworkDomains = grantedNetworkDomains;
@@ -3343,6 +3427,8 @@ LegacyMigrationResult WidgetPackageManager::MigrateLegacy(
     ReadSize(root, "maxSize", manifest.maxColumns, manifest.maxRows);
     bool arraysValid = true;
     manifest.permissions = ReadStringArray(root, "permissions", arraysValid);
+    manifest.optionalPermissions =
+        ReadStringArray(root, "optionalPermissions", arraysValid);
     manifest.networkDomains =
         ReadStringArray(root, "networkDomains", arraysValid);
     if (manifest.name.empty()) manifest.name = manifest.slug;
@@ -3670,6 +3756,8 @@ bool StaticCatalogSource::ReadCatalog(std::vector<PackageDetails>& entries,
         bool arraysValid = true;
         detail.manifest.permissions =
             ReadStringArray(value, "permissions", arraysValid);
+        detail.manifest.optionalPermissions =
+            ReadStringArray(value, "optionalPermissions", arraysValid);
         detail.manifest.networkDomains =
             ReadStringArray(value, "networkDomains", arraysValid);
         if (const JsonValue* locales = value.Find("locales");
@@ -3901,6 +3989,7 @@ PublishResult LocalCatalogPublisher::Publish(const PublishRequest& request)
         int apiVersion = 0;
         int dataVersion = 0;
         std::vector<std::string> permissions;
+        std::vector<std::string> optionalPermissions;
         std::vector<std::string> networkDomains;
         std::unordered_map<std::string, LocalizedMetadata> locales;
         std::vector<std::string> tags;
@@ -3936,6 +4025,9 @@ PublishResult LocalCatalogPublisher::Publish(const PublishRequest& request)
                 bool arraysValid = true;
                 record.permissions =
                     ReadStringArray(value, "permissions", arraysValid);
+                record.optionalPermissions =
+                    ReadStringArray(value, "optionalPermissions",
+                        arraysValid);
                 record.networkDomains =
                     ReadStringArray(value, "networkDomains", arraysValid);
                 if (const JsonValue* locales = value.Find("locales");
@@ -3973,7 +4065,9 @@ PublishResult LocalCatalogPublisher::Publish(const PublishRequest& request)
         request.title, request.description, publishedManifest.author,
         publishedManifest.license, publishedManifest.minHostVersion,
         publishedManifest.apiVersion, publishedManifest.dataVersion,
-        publishedManifest.permissions, publishedManifest.networkDomains,
+        publishedManifest.permissions,
+        publishedManifest.optionalPermissions,
+        publishedManifest.networkDomains,
         publishedManifest.locales, request.tags, request.changeNotes,
         PathUtf8(relative), actualSha256 });
     std::sort(records.begin(), records.end(),
@@ -4006,6 +4100,14 @@ PublishResult LocalCatalogPublisher::Publish(const PublishRequest& request)
         {
             if (permission) out << ',';
             out << '"' << JsonEscape(record.permissions[permission]) << '"';
+        }
+        out << "],\"optionalPermissions\":[";
+        for (std::size_t permission = 0;
+            permission < record.optionalPermissions.size(); ++permission)
+        {
+            if (permission) out << ',';
+            out << '"' << JsonEscape(
+                record.optionalPermissions[permission]) << '"';
         }
         out << "],\"networkDomains\":[";
         for (std::size_t domain = 0;

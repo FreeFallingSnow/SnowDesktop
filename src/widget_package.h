@@ -103,12 +103,15 @@ struct PackageManifest
     int maxRows = 0;
     int refreshIntervalMs = 0;
     std::vector<std::string> permissions;
+    std::vector<std::string> optionalPermissions;
     std::vector<std::string> networkDomains;
     std::unordered_map<std::string, LocalizedMetadata> locales;
 };
 
 PackageManifest LocalizePackageManifest(PackageManifest manifest,
     const std::string& requestedLocale);
+std::vector<std::string> DeclaredPermissions(
+    const PackageManifest& manifest);
 
 struct PackageSourceRef
 {
@@ -407,6 +410,7 @@ private:
         PackageSourceRef source;
         PermissionDecisionState state = PermissionDecisionState::Pending;
         std::vector<std::string> requestedPermissions;
+        std::vector<std::string> requestedOptionalPermissions;
         std::vector<std::string> requestedNetworkDomains;
         std::string requestedScopeFingerprint;
         std::vector<std::string> grantedPermissions;

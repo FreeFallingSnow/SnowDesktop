@@ -28,6 +28,13 @@ public:
         std::span<const std::string> declaredNetworkDomains,
         std::span<const std::string> storedGrantedPermissions,
         std::span<const std::string> storedGrantedNetworkDomains);
+    static PermissionGrantSnapshot Evaluate(
+        PermissionDecisionState state,
+        std::span<const std::string> requiredPermissions,
+        std::span<const std::string> optionalPermissions,
+        std::span<const std::string> declaredNetworkDomains,
+        std::span<const std::string> storedGrantedPermissions,
+        std::span<const std::string> storedGrantedNetworkDomains);
 
     static PermissionRuntimeBlock ActivationBlock(
         PermissionDecisionState state) noexcept;
@@ -42,6 +49,10 @@ public:
         std::string_view domain) noexcept;
     static std::string ScopeFingerprint(
         std::span<const std::string> declaredPermissions,
+        std::span<const std::string> declaredNetworkDomains);
+    static std::string ScopeFingerprint(
+        std::span<const std::string> requiredPermissions,
+        std::span<const std::string> optionalPermissions,
         std::span<const std::string> declaredNetworkDomains);
 };
 }

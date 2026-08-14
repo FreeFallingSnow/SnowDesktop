@@ -124,7 +124,8 @@ struct LuaWidgetManifest
     std::string entry;
     std::string signature;
     bool signatureValid = true;
-    std::vector<std::string> permissions; ///< 声明的权限列表，如 "filesystem", "exec"
+    std::vector<std::string> permissions; ///< 必需权限列表
+    std::vector<std::string> optionalPermissions; ///< 可拒绝并降级的权限列表
 };
 
 /**

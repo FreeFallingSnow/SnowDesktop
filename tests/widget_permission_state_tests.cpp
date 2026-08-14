@@ -142,6 +142,8 @@ void TestConsentSelection()
 void TestPermissionBrokerSnapshot()
 {
     using snowdesktop::widget::WidgetPermissionBroker;
+    const std::vector<std::string> required = { "ui.input" };
+    const std::vector<std::string> optional = { "desktop.read" };
     const std::vector<std::string> declared = {
         "desktop.read", "ui.input"
     };
@@ -152,7 +154,7 @@ void TestPermissionBrokerSnapshot()
         "ui.input", "undeclared.permission", "ui.input"
     };
     const auto granted = WidgetPermissionBroker::Evaluate(
-        PermissionDecisionState::Granted, declared, domains,
+        PermissionDecisionState::Granted, required, optional, domains,
         stored, std::vector<std::string>{ "example.com", "other.test" });
     Check(granted.runtimeBlock == PermissionRuntimeBlock::None &&
             granted.permissions ==
@@ -183,11 +185,51 @@ void TestPermissionBrokerSnapshot()
         "scope fingerprints must change when a requested domain changes");
 
     const auto denied = WidgetPermissionBroker::Evaluate(
-        PermissionDecisionState::Denied, declared, domains,
+        PermissionDecisionState::Denied, required, optional, domains,
         declared, domains);
     Check(denied.runtimeBlock == PermissionRuntimeBlock::Denied &&
             denied.permissions.empty() && denied.networkDomains.empty(),
         "denied decisions must block activation and expose no scopes");
+}
+
+void TestRequiredAndOptionalPermissionSemantics()
+{
+    using snowdesktop::widget::WidgetPermissionBroker;
+    const std::vector<std::string> required = { "desktop.read" };
+    const std::vector<std::string> optional = {
+        "calendar.read", "ui.input"
+    };
+    const std::vector<std::string> domains;
+    const auto requiredOnly = WidgetPermissionBroker::Evaluate(
+        PermissionDecisionState::Granted, required, optional, domains,
+        std::vector<std::string>{ "desktop.read", "ui.input" }, domains);
+    Check(requiredOnly.runtimeBlock == PermissionRuntimeBlock::None &&
+            requiredOnly.permissions == std::vector<std::string>({
+                "desktop.read", "ui.input" }),
+        "denied optional scopes must not block a component with all required permissions");
+
+    const auto missingRequired = WidgetPermissionBroker::Evaluate(
+        PermissionDecisionState::Granted, required, optional, domains,
+        std::vector<std::string>{ "calendar.read" }, domains);
+    Check(missingRequired.runtimeBlock ==
+            PermissionRuntimeBlock::MissingRequired &&
+            missingRequired.permissions ==
+                std::vector<std::string>{ "calendar.read" },
+        "a granted decision that omits a required scope must remain blocked");
+
+    const std::string requiredFingerprint =
+        WidgetPermissionBroker::ScopeFingerprint(
+            required, optional, domains);
+    const std::string reclassifiedFingerprint =
+        WidgetPermissionBroker::ScopeFingerprint(
+            optional, required, domains);
+    Check(requiredFingerprint.size() == 64 &&
+            requiredFingerprint != reclassifiedFingerprint,
+        "scope fingerprints must bind the required and optional classification");
+    Check(WidgetPermissionBroker::ScopeFingerprint(required, domains) ==
+            WidgetPermissionBroker::ScopeFingerprint(required,
+                std::vector<std::string>{}, domains),
+        "manifests without optional scopes must preserve the v1 fingerprint");
 }
 }
 
@@ -199,6 +241,7 @@ int main()
     TestPermissionRiskClassification();
     TestConsentSelection();
     TestPermissionBrokerSnapshot();
+    TestRequiredAndOptionalPermissionSemantics();
     std::cout << "widget permission state tests passed\n";
     return 0;
 }

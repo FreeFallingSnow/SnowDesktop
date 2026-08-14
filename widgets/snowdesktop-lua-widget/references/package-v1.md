@@ -54,6 +54,10 @@ store method，导入器拒绝加密、data descriptor、ZIP64 和其他压缩 m
 - `author`、`license`
 - `permissions`
 
+`permissions` 中的能力是组件启动所必需的；可降级功能可放入
+`optionalPermissions`。用户只授予必需权限时组件仍可启动，但相应可选 API
+保持不可用；同一权限不得同时出现在两个数组中。
+
 还可声明尺寸、刷新间隔、BCP-47 本地化目录、预览和设置元数据。v1 不允许
 跨包依赖、DLL、可执行文件、包外资源、符号链接、junction 或重解析点。
 `networkDomains` 仅作为可选的兼容元数据保留，不再作为 HTTP 运行时白名单；

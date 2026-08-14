@@ -97,6 +97,27 @@ PermissionGrantSnapshot WidgetPermissionBroker::Evaluate(
     std::span<const std::string> storedGrantedPermissions,
     std::span<const std::string> storedGrantedNetworkDomains)
 {
+    return Evaluate(state, declaredPermissions,
+        std::span<const std::string>{}, declaredNetworkDomains,
+        storedGrantedPermissions, storedGrantedNetworkDomains);
+}
+
+PermissionGrantSnapshot WidgetPermissionBroker::Evaluate(
+    PermissionDecisionState state,
+    std::span<const std::string> requiredPermissions,
+    std::span<const std::string> optionalPermissions,
+    std::span<const std::string> declaredNetworkDomains,
+    std::span<const std::string> storedGrantedPermissions,
+    std::span<const std::string> storedGrantedNetworkDomains)
+{
+    std::vector<std::string> declaredPermissions(
+        requiredPermissions.begin(), requiredPermissions.end());
+    for (const auto& permission : optionalPermissions)
+        if (std::find(declaredPermissions.begin(),
+                declaredPermissions.end(), permission) ==
+            declaredPermissions.end())
+            declaredPermissions.push_back(permission);
+
     PermissionGrantSnapshot result;
     result.runtimeBlock = ActivationBlock(state);
     result.permissions = EffectiveScopes(state,
@@ -104,7 +125,20 @@ PermissionGrantSnapshot WidgetPermissionBroker::Evaluate(
     result.networkDomains = EffectiveScopes(state,
         declaredNetworkDomains, storedGrantedNetworkDomains);
     result.requestedScopeFingerprint = ScopeFingerprint(
-        declaredPermissions, declaredNetworkDomains);
+        requiredPermissions, optionalPermissions,
+        declaredNetworkDomains);
+    if (result.runtimeBlock == PermissionRuntimeBlock::None)
+    {
+        for (const auto& required : requiredPermissions)
+        {
+            if (!AllowsPermission(result.permissions, required))
+            {
+                result.runtimeBlock =
+                    PermissionRuntimeBlock::MissingRequired;
+                break;
+            }
+        }
+    }
     return result;
 }
 
@@ -142,9 +176,26 @@ std::string WidgetPermissionBroker::ScopeFingerprint(
     std::span<const std::string> declaredPermissions,
     std::span<const std::string> declaredNetworkDomains)
 {
+    return ScopeFingerprint(declaredPermissions,
+        std::span<const std::string>{}, declaredNetworkDomains);
+}
+
+std::string WidgetPermissionBroker::ScopeFingerprint(
+    std::span<const std::string> requiredPermissions,
+    std::span<const std::string> optionalPermissions,
+    std::span<const std::string> declaredNetworkDomains)
+{
     std::ostringstream canonical;
-    canonical << "snowdesktop-widget-permission-scope-v1\n";
-    AppendCanonicalScopes(canonical, 'P', declaredPermissions);
+    if (optionalPermissions.empty())
+    {
+        canonical << "snowdesktop-widget-permission-scope-v1\n";
+        AppendCanonicalScopes(canonical, 'P', requiredPermissions);
+        AppendCanonicalScopes(canonical, 'D', declaredNetworkDomains);
+        return Sha256(canonical.str());
+    }
+    canonical << "snowdesktop-widget-permission-scope-v2\n";
+    AppendCanonicalScopes(canonical, 'R', requiredPermissions);
+    AppendCanonicalScopes(canonical, 'O', optionalPermissions);
     AppendCanonicalScopes(canonical, 'D', declaredNetworkDomains);
     return Sha256(canonical.str());
 }

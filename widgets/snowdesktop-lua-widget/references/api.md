@@ -685,7 +685,8 @@ field identifies `main.lua` or another safe package-relative Lua file.
   "defaultSize": { "columns": 2, "rows": 1 },
   "minSize": { "columns": 2, "rows": 1 },
   "maxSize": { "columns": 4, "rows": 3 },
-  "permissions": ["ui.input", "network.http"],
+  "permissions": ["ui.input"],
+  "optionalPermissions": ["network.http"],
   "author": "Example",
   "license": "MIT",
   "minHostVersion": "1.0.1.0",
@@ -780,7 +781,12 @@ restoring saved layouts, and reacting to grid changes.
 | `calendar.read` | selected date, date helpers, event queries, calendar-change callback |
 | `calendar.write` | shared date selection and event create/update/delete |
 
-Missing permissions produce a runtime error for guarded APIs. Context menus and desktop-change callbacks are skipped by the host when their permission is absent.
+`permissions` lists capabilities required to start the component.
+`optionalPermissions` lists features that may degrade independently. The user
+can grant only the required set; a missing optional permission does not block
+the Lua VM, but its guarded API reports a permission error. A permission cannot
+appear in both arrays. Missing context-menu and desktop-change capabilities
+also cause their callbacks to be skipped by the host.
 
 Declarative setting types are `text`, `bool`, `int`, `float`, `select`, and `color`.
 Values are stored in the same per-instance string storage used by `storage`.

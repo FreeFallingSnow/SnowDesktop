@@ -2578,6 +2578,7 @@ private:
         std::wstring targetWidgetId;
         snowdesktop::widget::PackageSourceRef source;
         std::vector<std::string> requestedPermissions;
+        std::vector<std::string> requestedOptionalPermissions;
         std::vector<std::string> requestedNetworkDomains;
     };
     std::optional<PendingLuaWidgetConsent> pendingLuaWidgetConsent_;

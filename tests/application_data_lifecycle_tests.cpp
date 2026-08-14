@@ -104,7 +104,8 @@ void MakePackage(const std::filesystem::path& root, std::string version,
     std::string id = "3af4c6ab-15d3-4f2a-8b8c-80e57600a87d",
     std::string permissions = "\"ui.input\"",
     std::string networkDomains = "",
-    std::string entry = "main.lua")
+    std::string entry = "main.lua",
+    std::string optionalPermissions = "")
 {
     Write(root / std::filesystem::path(entry), "function render() end\n");
     Write(root / L"assets" / L"label.txt", "asset");
@@ -125,6 +126,7 @@ void MakePackage(const std::filesystem::path& root, std::string version,
         "  \"license\": \"GPL-3.0-only\",\n"
         "  \"previewData\": {\"introduction\": \"Multiple sizes\", \"introductionKey\": \"preview.intro\", \"storage\": {\"message\": \"Preview\", \"count\": 3}, \"storageKeys\": {\"message\": \"preview.message\"}, \"variants\": [{\"id\": \"compact\", \"title\": \"Compact\", \"titleKey\": \"preview.compact\", \"description\": \"Compact hint\", \"descriptionKey\": \"preview.compact_hint\", \"size\": {\"columns\": 1, \"rows\": 1}, \"storage\": {\"mode\": \"compact\"}, \"storageKeys\": {\"mode\": \"preview.compact_mode\"}}, {\"id\": \"wide\", \"title\": \"Wide\", \"description\": \"Wide hint\", \"size\": {\"columns\": 2, \"rows\": 1}}]},\n"
         "  \"permissions\": [" + permissions + "],\n"
+        "  \"optionalPermissions\": [" + optionalPermissions + "],\n"
         "  \"networkDomains\": [" + networkDomains + "]\n"
         "}\n");
 }
@@ -668,6 +670,37 @@ int main()
         "\"calendar.read\", \"calendar.write\"");
     Expect(validator.ValidateDirectory(calendarPackage).Ok(),
         "calendar permissions are accepted");
+    const auto optionalPermissionPackage =
+        root / L"optional-permission-package";
+    MakePackage(optionalPermissionPackage, "1.0.0",
+        "266ad7e7-cb68-4a17-ae2d-90c5bed9ccdb",
+        "\"desktop.read\"", "", "main.lua",
+        "\"calendar.read\", \"ui.input\"");
+    PackageManifest optionalPermissionManifest;
+    Expect(validator.ValidateDirectory(optionalPermissionPackage,
+            &optionalPermissionManifest).Ok() &&
+            optionalPermissionManifest.permissions ==
+                std::vector<std::string>{ "desktop.read" } &&
+            optionalPermissionManifest.optionalPermissions ==
+                std::vector<std::string>({
+                    "calendar.read", "ui.input" }),
+        "required and optional permissions are parsed separately");
+    const auto duplicateOptionalPackage =
+        root / L"duplicate-optional-permission";
+    MakePackage(duplicateOptionalPackage, "1.0.0",
+        "d93d3424-452e-455c-bd86-ec7df5e99bbd",
+        "\"desktop.read\"", "", "main.lua",
+        "\"desktop.read\"");
+    Expect(!validator.ValidateDirectory(duplicateOptionalPackage).Ok(),
+        "a permission cannot be both required and optional");
+    const auto unknownOptionalPackage =
+        root / L"unknown-optional-permission";
+    MakePackage(unknownOptionalPackage, "1.0.0",
+        "d70b2447-8f2d-4e87-93ec-6a7f86fac70f",
+        "\"ui.input\"", "", "main.lua",
+        "\"future.unregistered\"");
+    Expect(!validator.ValidateDirectory(unknownOptionalPackage).Ok(),
+        "unknown optional permissions are rejected");
 
     std::string error;
     const auto nestedSource = root / L"nested-entry";
@@ -831,6 +864,43 @@ int main()
             installedGrantReloaded.Resolve(manifest.id)->permissionState ==
                 PermissionDecisionState::Granted,
         "an installed package grant survives a manager restart");
+
+    const auto optionalManagerPaths =
+        TestPaths(root / L"optional-permission-manager");
+    WidgetPackageManager optionalManager(optionalManagerPaths);
+    error.clear();
+    Expect(optionalManager.Initialize(error),
+        "optional-permission package manager initializes");
+    InstalledPackage optionalInstalled;
+    report = {};
+    Expect(optionalManager.InstallDirectory(optionalPermissionPackage,
+            { "local", "optional-permission-package" }, false,
+            optionalInstalled, report, error) &&
+            optionalInstalled.permissionState ==
+                PermissionDecisionState::Pending,
+        "a package with sensitive optional access starts pending consent");
+    const std::vector<std::string> requiredOnlyGrant = {
+        "desktop.read", "ui.input"
+    };
+    Expect(optionalManager.SetPermissionDecision(
+            optionalPermissionManifest.id,
+            PermissionDecisionState::Granted, requiredOnlyGrant, {},
+            error),
+        "required access can be granted while sensitive optional access is omitted");
+    WidgetPackageManager optionalGrantReloaded(optionalManagerPaths);
+    const auto optionalReloaded = optionalGrantReloaded.Initialize(error)
+        ? optionalGrantReloaded.Resolve(optionalPermissionManifest.id)
+        : std::nullopt;
+    Expect(optionalReloaded &&
+            optionalReloaded->permissionState ==
+                PermissionDecisionState::Granted &&
+            optionalReloaded->manifest.optionalPermissions ==
+                optionalPermissionManifest.optionalPermissions &&
+            optionalReloaded->grantedPermissions == requiredOnlyGrant,
+        "required-only grants and optional declarations survive a manager restart");
+    Expect(Read(optionalManagerPaths.registry).find(
+            "\"requestedOptionalPermissions\"") != std::string::npos,
+        "source-bound permission decisions persist optional scope metadata");
     Expect(manager.ResolveEntry(manifest.id).value_or(L"").filename() == L"main.lua",
         "entry resolves inside the package");
     Expect(manager.SetEnabled(manifest.id, false, error),

@@ -131,7 +131,8 @@ Create a matching manifest even when no permission is needed:
   "defaultSize": { "columns": 1, "rows": 1 },
   "minSize": { "columns": 1, "rows": 1 },
   "maxSize": { "columns": 4, "rows": 3 },
-  "permissions": []
+  "permissions": [],
+  "optionalPermissions": []
 }
 ```
 
@@ -153,6 +154,11 @@ Valid permissions:
   URLs. The host does not enforce a per-domain or public-network allowlist.
 - `calendar.read`: read shared local calendar dates and events.
 - `calendar.write`: select a shared date and create, edit, or delete events.
+
+Put capabilities required for the component to start in `permissions`. Put
+degradable features in `optionalPermissions`; the user may grant only the
+required set, and guarded optional APIs will then remain unavailable. Never
+declare the same capability in both arrays.
 
 Keep `defaultSize.columns` and `defaultSize.rows` between 1 and 8.
 
