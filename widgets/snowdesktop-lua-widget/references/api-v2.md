@@ -161,6 +161,52 @@ end
 `interaction.region`、`interaction.pointerActions` 和 `interaction.contextMenu`。
 - `widget.editText(...)`：旧宿主编辑器兼容调用，不建议新 v2 组件依赖。
 
+### `control` 文本编辑
+
+`control.textInput(spec)` 和 `control.textArea(spec)` 是当前即时绘制 surface 的
+宿主管理文本编辑器。组件在每次 `render` 中提交稳定描述符，宿主继续使用 Direct2D
+绘制透明背景、光标、选择、占位文本和 IME 组合下划线；输入值绑定到实例
+`storageKey`，函数返回当前字符串。它们不是尚未实现的声明式 `view` 树节点，也不向
+Lua 暴露剪贴板内容或原生窗口句柄。
+
+```lua
+local value = control.textArea({
+    key = "note",
+    storageKey = "text",
+    shape = {
+        type = "rect",
+        x = layout.cu(12),
+        y = layout.cu(12),
+        width = layout.width() - layout.cu(24),
+        height = layout.height() - layout.cu(48),
+    },
+    placeholder = l10n.tr("lua_widget.note.placeholder"),
+    fontSize = layout.fontCu(15),
+    maxBytes = 65536,
+    liveUpdate = true,
+})
+```
+
+共同字段为 `key/storageKey/shape`，以及 `placeholder/fontSize/textColor/
+placeholderColor/backgroundColor/borderColor/focusedBorderColor/backgroundAlpha/
+focusedBackgroundAlpha/borderAlpha/focusedBorderAlpha/radius/padding/
+borderThickness/selectAll/liveUpdate/maxBytes`。shape 只接受正尺寸 `rect`；key 和
+storageKey 是 1–128 字节有效 UTF-8。颜色是 `0xRRGGBB`，alpha 是 0–1，字号范围
+9–96。单行 `maxBytes` 默认 4096，多行默认 65536，允许范围 1–65536；粘贴、普通
+输入和 IME 提交按编辑后的最终 UTF-8 大小原子接受或拒绝，不会先删除选择再留下
+半次修改。旧存储若已经超限仍可删除内容，宿主不会静默截断。
+
+`textArea` 额外支持 `placeholderWhenWhitespace`。两个控件都支持点击定位、拖选、
+Shift 选择、Ctrl+A/C/X/V、Escape 恢复焦点前内容；多行 Enter 插入换行、
+Ctrl+Enter 提交，滚轮与光标跟随会调整实例内滚动位置。普通文本输入不要求权限，
+剪贴板只由宿主在聚焦控件内处理，并没有开放通用剪贴板 API。
+
+`control.focus(key)` 只能在直接 click/doubleClick/pointerDown/pointerUp/wheel、菜单命令
+或宿主明确标记的打开回调同步栈中成功；render、schedule、data.change 和
+task.complete 不能抢走桌面键盘焦点。返回 `(focused, error)`，稳定失败码为
+`trustedGestureRequired`、`controlNotFound` 或 `hostUnavailable`。对应 feature 为
+`control.textInput`、`control.textArea` 和 `control.focus`。
+
 ### `schedule`
 
 - `schedule.every(id, milliseconds, options?)`：创建或替换一个重复计划。
@@ -552,7 +598,8 @@ local display = resource.font("display")
 
 ## 当前明确未开放
 
-API v2 暂未向沙箱提供声明式 `view` 控件树、即时 region 的键盘焦点/UIA 输出、
+API v2 暂未向沙箱提供声明式 `view` 控件树、通用即时 region 的键盘焦点/UIA 输出、
 受控二级菜单、`desktop`、旧的同步 `media` 库、HTTP、尚未列出的系统状态、
-剪贴板、文件选择和应用启动库。它们将在对应宿主实现、配额与按需生命周期完成后
+通用剪贴板、文件选择和应用启动库。`control.textInput/textArea` 只在聚焦的
+宿主管理编辑器内部代理标准剪贴板操作，不允许 Lua 读取剪贴板。其余能力将在对应宿主实现、配额与按需生命周期完成后
 再加入 feature 目录和 LuaLS 定义；不要根据权限词汇自行推测函数名。

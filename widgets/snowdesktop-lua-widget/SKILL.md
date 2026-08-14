@@ -145,6 +145,10 @@ synchronous native context menu.
 - Register vertical immediate-mode overflow with `interaction.scroll`, translate
   content by its returned offset, and pair the viewport with
   `draw.pushClip/popClip`. Do not use the v1 `ui.scrollArea` compatibility API.
+- Submit storage-bound text editors with `control.textInput/textArea` during
+  render. Keep keys stable, set an explicit practical `maxBytes`, and call
+  `control.focus` only inside a direct trusted action or menu callback. Ordinary
+  editing does not require `ui.input`; Lua never receives clipboard contents.
 - Keep colors in `0xRRGGBB`.
 - Respect `widget.context().accessibility`, theme, DPI, visibility and preview
   state. Do not request permission for an ordinary pointer clock or static UI.

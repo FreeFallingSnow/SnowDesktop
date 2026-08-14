@@ -151,6 +151,39 @@
 ---@field viewportHeight integer Rounded logical viewport height.
 ---@field contentHeight integer Effective content height, never below viewportHeight.
 
+---@class SnowTextControlShape
+---@field type 'rect'
+---@field x number
+---@field y number
+---@field width number
+---@field height number
+
+---@class SnowTextInputDescriptor
+---@field key string Stable instance-scoped control key, 1..128 UTF-8 bytes.
+---@field storageKey string Persistent storage key, 1..128 UTF-8 bytes.
+---@field shape SnowTextControlShape Positive logical bounds submitted during render.
+---@field placeholder? string Up to 4096 UTF-8 bytes.
+---@field fontSize? number 9..96 logical pixels.
+---@field textColor? integer RGB color.
+---@field placeholderColor? integer RGB color.
+---@field backgroundColor? integer RGB color.
+---@field borderColor? integer RGB color.
+---@field focusedBorderColor? integer RGB color.
+---@field backgroundAlpha? number 0..1.
+---@field focusedBackgroundAlpha? number 0..1.
+---@field borderAlpha? number 0..1.
+---@field focusedBorderAlpha? number 0..1.
+---@field radius? number 0..4096.
+---@field padding? number 0..4096.
+---@field borderThickness? number 0.5..64.
+---@field selectAll? boolean Select all text when focus is first acquired.
+---@field liveUpdate? boolean Persist accepted edits immediately; defaults to true.
+---@field maxBytes? integer UTF-8 limit from 1..65536; defaults to 4096.
+
+---@class SnowTextAreaDescriptor: SnowTextInputDescriptor
+---@field placeholderWhenWhitespace? boolean Show the placeholder for unfocused whitespace-only values.
+---@field maxBytes? integer UTF-8 limit from 1..65536; defaults to 65536.
+
 ---@class SnowMenuRequest
 ---@field id string The region contextMenu binding ID.
 ---@field value? SnowStateValue The region contextMenu binding payload.
@@ -996,6 +1029,29 @@ function interaction.scroll(descriptor) end
 ---@param offset integer
 ---@return integer actualOffset
 function interaction.setScrollOffset(key, offset) end
+
+---@class snow.control
+control = {}
+
+---Submit one storage-bound Direct2D single-line editor during render. The host
+---owns caret, selection, clipboard normalization, IME composition and quota.
+---@param descriptor SnowTextInputDescriptor
+---@return string value
+function control.textInput(descriptor) end
+
+---Submit one storage-bound Direct2D multiline editor during render. Enter adds
+---a line, Ctrl+Enter commits, Escape restores the pre-focus value, and wheel
+---scrolling remains scoped to the control.
+---@param descriptor SnowTextAreaDescriptor
+---@return string value
+function control.textArea(descriptor) end
+
+---Focus a text control from a direct trusted action/menu/open callback. Calls
+---from render, schedules and asynchronous completions return false.
+---@param key string
+---@return boolean focused
+---@return 'trustedGestureRequired'|'controlNotFound'|'hostUnavailable'|nil error
+function control.focus(key) end
 
 ---@class snow.ui
 ui = {}

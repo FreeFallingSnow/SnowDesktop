@@ -128,6 +128,7 @@ public:
     const std::string& PressedKey() const noexcept;
     bool LastPointer(float& x, float& y) const noexcept;
     std::uint64_t Generation() const noexcept;
+    bool FrameOpen() const noexcept;
     std::string CursorAt(float x, float y) const;
     bool Empty() const noexcept;
     void Reset() noexcept;

@@ -371,6 +371,7 @@ struct LuaWidget
         float padding = 8.0f;
         int contentHeight = 0;
         int viewportHeight = 0;
+        std::size_t maximumUtf8Bytes = 0;
     };
     std::wstring widgetId;               ///< 小部件实例唯一 ID
     std::string packageId;                ///< 组件包 UUID
@@ -1050,7 +1051,12 @@ public:
     int RuntimeHttpRequest(const std::wstring& widgetId, HttpRequestOptions options);
     bool RuntimeHttpCancel(const std::wstring& widgetId, int requestId);
     void RuntimeRegisterHostControl(const std::wstring& widgetId, LuaWidget::HostControl control);
+    bool RuntimeRegisterV2HostControl(const std::wstring& widgetId,
+        LuaWidget::HostControl control, std::string& error);
     bool RuntimeFocusHostInput(const std::wstring& widgetId, const std::string& id);
+    bool RuntimeFocusHostInputFromTrustedGesture(
+        const std::wstring& widgetId, const std::string& id,
+        std::string& error);
     bool RuntimeGetFocusedHostInput(const std::wstring& widgetId, const std::string& id,
         std::wstring& text, size_t& cursor, size_t& selectionAnchor,
         std::wstring& compositionText, size_t& compositionCursor) const;
@@ -1217,9 +1223,11 @@ private:
         size_t selectionAnchor = 0;
         std::wstring compositionText;
         size_t compositionCursor = 0;
+        wchar_t pendingHighSurrogate = 0;
         bool pointerSelecting = false;
         bool liveUpdate = true;
         bool multiline = false;
+        std::size_t maximumUtf8Bytes = 0;
     };
     FocusedHostInput focusedHostInput_;
 };

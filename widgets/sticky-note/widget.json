@@ -1,16 +1,16 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "4664f034-3c7c-4469-9a82-44db90f68094",
   "slug": "sticky-note",
-  "apiVersion": 1,
+  "apiVersion": 2,
   "dataVersion": 1,
   "entry": "main.lua",
-  "minHostVersion": "1.0.1.0",
+  "minHostVersion": "1.0.4.0",
   "author": "SnowDesktop",
   "license": "GPL-3.0-only",
   "name": "Sticky Note",
   "nameKey": "lua_widget.sticky_note.name",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "An editable desktop sticky note.",
   "descriptionKey": "lua_widget.sticky_note.description",
   "locales": {
@@ -197,8 +197,19 @@
       "text": "lua_widget.sticky_note.preview_text"
     }
   },
-  "permissions": [
-    "ui.input",
-    "ui.contextMenu"
-  ]
+  "resources": {},
+  "permissions": [],
+  "optionalPermissions": [],
+  "requiredFeatures": [
+    "control.focus",
+    "control.textArea",
+    "draw.immediate",
+    "interaction.contextMenu",
+    "interaction.pointerActions",
+    "interaction.region",
+    "lifecycle.event",
+    "lifecycle.model",
+    "l10n.basic"
+  ],
+  "optionalFeatures": []
 }

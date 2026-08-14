@@ -32,6 +32,7 @@
 #include "widget_permission_broker.h"
 #include "widget_preview_context.h"
 #include "widget_interaction_region.h"
+#include "widget_text_input_rules.h"
 
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -3817,6 +3818,10 @@ static int lua_UiTextInput(lua_State* L)
         static_cast<float>(numberOption("borderThickness", 1.0)));
     const bool selectAll = boolOption("selectAll", false);
     const bool liveUpdate = boolOption("liveUpdate", true);
+    const int requestedMaxBytes = integerOption("maxBytes", 0);
+    const std::size_t maximumUtf8Bytes = requestedMaxBytes > 0
+        ? static_cast<std::size_t>(std::min(requestedMaxBytes, 64 * 1024))
+        : 0;
 
     auto* s = GetD2D(L);
     std::string value;
@@ -3946,7 +3951,22 @@ static int lua_UiTextInput(lua_State* L)
         control.liveUpdate = liveUpdate;
         control.fontSize = fontSize;
         control.padding = padding;
-        s->engine->RuntimeRegisterHostControl(BoundWidgetId(L), std::move(control));
+        control.maximumUtf8Bytes = maximumUtf8Bytes;
+        if (BoundWidgetApiVersion(L) >= 2)
+        {
+            std::string error;
+            if (!s->engine->RuntimeRegisterV2HostControl(
+                    BoundWidgetId(L), std::move(control), error))
+            {
+                return luaL_error(L, "control.textInput: %s",
+                    error.c_str());
+            }
+        }
+        else
+        {
+            s->engine->RuntimeRegisterHostControl(
+                BoundWidgetId(L), std::move(control));
+        }
     }
 
     lua_pushlstring(L, value.data(), value.size());
@@ -4020,6 +4040,10 @@ static int lua_UiTextArea(lua_State* L)
     const bool liveUpdate = boolOption("liveUpdate", true);
     const bool placeholderWhenWhitespace =
         boolOption("placeholderWhenWhitespace", false);
+    const int requestedMaxBytes = integerOption("maxBytes", 0);
+    const std::size_t maximumUtf8Bytes = requestedMaxBytes > 0
+        ? static_cast<std::size_t>(std::min(requestedMaxBytes, 64 * 1024))
+        : 0;
 
     auto* s = GetD2D(L);
     std::string value;
@@ -4099,8 +4123,22 @@ static int lua_UiTextArea(lua_State* L)
         control.contentHeight = contentHeight;
         control.viewportHeight =
             std::max(1, static_cast<int>(std::lround(height)));
-        s->engine->RuntimeRegisterHostControl(
-            BoundWidgetId(L), std::move(control));
+        control.maximumUtf8Bytes = maximumUtf8Bytes;
+        if (BoundWidgetApiVersion(L) >= 2)
+        {
+            std::string error;
+            if (!s->engine->RuntimeRegisterV2HostControl(
+                    BoundWidgetId(L), std::move(control), error))
+            {
+                return luaL_error(L, "control.textArea: %s",
+                    error.c_str());
+            }
+        }
+        else
+        {
+            s->engine->RuntimeRegisterHostControl(
+                BoundWidgetId(L), std::move(control));
+        }
     }
 
     int scrollOffset = s && s->engine
@@ -4241,6 +4279,305 @@ static int lua_UiFocusInput(lua_State* L)
         s->engine->RuntimeFocusHostInput(BoundWidgetId(L), id);
     lua_pushboolean(L, focused);
     return 1;
+}
+
+static void ValidateControlTableFields(lua_State* state, int table,
+    std::span<const char* const> allowed, const char* api)
+{
+    table = lua_absindex(state, table);
+    if (lua_getmetatable(state, table) != 0)
+    {
+        lua_pop(state, 1);
+        luaL_error(state, "%s: descriptor tables cannot have metatables", api);
+        return;
+    }
+    lua_pushnil(state);
+    while (lua_next(state, table) != 0)
+    {
+        std::size_t length = 0;
+        const char* key = lua_type(state, -2) == LUA_TSTRING
+            ? lua_tolstring(state, -2, &length) : nullptr;
+        const bool known = key && std::any_of(
+            allowed.begin(), allowed.end(), [&](const char* candidate) {
+                return std::string_view(key, length) == candidate;
+            });
+        if (!known)
+        {
+            const std::string field = key
+                ? std::string(key, length) : "<non-string>";
+            lua_pop(state, 2);
+            luaL_error(state, "%s: unknown field '%s'", api,
+                field.c_str());
+            return;
+        }
+        lua_pop(state, 1);
+    }
+}
+
+static std::string ReadControlIdentifier(lua_State* state, int table,
+    const char* field, const char* api)
+{
+    table = lua_absindex(state, table);
+    lua_getfield(state, table, field);
+    if (lua_type(state, -1) != LUA_TSTRING)
+    {
+        luaL_error(state, "%s: %s must be a string", api, field);
+        return {};
+    }
+    std::size_t length = 0;
+    const char* value = lua_tolstring(state, -1, &length);
+    const std::string result(value ? value : "", length);
+    lua_pop(state, 1);
+    if (result.empty() || result.size() > 128 ||
+        result.find('\0') != std::string::npos ||
+        !IsValidUtf8Local(result))
+    {
+        luaL_error(state,
+            "%s: %s must contain 1 to 128 bytes of valid UTF-8",
+            api, field);
+        return {};
+    }
+    return result;
+}
+
+static double ReadControlNumber(lua_State* state, int table,
+    const char* field, const char* api)
+{
+    table = lua_absindex(state, table);
+    lua_getfield(state, table, field);
+    if (lua_type(state, -1) != LUA_TNUMBER)
+    {
+        luaL_error(state, "%s: %s must be a number", api, field);
+        return 0.0;
+    }
+    const double value = lua_tonumber(state, -1);
+    lua_pop(state, 1);
+    return value;
+}
+
+static void ValidateOptionalControlString(lua_State* state, int table,
+    const char* field, std::size_t maximumBytes, const char* api)
+{
+    table = lua_absindex(state, table);
+    lua_getfield(state, table, field);
+    if (lua_isnil(state, -1))
+    {
+        lua_pop(state, 1);
+        return;
+    }
+    if (lua_type(state, -1) != LUA_TSTRING)
+    {
+        luaL_error(state, "%s: %s must be a string", api, field);
+        return;
+    }
+    std::size_t length = 0;
+    const char* value = lua_tolstring(state, -1, &length);
+    const std::string text(value ? value : "", length);
+    lua_pop(state, 1);
+    if (length > maximumBytes || text.find('\0') != std::string::npos ||
+        (!text.empty() && !IsValidUtf8Local(text)))
+    {
+        luaL_error(state, "%s: %s must be at most %d bytes of valid UTF-8",
+            api, field, static_cast<int>(maximumBytes));
+    }
+}
+
+static void ValidateOptionalControlBoolean(lua_State* state, int table,
+    const char* field, const char* api)
+{
+    table = lua_absindex(state, table);
+    lua_getfield(state, table, field);
+    if (!lua_isnil(state, -1) && lua_type(state, -1) != LUA_TBOOLEAN)
+    {
+        luaL_error(state, "%s: %s must be a boolean", api, field);
+        return;
+    }
+    lua_pop(state, 1);
+}
+
+static void ValidateOptionalControlNumber(lua_State* state, int table,
+    const char* field, double minimum, double maximum, const char* api,
+    bool integer = false)
+{
+    table = lua_absindex(state, table);
+    lua_getfield(state, table, field);
+    if (lua_isnil(state, -1))
+    {
+        lua_pop(state, 1);
+        return;
+    }
+    if (lua_type(state, -1) != LUA_TNUMBER ||
+        (integer && !lua_isinteger(state, -1)))
+    {
+        luaL_error(state, "%s: %s must be %s", api, field,
+            integer ? "an integer" : "a number");
+        return;
+    }
+    const double value = lua_tonumber(state, -1);
+    lua_pop(state, 1);
+    if (!std::isfinite(value) || value < minimum || value > maximum)
+    {
+        luaL_error(state, "%s: %s is outside the supported range",
+            api, field);
+    }
+}
+
+static int LuaControlText(lua_State* state, bool multiline)
+{
+    const char* api = multiline
+        ? "control.textArea" : "control.textInput";
+    if (lua_gettop(state) != 1)
+        return luaL_error(state, "%s: expected one descriptor", api);
+    luaL_checktype(state, 1, LUA_TTABLE);
+    const int descriptor = lua_absindex(state, 1);
+    static constexpr const char* inputFields[] = {
+        "key", "storageKey", "shape", "placeholder", "fontSize",
+        "textColor", "placeholderColor", "backgroundColor",
+        "borderColor", "focusedBorderColor", "backgroundAlpha",
+        "focusedBackgroundAlpha", "borderAlpha", "focusedBorderAlpha",
+        "radius", "padding", "borderThickness", "selectAll",
+        "liveUpdate", "maxBytes",
+    };
+    static constexpr const char* areaFields[] = {
+        "key", "storageKey", "shape", "placeholder",
+        "placeholderWhenWhitespace", "fontSize", "textColor",
+        "placeholderColor", "backgroundColor", "borderColor",
+        "focusedBorderColor", "backgroundAlpha",
+        "focusedBackgroundAlpha", "borderAlpha", "focusedBorderAlpha",
+        "radius", "padding", "borderThickness", "selectAll",
+        "liveUpdate", "maxBytes",
+    };
+    ValidateControlTableFields(state, descriptor,
+        multiline ? std::span<const char* const>(areaFields)
+                  : std::span<const char* const>(inputFields), api);
+    const std::string key = ReadControlIdentifier(
+        state, descriptor, "key", api);
+    const std::string storageKey = ReadControlIdentifier(
+        state, descriptor, "storageKey", api);
+
+    lua_getfield(state, descriptor, "shape");
+    if (lua_type(state, -1) != LUA_TTABLE)
+        return luaL_error(state, "%s: shape must be a table", api);
+    const int shape = lua_absindex(state, -1);
+    static constexpr const char* shapeFields[] = {
+        "type", "x", "y", "width", "height",
+    };
+    ValidateControlTableFields(state, shape, shapeFields, api);
+    lua_getfield(state, shape, "type");
+    if (lua_type(state, -1) != LUA_TSTRING ||
+        std::string_view(lua_tostring(state, -1)) != "rect")
+    {
+        return luaL_error(state, "%s: shape type must be 'rect'", api);
+    }
+    lua_pop(state, 1);
+    const double x = ReadControlNumber(state, shape, "x", api);
+    const double y = ReadControlNumber(state, shape, "y", api);
+    const double width = ReadControlNumber(state, shape, "width", api);
+    const double height = ReadControlNumber(state, shape, "height", api);
+    lua_pop(state, 1);
+    if (!std::isfinite(x) || !std::isfinite(y) ||
+        !std::isfinite(width) || !std::isfinite(height) ||
+        std::abs(x) > 1'000'000.0 || std::abs(y) > 1'000'000.0 ||
+        width <= 0.0 || height <= 0.0 ||
+        width > 1'000'000.0 || height > 1'000'000.0)
+    {
+        return luaL_error(state,
+            "%s: shape geometry must be finite, positive, and bounded", api);
+    }
+
+    ValidateOptionalControlString(
+        state, descriptor, "placeholder", 4096, api);
+    ValidateOptionalControlNumber(
+        state, descriptor, "fontSize", 9.0, 96.0, api);
+    for (const char* field : { "textColor", "placeholderColor",
+        "backgroundColor", "borderColor", "focusedBorderColor" })
+    {
+        ValidateOptionalControlNumber(state, descriptor, field,
+            0.0, 0xFFFFFF, api, true);
+    }
+    for (const char* field : { "backgroundAlpha",
+        "focusedBackgroundAlpha", "borderAlpha",
+        "focusedBorderAlpha" })
+    {
+        ValidateOptionalControlNumber(
+            state, descriptor, field, 0.0, 1.0, api);
+    }
+    ValidateOptionalControlNumber(
+        state, descriptor, "radius", 0.0, 4096.0, api);
+    ValidateOptionalControlNumber(
+        state, descriptor, "padding", 0.0, 4096.0, api);
+    ValidateOptionalControlNumber(
+        state, descriptor, "borderThickness", 0.5, 64.0, api);
+    ValidateOptionalControlNumber(
+        state, descriptor, "maxBytes", 1.0, 64 * 1024.0, api, true);
+    ValidateOptionalControlBoolean(
+        state, descriptor, "selectAll", api);
+    ValidateOptionalControlBoolean(
+        state, descriptor, "liveUpdate", api);
+    if (multiline)
+    {
+        ValidateOptionalControlBoolean(state, descriptor,
+            "placeholderWhenWhitespace", api);
+    }
+
+    lua_getfield(state, descriptor, "maxBytes");
+    const bool hasMaxBytes = !lua_isnil(state, -1);
+    lua_pop(state, 1);
+    if (!hasMaxBytes)
+    {
+        lua_pushinteger(state, multiline ? 64 * 1024 : 4096);
+        lua_setfield(state, descriptor, "maxBytes");
+    }
+
+    lua_pushlstring(state, key.data(), key.size());
+    lua_pushlstring(state, storageKey.data(), storageKey.size());
+    lua_pushnumber(state, x);
+    lua_pushnumber(state, y);
+    lua_pushnumber(state, width);
+    lua_pushnumber(state, height);
+    lua_pushvalue(state, descriptor);
+    lua_remove(state, descriptor);
+    return multiline
+        ? lua_UiTextArea(state) : lua_UiTextInput(state);
+}
+
+static int lua_ControlTextInput(lua_State* state)
+{
+    return LuaControlText(state, false);
+}
+
+static int lua_ControlTextArea(lua_State* state)
+{
+    return LuaControlText(state, true);
+}
+
+static int lua_ControlFocus(lua_State* state)
+{
+    if (lua_gettop(state) != 1)
+        return luaL_error(state, "control.focus: expected one key");
+    if (lua_type(state, 1) != LUA_TSTRING)
+        return luaL_error(state, "control.focus: key must be a string");
+    std::size_t length = 0;
+    const char* raw = lua_tolstring(state, 1, &length);
+    const std::string key(raw ? raw : "", length);
+    if (key.empty() || key.size() > 128 ||
+        key.find('\0') != std::string::npos ||
+        !IsValidUtf8Local(key))
+    {
+        return luaL_error(state,
+            "control.focus: key must contain 1 to 128 bytes of valid UTF-8");
+    }
+    auto* d2d = GetD2D(state);
+    std::string error = "hostUnavailable";
+    const bool focused = d2d && d2d->engine &&
+        d2d->engine->RuntimeFocusHostInputFromTrustedGesture(
+            BoundWidgetId(state), key, error);
+    lua_pushboolean(state, focused ? 1 : 0);
+    if (focused)
+        lua_pushnil(state);
+    else
+        lua_pushlstring(state, error.data(), error.size());
+    return 2;
 }
 
 static int lua_UiButton(lua_State* L)
@@ -10888,6 +11225,45 @@ void WidgetEngine::RuntimeRegisterHostControl(const std::wstring& widgetId,
     widgets_[index].hostControls.push_back(std::move(control));
 }
 
+bool WidgetEngine::RuntimeRegisterV2HostControl(
+    const std::wstring& widgetId, LuaWidget::HostControl control,
+    std::string& error)
+{
+    error.clear();
+    const int index = FindWidget(widgetId);
+    if (index < 0)
+    {
+        error = "widget instance is unavailable";
+        return false;
+    }
+    auto& widget = widgets_[index];
+    if (widget.manifest.apiVersion < 2)
+    {
+        error = "host text controls require API v2";
+        return false;
+    }
+    if (!widget.interactionRegions.FrameOpen())
+    {
+        error = "host text controls may only be submitted during render";
+        return false;
+    }
+    if (widget.hostControls.size() >= 128)
+    {
+        error = "host control limit exceeded (128)";
+        return false;
+    }
+    if (std::any_of(widget.hostControls.begin(),
+            widget.hostControls.end(), [&](const auto& candidate) {
+                return candidate.id == control.id;
+            }))
+    {
+        error = "duplicate host control key: " + control.id;
+        return false;
+    }
+    RuntimeRegisterHostControl(widgetId, std::move(control));
+    return true;
+}
+
 bool WidgetEngine::RuntimeFocusHostInput(const std::wstring& widgetId, const std::string& id)
 {
     int index = FindWidget(widgetId);
@@ -10901,7 +11277,24 @@ bool WidgetEngine::RuntimeFocusHostInput(const std::wstring& widgetId, const std
     if (focusedHostInput_.active && focusedHostInput_.widgetId == widgetId &&
         focusedHostInput_.id == id)
     {
+        if (found->liveUpdate)
+        {
+            const std::wstring storedText = Utf8ToWideLocal(
+                RuntimeGetStorageValue(widgetId, found->storageKey));
+            if (storedText != focusedHostInput_.text)
+            {
+                focusedHostInput_.text = storedText;
+                focusedHostInput_.originalText = storedText;
+                focusedHostInput_.cursor = storedText.size();
+                focusedHostInput_.selectionAnchor =
+                    found->selectAll ? 0 : storedText.size();
+                focusedHostInput_.compositionText.clear();
+                focusedHostInput_.compositionCursor = 0;
+            }
+        }
         focusedHostInput_.multiline = found->multiline;
+        focusedHostInput_.maximumUtf8Bytes =
+            found->maximumUtf8Bytes;
         if (hostInputFocusCallback_)
             hostInputFocusCallback_();
         return true;
@@ -10920,6 +11313,8 @@ bool WidgetEngine::RuntimeFocusHostInput(const std::wstring& widgetId, const std
         ? 0 : focusedHostInput_.cursor;
     focusedHostInput_.liveUpdate = found->liveUpdate;
     focusedHostInput_.multiline = found->multiline;
+    focusedHostInput_.maximumUtf8Bytes =
+        found->maximumUtf8Bytes;
     if (hostInputFocusCallback_)
         hostInputFocusCallback_();
     RuntimeInvalidateHost(widgetId);
@@ -11248,6 +11643,25 @@ bool WidgetEngine::SetHostInputComposition(
 {
     if (!focusedHostInput_.active)
         return false;
+    focusedHostInput_.pendingHighSurrogate = 0;
+    const size_t boundedCursor = std::min(
+        focusedHostInput_.cursor, focusedHostInput_.text.size());
+    const size_t boundedAnchor = std::min(
+        focusedHostInput_.selectionAnchor,
+        focusedHostInput_.text.size());
+    const size_t selectionStart = std::min(
+        boundedCursor, boundedAnchor);
+    const size_t selectionEnd = std::max(
+        boundedCursor, boundedAnchor);
+    if (!snowdesktop::widget_runtime::HostTextReplacementFits(
+            focusedHostInput_.text, selectionStart, selectionEnd,
+            text, focusedHostInput_.maximumUtf8Bytes))
+    {
+        focusedHostInput_.compositionText.clear();
+        focusedHostInput_.compositionCursor = 0;
+        RuntimeInvalidateHost(focusedHostInput_.widgetId);
+        return true;
+    }
     focusedHostInput_.compositionText = text;
     focusedHostInput_.compositionCursor =
         std::min(cursor, text.size());
@@ -11260,6 +11674,7 @@ bool WidgetEngine::CommitHostInputComposition(
 {
     if (!focusedHostInput_.active)
         return false;
+    focusedHostInput_.pendingHighSurrogate = 0;
 
     focusedHostInput_.cursor = std::min(
         focusedHostInput_.cursor, focusedHostInput_.text.size());
@@ -11272,10 +11687,17 @@ bool WidgetEngine::CommitHostInputComposition(
     const size_t selectionEnd = std::max(
         focusedHostInput_.selectionAnchor,
         focusedHostInput_.cursor);
-    focusedHostInput_.text.erase(
-        selectionStart, selectionEnd - selectionStart);
-    focusedHostInput_.text.insert(selectionStart, text);
-    focusedHostInput_.cursor = selectionStart + text.size();
+    size_t nextCursor = focusedHostInput_.cursor;
+    if (!snowdesktop::widget_runtime::TryApplyHostTextReplacement(
+            focusedHostInput_.text, selectionStart, selectionEnd,
+            text, focusedHostInput_.maximumUtf8Bytes, nextCursor))
+    {
+        focusedHostInput_.compositionText.clear();
+        focusedHostInput_.compositionCursor = 0;
+        RuntimeInvalidateHost(focusedHostInput_.widgetId);
+        return true;
+    }
+    focusedHostInput_.cursor = nextCursor;
     focusedHostInput_.selectionAnchor =
         focusedHostInput_.cursor;
     focusedHostInput_.compositionText.clear();
@@ -11304,6 +11726,24 @@ bool WidgetEngine::HandleHostInputChar(wchar_t ch)
 {
     if (!focusedHostInput_.active || ch < 0x20 || ch == 0x7F)
         return false;
+    if (ch >= 0xD800 && ch <= 0xDBFF)
+    {
+        focusedHostInput_.pendingHighSurrogate = ch;
+        return true;
+    }
+    std::wstring replacement;
+    if (ch >= 0xDC00 && ch <= 0xDFFF &&
+        focusedHostInput_.pendingHighSurrogate != 0)
+    {
+        replacement.push_back(
+            focusedHostInput_.pendingHighSurrogate);
+        replacement.push_back(ch);
+    }
+    else
+    {
+        replacement.push_back(ch);
+    }
+    focusedHostInput_.pendingHighSurrogate = 0;
     focusedHostInput_.compositionText.clear();
     focusedHostInput_.compositionCursor = 0;
 
@@ -11312,23 +11752,22 @@ bool WidgetEngine::HandleHostInputChar(wchar_t ch)
     focusedHostInput_.selectionAnchor = std::min(
         focusedHostInput_.selectionAnchor,
         focusedHostInput_.text.size());
-    if (focusedHostInput_.selectionAnchor !=
-        focusedHostInput_.cursor)
+    const size_t selectionStart = std::min(
+        focusedHostInput_.selectionAnchor,
+        focusedHostInput_.cursor);
+    const size_t selectionEnd = std::max(
+        focusedHostInput_.selectionAnchor,
+        focusedHostInput_.cursor);
+    size_t nextCursor = focusedHostInput_.cursor;
+    if (!snowdesktop::widget_runtime::TryApplyHostTextReplacement(
+            focusedHostInput_.text, selectionStart, selectionEnd,
+            replacement,
+            focusedHostInput_.maximumUtf8Bytes, nextCursor))
     {
-        const size_t selectionStart = std::min(
-            focusedHostInput_.selectionAnchor,
-            focusedHostInput_.cursor);
-        const size_t selectionEnd = std::max(
-            focusedHostInput_.selectionAnchor,
-            focusedHostInput_.cursor);
-        focusedHostInput_.text.erase(selectionStart,
-            selectionEnd - selectionStart);
-        focusedHostInput_.cursor = selectionStart;
+        RuntimeInvalidateHost(focusedHostInput_.widgetId);
+        return true;
     }
-    focusedHostInput_.selectionAnchor =
-        focusedHostInput_.cursor;
-    focusedHostInput_.text.insert(focusedHostInput_.cursor, 1, ch);
-    ++focusedHostInput_.cursor;
+    focusedHostInput_.cursor = nextCursor;
     focusedHostInput_.selectionAnchor =
         focusedHostInput_.cursor;
     if (focusedHostInput_.liveUpdate)
@@ -11341,6 +11780,7 @@ bool WidgetEngine::HandleHostInputChar(wchar_t ch)
 bool WidgetEngine::HandleHostInputKey(WPARAM key)
 {
     if (!focusedHostInput_.active) return false;
+    focusedHostInput_.pendingHighSurrogate = 0;
 
     const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
     const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
@@ -11395,10 +11835,17 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
             BlurHostInput(false);
             return true;
         }
-        eraseSelection();
-        focusedHostInput_.text.insert(
-            focusedHostInput_.cursor, 1, L'\n');
-        ++focusedHostInput_.cursor;
+        const size_t start = selectionStart();
+        const size_t end = selectionEnd();
+        size_t nextCursor = focusedHostInput_.cursor;
+        if (!snowdesktop::widget_runtime::TryApplyHostTextReplacement(
+                focusedHostInput_.text, start, end, L"\n",
+                focusedHostInput_.maximumUtf8Bytes, nextCursor))
+        {
+            RuntimeInvalidateHost(focusedHostInput_.widgetId);
+            return true;
+        }
+        focusedHostInput_.cursor = nextCursor;
         focusedHostInput_.selectionAnchor =
             focusedHostInput_.cursor;
         changed = true;
@@ -11445,6 +11892,11 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
     else if (ctrl && key == 'V')
     {
         std::wstring pasted;
+        bool pasteExceededLimit = false;
+        const std::size_t pasteUnitLimit =
+            focusedHostInput_.maximumUtf8Bytes == 0
+            ? (std::numeric_limits<std::size_t>::max)()
+            : focusedHostInput_.maximumUtf8Bytes + 1;
         if (OpenClipboard(nullptr))
         {
             if (HANDLE data = GetClipboardData(CF_UNICODETEXT))
@@ -11454,30 +11906,42 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
                     for (; *source; ++source)
                     {
                         if (*source == L'\r') continue;
-                        if (*source == L'\n')
-                            pasted.push_back(
-                                focusedHostInput_.multiline
-                                    ? L'\n' : L' ');
-                        else if (*source == L'\t')
-                            pasted.append(
-                                focusedHostInput_.multiline
-                                    ? L"    " : L" ");
-                        else
-                            pasted.push_back(*source);
+                        const std::wstring_view normalized = *source == L'\n'
+                            ? (focusedHostInput_.multiline
+                                ? std::wstring_view(L"\n")
+                                : std::wstring_view(L" "))
+                            : (*source == L'\t'
+                                ? (focusedHostInput_.multiline
+                                    ? std::wstring_view(L"    ")
+                                    : std::wstring_view(L" "))
+                                : std::wstring_view(source, 1));
+                        if (normalized.size() > pasteUnitLimit -
+                                std::min(pasted.size(), pasteUnitLimit))
+                        {
+                            pasteExceededLimit = true;
+                            break;
+                        }
+                        pasted.append(normalized);
                     }
                     GlobalUnlock(data);
                 }
             }
             CloseClipboard();
         }
-        if (!pasted.empty())
+        if (!pasted.empty() && !pasteExceededLimit)
         {
-            eraseSelection();
-            focusedHostInput_.text.insert(focusedHostInput_.cursor, pasted);
-            focusedHostInput_.cursor += pasted.size();
-            focusedHostInput_.selectionAnchor =
-                focusedHostInput_.cursor;
-            changed = true;
+            const size_t start = selectionStart();
+            const size_t end = selectionEnd();
+            size_t nextCursor = focusedHostInput_.cursor;
+            if (snowdesktop::widget_runtime::TryApplyHostTextReplacement(
+                    focusedHostInput_.text, start, end, pasted,
+                    focusedHostInput_.maximumUtf8Bytes, nextCursor))
+            {
+                focusedHostInput_.cursor = nextCursor;
+                focusedHostInput_.selectionAnchor =
+                    focusedHostInput_.cursor;
+                changed = true;
+            }
         }
     }
     else if (key == VK_BACK)
@@ -13051,6 +13515,24 @@ bool WidgetEngine::ApplyWidgetPermissionDecision(
     return true;
 }
 
+bool WidgetEngine::RuntimeFocusHostInputFromTrustedGesture(
+    const std::wstring& widgetId, const std::string& id,
+    std::string& error)
+{
+    error.clear();
+    if (!trustedGestureState_.Active())
+    {
+        error = "trustedGestureRequired";
+        return false;
+    }
+    if (!RuntimeFocusHostInput(widgetId, id))
+    {
+        error = "controlNotFound";
+        return false;
+    }
+    return true;
+}
+
 std::optional<snowdesktop::widget::PackageSourceRef>
 WidgetEngine::GetWidgetPackageSource(const std::wstring& packageId)
 {
@@ -14113,6 +14595,11 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "virtualList", lua_UiVirtualList, 1, nullptr, 1 },
         { "setScrollOffset", lua_UiSetScrollOffset, 1, nullptr, 1 },
     };
+    static constexpr FunctionDescriptor control[] = {
+        { "textInput", lua_ControlTextInput, 2 },
+        { "textArea", lua_ControlTextArea, 2 },
+        { "focus", lua_ControlFocus, 2 },
+    };
     static constexpr FunctionDescriptor desktop[] = {
         { "items", lua_DesktopItems, 1, "desktop.read" },
         { "selection", lua_DesktopSelection, 1, "desktop.read" },
@@ -14214,6 +14701,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         DescribeLibrary("media", media),
         DescribeLibrary("http", http),
         DescribeLibrary("ui", ui),
+        DescribeLibrary("control", control),
         DescribeLibrary("desktop", desktop),
         DescribeLibrary("everything", everything),
         DescribeLibrary("calendar", calendar),

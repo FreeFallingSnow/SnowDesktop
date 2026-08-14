@@ -316,6 +316,11 @@ std::uint64_t WidgetInteractionRegions::Generation() const noexcept
     return generation_;
 }
 
+bool WidgetInteractionRegions::FrameOpen() const noexcept
+{
+    return frameOpen_;
+}
+
 std::string WidgetInteractionRegions::CursorAt(float x, float y) const
 {
     const InteractionRegion* region = HitTest(x, y);

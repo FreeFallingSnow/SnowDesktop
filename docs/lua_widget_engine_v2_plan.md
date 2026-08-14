@@ -934,8 +934,16 @@ region generation 校验，旧菜单不会落到新一代 region。普通区域�
 即时绘制纵向溢出已增加 `interaction.scroll/setScrollOffset`：滚动位置按实例和稳定
 key 隔离，宿主负责 wheel、钳制、重绘和滚动条，组件使用 `draw.pushClip/popClip`
 裁剪并按返回 offset 绘制；这不是尚待实现的声明式 `view.scroll` 节点。
-当前只覆盖 desktop 即时绘制 surface；焦点、键盘、触控长按、UIA 语义输出、受控
-submenu、包内菜单图标和声明式 scene tree 仍按 M6 后续交付物推进。
+当前只覆盖 desktop 即时绘制 surface；通用 region 焦点与键盘、触控长按、UIA
+语义输出、受控 submenu、包内菜单图标和声明式 scene tree 仍按 M6 后续交付物推进。
+
+文本编辑的过渡宿主控件已增加 `control.textInput/textArea/focus`：组件在 render 中
+提交严格的稳定 key、storageKey、rect 与白名单视觉属性，宿主复用 Direct2D 光标、
+选择、滚动、剪贴板规范化和 IME 候选位置。单行默认 4 KiB、多行默认 64 KiB，所有
+插入按最终 UTF-8 大小原子校验；程序化聚焦只接受直接可信用户手势。该能力用于在
+完整声明式 view tree 到来前迁移现有编辑型组件，不把 `ui.input` 当成普通文本编辑的
+高风险权限，也不向 Lua 开放通用剪贴板读取。通用 region 键盘焦点、Tab 顺序和 UIA
+输出仍未完成，不能把此过渡控件计作第 13.4 节声明式控件全集完成。
 
 ### 13.3 参考优先级与完整性边界
 
@@ -1549,8 +1557,8 @@ v2.0 资源契约：
 ### 19.1 发布硬门槛
 
 当前仓库有 11 个内置组件；`analog-clock`、`digital-clock`、`media-controls`、
-`system-monitor`、`pomodoro` 与 `month-calendar` 已切到 schema/API v2，其余 5 个仍待迁移。
-这六个组件仍需完成真实
+`system-monitor`、`pomodoro`、`month-calendar` 与 `sticky-note` 已切到 schema/API v2，
+其余 4 个仍待迁移。这七个组件仍需完成真实
 桌面的多 DPI、主题、隐藏唤醒、系统数据、滚动、媒体控制、元素菜单与应用启动验收，
 因此只能计为代码迁移完成，不能计为最终验证完成。只有全部内置组件完成迁移和验收
 后才能宣布稳定。
@@ -1572,15 +1580,15 @@ v2.0 资源契约：
 |---|---|---|---|---|
 | A：基础绘制 | `analog-clock` | 无 | `widget.define`、环境上下文、按秒/分钟调度、v2 即时绘制 | 多 DPI/尺寸/主题截图一致；隐藏时无持续帧 |
 | A：基础绘制 | `digital-clock` | 无 | 可见性作用域、时间线调度、本地化和尺寸响应 | 12/24 小时、日期、语言、休眠恢复正确 |
-| B：状态与输入 | `sticky-note` | `ui.input` | 类型化存储、声明式文本编辑、焦点/IME、菜单动作 | 旧便笺内容保留；中文 IME、撤销和重启恢复通过 |
-| B：状态与输入 | `reminders` | `ui.input` | 稳定 key 集合、事务存储、编辑动作和可访问语义 | 旧任务顺序/完成状态保留；键盘与 Narrator 可用 |
+| B：状态与输入 | `sticky-note` | 无 | 有界宿主文本编辑、可信手势焦点/IME、菜单动作 | 旧便笺内容保留；中文 IME、撤销和重启恢复通过 |
+| B：状态与输入 | `reminders` | 无 | 稳定 key 集合、事务存储、编辑动作和可访问语义 | 旧任务顺序/完成状态保留；键盘与 Narrator 可用 |
 | B：状态与输入 | `pomodoro` | 可选 `notification.post` | 宿主调度、后台合并、通知可选权限、动作状态机 | 休眠恢复不补发多次；拒绝通知仍可计时 |
 | C：数据订阅 | `system-monitor` | 必需 `system.performance.read`；可选 `system.power.read`、`system.network.read` | 拆分 topic 的共享采样、可见性节流、v2 draw 与实例滚动 | 每类授权可分别拒绝/撤销；多实例不重复昂贵采样；无订阅即停 |
 | C：数据订阅 | `media-controls` | 必需 `media.read`；可选 `media.action`、`app.discovery`、`app.launch` | 媒体订阅、用户手势动作、应用搜索/不透明引用启动降级 | 播放器切换/退出恢复；分别拒绝媒体读取/控制和应用发现/启动权限 |
 | D：日历集合 | `month-calendar` | 可选 `calendar.read` | 日历订阅、月视图稳定 key、无权限日期计算和本地共享选择 | 跨月/时区/区域格式正确；拒绝读取仍可使用月视图 |
-| D：日历集合 | `agenda` | `calendar.read`、`calendar.write`、`ui.input` | 复杂集合、编辑面板、异步日历任务、作用域清理 | 现有功能逐项回归；修改权限拒绝时保留只读日程 |
-| E：网络 | `rss-reader` | `network.internet`、`shell.launch`、`ui.input` | 精确 HTTPS origin、网络任务、缓存/错误状态、受控打开链接动作 | 首次联网/打开链接授权；重定向/离线/撤权/恶意 feed 测试通过 |
-| E：桌面高权限 | `quick-launcher` | `desktop.read`、`desktop.action`、`app.discovery`、`app.launch`、`everything.search`、`ui.input` | 桌面/应用/Everything 搜索任务、虚拟列表、引用化启动/定位和最小权限降级 | 三类搜索与启动分别授权；大结果集、IME、撤权和索引变化通过 |
+| D：日历集合 | `agenda` | `calendar.read`、`calendar.write` | 复杂集合、编辑面板、异步日历任务、作用域清理 | 现有功能逐项回归；修改权限拒绝时保留只读日程 |
+| E：网络 | `rss-reader` | `network.internet`、`shell.launch` | 精确 HTTPS origin、网络任务、缓存/错误状态、受控打开链接动作 | 首次联网/打开链接授权；重定向/离线/撤权/恶意 feed 测试通过 |
+| E：桌面高权限 | `quick-launcher` | `desktop.read`、`desktop.action`、`app.discovery`、`app.launch`、`everything.search` | 桌面/应用/Everything 搜索任务、虚拟列表、引用化启动/定位和最小权限降级 | 三类搜索与启动分别授权；大结果集、IME、撤权和索引变化通过 |
 
 执行顺序是 A → B → C → D → E。每一波先迁一个代表组件，补齐缺失的 v2 契约和测试，再完成同波其余组件；不得为迁移某个组件临时增加只对该组件生效的隐式 API。
 

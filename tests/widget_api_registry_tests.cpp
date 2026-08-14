@@ -248,6 +248,12 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "calendar.selection") &&
             snowdesktop::widget_api::SupportsFeature(
+                "control.focus") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "control.textArea") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "control.textInput") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "data.calendar.events") &&
             snowdesktop::widget_api::SupportsFeature(
                 "data.calendar.selectedDate") &&
