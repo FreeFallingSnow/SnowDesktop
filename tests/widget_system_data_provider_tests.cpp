@@ -148,6 +148,23 @@ void TestTopicLifecycleAndSampling()
     Check(provider.StopTopic("system.storage.volumes") &&
             provider.ActiveTopicCount() == 2,
         "stopping volume sampling must preserve CPU and memory topics");
+    Check(provider.StartTopic("system.storage.io", 20ms) &&
+            provider.ActiveTopicCount() == 3,
+        "storage I/O sampling must start as an independent topic");
+    Check(WaitFor([&] {
+            const auto snapshot = provider.StorageIo();
+            return snapshot && snapshot->revision >= 2;
+        }),
+        "storage I/O sampling must publish warming and measured revisions");
+    const auto storageIo = provider.StorageIo();
+    Check(storageIo && storageIo->timestampMs > 0 &&
+            (storageIo->available || !storageIo->error.empty()) &&
+            (!storageIo->available || storageIo->busyPercent <= 100.0),
+        "storage I/O snapshots must expose aggregate rates or a stable error");
+    Check(provider.StopTopic("system.storage.io") &&
+            provider.ActiveTopicCount() == 2 &&
+            WaitFor([&] { return !provider.StorageIoResourcesActive(); }),
+        "the final storage I/O subscription must close PDH resources while the worker remains active");
 
     Check(provider.StopTopic("system.memory") && provider.Running() &&
             provider.ActiveTopicCount() == 1,

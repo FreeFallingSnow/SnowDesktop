@@ -288,6 +288,7 @@ struct LuaWidgetDataSnapshot
     snowdesktop::widget_runtime::WidgetGpuDataSnapshot gpu;
     snowdesktop::widget_runtime::WidgetStorageVolumesDataSnapshot
         storageVolumes;
+    snowdesktop::widget_runtime::WidgetStorageIoDataSnapshot storageIo;
 };
 
 /**

@@ -400,6 +400,11 @@ function schedule.cancel(id) end
 ---@class SnowStorageVolumesDataValue
 ---@field volumes SnowStorageVolumeDataValue[]
 
+---@class SnowStorageIoDataValue
+---@field readBytesPerSecond integer Aggregate physical-disk read rate.
+---@field writeBytesPerSecond integer Aggregate physical-disk write rate.
+---@field busyPercent number Aggregate physical-disk busy percentage, clamped to 0..100.
+
 ---@class SnowDataSnapshot<T>
 ---@field available boolean
 ---@field value? T
@@ -423,6 +428,7 @@ data = {}
 ---@overload fun(topic: 'system.network.status', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowNetworkStatusDataValue>
 ---@overload fun(topic: 'system.network.traffic', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowNetworkTrafficDataValue>
 ---@overload fun(topic: 'system.storage.volumes', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowStorageVolumesDataValue>
+---@overload fun(topic: 'system.storage.io', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowStorageIoDataValue>
 ---@param topic string
 ---@param options? SnowDataSubscribeOptions
 ---@return SnowDataSubscription<table>

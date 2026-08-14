@@ -29,6 +29,7 @@ constexpr std::string_view NetworkStatusTopic = "system.network.status";
 constexpr std::string_view NetworkTrafficTopic = "system.network.traffic";
 constexpr std::string_view GpuTopic = "system.gpu";
 constexpr std::string_view StorageVolumesTopic = "system.storage.volumes";
+constexpr std::string_view StorageIoTopic = "system.storage.io";
 
 std::uint64_t FileTimeValue(const FILETIME& value)
 {
@@ -211,7 +212,7 @@ bool WidgetSystemDataProvider::SupportsTopic(
     return topic == CpuTopic || topic == MemoryTopic ||
         topic == PowerTopic || topic == NetworkStatusTopic ||
         topic == NetworkTrafficTopic || topic == GpuTopic ||
-        topic == StorageVolumesTopic;
+        topic == StorageVolumesTopic || topic == StorageIoTopic;
 }
 
 bool WidgetSystemDataProvider::StartTopic(
@@ -237,6 +238,11 @@ bool WidgetSystemDataProvider::StartTopic(
             {
                 resetGpuBaseline_.store(true);
                 closeGpuRequested_.store(false);
+            }
+            if (topic == StorageIoTopic)
+            {
+                resetStorageIoBaseline_.store(true);
+                closeStorageIoRequested_.store(false);
             }
         }
         else
@@ -271,6 +277,8 @@ bool WidgetSystemDataProvider::StopTopic(std::string_view topic)
             resetNetworkBaseline_.store(true);
         if (topic == GpuTopic)
             closeGpuRequested_.store(true);
+        if (topic == StorageIoTopic)
+            closeStorageIoRequested_.store(true);
         ++configurationGeneration_;
         stopWorker = schedules_.empty();
     }
@@ -296,6 +304,8 @@ void WidgetSystemDataProvider::StopAll()
     resetNetworkBaseline_.store(true);
     resetGpuBaseline_.store(true);
     closeGpuRequested_.store(true);
+    resetStorageIoBaseline_.store(true);
+    closeStorageIoRequested_.store(true);
     if (worker_.joinable())
     {
         worker_.request_stop();
@@ -309,6 +319,7 @@ void WidgetSystemDataProvider::StopAll()
     previousSent_ = 0;
     previousNetworkSample_ = {};
     CloseGpuQuery();
+    CloseStorageIoQuery();
 }
 
 std::optional<WidgetCpuDataSnapshot>
@@ -360,6 +371,13 @@ WidgetSystemDataProvider::StorageVolumes() const
     return storageVolumes_;
 }
 
+std::optional<WidgetStorageIoDataSnapshot>
+WidgetSystemDataProvider::StorageIo() const
+{
+    std::scoped_lock lock(mutex_);
+    return storageIo_;
+}
+
 std::vector<std::string>
 WidgetSystemDataProvider::DrainChangedTopics()
 {
@@ -379,6 +397,11 @@ bool WidgetSystemDataProvider::Running() const noexcept
 bool WidgetSystemDataProvider::GpuResourcesActive() const noexcept
 {
     return gpuResourcesActive_.load();
+}
+
+bool WidgetSystemDataProvider::StorageIoResourcesActive() const noexcept
+{
+    return storageIoResourcesActive_.load();
 }
 
 std::size_t WidgetSystemDataProvider::ActiveTopicCount() const
@@ -402,6 +425,8 @@ void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
     {
         if (closeGpuRequested_.exchange(false))
             CloseGpuQuery();
+        if (closeStorageIoRequested_.exchange(false))
+            CloseStorageIoQuery();
         std::vector<std::string> dueTopics;
         {
             std::unique_lock lock(mutex_);
@@ -454,9 +479,12 @@ void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
                 PublishGpu(SampleGpu());
             else if (topic == StorageVolumesTopic)
                 PublishStorageVolumes(SampleStorageVolumes());
+            else if (topic == StorageIoTopic)
+                PublishStorageIo(SampleStorageIo());
         }
     }
     CloseGpuQuery();
+    CloseStorageIoQuery();
     if (apartmentInitialized)
         winrt::uninit_apartment();
 }
@@ -909,6 +937,125 @@ WidgetSystemDataProvider::SampleStorageVolumes()
     return snapshot;
 }
 
+bool WidgetSystemDataProvider::InitializeStorageIoQuery()
+{
+    CloseStorageIoQuery();
+    HQUERY query = nullptr;
+    if (PdhOpenQueryW(nullptr, 0, &query) != ERROR_SUCCESS)
+        return false;
+    HCOUNTER readCounter = nullptr;
+    HCOUNTER writeCounter = nullptr;
+    HCOUNTER busyCounter = nullptr;
+    const bool countersAdded =
+        PdhAddEnglishCounterW(query,
+            L"\\PhysicalDisk(_Total)\\Disk Read Bytes/sec",
+            0, &readCounter) == ERROR_SUCCESS &&
+        PdhAddEnglishCounterW(query,
+            L"\\PhysicalDisk(_Total)\\Disk Write Bytes/sec",
+            0, &writeCounter) == ERROR_SUCCESS &&
+        PdhAddEnglishCounterW(query,
+            L"\\PhysicalDisk(_Total)\\% Disk Time",
+            0, &busyCounter) == ERROR_SUCCESS;
+    if (!countersAdded || PdhCollectQueryData(query) != ERROR_SUCCESS)
+    {
+        if (busyCounter) PdhRemoveCounter(busyCounter);
+        if (writeCounter) PdhRemoveCounter(writeCounter);
+        if (readCounter) PdhRemoveCounter(readCounter);
+        PdhCloseQuery(query);
+        return false;
+    }
+    storageIoQuery_ = query;
+    storageReadCounter_ = readCounter;
+    storageWriteCounter_ = writeCounter;
+    storageBusyCounter_ = busyCounter;
+    storageIoResourcesActive_.store(true);
+    return true;
+}
+
+void WidgetSystemDataProvider::CloseStorageIoQuery()
+{
+    if (storageBusyCounter_)
+    {
+        PdhRemoveCounter(reinterpret_cast<HCOUNTER>(storageBusyCounter_));
+        storageBusyCounter_ = nullptr;
+    }
+    if (storageWriteCounter_)
+    {
+        PdhRemoveCounter(reinterpret_cast<HCOUNTER>(storageWriteCounter_));
+        storageWriteCounter_ = nullptr;
+    }
+    if (storageReadCounter_)
+    {
+        PdhRemoveCounter(reinterpret_cast<HCOUNTER>(storageReadCounter_));
+        storageReadCounter_ = nullptr;
+    }
+    if (storageIoQuery_)
+    {
+        PdhCloseQuery(reinterpret_cast<HQUERY>(storageIoQuery_));
+        storageIoQuery_ = nullptr;
+    }
+    storageIoResourcesActive_.store(false);
+}
+
+WidgetStorageIoDataSnapshot WidgetSystemDataProvider::SampleStorageIo()
+{
+    WidgetStorageIoDataSnapshot snapshot;
+    snapshot.timestampMs = TimestampMilliseconds();
+    snapshot.available = true;
+    const bool initializeQuery = resetStorageIoBaseline_.exchange(false) ||
+        !storageIoQuery_ || !storageReadCounter_ ||
+        !storageWriteCounter_ || !storageBusyCounter_;
+    if (initializeQuery)
+    {
+        if (!InitializeStorageIoQuery())
+        {
+            snapshot.available = false;
+            snapshot.warmingUp = false;
+            snapshot.error = "storage I/O sampling unavailable";
+        }
+        return snapshot;
+    }
+    if (PdhCollectQueryData(
+            reinterpret_cast<HQUERY>(storageIoQuery_)) != ERROR_SUCCESS)
+    {
+        snapshot.available = false;
+        snapshot.warmingUp = false;
+        snapshot.error = "storage I/O sampling failed";
+        return snapshot;
+    }
+
+    const auto readCounter = [](void* handle, double& value) {
+        PDH_FMT_COUNTERVALUE formatted{};
+        DWORD type = 0;
+        if (PdhGetFormattedCounterValue(reinterpret_cast<HCOUNTER>(handle),
+                PDH_FMT_DOUBLE, &type, &formatted) != ERROR_SUCCESS ||
+            (formatted.CStatus != PDH_CSTATUS_VALID_DATA &&
+                formatted.CStatus != PDH_CSTATUS_NEW_DATA))
+            return false;
+        value = formatted.doubleValue;
+        return true;
+    };
+    double readBytes = 0.0;
+    double writeBytes = 0.0;
+    double busyPercent = 0.0;
+    if (!readCounter(storageReadCounter_, readBytes) ||
+        !readCounter(storageWriteCounter_, writeBytes) ||
+        !readCounter(storageBusyCounter_, busyPercent))
+    {
+        snapshot.available = false;
+        snapshot.warmingUp = false;
+        snapshot.error = "storage I/O counters unavailable";
+        return snapshot;
+    }
+    snapshot.readBytesPerSecond = static_cast<std::uint64_t>(
+        std::max(0.0, readBytes));
+    snapshot.writeBytesPerSecond = static_cast<std::uint64_t>(
+        std::max(0.0, writeBytes));
+    snapshot.busyPercent = std::clamp(busyPercent, 0.0, 100.0);
+    snapshot.warmingUp = false;
+    return snapshot;
+}
+
 void WidgetSystemDataProvider::PublishCpu(
     WidgetCpuDataSnapshot snapshot)
 {
@@ -977,5 +1124,15 @@ void WidgetSystemDataProvider::PublishStorageVolumes(
     snapshot.revision = storageVolumes_ ? storageVolumes_->revision + 1 : 1;
     storageVolumes_ = std::move(snapshot);
     changedTopics_.insert(std::string(StorageVolumesTopic));
+}
+
+void WidgetSystemDataProvider::PublishStorageIo(
+    WidgetStorageIoDataSnapshot snapshot)
+{
+    std::scoped_lock lock(mutex_);
+    if (!schedules_.contains(std::string(StorageIoTopic))) return;
+    snapshot.revision = storageIo_ ? storageIo_->revision + 1 : 1;
+    storageIo_ = std::move(snapshot);
+    changedTopics_.insert(std::string(StorageIoTopic));
 }
 }

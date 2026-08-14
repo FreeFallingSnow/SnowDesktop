@@ -2187,6 +2187,17 @@ static void PushDataSnapshotEnvelope(lua_State* state,
         }
         lua_setfield(state, -2, "volumes");
     }
+    else if (snapshot->topic == "system.storage.io")
+    {
+        lua_pushinteger(state, static_cast<lua_Integer>(
+            snapshot->storageIo.readBytesPerSecond));
+        lua_setfield(state, -2, "readBytesPerSecond");
+        lua_pushinteger(state, static_cast<lua_Integer>(
+            snapshot->storageIo.writeBytesPerSecond));
+        lua_setfield(state, -2, "writeBytesPerSecond");
+        lua_pushnumber(state, snapshot->storageIo.busyPercent);
+        lua_setfield(state, -2, "busyPercent");
+    }
     lua_setfield(state, -2, "value");
 }
 
@@ -4863,6 +4874,10 @@ void WidgetEngine::InitializeWidgetDataBroker()
     (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
         "system.storage.volumes", kSystemStoragePermission,
         2000ms, 10000ms, 2000ms, false, false }, error);
+    error.clear();
+    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
+        "system.storage.io", kSystemStoragePermission,
+        1000ms, 5000ms, 2000ms, false, false }, error);
 
     if (previewOnly_)
         widgetSystemDataProvider_.reset();
@@ -7522,6 +7537,15 @@ WidgetEngine::RuntimeGetDataSnapshot(
                     48ull * 1024 * 1024 * 1024, true, true, false }
             };
         }
+        else if (result.topic == "system.storage.io")
+        {
+            result.storageIo.available = true;
+            result.storageIo.warmingUp = false;
+            result.storageIo.readBytesPerSecond = 18ull * 1024 * 1024;
+            result.storageIo.writeBytesPerSecond = 4ull * 1024 * 1024;
+            result.storageIo.busyPercent = 27.5;
+            result.storageIo.timestampMs = timestampNow;
+        }
         return result;
     }
     if (!binding->options.permissionGranted)
@@ -7632,6 +7656,22 @@ WidgetEngine::RuntimeGetDataSnapshot(
             result.available = snapshot->available;
             result.error = snapshot->error;
             setFreshness(snapshot->timestampMs);
+        }
+    }
+    else if (result.topic == "system.storage.io")
+    {
+        const auto snapshot = widgetSystemDataProvider_->StorageIo();
+        if (snapshot)
+        {
+            result.storageIo = *snapshot;
+            result.available = snapshot->available;
+            result.warmingUp = snapshot->warmingUp;
+            result.error = snapshot->error;
+            setFreshness(snapshot->timestampMs);
+        }
+        else
+        {
+            result.warmingUp = true;
         }
     }
     if (result.error.empty())

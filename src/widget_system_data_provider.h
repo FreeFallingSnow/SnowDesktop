@@ -124,6 +124,18 @@ struct WidgetStorageVolumesDataSnapshot
     std::string error;
 };
 
+struct WidgetStorageIoDataSnapshot
+{
+    bool available = false;
+    bool warmingUp = true;
+    std::uint64_t readBytesPerSecond = 0;
+    std::uint64_t writeBytesPerSecond = 0;
+    double busyPercent = 0.0;
+    std::int64_t timestampMs = 0;
+    std::uint64_t revision = 0;
+    std::string error;
+};
+
 class WidgetSystemDataProvider
 {
 public:
@@ -152,10 +164,12 @@ public:
     std::optional<WidgetNetworkTrafficDataSnapshot> NetworkTraffic() const;
     std::optional<WidgetGpuDataSnapshot> Gpu() const;
     std::optional<WidgetStorageVolumesDataSnapshot> StorageVolumes() const;
+    std::optional<WidgetStorageIoDataSnapshot> StorageIo() const;
     std::vector<std::string> DrainChangedTopics();
 
     bool Running() const noexcept;
     bool GpuResourcesActive() const noexcept;
+    bool StorageIoResourcesActive() const noexcept;
     std::size_t ActiveTopicCount() const;
     static bool SupportsTopic(std::string_view topic) noexcept;
 
@@ -174,6 +188,7 @@ private:
     WidgetNetworkTrafficDataSnapshot SampleNetworkTraffic();
     WidgetGpuDataSnapshot SampleGpu();
     WidgetStorageVolumesDataSnapshot SampleStorageVolumes();
+    WidgetStorageIoDataSnapshot SampleStorageIo();
     void PublishCpu(WidgetCpuDataSnapshot snapshot);
     void PublishMemory(WidgetMemoryDataSnapshot snapshot);
     void PublishPower(WidgetPowerDataSnapshot snapshot);
@@ -181,8 +196,11 @@ private:
     void PublishNetworkTraffic(WidgetNetworkTrafficDataSnapshot snapshot);
     void PublishGpu(WidgetGpuDataSnapshot snapshot);
     void PublishStorageVolumes(WidgetStorageVolumesDataSnapshot snapshot);
+    void PublishStorageIo(WidgetStorageIoDataSnapshot snapshot);
     bool InitializeGpuQuery();
     void CloseGpuQuery();
+    bool InitializeStorageIoQuery();
+    void CloseStorageIoQuery();
 
     mutable std::mutex mutex_;
     std::condition_variable condition_;
@@ -195,6 +213,7 @@ private:
     std::optional<WidgetNetworkTrafficDataSnapshot> networkTraffic_;
     std::optional<WidgetGpuDataSnapshot> gpu_;
     std::optional<WidgetStorageVolumesDataSnapshot> storageVolumes_;
+    std::optional<WidgetStorageIoDataSnapshot> storageIo_;
     std::uint64_t configurationGeneration_ = 0;
     std::jthread worker_;
     std::atomic<bool> resetCpuBaseline_{ true };
@@ -202,6 +221,9 @@ private:
     std::atomic<bool> resetGpuBaseline_{ true };
     std::atomic<bool> closeGpuRequested_{ false };
     std::atomic<bool> gpuResourcesActive_{ false };
+    std::atomic<bool> resetStorageIoBaseline_{ true };
+    std::atomic<bool> closeStorageIoRequested_{ false };
+    std::atomic<bool> storageIoResourcesActive_{ false };
 
     std::uint64_t previousIdle_ = 0;
     std::uint64_t previousKernel_ = 0;
@@ -211,5 +233,9 @@ private:
     Clock::time_point previousNetworkSample_{};
     void* gpuQuery_ = nullptr;
     void* gpuUtilizationCounter_ = nullptr;
+    void* storageIoQuery_ = nullptr;
+    void* storageReadCounter_ = nullptr;
+    void* storageWriteCounter_ = nullptr;
+    void* storageBusyCounter_ = nullptr;
 };
 }
