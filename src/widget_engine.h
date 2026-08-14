@@ -248,6 +248,25 @@ struct LuaWidgetTheme
     int contentTheme = 0;       ///< 文字颜色主题 (0=浅色/白字, 1=深色/黑字)
 };
 
+struct LuaWidgetSurfaceContext
+{
+    UINT dpiX = USER_DEFAULT_SCREEN_DPI;
+    UINT dpiY = USER_DEFAULT_SCREEN_DPI;
+    RECT monitorBounds{};
+    RECT workArea{};
+    bool monitorAvailable = false;
+    bool primaryMonitor = false;
+};
+
+struct LuaWidgetContextState
+{
+    LuaWidgetSurfaceContext surface;
+    bool visible = false;
+    bool preview = false;
+    bool focused = false;
+    bool selected = false;
+};
+
 /**
  * @struct LuaWidget
  * @brief 运行时小部件实例的完整状态描述
@@ -291,6 +310,7 @@ struct LuaWidget
     bool customStyle = false;            ///< 是否启用了自定义主题样式
     bool followPersonalizationDefault = false; ///< 尚未保存外观状态时是否默认跟随全局
     LuaWidgetTheme theme;                ///< 自定义主题配置（当 customStyle 为 true 时生效）
+    LuaWidgetSurfaceContext surfaceContext; ///< 当前显示器、工作区与 DPI 摘要
     std::vector<LuaWidgetManifest::Setting> scriptSettings; ///< Lua 顶层声明式设置
     std::vector<LuaWidgetManifest::SettingPreset> scriptPresets; ///< Lua 顶层声明式预设
     FILETIME lastModified = {};          ///< 脚本文件最后修改时间，用于变更检测
@@ -864,6 +884,10 @@ public:
     void SetWidgetLayoutMetrics(const std::wstring& widgetId,
         int cellWidth, int cellHeight, int gapY, int barHeight,
         DWRITE_FONT_WEIGHT fontWeight);
+    void SetWidgetSurfaceContext(const std::wstring& widgetId,
+        const LuaWidgetSurfaceContext& context);
+    LuaWidgetContextState RuntimeGetWidgetContextState(
+        const std::wstring& widgetId) const;
     void RuntimeOpenWidgetSettings(const std::wstring& widgetId);
     void RuntimeOpenWidgetPanel(const std::wstring& widgetId,
         std::wstring title, int width, int height);

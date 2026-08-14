@@ -213,6 +213,7 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature("resource.package") &&
             snowdesktop::widget_api::SupportsFeature("system.uptime") &&
             snowdesktop::widget_api::SupportsFeature("time.calendar") &&
+            snowdesktop::widget_api::SupportsFeature("widget.context") &&
             snowdesktop::widget_api::SupportsFeature(
                 "system.environment") &&
             !snowdesktop::widget_api::SupportsFeature("view.tree"),

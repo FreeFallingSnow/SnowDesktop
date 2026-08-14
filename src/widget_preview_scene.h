@@ -48,6 +48,7 @@ struct WidgetRenderOptions
     WidgetEngine* luaEngine = nullptr;
     POINT pointer{ -32000, -32000 };
     RECT frame{};
+    UINT dpi = USER_DEFAULT_SCREEN_DPI;
     bool interactive = false;
     bool registerBackdrop = true;
 };

@@ -16,7 +16,7 @@ namespace snowdesktop::widget_api
 namespace
 {
 constexpr std::uint32_t kCurrentApiVersion = 2;
-constexpr std::array<std::string_view, 9> kHostFeatures = {
+constexpr std::array<std::string_view, 10> kHostFeatures = {
     "draw.immediate",
     "l10n.basic",
     "l10n.format",
@@ -26,6 +26,7 @@ constexpr std::array<std::string_view, 9> kHostFeatures = {
     "system.uptime",
     "time.basic",
     "time.calendar",
+    "widget.context",
 };
 char kDefinedWidgetMarker = 0;
 

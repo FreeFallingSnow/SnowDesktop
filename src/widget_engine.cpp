@@ -36,6 +36,7 @@
 #include <imgui_impl_dx11.h>
 
 #include <dwrite_3.h>
+#include <dwmapi.h>
 
 #include <shlwapi.h>
 #include <shellapi.h>
@@ -2889,6 +2890,218 @@ static std::wstring ReadLuaPathArg(lua_State* L, int index)
     return Utf8ToWideLocal(path ? path : "");
 }
 
+struct WidgetSystemEnvironment
+{
+    bool highContrast = false;
+    bool reducedMotion = false;
+    double textScale = 1.0;
+    int accentColor = 0x0078D4;
+    std::string locale;
+    std::string region;
+    std::string timeZone;
+    int utcOffsetMinutes = 0;
+    std::string inputLanguage;
+};
+
+static WidgetSystemEnvironment QueryWidgetSystemEnvironment()
+{
+    static std::mutex cacheMutex;
+    static WidgetSystemEnvironment cached;
+    static ULONGLONG lastRefresh = 0;
+    const ULONGLONG now = GetTickCount64();
+    std::scoped_lock lock(cacheMutex);
+    if (lastRefresh != 0 && now - lastRefresh < 1000)
+        return cached;
+
+    WidgetSystemEnvironment result;
+    HIGHCONTRASTW highContrast{ sizeof(highContrast) };
+    if (SystemParametersInfoW(SPI_GETHIGHCONTRAST,
+            sizeof(highContrast), &highContrast, 0))
+        result.highContrast =
+            (highContrast.dwFlags & HCF_HIGHCONTRASTON) != 0;
+    BOOL animationsEnabled = TRUE;
+    if (SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0,
+            &animationsEnabled, 0))
+        result.reducedMotion = animationsEnabled == FALSE;
+
+    DWORD textScalePercent = 100;
+    DWORD textScaleBytes = sizeof(textScalePercent);
+    if (RegGetValueW(HKEY_CURRENT_USER,
+            L"Software\\Microsoft\\Accessibility", L"TextScaleFactor",
+            RRF_RT_REG_DWORD, nullptr, &textScalePercent,
+            &textScaleBytes) == ERROR_SUCCESS)
+    {
+        result.textScale = std::clamp(
+            static_cast<double>(textScalePercent) / 100.0, 0.5, 5.0);
+    }
+
+    DWORD colorization = 0;
+    BOOL colorizationOpaque = FALSE;
+    if (SUCCEEDED(DwmGetColorizationColor(
+            &colorization, &colorizationOpaque)))
+        result.accentColor = static_cast<int>(colorization & 0x00ffffffu);
+    else
+    {
+        const COLORREF accent = GetSysColor(COLOR_HIGHLIGHT);
+        result.accentColor = (GetRValue(accent) << 16) |
+            (GetGValue(accent) << 8) | GetBValue(accent);
+    }
+
+    result.locale = Locale::Instance().GetEffectiveLanguage();
+    std::wstring localeName = Utf8ToWideLocal(result.locale);
+    wchar_t localeBuffer[LOCALE_NAME_MAX_LENGTH]{};
+    if (localeName.empty() || GetLocaleInfoEx(localeName.c_str(),
+            LOCALE_SISO3166CTRYNAME, localeBuffer,
+            LOCALE_NAME_MAX_LENGTH) <= 0)
+    {
+        if (GetUserDefaultLocaleName(localeBuffer,
+                LOCALE_NAME_MAX_LENGTH) > 0)
+            localeName = localeBuffer;
+        localeBuffer[0] = L'\0';
+        GetLocaleInfoEx(localeName.c_str(), LOCALE_SISO3166CTRYNAME,
+            localeBuffer, LOCALE_NAME_MAX_LENGTH);
+    }
+    result.region = WidgetWideToUtf8(localeBuffer);
+
+    DYNAMIC_TIME_ZONE_INFORMATION timeZone{};
+    const DWORD timeZoneId = GetDynamicTimeZoneInformation(&timeZone);
+    const wchar_t* timeZoneName = timeZone.TimeZoneKeyName[0]
+        ? timeZone.TimeZoneKeyName : timeZone.StandardName;
+    result.timeZone = WidgetWideToUtf8(timeZoneName);
+    LONG bias = timeZone.Bias;
+    if (timeZoneId == TIME_ZONE_ID_STANDARD)
+        bias += timeZone.StandardBias;
+    else if (timeZoneId == TIME_ZONE_ID_DAYLIGHT)
+        bias += timeZone.DaylightBias;
+    result.utcOffsetMinutes = -static_cast<int>(bias);
+
+    const LANGID inputLanguage = LOWORD(
+        reinterpret_cast<ULONG_PTR>(GetKeyboardLayout(0)));
+    wchar_t inputLocale[LOCALE_NAME_MAX_LENGTH]{};
+    if (LCIDToLocaleName(MAKELCID(inputLanguage, SORT_DEFAULT),
+            inputLocale, LOCALE_NAME_MAX_LENGTH, 0) > 0)
+        result.inputLanguage = WidgetWideToUtf8(inputLocale);
+
+    cached = result;
+    lastRefresh = now;
+    return result;
+}
+
+static void PushContextRect(lua_State* L, const RECT& rect,
+    double scaleX, double scaleY)
+{
+    const double divisorX = scaleX > 0.0 ? scaleX : 1.0;
+    const double divisorY = scaleY > 0.0 ? scaleY : 1.0;
+    lua_createtable(L, 0, 6);
+    lua_pushnumber(L, rect.left / divisorX); lua_setfield(L, -2, "left");
+    lua_pushnumber(L, rect.top / divisorY); lua_setfield(L, -2, "top");
+    lua_pushnumber(L, rect.right / divisorX); lua_setfield(L, -2, "right");
+    lua_pushnumber(L, rect.bottom / divisorY); lua_setfield(L, -2, "bottom");
+    lua_pushnumber(L, (rect.right - rect.left) / divisorX);
+    lua_setfield(L, -2, "width");
+    lua_pushnumber(L, (rect.bottom - rect.top) / divisorY);
+    lua_setfield(L, -2, "height");
+}
+
+static int lua_WidgetContext(lua_State* L)
+{
+    auto* d2d = GetD2D(L);
+    const std::wstring widgetId = BoundWidgetId(L);
+    LuaWidgetContextState state = d2d && d2d->engine
+        ? d2d->engine->RuntimeGetWidgetContextState(widgetId)
+        : LuaWidgetContextState{};
+    lua_getfield(L, LUA_REGISTRYINDEX, "__widget_preview");
+    if (lua_toboolean(L, -1) != 0) state.preview = true;
+    lua_pop(L, 1);
+    const WidgetSystemEnvironment system = QueryWidgetSystemEnvironment();
+    const double scaleX = static_cast<double>(state.surface.dpiX) /
+        USER_DEFAULT_SCREEN_DPI;
+    const double scaleY = static_cast<double>(state.surface.dpiY) /
+        USER_DEFAULT_SCREEN_DPI;
+    const double pixelWidth = d2d
+        ? d2d->widgetRect.right - d2d->widgetRect.left : 0.0;
+    const double pixelHeight = d2d
+        ? d2d->widgetRect.bottom - d2d->widgetRect.top : 0.0;
+    const int columns = d2d ? std::max(1, d2d->gridColumns) : 1;
+    const int rows = d2d ? std::max(1, d2d->gridRows) : 1;
+    const int area = columns * rows;
+    const LuaWidgetTheme theme = d2d && d2d->engine
+        ? d2d->engine->RuntimeGetWidgetTheme(widgetId)
+        : LuaWidgetTheme{};
+
+    lua_createtable(L, 0, 18);
+    lua_createtable(L, 0, 2);
+    lua_pushnumber(L, pixelWidth / scaleX); lua_setfield(L, -2, "width");
+    lua_pushnumber(L, pixelHeight / scaleY); lua_setfield(L, -2, "height");
+    lua_setfield(L, -2, "logicalSize");
+    lua_createtable(L, 0, 2);
+    lua_pushnumber(L, pixelWidth); lua_setfield(L, -2, "width");
+    lua_pushnumber(L, pixelHeight); lua_setfield(L, -2, "height");
+    lua_setfield(L, -2, "pixelSize");
+    lua_createtable(L, 0, 4);
+    lua_pushinteger(L, state.surface.dpiX); lua_setfield(L, -2, "x");
+    lua_pushinteger(L, state.surface.dpiY); lua_setfield(L, -2, "y");
+    lua_pushnumber(L, scaleX); lua_setfield(L, -2, "scaleX");
+    lua_pushnumber(L, scaleY); lua_setfield(L, -2, "scaleY");
+    lua_setfield(L, -2, "dpi");
+    lua_pushstring(L, area <= 2 ? "small" :
+        (area <= 6 ? "medium" : "large"));
+    lua_setfield(L, -2, "sizeClass");
+    lua_createtable(L, 0, 2);
+    lua_pushinteger(L, columns); lua_setfield(L, -2, "columns");
+    lua_pushinteger(L, rows); lua_setfield(L, -2, "rows");
+    lua_setfield(L, -2, "grid");
+
+    lua_createtable(L, 0, 6);
+    lua_pushboolean(L, state.surface.monitorAvailable);
+    lua_setfield(L, -2, "available");
+    lua_pushboolean(L, state.surface.primaryMonitor);
+    lua_setfield(L, -2, "primary");
+    PushContextRect(L, state.surface.monitorBounds, 1.0, 1.0);
+    lua_setfield(L, -2, "pixelBounds");
+    PushContextRect(L, state.surface.workArea, 1.0, 1.0);
+    lua_setfield(L, -2, "pixelWorkArea");
+    PushContextRect(L, state.surface.monitorBounds, scaleX, scaleY);
+    lua_setfield(L, -2, "logicalBounds");
+    PushContextRect(L, state.surface.workArea, scaleX, scaleY);
+    lua_setfield(L, -2, "logicalWorkArea");
+    lua_setfield(L, -2, "monitor");
+
+    lua_createtable(L, 0, 6);
+    lua_pushstring(L, theme.contentTheme == 1 ? "light" : "dark");
+    lua_setfield(L, -2, "mode");
+    lua_pushinteger(L, theme.bg); lua_setfield(L, -2, "background");
+    lua_pushinteger(L, theme.border); lua_setfield(L, -2, "border");
+    lua_pushliteral(L, "systemAccent"); lua_setfield(L, -2, "accentToken");
+    lua_pushinteger(L, system.accentColor); lua_setfield(L, -2, "accentColor");
+    lua_pushboolean(L, system.highContrast); lua_setfield(L, -2, "highContrast");
+    lua_setfield(L, -2, "theme");
+
+    lua_createtable(L, 0, 3);
+    lua_pushboolean(L, system.highContrast); lua_setfield(L, -2, "highContrast");
+    lua_pushboolean(L, system.reducedMotion); lua_setfield(L, -2, "reducedMotion");
+    lua_pushnumber(L, system.textScale); lua_setfield(L, -2, "textScale");
+    lua_setfield(L, -2, "accessibility");
+    lua_pushlstring(L, system.locale.data(), system.locale.size());
+    lua_setfield(L, -2, "locale");
+    lua_pushlstring(L, system.region.data(), system.region.size());
+    lua_setfield(L, -2, "region");
+    lua_pushlstring(L, system.timeZone.data(), system.timeZone.size());
+    lua_setfield(L, -2, "timeZone");
+    lua_pushinteger(L, system.utcOffsetMinutes);
+    lua_setfield(L, -2, "utcOffsetMinutes");
+    lua_pushlstring(L, system.inputLanguage.data(),
+        system.inputLanguage.size());
+    lua_setfield(L, -2, "inputLanguage");
+    lua_pushboolean(L, state.visible); lua_setfield(L, -2, "visible");
+    lua_pushboolean(L, state.preview); lua_setfield(L, -2, "preview");
+    lua_pushboolean(L, state.focused); lua_setfield(L, -2, "focused");
+    lua_pushboolean(L, state.selected); lua_setfield(L, -2, "selected");
+    lua_pushstring(L, state.preview ? "preview" : "desktop");
+    lua_setfield(L, -2, "surface");
+    return 1;
+}
+
 static int lua_WidgetInfo(lua_State* L)
 {
     auto* s = GetD2D(L);
@@ -4743,6 +4956,8 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         lua_setfield(state, -2, name.c_str());
     }
     lua_setfield(state, LUA_REGISTRYINDEX, "__widget_resources");
+    lua_pushboolean(state, preview ? 1 : 0);
+    lua_setfield(state, LUA_REGISTRYINDEX, "__widget_preview");
     lua_pushboolean(state, 1);
     lua_setfield(state, LUA_REGISTRYINDEX, "__widget_loading");
     if (d2dState_)
@@ -7818,6 +8033,36 @@ void WidgetEngine::SetWidgetLayoutMetrics(
             fontWeight);
 }
 
+void WidgetEngine::SetWidgetSurfaceContext(
+    const std::wstring& widgetId,
+    const LuaWidgetSurfaceContext& context)
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0) return;
+    widgets_[index].surfaceContext = context;
+    widgets_[index].surfaceContext.dpiX =
+        std::max<UINT>(USER_DEFAULT_SCREEN_DPI, context.dpiX);
+    widgets_[index].surfaceContext.dpiY =
+        std::max<UINT>(USER_DEFAULT_SCREEN_DPI, context.dpiY);
+}
+
+LuaWidgetContextState WidgetEngine::RuntimeGetWidgetContextState(
+    const std::wstring& widgetId) const
+{
+    LuaWidgetContextState result;
+    const int index = FindWidget(widgetId);
+    if (index < 0) return result;
+    const LuaWidget& widget = widgets_[index];
+    result.surface = widget.surfaceContext;
+    result.visible = widget.hostVisible;
+    result.preview = widget.preview;
+    result.focused = focusedHostInput_.active &&
+        focusedHostInput_.widgetId == widgetId;
+    result.selected = widgetSelectedProvider_
+        ? widgetSelectedProvider_(widgetId) : false;
+    return result;
+}
+
 void WidgetEngine::RuntimeOpenWidgetSettings(const std::wstring& widgetId)
 {
     if (snowdesktop::widget_runtime::IsDryLoad()) return;
@@ -10008,6 +10253,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
     };
     static constexpr FunctionDescriptor widget[] = {
         { "info", lua_WidgetInfo },
+        { "context", lua_WidgetContext, 2 },
         { "hasPermission", lua_WidgetHasPermission },
         { "setTitle", lua_WidgetSetTitle },
         { "openSettings", lua_WidgetOpenSettings },

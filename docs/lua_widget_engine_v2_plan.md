@@ -684,6 +684,8 @@ API v2 不把 Win32、COM 或 WinRT 原样暴露给 Lua，而是固定为四个�
 | `time.parts/format/add/compare()` | 明确 time zone 和 locale 的日期拆分、格式化、安全加减与比较；处理 DST、闰日和系统时区变化 | 基础 |
 | `l10n.formatNumber/bytes/duration/relativeTime/list()` | 使用当前或显式 locale 的宿主格式化，不要求组件自己拼接单位和复数 | 基础 |
 
+当前过渡实现（2026-08-14）已提供 `widget.context()` 和 `widget.context` feature。返回值同时区分 logical/pixel size，包含 DPI/scale、size class、栅格跨度、当前显示器及工作区的 logical/pixel 摘要、主题与系统 accent、高对比度、reduced motion、text scale、locale、region、time zone、UTC offset、输入语言，以及 visible/preview/focused/selected 状态。预览使用显式预览 DPI 且将显示器摘要标记为 unavailable，避免把开发机真实显示器误当预览契约；当前 `focused` 只覆盖宿主管理的文本输入焦点，待声明式节点焦点系统落地后扩展为完整 surface focus。
+
 #### 12.6.2 可订阅系统状态
 
 | 数据主题 | v2.0 最小字段/行为 | 权限 |

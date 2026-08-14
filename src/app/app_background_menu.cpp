@@ -576,6 +576,7 @@ DesktopApp::RenderWidgetMenuPreview(
             (desktopFrame.top + desktopFrame.bottom) / 2 }
         : POINT{ -32000, -32000 };
     options.frame = desktopFrame;
+    options.dpi = dpi ? dpi : USER_DEFAULT_SCREEN_DPI;
     options.interactive = true;
     options.registerBackdrop = false;
     widget->DrawPreview(context.Get(), options.frame, options);

@@ -311,6 +311,26 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
                 }
             }
         }
+        LuaWidgetSurfaceContext surfaceContext;
+        if (preview)
+        {
+            const UINT previewDpi = renderOptions_
+                ? renderOptions_->dpi : USER_DEFAULT_SCREEN_DPI;
+            surfaceContext.dpiX = previewDpi;
+            surfaceContext.dpiY = previewDpi;
+            surfaceContext.monitorBounds = frame;
+            surfaceContext.workArea = frame;
+        }
+        else if (realPage)
+        {
+            surfaceContext.dpiX = realPage->dpiX;
+            surfaceContext.dpiY = realPage->dpiY;
+            surfaceContext.monitorBounds = realPage->bounds;
+            surfaceContext.workArea = realPage->workArea;
+            surfaceContext.monitorAvailable = true;
+            surfaceContext.primaryMonitor = realPage->isPrimary;
+        }
+        engine->SetWidgetSurfaceContext(data_->id, surfaceContext);
         widgetOk = SafeRenderWidget(
             data_->id, data_->packageId, engine, context, frame,
             data_->gridSpan.columns, data_->gridSpan.rows);
