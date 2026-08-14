@@ -740,6 +740,12 @@ local request = task.start("network.request", {
 - `dispose`、权限撤销或包更新自动取消未完成任务。
 - v2 首版不引入隐式 Promise；协程封装可在稳定任务契约之上后续增加。
 
+当前已落地未公开的 `WidgetTaskBroker` 生命周期内核：任务描述符注册、全局/实例/
+任务类型并发上限、权限和可信手势门禁、preview 标记、显式取消、撤权取消、实例
+dispose 与 shutdown 原因，以及执行器完成确认均有独立契约测试。它尚未注册任何公共
+任务或 `task.start` feature；必须先为具体执行器接通参数校验、结果值、Lua 生命周期
+完成事件和预览 mock，避免出现“能拿到 task ID 但没有可用任务”的半 API。
+
 ### 12.5 系统 API 缺口审计与分层
 
 当前运行时注册的系统相关公共面只有：`sys.getTime/notify/cpu/memory/battery/network/gpu`、`media.current/playPause/next/previous`、HTTP、桌面项目/应用搜索/打开/定位、Everything 搜索和宿主本地日历。现状存在以下结构性缺口：
