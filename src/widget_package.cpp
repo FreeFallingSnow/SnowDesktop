@@ -818,7 +818,7 @@ bool IsExplicitDnsName(const std::string& domain)
 bool IsFeatureId(const std::string& feature)
 {
     if (feature.size() < 3 || feature.size() > 96 ||
-        feature != Lower(feature) || feature.find('.') == std::string::npos)
+        feature.find('.') == std::string::npos)
         return false;
     std::size_t begin = 0;
     while (begin < feature.size())
@@ -827,12 +827,12 @@ bool IsFeatureId(const std::string& feature)
         const auto length = (end == std::string::npos
             ? feature.size() : end) - begin;
         if (length == 0 || length > 32 ||
-            !std::isalpha(static_cast<unsigned char>(feature[begin])))
+            !std::islower(static_cast<unsigned char>(feature[begin])))
             return false;
         for (std::size_t index = begin; index < begin + length; ++index)
         {
             const unsigned char ch = feature[index];
-            if (!(std::islower(ch) || std::isdigit(ch) || ch == '-'))
+            if (!(std::isalpha(ch) || std::isdigit(ch) || ch == '-'))
                 return false;
         }
         if (end == std::string::npos) break;

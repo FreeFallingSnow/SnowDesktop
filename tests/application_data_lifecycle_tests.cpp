@@ -669,16 +669,20 @@ int main()
     const auto contractV2Package = root / L"contract-v2";
     MakePackage(contractV2Package, "2.0.0",
         "ecffdc71-2600-44c2-b0f5-9941a583dc81", "", "", "main.lua",
-        "", 2, 2, "\"draw.immediate\"", "\"view.tree\"");
+        "", 2, 2,
+        "\"draw.immediate\", \"interaction.contextMenu\"",
+        "\"data.app.indexStatus\", \"view.tree\"");
     PackageManifest manifestV2;
     report = validator.ValidateDirectory(contractV2Package, &manifestV2);
     Expect(report.Ok() && manifestV2.schemaVersion == 2 &&
             manifestV2.apiVersion == 2 &&
             manifestV2.requiredFeatures ==
-                std::vector<std::string>{ "draw.immediate" } &&
+                std::vector<std::string>{ "draw.immediate",
+                    "interaction.contextMenu" } &&
             manifestV2.optionalFeatures ==
-                std::vector<std::string>{ "view.tree" },
-        "schema/API v2 package features are parsed and accepted");
+                std::vector<std::string>{ "data.app.indexStatus",
+                    "view.tree" },
+        "schema/API v2 lower-camel feature segments are parsed and accepted");
 
     const auto resourcePackage = root / L"resource-package";
     MakePackage(resourcePackage, "2.0.0",
@@ -757,7 +761,7 @@ int main()
         "f9312831-8944-41c3-a6fb-d3f6a0918fc2", "", "", "main.lua",
         "", 2, 2, "\"View.Tree\"");
     Expect(!validator.ValidateDirectory(invalidFeature).Ok(),
-        "feature identifiers must use the stable lowercase dotted form");
+        "feature identifier segments must start with a lowercase letter");
 
     const auto badSource = root / L"bad";
     MakePackage(badSource, "1.0.0",

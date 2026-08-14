@@ -112,6 +112,13 @@ static std::wstring Utf8ToWideLocal(const std::string& s)
     return r;
 }
 
+static bool IsValidUtf8Local(const std::string& value)
+{
+    if (value.empty()) return false;
+    return MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+        value.data(), static_cast<int>(value.size()), nullptr, 0) > 0;
+}
+
 /**
  * @brief 简易 JSON 字符串字段解析器（不依赖第三方库）
  * @param text  待解析的 JSON 文本
@@ -3141,7 +3148,7 @@ static int lua_TaskStart(lua_State* state)
         std::string query(queryValue ? queryValue : "", queryLength);
         lua_pop(state, 1);
         if (query.empty() || query.size() > 256 ||
-            Utf8ToWideLocal(query).empty())
+            !IsValidUtf8Local(query))
         {
             return luaL_error(state,
                 "task.start: app.search query must contain 1 to 256 bytes of valid UTF-8");
