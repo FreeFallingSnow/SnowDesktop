@@ -102,6 +102,28 @@ struct WidgetGpuDataSnapshot
     std::string error;
 };
 
+struct WidgetStorageVolumeDataSnapshot
+{
+    std::string id;
+    std::string displayName;
+    std::string mountPoint;
+    std::string kind;
+    std::uint64_t capacityBytes = 0;
+    std::uint64_t freeBytes = 0;
+    bool capacityAvailable = false;
+    bool removable = false;
+    bool readOnly = false;
+};
+
+struct WidgetStorageVolumesDataSnapshot
+{
+    bool available = false;
+    std::vector<WidgetStorageVolumeDataSnapshot> volumes;
+    std::int64_t timestampMs = 0;
+    std::uint64_t revision = 0;
+    std::string error;
+};
+
 class WidgetSystemDataProvider
 {
 public:
@@ -129,6 +151,7 @@ public:
     std::optional<WidgetNetworkStatusDataSnapshot> NetworkStatus() const;
     std::optional<WidgetNetworkTrafficDataSnapshot> NetworkTraffic() const;
     std::optional<WidgetGpuDataSnapshot> Gpu() const;
+    std::optional<WidgetStorageVolumesDataSnapshot> StorageVolumes() const;
     std::vector<std::string> DrainChangedTopics();
 
     bool Running() const noexcept;
@@ -150,12 +173,14 @@ private:
     WidgetNetworkStatusDataSnapshot SampleNetworkStatus();
     WidgetNetworkTrafficDataSnapshot SampleNetworkTraffic();
     WidgetGpuDataSnapshot SampleGpu();
+    WidgetStorageVolumesDataSnapshot SampleStorageVolumes();
     void PublishCpu(WidgetCpuDataSnapshot snapshot);
     void PublishMemory(WidgetMemoryDataSnapshot snapshot);
     void PublishPower(WidgetPowerDataSnapshot snapshot);
     void PublishNetworkStatus(WidgetNetworkStatusDataSnapshot snapshot);
     void PublishNetworkTraffic(WidgetNetworkTrafficDataSnapshot snapshot);
     void PublishGpu(WidgetGpuDataSnapshot snapshot);
+    void PublishStorageVolumes(WidgetStorageVolumesDataSnapshot snapshot);
     bool InitializeGpuQuery();
     void CloseGpuQuery();
 
@@ -169,6 +194,7 @@ private:
     std::optional<WidgetNetworkStatusDataSnapshot> networkStatus_;
     std::optional<WidgetNetworkTrafficDataSnapshot> networkTraffic_;
     std::optional<WidgetGpuDataSnapshot> gpu_;
+    std::optional<WidgetStorageVolumesDataSnapshot> storageVolumes_;
     std::uint64_t configurationGeneration_ = 0;
     std::jthread worker_;
     std::atomic<bool> resetCpuBaseline_{ true };

@@ -34,7 +34,7 @@ bool WaitFor(Predicate predicate)
 void TestTopicLifecycleAndSampling()
 {
     WidgetSystemDataProvider provider;
-    Check(!provider.StartTopic("system.storage.io", 20ms) &&
+    Check(!provider.StartTopic("system.display.topology", 20ms) &&
             !provider.StartTopic("system.memory", 1ms),
         "unsupported topics and invalid intervals must be rejected");
     Check(provider.StartTopic("system.memory", 20ms) &&
@@ -120,6 +120,34 @@ void TestTopicLifecycleAndSampling()
             provider.ActiveTopicCount() == 2 &&
             WaitFor([&] { return !provider.GpuResourcesActive(); }),
         "the final GPU subscription must close PDH resources while the worker remains active");
+    Check(provider.StartTopic("system.storage.volumes", 20ms) &&
+            provider.ActiveTopicCount() == 3,
+        "volume sampling must start as an independent topic");
+    Check(WaitFor([&] {
+            const auto snapshot = provider.StorageVolumes();
+            return snapshot && snapshot->revision > 0;
+        }),
+        "volume sampling must publish an immutable revision");
+    const auto volumes = provider.StorageVolumes();
+    Check(volumes && volumes->timestampMs > 0 &&
+            (volumes->available || !volumes->error.empty()) &&
+            (!volumes->available || !volumes->volumes.empty()),
+        "volume snapshots must expose mounted volumes or a stable error");
+    if (volumes && volumes->available && !volumes->volumes.empty())
+    {
+        const auto& volume = volumes->volumes.front();
+        Check(volume.id.starts_with("volume-") &&
+                !volume.displayName.empty() &&
+                !volume.mountPoint.empty() &&
+                !volume.kind.empty() &&
+                (!volume.capacityAvailable ||
+                    (volume.capacityBytes > 0 &&
+                        volume.freeBytes <= volume.capacityBytes)),
+            "volume entries must use opaque IDs and bounded capacity fields");
+    }
+    Check(provider.StopTopic("system.storage.volumes") &&
+            provider.ActiveTopicCount() == 2,
+        "stopping volume sampling must preserve CPU and memory topics");
 
     Check(provider.StopTopic("system.memory") && provider.Running() &&
             provider.ActiveTopicCount() == 1,

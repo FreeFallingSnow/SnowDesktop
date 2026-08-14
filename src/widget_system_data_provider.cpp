@@ -14,6 +14,7 @@
 #include <winrt/Windows.Networking.Connectivity.h>
 
 #include <algorithm>
+#include <cwctype>
 #include <unordered_map>
 #include <utility>
 
@@ -27,6 +28,7 @@ constexpr std::string_view PowerTopic = "system.power";
 constexpr std::string_view NetworkStatusTopic = "system.network.status";
 constexpr std::string_view NetworkTrafficTopic = "system.network.traffic";
 constexpr std::string_view GpuTopic = "system.gpu";
+constexpr std::string_view StorageVolumesTopic = "system.storage.volumes";
 
 std::uint64_t FileTimeValue(const FILETIME& value)
 {
@@ -142,6 +144,60 @@ std::optional<std::uint64_t> ParseGpuLuid(const wchar_t* instance)
     return (static_cast<std::uint64_t>(high) << 32) |
         static_cast<std::uint32_t>(low);
 }
+
+std::string OpaqueVolumeId(const wchar_t* root, bool resolveVolumeName)
+{
+    wchar_t volumeName[MAX_PATH + 1]{};
+    const wchar_t* identity = root;
+    if (resolveVolumeName && GetVolumeNameForVolumeMountPointW(
+            root, volumeName, static_cast<DWORD>(std::size(volumeName))))
+    {
+        identity = volumeName;
+    }
+    constexpr std::uint64_t offset = 14695981039346656037ull;
+    constexpr std::uint64_t prime = 1099511628211ull;
+    std::uint64_t hash = offset;
+    for (const wchar_t* cursor = identity; cursor && *cursor; ++cursor)
+    {
+        const wchar_t normalized = static_cast<wchar_t>(
+            towlower(static_cast<wint_t>(*cursor)));
+        hash ^= static_cast<std::uint16_t>(normalized);
+        hash *= prime;
+    }
+    return "volume-" + std::to_string(hash);
+}
+
+std::string DriveKind(UINT type)
+{
+    switch (type)
+    {
+    case DRIVE_REMOVABLE: return "removable";
+    case DRIVE_FIXED: return "fixed";
+    case DRIVE_REMOTE: return "network";
+    case DRIVE_CDROM: return "optical";
+    case DRIVE_RAMDISK: return "ramdisk";
+    default: return "unknown";
+    }
+}
+
+bool IsMappedNetworkRoot(const wchar_t* root)
+{
+    if (!root || !root[0] || root[1] != L':') return false;
+    wchar_t driveName[3]{ root[0], L':', L'\0' };
+    wchar_t targets[2048]{};
+    const DWORD length = QueryDosDeviceW(
+        driveName, targets, static_cast<DWORD>(std::size(targets)));
+    if (length == 0) return false;
+    for (const wchar_t* target = targets; *target;
+        target += wcslen(target) + 1)
+    {
+        const std::wstring_view path(target);
+        if (path.starts_with(L"\\Device\\Mup") ||
+            path.find(L"Redirector") != std::wstring_view::npos)
+            return true;
+    }
+    return false;
+}
 }
 
 WidgetSystemDataProvider::~WidgetSystemDataProvider()
@@ -154,7 +210,8 @@ bool WidgetSystemDataProvider::SupportsTopic(
 {
     return topic == CpuTopic || topic == MemoryTopic ||
         topic == PowerTopic || topic == NetworkStatusTopic ||
-        topic == NetworkTrafficTopic || topic == GpuTopic;
+        topic == NetworkTrafficTopic || topic == GpuTopic ||
+        topic == StorageVolumesTopic;
 }
 
 bool WidgetSystemDataProvider::StartTopic(
@@ -296,6 +353,13 @@ WidgetSystemDataProvider::Gpu() const
     return gpu_;
 }
 
+std::optional<WidgetStorageVolumesDataSnapshot>
+WidgetSystemDataProvider::StorageVolumes() const
+{
+    std::scoped_lock lock(mutex_);
+    return storageVolumes_;
+}
+
 std::vector<std::string>
 WidgetSystemDataProvider::DrainChangedTopics()
 {
@@ -388,6 +452,8 @@ void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
                 PublishNetworkTraffic(SampleNetworkTraffic());
             else if (topic == GpuTopic)
                 PublishGpu(SampleGpu());
+            else if (topic == StorageVolumesTopic)
+                PublishStorageVolumes(SampleStorageVolumes());
         }
     }
     CloseGpuQuery();
@@ -771,6 +837,78 @@ WidgetGpuDataSnapshot WidgetSystemDataProvider::SampleGpu()
     return snapshot;
 }
 
+WidgetStorageVolumesDataSnapshot
+WidgetSystemDataProvider::SampleStorageVolumes()
+{
+    WidgetStorageVolumesDataSnapshot snapshot;
+    snapshot.timestampMs = TimestampMilliseconds();
+    const DWORD required = GetLogicalDriveStringsW(0, nullptr);
+    if (required == 0)
+    {
+        snapshot.error = "volume enumeration failed";
+        return snapshot;
+    }
+    std::vector<wchar_t> roots(static_cast<std::size_t>(required) + 1, L'\0');
+    const DWORD copied = GetLogicalDriveStringsW(
+        static_cast<DWORD>(roots.size()), roots.data());
+    if (copied == 0 || copied >= roots.size())
+    {
+        snapshot.error = "volume enumeration failed";
+        return snapshot;
+    }
+
+    for (const wchar_t* root = roots.data(); *root;
+        root += wcslen(root) + 1)
+    {
+        // GetDriveTypeW can synchronously wait for a disconnected mapped
+        // network drive. QueryDosDevice is local-only, so identify redirector
+        // mappings before asking the filesystem for any drive metadata.
+        const UINT driveType = IsMappedNetworkRoot(root)
+            ? DRIVE_REMOTE : GetDriveTypeW(root);
+        if (driveType == DRIVE_NO_ROOT_DIR)
+            continue;
+        ULARGE_INTEGER available{};
+        ULARGE_INTEGER capacity{};
+        ULARGE_INTEGER free{};
+        const bool queryCapacity = driveType != DRIVE_REMOTE &&
+            driveType != DRIVE_CDROM && driveType != DRIVE_UNKNOWN;
+        const bool capacityAvailable = queryCapacity &&
+            GetDiskFreeSpaceExW(root, &available, &capacity, &free) != FALSE;
+
+        wchar_t label[MAX_PATH + 1]{};
+        DWORD fileSystemFlags = 0;
+        const bool volumeInfoAvailable = capacityAvailable &&
+            GetVolumeInformationW(
+            root, label, static_cast<DWORD>(std::size(label)), nullptr,
+            nullptr, &fileSystemFlags, nullptr, 0) != FALSE;
+        std::wstring displayName = label;
+        if (displayName.empty())
+        {
+            displayName = root;
+            while (!displayName.empty() &&
+                (displayName.back() == L'\\' || displayName.back() == L'/'))
+            {
+                displayName.pop_back();
+            }
+        }
+        WidgetStorageVolumeDataSnapshot volume;
+        volume.id = OpaqueVolumeId(root, capacityAvailable);
+        volume.displayName = WideToUtf8(displayName.c_str());
+        volume.mountPoint = WideToUtf8(root);
+        volume.kind = DriveKind(driveType);
+        volume.capacityBytes = capacity.QuadPart;
+        volume.freeBytes = available.QuadPart;
+        volume.capacityAvailable = capacityAvailable;
+        volume.removable = driveType == DRIVE_REMOVABLE;
+        volume.readOnly = driveType == DRIVE_CDROM ||
+            (volumeInfoAvailable &&
+                (fileSystemFlags & FILE_READ_ONLY_VOLUME) != 0);
+        snapshot.volumes.push_back(std::move(volume));
+    }
+    snapshot.available = true;
+    return snapshot;
+}
+
 void WidgetSystemDataProvider::PublishCpu(
     WidgetCpuDataSnapshot snapshot)
 {
@@ -829,5 +967,15 @@ void WidgetSystemDataProvider::PublishGpu(
     snapshot.revision = gpu_ ? gpu_->revision + 1 : 1;
     gpu_ = std::move(snapshot);
     changedTopics_.insert(std::string(GpuTopic));
+}
+
+void WidgetSystemDataProvider::PublishStorageVolumes(
+    WidgetStorageVolumesDataSnapshot snapshot)
+{
+    std::scoped_lock lock(mutex_);
+    if (!schedules_.contains(std::string(StorageVolumesTopic))) return;
+    snapshot.revision = storageVolumes_ ? storageVolumes_->revision + 1 : 1;
+    storageVolumes_ = std::move(snapshot);
+    changedTopics_.insert(std::string(StorageVolumesTopic));
 }
 }

@@ -586,7 +586,7 @@ local snapshot = cpu:value()
 
 当前已发布 `data.subscribe`、`data.system.cpu`、`data.system.memory` 和
 `data.system.gpu`、`data.system.power`，以及相互独立的 `data.system.network.status` /
-`data.system.network.traffic` feature。
+`data.system.network.traffic` 和 `data.system.storage.volumes` feature。
 Lua 订阅句柄已接通 `WidgetDataBroker` 与独立工作线程 provider：首个合格订阅按需
 启动对应 topic，多实例共享有效采样率，数据变化只使依赖实例失效，隐藏状态进入
 pause/throttle，最后订阅进入 idle grace，卸载、热重载和关闭自动释放。CPU 冷启动
@@ -594,7 +594,9 @@ pause/throttle，最后订阅进入 idle grace，卸载、热重载和关闭自�
 差分就绪后按 adapter LUID 聚合利用率，最后 GPU 订阅释放后即使共享 worker 仍为
 其他 topic 运行也会关闭 PDH query；网络状态使用 Windows 连接 profile 与 cost 提示，
 网络流量只聚合活动接口计数且不返回 IP、MAC、SSID、BSSID 或主机名；电源快照
-区分电池不存在、暂不可用和采样失败；预览只
+区分电池不存在、暂不可用和采样失败；存储卷枚举在后台线程进行，返回不透明卷
+ID、显示用挂载点、类型、容量可用性、可用空间和只读/可移除状态，不授予文件读取；
+远程卷不会被同步探测容量，避免断开映射阻塞共享 provider；预览只
 返回固定模拟快照，不启动真实 provider。当前 `continue` 对这些数据源会按
 provider 能力收敛为隐藏 throttle。
 

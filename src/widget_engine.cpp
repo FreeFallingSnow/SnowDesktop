@@ -1774,6 +1774,7 @@ constexpr char kSystemPerformancePermission[] =
     "system.performance.read";
 constexpr char kSystemPowerPermission[] = "system.power.read";
 constexpr char kSystemNetworkPermission[] = "system.network.read";
+constexpr char kSystemStoragePermission[] = "system.storage.read";
 
 static void SetNumberField(lua_State* L, const char* key, lua_Number value)
 {
@@ -2151,6 +2152,40 @@ static void PushDataSnapshotEnvelope(lua_State* state,
             lua_rawseti(state, -2, adapterIndex++);
         }
         lua_setfield(state, -2, "adapters");
+    }
+    else if (snapshot->topic == "system.storage.volumes")
+    {
+        lua_createtable(state,
+            static_cast<int>(snapshot->storageVolumes.volumes.size()), 0);
+        int volumeIndex = 1;
+        for (const auto& volume : snapshot->storageVolumes.volumes)
+        {
+            lua_createtable(state, 0, 9);
+            lua_pushlstring(state, volume.id.data(), volume.id.size());
+            lua_setfield(state, -2, "id");
+            lua_pushlstring(state, volume.displayName.data(),
+                volume.displayName.size());
+            lua_setfield(state, -2, "displayName");
+            lua_pushlstring(state, volume.mountPoint.data(),
+                volume.mountPoint.size());
+            lua_setfield(state, -2, "mountPoint");
+            lua_pushlstring(state, volume.kind.data(), volume.kind.size());
+            lua_setfield(state, -2, "kind");
+            lua_pushinteger(state, static_cast<lua_Integer>(
+                volume.capacityBytes));
+            lua_setfield(state, -2, "capacityBytes");
+            lua_pushinteger(state, static_cast<lua_Integer>(
+                volume.freeBytes));
+            lua_setfield(state, -2, "freeBytes");
+            lua_pushboolean(state, volume.capacityAvailable);
+            lua_setfield(state, -2, "capacityAvailable");
+            lua_pushboolean(state, volume.removable);
+            lua_setfield(state, -2, "removable");
+            lua_pushboolean(state, volume.readOnly);
+            lua_setfield(state, -2, "readOnly");
+            lua_rawseti(state, -2, volumeIndex++);
+        }
+        lua_setfield(state, -2, "volumes");
     }
     lua_setfield(state, -2, "value");
 }
@@ -4824,6 +4859,10 @@ void WidgetEngine::InitializeWidgetDataBroker()
     (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
         "system.gpu", kSystemPerformancePermission,
         1000ms, 5000ms, 2000ms, false, false }, error);
+    error.clear();
+    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
+        "system.storage.volumes", kSystemStoragePermission,
+        2000ms, 10000ms, 2000ms, false, false }, error);
 
     if (previewOnly_)
         widgetSystemDataProvider_.reset();
@@ -7470,6 +7509,19 @@ WidgetEngine::RuntimeGetDataSnapshot(
                     1ull * 1024 * 1024 * 1024 }
             };
         }
+        else if (result.topic == "system.storage.volumes")
+        {
+            result.storageVolumes.available = true;
+            result.storageVolumes.timestampMs = timestampNow;
+            result.storageVolumes.volumes = {
+                { "volume-preview-system", "System", "C:\\", "fixed",
+                    512ull * 1024 * 1024 * 1024,
+                    214ull * 1024 * 1024 * 1024, true, false, false },
+                { "volume-preview-removable", "Portable", "E:\\",
+                    "removable", 64ull * 1024 * 1024 * 1024,
+                    48ull * 1024 * 1024 * 1024, true, true, false }
+            };
+        }
         return result;
     }
     if (!binding->options.permissionGranted)
@@ -7568,6 +7620,18 @@ WidgetEngine::RuntimeGetDataSnapshot(
         else
         {
             result.warmingUp = true;
+        }
+    }
+    else if (result.topic == "system.storage.volumes")
+    {
+        const auto snapshot =
+            widgetSystemDataProvider_->StorageVolumes();
+        if (snapshot)
+        {
+            result.storageVolumes = *snapshot;
+            result.available = snapshot->available;
+            result.error = snapshot->error;
+            setFreshness(snapshot->timestampMs);
         }
     }
     if (result.error.empty())

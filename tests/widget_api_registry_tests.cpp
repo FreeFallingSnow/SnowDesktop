@@ -216,6 +216,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "data.system.network.traffic") &&
             snowdesktop::widget_api::SupportsFeature("data.system.power") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "data.system.storage.volumes") &&
             snowdesktop::widget_api::SupportsFeature("draw.immediate") &&
             snowdesktop::widget_api::SupportsFeature("l10n.format") &&
             snowdesktop::widget_api::SupportsFeature("module.package") &&

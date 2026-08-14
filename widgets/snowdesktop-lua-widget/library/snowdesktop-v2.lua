@@ -386,6 +386,20 @@ function schedule.cancel(id) end
 ---@field downloadBytesPerSecond integer
 ---@field uploadBytesPerSecond integer
 
+---@class SnowStorageVolumeDataValue
+---@field id string Opaque volume identifier; never a filesystem path.
+---@field displayName string
+---@field mountPoint string Display-only mount point such as C:\\.
+---@field kind 'fixed'|'removable'|'network'|'optical'|'ramdisk'|'unknown'
+---@field capacityBytes integer
+---@field freeBytes integer Free bytes available to the current user.
+---@field capacityAvailable boolean False when capacity lookup is intentionally skipped for a remote or unready volume.
+---@field removable boolean
+---@field readOnly boolean
+
+---@class SnowStorageVolumesDataValue
+---@field volumes SnowStorageVolumeDataValue[]
+
 ---@class SnowDataSnapshot<T>
 ---@field available boolean
 ---@field value? T
@@ -408,6 +422,7 @@ data = {}
 ---@overload fun(topic: 'system.power', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowPowerDataValue>
 ---@overload fun(topic: 'system.network.status', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowNetworkStatusDataValue>
 ---@overload fun(topic: 'system.network.traffic', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowNetworkTrafficDataValue>
+---@overload fun(topic: 'system.storage.volumes', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowStorageVolumesDataValue>
 ---@param topic string
 ---@param options? SnowDataSubscribeOptions
 ---@return SnowDataSubscription<table>
