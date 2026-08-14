@@ -308,7 +308,7 @@ static thread_local std::unordered_map<std::string, std::string>*
     g_storageOverlay = nullptr;
 static thread_local bool g_widgetDryLoad = false;
 static std::wstring g_storagePath;
-static std::deque<WidgetLogEntry> g_widgetLogs;
+static snowdesktop::widget_runtime::DiagnosticsLog g_widgetDiagnostics;
 static bool StorageWriteWithinQuota(const std::string& prefix,
     const std::string& key, const std::string& value);
 
@@ -5381,13 +5381,8 @@ void WidgetEngine::RuntimeRecordError(const std::wstring& widgetId, const std::s
 
 void WidgetEngine::RuntimeAddLog(const std::wstring& widgetId, const std::string& level, const std::string& message)
 {
-    WidgetLogEntry entry;
-    entry.key = WidgetWideToUtf8(widgetId);
-    entry.level = level.empty() ? "info" : level;
-    entry.message = message;
-    g_widgetLogs.push_back(std::move(entry));
-    while (g_widgetLogs.size() > 200)
-        g_widgetLogs.pop_front();
+    g_widgetDiagnostics.Add(
+        WidgetWideToUtf8(widgetId), level, message);
 }
 
 std::vector<LuaDesktopItemInfo> WidgetEngine::RuntimeDesktopItems() const
@@ -6878,11 +6873,7 @@ std::vector<WidgetDiagnosticEntry> WidgetEngine::GetWidgetDiagnostics() const
         if (errIt != g_storage.end())
             entry.lastError = errIt->second;
         std::string logKey = WidgetWideToUtf8(widget.widgetId);
-        for (const auto& log : g_widgetLogs)
-        {
-            if (log.key == logKey)
-                entry.logs.push_back(log);
-        }
+        entry.logs = g_widgetDiagnostics.EntriesFor(logKey);
         result.push_back(std::move(entry));
     }
     return result;

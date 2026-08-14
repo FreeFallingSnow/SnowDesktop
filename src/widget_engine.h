@@ -31,6 +31,7 @@
 #include "steam_workshop_sync.h"
 #include "lua_runtime.h"
 #include "widget_layout_context.h"
+#include "widget_runtime_diagnostics.h"
 
 struct ImGuiContext;
 struct PersonalizationSettings;
@@ -162,12 +163,7 @@ struct LuaWidgetMenuItem
  *
  * 用于诊断面板日志展示，包含日志键名、级别和消息内容。
  */
-struct WidgetLogEntry
-{
-    std::string key;      ///< 日志键名
-    std::string level;    ///< 日志级别（"info", "warn", "error", "debug"）
-    std::string message;  ///< 日志消息内容
-};
+using WidgetLogEntry = snowdesktop::widget_runtime::LogEntry;
 
 /**
  * @struct WidgetDiagnosticEntry
