@@ -646,6 +646,8 @@ public:
         const std::filesystem::path& stagingRoot);
     static std::unordered_map<std::string, std::string>
         CachedSteamWorkshopPackageAssociations();
+    static std::vector<snowdesktop::widget::SteamWorkshopInstallFailure>
+        CachedSteamWorkshopInstallFailures();
     snowdesktop::widget::SteamWorkshopSyncResult
         ApplySteamWorkshopSubscriptions(
             const snowdesktop::widget::SteamWorkshopSubscriptionSnapshot&

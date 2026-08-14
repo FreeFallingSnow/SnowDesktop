@@ -50,6 +50,8 @@
   "app.settings.widgets_publish_steam": "オープンワークショップクリエイターマネージャー",
   "app.settings.widgets_open_steam_workshop": "オープンワークショップ",
   "app.settings.widgets_open_workshop_item": "ワークショップページを開く",
+  "app.settings.widgets_workshop_install_failed": "インストールに失敗しました",
+  "app.settings.widgets_retry_install": "インストールを再試行",
   "app.settings.widgets_publisher_launch_failed": "Steam Workshop Creator Managerを起動できません。 Steam ツールがインストールされていることを確認します。",
   "app.settings.widgets_open_catalog": "オフライン コンポーネント カタログを読み込む…",
   "app.settings.widgets_offline_catalog_help": "テストまたはプライベート配布のために、このデバイスからオフライン コンポーネント リストをロードします。",

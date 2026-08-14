@@ -58,12 +58,21 @@ struct SteamWorkshopSyncPlan
     std::vector<std::string> conflicts;
 };
 
+struct SteamWorkshopInstallFailure
+{
+    std::string packageId;
+    std::string externalItemId;
+    PackageManifest manifest;
+    std::string error;
+};
+
 struct SteamWorkshopSyncResult
 {
     int installed = 0;
     int updated = 0;
     int uninstalled = 0;
     std::vector<std::string> errors;
+    std::vector<SteamWorkshopInstallFailure> installFailures;
 
     bool Changed() const
     {

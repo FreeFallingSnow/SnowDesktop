@@ -50,6 +50,8 @@
   "app.settings.widgets_publish_steam": "Workshop-Creator-Manager öffnen",
   "app.settings.widgets_open_steam_workshop": "Steam-Workshop öffnen",
   "app.settings.widgets_open_workshop_item": "Workshop-Seite öffnen",
+  "app.settings.widgets_workshop_install_failed": "Installation fehlgeschlagen",
+  "app.settings.widgets_retry_install": "Installation wiederholen",
   "app.settings.widgets_publisher_launch_failed": "Der Steam Workshop Creator Manager kann nicht gestartet werden. Überprüfen Sie, ob die Steam-Tools installiert sind.",
   "app.settings.widgets_open_catalog": "Offline-Komponentenkatalog laden...",
   "app.settings.widgets_offline_catalog_help": "Laden Sie eine Offline-Komponentenliste von diesem Gerät zum Testen oder zur privaten Verteilung.",

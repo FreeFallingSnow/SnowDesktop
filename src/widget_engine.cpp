@@ -232,6 +232,8 @@ struct SteamWorkshopPackageAssociationCache
 {
     std::mutex mutex;
     std::unordered_map<std::string, std::string> associations;
+    std::vector<snowdesktop::widget::SteamWorkshopInstallFailure>
+        installFailures;
 };
 
 static SteamWorkshopPackageAssociationCache&
@@ -239,6 +241,33 @@ GetSteamWorkshopPackageAssociationCache()
 {
     static SteamWorkshopPackageAssociationCache cache;
     return cache;
+}
+
+static void CacheSteamWorkshopInstallFailure(
+    snowdesktop::widget::SteamWorkshopInstallFailure failure)
+{
+    auto& cache = GetSteamWorkshopPackageAssociationCache();
+    std::lock_guard lock(cache.mutex);
+    auto existing = std::find_if(cache.installFailures.begin(),
+        cache.installFailures.end(), [&](const auto& candidate)
+        {
+            return candidate.packageId == failure.packageId;
+        });
+    if (existing == cache.installFailures.end())
+        cache.installFailures.push_back(std::move(failure));
+    else
+        *existing = std::move(failure);
+}
+
+static void ClearSteamWorkshopInstallFailure(
+    const std::string& packageId)
+{
+    auto& cache = GetSteamWorkshopPackageAssociationCache();
+    std::lock_guard lock(cache.mutex);
+    std::erase_if(cache.installFailures, [&](const auto& failure)
+    {
+        return failure.packageId == packageId;
+    });
 }
 
 static std::wstring ResolveWidgetPath(const std::wstring& packageId)
@@ -7779,6 +7808,14 @@ WidgetEngine::CachedSteamWorkshopPackageAssociations()
     return cache.associations;
 }
 
+std::vector<snowdesktop::widget::SteamWorkshopInstallFailure>
+WidgetEngine::CachedSteamWorkshopInstallFailures()
+{
+    auto& cache = GetSteamWorkshopPackageAssociationCache();
+    std::lock_guard lock(cache.mutex);
+    return cache.installFailures;
+}
+
 snowdesktop::widget::SteamWorkshopSyncResult
 WidgetEngine::ApplySteamWorkshopSubscriptions(
     const snowdesktop::widget::SteamWorkshopSubscriptionSnapshot& snapshot)
@@ -7792,6 +7829,15 @@ WidgetEngine::ApplySteamWorkshopSubscriptions(
         snapshot.preparationErrors.begin(), snapshot.preparationErrors.end());
     for (const auto& action : plan.actions)
     {
+        const auto recordInstallFailure = [&](std::string error)
+        {
+            snowdesktop::widget::SteamWorkshopInstallFailure failure;
+            failure.packageId = action.packageId;
+            failure.externalItemId = action.externalItemId;
+            failure.manifest = action.expectedManifest;
+            failure.error = std::move(error);
+            result.installFailures.push_back(std::move(failure));
+        };
         if (action.kind ==
             snowdesktop::widget::SteamWorkshopSyncActionKind::Uninstall)
         {
@@ -7820,8 +7866,10 @@ WidgetEngine::ApplySteamWorkshopSubscriptions(
             snapshot.preparedArtifacts.find(publishedFileId);
         if (prepared == snapshot.preparedArtifacts.end())
         {
-            result.errors.push_back(action.packageId +
-                ": detected Workshop package was not prepared locally");
+            const std::string error =
+                "detected Workshop package was not prepared locally";
+            result.errors.push_back(action.packageId + ": " + error);
+            recordInstallFailure(error);
             continue;
         }
 
@@ -7852,14 +7900,26 @@ WidgetEngine::ApplySteamWorkshopSubscriptions(
         }
         else
         {
+            std::string displayError;
             if (!installedOk)
             {
                 error = Utf8ToWideLocal(installError);
                 if (!report.Ok())
                     error += L"\n" + Utf8ToWideLocal(report.ToJson());
+                const auto issue = std::find_if(report.issues.begin(),
+                    report.issues.end(), [](const auto& candidate)
+                    {
+                        return candidate.severity == snowdesktop::widget::
+                            ValidationSeverity::Error;
+                    });
+                if (issue != report.issues.end())
+                    displayError = "[" + issue->code + "] " +
+                        issue->message;
             }
-            result.errors.push_back(action.packageId + ": " +
-                WidgetWideToUtf8(error));
+            const std::string fullError = WidgetWideToUtf8(error);
+            if (displayError.empty()) displayError = fullError;
+            result.errors.push_back(action.packageId + ": " + fullError);
+            recordInstallFailure(std::move(displayError));
         }
     }
     for (const auto& [publishedFileId, artifact] :
@@ -7880,6 +7940,12 @@ WidgetEngine::ApplySteamWorkshopSubscriptions(
             result.errors.push_back(
                 "cannot save Steam subscription history: " + historyError);
         }
+    }
+    if (snapshot.authoritative)
+    {
+        auto& cache = GetSteamWorkshopPackageAssociationCache();
+        std::lock_guard lock(cache.mutex);
+        cache.installFailures = result.installFailures;
     }
     return result;
 }
@@ -7970,10 +8036,39 @@ bool WidgetEngine::InstallAndVerifyWidgetPackageFromSource(
     {
         error = Utf8ToWideLocal(sourceError);
         if (!report.Ok()) error += L"\n" + Utf8ToWideLocal(report.ToJson());
+        if (providerId == "steam-workshop")
+        {
+            std::string displayError = sourceError;
+            const auto issue = std::find_if(report.issues.begin(),
+                report.issues.end(), [](const auto& candidate)
+                {
+                    return candidate.severity == snowdesktop::widget::
+                        ValidationSeverity::Error;
+                });
+            if (issue != report.issues.end())
+                displayError = "[" + issue->code + "] " + issue->message;
+            CacheSteamWorkshopInstallFailure({ details->manifest.id,
+                externalItemId, details->manifest,
+                std::move(displayError) });
+        }
         return false;
     }
-    return VerifyInstalledWidgetPackage(
+    const bool verified = VerifyInstalledWidgetPackage(
         installed.manifest.id, previousVersion, error);
+    if (providerId == "steam-workshop")
+    {
+        if (verified)
+        {
+            ClearSteamWorkshopInstallFailure(installed.manifest.id);
+        }
+        else
+        {
+            CacheSteamWorkshopInstallFailure({ details->manifest.id,
+                externalItemId, details->manifest,
+                WidgetWideToUtf8(error) });
+        }
+    }
+    return verified;
 }
 
 bool WidgetEngine::InstallAndVerifyStaticWidgetPackage(

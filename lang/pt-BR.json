@@ -50,6 +50,8 @@
   "app.settings.widgets_publish_steam": "Abrir o Gerenciador de criação do Steam Workshop",
   "app.settings.widgets_open_steam_workshop": "Abrir Workshop",
   "app.settings.widgets_open_workshop_item": "Abrir página da Oficina",
+  "app.settings.widgets_workshop_install_failed": "Falha na instalação",
+  "app.settings.widgets_retry_install": "Tentar instalar novamente",
   "app.settings.widgets_publisher_launch_failed": "Não é possível iniciar o Steam Workshop Creator Manager. Verifique se as ferramentas Steam estão instaladas.",
   "app.settings.widgets_open_catalog": "Carregar catálogo de widgets off-line…",
   "app.settings.widgets_offline_catalog_help": "Carregue uma lista de widgets off-line deste dispositivo para teste ou distribuição privada.",

@@ -50,6 +50,8 @@
     "app.settings.widgets_publish_steam": "打开创意工坊创作者管理器",
     "app.settings.widgets_open_steam_workshop": "打开创意工坊",
     "app.settings.widgets_open_workshop_item": "打开创意工坊页面",
+    "app.settings.widgets_workshop_install_failed": "安装失败",
+    "app.settings.widgets_retry_install": "重试安装",
     "app.settings.widgets_publisher_launch_failed": "无法启动 Steam 创意工坊创作者管理器，请检查 Steam 版工具是否完整安装。",
     "app.settings.widgets_open_catalog": "加载离线组件目录...",
     "app.settings.widgets_offline_catalog_help": "从本机载入离线组件列表，适合测试或私有分发。",
