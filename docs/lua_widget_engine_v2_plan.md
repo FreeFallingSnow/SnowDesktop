@@ -760,7 +760,8 @@ local taskId, err = task.start("media.toggle", { sessionId = session.id })
 `task.audio.output.control`、`task.app.search`、
 `task.app.launch`、`task.notification.show`、`task.calendar.write`、
 `task.network.request`、`task.shell.openUri`、`task.desktop.search`、
-`task.everything.search`、`task.shell.item` 和 `task.desktop.refresh` feature，完整媒体
+`task.everything.search`、`task.shell.item`、`task.system.openSettings` 和
+`task.desktop.refresh` feature，完整媒体
 控制动作、两个应用任务、一次性通知、本地日历 create/update/remove、公网 HTTPS GET、
 可信手势外链、桌面/Everything 项目搜索及受控打开、定位和刷新任务。
 `WidgetTaskBroker` 生命周期内核负责任务描述符注册、全局/实例/
@@ -773,7 +774,10 @@ token，避免热重载时同名实例的旧任务完成事件误投给新 VM。
 seek 以时间线起点为基准且受最小/最大可跳转范围约束，预览只产生确定性 mock。
 默认音频输出控制只接受 `setVolume/setMute`，始终在独立 COM MTA 线程重新解析当前
 multimedia render endpoint；音量钳制到 0–1，Core Audio 调用携带 SnowDesktop 来源
-GUID，同一实例以 100 ms 最小间隔限速，不开放逐进程或非默认设备控制。API v1
+GUID，同一实例以 100 ms 最小间隔限速，不开放逐进程或非默认设备控制。
+`system.openSettings` 只接受宿主枚举的 notifications/audio/display/network/
+bluetooth/power/storage/apps/personalization 页面，并在可信手势和 `shell.launch` 权限下
+映射为固定 `ms-settings:` URI；Lua 不能传 scheme、查询参数或原始 URI。API v1
 同步 `media.playPause/next/previous` 已通过函数版本上限从 v2 VM 隐藏，不能绕过
 手势门禁。应用搜索从 UI 线程复制宿主索引为不可变、有上限的目录快照，在独立任务
 线程完成名称/拼音排序与分页，只向 Lua 返回展示字段和实例作用域的不透明引用；
@@ -862,7 +866,7 @@ API v2 不把 Win32、COM 或 WinRT 原样暴露给 Lua，而是固定为四个�
 | `app.launch` | 只接受 `app.search` 返回的宿主引用；不接受任意 executable path、命令行或 working directory | `app.launch` + 用户手势 |
 | `media.play/pause/toggle/stop/next/previous/seek/setRate/setShuffle/setRepeat` | 只在目标 session 的 `can*` 为真时执行；异步返回 accepted/result，不伪造成功 | `media.action` + 用户手势 |
 | `audio.output.setVolume/setMute` | v2.0 仅作用于当前默认 render endpoint；范围钳制、来源标记、速率限制 | `audio.output.control` + 用户手势；不提供非默认 endpoint 或每进程静音 v2.0 |
-| `calendar.create/update/remove/setSelectedDate` | revision 冲突、日期/时区规则、稳定错误码；沿用宿主本地日历 | `calendar.write`；删除需要用户动作来源 |
+| `calendar.create/update/remove` | revision 冲突、日期/时区规则、稳定错误码；沿用宿主本地日历。共享日期选择使用无副作用的 `calendar.selectDate()`，不创建或修改事件 | `calendar.write`；删除需要用户动作来源 |
 | `system.openSettings` | 只接受宿主维护的设置页枚举，如 notifications/audio/display/network；不接受任意 `ms-settings:` 字符串 | `shell.launch` + 用户手势 |
 
 文件选择器返回的原生路径只在宿主内部使用。句柄绑定 `packageId + instanceId + grant revision + target identity + access mode`，可被用户撤销；包更新扩权、文件被移动/删除、卷卸载和权限撤销都必须产生稳定状态，不能退回为任意路径访问。

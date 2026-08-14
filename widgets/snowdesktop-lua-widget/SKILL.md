@@ -156,6 +156,9 @@ menu.
   `audio.output.setVolume` or `audio.output.setMute` from a direct trusted
   gesture. Declare `audio.output.control`, treat `rateLimited` as a normal
   rejection, and never emulate per-process or non-default-device control.
+- Open Windows Settings only with `system.openSettings` and one documented
+  page name. Declare `shell.launch`, start it from a direct trusted gesture,
+  and never accept or construct a raw `ms-settings:` URI in widget code.
 - Search applications with the bounded `task.start("app.search", { query,
   limit, offset })` task and retain only its opaque `ref` values. Launch one
   with `task.start("app.launch", { ref = item.ref })` inside the direct click

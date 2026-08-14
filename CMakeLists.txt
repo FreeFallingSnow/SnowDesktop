@@ -251,6 +251,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget_media_task_executor.cpp
     src/widget_audio_output_task_executor.cpp
     src/widget_app_task_executor.cpp
+    src/widget_system_settings.cpp
     src/widget_system_data_provider.cpp
     src/widget_audio_analysis_provider.cpp
     src/widget_interaction_region.cpp
@@ -786,6 +787,15 @@ if (BUILD_TESTING)
             src/widget_app_task_executor.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract app task lua widget)
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetSystemSettingsTests
+        widget_system_settings
+        SOURCES
+            tests/widget_system_settings_tests.cpp
+            src/widget_system_settings.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS contract system task lua widget)
 
     snowdesktop_add_test(
         SnowDesktopWidgetSystemDataProviderTests

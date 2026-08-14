@@ -268,6 +268,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "task.audio.output.control") &&
             snowdesktop::widget_api::SupportsFeature(
+                "task.system.openSettings") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "calendar.dateMath") &&
             snowdesktop::widget_api::SupportsFeature(
                 "calendar.selection") &&

@@ -457,10 +457,11 @@ CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.pow
 `app.search`、`app.launch`，桌面项目任务 `desktop.search`、`everything.search`、
 `shell.openItem`、`shell.revealItem`、`desktop.refresh`，一次性通知任务
 `notification.show`，以及本地日历写入任务 `calendar.create/update/remove`、公网读取
-任务 `network.request` 和外部链接动作 `shell.openUri`。它们对应
+任务 `network.request`、外部链接动作 `shell.openUri` 和受控设置动作
+`system.openSettings`。它们对应
 feature ID `task.start`、`task.media.control`、`task.audio.output.control`、`task.app.search`、`task.app.launch`
 、`task.notification.show`、`task.calendar.write`、`task.network.request` 和
-`task.shell.openUri`，以及 `task.desktop.search`、`task.everything.search`、
+`task.shell.openUri`、`task.system.openSettings`，以及 `task.desktop.search`、`task.everything.search`、
 `task.shell.item`、`task.desktop.refresh`。媒体动作要求 `media.action` 权限，而且只能在
 `click/doubleClick/pointerDown/pointerUp/wheel`、宿主按钮、菜单命令或由宿主明确
 标记来源的打开回调同步调用栈内启动：
@@ -488,6 +489,21 @@ local muteTask = task.start("audio.output.setMute", { muted = true })
 `audioEnumeratorUnavailable`、`audioEndpointUnavailable`、`audioVolumeUnavailable`、
 `audioControlRejected`、`permissionRevoked` 和 `canceled`。该权限不授予非默认设备、
 逐进程音频会话、默认设备切换或系统音频策略控制。
+
+`system.openSettings` 要求 `shell.launch` 和当前可信用户手势，只接受宿主固定枚举的
+`page`：`notifications/audio/display/network/bluetooth/power/storage/apps/personalization`。
+宿主把枚举映射到微软公开的固定 `ms-settings:` 页面；Lua 不能传 URI、查询参数或
+任意设置页名称：
+
+```lua
+local settingsTask = task.start("system.openSettings", {
+    page = "audio",
+})
+```
+
+成功值为 `{ accepted = true }`，表示 Windows 接受打开请求；稳定错误包括
+`openRejected`、`permissionDenied`、`userGestureRequired` 和 `canceled`。预览只返回
+确定性成功结果，不启动 Windows 设置。
 
 `app.search` 要求 `app.discovery`，不要求用户手势；参数是严格的普通表：`query`
 为 1–256 字节有效 UTF-8，`limit` 默认为 50、范围 1–100，`offset` 默认为 0、范围
@@ -662,7 +678,7 @@ HTTPS URL；`http:`、`file:`、自定义 scheme、localhost、局域网和 IP �
 
 `task.cancel(taskId)` 只接受当前 Lua VM 自己持有的任务。卸载、热重载、撤权和
 宿主关闭会自动取消；热重载使用 VM owner token，旧任务结果不会投递给新 VM。
-预览不会访问系统媒体会话、音频端点或系统通知，而是异步返回确定性的 `accepted=true` mock。
+预览不会访问系统媒体会话、音频端点、Windows 设置或系统通知，而是异步返回确定性的 `accepted=true` mock。
 媒体参数表只接受上述动作对应字段；其他任务同样拒绝未知字段、错误类型和越界数值。API v1 的
 `media.playPause/next/previous` 不会注册进 v2 VM，不能绕过任务的手势门禁。
 

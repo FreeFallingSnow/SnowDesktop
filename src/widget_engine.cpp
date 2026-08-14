@@ -37,6 +37,7 @@
 #include "widget_resource_lua.h"
 #include "widget_text_input_rules.h"
 #include "widget_storage_transaction.h"
+#include "widget_system_settings.h"
 
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -3516,6 +3517,39 @@ static int lua_TaskStart(lua_State* state)
             lua_pop(state, 1);
             arguments.emplace("muted", muted ? "1" : "0");
         }
+    }
+    else if (taskName == "system.openSettings")
+    {
+        if (!hasArguments)
+            return luaL_error(state,
+                "task.start: system.openSettings requires an arguments table");
+        lua_pushnil(state);
+        while (lua_next(state, 2) != 0)
+        {
+            if (lua_type(state, -2) != LUA_TSTRING ||
+                std::string_view(lua_tostring(state, -2)) != "page")
+            {
+                lua_pop(state, 2);
+                return luaL_error(state,
+                    "task.start: system.openSettings accepts only page");
+            }
+            lua_pop(state, 1);
+        }
+        lua_getfield(state, 2, "page");
+        if (lua_type(state, -1) != LUA_TSTRING)
+        {
+            lua_pop(state, 1);
+            return luaL_error(state,
+                "task.start: system.openSettings page must be a string");
+        }
+        size_t length = 0;
+        const char* value = lua_tolstring(state, -1, &length);
+        const std::string page(value ? value : "", length);
+        lua_pop(state, 1);
+        if (!snowdesktop::widget_runtime::SystemSettingsUri(page))
+            return luaL_error(state,
+                "task.start: system.openSettings page is not supported");
+        arguments.emplace("page", page);
     }
     else if (taskName == "app.search" || taskName == "desktop.search" ||
         taskName == "everything.search")
@@ -7198,6 +7232,9 @@ void WidgetEngine::InitializeWidgetTaskBroker()
         "shell.openUri", kShellLaunchPermission, true, 1 }, error);
     error.clear();
     (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "system.openSettings", kShellLaunchPermission, true, 1 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
         "desktop.search", kDesktopReadPermission, false, 2 }, error);
     error.clear();
     (void)taskBroker_->RegisterTask(TaskDescriptor{
@@ -7849,6 +7886,31 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
         {
             if (!action.preview) RuntimeRefreshDesktop();
             (void)taskBroker_->Complete(action.id, true);
+            continue;
+        }
+
+        if (action.name == "system.openSettings")
+        {
+            const auto page = action.arguments.find("page");
+            const auto uri = page == action.arguments.end()
+                ? std::nullopt
+                : snowdesktop::widget_runtime::SystemSettingsUri(
+                    page->second);
+            if (!uri)
+            {
+                (void)taskBroker_->Complete(
+                    action.id, false, "invalidArguments");
+                continue;
+            }
+            if (action.preview)
+            {
+                (void)taskBroker_->Complete(action.id, true);
+                continue;
+            }
+            const bool accepted = RuntimeOpenDesktopPath(
+                std::wstring(*uri));
+            (void)taskBroker_->Complete(action.id, accepted,
+                accepted ? std::string{} : "openRejected");
             continue;
         }
 

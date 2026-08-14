@@ -321,9 +321,9 @@
 ---@field topic? string Updated data subscription topic for data.change.
 ---@field revision? integer Monotonic provider revision for data.change.
 ---@field taskId? integer
----@field task? 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'|string
+---@field task? 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'system.openSettings'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'|string
 ---@field ok? boolean
----@field value? SnowMediaTaskValue|SnowAudioOutputTaskValue|SnowAppSearchTaskValue|SnowItemSearchTaskValue|SnowCalendarMutationTaskValue|SnowNetworkTaskValue|SnowStateValue
+---@field value? SnowMediaTaskValue|SnowAudioOutputTaskValue|SnowSystemSettingsTaskValue|SnowAppSearchTaskValue|SnowItemSearchTaskValue|SnowCalendarMutationTaskValue|SnowNetworkTaskValue|SnowStateValue
 ---@field error? string
 ---@field currentRevision? integer Latest revision returned by a failed calendar update conflict.
 ---@field status? integer HTTP status returned by a failed network.request after a response was received.
@@ -873,6 +873,12 @@ function data.subscribe(topic, options) end
 ---@class SnowAudioOutputMuteArguments
 ---@field muted boolean Requested master mute state.
 
+---@class SnowSystemSettingsArguments
+---@field page 'notifications'|'audio'|'display'|'network'|'bluetooth'|'power'|'storage'|'apps'|'personalization' Host-maintained settings page name.
+
+---@class SnowSystemSettingsTaskValue
+---@field accepted boolean Whether Windows accepted the settings URI, or true for the deterministic preview mock.
+
 ---@class SnowAppSearchArguments
 ---@field query string UTF-8 query containing 1 to 256 bytes.
 ---@field limit? integer Result count from 1 through 100; defaults to 50.
@@ -965,6 +971,7 @@ task = {}
 ---@overload fun(name: 'media.setRepeat', arguments: SnowMediaRepeatArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'audio.output.setVolume', arguments: SnowAudioOutputVolumeArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'audio.output.setMute', arguments: SnowAudioOutputMuteArguments): taskId: integer?, error: string?
+---@overload fun(name: 'system.openSettings', arguments: SnowSystemSettingsArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'app.search', arguments: SnowAppSearchArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'app.launch', arguments: SnowAppLaunchArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'desktop.search', arguments: SnowItemSearchArguments): taskId: integer?, error: string?
@@ -978,7 +985,7 @@ task = {}
 ---@overload fun(name: 'calendar.remove', arguments: SnowCalendarRemoveArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'network.request', arguments: SnowNetworkRequestArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'shell.openUri', arguments: SnowShellOpenUriArguments): taskId: integer?, error: string?
----@param name 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'
+---@param name 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'system.openSettings'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'
 ---@param arguments? table Strict task-specific argument table.
 ---@return integer? taskId
 ---@return string? error
