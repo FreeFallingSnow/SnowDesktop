@@ -87,6 +87,7 @@ struct LuaWidgetManifest
         double minValue = 0.0;
         double maxValue = 100.0;
         std::vector<std::string> options;
+        std::vector<std::string> optionLabels;
     };
     struct SettingPreset
     {

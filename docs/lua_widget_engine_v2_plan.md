@@ -1549,7 +1549,8 @@ v2.0 资源契约：
 ### 19.1 发布硬门槛
 
 当前仓库有 11 个内置组件；`analog-clock`、`digital-clock`、`media-controls`、
-`system-monitor` 与 `pomodoro` 已切到 schema/API v2，其余 6 个仍待迁移。这五个组件仍需完成真实
+`system-monitor`、`pomodoro` 与 `month-calendar` 已切到 schema/API v2，其余 5 个仍待迁移。
+这六个组件仍需完成真实
 桌面的多 DPI、主题、隐藏唤醒、系统数据、滚动、媒体控制、元素菜单与应用启动验收，
 因此只能计为代码迁移完成，不能计为最终验证完成。只有全部内置组件完成迁移和验收
 后才能宣布稳定。
@@ -1576,7 +1577,7 @@ v2.0 资源契约：
 | B：状态与输入 | `pomodoro` | 可选 `notification.post` | 宿主调度、后台合并、通知可选权限、动作状态机 | 休眠恢复不补发多次；拒绝通知仍可计时 |
 | C：数据订阅 | `system-monitor` | 必需 `system.performance.read`；可选 `system.power.read`、`system.network.read` | 拆分 topic 的共享采样、可见性节流、v2 draw 与实例滚动 | 每类授权可分别拒绝/撤销；多实例不重复昂贵采样；无订阅即停 |
 | C：数据订阅 | `media-controls` | 必需 `media.read`；可选 `media.action`、`app.discovery`、`app.launch` | 媒体订阅、用户手势动作、应用搜索/不透明引用启动降级 | 播放器切换/退出恢复；分别拒绝媒体读取/控制和应用发现/启动权限 |
-| D：日历集合 | `month-calendar` | `calendar.read`、`calendar.write`、`ui.input` | 日历订阅、月视图稳定 key、写操作手势与权限拆分 | 跨月/时区/区域格式正确；只读模式完整可用 |
+| D：日历集合 | `month-calendar` | 可选 `calendar.read` | 日历订阅、月视图稳定 key、无权限日期计算和本地共享选择 | 跨月/时区/区域格式正确；拒绝读取仍可使用月视图 |
 | D：日历集合 | `agenda` | `calendar.read`、`calendar.write`、`ui.input` | 复杂集合、编辑面板、异步日历任务、作用域清理 | 现有功能逐项回归；修改权限拒绝时保留只读日程 |
 | E：网络 | `rss-reader` | `network.internet`、`shell.launch`、`ui.input` | 精确 HTTPS origin、网络任务、缓存/错误状态、受控打开链接动作 | 首次联网/打开链接授权；重定向/离线/撤权/恶意 feed 测试通过 |
 | E：桌面高权限 | `quick-launcher` | `desktop.read`、`desktop.action`、`app.discovery`、`app.launch`、`everything.search`、`ui.input` | 桌面/应用/Everything 搜索任务、虚拟列表、引用化启动/定位和最小权限降级 | 三类搜索与启动分别授权；大结果集、IME、撤权和索引变化通过 |

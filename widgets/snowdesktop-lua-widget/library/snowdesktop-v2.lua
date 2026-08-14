@@ -93,6 +93,7 @@
 ---@field min? number
 ---@field max? number
 ---@field options? string[]
+---@field optionLabels? string[] Localized labels parallel to stable select option values.
 
 ---@class SnowSettingPreset
 ---@field id string
@@ -189,7 +190,7 @@
 ---@field settings? SnowWidgetSettings
 
 ---@class SnowWidgetEvent
----@field kind 'visibility'|'resize'|'pointer'|'timer'|'schedule'|'action'|'selection'|'environment'|'panel'|'task.complete'
+---@field kind 'visibility'|'resize'|'pointer'|'timer'|'schedule'|'action'|'selection'|'environment'|'panel'|'data.change'|'task.complete'
 ---@field action? 'click'|'doubleClick'|'pointerDown'|'pointerMove'|'pointerUp'|'wheel'|'opened'|'closed'|string
 ---@field id? string
 ---@field name? string
@@ -208,6 +209,8 @@
 ---@field trustedGesture? boolean
 ---@field surface? 'desktop'|'panel'
 ---@field reason? string
+---@field topic? string Updated data subscription topic for data.change.
+---@field revision? integer Monotonic provider revision for data.change.
 ---@field taskId? integer
 ---@field task? 'media.toggle'|'media.next'|'media.previous'|'app.search'|'app.launch'|'notification.show'|string
 ---@field ok? boolean
@@ -774,6 +777,33 @@ function time.add(epochMilliseconds, delta, options) end
 ---@param right integer
 ---@return -1|0|1
 function time.compare(left, right) end
+
+---@class SnowCalendarDateInfo
+---@field year integer
+---@field month integer
+---@field day integer
+---@field weekday integer 1 is Sunday.
+---@field daysInMonth integer
+
+---@class snow.calendar
+calendar = {}
+
+---Return Gregorian date fields without reading user calendar data.
+---@param date string ISO YYYY-MM-DD.
+---@return SnowCalendarDateInfo?
+function calendar.dateInfo(date) end
+
+---Add a bounded number of Gregorian days without reading user calendar data.
+---@param date string ISO YYYY-MM-DD.
+---@param offset integer From -366000 through 366000.
+---@return string? date
+function calendar.addDays(date, offset) end
+
+---Change SnowDesktop's shared local calendar selection. This does not create,
+---modify, or remove a calendar event and requires no calendar.write permission.
+---@param date string ISO YYYY-MM-DD.
+---@return boolean selected
+function calendar.selectDate(date) end
 
 ---@class snow.l10n
 l10n = {}

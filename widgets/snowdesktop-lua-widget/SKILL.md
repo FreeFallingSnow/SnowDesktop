@@ -115,6 +115,11 @@ synchronous native context menu.
   immutable envelopes during render, and declare `system.performance.read`
   `system.power.read`, or `system.network.read` as optional when system data
   can degrade gracefully.
+- For local calendars, subscribe to `calendar.events` and
+  `calendar.selectedDate` under `calendar.read`; use permission-free
+  `calendar.dateInfo/addDays/selectDate` for date math and SnowDesktop's shared
+  selection. Rebuild range subscriptions from `event.kind == "data.change"`,
+  and do not request `calendar.write` unless event records are mutated.
 - Start `media.toggle`, `media.next`, and `media.previous` with `task.start`
   only inside a direct trusted gesture callback, then match the returned ID
   in `event.kind == "task.complete"`. Never loop media actions from the

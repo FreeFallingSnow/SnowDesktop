@@ -1,16 +1,16 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "fd084e05-bb0f-43d7-977d-426ae39c1ab9",
   "slug": "month-calendar",
-  "apiVersion": 1,
-  "dataVersion": 1,
+  "apiVersion": 2,
+  "dataVersion": 2,
   "entry": "main.lua",
-  "minHostVersion": "1.0.1.0",
+  "minHostVersion": "1.0.4.0",
   "author": "SnowDesktop",
   "license": "GPL-3.0-only",
   "name": "Month Calendar",
   "nameKey": "lua_widget.month_calendar.name",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "A local month calendar linked with SnowDesktop schedules.",
   "descriptionKey": "lua_widget.month_calendar.description",
   "locales": {
@@ -237,10 +237,26 @@
     "columns": 4,
     "rows": 3
   },
-  "permissions": [
-    "calendar.read",
-    "calendar.write",
-    "ui.input",
-    "ui.contextMenu"
-  ]
+  "resources": {},
+  "permissions": [],
+  "optionalPermissions": [
+    "calendar.read"
+  ],
+  "requiredFeatures": [
+    "calendar.dateMath",
+    "calendar.selection",
+    "data.calendar.events",
+    "data.calendar.selectedDate",
+    "data.subscribe",
+    "draw.immediate",
+    "interaction.contextMenu",
+    "interaction.pointerActions",
+    "interaction.region",
+    "lifecycle.event",
+    "lifecycle.model",
+    "l10n.basic",
+    "settings.select.localizedOptions",
+    "time.basic"
+  ],
+  "optionalFeatures": []
 }

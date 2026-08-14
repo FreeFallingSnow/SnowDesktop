@@ -50,11 +50,14 @@ reason)`。没有 `setup` 时 model 为
 VM。
 
 event 覆盖宿主 surface 级事件：`visibility`、`resize`、`pointer`、`timer`、
-`schedule`、`action`、`selection`、`environment`、`panel` 和 `task.complete`。
+`schedule`、`action`、`selection`、`environment`、`panel`、`data.change` 和
+`task.complete`。
 指针事件包含 `action`、`surface`、`x/y`、`button`、`delta`，命中即时绘制
 region 时还包含 `targetKey`；schedule 事件包含 `id`、`missed` 和 `coalesced`。
 region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择统一以
 `event.kind == "action"` 投递。
+事件驱动的数据 topic 发生变更时，持有对应订阅的组件收到 `data.change`，其中包含
+`topic/revision`；组件可在该事件中重建依赖日期范围等参数的订阅。
 
 `menu(context, model, request)` 已用于即时绘制 region 的独立右键菜单；`view`
 仍是后续声明式视图契约预留项，当前宿主会拒绝使用。
@@ -289,8 +292,11 @@ value 通过 `session` 返回当前会话，`media.timeline` value 通过 `timel
 闭区间、最长 366 天）；未传时使用当前选中日期前后各 62 天。value 返回实际
 `fromDate/toDate`、最多 512 个本地事件、`revision` 和 `truncated`，事件包含
 `id/revision/title/date/allDay/startMinutes/endMinutes/notes/reminderMinutes`。
-selectedDate value 返回 `date/revision`。创建、修改、删除或选择日期仍不由这些只读
-topic 执行；预览返回固定日期和事件。
+selectedDate value 返回 `date/revision`。创建、修改和删除日程仍不由这些只读 topic
+执行；`calendar.selectDate(date)` 只改变 SnowDesktop 内部共享选中日期，不修改事件，
+因此不要求 `calendar.write`。纯 `calendar.dateInfo/addDays` 也不读取用户数据、不要求
+权限。对应 feature 为 `calendar.selection` 和 `calendar.dateMath`；预览返回固定日期
+和事件。
 
 `app.indexStatus` 受 `app.discovery` 保护，value 返回 `state/revision`。当前宿主
 应用索引真实返回 `indexing`、`ready` 或 `unavailable`；缺失时以
@@ -459,6 +465,21 @@ metatable、混合数组/对象以及超出深度、节点、字符串或 256-ke
 
 这些基础环境与时间接口不要求高风险权限。CPU、内存、网络、媒体、音频波形等
 按需数据订阅属于后续 API，不要用 API v1 的 `sys` 代替。
+
+### `calendar` 日期计算与选择
+
+- `calendar.dateInfo("YYYY-MM-DD")` 返回年、月、日、星期和当月天数。
+- `calendar.addDays(date, offset)` 返回偏移后的 ISO 日期，offset 范围为
+  -366000 到 366000。
+- `calendar.selectDate(date)` 改变 SnowDesktop 本地共享选中日期。
+
+前两项是纯 Gregorian 日期计算；第三项只用于月历、日程等组件协同，不创建、修改或
+删除日程。三者都不要求 `calendar.read/write`；读取选中日期和事件仍必须通过受
+`calendar.read` 保护的 `data.subscribe`。
+
+声明式 `select` 设置可用稳定的 `options` 值，并用等长的 `optionLabels` 提供当前语言
+显示文本；宿主保存值而不是翻译，切换语言不会使现有设置失效。对应 feature 为
+`settings.select.localizedOptions`。
 
 ### `l10n`
 

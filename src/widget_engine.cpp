@@ -923,6 +923,21 @@ static LuaWidgetManifest::Setting ReadLuaSettingTable(lua_State* L, int tableInd
     }
     lua_pop(L, 1);
 
+    lua_getfield(L, tableIndex, "optionLabels");
+    if (lua_istable(L, -1))
+    {
+        int labelsIndex = lua_absindex(L, -1);
+        for (int i = 1;; ++i)
+        {
+            lua_rawgeti(L, labelsIndex, i);
+            if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
+            setting.optionLabels.push_back(
+                LuaValueToStorageString(L, -1));
+            lua_pop(L, 1);
+        }
+    }
+    lua_pop(L, 1);
+
     if (setting.label.empty()) setting.label = setting.key;
     if (setting.type.empty()) setting.type = "text";
     return setting;
@@ -1070,6 +1085,15 @@ static std::uint64_t BoundWidgetRuntimeToken(lua_State* state)
         ? lua_tointeger(state, -1) : 0;
     lua_pop(state, 1);
     return value > 0 ? static_cast<std::uint64_t>(value) : 0;
+}
+
+static int BoundWidgetApiVersion(lua_State* state)
+{
+    lua_getfield(state, LUA_REGISTRYINDEX, "__widget_api_version");
+    const lua_Integer value = lua_isinteger(state, -1)
+        ? lua_tointeger(state, -1) : 1;
+    lua_pop(state, 1);
+    return std::max(1, static_cast<int>(value));
 }
 
 static std::optional<std::wstring> ResolvePackageAssetWithinRoot(
@@ -5353,9 +5377,27 @@ static int lua_CalendarSetSelectedDate(lua_State* L)
     return 1;
 }
 
+static int lua_CalendarSelectDate(lua_State* L)
+{
+    if (lua_gettop(L) != 1)
+        return luaL_error(L, "calendar.selectDate: expected one date");
+    size_t length = 0;
+    const char* value = luaL_checklstring(L, 1, &length);
+    const std::string date(value ? value : "", length);
+    auto* state = GetD2D(L);
+    lua_pushboolean(L, state && state->engine && length == 10 &&
+        date.find('\0') == std::string::npos &&
+        state->engine->RuntimeCalendarSetSelectedDate(date));
+    return 1;
+}
+
 static int lua_CalendarDateInfo(lua_State* L)
 {
-    if (!RequirePermission(L, "calendar.read"))
+    const int apiVersion = BoundWidgetApiVersion(L);
+    if (apiVersion >= 2 && lua_gettop(L) != 1)
+        return luaL_error(L, "calendar.dateInfo: expected one date");
+    if (apiVersion < 2 &&
+        !RequirePermission(L, "calendar.read"))
         return 0;
     const char* value = luaL_checkstring(L, 1);
     auto* state = GetD2D(L);
@@ -5383,11 +5425,22 @@ static int lua_CalendarDateInfo(lua_State* L)
 
 static int lua_CalendarAddDays(lua_State* L)
 {
-    if (!RequirePermission(L, "calendar.read"))
+    const int apiVersion = BoundWidgetApiVersion(L);
+    if (apiVersion >= 2 && lua_gettop(L) != 2)
+        return luaL_error(L,
+            "calendar.addDays: expected a date and offset");
+    if (apiVersion < 2 &&
+        !RequirePermission(L, "calendar.read"))
         return 0;
     const char* value = luaL_checkstring(L, 1);
-    const int offset = static_cast<int>(
-        luaL_checkinteger(L, 2));
+    const lua_Integer requestedOffset = luaL_checkinteger(L, 2);
+    if (apiVersion >= 2 &&
+        (requestedOffset < -366000 || requestedOffset > 366000))
+    {
+        return luaL_error(L,
+            "calendar.addDays: offset must be between -366000 and 366000");
+    }
+    const int offset = static_cast<int>(requestedOffset);
     auto* state = GetD2D(L);
     const auto result = state && state->engine
         ? state->engine->RuntimeCalendarAddDays(
@@ -7698,8 +7751,14 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
             std::vector<std::string> optionLabels;
             optionLabels.reserve(setting.options.size());
             for (size_t i = 0; i < setting.options.size(); ++i)
-                optionLabels.push_back(setting.options[i] +
+            {
+                const std::string& label =
+                    i < setting.optionLabels.size() &&
+                        !setting.optionLabels[i].empty()
+                    ? setting.optionLabels[i] : setting.options[i];
+                optionLabels.push_back(label +
                     "###SettingOption" + std::to_string(i));
+            }
             std::vector<const char*> labels;
             labels.reserve(optionLabels.size());
             for (const auto& option : optionLabels)
@@ -10085,31 +10144,60 @@ std::vector<LuaDesktopItemInfo> WidgetEngine::RuntimeDesktopSelection() const
 void WidgetEngine::NotifyCalendarChanged(
     const std::string& reason)
 {
-    if (reason == "selection")
-    {
+    const bool selectionChanged = reason == "selection";
+    if (selectionChanged)
         ++calendarSelectionRevision_;
-    }
     else
-    {
         ++calendarEventsRevision_;
-    }
+    const std::string topic = selectionChanged
+        ? "calendar.selectedDate" : "calendar.events";
+    const std::uint64_t revision = selectionChanged
+        ? calendarSelectionRevision_ : calendarEventsRevision_;
+
     std::vector<std::wstring> targets;
     for (const auto& widget : widgets_)
     {
-        if (!widget.valid || widget.preview ||
-            !RuntimeHasPermission(
+        if (!widget.valid || widget.preview) continue;
+        if (widget.manifest.apiVersion >= 2)
+        {
+            const bool subscribed = std::any_of(
+                widget.dataSubscriptions.begin(),
+                widget.dataSubscriptions.end(),
+                [&topic](const auto& entry) {
+                    return entry.second == topic;
+                });
+            if (!subscribed) continue;
+        }
+        else if (!RuntimeHasPermission(
                 widget.widgetId, "calendar.read"))
+        {
             continue;
+        }
         targets.push_back(widget.widgetId);
     }
     for (const auto& widgetId : targets)
     {
         const int index = FindWidget(widgetId);
         if (index < 0) continue;
-        lua_State* state = widgets_[index].state;
+        LuaWidget& widget = widgets_[index];
+        if (widget.manifest.apiVersion >= 2)
+        {
+            (void)InvokeLifecycleEvent(widget, "data.change",
+                [&topic, revision](lua_State* eventState) {
+                    lua_pushlstring(eventState, topic.data(), topic.size());
+                    lua_setfield(eventState, -2, "topic");
+                    lua_pushinteger(eventState,
+                        static_cast<lua_Integer>(revision));
+                    lua_setfield(eventState, -2, "revision");
+                });
+            RuntimeInvalidateHost(widgetId);
+            continue;
+        }
+
+        lua_State* state = widget.state;
         if (!state) continue;
-        const int widgetRef = widgets_[index].ref;
-        const RECT bounds = widgets_[index].lastBounds;
+        const int widgetRef = widget.ref;
+        const RECT bounds = widget.lastBounds;
         WidgetExecutionContextGuard contextGuard(
             d2dState_, widgetId);
         snowdesktop::lua_runtime::StackGuard stackGuard(state);
@@ -12116,6 +12204,8 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
             readNumber(object, "min", setting.minValue);
             readNumber(object, "max", setting.maxValue);
             setting.options = readStringArray(object, "options");
+            setting.optionLabels =
+                readStringArray(object, "optionLabels");
             if (!setting.key.empty() && !setting.label.empty())
             {
                 if (setting.type.empty()) setting.type = "text";
@@ -14038,15 +14128,16 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
     };
     static constexpr FunctionDescriptor calendar[] = {
         { "selectedDate", lua_CalendarSelectedDate, 1,
-            "calendar.read" },
+            "calendar.read", 1 },
         { "setSelectedDate", lua_CalendarSetSelectedDate, 1,
-            "calendar.write" },
+            "calendar.write", 1 },
+        { "selectDate", lua_CalendarSelectDate, 2 },
         { "dateInfo", lua_CalendarDateInfo, 1, "calendar.read" },
         { "addDays", lua_CalendarAddDays, 1, "calendar.read" },
-        { "events", lua_CalendarEvents, 1, "calendar.read" },
-        { "create", lua_CalendarCreate, 1, "calendar.write" },
-        { "update", lua_CalendarUpdate, 1, "calendar.write" },
-        { "remove", lua_CalendarRemove, 1, "calendar.write" },
+        { "events", lua_CalendarEvents, 1, "calendar.read", 1 },
+        { "create", lua_CalendarCreate, 1, "calendar.write", 1 },
+        { "update", lua_CalendarUpdate, 1, "calendar.write", 1 },
+        { "remove", lua_CalendarRemove, 1, "calendar.write", 1 },
     };
     static constexpr FunctionDescriptor layout[] = {
         { "width", lua_LayoutWidth },
