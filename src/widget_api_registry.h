@@ -19,6 +19,7 @@ struct FunctionDescriptor
     lua_CFunction callback = nullptr;
     std::uint32_t sinceApi = 1;
     const char* requiredPermission = nullptr;
+    std::uint32_t untilApi = 0;
 };
 
 struct LibraryDescriptor

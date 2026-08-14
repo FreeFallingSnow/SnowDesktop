@@ -117,6 +117,15 @@ void TestValidation()
                 LibraryValidationError::InvalidApiVersion,
         "API version zero must be rejected");
 
+    constexpr FunctionDescriptor invertedApiRange[] = {
+        { "answer", ReturnFortyTwo, 2, nullptr, 1 },
+    };
+    Check(
+        snowdesktop::widget_api::ValidateLibrary(
+            "sample", invertedApiRange) ==
+                LibraryValidationError::InvalidApiVersion,
+        "an API version range ending before it starts must be rejected");
+
     constexpr FunctionDescriptor emptyPermission[] = {
         { "answer", ReturnFortyTwo, 1, "" },
     };
@@ -143,6 +152,7 @@ void TestRegistration()
     constexpr FunctionDescriptor functions[] = {
         { "answer", ReturnFortyTwo },
         { "add", Add },
+        { "legacyOnly", Noop, 1, nullptr, 1 },
     };
 
     lua_pushliteral(state, "sentinel");
@@ -164,6 +174,11 @@ void TestRegistration()
     Check(
         lua_tointeger(state, -1) == 42,
         "answer callback must return its value");
+    lua_pop(state, 1);
+
+    lua_getfield(state, -1, "legacyOnly");
+    Check(lua_isfunction(state, -1),
+        "unversioned registration must retain the complete descriptor set");
     lua_pop(state, 1);
 
     lua_getfield(state, -1, "add");
@@ -191,6 +206,7 @@ void TestVersionedRegistration()
     constexpr FunctionDescriptor functions[] = {
         { "answer", ReturnFortyTwo, 1 },
         { "add", Add, 2 },
+        { "legacyOnly", Noop, 1, nullptr, 1 },
     };
     snowdesktop::widget_api::RegisterLibrary(
         state, "sample", functions, 1);
@@ -202,6 +218,18 @@ void TestVersionedRegistration()
     lua_getfield(state, -1, "add");
     Check(lua_isnil(state, -1),
         "API v1 registration must not expose v2 functions");
+    lua_pop(state, 2);
+
+    snowdesktop::widget_api::RegisterLibrary(
+        state, "sample", functions, 2);
+    lua_getglobal(state, "sample");
+    lua_getfield(state, -1, "answer");
+    Check(lua_isfunction(state, -1),
+        "API v2 registration must retain unbounded v1 functions");
+    lua_pop(state, 1);
+    lua_getfield(state, -1, "legacyOnly");
+    Check(lua_isnil(state, -1),
+        "API v2 registration must hide functions capped at v1");
     lua_pop(state, 2);
 }
 
@@ -258,6 +286,9 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature("lifecycle.model") &&
             snowdesktop::widget_api::SupportsFeature("state.transient") &&
             snowdesktop::widget_api::SupportsFeature("system.uptime") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "task.media.control") &&
+            snowdesktop::widget_api::SupportsFeature("task.start") &&
             snowdesktop::widget_api::SupportsFeature("time.calendar") &&
             snowdesktop::widget_api::SupportsFeature("widget.context") &&
             snowdesktop::widget_api::SupportsFeature(

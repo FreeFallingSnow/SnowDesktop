@@ -38,6 +38,7 @@
 #include "widget_lua_lifecycle.h"
 #include "widget_data_broker.h"
 #include "widget_task_broker.h"
+#include "widget_media_task_executor.h"
 #include "widget_trusted_gesture.h"
 #include "widget_system_data_provider.h"
 #include "widget_audio_analysis_provider.h"
@@ -977,6 +978,12 @@ public:
     bool RuntimeMediaPlayPause();
     bool RuntimeMediaNext();
     bool RuntimeMediaPrevious();
+    snowdesktop::widget_runtime::TaskStartResult RuntimeStartTask(
+        const std::wstring& widgetId, std::uint64_t ownerToken,
+        std::string name);
+    bool RuntimeCancelTask(
+        const std::wstring& widgetId, std::uint64_t ownerToken,
+        std::uint64_t taskId);
     bool RuntimeSetTimer(const std::wstring& widgetId,
         const std::string& name, int intervalMs, bool repeat,
         snowdesktop::widget_runtime::ScheduleHiddenPolicy hiddenPolicy =
@@ -1060,6 +1067,7 @@ private:
     void ApplyWidgetDataBrokerActions();
     void ReleaseWidgetDataSubscriptions(LuaWidget& widget);
     void InitializeWidgetTaskBroker();
+    void ApplyWidgetTaskBrokerActions();
     void ReleaseWidgetTasks(LuaWidget& widget,
         snowdesktop::widget_runtime::TaskBrokerCancelReason reason);
     void EnsureSystemSnapshotServiceStarted();
@@ -1097,6 +1105,9 @@ private:
         dataBroker_;
     std::unique_ptr<snowdesktop::widget_runtime::WidgetTaskBroker>
         taskBroker_;
+    std::unique_ptr<
+        snowdesktop::widget_runtime::WidgetMediaTaskExecutor>
+        mediaTaskExecutor_;
     snowdesktop::widget_runtime::WidgetTrustedGestureState
         trustedGestureState_;
     std::uint64_t nextWidgetRuntimeToken_ = 0;

@@ -187,6 +187,14 @@ WidgetTaskBroker::Snapshot(std::uint64_t id) const
         found->second.cancelRequested };
 }
 
+std::optional<std::string> WidgetTaskBroker::RequiredPermission(
+    std::string_view name) const
+{
+    const auto found = descriptors_.find(std::string(name));
+    if (found == descriptors_.end()) return std::nullopt;
+    return found->second.requiredPermission;
+}
+
 std::vector<TaskBrokerAction> WidgetTaskBroker::DrainActions()
 {
     return std::exchange(actions_, {});

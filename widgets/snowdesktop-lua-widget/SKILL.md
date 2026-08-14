@@ -113,6 +113,10 @@ it does not yet represent individual declarative elements.
   immutable envelopes during render, and declare `system.performance.read`
   `system.power.read`, or `system.network.read` as optional when system data
   can degrade gracefully.
+- Start `media.toggle`, `media.next`, and `media.previous` with `task.start`
+  only inside a direct trusted gesture callback, then match the returned ID
+  in `event.kind == "task.complete"`. Never loop media actions from the
+  completion event; it intentionally has no trusted-gesture activation.
 - Create `resource.image/font` handles at entry scope. Use `resource.status`
   when diagnostics are needed.
 - Use `draw.measureText`, clipping, explicit `maxWidth`, and separate opacity.
@@ -124,9 +128,11 @@ it does not yet represent individual declarative elements.
   diagnostics.
 - Never use `io`, `os`, `require`, `package`, `load`, arbitrary filesystem or
   process APIs; the sandbox does not expose them.
-- Do not invent v2 APIs from old v1 documentation. The absence of `desktop`,
-  `media`, `http`, `sys`, `ui` or audio libraries is intentional until the
-  corresponding v2 capability is implemented.
+- Do not invent v2 APIs from old v1 documentation. The synchronous `media`
+  library remains v1-only; v2 media reads use `data.subscribe` and the three
+  implemented controls use `task`. The absence of `desktop`, `http`, `sys`,
+  `ui` and other action libraries is intentional until the corresponding v2
+  capability is implemented.
 
 ## Verification
 

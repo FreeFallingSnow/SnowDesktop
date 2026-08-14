@@ -34,24 +34,28 @@ void TestRegistrationAndStartGuards()
     Check(!broker.RegisterTask({ "bad", {}, false, 0 }, error),
         "tasks require a valid per-instance concurrency limit");
     Check(broker.RegisterTask(
-            { "media.play", "media.action", true, 1 }, error) &&
+            { "media.toggle", "media.action", true, 1 }, error) &&
             !broker.RegisterTask(
-                { "media.play", "media.action", true, 1 }, error),
+                { "media.toggle", "media.action", true, 1 }, error),
         "task descriptors must register once");
+    const auto permission = broker.RequiredPermission("media.toggle");
+    Check(permission && *permission == "media.action" &&
+            !broker.RequiredPermission("missing"),
+        "registered tasks must expose their required permission");
 
     TaskStartOptions options;
-    const auto ownerless = broker.Start("widget", "media.play", options);
+    const auto ownerless = broker.Start("widget", "media.toggle", options);
     Check(!ownerless && ownerless.error == "task owner token is required",
         "tasks must identify the owning Lua VM generation");
     options.ownerToken = 101;
     Check(!broker.Start("widget", "missing", options) &&
-            !broker.Start("widget", "media.play", options),
+            !broker.Start("widget", "media.toggle", options),
         "unknown and unauthorized tasks must be rejected");
     options.permissionGranted = true;
-    Check(!broker.Start("widget", "media.play", options),
+    Check(!broker.Start("widget", "media.toggle", options),
         "gesture-required tasks must reject background starts");
     options.trustedGesture = true;
-    const auto started = broker.Start("widget", "media.play", options);
+    const auto started = broker.Start("widget", "media.toggle", options);
     Check(started && broker.ActiveCount() == 1,
         "an authorized trusted gesture must start one task");
     const auto actions = broker.DrainActions();
@@ -60,7 +64,7 @@ void TestRegistrationAndStartGuards()
             actions[0].id == started.id &&
             actions[0].ownerToken == 101 && !actions[0].preview,
         "task start actions must preserve identity and preview isolation");
-    Check(!broker.Start("widget", "media.play", options),
+    Check(!broker.Start("widget", "media.toggle", options),
         "descriptor concurrency must reject duplicate active actions");
     Check(broker.Complete(started.id, true) &&
             broker.ActiveCount() == 0,
@@ -69,7 +73,7 @@ void TestRegistrationAndStartGuards()
     Check(completions.size() == 1 && completions[0].ok &&
             completions[0].ownerToken == 101 &&
             completions[0].instanceId == "widget" &&
-            completions[0].name == "media.play",
+            completions[0].name == "media.toggle",
         "successful completions must retain task ownership metadata");
 }
 

@@ -20,7 +20,7 @@ namespace snowdesktop::widget_api
 namespace
 {
 constexpr std::uint32_t kCurrentApiVersion = 2;
-constexpr std::array<std::string_view, 38> kHostFeatures = {
+constexpr std::array<std::string_view, 40> kHostFeatures = {
     "data.app.indexStatus",
     "data.audio.output.analysis",
     "data.audio.output.default",
@@ -56,6 +56,8 @@ constexpr std::array<std::string_view, 38> kHostFeatures = {
     "state.transient",
     "system.environment",
     "system.uptime",
+    "task.media.control",
+    "task.start",
     "time.basic",
     "time.calendar",
     "widget.context",
@@ -643,7 +645,9 @@ LibraryValidationError ValidateLibrary(
             return LibraryValidationError::MissingFunctionName;
         if (!function.callback)
             return LibraryValidationError::MissingCallback;
-        if (function.sinceApi == 0)
+        if (function.sinceApi == 0 ||
+            (function.untilApi != 0 &&
+                function.untilApi < function.sinceApi))
             return LibraryValidationError::InvalidApiVersion;
         if (function.requiredPermission &&
             function.requiredPermission[0] == '\0')
@@ -787,14 +791,21 @@ void RegisterLibrary(
     }
 
     const int entryTop = lua_gettop(state);
+    const bool allVersions = apiVersion ==
+        (std::numeric_limits<std::uint32_t>::max)();
     const auto exposed = std::count_if(functions.begin(), functions.end(),
-        [apiVersion](const FunctionDescriptor& function) {
-            return function.sinceApi <= apiVersion;
+        [apiVersion, allVersions](const FunctionDescriptor& function) {
+            return allVersions || (function.sinceApi <= apiVersion &&
+                (function.untilApi == 0 ||
+                    apiVersion <= function.untilApi));
         });
     lua_createtable(state, 0, static_cast<int>(exposed));
     for (const FunctionDescriptor& function : functions)
     {
-        if (function.sinceApi > apiVersion) continue;
+        if (!allVersions && (function.sinceApi > apiVersion ||
+            (function.untilApi != 0 &&
+                apiVersion > function.untilApi)))
+            continue;
         lua_pushcfunction(state, function.callback);
         lua_setfield(state, -2, function.name);
     }

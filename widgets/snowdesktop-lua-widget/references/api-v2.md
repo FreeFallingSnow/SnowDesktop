@@ -237,6 +237,33 @@ CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.pow
 日历 topic 对应 `data.calendar.events` 和 `data.calendar.selectedDate`。
 应用索引状态对应 `data.app.indexStatus`。
 
+### `task`
+
+当前公开首批异步媒体动作：`media.toggle`、`media.next` 和 `media.previous`。
+它们对应 feature ID `task.start` 与 `task.media.control`，要求 `media.action`
+权限，而且只能在 `click/doubleClick/pointerDown/pointerUp/wheel`、宿主按钮、
+菜单命令或由宿主明确标记来源的打开回调同步调用栈内启动：
+
+```lua
+local taskId, err = task.start("media.toggle")
+if not taskId then
+    widget.log("warn", "media task rejected: " .. tostring(err))
+end
+```
+
+启动成功只表示任务进入宿主队列。WinRT 媒体调用在独立工作线程执行；完成后由
+`event.kind == "task.complete"` 串行投递，事件包含 `taskId/task/ok`。成功时
+`event.value.accepted == true`；失败时 `event.error` 为稳定错误码，例如
+`notAvailable`、`actionUnsupported`、`actionRejected`、`mediaActionFailed`、
+`permissionRevoked` 或 `canceled`。完成事件不继承原始用户手势，不能借完成回调
+连续启动更多高风险动作。
+
+`task.cancel(taskId)` 只接受当前 Lua VM 自己持有的任务。卸载、热重载、撤权和
+宿主关闭会自动取消；热重载使用 VM owner token，旧任务结果不会投递给新 VM。
+预览不会访问系统媒体会话，而是异步返回确定性的 `accepted=true` mock。
+当前三个媒体动作不接受参数，第二个参数只能省略、为 nil 或空表。API v1 的
+`media.playPause/next/previous` 不会注册进 v2 VM，不能绕过任务的手势门禁。
+
 ### `draw`
 
 即时绘制坐标以组件左上角为 `(0, 0)`：
@@ -367,6 +394,6 @@ local display = resource.font("display")
 ## 当前明确未开放
 
 API v2 暂未向沙箱提供声明式 `view` 控件树、元素事件/hover/独立右键菜单、
-`desktop`、`media`、HTTP、上述五个 topic 以外的系统状态、音频分析、
+`desktop`、旧的同步 `media` 库、HTTP、尚未列出的系统状态、
 剪贴板、文件选择和应用启动库。它们将在对应宿主实现、配额与按需生命周期完成后
 再加入 feature 目录和 LuaLS 定义；不要根据权限词汇自行推测函数名。

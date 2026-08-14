@@ -720,7 +720,8 @@ local frame = audio:value()
 
 ### 12.4 一次性任务
 
-网络请求、搜索和可能较慢的查询使用统一任务句柄：
+网络请求、搜索和可能较慢的查询最终使用统一任务 ID；下例网络任务仍属于后续
+origins 模型完成后的目标形态：
 
 ```lua
 local request = task.start("network.request", {
@@ -733,6 +734,14 @@ local request = task.start("network.request", {
 -- event.taskId, event.ok, event.value, event.error
 ```
 
+当前首批已公开 `media.toggle/media.next/media.previous`。它们不接受参数，必须从
+可信用户手势同步调用栈启动，并由同一个通用完成事件返回：
+
+```lua
+local taskId, err = task.start("media.toggle")
+-- 后续 event.kind == "task.complete" 且 event.taskId == taskId
+```
+
 要求：
 
 - 任务可取消、有限额、可诊断。
@@ -740,14 +749,16 @@ local request = task.start("network.request", {
 - `dispose`、权限撤销或包更新自动取消未完成任务。
 - v2 首版不引入隐式 Promise；协程封装可在稳定任务契约之上后续增加。
 
-当前已落地但未公开的 `WidgetTaskBroker` 生命周期内核：任务描述符注册、全局/实例/
+当前已公开 `task.start`、`task.cancel`、`task.media.control` feature 和三个媒体动作。
+`WidgetTaskBroker` 生命周期内核负责任务描述符注册、全局/实例/
 任务类型并发上限、权限和可信手势门禁、preview 标记、显式取消、撤权取消、实例
 dispose 与 shutdown 原因，以及执行器完成确认均有独立契约测试。实时与预览引擎均
 持有独立 broker，点击、指针按下/抬起、滚轮、菜单命令、宿主按钮以及由调用方明确
-标记来源的打开回调使用仅限同步调用栈的可信手势作用域；任务还携带 Lua VM owner token，避免热重载时同名实例的
-旧任务完成事件误投给新 VM。它尚未注册任何公共任务或 `task.start` feature；必须先为
-具体执行器接通参数校验、结果值、Lua 生命周期完成事件和预览 mock，避免出现“能拿到
-task ID 但没有可用任务”的半 API。
+标记来源的打开回调使用仅限同步调用栈的可信手势作用域；任务还携带 Lua VM owner
+token，避免热重载时同名实例的旧任务完成事件误投给新 VM。媒体执行器在独立 MTA
+工作线程调用 GSMTC，返回 accepted 或稳定错误码；预览只产生确定性 mock。API v1
+同步 `media.playPause/next/previous` 已通过函数版本上限从 v2 VM 隐藏，不能绕过
+手势门禁。网络、应用搜索等后续任务仍须先完成各自参数/作用域模型后再注册。
 
 ### 12.5 系统 API 缺口审计与分层
 

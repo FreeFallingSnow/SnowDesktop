@@ -1053,6 +1053,15 @@ static std::wstring BoundWidgetId(lua_State* state)
     return result;
 }
 
+static std::uint64_t BoundWidgetRuntimeToken(lua_State* state)
+{
+    lua_getfield(state, LUA_REGISTRYINDEX, "__widget_runtime_token");
+    const lua_Integer value = lua_isinteger(state, -1)
+        ? lua_tointeger(state, -1) : 0;
+    lua_pop(state, 1);
+    return value > 0 ? static_cast<std::uint64_t>(value) : 0;
+}
+
 static std::optional<std::wstring> ResolvePackageAssetWithinRoot(
     const std::filesystem::path& packageRoot,
     const std::wstring& relativePath);
@@ -1779,6 +1788,7 @@ constexpr char kSystemDisplayPermission[] = "system.display.read";
 constexpr char kAudioOutputReadPermission[] = "audio.output.read";
 constexpr char kAudioOutputAnalyzePermission[] = "audio.output.analyze";
 constexpr char kMediaReadPermission[] = "media.read";
+constexpr char kMediaActionPermission[] = "media.action";
 constexpr char kDesktopReadPermission[] = "desktop.read";
 constexpr char kCalendarReadPermission[] = "calendar.read";
 constexpr char kAppDiscoveryPermission[] = "app.discovery";
@@ -2705,6 +2715,59 @@ static int lua_DataSubscribe(lua_State* state)
     *handle = { d2d->engine, result.id };
     luaL_getmetatable(state, kDataSubscriptionHandleMetatable);
     lua_setmetatable(state, -2);
+    return 1;
+}
+
+static int lua_TaskStart(lua_State* state)
+{
+    if (lua_gettop(state) < 1 || lua_gettop(state) > 2)
+        return luaL_error(state,
+            "task.start: expected a task name and optional arguments");
+    size_t nameLength = 0;
+    const char* name = luaL_checklstring(state, 1, &nameLength);
+    if (nameLength == 0 || nameLength > 128)
+        return luaL_error(state,
+            "task.start: task name must contain 1 to 128 bytes");
+    if (!lua_isnoneornil(state, 2))
+    {
+        luaL_checktype(state, 2, LUA_TTABLE);
+        lua_pushnil(state);
+        if (lua_next(state, 2) != 0)
+        {
+            lua_pop(state, 2);
+            return luaL_error(state,
+                "task.start: registered media tasks do not accept arguments");
+        }
+    }
+
+    auto* d2d = GetD2D(state);
+    if (!d2d || !d2d->engine)
+        return luaL_error(state, "task.start: host is unavailable");
+    auto result = d2d->engine->RuntimeStartTask(
+        BoundWidgetId(state), BoundWidgetRuntimeToken(state),
+        std::string(name, nameLength));
+    if (!result)
+    {
+        lua_pushnil(state);
+        lua_pushlstring(state, result.error.data(), result.error.size());
+        return 2;
+    }
+    lua_pushinteger(state, static_cast<lua_Integer>(result.id));
+    return 1;
+}
+
+static int lua_TaskCancel(lua_State* state)
+{
+    if (lua_gettop(state) != 1)
+        return luaL_error(state, "task.cancel: expected one task ID");
+    const lua_Integer id = luaL_checkinteger(state, 1);
+    if (id <= 0)
+        return luaL_error(state, "task.cancel: task ID must be positive");
+    auto* d2d = GetD2D(state);
+    lua_pushboolean(state, d2d && d2d->engine &&
+        d2d->engine->RuntimeCancelTask(
+            BoundWidgetId(state), BoundWidgetRuntimeToken(state),
+            static_cast<std::uint64_t>(id)));
     return 1;
 }
 
@@ -5430,8 +5493,102 @@ void WidgetEngine::ReleaseWidgetDataSubscriptions(LuaWidget& widget)
 
 void WidgetEngine::InitializeWidgetTaskBroker()
 {
+    using snowdesktop::widget_runtime::TaskDescriptor;
     taskBroker_ = std::make_unique<
         snowdesktop::widget_runtime::WidgetTaskBroker>();
+    std::string error;
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "media.toggle", kMediaActionPermission, true, 1 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "media.next", kMediaActionPermission, true, 1 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "media.previous", kMediaActionPermission, true, 1 }, error);
+    if (previewOnly_)
+        mediaTaskExecutor_.reset();
+    else
+        mediaTaskExecutor_ = std::make_unique<
+            snowdesktop::widget_runtime::WidgetMediaTaskExecutor>();
+}
+
+void WidgetEngine::ApplyWidgetTaskBrokerActions()
+{
+    using snowdesktop::widget_runtime::TaskBrokerActionType;
+    if (!taskBroker_) return;
+    if (mediaTaskExecutor_)
+    {
+        for (auto& completion : mediaTaskExecutor_->DrainCompletions())
+        {
+            (void)taskBroker_->Complete(completion.id,
+                completion.accepted, std::move(completion.error));
+        }
+    }
+    for (const auto& action : taskBroker_->DrainActions())
+    {
+        if (action.type == TaskBrokerActionType::Cancel)
+        {
+            if (mediaTaskExecutor_)
+                (void)mediaTaskExecutor_->Cancel(action.id);
+            continue;
+        }
+        const auto snapshot = taskBroker_->Snapshot(action.id);
+        if (!snapshot) continue;
+        if (snapshot->cancelRequested)
+        {
+            (void)taskBroker_->Complete(action.id, false);
+            continue;
+        }
+
+        if (action.preview)
+        {
+            (void)taskBroker_->Complete(action.id, true);
+            continue;
+        }
+        if (!mediaTaskExecutor_ ||
+            !mediaTaskExecutor_->Start(action.id, action.name))
+        {
+            (void)taskBroker_->Complete(
+                action.id, false, "taskExecutorUnavailable");
+        }
+    }
+
+    for (const auto& completion : taskBroker_->DrainCompletions())
+    {
+        auto widget = std::find_if(widgets_.begin(), widgets_.end(),
+            [&completion](const LuaWidget& candidate) {
+                return candidate.runtimeToken == completion.ownerToken;
+            });
+        if (widget == widgets_.end() ||
+            widget->taskIds.erase(completion.id) == 0)
+            continue;
+        snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(
+            trustedGestureState_, false);
+        (void)InvokeLifecycleEvent(*widget, "task.complete",
+            [&completion](lua_State* eventState) {
+                lua_pushinteger(eventState,
+                    static_cast<lua_Integer>(completion.id));
+                lua_setfield(eventState, -2, "taskId");
+                lua_pushlstring(eventState, completion.name.data(),
+                    completion.name.size());
+                lua_setfield(eventState, -2, "task");
+                lua_pushboolean(eventState, completion.ok ? 1 : 0);
+                lua_setfield(eventState, -2, "ok");
+                if (completion.ok)
+                {
+                    lua_createtable(eventState, 0, 1);
+                    lua_pushboolean(eventState, 1);
+                    lua_setfield(eventState, -2, "accepted");
+                    lua_setfield(eventState, -2, "value");
+                }
+                else
+                {
+                    lua_pushlstring(eventState, completion.error.data(),
+                        completion.error.size());
+                    lua_setfield(eventState, -2, "error");
+                }
+            });
+    }
 }
 
 void WidgetEngine::ReleaseWidgetTasks(LuaWidget& widget,
@@ -5443,7 +5600,11 @@ void WidgetEngine::ReleaseWidgetTasks(LuaWidget& widget,
         return;
     }
     for (const std::uint64_t taskId : widget.taskIds)
+    {
         (void)taskBroker_->Cancel(taskId, reason);
+        if (mediaTaskExecutor_)
+            (void)mediaTaskExecutor_->Cancel(taskId);
+    }
     widget.taskIds.clear();
 }
 
@@ -5574,6 +5735,7 @@ void WidgetEngine::Shutdown()
     widgetSystemDataProvider_.reset();
     widgetAudioAnalysisProvider_.reset();
     dataBroker_.reset();
+    mediaTaskExecutor_.reset();
     taskBroker_.reset();
     widgetHostFailures_.clear();
     delete d2dState_; d2dState_ = nullptr;
@@ -6324,6 +6486,10 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     w.packageId = pending.packageId;
     w.packageRoot = pending.packageRoot;
     w.state = stateGuard.release();
+    lua_pushinteger(w.state,
+        static_cast<lua_Integer>(w.runtimeToken));
+    lua_setfield(w.state, LUA_REGISTRYINDEX,
+        "__widget_runtime_token");
     w.quota = std::move(quota);
     w.name = name;
     w.filePath = path;
@@ -7182,6 +7348,7 @@ void WidgetEngine::TickRuntime()
         dataBroker_->Tick(runtimeNow);
         ApplyWidgetDataBrokerActions();
     }
+    ApplyWidgetTaskBrokerActions();
     if (widgetSystemDataProvider_)
     {
         const auto changedTopics =
@@ -9022,6 +9189,62 @@ bool WidgetEngine::RuntimeMediaPrevious()
     if (snowdesktop::widget_runtime::IsDryLoad()) return false;
     EnsureSystemSnapshotServiceStarted();
     return systemSnapshotService_ && systemSnapshotService_->RequestMediaPrevious();
+}
+
+snowdesktop::widget_runtime::TaskStartResult
+WidgetEngine::RuntimeStartTask(
+    const std::wstring& widgetId, std::uint64_t ownerToken,
+    std::string name)
+{
+    using snowdesktop::widget_runtime::TaskStartOptions;
+    if (!taskBroker_)
+        return { 0, "task broker is not initialized" };
+    const auto loaded = std::find_if(widgets_.begin(), widgets_.end(),
+        [&widgetId, ownerToken](const LuaWidget& candidate) {
+            return candidate.widgetId == widgetId &&
+                candidate.runtimeToken == ownerToken;
+        });
+    if (loaded == widgets_.end())
+        return { 0, "widget instance is not loaded" };
+
+    LuaWidget& widget = *loaded;
+    TaskStartOptions options;
+    options.ownerToken = widget.runtimeToken;
+    const auto requiredPermission =
+        taskBroker_->RequiredPermission(name);
+    options.permissionGranted = requiredPermission &&
+        (requiredPermission->empty() ||
+            snowdesktop::widget::WidgetPermissionBroker::AllowsPermission(
+                widget.permissions, *requiredPermission));
+    options.trustedGesture = trustedGestureState_.Active();
+    options.preview = widget.preview;
+    auto result = taskBroker_->Start(
+        WidgetWideToUtf8(widgetId), name, options);
+    if (result)
+        widget.taskIds.insert(result.id);
+    return result;
+}
+
+bool WidgetEngine::RuntimeCancelTask(
+    const std::wstring& widgetId, std::uint64_t ownerToken,
+    std::uint64_t taskId)
+{
+    if (!taskBroker_ || taskId == 0) return false;
+    const auto loaded = std::find_if(widgets_.begin(), widgets_.end(),
+        [&widgetId, ownerToken](const LuaWidget& candidate) {
+            return candidate.widgetId == widgetId &&
+                candidate.runtimeToken == ownerToken;
+        });
+    if (loaded == widgets_.end()) return false;
+    LuaWidget& widget = *loaded;
+    if (!widget.taskIds.contains(taskId)) return false;
+    const auto snapshot = taskBroker_->Snapshot(taskId);
+    if (!snapshot || snapshot->ownerToken != widget.runtimeToken)
+        return false;
+    const bool canceled = taskBroker_->Cancel(taskId);
+    if (canceled && mediaTaskExecutor_)
+        (void)mediaTaskExecutor_->Cancel(taskId);
+    return canceled;
 }
 
 bool WidgetEngine::RuntimeSetTimer(const std::wstring& widgetId,
@@ -12426,10 +12649,12 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "status", lua_ResourceStatus, 2 },
     };
     static constexpr FunctionDescriptor media[] = {
-        { "current", lua_MediaCurrent, 1, "media.read" },
-        { "playPause", lua_MediaPlayPause, 1, "media.action" },
-        { "next", lua_MediaNext, 1, "media.action" },
-        { "previous", lua_MediaPrevious, 1, "media.action" },
+        { "current", lua_MediaCurrent, 1, kMediaReadPermission, 1 },
+        { "playPause", lua_MediaPlayPause, 1,
+            kMediaActionPermission, 1 },
+        { "next", lua_MediaNext, 1, kMediaActionPermission, 1 },
+        { "previous", lua_MediaPrevious, 1,
+            kMediaActionPermission, 1 },
     };
     static constexpr FunctionDescriptor http[] = {
         { "request", lua_HttpRequest, 1, "network.http" },
@@ -12507,6 +12732,10 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
     static constexpr FunctionDescriptor data[] = {
         { "subscribe", lua_DataSubscribe, 2 },
     };
+    static constexpr FunctionDescriptor task[] = {
+        { "start", lua_TaskStart, 2 },
+        { "cancel", lua_TaskCancel, 2 },
+    };
     static constexpr FunctionDescriptor imgui[] = {
         { "text", lua_ImGuiText },
         { "textWrapped", lua_ImGuiTextWrapped },
@@ -12549,6 +12778,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         DescribeLibrary("state", state),
         DescribeLibrary("schedule", schedule),
         DescribeLibrary("data", data),
+        DescribeLibrary("task", task),
         DescribeLibrary("imgui", imgui),
     };
 

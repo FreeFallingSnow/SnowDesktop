@@ -123,7 +123,7 @@
 ---@field settings? SnowWidgetSettings
 
 ---@class SnowWidgetEvent
----@field kind 'visibility'|'resize'|'pointer'|'timer'|'schedule'|'action'|'selection'|'environment'|'panel'
+---@field kind 'visibility'|'resize'|'pointer'|'timer'|'schedule'|'action'|'selection'|'environment'|'panel'|'task.complete'
 ---@field action? 'click'|'doubleClick'|'pointerDown'|'pointerMove'|'pointerUp'|'wheel'|'opened'|'closed'|string
 ---@field id? string
 ---@field name? string
@@ -139,6 +139,11 @@
 ---@field delta? integer
 ---@field surface? 'desktop'|'panel'
 ---@field reason? string
+---@field taskId? integer
+---@field task? 'media.toggle'|'media.next'|'media.previous'|string
+---@field ok? boolean
+---@field value? SnowMediaTaskValue
+---@field error? string
 
 ---@class SnowApiInfo
 ---@field current integer
@@ -595,6 +600,26 @@ data = {}
 ---@param options? SnowDataSubscribeOptions
 ---@return SnowDataSubscription<table>
 function data.subscribe(topic, options) end
+
+---@class SnowMediaTaskValue
+---@field accepted boolean The OS media action accepted the request, or true for the deterministic preview mock.
+
+---@class snow.task
+task = {}
+
+---Start an asynchronous one-shot task. Current media tasks accept no arguments,
+---require media.action, and must be started synchronously inside a trusted user
+---gesture callback. Runtime rejections return nil plus a stable error code.
+---@param name 'media.toggle'|'media.next'|'media.previous'
+---@param arguments? table Must be omitted or empty for current media tasks.
+---@return integer? taskId
+---@return string? error
+function task.start(name, arguments) end
+
+---Request cancellation of a task owned by the current Lua VM.
+---@param taskId integer
+---@return boolean canceled
+function task.cancel(taskId) end
 
 ---Compatibility editor retained by the host; new v2 widgets should wait for
 ---the declarative control tree instead of building new interaction on it.

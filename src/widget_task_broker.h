@@ -101,6 +101,8 @@ public:
     void Shutdown();
 
     std::optional<TaskSnapshot> Snapshot(std::uint64_t id) const;
+    std::optional<std::string> RequiredPermission(
+        std::string_view name) const;
     std::vector<TaskBrokerAction> DrainActions();
     std::vector<TaskCompletion> DrainCompletions();
     std::size_t ActiveCount() const noexcept;
