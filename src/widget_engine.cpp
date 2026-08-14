@@ -26,6 +26,7 @@
 #include "widget_package.h"
 #include "steam_workshop_source.h"
 #include "widget_api_registry.h"
+#include "widget_l10n_format.h"
 #include "widget_permission_broker.h"
 #include "widget_preview_context.h"
 
@@ -9046,6 +9047,192 @@ static int lua_L10nLanguage(lua_State* L)
     return 1;
 }
 
+static int LuaL10nOptions(lua_State* L, int index)
+{
+    if (lua_isnoneornil(L, index)) return 0;
+    luaL_checktype(L, index, LUA_TTABLE);
+    return lua_absindex(L, index);
+}
+
+static std::string LuaL10nLocale(lua_State* L, int options)
+{
+    std::string locale = Locale::Instance().GetEffectiveLanguage();
+    if (!options) return locale;
+    lua_getfield(L, options, "locale");
+    if (!lua_isnil(L, -1))
+    {
+        size_t length = 0;
+        const char* value = luaL_checklstring(L, -1, &length);
+        if (length == 0 || length >= LOCALE_NAME_MAX_LENGTH)
+            luaL_error(L, "l10n: 'locale' must be a valid locale name");
+        locale.assign(value, length);
+    }
+    lua_pop(L, 1);
+    return locale;
+}
+
+static int LuaL10nIntegerOption(lua_State* L, int options,
+    const char* name, int defaultValue, int minimum, int maximum)
+{
+    if (!options) return defaultValue;
+    lua_getfield(L, options, name);
+    if (lua_isnil(L, -1))
+    {
+        lua_pop(L, 1);
+        return defaultValue;
+    }
+    int isNumber = 0;
+    const lua_Integer raw = lua_tointegerx(L, -1, &isNumber);
+    if (!isNumber || raw < minimum || raw > maximum)
+    {
+        return luaL_error(L,
+            "l10n: option '%s' must be an integer from %d to %d",
+            name, minimum, maximum);
+    }
+    lua_pop(L, 1);
+    return static_cast<int>(raw);
+}
+
+static bool LuaL10nBooleanOption(lua_State* L, int options,
+    const char* name, bool defaultValue)
+{
+    if (!options) return defaultValue;
+    lua_getfield(L, options, name);
+    if (lua_isnil(L, -1))
+    {
+        lua_pop(L, 1);
+        return defaultValue;
+    }
+    if (!lua_isboolean(L, -1))
+        luaL_error(L, "l10n: option '%s' must be a boolean", name);
+    const bool result = lua_toboolean(L, -1) != 0;
+    lua_pop(L, 1);
+    return result;
+}
+
+static int lua_L10nFormatNumber(lua_State* L)
+{
+    const double value = luaL_checknumber(L, 1);
+    const int options = LuaL10nOptions(L, 2);
+    snowdesktop::widget_l10n::NumberOptions format;
+    format.minimumFractionDigits = LuaL10nIntegerOption(L, options,
+        "minimumFractionDigits", 0, 0, 6);
+    format.maximumFractionDigits = LuaL10nIntegerOption(L, options,
+        "maximumFractionDigits", 2, 0, 6);
+    if (format.minimumFractionDigits > format.maximumFractionDigits)
+    {
+        return luaL_error(L,
+            "l10n.formatNumber: minimumFractionDigits exceeds maximumFractionDigits");
+    }
+    format.grouping = LuaL10nBooleanOption(
+        L, options, "grouping", true);
+    const std::string result = snowdesktop::widget_l10n::FormatNumber(
+        value, LuaL10nLocale(L, options), format);
+    if (result.empty())
+        return luaL_error(L, "l10n.formatNumber: value must be finite");
+    lua_pushlstring(L, result.data(), result.size());
+    return 1;
+}
+
+static int lua_L10nFormatBytes(lua_State* L)
+{
+    const double value = luaL_checknumber(L, 1);
+    const int options = LuaL10nOptions(L, 2);
+    const int base = LuaL10nIntegerOption(L, options,
+        "base", 1024, 1000, 1024);
+    if (base != 1000 && base != 1024)
+        return luaL_error(L, "l10n.formatBytes: base must be 1000 or 1024");
+    const int digits = LuaL10nIntegerOption(L, options,
+        "maximumFractionDigits", 1, 0, 3);
+    const std::string result = snowdesktop::widget_l10n::FormatBytes(
+        value, LuaL10nLocale(L, options), base, digits);
+    if (result.empty())
+    {
+        return luaL_error(L,
+            "l10n.formatBytes: value must be finite and non-negative");
+    }
+    lua_pushlstring(L, result.data(), result.size());
+    return 1;
+}
+
+static int lua_L10nFormatDuration(lua_State* L)
+{
+    const lua_Integer value = luaL_checkinteger(L, 1);
+    if (value < 0)
+    {
+        return luaL_error(L,
+            "l10n.formatDuration: milliseconds must be non-negative");
+    }
+    const int options = LuaL10nOptions(L, 2);
+    std::string style = "short";
+    if (options)
+    {
+        lua_getfield(L, options, "style");
+        if (!lua_isnil(L, -1))
+        {
+            size_t length = 0;
+            const char* value = luaL_checklstring(L, -1, &length);
+            style.assign(value, length);
+        }
+        lua_pop(L, 1);
+    }
+    if (style != "short" && style != "clock")
+    {
+        return luaL_error(L,
+            "l10n.formatDuration: style must be 'short' or 'clock'");
+    }
+    const std::string result = snowdesktop::widget_l10n::FormatDuration(
+        static_cast<std::int64_t>(value), LuaL10nLocale(L, options), style);
+    lua_pushlstring(L, result.data(), result.size());
+    return 1;
+}
+
+static int lua_L10nFormatList(lua_State* L)
+{
+    luaL_checktype(L, 1, LUA_TTABLE);
+    const int valuesTable = lua_absindex(L, 1);
+    const size_t count = lua_rawlen(L, valuesTable);
+    if (count > 64)
+        return luaL_error(L, "l10n.formatList: at most 64 values are allowed");
+    size_t totalBytes = 0;
+    for (size_t index = 1; index <= count; ++index)
+    {
+        lua_rawgeti(L, valuesTable, static_cast<lua_Integer>(index));
+        if (lua_type(L, -1) != LUA_TSTRING)
+        {
+            return luaL_error(L,
+                "l10n.formatList: value %llu must be a string",
+                static_cast<unsigned long long>(index));
+        }
+        size_t length = 0;
+        lua_tolstring(L, -1, &length);
+        lua_pop(L, 1);
+        if (length > 65536 - totalBytes)
+        {
+            return luaL_error(L,
+                "l10n.formatList: values exceed the 64 KiB limit");
+        }
+        totalBytes += length;
+    }
+
+    const int options = LuaL10nOptions(L, 2);
+    const std::string locale = LuaL10nLocale(L, options);
+    std::vector<std::string> values;
+    values.reserve(count);
+    for (size_t index = 1; index <= count; ++index)
+    {
+        lua_rawgeti(L, valuesTable, static_cast<lua_Integer>(index));
+        size_t length = 0;
+        const char* value = lua_tolstring(L, -1, &length);
+        values.emplace_back(value, length);
+        lua_pop(L, 1);
+    }
+    const std::string result = snowdesktop::widget_l10n::FormatList(
+        values, locale);
+    lua_pushlstring(L, result.data(), result.size());
+    return 1;
+}
+
 static void PushWidgetL10nAPI(lua_State* L, const LuaWidgetManifest& manifest)
 {
     lua_newtable(L);
@@ -9074,6 +9261,18 @@ static void PushWidgetL10nAPI(lua_State* L, const LuaWidgetManifest& manifest)
 
     lua_pushcfunction(L, lua_L10nLanguage);
     lua_setfield(L, -2, "language");
+
+    if (manifest.apiVersion >= 2)
+    {
+        lua_pushcfunction(L, lua_L10nFormatNumber);
+        lua_setfield(L, -2, "formatNumber");
+        lua_pushcfunction(L, lua_L10nFormatBytes);
+        lua_setfield(L, -2, "formatBytes");
+        lua_pushcfunction(L, lua_L10nFormatDuration);
+        lua_setfield(L, -2, "formatDuration");
+        lua_pushcfunction(L, lua_L10nFormatList);
+        lua_setfield(L, -2, "formatList");
+    }
 }
 
 void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
