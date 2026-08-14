@@ -4891,25 +4891,14 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
     widget.namedTimerId = 0;
 
     const auto now = std::chrono::steady_clock::now();
-    std::vector<std::string> dueNames;
-    for (const auto& [name, timer] : widget.timers)
-        if (now >= timer.due) dueNames.push_back(name);
+    const std::vector<std::string> dueNames =
+        widget.namedTimers.DueNames(now);
 
     bool invoked = false;
     for (const auto& name : dueNames)
     {
-        auto it = widget.timers.find(name);
-        if (it == widget.timers.end()) continue;
-        const auto timer = it->second;
-        if (timer.repeat)
-        {
-            auto nextDue = timer.due + std::chrono::milliseconds(timer.intervalMs);
-            while (nextDue <= now)
-                nextDue += std::chrono::milliseconds(timer.intervalMs);
-            it->second.due = nextDue;
-        }
-        else
-            widget.timers.erase(it);
+        if (!widget.namedTimers.ConsumeDue(name, now))
+            continue;
 
         lua_rawgeti(state, LUA_REGISTRYINDEX, widget.ref);
         if (lua_istable(state, -1))
@@ -5698,16 +5687,11 @@ bool WidgetEngine::RuntimeSetTimer(const std::wstring& widgetId, const std::stri
     if (snowdesktop::widget_runtime::IsDryLoad()) return false;
     int index = FindWidget(widgetId);
     if (index < 0 || name.empty()) return false;
-    if (!widgets_[index].timers.contains(name) &&
-        widgets_[index].timers.size() >= 32)
+    if (!widgets_[index].namedTimers.Set(
+            name, intervalMs, repeat, std::chrono::steady_clock::now()))
+    {
         return false;
-    intervalMs = std::clamp(intervalMs, 100, 86400000);
-    LuaWidget::Timer timer;
-    timer.name = name;
-    timer.intervalMs = intervalMs;
-    timer.repeat = repeat;
-    timer.due = std::chrono::steady_clock::now() + std::chrono::milliseconds(intervalMs);
-    widgets_[index].timers[name] = std::move(timer);
+    }
     RescheduleNamedTimer(widgets_[index]);
     return true;
 }
@@ -5822,7 +5806,7 @@ bool WidgetEngine::RuntimeCancelTimer(const std::wstring& widgetId, const std::s
 {
     int index = FindWidget(widgetId);
     if (index < 0) return false;
-    const bool removed = widgets_[index].timers.erase(name) > 0;
+    const bool removed = widgets_[index].namedTimers.Cancel(name);
     if (removed)
         RescheduleNamedTimer(widgets_[index]);
     return removed;
@@ -5858,22 +5842,15 @@ void WidgetEngine::RescheduleNamedTimer(LuaWidget& widget)
         widgetTimerKillCallback_(widget.namedTimerId);
     widget.namedTimerId = 0;
 
-    if (widget.timers.empty() || !widgetTimerRequestCallback_)
+    if (!widgetTimerRequestCallback_)
         return;
 
-    auto nextDue = widget.timers.begin()->second.due;
-    for (const auto& [_, timer] : widget.timers)
-        nextDue = std::min(nextDue, timer.due);
-
-    const auto now = std::chrono::steady_clock::now();
-    const auto remaining = nextDue > now ? nextDue - now :
-        std::chrono::steady_clock::duration::zero();
-    auto delayMs = std::chrono::duration_cast<std::chrono::milliseconds>(remaining).count();
-    if (remaining > std::chrono::milliseconds(delayMs))
-        ++delayMs;
-    delayMs = std::clamp<std::int64_t>(delayMs, 100, 86400000);
+    const auto delay = widget.namedTimers.NextDelay(
+        std::chrono::steady_clock::now());
+    if (!delay)
+        return;
     widget.namedTimerId = widgetTimerRequestCallback_(
-        widget.widgetId, static_cast<UINT>(delayMs));
+        widget.widgetId, static_cast<UINT>(delay->count()));
 }
 
 int WidgetEngine::RuntimeHttpRequest(const std::wstring& widgetId, HttpRequestOptions options)

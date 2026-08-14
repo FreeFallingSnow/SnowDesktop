@@ -245,6 +245,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget_api_registry.cpp
     src/widget_preview_context.cpp
     src/widget_runtime_diagnostics.cpp
+    src/widget_runtime_scheduler.cpp
     src/widget_engine.cpp
     src/widget_package.cpp
     src/widget_package_paths.cpp
@@ -690,6 +691,15 @@ if (BUILD_TESTING)
         SnowDesktopWidgetRuntimeHealthTests
         widget_runtime_health
         SOURCES tests/widget_runtime_health_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS contract lua widget)
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetRuntimeSchedulerTests
+        widget_runtime_scheduler
+        SOURCES
+            tests/widget_runtime_scheduler_tests.cpp
+            src/widget_runtime_scheduler.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract lua widget)
 

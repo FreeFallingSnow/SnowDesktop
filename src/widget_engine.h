@@ -33,6 +33,7 @@
 #include "widget_layout_context.h"
 #include "widget_runtime_diagnostics.h"
 #include "widget_runtime_health.h"
+#include "widget_runtime_scheduler.h"
 
 struct ImGuiContext;
 struct PersonalizationSettings;
@@ -301,14 +302,7 @@ struct LuaWidget
     std::chrono::steady_clock::time_point lastRenderTime{};
     UINT_PTR refreshTimerId = 0;        ///< 宿主统一截止时间队列分配的周期令牌（0 = 未开）
     UINT_PTR namedTimerId = 0;          ///< widget.setTimer 命名定时器共用的下一次唤醒令牌
-    struct Timer
-    {
-        std::string name;
-        int intervalMs = 1000;
-        bool repeat = true;
-        std::chrono::steady_clock::time_point due;
-    };
-    std::unordered_map<std::string, Timer> timers;
+    snowdesktop::widget_runtime::NamedTimerSchedule namedTimers;
     std::vector<HostControl> hostControls;
     std::unordered_map<std::string, int> scrollOffsets;
     bool preview = false;
