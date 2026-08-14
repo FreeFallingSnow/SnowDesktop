@@ -408,6 +408,7 @@ private:
         PermissionDecisionState state = PermissionDecisionState::Pending;
         std::vector<std::string> requestedPermissions;
         std::vector<std::string> requestedNetworkDomains;
+        std::string requestedScopeFingerprint;
         std::vector<std::string> grantedPermissions;
         std::vector<std::string> grantedNetworkDomains;
     };

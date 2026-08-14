@@ -1,4 +1,5 @@
 #include "widget_permission_state.h"
+#include "widget_permission_broker.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -137,6 +138,57 @@ void TestConsentSelection()
                 "future.unregistered"),
         "basic capabilities may activate silently while sensitive and unknown capabilities require consent");
 }
+
+void TestPermissionBrokerSnapshot()
+{
+    using snowdesktop::widget::WidgetPermissionBroker;
+    const std::vector<std::string> declared = {
+        "desktop.read", "ui.input"
+    };
+    const std::vector<std::string> domains = {
+        "example.com", "api.example.com"
+    };
+    const std::vector<std::string> stored = {
+        "ui.input", "undeclared.permission", "ui.input"
+    };
+    const auto granted = WidgetPermissionBroker::Evaluate(
+        PermissionDecisionState::Granted, declared, domains,
+        stored, std::vector<std::string>{ "example.com", "other.test" });
+    Check(granted.runtimeBlock == PermissionRuntimeBlock::None &&
+            granted.permissions ==
+                std::vector<std::string>{ "ui.input" } &&
+            granted.networkDomains ==
+                std::vector<std::string>{ "example.com" },
+        "the broker must expose only declared, explicitly granted scopes");
+    Check(WidgetPermissionBroker::AllowsPermission(
+            granted.permissions, "ui.input") &&
+            !WidgetPermissionBroker::AllowsPermission(
+                granted.permissions, "desktop.read"),
+        "permission checks must use the effective grant snapshot");
+
+    const std::vector<std::string> reversedPermissions = {
+        "ui.input", "desktop.read"
+    };
+    const std::vector<std::string> reversedDomains = {
+        "api.example.com", "example.com"
+    };
+    const std::string fingerprint =
+        WidgetPermissionBroker::ScopeFingerprint(declared, domains);
+    Check(fingerprint.size() == 64 && fingerprint ==
+            WidgetPermissionBroker::ScopeFingerprint(
+                reversedPermissions, reversedDomains),
+        "scope fingerprints must be SHA-256 values independent of array order");
+    Check(fingerprint != WidgetPermissionBroker::ScopeFingerprint(
+            declared, std::vector<std::string>{ "example.com" }),
+        "scope fingerprints must change when a requested domain changes");
+
+    const auto denied = WidgetPermissionBroker::Evaluate(
+        PermissionDecisionState::Denied, declared, domains,
+        declared, domains);
+    Check(denied.runtimeBlock == PermissionRuntimeBlock::Denied &&
+            denied.permissions.empty() && denied.networkDomains.empty(),
+        "denied decisions must block activation and expose no scopes");
+}
 }
 
 int main()
@@ -146,6 +198,7 @@ int main()
     TestRuntimeEligibility();
     TestPermissionRiskClassification();
     TestConsentSelection();
+    TestPermissionBrokerSnapshot();
     std::cout << "widget permission state tests passed\n";
     return 0;
 }

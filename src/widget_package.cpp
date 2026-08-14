@@ -2,6 +2,7 @@
 
 #include "json_value.h"
 #include "language_fallback.h"
+#include "widget_permission_broker.h"
 
 #include <windows.h>
 #include <bcrypt.h>
@@ -1696,6 +1697,8 @@ bool WidgetPackageManager::LoadRegistry(std::string& error)
                 ReadStringArray(value, "requestedPermissions", arraysValid);
             record.requestedNetworkDomains =
                 ReadStringArray(value, "requestedNetworkDomains", arraysValid);
+            ReadString(value, "requestedScopeFingerprint",
+                record.requestedScopeFingerprint);
             record.grantedPermissions =
                 ReadStringArray(value, "grantedPermissions", arraysValid);
             record.grantedNetworkDomains =
@@ -1817,6 +1820,8 @@ bool WidgetPackageManager::SaveRegistry(std::string& error) const
             << JsonEscape(decision.source.externalItemId)
             << "\",\"state\":\""
             << PermissionDecisionStateName(decision.state)
+            << "\",\"requestedScopeFingerprint\":\""
+            << JsonEscape(decision.requestedScopeFingerprint)
             << "\",\"requestedPermissions\":[";
         for (std::size_t permission = 0;
             permission < decision.requestedPermissions.size(); ++permission)
@@ -1915,16 +1920,29 @@ bool WidgetPackageManager::Refresh(std::string& error)
         const std::set<std::string> declaredDomains(
             package.manifest.networkDomains.begin(),
             package.manifest.networkDomains.end());
+        const std::string requestedScopeFingerprint =
+            decision->second.requestedScopeFingerprint.empty()
+            ? WidgetPermissionBroker::ScopeFingerprint(
+                decision->second.requestedPermissions,
+                decision->second.requestedNetworkDomains)
+            : decision->second.requestedScopeFingerprint;
+        const std::string declaredScopeFingerprint =
+            WidgetPermissionBroker::ScopeFingerprint(
+                package.manifest.permissions,
+                package.manifest.networkDomains);
         if (requestedPermissions != declaredPermissions ||
-            requestedDomains != declaredDomains)
+            requestedDomains != declaredDomains ||
+            requestedScopeFingerprint != declaredScopeFingerprint)
             return false;
         package.permissionState = decision->second.state;
-        package.grantedPermissions = ResolveGrantedScopes(
-            package.permissionState, package.manifest.permissions,
-            decision->second.grantedPermissions);
-        package.grantedNetworkDomains = ResolveGrantedScopes(
-            package.permissionState, package.manifest.networkDomains,
+        const auto grant = WidgetPermissionBroker::Evaluate(
+            package.permissionState,
+            package.manifest.permissions,
+            package.manifest.networkDomains,
+            decision->second.grantedPermissions,
             decision->second.grantedNetworkDomains);
+        package.grantedPermissions = grant.permissions;
+        package.grantedNetworkDomains = grant.networkDomains;
         return true;
     };
     auto scanRoot = [&](const std::filesystem::path& root, bool builtin,
@@ -1986,14 +2004,14 @@ bool WidgetPackageManager::Refresh(std::string& error)
                     package.source = registryIt->second.source;
                     package.permissionState =
                         registryIt->second.permissionState;
-                    package.grantedPermissions = ResolveGrantedScopes(
+                    const auto grant = WidgetPermissionBroker::Evaluate(
                         package.permissionState,
                         package.manifest.permissions,
-                        registryIt->second.grantedPermissions);
-                    package.grantedNetworkDomains = ResolveGrantedScopes(
-                        package.permissionState,
                         package.manifest.networkDomains,
+                        registryIt->second.grantedPermissions,
                         registryIt->second.grantedNetworkDomains);
+                    package.grantedPermissions = grant.permissions;
+                    package.grantedNetworkDomains = grant.networkDomains;
                     applyExplicitDecision(package);
                 }
                 else
@@ -2738,6 +2756,10 @@ bool WidgetPackageManager::SetPermissionDecision(
     record.state = state;
     record.requestedPermissions = package->manifest.permissions;
     record.requestedNetworkDomains = package->manifest.networkDomains;
+    record.requestedScopeFingerprint =
+        WidgetPermissionBroker::ScopeFingerprint(
+            record.requestedPermissions,
+            record.requestedNetworkDomains);
     record.grantedPermissions = grantedPermissions;
     record.grantedNetworkDomains = grantedNetworkDomains;
     const std::string key = packageId + "\n" +

@@ -26,6 +26,7 @@
 #include "widget_package.h"
 #include "steam_workshop_source.h"
 #include "widget_api_registry.h"
+#include "widget_permission_broker.h"
 #include "widget_preview_context.h"
 
 #include <imgui.h>
@@ -3714,7 +3715,7 @@ bool WidgetEngine::EnsureWidgetLoaded(const std::wstring& widgetId, const std::w
         return false;
     if (const auto package = GetWidgetPackage(packageId))
     {
-        if (snowdesktop::widget::PermissionRuntimeBlockFor(
+        if (snowdesktop::widget::WidgetPermissionBroker::ActivationBlock(
                 package->permissionState) !=
             snowdesktop::widget::PermissionRuntimeBlock::None)
         {
@@ -3813,8 +3814,13 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     if (const auto package =
         GetWidgetPackageManager().Resolve(pending.packageId))
     {
-        switch (snowdesktop::widget::PermissionRuntimeBlockFor(
-            package->permissionState))
+        const auto grant = snowdesktop::widget::WidgetPermissionBroker::
+            Evaluate(package->permissionState,
+                pending.manifest.permissions,
+                pending.manifest.networkDomains,
+                package->grantedPermissions,
+                package->grantedNetworkDomains);
+        switch (grant.runtimeBlock)
         {
         case snowdesktop::widget::PermissionRuntimeBlock::PendingConsent:
             RuntimeRecordError(widgetId,
@@ -3827,12 +3833,8 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         case snowdesktop::widget::PermissionRuntimeBlock::None:
             break;
         }
-        const std::set<std::string> grantedPermissions(
-            package->grantedPermissions.begin(),
-            package->grantedPermissions.end());
-        for (const auto& permission : pending.manifest.permissions)
-            if (grantedPermissions.contains(permission))
-                pending.permissions.insert(permission);
+        pending.permissions.insert(
+            grant.permissions.begin(), grant.permissions.end());
     }
     else
     {
@@ -5373,7 +5375,7 @@ WidgetEngine::GetWidgetHostState(const std::wstring& widgetId,
     const auto package = GetWidgetPackage(packageId);
     if (!package)
         return { WidgetHostStateKind::LoadFailed, {} };
-    switch (snowdesktop::widget::PermissionRuntimeBlockFor(
+    switch (snowdesktop::widget::WidgetPermissionBroker::ActivationBlock(
         package->permissionState))
     {
     case snowdesktop::widget::PermissionRuntimeBlock::PendingConsent:
@@ -5420,7 +5422,8 @@ bool WidgetEngine::RuntimeHasPermission(const std::wstring& widgetId, const char
     int idx = FindWidget(widgetId);
     if (idx < 0) return false;
     const auto& perms = widgets_[idx].permissions;
-    return perms.contains(permission);
+    return snowdesktop::widget::WidgetPermissionBroker::
+        AllowsPermission(perms, permission);
 }
 
 void WidgetEngine::RuntimeRecordError(const std::wstring& widgetId, const std::string& message)
