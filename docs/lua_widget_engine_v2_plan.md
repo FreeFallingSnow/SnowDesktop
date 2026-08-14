@@ -647,9 +647,9 @@ endpoint，分别返回不透明 endpoint ID、友好名称/状态和有界主�
 calendar 写入仍需后续 task/action broker，不能借只读订阅直接调用。
 
 `app.indexStatus` 已作为宿主应用索引事件的轻量状态订阅接入，返回
-`ready/unavailable + revision`，不在每次变化时复制完整应用目录；预览固定为 ready。
-当前索引器没有独立暴露 indexing/error 阶段，宿主后续增加这些状态时可在冻结枚举内
-扩展，不改变订阅形状。应用结果检索仍必须进入有界 `app.search` 任务。
+`indexing/ready/unavailable + revision`，不在每次变化时复制完整应用目录；预览固定
+为 ready。应用结果检索进入有界 `app.search` 任务，只有任务启动时才在 UI 线程复制
+一次目录快照，随后转交 worker 匹配。
 
 ```text
 Stopped
@@ -734,8 +734,9 @@ local request = task.start("network.request", {
 -- event.taskId, event.ok, event.value, event.error
 ```
 
-当前首批已公开 `media.toggle/media.next/media.previous`。它们不接受参数，必须从
-可信用户手势同步调用栈启动，并由同一个通用完成事件返回：
+当前已公开 `media.toggle/media.next/media.previous`，以及有界分页的
+`app.search` 与引用化 `app.launch`。媒体动作不接受参数，必须从可信用户手势同步
+调用栈启动，并由同一个通用完成事件返回：
 
 ```lua
 local taskId, err = task.start("media.toggle")
@@ -749,7 +750,8 @@ local taskId, err = task.start("media.toggle")
 - `dispose`、权限撤销或包更新自动取消未完成任务。
 - v2 首版不引入隐式 Promise；协程封装可在稳定任务契约之上后续增加。
 
-当前已公开 `task.start`、`task.cancel`、`task.media.control` feature 和三个媒体动作。
+当前已公开 `task.start`、`task.cancel`、`task.media.control`、`task.app.search`、
+`task.app.launch` feature，三个媒体动作和两个应用任务。
 `WidgetTaskBroker` 生命周期内核负责任务描述符注册、全局/实例/
 任务类型并发上限、权限和可信手势门禁、preview 标记、显式取消、撤权取消、实例
 dispose 与 shutdown 原因，以及执行器完成确认均有独立契约测试。实时与预览引擎均
@@ -758,7 +760,11 @@ dispose 与 shutdown 原因，以及执行器完成确认均有独立契约测�
 token，避免热重载时同名实例的旧任务完成事件误投给新 VM。媒体执行器在独立 MTA
 工作线程调用 GSMTC，返回 accepted 或稳定错误码；预览只产生确定性 mock。API v1
 同步 `media.playPause/next/previous` 已通过函数版本上限从 v2 VM 隐藏，不能绕过
-手势门禁。网络、应用搜索等后续任务仍须先完成各自参数/作用域模型后再注册。
+手势门禁。应用搜索从 UI 线程复制宿主索引为不可变、有上限的目录快照，在独立任务
+线程完成名称/拼音排序与分页，只向 Lua 返回展示字段和实例作用域的不透明引用；
+`app.launch` 只接受该引用并再次检查目录 revision、`app.launch` 权限与可信用户手势，
+不接受路径、参数或工作目录。公开 feature 为 `task.app.search/task.app.launch`，
+预览使用确定性引用与结果。网络等后续任务仍须先完成各自参数/作用域模型后再注册。
 
 ### 12.5 系统 API 缺口审计与分层
 

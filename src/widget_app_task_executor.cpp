@@ -1,6 +1,8 @@
 #include "widget_app_task_executor.h"
 
 #include <array>
+#include <iomanip>
+#include <sstream>
 #include <utility>
 
 namespace snowdesktop::widget_runtime
@@ -9,11 +11,35 @@ namespace
 {
 constexpr int kNoMatchRank = 9;
 
+std::uint64_t HashReference(
+    std::string_view value, std::uint64_t seed) noexcept
+{
+    std::uint64_t hash = seed;
+    for (const unsigned char byte : value)
+    {
+        hash ^= byte;
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
 bool StartsWith(const std::string& value, const std::string& prefix) noexcept
 {
     return value.size() >= prefix.size() &&
         value.compare(0, prefix.size(), prefix) == 0;
 }
+}
+
+std::string MakeWidgetAppReference(std::string_view catalogId)
+{
+    if (catalogId.empty()) return {};
+    std::ostringstream stream;
+    stream << "app:" << std::hex << std::setfill('0')
+           << std::setw(16)
+           << HashReference(catalogId, 14695981039346656037ull)
+           << std::setw(16)
+           << HashReference(catalogId, 1099511628211ull);
+    return stream.str();
 }
 
 WidgetAppTaskExecutor::~WidgetAppTaskExecutor()

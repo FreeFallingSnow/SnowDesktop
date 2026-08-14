@@ -271,9 +271,10 @@ selectedDate value 返回 `date/revision`。创建、修改、删除或选择日
 topic 执行；预览返回固定日期和事件。
 
 `app.indexStatus` 受 `app.discovery` 保护，value 返回 `state/revision`。当前宿主
-应用搜索提供者就绪时为 `ready`，缺失时以 `available=false` 和
-`state="unavailable",error="providerUnavailable"` 明确报告；应用索引变更推进
-revision。该 topic 不携带完整应用目录，搜索结果仍应由后续有界任务获取。
+应用索引真实返回 `indexing`、`ready` 或 `unavailable`；缺失时以
+`available=false,state="unavailable",error="providerUnavailable"` 明确报告，
+应用索引变更推进 revision。该 topic 不携带完整应用目录，搜索结果由有界
+`app.search` 任务获取。
 
 CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.power.read` 保护，
 两个网络 topic 受 `system.network.read` 保护，两个存储 topic 受
@@ -299,8 +300,9 @@ CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.pow
 
 ### `task`
 
-当前公开首批异步媒体动作：`media.toggle`、`media.next` 和 `media.previous`。
-它们对应 feature ID `task.start` 与 `task.media.control`，要求 `media.action`
+当前公开异步媒体动作 `media.toggle`、`media.next`、`media.previous`，以及应用任务
+`app.search` 和 `app.launch`。它们对应 feature ID `task.start`、
+`task.media.control`、`task.app.search` 和 `task.app.launch`。媒体动作要求 `media.action`
 权限，而且只能在 `click/doubleClick/pointerDown/pointerUp/wheel`、宿主按钮、
 菜单命令或由宿主明确标记来源的打开回调同步调用栈内启动：
 
@@ -310,6 +312,40 @@ if not taskId then
     widget.log("warn", "media task rejected: " .. tostring(err))
 end
 ```
+
+`app.search` 要求 `app.discovery`，不要求用户手势；参数是严格的普通表：`query`
+为 1–256 字节有效 UTF-8，`limit` 默认为 50、范围 1–100，`offset` 默认为 0、范围
+0–10000。结果按宿主名称/拼音匹配排序并分页，只返回展示字段和实例作用域的不透明
+`ref`：
+
+```lua
+local searchId, err = task.start("app.search", {
+    query = "music",
+    limit = 20,
+    offset = 0,
+})
+
+-- 对应 task.complete 成功值：
+-- event.value.items[i] = { ref, title, source, type }
+-- event.value.nextOffset / hasMore / catalogRevision
+```
+
+如果应用索引仍在构建，完成事件返回 `appIndexNotReady`；可订阅
+`app.indexStatus`，在 revision/state 变化后重试。目录在 UI 线程复制成不可变快照，
+实际匹配在独立任务线程完成，因此不会让 Lua 或 worker 直接读取桌面应用容器。
+
+`app.launch` 要求独立的 `app.launch` 权限和当前可信用户手势，只接受同一组件实例
+先前搜索得到的 `ref`：
+
+```lua
+-- 必须位于直接 click/action 回调的同步调用栈：
+local launchId, err = task.start("app.launch", { ref = item.ref })
+```
+
+Lua 不会取得可执行文件路径、参数、Shell verb 或工作目录，也不能伪造其他实例的
+引用。应用目录 revision 改变后旧引用返回 `staleReference`；未知、被回收或跨实例
+引用返回 `invalidReference`。成功值与媒体动作一样为 `accepted=true`，只表示宿主的
+Shell 启动队列已接受请求，不代表目标进程最终成功启动。
 
 启动成功只表示任务进入宿主队列。WinRT 媒体调用在独立工作线程执行；完成后由
 `event.kind == "task.complete"` 串行投递，事件包含 `taskId/task/ok`。成功时
@@ -321,7 +357,8 @@ end
 `task.cancel(taskId)` 只接受当前 Lua VM 自己持有的任务。卸载、热重载、撤权和
 宿主关闭会自动取消；热重载使用 VM owner token，旧任务结果不会投递给新 VM。
 预览不会访问系统媒体会话，而是异步返回确定性的 `accepted=true` mock。
-当前三个媒体动作不接受参数，第二个参数只能省略、为 nil 或空表。API v1 的
+三个媒体动作不接受参数，第二个参数只能省略、为 nil 或空表；应用任务拒绝未知
+字段、错误类型和越界数值。API v1 的
 `media.playPause/next/previous` 不会注册进 v2 VM，不能绕过任务的手势门禁。
 
 ### `draw`

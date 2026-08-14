@@ -1,7 +1,31 @@
 #include "app.h"
+#include "name_pinyin.h"
 #include "search_match.h"
 
 // Lua widget data conversion and application-service bridge.
+
+namespace
+{
+std::wstring NormalizeLuaApplicationLaunchTarget(
+    const std::wstring& parsingName)
+{
+    if (parsingName.empty()) return {};
+    std::wstring launchTarget = parsingName;
+    const bool hasShellPrefix =
+        launchTarget.size() >= 6 &&
+        _wcsnicmp(launchTarget.c_str(), L"shell:", 6) == 0;
+    const bool hasNamespacePrefix = launchTarget.starts_with(L"::");
+    const bool hasDrivePrefix =
+        launchTarget.size() >= 2 && launchTarget[1] == L':';
+    const bool hasUncPrefix = launchTarget.starts_with(L"\\\\");
+    if (!hasShellPrefix && !hasNamespacePrefix &&
+        !hasDrivePrefix && !hasUncPrefix)
+    {
+        launchTarget = L"shell:AppsFolder\\" + launchTarget;
+    }
+    return launchTarget;
+}
+}
 
 std::string LuaWidgetWideToUtf8(const std::wstring& value)
 {
@@ -125,29 +149,8 @@ DesktopApp::BuildLuaApplicationSearch(
                 quickNavigationAppEntries_[index];
             if (entry.parsingName.empty())
                 continue;
-            std::wstring launchPath =
-                entry.parsingName;
-            const bool hasShellPrefix =
-                launchPath.size() >= 6 &&
-                _wcsnicmp(
-                    launchPath.c_str(),
-                    L"shell:", 6) == 0;
-            const bool hasNamespacePrefix =
-                launchPath.starts_with(L"::");
-            const bool hasDrivePrefix =
-                launchPath.size() >= 2 &&
-                launchPath[1] == L':';
-            const bool hasUncPrefix =
-                launchPath.starts_with(L"\\\\");
-            if (!hasShellPrefix &&
-                !hasNamespacePrefix &&
-                !hasDrivePrefix &&
-                !hasUncPrefix)
-            {
-                launchPath =
-                    L"shell:AppsFolder\\" +
-                    launchPath;
-            }
+            const std::wstring launchPath =
+                NormalizeLuaApplicationLaunchTarget(entry.parsingName);
             LuaDesktopItemInfo info;
             info.id = LuaWidgetWideToUtf8(
                 entry.parsingName);
@@ -163,6 +166,53 @@ DesktopApp::BuildLuaApplicationSearch(
         }
     }
     return result;
+}
+
+LuaApplicationCatalogSnapshot DesktopApp::BuildLuaApplicationCatalog()
+{
+    LuaApplicationCatalogSnapshot snapshot;
+    StartQuickNavigationAppIndexing();
+    if (!quickNavigationAppsIndexed_)
+    {
+        snapshot.state = quickNavigationAppIndexing_.load()
+            ? "indexing" : "unavailable";
+        return snapshot;
+    }
+
+    snapshot.state = "ready";
+    constexpr std::size_t MaximumEntries = 20000;
+    snapshot.entries.reserve(std::min(
+        quickNavigationAppEntries_.size(), MaximumEntries));
+    for (const auto& entry : quickNavigationAppEntries_)
+    {
+        if (snapshot.entries.size() >= MaximumEntries)
+            break;
+        const std::wstring launchTarget =
+            NormalizeLuaApplicationLaunchTarget(entry.parsingName);
+        if (launchTarget.empty()) continue;
+
+        snowdesktop::widget_runtime::WidgetAppCatalogEntry item;
+        item.id = LuaWidgetWideToUtf8(entry.parsingName);
+        item.title = LuaWidgetWideToUtf8(entry.name);
+        item.launchTarget = LuaWidgetWideToUtf8(launchTarget);
+        item.foldedTitle = LuaWidgetWideToUtf8(
+            ToUpperInvariant(entry.name));
+        item.pinyinFull = BuildNamePinyinFullKey(entry.name);
+        item.pinyinInitials = BuildNamePinyinInitialKey(entry.name);
+        item.source = "Applications";
+        item.type = "application";
+        if (!item.id.empty() && !item.title.empty())
+            snapshot.entries.push_back(std::move(item));
+    }
+    return snapshot;
+}
+
+std::string DesktopApp::BuildLuaApplicationIndexStatus()
+{
+    StartQuickNavigationAppIndexing();
+    if (quickNavigationAppsIndexed_) return "ready";
+    return quickNavigationAppIndexing_.load()
+        ? "indexing" : "unavailable";
 }
 
 std::vector<LuaDesktopItemInfo> DesktopApp::BuildLuaEverythingSearch(const std::string& query, int maxResults) const

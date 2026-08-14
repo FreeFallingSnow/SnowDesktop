@@ -116,6 +116,41 @@ void TestCancellationAndRevocation()
         "revocation must override late executor success or failure");
 }
 
+void TestApplicationTaskGesturePolicy()
+{
+    WidgetTaskBroker broker;
+    std::string error;
+    Check(broker.RegisterTask(
+            { "app.search", "app.discovery", false, 2 }, error) &&
+            broker.RegisterTask(
+                { "app.launch", "app.launch", true, 1 }, error),
+        "application task descriptors must register independently");
+    TaskStartOptions options;
+    options.ownerToken = 250;
+    options.permissionGranted = true;
+    options.arguments = { { "query", "music" },
+        { "limit", "20" }, { "offset", "0" } };
+    const auto search = broker.Start("widget", "app.search", options);
+    Check(static_cast<bool>(search),
+        "application search must be allowed without a user gesture");
+    Check(broker.Complete(search.id, true),
+        "application search completion must release its task slot");
+    broker.DrainActions();
+    broker.DrainCompletions();
+
+    options.arguments = { { "ref", "app:opaque" } };
+    Check(!broker.Start("widget", "app.launch", options),
+        "application launch must reject background calls");
+    options.trustedGesture = true;
+    const auto launch = broker.Start("widget", "app.launch", options);
+    Check(static_cast<bool>(launch),
+        "application launch must accept an authorized trusted gesture");
+    const auto actions = broker.DrainActions();
+    Check(actions.size() == 1 &&
+            actions[0].arguments.at("ref") == "app:opaque",
+        "application launch must preserve only the validated opaque reference");
+}
+
 void TestInstanceAndShutdownCleanup()
 {
     WidgetTaskBroker broker;
@@ -179,6 +214,7 @@ int main()
 {
     TestRegistrationAndStartGuards();
     TestCancellationAndRevocation();
+    TestApplicationTaskGesturePolicy();
     TestInstanceAndShutdownCleanup();
     TestTrustedGestureScope();
     std::cout << "widget task broker tests passed\n";

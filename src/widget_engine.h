@@ -39,6 +39,7 @@
 #include "widget_data_broker.h"
 #include "widget_task_broker.h"
 #include "widget_media_task_executor.h"
+#include "widget_app_task_executor.h"
 #include "widget_trusted_gesture.h"
 #include "widget_system_data_provider.h"
 #include "widget_audio_analysis_provider.h"
@@ -328,6 +329,12 @@ struct LuaWidgetDataSnapshot
     std::uint64_t appIndexRevision = 0;
 };
 
+struct LuaApplicationCatalogSnapshot
+{
+    std::string state = "unavailable";
+    std::vector<snowdesktop::widget_runtime::WidgetAppCatalogEntry> entries;
+};
+
 /**
  * @struct LuaWidget
  * @brief 运行时小部件实例的完整状态描述
@@ -341,6 +348,13 @@ struct LuaWidgetDataSnapshot
  */
 struct LuaWidget
 {
+    struct ApplicationReference
+    {
+        std::string catalogId;
+        std::string launchTarget;
+        std::uint64_t catalogRevision = 0;
+    };
+
     struct HostControl
     {
         enum class Type { Button, Toggle, Input, Scroll };
@@ -394,6 +408,8 @@ struct LuaWidget
     std::unordered_map<std::string, int> scrollOffsets;
     std::unordered_map<std::uint64_t, std::string> dataSubscriptions;
     std::unordered_set<std::uint64_t> taskIds;
+    std::unordered_map<std::string, ApplicationReference>
+        applicationReferences;
     snowdesktop::widget_runtime::WidgetInteractionRegions interactionRegions;
     std::uint64_t runtimeToken = 0;
     bool preview = false;
@@ -445,6 +461,9 @@ public:
 
     using DesktopSnapshotProvider = std::function<std::vector<LuaDesktopItemInfo>()>;
     using ApplicationSearchProvider = std::function<std::vector<LuaDesktopItemInfo>(const std::string&, int)>;
+    using ApplicationCatalogProvider =
+        std::function<LuaApplicationCatalogSnapshot()>;
+    using ApplicationIndexStatusProvider = std::function<std::string()>;
     using EverythingSearchProvider = std::function<std::vector<LuaDesktopItemInfo>(const std::string&, int)>;
     using WidgetSelectedProvider = std::function<bool(const std::wstring&)>;
     using SelectedWidgetPackageProvider = std::function<std::wstring()>;
@@ -473,6 +492,19 @@ public:
         selectedWidgetPackageProvider_ = std::move(provider);
     }
     void SetApplicationSearchProvider(ApplicationSearchProvider provider) { applicationSearchProvider_ = std::move(provider); }
+    void SetApplicationCatalogProvider(ApplicationCatalogProvider provider)
+    {
+        applicationCatalogProvider_ = std::move(provider);
+    }
+    void SetApplicationIndexStatusProvider(
+        ApplicationIndexStatusProvider provider)
+    {
+        applicationIndexStatusProvider_ = std::move(provider);
+    }
+    void SetApplicationLaunchCallback(DesktopPathAction callback)
+    {
+        applicationLaunchCallback_ = std::move(callback);
+    }
     void SetEverythingSearchProvider(EverythingSearchProvider provider) { everythingSearchProvider_ = std::move(provider); }
     /** @brief 设置小部件标题变更回调 */
     void SetWidgetTitleCallback(WidgetTitleCallback callback) { setWidgetTitleCallback_ = std::move(callback); }
@@ -1002,7 +1034,8 @@ public:
     bool RuntimeMediaPrevious();
     snowdesktop::widget_runtime::TaskStartResult RuntimeStartTask(
         const std::wstring& widgetId, std::uint64_t ownerToken,
-        std::string name);
+        std::string name,
+        std::unordered_map<std::string, std::string> arguments = {});
     bool RuntimeCancelTask(
         const std::wstring& widgetId, std::uint64_t ownerToken,
         std::uint64_t taskId);
@@ -1115,6 +1148,8 @@ private:
     SelectedWidgetPackageProvider
         selectedWidgetPackageProvider_; ///< 当前唯一选中组件包 UUID
     ApplicationSearchProvider applicationSearchProvider_; ///< Windows 应用搜索提供者回调
+    ApplicationCatalogProvider applicationCatalogProvider_;
+    ApplicationIndexStatusProvider applicationIndexStatusProvider_;
     EverythingSearchProvider everythingSearchProvider_; ///< Everything 搜索提供者回调
     WidgetTitleCallback setWidgetTitleCallback_;       ///< 设置小部件标题的回调
     WidgetTitleCallback openWidgetSettingsCallback_;   ///< 打开小部件设置面板的回调
@@ -1122,6 +1157,7 @@ private:
     WidgetPanelCloseCallback closeWidgetPanelCallback_;
     InvalidateCallback invalidateCallback_;            ///< 请求宿主重绘的回调
     DesktopPathAction desktopOpenCallback_;            ///< 打开桌面路径的回调
+    DesktopPathAction applicationLaunchCallback_;      ///< 启动已解析应用引用的回调
     DesktopPathAction desktopRevealCallback_;          ///< 在资源管理器中定位路径的回调
     DesktopRefreshCallback desktopRefreshCallback_;    ///< 刷新桌面的回调
     InlineTextEditCallback inlineTextEditCallback_;    ///< 内联文本编辑请求的回调
@@ -1137,6 +1173,12 @@ private:
     std::unique_ptr<
         snowdesktop::widget_runtime::WidgetMediaTaskExecutor>
         mediaTaskExecutor_;
+    std::unique_ptr<
+        snowdesktop::widget_runtime::WidgetAppTaskExecutor>
+        appTaskExecutor_;
+    std::unordered_map<std::uint64_t,
+        snowdesktop::widget_runtime::WidgetAppSearchCompletion>
+        appSearchCompletions_;
     snowdesktop::widget_runtime::WidgetTrustedGestureState
         trustedGestureState_;
     std::uint64_t nextWidgetRuntimeToken_ = 0;

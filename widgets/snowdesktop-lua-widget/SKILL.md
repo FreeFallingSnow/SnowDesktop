@@ -119,6 +119,11 @@ synchronous native context menu.
   only inside a direct trusted gesture callback, then match the returned ID
   in `event.kind == "task.complete"`. Never loop media actions from the
   completion event; it intentionally has no trusted-gesture activation.
+- Search applications with the bounded `task.start("app.search", { query,
+  limit, offset })` task and retain only its opaque `ref` values. Launch one
+  with `task.start("app.launch", { ref = item.ref })` inside the direct click
+  action. Never persist or invent refs, and never substitute a path, command
+  line, or working directory.
 - Create `resource.image/font` handles at entry scope. Use `resource.status`
   when diagnostics are needed.
 - Use `draw.measureText`, clipping, explicit `maxWidth`, and separate opacity.

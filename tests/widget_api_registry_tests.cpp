@@ -294,6 +294,10 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature("system.uptime") &&
             snowdesktop::widget_api::SupportsFeature(
                 "task.media.control") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "task.app.launch") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "task.app.search") &&
             snowdesktop::widget_api::SupportsFeature("task.start") &&
             snowdesktop::widget_api::SupportsFeature("time.calendar") &&
             snowdesktop::widget_api::SupportsFeature("widget.context") &&

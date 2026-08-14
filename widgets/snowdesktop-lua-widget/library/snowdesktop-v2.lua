@@ -197,9 +197,9 @@
 ---@field surface? 'desktop'|'panel'
 ---@field reason? string
 ---@field taskId? integer
----@field task? 'media.toggle'|'media.next'|'media.previous'|string
+---@field task? 'media.toggle'|'media.next'|'media.previous'|'app.search'|'app.launch'|string
 ---@field ok? boolean
----@field value? SnowMediaTaskValue|SnowStateValue
+---@field value? SnowMediaTaskValue|SnowAppSearchTaskValue|SnowStateValue
 ---@field error? string
 
 ---@class SnowApiInfo
@@ -661,14 +661,36 @@ function data.subscribe(topic, options) end
 ---@class SnowMediaTaskValue
 ---@field accepted boolean The OS media action accepted the request, or true for the deterministic preview mock.
 
+---@class SnowAppSearchArguments
+---@field query string UTF-8 query containing 1 to 256 bytes.
+---@field limit? integer Result count from 1 through 100; defaults to 50.
+---@field offset? integer Ranked result offset from 0 through 10000; defaults to 0.
+
+---@class SnowAppSearchItem
+---@field ref string Opaque, instance-scoped application reference accepted by app.launch.
+---@field title string
+---@field source string
+---@field type 'application'|string
+
+---@class SnowAppSearchTaskValue
+---@field items SnowAppSearchItem[]
+---@field nextOffset integer
+---@field hasMore boolean
+---@field catalogRevision integer
+
+---@class SnowAppLaunchArguments
+---@field ref string An opaque ref returned by app.search for this widget instance.
+
 ---@class snow.task
 task = {}
 
----Start an asynchronous one-shot task. Current media tasks accept no arguments,
----require media.action, and must be started synchronously inside a trusted user
----gesture callback. Runtime rejections return nil plus a stable error code.
----@param name 'media.toggle'|'media.next'|'media.previous'
----@param arguments? table Must be omitted or empty for current media tasks.
+---Start an asynchronous one-shot task. app.search is bounded and does not
+---require a gesture; app.launch and media controls require a trusted gesture.
+---Runtime rejections return nil plus a stable error code.
+---@overload fun(name: 'app.search', arguments: SnowAppSearchArguments): taskId: integer?, error: string?
+---@overload fun(name: 'app.launch', arguments: SnowAppLaunchArguments): taskId: integer?, error: string?
+---@param name 'media.toggle'|'media.next'|'media.previous'|'app.search'|'app.launch'
+---@param arguments? table Must be omitted or empty for media tasks.
 ---@return integer? taskId
 ---@return string? error
 function task.start(name, arguments) end

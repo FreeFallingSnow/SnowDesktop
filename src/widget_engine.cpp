@@ -21,6 +21,7 @@
 #include "constants.h"
 #include "utils.h"
 #include "font_cu_rules.h"
+#include "name_pinyin.h"
 #include "search_match.h"
 #include "personalization.h"
 #include "widget_package.h"
@@ -46,6 +47,7 @@
 #include <bcrypt.h>
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cctype>
 #include <cmath>
 #include <condition_variable>
@@ -1793,6 +1795,7 @@ constexpr char kMediaActionPermission[] = "media.action";
 constexpr char kDesktopReadPermission[] = "desktop.read";
 constexpr char kCalendarReadPermission[] = "calendar.read";
 constexpr char kAppDiscoveryPermission[] = "app.discovery";
+constexpr char kAppLaunchPermission[] = "app.launch";
 
 static bool ReadInteractionValue(lua_State* state, int index,
     snowdesktop::widget_runtime::InteractionValue& output,
@@ -3086,15 +3089,149 @@ static int lua_TaskStart(lua_State* state)
     if (nameLength == 0 || nameLength > 128)
         return luaL_error(state,
             "task.start: task name must contain 1 to 128 bytes");
-    if (!lua_isnoneornil(state, 2))
+    const std::string taskName(name, nameLength);
+    std::unordered_map<std::string, std::string> arguments;
+    const bool hasArguments = !lua_isnoneornil(state, 2);
+    if (hasArguments)
     {
         luaL_checktype(state, 2, LUA_TTABLE);
+        if (lua_getmetatable(state, 2) != 0)
+        {
+            lua_pop(state, 1);
+            return luaL_error(state,
+                "task.start: arguments must be a plain table");
+        }
+    }
+
+    if (taskName == "app.search")
+    {
+        if (!hasArguments)
+            return luaL_error(state,
+                "task.start: app.search requires an arguments table");
+        lua_pushnil(state);
+        while (lua_next(state, 2) != 0)
+        {
+            if (lua_type(state, -2) != LUA_TSTRING)
+            {
+                lua_pop(state, 2);
+                return luaL_error(state,
+                    "task.start: app.search argument keys must be strings");
+            }
+            size_t keyLength = 0;
+            const char* keyValue = lua_tolstring(state, -2, &keyLength);
+            const std::string_view key(keyValue ? keyValue : "", keyLength);
+            if (key != "query" && key != "limit" && key != "offset")
+            {
+                lua_pop(state, 2);
+                return luaL_error(state,
+                    "task.start: app.search received an unknown argument");
+            }
+            lua_pop(state, 1);
+        }
+
+        lua_getfield(state, 2, "query");
+        if (lua_type(state, -1) != LUA_TSTRING)
+        {
+            lua_pop(state, 1);
+            return luaL_error(state,
+                "task.start: app.search query must be a string");
+        }
+        size_t queryLength = 0;
+        const char* queryValue = lua_tolstring(state, -1, &queryLength);
+        std::string query(queryValue ? queryValue : "", queryLength);
+        lua_pop(state, 1);
+        if (query.empty() || query.size() > 256 ||
+            Utf8ToWideLocal(query).empty())
+        {
+            return luaL_error(state,
+                "task.start: app.search query must contain 1 to 256 bytes of valid UTF-8");
+        }
+        arguments.emplace("query", std::move(query));
+
+        lua_Integer limit = 50;
+        lua_getfield(state, 2, "limit");
+        if (!lua_isnil(state, -1))
+        {
+            if (!lua_isinteger(state, -1))
+            {
+                lua_pop(state, 1);
+                return luaL_error(state,
+                    "task.start: app.search limit must be an integer");
+            }
+            limit = lua_tointeger(state, -1);
+        }
+        lua_pop(state, 1);
+        if (limit < 1 || limit > 100)
+            return luaL_error(state,
+                "task.start: app.search limit must be between 1 and 100");
+        arguments.emplace("limit", std::to_string(limit));
+
+        lua_Integer offset = 0;
+        lua_getfield(state, 2, "offset");
+        if (!lua_isnil(state, -1))
+        {
+            if (!lua_isinteger(state, -1))
+            {
+                lua_pop(state, 1);
+                return luaL_error(state,
+                    "task.start: app.search offset must be an integer");
+            }
+            offset = lua_tointeger(state, -1);
+        }
+        lua_pop(state, 1);
+        if (offset < 0 || offset > 10000)
+            return luaL_error(state,
+                "task.start: app.search offset must be between 0 and 10000");
+        arguments.emplace("offset", std::to_string(offset));
+    }
+    else if (taskName == "app.launch")
+    {
+        if (!hasArguments)
+            return luaL_error(state,
+                "task.start: app.launch requires an arguments table");
+        lua_pushnil(state);
+        while (lua_next(state, 2) != 0)
+        {
+            if (lua_type(state, -2) != LUA_TSTRING)
+            {
+                lua_pop(state, 2);
+                return luaL_error(state,
+                    "task.start: app.launch argument keys must be strings");
+            }
+            size_t keyLength = 0;
+            const char* keyValue = lua_tolstring(state, -2, &keyLength);
+            if (std::string_view(keyValue ? keyValue : "", keyLength) != "ref")
+            {
+                lua_pop(state, 2);
+                return luaL_error(state,
+                    "task.start: app.launch received an unknown argument");
+            }
+            lua_pop(state, 1);
+        }
+        lua_getfield(state, 2, "ref");
+        if (lua_type(state, -1) != LUA_TSTRING)
+        {
+            lua_pop(state, 1);
+            return luaL_error(state,
+                "task.start: app.launch ref must be a string");
+        }
+        size_t refLength = 0;
+        const char* refValue = lua_tolstring(state, -1, &refLength);
+        std::string reference(refValue ? refValue : "", refLength);
+        lua_pop(state, 1);
+        if (reference.empty() || reference.size() > 128)
+            return luaL_error(state,
+                "task.start: app.launch ref must contain 1 to 128 bytes");
+        arguments.emplace("ref", std::move(reference));
+    }
+    else if (hasArguments)
+    {
         lua_pushnil(state);
         if (lua_next(state, 2) != 0)
         {
             lua_pop(state, 2);
             return luaL_error(state,
-                "task.start: registered media tasks do not accept arguments");
+                "task.start: this task does not accept arguments");
         }
     }
 
@@ -3103,7 +3240,7 @@ static int lua_TaskStart(lua_State* state)
         return luaL_error(state, "task.start: host is unavailable");
     auto result = d2d->engine->RuntimeStartTask(
         BoundWidgetId(state), BoundWidgetRuntimeToken(state),
-        std::string(name, nameLength));
+        taskName, std::move(arguments));
     if (!result)
     {
         lua_pushnil(state);
@@ -5863,11 +6000,24 @@ void WidgetEngine::InitializeWidgetTaskBroker()
     error.clear();
     (void)taskBroker_->RegisterTask(TaskDescriptor{
         "media.previous", kMediaActionPermission, true, 1 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "app.search", kAppDiscoveryPermission, false, 2 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "app.launch", kAppLaunchPermission, true, 1 }, error);
     if (previewOnly_)
+    {
         mediaTaskExecutor_.reset();
+        appTaskExecutor_.reset();
+    }
     else
+    {
         mediaTaskExecutor_ = std::make_unique<
             snowdesktop::widget_runtime::WidgetMediaTaskExecutor>();
+        appTaskExecutor_ = std::make_unique<
+            snowdesktop::widget_runtime::WidgetAppTaskExecutor>();
+    }
 }
 
 void WidgetEngine::ApplyWidgetTaskBrokerActions()
@@ -5882,12 +6032,30 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 completion.accepted, std::move(completion.error));
         }
     }
+    if (appTaskExecutor_)
+    {
+        for (auto& completion : appTaskExecutor_->DrainCompletions())
+        {
+            const std::uint64_t id = completion.id;
+            const bool ok = completion.ok;
+            std::string error = completion.error;
+            if (ok)
+                appSearchCompletions_.insert_or_assign(
+                    id, std::move(completion));
+            else
+                appSearchCompletions_.erase(id);
+            (void)taskBroker_->Complete(
+                id, ok, std::move(error));
+        }
+    }
     for (const auto& action : taskBroker_->DrainActions())
     {
         if (action.type == TaskBrokerActionType::Cancel)
         {
             if (mediaTaskExecutor_)
                 (void)mediaTaskExecutor_->Cancel(action.id);
+            if (appTaskExecutor_)
+                (void)appTaskExecutor_->Cancel(action.id);
             continue;
         }
         const auto snapshot = taskBroker_->Snapshot(action.id);
@@ -5895,6 +6063,143 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
         if (snapshot->cancelRequested)
         {
             (void)taskBroker_->Complete(action.id, false);
+            continue;
+        }
+
+        auto owner = std::find_if(widgets_.begin(), widgets_.end(),
+            [&action](const LuaWidget& candidate) {
+                return candidate.runtimeToken == action.ownerToken;
+            });
+        if (owner == widgets_.end())
+        {
+            (void)taskBroker_->Complete(
+                action.id, false, "instanceDisposed");
+            continue;
+        }
+
+        if (action.name == "app.search")
+        {
+            const auto query = action.arguments.find("query");
+            const auto limitValue = action.arguments.find("limit");
+            const auto offsetValue = action.arguments.find("offset");
+            std::size_t limit = 0;
+            std::size_t offset = 0;
+            const auto parseNumber = [](const std::string& text,
+                std::size_t& value) {
+                const char* begin = text.data();
+                const char* end = begin + text.size();
+                const auto parsed = std::from_chars(begin, end, value);
+                return parsed.ec == std::errc{} && parsed.ptr == end;
+            };
+            if (query == action.arguments.end() ||
+                limitValue == action.arguments.end() ||
+                offsetValue == action.arguments.end() ||
+                !parseNumber(limitValue->second, limit) ||
+                !parseNumber(offsetValue->second, offset))
+            {
+                (void)taskBroker_->Complete(
+                    action.id, false, "invalidArguments");
+                continue;
+            }
+
+            if (action.preview)
+            {
+                snowdesktop::widget_runtime::WidgetAppSearchCompletion
+                    completion;
+                completion.id = action.id;
+                completion.catalogRevision = 1;
+                completion.ok = true;
+                if (offset == 0 && limit > 0)
+                {
+                    completion.items.push_back({ "preview-app",
+                        _L("app.widget_preview.api.application"),
+                        "preview-app", "Applications", "application" });
+                }
+                completion.nextOffset =
+                    offset + completion.items.size();
+                appSearchCompletions_.insert_or_assign(
+                    action.id, std::move(completion));
+                (void)taskBroker_->Complete(action.id, true);
+                continue;
+            }
+
+            if (!applicationCatalogProvider_ || !appTaskExecutor_)
+            {
+                (void)taskBroker_->Complete(
+                    action.id, false, "providerUnavailable");
+                continue;
+            }
+            LuaApplicationCatalogSnapshot catalog;
+            try
+            {
+                catalog = applicationCatalogProvider_();
+            }
+            catch (...)
+            {
+                (void)taskBroker_->Complete(
+                    action.id, false, "providerFailed");
+                continue;
+            }
+            if (catalog.state != "ready")
+            {
+                (void)taskBroker_->Complete(action.id, false,
+                    catalog.state == "indexing"
+                        ? "appIndexNotReady" : "providerUnavailable");
+                continue;
+            }
+            const std::wstring queryWide =
+                Utf8ToWideLocal(query->second);
+            const std::string foldedQuery = WidgetWideToUtf8(
+                ToUpperInvariant(queryWide));
+            const std::string pinyinQuery =
+                BuildNamePinyinFullKey(queryWide);
+            if (foldedQuery.empty() ||
+                !appTaskExecutor_->StartSearch(
+                    action.id, foldedQuery, pinyinQuery,
+                    offset, limit, appIndexRevision_,
+                    std::move(catalog.entries)))
+            {
+                (void)taskBroker_->Complete(
+                    action.id, false, "taskExecutorUnavailable");
+            }
+            continue;
+        }
+
+        if (action.name == "app.launch")
+        {
+            const auto refValue = action.arguments.find("ref");
+            if (refValue == action.arguments.end())
+            {
+                (void)taskBroker_->Complete(
+                    action.id, false, "invalidArguments");
+                continue;
+            }
+            const auto reference = owner->applicationReferences.find(
+                refValue->second);
+            if (reference == owner->applicationReferences.end())
+            {
+                (void)taskBroker_->Complete(
+                    action.id, false, "invalidReference");
+                continue;
+            }
+            if (action.preview)
+            {
+                (void)taskBroker_->Complete(action.id, true);
+                continue;
+            }
+            if (reference->second.catalogRevision != appIndexRevision_)
+            {
+                (void)taskBroker_->Complete(
+                    action.id, false, "staleReference");
+                continue;
+            }
+            const std::wstring launchTarget = Utf8ToWideLocal(
+                reference->second.launchTarget);
+            const bool accepted = !launchTarget.empty() &&
+                applicationLaunchCallback_ &&
+                applicationLaunchCallback_(launchTarget);
+            (void)taskBroker_->Complete(action.id, accepted,
+                accepted ? std::string{} : "launchRejected");
             continue;
         }
 
@@ -5911,19 +6216,85 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
         }
     }
 
-    for (const auto& completion : taskBroker_->DrainCompletions())
+    for (auto& completion : taskBroker_->DrainCompletions())
     {
         auto widget = std::find_if(widgets_.begin(), widgets_.end(),
             [&completion](const LuaWidget& candidate) {
                 return candidate.runtimeToken == completion.ownerToken;
             });
+        const auto searchCompletion =
+            appSearchCompletions_.find(completion.id);
         if (widget == widgets_.end() ||
             widget->taskIds.erase(completion.id) == 0)
+        {
+            if (searchCompletion != appSearchCompletions_.end())
+                appSearchCompletions_.erase(searchCompletion);
             continue;
+        }
+        if (completion.ok && completion.name == "app.search" &&
+            searchCompletion == appSearchCompletions_.end())
+        {
+            completion.ok = false;
+            completion.error = "taskResultUnavailable";
+        }
+
+        struct PublicAppSearchItem
+        {
+            std::string reference;
+            std::string title;
+            std::string source;
+            std::string type;
+        };
+        std::vector<PublicAppSearchItem> publicItems;
+        std::size_t nextOffset = 0;
+        bool hasMore = false;
+        std::uint64_t catalogRevision = 0;
+        if (completion.ok && completion.name == "app.search")
+        {
+            constexpr std::size_t MaximumReferences = 2048;
+            catalogRevision = searchCompletion->second.catalogRevision;
+            std::erase_if(widget->applicationReferences,
+                [catalogRevision](const auto& entry) {
+                    return entry.second.catalogRevision != catalogRevision;
+                });
+            if (widget->applicationReferences.size() +
+                    searchCompletion->second.items.size() >
+                MaximumReferences)
+            {
+                widget->applicationReferences.clear();
+            }
+            publicItems.reserve(searchCompletion->second.items.size());
+            for (const auto& item : searchCompletion->second.items)
+            {
+                const std::string baseReference =
+                    snowdesktop::widget_runtime::MakeWidgetAppReference(
+                        item.id);
+                if (baseReference.empty()) continue;
+                std::string reference = baseReference;
+                for (std::size_t suffix = 1;; ++suffix)
+                {
+                    const auto collision =
+                        widget->applicationReferences.find(reference);
+                    if (collision == widget->applicationReferences.end() ||
+                        collision->second.catalogId == item.id)
+                        break;
+                    reference = baseReference + ":" +
+                        std::to_string(suffix);
+                }
+                widget->applicationReferences.insert_or_assign(reference,
+                    LuaWidget::ApplicationReference{ item.id,
+                        item.launchTarget, catalogRevision });
+                publicItems.push_back({ std::move(reference), item.title,
+                    item.source, item.type });
+            }
+            nextOffset = searchCompletion->second.nextOffset;
+            hasMore = searchCompletion->second.hasMore;
+        }
         snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(
             trustedGestureState_, false);
         (void)InvokeLifecycleEvent(*widget, "task.complete",
-            [&completion](lua_State* eventState) {
+            [&completion, &publicItems, nextOffset, hasMore,
+                catalogRevision](lua_State* eventState) {
                 lua_pushinteger(eventState,
                     static_cast<lua_Integer>(completion.id));
                 lua_setfield(eventState, -2, "taskId");
@@ -5934,9 +6305,45 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 lua_setfield(eventState, -2, "ok");
                 if (completion.ok)
                 {
-                    lua_createtable(eventState, 0, 1);
-                    lua_pushboolean(eventState, 1);
-                    lua_setfield(eventState, -2, "accepted");
+                    if (completion.name == "app.search")
+                    {
+                        lua_createtable(eventState, 0, 4);
+                        lua_createtable(eventState,
+                            static_cast<int>(publicItems.size()), 0);
+                        int index = 1;
+                        for (const auto& item : publicItems)
+                        {
+                            lua_createtable(eventState, 0, 4);
+                            lua_pushlstring(eventState,
+                                item.reference.data(), item.reference.size());
+                            lua_setfield(eventState, -2, "ref");
+                            lua_pushlstring(eventState,
+                                item.title.data(), item.title.size());
+                            lua_setfield(eventState, -2, "title");
+                            lua_pushlstring(eventState,
+                                item.source.data(), item.source.size());
+                            lua_setfield(eventState, -2, "source");
+                            lua_pushlstring(eventState,
+                                item.type.data(), item.type.size());
+                            lua_setfield(eventState, -2, "type");
+                            lua_rawseti(eventState, -2, index++);
+                        }
+                        lua_setfield(eventState, -2, "items");
+                        lua_pushinteger(eventState,
+                            static_cast<lua_Integer>(nextOffset));
+                        lua_setfield(eventState, -2, "nextOffset");
+                        lua_pushboolean(eventState, hasMore ? 1 : 0);
+                        lua_setfield(eventState, -2, "hasMore");
+                        lua_pushinteger(eventState,
+                            static_cast<lua_Integer>(catalogRevision));
+                        lua_setfield(eventState, -2, "catalogRevision");
+                    }
+                    else
+                    {
+                        lua_createtable(eventState, 0, 1);
+                        lua_pushboolean(eventState, 1);
+                        lua_setfield(eventState, -2, "accepted");
+                    }
                     lua_setfield(eventState, -2, "value");
                 }
                 else
@@ -5946,6 +6353,8 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                     lua_setfield(eventState, -2, "error");
                 }
             });
+        if (searchCompletion != appSearchCompletions_.end())
+            appSearchCompletions_.erase(searchCompletion);
     }
 }
 
@@ -5962,6 +6371,9 @@ void WidgetEngine::ReleaseWidgetTasks(LuaWidget& widget,
         (void)taskBroker_->Cancel(taskId, reason);
         if (mediaTaskExecutor_)
             (void)mediaTaskExecutor_->Cancel(taskId);
+        if (appTaskExecutor_)
+            (void)appTaskExecutor_->Cancel(taskId);
+        appSearchCompletions_.erase(taskId);
     }
     widget.taskIds.clear();
 }
@@ -6094,6 +6506,8 @@ void WidgetEngine::Shutdown()
     widgetAudioAnalysisProvider_.reset();
     dataBroker_.reset();
     mediaTaskExecutor_.reset();
+    appTaskExecutor_.reset();
+    appSearchCompletions_.clear();
     taskBroker_.reset();
     widgetHostFailures_.clear();
     delete d2dState_; d2dState_ = nullptr;
@@ -9365,11 +9779,15 @@ WidgetEngine::RuntimeGetDataSnapshot(
     }
     else if (result.topic == "app.indexStatus")
     {
-        result.appIndexState = applicationSearchProvider_
-            ? "ready" : "unavailable";
+        result.appIndexState = applicationIndexStatusProvider_
+            ? applicationIndexStatusProvider_() : "unavailable";
+        if (result.appIndexState != "ready" &&
+            result.appIndexState != "indexing" &&
+            result.appIndexState != "unavailable")
+            result.appIndexState = "unavailable";
         result.appIndexRevision = appIndexRevision_;
-        result.available = applicationSearchProvider_
-            ? true : false;
+        result.available = applicationIndexStatusProvider_ != nullptr &&
+            result.appIndexState != "unavailable";
         if (!result.available)
             result.error = "providerUnavailable";
         setFreshness(timestampNow);
@@ -9897,7 +10315,8 @@ bool WidgetEngine::RuntimeMediaPrevious()
 snowdesktop::widget_runtime::TaskStartResult
 WidgetEngine::RuntimeStartTask(
     const std::wstring& widgetId, std::uint64_t ownerToken,
-    std::string name)
+    std::string name,
+    std::unordered_map<std::string, std::string> arguments)
 {
     using snowdesktop::widget_runtime::TaskStartOptions;
     if (!taskBroker_)
@@ -9921,6 +10340,7 @@ WidgetEngine::RuntimeStartTask(
                 widget.permissions, *requiredPermission));
     options.trustedGesture = trustedGestureState_.Active();
     options.preview = widget.preview;
+    options.arguments = std::move(arguments);
     auto result = taskBroker_->Start(
         WidgetWideToUtf8(widgetId), name, options);
     if (result)
@@ -9947,6 +10367,10 @@ bool WidgetEngine::RuntimeCancelTask(
     const bool canceled = taskBroker_->Cancel(taskId);
     if (canceled && mediaTaskExecutor_)
         (void)mediaTaskExecutor_->Cancel(taskId);
+    if (canceled && appTaskExecutor_)
+        (void)appTaskExecutor_->Cancel(taskId);
+    if (canceled)
+        appSearchCompletions_.erase(taskId);
     return canceled;
 }
 

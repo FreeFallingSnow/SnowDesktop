@@ -9,6 +9,7 @@ namespace
 {
 using snowdesktop::widget_runtime::WidgetAppCatalogEntry;
 using snowdesktop::widget_runtime::WidgetAppTaskExecutor;
+using snowdesktop::widget_runtime::MakeWidgetAppReference;
 
 void Check(bool condition, const char* message)
 {
@@ -113,6 +114,22 @@ void TestInputLimits()
     Check(!executor.StartSearch(1, "A", "A", 10001, 10, 1, {}),
         "offsets above the pagination bound must be rejected");
 }
+
+void TestOpaqueReferences()
+{
+    const std::string first = MakeWidgetAppReference(
+        "Contoso.Reader_123!App");
+    const std::string repeated = MakeWidgetAppReference(
+        "Contoso.Reader_123!App");
+    const std::string second = MakeWidgetAppReference(
+        "Contoso.Writer_123!App");
+    Check(first.starts_with("app:") && first.size() == 36 &&
+            first == repeated && first != second &&
+            first.find("Contoso") == std::string::npos,
+        "application references must be stable, opaque, and identity-specific");
+    Check(MakeWidgetAppReference({}).empty(),
+        "empty catalog identities must not create usable references");
+}
 }
 
 int main()
@@ -120,6 +137,7 @@ int main()
     TestRankedPagination();
     TestPinyinAndCancellation();
     TestInputLimits();
+    TestOpaqueReferences();
     std::cout << "widget app task executor tests passed\n";
     return 0;
 }

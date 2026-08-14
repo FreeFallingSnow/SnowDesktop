@@ -2430,6 +2430,8 @@ private:
     std::vector<LuaDesktopItemInfo> BuildLuaDesktopSnapshot(bool selectedOnly) const;
     std::vector<LuaDesktopItemInfo> BuildLuaApplicationSearch(
         const std::string& query, int maxResults);
+    LuaApplicationCatalogSnapshot BuildLuaApplicationCatalog();
+    std::string BuildLuaApplicationIndexStatus();
     std::vector<LuaDesktopItemInfo> BuildLuaEverythingSearch(const std::string& query, int maxResults) const;
     std::vector<EverythingSearchResult> SearchEverythingCached(const std::wstring& query, DWORD maxResults) const;
     /** @brief 通过 Lua 脚本提交路径打开请求。 @param path 要打开的路径 @return 请求是否已接受 */

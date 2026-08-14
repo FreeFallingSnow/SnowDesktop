@@ -602,6 +602,16 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 return BuildLuaApplicationSearch(
                     query, maxResults);
             });
+        widgetEngine_->SetApplicationCatalogProvider([this]() {
+            return BuildLuaApplicationCatalog();
+        });
+        widgetEngine_->SetApplicationIndexStatusProvider([this]() {
+            return BuildLuaApplicationIndexStatus();
+        });
+        widgetEngine_->SetApplicationLaunchCallback(
+            [this](const std::wstring& target) {
+                return LuaOpenPath(target);
+            });
         widgetEngine_->SetEverythingSearchProvider([this](const std::string& query, int maxResults) {
             return BuildLuaEverythingSearch(query, maxResults);
         });

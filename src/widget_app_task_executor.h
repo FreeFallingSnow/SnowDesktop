@@ -6,12 +6,16 @@
 #include <deque>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <unordered_set>
 #include <vector>
 
 namespace snowdesktop::widget_runtime
 {
+/** Builds a stable opaque reference without exposing the catalog identity. */
+std::string MakeWidgetAppReference(std::string_view catalogId);
+
 struct WidgetAppCatalogEntry
 {
     std::string id;
