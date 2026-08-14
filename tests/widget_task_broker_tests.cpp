@@ -1,4 +1,5 @@
 #include "widget_task_broker.h"
+#include "widget_trusted_gesture.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -11,6 +12,9 @@ using snowdesktop::widget_runtime::TaskBrokerCancelReason;
 using snowdesktop::widget_runtime::TaskDescriptor;
 using snowdesktop::widget_runtime::TaskStartOptions;
 using snowdesktop::widget_runtime::WidgetTaskBroker;
+using snowdesktop::widget_runtime::IsTrustedWidgetGestureCallback;
+using snowdesktop::widget_runtime::WidgetTrustedGestureScope;
+using snowdesktop::widget_runtime::WidgetTrustedGestureState;
 
 void Check(bool condition, const char* message)
 {
@@ -36,6 +40,10 @@ void TestRegistrationAndStartGuards()
         "task descriptors must register once");
 
     TaskStartOptions options;
+    const auto ownerless = broker.Start("widget", "media.play", options);
+    Check(!ownerless && ownerless.error == "task owner token is required",
+        "tasks must identify the owning Lua VM generation");
+    options.ownerToken = 101;
     Check(!broker.Start("widget", "missing", options) &&
             !broker.Start("widget", "media.play", options),
         "unknown and unauthorized tasks must be rejected");
@@ -49,7 +57,8 @@ void TestRegistrationAndStartGuards()
     const auto actions = broker.DrainActions();
     Check(actions.size() == 1 &&
             actions[0].type == TaskBrokerActionType::Start &&
-            actions[0].id == started.id && !actions[0].preview,
+            actions[0].id == started.id &&
+            actions[0].ownerToken == 101 && !actions[0].preview,
         "task start actions must preserve identity and preview isolation");
     Check(!broker.Start("widget", "media.play", options),
         "descriptor concurrency must reject duplicate active actions");
@@ -58,6 +67,7 @@ void TestRegistrationAndStartGuards()
         "executors must be able to complete active tasks");
     const auto completions = broker.DrainCompletions();
     Check(completions.size() == 1 && completions[0].ok &&
+            completions[0].ownerToken == 101 &&
             completions[0].instanceId == "widget" &&
             completions[0].name == "media.play",
         "successful completions must retain task ownership metadata");
@@ -71,6 +81,7 @@ void TestCancellationAndRevocation()
             { "network.request", "network.internet", false, 4 }, error),
         "network task descriptor must register");
     TaskStartOptions options;
+    options.ownerToken = 201;
     options.permissionGranted = true;
     options.preview = true;
     const auto first = broker.Start("widget", "network.request", options);
@@ -105,12 +116,18 @@ void TestInstanceAndShutdownCleanup()
     std::string error;
     broker.RegisterTask({ "search", {}, false, 4 }, error);
     TaskStartOptions options;
+    options.ownerToken = 301;
     const auto first = broker.Start("widget-a", "search", options);
+    options.ownerToken = 302;
     const auto second = broker.Start("widget-b", "search", options);
     broker.DrainActions();
     Check(broker.CancelInstance("widget-a") == 1,
         "instance disposal must cancel only owned tasks");
     broker.Shutdown();
+    const auto afterShutdown = broker.Start("widget-b", "search", options);
+    Check(!afterShutdown &&
+            afterShutdown.error == "task broker is shut down",
+        "shutdown must reject tasks started by later dispose callbacks");
     const auto actions = broker.DrainActions();
     Check(actions.size() == 2 &&
             actions[0].id == first.id &&
@@ -124,6 +141,32 @@ void TestInstanceAndShutdownCleanup()
             broker.ActiveCount() == 0,
         "executor acknowledgements must release all canceled task records");
 }
+
+void TestTrustedGestureScope()
+{
+    Check(IsTrustedWidgetGestureCallback("onClick") &&
+            IsTrustedWidgetGestureCallback("onPanelMouseDown") &&
+            IsTrustedWidgetGestureCallback("onWheel") &&
+            !IsTrustedWidgetGestureCallback("onMouseMove") &&
+            !IsTrustedWidgetGestureCallback("onPanelOpened"),
+        "only direct pointer activations may open a trusted gesture scope");
+    WidgetTrustedGestureState state;
+    Check(!state.Active(), "gesture state must be inactive by default");
+    {
+        WidgetTrustedGestureScope outer(state, true);
+        Check(state.Active(),
+            "trusted callbacks must activate the gesture state");
+        {
+            WidgetTrustedGestureScope untrustedNested(state, false);
+            Check(!state.Active(),
+                "untrusted nested callbacks must not inherit activation");
+        }
+        Check(state.Active(),
+            "nested callbacks must restore the outer gesture state");
+    }
+    Check(!state.Active(),
+        "gesture activation must not escape its synchronous callback");
+}
 }
 
 int main()
@@ -131,6 +174,7 @@ int main()
     TestRegistrationAndStartGuards();
     TestCancellationAndRevocation();
     TestInstanceAndShutdownCleanup();
+    TestTrustedGestureScope();
     std::cout << "widget task broker tests passed\n";
     return 0;
 }

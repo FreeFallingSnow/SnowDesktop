@@ -6,7 +6,6 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 namespace snowdesktop::widget_runtime
@@ -35,6 +34,7 @@ struct TaskDescriptor
 
 struct TaskStartOptions
 {
+    std::uint64_t ownerToken = 0;
     bool permissionGranted = false;
     bool trustedGesture = false;
     bool preview = false;
@@ -57,6 +57,7 @@ struct TaskBrokerAction
     TaskBrokerCancelReason cancelReason =
         TaskBrokerCancelReason::Requested;
     std::uint64_t id = 0;
+    std::uint64_t ownerToken = 0;
     std::string instanceId;
     std::string name;
     bool preview = false;
@@ -65,6 +66,7 @@ struct TaskBrokerAction
 struct TaskCompletion
 {
     std::uint64_t id = 0;
+    std::uint64_t ownerToken = 0;
     std::string instanceId;
     std::string name;
     bool ok = false;
@@ -74,6 +76,7 @@ struct TaskCompletion
 struct TaskSnapshot
 {
     std::uint64_t id = 0;
+    std::uint64_t ownerToken = 0;
     std::string instanceId;
     std::string name;
     bool preview = false;
@@ -106,6 +109,7 @@ private:
     struct Task
     {
         std::uint64_t id = 0;
+        std::uint64_t ownerToken = 0;
         std::string instanceId;
         std::string name;
         bool preview = false;
@@ -119,5 +123,6 @@ private:
     std::vector<TaskBrokerAction> actions_;
     std::vector<TaskCompletion> completions_;
     std::uint64_t nextId_ = 0;
+    bool shuttingDown_ = false;
 };
 }

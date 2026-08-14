@@ -37,6 +37,8 @@
 #include "widget_runtime_scheduler.h"
 #include "widget_lua_lifecycle.h"
 #include "widget_data_broker.h"
+#include "widget_task_broker.h"
+#include "widget_trusted_gesture.h"
 #include "widget_system_data_provider.h"
 #include "widget_audio_analysis_provider.h"
 
@@ -383,6 +385,8 @@ struct LuaWidget
     std::vector<HostControl> hostControls;
     std::unordered_map<std::string, int> scrollOffsets;
     std::unordered_map<std::uint64_t, std::string> dataSubscriptions;
+    std::unordered_set<std::uint64_t> taskIds;
+    std::uint64_t runtimeToken = 0;
     bool preview = false;
     std::unordered_map<std::string, std::string> previewStorage;
     snowdesktop::widget_runtime::WidgetLuaLifecycle lifecycle;
@@ -560,7 +564,8 @@ public:
      * @brief 触发小部件的打开回调
      * @param widgetId 小部件实例 ID
      */
-    void InvokeOpen(const std::wstring& widgetId);
+    void InvokeOpen(const std::wstring& widgetId,
+        bool trustedGesture = false);
 
     /**
      * @brief 触发小部件被选中的回调
@@ -1054,6 +1059,9 @@ private:
     void InitializeWidgetDataBroker();
     void ApplyWidgetDataBrokerActions();
     void ReleaseWidgetDataSubscriptions(LuaWidget& widget);
+    void InitializeWidgetTaskBroker();
+    void ReleaseWidgetTasks(LuaWidget& widget,
+        snowdesktop::widget_runtime::TaskBrokerCancelReason reason);
     void EnsureSystemSnapshotServiceStarted();
     void RescheduleNamedTimer(LuaWidget& widget);
 
@@ -1087,6 +1095,11 @@ private:
     std::unique_ptr<SystemSnapshotService> systemSnapshotService_;
     std::unique_ptr<snowdesktop::widget_runtime::WidgetDataBroker>
         dataBroker_;
+    std::unique_ptr<snowdesktop::widget_runtime::WidgetTaskBroker>
+        taskBroker_;
+    snowdesktop::widget_runtime::WidgetTrustedGestureState
+        trustedGestureState_;
+    std::uint64_t nextWidgetRuntimeToken_ = 0;
     std::unique_ptr<snowdesktop::widget_runtime::WidgetSystemDataProvider>
         widgetSystemDataProvider_;
     std::unique_ptr<snowdesktop::widget_runtime::WidgetAudioAnalysisProvider>

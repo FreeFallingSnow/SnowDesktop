@@ -35,6 +35,10 @@ TaskStartResult WidgetTaskBroker::Start(
     TaskStartOptions options)
 {
     if (instanceId.empty()) return { 0, "instance ID is required" };
+    if (options.ownerToken == 0)
+        return { 0, "task owner token is required" };
+    if (shuttingDown_)
+        return { 0, "task broker is shut down" };
     const auto descriptor = descriptors_.find(std::string(name));
     if (descriptor == descriptors_.end())
         return { 0, "task is not registered" };
@@ -62,10 +66,12 @@ TaskStartResult WidgetTaskBroker::Start(
 
     std::uint64_t id = ++nextId_;
     if (id == 0) id = ++nextId_;
-    Task task{ id, std::move(instanceId), std::string(name),
+    Task task{ id, options.ownerToken, std::move(instanceId),
+        std::string(name),
         options.preview };
     actions_.push_back({ TaskBrokerActionType::Start,
-        TaskBrokerCancelReason::Requested, id, task.instanceId,
+        TaskBrokerCancelReason::Requested, id, task.ownerToken,
+        task.instanceId,
         task.name, task.preview });
     tasks_.emplace(id, std::move(task));
     return { id, {} };
@@ -80,7 +86,8 @@ bool WidgetTaskBroker::Cancel(
     found->second.cancelRequested = true;
     found->second.cancelReason = reason;
     actions_.push_back({ TaskBrokerActionType::Cancel, reason, id,
-        found->second.instanceId, found->second.name,
+        found->second.ownerToken, found->second.instanceId,
+        found->second.name,
         found->second.preview });
     return true;
 }
@@ -117,7 +124,8 @@ bool WidgetTaskBroker::Complete(
     {
         error = "taskFailed";
     }
-    completions_.push_back({ id, found->second.instanceId,
+    completions_.push_back({ id, found->second.ownerToken,
+        found->second.instanceId,
         found->second.name, ok, std::move(error) });
     tasks_.erase(found);
     return true;
@@ -157,6 +165,7 @@ std::size_t WidgetTaskBroker::CancelInstance(std::string_view instanceId)
 
 void WidgetTaskBroker::Shutdown()
 {
+    shuttingDown_ = true;
     std::vector<std::uint64_t> affected;
     affected.reserve(tasks_.size());
     for (const auto& [id, task] : tasks_)
@@ -172,7 +181,8 @@ WidgetTaskBroker::Snapshot(std::uint64_t id) const
 {
     const auto found = tasks_.find(id);
     if (found == tasks_.end()) return std::nullopt;
-    return TaskSnapshot{ found->second.id, found->second.instanceId,
+    return TaskSnapshot{ found->second.id, found->second.ownerToken,
+        found->second.instanceId,
         found->second.name, found->second.preview,
         found->second.cancelRequested };
 }

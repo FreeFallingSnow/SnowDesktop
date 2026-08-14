@@ -5428,6 +5428,25 @@ void WidgetEngine::ReleaseWidgetDataSubscriptions(LuaWidget& widget)
     ApplyWidgetDataBrokerActions();
 }
 
+void WidgetEngine::InitializeWidgetTaskBroker()
+{
+    taskBroker_ = std::make_unique<
+        snowdesktop::widget_runtime::WidgetTaskBroker>();
+}
+
+void WidgetEngine::ReleaseWidgetTasks(LuaWidget& widget,
+    snowdesktop::widget_runtime::TaskBrokerCancelReason reason)
+{
+    if (!taskBroker_)
+    {
+        widget.taskIds.clear();
+        return;
+    }
+    for (const std::uint64_t taskId : widget.taskIds)
+        (void)taskBroker_->Cancel(taskId, reason);
+    widget.taskIds.clear();
+}
+
 bool WidgetEngine::Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFactory)
 {
     previewOnly_ = false;
@@ -5475,6 +5494,7 @@ bool WidgetEngine::Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFa
     systemSnapshotService_ = std::make_unique<SystemSnapshotService>();
     httpService_ = std::make_unique<AsyncHttpService>();
     InitializeWidgetDataBroker();
+    InitializeWidgetTaskBroker();
     return true;
 }
 
@@ -5492,12 +5512,15 @@ bool WidgetEngine::InitPreview(
     // absent in this render-only engine.
     (void)GetWidgetPackageManager();
     InitializeWidgetDataBroker();
+    InitializeWidgetTaskBroker();
     return d2dState_ != nullptr;
 }
 
 void WidgetEngine::Shutdown()
 {
     focusedHostInput_ = {};
+    if (taskBroker_)
+        taskBroker_->Shutdown();
     if (d2dState_)
         d2dState_->shellIconLoader.reset();
     for (auto& widget : widgets_)
@@ -5506,6 +5529,8 @@ void WidgetEngine::Shutdown()
             InvokeSimpleCallback(widget, "onHidden");
         DisposeWidgetLifecycle(widget, "shutdown");
         ReleaseWidgetDataSubscriptions(widget);
+        ReleaseWidgetTasks(widget,
+            snowdesktop::widget_runtime::TaskBrokerCancelReason::Shutdown);
         if (widget.refreshTimerId && widgetTimerKillCallback_)
             widgetTimerKillCallback_(widget.refreshTimerId);
         if (widget.namedTimerId && widgetTimerKillCallback_)
@@ -5549,6 +5574,7 @@ void WidgetEngine::Shutdown()
     widgetSystemDataProvider_.reset();
     widgetAudioAnalysisProvider_.reset();
     dataBroker_.reset();
+    taskBroker_.reset();
     widgetHostFailures_.clear();
     delete d2dState_; d2dState_ = nullptr;
 }
@@ -5565,6 +5591,8 @@ void WidgetEngine::UnloadWidget(const std::wstring& widgetId)
         InvokeSimpleCallback(widgets_[idx], "onHidden");
     DisposeWidgetLifecycle(widgets_[idx], "unload");
     ReleaseWidgetDataSubscriptions(widgets_[idx]);
+    ReleaseWidgetTasks(widgets_[idx],
+        snowdesktop::widget_runtime::TaskBrokerCancelReason::InstanceDisposed);
     if (widgets_[idx].refreshTimerId && widgetTimerKillCallback_)
         widgetTimerKillCallback_(widgets_[idx].refreshTimerId);
     if (widgets_[idx].namedTimerId && widgetTimerKillCallback_)
@@ -6290,6 +6318,9 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
 
     LuaWidget w;
     w.widgetId = widgetId;
+    w.runtimeToken = ++nextWidgetRuntimeToken_;
+    if (w.runtimeToken == 0)
+        w.runtimeToken = ++nextWidgetRuntimeToken_;
     w.packageId = pending.packageId;
     w.packageRoot = pending.packageRoot;
     w.state = stateGuard.release();
@@ -6317,6 +6348,8 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     {
         LuaWidget& failed = widgets_.back();
         ReleaseWidgetDataSubscriptions(failed);
+        ReleaseWidgetTasks(failed,
+            snowdesktop::widget_runtime::TaskBrokerCancelReason::InstanceDisposed);
         if (failed.state)
         {
             failed.lifecycle.Release(failed.state);
@@ -7406,10 +7439,13 @@ bool WidgetEngine::HasCustomStyle(const std::wstring& widgetId) const
     return idx >= 0 && widgets_[idx].customStyle;
 }
 
-void WidgetEngine::InvokeOpen(const std::wstring& widgetId)
+void WidgetEngine::InvokeOpen(
+    const std::wstring& widgetId, bool trustedGesture)
 {
     int idx = FindWidget(widgetId);
     if (idx < 0) return;
+    snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(
+        trustedGestureState_, trustedGesture);
     InvokeSimpleCallback(widgets_[idx], "onOpen");
 }
 
@@ -7434,6 +7470,10 @@ void WidgetEngine::InvokeMouseEvent(const std::wstring& widgetId, const char* ca
     auto& w = widgets_[idx];
     lua_State* state = w.state;
     if (!state) return;
+    const bool trustedGesture = snowdesktop::widget_runtime::
+        IsTrustedWidgetGestureCallback(callbackName);
+    snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(
+        trustedGestureState_, trustedGesture);
     if (w.manifest.apiVersion >= 2)
     {
         const bool panel = std::strstr(callbackName, "Panel") != nullptr;
@@ -7589,6 +7629,8 @@ void WidgetEngine::InvokeMenu(const std::wstring& widgetId, int menuId)
     auto& w = widgets_[idx];
     lua_State* state = w.state;
     if (!state) return;
+    snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(
+        trustedGestureState_, true);
     WidgetExecutionContextGuard contextGuard(d2dState_, widgetId);
     snowdesktop::lua_runtime::StackGuard stackGuard(state);
     SetWidgetRectContext(d2dState_, w.lastBounds);
@@ -7852,6 +7894,8 @@ bool WidgetEngine::ReloadWidget(const std::wstring& widgetId)
         InvokeSimpleCallback(old, "onHidden");
     DisposeWidgetLifecycle(old, "hotReload");
     ReleaseWidgetDataSubscriptions(old);
+    ReleaseWidgetTasks(old,
+        snowdesktop::widget_runtime::TaskBrokerCancelReason::InstanceDisposed);
     if (old.refreshTimerId && widgetTimerKillCallback_)
         widgetTimerKillCallback_(old.refreshTimerId);
     if (old.namedTimerId && widgetTimerKillCallback_)
@@ -10030,6 +10074,8 @@ bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int 
             const bool controlValue =
                 it->type == LuaWidget::HostControl::Type::Toggle
                     ? !it->value : true;
+            snowdesktop::widget_runtime::WidgetTrustedGestureScope
+                gestureScope(trustedGestureState_, true);
             WidgetExecutionContextGuard contextGuard(
                 d2dState_, widgetId);
             snowdesktop::lua_runtime::StackGuard stackGuard(state);
@@ -11312,10 +11358,32 @@ bool WidgetEngine::ApplyWidgetPermissionDecision(
             grantedPermissions, grantedNetworkDomains, error))
         return false;
     const std::string requestedId = WidgetWideToUtf8(packageId);
+    const std::unordered_set<std::string> effectivePermissions =
+        state == snowdesktop::widget::PermissionDecisionState::Granted
+        ? std::unordered_set<std::string>(
+            grantedPermissions.begin(), grantedPermissions.end())
+        : std::unordered_set<std::string>{};
     std::vector<std::wstring> instances;
     for (const auto& widget : widgets_)
+    {
         if (widget.packageId == requestedId)
+        {
             instances.push_back(widget.widgetId);
+            if (taskBroker_)
+            {
+                const std::string instanceId =
+                    WidgetWideToUtf8(widget.widgetId);
+                for (const std::string& permission : widget.permissions)
+                {
+                    if (!effectivePermissions.contains(permission))
+                    {
+                        (void)taskBroker_->SetPermission(
+                            instanceId, permission, false);
+                    }
+                }
+            }
+        }
+    }
     for (const auto& instance : instances)
         UnloadWidget(instance);
     if (state == snowdesktop::widget::PermissionDecisionState::Granted)
