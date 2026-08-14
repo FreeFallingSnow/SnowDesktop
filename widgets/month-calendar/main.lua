@@ -253,12 +253,21 @@ local function drawHeaderButton(id, label, fontSize, colors, shape,
     submitButton(id, label, shape)
 end
 
-local weekdayKeys = {
-    "sun", "mon", "tue", "wed", "thu", "fri", "sat",
-}
-
 local function weekdayLabel(weekday)
-    return l10n.tr("lua_widget.month_calendar." .. weekdayKeys[weekday])
+    if weekday == 1 then
+        return l10n.tr("lua_widget.month_calendar.sun")
+    elseif weekday == 2 then
+        return l10n.tr("lua_widget.month_calendar.mon")
+    elseif weekday == 3 then
+        return l10n.tr("lua_widget.month_calendar.tue")
+    elseif weekday == 4 then
+        return l10n.tr("lua_widget.month_calendar.wed")
+    elseif weekday == 5 then
+        return l10n.tr("lua_widget.month_calendar.thu")
+    elseif weekday == 6 then
+        return l10n.tr("lua_widget.month_calendar.fri")
+    end
+    return l10n.tr("lua_widget.month_calendar.sat")
 end
 
 local function render(context, model)
