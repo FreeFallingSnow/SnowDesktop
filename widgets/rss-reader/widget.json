@@ -1,16 +1,16 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "3a8b02f9-560c-49b9-9b22-bc4405d863ea",
   "slug": "rss-reader",
-  "apiVersion": 1,
+  "apiVersion": 2,
   "dataVersion": 1,
   "entry": "main.lua",
-  "minHostVersion": "1.0.1.0",
+  "minHostVersion": "1.0.4.0",
   "author": "SnowDesktop",
   "license": "GPL-3.0-only",
   "name": "RSS Reader",
   "nameKey": "lua_widget.rss_reader.name",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "Subscribes to RSS and Atom feeds, lists headlines and dates, and opens articles on double-click.",
   "descriptionKey": "lua_widget.rss_reader.description",
   "locales": {
@@ -270,10 +270,31 @@
       "previewArticle3Title": "lua_widget.rss_reader.preview_article_3"
     }
   },
+  "resources": {},
   "permissions": [
-    "network.http",
-    "ui.input",
-    "desktop.action",
-    "ui.contextMenu"
-  ]
+    "network.internet"
+  ],
+  "optionalPermissions": [
+    "shell.launch"
+  ],
+  "networkDomains": [
+    "www.ithome.com"
+  ],
+  "requiredFeatures": [
+    "draw.immediate",
+    "interaction.contextMenu",
+    "interaction.pointerActions",
+    "interaction.region",
+    "interaction.scroll",
+    "lifecycle.event",
+    "lifecycle.model",
+    "l10n.basic",
+    "schedule.basic",
+    "schedule.visibility",
+    "task.network.request",
+    "task.shell.openUri",
+    "task.start",
+    "time.basic"
+  ],
+  "optionalFeatures": []
 }

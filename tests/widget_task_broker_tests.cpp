@@ -132,8 +132,10 @@ void TestApplicationTaskGesturePolicy()
                 error) &&
             broker.RegisterTask(
                 { "calendar.remove", "calendar.write", true, 1 },
-                error),
-        "application, notification, and calendar task descriptors must register independently");
+                error) &&
+            broker.RegisterTask(
+                { "shell.openUri", "shell.launch", true, 1 }, error),
+        "application, notification, calendar, and shell tasks must register independently");
     TaskStartOptions options;
     options.ownerToken = 250;
     options.permissionGranted = true;
@@ -192,9 +194,28 @@ void TestApplicationTaskGesturePolicy()
     Check(!broker.Start("widget", "calendar.remove", options),
         "calendar deletion must reject background calls");
     options.trustedGesture = true;
-    Check(static_cast<bool>(broker.Start(
-            "widget", "calendar.remove", options)),
+    const auto removal = broker.Start(
+        "widget", "calendar.remove", options);
+    Check(static_cast<bool>(removal),
         "calendar deletion must accept an authorized trusted gesture");
+    broker.DrainActions();
+    Check(broker.Complete(removal.id, true),
+        "calendar deletion completion must release its task slot");
+    broker.DrainCompletions();
+
+    options.arguments = { { "url", "https://example.com/article" } };
+    options.trustedGesture = false;
+    Check(!broker.Start("widget", "shell.openUri", options),
+        "external URI opening must reject background calls");
+    options.trustedGesture = true;
+    const auto opened = broker.Start("widget", "shell.openUri", options);
+    Check(static_cast<bool>(opened),
+        "external URI opening must accept an authorized trusted gesture");
+    const auto shellActions = broker.DrainActions();
+    Check(shellActions.size() == 1 &&
+            shellActions[0].arguments.at("url") ==
+                "https://example.com/article",
+        "external URI opening must preserve only the validated URL");
 }
 
 void TestInstanceAndShutdownCleanup()

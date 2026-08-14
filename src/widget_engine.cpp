@@ -1856,6 +1856,8 @@ constexpr char kMediaActionPermission[] = "media.action";
 constexpr char kDesktopReadPermission[] = "desktop.read";
 constexpr char kCalendarReadPermission[] = "calendar.read";
 constexpr char kCalendarWritePermission[] = "calendar.write";
+constexpr char kNetworkInternetPermission[] = "network.internet";
+constexpr char kShellLaunchPermission[] = "shell.launch";
 constexpr char kAppDiscoveryPermission[] = "app.discovery";
 constexpr char kAppLaunchPermission[] = "app.launch";
 constexpr char kNotificationPostPermission[] = "notification.post";
@@ -3450,6 +3452,125 @@ static int lua_TaskStart(lua_State* state)
                 "task.start: notification.show message must contain 1 to 2048 bytes of valid UTF-8");
         arguments.emplace("title", std::move(title));
         arguments.emplace("message", std::move(message));
+    }
+    else if (taskName == "network.request")
+    {
+        if (!hasArguments)
+            return luaL_error(state,
+                "task.start: network.request requires an arguments table");
+        lua_pushnil(state);
+        while (lua_next(state, 2) != 0)
+        {
+            if (lua_type(state, -2) != LUA_TSTRING)
+            {
+                lua_pop(state, 2);
+                return luaL_error(state,
+                    "task.start: network.request argument keys must be strings");
+            }
+            size_t keyLength = 0;
+            const char* keyValue = lua_tolstring(state, -2, &keyLength);
+            const std::string_view key(
+                keyValue ? keyValue : "", keyLength);
+            if (key != "url" && key != "timeoutMs" &&
+                key != "cacheSeconds" && key != "maxBytes")
+            {
+                lua_pop(state, 2);
+                return luaL_error(state,
+                    "task.start: network.request received an unknown argument");
+            }
+            lua_pop(state, 1);
+        }
+
+        lua_getfield(state, 2, "url");
+        if (lua_type(state, -1) != LUA_TSTRING)
+        {
+            lua_pop(state, 1);
+            return luaL_error(state,
+                "task.start: network.request url must be a string");
+        }
+        size_t urlLength = 0;
+        const char* urlValue = lua_tolstring(state, -1, &urlLength);
+        std::string url(urlValue ? urlValue : "", urlLength);
+        lua_pop(state, 1);
+        if (url.empty() || url.size() > 2048 ||
+            url.find('\0') != std::string::npos ||
+            !IsValidUtf8Local(url))
+        {
+            return luaL_error(state,
+                "task.start: network.request url must contain 1 to 2048 bytes of valid UTF-8");
+        }
+        arguments.emplace("url", std::move(url));
+
+        const auto readBoundedInteger = [&](const char* field,
+            lua_Integer fallback, lua_Integer minimum,
+            lua_Integer maximum, lua_Integer& output) -> bool {
+            lua_getfield(state, 2, field);
+            if (lua_isnil(state, -1))
+                output = fallback;
+            else if (lua_isinteger(state, -1))
+                output = lua_tointeger(state, -1);
+            else
+            {
+                lua_pop(state, 1);
+                return false;
+            }
+            lua_pop(state, 1);
+            return output >= minimum && output <= maximum;
+        };
+        lua_Integer timeoutMs = 15000;
+        lua_Integer cacheSeconds = 0;
+        lua_Integer maxBytes = 512 * 1024;
+        if (!readBoundedInteger(
+                "timeoutMs", 15000, 1000, 30000, timeoutMs) ||
+            !readBoundedInteger(
+                "cacheSeconds", 0, 0, 86400, cacheSeconds) ||
+            !readBoundedInteger(
+                "maxBytes", 512 * 1024, 4096, 1024 * 1024,
+                maxBytes))
+        {
+            return luaL_error(state,
+                "task.start: network.request numeric options are out of range");
+        }
+        arguments.emplace("timeoutMs", std::to_string(timeoutMs));
+        arguments.emplace("cacheSeconds", std::to_string(cacheSeconds));
+        arguments.emplace("maxBytes", std::to_string(maxBytes));
+    }
+    else if (taskName == "shell.openUri")
+    {
+        if (!hasArguments)
+            return luaL_error(state,
+                "task.start: shell.openUri requires an arguments table");
+        lua_pushnil(state);
+        while (lua_next(state, 2) != 0)
+        {
+            if (lua_type(state, -2) != LUA_TSTRING ||
+                std::string_view(lua_tostring(state, -2)) != "url")
+            {
+                lua_pop(state, 2);
+                return luaL_error(state,
+                    "task.start: shell.openUri accepts only url");
+            }
+            lua_pop(state, 1);
+        }
+        lua_getfield(state, 2, "url");
+        if (lua_type(state, -1) != LUA_TSTRING)
+        {
+            lua_pop(state, 1);
+            return luaL_error(state,
+                "task.start: shell.openUri url must be a string");
+        }
+        size_t urlLength = 0;
+        const char* urlValue = lua_tolstring(state, -1, &urlLength);
+        std::string url(urlValue ? urlValue : "", urlLength);
+        lua_pop(state, 1);
+        if (url.empty() || url.size() > 2048 ||
+            url.find('\0') != std::string::npos ||
+            !IsValidUtf8Local(url))
+        {
+            return luaL_error(state,
+                "task.start: shell.openUri url must contain 1 to 2048 bytes of valid UTF-8");
+        }
+        arguments.emplace("url", std::move(url));
     }
     else if (taskName == "calendar.create" ||
         taskName == "calendar.update" ||
@@ -6761,6 +6882,12 @@ void WidgetEngine::InitializeWidgetTaskBroker()
     error.clear();
     (void)taskBroker_->RegisterTask(TaskDescriptor{
         "calendar.remove", kCalendarWritePermission, true, 1 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "network.request", kNetworkInternetPermission, false, 2 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "shell.openUri", kShellLaunchPermission, true, 1 }, error);
     if (previewOnly_)
     {
         mediaTaskExecutor_.reset();
@@ -6813,6 +6940,17 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 (void)appTaskExecutor_->Cancel(action.id);
             appSearchCompletions_.erase(action.id);
             calendarMutationCompletions_.erase(action.id);
+            if (const auto request = networkTaskRequests_.find(action.id);
+                request != networkTaskRequests_.end())
+            {
+                if (httpService_)
+                    (void)httpService_->Cancel(
+                        action.instanceId.empty()
+                            ? std::wstring{}
+                            : Utf8ToWideLocal(action.instanceId),
+                        request->second);
+            }
+            networkTaskCompletions_.erase(action.id);
             continue;
         }
         const auto snapshot = taskBroker_->Snapshot(action.id);
@@ -6919,6 +7057,68 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 (void)taskBroker_->Complete(
                     action.id, false, "taskExecutorUnavailable");
             }
+            continue;
+        }
+
+        if (action.name == "network.request")
+        {
+            if (action.preview)
+            {
+                HttpResponse response;
+                response.status = 200;
+                response.body =
+                    "<?xml version=\"1.0\"?><rss><channel>"
+                    "<title>Preview feed</title></channel></rss>";
+                networkTaskCompletions_.insert_or_assign(
+                    action.id, std::move(response));
+                (void)taskBroker_->Complete(action.id, true);
+                continue;
+            }
+            const auto url = action.arguments.find("url");
+            const auto timeout = action.arguments.find("timeoutMs");
+            const auto cache = action.arguments.find("cacheSeconds");
+            const auto maximum = action.arguments.find("maxBytes");
+            const auto parseInteger = [](const std::string& text,
+                int& output) {
+                const char* begin = text.data();
+                const char* end = begin + text.size();
+                const auto parsed = std::from_chars(begin, end, output);
+                return parsed.ec == std::errc{} && parsed.ptr == end;
+            };
+            int timeoutMs = 0;
+            int cacheSeconds = 0;
+            int maximumBytes = 0;
+            if (!httpService_ || url == action.arguments.end() ||
+                timeout == action.arguments.end() ||
+                cache == action.arguments.end() ||
+                maximum == action.arguments.end() ||
+                !parseInteger(timeout->second, timeoutMs) ||
+                !parseInteger(cache->second, cacheSeconds) ||
+                !parseInteger(maximum->second, maximumBytes))
+            {
+                (void)taskBroker_->Complete(
+                    action.id, false, "invalidArguments");
+                continue;
+            }
+            HttpRequestOptions options;
+            options.widgetId = owner->widgetId;
+            options.url = Utf8ToWideLocal(url->second);
+            options.method = L"GET";
+            options.timeoutMs = timeoutMs;
+            options.cacheSeconds = cacheSeconds;
+            options.maximumResponseBytes =
+                static_cast<std::uint32_t>(maximumBytes);
+            options.allowedDomains = owner->manifest.networkDomains;
+            options.allowAnyHttpOrHttpsUrl = false;
+            const int requestId = httpService_->Submit(std::move(options));
+            if (requestId <= 0)
+            {
+                (void)taskBroker_->Complete(
+                    action.id, false, "requestRejected");
+                continue;
+            }
+            networkTaskRequests_.insert_or_assign(action.id, requestId);
+            networkRequestTasks_.insert_or_assign(requestId, action.id);
             continue;
         }
 
@@ -7075,6 +7275,30 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             continue;
         }
 
+        if (action.name == "shell.openUri")
+        {
+            const auto url = action.arguments.find("url");
+            if (url == action.arguments.end())
+            {
+                (void)taskBroker_->Complete(
+                    action.id, false, "invalidArguments");
+                continue;
+            }
+            if (action.preview)
+            {
+                (void)taskBroker_->Complete(action.id, true);
+                continue;
+            }
+            const std::wstring target = Utf8ToWideLocal(url->second);
+            const bool valid = snowdesktop::http_security::
+                IsAllowedPublicHttpsUrl(target);
+            const bool accepted = valid && RuntimeOpenDesktopPath(target);
+            (void)taskBroker_->Complete(action.id, accepted,
+                accepted ? std::string{} :
+                    (valid ? "openRejected" : "invalidUrl"));
+            continue;
+        }
+
         if (action.preview)
         {
             (void)taskBroker_->Complete(action.id, true);
@@ -7098,6 +7322,8 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             appSearchCompletions_.find(completion.id);
         const auto calendarCompletion =
             calendarMutationCompletions_.find(completion.id);
+        const auto networkCompletion =
+            networkTaskCompletions_.find(completion.id);
         if (widget == widgets_.end() ||
             widget->taskIds.erase(completion.id) == 0)
         {
@@ -7105,6 +7331,8 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 appSearchCompletions_.erase(searchCompletion);
             if (calendarCompletion != calendarMutationCompletions_.end())
                 calendarMutationCompletions_.erase(calendarCompletion);
+            if (networkCompletion != networkTaskCompletions_.end())
+                networkTaskCompletions_.erase(networkCompletion);
             continue;
         }
         if (completion.ok && completion.name == "app.search" &&
@@ -7119,6 +7347,13 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             completion.name == "calendar.remove";
         if (calendarTask &&
             calendarCompletion == calendarMutationCompletions_.end())
+        {
+            completion.ok = false;
+            completion.error = "taskResultUnavailable";
+        }
+        const bool networkTask = completion.name == "network.request";
+        if (completion.ok && networkTask &&
+            networkCompletion == networkTaskCompletions_.end())
         {
             completion.ok = false;
             completion.error = "taskResultUnavailable";
@@ -7179,12 +7414,16 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
         const snowdesktop::calendar::MutationResult* calendarResult =
             calendarCompletion != calendarMutationCompletions_.end()
             ? &calendarCompletion->second : nullptr;
+        const HttpResponse* networkResult =
+            networkCompletion != networkTaskCompletions_.end()
+            ? &networkCompletion->second : nullptr;
         snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(
             trustedGestureState_, false);
         (void)InvokeLifecycleEvent(*widget, "task.complete",
             [&completion, &publicItems, nextOffset, hasMore,
                 catalogRevision, calendarTask,
-                calendarResult](lua_State* eventState) {
+                calendarResult, networkTask,
+                networkResult](lua_State* eventState) {
                 lua_pushinteger(eventState,
                     static_cast<lua_Integer>(completion.id));
                 lua_setfield(eventState, -2, "taskId");
@@ -7239,6 +7478,19 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                             calendarResult->revision);
                         lua_setfield(eventState, -2, "revision");
                     }
+                    else if (networkTask)
+                    {
+                        lua_createtable(eventState, 0, 3);
+                        lua_pushinteger(eventState, networkResult->status);
+                        lua_setfield(eventState, -2, "status");
+                        lua_pushlstring(eventState,
+                            networkResult->body.data(),
+                            networkResult->body.size());
+                        lua_setfield(eventState, -2, "body");
+                        lua_pushboolean(eventState,
+                            networkResult->fromCache ? 1 : 0);
+                        lua_setfield(eventState, -2, "fromCache");
+                    }
                     else
                     {
                         lua_createtable(eventState, 0, 1);
@@ -7259,12 +7511,19 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                             calendarResult->revision);
                         lua_setfield(eventState, -2, "currentRevision");
                     }
+                    if (networkTask && networkResult)
+                    {
+                        lua_pushinteger(eventState, networkResult->status);
+                        lua_setfield(eventState, -2, "status");
+                    }
                 }
             });
         if (searchCompletion != appSearchCompletions_.end())
             appSearchCompletions_.erase(searchCompletion);
         if (calendarCompletion != calendarMutationCompletions_.end())
             calendarMutationCompletions_.erase(calendarCompletion);
+        if (networkCompletion != networkTaskCompletions_.end())
+            networkTaskCompletions_.erase(networkCompletion);
     }
 }
 
@@ -7285,6 +7544,7 @@ void WidgetEngine::ReleaseWidgetTasks(LuaWidget& widget,
             (void)appTaskExecutor_->Cancel(taskId);
         appSearchCompletions_.erase(taskId);
         calendarMutationCompletions_.erase(taskId);
+        networkTaskCompletions_.erase(taskId);
     }
     widget.taskIds.clear();
 }
@@ -7420,6 +7680,9 @@ void WidgetEngine::Shutdown()
     appTaskExecutor_.reset();
     appSearchCompletions_.clear();
     calendarMutationCompletions_.clear();
+    networkTaskCompletions_.clear();
+    networkTaskRequests_.clear();
+    networkRequestTasks_.clear();
     taskBroker_.reset();
     widgetHostFailures_.clear();
     delete d2dState_; d2dState_ = nullptr;
@@ -9142,6 +9405,35 @@ void WidgetEngine::TickRuntime()
     {
         for (auto& response : httpService_->Drain())
         {
+            if (const auto task = networkRequestTasks_.find(response.id);
+                task != networkRequestTasks_.end())
+            {
+                const std::uint64_t taskId = task->second;
+                networkRequestTasks_.erase(task);
+                networkTaskRequests_.erase(taskId);
+                const bool ok = response.error.empty() &&
+                    response.status >= 200 && response.status < 300;
+                std::string error;
+                if (!ok)
+                {
+                    if (response.error == "Cancelled")
+                        error = "canceled";
+                    else if (response.error == "Response too large")
+                        error = "responseTooLarge";
+                    else if (!response.error.empty())
+                        error = response.error.find("Redirect") !=
+                            std::string::npos
+                            ? "redirectRejected" : "networkError";
+                    else
+                        error = "httpStatus";
+                }
+                networkTaskCompletions_.insert_or_assign(
+                    taskId, response);
+                if (taskBroker_)
+                    (void)taskBroker_->Complete(
+                        taskId, ok, std::move(error));
+                continue;
+            }
             int index = FindWidget(response.widgetId);
             if (index < 0) continue;
             auto& widget = widgets_[index];
@@ -11344,6 +11636,8 @@ bool WidgetEngine::RuntimeCancelTask(
         appSearchCompletions_.erase(taskId);
     if (canceled)
         calendarMutationCompletions_.erase(taskId);
+    if (canceled)
+        networkTaskCompletions_.erase(taskId);
     return canceled;
 }
 

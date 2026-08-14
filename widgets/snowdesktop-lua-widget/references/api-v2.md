@@ -379,9 +379,11 @@ CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.pow
 
 当前公开异步媒体动作 `media.toggle`、`media.next`、`media.previous`，应用任务
 `app.search`、`app.launch`，一次性通知任务 `notification.show`，以及本地日历写入
-任务 `calendar.create/update/remove`。它们对应
+任务 `calendar.create/update/remove`、公网读取任务 `network.request` 和外部链接动作
+`shell.openUri`。它们对应
 feature ID `task.start`、`task.media.control`、`task.app.search`、`task.app.launch`
-、`task.notification.show` 和 `task.calendar.write`。媒体动作要求 `media.action` 权限，而且只能在
+、`task.notification.show`、`task.calendar.write`、`task.network.request` 和
+`task.shell.openUri`。媒体动作要求 `media.action` 权限，而且只能在
 `click/doubleClick/pointerDown/pointerUp/wheel`、宿主按钮、菜单命令或由宿主明确
 标记来源的打开回调同步调用栈内启动：
 
@@ -471,6 +473,39 @@ local updateId, err = task.start("calendar.update", {
 `invalid_time`、`invalid_reminder`、`event_limit`、`save_failed`、
 `permissionDenied`、`userGestureRequired` 和 `previewReadOnly`。
 
+`network.request` 要求 `network.internet`，当前只提供无凭据、无 Cookie、无自定义头部和
+请求体的 HTTPS `GET`。清单必须在 `networkDomains` 中逐项声明精确主机名；不支持通配符、
+子域继承、localhost、局域网地址或 IP 重定向。每实例该任务最多并发 2 个，参数只接受：
+
+- `url`：1–2048 字节有效 UTF-8，主机必须命中清单；
+- `timeoutMs`：1000–30000，默认 15000；
+- `cacheSeconds`：0–86400，默认 0，缓存按实例、请求与响应上限隔离；
+- `maxBytes`：4096–1048576，默认 524288。
+
+```lua
+local requestId, err = task.start("network.request", {
+    url = "https://www.example.com/feed.xml",
+    timeoutMs = 15000,
+    cacheSeconds = 120,
+    maxBytes = 512 * 1024,
+})
+
+-- 成功：event.value = { status, body, fromCache }
+-- HTTP 响应失败时：event.error == "httpStatus"，event.status 可用
+```
+
+重定向的每一跳都重新检查 HTTPS、精确清单域名、DNS 解析地址和实际连接地址。响应在
+worker 中读取，超限立即失败，不会把慢网络 I/O 放进 UI/render 线程。稳定完成错误包括
+`requestRejected`、`networkError`、`redirectRejected`、`responseTooLarge`、
+`httpStatus`、`permissionRevoked` 和 `canceled`。预览返回确定性的最小 RSS mock，不发起
+网络连接。动态设置如果指向未声明主机，会得到 `requestRejected`，组件不能据此扩大权限。
+
+`shell.openUri` 要求 `shell.launch` 和当前可信用户手势，只接受不含用户名/密码的公网
+HTTPS URL；`http:`、`file:`、自定义 scheme、localhost、局域网和 IP 内网地址均被拒绝。
+成功值为 `{ accepted = true }`，仅表示宿主 Shell 队列接受请求。稳定错误包括
+`invalidUrl`、`openRejected`、`permissionDenied`、`userGestureRequired` 和 `canceled`。
+阅读器等非核心打开场景应把 `shell.launch` 放入 `optionalPermissions`，无授权时仍显示内容。
+
 启动成功只表示任务进入宿主队列。WinRT 媒体调用在独立工作线程执行；完成后由
 `event.kind == "task.complete"` 串行投递，事件包含 `taskId/task/ok`。成功时
 `event.value.accepted == true`；失败时 `event.error` 为稳定错误码，例如
@@ -481,7 +516,7 @@ local updateId, err = task.start("calendar.update", {
 `task.cancel(taskId)` 只接受当前 Lua VM 自己持有的任务。卸载、热重载、撤权和
 宿主关闭会自动取消；热重载使用 VM owner token，旧任务结果不会投递给新 VM。
 预览不会访问系统媒体会话或系统通知，而是异步返回确定性的 `accepted=true` mock。
-三个媒体动作不接受参数，第二个参数只能省略、为 nil 或空表；应用和通知任务拒绝
+三个媒体动作不接受参数，第二个参数只能省略、为 nil 或空表；其他任务拒绝
 未知字段、错误类型和越界数值。API v1 的
 `media.playPause/next/previous` 不会注册进 v2 VM，不能绕过任务的手势门禁。
 

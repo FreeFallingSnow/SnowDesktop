@@ -722,14 +722,14 @@ local frame = audio:value()
 
 ### 12.4 一次性任务
 
-网络请求、搜索和可能较慢的查询最终使用统一任务 ID；下例网络任务仍属于后续
-origins 模型完成后的目标形态：
+网络请求、搜索和可能较慢的查询统一使用任务 ID。当前公网请求已经以精确域名、
+HTTPS GET、响应上限和每跳重定向复检接入任务代理：
 
 ```lua
 local request = task.start("network.request", {
     url = "https://api.example.com/data",
-    method = "GET",
-    cacheSeconds = 300
+    cacheSeconds = 300,
+    maxBytes = 512 * 1024
 })
 
 -- event.kind == "task.complete"
@@ -753,8 +753,9 @@ local taskId, err = task.start("media.toggle")
 - v2 首版不引入隐式 Promise；协程封装可在稳定任务契约之上后续增加。
 
 当前已公开 `task.start`、`task.cancel`、`task.media.control`、`task.app.search`、
-`task.app.launch`、`task.notification.show`、`task.calendar.write` feature，三个
-媒体动作、两个应用任务、一次性通知任务和本地日历 create/update/remove 任务。
+`task.app.launch`、`task.notification.show`、`task.calendar.write`、
+`task.network.request` 和 `task.shell.openUri` feature，三个媒体动作、两个应用任务、
+一次性通知任务、本地日历 create/update/remove、公网 HTTPS GET 和可信手势外链任务。
 `WidgetTaskBroker` 生命周期内核负责任务描述符注册、全局/实例/
 任务类型并发上限、权限和可信手势门禁、preview 标记、显式取消、撤权取消、实例
 dispose 与 shutdown 原因，以及执行器完成确认均有独立契约测试。实时与预览引擎均
@@ -1408,15 +1409,15 @@ v2.0 资源契约：
 {
   "name": "network.request",
   "sinceApi": 2,
-  "feature": "task.network",
-  "permission": "network.internet|network.local",
-  "preview": "denied",
+  "feature": "task.network.request",
+  "permission": "network.internet",
+  "preview": "deterministic-mock",
   "thread": "host-dispatch",
-  "arguments": [],
+  "arguments": ["url", "timeoutMs", "cacheSeconds", "maxBytes"],
   "result": "taskHandle",
   "limits": {
-    "concurrentPerInstance": 4,
-    "requestBytes": 65536,
+    "concurrentPerInstance": 2,
+    "requestBytes": 0,
     "responseBytes": 1048576
   }
 }
@@ -1568,7 +1569,8 @@ v2.0 资源契约：
 
 当前仓库有 11 个内置组件；`analog-clock`、`digital-clock`、`media-controls`、
 `system-monitor`、`pomodoro`、`month-calendar`、`sticky-note`、`reminders` 与
-`agenda` 已切到 schema/API v2，其余 2 个仍待迁移。这九个组件仍需完成真实
+`agenda`、`rss-reader` 已切到 schema/API v2，仅 `quick-launcher` 仍待迁移。这十个
+组件仍需完成真实
 桌面的多 DPI、主题、隐藏唤醒、系统数据、滚动、媒体控制、元素菜单与应用启动验收，
 因此只能计为代码迁移完成，不能计为最终验证完成。只有全部内置组件完成迁移和验收
 后才能宣布稳定。

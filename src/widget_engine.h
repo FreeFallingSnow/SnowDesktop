@@ -1194,6 +1194,10 @@ private:
     std::unordered_map<std::uint64_t,
         snowdesktop::calendar::MutationResult>
         calendarMutationCompletions_;
+    std::unordered_map<std::uint64_t, HttpResponse>
+        networkTaskCompletions_;
+    std::unordered_map<std::uint64_t, int> networkTaskRequests_;
+    std::unordered_map<int, std::uint64_t> networkRequestTasks_;
     snowdesktop::widget_runtime::WidgetTrustedGestureState
         trustedGestureState_;
     std::uint64_t nextWidgetRuntimeToken_ = 0;

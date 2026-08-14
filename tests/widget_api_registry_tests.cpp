@@ -332,6 +332,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "task.media.control") &&
             snowdesktop::widget_api::SupportsFeature(
+                "task.network.request") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "task.notification.show") &&
             snowdesktop::widget_api::SupportsFeature(
                 "task.app.launch") &&
@@ -340,6 +342,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "task.calendar.write") &&
             snowdesktop::widget_api::SupportsFeature("task.start") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "task.shell.openUri") &&
             snowdesktop::widget_api::SupportsFeature("time.calendar") &&
             snowdesktop::widget_api::SupportsFeature("widget.context") &&
             snowdesktop::widget_api::SupportsFeature("widget.panel") &&

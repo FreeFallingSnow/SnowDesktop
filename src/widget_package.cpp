@@ -1890,9 +1890,11 @@ bool WidgetPackageValidator::ReadManifest(
                     permission);
     }
     if (!manifest.networkDomains.empty() &&
-        !uniquePermissions.contains("network.http"))
+        !uniquePermissions.contains("network.http") &&
+        !uniquePermissions.contains("network.internet"))
         report.Add(ValidationSeverity::Error, "manifest.networkDomains",
-            manifestPath, "networkDomains requires network.http permission");
+            manifestPath,
+            "networkDomains requires network.http or network.internet permission");
     std::set<std::string> uniqueDomains;
     for (const auto& domain : manifest.networkDomains)
     {

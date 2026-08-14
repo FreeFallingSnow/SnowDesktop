@@ -775,6 +775,15 @@ int main()
         "\"network.http\"", "\"*.example.com\"");
     Expect(!validator.ValidateDirectory(badNetwork).Ok(),
         "wildcard network domains are rejected");
+    const auto v2Network = root / L"v2-network";
+    MakePackage(v2Network, "1.0.0",
+        "6c22cbe5-055b-42db-8198-915297034d5e",
+        "\"network.internet\"", "\"feeds.example.net\"",
+        "main.lua", "", 2, 2);
+    Write(v2Network / L"main.lua",
+        "return widget.define({render=function() end})\n");
+    Expect(validator.ValidateDirectory(v2Network).Ok(),
+        "v2 public network permission accepts explicit domains");
     const auto calendarPackage = root / L"calendar-package";
     MakePackage(calendarPackage, "1.0.0",
         "fd084e05-bb0f-43d7-977d-426ae39c1ab9",

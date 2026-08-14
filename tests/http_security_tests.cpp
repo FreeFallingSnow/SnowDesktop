@@ -17,6 +17,7 @@ void Expect(bool condition, const char* message)
 int main()
 {
     using snowdesktop::http_security::IsAllowedRemoteIpLiteral;
+    using snowdesktop::http_security::IsAllowedPublicHttpsUrl;
     using snowdesktop::http_security::IsAllowedUrlForDomains;
 
     Expect(IsAllowedRemoteIpLiteral(L"8.8.8.8"),
@@ -127,6 +128,16 @@ int main()
     Expect(!IsAllowedUrlForDomains(
             L"not a URL", {}, true),
         "widget HTTP mode rejects malformed URLs");
+
+    Expect(IsAllowedPublicHttpsUrl(L"https://example.com/article?id=1"),
+        "shell HTTPS policy accepts a public URL");
+    Expect(!IsAllowedPublicHttpsUrl(L"http://example.com/article"),
+        "shell HTTPS policy rejects plaintext HTTP");
+    Expect(!IsAllowedPublicHttpsUrl(L"https://user@example.com/article"),
+        "shell HTTPS policy rejects embedded credentials");
+    Expect(!IsAllowedPublicHttpsUrl(L"https://localhost/article") &&
+            !IsAllowedPublicHttpsUrl(L"https://192.168.1.2/article"),
+        "shell HTTPS policy rejects local targets");
 
     if (failures == 0)
         std::cout << "HTTP security tests passed\n";

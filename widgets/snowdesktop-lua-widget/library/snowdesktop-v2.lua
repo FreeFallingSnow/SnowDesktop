@@ -246,11 +246,12 @@
 ---@field topic? string Updated data subscription topic for data.change.
 ---@field revision? integer Monotonic provider revision for data.change.
 ---@field taskId? integer
----@field task? 'media.toggle'|'media.next'|'media.previous'|'app.search'|'app.launch'|'notification.show'|'calendar.create'|'calendar.update'|'calendar.remove'|string
+---@field task? 'media.toggle'|'media.next'|'media.previous'|'app.search'|'app.launch'|'notification.show'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'|string
 ---@field ok? boolean
----@field value? SnowMediaTaskValue|SnowAppSearchTaskValue|SnowCalendarMutationTaskValue|SnowStateValue
+---@field value? SnowMediaTaskValue|SnowAppSearchTaskValue|SnowCalendarMutationTaskValue|SnowNetworkTaskValue|SnowStateValue
 ---@field error? string
 ---@field currentRevision? integer Latest revision returned by a failed calendar update conflict.
+---@field status? integer HTTP status returned by a failed network.request after a response was received.
 
 ---@class SnowApiInfo
 ---@field current integer
@@ -755,11 +756,26 @@ function data.subscribe(topic, options) end
 ---@field id string Host-issued event ID; preserved for update/remove.
 ---@field revision integer New revision for create/update; zero for remove.
 
+---@class SnowNetworkRequestArguments
+---@field url string Public HTTPS URL whose exact hostname is declared in widget.json networkDomains.
+---@field timeoutMs? integer 1000 through 30000; defaults to 15000.
+---@field cacheSeconds? integer 0 through 86400; defaults to 0.
+---@field maxBytes? integer 4096 through 1048576; defaults to 524288.
+
+---@class SnowNetworkTaskValue
+---@field status integer Successful 2xx HTTP status.
+---@field body string Response bytes, bounded by maxBytes.
+---@field fromCache boolean Whether the response came from the instance-scoped HTTP cache.
+
+---@class SnowShellOpenUriArguments
+---@field url string Public HTTPS URL without embedded credentials.
+
 ---@class snow.task
 task = {}
 
----Start an asynchronous one-shot task. app.search and notification.show do
----not require a gesture; app.launch and media controls require a trusted gesture.
+---Start an asynchronous one-shot task. app.search, notification.show,
+---calendar create/update, and network.request do not require a gesture;
+---app.launch, shell.openUri, media controls, and calendar removal do.
 ---Runtime rejections return nil plus a stable error code.
 ---@overload fun(name: 'app.search', arguments: SnowAppSearchArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'app.launch', arguments: SnowAppLaunchArguments): taskId: integer?, error: string?
@@ -767,7 +783,9 @@ task = {}
 ---@overload fun(name: 'calendar.create', arguments: SnowCalendarEventArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'calendar.update', arguments: SnowCalendarUpdateArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'calendar.remove', arguments: SnowCalendarRemoveArguments): taskId: integer?, error: string?
----@param name 'media.toggle'|'media.next'|'media.previous'|'app.search'|'app.launch'|'notification.show'|'calendar.create'|'calendar.update'|'calendar.remove'
+---@overload fun(name: 'network.request', arguments: SnowNetworkRequestArguments): taskId: integer?, error: string?
+---@overload fun(name: 'shell.openUri', arguments: SnowShellOpenUriArguments): taskId: integer?, error: string?
+---@param name 'media.toggle'|'media.next'|'media.previous'|'app.search'|'app.launch'|'notification.show'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'
 ---@param arguments? table Must be omitted or empty for media tasks.
 ---@return integer? taskId
 ---@return string? error
