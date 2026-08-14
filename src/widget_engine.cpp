@@ -25,6 +25,7 @@
 #include "personalization.h"
 #include "widget_package.h"
 #include "steam_workshop_source.h"
+#include "widget_api_registry.h"
 
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -8600,137 +8601,142 @@ static void PushWidgetL10nAPI(lua_State* L, const LuaWidgetManifest& manifest)
 
 void WidgetEngine::RegisterDrawAPI(lua_State* L)
 {
-    lua_newtable(L);
-    lua_pushcfunction(L, lua_DrawText);  lua_setfield(L, -2, "text");
-    lua_pushcfunction(L, lua_MeasureText); lua_setfield(L, -2, "measureText");
-    lua_pushcfunction(L, lua_DrawRect);  lua_setfield(L, -2, "rect");
-    lua_pushcfunction(L, lua_DrawPushClip); lua_setfield(L, -2, "pushClip");
-    lua_pushcfunction(L, lua_DrawPopClip); lua_setfield(L, -2, "popClip");
-    lua_pushcfunction(L, lua_DrawStrokeRect); lua_setfield(L, -2, "strokeRect");
-    lua_pushcfunction(L, lua_DrawLine);  lua_setfield(L, -2, "line");
-    lua_pushcfunction(L, lua_DrawCircle);lua_setfield(L, -2, "circle");
-    lua_pushcfunction(L, lua_DrawFa);    lua_setfield(L, -2, "fa");
-    lua_pushcfunction(L, lua_DrawFluent);lua_setfield(L, -2, "fluent");
-    lua_pushcfunction(L, lua_DrawImage); lua_setfield(L, -2, "image");
-    lua_pushcfunction(L, lua_DrawIcon);  lua_setfield(L, -2, "icon");
-    lua_setglobal(L, "draw");
+    using snowdesktop::widget_api::FunctionDescriptor;
+    using snowdesktop::widget_api::RegisterLibrary;
 
-    lua_newtable(L);
-    lua_pushcfunction(L, lua_WidgetInfo); lua_setfield(L, -2, "info");
-    lua_pushcfunction(L, lua_WidgetSetTitle); lua_setfield(L, -2, "setTitle");
-    lua_pushcfunction(L, lua_WidgetOpenSettings); lua_setfield(L, -2, "openSettings");
-    lua_pushcfunction(L, lua_WidgetOpenPanel); lua_setfield(L, -2, "openPanel");
-    lua_pushcfunction(L, lua_WidgetClosePanel); lua_setfield(L, -2, "closePanel");
-    lua_pushcfunction(L, lua_WidgetInvalidate); lua_setfield(L, -2, "invalidate");
-    lua_pushcfunction(L, lua_WidgetLog); lua_setfield(L, -2, "log");
-    lua_pushcfunction(L, lua_WidgetTheme); lua_setfield(L, -2, "theme");
-    lua_pushcfunction(L, lua_WidgetEditText); lua_setfield(L, -2, "editText");
-    lua_pushcfunction(L, lua_WidgetSetTimer); lua_setfield(L, -2, "setTimer");
-    lua_pushcfunction(L, lua_WidgetCancelTimer); lua_setfield(L, -2, "cancelTimer");
-    lua_setglobal(L, "widget");
+    static constexpr FunctionDescriptor draw[] = {
+        { "text", lua_DrawText },
+        { "measureText", lua_MeasureText },
+        { "rect", lua_DrawRect },
+        { "pushClip", lua_DrawPushClip },
+        { "popClip", lua_DrawPopClip },
+        { "strokeRect", lua_DrawStrokeRect },
+        { "line", lua_DrawLine },
+        { "circle", lua_DrawCircle },
+        { "fa", lua_DrawFa },
+        { "fluent", lua_DrawFluent },
+        { "image", lua_DrawImage },
+        { "icon", lua_DrawIcon },
+    };
+    static constexpr FunctionDescriptor widget[] = {
+        { "info", lua_WidgetInfo },
+        { "setTitle", lua_WidgetSetTitle },
+        { "openSettings", lua_WidgetOpenSettings },
+        { "openPanel", lua_WidgetOpenPanel },
+        { "closePanel", lua_WidgetClosePanel },
+        { "invalidate", lua_WidgetInvalidate },
+        { "log", lua_WidgetLog },
+        { "theme", lua_WidgetTheme },
+        { "editText", lua_WidgetEditText },
+        { "setTimer", lua_WidgetSetTimer },
+        { "cancelTimer", lua_WidgetCancelTimer },
+    };
+    static constexpr FunctionDescriptor system[] = {
+        { "getTime", lua_GetTime },
+        { "notify", lua_Notify },
+        { "cpu", lua_SystemCpu },
+        { "memory", lua_SystemMemory },
+        { "battery", lua_SystemBattery },
+        { "network", lua_SystemNetwork },
+        { "gpu", lua_SystemGpu },
+    };
+    static constexpr FunctionDescriptor media[] = {
+        { "current", lua_MediaCurrent },
+        { "playPause", lua_MediaPlayPause },
+        { "next", lua_MediaNext },
+        { "previous", lua_MediaPrevious },
+    };
+    static constexpr FunctionDescriptor http[] = {
+        { "request", lua_HttpRequest },
+        { "cancel", lua_HttpCancel },
+    };
+    static constexpr FunctionDescriptor ui[] = {
+        { "textInput", lua_UiTextInput },
+        { "textArea", lua_UiTextArea },
+        { "focusInput", lua_UiFocusInput },
+        { "button", lua_UiButton },
+        { "toggle", lua_UiToggle },
+        { "progress", lua_UiProgress },
+        { "scrollArea", lua_UiScrollArea },
+        { "virtualList", lua_UiVirtualList },
+        { "setScrollOffset", lua_UiSetScrollOffset },
+    };
+    static constexpr FunctionDescriptor desktop[] = {
+        { "items", lua_DesktopItems },
+        { "selection", lua_DesktopSelection },
+        { "find", lua_DesktopFind },
+        { "findApplications", lua_DesktopFindApplications },
+        { "open", lua_DesktopOpen },
+        { "reveal", lua_DesktopReveal },
+        { "refresh", lua_DesktopRefresh },
+    };
+    static constexpr FunctionDescriptor everything[] = {
+        { "search", lua_EverythingSearch },
+    };
+    static constexpr FunctionDescriptor calendar[] = {
+        { "selectedDate", lua_CalendarSelectedDate },
+        { "setSelectedDate", lua_CalendarSetSelectedDate },
+        { "dateInfo", lua_CalendarDateInfo },
+        { "addDays", lua_CalendarAddDays },
+        { "events", lua_CalendarEvents },
+        { "create", lua_CalendarCreate },
+        { "update", lua_CalendarUpdate },
+        { "remove", lua_CalendarRemove },
+    };
+    static constexpr FunctionDescriptor layout[] = {
+        { "width", lua_LayoutWidth },
+        { "height", lua_LayoutHeight },
+        { "columns", lua_LayoutColumns },
+        { "rows", lua_LayoutRows },
+        { "sizeClass", lua_LayoutSizeClass },
+        { "cellWidth", lua_LayoutCellWidth },
+        { "cellHeight", lua_LayoutCellHeight },
+        { "cellScale", lua_LayoutCellScale },
+        { "cu", lua_LayoutCu },
+        { "fontCu", lua_LayoutFontCu },
+        { "cellGap", lua_LayoutCellGap },
+        { "barHeight", lua_LayoutBarHeight },
+    };
+    static constexpr FunctionDescriptor storage[] = {
+        { "get", lua_StorageGet },
+        { "set", lua_StorageSet },
+        { "remove", lua_StorageRemove },
+        { "keys", lua_StorageKeys },
+    };
+    static constexpr FunctionDescriptor imgui[] = {
+        { "text", lua_ImGuiText },
+        { "textWrapped", lua_ImGuiTextWrapped },
+        { "separator", lua_ImGuiSeparator },
+        { "sameLine", lua_ImGuiSameLine },
+        { "settingRow", lua_ImGuiSettingRow },
+        { "spacing", lua_ImGuiSpacing },
+        { "collapsingHeader", lua_ImGuiCollapsingHeader },
+        { "treeNode", lua_ImGuiTreeNode },
+        { "treePop", lua_ImGuiTreePop },
+        { "button", lua_ImGuiButton },
+        { "input", lua_ImGuiInputText },
+        { "inputText", lua_ImGuiInputTextSingle },
+        { "checkbox", lua_ImGuiCheckbox },
+        { "colorEdit3", lua_ImGuiColorEdit3 },
+        { "sliderFloat", lua_ImGuiSliderFloat },
+        { "sliderInt", lua_ImGuiSliderInt },
+        { "combo", lua_ImGuiCombo },
+        { "selectable", lua_ImGuiSelectable },
+        { "radio", lua_ImGuiRadio },
+        { "beginDisabled", lua_ImGuiBeginDisabled },
+        { "endDisabled", lua_ImGuiEndDisabled },
+    };
 
-    lua_newtable(L);
-    lua_pushcfunction(L, lua_GetTime);   lua_setfield(L, -2, "getTime");
-    lua_pushcfunction(L, lua_Notify);    lua_setfield(L, -2, "notify");
-    lua_pushcfunction(L, lua_SystemCpu); lua_setfield(L, -2, "cpu");
-    lua_pushcfunction(L, lua_SystemMemory); lua_setfield(L, -2, "memory");
-    lua_pushcfunction(L, lua_SystemBattery); lua_setfield(L, -2, "battery");
-    lua_pushcfunction(L, lua_SystemNetwork); lua_setfield(L, -2, "network");
-    lua_pushcfunction(L, lua_SystemGpu); lua_setfield(L, -2, "gpu");
-    lua_setglobal(L, "sys");
-
-    lua_newtable(L);
-    lua_pushcfunction(L, lua_MediaCurrent); lua_setfield(L, -2, "current");
-    lua_pushcfunction(L, lua_MediaPlayPause); lua_setfield(L, -2, "playPause");
-    lua_pushcfunction(L, lua_MediaNext); lua_setfield(L, -2, "next");
-    lua_pushcfunction(L, lua_MediaPrevious); lua_setfield(L, -2, "previous");
-    lua_setglobal(L, "media");
-
-    lua_newtable(L);
-    lua_pushcfunction(L, lua_HttpRequest); lua_setfield(L, -2, "request");
-    lua_pushcfunction(L, lua_HttpCancel); lua_setfield(L, -2, "cancel");
-    lua_setglobal(L, "http");
-
-    lua_newtable(L);
-    lua_pushcfunction(L, lua_UiTextInput); lua_setfield(L, -2, "textInput");
-    lua_pushcfunction(L, lua_UiTextArea); lua_setfield(L, -2, "textArea");
-    lua_pushcfunction(L, lua_UiFocusInput); lua_setfield(L, -2, "focusInput");
-    lua_pushcfunction(L, lua_UiButton); lua_setfield(L, -2, "button");
-    lua_pushcfunction(L, lua_UiToggle); lua_setfield(L, -2, "toggle");
-    lua_pushcfunction(L, lua_UiProgress); lua_setfield(L, -2, "progress");
-    lua_pushcfunction(L, lua_UiScrollArea); lua_setfield(L, -2, "scrollArea");
-    lua_pushcfunction(L, lua_UiVirtualList); lua_setfield(L, -2, "virtualList");
-    lua_pushcfunction(L, lua_UiSetScrollOffset); lua_setfield(L, -2, "setScrollOffset");
-    lua_setglobal(L, "ui");
-
-    lua_newtable(L);
-    lua_pushcfunction(L, lua_DesktopItems); lua_setfield(L, -2, "items");
-    lua_pushcfunction(L, lua_DesktopSelection); lua_setfield(L, -2, "selection");
-    lua_pushcfunction(L, lua_DesktopFind); lua_setfield(L, -2, "find");
-    lua_pushcfunction(L, lua_DesktopFindApplications); lua_setfield(L, -2, "findApplications");
-    lua_pushcfunction(L, lua_DesktopOpen); lua_setfield(L, -2, "open");
-    lua_pushcfunction(L, lua_DesktopReveal); lua_setfield(L, -2, "reveal");
-    lua_pushcfunction(L, lua_DesktopRefresh); lua_setfield(L, -2, "refresh");
-    lua_setglobal(L, "desktop");
-
-    lua_newtable(L);
-    lua_pushcfunction(L, lua_EverythingSearch); lua_setfield(L, -2, "search");
-    lua_setglobal(L, "everything");
-
-    lua_newtable(L);
-    lua_pushcfunction(L, lua_CalendarSelectedDate); lua_setfield(L, -2, "selectedDate");
-    lua_pushcfunction(L, lua_CalendarSetSelectedDate); lua_setfield(L, -2, "setSelectedDate");
-    lua_pushcfunction(L, lua_CalendarDateInfo); lua_setfield(L, -2, "dateInfo");
-    lua_pushcfunction(L, lua_CalendarAddDays); lua_setfield(L, -2, "addDays");
-    lua_pushcfunction(L, lua_CalendarEvents); lua_setfield(L, -2, "events");
-    lua_pushcfunction(L, lua_CalendarCreate); lua_setfield(L, -2, "create");
-    lua_pushcfunction(L, lua_CalendarUpdate); lua_setfield(L, -2, "update");
-    lua_pushcfunction(L, lua_CalendarRemove); lua_setfield(L, -2, "remove");
-    lua_setglobal(L, "calendar");
-
-    lua_newtable(L);
-    lua_pushcfunction(L, lua_LayoutWidth);  lua_setfield(L, -2, "width");
-    lua_pushcfunction(L, lua_LayoutHeight); lua_setfield(L, -2, "height");
-    lua_pushcfunction(L, lua_LayoutColumns); lua_setfield(L, -2, "columns");
-    lua_pushcfunction(L, lua_LayoutRows); lua_setfield(L, -2, "rows");
-    lua_pushcfunction(L, lua_LayoutSizeClass); lua_setfield(L, -2, "sizeClass");
-    lua_pushcfunction(L, lua_LayoutCellWidth); lua_setfield(L, -2, "cellWidth");
-    lua_pushcfunction(L, lua_LayoutCellHeight); lua_setfield(L, -2, "cellHeight");
-    lua_pushcfunction(L, lua_LayoutCellScale); lua_setfield(L, -2, "cellScale");
-    lua_pushcfunction(L, lua_LayoutCu); lua_setfield(L, -2, "cu");
-    lua_pushcfunction(L, lua_LayoutFontCu); lua_setfield(L, -2, "fontCu");
-    lua_pushcfunction(L, lua_LayoutCellGap);    lua_setfield(L, -2, "cellGap");
-    lua_pushcfunction(L, lua_LayoutBarHeight);  lua_setfield(L, -2, "barHeight");
-    lua_setglobal(L, "layout");
-
-    lua_newtable(L);
-    lua_pushcfunction(L, lua_StorageGet);   lua_setfield(L, -2, "get");
-    lua_pushcfunction(L, lua_StorageSet);   lua_setfield(L, -2, "set");
-    lua_pushcfunction(L, lua_StorageRemove);lua_setfield(L, -2, "remove");
-    lua_pushcfunction(L, lua_StorageKeys);  lua_setfield(L, -2, "keys");
-    lua_setglobal(L, "storage");
-
-    lua_newtable(L);
-    lua_pushcfunction(L, lua_ImGuiText);     lua_setfield(L, -2, "text");
-    lua_pushcfunction(L, lua_ImGuiTextWrapped); lua_setfield(L, -2, "textWrapped");
-    lua_pushcfunction(L, lua_ImGuiSeparator); lua_setfield(L, -2, "separator");
-    lua_pushcfunction(L, lua_ImGuiSameLine);  lua_setfield(L, -2, "sameLine");
-    lua_pushcfunction(L, lua_ImGuiSettingRow); lua_setfield(L, -2, "settingRow");
-    lua_pushcfunction(L, lua_ImGuiSpacing);   lua_setfield(L, -2, "spacing");
-    lua_pushcfunction(L, lua_ImGuiCollapsingHeader); lua_setfield(L, -2, "collapsingHeader");
-    lua_pushcfunction(L, lua_ImGuiTreeNode);  lua_setfield(L, -2, "treeNode");
-    lua_pushcfunction(L, lua_ImGuiTreePop);   lua_setfield(L, -2, "treePop");
-    lua_pushcfunction(L, lua_ImGuiButton);   lua_setfield(L, -2, "button");
-    lua_pushcfunction(L, lua_ImGuiInputText);lua_setfield(L, -2, "input");
-    lua_pushcfunction(L, lua_ImGuiInputTextSingle); lua_setfield(L, -2, "inputText");
-    lua_pushcfunction(L, lua_ImGuiCheckbox); lua_setfield(L, -2, "checkbox");
-    lua_pushcfunction(L, lua_ImGuiColorEdit3); lua_setfield(L, -2, "colorEdit3");
-    lua_pushcfunction(L, lua_ImGuiSliderFloat); lua_setfield(L, -2, "sliderFloat");
-    lua_pushcfunction(L, lua_ImGuiSliderInt); lua_setfield(L, -2, "sliderInt");
-    lua_pushcfunction(L, lua_ImGuiCombo); lua_setfield(L, -2, "combo");
-    lua_pushcfunction(L, lua_ImGuiSelectable); lua_setfield(L, -2, "selectable");
-    lua_pushcfunction(L, lua_ImGuiRadio); lua_setfield(L, -2, "radio");
-    lua_pushcfunction(L, lua_ImGuiBeginDisabled); lua_setfield(L, -2, "beginDisabled");
-    lua_pushcfunction(L, lua_ImGuiEndDisabled); lua_setfield(L, -2, "endDisabled");
-    lua_setglobal(L, "imgui");
+    RegisterLibrary(L, "draw", draw);
+    RegisterLibrary(L, "widget", widget);
+    RegisterLibrary(L, "sys", system);
+    RegisterLibrary(L, "media", media);
+    RegisterLibrary(L, "http", http);
+    RegisterLibrary(L, "ui", ui);
+    RegisterLibrary(L, "desktop", desktop);
+    RegisterLibrary(L, "everything", everything);
+    RegisterLibrary(L, "calendar", calendar);
+    RegisterLibrary(L, "layout", layout);
+    RegisterLibrary(L, "storage", storage);
+    RegisterLibrary(L, "imgui", imgui);
 }
