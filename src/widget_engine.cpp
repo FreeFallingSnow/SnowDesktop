@@ -35,6 +35,8 @@
 #include <imgui_impl_win32.h>
 #include <imgui_impl_dx11.h>
 
+#include <dwrite_3.h>
+
 #include <shlwapi.h>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -644,6 +646,12 @@ private:
     std::jthread worker_;
 };
 
+struct PrivateFontResource
+{
+    ComPtr<IDWriteFontCollection1> collection;
+    std::wstring familyName;
+};
+
 struct D2DState
 {
     ID2D1DeviceContext* ctx = nullptr;
@@ -668,7 +676,66 @@ struct D2DState
     ID2D1DeviceContext* brushContext = nullptr;
     std::unordered_map<std::uint32_t, ComPtr<ID2D1SolidColorBrush>> brushCache;
     std::unordered_map<std::uint64_t, ComPtr<IDWriteTextFormat>> textFormatCache;
+    std::unordered_map<std::wstring, PrivateFontResource> privateFonts;
+    std::unordered_map<std::wstring, ComPtr<IDWriteTextFormat>>
+        privateTextFormatCache;
 };
+
+static PrivateFontResource* LoadPrivateFont(
+    D2DState* state, const std::wstring& path)
+{
+    if (!state || !state->dwrite || path.empty()) return nullptr;
+    if (auto found = state->privateFonts.find(path);
+        found != state->privateFonts.end())
+        return &found->second;
+    ComPtr<IDWriteFactory3> factory;
+    if (FAILED(state->dwrite->QueryInterface(IID_PPV_ARGS(&factory))) ||
+        !factory)
+        return nullptr;
+    ComPtr<IDWriteFontFile> fontFile;
+    if (FAILED(state->dwrite->CreateFontFileReference(
+            path.c_str(), nullptr, &fontFile)) || !fontFile)
+        return nullptr;
+    ComPtr<IDWriteFontSetBuilder> baseBuilder;
+    ComPtr<IDWriteFontSetBuilder1> builder;
+    if (FAILED(factory->CreateFontSetBuilder(&baseBuilder)) || !baseBuilder ||
+        FAILED(baseBuilder.As(&builder)) || !builder ||
+        FAILED(builder->AddFontFile(fontFile.Get())))
+        return nullptr;
+    ComPtr<IDWriteFontSet> fontSet;
+    ComPtr<IDWriteFontCollection1> collection;
+    if (FAILED(baseBuilder->CreateFontSet(&fontSet)) || !fontSet ||
+        FAILED(factory->CreateFontCollectionFromFontSet(
+            fontSet.Get(), &collection)) || !collection ||
+        collection->GetFontFamilyCount() == 0)
+        return nullptr;
+    ComPtr<IDWriteFontFamily> family;
+    ComPtr<IDWriteLocalizedStrings> names;
+    if (FAILED(collection->GetFontFamily(0, &family)) || !family ||
+        FAILED(family->GetFamilyNames(&names)) || !names ||
+        names->GetCount() == 0)
+        return nullptr;
+    UINT32 nameIndex = 0;
+    BOOL exists = FALSE;
+    wchar_t locale[LOCALE_NAME_MAX_LENGTH]{};
+    if (GetUserDefaultLocaleName(locale, LOCALE_NAME_MAX_LENGTH) > 0)
+        names->FindLocaleName(locale, &nameIndex, &exists);
+    if (!exists)
+        names->FindLocaleName(L"en-US", &nameIndex, &exists);
+    if (!exists) nameIndex = 0;
+    UINT32 nameLength = 0;
+    if (FAILED(names->GetStringLength(nameIndex, &nameLength)) ||
+        nameLength == 0 || nameLength > 255)
+        return nullptr;
+    std::wstring familyName(nameLength + 1, L'\0');
+    if (FAILED(names->GetString(nameIndex, familyName.data(),
+            nameLength + 1)))
+        return nullptr;
+    familyName.resize(nameLength);
+    auto [inserted, added] = state->privateFonts.emplace(path,
+        PrivateFontResource{ std::move(collection), std::move(familyName) });
+    return added ? &inserted->second : nullptr;
+}
 
 static ID2D1SolidColorBrush* GetCachedBrush(D2DState* state, int color, float alpha = 1.0f)
 {
@@ -705,7 +772,7 @@ static IDWriteTextFormat* GetCachedTextFormat(D2DState* state, float size,
     DWRITE_WORD_WRAPPING wrapping = DWRITE_WORD_WRAPPING_WRAP,
     bool fontAwesome = false,
     bool verticallyCentered = false,
-    bool fluent = false)
+    bool fluent = false, const std::wstring* privateFontPath = nullptr)
 {
     if (!state || !state->dwrite) return nullptr;
     const auto sizeKey = static_cast<std::uint64_t>(std::clamp(
@@ -717,7 +784,35 @@ static IDWriteTextFormat* GetCachedTextFormat(D2DState* state, float size,
         (static_cast<std::uint64_t>(fontAwesome) << 40) |
         (static_cast<std::uint64_t>(verticallyCentered) << 41) |
         (static_cast<std::uint64_t>(fluent) << 42);
-    if (auto found = state->textFormatCache.find(key); found != state->textFormatCache.end())
+    if (privateFontPath)
+    {
+        const std::wstring privateKey = *privateFontPath + L"#" +
+            std::to_wstring(key);
+        if (auto found = state->privateTextFormatCache.find(privateKey);
+            found != state->privateTextFormatCache.end())
+            return found->second.Get();
+        PrivateFontResource* resource = LoadPrivateFont(
+            state, *privateFontPath);
+        if (!resource) return nullptr;
+        ComPtr<IDWriteTextFormat> format;
+        state->dwrite->CreateTextFormat(resource->familyName.c_str(),
+            resource->collection.Get(), weight, DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL, size, L"", &format);
+        if (!format) return nullptr;
+        format->SetTextAlignment(centered
+            ? DWRITE_TEXT_ALIGNMENT_CENTER
+            : DWRITE_TEXT_ALIGNMENT_LEADING);
+        format->SetParagraphAlignment(centered || verticallyCentered
+            ? DWRITE_PARAGRAPH_ALIGNMENT_CENTER
+            : DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+        format->SetWordWrapping(wrapping);
+        if (state->privateTextFormatCache.size() >= 128)
+            state->privateTextFormatCache.clear();
+        return state->privateTextFormatCache.emplace(
+            privateKey, std::move(format)).first->second.Get();
+    }
+    if (auto found = state->textFormatCache.find(key);
+        found != state->textFormatCache.end())
         return found->second.Get();
 
     ComPtr<IDWriteTextFormat> format;
@@ -957,6 +1052,59 @@ static std::wstring BoundWidgetId(lua_State* state)
     return result;
 }
 
+static std::optional<std::wstring> ResolvePackageAssetWithinRoot(
+    const std::filesystem::path& packageRoot,
+    const std::wstring& relativePath);
+
+static std::optional<std::wstring> ResolveCurrentPackageAsset(
+    lua_State* state, const std::wstring& relativePath)
+{
+    lua_getfield(state, LUA_REGISTRYINDEX, "__widget_package_root");
+    size_t length = 0;
+    const char* rootRaw = lua_tolstring(state, -1, &length);
+    const std::filesystem::path root = rootRaw
+        ? Utf8ToWideLocal(std::string(rootRaw, length))
+        : std::wstring{};
+    lua_pop(state, 1);
+    if (root.empty()) return std::nullopt;
+    return ResolvePackageAssetWithinRoot(root, relativePath);
+}
+
+static std::optional<snowdesktop::widget::PackageResource>
+CurrentPackageResource(lua_State* state, const std::string& name,
+    const char* expectedType = nullptr)
+{
+    lua_getfield(state, LUA_REGISTRYINDEX, "__widget_resources");
+    if (!lua_istable(state, -1))
+    {
+        lua_pop(state, 1);
+        return std::nullopt;
+    }
+    lua_getfield(state, -1, name.c_str());
+    if (!lua_istable(state, -1))
+    {
+        lua_pop(state, 2);
+        return std::nullopt;
+    }
+
+    snowdesktop::widget::PackageResource resource;
+    auto readField = [&](const char* field, std::string& output) {
+        lua_getfield(state, -1, field);
+        size_t fieldLength = 0;
+        const char* value = lua_tolstring(state, -1, &fieldLength);
+        if (value) output.assign(value, fieldLength);
+        lua_pop(state, 1);
+    };
+    readField("type", resource.type);
+    readField("path", resource.path);
+    readField("license", resource.license);
+    lua_pop(state, 2);
+    if (resource.type.empty() || resource.path.empty() ||
+        (expectedType && resource.type != expectedType))
+        return std::nullopt;
+    return resource;
+}
+
 static std::string BoundStoragePrefix(lua_State* state)
 {
     return WidgetWideToUtf8(BoundWidgetId(state));
@@ -1038,6 +1186,67 @@ static void SetWidgetRectContext(D2DState* state, RECT bounds)
         static_cast<float>(bounds.right), static_cast<float>(bounds.bottom));
 }
 
+enum class LuaResourceType : unsigned char
+{
+    Image,
+    Font,
+};
+
+struct LuaResourceHandle
+{
+    LuaResourceType type = LuaResourceType::Image;
+    char name[65]{};
+};
+
+constexpr char kResourceHandleMetatable[] =
+    "SnowDesktop.PackageResourceHandle";
+
+static LuaResourceHandle* TestResourceHandle(lua_State* L, int index)
+{
+    return static_cast<LuaResourceHandle*>(
+        luaL_testudata(L, index, kResourceHandleMetatable));
+}
+
+static int lua_ResourceHandleToString(lua_State* L)
+{
+    const auto* handle = TestResourceHandle(L, 1);
+    if (!handle) return luaL_error(L, "invalid package resource handle");
+    const char* type = handle->type == LuaResourceType::Image
+        ? "image" : "font";
+    lua_pushfstring(L, "resource.%s(%s)", type, handle->name);
+    return 1;
+}
+
+static void PushResourceHandle(lua_State* L, LuaResourceType type,
+    const std::string& name)
+{
+    auto* handle = static_cast<LuaResourceHandle*>(
+        lua_newuserdata(L, sizeof(LuaResourceHandle)));
+    *handle = {};
+    handle->type = type;
+    std::memcpy(handle->name, name.data(),
+        std::min(name.size(), sizeof(handle->name) - 1));
+    if (luaL_newmetatable(L, kResourceHandleMetatable))
+    {
+        lua_pushcfunction(L, lua_ResourceHandleToString);
+        lua_setfield(L, -2, "__tostring");
+        lua_pushliteral(L, "package resource handle");
+        lua_setfield(L, -2, "__metatable");
+    }
+    lua_setmetatable(L, -2);
+}
+
+static std::optional<std::wstring> ResolveResourceHandlePath(
+    lua_State* L, int index, LuaResourceType expected)
+{
+    const auto* handle = TestResourceHandle(L, index);
+    if (!handle || handle->type != expected) return std::nullopt;
+    const char* type = expected == LuaResourceType::Image ? "image" : "font";
+    const auto resource = CurrentPackageResource(L, handle->name, type);
+    if (!resource) return std::nullopt;
+    return ResolveCurrentPackageAsset(L, Utf8ToWideLocal(resource->path));
+}
+
 static int lua_DrawText(lua_State* L)
 {
     float x = static_cast<float>(luaL_checknumber(L, 1));
@@ -1051,6 +1260,15 @@ static int lua_DrawText(lua_State* L)
     float requestedHeight = static_cast<float>(luaL_optnumber(L, 9, 0));
     float alpha = static_cast<float>(luaL_optnumber(L, 10, 1.0));
 
+    std::optional<std::wstring> privateFontPath;
+    if (!lua_isnoneornil(L, 11))
+    {
+        privateFontPath = ResolveResourceHandlePath(
+            L, 11, LuaResourceType::Font);
+        if (!privateFontPath)
+            return luaL_error(L, "draw.text: invalid font resource handle");
+    }
+
     auto* s = GetD2D(L);
     if (!s || !s->ctx || !s->dwrite) return 0;
 
@@ -1058,7 +1276,9 @@ static int lua_DrawText(lua_State* L)
         bold ? DWRITE_FONT_WEIGHT_BOLD : s->itemFontWeight,
         false, maxWidth > 0 && singleLine
             ? DWRITE_WORD_WRAPPING_NO_WRAP
-            : DWRITE_WORD_WRAPPING_WRAP);
+            : DWRITE_WORD_WRAPPING_WRAP,
+        false, false, false,
+        privateFontPath ? &*privateFontPath : nullptr);
     if (!format) return 0;
 
     int wlen = MultiByteToWideChar(CP_UTF8, 0, text, -1, nullptr, 0);
@@ -1107,6 +1327,15 @@ static int lua_MeasureText(lua_State* L)
     float size = static_cast<float>(luaL_optnumber(L, 2, 14));
     float maxWidth = static_cast<float>(luaL_optnumber(L, 3, 0));
     bool bold = lua_toboolean(L, 4) != 0;
+    std::optional<std::wstring> privateFontPath;
+    if (!lua_isnoneornil(L, 5))
+    {
+        privateFontPath = ResolveResourceHandlePath(
+            L, 5, LuaResourceType::Font);
+        if (!privateFontPath)
+            return luaL_error(L,
+                "draw.measureText: invalid font resource handle");
+    }
 
     auto pushSize = [&](float width, float height) {
         lua_createtable(L, 0, 2);
@@ -1123,7 +1352,8 @@ static int lua_MeasureText(lua_State* L)
 
     IDWriteTextFormat* format = GetCachedTextFormat(s, size,
         bold ? DWRITE_FONT_WEIGHT_BOLD : s->itemFontWeight,
-        false, DWRITE_WORD_WRAPPING_WRAP);
+        false, DWRITE_WORD_WRAPPING_WRAP, false, false, false,
+        privateFontPath ? &*privateFontPath : nullptr);
     if (!format)
         return pushSize(0.0f, 0.0f);
 
@@ -2976,11 +3206,7 @@ static int lua_ModuleRequire(lua_State* L)
         _wcsicmp(std::filesystem::path(relativePath).extension().c_str(),
             L".lua") != 0)
         return luaL_error(L, "module.require: path must name a .lua file");
-    auto* state = GetD2D(L);
-    if (!state || !state->engine)
-        return luaL_error(L, "module.require: host context is unavailable");
-    const auto fullPath = state->engine->RuntimeResolvePackageAsset(
-        BoundWidgetId(L), relativePath);
+    const auto fullPath = ResolveCurrentPackageAsset(L, relativePath);
     if (!fullPath)
         return luaL_error(L, "module.require: path is outside the component package");
 
@@ -3677,18 +3903,38 @@ static ID2D1Bitmap1* LoadImageBitmap(D2DState* s, const std::wstring& path)
 
 static int lua_DrawImage(lua_State* L)
 {
-    const char* pathRaw = luaL_checkstring(L, 1);
     float x = static_cast<float>(luaL_checknumber(L, 2));
     float y = static_cast<float>(luaL_checknumber(L, 3));
     float w = static_cast<float>(luaL_checknumber(L, 4));
     float h = static_cast<float>(luaL_checknumber(L, 5));
     float alpha = static_cast<float>(luaL_optnumber(L, 6, 1.0));
     auto* s = GetD2D(L);
-    std::wstring path = Utf8ToWideLocal(pathRaw ? pathRaw : "");
-    if (!s || !s->engine || path.empty())
+    if (!s || !s->engine)
         return 0;
-    const auto fullPath = s->engine->RuntimeResolvePackageAsset(
-        BoundWidgetId(L), path);
+    std::optional<std::wstring> fullPath;
+    if (TestResourceHandle(L, 1))
+    {
+        fullPath = ResolveResourceHandlePath(
+            L, 1, LuaResourceType::Image);
+        if (!fullPath)
+            return luaL_error(L, "draw.image: invalid image resource handle");
+    }
+    else
+    {
+        lua_getfield(L, LUA_REGISTRYINDEX, "__widget_api_version");
+        const lua_Integer apiVersion = lua_tointeger(L, -1);
+        lua_pop(L, 1);
+        if (apiVersion >= 2)
+        {
+            return luaL_error(L,
+                "draw.image: API v2 requires resource.image() handle");
+        }
+        const char* pathRaw = luaL_checkstring(L, 1);
+        const std::wstring path = Utf8ToWideLocal(pathRaw ? pathRaw : "");
+        if (path.empty()) return 0;
+        fullPath = s->engine->RuntimeResolvePackageAsset(
+            BoundWidgetId(L), path);
+    }
     if (!fullPath) return 0;
     ID2D1Bitmap1* bmp = LoadImageBitmap(s, *fullPath);
     if (!s || !s->ctx || !bmp) return 0;
@@ -3696,6 +3942,102 @@ static int lua_DrawImage(lua_State* L)
         x + s->widgetRect.left + w, y + s->widgetRect.top + h);
     s->ctx->DrawBitmap(bmp, dst, alpha, D2D1_INTERPOLATION_MODE_LINEAR);
     return 0;
+}
+
+static bool ResourceCreationAllowed(lua_State* L)
+{
+    lua_getfield(L, LUA_REGISTRYINDEX, "__widget_loading");
+    const bool loading = lua_toboolean(L, -1) != 0;
+    lua_pop(L, 1);
+    return loading;
+}
+
+static int lua_ResourceExists(lua_State* L)
+{
+    size_t length = 0;
+    const char* name = luaL_checklstring(L, 1, &length);
+    const auto resource = length <= 64
+        ? CurrentPackageResource(L, std::string(name, length))
+        : std::nullopt;
+    const auto path = resource ? ResolveCurrentPackageAsset(
+        L, Utf8ToWideLocal(resource->path)) : std::nullopt;
+    std::error_code error;
+    const bool exists = path &&
+        std::filesystem::is_regular_file(*path, error);
+    lua_pushboolean(L, exists ? 1 : 0);
+    return 1;
+}
+
+static int lua_ResourceImage(lua_State* L)
+{
+    if (!ResourceCreationAllowed(L))
+    {
+        return luaL_error(L,
+            "resource.image: handles must be created while the entry script is loading");
+    }
+    size_t length = 0;
+    const char* nameRaw = luaL_checklstring(L, 1, &length);
+    if (length == 0 || length > 64)
+        return luaL_error(L, "resource.image: invalid resource name");
+    const std::string name(nameRaw, length);
+    auto* state = GetD2D(L);
+    const auto resource = CurrentPackageResource(L, name, "image");
+    const auto path = resource
+        ? ResolveCurrentPackageAsset(L, Utf8ToWideLocal(resource->path))
+        : std::nullopt;
+    if (!path || (state && state->ctx && !LoadImageBitmap(state, *path)))
+        return luaL_error(L, "resource.image: resource is missing or cannot be decoded");
+    PushResourceHandle(L, LuaResourceType::Image, name);
+    return 1;
+}
+
+static int lua_ResourceFont(lua_State* L)
+{
+    if (!ResourceCreationAllowed(L))
+    {
+        return luaL_error(L,
+            "resource.font: handles must be created while the entry script is loading");
+    }
+    size_t length = 0;
+    const char* nameRaw = luaL_checklstring(L, 1, &length);
+    if (length == 0 || length > 64)
+        return luaL_error(L, "resource.font: invalid resource name");
+    const std::string name(nameRaw, length);
+    auto* state = GetD2D(L);
+    const auto resource = CurrentPackageResource(L, name, "font");
+    const auto path = resource
+        ? ResolveCurrentPackageAsset(L, Utf8ToWideLocal(resource->path))
+        : std::nullopt;
+    if (!path || (state && state->dwrite && !LoadPrivateFont(state, *path)))
+        return luaL_error(L, "resource.font: resource is missing or invalid");
+    PushResourceHandle(L, LuaResourceType::Font, name);
+    return 1;
+}
+
+static int lua_ResourceStatus(lua_State* L)
+{
+    const auto* handle = TestResourceHandle(L, 1);
+    if (!handle)
+        return luaL_error(L, "resource.status: invalid resource handle");
+    const char* type = handle->type == LuaResourceType::Image
+        ? "image" : "font";
+    const auto path = ResolveResourceHandlePath(L, 1, handle->type);
+    auto* state = GetD2D(L);
+    bool ready = false;
+    if (path && state)
+    {
+        ready = handle->type == LuaResourceType::Image
+            ? state->imageCache.contains(*path)
+            : state->privateFonts.contains(*path);
+    }
+    lua_createtable(L, 0, 3);
+    lua_pushstring(L, ready ? "ready" : (path ? "pending" : "error"));
+    lua_setfield(L, -2, "state");
+    lua_pushstring(L, type);
+    lua_setfield(L, -2, "type");
+    lua_pushstring(L, handle->name);
+    lua_setfield(L, -2, "name");
+    return 1;
 }
 
 static ComPtr<ID2D1Bitmap1> BitmapFromHBitmap(ID2D1DeviceContext* ctx, HBITMAP hbm)
@@ -4019,6 +4361,12 @@ void WidgetEngine::UnloadWidget(const std::wstring& widgetId)
         lua_close(state);
         widgets_[idx].state = nullptr;
     }
+    if (d2dState_)
+    {
+        d2dState_->privateTextFormatCache.clear();
+        d2dState_->privateFonts.clear();
+        d2dState_->imageCache.clear();
+    }
     widgets_.erase(widgets_.begin() + idx);
     std::erase_if(widgets_, [&widgetId](const LuaWidget& widget) {
         return widget.widgetId == widgetId;
@@ -4139,7 +4487,7 @@ void WidgetEngine::PushSafeEnvironment(lua_State* L, const LuaWidget& widget)
     };
     static const char* v2Libraries[] = {
         "string", "table", "math", "utf8", "draw", "layout", "storage",
-        "widget", "system", "time", "module"
+        "widget", "system", "time", "module", "resource"
     };
     const std::span<const char* const> libraries =
         widget.manifest.apiVersion >= 2
@@ -4377,6 +4725,24 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         lua_setfield(state, -2, permission.c_str());
     }
     lua_setfield(state, LUA_REGISTRYINDEX, "__widget_permissions");
+    lua_pushstring(state,
+        WidgetWideToUtf8(pending.packageRoot.wstring()).c_str());
+    lua_setfield(state, LUA_REGISTRYINDEX, "__widget_package_root");
+    lua_createtable(state, 0,
+        static_cast<int>(pending.manifest.resources.size()));
+    for (const auto& [name, resource] : pending.manifest.resources)
+    {
+        lua_createtable(state, 0, 3);
+        lua_pushlstring(state, resource.type.data(), resource.type.size());
+        lua_setfield(state, -2, "type");
+        lua_pushlstring(state, resource.path.data(), resource.path.size());
+        lua_setfield(state, -2, "path");
+        lua_pushlstring(state, resource.license.data(),
+            resource.license.size());
+        lua_setfield(state, -2, "license");
+        lua_setfield(state, -2, name.c_str());
+    }
+    lua_setfield(state, LUA_REGISTRYINDEX, "__widget_resources");
     lua_pushboolean(state, 1);
     lua_setfield(state, LUA_REGISTRYINDEX, "__widget_loading");
     if (d2dState_)
@@ -7543,18 +7909,23 @@ void WidgetEngine::RuntimeCloseWidgetPanel(
         closeWidgetPanelCallback_(widgetId);
 }
 
-std::optional<std::wstring> WidgetEngine::RuntimeResolvePackageAsset(
-    const std::wstring& widgetId, const std::wstring& relativePath) const
+static std::optional<std::wstring> ResolvePackageAssetWithinRoot(
+    const std::filesystem::path& packageRoot,
+    const std::wstring& relativePath)
 {
     if (!snowdesktop::widget::WidgetPackageValidator::IsSafeRelativePath(
         std::filesystem::path(relativePath)))
         return std::nullopt;
-    const int index = FindWidget(widgetId);
-    if (index < 0 || widgets_[index].packageRoot.empty())
+    if (packageRoot.empty())
         return std::nullopt;
     std::error_code error;
     const auto root = std::filesystem::weakly_canonical(
-        widgets_[index].packageRoot, error);
+        packageRoot, error);
+    if (error) return std::nullopt;
+    const DWORD rootAttributes = GetFileAttributesW(root.c_str());
+    if (rootAttributes == INVALID_FILE_ATTRIBUTES ||
+        (rootAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
+        return std::nullopt;
     const auto target = std::filesystem::weakly_canonical(
         root / relativePath, error);
     if (error) return std::nullopt;
@@ -7579,6 +7950,15 @@ std::optional<std::wstring> WidgetEngine::RuntimeResolvePackageAsset(
             return std::nullopt;
     }
     return target.wstring();
+}
+
+std::optional<std::wstring> WidgetEngine::RuntimeResolvePackageAsset(
+    const std::wstring& widgetId, const std::wstring& relativePath) const
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0) return std::nullopt;
+    return ResolvePackageAssetWithinRoot(
+        widgets_[index].packageRoot, relativePath);
 }
 
 LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
@@ -7784,6 +8164,21 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
     manifest.networkDomains = readStringArray(root, "networkDomains");
     manifest.requiredFeatures = readStringArray(root, "requiredFeatures");
     manifest.optionalFeatures = readStringArray(root, "optionalFeatures");
+    if (const JsonValue* resources = root.Find("resources");
+        resources && resources->IsObject())
+    {
+        for (const auto& [name, value] : resources->object)
+        {
+            if (!value.IsObject() || name.empty()) continue;
+            snowdesktop::widget::PackageResource resource;
+            readString(value, "type", resource.type);
+            readString(value, "path", resource.path);
+            readString(value, "license", resource.license);
+            if ((resource.type == "image" || resource.type == "font") &&
+                !resource.path.empty())
+                manifest.resources.emplace(name, std::move(resource));
+        }
+    }
     double refreshMs = 0;
     if (readNumber(root, "refreshIntervalMs", refreshMs) &&
         std::isfinite(refreshMs) && refreshMs > 0)
@@ -9656,6 +10051,12 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
     static constexpr FunctionDescriptor module[] = {
         { "require", lua_ModuleRequire, 2 },
     };
+    static constexpr FunctionDescriptor resource[] = {
+        { "exists", lua_ResourceExists, 2 },
+        { "image", lua_ResourceImage, 2 },
+        { "font", lua_ResourceFont, 2 },
+        { "status", lua_ResourceStatus, 2 },
+    };
     static constexpr FunctionDescriptor media[] = {
         { "current", lua_MediaCurrent, 1, "media.read" },
         { "playPause", lua_MediaPlayPause, 1, "media.action" },
@@ -9752,6 +10153,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         DescribeLibrary("system", systemV2),
         DescribeLibrary("time", time),
         DescribeLibrary("module", module),
+        DescribeLibrary("resource", resource),
         DescribeLibrary("media", media),
         DescribeLibrary("http", http),
         DescribeLibrary("ui", ui),

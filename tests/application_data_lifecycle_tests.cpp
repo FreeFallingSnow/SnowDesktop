@@ -109,7 +109,8 @@ void MakePackage(const std::filesystem::path& root, std::string version,
     int schemaVersion = 1,
     int apiVersion = 1,
     std::string requiredFeatures = "",
-    std::string optionalFeatures = "")
+    std::string optionalFeatures = "",
+    std::string resources = "")
 {
     Write(root / std::filesystem::path(entry), "function render() end\n");
     Write(root / L"assets" / L"label.txt", "asset");
@@ -128,6 +129,7 @@ void MakePackage(const std::filesystem::path& root, std::string version,
         "  \"locales\": {\"zh-CN\": {\"preview.intro\": \"多尺寸介绍\", \"preview.message\": \"预览消息\", \"preview.compact\": \"紧凑模式\", \"preview.compact_hint\": \"紧凑说明\", \"preview.compact_mode\": \"紧凑数据\"}},\n"
         "  \"author\": \"SnowDesktop\",\n"
         "  \"license\": \"GPL-3.0-only\",\n"
+        "  \"resources\": {" + resources + "},\n"
         "  \"previewData\": {\"introduction\": \"Multiple sizes\", \"introductionKey\": \"preview.intro\", \"storage\": {\"message\": \"Preview\", \"count\": 3}, \"storageKeys\": {\"message\": \"preview.message\"}, \"variants\": [{\"id\": \"compact\", \"title\": \"Compact\", \"titleKey\": \"preview.compact\", \"description\": \"Compact hint\", \"descriptionKey\": \"preview.compact_hint\", \"size\": {\"columns\": 1, \"rows\": 1}, \"storage\": {\"mode\": \"compact\"}, \"storageKeys\": {\"mode\": \"preview.compact_mode\"}}, {\"id\": \"wide\", \"title\": \"Wide\", \"description\": \"Wide hint\", \"size\": {\"columns\": 2, \"rows\": 1}}]},\n"
         "  \"permissions\": [" + permissions + "],\n"
         "  \"optionalPermissions\": [" + optionalPermissions + "],\n"
@@ -671,6 +673,71 @@ int main()
             manifestV2.optionalFeatures ==
                 std::vector<std::string>{ "view.tree" },
         "schema/API v2 package features are parsed and accepted");
+
+    const auto resourcePackage = root / L"resource-package";
+    MakePackage(resourcePackage, "2.0.0",
+        "1d1bfbc3-e777-4b59-8124-6e53f188ae5b", "", "", "main.lua",
+        "", 2, 2, "\"resource.package\"", "",
+        "\"logo\": {\"type\": \"image\", \"path\": "
+        "\"assets/logo.png\"}, "
+        "\"body\": {\"type\": \"font\", \"path\": "
+        "\"assets/body.ttf\", \"license\": \"OFL-1.1\"}");
+    std::string pngHeader(24, '\0');
+    const std::string pngSignature("\x89PNG\r\n\x1a\n", 8);
+    pngHeader.replace(0, pngSignature.size(), pngSignature);
+    pngHeader.replace(12, 4, "IHDR");
+    pngHeader[19] = 1;
+    pngHeader[23] = 1;
+    Write(resourcePackage / L"assets" / L"logo.png", pngHeader);
+    Write(resourcePackage / L"assets" / L"body.ttf",
+        std::string("\0\1\0\0", 4));
+    PackageManifest resourceManifest;
+    report = validator.ValidateDirectory(resourcePackage, &resourceManifest);
+    Expect(report.Ok() && resourceManifest.resources.size() == 2 &&
+            resourceManifest.resources.at("logo").type == "image" &&
+            resourceManifest.resources.at("body").license == "OFL-1.1",
+        "v2 package image and private font resources are validated and parsed");
+
+    const auto traversalResourcePackage = root / L"resource-traversal";
+    MakePackage(traversalResourcePackage, "2.0.0",
+        "0c237b9b-7e14-44c8-9891-cd378f7b6ce6", "", "", "main.lua",
+        "", 2, 2, "", "",
+        "\"logo\": {\"type\": \"image\", \"path\": "
+        "\"../logo.png\"}");
+    Expect(!validator.ValidateDirectory(traversalResourcePackage).Ok(),
+        "v2 package resource paths cannot escape the package root");
+
+    const auto badResourceContentPackage = root / L"resource-content";
+    MakePackage(badResourceContentPackage, "2.0.0",
+        "4d399123-9ed4-4288-bbd0-4ea67dbb7aec", "", "", "main.lua",
+        "", 2, 2, "", "",
+        "\"logo\": {\"type\": \"image\", \"path\": "
+        "\"assets/logo.png\"}");
+    Write(badResourceContentPackage / L"assets" / L"logo.png",
+        "not a png");
+    Expect(!validator.ValidateDirectory(badResourceContentPackage).Ok(),
+        "declared image resources must match their signature and dimensions");
+
+    const auto unlicensedFontPackage = root / L"resource-font-license";
+    MakePackage(unlicensedFontPackage, "2.0.0",
+        "35bb0546-cd57-428d-be84-74682600d08f", "", "", "main.lua",
+        "", 2, 2, "", "",
+        "\"body\": {\"type\": \"font\", \"path\": "
+        "\"assets/body.ttf\"}");
+    Write(unlicensedFontPackage / L"assets" / L"body.ttf",
+        std::string("\0\1\0\0", 4));
+    Expect(!validator.ValidateDirectory(unlicensedFontPackage).Ok(),
+        "private font resources must declare their package license");
+
+    const auto legacyResourcePackage = root / L"legacy-resource";
+    MakePackage(legacyResourcePackage, "1.0.0",
+        "68a2ddbb-44dd-461d-9619-7114636338de", "", "", "main.lua",
+        "", 1, 1, "", "",
+        "\"logo\": {\"type\": \"image\", \"path\": "
+        "\"assets/logo.png\"}");
+    Write(legacyResourcePackage / L"assets" / L"logo.png", pngHeader);
+    Expect(!validator.ValidateDirectory(legacyResourcePackage).Ok(),
+        "legacy API packages cannot declare v2 resource handles");
 
     const auto mismatchedContract = root / L"mismatched-contract";
     MakePackage(mismatchedContract, "2.0.0",

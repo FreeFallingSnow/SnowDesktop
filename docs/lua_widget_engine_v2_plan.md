@@ -1175,7 +1175,7 @@ local format = module.require("modules/format.lua")
 
 ### 15.3 资源
 
-当前 `draw.image(relativePath, ...)` 已通过 `RuntimeResolvePackageAsset()` 把路径限制在当前包根目录，拒绝绝对路径、父目录穿越和重解析点；因此包内位图已经可用。现有 API 文档中“相对于根可执行文件的 `widgets` 目录”的描述应改为“相对于当前组件包根目录”。当前缺少包内自定义字体和可复用资源句柄。
+当前过渡实现（2026-08-14）已为 schema/API v2 增加清单资源表、`resource.exists/image/font/status`、图片/字体不透明句柄和包私有 DirectWrite 字体集合。v2 `draw.image` 只接受图片句柄，`draw.text`/`draw.measureText` 可接受字体句柄；原始相对路径只保留在尚待迁移的 v1 即时绘制兼容面。模块与资源都从实例注册的包根解析，因此入口脚本加载期间不依赖组件已经进入运行列表，也不会向 Lua 暴露宿主绝对路径。当前实现已执行扩展名、签名、像素数、文件大小、资源数、字体数、字体许可证、canonical root 和重解析点检查；跨实例只读解码缓存、稳定错误码和完全异步的 pending 加载仍按本节目标继续收口。
 
 API v2 将图片和字体升级为一等包资源。静态资源优先在清单中用稳定名称声明：
 

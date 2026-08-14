@@ -173,6 +173,236 @@ bool HasReparsePoint(const std::filesystem::path& path)
         (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
 }
 
+bool IsResourceName(std::string_view value)
+{
+    if (value.empty() || value.size() > 64 ||
+        !std::islower(static_cast<unsigned char>(value.front())))
+        return false;
+    return std::all_of(value.begin(), value.end(), [](unsigned char ch) {
+        return std::islower(ch) || std::isdigit(ch) || ch == '-' || ch == '_';
+    });
+}
+
+std::uint16_t ReadBig16(const std::string& data, std::size_t offset)
+{
+    return static_cast<std::uint16_t>(
+        (static_cast<unsigned char>(data[offset]) << 8) |
+        static_cast<unsigned char>(data[offset + 1]));
+}
+
+std::uint32_t ReadBig32(const std::string& data, std::size_t offset)
+{
+    return (static_cast<std::uint32_t>(
+        static_cast<unsigned char>(data[offset])) << 24) |
+        (static_cast<std::uint32_t>(
+            static_cast<unsigned char>(data[offset + 1])) << 16) |
+        (static_cast<std::uint32_t>(
+            static_cast<unsigned char>(data[offset + 2])) << 8) |
+        static_cast<unsigned char>(data[offset + 3]);
+}
+
+std::uint32_t ReadLittle32(const std::string& data, std::size_t offset)
+{
+    return static_cast<unsigned char>(data[offset]) |
+        (static_cast<std::uint32_t>(
+            static_cast<unsigned char>(data[offset + 1])) << 8) |
+        (static_cast<std::uint32_t>(
+            static_cast<unsigned char>(data[offset + 2])) << 16) |
+        (static_cast<std::uint32_t>(
+            static_cast<unsigned char>(data[offset + 3])) << 24);
+}
+
+std::uint16_t ReadLittle16(const std::string& data, std::size_t offset)
+{
+    return static_cast<unsigned char>(data[offset]) |
+        (static_cast<std::uint16_t>(
+            static_cast<unsigned char>(data[offset + 1])) << 8);
+}
+
+bool PixelCountAllowed(std::uint32_t width, std::uint32_t height)
+{
+    return width > 0 && height > 0 &&
+        static_cast<std::uint64_t>(width) * height <= 64ull * 1024ull * 1024ull;
+}
+
+bool SkipGifSubBlocks(const std::string& data, std::size_t& offset)
+{
+    while (offset < data.size())
+    {
+        const std::size_t size = static_cast<unsigned char>(data[offset++]);
+        if (size == 0) return true;
+        if (size > data.size() - offset) return false;
+        offset += size;
+    }
+    return false;
+}
+
+bool StaticGifIsValid(const std::string& data)
+{
+    if (data.size() < 13 ||
+        (data.compare(0, 6, "GIF87a") != 0 &&
+            data.compare(0, 6, "GIF89a") != 0) ||
+        !PixelCountAllowed(ReadLittle16(data, 6), ReadLittle16(data, 8)))
+        return false;
+    std::size_t offset = 13;
+    const unsigned char screenFlags =
+        static_cast<unsigned char>(data[10]);
+    if (screenFlags & 0x80)
+    {
+        const std::size_t colorTableBytes =
+            3u << ((screenFlags & 0x07) + 1);
+        if (colorTableBytes > data.size() - offset) return false;
+        offset += colorTableBytes;
+    }
+    unsigned int imageCount = 0;
+    while (offset < data.size())
+    {
+        const unsigned char block =
+            static_cast<unsigned char>(data[offset++]);
+        if (block == 0x3b) return imageCount == 1;
+        if (block == 0x21)
+        {
+            if (offset >= data.size()) return false;
+            ++offset;
+            if (!SkipGifSubBlocks(data, offset)) return false;
+            continue;
+        }
+        if (block != 0x2c || offset + 9 > data.size()) return false;
+        if (++imageCount > 1 ||
+            !PixelCountAllowed(ReadLittle16(data, offset + 4),
+                ReadLittle16(data, offset + 6)))
+            return false;
+        const unsigned char imageFlags =
+            static_cast<unsigned char>(data[offset + 8]);
+        offset += 9;
+        if (imageFlags & 0x80)
+        {
+            const std::size_t colorTableBytes =
+                3u << ((imageFlags & 0x07) + 1);
+            if (colorTableBytes > data.size() - offset) return false;
+            offset += colorTableBytes;
+        }
+        if (offset >= data.size()) return false;
+        ++offset;
+        if (!SkipGifSubBlocks(data, offset)) return false;
+    }
+    return false;
+}
+
+bool IconDirectoryIsValid(const std::string& data)
+{
+    if (data.size() < 6 || ReadLittle16(data, 0) != 0 ||
+        ReadLittle16(data, 2) != 1)
+        return false;
+    const std::uint16_t count = ReadLittle16(data, 4);
+    if (count == 0 || count > 256 ||
+        static_cast<std::size_t>(count) > (data.size() - 6) / 16)
+        return false;
+    for (std::size_t index = 0; index < count; ++index)
+    {
+        const std::size_t entry = 6 + index * 16;
+        const std::uint32_t width =
+            static_cast<unsigned char>(data[entry]) == 0 ? 256 :
+                static_cast<unsigned char>(data[entry]);
+        const std::uint32_t height =
+            static_cast<unsigned char>(data[entry + 1]) == 0 ? 256 :
+                static_cast<unsigned char>(data[entry + 1]);
+        const std::uint32_t bytes = ReadLittle32(data, entry + 8);
+        const std::uint32_t imageOffset = ReadLittle32(data, entry + 12);
+        if (!PixelCountAllowed(width, height) || bytes == 0 ||
+            imageOffset > data.size() || bytes > data.size() - imageOffset)
+            return false;
+    }
+    return true;
+}
+
+bool JpegDimensionsAllowed(const std::string& data)
+{
+    std::size_t offset = 2;
+    while (offset + 4 <= data.size())
+    {
+        while (offset < data.size() &&
+            static_cast<unsigned char>(data[offset]) != 0xff)
+            ++offset;
+        while (offset < data.size() &&
+            static_cast<unsigned char>(data[offset]) == 0xff)
+            ++offset;
+        if (offset >= data.size()) break;
+        const unsigned char marker =
+            static_cast<unsigned char>(data[offset++]);
+        if (marker == 0xd8 || marker == 0xd9 ||
+            (marker >= 0xd0 && marker <= 0xd7))
+            continue;
+        if (offset + 2 > data.size()) break;
+        const std::uint16_t length = ReadBig16(data, offset);
+        if (length < 2 || offset + length > data.size()) break;
+        const bool startOfFrame =
+            (marker >= 0xc0 && marker <= 0xc3) ||
+            (marker >= 0xc5 && marker <= 0xc7) ||
+            (marker >= 0xc9 && marker <= 0xcb) ||
+            (marker >= 0xcd && marker <= 0xcf);
+        if (startOfFrame && length >= 7)
+        {
+            const std::uint32_t height = ReadBig16(data, offset + 3);
+            const std::uint32_t width = ReadBig16(data, offset + 5);
+            return PixelCountAllowed(width, height);
+        }
+        offset += length;
+    }
+    return false;
+}
+
+bool ResourceContentIsValid(const std::filesystem::path& path,
+    const PackageResource& resource)
+{
+    std::string data;
+    if (!ReadFile(path, data, kMaxResourceBytes)) return false;
+    const std::string extension = Lower(path.extension().string());
+    if (resource.type == "font")
+    {
+        if (data.size() < 4) return false;
+        return (extension == ".ttf" &&
+                static_cast<unsigned char>(data[0]) == 0x00 &&
+                static_cast<unsigned char>(data[1]) == 0x01 &&
+                static_cast<unsigned char>(data[2]) == 0x00 &&
+                static_cast<unsigned char>(data[3]) == 0x00) ||
+            (extension == ".otf" && data.compare(0, 4, "OTTO") == 0);
+    }
+    if (resource.type != "image") return false;
+    if (extension == ".png")
+    {
+        return data.size() >= 24 &&
+            data.compare(0, 8, "\x89PNG\r\n\x1a\n") == 0 &&
+            data.compare(12, 4, "IHDR") == 0 &&
+            PixelCountAllowed(ReadBig32(data, 16), ReadBig32(data, 20));
+    }
+    if (extension == ".jpg" || extension == ".jpeg")
+    {
+        return data.size() >= 4 &&
+            static_cast<unsigned char>(data[0]) == 0xff &&
+            static_cast<unsigned char>(data[1]) == 0xd8 &&
+            JpegDimensionsAllowed(data);
+    }
+    if (extension == ".gif")
+        return StaticGifIsValid(data);
+    if (extension == ".bmp")
+    {
+        if (data.size() < 26 || data.compare(0, 2, "BM") != 0) return false;
+        const std::int32_t width = static_cast<std::int32_t>(
+            ReadLittle32(data, 18));
+        const std::int32_t height = static_cast<std::int32_t>(
+            ReadLittle32(data, 22));
+        if (width <= 0 || height == 0 || height ==
+            (std::numeric_limits<std::int32_t>::min)())
+            return false;
+        return PixelCountAllowed(static_cast<std::uint32_t>(width),
+            static_cast<std::uint32_t>(height < 0 ? -height : height));
+    }
+    if (extension == ".ico")
+        return IconDirectoryIsValid(data);
+    return false;
+}
+
 bool ReadString(const JsonValue& object, const char* name, std::string& output)
 {
     const JsonValue* value = object.Find(name);
@@ -299,6 +529,29 @@ std::string ManifestJson(const PackageManifest& manifest)
         << ", \"rows\": " << manifest.minRows << "},\n"
         << "  \"maxSize\": {\"columns\": " << manifest.maxColumns
         << ", \"rows\": " << manifest.maxRows << "},\n"
+        << "  \"resources\": {";
+    {
+        bool first = true;
+        std::vector<std::string> resourceNames;
+        resourceNames.reserve(manifest.resources.size());
+        for (const auto& [name, resource] : manifest.resources)
+        {
+            (void)resource;
+            resourceNames.push_back(name);
+        }
+        std::sort(resourceNames.begin(), resourceNames.end());
+        for (const auto& name : resourceNames)
+        {
+            const auto& resource = manifest.resources.at(name);
+            if (!first) out << ", ";
+            first = false;
+            out << '"' << JsonEscape(name) << "\": {\"type\": \""
+                << JsonEscape(resource.type) << "\", \"path\": \""
+                << JsonEscape(resource.path) << "\", \"license\": \""
+                << JsonEscape(resource.license) << "\"}";
+        }
+    }
+    out << "},\n"
         << "  \"permissions\": ";
     appendArray(out, manifest.permissions);
     out << ",\n  \"optionalPermissions\": ";
@@ -926,6 +1179,11 @@ bool MatchesExpectedManifest(const PackageManifest& actual,
         error = "package optional features do not match the source metadata";
         return false;
     }
+    if (!expected.resources.empty() && actual.resources != expected.resources)
+    {
+        error = "package resources do not match the source metadata";
+        return false;
+    }
     return true;
 }
 }
@@ -1418,6 +1676,74 @@ bool WidgetPackageValidator::ReadManifest(
         ReadStringArray(root, "requiredFeatures", arraysValid);
     manifest.optionalFeatures =
         ReadStringArray(root, "optionalFeatures", arraysValid);
+    if (const JsonValue* resources = root.Find("resources"))
+    {
+        if (!resources->IsObject())
+        {
+            report.Add(ValidationSeverity::Error, "manifest.resources",
+                manifestPath, "resources must be an object");
+        }
+        else
+        {
+            if (resources->object.size() > kMaxPackageResources)
+            {
+                report.Add(ValidationSeverity::Error,
+                    "manifest.resourceCount", manifestPath,
+                    "resources cannot contain more than 32 entries");
+            }
+            for (const auto& [name, value] : resources->object)
+            {
+                if (!IsResourceName(name))
+                {
+                    report.Add(ValidationSeverity::Error,
+                        "manifest.resourceName", manifestPath,
+                        "resource names must start with a lowercase letter and contain only lowercase letters, digits, '-' or '_': " +
+                            name);
+                    continue;
+                }
+                if (!value.IsObject())
+                {
+                    report.Add(ValidationSeverity::Error,
+                        "manifest.resource", manifestPath,
+                        "resource descriptors must be objects: " + name);
+                    continue;
+                }
+                PackageResource resource;
+                ReadString(value, "type", resource.type);
+                ReadString(value, "path", resource.path);
+                ReadString(value, "license", resource.license);
+                if (resource.type != "image" && resource.type != "font")
+                {
+                    report.Add(ValidationSeverity::Error,
+                        "manifest.resourceType", manifestPath,
+                        "resource type must be image or font: " + name);
+                }
+                const std::filesystem::path resourcePath =
+                    Utf8ToWide(resource.path);
+                const std::string extension = Lower(
+                    resourcePath.extension().string());
+                const bool extensionValid = resource.type == "image"
+                    ? (extension == ".png" || extension == ".jpg" ||
+                        extension == ".jpeg" || extension == ".bmp" ||
+                        extension == ".gif" || extension == ".ico")
+                    : (extension == ".ttf" || extension == ".otf");
+                if (!IsSafeRelativePath(resourcePath) || !extensionValid)
+                {
+                    report.Add(ValidationSeverity::Error,
+                        "manifest.resourcePath", manifestPath,
+                        "resource path is unsafe or has an unsupported extension: " +
+                            name);
+                }
+                if (resource.type == "font" && resource.license.empty())
+                {
+                    report.Add(ValidationSeverity::Error,
+                        "manifest.resourceLicense", manifestPath,
+                        "font resources must declare a license: " + name);
+                }
+                manifest.resources.emplace(name, std::move(resource));
+            }
+        }
+    }
 
     if (const JsonValue* locales = root.Find("locales");
         locales && locales->IsObject())
@@ -1598,6 +1924,11 @@ bool WidgetPackageValidator::ReadManifest(
         report.Add(ValidationSeverity::Error, "manifest.featureVersion",
             manifestPath,
             "feature negotiation is only available to schema/API v2 packages");
+    if (legacyContract && !manifest.resources.empty())
+    {
+        report.Add(ValidationSeverity::Error, "manifest.resourceVersion",
+            manifestPath, "resource declarations require schema/API v2");
+    }
     return report.Ok();
 }
 
@@ -1703,6 +2034,44 @@ ValidationReport WidgetPackageValidator::ValidateDirectory(
             root / Utf8ToWide(manifest.preview), ec)))
         report.Add(ValidationSeverity::Error, "package.previewMissing",
             manifest.preview, "preview path is unsafe or missing");
+    std::size_t fontCount = 0;
+    for (const auto& [name, resource] : manifest.resources)
+    {
+        if (resource.type == "font") ++fontCount;
+        const std::filesystem::path relative = Utf8ToWide(resource.path);
+        const std::filesystem::path fullPath = root / relative;
+        ec.clear();
+        if (!IsSafeRelativePath(relative) ||
+            !std::filesystem::is_regular_file(fullPath, ec))
+        {
+            report.Add(ValidationSeverity::Error,
+                "package.resourceMissing", relative,
+                "declared resource is missing: " + name);
+            continue;
+        }
+        const auto size = std::filesystem::file_size(fullPath, ec);
+        if (ec || size > kMaxResourceBytes)
+        {
+            report.Add(ValidationSeverity::Error,
+                "package.resourceSize", relative,
+                "resource is unreadable or exceeds the 8 MiB limit: " +
+                    name);
+            continue;
+        }
+        if (!ResourceContentIsValid(fullPath, resource))
+        {
+            report.Add(ValidationSeverity::Error,
+                "package.resourceContent", relative,
+                "resource signature, dimensions, or declared type is invalid: " +
+                    name);
+        }
+    }
+    if (fontCount > 8)
+    {
+        report.Add(ValidationSeverity::Error, "package.resourceFontCount",
+            root / L"widget.json",
+            "a package cannot declare more than 8 fonts");
+    }
     if (outputManifest) *outputManifest = std::move(manifest);
     return report;
 }

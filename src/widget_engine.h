@@ -110,6 +110,8 @@ struct LuaWidgetManifest
     std::vector<std::string> networkDomains; ///< 兼容保留的网络域名元数据
     std::vector<std::string> requiredFeatures; ///< 激活前必须满足的 v2 宿主特性
     std::vector<std::string> optionalFeatures; ///< 可由脚本探测并降级的 v2 宿主特性
+    std::unordered_map<std::string, snowdesktop::widget::PackageResource>
+        resources; ///< v2 清单声明的包内图片和私有字体
     std::vector<Setting> settings;        ///< 宿主生成的声明式设置
     std::vector<SettingPreset> presets;   ///< 宿主生成的声明式预设
     std::string publisher;

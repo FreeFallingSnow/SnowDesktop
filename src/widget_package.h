@@ -26,7 +26,9 @@ inline constexpr std::uint64_t kMaxArchiveBytes = 20ull * 1024ull * 1024ull;
 inline constexpr std::uint64_t kMaxExtractedBytes = 64ull * 1024ull * 1024ull;
 inline constexpr std::uint64_t kMaxEntryLuaBytes = 1ull * 1024ull * 1024ull;
 inline constexpr std::uint64_t kMaxPreviewBytes = 2ull * 1024ull * 1024ull;
+inline constexpr std::uint64_t kMaxResourceBytes = 8ull * 1024ull * 1024ull;
 inline constexpr std::size_t kMaxPackageFiles = 512;
+inline constexpr std::size_t kMaxPackageResources = 32;
 
 enum class ValidationSeverity
 {
@@ -60,6 +62,15 @@ struct LocalizedMetadata
     std::string title;
     std::string description;
     std::unordered_map<std::string, std::string> strings;
+};
+
+struct PackageResource
+{
+    std::string type;
+    std::string path;
+    std::string license;
+
+    bool operator==(const PackageResource&) const = default;
 };
 
 struct PreviewVariant
@@ -109,6 +120,7 @@ struct PackageManifest
     std::vector<std::string> networkDomains;
     std::vector<std::string> requiredFeatures;
     std::vector<std::string> optionalFeatures;
+    std::unordered_map<std::string, PackageResource> resources;
     std::unordered_map<std::string, LocalizedMetadata> locales;
 };
 
