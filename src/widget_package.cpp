@@ -2045,6 +2045,7 @@ bool WidgetPackageManager::Refresh(std::string& error)
                     {
                         InvalidPackage invalid;
                         invalid.manifest = std::move(manifest);
+                        invalid.packageId = invalid.manifest.id;
                         invalid.root = it->path();
                         invalid.report = report;
                         invalid.builtin = builtin;
@@ -2096,6 +2097,7 @@ bool WidgetPackageManager::Refresh(std::string& error)
                 {
                     InvalidPackage invalid;
                     invalid.manifest = std::move(manifest);
+                    invalid.packageId = id;
                     invalid.root = versionIt->path();
                     invalid.report = report;
                     const auto registryIt = registry_.find(id);

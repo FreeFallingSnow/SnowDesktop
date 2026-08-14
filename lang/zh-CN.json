@@ -97,8 +97,6 @@
     "app.widget.placeholder.load_failed": "组件无法加载。",
     "app.widget.placeholder.reload": "重新加载",
     "app.settings.widgets_filter_empty": "暂无组件",
-    "app.settings.widgets_invalid_components": "无效组件",
-    "app.settings.widgets_invalid_component": "组件无效",
     "app.settings.widgets_advanced": "高级选项",
     "app.settings.widgets_developer_tools": "组件开发工具",
     "app.settings.widgets_self_develop": "自己开发",

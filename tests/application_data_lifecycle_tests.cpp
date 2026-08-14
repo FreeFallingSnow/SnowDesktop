@@ -689,7 +689,10 @@ int main()
             std::filesystem::path(invalidScanId) / L"1.0.0", "1.0.0",
         invalidScanId, "\"system.read\"");
     MakePackage(invalidScanPaths.development / L"invalid-development",
-        "1.0.0", invalidScanId, "\"system.read\"");
+        "1.0.0", invalidScanId, "\"system.performance.read\"");
+    MakePackage(invalidScanPaths.development /
+            L"invalid-development-only", "1.0.0",
+        "df67af31-e68e-4c8c-a079-1d65451f93f0", "\"system.read\"");
     Write(invalidScanPaths.registry,
         "{\n  \"schemaVersion\": 1,\n  \"packages\": [\n"
         "    {\"packageId\":\"" + invalidScanId +
@@ -704,9 +707,10 @@ int main()
     Expect(invalidScanManager.Initialize(invalidScanError),
         "package manager initializes while invalid packages are present");
     const auto invalidScanned = invalidScanManager.ListInvalidPackages();
+    const auto validScanned = invalidScanManager.ListPackages();
     Expect(invalidScanned.size() == 2 &&
-            invalidScanManager.ListPackages().empty(),
-        "invalid installed and development packages are retained separately from loadable packages");
+            validScanned.size() == 1,
+        "invalid packages remain visible while a valid development copy of the same component remains loadable");
     const auto invalidInstalled = std::find_if(invalidScanned.begin(),
         invalidScanned.end(), [](const auto& package)
         {
@@ -714,10 +718,15 @@ int main()
         });
     Expect(invalidInstalled != invalidScanned.end() &&
             invalidInstalled->manifest.id == invalidScanId &&
+            invalidInstalled->packageId == invalidScanId &&
             invalidInstalled->selected &&
             invalidInstalled->source.providerId == "steam-workshop" &&
             !invalidInstalled->report.Ok(),
         "an invalid active installed package retains its identity, source, and validation report");
+    Expect(!validScanned.empty() && invalidInstalled != invalidScanned.end() &&
+            validScanned.front().development &&
+            validScanned.front().manifest.id == invalidInstalled->packageId,
+        "valid and invalid source copies expose the same package identity for one management-list entry");
     const auto optionalPermissionPackage =
         root / L"optional-permission-package";
     MakePackage(optionalPermissionPackage, "1.0.0",

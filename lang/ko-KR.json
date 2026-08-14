@@ -97,8 +97,6 @@
   "app.widget.placeholder.load_failed": "구성 요소를 불러올 수 없습니다.",
   "app.widget.placeholder.reload": "다시 불러오기",
   "app.settings.widgets_filter_empty": "구성 요소 없음",
-  "app.settings.widgets_invalid_components": "유효하지 않은 구성 요소",
-  "app.settings.widgets_invalid_component": "구성 요소가 유효하지 않음",
   "app.settings.widgets_advanced": "고급 옵션",
   "app.settings.widgets_developer_tools": "구성요소 개발자 도구",
   "app.settings.widgets_self_develop": "직접 개발",

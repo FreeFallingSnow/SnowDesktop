@@ -97,8 +97,6 @@
   "app.widget.placeholder.load_failed": "コンポーネントを読み込めませんでした。",
   "app.widget.placeholder.reload": "再読み込み",
   "app.settings.widgets_filter_empty": "コンポーネントなし",
-  "app.settings.widgets_invalid_components": "無効なコンポーネント",
-  "app.settings.widgets_invalid_component": "コンポーネントが無効です",
   "app.settings.widgets_advanced": "詳細オプション",
   "app.settings.widgets_developer_tools": "コンポーネント開発者ツール",
   "app.settings.widgets_self_develop": "自分で開発",

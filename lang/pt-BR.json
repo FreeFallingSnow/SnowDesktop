@@ -97,8 +97,6 @@
   "app.widget.placeholder.load_failed": "Não foi possível carregar o componente.",
   "app.widget.placeholder.reload": "Recarregar",
   "app.settings.widgets_filter_empty": "Sem widgets",
-  "app.settings.widgets_invalid_components": "Componentes inválidos",
-  "app.settings.widgets_invalid_component": "Componente inválido",
   "app.settings.widgets_advanced": "Opções Avançadas",
   "app.settings.widgets_developer_tools": "Ferramentas para desenvolvedores de widgets",
   "app.settings.widgets_self_develop": "Desenvolver por conta própria",

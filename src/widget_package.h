@@ -220,6 +220,7 @@ struct InstalledPackage
 
 struct InvalidPackage
 {
+    std::string packageId;
     PackageManifest manifest;
     PackageSourceRef source;
     std::filesystem::path root;

@@ -97,8 +97,6 @@
   "app.widget.placeholder.load_failed": "元件無法載入。",
   "app.widget.placeholder.reload": "重新載入",
   "app.settings.widgets_filter_empty": "目前沒有元件",
-  "app.settings.widgets_invalid_components": "無效元件",
-  "app.settings.widgets_invalid_component": "元件無效",
   "app.settings.widgets_advanced": "進階選項",
   "app.settings.widgets_developer_tools": "元件開發工具",
   "app.settings.widgets_self_develop": "自行開發",

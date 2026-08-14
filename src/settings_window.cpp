@@ -4237,6 +4237,12 @@ void SettingsWindow::DrawWidgetPackagesPage()
         const snowdesktop::widget::InstalledPackage* builtin = nullptr;
         const snowdesktop::widget::InstalledPackage* managed = nullptr;
         const snowdesktop::widget::InstalledPackage* development = nullptr;
+        std::vector<const snowdesktop::widget::InvalidPackage*>
+            invalidBuiltin;
+        std::vector<const snowdesktop::widget::InvalidPackage*>
+            invalidManaged;
+        std::vector<const snowdesktop::widget::InvalidPackage*>
+            invalidDevelopment;
     };
     std::vector<PackageGroup> packageGroups;
     std::unordered_map<std::string, std::size_t> packageGroupIndexes;
@@ -4256,6 +4262,23 @@ void SettingsWindow::DrawWidgetPackagesPage()
         else if (package.selected)
             group.managed = &package;
     }
+    for (const auto& package : invalidPackages)
+    {
+        const std::string groupId = !package.packageId.empty()
+            ? package.packageId
+            : "invalid:" + WideToUtf8(package.root.wstring());
+        auto [it, inserted] = packageGroupIndexes.emplace(
+            groupId, packageGroups.size());
+        if (inserted)
+            packageGroups.push_back(PackageGroup{ groupId });
+        PackageGroup& group = packageGroups[it->second];
+        if (package.development)
+            group.invalidDevelopment.push_back(&package);
+        else if (package.builtin)
+            group.invalidBuiltin.push_back(&package);
+        else
+            group.invalidManaged.push_back(&package);
+    }
     auto displayPackage = [](const PackageGroup& group)
         -> const snowdesktop::widget::InstalledPackage*
     {
@@ -4271,6 +4294,11 @@ void SettingsWindow::DrawWidgetPackagesPage()
             group.managed->source.providerId == "steam-workshop")
         {
             return group.managed->source.externalItemId;
+        }
+        for (const auto* package : group.invalidManaged)
+        {
+            if (package->source.providerId == "steam-workshop")
+                return package->source.externalItemId;
         }
         if (const auto subscribed =
                 widgetWorkshopSubscriptions.find(group.id);
@@ -4296,27 +4324,30 @@ void SettingsWindow::DrawWidgetPackagesPage()
     {
         if (searchText.empty()) return true;
         const auto* package = displayPackage(group);
-        if (!package) return false;
-        const auto manifest = localizedManifest(package->manifest);
-        std::string searchable = manifest.name + "\n" +
-            manifest.description + "\n" + manifest.author + "\n" +
-            manifest.id + "\n" + manifest.version;
-        return foldSearchText(std::move(searchable)).find(searchText) !=
-            std::string::npos;
-    };
-    auto invalidMatchesSearch = [&](const snowdesktop::widget::InvalidPackage&
-            package)
-    {
-        if (searchText.empty()) return true;
-        const auto manifest = localizedManifest(package.manifest);
-        std::string searchable = manifest.name + "\n" +
-            manifest.description + "\n" + manifest.author + "\n" +
-            manifest.id + "\n" + manifest.version + "\n" +
-            WideToUtf8(package.root.filename().wstring());
-        for (const auto& issue : package.report.issues)
+        std::string searchable = group.id;
+        if (package)
         {
-            searchable += "\n" + issue.code + "\n" + issue.message;
+            const auto manifest = localizedManifest(package->manifest);
+            searchable += "\n" + manifest.name + "\n" +
+                manifest.description + "\n" + manifest.author + "\n" +
+                manifest.id + "\n" + manifest.version;
         }
+        const auto appendInvalid = [&](const auto& candidates)
+        {
+            for (const auto* invalid : candidates)
+            {
+                const auto manifest = localizedManifest(invalid->manifest);
+                searchable += "\n" + manifest.name + "\n" +
+                    manifest.description + "\n" + manifest.author + "\n" +
+                    manifest.id + "\n" + manifest.version + "\n" +
+                    WideToUtf8(invalid->root.filename().wstring());
+                for (const auto& issue : invalid->report.issues)
+                    searchable += "\n" + issue.code + "\n" + issue.message;
+            }
+        };
+        appendInvalid(group.invalidBuiltin);
+        appendInvalid(group.invalidManaged);
+        appendInvalid(group.invalidDevelopment);
         return foldSearchText(std::move(searchable)).find(searchText) !=
             std::string::npos;
     };
@@ -4327,19 +4358,16 @@ void SettingsWindow::DrawWidgetPackagesPage()
     int developmentPackageCount = 0;
     for (const auto& group : packageGroups)
     {
-        const bool userPackage = group.managed || group.development;
+        const bool userPackage = group.managed || group.development ||
+            !group.invalidManaged.empty() ||
+            !group.invalidDevelopment.empty();
         if (userPackage) ++listedPackageCount;
-        if (group.managed) ++installedPackageCount;
-        if (group.development) ++developmentPackageCount;
-        if (group.builtin && !userPackage) ++builtinPackageCount;
-    }
-    for (const auto& package : invalidPackages)
-    {
-        ++listedPackageCount;
-        if (package.development)
-            ++developmentPackageCount;
-        else if (!package.builtin)
+        if (group.managed || !group.invalidManaged.empty())
             ++installedPackageCount;
+        if (group.development || !group.invalidDevelopment.empty())
+            ++developmentPackageCount;
+        if ((group.builtin || !group.invalidBuiltin.empty()) && !userPackage)
+            ++builtinPackageCount;
     }
     if ((widgetPackageFilter_ == 1 && installedPackageCount == 0) ||
         (widgetPackageFilter_ == 2 && developmentPackageCount == 0) ||
@@ -4396,56 +4424,51 @@ void SettingsWindow::DrawWidgetPackagesPage()
     std::vector<const PackageGroup*> visiblePackageGroups;
     for (const auto& group : packageGroups)
     {
-        if (!group.managed && !group.development) continue;
-        if (widgetPackageFilter_ == 1 && !group.managed) continue;
-        if (widgetPackageFilter_ == 2 && !group.development) continue;
+        const bool hasInstalled = group.managed ||
+            !group.invalidManaged.empty();
+        const bool hasDevelopment = group.development ||
+            !group.invalidDevelopment.empty();
+        if (!hasInstalled && !hasDevelopment) continue;
+        if (widgetPackageFilter_ == 1 && !hasInstalled) continue;
+        if (widgetPackageFilter_ == 2 && !hasDevelopment) continue;
         if (!matchesSearch(group)) continue;
         visiblePackageGroups.push_back(&group);
     }
-    std::vector<const snowdesktop::widget::InvalidPackage*>
-        visibleInvalidPackages;
-    for (const auto& package : invalidPackages)
-    {
-        if (widgetPackageFilter_ == 1 &&
-            (package.builtin || package.development))
-            continue;
-        if (widgetPackageFilter_ == 2 && !package.development) continue;
-        if (!invalidMatchesSearch(package)) continue;
-        visibleInvalidPackages.push_back(&package);
-    }
-    if (visiblePackageGroups.empty() && visibleInvalidPackages.empty())
+    if (visiblePackageGroups.empty())
         ImGui::TextDisabled("%s",
             _L("app.settings.widgets_filter_empty"));
     if (!visiblePackageGroups.empty())
     {
-        const float availableWidth = ImGui::GetContentRegionAvail().x;
-        const float cardGap = 10.0f * dpiScale_;
-        const float minimumCardWidth = 270.0f * dpiScale_;
-        const int installedColumns = std::clamp(
-            static_cast<int>((availableWidth + cardGap) /
-                (minimumCardWidth + cardGap)), 1, 3);
-        const float cardWidth = (availableWidth - cardGap *
-            static_cast<float>(installedColumns - 1)) /
-            static_cast<float>(installedColumns);
-        const float cardHeight = 270.0f * dpiScale_;
-        const ImVec2 gridStart = ImGui::GetCursorPos();
+        const float cardWidth = ImGui::GetContentRegionAvail().x;
+        const float cardGap = 6.0f * dpiScale_;
         for (std::size_t groupIndex = 0;
             groupIndex < visiblePackageGroups.size(); ++groupIndex)
         {
             const PackageGroup& group = *visiblePackageGroups[groupIndex];
-            const int column = static_cast<int>(
-                groupIndex % static_cast<std::size_t>(installedColumns));
-            const int row = static_cast<int>(
-                groupIndex / static_cast<std::size_t>(installedColumns));
-            ImGui::SetCursorPos(ImVec2(
-                gridStart.x +
-                    static_cast<float>(column) *
-                        (cardWidth + cardGap),
-                gridStart.y + static_cast<float>(row) *
-                    (cardHeight + cardGap)));
+            const float cardHeight = (220.0f + 38.0f *
+                static_cast<float>(group.invalidManaged.size() +
+                    group.invalidDevelopment.size())) * dpiScale_;
             const auto* package = displayPackage(group);
-            if (!package) continue;
-            const auto manifest = localizedManifest(package->manifest);
+            const snowdesktop::widget::InvalidPackage* displayInvalid =
+                nullptr;
+            const auto selectInvalid = [&](const auto& candidates)
+            {
+                if (displayInvalid) return;
+                const auto selected = std::find_if(candidates.begin(),
+                    candidates.end(), [](const auto* candidate)
+                    {
+                        return candidate->selected;
+                    });
+                if (selected != candidates.end()) displayInvalid = *selected;
+                else if (!candidates.empty()) displayInvalid = candidates.front();
+            };
+            selectInvalid(group.invalidDevelopment);
+            selectInvalid(group.invalidManaged);
+            if (!package && !displayInvalid) continue;
+            const auto manifest = localizedManifest(package
+                ? package->manifest : displayInvalid->manifest);
+            const std::string displayName = !manifest.name.empty()
+                ? manifest.name : group.id;
             std::vector<const snowdesktop::widget::InstalledPackage*>
                 olderVersions;
             if (group.managed)
@@ -4482,17 +4505,14 @@ void SettingsWindow::DrawWidgetPackagesPage()
                 snowdesktop::widget::SteamPublishedFileId(
                     workshopExternalItemId);
             ImGui::PushID(group.id.c_str());
-            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding,
-                6.0f * dpiScale_);
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
                 ImVec2(10.0f * dpiScale_, 9.0f * dpiScale_));
-            ImGui::BeginChild("##InstalledWidgetCard",
+            ImGui::BeginChild("##InstalledWidgetListItem",
                 ImVec2(cardWidth, cardHeight),
-                ImGuiChildFlags_Borders |
-                    ImGuiChildFlags_AlwaysUseWindowPadding);
-            ImGui::PopStyleVar(2);
+                ImGuiChildFlags_AlwaysUseWindowPadding);
+            ImGui::PopStyleVar();
 
-            ImGui::TextUnformatted(manifest.name.c_str());
+            ImGui::TextUnformatted(displayName.c_str());
             const float moreButtonWidth = 30.0f * dpiScale_;
             ImGui::SameLine(std::max(ImGui::GetCursorPosX(),
                 ImGui::GetWindowContentRegionMax().x - moreButtonWidth));
@@ -4514,25 +4534,113 @@ void SettingsWindow::DrawWidgetPackagesPage()
                 ImGui::TextWrapped("%s", manifest.description.c_str());
             ImGui::EndChild();
 
-            const char* kind = group.development
-                ? group.development->active
+            if (group.managed)
+            {
+                const char* installedSource = !workshopItemId.empty()
+                    ? _L("app.settings.widgets_source_steam")
+                    : _L("app.settings.widgets_source_local");
+                ImGui::TextDisabled("%s · %s · %s · %s", installedSource,
+                    group.managed->manifest.version.c_str(),
+                    _L("app.settings.valid"), group.managed->enabled
+                        ? _L("app.settings.widgets_active")
+                        : _L("app.settings.widgets_disabled"));
+            }
+            if (group.development)
+            {
+                const char* developmentState = group.development->active
                     ? _L("app.settings.widgets_development_active")
                     : group.managed
                         ? _L("app.settings.widgets_development_using_installed")
-                        : _L("app.settings.widgets_development_inactive")
-                : group.managed && group.managed->enabled
-                ? _L("app.settings.widgets_active")
-                : _L("app.settings.widgets_disabled");
-            const char* sourceLabel = !workshopItemId.empty()
-                ? _L("app.settings.widgets_source_steam")
-                : group.development && group.development->active
-                    ? _L("app.settings.widgets_filter_development")
-                    : _L("app.settings.widgets_source_local");
-            ImGui::TextDisabled("%s · %s", sourceLabel, kind);
+                        : _L("app.settings.widgets_development_inactive");
+                ImGui::TextDisabled("%s · %s · %s · %s",
+                    _L("app.settings.widgets_filter_development"),
+                    group.development->manifest.version.c_str(),
+                    _L("app.settings.valid"), developmentState);
+            }
+            if (package == group.builtin && !group.managed &&
+                !group.development)
+            {
+                ImGui::TextDisabled("%s · %s",
+                    _L("app.settings.widgets_filter_builtin"),
+                    _L("app.settings.valid"));
+            }
+            const auto drawInvalidSources = [&](const auto& candidates,
+                    const char* fallbackSource)
+            {
+                for (const auto* invalid : candidates)
+                {
+                    const char* invalidSource = fallbackSource;
+                    if (invalid->source.providerId == "steam-workshop")
+                        invalidSource =
+                            _L("app.settings.widgets_source_steam");
+                    ImGui::TextColored(
+                        ImVec4(0.82f, 0.30f, 0.27f, 1.0f),
+                        "%s · %s · %s", invalidSource,
+                        invalid->manifest.version.c_str(),
+                        _L("app.settings.invalid"));
+                    const auto issue = std::find_if(
+                        invalid->report.issues.begin(),
+                        invalid->report.issues.end(),
+                        [](const auto& candidate)
+                        {
+                            return candidate.severity ==
+                                snowdesktop::widget::ValidationSeverity::Error;
+                        });
+                    if (issue != invalid->report.issues.end())
+                    {
+                        ImGui::TextDisabled("[%s] %s", issue->code.c_str(),
+                            issue->message.c_str());
+                    }
+                }
+            };
+            drawInvalidSources(group.invalidManaged,
+                _L("app.settings.widgets_source_local"));
+            drawInvalidSources(group.invalidDevelopment,
+                _L("app.settings.widgets_filter_development"));
             if (!manifest.author.empty())
             {
                 ImGui::TextDisabled("%s: %s",
                     _L("app.settings.author"), manifest.author.c_str());
+            }
+            if (!package)
+            {
+                if (ImGui::BeginPopup("##WidgetPackageMore"))
+                {
+                    ImGui::TextUnformatted(displayName.c_str());
+                    ImGui::Separator();
+                    ImGui::TextDisabled("%s: %s",
+                        _L("app.settings.widgets_package_id"),
+                        group.id.c_str());
+                    if (!workshopItemId.empty() && ImGui::MenuItem(_L(
+                            "app.settings.widgets_open_workshop_item")))
+                    {
+                        OpenSteamUrlWithWebFallback(
+                            snowdesktop::SnowDesktopSteamCommunityItemClientUrl(
+                                workshopItemId),
+                            snowdesktop::SnowDesktopSteamCommunityItemUrl(
+                                workshopItemId));
+                    }
+                    if (!group.invalidManaged.empty())
+                    {
+                        ImGui::PushStyleColor(ImGuiCol_Text,
+                            ImVec4(0.86f, 0.22f, 0.20f, 1.0f));
+                        if (ImGui::MenuItem(
+                                _L("app.settings.widgets_uninstall")))
+                        {
+                            pendingWidgetPackageUninstall_ = group.id;
+                            pendingWidgetPackageUninstallWorkshopItem_ =
+                                workshopItemId.empty()
+                                ? std::string{} : workshopExternalItemId;
+                        }
+                        ImGui::PopStyleColor();
+                    }
+                    ImGui::EndPopup();
+                }
+                ImGui::EndChild();
+                ImGui::Separator();
+                ImGui::Dummy(ImVec2(0, cardGap));
+                ImGui::PopID();
+                continue;
             }
             const auto& permissions = package->grantedPermissions;
             const std::string permissionsText =
@@ -4627,7 +4735,9 @@ void SettingsWindow::DrawWidgetPackagesPage()
                         else
                             widgetPackageStatus_ = error;
                     }
-                    if (!group.development && !workshopItemId.empty() &&
+                    if (!group.development &&
+                        group.invalidDevelopment.empty() &&
+                        !workshopItemId.empty() &&
                         ImGui::MenuItem(_L(
                             "app.settings.widgets_create_development")))
                     {
@@ -4687,76 +4797,37 @@ void SettingsWindow::DrawWidgetPackagesPage()
                     }
                     ImGui::PopStyleColor();
                 }
-                ImGui::EndPopup();
-            }
-
-            const float frameHeight = ImGui::GetFrameHeight();
-            const float rowSpacing = ImGui::GetStyle().ItemSpacing.y;
-            const float footerStart = cardHeight -
-                3.0f * frameHeight - 2.0f * rowSpacing -
-                10.0f * dpiScale_;
-            ImGui::SetCursorPosY(std::max(
-                ImGui::GetCursorPosY(), footerStart));
-            const float actionWidth = ImGui::GetContentRegionAvail().x;
-            const float pairGap = ImGui::GetStyle().ItemSpacing.x;
-            const float pairWidth = (actionWidth - pairGap) * 0.5f;
-
-            if (group.development)
-            {
-                const bool toggleDevelopment = SecondaryButton(
-                    group.development->active
-                        ? _L("app.settings.widgets_development_deactivate")
-                        : _L("app.settings.widgets_development_activate"),
-                    workshopItemId.empty()
-                        ? ImVec2(actionWidth, 0)
-                        : ImVec2(pairWidth, 0));
-                if (toggleDevelopment)
+                if (group.development)
                 {
-                    std::string error;
-                    const bool active = !group.development->active;
-                    if (WidgetEngine::SetWidgetDevelopmentOverride(
-                            group.id, active, error))
+                    ImGui::Separator();
+                    if (ImGui::MenuItem(group.development->active
+                            ? _L("app.settings.widgets_development_deactivate")
+                            : _L("app.settings.widgets_development_activate")))
                     {
-                        reloadPackageInstances(group.id);
-                        widgetPackageStatus_ = _L(active
-                            ? "app.settings.widgets_development_activated_ok"
-                            : "app.settings.widgets_development_deactivated_ok");
-                        if (reloadCallback_) reloadCallback_();
+                        std::string error;
+                        const bool active = !group.development->active;
+                        if (WidgetEngine::SetWidgetDevelopmentOverride(
+                                group.id, active, error))
+                        {
+                            reloadPackageInstances(group.id);
+                            widgetPackageStatus_ = _L(active
+                                ? "app.settings.widgets_development_activated_ok"
+                                : "app.settings.widgets_development_deactivated_ok");
+                            if (reloadCallback_) reloadCallback_();
+                        }
+                        else widgetPackageStatus_ = error;
                     }
-                    else widgetPackageStatus_ = error;
-                }
-                if (!workshopItemId.empty())
-                {
-                    ImGui::SameLine();
-                    if (SecondaryButton(
-                            _L("app.settings.widgets_open_workshop_item"),
-                            ImVec2(pairWidth, 0)))
+                    ImGui::BeginDisabled(hasManagedVersion);
+                    if (ImGui::MenuItem(hasManagedVersion
+                            ? _L("app.settings.widgets_installed")
+                            : _L("app.settings.widgets_install_managed")))
                     {
-                        OpenSteamUrlWithWebFallback(
-                            snowdesktop::
-                                SnowDesktopSteamCommunityItemClientUrl(
-                                    workshopItemId),
-                            snowdesktop::SnowDesktopSteamCommunityItemUrl(
-                                workshopItemId));
+                        installLocalPackage(group.development->root, false,
+                            group.id);
                     }
-                }
-
-                ImGui::BeginDisabled(hasManagedVersion);
-                if (SecondaryButton(hasManagedVersion
-                        ? _L("app.settings.widgets_installed")
-                        : _L("app.settings.widgets_install_managed"),
-                        ImVec2(pairWidth, 0)))
-                {
-                    installLocalPackage(group.development->root, false,
-                        group.id);
-                }
-                ImGui::EndDisabled();
-                if (workshopPublisherAvailable)
-                {
-                    ImGui::SameLine();
-                    if (SecondaryButton(
-                            _L("app.settings.widgets_upload_steam"),
-                            ImVec2(pairWidth, 0)))
+                    ImGui::EndDisabled();
+                    if (workshopPublisherAvailable && ImGui::MenuItem(
+                            _L("app.settings.widgets_upload_steam")))
                     {
                         if (LaunchSteamWorkshopPublisher(
                                 WidgetEngine::GetWidgetPackagePaths().development,
@@ -4767,59 +4838,46 @@ void SettingsWindow::DrawWidgetPackagesPage()
                                 "app.settings.widgets_publisher_launch_failed");
                     }
                 }
-            }
-            else
-            {
-                if (group.managed)
+                if (!workshopItemId.empty())
                 {
-                    if (SecondaryButton(group.managed->enabled
-                            ? _L("app.settings.widgets_disable")
-                            : _L("app.settings.widgets_enable"),
-                            workshopItemId.empty()
-                                ? ImVec2(actionWidth, 0)
-                                : ImVec2(pairWidth, 0)))
+                    ImGui::Separator();
+                    if (ImGui::MenuItem(_L(
+                            "app.settings.widgets_open_workshop_item")))
                     {
-                        std::string error;
-                        const bool enabled = !group.managed->enabled;
-                        if (WidgetEngine::SetWidgetPackageEnabled(
-                                group.id, enabled, error))
-                        {
-                            widgetPackageStatus_ = _L(enabled
-                                ? "app.settings.widgets_enabled_ok"
-                                : "app.settings.widgets_disabled_ok");
-                            if (!enabled && widgetEngine_)
-                            {
-                                std::vector<std::wstring> instances;
-                                for (const auto& widget :
-                                    widgetEngine_->GetWidgets())
-                                    if (widget.packageId == group.id)
-                                        instances.push_back(widget.widgetId);
-                                for (const auto& instance : instances)
-                                    widgetEngine_->UnloadWidget(instance);
-                            }
-                            if (reloadCallback_) reloadCallback_();
-                        }
-                        else widgetPackageStatus_ = error;
-                    }
-                    if (!workshopItemId.empty())
-                    {
-                        ImGui::SameLine();
-                        if (SecondaryButton(_L(
-                                "app.settings.widgets_open_workshop_item"),
-                                ImVec2(pairWidth, 0)))
-                        {
-                            OpenSteamUrlWithWebFallback(
-                                snowdesktop::
-                                    SnowDesktopSteamCommunityItemClientUrl(
-                                        workshopItemId),
-                                snowdesktop::
-                                    SnowDesktopSteamCommunityItemUrl(
-                                        workshopItemId));
-                        }
+                        OpenSteamUrlWithWebFallback(
+                            snowdesktop::SnowDesktopSteamCommunityItemClientUrl(
+                                workshopItemId),
+                            snowdesktop::SnowDesktopSteamCommunityItemUrl(
+                                workshopItemId));
                     }
                 }
-                ImGui::Dummy(ImVec2(0, frameHeight));
+                if (!group.managed && !group.invalidManaged.empty())
+                {
+                    ImGui::Separator();
+                    ImGui::PushStyleColor(ImGuiCol_Text,
+                        ImVec4(0.86f, 0.22f, 0.20f, 1.0f));
+                    if (ImGui::MenuItem(
+                            _L("app.settings.widgets_uninstall")))
+                    {
+                        pendingWidgetPackageUninstall_ = group.id;
+                        pendingWidgetPackageUninstallWorkshopItem_ =
+                            workshopItemId.empty()
+                            ? std::string{} : workshopExternalItemId;
+                    }
+                    ImGui::PopStyleColor();
+                }
+                ImGui::EndPopup();
             }
+
+            const float frameHeight = ImGui::GetFrameHeight();
+            const float footerStart = cardHeight -
+                frameHeight - 10.0f * dpiScale_;
+            ImGui::SetCursorPosY(std::max(
+                ImGui::GetCursorPosY(), footerStart));
+            const float actionWidth = std::min(180.0f * dpiScale_,
+                ImGui::GetContentRegionAvail().x);
+            ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
+                ImGui::GetWindowContentRegionMax().x - actionWidth));
 
             const bool canAdd = package->active && package->enabled &&
                 addWidgetToDesktopCallback_;
@@ -4835,76 +4893,8 @@ void SettingsWindow::DrawWidgetPackagesPage()
             ImGui::EndDisabled();
 
             ImGui::EndChild();
-            ImGui::PopID();
-        }
-        const int rowCount = static_cast<int>(
-            (visiblePackageGroups.size() + installedColumns - 1) /
-            static_cast<std::size_t>(installedColumns));
-        const float gridHeight = static_cast<float>(rowCount) *
-            (cardHeight + cardGap) - cardGap;
-        ImGui::SetCursorPos(ImVec2(
-            gridStart.x, gridStart.y + std::max(0.0f, gridHeight)));
-        ImGui::Dummy(ImVec2(0, 0));
-    }
-
-    if (!visibleInvalidPackages.empty())
-    {
-        ImGui::Spacing();
-        std::string invalidHeader =
-            _L("app.settings.widgets_invalid_components");
-        invalidHeader += " ";
-        invalidHeader += std::to_string(visibleInvalidPackages.size());
-        ImGui::TextColored(ImVec4(0.82f, 0.30f, 0.27f, 1.0f), "%s",
-            invalidHeader.c_str());
-        for (const auto* package : visibleInvalidPackages)
-        {
-            const auto manifest = localizedManifest(package->manifest);
-            std::string name = manifest.name;
-            if (name.empty() && !manifest.id.empty()) name = manifest.id;
-            if (name.empty())
-            {
-                const auto fallback = !package->builtin &&
-                        !package->development
-                    ? package->root.parent_path().filename()
-                    : package->root.filename();
-                name = WideToUtf8(fallback.wstring());
-            }
-            const char* sourceLabel = package->builtin
-                ? _L("app.settings.widgets_filter_builtin")
-                : package->development
-                    ? _L("app.settings.widgets_filter_development")
-                    : package->source.providerId == "steam-workshop"
-                        ? _L("app.settings.widgets_source_steam")
-                        : _L("app.settings.widgets_source_local");
-            ImGui::PushID(WideToUtf8(package->root.wstring()).c_str());
-            ImGui::BeginChild("##InvalidWidgetPackage",
-                ImVec2(0, 100.0f * dpiScale_), ImGuiChildFlags_Borders |
-                    ImGuiChildFlags_AlwaysUseWindowPadding);
-            ImGui::TextUnformatted(name.c_str());
-            if (!manifest.version.empty())
-            {
-                ImGui::SameLine();
-                ImGui::TextDisabled(_L("app.settings.widgets_version"),
-                    manifest.version.c_str());
-            }
-            ImGui::TextColored(ImVec4(0.82f, 0.30f, 0.27f, 1.0f),
-                "%s · %s", _L("app.settings.widgets_invalid_component"),
-                sourceLabel);
-            const auto issue = std::find_if(package->report.issues.begin(),
-                package->report.issues.end(), [](const auto& candidate)
-                {
-                    return candidate.severity == snowdesktop::widget::
-                        ValidationSeverity::Error;
-                });
-            if (issue != package->report.issues.end())
-            {
-                ImGui::PushTextWrapPos();
-                ImGui::TextDisabled("[%s] %s", issue->code.c_str(),
-                    issue->message.c_str());
-                ImGui::PopTextWrapPos();
-            }
-            ImGui::EndChild();
-            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, cardGap));
             ImGui::PopID();
         }
     }
@@ -4912,7 +4902,11 @@ void SettingsWindow::DrawWidgetPackagesPage()
     std::vector<const PackageGroup*> visibleBuiltinGroups;
     for (const auto& group : packageGroups)
     {
-        if (!group.builtin || group.managed || group.development) continue;
+        if ((!group.builtin && group.invalidBuiltin.empty()) ||
+            group.managed || group.development ||
+            !group.invalidManaged.empty() ||
+            !group.invalidDevelopment.empty())
+            continue;
         if (matchesSearch(group)) visibleBuiltinGroups.push_back(&group);
     }
     if (!visibleBuiltinGroups.empty())
@@ -4930,7 +4924,37 @@ void SettingsWindow::DrawWidgetPackagesPage()
             for (const PackageGroup* group : visibleBuiltinGroups)
             {
                 const auto* package = displayPackage(*group);
-                if (!package) continue;
+                if (!package)
+                {
+                    const auto* invalid = group->invalidBuiltin.empty()
+                        ? nullptr : group->invalidBuiltin.front();
+                    if (!invalid) continue;
+                    const auto invalidManifest =
+                        localizedManifest(invalid->manifest);
+                    const std::string name = !invalidManifest.name.empty()
+                        ? invalidManifest.name : group->id;
+                    ImGui::PushID(("builtin-invalid-" + group->id).c_str());
+                    ImGui::TextUnformatted(name.c_str());
+                    ImGui::SameLine();
+                    ImGui::TextColored(
+                        ImVec4(0.82f, 0.30f, 0.27f, 1.0f), "%s · %s",
+                        _L("app.settings.widgets_filter_builtin"),
+                        _L("app.settings.invalid"));
+                    const auto issue = std::find_if(
+                        invalid->report.issues.begin(),
+                        invalid->report.issues.end(),
+                        [](const auto& candidate)
+                        {
+                            return candidate.severity == snowdesktop::widget::
+                                ValidationSeverity::Error;
+                        });
+                    if (issue != invalid->report.issues.end())
+                        ImGui::TextDisabled("[%s] %s", issue->code.c_str(),
+                            issue->message.c_str());
+                    ImGui::Separator();
+                    ImGui::PopID();
+                    continue;
+                }
                 const auto manifest = localizedManifest(package->manifest);
                 ImGui::PushID(("builtin-" + group->id).c_str());
                 const float rowHeight = 70.0f * dpiScale_;

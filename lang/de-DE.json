@@ -97,8 +97,6 @@
   "app.widget.placeholder.load_failed": "Die Komponente konnte nicht geladen werden.",
   "app.widget.placeholder.reload": "Neu laden",
   "app.settings.widgets_filter_empty": "Keine Komponenten",
-  "app.settings.widgets_invalid_components": "Ungültige Komponenten",
-  "app.settings.widgets_invalid_component": "Komponente ungültig",
   "app.settings.widgets_advanced": "Erweiterte Optionen",
   "app.settings.widgets_developer_tools": "Komponentenentwicklertools",
   "app.settings.widgets_self_develop": "Selbst entwickeln",
