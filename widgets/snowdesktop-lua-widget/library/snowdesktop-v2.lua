@@ -314,17 +314,22 @@ function widget.cancelTimer(name) end
 ---@class snow.schedule
 schedule = {}
 
+---@class SnowScheduleOptions
+---@field whenHidden? 'pause'|'throttle'|'continue'
+
 ---Create or replace a coalescing repeating schedule.
 ---@param id string
 ---@param milliseconds integer
+---@param options? SnowScheduleOptions
 ---@return boolean
-function schedule.every(id, milliseconds) end
+function schedule.every(id, milliseconds, options) end
 
 ---Create or replace a one-shot schedule.
 ---@param id string
 ---@param milliseconds integer
+---@param options? SnowScheduleOptions
 ---@return boolean
-function schedule.after(id, milliseconds) end
+function schedule.after(id, milliseconds, options) end
 
 ---@param id string
 ---@return boolean

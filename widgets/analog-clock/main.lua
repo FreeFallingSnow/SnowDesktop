@@ -20,6 +20,10 @@ local settings = {
     }
 }
 
+local function setup()
+    schedule.every("clock", 1000, { whenHidden = "pause" })
+end
+
 local function render()
     local t = time.parts(time.now())
     local showSecondHand = storage.get("showSecondHand") ~= "0"
@@ -126,5 +130,6 @@ return widget.define({
     alpha = 0,
     gradientEndA = 0,
     settings = settings,
+    setup = setup,
     render = render,
 })

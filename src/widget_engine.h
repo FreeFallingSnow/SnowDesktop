@@ -936,7 +936,10 @@ public:
     bool RuntimeMediaPlayPause();
     bool RuntimeMediaNext();
     bool RuntimeMediaPrevious();
-    bool RuntimeSetTimer(const std::wstring& widgetId, const std::string& name, int intervalMs, bool repeat);
+    bool RuntimeSetTimer(const std::wstring& widgetId,
+        const std::string& name, int intervalMs, bool repeat,
+        snowdesktop::widget_runtime::ScheduleHiddenPolicy hiddenPolicy =
+            snowdesktop::widget_runtime::ScheduleHiddenPolicy::Continue);
     bool RuntimeCancelTimer(const std::wstring& widgetId, const std::string& name);
     int RuntimeHttpRequest(const std::wstring& widgetId, HttpRequestOptions options);
     bool RuntimeHttpCancel(const std::wstring& widgetId, int requestId);

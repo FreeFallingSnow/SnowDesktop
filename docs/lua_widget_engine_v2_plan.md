@@ -517,8 +517,10 @@ schedule.timeline("agenda", {
 当前过渡实现已发布 `schedule.basic`：`schedule.every(id, ms)`、
 `schedule.after(id, ms)` 和 `schedule.cancel(id)` 复用宿主截止时间队列，限制每实例
 32 个、ID 128 字节、最小实际周期 100 ms，并通过 `event.kind="schedule"` 返回
-`id/missed/coalesced`。卸载、热重载和关闭自动取消。options、隐藏
-pause/throttle、绝对 `at` 和 timeline 尚未实现，不能计入完整调度契约。
+`id/missed/coalesced`。`schedule.visibility` 已增加第三个
+`{ whenHidden="pause"|"throttle"|"continue" }` 参数，默认 throttle；pause 在恢复
+可见时合并错过的截止时间，throttle 使用 5000 ms 隐藏下限。卸载、热重载和关闭
+自动取消。绝对 `at`、timeline 和预览虚拟时钟尚未实现，不能计入完整调度契约。
 
 ## 12. 数据订阅与任务
 
@@ -1449,7 +1451,10 @@ v2.0 资源契约：
 
 ### 19.1 发布硬门槛
 
-当前仓库有 11 个内置组件，全部仍为 schema v1/API v1。API v2 可以先以预览状态供第三方试用，但只有全部内置组件完成迁移和验收后才能宣布稳定。
+当前仓库有 11 个内置组件；`analog-clock` 与 `digital-clock` 已切到 schema/API v2、
+`widget.define` 和可见性作用域 schedule，其余 9 个仍待迁移。两个时钟尚需完成真实
+桌面的多 DPI、主题、隐藏唤醒与休眠恢复验收，因此只能计为代码迁移完成，不能计为
+最终验证完成。只有全部内置组件完成迁移和验收后才能宣布稳定。
 
 统一迁移规则：
 

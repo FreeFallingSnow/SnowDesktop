@@ -89,10 +89,12 @@
     "columns": 2,
     "rows": 2
   },
-  "refreshIntervalMs": 1000,
   "permissions": [],
   "requiredFeatures": [
     "draw.immediate",
+    "lifecycle.model",
+    "schedule.basic",
+    "schedule.visibility",
     "time.basic"
   ],
   "optionalFeatures": []

@@ -1944,17 +1944,36 @@ static int LuaScheduleSet(lua_State* state, bool repeat,
             "%s: milliseconds must be between 1 and 86400000",
             functionName);
     }
+    auto hiddenPolicy =
+        snowdesktop::widget_runtime::ScheduleHiddenPolicy::Throttle;
     if (!lua_isnoneornil(state, 3))
     {
-        return luaL_error(state,
-            "%s: options are not available with schedule.basic",
-            functionName);
+        luaL_checktype(state, 3, LUA_TTABLE);
+        lua_getfield(state, 3, "whenHidden");
+        if (!lua_isnil(state, -1))
+        {
+            size_t valueLength = 0;
+            const char* raw = luaL_checklstring(
+                state, -1, &valueLength);
+            const std::string_view value(raw, valueLength);
+            if (value == "pause")
+                hiddenPolicy = snowdesktop::widget_runtime::ScheduleHiddenPolicy::Pause;
+            else if (value == "throttle")
+                hiddenPolicy = snowdesktop::widget_runtime::ScheduleHiddenPolicy::Throttle;
+            else if (value == "continue")
+                hiddenPolicy = snowdesktop::widget_runtime::ScheduleHiddenPolicy::Continue;
+            else
+                return luaL_error(state,
+                    "%s: whenHidden must be 'pause', 'throttle', or 'continue'",
+                    functionName);
+        }
+        lua_pop(state, 1);
     }
     auto* d2d = GetD2D(state);
     lua_pushboolean(state, d2d && d2d->engine &&
         d2d->engine->RuntimeSetTimer(BoundWidgetId(state),
             std::string(name, nameLength), static_cast<int>(delay),
-            repeat));
+            repeat, hiddenPolicy));
     return 1;
 }
 
@@ -5658,6 +5677,8 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     w.scriptPresets = std::move(scriptPresets);
     w.preview = preview;
     w.previewStorage = std::move(pending.previewStorage);
+    (void)w.namedTimers.SetVisible(false,
+        snowdesktop::widget_runtime::NamedTimerSchedule::Clock::now());
     WIN32_FILE_ATTRIBUTE_DATA attr{};
     if (GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &attr))
         w.lastModified = attr.ftLastWriteTime;
@@ -6256,6 +6277,11 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     if (!found->hostVisible)
     {
         found->hostVisible = true;
+        if (found->namedTimers.SetVisible(true,
+                snowdesktop::widget_runtime::NamedTimerSchedule::Clock::now()))
+        {
+            RescheduleNamedTimer(*found);
+        }
         if (dataBroker_)
         {
             (void)dataBroker_->SetInstanceVisible(
@@ -6601,6 +6627,8 @@ void WidgetEngine::TickRuntime()
             runtimeNow - widget.lastRenderTime > std::chrono::milliseconds(2500))
         {
             widget.hostVisible = false;
+            if (widget.namedTimers.SetVisible(false, runtimeNow))
+                RescheduleNamedTimer(widget);
             if (dataBroker_)
             {
                 (void)dataBroker_->SetInstanceVisible(
@@ -6681,7 +6709,7 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
 
         if (widget.manifest.apiVersion >= 2)
         {
-            invoked = InvokeLifecycleEvent(widget, "schedule",
+            (void)InvokeLifecycleEvent(widget, "schedule",
                 [&fire](lua_State* eventState) {
                     lua_pushlstring(eventState,
                         fire->name.data(), fire->name.size());
@@ -6692,7 +6720,8 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
                     lua_pushboolean(eventState,
                         fire->coalesced ? 1 : 0);
                     lua_setfield(eventState, -2, "coalesced");
-                }) || invoked;
+                });
+            invoked = true;
             continue;
         }
 
@@ -7777,14 +7806,16 @@ bool WidgetEngine::RuntimeMediaPrevious()
     return systemSnapshotService_ && systemSnapshotService_->RequestMediaPrevious();
 }
 
-bool WidgetEngine::RuntimeSetTimer(const std::wstring& widgetId, const std::string& name,
-    int intervalMs, bool repeat)
+bool WidgetEngine::RuntimeSetTimer(const std::wstring& widgetId,
+    const std::string& name, int intervalMs, bool repeat,
+    snowdesktop::widget_runtime::ScheduleHiddenPolicy hiddenPolicy)
 {
     if (snowdesktop::widget_runtime::IsDryLoad()) return false;
     int index = FindWidget(widgetId);
     if (index < 0 || name.empty()) return false;
     if (!widgets_[index].namedTimers.Set(
-            name, intervalMs, repeat, std::chrono::steady_clock::now()))
+            name, intervalMs, repeat, std::chrono::steady_clock::now(),
+            hiddenPolicy))
     {
         return false;
     }

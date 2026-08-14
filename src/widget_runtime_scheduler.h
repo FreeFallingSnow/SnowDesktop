@@ -10,6 +10,13 @@
 
 namespace snowdesktop::widget_runtime
 {
+enum class ScheduleHiddenPolicy
+{
+    Pause,
+    Throttle,
+    Continue,
+};
+
 class NamedTimerSchedule
 {
 public:
@@ -20,9 +27,13 @@ public:
     static constexpr std::size_t MaxNameBytes = 128;
     static constexpr int MinIntervalMs = 100;
     static constexpr int MaxIntervalMs = 86400000;
+    static constexpr int HiddenThrottleIntervalMs = 5000;
 
-    bool Set(std::string name, int intervalMs, bool repeat, TimePoint now);
+    bool Set(std::string name, int intervalMs, bool repeat, TimePoint now,
+        ScheduleHiddenPolicy hiddenPolicy =
+            ScheduleHiddenPolicy::Continue);
     bool Cancel(std::string_view name);
+    bool SetVisible(bool visible, TimePoint now);
     struct Fire
     {
         std::string name;
@@ -42,9 +53,13 @@ private:
     {
         int intervalMs = 1000;
         bool repeat = true;
+        ScheduleHiddenPolicy hiddenPolicy =
+            ScheduleHiddenPolicy::Continue;
         TimePoint due;
     };
 
+    bool Eligible(const Timer& timer) const noexcept;
     std::unordered_map<std::string, Timer> timers_;
+    bool visible_ = true;
 };
 }

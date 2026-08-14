@@ -106,6 +106,9 @@ it does not yet represent individual declarative elements.
   the value changes. Do not use it as persistent storage.
 - Use `schedule.every/after/cancel` for v2 timers and handle
   `event.kind == "schedule"`; do not add new `widget.setTimer` usage.
+- Set `whenHidden` deliberately: prefer `pause` for purely visual clocks and
+  animation, `throttle` for low-frequency freshness, and `continue` only when
+  deadlines must remain active while the component is hidden.
 - Create `data.subscribe` handles once in `setup` or module scope, read their
   immutable envelopes during render, and declare `system.performance.read`
   or `system.power.read` as optional when system data can degrade gracefully.

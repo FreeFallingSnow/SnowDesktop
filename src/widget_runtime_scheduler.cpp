@@ -10,7 +10,8 @@ bool NamedTimerSchedule::Set(
     std::string name,
     int intervalMs,
     bool repeat,
-    TimePoint now)
+    TimePoint now,
+    ScheduleHiddenPolicy hiddenPolicy)
 {
     if (name.empty() || name.size() > MaxNameBytes ||
         (!timers_.contains(name) && timers_.size() >= MaxTimers))
@@ -20,10 +21,15 @@ bool NamedTimerSchedule::Set(
 
     intervalMs = std::clamp(
         intervalMs, MinIntervalMs, MaxIntervalMs);
+    const int effectiveInterval = !visible_ &&
+            hiddenPolicy == ScheduleHiddenPolicy::Throttle
+        ? std::max(intervalMs, HiddenThrottleIntervalMs)
+        : intervalMs;
     timers_[std::move(name)] = {
         intervalMs,
         repeat,
-        now + std::chrono::milliseconds(intervalMs),
+        hiddenPolicy,
+        now + std::chrono::milliseconds(effectiveInterval),
     };
     return true;
 }
@@ -33,13 +39,39 @@ bool NamedTimerSchedule::Cancel(std::string_view name)
     return timers_.erase(std::string(name)) > 0;
 }
 
+bool NamedTimerSchedule::SetVisible(bool visible, TimePoint now)
+{
+    if (visible_ == visible) return false;
+    visible_ = visible;
+    for (auto& [_, timer] : timers_)
+    {
+        if (timer.hiddenPolicy != ScheduleHiddenPolicy::Throttle)
+            continue;
+        const int effectiveInterval = visible_
+            ? timer.intervalMs
+            : std::max(timer.intervalMs, HiddenThrottleIntervalMs);
+        const auto adjustedDue = now +
+            std::chrono::milliseconds(effectiveInterval);
+        timer.due = visible_
+            ? std::min(timer.due, adjustedDue)
+            : std::max(timer.due, adjustedDue);
+    }
+    return true;
+}
+
+bool NamedTimerSchedule::Eligible(const Timer& timer) const noexcept
+{
+    return visible_ ||
+        timer.hiddenPolicy != ScheduleHiddenPolicy::Pause;
+}
+
 std::vector<std::string> NamedTimerSchedule::DueNames(
     TimePoint now) const
 {
     std::vector<std::string> result;
     for (const auto& [name, timer] : timers_)
     {
-        if (now >= timer.due)
+        if (Eligible(timer) && now >= timer.due)
             result.push_back(name);
     }
     return result;
@@ -57,7 +89,8 @@ NamedTimerSchedule::ConsumeDueInfo(
     std::string_view name, TimePoint now)
 {
     auto timer = timers_.find(std::string(name));
-    if (timer == timers_.end() || now < timer->second.due)
+    if (timer == timers_.end() || !Eligible(timer->second) ||
+        now < timer->second.due)
         return std::nullopt;
 
     Fire result;
@@ -69,13 +102,17 @@ NamedTimerSchedule::ConsumeDueInfo(
         return result;
     }
 
+    const int effectiveInterval = !visible_ &&
+            timer->second.hiddenPolicy == ScheduleHiddenPolicy::Throttle
+        ? std::max(timer->second.intervalMs, HiddenThrottleIntervalMs)
+        : timer->second.intervalMs;
     auto nextDue = timer->second.due +
-        std::chrono::milliseconds(timer->second.intervalMs);
+        std::chrono::milliseconds(effectiveInterval);
     while (nextDue <= now)
     {
         ++result.missed;
         nextDue +=
-            std::chrono::milliseconds(timer->second.intervalMs);
+            std::chrono::milliseconds(effectiveInterval);
     }
     timer->second.due = nextDue;
     result.coalesced = result.missed > 0;
@@ -88,12 +125,17 @@ NamedTimerSchedule::NextDelay(TimePoint now) const
     if (timers_.empty())
         return std::nullopt;
 
-    auto nextDue = timers_.begin()->second.due;
+    std::optional<TimePoint> nextDue;
     for (const auto& [_, timer] : timers_)
-        nextDue = std::min(nextDue, timer.due);
+    {
+        if (!Eligible(timer)) continue;
+        if (!nextDue || timer.due < *nextDue)
+            nextDue = timer.due;
+    }
+    if (!nextDue) return std::nullopt;
 
-    const auto remaining = nextDue > now
-        ? nextDue - now : Clock::duration::zero();
+    const auto remaining = *nextDue > now
+        ? *nextDue - now : Clock::duration::zero();
     std::int64_t delayMs =
         std::chrono::duration_cast<std::chrono::milliseconds>(
             remaining).count();

@@ -7,6 +7,7 @@
 namespace
 {
 using Schedule = snowdesktop::widget_runtime::NamedTimerSchedule;
+using HiddenPolicy = snowdesktop::widget_runtime::ScheduleHiddenPolicy;
 
 void Check(bool condition, const char* message)
 {
@@ -98,6 +99,57 @@ void TestDelayClampingAndRounding()
             std::chrono::milliseconds(Schedule::MinIntervalMs),
         "overdue timers must use the minimum host delay");
 }
+
+void TestVisibilityPolicies()
+{
+    const Schedule::TimePoint start{};
+    Schedule schedule;
+    Check(schedule.SetVisible(false, start),
+        "the schedule must enter its hidden state");
+    Check(schedule.Set("paused", 100, true, start,
+              HiddenPolicy::Pause) &&
+            schedule.Set("throttled", 100, true, start,
+                HiddenPolicy::Throttle) &&
+            schedule.Set("continuous", 100, true, start,
+                HiddenPolicy::Continue),
+        "all hidden policies must be accepted");
+    Check(schedule.NextDelay(start) == std::chrono::milliseconds(100),
+        "a hidden continue timer must keep its requested interval");
+    const auto hiddenDue = schedule.DueNames(
+        start + std::chrono::milliseconds(150));
+    Check(hiddenDue.size() == 1 && hiddenDue[0] == "continuous",
+        "hidden pause and throttle timers must not fire at foreground rate");
+    Check(schedule.ConsumeDue("continuous",
+              start + std::chrono::milliseconds(150)) &&
+            schedule.Cancel("continuous"),
+        "the hidden continue timer must remain consumable");
+    Check(schedule.NextDelay(start + std::chrono::milliseconds(150)) ==
+            std::chrono::milliseconds(4850),
+        "a hidden throttle timer must use the shared five-second floor");
+
+    const auto resume = start + std::chrono::milliseconds(1000);
+    Check(schedule.SetVisible(true, resume),
+        "the schedule must resume its visible state");
+    const auto resumedDue = schedule.DueNames(resume);
+    Check(resumedDue.size() == 1 && resumedDue[0] == "paused",
+        "an overdue paused timer must coalesce when visibility resumes");
+    const auto paused = schedule.ConsumeDueInfo("paused", resume);
+    Check(paused && paused->missed == 9 && paused->coalesced,
+        "resumed pause timers must report missed deadlines");
+    Check(schedule.NextDelay(resume) == std::chrono::milliseconds(100),
+        "resuming must restore the foreground throttle interval");
+
+    Schedule repeatedThrottle;
+    (void)repeatedThrottle.SetVisible(false, start);
+    Check(repeatedThrottle.Set("repeat", 100, true, start,
+              HiddenPolicy::Throttle) &&
+            repeatedThrottle.ConsumeDue("repeat",
+                start + std::chrono::milliseconds(5000)) &&
+            repeatedThrottle.NextDelay(
+                start + std::chrono::milliseconds(5000)) ==
+                std::chrono::milliseconds(5000),
+        "hidden throttle must preserve its floor after every firing");
+}
 }
 
 int main()
@@ -105,6 +157,7 @@ int main()
     TestLimitsAndReplacement();
     TestDueConsumption();
     TestDelayClampingAndRounding();
+    TestVisibilityPolicies();
     std::cout << "widget runtime scheduler tests passed\n";
     return 0;
 }

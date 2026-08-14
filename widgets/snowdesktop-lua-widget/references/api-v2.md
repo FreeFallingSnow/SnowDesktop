@@ -78,18 +78,19 @@ VM。
 
 ### `schedule`
 
-- `schedule.every(id, milliseconds)`：创建或替换一个重复计划。
-- `schedule.after(id, milliseconds)`：创建或替换一个单次计划。
+- `schedule.every(id, milliseconds, options?)`：创建或替换一个重复计划。
+- `schedule.after(id, milliseconds, options?)`：创建或替换一个单次计划。
 - `schedule.cancel(id)`：取消计划，存在并取消时返回 `true`。
 
 ID 为 1–128 字节，每个实例最多 32 个计划；周期请求范围是 1 ms–24 小时，
 宿主最小实际周期为 100 ms。跨过多个重复截止时间时只分发一个
 `event.kind == "schedule"` 事件，并通过 `missed` 和 `coalesced` 报告合并结果。
-卸载、热重载和关闭会自动取消实例计划。
+`options.whenHidden` 支持 `pause`、`throttle`（默认）和 `continue`。pause 隐藏时不
+保留宿主唤醒，恢复后只发送一个合并事件并报告 `missed`；throttle 隐藏时使用
+5000 ms 最小周期；continue 保持请求周期。卸载、热重载和关闭会自动取消实例计划。
 
-当前 `schedule.basic` 尚不支持 options、隐藏 pause/throttle、绝对时间 `at` 或
-timeline；传入第三个 options 参数会明确报错。API v1 继续使用 `onTimer` 兼容
-路径，清单 `refreshIntervalMs` 的 v2 过渡事件仍使用 `event.kind == "timer"`。
+当前尚不支持绝对时间 `at`、timeline 或预览虚拟时钟。API v1 继续使用 `onTimer`
+兼容路径；新 v2 组件不得再依赖清单 `refreshIntervalMs` 过渡事件。
 
 ### `data`
 

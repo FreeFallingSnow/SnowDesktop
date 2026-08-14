@@ -34,6 +34,10 @@ local settings = {
     }
 }
 
+local function setup()
+    schedule.every("clock", 1000, { whenHidden = "pause" })
+end
+
 local function loadConfig()
     descriptor.bg = tonumber(storage.get("bg")) or descriptor.bg
     descriptor.border = descriptor.bg
@@ -142,6 +146,7 @@ descriptor = {
     alpha = 0.0,
     gradientEndA = 0.0,
     settings = settings,
+    setup = setup,
     render = render,
 }
 
