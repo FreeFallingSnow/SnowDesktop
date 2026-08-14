@@ -6,6 +6,7 @@
 ---@alias SnowDateStyle 'none'|'short'|'long'
 ---@alias SnowTimeStyle 'none'|'short'|'long'
 ---@alias SnowDurationStyle 'short'|'clock'
+---@alias SnowStateValue nil|boolean|number|string|SnowStateValue[]|table<string, SnowStateValue>
 
 ---@class SnowSize
 ---@field width number
@@ -568,6 +569,36 @@ function storage.remove(key) end
 
 ---@return string[]
 function storage.keys() end
+
+---@class snow.state
+state = {}
+
+---Return a deep copy of transient instance state or the supplied default.
+---@generic T: SnowStateValue
+---@param key string
+---@param default? T
+---@return T?
+function state.get(key, default) end
+
+---Store a deep copy. Returns false when the value is unchanged.
+---@param key string
+---@param value SnowStateValue
+---@return boolean changed
+function state.set(key, value) end
+
+---@param key string
+---@return boolean changed
+function state.remove(key) end
+
+---@param key string
+---@return boolean
+function state.has(key) end
+
+---@return string[]
+function state.keys() end
+
+---@return boolean changed
+function state.clear() end
 
 ---@type string
 widgetId = ''

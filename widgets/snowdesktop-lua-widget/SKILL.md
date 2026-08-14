@@ -44,7 +44,8 @@ development packages live under `data\widgets\installed` and
 9. Add only features and permissions used by the component. Basic time,
    context, drawing, localization and package resources require no high-risk
    permission.
-10. Persist strings only. Write with `storage.set` only when a value changes.
+10. Use `state` for JSON-like VM-lifetime values and `storage` for persistent
+    strings. Write persistent values only when they change.
 11. Run `snowwidget validate <directory>` and
     `snowwidget pack <directory> <name.snowwidget>`.
 12. In the repository, also run `scripts\test.bat`, the standard Release build,
@@ -98,6 +99,8 @@ them until those contracts are implemented.
 
 - Treat `render` as a hot path. Do not write storage, create resource handles,
   load modules, or perform future data queries during every render.
+- `state.set` deep-copies JSON-like data and requests another frame only when
+  the value changes. Do not use it as persistent storage.
 - Create `resource.image/font` handles at entry scope. Use `resource.status`
   when diagnostics are needed.
 - Use `draw.measureText`, clipping, explicit `maxWidth`, and separate opacity.

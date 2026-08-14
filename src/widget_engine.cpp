@@ -4640,6 +4640,7 @@ void WidgetEngine::InvokeSimpleCallback(LuaWidget& widget, const char* callbackN
     lua_rawgeti(state, LUA_REGISTRYINDEX, widgetRef);
     if (!lua_istable(state, -1)) { lua_pop(state, 1); return; }
     lua_getfield(state, -1, callbackName);
+    bool stateChanged = false;
     if (lua_isfunction(state, -1))
     {
         if (snowdesktop::lua_runtime::ProtectedCall(state, 0, 0) != LUA_OK)
@@ -4648,10 +4649,17 @@ void WidgetEngine::InvokeSimpleCallback(LuaWidget& widget, const char* callbackN
             RuntimeRecordError(widgetId, error ? error : "(callback error)");
             lua_pop(state, 1);
         }
+        else
+        {
+            stateChanged = snowdesktop::widget_api::
+                ConsumeTransientStateDirty(state);
+        }
     }
     else
         lua_pop(state, 1);
     lua_pop(state, 1);
+    if (stateChanged)
+        RuntimeInvalidateHost(widgetId);
 }
 
 static int LuaReadOnlyApiWrite(lua_State* state)
@@ -4700,7 +4708,7 @@ void WidgetEngine::PushSafeEnvironment(lua_State* L, const LuaWidget& widget)
     };
     static const char* v2Libraries[] = {
         "string", "table", "math", "utf8", "draw", "layout", "storage",
-        "widget", "system", "time", "module", "resource"
+        "state", "widget", "system", "time", "module", "resource"
     };
     const std::span<const char* const> libraries =
         widget.manifest.apiVersion >= 2
@@ -5054,6 +5062,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         // retained only while bundled components are migrated to v2.
         ref = luaL_ref(state, LUA_REGISTRYINDEX);
     }
+    (void)snowdesktop::widget_api::ConsumeTransientStateDirty(state);
 
     std::string name = pending.manifest.name.empty()
         ? "Unnamed" : pending.manifest.name;
@@ -5854,6 +5863,8 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             lua_pop(state, 1);
             return;
         }
+        if (snowdesktop::widget_api::ConsumeTransientStateDirty(state))
+            RuntimeInvalidateHost(widgetId);
     }
     else
     {
@@ -6048,6 +6059,7 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
                 lua_pop(state, 1);
         }
         lua_pop(state, 1);
+        (void)snowdesktop::widget_api::ConsumeTransientStateDirty(state);
         RuntimeInvalidateHost(activeWidgetId);
         return;
     }
@@ -6092,7 +6104,10 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
 
     RescheduleNamedTimer(widget);
     if (invoked)
+    {
+        (void)snowdesktop::widget_api::ConsumeTransientStateDirty(state);
         RuntimeInvalidateHost(activeWidgetId);
+    }
 }
 
 // ── Check if widget uses custom style ────────────────────────────
@@ -10369,6 +10384,14 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "remove", lua_StorageRemove },
         { "keys", lua_StorageKeys },
     };
+    static constexpr FunctionDescriptor state[] = {
+        { "get", snowdesktop::widget_api::LuaTransientStateGet, 2 },
+        { "set", snowdesktop::widget_api::LuaTransientStateSet, 2 },
+        { "remove", snowdesktop::widget_api::LuaTransientStateRemove, 2 },
+        { "has", snowdesktop::widget_api::LuaTransientStateHas, 2 },
+        { "keys", snowdesktop::widget_api::LuaTransientStateKeys, 2 },
+        { "clear", snowdesktop::widget_api::LuaTransientStateClear, 2 },
+    };
     static constexpr FunctionDescriptor imgui[] = {
         { "text", lua_ImGuiText },
         { "textWrapped", lua_ImGuiTextWrapped },
@@ -10408,6 +10431,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         DescribeLibrary("calendar", calendar),
         DescribeLibrary("layout", layout),
         DescribeLibrary("storage", storage),
+        DescribeLibrary("state", state),
         DescribeLibrary("imgui", imgui),
     };
 

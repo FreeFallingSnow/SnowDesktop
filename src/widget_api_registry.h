@@ -81,6 +81,14 @@ int LuaHasFeature(lua_State* state);
 int LuaSystemCapabilities(lua_State* state);
 bool IsDefinedWidget(lua_State* state, int index) noexcept;
 
+int LuaTransientStateGet(lua_State* state);
+int LuaTransientStateSet(lua_State* state);
+int LuaTransientStateRemove(lua_State* state);
+int LuaTransientStateHas(lua_State* state);
+int LuaTransientStateKeys(lua_State* state);
+int LuaTransientStateClear(lua_State* state);
+bool ConsumeTransientStateDirty(lua_State* state) noexcept;
+
 /**
  * Registers a table of C callbacks as one Lua global library.
  *

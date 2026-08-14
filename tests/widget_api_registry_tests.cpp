@@ -211,6 +211,7 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature("l10n.format") &&
             snowdesktop::widget_api::SupportsFeature("module.package") &&
             snowdesktop::widget_api::SupportsFeature("resource.package") &&
+            snowdesktop::widget_api::SupportsFeature("state.transient") &&
             snowdesktop::widget_api::SupportsFeature("system.uptime") &&
             snowdesktop::widget_api::SupportsFeature("time.calendar") &&
             snowdesktop::widget_api::SupportsFeature("widget.context") &&
@@ -280,6 +281,62 @@ void TestV2Contract()
             std::string(lua_tostring(state, -1)) == "unsupported",
         "unsupported capabilities must return a stable reason");
     lua_pop(state, 3);
+}
+
+void TestTransientState()
+{
+    LuaState state;
+    luaL_openlibs(state);
+    constexpr FunctionDescriptor functions[] = {
+        { "get", snowdesktop::widget_api::LuaTransientStateGet, 2 },
+        { "set", snowdesktop::widget_api::LuaTransientStateSet, 2 },
+        { "remove", snowdesktop::widget_api::LuaTransientStateRemove, 2 },
+        { "has", snowdesktop::widget_api::LuaTransientStateHas, 2 },
+        { "keys", snowdesktop::widget_api::LuaTransientStateKeys, 2 },
+        { "clear", snowdesktop::widget_api::LuaTransientStateClear, 2 },
+    };
+    snowdesktop::widget_api::RegisterLibrary(
+        state, "state", functions, 2);
+    Check(!snowdesktop::widget_api::ConsumeTransientStateDirty(state),
+        "new transient state must start clean");
+
+    constexpr char script[] = R"lua(
+local source = { label = "ready", nested = { 1, 2, 3 } }
+assert(state.set("model", source))
+assert(not state.set("model", { nested = { 1, 2, 3 }, label = "ready" }))
+source.nested[1] = 99
+local first = state.get("model")
+assert(first.label == "ready" and first.nested[1] == 1)
+first.nested[2] = 88
+assert(state.get("model").nested[2] == 2)
+assert(state.has("model"))
+assert(state.get("missing", { available = false }).available == false)
+local keys = state.keys()
+assert(#keys == 1 and keys[1] == "model")
+assert(state.remove("model") and not state.remove("model"))
+assert(not state.has("model"))
+
+local cyclic = {}
+cyclic.self = cyclic
+assert(not pcall(function() state.set("cyclic", cyclic) end))
+assert(not pcall(function() state.set("mixed", { [1] = "a", key = "b" }) end))
+
+for index = 1, 256 do
+    assert(state.set("key-" .. index, index))
+end
+assert(not pcall(function() state.set("overflow", 1) end))
+assert(#state.keys() == 256)
+assert(state.clear() and not state.clear())
+)lua";
+    Check(luaL_loadbuffer(state, script, sizeof(script) - 1,
+            "@transient-state-test") == LUA_OK &&
+            lua_pcall(state, 0, 0, 0) == LUA_OK,
+        lua_gettop(state) > 0 && lua_isstring(state, -1)
+            ? lua_tostring(state, -1)
+            : "transient state script must execute");
+    Check(snowdesktop::widget_api::ConsumeTransientStateDirty(state) &&
+            !snowdesktop::widget_api::ConsumeTransientStateDirty(state),
+        "transient state changes must coalesce into one dirty signal");
 }
 
 void TestCatalogValidation()
@@ -485,6 +542,7 @@ int main()
     TestRegistration();
     TestVersionedRegistration();
     TestV2Contract();
+    TestTransientState();
     TestCatalogValidation();
     TestCatalogRegistration();
     TestInvalidRegistrationIsAtomic();

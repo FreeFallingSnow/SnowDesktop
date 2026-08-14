@@ -2,10 +2,14 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <cstring>
 #include <limits>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <unordered_set>
+#include <vector>
 
 extern "C" {
 #include <lauxlib.h>
@@ -16,12 +20,13 @@ namespace snowdesktop::widget_api
 namespace
 {
 constexpr std::uint32_t kCurrentApiVersion = 2;
-constexpr std::array<std::string_view, 10> kHostFeatures = {
+constexpr std::array<std::string_view, 11> kHostFeatures = {
     "draw.immediate",
     "l10n.basic",
     "l10n.format",
     "module.package",
     "resource.package",
+    "state.transient",
     "system.environment",
     "system.uptime",
     "time.basic",
@@ -29,6 +34,266 @@ constexpr std::array<std::string_view, 10> kHostFeatures = {
     "widget.context",
 };
 char kDefinedWidgetMarker = 0;
+char kTransientStateTableKey = 0;
+char kTransientStateDirtyKey = 0;
+
+constexpr std::size_t kMaxTransientStateKeys = 256;
+constexpr std::size_t kMaxTransientStateKeyBytes = 128;
+constexpr std::size_t kMaxTransientStateDepth = 16;
+constexpr std::size_t kMaxTransientStateNodes = 4096;
+constexpr std::size_t kMaxTransientStateStringBytes = 64 * 1024;
+constexpr std::size_t kMaxTransientStateValueBytes = 256 * 1024;
+
+struct StateCopyBudget
+{
+    std::size_t nodes = 0;
+    std::size_t stringBytes = 0;
+    std::unordered_set<const void*> ancestors;
+};
+
+void PushTransientStateTable(lua_State* state)
+{
+    lua_rawgetp(state, LUA_REGISTRYINDEX, &kTransientStateTableKey);
+    if (lua_istable(state, -1)) return;
+    lua_pop(state, 1);
+    lua_newtable(state);
+    lua_pushvalue(state, -1);
+    lua_rawsetp(state, LUA_REGISTRYINDEX, &kTransientStateTableKey);
+}
+
+void MarkTransientStateDirty(lua_State* state)
+{
+    lua_pushboolean(state, 1);
+    lua_rawsetp(state, LUA_REGISTRYINDEX, &kTransientStateDirtyKey);
+}
+
+std::size_t TableEntryCount(lua_State* state, int index)
+{
+    index = lua_absindex(state, index);
+    std::size_t count = 0;
+    lua_pushnil(state);
+    while (lua_next(state, index) != 0)
+    {
+        ++count;
+        lua_pop(state, 1);
+    }
+    return count;
+}
+
+bool PushStateValueCopy(lua_State* state, int index,
+    std::size_t depth, StateCopyBudget& budget, std::string& error)
+{
+    const int entryTop = lua_gettop(state);
+    index = lua_absindex(state, index);
+    if (++budget.nodes > kMaxTransientStateNodes)
+    {
+        error = "value exceeds the 4096-node limit";
+        return false;
+    }
+
+    switch (lua_type(state, index))
+    {
+    case LUA_TNIL:
+        lua_pushnil(state);
+        return true;
+    case LUA_TBOOLEAN:
+        lua_pushboolean(state, lua_toboolean(state, index));
+        return true;
+    case LUA_TNUMBER:
+    {
+        const lua_Number value = lua_tonumber(state, index);
+        if (!std::isfinite(static_cast<double>(value)))
+        {
+            error = "numbers must be finite";
+            return false;
+        }
+        if (lua_isinteger(state, index))
+            lua_pushinteger(state, lua_tointeger(state, index));
+        else
+            lua_pushnumber(state, value);
+        return true;
+    }
+    case LUA_TSTRING:
+    {
+        std::size_t length = 0;
+        const char* value = lua_tolstring(state, index, &length);
+        if (length > kMaxTransientStateStringBytes ||
+            budget.stringBytes >
+                kMaxTransientStateValueBytes - length)
+        {
+            error = "strings exceed the transient state value limit";
+            return false;
+        }
+        budget.stringBytes += length;
+        lua_pushlstring(state, value, length);
+        return true;
+    }
+    case LUA_TTABLE:
+        break;
+    default:
+        error = "values must be nil, boolean, finite number, string, array, or object";
+        return false;
+    }
+
+    if (depth >= kMaxTransientStateDepth)
+    {
+        error = "value exceeds the 16-level depth limit";
+        return false;
+    }
+    if (lua_getmetatable(state, index) != 0)
+    {
+        lua_pop(state, 1);
+        error = "tables with metatables are not allowed";
+        return false;
+    }
+    const void* identity = lua_topointer(state, index);
+    if (!budget.ancestors.insert(identity).second)
+    {
+        error = "cyclic tables are not allowed";
+        return false;
+    }
+
+    bool hasIntegerKeys = false;
+    bool hasStringKeys = false;
+    std::size_t entryCount = 0;
+    std::size_t maximumIndex = 0;
+    lua_pushnil(state);
+    while (lua_next(state, index) != 0)
+    {
+        ++entryCount;
+        if (lua_isinteger(state, -2))
+        {
+            const lua_Integer key = lua_tointeger(state, -2);
+            if (key <= 0 ||
+                static_cast<std::uint64_t>(key) >
+                    kMaxTransientStateNodes)
+            {
+                error = "array keys must be contiguous positive integers";
+                lua_settop(state, entryTop);
+                budget.ancestors.erase(identity);
+                return false;
+            }
+            hasIntegerKeys = true;
+            maximumIndex = std::max(maximumIndex,
+                static_cast<std::size_t>(key));
+        }
+        else if (lua_type(state, -2) == LUA_TSTRING)
+        {
+            std::size_t keyLength = 0;
+            lua_tolstring(state, -2, &keyLength);
+            if (keyLength == 0 || keyLength > kMaxTransientStateKeyBytes)
+            {
+                error = "object keys must contain 1 to 128 bytes";
+                lua_settop(state, entryTop);
+                budget.ancestors.erase(identity);
+                return false;
+            }
+            hasStringKeys = true;
+        }
+        else
+        {
+            error = "table keys must be strings or positive integers";
+            lua_settop(state, entryTop);
+            budget.ancestors.erase(identity);
+            return false;
+        }
+        lua_pop(state, 1);
+    }
+    if ((hasIntegerKeys && hasStringKeys) ||
+        (hasIntegerKeys && maximumIndex != entryCount))
+    {
+        error = hasIntegerKeys && hasStringKeys
+            ? "tables cannot mix array and object keys"
+            : "array keys must be contiguous positive integers";
+        budget.ancestors.erase(identity);
+        return false;
+    }
+
+    lua_createtable(state,
+        hasIntegerKeys ? static_cast<int>(entryCount) : 0,
+        hasStringKeys ? static_cast<int>(entryCount) : 0);
+    const int copy = lua_absindex(state, -1);
+    lua_pushnil(state);
+    while (lua_next(state, index) != 0)
+    {
+        const int value = lua_absindex(state, -1);
+        lua_pushvalue(state, -2);
+        if (!PushStateValueCopy(
+                state, value, depth + 1, budget, error))
+        {
+            lua_settop(state, entryTop);
+            budget.ancestors.erase(identity);
+            return false;
+        }
+        lua_rawset(state, copy);
+        lua_pop(state, 1);
+    }
+    budget.ancestors.erase(identity);
+    return true;
+}
+
+bool StateValuesEqual(lua_State* state, int left, int right,
+    std::size_t depth = 0)
+{
+    left = lua_absindex(state, left);
+    right = lua_absindex(state, right);
+    if (lua_rawequal(state, left, right)) return true;
+    const int leftType = lua_type(state, left);
+    const int rightType = lua_type(state, right);
+    if (leftType != rightType &&
+        !(leftType == LUA_TNUMBER && rightType == LUA_TNUMBER))
+        return false;
+    switch (leftType)
+    {
+    case LUA_TNIL:
+        return true;
+    case LUA_TBOOLEAN:
+        return lua_toboolean(state, left) == lua_toboolean(state, right);
+    case LUA_TNUMBER:
+        return lua_tonumber(state, left) == lua_tonumber(state, right);
+    case LUA_TSTRING:
+    {
+        std::size_t leftLength = 0;
+        std::size_t rightLength = 0;
+        const char* leftValue = lua_tolstring(state, left, &leftLength);
+        const char* rightValue = lua_tolstring(state, right, &rightLength);
+        return leftLength == rightLength &&
+            std::memcmp(leftValue, rightValue, leftLength) == 0;
+    }
+    case LUA_TTABLE:
+        break;
+    default:
+        return false;
+    }
+    if (depth >= kMaxTransientStateDepth ||
+        TableEntryCount(state, left) != TableEntryCount(state, right))
+        return false;
+
+    lua_pushnil(state);
+    while (lua_next(state, left) != 0)
+    {
+        lua_pushvalue(state, -2);
+        lua_rawget(state, right);
+        const bool equal = StateValuesEqual(
+            state, -2, -1, depth + 1);
+        lua_pop(state, 2);
+        if (!equal)
+        {
+            lua_pop(state, 1);
+            return false;
+        }
+    }
+    return true;
+}
+
+std::string CheckedTransientStateKey(lua_State* state, int index)
+{
+    std::size_t length = 0;
+    const char* value = luaL_checklstring(state, index, &length);
+    if (length == 0 || length > kMaxTransientStateKeyBytes)
+        luaL_argerror(state, index, "key must contain 1 to 128 bytes");
+    return std::string(value, length);
+}
 
 bool FieldIsNilOrFunction(lua_State* state, int tableIndex,
     const char* field)
@@ -200,6 +465,141 @@ bool IsDefinedWidget(lua_State* state, int index) noexcept
     const bool defined = lua_toboolean(state, -1) != 0;
     lua_pop(state, 1);
     return defined;
+}
+
+int LuaTransientStateGet(lua_State* state)
+{
+    const std::string key = CheckedTransientStateKey(state, 1);
+    PushTransientStateTable(state);
+    const int values = lua_absindex(state, -1);
+    lua_pushlstring(state, key.data(), key.size());
+    lua_rawget(state, values);
+    if (lua_isnil(state, -1) && !lua_isnone(state, 2))
+    {
+        lua_pop(state, 1);
+        StateCopyBudget budget;
+        std::string error;
+        if (!PushStateValueCopy(state, 2, 0, budget, error))
+            return luaL_error(state, "state.get: invalid default: %s",
+                error.c_str());
+        return 1;
+    }
+
+    const int value = lua_absindex(state, -1);
+    StateCopyBudget budget;
+    std::string error;
+    if (!PushStateValueCopy(state, value, 0, budget, error))
+        return luaL_error(state, "state.get: stored value is invalid: %s",
+            error.c_str());
+    return 1;
+}
+
+int LuaTransientStateSet(lua_State* state)
+{
+    const std::string key = CheckedTransientStateKey(state, 1);
+    luaL_checkany(state, 2);
+    StateCopyBudget budget;
+    std::string error;
+    if (!PushStateValueCopy(state, 2, 0, budget, error))
+        return luaL_error(state, "state.set: %s", error.c_str());
+    const int copy = lua_absindex(state, -1);
+
+    PushTransientStateTable(state);
+    const int values = lua_absindex(state, -1);
+    lua_pushlstring(state, key.data(), key.size());
+    lua_rawget(state, values);
+    const bool exists = !lua_isnil(state, -1);
+    const bool equal = StateValuesEqual(state, -1, copy);
+    lua_pop(state, 1);
+    if (equal)
+    {
+        lua_pushboolean(state, 0);
+        return 1;
+    }
+    if (!exists && !lua_isnil(state, copy) &&
+        TableEntryCount(state, values) >= kMaxTransientStateKeys)
+    {
+        return luaL_error(state,
+            "state.set: per-instance key limit exceeded");
+    }
+
+    lua_pushlstring(state, key.data(), key.size());
+    lua_pushvalue(state, copy);
+    lua_rawset(state, values);
+    MarkTransientStateDirty(state);
+    lua_pushboolean(state, 1);
+    return 1;
+}
+
+int LuaTransientStateRemove(lua_State* state)
+{
+    CheckedTransientStateKey(state, 1);
+    lua_settop(state, 1);
+    lua_pushnil(state);
+    return LuaTransientStateSet(state);
+}
+
+int LuaTransientStateHas(lua_State* state)
+{
+    const std::string key = CheckedTransientStateKey(state, 1);
+    PushTransientStateTable(state);
+    lua_pushlstring(state, key.data(), key.size());
+    lua_rawget(state, -2);
+    lua_pushboolean(state, !lua_isnil(state, -1));
+    return 1;
+}
+
+int LuaTransientStateKeys(lua_State* state)
+{
+    PushTransientStateTable(state);
+    const int values = lua_absindex(state, -1);
+    std::vector<std::string> keys;
+    keys.reserve(TableEntryCount(state, values));
+    lua_pushnil(state);
+    while (lua_next(state, values) != 0)
+    {
+        std::size_t length = 0;
+        const char* key = lua_tolstring(state, -2, &length);
+        keys.emplace_back(key, length);
+        lua_pop(state, 1);
+    }
+    std::sort(keys.begin(), keys.end());
+    lua_createtable(state, static_cast<int>(keys.size()), 0);
+    for (std::size_t index = 0; index < keys.size(); ++index)
+    {
+        lua_pushlstring(state, keys[index].data(), keys[index].size());
+        lua_rawseti(state, -2, static_cast<lua_Integer>(index + 1));
+    }
+    return 1;
+}
+
+int LuaTransientStateClear(lua_State* state)
+{
+    PushTransientStateTable(state);
+    const bool changed = TableEntryCount(state, -1) != 0;
+    lua_pop(state, 1);
+    if (changed)
+    {
+        lua_newtable(state);
+        lua_rawsetp(state, LUA_REGISTRYINDEX, &kTransientStateTableKey);
+        MarkTransientStateDirty(state);
+    }
+    lua_pushboolean(state, changed ? 1 : 0);
+    return 1;
+}
+
+bool ConsumeTransientStateDirty(lua_State* state) noexcept
+{
+    if (!state) return false;
+    lua_rawgetp(state, LUA_REGISTRYINDEX, &kTransientStateDirtyKey);
+    const bool dirty = lua_toboolean(state, -1) != 0;
+    lua_pop(state, 1);
+    if (dirty)
+    {
+        lua_pushboolean(state, 0);
+        lua_rawsetp(state, LUA_REGISTRYINDEX, &kTransientStateDirtyKey);
+    }
+    return dirty;
 }
 
 LibraryValidationError ValidateLibrary(

@@ -449,6 +449,12 @@ storage.setJson("settings", settings)
 
 ### 10.2 规则
 
+当前过渡实现（2026-08-14）已开放 `state.get/set/remove/has/keys/clear` 和
+`state.transient` feature。状态按实例 Lua VM 隔离，set/get 都进行受配额的
+JSON-like 深拷贝；循环、metatable、混合数组/对象、非有限数和超限值会被拒绝，
+同值写入不会重复触发失效，多个真实变化折叠为 dirty 信号。类型化持久 storage
+transaction、render 写入保护和 secret reference 仍属于 M4 后续工作。
+
 - `state.set` 在同一事件周期内批量合并，只触发一次视图更新。
 - `storage` 支持 string、number、boolean、null、array 和 object，序列化语义固定。
 - 持久化事务使用原子替换；失败时不暴露部分写入。

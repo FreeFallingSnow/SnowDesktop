@@ -78,6 +78,18 @@ return widget.define({
 
 只在值变化时写入；数值和布尔值应显式序列化，并用 `tonumber` 或明确规则读取。
 
+### `state`
+
+`state` 是仅随当前组件 VM 存活的实例内存状态：
+
+- `state.get(key, default?)` 返回深拷贝，未设置时返回默认值。
+- `state.set(key, value)` 保存深拷贝；值没有变化时返回 `false` 且不重复失效。
+- `state.remove(key)`、`state.has(key)`、`state.keys()`、`state.clear()`。
+
+值支持 nil、boolean、有限 number、string、连续数组和字符串键对象。循环表、
+metatable、混合数组/对象以及超出深度、节点、字符串或 256-key 实例配额的值会
+被拒绝。真实变化会合并成宿主失效信号；它不会写盘，热重载或卸载后丢失。
+
 ### `system` 与 `time`
 
 - `system.info()`：Windows、架构、宿主版本和部署模式。
