@@ -20,7 +20,7 @@ namespace snowdesktop::widget_api
 namespace
 {
 constexpr std::uint32_t kCurrentApiVersion = 2;
-constexpr std::array<std::string_view, 46> kHostFeatures = {
+constexpr std::array<std::string_view, 47> kHostFeatures = {
     "data.app.indexStatus",
     "data.audio.output.analysis",
     "data.audio.output.default",
@@ -61,6 +61,7 @@ constexpr std::array<std::string_view, 46> kHostFeatures = {
     "system.environment",
     "system.uptime",
     "task.media.control",
+    "task.notification.show",
     "task.app.launch",
     "task.app.search",
     "task.start",

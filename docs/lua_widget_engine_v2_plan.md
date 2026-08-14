@@ -751,7 +751,8 @@ local taskId, err = task.start("media.toggle")
 - v2 首版不引入隐式 Promise；协程封装可在稳定任务契约之上后续增加。
 
 当前已公开 `task.start`、`task.cancel`、`task.media.control`、`task.app.search`、
-`task.app.launch` feature，三个媒体动作和两个应用任务。
+`task.app.launch`、`task.notification.show` feature，三个媒体动作、两个应用任务和
+一次性通知任务。
 `WidgetTaskBroker` 生命周期内核负责任务描述符注册、全局/实例/
 任务类型并发上限、权限和可信手势门禁、preview 标记、显式取消、撤权取消、实例
 dispose 与 shutdown 原因，以及执行器完成确认均有独立契约测试。实时与预览引擎均
@@ -1547,8 +1548,8 @@ v2.0 资源契约：
 
 ### 19.1 发布硬门槛
 
-当前仓库有 11 个内置组件；`analog-clock`、`digital-clock`、`media-controls` 与
-`system-monitor` 已切到 schema/API v2，其余 7 个仍待迁移。这四个组件仍需完成真实
+当前仓库有 11 个内置组件；`analog-clock`、`digital-clock`、`media-controls`、
+`system-monitor` 与 `pomodoro` 已切到 schema/API v2，其余 6 个仍待迁移。这五个组件仍需完成真实
 桌面的多 DPI、主题、隐藏唤醒、系统数据、滚动、媒体控制、元素菜单与应用启动验收，
 因此只能计为代码迁移完成，不能计为最终验证完成。只有全部内置组件完成迁移和验收
 后才能宣布稳定。
@@ -1572,7 +1573,7 @@ v2.0 资源契约：
 | A：基础绘制 | `digital-clock` | 无 | 可见性作用域、时间线调度、本地化和尺寸响应 | 12/24 小时、日期、语言、休眠恢复正确 |
 | B：状态与输入 | `sticky-note` | `ui.input` | 类型化存储、声明式文本编辑、焦点/IME、菜单动作 | 旧便笺内容保留；中文 IME、撤销和重启恢复通过 |
 | B：状态与输入 | `reminders` | `ui.input` | 稳定 key 集合、事务存储、编辑动作和可访问语义 | 旧任务顺序/完成状态保留；键盘与 Narrator 可用 |
-| B：状态与输入 | `pomodoro` | `ui.input`、`notification.post` | 宿主调度、后台合并、通知可选权限、动作状态机 | 休眠恢复不补发多次；拒绝通知仍可计时 |
+| B：状态与输入 | `pomodoro` | 可选 `notification.post` | 宿主调度、后台合并、通知可选权限、动作状态机 | 休眠恢复不补发多次；拒绝通知仍可计时 |
 | C：数据订阅 | `system-monitor` | 必需 `system.performance.read`；可选 `system.power.read`、`system.network.read` | 拆分 topic 的共享采样、可见性节流、v2 draw 与实例滚动 | 每类授权可分别拒绝/撤销；多实例不重复昂贵采样；无订阅即停 |
 | C：数据订阅 | `media-controls` | 必需 `media.read`；可选 `media.action`、`app.discovery`、`app.launch` | 媒体订阅、用户手势动作、应用搜索/不透明引用启动降级 | 播放器切换/退出恢复；分别拒绝媒体读取/控制和应用发现/启动权限 |
 | D：日历集合 | `month-calendar` | `calendar.read`、`calendar.write`、`ui.input` | 日历订阅、月视图稳定 key、写操作手势与权限拆分 | 跨月/时区/区域格式正确；只读模式完整可用 |

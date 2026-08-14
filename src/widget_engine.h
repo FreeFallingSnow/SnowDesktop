@@ -1023,6 +1023,8 @@ public:
      */
     void RuntimeNotify(const std::wstring& widgetId,
         const std::wstring& title, const std::wstring& message);
+    std::string RuntimePostNotification(const std::wstring& widgetId,
+        const std::wstring& title, const std::wstring& message);
     CpuSnapshot RuntimeGetCpuSnapshot(const std::wstring& widgetId);
     MemorySnapshot RuntimeGetMemorySnapshot(const std::wstring& widgetId);
     BatterySnapshot RuntimeGetBatterySnapshot(const std::wstring& widgetId);

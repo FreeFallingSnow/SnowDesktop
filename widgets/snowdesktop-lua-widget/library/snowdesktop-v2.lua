@@ -175,6 +175,7 @@
 ---@field event? fun(context: SnowWidgetContext, model: any, event: SnowWidgetEvent) Receives host surface events; declarative node events are not available yet.
 ---@field menu? fun(context: SnowWidgetContext, model: any, request: SnowMenuRequest): SnowMenuModel? Builds an immediate-region context menu synchronously.
 ---@field dispose? fun(context: SnowWidgetContext, model: any, reason: 'unload'|'hotReload'|'shutdown'|string) Runs at most once before the instance VM is released.
+---@field migrateStorage? fun(oldVersion: integer, newVersion: integer) Runs before setup when persisted storage must be upgraded.
 ---@field useCustomStyle? boolean
 ---@field followPersonalizationDefault? boolean
 ---@field showTitle? boolean
@@ -208,7 +209,7 @@
 ---@field surface? 'desktop'|'panel'
 ---@field reason? string
 ---@field taskId? integer
----@field task? 'media.toggle'|'media.next'|'media.previous'|'app.search'|'app.launch'|string
+---@field task? 'media.toggle'|'media.next'|'media.previous'|'app.search'|'app.launch'|'notification.show'|string
 ---@field ok? boolean
 ---@field value? SnowMediaTaskValue|SnowAppSearchTaskValue|SnowStateValue
 ---@field error? string
@@ -692,15 +693,20 @@ function data.subscribe(topic, options) end
 ---@class SnowAppLaunchArguments
 ---@field ref string An opaque ref returned by app.search for this widget instance.
 
+---@class SnowNotificationShowArguments
+---@field title string Valid UTF-8 containing 1 to 256 bytes.
+---@field message string Valid UTF-8 containing 1 to 2048 bytes.
+
 ---@class snow.task
 task = {}
 
----Start an asynchronous one-shot task. app.search is bounded and does not
----require a gesture; app.launch and media controls require a trusted gesture.
+---Start an asynchronous one-shot task. app.search and notification.show do
+---not require a gesture; app.launch and media controls require a trusted gesture.
 ---Runtime rejections return nil plus a stable error code.
 ---@overload fun(name: 'app.search', arguments: SnowAppSearchArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'app.launch', arguments: SnowAppLaunchArguments): taskId: integer?, error: string?
----@param name 'media.toggle'|'media.next'|'media.previous'|'app.search'|'app.launch'
+---@overload fun(name: 'notification.show', arguments: SnowNotificationShowArguments): taskId: integer?, error: string?
+---@param name 'media.toggle'|'media.next'|'media.previous'|'app.search'|'app.launch'|'notification.show'
 ---@param arguments? table Must be omitted or empty for media tasks.
 ---@return integer? taskId
 ---@return string? error

@@ -322,11 +322,12 @@ CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.pow
 
 ### `task`
 
-当前公开异步媒体动作 `media.toggle`、`media.next`、`media.previous`，以及应用任务
-`app.search` 和 `app.launch`。它们对应 feature ID `task.start`、
-`task.media.control`、`task.app.search` 和 `task.app.launch`。媒体动作要求 `media.action`
-权限，而且只能在 `click/doubleClick/pointerDown/pointerUp/wheel`、宿主按钮、
-菜单命令或由宿主明确标记来源的打开回调同步调用栈内启动：
+当前公开异步媒体动作 `media.toggle`、`media.next`、`media.previous`，应用任务
+`app.search`、`app.launch`，以及一次性通知任务 `notification.show`。它们对应
+feature ID `task.start`、`task.media.control`、`task.app.search`、`task.app.launch`
+和 `task.notification.show`。媒体动作要求 `media.action` 权限，而且只能在
+`click/doubleClick/pointerDown/pointerUp/wheel`、宿主按钮、菜单命令或由宿主明确
+标记来源的打开回调同步调用栈内启动：
 
 ```lua
 local taskId, err = task.start("media.toggle")
@@ -369,6 +370,24 @@ Lua 不会取得可执行文件路径、参数、Shell verb 或工作目录，�
 引用返回 `invalidReference`。成功值与媒体动作一样为 `accepted=true`，只表示宿主的
 Shell 启动队列已接受请求，不代表目标进程最终成功启动。
 
+`notification.show` 要求 `notification.post` 权限，但不要求用户手势，因此可以从
+`schedule` 到期事件启动。参数是只允许 `title/message` 两个字段的严格普通表：标题为
+1–256 字节、正文为 1–2048 字节的有效 UTF-8，均不得包含 NUL。宿主沿用每实例每分钟
+最多 5 次的通知配额；预览会异步返回确定性的成功结果，但不会产生系统通知：
+
+```lua
+local notificationId, err = task.start("notification.show", {
+    title = l10n.tr("widget.name"),
+    message = l10n.tr("widget.completed"),
+})
+```
+
+组件应把 `notification.post` 放在 `optionalPermissions`，在授权拒绝、撤销或超额时
+继续完成自身主功能。成功值为 `accepted=true`；除通用的 `permissionRevoked` 和
+`canceled` 外，通知还可能返回 `quotaExceeded`、`providerUnavailable` 或
+`notificationFailed`。当前 v2 只开放一次性 `show`；更新、关闭、预约和操作按钮仍在
+后续计划内，不得使用 API v1 `system.notify` 代替。
+
 启动成功只表示任务进入宿主队列。WinRT 媒体调用在独立工作线程执行；完成后由
 `event.kind == "task.complete"` 串行投递，事件包含 `taskId/task/ok`。成功时
 `event.value.accepted == true`；失败时 `event.error` 为稳定错误码，例如
@@ -378,9 +397,9 @@ Shell 启动队列已接受请求，不代表目标进程最终成功启动。
 
 `task.cancel(taskId)` 只接受当前 Lua VM 自己持有的任务。卸载、热重载、撤权和
 宿主关闭会自动取消；热重载使用 VM owner token，旧任务结果不会投递给新 VM。
-预览不会访问系统媒体会话，而是异步返回确定性的 `accepted=true` mock。
-三个媒体动作不接受参数，第二个参数只能省略、为 nil 或空表；应用任务拒绝未知
-字段、错误类型和越界数值。API v1 的
+预览不会访问系统媒体会话或系统通知，而是异步返回确定性的 `accepted=true` mock。
+三个媒体动作不接受参数，第二个参数只能省略、为 nil 或空表；应用和通知任务拒绝
+未知字段、错误类型和越界数值。API v1 的
 `media.playPause/next/previous` 不会注册进 v2 VM，不能绕过任务的手势门禁。
 
 ### `draw`

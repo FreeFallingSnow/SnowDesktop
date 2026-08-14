@@ -1,45 +1,18 @@
--- pomodoro.lua - 番茄钟
-name = l10n.tr("lua_widget.pomodoro.name")
-useCustomStyle = true
-followPersonalizationDefault = true
-bottomBarHover = false
+-- pomodoro/main.lua - API v2 Pomodoro timer with background deadlines
+local DEFAULT_WORK_COLOR = 0xFF6347
+local DEFAULT_BREAK_COLOR = 0x4ECDC4
 
 local fluent = {
     play = utf8.char(0xF605),
+    pause = utf8.char(0xF8AE),
     stop = utf8.char(0xF72A),
     next = utf8.char(0xF569),
     reset = utf8.char(0xF19F),
 }
 
-bg = 0x151A21
-border = 0xFFFFFF
-alpha = 0.42
-gradientEndA = 0.30
+local descriptor
 
-local DEFAULT_WORK_COLOR   = 0xFF6347
-local DEFAULT_BREAK_COLOR  = 0x4ECDC4
-
-local function getPalette()
-    local theme = widget.theme()
-    if theme and theme.contentTheme == 1 then
-        return {
-            txtDark    = 0x1E293B,
-            txtMuted   = 0x334155,
-            trackColor = 0xE2E8F0,
-            btnBg      = 0xE2E8F0,
-            btnPause   = 0xD97706,
-        }
-    end
-    return {
-        txtDark    = 0xF1F5F9,
-        txtMuted   = 0xF1F5F9,
-        trackColor = 0x1E293B,
-        btnBg      = 0x1E293B,
-        btnPause   = 0xFFB347,
-    }
-end
-
-settings = {
+local settings = {
     fields = {
         { key = "workMin", label = l10n.tr("lua_widget.pomodoro.work_minutes"), type = "int", default = 25, min = 1, max = 120 },
         { key = "breakMin", label = l10n.tr("lua_widget.pomodoro.short_break_minutes"), type = "int", default = 5, min = 1, max = 60 },
@@ -47,112 +20,124 @@ settings = {
         { key = "longBreakInterval", label = l10n.tr("lua_widget.pomodoro.long_break_interval"), type = "int", default = 4, min = 1, max = 10 },
         { key = "workColor", label = l10n.tr("lua_widget.pomodoro.work_color"), type = "color", default = DEFAULT_WORK_COLOR },
         { key = "breakColor", label = l10n.tr("lua_widget.pomodoro.break_color"), type = "color", default = DEFAULT_BREAK_COLOR },
-    }
+    },
 }
 
-function updateTickTimer()
-    local state = storage.get("state") or "idle"
-    if state == "work" or state == "break" then
-        widget.setTimer("tick", 1000, true)
-    else
-        widget.cancelTimer("tick")
-    end
+local function clampInteger(value, minimum, maximum, fallback)
+    local number = math.floor(tonumber(value) or fallback)
+    return math.max(minimum, math.min(maximum, number))
 end
 
-function onVisible()
-    updateTickTimer()
+local function loadConfig()
+    return {
+        workMin = clampInteger(storage.get("workMin"), 1, 120, 25),
+        breakMin = clampInteger(storage.get("breakMin"), 1, 60, 5),
+        longBreakMin = clampInteger(storage.get("longBreakMin"), 1, 120, 15),
+        longBreakInterval = clampInteger(storage.get("longBreakInterval"), 1, 10, 4),
+        workColor = tonumber(storage.get("workColor")) or DEFAULT_WORK_COLOR,
+        breakColor = tonumber(storage.get("breakColor")) or DEFAULT_BREAK_COLOR,
+    }
 end
 
-function onHidden()
-    widget.cancelTimer("tick")
+local function configSignature(config)
+    return table.concat({
+        config.workMin,
+        config.breakMin,
+        config.longBreakMin,
+        config.longBreakInterval,
+    }, ":")
 end
 
-function onTimer(name)
-end
-
-function loadConfig()
-    workMin           = tonumber(storage.get("workMin"))           or 25
-    breakMin          = tonumber(storage.get("breakMin"))          or 5
-    longBreakMin      = tonumber(storage.get("longBreakMin"))      or 15
-    longBreakInterval = tonumber(storage.get("longBreakInterval")) or 4
-    workColor         = tonumber(storage.get("workColor"))         or DEFAULT_WORK_COLOR
-    breakColor        = tonumber(storage.get("breakColor"))        or DEFAULT_BREAK_COLOR
-
-    local savedBg = tonumber(storage.get("bg")) or tonumber(storage.get("bgColor"))
-    if savedBg then bg = savedBg end
-    local savedBorder = tonumber(storage.get("border")) or tonumber(storage.get("borderColor"))
-    if savedBorder then border = savedBorder end
-    alpha = tonumber(storage.get("alpha")) or alpha
-    gradientEndA = tonumber(storage.get("gradientEndA")) or gradientEndA
-    followPersonalization = storage.get("followPersonalization") == "1"
-    if followPersonalization then
+local function loadStyle()
+    descriptor.bg = tonumber(storage.get("bg")) or
+        tonumber(storage.get("bgColor")) or 0x151A21
+    descriptor.border = tonumber(storage.get("border")) or
+        tonumber(storage.get("borderColor")) or 0xFFFFFF
+    descriptor.alpha = tonumber(storage.get("alpha")) or 0.42
+    descriptor.gradientEndA = tonumber(storage.get("gradientEndA")) or 0.30
+    if storage.get("followPersonalization") == "1" then
         local theme = widget.theme()
         if theme and theme.bg then
-            bg = theme.bg
-            border = theme.border or border
-            alpha = theme.alpha or alpha
-            gradientEndA = theme.gradientEndA or gradientEndA
+            descriptor.bg = theme.bg
+            descriptor.border = theme.border or descriptor.border
+            descriptor.alpha = theme.alpha or descriptor.alpha
+            descriptor.gradientEndA = theme.gradientEndA or
+                descriptor.gradientEndA
         end
     end
 end
 
-function timeNow()
-    local t = sys.getTime()
-    return t.hour * 3600 + t.min * 60 + t.sec
+local function getPalette()
+    local theme = widget.theme()
+    if theme and theme.contentTheme == 1 then
+        return {
+            text = 0x1E293B,
+            muted = 0x334155,
+            track = 0xE2E8F0,
+            button = 0xE2E8F0,
+            pause = 0xD97706,
+        }
+    end
+    return {
+        text = 0xF1F5F9,
+        muted = 0xF1F5F9,
+        track = 0x1E293B,
+        button = 0x1E293B,
+        pause = 0xFFB347,
+    }
 end
 
-function elapsedSince(start)
-    local now = timeNow()
-    if now < start then now = now + 86400 end
-    return now - start
+local function nowSeconds()
+    return math.floor(time.now() / 1000)
 end
 
-function getState()           return storage.get("state") or "idle" end
-function getPausedRemaining() return tonumber(storage.get("pausedRemaining")) or 0 end
-function getSessions()        return tonumber(storage.get("sessions")) or 0 end
+local function getState()
+    local value = storage.get("state") or "idle"
+    if value == "work" or value == "break" or value == "paused" then
+        return value
+    end
+    return "idle"
+end
 
-function targetForState(st)
-    if st == "work" then
-        return workMin * 60
-    elseif st == "break" then
+local function getSessions()
+    return math.max(0, math.floor(tonumber(storage.get("sessions")) or 0))
+end
+
+local function getPausedRemaining()
+    return math.max(0,
+        math.floor(tonumber(storage.get("pausedRemaining")) or 0))
+end
+
+local function targetForState(state, config)
+    if state == "work" then return config.workMin * 60 end
+    if state == "break" then
         local sessions = getSessions()
-        if sessions > 0 and sessions % longBreakInterval == 0 then
-            return longBreakMin * 60
-        else
-            return breakMin * 60
+        if sessions > 0 and sessions % config.longBreakInterval == 0 then
+            return config.longBreakMin * 60
         end
+        return config.breakMin * 60
     end
-    return workMin * 60
+    return config.workMin * 60
 end
 
-function targetSeconds() return targetForState(getState()) end
-
-function remainingSeconds()
-    local s = getState()
-    if s == "idle"    then return workMin * 60 end
-    if s == "paused"  then return getPausedRemaining() end
-    local rem = targetSeconds() - elapsedSince(tonumber(storage.get("startTime")) or 0)
-    return rem > 0 and rem or 0
+local function remainingSeconds(config, epochSeconds)
+    local state = getState()
+    if state == "idle" then return config.workMin * 60 end
+    if state == "paused" then return getPausedRemaining() end
+    local started = tonumber(storage.get("startedAtEpoch")) or epochSeconds
+    local elapsed = math.max(0, epochSeconds - started)
+    return math.max(0, targetForState(state, config) - elapsed)
 end
 
-function progress()
-    local s = getState()
-    if s == "idle" then return 0 end
-    local t = targetSeconds()
-    if t == 0 then return 0 end
-    local p = 1 - remainingSeconds() / t
-    return p > 1 and 1 or p
+local function progress(config, remaining)
+    local state = getState()
+    if state == "idle" then return 0 end
+    local target = targetForState(state, config)
+    if target <= 0 then return 0 end
+    return math.max(0, math.min(1, 1 - remaining / target))
 end
 
-function formatTime(sec)
-    local m = math.floor(sec / 60)
-    local s = math.floor(sec % 60)
-    return string.format("%02d:%02d", m, s)
-end
-
-function sessionsInSet() return getSessions() % longBreakInterval end
-
-function updateTitleForState()
+local function updateTitle()
     local state = getState()
     if state == "work" then
         widget.setTitle(l10n.tr("lua_widget.pomodoro.title_work"))
@@ -165,340 +150,508 @@ function updateTitleForState()
     end
 end
 
-function onLanguageChanged()
-    updateTitleForState()
+local function postNotification(model, messageKey)
+    if not widget.hasFeature("task.start") or
+        not widget.hasFeature("task.notification.show") or
+        not widget.hasPermission("notification.post") then
+        return
+    end
+    local taskId, err = task.start("notification.show", {
+        title = l10n.tr("lua_widget.pomodoro.name"),
+        message = l10n.tr(messageKey),
+    })
+    if taskId then
+        model.notificationTasks[tostring(taskId)] = true
+    else
+        widget.log("warn", "notification.show rejected: " .. tostring(err))
+    end
 end
 
-function checkTransition()
-    local s = getState()
-    if s == "idle" or s == "paused" then return end
-    if remainingSeconds() > 0 then return end
+local function configureSchedules(model, config)
+    schedule.cancel("visual")
+    schedule.cancel("deadline")
+    local state = getState()
+    if state ~= "work" and state ~= "break" then return end
 
-    if s == "work" then
-        local sessions = getSessions() + 1
-        storage.set("sessions", tostring(sessions))
+    schedule.every("visual", 1000, { whenHidden = "pause" })
+    local remaining = remainingSeconds(config, nowSeconds())
+    schedule.after("deadline", math.max(1, remaining * 1000), {
+        whenHidden = "continue",
+    })
+    model.configSignature = configSignature(config)
+end
+
+local function completePhase(model, config, notify)
+    local state = getState()
+    if state == "work" then
+        storage.set("sessions", tostring(getSessions() + 1))
         storage.set("state", "break")
-        storage.set("startTime", tostring(timeNow()))
-        widget.setTitle(l10n.tr("lua_widget.pomodoro.title_break"))
-        sys.notify(l10n.tr("lua_widget.pomodoro.name"), l10n.tr("lua_widget.pomodoro.work_complete"))
-    elseif s == "break" then
-        if getSessions() >= longBreakInterval then
+        storage.set("startedAtEpoch", tostring(nowSeconds()))
+        storage.set("pausedRemaining", "0")
+        storage.set("prevState", "")
+        if notify then
+            postNotification(model, "lua_widget.pomodoro.work_complete")
+        end
+    elseif state == "break" then
+        if getSessions() >= config.longBreakInterval then
             storage.set("sessions", "0")
         end
         storage.set("state", "idle")
-        storage.set("startTime", "0")
-        widget.setTitle(l10n.tr("lua_widget.pomodoro.name"))
-        sys.notify(l10n.tr("lua_widget.pomodoro.name"), l10n.tr("lua_widget.pomodoro.break_complete"))
-    end
-    updateTickTimer()
-end
-
--- ---- actions ----
-
-function actionStart()
-    storage.set("state", "work")
-    storage.set("startTime", tostring(timeNow()))
-    storage.set("pausedRemaining", "0")
-    widget.setTitle(l10n.tr("lua_widget.pomodoro.title_work"))
-    updateTickTimer()
-end
-
-function actionPause()
-    storage.set("prevState", getState())
-    storage.set("pausedRemaining", tostring(remainingSeconds()))
-    storage.set("state", "paused")
-    widget.setTitle(l10n.tr("lua_widget.pomodoro.title_paused"))
-    updateTickTimer()
-end
-
-function actionResume()
-    local prevState = storage.get("prevState") or "work"
-    local target = targetForState(prevState)
-    local pausedRem = getPausedRemaining()
-    storage.set("state", prevState)
-    storage.set("startTime", tostring(timeNow() - (target - pausedRem)))
-    storage.set("pausedRemaining", "0")
-    storage.set("prevState", "")
-    if prevState == "work" then
-        widget.setTitle(l10n.tr("lua_widget.pomodoro.title_work"))
+        storage.set("startedAtEpoch", "0")
+        storage.set("pausedRemaining", "0")
+        storage.set("prevState", "")
+        if notify then
+            postNotification(model, "lua_widget.pomodoro.break_complete")
+        end
     else
-        widget.setTitle(l10n.tr("lua_widget.pomodoro.title_break"))
+        return false
     end
-    updateTickTimer()
+    updateTitle()
+    configureSchedules(model, config)
+    return true
 end
 
-function actionStop()
-    storage.set("state", "idle")
-    storage.set("startTime", "0")
+local function reconcile(model, notify)
+    local config = loadConfig()
+    local signature = configSignature(config)
+    local changed = signature ~= model.configSignature
+    model.configSignature = signature
+    local state = getState()
+    if (state == "work" or state == "break") and
+        remainingSeconds(config, nowSeconds()) <= 0 then
+        completePhase(model, config, notify)
+    elseif changed then
+        configureSchedules(model, config)
+    end
+end
+
+local function startWork(model)
+    local config = loadConfig()
+    storage.set("state", "work")
+    storage.set("startedAtEpoch", tostring(nowSeconds()))
     storage.set("pausedRemaining", "0")
     storage.set("prevState", "")
-    widget.setTitle(l10n.tr("lua_widget.pomodoro.name"))
-    updateTickTimer()
+    updateTitle()
+    configureSchedules(model, config)
 end
 
-function actionSkip()
-    local s = getState()
-    if s == "work" then
+local function pauseTimer(model)
+    local state = getState()
+    if state ~= "work" and state ~= "break" then return end
+    local config = loadConfig()
+    storage.set("prevState", state)
+    storage.set("pausedRemaining",
+        tostring(remainingSeconds(config, nowSeconds())))
+    storage.set("state", "paused")
+    storage.set("startedAtEpoch", "0")
+    updateTitle()
+    configureSchedules(model, config)
+end
+
+local function resumeTimer(model)
+    if getState() ~= "paused" then return end
+    local config = loadConfig()
+    local previous = storage.get("prevState") or "work"
+    if previous ~= "work" and previous ~= "break" then previous = "work" end
+    local target = targetForState(previous, config)
+    local remaining = math.min(target, getPausedRemaining())
+    storage.set("state", previous)
+    storage.set("startedAtEpoch",
+        tostring(nowSeconds() - (target - remaining)))
+    storage.set("pausedRemaining", "0")
+    storage.set("prevState", "")
+    updateTitle()
+    configureSchedules(model, config)
+end
+
+local function stopTimer(model)
+    storage.set("state", "idle")
+    storage.set("startedAtEpoch", "0")
+    storage.set("pausedRemaining", "0")
+    storage.set("prevState", "")
+    updateTitle()
+    configureSchedules(model, loadConfig())
+end
+
+local function skipPhase(model)
+    local config = loadConfig()
+    local state = getState()
+    if state == "work" then
         storage.set("sessions", tostring(getSessions() + 1))
         storage.set("state", "break")
-        storage.set("startTime", tostring(timeNow()))
-        widget.setTitle(l10n.tr("lua_widget.pomodoro.title_break"))
-        sys.notify(l10n.tr("lua_widget.pomodoro.name"), l10n.tr("lua_widget.pomodoro.work_skipped"))
-    elseif s == "break" then
-        if getSessions() >= longBreakInterval then
+        storage.set("startedAtEpoch", tostring(nowSeconds()))
+        postNotification(model, "lua_widget.pomodoro.work_skipped")
+    elseif state == "break" then
+        if getSessions() >= config.longBreakInterval then
             storage.set("sessions", "0")
         end
         storage.set("state", "work")
-        storage.set("startTime", tostring(timeNow()))
-        widget.setTitle(l10n.tr("lua_widget.pomodoro.title_work"))
-        sys.notify(l10n.tr("lua_widget.pomodoro.name"), l10n.tr("lua_widget.pomodoro.break_skipped"))
+        storage.set("startedAtEpoch", tostring(nowSeconds()))
+        postNotification(model, "lua_widget.pomodoro.break_skipped")
+    else
+        return
     end
-    updateTickTimer()
+    storage.set("pausedRemaining", "0")
+    storage.set("prevState", "")
+    updateTitle()
+    configureSchedules(model, config)
 end
 
-function actionReset()
+local function resetTimer(model)
     storage.set("state", "idle")
-    storage.set("startTime", "0")
+    storage.set("startedAtEpoch", "0")
     storage.set("pausedRemaining", "0")
     storage.set("sessions", "0")
     storage.set("prevState", "")
-    widget.setTitle(l10n.tr("lua_widget.pomodoro.name"))
-    updateTickTimer()
+    updateTitle()
+    configureSchedules(model, loadConfig())
 end
 
--- ---- drawing ----
-
-local btnHit = {}
-
-function drawBtn(cx, cy, r, icon, bgColor, iconColor, id)
-    draw.circle(cx, cy, r, bgColor, 0.88)
-    local sz = r * 1.1
-    draw.fa(icon, cx - sz / 2, cy - sz / 2, sz, iconColor)
-    btnHit[#btnHit + 1] = { id = id, x = cx - r, y = cy - r, w = r * 2, h = r * 2 }
-end
-
-function drawTrackRing(cx, cy, r, thickness, color, alpha)
-    local innerR = r - thickness / 2
-    local outerR = r + thickness / 2
-    local step = 2 * math.pi / math.max(360, math.floor(4 * math.pi * r))
-    local i = 0
-    while i < 2 * math.pi do
-        draw.line(
-            cx + math.cos(i) * innerR,
-            cy + math.sin(i) * innerR,
-            cx + math.cos(i) * outerR,
-            cy + math.sin(i) * outerR,
-            thickness, color, alpha)
-        i = i + step
+local function dispatchAction(model, action)
+    if action == "pomodoro.start" then startWork(model)
+    elseif action == "pomodoro.resume" then resumeTimer(model)
+    elseif action == "pomodoro.pause" then pauseTimer(model)
+    elseif action == "pomodoro.stop" then stopTimer(model)
+    elseif action == "pomodoro.skip" then skipPhase(model)
+    elseif action == "pomodoro.reset" then resetTimer(model)
     end
 end
 
-function drawProgressArc(cx, cy, r, prog, thickness, color, alpha)
-    if prog <= 0 then return end
-    local innerR = r - thickness / 2
-    local outerR = r + thickness / 2
-    local step = 2 * math.pi / math.max(360, math.floor(4 * math.pi * r))
-    local sweep = prog * 2 * math.pi
-    local sa = -math.pi / 2
-    local a = sa
-    while a < sa + sweep do
-        draw.line(
-            cx + math.cos(a) * innerR,
-            cy + math.sin(a) * innerR,
-            cx + math.cos(a) * outerR,
-            cy + math.sin(a) * outerR,
+local function setup()
+    local model = {
+        configSignature = "",
+        notificationTasks = {},
+    }
+    local state = getState()
+    if (state == "work" or state == "break") and
+        (tonumber(storage.get("startedAtEpoch")) or 0) <= 0 then
+        storage.set("startedAtEpoch", tostring(nowSeconds()))
+    end
+    updateTitle()
+    reconcile(model, false)
+    return model
+end
+
+local function formatTime(seconds)
+    local minutes = math.floor(seconds / 60)
+    return string.format("%02d:%02d", minutes, math.floor(seconds % 60))
+end
+
+local function drawTrackRing(cx, cy, radius, thickness, color, alpha)
+    local inner = radius - thickness / 2
+    local outer = radius + thickness / 2
+    local step = 2 * math.pi /
+        math.max(360, math.floor(4 * math.pi * radius))
+    local angle = 0
+    while angle < 2 * math.pi do
+        draw.line(cx + math.cos(angle) * inner,
+            cy + math.sin(angle) * inner,
+            cx + math.cos(angle) * outer,
+            cy + math.sin(angle) * outer,
             thickness, color, alpha)
-        a = a + step
+        angle = angle + step
     end
 end
 
-function drawDots(cx, cy, filled, total, color, alpha, dotR, gap)
+local function drawProgressArc(cx, cy, radius, value, thickness, color)
+    if value <= 0 then return end
+    local inner = radius - thickness / 2
+    local outer = radius + thickness / 2
+    local step = 2 * math.pi /
+        math.max(360, math.floor(4 * math.pi * radius))
+    local first = -math.pi / 2
+    local angle = first
+    local last = first + value * 2 * math.pi
+    while angle < last do
+        draw.line(cx + math.cos(angle) * inner,
+            cy + math.sin(angle) * inner,
+            cx + math.cos(angle) * outer,
+            cy + math.sin(angle) * outer,
+            thickness, color, 1.0)
+        angle = angle + step
+    end
+end
+
+local function drawDots(cx, cy, filled, total, color, radius, gap)
     local startX = cx - (total - 1) * gap / 2
-    for i = 1, total do
-        local dx = startX + (i - 1) * gap
-        if i <= filled then
-            draw.circle(dx, cy, dotR, color, alpha)
+    for index = 1, total do
+        local x = startX + (index - 1) * gap
+        if index <= filled then
+            draw.circle(x, cy, radius, color, 1.0)
         else
-            draw.circle(dx, cy, dotR, 0xFFFFFF, alpha * 0.30)
+            draw.circle(x, cy, radius, 0xFFFFFF, 0.30)
         end
     end
 end
 
-function currentAccent()
-    if getState() == "break" then return breakColor end
-    return workColor
+local function drawButton(id, glyph, label, cx, cy, radius,
+    background, foreground)
+    local hovered = interaction.isHovered(id)
+    local pressed = interaction.isPressed(id)
+    local alpha = pressed and 1.0 or (hovered and 0.94 or 0.86)
+    draw.circle(cx, cy, radius, background, alpha)
+    local size = radius * 1.1
+    draw.fa(glyph, cx - size / 2, cy - size / 2, size, foreground)
+    interaction.region({
+        key = id,
+        shape = { type = "circle", x = cx, y = cy, radius = radius },
+        cursor = "hand",
+        events = {
+            click = { id = id },
+            doubleClick = { id = id },
+            contextMenu = { id = "pomodoro.menu" },
+        },
+        accessibility = { role = "button", label = label },
+    })
 end
 
-function stateLabelText()
-    local s = getState()
-    if s == "work"   then return l10n.tr("lua_widget.pomodoro.state_work") end
-    if s == "break"  then return l10n.tr("lua_widget.pomodoro.state_break") end
-    if s == "paused" then return l10n.tr("lua_widget.pomodoro.state_paused") end
+local function stateLabel(state)
+    if state == "work" then
+        return l10n.tr("lua_widget.pomodoro.state_work")
+    elseif state == "break" then
+        return l10n.tr("lua_widget.pomodoro.state_break")
+    elseif state == "paused" then
+        return l10n.tr("lua_widget.pomodoro.state_paused")
+    end
     return l10n.tr("lua_widget.pomodoro.state_idle")
 end
 
-function render()
-    loadConfig()
-    updateTitleForState()
-    checkTransition()
-    btnHit = {}
-    local pal = getPalette()
+local function render()
+    loadStyle()
+    local config = loadConfig()
+    local palette = getPalette()
+    local width = layout.width()
+    local height = layout.height()
+    local contentHeight = math.max(1, height - layout.barHeight())
+    local centerX = width / 2
+    local state = getState()
+    local remaining = remainingSeconds(config, nowSeconds())
+    local accent = state == "break" and config.breakColor or config.workColor
+    local sessionsInSet = getSessions() % config.longBreakInterval
 
-    local w = layout.width()
-    local h = layout.height()
-    local cx = w / 2
-    local rows = layout.rows()
-    local bottomBarH = layout.cu(layout.barHeight())
+    interaction.region({
+        key = "pomodoro.surface",
+        shape = {
+            type = "rect", x = 0, y = 0,
+            width = width, height = contentHeight,
+        },
+        events = {
+            doubleClick = { id = "pomodoro.reset" },
+            contextMenu = { id = "pomodoro.menu" },
+        },
+        accessibility = {
+            role = "group",
+            label = l10n.tr("lua_widget.pomodoro.name"),
+        },
+    })
 
-    local function scu(value, minimum)
+    local rows = math.max(1, layout.rows())
+    local function scale(value, minimum)
         return math.max(minimum or 0, layout.cu(value * rows))
     end
-    local function fontCu(value)
+    local function font(value)
         return layout.fontCu(value * rows)
     end
 
-    local s     = getState()
-    local rem   = remainingSeconds()
-    local prog  = progress()
-    local accent= currentAccent()
-    local label = stateLabelText()
-    local inSet = sessionsInSet()
+    local ringThickness = scale(5, layout.cu(7))
+    local labelFont = font(6)
+    local timeFont = font(18)
+    local dotRadius = scale(2.5)
+    local dotGap = scale(8)
+    local buttonRadius = scale(9)
+    local buttonGap = scale(12)
+    local gap = scale(5)
+    local ringPadding = scale(18)
 
-    local ringThick  = scu(5, layout.cu(7))
-    local labelFont  = fontCu(6)
-    local timeFont   = fontCu(18)
-    local dotR       = scu(2.5)
-    local dotGap     = scu(8)
-    local btnR       = scu(9)
-    local btnGap     = scu(12)
-    local gap        = scu(5)
-    local margin     = scu(6)
-    local ringPad    = scu(18)
-
-    local sub = ""
-    if s == "work" then
-        sub = l10n.tr("lua_widget.pomodoro.round_current", inSet + 1, longBreakInterval)
-    elseif s == "break" then
-        sub = l10n.tr("lua_widget.pomodoro.round_completed", inSet, longBreakInterval)
+    local subline = ""
+    if state == "work" then
+        subline = l10n.tr("lua_widget.pomodoro.round_current",
+            sessionsInSet + 1, config.longBreakInterval)
+    elseif state == "break" then
+        subline = l10n.tr("lua_widget.pomodoro.round_completed",
+            sessionsInSet, config.longBreakInterval)
     end
-    local labelStr = label .. sub
-    local lm = draw.measureText(labelStr, labelFont, 0, true)
-    local timeStr = formatTime(rem)
-    local tm = draw.measureText(timeStr, timeFont, 0, true)
-
-    local labelH = lm.height
-    local dotsH  = dotR * 2 + gap
-    local btnsH  = btnR * 2 + gap
-    local belowH = labelH + gap + dotsH + gap + btnsH
-
-    local ringR = math.min(w, h - belowH) / 2 - ringPad
-    if ringR < scu(28) then
-        ringR = math.min(w, h - belowH) / 2 - ringPad / 2
+    local label = stateLabel(state) .. subline
+    local labelMetrics = draw.measureText(label, labelFont, 0, true)
+    local timeText = formatTime(remaining)
+    local timeMetrics = draw.measureText(timeText, timeFont, 0, true)
+    local dotsHeight = dotRadius * 2 + gap
+    local buttonsHeight = buttonRadius * 2 + gap
+    local belowHeight = labelMetrics.height + gap + dotsHeight + gap +
+        buttonsHeight
+    local ringRadius = math.min(width, contentHeight - belowHeight) / 2 -
+        ringPadding
+    if ringRadius < scale(28) then
+        ringRadius = math.min(width, contentHeight - belowHeight) / 2 -
+            ringPadding / 2
     end
-    local edgeInset = math.max(margin, bottomBarH)
-    local maxBalancedRingR =
-        (h - belowH - ringThick * 1.5 - edgeInset * 2) / 2
-    ringR = math.min(ringR, maxBalancedRingR)
-    if ringR <= 0 then return end
+    if ringRadius <= 0 then return end
 
-    local visualContentH = ringR * 2 + ringThick * 2 + belowH
-    local curY = (h - visualContentH - ringThick / 2) / 2
-    local ringCY = curY + ringR + ringThick
+    local totalHeight = ringRadius * 2 + ringThickness * 2 + belowHeight
+    local y = math.max(0, (contentHeight - totalHeight) / 2)
+    local ringCenterY = y + ringRadius + ringThickness
+    drawTrackRing(centerX, ringCenterY, ringRadius, ringThickness,
+        palette.track, 0.5)
+    drawProgressArc(centerX, ringCenterY, ringRadius,
+        progress(config, remaining), ringThickness, accent)
+    draw.text(centerX - timeMetrics.width / 2,
+        ringCenterY - timeMetrics.height / 2, timeText, timeFont,
+        palette.text, 0, true, true)
 
-    drawTrackRing(cx, ringCY, ringR, ringThick, pal.trackColor, 0.5)
-    if prog > 0.002 then
-        drawProgressArc(cx, ringCY, ringR, prog, ringThick, accent, 1.0)
-    end
-    draw.text(cx - tm.width / 2, ringCY - tm.height / 2, timeStr, timeFont, pal.txtDark, 0, true)
-
-    curY = ringCY + ringR + ringThick + gap
-    draw.text(cx - lm.width / 2, curY, labelStr, labelFont, pal.txtMuted)
-
-    curY = curY + labelH + gap
-    if s ~= "paused" then
-        drawDots(cx, curY + dotR, inSet, longBreakInterval, accent, 1.0, dotR, dotGap)
+    y = ringCenterY + ringRadius + ringThickness + gap
+    draw.text(centerX - labelMetrics.width / 2, y, label, labelFont,
+        palette.muted)
+    y = y + labelMetrics.height + gap
+    if state ~= "paused" then
+        drawDots(centerX, y + dotRadius, sessionsInSet,
+            config.longBreakInterval, accent, dotRadius, dotGap)
     end
 
-    curY = curY + dotsH + gap
-    local btnCY = curY + btnR
-
-    if s == "idle" then
-        local totalW = btnR * 4 + btnGap
-        local bx = cx - totalW / 2 + btnR
-        drawBtn(bx, btnCY, btnR, "", workColor, 0xFFFFFF, 1)
-        drawBtn(bx + btnR * 2 + btnGap, btnCY, btnR, "", pal.btnBg, pal.txtDark, 10)
-    elseif s == "paused" then
-        local totalW = btnR * 4 + btnGap
-        local bx = cx - totalW / 2 + btnR
-        drawBtn(bx, btnCY, btnR, "", workColor, 0xFFFFFF, 2)
-        drawBtn(bx + btnR * 2 + btnGap, btnCY, btnR, "", pal.btnBg, pal.txtDark, 3)
+    local buttonY = y + dotsHeight + gap + buttonRadius
+    local firstX = centerX - buttonRadius - buttonGap / 2
+    local secondX = centerX + buttonRadius + buttonGap / 2
+    if state == "idle" then
+        drawButton("pomodoro.start", "",
+            l10n.tr("lua_widget.pomodoro.start"), firstX, buttonY,
+            buttonRadius, config.workColor, 0xFFFFFF)
+        drawButton("pomodoro.reset", "",
+            l10n.tr("lua_widget.pomodoro.reset_count"), secondX, buttonY,
+            buttonRadius, palette.button, palette.text)
+    elseif state == "paused" then
+        drawButton("pomodoro.resume", "",
+            l10n.tr("lua_widget.pomodoro.resume"), firstX, buttonY,
+            buttonRadius, config.workColor, 0xFFFFFF)
+        drawButton("pomodoro.stop", "",
+            l10n.tr("lua_widget.pomodoro.stop"), secondX, buttonY,
+            buttonRadius, palette.button, palette.text)
     else
-        local totalW = btnR * 4 + btnGap
-        local bx = cx - totalW / 2 + btnR
-        drawBtn(bx, btnCY, btnR, "", pal.btnPause, 0xFFFFFF, 4)
-        drawBtn(bx + btnR * 2 + btnGap, btnCY, btnR, "", pal.btnBg, pal.txtDark, 5)
+        drawButton("pomodoro.pause", "",
+            l10n.tr("lua_widget.pomodoro.pause"), firstX, buttonY,
+            buttonRadius, palette.pause, 0xFFFFFF)
+        drawButton("pomodoro.skip", "",
+            l10n.tr("lua_widget.pomodoro.skip"), secondX, buttonY,
+            buttonRadius, palette.button, palette.text)
     end
 end
 
--- ---- input ----
-
-function hitButton(x, y)
-    for _, b in ipairs(btnHit) do
-        if x >= b.x and x <= b.x + b.w and y >= b.y and y <= b.y + b.h then
-            return b.id
+local function event(_context, model, value)
+    if value.kind == "schedule" then
+        if value.id == "visual" or value.id == "deadline" then
+            reconcile(model, true)
         end
+        return
     end
-    return nil
-end
-
-function dispatchButton(id)
-    if id == 1  then actionStart()
-    elseif id == 2  then actionResume()
-    elseif id == 3  then actionStop()
-    elseif id == 4  then actionPause()
-    elseif id == 5  then actionSkip()
-    elseif id == 10 then actionReset()
+    if value.kind == "task.complete" then
+        local key = tostring(value.taskId or "")
+        if model.notificationTasks[key] then
+            model.notificationTasks[key] = nil
+            if not value.ok then
+                widget.log("warn", "notification.show failed: " ..
+                    tostring(value.error))
+            end
+        end
+        return
+    end
+    if value.kind == "environment" then
+        updateTitle()
+        return
+    end
+    if value.kind == "action" then
+        dispatchAction(model, value.id)
     end
 end
 
-function onMouseDown(x, y, button, delta)
-    local bid = hitButton(x, y)
-    if bid then dispatchButton(bid) end
-end
-
-function onDoubleClick(x, y)
-    local bid = hitButton(x, y)
-    if bid then dispatchButton(bid) else actionReset() end
-end
-
--- ---- context menu ----
-
-function getContextMenu()
-    loadConfig()
-    local s = getState()
-    local menu = {}
-
-    if s == "idle" then
-        menu[#menu + 1] = { id = 1, label = l10n.tr("lua_widget.pomodoro.start"), icon = fluent.play, iconFont = "fluent" }
-    elseif s == "paused" then
-        menu[#menu + 1] = { id = 2, label = l10n.tr("lua_widget.pomodoro.resume"), icon = fluent.play, iconFont = "fluent" }
-        menu[#menu + 1] = { id = 3, label = l10n.tr("lua_widget.pomodoro.stop"), icon = fluent.stop, iconFont = "fluent" }
+local function menu(_context, _model, request)
+    if request.id ~= "pomodoro.menu" then return nil end
+    local state = getState()
+    local items = {}
+    if state == "idle" then
+        items[#items + 1] = {
+            id = "pomodoro.start",
+            label = l10n.tr("lua_widget.pomodoro.start"),
+            icon = fluent.play,
+            iconFont = "fluent",
+        }
+    elseif state == "paused" then
+        items[#items + 1] = {
+            id = "pomodoro.resume",
+            label = l10n.tr("lua_widget.pomodoro.resume"),
+            icon = fluent.play,
+            iconFont = "fluent",
+        }
+        items[#items + 1] = {
+            id = "pomodoro.stop",
+            label = l10n.tr("lua_widget.pomodoro.stop"),
+            icon = fluent.stop,
+            iconFont = "fluent",
+        }
     else
-        menu[#menu + 1] = { id = 5, label = l10n.tr("lua_widget.pomodoro.skip"), icon = fluent.next, iconFont = "fluent" }
-        menu[#menu + 1] = { id = 3, label = l10n.tr("lua_widget.pomodoro.stop"), icon = fluent.stop, iconFont = "fluent" }
+        items[#items + 1] = {
+            id = "pomodoro.pause",
+            label = l10n.tr("lua_widget.pomodoro.pause"),
+            icon = fluent.pause,
+            iconFont = "fluent",
+        }
+        items[#items + 1] = {
+            id = "pomodoro.skip",
+            label = l10n.tr("lua_widget.pomodoro.skip"),
+            icon = fluent.next,
+            iconFont = "fluent",
+        }
+        items[#items + 1] = {
+            id = "pomodoro.stop",
+            label = l10n.tr("lua_widget.pomodoro.stop"),
+            icon = fluent.stop,
+            iconFont = "fluent",
+        }
     end
-    menu[#menu + 1] = { separator = true }
-    menu[#menu + 1] = { id = 10, label = l10n.tr("lua_widget.pomodoro.reset_count"), icon = fluent.reset, iconFont = "fluent" }
-
-    return menu
+    items[#items + 1] = { type = "separator" }
+    items[#items + 1] = {
+        id = "pomodoro.reset",
+        label = l10n.tr("lua_widget.pomodoro.reset_count"),
+        icon = fluent.reset,
+        iconFont = "fluent",
+    }
+    return ui.menu(items)
 end
 
-function onMenu(id)
-    loadConfig()
-    if id == 1  then actionStart()
-    elseif id == 2  then actionResume()
-    elseif id == 3  then actionStop()
-    elseif id == 5  then actionSkip()
-    elseif id == 10 then actionReset()
+local function migrateStorage(oldVersion, newVersion)
+    if oldVersion >= 2 or newVersion < 2 then return end
+    local state = getState()
+    if state ~= "work" and state ~= "break" then
+        storage.set("startedAtEpoch", "0")
+        return
     end
+
+    local oldStart = tonumber(storage.get("startTime"))
+    local currentMilliseconds = time.now()
+    local currentSeconds = math.floor(currentMilliseconds / 1000)
+    if not oldStart or oldStart < 0 or oldStart >= 86400 then
+        storage.set("startedAtEpoch", tostring(currentSeconds))
+        return
+    end
+    local parts = time.parts(currentMilliseconds)
+    local secondsSinceMidnight = parts.hour * 3600 + parts.min * 60 + parts.sec
+    local elapsed = secondsSinceMidnight - oldStart
+    if elapsed < 0 then elapsed = elapsed + 86400 end
+    storage.set("startedAtEpoch", tostring(currentSeconds - elapsed))
 end
+
+descriptor = {
+    name = l10n.tr("lua_widget.pomodoro.name"),
+    useCustomStyle = true,
+    followPersonalizationDefault = true,
+    bottomBarHover = false,
+    bg = 0x151A21,
+    border = 0xFFFFFF,
+    alpha = 0.42,
+    gradientEndA = 0.30,
+    settings = settings,
+    setup = setup,
+    render = render,
+    event = event,
+    menu = menu,
+    migrateStorage = migrateStorage,
+}
+
+return widget.define(descriptor)

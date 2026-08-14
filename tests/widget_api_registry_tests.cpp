@@ -297,6 +297,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "task.media.control") &&
             snowdesktop::widget_api::SupportsFeature(
+                "task.notification.show") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "task.app.launch") &&
             snowdesktop::widget_api::SupportsFeature(
                 "task.app.search") &&

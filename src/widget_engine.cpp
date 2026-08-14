@@ -1803,6 +1803,7 @@ constexpr char kDesktopReadPermission[] = "desktop.read";
 constexpr char kCalendarReadPermission[] = "calendar.read";
 constexpr char kAppDiscoveryPermission[] = "app.discovery";
 constexpr char kAppLaunchPermission[] = "app.launch";
+constexpr char kNotificationPostPermission[] = "notification.post";
 
 static bool ReadInteractionValue(lua_State* state, int index,
     snowdesktop::widget_runtime::InteractionValue& output,
@@ -3341,6 +3342,59 @@ static int lua_TaskStart(lua_State* state)
             return luaL_error(state,
                 "task.start: app.launch ref must contain 1 to 128 bytes");
         arguments.emplace("ref", std::move(reference));
+    }
+    else if (taskName == "notification.show")
+    {
+        if (!hasArguments)
+            return luaL_error(state,
+                "task.start: notification.show requires an arguments table");
+        lua_pushnil(state);
+        while (lua_next(state, 2) != 0)
+        {
+            if (lua_type(state, -2) != LUA_TSTRING)
+            {
+                lua_pop(state, 2);
+                return luaL_error(state,
+                    "task.start: notification.show argument keys must be strings");
+            }
+            size_t keyLength = 0;
+            const char* keyValue = lua_tolstring(state, -2, &keyLength);
+            const std::string_view key(keyValue ? keyValue : "", keyLength);
+            if (key != "title" && key != "message")
+            {
+                lua_pop(state, 2);
+                return luaL_error(state,
+                    "task.start: notification.show received an unknown argument");
+            }
+            lua_pop(state, 1);
+        }
+
+        const auto readText = [&](const char* field,
+            std::size_t maximum, std::string& output) -> bool {
+            lua_getfield(state, 2, field);
+            if (lua_type(state, -1) != LUA_TSTRING)
+            {
+                lua_pop(state, 1);
+                return false;
+            }
+            size_t length = 0;
+            const char* value = lua_tolstring(state, -1, &length);
+            output.assign(value ? value : "", length);
+            lua_pop(state, 1);
+            return !output.empty() && output.size() <= maximum &&
+                output.find('\0') == std::string::npos &&
+                IsValidUtf8Local(output);
+        };
+        std::string title;
+        std::string message;
+        if (!readText("title", 256, title))
+            return luaL_error(state,
+                "task.start: notification.show title must contain 1 to 256 bytes of valid UTF-8");
+        if (!readText("message", 2048, message))
+            return luaL_error(state,
+                "task.start: notification.show message must contain 1 to 2048 bytes of valid UTF-8");
+        arguments.emplace("title", std::move(title));
+        arguments.emplace("message", std::move(message));
     }
     else if (hasArguments)
     {
@@ -6124,6 +6178,9 @@ void WidgetEngine::InitializeWidgetTaskBroker()
     error.clear();
     (void)taskBroker_->RegisterTask(TaskDescriptor{
         "app.launch", kAppLaunchPermission, true, 1 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "notification.show", kNotificationPostPermission, false, 2 }, error);
     if (previewOnly_)
     {
         mediaTaskExecutor_.reset();
@@ -6280,6 +6337,31 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 (void)taskBroker_->Complete(
                     action.id, false, "taskExecutorUnavailable");
             }
+            continue;
+        }
+
+        if (action.name == "notification.show")
+        {
+            const auto title = action.arguments.find("title");
+            const auto message = action.arguments.find("message");
+            if (title == action.arguments.end() ||
+                message == action.arguments.end() ||
+                action.arguments.size() != 2)
+            {
+                (void)taskBroker_->Complete(
+                    action.id, false, "invalidArguments");
+                continue;
+            }
+            if (action.preview)
+            {
+                (void)taskBroker_->Complete(action.id, true);
+                continue;
+            }
+            const std::string notificationError = RuntimePostNotification(
+                owner->widgetId, Utf8ToWideLocal(title->second),
+                Utf8ToWideLocal(message->second));
+            (void)taskBroker_->Complete(action.id,
+                notificationError.empty(), notificationError);
             continue;
         }
 
@@ -10304,9 +10386,21 @@ void WidgetEngine::RuntimeBeginInlineTextEdit(const LuaInlineTextEditRequest& re
 void WidgetEngine::RuntimeNotify(const std::wstring& widgetId,
     const std::wstring& title, const std::wstring& message)
 {
-    if (snowdesktop::widget_runtime::IsDryLoad()) return;
+    const std::string error = RuntimePostNotification(
+        widgetId, title, message);
+    if (!error.empty())
+        RuntimeRecordError(widgetId,
+            "Widget notification failed: " + error);
+}
+
+std::string WidgetEngine::RuntimePostNotification(
+    const std::wstring& widgetId, const std::wstring& title,
+    const std::wstring& message)
+{
+    if (snowdesktop::widget_runtime::IsDryLoad()) return {};
     const int index = FindWidget(widgetId);
-    if (index < 0) return;
+    if (index < 0) return "instanceDisposed";
+    if (title.empty() || message.empty()) return "invalidArguments";
     auto& widget = widgets_[index];
     const auto now = std::chrono::steady_clock::now();
     if (widget.notificationWindow.time_since_epoch().count() == 0 ||
@@ -10316,13 +10410,18 @@ void WidgetEngine::RuntimeNotify(const std::wstring& widgetId,
         widget.notificationsInWindow = 0;
     }
     if (widget.notificationsInWindow >= 5)
-    {
-        RuntimeRecordError(widgetId, "Widget notification quota exceeded");
-        return;
-    }
+        return "quotaExceeded";
+    if (!notifyCallback_) return "providerUnavailable";
     ++widget.notificationsInWindow;
-    if (notifyCallback_)
+    try
+    {
         notifyCallback_(title, message);
+    }
+    catch (...)
+    {
+        return "notificationFailed";
+    }
+    return {};
 }
 
 void WidgetEngine::EnsureSystemSnapshotServiceStarted()

@@ -123,8 +123,11 @@ void TestApplicationTaskGesturePolicy()
     Check(broker.RegisterTask(
             { "app.search", "app.discovery", false, 2 }, error) &&
             broker.RegisterTask(
-                { "app.launch", "app.launch", true, 1 }, error),
-        "application task descriptors must register independently");
+                { "app.launch", "app.launch", true, 1 }, error) &&
+            broker.RegisterTask(
+                { "notification.show", "notification.post", false, 2 },
+                error),
+        "application and notification task descriptors must register independently");
     TaskStartOptions options;
     options.ownerToken = 250;
     options.permissionGranted = true;
@@ -149,6 +152,23 @@ void TestApplicationTaskGesturePolicy()
     Check(actions.size() == 1 &&
             actions[0].arguments.at("ref") == "app:opaque",
         "application launch must preserve only the validated opaque reference");
+
+    Check(broker.Complete(launch.id, true),
+        "application launch completion must release its task slot");
+    broker.DrainCompletions();
+    options.trustedGesture = false;
+    options.arguments = { { "title", "Timer" },
+        { "message", "Complete" } };
+    const auto notification = broker.Start(
+        "widget", "notification.show", options);
+    Check(static_cast<bool>(notification),
+        "authorized background notification tasks must not require a gesture");
+    const auto notificationActions = broker.DrainActions();
+    Check(notificationActions.size() == 1 &&
+            notificationActions[0].arguments.size() == 2 &&
+            notificationActions[0].arguments.at("title") == "Timer" &&
+            notificationActions[0].arguments.at("message") == "Complete",
+        "notification tasks must preserve only their validated text payload");
 }
 
 void TestInstanceAndShutdownCleanup()

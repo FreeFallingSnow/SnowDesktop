@@ -124,6 +124,11 @@ synchronous native context menu.
   with `task.start("app.launch", { ref = item.ref })` inside the direct click
   action. Never persist or invent refs, and never substitute a path, command
   line, or working directory.
+- Post background completion notices only with
+  `task.start("notification.show", { title, message })`, declare
+  `notification.post` as optional when the widget can keep working without it,
+  and handle the matching `task.complete` result. Do not loop notifications or
+  fall back to the API v1 `system.notify` call.
 - Create `resource.image/font` handles at entry scope. Use `resource.status`
   when diagnostics are needed.
 - Use `draw.measureText`, clipping, explicit `maxWidth`, and separate opacity.
