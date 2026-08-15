@@ -277,6 +277,9 @@ void DesktopApp::RefreshQuickNavigationAppResults()
     const std::wstring query = GetQuickNavigationEffectiveSearchText();
     if (query.empty())
         return;
+    if (IsLuaLogicalSlotPickerOpen() &&
+        !LuaLogicalSlotPickerAccepts("app.reference"))
+        return;
 
     StartQuickNavigationAppIndexing();
     if (!quickNavigationAppsIndexed_)
@@ -286,6 +289,7 @@ void DesktopApp::RefreshQuickNavigationAppResults()
     {
         const QuickNavigationAppEntry& entry = quickNavigationAppEntries_[i];
         const std::wstring displayName =
+            !IsLuaLogicalSlotPickerOpen() &&
             generalSettings_.demoModeEnabled &&
             demoIdentityAssetsAvailable_
             ? GetDemoIdentityTitle(entry.parsingName)
@@ -299,7 +303,8 @@ void DesktopApp::RefreshQuickNavigationAppResults()
         [&](size_t a, size_t b) {
             const auto displayName = [&](size_t index) {
                 const auto& entry = quickNavigationAppEntries_[index];
-                return generalSettings_.demoModeEnabled &&
+                return !IsLuaLogicalSlotPickerOpen() &&
+                    generalSettings_.demoModeEnabled &&
                     demoIdentityAssetsAvailable_
                     ? GetDemoIdentityTitle(entry.parsingName)
                     : entry.name;
@@ -496,9 +501,10 @@ DesktopApp::BuildQuickNavigationContentModel() const
             demoCollectionIndex < widgets_.size()
             ? &widgets_[demoCollectionIndex] : nullptr;
         const std::wstring displayName =
-            ShouldUseDemoCollectionIdentity(demoCollection)
+            !IsLuaLogicalSlotPickerOpen() &&
+                ShouldUseDemoCollectionIdentity(demoCollection)
             ? GetDemoCollectionIdentityTitle(*demoCollection, identity)
-            : (ShouldUseDemoIdentity(item)
+            : (!IsLuaLogicalSlotPickerOpen() && ShouldUseDemoIdentity(item)
                 ? GetDemoIdentityTitle(identity) : item.name);
         if (!matches(displayName)) return;
         seenDesktop.insert(std::move(key));
@@ -510,6 +516,7 @@ DesktopApp::BuildQuickNavigationContentModel() const
         entry.name = displayName;
         entry.path = item.parsingName;
         entry.source = source;
+        if (!CanPickLuaLogicalSlotEntry(entry)) return;
         destination.push_back(std::move(entry));
     };
     auto appendDockDesktopItems =
@@ -831,8 +838,8 @@ DesktopApp::BuildQuickNavigationContentModel() const
                     entry.name = entryData.name;
                     entry.path = entryData.fullPath;
                     entry.source = source;
-                    entries.push_back(
-                        std::move(entry));
+                    if (CanPickLuaLogicalSlotEntry(entry))
+                        entries.push_back(std::move(entry));
                 }
                 appendSection(source, entries);
             }
@@ -854,8 +861,8 @@ DesktopApp::BuildQuickNavigationContentModel() const
                 entry.name = entryData.name;
                 entry.path = entryData.fullPath;
                 entry.source = source;
-                model.entries.push_back(
-                    std::move(entry));
+                if (CanPickLuaLogicalSlotEntry(entry))
+                    model.entries.push_back(std::move(entry));
             }
             return model;
         }
@@ -909,8 +916,8 @@ DesktopApp::BuildQuickNavigationContentModel() const
             entry.name = entryData.name;
             entry.path = entryData.fullPath;
             entry.source = source;
-            model.entries.push_back(
-                std::move(entry));
+            if (CanPickLuaLogicalSlotEntry(entry))
+                model.entries.push_back(std::move(entry));
         }
     }
 

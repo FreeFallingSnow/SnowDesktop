@@ -124,8 +124,11 @@ grant file contents, expose paths, or move source objects. Probe
 desktop/Application/Explorer object with host insertion preview. Probe
 `slots.nativeContextMenu` for host-owned per-item move/remove menus, and handle
 `slot.changed` only after probing `slots.event.changed`; re-read the slot model
-instead of trusting event data as writable state. Multi-object native ingress,
-native item drag-out/pointer reorder and the host picker are not available yet. A
+instead of trusting event data as writable state. Probe `slots.hostPicker` and
+call a binding/collection handle's `pick()` only from the current trusted action
+to open the manifest-filtered host picker; cancellation does not mutate the slot
+or grant file-content access. Multi-object native ingress and native item
+drag-out/pointer reorder are not available yet. A
 source reference used by Lua mutation must still come from a bounded host
 search or explicit file-reference task.
 Probe `slots.history` to expose explicit component actions for the bounded

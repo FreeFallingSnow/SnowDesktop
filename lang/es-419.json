@@ -774,6 +774,7 @@
   "app.guide.title": "Guía de paginación",
   "app.guide.page_num": "Página {0}",
   "app.nav.search_hint": "Buscar escritorio, aplicaciones y todo",
+  "app.nav.slot_picker_search_hint": "Buscar y elegir una aplicación, archivo o elemento del escritorio",
   "app.nav.everything_download": "Everything no está instalado; haz clic para descargarlo",
   "app.nav.tab_desktop": "Escritorio",
   "app.nav.tab_mapping": "Asignaciones",

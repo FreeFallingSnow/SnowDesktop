@@ -413,6 +413,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "slots.hostHistory") &&
             snowdesktop::widget_api::SupportsFeature(
+                "slots.hostPicker") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "view.monthCalendar") &&
             snowdesktop::widget_api::SupportsFeature("view.scroll") &&
             snowdesktop::widget_api::SupportsFeature(

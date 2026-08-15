@@ -196,8 +196,11 @@ void DesktopApp::EnsureQuickNavigationSearchEdit()
         reinterpret_cast<WPARAM>(quickNavigationSearchFont_ ? quickNavigationSearchFont_ : GetStockObject(DEFAULT_GUI_FONT)), TRUE);
     SendMessageW(quickNavigationSearchEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
         MAKELPARAM(QuickNavScale(10), QuickNavScale(10)));
+    const wchar_t* searchHint = IsLuaLogicalSlotPickerOpen()
+        ? _LW("app.nav.slot_picker_search_hint")
+        : _LW("app.nav.search_hint");
     SendMessageW(quickNavigationSearchEdit_, EM_SETCUEBANNER, TRUE,
-        reinterpret_cast<LPARAM>(_LW("app.nav.search_hint")));
+        reinterpret_cast<LPARAM>(searchHint));
     SetWindowSubclass(quickNavigationSearchEdit_, &DesktopApp::QuickNavigationSearchSubclassProc, 1,
         reinterpret_cast<DWORD_PTR>(this));
 }
@@ -409,6 +412,10 @@ void DesktopApp::RefreshQuickNavigationEverythingResults()
         return;
 
     RefreshQuickNavigationAppResults();
+
+    if (IsLuaLogicalSlotPickerOpen() &&
+        !LuaLogicalSlotPickerAccepts("filesystem.reference"))
+        return;
 
     const DWORD requestLimit = std::max<DWORD>(
         quickNavigationEverythingResultLimit_,
@@ -692,6 +699,15 @@ void DesktopApp::OpenQuickNavigation(
         dragDropController_.IsExternalDragActive())
         return;
     quickNavigationInvocationSource_ = source;
+    if (quickNavigationSearchEdit_ &&
+        IsWindow(quickNavigationSearchEdit_))
+    {
+        const wchar_t* searchHint = IsLuaLogicalSlotPickerOpen()
+            ? _LW("app.nav.slot_picker_search_hint")
+            : _LW("app.nav.search_hint");
+        SendMessageW(quickNavigationSearchEdit_, EM_SETCUEBANNER, TRUE,
+            reinterpret_cast<LPARAM>(searchHint));
+    }
 
     const bool reversingClose =
         quickNavigationAnimation_.IsClosing() &&
@@ -890,6 +906,8 @@ void DesktopApp::OpenQuickNavigation(
 void DesktopApp::CloseQuickNavigation()
 {
     if (!quickNavigationOpen_) return;
+    if (!quickNavigationPostCloseAction_)
+        logicalSlotPickerRequest_ = {};
     if (renameController_.
             IsQuickNavigationPresentation() &&
         renameEdit_ && IsWindow(renameEdit_))
@@ -1094,6 +1112,7 @@ void DesktopApp::FinalizeCloseQuickNavigation()
     DestroyQuickNavigationWindow();
     quickNavigationInvocationSource_ =
         QuickNavigationInvocationSource::Pointer;
+    logicalSlotPickerRequest_ = {};
     if (postCloseAction)
         postCloseAction();
 }

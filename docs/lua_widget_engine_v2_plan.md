@@ -1070,8 +1070,9 @@ feature probe、LuaLS 和契约测试，但通用键盘导航及 UIA Text/Calend
 `slot.changed` 主动事件；宿主不会把路径、PIDL、`IDataObject` 或 DropRoute 交给 Lua。
 后续又加入每实例 32 步、受可信动作约束且清空 redo 分支的 `slots.undo/redo` 事务历史，
 以及槽位项独立右键菜单、宿主移除/前后重排和选中单组件时的 Ctrl+Z/Ctrl+Shift+Z/Ctrl+Y。
-尚缺宿主选择器、原生槽位项拖出与指针同槽重排、槽位项键盘焦点/移动，因此 M6 槽位
-退出条件仍未达成。
+最新批次又接入受可信 action 约束的 `handle:pick()` 宿主选择器，复用快速导航的桌面、应用
+和 Everything 索引并按 manifest `accepts` 过滤，选择后仍走原子持久化事务。尚缺原生槽位项
+拖出与指针同槽重排、槽位项键盘焦点/移动，因此 M6 槽位退出条件仍未达成。
 
 节点规则：
 

@@ -774,6 +774,7 @@
   "app.guide.title": "페이징 가이드",
   "app.guide.page_num": "페이지 {0}",
   "app.nav.search_hint": "데스크톱, 앱 및 모든 것을 검색",
+  "app.nav.slot_picker_search_hint": "앱, 파일 또는 바탕 화면 항목 검색 및 선택",
   "app.nav.everything_download": "Everything이 설치되지 않았습니다. 다운로드하려면 클릭하세요.",
   "app.nav.tab_desktop": "데스크탑",
   "app.nav.tab_mapping": "매핑",

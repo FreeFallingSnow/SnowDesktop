@@ -548,6 +548,16 @@ struct LogicalSlotHostSurface
     std::vector<ItemRegion> items;
 };
 
+struct LogicalSlotPickerRequest
+{
+    std::wstring widgetId;
+    std::string slotId;
+    snowdesktop::widget_runtime::LogicalSlotKind kind =
+        snowdesktop::widget_runtime::LogicalSlotKind::Binding;
+    std::vector<std::string> accepts;
+    std::size_t targetIndex = 0;
+};
+
 class WidgetEngine
 {
 public:
@@ -597,6 +607,8 @@ public:
     using NotifyCallback = std::function<void(const std::wstring&, const std::wstring&)>;
     using FilePickerCallback = std::function<LuaWidgetFilePickerResult(
         const LuaWidgetFilePickerRequest&)>;
+    using LogicalSlotPickerCallback =
+        std::function<bool(const LogicalSlotPickerRequest&)>;
     using WidgetTimerRequestCallback = std::function<UINT_PTR(const std::wstring& widgetId, UINT intervalMs)>;
     using WidgetTimerKillCallback = std::function<void(UINT_PTR timerId)>;
 
@@ -651,6 +663,10 @@ public:
     void SetFilePickerCallback(FilePickerCallback callback)
     {
         filePickerCallback_ = std::move(callback);
+    }
+    void SetLogicalSlotPickerCallback(LogicalSlotPickerCallback callback)
+    {
+        logicalSlotPickerCallback_ = std::move(callback);
     }
     /** @brief 设置组件刷新截止时间请求回调（宿主返回统一调度令牌） */
     void SetWidgetTimerRequestCallback(WidgetTimerRequestCallback callback) { widgetTimerRequestCallback_ = std::move(callback); }
@@ -1074,6 +1090,10 @@ public:
         snowdesktop::widget_runtime::LogicalSlotItem candidate,
         std::size_t targetIndex,
         snowdesktop::widget_runtime::LogicalSlotChange& change,
+        std::string& error,
+        std::string_view source = "host.drop");
+    bool RuntimeOpenHostLogicalSlotPicker(const std::wstring& widgetId,
+        std::uint64_t ownerToken, std::string_view slotId,
         std::string& error);
     bool RuntimeRemoveHostLogicalSlotItem(const std::wstring& widgetId,
         std::string_view slotId, std::string_view itemId,
@@ -1390,6 +1410,7 @@ private:
     HostInputFocusCallback hostInputFocusCallback_;    ///< 让隐藏桌面输入窗口取得键盘焦点的回调
     NotifyCallback notifyCallback_;                     ///< 系统通知回调
     FilePickerCallback filePickerCallback_;             ///< 系统文件选择器回调
+    LogicalSlotPickerCallback logicalSlotPickerCallback_;
     WidgetTimerRequestCallback widgetTimerRequestCallback_; ///< 请求宿主为 widget 开独立 timer
     WidgetTimerKillCallback widgetTimerKillCallback_;   ///< 请求宿主关闭 widget 独立 timer
     std::unique_ptr<SystemSnapshotService> systemSnapshotService_;

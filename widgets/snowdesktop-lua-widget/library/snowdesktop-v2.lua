@@ -288,6 +288,7 @@
 ---@field item fun(self: SnowLogicalBinding): SnowLogicalSlotItem?
 ---@field bind fun(self: SnowLogicalBinding, reference: string): SnowLogicalSlotChange Requires a trusted user gesture.
 ---@field clear fun(self: SnowLogicalBinding): SnowLogicalSlotChange Requires a trusted user gesture and allowClear=true.
+---@field pick fun(self: SnowLogicalBinding): boolean Opens the manifest-filtered host picker; requires a trusted user gesture.
 
 ---@class SnowLogicalCollection
 ---@field id fun(self: SnowLogicalCollection): string
@@ -298,6 +299,7 @@
 ---@field add fun(self: SnowLogicalCollection, reference: string): SnowLogicalSlotChange Requires a trusted user gesture.
 ---@field remove fun(self: SnowLogicalCollection, itemId: string): SnowLogicalSlotChange Requires a trusted user gesture.
 ---@field move fun(self: SnowLogicalCollection, itemId: string, index: integer): SnowLogicalSlotChange Requires a trusted user gesture; index is 1-based.
+---@field pick fun(self: SnowLogicalCollection): boolean Opens the manifest-filtered host picker and appends one item; requires a trusted user gesture.
 
 ---@class SnowInteractionShape
 ---@field type 'rect'|'roundedRect'|'circle'
@@ -455,7 +457,7 @@
 ---@field slotKind? 'binding'|'collection' Logical slot model kind for slot.changed.
 ---@field operation? 'bound'|'replaced'|'added'|'removed'|'moved'|'cleared'|'undone'|'redone' Logical slot transaction for slot.changed.
 ---@field itemIds? string[] Opaque affected host item IDs for slot.changed.
----@field source? 'host.drop'|'host.menu'|'host.keyboard'|string Host change source for slot.changed.
+---@field source? 'host.drop'|'host.picker'|'host.menu'|'host.keyboard'|string Host change source for slot.changed.
 ---@field taskId? integer
 ---@field task? 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'filesystem.pickOpen'|'filesystem.pickSave'|'filesystem.pickFolder'|'filesystem.stat'|'filesystem.list'|'filesystem.read'|'filesystem.write'|'filesystem.release'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'|string
 ---@field ok? boolean

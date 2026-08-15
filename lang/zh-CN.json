@@ -774,6 +774,7 @@
     "app.guide.title": "分页使用指南",
     "app.guide.page_num": "第{0}页",
     "app.nav.search_hint": "在桌面、应用、Everything中搜索",
+    "app.nav.slot_picker_search_hint": "搜索并选择应用、文件或桌面项目",
     "app.nav.everything_download": "未安装 Everything，点击下载",
     "app.nav.tab_desktop": "桌面",
     "app.nav.tab_mapping": "映射",

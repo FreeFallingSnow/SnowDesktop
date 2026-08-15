@@ -774,6 +774,7 @@
   "app.guide.title": "Guide de pagination",
   "app.guide.page_num": "Page {0}",
   "app.nav.search_hint": "Rechercher sur le bureau, les applications et tout",
+  "app.nav.slot_picker_search_hint": "Rechercher et choisir une application, un fichier ou un élément du bureau",
   "app.nav.everything_download": "Tout n'est pas installé, cliquez pour télécharger",
   "app.nav.tab_desktop": "Bureau",
   "app.nav.tab_mapping": "Mappages",

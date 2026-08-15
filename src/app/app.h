@@ -2442,6 +2442,22 @@ private:
     bool CommitLuaLogicalSlotDrop(const std::wstring& widgetId,
         const std::string& slotId, const std::vector<Item*>& sourceItems,
         std::size_t targetIndex);
+    bool OpenLuaLogicalSlotPicker(const LogicalSlotPickerRequest& request);
+    bool IsLuaLogicalSlotPickerOpen() const;
+    bool LuaLogicalSlotPickerAccepts(std::string_view kind) const;
+    std::optional<snowdesktop::widget_runtime::LogicalSlotItem>
+        BuildLuaLogicalSlotPickerCandidate(
+            const QuickNavigationEntry& entry) const;
+    std::optional<snowdesktop::widget_runtime::LogicalSlotItem>
+        BuildLuaLogicalSlotPickerCandidate(
+            const QuickNavigationAppEntry& entry) const;
+    std::optional<snowdesktop::widget_runtime::LogicalSlotItem>
+        BuildLuaLogicalSlotPickerCandidate(
+            const QuickNavigationEverythingEntry& entry) const;
+    bool CanPickLuaLogicalSlotEntry(
+        const QuickNavigationEntry& entry) const;
+    bool CommitLuaLogicalSlotPickerCandidate(
+        snowdesktop::widget_runtime::LogicalSlotItem candidate);
     std::vector<EverythingSearchResult> SearchEverythingCached(const std::wstring& query, DWORD maxResults) const;
     /** @brief 通过 Lua 脚本提交路径打开请求。 @param path 要打开的路径 @return 请求是否已接受 */
     bool LuaOpenPath(const std::wstring& path);
@@ -3189,6 +3205,7 @@ private:
     /** @name 快速导航 */
     /** @{ */
     bool quickNavigationOpen_ = false;
+    LogicalSlotPickerRequest logicalSlotPickerRequest_{};
     bool quickNavigationTopmost_ = true;
     snowdesktop::quick_navigation_animation_rules::State
         quickNavigationAnimation_;

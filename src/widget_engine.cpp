@@ -16978,7 +16978,7 @@ bool WidgetEngine::RuntimeBindHostLogicalSlot(
     snowdesktop::widget_runtime::LogicalSlotItem candidate,
     std::size_t targetIndex,
     snowdesktop::widget_runtime::LogicalSlotChange& change,
-    std::string& error)
+    std::string& error, std::string_view source)
 {
     error.clear();
     auto widget = std::find_if(widgets_.begin(), widgets_.end(),
@@ -17004,7 +17004,62 @@ bool WidgetEngine::RuntimeBindHostLogicalSlot(
             change, error))
         return false;
 
-    DispatchHostLogicalSlotChange(*widget, change, "host.drop");
+    DispatchHostLogicalSlotChange(*widget, change, source);
+    return true;
+}
+
+bool WidgetEngine::RuntimeOpenHostLogicalSlotPicker(
+    const std::wstring& widgetId, std::uint64_t ownerToken,
+    std::string_view slotId, std::string& error)
+{
+    error.clear();
+    auto widget = std::find_if(widgets_.begin(), widgets_.end(),
+        [&widgetId, ownerToken](const LuaWidget& candidate) {
+            return candidate.widgetId == widgetId &&
+                candidate.runtimeToken == ownerToken;
+        });
+    if (widget == widgets_.end())
+    {
+        error = "logical slot owner is stale";
+        return false;
+    }
+    if (widget->preview || !trustedGestureState_.Active())
+    {
+        error = widget->preview ? "previewReadOnly" : "userGestureRequired";
+        return false;
+    }
+    const auto declaration = widget->logicalSlots.Declarations().find(slotId);
+    const auto* snapshot = widget->logicalSlots.Find(slotId);
+    if (declaration == widget->logicalSlots.Declarations().end() ||
+        !snapshot)
+    {
+        error = "logical slot is not declared";
+        return false;
+    }
+    if (snapshot->kind == LogicalSlotKind::Collection &&
+        snapshot->items.size() >= snapshot->capacity)
+    {
+        error = "logical slot is full";
+        return false;
+    }
+    if (!logicalSlotPickerCallback_)
+    {
+        error = "hostPickerUnavailable";
+        return false;
+    }
+
+    LogicalSlotPickerRequest request;
+    request.widgetId = widgetId;
+    request.slotId = std::string(slotId);
+    request.kind = snapshot->kind;
+    request.accepts = declaration->second.accepts;
+    request.targetIndex = snapshot->kind == LogicalSlotKind::Collection
+        ? snapshot->items.size() : 0;
+    if (!logicalSlotPickerCallback_(request))
+    {
+        error = "hostPickerUnavailable";
+        return false;
+    }
     return true;
 }
 
@@ -21374,6 +21429,21 @@ static int lua_LogicalSlotMove(lua_State* state)
     return 1;
 }
 
+static int lua_LogicalSlotPick(lua_State* state)
+{
+    auto* handle = CheckLogicalSlotHandle(state);
+    auto* d2d = GetD2D(state);
+    if (!d2d || !d2d->engine)
+        return luaL_error(state, "logical slot host is unavailable");
+    std::string error;
+    if (!d2d->engine->RuntimeOpenHostLogicalSlotPicker(
+            BoundWidgetId(state), handle->ownerToken,
+            handle->id.data(), error))
+        return luaL_error(state, "slots.pick: %s", error.c_str());
+    lua_pushboolean(state, 1);
+    return 1;
+}
+
 void PushLogicalSlotHandle(lua_State* state,
     snowdesktop::widget_runtime::LogicalSlotKind kind)
 {
@@ -21415,6 +21485,7 @@ void PushLogicalSlotHandle(lua_State* state,
             { "clear", lua_LogicalSlotClear },
             { "remove", lua_LogicalSlotRemove },
             { "move", lua_LogicalSlotMove },
+            { "pick", lua_LogicalSlotPick },
             { nullptr, nullptr },
         };
         luaL_setfuncs(state, methods, 0);

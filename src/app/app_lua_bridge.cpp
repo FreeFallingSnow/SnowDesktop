@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../logical_slot_picker_rules.h"
 #include "name_pinyin.h"
 #include "search_match.h"
 
@@ -255,6 +256,159 @@ std::vector<LuaDesktopItemInfo> DesktopApp::BuildLuaEverythingSearch(const std::
         result.push_back(std::move(info));
     }
     return result;
+}
+
+bool DesktopApp::IsLuaLogicalSlotPickerOpen() const
+{
+    return !logicalSlotPickerRequest_.widgetId.empty();
+}
+
+bool DesktopApp::LuaLogicalSlotPickerAccepts(std::string_view kind) const
+{
+    return IsLuaLogicalSlotPickerOpen() &&
+        snowdesktop::logical_slot_picker_rules::Accepts(
+            logicalSlotPickerRequest_.accepts, kind);
+}
+
+bool DesktopApp::OpenLuaLogicalSlotPicker(
+    const LogicalSlotPickerRequest& request)
+{
+    if (request.widgetId.empty() || request.slotId.empty() ||
+        request.accepts.empty() || quickNavigationOpen_ ||
+        IsLuaLogicalSlotPickerOpen())
+        return false;
+    const size_t widgetIndex = FindWidgetIndexById(request.widgetId);
+    if (widgetIndex >= widgets_.size() ||
+        widgets_[widgetIndex].type != DesktopWidgetType::LuaScript)
+        return false;
+
+    logicalSlotPickerRequest_ = request;
+    quickNavigationActiveWidgetIndex_ = static_cast<size_t>(-1);
+    OpenQuickNavigation(QuickNavigationInvocationSource::Pointer);
+    if (!quickNavigationOpen_)
+    {
+        logicalSlotPickerRequest_ = {};
+        return false;
+    }
+    return true;
+}
+
+std::optional<snowdesktop::widget_runtime::LogicalSlotItem>
+DesktopApp::BuildLuaLogicalSlotPickerCandidate(
+    const QuickNavigationAppEntry& entry) const
+{
+    if (!LuaLogicalSlotPickerAccepts("app.reference") ||
+        entry.parsingName.empty())
+        return std::nullopt;
+    const std::wstring target =
+        NormalizeLuaApplicationLaunchTarget(entry.parsingName);
+    if (target.empty()) return std::nullopt;
+
+    snowdesktop::widget_runtime::LogicalSlotItem candidate;
+    candidate.kind = "app.reference";
+    candidate.title = LuaWidgetWideToUtf8(entry.name);
+    candidate.source = "host.picker";
+    candidate.type = "application";
+    candidate.target = LuaWidgetWideToUtf8(target);
+    candidate.available = true;
+    if (candidate.title.empty()) candidate.title = candidate.target;
+    return candidate;
+}
+
+std::optional<snowdesktop::widget_runtime::LogicalSlotItem>
+DesktopApp::BuildLuaLogicalSlotPickerCandidate(
+    const QuickNavigationEverythingEntry& entry) const
+{
+    if (!LuaLogicalSlotPickerAccepts("filesystem.reference") ||
+        entry.path.empty())
+        return std::nullopt;
+    snowdesktop::widget_runtime::LogicalSlotItem candidate;
+    candidate.kind = "filesystem.reference";
+    candidate.title = LuaWidgetWideToUtf8(entry.name);
+    candidate.source = "host.picker";
+    candidate.type = entry.isDirectory ? "folder" : "file";
+    candidate.target = LuaWidgetWideToUtf8(entry.path);
+    candidate.available = true;
+    if (candidate.title.empty()) candidate.title = candidate.target;
+    return candidate;
+}
+
+std::optional<snowdesktop::widget_runtime::LogicalSlotItem>
+DesktopApp::BuildLuaLogicalSlotPickerCandidate(
+    const QuickNavigationEntry& entry) const
+{
+    snowdesktop::widget_runtime::LogicalSlotItem candidate;
+    candidate.source = "host.picker";
+    candidate.available = true;
+    if (entry.kind == QuickNavigationEntry::Kind::FolderEntry)
+    {
+        if (!LuaLogicalSlotPickerAccepts("filesystem.reference") ||
+            entry.path.empty())
+            return std::nullopt;
+        candidate.kind = "filesystem.reference";
+        candidate.title = LuaWidgetWideToUtf8(entry.name);
+        candidate.target = LuaWidgetWideToUtf8(entry.path);
+        const DWORD attributes = GetFileAttributesW(entry.path.c_str());
+        candidate.type = attributes != INVALID_FILE_ATTRIBUTES &&
+                (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0
+            ? "folder" : "file";
+    }
+    else
+    {
+        if (entry.itemIndex >= items_.size()) return std::nullopt;
+        const DesktopItem& item = items_[entry.itemIndex];
+        const std::wstring target = !item.parsingName.empty()
+            ? item.parsingName
+            : (!item.layoutKey.empty() ? item.layoutKey
+                : item.desktopIconClsid);
+        const std::string_view kind = snowdesktop::
+            logical_slot_picker_rules::DesktopCandidateKind(
+                logicalSlotPickerRequest_.accepts,
+                item.isApplicationShortcut,
+                !item.parsingName.empty());
+        if (kind.empty() || target.empty()) return std::nullopt;
+        candidate.kind = std::string(kind);
+        candidate.title = LuaWidgetWideToUtf8(item.name);
+        candidate.target = LuaWidgetWideToUtf8(target);
+        candidate.type = item.typeName.empty()
+            ? (item.isApplicationShortcut ? "application" : "desktop.item")
+            : LuaWidgetWideToUtf8(item.typeName);
+    }
+    if (candidate.title.empty()) candidate.title = candidate.target;
+    return candidate;
+}
+
+bool DesktopApp::CanPickLuaLogicalSlotEntry(
+    const QuickNavigationEntry& entry) const
+{
+    return !IsLuaLogicalSlotPickerOpen() ||
+        BuildLuaLogicalSlotPickerCandidate(entry).has_value();
+}
+
+bool DesktopApp::CommitLuaLogicalSlotPickerCandidate(
+    snowdesktop::widget_runtime::LogicalSlotItem candidate)
+{
+    if (!widgetEngine_ || !IsLuaLogicalSlotPickerOpen()) return false;
+    const LogicalSlotPickerRequest request = logicalSlotPickerRequest_;
+    logicalSlotPickerRequest_ = {};
+    CloseQuickNavigationThen(
+        [this, request, candidate = std::move(candidate)]() mutable {
+            if (!widgetEngine_) return;
+            snowdesktop::widget_runtime::LogicalSlotChange change;
+            std::string error;
+            if (!widgetEngine_->RuntimeBindHostLogicalSlot(
+                    request.widgetId, request.slotId,
+                    std::move(candidate), request.targetIndex,
+                    change, error, "host.picker"))
+            {
+                widgetEngine_->RuntimeRecordError(request.widgetId,
+                    "logical slot picker: " + error);
+                MessageBeep(MB_ICONWARNING);
+                return;
+            }
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        });
+    return true;
 }
 
 /**

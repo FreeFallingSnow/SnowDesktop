@@ -348,6 +348,16 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
     if (TryGetQuickNavigationAppEntryAtPoint(point, appEntry) &&
         appEntry && appEntry->absolutePidl.get())
     {
+        if (IsLuaLogicalSlotPickerOpen())
+        {
+            const auto candidate =
+                BuildLuaLogicalSlotPickerCandidate(*appEntry);
+            if (candidate)
+                CommitLuaLogicalSlotPickerCandidate(*candidate);
+            else
+                MessageBeep(MB_ICONWARNING);
+            return true;
+        }
         CloseQuickNavigationThenLaunchApp(*appEntry);
         return true;
     }
@@ -356,6 +366,16 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
     if (TryGetQuickNavigationEverythingEntryAtPoint(point, everythingEntry) &&
         !everythingEntry.path.empty())
     {
+        if (IsLuaLogicalSlotPickerOpen())
+        {
+            const auto candidate =
+                BuildLuaLogicalSlotPickerCandidate(everythingEntry);
+            if (candidate)
+                CommitLuaLogicalSlotPickerCandidate(*candidate);
+            else
+                MessageBeep(MB_ICONWARNING);
+            return true;
+        }
         const std::wstring launchPath =
             everythingEntry.path;
         CloseQuickNavigationThen(
@@ -376,6 +396,16 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
         if (clipped.bottom <= clipped.top || !PtInRect(&clipped, point)) continue;
 
         const QuickNavigationEntry entry = std::move(entries[i]);
+        if (IsLuaLogicalSlotPickerOpen())
+        {
+            const auto candidate =
+                BuildLuaLogicalSlotPickerCandidate(entry);
+            if (candidate)
+                CommitLuaLogicalSlotPickerCandidate(*candidate);
+            else
+                MessageBeep(MB_ICONWARNING);
+            return true;
+        }
         if (entry.kind == QuickNavigationEntry::Kind::DesktopItem &&
             entry.itemIndex != static_cast<size_t>(-1) && entry.itemIndex < items_.size())
         {
@@ -404,6 +434,8 @@ bool DesktopApp::HandleQuickNavigationRightClick(POINT point, POINT screenPoint)
 {
     if (!quickNavigationOpen_)
         return false;
+    if (IsLuaLogicalSlotPickerOpen())
+        return true;
 
     const QuickNavigationAppEntry* appEntry = nullptr;
     if (TryGetQuickNavigationAppEntryAtPoint(point, appEntry) && appEntry)

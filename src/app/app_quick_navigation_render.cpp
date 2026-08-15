@@ -967,7 +967,8 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                         rowRectApp.top + (rowH - iconSz) / 2,
                         rowRectApp.left + QuickNavScale(12) + iconSz,
                         rowRectApp.top + (rowH + iconSz) / 2);
-                    if (generalSettings_.demoModeEnabled &&
+                    if (!IsLuaLogicalSlotPickerOpen() &&
+                        generalSettings_.demoModeEnabled &&
                         demoIdentityAssetsAvailable_)
                         DrawDemoIdentityIcon(ctx.Get(), entry.parsingName,
                             iconRect);
@@ -989,6 +990,7 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                     typeRect.bottom -= QuickNavScale(5);
 
                     const std::wstring appName =
+                        !IsLuaLogicalSlotPickerOpen() &&
                         generalSettings_.demoModeEnabled &&
                         demoIdentityAssetsAvailable_
                         ? GetDemoIdentityTitle(entry.parsingName)

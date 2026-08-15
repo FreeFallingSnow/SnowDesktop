@@ -774,6 +774,7 @@
   "app.guide.title": "ページング ガイド",
   "app.guide.page_num": "ページ {0}",
   "app.nav.search_hint": "デスクトップ、アプリ、すべてを検索",
+  "app.nav.slot_picker_search_hint": "アプリ、ファイル、デスクトップ項目を検索して選択",
   "app.nav.everything_download": "Everything がインストールされていません。クリックしてダウンロードしてください",
   "app.nav.tab_desktop": "デスクトップ",
   "app.nav.tab_mapping": "マッピング",

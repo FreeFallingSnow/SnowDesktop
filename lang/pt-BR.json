@@ -774,6 +774,7 @@
   "app.guide.title": "Guia de paginação",
   "app.guide.page_num": "Página {0}",
   "app.nav.search_hint": "Pesquisar na área de trabalho, nos aplicativos e no Everything",
+  "app.nav.slot_picker_search_hint": "Pesquisar e escolher um aplicativo, arquivo ou item da área de trabalho",
   "app.nav.everything_download": "Everything não instalado; clique para baixar",
   "app.nav.tab_desktop": "Área de trabalho",
   "app.nav.tab_mapping": "Mapeamentos",

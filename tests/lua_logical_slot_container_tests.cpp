@@ -1,4 +1,5 @@
 #include "widgets/lua_logical_slot.h"
+#include "logical_slot_picker_rules.h"
 
 #include "core/item.h"
 
@@ -133,12 +134,36 @@ void TestCapacityAndBindingPolicy()
     Check(bindingHit && !bindingHit->canRemove,
         "a binding with allowClear=false must disable host removal");
 }
+
+void TestHostPickerCandidatePolicy()
+{
+    namespace picker = snowdesktop::logical_slot_picker_rules;
+    const std::vector<std::string> all{
+        "desktop.item", "app.reference", "filesystem.reference" };
+    Check(picker::DesktopCandidateKind(all, true, true) ==
+            "app.reference",
+        "an application shortcut must prefer the declared app reference");
+    Check(picker::DesktopCandidateKind(all, false, true) ==
+            "desktop.item",
+        "an ordinary desktop object must prefer the declared desktop reference");
+    Check(picker::DesktopCandidateKind(
+            { "filesystem.reference" }, false, true) ==
+            "filesystem.reference",
+        "a path-backed desktop object may fall back to a filesystem reference");
+    Check(picker::DesktopCandidateKind(
+            { "app.reference" }, false, true).empty(),
+        "a non-application must be filtered from an app-only host picker");
+    Check(picker::DesktopCandidateKind(
+            { "filesystem.reference" }, false, false).empty(),
+        "a namespace-only object must not become a filesystem reference");
+}
 }
 
 int main()
 {
     TestCollectionHitAndCommitBoundary();
     TestCapacityAndBindingPolicy();
+    TestHostPickerCandidatePolicy();
     std::cout << "Lua logical slot container tests passed\n";
     return 0;
 }

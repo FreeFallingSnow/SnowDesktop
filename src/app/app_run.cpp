@@ -792,6 +792,10 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             [this](const LuaWidgetFilePickerRequest& request) {
                 return ShowLuaWidgetFilePicker(hwnd_, request);
             });
+        widgetEngine_->SetLogicalSlotPickerCallback(
+            [this](const LogicalSlotPickerRequest& request) {
+                return OpenLuaLogicalSlotPicker(request);
+            });
         widgetEngine_->SetWidgetTimerRequestCallback([this](const std::wstring& widgetId, UINT intervalMs) -> UINT_PTR {
             if (!hwnd_) return 0;
             const snowdesktop::UiScheduleToken token =

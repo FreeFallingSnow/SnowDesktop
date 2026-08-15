@@ -774,6 +774,7 @@
   "app.guide.title": "Paging-Anleitung",
   "app.guide.page_num": "Seite {0}",
   "app.nav.search_hint": "Desktop, Apps und Everything durchsuchen",
+  "app.nav.slot_picker_search_hint": "App, Datei oder Desktopelement suchen und auswählen",
   "app.nav.everything_download": "Alles nicht installiert, zum Herunterladen klicken",
   "app.nav.tab_desktop": "Desktop",
   "app.nav.tab_mapping": "-Zuordnungen",

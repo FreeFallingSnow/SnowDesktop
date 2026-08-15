@@ -483,13 +483,18 @@ return view.slotSurface({
 进行命中判断，再显示插入预览并原子保存引用；不会移动、复制或删除真实对象。当前原生
 入口一次只接收一个对象，多选拖入会在命中前拒绝。组件或组件分组标签不会进入逻辑槽位。
 
-宿主拖放或槽位项菜单提交后会派发 `event.kind == "slot.changed"`，字段为 `slotId`、
+探测 `slots.hostPicker` 后，可在当前可信 action 中调用 binding 或 collection 句柄的
+`pick()`。宿主会打开复用快速导航索引的选择界面，只显示 manifest `accepts` 允许的应用、
+桌面项目或文件候选；选择结果直接成为持久化 opaque reference，collection 默认追加一项。
+选择器不会授予文件内容权限，取消也不会产生事务；collection 满容量时不会打开。
+
+宿主拖放、选择器或槽位项菜单提交后会派发 `event.kind == "slot.changed"`，字段为 `slotId`、
 `slotKind`、`revision`、`operation`、opaque `itemIds`，以及 `source == "host.drop"`、
-`"host.menu"` 或 `"host.keyboard"`。Lua 应重新读取对应句柄并重算 view，不能把事件内容
+`"host.picker"`、`"host.menu"` 或 `"host.keyboard"`。Lua 应重新读取对应句柄并重算 view，不能把事件内容
 当作可写模型。可分别探测 `slots.nativeDrop`、`slots.nativeContextMenu` 与
 `slots.event.changed`。原生槽位项菜单只显示该项的向前/向后移动和移除操作，不会附加
-组件总菜单；binding 是否能移除遵守 manifest 的 `allowClear`。宿主选择器、原生槽位项
-拖出和指针同槽重排仍未接入。
+组件总菜单；binding 是否能移除遵守 manifest 的 `allowClear`。原生槽位项拖出和指针
+同槽重排仍未接入。
 
 探测 `slots.history` 后，可在当前可信用户 action 中调用 `slots.undo()` / `slots.redo()`；
 它们按组件实例维护最近 32 次宿主槽位事务，返回 operation 为 `undone` / `redone` 的

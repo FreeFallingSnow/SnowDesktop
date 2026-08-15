@@ -774,6 +774,7 @@
     "app.guide.title": "Paging Guide",
     "app.guide.page_num": "Page {0}",
     "app.nav.search_hint": "Search desktop, apps, and Everything",
+    "app.nav.slot_picker_search_hint": "Search and choose an app, file, or desktop item",
     "app.nav.everything_download": "Everything not installed, click to download",
     "app.nav.tab_desktop": "Desktop",
     "app.nav.tab_mapping": "Mappings",
