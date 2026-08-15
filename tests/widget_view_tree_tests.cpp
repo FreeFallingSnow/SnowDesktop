@@ -2272,7 +2272,7 @@ void TestOverflowShadowAndImageTint()
             Near(root.shadow->offsetY, 5.0f) &&
             Near(root.shadow->alpha, 0.4f) &&
             root.children.size() == 1 &&
-            root.children[0].imageTint == 0x44AAEE,
+            root.children[0].imageTint == 0x44AAEEu,
         "visual properties must retain bounded typed values");
     Check(ValidateAndLayoutViewTree(root, 100.0f, 80.0f, error) &&
             root.clipFrame && Near(root.clipFrame->width, 100.0f) &&
