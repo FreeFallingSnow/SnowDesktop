@@ -23,12 +23,15 @@ const PackageImageSource* WidgetPackageImageCache::Fail(
     return nullptr;
 }
 
-const PackageImageSource* WidgetPackageImageCache::Load(
+const PackageImageSource* WidgetPackageImageCache::Acquire(
     const std::string& contentKey, const std::wstring& path)
 {
     if (const auto found = sources_.find(contentKey);
         found != sources_.end())
-        return &found->second;
+    {
+        ++found->second.references;
+        return &found->second.source;
+    }
     if (contentKey.empty() || path.empty() ||
         failures_.contains(contentKey))
         return nullptr;
@@ -60,10 +63,11 @@ const PackageImageSource* WidgetPackageImageCache::Load(
     const std::uint64_t decodedBytes = stride * height;
     if (maximumSingleBytes_ == 0 || maximumTotalBytes_ == 0 ||
         decodedBytes == 0 || decodedBytes > maximumSingleBytes_ ||
-        decodedBytes > (std::numeric_limits<UINT>::max)() ||
-        bytes_ > maximumTotalBytes_ ||
-        decodedBytes > maximumTotalBytes_ - bytes_)
+        decodedBytes > (std::numeric_limits<UINT>::max)())
         return Fail(contentKey);
+    if (bytes_ > maximumTotalBytes_ ||
+        decodedBytes > maximumTotalBytes_ - bytes_)
+        return nullptr;
 
     PackageImageSource source;
     source.width = width;
@@ -76,21 +80,42 @@ const PackageImageSource* WidgetPackageImageCache::Load(
 
     bytes_ += source.pixels.size();
     auto [inserted, added] = sources_.emplace(
-        contentKey, std::move(source));
-    return added ? &inserted->second : nullptr;
+        contentKey, Entry{ std::move(source), 1 });
+    return added ? &inserted->second.source : nullptr;
+}
+
+bool WidgetPackageImageCache::Release(
+    const std::string& contentKey) noexcept
+{
+    const auto found = sources_.find(contentKey);
+    if (found == sources_.end() || found->second.references == 0)
+        return false;
+    --found->second.references;
+    if (found->second.references != 0) return false;
+    const std::size_t released = found->second.source.pixels.size();
+    bytes_ = released > bytes_ ? 0 : bytes_ - released;
+    sources_.erase(found);
+    return true;
 }
 
 const PackageImageSource* WidgetPackageImageCache::Find(
     const std::string& contentKey) const noexcept
 {
     const auto found = sources_.find(contentKey);
-    return found == sources_.end() ? nullptr : &found->second;
+    return found == sources_.end() ? nullptr : &found->second.source;
 }
 
 bool WidgetPackageImageCache::Failed(
     const std::string& contentKey) const noexcept
 {
     return failures_.contains(contentKey);
+}
+
+std::size_t WidgetPackageImageCache::ReferenceCount(
+    const std::string& contentKey) const noexcept
+{
+    const auto found = sources_.find(contentKey);
+    return found == sources_.end() ? 0 : found->second.references;
 }
 
 std::size_t WidgetPackageImageCache::Size() const noexcept

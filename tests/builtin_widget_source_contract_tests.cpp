@@ -36,6 +36,19 @@ std::string_view Section(const std::string& source,
     return std::string_view(source).substr(begin, end - begin);
 }
 
+std::size_t CountOccurrences(
+    std::string_view source, std::string_view needle)
+{
+    std::size_t count = 0;
+    std::size_t offset = 0;
+    while ((offset = source.find(needle, offset)) != std::string_view::npos)
+    {
+        ++count;
+        offset += needle.size();
+    }
+    return count;
+}
+
 void TestRemindersRenderPurity(const fs::path& repository)
 {
     const std::string source = ReadFile(
@@ -117,7 +130,7 @@ void TestPackageResourceRenderPurity(const fs::path& repository)
     const std::string cacheSource = ReadFile(
         repository / "src" / "widget_package_image_cache.cpp");
     const std::string_view imageSourceLoad = Section(cacheSource,
-        "const PackageImageSource* WidgetPackageImageCache::Load(",
+        "const PackageImageSource* WidgetPackageImageCache::Acquire(",
         "\nconst PackageImageSource* WidgetPackageImageCache::Find(");
     Check(imageSourceLoad.find("CreateDecoderFromFilename") !=
             std::string_view::npos &&
@@ -134,9 +147,14 @@ void TestPackageResourceRenderPurity(const fs::path& repository)
             std::string_view::npos &&
             imageHandle.find("__widget_resource_content_keys") !=
                 std::string_view::npos &&
-            imageHandle.find("packageImageCache.Load(contentKey, *path)") !=
+            imageHandle.find("packageImageCache.Acquire(contentKey, *path)") !=
                 std::string_view::npos,
         "package image handles must bind to decoded content, not mutable paths");
+    Check(cacheSource.find("WidgetPackageImageCache::Release(") !=
+            std::string::npos &&
+            cacheSource.find("references") != std::string::npos &&
+            CountOccurrences(source, "ReleasePackageImageResources(") >= 6,
+        "all VM disposal paths must release content-keyed image references");
 
     const std::string_view handleResolve = Section(source,
         "static std::optional<std::wstring> ResolveResourceHandlePath(",

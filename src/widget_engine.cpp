@@ -8087,6 +8087,34 @@ static ID2D1Bitmap1* LoadImageBitmap(
     return result;
 }
 
+static void ReleasePackageImageResources(
+    D2DState* state, lua_State* luaState)
+{
+    if (!state || !luaState) return;
+    lua_getfield(luaState, LUA_REGISTRYINDEX,
+        "__widget_resource_content_keys");
+    if (lua_istable(luaState, -1))
+    {
+        lua_pushnil(luaState);
+        while (lua_next(luaState, -2) != 0)
+        {
+            size_t length = 0;
+            const char* value = lua_tolstring(luaState, -1, &length);
+            if (value && length > 0)
+            {
+                const std::string contentKey(value, length);
+                if (state->packageImageCache.Release(contentKey))
+                    state->imageCache.erase(contentKey);
+            }
+            lua_pop(luaState, 1);
+        }
+    }
+    lua_pop(luaState, 1);
+    lua_createtable(luaState, 0, 0);
+    lua_setfield(luaState, LUA_REGISTRYINDEX,
+        "__widget_resource_content_keys");
+}
+
 static ID2D1Bitmap1* LoadRuntimeImageBitmap(
     D2DState* state, const std::wstring& widgetId,
     std::string_view token)
@@ -8870,23 +8898,41 @@ static int lua_ResourceImage(lua_State* L)
         return luaL_error(L, "resource.image: invalid resource name");
     const std::string name(nameRaw, length);
     auto* state = GetD2D(L);
+    const auto existingContentKey =
+        CurrentPackageImageContentKey(L, name);
+    if (existingContentKey)
+    {
+        if (!state ||
+            !state->packageImageCache.Find(*existingContentKey) ||
+            (state->ctx &&
+                !LoadImageBitmap(state, *existingContentKey)))
+        {
+            return luaL_error(L,
+                "resource.image: cached resource is unavailable");
+        }
+        PushResourceHandle(L, LuaResourceType::Image, name);
+        return 1;
+    }
     const auto path = CurrentPackageResourcePath(L, name, "image");
     const std::string contentKey = path ? Sha256File(*path) : std::string{};
     if (!path || !state || contentKey.empty() ||
-        !state->packageImageCache.Load(contentKey, *path) ||
-        (state->ctx && !LoadImageBitmap(state, contentKey)))
+        !state->packageImageCache.Acquire(contentKey, *path))
         return luaL_error(L, "resource.image: resource is missing or cannot be decoded");
     lua_getfield(L, LUA_REGISTRYINDEX,
         "__widget_resource_content_keys");
     if (!lua_istable(L, -1))
     {
         lua_pop(L, 1);
+        (void)state->packageImageCache.Release(contentKey);
         return luaL_error(L,
             "resource.image: resource registry is unavailable");
     }
     lua_pushlstring(L, contentKey.data(), contentKey.size());
     lua_setfield(L, -2, name.c_str());
     lua_pop(L, 1);
+    if (state->ctx && !LoadImageBitmap(state, contentKey))
+        return luaL_error(L,
+            "resource.image: device bitmap creation failed");
     PushResourceHandle(L, LuaResourceType::Image, name);
     return 1;
 }
@@ -12354,6 +12400,7 @@ void WidgetEngine::Shutdown()
         {
             widget.lifecycle.Release(widget.state);
             luaL_unref(widget.state, LUA_REGISTRYINDEX, widget.ref);
+            ReleasePackageImageResources(d2dState_, widget.state);
             lua_close(widget.state);
             widget.state = nullptr;
         }
@@ -12435,6 +12482,7 @@ void WidgetEngine::UnloadWidget(const std::wstring& widgetId)
     {
         widgets_[idx].lifecycle.Release(state);
         luaL_unref(state, LUA_REGISTRYINDEX, widgets_[idx].ref);
+        ReleasePackageImageResources(d2dState_, state);
         lua_close(state);
         widgets_[idx].state = nullptr;
     }
@@ -12921,6 +12969,13 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
             "Cannot allocate isolated Lua state", quota->memoryExceeded);
         return false;
     }
+    const auto closePendingState = [d2dState = d2dState_](lua_State* value) {
+        if (!value) return;
+        ReleasePackageImageResources(d2dState, value);
+        lua_close(value);
+    };
+    std::unique_ptr<lua_State, decltype(closePendingState)> stateGuard(
+        state, closePendingState);
     const auto missing = snowdesktop::widget_api::MissingFeatures(
         pending.manifest.requiredFeatures);
     if (!missing.empty())
@@ -12936,8 +12991,6 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         RuntimeRecordError(widgetId, message);
         return false;
     }
-    std::unique_ptr<lua_State, decltype(&lua_close)> stateGuard(
-        state, lua_close);
     luaL_requiref(state, "_G", luaopen_base, 1); lua_pop(state, 1);
     luaL_requiref(state, LUA_TABLIBNAME, luaopen_table, 1); lua_pop(state, 1);
     luaL_requiref(state, LUA_STRLIBNAME, luaopen_string, 1); lua_pop(state, 1);
@@ -13293,6 +13346,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         {
             failed.lifecycle.Release(failed.state);
             luaL_unref(failed.state, LUA_REGISTRYINDEX, failed.ref);
+            ReleasePackageImageResources(d2dState_, failed.state);
             lua_close(failed.state);
             failed.state = nullptr;
         }
@@ -17394,6 +17448,7 @@ bool WidgetEngine::ReloadWidget(const std::wstring& widgetId)
     {
         old.lifecycle.Release(old.state);
         luaL_unref(old.state, LUA_REGISTRYINDEX, old.ref);
+        ReleasePackageImageResources(d2dState_, old.state);
         lua_close(old.state);
         old.state = nullptr;
     }

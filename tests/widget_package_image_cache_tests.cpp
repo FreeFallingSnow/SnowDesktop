@@ -68,34 +68,48 @@ int main()
     }
 
     WidgetPackageImageCache cache;
-    const auto* decoded = cache.Load("first-content", first.wstring());
+    const auto* decoded = cache.Acquire("first-content", first.wstring());
     Check(decoded && decoded->width == 1 && decoded->height == 1 &&
             decoded->stride == 4 && decoded->pixels.size() == 4 &&
             cache.Size() == 1 && cache.Bytes() == 4,
         "valid package image must decode into bounded BGRA pixels");
-    const auto* reused = cache.Load("first-content", second.wstring());
-    Check(reused == decoded,
+    const auto* reused = cache.Acquire("first-content", second.wstring());
+    Check(reused == decoded && cache.ReferenceCount("first-content") == 2,
         "the same content digest must share one decoded source");
 
     fs::remove(first, error);
     Check(!error && cache.Find("first-content") == decoded &&
-            cache.Load("first-content", first.wstring()) == decoded,
+            cache.Acquire("first-content", first.wstring()) == decoded &&
+            cache.ReferenceCount("first-content") == 3,
         "render-side lookup must survive source removal without file access");
-    Check(!cache.Load("invalid-content", invalid.wstring()) &&
+    Check(!cache.Acquire("invalid-content", invalid.wstring()) &&
             cache.Failed("invalid-content"),
         "decode failures must be stable and negatively cached");
     WriteBitmap(first, 0xff112233u);
-    const auto* changed = cache.Load("changed-content", first.wstring());
+    const auto* changed = cache.Acquire(
+        "changed-content", first.wstring());
     Check(changed && changed != decoded && cache.Size() == 2 &&
-            cache.Bytes() == 8,
+            cache.Bytes() == 8 &&
+            cache.ReferenceCount("changed-content") == 1,
         "a new content digest at the same path must decode new pixels");
+    Check(cache.Release("changed-content") && cache.Size() == 1 &&
+            cache.Bytes() == 4 &&
+            !cache.Release("first-content") &&
+            !cache.Release("first-content") &&
+            cache.Release("first-content") && cache.Size() == 0 &&
+            cache.Bytes() == 0,
+        "decoded pixels must remain until their last handle is released");
 
     WidgetPackageImageCache quotaCache(4, 4);
     WriteBitmap(first, 0xff336699u);
-    Check(quotaCache.Load("quota-first", first.wstring()) &&
-            !quotaCache.Load("quota-second", second.wstring()) &&
-            quotaCache.Failed("quota-second") && quotaCache.Bytes() == 4,
-        "decoded image cache must enforce per-image and total byte quotas");
+    Check(quotaCache.Acquire("quota-first", first.wstring()) &&
+            !quotaCache.Acquire("quota-second", second.wstring()) &&
+            !quotaCache.Failed("quota-second") && quotaCache.Bytes() == 4,
+        "active decoded images must enforce the total byte quota");
+    Check(quotaCache.Release("quota-first") &&
+            quotaCache.Acquire("quota-second", second.wstring()) &&
+            quotaCache.Bytes() == 4,
+        "a transient quota rejection must become retryable after release");
     quotaCache.Clear();
     Check(quotaCache.Size() == 0 && quotaCache.Bytes() == 0 &&
             !quotaCache.Failed("quota-second"),

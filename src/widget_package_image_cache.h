@@ -30,22 +30,31 @@ public:
         std::size_t maximumSingleBytes,
         std::size_t maximumTotalBytes);
 
-    const PackageImageSource* Load(
+    const PackageImageSource* Acquire(
         const std::string& contentKey, const std::wstring& path);
+    bool Release(const std::string& contentKey) noexcept;
     const PackageImageSource* Find(
         const std::string& contentKey) const noexcept;
     bool Failed(const std::string& contentKey) const noexcept;
+    std::size_t ReferenceCount(
+        const std::string& contentKey) const noexcept;
     std::size_t Size() const noexcept;
     std::size_t Bytes() const noexcept;
     void Clear() noexcept;
 
 private:
+    struct Entry
+    {
+        PackageImageSource source;
+        std::size_t references = 0;
+    };
+
     const PackageImageSource* Fail(const std::string& contentKey);
 
     std::size_t maximumSingleBytes_ = DefaultMaximumSingleBytes;
     std::size_t maximumTotalBytes_ = DefaultMaximumTotalBytes;
     std::size_t bytes_ = 0;
-    std::unordered_map<std::string, PackageImageSource> sources_;
+    std::unordered_map<std::string, Entry> sources_;
     std::unordered_set<std::string> failures_;
 };
 }
