@@ -82,17 +82,20 @@ local function buildView(context)
         weekDays[t.wday or 1])
 
     local width = math.max(1, context.logicalSize.width)
-    local contentHeight = math.max(1,
-        context.logicalSize.height - layout.barHeight())
+    local contentHeight = math.max(1, context.logicalSize.height)
     local padding = math.max(layout.cu(8), width * 0.06)
     local availableWidth = math.max(1, width - padding * 2)
+    local spanScale = math.sqrt(
+        math.max(1, width / math.max(1, layout.cellWidth())) *
+        math.max(1, contentHeight / math.max(1, layout.cellHeight())))
     local timeSize = math.min(
-        layout.fontCu(28) * clockScale,
+        layout.fontCu(28) * clockScale * spanScale,
         availableWidth / math.max(1, #timeStr * 0.55),
         contentHeight * 0.42)
     timeSize = math.max(layout.fontCu(12), timeSize)
     local secondarySize = math.max(layout.fontCu(7),
-        math.min(layout.fontCu(10) * clockScale, timeSize * 0.42))
+        math.min(layout.fontCu(10) * clockScale * spanScale,
+            timeSize * 0.42))
 
     local children = {
         view.text({

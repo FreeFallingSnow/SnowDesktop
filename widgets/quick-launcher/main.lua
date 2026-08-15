@@ -214,6 +214,14 @@ local function registerRegion(key, shape, events, label)
     })
 end
 
+local function drawCenteredStatus(text, x, y, width, font, color)
+    local measured = draw.measureText(text, font, width, false)
+    local measuredWidth = math.min(width, measured.width)
+    draw.text(x + math.max(0, (width - measuredWidth) / 2), y,
+        text, font, color, math.max(1, measuredWidth + layout.cu(1)),
+        false, true)
+end
+
 local function render(context, model)
     syncQueryAndSources(model)
     local colors = palette(context)
@@ -245,25 +253,27 @@ local function render(context, model)
         width = width - pad * 2, height = viewportHeight }
     interaction.region({
         key = "quick.surface", shape = viewport,
-        events = { contextMenu = { id = "quick.menu" } },
+        events = { contextMenu = {
+            id = "quick.menu", scope = "component" } },
         accessibility = { role = "list", label = descriptor.name },
     })
 
     if model.query == "" then
-        draw.text(pad, listTop + viewportHeight * 0.32,
+        drawCenteredStatus(
             l10n.tr("lua_widget.quick_launcher.empty_prompt"),
-            layout.fontCu(math.max(11, fontSize - 2)), colors.muted,
-            width - pad * 2, true, true)
+            pad, listTop + viewportHeight * 0.32, width - pad * 2,
+            layout.fontCu(math.max(11, fontSize - 2)), colors.muted)
         return
     end
 
     if #model.rows == 0 then
         local searching = next(model.searchTasks) ~= nil
-        draw.text(pad, listTop + viewportHeight * 0.32,
-            searching and "…" or
+        drawCenteredStatus(
+            searching and
+                l10n.tr("lua_widget.quick_launcher.searching") or
                 l10n.tr("lua_widget.quick_launcher.no_matches"),
-            layout.fontCu(math.max(11, fontSize - 2)), colors.muted,
-            width - pad * 2, true, true)
+            pad, listTop + viewportHeight * 0.32, width - pad * 2,
+            layout.fontCu(math.max(11, fontSize - 2)), colors.muted)
         return
     end
 
@@ -453,7 +463,7 @@ local function menu(_context, model, request)
                 enabled = canDesktopAction and
                     widget.hasFeature("task.shell.item") }
         end
-        items[#items + 1] = { type = "separator" }
+        return ui.menu(items)
     end
     items[#items + 1] = { id = "quick.edit",
         label = l10n.tr("lua_widget.quick_launcher.edit_query"),

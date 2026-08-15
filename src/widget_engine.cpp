@@ -39,6 +39,7 @@
 #include "widget_text_input_rules.h"
 #include "widget_storage_transaction.h"
 #include "widget_system_settings.h"
+#include "widgets/widget_chrome_rules.h"
 
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -2266,6 +2267,18 @@ static int lua_InteractionRegion(lua_State* state)
             const int actionTable = lua_absindex(state, -1);
             InteractionAction action;
             action.id = ReadRequiredStringField(state, actionTable, "id");
+            lua_getfield(state, actionTable, "scope");
+            if (!lua_isnil(state, -1))
+            {
+                const char* scope = luaL_checkstring(state, -1);
+                if (std::strcmp(scope, "component") == 0)
+                    action.contextMenuScope =
+                        InteractionAction::ContextMenuScope::Component;
+                else if (std::strcmp(scope, "element") != 0)
+                    return luaL_error(state,
+                        "interaction.region: action scope must be element or component");
+            }
+            lua_pop(state, 1);
             lua_getfield(state, actionTable, "value");
             std::size_t nodes = 0;
             std::size_t bytes = 0;
@@ -13871,7 +13884,25 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
         lua_setfield(state, -2, "widgetId");
     }
 
-    lua_getfield(state, -1, "view");
+    const int descriptorIndex = lua_absindex(state, -1);
+    lua_getfield(state, descriptorIndex, "showTitle");
+    const bool showTitle = !lua_isnil(state, -1) &&
+        lua_toboolean(state, -1) != 0;
+    lua_pop(state, 1);
+    lua_getfield(state, descriptorIndex, "bottomBarHover");
+    const bool bottomBarHover = lua_isnil(state, -1) ||
+        lua_toboolean(state, -1) != 0;
+    lua_pop(state, 1);
+    const int scaledBarHeight = static_cast<int>(std::round(
+        static_cast<float>(d2dState_->barHeight) *
+        CalculateWidgetCellScale(
+            std::max(4, d2dState_->gridCellW),
+            std::max(4, d2dState_->gridCellH))));
+    const int reservedBarHeight =
+        snowdesktop::widget_chrome_rules::ReservedBottomBarHeight(
+            showTitle, bottomBarHover, scaledBarHeight);
+
+    lua_getfield(state, descriptorIndex, "view");
     if (lua_isfunction(state, -1))
     {
         const auto pushContext = +[](lua_State* lifecycleState) {
@@ -13916,7 +13947,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                                     "panel") == 0
                                     ? 0.0f
                                     : static_cast<float>(
-                                        d2dState_->barHeight))),
+                                        reservedBarHeight))),
                         viewError))
             {
                 viewError = "view(): " + viewError;
@@ -14854,7 +14885,7 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
         WidgetExecutionContextGuard contextGuard(d2dState_, widgetId);
         snowdesktop::lua_runtime::StackGuard stackGuard(state);
         SetWidgetRectContext(d2dState_, w.lastBounds);
-        lua_createtable(state, 0, 5);
+        lua_createtable(state, 0, 6);
         lua_pushlstring(state, requestAction.id.data(),
             requestAction.id.size());
         lua_setfield(state, -2, "id");
@@ -14866,6 +14897,12 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
         lua_setfield(state, -2, "surface");
         lua_pushliteral(state, "pointer");
         lua_setfield(state, -2, "source");
+        lua_pushstring(state,
+            requestAction.contextMenuScope ==
+                    snowdesktop::widget_runtime::InteractionAction::
+                        ContextMenuScope::Component
+                ? "component" : "element");
+        lua_setfield(state, -2, "scope");
 
         bool invoked = false;
         std::string error;
@@ -14936,6 +14973,10 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
                     continue;
                 }
                 item.v2Action = true;
+                item.elementContext =
+                    requestAction.contextMenuScope ==
+                    snowdesktop::widget_runtime::InteractionAction::
+                        ContextMenuScope::Element;
                 item.targetKey = targetKey;
                 item.contextValue = requestAction.value;
                 item.interactionGeneration = generation;

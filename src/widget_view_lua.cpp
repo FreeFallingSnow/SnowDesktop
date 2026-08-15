@@ -822,10 +822,27 @@ bool ParseAction(lua_State* state, int index, InteractionAction& action,
         error = "view actions must be tables";
         return false;
     }
-    if (!ValidateObjectFields(state, index, { "id", "value" },
+    if (!ValidateObjectFields(state, index, { "id", "value", "scope" },
             "view action", error) ||
         !ReadStringField(state, index, "id", action.id, true, error))
         return false;
+    std::string scope;
+    if (!ReadStringField(state, index, "scope", scope, false, error))
+        return false;
+    if (!scope.empty())
+    {
+        if (scope == "element")
+            action.contextMenuScope =
+                InteractionAction::ContextMenuScope::Element;
+        else if (scope == "component")
+            action.contextMenuScope =
+                InteractionAction::ContextMenuScope::Component;
+        else
+        {
+            error = "view action scope must be element or component";
+            return false;
+        }
+    }
     lua_getfield(state, index, "value");
     std::size_t nodes = 0;
     std::size_t stringBytes = 0;

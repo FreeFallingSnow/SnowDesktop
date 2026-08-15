@@ -244,7 +244,7 @@ local function render(_context, model)
         subtitle = l10n.tr("lua_widget.media_control.double_click_player")
     end
 
-    local interactiveHeight = math.max(1, height - layout.barHeight())
+    local interactiveHeight = math.max(1, height)
     interaction.region({
         key = "media.surface",
         shape = {
@@ -256,7 +256,7 @@ local function render(_context, model)
         },
         events = {
             doubleClick = { id = "launcher.open" },
-            contextMenu = { id = "media.menu" },
+            contextMenu = { id = "media.menu", scope = "component" },
         },
         accessibility = {
             role = "group",
@@ -276,7 +276,7 @@ local function render(_context, model)
     local buttonSize = layout.cu(40)
     local buttonGap = layout.cu(12)
     local total = buttonSize * 3 + buttonGap * 2
-    local buttonY = height - layout.barHeight() - buttonSize - layout.cu(8)
+    local buttonY = height - buttonSize - layout.cu(8)
     local buttonX = (width - total) / 2
 
     drawButton(model, "media.previous", "media.previous", "",

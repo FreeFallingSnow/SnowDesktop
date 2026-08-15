@@ -187,7 +187,7 @@ local function render()
         cursor = "text",
         events = {
             doubleClick = { id = "note.focus" },
-            contextMenu = { id = "note.menu" },
+            contextMenu = { id = "note.menu", scope = "component" },
         },
         accessibility = {
             role = "group",

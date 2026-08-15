@@ -95,10 +95,12 @@ end
 local function palette(context)
     local light = context.theme and context.theme.mode == "light"
     return light and {
-        text = 0x000000, muted = 0x4F4F4F, card = 0x000000,
+        text = 0x000000, muted = 0x4F4F4F, secondary = 0x303030,
+        card = 0x000000,
         accent = 0x000000, inverse = 0xFFFFFF, danger = 0x8A1C1C,
     } or {
-        text = 0xFFFFFF, muted = 0xB7B7B7, card = 0xFFFFFF,
+        text = 0xFFFFFF, muted = 0xB7B7B7, secondary = 0xE0E0E0,
+        card = 0xFFFFFF,
         accent = 0xFFFFFF, inverse = 0x000000, danger = 0xFFB5B5,
     }
 end
@@ -202,11 +204,20 @@ local function openEditor(model)
         l10n.tr("lua_widget.agenda.edit") or
         l10n.tr("lua_widget.agenda.add")
     model.editorError = nil
-    widget.openPanel({ title = title, width = 460, height = 520 })
+    widget.openPanel({
+        title = title,
+        width = math.min(720, math.max(460, layout.cu(460))),
+        height = math.min(820, math.max(520, layout.cu(540))),
+    })
+    model.panelOpen = true
 end
 
 local function startNew(model)
     if not widget.hasPermission("calendar.write") then return end
+    if model.panelOpen then
+        widget.closePanel()
+        return
+    end
     local date = selectedDate(model)
     local startMinutes = 540
     if date == todayDate() then
@@ -229,6 +240,10 @@ end
 
 local function startEdit(model, item)
     if not item or not widget.hasPermission("calendar.write") then return end
+    if model.panelOpen then
+        widget.closePanel()
+        return
+    end
     storage.transaction(function(tx)
         clearDraftTransaction(tx)
         tx:set(DRAFT_TITLE, item.title or "")
@@ -344,7 +359,24 @@ local function drawHeaderButton(key, glyph, label, shape, colors, enabled)
         layout.cu(16), colors.accent, enabled and 1.0 or 0.28)
     registerRegion(key, { type = "roundedRect", x = shape.x, y = shape.y,
         width = shape.width, height = shape.height, radius = layout.cu(7) },
-        { click = { id = key }, contextMenu = { id = "agenda.menu" } },
+        { click = { id = key }, contextMenu = {
+            id = "agenda.menu", scope = "component" } },
+        label, enabled)
+end
+
+local function drawHeaderTextButton(key, label, shape, colors, enabled)
+    local hovered = enabled and interaction.isHovered(key)
+    local pressed = enabled and interaction.isPressed(key)
+    draw.rect(shape.x, shape.y, shape.width, shape.height,
+        colors.accent, layout.cu(7),
+        pressed and 0.16 or (hovered and 0.10 or 0.055))
+    centeredText(label, shape.x, shape.y, shape.width, shape.height,
+        layout.fontCu(11), colors.accent, true,
+        enabled and 0.92 or 0.28)
+    registerRegion(key, { type = "roundedRect", x = shape.x, y = shape.y,
+        width = shape.width, height = shape.height, radius = layout.cu(7) },
+        { click = { id = key }, contextMenu = {
+            id = "agenda.menu", scope = "component" } },
         label, enabled)
 end
 
@@ -369,22 +401,28 @@ local function render(context, model)
         l10n.tr("lua_widget.agenda.next_day"),
         { x = pad + button + gap, y = headerY,
             width = button, height = button }, colors, true)
+    local addX = width - pad - button
     drawHeaderButton("agenda.add", fluent.add,
         l10n.tr("lua_widget.agenda.add"),
-        { x = width - pad - button, y = headerY,
+        { x = addX, y = headerY,
             width = button, height = button }, colors, canWrite)
-    drawHeaderButton("agenda.today", fluent.today,
-        l10n.tr("lua_widget.agenda.today"),
-        { x = width - pad - button * 2 - gap, y = headerY,
-            width = button, height = button }, colors, true)
+    local todayLabel = l10n.tr("lua_widget.agenda.today")
+    local todayMetrics = draw.measureText(todayLabel,
+        layout.fontCu(11), 0, true)
+    local todayWidth = math.max(button, math.min(width * 0.25,
+        todayMetrics.width + layout.cu(14)))
+    local todayX = addX - gap - todayWidth
+    drawHeaderTextButton("agenda.today", todayLabel,
+        { x = todayX, y = headerY,
+            width = todayWidth, height = button }, colors, true)
     local titleX = pad + button * 2 + gap * 2
-    local titleRight = width - pad - button * 2 - gap * 2
+    local titleRight = todayX - gap
     centeredText(formatDate(selected, false), titleX, headerY,
         math.max(1, titleRight - titleX), button,
         mainFont, colors.text, true)
 
     local listTop = headerY + button + layout.cu(9)
-    local listBottom = height - layout.cu(layout.barHeight()) - layout.cu(6)
+    local listBottom = height - layout.cu(6)
     local viewportHeight = math.max(1, listBottom - listTop)
     local viewport = { type = "rect", x = pad, y = listTop,
         width = width - pad * 2, height = viewportHeight }
@@ -393,7 +431,7 @@ local function render(context, model)
         shape = viewport,
         events = {
             click = { id = "agenda.clearSelection" },
-            contextMenu = { id = "agenda.menu" },
+            contextMenu = { id = "agenda.menu", scope = "component" },
         },
         accessibility = { role = "list", label = descriptor.name },
     })
@@ -456,7 +494,7 @@ local function render(context, model)
             (formatTime(item.startMinutes) .. " – " .. formatTime(item.endMinutes))
         draw.text(textX, y + cardHeight - layout.cu(23),
             formatDate(item.date, true) .. " · " .. timing,
-            smallFont, colors.muted, textWidth, false, true, 0, 0.78)
+            smallFont, colors.secondary, textWidth, false, true, 0, 0.92)
     end
     draw.popClip()
 end
@@ -482,11 +520,17 @@ local function panelButton(model, id, label, x, y, width, height,
 end
 
 local function openDatePicker(model)
+    if model.datePickerOpen then
+        model.datePickerOpen = false
+        interaction.setScrollOffset("agenda.panel.scroll", 0)
+        return
+    end
     local info = calendar.dateInfo(storage.get(DRAFT_DATE) or "") or
         calendar.dateInfo(todayDate())
     model.pickerYear = info.year
     model.pickerMonth = info.month
     model.datePickerOpen = true
+    interaction.setScrollOffset("agenda.panel.scroll", 0)
 end
 
 local function shiftPickerMonth(model, offset)
@@ -576,12 +620,26 @@ local function panel(context, model)
     local fieldWidth = width - pad * 2
     local inputHeight = layout.cu(38)
     model.panelHits = {}
+    local allDay = storage.get(DRAFT_ALL_DAY) == "1"
+    local desiredHeight = model.datePickerOpen and layout.cu(500) or
+        (allDay and layout.cu(430) or layout.cu(510))
+    local contentHeight = math.max(height, desiredHeight)
+    local scroll = interaction.scroll({
+        key = "agenda.panel.scroll",
+        shape = { type = "rect", x = 0, y = 0,
+            width = width, height = height },
+        contentHeight = math.ceil(contentHeight),
+    })
+    local originY = -scroll.offset
+    draw.pushClip(0, 0, width, height)
 
-    panelLabel(l10n.tr("lua_widget.agenda.title"), pad, layout.cu(16),
+    panelLabel(l10n.tr("lua_widget.agenda.title"), pad,
+        layout.cu(16) + originY,
         fieldWidth, labelFont, colors.muted)
     control.textInput({
         key = "agenda-title", storageKey = DRAFT_TITLE,
-        shape = { type = "rect", x = pad, y = layout.cu(38),
+        shape = { type = "rect", x = pad,
+            y = layout.cu(38) + originY,
             width = fieldWidth, height = inputHeight },
         placeholder = l10n.tr("lua_widget.agenda.title_placeholder"),
         fontSize = inputFont, textColor = colors.text,
@@ -594,7 +652,7 @@ local function panel(context, model)
         liveUpdate = true, maxBytes = 512,
     })
 
-    local dateY = layout.cu(88)
+    local dateY = layout.cu(88) + originY
     panelLabel(l10n.tr("lua_widget.agenda.date"), pad, dateY,
         fieldWidth * 0.58, labelFont, colors.muted)
     local dateInputWidth = fieldWidth * 0.43
@@ -623,15 +681,17 @@ local function panel(context, model)
         storage.get(DRAFT_ALL_DAY) == "1", true)
 
     if model.datePickerOpen then
-        renderDatePicker(model, pad, layout.cu(166), fieldWidth, colors)
+        renderDatePicker(model, pad, layout.cu(166) + originY,
+            fieldWidth, colors)
         panelButton(model, "cancel", l10n.tr("lua_widget.agenda.cancel"),
-            pad, height - layout.cu(57), fieldWidth, layout.cu(38),
+            pad, contentHeight - layout.cu(57) + originY,
+            fieldWidth, layout.cu(38),
             colors, false, true)
+        draw.popClip()
         return
     end
 
-    local allDay = storage.get(DRAFT_ALL_DAY) == "1"
-    local timeY = layout.cu(162)
+    local timeY = layout.cu(162) + originY
     if not allDay then
         local half = (fieldWidth - layout.cu(10)) / 2
         panelLabel(l10n.tr("lua_widget.agenda.start"), pad, timeY,
@@ -668,7 +728,8 @@ local function panel(context, model)
         })
     end
 
-    local reminderY = allDay and layout.cu(162) or layout.cu(236)
+    local reminderY = (allDay and layout.cu(162) or layout.cu(236)) +
+        originY
     panelLabel(l10n.tr("lua_widget.agenda.reminder"), pad, reminderY,
         fieldWidth, labelFont, colors.muted)
     panelButton(model, "cycleReminder",
@@ -696,10 +757,11 @@ local function panel(context, model)
 
     local errorText = editorErrorText(model.editorError)
     if errorText then
-        draw.text(pad, height - layout.cu(91), errorText, labelFont,
+        draw.text(pad, contentHeight - layout.cu(91) + originY,
+            errorText, labelFont,
             colors.danger, fieldWidth, false, true)
     end
-    local buttonY = height - layout.cu(57)
+    local buttonY = contentHeight - layout.cu(57) + originY
     local actionWidth = (fieldWidth - layout.cu(10)) / 2
     panelButton(model, "cancel", l10n.tr("lua_widget.agenda.cancel"),
         pad, buttonY, actionWidth, layout.cu(38), colors, false, true)
@@ -707,6 +769,7 @@ local function panel(context, model)
         pad + actionWidth + layout.cu(10), buttonY,
         actionWidth, layout.cu(38), colors, true,
         model.pendingPanelTask == nil)
+    draw.popClip()
 end
 
 local function setup()
@@ -714,7 +777,7 @@ local function setup()
     local model = {
         selectedDate = todayDate(), eventsById = {}, panelHits = {},
         pendingPanelTask = nil, pendingDeleteTask = nil,
-        editorError = nil, datePickerOpen = false,
+        editorError = nil, datePickerOpen = false, panelOpen = false,
     }
     model.selectedSubscription = data.subscribe("calendar.selectedDate", {
         whenHidden = "pause", maxAgeMs = 86400000,
@@ -791,8 +854,13 @@ local function event(_context, model, value)
             storage.remove(SELECTED_ID)
         end
         return
-    elseif value.kind == "panel" and value.action == "closed" then
-        clearDraft(model)
+    elseif value.kind == "panel" then
+        if value.action == "opened" then
+            model.panelOpen = true
+        elseif value.action == "closed" then
+            model.panelOpen = false
+            clearDraft(model)
+        end
         return
     elseif value.kind == "pointer" and value.surface == "panel" and
         value.action == "click" then
@@ -856,20 +924,26 @@ local function menu(_context, model, request)
         storage.get(SELECTED_ID)
     local item = id and model.eventsById[id] or nil
     local canWrite = widget.hasPermission("calendar.write")
+    if item then
+        return ui.menu({
+            {
+                id = "agenda.edit",
+                label = l10n.tr("lua_widget.agenda.edit"),
+                icon = fluent.edit, iconFont = "fluent",
+                enabled = canWrite,
+            },
+            {
+                id = "agenda.delete",
+                label = l10n.tr("lua_widget.agenda.delete"),
+                icon = fluent.delete, iconFont = "fluent",
+                enabled = canWrite,
+            },
+        })
+    end
     return ui.menu({
         {
             id = "agenda.add", label = l10n.tr("lua_widget.agenda.add"),
             icon = fluent.add, iconFont = "fluent", enabled = canWrite,
-        },
-        {
-            id = "agenda.edit", label = l10n.tr("lua_widget.agenda.edit"),
-            icon = fluent.edit, iconFont = "fluent",
-            enabled = canWrite and item ~= nil,
-        },
-        {
-            id = "agenda.delete", label = l10n.tr("lua_widget.agenda.delete"),
-            icon = fluent.delete, iconFont = "fluent",
-            enabled = canWrite and item ~= nil,
         },
         { type = "separator" },
         {

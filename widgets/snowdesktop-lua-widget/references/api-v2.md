@@ -139,6 +139,9 @@ end
 `textAlign`；基础样式支持 RGB 前景/背景/边框、边框宽度、圆角、0–1 opacity 及
 hover/pressed 覆盖。按钮 `action` 是 click 简写；events 还支持 pointer enter/leave/
 down/up、doubleClick 和 contextMenu，动作通过 `event.kind == "action"` 投递。
+`contextMenu` 动作默认 `scope="element"`：命中后菜单只显示该元素返回的操作，不混入组件
+设置、悬浮和移除等总菜单。覆盖整张组件表面的菜单应显式写
+`{ id="component.menu", scope="component" }`，其返回项会附加到组件总菜单。
 
 `toggle` 和 `checkbox` 是受控选择控件：必须提供非空 `label`、显式 `checked`，以及
 `action` 简写或 `events.change`；不得绑定 `events.click`。指针完成一次有效点击时，宿主
@@ -455,8 +458,9 @@ end
 字体 glyph。回调必须同步、快速且不执行 I/O，最多读取 64 项。用户选择后收到
 `event.kind == "action"`，其中 `id` 为菜单项 ID，`source == "contextMenu"`，并带
 原 region 的 `targetKey` 与 `value`。菜单打开后只要 region 集合产生新一代提交，
-旧菜单动作就会失效，避免重排或复用 key 后误操作。SnowDesktop 的设置、授权、
-诊断和移除入口始终保留。该 API 不要求 `ui.contextMenu` 权限；对应 feature 为
+旧菜单动作就会失效，避免重排或复用 key 后误操作。`request.scope` 为 `element` 或
+`component`；元素级菜单独立显示，组件级菜单才与 SnowDesktop 的设置、授权、诊断和
+移除入口合并。该 API 不要求 `ui.contextMenu` 权限；对应 feature 为
 `interaction.region`、`interaction.pointerActions` 和 `interaction.contextMenu`。
 - `widget.editText(...)`：旧宿主编辑器兼容调用，不建议新 v2 组件依赖。
 

@@ -35,8 +35,15 @@ struct InteractionValue
 
 struct InteractionAction
 {
+    enum class ContextMenuScope
+    {
+        Element,
+        Component,
+    };
+
     std::string id;
     InteractionValue value;
+    ContextMenuScope contextMenuScope = ContextMenuScope::Element;
 
     bool operator==(const InteractionAction&) const = default;
 };

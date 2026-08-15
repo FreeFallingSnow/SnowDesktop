@@ -172,6 +172,17 @@ void TestSelectionContract()
         "right-clicking a selected item must preserve multi-selection");
 }
 
+void TestLuaWidgetMenuScope()
+{
+    using Scope = contract::LuaWidgetMenuScope;
+    Check(
+        contract::ResolveLuaWidgetMenuScope(false) == Scope::Widget,
+        "component actions must remain attached to the widget menu");
+    Check(
+        contract::ResolveLuaWidgetMenuScope(true) == Scope::Element,
+        "element actions must replace the widget menu at that target");
+}
+
 void TestMenuFocusRestoreContract()
 {
     Check(
@@ -210,6 +221,7 @@ int main()
     TestContainerMenuMatrix();
     TestSlotItemMenuMatrix();
     TestSelectionContract();
+    TestLuaWidgetMenuScope();
     TestMenuFocusRestoreContract();
     TestShellItemActionContract();
     if (failures != 0)

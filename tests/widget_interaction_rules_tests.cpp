@@ -708,6 +708,19 @@ void TestDesktopHoverDeactivation()
         "hover restoration requires both a desktop surface and a cleared state");
 }
 
+void TestBottomBarContentReservation()
+{
+    Check(
+        chromeRules::ReservedBottomBarHeight(true, false, 36) == 36,
+        "a persistent titled bottom bar must reserve content height");
+    Check(
+        chromeRules::ReservedBottomBarHeight(false, false, 36) == 0,
+        "a titleless move handle must float over the content");
+    Check(
+        chromeRules::ReservedBottomBarHeight(true, true, 36) == 0,
+        "a hover bottom bar must float over the content");
+}
+
 void TestNestedWidgetScrolling()
 {
     using snowdesktop::widget_scroll_rules::
@@ -868,6 +881,7 @@ int main()
     TestActiveItemFallback();
     TestTabWidthDistribution();
     TestBottomBarWidthFollowsCornerAndHeight();
+    TestBottomBarContentReservation();
     TestGuidePlaceholderLifecycle();
     TestStableReorder();
     TestPendingFilePlacementReconciliation();

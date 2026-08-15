@@ -353,30 +353,26 @@ local function buildView(context)
     local config = loadConfig()
     local palette = getPalette()
     local width = math.max(1, context.logicalSize.width)
-    local contentHeight = math.max(1,
-        context.logicalSize.height - layout.barHeight())
+    local contentHeight = math.max(1, context.logicalSize.height)
     local state = getState()
     local remaining = remainingSeconds(config, nowSeconds())
     local accent = state == "break" and config.breakColor or config.workColor
     local sessionsInSet = getSessions() % config.longBreakInterval
 
-    local rows = math.max(1, layout.rows())
-    local function scale(value, minimum)
-        return math.max(minimum or 0, layout.cu(value * rows))
-    end
-    local function font(value)
-        return layout.fontCu(value * rows)
-    end
-
-    local ringThickness = scale(5, layout.cu(7))
-    local labelFont = font(6)
-    local timeFont = font(18)
-    local dotRadius = scale(2.5)
-    local dotGap = scale(8)
-    local buttonRadius = scale(9)
-    local buttonGap = scale(12)
-    local gap = scale(5)
-    local padding = scale(8)
+    local shortSide = math.max(1, math.min(width, contentHeight))
+    local padding = math.max(layout.cu(6), shortSide * 0.05)
+    local gap = math.max(layout.cu(3), contentHeight * 0.022)
+    local buttonDiameter = math.max(layout.cu(26), math.min(
+        layout.cu(42), width * 0.16, contentHeight * 0.15))
+    local buttonRadius = buttonDiameter / 2
+    local buttonGap = math.max(layout.cu(8), buttonDiameter * 0.42)
+    local dotDiameter = math.max(layout.cu(4), math.min(
+        layout.cu(8), buttonDiameter * 0.22))
+    local dotRadius = dotDiameter / 2
+    local dotGap = math.max(dotDiameter + layout.cu(3),
+        dotDiameter * 1.8)
+    local labelFont = math.max(layout.fontCu(9), math.min(
+        layout.fontCu(14), contentHeight * 0.055))
 
     local subline = ""
     if state == "work" then
@@ -388,13 +384,16 @@ local function buildView(context)
     end
     local label = stateLabel(state) .. subline
     local timeText = formatTime(remaining)
-    local dotDiameter = dotRadius * 2
-    local buttonDiameter = buttonRadius * 2
     local labelHeight = labelFont * 1.4
+    local availableHeight = math.max(1, contentHeight - padding * 2)
     local reservedHeight = labelHeight + dotDiameter + buttonDiameter +
-        gap * 3 + padding * 2
-    local ringDiameter = math.max(scale(48), math.min(
-        width - padding * 2, contentHeight - reservedHeight))
+        gap * 3
+    local ringDiameter = math.max(layout.cu(38), math.min(
+        width - padding * 2, availableHeight - reservedHeight,
+        shortSide * 0.48))
+    local ringThickness = math.max(layout.cu(3), ringDiameter * 0.065)
+    local timeFont = math.max(layout.fontCu(15), math.min(
+        layout.fontCu(40), ringDiameter * 0.28))
 
     local dots = {}
     for index = 1, config.longBreakInterval do
@@ -423,7 +422,7 @@ local function buildView(context)
             action = { id = id },
             events = {
                 doubleClick = { id = id },
-                contextMenu = { id = "pomodoro.menu" },
+                contextMenu = { id = "pomodoro.menu", scope = "component" },
             },
             accessibility = {
                 role = "button",
@@ -474,7 +473,7 @@ local function buildView(context)
         justifyContent = "center",
         events = {
             doubleClick = { id = "pomodoro.reset" },
-            contextMenu = { id = "pomodoro.menu" },
+            contextMenu = { id = "pomodoro.menu", scope = "component" },
         },
         accessibility = {
             role = "group",

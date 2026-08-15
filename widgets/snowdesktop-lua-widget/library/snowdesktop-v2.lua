@@ -111,6 +111,7 @@
 ---@class SnowInteractionAction
 ---@field id string Stable action identifier delivered through event.kind == 'action'.
 ---@field value? SnowStateValue Deep-copied JSON-like payload.
+---@field scope? 'element'|'component' Context-menu scope; defaults to element. Component scope is appended to the widget menu.
 
 ---@alias SnowViewLength number|'auto'|'fill'
 ---@alias SnowViewAlignment 'start'|'center'|'end'|'stretch'
@@ -317,6 +318,7 @@
 ---@field targetKey string
 ---@field surface 'desktop'
 ---@field source 'pointer'
+---@field scope 'element'|'component'
 
 ---@class SnowMenuItem
 ---@field id? string Required except for separators.

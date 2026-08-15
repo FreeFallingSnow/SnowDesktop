@@ -1,6 +1,7 @@
 #include "app.h"
 #include "../demo_collection_rules.h"
 #include "../menu_fluent_glyphs.h"
+#include "../right_click_contract.h"
 #include "../widgets/collection_group_rules.h"
 
 // Widget editor, group-tab and generic widget context menus.
@@ -249,6 +250,7 @@ void DesktopApp::ShowWidgetContextMenu(
             ? _LW("app.interact.popup_container")
             : _LW("app.interact.large_folder"));
     std::vector<LuaWidgetMenuItem> luaMenuItems;
+    bool luaElementMenu = false;
     HMENU demoCategoryMenu = nullptr;
 
     if (widget.type == DesktopWidgetType::Collection)
@@ -422,7 +424,6 @@ void DesktopApp::ShowWidgetContextMenu(
     }
     else if (widget.type == DesktopWidgetType::LuaScript)
     {
-        AppendMenuW(menu, MF_STRING, kContextWidgetEdit, _LW("app.interact.detailed_settings"));
         if (widgetEngine_)
         {
             widgetEngine_->EnsureWidgetLoaded(widget.id, widget.packageId);
@@ -432,6 +433,22 @@ void DesktopApp::ShowWidgetContextMenu(
             luaMenuItems = widgetEngine_->GetContextMenu(widget.id,
                 clientPoint.x - frame.left,
                 clientPoint.y - frame.top);
+            const bool hasElementAction = std::any_of(
+                luaMenuItems.begin(), luaMenuItems.end(),
+                [](const LuaWidgetMenuItem& item) {
+                    return item.v2Action && item.elementContext &&
+                        !item.separator;
+                });
+            luaElementMenu =
+                snowdesktop::right_click_contract::
+                    ResolveLuaWidgetMenuScope(hasElementAction) ==
+                snowdesktop::right_click_contract::
+                    LuaWidgetMenuScope::Element;
+            if (!luaElementMenu)
+            {
+                AppendMenuW(menu, MF_STRING, kContextWidgetEdit,
+                    _LW("app.interact.detailed_settings"));
+            }
             for (size_t i = 0; i < luaMenuItems.size() &&
                 kContextLuaWidgetMenuFirst + static_cast<UINT>(i) <= kContextLuaWidgetMenuLast; ++i)
             {
@@ -510,20 +527,6 @@ void DesktopApp::ShowWidgetContextMenu(
         }
     }
 
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    if (CanRenameWidget(widget))
-    {
-        AppendMenuW(menu, MF_STRING, kContextWidgetRename, _LW("app.menu.rename"));
-        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    }
-    auto toggleLabel = [](const wchar_t* title, bool enabled) {
-        std::wstring label = title;
-        label += L"\t";
-        label += enabled
-            ? _LW("app.interact.on")
-            : _LW("app.interact.off");
-        return label;
-    };
     const UINT hoverToggleCommand = widget.showOnHoverOnly
         ? kContextWidgetShowOnHoverOff
         : kContextWidgetShowOnHoverOn;
@@ -533,25 +536,43 @@ void DesktopApp::ShowWidgetContextMenu(
     const UINT privacyToggleCommand = widget.privacyMode
         ? kContextWidgetPrivacyModeOff
         : kContextWidgetPrivacyModeOn;
-    const std::wstring hoverLabel = toggleLabel(
-        _LW("app.interact.hover_only"), widget.showOnHoverOnly);
-    const std::wstring keepLabel = toggleLabel(
-        _LW("app.interact.keep_when_hidden"),
-        widget.keepWhenDesktopHidden);
-    AppendMenuW(menu, MF_STRING, hoverToggleCommand, hoverLabel.c_str());
-    AppendMenuW(menu, MF_STRING, keepToggleCommand, keepLabel.c_str());
-    if (widget.type == DesktopWidgetType::Collection ||
-        widget.type == DesktopWidgetType::FileCategories ||
-        widget.type == DesktopWidgetType::FolderMapping ||
-        widget.type == DesktopWidgetType::CollectionGroup ||
-        widget.type == DesktopWidgetType::FileGroup)
+    if (!luaElementMenu)
     {
-        const std::wstring privacyLabel = toggleLabel(
-            _LW("app.interact.privacy_mode"), widget.privacyMode);
-        AppendMenuW(menu, MF_STRING,
-            privacyToggleCommand, privacyLabel.c_str());
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        if (CanRenameWidget(widget))
+        {
+            AppendMenuW(menu, MF_STRING, kContextWidgetRename, _LW("app.menu.rename"));
+            AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        }
+        auto toggleLabel = [](const wchar_t* title, bool enabled) {
+            std::wstring label = title;
+            label += L"\t";
+            label += enabled
+                ? _LW("app.interact.on")
+                : _LW("app.interact.off");
+            return label;
+        };
+        const std::wstring hoverLabel = toggleLabel(
+            _LW("app.interact.hover_only"), widget.showOnHoverOnly);
+        const std::wstring keepLabel = toggleLabel(
+            _LW("app.interact.keep_when_hidden"),
+            widget.keepWhenDesktopHidden);
+        AppendMenuW(menu, MF_STRING, hoverToggleCommand, hoverLabel.c_str());
+        AppendMenuW(menu, MF_STRING, keepToggleCommand, keepLabel.c_str());
+        if (widget.type == DesktopWidgetType::Collection ||
+            widget.type == DesktopWidgetType::FileCategories ||
+            widget.type == DesktopWidgetType::FolderMapping ||
+            widget.type == DesktopWidgetType::CollectionGroup ||
+            widget.type == DesktopWidgetType::FileGroup)
+        {
+            const std::wstring privacyLabel = toggleLabel(
+                _LW("app.interact.privacy_mode"), widget.privacyMode);
+            AppendMenuW(menu, MF_STRING,
+                privacyToggleCommand, privacyLabel.c_str());
+        }
+        AppendMenuW(menu, MF_STRING, kContextWidgetDelete,
+            _LW("app.interact.delete_widget"));
     }
-    AppendMenuW(menu, MF_STRING, kContextWidgetDelete, _LW("app.interact.delete_widget"));
 
     setFluentIcon(menu, kContextWidgetOpen, L"\uF582");
     setFluentIcon(menu, kContextWidgetManualCollect,

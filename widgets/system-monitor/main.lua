@@ -104,10 +104,13 @@ local function summarizeGpu(value)
     for _, adapter in ipairs(value.adapters) do
         summary.usagePercent = math.max(summary.usagePercent,
             adapter.usagePercent or 0)
-        summary.dedicatedMemoryBytes = summary.dedicatedMemoryBytes +
-            (adapter.dedicatedMemoryBytes or 0)
-        summary.dedicatedUsedBytes = summary.dedicatedUsedBytes +
-            (adapter.dedicatedUsedBytes or 0)
+        local dedicatedTotal = math.max(0,
+            adapter.dedicatedMemoryBytes or 0)
+        if dedicatedTotal > summary.dedicatedMemoryBytes then
+            summary.dedicatedMemoryBytes = dedicatedTotal
+            summary.dedicatedUsedBytes = math.max(0, math.min(
+                dedicatedTotal, adapter.dedicatedUsedBytes or 0))
+        end
         if adapter.name and adapter.name ~= "" then
             summary.names[#summary.names + 1] = adapter.name
         end
@@ -341,7 +344,7 @@ end
 local function render(_context, model)
     local width = layout.width()
     local height = layout.height()
-    local viewportHeight = math.max(1, height - layout.barHeight())
+    local viewportHeight = math.max(1, height)
     local cards, palette = buildCards()
     local columns = math.max(1, layout.columns())
     local rows = #cards > 0 and math.ceil(#cards / columns) or 0
@@ -414,7 +417,7 @@ local function render(_context, model)
             height = viewportHeight,
         },
         events = {
-            contextMenu = { id = "system.menu" },
+            contextMenu = { id = "system.menu", scope = "component" },
         },
         accessibility = {
             role = "group",

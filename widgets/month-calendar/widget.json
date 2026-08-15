@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "Month Calendar",
   "nameKey": "lua_widget.month_calendar.name",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "A local month calendar linked with SnowDesktop schedules.",
   "descriptionKey": "lua_widget.month_calendar.description",
   "locales": {

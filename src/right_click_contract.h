@@ -31,6 +31,20 @@ enum class ContextMenuKind : std::uint8_t
     CollectionGroupTab,
 };
 
+enum class LuaWidgetMenuScope : std::uint8_t
+{
+    Widget,
+    Element,
+};
+
+constexpr LuaWidgetMenuScope ResolveLuaWidgetMenuScope(
+    bool hasElementAction) noexcept
+{
+    return hasElementAction
+        ? LuaWidgetMenuScope::Element
+        : LuaWidgetMenuScope::Widget;
+}
+
 constexpr ContextMenuKind ResolveSlotItemMenu(
     slot_contract::SlotSurfaceKind surface,
     SlotItemKind item,

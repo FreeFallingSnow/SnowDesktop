@@ -610,7 +610,8 @@ void TestSelectionControlParsing()
                     checked = true,
                     events = {
                         change = { id = "compact.change" },
-                        contextMenu = { id = "compact.menu" },
+                        contextMenu = {
+                            id = "compact.menu", scope = "component" },
                     },
                 }),
             },
@@ -630,7 +631,9 @@ void TestSelectionControlParsing()
             root.children[1].type == ViewNodeType::Checkbox &&
             root.children[1].checked &&
             root.children[1].events.at("contextMenu").id ==
-                "compact.menu",
+                "compact.menu" &&
+            root.children[1].events.at("contextMenu").contextMenuScope ==
+                InteractionAction::ContextMenuScope::Component,
         "selection controls must retain controlled values and actions");
     Check(ValidateAndLayoutViewTree(root, 280.0f, 96.0f, error),
         "selection controls must validate and lay out");

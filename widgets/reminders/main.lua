@@ -255,7 +255,6 @@ local function render(context, model)
     local fontSize = layout.fontCu(currentFontSize())
     local smallFont = layout.fontCu(math.max(10, currentFontSize() - 3))
     local total = taskCounts()
-    if not context.selected then model.editingTaskId = nil end
 
     local inputY = pad
     local inputH = layout.cu(34)
@@ -310,14 +309,13 @@ local function render(context, model)
     }, addEnabled)
 
     local listTop = inputY + inputH + layout.cu(12)
-    local bottomBarH = layout.cu(layout.barHeight())
-    local listBottom = h - bottomBarH - layout.cu(7)
+    local listBottom = h - layout.cu(7)
     local viewportH = math.max(1, listBottom - listTop)
     local viewportShape = { type = "rect", x = pad, y = listTop,
         width = w - pad * 2, height = viewportH }
     registerRegion("tasks.background", viewportShape, "default", {
         click = { id = "task.clearSelection" },
-        contextMenu = { id = "task.menu" },
+        contextMenu = { id = "task.menu", scope = "component" },
     }, { role = "list", label = l10n.tr("lua_widget.reminders.name") })
 
     local rowH = layout.cu(math.max(43, currentFontSize() + 27))
@@ -373,7 +371,7 @@ local function render(context, model)
         local cardY = listTop + (index - 1) * rowH - scroll.offset
         local cardW = w - pad * 2
         local rowKey = "task.row." .. task.id
-        local selected = context.selected and task.id == selectedId
+        local selected = task.id == selectedId
         local rowHovered = interaction.isHovered(rowKey)
         draw.rect(pad, cardY, cardW, cardH, palette.card, layout.cu(10),
             selected and 0.105 or (rowHovered and 0.08 or 0.055))
@@ -421,8 +419,7 @@ local function render(context, model)
         local deleteSize = layout.cu(16)
         local deleteX = w - pad - deleteSize - layout.cu(11)
         local textX = checkboxX + checkboxSize + layout.cu(10)
-        local textW = math.max(1,
-            deleteX - textX - (selected and layout.cu(8) or 0))
+        local textW = math.max(1, deleteX - textX - layout.cu(8))
         local displayText = task.text ~= "" and task.text or
             l10n.tr("lua_widget.reminders.untitled")
         local measured = draw.measureText(displayText, fontSize, 0, false)
@@ -502,7 +499,7 @@ local function event(_context, model, value)
         storage.remove("selectedId")
     elseif value.id == "task.select" and id then
         storage.set("selectedId", id)
-        model.editingTaskId = id
+        model.editingTaskId = nil
     elseif value.id == "task.edit" and id then
         local alreadyEditing = model.editingTaskId == id
         storage.set("selectedId", id)
@@ -530,6 +527,22 @@ local function menu(_context, _model, request)
     if request.id ~= "task.menu" then return nil end
     local total, completed = taskCounts()
     local taskId = request.value and tostring(request.value) or nil
+    if taskId and storage.get(taskTextKey(taskId)) ~= nil then
+        return ui.menu({
+            {
+                id = "task.edit",
+                label = l10n.tr("lua_widget.reminders.edit_selected"),
+                icon = fluent.edit,
+                iconFont = "fluent",
+            },
+            {
+                id = "task.delete",
+                label = l10n.tr("lua_widget.reminders.delete_selected"),
+                icon = fluent.delete,
+                iconFont = "fluent",
+            },
+        })
+    end
     local items = {
         {
             id = "task.focusAdd",
@@ -538,20 +551,6 @@ local function menu(_context, _model, request)
             iconFont = "fluent",
         },
     }
-    if taskId and storage.get(taskTextKey(taskId)) ~= nil then
-        items[#items + 1] = {
-            id = "task.edit",
-            label = l10n.tr("lua_widget.reminders.edit_selected"),
-            icon = fluent.edit,
-            iconFont = "fluent",
-        }
-        items[#items + 1] = {
-            id = "task.delete",
-            label = l10n.tr("lua_widget.reminders.delete_selected"),
-            icon = fluent.delete,
-            iconFont = "fluent",
-        }
-    end
     items[#items + 1] = { type = "separator" }
     items[#items + 1] = {
         id = "task.clearCompleted",

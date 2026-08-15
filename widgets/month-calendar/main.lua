@@ -228,7 +228,7 @@ local function submitButton(id, label, shape)
         cursor = "hand",
         events = {
             click = { id = id },
-            contextMenu = { id = "calendar.menu" },
+            contextMenu = { id = "calendar.menu", scope = "component" },
         },
         accessibility = { role = "button", label = label },
     })
@@ -275,7 +275,7 @@ local function render(context, model)
     local colors = palette()
     local width = layout.width()
     local height = layout.height()
-    local contentHeight = math.max(1, height - layout.barHeight())
+    local contentHeight = math.max(1, height)
     local padding = layout.cu(11)
     local growth = layoutGrowth()
     local headerHeight = layout.cu(30 + growth * 1.8)
@@ -297,7 +297,8 @@ local function render(context, model)
             type = "rect", x = 0, y = 0,
             width = width, height = contentHeight,
         },
-        events = { contextMenu = { id = "calendar.menu" } },
+        events = { contextMenu = {
+            id = "calendar.menu", scope = "component" } },
         accessibility = {
             role = "group",
             label = l10n.tr("lua_widget.month_calendar.name"),
@@ -409,7 +410,8 @@ local function render(context, model)
                         id = "calendar.select",
                         value = { date = cell.date },
                     },
-                    contextMenu = { id = "calendar.menu" },
+                    contextMenu = {
+                        id = "calendar.menu", scope = "component" },
                 },
                 accessibility = {
                     role = "button",

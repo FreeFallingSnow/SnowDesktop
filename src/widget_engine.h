@@ -184,6 +184,7 @@ struct LuaWidgetMenuItem
     bool checked = false;      ///< 是否显示选中标记
     bool separator = false;    ///< 是否为分隔线（为 true 时忽略其他字段）
     bool v2Action = false;
+    bool elementContext = false;
     std::string actionId;
     std::string targetKey;
     snowdesktop::widget_runtime::InteractionValue contextValue;

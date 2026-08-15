@@ -6,6 +6,20 @@
 namespace snowdesktop::widget_chrome_rules
 {
 
+constexpr bool ReservesContentForBottomBar(
+    bool showTitle, bool bottomBarHover) noexcept
+{
+    return showTitle && !bottomBarHover;
+}
+
+inline int ReservedBottomBarHeight(
+    bool showTitle, bool bottomBarHover, int scaledBarHeight) noexcept
+{
+    return ReservesContentForBottomBar(showTitle, bottomBarHover)
+        ? std::max(0, scaledBarHeight)
+        : 0;
+}
+
 /**
  * Return the horizontal inset that keeps the bottom-bar edge content inside
  * the rounded widget outline.

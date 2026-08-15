@@ -197,13 +197,14 @@ local function render(context, model)
         layout.cu(1), colors.divider, 0.10)
 
     local listTop = headerBottom + layout.cu(7)
-    local listBottom = height - layout.cu(layout.barHeight() + 2)
+    local listBottom = height - layout.cu(2)
     local viewportHeight = math.max(1, listBottom - listTop)
     local viewport = { type = "rect", x = pad, y = listTop,
         width = width - pad * 2, height = viewportHeight }
     interaction.region({
         key = "rss.surface", shape = viewport,
-        events = { contextMenu = { id = "rss.menu" } },
+        events = { contextMenu = {
+            id = "rss.menu", scope = "component" } },
         accessibility = { role = "list", label = descriptor.name },
     })
 
@@ -346,6 +347,14 @@ local function menu(_context, _model, request)
     if request.id ~= "rss.menu" then return nil end
     local articleUrl = request.value and tostring(request.value) or nil
     local canOpen = widget.hasPermission("shell.launch")
+    if articleUrl and articleUrl ~= "" then
+        return ui.menu({
+            { id = "rss.open",
+                label = l10n.tr("lua_widget.rss_reader.open_article"),
+                icon = fluent.open, iconFont = "fluent",
+                enabled = canOpen },
+        })
+    end
     local items = {
         { id = "rss.refresh",
             label = l10n.tr("lua_widget.rss_reader.refresh_now"),
@@ -354,12 +363,6 @@ local function menu(_context, _model, request)
             label = l10n.tr("lua_widget.rss_reader.clear_cache"),
             icon = fluent.clear, iconFont = "fluent" },
     }
-    if articleUrl and articleUrl ~= "" then
-        items[#items + 1] = { type = "separator" }
-        items[#items + 1] = { id = "rss.open",
-            label = l10n.tr("lua_widget.rss_reader.open_source"),
-            icon = fluent.open, iconFont = "fluent", enabled = canOpen }
-    end
     items[#items + 1] = { type = "separator" }
     items[#items + 1] = { id = "rss.openSource",
         label = l10n.tr("lua_widget.rss_reader.open_source"),
