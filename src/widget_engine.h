@@ -132,6 +132,8 @@ struct LuaWidgetManifest
     std::vector<std::string> optionalFeatures; ///< 可由脚本探测并降级的 v2 宿主特性
     std::unordered_map<std::string, snowdesktop::widget::PackageResource>
         resources; ///< v2 清单声明的包内图片和私有字体
+    /// v2 清单声明的宿主管理逻辑槽位。
+    snowdesktop::widget_runtime::LogicalSlotDeclarations logicalSlots;
     std::vector<Setting> settings;        ///< 宿主生成的声明式设置
     std::vector<SettingPreset> presets;   ///< 宿主生成的声明式预设
     std::string publisher;
@@ -407,6 +409,10 @@ struct LuaWidget
         std::string catalogId;
         std::string launchTarget;
         std::uint64_t catalogRevision = 0;
+        std::string title;
+        std::string source;
+        std::string type;
+        bool persistent = false;
     };
 
     struct ItemReference
@@ -414,6 +420,11 @@ struct LuaWidget
         std::string target;
         std::string sourceTask;
         std::uint64_t revision = 0;
+        std::string title;
+        std::string source;
+        std::string type;
+        std::string referenceKind = "filesystem.reference";
+        bool persistent = false;
     };
 
     struct HostControl
@@ -491,6 +502,7 @@ struct LuaWidget
     std::unordered_map<std::string, ApplicationReference>
         applicationReferences;
     std::unordered_map<std::string, ItemReference> itemReferences;
+    snowdesktop::widget_runtime::LogicalSlotModel logicalSlots;
     snowdesktop::widget_runtime::WidgetInteractionRegions interactionRegions;
     std::optional<snowdesktop::widget_runtime::ViewNode> viewTree;
     bool panelFrameOpen = false;
@@ -1027,6 +1039,29 @@ public:
     std::optional<std::wstring> RuntimeResolveItemReference(
         const std::wstring& widgetId, std::uint64_t ownerToken,
         const std::string& reference) const;
+    std::optional<snowdesktop::widget_runtime::LogicalSlotSnapshot>
+        RuntimeLogicalSlotSnapshot(const std::wstring& widgetId,
+            std::uint64_t ownerToken, std::string_view slotId,
+            snowdesktop::widget_runtime::LogicalSlotKind kind) const;
+    bool RuntimeBindLogicalSlot(const std::wstring& widgetId,
+        std::uint64_t ownerToken, std::string_view slotId,
+        std::string_view reference,
+        snowdesktop::widget_runtime::LogicalSlotChange& change,
+        std::string& error);
+    bool RuntimeClearLogicalSlot(const std::wstring& widgetId,
+        std::uint64_t ownerToken, std::string_view slotId,
+        snowdesktop::widget_runtime::LogicalSlotChange& change,
+        std::string& error);
+    bool RuntimeRemoveLogicalSlotItem(const std::wstring& widgetId,
+        std::uint64_t ownerToken, std::string_view slotId,
+        std::string_view itemId,
+        snowdesktop::widget_runtime::LogicalSlotChange& change,
+        std::string& error);
+    bool RuntimeMoveLogicalSlotItem(const std::wstring& widgetId,
+        std::uint64_t ownerToken, std::string_view slotId,
+        std::string_view itemId, std::size_t targetIndex,
+        snowdesktop::widget_runtime::LogicalSlotChange& change,
+        std::string& error);
     std::optional<std::wstring> RuntimeResolvePackageAsset(
         const std::wstring& widgetId, const std::wstring& relativePath) const;
     std::optional<std::wstring> RuntimeResolvePackageResource(

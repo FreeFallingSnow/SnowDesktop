@@ -195,6 +195,8 @@ void RegisterViewLibrary(lua_State* state)
         { "waveform", LuaViewWaveform },
         { "spectrum", LuaViewSpectrum },
         { "monthCalendar", LuaViewMonthCalendar },
+        { "slotSurface", LuaViewSlotSurface },
+        { "slotItem", LuaViewSlotItem },
         { "spacer", LuaViewSpacer },
     };
     for (const auto& entry : entries)
@@ -1501,6 +1503,135 @@ void TestStyledTextAndMonthCalendar()
         "monthCalendar must reject impossible controlled dates");
     lua_close(state);
 }
+
+void TestLogicalSlotSceneContract()
+{
+    LogicalSlotDeclarations declarations;
+    declarations["primaryApp"] = {
+        LogicalSlotKind::Binding, { "app.reference" },
+        "reference", "allow", true, 1 };
+    declarations["favorites"] = {
+        LogicalSlotKind::Collection,
+        { "desktop.item", "filesystem.reference" },
+        "reference", {}, false, 4 };
+    LogicalSlotModel model;
+    std::string error;
+    Check(model.Configure(declarations, error),
+        "logical slot scene fixture must configure");
+
+    ViewNode binding;
+    binding.type = ViewNodeType::SlotSurface;
+    binding.key = "primary-surface";
+    binding.logicalSlotId = "primaryApp";
+    binding.logicalSlotKind = LogicalSlotKind::Binding;
+    ViewNode placeholder;
+    placeholder.type = ViewNodeType::Text;
+    placeholder.key = "primary-placeholder";
+    placeholder.text = "Drop an application";
+    binding.children.push_back(placeholder);
+    Check(ValidateAndLayoutViewTree(binding, 160.0f, 120.0f, error) &&
+            ValidateViewLogicalSlots(binding, model, error) &&
+            binding.children[0].frame == binding.frame,
+        "an empty binding may render one full-surface placeholder");
+
+    LogicalSlotChange change;
+    Check(model.Bind("primaryApp",
+            { {}, {}, "app.reference", "Calendar", "startmenu",
+                "application", "app:calendar", true },
+            change, error),
+        "binding fixture must accept its declared app reference");
+    const auto* bound = model.Find("primaryApp");
+    Check(bound && bound->items.size() == 1,
+        "binding fixture must retain one host item");
+    ViewNode slotItem;
+    slotItem.type = ViewNodeType::SlotItem;
+    slotItem.key = bound->items[0].id;
+    slotItem.logicalSlotReference = bound->items[0].reference;
+    slotItem.accessibilityLabel = bound->items[0].title;
+    ViewNode label;
+    label.type = ViewNodeType::Text;
+    label.key = "primary-label";
+    label.text = bound->items[0].title;
+    slotItem.children.push_back(label);
+    binding.children.assign(1, slotItem);
+    binding.logicalSlotRevision = bound->revision;
+    Check(ValidateAndLayoutViewTree(binding, 160.0f, 120.0f, error) &&
+            ValidateViewLogicalSlots(binding, model, error),
+        "a bound surface must report the exact opaque item and revision");
+    binding.children[0].logicalSlotReference = "lsr-forged";
+    Check(!ValidateViewLogicalSlots(binding, model, error) &&
+            error.find("exact host item") != std::string::npos,
+        "a forged binding reference must reject the whole scene commit");
+
+    Check(model.Bind("favorites",
+            { {}, {}, "desktop.item", "Notes", "desktop", "shortcut",
+                "desktop:notes", true }, change, error) &&
+        model.Bind("favorites",
+            { {}, {}, "filesystem.reference", "Plan", "picker", "file",
+                "file:plan", true }, change, error),
+        "collection fixture must accept two declared reference kinds");
+    const auto* favorites = model.Find("favorites");
+    ViewNode collection;
+    collection.type = ViewNodeType::SlotSurface;
+    collection.key = "favorites-surface";
+    collection.logicalSlotId = "favorites";
+    collection.logicalSlotKind = LogicalSlotKind::Collection;
+    collection.logicalSlotRevision = favorites->revision;
+    for (std::size_t index = 0; index < favorites->items.size(); ++index)
+    {
+        ViewNode item;
+        item.type = ViewNodeType::SlotItem;
+        item.key = favorites->items[index].id;
+        item.logicalSlotReference = favorites->items[index].reference;
+        item.accessibilityLabel = favorites->items[index].title;
+        ViewNode child;
+        child.type = ViewNodeType::Text;
+        child.key = "favorite-label-" + std::to_string(index);
+        child.text = favorites->items[index].title;
+        item.children.push_back(std::move(child));
+        collection.children.push_back(std::move(item));
+    }
+    Check(ValidateAndLayoutViewTree(collection, 240.0f, 160.0f, error) &&
+            ValidateViewLogicalSlots(collection, model, error),
+        "a collection scene must report every host item in host order");
+    std::swap(collection.children[0], collection.children[1]);
+    Check(!ValidateViewLogicalSlots(collection, model, error) &&
+            error.find("order") != std::string::npos,
+        "stale collection order must reject the whole scene commit");
+
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "Lua state must be available");
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    Check(luaL_dostring(state, R"lua(
+        return view.slotSurface({
+            key = "primary",
+            binding = "primaryApp",
+            revision = 7,
+            child = view.slotItem({
+                key = "lsi-item",
+                reference = "lsr-item",
+                child = view.text({ key = "label", text = "Calendar" }),
+                accessibility = { label = "Calendar" },
+                events = { contextMenu = {
+                    id = "item.menu", scope = "element"
+                } },
+            }),
+        })
+    )lua") == LUA_OK,
+        "logical slot Lua scene fixture must evaluate");
+    ViewNode parsed;
+    Check(ParseLuaViewTree(state, -1, parsed, error) &&
+            parsed.type == ViewNodeType::SlotSurface &&
+            parsed.logicalSlotId == "primaryApp" &&
+            parsed.logicalSlotRevision == 7 &&
+            parsed.children.size() == 1 &&
+            parsed.children[0].type == ViewNodeType::SlotItem &&
+            parsed.children[0].logicalSlotReference == "lsr-item" &&
+            parsed.children[0].children.size() == 1,
+        "slotSurface and slotItem constructors must retain typed scene fields");
+    lua_close(state);
+}
 }
 
 int main()
@@ -1519,6 +1650,7 @@ int main()
     TestVirtualizedCollections();
     TestDeclarativeInputControls();
     TestStyledTextAndMonthCalendar();
+    TestLogicalSlotSceneContract();
     std::cout << "Widget view tree tests passed\n";
     return 0;
 }

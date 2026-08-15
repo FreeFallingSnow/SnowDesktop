@@ -110,7 +110,8 @@ void MakePackage(const std::filesystem::path& root, std::string version,
     int apiVersion = 1,
     std::string requiredFeatures = "",
     std::string optionalFeatures = "",
-    std::string resources = "")
+    std::string resources = "",
+    std::string slots = "")
 {
     Write(root / std::filesystem::path(entry), "function render() end\n");
     Write(root / L"assets" / L"label.txt", "asset");
@@ -130,6 +131,7 @@ void MakePackage(const std::filesystem::path& root, std::string version,
         "  \"author\": \"SnowDesktop\",\n"
         "  \"license\": \"GPL-3.0-only\",\n"
         "  \"resources\": {" + resources + "},\n"
+        "  \"slots\": {" + slots + "},\n"
         "  \"previewData\": {\"introduction\": \"Multiple sizes\", \"introductionKey\": \"preview.intro\", \"storage\": {\"message\": \"Preview\", \"count\": 3}, \"storageKeys\": {\"message\": \"preview.message\"}, \"variants\": [{\"id\": \"compact\", \"title\": \"Compact\", \"titleKey\": \"preview.compact\", \"description\": \"Compact hint\", \"descriptionKey\": \"preview.compact_hint\", \"size\": {\"columns\": 1, \"rows\": 1}, \"storage\": {\"mode\": \"compact\"}, \"storageKeys\": {\"mode\": \"preview.compact_mode\"}}, {\"id\": \"wide\", \"title\": \"Wide\", \"description\": \"Wide hint\", \"size\": {\"columns\": 2, \"rows\": 1}}]},\n"
         "  \"permissions\": [" + permissions + "],\n"
         "  \"optionalPermissions\": [" + optionalPermissions + "],\n"
@@ -683,6 +685,46 @@ int main()
                 std::vector<std::string>{ "data.app.indexStatus",
                     "view.tree" },
         "schema/API v2 lower-camel feature segments are parsed and accepted");
+
+    const auto logicalSlotPackage = root / L"logical-slot-package";
+    MakePackage(logicalSlotPackage, "2.0.0",
+        "689ce096-bb57-4ccc-8cf5-7d75ba1987b8", "", "", "main.lua",
+        "", 2, 2, "\"slots.model\", \"view.logicalSlots\"", "",
+        "",
+        "\"primaryApp\": {\"kind\": \"binding\", "
+        "\"accepts\": [\"app.reference\"], "
+        "\"operation\": \"reference\", \"replacePolicy\": \"allow\", "
+        "\"allowClear\": true}, "
+        "\"favorites\": {\"kind\": \"collection\", "
+        "\"accepts\": [\"desktop.item\", \"filesystem.reference\"], "
+        "\"operation\": \"reference\", \"capacity\": 32}");
+    PackageManifest logicalSlotManifest;
+    report = validator.ValidateDirectory(logicalSlotPackage,
+        &logicalSlotManifest);
+    Expect(report.Ok() && logicalSlotManifest.logicalSlots.size() == 2 &&
+            logicalSlotManifest.logicalSlots.at("primaryApp").kind ==
+                snowdesktop::widget_runtime::LogicalSlotKind::Binding &&
+            logicalSlotManifest.logicalSlots.at("favorites").capacity == 32,
+        "v2 package binding and collection logical slots are validated and parsed");
+
+    const auto invalidLogicalSlotPackage = root / L"logical-slot-invalid";
+    MakePackage(invalidLogicalSlotPackage, "2.0.0",
+        "7ef66c66-f87c-4976-923b-073e07901196", "", "", "main.lua",
+        "", 2, 2, "", "", "",
+        "\"favorites\": {\"kind\": \"collection\", "
+        "\"accepts\": [\"widget\"], \"operation\": \"move\", "
+        "\"capacity\": 65}");
+    Expect(!validator.ValidateDirectory(invalidLogicalSlotPackage).Ok(),
+        "logical slots reject unknown payload kinds, destructive operations, and excessive capacity");
+
+    const auto legacyLogicalSlotPackage = root / L"logical-slot-legacy";
+    MakePackage(legacyLogicalSlotPackage, "1.0.0",
+        "243f1469-cba6-43b3-a471-d18d9162dcb0", "", "", "main.lua",
+        "", 1, 1, "", "", "",
+        "\"primaryApp\": {\"kind\": \"binding\", "
+        "\"accepts\": [\"app.reference\"]}");
+    Expect(!validator.ValidateDirectory(legacyLogicalSlotPackage).Ok(),
+        "schema/API v1 packages cannot declare v2 logical slots");
 
     const auto resourcePackage = root / L"resource-package";
     MakePackage(resourcePackage, "2.0.0",

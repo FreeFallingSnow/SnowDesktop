@@ -245,6 +245,7 @@ void TestV2Contract()
     };
     Check(hasV2Library("control") && hasV2Library("interaction") &&
             hasV2Library("view") &&
+            hasV2Library("slots") &&
             hasV2Library("task") && hasV2Library("calendar") &&
             hasV2Library("ui") && hasV2Library("l10n") &&
             !hasV2Library("http") && !hasV2Library("desktop"),
@@ -352,6 +353,9 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature("state.transient") &&
             snowdesktop::widget_api::SupportsFeature(
                 "storage.transaction") &&
+            snowdesktop::widget_api::SupportsFeature("slots.model") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "slots.mutation.userGesture") &&
             snowdesktop::widget_api::SupportsFeature("system.uptime") &&
             snowdesktop::widget_api::SupportsFeature(
                 "task.media.control") &&
@@ -396,6 +400,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature("view.image") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.inputControls") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "view.logicalSlots") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.monthCalendar") &&
             snowdesktop::widget_api::SupportsFeature("view.scroll") &&

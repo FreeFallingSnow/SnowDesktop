@@ -2,6 +2,7 @@
 
 #include "json_value.h"
 #include "language_fallback.h"
+#include "widget_logical_slot_manifest.h"
 #include "widget_permission_broker.h"
 
 #include <windows.h>
@@ -552,6 +553,9 @@ std::string ManifestJson(const PackageManifest& manifest)
         }
     }
     out << "},\n"
+        << "  \"slots\": "
+        << snowdesktop::widget_runtime::SerializeLogicalSlotDeclarations(
+            manifest.logicalSlots) << ",\n"
         << "  \"permissions\": ";
     appendArray(out, manifest.permissions);
     out << ",\n  \"optionalPermissions\": ";
@@ -1184,6 +1188,12 @@ bool MatchesExpectedManifest(const PackageManifest& actual,
         error = "package resources do not match the source metadata";
         return false;
     }
+    if (!expected.logicalSlots.empty() &&
+        actual.logicalSlots != expected.logicalSlots)
+    {
+        error = "package logical slots do not match the source metadata";
+        return false;
+    }
     return true;
 }
 }
@@ -1676,6 +1686,15 @@ bool WidgetPackageValidator::ReadManifest(
         ReadStringArray(root, "requiredFeatures", arraysValid);
     manifest.optionalFeatures =
         ReadStringArray(root, "optionalFeatures", arraysValid);
+    {
+        std::vector<snowdesktop::widget_runtime::
+            LogicalSlotManifestError> slotErrors;
+        (void)snowdesktop::widget_runtime::ParseLogicalSlotDeclarations(
+            root.Find("slots"), manifest.logicalSlots, slotErrors);
+        for (const auto& slotError : slotErrors)
+            report.Add(ValidationSeverity::Error, slotError.code,
+                manifestPath, slotError.message);
+    }
     if (const JsonValue* resources = root.Find("resources"))
     {
         if (!resources->IsObject())
@@ -1936,6 +1955,11 @@ bool WidgetPackageValidator::ReadManifest(
     {
         report.Add(ValidationSeverity::Error, "manifest.resourceVersion",
             manifestPath, "resource declarations require schema/API v2");
+    }
+    if (legacyContract && !manifest.logicalSlots.empty())
+    {
+        report.Add(ValidationSeverity::Error, "manifest.slotVersion",
+            manifestPath, "logical slot declarations require schema/API v2");
     }
     return report.Ok();
 }
@@ -4348,6 +4372,14 @@ bool StaticCatalogSource::ReadCatalog(std::vector<PackageDetails>& entries,
             ReadStringArray(value, "requiredFeatures", arraysValid);
         detail.manifest.optionalFeatures =
             ReadStringArray(value, "optionalFeatures", arraysValid);
+        {
+            std::vector<snowdesktop::widget_runtime::
+                LogicalSlotManifestError> slotErrors;
+            if (!snowdesktop::widget_runtime::ParseLogicalSlotDeclarations(
+                    value.Find("slots"), detail.manifest.logicalSlots,
+                    slotErrors))
+                arraysValid = false;
+        }
         if (const JsonValue* locales = value.Find("locales");
             locales && locales->IsObject())
         {

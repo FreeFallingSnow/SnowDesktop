@@ -114,6 +114,14 @@ host-rendered six-week Gregorian grid: provide seven localized weekday labels
 in Sunday-first order, keep `selectedDate` controlled, and apply the proposed
 ISO date from the action event's `selection` field. Date cells have stable
 `<calendar-key>/<YYYY-MM-DD>` targets and independent hover/context menus.
+Probe `slots.model` and `view.logicalSlots` before using manifest-declared
+logical bindings or collections. Open them with `slots.binding(id)` or
+`slots.collection(id)`, render the exact host snapshot with
+`view.slotSurface/slotItem`, and only call bind/add/clear/remove/move from the
+current trusted action event. These methods persist references; they do not
+grant file contents, expose paths, move source objects, or make the current
+host build accept native desktop/Explorer drops. A source reference must first
+come from a bounded host search or explicit file-reference task.
 Probe `view.scroll` for a host-owned vertical or horizontal viewport. Give it
 exactly one child, keep that child visible, and keep the same key so the host
 retains its clamped offset; never offset descendants yourself. Probe

@@ -53,5 +53,7 @@ int LuaViewBarChart(lua_State* state);
 int LuaViewWaveform(lua_State* state);
 int LuaViewSpectrum(lua_State* state);
 int LuaViewMonthCalendar(lua_State* state);
+int LuaViewSlotSurface(lua_State* state);
+int LuaViewSlotItem(lua_State* state);
 int LuaViewSpacer(lua_State* state);
 }

@@ -1005,6 +1005,8 @@ bool ParseNodeType(std::string_view type, ViewNodeType& result)
     else if (type == "spectrum") result = ViewNodeType::Spectrum;
     else if (type == "monthCalendar")
         result = ViewNodeType::MonthCalendar;
+    else if (type == "slotSurface") result = ViewNodeType::SlotSurface;
+    else if (type == "slotItem") result = ViewNodeType::SlotItem;
     else if (type == "spacer") result = ViewNodeType::Spacer;
     else return false;
     return true;
@@ -1073,6 +1075,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
                 "year", "month", "firstDayOfWeek", "selectedDate",
                 "todayDate", "eventDates", "weekdayLabels",
                 "showAdjacentDates",
+                "binding", "collection", "revision", "reference", "child",
                 "thickness", "trackOpacity",
                 "fillOpacity", "width", "height",
                 "padding", "gap", "columns", "columnGap", "rowGap",
@@ -1118,13 +1121,15 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     const bool styledTextNode = node.type == ViewNodeType::StyledText;
     const bool monthCalendarNode =
         node.type == ViewNodeType::MonthCalendar;
+    const bool slotSurfaceNode = node.type == ViewNodeType::SlotSurface;
+    const bool slotItemNode = node.type == ViewNodeType::SlotItem;
     const bool controlNode = checkControlNode || choiceNode || sliderNode ||
         inputNode || monthCalendarNode;
     const bool linkNode = node.type == ViewNodeType::Link;
     const bool labelNode = node.type == ViewNodeType::Button ||
         linkNode || checkControlNode;
     const bool actionNode = buttonNode || linkNode || controlNode ||
-        listItemNode;
+        listItemNode || slotItemNode;
     const bool iconNode = node.type == ViewNodeType::Icon ||
         node.type == ViewNodeType::IconButton;
     const bool textNode = node.type == ViewNodeType::Text ||
@@ -1289,6 +1294,47 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         error = "monthCalendar requires year, month, selectedDate, and weekdayLabels";
         return false;
     }
+    if (!slotSurfaceNode &&
+        (FieldPresent(state, index, "binding") ||
+            FieldPresent(state, index, "collection") ||
+            FieldPresent(state, index, "revision")))
+    {
+        error = "binding, collection, and revision are reserved for slotSurface";
+        return false;
+    }
+    if (!slotSurfaceNode && !slotItemNode &&
+        FieldPresent(state, index, "child"))
+    {
+        error = "child is reserved for slotSurface and slotItem";
+        return false;
+    }
+    if (!slotItemNode && FieldPresent(state, index, "reference"))
+    {
+        error = "reference is reserved for slotItem";
+        return false;
+    }
+    if (slotSurfaceNode)
+    {
+        const bool hasBinding = FieldPresent(state, index, "binding");
+        const bool hasCollection = FieldPresent(state, index, "collection");
+        if (hasBinding == hasCollection)
+        {
+            error = "slotSurface requires exactly one of binding or collection";
+            return false;
+        }
+        if (FieldPresent(state, index, "child") &&
+            FieldPresent(state, index, "children"))
+        {
+            error = "slotSurface cannot provide both child and children";
+            return false;
+        }
+    }
+    if (slotItemNode && FieldPresent(state, index, "child") &&
+        FieldPresent(state, index, "children"))
+    {
+        error = "slotItem cannot provide both child and children";
+        return false;
+    }
     if (!seriesNode && FieldPresent(state, index, "values"))
     {
         error = "only data-series nodes accept values";
@@ -1374,6 +1420,24 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         return false;
     }
     if (!ReadStringField(state, index, "key", node.key, true, error))
+        return false;
+    if (slotSurfaceNode)
+    {
+        const bool binding = FieldPresent(state, index, "binding");
+        node.logicalSlotKind = binding
+            ? LogicalSlotKind::Binding : LogicalSlotKind::Collection;
+        std::size_t revision = 0;
+        if (!ReadStringField(state, index,
+                binding ? "binding" : "collection",
+                node.logicalSlotId, true, error) ||
+            !ReadNonNegativeSizeField(state, index, "revision",
+                revision, false, error))
+            return false;
+        node.logicalSlotRevision = static_cast<std::uint64_t>(revision);
+    }
+    if (slotItemNode &&
+        !ReadStringField(state, index, "reference",
+            node.logicalSlotReference, true, error))
         return false;
     if (node.type == ViewNodeType::Badge &&
         !FieldPresent(state, index, "padding"))
@@ -1656,7 +1720,22 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         lua_pop(state, 1);
     }
 
-    lua_getfield(state, index, "children");
+    const bool singleSlotChild = (slotSurfaceNode || slotItemNode) &&
+        FieldPresent(state, index, "child");
+    lua_getfield(state, index, singleSlotChild ? "child" : "children");
+    if (singleSlotChild && !lua_isnil(state, -1))
+    {
+        ViewNode parsed;
+        if (!ParseNode(state, -1, parsed, depth + 1,
+                parsedNodes, error))
+        {
+            lua_pop(state, 1);
+            return false;
+        }
+        node.children.push_back(std::move(parsed));
+        lua_pop(state, 1);
+        return true;
+    }
     if (lua_istable(state, -1))
     {
         if (!ValidateArray(state, -1, "view children", error))
@@ -1823,6 +1902,14 @@ int LuaViewSpectrum(lua_State* state)
 int LuaViewMonthCalendar(lua_State* state)
 {
     return MakeNode(state, "monthCalendar");
+}
+int LuaViewSlotSurface(lua_State* state)
+{
+    return MakeNode(state, "slotSurface");
+}
+int LuaViewSlotItem(lua_State* state)
+{
+    return MakeNode(state, "slotItem");
 }
 int LuaViewSpacer(lua_State* state) { return MakeNode(state, "spacer"); }
 }

@@ -145,6 +145,10 @@ bool WidgetStorageTransaction::ValidateCommit(std::string& error) const
     for (const auto& [key, value] : candidate_)
     {
         if (!key.starts_with(prefix)) continue;
+        const std::string_view relative(key.data() + prefix.size(),
+            key.size() - prefix.size());
+        if (relative == "__host" || relative.starts_with("__host."))
+            continue;
         ++keys;
         bytes += key.size() + value.size();
         if (keys > kMaximumKeys || bytes > kMaximumInstanceBytes)

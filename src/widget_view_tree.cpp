@@ -227,6 +227,8 @@ const char* DefaultAccessibilityRole(ViewNodeType type) noexcept
     if (type == ViewNodeType::Badge) return "status";
     if (type == ViewNodeType::ListItem) return "listitem";
     if (type == ViewNodeType::MonthCalendar) return "grid";
+    if (type == ViewNodeType::SlotSurface) return "group";
+    if (type == ViewNodeType::SlotItem) return "listitem";
     return "";
 }
 
@@ -874,7 +876,9 @@ void LayoutNode(ViewNode& node, const ViewRect& frame)
         LayoutScroll(node, content);
     else if (node.type == ViewNodeType::Box ||
         node.type == ViewNodeType::Stack ||
-        node.type == ViewNodeType::ListItem)
+        node.type == ViewNodeType::ListItem ||
+        node.type == ViewNodeType::SlotSurface ||
+        node.type == ViewNodeType::SlotItem)
     {
         for (auto& child : node.children)
         {
@@ -1111,6 +1115,69 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             error = "listItem nodes require accessibility.label";
             return false;
         }
+    }
+    if (node.type == ViewNodeType::SlotSurface)
+    {
+        if (node.logicalSlotId.empty() || node.logicalSlotId.size() > 64)
+        {
+            error = "slotSurface requires a bounded logical slot id";
+            return false;
+        }
+        if (node.logicalSlotKind == LogicalSlotKind::Binding)
+        {
+            if (node.children.size() > 1)
+            {
+                error = "binding slotSurface accepts at most one child";
+                return false;
+            }
+        }
+        else if (!std::all_of(node.children.begin(), node.children.end(),
+                [](const ViewNode& child) {
+                    return child.type == ViewNodeType::SlotItem;
+                }))
+        {
+            error = "collection slotSurface children must all be slotItem nodes";
+            return false;
+        }
+    }
+    else if (!node.logicalSlotId.empty() || node.logicalSlotRevision != 0)
+    {
+        error = "logical slot surface state is reserved for slotSurface nodes";
+        return false;
+    }
+    if (node.type == ViewNodeType::SlotItem)
+    {
+        if (!parentType || *parentType != ViewNodeType::SlotSurface)
+        {
+            error = "slotItem nodes must be direct children of slotSurface";
+            return false;
+        }
+        if (node.logicalSlotReference.empty() ||
+            node.logicalSlotReference.size() > 128)
+        {
+            error = "slotItem requires a bounded opaque reference";
+            return false;
+        }
+        if (node.children.size() != 1 || !node.children.front().visible)
+        {
+            error = "slotItem nodes require exactly one visible child";
+            return false;
+        }
+        if (node.accessibilityLabel.empty())
+        {
+            error = "slotItem nodes require accessibility.label";
+            return false;
+        }
+        if (++collectionItems > ViewTreeLimits::MaximumCollectionItems)
+        {
+            error = "view collection item limit exceeded (256)";
+            return false;
+        }
+    }
+    else if (!node.logicalSlotReference.empty())
+    {
+        error = "logical slot references are reserved for slotItem nodes";
+        return false;
     }
     if (node.text.size() > ViewTreeLimits::MaximumTextBytes ||
         node.inputValue.size() > ViewTreeLimits::MaximumTextBytes ||
@@ -1706,7 +1773,8 @@ bool CollectRegions(const ViewNode& node,
         return true;
     }
     if ((!node.events.empty() || IsButtonNode(node.type) ||
-            node.type == ViewNodeType::ListItem) &&
+            node.type == ViewNodeType::ListItem ||
+            node.type == ViewNodeType::SlotItem) &&
         (!inheritedClip || Overlaps(node.frame, *inheritedClip)))
     {
         if (regions.size() >= WidgetInteractionRegions::kMaximumRegions)
@@ -2213,6 +2281,97 @@ bool ValidateAndLayoutViewTree(ViewNode& root, float width, float height,
     return true;
 }
 
+bool ValidateViewLogicalSlots(const ViewNode& root,
+    const LogicalSlotModel& model, std::string& error)
+{
+    error.clear();
+    std::unordered_set<std::string> surfaces;
+    const auto validate = [&](const auto& self,
+        const ViewNode& node) -> bool {
+        if (node.type == ViewNodeType::SlotSurface)
+        {
+            if (!surfaces.insert(node.logicalSlotId).second)
+            {
+                error = "logical slot has more than one slotSurface: " +
+                    node.logicalSlotId;
+                return false;
+            }
+            const LogicalSlotSnapshot* snapshot =
+                model.Find(node.logicalSlotId);
+            if (!snapshot)
+            {
+                error = "slotSurface references an undeclared logical slot: " +
+                    node.logicalSlotId;
+                return false;
+            }
+            if (snapshot->kind != node.logicalSlotKind)
+            {
+                error = "slotSurface kind does not match its manifest declaration: " +
+                    node.logicalSlotId;
+                return false;
+            }
+            if (node.logicalSlotRevision != 0 &&
+                node.logicalSlotRevision != snapshot->revision)
+            {
+                error = "slotSurface revision is stale: " +
+                    node.logicalSlotId;
+                return false;
+            }
+
+            std::vector<const ViewNode*> items;
+            for (const auto& child : node.children)
+                if (child.type == ViewNodeType::SlotItem)
+                    items.push_back(&child);
+            if (snapshot->kind == LogicalSlotKind::Binding)
+            {
+                if (snapshot->items.empty())
+                {
+                    if (!items.empty())
+                    {
+                        error = "empty binding slotSurface cannot report a slotItem: " +
+                            node.logicalSlotId;
+                        return false;
+                    }
+                }
+                else if (items.size() != 1 || node.children.size() != 1 ||
+                    items.front()->key != snapshot->items.front().id ||
+                    items.front()->logicalSlotReference !=
+                        snapshot->items.front().reference)
+                {
+                    error = "binding slotSurface must report its exact host item: " +
+                        node.logicalSlotId;
+                    return false;
+                }
+            }
+            else
+            {
+                if (items.size() != snapshot->items.size() ||
+                    node.children.size() != snapshot->items.size())
+                {
+                    error = "collection slotSurface must report every host item: " +
+                        node.logicalSlotId;
+                    return false;
+                }
+                for (std::size_t index = 0; index < items.size(); ++index)
+                {
+                    if (items[index]->key != snapshot->items[index].id ||
+                        items[index]->logicalSlotReference !=
+                            snapshot->items[index].reference)
+                    {
+                        error = "collection slotSurface item order or reference is stale: " +
+                            node.logicalSlotId;
+                        return false;
+                    }
+                }
+            }
+        }
+        for (const auto& child : node.children)
+            if (!self(self, child)) return false;
+        return true;
+    };
+    return validate(validate, root);
+}
+
 bool CollectViewInteractionRegions(const ViewNode& root,
     std::vector<InteractionRegion>& regions, std::string& error)
 {
@@ -2365,6 +2524,8 @@ const char* ViewNodeTypeName(ViewNodeType type) noexcept
     case ViewNodeType::Waveform: return "waveform";
     case ViewNodeType::Spectrum: return "spectrum";
     case ViewNodeType::MonthCalendar: return "monthCalendar";
+    case ViewNodeType::SlotSurface: return "slotSurface";
+    case ViewNodeType::SlotItem: return "slotItem";
     case ViewNodeType::Spacer: return "spacer";
     }
     return "unknown";

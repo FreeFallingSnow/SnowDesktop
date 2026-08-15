@@ -80,6 +80,24 @@ void TestFinalQuotaIsAtomic()
             error == "widget storage quota exceeded",
         "an over-quota final snapshot rejects the whole transaction");
 }
+
+void TestHostReservedStateDoesNotConsumeWidgetQuota()
+{
+    using snowdesktop::widget_runtime::StorageMap;
+    using snowdesktop::widget_runtime::WidgetStorageTransaction;
+    StorageMap source;
+    for (std::size_t index = 0;
+         index < WidgetStorageTransaction::kMaximumKeys; ++index)
+        source["instance.key" + std::to_string(index)] = "value";
+    for (std::size_t index = 0; index < 32; ++index)
+        source["instance.__host.logicalSlot.slot" +
+            std::to_string(index)] = std::string(65536, 'x');
+
+    WidgetStorageTransaction transaction(source, "instance");
+    std::string error;
+    Check(transaction.ValidateCommit(error),
+        "host-reserved logical slot state must not consume Lua storage quota");
+}
 }
 
 int main()
@@ -87,6 +105,7 @@ int main()
     TestReadWriteAndRemoval();
     TestFailureLeavesSourceUntouched();
     TestFinalQuotaIsAtomic();
+    TestHostReservedStateDoesNotConsumeWidgetQuota();
     if (failures != 0)
     {
         std::cerr << failures << " widget storage transaction checks failed\n";

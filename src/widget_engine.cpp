@@ -12,6 +12,7 @@
  */
 
 #include "widget_engine.h"
+#include "widget_logical_slot_manifest.h"
 #include "widget_scroll_rules.h"
 #include "data_paths.h"
 #include "deployment_context.h"
@@ -9546,7 +9547,8 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 (void)taskBroker_->Complete(action.id, true);
                 continue;
             }
-            if (reference->second.catalogRevision != appIndexRevision_)
+            if (!reference->second.persistent &&
+                reference->second.catalogRevision != appIndexRevision_)
             {
                 (void)taskBroker_->Complete(
                     action.id, false, "staleReference");
@@ -10341,7 +10343,8 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 }
                 widget->applicationReferences.insert_or_assign(reference,
                     LuaWidget::ApplicationReference{ item.id,
-                        item.launchTarget, catalogRevision });
+                        item.launchTarget, catalogRevision, item.title,
+                        item.source, item.type, false });
                 publicItems.push_back({ std::move(reference), item.title,
                     item.source, item.type });
             }
@@ -10392,7 +10395,11 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 }
                 widget->itemReferences.insert_or_assign(reference,
                     LuaWidget::ItemReference{ item.launchTarget,
-                        completion.name, catalogRevision });
+                        completion.name, catalogRevision, item.title,
+                        item.source, item.type,
+                        completion.name == "desktop.search"
+                            ? "desktop.item" : "filesystem.reference",
+                        false });
                 publicItems.push_back({ std::move(reference), item.title,
                     item.source, item.type });
             }
@@ -10464,7 +10471,9 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 }
                 widget->itemReferences.insert_or_assign(reference,
                     LuaWidget::ItemReference{ target, "clipboard.read",
-                        completion.id });
+                        completion.id, name, "clipboard",
+                        file.folder ? "folder" : "file",
+                        "filesystem.reference", false });
                 publicClipboardItems.push_back({ reference, name,
                     "clipboard", file.folder ? "folder" : "file" });
             }
@@ -11406,6 +11415,18 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     }
     PreviewExecutionScope previewScope(
         preview ? &pending.previewStorage : nullptr);
+    {
+        std::string slotError;
+        if (!pending.logicalSlots.Configure(
+                pending.manifest.logicalSlots, slotError) ||
+            !pending.logicalSlots.Restore(ActiveStorage(),
+                WidgetWideToUtf8(widgetId), slotError))
+        {
+            RuntimeRecordError(widgetId,
+                "Widget logical slot state is invalid: " + slotError);
+            return false;
+        }
+    }
     if (const auto package =
         GetWidgetPackageManager().ResolveEntryPath(path))
         pending.packageRoot = package->root;
@@ -11770,6 +11791,26 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     w.scriptPresets = std::move(scriptPresets);
     w.preview = preview;
     w.previewStorage = std::move(pending.previewStorage);
+    w.logicalSlots = std::move(pending.logicalSlots);
+    for (const auto& snapshot : w.logicalSlots.Snapshots())
+    {
+        for (const auto& item : snapshot.items)
+        {
+            if (item.kind == "app.reference")
+            {
+                w.applicationReferences.insert_or_assign(item.reference,
+                    LuaWidget::ApplicationReference{ {}, item.target, 0,
+                        item.title, item.source, item.type, true });
+            }
+            else
+            {
+                w.itemReferences.insert_or_assign(item.reference,
+                    LuaWidget::ItemReference{ item.target, "logical.slot",
+                        0, item.title, item.source, item.type,
+                        item.kind, true });
+            }
+        }
+    }
     (void)w.namedTimers.SetVisible(false,
         snowdesktop::widget_runtime::NamedTimerSchedule::Clock::now());
     WIN32_FILE_ATTRIBUTE_DATA attr{};
@@ -14188,6 +14229,11 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                                     : static_cast<float>(
                                         reservedBarHeight))),
                         viewError))
+            {
+                viewError = "view(): " + viewError;
+            }
+            else if (!snowdesktop::widget_runtime::ValidateViewLogicalSlots(
+                    candidate, found->logicalSlots, viewError))
             {
                 viewError = "view(): " + viewError;
             }
@@ -16697,7 +16743,7 @@ std::optional<std::wstring> WidgetEngine::RuntimeResolveItemReference(
     if (const auto item = widget->itemReferences.find(reference);
         item != widget->itemReferences.end())
     {
-        if (!previewOnly_ &&
+        if (!previewOnly_ && !item->second.persistent &&
             item->second.sourceTask == "desktop.search" &&
             item->second.revision != desktopDataRevision_)
             return std::nullopt;
@@ -16708,7 +16754,7 @@ std::optional<std::wstring> WidgetEngine::RuntimeResolveItemReference(
     if (const auto app = widget->applicationReferences.find(reference);
         app != widget->applicationReferences.end())
     {
-        if (!previewOnly_ &&
+        if (!previewOnly_ && !app->second.persistent &&
             app->second.catalogRevision != appIndexRevision_)
             return std::nullopt;
         const std::wstring target = Utf8ToWideLocal(
@@ -16717,6 +16763,246 @@ std::optional<std::wstring> WidgetEngine::RuntimeResolveItemReference(
             ? std::nullopt : std::optional<std::wstring>(target);
     }
     return std::nullopt;
+}
+
+namespace
+{
+void RebuildLogicalSlotReferences(LuaWidget& widget)
+{
+    std::erase_if(widget.applicationReferences, [](const auto& entry) {
+        return entry.second.persistent;
+    });
+    std::erase_if(widget.itemReferences, [](const auto& entry) {
+        return entry.second.persistent;
+    });
+    for (const auto& snapshot : widget.logicalSlots.Snapshots())
+    {
+        for (const auto& item : snapshot.items)
+        {
+            if (item.kind == "app.reference")
+            {
+                widget.applicationReferences.insert_or_assign(item.reference,
+                    LuaWidget::ApplicationReference{ {}, item.target, 0,
+                        item.title, item.source, item.type, true });
+            }
+            else
+            {
+                widget.itemReferences.insert_or_assign(item.reference,
+                    LuaWidget::ItemReference{ item.target, "logical.slot",
+                        0, item.title, item.source, item.type,
+                        item.kind, true });
+            }
+        }
+    }
+}
+
+bool CommitLogicalSlotMutation(WidgetEngine& engine, LuaWidget& widget,
+    snowdesktop::widget_runtime::LogicalSlotModel previousModel,
+    std::unordered_map<std::string, std::string> previousStorage,
+    std::string& error)
+{
+    auto& storage = ActiveStorage();
+    widget.logicalSlots.Export(storage, WidgetWideToUtf8(widget.widgetId));
+    if (!snowdesktop::widget_runtime::HasStorageOverlay() &&
+        !SaveStorageFile())
+    {
+        storage = std::move(previousStorage);
+        widget.logicalSlots = std::move(previousModel);
+        error = "logical slot persistence failed";
+        return false;
+    }
+    RebuildLogicalSlotReferences(widget);
+    engine.RuntimeInvalidateHost(widget.widgetId);
+    return true;
+}
+}
+
+std::optional<snowdesktop::widget_runtime::LogicalSlotSnapshot>
+WidgetEngine::RuntimeLogicalSlotSnapshot(const std::wstring& widgetId,
+    std::uint64_t ownerToken, std::string_view slotId,
+    snowdesktop::widget_runtime::LogicalSlotKind kind) const
+{
+    const auto widget = std::find_if(widgets_.begin(), widgets_.end(),
+        [&widgetId, ownerToken](const LuaWidget& candidate) {
+            return candidate.widgetId == widgetId &&
+                candidate.runtimeToken == ownerToken;
+        });
+    if (widget == widgets_.end()) return std::nullopt;
+    const auto* snapshot = widget->logicalSlots.Find(slotId);
+    if (!snapshot || snapshot->kind != kind) return std::nullopt;
+    return *snapshot;
+}
+
+bool WidgetEngine::RuntimeBindLogicalSlot(const std::wstring& widgetId,
+    std::uint64_t ownerToken, std::string_view slotId,
+    std::string_view reference,
+    snowdesktop::widget_runtime::LogicalSlotChange& change,
+    std::string& error)
+{
+    error.clear();
+    auto widget = std::find_if(widgets_.begin(), widgets_.end(),
+        [&widgetId, ownerToken](const LuaWidget& candidate) {
+            return candidate.widgetId == widgetId &&
+                candidate.runtimeToken == ownerToken;
+        });
+    if (widget == widgets_.end())
+    {
+        error = "logical slot owner is stale";
+        return false;
+    }
+    if (widget->preview)
+    {
+        error = "previewReadOnly";
+        return false;
+    }
+    if (!trustedGestureState_.Active())
+    {
+        error = "userGestureRequired";
+        return false;
+    }
+
+    snowdesktop::widget_runtime::LogicalSlotItem candidate;
+    if (const auto app = widget->applicationReferences.find(
+            std::string(reference));
+        app != widget->applicationReferences.end())
+    {
+        if (!app->second.persistent &&
+            app->second.catalogRevision != appIndexRevision_)
+        {
+            error = "staleReference";
+            return false;
+        }
+        candidate.kind = "app.reference";
+        candidate.title = app->second.title.empty()
+            ? app->second.launchTarget : app->second.title;
+        candidate.source = app->second.source;
+        candidate.type = app->second.type;
+        candidate.target = app->second.launchTarget;
+    }
+    else if (const auto item = widget->itemReferences.find(
+            std::string(reference));
+        item != widget->itemReferences.end())
+    {
+        if (!item->second.persistent &&
+            item->second.sourceTask == "desktop.search" &&
+            item->second.revision != desktopDataRevision_)
+        {
+            error = "staleReference";
+            return false;
+        }
+        candidate.kind = item->second.referenceKind;
+        candidate.title = item->second.title.empty()
+            ? item->second.target : item->second.title;
+        candidate.source = item->second.source;
+        candidate.type = item->second.type;
+        candidate.target = item->second.target;
+    }
+    else
+    {
+        error = "invalidReference";
+        return false;
+    }
+    candidate.available = true;
+
+    auto previousModel = widget->logicalSlots;
+    auto previousStorage = ActiveStorage();
+    if (!widget->logicalSlots.Bind(slotId, std::move(candidate),
+            change, error))
+        return false;
+    if (change.operation == "unchanged") return true;
+    return CommitLogicalSlotMutation(*this, *widget,
+        std::move(previousModel), std::move(previousStorage), error);
+}
+
+bool WidgetEngine::RuntimeClearLogicalSlot(const std::wstring& widgetId,
+    std::uint64_t ownerToken, std::string_view slotId,
+    snowdesktop::widget_runtime::LogicalSlotChange& change,
+    std::string& error)
+{
+    error.clear();
+    auto widget = std::find_if(widgets_.begin(), widgets_.end(),
+        [&widgetId, ownerToken](const LuaWidget& candidate) {
+            return candidate.widgetId == widgetId &&
+                candidate.runtimeToken == ownerToken;
+        });
+    if (widget == widgets_.end())
+    {
+        error = "logical slot owner is stale";
+        return false;
+    }
+    if (widget->preview || !trustedGestureState_.Active())
+    {
+        error = widget->preview ? "previewReadOnly" : "userGestureRequired";
+        return false;
+    }
+    auto previousModel = widget->logicalSlots;
+    auto previousStorage = ActiveStorage();
+    if (!widget->logicalSlots.Clear(slotId, change, error)) return false;
+    if (change.operation == "unchanged") return true;
+    return CommitLogicalSlotMutation(*this, *widget,
+        std::move(previousModel), std::move(previousStorage), error);
+}
+
+bool WidgetEngine::RuntimeRemoveLogicalSlotItem(
+    const std::wstring& widgetId, std::uint64_t ownerToken,
+    std::string_view slotId, std::string_view itemId,
+    snowdesktop::widget_runtime::LogicalSlotChange& change,
+    std::string& error)
+{
+    error.clear();
+    auto widget = std::find_if(widgets_.begin(), widgets_.end(),
+        [&widgetId, ownerToken](const LuaWidget& candidate) {
+            return candidate.widgetId == widgetId &&
+                candidate.runtimeToken == ownerToken;
+        });
+    if (widget == widgets_.end())
+    {
+        error = "logical slot owner is stale";
+        return false;
+    }
+    if (widget->preview || !trustedGestureState_.Active())
+    {
+        error = widget->preview ? "previewReadOnly" : "userGestureRequired";
+        return false;
+    }
+    auto previousModel = widget->logicalSlots;
+    auto previousStorage = ActiveStorage();
+    if (!widget->logicalSlots.Remove(slotId, itemId, change, error))
+        return false;
+    return CommitLogicalSlotMutation(*this, *widget,
+        std::move(previousModel), std::move(previousStorage), error);
+}
+
+bool WidgetEngine::RuntimeMoveLogicalSlotItem(const std::wstring& widgetId,
+    std::uint64_t ownerToken, std::string_view slotId,
+    std::string_view itemId, std::size_t targetIndex,
+    snowdesktop::widget_runtime::LogicalSlotChange& change,
+    std::string& error)
+{
+    error.clear();
+    auto widget = std::find_if(widgets_.begin(), widgets_.end(),
+        [&widgetId, ownerToken](const LuaWidget& candidate) {
+            return candidate.widgetId == widgetId &&
+                candidate.runtimeToken == ownerToken;
+        });
+    if (widget == widgets_.end())
+    {
+        error = "logical slot owner is stale";
+        return false;
+    }
+    if (widget->preview || !trustedGestureState_.Active())
+    {
+        error = widget->preview ? "previewReadOnly" : "userGestureRequired";
+        return false;
+    }
+    auto previousModel = widget->logicalSlots;
+    auto previousStorage = ActiveStorage();
+    if (!widget->logicalSlots.Move(slotId, itemId, targetIndex,
+            change, error))
+        return false;
+    if (change.operation == "unchanged") return true;
+    return CommitLogicalSlotMutation(*this, *widget,
+        std::move(previousModel), std::move(previousStorage), error);
 }
 
 void WidgetEngine::RuntimeRefreshDesktop()
@@ -19179,6 +19465,12 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
     manifest.networkDomains = readStringArray(root, "networkDomains");
     manifest.requiredFeatures = readStringArray(root, "requiredFeatures");
     manifest.optionalFeatures = readStringArray(root, "optionalFeatures");
+    {
+        std::vector<snowdesktop::widget_runtime::
+            LogicalSlotManifestError> slotErrors;
+        (void)snowdesktop::widget_runtime::ParseLogicalSlotDeclarations(
+            root.Find("slots"), manifest.logicalSlots, slotErrors);
+    }
     if (const JsonValue* resources = root.Find("resources");
         resources && resources->IsObject())
     {
@@ -20380,6 +20672,296 @@ static int lua_DrawFluent(lua_State* L)
 
 namespace
 {
+constexpr char kLogicalSlotMetatable[] = "SnowDesktop.LogicalSlot";
+
+struct LuaLogicalSlotHandle
+{
+    std::uint64_t ownerToken = 0;
+    snowdesktop::widget_runtime::LogicalSlotKind kind =
+        snowdesktop::widget_runtime::LogicalSlotKind::Binding;
+    std::array<char, 65> id{};
+};
+
+LuaLogicalSlotHandle* CheckLogicalSlotHandle(lua_State* state,
+    snowdesktop::widget_runtime::LogicalSlotKind* requiredKind = nullptr)
+{
+    auto* handle = static_cast<LuaLogicalSlotHandle*>(
+        luaL_checkudata(state, 1, kLogicalSlotMetatable));
+    if (!handle || handle->ownerToken == 0 || handle->id[0] == '\0')
+    {
+        luaL_error(state, "logical slot handle is closed");
+        return nullptr;
+    }
+    if (requiredKind && handle->kind != *requiredKind)
+    {
+        luaL_error(state, "logical slot handle has the wrong kind");
+        return nullptr;
+    }
+    return handle;
+}
+
+std::optional<snowdesktop::widget_runtime::LogicalSlotSnapshot>
+LogicalSlotHandleSnapshot(lua_State* state,
+    LuaLogicalSlotHandle* handle)
+{
+    auto* d2d = GetD2D(state);
+    if (!d2d || !d2d->engine || !handle) return std::nullopt;
+    return d2d->engine->RuntimeLogicalSlotSnapshot(
+        BoundWidgetId(state), handle->ownerToken, handle->id.data(),
+        handle->kind);
+}
+
+void PushLogicalSlotItem(lua_State* state,
+    const snowdesktop::widget_runtime::LogicalSlotItem& item)
+{
+    lua_createtable(state, 0, 7);
+    lua_pushlstring(state, item.id.data(), item.id.size());
+    lua_setfield(state, -2, "id");
+    lua_pushlstring(state, item.reference.data(), item.reference.size());
+    lua_setfield(state, -2, "reference");
+    lua_pushlstring(state, item.kind.data(), item.kind.size());
+    lua_setfield(state, -2, "kind");
+    lua_pushlstring(state, item.title.data(), item.title.size());
+    lua_setfield(state, -2, "title");
+    lua_pushlstring(state, item.source.data(), item.source.size());
+    lua_setfield(state, -2, "source");
+    lua_pushlstring(state, item.type.data(), item.type.size());
+    lua_setfield(state, -2, "type");
+    lua_pushstring(state, item.available ? "available" : "unavailable");
+    lua_setfield(state, -2, "availability");
+}
+
+void PushLogicalSlotChange(lua_State* state,
+    const snowdesktop::widget_runtime::LogicalSlotChange& change)
+{
+    lua_createtable(state, 0, 5);
+    lua_pushlstring(state, change.slotId.data(), change.slotId.size());
+    lua_setfield(state, -2, "slotId");
+    lua_pushstring(state,
+        snowdesktop::widget_runtime::LogicalSlotKindName(change.kind));
+    lua_setfield(state, -2, "kind");
+    lua_pushinteger(state, static_cast<lua_Integer>(change.revision));
+    lua_setfield(state, -2, "revision");
+    lua_pushlstring(state, change.operation.data(), change.operation.size());
+    lua_setfield(state, -2, "operation");
+    lua_createtable(state, static_cast<int>(change.itemIds.size()), 0);
+    for (std::size_t index = 0; index < change.itemIds.size(); ++index)
+    {
+        lua_pushlstring(state, change.itemIds[index].data(),
+            change.itemIds[index].size());
+        lua_rawseti(state, -2, static_cast<lua_Integer>(index + 1));
+    }
+    lua_setfield(state, -2, "itemIds");
+}
+
+static int lua_LogicalSlotId(lua_State* state)
+{
+    auto* handle = CheckLogicalSlotHandle(state);
+    lua_pushstring(state, handle->id.data());
+    return 1;
+}
+
+static int lua_LogicalSlotRevision(lua_State* state)
+{
+    auto* handle = CheckLogicalSlotHandle(state);
+    const auto snapshot = LogicalSlotHandleSnapshot(state, handle);
+    if (!snapshot) return luaL_error(state, "logical slot handle is stale");
+    lua_pushinteger(state, static_cast<lua_Integer>(snapshot->revision));
+    return 1;
+}
+
+static int lua_LogicalSlotState(lua_State* state)
+{
+    auto* handle = CheckLogicalSlotHandle(state);
+    const auto snapshot = LogicalSlotHandleSnapshot(state, handle);
+    if (!snapshot) return luaL_error(state, "logical slot handle is stale");
+    const bool unavailable = std::any_of(snapshot->items.begin(),
+        snapshot->items.end(), [](const auto& item) {
+            return !item.available;
+        });
+    lua_pushstring(state, unavailable ? "unavailable" :
+        (snapshot->items.empty() ? "empty" : "bound"));
+    return 1;
+}
+
+static int lua_LogicalSlotCapacity(lua_State* state)
+{
+    auto* handle = CheckLogicalSlotHandle(state);
+    const auto snapshot = LogicalSlotHandleSnapshot(state, handle);
+    if (!snapshot) return luaL_error(state, "logical slot handle is stale");
+    lua_pushinteger(state, static_cast<lua_Integer>(snapshot->capacity));
+    return 1;
+}
+
+static int lua_LogicalSlotItem(lua_State* state)
+{
+    auto kind = snowdesktop::widget_runtime::LogicalSlotKind::Binding;
+    auto* handle = CheckLogicalSlotHandle(state, &kind);
+    const auto snapshot = LogicalSlotHandleSnapshot(state, handle);
+    if (!snapshot) return luaL_error(state, "logical slot handle is stale");
+    if (snapshot->items.empty()) lua_pushnil(state);
+    else PushLogicalSlotItem(state, snapshot->items.front());
+    return 1;
+}
+
+static int lua_LogicalSlotItems(lua_State* state)
+{
+    auto kind = snowdesktop::widget_runtime::LogicalSlotKind::Collection;
+    auto* handle = CheckLogicalSlotHandle(state, &kind);
+    const auto snapshot = LogicalSlotHandleSnapshot(state, handle);
+    if (!snapshot) return luaL_error(state, "logical slot handle is stale");
+    lua_createtable(state, static_cast<int>(snapshot->items.size()), 0);
+    for (std::size_t index = 0; index < snapshot->items.size(); ++index)
+    {
+        PushLogicalSlotItem(state, snapshot->items[index]);
+        lua_rawseti(state, -2, static_cast<lua_Integer>(index + 1));
+    }
+    return 1;
+}
+
+static int lua_LogicalSlotBind(lua_State* state)
+{
+    auto* handle = CheckLogicalSlotHandle(state);
+    std::size_t length = 0;
+    const char* reference = luaL_checklstring(state, 2, &length);
+    if (length == 0 || length > 128)
+        return luaL_error(state, "logical slot reference is invalid");
+    auto* d2d = GetD2D(state);
+    if (!d2d || !d2d->engine)
+        return luaL_error(state, "logical slot host is unavailable");
+    snowdesktop::widget_runtime::LogicalSlotChange change;
+    std::string error;
+    if (!d2d->engine->RuntimeBindLogicalSlot(BoundWidgetId(state),
+            handle->ownerToken, handle->id.data(),
+            std::string_view(reference, length), change, error))
+        return luaL_error(state, "slots.bind: %s", error.c_str());
+    PushLogicalSlotChange(state, change);
+    return 1;
+}
+
+static int lua_LogicalSlotClear(lua_State* state)
+{
+    auto kind = snowdesktop::widget_runtime::LogicalSlotKind::Binding;
+    auto* handle = CheckLogicalSlotHandle(state, &kind);
+    auto* d2d = GetD2D(state);
+    if (!d2d || !d2d->engine)
+        return luaL_error(state, "logical slot host is unavailable");
+    snowdesktop::widget_runtime::LogicalSlotChange change;
+    std::string error;
+    if (!d2d->engine->RuntimeClearLogicalSlot(BoundWidgetId(state),
+            handle->ownerToken, handle->id.data(), change, error))
+        return luaL_error(state, "slots.clear: %s", error.c_str());
+    PushLogicalSlotChange(state, change);
+    return 1;
+}
+
+static int lua_LogicalSlotRemove(lua_State* state)
+{
+    auto kind = snowdesktop::widget_runtime::LogicalSlotKind::Collection;
+    auto* handle = CheckLogicalSlotHandle(state, &kind);
+    std::size_t length = 0;
+    const char* itemId = luaL_checklstring(state, 2, &length);
+    auto* d2d = GetD2D(state);
+    if (!d2d || !d2d->engine)
+        return luaL_error(state, "logical slot host is unavailable");
+    snowdesktop::widget_runtime::LogicalSlotChange change;
+    std::string error;
+    if (!d2d->engine->RuntimeRemoveLogicalSlotItem(BoundWidgetId(state),
+            handle->ownerToken, handle->id.data(),
+            std::string_view(itemId, length), change, error))
+        return luaL_error(state, "slots.remove: %s", error.c_str());
+    PushLogicalSlotChange(state, change);
+    return 1;
+}
+
+static int lua_LogicalSlotMove(lua_State* state)
+{
+    auto kind = snowdesktop::widget_runtime::LogicalSlotKind::Collection;
+    auto* handle = CheckLogicalSlotHandle(state, &kind);
+    std::size_t length = 0;
+    const char* itemId = luaL_checklstring(state, 2, &length);
+    const lua_Integer oneBasedIndex = luaL_checkinteger(state, 3);
+    if (oneBasedIndex <= 0)
+        return luaL_error(state, "slots.move: index must be positive");
+    auto* d2d = GetD2D(state);
+    if (!d2d || !d2d->engine)
+        return luaL_error(state, "logical slot host is unavailable");
+    snowdesktop::widget_runtime::LogicalSlotChange change;
+    std::string error;
+    if (!d2d->engine->RuntimeMoveLogicalSlotItem(BoundWidgetId(state),
+            handle->ownerToken, handle->id.data(),
+            std::string_view(itemId, length),
+            static_cast<std::size_t>(oneBasedIndex - 1), change, error))
+        return luaL_error(state, "slots.move: %s", error.c_str());
+    PushLogicalSlotChange(state, change);
+    return 1;
+}
+
+void PushLogicalSlotHandle(lua_State* state,
+    snowdesktop::widget_runtime::LogicalSlotKind kind)
+{
+    std::size_t length = 0;
+    const char* id = luaL_checklstring(state, 1, &length);
+    if (length == 0 || length > 64)
+    {
+        luaL_error(state, "logical slot id is invalid");
+        return;
+    }
+    const std::uint64_t ownerToken = BoundWidgetRuntimeToken(state);
+    auto* d2d = GetD2D(state);
+    if (!d2d || !d2d->engine || ownerToken == 0 ||
+        !d2d->engine->RuntimeLogicalSlotSnapshot(BoundWidgetId(state),
+            ownerToken, std::string_view(id, length), kind))
+    {
+        luaL_error(state, "logical slot is undeclared or has the wrong kind");
+        return;
+    }
+    auto* handle = static_cast<LuaLogicalSlotHandle*>(
+        lua_newuserdatauv(state, sizeof(LuaLogicalSlotHandle), 0));
+    *handle = {};
+    handle->ownerToken = ownerToken;
+    handle->kind = kind;
+    std::copy_n(id, length, handle->id.begin());
+    handle->id[length] = '\0';
+    if (luaL_newmetatable(state, kLogicalSlotMetatable) != 0)
+    {
+        lua_newtable(state);
+        const luaL_Reg methods[] = {
+            { "id", lua_LogicalSlotId },
+            { "revision", lua_LogicalSlotRevision },
+            { "state", lua_LogicalSlotState },
+            { "capacity", lua_LogicalSlotCapacity },
+            { "item", lua_LogicalSlotItem },
+            { "items", lua_LogicalSlotItems },
+            { "bind", lua_LogicalSlotBind },
+            { "add", lua_LogicalSlotBind },
+            { "clear", lua_LogicalSlotClear },
+            { "remove", lua_LogicalSlotRemove },
+            { "move", lua_LogicalSlotMove },
+            { nullptr, nullptr },
+        };
+        luaL_setfuncs(state, methods, 0);
+        lua_setfield(state, -2, "__index");
+        lua_pushboolean(state, 0);
+        lua_setfield(state, -2, "__metatable");
+    }
+    lua_setmetatable(state, -2);
+}
+
+static int lua_SlotsBinding(lua_State* state)
+{
+    PushLogicalSlotHandle(state,
+        snowdesktop::widget_runtime::LogicalSlotKind::Binding);
+    return 1;
+}
+
+static int lua_SlotsCollection(lua_State* state)
+{
+    PushLogicalSlotHandle(state,
+        snowdesktop::widget_runtime::LogicalSlotKind::Collection);
+    return 1;
+}
+
 constexpr char kStorageTransactionMetatable[] =
     "SnowDesktop.StorageTransaction";
 char kActiveStorageTransactionRegistryKey = 0;
@@ -20443,7 +21025,8 @@ static LuaStorageTransactionHandle* CheckStorageTransactionHandle(
 
 static bool IsReservedStorageTransactionKey(const std::string& key)
 {
-    return IsRemovedPanelEffectSettingKey(key);
+    return IsRemovedPanelEffectSettingKey(key) ||
+        key == "__host" || key.starts_with("__host.");
 }
 
 static int lua_StorageTransactionGet(lua_State* state)
@@ -20550,6 +21133,8 @@ static int lua_StorageGet(lua_State* L)
             L, "storage.get"))
         return rejected;
     const char* key = luaL_checkstring(L, 1);
+    if (IsReservedStorageTransactionKey(key ? key : ""))
+        return luaL_error(L, "storage.get: key is reserved");
     auto* s = GetD2D(L);
     if (!s) { lua_pushnil(L); return 1; }
     std::string fullKey = BoundStoragePrefix(L) + "." + key;
@@ -20586,6 +21171,7 @@ static bool StorageWriteWithinQuota(const std::string& prefix,
     for (const auto& [storedKey, storedValue] : ActiveStorage())
     {
         if (!storedKey.starts_with(prefix + ".")) continue;
+        if (storedKey.starts_with(prefix + ".__host.")) continue;
         if (storedKey == fullKey) continue;
         ++count;
         bytes += storedKey.size() + storedValue.size();
@@ -20605,7 +21191,9 @@ static int lua_StorageSet(lua_State* L)
     const char* key = luaL_checkstring(L, 1);
     const char* value = luaL_checkstring(L, 2);
     auto* s = GetD2D(L);
-    if (!s || IsRemovedPanelEffectSettingKey(key)) return 0;
+    if (!s) return 0;
+    if (IsReservedStorageTransactionKey(key ? key : ""))
+        return luaL_error(L, "storage.set: key is reserved");
     const std::string prefix = BoundStoragePrefix(L);
     if (!StorageWriteWithinQuota(prefix, key, value))
         return luaL_error(L, "widget storage quota exceeded");
@@ -20851,6 +21439,8 @@ static int lua_StorageRemove(lua_State* L)
     const char* key = luaL_checkstring(L, 1);
     auto* s = GetD2D(L);
     if (!s) return 0;
+    if (IsReservedStorageTransactionKey(key ? key : ""))
+        return luaL_error(L, "storage.remove: key is reserved");
     ActiveStorage().erase(BoundStoragePrefix(L) + "." + key);
     if (!snowdesktop::widget_runtime::HasStorageOverlay()) SaveStorageFile();
     return 0;
@@ -20870,6 +21460,7 @@ static int lua_StorageKeys(lua_State* L)
         if (!prefix.empty() && kv.first.compare(0, prefix.size(), prefix) != 0)
             continue;
         std::string key = prefix.empty() ? kv.first : kv.first.substr(prefix.size());
+        if (IsReservedStorageTransactionKey(key)) continue;
         lua_pushstring(L, key.c_str());
         lua_rawseti(L, -2, idx++);
     }
@@ -21393,6 +21984,9 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "spectrum", snowdesktop::widget_runtime::LuaViewSpectrum, 2 },
         { "monthCalendar",
             snowdesktop::widget_runtime::LuaViewMonthCalendar, 2 },
+        { "slotSurface",
+            snowdesktop::widget_runtime::LuaViewSlotSurface, 2 },
+        { "slotItem", snowdesktop::widget_runtime::LuaViewSlotItem, 2 },
         { "spacer", snowdesktop::widget_runtime::LuaViewSpacer, 2 },
     };
     static constexpr FunctionDescriptor widget[] = {
@@ -21523,6 +22117,10 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "keys", lua_StorageKeys },
         { "transaction", lua_StorageTransaction, 2 },
     };
+    static constexpr FunctionDescriptor slots[] = {
+        { "binding", lua_SlotsBinding, 2 },
+        { "collection", lua_SlotsCollection, 2 },
+    };
     static constexpr FunctionDescriptor state[] = {
         { "get", snowdesktop::widget_api::LuaTransientStateGet, 2 },
         { "set", snowdesktop::widget_api::LuaTransientStateSet, 2 },
@@ -21586,6 +22184,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         DescribeLibrary("calendar", calendar),
         DescribeLibrary("layout", layout),
         DescribeLibrary("storage", storage),
+        DescribeLibrary("slots", slots),
         DescribeLibrary("state", state),
         DescribeLibrary("schedule", schedule),
         DescribeLibrary("data", data),

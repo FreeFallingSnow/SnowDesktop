@@ -14,6 +14,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include "widget_logical_slot.h"
 #include "widget_permission_state.h"
 
 namespace snowdesktop::widget
@@ -121,6 +122,7 @@ struct PackageManifest
     std::vector<std::string> requiredFeatures;
     std::vector<std::string> optionalFeatures;
     std::unordered_map<std::string, PackageResource> resources;
+    snowdesktop::widget_runtime::LogicalSlotDeclarations logicalSlots;
     std::unordered_map<std::string, LocalizedMetadata> locales;
 };
 

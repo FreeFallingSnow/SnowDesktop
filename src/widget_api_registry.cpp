@@ -20,7 +20,7 @@ namespace snowdesktop::widget_api
 namespace
 {
 constexpr std::uint32_t kCurrentApiVersion = 2;
-constexpr std::array<std::string_view, 89> kHostFeatures = {
+constexpr std::array<std::string_view, 92> kHostFeatures = {
     "calendar.dateMath",
     "calendar.selection",
     "control.focus",
@@ -68,6 +68,8 @@ constexpr std::array<std::string_view, 89> kHostFeatures = {
     "schedule.visibility",
     "settings.appSearch",
     "settings.select.localizedOptions",
+    "slots.model",
+    "slots.mutation.userGesture",
     "state.transient",
     "storage.transaction",
     "system.environment",
@@ -104,6 +106,7 @@ constexpr std::array<std::string_view, 89> kHostFeatures = {
     "view.grid.uniform",
     "view.image",
     "view.inputControls",
+    "view.logicalSlots",
     "view.monthCalendar",
     "view.scroll",
     "view.selectionControls",
@@ -116,11 +119,11 @@ constexpr std::array<std::string_view, 15> kV1SandboxLibraries = {
     "storage", "widget", "desktop", "media", "http", "ui",
     "everything", "calendar",
 };
-constexpr std::array<std::string_view, 22> kV2SandboxLibraries = {
+constexpr std::array<std::string_view, 23> kV2SandboxLibraries = {
     "string", "table", "math", "utf8", "draw", "layout", "storage",
     "state", "schedule", "widget", "system", "time", "module",
     "resource", "data", "task", "interaction", "control", "calendar",
-    "ui", "l10n", "view",
+    "ui", "l10n", "view", "slots",
 };
 char kDefinedWidgetMarker = 0;
 char kTransientStateTableKey = 0;

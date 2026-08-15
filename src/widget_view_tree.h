@@ -1,6 +1,7 @@
 #pragma once
 
 #include "widget_interaction_region.h"
+#include "widget_logical_slot.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -56,6 +57,8 @@ enum class ViewNodeType
     Waveform,
     Spectrum,
     MonthCalendar,
+    SlotSurface,
+    SlotItem,
     Spacer,
 };
 
@@ -248,6 +251,10 @@ struct ViewNode
     std::vector<std::string> calendarEventDates;
     std::array<std::string, 7> weekdayLabels{};
     bool showAdjacentDates = true;
+    std::string logicalSlotId;
+    LogicalSlotKind logicalSlotKind = LogicalSlotKind::Binding;
+    std::uint64_t logicalSlotRevision = 0;
+    std::string logicalSlotReference;
     bool visible = true;
     bool enabled = true;
     std::string cursor;
@@ -338,6 +345,8 @@ struct ViewTreeLimits
 
 bool ValidateAndLayoutViewTree(ViewNode& root, float width, float height,
     std::string& error);
+bool ValidateViewLogicalSlots(const ViewNode& root,
+    const LogicalSlotModel& model, std::string& error);
 bool CollectViewInteractionRegions(const ViewNode& root,
     std::vector<InteractionRegion>& regions, std::string& error);
 bool CollectViewInputControls(const ViewNode& root,

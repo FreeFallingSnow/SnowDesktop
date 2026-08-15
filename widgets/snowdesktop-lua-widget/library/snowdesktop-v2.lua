@@ -251,13 +251,53 @@
 ---@field todayStyle? SnowViewStyle MonthCalendar today outline style.
 ---@field adjacentStyle? SnowViewStyle MonthCalendar adjacent-month date style.
 ---@field eventStyle? SnowViewStyle MonthCalendar event-marker style.
+---@field binding? string Required by a binding slotSurface; mutually exclusive with collection.
+---@field collection? string Required by a collection slotSurface; mutually exclusive with binding.
+---@field revision? integer Optional exact host slot revision asserted by slotSurface.
+---@field reference? string Required opaque reference for slotItem.
 ---@field accessibility? SnowViewAccessibility
 ---@field events? SnowViewEvents
 ---@field action? SnowInteractionAction Button/link click or controlled selection/value change shorthand.
+---@field child? SnowViewNode Exactly one child for slotItem; optional placeholder or bound child for a binding slotSurface.
 ---@field children? SnowViewNode[]
 
 ---@class SnowViewNode: SnowViewNodeOptions
----@field type 'box'|'row'|'column'|'grid'|'flow'|'stack'|'scroll'|'list'|'gridList'|'virtualList'|'virtualGrid'|'listItem'|'text'|'styledText'|'textInput'|'textArea'|'searchBox'|'numberInput'|'select'|'image'|'button'|'link'|'toggle'|'checkbox'|'radioGroup'|'slider'|'icon'|'iconButton'|'shape'|'badge'|'divider'|'progressBar'|'progressRing'|'meter'|'sparkline'|'lineChart'|'barChart'|'waveform'|'spectrum'|'monthCalendar'|'spacer'
+---@field type 'box'|'row'|'column'|'grid'|'flow'|'stack'|'scroll'|'list'|'gridList'|'virtualList'|'virtualGrid'|'listItem'|'slotSurface'|'slotItem'|'text'|'styledText'|'textInput'|'textArea'|'searchBox'|'numberInput'|'select'|'image'|'button'|'link'|'toggle'|'checkbox'|'radioGroup'|'slider'|'icon'|'iconButton'|'shape'|'badge'|'divider'|'progressBar'|'progressRing'|'meter'|'sparkline'|'lineChart'|'barChart'|'waveform'|'spectrum'|'monthCalendar'|'spacer'
+
+---@class SnowLogicalSlotItem
+---@field id string Stable opaque item ID used by collection remove/move.
+---@field reference string Persistent opaque reference accepted by slotItem and the corresponding launch/open task.
+---@field kind 'desktop.item'|'app.reference'|'filesystem.reference'
+---@field title string Display-only title.
+---@field source string Display-only source category.
+---@field type string Display-only item type.
+---@field availability 'available'|'unavailable'
+
+---@class SnowLogicalSlotChange
+---@field slotId string
+---@field kind 'binding'|'collection'
+---@field revision integer
+---@field operation 'unchanged'|'bound'|'replaced'|'cleared'|'added'|'removed'|'moved'
+---@field itemIds string[]
+
+---@class SnowLogicalBinding
+---@field id fun(self: SnowLogicalBinding): string
+---@field revision fun(self: SnowLogicalBinding): integer
+---@field state fun(self: SnowLogicalBinding): 'empty'|'bound'|'unavailable'
+---@field capacity fun(self: SnowLogicalBinding): integer Always 1.
+---@field item fun(self: SnowLogicalBinding): SnowLogicalSlotItem?
+---@field bind fun(self: SnowLogicalBinding, reference: string): SnowLogicalSlotChange Requires a trusted user gesture.
+---@field clear fun(self: SnowLogicalBinding): SnowLogicalSlotChange Requires a trusted user gesture and allowClear=true.
+
+---@class SnowLogicalCollection
+---@field id fun(self: SnowLogicalCollection): string
+---@field revision fun(self: SnowLogicalCollection): integer
+---@field state fun(self: SnowLogicalCollection): 'empty'|'bound'|'unavailable'
+---@field capacity fun(self: SnowLogicalCollection): integer
+---@field items fun(self: SnowLogicalCollection): SnowLogicalSlotItem[]
+---@field add fun(self: SnowLogicalCollection, reference: string): SnowLogicalSlotChange Requires a trusted user gesture.
+---@field remove fun(self: SnowLogicalCollection, itemId: string): SnowLogicalSlotChange Requires a trusted user gesture.
+---@field move fun(self: SnowLogicalCollection, itemId: string, index: integer): SnowLogicalSlotChange Requires a trusted user gesture; index is 1-based.
 
 ---@class SnowInteractionShape
 ---@field type 'rect'|'roundedRect'|'circle'
@@ -614,6 +654,16 @@ function view.virtualGrid(options) end
 ---@return SnowViewNode
 function view.listItem(options) end
 
+---Host-owned logical slot surface. Requires exactly one binding/collection ID declared in widget.json and probes with view.logicalSlots.
+---@param options SnowViewNodeOptions
+---@return SnowViewNode
+function view.slotSurface(options) end
+
+---One host-owned logical slot reference with exactly one visible child and accessibility.label. Probes with view.logicalSlots.
+---@param options SnowViewNodeOptions
+---@return SnowViewNode
+function view.slotItem(options) end
+
 ---@param options SnowViewNodeOptions
 ---@return SnowViewNode
 function view.text(options) end
@@ -736,6 +786,19 @@ function view.monthCalendar(options) end
 ---@param options SnowViewNodeOptions
 ---@return SnowViewNode
 function view.spacer(options) end
+
+---@class snow.slots
+slots = {}
+
+---Open a manifest-declared single-reference logical slot.
+---@param id string
+---@return SnowLogicalBinding
+function slots.binding(id) end
+
+---Open a manifest-declared bounded logical collection.
+---@param id string
+---@return SnowLogicalCollection
+function slots.collection(id) end
 
 ---@class snow.widget
 widget = {}

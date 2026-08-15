@@ -264,6 +264,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget_view_lua.cpp
     src/widget_text_input_rules.cpp
     src/widget_storage_transaction.cpp
+    src/widget_logical_slot.cpp
     src/widget_lua_lifecycle.cpp
     src/widget_runtime_diagnostics.cpp
     src/widget_runtime_scheduler.cpp
@@ -547,6 +548,7 @@ add_custom_command(TARGET SnowDesktop POST_BUILD
 
 add_executable(snowwidget
     tools/snowwidget/main.cpp
+    src/widget_logical_slot.cpp
     src/widget_package.cpp
     src/widget_permission_broker.cpp
     src/widget_permission_state.cpp)
@@ -657,6 +659,7 @@ if (BUILD_TESTING)
             src/atomic_file.cpp
             src/full_data_backup.cpp
             src/layout_storage.cpp
+            src/widget_logical_slot.cpp
             src/widget_package.cpp
             src/widget_permission_broker.cpp
             src/widget_permission_state.cpp
@@ -1008,6 +1011,7 @@ if (BUILD_TESTING)
             src/widget_view_tree.cpp
             src/widget_view_lua.cpp
             src/widget_interaction_region.cpp
+            src/widget_logical_slot.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES SnowDesktopLua
         LABELS contract interaction layout lua widget)
@@ -1027,6 +1031,15 @@ if (BUILD_TESTING)
         SOURCES
             tests/widget_storage_transaction_tests.cpp
             src/widget_storage_transaction.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS contract lua storage widget)
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetLogicalSlotTests
+        widget_logical_slot
+        SOURCES
+            tests/widget_logical_slot_tests.cpp
+            src/widget_logical_slot.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract lua storage widget)
 

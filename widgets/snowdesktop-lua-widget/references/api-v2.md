@@ -94,7 +94,8 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.grid.uniform` 提供基础 `grid`，`view.flow.wrap` 提供横向换行 `flow`。
 `view.scroll` 提供宿主滚动视口，`view.collection.basic` 提供基础集合，
 `view.collection.virtual` 提供固定行高虚拟集合与可见范围查询；
-`view.styledText.basic` 提供有界样式 span，`view.monthCalendar` 提供受控月历日期网格。
+`view.styledText.basic` 提供有界样式 span，`view.monthCalendar` 提供受控月历日期网格，
+`view.logicalSlots` 提供与 manifest 宿主管理槽位严格对应的 `slotSurface/slotItem`。
 每次 `view(context, model)` 返回一棵完整树；所有节点必须提供全树唯一、1–128 字节的
 稳定 `key`。宿主先完整解析、校验和布局，再原子替换上一棵成功树；回调或校验失败时
 继续显示上一棵树，不留下半棵树或空白交互区。
@@ -416,9 +417,70 @@ view.waveform({
 重复 key、NaN/Infinity 和越界值会拒绝整次提交。桌面树只布局在底部标题栏之上的内容区。
 
 该 feature 不是完整 `view.tree`：当前每帧重建树，尚无可变高度虚拟集合、
-可操作行内 span/slot 节点，也没有通用键盘焦点、UIA 输出、RTL、主题
+可操作行内 span，也没有通用键盘焦点、UIA 输出、RTL、主题
 token、差量资源复用或声明式 panel。需要这些能力的组件应继续使用 v2 即时绘制或等待
 对应 feature；不得把 `view.tree.core` 当作稳定完整控件集声明。
+
+### `slots.model` 与 `view.logicalSlots`
+
+API v2 包可在 `widget.json` 中静态声明单项绑定或有界集合。当前只支持
+`operation="reference"`，引用原对象而不移动、复制或删除它：
+
+```json
+"slots": {
+  "primaryApp": {
+    "kind": "binding",
+    "accepts": ["app.reference"],
+    "operation": "reference",
+    "replacePolicy": "allow",
+    "allowClear": true
+  },
+  "favorites": {
+    "kind": "collection",
+    "accepts": ["desktop.item", "app.reference", "filesystem.reference"],
+    "operation": "reference",
+    "capacity": 32
+  }
+}
+```
+
+每包最多声明 16 个槽位，集合容量为 1–64。`slots.binding(id)` 与
+`slots.collection(id)` 只接受 manifest 中同 kind 的 ID。读取方法 `id/revision/state/
+capacity/item/items` 可在 view 中调用；`bind/add/clear/remove/move` 会持久化宿主管理模型，
+只能由当前可信用户 action 调用，预览和普通 render/data/timer 回调会以
+`userGestureRequired` 或 `previewReadOnly` 拒绝。`bind/add` 接受 `app.search`、
+`desktop.search`、`everything.search` 或文件引用任务返回的当前实例 opaque ref，成功后
+返回 `SnowLogicalSlotChange`；槽位会发出新的持久 opaque `item.reference`，可继续交给
+对应的 `app.launch` 或 `shell.openItem/revealItem` 任务。
+
+声明式树必须准确反映同一宿主快照。binding 的 surface 可有一个 placeholder 或一个
+`slotItem`；有绑定时必须提交该 item。collection 的直接 children 必须按宿主顺序完整提交
+为 `slotItem`。伪造、漏掉、重复或交换 reference，以及可选 `revision` 不匹配，都会拒绝
+整棵新树并保留上一棵成功树：
+
+```lua
+local favorites = slots.collection("favorites")
+local children = {}
+for _, item in ipairs(favorites:items()) do
+    children[#children + 1] = view.slotItem({
+        key = item.id,
+        reference = item.reference,
+        accessibility = { label = item.title },
+        child = view.text({ key = item.id .. ".title", text = item.title }),
+    })
+end
+
+return view.slotSurface({
+    key = "favorites",
+    collection = "favorites",
+    revision = favorites:revision(),
+    children = children,
+})
+```
+
+这一批实现的是 manifest 校验、宿主持久模型、受信手势变更、持久引用恢复和 scene
+一致性契约。原生桌面/Explorer 拖入命中、插入预览、宿主选择器、撤销以及
+`slot.changed` 主动事件尚未接入，不能把 `slotSurface` 当作已经可接收系统拖放的区域。
 
 ### `interaction` 与元素级菜单
 
@@ -1302,6 +1364,7 @@ view.text({ key = "title", text = "SnowDesktop", font = display })
     "l10n.basic", "schedule.basic"],
   "optionalFeatures": [],
   "resources": {},
+  "slots": {},
   "permissions": [],
   "optionalPermissions": []
 }
