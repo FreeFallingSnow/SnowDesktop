@@ -49,12 +49,15 @@ reason)`。没有 `setup` 时 model 为
 `unload`、`hotReload` 或 `shutdown`。setup 失败时新 VM 不会替换热重载前的可用
 VM。
 
-event 覆盖宿主 surface 级事件：`visibility`、`resize`、`pointer`、`timer`、
+event 覆盖宿主 surface 级事件：`visibility`、`resize`、`timer`、
 `schedule`、`action`、`selection`、`environment`、`panel`、`dialog`、`popover`、
 `data.change` 和
 `task.complete`。
-指针事件包含 `action`、`surface`、`x/y`、`button`、`delta`，命中即时绘制
-region 时还包含 `targetKey`；schedule 事件包含 `id`、UTC epoch 毫秒 `now`、
+使用 `render`/即时绘制的 surface 还会收到原始 `pointer` 生命周期事件，其中包含
+`action`、`surface`、`x/y`、`button`、`delta`，命中 region 时还包含 `targetKey`。
+声明式 `view` surface 不投递这条通用高频事件；作者应在节点 `events.pointer*` 中显式
+绑定所需动作，未绑定动作的 hover/pressed 纯视觉状态由宿主直接重绘已提交 scene，
+不会同步进入 Lua。schedule 事件包含 `id`、UTC epoch 毫秒 `now`、
 `missed` 和 `coalesced`。
 region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择统一以
 `event.kind == "action"` 投递。
@@ -179,7 +182,9 @@ transition = {
 边框宽度以及 enter/exit transition 均不属于该 feature。
 
 桌面与 panel/dialog/popover 各自维护过渡状态，插值帧只重绘上一棵成功提交的 scene tree，
-不会每帧重新调用 Lua `view()`。目标样式来自新 scene 或宿主 hover/pressed/focus 等状态；
+不会每帧重新调用 Lua `view()`。未绑定节点 pointer action 的 hover/pressed 状态变化也走
+同一条已提交 scene 快速重绘路径；绑定动作时先向 `event.kind="action"` 投递精确节点事件，
+再由组件提交下一棵树。目标样式来自新 scene 或宿主 hover/pressed/focus 等状态；
 预览、宿主计时器不可用或系统开启“减少动态效果”时直接显示最终样式。隐藏、关闭 surface、
 热重载和卸载会清理待执行过渡。该能力不要求权限，也不能用于绕过 reducedMotion。
 探测 `view.state.visibility` 后，节点可声明 `visibility="visible"|"hidden"|"collapsed"`。

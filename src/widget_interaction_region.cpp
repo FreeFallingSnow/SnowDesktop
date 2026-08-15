@@ -657,6 +657,19 @@ const InteractionRegion* WidgetInteractionRegions::HitTest(
     return nullptr;
 }
 
+bool WidgetInteractionRegions::HasTransitionAction(
+    const InteractionHoverTransition& transition) const noexcept
+{
+    return (!transition.leftKey.empty() &&
+            transition.leftKey != transition.enteredKey &&
+            FindTransitionAction(
+                transition.leftKey, "pointerLeave") != nullptr) ||
+        (!transition.enteredKey.empty() &&
+            transition.enteredKey != transition.leftKey &&
+            FindTransitionAction(
+                transition.enteredKey, "pointerEnter") != nullptr);
+}
+
 bool WidgetInteractionRegions::ContainsKey(std::string_view key) const noexcept
 {
     return key.empty() || Find(key) != nullptr;

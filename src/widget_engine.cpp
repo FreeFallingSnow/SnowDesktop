@@ -1466,6 +1466,22 @@ InteractionRegionsForSurface(
         ? widget.panelInteractionRegions : widget.interactionRegions;
 }
 
+static bool HasDeclarativeViewForSurface(
+    const LuaWidget& widget, std::string_view surface) noexcept
+{
+    return IsPanelSurface(surface)
+        ? widget.panelViewTree.has_value() : widget.viewTree.has_value();
+}
+
+static void QueueDeclarativeVisualFrame(
+    LuaWidget& widget, std::string_view surface) noexcept
+{
+    if (IsPanelSurface(surface))
+        widget.panelViewTransitionFramePending = true;
+    else
+        widget.viewTransitionFramePending = true;
+}
+
 static std::unordered_map<std::string, int>& ScrollOffsetsForSurface(
     LuaWidget& widget, std::string_view surface)
 {
@@ -18763,29 +18779,51 @@ void WidgetEngine::InvokeMouseEvent(const std::wstring& widgetId, const char* ca
         std::string targetKey;
         auto& interactionRegions = InteractionRegionsForSurface(
             w, eventSurface);
+        const bool declarativeSurface =
+            HasDeclarativeViewForSurface(w, eventSurface);
         if (std::strcmp(kind, "pointer") == 0)
         {
+            bool declarativeVisualChanged = false;
+            bool visualChangeRequiresLua = false;
             const auto transition = interactionRegions.UpdateHover(
                 static_cast<float>(x), static_cast<float>(y));
             if (transition.Changed())
             {
+                declarativeVisualChanged = true;
+                visualChangeRequiresLua =
+                    interactionRegions.HasTransitionAction(transition);
                 DispatchInteractionTransition(w, transition, x, y,
                     eventSurface);
-                RuntimeInvalidateHost(widgetId);
             }
             if (std::strcmp(action, "pointerDown") == 0)
             {
+                const std::string previousPressed =
+                    interactionRegions.PressedKey();
                 targetKey = interactionRegions.PointerDown(
                     static_cast<float>(x), static_cast<float>(y), button).
                     targetKey;
-                RuntimeInvalidateHost(widgetId);
+                if (previousPressed != targetKey)
+                {
+                    declarativeVisualChanged = true;
+                    visualChangeRequiresLua = visualChangeRequiresLua ||
+                        interactionRegions.FindAction(
+                            targetKey, "pointerDown") != nullptr;
+                }
             }
             else if (std::strcmp(action, "pointerUp") == 0)
             {
+                const std::string previousPressed =
+                    interactionRegions.PressedKey();
                 targetKey = interactionRegions.PointerUp(
                     static_cast<float>(x), static_cast<float>(y), button).
                     targetKey;
-                RuntimeInvalidateHost(widgetId);
+                if (!previousPressed.empty())
+                {
+                    declarativeVisualChanged = true;
+                    visualChangeRequiresLua = visualChangeRequiresLua ||
+                        interactionRegions.FindAction(
+                            targetKey, "pointerUp") != nullptr;
+                }
             }
             else if (std::strcmp(action, "click") == 0)
             {
@@ -18808,32 +18846,41 @@ void WidgetEngine::InvokeMouseEvent(const std::wstring& widgetId, const char* ca
                     (std::strcmp(action, "click") == 0 ? 1 : 0),
                 false, "pointer", 0, std::nullopt, std::nullopt,
                 eventSurface);
+            if (declarativeVisualChanged)
+            {
+                if (declarativeSurface && !visualChangeRequiresLua)
+                    QueueDeclarativeVisualFrame(w, eventSurface);
+                RuntimeInvalidateHost(widgetId);
+            }
         }
-        (void)InvokeLifecycleEvent(w, kind,
-            [action, eventSurface, x, y, button, delta, trustedGesture,
-                &targetKey](lua_State* eventState) {
-                lua_pushstring(eventState, action);
-                lua_setfield(eventState, -2, "action");
-                lua_pushlstring(eventState, eventSurface.data(),
-                    eventSurface.size());
-                lua_setfield(eventState, -2, "surface");
-                lua_pushinteger(eventState, x);
-                lua_setfield(eventState, -2, "x");
-                lua_pushinteger(eventState, y);
-                lua_setfield(eventState, -2, "y");
-                lua_pushinteger(eventState, button);
-                lua_setfield(eventState, -2, "button");
-                lua_pushinteger(eventState, delta);
-                lua_setfield(eventState, -2, "delta");
-                if (!targetKey.empty())
-                {
-                    lua_pushlstring(eventState, targetKey.data(),
-                        targetKey.size());
-                    lua_setfield(eventState, -2, "targetKey");
-                }
-                lua_pushboolean(eventState, trustedGesture ? 1 : 0);
-                lua_setfield(eventState, -2, "trustedGesture");
-            });
+        if (std::strcmp(kind, "pointer") != 0 || !declarativeSurface)
+        {
+            (void)InvokeLifecycleEvent(w, kind,
+                [action, eventSurface, x, y, button, delta, trustedGesture,
+                    &targetKey](lua_State* eventState) {
+                    lua_pushstring(eventState, action);
+                    lua_setfield(eventState, -2, "action");
+                    lua_pushlstring(eventState, eventSurface.data(),
+                        eventSurface.size());
+                    lua_setfield(eventState, -2, "surface");
+                    lua_pushinteger(eventState, x);
+                    lua_setfield(eventState, -2, "x");
+                    lua_pushinteger(eventState, y);
+                    lua_setfield(eventState, -2, "y");
+                    lua_pushinteger(eventState, button);
+                    lua_setfield(eventState, -2, "button");
+                    lua_pushinteger(eventState, delta);
+                    lua_setfield(eventState, -2, "delta");
+                    if (!targetKey.empty())
+                    {
+                        lua_pushlstring(eventState, targetKey.data(),
+                            targetKey.size());
+                        lua_setfield(eventState, -2, "targetKey");
+                    }
+                    lua_pushboolean(eventState, trustedGesture ? 1 : 0);
+                    lua_setfield(eventState, -2, "trustedGesture");
+                });
+        }
         return;
     }
     const int widgetRef = w.ref;
@@ -21800,7 +21847,12 @@ void WidgetEngine::UpdateInteractionHover(
                 static_cast<float>(x), static_cast<float>(y))
             : interactionRegions.ClearHover();
         if (!transition.Changed()) continue;
+        const bool transitionHasAction =
+            interactionRegions.HasTransitionAction(transition);
         DispatchInteractionTransition(widget, transition, x, y, surface);
+        if (HasDeclarativeViewForSurface(widget, surface) &&
+            !transitionHasAction)
+            QueueDeclarativeVisualFrame(widget, surface);
         RuntimeInvalidateHost(widget.widgetId);
     }
 }
@@ -21815,8 +21867,13 @@ void WidgetEngine::ClearInteractionHover(std::string_view surface)
                 widget, targetSurface);
             const auto transition = regions.ClearHover();
             if (!transition.Changed()) return;
+            const bool transitionHasAction =
+                regions.HasTransitionAction(transition);
             DispatchInteractionTransition(
                 widget, transition, 0, 0, targetSurface);
+            if (HasDeclarativeViewForSurface(widget, targetSurface) &&
+                !transitionHasAction)
+                QueueDeclarativeVisualFrame(widget, targetSurface);
             RuntimeInvalidateHost(widget.widgetId);
         };
         if (surface.empty())

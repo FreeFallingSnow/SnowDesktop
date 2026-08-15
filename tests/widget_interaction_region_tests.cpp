@@ -95,6 +95,12 @@ void TestPointerPairingAndActions()
         "sibling region must stage");
     regions.CommitFrame();
 
+    const auto enteredLeft = regions.UpdateHover(10, 10);
+    const auto leftForRight = regions.UpdateHover(60, 10);
+    Check(!regions.HasTransitionAction(enteredLeft) &&
+            regions.HasTransitionAction(leftForRight),
+        "hover transitions must identify whether Lua actions are attached");
+
     Check(regions.PointerDown(10, 10, 1).targetKey == "left" &&
             regions.IsPressed("left"),
         "pointer down must capture the stable target");

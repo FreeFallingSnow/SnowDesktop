@@ -196,6 +196,8 @@ public:
         std::string_view key, std::string_view eventName) const noexcept;
     const InteractionAction* FindTransitionAction(
         std::string_view key, std::string_view eventName) const noexcept;
+    bool HasTransitionAction(
+        const InteractionHoverTransition& transition) const noexcept;
     std::optional<InteractionResolvedAction> ResolveAction(
         std::string_view key, std::string_view eventName,
         float x = 0.0f, float y = 0.0f, int button = 0) const;

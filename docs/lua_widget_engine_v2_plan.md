@@ -273,9 +273,9 @@ return widget.define({
 当前过渡实现已经接通组件的 `setup(context) -> model -> render/view(context,
 model) -> dispose(context, model, reason)` 路径，并将其作为 `lifecycle.model`
 feature 发布。setup 失败不会替换热重载前的可用 VM，dispose 在卸载、热重载和
-宿主关闭时至多执行一次。surface 级 `event` 已接通可见性、尺寸、指针、计时器、
-动作、选择、环境与面板事件，并作为 `lifecycle.event` feature 发布；声明式元素事件
-由节点 action 与通用 interaction 通道提供。`menu` 已接通即时 region 和
+宿主关闭时至多执行一次。surface 级 `event` 已接通可见性、尺寸、计时器、
+动作、选择、环境与面板事件，并作为 `lifecycle.event` feature 发布；原始指针生命周期
+只向即时绘制 surface 投递，声明式元素由节点 action 通道提供精确指针事件。`menu` 已接通即时 region 和
 `view.tree.core` 元素；声明式核心树已经开放，组件声明语义后由宿主生成 UIA 树，
 不向 Lua 暴露原生 Provider 或任意键盘旁路。
 
@@ -1276,7 +1276,7 @@ view.row({
 
 规则：
 
-- hover、pressed 和 focus 的纯视觉样式由宿主命中测试与动画器直接更新，不需要先进入 Lua，因此指针反馈可以在下一次可用呈现中出现。
+- hover、pressed 和 focus 的纯视觉样式由宿主命中测试与动画器直接更新，不需要先进入 Lua，因此指针反馈可以在下一次可用呈现中出现。当前 desktop 与 panel/dialog/popover 的声明式 surface 在没有绑定对应 pointer action 时会标记已提交 scene 快速帧，并跳过通用 `event.kind="pointer"`；即时绘制 surface 继续接收原始指针生命周期以便自行绘制。
 - `focusStyle` 与 `disabledStyle` 已进入公共属性矩阵、Lua 解析和 Direct2D 渲染；未声明 focus 样式时宿主提供默认可见轮廓，disabled 样式最后覆盖其他状态样式。
 - `validationState/validationMessage/validationStyle` 已进入输入和 select 的公共属性矩阵；校验样式在 pressed 后、focus/disabled 前叠加，消息同时进入语义 HelpText，但不会改变受控值提交规则。
 - `view.layout.constraints` 已把 `minWidth/maxWidth/minHeight/maxHeight/aspectRatio` 纳入公共属性矩阵、Lua 解析、固有尺寸和各容器布局；尺寸使用 0–4096 的有限逻辑单位，宽高比使用 0.01–100，并拒绝同轴上下限、宽高比约束或双固定尺寸互相冲突的树。
