@@ -231,7 +231,10 @@ Probe `view.transform.basic` before declaring a node `transform` with bounded
 `translateX`, `translateY`, positive uniform `scale`, or normalized
 `originX`/`originY`. Transforms are post-layout, inherit through descendants,
 and move drawing, hit targets, host inputs, clips, and accessibility bounds
-together; rotation is not part of this feature. Probe
+together. Probe `view.transform.affine` before adding positive `scaleX`/
+`scaleY` multipliers or bounded degree `rotate`; rotated hit targets and slider
+axes remain exact, while host-managed inputs, scroll viewports, logical slots,
+and clipping nodes intentionally require a positive axis-aligned matrix. Probe
 `view.transition.visual` separately before declaring `transition`. It accepts
 1–4 unique `background`/`foreground`/`borderColor`/`opacity` properties, a
 1–2000 ms duration, and linear/easeIn/easeOut/easeInOut easing. The host

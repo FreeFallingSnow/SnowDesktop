@@ -525,6 +525,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "view.surface.popover") &&
             snowdesktop::widget_api::SupportsFeature(
+                "view.transform.affine") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "view.transform.basic") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.transition.visual") &&

@@ -3567,9 +3567,12 @@ ViewResolvedTransform ComposeTransform(
     const ViewResolvedTransform& parent) noexcept
 {
     return {
-        local.scale * parent.scale,
-        local.translateX * parent.scale + parent.translateX,
-        local.translateY * parent.scale + parent.translateY
+        local.m11 * parent.m11 + local.m12 * parent.m21,
+        local.m11 * parent.m12 + local.m12 * parent.m22,
+        local.m21 * parent.m11 + local.m22 * parent.m21,
+        local.m21 * parent.m12 + local.m22 * parent.m22,
+        local.dx * parent.m11 + local.dy * parent.m21 + parent.dx,
+        local.dx * parent.m12 + local.dy * parent.m22 + parent.dy,
     };
 }
 
@@ -3581,9 +3584,88 @@ ViewResolvedTransform LocalTransform(const ViewNode& node) noexcept
         node.frame.width * value.originX;
     const float originY = node.frame.y +
         node.frame.height * value.originY;
-    return { value.scale,
-        originX * (1.0f - value.scale) + value.translateX,
-        originY * (1.0f - value.scale) + value.translateY };
+    const float radians = value.rotate *
+        (3.14159265358979323846f / 180.0f);
+    const float cosine = std::cos(radians);
+    const float sine = std::sin(radians);
+    const float scaleX = value.scale * value.scaleX;
+    const float scaleY = value.scale * value.scaleY;
+    const ViewResolvedTransform result{
+        scaleX * cosine,
+        scaleX * sine,
+        -scaleY * sine,
+        scaleY * cosine,
+        0.0f,
+        0.0f,
+    };
+    return { result.m11, result.m12, result.m21, result.m22,
+        originX - originX * result.m11 - originY * result.m21 +
+            value.translateX,
+        originY - originX * result.m12 - originY * result.m22 +
+            value.translateY };
+}
+
+struct TransformedPoint
+{
+    float x = 0.0f;
+    float y = 0.0f;
+};
+
+TransformedPoint ApplyTransform(float x, float y,
+    const ViewResolvedTransform& transform) noexcept
+{
+    return { x * transform.m11 + y * transform.m21 + transform.dx,
+        x * transform.m12 + y * transform.m22 + transform.dy };
+}
+
+float TransformScaleX(const ViewResolvedTransform& transform) noexcept
+{
+    return std::hypot(transform.m11, transform.m12);
+}
+
+float TransformScaleY(const ViewResolvedTransform& transform) noexcept
+{
+    return std::hypot(transform.m21, transform.m22);
+}
+
+bool IsPositiveAxisAlignedTransform(
+    const ViewResolvedTransform& transform) noexcept
+{
+    constexpr float epsilon = 0.00001f;
+    return transform.m11 > epsilon && transform.m22 > epsilon &&
+        std::abs(transform.m12) <= epsilon &&
+        std::abs(transform.m21) <= epsilon;
+}
+
+bool IsAxisAlignedTransform(const ViewResolvedTransform& transform) noexcept
+{
+    constexpr float epsilon = 0.00001f;
+    return (std::abs(transform.m12) <= epsilon &&
+            std::abs(transform.m21) <= epsilon) ||
+        (std::abs(transform.m11) <= epsilon &&
+            std::abs(transform.m22) <= epsilon);
+}
+
+bool SingularValues(const ViewResolvedTransform& transform,
+    float& minimum, float& maximum) noexcept
+{
+    const double squaredTrace =
+        static_cast<double>(transform.m11) * transform.m11 +
+        static_cast<double>(transform.m12) * transform.m12 +
+        static_cast<double>(transform.m21) * transform.m21 +
+        static_cast<double>(transform.m22) * transform.m22;
+    const double determinant =
+        static_cast<double>(transform.m11) * transform.m22 -
+        static_cast<double>(transform.m12) * transform.m21;
+    const double discriminant = std::sqrt(std::max(
+        0.0, squaredTrace * squaredTrace -
+            4.0 * determinant * determinant));
+    const double maximumSquared = (squaredTrace + discriminant) * 0.5;
+    if (!std::isfinite(maximumSquared) || maximumSquared <= 0.0)
+        return false;
+    maximum = static_cast<float>(std::sqrt(maximumSquared));
+    minimum = static_cast<float>(std::abs(determinant) / maximum);
+    return std::isfinite(minimum) && std::isfinite(maximum);
 }
 
 struct TransformMatch
@@ -3648,6 +3730,11 @@ bool ValidateTransforms(const ViewNode& node,
             !FiniteInRange(value.translateY,
                 -MaximumDimension, MaximumDimension) ||
             !FiniteInRange(value.scale, 0.05f, 8.0f) ||
+            !FiniteInRange(value.scaleX, 0.05f, 8.0f) ||
+            !FiniteInRange(value.scaleY, 0.05f, 8.0f) ||
+            !FiniteInRange(value.scale * value.scaleX, 0.05f, 8.0f) ||
+            !FiniteInRange(value.scale * value.scaleY, 0.05f, 8.0f) ||
+            !FiniteInRange(value.rotate, -360.0f, 360.0f) ||
             !FiniteInRange(value.originX, 0.0f, 1.0f) ||
             !FiniteInRange(value.originY, 0.0f, 1.0f))
         {
@@ -3657,16 +3744,16 @@ bool ValidateTransforms(const ViewNode& node,
     }
     const ViewResolvedTransform current =
         ComposeTransform(LocalTransform(node), parent);
-    if (!FiniteInRange(current.scale, 1.0f / 64.0f, 64.0f))
+    float minimumScale = 0.0f;
+    float maximumScale = 0.0f;
+    if (!SingularValues(current, minimumScale, maximumScale) ||
+        !FiniteInRange(minimumScale, 1.0f / 64.0f, 64.0f) ||
+        !FiniteInRange(maximumScale, 1.0f / 64.0f, 64.0f))
     {
-        error = "view cumulative transform scale must remain between 1/64 and 64";
+        error = "view cumulative transform axes must remain between 1/64 and 64";
         return false;
     }
-    const ViewRect transformed{
-        node.frame.x * current.scale + current.translateX,
-        node.frame.y * current.scale + current.translateY,
-        node.frame.width * current.scale,
-        node.frame.height * current.scale };
+    const ViewRect transformed = ApplyViewTransform(node.frame, current);
     if (!FiniteInRange(transformed.x,
             -MaximumScrollExtent, MaximumScrollExtent) ||
         !FiniteInRange(transformed.y,
@@ -3675,6 +3762,19 @@ bool ValidateTransforms(const ViewNode& node,
         !FiniteInRange(transformed.height, 0.0f, MaximumScrollExtent))
     {
         error = "view transformed bounds exceed 1000000";
+        return false;
+    }
+    if (node.clipFrame && !IsAxisAlignedTransform(current))
+    {
+        error = "view rotated clips are not supported";
+        return false;
+    }
+    if ((IsInputNode(node.type) || IsScrollContainer(node.type) ||
+            node.type == ViewNodeType::SlotSurface ||
+            node.type == ViewNodeType::SlotItem) &&
+        !IsPositiveAxisAlignedTransform(current))
+    {
+        error = "view host-managed controls and logical slots require an axis-aligned transform";
         return false;
     }
     for (const auto& child : node.children)
@@ -3801,37 +3901,97 @@ std::optional<ViewRect> ResolveViewClipForKey(
 ViewRect ApplyViewTransform(const ViewRect& rect,
     const ViewResolvedTransform& transform) noexcept
 {
-    return { rect.x * transform.scale + transform.translateX,
-        rect.y * transform.scale + transform.translateY,
-        rect.width * transform.scale,
-        rect.height * transform.scale };
+    const std::array points{
+        ApplyTransform(rect.x, rect.y, transform),
+        ApplyTransform(rect.x + rect.width, rect.y, transform),
+        ApplyTransform(rect.x, rect.y + rect.height, transform),
+        ApplyTransform(rect.x + rect.width,
+            rect.y + rect.height, transform),
+    };
+    float left = points.front().x;
+    float top = points.front().y;
+    float right = points.front().x;
+    float bottom = points.front().y;
+    for (const auto& point : points)
+    {
+        left = std::min(left, point.x);
+        top = std::min(top, point.y);
+        right = std::max(right, point.x);
+        bottom = std::max(bottom, point.y);
+    }
+    return { left, top, right - left, bottom - top };
 }
 
 void ApplyViewTransform(const ViewNode& root,
     InteractionRegion& region) noexcept
 {
     const auto transform = ResolveViewTransformForKey(root, region.key);
-    const auto applyShape = [&transform](InteractionShape& shape) {
-        shape.x = shape.x * transform.scale + transform.translateX;
-        shape.y = shape.y * transform.scale + transform.translateY;
-        shape.width *= transform.scale;
-        shape.height *= transform.scale;
-        shape.radius *= transform.scale;
-    };
-    applyShape(region.shape);
-    for (auto& fragment : region.hitFragments)
-        applyShape(fragment);
     if (const auto clip = ResolveViewClipForKey(root, region.key, false))
     {
         region.clip = InteractionClipRect{
             clip->x, clip->y, clip->width, clip->height };
     }
     else region.clip.reset();
-    if (region.controlKind == InteractionControlKind::Slider)
+    constexpr float epsilon = 0.000001f;
+    if (std::abs(transform.m11 - 1.0f) <= epsilon &&
+        std::abs(transform.m22 - 1.0f) <= epsilon &&
+        std::abs(transform.m12) <= epsilon &&
+        std::abs(transform.m21) <= epsilon &&
+        std::abs(transform.dx) <= epsilon &&
+        std::abs(transform.dy) <= epsilon)
+        return;
+    region.localHitShape = region.shape;
+    region.localHitFragments = region.hitFragments;
+    region.hitTransform = InteractionAffineTransform{
+        transform.m11, transform.m12, transform.m21, transform.m22,
+        transform.dx, transform.dy };
+    const auto applyShape = [&transform](InteractionShape& shape) {
+        if (shape.type == InteractionShapeType::Circle)
+        {
+            const auto center = ApplyTransform(shape.x, shape.y, transform);
+            const float extentX = shape.radius * std::hypot(
+                transform.m11, transform.m21);
+            const float extentY = shape.radius * std::hypot(
+                transform.m12, transform.m22);
+            shape.type = InteractionShapeType::Rect;
+            shape.x = center.x - extentX;
+            shape.y = center.y - extentY;
+            shape.width = extentX * 2.0f;
+            shape.height = extentY * 2.0f;
+            shape.radius = 0.0f;
+            return;
+        }
+        const ViewRect bounds = ApplyViewTransform(
+            { shape.x, shape.y, shape.width, shape.height }, transform);
+        shape.type = InteractionShapeType::Rect;
+        shape.x = bounds.x;
+        shape.y = bounds.y;
+        shape.width = bounds.width;
+        shape.height = bounds.height;
+        shape.radius = 0.0f;
+    };
+    applyShape(region.shape);
+    for (auto& fragment : region.hitFragments)
+        applyShape(fragment);
+    if (region.controlKind == InteractionControlKind::Slider &&
+        region.controlLength > 0.0f)
     {
-        region.controlStart = region.controlStart * transform.scale +
-            (region.vertical ? transform.translateY : transform.translateX);
-        region.controlLength *= transform.scale;
+        const float cross = region.vertical
+            ? region.localHitShape->x + region.localHitShape->width * 0.5f
+            : region.localHitShape->y + region.localHitShape->height * 0.5f;
+        const auto start = region.vertical
+            ? ApplyTransform(cross, region.controlStart, transform)
+            : ApplyTransform(region.controlStart, cross, transform);
+        const auto end = region.vertical
+            ? ApplyTransform(cross,
+                region.controlStart + region.controlLength, transform)
+            : ApplyTransform(
+                region.controlStart + region.controlLength, cross, transform);
+        region.hasControlAxis = true;
+        region.controlStartX = start.x;
+        region.controlStartY = start.y;
+        region.controlEndX = end.x;
+        region.controlEndY = end.y;
     }
 }
 
@@ -4283,11 +4443,13 @@ bool CollectViewInputControls(const ViewNode& root,
         const auto transform = ResolveViewTransformForKey(root, control.key);
         control.frame = ApplyViewTransform(control.frame, transform);
         control.clip = ResolveViewClipForKey(root, control.key, false);
-        control.fontSize *= transform.scale;
-        control.padding.top *= transform.scale;
-        control.padding.right *= transform.scale;
-        control.padding.bottom *= transform.scale;
-        control.padding.left *= transform.scale;
+        const float scaleX = TransformScaleX(transform);
+        const float scaleY = TransformScaleY(transform);
+        control.fontSize *= scaleY;
+        control.padding.top *= scaleY;
+        control.padding.right *= scaleX;
+        control.padding.bottom *= scaleY;
+        control.padding.left *= scaleX;
     }
     std::erase_if(controls, [](const auto& control) {
         return control.clip && !Overlaps(control.frame, *control.clip);

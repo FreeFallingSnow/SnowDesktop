@@ -2941,6 +2941,7 @@ void TestBasicTransforms()
             key = "moved", label = "Move", width = 20, height = 10,
             transform = {
                 translateX = 4, translateY = -2, scale = 1.5,
+                scaleX = 1.25, scaleY = 0.75, rotate = 30,
                 originX = 0, originY = 1,
             },
             action = { id = "move" },
@@ -2953,6 +2954,9 @@ void TestBasicTransforms()
             Near(parsed.transform->translateX, 4.0f) &&
             Near(parsed.transform->translateY, -2.0f) &&
             Near(parsed.transform->scale, 1.5f) &&
+            Near(parsed.transform->scaleX, 1.25f) &&
+            Near(parsed.transform->scaleY, 0.75f) &&
+            Near(parsed.transform->rotate, 30.0f) &&
             Near(parsed.transform->originX, 0.0f) &&
             Near(parsed.transform->originY, 1.0f),
         "Lua parsing must retain bounded node transform fields");
@@ -2971,11 +2975,11 @@ void TestBasicTransforms()
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(
         return view.text({ key = "invalid", text = "Invalid",
-            transform = { rotate = 45 } })
+            transform = { skewX = 45 } })
     )lua") == LUA_OK,
         "unknown transform field fixture must evaluate");
     Check(!ParseLuaViewTree(state, -1, parsed, error) &&
-            error.find("rotate") != std::string::npos,
+            error.find("skewX") != std::string::npos,
         "unpublished transform fields must fail atomic tree parsing");
     lua_close(state);
 
@@ -3035,6 +3039,105 @@ void TestBasicTransforms()
             Near(controls[0].fontSize, 15.0f) && controls[0].clip &&
             Near(controls[0].clip->width, 200.0f),
         "host input geometry and typography must follow cumulative transforms");
+
+    ViewNode affineRoot;
+    affineRoot.type = ViewNodeType::Stack;
+    affineRoot.key = "affine-root";
+    ViewNode affineButton;
+    affineButton.type = ViewNodeType::Button;
+    affineButton.key = "affine-button";
+    affineButton.text = "Affine";
+    affineButton.width = { ViewLengthKind::Fixed, 20.0f };
+    affineButton.height = { ViewLengthKind::Fixed, 10.0f };
+    affineButton.events["click"].id = "affine.click";
+    affineButton.transform = ViewTransform{};
+    affineButton.transform->translateX = 30.0f;
+    affineButton.transform->translateY = 10.0f;
+    affineButton.transform->originX = 0.0f;
+    affineButton.transform->originY = 0.0f;
+    affineButton.transform->scaleX = 2.0f;
+    affineButton.transform->rotate = 45.0f;
+    affineRoot.children = { affineButton };
+    Check(ValidateAndLayoutViewTree(affineRoot, 100.0f, 80.0f, error),
+        "bounded rotation and non-uniform scale must validate for drawn nodes");
+    regions.clear();
+    Check(CollectViewInteractionRegions(affineRoot, regions, error) &&
+            regions.size() == 1 &&
+            Near(regions[0].shape.x, 22.9289f) &&
+            Near(regions[0].shape.y, 10.0f) &&
+            Near(regions[0].shape.width, 35.3553f) &&
+            Near(regions[0].shape.height, 35.3553f) &&
+            regions[0].hitTransform && regions[0].localHitShape,
+        "affine interaction regions must expose transformed bounds and exact local geometry");
+    WidgetInteractionRegions runtimeRegions;
+    runtimeRegions.BeginFrame();
+    Check(runtimeRegions.Submit(regions[0], error),
+        "an affine declarative region must pass interaction validation");
+    runtimeRegions.CommitFrame();
+    Check(runtimeRegions.TargetAt(40.0f, 27.5f) == "affine-button" &&
+            runtimeRegions.TargetAt(23.5f, 44.0f).empty(),
+        "rotated hit testing must reject empty AABB corners through inverse geometry");
+
+    ViewNode sliderRoot;
+    sliderRoot.type = ViewNodeType::Stack;
+    sliderRoot.key = "slider-root";
+    ViewNode affineSlider;
+    affineSlider.type = ViewNodeType::Slider;
+    affineSlider.key = "affine-slider";
+    affineSlider.width = { ViewLengthKind::Fixed, 80.0f };
+    affineSlider.height = { ViewLengthKind::Fixed, 20.0f };
+    affineSlider.minimum = 0.0f;
+    affineSlider.maximum = 100.0f;
+    affineSlider.step = 1.0f;
+    affineSlider.value = 25.0f;
+    affineSlider.accessibilityLabel = "Affine slider";
+    affineSlider.events["change"].id = "slider.change";
+    affineSlider.transform = ViewTransform{};
+    affineSlider.transform->rotate = 35.0f;
+    sliderRoot.children = { affineSlider };
+    Check(ValidateAndLayoutViewTree(sliderRoot, 120.0f, 60.0f, error),
+        "a rotated drawn slider must retain a valid controlled axis");
+    regions.clear();
+    Check(CollectViewInteractionRegions(sliderRoot, regions, error) &&
+            regions.size() == 1 && regions[0].hasControlAxis,
+        "affine slider collection must transform both control-axis endpoints");
+    WidgetInteractionRegions sliderRegions;
+    sliderRegions.BeginFrame();
+    Check(sliderRegions.Submit(regions[0], error),
+        "an affine slider region must pass interaction validation");
+    sliderRegions.CommitFrame();
+    const float sliderMidX =
+        (regions[0].controlStartX + regions[0].controlEndX) * 0.5f;
+    const float sliderMidY =
+        (regions[0].controlStartY + regions[0].controlEndY) * 0.5f;
+    sliderRegions.PointerDown(sliderMidX, sliderMidY, 1);
+    const auto sliderChange = sliderRegions.ResolveAction(
+        "affine-slider", "pointerDown", sliderMidX, sliderMidY, 1);
+    Check(sliderChange && sliderChange->controlValue &&
+            Near(*sliderChange->controlValue, 50.0f),
+        "rotated slider pointer values must project onto the transformed axis");
+
+    ViewNode rotatedClip = affineRoot;
+    rotatedClip.children.clear();
+    rotatedClip.transform = ViewTransform{};
+    rotatedClip.transform->rotate = 15.0f;
+    rotatedClip.overflow = ViewOverflow::Clip;
+    rotatedClip.clipChildren = true;
+    Check(!ValidateAndLayoutViewTree(rotatedClip, 100.0f, 80.0f, error) &&
+            error == "view rotated clips are not supported",
+        "non-axis-aligned clipping must be rejected instead of using an imprecise AABB");
+
+    ViewNode rotatedInput;
+    rotatedInput.type = ViewNodeType::TextInput;
+    rotatedInput.key = "rotated-input";
+    rotatedInput.inputValue = "value";
+    rotatedInput.accessibilityLabel = "Input";
+    rotatedInput.events["change"].id = "input.change";
+    rotatedInput.transform = ViewTransform{};
+    rotatedInput.transform->rotate = 10.0f;
+    Check(!ValidateAndLayoutViewTree(rotatedInput, 120.0f, 40.0f, error) &&
+            error == "view host-managed controls and logical slots require an axis-aligned transform",
+        "host-managed input proxies must reject rotation they cannot map exactly");
 }
 
 void TestVisualTransitionRuntime()

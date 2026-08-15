@@ -113,6 +113,20 @@ struct InteractionClipRect
     bool operator==(const InteractionClipRect&) const = default;
 };
 
+struct InteractionAffineTransform
+{
+    // Direct2D-compatible row-vector affine matrix:
+    // x' = x*m11 + y*m21 + dx; y' = x*m12 + y*m22 + dy.
+    float m11 = 1.0f;
+    float m12 = 0.0f;
+    float m21 = 0.0f;
+    float m22 = 1.0f;
+    float dx = 0.0f;
+    float dy = 0.0f;
+
+    bool operator==(const InteractionAffineTransform&) const = default;
+};
+
 struct InteractionRegion
 {
     std::string key;
@@ -120,6 +134,11 @@ struct InteractionRegion
     // Optional exact hit fragments for wrapped inline content. `shape` remains
     // the stable union bounds used by accessibility and diagnostics.
     std::vector<InteractionShape> hitFragments;
+    // Declarative affine transforms retain local geometry for exact inverse
+    // hit testing while `shape`/`hitFragments` expose transformed AABBs.
+    std::optional<InteractionShape> localHitShape;
+    std::vector<InteractionShape> localHitFragments;
+    std::optional<InteractionAffineTransform> hitTransform;
     std::optional<InteractionClipRect> clip;
     std::string cursor;
     std::string tooltip;
@@ -135,6 +154,11 @@ struct InteractionRegion
     float step = 0.01f;
     float controlStart = 0.0f;
     float controlLength = 0.0f;
+    bool hasControlAxis = false;
+    float controlStartX = 0.0f;
+    float controlStartY = 0.0f;
+    float controlEndX = 0.0f;
+    float controlEndY = 0.0f;
     bool vertical = false;
     std::string currentSelection;
     std::string proposedSelection;

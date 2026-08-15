@@ -340,15 +340,21 @@ struct ViewTransform
     float scale = 1.0f;
     float originX = 0.5f;
     float originY = 0.5f;
+    float scaleX = 1.0f;
+    float scaleY = 1.0f;
+    float rotate = 0.0f;
 
     bool operator==(const ViewTransform&) const = default;
 };
 
 struct ViewResolvedTransform
 {
-    float scale = 1.0f;
-    float translateX = 0.0f;
-    float translateY = 0.0f;
+    float m11 = 1.0f;
+    float m12 = 0.0f;
+    float m21 = 0.0f;
+    float m22 = 1.0f;
+    float dx = 0.0f;
+    float dy = 0.0f;
 
     bool operator==(const ViewResolvedTransform&) const = default;
 };

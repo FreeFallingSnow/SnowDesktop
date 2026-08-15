@@ -29,6 +29,38 @@ bool IsValidShape(const InteractionShape& shape) noexcept
             (IsFiniteCoordinate(shape.radius) && shape.radius >= 0.0f));
 }
 
+bool IsValidTransform(const InteractionAffineTransform& transform) noexcept
+{
+    const bool finite = IsFiniteCoordinate(transform.m11) &&
+        IsFiniteCoordinate(transform.m12) &&
+        IsFiniteCoordinate(transform.m21) &&
+        IsFiniteCoordinate(transform.m22) &&
+        IsFiniteCoordinate(transform.dx) &&
+        IsFiniteCoordinate(transform.dy);
+    const double determinant =
+        static_cast<double>(transform.m11) * transform.m22 -
+        static_cast<double>(transform.m12) * transform.m21;
+    return finite && std::isfinite(determinant) &&
+        std::abs(determinant) >= 1.0e-8;
+}
+
+bool InverseTransformPoint(const InteractionAffineTransform& transform,
+    float x, float y, float& localX, float& localY) noexcept
+{
+    const double determinant =
+        static_cast<double>(transform.m11) * transform.m22 -
+        static_cast<double>(transform.m12) * transform.m21;
+    if (!std::isfinite(determinant) || std::abs(determinant) < 1.0e-8)
+        return false;
+    const double translatedX = x - transform.dx;
+    const double translatedY = y - transform.dy;
+    localX = static_cast<float>((translatedX * transform.m22 -
+        translatedY * transform.m21) / determinant);
+    localY = static_cast<float>((translatedY * transform.m11 -
+        translatedX * transform.m12) / determinant);
+    return std::isfinite(localX) && std::isfinite(localY);
+}
+
 bool IsSupportedCursor(std::string_view cursor) noexcept
 {
     return cursor.empty() || cursor == "default" || cursor == "hand" ||
@@ -142,6 +174,21 @@ bool WidgetInteractionRegions::Submit(
         error = "interaction region hit fragments must be finite and positive";
         return false;
     }
+    if (region.localHitFragments.size() > kMaximumHitFragments ||
+        std::any_of(region.localHitFragments.begin(),
+            region.localHitFragments.end(), [](const InteractionShape& shape) {
+                return !IsValidShape(shape);
+            }) ||
+        (region.localHitShape && !IsValidShape(*region.localHitShape)) ||
+        region.localHitShape.has_value() != region.hitTransform.has_value() ||
+        (!region.localHitFragments.empty() && !region.localHitShape) ||
+        (region.localHitShape &&
+            region.localHitFragments.size() != region.hitFragments.size()) ||
+        (region.hitTransform && !IsValidTransform(*region.hitTransform)))
+    {
+        error = "interaction transformed hit geometry is invalid";
+        return false;
+    }
     if (region.clip && (!IsFiniteCoordinate(region.clip->x) ||
             !IsFiniteCoordinate(region.clip->y) ||
             !IsFiniteCoordinate(region.clip->width) ||
@@ -193,6 +240,18 @@ bool WidgetInteractionRegions::Submit(
             region.controlValue > region.maximum))
     {
         error = "slider interaction values are invalid";
+        return false;
+    }
+    if (region.hasControlAxis &&
+        (region.controlKind != InteractionControlKind::Slider ||
+            !IsFiniteCoordinate(region.controlStartX) ||
+            !IsFiniteCoordinate(region.controlStartY) ||
+            !IsFiniteCoordinate(region.controlEndX) ||
+            !IsFiniteCoordinate(region.controlEndY) ||
+            (std::abs(region.controlEndX - region.controlStartX) < 1.0e-6f &&
+                std::abs(region.controlEndY - region.controlStartY) < 1.0e-6f)))
+    {
+        error = "slider interaction axis is invalid";
         return false;
     }
     if (region.controlKind == InteractionControlKind::Radio &&
@@ -492,15 +551,29 @@ WidgetInteractionRegions::ResolveAction(
     else if (resolvedName == "change" &&
         region->controlKind == InteractionControlKind::Slider)
     {
-        const float start = region->controlLength > 0.0f
-            ? region->controlStart
-            : (region->vertical ? region->shape.y : region->shape.x);
-        const float length = region->controlLength > 0.0f
-            ? region->controlLength
-            : (region->vertical ? region->shape.height :
-                region->shape.width);
-        float normalized = length > 0.0f
-            ? ((region->vertical ? y : x) - start) / length : 0.0f;
+        float normalized = 0.0f;
+        if (region->hasControlAxis)
+        {
+            const float axisX = region->controlEndX - region->controlStartX;
+            const float axisY = region->controlEndY - region->controlStartY;
+            const float lengthSquared = axisX * axisX + axisY * axisY;
+            normalized = lengthSquared > 0.0f
+                ? ((x - region->controlStartX) * axisX +
+                    (y - region->controlStartY) * axisY) / lengthSquared
+                : 0.0f;
+        }
+        else
+        {
+            const float start = region->controlLength > 0.0f
+                ? region->controlStart
+                : (region->vertical ? region->shape.y : region->shape.x);
+            const float length = region->controlLength > 0.0f
+                ? region->controlLength
+                : (region->vertical ? region->shape.height :
+                    region->shape.width);
+            normalized = length > 0.0f
+                ? ((region->vertical ? y : x) - start) / length : 0.0f;
+        }
         if (region->vertical) normalized = 1.0f - normalized;
         normalized = std::clamp(normalized, 0.0f, 1.0f);
         const float raw = region->minimum + normalized *
@@ -644,15 +717,33 @@ const InteractionRegion* WidgetInteractionRegions::HitTest(
 {
     for (auto region = active_.rbegin(); region != active_.rend(); ++region)
     {
-        const bool contains = region->hitFragments.empty()
+        const bool insideBounds = region->hitFragments.empty()
             ? region->shape.Contains(x, y)
             : std::any_of(region->hitFragments.begin(),
                 region->hitFragments.end(), [x, y](const auto& fragment) {
                     return fragment.Contains(x, y);
                 });
-        if (region->enabled &&
-            (!region->clip || region->clip->Contains(x, y)) && contains)
-            return &*region;
+        if (!region->enabled ||
+            (region->clip && !region->clip->Contains(x, y)) ||
+            !insideBounds)
+            continue;
+        if (region->hitTransform && region->localHitShape)
+        {
+            float localX = 0.0f;
+            float localY = 0.0f;
+            if (!InverseTransformPoint(
+                    *region->hitTransform, x, y, localX, localY))
+                continue;
+            const bool insideLocal = region->localHitFragments.empty()
+                ? region->localHitShape->Contains(localX, localY)
+                : std::any_of(region->localHitFragments.begin(),
+                    region->localHitFragments.end(),
+                    [localX, localY](const auto& fragment) {
+                        return fragment.Contains(localX, localY);
+                    });
+            if (!insideLocal) continue;
+        }
+        return &*region;
     }
     return nullptr;
 }

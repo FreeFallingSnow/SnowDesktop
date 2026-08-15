@@ -15968,7 +15968,11 @@ public:
     {
         if (!context_ || !node.transform) return;
         const auto& transform = *node.transform;
-        if (std::abs(transform.scale - 1.0f) <= 0.000001f &&
+        const float scaleX = transform.scale * transform.scaleX;
+        const float scaleY = transform.scale * transform.scaleY;
+        if (std::abs(scaleX - 1.0f) <= 0.000001f &&
+            std::abs(scaleY - 1.0f) <= 0.000001f &&
+            std::abs(transform.rotate) <= 0.000001f &&
             std::abs(transform.translateX) <= 0.000001f &&
             std::abs(transform.translateY) <= 0.000001f)
             return;
@@ -15980,7 +15984,8 @@ public:
                 node.frame.height * transform.originY);
         const D2D1_MATRIX_3X2_F local =
             D2D1::Matrix3x2F::Scale(
-                transform.scale, transform.scale, origin) *
+                scaleX, scaleY, origin) *
+            D2D1::Matrix3x2F::Rotation(transform.rotate, origin) *
             D2D1::Matrix3x2F::Translation(
                 transform.translateX, transform.translateY);
         context_->SetTransform(local * previous_);
@@ -16025,7 +16030,8 @@ static void DrawWidgetViewNode(D2DState* state,
         return;
     WidgetViewTransformScope transformScope(state, node);
     const float cumulativeScale = inheritedScale *
-        (node.transform ? node.transform->scale : 1.0f);
+        (node.transform
+            ? node.transform->scale * node.transform->scaleY : 1.0f);
 
     const bool hovered = regions.IsHovered(node.key);
     const bool pressed = regions.IsPressed(node.key);
