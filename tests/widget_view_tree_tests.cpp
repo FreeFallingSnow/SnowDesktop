@@ -3002,6 +3002,7 @@ void TestBasicTransforms()
     input.type = ViewNodeType::TextInput;
     input.key = "input";
     input.inputValue = "value";
+    input.accessibilityLabel = "Input";
     input.width = { ViewLengthKind::Fixed, 40.0f };
     input.height = { ViewLengthKind::Fixed, 20.0f };
     input.events["change"].id = "input.change";
