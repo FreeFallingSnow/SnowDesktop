@@ -738,6 +738,23 @@ timeline 跨过多个条目时也只分发最新到期值，并额外返回 `val
 `time.previewClock`。API v1 继续使用 `onTimer`
 兼容路径；新 v2 组件不得再依赖清单 `refreshIntervalMs` 过渡事件。
 
+### `animation`
+
+- `animation.requestFrame(id)` 请求一次宿主合并的下一帧事件，成功返回 `(true, nil)`。
+- `animation.cancelFrame(id)` 取消尚未分发的同名请求；确有请求被取消时返回 `true`。
+
+ID 必须是 1–128 字节有效 UTF-8；同名请求在同一帧内合并，每实例最多同时保留 16 个
+不同 ID。宿主约 16 ms 后分发 `event.kind == "frame"`，并提供 `id`、单调时钟
+`now` 和相对同一 ID 上一帧的 `deltaMs`；首帧和隐藏后恢复的首帧为 0，过长间隔
+封顶为 1000 ms。一次请求只产生一次事件，组件必须在 frame 事件中再次调用
+`requestFrame` 才会继续，因而不会创建永久隐式 60 FPS 循环。
+
+隐藏、卸载、热重载和宿主关闭会立即取消请求且不补帧；预览不启动真实计时器，系统启用
+“减少动态效果”时也拒绝逐帧回调。稳定失败码为 `hidden`、`reducedMotion`、
+`previewUnavailable`、`quotaExceeded`、`hostUnavailable` 或 `apiVersion`。此 API 不要求
+权限，对应 feature `animation.frame`；它只适合短时即时视觉更新，低频刷新仍应使用
+`schedule`，系统状态、媒体和音频数据仍应使用按需 `data.subscribe`。
+
 ### `data`
 
 当前公开二十四个按需数据源：`system.cpu`、`system.memory`、`system.gpu`、`system.power`、

@@ -418,13 +418,14 @@
 ---@field settings? SnowWidgetSettings
 
 ---@class SnowWidgetEvent
----@field kind 'visibility'|'resize'|'pointer'|'timer'|'schedule'|'action'|'selection'|'environment'|'panel'|'data.change'|'task.complete'|'slot.changed'|'notification.delivered'|'notification.action'
+---@field kind 'visibility'|'resize'|'pointer'|'timer'|'schedule'|'frame'|'action'|'selection'|'environment'|'panel'|'data.change'|'task.complete'|'slot.changed'|'notification.delivered'|'notification.action'
 ---@field action? 'click'|'change'|'focus'|'blur'|'submit'|'doubleClick'|'pointerDown'|'pointerMove'|'pointerUp'|'wheel'|'opened'|'closed'|string
 ---@field id? string
 ---@field name? string
 ---@field missed? integer
 ---@field coalesced? boolean
----@field now? integer UTC epoch milliseconds when a schedule event is dispatched.
+---@field now? integer UTC epoch milliseconds for schedule events; monotonic milliseconds for frame events.
+---@field deltaMs? integer Elapsed monotonic milliseconds since this ID's prior frame, or zero for its first frame.
 ---@field timelineIndex? integer One-based index of the newest due timeline entry.
 ---@field timelineCount? integer Total entries in the active timeline.
 ---@field timelineEnded? boolean Whether this event consumed the final timeline entry.
@@ -945,6 +946,20 @@ function schedule.timeline(id, entries, options) end
 ---@param id string
 ---@return boolean
 function schedule.cancel(id) end
+
+---@class snow.animation
+animation = {}
+
+---Request one host-coalesced next-frame event. Call again from the frame event to continue.
+---@param id string
+---@return boolean accepted
+---@return nil|'hidden'|'reducedMotion'|'previewUnavailable'|'quotaExceeded'|'hostUnavailable'|'apiVersion' error
+function animation.requestFrame(id) end
+
+---Cancel a pending named next-frame request.
+---@param id string
+---@return boolean
+function animation.cancelFrame(id) end
 
 ---@alias SnowDataHiddenPolicy 'pause'|'throttle'|'continue'
 

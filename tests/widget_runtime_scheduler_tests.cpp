@@ -10,6 +10,8 @@ namespace
 {
 using Schedule = snowdesktop::widget_runtime::NamedTimerSchedule;
 using HiddenPolicy = snowdesktop::widget_runtime::ScheduleHiddenPolicy;
+using FrameRequests =
+    snowdesktop::widget_runtime::AnimationFrameRequests;
 
 void Check(bool condition, const char* message)
 {
@@ -288,6 +290,63 @@ void TestTimelineValidationAndHiddenPause()
             resumed->missed == 1 && resumed->timelineEnded,
         "resuming a paused timeline must coalesce elapsed entries once");
 }
+
+void TestAnimationFrameRequests()
+{
+    FrameRequests requests;
+    const FrameRequests::TimePoint start{};
+    Check(!requests.Request("") &&
+            !requests.Request(std::string(
+                FrameRequests::MaxNameBytes + 1, 'x')) &&
+            !requests.Request("reduced", true),
+        "frame requests must reject invalid IDs and reduced-motion work");
+    for (std::size_t index = 0; index < FrameRequests::MaxRequests; ++index)
+    {
+        Check(requests.Request("frame-" + std::to_string(index)),
+            "frame requests below the per-instance limit must be accepted");
+    }
+    Check(requests.Request("frame-0") &&
+            requests.Size() == FrameRequests::MaxRequests &&
+            !requests.Request("overflow"),
+        "duplicate frames must coalesce without bypassing the limit");
+
+    const auto first = requests.Consume(
+        start + std::chrono::milliseconds(16));
+    Check(first.size() == FrameRequests::MaxRequests &&
+            first.front().name == "frame-0" &&
+            first.front().deltaMilliseconds == 0 &&
+            !requests.HasPending(),
+        "the first host frame must consume every pending ID once");
+    Check(requests.Request("frame-0"),
+        "an event may explicitly request its next frame");
+    const auto next = requests.Consume(
+        start + std::chrono::milliseconds(33));
+    Check(next.size() == 1 && next[0].name == "frame-0" &&
+            next[0].deltaMilliseconds == 17,
+        "continued frame loops must receive a monotonic delta");
+    Check(requests.Request("frame-0"),
+        "a continued frame loop may request a later host frame");
+    const auto delayed = requests.Consume(
+        start + std::chrono::milliseconds(5000));
+    Check(delayed.size() == 1 &&
+            delayed[0].deltaMilliseconds ==
+                FrameRequests::MaximumDeltaMilliseconds,
+        "long frame gaps must clamp animation catch-up work");
+
+    Check(requests.Request("frame-0") && requests.SetVisible(false) &&
+            !requests.HasPending() && !requests.Request("hidden"),
+        "hiding a component must clear and reject frame requests");
+    Check(requests.SetVisible(true) && requests.Request("frame-0"),
+        "a visible component may start a fresh frame loop");
+    const auto resumed = requests.Consume(
+        start + std::chrono::milliseconds(5000));
+    Check(resumed.size() == 1 &&
+            resumed[0].deltaMilliseconds == 0,
+        "resuming must not report a catch-up animation delta");
+    Check(requests.Request("frame-0") && requests.Cancel("frame-0") &&
+            !requests.HasPending() && !requests.Cancel("frame-0"),
+        "canceling a named next frame must be idempotent");
+}
 }
 
 int main()
@@ -299,6 +358,7 @@ int main()
     TestAbsoluteDeadlines();
     TestTimelineCoalescingAndReload();
     TestTimelineValidationAndHiddenPause();
+    TestAnimationFrameRequests();
     std::cout << "widget runtime scheduler tests passed\n";
     return 0;
 }

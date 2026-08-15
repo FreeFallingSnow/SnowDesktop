@@ -301,4 +301,74 @@ std::size_t NamedTimerSchedule::Size() const noexcept
 {
     return timers_.size();
 }
+
+bool AnimationFrameRequests::Request(
+    std::string name, bool reducedMotion)
+{
+    if (!visible_ || reducedMotion || name.empty() ||
+        name.size() > MaxNameBytes)
+        return false;
+    if (std::find(pending_.begin(), pending_.end(), name) != pending_.end())
+        return true;
+    if (pending_.size() >= MaxRequests) return false;
+    pending_.push_back(std::move(name));
+    return true;
+}
+
+bool AnimationFrameRequests::Cancel(std::string_view name)
+{
+    const auto found = std::find(pending_.begin(), pending_.end(), name);
+    const bool removed = found != pending_.end();
+    if (removed) pending_.erase(found);
+    previousFrames_.erase(std::string(name));
+    return removed;
+}
+
+bool AnimationFrameRequests::SetVisible(bool visible)
+{
+    if (visible_ == visible) return false;
+    visible_ = visible;
+    if (!visible_) Clear();
+    return true;
+}
+
+std::vector<AnimationFrameRequests::Frame>
+AnimationFrameRequests::Consume(TimePoint now)
+{
+    if (!visible_ || pending_.empty()) return {};
+    std::vector<std::string> names = std::exchange(pending_, {});
+    std::vector<Frame> result;
+    result.reserve(names.size());
+    for (std::string& name : names)
+    {
+        std::int64_t deltaMilliseconds = 0;
+        const auto previous = previousFrames_.find(name);
+        if (previous != previousFrames_.end() && now > previous->second)
+        {
+            deltaMilliseconds = std::clamp<std::int64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now - previous->second).count(),
+                0, MaximumDeltaMilliseconds);
+        }
+        previousFrames_.insert_or_assign(name, now);
+        result.push_back({ std::move(name), deltaMilliseconds });
+    }
+    return result;
+}
+
+void AnimationFrameRequests::Clear()
+{
+    pending_.clear();
+    previousFrames_.clear();
+}
+
+bool AnimationFrameRequests::HasPending() const noexcept
+{
+    return !pending_.empty();
+}
+
+std::size_t AnimationFrameRequests::Size() const noexcept
+{
+    return pending_.size();
+}
 }

@@ -521,7 +521,9 @@ struct LuaWidget
     std::chrono::steady_clock::time_point lastRenderTime{};
     UINT_PTR refreshTimerId = 0;        ///< 宿主统一截止时间队列分配的周期令牌（0 = 未开）
     UINT_PTR namedTimerId = 0;          ///< widget.setTimer 命名定时器共用的下一次唤醒令牌
+    UINT_PTR animationTimerId = 0;      ///< animation.requestFrame 共用的单次下一帧令牌
     snowdesktop::widget_runtime::NamedTimerSchedule namedTimers;
+    snowdesktop::widget_runtime::AnimationFrameRequests animationFrames;
     std::vector<HostControl> hostControls;
     snowdesktop::widget_runtime::DeferredHostInputFocus
         deferredHostInputFocus;
@@ -1325,6 +1327,10 @@ public:
         snowdesktop::widget_runtime::ScheduleHiddenPolicy hiddenPolicy,
         bool reloadAtEnd);
     bool RuntimeCancelTimer(const std::wstring& widgetId, const std::string& name);
+    std::string RuntimeRequestAnimationFrame(
+        const std::wstring& widgetId, const std::string& name);
+    bool RuntimeCancelAnimationFrame(
+        const std::wstring& widgetId, const std::string& name);
     int RuntimeHttpRequest(const std::wstring& widgetId, HttpRequestOptions options);
     bool RuntimeHttpCancel(const std::wstring& widgetId, int requestId);
     void RuntimeRegisterHostControl(const std::wstring& widgetId, LuaWidget::HostControl control);
@@ -1461,6 +1467,8 @@ private:
         snowdesktop::widget_runtime::TaskBrokerCancelReason reason);
     void EnsureSystemSnapshotServiceStarted();
     void RescheduleNamedTimer(LuaWidget& widget);
+    bool ScheduleAnimationFrame(LuaWidget& widget);
+    void StopAnimationFrames(LuaWidget& widget);
 
     D2DState* d2dState_ = nullptr;                     ///< Direct2D 渲染状态管理对象指针
     ComPtr<ID2D1DeviceContext> d2dContext_;            ///< Direct2D 设备上下文

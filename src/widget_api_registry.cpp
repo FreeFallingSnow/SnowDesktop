@@ -20,7 +20,8 @@ namespace snowdesktop::widget_api
 namespace
 {
 constexpr std::uint32_t kCurrentApiVersion = 2;
-constexpr std::array<std::string_view, 114> kHostFeatures = {
+constexpr std::array<std::string_view, 115> kHostFeatures = {
+    "animation.frame",
     "calendar.dateMath",
     "calendar.selection",
     "control.focus",
@@ -264,9 +265,9 @@ constexpr std::array<SystemTaskContract, 41> kSystemTaskContracts = {{
     { "system.openSettings", "task.system.openSettings", "shell.launch",
         true, 1 },
 }};
-constexpr std::array<std::string_view, 23> kV2SandboxLibraries = {
+constexpr std::array<std::string_view, 24> kV2SandboxLibraries = {
     "string", "table", "math", "utf8", "draw", "layout", "storage",
-    "state", "schedule", "widget", "system", "time", "module",
+    "state", "schedule", "animation", "widget", "system", "time", "module",
     "resource", "data", "task", "interaction", "control", "calendar",
     "ui", "l10n", "view", "slots",
 };

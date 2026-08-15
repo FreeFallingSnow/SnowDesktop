@@ -1235,8 +1235,8 @@ view.row({
 - 只有组件绑定了业务事件时才调用 Lua；状态更新、多个订阅通知和同一帧内的重复 `invalidate` 合并为至多一次 `view()` 求值和一次 scene diff。
 - 布局、绘制、命中区域和 UI Automation 边界来自同一棵提交成功的 scene tree；不允许视觉已经变化而点击仍指向旧树。
 - 声明式 transition 由宿主运行，默认只允许可合成的颜色、透明度和 transform；布局动画必须显式声明并受节点数量限制。
-- 即时绘制组件可以通过 `animation.requestFrame(id)` 请求下一帧，收到包含 `now` 和 `deltaMs` 的 frame 事件；不再次请求就自动停止，禁止永久隐式 60 FPS 循环。
-- 隐藏、最小化、系统休眠和组件卸载时停止 frame 请求；恢复时重新计算时间，不补绘所有错过帧。
+- 即时绘制组件已可通过 `animation.requestFrame(id)` 请求下一帧，收到包含单调时钟 `now` 和 `deltaMs` 的 frame 事件；同帧同 ID 合并，每实例最多 16 个待处理 ID，不再次请求就自动停止，禁止永久隐式 60 FPS 循环。`animation.cancelFrame(id)` 可显式取消待处理请求。
+- 当前实现会在组件隐藏、卸载、热重载和宿主关闭时停止并清空 frame 请求；恢复后首帧 delta 归零，不补绘所有错过帧。系统休眠/恢复的真实桌面场景仍列入第 18.5 节验证门禁。
 - `reducedMotion` 下宿主关闭非必要 transition，组件不得自行用逐帧回调绕过用户设置。
 - “实时”表示输入或状态变化驱动的下一帧更新，不承诺硬实时或始终满刷新率；繁忙系统下允许合帧，但不能阻塞桌面 UI 线程等待 Lua、文件或网络。
 
@@ -1916,6 +1916,7 @@ M7 切换完成后，发布运行时必须删除 API v1 注册和执行分支。
   差分通知，radio/select/calendar 常用内部项也已形成 Selection/SelectionItem 树；生成物、
   任意虚拟化集合子项、其余 Pattern/事件及默认值/范围等列仍需继续并入，尚未达到冻结条件。
 - 环境上下文、响应式尺寸和减少动态效果。
+- 即时绘制的按需 `animation.requestFrame/cancelFrame` 已接入宿主单次帧计时器、可见性清理和 `reducedMotion` 拒绝；真实桌面帧节奏、休眠恢复和多实例合帧仍需完成第 18.5 节场景验证。
 - 元素级 hover/pressed/focus、click/double click、指针捕获和独立原生右键菜单。
 - `LuaLogicalSlot`、`slots.binding/collection`、`slotSurface/slotItem`、宿主引用存储和现有 slot contract 全矩阵接入；v2.0 实现 binding 的 reference/replace/clear 和 collection 的 reference/reorder/remove。
 - 当前过渡实现已提供 collection slotItem 的宿主指针阈值、插入提示、同槽原子重排、历史记录及 `host.pointer` 变化来源；并以 `slots.keyboardNavigation` 提供可见 slotItem 的 Tab/空间方向焦点、焦点轮廓、Enter/Space 自身 click、Alt+方向键同槽重排、Delete 策略化移除和 `host.keyboard` 变化来源。跨槽拖动、原生拖出、通用节点键盘矩阵和 UIA 仍待后续批次。

@@ -104,4 +104,34 @@ private:
     std::unordered_map<std::string, Timer> timers_;
     bool visible_ = true;
 };
+
+class AnimationFrameRequests
+{
+public:
+    using Clock = std::chrono::steady_clock;
+    using TimePoint = Clock::time_point;
+
+    static constexpr std::size_t MaxRequests = 16;
+    static constexpr std::size_t MaxNameBytes = 128;
+    static constexpr std::int64_t MaximumDeltaMilliseconds = 1000;
+
+    struct Frame
+    {
+        std::string name;
+        std::int64_t deltaMilliseconds = 0;
+    };
+
+    bool Request(std::string name, bool reducedMotion = false);
+    bool Cancel(std::string_view name);
+    bool SetVisible(bool visible);
+    std::vector<Frame> Consume(TimePoint now);
+    void Clear();
+    bool HasPending() const noexcept;
+    std::size_t Size() const noexcept;
+
+private:
+    std::vector<std::string> pending_;
+    std::unordered_map<std::string, TimePoint> previousFrames_;
+    bool visible_ = true;
+};
 }

@@ -2985,6 +2985,66 @@ static int lua_ScheduleCancel(lua_State* state)
     return 1;
 }
 
+static int lua_AnimationRequestFrame(lua_State* state)
+{
+    if (lua_gettop(state) != 1)
+        return luaL_error(state,
+            "animation.requestFrame: expected one id");
+    if (lua_type(state, 1) != LUA_TSTRING)
+        return luaL_error(state,
+            "animation.requestFrame: id must be a string");
+    std::size_t nameLength = 0;
+    const char* name = lua_tolstring(state, 1, &nameLength);
+    const std::string frameId(name ? name : "", nameLength);
+    if (frameId.empty() ||
+        frameId.size() > snowdesktop::widget_runtime::
+            AnimationFrameRequests::MaxNameBytes ||
+        frameId.find('\0') != std::string::npos ||
+        !IsValidUtf8Local(frameId))
+    {
+        return luaL_error(state,
+            "animation.requestFrame: id must contain 1 to 128 bytes of valid UTF-8");
+    }
+    auto* d2d = GetD2D(state);
+    const std::string error = d2d && d2d->engine
+        ? d2d->engine->RuntimeRequestAnimationFrame(
+            BoundWidgetId(state), frameId)
+        : "hostUnavailable";
+    lua_pushboolean(state, error.empty() ? 1 : 0);
+    if (error.empty())
+        lua_pushnil(state);
+    else
+        lua_pushlstring(state, error.data(), error.size());
+    return 2;
+}
+
+static int lua_AnimationCancelFrame(lua_State* state)
+{
+    if (lua_gettop(state) != 1)
+        return luaL_error(state,
+            "animation.cancelFrame: expected one id");
+    if (lua_type(state, 1) != LUA_TSTRING)
+        return luaL_error(state,
+            "animation.cancelFrame: id must be a string");
+    std::size_t nameLength = 0;
+    const char* name = lua_tolstring(state, 1, &nameLength);
+    const std::string frameId(name ? name : "", nameLength);
+    if (frameId.empty() ||
+        frameId.size() > snowdesktop::widget_runtime::
+            AnimationFrameRequests::MaxNameBytes ||
+        frameId.find('\0') != std::string::npos ||
+        !IsValidUtf8Local(frameId))
+    {
+        return luaL_error(state,
+            "animation.cancelFrame: id must contain 1 to 128 bytes of valid UTF-8");
+    }
+    auto* d2d = GetD2D(state);
+    lua_pushboolean(state, d2d && d2d->engine &&
+        d2d->engine->RuntimeCancelAnimationFrame(
+            BoundWidgetId(state), frameId));
+    return 1;
+}
+
 struct LuaDataSubscriptionHandle
 {
     WidgetEngine* engine = nullptr;
@@ -12585,6 +12645,7 @@ void WidgetEngine::Shutdown()
             widgetTimerKillCallback_(widget.refreshTimerId);
         if (widget.namedTimerId && widgetTimerKillCallback_)
             widgetTimerKillCallback_(widget.namedTimerId);
+        StopAnimationFrames(widget);
     }
     if (systemSnapshotService_)
     {
@@ -12682,6 +12743,7 @@ void WidgetEngine::UnloadWidget(const std::wstring& widgetId)
         widgetTimerKillCallback_(widgets_[idx].refreshTimerId);
     if (widgets_[idx].namedTimerId && widgetTimerKillCallback_)
         widgetTimerKillCallback_(widgets_[idx].namedTimerId);
+    StopAnimationFrames(widgets_[idx]);
     if (httpService_) httpService_->CancelWidget(widgetId);
     lua_State* state = widgets_[idx].state;
     if (state)
@@ -13538,6 +13600,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     }
     (void)w.namedTimers.SetVisible(false,
         snowdesktop::widget_runtime::NamedTimerSchedule::Clock::now());
+    (void)w.animationFrames.SetVisible(false);
     WIN32_FILE_ATTRIBUTE_DATA attr{};
     if (GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &attr))
         w.lastModified = attr.ftLastWriteTime;
@@ -15925,6 +15988,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
         {
             RescheduleNamedTimer(*found);
         }
+        (void)found->animationFrames.SetVisible(true);
         if (dataBroker_)
         {
             (void)dataBroker_->SetInstanceVisible(
@@ -16823,6 +16887,7 @@ void WidgetEngine::TickRuntime()
             widget.hostVisible = false;
             if (widget.namedTimers.SetVisible(false, runtimeNow))
                 RescheduleNamedTimer(widget);
+            StopAnimationFrames(widget);
             if (dataBroker_)
             {
                 (void)dataBroker_->SetInstanceVisible(
@@ -16847,6 +16912,35 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
         d2dState_, activeWidgetId);
     snowdesktop::lua_runtime::StackGuard stackGuard(state);
     SetWidgetRectContext(d2dState_, widget.lastBounds);
+
+    if (timerId == widget.animationTimerId)
+    {
+        if (widget.animationTimerId && widgetTimerKillCallback_)
+            widgetTimerKillCallback_(widget.animationTimerId);
+        widget.animationTimerId = 0;
+        const auto now = snowdesktop::widget_runtime::
+            AnimationFrameRequests::Clock::now();
+        const auto nowMilliseconds = snowdesktop::widget_runtime::
+            CurrentMonotonicMilliseconds();
+        const auto frames = widget.animationFrames.Consume(now);
+        for (const auto& frame : frames)
+        {
+            (void)InvokeLifecycleEvent(widget, "frame",
+                [&frame, nowMilliseconds](lua_State* eventState) {
+                    lua_pushlstring(eventState,
+                        frame.name.data(), frame.name.size());
+                    lua_setfield(eventState, -2, "id");
+                    lua_pushinteger(eventState,
+                        static_cast<lua_Integer>(nowMilliseconds));
+                    lua_setfield(eventState, -2, "now");
+                    lua_pushinteger(eventState,
+                        static_cast<lua_Integer>(
+                            frame.deltaMilliseconds));
+                    lua_setfield(eventState, -2, "deltaMs");
+                });
+        }
+        return;
+    }
 
     if (timerId == widget.refreshTimerId)
     {
@@ -17649,6 +17743,7 @@ bool WidgetEngine::ReloadWidget(const std::wstring& widgetId)
         widgetTimerKillCallback_(old.refreshTimerId);
     if (old.namedTimerId && widgetTimerKillCallback_)
         widgetTimerKillCallback_(old.namedTimerId);
+    StopAnimationFrames(old);
     if (httpService_) httpService_->CancelWidget(widgetId);
     if (old.state)
     {
@@ -20472,6 +20567,47 @@ bool WidgetEngine::RuntimeCancelTimer(const std::wstring& widgetId, const std::s
     return removed;
 }
 
+std::string WidgetEngine::RuntimeRequestAnimationFrame(
+    const std::wstring& widgetId, const std::string& name)
+{
+    if (snowdesktop::widget_runtime::IsDryLoad())
+        return "previewUnavailable";
+    const int index = FindWidget(widgetId);
+    if (index < 0 || !widgets_[index].state)
+        return "hostUnavailable";
+    LuaWidget& widget = widgets_[index];
+    if (widget.manifest.apiVersion < 2)
+        return "apiVersion";
+    if (widget.preview)
+        return "previewUnavailable";
+    if (!widget.hostVisible)
+        return "hidden";
+    if (QueryWidgetSystemEnvironment().reducedMotion)
+        return "reducedMotion";
+    if (!widget.animationFrames.Request(name))
+        return "quotaExceeded";
+    if (ScheduleAnimationFrame(widget))
+        return {};
+    (void)widget.animationFrames.Cancel(name);
+    return "hostUnavailable";
+}
+
+bool WidgetEngine::RuntimeCancelAnimationFrame(
+    const std::wstring& widgetId, const std::string& name)
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0) return false;
+    LuaWidget& widget = widgets_[index];
+    const bool removed = widget.animationFrames.Cancel(name);
+    if (!widget.animationFrames.HasPending() && widget.animationTimerId)
+    {
+        if (widgetTimerKillCallback_)
+            widgetTimerKillCallback_(widget.animationTimerId);
+        widget.animationTimerId = 0;
+    }
+    return removed;
+}
+
 void WidgetEngine::RebindHostTimers()
 {
     for (auto& widget : widgets_)
@@ -20481,6 +20617,7 @@ void WidgetEngine::RebindHostTimers()
         // implementation may already have reused them for the new surface.
         widget.refreshTimerId = 0;
         widget.namedTimerId = 0;
+        widget.animationTimerId = 0;
 
         if (widget.preview)
             continue;
@@ -20493,6 +20630,7 @@ void WidgetEngine::RebindHostTimers()
                 static_cast<UINT>(widget.manifest.refreshIntervalMs));
         }
         RescheduleNamedTimer(widget);
+        (void)ScheduleAnimationFrame(widget);
     }
 }
 
@@ -20514,6 +20652,28 @@ void WidgetEngine::RescheduleNamedTimer(LuaWidget& widget)
         return;
     widget.namedTimerId = widgetTimerRequestCallback_(
         widget.widgetId, static_cast<UINT>(delay->count()));
+}
+
+bool WidgetEngine::ScheduleAnimationFrame(LuaWidget& widget)
+{
+    if (widget.animationTimerId)
+        return true;
+    if (widget.preview || !widget.hostVisible ||
+        !widget.animationFrames.HasPending() ||
+        !widgetTimerRequestCallback_)
+        return false;
+    widget.animationTimerId = widgetTimerRequestCallback_(
+        widget.widgetId, 16);
+    return widget.animationTimerId != 0;
+}
+
+void WidgetEngine::StopAnimationFrames(LuaWidget& widget)
+{
+    if (widget.animationTimerId && widgetTimerKillCallback_)
+        widgetTimerKillCallback_(widget.animationTimerId);
+    widget.animationTimerId = 0;
+    (void)widget.animationFrames.SetVisible(false);
+    widget.animationFrames.Clear();
 }
 
 bool WidgetEngine::RuntimeSetTimerAt(const std::wstring& widgetId,
@@ -26035,6 +26195,10 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
         { "timeline", lua_ScheduleTimeline, 2 },
         { "cancel", lua_ScheduleCancel, 2 },
     };
+    static constexpr FunctionDescriptor animation[] = {
+        { "requestFrame", lua_AnimationRequestFrame, 2 },
+        { "cancelFrame", lua_AnimationCancelFrame, 2 },
+    };
     static constexpr FunctionDescriptor data[] = {
         { "subscribe", lua_DataSubscribe, 2 },
     };
@@ -26059,6 +26223,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
         DescribeLibrary("slots", slots),
         DescribeLibrary("state", state),
         DescribeLibrary("schedule", schedule),
+        DescribeLibrary("animation", animation),
         DescribeLibrary("data", data),
         DescribeLibrary("task", task),
     };

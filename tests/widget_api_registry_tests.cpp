@@ -248,7 +248,8 @@ void TestV2Contract()
         return std::find(v2Libraries.begin(), v2Libraries.end(), name) !=
             v2Libraries.end();
     };
-    Check(hasV2Library("control") && hasV2Library("interaction") &&
+    Check(hasV2Library("animation") && hasV2Library("control") &&
+            hasV2Library("interaction") &&
             hasV2Library("view") &&
             hasV2Library("slots") &&
             hasV2Library("task") && hasV2Library("calendar") &&
@@ -264,6 +265,8 @@ void TestV2Contract()
         "the executable sandbox catalog must not retain API v1 libraries");
 
     Check(snowdesktop::widget_api::SupportsFeature(
+                "animation.frame") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "data.app.indexStatus") &&
             snowdesktop::widget_api::SupportsFeature(
                 "data.audio.output.analysis") &&

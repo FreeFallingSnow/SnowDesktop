@@ -226,6 +226,11 @@ menu.
 - Set `whenHidden` deliberately: prefer `pause` for purely visual clocks and
   animation, `throttle` for low-frequency freshness, and `continue` only when
   deadlines must remain active while the component is hidden.
+- Use `animation.requestFrame(id)` only for short, visible immediate-mode
+  animation loops. Handle `event.kind == "frame"` and request the ID again only
+  while the loop should continue; hidden, preview, and reduced-motion contexts
+  reject or cancel frame work. Use `animation.cancelFrame(id)` to stop an
+  already pending request.
 - Preview time is deterministic (`time.previewClock`): do not expect preview
   schedules to advance or wait for real deadlines. Use manifest preview data
   to present the intended state.
