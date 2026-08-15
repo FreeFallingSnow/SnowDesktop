@@ -945,9 +945,15 @@ HTTPS URL；`http:`、`file:`、自定义 scheme、localhost、局域网和 IP �
   maxHeight?, alpha?, font?)`
 - `draw.measureText(text, size?, maxWidth?, bold?, font?)`
 - `draw.rect(...)`、`draw.strokeRect(...)`、`draw.line(...)`、`draw.circle(...)`
+- `draw.arc(cx, cy, radius, startDegrees, sweepDegrees, thickness?, color?, alpha?)`
+- `draw.path(commands, options?)`
+- `draw.gradientRect(x, y, width, height, startColor?, endColor?, direction?, radius?, alpha?)`
+- `draw.shadow(x, y, width, height, color?, blur?, radius?, offsetX?, offsetY?, alpha?)`
+- `draw.sparkline(values, x, y, width, height, color?, thickness?, min?, max?, alpha?)`
 - `draw.pushClip(x, y, width, height)`、`draw.popClip()`
 - `draw.fa(...)`、`draw.fluent(...)`
 - `draw.image(imageHandle, x, y, width, height, alpha?)`
+- `draw.imageFit(imageHandle, x, y, width, height, fit?, alignment?, alpha?, interpolation?)`
 - `draw.icon(ref, x, y, size?, alpha?)`：要求 `desktop.read`，只接受当前实例由
   `app.search`、`desktop.search` 或 `everything.search` 返回且仍有效的不透明 ref；
   不接受路径、v1 项目表或其他实例的引用。
@@ -955,6 +961,27 @@ HTTPS URL；`http:`、`file:`、自定义 scheme、localhost、局域网和 IP �
 颜色是 `0xRRGGBB`，透明度单独传入。`draw.image` 在 v2 中只接受
 `resource.image()` 返回的不透明句柄；字体句柄可传给 `draw.text` 和
 `draw.measureText`。
+
+上述 `arc/path/gradientRect/shadow/sparkline/imageFit` 属于可探测 feature
+`draw.advanced`，仅注册到 API v2。它们遵守以下确定性边界：
+
+- `arc` 的 `0°` 指向右侧，正角度顺时针；非零 sweep 最多一圈，宿主会拆成至多
+  3 段安全圆弧。
+- `path` 接受 1–256 个严格命令，首项必须是
+  `{op="move", x, y}`。后续可用 `line`、`cubic`、`quadratic`、`close`；命令表
+  拒绝未知字段、元表和稀疏数组。`options` 只接受 `fillColor/strokeColor/thickness/
+  alpha/fillRule`，其中 `fillRule` 为 `alternate` 或 `winding`。没有指定填充或描边时
+  默认使用白色描边。
+- `gradientRect` 是两色线性渐变，方向为 `horizontal`、`vertical`、
+  `diagonalDown` 或 `diagonalUp`；圆角不能超过短边一半。
+- `imageFit` 仍只接受当前实例的图片句柄。`fit` 为 `fill/contain/cover/none`，
+  `alignment` 为 `start/center/end` 并同时作用于两轴，采样为 `linear/nearest`；
+  `cover` 由宿主计算源图裁切，不向 Lua 暴露资源路径或像素。
+- `shadow` 的 blur 为 `0–64`，最多产生 16 层宿主受控的柔和衰减；它不是任意
+  shader 或无界高斯效果。圆角不能超过短边一半，偏移和扩散后的区域仍受坐标预算约束。
+- `sparkline` 接受 1–512 个有限数值。`min/max` 必须成对提供且严格递增；省略时宿主
+  自动计算范围，越界样本裁到绘图区。所有宽高、坐标、线宽、颜色和透明度都经过有限值
+  与上限检查，不会因一次调用创建无界工作量。
 
 ### `layout`
 

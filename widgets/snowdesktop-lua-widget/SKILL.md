@@ -223,6 +223,12 @@ menu.
 - Create `resource.image/font` handles at entry scope. Use `resource.status`
   when diagnostics are needed.
 - Use `draw.measureText`, clipping, explicit `maxWidth`, and separate opacity.
+- Probe `draw.advanced` before using `draw.arc/path/gradientRect/imageFit/shadow/
+  sparkline`. Keep paths within 256 strict commands and sparklines within 512
+  finite values. Pass only image handles to `imageFit`; its fit, alignment, and
+  interpolation are host-controlled. Shadow blur stops at 64 and uses at most
+  16 bounded falloff layers, so do not describe it as an arbitrary shader or
+  unbounded Gaussian effect.
 - Submit every immediate-mode hit target with a stable `interaction.region`
   key during render. Read `interaction.isHovered/isPressed` for visuals and
   handle serialized region actions in `event`; never synthesize click from raw

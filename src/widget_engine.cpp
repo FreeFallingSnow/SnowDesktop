@@ -32,6 +32,7 @@
 #include "widget_permission_broker.h"
 #include "widget_preview_context.h"
 #include "widget_interaction_region.h"
+#include "widget_draw_geometry.h"
 #include "widget_view_lua.h"
 #include "widget_view_tree.h"
 #include "widget_resource_lua.h"
@@ -63,6 +64,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <limits>
 #include <mutex>
 #include <set>
@@ -7289,6 +7291,564 @@ static ID2D1Bitmap1* LoadRuntimeImageBitmap(
     return result;
 }
 
+static bool LuaTableUsesOnlyFields(lua_State* state, int index,
+    std::span<const std::string_view> allowed,
+    std::string_view context, std::string& error)
+{
+    index = lua_absindex(state, index);
+    if (lua_getmetatable(state, index) != 0)
+    {
+        lua_pop(state, 1);
+        error = std::string(context) + " cannot have a metatable";
+        return false;
+    }
+    lua_pushnil(state);
+    while (lua_next(state, index) != 0)
+    {
+        if (lua_type(state, -2) != LUA_TSTRING)
+        {
+            lua_pop(state, 2);
+            error = std::string(context) + " keys must be strings";
+            return false;
+        }
+        std::size_t length = 0;
+        const char* key = lua_tolstring(state, -2, &length);
+        const std::string_view field(key ? key : "", length);
+        if (std::find(allowed.begin(), allowed.end(), field) ==
+            allowed.end())
+        {
+            lua_pop(state, 2);
+            error = std::string(context) + " has unsupported field '" +
+                std::string(field) + "'";
+            return false;
+        }
+        lua_pop(state, 1);
+    }
+    return true;
+}
+
+static bool LuaTableUsesOnlyFields(lua_State* state, int index,
+    std::initializer_list<std::string_view> allowed,
+    std::string_view context, std::string& error)
+{
+    return LuaTableUsesOnlyFields(state, index,
+        std::span<const std::string_view>(allowed.begin(), allowed.size()),
+        context, error);
+}
+
+static bool LuaTableIsContiguousArray(lua_State* state, int index,
+    std::string_view context, std::string& error)
+{
+    index = lua_absindex(state, index);
+    if (lua_getmetatable(state, index) != 0)
+    {
+        lua_pop(state, 1);
+        error = std::string(context) + " cannot have a metatable";
+        return false;
+    }
+    const std::size_t length = lua_rawlen(state, index);
+    std::size_t count = 0;
+    lua_pushnil(state);
+    while (lua_next(state, index) != 0)
+    {
+        ++count;
+        const bool valid = lua_isinteger(state, -2) &&
+            lua_tointeger(state, -2) > 0 &&
+            static_cast<std::size_t>(lua_tointeger(state, -2)) <= length;
+        lua_pop(state, 1);
+        if (!valid)
+        {
+            lua_pop(state, 1);
+            error = std::string(context) +
+                " must use contiguous integer keys";
+            return false;
+        }
+    }
+    if (count != length)
+    {
+        error = std::string(context) +
+            " must use contiguous integer keys";
+        return false;
+    }
+    return true;
+}
+
+static int LuaDrawColor(lua_State* state, int index,
+    int fallback, const char* api)
+{
+    if (lua_isnoneornil(state, index)) return fallback;
+    const lua_Integer value = luaL_checkinteger(state, index);
+    if (value < 0 || value > 0xFFFFFF)
+        luaL_error(state, "%s: colors must be between 0 and 0xFFFFFF", api);
+    return static_cast<int>(value);
+}
+
+static float LuaDrawAlpha(lua_State* state, int index, const char* api)
+{
+    const float value = static_cast<float>(luaL_optnumber(state, index, 1.0));
+    if (!std::isfinite(value) || value < 0.0f || value > 1.0f)
+        luaL_error(state, "%s: alpha must be between 0 and 1", api);
+    return value;
+}
+
+static ID2D1Bitmap1* ResolveDrawImageBitmap(lua_State* state,
+    D2DState* d2d, int index, const char* api, bool allowLegacyPath)
+{
+    if (!d2d || !d2d->engine) return nullptr;
+    std::optional<std::wstring> fullPath;
+    ID2D1Bitmap1* bitmap = nullptr;
+    if (const auto* handle = TestResourceHandle(state, index))
+    {
+        if (handle->type != LuaResourceType::Image)
+            luaL_error(state, "%s: invalid image resource handle", api);
+        if (snowdesktop::widget_runtime::IsWidgetRuntimeImageToken(
+                handle->name))
+            bitmap = LoadRuntimeImageBitmap(
+                d2d, BoundWidgetId(state), handle->name);
+        else
+            fullPath = ResolveResourceHandlePath(
+                state, index, LuaResourceType::Image);
+        if (!bitmap && !fullPath)
+            luaL_error(state, "%s: invalid image resource handle", api);
+    }
+    else
+    {
+        if (!allowLegacyPath)
+            luaL_error(state, "%s: API v2 requires an image handle", api);
+        const char* pathRaw = luaL_checkstring(state, index);
+        const std::wstring path = Utf8ToWideLocal(pathRaw ? pathRaw : "");
+        if (path.empty()) return nullptr;
+        fullPath = d2d->engine->RuntimeResolvePackageAsset(
+            BoundWidgetId(state), path);
+    }
+    if (!bitmap && fullPath) bitmap = LoadImageBitmap(d2d, *fullPath);
+    return bitmap;
+}
+
+static int lua_DrawArc(lua_State* state)
+{
+    const float centerX = static_cast<float>(luaL_checknumber(state, 1));
+    const float centerY = static_cast<float>(luaL_checknumber(state, 2));
+    const float radius = static_cast<float>(luaL_checknumber(state, 3));
+    const float start = static_cast<float>(luaL_checknumber(state, 4));
+    const float sweep = static_cast<float>(luaL_checknumber(state, 5));
+    const float thickness = static_cast<float>(
+        luaL_optnumber(state, 6, 1.0));
+    const int color = LuaDrawColor(state, 7, 0xFFFFFF, "draw.arc");
+    const float alpha = LuaDrawAlpha(state, 8, "draw.arc");
+    if (!std::isfinite(thickness) || thickness <= 0.0f ||
+        thickness > 4096.0f)
+        return luaL_error(state,
+            "draw.arc: thickness must be positive and bounded");
+    std::vector<snowdesktop::widget_runtime::DrawArcPiece> pieces;
+    std::string error;
+    if (!snowdesktop::widget_runtime::BuildDrawArc(centerX, centerY,
+            radius, start, sweep, pieces, error))
+        return luaL_error(state, "draw.arc: %s", error.c_str());
+    auto* d2d = GetD2D(state);
+    if (!d2d || !d2d->ctx) return 0;
+    ComPtr<ID2D1Factory> factory;
+    d2d->ctx->GetFactory(&factory);
+    ComPtr<ID2D1PathGeometry> geometry;
+    ComPtr<ID2D1GeometrySink> sink;
+    if (!factory || FAILED(factory->CreatePathGeometry(&geometry)) ||
+        !geometry || FAILED(geometry->Open(&sink)) || !sink)
+        return 0;
+    const auto absolute = [d2d](const auto& point) {
+        return D2D1::Point2F(point.x + d2d->widgetRect.left,
+            point.y + d2d->widgetRect.top);
+    };
+    sink->BeginFigure(absolute(pieces.front().start),
+        D2D1_FIGURE_BEGIN_HOLLOW);
+    for (const auto& piece : pieces)
+        sink->AddArc(D2D1::ArcSegment(absolute(piece.end),
+            D2D1::SizeF(piece.radius, piece.radius), 0.0f,
+            piece.clockwise ? D2D1_SWEEP_DIRECTION_CLOCKWISE :
+                D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE,
+            D2D1_ARC_SIZE_SMALL));
+    sink->EndFigure(D2D1_FIGURE_END_OPEN);
+    if (FAILED(sink->Close())) return 0;
+    if (ID2D1SolidColorBrush* brush = GetCachedBrush(d2d, color, alpha))
+        d2d->ctx->DrawGeometry(geometry.Get(), brush, thickness);
+    return 0;
+}
+
+static int lua_DrawPath(lua_State* state)
+{
+    luaL_checktype(state, 1, LUA_TTABLE);
+    std::string error;
+    if (!LuaTableIsContiguousArray(state, 1, "draw.path commands", error))
+        return luaL_error(state, "draw.path: %s", error.c_str());
+    const std::size_t count = lua_rawlen(state, 1);
+    if (count == 0 || count > 256)
+        return luaL_error(state,
+            "draw.path: commands must contain 1 to 256 items");
+    using Command = snowdesktop::widget_runtime::DrawPathCommand;
+    using Type = snowdesktop::widget_runtime::DrawPathCommandType;
+    std::vector<Command> commands;
+    commands.reserve(count);
+    for (std::size_t index = 0; index < count; ++index)
+    {
+        lua_rawgeti(state, 1, static_cast<lua_Integer>(index + 1));
+        if (!lua_istable(state, -1))
+        {
+            lua_pop(state, 1);
+            return luaL_error(state,
+                "draw.path: every command must be a table");
+        }
+        lua_getfield(state, -1, "op");
+        const char* operation = luaL_checkstring(state, -1);
+        const std::string op = operation ? operation : "";
+        lua_pop(state, 1);
+        std::vector<std::string_view> allowed{ "op" };
+        Command command;
+        if (op == "move" || op == "line")
+        {
+            allowed = { "op", "x", "y" };
+            command.type = op == "move" ? Type::Move : Type::Line;
+            lua_getfield(state, -1, "x");
+            command.point.x = static_cast<float>(
+                luaL_checknumber(state, -1));
+            lua_pop(state, 1);
+            lua_getfield(state, -1, "y");
+            command.point.y = static_cast<float>(
+                luaL_checknumber(state, -1));
+            lua_pop(state, 1);
+        }
+        else if (op == "cubic")
+        {
+            allowed = { "op", "x1", "y1", "x2", "y2", "x", "y" };
+            command.type = Type::Cubic;
+            const auto read = [&](const char* field) {
+                lua_getfield(state, -1, field);
+                const float value = static_cast<float>(
+                    luaL_checknumber(state, -1));
+                lua_pop(state, 1);
+                return value;
+            };
+            command.control1 = { read("x1"), read("y1") };
+            command.control2 = { read("x2"), read("y2") };
+            command.point = { read("x"), read("y") };
+        }
+        else if (op == "quadratic")
+        {
+            allowed = { "op", "x1", "y1", "x", "y" };
+            command.type = Type::Quadratic;
+            const auto read = [&](const char* field) {
+                lua_getfield(state, -1, field);
+                const float value = static_cast<float>(
+                    luaL_checknumber(state, -1));
+                lua_pop(state, 1);
+                return value;
+            };
+            command.control1 = { read("x1"), read("y1") };
+            command.point = { read("x"), read("y") };
+        }
+        else if (op == "close")
+            command.type = Type::Close;
+        else
+        {
+            lua_pop(state, 1);
+            return luaL_error(state,
+                "draw.path: unsupported command '%s'", op.c_str());
+        }
+        if (!LuaTableUsesOnlyFields(state, -1,
+                std::span<const std::string_view>(allowed),
+                "draw.path command", error))
+        {
+            lua_pop(state, 1);
+            return luaL_error(state, "draw.path: %s", error.c_str());
+        }
+        commands.push_back(command);
+        lua_pop(state, 1);
+    }
+    if (!snowdesktop::widget_runtime::ValidateDrawPath(commands, error))
+        return luaL_error(state, "draw.path: %s", error.c_str());
+
+    std::optional<int> fillColor;
+    std::optional<int> strokeColor;
+    float thickness = 1.0f;
+    float alpha = 1.0f;
+    D2D1_FILL_MODE fillMode = D2D1_FILL_MODE_ALTERNATE;
+    if (!lua_isnoneornil(state, 2))
+    {
+        luaL_checktype(state, 2, LUA_TTABLE);
+        if (!LuaTableUsesOnlyFields(state, 2,
+                { "fillColor", "strokeColor", "thickness", "alpha",
+                    "fillRule" }, "draw.path options", error))
+            return luaL_error(state, "draw.path: %s", error.c_str());
+        lua_getfield(state, 2, "fillColor");
+        if (!lua_isnil(state, -1))
+            fillColor = LuaDrawColor(
+                state, -1, 0xFFFFFF, "draw.path");
+        lua_pop(state, 1);
+        lua_getfield(state, 2, "strokeColor");
+        if (!lua_isnil(state, -1))
+            strokeColor = LuaDrawColor(
+                state, -1, 0xFFFFFF, "draw.path");
+        lua_pop(state, 1);
+        lua_getfield(state, 2, "thickness");
+        if (!lua_isnil(state, -1))
+            thickness = static_cast<float>(luaL_checknumber(state, -1));
+        lua_pop(state, 1);
+        lua_getfield(state, 2, "alpha");
+        if (!lua_isnil(state, -1))
+            alpha = static_cast<float>(luaL_checknumber(state, -1));
+        lua_pop(state, 1);
+        lua_getfield(state, 2, "fillRule");
+        if (!lua_isnil(state, -1))
+        {
+            const char* value = luaL_checkstring(state, -1);
+            const std::string rule = value ? value : "";
+            if (rule == "winding") fillMode = D2D1_FILL_MODE_WINDING;
+            else if (rule != "alternate")
+            {
+                lua_pop(state, 1);
+                return luaL_error(state,
+                    "draw.path: fillRule must be alternate or winding");
+            }
+        }
+        lua_pop(state, 1);
+    }
+    if (!fillColor && !strokeColor) strokeColor = 0xFFFFFF;
+    if (!std::isfinite(thickness) || thickness <= 0.0f ||
+        thickness > 4096.0f || !std::isfinite(alpha) || alpha < 0.0f ||
+        alpha > 1.0f)
+        return luaL_error(state,
+            "draw.path: thickness and alpha are out of range");
+
+    auto* d2d = GetD2D(state);
+    if (!d2d || !d2d->ctx) return 0;
+    ComPtr<ID2D1Factory> factory;
+    d2d->ctx->GetFactory(&factory);
+    ComPtr<ID2D1PathGeometry> geometry;
+    ComPtr<ID2D1GeometrySink> sink;
+    if (!factory || FAILED(factory->CreatePathGeometry(&geometry)) ||
+        !geometry || FAILED(geometry->Open(&sink)) || !sink)
+        return 0;
+    sink->SetFillMode(fillMode);
+    bool open = false;
+    const auto point = [d2d](const auto& value) {
+        return D2D1::Point2F(value.x + d2d->widgetRect.left,
+            value.y + d2d->widgetRect.top);
+    };
+    for (const auto& command : commands)
+    {
+        if (command.type == Type::Move)
+        {
+            if (open) sink->EndFigure(D2D1_FIGURE_END_OPEN);
+            sink->BeginFigure(point(command.point), fillColor
+                ? D2D1_FIGURE_BEGIN_FILLED : D2D1_FIGURE_BEGIN_HOLLOW);
+            open = true;
+        }
+        else if (command.type == Type::Line)
+            sink->AddLine(point(command.point));
+        else if (command.type == Type::Cubic)
+            sink->AddBezier(D2D1::BezierSegment(point(command.control1),
+                point(command.control2), point(command.point)));
+        else if (command.type == Type::Quadratic)
+            sink->AddQuadraticBezier(D2D1::QuadraticBezierSegment(
+                point(command.control1), point(command.point)));
+        else if (open)
+        {
+            sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+            open = false;
+        }
+    }
+    if (open) sink->EndFigure(D2D1_FIGURE_END_OPEN);
+    if (FAILED(sink->Close())) return 0;
+    if (fillColor)
+    {
+        if (ID2D1SolidColorBrush* brush = GetCachedBrush(
+                d2d, *fillColor, alpha))
+            d2d->ctx->FillGeometry(geometry.Get(), brush);
+    }
+    if (strokeColor)
+    {
+        if (ID2D1SolidColorBrush* brush = GetCachedBrush(
+                d2d, *strokeColor, alpha))
+            d2d->ctx->DrawGeometry(geometry.Get(), brush, thickness);
+    }
+    return 0;
+}
+
+static int lua_DrawGradientRect(lua_State* state)
+{
+    const float x = static_cast<float>(luaL_checknumber(state, 1));
+    const float y = static_cast<float>(luaL_checknumber(state, 2));
+    const float width = static_cast<float>(luaL_checknumber(state, 3));
+    const float height = static_cast<float>(luaL_checknumber(state, 4));
+    const int startColor = LuaDrawColor(
+        state, 5, 0xFFFFFF, "draw.gradientRect");
+    const int endColor = LuaDrawColor(
+        state, 6, 0x000000, "draw.gradientRect");
+    const char* directionRaw = luaL_optstring(state, 7, "vertical");
+    const std::string direction = directionRaw ? directionRaw : "";
+    const float radius = static_cast<float>(
+        luaL_optnumber(state, 8, 0.0));
+    const float alpha = LuaDrawAlpha(state, 9, "draw.gradientRect");
+    if (!std::isfinite(x) || !std::isfinite(y) ||
+        !std::isfinite(width) || !std::isfinite(height) ||
+        width <= 0.0f || height <= 0.0f || width > 100000.0f ||
+        height > 100000.0f || std::abs(x) > 1000000.0f ||
+        std::abs(y) > 1000000.0f ||
+        std::abs(x + width) > 1000000.0f ||
+        std::abs(y + height) > 1000000.0f ||
+        !std::isfinite(radius) || radius < 0.0f ||
+        radius > std::min(width, height) * 0.5f)
+        return luaL_error(state,
+            "draw.gradientRect: geometry must be positive and bounded");
+    if (direction != "horizontal" && direction != "vertical" &&
+        direction != "diagonalDown" && direction != "diagonalUp")
+        return luaL_error(state,
+            "draw.gradientRect: unsupported direction");
+    auto* d2d = GetD2D(state);
+    if (!d2d || !d2d->ctx) return 0;
+    const D2D1_RECT_F rect = D2D1::RectF(
+        d2d->widgetRect.left + x, d2d->widgetRect.top + y,
+        d2d->widgetRect.left + x + width,
+        d2d->widgetRect.top + y + height);
+    D2D1_POINT_2F startPoint = D2D1::Point2F(rect.left, rect.top);
+    D2D1_POINT_2F endPoint = D2D1::Point2F(rect.left, rect.bottom);
+    if (direction == "horizontal")
+        endPoint = D2D1::Point2F(rect.right, rect.top);
+    else if (direction == "diagonalDown")
+        endPoint = D2D1::Point2F(rect.right, rect.bottom);
+    else if (direction == "diagonalUp")
+    {
+        startPoint = D2D1::Point2F(rect.left, rect.bottom);
+        endPoint = D2D1::Point2F(rect.right, rect.top);
+    }
+    const auto color = [alpha](int value) {
+        return D2D1::ColorF(((value >> 16) & 0xFF) / 255.0f,
+            ((value >> 8) & 0xFF) / 255.0f,
+            (value & 0xFF) / 255.0f, alpha);
+    };
+    const D2D1_GRADIENT_STOP stops[] = {
+        { 0.0f, color(startColor) }, { 1.0f, color(endColor) }
+    };
+    ComPtr<ID2D1GradientStopCollection> collection;
+    ComPtr<ID2D1LinearGradientBrush> brush;
+    if (FAILED(d2d->ctx->CreateGradientStopCollection(
+            stops, 2, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP,
+            &collection)) || !collection ||
+        FAILED(d2d->ctx->CreateLinearGradientBrush(
+            D2D1::LinearGradientBrushProperties(startPoint, endPoint),
+            collection.Get(), &brush)) || !brush)
+        return 0;
+    if (radius > 0.0f)
+        d2d->ctx->FillRoundedRectangle(
+            D2D1::RoundedRect(rect, radius, radius), brush.Get());
+    else
+        d2d->ctx->FillRectangle(rect, brush.Get());
+    return 0;
+}
+
+static int lua_DrawShadow(lua_State* state)
+{
+    snowdesktop::widget_runtime::DrawRect bounds{
+        static_cast<float>(luaL_checknumber(state, 1)),
+        static_cast<float>(luaL_checknumber(state, 2)),
+        static_cast<float>(luaL_checknumber(state, 3)),
+        static_cast<float>(luaL_checknumber(state, 4)),
+    };
+    const int color = LuaDrawColor(
+        state, 5, 0x000000, "draw.shadow");
+    const float blur = static_cast<float>(luaL_optnumber(state, 6, 12.0));
+    const float radius = static_cast<float>(luaL_optnumber(state, 7, 0.0));
+    const float offsetX = static_cast<float>(luaL_optnumber(state, 8, 0.0));
+    const float offsetY = static_cast<float>(luaL_optnumber(state, 9, 4.0));
+    const float alpha = LuaDrawAlpha(state, 10, "draw.shadow");
+    std::vector<snowdesktop::widget_runtime::DrawShadowLayer> layers;
+    std::string error;
+    if (!snowdesktop::widget_runtime::BuildDrawShadowLayers(bounds, blur,
+            radius, offsetX, offsetY, alpha, layers, error))
+        return luaL_error(state, "draw.shadow: %s", error.c_str());
+    auto* d2d = GetD2D(state);
+    if (!d2d || !d2d->ctx) return 0;
+    for (const auto& layer : layers)
+    {
+        ID2D1SolidColorBrush* brush = GetCachedBrush(
+            d2d, color, layer.alpha);
+        if (!brush) continue;
+        const D2D1_RECT_F rect = D2D1::RectF(
+            d2d->widgetRect.left + layer.bounds.x,
+            d2d->widgetRect.top + layer.bounds.y,
+            d2d->widgetRect.left + layer.bounds.x + layer.bounds.width,
+            d2d->widgetRect.top + layer.bounds.y + layer.bounds.height);
+        if (layer.radius > 0.0f)
+            d2d->ctx->FillRoundedRectangle(D2D1::RoundedRect(
+                rect, layer.radius, layer.radius), brush);
+        else
+            d2d->ctx->FillRectangle(rect, brush);
+    }
+    return 0;
+}
+
+static int lua_DrawSparkline(lua_State* state)
+{
+    luaL_checktype(state, 1, LUA_TTABLE);
+    std::string error;
+    if (!LuaTableIsContiguousArray(
+            state, 1, "draw.sparkline values", error))
+        return luaL_error(state, "draw.sparkline: %s", error.c_str());
+    const std::size_t count = lua_rawlen(state, 1);
+    if (count == 0 || count > 512)
+        return luaL_error(state,
+            "draw.sparkline: values must contain 1 to 512 items");
+    std::vector<float> values;
+    values.reserve(count);
+    for (std::size_t index = 0; index < count; ++index)
+    {
+        lua_rawgeti(state, 1, static_cast<lua_Integer>(index + 1));
+        values.push_back(static_cast<float>(luaL_checknumber(state, -1)));
+        lua_pop(state, 1);
+    }
+    snowdesktop::widget_runtime::DrawRect bounds{
+        static_cast<float>(luaL_checknumber(state, 2)),
+        static_cast<float>(luaL_checknumber(state, 3)),
+        static_cast<float>(luaL_checknumber(state, 4)),
+        static_cast<float>(luaL_checknumber(state, 5)),
+    };
+    const int color = LuaDrawColor(
+        state, 6, 0xFFFFFF, "draw.sparkline");
+    const float thickness = static_cast<float>(
+        luaL_optnumber(state, 7, 1.0));
+    std::optional<float> minimum;
+    std::optional<float> maximum;
+    if (!lua_isnoneornil(state, 8))
+        minimum = static_cast<float>(luaL_checknumber(state, 8));
+    if (!lua_isnoneornil(state, 9))
+        maximum = static_cast<float>(luaL_checknumber(state, 9));
+    const float alpha = LuaDrawAlpha(state, 10, "draw.sparkline");
+    if (!std::isfinite(thickness) || thickness <= 0.0f ||
+        thickness > 4096.0f)
+        return luaL_error(state,
+            "draw.sparkline: thickness must be positive and bounded");
+    std::vector<snowdesktop::widget_runtime::DrawPoint> points;
+    if (!snowdesktop::widget_runtime::BuildDrawSparkline(values, bounds,
+            minimum, maximum, points, error))
+        return luaL_error(state, "draw.sparkline: %s", error.c_str());
+    auto* d2d = GetD2D(state);
+    if (!d2d || !d2d->ctx) return 0;
+    ID2D1SolidColorBrush* brush = GetCachedBrush(d2d, color, alpha);
+    if (!brush) return 0;
+    const auto point = [d2d](const auto& value) {
+        return D2D1::Point2F(value.x + d2d->widgetRect.left,
+            value.y + d2d->widgetRect.top);
+    };
+    if (points.size() == 1)
+        d2d->ctx->FillEllipse(D2D1::Ellipse(
+            point(points.front()), thickness, thickness), brush);
+    else
+    {
+        for (std::size_t index = 1; index < points.size(); ++index)
+            d2d->ctx->DrawLine(point(points[index - 1]),
+                point(points[index]), brush, thickness);
+    }
+    return 0;
+}
+
 static int lua_DrawImage(lua_State* L)
 {
     float x = static_cast<float>(luaL_checknumber(L, 2));
@@ -7297,45 +7857,76 @@ static int lua_DrawImage(lua_State* L)
     float h = static_cast<float>(luaL_checknumber(L, 5));
     float alpha = static_cast<float>(luaL_optnumber(L, 6, 1.0));
     auto* s = GetD2D(L);
-    if (!s || !s->engine)
-        return 0;
-    std::optional<std::wstring> fullPath;
-    ID2D1Bitmap1* bmp = nullptr;
-    if (const auto* handle = TestResourceHandle(L, 1))
-    {
-        if (handle->type != LuaResourceType::Image)
-            return luaL_error(L, "draw.image: invalid image resource handle");
-        if (snowdesktop::widget_runtime::IsWidgetRuntimeImageToken(
-                handle->name))
-            bmp = LoadRuntimeImageBitmap(
-                s, BoundWidgetId(L), handle->name);
-        else
-            fullPath = ResolveResourceHandlePath(
-                L, 1, LuaResourceType::Image);
-        if (!bmp && !fullPath)
-            return luaL_error(L, "draw.image: invalid image resource handle");
-    }
-    else
-    {
-        lua_getfield(L, LUA_REGISTRYINDEX, "__widget_api_version");
-        const lua_Integer apiVersion = lua_tointeger(L, -1);
-        lua_pop(L, 1);
-        if (apiVersion >= 2)
-        {
-            return luaL_error(L,
-                "draw.image: API v2 requires resource.image() handle");
-        }
-        const char* pathRaw = luaL_checkstring(L, 1);
-        const std::wstring path = Utf8ToWideLocal(pathRaw ? pathRaw : "");
-        if (path.empty()) return 0;
-        fullPath = s->engine->RuntimeResolvePackageAsset(
-            BoundWidgetId(L), path);
-    }
-    if (!bmp && fullPath) bmp = LoadImageBitmap(s, *fullPath);
+    if (!s || !s->engine) return 0;
+    lua_getfield(L, LUA_REGISTRYINDEX, "__widget_api_version");
+    const bool allowLegacyPath = lua_tointeger(L, -1) < 2;
+    lua_pop(L, 1);
+    ID2D1Bitmap1* bmp = ResolveDrawImageBitmap(
+        L, s, 1, "draw.image", allowLegacyPath);
     if (!s || !s->ctx || !bmp) return 0;
     D2D1_RECT_F dst = D2D1::RectF(x + s->widgetRect.left, y + s->widgetRect.top,
         x + s->widgetRect.left + w, y + s->widgetRect.top + h);
     s->ctx->DrawBitmap(bmp, dst, alpha, D2D1_INTERPOLATION_MODE_LINEAR);
+    return 0;
+}
+
+static int lua_DrawImageFit(lua_State* state)
+{
+    const float x = static_cast<float>(luaL_checknumber(state, 2));
+    const float y = static_cast<float>(luaL_checknumber(state, 3));
+    const float width = static_cast<float>(luaL_checknumber(state, 4));
+    const float height = static_cast<float>(luaL_checknumber(state, 5));
+    const char* fitRaw = luaL_optstring(state, 6, "contain");
+    const char* alignmentRaw = luaL_optstring(state, 7, "center");
+    const float alpha = LuaDrawAlpha(state, 8, "draw.imageFit");
+    const char* interpolationRaw = luaL_optstring(state, 9, "linear");
+    using Fit = snowdesktop::widget_runtime::DrawImageFit;
+    using Alignment = snowdesktop::widget_runtime::DrawImageAlignment;
+    Fit fit = Fit::Contain;
+    const std::string fitName = fitRaw ? fitRaw : "";
+    if (fitName == "fill") fit = Fit::Fill;
+    else if (fitName == "cover") fit = Fit::Cover;
+    else if (fitName == "none") fit = Fit::None;
+    else if (fitName != "contain")
+        return luaL_error(state, "draw.imageFit: unsupported fit");
+    Alignment alignment = Alignment::Center;
+    const std::string alignmentName = alignmentRaw ? alignmentRaw : "";
+    if (alignmentName == "start") alignment = Alignment::Start;
+    else if (alignmentName == "end") alignment = Alignment::End;
+    else if (alignmentName != "center")
+        return luaL_error(state, "draw.imageFit: unsupported alignment");
+    const std::string interpolation = interpolationRaw
+        ? interpolationRaw : "";
+    if (interpolation != "linear" && interpolation != "nearest")
+        return luaL_error(state,
+            "draw.imageFit: interpolation must be linear or nearest");
+    auto* d2d = GetD2D(state);
+    if (!d2d || !d2d->engine) return 0;
+    ID2D1Bitmap1* bitmap = ResolveDrawImageBitmap(
+        state, d2d, 1, "draw.imageFit", false);
+    if (!bitmap || !d2d->ctx) return 0;
+    const D2D1_SIZE_F sourceSize = bitmap->GetSize();
+    const auto placement = snowdesktop::widget_runtime::
+        ResolveDrawImagePlacement(sourceSize.width, sourceSize.height,
+            { x, y, width, height }, fit, alignment);
+    if (!placement.valid)
+        return luaL_error(state,
+            "draw.imageFit: dimensions must be positive and bounded");
+    const D2D1_RECT_F destination = D2D1::RectF(
+        d2d->widgetRect.left + placement.destination.x,
+        d2d->widgetRect.top + placement.destination.y,
+        d2d->widgetRect.left + placement.destination.x +
+            placement.destination.width,
+        d2d->widgetRect.top + placement.destination.y +
+            placement.destination.height);
+    const D2D1_RECT_F source = D2D1::RectF(
+        placement.source.x, placement.source.y,
+        placement.source.x + placement.source.width,
+        placement.source.y + placement.source.height);
+    d2d->ctx->DrawBitmap(bitmap, destination, alpha,
+        interpolation == "nearest"
+            ? D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR
+            : D2D1_INTERPOLATION_MODE_LINEAR, source);
     return 0;
 }
 
@@ -19493,6 +20084,11 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "text", lua_DrawText },
         { "measureText", lua_MeasureText },
         { "rect", lua_DrawRect },
+        { "arc", lua_DrawArc, 2 },
+        { "path", lua_DrawPath, 2 },
+        { "gradientRect", lua_DrawGradientRect, 2 },
+        { "shadow", lua_DrawShadow, 2 },
+        { "sparkline", lua_DrawSparkline, 2 },
         { "pushClip", lua_DrawPushClip },
         { "popClip", lua_DrawPopClip },
         { "strokeRect", lua_DrawStrokeRect },
@@ -19501,6 +20097,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "fa", lua_DrawFa },
         { "fluent", lua_DrawFluent },
         { "image", lua_DrawImage },
+        { "imageFit", lua_DrawImageFit, 2 },
         { "icon", lua_DrawIcon, 1, "desktop.read" },
     };
     static constexpr FunctionDescriptor interaction[] = {

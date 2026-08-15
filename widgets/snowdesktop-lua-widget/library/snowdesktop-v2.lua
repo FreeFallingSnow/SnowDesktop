@@ -118,6 +118,11 @@
 ---@alias SnowViewImageFit 'fill'|'contain'|'cover'|'none'
 ---@alias SnowViewImageAlignment 'start'|'center'|'end'
 ---@alias SnowViewImageInterpolation 'nearest'|'linear'
+---@alias SnowDrawImageFit 'fill'|'contain'|'cover'|'none'
+---@alias SnowDrawImageAlignment 'start'|'center'|'end'
+---@alias SnowDrawImageInterpolation 'nearest'|'linear'
+---@alias SnowDrawGradientDirection 'horizontal'|'vertical'|'diagonalDown'|'diagonalUp'
+---@alias SnowDrawPathFillRule 'alternate'|'winding'
 
 ---@class SnowViewStyle
 ---@field background? integer RGB color.
@@ -469,6 +474,22 @@
 ---@class SnowTextMetrics
 ---@field width number
 ---@field height number
+
+---@class SnowDrawPathCommand
+---@field op 'move'|'line'|'cubic'|'quadratic'|'close'
+---@field x? number Endpoint x for move, line, cubic, or quadratic.
+---@field y? number Endpoint y for move, line, cubic, or quadratic.
+---@field x1? number First control-point x for cubic or quadratic.
+---@field y1? number First control-point y for cubic or quadratic.
+---@field x2? number Second control-point x for cubic.
+---@field y2? number Second control-point y for cubic.
+
+---@class SnowDrawPathOptions
+---@field fillColor? integer RGB fill color.
+---@field strokeColor? integer RGB stroke color; defaults to white when neither color is supplied.
+---@field thickness? number Positive bounded stroke width; defaults to 1.
+---@field alpha? number Shared fill/stroke opacity between 0 and 1.
+---@field fillRule? SnowDrawPathFillRule
 
 ---@class snow.view
 view = {}
@@ -1384,6 +1405,18 @@ function draw.measureText(text, size, maxWidth, bold, font) end
 ---@param alpha? number
 function draw.image(image, x, y, width, height, alpha) end
 
+---Draw a declared image using bounded aspect-ratio placement. Requires draw.advanced.
+---@param image SnowImageResource
+---@param x number
+---@param y number
+---@param width number
+---@param height number
+---@param fit? SnowDrawImageFit Defaults to contain.
+---@param alignment? SnowDrawImageAlignment Applies to both axes; defaults to center.
+---@param alpha? number
+---@param interpolation? SnowDrawImageInterpolation Defaults to linear.
+function draw.imageFit(image, x, y, width, height, fit, alignment, alpha, interpolation) end
+
 ---@param x number
 ---@param y number
 ---@param width number
@@ -1419,6 +1452,60 @@ function draw.popClip() end
 ---@param color? integer
 ---@param alpha? number
 function draw.line(x1, y1, x2, y2, thickness, color, alpha) end
+
+---Draw an arc. Zero degrees points right and positive sweeps run clockwise. Requires draw.advanced.
+---@param centerX number
+---@param centerY number
+---@param radius number
+---@param startDegrees number
+---@param sweepDegrees number Non-zero and at most one turn in either direction.
+---@param thickness? number
+---@param color? integer
+---@param alpha? number
+function draw.arc(centerX, centerY, radius, startDegrees, sweepDegrees, thickness, color, alpha) end
+
+---Draw a strict path containing at most 256 commands. Requires draw.advanced.
+---@param commands SnowDrawPathCommand[] Must begin with move and contain a drawable segment.
+---@param options? SnowDrawPathOptions
+function draw.path(commands, options) end
+
+---Fill a bounded rectangle with a two-stop linear gradient. Requires draw.advanced.
+---@param x number
+---@param y number
+---@param width number
+---@param height number
+---@param startColor? integer
+---@param endColor? integer
+---@param direction? SnowDrawGradientDirection Defaults to vertical.
+---@param radius? number
+---@param alpha? number
+function draw.gradientRect(x, y, width, height, startColor, endColor, direction, radius, alpha) end
+
+---Draw a bounded soft shadow using at most 16 host falloff layers. Requires draw.advanced.
+---@param x number
+---@param y number
+---@param width number
+---@param height number
+---@param color? integer
+---@param blur? number Between 0 and 64; defaults to 12.
+---@param radius? number At most half the shortest side.
+---@param offsetX? number
+---@param offsetY? number Defaults to 4.
+---@param alpha? number
+function draw.shadow(x, y, width, height, color, blur, radius, offsetX, offsetY, alpha) end
+
+---Draw 1 to 512 finite samples across a bounded rectangle. Requires draw.advanced.
+---@param values number[]
+---@param x number
+---@param y number
+---@param width number
+---@param height number
+---@param color? integer
+---@param thickness? number
+---@param minimum? number Must be supplied together with maximum and be smaller.
+---@param maximum? number Must be supplied together with minimum and be larger.
+---@param alpha? number
+function draw.sparkline(values, x, y, width, height, color, thickness, minimum, maximum, alpha) end
 
 ---@param centerX number
 ---@param centerY number

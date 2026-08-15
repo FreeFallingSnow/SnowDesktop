@@ -326,6 +326,7 @@ void TestV2Contract()
                 "data.system.storage.volumes") &&
             snowdesktop::widget_api::SupportsFeature(
                 "data.system.storage.io") &&
+            snowdesktop::widget_api::SupportsFeature("draw.advanced") &&
             snowdesktop::widget_api::SupportsFeature("draw.immediate") &&
             snowdesktop::widget_api::SupportsFeature(
                 "interaction.pointerActions") &&

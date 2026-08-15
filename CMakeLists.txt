@@ -258,6 +258,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget_system_settings.cpp
     src/widget_system_data_provider.cpp
     src/widget_audio_analysis_provider.cpp
+    src/widget_draw_geometry.cpp
     src/widget_interaction_region.cpp
     src/widget_view_tree.cpp
     src/widget_view_lua.cpp
@@ -989,6 +990,15 @@ if (BUILD_TESTING)
             src/widget_interaction_region.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract interaction lua widget)
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetDrawGeometryTests
+        widget_draw_geometry
+        SOURCES
+            tests/widget_draw_geometry_tests.cpp
+            src/widget_draw_geometry.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS contract render lua widget)
 
     snowdesktop_add_test(
         SnowDesktopWidgetViewTreeTests
