@@ -75,6 +75,35 @@ bool SupportsPattern(
         node.patterns, pattern);
 }
 
+double ScrollMaximum(const AccessibilityNode& node) noexcept
+{
+    return std::max(0.0, static_cast<double>(
+        node.scrollContentExtent - node.scrollViewportExtent));
+}
+
+bool Scrollable(const AccessibilityNode& node) noexcept
+{
+    return ScrollMaximum(node) > 0.0;
+}
+
+double ScrollPercent(const AccessibilityNode& node) noexcept
+{
+    const double maximum = ScrollMaximum(node);
+    return maximum > 0.0
+        ? std::clamp(static_cast<double>(node.scrollOffset) /
+                maximum * 100.0, 0.0, 100.0)
+        : UIA_ScrollPatternNoScroll;
+}
+
+double ScrollViewSize(const AccessibilityNode& node) noexcept
+{
+    return node.scrollContentExtent > 0.0f
+        ? std::clamp(static_cast<double>(node.scrollViewportExtent) /
+                static_cast<double>(node.scrollContentExtent) * 100.0,
+            0.0, 100.0)
+        : 100.0;
+}
+
 std::optional<AccessibilityPattern> PatternForId(
     PATTERNID patternId) noexcept
 {
@@ -92,6 +121,12 @@ std::optional<AccessibilityPattern> PatternForId(
         return AccessibilityPattern::SelectionItem;
     if (patternId == UIA_SelectionPatternId)
         return AccessibilityPattern::Selection;
+    if (patternId == UIA_ScrollPatternId)
+        return AccessibilityPattern::Scroll;
+    if (patternId == UIA_GridPatternId)
+        return AccessibilityPattern::Grid;
+    if (patternId == UIA_GridItemPatternId)
+        return AccessibilityPattern::GridItem;
     return std::nullopt;
 }
 
@@ -112,6 +147,12 @@ std::optional<AccessibilityPattern> AvailabilityPropertyPattern(
         return AccessibilityPattern::SelectionItem;
     if (propertyId == UIA_IsSelectionPatternAvailablePropertyId)
         return AccessibilityPattern::Selection;
+    if (propertyId == UIA_IsScrollPatternAvailablePropertyId)
+        return AccessibilityPattern::Scroll;
+    if (propertyId == UIA_IsGridPatternAvailablePropertyId)
+        return AccessibilityPattern::Grid;
+    if (propertyId == UIA_IsGridItemPatternAvailablePropertyId)
+        return AccessibilityPattern::GridItem;
     return std::nullopt;
 }
 
@@ -453,6 +494,18 @@ std::optional<PROPERTYID> ChangePropertyId(
         return UIA_ExpandCollapseExpandCollapseStatePropertyId;
     case WidgetAccessibilityChangeKind::Bounds:
         return UIA_BoundingRectanglePropertyId;
+    case WidgetAccessibilityChangeKind::HorizontalScrollPercent:
+        return UIA_ScrollHorizontalScrollPercentPropertyId;
+    case WidgetAccessibilityChangeKind::HorizontalViewSize:
+        return UIA_ScrollHorizontalViewSizePropertyId;
+    case WidgetAccessibilityChangeKind::HorizontallyScrollable:
+        return UIA_ScrollHorizontallyScrollablePropertyId;
+    case WidgetAccessibilityChangeKind::VerticalScrollPercent:
+        return UIA_ScrollVerticalScrollPercentPropertyId;
+    case WidgetAccessibilityChangeKind::VerticalViewSize:
+        return UIA_ScrollVerticalViewSizePropertyId;
+    case WidgetAccessibilityChangeKind::VerticallyScrollable:
+        return UIA_ScrollVerticallyScrollablePropertyId;
     default:
         return std::nullopt;
     }
@@ -513,6 +566,30 @@ HRESULT SetChangeVariant(VARIANT* result,
         return SetRectVariant(result, node
             ? NodeBounds(window, *widget, *node)
             : WidgetBounds(window, *widget));
+    case WidgetAccessibilityChangeKind::HorizontalScrollPercent:
+        SetDoubleVariant(result, node->scrollHorizontal
+            ? ScrollPercent(*node) : UIA_ScrollPatternNoScroll);
+        return S_OK;
+    case WidgetAccessibilityChangeKind::HorizontalViewSize:
+        SetDoubleVariant(result, node->scrollHorizontal
+            ? ScrollViewSize(*node) : 100.0);
+        return S_OK;
+    case WidgetAccessibilityChangeKind::HorizontallyScrollable:
+        SetBoolVariant(result,
+            node->scrollHorizontal && Scrollable(*node));
+        return S_OK;
+    case WidgetAccessibilityChangeKind::VerticalScrollPercent:
+        SetDoubleVariant(result, !node->scrollHorizontal
+            ? ScrollPercent(*node) : UIA_ScrollPatternNoScroll);
+        return S_OK;
+    case WidgetAccessibilityChangeKind::VerticalViewSize:
+        SetDoubleVariant(result, !node->scrollHorizontal
+            ? ScrollViewSize(*node) : 100.0);
+        return S_OK;
+    case WidgetAccessibilityChangeKind::VerticallyScrollable:
+        SetBoolVariant(result,
+            !node->scrollHorizontal && Scrollable(*node));
+        return S_OK;
     default:
         return UIA_E_NOTSUPPORTED;
     }
@@ -748,7 +825,10 @@ class FragmentProvider final :
     public IValueProvider,
     public IExpandCollapseProvider,
     public ISelectionItemProvider,
-    public ISelectionProvider
+    public ISelectionProvider,
+    public IScrollProvider,
+    public IGridProvider,
+    public IGridItemProvider
 {
 public:
     FragmentProvider(std::shared_ptr<ProviderState> state,
@@ -782,6 +862,12 @@ public:
             *object = static_cast<ISelectionItemProvider*>(this);
         else if (iid == IID_ISelectionProvider)
             *object = static_cast<ISelectionProvider*>(this);
+        else if (iid == IID_IScrollProvider)
+            *object = static_cast<IScrollProvider*>(this);
+        else if (iid == IID_IGridProvider)
+            *object = static_cast<IGridProvider*>(this);
+        else if (iid == IID_IGridItemProvider)
+            *object = static_cast<IGridItemProvider*>(this);
         else
             return E_NOINTERFACE;
         AddRef();
@@ -843,6 +929,15 @@ public:
                 reinterpret_cast<void**>(result));
         if (patternId == UIA_SelectionPatternId)
             return QueryInterface(IID_ISelectionProvider,
+                reinterpret_cast<void**>(result));
+        if (patternId == UIA_ScrollPatternId)
+            return QueryInterface(IID_IScrollProvider,
+                reinterpret_cast<void**>(result));
+        if (patternId == UIA_GridPatternId)
+            return QueryInterface(IID_IGridProvider,
+                reinterpret_cast<void**>(result));
+        if (patternId == UIA_GridItemPatternId)
+            return QueryInterface(IID_IGridItemProvider,
                 reinterpret_cast<void**>(result));
         return S_OK;
     }
@@ -1397,6 +1492,259 @@ public:
             node.sourceType ==
                 snowdesktop::widget_runtime::ViewNodeType::MonthCalendar;
         return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE Scroll(ScrollAmount horizontalAmount,
+        ScrollAmount verticalAmount) override
+    {
+        AccessibilityNode node;
+        const HRESULT hr = ResolvePatternNode(
+            AccessibilityPattern::Scroll, node);
+        if (FAILED(hr)) return hr;
+        const ScrollAmount requested = node.scrollHorizontal
+            ? horizontalAmount : verticalAmount;
+        const ScrollAmount unsupported = node.scrollHorizontal
+            ? verticalAmount : horizontalAmount;
+        if (unsupported != ScrollAmount_NoAmount)
+            return UIA_E_INVALIDOPERATION;
+        if (requested == ScrollAmount_NoAmount) return S_OK;
+
+        double delta = 0.0;
+        const double viewport = std::max(
+            1.0, static_cast<double>(node.scrollViewportExtent));
+        const double smallChange = std::max(16.0, viewport / 10.0);
+        switch (requested)
+        {
+        case ScrollAmount_LargeDecrement: delta = -viewport; break;
+        case ScrollAmount_SmallDecrement: delta = -smallChange; break;
+        case ScrollAmount_LargeIncrement: delta = viewport; break;
+        case ScrollAmount_SmallIncrement: delta = smallChange; break;
+        default: return E_INVALIDARG;
+        }
+        const double target = std::clamp(
+            static_cast<double>(node.scrollOffset) + delta,
+            0.0, ScrollMaximum(node));
+        return PerformAction(AccessibilityPattern::Scroll,
+            LuaWidgetAccessibilityActionKind::SetScrollOffset, target);
+    }
+
+    HRESULT STDMETHODCALLTYPE SetScrollPercent(double horizontalPercent,
+        double verticalPercent) override
+    {
+        AccessibilityNode node;
+        const HRESULT hr = ResolvePatternNode(
+            AccessibilityPattern::Scroll, node);
+        if (FAILED(hr)) return hr;
+        const double requested = node.scrollHorizontal
+            ? horizontalPercent : verticalPercent;
+        const double unsupported = node.scrollHorizontal
+            ? verticalPercent : horizontalPercent;
+        if (unsupported != UIA_ScrollPatternNoScroll)
+            return UIA_E_INVALIDOPERATION;
+        if (requested == UIA_ScrollPatternNoScroll) return S_OK;
+        if (!std::isfinite(requested) || requested < 0.0 ||
+            requested > 100.0)
+            return E_INVALIDARG;
+        if (!Scrollable(node)) return UIA_E_INVALIDOPERATION;
+        return PerformAction(AccessibilityPattern::Scroll,
+            LuaWidgetAccessibilityActionKind::SetScrollOffset,
+            ScrollMaximum(node) * requested / 100.0);
+    }
+
+    HRESULT STDMETHODCALLTYPE get_HorizontalScrollPercent(
+        double* result) override
+    {
+        if (!result) return E_POINTER;
+        AccessibilityNode node;
+        const HRESULT hr = ResolvePatternNode(
+            AccessibilityPattern::Scroll, node);
+        if (FAILED(hr)) return hr;
+        *result = node.scrollHorizontal
+            ? ScrollPercent(node) : UIA_ScrollPatternNoScroll;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE get_HorizontalViewSize(
+        double* result) override
+    {
+        if (!result) return E_POINTER;
+        AccessibilityNode node;
+        const HRESULT hr = ResolvePatternNode(
+            AccessibilityPattern::Scroll, node);
+        if (FAILED(hr)) return hr;
+        *result = node.scrollHorizontal ? ScrollViewSize(node) : 100.0;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE get_HorizontallyScrollable(
+        BOOL* result) override
+    {
+        if (!result) return E_POINTER;
+        AccessibilityNode node;
+        const HRESULT hr = ResolvePatternNode(
+            AccessibilityPattern::Scroll, node);
+        if (FAILED(hr)) return hr;
+        *result = node.scrollHorizontal && Scrollable(node)
+            ? TRUE : FALSE;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE get_VerticalScrollPercent(
+        double* result) override
+    {
+        if (!result) return E_POINTER;
+        AccessibilityNode node;
+        const HRESULT hr = ResolvePatternNode(
+            AccessibilityPattern::Scroll, node);
+        if (FAILED(hr)) return hr;
+        *result = !node.scrollHorizontal
+            ? ScrollPercent(node) : UIA_ScrollPatternNoScroll;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE get_VerticalViewSize(
+        double* result) override
+    {
+        if (!result) return E_POINTER;
+        AccessibilityNode node;
+        const HRESULT hr = ResolvePatternNode(
+            AccessibilityPattern::Scroll, node);
+        if (FAILED(hr)) return hr;
+        *result = !node.scrollHorizontal ? ScrollViewSize(node) : 100.0;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE get_VerticallyScrollable(
+        BOOL* result) override
+    {
+        if (!result) return E_POINTER;
+        AccessibilityNode node;
+        const HRESULT hr = ResolvePatternNode(
+            AccessibilityPattern::Scroll, node);
+        if (FAILED(hr)) return hr;
+        *result = !node.scrollHorizontal && Scrollable(node)
+            ? TRUE : FALSE;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE get_RowCount(int* result) override
+    {
+        if (!result) return E_POINTER;
+        AccessibilityNode node;
+        const HRESULT hr = ResolvePatternNode(
+            AccessibilityPattern::Grid, node);
+        if (FAILED(hr)) return hr;
+        if (!node.gridRowCount) return UIA_E_NOTSUPPORTED;
+        *result = *node.gridRowCount;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE get_ColumnCount(int* result) override
+    {
+        if (!result) return E_POINTER;
+        AccessibilityNode node;
+        const HRESULT hr = ResolvePatternNode(
+            AccessibilityPattern::Grid, node);
+        if (FAILED(hr)) return hr;
+        if (!node.gridColumnCount) return UIA_E_NOTSUPPORTED;
+        *result = *node.gridColumnCount;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE GetItem(int row, int column,
+        IRawElementProviderSimple** result) override
+    {
+        if (!result) return E_POINTER;
+        *result = nullptr;
+        std::vector<LuaWidgetAccessibilitySnapshot> snapshots;
+        if (!state_->Capture(snapshots))
+            return UIA_E_ELEMENTNOTAVAILABLE;
+        const auto resolved = ResolveElement(snapshots, reference_);
+        if (!resolved || !resolved->nodeIndex)
+            return UIA_E_ELEMENTNOTAVAILABLE;
+        const auto& widget = snapshots[resolved->widgetIndex];
+        const auto& node = widget.nodes[*resolved->nodeIndex];
+        if (!SupportsPattern(node, AccessibilityPattern::Grid))
+            return UIA_E_NOTSUPPORTED;
+        if (row < 0 || column < 0 || !node.gridRowCount ||
+            !node.gridColumnCount || row >= *node.gridRowCount ||
+            column >= *node.gridColumnCount)
+            return E_INVALIDARG;
+        const auto child = std::find_if(node.children.begin(),
+            node.children.end(), [&](std::size_t childIndex) {
+                if (childIndex >= widget.nodes.size()) return false;
+                const auto& candidate = widget.nodes[childIndex];
+                return candidate.gridRow == row &&
+                    candidate.gridColumn == column;
+            });
+        if (child == node.children.end()) return S_OK;
+        Microsoft::WRL::ComPtr<IRawElementProviderFragment> fragment;
+        HRESULT create = CreateFragmentProvider(state_, root_.Get(),
+            NodeReference(widget, widget.nodes[*child]), &fragment);
+        if (FAILED(create)) return create;
+        return fragment->QueryInterface(IID_PPV_ARGS(result));
+    }
+
+    HRESULT STDMETHODCALLTYPE get_Row(int* result) override
+    {
+        if (!result) return E_POINTER;
+        AccessibilityNode node;
+        const HRESULT hr = ResolvePatternNode(
+            AccessibilityPattern::GridItem, node);
+        if (FAILED(hr)) return hr;
+        if (!node.gridRow) return UIA_E_NOTSUPPORTED;
+        *result = *node.gridRow;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE get_Column(int* result) override
+    {
+        if (!result) return E_POINTER;
+        AccessibilityNode node;
+        const HRESULT hr = ResolvePatternNode(
+            AccessibilityPattern::GridItem, node);
+        if (FAILED(hr)) return hr;
+        if (!node.gridColumn) return UIA_E_NOTSUPPORTED;
+        *result = *node.gridColumn;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE get_RowSpan(int* result) override
+    {
+        if (!result) return E_POINTER;
+        AccessibilityNode node;
+        const HRESULT hr = ResolvePatternNode(
+            AccessibilityPattern::GridItem, node);
+        if (FAILED(hr)) return hr;
+        *result = node.gridRowSpan.value_or(1);
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE get_ColumnSpan(int* result) override
+    {
+        if (!result) return E_POINTER;
+        AccessibilityNode node;
+        const HRESULT hr = ResolvePatternNode(
+            AccessibilityPattern::GridItem, node);
+        if (FAILED(hr)) return hr;
+        *result = node.gridColumnSpan.value_or(1);
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE get_ContainingGrid(
+        IRawElementProviderSimple** result) override
+    {
+        if (!result) return E_POINTER;
+        *result = nullptr;
+        AccessibilityNode node;
+        const HRESULT hr = ResolvePatternNode(
+            AccessibilityPattern::GridItem, node);
+        if (FAILED(hr)) return hr;
+        Microsoft::WRL::ComPtr<IRawElementProviderFragment> parent;
+        const HRESULT navigation = Navigate(
+            NavigateDirection_Parent, &parent);
+        if (FAILED(navigation) || !parent) return navigation;
+        return parent->QueryInterface(IID_PPV_ARGS(result));
     }
 
 private:

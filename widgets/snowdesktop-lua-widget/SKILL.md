@@ -338,13 +338,16 @@ menu.
   Only regions with `accessibility.role` or `accessibility.label` enter the
   host semantic snapshot. Supply both for meaningful elements. The Windows
   UIA provider exposes the current tree, properties, navigation, hit testing,
-  host focus, and Invoke/Toggle/RangeValue/Value/ExpandCollapse/SelectionItem
-  actions. Accessibility actions are untrusted (`source="accessibility"`) and
+  host focus, and Invoke/Toggle/RangeValue/Value/ExpandCollapse/Selection/
+  SelectionItem/Scroll/Grid/GridItem patterns. Accessibility actions are
+  untrusted (`source="accessibility"`) and
   never grant permission authority. Successful desktop frames also emit
-  structure, focus, bounds, name, enabled, offscreen, toggle, value, and
-  expand/collapse UIA changes. Declarative radio options, expanded select
+  structure, focus, bounds, name, enabled, offscreen, toggle, value,
+  expand/collapse, and scroll UIA changes. Declarative radio options, expanded select
   options, and month-calendar dates are individual SelectionItem children;
-  their parent exposes Selection. Arbitrary virtualized collection children
+  their parent exposes Selection. Scroll containers expose their current host
+  offset through Scroll, while grids and materialized cells expose zero-based
+  Grid/GridItem coordinates. ScrollItem, unrealized virtual collection items,
   and real Narrator validation remain pending, so do not claim complete
   screen-reader support.
 - Register vertical immediate-mode overflow with `interaction.scroll`, translate

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <iostream>
+#include <utility>
 
 namespace
 {
@@ -81,7 +82,11 @@ void TestClipAndControlledState()
 {
     ViewNode scroll = Node(ViewNodeType::Scroll,
         "scroll", 0, 0, 160, 80);
+    scroll.orientation = ViewOrientation::Vertical;
     scroll.clipFrame = ViewRect{ 0, 0, 160, 80 };
+    scroll.scrollOffset = 40.0f;
+    scroll.scrollViewportExtent = 80.0f;
+    scroll.scrollContentExtent = 200.0f;
     ViewNode visible = Node(ViewNodeType::Checkbox,
         "visible", 8, 8, 120, 28);
     visible.text = "Visible";
@@ -101,6 +106,13 @@ void TestClipAndControlledState()
             nodes[2].offscreen && nodes[2].valueText == "snow" &&
             !nodes[2].valueReadOnly,
         "semantic state must retain controlled values and offscreen status");
+    Check(HasViewAccessibilityPattern(nodes[0].patterns,
+                ViewAccessibilityPattern::Scroll) &&
+            !nodes[0].scrollHorizontal &&
+            nodes[0].scrollOffset == 40.0f &&
+            nodes[0].scrollViewportExtent == 80.0f &&
+            nodes[0].scrollContentExtent == 200.0f,
+        "scroll containers must expose the applied host scroll state");
 }
 
 void TestImmediateRegionSemantics()
@@ -202,8 +214,35 @@ void TestVirtualControlChildren()
             return node.key == "calendar/2026-08-15";
         });
     Check(selected != nodes.end() && selected->checked == true &&
-            selected->focused && selected->controlType == "DataItem",
+            selected->focused && selected->controlType == "DataItem" &&
+            HasViewAccessibilityPattern(selected->patterns,
+                ViewAccessibilityPattern::GridItem) &&
+            selected->gridRow && selected->gridColumn &&
+            nodes[0].gridRowCount == 6 &&
+            nodes[0].gridColumnCount == 7,
         "month calendar date cells must expose selection and focus state");
+
+    ViewNode grid = Node(ViewNodeType::GridList,
+        "tiles", 0, 0, 200, 100);
+    grid.accessibilityLabel = "Tiles";
+    grid.columns = 2;
+    for (int index = 0; index < 3; ++index)
+    {
+        ViewNode item = Node(ViewNodeType::ListItem,
+            index == 0 ? "tile-a" : index == 1 ? "tile-b" : "tile-c",
+            static_cast<float>((index % 2) * 100),
+            static_cast<float>((index / 2) * 50), 100, 50);
+        item.accessibilityLabel = index == 0
+            ? "Tile A" : index == 1 ? "Tile B" : "Tile C";
+        grid.children.push_back(std::move(item));
+    }
+    Check(CollectViewAccessibilityNodes(grid, {}, nodes, error) &&
+            nodes.size() == 4 && nodes[0].gridRowCount == 2 &&
+            nodes[0].gridColumnCount == 2 &&
+            nodes[3].gridRow == 1 && nodes[3].gridColumn == 0 &&
+            HasViewAccessibilityPattern(nodes[3].patterns,
+                ViewAccessibilityPattern::GridItem),
+        "grid collections must expose zero-based row-major item metadata");
 }
 }
 

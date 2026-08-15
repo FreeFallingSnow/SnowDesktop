@@ -27,6 +27,12 @@ enum class WidgetAccessibilityChangeKind
     Value,
     ExpandCollapse,
     Bounds,
+    HorizontalScrollPercent,
+    HorizontalViewSize,
+    HorizontallyScrollable,
+    VerticalScrollPercent,
+    VerticalViewSize,
+    VerticallyScrollable,
 };
 
 struct WidgetAccessibilityChange

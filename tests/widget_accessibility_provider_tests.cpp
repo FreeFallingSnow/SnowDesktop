@@ -68,7 +68,7 @@ LuaWidgetAccessibilitySnapshot Snapshot()
     group.name = "Panel";
     group.controlType = "Group";
     group.bounds = { 0, 0, 300, 330 };
-    group.children = { 1, 2, 3, 4, 5, 6 };
+    group.children = { 1, 2, 3, 4, 5, 6, 9, 10 };
 
     ViewAccessibilityNode button;
     button.semanticId = "key:open";
@@ -153,9 +153,55 @@ LuaWidgetAccessibilitySnapshot Snapshot()
     optionB.bounds.y = 265;
     optionB.checked = true;
 
+    ViewAccessibilityNode scroll;
+    scroll.sourceType = snowdesktop::widget_runtime::ViewNodeType::Scroll;
+    scroll.semanticId = "key:feed-scroll";
+    scroll.key = "feed-scroll";
+    scroll.name = "Feed";
+    scroll.controlType = "Pane";
+    scroll.bounds = { 180, 10, 100, 100 };
+    scroll.parentIndex = 0;
+    scroll.patterns = ViewAccessibilityPattern::Scroll;
+    scroll.scrollHorizontal = false;
+    scroll.scrollOffset = 25.0f;
+    scroll.scrollViewportExtent = 100.0f;
+    scroll.scrollContentExtent = 300.0f;
+
+    ViewAccessibilityNode grid;
+    grid.semanticId = "key:grid";
+    grid.key = "grid";
+    grid.name = "Grid";
+    grid.controlType = "DataGrid";
+    grid.bounds = { 180, 125, 100, 80 };
+    grid.parentIndex = 0;
+    grid.patterns = ViewAccessibilityPattern::Grid;
+    grid.gridRowCount = 1;
+    grid.gridColumnCount = 2;
+    grid.children = { 11, 12 };
+
+    ViewAccessibilityNode cellA;
+    cellA.semanticId = "key:cell-a";
+    cellA.key = "cell-a";
+    cellA.name = "Cell A";
+    cellA.controlType = "DataItem";
+    cellA.bounds = { 180, 125, 50, 80 };
+    cellA.parentIndex = 10;
+    cellA.patterns = ViewAccessibilityPattern::GridItem;
+    cellA.gridRow = 0;
+    cellA.gridColumn = 0;
+    cellA.gridRowSpan = 1;
+    cellA.gridColumnSpan = 1;
+
+    ViewAccessibilityNode cellB = cellA;
+    cellB.semanticId = "key:cell-b";
+    cellB.key = "cell-b";
+    cellB.name = "Cell B";
+    cellB.bounds.x = 230;
+    cellB.gridColumn = 1;
+
     widget.bounds = RECT{ 10, 20, 310, 350 };
     widget.nodes = { group, button, status, toggle, slider, input, combo,
-        optionA, optionB };
+        optionA, optionB, scroll, grid, cellA, cellB };
     return widget;
 }
 
@@ -193,6 +239,8 @@ void TestSnapshotDiff()
     current[0].nodes[2].enabled = false;
     current[0].nodes[2].offscreen = true;
     current[0].nodes[2].bounds.x += 5.0f;
+    current[0].nodes[9].scrollOffset = 0.0f;
+    current[0].nodes[9].scrollContentExtent = 100.0f;
     const auto changes = snowdesktop::DiffWidgetAccessibilitySnapshots(
         previous, current);
     Check(ContainsChange(changes,
@@ -224,7 +272,19 @@ void TestSnapshotDiff()
                 WidgetAccessibilityElementKind::Node, "path:0/1") &&
             ContainsChange(changes,
                 WidgetAccessibilityChangeKind::Bounds,
-                WidgetAccessibilityElementKind::Node, "path:0/1"),
+                WidgetAccessibilityElementKind::Node, "path:0/1") &&
+            ContainsChange(changes,
+                WidgetAccessibilityChangeKind::VerticalScrollPercent,
+                WidgetAccessibilityElementKind::Node,
+                "key:feed-scroll") &&
+            ContainsChange(changes,
+                WidgetAccessibilityChangeKind::VerticalViewSize,
+                WidgetAccessibilityElementKind::Node,
+                "key:feed-scroll") &&
+            ContainsChange(changes,
+                WidgetAccessibilityChangeKind::VerticallyScrollable,
+                WidgetAccessibilityElementKind::Node,
+                "key:feed-scroll"),
         "snapshot diff must classify focus, property, state, and bounds changes");
 
     current[0].nodes.pop_back();
@@ -455,6 +515,77 @@ void TestProviderTreeAndLifetime()
         "Selection must preserve the selected option identity");
     selectedUnknown->Release();
     SafeArrayDestroy(selection);
+
+    ComPtr<IRawElementProviderFragment> scroll;
+    ComPtr<IRawElementProviderFragment> grid;
+    Check(SUCCEEDED(combo->Navigate(
+            NavigateDirection_NextSibling, &scroll)) && scroll &&
+            SUCCEEDED(scroll->Navigate(
+                NavigateDirection_NextSibling, &grid)) && grid,
+        "scroll and grid containers must remain navigable siblings");
+
+    pattern.Reset();
+    Check(SUCCEEDED(AsSimple(scroll.Get())->GetPatternProvider(
+            UIA_ScrollPatternId, &pattern)) && pattern,
+        "scroll containers must expose the Scroll pattern");
+    ComPtr<IScrollProvider> scrollPattern;
+    double verticalPercent = 0.0;
+    double verticalViewSize = 0.0;
+    BOOL verticallyScrollable = FALSE;
+    Check(SUCCEEDED(pattern.As(&scrollPattern)) &&
+            SUCCEEDED(scrollPattern->get_VerticalScrollPercent(
+                &verticalPercent)) && verticalPercent == 12.5 &&
+            SUCCEEDED(scrollPattern->get_VerticalViewSize(
+                &verticalViewSize)) &&
+            verticalViewSize > 33.0 && verticalViewSize < 34.0 &&
+            SUCCEEDED(scrollPattern->get_VerticallyScrollable(
+                &verticallyScrollable)) && verticallyScrollable &&
+            scrollPattern->SetScrollPercent(0.0, 50.0) ==
+                UIA_E_INVALIDOPERATION &&
+            SUCCEEDED(scrollPattern->SetScrollPercent(
+                UIA_ScrollPatternNoScroll, 50.0)) &&
+            actions.back().kind ==
+                LuaWidgetAccessibilityActionKind::SetScrollOffset &&
+            actions.back().nodeKey == "feed-scroll" &&
+            actions.back().numericValue == 100.0 &&
+            SUCCEEDED(scrollPattern->Scroll(
+                ScrollAmount_NoAmount, ScrollAmount_LargeIncrement)) &&
+            actions.back().numericValue == 125.0,
+        "Scroll must expose percentages and route bounded pixel offsets");
+
+    pattern.Reset();
+    Check(SUCCEEDED(AsSimple(grid.Get())->GetPatternProvider(
+            UIA_GridPatternId, &pattern)) && pattern,
+        "grid containers must expose the Grid pattern");
+    ComPtr<IGridProvider> gridPattern;
+    int rowCount = 0;
+    int columnCount = 0;
+    ComPtr<IRawElementProviderSimple> cell;
+    Check(SUCCEEDED(pattern.As(&gridPattern)) &&
+            SUCCEEDED(gridPattern->get_RowCount(&rowCount)) &&
+            SUCCEEDED(gridPattern->get_ColumnCount(&columnCount)) &&
+            rowCount == 1 && columnCount == 2 &&
+            SUCCEEDED(gridPattern->GetItem(0, 1, &cell)) && cell &&
+            PropertyString(cell.Get(), UIA_AutomationIdPropertyId) ==
+                L"cell-b",
+        "Grid must expose zero-based dimensions and addressable cells");
+    pattern.Reset();
+    Check(SUCCEEDED(cell->GetPatternProvider(
+            UIA_GridItemPatternId, &pattern)) && pattern,
+        "grid children must expose the GridItem pattern");
+    ComPtr<IGridItemProvider> gridItemPattern;
+    int row = -1;
+    int column = -1;
+    ComPtr<IRawElementProviderSimple> containingGrid;
+    Check(SUCCEEDED(pattern.As(&gridItemPattern)) &&
+            SUCCEEDED(gridItemPattern->get_Row(&row)) &&
+            SUCCEEDED(gridItemPattern->get_Column(&column)) &&
+            row == 0 && column == 1 &&
+            SUCCEEDED(gridItemPattern->get_ContainingGrid(
+                &containingGrid)) && containingGrid &&
+            PropertyString(containingGrid.Get(),
+                UIA_AutomationIdPropertyId) == L"grid",
+        "GridItem must expose coordinates and its containing grid");
 
     snapshots[0].nodes[3].checked = true;
     host.RefreshEvents();

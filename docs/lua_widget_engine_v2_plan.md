@@ -1182,14 +1182,16 @@ feature、默认 accessibility role、允许属性和直接必需属性由同一
 名称、ControlType、AutomationId、RuntimeId、边界、可见性、启用/焦点状态、父子/兄弟导航、
 点命中和焦点定位；窗口销毁或 Explorer 重建时旧 Provider 会失效，避免继续访问宿主旧状态。
 Invoke、Toggle、RangeValue、Value、ExpandCollapse 和 SelectionItem Pattern 已连接到现有
-interaction region 与宿主输入动作通道；辅助技术触发的 action 使用 `source="accessibility"`，
+interaction region 与宿主输入动作通道，Scroll Pattern 则复用宿主滚动状态；辅助技术触发的
+action 使用 `source="accessibility"`，
 且不会获得 trusted gesture 身份，因此不会绕过已有权限和用户手势门槛。成功桌面帧现在会按
-稳定语义 ID 差分并发送结构、焦点、边界、名称、启用、离屏、开关、选择、RangeValue、Value
-和展开状态 UIA 变化，未变化的帧不广播。已进一步把 `radioGroup` 选项、展开 `select` 选项和
+稳定语义 ID 差分并发送结构、焦点、边界、名称、启用、离屏、开关、选择、RangeValue、Value、
+展开和滚动状态 UIA 变化，未变化的帧不广播。已进一步把 `radioGroup` 选项、展开 `select` 选项和
 `monthCalendar` 日期生成为稳定
 SelectionItem 子元素，并为父控件实现 Selection Pattern；任意虚拟化集合的按需子项协议仍未
-接通，也尚未使用真实
-Narrator 场景验收；默认值/范围、子节点、事件、RTL、动画、额度和错误码仍未全部迁入矩阵，
+接通。滚动容器现提供单轴 Scroll Pattern，网格和已实体化单元提供零基 Grid/GridItem；
+ScrollItem、未实体化项的 VirtualizedItem 以及真实 Narrator 场景验收仍未完成；默认值/范围、
+子节点、事件、RTL、动画、额度和错误码仍未全部迁入矩阵，
 也尚未由它生成 LuaLS 与本文档，因此这仍不表示契约已经冻结或完整无障碍已经可用。
 
 即时绘制的 `interaction.region` 现在也会按 role、label、受控状态、形状/clip 和最后提交的宿主

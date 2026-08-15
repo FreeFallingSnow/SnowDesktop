@@ -47,6 +47,63 @@ std::string AccessibleName(const ViewNode& node)
     return node.text;
 }
 
+struct GridPosition
+{
+    int row = 0;
+    int column = 0;
+};
+
+bool IsGridContainer(ViewNodeType type) noexcept
+{
+    return type == ViewNodeType::Grid ||
+        type == ViewNodeType::GridList ||
+        type == ViewNodeType::VirtualGrid ||
+        type == ViewNodeType::MonthCalendar;
+}
+
+void PopulateContainerState(const ViewNode& source,
+    ViewAccessibilityNode& target)
+{
+    if (IsGridContainer(source.type))
+    {
+        const std::size_t columns = source.type ==
+                ViewNodeType::MonthCalendar
+            ? 7 : std::max<std::size_t>(1, source.columns);
+        const std::size_t items = source.type ==
+                ViewNodeType::MonthCalendar
+            ? 42 : source.children.size();
+        target.gridColumnCount = static_cast<int>(columns);
+        target.gridRowCount = static_cast<int>(items == 0 ? 0 :
+            (items + columns - 1) / columns);
+    }
+    if (source.type == ViewNodeType::Scroll ||
+        source.type == ViewNodeType::VirtualList ||
+        source.type == ViewNodeType::VirtualGrid)
+    {
+        target.scrollHorizontal = source.orientation ==
+            ViewOrientation::Horizontal;
+        target.scrollViewportExtent = std::max(
+            0.0f, source.scrollViewportExtent);
+        target.scrollContentExtent = std::max(
+            target.scrollViewportExtent, source.scrollContentExtent);
+        const float maximum = std::max(0.0f,
+            target.scrollContentExtent - target.scrollViewportExtent);
+        target.scrollOffset = std::clamp(
+            source.scrollOffset, 0.0f, maximum);
+    }
+}
+
+void PopulateGridItemState(const GridPosition& position,
+    ViewAccessibilityNode& target)
+{
+    target.patterns = target.patterns |
+        ViewAccessibilityPattern::GridItem;
+    target.gridRow = position.row;
+    target.gridColumn = position.column;
+    target.gridRowSpan = 1;
+    target.gridColumnSpan = 1;
+}
+
 struct ImmediateAccessibilityMapping
 {
     const char* controlType = "Custom";
@@ -158,6 +215,7 @@ bool AppendVirtualAccessibilityNode(const ViewNode& source,
     std::string controlType, std::string valueText,
     const ViewRect& bounds, const std::optional<ViewRect>& clip,
     std::size_t parentIndex, bool enabled, bool checked,
+    std::optional<GridPosition> gridPosition,
     std::string_view focusedKey,
     std::vector<ViewAccessibilityNode>& nodes,
     std::string& error)
@@ -191,6 +249,8 @@ bool AppendVirtualAccessibilityNode(const ViewNode& source,
     target.offscreen = bounds.width <= 0.0f || bounds.height <= 0.0f ||
         (clip && !Overlaps(bounds, *clip));
     target.checked = checked;
+    if (gridPosition)
+        PopulateGridItemState(*gridPosition, target);
     const std::size_t index = nodes.size();
     nodes.push_back(std::move(target));
     nodes[parentIndex].children.push_back(index);
@@ -215,6 +275,7 @@ bool AppendVirtualAccessibilityChildren(const ViewNode& source,
                     ViewRadioOptionFrame(source, index), inheritedClip,
                     parentIndex, source.enabled && option.enabled,
                     option.value == source.selectedValue,
+                    std::nullopt,
                     focusedKey, nodes, error))
                 return false;
         }
@@ -231,6 +292,7 @@ bool AppendVirtualAccessibilityChildren(const ViewNode& source,
                     inheritedClip, parentIndex,
                     source.enabled && option.enabled,
                     option.value == source.selectedValue,
+                    std::nullopt,
                     focusedKey, nodes, error))
                 return false;
         }
@@ -249,7 +311,10 @@ bool AppendVirtualAccessibilityChildren(const ViewNode& source,
                     cell.date, "gridcell", "DataItem", cell.date,
                     ViewMonthCalendarCellFrame(source, index),
                     inheritedClip, parentIndex, source.enabled,
-                    cell.selected, focusedKey, nodes, error))
+                    cell.selected,
+                    GridPosition{ static_cast<int>(index / 7),
+                        static_cast<int>(index % 7) },
+                    focusedKey, nodes, error))
                 return false;
         }
     }
@@ -260,6 +325,7 @@ bool CollectNode(const ViewNode& source, std::string_view semanticPath,
     std::string_view focusedKey,
     float viewportHeight,
     const std::optional<ViewRect>& inheritedClip,
+    std::optional<GridPosition> gridPosition,
     std::size_t parentIndex,
     std::vector<ViewAccessibilityNode>& nodes,
     std::string& error)
@@ -301,6 +367,9 @@ bool CollectNode(const ViewNode& source, std::string_view semanticPath,
             source.frame.height <= 0.0f ||
             (inheritedClip && !Overlaps(source.frame, *inheritedClip));
         PopulateValueState(source, target);
+        PopulateContainerState(source, target);
+        if (gridPosition)
+            PopulateGridItemState(*gridPosition, target);
         semanticParent = nodes.size();
         nodes.push_back(std::move(target));
         if (parentIndex != ViewAccessibilityNode::NoParent)
@@ -319,11 +388,22 @@ bool CollectNode(const ViewNode& source, std::string_view semanticPath,
         childClip = Intersect(inheritedClip, *source.clipFrame);
     for (std::size_t index = 0; index < source.children.size(); ++index)
     {
+        std::optional<GridPosition> childGridPosition;
+        if (IsGridContainer(source.type))
+        {
+            const std::size_t columns = source.type ==
+                    ViewNodeType::MonthCalendar
+                ? 7 : std::max<std::size_t>(1, source.columns);
+            childGridPosition = GridPosition{
+                static_cast<int>(index / columns),
+                static_cast<int>(index % columns) };
+        }
         const std::string childPath = std::string(semanticPath) + "/" +
             std::to_string(index);
         if (!CollectNode(source.children[index], childPath, focusedKey,
                 viewportHeight,
-                childClip, semanticParent, nodes, error)) return false;
+                childClip, childGridPosition, semanticParent,
+                nodes, error)) return false;
     }
     return true;
 }
@@ -337,7 +417,7 @@ bool CollectViewAccessibilityNodes(const ViewNode& root,
     nodes.clear();
     error.clear();
     if (!CollectNode(root, "0", focusedKey, root.frame.height,
-            std::nullopt,
+            std::nullopt, std::nullopt,
             ViewAccessibilityNode::NoParent, nodes, error))
     {
         nodes.clear();

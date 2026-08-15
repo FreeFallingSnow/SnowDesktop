@@ -21538,6 +21538,24 @@ bool WidgetEngine::RuntimePerformAccessibilityAction(
     if (request.kind == LuaWidgetAccessibilityActionKind::SetValue)
         return setHostValue(request.textValue);
     if (request.kind ==
+        LuaWidgetAccessibilityActionKind::SetScrollOffset)
+    {
+        if (!std::isfinite(request.numericValue) ||
+            request.numericValue < 0.0 ||
+            request.numericValue > 1'000'000.0)
+            return false;
+        const auto scroll = std::find_if(widget.hostControls.rbegin(),
+            widget.hostControls.rend(), [&](const auto& control) {
+                return control.type == LuaWidget::HostControl::Type::Scroll &&
+                    control.enabled && control.id == request.nodeKey;
+            });
+        if (scroll == widget.hostControls.rend()) return false;
+        RuntimeSetScrollOffset(request.widgetId, request.nodeKey,
+            static_cast<int>(std::lround(request.numericValue)));
+        RuntimeInvalidateHost(request.widgetId);
+        return true;
+    }
+    if (request.kind ==
         LuaWidgetAccessibilityActionKind::SetRangeValue)
     {
         if (!std::isfinite(request.numericValue)) return false;

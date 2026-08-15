@@ -16,6 +16,7 @@ enum class LuaWidgetAccessibilityActionKind
     SetValue,
     Expand,
     Collapse,
+    SetScrollOffset,
 };
 
 struct LuaWidgetAccessibilityActionRequest

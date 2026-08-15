@@ -179,7 +179,8 @@ radio 语义、hover/pressed/checked 绘制和右键菜单目标。选中选项�
 范围内的 `previousControlValue/controlValue`；右键只用于菜单，不改变数值。组件收到建议值
 后仍需更新自己的 model/storage 并调用 `widget.invalidate()`。这三个节点对应
 `view.actionControls`；探测 `view.keyboardNavigation.basic` 后，单选项可用 Enter/空格选择，
-滑块可用左/下减一档、右/上加一档。UI Automation 输出仍未开放。
+滑块可用左/下减一档、右/上加一档。UI Automation 已输出单选项的 SelectionItem、父组的
+Selection，以及滑块的 RangeValue Pattern；辅助技术动作仍要求组件处理建议值并回写受控状态。
 
 ```lua
 view.radioGroup({
@@ -262,7 +263,8 @@ view.searchBox({
 触控板 wheel、钳制到内容边界、移动子树并同时裁剪绘制和元素命中。滚出视口的按钮或
 列表项不能 hover、点击或打开右键菜单。`showScrollbar=false` 可隐藏宿主滚动条，但不会
 关闭滚动。每棵树最多 32 个 scroll，单轴内容 extent 最大 1,000,000 逻辑单位；该能力
-对应 feature `view.scroll`，当前不提供 Lua 自绘滚动条、惯性动画、滚动链或程序化定位。
+对应 feature `view.scroll`，当前不提供 Lua 自绘滚动条、惯性动画、滚动链或 Lua 程序化定位；
+Windows UI Automation Scroll Pattern 可以通过同一宿主滚动状态移动视口，但不会获得可信手势。
 
 `list` 是纵向有界集合，`gridList` 是要求 `columns=1..64` 的行优先等宽集合；两者的直接
 子节点必须全部是 `listItem`。每个 `listItem` 要求全树唯一稳定 key、只含一个可见内容子节点
@@ -451,12 +453,14 @@ accessibility role、允许属性和直接必需属性。Lua 解析器会在布�
 `referenceIcon`。该表也登记 UIA ControlType、基础 Pattern 和宿主键盘可聚焦性，宿主能从
 布局结果生成语义快照，并已通过 Windows UIA Fragment Provider 暴露组件/元素树、基础属性、
 边界、父子/兄弟导航、点命中与宿主焦点。Invoke、Toggle、RangeValue、Value、
-ExpandCollapse 和 SelectionItem Pattern 已连接到同一套 Lua action/受控输入通道，事件中的
+ExpandCollapse、SelectionItem 和 Scroll Pattern 已连接到同一套 Lua action/受控输入或宿主滚动
+通道，Selection 容器、Grid 与 GridItem 也会输出当前受控状态和零基行列坐标。事件中的
 `source` 为 `accessibility` 且 `trustedGesture=false`，不会借辅助技术操作扩大权限。UIA
 Provider 会在成功桌面帧后按稳定语义 ID 差分并发送结构、焦点、边界、名称、启用、离屏、开关、
-选择、RangeValue、Value 和展开状态变化，不会每帧广播未变化属性。其中 `radioGroup` 的选项、展开 `select` 的选项和
+选择、RangeValue、Value、展开和滚动状态变化，不会每帧广播未变化属性。其中 `radioGroup` 的选项、展开 `select` 的选项和
 `monthCalendar` 的日期已经作为稳定的 SelectionItem 子元素输出，父控件提供 Selection Pattern，
-可由辅助技术单独聚焦和选择。任意虚拟化集合内部项仍未形成完整 UIA 虚拟化协议，真实 Narrator
+可由辅助技术单独聚焦和选择。滚动容器提供 Scroll，网格及当前已实体化的单元提供
+Grid/GridItem；任意未实体化集合项仍未形成完整 UIA VirtualizedItem/ScrollItem 协议，真实 Narrator
 验收也尚未完成；默认值/范围、子节点、
 事件和错误码也未全部迁入，
 作者仍应以本节各 feature 的细化说明为准。
@@ -466,7 +470,7 @@ Provider 会在成功桌面帧后按稳定语义 ID 差分并发送结构、焦�
 声明语义不会出现在无障碍树中。快照只收集当前可见、有效且非预览的 v2 实例。
 
 该 feature 不是完整 `view.tree`：当前每帧重建树，尚无可变高度虚拟集合、
-可操作行内 span，也没有完整 UIA 虚拟集合/滚动 Pattern、RTL、主题
+可操作行内 span，也没有完整 UIA 虚拟集合/ScrollItem Pattern、RTL、主题
 token、差量资源复用或声明式 panel。需要这些能力的组件应继续使用 v2 即时绘制或等待
 对应 feature；不得把 `view.tree.core` 当作稳定完整控件集声明。
 

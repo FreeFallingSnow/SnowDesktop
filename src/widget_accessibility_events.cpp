@@ -1,5 +1,7 @@
 #include "widget_accessibility_events.h"
 
+#include <algorithm>
+#include <cmath>
 #include <map>
 #include <optional>
 #include <tuple>
@@ -84,6 +86,35 @@ void AddNodeChange(std::vector<WidgetAccessibilityChange>& changes,
 {
     changes.push_back({ kind, WidgetAccessibilityElementKind::Node,
         key.widgetId, key.semanticId });
+}
+
+double ScrollMaximum(const AccessibilityNode& node) noexcept
+{
+    return std::max(0.0, static_cast<double>(
+        node.scrollContentExtent - node.scrollViewportExtent));
+}
+
+bool Scrollable(const AccessibilityNode& node) noexcept
+{
+    return ScrollMaximum(node) > 0.0;
+}
+
+double ScrollPercent(const AccessibilityNode& node) noexcept
+{
+    const double maximum = ScrollMaximum(node);
+    return maximum > 0.0
+        ? std::clamp(static_cast<double>(node.scrollOffset) /
+                maximum * 100.0, 0.0, 100.0)
+        : -1.0;
+}
+
+double ScrollViewSize(const AccessibilityNode& node) noexcept
+{
+    return node.scrollContentExtent > 0.0f
+        ? std::clamp(static_cast<double>(node.scrollViewportExtent) /
+                static_cast<double>(node.scrollContentExtent) * 100.0,
+            0.0, 100.0)
+        : 100.0;
 }
 }
 
@@ -180,6 +211,47 @@ std::vector<WidgetAccessibilityChange> DiffWidgetAccessibilitySnapshots(
         if (!SameRect(old.bounds, now.bounds))
             AddNodeChange(changes,
                 WidgetAccessibilityChangeKind::Bounds, key);
+        if (snowdesktop::widget_runtime::HasViewAccessibilityPattern(
+                now.patterns, snowdesktop::widget_runtime::
+                    ViewAccessibilityPattern::Scroll))
+        {
+            if (old.scrollHorizontal != now.scrollHorizontal ||
+                (now.scrollHorizontal &&
+                    ScrollPercent(old) != ScrollPercent(now)))
+                AddNodeChange(changes,
+                    WidgetAccessibilityChangeKind::
+                        HorizontalScrollPercent, key);
+            if (old.scrollHorizontal != now.scrollHorizontal ||
+                (now.scrollHorizontal &&
+                    ScrollViewSize(old) != ScrollViewSize(now)))
+                AddNodeChange(changes,
+                    WidgetAccessibilityChangeKind::HorizontalViewSize,
+                    key);
+            if (old.scrollHorizontal != now.scrollHorizontal ||
+                (now.scrollHorizontal &&
+                    Scrollable(old) != Scrollable(now)))
+                AddNodeChange(changes,
+                    WidgetAccessibilityChangeKind::
+                        HorizontallyScrollable, key);
+            if (old.scrollHorizontal != now.scrollHorizontal ||
+                (!now.scrollHorizontal &&
+                    ScrollPercent(old) != ScrollPercent(now)))
+                AddNodeChange(changes,
+                    WidgetAccessibilityChangeKind::
+                        VerticalScrollPercent, key);
+            if (old.scrollHorizontal != now.scrollHorizontal ||
+                (!now.scrollHorizontal &&
+                    ScrollViewSize(old) != ScrollViewSize(now)))
+                AddNodeChange(changes,
+                    WidgetAccessibilityChangeKind::VerticalViewSize,
+                    key);
+            if (old.scrollHorizontal != now.scrollHorizontal ||
+                (!now.scrollHorizontal &&
+                    Scrollable(old) != Scrollable(now)))
+                AddNodeChange(changes,
+                    WidgetAccessibilityChangeKind::
+                        VerticallyScrollable, key);
+        }
     }
     return changes;
 }

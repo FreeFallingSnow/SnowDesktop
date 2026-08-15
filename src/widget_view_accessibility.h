@@ -39,6 +39,16 @@ struct ViewAccessibilityNode
     std::optional<float> step;
     bool valueReadOnly = true;
     bool rangeValueReadOnly = true;
+    std::optional<int> gridRow;
+    std::optional<int> gridColumn;
+    std::optional<int> gridRowSpan;
+    std::optional<int> gridColumnSpan;
+    std::optional<int> gridRowCount;
+    std::optional<int> gridColumnCount;
+    bool scrollHorizontal = false;
+    float scrollOffset = 0.0f;
+    float scrollViewportExtent = 0.0f;
+    float scrollContentExtent = 0.0f;
 };
 
 bool CollectViewAccessibilityNodes(const ViewNode& root,
