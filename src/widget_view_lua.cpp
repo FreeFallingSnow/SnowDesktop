@@ -371,6 +371,92 @@ bool ReadFloatField(lua_State* state, int table, const char* field,
     return true;
 }
 
+bool ReadEdgeInsetsField(lua_State* state, int table, const char* field,
+    ViewEdgeInsets& value, std::string& error)
+{
+    table = lua_absindex(state, table);
+    lua_getfield(state, table, field);
+    if (lua_isnil(state, -1))
+    {
+        lua_pop(state, 1);
+        return true;
+    }
+    if (lua_isnumber(state, -1))
+    {
+        const float uniform = static_cast<float>(lua_tonumber(state, -1));
+        lua_pop(state, 1);
+        if (!std::isfinite(uniform))
+        {
+            error = std::string("view field '") + field +
+                "' must be finite";
+            return false;
+        }
+        value = uniform;
+        return true;
+    }
+    if (!lua_istable(state, -1))
+    {
+        lua_pop(state, 1);
+        error = std::string("view field '") + field +
+            "' must be a number or edge-inset table";
+        return false;
+    }
+
+    const int insets = lua_absindex(state, -1);
+    const std::string context = std::string("view field '") + field + "'";
+    if (!ValidateObjectFields(state, insets,
+            { "horizontal", "vertical", "top", "right", "bottom", "left" },
+            context, error))
+    {
+        lua_pop(state, 1);
+        return false;
+    }
+    bool present = false;
+    ViewEdgeInsets parsed;
+    float component = 0.0f;
+    if (FieldPresent(state, insets, "horizontal"))
+    {
+        present = true;
+        if (!ReadFloatField(state, insets, "horizontal", component, error))
+        {
+            lua_pop(state, 1);
+            return false;
+        }
+        parsed.left = parsed.right = component;
+    }
+    if (FieldPresent(state, insets, "vertical"))
+    {
+        present = true;
+        if (!ReadFloatField(state, insets, "vertical", component, error))
+        {
+            lua_pop(state, 1);
+            return false;
+        }
+        parsed.top = parsed.bottom = component;
+    }
+    const auto readSide = [&](const char* side, float& destination) {
+        if (!FieldPresent(state, insets, side)) return true;
+        present = true;
+        return ReadFloatField(state, insets, side, destination, error);
+    };
+    if (!readSide("top", parsed.top) ||
+        !readSide("right", parsed.right) ||
+        !readSide("bottom", parsed.bottom) ||
+        !readSide("left", parsed.left))
+    {
+        lua_pop(state, 1);
+        return false;
+    }
+    lua_pop(state, 1);
+    if (!present)
+    {
+        error = context + " must define horizontal/vertical or a side";
+        return false;
+    }
+    value = parsed;
+    return true;
+}
+
 bool ReadSizeField(lua_State* state, int table, const char* field,
     std::size_t& value, std::string& error)
 {
@@ -1566,8 +1652,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             node.maximumHeight, error) ||
         !ReadOptionalNodeFloatField(state, index, "aspectRatio",
             node.aspectRatio, error) ||
-        !ReadFloatField(state, index, "margin", node.margin, error) ||
-        !ReadFloatField(state, index, "padding", node.padding, error) ||
+        !ReadEdgeInsetsField(state, index, "margin", node.margin, error) ||
+        !ReadEdgeInsetsField(state, index, "padding", node.padding, error) ||
         !ReadFloatField(state, index, "gap", node.gap, error) ||
         !ReadSizeField(state, index, "columns", node.columns, error) ||
         !ReadNonNegativeSizeField(state, index, "itemCount",

@@ -14579,13 +14579,13 @@ static void DrawWidgetDataSeries(D2DState* state,
 {
     using snowdesktop::widget_runtime::ViewNodeType;
     if (!state || !state->ctx || node.values.empty()) return;
-    const float inset = std::min(node.padding,
-        std::max(0.0f, std::min(
-            bounds.right - bounds.left,
-            bounds.bottom - bounds.top) * 0.5f));
+    const auto content = snowdesktop::widget_runtime::
+        ViewNodeContentRect(node);
     const D2D1_RECT_F rect = D2D1::RectF(
-        bounds.left + inset, bounds.top + inset,
-        bounds.right - inset, bounds.bottom - inset);
+        bounds.left + content.x - node.frame.x,
+        bounds.top + content.y - node.frame.y,
+        bounds.left + content.x - node.frame.x + content.width,
+        bounds.top + content.y - node.frame.y + content.height);
     const float width = std::max(0.0f, rect.right - rect.left);
     const float height = std::max(0.0f, rect.bottom - rect.top);
     if (width <= 0.0f || height <= 0.0f) return;
@@ -14739,8 +14739,8 @@ static void DrawDeclarativeViewInput(D2DState* state,
     const float y = node.frame.y;
     const float width = node.frame.width;
     const float height = node.frame.height;
-    const float padding = std::min(node.padding,
-        std::max(0.0f, std::min(width, height) * 0.5f));
+    const auto content = snowdesktop::widget_runtime::
+        ViewNodeContentRect(node);
     bool focused = false;
     size_t cursor = 0;
     size_t selectionAnchor = 0;
@@ -14780,24 +14780,25 @@ static void DrawDeclarativeViewInput(D2DState* state,
             : controlledText);
     const float scrollbarReserve = multiline ? 8.0f : 0.0f;
     const float innerWidth = std::max(1.0f,
-        width - padding * 2.0f - scrollbarReserve);
+        content.width - scrollbarReserve);
     ComPtr<IDWriteTextLayout> layout = multiline
         ? CreateHostMultilineTextLayout(state, displayText,
             node.fontSize, innerWidth)
         : CreateHostSingleLineTextLayout(state, displayText,
-            node.fontSize, innerWidth, height);
+            node.fontSize, innerWidth, content.height);
     if (!layout) return;
 
     int scrollOffset = multiline && state->engine
         ? state->engine->RuntimeGetScrollOffset(
             state->currentWidgetId, node.key) : 0;
-    const float originX = x + padding;
-    const float originY = multiline ? y + padding - scrollOffset : y;
+    const float originX = content.x;
+    const float originY = multiline
+        ? content.y - scrollOffset : content.y;
     const D2D1_RECT_F clip = D2D1::RectF(
-        state->widgetRect.left + x + padding,
-        state->widgetRect.top + y,
-        state->widgetRect.left + x + width - padding,
-        state->widgetRect.top + y + height);
+        state->widgetRect.left + content.x,
+        state->widgetRect.top + content.y,
+        state->widgetRect.left + content.x + content.width,
+        state->widgetRect.top + content.y + content.height);
     state->ctx->PushAxisAlignedClip(
         clip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     if (focused && compositionText.empty() &&
@@ -14874,7 +14875,13 @@ static void DrawDeclarativeSelect(D2DState* state,
     std::string label = node.placeholder;
     for (const auto& option : node.options)
         if (option.value == node.selectedValue) label = option.label;
-    const float inset = std::max(8.0f, node.padding);
+    const auto content = snowdesktop::widget_runtime::
+        ViewNodeContentRect(node);
+    const float textLeft = std::max(
+        node.frame.x + 8.0f, content.x);
+    const float textRight = std::min(
+        node.frame.x + node.frame.width - 28.0f,
+        content.x + content.width);
     if (state->dwrite && !label.empty())
     {
         IDWriteTextFormat* format = GetCachedTextFormat(state,
@@ -14888,11 +14895,10 @@ static void DrawDeclarativeSelect(D2DState* state,
         if (format && brush)
             state->ctx->DrawText(text.data(),
                 static_cast<UINT32>(text.size()), format,
-                D2D1::RectF(state->widgetRect.left + node.frame.x + inset,
-                    state->widgetRect.top + node.frame.y,
-                    state->widgetRect.left + node.frame.x +
-                        node.frame.width - 28.0f,
-                    state->widgetRect.top + node.frame.y + node.frame.height),
+                D2D1::RectF(state->widgetRect.left + textLeft,
+                    state->widgetRect.top + content.y,
+                    state->widgetRect.left + std::max(textLeft, textRight),
+                    state->widgetRect.top + content.y + content.height),
                 brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
     }
     if (ID2D1SolidColorBrush* brush = GetCachedBrush(state,
@@ -15048,11 +15054,10 @@ static void DrawWidgetStyledText(D2DState* state,
             DWRITE_TEXT_RANGE{ start, static_cast<UINT32>(part.size()) });
     }
     if (text.empty()) return;
-    const float inset = std::min(node.padding,
-        std::max(0.0f,
-            std::min(node.frame.width, node.frame.height) * 0.5f));
-    const float width = std::max(0.0f, node.frame.width - inset * 2.0f);
-    const float height = std::max(0.0f, node.frame.height - inset * 2.0f);
+    const auto content = snowdesktop::widget_runtime::
+        ViewNodeContentRect(node);
+    const float width = content.width;
+    const float height = content.height;
     const float layoutHeight = ViewTextLayoutHeight(node, height);
     ComPtr<IDWriteTextLayout> layout;
     if (width <= 0.0f || layoutHeight <= 0.0f || FAILED(
@@ -15089,8 +15094,8 @@ static void DrawWidgetStyledText(D2DState* state,
         const float contentHeight = SUCCEEDED(layout->GetMetrics(&metrics))
             ? std::min(layoutHeight, metrics.height) : layoutHeight;
         state->ctx->DrawTextLayout(D2D1::Point2F(
-            state->widgetRect.left + node.frame.x + inset,
-            state->widgetRect.top + node.frame.y + inset +
+            state->widgetRect.left + content.x,
+            state->widgetRect.top + content.y +
                 ViewTextVerticalOffset(node, height, contentHeight)),
             layout.Get(), brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
     }
@@ -15265,13 +15270,20 @@ static void DrawWidgetViewBitmap(D2DState* state,
     using snowdesktop::widget_runtime::ViewImageAlignment;
     using snowdesktop::widget_runtime::ViewImageFit;
     using snowdesktop::widget_runtime::ViewImageInterpolation;
-    const float inset = std::min(node.padding + borderWidth,
-        std::max(0.0f,
-            std::min(node.frame.width, node.frame.height) * 0.5f));
-    const float targetWidth = std::max(
-        0.0f, rect.right - rect.left - inset * 2.0f);
-    const float targetHeight = std::max(
-        0.0f, rect.bottom - rect.top - inset * 2.0f);
+    const auto content = snowdesktop::widget_runtime::
+        ViewNodeContentRect(node);
+    const float targetLeft = rect.left + content.x - node.frame.x +
+        borderWidth;
+    const float targetTop = rect.top + content.y - node.frame.y +
+        borderWidth;
+    const float targetRight = rect.right -
+        (node.frame.x + node.frame.width - content.x - content.width) -
+        borderWidth;
+    const float targetBottom = rect.bottom -
+        (node.frame.y + node.frame.height - content.y - content.height) -
+        borderWidth;
+    const float targetWidth = std::max(0.0f, targetRight - targetLeft);
+    const float targetHeight = std::max(0.0f, targetBottom - targetTop);
     const D2D1_SIZE_F sourceSize = bitmap->GetSize();
     DrawImageFit fit = DrawImageFit::Contain;
     if (node.imageFit == ViewImageFit::Fill) fit = DrawImageFit::Fill;
@@ -15284,7 +15296,7 @@ static void DrawWidgetViewBitmap(D2DState* state,
         alignment = DrawImageAlignment::End;
     const auto placement = snowdesktop::widget_runtime::
         ResolveDrawImagePlacement(sourceSize.width, sourceSize.height,
-            { rect.left + inset, rect.top + inset,
+            { targetLeft, targetTop,
                 targetWidth, targetHeight }, fit, alignment);
     if (!placement.valid) return;
     state->ctx->DrawBitmap(bitmap, D2D1::RectF(
@@ -15417,14 +15429,16 @@ static void DrawWidgetViewNode(D2DState* state,
     }
     if (node.type == ViewNodeType::Toggle)
     {
-        const float inset = std::min(node.padding,
-            std::max(0.0f, node.frame.width * 0.5f));
+        const auto content = snowdesktop::widget_runtime::
+            ViewNodeContentRect(node);
         const float trackWidth = std::min(36.0f,
-            std::max(0.0f, node.frame.width - inset * 2.0f));
-        const float trackHeight = std::min(20.0f, node.frame.height);
-        const float right = std::max(rect.left, rect.right - inset);
+            std::max(0.0f, content.width));
+        const float trackHeight = std::min(20.0f, content.height);
+        const float right = state->widgetRect.left +
+            content.x + content.width;
         const float left = std::max(rect.left, right - trackWidth);
-        const float top = (rect.top + rect.bottom - trackHeight) * 0.5f;
+        const float top = state->widgetRect.top + content.y +
+            (content.height - trackHeight) * 0.5f;
         const D2D1_RECT_F trackRect = D2D1::RectF(
             left, top, right, top + trackHeight);
         const std::uint32_t trackColor = style.background.value_or(
@@ -15461,13 +15475,13 @@ static void DrawWidgetViewNode(D2DState* state,
     }
     else if (node.type == ViewNodeType::Checkbox)
     {
-        const float inset = std::min(node.padding,
-            std::max(0.0f, node.frame.width * 0.5f));
+        const auto content = snowdesktop::widget_runtime::
+            ViewNodeContentRect(node);
         const float boxSize = std::min(18.0f, std::max(0.0f,
-            std::min(node.frame.width - inset * 2.0f,
-                node.frame.height)));
-        const float left = rect.left + inset;
-        const float top = (rect.top + rect.bottom - boxSize) * 0.5f;
+            std::min(content.width, content.height)));
+        const float left = state->widgetRect.left + content.x;
+        const float top = state->widgetRect.top + content.y +
+            (content.height - boxSize) * 0.5f;
         const D2D1_RECT_F box = D2D1::RectF(
             left, top, left + boxSize, top + boxSize);
         if (node.checked || style.background)
@@ -15572,7 +15586,7 @@ static void DrawWidgetViewNode(D2DState* state,
             const float indicatorRadius = std::min(8.0f,
                 std::max(0.0f, frame.height * 0.28f));
             const float indicatorX = optionRect.left +
-                std::min(frame.width * 0.5f, node.padding + 10.0f);
+                std::min(frame.width * 0.5f, node.padding.left + 10.0f);
             const float indicatorY =
                 (optionRect.top + optionRect.bottom) * 0.5f;
             const std::uint32_t foreground =
@@ -15601,7 +15615,7 @@ static void DrawWidgetViewNode(D2DState* state,
                 ComPtr<IDWriteTextLayout> layout;
                 const float textLeft = indicatorX + indicatorRadius + 8.0f;
                 const float textWidth = std::max(0.0f,
-                    optionRect.right - textLeft - node.padding);
+                    optionRect.right - textLeft - node.padding.right);
                 if (!label.empty() && SUCCEEDED(
                         state->dwrite->CreateTextLayout(label.data(),
                             static_cast<UINT32>(label.size()), format,
@@ -15636,24 +15650,32 @@ static void DrawWidgetViewNode(D2DState* state,
             : 0.0f;
         const float thumbRadius = std::min(8.0f, std::max(3.0f,
             std::min(node.frame.width, node.frame.height) * 0.3f));
-        const float inset = std::min(node.padding + thumbRadius,
-            std::max(0.0f, (vertical ? node.frame.height :
-                node.frame.width) * 0.5f));
+        const auto content = snowdesktop::widget_runtime::
+            ViewNodeContentRect(node);
+        const float mainLength = vertical
+            ? content.height : content.width;
+        const float inset = std::min(thumbRadius,
+            std::max(0.0f, mainLength * 0.5f));
         const float trackThickness = std::min(4.0f,
             vertical ? node.frame.width : node.frame.height);
         D2D1_RECT_F trackRect{};
         if (vertical)
         {
-            const float x = (rect.left + rect.right) * 0.5f;
+            const float x = state->widgetRect.left + content.x +
+                content.width * 0.5f;
             trackRect = D2D1::RectF(x - trackThickness * 0.5f,
-                rect.top + inset, x + trackThickness * 0.5f,
-                rect.bottom - inset);
+                state->widgetRect.top + content.y + inset,
+                x + trackThickness * 0.5f,
+                state->widgetRect.top + content.y + content.height - inset);
         }
         else
         {
-            const float y = (rect.top + rect.bottom) * 0.5f;
-            trackRect = D2D1::RectF(rect.left + inset,
-                y - trackThickness * 0.5f, rect.right - inset,
+            const float y = state->widgetRect.top + content.y +
+                content.height * 0.5f;
+            trackRect = D2D1::RectF(
+                state->widgetRect.left + content.x + inset,
+                y - trackThickness * 0.5f,
+                state->widgetRect.left + content.x + content.width - inset,
                 y + trackThickness * 0.5f);
         }
         const float trackRadius = trackThickness * 0.5f;
@@ -15838,27 +15860,25 @@ static void DrawWidgetViewNode(D2DState* state,
                     state->currentWidgetId, node.itemReference);
             if (target && state->engine->IsPreviewOnly())
             {
-                const float inset = std::min(node.padding + borderWidth,
-                    std::max(0.0f,
-                        std::min(node.frame.width, node.frame.height) * 0.5f));
+                const auto content = snowdesktop::widget_runtime::
+                    ViewNodeContentRect(node);
+                const float availableWidth = std::max(
+                    0.0f, content.width - borderWidth * 2.0f);
+                const float availableHeight = std::max(
+                    0.0f, content.height - borderWidth * 2.0f);
                 const float size = std::max(0.0f, std::min(
-                    node.frame.width - inset * 2.0f,
-                    node.frame.height - inset * 2.0f));
-                float x = node.frame.x + inset;
-                float y = node.frame.y + inset;
+                    availableWidth, availableHeight));
+                float x = content.x + borderWidth;
+                float y = content.y + borderWidth;
                 if (node.imageAlignment == ViewImageAlignment::Center)
                 {
-                    x += std::max(0.0f,
-                        (node.frame.width - inset * 2.0f - size) * 0.5f);
-                    y += std::max(0.0f,
-                        (node.frame.height - inset * 2.0f - size) * 0.5f);
+                    x += std::max(0.0f, (availableWidth - size) * 0.5f);
+                    y += std::max(0.0f, (availableHeight - size) * 0.5f);
                 }
                 else if (node.imageAlignment == ViewImageAlignment::End)
                 {
-                    x += std::max(0.0f,
-                        node.frame.width - inset * 2.0f - size);
-                    y += std::max(0.0f,
-                        node.frame.height - inset * 2.0f - size);
+                    x += std::max(0.0f, availableWidth - size);
+                    y += std::max(0.0f, availableHeight - size);
                 }
                 DrawSimulatedPreviewIcon(state, *target,
                     Utf8ToWideLocal(node.alt), x, y, size, opacity);
@@ -15913,19 +15933,17 @@ static void DrawWidgetViewNode(D2DState* state,
         const std::wstring text = Utf8ToWideLocal(node.text);
         if (format && brush && !text.empty())
         {
-            const float textInset = std::min(node.padding,
-                std::max(0.0f, std::min(
-                    node.frame.width, node.frame.height) * 0.5f));
-            float textLeft = rect.left + textInset;
-            float textRight = rect.right - textInset;
+            const auto content = snowdesktop::widget_runtime::
+                ViewNodeContentRect(node);
+            float textLeft = state->widgetRect.left + content.x;
+            float textRight = textLeft + content.width;
             if (node.type == ViewNodeType::Checkbox)
                 textLeft = std::min(textRight, textLeft + 26.0f);
             else if (node.type == ViewNodeType::Toggle)
                 textRight = std::max(textLeft, textRight - 44.0f);
             const float textWidth = std::max(0.0f,
                 textRight - textLeft);
-            const float textHeight = std::max(0.0f,
-                node.frame.height - textInset * 2.0f);
+            const float textHeight = content.height;
             const float layoutHeight = ViewTextLayoutHeight(
                 node, textHeight);
             ComPtr<IDWriteTextLayout> layout;
@@ -15957,7 +15975,7 @@ static void DrawWidgetViewNode(D2DState* state,
                         layout->GetMetrics(&metrics))
                     ? std::min(layoutHeight, metrics.height) : layoutHeight;
                 D2D1_POINT_2F origin = D2D1::Point2F(
-                    textLeft, rect.top + textInset +
+                    textLeft, state->widgetRect.top + content.y +
                         ViewTextVerticalOffset(
                             node, textHeight, contentHeight));
                 if (iconNode)
@@ -16586,8 +16604,8 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                         if (control.multiline)
                         {
                             const float innerWidth = std::max(1.0f,
-                                input.frame.width - input.padding * 2.0f -
-                                    8.0f);
+                                input.frame.width - input.padding.left -
+                                    input.padding.right - 8.0f);
                             std::wstring metricText =
                                 Utf8ToWideLocal(input.value);
                             size_t metricCursor = 0;
@@ -16607,7 +16625,8 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                             control.contentHeight = std::max(
                                 control.viewportHeight,
                                 static_cast<int>(std::ceil(metrics.height +
-                                    input.padding * 2.0f)));
+                                    input.padding.top +
+                                    input.padding.bottom)));
                         }
                         RuntimeRegisterHostControl(widgetId,
                             std::move(control));
@@ -21272,26 +21291,27 @@ size_t WidgetEngine::HitTestHostInputPosition(
         control.rect.bottom - control.rect.top);
     ComPtr<IDWriteTextLayout> layout;
     float localX = static_cast<float>(
-        x - control.rect.left) - control.padding;
+        x - control.rect.left) - control.padding.left;
     float localY = static_cast<float>(
-        y - control.rect.top);
+        y - control.rect.top) - control.padding.top;
     if (control.multiline)
     {
         const float scrollbarReserve = 8.0f;
         const float innerWidth = std::max(1.0f,
-            width - control.padding * 2.0f -
+            width - control.padding.left - control.padding.right -
                 scrollbarReserve);
         layout = CreateHostMultilineTextLayout(d2dState_,
             text, control.fontSize, innerWidth);
-        localY = localY - control.padding +
-            RuntimeGetScrollOffset(widgetId, control.id);
+        localY += RuntimeGetScrollOffset(widgetId, control.id);
     }
     else
     {
         const float innerWidth = std::max(1.0f,
-            width - control.padding * 2.0f);
+            width - control.padding.left - control.padding.right);
         layout = CreateHostSingleLineTextLayout(d2dState_,
-            text, control.fontSize, innerWidth, height);
+            text, control.fontSize, innerWidth,
+            std::max(1.0f, height - control.padding.top -
+                control.padding.bottom));
     }
     if (!layout)
         return std::min(focusedHostInput_.cursor,
@@ -21903,10 +21923,10 @@ bool WidgetEngine::HandleHostInputPointerMove(
         int offset = RuntimeGetScrollOffset(
             widgetId, control->id);
         if (y < control->rect.top +
-            static_cast<int>(std::lround(control->padding)))
+            static_cast<int>(std::lround(control->padding.top)))
             offset -= 24;
         else if (y > control->rect.bottom -
-            static_cast<int>(std::lround(control->padding)))
+            static_cast<int>(std::lround(control->padding.bottom)))
             offset += 24;
         RuntimeSetScrollOffset(widgetId,
             control->id, offset);
@@ -22320,7 +22340,7 @@ bool WidgetEngine::GetFocusedHostInputCaretRect(RECT& rect) const
     {
         constexpr float scrollbarReserve = 8.0f;
         const float innerWidth = std::max(1.0f,
-            width - control->padding * 2.0f -
+            width - control->padding.left - control->padding.right -
                 scrollbarReserve);
         layout = CreateHostMultilineTextLayout(d2dState_,
             display.text, control->fontSize,
@@ -22331,10 +22351,11 @@ bool WidgetEngine::GetFocusedHostInputCaretRect(RECT& rect) const
     else
     {
         const float innerWidth = std::max(1.0f,
-            width - control->padding * 2.0f);
+            width - control->padding.left - control->padding.right);
         layout = CreateHostSingleLineTextLayout(d2dState_,
             display.text, control->fontSize,
-            innerWidth, height);
+            innerWidth, std::max(1.0f,
+                height - control->padding.top - control->padding.bottom));
     }
     if (!layout)
         return false;
@@ -22374,9 +22395,9 @@ bool WidgetEngine::GetFocusedHostInputCaretRect(RECT& rect) const
         return false;
 
     const float localX = static_cast<float>(control->rect.left) +
-        control->padding + caretX;
+        control->padding.left + caretX;
     const float localY = static_cast<float>(control->rect.top) +
-        (control->multiline ? control->padding : 0.0f) +
+        control->padding.top +
         caretY - static_cast<float>(scrollOffset);
     const float caretHeight = std::max(
         metrics.height, control->fontSize);

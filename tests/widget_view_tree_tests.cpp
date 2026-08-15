@@ -640,7 +640,7 @@ void TestStatusVisualParsing()
             root.children.size() == 3 &&
             root.children[0].type == ViewNodeType::Badge &&
             root.children[0].text == "Online" &&
-            Near(root.children[0].padding, 4.0f) &&
+            Near(root.children[0].padding.left, 4.0f) &&
             root.children[1].type == ViewNodeType::Divider &&
             root.children[1].orientation == ViewOrientation::Vertical &&
             root.children[1].width.kind == ViewLengthKind::Auto &&
@@ -1867,8 +1867,8 @@ void TestUniformMargins()
     std::string error;
     Check(ParseLuaViewTree(state, -1, row, error) &&
             row.children.size() == 2 &&
-            Near(row.children[0].margin, 5.0f) &&
-            Near(row.children[1].margin, 10.0f),
+            Near(row.children[0].margin.left, 5.0f) &&
+            Near(row.children[1].margin.left, 10.0f),
         "Lua parsing must retain bounded uniform margins");
     Check(ValidateAndLayoutViewTree(row, 200.0f, 60.0f, error) &&
             Near(row.children[0].frame.x, 5.0f) &&
@@ -1877,6 +1877,32 @@ void TestUniformMargins()
             Near(row.children[1].frame.x, 65.0f) &&
             Near(row.children[1].frame.y, 10.0f),
         "linear layout must reserve margin outside child frames and gaps");
+
+    lua_settop(state, 0);
+    Check(luaL_dostring(state, R"lua(
+        return view.row({
+            key = "directional-insets",
+            padding = { horizontal = 10, vertical = 4, left = 20 },
+            alignItems = "start",
+            children = {
+                view.shape({ key = "directional-child", width = 40,
+                    height = 20,
+                    margin = { top = 1, right = 2, bottom = 3, left = 4 } }),
+            },
+        })
+    )lua") == LUA_OK,
+        "directional edge-inset Lua fixture must evaluate");
+    ViewNode directional;
+    Check(ParseLuaViewTree(state, -1, directional, error) &&
+            directional.padding == ViewEdgeInsets{ 4, 10, 4, 20 } &&
+            directional.children.size() == 1 &&
+            directional.children[0].margin ==
+                ViewEdgeInsets{ 1, 2, 3, 4 },
+        "Lua parsing must expand axis insets and let explicit sides override them");
+    Check(ValidateAndLayoutViewTree(
+            directional, 100.0f, 50.0f, error) &&
+            directional.children[0].frame == ViewRect{ 24, 5, 40, 20 },
+        "directional padding and margins must affect their matching edges");
 
     ViewNode grid;
     grid.type = ViewNodeType::Grid;

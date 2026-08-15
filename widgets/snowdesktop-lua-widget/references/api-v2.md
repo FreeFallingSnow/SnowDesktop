@@ -109,6 +109,11 @@ grid/flow/scroll 子项布局，而不是只在绘制时裁切；与宽高比不
 或不符合宽高比的双固定尺寸会拒绝整棵新树并保留上一棵有效树。
 `margin` 由父布局保留在节点 frame 之外，参与线性分配、grid cell、flow 换行、stack inset、
 scroll content extent 和虚拟 item extent；同级间的公共间隔仍优先使用父容器 `gap`。
+`view.layout.edgeInsets` 将 `margin/padding` 扩展为数值或边距表。数值表示四边相同；
+`{ horizontal = 12, vertical = 6 }` 分别设置左右和上下，`{ top, right, bottom, left }`
+可按边设置。轴值会先展开，显式边值随后覆盖对应轴；每个已声明值仍须位于 0–4096。
+不接受 CSS shorthand 字符串、数组或未知字段。方向值会实际参与固有尺寸、布局、滚动范围、
+文本/图片内容区和宿主输入控件命中，而不是只影响背景绘制。
 每次 `view(context, model)` 返回一棵完整树；所有节点必须提供全树唯一、1–128 字节的
 稳定 `key`。宿主先完整解析、校验和布局，再原子替换上一棵成功树；回调或校验失败时
 继续显示上一棵树，不留下半棵树或空白交互区。
@@ -149,7 +154,7 @@ local function buildView(context, model)
 end
 ```
 
-尺寸接受有限非负数字、`auto` 或 `fill`；线性布局支持 `padding`、`gap`、
+尺寸接受有限非负数字、`auto` 或 `fill`；线性布局支持数值或四边结构的 `padding`、`gap`、
 `flexBasis/flexGrow/flexShrink`、`alignItems/alignSelf` 和 `justifyContent`。`flexBasis`
 接受 0–4096 数值或 `auto`，先确定主轴基础外尺寸；正剩余空间按非负 `flexGrow` 分配，
 空间不足时按 `flexShrink × basis` 收缩并重新分配触及 `minWidth/minHeight` 后的溢出。

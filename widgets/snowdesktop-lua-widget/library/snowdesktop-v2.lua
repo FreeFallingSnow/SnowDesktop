@@ -130,6 +130,14 @@
 ---@alias SnowDrawGradientDirection 'horizontal'|'vertical'|'diagonalDown'|'diagonalUp'
 ---@alias SnowDrawPathFillRule 'alternate'|'winding'
 
+---@class SnowViewEdgeInsets
+---@field horizontal? number Applied to left and right before explicit side overrides.
+---@field vertical? number Applied to top and bottom before explicit side overrides.
+---@field top? number
+---@field right? number
+---@field bottom? number
+---@field left? number
+
 ---@class SnowViewStyle
 ---@field background? integer RGB color.
 ---@field foreground? integer RGB color.
@@ -235,8 +243,8 @@
 ---@field minHeight? number Minimum bounded logical height, from 0 through 4096.
 ---@field maxHeight? number Maximum bounded logical height, from 0 through 4096.
 ---@field aspectRatio? number Width divided by height, from 0.01 through 100; conflicting fixed dimensions or constraints reject the tree.
----@field margin? number Uniform outer spacing from 0 through 4096; parent layout reserves it outside the node frame.
----@field padding? number
+---@field margin? number|SnowViewEdgeInsets Outer spacing from 0 through 4096 per edge; parent layout reserves it outside the node frame.
+---@field padding? number|SnowViewEdgeInsets Inner spacing from 0 through 4096 per edge.
 ---@field gap? number
 ---@field columns? integer Required by grid, gridList, and virtualGrid; 1 to 64 equal-width columns.
 ---@field columnGap? number Grid/gridList/virtualGrid/flow horizontal gap; defaults to gap.

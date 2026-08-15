@@ -180,19 +180,67 @@ ResolvedNodeSize ResolveNodeSize(
     return result;
 }
 
-float ViewMarginExtent(const ViewNode& node) noexcept
+float HorizontalInsets(const ViewEdgeInsets& insets) noexcept
 {
-    return node.margin * 2.0f;
+    return insets.left + insets.right;
+}
+
+float VerticalInsets(const ViewEdgeInsets& insets) noexcept
+{
+    return insets.top + insets.bottom;
+}
+
+ViewEdgeInsets ResolveInsets(const ViewEdgeInsets& insets,
+    float width, float height) noexcept
+{
+    ViewEdgeInsets resolved = insets;
+    const float horizontal = HorizontalInsets(resolved);
+    if (horizontal > width && horizontal > 0.0f)
+    {
+        const float scale = std::max(0.0f, width) / horizontal;
+        resolved.left *= scale;
+        resolved.right *= scale;
+    }
+    const float vertical = VerticalInsets(resolved);
+    if (vertical > height && vertical > 0.0f)
+    {
+        const float scale = std::max(0.0f, height) / vertical;
+        resolved.top *= scale;
+        resolved.bottom *= scale;
+    }
+    return resolved;
+}
+
+float ViewHorizontalMargin(const ViewNode& node) noexcept
+{
+    return HorizontalInsets(node.margin);
+}
+
+float ViewVerticalMargin(const ViewNode& node) noexcept
+{
+    return VerticalInsets(node.margin);
+}
+
+float ViewHorizontalPadding(const ViewNode& node) noexcept
+{
+    return HorizontalInsets(node.padding);
+}
+
+float ViewVerticalPadding(const ViewNode& node) noexcept
+{
+    return VerticalInsets(node.padding);
 }
 
 ResolvedNodeSize ResolveOuterNodeSize(
     const ViewNode& node, float proposedWidth, float proposedHeight) noexcept
 {
-    const float margin = ViewMarginExtent(node);
+    const float horizontalMargin = ViewHorizontalMargin(node);
+    const float verticalMargin = ViewVerticalMargin(node);
     const ResolvedNodeSize inner = ResolveNodeSize(node,
-        std::max(0.0f, proposedWidth - margin),
-        std::max(0.0f, proposedHeight - margin));
-    return { inner.width + margin, inner.height + margin };
+        std::max(0.0f, proposedWidth - horizontalMargin),
+        std::max(0.0f, proposedHeight - verticalMargin));
+    return { inner.width + horizontalMargin,
+        inner.height + verticalMargin };
 }
 
 float TextIntrinsicWidth(const ViewNode& node) noexcept
@@ -203,7 +251,7 @@ float TextIntrinsicWidth(const ViewNode& node) noexcept
         node.letterSpacing;
     return std::max(node.fontSize,
         approximateGlyphs * node.fontSize * 0.55f + spacing) +
-        node.padding * 2.0f;
+        ViewHorizontalPadding(node);
 }
 
 float TextIntrinsicLineHeight(const ViewNode& node) noexcept
@@ -308,12 +356,11 @@ const char* DefaultAccessibilityRole(ViewNodeType type) noexcept
 
 ViewRect ContentRect(const ViewNode& node) noexcept
 {
-    const float inset = std::min(node.padding,
-        std::max(0.0f,
-            std::min(node.frame.width, node.frame.height) * 0.5f));
-    return { node.frame.x + inset, node.frame.y + inset,
-        std::max(0.0f, node.frame.width - inset * 2.0f),
-        std::max(0.0f, node.frame.height - inset * 2.0f) };
+    const ViewEdgeInsets insets = ResolveInsets(
+        node.padding, node.frame.width, node.frame.height);
+    return { node.frame.x + insets.left, node.frame.y + insets.top,
+        std::max(0.0f, node.frame.width - HorizontalInsets(insets)),
+        std::max(0.0f, node.frame.height - VerticalInsets(insets)) };
 }
 
 std::optional<ViewRect> IntersectRects(
@@ -345,12 +392,12 @@ float RawIntrinsicHeight(const ViewNode& node);
 
 float OuterIntrinsicWidth(const ViewNode& node)
 {
-    return IntrinsicWidth(node) + ViewMarginExtent(node);
+    return IntrinsicWidth(node) + ViewHorizontalMargin(node);
 }
 
 float OuterIntrinsicHeight(const ViewNode& node)
 {
-    return IntrinsicHeight(node) + ViewMarginExtent(node);
+    return IntrinsicHeight(node) + ViewVerticalMargin(node);
 }
 
 float IntrinsicWidth(const ViewNode& node)
@@ -394,31 +441,31 @@ float RawIntrinsicWidth(const ViewNode& node)
                         option.label.size(), 256)) * node.fontSize * 0.55f) +
                     26.0f);
         }
-        return result + node.padding * 2.0f;
+        return result + ViewHorizontalPadding(node);
     }
     if (IsInputNode(node.type) || node.type == ViewNodeType::Select)
-        return 144.0f + node.padding * 2.0f;
+        return 144.0f + ViewHorizontalPadding(node);
     if (node.type == ViewNodeType::Slider)
         return (node.orientation == ViewOrientation::Horizontal
-            ? 96.0f : 24.0f) + node.padding * 2.0f;
+            ? 96.0f : 24.0f) + ViewHorizontalPadding(node);
     if (node.type == ViewNodeType::Image ||
         node.type == ViewNodeType::ReferenceIcon)
-        return 48.0f + node.padding * 2.0f;
+        return 48.0f + ViewHorizontalPadding(node);
     if (IsIconNode(node.type))
-        return node.fontSize * 1.4f + node.padding * 2.0f;
+        return node.fontSize * 1.4f + ViewHorizontalPadding(node);
     if (node.type == ViewNodeType::ProgressRing)
-        return 32.0f + node.padding * 2.0f;
+        return 32.0f + ViewHorizontalPadding(node);
     if (node.type == ViewNodeType::Shape)
-        return 8.0f + node.padding * 2.0f;
+        return 8.0f + ViewHorizontalPadding(node);
     if (node.type == ViewNodeType::Divider)
         return (node.orientation == ViewOrientation::Vertical
-            ? node.thickness : 24.0f) + node.padding * 2.0f;
+            ? node.thickness : 24.0f) + ViewHorizontalPadding(node);
     if (node.type == ViewNodeType::Meter)
-        return 64.0f + node.padding * 2.0f;
+        return 64.0f + ViewHorizontalPadding(node);
     if (node.type == ViewNodeType::MonthCalendar)
-        return 224.0f + node.padding * 2.0f;
+        return 224.0f + ViewHorizontalPadding(node);
     if (IsDataSeriesNode(node.type))
-        return 64.0f + node.padding * 2.0f;
+        return 64.0f + ViewHorizontalPadding(node);
     if (node.type == ViewNodeType::Spacer)
         return 0.0f;
     if (IsVirtualCollection(node.type))
@@ -432,7 +479,7 @@ float RawIntrinsicWidth(const ViewNode& node)
         return cellWidth * static_cast<float>(columns) +
             node.columnGap.value_or(node.gap) *
                 static_cast<float>(columns > 0 ? columns - 1 : 0) +
-            node.padding * 2.0f;
+            ViewHorizontalPadding(node);
     }
     if (IsGridContainer(node.type))
     {
@@ -452,7 +499,7 @@ float RawIntrinsicWidth(const ViewNode& node)
         if (usedColumns > 1)
             result += node.columnGap.value_or(node.gap) *
                 static_cast<float>(usedColumns - 1);
-        return result + node.padding * 2.0f;
+        return result + ViewHorizontalPadding(node);
     }
     if (node.type == ViewNodeType::Flow)
     {
@@ -467,7 +514,7 @@ float RawIntrinsicWidth(const ViewNode& node)
         if (visible > 1)
             result += node.columnGap.value_or(node.gap) *
                 static_cast<float>(visible - 1);
-        return result + node.padding * 2.0f;
+        return result + ViewHorizontalPadding(node);
     }
     float result = 0.0f;
     if (node.type == ViewNodeType::Row)
@@ -488,7 +535,7 @@ float RawIntrinsicWidth(const ViewNode& node)
             if (child.visible)
                 result = std::max(result, OuterIntrinsicWidth(child));
     }
-    return result + node.padding * 2.0f;
+    return result + ViewHorizontalPadding(node);
 }
 
 float IntrinsicHeight(const ViewNode& node)
@@ -503,20 +550,20 @@ float RawIntrinsicHeight(const ViewNode& node)
     if (node.type == ViewNodeType::Text ||
         node.type == ViewNodeType::StyledText ||
         node.type == ViewNodeType::Link)
-        return TextIntrinsicLineHeight(node) + node.padding * 2.0f;
+        return TextIntrinsicLineHeight(node) + ViewVerticalPadding(node);
     if (node.type == ViewNodeType::Badge)
         return std::max(20.0f, TextIntrinsicLineHeight(node)) +
-            node.padding * 2.0f;
+            ViewVerticalPadding(node);
     if (node.type == ViewNodeType::Image ||
         node.type == ViewNodeType::ReferenceIcon)
-        return 48.0f + node.padding * 2.0f;
+        return 48.0f + ViewVerticalPadding(node);
     if (node.type == ViewNodeType::Button)
         return std::max(32.0f, TextIntrinsicLineHeight(node)) +
-            node.padding * 2.0f;
+            ViewVerticalPadding(node);
     if (node.type == ViewNodeType::Toggle ||
         node.type == ViewNodeType::Checkbox)
         return std::max(32.0f, TextIntrinsicLineHeight(node)) +
-            node.padding * 2.0f;
+            ViewVerticalPadding(node);
     if (node.type == ViewNodeType::RadioGroup)
     {
         const float optionHeight = std::max(
@@ -526,35 +573,35 @@ float RawIntrinsicHeight(const ViewNode& node)
                 node.gap * static_cast<float>(
                     node.options.empty() ? 0 : node.options.size() - 1)
             : optionHeight;
-        return content + node.padding * 2.0f;
+        return content + ViewVerticalPadding(node);
     }
     if (node.type == ViewNodeType::TextArea)
-        return 96.0f + node.padding * 2.0f;
+        return 96.0f + ViewVerticalPadding(node);
     if (IsInputNode(node.type) || node.type == ViewNodeType::Select)
         return std::max(36.0f, node.fontSize * 1.8f) +
-            node.padding * 2.0f;
+            ViewVerticalPadding(node);
     if (node.type == ViewNodeType::Slider)
         return (node.orientation == ViewOrientation::Horizontal
-            ? 24.0f : 96.0f) + node.padding * 2.0f;
+            ? 24.0f : 96.0f) + ViewVerticalPadding(node);
     if (node.type == ViewNodeType::IconButton)
         return std::max(32.0f, node.fontSize * 1.4f) +
-            node.padding * 2.0f;
+            ViewVerticalPadding(node);
     if (node.type == ViewNodeType::Icon)
-        return node.fontSize * 1.4f + node.padding * 2.0f;
+        return node.fontSize * 1.4f + ViewVerticalPadding(node);
     if (node.type == ViewNodeType::ProgressBar ||
         node.type == ViewNodeType::Meter)
-        return std::max(4.0f, node.thickness) + node.padding * 2.0f;
+        return std::max(4.0f, node.thickness) + ViewVerticalPadding(node);
     if (node.type == ViewNodeType::ProgressRing)
-        return 32.0f + node.padding * 2.0f;
+        return 32.0f + ViewVerticalPadding(node);
     if (node.type == ViewNodeType::Shape)
-        return 8.0f + node.padding * 2.0f;
+        return 8.0f + ViewVerticalPadding(node);
     if (node.type == ViewNodeType::Divider)
         return (node.orientation == ViewOrientation::Horizontal
-            ? node.thickness : 24.0f) + node.padding * 2.0f;
+            ? node.thickness : 24.0f) + ViewVerticalPadding(node);
     if (IsDataSeriesNode(node.type))
-        return 40.0f + node.padding * 2.0f;
+        return 40.0f + ViewVerticalPadding(node);
     if (node.type == ViewNodeType::MonthCalendar)
-        return 224.0f + node.padding * 2.0f;
+        return 224.0f + ViewVerticalPadding(node);
     if (node.type == ViewNodeType::Spacer)
         return 0.0f;
     if (IsVirtualCollection(node.type))
@@ -567,7 +614,7 @@ float RawIntrinsicHeight(const ViewNode& node)
             static_cast<double>(rows > 0 ? rows - 1 : 0) *
                 node.rowGap.value_or(node.gap);
         return static_cast<float>(std::min<double>(
-            MaximumScrollExtent, extent)) + node.padding * 2.0f;
+            MaximumScrollExtent, extent)) + ViewVerticalPadding(node);
     }
     if (IsGridContainer(node.type))
     {
@@ -587,7 +634,7 @@ float RawIntrinsicHeight(const ViewNode& node)
         if (heights.size() > 1)
             result += node.rowGap.value_or(node.gap) *
                 static_cast<float>(heights.size() - 1);
-        return result + node.padding * 2.0f;
+        return result + ViewVerticalPadding(node);
     }
     if (node.type == ViewNodeType::Flow)
     {
@@ -602,7 +649,7 @@ float RawIntrinsicHeight(const ViewNode& node)
         if (visible > 1)
             result += node.rowGap.value_or(node.gap) *
                 static_cast<float>(visible - 1);
-        return result + node.padding * 2.0f;
+        return result + ViewVerticalPadding(node);
     }
     float result = 0.0f;
     if (node.type == ViewNodeType::Column ||
@@ -624,7 +671,7 @@ float RawIntrinsicHeight(const ViewNode& node)
             if (child.visible)
                 result = std::max(result, OuterIntrinsicHeight(child));
     }
-    return result + node.padding * 2.0f;
+    return result + ViewVerticalPadding(node);
 }
 
 float ResolveCrossSize(const ViewLength& length, float intrinsic,
@@ -640,9 +687,10 @@ float ResolveCrossSize(const ViewLength& length, float intrinsic,
 
 float ResolveOuterCrossSize(const ViewNode& node,
     const ViewLength& length, float intrinsic, float available,
-    ViewAlignment alignment) noexcept
+    ViewAlignment alignment, bool horizontalAxis) noexcept
 {
-    const float margin = ViewMarginExtent(node);
+    const float margin = horizontalAxis
+        ? ViewHorizontalMargin(node) : ViewVerticalMargin(node);
     return ResolveCrossSize(length, intrinsic,
         std::max(0.0f, available - margin), alignment) + margin;
 }
@@ -689,9 +737,11 @@ void LayoutLinear(ViewNode& node, const ViewRect& content, bool horizontal)
             innerSize = mainLength.value;
         else if (mainLength.kind == ViewLengthKind::Fill)
             innerSize = 0.0f;
+        const float mainMargin = horizontal
+            ? ViewHorizontalMargin(child) : ViewVerticalMargin(child);
         mainSizes[index] = (horizontal
             ? ConstrainWidth(child, innerSize)
-            : ConstrainHeight(child, innerSize)) + ViewMarginExtent(child);
+            : ConstrainHeight(child, innerSize)) + mainMargin;
         baseTotal += mainSizes[index];
         growWeights[index] = child.flexGrow > 0.0f
             ? child.flexGrow :
@@ -699,7 +749,7 @@ void LayoutLinear(ViewNode& node, const ViewRect& content, bool horizontal)
         growTotal += growWeights[index];
         shrinkWeights[index] = child.flexShrink *
             std::max(1.0f,
-                mainSizes[index] - ViewMarginExtent(child));
+                mainSizes[index] - mainMargin);
     }
 
     const float availableForItems = std::max(0.0f, availableMain - gaps);
@@ -734,7 +784,8 @@ void LayoutLinear(ViewNode& node, const ViewRect& content, bool horizontal)
                     ? child.minimumWidth.value_or(0.0f)
                     : child.minimumHeight.value_or(0.0f);
                 const float minimumOuter = minimumInner +
-                    ViewMarginExtent(child);
+                    (horizontal ? ViewHorizontalMargin(child) :
+                        ViewVerticalMargin(child));
                 const float capacity = std::max(
                     0.0f, mainSizes[index] - minimumOuter);
                 const float share = requested *
@@ -761,7 +812,8 @@ void LayoutLinear(ViewNode& node, const ViewRect& content, bool horizontal)
         const ViewAlignment alignment = child.alignSelf == ViewAlignment::Auto
             ? node.alignItems : child.alignSelf;
         const float proposedCross = ResolveOuterCrossSize(child,
-            crossLength, intrinsicCross, availableCross, alignment);
+            crossLength, intrinsicCross, availableCross, alignment,
+            !horizontal);
         const ResolvedNodeSize resolved = ResolveOuterNodeSize(child,
             horizontal ? mainSizes[index] : proposedCross,
             horizontal ? proposedCross : mainSizes[index]);
@@ -859,9 +911,9 @@ void LayoutGrid(ViewNode& node, const ViewRect& content)
             ? node.alignItems : child.alignSelf;
         const ResolvedNodeSize resolved = ResolveOuterNodeSize(child,
             ResolveOuterCrossSize(child, child.width, IntrinsicWidth(child),
-                cellWidth, alignment),
+                cellWidth, alignment, true),
             ResolveOuterCrossSize(child, child.height, IntrinsicHeight(child),
-                rowHeights[row], alignment));
+                rowHeights[row], alignment, false));
         const float x = content.x +
             static_cast<float>(column) * (cellWidth + columnGap) +
             AlignOffset(alignment, cellWidth, resolved.width);
@@ -895,7 +947,7 @@ void LayoutFlow(ViewNode& node, const ViewRect& content)
         if (!child.visible) continue;
         float width = OuterIntrinsicWidth(child);
         if (child.width.kind == ViewLengthKind::Fixed)
-            width = child.width.value + ViewMarginExtent(child);
+            width = child.width.value + ViewHorizontalMargin(child);
         else if (child.width.kind == ViewLengthKind::Fill)
             width = content.width;
         const ResolvedNodeSize resolved = ResolveOuterNodeSize(child,
@@ -951,8 +1003,8 @@ void LayoutFlow(ViewNode& node, const ViewRect& content)
             const ResolvedNodeSize resolved = ResolveOuterNodeSize(child,
                 item.width, ResolveOuterCrossSize(child, child.height,
                     std::max(0.0f, item.intrinsicHeight -
-                        ViewMarginExtent(child)),
-                    line.height, alignment));
+                        ViewVerticalMargin(child)),
+                    line.height, alignment, false));
             LayoutNode(child, { x,
                 y + AlignOffset(alignment, line.height, resolved.height),
                 resolved.width, resolved.height });
@@ -971,9 +1023,9 @@ void LayoutScroll(ViewNode& node, const ViewRect& content)
         const ViewAlignment alignment = child.alignSelf == ViewAlignment::Auto
             ? ViewAlignment::Stretch : child.alignSelf;
         const float proposedWidth = ResolveOuterCrossSize(child, child.width,
-            IntrinsicWidth(child), content.width, alignment);
+            IntrinsicWidth(child), content.width, alignment, true);
         float height = child.height.kind == ViewLengthKind::Fixed
-            ? child.height.value + ViewMarginExtent(child) :
+            ? child.height.value + ViewVerticalMargin(child) :
                 OuterIntrinsicHeight(child);
         if (child.height.kind == ViewLengthKind::Fill)
             height = std::max(height, content.height);
@@ -988,9 +1040,9 @@ void LayoutScroll(ViewNode& node, const ViewRect& content)
         const ViewAlignment alignment = child.alignSelf == ViewAlignment::Auto
             ? ViewAlignment::Stretch : child.alignSelf;
         const float proposedHeight = ResolveOuterCrossSize(child, child.height,
-            IntrinsicHeight(child), content.height, alignment);
+            IntrinsicHeight(child), content.height, alignment, false);
         float width = child.width.kind == ViewLengthKind::Fixed
-            ? child.width.value + ViewMarginExtent(child) :
+            ? child.width.value + ViewHorizontalMargin(child) :
                 OuterIntrinsicWidth(child);
         if (child.width.kind == ViewLengthKind::Fill)
             width = std::max(width, content.width);
@@ -1037,27 +1089,18 @@ void LayoutVirtualCollection(ViewNode& node, const ViewRect& content)
 
 void LayoutNode(ViewNode& node, const ViewRect& frame)
 {
-    const float margin = std::min(node.margin,
-        std::max(0.0f,
-            std::min(frame.width, frame.height) * 0.5f));
+    const ViewEdgeInsets margin = ResolveInsets(
+        node.margin, frame.width, frame.height);
     const ResolvedNodeSize resolved = ResolveNodeSize(
-        node, std::max(0.0f, frame.width - margin * 2.0f),
-        std::max(0.0f, frame.height - margin * 2.0f));
-    node.frame = { frame.x + margin, frame.y + margin,
+        node, std::max(0.0f, frame.width - HorizontalInsets(margin)),
+        std::max(0.0f, frame.height - VerticalInsets(margin)));
+    node.frame = { frame.x + margin.left, frame.y + margin.top,
         resolved.width, resolved.height };
     node.clipFrame.reset();
     node.scrollOffset = 0.0f;
     node.scrollViewportExtent = 0.0f;
     node.scrollContentExtent = 0.0f;
-    const float inset = std::min(node.padding,
-        std::max(0.0f,
-            std::min(node.frame.width, node.frame.height) * 0.5f));
-    const ViewRect content{
-        node.frame.x + inset,
-        node.frame.y + inset,
-        std::max(0.0f, node.frame.width - inset * 2.0f),
-        std::max(0.0f, node.frame.height - inset * 2.0f),
-    };
+    const ViewRect content = ContentRect(node);
     if (node.type == ViewNodeType::Row)
         LayoutLinear(node, content, true);
     else if (node.type == ViewNodeType::Column ||
@@ -1086,10 +1129,10 @@ void LayoutNode(ViewNode& node, const ViewRect& frame)
             const ResolvedNodeSize childSize = ResolveOuterNodeSize(child,
                 ResolveOuterCrossSize(child, child.width,
                     IntrinsicWidth(child),
-                    content.width, alignment),
+                    content.width, alignment, true),
                 ResolveOuterCrossSize(child, child.height,
                     IntrinsicHeight(child),
-                    content.height, alignment));
+                    content.height, alignment, false));
             LayoutNode(child, {
                 content.x + AlignOffset(alignment,
                     content.width, childSize.width),
@@ -1170,8 +1213,14 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             *node.minimumHeight > *node.maximumHeight) ||
         (node.aspectRatio && !FiniteInRange(
             *node.aspectRatio, 0.01f, 100.0f)) ||
-        !FiniteInRange(node.margin, 0.0f, 4096.0f) ||
-        !FiniteInRange(node.padding, 0.0f, 4096.0f) ||
+        !FiniteInRange(node.margin.top, 0.0f, 4096.0f) ||
+        !FiniteInRange(node.margin.right, 0.0f, 4096.0f) ||
+        !FiniteInRange(node.margin.bottom, 0.0f, 4096.0f) ||
+        !FiniteInRange(node.margin.left, 0.0f, 4096.0f) ||
+        !FiniteInRange(node.padding.top, 0.0f, 4096.0f) ||
+        !FiniteInRange(node.padding.right, 0.0f, 4096.0f) ||
+        !FiniteInRange(node.padding.bottom, 0.0f, 4096.0f) ||
+        !FiniteInRange(node.padding.left, 0.0f, 4096.0f) ||
         !FiniteInRange(node.gap, 0.0f, 4096.0f) ||
         (node.columnGap && !FiniteInRange(*node.columnGap, 0.0f, 4096.0f)) ||
         (node.rowGap && !FiniteInRange(*node.rowGap, 0.0f, 4096.0f)) ||
@@ -2134,14 +2183,15 @@ bool CollectRegions(const ViewNode& node,
             region.vertical = node.orientation == ViewOrientation::Vertical;
             const float thumbRadius = std::min(8.0f, std::max(3.0f,
                 std::min(node.frame.width, node.frame.height) * 0.3f));
+            const ViewRect content = ContentRect(node);
             const float mainLength = region.vertical
-                ? node.frame.height : node.frame.width;
-            const float inset = std::min(node.padding + thumbRadius,
+                ? content.height : content.width;
+            const float radiusInset = std::min(thumbRadius,
                 std::max(0.0f, mainLength * 0.5f));
             region.controlStart = (region.vertical
-                ? node.frame.y : node.frame.x) + inset;
+                ? content.y : content.x) + radiusInset;
             region.controlLength = std::max(0.0f,
-                mainLength - inset * 2.0f);
+                mainLength - radiusInset * 2.0f);
         }
         region.checked = node.checked;
         region.accessibilityRole = node.accessibilityRole.empty()
@@ -2341,8 +2391,9 @@ bool ApplyScrollState(ViewNode& node,
             const ViewNode& child = node.children.front();
             contentExtent = std::max(viewportExtent,
                 vertical ? child.frame.y + child.frame.height +
-                        child.margin - clip.y :
-                    child.frame.x + child.frame.width + child.margin - clip.x);
+                        child.margin.bottom - clip.y :
+                    child.frame.x + child.frame.width +
+                        child.margin.right - clip.x);
             if (!FiniteInRange(contentExtent, 0.0f, MaximumScrollExtent))
             {
                 error = "view scroll content extent exceeds 1000000";
@@ -2405,19 +2456,17 @@ bool ApplyScrollState(ViewNode& node,
 }
 }
 
+ViewRect ViewNodeContentRect(const ViewNode& node) noexcept
+{
+    return ContentRect(node);
+}
+
 ViewRect ViewRadioOptionFrame(
     const ViewNode& node, std::size_t optionIndex) noexcept
 {
     if (node.options.empty() || optionIndex >= node.options.size())
         return {};
-    const float inset = std::min(node.padding,
-        std::max(0.0f, std::min(node.frame.width, node.frame.height) * 0.5f));
-    const ViewRect content{
-        node.frame.x + inset,
-        node.frame.y + inset,
-        std::max(0.0f, node.frame.width - inset * 2.0f),
-        std::max(0.0f, node.frame.height - inset * 2.0f),
-    };
+    const ViewRect content = ContentRect(node);
     const float count = static_cast<float>(node.options.size());
     if (node.orientation == ViewOrientation::Horizontal)
     {

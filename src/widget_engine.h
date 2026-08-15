@@ -460,7 +460,7 @@ struct LuaWidget
         float maximum = 1.0f;
         float step = 0.01f;
         float fontSize = 15.0f;
-        float padding = 8.0f;
+        snowdesktop::widget_runtime::ViewEdgeInsets padding{ 8.0f };
         int contentHeight = 0;
         int viewportHeight = 0;
         int contentWidth = 0;

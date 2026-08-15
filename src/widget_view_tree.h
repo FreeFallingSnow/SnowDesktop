@@ -178,6 +178,33 @@ struct ViewRect
     bool operator==(const ViewRect&) const = default;
 };
 
+struct ViewEdgeInsets
+{
+    float top = 0.0f;
+    float right = 0.0f;
+    float bottom = 0.0f;
+    float left = 0.0f;
+
+    constexpr ViewEdgeInsets() = default;
+    constexpr explicit ViewEdgeInsets(float uniform) noexcept
+        : top(uniform), right(uniform), bottom(uniform), left(uniform)
+    {
+    }
+    constexpr ViewEdgeInsets(float topValue, float rightValue,
+        float bottomValue, float leftValue) noexcept
+        : top(topValue), right(rightValue), bottom(bottomValue), left(leftValue)
+    {
+    }
+
+    ViewEdgeInsets& operator=(float uniform) noexcept
+    {
+        top = right = bottom = left = uniform;
+        return *this;
+    }
+
+    bool operator==(const ViewEdgeInsets&) const = default;
+};
+
 struct ViewStyle
 {
     std::optional<std::uint32_t> background;
@@ -236,8 +263,8 @@ struct ViewNode
     std::optional<float> minimumHeight;
     std::optional<float> maximumHeight;
     std::optional<float> aspectRatio;
-    float margin = 0.0f;
-    float padding = 0.0f;
+    ViewEdgeInsets margin;
+    ViewEdgeInsets padding;
     float gap = 0.0f;
     std::size_t columns = 1;
     std::size_t itemCount = 0;
@@ -349,7 +376,7 @@ struct ViewInputControl
     ViewRect frame;
     std::optional<ViewRect> clip;
     float fontSize = 15.0f;
-    float padding = 8.0f;
+    ViewEdgeInsets padding{ 8.0f };
     bool enabled = true;
     bool readOnly = false;
     bool selectAll = false;
@@ -411,6 +438,7 @@ bool ComputeViewVirtualRange(std::size_t itemCount, float itemExtent,
     std::size_t columns, float rowGap, float viewportExtent,
     float requestedOffset, std::size_t overscan,
     ViewVirtualRange& range, std::string& error);
+ViewRect ViewNodeContentRect(const ViewNode& node) noexcept;
 ViewRect ViewRadioOptionFrame(
     const ViewNode& node, std::size_t optionIndex) noexcept;
 ViewRect ViewSelectOptionFrame(const ViewNode& node,
