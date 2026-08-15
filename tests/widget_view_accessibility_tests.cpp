@@ -94,12 +94,50 @@ void TestClipAndControlledState()
             nodes[2].offscreen && nodes[2].valueText == "snow",
         "semantic state must retain controlled values and offscreen status");
 }
+
+void TestImmediateRegionSemantics()
+{
+    InteractionRegion button;
+    button.key = "open";
+    button.shape = { InteractionShapeType::RoundedRect,
+        8, 8, 80, 32, 6 };
+    button.accessibilityRole = "button";
+    button.accessibilityLabel = "Open";
+    button.events.emplace("click", InteractionAction{ "open", {} });
+    InteractionRegion slider;
+    slider.key = "level";
+    slider.shape = { InteractionShapeType::Rect,
+        8, 52, 120, 24, 0 };
+    slider.accessibilityRole = "slider";
+    slider.accessibilityLabel = "Level";
+    slider.controlKind = InteractionControlKind::Slider;
+    slider.controlValue = 4.0f;
+    slider.minimum = 0.0f;
+    slider.maximum = 10.0f;
+    slider.clip = InteractionClipRect{ 140, 0, 20, 20 };
+    slider.events.emplace("change", InteractionAction{ "level", {} });
+
+    std::vector<ViewAccessibilityNode> nodes;
+    std::string error;
+    Check(CollectInteractionAccessibilityNodes({ button, slider },
+            160, 100, "open", nodes, error) && nodes.size() == 2,
+        "immediate regions must share the declarative semantic model");
+    Check(nodes[0].controlType == "Button" && nodes[0].focused &&
+            HasViewAccessibilityPattern(nodes[0].patterns,
+                ViewAccessibilityPattern::Invoke),
+        "immediate buttons must expose Invoke and host focus");
+    Check(nodes[1].controlType == "Slider" &&
+            nodes[1].value == 4.0f && nodes[1].minimum == 0.0f &&
+            nodes[1].maximum == 10.0f && nodes[1].offscreen,
+        "immediate sliders must expose bounded range state and effective clipping");
+}
 }
 
 int main()
 {
     TestSemanticHierarchyAndState();
     TestClipAndControlledState();
+    TestImmediateRegionSemantics();
     std::cout << "widget view accessibility tests passed\n";
     return 0;
 }

@@ -453,6 +453,10 @@ accessibility role、允许属性和直接必需属性。Lua 解析器会在布�
 当前仍没有 Narrator 输出。默认值/范围、子节点、事件和错误码也未全部迁入，作者仍应以本节
 各 feature 的细化说明为准。
 
+即时模式的 `interaction.region` 也进入同一种宿主语义快照，因此使用 `render()` 的组件应为
+每个有意义的元素填写稳定 `key`、`accessibility.role` 与 `accessibility.label`；纯命中区域若不
+声明语义不会出现在无障碍树中。快照只收集当前可见、有效且非预览的 v2 实例。
+
 该 feature 不是完整 `view.tree`：当前每帧重建树，尚无可变高度虚拟集合、
 可操作行内 span，也没有 UIA 输出、RTL、主题
 token、差量资源复用或声明式 panel。需要这些能力的组件应继续使用 v2 即时绘制或等待

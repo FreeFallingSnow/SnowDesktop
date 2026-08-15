@@ -309,6 +309,8 @@ void TestKeyboardFocusableOrderAndFiltering()
     input.accessibilityRole = "searchbox";
     auto slider = Rect("volume", 0, 80, 120, 24);
     slider.controlKind = InteractionControlKind::Slider;
+    slider.accessibilityRole = "slider";
+    slider.accessibilityLabel = "Volume";
     slider.events.emplace("change",
         InteractionAction{ "volume.change", {} });
     auto pointerOnly = Rect("pointer", 0, 112, 80, 32);
@@ -337,6 +339,11 @@ void TestKeyboardFocusableOrderAndFiltering()
             !regions.IsKeyboardFocusable("disabled") &&
             !regions.IsKeyboardFocusable("missing"),
         "focus filtering must include inputs and exclude disabled or pointer-only regions");
+
+    const auto semantics = regions.AccessibilityRegions();
+    Check(semantics.size() == 2 && semantics[0].key == "query" &&
+            semantics[1].key == "volume",
+        "accessibility snapshots must omit regions without declared semantics");
 }
 }
 

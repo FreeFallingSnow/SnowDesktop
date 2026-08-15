@@ -458,6 +458,20 @@ WidgetInteractionRegions::KeyboardFocusableKeys() const
     return result;
 }
 
+std::vector<InteractionRegion>
+WidgetInteractionRegions::AccessibilityRegions() const
+{
+    std::vector<InteractionRegion> result;
+    result.reserve(active_.size());
+    for (const auto& region : active_)
+    {
+        if (!region.accessibilityRole.empty() ||
+            !region.accessibilityLabel.empty())
+            result.push_back(region);
+    }
+    return result;
+}
+
 bool WidgetInteractionRegions::IsKeyboardFocusable(
     std::string_view key) const noexcept
 {

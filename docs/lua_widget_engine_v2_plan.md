@@ -1182,6 +1182,11 @@ feature、默认 accessibility role、允许属性和直接必需属性由同一
 默认值/范围、子节点、事件、RTL、动画、额度和错误码仍未全部迁入矩阵，也尚未由它生成 LuaLS
 与本文档，因此这仍不表示契约已经冻结或 Narrator 已可使用。
 
+即时绘制的 `interaction.region` 现在也会按 role、label、受控状态、形状/clip 和最后提交的宿主
+焦点转换为同一种语义节点；`WidgetEngine` 只汇总当前可见、有效、非预览的 v2 实例，并保留
+组件身份、边界、选中状态和采集错误。这样后续 UIA Provider 只消费一个实例快照面，不需要
+为 `view()` 与 `render()` 维护两套 Windows 无障碍实现。
+
 ### 13.8 实时更新与交互状态
 
 声明式视图不是静态快照。宿主维护每个稳定 key 节点的 `hovered`、`pressed`、`focused`、`disabled`、`selected` 和 pointer capture 状态，并在输入、组件 state、数据订阅或调度变化后进行差量更新。

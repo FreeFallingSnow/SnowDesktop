@@ -190,6 +190,7 @@ public:
         std::string* targetKey = nullptr) const noexcept;
 
     std::vector<std::string> KeyboardFocusableKeys() const;
+    std::vector<InteractionRegion> AccessibilityRegions() const;
     bool IsKeyboardFocusable(std::string_view key) const noexcept;
     bool IsHovered(std::string_view key) const noexcept;
     bool IsPressed(std::string_view key) const noexcept;

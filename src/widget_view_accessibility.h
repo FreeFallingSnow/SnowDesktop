@@ -40,4 +40,10 @@ bool CollectViewAccessibilityNodes(const ViewNode& root,
     std::string_view focusedKey,
     std::vector<ViewAccessibilityNode>& nodes,
     std::string& error);
+bool CollectInteractionAccessibilityNodes(
+    const std::vector<InteractionRegion>& regions,
+    float surfaceWidth, float surfaceHeight,
+    std::string_view focusedKey,
+    std::vector<ViewAccessibilityNode>& nodes,
+    std::string& error);
 }

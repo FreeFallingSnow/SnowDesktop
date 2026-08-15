@@ -46,6 +46,61 @@ std::string AccessibleName(const ViewNode& node)
     return node.text;
 }
 
+struct ImmediateAccessibilityMapping
+{
+    const char* controlType = "Custom";
+    ViewAccessibilityPattern patterns = ViewAccessibilityPattern::None;
+    bool focusable = false;
+};
+
+ImmediateAccessibilityMapping MapImmediateRegion(
+    const InteractionRegion& region) noexcept
+{
+    if (region.controlKind == InteractionControlKind::Toggle)
+        return { "Button", ViewAccessibilityPattern::Toggle, true };
+    if (region.controlKind == InteractionControlKind::Checkbox)
+        return { "CheckBox", ViewAccessibilityPattern::Toggle, true };
+    if (region.controlKind == InteractionControlKind::Radio)
+        return { "RadioButton",
+            ViewAccessibilityPattern::SelectionItem, true };
+    if (region.controlKind == InteractionControlKind::Slider)
+        return { "Slider", ViewAccessibilityPattern::RangeValue, true };
+    if (region.accessibilityRole == "button")
+        return { "Button", ViewAccessibilityPattern::Invoke, true };
+    if (region.accessibilityRole == "link")
+        return { "Hyperlink", ViewAccessibilityPattern::Invoke, true };
+    if (region.accessibilityRole == "textbox" ||
+        region.accessibilityRole == "searchbox")
+        return { "Edit", ViewAccessibilityPattern::Value, true };
+    if (region.accessibilityRole == "spinbutton")
+        return { "Spinner", ViewAccessibilityPattern::Value |
+            ViewAccessibilityPattern::RangeValue, true };
+    if (region.accessibilityRole == "combobox")
+        return { "ComboBox", ViewAccessibilityPattern::ExpandCollapse |
+            ViewAccessibilityPattern::Selection, true };
+    if (region.accessibilityRole == "option" ||
+        region.accessibilityRole == "listitem")
+        return { "ListItem", ViewAccessibilityPattern::SelectionItem,
+            region.enabled };
+    if (region.accessibilityRole == "img") return { "Image" };
+    if (region.accessibilityRole == "separator") return { "Separator" };
+    if (region.accessibilityRole == "status") return { "Text" };
+    if (region.accessibilityRole == "meter")
+        return { "ProgressBar", ViewAccessibilityPattern::RangeValue };
+    if (region.accessibilityRole == "group") return { "Group" };
+    if (region.events.contains("click"))
+        return { "Custom", ViewAccessibilityPattern::Invoke, true };
+    return {};
+}
+
+ViewRect ImmediateBounds(const InteractionShape& shape) noexcept
+{
+    if (shape.type == InteractionShapeType::Circle)
+        return { shape.x - shape.radius, shape.y - shape.radius,
+            shape.radius * 2.0f, shape.radius * 2.0f };
+    return { shape.x, shape.y, shape.width, shape.height };
+}
+
 void PopulateValueState(const ViewNode& source,
     ViewAccessibilityNode& target)
 {
@@ -162,6 +217,66 @@ bool CollectViewAccessibilityNodes(const ViewNode& root,
     {
         nodes.clear();
         return false;
+    }
+    return true;
+}
+
+
+bool CollectInteractionAccessibilityNodes(
+    const std::vector<InteractionRegion>& regions,
+    float surfaceWidth, float surfaceHeight,
+    std::string_view focusedKey,
+    std::vector<ViewAccessibilityNode>& nodes,
+    std::string& error)
+{
+    nodes.clear();
+    error.clear();
+    const ViewRect surface{ 0.0f, 0.0f,
+        std::max(0.0f, surfaceWidth), std::max(0.0f, surfaceHeight) };
+    for (const auto& region : regions)
+    {
+        if (nodes.size() >= WidgetInteractionRegions::kMaximumRegions)
+        {
+            nodes.clear();
+            error = "interaction accessibility node limit exceeded (256)";
+            return false;
+        }
+        const ImmediateAccessibilityMapping mapping =
+            MapImmediateRegion(region);
+        ViewAccessibilityNode node;
+        node.key = region.key;
+        node.name = region.accessibilityLabel;
+        node.role = region.accessibilityRole;
+        node.controlType = mapping.controlType;
+        node.patterns = mapping.patterns;
+        node.bounds = ImmediateBounds(region.shape);
+        if (region.clip)
+            node.clip = ViewRect{ region.clip->x, region.clip->y,
+                region.clip->width, region.clip->height };
+        node.enabled = region.enabled;
+        node.focusable = mapping.focusable && region.enabled;
+        node.focused = node.focusable && region.key == focusedKey;
+        const std::optional<ViewRect> visibleClip = region.clip
+            ? Intersect(surface, *node.clip)
+            : std::optional<ViewRect>(surface);
+        node.offscreen = node.bounds.width <= 0.0f ||
+            node.bounds.height <= 0.0f || !visibleClip ||
+            !Overlaps(node.bounds, *visibleClip);
+        if (region.controlKind == InteractionControlKind::Toggle ||
+            region.controlKind == InteractionControlKind::Checkbox ||
+            region.controlKind == InteractionControlKind::Radio)
+            node.checked = region.checked;
+        if (region.controlKind == InteractionControlKind::Slider)
+        {
+            node.value = region.controlValue;
+            node.minimum = region.minimum;
+            node.maximum = region.maximum;
+            node.valueText = FormatNumber(region.controlValue);
+        }
+        if (region.hasExpandedProposal) node.expanded = region.expanded;
+        if (!region.currentSelection.empty())
+            node.valueText = region.currentSelection;
+        nodes.push_back(std::move(node));
     }
     return true;
 }

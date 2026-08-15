@@ -21344,6 +21344,40 @@ bool WidgetEngine::RuntimeIsWidgetSelected(
         widgetSelectedProvider_(widgetId);
 }
 
+std::vector<LuaWidgetAccessibilitySnapshot>
+WidgetEngine::RuntimeAccessibilitySnapshots() const
+{
+    std::vector<LuaWidgetAccessibilitySnapshot> result;
+    for (const auto& widget : widgets_)
+    {
+        if (!widget.valid || widget.preview || !widget.hostVisible ||
+            widget.manifest.apiVersion < 2)
+            continue;
+        LuaWidgetAccessibilitySnapshot snapshot;
+        snapshot.widgetId = widget.widgetId;
+        snapshot.packageId = widget.packageId;
+        snapshot.name = widget.name;
+        snapshot.bounds = widget.lastBounds;
+        snapshot.selected = RuntimeIsWidgetSelected(widget.widgetId);
+        const bool collected = widget.viewTree
+            ? snowdesktop::widget_runtime::CollectViewAccessibilityNodes(
+                *widget.viewTree, widget.viewKeyboardFocusKey,
+                snapshot.nodes, snapshot.error)
+            : snowdesktop::widget_runtime::
+                CollectInteractionAccessibilityNodes(
+                    widget.interactionRegions.AccessibilityRegions(),
+                    static_cast<float>(std::max<LONG>(0,
+                        widget.lastBounds.right - widget.lastBounds.left)),
+                    static_cast<float>(std::max<LONG>(0,
+                        widget.lastBounds.bottom - widget.lastBounds.top)),
+                    widget.viewKeyboardFocusKey,
+                    snapshot.nodes, snapshot.error);
+        if (!collected || !snapshot.nodes.empty())
+            result.push_back(std::move(snapshot));
+    }
+    return result;
+}
+
 std::wstring WidgetEngine::RuntimeSelectedWidgetPackageId() const
 {
     return selectedWidgetPackageProvider_
