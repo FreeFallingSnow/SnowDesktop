@@ -8,6 +8,9 @@
 namespace
 {
 using namespace std::chrono_literals;
+using snowdesktop::widget_runtime::ProjectWidgetAudioAnalysisSnapshot;
+using snowdesktop::widget_runtime::WidgetAudioAnalysisConfiguration;
+using snowdesktop::widget_runtime::WidgetAudioAnalysisDataSnapshot;
 using snowdesktop::widget_runtime::WidgetAudioAnalysisProvider;
 
 void Check(bool condition, const char* message)
@@ -56,9 +59,9 @@ void TestOnDemandCaptureLifecycle()
     {
         Check(snapshot->endpointId.starts_with("audio-output-") &&
                 snapshot->waveform.size() ==
-                    WidgetAudioAnalysisProvider::WaveformPoints &&
+                    WidgetAudioAnalysisProvider::DefaultWaveformPoints &&
                 snapshot->spectrum.size() ==
-                    WidgetAudioAnalysisProvider::SpectrumBins &&
+                    WidgetAudioAnalysisProvider::DefaultSpectrumBins &&
                 snapshot->rms >= 0.0 && snapshot->rms <= 1.0 &&
                 snapshot->peak >= 0.0 && snapshot->peak <= 1.0,
             "live analysis must expose bounded fixed-size derived data");
@@ -76,10 +79,35 @@ void TestOnDemandCaptureLifecycle()
             !provider.Snapshot(),
         "stopping the final subscription must release capture and clear data");
 }
+
+void TestSubscriptionProjection()
+{
+    WidgetAudioAnalysisDataSnapshot snapshot;
+    snapshot.available = true;
+    snapshot.waveform = { -1.0, -0.5, 0.0, 0.5, 1.0 };
+    snapshot.spectrum = { 0.0, 0.25, 0.5, 0.75, 1.0 };
+    snapshot.rms = 0.4;
+    snapshot.peak = 0.9;
+    WidgetAudioAnalysisConfiguration configuration;
+    configuration.waveformPoints = 16;
+    configuration.spectrum = false;
+    configuration.rms = true;
+    configuration.peak = false;
+    const auto projected = ProjectWidgetAudioAnalysisSnapshot(
+        snapshot, configuration);
+    Check(projected.hasWaveform && projected.waveform.size() == 16 &&
+            projected.waveform.front() == -1.0 &&
+            projected.waveform.back() == 1.0 &&
+            !projected.hasSpectrum && projected.spectrum.empty() &&
+            projected.hasRms && projected.rms == 0.4 &&
+            !projected.hasPeak && projected.peak == 0.0,
+        "each subscription must receive only its selected derived features");
+}
 }
 
 int main()
 {
+    TestSubscriptionProjection();
     TestOnDemandCaptureLifecycle();
     std::cout << "widget audio analysis provider tests passed\n";
     return 0;

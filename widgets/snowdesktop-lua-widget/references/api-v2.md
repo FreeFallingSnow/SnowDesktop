@@ -829,12 +829,17 @@ Windows 友好 `name` 和 `state`；`audio.output.volume` 包含匹配的 `endpo
 `available=false,error="notPresent"`。这两个 topic 只读取 endpoint 元数据与主音量，
 不会启动 loopback、取得 PCM 或暴露原生 endpoint ID；预览使用固定模拟设备。
 
-`audio.output.analysis` 使用独立 WASAPI loopback 线程，value 返回固定 128 点
+`audio.output.analysis` 使用独立 WASAPI loopback 线程。默认 value 返回 128 点
 `waveform`、64 个 `spectrum` bin、`rms/peak/silent/deviceChanged`、不透明
 `endpointId` 及源 `sampleRate/channels`。waveform 已下混为 mono 且限制在 -1–1，
-频谱和电平限制在 0–1；Lua 不取得 PCM、无限历史或每进程音频。当前配置通过
-`maxAgeMs` 选择 16–1000 ms 发布周期，点数和特征选择仍固定，后续再开放有上限的
-`features/waveformPoints/spectrumBins/updateHz` 选项。
+频谱和电平限制在 0–1；Lua 不取得 PCM、无限历史或每进程音频。
+
+订阅可通过 `features` 选择 1–4 个不重复的 `waveform/rms/peak/spectrum`；未选择的
+派生字段不会出现在 value 中。`waveformPoints` 为 16–256，`spectrumBins` 为 16–128，
+并且只能在相应 feature 启用时提供。`updateHz` 为 1–60 的整数，与 `maxAgeMs` 互斥；
+两者都是投递频率上限请求，而非硬实时保证。该高风险 topic 强制
+`whenHidden="pause"`。宿主在所有已授权可见订阅间取特征并集、最大点数和最高刷新率，
+只运行一条捕获/分析管线，再按每个订阅的配置裁剪字段和降采样。
 
 四个媒体 topic 受 `media.read` 保护，并在同一 provider 采样周期内合并读取：
 `media.sessions` value 返回最多 32 个会话和当前会话的不透明 ID，`media.current`

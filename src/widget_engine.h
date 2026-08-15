@@ -1050,7 +1050,9 @@ public:
             std::chrono::milliseconds maxAge,
             snowdesktop::widget_runtime::DataHiddenPolicy whenHidden,
             std::string rangeStart = {}, std::string rangeEnd = {},
-            std::string scopeHandle = {});
+            std::string scopeHandle = {},
+            snowdesktop::widget_runtime::WidgetAudioAnalysisConfiguration
+                audioAnalysis = {});
     bool RuntimeUnsubscribeData(std::uint64_t subscriptionId);
     std::optional<LuaWidgetDataSnapshot> RuntimeGetDataSnapshot(
         std::uint64_t subscriptionId) const;

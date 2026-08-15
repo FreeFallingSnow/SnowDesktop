@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <mutex>
 #include <optional>
@@ -21,6 +22,10 @@ struct WidgetAudioAnalysisDataSnapshot
     std::string endpointId;
     std::vector<double> waveform;
     std::vector<double> spectrum;
+    bool hasWaveform = true;
+    bool hasSpectrum = true;
+    bool hasRms = true;
+    bool hasPeak = true;
     double rms = 0.0;
     double peak = 0.0;
     unsigned int sampleRate = 0;
@@ -30,13 +35,29 @@ struct WidgetAudioAnalysisDataSnapshot
     std::string error;
 };
 
+struct WidgetAudioAnalysisConfiguration
+{
+    bool waveform = true;
+    bool spectrum = true;
+    bool rms = true;
+    bool peak = true;
+    std::size_t waveformPoints = 128;
+    std::size_t spectrumBins = 64;
+};
+
+WidgetAudioAnalysisDataSnapshot ProjectWidgetAudioAnalysisSnapshot(
+    const WidgetAudioAnalysisDataSnapshot& snapshot,
+    const WidgetAudioAnalysisConfiguration& configuration);
+
 class WidgetAudioAnalysisProvider
 {
 public:
     using Clock = std::chrono::steady_clock;
 
-    static constexpr std::size_t WaveformPoints = 128;
-    static constexpr std::size_t SpectrumBins = 64;
+    static constexpr std::size_t DefaultWaveformPoints = 128;
+    static constexpr std::size_t MaximumWaveformPoints = 256;
+    static constexpr std::size_t DefaultSpectrumBins = 64;
+    static constexpr std::size_t MaximumSpectrumBins = 128;
     static constexpr std::chrono::milliseconds MinimumInterval{ 16 };
     static constexpr std::chrono::milliseconds MaximumInterval{ 1000 };
 
@@ -47,7 +68,8 @@ public:
     WidgetAudioAnalysisProvider& operator=(
         const WidgetAudioAnalysisProvider&) = delete;
 
-    bool Start(std::chrono::milliseconds interval);
+    bool Start(std::chrono::milliseconds interval,
+        WidgetAudioAnalysisConfiguration configuration = {});
     void Stop();
     std::optional<WidgetAudioAnalysisDataSnapshot> Snapshot() const;
     bool DrainChanged();
@@ -57,9 +79,11 @@ public:
 private:
     void WorkerMain(std::stop_token stopToken);
     void Publish(WidgetAudioAnalysisDataSnapshot snapshot);
+    WidgetAudioAnalysisConfiguration Configuration() const;
 
     mutable std::mutex mutex_;
     std::optional<WidgetAudioAnalysisDataSnapshot> snapshot_;
+    WidgetAudioAnalysisConfiguration configuration_;
     bool changed_ = false;
     std::jthread worker_;
     std::atomic<std::int64_t> intervalMs_{ 33 };

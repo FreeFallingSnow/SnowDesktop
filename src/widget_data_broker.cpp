@@ -66,6 +66,18 @@ DataSubscriptionResult WidgetDataBroker::Subscribe(
     {
         return { 0, "data range is invalid" };
     }
+    if (topic == "audio.output.analysis" &&
+        (!(options.audioWaveform || options.audioSpectrum ||
+                options.audioRms || options.audioPeak) ||
+            (options.audioWaveform &&
+                (options.audioWaveformPoints < 16 ||
+                    options.audioWaveformPoints > 256)) ||
+            (options.audioSpectrum &&
+                (options.audioSpectrumBins < 16 ||
+                    options.audioSpectrumBins > 128))))
+    {
+        return { 0, "audio analysis options are invalid" };
+    }
     if (subscriptions_.size() >= MaxSubscriptions)
         return { 0, "global data subscription limit exceeded" };
     const std::size_t instanceCount = static_cast<std::size_t>(
@@ -261,6 +273,21 @@ WidgetDataBroker::SubscriptionSnapshot(
         options,
         eligible,
     };
+}
+
+std::vector<DataSubscriptionSnapshot>
+WidgetDataBroker::SubscriptionSnapshots(std::string_view topic) const
+{
+    std::vector<DataSubscriptionSnapshot> result;
+    const auto provider = providers_.find(std::string(topic));
+    if (provider == providers_.end()) return result;
+    result.reserve(provider->second.subscriptions.size());
+    for (const std::uint64_t id : provider->second.subscriptions)
+    {
+        const auto snapshot = SubscriptionSnapshot(id);
+        if (snapshot) result.push_back(*snapshot);
+    }
+    return result;
 }
 
 std::vector<DataBrokerAction> WidgetDataBroker::DrainActions()

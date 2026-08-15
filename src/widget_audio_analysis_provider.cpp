@@ -23,6 +23,46 @@ std::int64_t TimestampMilliseconds()
         std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
+bool ValidConfiguration(
+    const WidgetAudioAnalysisConfiguration& configuration) noexcept
+{
+    return (configuration.waveform || configuration.spectrum ||
+            configuration.rms || configuration.peak) &&
+        (!configuration.waveform ||
+            (configuration.waveformPoints >= 16 &&
+                configuration.waveformPoints <=
+                    WidgetAudioAnalysisProvider::MaximumWaveformPoints)) &&
+        (!configuration.spectrum ||
+            (configuration.spectrumBins >= 16 &&
+                configuration.spectrumBins <=
+                    WidgetAudioAnalysisProvider::MaximumSpectrumBins));
+}
+
+std::vector<double> Resample(
+    const std::vector<double>& values, std::size_t count)
+{
+    if (values.empty() || count == 0) return {};
+    if (values.size() == count) return values;
+    std::vector<double> result(count);
+    if (count == 1)
+    {
+        result[0] = values[values.size() / 2];
+        return result;
+    }
+    const double scale = static_cast<double>(values.size() - 1) /
+        static_cast<double>(count - 1);
+    for (std::size_t index = 0; index < count; ++index)
+    {
+        const double sourceIndex = static_cast<double>(index) * scale;
+        const std::size_t left = static_cast<std::size_t>(sourceIndex);
+        const std::size_t right = std::min(left + 1, values.size() - 1);
+        const double fraction = sourceIndex - static_cast<double>(left);
+        result[index] = values[left] +
+            (values[right] - values[left]) * fraction;
+    }
+    return result;
+}
+
 std::string OpaqueEndpointId(IMMDevice* endpoint)
 {
     if (!endpoint) return {};
@@ -140,7 +180,8 @@ void AppendMonoSamples(std::vector<double>& samples, const BYTE* data,
 WidgetAudioAnalysisDataSnapshot Analyze(
     const std::vector<double>& samples, std::string endpointId,
     unsigned int sampleRate, unsigned int channels,
-    bool deviceChanged)
+    bool deviceChanged,
+    const WidgetAudioAnalysisConfiguration& configuration)
 {
     WidgetAudioAnalysisDataSnapshot snapshot;
     snapshot.available = true;
@@ -150,10 +191,14 @@ WidgetAudioAnalysisDataSnapshot Analyze(
     snapshot.channels = channels;
     snapshot.timestampMs = TimestampMilliseconds();
     snapshot.deviceChanged = deviceChanged;
-    snapshot.waveform.assign(
-        WidgetAudioAnalysisProvider::WaveformPoints, 0.0);
-    snapshot.spectrum.assign(
-        WidgetAudioAnalysisProvider::SpectrumBins, 0.0);
+    snapshot.hasWaveform = configuration.waveform;
+    snapshot.hasSpectrum = configuration.spectrum;
+    snapshot.hasRms = configuration.rms;
+    snapshot.hasPeak = configuration.peak;
+    if (configuration.waveform)
+        snapshot.waveform.assign(configuration.waveformPoints, 0.0);
+    if (configuration.spectrum)
+        snapshot.spectrum.assign(configuration.spectrumBins, 0.0);
     if (samples.empty()) return snapshot;
 
     const std::size_t windowSize = std::min<std::size_t>(
@@ -172,14 +217,12 @@ WidgetAudioAnalysisDataSnapshot Analyze(
     snapshot.silent = snapshot.peak < 0.0005;
 
     for (std::size_t point = 0;
-        point < WidgetAudioAnalysisProvider::WaveformPoints; ++point)
+        point < snapshot.waveform.size(); ++point)
     {
         const std::size_t begin = windowStart +
-            point * windowSize /
-                WidgetAudioAnalysisProvider::WaveformPoints;
+            point * windowSize / snapshot.waveform.size();
         const std::size_t end = windowStart +
-            (point + 1) * windowSize /
-                WidgetAudioAnalysisProvider::WaveformPoints;
+            (point + 1) * windowSize / snapshot.waveform.size();
         if (end <= begin) continue;
         double total = 0.0;
         for (std::size_t index = begin; index < end; ++index)
@@ -193,7 +236,7 @@ WidgetAudioAnalysisDataSnapshot Analyze(
     if (fftSize > 1)
     {
         for (std::size_t bin = 0;
-            bin < WidgetAudioAnalysisProvider::SpectrumBins; ++bin)
+            bin < snapshot.spectrum.size(); ++bin)
         {
             double real = 0.0;
             double imaginary = 0.0;
@@ -231,15 +274,42 @@ bool WaitInterruptible(std::stop_token stopToken,
 }
 }
 
+WidgetAudioAnalysisDataSnapshot ProjectWidgetAudioAnalysisSnapshot(
+    const WidgetAudioAnalysisDataSnapshot& snapshot,
+    const WidgetAudioAnalysisConfiguration& configuration)
+{
+    WidgetAudioAnalysisDataSnapshot result = snapshot;
+    result.hasWaveform = configuration.waveform;
+    result.hasSpectrum = configuration.spectrum;
+    result.hasRms = configuration.rms;
+    result.hasPeak = configuration.peak;
+    result.waveform = configuration.waveform
+        ? Resample(snapshot.waveform, configuration.waveformPoints)
+        : std::vector<double>{};
+    result.spectrum = configuration.spectrum
+        ? Resample(snapshot.spectrum, configuration.spectrumBins)
+        : std::vector<double>{};
+    if (!configuration.rms) result.rms = 0.0;
+    if (!configuration.peak) result.peak = 0.0;
+    return result;
+}
+
 WidgetAudioAnalysisProvider::~WidgetAudioAnalysisProvider()
 {
     Stop();
 }
 
-bool WidgetAudioAnalysisProvider::Start(std::chrono::milliseconds interval)
+bool WidgetAudioAnalysisProvider::Start(
+    std::chrono::milliseconds interval,
+    WidgetAudioAnalysisConfiguration configuration)
 {
+    if (!ValidConfiguration(configuration)) return false;
     interval = std::clamp(interval, MinimumInterval, MaximumInterval);
     intervalMs_.store(interval.count());
+    {
+        std::scoped_lock lock(mutex_);
+        configuration_ = configuration;
+    }
     if (worker_.joinable()) return true;
     stopEvent_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     if (!stopEvent_) return false;
@@ -289,6 +359,13 @@ bool WidgetAudioAnalysisProvider::Running() const noexcept
 bool WidgetAudioAnalysisProvider::ResourcesActive() const noexcept
 {
     return resourcesActive_.load();
+}
+
+WidgetAudioAnalysisConfiguration
+WidgetAudioAnalysisProvider::Configuration() const
+{
+    std::scoped_lock lock(mutex_);
+    return configuration_;
 }
 
 void WidgetAudioAnalysisProvider::Publish(
@@ -435,7 +512,7 @@ void WidgetAudioAnalysisProvider::WorkerMain(std::stop_token stopToken)
             {
                 Publish(Analyze(samples, endpointId,
                     format->nSamplesPerSec, format->nChannels,
-                    deviceChangedPending));
+                    deviceChangedPending, Configuration()));
                 deviceChangedPending = false;
                 lastPublish = now;
             }

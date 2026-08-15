@@ -2156,6 +2156,7 @@ static bool ReadInteractionValue(lua_State* state, int index,
             return false;
         }
         lua_pop(state, 1);
+
     }
     if ((integerKeys && stringKeys) ||
         (integerKeys && maximumIndex != count))
@@ -3394,28 +3395,40 @@ static void PushDataSnapshotEnvelope(lua_State* state,
     }
     else if (snapshot->topic == "audio.output.analysis")
     {
-        lua_createtable(state,
-            static_cast<int>(snapshot->audioAnalysis.waveform.size()), 0);
-        int waveformIndex = 1;
-        for (const double value : snapshot->audioAnalysis.waveform)
+        if (snapshot->audioAnalysis.hasWaveform)
         {
-            lua_pushnumber(state, value);
-            lua_rawseti(state, -2, waveformIndex++);
+            lua_createtable(state,
+                static_cast<int>(snapshot->audioAnalysis.waveform.size()), 0);
+            int waveformIndex = 1;
+            for (const double value : snapshot->audioAnalysis.waveform)
+            {
+                lua_pushnumber(state, value);
+                lua_rawseti(state, -2, waveformIndex++);
+            }
+            lua_setfield(state, -2, "waveform");
         }
-        lua_setfield(state, -2, "waveform");
-        lua_createtable(state,
-            static_cast<int>(snapshot->audioAnalysis.spectrum.size()), 0);
-        int spectrumIndex = 1;
-        for (const double value : snapshot->audioAnalysis.spectrum)
+        if (snapshot->audioAnalysis.hasSpectrum)
         {
-            lua_pushnumber(state, value);
-            lua_rawseti(state, -2, spectrumIndex++);
+            lua_createtable(state,
+                static_cast<int>(snapshot->audioAnalysis.spectrum.size()), 0);
+            int spectrumIndex = 1;
+            for (const double value : snapshot->audioAnalysis.spectrum)
+            {
+                lua_pushnumber(state, value);
+                lua_rawseti(state, -2, spectrumIndex++);
+            }
+            lua_setfield(state, -2, "spectrum");
         }
-        lua_setfield(state, -2, "spectrum");
-        lua_pushnumber(state, snapshot->audioAnalysis.rms);
-        lua_setfield(state, -2, "rms");
-        lua_pushnumber(state, snapshot->audioAnalysis.peak);
-        lua_setfield(state, -2, "peak");
+        if (snapshot->audioAnalysis.hasRms)
+        {
+            lua_pushnumber(state, snapshot->audioAnalysis.rms);
+            lua_setfield(state, -2, "rms");
+        }
+        if (snapshot->audioAnalysis.hasPeak)
+        {
+            lua_pushnumber(state, snapshot->audioAnalysis.peak);
+            lua_setfield(state, -2, "peak");
+        }
         lua_pushboolean(state, snapshot->audioAnalysis.silent);
         lua_setfield(state, -2, "silent");
         lua_pushboolean(state, snapshot->audioAnalysis.deviceChanged);
@@ -3645,19 +3658,56 @@ static int lua_DataSubscribe(lua_State* state)
             "data.subscribe: expected topic and optional options");
 
     const std::string topicValue(topic, topicLength);
-    lua_Integer maxAgeMs = 1000;
+    const bool audioAnalysisTopic =
+        topicValue == "audio.output.analysis";
+    lua_Integer maxAgeMs = audioAnalysisTopic ? 33 : 1000;
+    bool maxAgeSpecified = false;
+    bool updateHzSpecified = false;
+    bool waveformPointsSpecified = false;
+    bool spectrumBinsSpecified = false;
+    snowdesktop::widget_runtime::WidgetAudioAnalysisConfiguration
+        audioAnalysis;
     std::string rangeStart;
     std::string rangeEnd;
     std::string scopeHandle;
-    auto hiddenPolicy = topicValue == "filesystem.watch"
+    auto hiddenPolicy = topicValue == "filesystem.watch" ||
+            audioAnalysisTopic
         ? snowdesktop::widget_runtime::DataHiddenPolicy::Pause
         : snowdesktop::widget_runtime::DataHiddenPolicy::Throttle;
     if (!lua_isnoneornil(state, 2))
     {
         luaL_checktype(state, 2, LUA_TTABLE);
+        lua_pushnil(state);
+        while (lua_next(state, 2) != 0)
+        {
+            if (lua_type(state, -2) != LUA_TSTRING)
+                return luaL_error(state,
+                    "data.subscribe: option keys must be strings");
+            size_t keyLength = 0;
+            const char* keyRaw = lua_tolstring(state, -2, &keyLength);
+            const std::string_view key(keyRaw, keyLength);
+            const bool common = key == "maxAgeMs" ||
+                key == "whenHidden";
+            const bool calendar = topicValue == "calendar.events" &&
+                (key == "fromDate" || key == "toDate");
+            const bool filesystem = topicValue == "filesystem.watch" &&
+                key == "handle";
+            const bool audio = audioAnalysisTopic &&
+                (key == "features" || key == "updateHz" ||
+                    key == "waveformPoints" || key == "spectrumBins");
+            if (!common && !calendar && !filesystem && !audio)
+            {
+                return luaL_error(state,
+                    "data.subscribe: option '%.*s' is not valid for topic '%s'",
+                    static_cast<int>(keyLength), keyRaw,
+                    topicValue.c_str());
+            }
+            lua_pop(state, 1);
+        }
         lua_getfield(state, 2, "maxAgeMs");
         if (!lua_isnil(state, -1))
         {
+            maxAgeSpecified = true;
             int isInteger = 0;
             maxAgeMs = lua_tointegerx(state, -1, &isInteger);
             if (!isInteger || maxAgeMs <= 0 || maxAgeMs > 86400000)
@@ -3682,6 +3732,9 @@ static int lua_DataSubscribe(lua_State* state)
             else
                 return luaL_error(state,
                     "data.subscribe: whenHidden must be 'pause', 'throttle', or 'continue'");
+            if (audioAnalysisTopic && value != "pause")
+                return luaL_error(state,
+                    "data.subscribe: audio.output.analysis requires whenHidden='pause'");
         }
         lua_pop(state, 1);
 
@@ -3712,6 +3765,127 @@ static int lua_DataSubscribe(lua_State* state)
             scopeHandle.assign(handle, handleLength);
         }
         lua_pop(state, 1);
+
+        if (audioAnalysisTopic)
+        {
+            lua_getfield(state, 2, "features");
+            if (!lua_isnil(state, -1))
+            {
+                luaL_checktype(state, -1, LUA_TTABLE);
+                const int featuresTable = lua_absindex(state, -1);
+                if (lua_getmetatable(state, featuresTable) != 0)
+                {
+                    lua_pop(state, 1);
+                    return luaL_error(state,
+                        "data.subscribe: audio features must be a plain array");
+                }
+                const size_t featureCount = lua_rawlen(
+                    state, featuresTable);
+                if (featureCount == 0 || featureCount > 4)
+                    return luaL_error(state,
+                        "data.subscribe: audio features must contain 1 to 4 entries");
+                size_t actualCount = 0;
+                lua_pushnil(state);
+                while (lua_next(state, featuresTable) != 0)
+                {
+                    if (!lua_isinteger(state, -2))
+                        return luaL_error(state,
+                            "data.subscribe: audio features must be a dense array");
+                    const lua_Integer key = lua_tointeger(state, -2);
+                    if (key < 1 || static_cast<size_t>(key) > featureCount)
+                        return luaL_error(state,
+                            "data.subscribe: audio features must be a dense array");
+                    ++actualCount;
+                    lua_pop(state, 1);
+                }
+                if (actualCount != featureCount)
+                    return luaL_error(state,
+                        "data.subscribe: audio features must be a dense array");
+
+                audioAnalysis.waveform = false;
+                audioAnalysis.spectrum = false;
+                audioAnalysis.rms = false;
+                audioAnalysis.peak = false;
+                std::unordered_set<std::string> seen;
+                for (size_t index = 1; index <= featureCount; ++index)
+                {
+                    lua_rawgeti(state, featuresTable,
+                        static_cast<lua_Integer>(index));
+                    size_t featureLength = 0;
+                    const char* featureRaw = luaL_checklstring(
+                        state, -1, &featureLength);
+                    const std::string feature(featureRaw, featureLength);
+                    lua_pop(state, 1);
+                    if (!seen.insert(feature).second)
+                        return luaL_error(state,
+                            "data.subscribe: audio features must be unique");
+                    if (feature == "waveform")
+                        audioAnalysis.waveform = true;
+                    else if (feature == "spectrum")
+                        audioAnalysis.spectrum = true;
+                    else if (feature == "rms")
+                        audioAnalysis.rms = true;
+                    else if (feature == "peak")
+                        audioAnalysis.peak = true;
+                    else
+                        return luaL_error(state,
+                            "data.subscribe: unsupported audio feature '%s'",
+                            feature.c_str());
+                }
+            }
+            lua_pop(state, 1);
+
+            const auto readAudioInteger = [&](const char* field,
+                lua_Integer minimum, lua_Integer maximum,
+                std::size_t& output, bool& specified) {
+                lua_getfield(state, 2, field);
+                if (!lua_isnil(state, -1))
+                {
+                    specified = true;
+                    if (!lua_isinteger(state, -1))
+                        luaL_error(state,
+                            "data.subscribe: %s must be an integer",
+                            field);
+                    const lua_Integer value = lua_tointeger(state, -1);
+                    if (value < minimum || value > maximum)
+                        luaL_error(state,
+                            "data.subscribe: %s must be between %lld and %lld",
+                            field, static_cast<long long>(minimum),
+                            static_cast<long long>(maximum));
+                    output = static_cast<std::size_t>(value);
+                }
+                lua_pop(state, 1);
+            };
+            readAudioInteger("waveformPoints", 16, 256,
+                audioAnalysis.waveformPoints, waveformPointsSpecified);
+            readAudioInteger("spectrumBins", 16, 128,
+                audioAnalysis.spectrumBins, spectrumBinsSpecified);
+
+            lua_getfield(state, 2, "updateHz");
+            if (!lua_isnil(state, -1))
+            {
+                updateHzSpecified = true;
+                if (!lua_isinteger(state, -1))
+                    return luaL_error(state,
+                        "data.subscribe: updateHz must be an integer");
+                const lua_Integer updateHz = lua_tointeger(state, -1);
+                if (updateHz < 1 || updateHz > 60)
+                    return luaL_error(state,
+                        "data.subscribe: updateHz must be between 1 and 60");
+                maxAgeMs = (1000 + updateHz - 1) / updateHz;
+            }
+            lua_pop(state, 1);
+
+            if (maxAgeSpecified && updateHzSpecified)
+                return luaL_error(state,
+                    "data.subscribe: maxAgeMs and updateHz are mutually exclusive");
+            if (waveformPointsSpecified && !audioAnalysis.waveform)
+                return luaL_error(state,
+                    "data.subscribe: waveformPoints requires the waveform feature");
+            if (spectrumBinsSpecified && !audioAnalysis.spectrum)
+                return luaL_error(state,
+                    "data.subscribe: spectrumBins requires the spectrum feature");
+        }
     }
 
     if (topicValue == "filesystem.watch")
@@ -3754,7 +3928,7 @@ static int lua_DataSubscribe(lua_State* state)
         BoundWidgetId(state), topicValue,
         std::chrono::milliseconds(maxAgeMs), hiddenPolicy,
         std::move(rangeStart), std::move(rangeEnd),
-        std::move(scopeHandle));
+        std::move(scopeHandle), audioAnalysis);
     if (!result)
         return luaL_error(state, "data.subscribe: %s", result.error.c_str());
 
@@ -9259,6 +9433,36 @@ void WidgetEngine::ApplyWidgetDataBrokerActions()
 {
     using snowdesktop::widget_runtime::DataBrokerActionType;
     if (!dataBroker_) return;
+    const auto audioConfiguration = [this] {
+        snowdesktop::widget_runtime::WidgetAudioAnalysisConfiguration
+            configuration{ false, false, false, false, 16, 16 };
+        for (const auto& subscription :
+            dataBroker_->SubscriptionSnapshots("audio.output.analysis"))
+        {
+            if (!subscription.eligible) continue;
+            configuration.waveform = configuration.waveform ||
+                subscription.options.audioWaveform;
+            configuration.spectrum = configuration.spectrum ||
+                subscription.options.audioSpectrum;
+            configuration.rms = configuration.rms ||
+                subscription.options.audioRms;
+            configuration.peak = configuration.peak ||
+                subscription.options.audioPeak;
+            if (subscription.options.audioWaveform)
+            {
+                configuration.waveformPoints = std::max(
+                    configuration.waveformPoints,
+                    subscription.options.audioWaveformPoints);
+            }
+            if (subscription.options.audioSpectrum)
+            {
+                configuration.spectrumBins = std::max(
+                    configuration.spectrumBins,
+                    subscription.options.audioSpectrumBins);
+            }
+        }
+        return configuration;
+    };
     for (const auto& action : dataBroker_->DrainActions())
     {
         const bool audioAnalysis =
@@ -9280,7 +9484,8 @@ void WidgetEngine::ApplyWidgetDataBrokerActions()
                 : audioAnalysis
                 ? widgetAudioAnalysisProvider_ &&
                     widgetAudioAnalysisProvider_->Start(
-                        action.effectiveInterval)
+                        action.effectiveInterval,
+                        audioConfiguration())
                 : widgetSystemDataProvider_ &&
                     widgetSystemDataProvider_->StartTopic(
                         action.topic, action.effectiveInterval);
@@ -9298,7 +9503,8 @@ void WidgetEngine::ApplyWidgetDataBrokerActions()
             {
                 if (widgetAudioAnalysisProvider_)
                     (void)widgetAudioAnalysisProvider_->Start(
-                        action.effectiveInterval);
+                        action.effectiveInterval,
+                        audioConfiguration());
             }
             else if (widgetSystemDataProvider_)
             {
@@ -17540,7 +17746,9 @@ WidgetEngine::RuntimeSubscribeData(
     std::chrono::milliseconds maxAge,
     snowdesktop::widget_runtime::DataHiddenPolicy whenHidden,
     std::string rangeStart, std::string rangeEnd,
-    std::string scopeHandle)
+    std::string scopeHandle,
+    snowdesktop::widget_runtime::WidgetAudioAnalysisConfiguration
+        audioAnalysis)
 {
     using snowdesktop::widget_runtime::DataSubscriptionOptions;
     if (!dataBroker_)
@@ -17599,6 +17807,12 @@ WidgetEngine::RuntimeSubscribeData(
     options.preview = widget.preview;
     options.rangeStart = std::move(rangeStart);
     options.rangeEnd = std::move(rangeEnd);
+    options.audioWaveform = audioAnalysis.waveform;
+    options.audioSpectrum = audioAnalysis.spectrum;
+    options.audioRms = audioAnalysis.rms;
+    options.audioPeak = audioAnalysis.peak;
+    options.audioWaveformPoints = audioAnalysis.waveformPoints;
+    options.audioSpectrumBins = audioAnalysis.spectrumBins;
     auto result = dataBroker_->Subscribe(
         WidgetWideToUtf8(widgetId), topic, options,
         snowdesktop::widget_runtime::WidgetDataBroker::Clock::now());
@@ -17788,7 +18002,7 @@ WidgetEngine::RuntimeGetDataSnapshot(
             result.audioAnalysis.timestampMs = timestampNow;
             result.audioAnalysis.waveform.resize(
                 snowdesktop::widget_runtime::
-                    WidgetAudioAnalysisProvider::WaveformPoints);
+                    WidgetAudioAnalysisProvider::MaximumWaveformPoints);
             for (std::size_t index = 0;
                 index < result.audioAnalysis.waveform.size(); ++index)
             {
@@ -17798,7 +18012,7 @@ WidgetEngine::RuntimeGetDataSnapshot(
             }
             result.audioAnalysis.spectrum.resize(
                 snowdesktop::widget_runtime::
-                    WidgetAudioAnalysisProvider::SpectrumBins);
+                    WidgetAudioAnalysisProvider::MaximumSpectrumBins);
             for (std::size_t index = 0;
                 index < result.audioAnalysis.spectrum.size(); ++index)
             {
@@ -18288,6 +18502,17 @@ WidgetEngine::RuntimeGetDataSnapshot(
         if (!result.available)
             result.error = "providerUnavailable";
         setFreshness(timestampNow);
+    }
+    if (result.topic == "audio.output.analysis")
+    {
+        result.audioAnalysis = snowdesktop::widget_runtime::
+            ProjectWidgetAudioAnalysisSnapshot(result.audioAnalysis,
+                { binding->options.audioWaveform,
+                    binding->options.audioSpectrum,
+                    binding->options.audioRms,
+                    binding->options.audioPeak,
+                    binding->options.audioWaveformPoints,
+                    binding->options.audioSpectrumBins });
     }
     if (result.error.empty())
     {

@@ -642,11 +642,13 @@ endpoint，分别返回不透明 endpoint ID、友好名称/状态和有界主�
 使用低频兜底采样，IMMNotificationClient 与 IAudioEndpointVolumeCallback 事件接入
 仍属于本数据域的后续工作。
 
-`audio.output.analysis` 已使用独立 WASAPI loopback 捕获线程，向 Lua 只发布固定
-128 点 mono waveform、64 个归一化频谱 bin、RMS/peak/静音和设备变化状态；首个
-已授权可见订阅启动，最后一个可见订阅消失、权限撤销或卸载时立即停止并清空快照，
-不使用 idle grace。多订阅由 broker 合并为一条捕获管线，预览使用确定性模拟数据；
-点数/特征/updateHz 的逐订阅配置与运行状态指示仍待后续收口。
+`audio.output.analysis` 已使用独立 WASAPI loopback 捕获线程；默认向 Lua 发布 128 点
+mono waveform、64 个归一化频谱 bin、RMS/peak/静音和设备变化状态，也允许订阅在
+`features` 中选择派生结果、用 `waveformPoints`/`spectrumBins` 请求有界尺寸，并用
+`updateHz` 请求 1–60 Hz 的发布上限。首个已授权可见订阅启动，最后一个可见订阅消失、
+权限撤销或卸载时立即停止并清空快照，不使用 idle grace。多订阅由 broker 合并为一条
+捕获管线：provider 使用所有合格订阅所需特征的并集、最大点数和最高刷新率计算一次，
+再为每个订阅裁剪字段与降采样；预览使用确定性模拟数据。运行状态指示仍待后续收口。
 
 `media.sessions`、`media.current`、`media.timeline` 和 `media.artwork` 已接入同一按需 WinRT GSMTC
 采样路径：最多返回 32 个会话、不透明 session ID、受限元数据、播放状态、时间线和
@@ -734,7 +736,8 @@ local frame = audio:value()
 - 最后一个可见订阅隐藏、取消、卸载或失去权限时立即停止捕获、释放 endpoint/线程并清空 PCM 环形缓冲；不使用 idle grace，不允许组件把 `whenHidden` 改为 continue。
 - 多组件共享一个按默认输出 endpoint 建立的捕获与分析管线；broker 取受限后的最高 updateHz/FFT 配置，再为各订阅降采样，不能为每个实例创建一个捕获客户端。
 - 普通 Lua 组件不获得原始 PCM、音频文件、进程级音频内容或无限长度历史，只获得宿主计算的定长 waveform/RMS/peak/spectrum 数组。
-- v2 首版建议限制 `updateHz <= 60`、`waveformPoints <= 256`、`spectrumBins <= 128`；捕获、混音、FFT 和降采样全部离开 UI/Lua 线程。
+- `features` 是 1–4 个不重复的 `waveform/rms/peak/spectrum`；`waveformPoints` 限制为 16–256，`spectrumBins` 限制为 16–128，且尺寸选项只能与对应特征同时使用。未配置时默认启用全部特征并使用 128/64 点。
+- `updateHz` 必须是 1–60 的整数，并与通用 `maxAgeMs` 互斥；它是最大投递频率请求，不是硬实时保证。捕获、混音、FFT 和降采样全部离开 UI/Lua 线程。
 - 无播放或持续静音时发布低频静音状态并允许 provider 进入受控 idle；检测到新音频会话后恢复，恢复机制必须由宿主事件驱动，不允许组件轮询拉起。
 - 默认输出设备变化时原子重建捕获，发布 `deviceChanged`/warming 状态；旧 endpoint 数据不得混入新设备时间线。
 - 授权页明确说明“分析当前电脑正在播放的声音”，组件运行时提供可见的使用状态和一键撤销入口。

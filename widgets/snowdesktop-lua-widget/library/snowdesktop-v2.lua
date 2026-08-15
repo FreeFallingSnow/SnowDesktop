@@ -959,6 +959,14 @@ function schedule.cancel(id) end
 ---@class SnowFilesystemWatchSubscribeOptions: SnowDataSubscribeOptions
 ---@field handle string Opaque folder handle returned by filesystem.pickFolder.
 
+---@alias SnowAudioAnalysisFeature 'waveform'|'spectrum'|'rms'|'peak'
+
+---@class SnowAudioAnalysisSubscribeOptions: SnowDataSubscribeOptions
+---@field features? SnowAudioAnalysisFeature[] One to four unique derived features; defaults to all.
+---@field updateHz? integer 1..60; mutually exclusive with maxAgeMs and defaults to approximately 30 Hz.
+---@field waveformPoints? integer 16..256; requires the waveform feature and defaults to 128.
+---@field spectrumBins? integer 16..128; requires the spectrum feature and defaults to 64.
+
 ---@class SnowCpuDataValue
 ---@field usagePercent number
 ---@field logicalProcessors integer
@@ -1071,10 +1079,10 @@ function schedule.cancel(id) end
 ---@field maximum number Currently 1.0.
 
 ---@class SnowAudioOutputAnalysisDataValue
----@field waveform number[] 128 normalized mono points in -1.0..1.0.
----@field spectrum number[] 64 normalized magnitude bins in 0.0..1.0.
----@field rms number Normalized RMS level in 0.0..1.0.
----@field peak number Normalized peak level in 0.0..1.0.
+---@field waveform? number[] Requested normalized mono points in -1.0..1.0; omitted when not selected.
+---@field spectrum? number[] Requested normalized magnitude bins in 0.0..1.0; omitted when not selected.
+---@field rms? number Normalized RMS level in 0.0..1.0; omitted when not selected.
+---@field peak? number Normalized peak level in 0.0..1.0; omitted when not selected.
 ---@field silent boolean
 ---@field deviceChanged boolean
 ---@field endpointId string Opaque endpoint identifier.
@@ -1213,7 +1221,7 @@ data = {}
 ---@overload fun(topic: 'system.display.current', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowDisplayCurrentDataValue>
 ---@overload fun(topic: 'audio.output.default', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowAudioOutputDefaultDataValue>
 ---@overload fun(topic: 'audio.output.volume', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowAudioOutputVolumeDataValue>
----@overload fun(topic: 'audio.output.analysis', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowAudioOutputAnalysisDataValue>
+---@overload fun(topic: 'audio.output.analysis', options?: SnowAudioAnalysisSubscribeOptions): SnowDataSubscription<SnowAudioOutputAnalysisDataValue>
 ---@overload fun(topic: 'media.sessions', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowMediaSessionsDataValue>
 ---@overload fun(topic: 'media.current', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowMediaCurrentDataValue>
 ---@overload fun(topic: 'media.timeline', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowMediaTimelineDataValue>

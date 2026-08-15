@@ -65,6 +65,12 @@ struct DataSubscriptionOptions
     bool preview = false;
     std::string rangeStart;
     std::string rangeEnd;
+    bool audioWaveform = true;
+    bool audioSpectrum = true;
+    bool audioRms = true;
+    bool audioPeak = true;
+    std::size_t audioWaveformPoints = 128;
+    std::size_t audioSpectrumBins = 64;
 };
 
 struct DataSubscriptionResult
@@ -143,6 +149,8 @@ public:
         std::string_view topic) const;
     std::optional<DataSubscriptionSnapshot> SubscriptionSnapshot(
         std::uint64_t subscriptionId) const;
+    std::vector<DataSubscriptionSnapshot> SubscriptionSnapshots(
+        std::string_view topic) const;
     std::vector<DataBrokerAction> DrainActions();
     std::size_t SubscriptionCount() const noexcept;
 

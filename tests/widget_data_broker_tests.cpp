@@ -1,5 +1,6 @@
 #include "widget_data_broker.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
@@ -212,19 +213,45 @@ void TestHighRiskAndPreviewIsolation()
             broker.Snapshot("audio.output.analysis")->previewCount == 1,
         "preview subscriptions must never start a real high-risk provider");
 
+    DataSubscriptionOptions invalid;
+    invalid.permissionGranted = true;
+    invalid.audioWaveform = false;
+    invalid.audioSpectrum = false;
+    invalid.audioRms = false;
+    invalid.audioPeak = false;
+    Check(!broker.Subscribe("invalid", "audio.output.analysis", invalid,
+            start + 1ms),
+        "audio analysis subscriptions must select at least one feature");
+
     DataSubscriptionOptions live;
     live.requestedInterval = 33ms;
     live.permissionGranted = true;
     live.whenHidden = DataHiddenPolicy::Continue;
+    live.audioWaveform = false;
+    live.audioSpectrum = true;
+    live.audioRms = true;
+    live.audioPeak = false;
+    live.audioSpectrumBins = 96;
     const auto subscription = broker.Subscribe(
-        "live", "audio.output.analysis", live, start + 1ms);
+        "live", "audio.output.analysis", live, start + 2ms);
     auto actions = broker.DrainActions();
     Check(static_cast<bool>(subscription) && actions.size() == 1 &&
             actions[0].type == DataBrokerActionType::Start,
         "a visible authorized audio subscription must start capture once");
+    const auto audioSubscriptions = broker.SubscriptionSnapshots(
+        "audio.output.analysis");
+    const auto liveBinding = std::find_if(audioSubscriptions.begin(),
+        audioSubscriptions.end(), [&subscription](const auto& value) {
+            return value.id == subscription.id;
+        });
+    Check(liveBinding != audioSubscriptions.end() &&
+            !liveBinding->options.audioWaveform &&
+            liveBinding->options.audioSpectrum &&
+            liveBinding->options.audioSpectrumBins == 96,
+        "audio subscription diagnostics must retain derived-data options");
     broker.MarkStarted("audio.output.analysis", true);
 
-    Check(broker.SetInstanceVisible("live", false, start + 2ms) == 1,
+    Check(broker.SetInstanceVisible("live", false, start + 3ms) == 1,
         "audio subscription visibility must be tracked");
     actions = broker.DrainActions();
     const auto snapshot = broker.Snapshot("audio.output.analysis");

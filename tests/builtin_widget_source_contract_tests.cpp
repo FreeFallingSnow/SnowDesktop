@@ -173,6 +173,34 @@ void TestPackageResourceRenderPurity(const fs::path& repository)
                 std::string_view::npos,
         "resource.exists must not touch the filesystem from arbitrary callbacks");
 }
+
+void TestAudioAnalysisSubscriptionOptions(const fs::path& repository)
+{
+    const std::string source = ReadFile(
+        repository / "src" / "widget_engine.cpp");
+    const std::string_view subscribe = Section(source,
+        "static int lua_DataSubscribe(",
+        "\nstatic int lua_TaskStart(");
+    for (const std::string_view option : {
+        "\"features\"", "\"updateHz\"", "\"waveformPoints\"",
+        "\"spectrumBins\"", "mutually exclusive",
+        "WidgetAudioAnalysisConfiguration",
+        "audio.output.analysis requires whenHidden" })
+    {
+        Check(subscribe.find(option) != std::string_view::npos,
+            "audio analysis subscription option contract is missing");
+    }
+
+    const std::string_view actions = Section(source,
+        "void WidgetEngine::ApplyWidgetDataBrokerActions()",
+        "\nvoid WidgetEngine::ReconcileFilesystemWatches()");
+    Check(actions.find(
+            "SubscriptionSnapshots(\"audio.output.analysis\")") !=
+            std::string_view::npos &&
+            actions.find("audioConfiguration()") !=
+                std::string_view::npos,
+        "audio provider must aggregate eligible subscription configurations");
+}
 }
 
 int main(int argc, char** argv)
@@ -181,6 +209,7 @@ int main(int argc, char** argv)
     TestRemindersRenderPurity(fs::path(argv[1]));
     TestV2OnlyWidgetActivation(fs::path(argv[1]));
     TestPackageResourceRenderPurity(fs::path(argv[1]));
+    TestAudioAnalysisSubscriptionOptions(fs::path(argv[1]));
     std::cout << "Built-in widget source contract tests passed\n";
     return 0;
 }
