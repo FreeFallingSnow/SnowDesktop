@@ -108,6 +108,12 @@ void TestPointerPairingAndActions()
             regions.ConsumeClickTarget(10, 10) == "left" &&
             regions.ConsumeClickTarget(10, 10).empty(),
         "matching down/up must produce exactly one click target");
+    regions.PointerDown(10, 10, 1);
+    regions.CancelPointerPress();
+    Check(!regions.IsPressed("left") &&
+            regions.PointerUp(10, 10, 1).clickTargetKey.empty() &&
+            regions.ConsumeClickTarget(10, 10).empty(),
+        "a host-owned drag takeover must cancel pressed and click state");
     const auto* action = regions.FindAction("left", "click");
     Check(action && action->id == "left.open",
         "serialized action must remain attached to the stable region");

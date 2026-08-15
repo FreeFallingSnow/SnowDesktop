@@ -496,6 +496,13 @@ return view.slotSurface({
 })
 ```
 
+探测 `slots.pointerReorder` 后，collection 中有至少两个项目时，用户可从任一已提交
+`slotItem` 内直接按住拖动。未越过系统拖动阈值时仍按普通声明式 click 处理；越过后由宿主
+接管捕获，实时绘制源项目轮廓和插入线，释放时按 item ID 原子调用同槽 move，并写入同一
+undo/redo 历史。成功变化通过 `slot.changed` 以 `source="host.pointer"` 投递；Lua 不接收
+高频拖动坐标，也不能伪造插入位置。binding、单项目 collection、槽位外拖出和跨槽拖动
+不属于该 feature。
+
 提交成功的 `slotSurface` 现在也是宿主原生拖放面。桌面项目、应用快捷方式或 Explorer
 文件拖到该区域时，宿主先按 manifest 的 `accepts`、binding 替换策略及 collection 容量
 进行命中判断，再显示插入预览并原子保存引用；不会移动、复制或删除真实对象。当前原生
@@ -508,11 +515,11 @@ return view.slotSurface({
 
 宿主拖放、选择器或槽位项菜单提交后会派发 `event.kind == "slot.changed"`，字段为 `slotId`、
 `slotKind`、`revision`、`operation`、opaque `itemIds`，以及 `source == "host.drop"`、
-`"host.picker"`、`"host.menu"` 或 `"host.keyboard"`。Lua 应重新读取对应句柄并重算 view，不能把事件内容
+`"host.picker"`、`"host.menu"`、`"host.pointer"` 或 `"host.keyboard"`。Lua 应重新读取对应句柄并重算 view，不能把事件内容
 当作可写模型。可分别探测 `slots.nativeDrop`、`slots.nativeContextMenu` 与
-`slots.event.changed`。原生槽位项菜单只显示该项的向前/向后移动和移除操作，不会附加
+`slots.pointerReorder`、`slots.event.changed`。原生槽位项菜单只显示该项的向前/向后移动和移除操作，不会附加
 组件总菜单；binding 是否能移除遵守 manifest 的 `allowClear`。原生槽位项拖出和指针
-同槽重排仍未接入。
+跨槽重排仍未接入。
 
 探测 `slots.history` 后，可在当前可信用户 action 中调用 `slots.undo()` / `slots.redo()`；
 它们按组件实例维护最近 32 次宿主槽位事务，返回 operation 为 `undone` / `redone` 的

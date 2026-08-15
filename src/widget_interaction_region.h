@@ -170,6 +170,7 @@ public:
     InteractionHoverTransition ClearHover();
     InteractionPointerResult PointerDown(float x, float y, int button);
     InteractionPointerResult PointerUp(float x, float y, int button);
+    void CancelPointerPress() noexcept;
     std::string ConsumeClickTarget(float x, float y);
     std::string TargetAt(float x, float y) const;
     std::string PointerMoveTarget(float x, float y) const;

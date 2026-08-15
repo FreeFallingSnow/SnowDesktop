@@ -460,6 +460,18 @@ struct LuaWidget
         bool horizontal = false;
         std::size_t maximumUtf8Bytes = 0;
     };
+
+    struct LogicalSlotPointerDrag
+    {
+        std::string slotId;
+        std::string itemId;
+        std::size_t sourceIndex = 0;
+        std::size_t targetIndex = 0;
+        POINT start{};
+        RECT sourceBounds{};
+        RECT indicatorBounds{};
+        bool moved = false;
+    };
     std::wstring widgetId;               ///< 小部件实例唯一 ID
     std::string packageId;                ///< 组件包 UUID
     std::filesystem::path packageRoot;    ///< 已校验组件包根目录
@@ -504,6 +516,7 @@ struct LuaWidget
     std::unordered_map<std::string, ItemReference> itemReferences;
     snowdesktop::widget_runtime::LogicalSlotModel logicalSlots;
     snowdesktop::widget_runtime::LogicalSlotHistory logicalSlotHistory;
+    std::optional<LogicalSlotPointerDrag> logicalSlotPointerDrag;
     snowdesktop::widget_runtime::WidgetInteractionRegions interactionRegions;
     std::optional<snowdesktop::widget_runtime::ViewNode> viewTree;
     bool panelFrameOpen = false;
@@ -1107,7 +1120,8 @@ public:
         std::string_view slotId, std::string_view itemId,
         std::size_t targetIndex,
         snowdesktop::widget_runtime::LogicalSlotChange& change,
-        std::string& error);
+        std::string& error,
+        std::string_view source = "host.menu");
     bool RuntimeCanUndoHostLogicalSlot(const std::wstring& widgetId) const;
     bool RuntimeCanRedoHostLogicalSlot(const std::wstring& widgetId) const;
     bool RuntimeUndoHostLogicalSlot(const std::wstring& widgetId,
@@ -1307,6 +1321,14 @@ public:
     std::vector<LuaWidget::HostControl> GetScrollControls(const std::wstring& widgetId) const;
 
 private:
+    void BeginHostLogicalSlotPointer(
+        LuaWidget& widget, int x, int y);
+    bool UpdateHostLogicalSlotPointer(
+        LuaWidget& widget, int x, int y);
+    bool EndHostLogicalSlotPointer(
+        const std::wstring& widgetId);
+    void DrawHostLogicalSlotPointerPreview(
+        const LuaWidget& widget);
     bool VerifyInstalledWidgetPackage(const std::string& packageId,
         const std::optional<std::string>& previousVersion,
         std::wstring& error);

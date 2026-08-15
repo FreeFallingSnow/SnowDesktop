@@ -265,6 +265,13 @@ InteractionPointerResult WidgetInteractionRegions::PointerUp(
     return result;
 }
 
+void WidgetInteractionRegions::CancelPointerPress() noexcept
+{
+    pressedKey_.clear();
+    clickCandidateKey_.clear();
+    pressedButton_ = -1;
+}
+
 std::string WidgetInteractionRegions::ConsumeClickTarget(float x, float y)
 {
     UpdateHover(x, y);

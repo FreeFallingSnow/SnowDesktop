@@ -126,13 +126,16 @@ this visual node does not grant launch, open, reveal, or file-content access.
 Probe
 `slots.nativeDrop` when a committed slotSurface should accept one native
 desktop/Application/Explorer object with host insertion preview. Probe
+`slots.pointerReorder` when collection slotItem nodes should support direct
+same-surface dragging; the host owns the drag threshold, insertion indicator,
+atomic move, undo record, and `slot.changed` event. Probe
 `slots.nativeContextMenu` for host-owned per-item move/remove menus, and handle
 `slot.changed` only after probing `slots.event.changed`; re-read the slot model
 instead of trusting event data as writable state. Probe `slots.hostPicker` and
 call a binding/collection handle's `pick()` only from the current trusted action
 to open the manifest-filtered host picker; cancellation does not mutate the slot
 or grant file-content access. Multi-object native ingress and native item
-drag-out/pointer reorder are not available yet. A
+drag-out are not available yet. A
 source reference used by Lua mutation must still come from a bounded host
 search or explicit file-reference task.
 Probe `slots.history` to expose explicit component actions for the bounded

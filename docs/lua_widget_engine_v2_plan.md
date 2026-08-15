@@ -1829,6 +1829,7 @@ M7 切换完成后，发布运行时必须删除 API v1 注册和执行分支。
 - 环境上下文、响应式尺寸和减少动态效果。
 - 元素级 hover/pressed/focus、click/double click、指针捕获和独立原生右键菜单。
 - `LuaLogicalSlot`、`slots.binding/collection`、`slotSurface/slotItem`、宿主引用存储和现有 slot contract 全矩阵接入；v2.0 实现 binding 的 reference/replace/clear 和 collection 的 reference/reorder/remove。
+- 当前过渡实现已提供 collection slotItem 的宿主指针阈值、插入提示、同槽原子重排、历史记录及 `host.pointer` 变化来源；跨槽拖动和原生拖出仍待后续批次。
 - 即时绘制交互 region 与语义树接口。
 
 退出条件：

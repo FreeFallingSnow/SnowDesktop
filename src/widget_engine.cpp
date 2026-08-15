@@ -13,6 +13,7 @@
 
 #include "widget_engine.h"
 #include "widget_logical_slot_manifest.h"
+#include "logical_slot_pointer_rules.h"
 #include "widget_scroll_rules.h"
 #include "data_paths.h"
 #include "deployment_context.h"
@@ -14510,6 +14511,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             DrawWidgetSelectOverlays(d2dState_, *found->viewTree,
                 found->interactionRegions, std::nullopt,
                 found->viewTree->frame.height);
+            DrawHostLogicalSlotPointerPreview(*found);
         }
         while (d2dState_->widgetClipDepth > 0)
         {
@@ -17192,7 +17194,7 @@ bool WidgetEngine::RuntimeMoveHostLogicalSlotItem(
     const std::wstring& widgetId, std::string_view slotId,
     std::string_view itemId, std::size_t targetIndex,
     snowdesktop::widget_runtime::LogicalSlotChange& change,
-    std::string& error)
+    std::string& error, std::string_view source)
 {
     error.clear();
     auto widget = std::find_if(widgets_.begin(), widgets_.end(),
@@ -17215,7 +17217,7 @@ bool WidgetEngine::RuntimeMoveHostLogicalSlotItem(
             std::move(previousModel), std::move(previousStorage),
             change, error))
         return false;
-    DispatchHostLogicalSlotChange(*widget, change, "host.menu");
+    DispatchHostLogicalSlotChange(*widget, change, source);
     return true;
 }
 
@@ -18717,9 +18719,158 @@ bool WidgetEngine::IsFocusedHostInputAt(
     return false;
 }
 
+void WidgetEngine::BeginHostLogicalSlotPointer(
+    LuaWidget& widget, int x, int y)
+{
+    widget.logicalSlotPointerDrag.reset();
+    if (widget.preview || !widget.valid || !widget.viewTree) return;
+    const POINT point{ widget.lastBounds.left + x,
+        widget.lastBounds.top + y };
+    for (const auto& snapshot : widget.logicalSlots.Snapshots())
+    {
+        if (snapshot.kind !=
+                snowdesktop::widget_runtime::LogicalSlotKind::Collection ||
+            snapshot.items.size() < 2)
+            continue;
+        const auto surface = RuntimeLogicalSlotSurface(
+            widget.widgetId, snapshot.id);
+        if (!surface) continue;
+        for (std::size_t index = 0; index < surface->items.size(); ++index)
+        {
+            if (!PtInRect(&surface->items[index].bounds, point)) continue;
+            widget.logicalSlotPointerDrag =
+                LuaWidget::LogicalSlotPointerDrag{
+                    snapshot.id, surface->items[index].itemId,
+                    index, index, POINT{ x, y },
+                    surface->items[index].bounds, RECT{}, false };
+            return;
+        }
+    }
+}
+
+bool WidgetEngine::UpdateHostLogicalSlotPointer(
+    LuaWidget& widget, int x, int y)
+{
+    if (!widget.logicalSlotPointerDrag) return false;
+    auto& drag = *widget.logicalSlotPointerDrag;
+    if (!drag.moved)
+    {
+        const int thresholdX = std::max(4, GetSystemMetrics(SM_CXDRAG));
+        const int thresholdY = std::max(4, GetSystemMetrics(SM_CYDRAG));
+        if (std::abs(x - drag.start.x) <= thresholdX &&
+            std::abs(y - drag.start.y) <= thresholdY)
+            return false;
+    }
+
+    const auto surface = RuntimeLogicalSlotSurface(
+        widget.widgetId, drag.slotId);
+    if (!surface || surface->items.size() < 2)
+    {
+        widget.logicalSlotPointerDrag.reset();
+        return false;
+    }
+    std::vector<RECT> itemBounds;
+    itemBounds.reserve(surface->items.size());
+    std::size_t sourceIndex = surface->items.size();
+    for (std::size_t index = 0; index < surface->items.size(); ++index)
+    {
+        itemBounds.push_back(surface->items[index].bounds);
+        if (surface->items[index].itemId == drag.itemId)
+            sourceIndex = index;
+    }
+    if (sourceIndex >= itemBounds.size())
+    {
+        widget.logicalSlotPointerDrag.reset();
+        return false;
+    }
+    const POINT point{ widget.lastBounds.left + x,
+        widget.lastBounds.top + y };
+    const auto target = snowdesktop::widget_runtime::
+        ResolveLogicalSlotPointerTarget(
+            itemBounds, sourceIndex, point, surface->bounds);
+    if (!target)
+    {
+        widget.logicalSlotPointerDrag.reset();
+        return false;
+    }
+    if (!drag.moved)
+        widget.interactionRegions.CancelPointerPress();
+    const bool changed = !drag.moved ||
+        drag.targetIndex != target->targetIndex ||
+        !EqualRect(&drag.indicatorBounds, &target->indicator) ||
+        !EqualRect(&drag.sourceBounds, &itemBounds[sourceIndex]);
+    drag.moved = true;
+    drag.sourceIndex = sourceIndex;
+    drag.targetIndex = target->targetIndex;
+    drag.sourceBounds = itemBounds[sourceIndex];
+    drag.indicatorBounds = target->indicator;
+    if (changed) RuntimeInvalidateHost(widget.widgetId);
+    return true;
+}
+
+bool WidgetEngine::EndHostLogicalSlotPointer(
+    const std::wstring& widgetId)
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0 || !widgets_[index].logicalSlotPointerDrag)
+        return false;
+    const LuaWidget::LogicalSlotPointerDrag drag =
+        *widgets_[index].logicalSlotPointerDrag;
+    widgets_[index].logicalSlotPointerDrag.reset();
+    RuntimeInvalidateHost(widgetId);
+    if (!drag.moved) return false;
+
+    snowdesktop::widget_runtime::LogicalSlotChange change;
+    std::string error;
+    if (!RuntimeMoveHostLogicalSlotItem(widgetId, drag.slotId,
+            drag.itemId, drag.targetIndex, change, error,
+            "host.pointer"))
+    {
+        RuntimeRecordError(widgetId,
+            "logical slot pointer reorder: " + error);
+    }
+    return true;
+}
+
+void WidgetEngine::DrawHostLogicalSlotPointerPreview(
+    const LuaWidget& widget)
+{
+    if (!d2dState_ || !d2dState_->ctx ||
+        !widget.logicalSlotPointerDrag ||
+        !widget.logicalSlotPointerDrag->moved)
+        return;
+    const auto& drag = *widget.logicalSlotPointerDrag;
+    const D2D1_RECT_F source = D2D1::RectF(
+        static_cast<float>(drag.sourceBounds.left),
+        static_cast<float>(drag.sourceBounds.top),
+        static_cast<float>(drag.sourceBounds.right),
+        static_cast<float>(drag.sourceBounds.bottom));
+    if (ID2D1SolidColorBrush* fill = GetCachedBrush(
+            d2dState_, 0x4C9AFF, 0.10f))
+        d2dState_->ctx->FillRoundedRectangle(
+            D2D1::RoundedRect(source, 6.0f, 6.0f), fill);
+    if (ID2D1SolidColorBrush* outline = GetCachedBrush(
+            d2dState_, 0x72C7FF, 0.76f))
+        d2dState_->ctx->DrawRoundedRectangle(
+            D2D1::RoundedRect(source, 6.0f, 6.0f), outline, 1.5f);
+    const D2D1_RECT_F indicator = D2D1::RectF(
+        static_cast<float>(drag.indicatorBounds.left),
+        static_cast<float>(drag.indicatorBounds.top),
+        static_cast<float>(drag.indicatorBounds.right),
+        static_cast<float>(drag.indicatorBounds.bottom));
+    if (ID2D1SolidColorBrush* brush = GetCachedBrush(
+            d2dState_, 0x4C9AFF, 1.0f))
+        d2dState_->ctx->FillRoundedRectangle(
+            D2D1::RoundedRect(indicator, 2.0f, 2.0f), brush);
+}
+
 bool WidgetEngine::HandleHostInputPointerMove(
     const std::wstring& widgetId, int x, int y)
 {
+    const int widgetIndex = FindWidget(widgetId);
+    if (widgetIndex >= 0 &&
+        UpdateHostLogicalSlotPointer(widgets_[widgetIndex], x, y))
+        return true;
     if (!focusedHostInput_.active ||
         !focusedHostInput_.pointerSelecting ||
         focusedHostInput_.widgetId != widgetId)
@@ -18759,6 +18910,7 @@ bool WidgetEngine::HandleHostInputPointerMove(
 bool WidgetEngine::HandleHostInputPointerUp(
     const std::wstring& widgetId, int x, int y)
 {
+    if (EndHostLogicalSlotPointer(widgetId)) return true;
     if (!focusedHostInput_.active ||
         !focusedHostInput_.pointerSelecting ||
         focusedHostInput_.widgetId != widgetId)
@@ -19615,6 +19767,7 @@ bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int 
             return true;
         }
     }
+    if (!wheel) BeginHostLogicalSlotPointer(widget, x, y);
     return false;
 }
 

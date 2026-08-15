@@ -1,5 +1,6 @@
 #include "widgets/lua_logical_slot.h"
 #include "logical_slot_picker_rules.h"
+#include "logical_slot_pointer_rules.h"
 
 #include "core/item.h"
 
@@ -157,6 +158,45 @@ void TestHostPickerCandidatePolicy()
             { "filesystem.reference" }, false, false).empty(),
         "a namespace-only object must not become a filesystem reference");
 }
+
+void TestPointerReorderTargets()
+{
+    using snowdesktop::widget_runtime::ResolveLogicalSlotPointerTarget;
+    const RECT surface{ 100, 100, 300, 300 };
+    const std::vector<RECT> vertical{
+        { 110, 110, 290, 150 },
+        { 110, 160, 290, 200 },
+        { 110, 210, 290, 250 },
+    };
+    const auto moveDown = ResolveLogicalSlotPointerTarget(
+        vertical, 0, POINT{ 150, 190 }, surface);
+    Check(moveDown && moveDown->insertionIndex == 2 &&
+            moveDown->targetIndex == 1 && !moveDown->horizontal &&
+            moveDown->indicator.top == 208,
+        "dragging below another vertical item must account for source removal");
+    const auto moveUp = ResolveLogicalSlotPointerTarget(
+        vertical, 2, POINT{ 150, 115 }, surface);
+    Check(moveUp && moveUp->insertionIndex == 0 &&
+            moveUp->targetIndex == 0 && moveUp->indicator.top == 108,
+        "dragging above the first vertical item must target index zero");
+
+    const std::vector<RECT> horizontal{
+        { 110, 110, 150, 190 },
+        { 160, 110, 200, 190 },
+        { 210, 110, 250, 190 },
+    };
+    const auto moveRight = ResolveLogicalSlotPointerTarget(
+        horizontal, 0, POINT{ 245, 150 }, surface);
+    Check(moveRight && moveRight->horizontal &&
+            moveRight->insertionIndex == 3 &&
+            moveRight->targetIndex == 2 &&
+            moveRight->indicator.left == 248,
+        "horizontal pointer reorder must expose a trailing vertical indicator");
+    Check(!ResolveLogicalSlotPointerTarget(
+            std::span<const RECT>(horizontal.data(), 1),
+            0, POINT{ 120, 120 }, surface),
+        "a one-item collection must not enter pointer reorder mode");
+}
 }
 
 int main()
@@ -164,6 +204,7 @@ int main()
     TestCollectionHitAndCommitBoundary();
     TestCapacityAndBindingPolicy();
     TestHostPickerCandidatePolicy();
+    TestPointerReorderTargets();
     std::cout << "Lua logical slot container tests passed\n";
     return 0;
 }
