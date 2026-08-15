@@ -519,7 +519,7 @@ function view.flow(options) end
 ---@return SnowViewNode
 function view.stack(options) end
 
----Host-owned bounded scroll viewport with exactly one visible child. Requires view.scroll.
+---Host-owned bounded scroll viewport with exactly one visible child. Additional hidden children are rejected. Requires view.scroll.
 ---@param options SnowViewNodeOptions
 ---@return SnowViewNode
 function view.scroll(options) end
@@ -534,7 +534,7 @@ function view.list(options) end
 ---@return SnowViewNode
 function view.gridList(options) end
 
----Stable collection item with exactly one visible child and accessibility.label. Requires view.collection.basic.
+---Stable collection item with exactly one visible child; additional hidden children are rejected. Requires view.collection.basic.
 ---@param options SnowViewNodeOptions
 ---@return SnowViewNode
 function view.listItem(options) end

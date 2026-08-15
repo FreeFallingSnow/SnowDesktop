@@ -1068,8 +1068,9 @@ void TestScrollableCollections()
         })
     )lua") == LUA_OK,
         "unlabelled list-item fixture must evaluate");
-    Check(ParseLuaViewTree(state, -1, invalid, error) &&
-            !ValidateAndLayoutViewTree(invalid, 200.0f, 80.0f, error) &&
+    ViewNode unlabelled;
+    Check(ParseLuaViewTree(state, -1, unlabelled, error) &&
+            !ValidateAndLayoutViewTree(unlabelled, 200.0f, 80.0f, error) &&
             error.find("accessibility.label") != std::string::npos,
         "list items must require stable accessibility labels");
     lua_close(state);

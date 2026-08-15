@@ -206,7 +206,8 @@ view.slider({
 避免测量阶段因未知最终宽度截断换行内容；在固定或 fill 高度中，超出的行高会按可用高度
 收缩。对应 feature 为 `view.flow.wrap`，不包含纵向 flow、masonry、滚动或虚拟化。
 
-`scroll` 是宿主管理的有界滚动视口，要求恰好一个可见子节点；默认纵向，也可使用
+`scroll` 是宿主管理的有界滚动视口，只允许一个子节点且该节点必须可见（额外隐藏节点也会
+拒绝）；默认纵向，也可使用
 `orientation="horizontal"`。宿主测量完整内容、按实例和稳定 key 保存偏移、处理滚轮/
 触控板 wheel、钳制到内容边界、移动子树并同时裁剪绘制和元素命中。滚出视口的按钮或
 列表项不能 hover、点击或打开右键菜单。`showScrollbar=false` 可隐藏宿主滚动条，但不会
@@ -214,8 +215,8 @@ view.slider({
 对应 feature `view.scroll`，当前不提供 Lua 自绘滚动条、惯性动画、滚动链或程序化定位。
 
 `list` 是纵向有界集合，`gridList` 是要求 `columns=1..64` 的行优先等宽集合；两者的直接
-子节点必须全部是 `listItem`。每个 `listItem` 要求全树唯一稳定 key、恰好一个可见内容子节点
-和 `accessibility.label`，可以使用 `action`/`events.click`、doubleClick、pointer 状态与
+子节点必须全部是 `listItem`。每个 `listItem` 要求全树唯一稳定 key、只含一个可见内容子节点
+（额外隐藏节点也会拒绝）和 `accessibility.label`，可以使用 `action`/`events.click`、doubleClick、pointer 状态与
 独立 contextMenu；宿主默认赋予 `listitem` 语义。一个树最多 256 个 listItem，仍受 512
 总节点和 256 交互区域上限约束。对应 feature 为 `view.collection.basic`。这是非虚拟化
 基础集合；大量或远程分页数据仍须等待 `virtualList/virtualGrid`，不能通过超配额树模拟。

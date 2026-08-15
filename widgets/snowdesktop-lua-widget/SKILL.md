@@ -99,10 +99,12 @@ Treat radioGroup and slider as controlled: update component-owned state from
 context menus; slider changes are emitted during captured left-button drag.
 Do not assume keyboard or UI Automation support yet.
 Probe `view.scroll` for a host-owned vertical or horizontal viewport. Give it
-exactly one visible child and keep the same key so the host retains its clamped
-offset; never offset descendants yourself. Probe `view.collection.basic` for
+exactly one child, keep that child visible, and keep the same key so the host
+retains its clamped offset; never offset descendants yourself. Probe
+`view.collection.basic` for
 non-virtual `list/gridList/listItem`: collection children must be listItem,
-each item needs one visible child, a globally stable key, and `accessibility.label`.
+each item needs exactly one visible child, a globally stable key, and
+`accessibility.label`.
 Keep a tree within 256 list items and use per-item actions/context menus. These
 features do not provide virtualList/virtualGrid or keyboard/UIA support yet.
 Probe `view.grid.uniform` before using `view.grid`; it is a bounded row-major

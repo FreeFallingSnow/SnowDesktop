@@ -795,7 +795,7 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
     if (node.type == ViewNodeType::Scroll &&
         (node.children.size() != 1 || !node.children.front().visible))
     {
-        error = "scroll nodes require exactly one visible child";
+        error = "scroll nodes require exactly one child and it must be visible";
         return false;
     }
     if (IsCollectionContainer(node.type))
@@ -824,7 +824,7 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         }
         if (node.children.size() != 1 || !node.children.front().visible)
         {
-            error = "listItem nodes require exactly one visible child";
+            error = "listItem nodes require exactly one child and it must be visible";
             return false;
         }
         if (node.accessibilityLabel.empty())
