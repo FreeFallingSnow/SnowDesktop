@@ -414,6 +414,7 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature("widget.context") &&
             snowdesktop::widget_api::SupportsFeature("widget.dialog") &&
             snowdesktop::widget_api::SupportsFeature("widget.panel") &&
+            snowdesktop::widget_api::SupportsFeature("widget.popover") &&
             snowdesktop::widget_api::SupportsFeature(
                 "system.environment") &&
             snowdesktop::widget_api::SupportsFeature("view.font") &&
@@ -522,6 +523,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "view.surface.panel") &&
             snowdesktop::widget_api::SupportsFeature(
+                "view.surface.popover") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "view.tree.core") &&
             !snowdesktop::widget_api::SupportsFeature("view.tree"),
         "host feature lookup must distinguish supported features");
@@ -604,9 +607,11 @@ void TestV2Contract()
     lua_setfield(state, -2, "panel");
     lua_pushcfunction(state, Noop);
     lua_setfield(state, -2, "dialog");
+    lua_pushcfunction(state, Noop);
+    lua_setfield(state, -2, "popover");
     Check(lua_pcall(state, 1, 1, 0) == LUA_OK &&
             snowdesktop::widget_api::IsDefinedWidget(state, -1),
-        "widget.define must accept panel and dialog surface callbacks");
+        "widget.define must accept auxiliary surface callbacks");
     lua_pop(state, 2);
 
     lua_getglobal(state, "widget");

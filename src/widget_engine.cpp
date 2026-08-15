@@ -1432,12 +1432,14 @@ private:
 
 static bool IsPanelSurface(std::string_view surface) noexcept
 {
-    return surface == "panel" || surface == "dialog";
+    return surface == "panel" || surface == "dialog" ||
+        surface == "popover";
 }
 
 static std::string NormalizeWidgetSurface(std::string_view surface)
 {
     if (surface == "dialog") return "dialog";
+    if (surface == "popover") return "popover";
     if (surface == "panel") return "panel";
     return "desktop";
 }
@@ -8796,6 +8798,46 @@ static int lua_WidgetOpenDialog(lua_State* L)
             width, height, dismissOnOutside,
             dismissOnEscape);
     return 0;
+}
+
+static int lua_WidgetOpenPopover(lua_State* L)
+{
+    luaL_checktype(L, 1, LUA_TTABLE);
+    const std::string title =
+        LuaReadStorageField(L, 1, "title");
+    const std::string anchorKey =
+        LuaReadStorageField(L, 1, "anchorKey");
+    std::string placement =
+        LuaReadStorageField(L, 1, "placement");
+    if (placement.empty()) placement = "auto";
+    int width = 360;
+    int height = 280;
+    bool dismissOnOutside = true;
+    bool dismissOnEscape = true;
+    lua_getfield(L, 1, "width");
+    if (lua_isnumber(L, -1))
+        width = static_cast<int>(lua_tointeger(L, -1));
+    lua_pop(L, 1);
+    lua_getfield(L, 1, "height");
+    if (lua_isnumber(L, -1))
+        height = static_cast<int>(lua_tointeger(L, -1));
+    lua_pop(L, 1);
+    lua_getfield(L, 1, "dismissOnOutside");
+    if (!lua_isnil(L, -1))
+        dismissOnOutside = lua_toboolean(L, -1) != 0;
+    lua_pop(L, 1);
+    lua_getfield(L, 1, "dismissOnEscape");
+    if (!lua_isnil(L, -1))
+        dismissOnEscape = lua_toboolean(L, -1) != 0;
+    lua_pop(L, 1);
+    auto* s = GetD2D(L);
+    const bool opened = s && s->engine &&
+        s->engine->RuntimeOpenWidgetPopover(
+            BoundWidgetId(L), Utf8ToWideLocal(title),
+            anchorKey, std::move(placement), width, height,
+            dismissOnOutside, dismissOnEscape);
+    lua_pushboolean(L, opened ? 1 : 0);
+    return 1;
 }
 
 static int lua_DrawPath(lua_State* state)
@@ -17665,7 +17707,9 @@ bool WidgetEngine::RenderWidgetPanel(
         return false;
     const std::string callbackName =
         normalizedSurface == "dialog" ? "dialog" :
-        (widget.manifest.apiVersion >= 2 ? "panel" : "renderPanel");
+        normalizedSurface == "popover" ? "popover" :
+        widget.manifest.apiVersion >= 2 ? "panel" : "renderPanel";
+
     WidgetExecutionContextGuard contextGuard(d2dState_, widgetId);
     WidgetSurfaceScope surfaceScope(
         d2dState_, normalizedSurface.c_str());
@@ -17757,7 +17801,8 @@ bool WidgetEngine::RenderWidgetPanel(
         const char* error = lua_tostring(state, -1);
         RuntimeRecordError(
             widgetId,
-            error ? error : "(panel render error)");
+            error ? std::string(error)
+                : callbackName + " render error");
         lua_pop(state, 1);
     }
     else if (widget.manifest.apiVersion >= 2)
@@ -18492,35 +18537,43 @@ void WidgetEngine::InvokeMouseEvent(const std::wstring& widgetId, const char* ca
         const std::string eventSurface =
             std::strstr(callbackName, "Dialog") != nullptr
                 ? "dialog"
-                : (std::strstr(callbackName, "Panel") != nullptr
-                    ? "panel" : "desktop");
+                : (std::strstr(callbackName, "Popover") != nullptr
+                    ? "popover"
+                    : (std::strstr(callbackName, "Panel") != nullptr
+                        ? "panel" : "desktop"));
         WidgetSurfaceScope surfaceScope(
             d2dState_, eventSurface.c_str());
         const char* kind = "pointer";
         const char* action = callbackName;
         if (std::strcmp(callbackName, "onClick") == 0 ||
             std::strcmp(callbackName, "onPanelClick") == 0 ||
-            std::strcmp(callbackName, "onDialogClick") == 0)
+            std::strcmp(callbackName, "onDialogClick") == 0 ||
+            std::strcmp(callbackName, "onPopoverClick") == 0)
             action = "click";
         else if (std::strcmp(callbackName, "onDoubleClick") == 0 ||
             std::strcmp(callbackName, "onPanelDoubleClick") == 0 ||
-            std::strcmp(callbackName, "onDialogDoubleClick") == 0)
+            std::strcmp(callbackName, "onDialogDoubleClick") == 0 ||
+            std::strcmp(callbackName, "onPopoverDoubleClick") == 0)
             action = "doubleClick";
         else if (std::strcmp(callbackName, "onMouseDown") == 0 ||
             std::strcmp(callbackName, "onPanelMouseDown") == 0 ||
-            std::strcmp(callbackName, "onDialogMouseDown") == 0)
+            std::strcmp(callbackName, "onDialogMouseDown") == 0 ||
+            std::strcmp(callbackName, "onPopoverMouseDown") == 0)
             action = "pointerDown";
         else if (std::strcmp(callbackName, "onMouseMove") == 0 ||
             std::strcmp(callbackName, "onPanelMouseMove") == 0 ||
-            std::strcmp(callbackName, "onDialogMouseMove") == 0)
+            std::strcmp(callbackName, "onDialogMouseMove") == 0 ||
+            std::strcmp(callbackName, "onPopoverMouseMove") == 0)
             action = "pointerMove";
         else if (std::strcmp(callbackName, "onMouseUp") == 0 ||
             std::strcmp(callbackName, "onPanelMouseUp") == 0 ||
-            std::strcmp(callbackName, "onDialogMouseUp") == 0)
+            std::strcmp(callbackName, "onDialogMouseUp") == 0 ||
+            std::strcmp(callbackName, "onPopoverMouseUp") == 0)
             action = "pointerUp";
         else if (std::strcmp(callbackName, "onWheel") == 0 ||
             std::strcmp(callbackName, "onPanelWheel") == 0 ||
-            std::strcmp(callbackName, "onDialogWheel") == 0)
+            std::strcmp(callbackName, "onDialogWheel") == 0 ||
+            std::strcmp(callbackName, "onPopoverWheel") == 0)
             action = "wheel";
         else if (std::strcmp(callbackName, "onPanelOpened") == 0)
         {
@@ -18540,6 +18593,16 @@ void WidgetEngine::InvokeMouseEvent(const std::wstring& widgetId, const char* ca
         else if (std::strcmp(callbackName, "onDialogClosed") == 0)
         {
             kind = "dialog";
+            action = "closed";
+        }
+        else if (std::strcmp(callbackName, "onPopoverOpened") == 0)
+        {
+            kind = "popover";
+            action = "opened";
+        }
+        else if (std::strcmp(callbackName, "onPopoverClosed") == 0)
+        {
+            kind = "popover";
             action = "closed";
         }
         std::string targetKey;
@@ -25238,6 +25301,77 @@ void WidgetEngine::RuntimeOpenWidgetDialog(
     openWidgetPanelCallback_(request);
 }
 
+bool WidgetEngine::RuntimeOpenWidgetPopover(
+    const std::wstring& widgetId, std::wstring title,
+    std::string anchorKey, std::string placement,
+    int width, int height, bool dismissOnOutside,
+    bool dismissOnEscape)
+{
+    if (snowdesktop::widget_runtime::IsDryLoad() ||
+        !openWidgetPanelCallback_ ||
+        !trustedGestureState_.Active() || anchorKey.empty() ||
+        CurrentWidgetSurface(d2dState_) != "desktop")
+        return false;
+    static constexpr std::array<std::string_view, 9> placements = {
+        "auto", "top", "bottom", "left", "right",
+        "topStart", "topEnd", "bottomStart", "bottomEnd"
+    };
+    if (std::find(placements.begin(), placements.end(), placement) ==
+        placements.end())
+        return false;
+    const int index = FindWidget(widgetId);
+    if (index < 0 || !widgets_[index].valid ||
+        widgets_[index].preview)
+        return false;
+    const auto* anchor =
+        widgets_[index].interactionRegions.Find(anchorKey);
+    if (!anchor || !anchor->enabled)
+        return false;
+    float left = anchor->shape.x;
+    float top = anchor->shape.y;
+    float right = anchor->shape.x + anchor->shape.width;
+    float bottom = anchor->shape.y + anchor->shape.height;
+    if (anchor->shape.type ==
+        snowdesktop::widget_runtime::InteractionShapeType::Circle)
+    {
+        left = anchor->shape.x - anchor->shape.radius;
+        top = anchor->shape.y - anchor->shape.radius;
+        right = anchor->shape.x + anchor->shape.radius;
+        bottom = anchor->shape.y + anchor->shape.radius;
+    }
+    if (anchor->clip)
+    {
+        left = std::max(left, anchor->clip->x);
+        top = std::max(top, anchor->clip->y);
+        right = std::min(right,
+            anchor->clip->x + anchor->clip->width);
+        bottom = std::min(bottom,
+            anchor->clip->y + anchor->clip->height);
+    }
+    if (right <= left || bottom <= top)
+        return false;
+    const RECT ownerBounds = widgets_[index].lastBounds;
+    LuaWidgetPanelRequest request;
+    request.widgetId = widgetId;
+    request.title = std::move(title);
+    request.surface = "popover";
+    request.placement = std::move(placement);
+    request.anchorRect = {
+        ownerBounds.left + static_cast<LONG>(std::floor(left)),
+        ownerBounds.top + static_cast<LONG>(std::floor(top)),
+        ownerBounds.left + static_cast<LONG>(std::ceil(right)),
+        ownerBounds.top + static_cast<LONG>(std::ceil(bottom))
+    };
+    request.hasAnchor = true;
+    request.showHeader = !request.title.empty();
+    request.width = std::clamp(width, 200, 720);
+    request.height = std::clamp(height, 120, 720);
+    request.dismissOnOutside = dismissOnOutside;
+    request.dismissOnEscape = dismissOnEscape;
+    openWidgetPanelCallback_(request);
+    return true;
+}
+
 void WidgetEngine::RuntimeCloseWidgetPanel(
     const std::wstring& widgetId)
 {
@@ -28395,8 +28529,10 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
         { "openSettings", lua_WidgetOpenSettings },
         { "openPanel", lua_WidgetOpenPanel },
         { "openDialog", lua_WidgetOpenDialog, 2 },
+        { "openPopover", lua_WidgetOpenPopover, 2 },
         { "closePanel", lua_WidgetClosePanel },
         { "closeDialog", lua_WidgetClosePanel, 2 },
+        { "closePopover", lua_WidgetClosePanel, 2 },
         { "invalidate", lua_WidgetInvalidate },
         { "log", lua_WidgetLog },
         { "theme", lua_WidgetTheme },

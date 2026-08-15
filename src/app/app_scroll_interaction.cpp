@@ -42,7 +42,9 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
                 if (widgetEngine_)
                 {
                     const char* eventName = surface == "dialog"
-                        ? "onDialogWheel" : "onPanelWheel";
+                        ? "onDialogWheel"
+                        : (surface == "popover"
+                            ? "onPopoverWheel" : "onPanelWheel");
                     widgetEngine_->InvokeMouseEvent(
                         luaWidgetPanelRequest_.widgetId,
                         eventName,

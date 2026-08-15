@@ -178,7 +178,9 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         {
             const char* eventName = surface == "dialog"
                 ? "onDialogMouseMove"
-                : "onPanelMouseMove";
+                : (surface == "popover"
+                    ? "onPopoverMouseMove"
+                    : "onPanelMouseMove");
             widgetEngine_->InvokeMouseEvent(
                 luaWidgetPanelRequest_.widgetId,
                 eventName,

@@ -1030,7 +1030,7 @@ region generation 校验，旧菜单不会落到新一代 region。普通区域�
 key 隔离，宿主负责 wheel、钳制、重绘和滚动条，组件使用 `draw.pushClip/popClip`
 裁剪并按返回 offset 绘制。声明式轨道现已另行开放 `view.scroll`：支持纵向/横向单子树、
 宿主 offset、测量、滚轮、裁剪绘制和裁剪命中，滚出视口的元素不会继续响应交互。
-desktop 与 panel 的即时绘制 surface 均有各自原子提交的 region 集合；
+desktop 与宿主辅助 surface 的即时绘制均有各自原子提交的 region 集合；
 `view.keyboardNavigation.basic` 已让可点击、受控和文本输入 region 进入所属 surface 的宿主
 焦点序列。触控长按、受控 submenu、包内菜单图标
 和完整 UIA scene tree 仍按 M6 后续交付物推进。
@@ -1057,6 +1057,13 @@ desktop 与 panel 的即时绘制 surface 均有各自原子提交的 region 集
 `surface="dialog"`。默认 Escape 关闭、点击遮罩不关闭，可分别用 `dismissOnEscape` 和
 `dismissOnOutside` 调整；宿主关闭按钮始终保留。panel 与 dialog 互斥，打开新 surface 会关闭
 旧 surface。当前仍缺 dialog UIA Fragment 导出与真实桌面交互验收，故按已编译待验证能力记录。
+
+`widget.define.popover(context, model)` 已通过 `view.surface.popover` 复用辅助 surface 场景管线。
+`widget.openPopover` 只能在可信 desktop 手势中使用上一棵成功 scene 的稳定 `anchorKey`，宿主从
+已裁剪命中范围计算锚点，支持 auto/top/bottom/left/right 与 start/end 变体，并在工作区内翻转、
+钳制；Lua 不得提供屏幕坐标。无标题时使用紧凑 chrome，默认外部点击与 Escape 关闭。未知、禁用、
+滚出裁剪区或陈旧 key 会返回 false，辅助 surface 内嵌套打开也会拒绝。popover 与 panel/dialog
+共享唯一辅助 surface 槽位；当前仍缺 UIA Fragment 导出与真实桌面定位/关闭验收。
 
 ### 13.3 参考优先级与完整性边界
 
@@ -1110,8 +1117,8 @@ ScrollItem 仍未完成，因此本进度
 复用宿主键盘、选择、剪贴板代理和 IME 编辑器，使用组件受控 value 与 change 建议值，支持
 focus/blur/submit、提交模式、字节上限、数字有效性和方向键 step；select 的展开状态和选择值
 同样受控，宿主在组件表面顶层绘制有界选项并返回 expansion/selection 建议。通用焦点遍历
-已由 `view.keyboardNavigation.basic` 覆盖；当前仍缺 UIA Pattern 和可逃逸父 surface 的
-popover，因此这里只发布细粒度 feature，不能把
+已由 `view.keyboardNavigation.basic` 覆盖；锚定 popover 已实现，但仍缺 UIA Pattern、嵌套
+popover 与跨辅助 surface 的焦点恢复，因此这里只发布细粒度 feature，不能把
 五类控件计作第 13.4 节“控件契约完整”。
 四类文本/数值输入现已支持 `readOnly`：仍保留焦点、选择、复制和 submit，但统一阻止键入、
 IME、粘贴/剪切删除、退格/Delete、数值步进和 UIA SetValue；只读节点不再强制声明不会触发的
@@ -1786,7 +1793,7 @@ UTF-8/UTF-16 边界换算和 selectionChange 建议，`view.keyboard.events` 已
 聚焦按键观察、按下/释放配对和失焦清理，`view.focus.request` 已把可信动作焦点请求扩展到
 任意可聚焦声明式节点并支持下一次成功提交解析；这些声明都不把状态持久化责任转移给宿主。
 其额度为 512 节点、32 层、单节点 4 KiB 文本、全树 64 KiB 文本和 256 个交互元素；未知字段、
-重复 key、非连续 children、错误枚举和越界数值拒绝整次提交。数据图形由宿主直接有界绘制，不展开为逐样本节点或命中区域。`view.surface.panel` 与 `view.surface.dialog` 已把同一树、命中、滚动、控件和键盘管线扩展到互斥的宿主辅助 surface 状态；dialog 另有居中遮罩和非阻塞背景输入隔离。它们尚不包含完整必选节点矩阵、
+重复 key、非连续 children、错误枚举和越界数值拒绝整次提交。数据图形由宿主直接有界绘制，不展开为逐样本节点或命中区域。`view.surface.panel`、`view.surface.dialog` 与 `view.surface.popover` 已把同一树、命中、滚动、控件和键盘管线扩展到互斥的宿主辅助 surface 状态；dialog 另有居中遮罩和非阻塞背景输入隔离，popover 由稳定桌面元素 key 锚定。它们尚不包含完整必选节点矩阵、
 完整 UIA、RTL、文本换行、可变高度虚拟化和差量资源复用；通用 surface 键盘焦点已作为
 `view.keyboardNavigation.basic` 单独发布，因此仍只发布
 细粒度 feature，不发布 `view.tree`，也不计作 M6 完成。

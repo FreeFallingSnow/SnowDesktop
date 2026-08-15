@@ -484,7 +484,16 @@ default border does not fit the component design.
   keeps focus on the dialog. Outside-click dismissal defaults to false and
   Escape dismissal defaults to true; set either option explicitly when the
   workflow requires different behavior. Close it with `widget.closeDialog`.
-  Only one panel or dialog can be active for the host at a time.
+  Only one panel, dialog, or popover can be active for the host at a time.
+- Put a lightweight element-attached surface in `widget.define.popover` and
+  open it only from a trusted desktop action with
+  `widget.openPopover({ anchorKey = stableElementKey, ... })` after probing
+  `view.surface.popover`. The anchor must exist and be enabled in the last
+  successful desktop scene; Lua never supplies screen coordinates. Use
+  `placement` for auto/top/bottom/left/right or start/end variants. Omitting
+  the title selects compact chrome. Popovers default to outside-click and
+  Escape dismissal and share the single auxiliary-surface slot with panels
+  and dialogs; nesting them is not supported.
 - Keep colors in `0xRRGGBB`.
 - Respect `widget.context().accessibility`, theme, DPI, visibility and preview
   state. Do not request permission for an ordinary pointer clock or static UI.

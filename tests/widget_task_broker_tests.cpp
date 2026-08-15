@@ -304,10 +304,12 @@ void TestTrustedGestureScope()
     Check(IsTrustedWidgetGestureCallback("onClick") &&
             IsTrustedWidgetGestureCallback("onPanelMouseDown") &&
             IsTrustedWidgetGestureCallback("onDialogMouseDown") &&
+            IsTrustedWidgetGestureCallback("onPopoverMouseDown") &&
             IsTrustedWidgetGestureCallback("onWheel") &&
             !IsTrustedWidgetGestureCallback("onMouseMove") &&
             !IsTrustedWidgetGestureCallback("onPanelOpened") &&
-            !IsTrustedWidgetGestureCallback("onDialogOpened"),
+            !IsTrustedWidgetGestureCallback("onDialogOpened") &&
+            !IsTrustedWidgetGestureCallback("onPopoverOpened"),
         "only direct pointer activations may open a trusted gesture scope");
     WidgetTrustedGestureState state;
     Check(!state.Active(), "gesture state must be inactive by default");

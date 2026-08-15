@@ -740,14 +740,21 @@ void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
             PtInRect(&content, upPoint) &&
             widgetEngine_)
         {
-            const bool dialog = surface == "dialog";
+            const char* upEvent = surface == "dialog"
+                ? "onDialogMouseUp"
+                : (surface == "popover"
+                    ? "onPopoverMouseUp" : "onPanelMouseUp");
+            const char* clickEvent = surface == "dialog"
+                ? "onDialogClick"
+                : (surface == "popover"
+                    ? "onPopoverClick" : "onPanelClick");
             widgetEngine_->InvokeMouseEvent(
                 panelWidgetId,
-                dialog ? "onDialogMouseUp" : "onPanelMouseUp",
+                upEvent,
                 localX, localY, 1, 0);
             widgetEngine_->InvokeMouseEvent(
                 panelWidgetId,
-                dialog ? "onDialogClick" : "onPanelClick",
+                clickEvent,
                 localX, localY, 1, 0);
         }
         luaWidgetPanelMouseDown_ = false;

@@ -59,6 +59,13 @@ void DesktopApp::OpenLuaWidgetPanel(
             };
         }
     }
+    if (request.hasAnchor)
+    {
+        luaWidgetPanelAnchorPoint_ = {
+            (request.anchorRect.left + request.anchorRect.right) / 2,
+            (request.anchorRect.top + request.anchorRect.bottom) / 2
+        };
+    }
     luaWidgetPanelRect_ = GetLuaWidgetPanelRect();
     luaWidgetPanelMouseDown_ = false;
     luaWidgetPanelAnimation_.ResetHidden();
@@ -79,7 +86,9 @@ void DesktopApp::OpenLuaWidgetPanel(
     if (widgetEngine_)
     {
         const char* openedEvent = request.surface == "dialog"
-            ? "onDialogOpened" : "onPanelOpened";
+            ? "onDialogOpened"
+            : (request.surface == "popover"
+                ? "onPopoverOpened" : "onPanelOpened");
         widgetEngine_->InvokeMouseEvent(
             request.widgetId, openedEvent,
             0, 0, 0, 0);
@@ -107,7 +116,9 @@ void DesktopApp::FinalizeCloseLuaWidgetPanel()
     if (!closingId.empty() && widgetEngine_)
     {
         const char* closedEvent = closingSurface == "dialog"
-            ? "onDialogClosed" : "onPanelClosed";
+            ? "onDialogClosed"
+            : (closingSurface == "popover"
+                ? "onPopoverClosed" : "onPanelClosed");
         widgetEngine_->InvokeMouseEvent(
             closingId, closedEvent,
             0, 0, 0, 0);

@@ -263,6 +263,10 @@ struct LuaWidgetPanelRequest
     std::wstring widgetId;
     std::wstring title;
     std::string surface = "panel";
+    std::string placement = "auto";
+    RECT anchorRect{};
+    bool hasAnchor = false;
+    bool showHeader = true;
     int width = 520;
     int height = 620;
     bool dismissOnOutside = true;
@@ -1309,6 +1313,10 @@ public:
         std::wstring title, int width, int height);
     void RuntimeOpenWidgetDialog(const std::wstring& widgetId,
         std::wstring title, int width, int height,
+        bool dismissOnOutside, bool dismissOnEscape);
+    bool RuntimeOpenWidgetPopover(const std::wstring& widgetId,
+        std::wstring title, std::string anchorKey,
+        std::string placement, int width, int height,
         bool dismissOnOutside, bool dismissOnEscape);
     void RuntimeCloseWidgetPanel(const std::wstring& widgetId);
 

@@ -431,12 +431,16 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             const RECT content = GetLuaWidgetPanelContentRect();
             if (PtInRect(&content, pt) && widgetEngine_)
             {
-                const bool dialog =
-                    luaWidgetPanelRequest_.surface == "dialog";
+                const std::string& surface =
+                    luaWidgetPanelRequest_.surface;
+                const char* eventName = surface == "dialog"
+                    ? "onDialogDoubleClick"
+                    : (surface == "popover"
+                        ? "onPopoverDoubleClick"
+                        : "onPanelDoubleClick");
                 widgetEngine_->InvokeMouseEvent(
                     luaWidgetPanelRequest_.widgetId,
-                    dialog ? "onDialogDoubleClick"
-                        : "onPanelDoubleClick",
+                    eventName,
                     pt.x - content.left,
                     pt.y - content.top, 1, 0);
                 return 0;

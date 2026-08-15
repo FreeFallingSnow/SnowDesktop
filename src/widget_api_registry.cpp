@@ -20,7 +20,7 @@ namespace snowdesktop::widget_api
 namespace
 {
 constexpr std::uint32_t kCurrentApiVersion = 2;
-constexpr std::array<std::string_view, 146> kHostFeatures = {
+constexpr std::array<std::string_view, 148> kHostFeatures = {
     "animation.frame",
     "calendar.dateMath",
     "calendar.selection",
@@ -119,6 +119,7 @@ constexpr std::array<std::string_view, 146> kHostFeatures = {
     "widget.context",
     "widget.dialog",
     "widget.panel",
+    "widget.popover",
     "view.actionControls",
     "view.checkbox.indeterminate",
     "view.collection.basic",
@@ -162,6 +163,7 @@ constexpr std::array<std::string_view, 146> kHostFeatures = {
     "view.styledText.basic",
     "view.surface.dialog",
     "view.surface.panel",
+    "view.surface.popover",
     "view.text.flow",
     "view.text.locale",
     "view.text.typography",
@@ -722,7 +724,7 @@ int LuaDefineWidget(lua_State* state)
     const int descriptor = lua_absindex(state, 1);
     for (const char* callback : {
         "render", "view", "setup", "event", "dispose", "menu",
-        "panel", "dialog" })
+        "panel", "dialog", "popover" })
     {
         if (!FieldIsNilOrFunction(state, descriptor, callback))
         {

@@ -1,7 +1,7 @@
 ---@meta SnowDesktop API v2
 
 ---@alias SnowWidgetSizeClass 'small'|'medium'|'large'
----@alias SnowWidgetSurfaceKind 'desktop'|'panel'|'dialog'|'preview'
+---@alias SnowWidgetSurfaceKind 'desktop'|'panel'|'dialog'|'popover'|'preview'
 ---@alias SnowResourceState 'ready'|'error'
 ---@alias SnowResourceLoadError 'loadPhaseRequired'|'invalidName'|'notDeclared'|'typeMismatch'|'hostUnavailable'|'unavailable'|'quotaExceeded'|'decodeFailed'|'deviceUnavailable'|'fontLoadFailed'|'invalidHandle'
 ---@alias SnowDateStyle 'none'|'short'|'long'
@@ -501,7 +501,7 @@
 ---@field id string The region contextMenu binding ID.
 ---@field value? SnowStateValue The region contextMenu binding payload.
 ---@field targetKey string
----@field surface 'desktop'|'panel'|'dialog'
+---@field surface 'desktop'|'panel'|'dialog'|'popover'
 ---@field source 'pointer'
 ---@field scope 'element'|'component'
 
@@ -522,6 +522,7 @@
 ---@field view? fun(context: SnowWidgetContext, model: any): SnowViewNode Exactly one of view or render is required; requires view.tree.core for the current node subset.
 ---@field panel? fun(context: SnowWidgetContext, model: any): SnowViewNode? Renders the host-owned auxiliary panel surface opened with widget.openPanel. Return a declarative view after probing view.surface.panel, or nil for immediate drawing.
 ---@field dialog? fun(context: SnowWidgetContext, model: any): SnowViewNode? Renders the non-blocking modal surface opened with widget.openDialog. Return a declarative view after probing view.surface.dialog, or nil for immediate drawing.
+---@field popover? fun(context: SnowWidgetContext, model: any): SnowViewNode? Renders the element-anchored surface opened with widget.openPopover. Return a declarative view after probing view.surface.popover, or nil for immediate drawing.
 ---@field setup? fun(context: SnowWidgetContext): any Runs once and returns the instance model passed to render and dispose.
 ---@field event? fun(context: SnowWidgetContext, model: any, event: SnowWidgetEvent) Receives host surface and declarative action events.
 ---@field menu? fun(context: SnowWidgetContext, model: any, request: SnowMenuRequest): SnowMenuModel? Builds an immediate-region context menu synchronously.
@@ -540,7 +541,7 @@
 ---@field settings? SnowWidgetSettings
 
 ---@class SnowWidgetEvent
----@field kind 'visibility'|'resize'|'pointer'|'timer'|'schedule'|'frame'|'action'|'selection'|'environment'|'panel'|'dialog'|'data.change'|'task.complete'|'slot.changed'|'notification.delivered'|'notification.action'
+---@field kind 'visibility'|'resize'|'pointer'|'timer'|'schedule'|'frame'|'action'|'selection'|'environment'|'panel'|'dialog'|'popover'|'data.change'|'task.complete'|'slot.changed'|'notification.delivered'|'notification.action'
 ---@field action? 'click'|'change'|'selectionChange'|'focus'|'blur'|'submit'|'doubleClick'|'pointerDown'|'pointerMove'|'pointerUp'|'wheel'|'keyDown'|'keyUp'|'opened'|'closed'|string
 ---@field id? string
 ---@field name? string
@@ -586,7 +587,7 @@
 ---@field cancelled? boolean True when Escape reverts an input or reports blur cancellation.
 ---@field clickCount? integer
 ---@field trustedGesture? boolean
----@field surface? 'desktop'|'panel'|'dialog'
+---@field surface? 'desktop'|'panel'|'dialog'|'popover'
 ---@field reason? string
 ---@field topic? string Updated data subscription topic for data.change.
 ---@field revision? integer Monotonic provider revision for data.change.
@@ -711,6 +712,17 @@
 
 ---@class SnowWidgetDialogOptions: SnowWidgetPanelOptions
 ---@field dismissOnOutside? boolean Defaults to false so an accidental desktop click cannot discard the dialog.
+---@field dismissOnEscape? boolean Defaults to true.
+
+---@alias SnowWidgetPopoverPlacement 'auto'|'top'|'bottom'|'left'|'right'|'topStart'|'topEnd'|'bottomStart'|'bottomEnd'
+
+---@class SnowWidgetPopoverOptions
+---@field anchorKey string Stable key of an enabled declarative or immediate interaction element on the desktop surface.
+---@field title? string When omitted, the host uses compact chrome without a title bar.
+---@field placement? SnowWidgetPopoverPlacement Defaults to auto and flips to available work-area space.
+---@field width? integer Clamped to 200..720 before work-area constraints.
+---@field height? integer Clamped to 120..720 before work-area constraints.
+---@field dismissOnOutside? boolean Defaults to true.
 ---@field dismissOnEscape? boolean Defaults to true.
 
 ---@class SnowInlineTextEditOptions
@@ -1027,6 +1039,12 @@ function widget.closePanel() end
 function widget.openDialog(options) end
 
 function widget.closeDialog() end
+
+---@param options SnowWidgetPopoverOptions
+---@return boolean opened False outside a trusted desktop gesture or when anchorKey is not in the current successful desktop scene.
+function widget.openPopover(options) end
+
+function widget.closePopover() end
 
 function widget.invalidate() end
 

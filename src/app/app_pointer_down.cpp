@@ -67,7 +67,9 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 {
                     const char* eventName = surface == "dialog"
                         ? "onDialogMouseDown"
-                        : "onPanelMouseDown";
+                        : (surface == "popover"
+                            ? "onPopoverMouseDown"
+                            : "onPanelMouseDown");
                     widgetEngine_->InvokeMouseEvent(
                         luaWidgetPanelRequest_.widgetId,
                         eventName,
