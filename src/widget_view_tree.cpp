@@ -1125,6 +1125,18 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
                     *style.cornerRadius, 0.0f, 4096.0f)) &&
             (!style.opacity || FiniteInRange(*style.opacity, 0.0f, 1.0f));
     };
+    if (node.maximumLines > 64)
+    {
+        error = "view maxLines must be between 0 and 64";
+        return false;
+    }
+    if (node.verticalAlign != ViewAlignment::Start &&
+        node.verticalAlign != ViewAlignment::Center &&
+        node.verticalAlign != ViewAlignment::End)
+    {
+        error = "view verticalAlign must be start, center, or end";
+        return false;
+    }
     if (!ValidateLength(node.width) || !ValidateLength(node.height) ||
         !ValidateLength(node.flexBasis) ||
         node.flexBasis.kind == ViewLengthKind::Fill ||

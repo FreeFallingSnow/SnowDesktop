@@ -14927,6 +14927,61 @@ static void SetViewTextLayoutAlignment(IDWriteTextLayout* layout,
         layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
 }
 
+static DWRITE_WORD_WRAPPING ViewTextWrapping(
+    const snowdesktop::widget_runtime::ViewNode& node) noexcept
+{
+    return node.textWrap ==
+        snowdesktop::widget_runtime::ViewTextWrap::Wrap
+        ? DWRITE_WORD_WRAPPING_WRAP : DWRITE_WORD_WRAPPING_NO_WRAP;
+}
+
+static float ViewTextLineHeight(
+    const snowdesktop::widget_runtime::ViewNode& node) noexcept
+{
+    float size = node.fontSize;
+    for (const auto& span : node.spans)
+        if (span.fontSize) size = std::max(size, *span.fontSize);
+    return std::max(1.0f, size * 1.4f);
+}
+
+static float ViewTextLayoutHeight(
+    const snowdesktop::widget_runtime::ViewNode& node,
+    float available) noexcept
+{
+    if (node.maximumLines == 0) return available;
+    return std::min(available, ViewTextLineHeight(node) *
+        static_cast<float>(node.maximumLines));
+}
+
+static float ViewTextVerticalOffset(
+    const snowdesktop::widget_runtime::ViewNode& node,
+    float available, float content) noexcept
+{
+    using snowdesktop::widget_runtime::ViewAlignment;
+    const float remaining = std::max(0.0f, available - content);
+    if (node.verticalAlign == ViewAlignment::Center)
+        return remaining * 0.5f;
+    if (node.verticalAlign == ViewAlignment::End)
+        return remaining;
+    return 0.0f;
+}
+
+static void SetViewTextOverflow(D2DState* state,
+    IDWriteTextFormat* format, IDWriteTextLayout* layout,
+    const snowdesktop::widget_runtime::ViewNode& node)
+{
+    if (!state || !state->dwrite || !format || !layout ||
+        node.overflowText !=
+            snowdesktop::widget_runtime::ViewTextOverflow::Ellipsis)
+        return;
+    DWRITE_TRIMMING trimming{};
+    trimming.granularity = DWRITE_TRIMMING_GRANULARITY_CHARACTER;
+    ComPtr<IDWriteInlineObject> ellipsis;
+    if (SUCCEEDED(state->dwrite->CreateEllipsisTrimmingSign(
+            format, &ellipsis)) && ellipsis)
+        layout->SetTrimming(&trimming, ellipsis.Get());
+}
+
 static void DrawWidgetStyledText(D2DState* state,
     const snowdesktop::widget_runtime::ViewNode& node,
     const snowdesktop::widget_runtime::ViewStyle& style, float opacity)
@@ -14941,7 +14996,7 @@ static void DrawWidgetStyledText(D2DState* state,
             privateFontPath
         ? GetCachedTextFormat(state, node.fontSize,
             node.bold ? DWRITE_FONT_WEIGHT_BOLD : state->itemFontWeight,
-            false, DWRITE_WORD_WRAPPING_WRAP, false, false, false,
+            false, ViewTextWrapping(node), false, false, false,
             privateFontPath ? &*privateFontPath : nullptr)
         : nullptr;
     if (!format) return;
@@ -14964,14 +15019,16 @@ static void DrawWidgetStyledText(D2DState* state,
             std::min(node.frame.width, node.frame.height) * 0.5f));
     const float width = std::max(0.0f, node.frame.width - inset * 2.0f);
     const float height = std::max(0.0f, node.frame.height - inset * 2.0f);
+    const float layoutHeight = ViewTextLayoutHeight(node, height);
     ComPtr<IDWriteTextLayout> layout;
-    if (width <= 0.0f || height <= 0.0f || FAILED(
+    if (width <= 0.0f || layoutHeight <= 0.0f || FAILED(
             state->dwrite->CreateTextLayout(text.data(),
-                static_cast<UINT32>(text.size()), format, width, height,
+                static_cast<UINT32>(text.size()), format, width, layoutHeight,
                 &layout)) || !layout)
         return;
     SetViewTextLayoutAlignment(layout.Get(), node.textAlign);
-    layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+    SetViewTextOverflow(state, format, layout.Get(), node);
     for (const auto& [span, range] : ranges)
     {
         if (span->fontSize) layout->SetFontSize(*span->fontSize, range);
@@ -14991,10 +15048,16 @@ static void DrawWidgetStyledText(D2DState* state,
     ID2D1SolidColorBrush* brush = GetCachedBrush(state,
         static_cast<int>(style.foreground.value_or(0xFFFFFF)), opacity);
     if (brush)
+    {
+        DWRITE_TEXT_METRICS metrics{};
+        const float contentHeight = SUCCEEDED(layout->GetMetrics(&metrics))
+            ? std::min(layoutHeight, metrics.height) : layoutHeight;
         state->ctx->DrawTextLayout(D2D1::Point2F(
             state->widgetRect.left + node.frame.x + inset,
-            state->widgetRect.top + node.frame.y + inset),
+            state->widgetRect.top + node.frame.y + inset +
+                ViewTextVerticalOffset(node, height, contentHeight)),
             layout.Get(), brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    }
 }
 
 static void DrawWidgetMonthCalendar(D2DState* state,
@@ -15801,7 +15864,7 @@ static void DrawWidgetViewNode(D2DState* state,
             ? GetCachedTextFormat(state,
             node.fontSize,
             node.bold ? DWRITE_FONT_WEIGHT_BOLD : state->itemFontWeight,
-            iconNode, DWRITE_WORD_WRAPPING_NO_WRAP,
+            iconNode, ViewTextWrapping(node),
             iconNode && node.iconFont == ViewIconFont::FontAwesome,
             iconNode,
             iconNode && node.iconFont == ViewIconFont::Fluent,
@@ -15827,10 +15890,12 @@ static void DrawWidgetViewNode(D2DState* state,
                 textRight - textLeft);
             const float textHeight = std::max(0.0f,
                 node.frame.height - textInset * 2.0f);
+            const float layoutHeight = ViewTextLayoutHeight(
+                node, textHeight);
             ComPtr<IDWriteTextLayout> layout;
             if (SUCCEEDED(state->dwrite->CreateTextLayout(
                     text.data(), static_cast<UINT32>(text.size()),
-                    format, textWidth, textHeight,
+                    format, textWidth, layoutHeight,
                     &layout)) && layout)
             {
                 if (iconNode || node.textAlign == ViewTextAlignment::Center)
@@ -15843,20 +15908,20 @@ static void DrawWidgetViewNode(D2DState* state,
                     layout->SetTextAlignment(
                         DWRITE_TEXT_ALIGNMENT_LEADING);
                 layout->SetParagraphAlignment(
-                    DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                    DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
                 if (node.type == ViewNodeType::Link)
                     layout->SetUnderline(TRUE,
                         DWRITE_TEXT_RANGE{ 0,
                             static_cast<UINT32>(text.size()) });
-                DWRITE_TRIMMING trimming{};
-                trimming.granularity =
-                    DWRITE_TRIMMING_GRANULARITY_CHARACTER;
-                ComPtr<IDWriteInlineObject> ellipsis;
-                if (SUCCEEDED(state->dwrite->CreateEllipsisTrimmingSign(
-                        format, &ellipsis)) && ellipsis)
-                    layout->SetTrimming(&trimming, ellipsis.Get());
+                SetViewTextOverflow(state, format, layout.Get(), node);
+                DWRITE_TEXT_METRICS metrics{};
+                const float contentHeight = SUCCEEDED(
+                        layout->GetMetrics(&metrics))
+                    ? std::min(layoutHeight, metrics.height) : layoutHeight;
                 D2D1_POINT_2F origin = D2D1::Point2F(
-                    textLeft, rect.top + textInset);
+                    textLeft, rect.top + textInset +
+                        ViewTextVerticalOffset(
+                            node, textHeight, contentHeight));
                 if (iconNode)
                 {
                     DWRITE_OVERHANG_METRICS overhang{};

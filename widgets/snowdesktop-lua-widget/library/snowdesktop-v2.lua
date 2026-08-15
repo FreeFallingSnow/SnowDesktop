@@ -116,6 +116,8 @@
 
 ---@alias SnowViewLength number|'auto'|'fill'
 ---@alias SnowViewFlexBasis number|'auto'
+---@alias SnowViewTextWrap 'noWrap'|'wrap'
+---@alias SnowViewTextOverflow 'clip'|'ellipsis'
 ---@alias SnowViewAlignment 'start'|'center'|'end'|'stretch'
 ---@alias SnowViewSelfAlignment 'auto'|'start'|'center'|'end'|'stretch'
 ---@alias SnowViewImageFit 'fill'|'contain'|'cover'|'none'
@@ -254,6 +256,10 @@
 ---@field checked? boolean Required explicit controlled value for toggle and checkbox nodes.
 ---@field showScrollbar? boolean Scroll or virtual-collection host scrollbar visibility; defaults to true.
 ---@field textAlign? 'start'|'center'|'end'
+---@field verticalAlign? 'start'|'center'|'end' Text block alignment inside the node; defaults to center.
+---@field textWrap? SnowViewTextWrap Defaults to noWrap, except styledText defaults to wrap.
+---@field maxLines? integer Maximum rendered lines from 0/unlimited through 64.
+---@field overflowText? SnowViewTextOverflow Defaults to ellipsis, except styledText defaults to clip.
 ---@field visible? boolean
 ---@field enabled? boolean
 ---@field cursor? string

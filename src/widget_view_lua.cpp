@@ -903,6 +903,56 @@ bool ReadTextAlignmentField(lua_State* state, int table,
     return true;
 }
 
+bool ReadTextVerticalAlignmentField(lua_State* state, int table,
+    ViewAlignment& value, std::string& error)
+{
+    std::string text;
+    if (!ReadStringField(state, table, "verticalAlign", text, false, error))
+        return false;
+    if (text.empty() || text == "center") value = ViewAlignment::Center;
+    else if (text == "start") value = ViewAlignment::Start;
+    else if (text == "end") value = ViewAlignment::End;
+    else
+    {
+        error = "view field 'verticalAlign' has an unsupported value";
+        return false;
+    }
+    return true;
+}
+
+bool ReadTextWrapField(lua_State* state, int table,
+    ViewTextWrap& value, std::string& error)
+{
+    std::string text;
+    if (!ReadStringField(state, table, "textWrap", text, false, error))
+        return false;
+    if (text.empty() || text == "noWrap") value = ViewTextWrap::NoWrap;
+    else if (text == "wrap") value = ViewTextWrap::Wrap;
+    else
+    {
+        error = "view field 'textWrap' has an unsupported value";
+        return false;
+    }
+    return true;
+}
+
+bool ReadTextOverflowField(lua_State* state, int table,
+    ViewTextOverflow& value, std::string& error)
+{
+    std::string text;
+    if (!ReadStringField(state, table, "overflowText", text, false, error))
+        return false;
+    if (text.empty() || text == "ellipsis")
+        value = ViewTextOverflow::Ellipsis;
+    else if (text == "clip") value = ViewTextOverflow::Clip;
+    else
+    {
+        error = "view field 'overflowText' has an unsupported value";
+        return false;
+    }
+    return true;
+}
+
 bool ReadValidationStateField(lua_State* state, int table,
     ViewValidationState& value, std::string& error)
 {
@@ -1465,6 +1515,10 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         node.gap = 8.0f;
     if (inputNode && !FieldPresent(state, index, "padding"))
         node.padding = 8.0f;
+    if (styledTextNode && !FieldPresent(state, index, "textWrap"))
+        node.textWrap = ViewTextWrap::Wrap;
+    if (styledTextNode && !FieldPresent(state, index, "overflowText"))
+        node.overflowText = ViewTextOverflow::Clip;
     const char* contentField = iconNode ? "glyph" :
         (labelNode ? "label" : "text");
     if (!ReadStringField(state, index, contentField,
@@ -1543,6 +1597,13 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadJustificationField(state, index,
             node.justifyContent, error) ||
         !ReadTextAlignmentField(state, index, node.textAlign, error) ||
+        !ReadTextVerticalAlignmentField(state, index,
+            node.verticalAlign, error) ||
+        !ReadTextWrapField(state, index, node.textWrap, error) ||
+        !ReadNonNegativeSizeField(state, index, "maxLines",
+            node.maximumLines, false, error) ||
+        !ReadTextOverflowField(state, index,
+            node.overflowText, error) ||
         !ReadShapeKindField(state, index, node.shapeKind, error) ||
         !ReadIconFontField(state, index, node.iconFont, error) ||
         !ReadStyleField(state, index, "style", node.style, error) ||

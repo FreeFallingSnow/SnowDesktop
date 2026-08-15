@@ -93,6 +93,7 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.inputControls` 一次提供 `textInput/textArea/searchBox/numberInput/select`，
 `view.keyboardNavigation.basic` 提供桌面 surface 的通用宿主键盘焦点与激活，
 `view.flex.sizing` 提供线性布局的 basis/grow/shrink 尺寸分配，
+`view.text.flow` 提供文本块的换行、行数、溢出和垂直对齐，
 `view.grid.uniform` 提供基础 `grid`，`view.flow.wrap` 提供横向换行 `flow`。
 `view.scroll` 提供宿主滚动视口，`view.collection.basic` 提供基础集合，
 `view.collection.virtual` 提供固定行高虚拟集合与可见范围查询；
@@ -158,6 +159,12 @@ down/up、doubleClick 和 contextMenu，动作通过 `event.kind == "action"` �
 `contextMenu` 动作默认 `scope="element"`：命中后菜单只显示该元素返回的操作，不混入组件
 设置、悬浮和移除等总菜单。覆盖整张组件表面的菜单应显式写
 `{ id="component.menu", scope="component" }`，其返回项会附加到组件总菜单。
+
+探测 `view.text.flow` 后，普通 `text`、按钮/链接等 label 节点和 `styledText` 可使用
+`textWrap="noWrap|wrap"`、`maxLines=0..64`、`overflowText="clip|ellipsis"` 和
+`verticalAlign="start|center|end"`。普通文本/label 默认 noWrap+ellipsis，styledText 为保持
+多段正文语义默认 wrap+clip；两者默认垂直居中。宿主在同一个 DirectWrite layout 中应用
+换行、行数高度门限、字符级省略和文本块偏移，最终绘制仍受节点 frame 裁剪。
 
 `toggle` 和 `checkbox` 是受控选择控件：必须提供非空 `label`、显式 `checked`，以及
 `action` 简写或 `events.change`；不得绑定 `events.click`。指针完成一次有效点击时，宿主

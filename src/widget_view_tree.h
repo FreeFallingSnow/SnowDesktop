@@ -114,6 +114,18 @@ enum class ViewTextAlignment
     End,
 };
 
+enum class ViewTextWrap
+{
+    NoWrap,
+    Wrap,
+};
+
+enum class ViewTextOverflow
+{
+    Clip,
+    Ellipsis,
+};
+
 enum class ViewValidationState
 {
     None,
@@ -235,6 +247,10 @@ struct ViewNode
     ViewAlignment alignSelf = ViewAlignment::Auto;
     ViewJustification justifyContent = ViewJustification::Start;
     ViewTextAlignment textAlign = ViewTextAlignment::Start;
+    ViewAlignment verticalAlign = ViewAlignment::Center;
+    ViewTextWrap textWrap = ViewTextWrap::NoWrap;
+    ViewTextOverflow overflowText = ViewTextOverflow::Ellipsis;
+    std::size_t maximumLines = 0;
     ViewImageFit imageFit = ViewImageFit::Contain;
     ViewImageAlignment imageAlignment = ViewImageAlignment::Center;
     ViewImageInterpolation imageInterpolation =

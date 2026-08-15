@@ -215,7 +215,10 @@ void TestLuaParsing()
     luaL_openlibs(state);
     RegisterViewLibrary(state);
     const char* script = R"lua(
-        local source = { key = "title", text = "Ready" }
+        local source = {
+            key = "title", text = "Ready", textWrap = "wrap",
+            maxLines = 2, overflowText = "clip", verticalAlign = "end",
+        }
         local title = view.text(source)
         assert(source.type == nil)
         return view.column({
@@ -262,6 +265,10 @@ void TestLuaParsing()
             root.type == ViewNodeType::Column &&
             root.children.size() == 2 &&
             root.children[0].type == ViewNodeType::Text &&
+            root.children[0].textWrap == ViewTextWrap::Wrap &&
+            root.children[0].maximumLines == 2 &&
+            root.children[0].overflowText == ViewTextOverflow::Clip &&
+            root.children[0].verticalAlign == ViewAlignment::End &&
             root.children[1].type == ViewNodeType::Button &&
             root.children[1].events.at("click").id == "open" &&
             root.children[1].events.at("contextMenu").id == "open.menu" &&
@@ -293,6 +300,18 @@ void TestLuaParsing()
     Check(!ParseLuaViewTree(state, -1, root, error) &&
             error.find("fontSze") != std::string::npos,
         "view parsing must reject unknown fields instead of hiding typos");
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.text({
+            key = "too-many-lines", text = "Text", maxLines = 65,
+        })
+    )lua") == LUA_OK,
+        "max-lines boundary fixture must evaluate");
+    root = {};
+    Check(ParseLuaViewTree(state, -1, root, error) &&
+            !ValidateAndLayoutViewTree(root, 100.0f, 40.0f, error) &&
+            error == "view maxLines must be between 0 and 64",
+        "maxLines must reject values above the bounded public range");
     lua_close(state);
 }
 
@@ -1497,6 +1516,9 @@ void TestStyledTextAndMonthCalendar()
                 "Build passed · validation pending" &&
             root.children[0].spans[1].bold &&
             root.children[0].spans[1].underline &&
+            root.children[0].textWrap == ViewTextWrap::Wrap &&
+            root.children[0].overflowText == ViewTextOverflow::Clip &&
+            root.children[0].verticalAlign == ViewAlignment::Center &&
             root.children[1].type == ViewNodeType::MonthCalendar &&
             root.children[1].calendarYear == 2026 &&
             root.children[1].calendarMonth == 8 &&
