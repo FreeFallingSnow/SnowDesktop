@@ -449,11 +449,15 @@ struct LuaWidget
         bool controlled = false;
         bool numeric = false;
         bool selectAll = true;
+        std::optional<snowdesktop::widget_runtime::ViewTextSelection>
+            selection;
         bool liveUpdate = false;
         bool multiline = false;
         std::string controlledText;
         std::string placeholder;
         snowdesktop::widget_runtime::InteractionAction changeAction;
+        snowdesktop::widget_runtime::InteractionAction
+            selectionChangeAction;
         snowdesktop::widget_runtime::InteractionAction focusAction;
         snowdesktop::widget_runtime::InteractionAction blurAction;
         snowdesktop::widget_runtime::InteractionAction submitAction;
@@ -1447,6 +1451,12 @@ private:
         const std::wstring& previousText, const std::wstring& text,
         bool numeric, float minimum, float maximum,
         bool committed, bool cancelled, const char* source);
+    void DispatchHostInputSelectionChange(const std::wstring& widgetId,
+        const std::string& targetKey,
+        const snowdesktop::widget_runtime::InteractionAction& action,
+        const std::wstring& text,
+        size_t previousAnchor, size_t previousCursor,
+        size_t anchor, size_t cursor, const char* source);
     void DispatchHostInputAction(const std::wstring& widgetId,
         const std::string& targetKey,
         const snowdesktop::widget_runtime::InteractionAction& action,
@@ -1649,6 +1659,12 @@ private:
         std::wstring originalText;
         size_t cursor = 0;
         size_t selectionAnchor = 0;
+        std::optional<snowdesktop::widget_runtime::ViewTextSelection>
+            controlledSelection;
+        snowdesktop::widget_runtime::InteractionAction
+            selectionChangeAction;
+        size_t pointerSelectionStartCursor = 0;
+        size_t pointerSelectionStartAnchor = 0;
         std::wstring compositionText;
         size_t compositionCursor = 0;
         wchar_t pendingHighSurrogate = 0;

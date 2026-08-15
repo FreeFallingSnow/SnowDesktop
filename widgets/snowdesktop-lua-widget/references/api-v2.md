@@ -102,7 +102,7 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.image.tint` 提供保留图片 alpha 的 RGB 着色，
 `view.state.selected` 提供通用受控选中样式，`view.checkbox.indeterminate` 提供复选框混合态，
 `view.state.visibility` 明确区分参与布局的隐藏状态与完全折叠状态，
-`view.input.required` 提供表单必填语义，
+`view.input.selection` 提供文本输入的受控选区，`view.input.required` 提供表单必填语义，
 `view.keyboardNavigation.order` 提供显式焦点参与和顺序，
 `view.grid.uniform` 提供基础 `grid`，`view.grid.placement` 提供显式格位与跨度，
 `view.grid.tracks` 提供受限 fixed/auto/fr/minmax 列轨和行轨，
@@ -309,6 +309,28 @@ Lua 不会获得剪贴板内容或原生句柄。`liveUpdate=false` 将 change �
 文本是完整且位于范围内的数字时，change 还带 `numberValid=true` 和 `controlValue`。
 探测 `view.keyboardNavigation.basic` 后，Tab/Shift+Tab 可在这些输入与同树其他可操作元素
 之间循环；进入输入后仍由上述宿主编辑器处理文本键、选择、IME 和提交。
+
+探测 `view.input.selection` 后，`textInput/textArea/searchBox` 可声明
+`selection = { start = 0, finish = 0 }`。`start/finish` 是从 0 开始、左闭右开的 UTF-8
+字节偏移，必须位于当前 `value` 的码点边界且满足 `start <= finish`；不能把 Lua 字符串的
+字节偏移与 Windows 编辑器内部 UTF-16 单元混用。声明 selection 时必须同时声明
+`events.selectionChange`，并且不能再使用一次性的 `selectAll`。键盘或指针只改变选区时，
+动作事件携带 `previousSelection/selection`；发生文本 change 时，change 事件也携带编辑后的
+`selection`。组件应把建议范围写回自身 model 并 invalidate，宿主只在聚焦编辑期间保存草稿，
+不会替组件持久化选区。
+
+```lua
+view.textInput({
+    key = "title",
+    value = model.title,
+    selection = model.titleSelection,
+    events = {
+        change = { id = "title.change" },
+        selectionChange = { id = "title.selection" },
+    },
+    accessibility = { label = "Title" },
+})
+```
 
 探测 `view.input.required` 后，textInput/textArea/searchBox/numberInput/select 可声明
 `required=true`。它会映射为 UI Automation 的 IsRequiredForForm，方便辅助技术理解表单，

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -22,6 +23,10 @@ private:
 };
 
 std::size_t Utf8BytesForHostText(std::wstring_view text) noexcept;
+std::size_t Utf8ByteOffsetForHostTextOffset(
+    std::wstring_view text, std::size_t hostOffset) noexcept;
+std::optional<std::size_t> HostTextOffsetFromUtf8ByteOffset(
+    std::wstring_view text, std::size_t utf8ByteOffset) noexcept;
 
 bool HostInputAllowsMutation(bool enabled, bool readOnly) noexcept;
 

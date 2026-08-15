@@ -16821,6 +16821,9 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                         control.controlledText = input.value;
                         control.placeholder = input.placeholder;
                         control.changeAction = input.changeAction;
+                        control.selection = input.selection;
+                        control.selectionChangeAction =
+                            input.selectionChangeAction;
                         control.focusAction = input.focusAction;
                         control.blurAction = input.blurAction;
                         control.submitAction = input.submitAction;
@@ -20447,12 +20450,31 @@ void WidgetEngine::DispatchHostInputChange(const std::wstring& widgetId,
         ? parseNumber(text) : std::optional<double>{};
     const std::string previousUtf8 = WidgetWideToUtf8(previousText);
     const std::string proposedUtf8 = WidgetWideToUtf8(text);
+    std::optional<snowdesktop::widget_runtime::ViewTextSelection>
+        proposedSelection;
+    if (focusedHostInput_.active &&
+        focusedHostInput_.widgetId == widgetId &&
+        focusedHostInput_.id == targetKey &&
+        focusedHostInput_.controlledSelection)
+    {
+        proposedSelection = snowdesktop::widget_runtime::ViewTextSelection{
+            snowdesktop::widget_runtime::Utf8ByteOffsetForHostTextOffset(
+                focusedHostInput_.text,
+                std::min(focusedHostInput_.selectionAnchor,
+                    focusedHostInput_.cursor)),
+            snowdesktop::widget_runtime::Utf8ByteOffsetForHostTextOffset(
+                focusedHostInput_.text,
+                std::max(focusedHostInput_.selectionAnchor,
+                    focusedHostInput_.cursor)),
+        };
+    }
     const bool trustedGesture = trustedGestureState_.Active();
     const std::string eventSource = source && *source ? source : "keyboard";
     (void)InvokeLifecycleEvent(widgets_[index], "action",
         [&action, &targetKey, &previousUtf8, &proposedUtf8,
             numeric, previousNumber, proposedNumber, committed,
-            cancelled, trustedGesture, &eventSource](lua_State* eventState) {
+            cancelled, proposedSelection, trustedGesture,
+            &eventSource](lua_State* eventState) {
             lua_pushlstring(eventState, action.id.data(), action.id.size());
             lua_setfield(eventState, -2, "id");
             PushInteractionValue(eventState, action.value);
@@ -20467,6 +20489,17 @@ void WidgetEngine::DispatchHostInputChange(const std::wstring& widgetId,
             lua_pushlstring(eventState, proposedUtf8.data(),
                 proposedUtf8.size());
             lua_setfield(eventState, -2, "text");
+            if (proposedSelection)
+            {
+                lua_createtable(eventState, 0, 2);
+                lua_pushinteger(eventState,
+                    static_cast<lua_Integer>(proposedSelection->start));
+                lua_setfield(eventState, -2, "start");
+                lua_pushinteger(eventState,
+                    static_cast<lua_Integer>(proposedSelection->finish));
+                lua_setfield(eventState, -2, "finish");
+                lua_setfield(eventState, -2, "selection");
+            }
             if (numeric)
             {
                 lua_pushboolean(eventState, proposedNumber.has_value());
@@ -20486,6 +20519,63 @@ void WidgetEngine::DispatchHostInputChange(const std::wstring& widgetId,
             lua_setfield(eventState, -2, "committed");
             lua_pushboolean(eventState, cancelled ? 1 : 0);
             lua_setfield(eventState, -2, "cancelled");
+            lua_pushboolean(eventState, trustedGesture ? 1 : 0);
+            lua_setfield(eventState, -2, "trustedGesture");
+            lua_pushlstring(eventState, eventSource.data(),
+                eventSource.size());
+            lua_setfield(eventState, -2, "source");
+            lua_pushliteral(eventState, "desktop");
+            lua_setfield(eventState, -2, "surface");
+        });
+}
+
+void WidgetEngine::DispatchHostInputSelectionChange(
+    const std::wstring& widgetId, const std::string& targetKey,
+    const snowdesktop::widget_runtime::InteractionAction& action,
+    const std::wstring& text, size_t previousAnchor,
+    size_t previousCursor, size_t anchor, size_t cursor,
+    const char* source)
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0 || action.id.empty()) return;
+    const auto makeSelection = [&text](size_t left, size_t right) {
+        return snowdesktop::widget_runtime::ViewTextSelection{
+            snowdesktop::widget_runtime::Utf8ByteOffsetForHostTextOffset(
+                text, std::min(left, right)),
+            snowdesktop::widget_runtime::Utf8ByteOffsetForHostTextOffset(
+                text, std::max(left, right)),
+        };
+    };
+    const auto previous = makeSelection(previousAnchor, previousCursor);
+    const auto proposed = makeSelection(anchor, cursor);
+    if (previous == proposed) return;
+    const bool trustedGesture = trustedGestureState_.Active();
+    const std::string eventSource = source && *source ? source : "keyboard";
+    (void)InvokeLifecycleEvent(widgets_[index], "action",
+        [&action, &targetKey, previous, proposed, trustedGesture,
+            &eventSource](lua_State* eventState) {
+            const auto pushSelection = [eventState](
+                const snowdesktop::widget_runtime::ViewTextSelection& value) {
+                lua_createtable(eventState, 0, 2);
+                lua_pushinteger(eventState,
+                    static_cast<lua_Integer>(value.start));
+                lua_setfield(eventState, -2, "start");
+                lua_pushinteger(eventState,
+                    static_cast<lua_Integer>(value.finish));
+                lua_setfield(eventState, -2, "finish");
+            };
+            lua_pushlstring(eventState, action.id.data(), action.id.size());
+            lua_setfield(eventState, -2, "id");
+            PushInteractionValue(eventState, action.value);
+            lua_setfield(eventState, -2, "value");
+            lua_pushlstring(eventState, targetKey.data(), targetKey.size());
+            lua_setfield(eventState, -2, "targetKey");
+            lua_pushliteral(eventState, "selectionChange");
+            lua_setfield(eventState, -2, "action");
+            pushSelection(previous);
+            lua_setfield(eventState, -2, "previousSelection");
+            pushSelection(proposed);
+            lua_setfield(eventState, -2, "selection");
             lua_pushboolean(eventState, trustedGesture ? 1 : 0);
             lua_setfield(eventState, -2, "trustedGesture");
             lua_pushlstring(eventState, eventSource.data(),
@@ -21381,6 +21471,8 @@ void WidgetEngine::RuntimeRegisterHostControl(const std::wstring& widgetId,
         focusedHostInput_.readOnly = control.readOnly;
         focusedHostInput_.numeric = control.numeric;
         focusedHostInput_.changeAction = control.changeAction;
+        focusedHostInput_.selectionChangeAction =
+            control.selectionChangeAction;
         focusedHostInput_.focusAction = control.focusAction;
         focusedHostInput_.blurAction = control.blurAction;
         focusedHostInput_.submitAction = control.submitAction;
@@ -21391,6 +21483,25 @@ void WidgetEngine::RuntimeRegisterHostControl(const std::wstring& widgetId,
         focusedHostInput_.minimum = control.minimum;
         focusedHostInput_.maximum = control.maximum;
         focusedHostInput_.step = control.step;
+        const bool selectionChanged =
+            focusedHostInput_.controlledSelection != control.selection;
+        focusedHostInput_.controlledSelection = control.selection;
+        if (selectionChanged && control.selection)
+        {
+            const auto anchor = snowdesktop::widget_runtime::
+                HostTextOffsetFromUtf8ByteOffset(
+                    focusedHostInput_.text, control.selection->start);
+            const auto cursor = snowdesktop::widget_runtime::
+                HostTextOffsetFromUtf8ByteOffset(
+                    focusedHostInput_.text, control.selection->finish);
+            if (anchor && cursor)
+            {
+                focusedHostInput_.selectionAnchor = *anchor;
+                focusedHostInput_.cursor = *cursor;
+                focusedHostInput_.compositionText.clear();
+                focusedHostInput_.compositionCursor = 0;
+            }
+        }
     }
     widgets_[index].hostControls.push_back(std::move(control));
 }
@@ -21510,6 +21621,8 @@ bool WidgetEngine::RuntimeFocusHostInput(const std::wstring& widgetId,
         focusedHostInput_.readOnly = found->readOnly;
         focusedHostInput_.numeric = found->numeric;
         focusedHostInput_.changeAction = found->changeAction;
+        focusedHostInput_.selectionChangeAction =
+            found->selectionChangeAction;
         focusedHostInput_.focusAction = found->focusAction;
         focusedHostInput_.blurAction = found->blurAction;
         focusedHostInput_.submitAction = found->submitAction;
@@ -21518,6 +21631,23 @@ bool WidgetEngine::RuntimeFocusHostInput(const std::wstring& widgetId,
         focusedHostInput_.step = found->step;
         focusedHostInput_.maximumUtf8Bytes =
             found->maximumUtf8Bytes;
+        const bool selectionChanged =
+            focusedHostInput_.controlledSelection != found->selection;
+        focusedHostInput_.controlledSelection = found->selection;
+        if (selectionChanged && found->selection)
+        {
+            const auto anchor = snowdesktop::widget_runtime::
+                HostTextOffsetFromUtf8ByteOffset(
+                    focusedHostInput_.text, found->selection->start);
+            const auto cursor = snowdesktop::widget_runtime::
+                HostTextOffsetFromUtf8ByteOffset(
+                    focusedHostInput_.text, found->selection->finish);
+            if (anchor && cursor)
+            {
+                focusedHostInput_.selectionAnchor = *anchor;
+                focusedHostInput_.cursor = *cursor;
+            }
+        }
         if (hostInputFocusCallback_)
             hostInputFocusCallback_();
         return true;
@@ -21537,12 +21667,29 @@ bool WidgetEngine::RuntimeFocusHostInput(const std::wstring& widgetId,
     focusedHostInput_.cursor = focusedHostInput_.text.size();
     focusedHostInput_.selectionAnchor = found->selectAll
         ? 0 : focusedHostInput_.cursor;
+    focusedHostInput_.controlledSelection = found->selection;
+    if (found->selection)
+    {
+        const auto anchor = snowdesktop::widget_runtime::
+            HostTextOffsetFromUtf8ByteOffset(
+                focusedHostInput_.text, found->selection->start);
+        const auto cursor = snowdesktop::widget_runtime::
+            HostTextOffsetFromUtf8ByteOffset(
+                focusedHostInput_.text, found->selection->finish);
+        if (anchor && cursor)
+        {
+            focusedHostInput_.selectionAnchor = *anchor;
+            focusedHostInput_.cursor = *cursor;
+        }
+    }
     focusedHostInput_.liveUpdate = found->liveUpdate;
     focusedHostInput_.multiline = found->multiline;
     focusedHostInput_.controlled = found->controlled;
     focusedHostInput_.readOnly = found->readOnly;
     focusedHostInput_.numeric = found->numeric;
     focusedHostInput_.changeAction = found->changeAction;
+    focusedHostInput_.selectionChangeAction =
+        found->selectionChangeAction;
     focusedHostInput_.focusAction = found->focusAction;
     focusedHostInput_.blurAction = found->blurAction;
     focusedHostInput_.submitAction = found->submitAction;
@@ -22260,6 +22407,14 @@ bool WidgetEngine::HandleHostInputPointerUp(
                 HitTestHostInputPosition(
                     *control, widgetId, x, y);
     }
+    DispatchHostInputSelectionChange(widgetId,
+        focusedHostInput_.id,
+        focusedHostInput_.selectionChangeAction,
+        focusedHostInput_.text,
+        focusedHostInput_.pointerSelectionStartAnchor,
+        focusedHostInput_.pointerSelectionStartCursor,
+        focusedHostInput_.selectionAnchor,
+        focusedHostInput_.cursor, "pointer");
     focusedHostInput_.pointerSelecting = false;
     RuntimeInvalidateHost(widgetId);
     return true;
@@ -22434,6 +22589,19 @@ bool WidgetEngine::RuntimePerformAccessibilityAction(
             previous = focusedHostInput_.text;
         if (previous == value) return true;
 
+        const bool focused = focusedHostInput_.active &&
+            focusedHostInput_.widgetId == request.widgetId &&
+            focusedHostInput_.id == request.nodeKey;
+        if (focused)
+        {
+            focusedHostInput_.text = value;
+            focusedHostInput_.originalText = value;
+            focusedHostInput_.cursor = value.size();
+            focusedHostInput_.selectionAnchor = value.size();
+            focusedHostInput_.compositionText.clear();
+            focusedHostInput_.compositionCursor = 0;
+        }
+
         if (control->controlled)
         {
             DispatchHostInputChange(request.widgetId, request.nodeKey,
@@ -22445,17 +22613,6 @@ bool WidgetEngine::RuntimePerformAccessibilityAction(
         {
             RuntimeSetStorageValue(request.widgetId,
                 control->storageKey, WidgetWideToUtf8(value));
-        }
-        if (focusedHostInput_.active &&
-            focusedHostInput_.widgetId == request.widgetId &&
-            focusedHostInput_.id == request.nodeKey)
-        {
-            focusedHostInput_.text = value;
-            focusedHostInput_.originalText = value;
-            focusedHostInput_.cursor = value.size();
-            focusedHostInput_.selectionAnchor = value.size();
-            focusedHostInput_.compositionText.clear();
-            focusedHostInput_.compositionCursor = 0;
         }
         RuntimeInvalidateHost(request.widgetId);
         return true;
@@ -23011,6 +23168,19 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
         focusedHostInput_.text.size());
     focusedHostInput_.pointerSelecting = false;
     const std::wstring previousText = focusedHostInput_.text;
+    const size_t previousCursor = focusedHostInput_.cursor;
+    const size_t previousSelectionAnchor =
+        focusedHostInput_.selectionAnchor;
+    const auto dispatchSelectionChange = [&]() {
+        if (!focusedHostInput_.controlledSelection) return;
+        DispatchHostInputSelectionChange(
+            focusedHostInput_.widgetId, focusedHostInput_.id,
+            focusedHostInput_.selectionChangeAction,
+            focusedHostInput_.text,
+            previousSelectionAnchor, previousCursor,
+            focusedHostInput_.selectionAnchor,
+            focusedHostInput_.cursor, "keyboard");
+    };
     auto hasSelection = [&]() {
         return focusedHostInput_.selectionAnchor !=
             focusedHostInput_.cursor;
@@ -23039,6 +23209,7 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
         if (!shift)
             focusedHostInput_.selectionAnchor =
                 focusedHostInput_.cursor;
+        dispatchSelectionChange();
         RuntimeInvalidateHost(focusedHostInput_.widgetId);
         return true;
     };
@@ -23080,6 +23251,7 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
     {
         focusedHostInput_.selectionAnchor = 0;
         focusedHostInput_.cursor = focusedHostInput_.text.size();
+        dispatchSelectionChange();
         RuntimeInvalidateHost(focusedHostInput_.widgetId);
         return true;
     }
@@ -23448,6 +23620,10 @@ bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int 
                 focusedHostInput_.widgetId == widgetId &&
                 focusedHostInput_.id == it->id)
             {
+                focusedHostInput_.pointerSelectionStartCursor =
+                    focusedHostInput_.cursor;
+                focusedHostInput_.pointerSelectionStartAnchor =
+                    focusedHostInput_.selectionAnchor;
                 focusedHostInput_.cursor =
                     HitTestHostInputPosition(
                         *it, widgetId, x, y);

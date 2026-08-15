@@ -124,6 +124,12 @@ void TestRepresentativeApplicability()
             !ViewNodeAllowsProperty(ViewNodeType::ReferenceIcon, "source"),
         "package images and opaque reference icons must remain distinct");
     Check(ViewNodeAllowsProperty(ViewNodeType::TextInput, "liveUpdate") &&
+            ViewNodeAllowsProperty(ViewNodeType::TextInput, "selection") &&
+            ViewNodeAllowsProperty(ViewNodeType::TextArea, "selection") &&
+            ViewNodeAllowsProperty(ViewNodeType::SearchBox, "selection") &&
+            !ViewNodeAllowsProperty(ViewNodeType::NumberInput,
+                "selection") &&
+            !ViewNodeAllowsProperty(ViewNodeType::Select, "selection") &&
             ViewNodeAllowsProperty(ViewNodeType::TextArea, "readOnly") &&
             !ViewNodeAllowsProperty(ViewNodeType::Button, "liveUpdate") &&
             !ViewNodeAllowsProperty(ViewNodeType::Select, "readOnly"),

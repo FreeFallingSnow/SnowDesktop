@@ -1493,6 +1493,52 @@ bool ReadSelectionModeField(lua_State* state, int table,
     return true;
 }
 
+bool ReadTextSelectionField(lua_State* state, int table,
+    std::string_view value, std::optional<ViewTextSelection>& selection,
+    std::string& error)
+{
+    table = lua_absindex(state, table);
+    lua_getfield(state, table, "selection");
+    if (lua_isnil(state, -1))
+    {
+        lua_pop(state, 1);
+        return true;
+    }
+    if (!lua_istable(state, -1) ||
+        !ValidateObjectFields(state, -1, { "start", "finish" },
+            "view text selection", error))
+    {
+        if (error.empty())
+            error = "view field 'selection' must be a { start, finish } table";
+        lua_pop(state, 1);
+        return false;
+    }
+    ViewTextSelection parsed;
+    if (!ReadNonNegativeSizeField(state, -1, "start",
+            parsed.start, true, error) ||
+        !ReadNonNegativeSizeField(state, -1, "finish",
+            parsed.finish, true, error))
+    {
+        lua_pop(state, 1);
+        return false;
+    }
+    lua_pop(state, 1);
+    const auto boundary = [value](std::size_t offset) {
+        return offset <= value.size() &&
+            (offset == value.size() ||
+                (static_cast<unsigned char>(value[offset]) & 0xC0u) !=
+                    0x80u);
+    };
+    if (parsed.start > parsed.finish || !boundary(parsed.start) ||
+        !boundary(parsed.finish))
+    {
+        error = "view text selection must use ordered UTF-8 byte boundaries within value";
+        return false;
+    }
+    selection = parsed;
+    return true;
+}
+
 bool ReadVisibilityField(lua_State* state, int table,
     ViewVisibility& value, std::string& error)
 {
@@ -2330,8 +2376,15 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     if (textInputNode)
     {
         if (!ReadStringField(state, index, "value",
-                node.inputValue, true, error))
+                node.inputValue, true, error) ||
+            !ReadTextSelectionField(state, index, node.inputValue,
+                node.textSelection, error))
             return false;
+        if (node.textSelection && node.selectAll)
+        {
+            error = "view input selection cannot be combined with selectAll";
+            return false;
+        }
     }
     else if (progressNode || sliderNode || numberInputNode)
     {
@@ -2442,7 +2495,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         if (!ValidateObjectFields(state, events,
                 { "pointerEnter", "pointerLeave", "pointerDown",
                     "pointerUp", "click", "doubleClick", "contextMenu",
-                    "change", "focus", "blur", "submit", "scrollEnd" },
+                    "change", "selectionChange", "focus", "blur",
+                    "submit", "scrollEnd" },
                 "view events", error))
         {
             lua_pop(state, 1);
@@ -2450,8 +2504,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         }
         for (const char* eventName : { "pointerEnter", "pointerLeave",
             "pointerDown", "pointerUp", "click", "doubleClick",
-            "contextMenu", "change", "focus", "blur", "submit",
-            "scrollEnd" })
+            "contextMenu", "change", "selectionChange", "focus", "blur",
+            "submit", "scrollEnd" })
         {
             lua_getfield(state, events, eventName);
             if (!lua_isnil(state, -1))

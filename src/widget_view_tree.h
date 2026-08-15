@@ -249,6 +249,15 @@ struct ViewRect
     bool operator==(const ViewRect&) const = default;
 };
 
+struct ViewTextSelection
+{
+    // Zero-based half-open UTF-8 byte offsets in the controlled value.
+    std::size_t start = 0;
+    std::size_t finish = 0;
+
+    bool operator==(const ViewTextSelection&) const = default;
+};
+
 struct ViewEdgeInsets
 {
     float top = 0.0f;
@@ -428,6 +437,7 @@ struct ViewNode
     bool selected = false;
     bool expanded = false;
     bool selectAll = false;
+    std::optional<ViewTextSelection> textSelection;
     bool liveUpdate = true;
     bool readOnly = false;
     bool required = false;
@@ -505,12 +515,14 @@ struct ViewInputControl
     bool focusable = true;
     bool readOnly = false;
     bool selectAll = false;
+    std::optional<ViewTextSelection> selection;
     bool liveUpdate = true;
     std::size_t maximumUtf8Bytes = 0;
     float minimum = 0.0f;
     float maximum = 1.0f;
     float step = 0.01f;
     InteractionAction changeAction;
+    InteractionAction selectionChangeAction;
     InteractionAction focusAction;
     InteractionAction blurAction;
     InteractionAction submitAction;

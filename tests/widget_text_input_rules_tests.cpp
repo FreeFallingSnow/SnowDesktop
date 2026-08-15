@@ -17,6 +17,8 @@ void Check(bool condition, const char* message)
 
 void TestUtf8Counting()
 {
+    using snowdesktop::widget_runtime::HostTextOffsetFromUtf8ByteOffset;
+    using snowdesktop::widget_runtime::Utf8ByteOffsetForHostTextOffset;
     using snowdesktop::widget_runtime::Utf8BytesForHostText;
     Check(Utf8BytesForHostText(L"note") == 4,
         "ASCII host text uses one byte per code point");
@@ -24,6 +26,19 @@ void TestUtf8Counting()
         "CJK host text uses three bytes per code point");
     Check(Utf8BytesForHostText(L"\U0001F4DD") == 4,
         "supplementary characters use one four-byte UTF-8 sequence");
+    const std::wstring mixed = L"A便\U0001F4DDB";
+    Check(Utf8ByteOffsetForHostTextOffset(mixed, 0) == 0 &&
+            Utf8ByteOffsetForHostTextOffset(mixed, 1) == 1 &&
+            Utf8ByteOffsetForHostTextOffset(mixed, 2) == 4 &&
+            Utf8ByteOffsetForHostTextOffset(mixed, mixed.size()) == 9,
+        "host caret offsets convert to zero-based UTF-8 byte boundaries");
+    Check(HostTextOffsetFromUtf8ByteOffset(mixed, 0) == 0 &&
+            HostTextOffsetFromUtf8ByteOffset(mixed, 4) == 2 &&
+            HostTextOffsetFromUtf8ByteOffset(mixed, 8) ==
+                mixed.size() - 1 &&
+            HostTextOffsetFromUtf8ByteOffset(mixed, 9) == mixed.size() &&
+            !HostTextOffsetFromUtf8ByteOffset(mixed, 2),
+        "UTF-8 selection offsets convert only at complete code-point boundaries");
 }
 
 void TestBoundedReplacement()

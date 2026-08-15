@@ -18,6 +18,39 @@ std::size_t Utf8CodePointBytes(std::uint32_t codePoint) noexcept
     if (codePoint <= 0xFFFF) return 3;
     return 4;
 }
+
+std::uint32_t HostCodePointAt(std::wstring_view text,
+    std::size_t index, std::size_t& units) noexcept
+{
+    units = 1;
+    std::uint32_t codePoint = static_cast<std::uint32_t>(text[index]);
+    if constexpr (sizeof(wchar_t) == 2)
+    {
+        if (codePoint >= 0xD800 && codePoint <= 0xDBFF)
+        {
+            if (index + 1 < text.size())
+            {
+                const std::uint32_t low =
+                    static_cast<std::uint32_t>(text[index + 1]);
+                if (low >= 0xDC00 && low <= 0xDFFF)
+                {
+                    units = 2;
+                    return 0x10000 + ((codePoint - 0xD800) << 10) +
+                        (low - 0xDC00);
+                }
+            }
+            return kReplacementCharacter;
+        }
+        if (codePoint >= 0xDC00 && codePoint <= 0xDFFF)
+            return kReplacementCharacter;
+    }
+    else if (codePoint > 0x10FFFF ||
+        (codePoint >= 0xD800 && codePoint <= 0xDFFF))
+    {
+        return kReplacementCharacter;
+    }
+    return codePoint;
+}
 }
 
 void DeferredHostInputFocus::Request(
@@ -52,47 +85,59 @@ const std::string& DeferredHostInputFocus::ControlId() const noexcept
 std::size_t Utf8BytesForHostText(std::wstring_view text) noexcept
 {
     std::size_t bytes = 0;
-    for (std::size_t index = 0; index < text.size(); ++index)
+    for (std::size_t index = 0; index < text.size();)
     {
-        std::uint32_t codePoint =
-            static_cast<std::uint32_t>(text[index]);
-        if constexpr (sizeof(wchar_t) == 2)
-        {
-            if (codePoint >= 0xD800 && codePoint <= 0xDBFF)
-            {
-                if (index + 1 < text.size())
-                {
-                    const std::uint32_t low =
-                        static_cast<std::uint32_t>(text[index + 1]);
-                    if (low >= 0xDC00 && low <= 0xDFFF)
-                    {
-                        codePoint = 0x10000 +
-                            ((codePoint - 0xD800) << 10) +
-                            (low - 0xDC00);
-                        ++index;
-                    }
-                    else
-                        codePoint = kReplacementCharacter;
-                }
-                else
-                    codePoint = kReplacementCharacter;
-            }
-            else if (codePoint >= 0xDC00 && codePoint <= 0xDFFF)
-                codePoint = kReplacementCharacter;
-        }
-        else if (codePoint > 0x10FFFF ||
-            (codePoint >= 0xD800 && codePoint <= 0xDFFF))
-        {
-            codePoint = kReplacementCharacter;
-        }
+        std::size_t units = 1;
+        const std::uint32_t codePoint =
+            HostCodePointAt(text, index, units);
         const std::size_t codePointBytes =
             Utf8CodePointBytes(codePoint);
         if (bytes > (std::numeric_limits<std::size_t>::max)() -
                 codePointBytes)
             return (std::numeric_limits<std::size_t>::max)();
         bytes += codePointBytes;
+        index += units;
     }
     return bytes;
+}
+
+std::size_t Utf8ByteOffsetForHostTextOffset(
+    std::wstring_view text, std::size_t hostOffset) noexcept
+{
+    hostOffset = std::min(hostOffset, text.size());
+    std::size_t bytes = 0;
+    for (std::size_t index = 0; index < hostOffset;)
+    {
+        std::size_t units = 1;
+        const std::uint32_t codePoint =
+            HostCodePointAt(text, index, units);
+        const std::size_t codePointBytes =
+            Utf8CodePointBytes(codePoint);
+        if (bytes > (std::numeric_limits<std::size_t>::max)() -
+                codePointBytes)
+            return (std::numeric_limits<std::size_t>::max)();
+        bytes += codePointBytes;
+        index += units;
+    }
+    return bytes;
+}
+
+std::optional<std::size_t> HostTextOffsetFromUtf8ByteOffset(
+    std::wstring_view text, std::size_t utf8ByteOffset) noexcept
+{
+    if (utf8ByteOffset == 0) return std::size_t{0};
+    std::size_t bytes = 0;
+    for (std::size_t index = 0; index < text.size();)
+    {
+        std::size_t units = 1;
+        const std::uint32_t codePoint =
+            HostCodePointAt(text, index, units);
+        bytes += Utf8CodePointBytes(codePoint);
+        index += units;
+        if (bytes == utf8ByteOffset) return index;
+        if (bytes > utf8ByteOffset) return std::nullopt;
+    }
+    return std::nullopt;
 }
 
 bool HostInputAllowsMutation(bool enabled, bool readOnly) noexcept

@@ -176,6 +176,10 @@
 ---@field role? string Optional semantic role override.
 ---@field label? string
 
+---@class SnowViewTextSelection
+---@field start integer Zero-based inclusive UTF-8 byte offset at a code-point boundary.
+---@field finish integer Zero-based exclusive UTF-8 byte offset at a code-point boundary; no smaller than start.
+
 ---@class SnowViewEvents
 ---@field pointerEnter? SnowInteractionAction
 ---@field pointerLeave? SnowInteractionAction
@@ -185,6 +189,7 @@
 ---@field doubleClick? SnowInteractionAction
 ---@field contextMenu? SnowInteractionAction
 ---@field change? SnowInteractionAction Controlled selection, slider, or input value proposal.
+---@field selectionChange? SnowInteractionAction Controlled text selection proposal from pointer or keyboard movement.
 ---@field focus? SnowInteractionAction Input gained host keyboard/IME focus.
 ---@field blur? SnowInteractionAction Input lost host keyboard/IME focus.
 ---@field submit? SnowInteractionAction Single-line Enter or textArea Ctrl+Enter.
@@ -256,6 +261,7 @@
 ---@field placeholder? string Input or select placeholder.
 ---@field expanded? boolean Required controlled select popup state; defaults to false when omitted.
 ---@field selectAll? boolean Select all text on first focus.
+---@field selection? SnowViewTextSelection Controlled textInput/textArea/searchBox selection; requires view.input.selection and events.selectionChange, and conflicts with selectAll.
 ---@field liveUpdate? boolean Emit each input edit when true (default); emit on commit when false.
 ---@field readOnly? boolean Text-like and numeric inputs remain focusable/selectable but reject typing, IME, paste, cut, delete, UIA value changes, and numeric stepping.
 ---@field required? boolean Text-like, numeric, and select form requirement exposed through host accessibility semantics; it does not validate or block submission.
@@ -509,7 +515,7 @@
 
 ---@class SnowWidgetEvent
 ---@field kind 'visibility'|'resize'|'pointer'|'timer'|'schedule'|'frame'|'action'|'selection'|'environment'|'panel'|'data.change'|'task.complete'|'slot.changed'|'notification.delivered'|'notification.action'
----@field action? 'click'|'change'|'focus'|'blur'|'submit'|'doubleClick'|'pointerDown'|'pointerMove'|'pointerUp'|'wheel'|'opened'|'closed'|string
+---@field action? 'click'|'change'|'selectionChange'|'focus'|'blur'|'submit'|'doubleClick'|'pointerDown'|'pointerMove'|'pointerUp'|'wheel'|'opened'|'closed'|string
 ---@field id? string
 ---@field name? string
 ---@field missed? integer
@@ -533,8 +539,8 @@
 ---@field checked? boolean Proposed next controlled value for toggle/checkbox change events; the host does not persist it.
 ---@field previousIndeterminate? boolean Current checkbox mixed state for checkbox change events.
 ---@field indeterminate? boolean Proposed checkbox mixed state; activation always proposes false and the host does not persist it.
----@field previousSelection? string Current radioGroup/select selectedValue for change events.
----@field selection? string Proposed radioGroup/select option value; the host does not persist it.
+---@field previousSelection? string|SnowViewTextSelection Current radioGroup/select value or prior controlled text selection.
+---@field selection? string|SnowViewTextSelection Proposed radioGroup/select value or text selection; input text-change events include the resulting selection when controlled.
 ---@field previousSelectedKeys? string[] Previous controlled collection keys.
 ---@field selectedKeys? string[] Proposed controlled collection keys; the host does not persist them.
 ---@field previousExpanded? boolean Current select expanded state for click events.

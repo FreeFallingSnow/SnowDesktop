@@ -126,6 +126,12 @@ not expose clipboard data or native handles. Select requires both click (toggle
 proposal) and change (option proposal), and its bounded popup is clipped by the
 widget/parent scroll surface. Do not confuse these nodes with the storage-bound
 immediate `control.textInput/textArea` compatibility calls. Probe
+`view.input.selection` before declaring `selection = { start, finish }` on a
+textInput, textArea, or searchBox. The range is zero-based, half-open, and uses
+UTF-8 byte offsets at code-point boundaries; it conflicts with `selectAll` and
+requires `events.selectionChange`. Apply the event's proposed `selection` to
+component-owned state and invalidate. Text `change` events also include the
+resulting selection when this controlled property is present. Probe
 `view.input.required` before declaring `required`; it supplies form semantics
 to accessibility clients but does not validate values or block component actions.
 Probe `view.styledText.basic` for 1-64 bounded text spans with per-span color,

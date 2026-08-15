@@ -1107,6 +1107,11 @@ popover，因此这里只发布细粒度 feature，不能把
 四类文本/数值输入现已支持 `readOnly`：仍保留焦点、选择、复制和 submit，但统一阻止键入、
 IME、粘贴/剪切删除、退格/Delete、数值步进和 UIA SetValue；只读节点不再强制声明不会触发的
 change 动作。`select` 的只读语义未混入本批次，继续使用受控 expanded/selection 或 enabled。
+文本输入后续已通过 `view.input.selection` 开放受控选区：textInput/textArea/searchBox 使用
+`{start, finish}` 表示从 0 开始、左闭右开的 UTF-8 字节范围，解析时拒绝越界和落在码点内部的
+偏移，并与宿主内部 UTF-16 光标安全换算。声明选区必须绑定 selectionChange 且不能同时使用
+selectAll；键盘/指针只移动选区时返回 previousSelection/selection，文本 change 同时返回结果
+选区，组件仍负责写回 model。
 五类输入/选择节点现已同时接入 `validationState/validationMessage/validationStyle`：状态枚举为
 none/info/success/warning/error，宿主在未定制时提供可见状态边框，校验消息纳入文本配额并映射到
 UI Automation HelpText。校验状态只负责受控呈现与语义，不隐式拦截 change 或替组件修改数据；
@@ -1269,6 +1274,7 @@ view.row({
 - `view.scroll.events` 已把 `events.scrollEnd` 限定到 scroll/virtual collection；滚轮或 UIA 操作从末端前到达最大宿主偏移时只投递一次，离开末端后才能再次触发，UIA 来源不获得可信手势。
 - `view.keyboardNavigation.order` 已加入 `focusable/tabIndex`：-1 只退出顺序遍历，正数先按升序、再接默认 0 的声明顺序；焦点样式、鼠标焦点、键盘遍历和 UIA IsKeyboardFocusable 使用同一有效状态。
 - `view.state.visibility` 已加入显式 visible/hidden/collapsed：hidden 仍保留父布局空间，但绘制、后代命中、宿主输入、逻辑槽位和 UIA 语义都从同一棵提交树中省略；collapsed 继续复用旧 `visible=false` 的不占位语义，透明度为 0 不等同隐藏。
+- `view.input.selection` 已把 textInput/textArea/searchBox 的受控 selection 纳入公共属性与动作矩阵：公共偏移使用 UTF-8 字节码点边界，宿主编辑器内部转换为 UTF-16；selectionChange 与文本 change 返回同一结果范围，`selectAll` 只保留为互斥的一次性兼容入口。
 - 只有组件绑定了业务事件时才调用 Lua；状态更新、多个订阅通知和同一帧内的重复 `invalidate` 合并为至多一次 `view()` 求值和一次 scene diff。
 - 布局、绘制、命中区域和 UI Automation 边界来自同一棵提交成功的 scene tree；不允许视觉已经变化而点击仍指向旧树。
 - 声明式 transition 由宿主运行，默认只允许可合成的颜色、透明度和 transform；布局动画必须显式声明并受节点数量限制。
@@ -1323,6 +1329,7 @@ view.button({
 - 只有获得焦点的组件接收键盘输入。
 - 提供焦点移动、焦点请求和焦点可见性 API。
 - 文本输入继续使用宿主 IME 管线，不由组件创建原生窗口。
+- 受控文本选区使用 `{start, finish}` 的 UTF-8 字节半开区间；宿主在键盘或指针只移动选区时投递 `selectionChange`，在文本 change 中附带结果选区，组件写回后才成为下一棵树的权威状态。
 - 指针捕获绑定到 `instanceId + nodeKey + pointerId`，必须有超时，并在节点移除、隐藏、失焦、权限撤销和卸载时自动释放。
 
 示例：
@@ -1761,7 +1768,8 @@ doubleClick/pointer/contextMenu action，以及“先完整校验布局、后原
 受控状态继续按细粒度 feature 推进：`view.state.selected` 已贯通通用
 `selected/selectedStyle` 与 SelectionItem 语义，`view.checkbox.indeterminate` 已贯通
 混合态绘制、交互建议和 UIA Toggle Indeterminate，`view.input.required` 已贯通
-input/select 的 UIA IsRequiredForForm 语义；这些声明都不把状态持久化责任转移给宿主。
+input/select 的 UIA IsRequiredForForm 语义，`view.input.selection` 已贯通文本输入受控选区、
+UTF-8/UTF-16 边界换算和 selectionChange 建议；这些声明都不把状态持久化责任转移给宿主。
 其额度为 512 节点、32 层、单节点 4 KiB 文本、全树 64 KiB 文本和 256 个交互元素；未知字段、
 重复 key、非连续 children、错误枚举和越界数值拒绝整次提交。数据图形由宿主直接有界绘制，不展开为逐样本节点或命中区域。它尚不包含完整必选节点矩阵、
 UIA、RTL、文本换行、可变高度虚拟化、差量资源复用和声明式 panel；通用桌面键盘焦点已作为

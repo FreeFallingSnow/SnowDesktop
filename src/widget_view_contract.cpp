@@ -59,7 +59,7 @@ constexpr auto kProperties = std::to_array<std::string_view>({
     "type", "key", "text", "spans", "label", "glyph", "iconFont",
     "source", "font", "fit", "alignment", "interpolation", "alt",
     "shape", "orientation", "value", "values", "min", "max", "step",
-    "options", "selectedValue", "placeholder", "expanded", "selectAll",
+    "options", "selectedValue", "placeholder", "expanded", "selectAll", "selection",
     "liveUpdate", "readOnly", "required", "busy", "validationState", "validationMessage",
     "maxBytes", "year", "month", "firstDayOfWeek",
     "selectedDate", "todayDate", "eventDates", "weekdayLabels",
@@ -266,6 +266,9 @@ bool ViewNodeAllowsProperty(
     if (property == "expanded") return type == ViewNodeType::Select;
     if (property == "selectAll" || property == "liveUpdate" ||
         property == "maxBytes") return IsInput(type);
+    if (property == "selection")
+        return IsType(type, { ViewNodeType::TextInput,
+            ViewNodeType::TextArea, ViewNodeType::SearchBox });
     if (property == "readOnly") return IsInput(type);
     if (property == "required")
         return IsInput(type) || type == ViewNodeType::Select;

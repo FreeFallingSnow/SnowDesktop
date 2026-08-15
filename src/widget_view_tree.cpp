@@ -2782,7 +2782,8 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             eventName != "contextMenu" && eventName != "pointerEnter" &&
             eventName != "pointerLeave" && eventName != "pointerDown" &&
             eventName != "pointerUp" && eventName != "change" &&
-            eventName != "focus" && eventName != "blur" &&
+            eventName != "selectionChange" && eventName != "focus" &&
+            eventName != "blur" &&
             eventName != "submit" && eventName != "scrollEnd")
         {
             error = "unsupported view event: " + eventName;
@@ -2799,6 +2800,17 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             node.events.contains("submit")))
     {
         error = "focus, blur, and submit are reserved for input nodes";
+        return false;
+    }
+    const bool textSelectionInput = node.type == ViewNodeType::TextInput ||
+        node.type == ViewNodeType::TextArea ||
+        node.type == ViewNodeType::SearchBox;
+    if ((node.textSelection.has_value() ||
+            node.events.contains("selectionChange")) &&
+        (!textSelectionInput || !node.textSelection ||
+            !node.events.contains("selectionChange")))
+    {
+        error = "controlled text selection requires selection and selectionChange on a text input";
         return false;
     }
     if (!IsScrollContainer(node.type) && node.events.contains("scrollEnd"))
@@ -3057,7 +3069,8 @@ bool CollectRegions(const ViewNode& node,
             region.tooltip = node.tooltip;
             for (const auto& [name, action] : node.events)
                 if (name != "change" && name != "focus" &&
-                    name != "blur" && name != "submit")
+                    name != "blur" && name != "submit" &&
+                    name != "selectionChange")
                     region.events.emplace(name, action);
             region.accessibilityRole = node.accessibilityRole.empty()
                 ? DefaultAccessibilityRole(node.type)
@@ -3331,6 +3344,7 @@ bool CollectInputs(const ViewNode& node,
         control.focusable = IsNodeKeyboardFocusable(node);
         control.readOnly = node.readOnly;
         control.selectAll = node.selectAll;
+        control.selection = node.textSelection;
         control.liveUpdate = node.liveUpdate;
         control.maximumUtf8Bytes = node.maximumUtf8Bytes;
         control.minimum = node.minimum;
@@ -3338,6 +3352,9 @@ bool CollectInputs(const ViewNode& node,
         control.step = node.step;
         if (const auto action = node.events.find("change");
             action != node.events.end()) control.changeAction = action->second;
+        if (const auto action = node.events.find("selectionChange");
+            action != node.events.end())
+            control.selectionChangeAction = action->second;
         if (const auto action = node.events.find("focus");
             action != node.events.end()) control.focusAction = action->second;
         if (const auto action = node.events.find("blur");

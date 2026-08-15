@@ -1783,6 +1783,7 @@ void TestDeclarativeInputControls()
             children = {
                 view.textInput({
                     key = "name", value = "Snow", placeholder = "Name",
+                    selection = { start = 1, finish = 4 },
                     required = true,
                     maxBytes = 64, action = { id = "name.change" },
                     validationState = "error",
@@ -1794,6 +1795,7 @@ void TestDeclarativeInputControls()
                         focus = { id = "name.focus" },
                         blur = { id = "name.blur" },
                         submit = { id = "name.submit" },
+                        selectionChange = { id = "name.selection" },
                         contextMenu = { id = "name.menu" },
                     },
                     accessibility = { label = "Name" },
@@ -1836,6 +1838,8 @@ void TestDeclarativeInputControls()
             root.children.size() == 5 &&
             root.children[0].type == ViewNodeType::TextInput &&
             root.children[0].inputValue == "Snow" &&
+            root.children[0].textSelection ==
+                std::optional<ViewTextSelection>{{ 1, 4 }} &&
             root.children[0].required &&
             root.children[0].validationState ==
                 ViewValidationState::Error &&
@@ -1859,6 +1863,9 @@ void TestDeclarativeInputControls()
             controls.size() == 4 &&
             controls[0].key == "name" &&
             controls[0].changeAction.id == "name.change" &&
+            controls[0].selection ==
+                std::optional<ViewTextSelection>{{ 1, 4 }} &&
+            controls[0].selectionChangeAction.id == "name.selection" &&
             controls[0].focusAction.id == "name.focus" &&
             controls[1].type == ViewNodeType::TextArea &&
             controls[1].readOnly && !controls[1].focusable &&
@@ -1872,6 +1879,7 @@ void TestDeclarativeInputControls()
             regions.size() == 7 && regions[0].key == "name" &&
             regions[0].cursor == "text" &&
             !regions[0].events.contains("change") &&
+            !regions[0].events.contains("selectionChange") &&
             !regions[0].events.contains("focus") &&
             regions[4].key == "theme" &&
             regions[4].hasExpandedProposal &&
@@ -1923,6 +1931,37 @@ void TestDeclarativeInputControls()
     Check(!ParseLuaViewTree(state, -1, invalid, error) &&
             error.find("validationState") != std::string::npos,
         "validationState must reject values outside the public enum");
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.textInput({
+            key = "bad-selection", value = "雪a",
+            selection = { start = 1, finish = 4 },
+            action = { id = "bad-selection.change" },
+            events = {
+                selectionChange = { id = "bad-selection.selection" },
+            },
+            accessibility = { label = "Bad selection" },
+        })
+    )lua") == LUA_OK,
+        "invalid text-selection fixture must evaluate");
+    Check(!ParseLuaViewTree(state, -1, invalid, error) &&
+            error.find("UTF-8 byte boundaries") != std::string::npos,
+        "text selection must reject offsets inside a UTF-8 code point");
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.searchBox({
+            key = "missing-selection-action", value = "clock",
+            selection = { start = 0, finish = 5 },
+            action = { id = "search.change" },
+            accessibility = { label = "Search" },
+        })
+    )lua") == LUA_OK,
+        "missing selectionChange fixture must evaluate");
+    Check(ParseLuaViewTree(state, -1, invalid, error) &&
+            !ValidateAndLayoutViewTree(invalid, 200.0f, 40.0f, error) &&
+            error.find("requires selection and selectionChange") !=
+                std::string::npos,
+        "controlled text selection must require a proposal action");
     lua_close(state);
 }
 
