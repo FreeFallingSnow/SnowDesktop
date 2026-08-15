@@ -43,6 +43,7 @@
 #include "widget_storage_transaction.h"
 #include "widget_storage_value.h"
 #include "widget_storage_write_budget.h"
+#include "widget_secret_store.h"
 #include "widget_system_settings.h"
 #include "atomic_file.h"
 #include "widgets/widget_chrome_rules.h"
@@ -371,6 +372,13 @@ static std::wstring g_storagePath;
 static snowdesktop::widget_runtime::DiagnosticsLog g_widgetDiagnostics;
 static bool StorageWriteWithinQuota(const std::string& prefix,
     const std::string& key, const std::string& value);
+
+static std::filesystem::path WidgetSecretStorePath()
+{
+    const std::filesystem::path data = GetDataDirectoryPath();
+    return data.parent_path() / L"PrivateState" /
+        L"SnowDesktop.widget-secrets.bin";
+}
 
 static bool IsRemovedPanelEffectSettingKey(const std::string& key)
 {
@@ -1066,6 +1074,13 @@ static LuaWidgetManifest::Setting ReadLuaSettingTable(lua_State* L, int tableInd
 
     if (setting.label.empty()) setting.label = setting.key;
     if (setting.type.empty()) setting.type = "text";
+    if (setting.type == "password")
+    {
+        // Secret defaults would put plaintext in the package or Lua source.
+        setting.defaultValue.clear();
+        setting.options.clear();
+        setting.optionLabels.clear();
+    }
     return setting;
 }
 
@@ -4840,6 +4855,11 @@ static int lua_TaskStart(lua_State* state)
     }
     else if (taskName == "network.request")
     {
+        constexpr std::size_t MaximumHeaders = 32;
+        constexpr std::size_t MaximumHeaderNameBytes = 128;
+        constexpr std::size_t MaximumHeaderValueBytes = 16 * 1024;
+        constexpr std::size_t MaximumHeaderBytes = 32 * 1024;
+        constexpr std::size_t MaximumBodyBytes = 64 * 1024;
         if (!hasArguments)
             return luaL_error(state,
                 "task.start: network.request requires an arguments table");
@@ -4856,8 +4876,10 @@ static int lua_TaskStart(lua_State* state)
             const char* keyValue = lua_tolstring(state, -2, &keyLength);
             const std::string_view key(
                 keyValue ? keyValue : "", keyLength);
-            if (key != "url" && key != "timeoutMs" &&
-                key != "cacheSeconds" && key != "maxBytes")
+            if (key != "url" && key != "method" &&
+                key != "headers" && key != "body" &&
+                key != "timeoutMs" && key != "cacheSeconds" &&
+                key != "maxBytes")
             {
                 lua_pop(state, 2);
                 return luaL_error(state,
@@ -4866,25 +4888,324 @@ static int lua_TaskStart(lua_State* state)
             lua_pop(state, 1);
         }
 
-        lua_getfield(state, 2, "url");
-        if (lua_type(state, -1) != LUA_TSTRING)
-        {
+        const auto readRequiredUtf8 = [&](const char* field,
+            std::size_t maximum, std::string& output) {
+            lua_getfield(state, 2, field);
+            if (lua_type(state, -1) != LUA_TSTRING)
+            {
+                lua_pop(state, 1);
+                return false;
+            }
+            size_t length = 0;
+            const char* value = lua_tolstring(state, -1, &length);
+            output.assign(value ? value : "", length);
             lua_pop(state, 1);
-            return luaL_error(state,
-                "task.start: network.request url must be a string");
-        }
-        size_t urlLength = 0;
-        const char* urlValue = lua_tolstring(state, -1, &urlLength);
-        std::string url(urlValue ? urlValue : "", urlLength);
-        lua_pop(state, 1);
-        if (url.empty() || url.size() > 2048 ||
-            url.find('\0') != std::string::npos ||
-            !IsValidUtf8Local(url))
+            return !output.empty() && output.size() <= maximum &&
+                output.find('\0') == std::string::npos &&
+                IsValidUtf8Local(output);
+        };
+        std::string url;
+        if (!readRequiredUtf8("url", 2048, url))
         {
             return luaL_error(state,
                 "task.start: network.request url must contain 1 to 2048 bytes of valid UTF-8");
         }
         arguments.emplace("url", std::move(url));
+
+        std::string method = "GET";
+        lua_getfield(state, 2, "method");
+        if (!lua_isnil(state, -1))
+        {
+            if (lua_type(state, -1) != LUA_TSTRING)
+            {
+                lua_pop(state, 1);
+                return luaL_error(state,
+                    "task.start: network.request method must be a string");
+            }
+            size_t length = 0;
+            const char* value = lua_tolstring(state, -1, &length);
+            method.assign(value ? value : "", length);
+            std::transform(method.begin(), method.end(), method.begin(),
+                [](unsigned char ch) {
+                    return static_cast<char>(std::toupper(ch));
+                });
+        }
+        lua_pop(state, 1);
+        if (method != "GET" && method != "HEAD" &&
+            method != "POST" && method != "PUT" &&
+            method != "PATCH" && method != "DELETE")
+        {
+            return luaL_error(state,
+                "task.start: network.request method is not supported");
+        }
+        arguments.emplace("method", method);
+
+        const auto validHeaderName = [](std::string_view name) {
+            if (name.empty() || name.size() > MaximumHeaderNameBytes)
+                return false;
+            if (!std::all_of(name.begin(), name.end(),
+                [](unsigned char ch) {
+                    return std::isalnum(ch) || ch == '!' || ch == '#' ||
+                        ch == '$' || ch == '%' || ch == '&' || ch == '\'' ||
+                        ch == '*' || ch == '+' || ch == '-' || ch == '.' ||
+                        ch == '^' || ch == '_' || ch == '`' || ch == '|' ||
+                        ch == '~';
+                }))
+                return false;
+            std::string lower(name);
+            std::transform(lower.begin(), lower.end(), lower.begin(),
+                [](unsigned char ch) {
+                    return static_cast<char>(std::tolower(ch));
+                });
+            static constexpr std::array<std::string_view, 7> Forbidden{
+                "connection", "content-length", "cookie", "host",
+                "proxy-authorization", "te", "transfer-encoding" };
+            return std::find(Forbidden.begin(), Forbidden.end(), lower) ==
+                Forbidden.end();
+        };
+        const auto encodeSecretDescriptor = [&](int tableIndex,
+            const std::string& prefix, std::size_t maximumAffixBytes,
+            bool header, std::string& descriptorError) {
+            tableIndex = lua_absindex(state, tableIndex);
+            if (lua_type(state, tableIndex) != LUA_TTABLE ||
+                lua_getmetatable(state, tableIndex) != 0)
+            {
+                if (lua_istable(state, tableIndex)) lua_pop(state, 1);
+                descriptorError = "secret descriptor must be a plain table";
+                return false;
+            }
+            lua_pushnil(state);
+            while (lua_next(state, tableIndex) != 0)
+            {
+                if (lua_type(state, -2) != LUA_TSTRING)
+                {
+                    lua_pop(state, 2);
+                    descriptorError =
+                        "secret descriptor keys must be strings";
+                    return false;
+                }
+                size_t keyLength = 0;
+                const char* keyValue = lua_tolstring(
+                    state, -2, &keyLength);
+                const std::string_view key(
+                    keyValue ? keyValue : "", keyLength);
+                if (key != "secretRef" && key != "prefix" &&
+                    key != "suffix")
+                {
+                    lua_pop(state, 2);
+                    descriptorError =
+                        "secret descriptor received an unknown field";
+                    return false;
+                }
+                lua_pop(state, 1);
+            }
+            const auto readDescriptorField = [&](const char* field,
+                bool required, std::string& output) {
+                lua_getfield(state, tableIndex, field);
+                if (lua_isnil(state, -1) && !required)
+                {
+                    lua_pop(state, 1);
+                    output.clear();
+                    return true;
+                }
+                if (lua_type(state, -1) != LUA_TSTRING)
+                {
+                    lua_pop(state, 1);
+                    return false;
+                }
+                size_t length = 0;
+                const char* value = lua_tolstring(state, -1, &length);
+                output.assign(value ? value : "", length);
+                lua_pop(state, 1);
+                return true;
+            };
+            std::string reference;
+            std::string valuePrefix;
+            std::string valueSuffix;
+            if (!readDescriptorField("secretRef", true, reference) ||
+                !snowdesktop::widget_runtime::WidgetSecretStore::
+                    IsReference(reference) ||
+                !readDescriptorField("prefix", false, valuePrefix) ||
+                !readDescriptorField("suffix", false, valueSuffix) ||
+                valuePrefix.size() > maximumAffixBytes ||
+                valueSuffix.size() > maximumAffixBytes -
+                    valuePrefix.size())
+            {
+                descriptorError =
+                    "secret descriptor fields are invalid or too large";
+                return false;
+            }
+            if (header &&
+                (valuePrefix.find_first_of("\r\n\0", 0, 3) !=
+                        std::string::npos ||
+                    valueSuffix.find_first_of("\r\n\0", 0, 3) !=
+                        std::string::npos ||
+                    !IsValidUtf8Local(valuePrefix) ||
+                    !IsValidUtf8Local(valueSuffix)))
+            {
+                descriptorError =
+                    "secret header affixes must be valid single-line UTF-8";
+                return false;
+            }
+            arguments.emplace(prefix + "kind", "secret");
+            arguments.emplace(prefix + "ref", std::move(reference));
+            arguments.emplace(prefix + "prefix", std::move(valuePrefix));
+            arguments.emplace(prefix + "suffix", std::move(valueSuffix));
+            arguments.insert_or_assign("usesSecret", "1");
+            return true;
+        };
+
+        std::size_t headerCount = 0;
+        std::size_t headerBytes = 0;
+        std::unordered_set<std::string> normalizedHeaderNames;
+        lua_getfield(state, 2, "headers");
+        if (!lua_isnil(state, -1))
+        {
+            if (lua_type(state, -1) != LUA_TTABLE ||
+                lua_getmetatable(state, -1) != 0)
+            {
+                if (lua_istable(state, -1)) lua_pop(state, 1);
+                lua_pop(state, 1);
+                return luaL_error(state,
+                    "task.start: network.request headers must be a plain table");
+            }
+            const int headersTable = lua_absindex(state, -1);
+            lua_pushnil(state);
+            while (lua_next(state, headersTable) != 0)
+            {
+                if (lua_type(state, -2) != LUA_TSTRING ||
+                    headerCount >= MaximumHeaders)
+                {
+                    lua_pop(state, 3);
+                    return luaL_error(state,
+                        "task.start: network.request accepts at most 32 string-keyed headers");
+                }
+                size_t headerNameLength = 0;
+                const char* nameValue = lua_tolstring(
+                    state, -2, &headerNameLength);
+                std::string headerName(
+                    nameValue ? nameValue : "", headerNameLength);
+                std::string normalizedHeaderName = headerName;
+                std::transform(normalizedHeaderName.begin(),
+                    normalizedHeaderName.end(),
+                    normalizedHeaderName.begin(),
+                    [](unsigned char ch) {
+                        return static_cast<char>(std::tolower(ch));
+                    });
+                if (!validHeaderName(headerName) ||
+                    !normalizedHeaderNames.insert(
+                        normalizedHeaderName).second)
+                {
+                    lua_pop(state, 3);
+                    return luaL_error(state,
+                        "task.start: network.request header name is invalid");
+                }
+                const std::string fieldPrefix = "header." +
+                    std::to_string(headerCount) + ".";
+                arguments.emplace(fieldPrefix + "name", headerName);
+                headerBytes += headerName.size() + 4;
+                if (lua_type(state, -1) == LUA_TSTRING)
+                {
+                    if (normalizedHeaderName == "authorization" ||
+                        normalizedHeaderName == "api-key" ||
+                        normalizedHeaderName == "x-api-key")
+                    {
+                        lua_pop(state, 3);
+                        return luaL_error(state,
+                            "task.start: credential headers require a secret descriptor");
+                    }
+                    size_t valueLength = 0;
+                    const char* value = lua_tolstring(
+                        state, -1, &valueLength);
+                    std::string headerValue(
+                        value ? value : "", valueLength);
+                    if (headerValue.size() > MaximumHeaderValueBytes ||
+                        headerValue.find_first_of("\r\n\0", 0, 3) !=
+                            std::string::npos ||
+                        !IsValidUtf8Local(headerValue))
+                    {
+                        lua_pop(state, 3);
+                        return luaL_error(state,
+                            "task.start: network.request header values must be bounded single-line UTF-8 strings");
+                    }
+                    headerBytes += headerValue.size();
+                    arguments.emplace(fieldPrefix + "kind", "raw");
+                    arguments.emplace(fieldPrefix + "value",
+                        std::move(headerValue));
+                }
+                else if (lua_type(state, -1) == LUA_TTABLE)
+                {
+                    std::string descriptorError;
+                    if (!encodeSecretDescriptor(-1, fieldPrefix,
+                            MaximumHeaderValueBytes, true,
+                            descriptorError))
+                    {
+                        lua_pop(state, 3);
+                        return luaL_error(state,
+                            "task.start: network.request header secret descriptor is invalid: %s",
+                            descriptorError.c_str());
+                    }
+                    headerBytes += arguments[fieldPrefix + "prefix"].size() +
+                        arguments[fieldPrefix + "suffix"].size();
+                }
+                else
+                {
+                    lua_pop(state, 3);
+                    return luaL_error(state,
+                        "task.start: network.request header values must be strings or secret descriptors");
+                }
+                if (headerBytes > MaximumHeaderBytes)
+                {
+                    lua_pop(state, 3);
+                    return luaL_error(state,
+                        "task.start: network.request headers exceed the 32 KiB limit");
+                }
+                ++headerCount;
+                lua_pop(state, 1);
+            }
+        }
+        lua_pop(state, 1);
+        arguments.emplace("headerCount", std::to_string(headerCount));
+
+        lua_getfield(state, 2, "body");
+        if (lua_isnil(state, -1))
+        {
+            arguments.emplace("body.kind", "raw");
+            arguments.emplace("body.value", "");
+        }
+        else if (lua_type(state, -1) == LUA_TSTRING)
+        {
+            size_t length = 0;
+            const char* value = lua_tolstring(state, -1, &length);
+            if (length > MaximumBodyBytes)
+            {
+                lua_pop(state, 1);
+                return luaL_error(state,
+                    "task.start: network.request body exceeds the 64 KiB limit");
+            }
+            arguments.emplace("body.kind", "raw");
+            arguments.emplace("body.value",
+                std::string(value ? value : "", length));
+        }
+        else if (lua_type(state, -1) == LUA_TTABLE)
+        {
+            std::string descriptorError;
+            if (!encodeSecretDescriptor(-1, "body.",
+                    MaximumBodyBytes, false, descriptorError))
+            {
+                lua_pop(state, 1);
+                return luaL_error(state,
+                    "task.start: network.request body secret descriptor is invalid: %s",
+                    descriptorError.c_str());
+            }
+        }
+        else
+        {
+            lua_pop(state, 1);
+            return luaL_error(state,
+                "task.start: network.request body must be a string or secret descriptor");
+        }
+        lua_pop(state, 1);
 
         const auto readBoundedInteger = [&](const char* field,
             lua_Integer fallback, lua_Integer minimum,
@@ -9947,6 +10268,9 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 continue;
             }
             const auto url = action.arguments.find("url");
+            const auto method = action.arguments.find("method");
+            const auto headerCountValue =
+                action.arguments.find("headerCount");
             const auto timeout = action.arguments.find("timeoutMs");
             const auto cache = action.arguments.find("cacheSeconds");
             const auto maximum = action.arguments.find("maxBytes");
@@ -9960,10 +10284,14 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             int timeoutMs = 0;
             int cacheSeconds = 0;
             int maximumBytes = 0;
+            int headerCount = 0;
             if (!httpService_ || url == action.arguments.end() ||
+                method == action.arguments.end() ||
+                headerCountValue == action.arguments.end() ||
                 timeout == action.arguments.end() ||
                 cache == action.arguments.end() ||
                 maximum == action.arguments.end() ||
+                !parseInteger(headerCountValue->second, headerCount) ||
                 !parseInteger(timeout->second, timeoutMs) ||
                 !parseInteger(cache->second, cacheSeconds) ||
                 !parseInteger(maximum->second, maximumBytes))
@@ -9972,18 +10300,139 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                     action.id, false, "invalidArguments");
                 continue;
             }
+            if (headerCount < 0 || headerCount > 32)
+            {
+                (void)taskBroker_->Complete(
+                    action.id, false, "invalidArguments");
+                continue;
+            }
+
+            const auto argument = [&](const std::string& key)
+                -> const std::string* {
+                const auto found = action.arguments.find(key);
+                return found == action.arguments.end()
+                    ? nullptr : &found->second;
+            };
+            const auto wipe = [](std::string& value) {
+                if (!value.empty())
+                    SecureZeroMemory(value.data(), value.size());
+                value.clear();
+            };
+            const auto composeValue = [&](const std::string& prefix,
+                std::size_t maximumBytes, bool header,
+                std::string& output) {
+                const std::string* kind = argument(prefix + "kind");
+                if (!kind) return false;
+                if (*kind == "raw")
+                {
+                    const std::string* value = argument(prefix + "value");
+                    if (!value || value->size() > maximumBytes)
+                        return false;
+                    output = *value;
+                }
+                else if (*kind == "secret")
+                {
+                    const std::string* reference = argument(prefix + "ref");
+                    const std::string* valuePrefix =
+                        argument(prefix + "prefix");
+                    const std::string* valueSuffix =
+                        argument(prefix + "suffix");
+                    if (!secretStore_ || !reference || !valuePrefix ||
+                        !valueSuffix ||
+                        valuePrefix->size() > maximumBytes ||
+                        valueSuffix->size() >
+                            maximumBytes - valuePrefix->size())
+                        return false;
+                    std::string secret;
+                    std::string error;
+                    if (!secretStore_->Resolve(owner->packageId,
+                            action.instanceId, *reference, secret, error) ||
+                        secret.size() > maximumBytes - valuePrefix->size() -
+                            valueSuffix->size())
+                    {
+                        wipe(secret);
+                        return false;
+                    }
+                    output.reserve(valuePrefix->size() + secret.size() +
+                        valueSuffix->size());
+                    output = *valuePrefix;
+                    output += secret;
+                    output += *valueSuffix;
+                    wipe(secret);
+                }
+                else
+                    return false;
+                if (header &&
+                    (output.find_first_of("\r\n\0", 0, 3) !=
+                            std::string::npos ||
+                        !IsValidUtf8Local(output)))
+                {
+                    wipe(output);
+                    return false;
+                }
+                return true;
+            };
+
+            std::string headersUtf8;
+            bool requestArgumentsValid = true;
+            for (int headerIndex = 0; headerIndex < headerCount;
+                ++headerIndex)
+            {
+                const std::string prefix = "header." +
+                    std::to_string(headerIndex) + ".";
+                const std::string* name = argument(prefix + "name");
+                std::string value;
+                if (!name || !composeValue(prefix, 16 * 1024, true,
+                        value) ||
+                    headersUtf8.size() > 32 * 1024 - name->size() - 4 ||
+                    value.size() > 32 * 1024 - headersUtf8.size() -
+                        name->size() - 4)
+                {
+                    wipe(value);
+                    requestArgumentsValid = false;
+                    break;
+                }
+                headersUtf8 += *name;
+                headersUtf8 += ": ";
+                headersUtf8 += value;
+                headersUtf8 += "\r\n";
+                wipe(value);
+            }
+            std::string body;
+            if (requestArgumentsValid &&
+                !composeValue("body.", 64 * 1024, false, body))
+                requestArgumentsValid = false;
+            if (!requestArgumentsValid)
+            {
+                wipe(headersUtf8);
+                wipe(body);
+                const bool usesSecret =
+                    action.arguments.contains("usesSecret");
+                (void)taskBroker_->Complete(action.id, false,
+                    usesSecret ? "secretUnavailable" :
+                        "invalidArguments");
+                continue;
+            }
             HttpRequestOptions options;
             options.widgetId = owner->widgetId;
             options.url = Utf8ToWideLocal(url->second);
-            options.method = L"GET";
+            options.method = Utf8ToWideLocal(method->second);
+            options.headers = Utf8ToWideLocal(headersUtf8);
+            options.body = std::move(body);
             options.timeoutMs = timeoutMs;
-            options.cacheSeconds = cacheSeconds;
+            options.cacheSeconds =
+                method->second == "GET" && options.body.empty() &&
+                    !action.arguments.contains("usesSecret")
+                ? cacheSeconds : 0;
             options.maximumResponseBytes =
                 static_cast<std::uint32_t>(maximumBytes);
             options.allowedDomains = owner->manifest.networkDomains;
             options.allowAnyHttpOrHttpsUrl = false;
             options.allowAnyPublicHttpsUrl =
                 owner->manifest.networkDomains.empty();
+            options.sameOriginRedirectsOnly =
+                action.arguments.contains("usesSecret");
+            wipe(headersUtf8);
             const int requestId = httpService_->Submit(std::move(options));
             if (requestId <= 0)
             {
@@ -11918,6 +12367,17 @@ bool WidgetEngine::Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFa
     // Init storage path
     g_storagePath = GetDataFilePath(L"SnowDesktop.storage.json");
     LoadStorageFile();
+    secretStore_ = std::make_unique<
+        snowdesktop::widget_runtime::WidgetSecretStore>(
+            WidgetSecretStorePath());
+    std::string secretStoreError;
+    if (!secretStore_->Load(secretStoreError))
+    {
+        const std::string diagnostic =
+            "SnowDesktop widget secret store load failed: " +
+            secretStoreError + "\n";
+        OutputDebugStringA(diagnostic.c_str());
+    }
     filesystemHandleStore_ = std::make_unique<
         snowdesktop::widget_runtime::WidgetFilesystemHandleStore>(
             GetDataFilePath(L"SnowDesktop.widget-file-handles.json"));
@@ -11984,6 +12444,13 @@ bool WidgetEngine::InitPreview(
 void WidgetEngine::Shutdown()
 {
     focusedHostInput_ = {};
+    for (auto& [key, draft] : secretSettingDrafts_)
+    {
+        (void)key;
+        if (!draft.value.empty())
+            SecureZeroMemory(draft.value.data(), draft.value.size());
+    }
+    secretSettingDrafts_.clear();
     if (taskBroker_)
         taskBroker_->Shutdown();
     if (notificationCenter_)
@@ -12046,6 +12513,7 @@ void WidgetEngine::Shutdown()
     clipboardTaskExecutor_.reset();
     filesystemWatchService_.reset();
     filesystemHandleStore_.reset();
+    secretStore_.reset();
     filesystemTaskExecutor_.reset();
     appTaskExecutor_.reset();
     desktopTaskExecutor_.reset();
@@ -12079,6 +12547,14 @@ void WidgetEngine::UnloadWidget(const std::wstring& widgetId)
         widgets_[idx].preview ? &widgets_[idx].previewStorage : nullptr);
     if (focusedHostInput_.active && focusedHostInput_.widgetId == widgetId)
         focusedHostInput_ = {};
+    const std::string secretDraftPrefix = WidgetWideToUtf8(widgetId) + "\n";
+    std::erase_if(secretSettingDrafts_, [&](auto& item) {
+        if (!item.first.starts_with(secretDraftPrefix)) return false;
+        if (!item.second.value.empty())
+            SecureZeroMemory(item.second.value.data(),
+                item.second.value.size());
+        return true;
+    });
     if (widgets_[idx].hostVisible)
         InvokeSimpleCallback(widgets_[idx], "onHidden");
     DisposeWidgetLifecycle(widgets_[idx], "unload");
@@ -12122,6 +12598,18 @@ void WidgetEngine::DeleteWidgetInstance(const std::wstring& widgetId)
             WidgetWideToUtf8(widgetId), error);
     }
     UnloadWidget(widgetId);
+    if (secretStore_)
+    {
+        bool removed = false;
+        std::string error;
+        if (!secretStore_->RemoveInstance(
+                WidgetWideToUtf8(widgetId), removed, error))
+        {
+            OutputDebugStringA((
+                "SnowDesktop widget secret cleanup failed: " + error +
+                "\n").c_str());
+        }
+    }
     widgetHostFailures_.erase(widgetId);
     std::string prefix = WidgetWideToUtf8(widgetId) + ".";
     auto& storage = ActiveStorage();
@@ -12865,6 +13353,28 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     w.scriptPresets = std::move(scriptPresets);
     w.preview = preview;
     w.previewStorage = std::move(pending.previewStorage);
+    if (w.manifest.apiVersion >= 2 && !preview &&
+        !snowdesktop::widget_runtime::HasStorageOverlay())
+    {
+        bool removedPlaintextSecretSetting = false;
+        const auto purgePasswordValues = [&](const auto& settings) {
+            for (const auto& setting : settings)
+            {
+                if (setting.type != "password") continue;
+                removedPlaintextSecretSetting =
+                    g_storage.erase(storagePrefix + setting.key) > 0 ||
+                    removedPlaintextSecretSetting;
+                removedPlaintextSecretSetting =
+                    g_storage.erase(storagePrefix +
+                        snowdesktop::widget_runtime::
+                            TypedStorageMetadataKey(setting.key)) > 0 ||
+                    removedPlaintextSecretSetting;
+            }
+        };
+        purgePasswordValues(w.manifest.settings);
+        purgePasswordValues(w.scriptSettings);
+        if (removedPlaintextSecretSetting) SaveStorageFile();
+    }
     w.logicalSlots = std::move(pending.logicalSlots);
     for (const auto& snapshot : w.logicalSlots.Snapshots())
     {
@@ -13005,9 +13515,16 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
         g_storage[fullKey] = value;
         storageChanged = true;
     };
+    auto isSecretSettingKey = [&](std::string_view key) {
+        return std::any_of(settings.begin(), settings.end(),
+            [&](const LuaWidgetManifest::Setting& setting) {
+                return setting.key == key && setting.type == "password";
+            });
+    };
     auto applyValues = [&](const std::unordered_map<std::string, std::string>& values) {
         for (const auto& kv : values)
-            setStorage(kv.first, kv.second);
+            if (!isSecretSettingKey(kv.first))
+                setStorage(kv.first, kv.second);
     };
     auto flushStorageChanges = [&]() {
         if (!storageChanged) return;
@@ -13131,11 +13648,79 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
         if (setting.key.empty() || IsHostStructureSettingKey(setting.key) ||
             IsHostAppearanceSettingKey(setting.key))
             return;
-        std::string current = getStorage(setting.key, setting.defaultValue);
+        std::string current = setting.type == "password"
+            ? getStorage(setting.key) :
+              getStorage(setting.key, setting.defaultValue);
         std::string next = current;
         bool changed = false;
         ImGui::PushID(setting.key.c_str());
-        if (setting.type == "bool")
+        if (setting.type == "password")
+        {
+            current = secretStore_ ? secretStore_->Reference(
+                widget.packageId, editorId, setting.key) : std::string{};
+            const bool validReference = !current.empty();
+
+            const std::string draftKey = editorId + "\n" + setting.key;
+            auto& draft = secretSettingDrafts_[draftKey];
+            std::array<char,
+                snowdesktop::widget_runtime::WidgetSecretStore::
+                    MaximumSecretBytes + 1> buffer{};
+            strncpy_s(buffer.data(), buffer.size(), draft.value.c_str(),
+                _TRUNCATE);
+            const float secretControlWidth = beginEditorRow(
+                setting.label.c_str(), kEditorControlWidth);
+            const float clearButtonWidth = ImGui::GetFrameHeight();
+            ImGui::SetNextItemWidth(std::max(ImGui::GetFrameHeight(),
+                secretControlWidth - clearButtonWidth -
+                    ImGui::GetStyle().ItemSpacing.x));
+            if (!secretStore_) ImGui::BeginDisabled();
+            if (ImGui::InputTextWithHint("##Value",
+                    validReference ? "••••••••" : "", buffer.data(),
+                    buffer.size(), ImGuiInputTextFlags_Password))
+            {
+                draft.value = buffer.data();
+                draft.dirty = true;
+            }
+            const bool commit = ImGui::IsItemDeactivatedAfterEdit();
+            if (!secretStore_) ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (!secretStore_ || !validReference) ImGui::BeginDisabled();
+            const bool clearSecret = ImGui::Button(
+                "×##ClearSecret", ImVec2(clearButtonWidth, 0.0f));
+            if (!secretStore_ || !validReference) ImGui::EndDisabled();
+            if ((clearSecret || (commit && draft.dirty)) && secretStore_)
+            {
+                bool stored = false;
+                std::string error;
+                if (clearSecret || draft.value.empty())
+                {
+                    bool removed = false;
+                    stored = secretStore_->RemoveSetting(widget.packageId,
+                        editorId, setting.key, removed, error);
+                }
+                else
+                {
+                    std::string reference;
+                    stored = secretStore_->Set(widget.packageId, editorId,
+                        setting.key, draft.value, reference, error);
+                }
+                if (stored)
+                {
+                    if (!draft.value.empty())
+                        SecureZeroMemory(draft.value.data(),
+                            draft.value.size());
+                    secretSettingDrafts_.erase(draftKey);
+                    RuntimeInvalidateHost(widgetId);
+                }
+                else
+                {
+                    OutputDebugStringA((
+                        "SnowDesktop widget secret update failed: " +
+                        error + "\n").c_str());
+                }
+            }
+        }
+        else if (setting.type == "bool")
         {
             bool value = current == "1" || current == "true";
             if (editorCheckbox(setting.label.c_str(), "##Value", &value))
@@ -13330,7 +13915,8 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
         for (const auto& setting : settings)
         {
             if (setting.key.empty() || IsHostStructureSettingKey(setting.key) ||
-                IsHostAppearanceSettingKey(setting.key))
+                IsHostAppearanceSettingKey(setting.key) ||
+                setting.type == "password")
                 continue;
 
             std::string value = setting.defaultValue;
@@ -13456,7 +14042,8 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
                         setStorage("acrylicEnabled", "0");
                     for (const auto& kv : presets[presetIndex].values)
                     {
-                        if (kv.first != "followPersonalization")
+                        if (kv.first != "followPersonalization" &&
+                            !isSecretSettingKey(kv.first))
                             setStorage(kv.first, kv.second);
                     }
                     setStorage("__preset", presets[presetIndex].id);
@@ -19129,6 +19716,9 @@ bool WidgetEngine::RuntimeCanWriteWidgetStorage(
 
 std::string WidgetEngine::RuntimeGetStorageValue(const std::wstring& widgetId, const std::string& key) const
 {
+    std::string secretReference;
+    if (RuntimeGetSecretReference(widgetId, key, secretReference))
+        return secretReference;
     const std::string prefix = WidgetWideToUtf8(widgetId);
     const std::string fullKey = prefix + "." + key;
     int idx = FindWidget(widgetId);
@@ -19156,6 +19746,8 @@ std::string WidgetEngine::RuntimeGetStorageValue(const std::wstring& widgetId, c
 void WidgetEngine::RuntimeSetStorageValue(const std::wstring& widgetId, const std::string& key, const std::string& value)
 {
     if (key.empty() || IsRemovedPanelEffectSettingKey(key)) return;
+    std::string secretReference;
+    if (RuntimeGetSecretReference(widgetId, key, secretReference)) return;
     const std::string prefix = WidgetWideToUtf8(widgetId);
     if (!StorageWriteWithinQuota(prefix, key, value))
     {
@@ -19176,6 +19768,59 @@ void WidgetEngine::RuntimeSetStorageValue(const std::wstring& widgetId, const st
     storage.erase(prefix + "." +
         snowdesktop::widget_runtime::TypedStorageMetadataKey(key));
     if (!snowdesktop::widget_runtime::HasStorageOverlay()) SaveStorageFile();
+}
+
+bool WidgetEngine::RuntimeGetSecretReference(
+    const std::wstring& widgetId, const std::string& key,
+    std::string& reference) const
+{
+    reference.clear();
+    const int index = FindWidget(widgetId);
+    if (index < 0 || widgets_[index].manifest.apiVersion < 2)
+        return false;
+    const LuaWidget& widget = widgets_[index];
+    const auto declaresPassword = [&](const auto& settings) {
+        return std::any_of(settings.begin(), settings.end(),
+            [&](const LuaWidgetManifest::Setting& setting) {
+                return setting.key == key && setting.type == "password";
+            });
+    };
+    if (!declaresPassword(widget.manifest.settings) &&
+        !declaresPassword(widget.scriptSettings))
+        return false;
+    if (!widget.preview && secretStore_)
+    {
+        reference = secretStore_->Reference(widget.packageId,
+            WidgetWideToUtf8(widgetId), key);
+    }
+    return true;
+}
+
+std::vector<std::string> WidgetEngine::RuntimeSecretStorageKeys(
+    const std::wstring& widgetId) const
+{
+    std::vector<std::string> result;
+    const int index = FindWidget(widgetId);
+    if (index < 0 || widgets_[index].preview || !secretStore_ ||
+        widgets_[index].manifest.apiVersion < 2)
+        return result;
+    const LuaWidget& widget = widgets_[index];
+    const std::string instanceId = WidgetWideToUtf8(widgetId);
+    const auto append = [&](const auto& settings) {
+        for (const auto& setting : settings)
+        {
+            if (setting.type == "password" &&
+                !secretStore_->Reference(widget.packageId, instanceId,
+                    setting.key).empty() &&
+                std::find(result.begin(), result.end(), setting.key) ==
+                    result.end())
+                result.push_back(setting.key);
+        }
+    };
+    append(widget.manifest.settings);
+    append(widget.scriptSettings);
+    std::sort(result.begin(), result.end());
+    return result;
 }
 
 void WidgetEngine::ReloadStorage()
@@ -21761,6 +22406,12 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
             if (!setting.key.empty() && !setting.label.empty())
             {
                 if (setting.type.empty()) setting.type = "text";
+                if (setting.type == "password")
+                {
+                    setting.defaultValue.clear();
+                    setting.options.clear();
+                    setting.optionLabels.clear();
+                }
                 if (!IsHostStructureSettingKey(setting.key) &&
                     !IsHostAppearanceSettingKey(setting.key))
                     manifest.settings.push_back(std::move(setting));
@@ -23384,6 +24035,27 @@ static bool IsReservedStorageTransactionKey(const std::string& key)
         key == "__host" || key.starts_with("__host.");
 }
 
+static bool BoundSecretSetting(lua_State* state, const std::string& key,
+    std::string* reference = nullptr)
+{
+    if (BoundWidgetApiVersion(state) < 2) return false;
+    auto* d2d = GetD2D(state);
+    std::string value;
+    const bool secret = d2d && d2d->engine &&
+        d2d->engine->RuntimeGetSecretReference(
+            BoundWidgetId(state), key, value);
+    if (secret && reference) *reference = std::move(value);
+    return secret;
+}
+
+static int RejectSecretSettingWrite(lua_State* state,
+    const std::string& key, const char* api)
+{
+    if (!BoundSecretSetting(state, key)) return 0;
+    return luaL_error(state,
+        "%s: password settings are host-managed and read-only to Lua", api);
+}
+
 static int lua_StorageTransactionGet(lua_State* state)
 {
     auto* handle = CheckStorageTransactionHandle(state);
@@ -23391,6 +24063,14 @@ static int lua_StorageTransactionGet(lua_State* state)
         state, 2, "storage.transaction", "key");
     if (IsReservedStorageTransactionKey(key))
         return luaL_error(state, "storage.transaction: key is reserved");
+    std::string secretReference;
+    if (BoundSecretSetting(state, key, &secretReference))
+    {
+        if (secretReference.empty()) lua_pushnil(state);
+        else lua_pushlstring(state, secretReference.data(),
+            secretReference.size());
+        return 1;
+    }
     std::string error;
     const auto value = handle->transaction->Get(key, error);
     if (!error.empty())
@@ -23426,6 +24106,9 @@ static int lua_StorageTransactionSet(lua_State* state)
     }
     if (IsReservedStorageTransactionKey(key))
         return luaL_error(state, "storage.transaction: key is reserved");
+    if (const int rejected = RejectSecretSettingWrite(
+            state, key, "storage.transaction"))
+        return rejected;
     bool valueChanged = false;
     std::string error;
     if (!handle->transaction->Set(
@@ -23454,6 +24137,9 @@ static int lua_StorageTransactionRemove(lua_State* state)
         state, 2, "storage.transaction", "key");
     if (IsReservedStorageTransactionKey(key))
         return luaL_error(state, "storage.transaction: key is reserved");
+    if (const int rejected = RejectSecretSettingWrite(
+            state, key, "storage.transaction"))
+        return rejected;
     bool valueChanged = false;
     std::string error;
     if (!handle->transaction->Remove(key, valueChanged, error))
@@ -23553,6 +24239,14 @@ static int lua_StorageGet(lua_State* L)
         return luaL_error(L, "storage.get: key is reserved");
     auto* s = GetD2D(L);
     if (!s) { lua_pushnil(L); return 1; }
+    std::string secretReference;
+    if (BoundSecretSetting(L, key, &secretReference))
+    {
+        if (secretReference.empty()) lua_pushnil(L);
+        else lua_pushlstring(L, secretReference.data(),
+            secretReference.size());
+        return 1;
+    }
     const std::string prefix = BoundStoragePrefix(L);
     auto& storage = ActiveStorage();
     const auto value = storage.find(prefix + "." + key);
@@ -23628,6 +24322,9 @@ static int lua_StorageSet(lua_State* L)
     if (!s) return 0;
     if (IsReservedStorageTransactionKey(key))
         return luaL_error(L, "storage.set: key is reserved");
+    if (const int rejected = RejectSecretSettingWrite(
+            L, key, "storage.set"))
+        return rejected;
     const std::string prefix = BoundStoragePrefix(L);
     if (BoundWidgetApiVersion(L) < 2)
     {
@@ -23911,6 +24608,9 @@ static int lua_StorageRemove(lua_State* L)
     if (!s) return 0;
     if (IsReservedStorageTransactionKey(key))
         return luaL_error(L, "storage.remove: key is reserved");
+    if (const int rejected = RejectSecretSettingWrite(
+            L, key, "storage.remove"))
+        return rejected;
     const std::string prefix = BoundStoragePrefix(L);
     if (BoundWidgetApiVersion(L) < 2)
     {
@@ -23961,8 +24661,18 @@ static int lua_StorageKeys(lua_State* L)
             continue;
         std::string key = prefix.empty() ? kv.first : kv.first.substr(prefix.size());
         if (IsReservedStorageTransactionKey(key)) continue;
+        if (BoundSecretSetting(L, key)) continue;
         lua_pushstring(L, key.c_str());
         lua_rawseti(L, -2, idx++);
+    }
+    if (s && s->engine)
+    {
+        for (const auto& key : s->engine->RuntimeSecretStorageKeys(
+                BoundWidgetId(L)))
+        {
+            lua_pushlstring(L, key.data(), key.size());
+            lua_rawseti(L, -2, idx++);
+        }
     }
     return 1;
 }

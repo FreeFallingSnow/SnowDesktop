@@ -1592,6 +1592,9 @@ int main()
     Write(fullBackupData / L"widgets" / L"storage" /
         L"package-id" / L"instance-id.json",
         "{ \"counter\": 27 }\n");
+    Write(fullBackupState / L"PrivateState" /
+        L"SnowDesktop.widget-secrets.bin",
+        "encrypted-private-state-must-not-be-exported");
     Write(fullBackupData / L"SnowDesktop_crash.log",
         "excluded log\n");
     Write(fullBackupData / L"SnowDesktop.log",
@@ -1647,6 +1650,12 @@ int main()
         !std::filesystem::exists(
             createdFullBackup.backup.data / L"widgets" / L"quarantine"),
         "complete backup excludes logs, dumps, staging, and quarantine");
+    Expect(!std::filesystem::exists(
+            createdFullBackup.backup.root / L"PrivateState") &&
+        !std::filesystem::exists(
+            createdFullBackup.backup.data /
+                L"SnowDesktop.widget-secrets.bin"),
+        "complete backup excludes the sibling widget secret store");
     const auto longBackupFile = std::filesystem::absolute(
         createdFullBackup.backup.data / longBackupRelative);
     const std::wstring extendedLongBackupFile =

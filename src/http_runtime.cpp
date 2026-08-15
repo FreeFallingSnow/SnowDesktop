@@ -268,6 +268,38 @@ bool snowdesktop::http_security::IsAllowedUrlForDomains(
     return false;
 }
 
+bool snowdesktop::http_security::HaveSameOrigin(
+    const std::wstring& left, const std::wstring& right)
+{
+    const auto readOrigin = [](const std::wstring& url,
+        INTERNET_SCHEME& scheme, INTERNET_PORT& port,
+        std::wstring& host) {
+        URL_COMPONENTS components{ sizeof(components) };
+        wchar_t hostBuffer[256]{};
+        components.lpszHostName = hostBuffer;
+        components.dwHostNameLength =
+            static_cast<DWORD>(std::size(hostBuffer));
+        if (!WinHttpCrackUrl(url.c_str(), 0, 0, &components) ||
+            components.dwHostNameLength == 0)
+            return false;
+        scheme = components.nScheme;
+        port = components.nPort;
+        host = NormalizeHostname(std::wstring(
+            hostBuffer, components.dwHostNameLength));
+        return !host.empty();
+    };
+    INTERNET_SCHEME leftScheme = static_cast<INTERNET_SCHEME>(0);
+    INTERNET_SCHEME rightScheme = static_cast<INTERNET_SCHEME>(0);
+    INTERNET_PORT leftPort = 0;
+    INTERNET_PORT rightPort = 0;
+    std::wstring leftHost;
+    std::wstring rightHost;
+    return readOrigin(left, leftScheme, leftPort, leftHost) &&
+        readOrigin(right, rightScheme, rightPort, rightHost) &&
+        leftScheme == rightScheme && leftPort == rightPort &&
+        leftHost == rightHost;
+}
+
 bool snowdesktop::http_security::IsAllowedPublicHttpsUrl(
     const std::wstring& url)
 {
@@ -432,6 +464,13 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
     std::wstring currentUrl = options.url;
     for (int redirectCount = 0; redirectCount <= 3 && !token.stop_requested(); ++redirectCount)
     {
+        if (options.sameOriginRedirectsOnly &&
+            !snowdesktop::http_security::HaveSameOrigin(
+                options.url, currentUrl))
+        {
+            response.error = "Redirect changed origin for credential-bearing request";
+            break;
+        }
         if (!snowdesktop::http_security::
                 IsAllowedUrlForDomains(
                     currentUrl, options.allowedDomains,

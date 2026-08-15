@@ -88,8 +88,8 @@
 ---@class SnowSettingField
 ---@field key string
 ---@field label string
----@field type 'text'|'bool'|'int'|'float'|'select'|'color'|'appSearch'
----@field default? string|number|boolean
+---@field type 'text'|'password'|'bool'|'int'|'float'|'select'|'color'|'appSearch'
+---@field default? string|number|boolean Ignored for password fields; secrets must never be shipped as defaults.
 ---@field searchKey? string Required by appSearch; stores the user's query separately from the selected display title.
 ---@field emptyLabel? string Localized label used to clear an appSearch selection.
 ---@field noResultsLabel? string Localized label shown after an appSearch returns no applications.
@@ -1425,9 +1425,17 @@ function data.subscribe(topic, options) end
 
 ---@class SnowNetworkRequestArguments
 ---@field url string Public HTTPS URL; optional widget.json networkDomains narrows it to exact declared hostnames.
+---@field method? 'GET'|'HEAD'|'POST'|'PUT'|'PATCH'|'DELETE' Defaults to GET.
+---@field headers? table<string, string|SnowNetworkSecretDescriptor> Up to 32 single-line headers and 32 KiB after host injection.
+---@field body? string|SnowNetworkSecretDescriptor Raw bytes up to 64 KiB; a descriptor injects one host-managed secret segment.
 ---@field timeoutMs? integer 1000 through 30000; defaults to 15000.
 ---@field cacheSeconds? integer 0 through 86400; defaults to 0.
 ---@field maxBytes? integer 4096 through 1048576; defaults to 524288.
+
+---@class SnowNetworkSecretDescriptor
+---@field secretRef string Opaque reference returned by storage.get for a declared password setting in this instance.
+---@field prefix? string Host prepends these bytes before the secret. Header affixes must be single-line UTF-8.
+---@field suffix? string Host appends these bytes after the secret. No JSON or URL escaping is applied.
 
 ---@class SnowNetworkTaskValue
 ---@field status integer Successful 2xx HTTP status.

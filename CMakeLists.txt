@@ -269,6 +269,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget_storage_transaction.cpp
     src/widget_storage_value.cpp
     src/widget_storage_write_budget.cpp
+    src/widget_secret_store.cpp
     src/widget_logical_slot.cpp
     src/widget_lua_lifecycle.cpp
     src/widget_runtime_diagnostics.cpp
@@ -535,7 +536,7 @@ endif()
 target_link_libraries(SnowDesktop PRIVATE
     SnowDesktopImgui SnowDesktopLua SnowDesktopEverything SnowDesktopPinyinData
     comctl32 d2d1 d3d11 dbghelp dcomp dwmapi dwrite dxgi dxguid gdi32 msimg32
-    advapi32 bcrypt imm32 iphlpapi ole32 pdh propsys runtimeobject shcore shell32 shlwapi urlmon user32 windowsapp windowscodecs uuid winhttp ws2_32
+    advapi32 bcrypt crypt32 imm32 iphlpapi ole32 pdh propsys runtimeobject shcore shell32 shlwapi urlmon user32 windowsapp windowscodecs uuid winhttp ws2_32
     version wbemuuid
 )
 
@@ -1067,6 +1068,16 @@ if (BUILD_TESTING)
             src/widget_storage_write_budget.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract lua storage widget)
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetSecretStoreTests
+        widget_secret_store
+        SOURCES
+            tests/widget_secret_store_tests.cpp
+            src/widget_secret_store.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES bcrypt crypt32
+        LABELS contract lua security storage widget)
 
     snowdesktop_add_test(
         SnowDesktopBuiltinWidgetSourceContractTests

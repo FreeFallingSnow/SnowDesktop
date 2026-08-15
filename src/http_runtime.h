@@ -21,6 +21,7 @@ bool IsAllowedUrlForDomains(const std::wstring& url,
     bool allowAnyHttpOrHttpsUrl = false,
     bool allowAnyPublicHttpsUrl = false);
 bool IsAllowedPublicHttpsUrl(const std::wstring& url);
+bool HaveSameOrigin(const std::wstring& left, const std::wstring& right);
 }
 
 struct HttpRequestOptions
@@ -36,6 +37,7 @@ struct HttpRequestOptions
     std::vector<std::string> allowedDomains;
     bool allowAnyHttpOrHttpsUrl = false;
     bool allowAnyPublicHttpsUrl = false;
+    bool sameOriginRedirectsOnly = false;
 };
 
 struct HttpResponse

@@ -466,8 +466,10 @@ JSON-like 深拷贝；循环、metatable、混合数组/对象、非有限数和
 整批回滚，最终快照一次原子替换；`storage.typed` 让直接写入和事务保存受限 JSON-like
 值，同时以宿主保留元数据区分既有原始字符串；v2 的直接写入和事务均禁止从 `render`
 调用。`storage.writeBudget` 对每个真实实例提供 32 次突发提交，之后每秒恢复一次；事务
-只按最终真实变化计一次，未改变、预览和迁移覆盖层不计。secret reference 仍属于 M4
-后续工作。
+只按最终真实变化计一次，未改变、预览和迁移覆盖层不计。`settings.secretReference` 已将
+声明式 `password` 接入每用户 DPAPI 私有存储：Lua 的 storage API 只观察实例作用域 opaque
+reference；`task.network.secretReference` 在发送前解析 header/body descriptor，任务队列、
+预览、日志、完成事件和数据备份均不保存秘密正文。
 
 - `state.set` 在同一事件周期内批量合并，只触发一次视图更新。
 - `storage` 支持 string、number、boolean、null、array 和 object，序列化语义固定。
@@ -741,7 +743,7 @@ local frame = audio:value()
 ### 12.4 一次性任务
 
 网络请求、搜索和可能较慢的查询统一使用任务 ID。当前公网请求已经以精确域名、
-HTTPS GET、响应上限和每跳重定向复检接入任务代理：
+HTTPS 请求、受限 method/header/body、secret descriptor、响应上限和每跳重定向复检接入任务代理：
 
 ```lua
 local request = task.start("network.request", {
@@ -776,14 +778,15 @@ local taskId, err = task.start("media.toggle", { sessionId = session.id })
 `task.app.launch`、`task.notification.show`、`task.notification.lifecycle`、
 `task.notification.schedule`、`task.notification.structured`、
 `task.notification.actions`、`task.calendar.write`、
-`task.network.request`、`task.shell.openUri`、`task.desktop.search`、
+`task.network.request`、`task.network.headers`、`task.network.requestBody`、
+`task.network.secretReference`、`task.shell.openUri`、`task.desktop.search`、
 `task.everything.search`、`task.shell.item`、`task.system.openSettings`、
 `task.clipboard.text`、`task.clipboard.image`、`task.clipboard.fileReference`、
 `task.filesystem.picker`、`task.filesystem.access`、
 `data.filesystem.watch` 和
 `task.desktop.refresh` feature，完整媒体
 控制动作、两个应用任务、实例作用域通知 ID 与 show/update/dismiss/schedule/cancel、
-本地日历 create/update/remove、公网 HTTPS GET、
+本地日历 create/update/remove、公网 HTTPS 有界请求、
 可信手势外链、用户选择文件/目录、桌面/Everything 项目搜索及受控打开、定位和刷新任务。
 `WidgetTaskBroker` 生命周期内核负责任务描述符注册、全局/实例/
 任务类型并发上限、权限和可信手势门禁、preview 标记、显式取消、撤权取消、实例
@@ -1423,7 +1426,7 @@ v2.0 不开放：真实文件 move/copy/delete、组件嵌套、把 Lua 组件�
 
 普通配置值进入类型化实例存储；secret、file/folder handle 和宿主 item/app reference 只保存绑定/授权记录，不进入普通字符串存储和预览。entity selector 由宿主展示，组件只取得用户最终选择的 opaque reference；组件若自行枚举候选，仍需对应 read/discovery 权限。
 
-当前过渡实现已提供 `settings.appSearch`：搜索文字与已选显示名分别存储，候选匹配复用宿主应用索引并在 worker 执行，媒体控制组件已接入。它解决设置页动态搜索和选择交互，但尚不是最终的持久 `appReference` binding；后者仍按上段要求进入宿主管理的 opaque reference 存储。
+当前过渡实现已提供 `settings.appSearch`：搜索文字与已选显示名分别存储，候选匹配复用宿主应用索引并在 worker 执行，媒体控制组件已接入。它解决设置页动态搜索和选择交互，但尚不是最终的持久 `appReference` binding；后者仍按上段要求进入宿主管理的 opaque reference 存储。`settings.secretReference` 已提供 `password` 字段：无 default/preset、遮罩编辑、显式清除、DPAPI 私有持久化及只读 opaque reference；secret 文件位于普通 data 目录之外，不随 `.snowbackup` 导出。
 
 ### 15.2 包内模块
 
@@ -1815,6 +1818,7 @@ M7 切换完成后，发布运行时必须删除 API v1 注册和执行分支。
 交付物：
 
 - transient state、类型化 storage transaction 和 secret reference 基础。
+  当前三项基础均已实现；secret 仅开放声明式录入和受控网络任务注入，不提供正文读取 API。
 - 统一 task、schedule 和 data subscription。
 - 按 M4A（CPU/内存/GPU/电源）、M4B（存储/网络/显示）、M4C（媒体/音频/通知）、M4D（文件句柄/剪贴板/Shell/桌面/日历）四个可独立验收子波次完成第 12.6 节全部必选 provider、task 和 action。
 - 所有 provider 按数据主题引用计数启停、共享采样、可见性节流和诊断；事件可用时不保留多余轮询。
@@ -2056,7 +2060,7 @@ M1 runtime boundary + M2 permission model
 - 未完成 M2 前不增加新的高风险 API。
 - 未完成 M3 前不把 `kHostApiVersion` 直接改为 2。
 - 未完成 M4 前不增加更多独立异步回调。
-- 未完成网络授权和 origin 模型前不增加 secrets、账户或位置能力。
+- secret 只允许在已完成 origin 约束的宿主任务中受控注入；不增加通用 reveal、账户或位置能力。
 - 未完成 UI Automation 基础前不把声明式 UI 标记为稳定。
 - 未完成 M7 前不宣布 Lua API v2 稳定。
 - 未完成 W2 前不接受可分发的第三方 WebView 包。

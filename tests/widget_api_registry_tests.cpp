@@ -348,6 +348,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "settings.appSearch") &&
             snowdesktop::widget_api::SupportsFeature(
+                "settings.secretReference") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "settings.select.localizedOptions") &&
             snowdesktop::widget_api::SupportsFeature("lifecycle.event") &&
             snowdesktop::widget_api::SupportsFeature("lifecycle.model") &&
@@ -371,6 +373,12 @@ void TestV2Contract()
                 "task.everything.search") &&
             snowdesktop::widget_api::SupportsFeature(
                 "task.network.request") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "task.network.headers") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "task.network.requestBody") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "task.network.secretReference") &&
             snowdesktop::widget_api::SupportsFeature(
                 "task.notification.actions") &&
             snowdesktop::widget_api::SupportsFeature(

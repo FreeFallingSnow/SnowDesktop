@@ -1222,13 +1222,16 @@ local updateId, err = task.start("calendar.update", {
 `invalid_time`、`invalid_reminder`、`event_limit`、`save_failed`、
 `permissionDenied`、`userGestureRequired` 和 `previewReadOnly`。
 
-`network.request` 要求 `network.internet`，当前只提供无凭据、无 Cookie、无自定义头部和
-请求体的公网 HTTPS `GET`。默认可访问任意公网 HTTPS 主机；如果组件功能固定依赖少数服务，
+`network.request` 要求 `network.internet`，支持公网 HTTPS 的 `GET/HEAD/POST/PUT/PATCH/DELETE`、
+有界自定义请求头和请求体，但仍不启用 WinHTTP Cookie 或系统认证。默认可访问任意公网 HTTPS 主机；如果组件功能固定依赖少数服务，
 可以在 `networkDomains` 中逐项声明精确主机名，主动把自身网络范围收窄。域名限制不支持
 通配符或子域继承；无论是否收窄，localhost、局域网地址和指向非公网地址的解析或重定向
 都被拒绝。每实例该任务最多并发 2 个，参数只接受：
 
 - `url`：1–2048 字节有效 UTF-8 公网 HTTPS URL；清单声明了 `networkDomains` 时主机必须精确命中；
+- `method`：上述六个大写方法，默认 `GET`；
+- `headers`：最多 32 个 RFC token 名称；普通值必须是单行 UTF-8，也可以使用下述 secret descriptor；注入后合计不超过 32 KiB；
+- `body`：普通字符串字节或一个 secret descriptor，注入后不超过 64 KiB；
 - `timeoutMs`：1000–30000，默认 15000；
 - `cacheSeconds`：0–86400，默认 0，缓存按实例、请求与响应上限隔离；
 - `maxBytes`：4096–1048576，默认 524288。
@@ -1244,6 +1247,30 @@ local requestId, err = task.start("network.request", {
 -- 成功：event.value = { status, body, fromCache }
 -- HTTP 响应失败时：event.error == "httpStatus"，event.status 可用
 ```
+
+声明式 `password` 设置取得的引用只能作为 `{ secretRef=ref, prefix=?, suffix=? }` descriptor
+交给请求头值或整个 body。任务代理队列只保存引用和公开前后缀；宿主在真正发送前按包和实例
+解析并注入正文，完成事件、日志和诊断不会回传正文。例如：
+
+```lua
+local tokenRef = storage.get("apiToken")
+local requestId, err = task.start("network.request", {
+    url = "https://api.example.com/items",
+    method = "POST",
+    headers = {
+        Authorization = { secretRef = tokenRef, prefix = "Bearer " },
+        ["Content-Type"] = "application/json",
+    },
+    body = "{\"limit\":20}",
+    maxBytes = 256 * 1024,
+})
+```
+
+descriptor 的 prefix/suffix 只是原始拼接，不执行 JSON 或 URL 转义；需要结构化编码时应把秘密
+放在专用请求头，或确保服务端约定的秘密字符集可直接嵌入。含 secret、非 GET 或非空 body 的
+请求强制关闭响应缓存。引用缺失、已清除、来自其他实例或无法由当前 Windows 用户解密时返回
+`secretUnavailable`。对应 feature 为 `task.network.headers`、`task.network.requestBody` 和
+`task.network.secretReference`。
 
 重定向的每一跳都重新检查 HTTPS、可选的精确域名范围、DNS 解析地址和实际连接地址。响应在
 worker 中读取，超限立即失败，不会把慢网络 I/O 放进 UI/render 线程。稳定完成错误包括
@@ -1364,7 +1391,9 @@ end)
 API v2 的 `storage.set/remove/transaction` 不能在 `render` 内调用；持久化只允许在
 setup、事件、菜单动作或迁移回调等副作用阶段执行。预览和迁移使用隔离覆盖层，成功
 后再由宿主决定是否持久化。存储 null 与缺失键都会由 `get` 返回 nil，需要区分时使用
-`storage.keys()`；secret reference 尚未开放。
+`storage.keys()`。声明式 `password` 键是宿主管理的只读 secret reference：可以通过
+`storage.get/keys` 读取引用，但 `storage.set/remove` 和事务写入会拒绝覆盖；秘密正文不属于
+storage 值，预览中该键始终未设置。
 
 每个真实实例可突发提交 32 次持久变化，之后每秒恢复 1 次；一次事务只计一次，未改变
 的提交、预览和迁移覆盖层不计。超过预算时调用抛出包含建议等待毫秒数的稳定错误。
@@ -1419,6 +1448,12 @@ metatable、混合数组/对象以及超出深度、节点、字符串或 256-ke
 `noResultsLabel` 必须使用组件清单中的本地化文本。该控件只负责设置交互；组件运行时仍应
 通过 `app.search` 获取当前实例的 opaque `ref`，并在可信用户动作中用 `app.launch` 启动。
 对应 feature 为 `settings.appSearch`。
+
+`password` 设置由宿主显示遮罩输入框并使用 Windows DPAPI 写入独立私有状态文件；不要提供
+`default`，也不要把该键写进 preset。输入框失去焦点时提交新值，右侧 `×` 清除已有值。
+Lua 的 `storage.get(key)` 只能得到形如 `secret:v1:…` 的实例作用域 opaque reference，未设置时
+返回 nil；没有 `secrets.reveal()`，引用不能跨包或跨组件实例解析，也不会进入组件预览、普通
+storage、日志或 `.snowbackup` 数据目录。对应 feature 为 `settings.secretReference`。
 
 ### `l10n`
 

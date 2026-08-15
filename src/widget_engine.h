@@ -54,6 +54,7 @@
 #include "widget_view_tree.h"
 #include "widget_text_input_rules.h"
 #include "widget_storage_write_budget.h"
+#include "widget_secret_store.h"
 
 struct ImGuiContext;
 struct PersonalizationSettings;
@@ -1224,6 +1225,11 @@ public:
      * @return 存储的字符串值，键不存在返回空字符串
      */
     std::string RuntimeGetStorageValue(const std::wstring& widgetId, const std::string& key) const;
+    /** Return true when key is a host-managed password setting. */
+    bool RuntimeGetSecretReference(const std::wstring& widgetId,
+        const std::string& key, std::string& reference) const;
+    std::vector<std::string> RuntimeSecretStorageKeys(
+        const std::wstring& widgetId) const;
 
     /**
      * @brief 设置小部件的持久化存储值
@@ -1493,6 +1499,8 @@ private:
     std::unique_ptr<
         snowdesktop::widget_runtime::WidgetFilesystemHandleStore>
         filesystemHandleStore_;
+    std::unique_ptr<snowdesktop::widget_runtime::WidgetSecretStore>
+        secretStore_;
     std::unique_ptr<
         snowdesktop::widget_runtime::WidgetFilesystemTaskExecutor>
         filesystemTaskExecutor_;
@@ -1521,6 +1529,13 @@ private:
         settingsAppTaskExecutor_;
     std::unordered_map<std::string, SettingsAppSearchState>
         settingsAppSearchStates_;
+    struct SecretSettingDraft
+    {
+        std::string value;
+        bool dirty = false;
+    };
+    std::unordered_map<std::string, SecretSettingDraft>
+        secretSettingDrafts_;
     std::uint64_t nextSettingsAppSearchTaskId_ = 0;
     std::unordered_map<std::uint64_t,
         snowdesktop::widget_runtime::WidgetAppSearchCompletion>

@@ -19,6 +19,7 @@ int main()
     using snowdesktop::http_security::IsAllowedRemoteIpLiteral;
     using snowdesktop::http_security::IsAllowedPublicHttpsUrl;
     using snowdesktop::http_security::IsAllowedUrlForDomains;
+    using snowdesktop::http_security::HaveSameOrigin;
 
     Expect(IsAllowedRemoteIpLiteral(L"8.8.8.8"),
         "a public IPv4 address is accepted");
@@ -159,6 +160,19 @@ int main()
     Expect(!IsAllowedPublicHttpsUrl(L"https://localhost/article") &&
             !IsAllowedPublicHttpsUrl(L"https://192.168.1.2/article"),
         "shell HTTPS policy rejects local targets");
+
+    Expect(HaveSameOrigin(L"https://Example.com/path",
+            L"https://example.com/other?q=1") &&
+        HaveSameOrigin(L"https://example.com./path",
+            L"https://EXAMPLE.COM/other"),
+        "same-origin comparison normalizes hostname case and trailing dots");
+    Expect(!HaveSameOrigin(L"https://example.com/path",
+            L"https://other.example/path") &&
+        !HaveSameOrigin(L"https://example.com/path",
+            L"https://example.com:8443/path") &&
+        !HaveSameOrigin(L"https://example.com/path",
+            L"http://example.com/path"),
+        "credential redirect origin comparison binds scheme, host, and port");
 
     if (failures == 0)
         std::cout << "HTTP security tests passed\n";
