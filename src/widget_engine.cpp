@@ -41,6 +41,7 @@
 #include "widget_resource_lua.h"
 #include "widget_text_input_rules.h"
 #include "widget_storage_transaction.h"
+#include "widget_storage_value.h"
 #include "widget_system_settings.h"
 #include "atomic_file.h"
 #include "widgets/widget_chrome_rules.h"
@@ -19121,13 +19122,21 @@ bool WidgetEngine::RuntimeCanWriteWidgetStorage(
 
 std::string WidgetEngine::RuntimeGetStorageValue(const std::wstring& widgetId, const std::string& key) const
 {
-    std::string fullKey = WidgetWideToUtf8(widgetId) + "." + key;
+    const std::string prefix = WidgetWideToUtf8(widgetId);
+    const std::string fullKey = prefix + "." + key;
     int idx = FindWidget(widgetId);
     auto& storage = idx >= 0 && widgets_[idx].preview
         ? widgets_[idx].previewStorage : ActiveStorage();
     auto it = storage.find(fullKey);
     if (it != storage.end())
+    {
+        const auto marker = storage.find(prefix + "." +
+            snowdesktop::widget_runtime::TypedStorageMetadataKey(key));
+        if (marker != storage.end() &&
+            marker->second == snowdesktop::widget_runtime::TypedStorageMarker)
+            return {};
         return it->second;
+    }
 
     if (idx < 0) return {};
     const LuaWidget& widget = widgets_[idx];
@@ -19149,10 +19158,16 @@ void WidgetEngine::RuntimeSetStorageValue(const std::wstring& widgetId, const st
     const int index = FindWidget(widgetId);
     if (index >= 0 && widgets_[index].preview)
     {
-        widgets_[index].previewStorage[prefix + "." + key] = value;
+        auto& storage = widgets_[index].previewStorage;
+        storage[prefix + "." + key] = value;
+        storage.erase(prefix + "." +
+            snowdesktop::widget_runtime::TypedStorageMetadataKey(key));
         return;
     }
-    ActiveStorage()[prefix + "." + key] = value;
+    auto& storage = ActiveStorage();
+    storage[prefix + "." + key] = value;
+    storage.erase(prefix + "." +
+        snowdesktop::widget_runtime::TypedStorageMetadataKey(key));
     if (!snowdesktop::widget_runtime::HasStorageOverlay()) SaveStorageFile();
 }
 
@@ -23280,18 +23295,66 @@ static void SetActiveLuaStorageTransaction(lua_State* state,
         &kActiveStorageTransactionRegistryKey);
 }
 
-static std::string ReadExactStorageString(
-    lua_State* state, int index, const char* field)
+static std::string ReadExactStorageString(lua_State* state, int index,
+    const char* api, const char* field)
 {
     if (lua_type(state, index) != LUA_TSTRING)
     {
-        luaL_error(state, "storage.transaction: %s must be a string",
-            field);
+        luaL_error(state, "%s: %s must be a string", api, field);
         return {};
     }
     std::size_t length = 0;
     const char* value = lua_tolstring(state, index, &length);
     return std::string(value ? value : "", length);
+}
+
+static bool ReadTypedStorageValue(lua_State* state, int index,
+    std::string& encoded, bool& typed, std::string& error)
+{
+    typed = false;
+    error.clear();
+    if (BoundWidgetApiVersion(state) < 2)
+    {
+        encoded = ReadExactStorageString(
+            state, index, "storage.set", "value");
+        return true;
+    }
+    if (lua_type(state, index) == LUA_TSTRING)
+    {
+        encoded = ReadExactStorageString(
+            state, index, "storage.set", "value");
+        return true;
+    }
+    snowdesktop::widget_runtime::InteractionValue value;
+    std::size_t nodes = 0;
+    std::size_t stringBytes = 0;
+    std::unordered_set<const void*> ancestors;
+    if (!ReadInteractionValue(state, index, value, 0,
+            nodes, stringBytes, ancestors, error))
+        return false;
+    typed = true;
+    return snowdesktop::widget_runtime::EncodeTypedStorageValue(
+        value, encoded, error);
+}
+
+static int PushStoredStorageValue(lua_State* state,
+    std::string_view encoded, bool typed, const char* api)
+{
+    if (!typed)
+    {
+        lua_pushlstring(state, encoded.data(), encoded.size());
+        return 1;
+    }
+    snowdesktop::widget_runtime::InteractionValue value;
+    std::string error;
+    if (!snowdesktop::widget_runtime::DecodeTypedStorageValue(
+            encoded, value, error))
+    {
+        return luaL_error(state, "%s: persisted typed value is invalid: %s",
+            api, error.c_str());
+    }
+    PushInteractionValue(state, value);
+    return 1;
 }
 
 static LuaStorageTransactionHandle* CheckStorageTransactionHandle(
@@ -23317,47 +23380,84 @@ static bool IsReservedStorageTransactionKey(const std::string& key)
 static int lua_StorageTransactionGet(lua_State* state)
 {
     auto* handle = CheckStorageTransactionHandle(state);
-    const std::string key = ReadExactStorageString(state, 2, "key");
+    const std::string key = ReadExactStorageString(
+        state, 2, "storage.transaction", "key");
     if (IsReservedStorageTransactionKey(key))
         return luaL_error(state, "storage.transaction: key is reserved");
     std::string error;
     const auto value = handle->transaction->Get(key, error);
     if (!error.empty())
         return luaL_error(state, "storage.transaction: %s", error.c_str());
-    if (value)
-        lua_pushlstring(state, value->data(), value->size());
-    else
+    if (!value)
+    {
         lua_pushnil(state);
-    return 1;
+        return 1;
+    }
+    const auto marker = handle->transaction->GetHostMetadata(
+        snowdesktop::widget_runtime::TypedStorageMetadataKey(key), error);
+    if (!error.empty())
+        return luaL_error(state, "storage.transaction: %s", error.c_str());
+    return PushStoredStorageValue(state, *value,
+        marker == snowdesktop::widget_runtime::TypedStorageMarker,
+        "storage.transaction");
 }
 
 static int lua_StorageTransactionSet(lua_State* state)
 {
     auto* handle = CheckStorageTransactionHandle(state);
-    std::string key = ReadExactStorageString(state, 2, "key");
-    std::string value = ReadExactStorageString(state, 3, "value");
+    std::string key = ReadExactStorageString(
+        state, 2, "storage.transaction", "key");
+    std::string value;
+    bool typed = false;
+    std::string valueError;
+    if (!ReadTypedStorageValue(
+            state, 3, value, typed, valueError))
+    {
+        return luaL_error(state,
+            "storage.transaction: value must be bounded JSON-like data: %s",
+            valueError.c_str());
+    }
     if (IsReservedStorageTransactionKey(key))
         return luaL_error(state, "storage.transaction: key is reserved");
-    bool changed = false;
+    bool valueChanged = false;
     std::string error;
     if (!handle->transaction->Set(
-            std::move(key), std::move(value), changed, error))
+            key, std::move(value), valueChanged, error))
         return luaL_error(state, "storage.transaction: %s", error.c_str());
-    lua_pushboolean(state, changed ? 1 : 0);
+    const std::string metadataKey =
+        snowdesktop::widget_runtime::TypedStorageMetadataKey(key);
+    bool metadataChanged = false;
+    const bool metadataOk = typed
+        ? handle->transaction->SetHostMetadata(metadataKey,
+            std::string(snowdesktop::widget_runtime::TypedStorageMarker),
+            metadataChanged, error)
+        : handle->transaction->RemoveHostMetadata(metadataKey,
+            metadataChanged, error);
+    if (!metadataOk)
+        return luaL_error(state, "storage.transaction: %s", error.c_str());
+    lua_pushboolean(state,
+        valueChanged || metadataChanged ? 1 : 0);
     return 1;
 }
 
 static int lua_StorageTransactionRemove(lua_State* state)
 {
     auto* handle = CheckStorageTransactionHandle(state);
-    const std::string key = ReadExactStorageString(state, 2, "key");
+    const std::string key = ReadExactStorageString(
+        state, 2, "storage.transaction", "key");
     if (IsReservedStorageTransactionKey(key))
         return luaL_error(state, "storage.transaction: key is reserved");
-    bool changed = false;
+    bool valueChanged = false;
     std::string error;
-    if (!handle->transaction->Remove(key, changed, error))
+    if (!handle->transaction->Remove(key, valueChanged, error))
         return luaL_error(state, "storage.transaction: %s", error.c_str());
-    lua_pushboolean(state, changed ? 1 : 0);
+    bool metadataChanged = false;
+    if (!handle->transaction->RemoveHostMetadata(
+            snowdesktop::widget_runtime::TypedStorageMetadataKey(key),
+            metadataChanged, error))
+        return luaL_error(state, "storage.transaction: %s", error.c_str());
+    lua_pushboolean(state,
+        valueChanged || metadataChanged ? 1 : 0);
     return 1;
 }
 
@@ -23417,16 +23517,26 @@ static int lua_StorageGet(lua_State* L)
     if (const int rejected = RejectStorageAccessInsideTransaction(
             L, "storage.get"))
         return rejected;
-    const char* key = luaL_checkstring(L, 1);
-    if (IsReservedStorageTransactionKey(key ? key : ""))
+    const std::string key = ReadExactStorageString(
+        L, 1, "storage.get", "key");
+    if (IsReservedStorageTransactionKey(key))
         return luaL_error(L, "storage.get: key is reserved");
     auto* s = GetD2D(L);
     if (!s) { lua_pushnil(L); return 1; }
-    std::string fullKey = BoundStoragePrefix(L) + "." + key;
-    auto it = g_storage.find(fullKey);
-    if (it != g_storage.end())
-        lua_pushstring(L, it->second.c_str());
-    else if (s->engine)
+    const std::string prefix = BoundStoragePrefix(L);
+    auto& storage = ActiveStorage();
+    const auto value = storage.find(prefix + "." + key);
+    if (value != storage.end())
+    {
+        const auto marker = storage.find(prefix + "." +
+            snowdesktop::widget_runtime::TypedStorageMetadataKey(key));
+        return PushStoredStorageValue(L, value->second,
+            marker != storage.end() &&
+                marker->second == snowdesktop::widget_runtime::
+                    TypedStorageMarker,
+            "storage.get");
+    }
+    if (s->engine)
     {
         std::string defaultValue =
             s->engine->RuntimeGetStorageValue(BoundWidgetId(L), key);
@@ -23473,17 +23583,59 @@ static int lua_StorageSet(lua_State* L)
     if (const int rejected = RejectStorageWriteDuringRender(
             L, "storage.set"))
         return rejected;
-    const char* key = luaL_checkstring(L, 1);
-    const char* value = luaL_checkstring(L, 2);
+    std::string key = ReadExactStorageString(
+        L, 1, "storage.set", "key");
+    std::string value;
+    bool typed = false;
+    std::string valueError;
+    if (!ReadTypedStorageValue(L, 2, value, typed, valueError))
+    {
+        return luaL_error(L,
+            "storage.set: value must be bounded JSON-like data: %s",
+            valueError.c_str());
+    }
     auto* s = GetD2D(L);
     if (!s) return 0;
-    if (IsReservedStorageTransactionKey(key ? key : ""))
+    if (IsReservedStorageTransactionKey(key))
         return luaL_error(L, "storage.set: key is reserved");
     const std::string prefix = BoundStoragePrefix(L);
-    if (!StorageWriteWithinQuota(prefix, key, value))
-        return luaL_error(L, "widget storage quota exceeded");
-    ActiveStorage()[prefix + "." + key] = value;
-    if (!snowdesktop::widget_runtime::HasStorageOverlay()) SaveStorageFile();
+    if (BoundWidgetApiVersion(L) < 2)
+    {
+        if (!StorageWriteWithinQuota(prefix, key, value))
+            return luaL_error(L, "widget storage quota exceeded");
+        ActiveStorage()[prefix + "." + key] = value;
+        if (!snowdesktop::widget_runtime::HasStorageOverlay())
+            SaveStorageFile();
+        return 0;
+    }
+
+    auto& storage = ActiveStorage();
+    snowdesktop::widget_runtime::WidgetStorageTransaction transaction(
+        storage, prefix);
+    bool changed = false;
+    std::string error;
+    if (!transaction.Set(key, std::move(value), changed, error))
+        return luaL_error(L, "storage.set: %s", error.c_str());
+    const std::string metadataKey =
+        snowdesktop::widget_runtime::TypedStorageMetadataKey(key);
+    bool metadataChanged = false;
+    const bool metadataOk = typed
+        ? transaction.SetHostMetadata(metadataKey,
+            std::string(snowdesktop::widget_runtime::TypedStorageMarker),
+            metadataChanged, error)
+        : transaction.RemoveHostMetadata(metadataKey,
+            metadataChanged, error);
+    if (!metadataOk || !transaction.ValidateCommit(error))
+        return luaL_error(L, "storage.set: %s", error.c_str());
+    if (!transaction.Changed()) return 0;
+    auto candidate = transaction.TakeCandidate();
+    storage.swap(candidate);
+    if (!snowdesktop::widget_runtime::HasStorageOverlay() &&
+        !SaveStorageFile())
+    {
+        storage.swap(candidate);
+        return luaL_error(L, "storage.set: failed to persist storage");
+    }
     return 0;
 }
 
@@ -23721,13 +23873,41 @@ static int lua_StorageRemove(lua_State* L)
     if (const int rejected = RejectStorageWriteDuringRender(
             L, "storage.remove"))
         return rejected;
-    const char* key = luaL_checkstring(L, 1);
+    const std::string key = ReadExactStorageString(
+        L, 1, "storage.remove", "key");
     auto* s = GetD2D(L);
     if (!s) return 0;
-    if (IsReservedStorageTransactionKey(key ? key : ""))
+    if (IsReservedStorageTransactionKey(key))
         return luaL_error(L, "storage.remove: key is reserved");
-    ActiveStorage().erase(BoundStoragePrefix(L) + "." + key);
-    if (!snowdesktop::widget_runtime::HasStorageOverlay()) SaveStorageFile();
+    const std::string prefix = BoundStoragePrefix(L);
+    if (BoundWidgetApiVersion(L) < 2)
+    {
+        ActiveStorage().erase(prefix + "." + key);
+        if (!snowdesktop::widget_runtime::HasStorageOverlay())
+            SaveStorageFile();
+        return 0;
+    }
+    auto& storage = ActiveStorage();
+    snowdesktop::widget_runtime::WidgetStorageTransaction transaction(
+        storage, prefix);
+    bool changed = false;
+    std::string error;
+    if (!transaction.Remove(key, changed, error))
+        return luaL_error(L, "storage.remove: %s", error.c_str());
+    bool metadataChanged = false;
+    if (!transaction.RemoveHostMetadata(
+            snowdesktop::widget_runtime::TypedStorageMetadataKey(key),
+            metadataChanged, error) || !transaction.ValidateCommit(error))
+        return luaL_error(L, "storage.remove: %s", error.c_str());
+    if (!transaction.Changed()) return 0;
+    auto candidate = transaction.TakeCandidate();
+    storage.swap(candidate);
+    if (!snowdesktop::widget_runtime::HasStorageOverlay() &&
+        !SaveStorageFile())
+    {
+        storage.swap(candidate);
+        return luaL_error(L, "storage.remove: failed to persist storage");
+    }
     return 0;
 }
 

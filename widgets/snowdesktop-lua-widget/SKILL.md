@@ -46,7 +46,7 @@ development packages live under `data\widgets\installed` and
    context, drawing, localization and package resources require no high-risk
    permission.
 10. Use `state` for JSON-like VM-lifetime values and `storage` for persistent
-    strings. Write persistent values only when they change.
+    JSON-like values. Write persistent values only when they change.
 11. Run `snowwidget validate <directory>` and
     `snowwidget pack <directory> <name.snowwidget>`.
 12. In the repository, also run `scripts\test.bat`, the standard Release build,
@@ -197,10 +197,13 @@ menu.
   handles, load modules, or perform future data queries during every frame.
 - `state.set` deep-copies JSON-like data and requests another frame only when
   the value changes. Do not use it as persistent storage.
-- Group related persistent string writes with `storage.transaction`; access
+- Group related persistent JSON-like writes with `storage.transaction`; access
   storage only through its `tx` argument until the callback returns. A callback
   error or final quota failure rolls back the complete change. Never write
   persistent storage from `render`.
+- `storage.typed` preserves booleans, finite numbers, strings, arrays, objects,
+  and null while keeping legacy unmarked values as strings. Use
+  `storage.keys()` when stored null must be distinguished from a missing key.
 - Use `schedule.every/after/at/cancel` for v2 timers and handle
   `event.kind == "schedule"`; do not add new `widget.setTimer` usage.
 - Use `schedule.timeline` for 1–64 strictly increasing absolute state entries.

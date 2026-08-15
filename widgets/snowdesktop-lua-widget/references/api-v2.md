@@ -1335,16 +1335,17 @@ HTTPS URL；`http:`、`file:`、自定义 scheme、localhost、局域网和 IP �
 
 ### `storage`
 
-- `storage.get(key) -> string?`
-- `storage.set(key, value)`：`value` 必须是字符串，并立即持久化。
+- `storage.get(key) -> SnowStateValue?`
+- `storage.set(key, value)`：`value` 可以是 nil、boolean、有限 number、string、连续数组
+  或字符串键对象，并立即原子持久化。
 - `storage.remove(key)`、`storage.keys()`。
-- `storage.transaction(function(tx) ... end) -> changed`：一次原子提交多个字符串
+- `storage.transaction(function(tx) ... end) -> changed`：一次原子提交多个类型化
   写入；事务对象提供 `tx:get/set/remove`。
 
 ```lua
 storage.transaction(function(tx)
-    tx:set("item.42.title", "Book tickets")
-    tx:set("order", "17,42")
+    tx:set("item.42", { title = "Book tickets", done = false })
+    tx:set("order", { 17, 42 })
     tx:remove("draft")
 end)
 ```
@@ -1353,14 +1354,18 @@ end)
 `storage.get/set/remove/keys`。回调抛错、最终快照超过配额或写盘失败时不会暴露部分
 修改；配额在最终快照上检查，因此允许先暂存新键再在同一事务删除旧键。事务最多
 1024 次操作；每实例最多 256 个键、每键 128 个有效 UTF-8 字节、每值 64 KiB、
-总量 1 MiB。`storage.transaction` 对应 feature 为 `storage.transaction`。
+总量 1 MiB。顶层字符串仍可使用完整的 64 KiB 单值配额；非字符串结构化值最多 256 个
+节点、8 层和合计 16 KiB 的字符串内容。循环表、metatable、混合数组/对象、非有限数和
+无效 UTF-8 会被拒绝。既有未标记值始终按原字符串读取；新字符串也保持原始字符串编码，
+非字符串值使用宿主保留的实例元数据标记，避免把用户历史字符串误判成序列化对象。
+对应 feature 为 `storage.transaction` 和 `storage.typed`。
 
 API v2 的 `storage.set/remove/transaction` 不能在 `render` 内调用；持久化只允许在
 setup、事件、菜单动作或迁移回调等副作用阶段执行。预览和迁移使用隔离覆盖层，成功
-后再由宿主决定是否持久化。当前事务值仍是字符串；计划中的 JSON-like 类型化持久值
-和 secret reference 尚未开放。
+后再由宿主决定是否持久化。存储 null 与缺失键都会由 `get` 返回 nil，需要区分时使用
+`storage.keys()`；secret reference 尚未开放。
 
-只在值变化时写入；数值和布尔值应显式序列化，并用 `tonumber` 或明确规则读取。
+只在值变化时写入；新组件不必再手工 `tostring/tonumber` 编解码结构化状态。
 
 ### `state`
 

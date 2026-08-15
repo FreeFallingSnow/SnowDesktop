@@ -77,6 +77,18 @@ bool WidgetStorageTransaction::ValidateKey(
     return true;
 }
 
+bool WidgetStorageTransaction::ValidateHostMetadataKey(
+    std::string_view key, std::string& error) const
+{
+    if (!key.starts_with("__host.") || key.size() > 512 ||
+        key.find('\0') != std::string_view::npos || !IsValidUtf8(key))
+    {
+        error = "host metadata key is invalid";
+        return false;
+    }
+    return true;
+}
+
 bool WidgetStorageTransaction::ConsumeOperation(std::string& error)
 {
     if (operationCount_ >= kMaximumOperations)
@@ -132,6 +144,49 @@ bool WidgetStorageTransaction::Remove(std::string_view key,
     changed = false;
     error.clear();
     if (!ConsumeOperation(error) || !ValidateKey(key, error)) return false;
+    changed = candidate_.erase(FullKey(key)) != 0;
+    return true;
+}
+
+std::optional<std::string> WidgetStorageTransaction::GetHostMetadata(
+    std::string_view key, std::string& error) const
+{
+    error.clear();
+    if (!ValidateHostMetadataKey(key, error)) return std::nullopt;
+    const auto found = candidate_.find(FullKey(key));
+    if (found == candidate_.end()) return std::nullopt;
+    return found->second;
+}
+
+bool WidgetStorageTransaction::SetHostMetadata(
+    std::string key, std::string value,
+    bool& changed, std::string& error)
+{
+    changed = false;
+    error.clear();
+    if (!ValidateHostMetadataKey(key, error))
+        return false;
+    if (value.size() > kMaximumValueBytes ||
+        (!value.empty() && !IsValidUtf8(value)))
+    {
+        error = "host metadata value is invalid";
+        return false;
+    }
+    const std::string fullKey = FullKey(key);
+    const auto found = candidate_.find(fullKey);
+    if (found != candidate_.end() && found->second == value) return true;
+    candidate_[fullKey] = std::move(value);
+    changed = true;
+    return true;
+}
+
+bool WidgetStorageTransaction::RemoveHostMetadata(
+    std::string_view key, bool& changed, std::string& error)
+{
+    changed = false;
+    error.clear();
+    if (!ValidateHostMetadataKey(key, error))
+        return false;
     changed = candidate_.erase(FullKey(key)) != 0;
     return true;
 }

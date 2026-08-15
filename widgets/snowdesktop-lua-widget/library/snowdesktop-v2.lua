@@ -1915,14 +1915,14 @@ storage = {}
 ---@class SnowStorageTransaction
 local SnowStorageTransaction = {}
 
----Read the current staged string value. Missing keys return nil.
+---Read the current staged typed value. Missing keys and stored null return nil; use keys to distinguish them.
 ---@param key string
----@return string?
+---@return SnowStateValue?
 function SnowStorageTransaction:get(key) end
 
----Stage a string value. The final snapshot is quota-checked at commit.
+---Stage a bounded JSON-like value. The final snapshot is quota-checked at commit.
 ---@param key string
----@param value string
+---@param value SnowStateValue
 ---@return boolean changed
 function SnowStorageTransaction:set(key, value) end
 
@@ -1932,11 +1932,11 @@ function SnowStorageTransaction:set(key, value) end
 function SnowStorageTransaction:remove(key) end
 
 ---@param key string
----@return string?
+---@return SnowStateValue?
 function storage.get(key) end
 
 ---@param key string
----@param value string
+---@param value SnowStateValue
 function storage.set(key, value) end
 
 ---@param key string
@@ -1945,7 +1945,7 @@ function storage.remove(key) end
 ---@return string[]
 function storage.keys() end
 
----Atomically commit staged string writes after the callback succeeds.
+---Atomically commit staged typed writes after the callback succeeds.
 ---The transaction is rolled back on callback error, quota failure, or disk failure.
 ---@param callback fun(transaction: SnowStorageTransaction)
 ---@return boolean changed

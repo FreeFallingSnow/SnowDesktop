@@ -27,6 +27,12 @@ public:
         bool& changed, std::string& error);
     bool Remove(std::string_view key,
         bool& changed, std::string& error);
+    std::optional<std::string> GetHostMetadata(
+        std::string_view key, std::string& error) const;
+    bool SetHostMetadata(std::string key, std::string value,
+        bool& changed, std::string& error);
+    bool RemoveHostMetadata(std::string_view key,
+        bool& changed, std::string& error);
     bool ValidateCommit(std::string& error) const;
 
     bool Changed() const noexcept;
@@ -34,6 +40,8 @@ public:
 
 private:
     bool ValidateKey(std::string_view key, std::string& error) const;
+    bool ValidateHostMetadataKey(
+        std::string_view key, std::string& error) const;
     bool ConsumeOperation(std::string& error);
     std::string FullKey(std::string_view key) const;
 
