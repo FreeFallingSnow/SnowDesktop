@@ -325,13 +325,20 @@ struct ViewChoiceOption
 
 struct ViewTextSpan
 {
+    std::string key;
     std::string text;
     std::optional<std::uint32_t> foreground;
+    std::optional<std::uint32_t> hoverForeground;
+    std::optional<std::uint32_t> pressedForeground;
     std::optional<float> fontSize;
     bool bold = false;
     bool italic = false;
     bool underline = false;
     bool strikethrough = false;
+    std::string cursor;
+    std::string tooltip;
+    std::string accessibilityLabel;
+    std::map<std::string, InteractionAction, std::less<>> events;
 };
 
 struct ViewMonthCalendarCell

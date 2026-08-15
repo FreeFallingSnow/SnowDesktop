@@ -1350,6 +1350,14 @@ void TestScrollableCollections()
             regions[1].accessibilityLabel == "Item 1" &&
             root.children[0].children[0].frame.y < root.clipFrame->y,
         "scroll-end and list-item actions must keep independent clipped regions");
+    WidgetInteractionRegions stagedRegions;
+    stagedRegions.BeginFrame();
+    bool staged = true;
+    for (auto& region : regions)
+        staged = staged && stagedRegions.Submit(std::move(region), error);
+    Check(staged,
+        "scrollEnd regions must pass the host interaction transaction validator");
+    stagedRegions.CommitFrame();
 
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(
@@ -2009,8 +2017,18 @@ void TestStyledTextAndMonthCalendar()
                     height = 40,
                     spans = {
                         { text = "Build ", foreground = 0x94A3B8 },
-                        { text = "passed", foreground = 0x4ADE80,
-                            bold = true, underline = true },
+                        { key = "result", text = "passed",
+                            foreground = 0x4ADE80,
+                            hoverForeground = 0x86EFAC,
+                            pressedForeground = 0x22C55E,
+                            bold = true, underline = true,
+                            tooltip = "Open build result",
+                            action = { id = "build.open" },
+                            events = {
+                                contextMenu = { id = "build.menu" },
+                                pointerMove = { id = "build.move" },
+                            },
+                            accessibility = { label = "Build result" } },
                         { text = " · validation pending", italic = true,
                             fontSize = 13 },
                     },
@@ -2051,6 +2069,13 @@ void TestStyledTextAndMonthCalendar()
                 "Build passed · validation pending" &&
             root.children[0].spans[1].bold &&
             root.children[0].spans[1].underline &&
+            root.children[0].spans[1].key == "result" &&
+            root.children[0].spans[1].hoverForeground == 0x86EFAC &&
+            root.children[0].spans[1].pressedForeground == 0x22C55E &&
+            root.children[0].spans[1].events.contains("click") &&
+            root.children[0].spans[1].events.contains("contextMenu") &&
+            root.children[0].spans[1].events.contains("pointerMove") &&
+            root.children[0].spans[1].accessibilityLabel == "Build result" &&
             root.children[0].textWrap == ViewTextWrap::Wrap &&
             root.children[0].overflowText == ViewTextOverflow::Clip &&
             root.children[0].verticalAlign == ViewAlignment::Center &&
@@ -2063,6 +2088,11 @@ void TestStyledTextAndMonthCalendar()
         "styled text spans and calendar fields must remain strongly typed");
     Check(ValidateAndLayoutViewTree(root, 320.0f, 272.0f, error),
         "styledText and monthCalendar must validate and lay out together");
+    ViewNode invalidSpan = root.children[0];
+    invalidSpan.spans[1].key.clear();
+    Check(!ValidateAndLayoutViewTree(invalidSpan, 320.0f, 40.0f, error) &&
+            error.find("stable key") != std::string::npos,
+        "interactive styledText spans must require a stable generated target key");
 
     std::array<ViewMonthCalendarCell, 42> cells;
     Check(BuildViewMonthCalendarCells(root.children[1], cells, error) &&

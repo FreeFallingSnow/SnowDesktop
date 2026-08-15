@@ -117,6 +117,9 @@ struct InteractionRegion
 {
     std::string key;
     InteractionShape shape;
+    // Optional exact hit fragments for wrapped inline content. `shape` remains
+    // the stable union bounds used by accessibility and diagnostics.
+    std::vector<InteractionShape> hitFragments;
     std::optional<InteractionClipRect> clip;
     std::string cursor;
     std::string tooltip;
@@ -172,6 +175,7 @@ class WidgetInteractionRegions
 {
 public:
     static constexpr std::size_t kMaximumRegions = 256;
+    static constexpr std::size_t kMaximumHitFragments = 64;
 
     void BeginFrame();
     bool Submit(InteractionRegion region, std::string& error);

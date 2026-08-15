@@ -513,6 +513,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "view.statusVisuals") &&
             snowdesktop::widget_api::SupportsFeature(
+                "view.styledText.actions") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "view.styledText.basic") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.surface.panel") &&

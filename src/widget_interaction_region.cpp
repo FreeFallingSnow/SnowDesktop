@@ -16,6 +16,19 @@ bool IsFiniteCoordinate(float value) noexcept
     return std::isfinite(value) && std::abs(value) <= kMaximumCoordinate;
 }
 
+bool IsValidShape(const InteractionShape& shape) noexcept
+{
+    if (!IsFiniteCoordinate(shape.x) || !IsFiniteCoordinate(shape.y))
+        return false;
+    if (shape.type == InteractionShapeType::Circle)
+        return IsFiniteCoordinate(shape.radius) && shape.radius > 0.0f;
+    return IsFiniteCoordinate(shape.width) &&
+        IsFiniteCoordinate(shape.height) && shape.width > 0.0f &&
+        shape.height > 0.0f &&
+        (shape.type != InteractionShapeType::RoundedRect ||
+            (IsFiniteCoordinate(shape.radius) && shape.radius >= 0.0f));
+}
+
 bool IsSupportedCursor(std::string_view cursor) noexcept
 {
     return cursor.empty() || cursor == "default" || cursor == "hand" ||
@@ -29,7 +42,8 @@ bool IsSupportedEvent(std::string_view eventName) noexcept
         eventName == "pointerMove" || eventName == "click" ||
         eventName == "doubleClick" || eventName == "wheel" ||
         eventName == "contextMenu" || eventName == "keyDown" ||
-        eventName == "keyUp" || eventName == "change";
+        eventName == "keyUp" || eventName == "change" ||
+        eventName == "scrollEnd";
 }
 
 bool IsTextEntryRole(std::string_view role) noexcept
@@ -110,29 +124,22 @@ bool WidgetInteractionRegions::Submit(
         error = "unsupported interaction cursor";
         return false;
     }
-    if (!IsFiniteCoordinate(region.shape.x) ||
-        !IsFiniteCoordinate(region.shape.y))
+    if (!IsValidShape(region.shape))
     {
-        error = "interaction region coordinates must be finite";
+        error = "interaction region shape must be finite and positive";
         return false;
     }
-    if (region.shape.type == InteractionShapeType::Circle)
+    if (region.hitFragments.size() > kMaximumHitFragments)
     {
-        if (!IsFiniteCoordinate(region.shape.radius) ||
-            region.shape.radius <= 0.0f)
-        {
-            error = "circle interaction region radius must be positive";
-            return false;
-        }
+        error = "interaction region hit fragment limit exceeded (64)";
+        return false;
     }
-    else if (!IsFiniteCoordinate(region.shape.width) ||
-        !IsFiniteCoordinate(region.shape.height) ||
-        region.shape.width <= 0.0f || region.shape.height <= 0.0f ||
-        (region.shape.type == InteractionShapeType::RoundedRect &&
-            (!IsFiniteCoordinate(region.shape.radius) ||
-                region.shape.radius < 0.0f)))
+    if (std::any_of(region.hitFragments.begin(),
+            region.hitFragments.end(), [](const InteractionShape& shape) {
+                return !IsValidShape(shape);
+            }))
     {
-        error = "rect interaction region size must be positive";
+        error = "interaction region hit fragments must be finite and positive";
         return false;
     }
     if (region.clip && (!IsFiniteCoordinate(region.clip->x) ||
@@ -637,9 +644,14 @@ const InteractionRegion* WidgetInteractionRegions::HitTest(
 {
     for (auto region = active_.rbegin(); region != active_.rend(); ++region)
     {
+        const bool contains = region->hitFragments.empty()
+            ? region->shape.Contains(x, y)
+            : std::any_of(region->hitFragments.begin(),
+                region->hitFragments.end(), [x, y](const auto& fragment) {
+                    return fragment.Contains(x, y);
+                });
         if (region->enabled &&
-            (!region->clip || region->clip->Contains(x, y)) &&
-            region->shape.Contains(x, y))
+            (!region->clip || region->clip->Contains(x, y)) && contains)
             return &*region;
     }
     return nullptr;

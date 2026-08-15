@@ -184,9 +184,11 @@
 ---@field pointerEnter? SnowInteractionAction
 ---@field pointerLeave? SnowInteractionAction
 ---@field pointerDown? SnowInteractionAction
+---@field pointerMove? SnowInteractionAction
 ---@field pointerUp? SnowInteractionAction
 ---@field click? SnowInteractionAction
 ---@field doubleClick? SnowInteractionAction
+---@field wheel? SnowInteractionAction
 ---@field contextMenu? SnowInteractionAction
 ---@field keyDown? SnowInteractionAction Focused-node key press observation; requires view.keyboard.events and cannot cancel host behavior.
 ---@field keyUp? SnowInteractionAction Paired focused-node key release observation; requires view.keyboard.events.
@@ -204,13 +206,34 @@
 ---@field enabled? boolean Defaults to true.
 
 ---@class SnowViewTextSpan
+---@field key? string Required when the span has actions, events, tooltip, accessibility metadata, or interactive colors; target becomes '<styledText-key>/<span-key>'.
 ---@field text string Non-empty bounded UTF-8 text.
 ---@field foreground? integer Per-span RGB color.
+---@field hoverForeground? integer RGB color while the exact span fragments are hovered; requires view.styledText.actions.
+---@field pressedForeground? integer RGB color while the exact span fragments are pressed; requires view.styledText.actions.
 ---@field fontSize? number Per-span font size from 1 through 512.
 ---@field bold? boolean
 ---@field italic? boolean
 ---@field underline? boolean
 ---@field strikethrough? boolean
+---@field cursor? 'default'|'hand'|'text'|'crosshair'
+---@field tooltip? string Host-owned bounded plain-text tooltip.
+---@field accessibility? SnowViewAccessibility
+---@field events? SnowViewTextSpanEvents Pointer, menu, and focused key actions for this span.
+---@field action? SnowInteractionAction Click shorthand.
+
+---@class SnowViewTextSpanEvents
+---@field pointerEnter? SnowInteractionAction
+---@field pointerLeave? SnowInteractionAction
+---@field pointerDown? SnowInteractionAction
+---@field pointerMove? SnowInteractionAction
+---@field pointerUp? SnowInteractionAction
+---@field click? SnowInteractionAction
+---@field doubleClick? SnowInteractionAction
+---@field wheel? SnowInteractionAction
+---@field contextMenu? SnowInteractionAction
+---@field keyDown? SnowInteractionAction
+---@field keyUp? SnowInteractionAction
 
 ---@class SnowViewVirtualRangeOptions
 ---@field key string Stable virtual collection key.
@@ -232,7 +255,7 @@
 ---@class SnowViewNodeOptions
 ---@field key string Globally unique stable key in the returned tree.
 ---@field text? string Used by text nodes.
----@field spans? SnowViewTextSpan[] Required by styledText; 1 to 64 style-only spans.
+---@field spans? SnowViewTextSpan[] Required by styledText; 1 to 64 bounded spans. Interactive span fields require view.styledText.actions.
 ---@field label? string Required by button, link, toggle, and checkbox nodes.
 ---@field glyph? string Required by icon and iconButton nodes.
 ---@field source? SnowImageResource Required by image nodes.
@@ -478,7 +501,7 @@
 ---@field id string The region contextMenu binding ID.
 ---@field value? SnowStateValue The region contextMenu binding payload.
 ---@field targetKey string
----@field surface 'desktop'
+---@field surface 'desktop'|'panel'
 ---@field source 'pointer'
 ---@field scope 'element'|'component'
 
@@ -804,7 +827,7 @@ function view.slotItem(options) end
 ---@return SnowViewNode
 function view.text(options) end
 
----Bounded style-only rich text. Icons and actionable spans remain outside view.styledText.basic.
+---Bounded rich text. Probe view.styledText.actions before using stable interactive spans; inline icons remain unsupported.
 ---@param options SnowViewNodeOptions Requires 1..64 spans; probes with view.styledText.basic.
 ---@return SnowViewNode
 function view.styledText(options) end

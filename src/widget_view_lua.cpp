@@ -1145,6 +1145,9 @@ bool ReadStringArrayField(lua_State* state, int table, const char* field,
     return true;
 }
 
+bool ParseAction(lua_State* state, int index, InteractionAction& action,
+    std::string& error);
+
 bool ReadTextSpansField(lua_State* state, int table,
     std::vector<ViewTextSpan>& spans, std::string& error)
 {
@@ -1171,8 +1174,10 @@ bool ReadTextSpansField(lua_State* state, int table,
         lua_rawgeti(state, -1, static_cast<lua_Integer>(index + 1));
         if (!lua_istable(state, -1) ||
             !ValidateObjectFields(state, -1,
-                { "text", "foreground", "fontSize", "bold", "italic",
-                    "underline", "strikethrough" },
+                { "key", "text", "foreground", "hoverForeground",
+                    "pressedForeground", "fontSize", "bold", "italic",
+                    "underline", "strikethrough", "cursor", "tooltip",
+                    "accessibility", "events", "action" },
                 "styledText span", error))
         {
             if (error.empty()) error = "styledText spans must be objects";
@@ -1180,9 +1185,14 @@ bool ReadTextSpansField(lua_State* state, int table,
             return false;
         }
         ViewTextSpan span;
-        if (!ReadStringField(state, -1, "text", span.text, true, error) ||
+        if (!ReadStringField(state, -1, "key", span.key, false, error) ||
+            !ReadStringField(state, -1, "text", span.text, true, error) ||
             !ReadOptionalColor(state, -1, "foreground",
                 span.foreground, error) ||
+            !ReadOptionalColor(state, -1, "hoverForeground",
+                span.hoverForeground, error) ||
+            !ReadOptionalColor(state, -1, "pressedForeground",
+                span.pressedForeground, error) ||
             !ReadOptionalNodeFloatField(state, -1, "fontSize",
                 span.fontSize, error) ||
             !ReadBoolField(state, -1, "bold", span.bold, error) ||
@@ -1190,11 +1200,87 @@ bool ReadTextSpansField(lua_State* state, int table,
             !ReadBoolField(state, -1, "underline", span.underline,
                 error) ||
             !ReadBoolField(state, -1, "strikethrough",
-                span.strikethrough, error))
+                span.strikethrough, error) ||
+            !ReadStringField(state, -1, "cursor", span.cursor,
+                false, error) ||
+            !ReadStringField(state, -1, "tooltip", span.tooltip,
+                false, error))
         {
             lua_pop(state, 2);
             return false;
         }
+
+        lua_getfield(state, -1, "accessibility");
+        if (lua_istable(state, -1))
+        {
+            if (!ValidateObjectFields(state, -1, { "label" },
+                    "styledText span accessibility", error) ||
+                !ReadStringField(state, -1, "label",
+                    span.accessibilityLabel, false, error))
+            {
+                lua_pop(state, 3);
+                return false;
+            }
+        }
+        else if (!lua_isnil(state, -1))
+        {
+            lua_pop(state, 3);
+            error = "styledText span accessibility must be a table";
+            return false;
+        }
+        lua_pop(state, 1);
+
+        lua_getfield(state, -1, "events");
+        if (lua_istable(state, -1))
+        {
+            const int events = lua_absindex(state, -1);
+            if (!ValidateObjectFields(state, events,
+                    { "pointerEnter", "pointerLeave", "pointerDown",
+                        "pointerMove", "pointerUp", "click",
+                        "doubleClick", "wheel", "contextMenu", "keyDown", "keyUp" },
+                    "styledText span events", error))
+            {
+                lua_pop(state, 3);
+                return false;
+            }
+            for (const char* eventName : { "pointerEnter", "pointerLeave",
+                "pointerDown", "pointerMove", "pointerUp", "click",
+                "doubleClick", "wheel", "contextMenu", "keyDown", "keyUp" })
+            {
+                lua_getfield(state, events, eventName);
+                if (!lua_isnil(state, -1))
+                {
+                    InteractionAction action;
+                    if (!ParseAction(state, -1, action, error))
+                    {
+                        lua_pop(state, 4);
+                        return false;
+                    }
+                    span.events.emplace(eventName, std::move(action));
+                }
+                lua_pop(state, 1);
+            }
+        }
+        else if (!lua_isnil(state, -1))
+        {
+            lua_pop(state, 3);
+            error = "styledText span events must be a table";
+            return false;
+        }
+        lua_pop(state, 1);
+
+        lua_getfield(state, -1, "action");
+        if (!lua_isnil(state, -1))
+        {
+            InteractionAction action;
+            if (!ParseAction(state, -1, action, error))
+            {
+                lua_pop(state, 3);
+                return false;
+            }
+            span.events.insert_or_assign("click", std::move(action));
+        }
+        lua_pop(state, 1);
         spans.push_back(std::move(span));
         lua_pop(state, 1);
     }
@@ -2494,7 +2580,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         const int events = lua_absindex(state, -1);
         if (!ValidateObjectFields(state, events,
                 { "pointerEnter", "pointerLeave", "pointerDown",
-                    "pointerUp", "click", "doubleClick", "contextMenu",
+                    "pointerMove", "pointerUp", "click", "doubleClick", "wheel", "contextMenu",
                     "keyDown", "keyUp", "change", "selectionChange",
                     "focus", "blur", "submit", "scrollEnd" },
                 "view events", error))
@@ -2503,7 +2589,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             return false;
         }
         for (const char* eventName : { "pointerEnter", "pointerLeave",
-            "pointerDown", "pointerUp", "click", "doubleClick",
+            "pointerDown", "pointerMove", "pointerUp", "click", "doubleClick", "wheel",
             "contextMenu", "keyDown", "keyUp", "change",
             "selectionChange", "focus", "blur", "submit", "scrollEnd" })
         {

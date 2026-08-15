@@ -200,6 +200,33 @@ void TestClippedHitTesting()
     regions.AbortFrame();
 }
 
+void TestFragmentedHitTesting()
+{
+    WidgetInteractionRegions regions;
+    std::string error;
+    auto wrapped = Rect("wrapped-link", 0, 0, 100, 40);
+    wrapped.hitFragments.push_back(Rect("fragment-a", 0, 0, 24, 16).shape);
+    wrapped.hitFragments.push_back(Rect("fragment-b", 72, 24, 28, 16).shape);
+    wrapped.events.emplace("click",
+        InteractionAction{ "wrapped.open", {} });
+    regions.BeginFrame();
+    Check(regions.Submit(std::move(wrapped), error),
+        "a bounded multi-fragment interaction target must stage");
+    regions.CommitFrame();
+    Check(regions.TargetAt(10, 8) == "wrapped-link" &&
+            regions.TargetAt(90, 32) == "wrapped-link" &&
+            regions.TargetAt(50, 20).empty(),
+        "fragmented hit testing must not activate whitespace inside union bounds");
+
+    auto invalid = Rect("invalid-fragments", 0, 0, 20, 20);
+    invalid.hitFragments.push_back(Rect("empty", 0, 0, 0, 10).shape);
+    regions.BeginFrame();
+    Check(!regions.Submit(std::move(invalid), error) &&
+            error.find("fragment") != std::string::npos,
+        "invalid hit fragments must reject the whole interaction frame");
+    regions.AbortFrame();
+}
+
 void TestControlledActionResolution()
 {
     WidgetInteractionRegions regions;
@@ -440,6 +467,7 @@ int main()
     TestPointerPairingAndActions();
     TestShapesAndValidation();
     TestClippedHitTesting();
+    TestFragmentedHitTesting();
     TestControlledActionResolution();
     TestRadioAndSliderActionResolution();
     TestCollectionSelectionResolution();

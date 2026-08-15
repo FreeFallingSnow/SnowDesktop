@@ -2468,6 +2468,7 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         }
         std::string combined;
         combined.reserve(node.text.size());
+        std::unordered_set<std::string> spanKeys;
         for (const auto& span : node.spans)
         {
             if (span.text.empty() ||
@@ -2476,6 +2477,41 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             {
                 error = "styledText spans require non-empty bounded text and font sizes";
                 return false;
+            }
+            const bool hasInteractionMetadata = !span.events.empty() ||
+                !span.cursor.empty() || !span.tooltip.empty() ||
+                !span.accessibilityLabel.empty() ||
+                span.hoverForeground.has_value() ||
+                span.pressedForeground.has_value();
+            if (hasInteractionMetadata && span.key.empty())
+            {
+                error = "interactive styledText spans require a stable key";
+                return false;
+            }
+            if (!span.key.empty())
+            {
+                const std::string regionKey = node.key + "/" + span.key;
+                if (span.key.size() > 128 || regionKey.size() > 128 ||
+                    !spanKeys.insert(span.key).second)
+                {
+                    error = "styledText span keys must be unique and bounded";
+                    return false;
+                }
+                if (!keys.insert(regionKey).second)
+                {
+                    error = "duplicate generated styledText span key: " +
+                        regionKey;
+                    return false;
+                }
+                const std::size_t extraBytes = span.key.size() +
+                    span.tooltip.size() + span.accessibilityLabel.size();
+                if (extraBytes >
+                    ViewTreeLimits::MaximumTotalTextBytes - textBytes)
+                {
+                    error = "view tree text limit exceeded";
+                    return false;
+                }
+                textBytes += extraBytes;
             }
             combined += span.text;
         }

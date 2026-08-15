@@ -1128,7 +1128,9 @@ UI Automation HelpText。校验状态只负责受控呈现与语义，不隐式�
 
 同日后续实现已增加 `view.styledText.basic` 与 `view.monthCalendar`。前者提供 1–64 个
 有界样式 span，并由单个 DirectWrite layout 完成颜色、字号、粗体、斜体、下划线、删除线、
-换行和裁剪；inline icon 与 action span 仍未包含在 basic feature 中。后者提供固定六周的
+换行和裁剪；后续 `view.styledText.actions` 又为带稳定 key 的 span 增加精确多片段命中、
+hover/pressed、click、pointer/key 事件、tooltip、键盘焦点和元素级右键菜单，inline icon
+仍未包含。后者提供固定六周的
 Gregorian 网格、可配置周起始、受控 ISO 日期选择、今日/相邻月份/事件状态样式，以及每个
 日期独立的 hover、pressed、change 建议值和元素右键目标。两者已有解析、限额、布局、命中、
 feature probe、LuaLS 和契约测试；日期单元已经进入通用键盘导航，UIA Text/Calendar Pattern

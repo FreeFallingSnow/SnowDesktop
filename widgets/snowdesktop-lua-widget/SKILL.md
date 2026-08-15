@@ -138,8 +138,13 @@ resulting selection when this controlled property is present. Probe
 `view.input.required` before declaring `required`; it supplies form semantics
 to accessibility clients but does not validate values or block component actions.
 Probe `view.styledText.basic` for 1-64 bounded text spans with per-span color,
-size, bold, italic, underline, and strikethrough. This basic feature does not
-yet include inline icons or actionable spans. Probe `view.monthCalendar` for a
+size, bold, italic, underline, and strikethrough. Probe
+`view.styledText.actions` before adding a stable span `key`, click `action`,
+pointer/key `events`, element `contextMenu`, tooltip, accessibility label, or
+hover/pressed colors. The host uses exact wrapped-line fragments for hit
+testing and targets the span as `<styledText-key>/<span-key>`; persistent state
+changes still belong in the descriptor event callback. Inline icons remain
+unsupported. Probe `view.monthCalendar` for a
 host-rendered six-week Gregorian grid: provide seven localized weekday labels
 in Sunday-first order, keep `selectedDate` controlled, and apply the proposed
 ISO date from the action event's `selection` field. Date cells have stable

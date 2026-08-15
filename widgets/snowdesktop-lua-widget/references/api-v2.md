@@ -114,7 +114,8 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.collection.orientation` 提供普通 list 横纵方向，
 `view.collection.selection` 提供受控单选/多选，`view.collection.contentStates` 提供空态/加载态，
 `view.collection.virtual` 提供固定行高虚拟集合与可见范围查询；
-`view.styledText.basic` 提供有界样式 span，`view.monthCalendar` 提供受控月历日期网格，
+`view.styledText.basic` 提供有界样式 span，`view.styledText.actions` 提供精确行内交互目标，
+`view.monthCalendar` 提供受控月历日期网格，
 `view.logicalSlots` 提供与 manifest 宿主管理槽位严格对应的 `slotSurface/slotItem`，
 `view.referenceIcon` 提供只接收实例自有 opaque ref 的宿主图标节点。
 `view.layout.constraints` 为所有节点提供 `minWidth/maxWidth/minHeight/maxHeight` 数值约束、
@@ -593,16 +594,28 @@ view.referenceIcon({
 
 `styledText` 要求 1–64 个非空 `spans`，每个 span 可独立指定
 `foreground/fontSize/bold/italic/underline/strikethrough`。宿主把全部 span 合并为一个 DirectWrite layout，统一
-执行换行、裁剪、对齐和包私有字体解析，而不是为每段创建子节点。该首批契约通过
-`view.styledText.basic` 探测；它刻意不包含 inline icon 和可点击 action span，作者不得
-把整个节点的命中区误当作行内链接语义。
+执行换行、裁剪、对齐和包私有字体解析，而不是为每段创建布局子节点。基础样式通过
+`view.styledText.basic` 探测。
+
+探测 `view.styledText.actions` 后，span 可增加稳定 `key`、`action`、受限 pointer/key
+`events`、`contextMenu`、`cursor`、`tooltip`、`accessibility.label` 以及
+`hoverForeground/pressedForeground`。生成的独立目标为
+`<styledText-key>/<span-key>`；宿主从同一 DirectWrite layout 提取最多 64 个换行片段进行精确
+命中，不会把两行之间或行尾之外的包围盒空白当作链接。click、双击、hover、pressed、键盘、
+提示和元素级右键菜单都复用普通 action surface 路由，事件的 `targetKey` 是上述生成键。
+存在任何交互字段的 span 必须提供 key；重复键、超长生成键或片段超配额会拒绝整棵新树并
+保留上一成功树。该 feature 仍不提供 inline icon 或任意 HTML/Markdown。
 
 ```lua
 view.styledText({
     key = "status",
     spans = {
         { text = "Build ", foreground = 0x94A3B8 },
-        { text = "passed", foreground = 0x4ADE80, bold = true },
+        { key = "result", text = "passed", foreground = 0x4ADE80,
+          hoverForeground = 0x86EFAC, bold = true,
+          action = { id = "build.open" },
+          events = { contextMenu = { id = "build.menu" } },
+          accessibility = { label = "Build result" } },
     },
     accessibility = { label = "Build passed" },
 })
