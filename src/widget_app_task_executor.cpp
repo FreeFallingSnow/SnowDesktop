@@ -103,9 +103,21 @@ bool WidgetAppTaskExecutor::StartSearch(std::uint64_t id,
 bool WidgetAppTaskExecutor::Cancel(std::uint64_t id)
 {
     std::scoped_lock lock(mutex_);
-    if (!active_.contains(id)) return false;
-    canceled_.insert(id);
-    condition_.notify_all();
+    if (active_.contains(id))
+    {
+        canceled_.insert(id);
+        condition_.notify_all();
+        return true;
+    }
+    const auto completion = std::find_if(
+        completions_.begin(), completions_.end(),
+        [id](const auto& candidate) { return candidate.id == id; });
+    if (completion == completions_.end()) return false;
+    completion->ok = false;
+    completion->error = "canceled";
+    completion->items.clear();
+    completion->nextOffset = 0;
+    completion->hasMore = false;
     return true;
 }
 
@@ -257,9 +269,21 @@ bool WidgetExternalSearchTaskExecutor::StartSearch(
 bool WidgetExternalSearchTaskExecutor::Cancel(std::uint64_t id)
 {
     std::scoped_lock lock(mutex_);
-    if (!active_.contains(id)) return false;
-    canceled_.insert(id);
-    condition_.notify_all();
+    if (active_.contains(id))
+    {
+        canceled_.insert(id);
+        condition_.notify_all();
+        return true;
+    }
+    const auto completion = std::find_if(
+        completions_.begin(), completions_.end(),
+        [id](const auto& candidate) { return candidate.id == id; });
+    if (completion == completions_.end()) return false;
+    completion->ok = false;
+    completion->error = "canceled";
+    completion->items.clear();
+    completion->nextOffset = 0;
+    completion->hasMore = false;
     return true;
 }
 

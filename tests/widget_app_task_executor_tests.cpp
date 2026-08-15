@@ -114,6 +114,22 @@ void TestPinyinAndCancellation()
             canceled[0].error == "canceled" &&
             canceled[0].items.empty(),
         "canceled searches must not publish catalog data");
+
+    Check(executor.StartSearch(23, "NONE", "NONE", 0, 10, 9, {}),
+        "fast empty search must start");
+    const auto deadline = std::chrono::steady_clock::now() +
+        std::chrono::seconds(1);
+    while (executor.ActiveCount() != 0 &&
+        std::chrono::steady_clock::now() < deadline)
+        std::this_thread::yield();
+    Check(executor.ActiveCount() == 0 && executor.Cancel(23),
+        "completed but undelivered search must remain cancelable");
+    auto canceledCompletion = WaitFor(executor);
+    Check(canceledCompletion.size() == 1 &&
+            !canceledCompletion[0].ok &&
+            canceledCompletion[0].error == "canceled" &&
+            canceledCompletion[0].items.empty(),
+        "late cancellation must suppress undelivered search data");
 }
 
 void TestInputLimits()
