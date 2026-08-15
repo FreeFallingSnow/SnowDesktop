@@ -152,6 +152,10 @@ menu.
   Match the returned ID in `event.kind == "task.complete"`. Never loop media
   actions from the completion event; it intentionally has no trusted-gesture
   activation.
+- Read the current session cover through `media.artwork`. Pass its temporary
+  `image` handle directly to `draw.image` or `view.image.source`; never expect
+  encoded bytes or a cache path, never persist the handle after unsubscribing,
+  and treat `notPresent` as a normal no-cover state.
 - Change only the current default audio endpoint with
   `audio.output.setVolume` or `audio.output.setMute` from a direct trusted
   gesture. Declare `audio.output.control`, treat `rateLimited` as a normal

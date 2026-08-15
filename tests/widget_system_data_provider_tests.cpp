@@ -249,20 +249,24 @@ void TestTopicLifecycleAndSampling()
     Check(provider.StartTopic("media.sessions", 20ms) &&
             provider.StartTopic("media.current", 20ms) &&
             provider.StartTopic("media.timeline", 20ms) &&
-            provider.ActiveTopicCount() == 5,
-        "media list, current session, and timeline must start independently");
+            provider.StartTopic("media.artwork", 20ms) &&
+            provider.ActiveTopicCount() == 6,
+        "media list, current session, timeline, and artwork must start independently");
     Check(WaitFor([&] {
             const auto sessions = provider.MediaSessions();
             const auto current = provider.MediaCurrent();
             const auto timeline = provider.MediaTimeline();
+            const auto artwork = provider.MediaArtwork();
             return sessions && sessions->revision > 0 &&
                 current && current->revision > 0 &&
-                timeline && timeline->revision > 0;
+                timeline && timeline->revision > 0 &&
+                artwork && artwork->revision > 0;
         }),
         "media topics must publish coalesced revisions");
     const auto mediaSessions = provider.MediaSessions();
     const auto mediaCurrent = provider.MediaCurrent();
     const auto mediaTimeline = provider.MediaTimeline();
+    const auto mediaArtwork = provider.MediaArtwork();
     Check(mediaSessions && mediaSessions->timestampMs > 0 &&
             (mediaSessions->available || !mediaSessions->error.empty()) &&
             mediaSessions->sessions.size() <= 32,
@@ -289,11 +293,25 @@ void TestTopicLifecycleAndSampling()
     Check(mediaTimeline && mediaTimeline->timestampMs > 0 &&
             (mediaTimeline->available || !mediaTimeline->error.empty()),
         "media timeline must expose bounded values or notPresent");
+    Check(mediaArtwork && mediaArtwork->timestampMs > 0 &&
+            (mediaArtwork->available || !mediaArtwork->error.empty()) &&
+            (!mediaArtwork->available ||
+                (mediaArtwork->resourceToken.starts_with("@media:") &&
+                    mediaArtwork->pixels &&
+                    mediaArtwork->pixels->width <= 512 &&
+                    mediaArtwork->pixels->height <= 512 &&
+                    mediaArtwork->pixels->bgraPremultiplied.size() ==
+                        static_cast<std::size_t>(
+                            mediaArtwork->pixels->stride) *
+                            mediaArtwork->pixels->height)),
+        "media artwork must expose bounded decoded pixels or a stable error");
     Check(provider.StopTopic("media.sessions") &&
-            provider.ActiveTopicCount() == 4 &&
+            provider.ActiveTopicCount() == 5 &&
             provider.StopTopic("media.current") &&
-            provider.ActiveTopicCount() == 3 &&
+            provider.ActiveTopicCount() == 4 &&
             provider.StopTopic("media.timeline") &&
+            provider.ActiveTopicCount() == 3 &&
+            provider.StopTopic("media.artwork") &&
             provider.ActiveTopicCount() == 2,
         "media topics must stop independently from other sources");
 

@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -243,6 +244,26 @@ struct WidgetMediaSessionDataSnapshot
     WidgetMediaTimelineDataSnapshot timeline;
 };
 
+struct WidgetMediaArtworkPixels
+{
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    std::uint32_t stride = 0;
+    std::vector<std::uint8_t> bgraPremultiplied;
+};
+
+struct WidgetMediaArtworkDataSnapshot
+{
+    bool available = false;
+    std::string sessionId;
+    std::string resourceToken;
+    std::shared_ptr<const WidgetMediaArtworkPixels> pixels;
+    std::uint64_t mediaIdentity = 0;
+    std::int64_t timestampMs = 0;
+    std::uint64_t revision = 0;
+    std::string error;
+};
+
 struct WidgetMediaSessionsDataSnapshot
 {
     bool available = false;
@@ -251,6 +272,7 @@ struct WidgetMediaSessionsDataSnapshot
     std::int64_t timestampMs = 0;
     std::uint64_t revision = 0;
     std::string error;
+    WidgetMediaArtworkDataSnapshot artwork;
 };
 
 struct WidgetMediaCurrentDataSnapshot
@@ -304,6 +326,7 @@ public:
     std::optional<WidgetMediaSessionsDataSnapshot> MediaSessions() const;
     std::optional<WidgetMediaCurrentDataSnapshot> MediaCurrent() const;
     std::optional<WidgetMediaTimelineDataSnapshot> MediaTimeline() const;
+    std::optional<WidgetMediaArtworkDataSnapshot> MediaArtwork() const;
     std::vector<std::string> DrainChangedTopics();
 
     bool Running() const noexcept;
@@ -331,7 +354,8 @@ private:
     WidgetDisplayTopologyDataSnapshot SampleDisplayTopology();
     WidgetAudioOutputDefaultDataSnapshot SampleAudioOutputDefault();
     WidgetAudioOutputVolumeDataSnapshot SampleAudioOutputVolume();
-    WidgetMediaSessionsDataSnapshot SampleMediaSessions();
+    WidgetMediaSessionsDataSnapshot SampleMediaSessions(
+        bool includeArtwork = false);
     void PublishCpu(WidgetCpuDataSnapshot snapshot);
     void PublishMemory(WidgetMemoryDataSnapshot snapshot);
     void PublishPower(WidgetPowerDataSnapshot snapshot);
@@ -349,6 +373,7 @@ private:
     void PublishMediaSessions(WidgetMediaSessionsDataSnapshot snapshot);
     void PublishMediaCurrent(const WidgetMediaSessionsDataSnapshot& snapshot);
     void PublishMediaTimeline(const WidgetMediaSessionsDataSnapshot& snapshot);
+    void PublishMediaArtwork(const WidgetMediaSessionsDataSnapshot& snapshot);
     bool InitializeGpuQuery();
     void CloseGpuQuery();
     bool InitializeStorageIoQuery();
@@ -373,6 +398,7 @@ private:
     std::optional<WidgetMediaSessionsDataSnapshot> mediaSessions_;
     std::optional<WidgetMediaCurrentDataSnapshot> mediaCurrent_;
     std::optional<WidgetMediaTimelineDataSnapshot> mediaTimeline_;
+    std::optional<WidgetMediaArtworkDataSnapshot> mediaArtwork_;
     std::uint64_t configurationGeneration_ = 0;
     std::jthread worker_;
     std::atomic<bool> resetCpuBaseline_{ true };

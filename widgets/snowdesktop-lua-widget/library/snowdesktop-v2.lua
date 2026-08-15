@@ -761,6 +761,12 @@ function schedule.cancel(id) end
 ---@class SnowMediaTimelineDataValue
 ---@field timeline SnowMediaTimelineValue
 
+---@class SnowMediaArtworkDataValue
+---@field sessionId string Opaque current media session identifier.
+---@field image SnowImageResource Temporary host-decoded image resource handle.
+---@field width integer Decoded pixel width, at most 512.
+---@field height integer Decoded pixel height, at most 512.
+
 ---@class SnowDesktopItemDataValue
 ---@field id string Stable host reference; never an absolute path.
 ---@field title string
@@ -850,6 +856,7 @@ data = {}
 ---@overload fun(topic: 'media.sessions', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowMediaSessionsDataValue>
 ---@overload fun(topic: 'media.current', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowMediaCurrentDataValue>
 ---@overload fun(topic: 'media.timeline', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowMediaTimelineDataValue>
+---@overload fun(topic: 'media.artwork', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowMediaArtworkDataValue>
 ---@overload fun(topic: 'desktop.items', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowDesktopItemsDataValue>
 ---@overload fun(topic: 'desktop.selection', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowDesktopSelectionDataValue>
 ---@overload fun(topic: 'desktop.changes', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowDesktopChangesDataValue>

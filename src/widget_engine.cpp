@@ -669,6 +669,12 @@ struct PrivateFontResource
     std::wstring familyName;
 };
 
+struct RuntimeImageResource
+{
+    std::shared_ptr<const snowdesktop::widget_runtime::
+        WidgetMediaArtworkPixels> pixels;
+};
+
 struct D2DState
 {
     ID2D1DeviceContext* ctx = nullptr;
@@ -688,6 +694,9 @@ struct D2DState
     int widgetClipDepth = 0;
     ComPtr<ID2D1Device> bitmapDevice;
     std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>> imageCache;
+    std::unordered_map<std::string, RuntimeImageResource> runtimeImages;
+    std::unordered_map<std::string, ComPtr<ID2D1Bitmap1>>
+        runtimeImageBitmaps;
     std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>> shellIconCache;
     std::unordered_set<std::wstring> shellIconFailures;
     std::unique_ptr<AsyncShellIconLoader> shellIconLoader;
@@ -698,6 +707,29 @@ struct D2DState
     std::unordered_map<std::wstring, ComPtr<IDWriteTextFormat>>
         privateTextFormatCache;
 };
+
+static void RegisterRuntimeImageSource(D2DState* state,
+    const snowdesktop::widget_runtime::WidgetMediaArtworkDataSnapshot& artwork)
+{
+    if (!state || !artwork.available || !artwork.pixels ||
+        !artwork.resourceToken.starts_with("@media:") ||
+        artwork.resourceToken.size() > 64 ||
+        artwork.pixels->width == 0 || artwork.pixels->height == 0 ||
+        artwork.pixels->width > 512 || artwork.pixels->height > 512 ||
+        artwork.pixels->stride != artwork.pixels->width * 4 ||
+        artwork.pixels->bgraPremultiplied.size() !=
+            static_cast<std::size_t>(artwork.pixels->stride) *
+                artwork.pixels->height)
+        return;
+    if (!state->runtimeImages.contains(artwork.resourceToken) &&
+        state->runtimeImages.size() >= 64)
+    {
+        state->runtimeImages.clear();
+        state->runtimeImageBitmaps.clear();
+    }
+    state->runtimeImages.insert_or_assign(
+        artwork.resourceToken, RuntimeImageResource{ artwork.pixels });
+}
 
 static PrivateFontResource* LoadPrivateFont(
     D2DState* state, const std::wstring& path)
@@ -3076,6 +3108,23 @@ static void PushDataSnapshotEnvelope(lua_State* state,
     {
         PushMediaTimelineDataValue(state, snapshot->mediaTimeline);
         lua_setfield(state, -2, "timeline");
+    }
+    else if (snapshot->topic == "media.artwork")
+    {
+        RegisterRuntimeImageSource(GetD2D(state), snapshot->mediaArtwork);
+        lua_pushlstring(state, snapshot->mediaArtwork.sessionId.data(),
+            snapshot->mediaArtwork.sessionId.size());
+        lua_setfield(state, -2, "sessionId");
+        PushResourceHandle(state, LuaResourceType::Image,
+            snapshot->mediaArtwork.resourceToken);
+        lua_setfield(state, -2, "image");
+        if (snapshot->mediaArtwork.pixels)
+        {
+            lua_pushinteger(state, snapshot->mediaArtwork.pixels->width);
+            lua_setfield(state, -2, "width");
+            lua_pushinteger(state, snapshot->mediaArtwork.pixels->height);
+            lua_setfield(state, -2, "height");
+        }
     }
     else if (snapshot->topic == "filesystem.watch")
     {
@@ -7087,6 +7136,7 @@ static void EnsureBitmapCachesForCurrentDevice(D2DState* state)
     if (state->bitmapDevice.Get() == device.Get()) return;
     state->bitmapDevice = std::move(device);
     state->imageCache.clear();
+    state->runtimeImageBitmaps.clear();
     state->shellIconCache.clear();
     state->shellIconFailures.clear();
 }
@@ -7125,6 +7175,35 @@ static ID2D1Bitmap1* LoadImageBitmap(D2DState* s, const std::wstring& path)
     return result;
 }
 
+static ID2D1Bitmap1* LoadRuntimeImageBitmap(
+    D2DState* state, std::string_view token)
+{
+    if (!state || !state->ctx || !token.starts_with("@media:"))
+        return nullptr;
+    EnsureBitmapCachesForCurrentDevice(state);
+    const std::string key(token);
+    if (const auto cached = state->runtimeImageBitmaps.find(key);
+        cached != state->runtimeImageBitmaps.end())
+        return cached->second.Get();
+    const auto source = state->runtimeImages.find(key);
+    if (source == state->runtimeImages.end() || !source->second.pixels)
+        return nullptr;
+    const auto& pixels = *source->second.pixels;
+    D2D1_BITMAP_PROPERTIES1 properties = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_NONE,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
+            D2D1_ALPHA_MODE_PREMULTIPLIED), 96.0f, 96.0f);
+    ComPtr<ID2D1Bitmap1> bitmap;
+    if (FAILED(state->ctx->CreateBitmap(
+            D2D1::SizeU(pixels.width, pixels.height),
+            pixels.bgraPremultiplied.data(), pixels.stride,
+            &properties, &bitmap)) || !bitmap)
+        return nullptr;
+    ID2D1Bitmap1* result = bitmap.Get();
+    state->runtimeImageBitmaps.emplace(key, std::move(bitmap));
+    return result;
+}
+
 static int lua_DrawImage(lua_State* L)
 {
     float x = static_cast<float>(luaL_checknumber(L, 2));
@@ -7136,11 +7215,17 @@ static int lua_DrawImage(lua_State* L)
     if (!s || !s->engine)
         return 0;
     std::optional<std::wstring> fullPath;
-    if (TestResourceHandle(L, 1))
+    ID2D1Bitmap1* bmp = nullptr;
+    if (const auto* handle = TestResourceHandle(L, 1))
     {
-        fullPath = ResolveResourceHandlePath(
-            L, 1, LuaResourceType::Image);
-        if (!fullPath)
+        if (handle->type != LuaResourceType::Image)
+            return luaL_error(L, "draw.image: invalid image resource handle");
+        if (std::string_view(handle->name).starts_with("@media:"))
+            bmp = LoadRuntimeImageBitmap(s, handle->name);
+        else
+            fullPath = ResolveResourceHandlePath(
+                L, 1, LuaResourceType::Image);
+        if (!bmp && !fullPath)
             return luaL_error(L, "draw.image: invalid image resource handle");
     }
     else
@@ -7159,8 +7244,7 @@ static int lua_DrawImage(lua_State* L)
         fullPath = s->engine->RuntimeResolvePackageAsset(
             BoundWidgetId(L), path);
     }
-    if (!fullPath) return 0;
-    ID2D1Bitmap1* bmp = LoadImageBitmap(s, *fullPath);
+    if (!bmp && fullPath) bmp = LoadImageBitmap(s, *fullPath);
     if (!s || !s->ctx || !bmp) return 0;
     D2D1_RECT_F dst = D2D1::RectF(x + s->widgetRect.left, y + s->widgetRect.top,
         x + s->widgetRect.left + w, y + s->widgetRect.top + h);
@@ -7245,17 +7329,24 @@ static int lua_ResourceStatus(lua_State* L)
         return luaL_error(L, "resource.status: invalid resource handle");
     const char* type = handle->type == LuaResourceType::Image
         ? "image" : "font";
-    const auto path = ResolveResourceHandlePath(L, 1, handle->type);
     auto* state = GetD2D(L);
+    const bool runtimeImage = handle->type == LuaResourceType::Image &&
+        std::string_view(handle->name).starts_with("@media:");
+    const auto path = runtimeImage
+        ? std::optional<std::wstring>{}
+        : ResolveResourceHandlePath(L, 1, handle->type);
     bool ready = false;
-    if (path && state)
+    if (runtimeImage && state)
+        ready = state->runtimeImages.contains(handle->name);
+    else if (path && state)
     {
         ready = handle->type == LuaResourceType::Image
             ? state->imageCache.contains(*path)
             : state->privateFonts.contains(*path);
     }
     lua_createtable(L, 0, 3);
-    lua_pushstring(L, ready ? "ready" : (path ? "pending" : "error"));
+    lua_pushstring(L, ready ? "ready" :
+        ((path || runtimeImage) ? "pending" : "error"));
     lua_setfield(L, -2, "state");
     lua_pushstring(L, type);
     lua_setfield(L, -2, "type");
@@ -7557,6 +7648,10 @@ void WidgetEngine::InitializeWidgetDataBroker()
         500ms, 2000ms, 2000ms, false, false }, error);
     error.clear();
     (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
+        "media.artwork", kMediaReadPermission,
+        500ms, 2000ms, 0ms, false, false }, error);
+    error.clear();
+    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
         "desktop.items", kDesktopReadPermission,
         100ms, 1000ms, 0ms, false, true }, error);
     error.clear();
@@ -7660,7 +7755,14 @@ void WidgetEngine::ApplyWidgetDataBrokerActions()
                     widgetAudioAnalysisProvider_->Stop();
             }
             else if (widgetSystemDataProvider_)
+            {
                 (void)widgetSystemDataProvider_->StopTopic(action.topic);
+                if (action.topic == "media.artwork" && d2dState_)
+                {
+                    d2dState_->runtimeImages.clear();
+                    d2dState_->runtimeImageBitmaps.clear();
+                }
+            }
             break;
         }
     }
@@ -11700,10 +11802,16 @@ static void DrawWidgetViewNode(D2DState* state,
     }
     else if (node.type == ViewNodeType::Image && state->engine)
     {
-        const auto path = state->engine->RuntimeResolvePackageResource(
-            state->currentWidgetId, node.imageResourceName, "image");
-        ID2D1Bitmap1* bitmap = path
-            ? LoadImageBitmap(state, *path) : nullptr;
+        ID2D1Bitmap1* bitmap = nullptr;
+        if (node.imageResourceName.starts_with("@media:"))
+            bitmap = LoadRuntimeImageBitmap(
+                state, node.imageResourceName);
+        else
+        {
+            const auto path = state->engine->RuntimeResolvePackageResource(
+                state->currentWidgetId, node.imageResourceName, "image");
+            if (path) bitmap = LoadImageBitmap(state, *path);
+        }
         if (bitmap)
         {
             const float inset = std::min(
@@ -13647,6 +13755,36 @@ WidgetEngine::RuntimeGetDataSnapshot(
                 result.mediaTimeline = session.timeline;
             }
         }
+        else if (result.topic == "media.artwork")
+        {
+            auto pixels = std::make_shared<snowdesktop::widget_runtime::
+                WidgetMediaArtworkPixels>();
+            pixels->width = 64;
+            pixels->height = 64;
+            pixels->stride = pixels->width * 4;
+            pixels->bgraPremultiplied.resize(
+                pixels->stride * pixels->height);
+            for (std::uint32_t y = 0; y < pixels->height; ++y)
+            {
+                for (std::uint32_t x = 0; x < pixels->width; ++x)
+                {
+                    const std::size_t offset =
+                        static_cast<std::size_t>(y * pixels->stride + x * 4);
+                    pixels->bgraPremultiplied[offset] =
+                        static_cast<std::uint8_t>(96 + x * 2);
+                    pixels->bgraPremultiplied[offset + 1] =
+                        static_cast<std::uint8_t>(64 + y * 2);
+                    pixels->bgraPremultiplied[offset + 2] = 224;
+                    pixels->bgraPremultiplied[offset + 3] = 255;
+                }
+            }
+            result.mediaArtwork.available = true;
+            result.mediaArtwork.sessionId = "media-session-preview";
+            result.mediaArtwork.resourceToken = "@media:preview";
+            result.mediaArtwork.pixels = std::move(pixels);
+            result.mediaArtwork.timestampMs = timestampNow;
+            result.mediaArtwork.revision = 1;
+        }
         else if (result.topic == "desktop.items" ||
             result.topic == "desktop.selection")
         {
@@ -13962,6 +14100,17 @@ WidgetEngine::RuntimeGetDataSnapshot(
         if (snapshot)
         {
             result.mediaTimeline = *snapshot;
+            result.available = snapshot->available;
+            result.error = snapshot->error;
+            setFreshness(snapshot->timestampMs);
+        }
+    }
+    else if (result.topic == "media.artwork")
+    {
+        const auto snapshot = widgetSystemDataProvider_->MediaArtwork();
+        if (snapshot)
+        {
+            result.mediaArtwork = *snapshot;
             result.available = snapshot->available;
             result.error = snapshot->error;
             setFreshness(snapshot->timestampMs);

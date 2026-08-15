@@ -595,7 +595,7 @@ local snapshot = cpu:value()
 `data.system.storage.io`、`data.system.display.topology` 和
 `data.system.display.current`，以及 `data.audio.output.default`、
 `data.audio.output.volume`、`data.audio.output.analysis`，和
-`data.media.sessions/current/timeline`、
+`data.media.sessions/current/timeline/artwork`、
 `data.desktop.items/selection/changes`、
 `data.calendar.events/selectedDate`、`data.app.indexStatus` 和
 `data.filesystem.watch` feature。
@@ -634,11 +634,14 @@ endpoint，分别返回不透明 endpoint ID、友好名称/状态和有界主�
 不使用 idle grace。多订阅由 broker 合并为一条捕获管线，预览使用确定性模拟数据；
 点数/特征/updateHz 的逐订阅配置与运行状态指示仍待后续收口。
 
-`media.sessions`、`media.current` 和 `media.timeline` 已接入同一按需 WinRT GSMTC
+`media.sessions`、`media.current`、`media.timeline` 和 `media.artwork` 已接入同一按需 WinRT GSMTC
 采样路径：最多返回 32 个会话、不透明 session ID、受限元数据、播放状态、时间线和
-逐动作 `can*`，同一轮到期的三个 topic 只查询一次 Windows 会话管理器。列表为空是
+逐动作 `can*`，同一轮到期的四个 topic 只查询一次 Windows 会话管理器。列表为空是
 正常可用状态，current/timeline 使用稳定 `notPresent`；预览不读取开发机媒体状态。
-封面 resource handle 和通过 task/action broker 执行的媒体控制仍属于后续工作。
+artwork 在 provider 工作线程中读取最多 4 MiB 编码内容，将边长不超过 16384 的源图
+限尺寸解码为最长边 512 的 PBGRA，并以临时 image resource handle 交给即时绘制或声明式
+视图；同一媒体身份复用解码结果，最后订阅释放时清除像素和 GPU bitmap。媒体控制已通过
+task/action broker 提供，并在执行时复核权限、会话能力和可信手势。
 
 `desktop.items`、`desktop.selection` 和 `desktop.changes` 已作为无轮询的宿主事件
 数据源接入 broker；列表分别限制为 2048/512 项，只返回稳定宿主引用和展示元数据，
@@ -815,7 +818,8 @@ SDK 的其他调用串行。两类搜索都只返回实例作用域的不透明�
 - 只有单一聚合 CPU/GPU/网络快照，缺少多 GPU/多卷/多显示器结构、网络连接状态与流量拆分，以及统一的单位、时间戳和 warming/stale 语义。
 - clipboard 文本、文件选择句柄、stat/list/read/write 和非递归文件 watch 已有首批
   能力；剪贴板图片/文件引用、二进制/流式文件访问与递归目录能力仍未完成。
-- 媒体只支持四个调用，缺少会话列表、时间线、封面句柄、seek/stop，以及按源能力报告可用动作。
+- 媒体会话列表、当前会话、时间线、限尺寸封面句柄、seek/stop 和逐源动作能力已形成首批
+  公共面；后续缺口是 GSMTC 事件驱动更新以及更多播放器的兼容性矩阵和实机验证。
 - 音频分析已经设计，但普通 endpoint 读取、音量/静音订阅和受控修改尚未列入公共面。
 - 当前 `sys.notify` 是 tray balloon 级接口，缺少通知 ID、更新、撤销、动作回传、调度、频控和失败状态。
 - 缺少 OS/架构 feature probe，以及更完整的时区/区域格式化等常见组件能力。

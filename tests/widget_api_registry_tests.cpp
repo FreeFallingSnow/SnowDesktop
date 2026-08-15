@@ -278,6 +278,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "data.filesystem.watch") &&
             snowdesktop::widget_api::SupportsFeature(
+                "data.media.artwork") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "calendar.dateMath") &&
             snowdesktop::widget_api::SupportsFeature(
                 "calendar.selection") &&

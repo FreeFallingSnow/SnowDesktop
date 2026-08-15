@@ -20,9 +20,13 @@
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Media.Control.h>
 #include <winrt/Windows.Networking.Connectivity.h>
+#include <winrt/Windows.Storage.Streams.h>
+#include <wincodec.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cwctype>
+#include <limits>
 #include <unordered_map>
 #include <utility>
 
@@ -45,7 +49,11 @@ constexpr std::string_view AudioOutputVolumeTopic = "audio.output.volume";
 constexpr std::string_view MediaSessionsTopic = "media.sessions";
 constexpr std::string_view MediaCurrentTopic = "media.current";
 constexpr std::string_view MediaTimelineTopic = "media.timeline";
+constexpr std::string_view MediaArtworkTopic = "media.artwork";
 constexpr std::size_t MaximumMediaStringBytes = 4096;
+constexpr std::uint64_t MaximumArtworkEncodedBytes = 4ull * 1024 * 1024;
+constexpr UINT MaximumArtworkSourceDimension = 16384;
+constexpr UINT MaximumArtworkOutputDimension = 512;
 
 std::uint64_t FileTimeValue(const FILETIME& value)
 {
@@ -268,6 +276,185 @@ std::string BoundedMediaString(std::wstring_view value)
     return result;
 }
 
+std::string ArtworkResourceToken(const WidgetMediaArtworkPixels& pixels)
+{
+    constexpr std::uint64_t offset = 14695981039346656037ull;
+    constexpr std::uint64_t prime = 1099511628211ull;
+    std::uint64_t hash = offset;
+    const auto mix = [&](std::uint64_t value) {
+        for (int shift = 0; shift < 64; shift += 8)
+        {
+            hash ^= (value >> shift) & 0xffu;
+            hash *= prime;
+        }
+    };
+    mix(pixels.width);
+    mix(pixels.height);
+    for (const std::uint8_t value : pixels.bgraPremultiplied)
+    {
+        hash ^= value;
+        hash *= prime;
+    }
+    return "@media:" + std::to_string(hash);
+}
+
+std::uint64_t MediaArtworkIdentity(std::string_view sessionId,
+    std::string_view title, std::string_view artist, std::string_view album)
+{
+    constexpr std::uint64_t offset = 1469598103934665603ull;
+    constexpr std::uint64_t prime = 1099511628211ull;
+    std::uint64_t hash = offset;
+    const auto mix = [&](std::string_view value) {
+        for (const unsigned char character : value)
+        {
+            hash ^= character;
+            hash *= prime;
+        }
+        hash ^= 0xffu;
+        hash *= prime;
+    };
+    mix(sessionId);
+    mix(title);
+    mix(artist);
+    mix(album);
+    return hash;
+}
+
+WidgetMediaArtworkDataSnapshot DecodeMediaArtwork(
+    const winrt::Windows::Storage::Streams::IRandomAccessStreamReference&
+        reference,
+    std::string sessionId, std::int64_t timestampMs)
+{
+    using namespace winrt::Windows::Storage::Streams;
+    WidgetMediaArtworkDataSnapshot snapshot;
+    snapshot.sessionId = std::move(sessionId);
+    snapshot.timestampMs = timestampMs;
+    if (!reference)
+    {
+        snapshot.error = "notPresent";
+        return snapshot;
+    }
+    try
+    {
+        const auto stream = reference.OpenReadAsync().get();
+        if (!stream)
+        {
+            snapshot.error = "artworkReadFailed";
+            return snapshot;
+        }
+        const std::uint64_t encodedSize = stream.Size();
+        if (encodedSize == 0)
+        {
+            snapshot.error = "notPresent";
+            return snapshot;
+        }
+        if (encodedSize > MaximumArtworkEncodedBytes ||
+            encodedSize > (std::numeric_limits<std::uint32_t>::max)())
+        {
+            snapshot.error = "artworkTooLarge";
+            return snapshot;
+        }
+        DataReader reader(stream.GetInputStreamAt(0));
+        const std::uint32_t expected =
+            static_cast<std::uint32_t>(encodedSize);
+        if (reader.LoadAsync(expected).get() != expected)
+        {
+            snapshot.error = "artworkReadFailed";
+            return snapshot;
+        }
+        std::vector<std::uint8_t> encoded(expected);
+        reader.ReadBytes(encoded);
+        reader.Close();
+
+        Microsoft::WRL::ComPtr<IWICImagingFactory> factory;
+        if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+                CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) || !factory)
+        {
+            snapshot.error = "artworkDecodeFailed";
+            return snapshot;
+        }
+        Microsoft::WRL::ComPtr<IWICStream> wicStream;
+        Microsoft::WRL::ComPtr<IWICBitmapDecoder> decoder;
+        Microsoft::WRL::ComPtr<IWICBitmapFrameDecode> frame;
+        if (FAILED(factory->CreateStream(&wicStream)) || !wicStream ||
+            FAILED(wicStream->InitializeFromMemory(encoded.data(), expected)) ||
+            FAILED(factory->CreateDecoderFromStream(wicStream.Get(), nullptr,
+                WICDecodeMetadataCacheOnLoad, &decoder)) || !decoder ||
+            FAILED(decoder->GetFrame(0, &frame)) || !frame)
+        {
+            snapshot.error = "artworkDecodeFailed";
+            return snapshot;
+        }
+        UINT sourceWidth = 0;
+        UINT sourceHeight = 0;
+        if (FAILED(frame->GetSize(&sourceWidth, &sourceHeight)) ||
+            sourceWidth == 0 || sourceHeight == 0 ||
+            sourceWidth > MaximumArtworkSourceDimension ||
+            sourceHeight > MaximumArtworkSourceDimension)
+        {
+            snapshot.error = "artworkDimensionsInvalid";
+            return snapshot;
+        }
+
+        const double scale = std::min(1.0,
+            static_cast<double>(MaximumArtworkOutputDimension) /
+                static_cast<double>(std::max(sourceWidth, sourceHeight)));
+        const UINT width = std::max<UINT>(1,
+            static_cast<UINT>(std::lround(sourceWidth * scale)));
+        const UINT height = std::max<UINT>(1,
+            static_cast<UINT>(std::lround(sourceHeight * scale)));
+        Microsoft::WRL::ComPtr<IWICBitmapSource> source;
+        if (width != sourceWidth || height != sourceHeight)
+        {
+            Microsoft::WRL::ComPtr<IWICBitmapScaler> scaler;
+            if (FAILED(factory->CreateBitmapScaler(&scaler)) || !scaler ||
+                FAILED(scaler->Initialize(frame.Get(), width, height,
+                    WICBitmapInterpolationModeFant)) ||
+                FAILED(scaler.As(&source)))
+            {
+                snapshot.error = "artworkDecodeFailed";
+                return snapshot;
+            }
+        }
+        else if (FAILED(frame.As(&source)))
+        {
+            snapshot.error = "artworkDecodeFailed";
+            return snapshot;
+        }
+
+        Microsoft::WRL::ComPtr<IWICFormatConverter> converter;
+        if (FAILED(factory->CreateFormatConverter(&converter)) || !converter ||
+            FAILED(converter->Initialize(source.Get(),
+                GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone,
+                nullptr, 0.0, WICBitmapPaletteTypeMedianCut)))
+        {
+            snapshot.error = "artworkDecodeFailed";
+            return snapshot;
+        }
+        auto pixels = std::make_shared<WidgetMediaArtworkPixels>();
+        pixels->width = width;
+        pixels->height = height;
+        pixels->stride = width * 4;
+        pixels->bgraPremultiplied.resize(
+            static_cast<std::size_t>(pixels->stride) * height);
+        if (FAILED(converter->CopyPixels(nullptr, pixels->stride,
+                static_cast<UINT>(pixels->bgraPremultiplied.size()),
+                pixels->bgraPremultiplied.data())))
+        {
+            snapshot.error = "artworkDecodeFailed";
+            return snapshot;
+        }
+        snapshot.resourceToken = ArtworkResourceToken(*pixels);
+        snapshot.pixels = std::move(pixels);
+        snapshot.available = true;
+    }
+    catch (...)
+    {
+        snapshot.error = "artworkReadFailed";
+    }
+    return snapshot;
+}
+
 std::string MediaPlaybackStatus(
     winrt::Windows::Media::Control::
         GlobalSystemMediaTransportControlsSessionPlaybackStatus status)
@@ -464,7 +651,7 @@ bool WidgetSystemDataProvider::SupportsTopic(
         topic == DisplayTopologyTopic || topic == DisplayCurrentTopic ||
         topic == AudioOutputDefaultTopic || topic == AudioOutputVolumeTopic ||
         topic == MediaSessionsTopic || topic == MediaCurrentTopic ||
-        topic == MediaTimelineTopic;
+        topic == MediaTimelineTopic || topic == MediaArtworkTopic;
 }
 
 bool WidgetSystemDataProvider::StartTopic(
@@ -524,6 +711,7 @@ bool WidgetSystemDataProvider::StopTopic(std::string_view topic)
         std::scoped_lock lock(mutex_);
         removed = schedules_.erase(std::string(topic)) > 0;
         if (!removed) return false;
+        if (topic == MediaArtworkTopic) mediaArtwork_.reset();
         if (topic == CpuTopic) resetCpuBaseline_.store(true);
         if (topic == NetworkTrafficTopic)
             resetNetworkBaseline_.store(true);
@@ -550,6 +738,7 @@ void WidgetSystemDataProvider::StopAll()
         std::scoped_lock lock(mutex_);
         schedules_.clear();
         changedTopics_.clear();
+        mediaArtwork_.reset();
         ++configurationGeneration_;
     }
     resetCpuBaseline_.store(true);
@@ -679,6 +868,13 @@ WidgetSystemDataProvider::MediaTimeline() const
     return mediaTimeline_;
 }
 
+std::optional<WidgetMediaArtworkDataSnapshot>
+WidgetSystemDataProvider::MediaArtwork() const
+{
+    std::scoped_lock lock(mutex_);
+    return mediaArtwork_;
+}
+
 std::vector<std::string>
 WidgetSystemDataProvider::DrainChangedTopics()
 {
@@ -767,7 +963,8 @@ void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
             dueTopics.begin(), dueTopics.end(), [](const auto& topic) {
                 return topic == MediaSessionsTopic ||
                     topic == MediaCurrentTopic ||
-                    topic == MediaTimelineTopic;
+                    topic == MediaTimelineTopic ||
+                    topic == MediaArtworkTopic;
             });
         for (const std::string& topic : dueTopics)
         {
@@ -799,7 +996,10 @@ void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
         }
         if (mediaDue && !stopToken.stop_requested())
         {
-            const auto snapshot = SampleMediaSessions();
+            const bool artworkDue = std::find(
+                dueTopics.begin(), dueTopics.end(),
+                MediaArtworkTopic) != dueTopics.end();
+            const auto snapshot = SampleMediaSessions(artworkDue);
             if (std::find(dueTopics.begin(), dueTopics.end(),
                     MediaSessionsTopic) != dueTopics.end())
                 PublishMediaSessions(snapshot);
@@ -809,6 +1009,8 @@ void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
             if (std::find(dueTopics.begin(), dueTopics.end(),
                     MediaTimelineTopic) != dueTopics.end())
                 PublishMediaTimeline(snapshot);
+            if (artworkDue)
+                PublishMediaArtwork(snapshot);
         }
     }
     CloseGpuQuery();
@@ -1574,11 +1776,12 @@ WidgetSystemDataProvider::SampleAudioOutputVolume()
 }
 
 WidgetMediaSessionsDataSnapshot
-WidgetSystemDataProvider::SampleMediaSessions()
+WidgetSystemDataProvider::SampleMediaSessions(bool includeArtwork)
 {
     using namespace winrt::Windows::Media::Control;
     WidgetMediaSessionsDataSnapshot snapshot;
     snapshot.timestampMs = TimestampMilliseconds();
+    snapshot.artwork.timestampMs = snapshot.timestampMs;
     try
     {
         thread_local GlobalSystemMediaTransportControlsSessionManager manager{
@@ -1656,11 +1859,36 @@ WidgetSystemDataProvider::SampleMediaSessions()
                 value.title = BoundedMediaString(properties.Title());
                 value.artist = BoundedMediaString(properties.Artist());
                 value.album = BoundedMediaString(properties.AlbumTitle());
+                if (current && includeArtwork)
+                {
+                    const std::uint64_t mediaIdentity = MediaArtworkIdentity(
+                        value.id, value.title, value.artist, value.album);
+                    const auto previous = MediaArtwork();
+                    if (previous && previous->available &&
+                        previous->mediaIdentity == mediaIdentity)
+                    {
+                        snapshot.artwork = *previous;
+                        snapshot.artwork.timestampMs = snapshot.timestampMs;
+                    }
+                    else
+                    {
+                        snapshot.artwork = DecodeMediaArtwork(
+                            properties.Thumbnail(), value.id,
+                            snapshot.timestampMs);
+                        snapshot.artwork.mediaIdentity = mediaIdentity;
+                    }
+                }
             }
             catch (...)
             {
                 // One source may withhold metadata without invalidating the
                 // session list, playback state, controls, or timeline.
+                if (current && includeArtwork)
+                {
+                    snapshot.artwork.sessionId = value.id;
+                    snapshot.artwork.timestampMs = snapshot.timestampMs;
+                    snapshot.artwork.error = "artworkQueryFailed";
+                }
             }
             if (current) snapshot.currentSessionId = value.id;
             snapshot.sessions.push_back(std::move(value));
@@ -1675,10 +1903,15 @@ WidgetSystemDataProvider::SampleMediaSessions()
             appendSession(session, false);
         }
         snapshot.available = true;
+        if (includeArtwork && snapshot.artwork.error.empty() &&
+            !snapshot.artwork.available)
+            snapshot.artwork.error = "notPresent";
     }
     catch (...)
     {
         snapshot.error = "mediaSessionQueryFailed";
+        if (includeArtwork)
+            snapshot.artwork.error = "mediaSessionQueryFailed";
     }
     return snapshot;
 }
@@ -1882,5 +2115,20 @@ void WidgetSystemDataProvider::PublishMediaTimeline(
     }
     mediaTimeline_ = std::move(timeline);
     changedTopics_.insert(std::string(MediaTimelineTopic));
+}
+
+void WidgetSystemDataProvider::PublishMediaArtwork(
+    const WidgetMediaSessionsDataSnapshot& snapshot)
+{
+    std::scoped_lock lock(mutex_);
+    if (!schedules_.contains(std::string(MediaArtworkTopic))) return;
+    WidgetMediaArtworkDataSnapshot artwork = snapshot.artwork;
+    artwork.revision = mediaArtwork_ ? mediaArtwork_->revision + 1 : 1;
+    artwork.timestampMs = snapshot.timestampMs;
+    if (!snapshot.available && artwork.error.empty())
+        artwork.error = snapshot.error.empty()
+            ? "mediaSessionQueryFailed" : snapshot.error;
+    mediaArtwork_ = std::move(artwork);
+    changedTopics_.insert(std::string(MediaArtworkTopic));
 }
 }

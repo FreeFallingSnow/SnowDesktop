@@ -363,6 +363,8 @@ struct LuaWidgetDataSnapshot
         mediaCurrent;
     snowdesktop::widget_runtime::WidgetMediaTimelineDataSnapshot
         mediaTimeline;
+    snowdesktop::widget_runtime::WidgetMediaArtworkDataSnapshot
+        mediaArtwork;
     std::vector<LuaDesktopItemInfo> desktopItems;
     std::uint64_t desktopRevision = 0;
     std::string desktopChangeReason;

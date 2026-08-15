@@ -303,11 +303,11 @@ ID 为 1–128 字节，每个实例最多 32 个计划；周期请求范围是 
 
 ### `data`
 
-当前公开二十三个按需数据源：`system.cpu`、`system.memory`、`system.gpu`、`system.power`、
+当前公开二十四个按需数据源：`system.cpu`、`system.memory`、`system.gpu`、`system.power`、
 `system.network.status`、`system.network.traffic`、`system.storage.volumes`、
 `system.storage.io`、`system.display.topology`、`system.display.current`、
 `audio.output.default`、`audio.output.volume`、`audio.output.analysis`、
-`media.sessions`、`media.current`、`media.timeline`、`desktop.items`、
+`media.sessions`、`media.current`、`media.timeline`、`media.artwork`、`desktop.items`、
 `desktop.selection`、`desktop.changes`、`calendar.events` 和
 `calendar.selectedDate`、`app.indexStatus`，以及 `filesystem.watch`。在 `setup` 或模块
 入口创建订阅，不要在每次 `render` 中重复订阅：
@@ -397,13 +397,18 @@ Windows 友好 `name` 和 `state`；`audio.output.volume` 包含匹配的 `endpo
 `maxAgeMs` 选择 16–1000 ms 发布周期，点数和特征选择仍固定，后续再开放有上限的
 `features/waveformPoints/spectrumBins/updateHz` 选项。
 
-三个媒体 topic 受 `media.read` 保护，并在同一 provider 采样周期内合并读取：
+四个媒体 topic 受 `media.read` 保护，并在同一 provider 采样周期内合并读取：
 `media.sessions` value 返回最多 32 个会话和当前会话的不透明 ID，`media.current`
 value 通过 `session` 返回当前会话，`media.timeline` value 通过 `timeline` 返回当前
 时间线。每个会话包含受限到 4096 字节的 `sourceName/title/artist/album`、播放状态、
 逐动作 `can*`、相对 `positionMs/durationMs` 和 seek 范围；没有当前会话时 current
 和 timeline 返回 `available=false,error="notPresent"`，会话列表则是可用的空数组。
-这些只读订阅不会执行播放动作或取得封面原图，预览使用一个固定模拟会话。
+`media.artwork` 只返回当前会话的 `sessionId`、临时 `image` resource handle 和不超过
+512×512 的 `width/height`。宿主在工作线程读取最多 4 MiB 的编码数据，拒绝边长超过
+16384 的源图，并解码为有界 PBGRA 像素；Lua 不取得编码原图、缓存路径或像素字节。
+该句柄可直接传给 `draw.image` 或 `view.image.source`，最后一个订阅取消后对应 CPU/GPU
+缓存立即清除，因此不应持久化句柄。无封面使用 `notPresent`；读取、查询、解码、尺寸等
+失败分别使用稳定错误码。预览返回固定 64×64 模拟封面，不读取开发机媒体状态。
 
 三个桌面 topic 受 `desktop.read` 保护且由宿主变更事件驱动，不启动轮询线程。
 `desktop.items` 返回最多 2048 项，`desktop.selection` 返回最多 512 项；每项只有
@@ -444,7 +449,8 @@ CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.pow
 `data.system.storage.io`、`data.system.display.topology` 和
 `data.system.display.current`，以及 `data.audio.output.default`、
 `data.audio.output.volume` 和 `data.audio.output.analysis`，以及
-`data.media.sessions`、`data.media.current` 和 `data.media.timeline`。
+`data.media.sessions`、`data.media.current`、`data.media.timeline` 和
+`data.media.artwork`。
 桌面 topic 对应 `data.desktop.items`、`data.desktop.selection` 和
 `data.desktop.changes`。
 日历 topic 对应 `data.calendar.events` 和 `data.calendar.selectedDate`。
