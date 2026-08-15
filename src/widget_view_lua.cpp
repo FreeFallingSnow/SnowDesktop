@@ -984,6 +984,7 @@ bool ParseNodeType(std::string_view type, ViewNodeType& result)
     else if (type == "numberInput") result = ViewNodeType::NumberInput;
     else if (type == "select") result = ViewNodeType::Select;
     else if (type == "image") result = ViewNodeType::Image;
+    else if (type == "referenceIcon") result = ViewNodeType::ReferenceIcon;
     else if (type == "button") result = ViewNodeType::Button;
     else if (type == "link") result = ViewNodeType::Link;
     else if (type == "toggle") result = ViewNodeType::Toggle;
@@ -1144,6 +1145,9 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         node.type == ViewNodeType::Waveform ||
         node.type == ViewNodeType::Spectrum;
     const bool imageNode = node.type == ViewNodeType::Image;
+    const bool referenceIconNode =
+        node.type == ViewNodeType::ReferenceIcon;
+    const bool imageVisualNode = imageNode || referenceIconNode;
     const bool dividerNode = node.type == ViewNodeType::Divider;
     const bool gridNode = node.type == ViewNodeType::Grid ||
         node.type == ViewNodeType::GridList || virtualGridNode;
@@ -1308,9 +1312,10 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         error = "child is reserved for slotSurface and slotItem";
         return false;
     }
-    if (!slotItemNode && FieldPresent(state, index, "reference"))
+    if (!slotItemNode && !referenceIconNode &&
+        FieldPresent(state, index, "reference"))
     {
-        error = "reference is reserved for slotItem";
+        error = "reference is reserved for slotItem and referenceIcon";
         return false;
     }
     if (slotSurfaceNode)
@@ -1384,13 +1389,17 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         error = "only progress and data-series nodes accept drawing fields";
         return false;
     }
-    if (!imageNode && (FieldPresent(state, index, "source") ||
-            FieldPresent(state, index, "fit") ||
+    if (!imageVisualNode && (FieldPresent(state, index, "fit") ||
             FieldPresent(state, index, "alignment") ||
             FieldPresent(state, index, "interpolation") ||
             FieldPresent(state, index, "alt")))
     {
-        error = "only image nodes accept image resource fields";
+        error = "only image and referenceIcon nodes accept image visual fields";
+        return false;
+    }
+    if (!imageNode && FieldPresent(state, index, "source"))
+    {
+        error = "only image nodes accept an image resource source";
         return false;
     }
     if (!textResourceNode && FieldPresent(state, index, "font"))
@@ -1398,9 +1407,9 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         error = "only text and label-bearing nodes accept a font resource";
         return false;
     }
-    if (imageNode && !FieldPresent(state, index, "alt"))
+    if (imageVisualNode && !FieldPresent(state, index, "alt"))
     {
-        error = "image nodes require an explicit 'alt' field";
+        error = "image and referenceIcon nodes require an explicit 'alt' field";
         return false;
     }
     if (checkControlNode && !FieldPresent(state, index, "checked"))
@@ -1438,6 +1447,10 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     if (slotItemNode &&
         !ReadStringField(state, index, "reference",
             node.logicalSlotReference, true, error))
+        return false;
+    if (referenceIconNode &&
+        !ReadStringField(state, index, "reference",
+            node.itemReference, true, error))
         return false;
     if (node.type == ViewNodeType::Badge &&
         !FieldPresent(state, index, "padding"))
@@ -1850,6 +1863,10 @@ int LuaViewNumberInput(lua_State* state)
 }
 int LuaViewSelect(lua_State* state) { return MakeNode(state, "select"); }
 int LuaViewImage(lua_State* state) { return MakeNode(state, "image"); }
+int LuaViewReferenceIcon(lua_State* state)
+{
+    return MakeNode(state, "referenceIcon");
+}
 int LuaViewButton(lua_State* state) { return MakeNode(state, "button"); }
 int LuaViewLink(lua_State* state) { return MakeNode(state, "link"); }
 int LuaViewToggle(lua_State* state) { return MakeNode(state, "toggle"); }

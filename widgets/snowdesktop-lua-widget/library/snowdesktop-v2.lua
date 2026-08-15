@@ -193,7 +193,7 @@
 ---@field fit? SnowViewImageFit Image scaling mode; defaults to contain.
 ---@field alignment? SnowViewImageAlignment Image alignment on both axes; defaults to center.
 ---@field interpolation? SnowViewImageInterpolation Image sampling mode; defaults to linear.
----@field alt? string Required by image nodes; use an empty string for decorative images.
+---@field alt? string Required by image and referenceIcon nodes; use an empty string for decorative visuals.
 ---@field iconFont? 'fa'|'fluent'|'fluent-regular'
 ---@field shape? 'rectangle'|'roundedRectangle'|'circle'|'ellipse'
 ---@field orientation? 'horizontal'|'vertical' Divider direction, radioGroup/slider axis, or scroll axis; scroll defaults to vertical.
@@ -254,7 +254,7 @@
 ---@field binding? string Required by a binding slotSurface; mutually exclusive with collection.
 ---@field collection? string Required by a collection slotSurface; mutually exclusive with binding.
 ---@field revision? integer Optional exact host slot revision asserted by slotSurface.
----@field reference? string Required opaque reference for slotItem.
+---@field reference? string Required opaque reference for slotItem and referenceIcon.
 ---@field accessibility? SnowViewAccessibility
 ---@field events? SnowViewEvents
 ---@field action? SnowInteractionAction Button/link click or controlled selection/value change shorthand.
@@ -262,7 +262,7 @@
 ---@field children? SnowViewNode[]
 
 ---@class SnowViewNode: SnowViewNodeOptions
----@field type 'box'|'row'|'column'|'grid'|'flow'|'stack'|'scroll'|'list'|'gridList'|'virtualList'|'virtualGrid'|'listItem'|'slotSurface'|'slotItem'|'text'|'styledText'|'textInput'|'textArea'|'searchBox'|'numberInput'|'select'|'image'|'button'|'link'|'toggle'|'checkbox'|'radioGroup'|'slider'|'icon'|'iconButton'|'shape'|'badge'|'divider'|'progressBar'|'progressRing'|'meter'|'sparkline'|'lineChart'|'barChart'|'waveform'|'spectrum'|'monthCalendar'|'spacer'
+---@field type 'box'|'row'|'column'|'grid'|'flow'|'stack'|'scroll'|'list'|'gridList'|'virtualList'|'virtualGrid'|'listItem'|'slotSurface'|'slotItem'|'text'|'styledText'|'textInput'|'textArea'|'searchBox'|'numberInput'|'select'|'image'|'referenceIcon'|'button'|'link'|'toggle'|'checkbox'|'radioGroup'|'slider'|'icon'|'iconButton'|'shape'|'badge'|'divider'|'progressBar'|'progressRing'|'meter'|'sparkline'|'lineChart'|'barChart'|'waveform'|'spectrum'|'monthCalendar'|'spacer'
 
 ---@class SnowLogicalSlotItem
 ---@field id string Stable opaque item ID used by collection remove/move.
@@ -708,6 +708,11 @@ function view.select(options) end
 ---@param options SnowViewNodeOptions
 ---@return SnowViewNode
 function view.image(options) end
+
+---Host-rendered shell icon for an opaque app/item reference owned by this widget instance. Requires view.referenceIcon and does not expose a path or grant launch/file access.
+---@param options SnowViewNodeOptions Requires reference and explicit alt.
+---@return SnowViewNode
+function view.referenceIcon(options) end
 
 ---@param options SnowViewNodeOptions
 ---@return SnowViewNode

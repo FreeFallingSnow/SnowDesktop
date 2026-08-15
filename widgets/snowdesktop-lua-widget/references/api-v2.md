@@ -95,7 +95,8 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.scroll` 提供宿主滚动视口，`view.collection.basic` 提供基础集合，
 `view.collection.virtual` 提供固定行高虚拟集合与可见范围查询；
 `view.styledText.basic` 提供有界样式 span，`view.monthCalendar` 提供受控月历日期网格，
-`view.logicalSlots` 提供与 manifest 宿主管理槽位严格对应的 `slotSurface/slotItem`。
+`view.logicalSlots` 提供与 manifest 宿主管理槽位严格对应的 `slotSurface/slotItem`，
+`view.referenceIcon` 提供只接收实例自有 opaque ref 的宿主图标节点。
 每次 `view(context, model)` 返回一棵完整树；所有节点必须提供全树唯一、1–128 字节的
 稳定 `key`。宿主先完整解析、校验和布局，再原子替换上一棵成功树；回调或校验失败时
 继续显示上一棵树，不留下半棵树或空白交互区。
@@ -340,7 +341,23 @@ return view.virtualList({
 `image` 的 `source` 只接受入口加载期间创建的 `resource.image()` 句柄，必须显式提供
 `alt`（装饰图片使用空字符串），支持 `fill/contain/cover/none` fit、
 `start/center/end` alignment 和 `nearest/linear` interpolation；对应 feature 为
-`view.image`。`text`、`badge`、`button`、`link`、`toggle`、`checkbox` 和
+`view.image`。`referenceIcon` 使用相同的 `alt/fit/alignment/interpolation`，但以当前
+组件实例从宿主搜索、文件引用任务或逻辑槽位获得的 1–128 字节 opaque `reference`
+代替图片资源句柄；宿主在异步 Shell 图标缓存就绪后重绘，不在渲染热路径同步解码，
+也不会把目标路径交给 Lua。该节点本身不授予启动、打开、定位或文件内容权限，对应
+feature 为 `view.referenceIcon`。
+
+```lua
+view.referenceIcon({
+    key = item.id .. ".icon",
+    reference = item.reference,
+    alt = item.title,
+    width = 64,
+    height = 64,
+})
+```
+
+`text`、`badge`、`button`、`link`、`toggle`、`checkbox` 和
 `radioGroup` 可通过 `font` 使用
 `resource.font()` 返回的包私有字体
 句柄，对应 feature 为 `view.font`。这些属性不接受文件路径或跨包句柄。
@@ -451,7 +468,8 @@ capacity/item/items` 可在 view 中调用；`bind/add/clear/remove/move` 会持
 `userGestureRequired` 或 `previewReadOnly` 拒绝。`bind/add` 接受 `app.search`、
 `desktop.search`、`everything.search` 或文件引用任务返回的当前实例 opaque ref，成功后
 返回 `SnowLogicalSlotChange`；槽位会发出新的持久 opaque `item.reference`，可继续交给
-对应的 `app.launch` 或 `shell.openItem/revealItem` 任务。
+`view.referenceIcon` 显示宿主图标，或交给对应的 `app.launch`、
+`shell.openItem/revealItem` 任务执行受权限和可信手势约束的操作。
 
 声明式树必须准确反映同一宿主快照。binding 的 surface 可有一个 placeholder 或一个
 `slotItem`；有绑定时必须提交该 item。collection 的直接 children 必须按宿主顺序完整提交

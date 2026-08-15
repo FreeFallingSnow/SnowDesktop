@@ -175,6 +175,7 @@ void RegisterViewLibrary(lua_State* state)
         { "numberInput", LuaViewNumberInput },
         { "select", LuaViewSelect },
         { "image", LuaViewImage },
+        { "referenceIcon", LuaViewReferenceIcon },
         { "button", LuaViewButton },
         { "link", LuaViewLink },
         { "toggle", LuaViewToggle },
@@ -351,6 +352,14 @@ void TestVisualNodeParsing()
                     alignment = "end",
                     interpolation = "nearest",
                 }),
+                view.referenceIcon({
+                    key = "application-icon",
+                    reference = "app-ref-1",
+                    alt = "Bound application",
+                    width = 48,
+                    height = 48,
+                    fit = "contain",
+                }),
                 view.text({
                     key = "brand",
                     text = "SnowDesktop",
@@ -364,7 +373,7 @@ void TestVisualNodeParsing()
     ViewNode root;
     std::string error;
     Check(ParseLuaViewTree(state, -1, root, error) &&
-            root.children.size() == 7 &&
+            root.children.size() == 8 &&
             root.children[0].type == ViewNodeType::Shape &&
             root.children[0].shapeKind == ViewShapeKind::Circle &&
             root.children[1].type == ViewNodeType::ProgressBar &&
@@ -380,8 +389,11 @@ void TestVisualNodeParsing()
             root.children[5].imageAlignment == ViewImageAlignment::End &&
             root.children[5].imageInterpolation ==
                 ViewImageInterpolation::Nearest &&
-            root.children[6].fontResourceName == "display",
-        "visual and package resource nodes must retain typed fields");
+            root.children[6].type == ViewNodeType::ReferenceIcon &&
+            root.children[6].itemReference == "app-ref-1" &&
+            root.children[6].alt == "Bound application" &&
+            root.children[7].fontResourceName == "display",
+        "visual, reference icon, and package resource nodes must retain typed fields");
     Check(ValidateAndLayoutViewTree(root, 320.0f, 80.0f, error),
         "visual nodes must validate and lay out together");
     std::vector<InteractionRegion> regions;
@@ -407,6 +419,22 @@ void TestVisualNodeParsing()
     Check(!ParseLuaViewTree(state, -1, invalid, error) &&
             error.find("wrong package resource type") != std::string::npos,
         "image nodes must reject font handles as their source");
+
+    lua_settop(state, 0);
+    Check(luaL_dostring(state, R"lua(
+        return view.referenceIcon({
+            key = "invalid-reference-icon",
+            reference = string.rep("x", 129),
+            alt = "Invalid",
+        })
+    )lua") == LUA_OK,
+        "overlong reference icon fixture must evaluate");
+    invalid = {};
+    error.clear();
+    Check(ParseLuaViewTree(state, -1, invalid, error) &&
+            !ValidateAndLayoutViewTree(invalid, 64.0f, 64.0f, error) &&
+            error.find("bounded opaque reference") != std::string::npos,
+        "referenceIcon must reject references outside the opaque token bound");
     lua_close(state);
 }
 

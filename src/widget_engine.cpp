@@ -13202,6 +13202,52 @@ static void DrawWidgetMonthCalendar(D2DState* state,
     }
 }
 
+static void DrawWidgetViewBitmap(D2DState* state,
+    const snowdesktop::widget_runtime::ViewNode& node,
+    ID2D1Bitmap1* bitmap, const D2D1_RECT_F& rect,
+    float opacity, float borderWidth)
+{
+    if (!state || !state->ctx || !bitmap) return;
+    using snowdesktop::widget_runtime::DrawImageAlignment;
+    using snowdesktop::widget_runtime::DrawImageFit;
+    using snowdesktop::widget_runtime::ViewImageAlignment;
+    using snowdesktop::widget_runtime::ViewImageFit;
+    using snowdesktop::widget_runtime::ViewImageInterpolation;
+    const float inset = std::min(node.padding + borderWidth,
+        std::max(0.0f,
+            std::min(node.frame.width, node.frame.height) * 0.5f));
+    const float targetWidth = std::max(
+        0.0f, rect.right - rect.left - inset * 2.0f);
+    const float targetHeight = std::max(
+        0.0f, rect.bottom - rect.top - inset * 2.0f);
+    const D2D1_SIZE_F sourceSize = bitmap->GetSize();
+    DrawImageFit fit = DrawImageFit::Contain;
+    if (node.imageFit == ViewImageFit::Fill) fit = DrawImageFit::Fill;
+    else if (node.imageFit == ViewImageFit::Cover) fit = DrawImageFit::Cover;
+    else if (node.imageFit == ViewImageFit::None) fit = DrawImageFit::None;
+    DrawImageAlignment alignment = DrawImageAlignment::Center;
+    if (node.imageAlignment == ViewImageAlignment::Start)
+        alignment = DrawImageAlignment::Start;
+    else if (node.imageAlignment == ViewImageAlignment::End)
+        alignment = DrawImageAlignment::End;
+    const auto placement = snowdesktop::widget_runtime::
+        ResolveDrawImagePlacement(sourceSize.width, sourceSize.height,
+            { rect.left + inset, rect.top + inset,
+                targetWidth, targetHeight }, fit, alignment);
+    if (!placement.valid) return;
+    state->ctx->DrawBitmap(bitmap, D2D1::RectF(
+            placement.destination.x, placement.destination.y,
+            placement.destination.x + placement.destination.width,
+            placement.destination.y + placement.destination.height),
+        opacity,
+        node.imageInterpolation == ViewImageInterpolation::Nearest
+            ? D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR
+            : D2D1_INTERPOLATION_MODE_LINEAR,
+        D2D1::RectF(placement.source.x, placement.source.y,
+            placement.source.x + placement.source.width,
+            placement.source.y + placement.source.height));
+}
+
 static void DrawWidgetViewNode(D2DState* state,
     const snowdesktop::widget_runtime::ViewNode& node,
     const snowdesktop::widget_runtime::WidgetInteractionRegions& regions)
@@ -13697,94 +13743,75 @@ static void DrawWidgetViewNode(D2DState* state,
     {
         DrawWidgetDataSeries(state, node, style, rect, opacity);
     }
-    else if (node.type == ViewNodeType::Image && state->engine)
+    else if ((node.type == ViewNodeType::Image ||
+            node.type == ViewNodeType::ReferenceIcon) && state->engine)
     {
         ID2D1Bitmap1* bitmap = nullptr;
-        if (snowdesktop::widget_runtime::IsWidgetRuntimeImageToken(
-                node.imageResourceName))
-            bitmap = LoadRuntimeImageBitmap(
-                state, state->currentWidgetId, node.imageResourceName);
-        else
+        if (node.type == ViewNodeType::Image)
         {
-            const auto path = state->engine->RuntimeResolvePackageResource(
-                state->currentWidgetId, node.imageResourceName, "image");
-            if (path) bitmap = LoadImageBitmap(state, *path);
-        }
-        if (bitmap)
-        {
-            const float inset = std::min(
-                node.padding + borderWidth,
-                std::max(0.0f, std::min(
-                    node.frame.width, node.frame.height) * 0.5f));
-            D2D1_RECT_F destination = D2D1::RectF(
-                rect.left + inset, rect.top + inset,
-                rect.right - inset, rect.bottom - inset);
-            const D2D1_SIZE_F size = bitmap->GetSize();
-            D2D1_RECT_F source = D2D1::RectF(
-                0.0f, 0.0f, size.width, size.height);
-            const float targetWidth = std::max(
-                0.0f, destination.right - destination.left);
-            const float targetHeight = std::max(
-                0.0f, destination.bottom - destination.top);
-            const auto offset = [alignment = node.imageAlignment](
-                    float available, float used) {
-                if (alignment == ViewImageAlignment::Center)
-                    return std::max(0.0f, (available - used) * 0.5f);
-                if (alignment == ViewImageAlignment::End)
-                    return std::max(0.0f, available - used);
-                return 0.0f;
-            };
-            if (size.width > 0.0f && size.height > 0.0f &&
-                targetWidth > 0.0f && targetHeight > 0.0f)
+            if (snowdesktop::widget_runtime::IsWidgetRuntimeImageToken(
+                    node.imageResourceName))
+                bitmap = LoadRuntimeImageBitmap(
+                    state, state->currentWidgetId,
+                    node.imageResourceName);
+            else
             {
-                if (node.imageFit == ViewImageFit::Contain)
-                {
-                    const float scale = std::min(
-                        targetWidth / size.width,
-                        targetHeight / size.height);
-                    const float width = size.width * scale;
-                    const float height = size.height * scale;
-                    destination.left += offset(targetWidth, width);
-                    destination.top += offset(targetHeight, height);
-                    destination.right = destination.left + width;
-                    destination.bottom = destination.top + height;
-                }
-                else if (node.imageFit == ViewImageFit::Cover)
-                {
-                    const float targetAspect = targetWidth / targetHeight;
-                    const float sourceAspect = size.width / size.height;
-                    if (sourceAspect > targetAspect)
-                    {
-                        const float width = size.height * targetAspect;
-                        source.left = offset(size.width, width);
-                        source.right = source.left + width;
-                    }
-                    else
-                    {
-                        const float height = size.width / targetAspect;
-                        source.top = offset(size.height, height);
-                        source.bottom = source.top + height;
-                    }
-                }
-                else if (node.imageFit == ViewImageFit::None)
-                {
-                    const float width = std::min(size.width, targetWidth);
-                    const float height = std::min(size.height, targetHeight);
-                    destination.left += offset(targetWidth, width);
-                    destination.top += offset(targetHeight, height);
-                    destination.right = destination.left + width;
-                    destination.bottom = destination.top + height;
-                    source.right = width;
-                    source.bottom = height;
-                }
-                state->ctx->DrawBitmap(bitmap, destination, opacity,
-                    node.imageInterpolation ==
-                            ViewImageInterpolation::Nearest
-                        ? D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR
-                        : D2D1_INTERPOLATION_MODE_LINEAR,
-                    source);
+                const auto path =
+                    state->engine->RuntimeResolvePackageResource(
+                        state->currentWidgetId,
+                        node.imageResourceName, "image");
+                if (path) bitmap = LoadImageBitmap(state, *path);
             }
         }
+        else
+        {
+            const auto target =
+                state->engine->RuntimeResolveViewReference(
+                    state->currentWidgetId, node.itemReference);
+            if (target && state->engine->IsPreviewOnly())
+            {
+                const float inset = std::min(node.padding + borderWidth,
+                    std::max(0.0f,
+                        std::min(node.frame.width, node.frame.height) * 0.5f));
+                const float size = std::max(0.0f, std::min(
+                    node.frame.width - inset * 2.0f,
+                    node.frame.height - inset * 2.0f));
+                float x = node.frame.x + inset;
+                float y = node.frame.y + inset;
+                if (node.imageAlignment == ViewImageAlignment::Center)
+                {
+                    x += std::max(0.0f,
+                        (node.frame.width - inset * 2.0f - size) * 0.5f);
+                    y += std::max(0.0f,
+                        (node.frame.height - inset * 2.0f - size) * 0.5f);
+                }
+                else if (node.imageAlignment == ViewImageAlignment::End)
+                {
+                    x += std::max(0.0f,
+                        node.frame.width - inset * 2.0f - size);
+                    y += std::max(0.0f,
+                        node.frame.height - inset * 2.0f - size);
+                }
+                DrawSimulatedPreviewIcon(state, *target,
+                    Utf8ToWideLocal(node.alt), x, y, size, opacity);
+                return;
+            }
+            if (target)
+            {
+                EnsureBitmapCachesForCurrentDevice(state);
+                if (!state->shellIconFailures.contains(*target))
+                {
+                    const auto cached = state->shellIconCache.find(*target);
+                    if (cached != state->shellIconCache.end())
+                        bitmap = cached->second.Get();
+                    else if (state->shellIconLoader)
+                        state->shellIconLoader->Request(
+                            *target, state->currentWidgetId);
+                }
+            }
+        }
+        DrawWidgetViewBitmap(
+            state, node, bitmap, rect, opacity, borderWidth);
     }
 
     if ((node.type == ViewNodeType::Text ||
@@ -16763,6 +16790,19 @@ std::optional<std::wstring> WidgetEngine::RuntimeResolveItemReference(
             ? std::nullopt : std::optional<std::wstring>(target);
     }
     return std::nullopt;
+}
+
+std::optional<std::wstring> WidgetEngine::RuntimeResolveViewReference(
+    const std::wstring& widgetId, const std::string& reference) const
+{
+    if (reference.empty()) return std::nullopt;
+    const auto widget = std::find_if(widgets_.begin(), widgets_.end(),
+        [&widgetId](const LuaWidget& candidate) {
+            return candidate.widgetId == widgetId;
+        });
+    if (widget == widgets_.end()) return std::nullopt;
+    return RuntimeResolveItemReference(
+        widgetId, widget->runtimeToken, reference);
 }
 
 namespace
@@ -22561,6 +22601,8 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "numberInput", snowdesktop::widget_runtime::LuaViewNumberInput, 2 },
         { "select", snowdesktop::widget_runtime::LuaViewSelect, 2 },
         { "image", snowdesktop::widget_runtime::LuaViewImage, 2 },
+        { "referenceIcon",
+            snowdesktop::widget_runtime::LuaViewReferenceIcon, 2 },
         { "button", snowdesktop::widget_runtime::LuaViewButton, 2 },
         { "link", snowdesktop::widget_runtime::LuaViewLink, 2 },
         { "toggle", snowdesktop::widget_runtime::LuaViewToggle, 2 },

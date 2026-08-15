@@ -33,6 +33,7 @@ int LuaViewSearchBox(lua_State* state);
 int LuaViewNumberInput(lua_State* state);
 int LuaViewSelect(lua_State* state);
 int LuaViewImage(lua_State* state);
+int LuaViewReferenceIcon(lua_State* state);
 int LuaViewButton(lua_State* state);
 int LuaViewLink(lua_State* state);
 int LuaViewToggle(lua_State* state);

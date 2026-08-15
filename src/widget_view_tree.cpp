@@ -175,6 +175,7 @@ bool IsLeafNode(ViewNodeType type) noexcept
     return type == ViewNodeType::Text ||
         type == ViewNodeType::StyledText ||
         type == ViewNodeType::Image ||
+        type == ViewNodeType::ReferenceIcon ||
         IsButtonNode(type) || type == ViewNodeType::Link ||
         IsControlledNode(type) ||
         type == ViewNodeType::Icon || type == ViewNodeType::Shape ||
@@ -310,7 +311,8 @@ float IntrinsicWidth(const ViewNode& node)
     if (node.type == ViewNodeType::Slider)
         return (node.orientation == ViewOrientation::Horizontal
             ? 96.0f : 24.0f) + node.padding * 2.0f;
-    if (node.type == ViewNodeType::Image)
+    if (node.type == ViewNodeType::Image ||
+        node.type == ViewNodeType::ReferenceIcon)
         return 48.0f + node.padding * 2.0f;
     if (IsIconNode(node.type))
         return node.fontSize * 1.4f + node.padding * 2.0f;
@@ -409,7 +411,8 @@ float IntrinsicHeight(const ViewNode& node)
     if (node.type == ViewNodeType::Badge)
         return std::max(20.0f, node.fontSize * 1.4f) +
             node.padding * 2.0f;
-    if (node.type == ViewNodeType::Image)
+    if (node.type == ViewNodeType::Image ||
+        node.type == ViewNodeType::ReferenceIcon)
         return 48.0f + node.padding * 2.0f;
     if (node.type == ViewNodeType::Button)
         return std::max(32.0f, node.fontSize * 1.8f) +
@@ -1177,6 +1180,19 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
     else if (!node.logicalSlotReference.empty())
     {
         error = "logical slot references are reserved for slotItem nodes";
+        return false;
+    }
+    if (node.type == ViewNodeType::ReferenceIcon)
+    {
+        if (node.itemReference.empty() || node.itemReference.size() > 128)
+        {
+            error = "referenceIcon requires a bounded opaque reference";
+            return false;
+        }
+    }
+    else if (!node.itemReference.empty())
+    {
+        error = "item references are reserved for referenceIcon nodes";
         return false;
     }
     if (node.text.size() > ViewTreeLimits::MaximumTextBytes ||
@@ -2504,6 +2520,7 @@ const char* ViewNodeTypeName(ViewNodeType type) noexcept
     case ViewNodeType::NumberInput: return "numberInput";
     case ViewNodeType::Select: return "select";
     case ViewNodeType::Image: return "image";
+    case ViewNodeType::ReferenceIcon: return "referenceIcon";
     case ViewNodeType::Button: return "button";
     case ViewNodeType::Link: return "link";
     case ViewNodeType::Toggle: return "toggle";

@@ -120,6 +120,10 @@ logical bindings or collections. Open them with `slots.binding(id)` or
 `view.slotSurface/slotItem`, and only call bind/add/clear/remove/move from the
 current trusted action event. These methods persist references; they do not
 grant file contents, expose paths, or move source objects. Probe
+`view.referenceIcon` to render a bound/search result's opaque reference as a
+host-resolved icon without requiring a package image or exposing its target;
+this visual node does not grant launch, open, reveal, or file-content access.
+Probe
 `slots.nativeDrop` when a committed slotSurface should accept one native
 desktop/Application/Explorer object with host insertion preview. Probe
 `slots.nativeContextMenu` for host-owned per-item move/remove menus, and handle
@@ -260,7 +264,8 @@ menu.
   to run a fresh bounded `filesystem.list`; watching pauses while hidden and
   never recurses or follows reparse points.
 - Search applications with the bounded `task.start("app.search", { query,
-  limit, offset })` task and retain only its opaque `ref` values. Launch one
+  limit, offset })` task and retain only its opaque `ref` values. Render one
+  declaratively with `view.referenceIcon` after probing that feature. Launch one
   with `task.start("app.launch", { ref = item.ref })` inside the direct click
   action. Never persist or invent refs, and never substitute a path, command
   line, or working directory.

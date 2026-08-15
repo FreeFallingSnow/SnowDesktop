@@ -1079,6 +1079,10 @@ public:
     std::optional<std::wstring> RuntimeResolveItemReference(
         const std::wstring& widgetId, std::uint64_t ownerToken,
         const std::string& reference) const;
+    /** Resolve one opaque reference for host-owned declarative rendering. */
+    std::optional<std::wstring> RuntimeResolveViewReference(
+        const std::wstring& widgetId,
+        const std::string& reference) const;
     std::optional<snowdesktop::widget_runtime::LogicalSlotSnapshot>
         RuntimeLogicalSlotSnapshot(const std::wstring& widgetId,
             std::uint64_t ownerToken, std::string_view slotId,

@@ -37,6 +37,7 @@ enum class ViewNodeType
     NumberInput,
     Select,
     Image,
+    ReferenceIcon,
     Button,
     Link,
     Toggle,
@@ -197,6 +198,7 @@ struct ViewNode
     std::string inputValue;
     std::string placeholder;
     std::string imageResourceName;
+    std::string itemReference;
     std::string fontResourceName;
     std::string alt;
     std::vector<ViewTextSpan> spans;

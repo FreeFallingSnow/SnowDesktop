@@ -1328,7 +1328,11 @@ view.slotSurface({
     child = app and view.slotItem({
         key = app.id,
         reference = app.reference,
-        child = view.image({ source = app.icon })
+        child = view.referenceIcon({
+            key = app.id .. ".icon",
+            reference = app.reference,
+            alt = app.title
+        })
     }) or view.text({ text = "拖入一个应用" })
 })
 ```
