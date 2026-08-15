@@ -478,9 +478,15 @@ return view.slotSurface({
 })
 ```
 
-这一批实现的是 manifest 校验、宿主持久模型、受信手势变更、持久引用恢复和 scene
-一致性契约。原生桌面/Explorer 拖入命中、插入预览、宿主选择器、撤销以及
-`slot.changed` 主动事件尚未接入，不能把 `slotSurface` 当作已经可接收系统拖放的区域。
+提交成功的 `slotSurface` 现在也是宿主原生拖放面。桌面项目、应用快捷方式或 Explorer
+文件拖到该区域时，宿主先按 manifest 的 `accepts`、binding 替换策略及 collection 容量
+进行命中判断，再显示插入预览并原子保存引用；不会移动、复制或删除真实对象。当前原生
+入口一次只接收一个对象，多选拖入会在命中前拒绝。组件或组件分组标签不会进入逻辑槽位。
+
+宿主拖放提交后会派发 `event.kind == "slot.changed"`，字段为 `slotId`、`slotKind`、
+`revision`、`operation`、opaque `itemIds` 和 `source == "host.drop"`。Lua 应重新读取对应
+句柄并重算 view，不能把事件内容当作可写模型。可分别探测 `slots.nativeDrop` 与
+`slots.event.changed`。宿主选择器、原生槽位项拖出/同槽重排、删除手势和 undo 仍未接入。
 
 ### `interaction` 与元素级菜单
 

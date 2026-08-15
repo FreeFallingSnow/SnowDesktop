@@ -33,6 +33,7 @@ enum class SlotSurfaceKind : std::uint8_t
     FolderMapping,
     CollectionGroup,
     FileGroup,
+    LuaLogicalSlot,
     Guide,
     External,
     Count,
@@ -76,6 +77,7 @@ enum class DropRoute : std::uint8_t
     ReleaseGroupedChild,
     TransferGroupedLabel,
     ExportToExternal,
+    BindLogicalReference,
 };
 
 enum class InteractionCapability : std::uint8_t
@@ -239,6 +241,14 @@ inline constexpr std::array<
             PayloadBit(DragPayloadKind::FolderMappingWidget) |
             PayloadBit(DragPayloadKind::FolderEntry) |
             PayloadBit(DragPayloadKind::FileGroupLabel),
+        kInteractiveSlotCapabilities,
+    },
+    {
+        SlotSurfaceKind::LuaLogicalSlot,
+        "lua_logical_slot",
+        true,
+        false,
+        PayloadBit(DragPayloadKind::DesktopItem),
         kInteractiveSlotCapabilities,
     },
     {
@@ -517,6 +527,8 @@ constexpr DropRoute EvaluateSlotDropUnchecked(
             return DropRoute::RouteThroughCollectionGroup;
         if (target == SlotSurfaceKind::FileGroup)
             return DropRoute::RouteThroughFileGroup;
+        if (target == SlotSurfaceKind::LuaLogicalSlot)
+            return DropRoute::BindLogicalReference;
         return SurfaceBuildsSlots(target)
             ? DropRoute::InsertLogicalItem
             : DropRoute::Reject;
@@ -588,6 +600,10 @@ constexpr DropRoute EvaluateSlotDropUnchecked(
 
     if (payload == DragPayloadKind::DesktopItem)
     {
+        if (target == SlotSurfaceKind::LuaLogicalSlot)
+            return relation == DragRelation::SameInstance
+                ? DropRoute::ReorderWithinContainer
+                : DropRoute::BindLogicalReference;
         if (target == SlotSurfaceKind::Desktop)
             return relation == DragRelation::SameInstance
                 ? DropRoute::ReorderWithinContainer
@@ -612,6 +628,8 @@ constexpr DropRoute EvaluateSlotDropUnchecked(
 
     if (payload == DragPayloadKind::FolderEntry)
     {
+        if (target == SlotSurfaceKind::LuaLogicalSlot)
+            return DropRoute::BindLogicalReference;
         if (target == SlotSurfaceKind::Desktop)
             return DropRoute::TransferFile;
         if (target == SlotSurfaceKind::Dock)
@@ -644,6 +662,7 @@ constexpr bool RouteRequiresInsertionIndicator(
     case DropRoute::MoveCollectionIntoGroup:
     case DropRoute::MoveFileSourceIntoGroup:
     case DropRoute::TransferGroupedLabel:
+    case DropRoute::BindLogicalReference:
         return true;
     default:
         return false;

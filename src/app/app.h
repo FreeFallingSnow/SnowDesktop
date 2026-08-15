@@ -2435,6 +2435,9 @@ private:
     LuaApplicationCatalogSnapshot BuildLuaApplicationCatalog();
     std::string BuildLuaApplicationIndexStatus();
     std::vector<LuaDesktopItemInfo> BuildLuaEverythingSearch(const std::string& query, int maxResults) const;
+    bool CommitLuaLogicalSlotDrop(const std::wstring& widgetId,
+        const std::string& slotId, const std::vector<Item*>& sourceItems,
+        std::size_t targetIndex);
     std::vector<EverythingSearchResult> SearchEverythingCached(const std::wstring& query, DWORD maxResults) const;
     /** @brief 通过 Lua 脚本提交路径打开请求。 @param path 要打开的路径 @return 请求是否已接受 */
     bool LuaOpenPath(const std::wstring& path);

@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../widgets/lua_logical_slot.h"
 
 // OLE drag-enter/over/leave/drop session handling.
 
@@ -156,6 +157,9 @@ HRESULT DesktopApp::HandleOleDragEnter(
         dynamic_cast<DockContainer*>(targetContainer) &&
         targetRegion != HitRegion::Handoff &&
         targetRegion != HitRegion::Blocked;
+    const bool externalLogicalReference =
+        dynamic_cast<LuaLogicalSlotContainer*>(targetContainer) != nullptr &&
+        targetRegion != HitRegion::Blocked;
     if (externalDockMapping)
         dragSession_.UpdateActionFromMods(
             DropActionToMods(
@@ -173,7 +177,9 @@ HRESULT DesktopApp::HandleOleDragEnter(
     *effect = ((desktopIconsHidden_ && !targetContainer) ||
         targetRegion == HitRegion::Blocked)
         ? DROPEFFECT_NONE
-        : (externalDockMapping
+        : (externalLogicalReference
+            ? DROPEFFECT_COPY
+            : externalDockMapping
             ? snowdesktop::dock_drop_rules::
                 ChooseExternalMappingEffect(*effect)
             : ChooseDropEffect(keyState, *effect));
@@ -306,6 +312,9 @@ HRESULT DesktopApp::HandleOleDragOver(
         dynamic_cast<DockContainer*>(targetContainer) &&
         targetRegion != HitRegion::Handoff &&
         targetRegion != HitRegion::Blocked;
+    const bool externalLogicalReference =
+        dynamic_cast<LuaLogicalSlotContainer*>(targetContainer) != nullptr &&
+        targetRegion != HitRegion::Blocked;
     if (externalDockMapping)
         dragSession_.UpdateActionFromMods(
             DropActionToMods(
@@ -323,7 +332,9 @@ HRESULT DesktopApp::HandleOleDragOver(
     *effect = ((desktopIconsHidden_ && !targetContainer) ||
         targetRegion == HitRegion::Blocked)
         ? DROPEFFECT_NONE
-        : (externalDockMapping
+        : (externalLogicalReference
+            ? DROPEFFECT_COPY
+            : externalDockMapping
             ? snowdesktop::dock_drop_rules::
                 ChooseExternalMappingEffect(*effect)
             : ChooseDropEffect(keyState, *effect));
@@ -638,6 +649,20 @@ HRESULT DesktopApp::HandleOleDrop(
             ReloadItems();
             refreshDockFolderPopup();
             *effect = DROPEFFECT_MOVE;
+            return S_OK;
+        }
+
+        if (auto* logicalSlot =
+                dynamic_cast<LuaLogicalSlotContainer*>(
+                    dragSession_.TargetContainer()))
+        {
+            const bool committed = logicalSlot->CommitItems(
+                dragSession_.Items(), dragSession_.TargetSlot(),
+                dragSession_.TargetRegion());
+            ClearSelection();
+            EndDragSession();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            *effect = committed ? DROPEFFECT_COPY : DROPEFFECT_NONE;
             return S_OK;
         }
 
@@ -1061,6 +1086,20 @@ HRESULT DesktopApp::HandleOleDrop(
         DragSourceList sourceList = BuildDragSourceList(sourceItems, nullptr);
         Container* target = dragSession_.TargetContainer() ? dragSession_.TargetContainer() : GetDesktopGrid();
         HitRegion targetRegion = dragSession_.TargetRegion() != HitRegion::None ? dragSession_.TargetRegion() : HitRegion::Empty;
+
+        if (auto* logicalSlot =
+                dynamic_cast<LuaLogicalSlotContainer*>(target))
+        {
+            const bool committed = logicalSlot->CommitItems(
+                sourceItems,
+                dragSession_.TargetContainer()
+                    ? dragSession_.TargetSlot() : nullptr,
+                targetRegion);
+            EndDragSession();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            *effect = committed ? DROPEFFECT_COPY : DROPEFFECT_NONE;
+            return S_OK;
+        }
 
         if (auto* dock = dynamic_cast<DockContainer*>(target);
             dock && externalDockMappingTarget &&

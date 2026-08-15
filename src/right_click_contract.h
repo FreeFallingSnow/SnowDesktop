@@ -123,6 +123,7 @@ constexpr ContextMenuKind ResolveContainerMenu(
     case Surface::FolderMapping:
     case Surface::CollectionGroup:
     case Surface::FileGroup:
+    case Surface::LuaLogicalSlot:
     case Surface::Guide:
         return ContextMenuKind::Widget;
     default:

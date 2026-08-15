@@ -16767,6 +16767,51 @@ std::optional<std::wstring> WidgetEngine::RuntimeResolveItemReference(
 
 namespace
 {
+using snowdesktop::widget_runtime::LogicalSlotKind;
+using snowdesktop::widget_runtime::ViewNode;
+using snowdesktop::widget_runtime::ViewNodeType;
+using snowdesktop::widget_runtime::ViewRect;
+
+std::optional<ViewRect> IntersectLogicalSlotFrames(
+    const std::optional<ViewRect>& first, const ViewRect& second)
+{
+    if (!first) return second;
+    const float left = std::max(first->x, second.x);
+    const float top = std::max(first->y, second.y);
+    const float right = std::min(
+        first->x + first->width, second.x + second.width);
+    const float bottom = std::min(
+        first->y + first->height, second.y + second.height);
+    if (right <= left || bottom <= top) return std::nullopt;
+    return ViewRect{ left, top, right - left, bottom - top };
+}
+
+bool LogicalSlotScrollContainer(ViewNodeType type)
+{
+    return type == ViewNodeType::Scroll ||
+        type == ViewNodeType::VirtualList ||
+        type == ViewNodeType::VirtualGrid;
+}
+
+RECT LogicalSlotClientRect(const LuaWidget& widget, const ViewRect& frame)
+{
+    RECT result{
+        widget.lastBounds.left +
+            static_cast<LONG>(std::lround(frame.x)),
+        widget.lastBounds.top +
+            static_cast<LONG>(std::lround(frame.y)),
+        widget.lastBounds.left +
+            static_cast<LONG>(std::lround(frame.x + frame.width)),
+        widget.lastBounds.top +
+            static_cast<LONG>(std::lround(frame.y + frame.height)),
+    };
+    result.left = std::max(result.left, widget.lastBounds.left);
+    result.top = std::max(result.top, widget.lastBounds.top);
+    result.right = std::min(result.right, widget.lastBounds.right);
+    result.bottom = std::min(result.bottom, widget.lastBounds.bottom);
+    return result;
+}
+
 void RebuildLogicalSlotReferences(LuaWidget& widget)
 {
     std::erase_if(widget.applicationReferences, [](const auto& entry) {
@@ -16815,6 +16860,177 @@ bool CommitLogicalSlotMutation(WidgetEngine& engine, LuaWidget& widget,
     engine.RuntimeInvalidateHost(widget.widgetId);
     return true;
 }
+}
+
+std::optional<LogicalSlotHostSurface>
+WidgetEngine::RuntimeLogicalSlotSurface(const std::wstring& widgetId,
+    std::string_view slotId) const
+{
+    const auto widget = std::find_if(widgets_.begin(), widgets_.end(),
+        [&widgetId](const LuaWidget& candidate) {
+            return candidate.widgetId == widgetId;
+        });
+    if (widget == widgets_.end() || widget->preview || !widget->valid ||
+        widget->manifest.apiVersion < 2 || !widget->viewTree)
+        return std::nullopt;
+
+    const auto declaration = widget->logicalSlots.Declarations().find(slotId);
+    const auto* snapshot = widget->logicalSlots.Find(slotId);
+    if (declaration == widget->logicalSlots.Declarations().end() ||
+        !snapshot)
+        return std::nullopt;
+
+    LogicalSlotHostSurface result;
+    result.widgetId = widgetId;
+    result.slotId = std::string(slotId);
+    result.kind = snapshot->kind;
+    result.revision = snapshot->revision;
+    result.capacity = snapshot->capacity;
+    result.itemCount = snapshot->items.size();
+    result.accepts = declaration->second.accepts;
+    result.replacePolicy = declaration->second.replacePolicy;
+
+    const auto collect = [&](const auto& self, const ViewNode& node,
+        std::optional<ViewRect> inheritedClip) -> bool {
+        if (!node.visible) return false;
+        if (node.type == ViewNodeType::SlotSurface &&
+            node.logicalSlotId == slotId)
+        {
+            if (node.logicalSlotKind != snapshot->kind ||
+                (node.logicalSlotRevision != 0 &&
+                    node.logicalSlotRevision != snapshot->revision))
+                return false;
+            std::vector<const ViewNode*> sceneItems;
+            for (const auto& child : node.children)
+                if (child.type == ViewNodeType::SlotItem)
+                    sceneItems.push_back(&child);
+            if (snapshot->kind == LogicalSlotKind::Binding)
+            {
+                if ((!snapshot->items.empty() &&
+                        (sceneItems.size() != 1 ||
+                         node.children.size() != 1 ||
+                         sceneItems.front()->key !=
+                            snapshot->items.front().id ||
+                         sceneItems.front()->logicalSlotReference !=
+                            snapshot->items.front().reference)) ||
+                    (snapshot->items.empty() && !sceneItems.empty()))
+                    return false;
+            }
+            else
+            {
+                if (sceneItems.size() != snapshot->items.size() ||
+                    node.children.size() != snapshot->items.size())
+                    return false;
+                for (std::size_t index = 0;
+                    index < sceneItems.size(); ++index)
+                {
+                    if (sceneItems[index]->key != snapshot->items[index].id ||
+                        sceneItems[index]->logicalSlotReference !=
+                            snapshot->items[index].reference)
+                        return false;
+                }
+            }
+            const auto visibleSurface =
+                IntersectLogicalSlotFrames(inheritedClip, node.frame);
+            if (!visibleSurface) return false;
+            result.bounds = LogicalSlotClientRect(*widget, *visibleSurface);
+            if (result.bounds.right <= result.bounds.left ||
+                result.bounds.bottom <= result.bounds.top)
+                return false;
+
+            for (const auto& child : node.children)
+            {
+                if (child.type != ViewNodeType::SlotItem || !child.visible)
+                    continue;
+                const auto visibleItem = IntersectLogicalSlotFrames(
+                    visibleSurface, child.frame);
+                if (!visibleItem) continue;
+                RECT bounds = LogicalSlotClientRect(*widget, *visibleItem);
+                if (bounds.right <= bounds.left ||
+                    bounds.bottom <= bounds.top)
+                    continue;
+                result.items.push_back({ child.key, bounds });
+            }
+            return true;
+        }
+
+        std::optional<ViewRect> childClip = inheritedClip;
+        if (LogicalSlotScrollContainer(node.type) && node.clipFrame)
+            childClip = IntersectLogicalSlotFrames(
+                inheritedClip, *node.clipFrame);
+        if (LogicalSlotScrollContainer(node.type) && !childClip)
+            return false;
+        for (const auto& child : node.children)
+            if (self(self, child, childClip)) return true;
+        return false;
+    };
+
+    if (!collect(collect, *widget->viewTree, std::nullopt))
+        return std::nullopt;
+    return result;
+}
+
+bool WidgetEngine::RuntimeBindHostLogicalSlot(
+    const std::wstring& widgetId, std::string_view slotId,
+    snowdesktop::widget_runtime::LogicalSlotItem candidate,
+    std::size_t targetIndex,
+    snowdesktop::widget_runtime::LogicalSlotChange& change,
+    std::string& error)
+{
+    error.clear();
+    auto widget = std::find_if(widgets_.begin(), widgets_.end(),
+        [&widgetId](const LuaWidget& candidateWidget) {
+            return candidateWidget.widgetId == widgetId;
+        });
+    if (widget == widgets_.end() || widget->preview || !widget->valid ||
+        widget->manifest.apiVersion < 2)
+    {
+        error = "logical slot host owner is unavailable";
+        return false;
+    }
+
+    candidate.available = true;
+    auto previousModel = widget->logicalSlots;
+    auto previousStorage = ActiveStorage();
+    if (!widget->logicalSlots.Bind(slotId, std::move(candidate),
+            change, error, targetIndex))
+        return false;
+    if (change.operation == "unchanged") return true;
+    if (!CommitLogicalSlotMutation(*this, *widget,
+            std::move(previousModel), std::move(previousStorage), error))
+        return false;
+
+    const auto eventChange = change;
+    (void)InvokeLifecycleEvent(*widget, "slot.changed",
+        [eventChange](lua_State* state) {
+            lua_pushlstring(state, eventChange.slotId.data(),
+                eventChange.slotId.size());
+            lua_setfield(state, -2, "slotId");
+            lua_pushstring(state,
+                snowdesktop::widget_runtime::LogicalSlotKindName(
+                    eventChange.kind));
+            lua_setfield(state, -2, "slotKind");
+            lua_pushinteger(state,
+                static_cast<lua_Integer>(eventChange.revision));
+            lua_setfield(state, -2, "revision");
+            lua_pushlstring(state, eventChange.operation.data(),
+                eventChange.operation.size());
+            lua_setfield(state, -2, "operation");
+            lua_createtable(state,
+                static_cast<int>(eventChange.itemIds.size()), 0);
+            for (std::size_t index = 0;
+                index < eventChange.itemIds.size(); ++index)
+            {
+                lua_pushlstring(state, eventChange.itemIds[index].data(),
+                    eventChange.itemIds[index].size());
+                lua_rawseti(state, -2,
+                    static_cast<lua_Integer>(index + 1));
+            }
+            lua_setfield(state, -2, "itemIds");
+            lua_pushstring(state, "host.drop");
+            lua_setfield(state, -2, "source");
+        });
+    return true;
 }
 
 std::optional<snowdesktop::widget_runtime::LogicalSlotSnapshot>

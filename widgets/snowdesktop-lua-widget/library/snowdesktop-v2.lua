@@ -416,7 +416,7 @@
 ---@field settings? SnowWidgetSettings
 
 ---@class SnowWidgetEvent
----@field kind 'visibility'|'resize'|'pointer'|'timer'|'schedule'|'action'|'selection'|'environment'|'panel'|'data.change'|'task.complete'
+---@field kind 'visibility'|'resize'|'pointer'|'timer'|'schedule'|'action'|'selection'|'environment'|'panel'|'data.change'|'task.complete'|'slot.changed'
 ---@field action? 'click'|'change'|'focus'|'blur'|'submit'|'doubleClick'|'pointerDown'|'pointerMove'|'pointerUp'|'wheel'|'opened'|'closed'|string
 ---@field id? string
 ---@field name? string
@@ -451,6 +451,11 @@
 ---@field reason? string
 ---@field topic? string Updated data subscription topic for data.change.
 ---@field revision? integer Monotonic provider revision for data.change.
+---@field slotId? string Manifest logical-slot ID for slot.changed.
+---@field slotKind? 'binding'|'collection' Logical slot model kind for slot.changed.
+---@field operation? 'bound'|'replaced'|'added'|'removed'|'moved'|'cleared' Logical slot transaction for slot.changed.
+---@field itemIds? string[] Opaque affected host item IDs for slot.changed.
+---@field source? 'host.drop'|string Host change source for slot.changed.
 ---@field taskId? integer
 ---@field task? 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'filesystem.pickOpen'|'filesystem.pickSave'|'filesystem.pickFolder'|'filesystem.stat'|'filesystem.list'|'filesystem.read'|'filesystem.write'|'filesystem.release'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'|string
 ---@field ok? boolean

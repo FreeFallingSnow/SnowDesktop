@@ -95,7 +95,8 @@ public:
     std::vector<LogicalSlotSnapshot> Snapshots() const;
 
     bool Bind(std::string_view slotId, LogicalSlotItem candidate,
-        LogicalSlotChange& change, std::string& error);
+        LogicalSlotChange& change, std::string& error,
+        std::optional<std::size_t> targetIndex = std::nullopt);
     bool Clear(std::string_view slotId,
         LogicalSlotChange& change, std::string& error);
     bool Remove(std::string_view slotId, std::string_view itemId,

@@ -119,9 +119,14 @@ logical bindings or collections. Open them with `slots.binding(id)` or
 `slots.collection(id)`, render the exact host snapshot with
 `view.slotSurface/slotItem`, and only call bind/add/clear/remove/move from the
 current trusted action event. These methods persist references; they do not
-grant file contents, expose paths, move source objects, or make the current
-host build accept native desktop/Explorer drops. A source reference must first
-come from a bounded host search or explicit file-reference task.
+grant file contents, expose paths, or move source objects. Probe
+`slots.nativeDrop` when a committed slotSurface should accept one native
+desktop/Application/Explorer object with host insertion preview, and handle
+`slot.changed` only after probing `slots.event.changed`; re-read the slot model
+instead of trusting event data as writable state. Multi-object native ingress,
+native item drag-out/reorder, host picker, and undo are not available yet. A
+source reference used by Lua mutation must still come from a bounded host
+search or explicit file-reference task.
 Probe `view.scroll` for a host-owned vertical or horizontal viewport. Give it
 exactly one child, keep that child visible, and keep the same key so the host
 retains its clamped offset; never offset descendants yourself. Probe

@@ -524,6 +524,28 @@ struct WidgetErrorEntry
     std::string message;  ///< 错误描述信息
 };
 
+/** Host-only geometry and policy snapshot for one committed slotSurface. */
+struct LogicalSlotHostSurface
+{
+    struct ItemRegion
+    {
+        std::string itemId;
+        RECT bounds{};
+    };
+
+    std::wstring widgetId;
+    std::string slotId;
+    snowdesktop::widget_runtime::LogicalSlotKind kind =
+        snowdesktop::widget_runtime::LogicalSlotKind::Binding;
+    std::uint64_t revision = 0;
+    std::size_t capacity = 1;
+    std::size_t itemCount = 0;
+    std::vector<std::string> accepts;
+    std::string replacePolicy;
+    RECT bounds{};
+    std::vector<ItemRegion> items;
+};
+
 class WidgetEngine
 {
 public:
@@ -1043,6 +1065,14 @@ public:
         RuntimeLogicalSlotSnapshot(const std::wstring& widgetId,
             std::uint64_t ownerToken, std::string_view slotId,
             snowdesktop::widget_runtime::LogicalSlotKind kind) const;
+    std::optional<LogicalSlotHostSurface> RuntimeLogicalSlotSurface(
+        const std::wstring& widgetId, std::string_view slotId) const;
+    bool RuntimeBindHostLogicalSlot(const std::wstring& widgetId,
+        std::string_view slotId,
+        snowdesktop::widget_runtime::LogicalSlotItem candidate,
+        std::size_t targetIndex,
+        snowdesktop::widget_runtime::LogicalSlotChange& change,
+        std::string& error);
     bool RuntimeBindLogicalSlot(const std::wstring& widgetId,
         std::uint64_t ownerToken, std::string_view slotId,
         std::string_view reference,

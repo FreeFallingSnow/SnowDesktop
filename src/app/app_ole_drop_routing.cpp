@@ -136,6 +136,99 @@ POINT DesktopApp::ScreenPointToClient(POINTL screen) const
     return pt;
 }
 
+bool DesktopApp::CommitLuaLogicalSlotDrop(
+    const std::wstring& widgetId, const std::string& slotId,
+    const std::vector<Item*>& sourceItems, std::size_t targetIndex)
+{
+    if (!widgetEngine_ || sourceItems.size() != 1 || !sourceItems.front())
+        return false;
+    const auto surface = widgetEngine_->RuntimeLogicalSlotSurface(
+        widgetId, slotId);
+    if (!surface) return false;
+    const auto accepts = [&surface](std::string_view kind) {
+        return std::find(surface->accepts.begin(), surface->accepts.end(),
+            kind) != surface->accepts.end();
+    };
+
+    Item* sourceItem = sourceItems.front();
+    snowdesktop::widget_runtime::LogicalSlotItem candidate;
+    candidate.title = WideToUtf8(sourceItem->GetTitle());
+    const std::wstring sourcePath = sourceItem->GetPath();
+
+    DesktopItem* desktopItem = nullptr;
+    if (auto* desktopIcon = dynamic_cast<DesktopIcon*>(sourceItem))
+        desktopItem = desktopIcon->GetDesktopItem();
+    else if (auto* dockItem = dynamic_cast<DockEntryItem*>(sourceItem);
+        dockItem && dockItem->GetEntryType() == DockEntryType::DesktopItem)
+    {
+        const std::size_t itemIndex = FindItemIndexByKey(
+            dockItem->GetReference());
+        if (itemIndex < items_.size()) desktopItem = &items_[itemIndex];
+    }
+    else if (auto* frequentItem =
+            dynamic_cast<DockFrequentItem*>(sourceItem))
+    {
+        const std::size_t itemIndex = frequentItem->GetItemIndex();
+        if (itemIndex < items_.size()) desktopItem = &items_[itemIndex];
+    }
+
+    if (desktopItem)
+    {
+        const std::wstring target = !desktopItem->parsingName.empty()
+            ? desktopItem->parsingName
+            : (!desktopItem->layoutKey.empty() ? desktopItem->layoutKey
+                : desktopItem->desktopIconClsid);
+        if (target.empty()) return false;
+        if (desktopItem->isApplicationShortcut &&
+            accepts("app.reference"))
+            candidate.kind = "app.reference";
+        else if (accepts("desktop.item"))
+            candidate.kind = "desktop.item";
+        else if (!sourcePath.empty() && accepts("filesystem.reference"))
+            candidate.kind = "filesystem.reference";
+        else
+            return false;
+        candidate.target = WideToUtf8(target);
+        candidate.source = "desktop.drop";
+        candidate.type = desktopItem->typeName.empty()
+            ? (desktopItem->isApplicationShortcut
+                ? "application" : "desktop.item")
+            : WideToUtf8(desktopItem->typeName);
+    }
+    else if (dynamic_cast<FolderEntryIcon*>(sourceItem) ||
+        dynamic_cast<ExternalFileItem*>(sourceItem) ||
+        (!sourcePath.empty() && !dynamic_cast<Widget*>(sourceItem)))
+    {
+        if (sourcePath.empty() || !accepts("filesystem.reference"))
+            return false;
+        candidate.kind = "filesystem.reference";
+        candidate.target = WideToUtf8(sourcePath);
+        candidate.source = dynamic_cast<ExternalFileItem*>(sourceItem)
+            ? "explorer.drop" : "widget.drop";
+        const DWORD attributes = GetFileAttributesW(sourcePath.c_str());
+        candidate.type = attributes != INVALID_FILE_ATTRIBUTES &&
+                (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0
+            ? "folder" : "file";
+    }
+    else
+        return false;
+
+    if (candidate.title.empty()) candidate.title = candidate.target;
+    snowdesktop::widget_runtime::LogicalSlotChange change;
+    std::string error;
+    if (!widgetEngine_->RuntimeBindHostLogicalSlot(widgetId, slotId,
+            std::move(candidate), targetIndex, change, error))
+    {
+        if (!error.empty())
+            widgetEngine_->RuntimeRecordError(widgetId,
+                "logical slot drop: " + error);
+        MessageBeep(MB_ICONWARNING);
+        return false;
+    }
+    InvalidateRect(hwnd_, nullptr, FALSE);
+    return true;
+}
+
 /**
  * @brief COM IDropTarget::DragEnter 实现
  * @param dataObject 拖放数据对象

@@ -1061,12 +1061,14 @@ Gregorian 网格、可配置周起始、受控 ISO 日期选择、今日/相邻�
 feature probe、LuaLS 和契约测试，但通用键盘导航及 UIA Text/Calendar Pattern 仍归 M6
 完整性门禁，不能仅因节点可以绘制就宣称声明式视图已稳定。
 
-同日逻辑槽位第一批基础契约也已落地：v2 manifest 可声明最多 16 个 binding/collection，
+同日逻辑槽位基础契约也已落地：v2 manifest 可声明最多 16 个 binding/collection，
 宿主按实例持久保存 `reference` 模型并为 Lua 恢复可启动/打开的 opaque 引用；
 `slots.binding/collection` 提供读取以及受可信用户动作约束的 bind/add/clear/remove/move，
 `slotSurface/slotItem` 会校验 kind、revision、完整项目集合和顺序，伪造或陈旧 scene 不会覆盖
-上一棵可用树。该进度尚未包含 `LuaLogicalSlot` 原生 surface、桌面/Explorer drop ingress、
-插入预览、选择器、undo 和 `slot.changed` 主动事件，因此 M6 槽位退出条件仍未达成。
+上一棵可用树。后续批次已加入固定的 `LuaLogicalSlot` 原生 surface、完整 slot contract
+矩阵、桌面/Explorer 单对象 reference ingress、容量/替换策略命中、插入预览和
+`slot.changed` 主动事件；宿主不会把路径、PIDL、`IDataObject` 或 DropRoute 交给 Lua。
+尚缺宿主选择器、原生槽位项拖出与同槽重排、删除手势和 undo，因此 M6 槽位退出条件仍未达成。
 
 节点规则：
 

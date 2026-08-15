@@ -285,6 +285,7 @@ set(SNOWDESKTOP_SOURCES
     src/widgets/file_categories.cpp
     src/widgets/folder_mapping.cpp
     src/widgets/lua_script.cpp
+    src/widgets/lua_logical_slot.cpp
     src/widgets/guide_widget.cpp
 )
 
@@ -1042,6 +1043,19 @@ if (BUILD_TESTING)
             src/widget_logical_slot.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract lua storage widget)
+
+    snowdesktop_add_test(
+        SnowDesktopLuaLogicalSlotContainerTests
+        lua_logical_slot_container
+        SOURCES
+            tests/lua_logical_slot_container_tests.cpp
+            src/widgets/lua_logical_slot.cpp
+            src/core/slot.cpp
+            src/core/container.cpp
+            src/l10n.cpp
+        INCLUDE_DIRECTORIES src src/core third_party/lua
+        LINK_LIBRARIES d2d1 user32
+        LABELS contract interaction lua slot widget)
 
     snowdesktop_add_test(
         SnowDesktopFolderSelfDropRulesTests

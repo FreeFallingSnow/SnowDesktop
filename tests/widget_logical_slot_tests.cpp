@@ -114,6 +114,13 @@ void TestBindingAndCollectionTransactions()
             Item("filesystem.reference", "Plan", "file:plan"),
             change, error),
         "a collection must accept a second declared reference kind");
+    Check(model.Remove("favorites", model.Find("favorites")->items[1].id,
+            change, error) &&
+        model.Bind("favorites",
+            Item("filesystem.reference", "Plan", "file:plan"),
+            change, error, 0) &&
+        model.Find("favorites")->items.front().title == "Plan",
+        "a host drop must insert a new collection reference at its exact boundary");
     Check(!model.Bind("favorites",
             Item("filesystem.reference", "Overflow", "file:overflow"),
             change, error) && error.find("capacity") != std::string::npos,

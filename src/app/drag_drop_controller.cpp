@@ -1,5 +1,6 @@
 #include "drag_drop_controller.h"
 
+#include <algorithm>
 #include <utility>
 
 void DragDropController::BeginSelfDrag()
@@ -91,7 +92,9 @@ DragTargetResolution DragDropController::ResolveExternalTarget(
 {
     DragTargetResolution resolution =
         DragTargetResolver::ResolveExternal(
-            containers, point, filter);
+            containers, point, filter,
+            static_cast<std::size_t>(std::max(
+                1, externalSummary_.fileCount)));
     session_.UpdateTarget(
         resolution.container,
         resolution.slot,

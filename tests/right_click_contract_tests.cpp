@@ -54,6 +54,7 @@ void TestContainerMenuMatrix()
         case Surface::FolderMapping:
         case Surface::CollectionGroup:
         case Surface::FileGroup:
+        case Surface::LuaLogicalSlot:
         case Surface::Guide:
             expected = Menu::Widget;
             break;

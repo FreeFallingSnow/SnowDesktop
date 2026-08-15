@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../widgets/lua_logical_slot.h"
 
 // Desktop-item layout and container rebuild.
 
@@ -130,6 +131,33 @@ void DesktopApp::RebuildContainersAndItems()
         else if (!dockExclusive)
         {
             items_oo_.push_back(std::move(widget));
+            if (w.type == DesktopWidgetType::LuaScript && widgetEngine_ &&
+                widgetEngine_->EnsureWidgetLoaded(w.id, w.packageId))
+            {
+                const LuaWidgetManifest manifest =
+                    WidgetEngine::GetWidgetManifest(w.packageId);
+                for (const auto& [slotId, declaration] :
+                    manifest.logicalSlots)
+                {
+                    (void)declaration;
+                    const std::wstring widgetId = w.id;
+                    containers_.push_back(
+                        std::make_unique<LuaLogicalSlotContainer>(
+                            widgetId, slotId,
+                            [this, widgetId, slotId]() {
+                                return widgetEngine_
+                                    ? widgetEngine_->RuntimeLogicalSlotSurface(
+                                        widgetId, slotId)
+                                    : std::optional<LogicalSlotHostSurface>{};
+                            },
+                            [this, widgetId, slotId](
+                                const std::vector<Item*>& sourceItems,
+                                std::size_t targetIndex) {
+                                return CommitLuaLogicalSlotDrop(widgetId,
+                                    slotId, sourceItems, targetIndex);
+                            }));
+                }
+            }
         }
     }
 

@@ -415,7 +415,7 @@ bool LogicalSlotModel::ValidateItem(const LogicalSlotItem& item,
 
 bool LogicalSlotModel::Bind(std::string_view slotId,
     LogicalSlotItem candidate, LogicalSlotChange& change,
-    std::string& error)
+    std::string& error, std::optional<std::size_t> targetIndex)
 {
     error.clear();
     change = {};
@@ -483,7 +483,16 @@ bool LogicalSlotModel::Bind(std::string_view slotId,
         operation = snapshot->second.items.empty() ? "bound" : "replaced";
         snapshot->second.items.assign(1, candidate);
     }
-    else snapshot->second.items.push_back(candidate);
+    else
+    {
+        const std::size_t insertAt = std::min(
+            targetIndex.value_or(snapshot->second.items.size()),
+            snapshot->second.items.size());
+        snapshot->second.items.insert(
+            snapshot->second.items.begin() +
+                static_cast<std::ptrdiff_t>(insertAt),
+            candidate);
+    }
     ++snapshot->second.revision;
     if (snapshot->second.revision == 0) ++snapshot->second.revision;
     change = { snapshot->second.id, snapshot->second.kind,
