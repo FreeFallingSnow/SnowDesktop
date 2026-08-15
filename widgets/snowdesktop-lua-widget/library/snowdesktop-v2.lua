@@ -2004,8 +2004,10 @@ function control.textInput(descriptor) end
 ---@return string value
 function control.textArea(descriptor) end
 
----Accept a text-control focus request from a direct trusted action/menu/open
----callback. A control added by that action is focused after the next successful
+---Accept a host focus request from a direct trusted action/menu/open callback.
+---With view.focus.request, the key may identify any focusable declarative node;
+---otherwise it identifies a submitted text control. A target added by that action
+---is focused after the next successful
 ---render of the same surface. Calls from render, schedules and asynchronous
 ---completions return false.
 ---@param key string

@@ -1274,6 +1274,7 @@ view.row({
 - `view.scroll.events` 已把 `events.scrollEnd` 限定到 scroll/virtual collection；滚轮或 UIA 操作从末端前到达最大宿主偏移时只投递一次，离开末端后才能再次触发，UIA 来源不获得可信手势。
 - `view.keyboardNavigation.order` 已加入 `focusable/tabIndex`：-1 只退出顺序遍历，正数先按升序、再接默认 0 的声明顺序；焦点样式、鼠标焦点、键盘遍历和 UIA IsKeyboardFocusable 使用同一有效状态。
 - `view.keyboard.events` 已为可聚焦节点加入 keyDown/keyUp 观察：事件包含稳定符号键名、Windows virtual key、重复与修饰键状态，输入代理与桌面窗口走同一入口；按下目标用于配对释放，窗口失焦清理。事件不提供取消返回值，宿主激活与管理快捷键继续执行，字符/IME 仍只走输入控件。
+- `view.focus.request` 已将可信手势内的 `control.focus(key)` 从文本输入扩展到最后一棵成功树中的任意启用、可聚焦元素，并同步逻辑槽位焦点；动作中新加入的目标仍只延迟到同 surface 下一次成功提交，失败后立即清理，不允许 render/schedule/异步完成抢焦点。
 - `view.state.visibility` 已加入显式 visible/hidden/collapsed：hidden 仍保留父布局空间，但绘制、后代命中、宿主输入、逻辑槽位和 UIA 语义都从同一棵提交树中省略；collapsed 继续复用旧 `visible=false` 的不占位语义，透明度为 0 不等同隐藏。
 - `view.input.selection` 已把 textInput/textArea/searchBox 的受控 selection 纳入公共属性与动作矩阵：公共偏移使用 UTF-8 字节码点边界，宿主编辑器内部转换为 UTF-16；selectionChange 与文本 change 返回同一结果范围，`selectAll` 只保留为互斥的一次性兼容入口。
 - 只有组件绑定了业务事件时才调用 Lua；状态更新、多个订阅通知和同一帧内的重复 `invalidate` 合并为至多一次 `view()` 求值和一次 scene diff。
@@ -1328,7 +1329,7 @@ view.button({
 - 事件以最深命中节点为 target，再沿 scene tree 向上查找已绑定处理；enter/leave 不冒泡。处理结果可以标记 handled，但不能阻止 SnowDesktop 的安全和管理快捷入口。
 - 同一帧内的 `pointerMove` 和 wheel 可以合并；down/up/click、焦点、菜单请求和按键不能被合并或乱序。
 - 只有获得焦点的组件接收键盘输入。
-- 提供焦点移动、焦点请求和焦点可见性 API。
+- 焦点移动继续由宿主 Tab/方向键完成；`view.focus.request` 已提供可信动作中的显式焦点请求并支持下一次成功提交解析，焦点可见性由宿主轮廓保证。
 - 文本输入继续使用宿主 IME 管线，不由组件创建原生窗口。
 - 受控文本选区使用 `{start, finish}` 的 UTF-8 字节半开区间；宿主在键盘或指针只移动选区时投递 `selectionChange`，在文本 change 中附带结果选区，组件写回后才成为下一棵树的权威状态。
 - 指针捕获绑定到 `instanceId + nodeKey + pointerId`，必须有超时，并在节点移除、隐藏、失焦、权限撤销和卸载时自动释放。
@@ -1771,7 +1772,8 @@ doubleClick/pointer/contextMenu action，以及“先完整校验布局、后原
 混合态绘制、交互建议和 UIA Toggle Indeterminate，`view.input.required` 已贯通
 input/select 的 UIA IsRequiredForForm 语义，`view.input.selection` 已贯通文本输入受控选区、
 UTF-8/UTF-16 边界换算和 selectionChange 建议，`view.keyboard.events` 已贯通桌面与输入代理的
-聚焦按键观察、按下/释放配对和失焦清理；这些声明都不把状态持久化责任转移给宿主。
+聚焦按键观察、按下/释放配对和失焦清理，`view.focus.request` 已把可信动作焦点请求扩展到
+任意可聚焦声明式节点并支持下一次成功提交解析；这些声明都不把状态持久化责任转移给宿主。
 其额度为 512 节点、32 层、单节点 4 KiB 文本、全树 64 KiB 文本和 256 个交互元素；未知字段、
 重复 key、非连续 children、错误枚举和越界数值拒绝整次提交。数据图形由宿主直接有界绘制，不展开为逐样本节点或命中区域。它尚不包含完整必选节点矩阵、
 UIA、RTL、文本换行、可变高度虚拟化、差量资源复用和声明式 panel；通用桌面键盘焦点已作为

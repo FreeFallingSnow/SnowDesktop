@@ -434,6 +434,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "view.flex.sizing") &&
             snowdesktop::widget_api::SupportsFeature(
+                "view.focus.request") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "view.flow.wrap") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.grid.placement") &&

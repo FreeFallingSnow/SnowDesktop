@@ -1344,6 +1344,8 @@ public:
         LuaWidget::HostControl control, std::string& error);
     bool RuntimeFocusHostInput(const std::wstring& widgetId,
         const std::string& id, const char* source = "pointer");
+    bool RuntimeFocusViewTarget(const std::wstring& widgetId,
+        const std::string& id, const char* source = "programmatic");
     void ResolveDeferredHostInputFocus(
         const std::wstring& widgetId, std::string_view surface);
     bool RuntimeFocusHostInputFromTrustedGesture(

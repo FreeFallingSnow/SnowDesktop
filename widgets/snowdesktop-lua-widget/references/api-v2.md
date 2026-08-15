@@ -93,6 +93,7 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.inputControls` 一次提供 `textInput/textArea/searchBox/numberInput/select`，
 `view.keyboardNavigation.basic` 提供桌面 surface 的通用宿主键盘焦点与激活，
 `view.keyboard.events` 提供聚焦元素不可取消的按下/释放观察事件，
+`view.focus.request` 将可信手势焦点请求扩展到任意可聚焦声明式元素，
 `view.flex.layout` 提供 row/column 主轴切换、换行与多行交叉轴对齐，
 `view.flex.sizing` 提供线性布局的 basis/grow/shrink 尺寸分配，
 `view.text.flow` 提供文本块的换行、行数、溢出和垂直对齐，
@@ -907,12 +908,14 @@ Ctrl+Enter 提交，滚轮与光标跟随会调整实例内滚动位置。普通
 
 `control.focus(key)` 只能在直接 click/doubleClick/pointerDown/pointerUp/wheel、菜单命令
 或宿主明确标记的打开回调同步栈中接受；render、schedule、data.change 和
-task.complete 不能抢走桌面键盘焦点。若该操作同时把目标输入框加入界面树，宿主会把
+task.complete 不能抢走桌面键盘焦点。探测 `view.focus.request` 后，key 除文本输入外还可
+指向最后一棵成功视图中的任意启用、可聚焦元素，包括普通按钮、列表项和逻辑槽位项；槽位焦点
+状态会同步更新。若该操作同时把目标加入界面树，宿主会把
 最新一次聚焦请求保留到同一 surface 的下一次成功渲染，并在提交控件后聚焦；若届时
 仍未提交目标控件，则清除请求并记录诊断，不会在更晚的无关界面中意外聚焦。返回
 `(accepted, error)`，稳定失败码为 `trustedGestureRequired`、`controlNotFound` 或
 `hostUnavailable`。对应 feature 为 `control.textInput`、`control.textArea` 和
-`control.focus`。
+`control.focus`；通用声明式目标另要求 `view.focus.request`。
 
 ### `schedule`
 

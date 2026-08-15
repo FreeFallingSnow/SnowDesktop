@@ -459,7 +459,10 @@ default border does not fit the component design.
   `draw.pushClip/popClip`. Do not use the v1 `ui.scrollArea` compatibility API.
 - Submit storage-bound text editors with `control.textInput/textArea` during
   render. Keep keys stable, set an explicit practical `maxBytes`, and call
-  `control.focus` only inside a direct trusted action or menu callback. Ordinary
+  `control.focus` only inside a direct trusted action or menu callback. After
+  probing `view.focus.request`, the same call may target any enabled focusable
+  declarative node, including list/slot items; a newly rendered target resolves
+  only after the next successful tree submission. Ordinary
   editing does not require `ui.input`; Lua never receives clipboard contents.
 - Put an auxiliary editor in the optional `widget.define.panel` callback and
   open it with `widget.openPanel`; its context surface is `panel`, it accepts

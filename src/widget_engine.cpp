@@ -21891,6 +21891,43 @@ std::vector<HostLogicalSlotKeyboardItem> CollectHostLogicalSlotKeyboardItems(
 }
 }
 
+bool WidgetEngine::RuntimeFocusViewTarget(const std::wstring& widgetId,
+    const std::string& id, const char* source)
+{
+    int index = FindWidget(widgetId);
+    if (index < 0 || id.empty()) return false;
+    auto& widget = widgets_[index];
+    if (!widget.valid || widget.preview ||
+        !RuntimeIsWidgetSelected(widgetId))
+        return false;
+    if (RuntimeFocusHostInput(widgetId, id, source)) return true;
+    if (!widget.interactionRegions.IsKeyboardFocusable(id)) return false;
+
+    if (focusedHostInput_.active &&
+        focusedHostInput_.widgetId == widgetId)
+        BlurHostInput(false);
+    index = FindWidget(widgetId);
+    if (index < 0) return false;
+    auto& current = widgets_[index];
+    if (!current.valid || current.preview ||
+        !RuntimeIsWidgetSelected(widgetId) ||
+        !current.interactionRegions.IsKeyboardFocusable(id))
+        return false;
+    current.viewKeyboardFocusKey = id;
+    current.logicalSlotFocus.reset();
+    const auto slotItems = CollectHostLogicalSlotKeyboardItems(*this, current);
+    const auto slot = std::find_if(slotItems.begin(), slotItems.end(),
+        [&id](const auto& item) { return item.itemId == id; });
+    if (slot != slotItems.end())
+    {
+        current.logicalSlotFocus = LuaWidget::LogicalSlotFocus{
+            slot->slotId, slot->itemId };
+    }
+    if (hostInputFocusCallback_) hostInputFocusCallback_();
+    RuntimeInvalidateHost(widgetId);
+    return true;
+}
+
 void WidgetEngine::BeginHostLogicalSlotPointer(
     LuaWidget& widget, int x, int y)
 {
@@ -25160,7 +25197,7 @@ void WidgetEngine::ResolveDeferredHostInputFocus(
     if (!request.MatchesSurface(surface)) return;
     const std::string controlId = request.ControlId();
     request.Clear();
-    if (!RuntimeFocusHostInput(widgetId, controlId))
+    if (!RuntimeFocusViewTarget(widgetId, controlId, "programmatic"))
     {
         RuntimeRecordError(widgetId,
             "Deferred control.focus target was not submitted: " + controlId);
@@ -25177,7 +25214,7 @@ bool WidgetEngine::RuntimeFocusHostInputFromTrustedGesture(
         error = "trustedGestureRequired";
         return false;
     }
-    if (RuntimeFocusHostInput(widgetId, id))
+    if (RuntimeFocusViewTarget(widgetId, id, "programmatic"))
         return true;
 
     const int index = FindWidget(widgetId);
@@ -25186,12 +25223,13 @@ bool WidgetEngine::RuntimeFocusHostInputFromTrustedGesture(
         error = "hostUnavailable";
         return false;
     }
-    const auto& controls = widgets_[index].hostControls;
+    const auto& widget = widgets_[index];
+    const auto& controls = widget.hostControls;
     const bool submittedWithKey = std::any_of(
         controls.begin(), controls.end(), [&](const auto& control) {
             return control.id == id;
         });
-    if (submittedWithKey)
+    if (submittedWithKey || widget.interactionRegions.Find(id))
     {
         error = "controlNotFound";
         return false;
