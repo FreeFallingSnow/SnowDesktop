@@ -10,7 +10,9 @@ namespace
 {
 using snowdesktop::widget_runtime::FindViewNodeContract;
 using snowdesktop::widget_runtime::FindViewNodeType;
+using snowdesktop::widget_runtime::HasViewAccessibilityPattern;
 using snowdesktop::widget_runtime::IsKnownViewNodeProperty;
+using snowdesktop::widget_runtime::ViewAccessibilityPattern;
 using snowdesktop::widget_runtime::ViewNodeAllowedProperties;
 using snowdesktop::widget_runtime::ViewNodeContracts;
 using snowdesktop::widget_runtime::ViewNodeRequiresProperty;
@@ -36,6 +38,9 @@ void TestContractCoverageAndRoundTrip()
         Check(!contract.name.empty() && !contract.category.empty() &&
                 !contract.feature.empty(),
             "each node contract must publish its name, category, and feature");
+        Check(contract.type == ViewNodeType::Spacer ||
+                !contract.uiaControlType.empty(),
+            "every semantic node must publish a UIA control type");
         Check(types.insert(contract.type).second,
             "node contract types must be unique");
         Check(names.emplace(contract.name).second,
@@ -91,6 +96,23 @@ void TestRepresentativeApplicability()
             ViewNodeAllowsProperty(ViewNodeType::SlotItem, "reference") &&
             !ViewNodeAllowsProperty(ViewNodeType::SlotItem, "binding"),
         "logical-slot model and item fields must remain separated");
+
+    const auto* button = FindViewNodeContract(ViewNodeType::Button);
+    const auto* slider = FindViewNodeContract(ViewNodeType::Slider);
+    const auto* input = FindViewNodeContract(ViewNodeType::TextInput);
+    Check(button && button->uiaControlType == "Button" &&
+            HasViewAccessibilityPattern(button->uiaPatterns,
+                ViewAccessibilityPattern::Invoke) &&
+            button->keyboardFocusable,
+        "button UIA mapping must expose Invoke and keyboard focus");
+    Check(slider && slider->uiaControlType == "Slider" &&
+            HasViewAccessibilityPattern(slider->uiaPatterns,
+                ViewAccessibilityPattern::RangeValue),
+        "slider UIA mapping must expose RangeValue");
+    Check(input && input->uiaControlType == "Edit" &&
+            HasViewAccessibilityPattern(input->uiaPatterns,
+                ViewAccessibilityPattern::Value),
+        "text input UIA mapping must expose Value");
 }
 }
 

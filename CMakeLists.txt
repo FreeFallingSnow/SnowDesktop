@@ -263,6 +263,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget_audio_analysis_provider.cpp
     src/widget_draw_geometry.cpp
     src/widget_interaction_region.cpp
+    src/widget_view_accessibility.cpp
     src/widget_view_contract.cpp
     src/widget_view_tree.cpp
     src/widget_view_lua.cpp
@@ -1028,6 +1029,16 @@ if (BUILD_TESTING)
             src/widget_draw_geometry.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract render lua widget)
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetViewAccessibilityTests
+        widget_view_accessibility
+        SOURCES
+            tests/widget_view_accessibility_tests.cpp
+            src/widget_view_accessibility.cpp
+            src/widget_view_contract.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS accessibility contract layout lua widget)
 
     snowdesktop_add_test(
         SnowDesktopWidgetViewContractTests

@@ -2,6 +2,7 @@
 
 #include "widget_view_tree.h"
 
+#include <cstdint>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -9,6 +10,38 @@
 
 namespace snowdesktop::widget_runtime
 {
+enum class ViewAccessibilityPattern : std::uint32_t
+{
+    None = 0,
+    Invoke = 1u << 0,
+    Toggle = 1u << 1,
+    Selection = 1u << 2,
+    SelectionItem = 1u << 3,
+    RangeValue = 1u << 4,
+    Value = 1u << 5,
+    ExpandCollapse = 1u << 6,
+    Scroll = 1u << 7,
+    Grid = 1u << 8,
+    GridItem = 1u << 9,
+};
+
+constexpr ViewAccessibilityPattern operator|(
+    ViewAccessibilityPattern left,
+    ViewAccessibilityPattern right) noexcept
+{
+    return static_cast<ViewAccessibilityPattern>(
+        static_cast<std::uint32_t>(left) |
+        static_cast<std::uint32_t>(right));
+}
+
+constexpr bool HasViewAccessibilityPattern(
+    ViewAccessibilityPattern value,
+    ViewAccessibilityPattern pattern) noexcept
+{
+    return (static_cast<std::uint32_t>(value) &
+        static_cast<std::uint32_t>(pattern)) != 0;
+}
+
 struct ViewNodeContract
 {
     ViewNodeType type = ViewNodeType::Box;
@@ -16,6 +49,10 @@ struct ViewNodeContract
     std::string_view category;
     std::string_view feature;
     std::string_view defaultAccessibilityRole;
+    std::string_view uiaControlType;
+    ViewAccessibilityPattern uiaPatterns =
+        ViewAccessibilityPattern::None;
+    bool keyboardFocusable = false;
 };
 
 std::span<const ViewNodeContract> ViewNodeContracts() noexcept;

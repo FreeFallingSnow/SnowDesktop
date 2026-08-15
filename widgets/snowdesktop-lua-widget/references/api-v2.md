@@ -448,8 +448,10 @@ view.waveform({
 宿主现在从同一份可枚举节点契约表读取 44 个已公开节点的名称、所属 feature、默认
 accessibility role、允许属性和直接必需属性。Lua 解析器会在布局前按该表拒绝拼错字段或
 用在错误节点上的字段；例如 `columns` 不能用于 `row`，`source` 不能用于
-`referenceIcon`。该表目前仍是完整矩阵的第一层，默认值/范围、子节点、事件、UIA 和错误码
-尚未全部迁入，因此作者仍应以本节各 feature 的细化说明为准。
+`referenceIcon`。该表也登记 UIA ControlType、基础 Pattern 和宿主键盘可聚焦性，宿主能从
+布局结果生成只读语义快照；Windows UIA Provider 和复杂控件内部虚拟子项尚未接通，因此
+当前仍没有 Narrator 输出。默认值/范围、子节点、事件和错误码也未全部迁入，作者仍应以本节
+各 feature 的细化说明为准。
 
 该 feature 不是完整 `view.tree`：当前每帧重建树，尚无可变高度虚拟集合、
 可操作行内 span，也没有 UIA 输出、RTL、主题

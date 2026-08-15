@@ -1176,8 +1176,11 @@ M6 冻结前必须生成并评审一份机器可读的 **node-property applicabi
 当前已建立第一层宿主契约表 `widget_view_contract`：44 个已公开节点的规范名称、类别、细粒度
 feature、默认 accessibility role、允许属性和直接必需属性由同一份可枚举矩阵提供，Lua view
 解析器已使用该矩阵拒绝未知或不适用属性，节点名称解析和默认 role 也不再各自维护副本。当前
-仍未把默认值/范围、子节点、事件、键盘、UIA、RTL、动画、额度和错误码全部迁入矩阵，也尚未
-由它生成 LuaLS 与本文档，因此这只是完整性门禁的第一层，不表示契约已经冻结。
+现已进一步为每个语义节点登记 UIA ControlType、基础 Pattern 和是否参与宿主键盘焦点，并可从
+布局后的 view tree 生成保持父子关系、裁剪/offscreen、enabled/focused 和受控值状态的只读语义
+快照。该快照尚未接入 Windows UIA Provider，也未合成 radio/select/calendar 的内部虚拟子项；
+默认值/范围、子节点、事件、RTL、动画、额度和错误码仍未全部迁入矩阵，也尚未由它生成 LuaLS
+与本文档，因此这仍不表示契约已经冻结或 Narrator 已可使用。
 
 ### 13.8 实时更新与交互状态
 
@@ -1870,7 +1873,8 @@ M7 切换完成后，发布运行时必须删除 API v1 注册和执行分支。
 - scene node、diff、layout、renderer、节点级 hit testing/input、transition/animation 和 UI Automation。
 - 第 13.4 节全部 v2.0 必选布局、内容、控件、集合、图表和宿主表面节点，不以未定义的“首批节点”替代稳定版清单。
 - 冻结的机器可读 node-property applicability matrix，以及由它生成的 LuaLS 类型、文档、校验器、默认值表和测试参数集。
-  当前第一层节点/属性矩阵已进入宿主校验器并有独立契约测试；生成物、UIA/键盘/事件及
+  当前节点/属性矩阵已进入宿主校验器并有独立契约测试，UIA ControlType/基础 Pattern/
+  键盘焦点列及只读语义快照也已建立；Windows Provider、生成物、虚拟子项、事件及
   默认值/范围等列仍需继续并入，尚未达到冻结条件。
 - 环境上下文、响应式尺寸和减少动态效果。
 - 元素级 hover/pressed/focus、click/double click、指针捕获和独立原生右键菜单。
