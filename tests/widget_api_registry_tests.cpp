@@ -1,11 +1,16 @@
 #include "widget_api_registry.h"
+#include "widget_permission_state.h"
 
 #include <algorithm>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 
 extern "C" {
 #include <lauxlib.h>
@@ -571,6 +576,160 @@ void TestV2Contract()
     lua_pop(state, 3);
 }
 
+std::string ReadTextFile(const std::filesystem::path& path)
+{
+    std::ifstream stream(path, std::ios::binary);
+    Check(stream.good(), "contract artifact must be readable");
+    return std::string(std::istreambuf_iterator<char>(stream),
+        std::istreambuf_iterator<char>());
+}
+
+std::filesystem::path FindSourceRoot()
+{
+    std::filesystem::path current = std::filesystem::current_path();
+    for (int depth = 0; depth < 6; ++depth)
+    {
+        if (std::filesystem::exists(current /
+                "widgets/snowdesktop-lua-widget/library/snowdesktop-v2.lua"))
+            return current;
+        if (!current.has_parent_path() || current.parent_path() == current)
+            break;
+        current = current.parent_path();
+    }
+    Check(false, "test must run within the SnowDesktop source tree");
+    return {};
+}
+
+void TestSystemCapabilityContract()
+{
+    const auto functions =
+        snowdesktop::widget_api::SystemFunctionContracts();
+    const auto topics =
+        snowdesktop::widget_api::SystemDataTopicContracts();
+    const auto tasks = snowdesktop::widget_api::SystemTaskContracts();
+    Check(functions.size() == 15, "v2 system function catalog must be frozen");
+    Check(topics.size() == 24, "v2 data topic catalog must be frozen");
+    Check(tasks.size() == 41, "v2 task catalog must be frozen");
+
+    std::unordered_set<std::string> names;
+    const auto checkCommon = [&](const char* name, const char* feature,
+                                 const char* permission) {
+        Check(name && name[0] != '\0', "capability name must not be empty");
+        Check(feature && feature[0] != '\0' &&
+                snowdesktop::widget_api::SupportsFeature(feature),
+            "capability feature must exist in the host catalog");
+        Check(names.insert(name).second,
+            "capability names must be unique across kinds");
+        Check(!permission || permission[0] == '\0' ||
+                snowdesktop::widget::IsKnownWidgetPermission(permission),
+            "capability permission must exist in the permission catalog");
+    };
+    for (const auto& contract : functions)
+        checkCommon(contract.name, contract.feature, nullptr);
+    for (const auto& contract : topics)
+    {
+        checkCommon(contract.name, contract.feature,
+            contract.requiredPermission);
+        Check(contract.minimumIntervalMs > 0 &&
+                contract.hiddenIntervalMs >= contract.minimumIntervalMs,
+            "data topics must define bounded visible and hidden intervals");
+    }
+    for (const auto& contract : tasks)
+    {
+        checkCommon(contract.name, contract.feature,
+            contract.requiredPermission);
+        Check(contract.maximumPerInstance > 0 &&
+                contract.maximumPerInstance <= 16,
+            "tasks must define a valid per-instance concurrency limit");
+    }
+
+    const std::filesystem::path sourceRoot = FindSourceRoot();
+    const std::string luaDefinitions = ReadTextFile(sourceRoot /
+        "widgets/snowdesktop-lua-widget/library/snowdesktop-v2.lua");
+    const std::string documentation = ReadTextFile(sourceRoot /
+        "widgets/snowdesktop-lua-widget/references/api-v2.md");
+    for (const auto& contract : functions)
+    {
+        Check(luaDefinitions.find(contract.name) != std::string::npos,
+            "every system function must have a LuaLS declaration");
+        Check(documentation.find(contract.name) != std::string::npos,
+            "every system function must be documented");
+    }
+    for (const auto& contract : topics)
+    {
+        Check(luaDefinitions.find(contract.name) != std::string::npos,
+            "every data topic must have a LuaLS declaration");
+        Check(documentation.find(contract.name) != std::string::npos,
+            "every data topic must be documented");
+    }
+    for (const auto& contract : tasks)
+    {
+        Check(luaDefinitions.find(contract.name) != std::string::npos,
+            "every task must have a LuaLS declaration");
+        Check(documentation.find(contract.name) != std::string::npos,
+            "every task must be documented");
+    }
+
+    LuaState state;
+    constexpr FunctionDescriptor systemFunctions[] = {
+        { "capabilities",
+            snowdesktop::widget_api::LuaSystemCapabilities, 2 },
+    };
+    snowdesktop::widget_api::RegisterLibrary(
+        state, "system", systemFunctions, 2);
+
+    lua_getglobal(state, "system");
+    lua_getfield(state, -1, "capabilities");
+    lua_pushliteral(state, "system.cpu");
+    Check(lua_pcall(state, 1, 1, 0) == LUA_OK && lua_istable(state, -1),
+        "system.capabilities must resolve a data topic name");
+    lua_getfield(state, -1, "kind");
+    Check(lua_isstring(state, -1) &&
+            std::string(lua_tostring(state, -1)) == "data",
+        "data topic capability must expose its kind");
+    lua_pop(state, 1);
+    lua_getfield(state, -1, "permission");
+    Check(lua_isstring(state, -1) && std::string(lua_tostring(state, -1)) ==
+            "system.performance.read",
+        "data topic capability must expose its permission");
+    lua_pop(state, 1);
+    lua_getfield(state, -1, "hostAvailable");
+    const bool hostAvailable = lua_toboolean(state, -1) != 0;
+    lua_pop(state, 1);
+    lua_getfield(state, -1, "authorized");
+    const bool unauthorized = lua_toboolean(state, -1) == 0;
+    lua_pop(state, 1);
+    lua_getfield(state, -1, "reason");
+    Check(hostAvailable && unauthorized && lua_isstring(state, -1) &&
+            std::string(lua_tostring(state, -1)) == "permissionRequired",
+        "capability must distinguish host support from instance permission");
+    lua_pop(state, 3);
+
+    lua_createtable(state, 0, 1);
+    lua_pushboolean(state, 1);
+    lua_setfield(state, -2, "system.performance.read");
+    lua_setfield(state, LUA_REGISTRYINDEX, "__widget_permissions");
+    lua_getglobal(state, "system");
+    lua_getfield(state, -1, "capabilities");
+    lua_pushliteral(state, "system.cpu");
+    Check(lua_pcall(state, 1, 1, 0) == LUA_OK,
+        "authorized capability query must execute");
+    lua_getfield(state, -1, "available");
+    Check(lua_toboolean(state, -1) != 0,
+        "authorized host capability must be available");
+    lua_pop(state, 3);
+
+    lua_getglobal(state, "system");
+    lua_getfield(state, -1, "capabilities");
+    Check(lua_pcall(state, 0, 1, 0) == LUA_OK,
+        "complete capability query must execute");
+    lua_getfield(state, -1, "capabilities");
+    Check(lua_rawlen(state, -1) ==
+            functions.size() + topics.size() + tasks.size(),
+        "complete capability query must expose every contract entry");
+    lua_pop(state, 3);
+}
+
 void TestTransientState()
 {
     LuaState state;
@@ -830,6 +989,7 @@ int main()
     TestRegistration();
     TestVersionedRegistration();
     TestV2Contract();
+    TestSystemCapabilityContract();
     TestTransientState();
     TestCatalogValidation();
     TestCatalogRegistration();

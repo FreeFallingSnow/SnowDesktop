@@ -274,9 +274,10 @@ return widget.define({
 model) -> dispose(context, model, reason)` 路径，并将其作为 `lifecycle.model`
 feature 发布。setup 失败不会替换热重载前的可用 VM，dispose 在卸载、热重载和
 宿主关闭时至多执行一次。surface 级 `event` 已接通可见性、尺寸、指针、计时器、
-动作、选择、环境与面板事件，并作为 `lifecycle.event` feature 发布；它不代表
-声明式元素事件。`menu` 已接通即时 region 和 `view.tree.core` 元素；完整
-`view.tree` 尚未接通，仍在 feature negotiation 阶段明确拒绝。
+动作、选择、环境与面板事件，并作为 `lifecycle.event` feature 发布；声明式元素事件
+由节点 action 与通用 interaction 通道提供。`menu` 已接通即时 region 和
+`view.tree.core` 元素；声明式核心树已经开放，组件声明语义后由宿主生成 UIA 树，
+不向 Lua 暴露原生 Provider 或任意键盘旁路。
 
 ## 7. 生命周期状态机
 
@@ -950,6 +951,12 @@ API v2 明确禁止：任意 WMI 查询、注册表读写、PowerShell/cmd/进�
 - 订阅按 topic/设备/选项共享，事件可用时不用轮询；权限撤销、设备移除、休眠和最后订阅释放都有确定清理行为。
 - 输出默认去标识化并最小化；路径、IP/MAC、SSID/BSSID、用户名、机器名、序列号等不能因“读取系统状态”顺带泄露。
 - 每个能力有独立额度、诊断、审计事件、拒绝降级示例和确定性预览数据。
+
+当前实现已将第 12.6 节的 15 个基础函数、24 个数据主题和 41 个任务集中到
+`widget_api_registry` 的系统能力契约。data/task broker 直接由该契约注册，
+`system.capabilities()` 可按 feature 或公开 API 名返回权限、手势、预览、刷新率与并发上限；
+契约测试同时校验 feature、权限目录、LuaLS 和开发者文档覆盖。硬件存在性和 provider
+运行状态仍由订阅快照表达，不能把 host feature 存在误写成设备一定存在。
 
 ## 13. 视图与绘制
 

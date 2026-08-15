@@ -706,6 +706,7 @@ if (BUILD_TESTING)
         SOURCES
             tests/widget_api_registry_tests.cpp
             src/widget_api_registry.cpp
+            src/widget_permission_state.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES SnowDesktopLua
         LABELS contract lua widget)

@@ -136,6 +136,134 @@ constexpr std::array<std::string_view, 114> kHostFeatures = {
     "view.styledText.basic",
     "view.tree.core",
 };
+constexpr std::array<SystemFunctionContract, 15>
+kSystemFunctionContracts = {{
+    { "widget.context", "widget.context" },
+    { "system.capabilities", "system.environment" },
+    { "system.info", "system.environment" },
+    { "system.uptime", "system.uptime" },
+    { "time.now", "time.basic" },
+    { "time.monotonic", "time.basic" },
+    { "time.parts", "time.calendar" },
+    { "time.format", "time.calendar" },
+    { "time.add", "time.calendar" },
+    { "time.compare", "time.calendar" },
+    { "l10n.formatNumber", "l10n.format" },
+    { "l10n.formatBytes", "l10n.format" },
+    { "l10n.formatDuration", "l10n.format" },
+    { "l10n.formatRelativeTime", "l10n.format" },
+    { "l10n.formatList", "l10n.format" },
+}};
+constexpr std::array<SystemDataTopicContract, 24>
+kSystemDataTopicContracts = {{
+    { "system.cpu", "data.system.cpu", "system.performance.read",
+        500, 5000, 2000, false, false },
+    { "system.memory", "data.system.memory", "system.performance.read",
+        1000, 5000, 2000, false, false },
+    { "system.gpu", "data.system.gpu", "system.performance.read",
+        1000, 5000, 2000, false, false },
+    { "system.power", "data.system.power", "system.power.read",
+        2000, 10000, 2000, false, false },
+    { "system.storage.volumes", "data.system.storage.volumes",
+        "system.storage.read", 2000, 10000, 2000, false, false },
+    { "system.storage.io", "data.system.storage.io",
+        "system.storage.read", 1000, 5000, 2000, false, false },
+    { "system.network.status", "data.system.network.status",
+        "system.network.read", 2000, 10000, 2000, false, false },
+    { "system.network.traffic", "data.system.network.traffic",
+        "system.network.read", 1000, 5000, 2000, false, false },
+    { "system.display.current", "data.system.display.current",
+        "system.display.read", 2000, 10000, 2000, false, false },
+    { "system.display.topology", "data.system.display.topology",
+        "system.display.read", 2000, 10000, 2000, false, false },
+    { "media.sessions", "data.media.sessions", "media.read",
+        500, 2000, 2000, false, false },
+    { "media.current", "data.media.current", "media.read",
+        500, 2000, 2000, false, false },
+    { "media.timeline", "data.media.timeline", "media.read",
+        500, 2000, 2000, false, false },
+    { "media.artwork", "data.media.artwork", "media.read",
+        500, 2000, 0, false, false },
+    { "audio.output.default", "data.audio.output.default",
+        "audio.output.read", 1000, 5000, 2000, false, false },
+    { "audio.output.volume", "data.audio.output.volume",
+        "audio.output.read", 1000, 5000, 2000, false, false },
+    { "audio.output.analysis", "data.audio.output.analysis",
+        "audio.output.analyze", 16, 1000, 0, true, false },
+    { "desktop.items", "data.desktop.items", "desktop.read",
+        100, 1000, 0, false, true },
+    { "desktop.selection", "data.desktop.selection", "desktop.read",
+        100, 1000, 0, false, true },
+    { "desktop.changes", "data.desktop.changes", "desktop.read",
+        100, 1000, 0, false, true },
+    { "app.indexStatus", "data.app.indexStatus", "app.discovery",
+        100, 1000, 0, false, true },
+    { "calendar.events", "data.calendar.events", "calendar.read",
+        100, 1000, 0, false, true },
+    { "calendar.selectedDate", "data.calendar.selectedDate",
+        "calendar.read", 100, 1000, 0, false, true },
+    { "filesystem.watch", "data.filesystem.watch",
+        "filesystem.userSelected.watch", 100, 1000, 0, true, false },
+}};
+constexpr std::array<SystemTaskContract, 41> kSystemTaskContracts = {{
+    { "network.request", "task.network.request", "network.internet",
+        false, 2 },
+    { "notification.show", "task.notification.show", "notification.post",
+        false, 2 },
+    { "notification.update", "task.notification.lifecycle",
+        "notification.post", false, 2 },
+    { "notification.dismiss", "task.notification.lifecycle",
+        "notification.post", false, 2 },
+    { "notification.schedule", "task.notification.schedule",
+        "notification.post", false, 2 },
+    { "notification.cancel", "task.notification.schedule",
+        "notification.post", false, 2 },
+    { "clipboard.read", "task.clipboard.text", "clipboard.read", true, 1 },
+    { "clipboard.write", "task.clipboard.text", "clipboard.write", true, 1 },
+    { "clipboard.clear", "task.clipboard.text", "clipboard.write", true, 1 },
+    { "filesystem.pickOpen", "task.filesystem.picker",
+        "filesystem.userSelected.read", true, 1 },
+    { "filesystem.pickSave", "task.filesystem.picker",
+        "filesystem.userSelected.write", true, 1 },
+    { "filesystem.pickFolder", "task.filesystem.picker", "", true, 1 },
+    { "filesystem.stat", "task.filesystem.access",
+        "filesystem.userSelected.read", false, 4 },
+    { "filesystem.list", "task.filesystem.access",
+        "filesystem.userSelected.read", false, 2 },
+    { "filesystem.read", "task.filesystem.access",
+        "filesystem.userSelected.read", false, 2 },
+    { "filesystem.write", "task.filesystem.access",
+        "filesystem.userSelected.write", false, 1 },
+    { "filesystem.release", "task.filesystem.access", "", false, 4 },
+    { "desktop.search", "task.desktop.search", "desktop.read", false, 2 },
+    { "app.search", "task.app.search", "app.discovery", false, 2 },
+    { "everything.search", "task.everything.search", "everything.search",
+        false, 1 },
+    { "shell.openUri", "task.shell.openUri", "shell.launch", true, 1 },
+    { "shell.openItem", "task.shell.item", "desktop.action", true, 1 },
+    { "shell.revealItem", "task.shell.item", "desktop.action", true, 1 },
+    { "desktop.refresh", "task.desktop.refresh", "desktop.action", true, 1 },
+    { "app.launch", "task.app.launch", "app.launch", true, 1 },
+    { "media.play", "task.media.control", "media.action", true, 1 },
+    { "media.pause", "task.media.control", "media.action", true, 1 },
+    { "media.toggle", "task.media.control", "media.action", true, 1 },
+    { "media.stop", "task.media.control", "media.action", true, 1 },
+    { "media.next", "task.media.control", "media.action", true, 1 },
+    { "media.previous", "task.media.control", "media.action", true, 1 },
+    { "media.seek", "task.media.control", "media.action", true, 1 },
+    { "media.setRate", "task.media.control", "media.action", true, 1 },
+    { "media.setShuffle", "task.media.control", "media.action", true, 1 },
+    { "media.setRepeat", "task.media.control", "media.action", true, 1 },
+    { "audio.output.setVolume", "task.audio.output.control",
+        "audio.output.control", true, 1 },
+    { "audio.output.setMute", "task.audio.output.control",
+        "audio.output.control", true, 1 },
+    { "calendar.create", "task.calendar.write", "calendar.write", false, 1 },
+    { "calendar.update", "task.calendar.write", "calendar.write", false, 1 },
+    { "calendar.remove", "task.calendar.write", "calendar.write", true, 1 },
+    { "system.openSettings", "task.system.openSettings", "shell.launch",
+        true, 1 },
+}};
 constexpr std::array<std::string_view, 15> kV1SandboxLibraries = {
     "string", "table", "math", "utf8", "draw", "sys", "layout",
     "storage", "widget", "desktop", "media", "http", "ui",
@@ -425,6 +553,94 @@ bool HasNonNilField(lua_State* state, int tableIndex, const char* field)
     lua_pop(state, 1);
     return present;
 }
+
+bool HasGrantedPermission(lua_State* state, const char* permission)
+{
+    if (!permission || permission[0] == '\0') return true;
+    lua_getfield(state, LUA_REGISTRYINDEX, "__widget_permissions");
+    if (!lua_istable(state, -1))
+    {
+        lua_pop(state, 1);
+        return false;
+    }
+    lua_getfield(state, -1, permission);
+    const bool granted = lua_toboolean(state, -1) != 0;
+    lua_pop(state, 2);
+    return granted;
+}
+
+const char* PreviewName(SystemCapabilityPreview preview) noexcept
+{
+    return preview == SystemCapabilityPreview::Deterministic
+        ? "deterministic" : "noSideEffects";
+}
+
+void PushCapabilityBase(lua_State* state, const char* name,
+    const char* feature, const char* kind, const char* permission,
+    bool requiresTrustedGesture, SystemCapabilityPreview preview)
+{
+    const bool hostAvailable = feature && SupportsFeature(feature);
+    const bool authorized = HasGrantedPermission(state, permission);
+    const bool available = hostAvailable && authorized;
+    lua_createtable(state, 0, 10);
+    lua_pushstring(state, name); lua_setfield(state, -2, "id");
+    lua_pushstring(state, name); lua_setfield(state, -2, "name");
+    lua_pushstring(state, feature); lua_setfield(state, -2, "feature");
+    lua_pushstring(state, kind); lua_setfield(state, -2, "kind");
+    lua_pushboolean(state, hostAvailable); lua_setfield(state, -2,
+        "hostAvailable");
+    lua_pushboolean(state, authorized); lua_setfield(state, -2,
+        "authorized");
+    lua_pushboolean(state, available); lua_setfield(state, -2, "available");
+    lua_pushinteger(state, 1); lua_setfield(state, -2, "version");
+    lua_pushboolean(state, requiresTrustedGesture);
+    lua_setfield(state, -2, "requiresTrustedGesture");
+    lua_pushstring(state, PreviewName(preview));
+    lua_setfield(state, -2, "preview");
+    if (permission && permission[0] != '\0')
+    {
+        lua_pushstring(state, permission);
+        lua_setfield(state, -2, "permission");
+    }
+    if (!hostAvailable)
+    {
+        lua_pushliteral(state, "unsupported");
+        lua_setfield(state, -2, "reason");
+    }
+    else if (!authorized)
+    {
+        lua_pushliteral(state, "permissionRequired");
+        lua_setfield(state, -2, "reason");
+    }
+}
+
+void PushCapability(lua_State* state,
+    const SystemFunctionContract& contract)
+{
+    PushCapabilityBase(state, contract.name, contract.feature, "function",
+        nullptr, false, SystemCapabilityPreview::Deterministic);
+}
+
+void PushCapability(lua_State* state,
+    const SystemDataTopicContract& contract)
+{
+    PushCapabilityBase(state, contract.name, contract.feature, "data",
+        contract.requiredPermission, false, contract.preview);
+    lua_pushinteger(state, contract.minimumIntervalMs);
+    lua_setfield(state, -2, "minimumIntervalMs");
+    lua_pushinteger(state, contract.hiddenIntervalMs);
+    lua_setfield(state, -2, "hiddenIntervalMs");
+}
+
+void PushCapability(lua_State* state, const SystemTaskContract& contract)
+{
+    PushCapabilityBase(state, contract.name, contract.feature, "task",
+        contract.requiredPermission, contract.requiresTrustedGesture,
+        contract.preview);
+    lua_pushinteger(state, static_cast<lua_Integer>(
+        contract.maximumPerInstance));
+    lua_setfield(state, -2, "maximumPerInstance");
+}
 }
 
 std::span<const std::string_view> HostFeatures() noexcept
@@ -436,6 +652,23 @@ bool SupportsFeature(std::string_view feature) noexcept
 {
     return std::find(kHostFeatures.begin(), kHostFeatures.end(), feature) !=
         kHostFeatures.end();
+}
+
+std::span<const SystemFunctionContract>
+SystemFunctionContracts() noexcept
+{
+    return kSystemFunctionContracts;
+}
+
+std::span<const SystemDataTopicContract>
+SystemDataTopicContracts() noexcept
+{
+    return kSystemDataTopicContracts;
+}
+
+std::span<const SystemTaskContract> SystemTaskContracts() noexcept
+{
+    return kSystemTaskContracts;
 }
 
 std::span<const std::string_view> SandboxLibraries(
@@ -530,17 +763,65 @@ int LuaSystemCapabilities(lua_State* state)
     {
         std::size_t length = 0;
         const char* value = luaL_checklstring(state, 1, &length);
-        const std::string_view feature(value, length);
-        const bool available = SupportsFeature(feature);
-        lua_createtable(state, 0, 3);
-        lua_pushlstring(state, feature.data(), feature.size());
+        const std::string_view query(value, length);
+        for (const auto& contract : kSystemFunctionContracts)
+        {
+            if (query == contract.name)
+            {
+                PushCapability(state, contract);
+                return 1;
+            }
+        }
+        for (const auto& contract : kSystemDataTopicContracts)
+        {
+            if (query == contract.name)
+            {
+                PushCapability(state, contract);
+                return 1;
+            }
+        }
+        for (const auto& contract : kSystemTaskContracts)
+        {
+            if (query == contract.name)
+            {
+                PushCapability(state, contract);
+                return 1;
+            }
+        }
+
+        const bool available = SupportsFeature(query);
+        lua_createtable(state, 0, 5);
+        lua_pushlstring(state, query.data(), query.size());
         lua_setfield(state, -2, "id");
-        lua_pushboolean(state, available ? 1 : 0);
+        lua_pushboolean(state, available);
+        lua_setfield(state, -2, "hostAvailable");
+        lua_pushboolean(state, available);
         lua_setfield(state, -2, "available");
         if (available)
         {
             lua_pushinteger(state, 1);
             lua_setfield(state, -2, "version");
+            lua_createtable(state, 0, 0);
+            int apiIndex = 1;
+            for (const auto& contract : kSystemFunctionContracts)
+            {
+                if (query != contract.feature) continue;
+                PushCapability(state, contract);
+                lua_rawseti(state, -2, apiIndex++);
+            }
+            for (const auto& contract : kSystemDataTopicContracts)
+            {
+                if (query != contract.feature) continue;
+                PushCapability(state, contract);
+                lua_rawseti(state, -2, apiIndex++);
+            }
+            for (const auto& contract : kSystemTaskContracts)
+            {
+                if (query != contract.feature) continue;
+                PushCapability(state, contract);
+                lua_rawseti(state, -2, apiIndex++);
+            }
+            lua_setfield(state, -2, "apis");
         }
         else
         {
@@ -550,7 +831,7 @@ int LuaSystemCapabilities(lua_State* state)
         return 1;
     }
 
-    lua_createtable(state, 0, 2);
+    lua_createtable(state, 0, 3);
     lua_pushinteger(state, kCurrentApiVersion);
     lua_setfield(state, -2, "apiVersion");
     lua_createtable(state, static_cast<int>(kHostFeatures.size()), 0);
@@ -567,6 +848,25 @@ int LuaSystemCapabilities(lua_State* state)
         lua_rawseti(state, -2, index++);
     }
     lua_setfield(state, -2, "features");
+    lua_createtable(state, static_cast<int>(kSystemFunctionContracts.size() +
+        kSystemDataTopicContracts.size() + kSystemTaskContracts.size()), 0);
+    int capabilityIndex = 1;
+    for (const auto& contract : kSystemFunctionContracts)
+    {
+        PushCapability(state, contract);
+        lua_rawseti(state, -2, capabilityIndex++);
+    }
+    for (const auto& contract : kSystemDataTopicContracts)
+    {
+        PushCapability(state, contract);
+        lua_rawseti(state, -2, capabilityIndex++);
+    }
+    for (const auto& contract : kSystemTaskContracts)
+    {
+        PushCapability(state, contract);
+        lua_rawseti(state, -2, capabilityIndex++);
+    }
+    lua_setfield(state, -2, "capabilities");
     return 1;
 }
 

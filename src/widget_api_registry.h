@@ -28,6 +28,50 @@ struct LibraryDescriptor
     std::span<const FunctionDescriptor> functions;
 };
 
+enum class SystemCapabilityKind
+{
+    Function,
+    DataTopic,
+    Task,
+};
+
+enum class SystemCapabilityPreview
+{
+    Deterministic,
+    NoSideEffects,
+};
+
+struct SystemFunctionContract
+{
+    const char* name = nullptr;
+    const char* feature = nullptr;
+};
+
+struct SystemDataTopicContract
+{
+    const char* name = nullptr;
+    const char* feature = nullptr;
+    const char* requiredPermission = nullptr;
+    std::uint32_t minimumIntervalMs = 1000;
+    std::uint32_t hiddenIntervalMs = 5000;
+    std::uint32_t idleGraceMs = 2000;
+    bool highRisk = false;
+    bool supportsHiddenContinue = false;
+    SystemCapabilityPreview preview =
+        SystemCapabilityPreview::Deterministic;
+};
+
+struct SystemTaskContract
+{
+    const char* name = nullptr;
+    const char* feature = nullptr;
+    const char* requiredPermission = nullptr;
+    bool requiresTrustedGesture = false;
+    std::size_t maximumPerInstance = 4;
+    SystemCapabilityPreview preview =
+        SystemCapabilityPreview::NoSideEffects;
+};
+
 enum class LibraryValidationError
 {
     None,
@@ -73,6 +117,11 @@ const FunctionDescriptor* FindFunction(
 
 std::span<const std::string_view> HostFeatures() noexcept;
 bool SupportsFeature(std::string_view feature) noexcept;
+std::span<const SystemFunctionContract>
+SystemFunctionContracts() noexcept;
+std::span<const SystemDataTopicContract>
+SystemDataTopicContracts() noexcept;
+std::span<const SystemTaskContract> SystemTaskContracts() noexcept;
 std::span<const std::string_view> SandboxLibraries(
     std::uint32_t apiVersion) noexcept;
 std::vector<std::string> MissingFeatures(

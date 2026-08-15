@@ -9109,7 +9109,6 @@ WidgetEngine::~WidgetEngine()
 
 void WidgetEngine::InitializeWidgetDataBroker()
 {
-    using namespace std::chrono_literals;
     using snowdesktop::widget_runtime::DataProviderDescriptor;
 
     dataBroker_ = std::make_unique<
@@ -9123,101 +9122,19 @@ void WidgetEngine::InitializeWidgetDataBroker()
     calendarSelectionRevision_ = 0;
     appIndexRevision_ = 0;
     std::string error;
-    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
-        "system.cpu", kSystemPerformancePermission,
-        500ms, 5000ms, 2000ms, false, false }, error);
-    error.clear();
-    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
-        "system.memory", kSystemPerformancePermission,
-        1000ms, 5000ms, 2000ms, false, false }, error);
-    error.clear();
-    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
-        "system.power", kSystemPowerPermission,
-        2000ms, 10000ms, 2000ms, false, false }, error);
-    error.clear();
-    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
-        "system.network.status", kSystemNetworkPermission,
-        2000ms, 10000ms, 2000ms, false, false }, error);
-    error.clear();
-    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
-        "system.network.traffic", kSystemNetworkPermission,
-        1000ms, 5000ms, 2000ms, false, false }, error);
-    error.clear();
-    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
-        "system.gpu", kSystemPerformancePermission,
-        1000ms, 5000ms, 2000ms, false, false }, error);
-    error.clear();
-    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
-        "system.storage.volumes", kSystemStoragePermission,
-        2000ms, 10000ms, 2000ms, false, false }, error);
-    error.clear();
-    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
-        "system.storage.io", kSystemStoragePermission,
-        1000ms, 5000ms, 2000ms, false, false }, error);
-    error.clear();
-    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
-        "system.display.topology", kSystemDisplayPermission,
-        2000ms, 10000ms, 2000ms, false, false }, error);
-    error.clear();
-    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
-        "system.display.current", kSystemDisplayPermission,
-        2000ms, 10000ms, 2000ms, false, false }, error);
-    error.clear();
-    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
-        "audio.output.default", kAudioOutputReadPermission,
-        1000ms, 5000ms, 2000ms, false, false }, error);
-    error.clear();
-    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
-        "audio.output.volume", kAudioOutputReadPermission,
-        1000ms, 5000ms, 2000ms, false, false }, error);
-    error.clear();
-    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
-        "audio.output.analysis", kAudioOutputAnalyzePermission,
-        16ms, 1000ms, 0ms, true, false }, error);
-    error.clear();
-    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
-        "media.sessions", kMediaReadPermission,
-        500ms, 2000ms, 2000ms, false, false }, error);
-    error.clear();
-    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
-        "media.current", kMediaReadPermission,
-        500ms, 2000ms, 2000ms, false, false }, error);
-    error.clear();
-    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
-        "media.timeline", kMediaReadPermission,
-        500ms, 2000ms, 2000ms, false, false }, error);
-    error.clear();
-    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
-        "media.artwork", kMediaReadPermission,
-        500ms, 2000ms, 0ms, false, false }, error);
-    error.clear();
-    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
-        "desktop.items", kDesktopReadPermission,
-        100ms, 1000ms, 0ms, false, true }, error);
-    error.clear();
-    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
-        "desktop.selection", kDesktopReadPermission,
-        100ms, 1000ms, 0ms, false, true }, error);
-    error.clear();
-    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
-        "desktop.changes", kDesktopReadPermission,
-        100ms, 1000ms, 0ms, false, true }, error);
-    error.clear();
-    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
-        "calendar.events", kCalendarReadPermission,
-        100ms, 1000ms, 0ms, false, true }, error);
-    error.clear();
-    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
-        "calendar.selectedDate", kCalendarReadPermission,
-        100ms, 1000ms, 0ms, false, true }, error);
-    error.clear();
-    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
-        "app.indexStatus", kAppDiscoveryPermission,
-        100ms, 1000ms, 0ms, false, true }, error);
-    error.clear();
-    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
-        "filesystem.watch", kFilesystemWatchPermission,
-        100ms, 1000ms, 0ms, true, false }, error);
+    for (const auto& contract :
+        snowdesktop::widget_api::SystemDataTopicContracts())
+    {
+        (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
+            contract.name,
+            contract.requiredPermission ? contract.requiredPermission : "",
+            std::chrono::milliseconds(contract.minimumIntervalMs),
+            std::chrono::milliseconds(contract.hiddenIntervalMs),
+            std::chrono::milliseconds(contract.idleGraceMs),
+            contract.highRisk,
+            contract.supportsHiddenContinue }, error);
+        error.clear();
+    }
 
     if (previewOnly_)
     {
@@ -9507,130 +9424,16 @@ void WidgetEngine::InitializeWidgetTaskBroker()
     notificationCenter_ = std::make_unique<
         snowdesktop::widget_runtime::WidgetNotificationCenter>();
     std::string error;
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "media.toggle", kMediaActionPermission, true, 1 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "media.next", kMediaActionPermission, true, 1 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "media.previous", kMediaActionPermission, true, 1 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "media.play", kMediaActionPermission, true, 1 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "media.pause", kMediaActionPermission, true, 1 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "media.stop", kMediaActionPermission, true, 1 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "media.seek", kMediaActionPermission, true, 1 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "media.setRate", kMediaActionPermission, true, 1 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "media.setShuffle", kMediaActionPermission, true, 1 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "media.setRepeat", kMediaActionPermission, true, 1 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "audio.output.setVolume", kAudioOutputControlPermission,
-        true, 1 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "audio.output.setMute", kAudioOutputControlPermission,
-        true, 1 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "app.search", kAppDiscoveryPermission, false, 2 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "app.launch", kAppLaunchPermission, true, 1 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "notification.show", kNotificationPostPermission, false, 2 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "notification.update", kNotificationPostPermission, false, 2 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "notification.dismiss", kNotificationPostPermission, false, 2 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "notification.schedule", kNotificationPostPermission, false, 2 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "notification.cancel", kNotificationPostPermission, false, 2 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "calendar.create", kCalendarWritePermission, false, 1 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "calendar.update", kCalendarWritePermission, false, 1 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "calendar.remove", kCalendarWritePermission, true, 1 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "network.request", kNetworkInternetPermission, false, 2 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "shell.openUri", kShellLaunchPermission, true, 1 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "system.openSettings", kShellLaunchPermission, true, 1 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "clipboard.read", kClipboardReadPermission, true, 1 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "clipboard.write", kClipboardWritePermission, true, 1 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "clipboard.clear", kClipboardWritePermission, true, 1 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "filesystem.pickOpen", kFilesystemReadPermission, true, 1 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "filesystem.pickSave", kFilesystemWritePermission, true, 1 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "filesystem.pickFolder", "", true, 1 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "filesystem.stat", kFilesystemReadPermission, false, 4 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "filesystem.list", kFilesystemReadPermission, false, 2 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "filesystem.read", kFilesystemReadPermission, false, 2 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "filesystem.write", kFilesystemWritePermission, false, 1 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "filesystem.release", "", false, 4 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "desktop.search", kDesktopReadPermission, false, 2 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "everything.search", kEverythingSearchPermission, false, 1 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "shell.openItem", kDesktopActionPermission, true, 1 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "shell.revealItem", kDesktopActionPermission, true, 1 }, error);
-    error.clear();
-    (void)taskBroker_->RegisterTask(TaskDescriptor{
-        "desktop.refresh", kDesktopActionPermission, true, 1 }, error);
+    for (const auto& contract :
+        snowdesktop::widget_api::SystemTaskContracts())
+    {
+        (void)taskBroker_->RegisterTask(TaskDescriptor{
+            contract.name,
+            contract.requiredPermission ? contract.requiredPermission : "",
+            contract.requiresTrustedGesture,
+            contract.maximumPerInstance }, error);
+        error.clear();
+    }
     if (previewOnly_)
     {
         mediaTaskExecutor_.reset();

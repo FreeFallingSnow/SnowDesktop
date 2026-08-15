@@ -1452,15 +1452,20 @@ metatable、混合数组/对象以及超出深度、节点、字符串或 256-ke
 ### `system` 与 `time`
 
 - `system.info()`：Windows、架构、宿主版本和部署模式。
-- `system.capabilities(feature?)`：列出或查询 feature。
+- `system.capabilities(featureOrApi?)`：不传参数时同时返回宿主 feature 列表和完整的
+  v2 系统函数、数据主题、任务契约；传 feature ID 或公开 API 名时返回单项状态。
 - `system.uptime()`：毫秒与是否包含睡眠时间。
 - `time.now()`、`time.monotonic()`。
 - `time.parts(epochMilliseconds?, timeZone?)`。
 - `time.format(epochMilliseconds?, options?)`。
 - `time.add(epochMilliseconds, delta, options?)`、`time.compare(a, b)`。
 
-这些基础环境与时间接口不要求高风险权限。CPU、内存、网络、媒体、音频波形等
-按需数据订阅属于后续 API，不要用 API v1 的 `sys` 代替。
+这些基础环境与时间接口不要求高风险权限。`system.capabilities("system.cpu")`
+这类 API 名查询会同时返回 `feature`、`kind`、`hostAvailable`、`authorized`、
+`permission`、`available/reason` 和刷新率或并发上限。`hostAvailable` 只表示宿主包含
+该能力；硬件是否存在、provider 是否 warming/stale 仍由对应数据快照表达。
+CPU、内存、网络、媒体和音频波形等状态应通过 `data.subscribe` 按需订阅，不能使用
+API v1 的同步 `sys` 代替。
 在组件预览中，`time.now()`、无参数的 `time.parts/format`、`time.monotonic()` 和
 `system.uptime()` 使用固定虚拟值，保证重复预览不会随等待时间变化；正式实例仍读取
 宿主当前时间。可通过 `time.previewClock` feature 查询该保证。
@@ -1568,9 +1573,12 @@ view.text({ key = "title", text = "SnowDesktop", font = display })
 
 ## 当前明确未开放
 
-API v2 暂未向沙箱提供完整 `view.tree`、UI Automation 输出、通用即时 region 的自定义
-Tab 顺序与任意原始键盘事件、
-受控二级菜单、`desktop`、旧的同步 `media` 库、HTTP、尚未列出的系统状态、
-通用剪贴板、文件选择和应用启动库。声明式输入与 `control.textInput/textArea` 只在聚焦的
-宿主管理编辑器内部代理标准剪贴板操作，不允许 Lua 读取剪贴板。其余能力将在对应宿主实现、配额与按需生命周期完成后
-再加入 feature 目录和 LuaLS 定义；不要根据权限词汇自行推测函数名。
+API v2 不提供 API v1 的同步 `desktop`、`media`、`http` 和 `sys` 库，也不提供任意
+原始键盘事件、原生 UI Automation 对象、系统路径、Shell verb、进程、WMI、注册表或
+原生句柄。声明式 `view.tree.core`、宿主生成的 UI Automation 语义、元素级交互和独立
+右键菜单已经开放；组件只能声明语义，不能直接操作 UIA Provider。
+
+剪贴板、文件选择/句柄访问、应用/桌面搜索与启动、媒体控制、通知、HTTP 请求和系统状态
+均已通过 `task.start` / `data.subscribe` 的窄能力开放，并继续受清单权限、可信手势、额度、
+取消和预览无副作用策略约束。尚未出现在 `system.capabilities()`、feature 目录和 LuaLS 中的
+能力仍视为未开放；不要根据权限词汇自行推测函数名。

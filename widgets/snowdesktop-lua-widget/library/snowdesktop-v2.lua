@@ -479,13 +479,26 @@
 
 ---@class SnowCapability
 ---@field id string
+---@field name? string Public function, data topic, or task name.
+---@field feature? string Feature gate that owns this API entry.
+---@field kind? 'function'|'data'|'task'
+---@field hostAvailable? boolean Whether this host build exposes the feature independently of instance authorization.
+---@field authorized? boolean Whether the current widget instance has the required permission.
 ---@field available boolean
 ---@field version? integer
----@field reason? 'unsupported'|string
+---@field reason? 'unsupported'|'permissionRequired'|string
+---@field permission? string Narrow permission required by this entry.
+---@field requiresTrustedGesture? boolean
+---@field preview? 'deterministic'|'noSideEffects'
+---@field minimumIntervalMs? integer Data-topic lower refresh bound.
+---@field hiddenIntervalMs? integer Data-topic hidden refresh interval.
+---@field maximumPerInstance? integer Task concurrency limit.
+---@field apis? SnowCapability[] Entries owned by a queried feature.
 
 ---@class SnowCapabilities
 ---@field apiVersion integer
 ---@field features SnowCapability[]
+---@field capabilities SnowCapability[] Complete v2 system function/data/task contract for the current instance.
 
 ---@class SnowSystemInfo
 ---@field osFamily 'windows'
@@ -1521,7 +1534,7 @@ system = {}
 ---@return SnowSystemInfo
 function system.info() end
 
----@overload fun(feature: string): SnowCapability
+---@overload fun(featureOrApi: string): SnowCapability
 ---@return SnowCapabilities
 function system.capabilities() end
 
