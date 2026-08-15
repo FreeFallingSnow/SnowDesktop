@@ -42,6 +42,52 @@ void DesktopApp::OnKeyDown(WPARAM key)
     bool shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
     bool restoreFloatingDockLayer = false;
 
+    if (ctrl && (key == 'Z' || key == 'Y') && widgetEngine_)
+    {
+        size_t selectedLua = static_cast<size_t>(-1);
+        bool multipleSelected = false;
+        for (size_t index = 0; index < widgets_.size(); ++index)
+        {
+            if (!widgets_[index].selected) continue;
+            if (selectedLua != static_cast<size_t>(-1) ||
+                widgets_[index].type != DesktopWidgetType::LuaScript)
+            {
+                multipleSelected = true;
+                break;
+            }
+            selectedLua = index;
+        }
+        if (!multipleSelected && selectedLua < widgets_.size())
+        {
+            const bool redo = key == 'Y' || shift;
+            const auto& widgetId = widgets_[selectedLua].id;
+            widgetEngine_->EnsureWidgetLoaded(
+                widgetId, widgets_[selectedLua].packageId);
+            const bool available = redo
+                ? widgetEngine_->RuntimeCanRedoHostLogicalSlot(widgetId)
+                : widgetEngine_->RuntimeCanUndoHostLogicalSlot(widgetId);
+            if (available)
+            {
+                snowdesktop::widget_runtime::LogicalSlotChange change;
+                std::string error;
+                const bool succeeded = redo
+                    ? widgetEngine_->RuntimeRedoHostLogicalSlot(
+                        widgetId, change, error)
+                    : widgetEngine_->RuntimeUndoHostLogicalSlot(
+                        widgetId, change, error);
+                if (!succeeded)
+                {
+                    widgetEngine_->RuntimeRecordError(widgetId,
+                        "logical slot host history: " + error);
+                    MessageBeep(MB_ICONWARNING);
+                }
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                RestoreInteractionInputFocus();
+                return;
+            }
+        }
+    }
+
     switch (key)
     {
     case VK_F2:

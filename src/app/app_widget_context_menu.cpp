@@ -147,6 +147,79 @@ void DesktopApp::ShowFileGroupSourceTabContextMenu(
     }
 }
 
+void DesktopApp::ShowLuaLogicalSlotItemContextMenu(
+    POINT screenPoint, const std::wstring& widgetId,
+    const std::string& slotId, const std::string& itemId,
+    bool collection, size_t itemIndex, size_t itemCount,
+    bool canRemove)
+{
+    if (!widgetEngine_) return;
+    PrepareMenuIconsForPoint(screenPoint);
+    HMENU menu = CreatePopupMenu();
+    if (!menu) return;
+
+    if (collection)
+    {
+        AppendMenuW(menu,
+            MF_STRING | (itemIndex == 0 ? MF_GRAYED : 0),
+            kContextLuaLogicalSlotMovePrevious,
+            _LW("app.interact.logical_slot_move_previous"));
+        AppendMenuW(menu,
+            MF_STRING |
+                (itemIndex + 1 >= itemCount ? MF_GRAYED : 0),
+            kContextLuaLogicalSlotMoveNext,
+            _LW("app.interact.logical_slot_move_next"));
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        SetMenuItemIcon(menu, kContextLuaLogicalSlotMovePrevious,
+            L"\uE74A", MenuIconFont::FluentRegular);
+        SetMenuItemIcon(menu, kContextLuaLogicalSlotMoveNext,
+            L"\uE74B", MenuIconFont::FluentRegular);
+    }
+    AppendMenuW(menu, MF_STRING | (canRemove ? 0 : MF_GRAYED),
+        kContextLuaLogicalSlotRemove,
+        _LW("app.interact.logical_slot_remove"));
+    SetMenuItemIcon(menu, kContextLuaLogicalSlotRemove,
+        L"\uF34C", MenuIconFont::FluentRegular);
+
+    SetForegroundWindow(hwnd_);
+    const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
+    DestroyMenu(menu);
+    ClearMenuIcons();
+    RestoreDesktopWindowLayer();
+
+    snowdesktop::widget_runtime::LogicalSlotChange change;
+    std::string error;
+    bool handled = false;
+    bool succeeded = true;
+    if (command == kContextLuaLogicalSlotMovePrevious && itemIndex > 0)
+    {
+        handled = true;
+        succeeded = widgetEngine_->RuntimeMoveHostLogicalSlotItem(
+            widgetId, slotId, itemId, itemIndex - 1, change, error);
+    }
+    else if (command == kContextLuaLogicalSlotMoveNext &&
+        itemIndex + 1 < itemCount)
+    {
+        handled = true;
+        succeeded = widgetEngine_->RuntimeMoveHostLogicalSlotItem(
+            widgetId, slotId, itemId, itemIndex + 1, change, error);
+    }
+    else if (command == kContextLuaLogicalSlotRemove && canRemove)
+    {
+        handled = true;
+        succeeded = widgetEngine_->RuntimeRemoveHostLogicalSlotItem(
+            widgetId, slotId, itemId, change, error);
+    }
+    if (handled && !succeeded)
+    {
+        widgetEngine_->RuntimeRecordError(widgetId,
+            "logical slot host menu: " + error);
+        MessageBeep(MB_ICONWARNING);
+    }
+    if (handled) InvalidateRect(hwnd_, nullptr, FALSE);
+    RestoreInteractionInputFocus();
+}
+
 void DesktopApp::ShowWidgetContextMenu(
     POINT screenPoint, size_t widgetIndex,
     std::optional<RECT> dockRenameAnchor)

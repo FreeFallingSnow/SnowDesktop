@@ -201,6 +201,9 @@ constexpr UINT kContextDockRemoveFrequentItem = 41809;
 constexpr UINT kContextDockCloseApplication = 41810;
 constexpr UINT kContextDockKeepWhenHiddenOn = 41811;
 constexpr UINT kContextDockKeepWhenHiddenOff = 41812;
+constexpr UINT kContextLuaLogicalSlotMovePrevious = 41813;
+constexpr UINT kContextLuaLogicalSlotMoveNext = 41814;
+constexpr UINT kContextLuaLogicalSlotRemove = 41815;
 
 // ── 外壳变更通知 ──────────────────────────────
 constexpr UINT kShellChangeMessage = WM_APP + 2;

@@ -405,9 +405,13 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "slots.nativeDrop") &&
             snowdesktop::widget_api::SupportsFeature(
+                "slots.nativeContextMenu") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "slots.event.changed") &&
             snowdesktop::widget_api::SupportsFeature(
                 "slots.history") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "slots.hostHistory") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.monthCalendar") &&
             snowdesktop::widget_api::SupportsFeature("view.scroll") &&

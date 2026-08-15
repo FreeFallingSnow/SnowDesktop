@@ -541,6 +541,7 @@ struct LogicalSlotHostSurface
     std::uint64_t revision = 0;
     std::size_t capacity = 1;
     std::size_t itemCount = 0;
+    bool allowClear = true;
     std::vector<std::string> accepts;
     std::string replacePolicy;
     RECT bounds{};
@@ -1074,6 +1075,23 @@ public:
         std::size_t targetIndex,
         snowdesktop::widget_runtime::LogicalSlotChange& change,
         std::string& error);
+    bool RuntimeRemoveHostLogicalSlotItem(const std::wstring& widgetId,
+        std::string_view slotId, std::string_view itemId,
+        snowdesktop::widget_runtime::LogicalSlotChange& change,
+        std::string& error);
+    bool RuntimeMoveHostLogicalSlotItem(const std::wstring& widgetId,
+        std::string_view slotId, std::string_view itemId,
+        std::size_t targetIndex,
+        snowdesktop::widget_runtime::LogicalSlotChange& change,
+        std::string& error);
+    bool RuntimeCanUndoHostLogicalSlot(const std::wstring& widgetId) const;
+    bool RuntimeCanRedoHostLogicalSlot(const std::wstring& widgetId) const;
+    bool RuntimeUndoHostLogicalSlot(const std::wstring& widgetId,
+        snowdesktop::widget_runtime::LogicalSlotChange& change,
+        std::string& error);
+    bool RuntimeRedoHostLogicalSlot(const std::wstring& widgetId,
+        snowdesktop::widget_runtime::LogicalSlotChange& change,
+        std::string& error);
     bool RuntimeBindLogicalSlot(const std::wstring& widgetId,
         std::uint64_t ownerToken, std::string_view slotId,
         std::string_view reference,
@@ -1309,6 +1327,9 @@ private:
     bool InitializeWidgetLifecycle(LuaWidget& widget);
     bool InvokeLifecycleEvent(LuaWidget& widget, const char* kind,
         const std::function<void(lua_State*)>& pushFields);
+    void DispatchHostLogicalSlotChange(LuaWidget& widget,
+        const snowdesktop::widget_runtime::LogicalSlotChange& change,
+        std::string_view source);
     void DispatchInteractionAction(LuaWidget& widget,
         const std::string& targetKey, const char* eventName,
         int x, int y, int button, int delta, int clickCount = 0,

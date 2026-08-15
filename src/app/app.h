@@ -1402,6 +1402,10 @@ private:
     void ShowFileGroupSourceTabContextMenu(
         POINT screenPoint, size_t groupIndex,
         const std::wstring& childId);
+    void ShowLuaLogicalSlotItemContextMenu(POINT screenPoint,
+        const std::wstring& widgetId, const std::string& slotId,
+        const std::string& itemId, bool collection,
+        size_t itemIndex, size_t itemCount, bool canRemove);
     /** @brief 显示文件夹条目上下文菜单。 @param screenPoint 屏幕坐标 @param widgetIndex 部件索引 @param memberIndex 成员索引 */
     void ShowFolderEntryContextMenu(POINT screenPoint, size_t widgetIndex,
         size_t memberIndex, bool keepQuickNavigationOpen = false);

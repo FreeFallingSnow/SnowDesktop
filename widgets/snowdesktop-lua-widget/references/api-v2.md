@@ -483,16 +483,20 @@ return view.slotSurface({
 进行命中判断，再显示插入预览并原子保存引用；不会移动、复制或删除真实对象。当前原生
 入口一次只接收一个对象，多选拖入会在命中前拒绝。组件或组件分组标签不会进入逻辑槽位。
 
-宿主拖放提交后会派发 `event.kind == "slot.changed"`，字段为 `slotId`、`slotKind`、
-`revision`、`operation`、opaque `itemIds` 和 `source == "host.drop"`。Lua 应重新读取对应
-句柄并重算 view，不能把事件内容当作可写模型。可分别探测 `slots.nativeDrop` 与
-`slots.event.changed`。宿主选择器、原生槽位项拖出/同槽重排和删除手势仍未接入。
+宿主拖放或槽位项菜单提交后会派发 `event.kind == "slot.changed"`，字段为 `slotId`、
+`slotKind`、`revision`、`operation`、opaque `itemIds`，以及 `source == "host.drop"`、
+`"host.menu"` 或 `"host.keyboard"`。Lua 应重新读取对应句柄并重算 view，不能把事件内容
+当作可写模型。可分别探测 `slots.nativeDrop`、`slots.nativeContextMenu` 与
+`slots.event.changed`。原生槽位项菜单只显示该项的向前/向后移动和移除操作，不会附加
+组件总菜单；binding 是否能移除遵守 manifest 的 `allowClear`。宿主选择器、原生槽位项
+拖出和指针同槽重排仍未接入。
 
 探测 `slots.history` 后，可在当前可信用户 action 中调用 `slots.undo()` / `slots.redo()`；
 它们按组件实例维护最近 32 次宿主槽位事务，返回 operation 为 `undone` / `redone` 的
 `SnowLogicalSlotChange`。`slots.canUndo()` / `slots.canRedo()` 可在 view 中读取。新事务会清空
-redo 栈，热重载或重启不会恢复历史。当前这仍是组件动作入口，宿主通用 Ctrl+Z、原生
-槽位项右键删除和键盘移动尚未接入。
+redo 栈，热重载或重启不会恢复历史。探测 `slots.hostHistory` 后，选中单个 Lua 组件时
+宿主还会将 Ctrl+Z、Ctrl+Shift+Z 和 Ctrl+Y 路由到同一历史；没有可用槽位历史时不会
+吞掉原桌面快捷键。槽位项键盘焦点和键盘移动仍未接入。
 
 ### `interaction` 与元素级菜单
 

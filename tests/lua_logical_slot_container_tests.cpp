@@ -88,6 +88,16 @@ void TestCollectionHitAndCommitBoundary()
         "uncovered collection space must append through a trailing host slot");
     Check(container.HitTestDrag({ 20, 20 }, slot) == HitRegion::None,
         "logical slot geometry must not leak outside the committed surface");
+
+    const auto firstHit = container.ItemAtPoint({ 150, 130 });
+    Check(firstHit && firstHit->itemId == "first" &&
+            firstHit->index == 0 && firstHit->itemCount == 2 &&
+            firstHit->kind ==
+                snowdesktop::widget_runtime::LogicalSlotKind::Collection &&
+            firstHit->canRemove,
+        "a committed slotItem must expose an exact host context-menu hit");
+    Check(!container.ItemAtPoint({ 150, 260 }),
+        "empty slotSurface space must not expose an item context menu");
 }
 
 void TestCapacityAndBindingPolicy()
@@ -107,9 +117,11 @@ void TestCapacityAndBindingPolicy()
     binding.kind = snowdesktop::widget_runtime::LogicalSlotKind::Binding;
     binding.capacity = 1;
     binding.itemCount = 1;
+    binding.allowClear = false;
     binding.replacePolicy = "reject";
     binding.accepts = { "app.reference" };
     binding.bounds = { 0, 0, 100, 100 };
+    binding.items = { { "primary-item", binding.bounds } };
     LuaLogicalSlotContainer bindingContainer(
         L"widget-1", "primary", [&binding]() {
             return std::optional<LogicalSlotHostSurface>(binding);
@@ -117,6 +129,9 @@ void TestCapacityAndBindingPolicy()
     Check(!bindingContainer.AcceptsDragPayload(
             snowdesktop::slot_contract::DragPayloadKind::DesktopItem, 1),
         "a populated reject-policy binding must not advertise replacement");
+    const auto bindingHit = bindingContainer.ItemAtPoint({ 50, 50 });
+    Check(bindingHit && !bindingHit->canRemove,
+        "a binding with allowClear=false must disable host removal");
 }
 }
 

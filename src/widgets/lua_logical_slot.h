@@ -19,6 +19,16 @@
 class LuaLogicalSlotContainer final : public Container
 {
 public:
+    struct ItemHit
+    {
+        std::string itemId;
+        snowdesktop::widget_runtime::LogicalSlotKind kind =
+            snowdesktop::widget_runtime::LogicalSlotKind::Binding;
+        std::size_t index = 0;
+        std::size_t itemCount = 0;
+        bool canRemove = false;
+    };
+
     using SurfaceProvider =
         std::function<std::optional<LogicalSlotHostSurface>()>;
     using DropCommitter = std::function<bool(
@@ -57,6 +67,7 @@ public:
         HitRegion region) const;
     bool CommitItems(const std::vector<Item*>& sourceItems,
         Slot* targetSlot, HitRegion region);
+    std::optional<ItemHit> ItemAtPoint(POINT point) const;
 
 private:
     std::optional<LogicalSlotHostSurface> Surface() const;

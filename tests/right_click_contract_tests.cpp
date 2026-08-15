@@ -80,7 +80,7 @@ void TestSlotItemMenuMatrix()
         slot::kSurfaceDescriptors)
     {
         for (std::size_t itemIndex = 0;
-            itemIndex < static_cast<std::size_t>(Item::None) + 1;
+            itemIndex < static_cast<std::size_t>(Item::Count);
             ++itemIndex)
         {
             const Item item =
@@ -142,6 +142,10 @@ void TestSlotItemMenuMatrix()
                     expected = Menu::FileGroupSourceTab;
                 else if (item == Item::Widget)
                     expected = Menu::Widget;
+                break;
+            case Surface::LuaLogicalSlot:
+                if (item == Item::LogicalSlotItem)
+                    expected = Menu::LogicalSlotItem;
                 break;
             default:
                 break;

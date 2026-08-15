@@ -1,5 +1,6 @@
 #include "app.h"
 #include "../right_click_contract.h"
+#include "../widgets/lua_logical_slot.h"
 
 // Page-navigation clicks and right-button context dispatch.
 
@@ -440,6 +441,39 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
         InvalidateRect(hwnd_, nullptr, FALSE);
         ShowCollectionGroupTabContextMenu(
             screenPt, groupIndex, collectionId);
+        return;
+    }
+
+    // A logical slot item owns an element-only host menu. Resolve it before
+    // ordinary widget members and the surrounding Lua widget frame.
+    for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
+    {
+        if (desktopIconsHidden_ && !IsRetainedContainer(it->get()))
+            continue;
+        auto* logicalSlot =
+            dynamic_cast<LuaLogicalSlotContainer*>(it->get());
+        if (!logicalSlot) continue;
+        const auto itemHit = logicalSlot->ItemAtPoint(pt);
+        if (!itemHit) continue;
+        if (snowdesktop::right_click_contract::ResolveSlotItemMenu(
+                logicalSlot->GetSlotSurfaceKind(),
+                snowdesktop::right_click_contract::
+                    SlotItemKind::LogicalSlotItem,
+                false) != snowdesktop::right_click_contract::
+                    ContextMenuKind::LogicalSlotItem)
+            break;
+        const size_t widgetIndex =
+            FindWidgetIndexById(logicalSlot->WidgetId());
+        if (widgetIndex >= widgets_.size()) break;
+        SelectWidgetOnly(widgetIndex);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        ShowLuaLogicalSlotItemContextMenu(screenPt,
+            logicalSlot->WidgetId(), logicalSlot->SlotId(),
+            itemHit->itemId,
+            itemHit->kind == snowdesktop::widget_runtime::
+                LogicalSlotKind::Collection,
+            itemHit->index, itemHit->itemCount,
+            itemHit->canRemove);
         return;
     }
 

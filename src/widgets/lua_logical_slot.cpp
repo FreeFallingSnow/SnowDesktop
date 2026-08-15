@@ -26,6 +26,27 @@ std::wstring LuaLogicalSlotContainer::GetTitle() const
     return std::wstring(slotId_.begin(), slotId_.end());
 }
 
+std::optional<LuaLogicalSlotContainer::ItemHit>
+LuaLogicalSlotContainer::ItemAtPoint(POINT point) const
+{
+    const auto surface = Surface();
+    if (!surface) return std::nullopt;
+    for (std::size_t index = 0; index < surface->items.size(); ++index)
+    {
+        if (!PtInRect(&surface->items[index].bounds, point)) continue;
+        return ItemHit{
+            surface->items[index].itemId,
+            surface->kind,
+            index,
+            surface->itemCount,
+            surface->kind ==
+                    snowdesktop::widget_runtime::LogicalSlotKind::Collection ||
+                surface->allowClear,
+        };
+    }
+    return std::nullopt;
+}
+
 std::vector<std::unique_ptr<Slot>>
 LuaLogicalSlotContainer::BuildSlots()
 {

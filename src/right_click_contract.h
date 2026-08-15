@@ -15,6 +15,8 @@ enum class SlotItemKind : std::uint8_t
     CollectionGroupLabel,
     FileGroupLabel,
     Widget,
+    LogicalSlotItem,
+    Count,
 };
 
 enum class ContextMenuKind : std::uint8_t
@@ -29,6 +31,7 @@ enum class ContextMenuKind : std::uint8_t
     Background,
     FileGroupSourceTab,
     CollectionGroupTab,
+    LogicalSlotItem,
 };
 
 enum class LuaWidgetMenuScope : std::uint8_t
@@ -104,6 +107,10 @@ constexpr ContextMenuKind ResolveSlotItemMenu(
     if (item == SlotItemKind::FileGroupLabel &&
         surface == Surface::FileGroup)
         return ContextMenuKind::FileGroupSourceTab;
+
+    if (item == SlotItemKind::LogicalSlotItem &&
+        surface == Surface::LuaLogicalSlot)
+        return ContextMenuKind::LogicalSlotItem;
 
     return ContextMenuKind::None;
 }

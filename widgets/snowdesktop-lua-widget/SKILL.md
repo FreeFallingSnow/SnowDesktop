@@ -121,17 +121,18 @@ logical bindings or collections. Open them with `slots.binding(id)` or
 current trusted action event. These methods persist references; they do not
 grant file contents, expose paths, or move source objects. Probe
 `slots.nativeDrop` when a committed slotSurface should accept one native
-desktop/Application/Explorer object with host insertion preview, and handle
+desktop/Application/Explorer object with host insertion preview. Probe
+`slots.nativeContextMenu` for host-owned per-item move/remove menus, and handle
 `slot.changed` only after probing `slots.event.changed`; re-read the slot model
 instead of trusting event data as writable state. Multi-object native ingress,
-native item drag-out/reorder and the host picker are not available yet. A
+native item drag-out/pointer reorder and the host picker are not available yet. A
 source reference used by Lua mutation must still come from a bounded host
 search or explicit file-reference task.
 Probe `slots.history` to expose explicit component actions for the bounded
 per-instance undo/redo history. Call undo/redo only from the current trusted
 action and use canUndo/canRedo while rendering; history is not restored after
-reload or restart. Host Ctrl+Z and native item removal/reorder are still
-separate unavailable interactions.
+reload or restart. Probe `slots.hostHistory` when documenting that a selected
+widget also receives host Ctrl+Z, Ctrl+Shift+Z, and Ctrl+Y for this history.
 Probe `view.scroll` for a host-owned vertical or horizontal viewport. Give it
 exactly one child, keep that child visible, and keep the same key so the host
 retains its clamped offset; never offset descendants yourself. Probe
