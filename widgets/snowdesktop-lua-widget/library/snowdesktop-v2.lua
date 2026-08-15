@@ -127,6 +127,7 @@
 ---@alias SnowViewImageFit 'fill'|'contain'|'cover'|'none'
 ---@alias SnowViewImageAlignment 'start'|'center'|'end'
 ---@alias SnowViewImageInterpolation 'nearest'|'linear'
+---@alias SnowViewOverflow 'visible'|'clip'
 ---@alias SnowViewValidationState 'none'|'info'|'success'|'warning'|'error'
 ---@alias SnowDrawImageFit 'fill'|'contain'|'cover'|'none'
 ---@alias SnowDrawImageAlignment 'start'|'center'|'end'
@@ -145,6 +146,13 @@
 ---@class SnowViewOffset
 ---@field x? number Horizontal visual offset from -4096 through 4096.
 ---@field y? number Vertical visual offset from -4096 through 4096.
+
+---@class SnowViewShadow
+---@field color? integer RGB shadow color; defaults to black.
+---@field blur? number Bounded soft-shadow spread from 0 through 64; defaults to 12.
+---@field offsetX? number Horizontal offset from -4096 through 4096; defaults to 0.
+---@field offsetY? number Vertical offset from -4096 through 4096; defaults to 4.
+---@field alpha? number Opacity from 0 through 1; defaults to 0.25.
 
 ---@class SnowViewStyle
 ---@field background? integer RGB color.
@@ -214,6 +222,7 @@
 ---@field fit? SnowViewImageFit Image scaling mode; defaults to contain.
 ---@field alignment? SnowViewImageAlignment Image alignment on both axes; defaults to center.
 ---@field interpolation? SnowViewImageInterpolation Image sampling mode; defaults to linear.
+---@field tint? integer Image-only RGB tint that replaces source RGB while preserving source alpha.
 ---@field alt? string Required by image and referenceIcon nodes; use an empty string for decorative visuals.
 ---@field iconFont? 'fa'|'fluent'|'fluent-regular'
 ---@field shape? 'rectangle'|'roundedRectangle'|'circle'|'ellipse'
@@ -255,7 +264,9 @@
 ---@field padding? number|SnowViewEdgeInsets Inner spacing from 0 through 4096 per edge.
 ---@field offset? SnowViewOffset Visual translation allowed only on direct stack children; it does not consume layout space.
 ---@field zIndex? integer Stable paint and hit-test order from -1024 through 1024, allowed only on direct stack children.
----@field clip? boolean Clip a container's descendants to its content rectangle; defaults to false.
+---@field clip? boolean Compatibility clipping flag; use matching overflow='clip' in new widgets.
+---@field overflow? SnowViewOverflow Container descendant overflow behavior; defaults to visible.
+---@field shadow? SnowViewShadow Bounded host-rendered frame shadow that does not change layout or hit bounds.
 ---@field gap? number
 ---@field columns? integer Required by grid, gridList, and virtualGrid; 1 to 64 equal-width columns.
 ---@field columnGap? number Grid/gridList/virtualGrid/flow horizontal gap; defaults to gap.

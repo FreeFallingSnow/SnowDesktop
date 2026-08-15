@@ -863,6 +863,39 @@ bool ReadStyleField(lua_State* state, int table, const char* field,
     return ok;
 }
 
+bool ReadShadowField(lua_State* state, int table,
+    std::optional<ViewShadow>& shadow, std::string& error)
+{
+    table = lua_absindex(state, table);
+    lua_getfield(state, table, "shadow");
+    if (lua_isnil(state, -1))
+    {
+        lua_pop(state, 1);
+        return true;
+    }
+    if (!lua_istable(state, -1))
+    {
+        lua_pop(state, 1);
+        error = "view field 'shadow' must be a table";
+        return false;
+    }
+    ViewShadow parsed;
+    std::optional<std::uint32_t> color;
+    const bool ok = ValidateObjectFields(state, -1,
+            { "color", "blur", "offsetX", "offsetY", "alpha" },
+            "view shadow", error) &&
+        ReadOptionalColor(state, -1, "color", color, error) &&
+        ReadFloatField(state, -1, "blur", parsed.blur, error) &&
+        ReadFloatField(state, -1, "offsetX", parsed.offsetX, error) &&
+        ReadFloatField(state, -1, "offsetY", parsed.offsetY, error) &&
+        ReadFloatField(state, -1, "alpha", parsed.alpha, error);
+    lua_pop(state, 1);
+    if (!ok) return false;
+    if (color) parsed.color = *color;
+    shadow = parsed;
+    return true;
+}
+
 bool ReadStringArrayField(lua_State* state, int table, const char* field,
     std::vector<std::string>& values, std::size_t minimum,
     std::size_t maximum, bool required, std::string& error)
@@ -1283,6 +1316,22 @@ bool ReadImageInterpolationField(lua_State* state, int table,
     else
     {
         error = "view field 'interpolation' has an unsupported value";
+        return false;
+    }
+    return true;
+}
+
+bool ReadOverflowField(lua_State* state, int table,
+    ViewOverflow& value, std::string& error)
+{
+    std::string text;
+    if (!ReadStringField(state, table, "overflow", text, false, error))
+        return false;
+    if (text.empty() || text == "visible") value = ViewOverflow::Visible;
+    else if (text == "clip") value = ViewOverflow::Clip;
+    else
+    {
+        error = "view field 'overflow' must be visible or clip";
         return false;
     }
     return true;
@@ -1792,6 +1841,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         node.overflowText = ViewTextOverflow::Clip;
     const char* contentField = iconNode ? "glyph" :
         (labelNode ? "label" : "text");
+    const bool clipSpecified = FieldPresent(state, index, "clip");
+    const bool overflowSpecified = FieldPresent(state, index, "overflow");
     if (!ReadStringField(state, index, contentField,
             node.text, false, error) ||
         !ReadResourceField(state, index, "source", LuaResourceType::Image,
@@ -1804,6 +1855,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             node.imageAlignment, error) ||
         !ReadImageInterpolationField(state, index,
             node.imageInterpolation, error) ||
+        !ReadOptionalColor(state, index, "tint", node.imageTint, error) ||
         !ReadOrientationField(state, index, node.orientation, error) ||
         !ReadLengthField(state, index, "width", node.width, error) ||
         !ReadLengthField(state, index, "height", node.height, error) ||
@@ -1822,6 +1874,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadOffsetField(state, index, node.offsetX, node.offsetY, error) ||
         !ReadIntegerField(state, index, "zIndex", node.zIndex, error) ||
         !ReadBoolField(state, index, "clip", node.clipChildren, error) ||
+        !ReadOverflowField(state, index, node.overflow, error) ||
+        !ReadShadowField(state, index, node.shadow, error) ||
         !ReadFloatField(state, index, "gap", node.gap, error) ||
         !ReadSizeField(state, index, "columns", node.columns, error) ||
         !ReadNonNegativeSizeField(state, index, "itemCount",
@@ -1926,6 +1980,17 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadStyleField(state, index, "eventStyle",
             node.eventStyle, error))
         return false;
+
+    if (overflowSpecified)
+    {
+        const bool overflowClips = node.overflow == ViewOverflow::Clip;
+        if (clipSpecified && node.clipChildren != overflowClips)
+        {
+            error = "view clip and overflow must describe the same clipping behavior";
+            return false;
+        }
+        node.clipChildren = overflowClips;
+    }
 
     if (styledTextNode)
     {

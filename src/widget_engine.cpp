@@ -54,6 +54,7 @@
 #include <imgui_impl_dx11.h>
 
 #include <dwrite_3.h>
+#include <d2d1effects.h>
 #include <dwmapi.h>
 
 #include <shlwapi.h>
@@ -15381,17 +15382,98 @@ static void DrawWidgetViewBitmap(D2DState* state,
             { targetLeft, targetTop,
                 targetWidth, targetHeight }, fit, alignment);
     if (!placement.valid) return;
+    const D2D1_INTERPOLATION_MODE interpolation =
+        node.imageInterpolation == ViewImageInterpolation::Nearest
+        ? D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR
+        : D2D1_INTERPOLATION_MODE_LINEAR;
+    const D2D1_RECT_F sourceRect = D2D1::RectF(
+        placement.source.x, placement.source.y,
+        placement.source.x + placement.source.width,
+        placement.source.y + placement.source.height);
+    if (node.imageTint)
+    {
+        ComPtr<ID2D1Effect> tintEffect;
+        if (SUCCEEDED(state->ctx->CreateEffect(
+                CLSID_D2D1ColorMatrix, &tintEffect)) && tintEffect)
+        {
+            const D2D1_COLOR_F tint = D2D1::ColorF(*node.imageTint);
+            const D2D1_MATRIX_5X4_F matrix = {
+                0.0f, 0.0f, 0.0f, 0.0f,
+                0.0f, 0.0f, 0.0f, 0.0f,
+                0.0f, 0.0f, 0.0f, 0.0f,
+                tint.r * opacity, tint.g * opacity,
+                    tint.b * opacity, opacity,
+                0.0f, 0.0f, 0.0f, 0.0f,
+            };
+            tintEffect->SetInput(0, bitmap);
+            if (SUCCEEDED(tintEffect->SetValue(
+                    D2D1_COLORMATRIX_PROP_COLOR_MATRIX, matrix)) &&
+                SUCCEEDED(tintEffect->SetValue(
+                    D2D1_COLORMATRIX_PROP_ALPHA_MODE,
+                    D2D1_COLORMATRIX_ALPHA_MODE_PREMULTIPLIED)))
+            {
+                D2D1_MATRIX_3X2_F previous{};
+                state->ctx->GetTransform(&previous);
+                const float scaleX = placement.destination.width /
+                    placement.source.width;
+                const float scaleY = placement.destination.height /
+                    placement.source.height;
+                const D2D1_MATRIX_3X2_F placementTransform =
+                    D2D1::Matrix3x2F::Scale(scaleX, scaleY) *
+                    D2D1::Matrix3x2F::Translation(
+                        placement.destination.x,
+                        placement.destination.y);
+                state->ctx->SetTransform(placementTransform * previous);
+                state->ctx->DrawImage(tintEffect.Get(),
+                    D2D1::Point2F(-placement.source.x,
+                        -placement.source.y),
+                    sourceRect, interpolation,
+                    D2D1_COMPOSITE_MODE_SOURCE_OVER);
+                state->ctx->SetTransform(previous);
+                return;
+            }
+        }
+    }
     state->ctx->DrawBitmap(bitmap, D2D1::RectF(
             placement.destination.x, placement.destination.y,
             placement.destination.x + placement.destination.width,
             placement.destination.y + placement.destination.height),
-        opacity,
-        node.imageInterpolation == ViewImageInterpolation::Nearest
-            ? D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR
-            : D2D1_INTERPOLATION_MODE_LINEAR,
-        D2D1::RectF(placement.source.x, placement.source.y,
-            placement.source.x + placement.source.width,
-            placement.source.y + placement.source.height));
+        opacity, interpolation, sourceRect);
+}
+
+static void DrawWidgetViewShadow(D2DState* state,
+    const snowdesktop::widget_runtime::ViewNode& node,
+    float radius, float opacity)
+{
+    if (!state || !state->ctx || !node.shadow || opacity <= 0.0f) return;
+    std::vector<snowdesktop::widget_runtime::DrawShadowLayer> layers;
+    std::string error;
+    if (!snowdesktop::widget_runtime::BuildDrawShadowLayers(
+            { node.frame.x, node.frame.y,
+                node.frame.width, node.frame.height },
+            node.shadow->blur,
+            std::min(radius,
+                std::min(node.frame.width, node.frame.height) * 0.5f),
+            node.shadow->offsetX, node.shadow->offsetY,
+            node.shadow->alpha * opacity, layers, error))
+        return;
+    for (const auto& layer : layers)
+    {
+        ID2D1SolidColorBrush* brush = GetCachedBrush(state,
+            static_cast<int>(node.shadow->color), layer.alpha);
+        if (!brush) continue;
+        const D2D1_RECT_F shadowRect = D2D1::RectF(
+            state->widgetRect.left + layer.bounds.x,
+            state->widgetRect.top + layer.bounds.y,
+            state->widgetRect.left + layer.bounds.x + layer.bounds.width,
+            state->widgetRect.top + layer.bounds.y + layer.bounds.height);
+        if (layer.radius > 0.0f)
+            state->ctx->FillRoundedRectangle(
+                D2D1::RoundedRect(shadowRect,
+                    layer.radius, layer.radius), brush);
+        else
+            state->ctx->FillRectangle(shadowRect, brush);
+    }
 }
 
 static void DrawWidgetViewNode(D2DState* state,
@@ -15434,6 +15516,8 @@ static void DrawWidgetViewNode(D2DState* state,
         state->widgetRect.top + node.frame.y,
         state->widgetRect.left + node.frame.x + node.frame.width,
         state->widgetRect.top + node.frame.y + node.frame.height);
+
+    DrawWidgetViewShadow(state, node, radius, opacity);
 
     const bool buttonNode = node.type == ViewNodeType::Button ||
         node.type == ViewNodeType::IconButton;

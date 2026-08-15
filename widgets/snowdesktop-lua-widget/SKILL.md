@@ -177,6 +177,11 @@ the complete fixed/auto/fr/minmax track or virtual-grid contract. Probe
 `view.grid.placement` before setting `gridColumn`, `gridRow`, `columnSpan`, or
 `rowSpan` on direct grid/gridList children. Coordinates are 1-based, spans are
 limited to 64 tracks, and the host rejects overlap or out-of-bounds placement.
+Probe `view.layout.overflow` before using `overflow="clip"` on a container;
+the host applies the same content rectangle to descendant paint, pointer hit,
+inputs, and semantic visibility. `clip=true` remains compatibility syntax and
+must not contradict overflow. Probe `view.shadow` for bounded frame shadows and
+`view.image.tint` for alpha-preserving RGB tint on package image nodes.
 Probe `view.flow.wrap` before using `view.flow`; it wraps fixed/auto-width
 children horizontally, skips hidden children, and supports per-line
 `columnGap`/`rowGap`, but it is not a scrolling or virtualized collection.

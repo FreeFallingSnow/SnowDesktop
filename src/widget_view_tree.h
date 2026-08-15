@@ -191,6 +191,12 @@ enum class ViewImageInterpolation
     Linear,
 };
 
+enum class ViewOverflow
+{
+    Visible,
+    Clip,
+};
+
 enum class ViewOrientation
 {
     Horizontal,
@@ -242,6 +248,15 @@ struct ViewStyle
     std::optional<float> borderWidth;
     std::optional<float> cornerRadius;
     std::optional<float> opacity;
+};
+
+struct ViewShadow
+{
+    std::uint32_t color = 0x000000;
+    float blur = 12.0f;
+    float offsetX = 0.0f;
+    float offsetY = 4.0f;
+    float alpha = 0.25f;
 };
 
 struct ViewChoiceOption
@@ -298,6 +313,8 @@ struct ViewNode
     float offsetY = 0.0f;
     int zIndex = 0;
     bool clipChildren = false;
+    ViewOverflow overflow = ViewOverflow::Visible;
+    std::optional<ViewShadow> shadow;
     float gap = 0.0f;
     std::size_t columns = 1;
     std::size_t itemCount = 0;
@@ -330,6 +347,7 @@ struct ViewNode
     ViewImageAlignment imageAlignment = ViewImageAlignment::Center;
     ViewImageInterpolation imageInterpolation =
         ViewImageInterpolation::Linear;
+    std::optional<std::uint32_t> imageTint;
     ViewOrientation orientation = ViewOrientation::Horizontal;
     ViewShapeKind shapeKind = ViewShapeKind::Rectangle;
     ViewIconFont iconFont = ViewIconFont::FontAwesome;

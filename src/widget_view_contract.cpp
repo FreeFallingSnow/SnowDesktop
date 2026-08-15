@@ -66,7 +66,8 @@ constexpr auto kProperties = std::to_array<std::string_view>({
     "showAdjacentDates", "binding", "collection", "revision", "reference",
     "child", "thickness", "trackOpacity", "fillOpacity", "width", "height",
     "minWidth", "maxWidth", "minHeight", "maxHeight", "aspectRatio",
-    "margin", "padding", "offset", "zIndex", "clip", "gap", "columns",
+    "margin", "padding", "offset", "zIndex", "clip", "overflow",
+    "shadow", "gap", "columns",
     "columnGap", "rowGap", "gridColumn", "gridRow", "columnSpan",
     "rowSpan", "itemCount",
     "itemExtent", "firstIndex", "overscan", "flexBasis", "flexGrow",
@@ -77,7 +78,7 @@ constexpr auto kProperties = std::to_array<std::string_view>({
     "alignSelf", "justifyContent", "textAlign", "verticalAlign",
     "textWrap", "maxLines", "overflowText", "style", "hoverStyle",
     "pressedStyle", "focusStyle", "disabledStyle", "validationStyle",
-    "checkedStyle",
+    "checkedStyle", "tint",
     "selectedStyle", "todayStyle",
     "adjacentStyle", "eventStyle", "accessibility", "events", "action",
     "children",
@@ -86,7 +87,7 @@ constexpr auto kProperties = std::to_array<std::string_view>({
 constexpr auto kCommonProperties = std::to_array<std::string_view>({
     "type", "key", "width", "height", "minWidth", "maxWidth",
     "minHeight", "maxHeight", "aspectRatio", "margin", "padding",
-    "offset", "zIndex", "clip", "gap",
+    "offset", "zIndex", "clip", "overflow", "shadow", "gap",
     "gridColumn", "gridRow", "columnSpan", "rowSpan",
     "flexBasis", "flexGrow", "flexShrink",
     "fontSize", "fontWeight", "fontStyle", "lineHeight", "letterSpacing",
@@ -241,6 +242,7 @@ bool ViewNodeAllowsProperty(
         property == "interpolation" || property == "alt")
         return type == ViewNodeType::Image ||
             type == ViewNodeType::ReferenceIcon;
+    if (property == "tint") return type == ViewNodeType::Image;
     if (property == "shape") return type == ViewNodeType::Shape;
     if (property == "orientation")
         return IsType(type, { ViewNodeType::Divider,

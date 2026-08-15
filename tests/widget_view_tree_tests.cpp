@@ -2232,6 +2232,100 @@ void TestFlexLayout()
     lua_close(state);
 }
 
+void TestOverflowShadowAndImageTint()
+{
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "Lua state must be available");
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    PushResourceHandle(state, LuaResourceType::Image, "status-mask");
+    lua_setglobal(state, "statusMask");
+    Check(luaL_dostring(state, R"lua(
+        return view.column({
+            key = "visuals",
+            overflow = "clip",
+            shadow = {
+                color = 0x102030,
+                blur = 10,
+                offsetX = 2,
+                offsetY = 5,
+                alpha = 0.4,
+            },
+            children = {
+                view.image({
+                    key = "mask",
+                    source = statusMask,
+                    alt = "Status",
+                    tint = 0x44AAEE,
+                }),
+            },
+        })
+    )lua") == LUA_OK,
+        "overflow, shadow, and image-tint fixture must evaluate");
+    ViewNode root;
+    std::string error;
+    Check(ParseLuaViewTree(state, -1, root, error) &&
+            root.overflow == ViewOverflow::Clip && root.clipChildren &&
+            root.shadow && root.shadow->color == 0x102030 &&
+            Near(root.shadow->blur, 10.0f) &&
+            Near(root.shadow->offsetX, 2.0f) &&
+            Near(root.shadow->offsetY, 5.0f) &&
+            Near(root.shadow->alpha, 0.4f) &&
+            root.children.size() == 1 &&
+            root.children[0].imageTint == 0x44AAEE,
+        "visual properties must retain bounded typed values");
+    Check(ValidateAndLayoutViewTree(root, 100.0f, 80.0f, error) &&
+            root.clipFrame && Near(root.clipFrame->width, 100.0f) &&
+            Near(root.clipFrame->height, 80.0f),
+        "overflow=clip must produce the same content clip used by layout and hit testing");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.box({ key = "conflict", clip = true,
+            overflow = "visible" })
+    )lua") == LUA_OK,
+        "conflicting clipping fixture must evaluate");
+    ViewNode invalid;
+    Check(!ParseLuaViewTree(state, -1, invalid, error) &&
+            error.find("same clipping behavior") != std::string::npos,
+        "clip compatibility syntax must not contradict overflow");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.text({ key = "leaf", text = "Leaf",
+            overflow = "clip" })
+    )lua") == LUA_OK,
+        "leaf overflow fixture must evaluate");
+    invalid = {};
+    Check(ParseLuaViewTree(state, -1, invalid, error) &&
+            !ValidateAndLayoutViewTree(invalid, 100.0f, 40.0f, error) &&
+            error == "view clip is only valid for container nodes",
+        "overflow clipping must reject leaf nodes just like clip=true");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.shape({ key = "bad-tint", tint = 0xFFFFFF })
+    )lua") == LUA_OK,
+        "misapplied image tint fixture must evaluate");
+    invalid = {};
+    Check(!ParseLuaViewTree(state, -1, invalid, error) &&
+            error.find("tint") != std::string::npos,
+        "tint must remain scoped to package image nodes");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.box({ key = "bad-shadow",
+            shadow = { blur = 65 } })
+    )lua") == LUA_OK,
+        "out-of-range shadow fixture must evaluate");
+    invalid = {};
+    Check(ParseLuaViewTree(state, -1, invalid, error) &&
+            !ValidateAndLayoutViewTree(invalid, 100.0f, 40.0f, error) &&
+            error == "view shadow values must be finite and bounded",
+        "shadow values must be rejected outside host rendering bounds");
+    lua_close(state);
+}
+
 void TestStackPositioningAndClipping()
 {
     lua_State* state = luaL_newstate();
@@ -2375,6 +2469,7 @@ int main()
     TestUniformMargins();
     TestFlexSizing();
     TestFlexLayout();
+    TestOverflowShadowAndImageTint();
     TestStackPositioningAndClipping();
     TestTextLocaleValidation();
     std::cout << "Widget view tree tests passed\n";

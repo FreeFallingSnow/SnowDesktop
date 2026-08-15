@@ -95,6 +95,8 @@ void TestRepresentativeApplicability()
         "virtual collection properties must not leak to eager collections");
     Check(ViewNodeAllowsProperty(ViewNodeType::Image, "source") &&
             ViewNodeAllowsProperty(ViewNodeType::ReferenceIcon, "reference") &&
+            ViewNodeAllowsProperty(ViewNodeType::Image, "tint") &&
+            !ViewNodeAllowsProperty(ViewNodeType::ReferenceIcon, "tint") &&
             !ViewNodeAllowsProperty(ViewNodeType::ReferenceIcon, "source"),
         "package images and opaque reference icons must remain distinct");
     Check(ViewNodeAllowsProperty(ViewNodeType::TextInput, "liveUpdate") &&
@@ -119,6 +121,8 @@ void TestRepresentativeApplicability()
             ViewNodeAllowsProperty(ViewNodeType::Image, "aspectRatio") &&
             ViewNodeAllowsProperty(ViewNodeType::Spacer, "margin") &&
             ViewNodeAllowsProperty(ViewNodeType::Stack, "clip") &&
+            ViewNodeAllowsProperty(ViewNodeType::Column, "overflow") &&
+            ViewNodeAllowsProperty(ViewNodeType::Button, "shadow") &&
             ViewNodeAllowsProperty(ViewNodeType::Button, "offset") &&
             ViewNodeAllowsProperty(ViewNodeType::Button, "zIndex") &&
             ViewNodeAllowsProperty(ViewNodeType::Button, "flexBasis") &&

@@ -1561,7 +1561,7 @@ void LayoutNode(ViewNode& node, const ViewRect& frame)
                 childSize.width, childSize.height });
         }
     }
-    if (node.clipChildren)
+    if (node.clipChildren || node.overflow == ViewOverflow::Clip)
         node.clipFrame = ContentRect(node);
 }
 
@@ -1645,9 +1645,19 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         error = "grid placement properties are only valid for direct grid or gridList children";
         return false;
     }
-    if (node.clipChildren && IsLeafNode(node.type))
+    if ((node.clipChildren || node.overflow == ViewOverflow::Clip) &&
+        IsLeafNode(node.type))
     {
         error = "view clip is only valid for container nodes";
+        return false;
+    }
+    if (node.shadow &&
+        (!FiniteInRange(node.shadow->blur, 0.0f, 64.0f) ||
+            !FiniteInRange(node.shadow->offsetX, -4096.0f, 4096.0f) ||
+            !FiniteInRange(node.shadow->offsetY, -4096.0f, 4096.0f) ||
+            !FiniteInRange(node.shadow->alpha, 0.0f, 1.0f)))
+    {
+        error = "view shadow values must be finite and bounded";
         return false;
     }
     if (!ValidateLength(node.width) || !ValidateLength(node.height) ||
@@ -2215,6 +2225,12 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         !node.imageResourceName.empty())
     {
         error = "only image nodes can retain an image resource";
+        return false;
+    }
+    if (node.imageTint && (node.type != ViewNodeType::Image ||
+            *node.imageTint > 0xFFFFFF))
+    {
+        error = "image tint is only valid for image nodes and must be an RGB color";
         return false;
     }
     if (!node.fontResourceName.empty() &&

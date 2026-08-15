@@ -98,6 +98,8 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.text.typography` 提供字体粗细、字形、行高和字距，
 `view.text.locale` 提供 BCP 47 locale 与双向文本基准方向，
 `view.tooltip` 提供宿主管理的纯文本元素提示，
+`view.layout.overflow` 提供容器后代裁剪，`view.shadow` 提供有界宿主阴影，
+`view.image.tint` 提供保留图片 alpha 的 RGB 着色，
 `view.grid.uniform` 提供基础 `grid`，`view.grid.placement` 提供显式格位与跨度，
 `view.flow.wrap` 提供横向换行 `flow`。
 `view.scroll` 提供宿主滚动视口，`view.collection.basic` 提供基础集合，
@@ -123,6 +125,11 @@ scroll content extent 和虚拟 item extent；同级间的公共间隔仍优先�
 相同值仍保持声明顺序。其他父容器不得使用非零 offset/zIndex，语义与键盘顺序仍保持原声明顺序。
 容器可用 `clip = true` 将后代绘制、指针命中、宿主输入和语义可见范围裁剪到自身 content rect；
 叶节点使用 clip 会拒绝整棵新树。当前不支持任意裁剪路径或通过 offset 脱离 stack 建立绝对布局。
+新组件应在探测 `view.layout.overflow` 后使用 `overflow="visible"|"clip"`；`clip=true`
+仅作为兼容写法保留，同时声明两者时必须表达相同结果。`shadow={color,blur,offsetX,offsetY,alpha}`
+由宿主最多 16 层受控衰减绘制，blur 限制为 0 到 64，不参与布局或扩大命中区；对应 feature
+为 `view.shadow`。图片在探测 `view.image.tint` 后可声明 `tint=0xRRGGBB`，宿主替换 RGB、
+保留源 alpha，并继续遵循 fit、alignment、interpolation 和节点 opacity。
 每次 `view(context, model)` 返回一棵完整树；所有节点必须提供全树唯一、1–128 字节的
 稳定 `key`。宿主先完整解析、校验和布局，再原子替换上一棵成功树；回调或校验失败时
 继续显示上一棵树，不留下半棵树或空白交互区。

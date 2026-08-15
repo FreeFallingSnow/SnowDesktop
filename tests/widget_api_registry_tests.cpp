@@ -435,6 +435,8 @@ void TestV2Contract()
                 "view.grid.uniform") &&
             snowdesktop::widget_api::SupportsFeature("view.image") &&
             snowdesktop::widget_api::SupportsFeature(
+                "view.image.tint") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "view.inputControls") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.keyboardNavigation.basic") &&
@@ -443,6 +445,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "view.layout.edgeInsets") &&
             snowdesktop::widget_api::SupportsFeature(
+                "view.layout.overflow") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "view.positioning.basic") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.text.flow") &&
@@ -450,6 +454,7 @@ void TestV2Contract()
                 "view.text.locale") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.text.typography") &&
+            snowdesktop::widget_api::SupportsFeature("view.shadow") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.tooltip") &&
             snowdesktop::widget_api::SupportsFeature(
