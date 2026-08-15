@@ -1,0 +1,103 @@
+#include "widget_view_contract.h"
+
+#include <algorithm>
+#include <cstdlib>
+#include <iostream>
+#include <set>
+#include <string>
+
+namespace
+{
+using snowdesktop::widget_runtime::FindViewNodeContract;
+using snowdesktop::widget_runtime::FindViewNodeType;
+using snowdesktop::widget_runtime::IsKnownViewNodeProperty;
+using snowdesktop::widget_runtime::ViewNodeAllowedProperties;
+using snowdesktop::widget_runtime::ViewNodeContracts;
+using snowdesktop::widget_runtime::ViewNodeRequiresProperty;
+using snowdesktop::widget_runtime::ViewNodeRequiredProperties;
+using snowdesktop::widget_runtime::ViewNodeType;
+
+void Check(bool condition, const char* message)
+{
+    if (condition) return;
+    std::cerr << "FAILED: " << message << '\n';
+    std::exit(1);
+}
+
+void TestContractCoverageAndRoundTrip()
+{
+    const auto contracts = ViewNodeContracts();
+    Check(contracts.size() == 44,
+        "the matrix must cover every currently public view node");
+    std::set<ViewNodeType> types;
+    std::set<std::string> names;
+    for (const auto& contract : contracts)
+    {
+        Check(!contract.name.empty() && !contract.category.empty() &&
+                !contract.feature.empty(),
+            "each node contract must publish its name, category, and feature");
+        Check(types.insert(contract.type).second,
+            "node contract types must be unique");
+        Check(names.emplace(contract.name).second,
+            "node contract names must be unique");
+        const auto byName = FindViewNodeType(contract.name);
+        Check(byName && *byName == contract.type,
+            "node names must round-trip to their enum type");
+        Check(FindViewNodeContract(contract.type) == &contract &&
+                FindViewNodeContract(contract.name) == &contract,
+            "contract lookups must resolve the canonical matrix entry");
+
+        const auto allowed = ViewNodeAllowedProperties(contract.type);
+        const auto required = ViewNodeRequiredProperties(contract.type);
+        Check(!allowed.empty(),
+            "every public node must have an enumerable property contract");
+        for (const auto property : required)
+        {
+            Check(IsKnownViewNodeProperty(property),
+                "required properties must belong to the public vocabulary");
+            Check(std::find(allowed.begin(), allowed.end(), property) !=
+                    allowed.end(),
+                "required properties must also be allowed");
+        }
+        Check(ViewNodeRequiresProperty(contract.type, "type") &&
+                ViewNodeRequiresProperty(contract.type, "key"),
+            "every node must require type and key");
+    }
+    Check(!FindViewNodeType("webView") &&
+            FindViewNodeContract("webView") == nullptr,
+        "unpublished nodes must not appear in the public matrix");
+}
+
+void TestRepresentativeApplicability()
+{
+    using snowdesktop::widget_runtime::ViewNodeAllowsProperty;
+    Check(ViewNodeAllowsProperty(ViewNodeType::Grid, "columns") &&
+            !ViewNodeAllowsProperty(ViewNodeType::Row, "columns"),
+        "grid-only properties must be machine readable");
+    Check(ViewNodeAllowsProperty(ViewNodeType::VirtualGrid, "itemCount") &&
+            !ViewNodeAllowsProperty(ViewNodeType::GridList, "itemCount"),
+        "virtual collection properties must not leak to eager collections");
+    Check(ViewNodeAllowsProperty(ViewNodeType::Image, "source") &&
+            ViewNodeAllowsProperty(ViewNodeType::ReferenceIcon, "reference") &&
+            !ViewNodeAllowsProperty(ViewNodeType::ReferenceIcon, "source"),
+        "package images and opaque reference icons must remain distinct");
+    Check(ViewNodeAllowsProperty(ViewNodeType::TextInput, "liveUpdate") &&
+            !ViewNodeAllowsProperty(ViewNodeType::Button, "liveUpdate"),
+        "input editing properties must be scoped to input nodes");
+    Check(ViewNodeAllowsProperty(ViewNodeType::MonthCalendar, "eventDates") &&
+            !ViewNodeAllowsProperty(ViewNodeType::List, "eventDates"),
+        "calendar properties must be scoped to monthCalendar");
+    Check(ViewNodeAllowsProperty(ViewNodeType::SlotSurface, "binding") &&
+            ViewNodeAllowsProperty(ViewNodeType::SlotItem, "reference") &&
+            !ViewNodeAllowsProperty(ViewNodeType::SlotItem, "binding"),
+        "logical-slot model and item fields must remain separated");
+}
+}
+
+int main()
+{
+    TestContractCoverageAndRoundTrip();
+    TestRepresentativeApplicability();
+    std::cout << "widget view contract tests passed\n";
+    return 0;
+}

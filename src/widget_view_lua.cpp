@@ -1,4 +1,5 @@
 #include "widget_view_lua.h"
+#include "widget_view_contract.h"
 #include "widget_resource_lua.h"
 
 #include <algorithm>
@@ -96,6 +97,59 @@ bool FieldPresent(lua_State* state, int index, const char* field)
     const bool present = !lua_isnil(state, -1);
     lua_pop(state, 1);
     return present;
+}
+
+bool ValidateNodeFields(lua_State* state, int index, ViewNodeType type,
+    std::string& error)
+{
+    index = lua_absindex(state, index);
+    if (lua_getmetatable(state, index) != 0)
+    {
+        lua_pop(state, 1);
+        error = "view node cannot have a metatable";
+        return false;
+    }
+    lua_pushnil(state);
+    while (lua_next(state, index) != 0)
+    {
+        if (lua_type(state, -2) != LUA_TSTRING)
+        {
+            lua_pop(state, 2);
+            error = "view node keys must be strings";
+            return false;
+        }
+        std::size_t length = 0;
+        const char* key = lua_tolstring(state, -2, &length);
+        const std::string_view field(key ? key : "", length);
+        if (!IsKnownViewNodeProperty(field))
+        {
+            lua_pop(state, 2);
+            error = "view node has unsupported field '" +
+                std::string(field) + "'";
+            return false;
+        }
+        if (!ViewNodeAllowsProperty(type, field))
+        {
+            const char* typeName = ViewNodeTypeName(type);
+            lua_pop(state, 2);
+            error = std::string(typeName) + " nodes do not accept field '" +
+                std::string(field) + "'";
+            return false;
+        }
+        lua_pop(state, 1);
+    }
+    for (const std::string_view property :
+        ViewNodeRequiredProperties(type))
+    {
+        const std::string name(property);
+        if (!FieldPresent(state, index, name.c_str()))
+        {
+            error = std::string(ViewNodeTypeName(type)) +
+                " nodes require field '" + name + "'";
+            return false;
+        }
+    }
+    return true;
 }
 
 bool ReadActionValue(lua_State* state, int index,
@@ -964,52 +1018,9 @@ bool ParseAction(lua_State* state, int index, InteractionAction& action,
 
 bool ParseNodeType(std::string_view type, ViewNodeType& result)
 {
-    if (type == "box") result = ViewNodeType::Box;
-    else if (type == "row") result = ViewNodeType::Row;
-    else if (type == "column") result = ViewNodeType::Column;
-    else if (type == "grid") result = ViewNodeType::Grid;
-    else if (type == "flow") result = ViewNodeType::Flow;
-    else if (type == "stack") result = ViewNodeType::Stack;
-    else if (type == "scroll") result = ViewNodeType::Scroll;
-    else if (type == "list") result = ViewNodeType::List;
-    else if (type == "gridList") result = ViewNodeType::GridList;
-    else if (type == "virtualList") result = ViewNodeType::VirtualList;
-    else if (type == "virtualGrid") result = ViewNodeType::VirtualGrid;
-    else if (type == "listItem") result = ViewNodeType::ListItem;
-    else if (type == "text") result = ViewNodeType::Text;
-    else if (type == "styledText") result = ViewNodeType::StyledText;
-    else if (type == "textInput") result = ViewNodeType::TextInput;
-    else if (type == "textArea") result = ViewNodeType::TextArea;
-    else if (type == "searchBox") result = ViewNodeType::SearchBox;
-    else if (type == "numberInput") result = ViewNodeType::NumberInput;
-    else if (type == "select") result = ViewNodeType::Select;
-    else if (type == "image") result = ViewNodeType::Image;
-    else if (type == "referenceIcon") result = ViewNodeType::ReferenceIcon;
-    else if (type == "button") result = ViewNodeType::Button;
-    else if (type == "link") result = ViewNodeType::Link;
-    else if (type == "toggle") result = ViewNodeType::Toggle;
-    else if (type == "checkbox") result = ViewNodeType::Checkbox;
-    else if (type == "radioGroup") result = ViewNodeType::RadioGroup;
-    else if (type == "slider") result = ViewNodeType::Slider;
-    else if (type == "icon") result = ViewNodeType::Icon;
-    else if (type == "iconButton") result = ViewNodeType::IconButton;
-    else if (type == "shape") result = ViewNodeType::Shape;
-    else if (type == "badge") result = ViewNodeType::Badge;
-    else if (type == "divider") result = ViewNodeType::Divider;
-    else if (type == "progressBar") result = ViewNodeType::ProgressBar;
-    else if (type == "progressRing") result = ViewNodeType::ProgressRing;
-    else if (type == "meter") result = ViewNodeType::Meter;
-    else if (type == "sparkline") result = ViewNodeType::Sparkline;
-    else if (type == "lineChart") result = ViewNodeType::LineChart;
-    else if (type == "barChart") result = ViewNodeType::BarChart;
-    else if (type == "waveform") result = ViewNodeType::Waveform;
-    else if (type == "spectrum") result = ViewNodeType::Spectrum;
-    else if (type == "monthCalendar")
-        result = ViewNodeType::MonthCalendar;
-    else if (type == "slotSurface") result = ViewNodeType::SlotSurface;
-    else if (type == "slotItem") result = ViewNodeType::SlotItem;
-    else if (type == "spacer") result = ViewNodeType::Spacer;
-    else return false;
+    const auto found = FindViewNodeType(type);
+    if (!found) return false;
+    result = *found;
     return true;
 }
 
@@ -1066,31 +1077,6 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         error = "view tree exceeds its node or depth limit";
         return false;
     }
-    if (!ValidateObjectFields(state, index,
-            { "type", "key", "text", "spans", "label", "glyph", "iconFont",
-                "source", "font", "fit", "alignment", "interpolation",
-                "alt",
-                "shape", "orientation", "value", "values", "min", "max",
-                "step", "options", "selectedValue", "placeholder",
-                "expanded", "selectAll", "liveUpdate", "maxBytes",
-                "year", "month", "firstDayOfWeek", "selectedDate",
-                "todayDate", "eventDates", "weekdayLabels",
-                "showAdjacentDates",
-                "binding", "collection", "revision", "reference", "child",
-                "thickness", "trackOpacity",
-                "fillOpacity", "width", "height",
-                "padding", "gap", "columns", "columnGap", "rowGap",
-                "itemCount", "itemExtent", "firstIndex", "overscan",
-                "flexGrow", "fontSize", "bold",
-                "checked", "visible", "enabled", "cursor", "alignItems",
-                "showScrollbar",
-                "alignSelf", "justifyContent", "textAlign", "style",
-                "hoverStyle", "pressedStyle", "checkedStyle",
-                "selectedStyle", "todayStyle", "adjacentStyle",
-                "eventStyle",
-                "accessibility", "events",
-                "action", "children" }, "view node", error))
-        return false;
     std::string type;
     if (!ReadStringField(state, index, "type", type, true, error) ||
         !ParseNodeType(type, node.type))
@@ -1098,6 +1084,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         if (error.empty()) error = "unsupported view node type: " + type;
         return false;
     }
+    if (!ValidateNodeFields(state, index, node.type, error)) return false;
     const bool buttonNode = node.type == ViewNodeType::Button ||
         node.type == ViewNodeType::IconButton;
     const bool checkControlNode = node.type == ViewNodeType::Toggle ||

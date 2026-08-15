@@ -263,6 +263,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget_audio_analysis_provider.cpp
     src/widget_draw_geometry.cpp
     src/widget_interaction_region.cpp
+    src/widget_view_contract.cpp
     src/widget_view_tree.cpp
     src/widget_view_lua.cpp
     src/widget_text_input_rules.cpp
@@ -1029,10 +1030,20 @@ if (BUILD_TESTING)
         LABELS contract render lua widget)
 
     snowdesktop_add_test(
+        SnowDesktopWidgetViewContractTests
+        widget_view_contract
+        SOURCES
+            tests/widget_view_contract_tests.cpp
+            src/widget_view_contract.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS contract layout lua widget)
+
+    snowdesktop_add_test(
         SnowDesktopWidgetViewTreeTests
         widget_view_tree
         SOURCES
             tests/widget_view_tree_tests.cpp
+            src/widget_view_contract.cpp
             src/widget_view_tree.cpp
             src/widget_view_lua.cpp
             src/widget_interaction_region.cpp

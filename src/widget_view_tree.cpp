@@ -1,4 +1,5 @@
 #include "widget_view_tree.h"
+#include "widget_view_contract.h"
 
 #include <algorithm>
 #include <array>
@@ -212,25 +213,8 @@ bool IsScrollContainer(ViewNodeType type) noexcept
 
 const char* DefaultAccessibilityRole(ViewNodeType type) noexcept
 {
-    if (IsButtonNode(type)) return "button";
-    if (type == ViewNodeType::Link) return "link";
-    if (type == ViewNodeType::Slider) return "slider";
-    if (type == ViewNodeType::Toggle) return "switch";
-    if (type == ViewNodeType::Checkbox) return "checkbox";
-    if (type == ViewNodeType::TextInput ||
-        type == ViewNodeType::TextArea) return "textbox";
-    if (type == ViewNodeType::SearchBox) return "searchbox";
-    if (type == ViewNodeType::NumberInput) return "spinbutton";
-    if (type == ViewNodeType::Select) return "combobox";
-    if (IsDataSeriesNode(type)) return "img";
-    if (type == ViewNodeType::Meter) return "meter";
-    if (type == ViewNodeType::Divider) return "separator";
-    if (type == ViewNodeType::Badge) return "status";
-    if (type == ViewNodeType::ListItem) return "listitem";
-    if (type == ViewNodeType::MonthCalendar) return "grid";
-    if (type == ViewNodeType::SlotSurface) return "group";
-    if (type == ViewNodeType::SlotItem) return "listitem";
-    return "";
+    const ViewNodeContract* contract = FindViewNodeContract(type);
+    return contract ? contract->defaultAccessibilityRole.data() : "";
 }
 
 ViewRect ContentRect(const ViewNode& node) noexcept
@@ -2498,53 +2482,7 @@ bool ComputeViewVirtualRange(std::size_t itemCount, float itemExtent,
 
 const char* ViewNodeTypeName(ViewNodeType type) noexcept
 {
-    switch (type)
-    {
-    case ViewNodeType::Box: return "box";
-    case ViewNodeType::Row: return "row";
-    case ViewNodeType::Column: return "column";
-    case ViewNodeType::Grid: return "grid";
-    case ViewNodeType::Flow: return "flow";
-    case ViewNodeType::Stack: return "stack";
-    case ViewNodeType::Scroll: return "scroll";
-    case ViewNodeType::List: return "list";
-    case ViewNodeType::GridList: return "gridList";
-    case ViewNodeType::VirtualList: return "virtualList";
-    case ViewNodeType::VirtualGrid: return "virtualGrid";
-    case ViewNodeType::ListItem: return "listItem";
-    case ViewNodeType::Text: return "text";
-    case ViewNodeType::StyledText: return "styledText";
-    case ViewNodeType::TextInput: return "textInput";
-    case ViewNodeType::TextArea: return "textArea";
-    case ViewNodeType::SearchBox: return "searchBox";
-    case ViewNodeType::NumberInput: return "numberInput";
-    case ViewNodeType::Select: return "select";
-    case ViewNodeType::Image: return "image";
-    case ViewNodeType::ReferenceIcon: return "referenceIcon";
-    case ViewNodeType::Button: return "button";
-    case ViewNodeType::Link: return "link";
-    case ViewNodeType::Toggle: return "toggle";
-    case ViewNodeType::Checkbox: return "checkbox";
-    case ViewNodeType::RadioGroup: return "radioGroup";
-    case ViewNodeType::Slider: return "slider";
-    case ViewNodeType::Icon: return "icon";
-    case ViewNodeType::IconButton: return "iconButton";
-    case ViewNodeType::Shape: return "shape";
-    case ViewNodeType::Badge: return "badge";
-    case ViewNodeType::Divider: return "divider";
-    case ViewNodeType::ProgressBar: return "progressBar";
-    case ViewNodeType::ProgressRing: return "progressRing";
-    case ViewNodeType::Meter: return "meter";
-    case ViewNodeType::Sparkline: return "sparkline";
-    case ViewNodeType::LineChart: return "lineChart";
-    case ViewNodeType::BarChart: return "barChart";
-    case ViewNodeType::Waveform: return "waveform";
-    case ViewNodeType::Spectrum: return "spectrum";
-    case ViewNodeType::MonthCalendar: return "monthCalendar";
-    case ViewNodeType::SlotSurface: return "slotSurface";
-    case ViewNodeType::SlotItem: return "slotItem";
-    case ViewNodeType::Spacer: return "spacer";
-    }
-    return "unknown";
+    const ViewNodeContract* contract = FindViewNodeContract(type);
+    return contract ? contract->name.data() : "unknown";
 }
 }

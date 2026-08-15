@@ -1173,6 +1173,12 @@ v2.0 明确不提供：浏览器/HTML 控件、视频播放器、富文本编辑
 
 M6 冻结前必须生成并评审一份机器可读的 **node-property applicability matrix**。矩阵逐节点列出：允许/必需/禁止属性、默认值、枚举和数值范围、子节点约束、事件负载、视觉状态、键盘操作、焦点行为、UIA ControlType/Pattern/属性/事件、RTL/本地化规则、可动画字段、资源与节点额度、预览降级和稳定错误码。上述表格是候选公开面，只有矩阵、生成物和测试三者一致后才成为冻结 API；不能把“表里出现了名称”等同于实现完整。
 
+当前已建立第一层宿主契约表 `widget_view_contract`：44 个已公开节点的规范名称、类别、细粒度
+feature、默认 accessibility role、允许属性和直接必需属性由同一份可枚举矩阵提供，Lua view
+解析器已使用该矩阵拒绝未知或不适用属性，节点名称解析和默认 role 也不再各自维护副本。当前
+仍未把默认值/范围、子节点、事件、键盘、UIA、RTL、动画、额度和错误码全部迁入矩阵，也尚未
+由它生成 LuaLS 与本文档，因此这只是完整性门禁的第一层，不表示契约已经冻结。
+
 ### 13.8 实时更新与交互状态
 
 声明式视图不是静态快照。宿主维护每个稳定 key 节点的 `hovered`、`pressed`、`focused`、`disabled`、`selected` 和 pointer capture 状态，并在输入、组件 state、数据订阅或调度变化后进行差量更新。
@@ -1864,6 +1870,8 @@ M7 切换完成后，发布运行时必须删除 API v1 注册和执行分支。
 - scene node、diff、layout、renderer、节点级 hit testing/input、transition/animation 和 UI Automation。
 - 第 13.4 节全部 v2.0 必选布局、内容、控件、集合、图表和宿主表面节点，不以未定义的“首批节点”替代稳定版清单。
 - 冻结的机器可读 node-property applicability matrix，以及由它生成的 LuaLS 类型、文档、校验器、默认值表和测试参数集。
+  当前第一层节点/属性矩阵已进入宿主校验器并有独立契约测试；生成物、UIA/键盘/事件及
+  默认值/范围等列仍需继续并入，尚未达到冻结条件。
 - 环境上下文、响应式尺寸和减少动态效果。
 - 元素级 hover/pressed/focus、click/double click、指针捕获和独立原生右键菜单。
 - `LuaLogicalSlot`、`slots.binding/collection`、`slotSurface/slotItem`、宿主引用存储和现有 slot contract 全矩阵接入；v2.0 实现 binding 的 reference/replace/clear 和 collection 的 reference/reorder/remove。
