@@ -125,7 +125,6 @@ local function addDraft()
         saveOrder(tx, ids)
         tx:set("nextId", tostring(nextId + 1))
         tx:remove("draft")
-        tx:remove("selectedId")
     end)
     return true
 end
@@ -147,12 +146,10 @@ local function deleteTask(id)
         if current ~= id then kept[#kept + 1] = current end
     end
     done[id] = nil
-    local selected = storage.get("selectedId")
     storage.transaction(function(tx)
         tx:remove(taskTextKey(id))
         saveOrder(tx, kept)
         saveDoneIds(tx, kept, done)
-        if selected == id then tx:remove("selectedId") end
     end)
 end
 
@@ -168,12 +165,10 @@ local function clearCompleted()
             kept[#kept + 1] = id
         end
     end
-    local selected = storage.get("selectedId")
     storage.transaction(function(tx)
         for _, id in ipairs(removed) do tx:remove(taskTextKey(id)) end
         saveOrder(tx, kept)
         tx:remove("doneIds")
-        if selected and done[selected] then tx:remove("selectedId") end
     end)
 end
 
@@ -231,7 +226,7 @@ end
 
 local function setup()
     widget.setTitle(l10n.tr("lua_widget.reminders.name"))
-    return { editingTaskId = nil }
+    return { editingTaskId = nil, selectedId = nil }
 end
 
 local function registerRegion(key, shape, cursor, events, accessibility,
@@ -248,10 +243,8 @@ end
 
 local function render(context, model)
     if not context.selected then
+        model.selectedId = nil
         model.editingTaskId = nil
-        if storage.get("selectedId") ~= nil then
-            storage.remove("selectedId")
-        end
     end
     local w = layout.width()
     local h = layout.height()
@@ -369,7 +362,7 @@ local function render(context, model)
     local first = math.max(1, math.floor(scroll.offset / rowH) + 1)
     local last = math.min(#tasks,
         math.ceil((scroll.offset + viewportH) / rowH))
-    local selectedId = storage.get("selectedId")
+    local selectedId = model.selectedId
 
     draw.pushClip(pad, listTop, w - pad * 2, viewportH)
     for index = first, last do
@@ -498,26 +491,31 @@ local function event(_context, model, value)
     if value.kind ~= "action" then return end
     local id = value.value and tostring(value.value) or nil
     if value.id == "task.add" then
-        if addDraft() then model.editingTaskId = nil end
+        if addDraft() then
+            model.selectedId = nil
+            model.editingTaskId = nil
+        end
     elseif value.id == "task.clearSelection" then
+        model.selectedId = nil
         model.editingTaskId = nil
-        storage.remove("selectedId")
     elseif value.id == "task.select" and id then
-        storage.set("selectedId", id)
+        model.selectedId = id
         model.editingTaskId = nil
     elseif value.id == "task.edit" and id then
-        storage.set("selectedId", id)
+        model.selectedId = id
         model.editingTaskId = id
         control.focus("edit-task-" .. id)
     elseif value.id == "task.toggle" and id then
         model.editingTaskId = nil
         toggleTask(id)
     elseif value.id == "task.delete" and id then
+        model.selectedId = nil
         model.editingTaskId = nil
         deleteTask(id)
     elseif value.id == "task.focusAdd" then
         control.focus("new-task")
     elseif value.id == "task.clearCompleted" then
+        model.selectedId = nil
         model.editingTaskId = nil
         clearCompleted()
     elseif value.id == "task.setAll" then
