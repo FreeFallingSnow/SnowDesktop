@@ -342,8 +342,11 @@ menu.
   actions. Accessibility actions are untrusted (`source="accessibility"`) and
   never grant permission authority. Successful desktop frames also emit
   structure, focus, bounds, name, enabled, offscreen, toggle, value, and
-  expand/collapse UIA changes. Virtual child controls and real Narrator
-  validation remain pending, so do not claim complete screen-reader support.
+  expand/collapse UIA changes. Declarative radio options, expanded select
+  options, and month-calendar dates are individual SelectionItem children;
+  their parent exposes Selection. Arbitrary virtualized collection children
+  and real Narrator validation remain pending, so do not claim complete
+  screen-reader support.
 - Register vertical immediate-mode overflow with `interaction.scroll`, translate
   content by its returned offset, and pair the viewport with
   `draw.pushClip/popClip`. Do not use the v1 `ui.scrollArea` compatibility API.

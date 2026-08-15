@@ -454,8 +454,10 @@ accessibility role、允许属性和直接必需属性。Lua 解析器会在布�
 ExpandCollapse 和 SelectionItem Pattern 已连接到同一套 Lua action/受控输入通道，事件中的
 `source` 为 `accessibility` 且 `trustedGesture=false`，不会借辅助技术操作扩大权限。UIA
 Provider 会在成功桌面帧后按稳定语义 ID 差分并发送结构、焦点、边界、名称、启用、离屏、开关、
-选择、RangeValue、Value 和展开状态变化，不会每帧广播未变化属性。复杂控件内部虚拟子项和
-真实 Narrator 验收尚未完成；默认值/范围、子节点、
+选择、RangeValue、Value 和展开状态变化，不会每帧广播未变化属性。其中 `radioGroup` 的选项、展开 `select` 的选项和
+`monthCalendar` 的日期已经作为稳定的 SelectionItem 子元素输出，父控件提供 Selection Pattern，
+可由辅助技术单独聚焦和选择。任意虚拟化集合内部项仍未形成完整 UIA 虚拟化协议，真实 Narrator
+验收也尚未完成；默认值/范围、子节点、
 事件和错误码也未全部迁入，
 作者仍应以本节各 feature 的细化说明为准。
 

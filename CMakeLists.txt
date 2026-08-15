@@ -1039,7 +1039,12 @@ if (BUILD_TESTING)
             tests/widget_view_accessibility_tests.cpp
             src/widget_view_accessibility.cpp
             src/widget_view_contract.cpp
+            src/widget_view_tree.cpp
+            src/widget_view_lua.cpp
+            src/widget_interaction_region.cpp
+            src/widget_logical_slot.cpp
         INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES SnowDesktopLua
         LABELS accessibility contract layout lua widget)
 
     snowdesktop_add_test(

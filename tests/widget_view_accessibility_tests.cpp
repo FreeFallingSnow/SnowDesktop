@@ -1,5 +1,6 @@
 #include "widget_view_accessibility.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 
@@ -141,6 +142,69 @@ void TestImmediateRegionSemantics()
             !nodes[1].rangeValueReadOnly && nodes[1].offscreen,
         "immediate sliders must expose bounded range state and effective clipping");
 }
+
+void TestVirtualControlChildren()
+{
+    ViewNode radio = Node(ViewNodeType::RadioGroup,
+        "theme", 0, 0, 200, 40);
+    radio.accessibilityLabel = "Theme";
+    radio.selectedValue = "dark";
+    radio.options = {
+        { "light", "light", "Light", true },
+        { "dark", "dark", "Dark", true },
+    };
+    std::vector<ViewAccessibilityNode> nodes;
+    std::string error;
+    Check(CollectViewAccessibilityNodes(
+            radio, "theme/dark", nodes, error) &&
+            nodes.size() == 3 && nodes[0].children.size() == 2 &&
+            nodes[1].semanticId == "key:theme/light" &&
+            nodes[1].controlType == "RadioButton" &&
+            nodes[1].checked == false &&
+            nodes[2].semanticId == "key:theme/dark" &&
+            nodes[2].checked == true && nodes[2].focused &&
+            HasViewAccessibilityPattern(nodes[2].patterns,
+                ViewAccessibilityPattern::SelectionItem),
+        "radio groups must expose stable selectable option children");
+
+    ViewNode select = Node(ViewNodeType::Select,
+        "choice", 0, 0, 180, 32);
+    select.accessibilityLabel = "Choice";
+    select.selectedValue = "b";
+    select.options = {
+        { "a", "a", "Option A", true },
+        { "b", "b", "Option B", true },
+    };
+    Check(CollectViewAccessibilityNodes(
+            select, {}, nodes, error) && nodes.size() == 1,
+        "collapsed selects must not expose popup options");
+    select.expanded = true;
+    Check(CollectViewAccessibilityNodes(
+            select, "choice/b", nodes, error) && nodes.size() == 3 &&
+            nodes[1].controlType == "ListItem" &&
+            nodes[2].key == "choice/b" && nodes[2].checked == true,
+        "expanded selects must expose their selectable popup options");
+
+    ViewNode calendar = Node(ViewNodeType::MonthCalendar,
+        "calendar", 0, 0, 280, 240);
+    calendar.accessibilityLabel = "August 2026";
+    calendar.calendarYear = 2026;
+    calendar.calendarMonth = 8;
+    calendar.calendarSelectedDate = "2026-08-15";
+    calendar.calendarTodayDate = "2026-08-15";
+    calendar.firstDayOfWeek = 1;
+    Check(CollectViewAccessibilityNodes(calendar,
+            "calendar/2026-08-15", nodes, error) &&
+            nodes.size() == 43 && nodes[0].children.size() == 42,
+        "month calendars must expose all materialized date cells");
+    const auto selected = std::find_if(nodes.begin(), nodes.end(),
+        [](const auto& node) {
+            return node.key == "calendar/2026-08-15";
+        });
+    Check(selected != nodes.end() && selected->checked == true &&
+            selected->focused && selected->controlType == "DataItem",
+        "month calendar date cells must expose selection and focus state");
+}
 }
 
 int main()
@@ -148,6 +212,7 @@ int main()
     TestSemanticHierarchyAndState();
     TestClipAndControlledState();
     TestImmediateRegionSemantics();
+    TestVirtualControlChildren();
     std::cout << "widget view accessibility tests passed\n";
     return 0;
 }

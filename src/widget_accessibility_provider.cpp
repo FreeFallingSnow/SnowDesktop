@@ -90,6 +90,8 @@ std::optional<AccessibilityPattern> PatternForId(
         return AccessibilityPattern::ExpandCollapse;
     if (patternId == UIA_SelectionItemPatternId)
         return AccessibilityPattern::SelectionItem;
+    if (patternId == UIA_SelectionPatternId)
+        return AccessibilityPattern::Selection;
     return std::nullopt;
 }
 
@@ -108,6 +110,8 @@ std::optional<AccessibilityPattern> AvailabilityPropertyPattern(
         return AccessibilityPattern::ExpandCollapse;
     if (propertyId == UIA_IsSelectionItemPatternAvailablePropertyId)
         return AccessibilityPattern::SelectionItem;
+    if (propertyId == UIA_IsSelectionPatternAvailablePropertyId)
+        return AccessibilityPattern::Selection;
     return std::nullopt;
 }
 
@@ -254,6 +258,7 @@ LONG ControlTypeId(std::string_view type) noexcept
     if (type == "Text") return UIA_TextControlTypeId;
     if (type == "Group") return UIA_GroupControlTypeId;
     if (type == "DataGrid") return UIA_DataGridControlTypeId;
+    if (type == "DataItem") return UIA_DataItemControlTypeId;
     if (type == "Pane") return UIA_PaneControlTypeId;
     if (type == "Separator") return UIA_SeparatorControlTypeId;
     return UIA_CustomControlTypeId;
@@ -742,7 +747,8 @@ class FragmentProvider final :
     public IRangeValueProvider,
     public IValueProvider,
     public IExpandCollapseProvider,
-    public ISelectionItemProvider
+    public ISelectionItemProvider,
+    public ISelectionProvider
 {
 public:
     FragmentProvider(std::shared_ptr<ProviderState> state,
@@ -774,6 +780,8 @@ public:
             *object = static_cast<IExpandCollapseProvider*>(this);
         else if (iid == IID_ISelectionItemProvider)
             *object = static_cast<ISelectionItemProvider*>(this);
+        else if (iid == IID_ISelectionProvider)
+            *object = static_cast<ISelectionProvider*>(this);
         else
             return E_NOINTERFACE;
         AddRef();
@@ -832,6 +840,9 @@ public:
                 reinterpret_cast<void**>(result));
         if (patternId == UIA_SelectionItemPatternId)
             return QueryInterface(IID_ISelectionItemProvider,
+                reinterpret_cast<void**>(result));
+        if (patternId == UIA_SelectionPatternId)
+            return QueryInterface(IID_ISelectionProvider,
                 reinterpret_cast<void**>(result));
         return S_OK;
     }
@@ -1310,6 +1321,82 @@ public:
             NavigateDirection_Parent, &parent);
         if (FAILED(navigation) || !parent) return navigation;
         return parent->QueryInterface(IID_PPV_ARGS(result));
+    }
+
+    HRESULT STDMETHODCALLTYPE GetSelection(SAFEARRAY** result) override
+    {
+        if (!result) return E_POINTER;
+        *result = nullptr;
+        std::vector<LuaWidgetAccessibilitySnapshot> snapshots;
+        if (!state_->Capture(snapshots))
+            return UIA_E_ELEMENTNOTAVAILABLE;
+        const auto resolved = ResolveElement(snapshots, reference_);
+        if (!resolved || !resolved->nodeIndex)
+            return UIA_E_ELEMENTNOTAVAILABLE;
+        const auto& widget = snapshots[resolved->widgetIndex];
+        const auto& node = widget.nodes[*resolved->nodeIndex];
+        if (!SupportsPattern(node, AccessibilityPattern::Selection))
+            return UIA_E_NOTSUPPORTED;
+
+        std::vector<Microsoft::WRL::ComPtr<IRawElementProviderSimple>>
+            selected;
+        for (const std::size_t childIndex : node.children)
+        {
+            if (childIndex >= widget.nodes.size())
+                return UIA_E_ELEMENTNOTAVAILABLE;
+            const auto& child = widget.nodes[childIndex];
+            if (!child.checked.value_or(false)) continue;
+            Microsoft::WRL::ComPtr<IRawElementProviderFragment> fragment;
+            HRESULT hr = CreateFragmentProvider(state_, root_.Get(),
+                NodeReference(widget, child), &fragment);
+            if (FAILED(hr)) return hr;
+            Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple;
+            hr = fragment.As(&simple);
+            if (FAILED(hr)) return hr;
+            selected.push_back(std::move(simple));
+        }
+
+        SAFEARRAY* array = SafeArrayCreateVector(VT_UNKNOWN, 0,
+            static_cast<ULONG>(selected.size()));
+        if (!array) return E_OUTOFMEMORY;
+        for (LONG index = 0;
+             index < static_cast<LONG>(selected.size()); ++index)
+        {
+            HRESULT hr = SafeArrayPutElement(
+                array, &index, selected[index].Get());
+            if (FAILED(hr))
+            {
+                SafeArrayDestroy(array);
+                return hr;
+            }
+        }
+        *result = array;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE get_CanSelectMultiple(BOOL* result) override
+    {
+        if (!result) return E_POINTER;
+        AccessibilityNode node;
+        const HRESULT hr = ResolvePatternNode(
+            AccessibilityPattern::Selection, node);
+        if (FAILED(hr)) return hr;
+        *result = FALSE;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE get_IsSelectionRequired(BOOL* result) override
+    {
+        if (!result) return E_POINTER;
+        AccessibilityNode node;
+        const HRESULT hr = ResolvePatternNode(
+            AccessibilityPattern::Selection, node);
+        if (FAILED(hr)) return hr;
+        *result = node.sourceType ==
+                snowdesktop::widget_runtime::ViewNodeType::RadioGroup ||
+            node.sourceType ==
+                snowdesktop::widget_runtime::ViewNodeType::MonthCalendar;
+        return S_OK;
     }
 
 private:

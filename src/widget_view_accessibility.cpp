@@ -1,6 +1,7 @@
 #include "widget_view_accessibility.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 
 namespace snowdesktop::widget_runtime
@@ -152,8 +153,112 @@ void PopulateValueState(const ViewNode& source,
         target.expanded = source.expanded;
 }
 
+bool AppendVirtualAccessibilityNode(const ViewNode& source,
+    std::string key, std::string name, std::string role,
+    std::string controlType, std::string valueText,
+    const ViewRect& bounds, const std::optional<ViewRect>& clip,
+    std::size_t parentIndex, bool enabled, bool checked,
+    std::string_view focusedKey,
+    std::vector<ViewAccessibilityNode>& nodes,
+    std::string& error)
+{
+    if (parentIndex == ViewAccessibilityNode::NoParent ||
+        parentIndex >= nodes.size())
+    {
+        error = "virtual accessibility node is missing its semantic parent";
+        return false;
+    }
+    if (nodes.size() >= ViewTreeLimits::MaximumNodes)
+    {
+        error = "view accessibility node limit exceeded (512)";
+        return false;
+    }
+    ViewAccessibilityNode target;
+    target.sourceType = source.type;
+    target.semanticId = "key:" + key;
+    target.key = std::move(key);
+    target.name = std::move(name);
+    target.role = std::move(role);
+    target.controlType = std::move(controlType);
+    target.valueText = std::move(valueText);
+    target.patterns = ViewAccessibilityPattern::SelectionItem;
+    target.bounds = bounds;
+    target.clip = clip;
+    target.parentIndex = parentIndex;
+    target.enabled = enabled;
+    target.focusable = enabled;
+    target.focused = enabled && target.key == focusedKey;
+    target.offscreen = bounds.width <= 0.0f || bounds.height <= 0.0f ||
+        (clip && !Overlaps(bounds, *clip));
+    target.checked = checked;
+    const std::size_t index = nodes.size();
+    nodes.push_back(std::move(target));
+    nodes[parentIndex].children.push_back(index);
+    return true;
+}
+
+bool AppendVirtualAccessibilityChildren(const ViewNode& source,
+    float viewportHeight, std::string_view focusedKey,
+    const std::optional<ViewRect>& inheritedClip,
+    std::size_t parentIndex,
+    std::vector<ViewAccessibilityNode>& nodes,
+    std::string& error)
+{
+    if (source.type == ViewNodeType::RadioGroup)
+    {
+        for (std::size_t index = 0; index < source.options.size(); ++index)
+        {
+            const auto& option = source.options[index];
+            if (!AppendVirtualAccessibilityNode(source,
+                    source.key + "/" + option.key,
+                    option.label, "radio", "RadioButton", option.value,
+                    ViewRadioOptionFrame(source, index), inheritedClip,
+                    parentIndex, source.enabled && option.enabled,
+                    option.value == source.selectedValue,
+                    focusedKey, nodes, error))
+                return false;
+        }
+    }
+    else if (source.type == ViewNodeType::Select && source.expanded)
+    {
+        for (std::size_t index = 0; index < source.options.size(); ++index)
+        {
+            const auto& option = source.options[index];
+            if (!AppendVirtualAccessibilityNode(source,
+                    source.key + "/" + option.key,
+                    option.label, "option", "ListItem", option.value,
+                    ViewSelectOptionFrame(source, index, viewportHeight),
+                    inheritedClip, parentIndex,
+                    source.enabled && option.enabled,
+                    option.value == source.selectedValue,
+                    focusedKey, nodes, error))
+                return false;
+        }
+    }
+    else if (source.type == ViewNodeType::MonthCalendar)
+    {
+        std::array<ViewMonthCalendarCell, 42> cells;
+        if (!BuildViewMonthCalendarCells(source, cells, error))
+            return false;
+        for (std::size_t index = 0; index < cells.size(); ++index)
+        {
+            const auto& cell = cells[index];
+            if (!cell.currentMonth && !source.showAdjacentDates) continue;
+            if (!AppendVirtualAccessibilityNode(source,
+                    source.key + "/" + cell.date,
+                    cell.date, "gridcell", "DataItem", cell.date,
+                    ViewMonthCalendarCellFrame(source, index),
+                    inheritedClip, parentIndex, source.enabled,
+                    cell.selected, focusedKey, nodes, error))
+                return false;
+        }
+    }
+    return true;
+}
+
 bool CollectNode(const ViewNode& source, std::string_view semanticPath,
     std::string_view focusedKey,
+    float viewportHeight,
     const std::optional<ViewRect>& inheritedClip,
     std::size_t parentIndex,
     std::vector<ViewAccessibilityNode>& nodes,
@@ -200,6 +305,10 @@ bool CollectNode(const ViewNode& source, std::string_view semanticPath,
         nodes.push_back(std::move(target));
         if (parentIndex != ViewAccessibilityNode::NoParent)
             nodes[parentIndex].children.push_back(semanticParent);
+        if (!AppendVirtualAccessibilityChildren(source, viewportHeight,
+                focusedKey, inheritedClip, semanticParent,
+                nodes, error))
+            return false;
     }
 
     std::optional<ViewRect> childClip = inheritedClip;
@@ -213,6 +322,7 @@ bool CollectNode(const ViewNode& source, std::string_view semanticPath,
         const std::string childPath = std::string(semanticPath) + "/" +
             std::to_string(index);
         if (!CollectNode(source.children[index], childPath, focusedKey,
+                viewportHeight,
                 childClip, semanticParent, nodes, error)) return false;
     }
     return true;
@@ -226,7 +336,8 @@ bool CollectViewAccessibilityNodes(const ViewNode& root,
 {
     nodes.clear();
     error.clear();
-    if (!CollectNode(root, "0", focusedKey, std::nullopt,
+    if (!CollectNode(root, "0", focusedKey, root.frame.height,
+            std::nullopt,
             ViewAccessibilityNode::NoParent, nodes, error))
     {
         nodes.clear();

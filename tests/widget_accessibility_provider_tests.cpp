@@ -130,11 +130,32 @@ LuaWidgetAccessibilitySnapshot Snapshot()
     combo.controlType = "ComboBox";
     combo.bounds = { 10, 200, 160, 28 };
     combo.parentIndex = 0;
-    combo.patterns = ViewAccessibilityPattern::ExpandCollapse;
+    combo.sourceType = snowdesktop::widget_runtime::ViewNodeType::Select;
+    combo.patterns = ViewAccessibilityPattern::ExpandCollapse |
+        ViewAccessibilityPattern::Selection;
     combo.expanded = false;
+    combo.children = { 7, 8 };
+
+    ViewAccessibilityNode optionA;
+    optionA.semanticId = "key:choice/a";
+    optionA.key = "choice/a";
+    optionA.name = "Option A";
+    optionA.controlType = "ListItem";
+    optionA.bounds = { 10, 235, 160, 28 };
+    optionA.parentIndex = 6;
+    optionA.patterns = ViewAccessibilityPattern::SelectionItem;
+    optionA.checked = false;
+
+    ViewAccessibilityNode optionB = optionA;
+    optionB.semanticId = "key:choice/b";
+    optionB.key = "choice/b";
+    optionB.name = "Option B";
+    optionB.bounds.y = 265;
+    optionB.checked = true;
 
     widget.bounds = RECT{ 10, 20, 310, 350 };
-    widget.nodes = { group, button, status, toggle, slider, input, combo };
+    widget.nodes = { group, button, status, toggle, slider, input, combo,
+        optionA, optionB };
     return widget;
 }
 
@@ -405,6 +426,35 @@ void TestProviderTreeAndLifetime()
             actions.back().kind ==
                 LuaWidgetAccessibilityActionKind::Expand,
         "ExpandCollapse must expose state and route expansion");
+
+    pattern.Reset();
+    Check(SUCCEEDED(AsSimple(combo.Get())->GetPatternProvider(
+            UIA_SelectionPatternId, &pattern)) && pattern,
+        "selection containers must expose the Selection pattern");
+    ComPtr<ISelectionProvider> selectionPattern;
+    SAFEARRAY* selection = nullptr;
+    Check(SUCCEEDED(pattern.As(&selectionPattern)) &&
+            SUCCEEDED(selectionPattern->GetSelection(&selection)) &&
+            selection && SafeArrayGetDim(selection) == 1,
+        "Selection must return a provider array");
+    LONG lower = 0;
+    LONG upper = -1;
+    Check(SUCCEEDED(SafeArrayGetLBound(selection, 1, &lower)) &&
+            SUCCEEDED(SafeArrayGetUBound(selection, 1, &upper)) &&
+            lower == 0 && upper == 0,
+        "single-selection controls must report one selected child");
+    IUnknown* selectedUnknown = nullptr;
+    Check(SUCCEEDED(SafeArrayGetElement(selection,
+            &lower, &selectedUnknown)) && selectedUnknown,
+        "Selection must return the selected child provider");
+    ComPtr<IRawElementProviderSimple> selectedSimple;
+    Check(SUCCEEDED(selectedUnknown->QueryInterface(
+            IID_PPV_ARGS(&selectedSimple))) &&
+            PropertyString(selectedSimple.Get(),
+                UIA_AutomationIdPropertyId) == L"choice/b",
+        "Selection must preserve the selected option identity");
+    selectedUnknown->Release();
+    SafeArrayDestroy(selection);
 
     snapshots[0].nodes[3].checked = true;
     host.RefreshEvents();
