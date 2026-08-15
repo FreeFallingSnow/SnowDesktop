@@ -77,6 +77,9 @@ void TestRepresentativeApplicability()
 {
     using snowdesktop::widget_runtime::ViewNodeAllowsProperty;
     Check(ViewNodeAllowsProperty(ViewNodeType::Grid, "columns") &&
+            ViewNodeAllowsProperty(ViewNodeType::Grid, "rows") &&
+            ViewNodeAllowsProperty(ViewNodeType::GridList, "rows") &&
+            !ViewNodeAllowsProperty(ViewNodeType::VirtualGrid, "rows") &&
             !ViewNodeAllowsProperty(ViewNodeType::Row, "columns"),
         "grid-only properties must be machine readable");
     Check(ViewNodeAllowsProperty(ViewNodeType::Row, "flexDirection") &&

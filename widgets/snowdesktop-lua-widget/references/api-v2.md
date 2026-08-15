@@ -101,6 +101,7 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.layout.overflow` 提供容器后代裁剪，`view.shadow` 提供有界宿主阴影，
 `view.image.tint` 提供保留图片 alpha 的 RGB 着色，
 `view.grid.uniform` 提供基础 `grid`，`view.grid.placement` 提供显式格位与跨度，
+`view.grid.tracks` 提供受限 fixed/auto/fr/minmax 列轨和行轨，
 `view.flow.wrap` 提供横向换行 `flow`。
 `view.scroll` 提供宿主滚动视口，`view.collection.basic` 提供基础集合，
 `view.collection.virtual` 提供固定行高虚拟集合与可见范围查询；
@@ -330,11 +331,17 @@ view.searchBox({
 `columnGap/rowGap` 分别控制水平和垂直间距，未提供时回退到 `gap`。隐藏子节点不占格，
 其余子节点保持原顺序，现有 `alignItems/alignSelf` 控制格内拉伸或对齐，
 `justifyContent` 控制整组行在纵向剩余空间中的位置。对应 feature 为
-`view.grid.uniform`。`view.grid.placement` 另允许 `grid` 和 `gridList` 的直接子节点使用
+`view.grid.uniform`。探测 `view.grid.tracks` 后，`grid/gridList.columns` 也可改为 1–64 项数组：
+数字是固定逻辑尺寸，`"auto"` 取已声明子项的固有尺寸，`{fr=n}` 按正权重分配剩余空间，
+`{min=n,max=...}` 的 max 可为不小于 min 的固定值、`"auto"` 或 `{fr=n}`。可选 `rows`
+接受同一数组，也可用整数创建对应数量的 auto 行；内容需要的后续隐式行仍为 auto。
+固定轨和内容下限可以溢出容器，是否裁剪由 `overflow` 决定。`virtualGrid` 为保证固定行高的
+范围计算，仍只接受整数等宽 columns，也不接受 rows。
+`view.grid.placement` 另允许 `grid` 和 `gridList` 的直接子节点使用
 1-based `gridColumn/gridRow`，以及 1 到 64 的 `columnSpan/rowSpan`；只指定一个坐标时，
 另一轴以及完全未指定的子项按声明顺序在首个可用位置行优先放置。显式格位重叠、跨度越过
 列边界或第 64 行会拒绝整棵树，不会覆盖已有子项。该 feature 仍不包含 fixed/auto/fr/minmax
-track、自定义显式行尺寸、瀑布流或虚拟化；需要这些能力时不得假设基础 `grid` 会静默模拟。
+任意嵌套 track 函数、瀑布流或自动虚拟化；需要这些能力时不得假设基础 `grid` 会静默模拟。
 
 `flow` 按子节点原顺序从左到右放置，当前行剩余宽度不足时整体换到下一行；隐藏子节点
 不占位置，单个超宽子节点钳制到内容区宽度。`columnGap/rowGap` 独立控制项间距与行间距，

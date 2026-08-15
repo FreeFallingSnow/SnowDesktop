@@ -197,6 +197,14 @@ enum class ViewOverflow
     Clip,
 };
 
+enum class ViewGridTrackKind
+{
+    Fixed,
+    Auto,
+    Fraction,
+    MinMax,
+};
+
 enum class ViewOrientation
 {
     Horizontal,
@@ -259,6 +267,17 @@ struct ViewShadow
     float alpha = 0.25f;
 };
 
+struct ViewGridTrack
+{
+    ViewGridTrackKind kind = ViewGridTrackKind::Auto;
+    float value = 0.0f;
+    float minimum = 0.0f;
+    ViewGridTrackKind maximumKind = ViewGridTrackKind::Auto;
+    float maximumValue = 0.0f;
+
+    bool operator==(const ViewGridTrack&) const = default;
+};
+
 struct ViewChoiceOption
 {
     std::string key;
@@ -317,6 +336,8 @@ struct ViewNode
     std::optional<ViewShadow> shadow;
     float gap = 0.0f;
     std::size_t columns = 1;
+    std::vector<ViewGridTrack> columnTracks;
+    std::vector<ViewGridTrack> rowTracks;
     std::size_t itemCount = 0;
     std::size_t firstIndex = 0;
     std::size_t overscan = 2;

@@ -755,6 +755,203 @@ bool ReadLengthField(lua_State* state, int table, const char* field,
     return false;
 }
 
+bool ReadGridFraction(lua_State* state, int index, float& value,
+    std::string& error)
+{
+    index = lua_absindex(state, index);
+    if (!lua_istable(state, index) ||
+        !ValidateObjectFields(state, index, { "fr" },
+            "grid fractional track", error))
+    {
+        if (error.empty())
+            error = "grid fractional track must be a { fr = number } object";
+        return false;
+    }
+    lua_getfield(state, index, "fr");
+    const bool valid = lua_type(state, -1) == LUA_TNUMBER &&
+        std::isfinite(static_cast<double>(lua_tonumber(state, -1))) &&
+        lua_tonumber(state, -1) > 0.0 && lua_tonumber(state, -1) <= 1000.0;
+    if (valid) value = static_cast<float>(lua_tonumber(state, -1));
+    lua_pop(state, 1);
+    if (!valid)
+    {
+        error = "grid fractional track weight must be between 0 and 1000";
+        return false;
+    }
+    return true;
+}
+
+bool ReadGridTrack(lua_State* state, int index, ViewGridTrack& track,
+    std::string& error)
+{
+    index = lua_absindex(state, index);
+    if (lua_type(state, index) == LUA_TNUMBER)
+    {
+        const double value = static_cast<double>(lua_tonumber(state, index));
+        if (!std::isfinite(value) || value < 0.0 || value > 100000.0)
+        {
+            error = "fixed grid track must be between 0 and 100000";
+            return false;
+        }
+        track.kind = ViewGridTrackKind::Fixed;
+        track.value = static_cast<float>(value);
+        return true;
+    }
+    if (lua_isstring(state, index))
+    {
+        const char* value = lua_tostring(state, index);
+        if (value && std::strcmp(value, "auto") == 0)
+        {
+            track.kind = ViewGridTrackKind::Auto;
+            return true;
+        }
+        error = "grid track string must be 'auto'";
+        return false;
+    }
+    if (!lua_istable(state, index))
+    {
+        error = "grid track must be a number, 'auto', { fr }, or { min, max }";
+        return false;
+    }
+
+    const bool hasFraction = FieldPresent(state, index, "fr");
+    const bool hasMinimum = FieldPresent(state, index, "min");
+    const bool hasMaximum = FieldPresent(state, index, "max");
+    if (hasFraction && !hasMinimum && !hasMaximum)
+    {
+        track.kind = ViewGridTrackKind::Fraction;
+        return ReadGridFraction(state, index, track.value, error);
+    }
+    if (hasFraction || !hasMinimum || !hasMaximum ||
+        !ValidateObjectFields(state, index, { "min", "max" },
+            "grid minmax track", error))
+    {
+        if (error.empty())
+            error = "grid minmax track must contain only min and max";
+        return false;
+    }
+
+    lua_getfield(state, index, "min");
+    const double minimum = lua_type(state, -1) == LUA_TNUMBER
+        ? static_cast<double>(lua_tonumber(state, -1)) : -1.0;
+    const bool validMinimum = lua_type(state, -1) == LUA_TNUMBER &&
+        std::isfinite(minimum) && minimum >= 0.0 && minimum <= 100000.0;
+    lua_pop(state, 1);
+    if (!validMinimum)
+    {
+        error = "grid minmax minimum must be between 0 and 100000";
+        return false;
+    }
+
+    track.kind = ViewGridTrackKind::MinMax;
+    track.minimum = static_cast<float>(minimum);
+    lua_getfield(state, index, "max");
+    if (lua_type(state, -1) == LUA_TNUMBER)
+    {
+        const double maximum = static_cast<double>(lua_tonumber(state, -1));
+        if (!std::isfinite(maximum) || maximum < minimum ||
+            maximum > 100000.0)
+        {
+            lua_pop(state, 1);
+            error = "grid minmax fixed maximum must be at least min and no more than 100000";
+            return false;
+        }
+        track.maximumKind = ViewGridTrackKind::Fixed;
+        track.maximumValue = static_cast<float>(maximum);
+    }
+    else if (lua_isstring(state, -1))
+    {
+        const char* maximum = lua_tostring(state, -1);
+        if (!maximum || std::strcmp(maximum, "auto") != 0)
+        {
+            lua_pop(state, 1);
+            error = "grid minmax maximum string must be 'auto'";
+            return false;
+        }
+        track.maximumKind = ViewGridTrackKind::Auto;
+    }
+    else if (lua_istable(state, -1))
+    {
+        track.maximumKind = ViewGridTrackKind::Fraction;
+        if (!ReadGridFraction(state, -1, track.maximumValue, error))
+        {
+            lua_pop(state, 1);
+            return false;
+        }
+    }
+    else
+    {
+        lua_pop(state, 1);
+        error = "grid minmax maximum must be a number, 'auto', or { fr }";
+        return false;
+    }
+    lua_pop(state, 1);
+    return true;
+}
+
+bool ReadGridTracksField(lua_State* state, int table, const char* field,
+    bool allowTrackArray, std::size_t& count,
+    std::vector<ViewGridTrack>& tracks, std::string& error)
+{
+    table = lua_absindex(state, table);
+    lua_getfield(state, table, field);
+    if (lua_isnil(state, -1))
+    {
+        lua_pop(state, 1);
+        return true;
+    }
+    if (lua_isinteger(state, -1))
+    {
+        const lua_Integer parsed = lua_tointeger(state, -1);
+        lua_pop(state, 1);
+        if (parsed <= 0 || parsed > 64)
+        {
+            error = std::string("view field '") + field +
+                "' must contain 1 to 64 tracks";
+            return false;
+        }
+        count = static_cast<std::size_t>(parsed);
+        tracks.clear();
+        return true;
+    }
+    if (!allowTrackArray || !lua_istable(state, -1) ||
+        !ValidateArray(state, -1, std::string("view ") + field, error))
+    {
+        if (error.empty())
+            error = std::string("view field '") + field +
+                "' must be an integer or a grid track array";
+        lua_pop(state, 1);
+        return false;
+    }
+    const std::size_t length = lua_rawlen(state, -1);
+    if (length == 0 || length > 64)
+    {
+        lua_pop(state, 1);
+        error = std::string("view field '") + field +
+            "' must contain 1 to 64 tracks";
+        return false;
+    }
+    tracks.clear();
+    tracks.reserve(length);
+    for (std::size_t index = 0; index < length; ++index)
+    {
+        lua_rawgeti(state, -1, static_cast<lua_Integer>(index + 1));
+        ViewGridTrack track;
+        if (!ReadGridTrack(state, -1, track, error))
+        {
+            lua_pop(state, 2);
+            error = std::string("view field '") + field +
+                "' track " + std::to_string(index + 1) + ": " + error;
+            return false;
+        }
+        tracks.push_back(track);
+        lua_pop(state, 1);
+    }
+    lua_pop(state, 1);
+    count = length;
+    return true;
+}
+
 bool ReadOptionalColor(lua_State* state, int table, const char* field,
     std::optional<std::uint32_t>& value, std::string& error)
 {
@@ -1516,6 +1713,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     const bool dividerNode = node.type == ViewNodeType::Divider;
     const bool gridNode = node.type == ViewNodeType::Grid ||
         node.type == ViewNodeType::GridList || virtualGridNode;
+    const bool positionedGridNode = node.type == ViewNodeType::Grid ||
+        node.type == ViewNodeType::GridList;
     const bool flowNode = node.type == ViewNodeType::Flow;
     const bool flexContainerNode = node.type == ViewNodeType::Row ||
         node.type == ViewNodeType::Column;
@@ -1581,6 +1780,11 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     if (!gridNode && FieldPresent(state, index, "columns"))
     {
         error = "only grid, gridList, and virtualGrid nodes accept columns";
+        return false;
+    }
+    if (!positionedGridNode && FieldPresent(state, index, "rows"))
+    {
+        error = "only grid and gridList nodes accept rows";
         return false;
     }
     if (!gridNode && !flowNode && !virtualListNode &&
@@ -1843,6 +2047,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         (labelNode ? "label" : "text");
     const bool clipSpecified = FieldPresent(state, index, "clip");
     const bool overflowSpecified = FieldPresent(state, index, "overflow");
+    std::size_t rowTrackCount = 0;
     if (!ReadStringField(state, index, contentField,
             node.text, false, error) ||
         !ReadResourceField(state, index, "source", LuaResourceType::Image,
@@ -1877,7 +2082,10 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadOverflowField(state, index, node.overflow, error) ||
         !ReadShadowField(state, index, node.shadow, error) ||
         !ReadFloatField(state, index, "gap", node.gap, error) ||
-        !ReadSizeField(state, index, "columns", node.columns, error) ||
+        !ReadGridTracksField(state, index, "columns",
+            positionedGridNode, node.columns, node.columnTracks, error) ||
+        !ReadGridTracksField(state, index, "rows",
+            positionedGridNode, rowTrackCount, node.rowTracks, error) ||
         !ReadNonNegativeSizeField(state, index, "itemCount",
             node.itemCount, virtualCollectionNode, error) ||
         !ReadFloatField(state, index, "itemExtent",
@@ -1980,6 +2188,9 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadStyleField(state, index, "eventStyle",
             node.eventStyle, error))
         return false;
+
+    if (rowTrackCount > 0 && node.rowTracks.empty())
+        node.rowTracks.resize(rowTrackCount);
 
     if (overflowSpecified)
     {

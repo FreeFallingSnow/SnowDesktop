@@ -444,6 +444,153 @@ float OuterIntrinsicHeight(const ViewNode& node)
     return IntrinsicHeight(node) + ViewVerticalMargin(node);
 }
 
+const ViewGridTrack& GridTrackAt(
+    const std::vector<ViewGridTrack>& tracks, std::size_t index) noexcept
+{
+    static constexpr ViewGridTrack implicitAuto{};
+    return index < tracks.size() ? tracks[index] : implicitAuto;
+}
+
+float GridTrackBaseSize(const ViewGridTrack& track) noexcept
+{
+    if (track.kind == ViewGridTrackKind::Fixed) return track.value;
+    if (track.kind == ViewGridTrackKind::MinMax) return track.minimum;
+    return 0.0f;
+}
+
+float GridTrackGrowthCapacity(const ViewGridTrack& track,
+    float current) noexcept
+{
+    if (track.kind == ViewGridTrackKind::Fixed) return 0.0f;
+    if (track.kind == ViewGridTrackKind::MinMax &&
+        track.maximumKind == ViewGridTrackKind::Fixed)
+        return std::max(0.0f, track.maximumValue - current);
+    return std::numeric_limits<float>::infinity();
+}
+
+void GrowGridTrackRange(const std::vector<ViewGridTrack>& tracks,
+    std::vector<float>& sizes, std::size_t start, std::size_t span,
+    float amount)
+{
+    std::vector<std::size_t> active;
+    active.reserve(span);
+    for (std::size_t index = start; index < start + span; ++index)
+        if (GridTrackGrowthCapacity(GridTrackAt(tracks, index),
+                sizes[index]) > 0.001f)
+            active.push_back(index);
+    while (amount > 0.001f && !active.empty())
+    {
+        const float share = amount / static_cast<float>(active.size());
+        float applied = 0.0f;
+        std::vector<std::size_t> remaining;
+        remaining.reserve(active.size());
+        for (const std::size_t index : active)
+        {
+            const float capacity = GridTrackGrowthCapacity(
+                GridTrackAt(tracks, index), sizes[index]);
+            const float delta = std::min(share, capacity);
+            sizes[index] += delta;
+            applied += delta;
+            if (capacity > delta + 0.001f) remaining.push_back(index);
+        }
+        if (applied <= 0.001f) break;
+        amount -= applied;
+        active = std::move(remaining);
+    }
+}
+
+std::vector<float> ResolveGridTrackSizes(const ViewNode& node,
+    const std::vector<ViewGridTrack>& tracks, std::size_t count,
+    bool horizontal, float gap, std::optional<float> available)
+{
+    std::vector<float> sizes(count, 0.0f);
+    for (std::size_t index = 0; index < count; ++index)
+        sizes[index] = GridTrackBaseSize(GridTrackAt(tracks, index));
+
+    for (const ViewNode& child : node.children)
+    {
+        if (!child.visible) continue;
+        const std::size_t start = horizontal
+            ? child.resolvedGridColumn : child.resolvedGridRow;
+        const std::size_t requestedSpan = horizontal
+            ? child.columnSpan : child.rowSpan;
+        if (start >= count) continue;
+        const std::size_t span = std::min(requestedSpan, count - start);
+        float current = gap * static_cast<float>(span - 1);
+        for (std::size_t index = start; index < start + span; ++index)
+            current += sizes[index];
+        const float intrinsic = horizontal
+            ? OuterIntrinsicWidth(child) : OuterIntrinsicHeight(child);
+        GrowGridTrackRange(tracks, sizes, start, span,
+            std::max(0.0f, intrinsic - current));
+    }
+
+    if (!available) return sizes;
+    const float gapExtent = gap * static_cast<float>(count > 0
+        ? count - 1 : 0);
+    float used = 0.0f;
+    for (const float size : sizes) used += size;
+    float extra = std::max(0.0f, *available - gapExtent - used);
+
+    if (extra > 0.001f)
+    {
+        std::vector<std::size_t> capped;
+        for (std::size_t index = 0; index < count; ++index)
+        {
+            const ViewGridTrack& track = GridTrackAt(tracks, index);
+            if (track.kind == ViewGridTrackKind::MinMax &&
+                track.maximumKind == ViewGridTrackKind::Fixed &&
+                sizes[index] + 0.001f < track.maximumValue)
+                capped.push_back(index);
+        }
+        while (extra > 0.001f && !capped.empty())
+        {
+            const float share = extra / static_cast<float>(capped.size());
+            float applied = 0.0f;
+            std::vector<std::size_t> remaining;
+            for (const std::size_t index : capped)
+            {
+                const float capacity = std::max(
+                    0.0f, GridTrackAt(tracks, index).maximumValue -
+                        sizes[index]);
+                const float delta = std::min(share, capacity);
+                sizes[index] += delta;
+                applied += delta;
+                if (capacity > delta + 0.001f) remaining.push_back(index);
+            }
+            if (applied <= 0.001f) break;
+            extra -= applied;
+            capped = std::move(remaining);
+        }
+    }
+
+    float fractionTotal = 0.0f;
+    for (std::size_t index = 0; index < count; ++index)
+    {
+        const ViewGridTrack& track = GridTrackAt(tracks, index);
+        if (track.kind == ViewGridTrackKind::Fraction)
+            fractionTotal += track.value;
+        else if (track.kind == ViewGridTrackKind::MinMax &&
+            track.maximumKind == ViewGridTrackKind::Fraction)
+            fractionTotal += track.maximumValue;
+    }
+    if (extra > 0.001f && fractionTotal > 0.0f)
+    {
+        for (std::size_t index = 0; index < count; ++index)
+        {
+            const ViewGridTrack& track = GridTrackAt(tracks, index);
+            float weight = 0.0f;
+            if (track.kind == ViewGridTrackKind::Fraction)
+                weight = track.value;
+            else if (track.kind == ViewGridTrackKind::MinMax &&
+                track.maximumKind == ViewGridTrackKind::Fraction)
+                weight = track.maximumValue;
+            sizes[index] += extra * (weight / fractionTotal);
+        }
+    }
+    return sizes;
+}
+
 float IntrinsicWidth(const ViewNode& node)
 {
     return ConstrainWidth(node, RawIntrinsicWidth(node));
@@ -527,6 +674,19 @@ float RawIntrinsicWidth(const ViewNode& node)
     }
     if (IsGridContainer(node.type))
     {
+        if (!node.columnTracks.empty())
+        {
+            const float columnGap = node.columnGap.value_or(node.gap);
+            const auto widths = ResolveGridTrackSizes(node,
+                node.columnTracks, node.columns, true, columnGap,
+                std::nullopt);
+            float result = 0.0f;
+            for (const float width : widths) result += width;
+            if (widths.size() > 1)
+                result += columnGap *
+                    static_cast<float>(widths.size() - 1);
+            return result + ViewHorizontalPadding(node);
+        }
         std::vector<float> widths(node.columns, 0.0f);
         std::size_t usedColumns = 0;
         const float columnGap = node.columnGap.value_or(node.gap);
@@ -683,6 +843,23 @@ float RawIntrinsicHeight(const ViewNode& node)
     }
     if (IsGridContainer(node.type))
     {
+        if (!node.rowTracks.empty())
+        {
+            std::size_t rows = node.rowTracks.size();
+            for (const auto& child : node.children)
+                if (child.visible)
+                    rows = std::max(rows,
+                        child.resolvedGridRow + child.rowSpan);
+            const float rowGap = node.rowGap.value_or(node.gap);
+            const auto heights = ResolveGridTrackSizes(node,
+                node.rowTracks, rows, false, rowGap, std::nullopt);
+            float result = 0.0f;
+            for (const float height : heights) result += height;
+            if (heights.size() > 1)
+                result += rowGap *
+                    static_cast<float>(heights.size() - 1);
+            return result + ViewVerticalPadding(node);
+        }
         std::vector<float> heights;
         const float rowGap = node.rowGap.value_or(node.gap);
         for (const auto& child : node.children)
@@ -1254,29 +1431,46 @@ void LayoutGrid(ViewNode& node, const ViewRect& content)
     if (visible.empty()) return;
 
     const std::size_t columns = node.columns;
-    std::size_t rows = 0;
+    std::size_t rows = node.rowTracks.size();
     for (const ViewNode* child : visible)
         rows = std::max(rows, child->resolvedGridRow + child->rowSpan);
     if (rows == 0) return;
     const float columnGap = node.columnGap.value_or(node.gap);
     float rowGap = node.rowGap.value_or(node.gap);
-    const float cellWidth = std::max(0.0f,
-        (content.width - columnGap * static_cast<float>(columns - 1)) /
-            static_cast<float>(columns));
-    std::vector<float> rowHeights(rows, 0.0f);
-    for (const ViewNode* child : visible)
+    std::vector<float> columnWidths;
+    if (node.columnTracks.empty())
     {
-        float current = rowGap * static_cast<float>(child->rowSpan - 1);
-        for (std::size_t row = child->resolvedGridRow;
-            row < child->resolvedGridRow + child->rowSpan; ++row)
-            current += rowHeights[row];
-        const float deficit = std::max(
-            0.0f, OuterIntrinsicHeight(*child) - current);
-        const float addition = deficit /
-            static_cast<float>(child->rowSpan);
-        for (std::size_t row = child->resolvedGridRow;
-            row < child->resolvedGridRow + child->rowSpan; ++row)
-            rowHeights[row] += addition;
+        const float cellWidth = std::max(0.0f,
+            (content.width - columnGap * static_cast<float>(columns - 1)) /
+                static_cast<float>(columns));
+        columnWidths.assign(columns, cellWidth);
+    }
+    else
+        columnWidths = ResolveGridTrackSizes(node, node.columnTracks,
+            columns, true, columnGap, content.width);
+
+    std::vector<float> rowHeights;
+    if (!node.rowTracks.empty())
+        rowHeights = ResolveGridTrackSizes(node, node.rowTracks,
+            rows, false, rowGap, content.height);
+    else
+    {
+        rowHeights.assign(rows, 0.0f);
+        for (const ViewNode* child : visible)
+        {
+            float current = rowGap *
+                static_cast<float>(child->rowSpan - 1);
+            for (std::size_t row = child->resolvedGridRow;
+                row < child->resolvedGridRow + child->rowSpan; ++row)
+                current += rowHeights[row];
+            const float deficit = std::max(
+                0.0f, OuterIntrinsicHeight(*child) - current);
+            const float addition = deficit /
+                static_cast<float>(child->rowSpan);
+            for (std::size_t row = child->resolvedGridRow;
+                row < child->resolvedGridRow + child->rowSpan; ++row)
+                rowHeights[row] += addition;
+        }
     }
 
     float rowsHeight = 0.0f;
@@ -1284,7 +1478,8 @@ void LayoutGrid(ViewNode& node, const ViewRect& content)
     const float gapsHeight = rowGap * static_cast<float>(rows - 1);
     const float availableRowsHeight = std::max(
         0.0f, content.height - gapsHeight);
-    if (rowsHeight > availableRowsHeight && rowsHeight > 0.0f)
+    if (node.rowTracks.empty() &&
+        rowsHeight > availableRowsHeight && rowsHeight > 0.0f)
     {
         const float scale = availableRowsHeight / rowsHeight;
         for (float& height : rowHeights) height *= scale;
@@ -1309,14 +1504,21 @@ void LayoutGrid(ViewNode& node, const ViewRect& content)
         rowOffsets[row] = rowOffsets[row - 1] +
             rowHeights[row - 1] + rowGap;
 
+    std::vector<float> columnOffsets(columns, content.x);
+    for (std::size_t column = 1; column < columns; ++column)
+        columnOffsets[column] = columnOffsets[column - 1] +
+            columnWidths[column - 1] + columnGap;
+
     for (ViewNode* childPointer : visible)
     {
         ViewNode& child = *childPointer;
         const std::size_t column = child.resolvedGridColumn;
         const std::size_t row = child.resolvedGridRow;
-        const float spannedWidth = cellWidth *
-                static_cast<float>(child.columnSpan) +
-            columnGap * static_cast<float>(child.columnSpan - 1);
+        float spannedWidth = columnGap *
+            static_cast<float>(child.columnSpan - 1);
+        for (std::size_t currentColumn = column;
+            currentColumn < column + child.columnSpan; ++currentColumn)
+            spannedWidth += columnWidths[currentColumn];
         float spannedHeight = rowGap *
             static_cast<float>(child.rowSpan - 1);
         for (std::size_t currentRow = row;
@@ -1329,8 +1531,7 @@ void LayoutGrid(ViewNode& node, const ViewRect& content)
                 spannedWidth, alignment, true),
             ResolveOuterCrossSize(child, child.height, IntrinsicHeight(child),
                 spannedHeight, alignment, false));
-        const float x = content.x +
-            static_cast<float>(column) * (cellWidth + columnGap) +
+        const float x = columnOffsets[column] +
             AlignOffset(alignment, spannedWidth, resolved.width);
         LayoutNode(child, { x,
             rowOffsets[row] + AlignOffset(
@@ -1782,6 +1983,44 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         (node.columns == 0 || node.columns > 64))
     {
         error = "grid columns must be between 1 and 64";
+        return false;
+    }
+    const auto validGridTrack = [](const ViewGridTrack& track) {
+        if (track.kind == ViewGridTrackKind::Fixed)
+            return FiniteInRange(track.value, 0.0f, MaximumDimension);
+        if (track.kind == ViewGridTrackKind::Auto) return true;
+        if (track.kind == ViewGridTrackKind::Fraction)
+            return FiniteInRange(track.value, 0.000001f, 1000.0f);
+        if (track.kind != ViewGridTrackKind::MinMax ||
+            !FiniteInRange(track.minimum, 0.0f, MaximumDimension))
+            return false;
+        if (track.maximumKind == ViewGridTrackKind::Auto) return true;
+        if (track.maximumKind == ViewGridTrackKind::Fixed)
+            return FiniteInRange(track.maximumValue,
+                track.minimum, MaximumDimension);
+        return track.maximumKind == ViewGridTrackKind::Fraction &&
+            FiniteInRange(track.maximumValue, 0.000001f, 1000.0f);
+    };
+    if ((!node.columnTracks.empty() &&
+            (node.type != ViewNodeType::Grid &&
+                node.type != ViewNodeType::GridList)) ||
+        (!node.columnTracks.empty() &&
+            node.columnTracks.size() != node.columns) ||
+        node.columnTracks.size() > 64 ||
+        !std::all_of(node.columnTracks.begin(), node.columnTracks.end(),
+            validGridTrack))
+    {
+        error = "grid column tracks must be a valid 1 to 64 track definition";
+        return false;
+    }
+    if ((!node.rowTracks.empty() &&
+            node.type != ViewNodeType::Grid &&
+            node.type != ViewNodeType::GridList) ||
+        node.rowTracks.size() > 64 ||
+        !std::all_of(node.rowTracks.begin(), node.rowTracks.end(),
+            validGridTrack))
+    {
+        error = "grid row tracks must be a valid 1 to 64 track definition";
         return false;
     }
     if (!IsGridContainer(node.type) && node.columns != 1)

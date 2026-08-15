@@ -432,6 +432,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "view.grid.placement") &&
             snowdesktop::widget_api::SupportsFeature(
+                "view.grid.tracks") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "view.grid.uniform") &&
             snowdesktop::widget_api::SupportsFeature("view.image") &&
             snowdesktop::widget_api::SupportsFeature(

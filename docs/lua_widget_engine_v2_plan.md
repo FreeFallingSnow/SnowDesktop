@@ -1107,8 +1107,9 @@ UI Automation HelpText。校验状态只负责受控呈现与语义，不隐式�
 布局主线新增 `view.grid.placement`：`grid/gridList` 的直接子节点可声明 1-based
 `gridColumn/gridRow` 和 1 到 64 的 `columnSpan/rowSpan`，也可只约束一轴并由宿主按声明顺序
 寻找首个空位。显式重叠、越过列边界或超出 64 行会在原子提交前拒绝；布局、绘制、命中和
-网格位置语义共用同一 resolved frame。当前列仍为 `view.grid.uniform` 的等宽列，属性表中计划的
-`rows` 以及 fixed/auto/fr/minmax track 定义尚未实现，不能将本批次计作完整 Grid 契约。
+网格位置语义共用同一 resolved frame。后续 `view.grid.tracks` 已允许 `grid/gridList` 使用
+1–64 项 fixed/auto/fr/minmax 受限列轨与行轨，先满足固有内容和 min，再向固定 cap 与 fr 权重
+分配剩余空间；额外隐式行保持 auto，`virtualGrid` 仍使用整数等宽列以保持固定范围计算。
 
 同日后续实现已增加 `view.styledText.basic` 与 `view.monthCalendar`。前者提供 1–64 个
 有界样式 span，并由单个 DirectWrite layout 完成颜色、字号、粗体、斜体、下划线、删除线、
@@ -1247,7 +1248,7 @@ view.row({
 - hover、pressed 和 focus 的纯视觉样式由宿主命中测试与动画器直接更新，不需要先进入 Lua，因此指针反馈可以在下一次可用呈现中出现。
 - `focusStyle` 与 `disabledStyle` 已进入公共属性矩阵、Lua 解析和 Direct2D 渲染；未声明 focus 样式时宿主提供默认可见轮廓，disabled 样式最后覆盖其他状态样式。
 - `validationState/validationMessage/validationStyle` 已进入输入和 select 的公共属性矩阵；校验样式在 pressed 后、focus/disabled 前叠加，消息同时进入语义 HelpText，但不会改变受控值提交规则。
-- `view.layout.constraints` 已把 `minWidth/maxWidth/minHeight/maxHeight/aspectRatio` 纳入公共属性矩阵、Lua 解析、固有尺寸和各容器布局；尺寸使用 0–4096 的有限逻辑单位，宽高比使用 0.01–100，并拒绝同轴上下限、宽高比约束或双固定尺寸互相冲突的树。更完整的 flex/grid track 仍按属性矩阵逐批实现。
+- `view.layout.constraints` 已把 `minWidth/maxWidth/minHeight/maxHeight/aspectRatio` 纳入公共属性矩阵、Lua 解析、固有尺寸和各容器布局；尺寸使用 0–4096 的有限逻辑单位，宽高比使用 0.01–100，并拒绝同轴上下限、宽高比约束或双固定尺寸互相冲突的树。Flex reverse 等剩余布局枚举仍按属性矩阵逐批实现。
 - `view.layout.constraints` 的首批盒模型已加入 0–4096 的统一 `margin`：父布局在节点 frame 外保留空间，线性布局、grid、flow、stack、scroll content extent 与虚拟 item 都使用同一外尺寸模型。
 - `view.layout.edgeInsets` 已将 `margin/padding` 扩展为 scalar、`horizontal/vertical` 与 `top/right/bottom/left` 结构；轴值先展开、显式边值覆盖，四边值进入固有尺寸、全部容器布局、滚动范围、文本/图片内容区和宿主输入命中。仍不解析 CSS shorthand 字符串，也不支持负边距。
 - `view.positioning.basic` 已为 stack 直接子节点加入有界 `offset{x,y}` 与稳定 `zIndex`，绘制和命中使用同一排序而语义顺序保持声明顺序；容器 `clip=true` 同时约束后代绘制、命中、宿主输入和语义可见范围。任意 absolute 布局、裁剪路径与跨容器视觉重排仍不开放。
@@ -1743,7 +1744,7 @@ v2.0 资源契约：
 - 音频分析分别记录 1/5/10 个订阅下的捕获线程数、CPU、内存、FFT 耗时和发布丢帧；实例数增长不得线性增加捕获客户端。
 - 图片解码、字体解析和 GPU 上传必须计入独立资源预算；缓存不得绕过 Lua 实例内存限制形成无上限宿主内存占用。
 
-当前过渡实现（2026-08-15）发布 `view.tree.core`，支持 `box/row/column/stack/text/image/button/icon/iconButton/shape/progressBar/progressRing/spacer`，以 `view.grid.uniform` 提供 1–64 个等宽列、行优先顺序和独立行列间距的基础 `grid`，并以 `view.grid.placement` 提供 1-based 显式行列、跨行跨列和受限自动放置（仍不包含自定义 track/虚拟化），再以 `view.flow.wrap` 提供跳过隐藏项、独立行列间距、逐行 justify 和行内 align 的横向换行 `flow`（不包含纵向 flow/masonry/滚动/虚拟化）；`view.statusVisuals` 公开 `badge/divider/meter`，`view.dataSeries` 公开 `sparkline/lineChart/barChart/waveform/spectrum`，`view.selectionControls` 公开受控 `toggle/checkbox`，`view.actionControls` 一次公开 `link/radioGroup/slider`：link 使用宿主链接语义与实时 hover/pressed 绘制，radioGroup 为每个选项生成独立稳定命中区和 `previousSelection/selection` 建议值，slider 以捕获的左键拖动持续返回 step 对齐的 `previousControlValue/controlValue`；`view.inputControls` 一次公开 `textInput/textArea/searchBox/numberInput/select`，输入复用宿主键盘、IME、选择和剪贴板代理并投递受控文本/数值建议，select 以组件受控 expanded 状态绘制顶层有界选项；所有受控值均由组件写回，宿主不替组件持久化，元素各自支持 contextMenu；meter、slider 与数据图形要求无障碍标签，数据图形每节点最多 512 个有限样本、全树最多 4096 个并支持自动或显式 `min/max` 值域、
+当前过渡实现（2026-08-15）发布 `view.tree.core`，支持 `box/row/column/stack/text/image/button/icon/iconButton/shape/progressBar/progressRing/spacer`，以 `view.grid.uniform` 提供 1–64 个等宽列、行优先顺序和独立行列间距的基础 `grid`，以 `view.grid.placement` 提供 1-based 显式行列、跨行跨列和受限自动放置，并以 `view.grid.tracks` 提供 fixed/auto/fr/minmax 的有界显式列轨与行轨（虚拟网格仍使用整数等宽列），再以 `view.flow.wrap` 提供跳过隐藏项、独立行列间距、逐行 justify 和行内 align 的横向换行 `flow`（不包含纵向 flow/masonry/滚动/虚拟化）；`view.statusVisuals` 公开 `badge/divider/meter`，`view.dataSeries` 公开 `sparkline/lineChart/barChart/waveform/spectrum`，`view.selectionControls` 公开受控 `toggle/checkbox`，`view.actionControls` 一次公开 `link/radioGroup/slider`：link 使用宿主链接语义与实时 hover/pressed 绘制，radioGroup 为每个选项生成独立稳定命中区和 `previousSelection/selection` 建议值，slider 以捕获的左键拖动持续返回 step 对齐的 `previousControlValue/controlValue`；`view.inputControls` 一次公开 `textInput/textArea/searchBox/numberInput/select`，输入复用宿主键盘、IME、选择和剪贴板代理并投递受控文本/数值建议，select 以组件受控 expanded 状态绘制顶层有界选项；所有受控值均由组件写回，宿主不替组件持久化，元素各自支持 contextMenu；meter、slider 与数据图形要求无障碍标签，数据图形每节点最多 512 个有限样本、全树最多 4096 个并支持自动或显式 `min/max` 值域、
 稳定全树 key、基础线性布局、基础文本/边框样式、宿主 hover/pressed 视觉、元素 click/
 doubleClick/pointer/contextMenu action，以及“先完整校验布局、后原子提交；失败保留上一成功树”。
 其额度为 512 节点、32 层、单节点 4 KiB 文本、全树 64 KiB 文本和 256 个交互元素；未知字段、

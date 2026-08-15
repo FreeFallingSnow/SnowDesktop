@@ -172,11 +172,14 @@ row gap, columns, overscan, firstIndex, and contiguous listItem children. Keep
 the materialized window within 128 items; do not emulate variable-height rows,
 horizontal virtualization, sticky headers, or programmatic scrolling.
 Probe `view.grid.uniform` before using `view.grid`; it is a bounded row-major
-equal-column layout with 1–64 columns and optional `columnGap`/`rowGap`, not
-the complete fixed/auto/fr/minmax track or virtual-grid contract. Probe
+equal-column layout with 1–64 columns and optional `columnGap`/`rowGap`. Probe
 `view.grid.placement` before setting `gridColumn`, `gridRow`, `columnSpan`, or
 `rowSpan` on direct grid/gridList children. Coordinates are 1-based, spans are
 limited to 64 tracks, and the host rejects overlap or out-of-bounds placement.
+Probe `view.grid.tracks` before replacing integer `columns` or adding `rows`
+with bounded fixed/auto/fr/minmax track definitions. `virtualGrid` intentionally
+keeps integer equal-width columns and rejects explicit row tracks so its fixed
+virtual range remains deterministic.
 Probe `view.layout.overflow` before using `overflow="clip"` on a container;
 the host applies the same content rectangle to descendant paint, pointer hit,
 inputs, and semantic visibility. `clip=true` remains compatibility syntax and

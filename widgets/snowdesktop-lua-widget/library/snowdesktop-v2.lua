@@ -128,6 +128,7 @@
 ---@alias SnowViewImageAlignment 'start'|'center'|'end'
 ---@alias SnowViewImageInterpolation 'nearest'|'linear'
 ---@alias SnowViewOverflow 'visible'|'clip'
+---@alias SnowViewGridTrack number|'auto'|SnowViewGridFractionTrack|SnowViewGridMinMaxTrack
 ---@alias SnowViewValidationState 'none'|'info'|'success'|'warning'|'error'
 ---@alias SnowDrawImageFit 'fill'|'contain'|'cover'|'none'
 ---@alias SnowDrawImageAlignment 'start'|'center'|'end'
@@ -153,6 +154,13 @@
 ---@field offsetX? number Horizontal offset from -4096 through 4096; defaults to 0.
 ---@field offsetY? number Vertical offset from -4096 through 4096; defaults to 4.
 ---@field alpha? number Opacity from 0 through 1; defaults to 0.25.
+
+---@class SnowViewGridFractionTrack
+---@field fr number Positive fraction weight no greater than 1000.
+
+---@class SnowViewGridMinMaxTrack
+---@field min number Fixed minimum from 0 through 100000 logical units.
+---@field max number|'auto'|SnowViewGridFractionTrack Fixed cap, intrinsic cap, or fractional maximum.
 
 ---@class SnowViewStyle
 ---@field background? integer RGB color.
@@ -268,7 +276,8 @@
 ---@field overflow? SnowViewOverflow Container descendant overflow behavior; defaults to visible.
 ---@field shadow? SnowViewShadow Bounded host-rendered frame shadow that does not change layout or hit bounds.
 ---@field gap? number
----@field columns? integer Required by grid, gridList, and virtualGrid; 1 to 64 equal-width columns.
+---@field columns? integer|SnowViewGridTrack[] Required by grid, gridList, and virtualGrid. Track arrays require view.grid.tracks and are rejected by virtualGrid.
+---@field rows? integer|SnowViewGridTrack[] Optional explicit grid/gridList rows; integer creates that many auto tracks and implicit trailing rows remain auto.
 ---@field columnGap? number Grid/gridList/virtualGrid/flow horizontal gap; defaults to gap.
 ---@field rowGap? number Grid/gridList/virtualList/virtualGrid/flow vertical gap; defaults to gap.
 ---@field gridColumn? integer Explicit 1-based column for a direct grid/gridList child; 1 through 64.
@@ -702,7 +711,7 @@ function view.row(options) end
 ---@return SnowViewNode
 function view.column(options) end
 
----@param options SnowViewNodeOptions Requires columns; equal-width layout with optional explicit placement/spans through view.grid.placement.
+---@param options SnowViewNodeOptions Requires columns; supports equal-width columns or bounded explicit tracks through view.grid.tracks, plus placement/spans through view.grid.placement.
 ---@return SnowViewNode
 function view.grid(options) end
 

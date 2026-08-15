@@ -999,6 +999,80 @@ void TestUniformGridParsingAndLayout()
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(
         return view.grid({
+            key = "track-grid",
+            columns = { 80, "auto", { fr = 1 },
+                { min = 40, max = { fr = 2 } } },
+            rows = { 24, { fr = 1 } },
+            columnGap = 10,
+            rowGap = 4,
+            children = {
+                view.shape({ key = "fixed", width = "fill",
+                    height = "fill", gridColumn = 1, gridRow = 1 }),
+                view.shape({ key = "auto", width = 60,
+                    height = "fill", gridColumn = 2, gridRow = 1 }),
+                view.shape({ key = "fraction", width = "fill",
+                    height = "fill", gridColumn = 3, gridRow = 2 }),
+                view.shape({ key = "minmax", width = "fill",
+                    height = "fill", gridColumn = 4, gridRow = 2 }),
+            },
+        })
+    )lua") == LUA_OK,
+        "explicit grid-track Lua fixture must evaluate");
+    root = {};
+    Check(ParseLuaViewTree(state, -1, root, error) &&
+            root.columns == 4 && root.columnTracks.size() == 4 &&
+            root.columnTracks[0].kind == ViewGridTrackKind::Fixed &&
+            Near(root.columnTracks[0].value, 80.0f) &&
+            root.columnTracks[1].kind == ViewGridTrackKind::Auto &&
+            root.columnTracks[2].kind == ViewGridTrackKind::Fraction &&
+            Near(root.columnTracks[2].value, 1.0f) &&
+            root.columnTracks[3].kind == ViewGridTrackKind::MinMax &&
+            Near(root.columnTracks[3].minimum, 40.0f) &&
+            root.columnTracks[3].maximumKind ==
+                ViewGridTrackKind::Fraction &&
+            Near(root.columnTracks[3].maximumValue, 2.0f) &&
+            root.rowTracks.size() == 2,
+        "grid track parsing must retain fixed, auto, fractional, and minmax definitions");
+    Check(ValidateAndLayoutViewTree(root, 400.0f, 120.0f, error) &&
+            Near(root.children[0].frame.x, 0.0f) &&
+            Near(root.children[0].frame.width, 80.0f) &&
+            Near(root.children[0].frame.height, 24.0f) &&
+            Near(root.children[1].frame.x, 90.0f) &&
+            Near(root.children[1].frame.width, 60.0f) &&
+            Near(root.children[2].frame.x, 160.0f) &&
+            Near(root.children[2].frame.width, 68.6667f) &&
+            Near(root.children[2].frame.y, 28.0f) &&
+            Near(root.children[2].frame.height, 92.0f) &&
+            Near(root.children[3].frame.x, 238.6667f) &&
+            Near(root.children[3].frame.width, 161.3333f),
+        "grid track layout must resolve intrinsic content before distributing fractional space");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.grid({ key = "invalid-track",
+            columns = { { min = 60, max = 40 } } })
+    )lua") == LUA_OK,
+        "invalid minmax grid-track fixture must evaluate");
+    root = {};
+    Check(!ParseLuaViewTree(state, -1, root, error) &&
+            error.find("at least min") != std::string::npos,
+        "minmax tracks must reject a fixed maximum below the minimum");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.virtualGrid({ key = "virtual-tracks",
+            columns = { { fr = 1 }, { fr = 1 } },
+            itemCount = 0, itemExtent = 24, firstIndex = 0 })
+    )lua") == LUA_OK,
+        "virtual-grid track fixture must evaluate");
+    root = {};
+    Check(!ParseLuaViewTree(state, -1, root, error) &&
+            error.find("integer") != std::string::npos,
+        "virtualGrid must retain fixed equal-width columns for bounded virtualization");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.grid({
             key = "overlap",
             columns = 2,
             children = {

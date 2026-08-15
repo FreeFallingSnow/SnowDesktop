@@ -67,7 +67,7 @@ constexpr auto kProperties = std::to_array<std::string_view>({
     "child", "thickness", "trackOpacity", "fillOpacity", "width", "height",
     "minWidth", "maxWidth", "minHeight", "maxHeight", "aspectRatio",
     "margin", "padding", "offset", "zIndex", "clip", "overflow",
-    "shadow", "gap", "columns",
+    "shadow", "gap", "columns", "rows",
     "columnGap", "rowGap", "gridColumn", "gridRow", "columnSpan",
     "rowSpan", "itemCount",
     "itemExtent", "firstIndex", "overscan", "flexBasis", "flexGrow",
@@ -289,6 +289,8 @@ bool ViewNodeAllowsProperty(
         return IsProgress(type) || IsSeries(type) ||
             type == ViewNodeType::Divider;
     if (property == "columns") return IsGrid(type);
+    if (property == "rows")
+        return type == ViewNodeType::Grid || type == ViewNodeType::GridList;
     if (property == "columnGap")
         return IsGrid(type) || type == ViewNodeType::Flow;
     if (property == "rowGap")
