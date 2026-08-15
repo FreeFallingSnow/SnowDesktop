@@ -178,9 +178,12 @@ Probe `view.flow.wrap` before using `view.flow`; it wraps fixed/auto-width
 children horizontally, skips hidden children, and supports per-line
 `columnGap`/`rowGap`, but it is not a scrolling or virtualized collection.
 Probe `view.layout.constraints` before using numeric `minWidth`, `maxWidth`,
-`minHeight`, `maxHeight`, or `aspectRatio`. Keep sizes within 0 through 4096,
-ratios within 0.01 through 100, and do not declare mutually incompatible
-constraints or mismatched fixed width and height.
+`minHeight`, `maxHeight`, `aspectRatio`, or `margin`. Keep sizes and uniform
+outer margins within 0 through 4096, ratios within 0.01 through 100, and do
+not declare mutually incompatible constraints or mismatched fixed width and
+height. Margin is reserved outside the node frame by linear, grid, flow,
+stack, scroll, and virtual layouts; use parent `gap` for spacing that should
+exist only between siblings.
 Probe `view.keyboardNavigation.basic` for ordinary actionable declarative
 nodes and storage-bound immediate text controls. The subset does not provide
 custom tab order, raw key bindings, variable-height virtualization, or the

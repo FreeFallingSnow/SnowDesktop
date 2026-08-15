@@ -98,11 +98,13 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.styledText.basic` 提供有界样式 span，`view.monthCalendar` 提供受控月历日期网格，
 `view.logicalSlots` 提供与 manifest 宿主管理槽位严格对应的 `slotSurface/slotItem`，
 `view.referenceIcon` 提供只接收实例自有 opaque ref 的宿主图标节点。
-`view.layout.constraints` 为所有节点提供 `minWidth/maxWidth/minHeight/maxHeight` 数值约束和
-`aspectRatio`。尺寸约束是 0–4096 的有限逻辑单位，同一轴的最小值不得大于最大值；
+`view.layout.constraints` 为所有节点提供 `minWidth/maxWidth/minHeight/maxHeight` 数值约束、
+`aspectRatio` 和统一 `margin`。尺寸约束与外边距是 0–4096 的有限逻辑单位，同一轴的最小值不得大于最大值；
 宽高比表示 `width / height`，范围 0.01–100。约束会参与固有尺寸、fill/flex 分配以及
 grid/flow/scroll 子项布局，而不是只在绘制时裁切；与宽高比不可能同时满足的最小/最大约束，
 或不符合宽高比的双固定尺寸会拒绝整棵新树并保留上一棵有效树。
+`margin` 由父布局保留在节点 frame 之外，参与线性分配、grid cell、flow 换行、stack inset、
+scroll content extent 和虚拟 item extent；同级间的公共间隔仍优先使用父容器 `gap`。
 每次 `view(context, model)` 返回一棵完整树；所有节点必须提供全树唯一、1–128 字节的
 稳定 `key`。宿主先完整解析、校验和布局，再原子替换上一棵成功树；回调或校验失败时
 继续显示上一棵树，不留下半棵树或空白交互区。

@@ -1492,6 +1492,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             node.maximumHeight, error) ||
         !ReadOptionalNodeFloatField(state, index, "aspectRatio",
             node.aspectRatio, error) ||
+        !ReadFloatField(state, index, "margin", node.margin, error) ||
         !ReadFloatField(state, index, "padding", node.padding, error) ||
         !ReadFloatField(state, index, "gap", node.gap, error) ||
         !ReadSizeField(state, index, "columns", node.columns, error) ||

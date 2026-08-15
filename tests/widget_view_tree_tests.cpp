@@ -1795,6 +1795,119 @@ void TestBoundedSizeConstraints()
         "Lua parsing must retain all bounded size constraints");
     lua_close(state);
 }
+
+void TestUniformMargins()
+{
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "Lua state must be available");
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    Check(luaL_dostring(state, R"lua(
+        return view.row({
+            key = "margin-row",
+            gap = 5,
+            alignItems = "start",
+            children = {
+                view.shape({ key = "one", width = 40, height = 20,
+                    margin = 5 }),
+                view.shape({ key = "two", width = 40, height = 20,
+                    margin = 10 }),
+            },
+        })
+    )lua") == LUA_OK,
+        "uniform-margin Lua fixture must evaluate");
+    ViewNode row;
+    std::string error;
+    Check(ParseLuaViewTree(state, -1, row, error) &&
+            row.children.size() == 2 &&
+            Near(row.children[0].margin, 5.0f) &&
+            Near(row.children[1].margin, 10.0f),
+        "Lua parsing must retain bounded uniform margins");
+    Check(ValidateAndLayoutViewTree(row, 200.0f, 60.0f, error) &&
+            Near(row.children[0].frame.x, 5.0f) &&
+            Near(row.children[0].frame.y, 5.0f) &&
+            Near(row.children[0].frame.width, 40.0f) &&
+            Near(row.children[1].frame.x, 65.0f) &&
+            Near(row.children[1].frame.y, 10.0f),
+        "linear layout must reserve margin outside child frames and gaps");
+
+    ViewNode grid;
+    grid.type = ViewNodeType::Grid;
+    grid.key = "margin-grid";
+    grid.columns = 1;
+    ViewNode gridChild;
+    gridChild.type = ViewNodeType::Shape;
+    gridChild.key = "grid-child";
+    gridChild.height = { ViewLengthKind::Fixed, 20.0f };
+    gridChild.margin = 5.0f;
+    grid.children.push_back(gridChild);
+    Check(ValidateAndLayoutViewTree(grid, 100.0f, 50.0f, error) &&
+            Near(grid.children[0].frame.x, 5.0f) &&
+            Near(grid.children[0].frame.y, 5.0f) &&
+            Near(grid.children[0].frame.width, 90.0f),
+        "grid layout must reserve margin inside each cell");
+
+    ViewNode flow;
+    flow.type = ViewNodeType::Flow;
+    flow.key = "margin-flow";
+    flow.alignItems = ViewAlignment::Start;
+    for (int index = 0; index < 2; ++index)
+    {
+        ViewNode child;
+        child.type = ViewNodeType::Shape;
+        child.key = "flow-" + std::to_string(index);
+        child.width = { ViewLengthKind::Fixed, 40.0f };
+        child.height = { ViewLengthKind::Fixed, 20.0f };
+        child.margin = 5.0f;
+        flow.children.push_back(std::move(child));
+    }
+    Check(ValidateAndLayoutViewTree(flow, 100.0f, 50.0f, error) &&
+            Near(flow.children[0].frame.x, 5.0f) &&
+            Near(flow.children[1].frame.x, 55.0f) &&
+            Near(flow.children[1].frame.y, 5.0f),
+        "flow wrapping must count margins in line width and child placement");
+
+    ViewNode stack;
+    stack.type = ViewNodeType::Stack;
+    stack.key = "margin-stack";
+    ViewNode stackChild;
+    stackChild.type = ViewNodeType::Shape;
+    stackChild.key = "stack-child";
+    stackChild.width = { ViewLengthKind::Fill, 0.0f };
+    stackChild.height = { ViewLengthKind::Fill, 0.0f };
+    stackChild.margin = 10.0f;
+    stack.children.push_back(stackChild);
+    Check(ValidateAndLayoutViewTree(stack, 100.0f, 100.0f, error) &&
+            stack.children[0].frame == ViewRect{ 10, 10, 80, 80 },
+        "stack layout must inset fill children by their margins");
+
+    ViewNode scroll;
+    scroll.type = ViewNodeType::Scroll;
+    scroll.key = "margin-scroll";
+    ViewNode scrollChild;
+    scrollChild.type = ViewNodeType::Shape;
+    scrollChild.key = "scroll-child";
+    scrollChild.height = { ViewLengthKind::Fixed, 100.0f };
+    scrollChild.margin = 5.0f;
+    scroll.children.push_back(scrollChild);
+    Check(ValidateAndLayoutViewTree(scroll, 100.0f, 50.0f, error),
+        "scroll margin fixture must validate and lay out");
+    std::vector<ViewScrollViewport> viewports;
+    Check(ApplyViewScrollOffsets(scroll,
+            [](std::string_view, float) { return 0.0f; },
+            viewports, error) && viewports.size() == 1 &&
+            Near(viewports[0].contentExtent, 110.0f),
+        "scroll content extent must include leading and trailing margins");
+
+    ViewNode invalid;
+    invalid.type = ViewNodeType::Shape;
+    invalid.key = "negative-margin";
+    invalid.margin = -1.0f;
+    Check(!ValidateAndLayoutViewTree(invalid, 40.0f, 40.0f, error) &&
+            error == "view node contains an invalid numeric field",
+        "negative margins must reject the complete view tree");
+    lua_close(state);
+}
 }
 
 int main()
@@ -1815,6 +1928,7 @@ int main()
     TestStyledTextAndMonthCalendar();
     TestLogicalSlotSceneContract();
     TestBoundedSizeConstraints();
+    TestUniformMargins();
     std::cout << "Widget view tree tests passed\n";
     return 0;
 }

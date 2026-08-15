@@ -218,6 +218,7 @@ struct ViewNode
     std::optional<float> minimumHeight;
     std::optional<float> maximumHeight;
     std::optional<float> aspectRatio;
+    float margin = 0.0f;
     float padding = 0.0f;
     float gap = 0.0f;
     std::size_t columns = 1;

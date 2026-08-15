@@ -105,8 +105,9 @@ void TestRepresentativeApplicability()
         "validation fields must remain scoped to inputs and selects");
     Check(ViewNodeAllowsProperty(ViewNodeType::Box, "minWidth") &&
             ViewNodeAllowsProperty(ViewNodeType::Text, "maxHeight") &&
-            ViewNodeAllowsProperty(ViewNodeType::Image, "aspectRatio"),
-        "bounded size constraints must be common machine-readable properties");
+            ViewNodeAllowsProperty(ViewNodeType::Image, "aspectRatio") &&
+            ViewNodeAllowsProperty(ViewNodeType::Spacer, "margin"),
+        "bounded size constraints and margin must be common machine-readable properties");
     Check(ViewNodeAllowsProperty(ViewNodeType::MonthCalendar, "eventDates") &&
             !ViewNodeAllowsProperty(ViewNodeType::List, "eventDates"),
         "calendar properties must be scoped to monthCalendar");
