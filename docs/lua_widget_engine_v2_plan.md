@@ -507,6 +507,10 @@ schedule.timeline("agenda", {
 }
 ```
 
+timeline 事件还会携带 `value/timelineIndex/timelineCount/timelineEnded/reload`；跨过多个
+条目时只提交最新到期值，`missed` 记录被省略的较早条目数。`reload="atEnd"` 只在
+最终事件标记 `reload=true`，由组件在事件回调中发布下一组 timeline，不隐式重跑 VM。
+
 ### 11.2 调度规则
 
 - 默认最小周期仍为 100 ms，但作者工具对低于 1000 ms 的后台刷新发出警告。
@@ -525,7 +529,9 @@ schedule.timeline("agenda", {
 `{ whenHidden="pause"|"throttle"|"continue" }` 参数，默认 throttle；pause 在恢复
 可见时合并错过的截止时间，throttle 使用 5000 ms 隐藏下限。卸载、热重载和关闭
 自动取消。`schedule.absolute` 将最远 366 天的 UTC 绝对截止时间重新投影到单调时钟，
-过去截止时间在下一宿主唤醒合并触发；timeline 和预览虚拟时钟尚未实现，不能计入完整调度契约。
+过去截止时间在下一宿主唤醒合并触发。`schedule.timeline` 已支持每计划 1–64 个严格
+递增绝对条目、受限 JSON-like value、跨条目合并和 `reload="atEnd"` 最终事件标志；
+预览虚拟时钟尚未实现，不能计入完整调度契约。
 
 ## 12. 数据订阅与任务
 

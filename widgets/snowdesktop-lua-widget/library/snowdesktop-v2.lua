@@ -425,6 +425,10 @@
 ---@field missed? integer
 ---@field coalesced? boolean
 ---@field now? integer UTC epoch milliseconds when a schedule event is dispatched.
+---@field timelineIndex? integer One-based index of the newest due timeline entry.
+---@field timelineCount? integer Total entries in the active timeline.
+---@field timelineEnded? boolean Whether this event consumed the final timeline entry.
+---@field reload? boolean True on the final entry when the timeline requested reload = 'atEnd'.
 ---@field visible? boolean
 ---@field selected? boolean
 ---@field columns? integer
@@ -890,6 +894,13 @@ schedule = {}
 ---@class SnowScheduleOptions
 ---@field whenHidden? 'pause'|'throttle'|'continue'
 
+---@class SnowScheduleTimelineEntry
+---@field at integer UTC epoch milliseconds, strictly increasing and no more than 366 days in the future.
+---@field value? SnowStateValue JSON-like value delivered through the schedule event.
+
+---@class SnowScheduleTimelineOptions: SnowScheduleOptions
+---@field reload? 'none'|'atEnd' Request a reload flag on the final event so the widget can publish its next timeline.
+
 ---Create or replace a coalescing repeating schedule.
 ---@param id string
 ---@param milliseconds integer
@@ -910,6 +921,13 @@ function schedule.after(id, milliseconds, options) end
 ---@param options? SnowScheduleOptions
 ---@return boolean
 function schedule.at(id, epochMilliseconds, options) end
+
+---Create or replace an absolute timeline. Elapsed entries coalesce to the newest due value.
+---@param id string
+---@param entries SnowScheduleTimelineEntry[] One through 64 entries.
+---@param options? SnowScheduleTimelineOptions
+---@return boolean
+function schedule.timeline(id, entries, options) end
 
 ---@param id string
 ---@return boolean

@@ -1300,6 +1300,12 @@ public:
         const std::string& name, std::int64_t epochMilliseconds,
         snowdesktop::widget_runtime::ScheduleHiddenPolicy hiddenPolicy =
             snowdesktop::widget_runtime::ScheduleHiddenPolicy::Continue);
+    bool RuntimeSetTimeline(const std::wstring& widgetId,
+        const std::string& name,
+        std::vector<snowdesktop::widget_runtime::
+            NamedTimerSchedule::TimelineEntry> entries,
+        snowdesktop::widget_runtime::ScheduleHiddenPolicy hiddenPolicy,
+        bool reloadAtEnd);
     bool RuntimeCancelTimer(const std::wstring& widgetId, const std::string& name);
     int RuntimeHttpRequest(const std::wstring& widgetId, HttpRequestOptions options);
     bool RuntimeHttpCancel(const std::wstring& widgetId, int requestId);

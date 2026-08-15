@@ -674,19 +674,29 @@ task.complete 不能抢走桌面键盘焦点。若该操作同时把目标输入
 - `schedule.after(id, milliseconds, options?)`：创建或替换一个单次计划。
 - `schedule.at(id, epochMilliseconds, options?)`：按 UTC epoch 毫秒创建或替换一个
   单次绝对时间计划，最远可设置 366 天；过去时间在下一次宿主唤醒时合并触发。
+- `schedule.timeline(id, entries, options?)`：创建或替换一组按绝对时间排列的状态条目；
+  `entries` 为 1–64 个 `{ at=UTC毫秒, value=JSON-like值 }`，`at` 必须严格递增且
+  最远不超过 366 天。
 - `schedule.cancel(id)`：取消计划，存在并取消时返回 `true`。
 
 ID 为 1–128 字节，每个实例最多 32 个计划；周期请求范围是 1 ms–24 小时，
 宿主最小实际周期为 100 ms。跨过多个重复截止时间时只分发一个
 `event.kind == "schedule"` 事件，并通过 `now`、`missed` 和 `coalesced` 报告实际分发
 时间与合并结果。
+timeline 跨过多个条目时也只分发最新到期值，并额外返回 `value`、一基
+`timelineIndex`、`timelineCount` 和 `timelineEnded`；`missed` 是本次省略的较早
+条目数。所有条目的 value 合计最多 256 个节点、8 层和 16 KiB 字符串，语义与
+`SnowStateValue` 一致。
 `options.whenHidden` 支持 `pause`、`throttle`（默认）和 `continue`。pause 隐藏时不
 保留宿主唤醒，恢复后只发送一个合并事件并报告 `missed`；throttle 隐藏时使用
-5000 ms 最小周期；continue 保持请求周期。卸载、热重载和关闭会自动取消实例计划。
+5000 ms 最小周期；对绝对时间 timeline，throttle 与 continue 都保留绝对截止时间。
+卸载、热重载和关闭会自动取消实例计划。
 
-`schedule.at` 对应 feature `schedule.absolute`；系统时钟在宿主重新计算截止时间时会重新
-投影到单调时钟，避免用可回拨的 wall clock 计算经过时长。当前尚不支持 timeline 或
-预览虚拟时钟。API v1 继续使用 `onTimer`
+`schedule.timeline` 的 `options.reload` 可为 `none`（默认）或 `atEnd`。`atEnd` 不会
+直接重跑 Lua；最终事件会设置 `reload=true`，组件应在事件回调中发布下一组 timeline。
+它对应 feature `schedule.timeline`。`schedule.at` 对应 feature `schedule.absolute`；
+系统时钟在宿主重新计算截止时间时会重新投影到单调时钟，避免用可回拨的 wall clock
+计算经过时长。当前尚不支持预览虚拟时钟。API v1 继续使用 `onTimer`
 兼容路径；新 v2 组件不得再依赖清单 `refreshIntervalMs` 过渡事件。
 
 ### `data`

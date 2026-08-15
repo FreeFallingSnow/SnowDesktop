@@ -3,6 +3,8 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace
 {
@@ -201,6 +203,91 @@ void TestAbsoluteDeadlines()
                 wallStart + std::chrono::milliseconds(200)).size() == 1,
         "a hidden paused absolute deadline must coalesce on resume");
 }
+
+void TestTimelineCoalescingAndReload()
+{
+    const Schedule::TimePoint steadyStart{};
+    const Schedule::WallTimePoint wallStart{
+        std::chrono::milliseconds(2'000'000) };
+    Schedule schedule;
+    snowdesktop::widget_runtime::InteractionValue firstValue;
+    firstValue.type = snowdesktop::widget_runtime::InteractionValue::Type::String;
+    firstValue.string = "first";
+    snowdesktop::widget_runtime::InteractionValue secondValue = firstValue;
+    secondValue.string = "second";
+    snowdesktop::widget_runtime::InteractionValue finalValue = firstValue;
+    finalValue.string = "final";
+    std::vector<Schedule::TimelineEntry> entries = {
+        { 2'000'100, firstValue },
+        { 2'000'200, secondValue },
+        { 2'000'500, finalValue },
+    };
+    Check(schedule.SetTimeline("agenda", std::move(entries),
+            steadyStart, wallStart, HiddenPolicy::Continue, true) &&
+            schedule.NextDelay(steadyStart, wallStart) ==
+                std::chrono::milliseconds(100),
+        "a bounded increasing timeline must schedule its first entry");
+
+    const auto coalesced = schedule.ConsumeDueInfo("agenda",
+        steadyStart + std::chrono::milliseconds(250),
+        wallStart + std::chrono::milliseconds(250));
+    Check(coalesced && coalesced->timeline &&
+            coalesced->timelineIndex == 2 &&
+            coalesced->timelineCount == 3 &&
+            coalesced->missed == 1 && coalesced->coalesced &&
+            coalesced->value.string == "second" &&
+            !coalesced->timelineEnded && !coalesced->reload,
+        "elapsed timeline entries must coalesce to the newest due value");
+    Check(schedule.NextDelay(
+            steadyStart + std::chrono::milliseconds(250),
+            wallStart + std::chrono::milliseconds(250)) ==
+                std::chrono::milliseconds(250),
+        "a timeline must advance to its next absolute entry");
+
+    const auto final = schedule.ConsumeDueInfo("agenda",
+        steadyStart + std::chrono::milliseconds(500),
+        wallStart + std::chrono::milliseconds(500));
+    Check(final && final->timeline && final->timelineIndex == 3 &&
+            final->value.string == "final" && final->timelineEnded &&
+            final->reload && schedule.Size() == 0,
+        "the final timeline entry must retire the schedule and expose reload-at-end");
+}
+
+void TestTimelineValidationAndHiddenPause()
+{
+    const Schedule::TimePoint steadyStart{};
+    const Schedule::WallTimePoint wallStart{
+        std::chrono::milliseconds(3'000'000) };
+    Schedule schedule;
+    Check(!schedule.SetTimeline("empty", {}, steadyStart, wallStart),
+        "empty timelines must be rejected");
+    Check(!schedule.SetTimeline("unordered",
+            { { 3'000'200, {} }, { 3'000'100, {} } },
+            steadyStart, wallStart),
+        "timeline deadlines must be strictly increasing");
+    Check(!schedule.SetTimeline("too-far",
+            { { 3'000'000 + Schedule::MaxAbsoluteDelayMs + 1, {} } },
+            steadyStart, wallStart),
+        "timeline entries beyond the absolute horizon must be rejected");
+
+    Check(schedule.SetVisible(false, steadyStart) &&
+            schedule.SetTimeline("paused",
+                { { 3'000'100, {} }, { 3'000'200, {} } },
+                steadyStart, wallStart, HiddenPolicy::Pause) &&
+            schedule.DueNames(
+                steadyStart + std::chrono::milliseconds(250),
+                wallStart + std::chrono::milliseconds(250)).empty(),
+        "a hidden paused timeline must not wake the host");
+    Check(schedule.SetVisible(true,
+                steadyStart + std::chrono::milliseconds(250)),
+        "a paused timeline must resume with its owner");
+    const auto resumed = schedule.ConsumeDueInfo("paused",
+        steadyStart + std::chrono::milliseconds(250),
+        wallStart + std::chrono::milliseconds(250));
+    Check(resumed && resumed->timeline && resumed->timelineIndex == 2 &&
+            resumed->missed == 1 && resumed->timelineEnded,
+        "resuming a paused timeline must coalesce elapsed entries once");
+}
 }
 
 int main()
@@ -210,6 +297,8 @@ int main()
     TestDelayClampingAndRounding();
     TestVisibilityPolicies();
     TestAbsoluteDeadlines();
+    TestTimelineCoalescingAndReload();
+    TestTimelineValidationAndHiddenPause();
     std::cout << "widget runtime scheduler tests passed\n";
     return 0;
 }

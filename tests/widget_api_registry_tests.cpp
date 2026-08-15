@@ -343,6 +343,7 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "schedule.absolute") &&
             snowdesktop::widget_api::SupportsFeature("schedule.basic") &&
+            snowdesktop::widget_api::SupportsFeature("schedule.timeline") &&
             snowdesktop::widget_api::SupportsFeature("schedule.visibility") &&
             snowdesktop::widget_api::SupportsFeature(
                 "settings.appSearch") &&

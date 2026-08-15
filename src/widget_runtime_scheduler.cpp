@@ -65,6 +65,48 @@ bool NamedTimerSchedule::SetAt(
     return true;
 }
 
+bool NamedTimerSchedule::SetTimeline(
+    std::string name,
+    std::vector<TimelineEntry> entries,
+    TimePoint now,
+    WallTimePoint wallNow,
+    ScheduleHiddenPolicy hiddenPolicy,
+    bool reloadAtEnd)
+{
+    if (name.empty() || name.size() > MaxNameBytes ||
+        entries.empty() || entries.size() > MaxTimelineEntries ||
+        (!timers_.contains(name) && timers_.size() >= MaxTimers))
+        return false;
+
+    const std::int64_t wallNowMilliseconds =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            wallNow.time_since_epoch()).count();
+    std::int64_t previous = -1;
+    for (const auto& entry : entries)
+    {
+        if (entry.epochMilliseconds < 0 ||
+            entry.epochMilliseconds <= previous ||
+            entry.epochMilliseconds >
+                wallNowMilliseconds + MaxAbsoluteDelayMs)
+            return false;
+        previous = entry.epochMilliseconds;
+    }
+
+    const std::int64_t remaining = std::max<std::int64_t>(0,
+        entries.front().epochMilliseconds - wallNowMilliseconds);
+    Timer timer;
+    timer.intervalMs = MinIntervalMs;
+    timer.repeat = false;
+    timer.hiddenPolicy = hiddenPolicy;
+    timer.due = now + std::chrono::milliseconds(remaining);
+    timer.absoluteEpochMilliseconds = entries.front().epochMilliseconds;
+    timer.timeline = std::move(entries);
+    timer.timelineIndex = 0;
+    timer.reloadAtEnd = reloadAtEnd;
+    timers_.insert_or_assign(std::move(name), std::move(timer));
+    return true;
+}
+
 bool NamedTimerSchedule::Cancel(std::string_view name)
 {
     return timers_.erase(std::string(name)) > 0;
@@ -154,6 +196,48 @@ NamedTimerSchedule::ConsumeDueInfo(
 
     Fire result;
     result.name = timer->first;
+
+    if (!timer->second.timeline.empty())
+    {
+        const std::int64_t wallNowMilliseconds =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                wallNow.time_since_epoch()).count();
+        const std::size_t firstDue = timer->second.timelineIndex;
+        std::size_t lastDue = firstDue;
+        while (lastDue + 1 < timer->second.timeline.size() &&
+            timer->second.timeline[lastDue + 1].epochMilliseconds <=
+                wallNowMilliseconds)
+        {
+            ++lastDue;
+        }
+        result.timeline = true;
+        result.timelineIndex = lastDue + 1;
+        result.timelineCount = timer->second.timeline.size();
+        result.missed = lastDue - firstDue;
+        result.coalesced = result.missed > 0;
+        result.value = timer->second.timeline[lastDue].value;
+        result.timelineEnded = lastDue + 1 ==
+            timer->second.timeline.size();
+        result.reload = result.timelineEnded &&
+            timer->second.reloadAtEnd;
+        if (result.timelineEnded)
+        {
+            timers_.erase(timer);
+        }
+        else
+        {
+            timer->second.timelineIndex = lastDue + 1;
+            timer->second.absoluteEpochMilliseconds =
+                timer->second.timeline[timer->second.timelineIndex].
+                    epochMilliseconds;
+            const std::int64_t remaining = std::max<std::int64_t>(0,
+                timer->second.absoluteEpochMilliseconds -
+                    wallNowMilliseconds);
+            timer->second.due = now +
+                std::chrono::milliseconds(remaining);
+        }
+        return result;
+    }
 
     if (!timer->second.repeat)
     {

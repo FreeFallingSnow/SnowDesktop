@@ -201,8 +201,12 @@ menu.
   storage only through its `tx` argument until the callback returns. A callback
   error or final quota failure rolls back the complete change. Never write
   persistent storage from `render`.
-- Use `schedule.every/after/cancel` for v2 timers and handle
+- Use `schedule.every/after/at/cancel` for v2 timers and handle
   `event.kind == "schedule"`; do not add new `widget.setTimer` usage.
+- Use `schedule.timeline` for 1–64 strictly increasing absolute state entries.
+  Elapsed entries coalesce to the newest due value; inspect `timelineIndex`,
+  `timelineCount`, `timelineEnded`, and `missed`. With `reload = "atEnd"`,
+  publish the next timeline when the final event reports `reload = true`.
 - Set `whenHidden` deliberately: prefer `pause` for purely visual clocks and
   animation, `throttle` for low-frequency freshness, and `continue` only when
   deadlines must remain active while the component is hidden.

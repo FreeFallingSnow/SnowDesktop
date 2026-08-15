@@ -1,5 +1,7 @@
 #pragma once
 
+#include "widget_interaction_region.h"
+
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -33,6 +35,13 @@ public:
     static constexpr std::int64_t MaxAbsoluteDelayMs =
         366LL * 24LL * 60LL * 60LL * 1000LL;
     static constexpr int HiddenThrottleIntervalMs = 5000;
+    static constexpr std::size_t MaxTimelineEntries = 64;
+
+    struct TimelineEntry
+    {
+        std::int64_t epochMilliseconds = 0;
+        InteractionValue value;
+    };
 
     bool Set(std::string name, int intervalMs, bool repeat, TimePoint now,
         ScheduleHiddenPolicy hiddenPolicy =
@@ -41,6 +50,12 @@ public:
         TimePoint now, WallTimePoint wallNow,
         ScheduleHiddenPolicy hiddenPolicy =
             ScheduleHiddenPolicy::Continue);
+    bool SetTimeline(std::string name,
+        std::vector<TimelineEntry> entries,
+        TimePoint now, WallTimePoint wallNow,
+        ScheduleHiddenPolicy hiddenPolicy =
+            ScheduleHiddenPolicy::Continue,
+        bool reloadAtEnd = false);
     bool Cancel(std::string_view name);
     bool SetVisible(bool visible, TimePoint now);
     struct Fire
@@ -48,6 +63,12 @@ public:
         std::string name;
         std::size_t missed = 0;
         bool coalesced = false;
+        bool timeline = false;
+        std::size_t timelineIndex = 0;
+        std::size_t timelineCount = 0;
+        bool timelineEnded = false;
+        bool reload = false;
+        InteractionValue value;
     };
     std::vector<std::string> DueNames(TimePoint now) const;
     std::vector<std::string> DueNames(
@@ -72,6 +93,9 @@ private:
             ScheduleHiddenPolicy::Continue;
         TimePoint due;
         std::int64_t absoluteEpochMilliseconds = -1;
+        std::vector<TimelineEntry> timeline;
+        std::size_t timelineIndex = 0;
+        bool reloadAtEnd = false;
     };
 
     bool Eligible(const Timer& timer) const noexcept;

@@ -2705,6 +2705,178 @@ static int lua_ScheduleAt(lua_State* state)
     return 1;
 }
 
+static int lua_ScheduleTimeline(lua_State* state)
+{
+    using Schedule = snowdesktop::widget_runtime::NamedTimerSchedule;
+    size_t nameLength = 0;
+    const char* name = luaL_checklstring(state, 1, &nameLength);
+    if (nameLength == 0 || nameLength > Schedule::MaxNameBytes)
+        return luaL_error(state,
+            "schedule.timeline: id must contain 1 to 128 bytes");
+    luaL_checktype(state, 2, LUA_TTABLE);
+    if (lua_getmetatable(state, 2) != 0)
+    {
+        lua_pop(state, 1);
+        return luaL_error(state,
+            "schedule.timeline: entries must be a plain array");
+    }
+    const std::size_t entryCount = lua_rawlen(state, 2);
+    if (entryCount == 0 || entryCount > Schedule::MaxTimelineEntries)
+        return luaL_error(state,
+            "schedule.timeline: entries must contain 1 to 64 items");
+    std::size_t enumeratedEntries = 0;
+    lua_pushnil(state);
+    while (lua_next(state, 2) != 0)
+    {
+        ++enumeratedEntries;
+        const bool validIndex = lua_isinteger(state, -2) &&
+            lua_tointeger(state, -2) >= 1 &&
+            static_cast<std::size_t>(lua_tointeger(state, -2)) <=
+                entryCount;
+        lua_pop(state, 1);
+        if (!validIndex)
+            return luaL_error(state,
+                "schedule.timeline: entries must be a contiguous array");
+    }
+    if (enumeratedEntries != entryCount)
+        return luaL_error(state,
+            "schedule.timeline: entries must be a contiguous array");
+
+    const auto wallNow = std::chrono::system_clock::now();
+    const std::int64_t wallNowMilliseconds =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            wallNow.time_since_epoch()).count();
+    std::vector<Schedule::TimelineEntry> entries;
+    entries.reserve(entryCount);
+    std::int64_t previousAt = -1;
+    std::size_t valueNodes = 0;
+    std::size_t valueStringBytes = 0;
+    for (std::size_t index = 1; index <= entryCount; ++index)
+    {
+        lua_rawgeti(state, 2, static_cast<lua_Integer>(index));
+        if (lua_type(state, -1) != LUA_TTABLE ||
+            lua_getmetatable(state, -1) != 0)
+        {
+            if (lua_istable(state, -1)) lua_pop(state, 1);
+            return luaL_error(state,
+                "schedule.timeline: each entry must be a plain table");
+        }
+        const int entryTable = lua_absindex(state, -1);
+        lua_pushnil(state);
+        while (lua_next(state, entryTable) != 0)
+        {
+            if (lua_type(state, -2) != LUA_TSTRING)
+                return luaL_error(state,
+                    "schedule.timeline: entry keys must be strings");
+            std::size_t keyLength = 0;
+            const char* key = lua_tolstring(state, -2, &keyLength);
+            const std::string_view field(key ? key : "", keyLength);
+            if (field != "at" && field != "value")
+                return luaL_error(state,
+                    "schedule.timeline: entry received an unknown field");
+            lua_pop(state, 1);
+        }
+
+        lua_getfield(state, entryTable, "at");
+        if (!lua_isinteger(state, -1))
+            return luaL_error(state,
+                "schedule.timeline: entry at must be a UTC epoch millisecond integer");
+        const auto at = static_cast<std::int64_t>(
+            lua_tointeger(state, -1));
+        lua_pop(state, 1);
+        if (at < 0 || at <= previousAt ||
+            at > wallNowMilliseconds + Schedule::MaxAbsoluteDelayMs)
+        {
+            return luaL_error(state,
+                "schedule.timeline: entry times must be strictly increasing non-negative UTC timestamps no more than 366 days in the future");
+        }
+        previousAt = at;
+
+        lua_getfield(state, entryTable, "value");
+        snowdesktop::widget_runtime::InteractionValue value;
+        std::unordered_set<const void*> ancestors;
+        std::string valueError;
+        if (!ReadInteractionValue(state, -1, value, 0,
+                valueNodes, valueStringBytes, ancestors, valueError))
+        {
+            return luaL_error(state,
+                "schedule.timeline: value must be bounded JSON-like data: %s",
+                valueError.c_str());
+        }
+        lua_pop(state, 2);
+        entries.push_back({ at, std::move(value) });
+    }
+
+    auto hiddenPolicy =
+        snowdesktop::widget_runtime::ScheduleHiddenPolicy::Throttle;
+    bool reloadAtEnd = false;
+    if (!lua_isnoneornil(state, 3))
+    {
+        luaL_checktype(state, 3, LUA_TTABLE);
+        if (lua_getmetatable(state, 3) != 0)
+        {
+            lua_pop(state, 1);
+            return luaL_error(state,
+                "schedule.timeline: options must be a plain table");
+        }
+        lua_pushnil(state);
+        while (lua_next(state, 3) != 0)
+        {
+            if (lua_type(state, -2) != LUA_TSTRING)
+                return luaL_error(state,
+                    "schedule.timeline: option keys must be strings");
+            std::size_t keyLength = 0;
+            const char* key = lua_tolstring(state, -2, &keyLength);
+            const std::string_view field(key ? key : "", keyLength);
+            if (field != "whenHidden" && field != "reload")
+                return luaL_error(state,
+                    "schedule.timeline: options received an unknown field");
+            lua_pop(state, 1);
+        }
+        lua_getfield(state, 3, "whenHidden");
+        if (!lua_isnil(state, -1))
+        {
+            std::size_t valueLength = 0;
+            const char* raw = luaL_checklstring(
+                state, -1, &valueLength);
+            const std::string_view value(raw, valueLength);
+            if (value == "pause")
+                hiddenPolicy = snowdesktop::widget_runtime::
+                    ScheduleHiddenPolicy::Pause;
+            else if (value == "throttle")
+                hiddenPolicy = snowdesktop::widget_runtime::
+                    ScheduleHiddenPolicy::Throttle;
+            else if (value == "continue")
+                hiddenPolicy = snowdesktop::widget_runtime::
+                    ScheduleHiddenPolicy::Continue;
+            else
+                return luaL_error(state,
+                    "schedule.timeline: whenHidden must be 'pause', 'throttle', or 'continue'");
+        }
+        lua_pop(state, 1);
+        lua_getfield(state, 3, "reload");
+        if (!lua_isnil(state, -1))
+        {
+            std::size_t valueLength = 0;
+            const char* raw = luaL_checklstring(
+                state, -1, &valueLength);
+            const std::string_view value(raw, valueLength);
+            if (value == "atEnd") reloadAtEnd = true;
+            else if (value != "none")
+                return luaL_error(state,
+                    "schedule.timeline: reload must be 'none' or 'atEnd'");
+        }
+        lua_pop(state, 1);
+    }
+
+    auto* d2d = GetD2D(state);
+    lua_pushboolean(state, d2d && d2d->engine &&
+        d2d->engine->RuntimeSetTimeline(BoundWidgetId(state),
+            std::string(name, nameLength), std::move(entries),
+            hiddenPolicy, reloadAtEnd));
+    return 1;
+}
+
 static int lua_ScheduleEvery(lua_State* state)
 {
     return LuaScheduleSet(state, true, "schedule.every");
@@ -15962,16 +16134,18 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
     widget.namedTimerId = 0;
 
     const auto now = std::chrono::steady_clock::now();
+    const auto wallNow = std::chrono::system_clock::now();
     const auto wallNowMilliseconds =
         std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count();
+            wallNow.time_since_epoch()).count();
     const std::vector<std::string> dueNames =
-        widget.namedTimers.DueNames(now);
+        widget.namedTimers.DueNames(now, wallNow);
 
     bool invoked = false;
     for (const auto& name : dueNames)
     {
-        const auto fire = widget.namedTimers.ConsumeDueInfo(name, now);
+        const auto fire = widget.namedTimers.ConsumeDueInfo(
+            name, now, wallNow);
         if (!fire)
             continue;
 
@@ -15991,6 +16165,25 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
                     lua_pushboolean(eventState,
                         fire->coalesced ? 1 : 0);
                     lua_setfield(eventState, -2, "coalesced");
+                    if (fire->timeline)
+                    {
+                        PushInteractionValue(eventState, fire->value);
+                        lua_setfield(eventState, -2, "value");
+                        lua_pushinteger(eventState,
+                            static_cast<lua_Integer>(
+                                fire->timelineIndex));
+                        lua_setfield(eventState, -2, "timelineIndex");
+                        lua_pushinteger(eventState,
+                            static_cast<lua_Integer>(
+                                fire->timelineCount));
+                        lua_setfield(eventState, -2, "timelineCount");
+                        lua_pushboolean(eventState,
+                            fire->timelineEnded ? 1 : 0);
+                        lua_setfield(eventState, -2, "timelineEnded");
+                        lua_pushboolean(eventState,
+                            fire->reload ? 1 : 0);
+                        lua_setfield(eventState, -2, "reload");
+                    }
                 });
             invoked = true;
             continue;
@@ -19467,6 +19660,27 @@ bool WidgetEngine::RuntimeSetTimerAt(const std::wstring& widgetId,
     if (!widgets_[index].namedTimers.SetAt(name, epochMilliseconds,
             std::chrono::steady_clock::now(),
             std::chrono::system_clock::now(), hiddenPolicy))
+    {
+        return false;
+    }
+    RescheduleNamedTimer(widgets_[index]);
+    return true;
+}
+
+bool WidgetEngine::RuntimeSetTimeline(const std::wstring& widgetId,
+    const std::string& name,
+    std::vector<snowdesktop::widget_runtime::
+        NamedTimerSchedule::TimelineEntry> entries,
+    snowdesktop::widget_runtime::ScheduleHiddenPolicy hiddenPolicy,
+    bool reloadAtEnd)
+{
+    if (snowdesktop::widget_runtime::IsDryLoad()) return false;
+    const int index = FindWidget(widgetId);
+    if (index < 0 || name.empty()) return false;
+    if (!widgets_[index].namedTimers.SetTimeline(name,
+            std::move(entries), std::chrono::steady_clock::now(),
+            std::chrono::system_clock::now(), hiddenPolicy,
+            reloadAtEnd))
     {
         return false;
     }
@@ -24176,6 +24390,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "every", lua_ScheduleEvery, 2 },
         { "after", lua_ScheduleAfter, 2 },
         { "at", lua_ScheduleAt, 2 },
+        { "timeline", lua_ScheduleTimeline, 2 },
         { "cancel", lua_ScheduleCancel, 2 },
     };
     static constexpr FunctionDescriptor data[] = {
