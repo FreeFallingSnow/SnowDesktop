@@ -184,15 +184,28 @@ local function setAllCompleted(doneValue)
 end
 
 local function migrateStorage(oldVersion, newVersion)
-    if oldVersion >= 2 or newVersion < 2 then return end
-    local ids = loadOrder()
+    local migrateDoneState = oldVersion < 2 and newVersion >= 2
+    local migrateSelectionState = oldVersion < 3 and newVersion >= 3
+    if not migrateDoneState and not migrateSelectionState then return end
+
+    local ids = {}
     local done = {}
-    for _, id in ipairs(ids) do
-        if storage.get(legacyTaskDoneKey(id)) == "1" then done[id] = true end
+    if migrateDoneState then
+        ids = loadOrder()
+        for _, id in ipairs(ids) do
+            if storage.get(legacyTaskDoneKey(id)) == "1" then
+                done[id] = true
+            end
+        end
     end
     storage.transaction(function(tx)
-        for _, id in ipairs(ids) do tx:remove(legacyTaskDoneKey(id)) end
-        saveDoneIds(tx, ids, done)
+        if migrateDoneState then
+            for _, id in ipairs(ids) do
+                tx:remove(legacyTaskDoneKey(id))
+            end
+            saveDoneIds(tx, ids, done)
+        end
+        if migrateSelectionState then tx:remove("selectedId") end
     end)
 end
 

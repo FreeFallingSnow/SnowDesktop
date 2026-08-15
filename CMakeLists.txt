@@ -1036,6 +1036,13 @@ if (BUILD_TESTING)
         LABELS contract lua storage widget)
 
     snowdesktop_add_test(
+        SnowDesktopBuiltinWidgetSourceContractTests
+        builtin_widget_source_contract
+        SOURCES tests/builtin_widget_source_contract_tests.cpp
+        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
+        LABELS contract lua render storage widget)
+
+    snowdesktop_add_test(
         SnowDesktopWidgetLogicalSlotTests
         widget_logical_slot
         SOURCES
