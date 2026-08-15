@@ -89,7 +89,7 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` feature 提供
 `sparkline/lineChart/barChart/waveform/spectrum`，`view.statusVisuals` 提供
 `badge/divider/meter`，`view.selectionControls` 提供 `toggle/checkbox`，
-`view.grid.uniform` 提供基础 `grid`。
+`view.grid.uniform` 提供基础 `grid`，`view.flow.wrap` 提供横向换行 `flow`。
 每次 `view(context, model)` 返回一棵完整树；所有节点必须提供全树唯一、1–128 字节的
 稳定 `key`。宿主先完整解析、校验和布局，再原子替换上一棵成功树；回调或校验失败时
 继续显示上一棵树，不留下半棵树或空白交互区。
@@ -162,6 +162,13 @@ view.toggle({
 `view.grid.uniform`。该 feature 不包含自定义 track、显式行定义、跨行/跨列、自动填充、
 瀑布流或虚拟化；需要这些能力时不得假设基础 `grid` 会静默模拟。
 
+`flow` 按子节点原顺序从左到右放置，当前行剩余宽度不足时整体换到下一行；隐藏子节点
+不占位置，单个超宽子节点钳制到内容区宽度。`columnGap/rowGap` 独立控制项间距与行间距，
+未提供时回退到 `gap`；`justifyContent` 分别作用于每一行的横向剩余空间，
+`alignItems/alignSelf` 控制行内纵向对齐。自动高度采用“每项单独一行”的保守固有高度，
+避免测量阶段因未知最终宽度截断换行内容；在固定或 fill 高度中，超出的行高会按可用高度
+收缩。对应 feature 为 `view.flow.wrap`，不包含纵向 flow、masonry、滚动或虚拟化。
+
 `shape` 支持 rectangle、roundedRectangle、circle 和 ellipse；填充与描边来自 style。
 `image` 的 `source` 只接受入口加载期间创建的 `resource.image()` 句柄，必须显式提供
 `alt`（装饰图片使用空字符串），支持 `fill/contain/cover/none` fit、
@@ -204,7 +211,7 @@ view.waveform({
 区域；数据图形另有上述逐节点和全树样本额度。未知字段、错误枚举、非连续 children、
 重复 key、NaN/Infinity 和越界值会拒绝整次提交。桌面树只布局在底部标题栏之上的内容区。
 
-该 feature 不是完整 `view.tree`：当前每帧重建树，尚无 flow/scroll/list/
+该 feature 不是完整 `view.tree`：当前每帧重建树，尚无 scroll/list/
 input/slot 节点，也没有键盘焦点、UIA 输出、RTL、文本换行、主题
 token、差量资源复用或声明式 panel。需要这些能力的组件应继续使用 v2 即时绘制或等待
 对应 feature；不得把 `view.tree.core` 当作稳定完整控件集声明。

@@ -159,6 +159,7 @@ void RegisterViewLibrary(lua_State* state)
         { "row", LuaViewRow },
         { "column", LuaViewColumn },
         { "grid", LuaViewGrid },
+        { "flow", LuaViewFlow },
         { "stack", LuaViewStack },
         { "text", LuaViewText },
         { "image", LuaViewImage },
@@ -736,6 +737,58 @@ void TestUniformGridParsingAndLayout()
         "grid layout must enforce the documented column limit");
     lua_close(state);
 }
+
+void TestFlowParsingAndLayout()
+{
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "Lua state must be available");
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    Check(luaL_dostring(state, R"lua(
+        return view.flow({
+            key = "flow",
+            columnGap = 5,
+            rowGap = 7,
+            alignItems = "start",
+            justifyContent = "spaceBetween",
+            children = {
+                view.shape({ key = "one", width = 60, height = 20 }),
+                view.shape({ key = "hidden", width = 140, height = 20,
+                    visible = false }),
+                view.shape({ key = "two", width = 60, height = 20 }),
+                view.shape({ key = "three", width = 60, height = 20 }),
+            },
+        })
+    )lua") == LUA_OK,
+        "flow Lua fixture must evaluate");
+    ViewNode root;
+    std::string error;
+    Check(ParseLuaViewTree(state, -1, root, error) &&
+            root.type == ViewNodeType::Flow &&
+            root.columnGap && Near(*root.columnGap, 5.0f) &&
+            root.rowGap && Near(*root.rowGap, 7.0f),
+        "flow parsing must retain independent line gaps");
+    Check(ValidateAndLayoutViewTree(root, 150.0f, 80.0f, error) &&
+            Near(root.children[0].frame.x, 0.0f) &&
+            Near(root.children[0].frame.y, 0.0f) &&
+            Near(root.children[2].frame.x, 90.0f) &&
+            Near(root.children[2].frame.y, 0.0f) &&
+            Near(root.children[3].frame.x, 0.0f) &&
+            Near(root.children[3].frame.y, 27.0f) &&
+            Near(root.children[3].frame.width, 60.0f),
+        "flow must skip hidden children, wrap by width, and justify each line");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.flow({ key = "invalid", columns = 2 })
+    )lua") == LUA_OK,
+        "flow-columns fixture must evaluate");
+    ViewNode invalid;
+    Check(!ParseLuaViewTree(state, -1, invalid, error) &&
+            error.find("only grid") != std::string::npos,
+        "flow must reject fixed grid column counts");
+    lua_close(state);
+}
 }
 
 int main()
@@ -748,6 +801,7 @@ int main()
     TestStatusVisualParsing();
     TestSelectionControlParsing();
     TestUniformGridParsingAndLayout();
+    TestFlowParsingAndLayout();
     std::cout << "Widget view tree tests passed\n";
     return 0;
 }

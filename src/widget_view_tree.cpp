@@ -121,6 +121,21 @@ float IntrinsicWidth(const ViewNode& node)
                 static_cast<float>(usedColumns - 1);
         return result + node.padding * 2.0f;
     }
+    if (node.type == ViewNodeType::Flow)
+    {
+        float result = 0.0f;
+        std::size_t visible = 0;
+        for (const auto& child : node.children)
+        {
+            if (!child.visible) continue;
+            result += IntrinsicWidth(child);
+            ++visible;
+        }
+        if (visible > 1)
+            result += node.columnGap.value_or(node.gap) *
+                static_cast<float>(visible - 1);
+        return result + node.padding * 2.0f;
+    }
     float result = 0.0f;
     if (node.type == ViewNodeType::Row)
     {
@@ -196,6 +211,21 @@ float IntrinsicHeight(const ViewNode& node)
         if (heights.size() > 1)
             result += node.rowGap.value_or(node.gap) *
                 static_cast<float>(heights.size() - 1);
+        return result + node.padding * 2.0f;
+    }
+    if (node.type == ViewNodeType::Flow)
+    {
+        float result = 0.0f;
+        std::size_t visible = 0;
+        for (const auto& child : node.children)
+        {
+            if (!child.visible) continue;
+            result += IntrinsicHeight(child);
+            ++visible;
+        }
+        if (visible > 1)
+            result += node.rowGap.value_or(node.gap) *
+                static_cast<float>(visible - 1);
         return result + node.padding * 2.0f;
     }
     float result = 0.0f;
@@ -394,6 +424,89 @@ void LayoutGrid(ViewNode& node, const ViewRect& content)
     }
 }
 
+void LayoutFlow(ViewNode& node, const ViewRect& content)
+{
+    struct Item
+    {
+        ViewNode* node = nullptr;
+        float width = 0.0f;
+        float intrinsicHeight = 0.0f;
+    };
+    struct Line
+    {
+        std::vector<Item> items;
+        float width = 0.0f;
+        float height = 0.0f;
+    };
+
+    std::vector<Line> lines;
+    const float columnGap = node.columnGap.value_or(node.gap);
+    for (auto& child : node.children)
+    {
+        if (!child.visible) continue;
+        float width = IntrinsicWidth(child);
+        if (child.width.kind == ViewLengthKind::Fixed)
+            width = child.width.value;
+        else if (child.width.kind == ViewLengthKind::Fill)
+            width = content.width;
+        width = std::clamp(width, 0.0f, content.width);
+        const float height = IntrinsicHeight(child);
+        if (lines.empty() || (!lines.back().items.empty() &&
+                lines.back().width + columnGap + width > content.width))
+            lines.push_back({});
+        Line& line = lines.back();
+        if (!line.items.empty()) line.width += columnGap;
+        line.width += width;
+        line.height = std::max(line.height, height);
+        line.items.push_back({ &child, width, height });
+    }
+    if (lines.empty()) return;
+
+    float rowGap = node.rowGap.value_or(node.gap);
+    float linesHeight = 0.0f;
+    for (const auto& line : lines) linesHeight += line.height;
+    const float gapHeight = rowGap * static_cast<float>(lines.size() - 1);
+    const float availableLinesHeight = std::max(
+        0.0f, content.height - gapHeight);
+    if (linesHeight > availableLinesHeight && linesHeight > 0.0f)
+    {
+        const float scale = availableLinesHeight / linesHeight;
+        for (auto& line : lines) line.height *= scale;
+        linesHeight = availableLinesHeight;
+    }
+
+    float y = content.y;
+    for (auto& line : lines)
+    {
+        float x = content.x;
+        float dynamicGap = columnGap;
+        if (node.justifyContent == ViewJustification::Center)
+            x += std::max(0.0f, (content.width - line.width) * 0.5f);
+        else if (node.justifyContent == ViewJustification::End)
+            x += std::max(0.0f, content.width - line.width);
+        else if (node.justifyContent == ViewJustification::SpaceBetween &&
+            line.items.size() > 1 && content.width > line.width)
+        {
+            dynamicGap += (content.width - line.width) /
+                static_cast<float>(line.items.size() - 1);
+        }
+        for (const Item& item : line.items)
+        {
+            ViewNode& child = *item.node;
+            const ViewAlignment alignment =
+                child.alignSelf == ViewAlignment::Auto
+                ? node.alignItems : child.alignSelf;
+            const float height = ResolveCrossSize(child.height,
+                item.intrinsicHeight, line.height, alignment);
+            LayoutNode(child, { x,
+                y + AlignOffset(alignment, line.height, height),
+                item.width, height });
+            x += item.width + dynamicGap;
+        }
+        y += line.height + rowGap;
+    }
+}
+
 void LayoutNode(ViewNode& node, const ViewRect& frame)
 {
     node.frame = frame;
@@ -411,6 +524,8 @@ void LayoutNode(ViewNode& node, const ViewRect& frame)
         LayoutLinear(node, content, false);
     else if (node.type == ViewNodeType::Grid)
         LayoutGrid(node, content);
+    else if (node.type == ViewNodeType::Flow)
+        LayoutFlow(node, content);
     else if (node.type == ViewNodeType::Box ||
         node.type == ViewNodeType::Stack)
     {
@@ -491,10 +606,16 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         error = "grid columns must be between 1 and 64";
         return false;
     }
-    if (node.type != ViewNodeType::Grid &&
-        (node.columns != 1 || node.columnGap || node.rowGap))
+    if (node.type != ViewNodeType::Grid && node.columns != 1)
     {
-        error = "grid layout fields are reserved for grid nodes";
+        error = "grid columns are reserved for grid nodes";
+        return false;
+    }
+    if (node.type != ViewNodeType::Grid &&
+        node.type != ViewNodeType::Flow &&
+        (node.columnGap || node.rowGap))
+    {
+        error = "columnGap and rowGap are reserved for grid and flow nodes";
         return false;
     }
     if (node.text.size() > ViewTreeLimits::MaximumTextBytes ||
@@ -778,6 +899,7 @@ const char* ViewNodeTypeName(ViewNodeType type) noexcept
     case ViewNodeType::Row: return "row";
     case ViewNodeType::Column: return "column";
     case ViewNodeType::Grid: return "grid";
+    case ViewNodeType::Flow: return "flow";
     case ViewNodeType::Stack: return "stack";
     case ViewNodeType::Text: return "text";
     case ViewNodeType::Image: return "image";

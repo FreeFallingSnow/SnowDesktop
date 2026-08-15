@@ -762,6 +762,7 @@ bool ParseNodeType(std::string_view type, ViewNodeType& result)
     else if (type == "row") result = ViewNodeType::Row;
     else if (type == "column") result = ViewNodeType::Column;
     else if (type == "grid") result = ViewNodeType::Grid;
+    else if (type == "flow") result = ViewNodeType::Flow;
     else if (type == "stack") result = ViewNodeType::Stack;
     else if (type == "text") result = ViewNodeType::Text;
     else if (type == "image") result = ViewNodeType::Image;
@@ -883,6 +884,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     const bool imageNode = node.type == ViewNodeType::Image;
     const bool dividerNode = node.type == ViewNodeType::Divider;
     const bool gridNode = node.type == ViewNodeType::Grid;
+    const bool flowNode = node.type == ViewNodeType::Flow;
     const bool textResourceNode = textNode || labelNode;
     if (labelNode &&
         (FieldPresent(state, index, "text") ||
@@ -927,11 +929,16 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         error = "only divider nodes accept orientation";
         return false;
     }
-    if (!gridNode && (FieldPresent(state, index, "columns") ||
-            FieldPresent(state, index, "columnGap") ||
+    if (!gridNode && FieldPresent(state, index, "columns"))
+    {
+        error = "only grid nodes accept columns";
+        return false;
+    }
+    if (!gridNode && !flowNode &&
+        (FieldPresent(state, index, "columnGap") ||
             FieldPresent(state, index, "rowGap")))
     {
-        error = "only grid nodes accept columns, columnGap, and rowGap";
+        error = "only grid and flow nodes accept columnGap and rowGap";
         return false;
     }
     if (gridNode && !FieldPresent(state, index, "columns"))
@@ -1235,6 +1242,7 @@ int LuaViewBox(lua_State* state) { return MakeNode(state, "box"); }
 int LuaViewRow(lua_State* state) { return MakeNode(state, "row"); }
 int LuaViewColumn(lua_State* state) { return MakeNode(state, "column"); }
 int LuaViewGrid(lua_State* state) { return MakeNode(state, "grid"); }
+int LuaViewFlow(lua_State* state) { return MakeNode(state, "flow"); }
 int LuaViewStack(lua_State* state) { return MakeNode(state, "stack"); }
 int LuaViewText(lua_State* state) { return MakeNode(state, "text"); }
 int LuaViewImage(lua_State* state) { return MakeNode(state, "image"); }

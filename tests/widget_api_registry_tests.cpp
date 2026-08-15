@@ -383,6 +383,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature("view.font") &&
             snowdesktop::widget_api::SupportsFeature("view.dataSeries") &&
             snowdesktop::widget_api::SupportsFeature(
+                "view.flow.wrap") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "view.grid.uniform") &&
             snowdesktop::widget_api::SupportsFeature("view.image") &&
             snowdesktop::widget_api::SupportsFeature(

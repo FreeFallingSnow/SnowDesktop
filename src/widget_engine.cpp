@@ -19292,6 +19292,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "row", snowdesktop::widget_runtime::LuaViewRow, 2 },
         { "column", snowdesktop::widget_runtime::LuaViewColumn, 2 },
         { "grid", snowdesktop::widget_runtime::LuaViewGrid, 2 },
+        { "flow", snowdesktop::widget_runtime::LuaViewFlow, 2 },
         { "stack", snowdesktop::widget_runtime::LuaViewStack, 2 },
         { "text", snowdesktop::widget_runtime::LuaViewText, 2 },
         { "image", snowdesktop::widget_runtime::LuaViewImage, 2 },

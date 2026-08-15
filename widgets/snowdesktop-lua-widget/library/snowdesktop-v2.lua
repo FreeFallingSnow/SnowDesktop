@@ -167,8 +167,8 @@
 ---@field padding? number
 ---@field gap? number
 ---@field columns? integer Required by grid; 1 to 64 equal-width columns.
----@field columnGap? number Grid horizontal gap; defaults to gap.
----@field rowGap? number Grid vertical gap; defaults to gap.
+---@field columnGap? number Grid/flow horizontal gap; defaults to gap.
+---@field rowGap? number Grid/flow vertical gap; defaults to gap.
 ---@field flexGrow? number
 ---@field alignItems? SnowViewAlignment
 ---@field alignSelf? SnowViewSelfAlignment
@@ -190,7 +190,7 @@
 ---@field children? SnowViewNode[]
 
 ---@class SnowViewNode: SnowViewNodeOptions
----@field type 'box'|'row'|'column'|'grid'|'stack'|'text'|'image'|'button'|'toggle'|'checkbox'|'icon'|'iconButton'|'shape'|'badge'|'divider'|'progressBar'|'progressRing'|'meter'|'sparkline'|'lineChart'|'barChart'|'waveform'|'spectrum'|'spacer'
+---@field type 'box'|'row'|'column'|'grid'|'flow'|'stack'|'text'|'image'|'button'|'toggle'|'checkbox'|'icon'|'iconButton'|'shape'|'badge'|'divider'|'progressBar'|'progressRing'|'meter'|'sparkline'|'lineChart'|'barChart'|'waveform'|'spectrum'|'spacer'
 
 ---@class SnowInteractionShape
 ---@field type 'rect'|'roundedRect'|'circle'
@@ -475,6 +475,10 @@ function view.column(options) end
 ---@param options SnowViewNodeOptions Requires columns; row-major equal-width layout, probes with view.grid.uniform.
 ---@return SnowViewNode
 function view.grid(options) end
+
+---@param options SnowViewNodeOptions Horizontal wrapping layout; probes with view.flow.wrap.
+---@return SnowViewNode
+function view.flow(options) end
 
 ---@param options SnowViewNodeOptions
 ---@return SnowViewNode

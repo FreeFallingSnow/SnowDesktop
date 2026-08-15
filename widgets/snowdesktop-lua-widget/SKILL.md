@@ -94,8 +94,12 @@ updating component-owned state; never bind `click` or assume the host persists
 the proposed value.
 Probe `view.grid.uniform` before using `view.grid`; it is a bounded row-major
 equal-column layout with 1–64 columns and optional `columnGap`/`rowGap`, not
-the future track/span/virtual-grid contract. It does not yet provide keyboard
-focus, UI Automation, collections, or the complete `view.tree` contract. Optional
+the future track/span/virtual-grid contract.
+Probe `view.flow.wrap` before using `view.flow`; it wraps fixed/auto-width
+children horizontally, skips hidden children, and supports per-line
+`columnGap`/`rowGap`, but it is not a scrolling or virtualized collection.
+The subset does not yet provide keyboard focus, UI Automation, collections,
+or the complete `view.tree` contract. Optional
 `menu(context, model, request)` builds an element's synchronous native context
 menu.
 

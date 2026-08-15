@@ -18,6 +18,7 @@ enum class ViewNodeType
     Row,
     Column,
     Grid,
+    Flow,
     Stack,
     Text,
     Image,
