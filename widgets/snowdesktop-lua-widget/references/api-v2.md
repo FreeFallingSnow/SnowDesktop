@@ -1468,6 +1468,11 @@ metatable、混合数组/对象以及超出深度、节点、字符串或 256-ke
 - `time.format(epochMilliseconds?, options?)`。
 - `time.add(epochMilliseconds, delta, options?)`、`time.compare(a, b)`。
 
+时区参数接受 `local`、`utc` 或 Windows 时区键（例如
+`Pacific Standard Time`、`China Standard Time`）。`widget.context().timeZone`
+返回的键可直接传给上述接口；显式时区的拆分、格式化和日历加减会应用对应日期的
+DST 规则。未知时区会被拒绝，不会静默回退到本地时区。
+
 这些基础环境与时间接口不要求高风险权限。`system.capabilities("system.cpu")`
 这类 API 名查询会同时返回 `feature`、`kind`、`hostAvailable`、`authorized`、
 `permission`、`available/reason` 和刷新率或并发上限。`hostAvailable` 只表示宿主包含

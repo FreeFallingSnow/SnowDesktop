@@ -7,6 +7,7 @@
 #include <cctype>
 #include <limits>
 #include <string>
+#include <vector>
 
 namespace snowdesktop::widget_time
 {
@@ -77,6 +78,24 @@ struct ResolvedTimeZone
     DYNAMIC_TIME_ZONE_INFORMATION value{};
 };
 
+const std::vector<DYNAMIC_TIME_ZONE_INFORMATION>& EnumeratedTimeZones()
+{
+    static const std::vector<DYNAMIC_TIME_ZONE_INFORMATION> zones = [] {
+        std::vector<DYNAMIC_TIME_ZONE_INFORMATION> result;
+        for (DWORD index = 0;; ++index)
+        {
+            DYNAMIC_TIME_ZONE_INFORMATION value{};
+            const DWORD status = EnumDynamicTimeZoneInformation(
+                index, &value);
+            if (status == ERROR_NO_MORE_ITEMS) break;
+            if (status != ERROR_SUCCESS) break;
+            result.push_back(value);
+        }
+        return result;
+    }();
+    return zones;
+}
+
 bool ResolveTimeZone(std::string_view name, ResolvedTimeZone& result)
 {
     if (EqualsAsciiInsensitive(name, "utc"))
@@ -84,10 +103,29 @@ bool ResolveTimeZone(std::string_view name, ResolvedTimeZone& result)
         result.utc = true;
         return true;
     }
-    if (!EqualsAsciiInsensitive(name, "local")) return false;
     result.utc = false;
-    return GetDynamicTimeZoneInformation(&result.value) !=
-        TIME_ZONE_ID_INVALID;
+    if (EqualsAsciiInsensitive(name, "local"))
+    {
+        return GetDynamicTimeZoneInformation(&result.value) !=
+            TIME_ZONE_ID_INVALID;
+    }
+
+    const std::wstring requested = Utf8ToWide(name);
+    if (requested.empty()) return false;
+    const auto match = std::find_if(EnumeratedTimeZones().begin(),
+        EnumeratedTimeZones().end(), [&](const auto& candidate) {
+            return _wcsicmp(candidate.TimeZoneKeyName,
+                       requested.c_str()) == 0 ||
+                (candidate.StandardName[0] != L'\0' &&
+                    _wcsicmp(candidate.StandardName,
+                        requested.c_str()) == 0) ||
+                (candidate.DaylightName[0] != L'\0' &&
+                    _wcsicmp(candidate.DaylightName,
+                        requested.c_str()) == 0);
+        });
+    if (match == EnumeratedTimeZones().end()) return false;
+    result.value = *match;
+    return true;
 }
 
 std::uint64_t FileTimeValue(const FILETIME& value)

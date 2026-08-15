@@ -41,6 +41,19 @@ void TestParts()
     Check(snowdesktop::widget_time::Parts(0, "invalid", parts) ==
             snowdesktop::widget_time::TimeError::InvalidTimeZone,
         "parts must reject unsupported time zones");
+
+    Check(snowdesktop::widget_time::Parts(
+            Timestamp(2024, 7, 1, 12), "Pacific Standard Time", parts) ==
+            snowdesktop::widget_time::TimeError::None &&
+            parts.year == 2024 && parts.month == 7 && parts.day == 1 &&
+            parts.hour == 5,
+        "parts must resolve explicit Windows time-zone keys with DST");
+    Check(snowdesktop::widget_time::Parts(
+            Timestamp(2024, 7, 1, 12), "Tokyo Standard Time", parts) ==
+            snowdesktop::widget_time::TimeError::None &&
+            parts.year == 2024 && parts.month == 7 && parts.day == 1 &&
+            parts.hour == 21,
+        "parts must resolve Windows zones without daylight saving time");
 }
 
 void TestFormatting()
@@ -98,6 +111,13 @@ void TestCalendarAddition()
 
     Check(Add(0, {}, "invalid", result) == TimeError::InvalidTimeZone,
         "calendar addition must reject unsupported time zones");
+
+    AddDelta pacificDay;
+    pacificDay.days = 1;
+    Check(Add(Timestamp(2024, 3, 10, 4), pacificDay,
+            "Pacific Standard Time", result) == TimeError::None &&
+            result == Timestamp(2024, 3, 11, 3),
+        "calendar-day addition must preserve local time across DST changes");
 }
 }
 
