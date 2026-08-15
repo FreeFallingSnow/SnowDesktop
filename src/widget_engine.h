@@ -558,10 +558,14 @@ struct LuaWidget
     std::string viewKeyboardFocusKey;
     snowdesktop::widget_runtime::WidgetInteractionRegions interactionRegions;
     std::optional<snowdesktop::widget_runtime::ViewNode> viewTree;
+    snowdesktop::widget_runtime::ViewTransitionRuntime viewTransitions;
+    bool viewTransitionFramePending = false;
     std::string panelViewKeyboardFocusKey;
     snowdesktop::widget_runtime::WidgetInteractionRegions
         panelInteractionRegions;
     std::optional<snowdesktop::widget_runtime::ViewNode> panelViewTree;
+    snowdesktop::widget_runtime::ViewTransitionRuntime panelViewTransitions;
+    bool panelViewTransitionFramePending = false;
     std::string panelSurface = "panel";
     bool panelActive = false;
     bool panelFrameOpen = false;

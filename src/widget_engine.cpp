@@ -15989,7 +15989,10 @@ private:
 static void DrawWidgetViewNode(D2DState* state,
     const snowdesktop::widget_runtime::ViewNode& node,
     const snowdesktop::widget_runtime::WidgetInteractionRegions& regions,
-    std::string_view focusedKey, float inheritedScale = 1.0f)
+    std::string_view focusedKey,
+    snowdesktop::widget_runtime::ViewTransitionRuntime* transitions,
+    snowdesktop::widget_runtime::ViewTransitionRuntime::TimePoint now,
+    bool reducedMotion, float inheritedScale = 1.0f)
 {
     using snowdesktop::widget_runtime::ViewNodeType;
     using snowdesktop::widget_runtime::ViewShapeKind;
@@ -16020,6 +16023,9 @@ static void DrawWidgetViewNode(D2DState* state,
         else if (hovered && !node.hoverStyle.opacity)
             style.opacity = 0.82f;
     }
+    if (transitions)
+        style = transitions->Resolve(
+            node.key, style, node.transition, now, reducedMotion);
     const bool badgeNode = node.type == ViewNodeType::Badge;
     const float opacity = std::clamp(
         style.opacity.value_or(1.0f), 0.0f, 1.0f);
@@ -16740,7 +16746,8 @@ static void DrawWidgetViewNode(D2DState* state,
         for (const auto* child : snowdesktop::widget_runtime::
                 ViewChildrenInPaintOrder(node))
             DrawWidgetViewNode(
-                state, *child, regions, focusedKey, cumulativeScale);
+                state, *child, regions, focusedKey, transitions,
+                now, reducedMotion, cumulativeScale);
         state->ctx->PopAxisAlignedClip();
         --state->widgetClipDepth;
 
@@ -16806,7 +16813,8 @@ static void DrawWidgetViewNode(D2DState* state,
     for (const auto* child : snowdesktop::widget_runtime::
             ViewChildrenInPaintOrder(node))
         DrawWidgetViewNode(
-            state, *child, regions, focusedKey, cumulativeScale);
+            state, *child, regions, focusedKey, transitions,
+            now, reducedMotion, cumulativeScale);
     if (focused && specialGeometry && style.borderColor)
     {
         if (ID2D1SolidColorBrush* focus = GetCachedBrush(state,
@@ -16816,6 +16824,22 @@ static void DrawWidgetViewNode(D2DState* state,
                     std::max(3.0f, radius)), focus,
                 std::max(1.0f, style.borderWidth.value_or(1.5f)));
     }
+}
+
+static bool DrawWidgetViewTree(D2DState* state,
+    const snowdesktop::widget_runtime::ViewNode& tree,
+    const snowdesktop::widget_runtime::WidgetInteractionRegions& regions,
+    std::string_view focusedKey,
+    snowdesktop::widget_runtime::ViewTransitionRuntime& transitions,
+    bool reducedMotion)
+{
+    const auto now = snowdesktop::widget_runtime::
+        ViewTransitionRuntime::Clock::now();
+    transitions.BeginFrame();
+    DrawWidgetViewNode(state, tree, regions, focusedKey,
+        &transitions, now, reducedMotion);
+    transitions.EndFrame();
+    return transitions.HasActive();
 }
 
 static void DrawWidgetViewTooltip(D2DState* state,
@@ -17125,6 +17149,9 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
 
     d2dState_->ctx = context;
     DrainShellIconResults(d2dState_);
+    const RECT previousBounds = found->lastBounds;
+    const int previousColumns = found->lastColumns;
+    const int previousRows = found->lastRows;
     found->lastBounds = bounds;
     d2dState_->gridColumns = std::max(1, columns);
     d2dState_->gridRows = std::max(1, rows);
@@ -17194,6 +17221,35 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
         }
     }
     found->lastRenderTime = std::chrono::steady_clock::now();
+    const bool transitionFrameRequested =
+        std::exchange(found->viewTransitionFramePending, false);
+    const bool transitionGeometryUnchanged =
+        EqualRect(&previousBounds, &bounds) != FALSE &&
+        previousColumns == columns && previousRows == rows;
+    if (transitionFrameRequested && transitionGeometryUnchanged &&
+        found->manifest.apiVersion >= 2 && found->viewTree)
+    {
+        d2dState_->widgetClipDepth = 0;
+        const bool transitionActive = DrawWidgetViewTree(
+            d2dState_, *found->viewTree, found->interactionRegions,
+            found->viewKeyboardFocusKey, found->viewTransitions,
+            found->preview || !widgetTimerRequestCallback_ ||
+                QueryWidgetSystemEnvironment().reducedMotion);
+        DrawWidgetSelectOverlays(d2dState_, *found->viewTree,
+            found->interactionRegions, found->viewTree->frame.height);
+        DrawHostViewInteractionOverlays(*found,
+            found->interactionRegions,
+            found->viewKeyboardFocusKey, true);
+        DrawWidgetViewTooltip(d2dState_, found->interactionRegions);
+        while (d2dState_->widgetClipDepth > 0)
+        {
+            d2dState_->ctx->PopAxisAlignedClip();
+            --d2dState_->widgetClipDepth;
+        }
+        if (transitionActive)
+            (void)ScheduleAnimationFrame(*found);
+        return;
+    }
     std::erase_if(found->hostControls, [](const auto& control) {
         return HostControlBelongsToSurface(control, "desktop");
     });
@@ -17554,9 +17610,13 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             RuntimeInvalidateHost(widgetId);
         if (found->viewTree)
         {
-            DrawWidgetViewNode(d2dState_, *found->viewTree,
+            const bool transitionActive = DrawWidgetViewTree(
+                d2dState_, *found->viewTree,
                 found->interactionRegions,
-                found->viewKeyboardFocusKey);
+                found->viewKeyboardFocusKey,
+                found->viewTransitions,
+                found->preview || !widgetTimerRequestCallback_ ||
+                    QueryWidgetSystemEnvironment().reducedMotion);
             DrawWidgetSelectOverlays(d2dState_, *found->viewTree,
                 found->interactionRegions,
                 found->viewTree->frame.height);
@@ -17573,6 +17633,8 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                 found->viewKeyboardFocusKey, true);
             DrawWidgetViewTooltip(
                 d2dState_, found->interactionRegions);
+            if (transitionActive)
+                (void)ScheduleAnimationFrame(*found);
         }
         while (d2dState_->widgetClipDepth > 0)
         {
@@ -17747,12 +17809,47 @@ bool WidgetEngine::RenderWidgetPanel(
 
     d2dState_->ctx = context;
     DrainShellIconResults(d2dState_);
+    const RECT previousPanelBounds = widget.panelBounds;
+    const std::string previousPanelSurface = widget.panelSurface;
+    const bool panelWasActive = widget.panelActive;
     widget.panelBounds = bounds;
     widget.panelSurface = normalizedSurface;
     widget.panelActive = true;
     SetWidgetRectContext(d2dState_, bounds);
     widget.lastRenderTime =
         std::chrono::steady_clock::now();
+    const bool transitionFrameRequested =
+        std::exchange(widget.panelViewTransitionFramePending, false);
+    if (transitionFrameRequested && panelWasActive &&
+        EqualRect(&previousPanelBounds, &bounds) != FALSE &&
+        previousPanelSurface == normalizedSurface &&
+        widget.manifest.apiVersion >= 2 && widget.panelViewTree)
+    {
+        d2dState_->widgetClipDepth = 0;
+        const bool transitionActive = DrawWidgetViewTree(
+            d2dState_, *widget.panelViewTree,
+            widget.panelInteractionRegions,
+            widget.panelViewKeyboardFocusKey,
+            widget.panelViewTransitions,
+            widget.preview || !widgetTimerRequestCallback_ ||
+                QueryWidgetSystemEnvironment().reducedMotion);
+        DrawWidgetSelectOverlays(d2dState_, *widget.panelViewTree,
+            widget.panelInteractionRegions,
+            widget.panelViewTree->frame.height);
+        DrawWidgetViewTooltip(
+            d2dState_, widget.panelInteractionRegions);
+        DrawHostViewInteractionOverlays(widget,
+            widget.panelInteractionRegions,
+            widget.panelViewKeyboardFocusKey, false);
+        while (d2dState_->widgetClipDepth > 0)
+        {
+            d2dState_->ctx->PopAxisAlignedClip();
+            --d2dState_->widgetClipDepth;
+        }
+        if (transitionActive)
+            (void)ScheduleAnimationFrame(widget);
+        return true;
+    }
     std::vector<LuaWidget::HostControl> previousPanelControls;
     for (const auto& control : widget.hostControls)
     {
@@ -17984,7 +18081,11 @@ bool WidgetEngine::RenderWidgetPanel(
                 if (hasView)
                     current.panelViewTree = std::move(candidate);
                 else
+                {
                     current.panelViewTree.reset();
+                    current.panelViewTransitions.Clear();
+                    current.panelViewTransitionFramePending = false;
+                }
                 const auto transition =
                     current.panelInteractionRegions.CommitFrame();
                 if (transition.Changed())
@@ -18002,15 +18103,21 @@ bool WidgetEngine::RenderWidgetPanel(
                     widgetId, normalizedSurface);
                 if (current.panelViewTree)
                 {
-                    DrawWidgetViewNode(d2dState_, *current.panelViewTree,
+                    const bool transitionActive = DrawWidgetViewTree(
+                        d2dState_, *current.panelViewTree,
                         current.panelInteractionRegions,
-                        current.panelViewKeyboardFocusKey);
+                        current.panelViewKeyboardFocusKey,
+                        current.panelViewTransitions,
+                        current.preview || !widgetTimerRequestCallback_ ||
+                            QueryWidgetSystemEnvironment().reducedMotion);
                     DrawWidgetSelectOverlays(d2dState_,
                         *current.panelViewTree,
                         current.panelInteractionRegions,
                         current.panelViewTree->frame.height);
                     DrawWidgetViewTooltip(d2dState_,
                         current.panelInteractionRegions);
+                    if (transitionActive)
+                        (void)ScheduleAnimationFrame(current);
                 }
                 if (!current.panelViewKeyboardFocusKey.empty() &&
                     !current.panelInteractionRegions.IsKeyboardFocusable(
@@ -18035,18 +18142,24 @@ bool WidgetEngine::RenderWidgetPanel(
         const int currentIndex = FindWidget(widgetId);
         if (currentIndex >= 0)
         {
-            const auto& current = widgets_[currentIndex];
+            auto& current = widgets_[currentIndex];
             if (current.panelViewTree)
             {
-                DrawWidgetViewNode(d2dState_, *current.panelViewTree,
+                const bool transitionActive = DrawWidgetViewTree(
+                    d2dState_, *current.panelViewTree,
                     current.panelInteractionRegions,
-                    current.panelViewKeyboardFocusKey);
+                    current.panelViewKeyboardFocusKey,
+                    current.panelViewTransitions,
+                    current.preview || !widgetTimerRequestCallback_ ||
+                        QueryWidgetSystemEnvironment().reducedMotion);
                 DrawWidgetSelectOverlays(d2dState_,
                     *current.panelViewTree,
                     current.panelInteractionRegions,
                     current.panelViewTree->frame.height);
                 DrawWidgetViewTooltip(d2dState_,
                     current.panelInteractionRegions);
+                if (transitionActive)
+                    (void)ScheduleAnimationFrame(current);
             }
             DrawHostViewInteractionOverlays(current,
                 current.panelInteractionRegions,
@@ -18373,6 +18486,14 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
             AnimationFrameRequests::Clock::now();
         const auto nowMilliseconds = snowdesktop::widget_runtime::
             CurrentMonotonicMilliseconds();
+        const bool desktopTransitionFrame =
+            widget.viewTransitions.Tick(now);
+        const bool panelTransitionFrame =
+            widget.panelViewTransitions.Tick(now);
+        if (desktopTransitionFrame)
+            widget.viewTransitionFramePending = true;
+        if (panelTransitionFrame && widget.panelActive)
+            widget.panelViewTransitionFramePending = true;
         const auto frames = widget.animationFrames.Consume(now);
         for (const auto& frame : frames)
         {
@@ -18390,6 +18511,10 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
                     lua_setfield(eventState, -2, "deltaMs");
                 });
         }
+        if (desktopTransitionFrame ||
+            (panelTransitionFrame && widget.panelActive))
+            RuntimeInvalidateHost(activeWidgetId);
+        (void)ScheduleAnimationFrame(widget);
         return;
     }
 
@@ -22325,7 +22450,10 @@ bool WidgetEngine::RuntimeCancelAnimationFrame(
     if (index < 0) return false;
     LuaWidget& widget = widgets_[index];
     const bool removed = widget.animationFrames.Cancel(name);
-    if (!widget.animationFrames.HasPending() && widget.animationTimerId)
+    if (!widget.animationFrames.HasPending() &&
+        !widget.viewTransitions.HasActive() &&
+        !widget.panelViewTransitions.HasActive() &&
+        widget.animationTimerId)
     {
         if (widgetTimerKillCallback_)
             widgetTimerKillCallback_(widget.animationTimerId);
@@ -22384,8 +22512,11 @@ bool WidgetEngine::ScheduleAnimationFrame(LuaWidget& widget)
 {
     if (widget.animationTimerId)
         return true;
-    if (widget.preview || !widget.hostVisible ||
-        !widget.animationFrames.HasPending() ||
+    const bool pending = widget.animationFrames.HasPending() ||
+        widget.viewTransitions.HasActive() ||
+        (widget.panelActive && widget.panelViewTransitions.HasActive());
+    if (widget.preview || (!widget.hostVisible && !widget.panelActive) ||
+        !pending ||
         !widgetTimerRequestCallback_)
         return false;
     widget.animationTimerId = widgetTimerRequestCallback_(
@@ -22400,6 +22531,10 @@ void WidgetEngine::StopAnimationFrames(LuaWidget& widget)
     widget.animationTimerId = 0;
     (void)widget.animationFrames.SetVisible(false);
     widget.animationFrames.Clear();
+    widget.viewTransitions.Clear();
+    widget.panelViewTransitions.Clear();
+    widget.viewTransitionFramePending = false;
+    widget.panelViewTransitionFramePending = false;
 }
 
 bool WidgetEngine::RuntimeSetTimerAt(const std::wstring& widgetId,
@@ -25162,6 +25297,8 @@ void WidgetEngine::CloseWidgetPanelSurface(
     }
     widget.panelActive = false;
     widget.panelSurface = "panel";
+    widget.panelViewTransitions.Clear();
+    widget.panelViewTransitionFramePending = false;
     widget.panelViewKeyboardFocusKey.clear();
     widget.panelInteractionRegions.CancelPointerPress();
     const auto transition = widget.panelInteractionRegions.ClearHover();
