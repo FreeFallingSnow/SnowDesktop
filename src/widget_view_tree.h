@@ -265,6 +265,10 @@ struct ViewNode
     std::optional<float> aspectRatio;
     ViewEdgeInsets margin;
     ViewEdgeInsets padding;
+    float offsetX = 0.0f;
+    float offsetY = 0.0f;
+    int zIndex = 0;
+    bool clipChildren = false;
     float gap = 0.0f;
     std::size_t columns = 1;
     std::size_t itemCount = 0;
@@ -439,6 +443,7 @@ bool ComputeViewVirtualRange(std::size_t itemCount, float itemExtent,
     float requestedOffset, std::size_t overscan,
     ViewVirtualRange& range, std::string& error);
 ViewRect ViewNodeContentRect(const ViewNode& node) noexcept;
+std::vector<const ViewNode*> ViewChildrenInPaintOrder(const ViewNode& node);
 ViewRect ViewRadioOptionFrame(
     const ViewNode& node, std::size_t optionIndex) noexcept;
 ViewRect ViewSelectOptionFrame(const ViewNode& node,

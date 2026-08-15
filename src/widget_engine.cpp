@@ -15992,9 +15992,7 @@ static void DrawWidgetViewNode(D2DState* state,
         }
     }
 
-    if ((node.type == ViewNodeType::Scroll ||
-            node.type == ViewNodeType::VirtualList ||
-            node.type == ViewNodeType::VirtualGrid) && node.clipFrame)
+    if (node.clipFrame)
     {
         const auto& clip = *node.clipFrame;
         state->ctx->PushAxisAlignedClip(D2D1::RectF(
@@ -16004,8 +16002,9 @@ static void DrawWidgetViewNode(D2DState* state,
             state->widgetRect.top + clip.y + clip.height),
             D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         ++state->widgetClipDepth;
-        for (const auto& child : node.children)
-            DrawWidgetViewNode(state, child, regions, focusedKey);
+        for (const auto* child : snowdesktop::widget_runtime::
+                ViewChildrenInPaintOrder(node))
+            DrawWidgetViewNode(state, *child, regions, focusedKey);
         state->ctx->PopAxisAlignedClip();
         --state->widgetClipDepth;
 
@@ -16068,8 +16067,9 @@ static void DrawWidgetViewNode(D2DState* state,
         }
         return;
     }
-    for (const auto& child : node.children)
-        DrawWidgetViewNode(state, child, regions, focusedKey);
+    for (const auto* child : snowdesktop::widget_runtime::
+            ViewChildrenInPaintOrder(node))
+        DrawWidgetViewNode(state, *child, regions, focusedKey);
     if (focused && specialGeometry && style.borderColor)
     {
         if (ID2D1SolidColorBrush* focus = GetCachedBrush(state,
@@ -16222,12 +16222,14 @@ static void DrawWidgetSelectOverlays(D2DState* state,
     }
     std::optional<snowdesktop::widget_runtime::ViewRect> childClip =
         inheritedClip;
-    if ((node.type == ViewNodeType::Scroll ||
-            node.type == ViewNodeType::VirtualList ||
-            node.type == ViewNodeType::VirtualGrid) && node.clipFrame)
+    if (node.clipFrame)
+    {
         childClip = IntersectViewClips(inheritedClip, *node.clipFrame);
-    for (const auto& child : node.children)
-        DrawWidgetSelectOverlays(state, child, regions,
+        if (!childClip) return;
+    }
+    for (const auto* child : snowdesktop::widget_runtime::
+            ViewChildrenInPaintOrder(node))
+        DrawWidgetSelectOverlays(state, *child, regions,
             childClip, viewportHeight);
 }
 
@@ -19376,10 +19378,10 @@ WidgetEngine::RuntimeLogicalSlotSurface(const std::wstring& widgetId,
         }
 
         std::optional<ViewRect> childClip = inheritedClip;
-        if (LogicalSlotScrollContainer(node.type) && node.clipFrame)
+        if (node.clipFrame)
             childClip = IntersectLogicalSlotFrames(
                 inheritedClip, *node.clipFrame);
-        if (LogicalSlotScrollContainer(node.type) && !childClip)
+        if (node.clipFrame && !childClip)
             return false;
         for (const auto& child : node.children)
             if (self(self, child, childClip)) return true;

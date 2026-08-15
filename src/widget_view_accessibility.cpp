@@ -383,11 +383,11 @@ bool CollectNode(const ViewNode& source, std::string_view semanticPath,
     }
 
     std::optional<ViewRect> childClip = inheritedClip;
-    if ((source.type == ViewNodeType::Scroll ||
-            source.type == ViewNodeType::VirtualList ||
-            source.type == ViewNodeType::VirtualGrid) &&
-        source.clipFrame)
+    if (source.clipFrame)
+    {
         childClip = Intersect(inheritedClip, *source.clipFrame);
+        if (!childClip) return true;
+    }
     for (std::size_t index = 0; index < source.children.size(); ++index)
     {
         std::optional<GridPosition> childGridPosition;

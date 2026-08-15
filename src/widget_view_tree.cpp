@@ -1094,7 +1094,8 @@ void LayoutNode(ViewNode& node, const ViewRect& frame)
     const ResolvedNodeSize resolved = ResolveNodeSize(
         node, std::max(0.0f, frame.width - HorizontalInsets(margin)),
         std::max(0.0f, frame.height - VerticalInsets(margin)));
-    node.frame = { frame.x + margin.left, frame.y + margin.top,
+    node.frame = { frame.x + margin.left + node.offsetX,
+        frame.y + margin.top + node.offsetY,
         resolved.width, resolved.height };
     node.clipFrame.reset();
     node.scrollOffset = 0.0f;
@@ -1141,6 +1142,8 @@ void LayoutNode(ViewNode& node, const ViewRect& frame)
                 childSize.width, childSize.height });
         }
     }
+    if (node.clipChildren)
+        node.clipFrame = ContentRect(node);
 }
 
 bool ValidateNode(const ViewNode& node, std::size_t depth,
@@ -1196,6 +1199,18 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         error = "view verticalAlign must be start, center, or end";
         return false;
     }
+    if ((node.offsetX != 0.0f || node.offsetY != 0.0f ||
+            node.zIndex != 0) &&
+        (!parentType || *parentType != ViewNodeType::Stack))
+    {
+        error = "view offset and zIndex are only valid for direct stack children";
+        return false;
+    }
+    if (node.clipChildren && IsLeafNode(node.type))
+    {
+        error = "view clip is only valid for container nodes";
+        return false;
+    }
     if (!ValidateLength(node.width) || !ValidateLength(node.height) ||
         !ValidateLength(node.flexBasis) ||
         node.flexBasis.kind == ViewLengthKind::Fill ||
@@ -1221,6 +1236,9 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         !FiniteInRange(node.padding.right, 0.0f, 4096.0f) ||
         !FiniteInRange(node.padding.bottom, 0.0f, 4096.0f) ||
         !FiniteInRange(node.padding.left, 0.0f, 4096.0f) ||
+        !FiniteInRange(node.offsetX, -4096.0f, 4096.0f) ||
+        !FiniteInRange(node.offsetY, -4096.0f, 4096.0f) ||
+        node.zIndex < -1024 || node.zIndex > 1024 ||
         !FiniteInRange(node.gap, 0.0f, 4096.0f) ||
         (node.columnGap && !FiniteInRange(*node.columnGap, 0.0f, 4096.0f)) ||
         (node.rowGap && !FiniteInRange(*node.rowGap, 0.0f, 4096.0f)) ||
@@ -2203,14 +2221,14 @@ bool CollectRegions(const ViewNode& node,
         regions.push_back(std::move(region));
     }
     std::optional<ViewRect> childClip = inheritedClip;
-    if (IsScrollContainer(node.type) && node.clipFrame)
+    if (node.clipFrame)
     {
         if (inheritedClip && !Overlaps(*node.clipFrame, *inheritedClip))
             return true;
         childClip = IntersectRects(inheritedClip, *node.clipFrame);
     }
-    for (const auto& child : node.children)
-        if (!CollectRegions(child, regions, childClip,
+    for (const ViewNode* child : ViewChildrenInPaintOrder(node))
+        if (!CollectRegions(*child, regions, childClip,
                 viewportHeight, error)) return false;
     return true;
 }
@@ -2263,10 +2281,14 @@ bool CollectSelectOptions(const ViewNode& node,
         return true;
     }
     std::optional<ViewRect> childClip = inheritedClip;
-    if (IsScrollContainer(node.type) && node.clipFrame)
+    if (node.clipFrame)
+    {
+        if (inheritedClip && !Overlaps(*node.clipFrame, *inheritedClip))
+            return true;
         childClip = IntersectRects(inheritedClip, *node.clipFrame);
-    for (const auto& child : node.children)
-        if (!CollectSelectOptions(child, regions, childClip,
+    }
+    for (const ViewNode* child : ViewChildrenInPaintOrder(node))
+        if (!CollectSelectOptions(*child, regions, childClip,
                 viewportHeight, error)) return false;
     return true;
 }
@@ -2322,10 +2344,14 @@ bool CollectInputs(const ViewNode& node,
         return true;
     }
     std::optional<ViewRect> childClip = inheritedClip;
-    if (IsScrollContainer(node.type) && node.clipFrame)
+    if (node.clipFrame)
+    {
+        if (inheritedClip && !Overlaps(*node.clipFrame, *inheritedClip))
+            return true;
         childClip = IntersectRects(inheritedClip, *node.clipFrame);
-    for (const auto& child : node.children)
-        if (!CollectInputs(child, controls, childClip, error)) return false;
+    }
+    for (const ViewNode* child : ViewChildrenInPaintOrder(node))
+        if (!CollectInputs(*child, controls, childClip, error)) return false;
     return true;
 }
 
@@ -2350,6 +2376,12 @@ bool ApplyScrollState(ViewNode& node,
 {
     if (!node.visible) return true;
     std::optional<ViewRect> childClip = inheritedClip;
+    if (!IsScrollContainer(node.type) && node.clipFrame)
+    {
+        if (inheritedClip && !Overlaps(*node.clipFrame, *inheritedClip))
+            return true;
+        childClip = IntersectRects(inheritedClip, *node.clipFrame);
+    }
     if (IsScrollContainer(node.type))
     {
         if (++scrollContainers > ViewTreeLimits::MaximumScrollContainers)
@@ -2459,6 +2491,18 @@ bool ApplyScrollState(ViewNode& node,
 ViewRect ViewNodeContentRect(const ViewNode& node) noexcept
 {
     return ContentRect(node);
+}
+
+std::vector<const ViewNode*> ViewChildrenInPaintOrder(const ViewNode& node)
+{
+    std::vector<const ViewNode*> result;
+    result.reserve(node.children.size());
+    for (const auto& child : node.children) result.push_back(&child);
+    std::stable_sort(result.begin(), result.end(),
+        [](const ViewNode* left, const ViewNode* right) {
+            return left->zIndex < right->zIndex;
+        });
+    return result;
 }
 
 ViewRect ViewRadioOptionFrame(

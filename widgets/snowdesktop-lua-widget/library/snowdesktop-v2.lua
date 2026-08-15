@@ -138,6 +138,10 @@
 ---@field bottom? number
 ---@field left? number
 
+---@class SnowViewOffset
+---@field x? number Horizontal visual offset from -4096 through 4096.
+---@field y? number Vertical visual offset from -4096 through 4096.
+
 ---@class SnowViewStyle
 ---@field background? integer RGB color.
 ---@field foreground? integer RGB color.
@@ -245,6 +249,9 @@
 ---@field aspectRatio? number Width divided by height, from 0.01 through 100; conflicting fixed dimensions or constraints reject the tree.
 ---@field margin? number|SnowViewEdgeInsets Outer spacing from 0 through 4096 per edge; parent layout reserves it outside the node frame.
 ---@field padding? number|SnowViewEdgeInsets Inner spacing from 0 through 4096 per edge.
+---@field offset? SnowViewOffset Visual translation allowed only on direct stack children; it does not consume layout space.
+---@field zIndex? integer Stable paint and hit-test order from -1024 through 1024, allowed only on direct stack children.
+---@field clip? boolean Clip a container's descendants to its content rectangle; defaults to false.
 ---@field gap? number
 ---@field columns? integer Required by grid, gridList, and virtualGrid; 1 to 64 equal-width columns.
 ---@field columnGap? number Grid/gridList/virtualGrid/flow horizontal gap; defaults to gap.

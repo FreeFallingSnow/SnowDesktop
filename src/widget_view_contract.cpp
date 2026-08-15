@@ -66,7 +66,8 @@ constexpr auto kProperties = std::to_array<std::string_view>({
     "showAdjacentDates", "binding", "collection", "revision", "reference",
     "child", "thickness", "trackOpacity", "fillOpacity", "width", "height",
     "minWidth", "maxWidth", "minHeight", "maxHeight", "aspectRatio",
-    "margin", "padding", "gap", "columns", "columnGap", "rowGap", "itemCount",
+    "margin", "padding", "offset", "zIndex", "clip", "gap", "columns",
+    "columnGap", "rowGap", "itemCount",
     "itemExtent", "firstIndex", "overscan", "flexBasis", "flexGrow",
     "flexShrink", "fontSize", "fontWeight", "fontStyle", "lineHeight",
     "letterSpacing", "bold",
@@ -82,7 +83,8 @@ constexpr auto kProperties = std::to_array<std::string_view>({
 
 constexpr auto kCommonProperties = std::to_array<std::string_view>({
     "type", "key", "width", "height", "minWidth", "maxWidth",
-    "minHeight", "maxHeight", "aspectRatio", "margin", "padding", "gap",
+    "minHeight", "maxHeight", "aspectRatio", "margin", "padding",
+    "offset", "zIndex", "clip", "gap",
     "flexBasis", "flexGrow", "flexShrink",
     "fontSize", "fontWeight", "fontStyle", "lineHeight", "letterSpacing",
     "bold", "visible", "enabled", "cursor", "tooltip", "alignItems",

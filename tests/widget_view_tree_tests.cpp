@@ -2075,6 +2075,91 @@ void TestFlexSizing()
         "flexBasis must accept only auto or a bounded numeric value");
     lua_close(state);
 }
+
+void TestStackPositioningAndClipping()
+{
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "Lua state must be available");
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    Check(luaL_dostring(state, R"lua(
+        return view.stack({
+            key = "overlay",
+            padding = 10,
+            clip = true,
+            children = {
+                view.button({ key = "back", label = "Back",
+                    width = 60, height = 40, zIndex = -1,
+                    offset = { x = -5, y = 2 },
+                    action = { id = "back.open" } }),
+                view.button({ key = "front", label = "Front",
+                    width = 60, height = 40, zIndex = 2,
+                    offset = { x = 20, y = 15 },
+                    action = { id = "front.open" } }),
+            },
+        })
+    )lua") == LUA_OK,
+        "stack positioning Lua fixture must evaluate");
+    ViewNode root;
+    std::string error;
+    Check(ParseLuaViewTree(state, -1, root, error) &&
+            root.clipChildren && root.children.size() == 2 &&
+            Near(root.children[0].offsetX, -5.0f) &&
+            Near(root.children[0].offsetY, 2.0f) &&
+            root.children[0].zIndex == -1 &&
+            root.children[1].zIndex == 2,
+        "Lua parsing must retain bounded stack offsets, zIndex, and clipping");
+    Check(ValidateAndLayoutViewTree(root, 100.0f, 80.0f, error) &&
+            root.clipFrame == ViewRect{ 10, 10, 80, 60 } &&
+            root.children[0].frame == ViewRect{ 5, 12, 60, 40 } &&
+            root.children[1].frame == ViewRect{ 30, 25, 60, 40 },
+        "stack offsets must translate visuals without consuming layout space");
+    const auto paintOrder = ViewChildrenInPaintOrder(root);
+    Check(paintOrder.size() == 2 && paintOrder[0]->key == "back" &&
+            paintOrder[1]->key == "front",
+        "stack paint order must be stable and sorted by zIndex");
+    std::vector<InteractionRegion> regions;
+    Check(CollectViewInteractionRegions(root, regions, error) &&
+            regions.size() == 2 && regions[0].key == "back" &&
+            regions[1].key == "front" && regions[0].clip &&
+            Near(regions[0].clip->x, 10.0f) &&
+            Near(regions[0].clip->y, 10.0f) &&
+            Near(regions[0].clip->width, 80.0f) &&
+            Near(regions[0].clip->height, 60.0f),
+        "paint order and explicit clips must also govern hit regions");
+    WidgetInteractionRegions interaction;
+    interaction.BeginFrame();
+    for (auto& region : regions)
+        Check(interaction.Submit(std::move(region), error),
+            "stack region must submit");
+    interaction.CommitFrame();
+    Check(interaction.TargetAt(40.0f, 30.0f) == "front" &&
+            interaction.TargetAt(6.0f, 20.0f).empty(),
+        "zIndex must choose the top visual while clip excludes overflow hits");
+
+    ViewNode row;
+    row.type = ViewNodeType::Row;
+    row.key = "row";
+    ViewNode positioned;
+    positioned.type = ViewNodeType::Shape;
+    positioned.key = "positioned";
+    positioned.offsetX = 1.0f;
+    row.children.push_back(positioned);
+    Check(!ValidateAndLayoutViewTree(row, 100.0f, 40.0f, error) &&
+            error ==
+                "view offset and zIndex are only valid for direct stack children",
+        "offset must not create arbitrary visual order outside stack");
+
+    ViewNode clippedLeaf;
+    clippedLeaf.type = ViewNodeType::Shape;
+    clippedLeaf.key = "clipped-leaf";
+    clippedLeaf.clipChildren = true;
+    Check(!ValidateAndLayoutViewTree(
+            clippedLeaf, 40.0f, 40.0f, error) &&
+            error == "view clip is only valid for container nodes",
+        "clip must reject nodes that cannot have descendants");
+    lua_close(state);
+}
 }
 
 int main()
@@ -2097,6 +2182,7 @@ int main()
     TestBoundedSizeConstraints();
     TestUniformMargins();
     TestFlexSizing();
+    TestStackPositioningAndClipping();
     std::cout << "Widget view tree tests passed\n";
     return 0;
 }

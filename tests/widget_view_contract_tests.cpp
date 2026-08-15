@@ -107,6 +107,9 @@ void TestRepresentativeApplicability()
             ViewNodeAllowsProperty(ViewNodeType::Text, "maxHeight") &&
             ViewNodeAllowsProperty(ViewNodeType::Image, "aspectRatio") &&
             ViewNodeAllowsProperty(ViewNodeType::Spacer, "margin") &&
+            ViewNodeAllowsProperty(ViewNodeType::Stack, "clip") &&
+            ViewNodeAllowsProperty(ViewNodeType::Button, "offset") &&
+            ViewNodeAllowsProperty(ViewNodeType::Button, "zIndex") &&
             ViewNodeAllowsProperty(ViewNodeType::Button, "flexBasis") &&
             ViewNodeAllowsProperty(ViewNodeType::Text, "flexShrink") &&
             ViewNodeAllowsProperty(ViewNodeType::StyledText, "textWrap") &&

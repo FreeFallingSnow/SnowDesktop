@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstring>
 #include <initializer_list>
+#include <limits>
 #include <unordered_set>
 
 extern "C" {
@@ -454,6 +455,77 @@ bool ReadEdgeInsetsField(lua_State* state, int table, const char* field,
         return false;
     }
     value = parsed;
+    return true;
+}
+
+bool ReadOffsetField(lua_State* state, int table, float& x, float& y,
+    std::string& error)
+{
+    table = lua_absindex(state, table);
+    lua_getfield(state, table, "offset");
+    if (lua_isnil(state, -1))
+    {
+        lua_pop(state, 1);
+        return true;
+    }
+    if (!lua_istable(state, -1))
+    {
+        lua_pop(state, 1);
+        error = "view field 'offset' must be an { x, y } table";
+        return false;
+    }
+    const int offset = lua_absindex(state, -1);
+    if (!ValidateObjectFields(state, offset, { "x", "y" },
+            "view field 'offset'", error))
+    {
+        lua_pop(state, 1);
+        return false;
+    }
+    const bool hasX = FieldPresent(state, offset, "x");
+    const bool hasY = FieldPresent(state, offset, "y");
+    if (!hasX && !hasY)
+    {
+        lua_pop(state, 1);
+        error = "view field 'offset' must define x or y";
+        return false;
+    }
+    if (!ReadFloatField(state, offset, "x", x, error) ||
+        !ReadFloatField(state, offset, "y", y, error))
+    {
+        lua_pop(state, 1);
+        return false;
+    }
+    lua_pop(state, 1);
+    return true;
+}
+
+bool ReadIntegerField(lua_State* state, int table, const char* field,
+    int& value, std::string& error)
+{
+    table = lua_absindex(state, table);
+    lua_getfield(state, table, field);
+    if (lua_isnil(state, -1))
+    {
+        lua_pop(state, 1);
+        return true;
+    }
+    if (!lua_isinteger(state, -1))
+    {
+        lua_pop(state, 1);
+        error = std::string("view field '") + field +
+            "' must be an integer";
+        return false;
+    }
+    const lua_Integer parsed = lua_tointeger(state, -1);
+    lua_pop(state, 1);
+    if (parsed < std::numeric_limits<int>::min() ||
+        parsed > std::numeric_limits<int>::max())
+    {
+        error = std::string("view field '") + field +
+            "' is outside the supported integer range";
+        return false;
+    }
+    value = static_cast<int>(parsed);
     return true;
 }
 
@@ -1654,6 +1726,9 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             node.aspectRatio, error) ||
         !ReadEdgeInsetsField(state, index, "margin", node.margin, error) ||
         !ReadEdgeInsetsField(state, index, "padding", node.padding, error) ||
+        !ReadOffsetField(state, index, node.offsetX, node.offsetY, error) ||
+        !ReadIntegerField(state, index, "zIndex", node.zIndex, error) ||
+        !ReadBoolField(state, index, "clip", node.clipChildren, error) ||
         !ReadFloatField(state, index, "gap", node.gap, error) ||
         !ReadSizeField(state, index, "columns", node.columns, error) ||
         !ReadNonNegativeSizeField(state, index, "itemCount",

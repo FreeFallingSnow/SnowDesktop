@@ -439,6 +439,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "view.layout.edgeInsets") &&
             snowdesktop::widget_api::SupportsFeature(
+                "view.positioning.basic") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "view.text.flow") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.text.typography") &&
