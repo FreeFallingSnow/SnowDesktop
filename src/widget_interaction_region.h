@@ -113,6 +113,7 @@ struct InteractionRegion
     InteractionShape shape;
     std::optional<InteractionClipRect> clip;
     std::string cursor;
+    std::string tooltip;
     std::map<std::string, InteractionAction, std::less<>> events;
     std::string accessibilityRole;
     std::string accessibilityLabel;

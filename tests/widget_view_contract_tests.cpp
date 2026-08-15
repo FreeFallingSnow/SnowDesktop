@@ -116,7 +116,8 @@ void TestRepresentativeApplicability()
             ViewNodeAllowsProperty(ViewNodeType::StyledText, "fontWeight") &&
             ViewNodeAllowsProperty(ViewNodeType::Button, "fontStyle") &&
             ViewNodeAllowsProperty(ViewNodeType::Text, "lineHeight") &&
-            ViewNodeAllowsProperty(ViewNodeType::Link, "letterSpacing"),
+            ViewNodeAllowsProperty(ViewNodeType::Link, "letterSpacing") &&
+            ViewNodeAllowsProperty(ViewNodeType::Shape, "tooltip"),
         "bounded size and flex constraints must be common machine-readable properties");
     Check(ViewNodeAllowsProperty(ViewNodeType::MonthCalendar, "eventDates") &&
             !ViewNodeAllowsProperty(ViewNodeType::List, "eventDates"),

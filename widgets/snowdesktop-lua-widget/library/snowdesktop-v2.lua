@@ -267,6 +267,7 @@
 ---@field visible? boolean
 ---@field enabled? boolean
 ---@field cursor? string
+---@field tooltip? string Bounded plain-text host tooltip; also used as semantic help text when no validation message is present.
 ---@field style? SnowViewStyle
 ---@field hoverStyle? SnowViewStyle
 ---@field pressedStyle? SnowViewStyle

@@ -306,6 +306,7 @@ struct ViewNode
     bool visible = true;
     bool enabled = true;
     std::string cursor;
+    std::string tooltip;
     std::string accessibilityRole;
     std::string accessibilityLabel;
     ViewStyle style;

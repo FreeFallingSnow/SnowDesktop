@@ -162,7 +162,8 @@ ViewRect ImmediateBounds(const InteractionShape& shape) noexcept
 void PopulateValueState(const ViewNode& source,
     ViewAccessibilityNode& target)
 {
-    target.helpText = source.validationMessage;
+    target.helpText = source.validationMessage.empty()
+        ? source.tooltip : source.validationMessage;
     if (source.type == ViewNodeType::TextInput ||
         source.type == ViewNodeType::TextArea ||
         source.type == ViewNodeType::SearchBox)

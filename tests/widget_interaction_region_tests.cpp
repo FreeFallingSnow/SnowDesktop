@@ -164,6 +164,14 @@ void TestShapesAndValidation()
             !error.empty(),
         "non-positive geometry must be rejected");
     regions.AbortFrame();
+
+    regions.BeginFrame();
+    auto oversizedTooltip = Rect("oversized-tooltip", 0, 0, 10, 10);
+    oversizedTooltip.tooltip.assign(4097, 'x');
+    Check(!regions.Submit(std::move(oversizedTooltip), error) &&
+            error.find("tooltip") != std::string::npos,
+        "interaction tooltips must enforce the bounded text quota");
+    regions.AbortFrame();
 }
 
 void TestClippedHitTesting()

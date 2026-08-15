@@ -1466,9 +1466,10 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         node.inputValue.size() > ViewTreeLimits::MaximumTextBytes ||
         node.placeholder.size() > ViewTreeLimits::MaximumTextBytes ||
         node.alt.size() > ViewTreeLimits::MaximumTextBytes ||
+        node.tooltip.size() > ViewTreeLimits::MaximumTextBytes ||
         node.validationMessage.size() > ViewTreeLimits::MaximumTextBytes ||
         textBytes + node.text.size() + node.inputValue.size() +
-            node.placeholder.size() + node.alt.size() +
+            node.placeholder.size() + node.alt.size() + node.tooltip.size() +
             node.validationMessage.size() >
             ViewTreeLimits::MaximumTotalTextBytes)
     {
@@ -1476,7 +1477,7 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         return false;
     }
     textBytes += node.text.size() + node.inputValue.size() +
-        node.placeholder.size() + node.alt.size() +
+        node.placeholder.size() + node.alt.size() + node.tooltip.size() +
         node.validationMessage.size();
     if (node.type == ViewNodeType::StyledText)
     {
@@ -1869,7 +1870,7 @@ bool CollectRegions(const ViewNode& node,
         std::map<std::string, InteractionAction, std::less<>> surfaceEvents;
         for (const auto& [name, action] : node.events)
             if (name != "change") surfaceEvents.emplace(name, action);
-        if (!surfaceEvents.empty() &&
+        if ((!surfaceEvents.empty() || !node.tooltip.empty()) &&
             (!inheritedClip || Overlaps(node.frame, *inheritedClip)))
         {
             if (regions.size() >=
@@ -1894,6 +1895,7 @@ bool CollectRegions(const ViewNode& node,
                     inheritedClip->y, inheritedClip->width,
                     inheritedClip->height };
             surface.events = std::move(surfaceEvents);
+            surface.tooltip = node.tooltip;
             surface.accessibilityRole = node.accessibilityRole.empty()
                 ? "grid" : node.accessibilityRole;
             surface.accessibilityLabel = node.accessibilityLabel;
@@ -1929,6 +1931,7 @@ bool CollectRegions(const ViewNode& node,
                     inheritedClip->y, inheritedClip->width,
                     inheritedClip->height };
             region.cursor = node.cursor.empty() ? "hand" : node.cursor;
+            region.tooltip = node.tooltip;
             region.events = node.events;
             region.controlKind = InteractionControlKind::Radio;
             region.checked = cell.selected;
@@ -1976,6 +1979,7 @@ bool CollectRegions(const ViewNode& node,
                     inheritedClip->y, inheritedClip->width,
                     inheritedClip->height };
             region.cursor = node.cursor.empty() ? "hand" : node.cursor;
+            region.tooltip = node.tooltip;
             region.events = node.events;
             region.controlKind = InteractionControlKind::Radio;
             region.checked = option.value == node.selectedValue;
@@ -2013,6 +2017,7 @@ bool CollectRegions(const ViewNode& node,
                     inheritedClip->y, inheritedClip->width,
                     inheritedClip->height };
             region.cursor = node.cursor.empty() ? "text" : node.cursor;
+            region.tooltip = node.tooltip;
             for (const auto& [name, action] : node.events)
                 if (name != "change" && name != "focus" &&
                     name != "blur" && name != "submit")
@@ -2050,6 +2055,7 @@ bool CollectRegions(const ViewNode& node,
                     inheritedClip->y, inheritedClip->width,
                     inheritedClip->height };
             trigger.cursor = node.cursor.empty() ? "hand" : node.cursor;
+            trigger.tooltip = node.tooltip;
             for (const auto& [name, action] : node.events)
                 if (name != "change") trigger.events.emplace(name, action);
             trigger.accessibilityRole = node.accessibilityRole.empty()
@@ -2062,7 +2068,8 @@ bool CollectRegions(const ViewNode& node,
         }
         return true;
     }
-    if ((!node.events.empty() || IsButtonNode(node.type) ||
+    if ((!node.events.empty() || !node.tooltip.empty() ||
+            IsButtonNode(node.type) ||
             node.type == ViewNodeType::ListItem ||
             node.type == ViewNodeType::SlotItem) &&
         (!inheritedClip || Overlaps(node.frame, *inheritedClip)))
@@ -2111,6 +2118,7 @@ bool CollectRegions(const ViewNode& node,
                 node.type == ViewNodeType::Slider ||
                 node.events.contains("click"))
             ? "hand" : node.cursor;
+        region.tooltip = node.tooltip;
         region.events = node.events;
         if (node.type == ViewNodeType::Toggle)
             region.controlKind = InteractionControlKind::Toggle;
@@ -2190,6 +2198,7 @@ bool CollectSelectOptions(const ViewNode& node,
                     inheritedClip->y, inheritedClip->width,
                     inheritedClip->height };
             region.cursor = "hand";
+            region.tooltip = node.tooltip;
             for (const auto& [name, action] : node.events)
                 if (name != "click") region.events.emplace(name, action);
             region.controlKind = InteractionControlKind::Radio;

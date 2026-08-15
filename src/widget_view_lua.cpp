@@ -1617,6 +1617,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadBoolField(state, index, "visible", node.visible, error) ||
         !ReadBoolField(state, index, "enabled", node.enabled, error) ||
         !ReadStringField(state, index, "cursor", node.cursor, false, error) ||
+        !ReadStringField(state, index, "tooltip",
+            node.tooltip, false, error) ||
         !ReadAlignmentField(state, index, "alignItems",
             node.alignItems, false, error) ||
         !ReadAlignmentField(state, index, "alignSelf",

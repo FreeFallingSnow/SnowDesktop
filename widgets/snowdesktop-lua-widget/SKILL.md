@@ -193,6 +193,11 @@ Probe `view.text.typography` before using `fontWeight`, `fontStyle`,
 lineHeight is 1..1024, and letterSpacing is -64..256 logical units. These
 properties apply to plain/styled text and label-bearing declarative nodes, not
 to host text editors in this feature.
+Probe `view.tooltip` before using a plain-string `tooltip` on any declarative
+node. The host creates a clipped hover region even for non-actionable text,
+draws the bounded tooltip above view/select/input overlays, and exposes it as
+semantic help text when no validation message is present. Do not put secrets,
+commands, rich markup, or essential always-visible instructions in tooltips.
 Probe `view.layout.constraints` before using numeric `minWidth`, `maxWidth`,
 `minHeight`, `maxHeight`, `aspectRatio`, or `margin`. Keep sizes and uniform
 outer margins within 0 through 4096, ratios within 0.01 through 100, and do

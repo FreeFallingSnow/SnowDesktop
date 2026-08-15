@@ -33,6 +33,7 @@ void TestSemanticHierarchyAndState()
     ViewNode title = Node(ViewNodeType::Text,
         "", 8, 8, 180, 24);
     title.text = "System monitor";
+    title.tooltip = "Current CPU and memory status";
     ViewNode button = Node(ViewNodeType::Button,
         "refresh", 8, 40, 100, 32);
     button.text = "Refresh";
@@ -62,6 +63,7 @@ void TestSemanticHierarchyAndState()
         "semantic ids must prefer stable keys and fall back to structure paths");
     Check(nodes[1].controlType == "Text" &&
             nodes[1].name == "System monitor" &&
+            nodes[1].helpText == "Current CPU and memory status" &&
             !nodes[1].focusable,
         "text nodes must expose bounded read-only semantics");
     Check(nodes[2].controlType == "Button" &&

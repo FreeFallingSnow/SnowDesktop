@@ -220,6 +220,7 @@ void TestLuaParsing()
             maxLines = 2, overflowText = "clip", verticalAlign = "end",
             fontWeight = 600, fontStyle = "italic",
             lineHeight = 24, letterSpacing = 1.5,
+            tooltip = "Current status",
         }
         local title = view.text(source)
         assert(source.type == nil)
@@ -275,6 +276,7 @@ void TestLuaParsing()
             root.children[0].fontStyle == ViewFontStyle::Italic &&
             root.children[0].lineHeight == 24.0f &&
             Near(root.children[0].letterSpacing, 1.5f) &&
+            root.children[0].tooltip == "Current status" &&
             root.children[1].type == ViewNodeType::Button &&
             root.children[1].events.at("click").id == "open" &&
             root.children[1].events.at("contextMenu").id == "open.menu" &&
@@ -291,6 +293,11 @@ void TestLuaParsing()
         "Lua parsing must retain typed nodes, styles, actions, and semantics");
     Check(ValidateAndLayoutViewTree(root, 300.0f, 160.0f, error),
         "a parsed Lua view must pass the host layout contract");
+    std::vector<InteractionRegion> regions;
+    Check(CollectViewInteractionRegions(root, regions, error) &&
+            regions.size() == 2 && regions[0].key == "title" &&
+            regions[0].tooltip == "Current status",
+        "a tooltip-only node must receive a bounded host hover region");
 
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(

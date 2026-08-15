@@ -156,6 +156,11 @@ bool WidgetInteractionRegions::Submit(
             return false;
         }
     }
+    if (region.tooltip.size() > 4096)
+    {
+        error = "interaction tooltip must contain at most 4096 bytes";
+        return false;
+    }
     const bool controlled = region.controlKind !=
         InteractionControlKind::None;
     if (controlled && (!region.events.contains("change") ||

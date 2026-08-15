@@ -16063,6 +16063,69 @@ static void DrawWidgetViewNode(D2DState* state,
     }
 }
 
+static void DrawWidgetViewTooltip(D2DState* state,
+    const snowdesktop::widget_runtime::WidgetInteractionRegions& regions)
+{
+    if (!state || !state->ctx || !state->dwrite) return;
+    const auto* region = regions.Find(regions.HoveredKey());
+    if (!region || region->tooltip.empty()) return;
+    float pointerX = 0.0f;
+    float pointerY = 0.0f;
+    if (!regions.LastPointer(pointerX, pointerY)) return;
+
+    const float surfaceWidth = std::max(
+        0.0f, state->widgetRect.right - state->widgetRect.left);
+    const float surfaceHeight = std::max(
+        0.0f, state->widgetRect.bottom - state->widgetRect.top);
+    const float maximumWidth = std::max(
+        1.0f, std::min(280.0f, surfaceWidth - 8.0f));
+    const float maximumHeight = std::max(
+        1.0f, std::min(192.0f, surfaceHeight - 8.0f));
+    IDWriteTextFormat* format = GetCachedTextFormat(state, 13.0f,
+        DWRITE_FONT_WEIGHT_NORMAL, false, DWRITE_WORD_WRAPPING_WRAP);
+    const std::wstring text = Utf8ToWideLocal(region->tooltip);
+    if (!format || text.empty()) return;
+    ComPtr<IDWriteTextLayout> layout;
+    if (FAILED(state->dwrite->CreateTextLayout(text.data(),
+            static_cast<UINT32>(text.size()), format,
+            std::max(1.0f, maximumWidth - 16.0f),
+            std::max(1.0f, maximumHeight - 12.0f), &layout)) || !layout)
+        return;
+    DWRITE_TRIMMING trimming{};
+    trimming.granularity = DWRITE_TRIMMING_GRANULARITY_CHARACTER;
+    ComPtr<IDWriteInlineObject> ellipsis;
+    if (SUCCEEDED(state->dwrite->CreateEllipsisTrimmingSign(
+            format, &ellipsis)) && ellipsis)
+        layout->SetTrimming(&trimming, ellipsis.Get());
+    DWRITE_TEXT_METRICS metrics{};
+    if (FAILED(layout->GetMetrics(&metrics))) return;
+    const float width = std::min(maximumWidth,
+        std::max(32.0f, std::ceil(metrics.widthIncludingTrailingWhitespace) +
+            16.0f));
+    const float height = std::min(maximumHeight,
+        std::max(24.0f, std::ceil(metrics.height) + 12.0f));
+    float x = pointerX + 12.0f;
+    float y = pointerY + 16.0f;
+    if (x + width > surfaceWidth - 4.0f)
+        x = pointerX - width - 12.0f;
+    if (y + height > surfaceHeight - 4.0f)
+        y = pointerY - height - 12.0f;
+    x = std::clamp(x, 4.0f, std::max(4.0f, surfaceWidth - width - 4.0f));
+    y = std::clamp(y, 4.0f, std::max(4.0f, surfaceHeight - height - 4.0f));
+    DrawHostRect(state, x, y, width, height,
+        0x20242B, 6.0f, 0.97f);
+    DrawHostStrokeRect(state, x, y, width, height,
+        0xFFFFFF, 6.0f, 1.0f, 0.18f);
+    if (ID2D1SolidColorBrush* brush = GetCachedBrush(
+            state, 0xF4F7FB, 1.0f))
+    {
+        state->ctx->DrawTextLayout(D2D1::Point2F(
+            state->widgetRect.left + x + 8.0f,
+            state->widgetRect.top + y + 6.0f),
+            layout.Get(), brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    }
+}
+
 static std::optional<snowdesktop::widget_runtime::ViewRect>
 IntersectViewClips(
     const std::optional<snowdesktop::widget_runtime::ViewRect>& first,
@@ -16607,6 +16670,8 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                 found->logicalSlotFocus.reset();
             }
             DrawHostViewInteractionOverlays(*found);
+            DrawWidgetViewTooltip(
+                d2dState_, found->interactionRegions);
         }
         while (d2dState_->widgetClipDepth > 0)
         {

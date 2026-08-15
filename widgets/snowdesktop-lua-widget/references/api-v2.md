@@ -95,6 +95,7 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.flex.sizing` 提供线性布局的 basis/grow/shrink 尺寸分配，
 `view.text.flow` 提供文本块的换行、行数、溢出和垂直对齐，
 `view.text.typography` 提供字体粗细、字形、行高和字距，
+`view.tooltip` 提供宿主管理的纯文本元素提示，
 `view.grid.uniform` 提供基础 `grid`，`view.flow.wrap` 提供横向换行 `flow`。
 `view.scroll` 提供宿主滚动视口，`view.collection.basic` 提供基础集合，
 `view.collection.virtual` 提供固定行高虚拟集合与可见范围查询；
@@ -172,6 +173,12 @@ down/up、doubleClick 和 contextMenu，动作通过 `event.kind == "action"` �
 `letterSpacing`。显式 fontWeight 优先于兼容属性 `bold`；lineHeight 同时参与固有高度和
 DirectWrite 行距，letterSpacing 同时参与近似固有宽度与 TextLayout1 字符间距。该 feature
 不改变宿主文本编辑器的输入、选择或 IME 度量，输入控件排版将在对应控件契约中单独开放。
+
+探测 `view.tooltip` 后，任意声明式节点可设置最多 4096 UTF-8 字节的纯字符串 `tooltip`。
+宿主会为只有提示而没有 action 的节点创建裁剪命中区，在元素 hover 时将提示限制在组件 surface
+内并绘制于 select 与输入覆盖层之上；它不创建 HWND、不执行 markup，也不调用 Lua 回调。
+tooltip 同时作为 UI Automation HelpText 的后备值，输入节点存在 `validationMessage` 时以后者优先。
+提示不得承载秘密、命令或必须常驻可见的说明；这些内容应使用正常文本节点或宿主 panel。
 
 `toggle` 和 `checkbox` 是受控选择控件：必须提供非空 `label`、显式 `checked`，以及
 `action` 简写或 `events.change`；不得绑定 `events.click`。指针完成一次有效点击时，宿主
