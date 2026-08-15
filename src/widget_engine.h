@@ -53,6 +53,7 @@
 #include "widget_interaction_region.h"
 #include "widget_view_tree.h"
 #include "widget_view_accessibility.h"
+#include "widget_accessibility_snapshot.h"
 #include "widget_text_input_rules.h"
 #include "widget_storage_write_budget.h"
 #include "widget_secret_store.h"
@@ -395,17 +396,6 @@ struct LuaApplicationCatalogSnapshot
 {
     std::string state = "unavailable";
     std::vector<snowdesktop::widget_runtime::WidgetAppCatalogEntry> entries;
-};
-
-struct LuaWidgetAccessibilitySnapshot
-{
-    std::wstring widgetId;
-    std::string packageId;
-    std::string name;
-    RECT bounds{};
-    bool selected = false;
-    std::vector<snowdesktop::widget_runtime::ViewAccessibilityNode> nodes;
-    std::string error;
 };
 
 /**
@@ -1347,6 +1337,8 @@ public:
     bool RuntimeIsWidgetSelected(const std::wstring& widgetId) const;
     std::vector<LuaWidgetAccessibilitySnapshot>
         RuntimeAccessibilitySnapshots() const;
+    bool RuntimeSetAccessibilityFocus(const std::wstring& widgetId,
+        const std::string& nodeKey);
     std::wstring RuntimeSelectedWidgetPackageId() const;
     bool HandleHostInputKey(WPARAM key);
     bool HandleHostViewKey(const std::wstring& widgetId, WPARAM key,

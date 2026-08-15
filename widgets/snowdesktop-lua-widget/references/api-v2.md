@@ -449,9 +449,10 @@ view.waveform({
 accessibility role、允许属性和直接必需属性。Lua 解析器会在布局前按该表拒绝拼错字段或
 用在错误节点上的字段；例如 `columns` 不能用于 `row`，`source` 不能用于
 `referenceIcon`。该表也登记 UIA ControlType、基础 Pattern 和宿主键盘可聚焦性，宿主能从
-布局结果生成只读语义快照；Windows UIA Provider 和复杂控件内部虚拟子项尚未接通，因此
-当前仍没有 Narrator 输出。默认值/范围、子节点、事件和错误码也未全部迁入，作者仍应以本节
-各 feature 的细化说明为准。
+布局结果生成只读语义快照，并已通过 Windows UIA Fragment Provider 暴露组件/元素树、基础
+属性、边界、父子/兄弟导航、点命中与宿主焦点。Pattern 动作、属性/结构事件、复杂控件内部
+虚拟子项和真实 Narrator 验收尚未完成；默认值/范围、子节点、事件和错误码也未全部迁入，
+作者仍应以本节各 feature 的细化说明为准。
 
 即时模式的 `interaction.region` 也进入同一种宿主语义快照，因此使用 `render()` 的组件应为
 每个有意义的元素填写稳定 `key`、`accessibility.role` 与 `accessibility.label`；纯命中区域若不

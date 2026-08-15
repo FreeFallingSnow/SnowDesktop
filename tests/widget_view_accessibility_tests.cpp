@@ -29,7 +29,7 @@ void TestSemanticHierarchyAndState()
     ViewNode root = Node(ViewNodeType::Column,
         "root", 0, 0, 240, 180);
     ViewNode title = Node(ViewNodeType::Text,
-        "title", 8, 8, 180, 24);
+        "", 8, 8, 180, 24);
     title.text = "System monitor";
     ViewNode button = Node(ViewNodeType::Button,
         "refresh", 8, 40, 100, 32);
@@ -53,6 +53,10 @@ void TestSemanticHierarchyAndState()
             nodes[2].parentIndex == 0 &&
             nodes[3].parentIndex == 0,
         "semantic hierarchy must preserve view parentage");
+    Check(nodes[0].semanticId == "key:root" &&
+            nodes[1].semanticId == "path:0/0" &&
+            nodes[2].semanticId == "key:refresh",
+        "semantic ids must prefer stable keys and fall back to structure paths");
     Check(nodes[1].controlType == "Text" &&
             nodes[1].name == "System monitor" &&
             !nodes[1].focusable,
@@ -123,6 +127,7 @@ void TestImmediateRegionSemantics()
             160, 100, "open", nodes, error) && nodes.size() == 2,
         "immediate regions must share the declarative semantic model");
     Check(nodes[0].controlType == "Button" && nodes[0].focused &&
+            nodes[0].semanticId == "key:open" &&
             HasViewAccessibilityPattern(nodes[0].patterns,
                 ViewAccessibilityPattern::Invoke),
         "immediate buttons must expose Invoke and host focus");

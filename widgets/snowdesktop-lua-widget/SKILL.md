@@ -337,7 +337,10 @@ menu.
   and `ui.menu`, keeping the callback synchronous and I/O-free.
   Only regions with `accessibility.role` or `accessibility.label` enter the
   host semantic snapshot. Supply both for meaningful elements. The Windows
-  UIA provider remains pending, so do not claim Narrator support.
+  UIA provider exposes the current read-only tree, properties, navigation,
+  hit testing, and host focus; pattern actions, change events, virtual child
+  controls, and real Narrator validation remain pending, so do not claim
+  complete screen-reader support.
 - Register vertical immediate-mode overflow with `interaction.scroll`, translate
   content by its returned offset, and pair the viewport with
   `draw.pushClip/popClip`. Do not use the v1 `ui.scrollArea` compatibility API.

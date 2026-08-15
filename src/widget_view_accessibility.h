@@ -15,6 +15,8 @@ struct ViewAccessibilityNode
     static constexpr std::size_t NoParent = static_cast<std::size_t>(-1);
 
     ViewNodeType sourceType = ViewNodeType::Box;
+    // Host-only identity used by UI Automation. Lua still observes `key`.
+    std::string semanticId;
     std::string key;
     std::string name;
     std::string role;

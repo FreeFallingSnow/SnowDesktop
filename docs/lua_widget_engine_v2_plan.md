@@ -1178,9 +1178,12 @@ feature、默认 accessibility role、允许属性和直接必需属性由同一
 解析器已使用该矩阵拒绝未知或不适用属性，节点名称解析和默认 role 也不再各自维护副本。当前
 现已进一步为每个语义节点登记 UIA ControlType、基础 Pattern 和是否参与宿主键盘焦点，并可从
 布局后的 view tree 生成保持父子关系、裁剪/offscreen、enabled/focused 和受控值状态的只读语义
-快照。该快照尚未接入 Windows UIA Provider，也未合成 radio/select/calendar 的内部虚拟子项；
-默认值/范围、子节点、事件、RTL、动画、额度和错误码仍未全部迁入矩阵，也尚未由它生成 LuaLS
-与本文档，因此这仍不表示契约已经冻结或 Narrator 已可使用。
+快照。桌面窗口已响应 `WM_GETOBJECT`，通过 Windows UIA Fragment Provider 暴露当前组件与元素的
+名称、ControlType、AutomationId、RuntimeId、边界、可见性、启用/焦点状态、父子/兄弟导航、
+点命中和焦点定位；窗口销毁或 Explorer 重建时旧 Provider 会失效，避免继续访问宿主旧状态。
+Pattern 动作、属性/结构事件和 radio/select/calendar 的内部虚拟子项仍未接通，也尚未使用真实
+Narrator 场景验收；默认值/范围、子节点、事件、RTL、动画、额度和错误码仍未全部迁入矩阵，
+也尚未由它生成 LuaLS 与本文档，因此这仍不表示契约已经冻结或完整无障碍已经可用。
 
 即时绘制的 `interaction.region` 现在也会按 role、label、受控状态、形状/clip 和最后提交的宿主
 焦点转换为同一种语义节点；`WidgetEngine` 只汇总当前可见、有效、非预览的 v2 实例，并保留
@@ -1879,8 +1882,8 @@ M7 切换完成后，发布运行时必须删除 API v1 注册和执行分支。
 - 第 13.4 节全部 v2.0 必选布局、内容、控件、集合、图表和宿主表面节点，不以未定义的“首批节点”替代稳定版清单。
 - 冻结的机器可读 node-property applicability matrix，以及由它生成的 LuaLS 类型、文档、校验器、默认值表和测试参数集。
   当前节点/属性矩阵已进入宿主校验器并有独立契约测试，UIA ControlType/基础 Pattern/
-  键盘焦点列及只读语义快照也已建立；Windows Provider、生成物、虚拟子项、事件及
-  默认值/范围等列仍需继续并入，尚未达到冻结条件。
+  键盘焦点列、只读语义快照及 Windows Fragment Provider 已建立；Pattern 动作、生成物、
+  虚拟子项、属性/结构事件及默认值/范围等列仍需继续并入，尚未达到冻结条件。
 - 环境上下文、响应式尺寸和减少动态效果。
 - 元素级 hover/pressed/focus、click/double click、指针捕获和独立原生右键菜单。
 - `LuaLogicalSlot`、`slots.binding/collection`、`slotSurface/slotItem`、宿主引用存储和现有 slot contract 全矩阵接入；v2.0 实现 binding 的 reference/replace/clear 和 collection 的 reference/reorder/remove。

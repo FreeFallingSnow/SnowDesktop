@@ -889,6 +889,31 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     {
         widgetEngine_.reset();
     }
+    widgetAccessibilityProvider_ = std::make_unique<
+        snowdesktop::WidgetAccessibilityProviderHost>(
+        [this]() {
+            return widgetEngine_
+                ? widgetEngine_->RuntimeAccessibilitySnapshots()
+                : std::vector<LuaWidgetAccessibilitySnapshot>{};
+        },
+        [this](const std::wstring& widgetId,
+            const std::string& nodeKey) {
+            if (!hwnd_ || !IsWindow(hwnd_) || !widgetEngine_)
+                return false;
+            const size_t index = FindWidgetIndexById(widgetId);
+            if (index >= widgets_.size() ||
+                widgets_[index].type != DesktopWidgetType::LuaScript)
+                return false;
+            SelectWidgetOnly(index);
+            ::SetFocus(hwnd_);
+            const bool focused = nodeKey.empty() ||
+                widgetEngine_->RuntimeSetAccessibilityFocus(
+                    widgetId, nodeKey);
+            if (focused)
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            return focused;
+        });
+    widgetAccessibilityProvider_->AttachWindow(hwnd_);
     StartSteamWorkshopWatcher();
 
     // Expose the tray menu only after SettingsWindow and all of its callbacks
@@ -968,6 +993,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             settingsWindow_->NeedsRender())
             settingsWindow_->Render();
     }
+    widgetAccessibilityProvider_.reset();
     uiAnimationScheduler_.Shutdown();
     OleUninitialize();
     return static_cast<int>(msg.wParam);

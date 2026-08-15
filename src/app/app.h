@@ -64,6 +64,7 @@
 #include "data_paths.h"
 #include "utils.h"
 #include "widget_engine.h"
+#include "widget_accessibility_provider.h"
 #include "l10n.h"
 #include "item_location.h"
 #include "types.h"
@@ -2598,6 +2599,8 @@ private:
     std::vector<std::unique_ptr<MenuIconEntry>> menuIconPool_;
     std::unique_ptr<SettingsWindow> settingsWindow_;
     std::unique_ptr<WidgetEngine> widgetEngine_;
+    std::unique_ptr<snowdesktop::WidgetAccessibilityProviderHost>
+        widgetAccessibilityProvider_;
     struct PendingLuaWidgetConsent
     {
         std::uint64_t sessionId = 0;

@@ -33,6 +33,7 @@ DesktopApp::~DesktopApp()
     StopDemoIconLoader();
     StopIconLoader();
     ClearQuickNavigationEverythingResults();
+    widgetAccessibilityProvider_.reset();
     widgetEngine_.reset();
     settingsWindow_.reset();
     for (DockRunningAppInfo& app : dockUnpinnedRunningApps_)
@@ -133,6 +134,8 @@ void DesktopApp::RegisterOleDropTarget()
 
 void DesktopApp::ResetDesktopWindowResources()
 {
+    if (widgetAccessibilityProvider_ && hwnd_)
+        widgetAccessibilityProvider_->DetachWindow(hwnd_);
     EndDesktopPassthroughHold(false);
     UnregisterDesktopPassthroughHotkey();
     desktopBackdropCompositor_.Reset();
@@ -624,6 +627,9 @@ bool DesktopApp::CreateDesktopOverlayWindow()
         nullptr, nullptr, instance_, this);
     if (!hwnd_)
         return false;
+
+    if (widgetAccessibilityProvider_)
+        widgetAccessibilityProvider_->AttachWindow(hwnd_);
 
     AttachWindowToDesktopHost(parent);
     if (!CreateDesktopInputWindow(parent))

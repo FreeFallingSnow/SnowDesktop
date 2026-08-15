@@ -146,7 +146,8 @@ void PopulateValueState(const ViewNode& source,
         target.expanded = source.expanded;
 }
 
-bool CollectNode(const ViewNode& source, std::string_view focusedKey,
+bool CollectNode(const ViewNode& source, std::string_view semanticPath,
+    std::string_view focusedKey,
     const std::optional<ViewRect>& inheritedClip,
     std::size_t parentIndex,
     std::vector<ViewAccessibilityNode>& nodes,
@@ -169,6 +170,9 @@ bool CollectNode(const ViewNode& source, std::string_view focusedKey,
         }
         ViewAccessibilityNode target;
         target.sourceType = source.type;
+        target.semanticId = source.key.empty()
+            ? "path:" + std::string(semanticPath)
+            : "key:" + source.key;
         target.key = source.key;
         target.name = AccessibleName(source);
         target.role = source.accessibilityRole.empty()
@@ -198,9 +202,13 @@ bool CollectNode(const ViewNode& source, std::string_view focusedKey,
             source.type == ViewNodeType::VirtualGrid) &&
         source.clipFrame)
         childClip = Intersect(inheritedClip, *source.clipFrame);
-    for (const auto& child : source.children)
-        if (!CollectNode(child, focusedKey, childClip,
-                semanticParent, nodes, error)) return false;
+    for (std::size_t index = 0; index < source.children.size(); ++index)
+    {
+        const std::string childPath = std::string(semanticPath) + "/" +
+            std::to_string(index);
+        if (!CollectNode(source.children[index], childPath, focusedKey,
+                childClip, semanticParent, nodes, error)) return false;
+    }
     return true;
 }
 }
@@ -212,7 +220,7 @@ bool CollectViewAccessibilityNodes(const ViewNode& root,
 {
     nodes.clear();
     error.clear();
-    if (!CollectNode(root, focusedKey, std::nullopt,
+    if (!CollectNode(root, "0", focusedKey, std::nullopt,
             ViewAccessibilityNode::NoParent, nodes, error))
     {
         nodes.clear();
@@ -244,6 +252,7 @@ bool CollectInteractionAccessibilityNodes(
         const ImmediateAccessibilityMapping mapping =
             MapImmediateRegion(region);
         ViewAccessibilityNode node;
+        node.semanticId = "key:" + region.key;
         node.key = region.key;
         node.name = region.accessibilityLabel;
         node.role = region.accessibilityRole;

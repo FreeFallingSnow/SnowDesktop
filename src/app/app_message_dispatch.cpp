@@ -58,6 +58,15 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
     switch (msg)
     {
+    case WM_GETOBJECT:
+    {
+        LRESULT accessibilityResult = 0;
+        if (widgetAccessibilityProvider_ &&
+            widgetAccessibilityProvider_->TryHandleGetObject(
+                hwnd, wp, lp, accessibilityResult))
+            return accessibilityResult;
+        break;
+    }
     case WM_NCHITTEST:
         // The desktop overlay intentionally owns input across its complete
         // client area. Be explicit for the resized portion of the layered
@@ -815,6 +824,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         RequestExit();
         return 0;
     case WM_DESTROY:
+        if (widgetAccessibilityProvider_)
+            widgetAccessibilityProvider_->DetachWindow(hwnd);
         StopDemoIconLoader();
         if (luaInlineEdit_)
             CommitLuaInlineTextEdit(false);

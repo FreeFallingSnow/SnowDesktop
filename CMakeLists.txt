@@ -263,6 +263,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget_audio_analysis_provider.cpp
     src/widget_draw_geometry.cpp
     src/widget_interaction_region.cpp
+    src/widget_accessibility_provider.cpp
     src/widget_view_accessibility.cpp
     src/widget_view_contract.cpp
     src/widget_view_tree.cpp
@@ -538,7 +539,7 @@ endif()
 target_link_libraries(SnowDesktop PRIVATE
     SnowDesktopImgui SnowDesktopLua SnowDesktopEverything SnowDesktopPinyinData
     comctl32 d2d1 d3d11 dbghelp dcomp dwmapi dwrite dxgi dxguid gdi32 msimg32
-    advapi32 bcrypt crypt32 imm32 iphlpapi ole32 pdh propsys runtimeobject shcore shell32 shlwapi urlmon user32 windowsapp windowscodecs uuid winhttp ws2_32
+    advapi32 bcrypt crypt32 imm32 iphlpapi ole32 oleaut32 pdh propsys runtimeobject shcore shell32 shlwapi uiautomationcore urlmon user32 windowsapp windowscodecs uuid winhttp ws2_32
     version wbemuuid
 )
 
@@ -1039,6 +1040,16 @@ if (BUILD_TESTING)
             src/widget_view_contract.cpp
         INCLUDE_DIRECTORIES src
         LABELS accessibility contract layout lua widget)
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetAccessibilityProviderTests
+        widget_accessibility_provider
+        SOURCES
+            tests/widget_accessibility_provider_tests.cpp
+            src/widget_accessibility_provider.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES ole32 oleaut32 uiautomationcore user32
+        LABELS accessibility contract integration widget)
 
     snowdesktop_add_test(
         SnowDesktopWidgetViewContractTests

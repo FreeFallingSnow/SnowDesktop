@@ -21372,10 +21372,50 @@ WidgetEngine::RuntimeAccessibilitySnapshots() const
                         widget.lastBounds.bottom - widget.lastBounds.top)),
                     widget.viewKeyboardFocusKey,
                     snapshot.nodes, snapshot.error);
-        if (!collected || !snapshot.nodes.empty())
-            result.push_back(std::move(snapshot));
+        (void)collected;
+        result.push_back(std::move(snapshot));
     }
     return result;
+}
+
+bool WidgetEngine::RuntimeSetAccessibilityFocus(
+    const std::wstring& widgetId, const std::string& nodeKey)
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0 || !RuntimeIsWidgetSelected(widgetId)) return false;
+    auto& widget = widgets_[index];
+    if (!widget.valid || widget.preview || !widget.hostVisible ||
+        widget.manifest.apiVersion < 2 ||
+        !widget.interactionRegions.IsKeyboardFocusable(nodeKey))
+        return false;
+
+    const auto input = std::find_if(widget.hostControls.rbegin(),
+        widget.hostControls.rend(), [&](const auto& control) {
+            return control.type == LuaWidget::HostControl::Type::Input &&
+                control.enabled && control.id == nodeKey;
+        });
+    if (input != widget.hostControls.rend())
+    {
+        if (!RuntimeFocusHostInput(widgetId, nodeKey, "accessibility"))
+            return false;
+    }
+    else
+    {
+        if (focusedHostInput_.active &&
+            focusedHostInput_.widgetId == widgetId)
+            BlurHostInput(false);
+        widget.viewKeyboardFocusKey = nodeKey;
+    }
+
+    widget.logicalSlotFocus.reset();
+    const auto slotItems = CollectHostLogicalSlotKeyboardItems(*this, widget);
+    const auto slot = std::find_if(slotItems.begin(), slotItems.end(),
+        [&](const auto& item) { return item.itemId == nodeKey; });
+    if (slot != slotItems.end())
+        widget.logicalSlotFocus = LuaWidget::LogicalSlotFocus{
+            slot->slotId, slot->itemId };
+    RuntimeInvalidateHost(widgetId);
+    return true;
 }
 
 std::wstring WidgetEngine::RuntimeSelectedWidgetPackageId() const
