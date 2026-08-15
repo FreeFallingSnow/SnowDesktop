@@ -157,6 +157,13 @@
 ---@field offsetY? number Vertical offset from -4096 through 4096; defaults to 4.
 ---@field alpha? number Opacity from 0 through 1; defaults to 0.25.
 
+---@class SnowViewTransform
+---@field translateX? number Post-layout horizontal translation from -4096 through 4096; defaults to 0.
+---@field translateY? number Post-layout vertical translation from -4096 through 4096; defaults to 0.
+---@field scale? number Positive uniform scale from 0.05 through 8; defaults to 1 and nested cumulative scale must remain between 1/64 and 64.
+---@field originX? number Normalized horizontal transform origin from 0 through 1; defaults to 0.5.
+---@field originY? number Normalized vertical transform origin from 0 through 1; defaults to 0.5.
+
 ---@class SnowViewGridFractionTrack
 ---@field fr number Positive fraction weight no greater than 1000.
 
@@ -310,6 +317,7 @@
 ---@field clip? boolean Compatibility clipping flag; use matching overflow='clip' in new widgets.
 ---@field overflow? SnowViewOverflow Container descendant overflow behavior; defaults to visible.
 ---@field shadow? SnowViewShadow Bounded host-rendered frame shadow that does not change layout or hit bounds.
+---@field transform? SnowViewTransform Post-layout translation/uniform scale inherited by descendants; affects drawing, hit testing, host inputs, clipping, and accessibility after probing view.transform.basic.
 ---@field gap? number
 ---@field columns? integer|SnowViewGridTrack[] Required by grid, gridList, and virtualGrid. Track arrays require view.grid.tracks and are rejected by virtualGrid.
 ---@field rows? integer|SnowViewGridTrack[] Optional explicit grid/gridList rows; integer creates that many auto tracks and implicit trailing rows remain auto.

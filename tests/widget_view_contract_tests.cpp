@@ -165,6 +165,7 @@ void TestRepresentativeApplicability()
             ViewNodeAllowsProperty(ViewNodeType::Stack, "clip") &&
             ViewNodeAllowsProperty(ViewNodeType::Column, "overflow") &&
             ViewNodeAllowsProperty(ViewNodeType::Button, "shadow") &&
+            ViewNodeAllowsProperty(ViewNodeType::Button, "transform") &&
             ViewNodeAllowsProperty(ViewNodeType::Button, "offset") &&
             ViewNodeAllowsProperty(ViewNodeType::Button, "zIndex") &&
             ViewNodeAllowsProperty(ViewNodeType::Button, "flexBasis") &&

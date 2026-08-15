@@ -1093,6 +1093,40 @@ bool ReadShadowField(lua_State* state, int table,
     return true;
 }
 
+bool ReadTransformField(lua_State* state, int table,
+    std::optional<ViewTransform>& transform, std::string& error)
+{
+    table = lua_absindex(state, table);
+    lua_getfield(state, table, "transform");
+    if (lua_isnil(state, -1))
+    {
+        lua_pop(state, 1);
+        return true;
+    }
+    if (!lua_istable(state, -1))
+    {
+        lua_pop(state, 1);
+        error = "view field 'transform' must be a table";
+        return false;
+    }
+    ViewTransform parsed;
+    const bool ok = ValidateObjectFields(state, -1,
+            { "translateX", "translateY", "scale",
+                "originX", "originY" },
+            "view transform", error) &&
+        ReadFloatField(state, -1, "translateX",
+            parsed.translateX, error) &&
+        ReadFloatField(state, -1, "translateY",
+            parsed.translateY, error) &&
+        ReadFloatField(state, -1, "scale", parsed.scale, error) &&
+        ReadFloatField(state, -1, "originX", parsed.originX, error) &&
+        ReadFloatField(state, -1, "originY", parsed.originY, error);
+    lua_pop(state, 1);
+    if (!ok) return false;
+    transform = parsed;
+    return true;
+}
+
 bool ReadStringArrayField(lua_State* state, int table, const char* field,
     std::vector<std::string>& values, std::size_t minimum,
     std::size_t maximum, bool required, std::string& error)
@@ -2268,6 +2302,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadBoolField(state, index, "clip", node.clipChildren, error) ||
         !ReadOverflowField(state, index, node.overflow, error) ||
         !ReadShadowField(state, index, node.shadow, error) ||
+        !ReadTransformField(state, index, node.transform, error) ||
         !ReadFloatField(state, index, "gap", node.gap, error) ||
         !ReadGridTracksField(state, index, "columns",
             positionedGridNode, node.columns, node.columnTracks, error) ||

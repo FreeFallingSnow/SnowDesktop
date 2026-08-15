@@ -304,6 +304,26 @@ struct ViewShadow
     float alpha = 0.25f;
 };
 
+struct ViewTransform
+{
+    float translateX = 0.0f;
+    float translateY = 0.0f;
+    float scale = 1.0f;
+    float originX = 0.5f;
+    float originY = 0.5f;
+
+    bool operator==(const ViewTransform&) const = default;
+};
+
+struct ViewResolvedTransform
+{
+    float scale = 1.0f;
+    float translateX = 0.0f;
+    float translateY = 0.0f;
+
+    bool operator==(const ViewResolvedTransform&) const = default;
+};
+
 struct ViewGridTrack
 {
     ViewGridTrackKind kind = ViewGridTrackKind::Auto;
@@ -378,6 +398,7 @@ struct ViewNode
     bool clipChildren = false;
     ViewOverflow overflow = ViewOverflow::Visible;
     std::optional<ViewShadow> shadow;
+    std::optional<ViewTransform> transform;
     float gap = 0.0f;
     std::size_t columns = 1;
     std::vector<ViewGridTrack> columnTracks;
@@ -583,6 +604,15 @@ bool ComputeViewVirtualRange(std::size_t itemCount, float itemExtent,
     float requestedOffset, std::size_t overscan,
     ViewVirtualRange& range, std::string& error);
 ViewRect ViewNodeContentRect(const ViewNode& node) noexcept;
+ViewResolvedTransform ResolveViewTransformForKey(
+    const ViewNode& root, std::string_view key) noexcept;
+std::optional<ViewRect> ResolveViewClipForKey(
+    const ViewNode& root, std::string_view key,
+    bool includeMatchedNode) noexcept;
+ViewRect ApplyViewTransform(const ViewRect& rect,
+    const ViewResolvedTransform& transform) noexcept;
+void ApplyViewTransform(const ViewNode& root,
+    InteractionRegion& region) noexcept;
 std::vector<const ViewNode*> ViewChildrenInPaintOrder(const ViewNode& node);
 ViewRect ViewRadioOptionFrame(
     const ViewNode& node, std::size_t optionIndex) noexcept;

@@ -415,7 +415,6 @@ bool CollectNode(const ViewNode& source, std::string_view semanticPath,
     if (source.clipFrame)
     {
         childClip = Intersect(inheritedClip, *source.clipFrame);
-        if (!childClip) return true;
     }
     for (std::size_t index = 0; index < source.children.size(); ++index)
     {
@@ -467,6 +466,15 @@ bool CollectViewAccessibilityNodes(const ViewNode& root,
     {
         nodes.clear();
         return false;
+    }
+    for (auto& node : nodes)
+    {
+        node.bounds = ApplyViewTransform(node.bounds,
+            ResolveViewTransformForKey(root, node.key));
+        node.clip = ResolveViewClipForKey(root, node.key, false);
+        node.offscreen = node.bounds.width <= 0.0f ||
+            node.bounds.height <= 0.0f ||
+            (node.clip && !Overlaps(node.bounds, *node.clip));
     }
     return true;
 }

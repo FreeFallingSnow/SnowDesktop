@@ -2930,6 +2930,112 @@ void TestTextLocaleValidation()
     lua_close(state);
 }
 
+void TestBasicTransforms()
+{
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "Lua state must be available");
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    Check(luaL_dostring(state, R"lua(
+        return view.button({
+            key = "moved", label = "Move", width = 20, height = 10,
+            transform = {
+                translateX = 4, translateY = -2, scale = 1.5,
+                originX = 0, originY = 1,
+            },
+            action = { id = "move" },
+        })
+    )lua") == LUA_OK,
+        "basic transform Lua fixture must evaluate");
+    ViewNode parsed;
+    std::string error;
+    Check(ParseLuaViewTree(state, -1, parsed, error) && parsed.transform &&
+            Near(parsed.transform->translateX, 4.0f) &&
+            Near(parsed.transform->translateY, -2.0f) &&
+            Near(parsed.transform->scale, 1.5f) &&
+            Near(parsed.transform->originX, 0.0f) &&
+            Near(parsed.transform->originY, 1.0f),
+        "Lua parsing must retain bounded node transform fields");
+
+    ViewNode invalid = parsed;
+    invalid.transform->scale = 0.0f;
+    Check(!ValidateAndLayoutViewTree(invalid, 100.0f, 40.0f, error) &&
+            error.find("transform") != std::string::npos,
+        "non-positive node scales must reject the whole view commit");
+    invalid = parsed;
+    invalid.transform->originX = 1.1f;
+    Check(!ValidateAndLayoutViewTree(invalid, 100.0f, 40.0f, error) &&
+            error.find("transform") != std::string::npos,
+        "transform origins outside normalized bounds must reject the tree");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.text({ key = "invalid", text = "Invalid",
+            transform = { rotate = 45 } })
+    )lua") == LUA_OK,
+        "unknown transform field fixture must evaluate");
+    Check(!ParseLuaViewTree(state, -1, parsed, error) &&
+            error.find("unknown field 'rotate'") != std::string::npos,
+        "unpublished transform fields must fail atomic tree parsing");
+    lua_close(state);
+
+    ViewNode root;
+    root.type = ViewNodeType::Stack;
+    root.key = "root";
+    root.clipChildren = true;
+    root.overflow = ViewOverflow::Clip;
+    root.transform = ViewTransform{
+        10.0f, 5.0f, 2.0f, 0.0f, 0.0f };
+
+    ViewNode button;
+    button.type = ViewNodeType::Button;
+    button.key = "button";
+    button.text = "Button";
+    button.width = { ViewLengthKind::Fixed, 20.0f };
+    button.height = { ViewLengthKind::Fixed, 10.0f };
+    button.offsetX = 120.0f;
+    button.events["click"].id = "button.click";
+    button.transform = ViewTransform{
+        -115.0f, 1.0f, 0.5f, 0.0f, 0.0f };
+
+    ViewNode input;
+    input.type = ViewNodeType::TextInput;
+    input.key = "input";
+    input.inputValue = "value";
+    input.width = { ViewLengthKind::Fixed, 40.0f };
+    input.height = { ViewLengthKind::Fixed, 20.0f };
+    input.events["change"].id = "input.change";
+    input.transform = ViewTransform{
+        5.0f, 1.0f, 0.5f, 0.0f, 0.0f };
+    root.children = { button, input };
+
+    Check(ValidateAndLayoutViewTree(root, 100.0f, 80.0f, error),
+        "nested bounded transforms must validate after layout");
+    std::vector<InteractionRegion> regions;
+    Check(CollectViewInteractionRegions(root, regions, error) &&
+            regions.size() == 2 &&
+            Near(regions[0].shape.x, 20.0f) &&
+            Near(regions[0].shape.y, 7.0f) &&
+            Near(regions[0].shape.width, 20.0f) &&
+            Near(regions[0].shape.height, 10.0f) &&
+            regions[0].clip && Near(regions[0].clip->x, 10.0f) &&
+            Near(regions[0].clip->y, 5.0f) &&
+            Near(regions[0].clip->width, 200.0f) &&
+            Near(regions[0].clip->height, 160.0f),
+        "transforms must move an initially clipped hit shape and its ancestor clip together");
+
+    std::vector<ViewInputControl> controls;
+    Check(CollectViewInputControls(root, controls, error) &&
+            controls.size() == 1 && controls[0].key == "input" &&
+            Near(controls[0].frame.x, 20.0f) &&
+            Near(controls[0].frame.y, 7.0f) &&
+            Near(controls[0].frame.width, 40.0f) &&
+            Near(controls[0].frame.height, 20.0f) &&
+            Near(controls[0].fontSize, 15.0f) && controls[0].clip &&
+            Near(controls[0].clip->width, 200.0f),
+        "host input geometry and typography must follow cumulative transforms");
+}
+
 void TestVisibilityStates()
 {
     lua_State* state = luaL_newstate();
@@ -3015,6 +3121,7 @@ int main()
     TestOverflowShadowAndImageTint();
     TestStackPositioningAndClipping();
     TestTextLocaleValidation();
+    TestBasicTransforms();
     TestVisibilityStates();
     std::cout << "Widget view tree tests passed\n";
     return 0;

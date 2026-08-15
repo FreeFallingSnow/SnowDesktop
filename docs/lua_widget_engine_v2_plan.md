@@ -1283,7 +1283,8 @@ view.row({
 - `view.layout.constraints` 的首批盒模型已加入 0–4096 的统一 `margin`：父布局在节点 frame 外保留空间，线性布局、grid、flow、stack、scroll content extent 与虚拟 item 都使用同一外尺寸模型。
 - `view.layout.edgeInsets` 已将 `margin/padding` 扩展为 scalar、`horizontal/vertical` 与 `top/right/bottom/left` 结构；轴值先展开、显式边值覆盖，四边值进入固有尺寸、全部容器布局、滚动范围、文本/图片内容区和宿主输入命中。仍不解析 CSS shorthand 字符串，也不支持负边距。
 - `view.positioning.basic` 已为 stack 直接子节点加入有界 `offset{x,y}` 与稳定 `zIndex`，绘制和命中使用同一排序而语义顺序保持声明顺序；容器 `clip=true` 同时约束后代绘制、命中、宿主输入和语义可见范围。任意 absolute 布局、裁剪路径与跨容器视觉重排仍不开放。
-- `view.layout.overflow` 现以 `overflow=visible|clip` 正式承接容器后代溢出策略，旧 `clip` 仅作一致性兼容入口；`view.shadow` 使用与即时绘制相同的最多 16 层有界衰减模型，`view.image.tint` 通过宿主 ColorMatrix 保留源 alpha 并替换 RGB。阴影不改变布局/命中，任意 transform 与声明式 transition 仍待后续批次。
+- `view.layout.overflow` 现以 `overflow=visible|clip` 正式承接容器后代溢出策略，旧 `clip` 仅作一致性兼容入口；`view.shadow` 使用与即时绘制相同的最多 16 层有界衰减模型，`view.image.tint` 通过宿主 ColorMatrix 保留源 alpha 并替换 RGB。阴影不改变布局/命中。
+- `view.transform.basic` 已加入布局后的 `translateX/translateY`、正数统一 `scale` 和归一化 `originX/originY`。单节点缩放限制为 0.05–8，嵌套累计缩放限制为 1/64–64；子树继承父变换，绘制、精确元素命中、slider 几何、宿主输入、滚动视口、祖先裁剪和 UIA 边界使用同一累计结果，变换本身不参与布局。旋转、斜切、非统一缩放和声明式 transition 仍待后续批次；当前真实桌面绘制、命中和辅助技术场景待验证。
 - `view.flex.sizing` 现已为 row/column/list 子项补齐 `flexBasis/flexGrow/flexShrink`：basis 先参与外尺寸求解，正空间按 grow 分配，溢出按 shrink×basis 迭代收缩并在命中 min 约束后重新分配；`fill` 保留隐式 grow=1。`view.flex.layout` 已为 row/column 补齐 row/rowReverse/column/columnReverse 主轴、noWrap/wrap/wrapReverse，以及 start/center/end/stretch/spaceBetween/spaceAround/spaceEvenly 多行对齐；每行独立执行 sizing/justify，逻辑绘制、命中、键盘和 UIA 顺序不随视觉反转。
 - `view.text.flow` 现已让普通 text、label 节点与 styledText 共用 `textWrap/maxLines/overflowText/verticalAlign` 的 DirectWrite layout 规则；普通文本默认 noWrap+ellipsis，styledText 默认 wrap+clip，行数限制为 0（无限）到 64。
 - `view.text.typography` 现已补入 100–900 的 `fontWeight`、normal/italic `fontStyle`、1–1024 `lineHeight` 与 -64–256 `letterSpacing`；行高参与固有高度和 DirectWrite 行距，字距参与近似固有宽度和 TextLayout1 字符间距；宿主编辑器排版不由本 feature 暗示。
@@ -1793,7 +1794,7 @@ UTF-8/UTF-16 边界换算和 selectionChange 建议，`view.keyboard.events` 已
 聚焦按键观察、按下/释放配对和失焦清理，`view.focus.request` 已把可信动作焦点请求扩展到
 任意可聚焦声明式节点并支持下一次成功提交解析；这些声明都不把状态持久化责任转移给宿主。
 其额度为 512 节点、32 层、单节点 4 KiB 文本、全树 64 KiB 文本和 256 个交互元素；未知字段、
-重复 key、非连续 children、错误枚举和越界数值拒绝整次提交。数据图形由宿主直接有界绘制，不展开为逐样本节点或命中区域。`view.surface.panel`、`view.surface.dialog` 与 `view.surface.popover` 已把同一树、命中、滚动、控件和键盘管线扩展到互斥的宿主辅助 surface 状态；dialog 另有居中遮罩和非阻塞背景输入隔离，popover 由稳定桌面元素 key 锚定。它们尚不包含完整必选节点矩阵、
+重复 key、非连续 children、错误枚举和越界数值拒绝整次提交。数据图形由宿主直接有界绘制，不展开为逐样本节点或命中区域。`view.transform.basic` 已将有界平移、统一缩放与变换原点贯通绘制、命中、宿主输入、裁剪和 UIA 边界，但旋转及 transition 尚未开放。`view.surface.panel`、`view.surface.dialog` 与 `view.surface.popover` 已把同一树、命中、滚动、控件和键盘管线扩展到互斥的宿主辅助 surface 状态；dialog 另有居中遮罩和非阻塞背景输入隔离，popover 由稳定桌面元素 key 锚定。它们尚不包含完整必选节点矩阵、
 完整 UIA、RTL、文本换行、可变高度虚拟化和差量资源复用；通用 surface 键盘焦点已作为
 `view.keyboardNavigation.basic` 单独发布，因此仍只发布
 细粒度 feature，不发布 `view.tree`，也不计作 M6 完成。

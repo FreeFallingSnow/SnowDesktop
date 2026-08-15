@@ -14937,7 +14937,8 @@ static void ApplyViewTextLocaleAndDirection(IDWriteTextLayout* layout,
 
 static void DrawDeclarativeViewInput(D2DState* state,
     const snowdesktop::widget_runtime::ViewNode& node,
-    const snowdesktop::widget_runtime::ViewStyle& style, float opacity)
+    const snowdesktop::widget_runtime::ViewStyle& style, float opacity,
+    float cumulativeScale)
 {
     using snowdesktop::widget_runtime::ViewNodeType;
     if (!state || !state->ctx) return;
@@ -14997,9 +14998,11 @@ static void DrawDeclarativeViewInput(D2DState* state,
     ApplyViewTextLocaleAndDirection(layout.Get(), node, displayText);
     SetViewTextLayoutAlignment(layout.Get(), node.textAlign);
 
-    int scrollOffset = multiline && state->engine
+    const int scaledScrollOffset = multiline && state->engine
         ? state->engine->RuntimeGetScrollOffset(
             state->currentWidgetId, node.key) : 0;
+    const float scrollOffset = cumulativeScale > 0.0f
+        ? static_cast<float>(scaledScrollOffset) / cumulativeScale : 0.0f;
     const float originX = content.x;
     const float originY = multiline
         ? content.y - scrollOffset : content.y;
@@ -15499,6 +15502,7 @@ IntersectStyledTextHitRect(
 }
 
 static bool CollectStyledTextActionRegions(D2DState* state,
+    const snowdesktop::widget_runtime::ViewNode& root,
     const snowdesktop::widget_runtime::ViewNode& node,
     std::vector<snowdesktop::widget_runtime::InteractionRegion>& regions,
     const std::optional<snowdesktop::widget_runtime::ViewRect>& inheritedClip,
@@ -15519,10 +15523,8 @@ static bool CollectStyledTextActionRegions(D2DState* state,
             StyledTextHitLayout hitLayout;
             if (!BuildStyledTextHitLayout(state, node, hitLayout, error))
                 return false;
-            ViewRect contentClip = hitLayout.content;
-            std::optional<ViewRect> effectiveClip = inheritedClip
-                ? IntersectStyledTextHitRect(*inheritedClip, contentClip)
-                : std::optional<ViewRect>(contentClip);
+            const ViewRect contentClip = hitLayout.content;
+            const std::optional<ViewRect> effectiveClip = contentClip;
             if (effectiveClip)
             {
                 for (const auto& [span, range] : hitLayout.ranges)
@@ -15574,9 +15576,10 @@ static bool CollectStyledTextActionRegions(D2DState* state,
                         span->events.contains("keyDown") ||
                         span->events.contains("keyUp"))
                         region.focusable = true;
-                    region.clip = InteractionClipRect{
-                        effectiveClip->x, effectiveClip->y,
-                        effectiveClip->width, effectiveClip->height };
+                    if (inheritedClip)
+                        region.clip = InteractionClipRect{
+                            inheritedClip->x, inheritedClip->y,
+                            inheritedClip->width, inheritedClip->height };
 
                     bool first = true;
                     ViewRect unionRect{};
@@ -15628,6 +15631,7 @@ static bool CollectStyledTextActionRegions(D2DState* state,
                         error = "view interaction region limit exceeded (256)";
                         return false;
                     }
+                    ApplyViewTransform(root, region);
                     regions.push_back(std::move(region));
                 }
             }
@@ -15640,11 +15644,10 @@ static bool CollectStyledTextActionRegions(D2DState* state,
         childClip = inheritedClip
             ? IntersectStyledTextHitRect(*inheritedClip, *node.clipFrame)
             : node.clipFrame;
-        if (!childClip) return true;
     }
     for (const ViewNode* child : ViewChildrenInPaintOrder(node))
         if (!CollectStyledTextActionRegions(
-                state, *child, regions, childClip, error)) return false;
+                state, root, *child, regions, childClip, error)) return false;
     return true;
 }
 
@@ -15940,10 +15943,53 @@ static void DrawWidgetViewShadow(D2DState* state,
     }
 }
 
+class WidgetViewTransformScope
+{
+public:
+    WidgetViewTransformScope(D2DState* state,
+        const snowdesktop::widget_runtime::ViewNode& node)
+        : context_(state ? state->ctx : nullptr)
+    {
+        if (!context_ || !node.transform) return;
+        const auto& transform = *node.transform;
+        if (std::abs(transform.scale - 1.0f) <= 0.000001f &&
+            std::abs(transform.translateX) <= 0.000001f &&
+            std::abs(transform.translateY) <= 0.000001f)
+            return;
+        context_->GetTransform(&previous_);
+        const D2D1_POINT_2F origin = D2D1::Point2F(
+            state->widgetRect.left + node.frame.x +
+                node.frame.width * transform.originX,
+            state->widgetRect.top + node.frame.y +
+                node.frame.height * transform.originY);
+        const D2D1_MATRIX_3X2_F local =
+            D2D1::Matrix3x2F::Scale(
+                transform.scale, transform.scale, origin) *
+            D2D1::Matrix3x2F::Translation(
+                transform.translateX, transform.translateY);
+        context_->SetTransform(local * previous_);
+        active_ = true;
+    }
+
+    ~WidgetViewTransformScope()
+    {
+        if (active_) context_->SetTransform(previous_);
+    }
+
+    WidgetViewTransformScope(const WidgetViewTransformScope&) = delete;
+    WidgetViewTransformScope& operator=(
+        const WidgetViewTransformScope&) = delete;
+
+private:
+    ID2D1DeviceContext* context_ = nullptr;
+    D2D1_MATRIX_3X2_F previous_{};
+    bool active_ = false;
+};
+
 static void DrawWidgetViewNode(D2DState* state,
     const snowdesktop::widget_runtime::ViewNode& node,
     const snowdesktop::widget_runtime::WidgetInteractionRegions& regions,
-    std::string_view focusedKey)
+    std::string_view focusedKey, float inheritedScale = 1.0f)
 {
     using snowdesktop::widget_runtime::ViewNodeType;
     using snowdesktop::widget_runtime::ViewShapeKind;
@@ -15958,6 +16004,9 @@ static void DrawWidgetViewNode(D2DState* state,
             ViewVisibility::Hidden ||
         node.frame.width <= 0.0f || node.frame.height <= 0.0f)
         return;
+    WidgetViewTransformScope transformScope(state, node);
+    const float cumulativeScale = inheritedScale *
+        (node.transform ? node.transform->scale : 1.0f);
 
     const bool hovered = regions.IsHovered(node.key);
     const bool pressed = regions.IsPressed(node.key);
@@ -16040,7 +16089,8 @@ static void DrawWidgetViewNode(D2DState* state,
 
     if (IsDeclarativeInputNode(node.type))
     {
-        DrawDeclarativeViewInput(state, node, style, opacity);
+        DrawDeclarativeViewInput(
+            state, node, style, opacity, cumulativeScale);
         return;
     }
     if (node.type == ViewNodeType::Select)
@@ -16689,7 +16739,8 @@ static void DrawWidgetViewNode(D2DState* state,
         ++state->widgetClipDepth;
         for (const auto* child : snowdesktop::widget_runtime::
                 ViewChildrenInPaintOrder(node))
-            DrawWidgetViewNode(state, *child, regions, focusedKey);
+            DrawWidgetViewNode(
+                state, *child, regions, focusedKey, cumulativeScale);
         state->ctx->PopAxisAlignedClip();
         --state->widgetClipDepth;
 
@@ -16754,7 +16805,8 @@ static void DrawWidgetViewNode(D2DState* state,
     }
     for (const auto* child : snowdesktop::widget_runtime::
             ViewChildrenInPaintOrder(node))
-        DrawWidgetViewNode(state, *child, regions, focusedKey);
+        DrawWidgetViewNode(
+            state, *child, regions, focusedKey, cumulativeScale);
     if (focused && specialGeometry && style.borderColor)
     {
         if (ID2D1SolidColorBrush* focus = GetCachedBrush(state,
@@ -16829,44 +16881,18 @@ static void DrawWidgetViewTooltip(D2DState* state,
     }
 }
 
-static std::optional<snowdesktop::widget_runtime::ViewRect>
-IntersectViewClips(
-    const std::optional<snowdesktop::widget_runtime::ViewRect>& first,
-    const snowdesktop::widget_runtime::ViewRect& second)
-{
-    if (!first) return second;
-    const float left = std::max(first->x, second.x);
-    const float top = std::max(first->y, second.y);
-    const float right = std::min(first->x + first->width,
-        second.x + second.width);
-    const float bottom = std::min(first->y + first->height,
-        second.y + second.height);
-    if (right <= left || bottom <= top) return std::nullopt;
-    return snowdesktop::widget_runtime::ViewRect{
-        left, top, right - left, bottom - top };
-}
-
 static void DrawWidgetSelectOverlays(D2DState* state,
     const snowdesktop::widget_runtime::ViewNode& node,
     const snowdesktop::widget_runtime::WidgetInteractionRegions& regions,
-    const std::optional<snowdesktop::widget_runtime::ViewRect>& inheritedClip,
     float viewportHeight)
 {
     using snowdesktop::widget_runtime::ViewNodeType;
-    if (!state || !state->ctx || !node.visible) return;
+    if (!state || !state->ctx || !node.visible ||
+        node.visibility == snowdesktop::widget_runtime::
+            ViewVisibility::Hidden) return;
+    WidgetViewTransformScope transformScope(state, node);
     if (node.type == ViewNodeType::Select && node.expanded)
     {
-        if (inheritedClip)
-        {
-            state->ctx->PushAxisAlignedClip(D2D1::RectF(
-                state->widgetRect.left + inheritedClip->x,
-                state->widgetRect.top + inheritedClip->y,
-                state->widgetRect.left + inheritedClip->x +
-                    inheritedClip->width,
-                state->widgetRect.top + inheritedClip->y +
-                    inheritedClip->height),
-                D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-        }
         IDWriteTextFormat* format = GetCachedTextFormat(state,
             node.fontSize, state->itemFontWeight, false,
             DWRITE_WORD_WRAPPING_NO_WRAP, false, true);
@@ -16918,19 +16944,23 @@ static void DrawWidgetSelectOverlays(D2DState* state,
                 }
             }
         }
-        if (inheritedClip) state->ctx->PopAxisAlignedClip();
     }
-    std::optional<snowdesktop::widget_runtime::ViewRect> childClip =
-        inheritedClip;
+    bool clipped = false;
     if (node.clipFrame)
     {
-        childClip = IntersectViewClips(inheritedClip, *node.clipFrame);
-        if (!childClip) return;
+        const auto& clip = *node.clipFrame;
+        state->ctx->PushAxisAlignedClip(D2D1::RectF(
+            state->widgetRect.left + clip.x,
+            state->widgetRect.top + clip.y,
+            state->widgetRect.left + clip.x + clip.width,
+            state->widgetRect.top + clip.y + clip.height),
+            D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        clipped = true;
     }
     for (const auto* child : snowdesktop::widget_runtime::
             ViewChildrenInPaintOrder(node))
-        DrawWidgetSelectOverlays(state, *child, regions,
-            childClip, viewportHeight);
+        DrawWidgetSelectOverlays(state, *child, regions, viewportHeight);
+    if (clipped) state->ctx->PopAxisAlignedClip();
 }
 
 static std::vector<LuaWidget::HostControl> BuildViewHostControls(
@@ -17280,7 +17310,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                 viewError = "view(): " + viewError;
             }
             else if (!CollectStyledTextActionRegions(
-                    d2dState_, candidate, regions, std::nullopt,
+                    d2dState_, candidate, candidate, regions, std::nullopt,
                     viewError))
             {
                 viewError = "view(): " + viewError;
@@ -17528,7 +17558,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                 found->interactionRegions,
                 found->viewKeyboardFocusKey);
             DrawWidgetSelectOverlays(d2dState_, *found->viewTree,
-                found->interactionRegions, std::nullopt,
+                found->interactionRegions,
                 found->viewTree->frame.height);
             if (!RuntimeIsWidgetSelected(found->widgetId) ||
                 (!found->viewKeyboardFocusKey.empty() &&
@@ -17863,7 +17893,7 @@ bool WidgetEngine::RenderWidgetPanel(
             viewError = callbackName + "(): " + viewError;
         }
         else if (hasView && !CollectStyledTextActionRegions(
-                d2dState_, candidate, regions, std::nullopt,
+                d2dState_, candidate, candidate, regions, std::nullopt,
                 viewError))
         {
             panelAccepted = false;
@@ -17977,7 +18007,7 @@ bool WidgetEngine::RenderWidgetPanel(
                         current.panelViewKeyboardFocusKey);
                     DrawWidgetSelectOverlays(d2dState_,
                         *current.panelViewTree,
-                        current.panelInteractionRegions, std::nullopt,
+                        current.panelInteractionRegions,
                         current.panelViewTree->frame.height);
                     DrawWidgetViewTooltip(d2dState_,
                         current.panelInteractionRegions);
@@ -18013,7 +18043,7 @@ bool WidgetEngine::RenderWidgetPanel(
                     current.panelViewKeyboardFocusKey);
                 DrawWidgetSelectOverlays(d2dState_,
                     *current.panelViewTree,
-                    current.panelInteractionRegions, std::nullopt,
+                    current.panelInteractionRegions,
                     current.panelViewTree->frame.height);
                 DrawWidgetViewTooltip(d2dState_,
                     current.panelInteractionRegions);
@@ -20498,8 +20528,8 @@ WidgetEngine::RuntimeLogicalSlotSurface(const std::wstring& widgetId,
     result.accepts = declaration->second.accepts;
     result.replacePolicy = declaration->second.replacePolicy;
 
-    const auto collect = [&](const auto& self, const ViewNode& node,
-        std::optional<ViewRect> inheritedClip) -> bool {
+    const auto collect = [&](const auto& self,
+        const ViewNode& node) -> bool {
         if (!node.visible || node.visibility ==
                 snowdesktop::widget_runtime::ViewVisibility::Hidden)
             return false;
@@ -20540,8 +20570,14 @@ WidgetEngine::RuntimeLogicalSlotSurface(const std::wstring& widgetId,
                         return false;
                 }
             }
-            const auto visibleSurface =
-                IntersectLogicalSlotFrames(inheritedClip, node.frame);
+            const ViewRect transformedSurface =
+                snowdesktop::widget_runtime::ApplyViewTransform(node.frame,
+                    snowdesktop::widget_runtime::ResolveViewTransformForKey(
+                        *widget->viewTree, node.key));
+            const auto visibleSurface = IntersectLogicalSlotFrames(
+                snowdesktop::widget_runtime::ResolveViewClipForKey(
+                    *widget->viewTree, node.key, false),
+                transformedSurface);
             if (!visibleSurface) return false;
             result.bounds = LogicalSlotClientRect(*widget, *visibleSurface);
             if (result.bounds.right <= result.bounds.left ||
@@ -20552,8 +20588,19 @@ WidgetEngine::RuntimeLogicalSlotSurface(const std::wstring& widgetId,
             {
                 if (child.type != ViewNodeType::SlotItem || !child.visible)
                     continue;
-                const auto visibleItem = IntersectLogicalSlotFrames(
-                    visibleSurface, child.frame);
+                const ViewRect transformedItem =
+                    snowdesktop::widget_runtime::ApplyViewTransform(
+                        child.frame,
+                        snowdesktop::widget_runtime::
+                            ResolveViewTransformForKey(
+                                *widget->viewTree, child.key));
+                auto visibleItem = IntersectLogicalSlotFrames(
+                    visibleSurface, transformedItem);
+                if (visibleItem)
+                    visibleItem = IntersectLogicalSlotFrames(
+                        snowdesktop::widget_runtime::ResolveViewClipForKey(
+                            *widget->viewTree, child.key, false),
+                        *visibleItem);
                 if (!visibleItem) continue;
                 RECT bounds = LogicalSlotClientRect(*widget, *visibleItem);
                 if (bounds.right <= bounds.left ||
@@ -20564,18 +20611,12 @@ WidgetEngine::RuntimeLogicalSlotSurface(const std::wstring& widgetId,
             return true;
         }
 
-        std::optional<ViewRect> childClip = inheritedClip;
-        if (node.clipFrame)
-            childClip = IntersectLogicalSlotFrames(
-                inheritedClip, *node.clipFrame);
-        if (node.clipFrame && !childClip)
-            return false;
         for (const auto& child : node.children)
-            if (self(self, child, childClip)) return true;
+            if (self(self, child)) return true;
         return false;
     };
 
-    if (!collect(collect, *widget->viewTree, std::nullopt))
+    if (!collect(collect, *widget->viewTree))
         return std::nullopt;
     return result;
 }

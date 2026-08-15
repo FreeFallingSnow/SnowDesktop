@@ -227,6 +227,11 @@ the host applies the same content rectangle to descendant paint, pointer hit,
 inputs, and semantic visibility. `clip=true` remains compatibility syntax and
 must not contradict overflow. Probe `view.shadow` for bounded frame shadows and
 `view.image.tint` for alpha-preserving RGB tint on package image nodes.
+Probe `view.transform.basic` before declaring a node `transform` with bounded
+`translateX`, `translateY`, positive uniform `scale`, or normalized
+`originX`/`originY`. Transforms are post-layout, inherit through descendants,
+and move drawing, hit targets, host inputs, clips, and accessibility bounds
+together; rotation and declarative transitions are not part of this feature.
 Probe `view.state.visibility` before using `visibility`. `hidden` keeps layout
 space but removes the whole subtree from paint, hit testing, host inputs, and
 UI Automation; `collapsed` also removes its layout space. Legacy `visible=false`

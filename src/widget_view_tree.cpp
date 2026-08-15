@@ -2959,8 +2959,7 @@ bool CollectRegions(const ViewNode& node,
         std::map<std::string, InteractionAction, std::less<>> surfaceEvents;
         for (const auto& [name, action] : node.events)
             if (name != "change") surfaceEvents.emplace(name, action);
-        if ((!surfaceEvents.empty() || !node.tooltip.empty()) &&
-            (!inheritedClip || Overlaps(node.frame, *inheritedClip)))
+        if (!surfaceEvents.empty() || !node.tooltip.empty())
         {
             if (regions.size() >=
                 WidgetInteractionRegions::kMaximumRegions)
@@ -2997,7 +2996,6 @@ bool CollectRegions(const ViewNode& node,
             const auto& cell = cells[index];
             if (!cell.currentMonth && !node.showAdjacentDates) continue;
             const ViewRect frame = ViewMonthCalendarCellFrame(node, index);
-            if (inheritedClip && !Overlaps(frame, *inheritedClip)) continue;
             if (regions.size() >=
                 WidgetInteractionRegions::kMaximumRegions)
             {
@@ -3041,8 +3039,6 @@ bool CollectRegions(const ViewNode& node,
         {
             const auto& option = node.options[index];
             const ViewRect frame = ViewRadioOptionFrame(node, index);
-            if (inheritedClip && !Overlaps(frame, *inheritedClip))
-                continue;
             if (regions.size() >=
                 WidgetInteractionRegions::kMaximumRegions)
             {
@@ -3086,43 +3082,40 @@ bool CollectRegions(const ViewNode& node,
     }
     if (IsInputNode(node.type))
     {
-        if (!inheritedClip || Overlaps(node.frame, *inheritedClip))
+        if (regions.size() >=
+            WidgetInteractionRegions::kMaximumRegions)
         {
-            if (regions.size() >=
-                WidgetInteractionRegions::kMaximumRegions)
-            {
-                error = "view interaction region limit exceeded (256)";
-                return false;
-            }
-            InteractionRegion region;
-            region.key = node.key;
-            region.shape.type = node.style.cornerRadius.value_or(0.0f) > 0.0f
-                ? InteractionShapeType::RoundedRect
-                : InteractionShapeType::Rect;
-            region.shape.x = node.frame.x;
-            region.shape.y = node.frame.y;
-            region.shape.width = node.frame.width;
-            region.shape.height = node.frame.height;
-            region.shape.radius = node.style.cornerRadius.value_or(0.0f);
-            if (inheritedClip)
-                region.clip = InteractionClipRect{ inheritedClip->x,
-                    inheritedClip->y, inheritedClip->width,
-                    inheritedClip->height };
-            region.cursor = node.cursor.empty() ? "text" : node.cursor;
-            region.tooltip = node.tooltip;
-            for (const auto& [name, action] : node.events)
-                if (name != "change" && name != "focus" &&
-                    name != "blur" && name != "submit" &&
-                    name != "selectionChange")
-                    region.events.emplace(name, action);
-            region.accessibilityRole = node.accessibilityRole.empty()
-                ? DefaultAccessibilityRole(node.type)
-                : node.accessibilityRole;
-            region.accessibilityLabel = node.accessibilityLabel;
-            region.enabled = node.enabled;
-            ApplyNodeFocusPolicy(node, region);
-            regions.push_back(std::move(region));
+            error = "view interaction region limit exceeded (256)";
+            return false;
         }
+        InteractionRegion region;
+        region.key = node.key;
+        region.shape.type = node.style.cornerRadius.value_or(0.0f) > 0.0f
+            ? InteractionShapeType::RoundedRect
+            : InteractionShapeType::Rect;
+        region.shape.x = node.frame.x;
+        region.shape.y = node.frame.y;
+        region.shape.width = node.frame.width;
+        region.shape.height = node.frame.height;
+        region.shape.radius = node.style.cornerRadius.value_or(0.0f);
+        if (inheritedClip)
+            region.clip = InteractionClipRect{ inheritedClip->x,
+                inheritedClip->y, inheritedClip->width,
+                inheritedClip->height };
+        region.cursor = node.cursor.empty() ? "text" : node.cursor;
+        region.tooltip = node.tooltip;
+        for (const auto& [name, action] : node.events)
+            if (name != "change" && name != "focus" &&
+                name != "blur" && name != "submit" &&
+                name != "selectionChange")
+                region.events.emplace(name, action);
+        region.accessibilityRole = node.accessibilityRole.empty()
+            ? DefaultAccessibilityRole(node.type)
+            : node.accessibilityRole;
+        region.accessibilityLabel = node.accessibilityLabel;
+        region.enabled = node.enabled;
+        ApplyNodeFocusPolicy(node, region);
+        regions.push_back(std::move(region));
         return true;
     }
     if (node.type == ViewNodeType::Select)
@@ -3132,35 +3125,32 @@ bool CollectRegions(const ViewNode& node,
             error = "view interaction region limit exceeded (256)";
             return false;
         }
-        if (!inheritedClip || Overlaps(node.frame, *inheritedClip))
-        {
-            InteractionRegion trigger;
-            trigger.key = node.key;
-            trigger.shape.type = node.style.cornerRadius.value_or(0.0f) > 0.0f
-                ? InteractionShapeType::RoundedRect
-                : InteractionShapeType::Rect;
-            trigger.shape.x = node.frame.x;
-            trigger.shape.y = node.frame.y;
-            trigger.shape.width = node.frame.width;
-            trigger.shape.height = node.frame.height;
-            trigger.shape.radius = node.style.cornerRadius.value_or(0.0f);
-            if (inheritedClip)
-                trigger.clip = InteractionClipRect{ inheritedClip->x,
-                    inheritedClip->y, inheritedClip->width,
-                    inheritedClip->height };
-            trigger.cursor = node.cursor.empty() ? "hand" : node.cursor;
-            trigger.tooltip = node.tooltip;
-            for (const auto& [name, action] : node.events)
-                if (name != "change") trigger.events.emplace(name, action);
-            trigger.accessibilityRole = node.accessibilityRole.empty()
-                ? "combobox" : node.accessibilityRole;
-            trigger.accessibilityLabel = node.accessibilityLabel;
-            trigger.hasExpandedProposal = true;
-            trigger.expanded = node.expanded;
-            trigger.enabled = node.enabled;
-            ApplyNodeFocusPolicy(node, trigger);
-            regions.push_back(std::move(trigger));
-        }
+        InteractionRegion trigger;
+        trigger.key = node.key;
+        trigger.shape.type = node.style.cornerRadius.value_or(0.0f) > 0.0f
+            ? InteractionShapeType::RoundedRect
+            : InteractionShapeType::Rect;
+        trigger.shape.x = node.frame.x;
+        trigger.shape.y = node.frame.y;
+        trigger.shape.width = node.frame.width;
+        trigger.shape.height = node.frame.height;
+        trigger.shape.radius = node.style.cornerRadius.value_or(0.0f);
+        if (inheritedClip)
+            trigger.clip = InteractionClipRect{ inheritedClip->x,
+                inheritedClip->y, inheritedClip->width,
+                inheritedClip->height };
+        trigger.cursor = node.cursor.empty() ? "hand" : node.cursor;
+        trigger.tooltip = node.tooltip;
+        for (const auto& [name, action] : node.events)
+            if (name != "change") trigger.events.emplace(name, action);
+        trigger.accessibilityRole = node.accessibilityRole.empty()
+            ? "combobox" : node.accessibilityRole;
+        trigger.accessibilityLabel = node.accessibilityLabel;
+        trigger.hasExpandedProposal = true;
+        trigger.expanded = node.expanded;
+        trigger.enabled = node.enabled;
+        ApplyNodeFocusPolicy(node, trigger);
+        regions.push_back(std::move(trigger));
         return true;
     }
     const bool hasDirectRegionEvent = std::any_of(node.events.begin(),
@@ -3172,8 +3162,7 @@ bool CollectRegions(const ViewNode& node,
             IsNodeKeyboardFocusable(node) ||
             IsButtonNode(node.type) ||
             node.type == ViewNodeType::ListItem ||
-            node.type == ViewNodeType::SlotItem) &&
-        (!inheritedClip || Overlaps(node.frame, *inheritedClip)))
+            node.type == ViewNodeType::SlotItem))
     {
         if (regions.size() >= WidgetInteractionRegions::kMaximumRegions)
         {
@@ -3279,8 +3268,6 @@ bool CollectRegions(const ViewNode& node,
     std::optional<ViewRect> childClip = inheritedClip;
     if (node.clipFrame)
     {
-        if (inheritedClip && !Overlaps(*node.clipFrame, *inheritedClip))
-            return true;
         childClip = IntersectRects(inheritedClip, *node.clipFrame);
     }
     for (const ViewNode* child : ViewChildrenInPaintOrder(node))
@@ -3303,8 +3290,6 @@ bool CollectSelectOptions(const ViewNode& node,
             const auto& option = node.options[index];
             const ViewRect frame = ViewSelectOptionFrame(
                 node, index, viewportHeight);
-            if (inheritedClip && !Overlaps(frame, *inheritedClip))
-                continue;
             if (regions.size() >=
                 WidgetInteractionRegions::kMaximumRegions)
             {
@@ -3341,8 +3326,6 @@ bool CollectSelectOptions(const ViewNode& node,
     std::optional<ViewRect> childClip = inheritedClip;
     if (node.clipFrame)
     {
-        if (inheritedClip && !Overlaps(*node.clipFrame, *inheritedClip))
-            return true;
         childClip = IntersectRects(inheritedClip, *node.clipFrame);
     }
     for (const ViewNode* child : ViewChildrenInPaintOrder(node))
@@ -3359,8 +3342,6 @@ bool CollectInputs(const ViewNode& node,
         return true;
     if (IsInputNode(node.type))
     {
-        if (inheritedClip && !Overlaps(node.frame, *inheritedClip))
-            return true;
         if (controls.size() >= 128)
         {
             error = "view input control limit exceeded (128)";
@@ -3410,8 +3391,6 @@ bool CollectInputs(const ViewNode& node,
     std::optional<ViewRect> childClip = inheritedClip;
     if (node.clipFrame)
     {
-        if (inheritedClip && !Overlaps(*node.clipFrame, *inheritedClip))
-            return true;
         childClip = IntersectRects(inheritedClip, *node.clipFrame);
     }
     for (const ViewNode* child : ViewChildrenInPaintOrder(node))
@@ -3443,8 +3422,6 @@ bool ApplyScrollState(ViewNode& node,
     std::optional<ViewRect> childClip = inheritedClip;
     if (!IsScrollContainer(node.type) && node.clipFrame)
     {
-        if (inheritedClip && !Overlaps(*node.clipFrame, *inheritedClip))
-            return true;
         childClip = IntersectRects(inheritedClip, *node.clipFrame);
     }
     if (IsScrollContainer(node.type))
@@ -3541,8 +3518,6 @@ bool ApplyScrollState(ViewNode& node,
                 vertical ? -offset : 0.0f);
         }
 
-        if (inheritedClip && !Overlaps(clip, *inheritedClip))
-            return true;
         childClip = IntersectRects(inheritedClip, clip);
         const ViewRect visibleFrame = childClip.value_or(clip);
         viewports.push_back({ node.key, visibleFrame, node.orientation,
@@ -3553,11 +3528,205 @@ bool ApplyScrollState(ViewNode& node,
                 scrollContainers, error)) return false;
     return true;
 }
+
+ViewResolvedTransform ComposeTransform(
+    const ViewResolvedTransform& local,
+    const ViewResolvedTransform& parent) noexcept
+{
+    return {
+        local.scale * parent.scale,
+        local.translateX * parent.scale + parent.translateX,
+        local.translateY * parent.scale + parent.translateY
+    };
+}
+
+ViewResolvedTransform LocalTransform(const ViewNode& node) noexcept
+{
+    if (!node.transform) return {};
+    const auto& value = *node.transform;
+    const float originX = node.frame.x +
+        node.frame.width * value.originX;
+    const float originY = node.frame.y +
+        node.frame.height * value.originY;
+    return { value.scale,
+        originX * (1.0f - value.scale) + value.translateX,
+        originY * (1.0f - value.scale) + value.translateY };
+}
+
+struct TransformMatch
+{
+    ViewResolvedTransform node;
+    std::optional<ViewRect> parentClip;
+    std::optional<ViewRect> nodeClip;
+    std::size_t keyLength = 0;
+    bool found = false;
+};
+
+void FindTransform(const ViewNode& node, std::string_view key,
+    const ViewResolvedTransform& parent,
+    const std::optional<ViewRect>& inheritedClip,
+    bool inheritedClipActive,
+    TransformMatch& match) noexcept
+{
+    const ViewResolvedTransform current =
+        ComposeTransform(LocalTransform(node), parent);
+    std::optional<ViewRect> childClip = inheritedClip;
+    bool childClipActive = inheritedClipActive;
+    if (node.clipFrame)
+    {
+        const ViewRect transformedClip =
+            ApplyViewTransform(*node.clipFrame, current);
+        childClip = inheritedClipActive
+            ? (inheritedClip
+                ? IntersectRects(inheritedClip, transformedClip)
+                : std::nullopt)
+            : std::optional<ViewRect>(transformedClip);
+        childClipActive = true;
+    }
+    const bool exact = key == node.key;
+    const bool generated = key.size() > node.key.size() &&
+        key.starts_with(node.key) && key[node.key.size()] == '/';
+    if ((exact || generated) && node.key.size() >= match.keyLength)
+    {
+        match.node = current;
+        match.parentClip = inheritedClipActive
+            ? std::optional<ViewRect>(
+                inheritedClip.value_or(ViewRect{}))
+            : std::nullopt;
+        match.nodeClip = childClipActive
+            ? std::optional<ViewRect>(childClip.value_or(ViewRect{}))
+            : std::nullopt;
+        match.keyLength = node.key.size();
+        match.found = true;
+    }
+    for (const auto& child : node.children)
+        FindTransform(child, key, current, childClip,
+            childClipActive, match);
+}
+
+bool ValidateTransforms(const ViewNode& node,
+    const ViewResolvedTransform& parent, std::string& error)
+{
+    if (node.transform)
+    {
+        const auto& value = *node.transform;
+        if (!FiniteInRange(value.translateX,
+                -MaximumDimension, MaximumDimension) ||
+            !FiniteInRange(value.translateY,
+                -MaximumDimension, MaximumDimension) ||
+            !FiniteInRange(value.scale, 0.05f, 8.0f) ||
+            !FiniteInRange(value.originX, 0.0f, 1.0f) ||
+            !FiniteInRange(value.originY, 0.0f, 1.0f))
+        {
+            error = "view transform fields are outside their limits";
+            return false;
+        }
+    }
+    const ViewResolvedTransform current =
+        ComposeTransform(LocalTransform(node), parent);
+    if (!FiniteInRange(current.scale, 1.0f / 64.0f, 64.0f))
+    {
+        error = "view cumulative transform scale must remain between 1/64 and 64";
+        return false;
+    }
+    const ViewRect transformed{
+        node.frame.x * current.scale + current.translateX,
+        node.frame.y * current.scale + current.translateY,
+        node.frame.width * current.scale,
+        node.frame.height * current.scale };
+    if (!FiniteInRange(transformed.x,
+            -MaximumScrollExtent, MaximumScrollExtent) ||
+        !FiniteInRange(transformed.y,
+            -MaximumScrollExtent, MaximumScrollExtent) ||
+        !FiniteInRange(transformed.width, 0.0f, MaximumScrollExtent) ||
+        !FiniteInRange(transformed.height, 0.0f, MaximumScrollExtent))
+    {
+        error = "view transformed bounds exceed 1000000";
+        return false;
+    }
+    for (const auto& child : node.children)
+        if (!ValidateTransforms(child, current, error)) return false;
+    return true;
+}
 }
 
 ViewRect ViewNodeContentRect(const ViewNode& node) noexcept
 {
     return ContentRect(node);
+}
+
+ViewResolvedTransform ResolveViewTransformForKey(
+    const ViewNode& root, std::string_view key) noexcept
+{
+    TransformMatch match;
+    FindTransform(root, key, {}, std::nullopt, false, match);
+    return match.found ? match.node : ViewResolvedTransform{};
+}
+
+std::optional<ViewRect> ResolveViewClipForKey(
+    const ViewNode& root, std::string_view key,
+    bool includeMatchedNode) noexcept
+{
+    TransformMatch match;
+    FindTransform(root, key, {}, std::nullopt, false, match);
+    if (!match.found) return std::nullopt;
+    return includeMatchedNode ? match.nodeClip : match.parentClip;
+}
+
+ViewRect ApplyViewTransform(const ViewRect& rect,
+    const ViewResolvedTransform& transform) noexcept
+{
+    return { rect.x * transform.scale + transform.translateX,
+        rect.y * transform.scale + transform.translateY,
+        rect.width * transform.scale,
+        rect.height * transform.scale };
+}
+
+void ApplyViewTransform(const ViewNode& root,
+    InteractionRegion& region) noexcept
+{
+    const auto transform = ResolveViewTransformForKey(root, region.key);
+    const auto applyShape = [&transform](InteractionShape& shape) {
+        shape.x = shape.x * transform.scale + transform.translateX;
+        shape.y = shape.y * transform.scale + transform.translateY;
+        shape.width *= transform.scale;
+        shape.height *= transform.scale;
+        shape.radius *= transform.scale;
+    };
+    applyShape(region.shape);
+    for (auto& fragment : region.hitFragments)
+        applyShape(fragment);
+    if (const auto clip = ResolveViewClipForKey(root, region.key, false))
+    {
+        region.clip = InteractionClipRect{
+            clip->x, clip->y, clip->width, clip->height };
+    }
+    else region.clip.reset();
+    if (region.controlKind == InteractionControlKind::Slider)
+    {
+        region.controlStart = region.controlStart * transform.scale +
+            (region.vertical ? transform.translateY : transform.translateX);
+        region.controlLength *= transform.scale;
+    }
+}
+
+static bool InteractionRegionOverlapsClip(
+    const InteractionRegion& region) noexcept
+{
+    if (!region.clip) return true;
+    const ViewRect clip{ region.clip->x, region.clip->y,
+        region.clip->width, region.clip->height };
+    const auto overlapsShape = [&clip](const InteractionShape& shape) {
+        const ViewRect bounds = shape.type == InteractionShapeType::Circle
+            ? ViewRect{ shape.x - shape.radius, shape.y - shape.radius,
+                shape.radius * 2.0f, shape.radius * 2.0f }
+            : ViewRect{ shape.x, shape.y, shape.width, shape.height };
+        return Overlaps(bounds, clip);
+    };
+    if (!region.hitFragments.empty())
+        return std::any_of(region.hitFragments.begin(),
+            region.hitFragments.end(), overlapsShape);
+    return overlapsShape(region.shape);
 }
 
 std::vector<const ViewNode*> ViewChildrenInPaintOrder(const ViewNode& node)
@@ -3743,7 +3912,7 @@ bool ValidateAndLayoutViewTree(ViewNode& root, float width, float height,
     ApplyCollectionSelectionState(root);
     if (!ResolveGridPlacements(root, error)) return false;
     LayoutNode(root, { 0.0f, 0.0f, width, height });
-    return true;
+    return ValidateTransforms(root, {}, error);
 }
 
 bool ValidateViewLogicalSlots(const ViewNode& root,
@@ -3852,6 +4021,11 @@ bool CollectViewInteractionRegions(const ViewNode& root,
         regions.clear();
         return false;
     }
+    for (auto& region : regions)
+        ApplyViewTransform(root, region);
+    std::erase_if(regions, [](const auto& region) {
+        return !InteractionRegionOverlapsClip(region);
+    });
     return true;
 }
 
@@ -3860,7 +4034,22 @@ bool CollectViewInputControls(const ViewNode& root,
 {
     error.clear();
     controls.clear();
-    return CollectInputs(root, controls, std::nullopt, error);
+    if (!CollectInputs(root, controls, std::nullopt, error)) return false;
+    for (auto& control : controls)
+    {
+        const auto transform = ResolveViewTransformForKey(root, control.key);
+        control.frame = ApplyViewTransform(control.frame, transform);
+        control.clip = ResolveViewClipForKey(root, control.key, false);
+        control.fontSize *= transform.scale;
+        control.padding.top *= transform.scale;
+        control.padding.right *= transform.scale;
+        control.padding.bottom *= transform.scale;
+        control.padding.left *= transform.scale;
+    }
+    std::erase_if(controls, [](const auto& control) {
+        return control.clip && !Overlaps(control.frame, *control.clip);
+    });
+    return true;
 }
 
 bool ApplyViewScrollOffsets(ViewNode& root,
@@ -3870,8 +4059,26 @@ bool ApplyViewScrollOffsets(ViewNode& root,
     error.clear();
     viewports.clear();
     std::size_t scrollContainers = 0;
-    return ApplyScrollState(root, resolver, viewports, std::nullopt,
-        scrollContainers, error);
+    if (!ApplyScrollState(root, resolver, viewports, std::nullopt,
+            scrollContainers, error) || !ValidateTransforms(root, {}, error))
+    {
+        viewports.clear();
+        return false;
+    }
+    for (auto& viewport : viewports)
+    {
+        if (const auto clip = ResolveViewClipForKey(
+                root, viewport.key, true))
+            viewport.frame = *clip;
+        else
+            viewport.frame = ApplyViewTransform(viewport.frame,
+                ResolveViewTransformForKey(root, viewport.key));
+    }
+    std::erase_if(viewports, [](const auto& viewport) {
+        return viewport.frame.width <= 0.0f ||
+            viewport.frame.height <= 0.0f;
+    });
+    return true;
 }
 
 bool ComputeViewVirtualRange(std::size_t itemCount, float itemExtent,

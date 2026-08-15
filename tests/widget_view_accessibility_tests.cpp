@@ -293,6 +293,31 @@ void TestHiddenSemanticSubtree()
             nodes[1].key == "visible-button",
         "hidden semantic subtrees must be omitted while siblings remain visible");
 }
+
+void TestTransformedSemanticBounds()
+{
+    ViewNode root = Node(ViewNodeType::Stack,
+        "root", 0, 0, 100, 80);
+    root.clipFrame = ViewRect{ 0, 0, 100, 80 };
+    root.transform = ViewTransform{
+        10.0f, 5.0f, 2.0f, 0.0f, 0.0f };
+    ViewNode button = Node(ViewNodeType::Button,
+        "button", 0, 0, 20, 10);
+    button.text = "Button";
+    button.transform = ViewTransform{
+        5.0f, 1.0f, 0.5f, 0.0f, 0.0f };
+    root.children.push_back(button);
+
+    std::vector<ViewAccessibilityNode> nodes;
+    std::string error;
+    Check(CollectViewAccessibilityNodes(root, "button", nodes, error) &&
+            nodes.size() == 2 &&
+            nodes[0].bounds == ViewRect{ 10, 5, 200, 160 } &&
+            nodes[1].bounds == ViewRect{ 20, 7, 20, 10 } &&
+            nodes[1].clip == ViewRect{ 10, 5, 200, 160 } &&
+            nodes[1].focused && !nodes[1].offscreen,
+        "accessibility bounds and ancestor clips must follow nested transforms");
+}
 }
 
 int main()
@@ -302,6 +327,7 @@ int main()
     TestImmediateRegionSemantics();
     TestVirtualControlChildren();
     TestHiddenSemanticSubtree();
+    TestTransformedSemanticBounds();
     std::cout << "widget view accessibility tests passed\n";
     return 0;
 }
