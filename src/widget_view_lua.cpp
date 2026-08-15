@@ -818,6 +818,10 @@ bool ParseNodeType(std::string_view type, ViewNodeType& result)
     else if (type == "grid") result = ViewNodeType::Grid;
     else if (type == "flow") result = ViewNodeType::Flow;
     else if (type == "stack") result = ViewNodeType::Stack;
+    else if (type == "scroll") result = ViewNodeType::Scroll;
+    else if (type == "list") result = ViewNodeType::List;
+    else if (type == "gridList") result = ViewNodeType::GridList;
+    else if (type == "listItem") result = ViewNodeType::ListItem;
     else if (type == "text") result = ViewNodeType::Text;
     else if (type == "image") result = ViewNodeType::Image;
     else if (type == "button") result = ViewNodeType::Button;
@@ -908,6 +912,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
                 "padding", "gap", "columns", "columnGap", "rowGap",
                 "flexGrow", "fontSize", "bold",
                 "checked", "visible", "enabled", "cursor", "alignItems",
+                "showScrollbar",
                 "alignSelf", "justifyContent", "textAlign", "style",
                 "hoverStyle", "pressedStyle", "checkedStyle",
                 "accessibility", "events",
@@ -926,11 +931,14 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         node.type == ViewNodeType::Checkbox;
     const bool radioNode = node.type == ViewNodeType::RadioGroup;
     const bool sliderNode = node.type == ViewNodeType::Slider;
+    const bool scrollNode = node.type == ViewNodeType::Scroll;
+    const bool listItemNode = node.type == ViewNodeType::ListItem;
     const bool controlNode = checkControlNode || radioNode || sliderNode;
     const bool linkNode = node.type == ViewNodeType::Link;
     const bool labelNode = node.type == ViewNodeType::Button ||
         linkNode || checkControlNode;
-    const bool actionNode = buttonNode || linkNode || controlNode;
+    const bool actionNode = buttonNode || linkNode || controlNode ||
+        listItemNode;
     const bool iconNode = node.type == ViewNodeType::Icon ||
         node.type == ViewNodeType::IconButton;
     const bool textNode = node.type == ViewNodeType::Text ||
@@ -945,7 +953,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         node.type == ViewNodeType::Spectrum;
     const bool imageNode = node.type == ViewNodeType::Image;
     const bool dividerNode = node.type == ViewNodeType::Divider;
-    const bool gridNode = node.type == ViewNodeType::Grid;
+    const bool gridNode = node.type == ViewNodeType::Grid ||
+        node.type == ViewNodeType::GridList;
     const bool flowNode = node.type == ViewNodeType::Flow;
     const bool textResourceNode = textNode || labelNode || radioNode;
     if (labelNode &&
@@ -961,11 +970,14 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         error = "icon nodes use 'glyph', not 'text' or 'label'";
         return false;
     }
-    if (!actionNode &&
-        (FieldPresent(state, index, "label") ||
-            FieldPresent(state, index, "action")))
+    if (!labelNode && FieldPresent(state, index, "label"))
     {
-        error = "only action controls accept 'label' and 'action'";
+        error = "only label-bearing action controls accept 'label'";
+        return false;
+    }
+    if (!actionNode && FieldPresent(state, index, "action"))
+    {
+        error = "only action-capable nodes accept 'action'";
         return false;
     }
     if (!textNode && !labelNode && !iconNode &&
@@ -986,27 +998,32 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         error = "only shape nodes accept 'shape'";
         return false;
     }
-    if (!dividerNode && !radioNode && !sliderNode &&
+    if (!dividerNode && !radioNode && !sliderNode && !scrollNode &&
         FieldPresent(state, index, "orientation"))
     {
-        error = "only divider, radioGroup, and slider nodes accept orientation";
+        error = "only divider, radioGroup, slider, and scroll nodes accept orientation";
         return false;
     }
     if (!gridNode && FieldPresent(state, index, "columns"))
     {
-        error = "only grid nodes accept columns";
+        error = "only grid and gridList nodes accept columns";
         return false;
     }
     if (!gridNode && !flowNode &&
         (FieldPresent(state, index, "columnGap") ||
             FieldPresent(state, index, "rowGap")))
     {
-        error = "only grid and flow nodes accept columnGap and rowGap";
+        error = "only grid, gridList, and flow nodes accept columnGap and rowGap";
         return false;
     }
     if (gridNode && !FieldPresent(state, index, "columns"))
     {
-        error = "grid nodes require columns";
+        error = "grid and gridList nodes require columns";
+        return false;
+    }
+    if (!scrollNode && FieldPresent(state, index, "showScrollbar"))
+    {
+        error = "only scroll nodes accept showScrollbar";
         return false;
     }
     if (!progressNode && !sliderNode && FieldPresent(state, index, "value"))
@@ -1126,6 +1143,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             node.fillOpacity, error) ||
         !ReadBoolField(state, index, "bold", node.bold, error) ||
         !ReadBoolField(state, index, "checked", node.checked, error) ||
+        !ReadBoolField(state, index, "showScrollbar",
+            node.showScrollbar, error) ||
         !ReadBoolField(state, index, "visible", node.visible, error) ||
         !ReadBoolField(state, index, "enabled", node.enabled, error) ||
         !ReadStringField(state, index, "cursor", node.cursor, false, error) ||
@@ -1146,6 +1165,9 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadStyleField(state, index, "checkedStyle",
             node.checkedStyle, error))
         return false;
+
+    if (scrollNode && !FieldPresent(state, index, "orientation"))
+        node.orientation = ViewOrientation::Vertical;
 
     if (dividerNode && node.orientation == ViewOrientation::Vertical)
     {
@@ -1354,6 +1376,16 @@ int LuaViewColumn(lua_State* state) { return MakeNode(state, "column"); }
 int LuaViewGrid(lua_State* state) { return MakeNode(state, "grid"); }
 int LuaViewFlow(lua_State* state) { return MakeNode(state, "flow"); }
 int LuaViewStack(lua_State* state) { return MakeNode(state, "stack"); }
+int LuaViewScroll(lua_State* state) { return MakeNode(state, "scroll"); }
+int LuaViewList(lua_State* state) { return MakeNode(state, "list"); }
+int LuaViewGridList(lua_State* state)
+{
+    return MakeNode(state, "gridList");
+}
+int LuaViewListItem(lua_State* state)
+{
+    return MakeNode(state, "listItem");
+}
 int LuaViewText(lua_State* state) { return MakeNode(state, "text"); }
 int LuaViewImage(lua_State* state) { return MakeNode(state, "image"); }
 int LuaViewButton(lua_State* state) { return MakeNode(state, "button"); }

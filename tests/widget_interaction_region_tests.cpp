@@ -160,6 +160,32 @@ void TestShapesAndValidation()
     regions.AbortFrame();
 }
 
+void TestClippedHitTesting()
+{
+    WidgetInteractionRegions regions;
+    std::string error;
+    auto clipped = Rect("clipped", 0, 0, 100, 100);
+    clipped.clip = snowdesktop::widget_runtime::InteractionClipRect{
+        20, 20, 40, 40 };
+    regions.BeginFrame();
+    Check(regions.Submit(std::move(clipped), error),
+        "a bounded interaction clip must stage");
+    regions.CommitFrame();
+    Check(regions.TargetAt(30, 30) == "clipped" &&
+            regions.TargetAt(10, 10).empty() &&
+            regions.TargetAt(80, 80).empty(),
+        "hit testing must intersect a region shape with its ancestor clip");
+
+    auto invalid = Rect("invalid-clip", 0, 0, 20, 20);
+    invalid.clip = snowdesktop::widget_runtime::InteractionClipRect{
+        0, 0, 0, 10 };
+    regions.BeginFrame();
+    Check(!regions.Submit(std::move(invalid), error) &&
+            error.find("clip") != std::string::npos,
+        "empty interaction clips must be rejected");
+    regions.AbortFrame();
+}
+
 void TestControlledActionResolution()
 {
     WidgetInteractionRegions regions;
@@ -263,6 +289,7 @@ int main()
     TestFrameTransactionAndStableState();
     TestPointerPairingAndActions();
     TestShapesAndValidation();
+    TestClippedHitTesting();
     TestControlledActionResolution();
     TestRadioAndSliderActionResolution();
     std::cout << "widget interaction region tests passed\n";

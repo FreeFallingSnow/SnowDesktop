@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -20,6 +21,10 @@ enum class ViewNodeType
     Grid,
     Flow,
     Stack,
+    Scroll,
+    List,
+    GridList,
+    ListItem,
     Text,
     Image,
     Button,
@@ -128,6 +133,8 @@ struct ViewRect
     float y = 0.0f;
     float width = 0.0f;
     float height = 0.0f;
+
+    bool operator==(const ViewRect&) const = default;
 };
 
 struct ViewStyle
@@ -188,6 +195,7 @@ struct ViewNode
     std::optional<float> seriesMaximum;
     bool bold = false;
     bool checked = false;
+    bool showScrollbar = true;
     std::string selectedValue;
     std::vector<ViewChoiceOption> options;
     bool visible = true;
@@ -202,7 +210,25 @@ struct ViewNode
     std::map<std::string, InteractionAction, std::less<>> events;
     std::vector<ViewNode> children;
     ViewRect frame;
+    std::optional<ViewRect> clipFrame;
+    float scrollOffset = 0.0f;
+    float scrollViewportExtent = 0.0f;
+    float scrollContentExtent = 0.0f;
 };
+
+struct ViewScrollViewport
+{
+    std::string key;
+    ViewRect frame;
+    ViewOrientation orientation = ViewOrientation::Vertical;
+    float viewportExtent = 0.0f;
+    float contentExtent = 0.0f;
+    float offset = 0.0f;
+    float maximum = 0.0f;
+};
+
+using ViewScrollOffsetResolver = std::function<float(
+    std::string_view key, float maximum)>;
 
 struct ViewTreeLimits
 {
@@ -214,12 +240,17 @@ struct ViewTreeLimits
     static constexpr std::size_t MaximumSeriesPoints = 512;
     static constexpr std::size_t MaximumTotalSeriesPoints = 4096;
     static constexpr std::size_t MaximumChoiceOptions = 64;
+    static constexpr std::size_t MaximumCollectionItems = 256;
+    static constexpr std::size_t MaximumScrollContainers = 32;
 };
 
 bool ValidateAndLayoutViewTree(ViewNode& root, float width, float height,
     std::string& error);
 bool CollectViewInteractionRegions(const ViewNode& root,
     std::vector<InteractionRegion>& regions, std::string& error);
+bool ApplyViewScrollOffsets(ViewNode& root,
+    const ViewScrollOffsetResolver& resolver,
+    std::vector<ViewScrollViewport>& viewports, std::string& error);
 ViewRect ViewRadioOptionFrame(
     const ViewNode& node, std::size_t optionIndex) noexcept;
 const char* ViewNodeTypeName(ViewNodeType type) noexcept;

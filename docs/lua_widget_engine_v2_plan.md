@@ -988,9 +988,10 @@ region generation 校验，旧菜单不会落到新一代 region。普通区域�
 要求权限，菜单内触发的启动、媒体控制等动作仍由各自 broker 校验权限与可信手势。
 即时绘制纵向溢出已增加 `interaction.scroll/setScrollOffset`：滚动位置按实例和稳定
 key 隔离，宿主负责 wheel、钳制、重绘和滚动条，组件使用 `draw.pushClip/popClip`
-裁剪并按返回 offset 绘制；这不是尚待实现的声明式 `view.scroll` 节点。
+裁剪并按返回 offset 绘制。声明式轨道现已另行开放 `view.scroll`：支持纵向/横向单子树、
+宿主 offset、测量、滚轮、裁剪绘制和裁剪命中，滚出视口的元素不会继续响应交互。
 当前只覆盖 desktop 即时绘制 surface；通用 region 焦点与键盘、触控长按、UIA
-语义输出、受控 submenu、包内菜单图标和声明式 scene tree 仍按 M6 后续交付物推进。
+语义输出、受控 submenu、包内菜单图标和完整 UIA scene tree 仍按 M6 后续交付物推进。
 
 文本编辑的过渡宿主控件已增加 `control.textInput/textArea/focus`：组件在 render 中
 提交严格的稳定 key、storageKey、rect 与白名单视觉属性，宿主复用 Direct2D 光标、
@@ -1037,6 +1038,12 @@ SnowDesktop 不照搬某一个框架，参考优先级如下：
 | 日期 | `monthCalendar` | 月历、日期选择、今日/选中/有事件状态和 Calendar UIA 语义 |
 | 宿主逻辑槽位 | `slotSurface`、`slotItem` | 自定义收藏夹、启动器和队列接收宿主项目引用，并获得原生拖放预览、重排和无障碍语义 |
 | 宿主表面 | `tooltip`、`popover`、`contextMenu`、`panel`、`dialog` | 提示、元素菜单、日历/日程编辑和设置；内部内容仍使用同一 view 节点 |
+
+当前实现进度（2026-08-15）：`view.scroll` 已覆盖最多 32 个宿主管理的纵向/横向
+有界视口，统一保存偏移、钳制、滚轮、滚动条、绘制 clip 与交互 clip；
+`view.collection.basic` 已覆盖非虚拟 `list/gridList/listItem`，限制 256 个稳定项，
+每项有独立 action、hover、菜单目标与 listitem 语义。`virtualList/virtualGrid`、集合键盘
+导航和 UIA Collection/Scroll pattern 仍未完成，因此本进度不代表第 13.4 节集合全集完成。
 
 节点规则：
 

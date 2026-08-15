@@ -384,12 +384,15 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature("view.font") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.actionControls") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "view.collection.basic") &&
             snowdesktop::widget_api::SupportsFeature("view.dataSeries") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.flow.wrap") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.grid.uniform") &&
             snowdesktop::widget_api::SupportsFeature("view.image") &&
+            snowdesktop::widget_api::SupportsFeature("view.scroll") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.selectionControls") &&
             snowdesktop::widget_api::SupportsFeature(

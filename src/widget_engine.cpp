@@ -13273,6 +13273,80 @@ static void DrawWidgetViewNode(D2DState* state,
         }
     }
 
+    if (node.type == ViewNodeType::Scroll && node.clipFrame)
+    {
+        const auto& clip = *node.clipFrame;
+        state->ctx->PushAxisAlignedClip(D2D1::RectF(
+            state->widgetRect.left + clip.x,
+            state->widgetRect.top + clip.y,
+            state->widgetRect.left + clip.x + clip.width,
+            state->widgetRect.top + clip.y + clip.height),
+            D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        ++state->widgetClipDepth;
+        for (const auto& child : node.children)
+            DrawWidgetViewNode(state, child, regions);
+        state->ctx->PopAxisAlignedClip();
+        --state->widgetClipDepth;
+
+        if (node.showScrollbar && node.scrollContentExtent >
+                node.scrollViewportExtent &&
+            node.scrollViewportExtent > 0.0f)
+        {
+            const bool vertical = node.orientation ==
+                ViewOrientation::Vertical;
+            const float trackExtent = node.scrollViewportExtent;
+            const float crossExtent = vertical ? clip.width : clip.height;
+            const float edgeInset = std::min(2.0f, crossExtent * 0.25f);
+            const float barThickness = std::min(3.0f,
+                std::max(0.0f, crossExtent - edgeInset));
+            const float thumbExtent = std::min(trackExtent,
+                std::max(16.0f, trackExtent * trackExtent /
+                    node.scrollContentExtent));
+            const float maximum = node.scrollContentExtent -
+                node.scrollViewportExtent;
+            const float position = maximum > 0.0f
+                ? (trackExtent - thumbExtent) * node.scrollOffset / maximum
+                : 0.0f;
+            const std::uint32_t scrollbarColor =
+                style.foreground.value_or(0xFFFFFF);
+            ID2D1SolidColorBrush* trackBrush = GetCachedBrush(state,
+                static_cast<int>(scrollbarColor), opacity * 0.10f);
+            ID2D1SolidColorBrush* thumbBrush = GetCachedBrush(state,
+                static_cast<int>(scrollbarColor), opacity * 0.48f);
+            D2D1_RECT_F trackRect{};
+            D2D1_RECT_F thumbRect{};
+            if (vertical)
+            {
+                const float right = state->widgetRect.left + clip.x +
+                    clip.width - edgeInset;
+                trackRect = D2D1::RectF(right - barThickness,
+                    state->widgetRect.top + clip.y, right,
+                    state->widgetRect.top + clip.y + clip.height);
+                thumbRect = D2D1::RectF(trackRect.left,
+                    trackRect.top + position, trackRect.right,
+                    trackRect.top + position + thumbExtent);
+            }
+            else
+            {
+                const float bottom = state->widgetRect.top + clip.y +
+                    clip.height - edgeInset;
+                trackRect = D2D1::RectF(
+                    state->widgetRect.left + clip.x,
+                    bottom - barThickness,
+                    state->widgetRect.left + clip.x + clip.width, bottom);
+                thumbRect = D2D1::RectF(trackRect.left + position,
+                    trackRect.top, trackRect.left + position + thumbExtent,
+                    trackRect.bottom);
+            }
+            if (trackBrush)
+                state->ctx->FillRoundedRectangle(
+                    D2D1::RoundedRect(trackRect, 1.5f, 1.5f), trackBrush);
+            if (thumbBrush)
+                state->ctx->FillRoundedRectangle(
+                    D2D1::RoundedRect(thumbRect, 1.5f, 1.5f), thumbBrush);
+        }
+        return;
+    }
     for (const auto& child : node.children)
         DrawWidgetViewNode(state, child, regions);
 }
@@ -13424,6 +13498,8 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             snowdesktop::widget_runtime::ViewNode candidate;
             std::vector<snowdesktop::widget_runtime::InteractionRegion>
                 regions;
+            std::vector<snowdesktop::widget_runtime::ViewScrollViewport>
+                scrollViewports;
             if (!snowdesktop::widget_runtime::ParseLuaViewTree(
                     state, -1, candidate, viewError))
             {
@@ -13445,6 +13521,17 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             {
                 viewError = "view(): " + viewError;
             }
+            else if (!snowdesktop::widget_runtime::ApplyViewScrollOffsets(
+                    candidate,
+                    [found](std::string_view key, float) {
+                        const auto position = found->scrollOffsets.find(
+                            std::string(key));
+                        return position == found->scrollOffsets.end()
+                            ? 0.0f : static_cast<float>(position->second);
+                    }, scrollViewports, viewError))
+            {
+                viewError = "view(): " + viewError;
+            }
             else if (!snowdesktop::widget_runtime::
                     CollectViewInteractionRegions(candidate,
                         regions, viewError))
@@ -13462,6 +13549,77 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                         accepted = false;
                         viewError = "view(): " + viewError;
                         break;
+                    }
+                }
+                if (accepted && found->hostControls.size() +
+                        scrollViewports.size() > 128)
+                {
+                    accepted = false;
+                    viewError = "view(): host control limit exceeded (128)";
+                }
+                if (accepted)
+                {
+                    for (const auto& viewport : scrollViewports)
+                    {
+                        const bool duplicate = std::any_of(
+                            found->hostControls.begin(),
+                            found->hostControls.end(),
+                            [&](const auto& control) {
+                                return control.id == viewport.key;
+                            });
+                        if (duplicate)
+                        {
+                            accepted = false;
+                            viewError = "view(): duplicate host control key: " +
+                                viewport.key;
+                            break;
+                        }
+                    }
+                }
+                if (accepted)
+                {
+                    for (const auto& viewport : scrollViewports)
+                    {
+                        LuaWidget::HostControl control;
+                        control.type = LuaWidget::HostControl::Type::Scroll;
+                        control.id = viewport.key;
+                        control.rect = {
+                            static_cast<LONG>(std::lround(viewport.frame.x)),
+                            static_cast<LONG>(std::lround(viewport.frame.y)),
+                            static_cast<LONG>(std::lround(viewport.frame.x +
+                                viewport.frame.width)),
+                            static_cast<LONG>(std::lround(viewport.frame.y +
+                                viewport.frame.height)),
+                        };
+                        control.horizontal = viewport.orientation ==
+                            snowdesktop::widget_runtime::
+                                ViewOrientation::Horizontal;
+                        const int viewportExtent = std::max(1,
+                            static_cast<int>(std::lround(
+                                viewport.viewportExtent)));
+                        const int contentExtent = std::max(viewportExtent,
+                            static_cast<int>(std::lround(
+                                viewport.contentExtent)));
+                        control.viewportWidth = std::max(1,
+                            static_cast<int>(std::lround(
+                                viewport.frame.width)));
+                        control.contentWidth = control.viewportWidth;
+                        control.viewportHeight = std::max(1,
+                            static_cast<int>(std::lround(
+                                viewport.frame.height)));
+                        control.contentHeight = control.viewportHeight;
+                        if (control.horizontal)
+                        {
+                            control.viewportWidth = viewportExtent;
+                            control.contentWidth = contentExtent;
+                        }
+                        else
+                        {
+                            control.viewportHeight = viewportExtent;
+                            control.contentHeight = contentExtent;
+                        }
+                        RuntimeRegisterHostControl(widgetId,
+                            std::move(control));
                     }
                 }
             }
@@ -16544,7 +16702,9 @@ void WidgetEngine::RuntimeRegisterHostControl(const std::wstring& widgetId,
         (control.type == LuaWidget::HostControl::Type::Input &&
             control.multiline))
     {
-        const int maximum = std::max(0, control.contentHeight - control.viewportHeight);
+        const int maximum = control.horizontal
+            ? std::max(0, control.contentWidth - control.viewportWidth)
+            : std::max(0, control.contentHeight - control.viewportHeight);
         int& offset = widgets_[index].scrollOffsets[control.id];
         offset = std::clamp(offset, 0, maximum);
     }
@@ -17440,8 +17600,9 @@ void WidgetEngine::RuntimeSetScrollOffset(
             !(it->type == LuaWidget::HostControl::Type::Input &&
                 it->multiline))
             continue;
-        maximum = std::max(
-            0, it->contentHeight - it->viewportHeight);
+        maximum = it->horizontal
+            ? std::max(0, it->contentWidth - it->viewportWidth)
+            : std::max(0, it->contentHeight - it->viewportHeight);
         break;
     }
     widget.scrollOffsets[id] =
@@ -17479,7 +17640,9 @@ bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int 
                     LuaWidget::HostControl::Type::Input &&
                     it->multiline)))
         {
-            int maximum = std::max(0, it->contentHeight - it->viewportHeight);
+            const int maximum = it->horizontal
+                ? std::max(0, it->contentWidth - it->viewportWidth)
+                : std::max(0, it->contentHeight - it->viewportHeight);
             int& offset = widget.scrollOffsets[it->id];
             const auto result =
                 snowdesktop::widget_scroll_rules::ApplyWheelDelta(
@@ -20114,6 +20277,10 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "grid", snowdesktop::widget_runtime::LuaViewGrid, 2 },
         { "flow", snowdesktop::widget_runtime::LuaViewFlow, 2 },
         { "stack", snowdesktop::widget_runtime::LuaViewStack, 2 },
+        { "scroll", snowdesktop::widget_runtime::LuaViewScroll, 2 },
+        { "list", snowdesktop::widget_runtime::LuaViewList, 2 },
+        { "gridList", snowdesktop::widget_runtime::LuaViewGridList, 2 },
+        { "listItem", snowdesktop::widget_runtime::LuaViewListItem, 2 },
         { "text", snowdesktop::widget_runtime::LuaViewText, 2 },
         { "image", snowdesktop::widget_runtime::LuaViewImage, 2 },
         { "button", snowdesktop::widget_runtime::LuaViewButton, 2 },

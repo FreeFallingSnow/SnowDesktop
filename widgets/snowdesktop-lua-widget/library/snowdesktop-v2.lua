@@ -165,7 +165,7 @@
 ---@field alt? string Required by image nodes; use an empty string for decorative images.
 ---@field iconFont? 'fa'|'fluent'|'fluent-regular'
 ---@field shape? 'rectangle'|'roundedRectangle'|'circle'|'ellipse'
----@field orientation? 'horizontal'|'vertical' Divider direction or radioGroup/slider axis; vertical divider/slider defaults to auto width and fill height.
+---@field orientation? 'horizontal'|'vertical' Divider direction, radioGroup/slider axis, or scroll axis; scroll defaults to vertical.
 ---@field value? number Progress value between 0 and 1, or the explicit controlled slider value.
 ---@field values? number[] Required by data-series nodes; 1 to 512 finite samples, with at most 4096 samples across one tree.
 ---@field min? number Explicit data-series or slider minimum; defaults to 0 for slider.
@@ -180,9 +180,9 @@
 ---@field height? SnowViewLength
 ---@field padding? number
 ---@field gap? number
----@field columns? integer Required by grid; 1 to 64 equal-width columns.
----@field columnGap? number Grid/flow horizontal gap; defaults to gap.
----@field rowGap? number Grid/flow vertical gap; defaults to gap.
+---@field columns? integer Required by grid and gridList; 1 to 64 equal-width columns.
+---@field columnGap? number Grid/gridList/flow horizontal gap; defaults to gap.
+---@field rowGap? number Grid/gridList/flow vertical gap; defaults to gap.
 ---@field flexGrow? number
 ---@field alignItems? SnowViewAlignment
 ---@field alignSelf? SnowViewSelfAlignment
@@ -190,6 +190,7 @@
 ---@field fontSize? number
 ---@field bold? boolean
 ---@field checked? boolean Required explicit controlled value for toggle and checkbox nodes.
+---@field showScrollbar? boolean Scroll-only host scrollbar visibility; defaults to true.
 ---@field textAlign? 'start'|'center'|'end'
 ---@field visible? boolean
 ---@field enabled? boolean
@@ -204,7 +205,7 @@
 ---@field children? SnowViewNode[]
 
 ---@class SnowViewNode: SnowViewNodeOptions
----@field type 'box'|'row'|'column'|'grid'|'flow'|'stack'|'text'|'image'|'button'|'link'|'toggle'|'checkbox'|'radioGroup'|'slider'|'icon'|'iconButton'|'shape'|'badge'|'divider'|'progressBar'|'progressRing'|'meter'|'sparkline'|'lineChart'|'barChart'|'waveform'|'spectrum'|'spacer'
+---@field type 'box'|'row'|'column'|'grid'|'flow'|'stack'|'scroll'|'list'|'gridList'|'listItem'|'text'|'image'|'button'|'link'|'toggle'|'checkbox'|'radioGroup'|'slider'|'icon'|'iconButton'|'shape'|'badge'|'divider'|'progressBar'|'progressRing'|'meter'|'sparkline'|'lineChart'|'barChart'|'waveform'|'spectrum'|'spacer'
 
 ---@class SnowInteractionShape
 ---@field type 'rect'|'roundedRect'|'circle'
@@ -517,6 +518,26 @@ function view.flow(options) end
 ---@param options SnowViewNodeOptions
 ---@return SnowViewNode
 function view.stack(options) end
+
+---Host-owned bounded scroll viewport with exactly one visible child. Requires view.scroll.
+---@param options SnowViewNodeOptions
+---@return SnowViewNode
+function view.scroll(options) end
+
+---Bounded vertical collection whose direct children are listItem nodes. Requires view.collection.basic.
+---@param options SnowViewNodeOptions
+---@return SnowViewNode
+function view.list(options) end
+
+---Bounded row-major collection whose direct children are listItem nodes. Requires view.collection.basic.
+---@param options SnowViewNodeOptions
+---@return SnowViewNode
+function view.gridList(options) end
+
+---Stable collection item with exactly one visible child and accessibility.label. Requires view.collection.basic.
+---@param options SnowViewNodeOptions
+---@return SnowViewNode
+function view.listItem(options) end
 
 ---@param options SnowViewNodeOptions
 ---@return SnowViewNode

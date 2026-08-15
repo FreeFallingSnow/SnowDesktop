@@ -9,6 +9,7 @@ namespace snowdesktop::widget_runtime
 namespace
 {
 constexpr float MaximumDimension = 100000.0f;
+constexpr float MaximumScrollExtent = 1000000.0f;
 
 bool FiniteInRange(float value, float minimum, float maximum) noexcept
 {
@@ -77,6 +78,63 @@ bool IsLeafNode(ViewNodeType type) noexcept
         type == ViewNodeType::Spacer;
 }
 
+bool IsGridContainer(ViewNodeType type) noexcept
+{
+    return type == ViewNodeType::Grid || type == ViewNodeType::GridList;
+}
+
+bool IsCollectionContainer(ViewNodeType type) noexcept
+{
+    return type == ViewNodeType::List || type == ViewNodeType::GridList;
+}
+
+const char* DefaultAccessibilityRole(ViewNodeType type) noexcept
+{
+    if (IsButtonNode(type)) return "button";
+    if (type == ViewNodeType::Link) return "link";
+    if (type == ViewNodeType::Slider) return "slider";
+    if (type == ViewNodeType::Toggle) return "switch";
+    if (type == ViewNodeType::Checkbox) return "checkbox";
+    if (IsDataSeriesNode(type)) return "img";
+    if (type == ViewNodeType::Meter) return "meter";
+    if (type == ViewNodeType::Divider) return "separator";
+    if (type == ViewNodeType::Badge) return "status";
+    if (type == ViewNodeType::ListItem) return "listitem";
+    return "";
+}
+
+ViewRect ContentRect(const ViewNode& node) noexcept
+{
+    const float inset = std::min(node.padding,
+        std::max(0.0f,
+            std::min(node.frame.width, node.frame.height) * 0.5f));
+    return { node.frame.x + inset, node.frame.y + inset,
+        std::max(0.0f, node.frame.width - inset * 2.0f),
+        std::max(0.0f, node.frame.height - inset * 2.0f) };
+}
+
+std::optional<ViewRect> IntersectRects(
+    const std::optional<ViewRect>& first, const ViewRect& second) noexcept
+{
+    if (!first) return second;
+    const float left = std::max(first->x, second.x);
+    const float top = std::max(first->y, second.y);
+    const float right = std::min(first->x + first->width,
+        second.x + second.width);
+    const float bottom = std::min(first->y + first->height,
+        second.y + second.height);
+    if (right <= left || bottom <= top) return std::nullopt;
+    return ViewRect{ left, top, right - left, bottom - top };
+}
+
+bool Overlaps(const ViewRect& rect, const ViewRect& clip) noexcept
+{
+    return rect.x < clip.x + clip.width &&
+        rect.x + rect.width > clip.x &&
+        rect.y < clip.y + clip.height &&
+        rect.y + rect.height > clip.y;
+}
+
 float IntrinsicWidth(const ViewNode& node);
 float IntrinsicHeight(const ViewNode& node);
 
@@ -137,7 +195,7 @@ float IntrinsicWidth(const ViewNode& node)
         return 64.0f + node.padding * 2.0f;
     if (node.type == ViewNodeType::Spacer)
         return 0.0f;
-    if (node.type == ViewNodeType::Grid)
+    if (IsGridContainer(node.type))
     {
         std::vector<float> widths(node.columns, 0.0f);
         std::size_t visible = 0;
@@ -244,7 +302,7 @@ float IntrinsicHeight(const ViewNode& node)
         return 40.0f + node.padding * 2.0f;
     if (node.type == ViewNodeType::Spacer)
         return 0.0f;
-    if (node.type == ViewNodeType::Grid)
+    if (IsGridContainer(node.type))
     {
         std::vector<float> heights;
         std::size_t visible = 0;
@@ -279,7 +337,8 @@ float IntrinsicHeight(const ViewNode& node)
         return result + node.padding * 2.0f;
     }
     float result = 0.0f;
-    if (node.type == ViewNodeType::Column)
+    if (node.type == ViewNodeType::Column ||
+        node.type == ViewNodeType::List)
     {
         std::size_t visible = 0;
         for (const auto& child : node.children)
@@ -557,9 +616,45 @@ void LayoutFlow(ViewNode& node, const ViewRect& content)
     }
 }
 
+void LayoutScroll(ViewNode& node, const ViewRect& content)
+{
+    if (node.children.empty() || !node.children.front().visible) return;
+    ViewNode& child = node.children.front();
+    if (node.orientation == ViewOrientation::Vertical)
+    {
+        const ViewAlignment alignment = child.alignSelf == ViewAlignment::Auto
+            ? ViewAlignment::Stretch : child.alignSelf;
+        const float width = ResolveCrossSize(child.width,
+            IntrinsicWidth(child), content.width, alignment);
+        float height = child.height.kind == ViewLengthKind::Fixed
+            ? child.height.value : IntrinsicHeight(child);
+        if (child.height.kind == ViewLengthKind::Fill)
+            height = std::max(height, content.height);
+        LayoutNode(child, { content.x + AlignOffset(alignment,
+            content.width, width), content.y, width, height });
+    }
+    else
+    {
+        const ViewAlignment alignment = child.alignSelf == ViewAlignment::Auto
+            ? ViewAlignment::Stretch : child.alignSelf;
+        const float height = ResolveCrossSize(child.height,
+            IntrinsicHeight(child), content.height, alignment);
+        float width = child.width.kind == ViewLengthKind::Fixed
+            ? child.width.value : IntrinsicWidth(child);
+        if (child.width.kind == ViewLengthKind::Fill)
+            width = std::max(width, content.width);
+        LayoutNode(child, { content.x, content.y + AlignOffset(alignment,
+            content.height, height), width, height });
+    }
+}
+
 void LayoutNode(ViewNode& node, const ViewRect& frame)
 {
     node.frame = frame;
+    node.clipFrame.reset();
+    node.scrollOffset = 0.0f;
+    node.scrollViewportExtent = 0.0f;
+    node.scrollContentExtent = 0.0f;
     const float inset = std::min(node.padding,
         std::max(0.0f, std::min(frame.width, frame.height) * 0.5f));
     const ViewRect content{
@@ -570,14 +665,18 @@ void LayoutNode(ViewNode& node, const ViewRect& frame)
     };
     if (node.type == ViewNodeType::Row)
         LayoutLinear(node, content, true);
-    else if (node.type == ViewNodeType::Column)
+    else if (node.type == ViewNodeType::Column ||
+        node.type == ViewNodeType::List)
         LayoutLinear(node, content, false);
-    else if (node.type == ViewNodeType::Grid)
+    else if (IsGridContainer(node.type))
         LayoutGrid(node, content);
     else if (node.type == ViewNodeType::Flow)
         LayoutFlow(node, content);
+    else if (node.type == ViewNodeType::Scroll)
+        LayoutScroll(node, content);
     else if (node.type == ViewNodeType::Box ||
-        node.type == ViewNodeType::Stack)
+        node.type == ViewNodeType::Stack ||
+        node.type == ViewNodeType::ListItem)
     {
         for (auto& child : node.children)
         {
@@ -601,9 +700,10 @@ void LayoutNode(ViewNode& node, const ViewRect& frame)
 
 bool ValidateNode(const ViewNode& node, std::size_t depth,
     std::size_t& nodes, std::size_t& textBytes,
-    std::size_t& seriesPoints,
+    std::size_t& seriesPoints, std::size_t& collectionItems,
     std::unordered_set<std::string>& keys,
-    std::unordered_set<std::string>& resources, std::string& error)
+    std::unordered_set<std::string>& resources,
+    std::optional<ViewNodeType> parentType, std::string& error)
 {
     if (++nodes > ViewTreeLimits::MaximumNodes)
     {
@@ -669,23 +769,69 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         error = "slider requires min < max, a value in range, and a positive bounded step";
         return false;
     }
-    if (node.type == ViewNodeType::Grid &&
+    if (IsGridContainer(node.type) &&
         (node.columns == 0 || node.columns > 64))
     {
         error = "grid columns must be between 1 and 64";
         return false;
     }
-    if (node.type != ViewNodeType::Grid && node.columns != 1)
+    if (!IsGridContainer(node.type) && node.columns != 1)
     {
         error = "grid columns are reserved for grid nodes";
         return false;
     }
-    if (node.type != ViewNodeType::Grid &&
+    if (!IsGridContainer(node.type) &&
         node.type != ViewNodeType::Flow &&
         (node.columnGap || node.rowGap))
     {
         error = "columnGap and rowGap are reserved for grid and flow nodes";
         return false;
+    }
+    if (node.type != ViewNodeType::Scroll && !node.showScrollbar)
+    {
+        error = "showScrollbar is reserved for scroll nodes";
+        return false;
+    }
+    if (node.type == ViewNodeType::Scroll &&
+        (node.children.size() != 1 || !node.children.front().visible))
+    {
+        error = "scroll nodes require exactly one visible child";
+        return false;
+    }
+    if (IsCollectionContainer(node.type))
+    {
+        if (!std::all_of(node.children.begin(), node.children.end(),
+                [](const ViewNode& child) {
+                    return child.type == ViewNodeType::ListItem;
+                }))
+        {
+            error = std::string(ViewNodeTypeName(node.type)) +
+                " children must all be listItem nodes";
+            return false;
+        }
+    }
+    if (node.type == ViewNodeType::ListItem)
+    {
+        if (!parentType || !IsCollectionContainer(*parentType))
+        {
+            error = "listItem nodes must be direct children of list or gridList";
+            return false;
+        }
+        if (++collectionItems > ViewTreeLimits::MaximumCollectionItems)
+        {
+            error = "view collection item limit exceeded (256)";
+            return false;
+        }
+        if (node.children.size() != 1 || !node.children.front().visible)
+        {
+            error = "listItem nodes require exactly one visible child";
+            return false;
+        }
+        if (node.accessibilityLabel.empty())
+        {
+            error = "listItem nodes require accessibility.label";
+            return false;
+        }
     }
     if (node.text.size() > ViewTreeLimits::MaximumTextBytes ||
         node.alt.size() > ViewTreeLimits::MaximumTextBytes ||
@@ -928,26 +1074,30 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
     }
     for (const auto& child : node.children)
         if (!ValidateNode(child, depth + 1, nodes, textBytes,
-                seriesPoints, keys, resources, error)) return false;
+                seriesPoints, collectionItems, keys, resources,
+                node.type, error)) return false;
     return true;
 }
 
 bool CollectRegions(const ViewNode& node,
-    std::vector<InteractionRegion>& regions, std::string& error)
+    std::vector<InteractionRegion>& regions,
+    const std::optional<ViewRect>& inheritedClip, std::string& error)
 {
     if (!node.visible) return true;
     if (node.type == ViewNodeType::RadioGroup)
     {
         for (std::size_t index = 0; index < node.options.size(); ++index)
         {
+            const auto& option = node.options[index];
+            const ViewRect frame = ViewRadioOptionFrame(node, index);
+            if (inheritedClip && !Overlaps(frame, *inheritedClip))
+                continue;
             if (regions.size() >=
                 WidgetInteractionRegions::kMaximumRegions)
             {
                 error = "view interaction region limit exceeded (256)";
                 return false;
             }
-            const auto& option = node.options[index];
-            const ViewRect frame = ViewRadioOptionFrame(node, index);
             if (frame.width <= 0.0f || frame.height <= 0.0f)
             {
                 error = "interactive radio option has an empty layout: " +
@@ -964,6 +1114,10 @@ bool CollectRegions(const ViewNode& node,
             region.shape.width = frame.width;
             region.shape.height = frame.height;
             region.shape.radius = node.style.cornerRadius.value_or(0.0f);
+            if (inheritedClip)
+                region.clip = InteractionClipRect{ inheritedClip->x,
+                    inheritedClip->y, inheritedClip->width,
+                    inheritedClip->height };
             region.cursor = node.cursor.empty() ? "hand" : node.cursor;
             region.events = node.events;
             region.controlKind = InteractionControlKind::Radio;
@@ -977,7 +1131,9 @@ bool CollectRegions(const ViewNode& node,
         }
         return true;
     }
-    if (!node.events.empty() || IsButtonNode(node.type))
+    if ((!node.events.empty() || IsButtonNode(node.type) ||
+            node.type == ViewNodeType::ListItem) &&
+        (!inheritedClip || Overlaps(node.frame, *inheritedClip)))
     {
         if (regions.size() >= WidgetInteractionRegions::kMaximumRegions)
         {
@@ -991,6 +1147,10 @@ bool CollectRegions(const ViewNode& node,
         }
         InteractionRegion region;
         region.key = node.key;
+        if (inheritedClip)
+            region.clip = InteractionClipRect{ inheritedClip->x,
+                inheritedClip->y, inheritedClip->width,
+                inheritedClip->height };
         if (node.type == ViewNodeType::Shape &&
             node.shapeKind == ViewShapeKind::Circle)
         {
@@ -1045,25 +1205,101 @@ bool CollectRegions(const ViewNode& node,
         }
         region.checked = node.checked;
         region.accessibilityRole = node.accessibilityRole.empty()
-            ? (IsButtonNode(node.type) ? "button" :
-                (node.type == ViewNodeType::Link ? "link" :
-                    (node.type == ViewNodeType::Slider ? "slider" :
-                (node.type == ViewNodeType::Toggle ? "switch" :
-                    (node.type == ViewNodeType::Checkbox ? "checkbox" :
-                (IsDataSeriesNode(node.type) ? "img" :
-                    (node.type == ViewNodeType::Meter ? "meter" :
-                        (node.type == ViewNodeType::Divider
-                            ? "separator" :
-                            (node.type == ViewNodeType::Badge
-                                ? "status" : "")))))))))
+            ? DefaultAccessibilityRole(node.type)
             : node.accessibilityRole;
         region.accessibilityLabel = node.accessibilityLabel.empty()
             ? node.text : node.accessibilityLabel;
         region.enabled = node.enabled;
         regions.push_back(std::move(region));
     }
+    std::optional<ViewRect> childClip = inheritedClip;
+    if (node.type == ViewNodeType::Scroll && node.clipFrame)
+    {
+        if (inheritedClip && !Overlaps(*node.clipFrame, *inheritedClip))
+            return true;
+        childClip = IntersectRects(inheritedClip, *node.clipFrame);
+    }
     for (const auto& child : node.children)
-        if (!CollectRegions(child, regions, error)) return false;
+        if (!CollectRegions(child, regions, childClip, error)) return false;
+    return true;
+}
+
+void TranslateTree(ViewNode& node, float deltaX, float deltaY) noexcept
+{
+    node.frame.x += deltaX;
+    node.frame.y += deltaY;
+    if (node.clipFrame)
+    {
+        node.clipFrame->x += deltaX;
+        node.clipFrame->y += deltaY;
+    }
+    for (auto& child : node.children)
+        TranslateTree(child, deltaX, deltaY);
+}
+
+bool ApplyScrollState(ViewNode& node,
+    const ViewScrollOffsetResolver& resolver,
+    std::vector<ViewScrollViewport>& viewports,
+    const std::optional<ViewRect>& inheritedClip,
+    std::size_t& scrollContainers, std::string& error)
+{
+    if (!node.visible) return true;
+    std::optional<ViewRect> childClip = inheritedClip;
+    if (node.type == ViewNodeType::Scroll)
+    {
+        if (++scrollContainers > ViewTreeLimits::MaximumScrollContainers)
+        {
+            error = "view scroll container limit exceeded (32)";
+            return false;
+        }
+        if (node.children.size() != 1 || !node.children.front().visible)
+        {
+            error = "view scroll state requires one visible child";
+            return false;
+        }
+        const ViewRect clip = ContentRect(node);
+        if (clip.width <= 0.0f || clip.height <= 0.0f)
+        {
+            error = "view scroll viewport must have positive content bounds";
+            return false;
+        }
+        node.clipFrame = clip;
+        ViewNode& child = node.children.front();
+        const bool vertical = node.orientation == ViewOrientation::Vertical;
+        const float viewportExtent = vertical ? clip.height : clip.width;
+        const float contentExtent = std::max(viewportExtent,
+            vertical ? child.frame.y + child.frame.height - clip.y :
+                child.frame.x + child.frame.width - clip.x);
+        if (!FiniteInRange(contentExtent, 0.0f, MaximumScrollExtent))
+        {
+            error = "view scroll content extent exceeds 1000000";
+            return false;
+        }
+        const float maximum = std::max(0.0f,
+            contentExtent - viewportExtent);
+        const float requested = resolver ? resolver(node.key, maximum) : 0.0f;
+        if (!std::isfinite(requested))
+        {
+            error = "view scroll resolver returned a non-finite offset";
+            return false;
+        }
+        const float offset = std::clamp(requested, 0.0f, maximum);
+        node.scrollOffset = offset;
+        node.scrollViewportExtent = viewportExtent;
+        node.scrollContentExtent = contentExtent;
+        TranslateTree(child, vertical ? 0.0f : -offset,
+            vertical ? -offset : 0.0f);
+
+        if (inheritedClip && !Overlaps(clip, *inheritedClip))
+            return true;
+        childClip = IntersectRects(inheritedClip, clip);
+        const ViewRect visibleFrame = childClip.value_or(clip);
+        viewports.push_back({ node.key, visibleFrame, node.orientation,
+            viewportExtent, contentExtent, offset, maximum });
+    }
+    for (auto& child : node.children)
+        if (!ApplyScrollState(child, resolver, viewports, childClip,
+                scrollContainers, error)) return false;
     return true;
 }
 }
@@ -1108,10 +1344,11 @@ bool ValidateAndLayoutViewTree(ViewNode& root, float width, float height,
     std::size_t nodes = 0;
     std::size_t textBytes = 0;
     std::size_t seriesPoints = 0;
+    std::size_t collectionItems = 0;
     std::unordered_set<std::string> keys;
     std::unordered_set<std::string> resources;
     if (!ValidateNode(root, 0, nodes, textBytes, seriesPoints,
-            keys, resources, error))
+            collectionItems, keys, resources, std::nullopt, error))
         return false;
     LayoutNode(root, { 0.0f, 0.0f, width, height });
     return true;
@@ -1122,7 +1359,7 @@ bool CollectViewInteractionRegions(const ViewNode& root,
 {
     error.clear();
     regions.clear();
-    if (!CollectRegions(root, regions, error)) return false;
+    if (!CollectRegions(root, regions, std::nullopt, error)) return false;
     if (regions.size() > WidgetInteractionRegions::kMaximumRegions)
     {
         error = "view interaction region limit exceeded (256)";
@@ -1130,6 +1367,17 @@ bool CollectViewInteractionRegions(const ViewNode& root,
         return false;
     }
     return true;
+}
+
+bool ApplyViewScrollOffsets(ViewNode& root,
+    const ViewScrollOffsetResolver& resolver,
+    std::vector<ViewScrollViewport>& viewports, std::string& error)
+{
+    error.clear();
+    viewports.clear();
+    std::size_t scrollContainers = 0;
+    return ApplyScrollState(root, resolver, viewports, std::nullopt,
+        scrollContainers, error);
 }
 
 const char* ViewNodeTypeName(ViewNodeType type) noexcept
@@ -1142,6 +1390,10 @@ const char* ViewNodeTypeName(ViewNodeType type) noexcept
     case ViewNodeType::Grid: return "grid";
     case ViewNodeType::Flow: return "flow";
     case ViewNodeType::Stack: return "stack";
+    case ViewNodeType::Scroll: return "scroll";
+    case ViewNodeType::List: return "list";
+    case ViewNodeType::GridList: return "gridList";
+    case ViewNodeType::ListItem: return "listItem";
     case ViewNodeType::Text: return "text";
     case ViewNodeType::Image: return "image";
     case ViewNodeType::Button: return "button";

@@ -120,6 +120,15 @@ bool WidgetInteractionRegions::Submit(
         error = "rect interaction region size must be positive";
         return false;
     }
+    if (region.clip && (!IsFiniteCoordinate(region.clip->x) ||
+            !IsFiniteCoordinate(region.clip->y) ||
+            !IsFiniteCoordinate(region.clip->width) ||
+            !IsFiniteCoordinate(region.clip->height) ||
+            region.clip->width <= 0.0f || region.clip->height <= 0.0f))
+    {
+        error = "interaction clip geometry must be finite and positive";
+        return false;
+    }
     for (const auto& [eventName, action] : region.events)
     {
         if (!IsSupportedEvent(eventName))
@@ -459,7 +468,9 @@ const InteractionRegion* WidgetInteractionRegions::HitTest(
 {
     for (auto region = active_.rbegin(); region != active_.rend(); ++region)
     {
-        if (region->enabled && region->shape.Contains(x, y))
+        if (region->enabled &&
+            (!region->clip || region->clip->Contains(x, y)) &&
+            region->shape.Contains(x, y))
             return &*region;
     }
     return nullptr;

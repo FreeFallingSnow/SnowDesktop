@@ -429,6 +429,9 @@ struct LuaWidget
         float padding = 8.0f;
         int contentHeight = 0;
         int viewportHeight = 0;
+        int contentWidth = 0;
+        int viewportWidth = 0;
+        bool horizontal = false;
         std::size_t maximumUtf8Bytes = 0;
     };
     std::wstring widgetId;               ///< 小部件实例唯一 ID

@@ -161,6 +161,10 @@ void RegisterViewLibrary(lua_State* state)
         { "grid", LuaViewGrid },
         { "flow", LuaViewFlow },
         { "stack", LuaViewStack },
+        { "scroll", LuaViewScroll },
+        { "list", LuaViewList },
+        { "gridList", LuaViewGridList },
+        { "listItem", LuaViewListItem },
         { "text", LuaViewText },
         { "image", LuaViewImage },
         { "button", LuaViewButton },
@@ -932,6 +936,164 @@ void TestFlowParsingAndLayout()
         "flow must reject fixed grid column counts");
     lua_close(state);
 }
+
+void TestScrollableCollections()
+{
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "Lua state must be available");
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    Check(luaL_dostring(state, R"lua(
+        local items = {}
+        for index = 1, 3 do
+            items[index] = view.listItem({
+                key = "item-" .. index,
+                height = 40,
+                action = { id = "item.open", value = { index = index } },
+                events = {
+                    contextMenu = {
+                        id = "item.menu",
+                        value = { index = index },
+                    },
+                },
+                accessibility = { label = "Item " .. index },
+                children = {
+                    view.text({
+                        key = "label-" .. index,
+                        text = "Item " .. index,
+                    }),
+                },
+            })
+        end
+        return view.scroll({
+            key = "feed",
+            height = 100,
+            padding = 4,
+            children = {
+                view.list({ key = "items", gap = 4, children = items }),
+            },
+        })
+    )lua") == LUA_OK,
+        "scrollable-list Lua fixture must evaluate");
+    ViewNode root;
+    std::string error;
+    Check(ParseLuaViewTree(state, -1, root, error) &&
+            root.type == ViewNodeType::Scroll &&
+            root.orientation == ViewOrientation::Vertical &&
+            root.children.size() == 1 &&
+            root.children[0].type == ViewNodeType::List &&
+            root.children[0].children.size() == 3 &&
+            root.children[0].children[0].type ==
+                ViewNodeType::ListItem,
+        "scroll, list, and listItem constructors must retain typed nodes");
+    Check(ValidateAndLayoutViewTree(root, 200.0f, 100.0f, error),
+        "a bounded scrollable list must validate and lay out");
+    std::vector<ViewScrollViewport> viewports;
+    Check(ApplyViewScrollOffsets(root,
+            [](std::string_view key, float) {
+                return key == "feed" ? 100.0f : 0.0f;
+            }, viewports, error) && viewports.size() == 1 &&
+            viewports[0].key == "feed" &&
+            Near(viewports[0].viewportExtent, 92.0f) &&
+            Near(viewports[0].contentExtent, 128.0f) &&
+            Near(viewports[0].maximum, 36.0f) &&
+            Near(viewports[0].offset, 36.0f) &&
+            root.clipFrame && Near(root.clipFrame->y, 4.0f),
+        "scroll state must clamp a host offset to measured content extent");
+    std::vector<InteractionRegion> regions;
+    Check(CollectViewInteractionRegions(root, regions, error) &&
+            regions.size() == 3 && regions[0].key == "item-1" &&
+            regions[0].clip && Near(regions[0].clip->y, 4.0f) &&
+            Near(regions[0].clip->height, 92.0f) &&
+            regions[0].events.at("click").id == "item.open" &&
+            regions[0].events.at("contextMenu").id == "item.menu" &&
+            regions[0].accessibilityRole == "listitem" &&
+            regions[0].accessibilityLabel == "Item 1" &&
+            root.children[0].children[0].frame.y < root.clipFrame->y,
+        "list items must keep independent actions and clipped hit regions");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.gridList({
+            key = "tiles",
+            columns = 2,
+            columnGap = 6,
+            rowGap = 8,
+            children = {
+                view.listItem({
+                    key = "tile",
+                    accessibility = { label = "Tile" },
+                    children = {
+                        view.text({ key = "tile-label", text = "Tile" }),
+                    },
+                }),
+            },
+        })
+    )lua") == LUA_OK,
+        "grid-list Lua fixture must evaluate");
+    ViewNode grid;
+    Check(ParseLuaViewTree(state, -1, grid, error) &&
+            grid.type == ViewNodeType::GridList && grid.columns == 2 &&
+            ValidateAndLayoutViewTree(grid, 200.0f, 80.0f, error),
+        "gridList must reuse bounded row-major collection layout");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.list({
+            key = "invalid-list",
+            children = {
+                view.text({ key = "not-item", text = "Invalid" }),
+            },
+        })
+    )lua") == LUA_OK,
+        "invalid collection fixture must evaluate");
+    ViewNode invalid;
+    Check(ParseLuaViewTree(state, -1, invalid, error) &&
+            !ValidateAndLayoutViewTree(invalid, 200.0f, 80.0f, error) &&
+            error.find("listItem") != std::string::npos,
+        "collection containers must reject non-listItem direct children");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.list({
+            key = "missing-label",
+            children = {
+                view.listItem({
+                    key = "unlabelled-item",
+                    children = {
+                        view.text({ key = "content", text = "Content" }),
+                    },
+                }),
+            },
+        })
+    )lua") == LUA_OK,
+        "unlabelled list-item fixture must evaluate");
+    Check(ParseLuaViewTree(state, -1, invalid, error) &&
+            !ValidateAndLayoutViewTree(invalid, 200.0f, 80.0f, error) &&
+            error.find("accessibility.label") != std::string::npos,
+        "list items must require stable accessibility labels");
+    lua_close(state);
+
+    ViewNode horizontal;
+    horizontal.type = ViewNodeType::Scroll;
+    horizontal.key = "horizontal";
+    horizontal.orientation = ViewOrientation::Horizontal;
+    ViewNode row;
+    row.type = ViewNodeType::Row;
+    row.key = "wide-row";
+    row.width = { ViewLengthKind::Fixed, 240.0f };
+    row.height = { ViewLengthKind::Fill, 0.0f };
+    horizontal.children.push_back(row);
+    Check(ValidateAndLayoutViewTree(horizontal, 100.0f, 40.0f, error),
+        "a horizontal scroll viewport must validate");
+    viewports.clear();
+    Check(ApplyViewScrollOffsets(horizontal,
+            [](std::string_view, float) { return 60.0f; },
+            viewports, error) && viewports.size() == 1 &&
+            Near(viewports[0].maximum, 140.0f) &&
+            Near(horizontal.children[0].frame.x, -60.0f),
+        "horizontal scroll must translate content on the x axis");
+}
 }
 
 int main()
@@ -946,6 +1108,7 @@ int main()
     TestActionControlParsing();
     TestUniformGridParsingAndLayout();
     TestFlowParsingAndLayout();
+    TestScrollableCollections();
     std::cout << "Widget view tree tests passed\n";
     return 0;
 }

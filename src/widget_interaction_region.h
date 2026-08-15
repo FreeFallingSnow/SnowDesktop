@@ -82,10 +82,27 @@ struct InteractionShape
     bool operator==(const InteractionShape&) const = default;
 };
 
+struct InteractionClipRect
+{
+    float x = 0.0f;
+    float y = 0.0f;
+    float width = 0.0f;
+    float height = 0.0f;
+
+    bool Contains(float pointX, float pointY) const noexcept
+    {
+        return pointX >= x && pointY >= y &&
+            pointX <= x + width && pointY <= y + height;
+    }
+
+    bool operator==(const InteractionClipRect&) const = default;
+};
+
 struct InteractionRegion
 {
     std::string key;
     InteractionShape shape;
+    std::optional<InteractionClipRect> clip;
     std::string cursor;
     std::map<std::string, InteractionAction, std::less<>> events;
     std::string accessibilityRole;

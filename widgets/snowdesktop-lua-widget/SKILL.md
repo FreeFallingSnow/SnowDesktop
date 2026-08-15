@@ -80,8 +80,8 @@ supports optional `setup(context)` and `dispose(context, model, reason)`;
 `setup` runs once and its return value is passed to `render` or `view`, `event`, and
 `dispose`. Optional `event(context, model, event)` receives host surface events;
 immediate-mode elements use `interaction.region`. The transitional
-`view.tree.core` subset supports box/row/column/stack/text/image/button/icon/
-iconButton/shape/progressBar/progressRing/spacer nodes, stable element actions,
+`view.tree.core` subset supports box/row/column/grid/flow/stack/text/image/
+button/icon/iconButton/shape/progressBar/progressRing/spacer nodes, stable element actions,
 package resource handles, hover/pressed styles, and per-element context-menu
 bindings. Probe `view.dataSeries` for bounded sparkline/lineChart/barChart/
 waveform/spectrum nodes; keep each series within 512 finite samples and the
@@ -98,14 +98,21 @@ Treat radioGroup and slider as controlled: update component-owned state from
 `<group-key>/<option-key>` targets for independent hover, press, semantics, and
 context menus; slider changes are emitted during captured left-button drag.
 Do not assume keyboard or UI Automation support yet.
+Probe `view.scroll` for a host-owned vertical or horizontal viewport. Give it
+exactly one visible child and keep the same key so the host retains its clamped
+offset; never offset descendants yourself. Probe `view.collection.basic` for
+non-virtual `list/gridList/listItem`: collection children must be listItem,
+each item needs one visible child, a globally stable key, and `accessibility.label`.
+Keep a tree within 256 list items and use per-item actions/context menus. These
+features do not provide virtualList/virtualGrid or keyboard/UIA support yet.
 Probe `view.grid.uniform` before using `view.grid`; it is a bounded row-major
 equal-column layout with 1–64 columns and optional `columnGap`/`rowGap`, not
 the future track/span/virtual-grid contract.
 Probe `view.flow.wrap` before using `view.flow`; it wraps fixed/auto-width
 children horizontally, skips hidden children, and supports per-line
 `columnGap`/`rowGap`, but it is not a scrolling or virtualized collection.
-The subset does not yet provide keyboard focus, UI Automation, collections,
-or the complete `view.tree` contract. Optional
+The subset does not yet provide keyboard focus, UI Automation, virtualized
+collections, or the complete `view.tree` contract. Optional
 `menu(context, model, request)` builds an element's synchronous native context
 menu.
 
