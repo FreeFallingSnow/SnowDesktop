@@ -819,9 +819,9 @@ function schedule.cancel(id) end
 ---@field name string
 ---@field usagePercent number
 ---@field dedicatedMemoryBytes integer
----@field dedicatedUsedBytes integer
+---@field dedicatedUsedBytes integer PDH Dedicated Usage assigned by adapter LUID.
 ---@field sharedMemoryBytes integer
----@field sharedUsedBytes integer
+---@field sharedUsedBytes integer PDH Shared Usage assigned by adapter LUID.
 
 ---@class SnowGpuDataValue
 ---@field adapters SnowGpuAdapterDataValue[]

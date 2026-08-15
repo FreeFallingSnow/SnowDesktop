@@ -247,6 +247,12 @@ local function registerRegion(key, shape, cursor, events, accessibility,
 end
 
 local function render(context, model)
+    if not context.selected then
+        model.editingTaskId = nil
+        if storage.get("selectedId") ~= nil then
+            storage.remove("selectedId")
+        end
+    end
     local w = layout.width()
     local h = layout.height()
     local pad = layout.cu(14)

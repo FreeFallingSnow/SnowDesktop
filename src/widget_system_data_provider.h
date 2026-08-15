@@ -412,6 +412,8 @@ private:
     Clock::time_point previousNetworkSample_{};
     void* gpuQuery_ = nullptr;
     void* gpuUtilizationCounter_ = nullptr;
+    void* gpuDedicatedUsageCounter_ = nullptr;
+    void* gpuSharedUsageCounter_ = nullptr;
     void* storageIoQuery_ = nullptr;
     void* storageReadCounter_ = nullptr;
     void* storageWriteCounter_ = nullptr;

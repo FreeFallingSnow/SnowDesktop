@@ -175,7 +175,9 @@ local function syncQueryAndSources(model)
     local query = trim(storage.get("query") or "")
     if query ~= model.query then
         model.query = query
-        queueSearch(model, 140)
+        schedule.cancel("quick-search")
+        beginSearch(model)
+        interaction.setScrollOffset("quick-results", 0)
     end
 
     if desktopChanges then

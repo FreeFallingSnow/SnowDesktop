@@ -585,9 +585,11 @@ end
 
 GPU value 的 `adapters` 是数组；每项包含不透明 `id`、显示 `name`、
 `usagePercent`、`dedicatedMemoryBytes/dedicatedUsedBytes` 和
-`sharedMemoryBytes/sharedUsedBytes`。宿主不会只返回第一块 GPU；首次 PDH 差分
-样本为 `warmingUp=true`。最后一个 GPU 订阅释放后会关闭 PDH query，不会因 CPU、
-内存或网络仍有订阅而继续采样 GPU。
+`sharedMemoryBytes/sharedUsedBytes`。两个容量来自 DXGI adapter 描述；两个 used 字段
+分别来自 Windows `GPU Adapter Memory` 的 Dedicated Usage 和 Shared Usage，并按
+adapter LUID 归属，不能把核显 LOCAL segment 当作专用显存。宿主不会只返回第一块
+GPU；首次 PDH 差分样本为 `warmingUp=true`。最后一个 GPU 订阅释放后会关闭 PDH
+query，不会因 CPU、内存或网络仍有订阅而继续采样 GPU。
 
 网络 status value 包含 `connectivity`（`none/local/internet`）、`transport`
 （`none/ethernet/wifi/cellular/other`）、`costKnown/metered/roaming/overLimit`。
