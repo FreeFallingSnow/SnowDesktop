@@ -909,7 +909,8 @@ bool ReadTextVerticalAlignmentField(lua_State* state, int table,
     std::string text;
     if (!ReadStringField(state, table, "verticalAlign", text, false, error))
         return false;
-    if (text.empty() || text == "center") value = ViewAlignment::Center;
+    if (text.empty()) return true;
+    if (text == "center") value = ViewAlignment::Center;
     else if (text == "start") value = ViewAlignment::Start;
     else if (text == "end") value = ViewAlignment::End;
     else
@@ -926,7 +927,8 @@ bool ReadTextWrapField(lua_State* state, int table,
     std::string text;
     if (!ReadStringField(state, table, "textWrap", text, false, error))
         return false;
-    if (text.empty() || text == "noWrap") value = ViewTextWrap::NoWrap;
+    if (text.empty()) return true;
+    if (text == "noWrap") value = ViewTextWrap::NoWrap;
     else if (text == "wrap") value = ViewTextWrap::Wrap;
     else
     {
@@ -942,7 +944,8 @@ bool ReadTextOverflowField(lua_State* state, int table,
     std::string text;
     if (!ReadStringField(state, table, "overflowText", text, false, error))
         return false;
-    if (text.empty() || text == "ellipsis")
+    if (text.empty()) return true;
+    if (text == "ellipsis")
         value = ViewTextOverflow::Ellipsis;
     else if (text == "clip") value = ViewTextOverflow::Clip;
     else
