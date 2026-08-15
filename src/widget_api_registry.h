@@ -122,8 +122,7 @@ SystemFunctionContracts() noexcept;
 std::span<const SystemDataTopicContract>
 SystemDataTopicContracts() noexcept;
 std::span<const SystemTaskContract> SystemTaskContracts() noexcept;
-std::span<const std::string_view> SandboxLibraries(
-    std::uint32_t apiVersion) noexcept;
+std::span<const std::string_view> SandboxLibraries() noexcept;
 std::vector<std::string> MissingFeatures(
     std::span<const std::string> requiredFeatures);
 

@@ -1845,7 +1845,9 @@ M7 切换完成后，发布运行时必须删除 API v1 注册和执行分支。
 - 安全包内模块、图片和包私有字体资源句柄。
 - v2 LuaLS 类型和迁移指南初版。
 - 当前正式加载路径已在读取入口正文和创建 Lua VM 前强制要求 schema/API 同为 2；
-  schema/API v1 仅保留清单解析和迁移诊断，不再进入 API 注册或执行分支。
+  schema/API v1 仅保留清单解析和迁移诊断，不再进入 API 注册或执行分支。正式 VM 的
+  sandbox 与注册目录也已删除 `sys/media/http/desktop/everything/imgui` 等 v1 库，
+  不再先创建旧全局再依赖 `_ENV` 隐藏。
 
 退出条件：
 

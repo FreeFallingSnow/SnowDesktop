@@ -12665,8 +12665,7 @@ void WidgetEngine::PushSafeEnvironment(lua_State* L, const LuaWidget& widget)
         lua_setfield(L, -2, name);
     }
     for (const std::string_view name :
-        snowdesktop::widget_api::SandboxLibraries(
-            static_cast<std::uint32_t>(widget.manifest.apiVersion)))
+        snowdesktop::widget_api::SandboxLibraries())
     {
         if (name == "l10n") continue;
         const std::string libraryName(name);
@@ -12676,13 +12675,6 @@ void WidgetEngine::PushSafeEnvironment(lua_State* L, const LuaWidget& widget)
     PushWidgetL10nAPI(L, widget.manifest);
     PushReadOnlyProxyForTopTable(L);
     lua_setfield(L, -2, "l10n");
-
-    if (widget.manifest.apiVersion == 1 &&
-        widget.permissions.contains("ui.input"))
-    {
-        PushReadOnlyGlobal(L, "imgui");
-        lua_setfield(L, -2, "imgui");
-    }
 
     lua_pushstring(L, WidgetWideToUtf8(widget.widgetId).c_str());
     lua_setfield(L, -2, "widgetId");
@@ -12894,7 +12886,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     luaL_requiref(state, LUA_STRLIBNAME, luaopen_string, 1); lua_pop(state, 1);
     luaL_requiref(state, LUA_MATHLIBNAME, luaopen_math, 1); lua_pop(state, 1);
     luaL_requiref(state, LUA_UTF8LIBNAME, luaopen_utf8, 1); lua_pop(state, 1);
-    RegisterDrawAPI(state, pending.manifest.apiVersion);
+    RegisterDrawAPI(state);
     lua_pushinteger(state, pending.manifest.apiVersion);
     lua_setfield(state, LUA_REGISTRYINDEX, "__widget_api_version");
     lua_pushlightuserdata(state, d2dState_);
@@ -25470,7 +25462,7 @@ static void PushWidgetL10nAPI(lua_State* L, const LuaWidgetManifest& manifest)
     }
 }
 
-void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
+void WidgetEngine::RegisterDrawAPI(lua_State* L)
 {
     using snowdesktop::widget_api::DescribeLibrary;
     using snowdesktop::widget_api::FunctionDescriptor;
@@ -25572,17 +25564,6 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "apiInfo", snowdesktop::widget_api::LuaApiInfo, 2 },
         { "hasFeature", snowdesktop::widget_api::LuaHasFeature, 2 },
     };
-    static constexpr FunctionDescriptor system[] = {
-        { "getTime", lua_GetTime },
-        { "notify", lua_Notify, 1, "ui.notify" },
-        { "cpu", lua_SystemCpu, 1, kSystemPerformancePermission },
-        { "memory", lua_SystemMemory, 1,
-            kSystemPerformancePermission },
-        { "battery", lua_SystemBattery, 1, kSystemPowerPermission },
-        { "network", lua_SystemNetwork, 1,
-            kSystemNetworkPermission },
-        { "gpu", lua_SystemGpu, 1, kSystemPerformancePermission },
-    };
     static constexpr FunctionDescriptor time[] = {
         { "now", lua_TimeNow, 2 },
         { "monotonic", lua_TimeMonotonic, 2 },
@@ -25606,60 +25587,18 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "font", lua_ResourceFont, 2 },
         { "status", lua_ResourceStatus, 2 },
     };
-    static constexpr FunctionDescriptor media[] = {
-        { "current", lua_MediaCurrent, 1, kMediaReadPermission, 1 },
-        { "playPause", lua_MediaPlayPause, 1,
-            kMediaActionPermission, 1 },
-        { "next", lua_MediaNext, 1, kMediaActionPermission, 1 },
-        { "previous", lua_MediaPrevious, 1,
-            kMediaActionPermission, 1 },
-    };
-    static constexpr FunctionDescriptor http[] = {
-        { "request", lua_HttpRequest, 1, "network.http" },
-        { "cancel", lua_HttpCancel, 1, "network.http" },
-    };
     static constexpr FunctionDescriptor ui[] = {
         { "menu", lua_UiMenu, 2 },
-        { "textInput", lua_UiTextInput, 1, nullptr, 1 },
-        { "textArea", lua_UiTextArea, 1, nullptr, 1 },
-        { "focusInput", lua_UiFocusInput, 1, nullptr, 1 },
-        { "button", lua_UiButton, 1, nullptr, 1 },
-        { "toggle", lua_UiToggle, 1, nullptr, 1 },
-        { "progress", lua_UiProgress, 1, nullptr, 1 },
-        { "scrollArea", lua_UiScrollArea, 1, nullptr, 1 },
-        { "virtualList", lua_UiVirtualList, 1, nullptr, 1 },
-        { "setScrollOffset", lua_UiSetScrollOffset, 1, nullptr, 1 },
     };
     static constexpr FunctionDescriptor control[] = {
         { "textInput", lua_ControlTextInput, 2 },
         { "textArea", lua_ControlTextArea, 2 },
         { "focus", lua_ControlFocus, 2 },
     };
-    static constexpr FunctionDescriptor desktop[] = {
-        { "items", lua_DesktopItems, 1, "desktop.read" },
-        { "selection", lua_DesktopSelection, 1, "desktop.read" },
-        { "find", lua_DesktopFind, 1, "desktop.read" },
-        { "findApplications", lua_DesktopFindApplications, 1,
-            "desktop.read" },
-        { "open", lua_DesktopOpen, 1, "desktop.action" },
-        { "reveal", lua_DesktopReveal, 1, "desktop.action" },
-        { "refresh", lua_DesktopRefresh, 1, "desktop.action" },
-    };
-    static constexpr FunctionDescriptor everything[] = {
-        { "search", lua_EverythingSearch, 1, "everything.search" },
-    };
     static constexpr FunctionDescriptor calendar[] = {
-        { "selectedDate", lua_CalendarSelectedDate, 1,
-            "calendar.read", 1 },
-        { "setSelectedDate", lua_CalendarSetSelectedDate, 1,
-            "calendar.write", 1 },
         { "selectDate", lua_CalendarSelectDate, 2 },
         { "dateInfo", lua_CalendarDateInfo, 1 },
         { "addDays", lua_CalendarAddDays, 1 },
-        { "events", lua_CalendarEvents, 1, "calendar.read", 1 },
-        { "create", lua_CalendarCreate, 1, "calendar.write", 1 },
-        { "update", lua_CalendarUpdate, 1, "calendar.write", 1 },
-        { "remove", lua_CalendarRemove, 1, "calendar.write", 1 },
     };
     static constexpr FunctionDescriptor layout[] = {
         { "width", lua_LayoutWidth },
@@ -25712,45 +25651,17 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "start", lua_TaskStart, 2 },
         { "cancel", lua_TaskCancel, 2 },
     };
-    static constexpr FunctionDescriptor imgui[] = {
-        { "text", lua_ImGuiText },
-        { "textWrapped", lua_ImGuiTextWrapped },
-        { "separator", lua_ImGuiSeparator },
-        { "sameLine", lua_ImGuiSameLine },
-        { "settingRow", lua_ImGuiSettingRow },
-        { "spacing", lua_ImGuiSpacing },
-        { "collapsingHeader", lua_ImGuiCollapsingHeader },
-        { "treeNode", lua_ImGuiTreeNode },
-        { "treePop", lua_ImGuiTreePop },
-        { "button", lua_ImGuiButton },
-        { "input", lua_ImGuiInputText },
-        { "inputText", lua_ImGuiInputTextSingle },
-        { "checkbox", lua_ImGuiCheckbox },
-        { "colorEdit3", lua_ImGuiColorEdit3 },
-        { "sliderFloat", lua_ImGuiSliderFloat },
-        { "sliderInt", lua_ImGuiSliderInt },
-        { "combo", lua_ImGuiCombo },
-        { "selectable", lua_ImGuiSelectable },
-        { "radio", lua_ImGuiRadio },
-        { "beginDisabled", lua_ImGuiBeginDisabled },
-        { "endDisabled", lua_ImGuiEndDisabled },
-    };
     static constexpr LibraryDescriptor libraries[] = {
         DescribeLibrary("draw", draw),
         DescribeLibrary("interaction", interaction),
         DescribeLibrary("view", view),
         DescribeLibrary("widget", widget),
-        DescribeLibrary("sys", system),
         DescribeLibrary("system", systemV2),
         DescribeLibrary("time", time),
         DescribeLibrary("module", module),
         DescribeLibrary("resource", resource),
-        DescribeLibrary("media", media),
-        DescribeLibrary("http", http),
         DescribeLibrary("ui", ui),
         DescribeLibrary("control", control),
-        DescribeLibrary("desktop", desktop),
-        DescribeLibrary("everything", everything),
         DescribeLibrary("calendar", calendar),
         DescribeLibrary("layout", layout),
         DescribeLibrary("storage", storage),
@@ -25759,12 +25670,11 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         DescribeLibrary("schedule", schedule),
         DescribeLibrary("data", data),
         DescribeLibrary("task", task),
-        DescribeLibrary("imgui", imgui),
     };
 
-    if (apiVersion >= 2)
-        RegisterDataSubscriptionHandle(L);
+    RegisterDataSubscriptionHandle(L);
     RegisterLibraries(L,
         std::span<const LibraryDescriptor>(libraries),
-        static_cast<std::uint32_t>(std::max(1, apiVersion)));
+        static_cast<std::uint32_t>(
+            snowdesktop::widget::kHostApiVersion));
 }

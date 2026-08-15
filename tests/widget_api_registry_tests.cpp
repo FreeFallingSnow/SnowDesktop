@@ -243,7 +243,7 @@ void TestVersionedRegistration()
 void TestV2Contract()
 {
     const auto v2Libraries =
-        snowdesktop::widget_api::SandboxLibraries(2);
+        snowdesktop::widget_api::SandboxLibraries();
     const auto hasV2Library = [&](std::string_view name) {
         return std::find(v2Libraries.begin(), v2Libraries.end(), name) !=
             v2Libraries.end();
@@ -255,13 +255,13 @@ void TestV2Contract()
             hasV2Library("ui") && hasV2Library("l10n") &&
             !hasV2Library("http") && !hasV2Library("desktop"),
         "API v2 sandbox must expose implemented libraries and hide legacy ones");
-    const auto v1Libraries =
-        snowdesktop::widget_api::SandboxLibraries(1);
-    Check(std::find(v1Libraries.begin(), v1Libraries.end(), "http") !=
-            v1Libraries.end() &&
-            std::find(v1Libraries.begin(), v1Libraries.end(), "control") ==
-                v1Libraries.end(),
-        "API v1 sandbox library catalog must remain isolated from v2");
+    Check(std::find(v2Libraries.begin(), v2Libraries.end(), "sys") ==
+            v2Libraries.end() &&
+            std::find(v2Libraries.begin(), v2Libraries.end(), "media") ==
+                v2Libraries.end() &&
+            std::find(v2Libraries.begin(), v2Libraries.end(), "imgui") ==
+                v2Libraries.end(),
+        "the executable sandbox catalog must not retain API v1 libraries");
 
     Check(snowdesktop::widget_api::SupportsFeature(
                 "data.app.indexStatus") &&

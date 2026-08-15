@@ -1394,7 +1394,7 @@ private:
      * @brief 向 Lua 状态机注册绘制 API
      * @param L Lua 状态机指针
      */
-    void RegisterDrawAPI(lua_State* L, int apiVersion);
+    void RegisterDrawAPI(lua_State* L);
 
     /**
      * @brief 推入一个安全的沙箱环境表

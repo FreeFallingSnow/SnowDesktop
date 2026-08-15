@@ -83,6 +83,21 @@ void TestV2OnlyWidgetActivation(const fs::path& repository)
     Check(loadWidget.find("legacyContract") == std::string_view::npos &&
             loadWidget.find("currentContract ?") == std::string_view::npos,
         "LoadWidget must not retain an API v1 execution branch");
+
+    const std::size_t registrationStart = source.find(
+        "void WidgetEngine::RegisterDrawAPI(");
+    Check(registrationStart != std::string::npos,
+        "widget API registration function is missing");
+    const std::string_view registration =
+        std::string_view(source).substr(registrationStart);
+    for (const std::string_view legacyLibrary : {
+        "DescribeLibrary(\"sys\"", "DescribeLibrary(\"media\"",
+        "DescribeLibrary(\"http\"", "DescribeLibrary(\"desktop\"",
+        "DescribeLibrary(\"everything\"", "DescribeLibrary(\"imgui\"" })
+    {
+        Check(registration.find(legacyLibrary) == std::string_view::npos,
+            "formal VM registration must not create API v1 library tables");
+    }
 }
 }
 

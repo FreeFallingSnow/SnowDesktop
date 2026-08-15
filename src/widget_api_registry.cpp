@@ -264,11 +264,6 @@ constexpr std::array<SystemTaskContract, 41> kSystemTaskContracts = {{
     { "system.openSettings", "task.system.openSettings", "shell.launch",
         true, 1 },
 }};
-constexpr std::array<std::string_view, 15> kV1SandboxLibraries = {
-    "string", "table", "math", "utf8", "draw", "sys", "layout",
-    "storage", "widget", "desktop", "media", "http", "ui",
-    "everything", "calendar",
-};
 constexpr std::array<std::string_view, 23> kV2SandboxLibraries = {
     "string", "table", "math", "utf8", "draw", "layout", "storage",
     "state", "schedule", "widget", "system", "time", "module",
@@ -671,12 +666,9 @@ std::span<const SystemTaskContract> SystemTaskContracts() noexcept
     return kSystemTaskContracts;
 }
 
-std::span<const std::string_view> SandboxLibraries(
-    std::uint32_t apiVersion) noexcept
+std::span<const std::string_view> SandboxLibraries() noexcept
 {
-    return apiVersion >= 2
-        ? std::span<const std::string_view>(kV2SandboxLibraries)
-        : std::span<const std::string_view>(kV1SandboxLibraries);
+    return kV2SandboxLibraries;
 }
 
 std::vector<std::string> MissingFeatures(
