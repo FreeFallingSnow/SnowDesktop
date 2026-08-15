@@ -89,6 +89,7 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` feature 提供
 `sparkline/lineChart/barChart/waveform/spectrum`，`view.statusVisuals` 提供
 `badge/divider/meter`，`view.selectionControls` 提供 `toggle/checkbox`，
+`view.actionControls` 提供 `link/radioGroup/slider`，
 `view.grid.uniform` 提供基础 `grid`，`view.flow.wrap` 提供横向换行 `flow`。
 每次 `view(context, model)` 返回一棵完整树；所有节点必须提供全树唯一、1–128 字节的
 稳定 `key`。宿主先完整解析、校验和布局，再原子替换上一棵成功树；回调或校验失败时
@@ -155,6 +156,42 @@ view.toggle({
 })
 ```
 
+`link` 要求非空 `label` 和 click action，宿主使用链接语义、手型光标、强调色与下划线
+实时绘制，并支持 hover/pressed 样式和元素级 `contextMenu`。`radioGroup` 与 `slider` 同样是
+受控控件，必须使用 `action` 简写或 `events.change`，不得绑定 `events.click`。单选组要求
+显式 `selectedValue`（空字符串表示未选择）以及 1–64 个 `{ key, value, label, enabled? }`
+选项，key/value 在组内唯一；每个选项都有独立的 `<group-key>/<option-key>` 命中区、
+radio 语义、hover/pressed/checked 绘制和右键菜单目标。选中选项时 action 事件附带
+`previousSelection/selection`，宿主不写回选中值。
+
+`slider` 要求显式 `value` 和 `accessibility.label`，支持 `min/max/step`（默认
+0/1/0.01）及水平/垂直方向。鼠标左键按下后由宿主捕获拖动，持续投递 step 对齐且限制在
+范围内的 `previousControlValue/controlValue`；右键只用于菜单，不改变数值。组件收到建议值
+后仍需更新自己的 model/storage 并调用 `widget.invalidate()`。这三个节点对应
+`view.actionControls`；当前尚不提供键盘调节与 UI Automation 输出。
+
+```lua
+view.radioGroup({
+    key = "density",
+    selectedValue = model.density,
+    options = {
+        { key = "comfortable", value = "comfortable", label = "Comfortable" },
+        { key = "compact", value = "compact", label = "Compact" },
+    },
+    action = { id = "density.change" },
+})
+
+view.slider({
+    key = "volume",
+    value = model.volume,
+    min = 0,
+    max = 100,
+    step = 5,
+    action = { id = "volume.change" },
+    accessibility = { label = "Volume" },
+})
+```
+
 `grid` 是行优先的均匀网格容器，必须提供 1–64 的整数 `columns`；每列等宽，
 `columnGap/rowGap` 分别控制水平和垂直间距，未提供时回退到 `gap`。隐藏子节点不占格，
 其余子节点保持原顺序，现有 `alignItems/alignSelf` 控制格内拉伸或对齐，
@@ -173,7 +210,8 @@ view.toggle({
 `image` 的 `source` 只接受入口加载期间创建的 `resource.image()` 句柄，必须显式提供
 `alt`（装饰图片使用空字符串），支持 `fill/contain/cover/none` fit、
 `start/center/end` alignment 和 `nearest/linear` interpolation；对应 feature 为
-`view.image`。`text`、`badge`、`button`、`toggle` 和 `checkbox` 可通过 `font` 使用
+`view.image`。`text`、`badge`、`button`、`link`、`toggle`、`checkbox` 和
+`radioGroup` 可通过 `font` 使用
 `resource.font()` 返回的包私有字体
 句柄，对应 feature 为 `view.font`。这些属性不接受文件路径或跨包句柄。
 `icon`/`iconButton` 的 `glyph` 使用宿主 Font Awesome 或 Fluent 字体，`iconButton` 必须
@@ -212,7 +250,7 @@ view.waveform({
 重复 key、NaN/Infinity 和越界值会拒绝整次提交。桌面树只布局在底部标题栏之上的内容区。
 
 该 feature 不是完整 `view.tree`：当前每帧重建树，尚无 scroll/list/
-input/slot 节点，也没有键盘焦点、UIA 输出、RTL、文本换行、主题
+文本输入/slot 节点，也没有键盘焦点、UIA 输出、RTL、文本换行、主题
 token、差量资源复用或声明式 panel。需要这些能力的组件应继续使用 v2 即时绘制或等待
 对应 feature；不得把 `view.tree.core` 当作稳定完整控件集声明。
 

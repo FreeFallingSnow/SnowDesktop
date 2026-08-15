@@ -92,6 +92,12 @@ progress. Probe `view.selectionControls` for controlled toggle/checkbox nodes:
 always pass an explicit `checked` value and handle their `change` action by
 updating component-owned state; never bind `click` or assume the host persists
 the proposed value.
+Probe `view.actionControls` for host-rendered link/radioGroup/slider nodes.
+Treat radioGroup and slider as controlled: update component-owned state from
+`selection` or `controlValue`, then invalidate. Radio options use generated
+`<group-key>/<option-key>` targets for independent hover, press, semantics, and
+context menus; slider changes are emitted during captured left-button drag.
+Do not assume keyboard or UI Automation support yet.
 Probe `view.grid.uniform` before using `view.grid`; it is a bounded row-major
 equal-column layout with 1–64 columns and optional `columnGap`/`rowGap`, not
 the future track/span/virtual-grid contract.

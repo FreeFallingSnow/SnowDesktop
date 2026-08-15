@@ -23,8 +23,11 @@ enum class ViewNodeType
     Text,
     Image,
     Button,
+    Link,
     Toggle,
     Checkbox,
+    RadioGroup,
+    Slider,
     Icon,
     IconButton,
     Shape,
@@ -137,6 +140,14 @@ struct ViewStyle
     std::optional<float> opacity;
 };
 
+struct ViewChoiceOption
+{
+    std::string key;
+    std::string value;
+    std::string label;
+    bool enabled = true;
+};
+
 struct ViewNode
 {
     ViewNodeType type = ViewNodeType::Box;
@@ -166,6 +177,9 @@ struct ViewNode
     ViewIconFont iconFont = ViewIconFont::FontAwesome;
     float fontSize = 15.0f;
     float value = 0.0f;
+    float minimum = 0.0f;
+    float maximum = 1.0f;
+    float step = 0.01f;
     float thickness = 4.0f;
     float trackOpacity = 1.0f;
     float fillOpacity = 1.0f;
@@ -174,6 +188,8 @@ struct ViewNode
     std::optional<float> seriesMaximum;
     bool bold = false;
     bool checked = false;
+    std::string selectedValue;
+    std::vector<ViewChoiceOption> options;
     bool visible = true;
     bool enabled = true;
     std::string cursor;
@@ -197,11 +213,14 @@ struct ViewTreeLimits
     static constexpr std::size_t MaximumResources = 64;
     static constexpr std::size_t MaximumSeriesPoints = 512;
     static constexpr std::size_t MaximumTotalSeriesPoints = 4096;
+    static constexpr std::size_t MaximumChoiceOptions = 64;
 };
 
 bool ValidateAndLayoutViewTree(ViewNode& root, float width, float height,
     std::string& error);
 bool CollectViewInteractionRegions(const ViewNode& root,
     std::vector<InteractionRegion>& regions, std::string& error);
+ViewRect ViewRadioOptionFrame(
+    const ViewNode& node, std::size_t optionIndex) noexcept;
 const char* ViewNodeTypeName(ViewNodeType type) noexcept;
 }

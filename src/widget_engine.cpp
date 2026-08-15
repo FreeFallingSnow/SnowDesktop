@@ -11816,7 +11816,8 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
 
 static snowdesktop::widget_runtime::ViewStyle ResolveViewStyle(
     const snowdesktop::widget_runtime::ViewNode& node,
-    bool hovered, bool pressed)
+    bool hovered, bool pressed,
+    std::optional<bool> checkedOverride = std::nullopt)
 {
     using snowdesktop::widget_runtime::ViewStyle;
     ViewStyle result = node.style;
@@ -11828,7 +11829,7 @@ static snowdesktop::widget_runtime::ViewStyle ResolveViewStyle(
         if (style.cornerRadius) result.cornerRadius = style.cornerRadius;
         if (style.opacity) result.opacity = style.opacity;
     };
-    if (node.checked) overlay(node.checkedStyle);
+    if (checkedOverride.value_or(node.checked)) overlay(node.checkedStyle);
     if (hovered) overlay(node.hoverStyle);
     if (pressed) overlay(node.pressedStyle);
     return result;
@@ -12048,7 +12049,15 @@ static void DrawWidgetViewNode(D2DState* state,
 
     const bool hovered = regions.IsHovered(node.key);
     const bool pressed = regions.IsPressed(node.key);
-    const auto style = ResolveViewStyle(node, hovered, pressed);
+    auto style = ResolveViewStyle(node, hovered, pressed);
+    if (node.type == ViewNodeType::Link)
+    {
+        if (!style.foreground) style.foreground = 0x72C7FF;
+        if (pressed && !node.pressedStyle.opacity)
+            style.opacity = 0.65f;
+        else if (hovered && !node.hoverStyle.opacity)
+            style.opacity = 0.82f;
+    }
     const bool badgeNode = node.type == ViewNodeType::Badge;
     const float opacity = std::clamp(
         style.opacity.value_or(1.0f), 0.0f, 1.0f);
@@ -12072,7 +12081,9 @@ static void DrawWidgetViewNode(D2DState* state,
         node.type == ViewNodeType::ProgressBar ||
         node.type == ViewNodeType::ProgressRing ||
         node.type == ViewNodeType::Meter ||
-        node.type == ViewNodeType::Icon || checkControlNode;
+        node.type == ViewNodeType::Icon || checkControlNode ||
+        node.type == ViewNodeType::RadioGroup ||
+        node.type == ViewNodeType::Slider;
     const bool implicitSurfaceBackground = !style.background &&
         (buttonNode || badgeNode);
     std::optional<std::uint32_t> background = style.background;
@@ -12203,6 +12214,182 @@ static void DrawWidgetViewNode(D2DState* state,
                         left + boxSize * 0.81f, top + boxSize * 0.31f),
                     mark, std::min(2.0f, boxSize * 0.12f));
             }
+        }
+    }
+    else if (node.type == ViewNodeType::RadioGroup)
+    {
+        std::optional<std::wstring> privateFontPath;
+        if (!node.fontResourceName.empty() && state->engine)
+            privateFontPath = state->engine->RuntimeResolvePackageResource(
+                state->currentWidgetId, node.fontResourceName, "font");
+        IDWriteTextFormat* format = node.fontResourceName.empty() ||
+                privateFontPath
+            ? GetCachedTextFormat(state, node.fontSize,
+                node.bold ? DWRITE_FONT_WEIGHT_BOLD : state->itemFontWeight,
+                false, DWRITE_WORD_WRAPPING_NO_WRAP, false, false, false,
+                privateFontPath ? &*privateFontPath : nullptr)
+            : nullptr;
+        for (std::size_t index = 0; index < node.options.size(); ++index)
+        {
+            const auto& option = node.options[index];
+            const std::string optionKey = node.key + "/" + option.key;
+            const bool optionHovered = regions.IsHovered(optionKey);
+            const bool optionPressed = regions.IsPressed(optionKey);
+            const bool selected = option.value == node.selectedValue;
+            const auto optionStyle = ResolveViewStyle(
+                node, optionHovered, optionPressed, selected);
+            const float optionOpacity = std::clamp(
+                optionStyle.opacity.value_or(1.0f), 0.0f, 1.0f) *
+                (node.enabled && option.enabled ? 1.0f : 0.42f);
+            const auto frame = snowdesktop::widget_runtime::
+                ViewRadioOptionFrame(node, index);
+            const D2D1_RECT_F optionRect = D2D1::RectF(
+                state->widgetRect.left + frame.x,
+                state->widgetRect.top + frame.y,
+                state->widgetRect.left + frame.x + frame.width,
+                state->widgetRect.top + frame.y + frame.height);
+            const float optionRadius = std::max(0.0f,
+                optionStyle.cornerRadius.value_or(4.0f));
+            if (optionStyle.background || optionHovered || optionPressed)
+            {
+                const std::uint32_t color =
+                    optionStyle.background.value_or(0xFFFFFF);
+                const float alpha = optionOpacity *
+                    (optionStyle.background ? 1.0f :
+                        (optionPressed ? 0.16f : 0.10f));
+                if (ID2D1SolidColorBrush* brush = GetCachedBrush(state,
+                        static_cast<int>(color), alpha))
+                    state->ctx->FillRoundedRectangle(
+                        D2D1::RoundedRect(optionRect,
+                            optionRadius, optionRadius), brush);
+            }
+            const float indicatorRadius = std::min(8.0f,
+                std::max(0.0f, frame.height * 0.28f));
+            const float indicatorX = optionRect.left +
+                std::min(frame.width * 0.5f, node.padding + 10.0f);
+            const float indicatorY =
+                (optionRect.top + optionRect.bottom) * 0.5f;
+            const std::uint32_t foreground =
+                optionStyle.foreground.value_or(0xFFFFFF);
+            if (ID2D1SolidColorBrush* outline = GetCachedBrush(state,
+                    static_cast<int>(selected ? 0x4C9AFF : foreground),
+                    optionOpacity * (selected ? 1.0f : 0.62f)))
+                state->ctx->DrawEllipse(D2D1::Ellipse(
+                    D2D1::Point2F(indicatorX, indicatorY),
+                    indicatorRadius, indicatorRadius), outline,
+                    std::max(1.0f,
+                        optionStyle.borderWidth.value_or(1.5f)));
+            if (selected)
+            {
+                if (ID2D1SolidColorBrush* mark = GetCachedBrush(state,
+                        static_cast<int>(optionStyle.foreground.value_or(
+                            0x4C9AFF)), optionOpacity))
+                    state->ctx->FillEllipse(D2D1::Ellipse(
+                        D2D1::Point2F(indicatorX, indicatorY),
+                        indicatorRadius * 0.5f,
+                        indicatorRadius * 0.5f), mark);
+            }
+            if (format && state->dwrite)
+            {
+                const std::wstring label = Utf8ToWideLocal(option.label);
+                ComPtr<IDWriteTextLayout> layout;
+                const float textLeft = indicatorX + indicatorRadius + 8.0f;
+                const float textWidth = std::max(0.0f,
+                    optionRect.right - textLeft - node.padding);
+                if (!label.empty() && SUCCEEDED(
+                        state->dwrite->CreateTextLayout(label.data(),
+                            static_cast<UINT32>(label.size()), format,
+                            textWidth, frame.height, &layout)) && layout)
+                {
+                    layout->SetParagraphAlignment(
+                        DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                    DWRITE_TRIMMING trimming{};
+                    trimming.granularity =
+                        DWRITE_TRIMMING_GRANULARITY_CHARACTER;
+                    ComPtr<IDWriteInlineObject> ellipsis;
+                    if (SUCCEEDED(state->dwrite->
+                            CreateEllipsisTrimmingSign(format, &ellipsis)) &&
+                        ellipsis)
+                        layout->SetTrimming(&trimming, ellipsis.Get());
+                    if (ID2D1SolidColorBrush* textBrush = GetCachedBrush(
+                            state, static_cast<int>(foreground),
+                            optionOpacity))
+                        state->ctx->DrawTextLayout(D2D1::Point2F(
+                            textLeft, optionRect.top), layout.Get(),
+                            textBrush);
+                }
+            }
+        }
+    }
+    else if (node.type == ViewNodeType::Slider)
+    {
+        const bool vertical = node.orientation == ViewOrientation::Vertical;
+        const float span = node.maximum - node.minimum;
+        const float normalized = span > 0.0f
+            ? std::clamp((node.value - node.minimum) / span, 0.0f, 1.0f)
+            : 0.0f;
+        const float thumbRadius = std::min(8.0f, std::max(3.0f,
+            std::min(node.frame.width, node.frame.height) * 0.3f));
+        const float inset = std::min(node.padding + thumbRadius,
+            std::max(0.0f, (vertical ? node.frame.height :
+                node.frame.width) * 0.5f));
+        const float trackThickness = std::min(4.0f,
+            vertical ? node.frame.width : node.frame.height);
+        D2D1_RECT_F trackRect{};
+        if (vertical)
+        {
+            const float x = (rect.left + rect.right) * 0.5f;
+            trackRect = D2D1::RectF(x - trackThickness * 0.5f,
+                rect.top + inset, x + trackThickness * 0.5f,
+                rect.bottom - inset);
+        }
+        else
+        {
+            const float y = (rect.top + rect.bottom) * 0.5f;
+            trackRect = D2D1::RectF(rect.left + inset,
+                y - trackThickness * 0.5f, rect.right - inset,
+                y + trackThickness * 0.5f);
+        }
+        const float trackRadius = trackThickness * 0.5f;
+        if (ID2D1SolidColorBrush* track = GetCachedBrush(state,
+                static_cast<int>(style.background.value_or(0xFFFFFF)),
+                opacity * (style.background ? 1.0f : 0.22f)))
+            state->ctx->FillRoundedRectangle(D2D1::RoundedRect(
+                trackRect, trackRadius, trackRadius), track);
+        D2D1_RECT_F fillRect = trackRect;
+        D2D1_POINT_2F thumb{};
+        if (vertical)
+        {
+            const float y = trackRect.bottom - normalized *
+                (trackRect.bottom - trackRect.top);
+            fillRect.top = y;
+            thumb = D2D1::Point2F(
+                (trackRect.left + trackRect.right) * 0.5f, y);
+        }
+        else
+        {
+            const float x = trackRect.left + normalized *
+                (trackRect.right - trackRect.left);
+            fillRect.right = x;
+            thumb = D2D1::Point2F(x,
+                (trackRect.top + trackRect.bottom) * 0.5f);
+        }
+        const std::uint32_t fillColor =
+            style.foreground.value_or(0x4C9AFF);
+        if (ID2D1SolidColorBrush* fill = GetCachedBrush(state,
+                static_cast<int>(fillColor), opacity))
+        {
+            state->ctx->FillRoundedRectangle(D2D1::RoundedRect(
+                fillRect, trackRadius, trackRadius), fill);
+            state->ctx->FillEllipse(D2D1::Ellipse(
+                thumb, thumbRadius, thumbRadius), fill);
+        }
+        if (borderWidth > 0.0f && style.borderColor)
+        {
+            if (ID2D1SolidColorBrush* outline = GetCachedBrush(state,
+                    static_cast<int>(*style.borderColor), opacity))
+                state->ctx->DrawEllipse(D2D1::Ellipse(
+                    thumb, thumbRadius, thumbRadius), outline, borderWidth);
         }
     }
     else if (node.type == ViewNodeType::Divider)
@@ -12409,7 +12596,8 @@ static void DrawWidgetViewNode(D2DState* state,
 
     if ((node.type == ViewNodeType::Text ||
             node.type == ViewNodeType::Badge ||
-            node.type == ViewNodeType::Button || checkControlNode ||
+            node.type == ViewNodeType::Button ||
+            node.type == ViewNodeType::Link || checkControlNode ||
             iconNode) &&
         !node.text.empty() && state->dwrite)
     {
@@ -12467,6 +12655,10 @@ static void DrawWidgetViewNode(D2DState* state,
                         DWRITE_TEXT_ALIGNMENT_LEADING);
                 layout->SetParagraphAlignment(
                     DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                if (node.type == ViewNodeType::Link)
+                    layout->SetUnderline(TRUE,
+                        DWRITE_TEXT_RANGE{ 0,
+                            static_cast<UINT32>(text.size()) });
                 DWRITE_TRIMMING trimming{};
                 trimming.granularity =
                     DWRITE_TRIMMING_GRANULARITY_CHARACTER;
@@ -13320,6 +13512,10 @@ void WidgetEngine::InvokeMouseEvent(const std::wstring& widgetId, const char* ca
             else if (std::strcmp(action, "click") == 0)
             {
                 targetKey = w.interactionRegions.ConsumeClickTarget(x, y);
+            }
+            else if (std::strcmp(action, "pointerMove") == 0)
+            {
+                targetKey = w.interactionRegions.PointerMoveTarget(x, y);
             }
             else
             {
@@ -15047,6 +15243,10 @@ void WidgetEngine::DispatchInteractionAction(LuaWidget& widget,
     std::string resolvedEventName(eventName);
     std::optional<bool> previousChecked;
     std::optional<bool> checked;
+    std::optional<float> previousControlValue;
+    std::optional<float> controlValue;
+    std::optional<std::string> previousSelection;
+    std::optional<std::string> selection;
     const bool trustedGesture = trustedGestureState_.Active();
     if (includeRetired)
     {
@@ -15059,17 +15259,23 @@ void WidgetEngine::DispatchInteractionAction(LuaWidget& widget,
     else
     {
         const auto resolved = widget.interactionRegions.ResolveAction(
-            targetKey, eventName);
+            targetKey, eventName, static_cast<float>(x),
+            static_cast<float>(y), button);
         if (!resolved) return;
         action = resolved->action;
         resolvedEventName = resolved->eventName;
         previousChecked = resolved->previousChecked;
         checked = resolved->checked;
+        previousControlValue = resolved->previousControlValue;
+        controlValue = resolved->controlValue;
+        previousSelection = resolved->previousSelection;
+        selection = resolved->selection;
     }
     (void)InvokeLifecycleEvent(widget, "action",
         [&action, &targetKey, &resolvedEventName,
-            previousChecked, checked, trustedGesture, x, y, button, delta,
-            clickCount](lua_State* eventState) {
+            previousChecked, checked, previousControlValue, controlValue,
+            previousSelection, selection, trustedGesture, x, y, button,
+            delta, clickCount](lua_State* eventState) {
             lua_pushlstring(eventState, action.id.data(), action.id.size());
             lua_setfield(eventState, -2, "id");
             PushInteractionValue(eventState, action.value);
@@ -15085,6 +15291,23 @@ void WidgetEngine::DispatchInteractionAction(LuaWidget& widget,
                 lua_setfield(eventState, -2, "previousChecked");
                 lua_pushboolean(eventState, *checked ? 1 : 0);
                 lua_setfield(eventState, -2, "checked");
+            }
+            if (previousControlValue.has_value() &&
+                controlValue.has_value())
+            {
+                lua_pushnumber(eventState, *previousControlValue);
+                lua_setfield(eventState, -2, "previousControlValue");
+                lua_pushnumber(eventState, *controlValue);
+                lua_setfield(eventState, -2, "controlValue");
+            }
+            if (previousSelection.has_value() && selection.has_value())
+            {
+                lua_pushlstring(eventState, previousSelection->data(),
+                    previousSelection->size());
+                lua_setfield(eventState, -2, "previousSelection");
+                lua_pushlstring(eventState, selection->data(),
+                    selection->size());
+                lua_setfield(eventState, -2, "selection");
             }
             lua_pushboolean(eventState, trustedGesture ? 1 : 0);
             lua_setfield(eventState, -2, "trustedGesture");
@@ -19297,8 +19520,11 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "text", snowdesktop::widget_runtime::LuaViewText, 2 },
         { "image", snowdesktop::widget_runtime::LuaViewImage, 2 },
         { "button", snowdesktop::widget_runtime::LuaViewButton, 2 },
+        { "link", snowdesktop::widget_runtime::LuaViewLink, 2 },
         { "toggle", snowdesktop::widget_runtime::LuaViewToggle, 2 },
         { "checkbox", snowdesktop::widget_runtime::LuaViewCheckbox, 2 },
+        { "radioGroup", snowdesktop::widget_runtime::LuaViewRadioGroup, 2 },
+        { "slider", snowdesktop::widget_runtime::LuaViewSlider, 2 },
         { "icon", snowdesktop::widget_runtime::LuaViewIcon, 2 },
         { "iconButton", snowdesktop::widget_runtime::LuaViewIconButton, 2 },
         { "shape", snowdesktop::widget_runtime::LuaViewShape, 2 },

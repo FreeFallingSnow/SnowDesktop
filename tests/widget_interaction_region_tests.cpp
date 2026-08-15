@@ -1,6 +1,7 @@
 #include "widget_interaction_region.h"
 
 #include <cstdlib>
+#include <cmath>
 #include <iostream>
 #include <string>
 
@@ -198,6 +199,63 @@ void TestControlledActionResolution()
         "plain regions must reject controlled change bindings");
     regions.AbortFrame();
 }
+
+void TestRadioAndSliderActionResolution()
+{
+    WidgetInteractionRegions regions;
+    std::string error;
+    auto radio = Rect("theme/dark", 0, 0, 100, 32);
+    radio.controlKind = InteractionControlKind::Radio;
+    radio.currentSelection = "light";
+    radio.proposedSelection = "dark";
+    radio.events.emplace("change",
+        InteractionAction{ "theme.change", {} });
+    auto slider = Rect("volume", 0, 40, 100, 24);
+    slider.controlKind = InteractionControlKind::Slider;
+    slider.controlValue = 4.0f;
+    slider.minimum = 0.0f;
+    slider.maximum = 10.0f;
+    slider.step = 2.0f;
+    slider.events.emplace("change",
+        InteractionAction{ "volume.change", {} });
+    regions.BeginFrame();
+    Check(regions.Submit(std::move(radio), error) &&
+            regions.Submit(std::move(slider), error),
+        "radio and slider controlled regions must stage");
+    regions.CommitFrame();
+
+    const auto selection = regions.ResolveAction("theme/dark", "click");
+    Check(selection && selection->eventName == "change" &&
+            selection->previousSelection == "light" &&
+            selection->selection == "dark",
+        "radio clicks must propose the selected option value");
+
+    regions.PointerDown(55.0f, 52.0f, 1);
+    const auto value = regions.ResolveAction(
+        "volume", "pointerDown", 55.0f, 52.0f, 1);
+    Check(value && value->eventName == "change" &&
+            value->previousControlValue &&
+            std::abs(*value->previousControlValue - 4.0f) < 0.01f &&
+            value->controlValue &&
+            std::abs(*value->controlValue - 6.0f) < 0.01f,
+        "slider pointer down must propose a step-rounded value");
+    Check(regions.PointerMoveTarget(140.0f, 52.0f) == "volume",
+        "an active slider drag must retain pointer capture outside bounds");
+    const auto dragged = regions.ResolveAction(
+        "volume", "pointerMove", 140.0f, 52.0f, 1);
+    Check(dragged && dragged->controlValue &&
+            std::abs(*dragged->controlValue - 10.0f) < 0.01f,
+        "captured slider movement must clamp to the declared maximum");
+    regions.PointerUp(140.0f, 52.0f, 1);
+    Check(regions.PointerMoveTarget(140.0f, 52.0f).empty(),
+        "slider capture must end on pointer up");
+
+    regions.PointerDown(20.0f, 52.0f, 2);
+    Check(!regions.ResolveAction(
+            "volume", "pointerDown", 20.0f, 52.0f, 2),
+        "right button presses must not change slider values");
+    regions.PointerUp(20.0f, 52.0f, 2);
+}
 }
 
 int main()
@@ -206,6 +264,7 @@ int main()
     TestPointerPairingAndActions();
     TestShapesAndValidation();
     TestControlledActionResolution();
+    TestRadioAndSliderActionResolution();
     std::cout << "widget interaction region tests passed\n";
     return 0;
 }

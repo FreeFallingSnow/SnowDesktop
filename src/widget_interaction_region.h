@@ -46,6 +46,8 @@ enum class InteractionControlKind
     None,
     Toggle,
     Checkbox,
+    Radio,
+    Slider,
 };
 
 struct InteractionResolvedAction
@@ -54,6 +56,10 @@ struct InteractionResolvedAction
     std::string eventName;
     std::optional<bool> previousChecked;
     std::optional<bool> checked;
+    std::optional<float> previousControlValue;
+    std::optional<float> controlValue;
+    std::optional<std::string> previousSelection;
+    std::optional<std::string> selection;
 };
 
 enum class InteractionShapeType
@@ -86,6 +92,15 @@ struct InteractionRegion
     std::string accessibilityLabel;
     InteractionControlKind controlKind = InteractionControlKind::None;
     bool checked = false;
+    float controlValue = 0.0f;
+    float minimum = 0.0f;
+    float maximum = 1.0f;
+    float step = 0.01f;
+    float controlStart = 0.0f;
+    float controlLength = 0.0f;
+    bool vertical = false;
+    std::string currentSelection;
+    std::string proposedSelection;
     bool enabled = true;
 
     bool operator==(const InteractionRegion&) const = default;
@@ -129,6 +144,7 @@ public:
     InteractionPointerResult PointerUp(float x, float y, int button);
     std::string ConsumeClickTarget(float x, float y);
     std::string TargetAt(float x, float y) const;
+    std::string PointerMoveTarget(float x, float y) const;
 
     const InteractionRegion* Find(std::string_view key) const noexcept;
     const InteractionAction* FindAction(
@@ -136,7 +152,8 @@ public:
     const InteractionAction* FindTransitionAction(
         std::string_view key, std::string_view eventName) const noexcept;
     std::optional<InteractionResolvedAction> ResolveAction(
-        std::string_view key, std::string_view eventName) const;
+        std::string_view key, std::string_view eventName,
+        float x = 0.0f, float y = 0.0f, int button = 0) const;
     const InteractionAction* ActionAt(
         float x, float y, std::string_view eventName,
         std::string* targetKey = nullptr) const noexcept;

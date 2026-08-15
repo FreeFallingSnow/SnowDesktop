@@ -392,6 +392,60 @@ bool ReadNumberArrayField(lua_State* state, int table, const char* field,
 }
 
 bool ReadBoolField(lua_State* state, int table, const char* field,
+    bool& value, std::string& error);
+
+bool ReadChoiceOptionsField(lua_State* state, int table,
+    std::vector<ViewChoiceOption>& options, std::string& error)
+{
+    table = lua_absindex(state, table);
+    lua_getfield(state, table, "options");
+    if (!lua_istable(state, -1) ||
+        !ValidateArray(state, -1, "radioGroup options", error))
+    {
+        if (error.empty()) error = "radioGroup options must be an array";
+        lua_pop(state, 1);
+        return false;
+    }
+    const std::size_t count = lua_rawlen(state, -1);
+    if (count == 0 || count > ViewTreeLimits::MaximumChoiceOptions)
+    {
+        lua_pop(state, 1);
+        error = "radioGroup options must contain 1 to 64 items";
+        return false;
+    }
+    options.clear();
+    options.reserve(count);
+    for (std::size_t index = 0; index < count; ++index)
+    {
+        lua_rawgeti(state, -1, static_cast<lua_Integer>(index + 1));
+        if (!lua_istable(state, -1) ||
+            !ValidateObjectFields(state, -1,
+                { "key", "value", "label", "enabled" },
+                "radioGroup option", error))
+        {
+            if (error.empty()) error = "radioGroup options must be objects";
+            lua_pop(state, 2);
+            return false;
+        }
+        ViewChoiceOption option;
+        if (!ReadStringField(state, -1, "key", option.key, true, error) ||
+            !ReadStringField(state, -1, "value", option.value, true,
+                error) ||
+            !ReadStringField(state, -1, "label", option.label, true,
+                error) ||
+            !ReadBoolField(state, -1, "enabled", option.enabled, error))
+        {
+            lua_pop(state, 2);
+            return false;
+        }
+        options.push_back(std::move(option));
+        lua_pop(state, 1);
+    }
+    lua_pop(state, 1);
+    return true;
+}
+
+bool ReadBoolField(lua_State* state, int table, const char* field,
     bool& value, std::string& error)
 {
     table = lua_absindex(state, table);
@@ -767,8 +821,11 @@ bool ParseNodeType(std::string_view type, ViewNodeType& result)
     else if (type == "text") result = ViewNodeType::Text;
     else if (type == "image") result = ViewNodeType::Image;
     else if (type == "button") result = ViewNodeType::Button;
+    else if (type == "link") result = ViewNodeType::Link;
     else if (type == "toggle") result = ViewNodeType::Toggle;
     else if (type == "checkbox") result = ViewNodeType::Checkbox;
+    else if (type == "radioGroup") result = ViewNodeType::RadioGroup;
+    else if (type == "slider") result = ViewNodeType::Slider;
     else if (type == "icon") result = ViewNodeType::Icon;
     else if (type == "iconButton") result = ViewNodeType::IconButton;
     else if (type == "shape") result = ViewNodeType::Shape;
@@ -845,6 +902,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
                 "source", "font", "fit", "alignment", "interpolation",
                 "alt",
                 "shape", "orientation", "value", "values", "min", "max",
+                "step", "options", "selectedValue",
                 "thickness", "trackOpacity",
                 "fillOpacity", "width", "height",
                 "padding", "gap", "columns", "columnGap", "rowGap",
@@ -864,11 +922,15 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     }
     const bool buttonNode = node.type == ViewNodeType::Button ||
         node.type == ViewNodeType::IconButton;
-    const bool controlNode = node.type == ViewNodeType::Toggle ||
+    const bool checkControlNode = node.type == ViewNodeType::Toggle ||
         node.type == ViewNodeType::Checkbox;
+    const bool radioNode = node.type == ViewNodeType::RadioGroup;
+    const bool sliderNode = node.type == ViewNodeType::Slider;
+    const bool controlNode = checkControlNode || radioNode || sliderNode;
+    const bool linkNode = node.type == ViewNodeType::Link;
     const bool labelNode = node.type == ViewNodeType::Button ||
-        controlNode;
-    const bool actionNode = buttonNode || controlNode;
+        linkNode || checkControlNode;
+    const bool actionNode = buttonNode || linkNode || controlNode;
     const bool iconNode = node.type == ViewNodeType::Icon ||
         node.type == ViewNodeType::IconButton;
     const bool textNode = node.type == ViewNodeType::Text ||
@@ -885,12 +947,12 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     const bool dividerNode = node.type == ViewNodeType::Divider;
     const bool gridNode = node.type == ViewNodeType::Grid;
     const bool flowNode = node.type == ViewNodeType::Flow;
-    const bool textResourceNode = textNode || labelNode;
+    const bool textResourceNode = textNode || labelNode || radioNode;
     if (labelNode &&
         (FieldPresent(state, index, "text") ||
             FieldPresent(state, index, "glyph")))
     {
-        error = "button, toggle, and checkbox nodes use 'label', not 'text' or 'glyph'";
+        error = "button, link, toggle, and checkbox nodes use 'label', not 'text' or 'glyph'";
         return false;
     }
     if (iconNode && (FieldPresent(state, index, "text") ||
@@ -903,7 +965,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         (FieldPresent(state, index, "label") ||
             FieldPresent(state, index, "action")))
     {
-        error = "only button, toggle, and checkbox nodes accept 'label' and 'action'";
+        error = "only action controls accept 'label' and 'action'";
         return false;
     }
     if (!textNode && !labelNode && !iconNode &&
@@ -924,9 +986,10 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         error = "only shape nodes accept 'shape'";
         return false;
     }
-    if (!dividerNode && FieldPresent(state, index, "orientation"))
+    if (!dividerNode && !radioNode && !sliderNode &&
+        FieldPresent(state, index, "orientation"))
     {
-        error = "only divider nodes accept orientation";
+        error = "only divider, radioGroup, and slider nodes accept orientation";
         return false;
     }
     if (!gridNode && FieldPresent(state, index, "columns"))
@@ -946,26 +1009,38 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         error = "grid nodes require columns";
         return false;
     }
-    if (!progressNode && FieldPresent(state, index, "value"))
+    if (!progressNode && !sliderNode && FieldPresent(state, index, "value"))
     {
-        error = "only progress nodes accept 'value'";
+        error = "only progress and slider nodes accept 'value'";
         return false;
     }
-    if (!controlNode && FieldPresent(state, index, "checked"))
+    if (!checkControlNode && FieldPresent(state, index, "checked"))
     {
         error = "only toggle and checkbox nodes accept checked";
         return false;
     }
-    if (!controlNode && FieldPresent(state, index, "checkedStyle"))
+    if (!checkControlNode && !radioNode &&
+        FieldPresent(state, index, "checkedStyle"))
     {
-        error = "only toggle and checkbox nodes accept checkedStyle";
+        error = "only selection controls accept checkedStyle";
         return false;
     }
-    if (!seriesNode && (FieldPresent(state, index, "values") ||
+    if (!seriesNode && !sliderNode && (FieldPresent(state, index, "values") ||
             FieldPresent(state, index, "min") ||
             FieldPresent(state, index, "max")))
     {
-        error = "only data-series nodes accept values, min, and max";
+        error = "only data-series and slider nodes accept values, min, and max";
+        return false;
+    }
+    if (!sliderNode && FieldPresent(state, index, "step"))
+    {
+        error = "only slider nodes accept step";
+        return false;
+    }
+    if (!radioNode && (FieldPresent(state, index, "options") ||
+            FieldPresent(state, index, "selectedValue")))
+    {
+        error = "only radioGroup nodes accept options and selectedValue";
         return false;
     }
     if (!progressNode && !seriesNode && !dividerNode && (
@@ -987,7 +1062,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     }
     if (!textResourceNode && FieldPresent(state, index, "font"))
     {
-        error = "only text, badge, button, toggle, and checkbox nodes accept a font resource";
+        error = "only text and label-bearing nodes accept a font resource";
         return false;
     }
     if (imageNode && !FieldPresent(state, index, "alt"))
@@ -995,9 +1070,19 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         error = "image nodes require an explicit 'alt' field";
         return false;
     }
-    if (controlNode && !FieldPresent(state, index, "checked"))
+    if (checkControlNode && !FieldPresent(state, index, "checked"))
     {
         error = "toggle and checkbox nodes require checked";
+        return false;
+    }
+    if (sliderNode && !FieldPresent(state, index, "value"))
+    {
+        error = "slider nodes require value";
+        return false;
+    }
+    if (radioNode && !FieldPresent(state, index, "selectedValue"))
+    {
+        error = "radioGroup nodes require selectedValue";
         return false;
     }
     if (!ReadStringField(state, index, "key", node.key, true, error))
@@ -1005,6 +1090,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     if (node.type == ViewNodeType::Badge &&
         !FieldPresent(state, index, "padding"))
         node.padding = 4.0f;
+    if (radioNode && !FieldPresent(state, index, "gap"))
+        node.gap = 8.0f;
     const char* contentField = iconNode ? "glyph" :
         (labelNode ? "label" : "text");
     if (!ReadStringField(state, index, contentField,
@@ -1066,6 +1153,29 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             node.width = { ViewLengthKind::Auto, 0.0f };
         if (!FieldPresent(state, index, "height"))
             node.height = { ViewLengthKind::Fill, 0.0f };
+    }
+
+    if (sliderNode)
+    {
+        if (!ReadFloatField(state, index, "min", node.minimum, error) ||
+            !ReadFloatField(state, index, "max", node.maximum, error) ||
+            !ReadFloatField(state, index, "step", node.step, error))
+            return false;
+        if (node.orientation == ViewOrientation::Vertical)
+        {
+            if (!FieldPresent(state, index, "width"))
+                node.width = { ViewLengthKind::Auto, 0.0f };
+            if (!FieldPresent(state, index, "height"))
+                node.height = { ViewLengthKind::Fill, 0.0f };
+        }
+    }
+
+    if (radioNode)
+    {
+        if (!ReadStringField(state, index, "selectedValue",
+                node.selectedValue, true, error) ||
+            !ReadChoiceOptionsField(state, index, node.options, error))
+            return false;
     }
 
     if (seriesNode)
@@ -1247,11 +1357,17 @@ int LuaViewStack(lua_State* state) { return MakeNode(state, "stack"); }
 int LuaViewText(lua_State* state) { return MakeNode(state, "text"); }
 int LuaViewImage(lua_State* state) { return MakeNode(state, "image"); }
 int LuaViewButton(lua_State* state) { return MakeNode(state, "button"); }
+int LuaViewLink(lua_State* state) { return MakeNode(state, "link"); }
 int LuaViewToggle(lua_State* state) { return MakeNode(state, "toggle"); }
 int LuaViewCheckbox(lua_State* state)
 {
     return MakeNode(state, "checkbox");
 }
+int LuaViewRadioGroup(lua_State* state)
+{
+    return MakeNode(state, "radioGroup");
+}
+int LuaViewSlider(lua_State* state) { return MakeNode(state, "slider"); }
 int LuaViewIcon(lua_State* state) { return MakeNode(state, "icon"); }
 int LuaViewIconButton(lua_State* state)
 {

@@ -146,6 +146,25 @@ bool WidgetInteractionRegions::Submit(
         error = "change is reserved for controlled interaction regions";
         return false;
     }
+    if (region.controlKind == InteractionControlKind::Slider &&
+        (!std::isfinite(region.minimum) ||
+            !std::isfinite(region.maximum) ||
+            !std::isfinite(region.controlValue) ||
+            !std::isfinite(region.step) ||
+            region.minimum >= region.maximum || region.step <= 0.0f ||
+            region.step > region.maximum - region.minimum ||
+            region.controlValue < region.minimum ||
+            region.controlValue > region.maximum))
+    {
+        error = "slider interaction values are invalid";
+        return false;
+    }
+    if (region.controlKind == InteractionControlKind::Radio &&
+        region.proposedSelection.empty())
+    {
+        error = "radio interaction regions require a proposed selection";
+        return false;
+    }
     staging_.push_back(std::move(region));
     return true;
 }
@@ -254,6 +273,19 @@ std::string WidgetInteractionRegions::TargetAt(float x, float y) const
     return target ? target->key : std::string{};
 }
 
+std::string WidgetInteractionRegions::PointerMoveTarget(
+    float x, float y) const
+{
+    if (!pressedKey_.empty() && pressedButton_ == 1)
+    {
+        const InteractionRegion* pressed = Find(pressedKey_);
+        if (pressed && pressed->enabled && pressed->controlKind ==
+                InteractionControlKind::Slider)
+            return pressedKey_;
+    }
+    return TargetAt(x, y);
+}
+
 const InteractionRegion* WidgetInteractionRegions::Find(
     std::string_view key) const noexcept
 {
@@ -287,24 +319,63 @@ const InteractionAction* WidgetInteractionRegions::FindTransitionAction(
 
 std::optional<InteractionResolvedAction>
 WidgetInteractionRegions::ResolveAction(
-    std::string_view key, std::string_view eventName) const
+    std::string_view key, std::string_view eventName,
+    float x, float y, int button) const
 {
     const InteractionRegion* region = Find(key);
     if (!region) return std::nullopt;
     std::string_view resolvedName = eventName;
-    if (eventName == "click" && region->controlKind !=
-            InteractionControlKind::None)
+    const bool sliderChange = region->controlKind ==
+            InteractionControlKind::Slider &&
+        ((eventName == "pointerDown" && button == 1 &&
+                pressedKey_ == key && pressedButton_ == 1) ||
+            (eventName == "pointerMove" && pressedKey_ == key &&
+                pressedButton_ == 1));
+    if ((eventName == "click" && region->controlKind !=
+            InteractionControlKind::None && region->controlKind !=
+                InteractionControlKind::Slider) || sliderChange)
         resolvedName = "change";
     const auto action = region->events.find(resolvedName);
     if (action == region->events.end()) return std::nullopt;
     InteractionResolvedAction result;
     result.action = action->second;
     result.eventName = resolvedName;
-    if (resolvedName == "change" && region->controlKind !=
-            InteractionControlKind::None)
+    if (resolvedName == "change" &&
+        (region->controlKind == InteractionControlKind::Toggle ||
+            region->controlKind == InteractionControlKind::Checkbox))
     {
         result.previousChecked = region->checked;
         result.checked = !region->checked;
+    }
+    else if (resolvedName == "change" &&
+        region->controlKind == InteractionControlKind::Radio)
+    {
+        result.previousSelection = region->currentSelection;
+        result.selection = region->proposedSelection;
+    }
+    else if (resolvedName == "change" &&
+        region->controlKind == InteractionControlKind::Slider)
+    {
+        const float start = region->controlLength > 0.0f
+            ? region->controlStart
+            : (region->vertical ? region->shape.y : region->shape.x);
+        const float length = region->controlLength > 0.0f
+            ? region->controlLength
+            : (region->vertical ? region->shape.height :
+                region->shape.width);
+        float normalized = length > 0.0f
+            ? ((region->vertical ? y : x) - start) / length : 0.0f;
+        if (region->vertical) normalized = 1.0f - normalized;
+        normalized = std::clamp(normalized, 0.0f, 1.0f);
+        const float raw = region->minimum + normalized *
+            (region->maximum - region->minimum);
+        float proposed = region->minimum + std::round(
+            (raw - region->minimum) / region->step) * region->step;
+        if (normalized <= 0.0f) proposed = region->minimum;
+        if (normalized >= 1.0f) proposed = region->maximum;
+        result.previousControlValue = region->controlValue;
+        result.controlValue = std::clamp(
+            proposed, region->minimum, region->maximum);
     }
     return result;
 }

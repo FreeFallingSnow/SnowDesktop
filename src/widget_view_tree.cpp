@@ -47,6 +47,13 @@ bool IsCheckControlNode(ViewNodeType type) noexcept
         type == ViewNodeType::Checkbox;
 }
 
+bool IsControlledNode(ViewNodeType type) noexcept
+{
+    return IsCheckControlNode(type) ||
+        type == ViewNodeType::RadioGroup ||
+        type == ViewNodeType::Slider;
+}
+
 bool IsDataSeriesNode(ViewNodeType type) noexcept
 {
     return type == ViewNodeType::Sparkline ||
@@ -59,7 +66,8 @@ bool IsDataSeriesNode(ViewNodeType type) noexcept
 bool IsLeafNode(ViewNodeType type) noexcept
 {
     return type == ViewNodeType::Text || type == ViewNodeType::Image ||
-        IsButtonNode(type) || IsCheckControlNode(type) ||
+        IsButtonNode(type) || type == ViewNodeType::Link ||
+        IsControlledNode(type) ||
         type == ViewNodeType::Icon || type == ViewNodeType::Shape ||
         type == ViewNodeType::Badge || type == ViewNodeType::Divider ||
         type == ViewNodeType::ProgressBar ||
@@ -78,12 +86,40 @@ float IntrinsicWidth(const ViewNode& node)
         return node.width.value;
     if (node.type == ViewNodeType::Text ||
         node.type == ViewNodeType::Badge ||
-        node.type == ViewNodeType::Button)
+        node.type == ViewNodeType::Button ||
+        node.type == ViewNodeType::Link)
         return TextIntrinsicWidth(node);
     if (node.type == ViewNodeType::Toggle)
         return TextIntrinsicWidth(node) + 44.0f;
     if (node.type == ViewNodeType::Checkbox)
         return TextIntrinsicWidth(node) + 26.0f;
+    if (node.type == ViewNodeType::RadioGroup)
+    {
+        float result = 0.0f;
+        if (node.orientation == ViewOrientation::Horizontal)
+        {
+            for (const auto& option : node.options)
+                result += std::max(node.fontSize,
+                    static_cast<float>(std::min<std::size_t>(
+                        option.label.size(), 256)) * node.fontSize * 0.55f) +
+                    26.0f;
+            if (node.options.size() > 1)
+                result += node.gap *
+                    static_cast<float>(node.options.size() - 1);
+        }
+        else
+        {
+            for (const auto& option : node.options)
+                result = std::max(result, std::max(node.fontSize,
+                    static_cast<float>(std::min<std::size_t>(
+                        option.label.size(), 256)) * node.fontSize * 0.55f) +
+                    26.0f);
+        }
+        return result + node.padding * 2.0f;
+    }
+    if (node.type == ViewNodeType::Slider)
+        return (node.orientation == ViewOrientation::Horizontal
+            ? 96.0f : 24.0f) + node.padding * 2.0f;
     if (node.type == ViewNodeType::Image)
         return 48.0f + node.padding * 2.0f;
     if (IsIconNode(node.type))
@@ -161,7 +197,8 @@ float IntrinsicHeight(const ViewNode& node)
 {
     if (node.height.kind == ViewLengthKind::Fixed)
         return node.height.value;
-    if (node.type == ViewNodeType::Text)
+    if (node.type == ViewNodeType::Text ||
+        node.type == ViewNodeType::Link)
         return node.fontSize * 1.4f + node.padding * 2.0f;
     if (node.type == ViewNodeType::Badge)
         return std::max(20.0f, node.fontSize * 1.4f) +
@@ -175,6 +212,19 @@ float IntrinsicHeight(const ViewNode& node)
         node.type == ViewNodeType::Checkbox)
         return std::max(32.0f, node.fontSize * 1.8f) +
             node.padding * 2.0f;
+    if (node.type == ViewNodeType::RadioGroup)
+    {
+        const float optionHeight = std::max(32.0f, node.fontSize * 1.8f);
+        const float content = node.orientation == ViewOrientation::Vertical
+            ? optionHeight * static_cast<float>(node.options.size()) +
+                node.gap * static_cast<float>(
+                    node.options.empty() ? 0 : node.options.size() - 1)
+            : optionHeight;
+        return content + node.padding * 2.0f;
+    }
+    if (node.type == ViewNodeType::Slider)
+        return (node.orientation == ViewOrientation::Horizontal
+            ? 24.0f : 96.0f) + node.padding * 2.0f;
     if (node.type == ViewNodeType::IconButton)
         return std::max(32.0f, node.fontSize * 1.4f) +
             node.padding * 2.0f;
@@ -589,7 +639,6 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         (node.rowGap && !FiniteInRange(*node.rowGap, 0.0f, 4096.0f)) ||
         !FiniteInRange(node.flexGrow, 0.0f, 1000.0f) ||
         !FiniteInRange(node.fontSize, 1.0f, 512.0f) ||
-        !FiniteInRange(node.value, 0.0f, 1.0f) ||
         !FiniteInRange(node.thickness, 0.5f, 4096.0f) ||
         !FiniteInRange(node.trackOpacity, 0.0f, 1.0f) ||
         !FiniteInRange(node.fillOpacity, 0.0f, 1.0f) ||
@@ -598,6 +647,26 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         !validStyle(node.checkedStyle))
     {
         error = "view node dimensions and typography must be finite and bounded";
+        return false;
+    }
+    if ((node.type == ViewNodeType::ProgressBar ||
+            node.type == ViewNodeType::ProgressRing ||
+            node.type == ViewNodeType::Meter) &&
+        !FiniteInRange(node.value, 0.0f, 1.0f))
+    {
+        error = "progress values must be finite and between 0 and 1";
+        return false;
+    }
+    if (node.type == ViewNodeType::Slider &&
+        (!FiniteInRange(node.minimum, -1.0e9f, 1.0e9f) ||
+            !FiniteInRange(node.maximum, -1.0e9f, 1.0e9f) ||
+            !FiniteInRange(node.value, -1.0e9f, 1.0e9f) ||
+            !FiniteInRange(node.step, 0.000001f, 1.0e9f) ||
+            node.minimum >= node.maximum || node.value < node.minimum ||
+            node.value > node.maximum ||
+            node.step > node.maximum - node.minimum))
+    {
+        error = "slider requires min < max, a value in range, and a positive bounded step";
         return false;
     }
     if (node.type == ViewNodeType::Grid &&
@@ -637,6 +706,63 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         return false;
     }
     textBytes += node.accessibilityLabel.size();
+    if (node.type == ViewNodeType::RadioGroup)
+    {
+        if (node.options.empty() ||
+            node.options.size() > ViewTreeLimits::MaximumChoiceOptions)
+        {
+            error = "radioGroup options must contain 1 to 64 items";
+            return false;
+        }
+        std::unordered_set<std::string> optionKeys;
+        std::unordered_set<std::string> optionValues;
+        bool selectionFound = node.selectedValue.empty();
+        for (const auto& option : node.options)
+        {
+            const std::string regionKey = node.key + "/" + option.key;
+            if (option.key.empty() || option.key.size() > 128 ||
+                option.value.empty() ||
+                option.value.size() > ViewTreeLimits::MaximumTextBytes ||
+                option.label.empty() ||
+                option.label.size() > ViewTreeLimits::MaximumTextBytes ||
+                regionKey.size() > 128)
+            {
+                error = "radioGroup option keys, values, and labels must be non-empty and bounded";
+                return false;
+            }
+            if (!optionKeys.insert(option.key).second ||
+                !optionValues.insert(option.value).second)
+            {
+                error = "radioGroup option keys and values must be unique";
+                return false;
+            }
+            if (!keys.insert(regionKey).second)
+            {
+                error = "duplicate generated radio option key: " + regionKey;
+                return false;
+            }
+            const std::size_t optionBytes = option.key.size() +
+                option.value.size() + option.label.size();
+            if (optionBytes >
+                ViewTreeLimits::MaximumTotalTextBytes - textBytes)
+            {
+                error = "view tree text limit exceeded";
+                return false;
+            }
+            textBytes += optionBytes;
+            if (option.value == node.selectedValue) selectionFound = true;
+        }
+        if (!selectionFound)
+        {
+            error = "radioGroup selectedValue must match an option or be empty";
+            return false;
+        }
+    }
+    else if (!node.options.empty() || !node.selectedValue.empty())
+    {
+        error = "radio options are reserved for radioGroup nodes";
+        return false;
+    }
     if (IsDataSeriesNode(node.type))
     {
         if (node.values.empty() ||
@@ -695,10 +821,12 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
     if (!node.fontResourceName.empty() &&
         node.type != ViewNodeType::Text &&
         node.type != ViewNodeType::Button &&
+        node.type != ViewNodeType::Link &&
         node.type != ViewNodeType::Badge &&
-        !IsCheckControlNode(node.type))
+        !IsCheckControlNode(node.type) &&
+        node.type != ViewNodeType::RadioGroup)
     {
-        error = "only text, badge, button, toggle, and checkbox nodes can retain a font resource";
+        error = "only text and label-bearing nodes can retain a font resource";
         return false;
     }
     if (!node.imageResourceName.empty())
@@ -719,6 +847,11 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
     if (node.type == ViewNodeType::Button && node.text.empty())
     {
         error = "button nodes require label text";
+        return false;
+    }
+    if (node.type == ViewNodeType::Link && node.text.empty())
+    {
+        error = "link nodes require label text";
         return false;
     }
     if (node.type == ViewNodeType::Badge && node.text.empty())
@@ -750,6 +883,12 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         error = "meter nodes require accessibility.label";
         return false;
     }
+    if (node.type == ViewNodeType::Slider &&
+        node.accessibilityLabel.empty())
+    {
+        error = "slider nodes require accessibility.label";
+        return false;
+    }
     for (const auto& [eventName, action] : node.events)
     {
         if (eventName != "click" && eventName != "doubleClick" &&
@@ -766,7 +905,7 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             return false;
         }
     }
-    if (IsCheckControlNode(node.type))
+    if (IsControlledNode(node.type))
     {
         if (!node.events.contains("change") ||
             node.events.contains("click"))
@@ -781,6 +920,12 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         error = "change is reserved for controlled view nodes";
         return false;
     }
+    if (node.type == ViewNodeType::Link &&
+        !node.events.contains("click"))
+    {
+        error = "link nodes require a click action";
+        return false;
+    }
     for (const auto& child : node.children)
         if (!ValidateNode(child, depth + 1, nodes, textBytes,
                 seriesPoints, keys, resources, error)) return false;
@@ -791,8 +936,54 @@ bool CollectRegions(const ViewNode& node,
     std::vector<InteractionRegion>& regions, std::string& error)
 {
     if (!node.visible) return true;
+    if (node.type == ViewNodeType::RadioGroup)
+    {
+        for (std::size_t index = 0; index < node.options.size(); ++index)
+        {
+            if (regions.size() >=
+                WidgetInteractionRegions::kMaximumRegions)
+            {
+                error = "view interaction region limit exceeded (256)";
+                return false;
+            }
+            const auto& option = node.options[index];
+            const ViewRect frame = ViewRadioOptionFrame(node, index);
+            if (frame.width <= 0.0f || frame.height <= 0.0f)
+            {
+                error = "interactive radio option has an empty layout: " +
+                    node.key + "/" + option.key;
+                return false;
+            }
+            InteractionRegion region;
+            region.key = node.key + "/" + option.key;
+            region.shape.type = node.style.cornerRadius.value_or(0.0f) > 0.0f
+                ? InteractionShapeType::RoundedRect
+                : InteractionShapeType::Rect;
+            region.shape.x = frame.x;
+            region.shape.y = frame.y;
+            region.shape.width = frame.width;
+            region.shape.height = frame.height;
+            region.shape.radius = node.style.cornerRadius.value_or(0.0f);
+            region.cursor = node.cursor.empty() ? "hand" : node.cursor;
+            region.events = node.events;
+            region.controlKind = InteractionControlKind::Radio;
+            region.checked = option.value == node.selectedValue;
+            region.currentSelection = node.selectedValue;
+            region.proposedSelection = option.value;
+            region.accessibilityRole = "radio";
+            region.accessibilityLabel = option.label;
+            region.enabled = node.enabled && option.enabled;
+            regions.push_back(std::move(region));
+        }
+        return true;
+    }
     if (!node.events.empty() || IsButtonNode(node.type))
     {
+        if (regions.size() >= WidgetInteractionRegions::kMaximumRegions)
+        {
+            error = "view interaction region limit exceeded (256)";
+            return false;
+        }
         if (node.frame.width <= 0.0f || node.frame.height <= 0.0f)
         {
             error = "interactive view node has an empty layout: " + node.key;
@@ -824,6 +1015,8 @@ bool CollectRegions(const ViewNode& node,
         }
         region.cursor = node.cursor.empty() &&
             (IsButtonNode(node.type) || IsCheckControlNode(node.type) ||
+                node.type == ViewNodeType::Link ||
+                node.type == ViewNodeType::Slider ||
                 node.events.contains("click"))
             ? "hand" : node.cursor;
         region.events = node.events;
@@ -831,9 +1024,30 @@ bool CollectRegions(const ViewNode& node,
             region.controlKind = InteractionControlKind::Toggle;
         else if (node.type == ViewNodeType::Checkbox)
             region.controlKind = InteractionControlKind::Checkbox;
+        else if (node.type == ViewNodeType::Slider)
+        {
+            region.controlKind = InteractionControlKind::Slider;
+            region.controlValue = node.value;
+            region.minimum = node.minimum;
+            region.maximum = node.maximum;
+            region.step = node.step;
+            region.vertical = node.orientation == ViewOrientation::Vertical;
+            const float thumbRadius = std::min(8.0f, std::max(3.0f,
+                std::min(node.frame.width, node.frame.height) * 0.3f));
+            const float mainLength = region.vertical
+                ? node.frame.height : node.frame.width;
+            const float inset = std::min(node.padding + thumbRadius,
+                std::max(0.0f, mainLength * 0.5f));
+            region.controlStart = (region.vertical
+                ? node.frame.y : node.frame.x) + inset;
+            region.controlLength = std::max(0.0f,
+                mainLength - inset * 2.0f);
+        }
         region.checked = node.checked;
         region.accessibilityRole = node.accessibilityRole.empty()
             ? (IsButtonNode(node.type) ? "button" :
+                (node.type == ViewNodeType::Link ? "link" :
+                    (node.type == ViewNodeType::Slider ? "slider" :
                 (node.type == ViewNodeType::Toggle ? "switch" :
                     (node.type == ViewNodeType::Checkbox ? "checkbox" :
                 (IsDataSeriesNode(node.type) ? "img" :
@@ -841,7 +1055,7 @@ bool CollectRegions(const ViewNode& node,
                         (node.type == ViewNodeType::Divider
                             ? "separator" :
                             (node.type == ViewNodeType::Badge
-                                ? "status" : "")))))))
+                                ? "status" : "")))))))))
             : node.accessibilityRole;
         region.accessibilityLabel = node.accessibilityLabel.empty()
             ? node.text : node.accessibilityLabel;
@@ -852,6 +1066,33 @@ bool CollectRegions(const ViewNode& node,
         if (!CollectRegions(child, regions, error)) return false;
     return true;
 }
+}
+
+ViewRect ViewRadioOptionFrame(
+    const ViewNode& node, std::size_t optionIndex) noexcept
+{
+    if (node.options.empty() || optionIndex >= node.options.size())
+        return {};
+    const float inset = std::min(node.padding,
+        std::max(0.0f, std::min(node.frame.width, node.frame.height) * 0.5f));
+    const ViewRect content{
+        node.frame.x + inset,
+        node.frame.y + inset,
+        std::max(0.0f, node.frame.width - inset * 2.0f),
+        std::max(0.0f, node.frame.height - inset * 2.0f),
+    };
+    const float count = static_cast<float>(node.options.size());
+    if (node.orientation == ViewOrientation::Horizontal)
+    {
+        const float width = std::max(0.0f,
+            (content.width - node.gap * (count - 1.0f)) / count);
+        return { content.x + static_cast<float>(optionIndex) *
+                (width + node.gap), content.y, width, content.height };
+    }
+    const float height = std::max(0.0f,
+        (content.height - node.gap * (count - 1.0f)) / count);
+    return { content.x, content.y + static_cast<float>(optionIndex) *
+            (height + node.gap), content.width, height };
 }
 
 bool ValidateAndLayoutViewTree(ViewNode& root, float width, float height,
@@ -904,8 +1145,11 @@ const char* ViewNodeTypeName(ViewNodeType type) noexcept
     case ViewNodeType::Text: return "text";
     case ViewNodeType::Image: return "image";
     case ViewNodeType::Button: return "button";
+    case ViewNodeType::Link: return "link";
     case ViewNodeType::Toggle: return "toggle";
     case ViewNodeType::Checkbox: return "checkbox";
+    case ViewNodeType::RadioGroup: return "radioGroup";
+    case ViewNodeType::Slider: return "slider";
     case ViewNodeType::Icon: return "icon";
     case ViewNodeType::IconButton: return "iconButton";
     case ViewNodeType::Shape: return "shape";

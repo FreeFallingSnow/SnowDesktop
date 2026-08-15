@@ -139,26 +139,35 @@
 ---@field click? SnowInteractionAction
 ---@field doubleClick? SnowInteractionAction
 ---@field contextMenu? SnowInteractionAction
----@field change? SnowInteractionAction Toggle/checkbox controlled-value proposal.
+---@field change? SnowInteractionAction Controlled toggle/checkbox/radioGroup/slider value proposal.
+
+---@class SnowViewChoiceOption
+---@field key string Stable option key; its interaction target is '<group-key>/<option-key>'.
+---@field value string Stable non-empty value unique within the group.
+---@field label string Non-empty visible and accessible label.
+---@field enabled? boolean Defaults to true.
 
 ---@class SnowViewNodeOptions
 ---@field key string Globally unique stable key in the returned tree.
 ---@field text? string Used by text nodes.
----@field label? string Required by button, toggle, and checkbox nodes.
+---@field label? string Required by button, link, toggle, and checkbox nodes.
 ---@field glyph? string Required by icon and iconButton nodes.
 ---@field source? SnowImageResource Required by image nodes.
----@field font? SnowFontResource Package-private font for text, badge, button, toggle, and checkbox nodes.
+---@field font? SnowFontResource Package-private font for text and label-bearing nodes, including link and radioGroup.
 ---@field fit? SnowViewImageFit Image scaling mode; defaults to contain.
 ---@field alignment? SnowViewImageAlignment Image alignment on both axes; defaults to center.
 ---@field interpolation? SnowViewImageInterpolation Image sampling mode; defaults to linear.
 ---@field alt? string Required by image nodes; use an empty string for decorative images.
 ---@field iconFont? 'fa'|'fluent'|'fluent-regular'
 ---@field shape? 'rectangle'|'roundedRectangle'|'circle'|'ellipse'
----@field orientation? 'horizontal'|'vertical' Divider direction; vertical dividers default to auto width and fill height.
----@field value? number Progress value between 0 and 1.
+---@field orientation? 'horizontal'|'vertical' Divider direction or radioGroup/slider axis; vertical divider/slider defaults to auto width and fill height.
+---@field value? number Progress value between 0 and 1, or the explicit controlled slider value.
 ---@field values? number[] Required by data-series nodes; 1 to 512 finite samples, with at most 4096 samples across one tree.
----@field min? number Explicit data-series minimum; must be paired with max and be smaller than it.
----@field max? number Explicit data-series maximum; must be paired with min and be larger than it.
+---@field min? number Explicit data-series or slider minimum; defaults to 0 for slider.
+---@field max? number Explicit data-series or slider maximum; defaults to 1 for slider.
+---@field step? number Positive slider step no larger than max-min; defaults to 0.01.
+---@field options? SnowViewChoiceOption[] Required by radioGroup; 1 to 64 unique keys and values.
+---@field selectedValue? string Required controlled radioGroup value; empty means no selection.
 ---@field thickness? number Progress or data-series stroke thickness.
 ---@field trackOpacity? number Progress track or chart guide opacity between 0 and 1.
 ---@field fillOpacity? number Progress or data-series foreground opacity between 0 and 1.
@@ -183,14 +192,14 @@
 ---@field style? SnowViewStyle
 ---@field hoverStyle? SnowViewStyle
 ---@field pressedStyle? SnowViewStyle
----@field checkedStyle? SnowViewStyle Applied before hover/pressed when a toggle or checkbox is checked.
+---@field checkedStyle? SnowViewStyle Applied before hover/pressed when a toggle/checkbox or radio option is selected.
 ---@field accessibility? SnowViewAccessibility
 ---@field events? SnowViewEvents
----@field action? SnowInteractionAction Button click or toggle/checkbox change shorthand.
+---@field action? SnowInteractionAction Button/link click or controlled selection/value change shorthand.
 ---@field children? SnowViewNode[]
 
 ---@class SnowViewNode: SnowViewNodeOptions
----@field type 'box'|'row'|'column'|'grid'|'flow'|'stack'|'text'|'image'|'button'|'toggle'|'checkbox'|'icon'|'iconButton'|'shape'|'badge'|'divider'|'progressBar'|'progressRing'|'meter'|'sparkline'|'lineChart'|'barChart'|'waveform'|'spectrum'|'spacer'
+---@field type 'box'|'row'|'column'|'grid'|'flow'|'stack'|'text'|'image'|'button'|'link'|'toggle'|'checkbox'|'radioGroup'|'slider'|'icon'|'iconButton'|'shape'|'badge'|'divider'|'progressBar'|'progressRing'|'meter'|'sparkline'|'lineChart'|'barChart'|'waveform'|'spectrum'|'spacer'
 
 ---@class SnowInteractionShape
 ---@field type 'rect'|'roundedRect'|'circle'
@@ -326,6 +335,10 @@
 ---@field targetKey? string Stable immediate interaction region key.
 ---@field previousChecked? boolean Current controlled value for toggle/checkbox change events.
 ---@field checked? boolean Proposed next controlled value for toggle/checkbox change events; the host does not persist it.
+---@field previousSelection? string Current radioGroup selectedValue for change events.
+---@field selection? string Proposed radioGroup option value; the host does not persist it.
+---@field previousControlValue? number Current slider value for change events.
+---@field controlValue? number Proposed step-rounded slider value; the host does not persist it.
 ---@field clickCount? integer
 ---@field trustedGesture? boolean
 ---@field surface? 'desktop'|'panel'
@@ -496,6 +509,10 @@ function view.image(options) end
 ---@return SnowViewNode
 function view.button(options) end
 
+---@param options SnowViewNodeOptions Requires a non-empty label and click/action; probes with view.actionControls.
+---@return SnowViewNode
+function view.link(options) end
+
 ---@param options SnowViewNodeOptions Requires label, explicit checked, and change/action; probes with view.selectionControls.
 ---@return SnowViewNode
 function view.toggle(options) end
@@ -503,6 +520,14 @@ function view.toggle(options) end
 ---@param options SnowViewNodeOptions Requires label, explicit checked, and change/action; probes with view.selectionControls.
 ---@return SnowViewNode
 function view.checkbox(options) end
+
+---@param options SnowViewNodeOptions Requires selectedValue, 1..64 options, and change/action; probes with view.actionControls.
+---@return SnowViewNode
+function view.radioGroup(options) end
+
+---@param options SnowViewNodeOptions Requires value, change/action, and accessibility.label; probes with view.actionControls.
+---@return SnowViewNode
+function view.slider(options) end
 
 ---@param options SnowViewNodeOptions
 ---@return SnowViewNode

@@ -164,8 +164,11 @@ void RegisterViewLibrary(lua_State* state)
         { "text", LuaViewText },
         { "image", LuaViewImage },
         { "button", LuaViewButton },
+        { "link", LuaViewLink },
         { "toggle", LuaViewToggle },
         { "checkbox", LuaViewCheckbox },
+        { "radioGroup", LuaViewRadioGroup },
+        { "slider", LuaViewSlider },
         { "icon", LuaViewIcon },
         { "iconButton", LuaViewIconButton },
         { "shape", LuaViewShape },
@@ -664,6 +667,146 @@ void TestSelectionControlParsing()
     lua_close(state);
 }
 
+void TestActionControlParsing()
+{
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "Lua state must be available");
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    Check(luaL_dostring(state, R"lua(
+        return view.column({
+            key = "actions",
+            children = {
+                view.link({
+                    key = "details",
+                    label = "Open details",
+                    height = 24,
+                    action = { id = "details.open" },
+                    events = {
+                        contextMenu = { id = "details.menu" },
+                    },
+                }),
+                view.radioGroup({
+                    key = "density",
+                    height = 80,
+                    orientation = "vertical",
+                    selectedValue = "comfortable",
+                    options = {
+                        { key = "comfortable", value = "comfortable",
+                            label = "Comfortable" },
+                        { key = "compact", value = "compact",
+                            label = "Compact", enabled = false },
+                    },
+                    checkedStyle = { foreground = 0x4C9AFF },
+                    action = { id = "density.change" },
+                    events = {
+                        contextMenu = { id = "density.menu" },
+                    },
+                }),
+                view.slider({
+                    key = "volume",
+                    height = 32,
+                    value = 35,
+                    min = 0,
+                    max = 100,
+                    step = 5,
+                    action = { id = "volume.change" },
+                    accessibility = { label = "Volume" },
+                }),
+            },
+        })
+    )lua") == LUA_OK,
+        "action-control Lua fixture must evaluate");
+    ViewNode root;
+    std::string error;
+    Check(ParseLuaViewTree(state, -1, root, error) &&
+            root.children.size() == 3 &&
+            root.children[0].type == ViewNodeType::Link &&
+            root.children[0].events.at("click").id == "details.open" &&
+            root.children[1].type == ViewNodeType::RadioGroup &&
+            root.children[1].selectedValue == "comfortable" &&
+            root.children[1].options.size() == 2 &&
+            !root.children[1].options[1].enabled &&
+            root.children[2].type == ViewNodeType::Slider &&
+            Near(root.children[2].value, 35.0f) &&
+            Near(root.children[2].minimum, 0.0f) &&
+            Near(root.children[2].maximum, 100.0f) &&
+            Near(root.children[2].step, 5.0f),
+        "link, radioGroup, and slider must retain typed controlled fields");
+    Check(ValidateAndLayoutViewTree(root, 300.0f, 136.0f, error),
+        "the action-control fixture must validate and lay out");
+    std::vector<InteractionRegion> regions;
+    Check(CollectViewInteractionRegions(root, regions, error) &&
+            regions.size() == 4 &&
+            regions[0].key == "details" &&
+            regions[0].accessibilityRole == "link" &&
+            regions[1].key == "density/comfortable" &&
+            regions[1].controlKind == InteractionControlKind::Radio &&
+            regions[1].checked &&
+            regions[1].events.contains("contextMenu") &&
+            regions[2].key == "density/compact" &&
+            !regions[2].enabled &&
+            regions[3].controlKind == InteractionControlKind::Slider &&
+            Near(regions[3].controlValue, 35.0f) &&
+            regions[3].accessibilityRole == "slider",
+        "action controls must produce link, per-option radio, and slider regions");
+    const ViewRect secondOption = ViewRadioOptionFrame(
+        root.children[1], 1);
+    Check(secondOption.y > root.children[1].frame.y &&
+            secondOption.height > 0.0f,
+        "vertical radio options must receive separate stable geometry");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.radioGroup({
+            key = "duplicate",
+            selectedValue = "one",
+            options = {
+                { key = "one", value = "one", label = "One" },
+                { key = "two", value = "one", label = "Also one" },
+            },
+            action = { id = "duplicate.change" },
+        })
+    )lua") == LUA_OK,
+        "duplicate radio-value fixture must evaluate");
+    ViewNode invalid;
+    Check(ParseLuaViewTree(state, -1, invalid, error) &&
+            !ValidateAndLayoutViewTree(invalid, 240.0f, 80.0f, error) &&
+            error.find("unique") != std::string::npos,
+        "radioGroup option values must be unique");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.slider({
+            key = "bad-slider",
+            value = 5,
+            min = 10,
+            max = 0,
+            step = 1,
+            action = { id = "bad.change" },
+            accessibility = { label = "Bad slider" },
+        })
+    )lua") == LUA_OK,
+        "invalid slider-range fixture must evaluate");
+    invalid = {};
+    Check(ParseLuaViewTree(state, -1, invalid, error) &&
+            !ValidateAndLayoutViewTree(invalid, 240.0f, 32.0f, error) &&
+            error.find("min < max") != std::string::npos,
+        "slider ranges and values must be validated together");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.link({ key = "inactive", label = "Inactive" })
+    )lua") == LUA_OK,
+        "inactive-link fixture must evaluate");
+    invalid = {};
+    Check(ParseLuaViewTree(state, -1, invalid, error) &&
+            !ValidateAndLayoutViewTree(invalid, 120.0f, 24.0f, error) &&
+            error.find("click action") != std::string::npos,
+        "link nodes must not silently accept missing actions");
+    lua_close(state);
+}
+
 void TestUniformGridParsingAndLayout()
 {
     lua_State* state = luaL_newstate();
@@ -800,6 +943,7 @@ int main()
     TestDataSeriesParsingAndLimits();
     TestStatusVisualParsing();
     TestSelectionControlParsing();
+    TestActionControlParsing();
     TestUniformGridParsingAndLayout();
     TestFlowParsingAndLayout();
     std::cout << "Widget view tree tests passed\n";
