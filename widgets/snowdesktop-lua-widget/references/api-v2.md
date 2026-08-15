@@ -119,7 +119,7 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.layout.overflow` 提供容器后代裁剪，`view.shadow` 提供有界宿主阴影，
 `view.image.tint` 提供保留图片 alpha 的 RGB 着色，
 `view.transform.basic` 提供布局后的平移、统一缩放和变换原点，
-`view.transform.affine` 提供非统一缩放、旋转和精确逆矩阵命中，
+`view.transform.affine` 提供非统一缩放、旋转、斜切和精确逆矩阵命中，
 `view.transition.visual` 提供宿主驱动的有限视觉样式过渡，
 `view.state.selected` 提供通用受控选中样式，`view.checkbox.indeterminate` 提供复选框混合态，
 `view.state.visibility` 明确区分参与布局的隐藏状态与完全折叠状态，
@@ -163,12 +163,13 @@ scroll content extent 和虚拟 item extent；同级间的公共间隔仍优先�
 `transform={translateX?,translateY?,scale?,originX?,originY?}`。平移每轴限制在
 -4096–4096，统一正数 scale 限制为 0.05–8，归一化原点限制为 0–1；嵌套累计缩放必须保持
 在 1/64–64。变换在布局后应用并由后代继承，绘制、命中、宿主输入、裁剪和 UIA 边界使用
-同一结果。探测 `view.transform.affine` 后还可加入 `scaleX/scaleY` 正数乘数和
-`rotate`（-360–360 度）；每个最终局部轴仍须保持 0.05–8，嵌套仿射矩阵的最小/最大伸缩轴
+同一结果。探测 `view.transform.affine` 后还可加入 `scaleX/scaleY` 正数乘数、
+`rotate`（-360–360 度）以及 `skewX/skewY`（各 -80–80 度）。局部顺序固定为
+scale → skew → rotate → translate；每个最终局部缩放轴仍须保持 0.05–8，嵌套仿射矩阵的最小/最大伸缩轴
 仍限制为 1/64–64。旋转命中使用逆矩阵恢复原始 rect/roundedRect/circle 或文本片段，而 UIA
 继续暴露变换后的轴对齐包围框；slider 值按旋转后的真实轨道投影。宿主管理的输入代理、
 scroll viewport 和逻辑槽位只接受正向轴对齐变换，带裁剪的节点也不接受非轴对齐矩阵，
-避免用不精确 AABB 冒充可操作或裁剪区域。斜切仍未开放。
+避免用不精确 AABB 冒充可操作或裁剪区域。透视变换不属于二维组件 scene API。
 
 探测 `view.transition.visual` 后，任意节点可声明：
 

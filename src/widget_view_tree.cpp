@@ -3588,13 +3588,17 @@ ViewResolvedTransform LocalTransform(const ViewNode& node) noexcept
         (3.14159265358979323846f / 180.0f);
     const float cosine = std::cos(radians);
     const float sine = std::sin(radians);
+    const float skewX = std::tan(value.skewX *
+        (3.14159265358979323846f / 180.0f));
+    const float skewY = std::tan(value.skewY *
+        (3.14159265358979323846f / 180.0f));
     const float scaleX = value.scale * value.scaleX;
     const float scaleY = value.scale * value.scaleY;
     const ViewResolvedTransform result{
-        scaleX * cosine,
-        scaleX * sine,
-        -scaleY * sine,
-        scaleY * cosine,
+        scaleX * (cosine - skewY * sine),
+        scaleX * (sine + skewY * cosine),
+        scaleY * (skewX * cosine - sine),
+        scaleY * (skewX * sine + cosine),
         0.0f,
         0.0f,
     };
@@ -3735,6 +3739,8 @@ bool ValidateTransforms(const ViewNode& node,
             !FiniteInRange(value.scale * value.scaleX, 0.05f, 8.0f) ||
             !FiniteInRange(value.scale * value.scaleY, 0.05f, 8.0f) ||
             !FiniteInRange(value.rotate, -360.0f, 360.0f) ||
+            !FiniteInRange(value.skewX, -80.0f, 80.0f) ||
+            !FiniteInRange(value.skewY, -80.0f, 80.0f) ||
             !FiniteInRange(value.originX, 0.0f, 1.0f) ||
             !FiniteInRange(value.originY, 0.0f, 1.0f))
         {
@@ -3886,6 +3892,12 @@ ViewResolvedTransform ResolveViewTransformForKey(
     TransformMatch match;
     FindTransform(root, key, {}, std::nullopt, false, match);
     return match.found ? match.node : ViewResolvedTransform{};
+}
+
+ViewResolvedTransform ResolveViewLocalTransform(
+    const ViewNode& node) noexcept
+{
+    return LocalTransform(node);
 }
 
 std::optional<ViewRect> ResolveViewClipForKey(

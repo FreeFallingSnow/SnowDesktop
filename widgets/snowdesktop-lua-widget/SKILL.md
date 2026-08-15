@@ -232,7 +232,8 @@ Probe `view.transform.basic` before declaring a node `transform` with bounded
 `originX`/`originY`. Transforms are post-layout, inherit through descendants,
 and move drawing, hit targets, host inputs, clips, and accessibility bounds
 together. Probe `view.transform.affine` before adding positive `scaleX`/
-`scaleY` multipliers or bounded degree `rotate`; rotated hit targets and slider
+`scaleY` multipliers, bounded degree `rotate`, or bounded `skewX`/`skewY`;
+affine hit targets and slider
 axes remain exact, while host-managed inputs, scroll viewports, logical slots,
 and clipping nodes intentionally require a positive axis-aligned matrix. Probe
 `view.transition.visual` separately before declaring `transition`. It accepts

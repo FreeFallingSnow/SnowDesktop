@@ -343,6 +343,8 @@ struct ViewTransform
     float scaleX = 1.0f;
     float scaleY = 1.0f;
     float rotate = 0.0f;
+    float skewX = 0.0f;
+    float skewY = 0.0f;
 
     bool operator==(const ViewTransform&) const = default;
 };
@@ -673,6 +675,8 @@ bool ComputeViewVirtualRange(std::size_t itemCount, float itemExtent,
 ViewRect ViewNodeContentRect(const ViewNode& node) noexcept;
 ViewResolvedTransform ResolveViewTransformForKey(
     const ViewNode& root, std::string_view key) noexcept;
+ViewResolvedTransform ResolveViewLocalTransform(
+    const ViewNode& node) noexcept;
 std::optional<ViewRect> ResolveViewClipForKey(
     const ViewNode& root, std::string_view key,
     bool includeMatchedNode) noexcept;

@@ -2942,6 +2942,7 @@ void TestBasicTransforms()
             transform = {
                 translateX = 4, translateY = -2, scale = 1.5,
                 scaleX = 1.25, scaleY = 0.75, rotate = 30,
+                skewX = 10, skewY = -5,
                 originX = 0, originY = 1,
             },
             action = { id = "move" },
@@ -2957,6 +2958,8 @@ void TestBasicTransforms()
             Near(parsed.transform->scaleX, 1.25f) &&
             Near(parsed.transform->scaleY, 0.75f) &&
             Near(parsed.transform->rotate, 30.0f) &&
+            Near(parsed.transform->skewX, 10.0f) &&
+            Near(parsed.transform->skewY, -5.0f) &&
             Near(parsed.transform->originX, 0.0f) &&
             Near(parsed.transform->originY, 1.0f),
         "Lua parsing must retain bounded node transform fields");
@@ -2975,11 +2978,11 @@ void TestBasicTransforms()
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(
         return view.text({ key = "invalid", text = "Invalid",
-            transform = { skewX = 45 } })
+            transform = { perspective = 45 } })
     )lua") == LUA_OK,
         "unknown transform field fixture must evaluate");
     Check(!ParseLuaViewTree(state, -1, parsed, error) &&
-            error.find("skewX") != std::string::npos,
+            error.find("perspective") != std::string::npos,
         "unpublished transform fields must fail atomic tree parsing");
     lua_close(state);
 
@@ -3138,6 +3141,15 @@ void TestBasicTransforms()
     Check(!ValidateAndLayoutViewTree(rotatedInput, 120.0f, 40.0f, error) &&
             error == "view host-managed controls and logical slots require an axis-aligned transform",
         "host-managed input proxies must reject rotation they cannot map exactly");
+
+    ViewNode singularSkew = affineButton;
+    singularSkew.key = "singular-skew";
+    singularSkew.transform = ViewTransform{};
+    singularSkew.transform->skewX = 45.0f;
+    singularSkew.transform->skewY = 45.0f;
+    Check(!ValidateAndLayoutViewTree(singularSkew, 100.0f, 40.0f, error) &&
+            error == "view cumulative transform axes must remain between 1/64 and 64",
+        "a singular two-axis skew must reject the scene commit");
 }
 
 void TestVisualTransitionRuntime()

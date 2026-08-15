@@ -1112,7 +1112,7 @@ bool ReadTransformField(lua_State* state, int table,
     ViewTransform parsed;
     const bool ok = ValidateObjectFields(state, -1,
             { "translateX", "translateY", "scale", "scaleX", "scaleY",
-                "rotate", "originX", "originY" },
+                "rotate", "skewX", "skewY", "originX", "originY" },
             "view transform", error) &&
         ReadFloatField(state, -1, "translateX",
             parsed.translateX, error) &&
@@ -1122,6 +1122,8 @@ bool ReadTransformField(lua_State* state, int table,
         ReadFloatField(state, -1, "scaleX", parsed.scaleX, error) &&
         ReadFloatField(state, -1, "scaleY", parsed.scaleY, error) &&
         ReadFloatField(state, -1, "rotate", parsed.rotate, error) &&
+        ReadFloatField(state, -1, "skewX", parsed.skewX, error) &&
+        ReadFloatField(state, -1, "skewY", parsed.skewY, error) &&
         ReadFloatField(state, -1, "originX", parsed.originX, error) &&
         ReadFloatField(state, -1, "originY", parsed.originY, error);
     lua_pop(state, 1);

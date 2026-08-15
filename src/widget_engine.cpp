@@ -15967,27 +15967,28 @@ public:
         : context_(state ? state->ctx : nullptr)
     {
         if (!context_ || !node.transform) return;
-        const auto& transform = *node.transform;
-        const float scaleX = transform.scale * transform.scaleX;
-        const float scaleY = transform.scale * transform.scaleY;
-        if (std::abs(scaleX - 1.0f) <= 0.000001f &&
-            std::abs(scaleY - 1.0f) <= 0.000001f &&
-            std::abs(transform.rotate) <= 0.000001f &&
-            std::abs(transform.translateX) <= 0.000001f &&
-            std::abs(transform.translateY) <= 0.000001f)
+        const auto transform = snowdesktop::widget_runtime::
+            ResolveViewLocalTransform(node);
+        if (std::abs(transform.m11 - 1.0f) <= 0.000001f &&
+            std::abs(transform.m22 - 1.0f) <= 0.000001f &&
+            std::abs(transform.m12) <= 0.000001f &&
+            std::abs(transform.m21) <= 0.000001f &&
+            std::abs(transform.dx) <= 0.000001f &&
+            std::abs(transform.dy) <= 0.000001f)
             return;
         context_->GetTransform(&previous_);
-        const D2D1_POINT_2F origin = D2D1::Point2F(
-            state->widgetRect.left + node.frame.x +
-                node.frame.width * transform.originX,
-            state->widgetRect.top + node.frame.y +
-                node.frame.height * transform.originY);
-        const D2D1_MATRIX_3X2_F local =
-            D2D1::Matrix3x2F::Scale(
-                scaleX, scaleY, origin) *
-            D2D1::Matrix3x2F::Rotation(transform.rotate, origin) *
-            D2D1::Matrix3x2F::Translation(
-                transform.translateX, transform.translateY);
+        const float left = state->widgetRect.left;
+        const float top = state->widgetRect.top;
+        const D2D1_MATRIX_3X2_F local{
+            transform.m11,
+            transform.m12,
+            transform.m21,
+            transform.m22,
+            transform.dx + left - left * transform.m11 -
+                top * transform.m21,
+            transform.dy + top - left * transform.m12 -
+                top * transform.m22,
+        };
         context_->SetTransform(local * previous_);
         active_ = true;
     }

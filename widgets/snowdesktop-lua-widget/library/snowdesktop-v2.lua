@@ -166,6 +166,8 @@
 ---@field scaleX? number Positive horizontal multiplier; combined with scale it must remain from 0.05 through 8. Requires view.transform.affine.
 ---@field scaleY? number Positive vertical multiplier; combined with scale it must remain from 0.05 through 8. Requires view.transform.affine.
 ---@field rotate? number Clockwise rotation in degrees from -360 through 360. Requires view.transform.affine.
+---@field skewX? number Horizontal skew angle in degrees from -80 through 80. Requires view.transform.affine.
+---@field skewY? number Vertical skew angle in degrees from -80 through 80. Requires view.transform.affine.
 ---@field originX? number Normalized horizontal transform origin from 0 through 1; defaults to 0.5.
 ---@field originY? number Normalized vertical transform origin from 0 through 1; defaults to 0.5.
 
@@ -327,7 +329,7 @@
 ---@field clip? boolean Compatibility clipping flag; use matching overflow='clip' in new widgets.
 ---@field overflow? SnowViewOverflow Container descendant overflow behavior; defaults to visible.
 ---@field shadow? SnowViewShadow Bounded host-rendered frame shadow that does not change layout or hit bounds.
----@field transform? SnowViewTransform Post-layout transform inherited by descendants. Probe view.transform.basic for translation/uniform scale and view.transform.affine for non-uniform scale/rotation.
+---@field transform? SnowViewTransform Post-layout transform inherited by descendants. Probe view.transform.basic for translation/uniform scale and view.transform.affine for non-uniform scale, rotation, and skew.
 ---@field transition? SnowViewTransition Host-driven visual style transition after probing view.transition.visual; interpolation frames do not re-run view().
 ---@field gap? number
 ---@field columns? integer|SnowViewGridTrack[] Required by grid, gridList, and virtualGrid. Track arrays require view.grid.tracks and are rejected by virtualGrid.
