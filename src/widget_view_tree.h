@@ -232,6 +232,13 @@ enum class ViewCollectionContent
     Loading,
 };
 
+enum class ViewVisibility
+{
+    Visible,
+    Hidden,
+    Collapsed,
+};
+
 struct ViewRect
 {
     float x = 0.0f;
@@ -444,6 +451,7 @@ struct ViewNode
     std::uint64_t logicalSlotRevision = 0;
     std::string logicalSlotReference;
     bool visible = true;
+    ViewVisibility visibility = ViewVisibility::Visible;
     bool enabled = true;
     std::optional<bool> focusable;
     std::optional<int> tabIndex;

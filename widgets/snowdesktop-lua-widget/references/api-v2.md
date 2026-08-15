@@ -101,6 +101,7 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.layout.overflow` 提供容器后代裁剪，`view.shadow` 提供有界宿主阴影，
 `view.image.tint` 提供保留图片 alpha 的 RGB 着色，
 `view.state.selected` 提供通用受控选中样式，`view.checkbox.indeterminate` 提供复选框混合态，
+`view.state.visibility` 明确区分参与布局的隐藏状态与完全折叠状态，
 `view.input.required` 提供表单必填语义，
 `view.keyboardNavigation.order` 提供显式焦点参与和顺序，
 `view.grid.uniform` 提供基础 `grid`，`view.grid.placement` 提供显式格位与跨度，
@@ -135,6 +136,11 @@ scroll content extent 和虚拟 item extent；同级间的公共间隔仍优先�
 由宿主最多 16 层受控衰减绘制，blur 限制为 0 到 64，不参与布局或扩大命中区；对应 feature
 为 `view.shadow`。图片在探测 `view.image.tint` 后可声明 `tint=0xRRGGBB`，宿主替换 RGB、
 保留源 alpha，并继续遵循 fit、alignment、interpolation 和节点 opacity。
+探测 `view.state.visibility` 后，节点可声明 `visibility="visible"|"hidden"|"collapsed"`。
+`hidden` 仍参与父布局，但整棵子树不绘制、不可命中、不创建宿主输入，也不进入 UI Automation；
+`collapsed` 则不占用布局空间。旧 `visible=false` 固定等价于 collapsed，`visible=true` 等价于 visible。
+同时声明两种写法时必须一致，且 `hidden` 不得与旧布尔写法混用。`opacity=0` 只改变绘制透明度，
+节点仍可交互，不能用作隐藏状态。
 每次 `view(context, model)` 返回一棵完整树；所有节点必须提供全树唯一、1–128 字节的
 稳定 `key`。宿主先完整解析、校验和布局，再原子替换上一棵成功树；回调或校验失败时
 继续显示上一棵树，不留下半棵树或空白交互区。

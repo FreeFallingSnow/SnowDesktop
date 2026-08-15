@@ -2761,6 +2761,64 @@ void TestTextLocaleValidation()
         "unknown text directions must fail during atomic tree parsing");
     lua_close(state);
 }
+
+void TestVisibilityStates()
+{
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "Lua state must be available");
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    Check(luaL_dostring(state, R"lua(
+        return view.row({
+            key = "visibility-row",
+            children = {
+                view.button({
+                    key = "reserved", label = "Reserved", width = 40,
+                    visibility = "hidden",
+                    action = { id = "reserved.click" },
+                }),
+                view.button({
+                    key = "active", label = "Active", width = 40,
+                    action = { id = "active.click" },
+                }),
+            },
+        })
+    )lua") == LUA_OK,
+        "hidden visibility fixture must evaluate");
+    ViewNode hidden;
+    std::string error;
+    Check(ParseLuaViewTree(state, -1, hidden, error) &&
+            hidden.children[0].visibility == ViewVisibility::Hidden &&
+            hidden.children[0].visible &&
+            ValidateAndLayoutViewTree(hidden, 100.0f, 40.0f, error) &&
+            Near(hidden.children[0].frame.x, 0.0f) &&
+            Near(hidden.children[1].frame.x, 40.0f),
+        "hidden nodes must reserve normal layout space");
+    std::vector<InteractionRegion> regions;
+    Check(CollectViewInteractionRegions(hidden, regions, error) &&
+            regions.size() == 1 && regions[0].key == "active" &&
+            Near(regions[0].shape.x, 40.0f),
+        "hidden subtrees must not retain pointer or keyboard targets");
+
+    ViewNode collapsed = hidden;
+    collapsed.children[0].visible = false;
+    collapsed.children[0].visibility = ViewVisibility::Collapsed;
+    Check(ValidateAndLayoutViewTree(collapsed, 100.0f, 40.0f, error) &&
+            Near(collapsed.children[1].frame.x, 0.0f),
+        "collapsed nodes must be removed from layout");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.text({ key = "conflict", text = "Conflict",
+            visible = true, visibility = "hidden" })
+    )lua") == LUA_OK,
+        "visibility conflict fixture must evaluate");
+    ViewNode invalid;
+    Check(!ParseLuaViewTree(state, -1, invalid, error) &&
+            error.find("conflicting") != std::string::npos,
+        "legacy visible and explicit visibility must not contradict each other");
+    lua_close(state);
+}
 }
 
 int main()
@@ -2788,6 +2846,7 @@ int main()
     TestOverflowShadowAndImageTint();
     TestStackPositioningAndClipping();
     TestTextLocaleValidation();
+    TestVisibilityStates();
     std::cout << "Widget view tree tests passed\n";
     return 0;
 }

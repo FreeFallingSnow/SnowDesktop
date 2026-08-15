@@ -128,6 +128,7 @@
 ---@alias SnowViewImageAlignment 'start'|'center'|'end'
 ---@alias SnowViewImageInterpolation 'nearest'|'linear'
 ---@alias SnowViewOverflow 'visible'|'clip'
+---@alias SnowViewVisibility 'visible'|'hidden'|'collapsed'
 ---@alias SnowViewGridTrack number|'auto'|SnowViewGridFractionTrack|SnowViewGridMinMaxTrack
 ---@alias SnowViewValidationState 'none'|'info'|'success'|'warning'|'error'
 ---@alias SnowViewSelectionMode 'none'|'single'|'multiple'
@@ -322,7 +323,8 @@
 ---@field textWrap? SnowViewTextWrap Defaults to noWrap, except styledText defaults to wrap.
 ---@field maxLines? integer Maximum rendered lines from 0/unlimited through 64.
 ---@field overflowText? SnowViewTextOverflow Defaults to ellipsis, except styledText defaults to clip.
----@field visible? boolean
+---@field visible? boolean Compatibility visibility flag; false means collapsed.
+---@field visibility? SnowViewVisibility Explicit layout/paint/input visibility; probe view.state.visibility before use.
 ---@field enabled? boolean
 ---@field focusable? boolean Override whether the semantic node can receive host pointer/UIA focus; defaults to the node contract.
 ---@field tabIndex? integer Sequential host focus order from -1 through 32767. -1 skips Tab/spatial traversal; positive values sort before 0/source order.

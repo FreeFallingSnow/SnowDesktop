@@ -15492,6 +15492,8 @@ static void DrawWidgetViewNode(D2DState* state,
     using snowdesktop::widget_runtime::ViewOrientation;
     using snowdesktop::widget_runtime::ViewTextAlignment;
     if (!state || !state->ctx || !node.visible ||
+        node.visibility == snowdesktop::widget_runtime::
+            ViewVisibility::Hidden ||
         node.frame.width <= 0.0f || node.frame.height <= 0.0f)
         return;
 
@@ -19552,7 +19554,9 @@ WidgetEngine::RuntimeLogicalSlotSurface(const std::wstring& widgetId,
 
     const auto collect = [&](const auto& self, const ViewNode& node,
         std::optional<ViewRect> inheritedClip) -> bool {
-        if (!node.visible) return false;
+        if (!node.visible || node.visibility ==
+                snowdesktop::widget_runtime::ViewVisibility::Hidden)
+            return false;
         if (node.type == ViewNodeType::SlotSurface &&
             node.logicalSlotId == slotId)
         {

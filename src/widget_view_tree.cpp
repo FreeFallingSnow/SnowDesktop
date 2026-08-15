@@ -2891,7 +2891,8 @@ bool CollectRegions(const ViewNode& node,
     const std::optional<ViewRect>& inheritedClip, float viewportHeight,
     std::string& error)
 {
-    if (!node.visible) return true;
+    if (!node.visible || node.visibility == ViewVisibility::Hidden)
+        return true;
     if (node.type == ViewNodeType::MonthCalendar)
     {
         std::array<ViewMonthCalendarCell, 42> cells;
@@ -3233,7 +3234,8 @@ bool CollectSelectOptions(const ViewNode& node,
     const std::optional<ViewRect>& inheritedClip, float viewportHeight,
     std::string& error)
 {
-    if (!node.visible) return true;
+    if (!node.visible || node.visibility == ViewVisibility::Hidden)
+        return true;
     if (node.type == ViewNodeType::Select && node.expanded)
     {
         for (std::size_t index = 0; index < node.options.size(); ++index)
@@ -3293,7 +3295,8 @@ bool CollectInputs(const ViewNode& node,
     std::vector<ViewInputControl>& controls,
     const std::optional<ViewRect>& inheritedClip, std::string& error)
 {
-    if (!node.visible) return true;
+    if (!node.visible || node.visibility == ViewVisibility::Hidden)
+        return true;
     if (IsInputNode(node.type))
     {
         if (inheritedClip && !Overlaps(node.frame, *inheritedClip))
@@ -3371,7 +3374,8 @@ bool ApplyScrollState(ViewNode& node,
     const std::optional<ViewRect>& inheritedClip,
     std::size_t& scrollContainers, std::string& error)
 {
-    if (!node.visible) return true;
+    if (!node.visible || node.visibility == ViewVisibility::Hidden)
+        return true;
     std::optional<ViewRect> childClip = inheritedClip;
     if (!IsScrollContainer(node.type) && node.clipFrame)
     {

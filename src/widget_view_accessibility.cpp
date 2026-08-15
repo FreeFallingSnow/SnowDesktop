@@ -356,7 +356,8 @@ bool CollectNode(const ViewNode& source, std::string_view semanticPath,
     std::vector<ViewAccessibilityNode>& nodes,
     std::string& error)
 {
-    if (!source.visible) return true;
+    if (!source.visible || source.visibility == ViewVisibility::Hidden)
+        return true;
     const ViewNodeContract* contract = FindViewNodeContract(source.type);
     if (!contract)
     {

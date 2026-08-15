@@ -108,7 +108,9 @@ void TestRepresentativeApplicability()
                 "loadingContent") &&
             !ViewNodeAllowsProperty(ViewNodeType::Grid, "emptyContent") &&
             ViewNodeAllowsProperty(ViewNodeType::Grid, "busy") &&
-            ViewNodeAllowsProperty(ViewNodeType::Button, "busy"),
+            ViewNodeAllowsProperty(ViewNodeType::Button, "busy") &&
+            ViewNodeAllowsProperty(ViewNodeType::Button, "visibility") &&
+            ViewNodeAllowsProperty(ViewNodeType::Box, "visibility"),
         "collection content alternatives and common busy state must remain scoped");
     Check(ViewNodeAllowsProperty(ViewNodeType::Image, "source") &&
             ViewNodeAllowsProperty(ViewNodeType::ReferenceIcon, "reference") &&

@@ -501,6 +501,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "view.state.selected") &&
             snowdesktop::widget_api::SupportsFeature(
+                "view.state.visibility") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "view.statusVisuals") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.styledText.basic") &&

@@ -269,6 +269,30 @@ void TestVirtualControlChildren()
                 ViewAccessibilityPattern::GridItem),
         "grid collections must expose selection capability, positions, and spans");
 }
+
+void TestHiddenSemanticSubtree()
+{
+    ViewNode root = Node(ViewNodeType::Column,
+        "root", 0, 0, 160, 80);
+    ViewNode hidden = Node(ViewNodeType::Box,
+        "hidden", 0, 0, 160, 40);
+    hidden.visibility = ViewVisibility::Hidden;
+    ViewNode hiddenButton = Node(ViewNodeType::Button,
+        "hidden-button", 0, 0, 80, 32);
+    hiddenButton.text = "Hidden";
+    hidden.children.push_back(hiddenButton);
+    ViewNode visibleButton = Node(ViewNodeType::Button,
+        "visible-button", 0, 40, 80, 32);
+    visibleButton.text = "Visible";
+    root.children = { hidden, visibleButton };
+
+    std::vector<ViewAccessibilityNode> nodes;
+    std::string error;
+    Check(CollectViewAccessibilityNodes(root, {}, nodes, error) &&
+            nodes.size() == 2 && nodes[0].key == "root" &&
+            nodes[1].key == "visible-button",
+        "hidden semantic subtrees must be omitted while siblings remain visible");
+}
 }
 
 int main()
@@ -277,6 +301,7 @@ int main()
     TestClipAndControlledState();
     TestImmediateRegionSemantics();
     TestVirtualControlChildren();
+    TestHiddenSemanticSubtree();
     std::cout << "widget view accessibility tests passed\n";
     return 0;
 }

@@ -210,6 +210,10 @@ the host applies the same content rectangle to descendant paint, pointer hit,
 inputs, and semantic visibility. `clip=true` remains compatibility syntax and
 must not contradict overflow. Probe `view.shadow` for bounded frame shadows and
 `view.image.tint` for alpha-preserving RGB tint on package image nodes.
+Probe `view.state.visibility` before using `visibility`. `hidden` keeps layout
+space but removes the whole subtree from paint, hit testing, host inputs, and
+UI Automation; `collapsed` also removes its layout space. Legacy `visible=false`
+means collapsed. Do not use `opacity=0` to hide an interactive node.
 Probe `view.flow.wrap` before using `view.flow`; it wraps fixed/auto-width
 children horizontally, skips hidden children, and supports per-line
 `columnGap`/`rowGap`, but it is not a scrolling or virtualized collection.

@@ -1168,7 +1168,7 @@ feature probe、LuaLS 和契约测试；日期单元已经进入通用键盘导�
 | 状态样式 | `style`、`hoverStyle`、`pressedStyle`、`focusStyle`、`disabledStyle`、`selectedStyle`、`checkedStyle`、`validationStyle` |
 | 文本 | `text`、`font`、`fontSize`、`fontWeight`、`fontStyle`、`lineHeight`、`letterSpacing`、`textAlign`、`verticalAlign`、`textWrap`、`maxLines`、`overflowText`、`locale`、`textDirection` |
 | 图片/图标 | `source`、`fit`、`alignment`、`interpolation`、`tint`、`alt`；source 必须是包资源或宿主受控句柄 |
-| 通用状态 | `visible`、`enabled`、`readOnly`、`required`、`focusable`、`tabIndex`、`selected`、`expanded`、`busy`、`validationState`、`validationMessage` |
+| 通用状态 | `visible`（兼容）、`visibility`、`enabled`、`readOnly`、`required`、`focusable`、`tabIndex`、`selected`、`expanded`、`busy`、`validationState`、`validationMessage` |
 | 值控件 | `value`、`checked`、`indeterminate`、`min`、`max`、`step`、`placeholder`、`selection`；按节点类型进行强类型约束 |
 | 集合 | `orientation`、`selectionMode`、`selectedKeys`、`estimatedItemSize`、`overscan`、`initialScrollKey`、`emptyContent`、`loadingContent` |
 | 宿主槽位 | `binding` 或 `collection`、`reference`、`emptyContent`、`dropStyle`；slot ID/kind 来自 manifest，reference 只能来自对应宿主模型，不能用字符串伪造 |
@@ -1181,7 +1181,7 @@ feature probe、LuaLS 和契约测试；日期单元已经进入通用键盘导�
 
 - 无样式级联和选择器。父节点只传递文档明确列出的环境值，如 locale、direction、enabled 和主题 token；其余属性均显式。
 - 逻辑 child 顺序同时决定默认绘制、Tab 和 UIA 顺序；v2.0 不提供类似 CSS `order` 的视觉重排，避免屏幕阅读顺序与画面不一致。
-- `visible=false` 区分 hidden 与 collapsed 的需要通过明确枚举表达；隐藏节点是否进入 UIA、布局和 hit-test 不能依赖实现猜测。
+- `view.state.visibility` 已通过 `visible|hidden|collapsed` 明确定义显示状态：hidden 保留布局但整棵子树退出绘制、命中、宿主输入、逻辑槽位和 UIA，collapsed 不参与布局；旧 `visible=false` 固定等价于 collapsed，冲突的双重声明会拒绝新树。
 - 受控输入的 `value/checked/selection` 来自 model，`change` 只报告建议值；宿主不会绕过组件状态直接持久化。
 - 未知属性、错误枚举、NaN/Infinity、越界尺寸和不适用于该节点的属性在开发包中报错，在正式包中产生稳定诊断并拒绝该次 tree commit，不静默降级。
 
@@ -1266,6 +1266,7 @@ view.row({
 - `view.tooltip` 现已提供所有节点通用的有界纯文本提示：tooltip-only 节点也生成裁剪命中区，提示在 view/select/input 覆盖层之后绘制并限制在组件 surface 内，同时在无 validationMessage 时映射为 UIA HelpText；富提示、markup、任意窗口和把必要信息仅藏在 hover 中仍不允许。
 - `view.scroll.events` 已把 `events.scrollEnd` 限定到 scroll/virtual collection；滚轮或 UIA 操作从末端前到达最大宿主偏移时只投递一次，离开末端后才能再次触发，UIA 来源不获得可信手势。
 - `view.keyboardNavigation.order` 已加入 `focusable/tabIndex`：-1 只退出顺序遍历，正数先按升序、再接默认 0 的声明顺序；焦点样式、鼠标焦点、键盘遍历和 UIA IsKeyboardFocusable 使用同一有效状态。
+- `view.state.visibility` 已加入显式 visible/hidden/collapsed：hidden 仍保留父布局空间，但绘制、后代命中、宿主输入、逻辑槽位和 UIA 语义都从同一棵提交树中省略；collapsed 继续复用旧 `visible=false` 的不占位语义，透明度为 0 不等同隐藏。
 - 只有组件绑定了业务事件时才调用 Lua；状态更新、多个订阅通知和同一帧内的重复 `invalidate` 合并为至多一次 `view()` 求值和一次 scene diff。
 - 布局、绘制、命中区域和 UI Automation 边界来自同一棵提交成功的 scene tree；不允许视觉已经变化而点击仍指向旧树。
 - 声明式 transition 由宿主运行，默认只允许可合成的颜色、透明度和 transform；布局动画必须显式声明并受节点数量限制。

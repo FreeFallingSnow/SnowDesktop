@@ -1493,6 +1493,23 @@ bool ReadSelectionModeField(lua_State* state, int table,
     return true;
 }
 
+bool ReadVisibilityField(lua_State* state, int table,
+    ViewVisibility& value, std::string& error)
+{
+    std::string text;
+    if (!ReadStringField(state, table, "visibility", text, false, error))
+        return false;
+    if (text.empty() || text == "visible") value = ViewVisibility::Visible;
+    else if (text == "hidden") value = ViewVisibility::Hidden;
+    else if (text == "collapsed") value = ViewVisibility::Collapsed;
+    else
+    {
+        error = "view field 'visibility' must be visible, hidden, or collapsed";
+        return false;
+    }
+    return true;
+}
+
 bool ReadImageFitField(lua_State* state, int table,
     ViewImageFit& value, std::string& error)
 {
@@ -2078,6 +2095,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         (labelNode ? "label" : "text");
     const bool clipSpecified = FieldPresent(state, index, "clip");
     const bool overflowSpecified = FieldPresent(state, index, "overflow");
+    const bool visibleSpecified = FieldPresent(state, index, "visible");
+    const bool visibilitySpecified = FieldPresent(state, index, "visibility");
     const bool focusableSpecified = FieldPresent(state, index, "focusable");
     const bool tabIndexSpecified = FieldPresent(state, index, "tabIndex");
     bool focusable = false;
@@ -2191,6 +2210,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadBoolField(state, index, "showAdjacentDates",
             node.showAdjacentDates, error) ||
         !ReadBoolField(state, index, "visible", node.visible, error) ||
+        !ReadVisibilityField(state, index, node.visibility, error) ||
         !ReadBoolField(state, index, "enabled", node.enabled, error) ||
         !ReadBoolField(state, index, "focusable", focusable, error) ||
         !ReadIntegerField(state, index, "tabIndex", tabIndex, error) ||
@@ -2238,6 +2258,23 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
 
     if (focusableSpecified) node.focusable = focusable;
     if (tabIndexSpecified) node.tabIndex = tabIndex;
+
+    if (visibilitySpecified)
+    {
+        if (visibleSpecified &&
+            ((node.visibility == ViewVisibility::Visible && !node.visible) ||
+                (node.visibility == ViewVisibility::Collapsed &&
+                    node.visible) ||
+                node.visibility == ViewVisibility::Hidden))
+        {
+            error = "view visible and visibility describe conflicting states";
+            return false;
+        }
+        node.visible = node.visibility != ViewVisibility::Collapsed;
+    }
+    else
+        node.visibility = node.visible
+            ? ViewVisibility::Visible : ViewVisibility::Collapsed;
 
     if (rowTrackCount > 0 && node.rowTracks.empty())
         node.rowTracks.resize(rowTrackCount);
