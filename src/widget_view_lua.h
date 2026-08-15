@@ -22,6 +22,8 @@ int LuaViewStack(lua_State* state);
 int LuaViewScroll(lua_State* state);
 int LuaViewList(lua_State* state);
 int LuaViewGridList(lua_State* state);
+int LuaViewVirtualList(lua_State* state);
+int LuaViewVirtualGrid(lua_State* state);
 int LuaViewListItem(lua_State* state);
 int LuaViewText(lua_State* state);
 int LuaViewImage(lua_State* state);

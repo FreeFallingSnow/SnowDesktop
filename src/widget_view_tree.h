@@ -24,6 +24,8 @@ enum class ViewNodeType
     Scroll,
     List,
     GridList,
+    VirtualList,
+    VirtualGrid,
     ListItem,
     Text,
     Image,
@@ -168,6 +170,10 @@ struct ViewNode
     float padding = 0.0f;
     float gap = 0.0f;
     std::size_t columns = 1;
+    std::size_t itemCount = 0;
+    std::size_t firstIndex = 0;
+    std::size_t overscan = 2;
+    float itemExtent = 0.0f;
     std::optional<float> columnGap;
     std::optional<float> rowGap;
     float flexGrow = 0.0f;
@@ -227,6 +233,16 @@ struct ViewScrollViewport
     float maximum = 0.0f;
 };
 
+struct ViewVirtualRange
+{
+    std::size_t firstIndex = 0;
+    std::size_t lastIndex = 0;
+    float offset = 0.0f;
+    float maximum = 0.0f;
+    float viewportExtent = 0.0f;
+    float contentExtent = 0.0f;
+};
+
 using ViewScrollOffsetResolver = std::function<float(
     std::string_view key, float maximum)>;
 
@@ -242,6 +258,9 @@ struct ViewTreeLimits
     static constexpr std::size_t MaximumChoiceOptions = 64;
     static constexpr std::size_t MaximumCollectionItems = 256;
     static constexpr std::size_t MaximumScrollContainers = 32;
+    static constexpr std::size_t MaximumVirtualItemCount = 1'000'000;
+    static constexpr std::size_t MaximumVirtualWindowItems = 128;
+    static constexpr std::size_t MaximumVirtualOverscan = 16;
 };
 
 bool ValidateAndLayoutViewTree(ViewNode& root, float width, float height,
@@ -251,6 +270,10 @@ bool CollectViewInteractionRegions(const ViewNode& root,
 bool ApplyViewScrollOffsets(ViewNode& root,
     const ViewScrollOffsetResolver& resolver,
     std::vector<ViewScrollViewport>& viewports, std::string& error);
+bool ComputeViewVirtualRange(std::size_t itemCount, float itemExtent,
+    std::size_t columns, float rowGap, float viewportExtent,
+    float requestedOffset, std::size_t overscan,
+    ViewVirtualRange& range, std::string& error);
 ViewRect ViewRadioOptionFrame(
     const ViewNode& node, std::size_t optionIndex) noexcept;
 const char* ViewNodeTypeName(ViewNodeType type) noexcept;

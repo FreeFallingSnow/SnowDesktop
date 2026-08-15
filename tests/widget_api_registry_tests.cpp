@@ -386,6 +386,8 @@ void TestV2Contract()
                 "view.actionControls") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.collection.basic") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "view.collection.virtual") &&
             snowdesktop::widget_api::SupportsFeature("view.dataSeries") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.flow.wrap") &&

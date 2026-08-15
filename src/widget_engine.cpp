@@ -7373,6 +7373,95 @@ static bool LuaTableIsContiguousArray(lua_State* state, int index,
     return true;
 }
 
+static int lua_ViewVirtualRange(lua_State* state)
+{
+    using snowdesktop::widget_runtime::ComputeViewVirtualRange;
+    using snowdesktop::widget_runtime::ViewTreeLimits;
+    using snowdesktop::widget_runtime::ViewVirtualRange;
+    luaL_checktype(state, 1, LUA_TTABLE);
+    lua_settop(state, 1);
+    const int descriptor = lua_absindex(state, 1);
+    std::string error;
+    if (!LuaTableUsesOnlyFields(state, descriptor,
+            { "key", "itemCount", "itemExtent", "viewportExtent",
+                "columns", "rowGap", "overscan" },
+            "view.virtualRange", error))
+        return luaL_error(state, "view.virtualRange: %s", error.c_str());
+
+    const std::string key = ReadRequiredStringField(
+        state, descriptor, "key");
+    if (key.empty() || key.size() > 128 ||
+        key.find('\0') != std::string::npos || !IsValidUtf8Local(key))
+    {
+        return luaL_error(state,
+            "view.virtualRange: key must contain 1 to 128 bytes of valid UTF-8");
+    }
+    const auto readInteger = [&](const char* field, lua_Integer fallback) {
+        lua_getfield(state, descriptor, field);
+        const lua_Integer value = lua_isnil(state, -1)
+            ? fallback : luaL_checkinteger(state, -1);
+        lua_pop(state, 1);
+        return value;
+    };
+    const auto readNumber = [&](const char* field, double fallback) {
+        lua_getfield(state, descriptor, field);
+        const double value = lua_isnil(state, -1)
+            ? fallback : static_cast<double>(luaL_checknumber(state, -1));
+        lua_pop(state, 1);
+        return value;
+    };
+    const lua_Integer itemCountValue = readInteger("itemCount", -1);
+    const lua_Integer columnsValue = readInteger("columns", 1);
+    const lua_Integer overscanValue = readInteger("overscan", 2);
+    const double itemExtentValue = readNumber(
+        "itemExtent", std::numeric_limits<double>::quiet_NaN());
+    const double viewportExtentValue = readNumber(
+        "viewportExtent", std::numeric_limits<double>::quiet_NaN());
+    const double rowGapValue = readNumber("rowGap", 0.0);
+    if (itemCountValue < 0 ||
+        itemCountValue > static_cast<lua_Integer>(
+            ViewTreeLimits::MaximumVirtualItemCount) ||
+        columnsValue <= 0 || columnsValue > 64 ||
+        overscanValue < 0 ||
+        overscanValue > static_cast<lua_Integer>(
+            ViewTreeLimits::MaximumVirtualOverscan))
+    {
+        return luaL_error(state,
+            "view.virtualRange: integer arguments exceed their limits");
+    }
+
+    auto* d2d = GetD2D(state);
+    if (!d2d || !d2d->engine)
+        return luaL_error(state,
+            "view.virtualRange: host context is unavailable");
+    ViewVirtualRange range;
+    if (!ComputeViewVirtualRange(
+            static_cast<std::size_t>(itemCountValue),
+            static_cast<float>(itemExtentValue),
+            static_cast<std::size_t>(columnsValue),
+            static_cast<float>(rowGapValue),
+            static_cast<float>(viewportExtentValue),
+            static_cast<float>(d2d->engine->RuntimeGetScrollOffset(
+                BoundWidgetId(state), key)),
+            static_cast<std::size_t>(overscanValue), range, error))
+        return luaL_error(state, "view.virtualRange: %s", error.c_str());
+
+    lua_createtable(state, 0, 6);
+    lua_pushinteger(state, static_cast<lua_Integer>(range.firstIndex));
+    lua_setfield(state, -2, "firstIndex");
+    lua_pushinteger(state, static_cast<lua_Integer>(range.lastIndex));
+    lua_setfield(state, -2, "lastIndex");
+    lua_pushnumber(state, range.offset);
+    lua_setfield(state, -2, "offset");
+    lua_pushnumber(state, range.maximum);
+    lua_setfield(state, -2, "maximum");
+    lua_pushnumber(state, range.viewportExtent);
+    lua_setfield(state, -2, "viewportExtent");
+    lua_pushnumber(state, range.contentExtent);
+    lua_setfield(state, -2, "contentExtent");
+    return 1;
+}
+
 static int LuaDrawColor(lua_State* state, int index,
     int fallback, const char* api)
 {
@@ -13273,7 +13362,9 @@ static void DrawWidgetViewNode(D2DState* state,
         }
     }
 
-    if (node.type == ViewNodeType::Scroll && node.clipFrame)
+    if ((node.type == ViewNodeType::Scroll ||
+            node.type == ViewNodeType::VirtualList ||
+            node.type == ViewNodeType::VirtualGrid) && node.clipFrame)
     {
         const auto& clip = *node.clipFrame;
         state->ctx->PushAxisAlignedClip(D2D1::RectF(
@@ -20280,6 +20371,9 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "scroll", snowdesktop::widget_runtime::LuaViewScroll, 2 },
         { "list", snowdesktop::widget_runtime::LuaViewList, 2 },
         { "gridList", snowdesktop::widget_runtime::LuaViewGridList, 2 },
+        { "virtualList", snowdesktop::widget_runtime::LuaViewVirtualList, 2 },
+        { "virtualGrid", snowdesktop::widget_runtime::LuaViewVirtualGrid, 2 },
+        { "virtualRange", lua_ViewVirtualRange, 2 },
         { "listItem", snowdesktop::widget_runtime::LuaViewListItem, 2 },
         { "text", snowdesktop::widget_runtime::LuaViewText, 2 },
         { "image", snowdesktop::widget_runtime::LuaViewImage, 2 },

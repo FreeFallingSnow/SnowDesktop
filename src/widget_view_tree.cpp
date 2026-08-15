@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <unordered_set>
 
 namespace snowdesktop::widget_runtime
@@ -80,12 +81,25 @@ bool IsLeafNode(ViewNodeType type) noexcept
 
 bool IsGridContainer(ViewNodeType type) noexcept
 {
-    return type == ViewNodeType::Grid || type == ViewNodeType::GridList;
+    return type == ViewNodeType::Grid || type == ViewNodeType::GridList ||
+        type == ViewNodeType::VirtualGrid;
+}
+
+bool IsVirtualCollection(ViewNodeType type) noexcept
+{
+    return type == ViewNodeType::VirtualList ||
+        type == ViewNodeType::VirtualGrid;
 }
 
 bool IsCollectionContainer(ViewNodeType type) noexcept
 {
-    return type == ViewNodeType::List || type == ViewNodeType::GridList;
+    return type == ViewNodeType::List || type == ViewNodeType::GridList ||
+        IsVirtualCollection(type);
+}
+
+bool IsScrollContainer(ViewNodeType type) noexcept
+{
+    return type == ViewNodeType::Scroll || IsVirtualCollection(type);
 }
 
 const char* DefaultAccessibilityRole(ViewNodeType type) noexcept
@@ -195,6 +209,19 @@ float IntrinsicWidth(const ViewNode& node)
         return 64.0f + node.padding * 2.0f;
     if (node.type == ViewNodeType::Spacer)
         return 0.0f;
+    if (IsVirtualCollection(node.type))
+    {
+        float cellWidth = 0.0f;
+        for (const auto& child : node.children)
+            if (child.visible)
+                cellWidth = std::max(cellWidth, IntrinsicWidth(child));
+        const std::size_t columns = node.type == ViewNodeType::VirtualGrid
+            ? node.columns : 1;
+        return cellWidth * static_cast<float>(columns) +
+            node.columnGap.value_or(node.gap) *
+                static_cast<float>(columns > 0 ? columns - 1 : 0) +
+            node.padding * 2.0f;
+    }
     if (IsGridContainer(node.type))
     {
         std::vector<float> widths(node.columns, 0.0f);
@@ -302,6 +329,18 @@ float IntrinsicHeight(const ViewNode& node)
         return 40.0f + node.padding * 2.0f;
     if (node.type == ViewNodeType::Spacer)
         return 0.0f;
+    if (IsVirtualCollection(node.type))
+    {
+        const std::size_t columns = node.type == ViewNodeType::VirtualGrid
+            ? node.columns : 1;
+        const std::size_t rows = columns == 0 ? 0 :
+            (node.itemCount + columns - 1) / columns;
+        const double extent = static_cast<double>(rows) * node.itemExtent +
+            static_cast<double>(rows > 0 ? rows - 1 : 0) *
+                node.rowGap.value_or(node.gap);
+        return static_cast<float>(std::min<double>(
+            MaximumScrollExtent, extent)) + node.padding * 2.0f;
+    }
     if (IsGridContainer(node.type))
     {
         std::vector<float> heights;
@@ -648,6 +687,37 @@ void LayoutScroll(ViewNode& node, const ViewRect& content)
     }
 }
 
+void LayoutVirtualCollection(ViewNode& node, const ViewRect& content)
+{
+    if (node.children.empty()) return;
+    const std::size_t columns = node.type == ViewNodeType::VirtualGrid
+        ? node.columns : 1;
+    if (columns == 0 || node.firstIndex == 0) return;
+    const float columnGap = node.columnGap.value_or(node.gap);
+    const float rowGap = node.rowGap.value_or(node.gap);
+    const float cellWidth = std::max(0.0f,
+        (content.width - columnGap * static_cast<float>(columns - 1)) /
+            static_cast<float>(columns));
+    for (std::size_t childIndex = 0;
+        childIndex < node.children.size(); ++childIndex)
+    {
+        ViewNode& child = node.children[childIndex];
+        if (!child.visible) continue;
+        const std::size_t itemIndex = node.firstIndex + childIndex;
+        const std::size_t zeroBased = itemIndex - 1;
+        const std::size_t row = zeroBased / columns;
+        const std::size_t column = zeroBased % columns;
+        LayoutNode(child, {
+            content.x + static_cast<float>(column) *
+                (cellWidth + columnGap),
+            content.y + static_cast<float>(row) *
+                (node.itemExtent + rowGap),
+            cellWidth,
+            node.itemExtent,
+        });
+    }
+}
+
 void LayoutNode(ViewNode& node, const ViewRect& frame)
 {
     node.frame = frame;
@@ -668,6 +738,8 @@ void LayoutNode(ViewNode& node, const ViewRect& frame)
     else if (node.type == ViewNodeType::Column ||
         node.type == ViewNodeType::List)
         LayoutLinear(node, content, false);
+    else if (IsVirtualCollection(node.type))
+        LayoutVirtualCollection(node, content);
     else if (IsGridContainer(node.type))
         LayoutGrid(node, content);
     else if (node.type == ViewNodeType::Flow)
@@ -782,14 +854,27 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
     }
     if (!IsGridContainer(node.type) &&
         node.type != ViewNodeType::Flow &&
+        node.type != ViewNodeType::VirtualList &&
         (node.columnGap || node.rowGap))
     {
-        error = "columnGap and rowGap are reserved for grid and flow nodes";
+        error = "columnGap and rowGap are reserved for grid, flow, and virtual collection nodes";
         return false;
     }
-    if (node.type != ViewNodeType::Scroll && !node.showScrollbar)
+    if (node.type == ViewNodeType::VirtualList && node.columnGap)
     {
-        error = "showScrollbar is reserved for scroll nodes";
+        error = "columnGap is reserved for grid nodes";
+        return false;
+    }
+    if (!IsVirtualCollection(node.type) &&
+        (node.itemCount != 0 || node.firstIndex != 0 ||
+            node.itemExtent != 0.0f || node.overscan != 2))
+    {
+        error = "virtual collection metadata is reserved for virtual nodes";
+        return false;
+    }
+    if (!IsScrollContainer(node.type) && !node.showScrollbar)
+    {
+        error = "showScrollbar is reserved for scroll containers";
         return false;
     }
     if (node.type == ViewNodeType::Scroll &&
@@ -810,11 +895,63 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             return false;
         }
     }
+    if (IsVirtualCollection(node.type))
+    {
+        if (node.orientation != ViewOrientation::Vertical)
+        {
+            error = "virtual collection nodes are vertical";
+            return false;
+        }
+        if (node.height.kind == ViewLengthKind::Auto)
+        {
+            error = "virtual collection nodes require fixed or fill height";
+            return false;
+        }
+        if (node.itemCount > ViewTreeLimits::MaximumVirtualItemCount ||
+            node.overscan > ViewTreeLimits::MaximumVirtualOverscan)
+        {
+            error = "virtual collection itemCount or overscan exceeds its limit";
+            return false;
+        }
+        if (node.children.size() >
+            ViewTreeLimits::MaximumVirtualWindowItems)
+        {
+            error = "virtual collection materialized window exceeds 128 items";
+            return false;
+        }
+        ViewVirtualRange range;
+        if (!ComputeViewVirtualRange(node.itemCount, node.itemExtent,
+                node.type == ViewNodeType::VirtualGrid ? node.columns : 1,
+                node.rowGap.value_or(node.gap), 1.0f, 0.0f,
+                node.overscan, range, error))
+            return false;
+        if (node.itemCount == 0)
+        {
+            if (node.firstIndex != 0 || !node.children.empty())
+            {
+                error = "empty virtual collections require firstIndex 0 and no children";
+                return false;
+            }
+        }
+        else
+        {
+            if (node.firstIndex == 0 || node.firstIndex > node.itemCount ||
+                node.children.empty() ||
+                node.children.size() >
+                    node.itemCount - (node.firstIndex - 1) ||
+                !std::all_of(node.children.begin(), node.children.end(),
+                    [](const ViewNode& child) { return child.visible; }))
+            {
+                error = "virtual collection window must be a non-empty visible contiguous item range";
+                return false;
+            }
+        }
+    }
     if (node.type == ViewNodeType::ListItem)
     {
         if (!parentType || !IsCollectionContainer(*parentType))
         {
-            error = "listItem nodes must be direct children of list or gridList";
+            error = "listItem nodes must be direct children of a collection";
             return false;
         }
         if (++collectionItems > ViewTreeLimits::MaximumCollectionItems)
@@ -1213,7 +1350,7 @@ bool CollectRegions(const ViewNode& node,
         regions.push_back(std::move(region));
     }
     std::optional<ViewRect> childClip = inheritedClip;
-    if (node.type == ViewNodeType::Scroll && node.clipFrame)
+    if (IsScrollContainer(node.type) && node.clipFrame)
     {
         if (inheritedClip && !Overlaps(*node.clipFrame, *inheritedClip))
             return true;
@@ -1245,14 +1382,15 @@ bool ApplyScrollState(ViewNode& node,
 {
     if (!node.visible) return true;
     std::optional<ViewRect> childClip = inheritedClip;
-    if (node.type == ViewNodeType::Scroll)
+    if (IsScrollContainer(node.type))
     {
         if (++scrollContainers > ViewTreeLimits::MaximumScrollContainers)
         {
             error = "view scroll container limit exceeded (32)";
             return false;
         }
-        if (node.children.size() != 1 || !node.children.front().visible)
+        if (node.type == ViewNodeType::Scroll &&
+            (node.children.size() != 1 || !node.children.front().visible))
         {
             error = "view scroll state requires one visible child";
             return false;
@@ -1264,19 +1402,36 @@ bool ApplyScrollState(ViewNode& node,
             return false;
         }
         node.clipFrame = clip;
-        ViewNode& child = node.children.front();
         const bool vertical = node.orientation == ViewOrientation::Vertical;
         const float viewportExtent = vertical ? clip.height : clip.width;
-        const float contentExtent = std::max(viewportExtent,
-            vertical ? child.frame.y + child.frame.height - clip.y :
-                child.frame.x + child.frame.width - clip.x);
-        if (!FiniteInRange(contentExtent, 0.0f, MaximumScrollExtent))
+        float contentExtent = viewportExtent;
+        float maximum = 0.0f;
+        ViewVirtualRange virtualRange;
+        if (IsVirtualCollection(node.type))
         {
-            error = "view scroll content extent exceeds 1000000";
-            return false;
+            if (!ComputeViewVirtualRange(node.itemCount, node.itemExtent,
+                    node.type == ViewNodeType::VirtualGrid
+                        ? node.columns : 1,
+                    node.rowGap.value_or(node.gap), viewportExtent,
+                    0.0f, node.overscan, virtualRange, error))
+                return false;
+            contentExtent = virtualRange.contentExtent;
+            maximum = virtualRange.maximum;
         }
-        const float maximum = std::max(0.0f,
-            contentExtent - viewportExtent);
+        else
+        {
+            const ViewNode& child = node.children.front();
+            contentExtent = std::max(viewportExtent,
+                vertical ? child.frame.y + child.frame.height - clip.y :
+                    child.frame.x + child.frame.width - clip.x);
+            if (!FiniteInRange(contentExtent, 0.0f, MaximumScrollExtent))
+            {
+                error = "view scroll content extent exceeds 1000000";
+                return false;
+            }
+            maximum = std::max(0.0f,
+                contentExtent - viewportExtent);
+        }
         const float requested = resolver ? resolver(node.key, maximum) : 0.0f;
         if (!std::isfinite(requested))
         {
@@ -1287,8 +1442,35 @@ bool ApplyScrollState(ViewNode& node,
         node.scrollOffset = offset;
         node.scrollViewportExtent = viewportExtent;
         node.scrollContentExtent = contentExtent;
-        TranslateTree(child, vertical ? 0.0f : -offset,
-            vertical ? -offset : 0.0f);
+        if (IsVirtualCollection(node.type))
+        {
+            ViewVirtualRange visibleRange;
+            if (!ComputeViewVirtualRange(node.itemCount, node.itemExtent,
+                    node.type == ViewNodeType::VirtualGrid
+                        ? node.columns : 1,
+                    node.rowGap.value_or(node.gap), viewportExtent,
+                    offset, 0, visibleRange, error))
+                return false;
+            if (node.itemCount > 0)
+            {
+                const std::size_t providedLast = node.firstIndex +
+                    node.children.size() - 1;
+                if (node.firstIndex > visibleRange.firstIndex ||
+                    providedLast < visibleRange.lastIndex)
+                {
+                    error = "virtual collection window does not cover the visible range";
+                    return false;
+                }
+            }
+            for (auto& child : node.children)
+                TranslateTree(child, 0.0f, -offset);
+        }
+        else
+        {
+            TranslateTree(node.children.front(),
+                vertical ? 0.0f : -offset,
+                vertical ? -offset : 0.0f);
+        }
 
         if (inheritedClip && !Overlaps(clip, *inheritedClip))
             return true;
@@ -1380,6 +1562,77 @@ bool ApplyViewScrollOffsets(ViewNode& root,
         scrollContainers, error);
 }
 
+bool ComputeViewVirtualRange(std::size_t itemCount, float itemExtent,
+    std::size_t columns, float rowGap, float viewportExtent,
+    float requestedOffset, std::size_t overscan,
+    ViewVirtualRange& range, std::string& error)
+{
+    error.clear();
+    range = {};
+    if (itemCount > ViewTreeLimits::MaximumVirtualItemCount ||
+        columns == 0 || columns > 64 ||
+        overscan > ViewTreeLimits::MaximumVirtualOverscan ||
+        !FiniteInRange(itemExtent, 0.000001f, MaximumScrollExtent) ||
+        !FiniteInRange(rowGap, 0.0f, 4096.0f) ||
+        !FiniteInRange(viewportExtent, 0.000001f,
+            MaximumScrollExtent) ||
+        !std::isfinite(requestedOffset))
+    {
+        error = "virtual range arguments must be finite and within their limits";
+        return false;
+    }
+
+    const std::size_t rowCount = itemCount == 0 ? 0 :
+        (itemCount + columns - 1) / columns;
+    const double rawContentExtent =
+        static_cast<double>(rowCount) * itemExtent +
+        static_cast<double>(rowCount > 0 ? rowCount - 1 : 0) * rowGap;
+    if (!std::isfinite(rawContentExtent) ||
+        rawContentExtent > MaximumScrollExtent)
+    {
+        error = "virtual collection content extent exceeds 1000000";
+        return false;
+    }
+    range.viewportExtent = viewportExtent;
+    range.contentExtent = std::max(viewportExtent,
+        static_cast<float>(rawContentExtent));
+    range.maximum = std::max(0.0f,
+        range.contentExtent - viewportExtent);
+    range.offset = std::clamp(requestedOffset, 0.0f, range.maximum);
+    if (itemCount == 0) return true;
+
+    const double stride = static_cast<double>(itemExtent) + rowGap;
+    std::size_t firstVisibleRow = std::min(rowCount - 1,
+        static_cast<std::size_t>(std::floor(range.offset / stride)));
+    const double firstRowEnd =
+        static_cast<double>(firstVisibleRow) * stride + itemExtent;
+    if (firstRowEnd <= range.offset && firstVisibleRow + 1 < rowCount)
+        ++firstVisibleRow;
+    const double visibleEnd = std::nextafter(
+        static_cast<double>(range.offset) + viewportExtent,
+        -std::numeric_limits<double>::infinity());
+    std::size_t lastVisibleRow = std::min(rowCount - 1,
+        static_cast<std::size_t>(std::floor(
+            std::max(0.0, visibleEnd) / stride)));
+    if (lastVisibleRow < firstVisibleRow)
+        lastVisibleRow = firstVisibleRow;
+    const std::size_t firstRow = firstVisibleRow > overscan
+        ? firstVisibleRow - overscan : 0;
+    const std::size_t lastRow = std::min(rowCount - 1,
+        lastVisibleRow + std::min(overscan,
+            rowCount - 1 - lastVisibleRow));
+    range.firstIndex = firstRow * columns + 1;
+    range.lastIndex = std::min(itemCount, (lastRow + 1) * columns);
+    if (range.lastIndex - range.firstIndex + 1 >
+        ViewTreeLimits::MaximumVirtualWindowItems)
+    {
+        error = "virtual materialization window exceeds 128 items";
+        range = {};
+        return false;
+    }
+    return true;
+}
+
 const char* ViewNodeTypeName(ViewNodeType type) noexcept
 {
     switch (type)
@@ -1393,6 +1646,8 @@ const char* ViewNodeTypeName(ViewNodeType type) noexcept
     case ViewNodeType::Scroll: return "scroll";
     case ViewNodeType::List: return "list";
     case ViewNodeType::GridList: return "gridList";
+    case ViewNodeType::VirtualList: return "virtualList";
+    case ViewNodeType::VirtualGrid: return "virtualGrid";
     case ViewNodeType::ListItem: return "listItem";
     case ViewNodeType::Text: return "text";
     case ViewNodeType::Image: return "image";

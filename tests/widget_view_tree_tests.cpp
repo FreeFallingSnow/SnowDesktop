@@ -164,6 +164,8 @@ void RegisterViewLibrary(lua_State* state)
         { "scroll", LuaViewScroll },
         { "list", LuaViewList },
         { "gridList", LuaViewGridList },
+        { "virtualList", LuaViewVirtualList },
+        { "virtualGrid", LuaViewVirtualGrid },
         { "listItem", LuaViewListItem },
         { "text", LuaViewText },
         { "image", LuaViewImage },
@@ -1095,6 +1097,150 @@ void TestScrollableCollections()
             Near(horizontal.children[0].frame.x, -60.0f),
         "horizontal scroll must translate content on the x axis");
 }
+
+void TestVirtualizedCollections()
+{
+    std::string error;
+    ViewVirtualRange calculated;
+    Check(ComputeViewVirtualRange(1000, 40.0f, 1, 4.0f,
+            100.0f, 220.0f, 2, calculated, error) &&
+            calculated.firstIndex == 4 &&
+            calculated.lastIndex == 10 &&
+            Near(calculated.offset, 220.0f) &&
+            Near(calculated.contentExtent, 43996.0f) &&
+            Near(calculated.maximum, 43896.0f),
+        "virtual range calculation must return an overscanned 1-based window");
+    Check(ComputeViewVirtualRange(0, 40.0f, 1, 0.0f,
+            100.0f, 50.0f, 2, calculated, error) &&
+            calculated.firstIndex == 0 && calculated.lastIndex == 0 &&
+            Near(calculated.offset, 0.0f) &&
+            Near(calculated.contentExtent, 100.0f),
+        "empty virtual ranges must retain a bounded viewport without items");
+    Check(!ComputeViewVirtualRange(1000000, 2.0f, 1, 0.0f,
+            100.0f, 0.0f, 2, calculated, error) &&
+            error.find("1000000") != std::string::npos,
+        "virtual range calculation must reject oversized logical content");
+    Check(!ComputeViewVirtualRange(1000, 1.0f, 1, 0.0f,
+            200.0f, 0.0f, 0, calculated, error) &&
+            error.find("128") != std::string::npos,
+        "virtual range calculation must reject oversized visible windows");
+
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "Lua state must be available");
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    Check(luaL_dostring(state, R"lua(
+        local items = {}
+        for index = 4, 10 do
+            items[#items + 1] = view.listItem({
+                key = "virtual-item-" .. index,
+                action = { id = "item.open", value = { index = index } },
+                accessibility = { label = "Virtual item " .. index },
+                children = {
+                    view.text({
+                        key = "virtual-label-" .. index,
+                        text = "Virtual item " .. index,
+                    }),
+                },
+            })
+        end
+        return view.virtualList({
+            key = "virtual-feed",
+            height = 100,
+            itemCount = 1000,
+            itemExtent = 40,
+            firstIndex = 4,
+            overscan = 2,
+            rowGap = 4,
+            children = items,
+        })
+    )lua") == LUA_OK,
+        "virtual-list Lua fixture must evaluate");
+    ViewNode list;
+    Check(ParseLuaViewTree(state, -1, list, error) &&
+            list.type == ViewNodeType::VirtualList &&
+            list.orientation == ViewOrientation::Vertical &&
+            list.itemCount == 1000 && list.itemExtent == 40.0f &&
+            list.firstIndex == 4 && list.overscan == 2 &&
+            list.children.size() == 7,
+        "virtualList must retain fixed-extent window metadata");
+    Check(ValidateAndLayoutViewTree(list, 200.0f, 100.0f, error),
+        "a bounded virtual list window must validate and lay out");
+    std::vector<ViewScrollViewport> viewports;
+    Check(ApplyViewScrollOffsets(list,
+            [](std::string_view key, float) {
+                return key == "virtual-feed" ? 220.0f : 0.0f;
+            }, viewports, error) && viewports.size() == 1 &&
+            Near(viewports[0].contentExtent, 43996.0f) &&
+            Near(viewports[0].offset, 220.0f) &&
+            Near(list.children[2].frame.y, 0.0f),
+        "virtualList must place its global item window and reuse host scrolling");
+    std::vector<InteractionRegion> regions;
+    Check(CollectViewInteractionRegions(list, regions, error) &&
+            regions.size() == 3 &&
+            regions.front().key == "virtual-item-6" &&
+            regions.back().key == "virtual-item-8" &&
+            regions.front().clip && Near(regions.front().clip->height, 100.0f),
+        "only visible virtual list items must expose clipped interactions");
+
+    ViewNode incomplete = list;
+    incomplete.firstIndex = 1;
+    incomplete.children.resize(1);
+    Check(ValidateAndLayoutViewTree(incomplete, 200.0f, 100.0f, error) &&
+            !ApplyViewScrollOffsets(incomplete,
+                [](std::string_view, float) { return 220.0f; },
+                viewports, error) &&
+            error.find("cover") != std::string::npos,
+        "the host must reject a virtual window that misses visible items");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        local items = {}
+        for index = 5, 20 do
+            items[#items + 1] = view.listItem({
+                key = "tile-" .. index,
+                accessibility = { label = "Tile " .. index },
+                children = {
+                    view.text({ key = "tile-label-" .. index,
+                        text = "Tile " .. index }),
+                },
+            })
+        end
+        return view.virtualGrid({
+            key = "virtual-tiles",
+            height = 70,
+            columns = 4,
+            itemCount = 100,
+            itemExtent = 30,
+            firstIndex = 5,
+            overscan = 1,
+            columnGap = 6,
+            rowGap = 5,
+            children = items,
+        })
+    )lua") == LUA_OK,
+        "virtual-grid Lua fixture must evaluate");
+    ViewNode grid;
+    Check(ParseLuaViewTree(state, -1, grid, error) &&
+            grid.type == ViewNodeType::VirtualGrid &&
+            grid.columns == 4 && grid.firstIndex == 5 &&
+            ValidateAndLayoutViewTree(grid, 200.0f, 70.0f, error),
+        "virtualGrid must parse and use global row-major item indices");
+    viewports.clear();
+    Check(ApplyViewScrollOffsets(grid,
+            [](std::string_view, float) { return 70.0f; },
+            viewports, error) && viewports.size() == 1 &&
+            Near(viewports[0].contentExtent, 870.0f) &&
+            Near(grid.children[0].frame.y, -35.0f) &&
+            Near(grid.children[4].frame.y, 0.0f),
+        "virtualGrid must place overscan rows around the visible grid rows");
+    regions.clear();
+    Check(CollectViewInteractionRegions(grid, regions, error) &&
+            regions.size() == 8 && regions.front().key == "tile-9" &&
+            regions.back().key == "tile-16",
+        "virtualGrid must only materialize interaction regions for visible rows");
+    lua_close(state);
+}
 }
 
 int main()
@@ -1110,6 +1256,7 @@ int main()
     TestUniformGridParsingAndLayout();
     TestFlowParsingAndLayout();
     TestScrollableCollections();
+    TestVirtualizedCollections();
     std::cout << "Widget view tree tests passed\n";
     return 0;
 }

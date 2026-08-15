@@ -152,6 +152,23 @@
 ---@field label string Non-empty visible and accessible label.
 ---@field enabled? boolean Defaults to true.
 
+---@class SnowViewVirtualRangeOptions
+---@field key string Stable virtual collection key.
+---@field itemCount integer Total logical items from 0 through 1000000.
+---@field itemExtent number Fixed logical row height.
+---@field viewportExtent number Positive logical content-viewport height after padding.
+---@field columns? integer Grid column count from 1 through 64; defaults to 1.
+---@field rowGap? number Logical gap between rows; defaults to 0.
+---@field overscan? integer Extra rows on each side from 0 through 16; defaults to 2.
+
+---@class SnowViewVirtualRange
+---@field firstIndex integer First 1-based item to materialize, or 0 when empty.
+---@field lastIndex integer Last inclusive 1-based item to materialize, or 0 when empty.
+---@field offset number Host-owned clamped scroll offset.
+---@field maximum number Maximum scroll offset.
+---@field viewportExtent number Validated viewport extent.
+---@field contentExtent number Total bounded logical content extent.
+
 ---@class SnowViewNodeOptions
 ---@field key string Globally unique stable key in the returned tree.
 ---@field text? string Used by text nodes.
@@ -180,9 +197,13 @@
 ---@field height? SnowViewLength
 ---@field padding? number
 ---@field gap? number
----@field columns? integer Required by grid and gridList; 1 to 64 equal-width columns.
----@field columnGap? number Grid/gridList/flow horizontal gap; defaults to gap.
----@field rowGap? number Grid/gridList/flow vertical gap; defaults to gap.
+---@field columns? integer Required by grid, gridList, and virtualGrid; 1 to 64 equal-width columns.
+---@field columnGap? number Grid/gridList/virtualGrid/flow horizontal gap; defaults to gap.
+---@field rowGap? number Grid/gridList/virtualList/virtualGrid/flow vertical gap; defaults to gap.
+---@field itemCount? integer Required total logical item count for virtualList/virtualGrid; 0 through 1000000.
+---@field itemExtent? number Required fixed row height for virtualList/virtualGrid.
+---@field firstIndex? integer Required first 1-based materialized item for virtualList/virtualGrid; 0 only when empty.
+---@field overscan? integer Virtual collection overscan rows from 0 through 16; defaults to 2.
 ---@field flexGrow? number
 ---@field alignItems? SnowViewAlignment
 ---@field alignSelf? SnowViewSelfAlignment
@@ -190,7 +211,7 @@
 ---@field fontSize? number
 ---@field bold? boolean
 ---@field checked? boolean Required explicit controlled value for toggle and checkbox nodes.
----@field showScrollbar? boolean Scroll-only host scrollbar visibility; defaults to true.
+---@field showScrollbar? boolean Scroll or virtual-collection host scrollbar visibility; defaults to true.
 ---@field textAlign? 'start'|'center'|'end'
 ---@field visible? boolean
 ---@field enabled? boolean
@@ -205,7 +226,7 @@
 ---@field children? SnowViewNode[]
 
 ---@class SnowViewNode: SnowViewNodeOptions
----@field type 'box'|'row'|'column'|'grid'|'flow'|'stack'|'scroll'|'list'|'gridList'|'listItem'|'text'|'image'|'button'|'link'|'toggle'|'checkbox'|'radioGroup'|'slider'|'icon'|'iconButton'|'shape'|'badge'|'divider'|'progressBar'|'progressRing'|'meter'|'sparkline'|'lineChart'|'barChart'|'waveform'|'spectrum'|'spacer'
+---@field type 'box'|'row'|'column'|'grid'|'flow'|'stack'|'scroll'|'list'|'gridList'|'virtualList'|'virtualGrid'|'listItem'|'text'|'image'|'button'|'link'|'toggle'|'checkbox'|'radioGroup'|'slider'|'icon'|'iconButton'|'shape'|'badge'|'divider'|'progressBar'|'progressRing'|'meter'|'sparkline'|'lineChart'|'barChart'|'waveform'|'spectrum'|'spacer'
 
 ---@class SnowInteractionShape
 ---@field type 'rect'|'roundedRect'|'circle'
@@ -533,6 +554,21 @@ function view.list(options) end
 ---@param options SnowViewNodeOptions
 ---@return SnowViewNode
 function view.gridList(options) end
+
+---Return the bounded materialization window for a virtual collection's current host offset. Requires view.collection.virtual.
+---@param options SnowViewVirtualRangeOptions
+---@return SnowViewVirtualRange
+function view.virtualRange(options) end
+
+---Fixed-row virtual vertical list. Children are the contiguous listItem window beginning at firstIndex. Requires view.collection.virtual.
+---@param options SnowViewNodeOptions
+---@return SnowViewNode
+function view.virtualList(options) end
+
+---Fixed-row row-major virtual grid. Children are the contiguous listItem window beginning at firstIndex. Requires view.collection.virtual.
+---@param options SnowViewNodeOptions
+---@return SnowViewNode
+function view.virtualGrid(options) end
 
 ---Stable collection item with exactly one visible child; additional hidden children are rejected. Requires view.collection.basic.
 ---@param options SnowViewNodeOptions

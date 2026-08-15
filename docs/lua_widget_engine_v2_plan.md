@@ -1042,7 +1042,9 @@ SnowDesktop 不照搬某一个框架，参考优先级如下：
 当前实现进度（2026-08-15）：`view.scroll` 已覆盖最多 32 个宿主管理的纵向/横向
 有界视口，统一保存偏移、钳制、滚轮、滚动条、绘制 clip 与交互 clip；
 `view.collection.basic` 已覆盖非虚拟 `list/gridList/listItem`，限制 256 个稳定项，
-每项有独立 action、hover、菜单目标与 listitem 语义。`virtualList/virtualGrid`、集合键盘
+每项有独立 action、hover、菜单目标与 listitem 语义；`view.collection.virtual` 进一步
+提供固定行高 `virtualList/virtualGrid` 和 `view.virtualRange`，按实例滚动位置只实体化
+最多 128 个连续项，宿主按全局 1-based 索引布局并校验窗口覆盖可见行。可变行高、集合键盘
 导航和 UIA Collection/Scroll pattern 仍未完成，因此本进度不代表第 13.4 节集合全集完成。
 
 节点规则：
@@ -1620,7 +1622,7 @@ v2.0 资源契约：
 doubleClick/pointer/contextMenu action，以及“先完整校验布局、后原子提交；失败保留上一成功树”。
 其额度为 512 节点、32 层、单节点 4 KiB 文本、全树 64 KiB 文本和 256 个交互元素；未知字段、
 重复 key、非连续 children、错误枚举和越界数值拒绝整次提交。数据图形由宿主直接有界绘制，不展开为逐样本节点或命中区域。它尚不包含完整必选节点矩阵、
-键盘焦点、UIA、RTL、文本换行、集合/虚拟化、差量资源复用和声明式 panel，因此只发布
+键盘焦点、UIA、RTL、文本换行、可变高度虚拟化、差量资源复用和声明式 panel，因此只发布
 细粒度 feature，不发布 `view.tree`，也不计作 M6 完成。
 
 ### 18.9 最终验证入口

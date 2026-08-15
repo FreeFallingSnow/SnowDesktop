@@ -106,15 +106,21 @@ non-virtual `list/gridList/listItem`: collection children must be listItem,
 each item needs exactly one visible child, a globally stable key, and
 `accessibility.label`.
 Keep a tree within 256 list items and use per-item actions/context menus. These
-features do not provide virtualList/virtualGrid or keyboard/UIA support yet.
+basic collections do not provide keyboard/UIA support. For larger data, probe
+`view.collection.virtual`, call `view.virtualRange` with the stable collection
+key and actual content-viewport height, create only its inclusive 1-based
+window, then submit `virtualList` or `virtualGrid` with matching fixed extent,
+row gap, columns, overscan, firstIndex, and contiguous listItem children. Keep
+the materialized window within 128 items; do not emulate variable-height rows,
+horizontal virtualization, sticky headers, or programmatic scrolling.
 Probe `view.grid.uniform` before using `view.grid`; it is a bounded row-major
 equal-column layout with 1–64 columns and optional `columnGap`/`rowGap`, not
 the future track/span/virtual-grid contract.
 Probe `view.flow.wrap` before using `view.flow`; it wraps fixed/auto-width
 children horizontally, skips hidden children, and supports per-line
 `columnGap`/`rowGap`, but it is not a scrolling or virtualized collection.
-The subset does not yet provide keyboard focus, UI Automation, virtualized
-collections, or the complete `view.tree` contract. Optional
+The subset does not yet provide keyboard focus, UI Automation, variable-height
+virtualization, or the complete `view.tree` contract. Optional
 `menu(context, model, request)` builds an element's synchronous native context
 menu.
 

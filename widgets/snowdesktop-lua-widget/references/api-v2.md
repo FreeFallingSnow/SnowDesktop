@@ -91,6 +91,8 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `badge/divider/meter`，`view.selectionControls` 提供 `toggle/checkbox`，
 `view.actionControls` 提供 `link/radioGroup/slider`，
 `view.grid.uniform` 提供基础 `grid`，`view.flow.wrap` 提供横向换行 `flow`。
+`view.scroll` 提供宿主滚动视口，`view.collection.basic` 提供基础集合，
+`view.collection.virtual` 提供固定行高虚拟集合与可见范围查询。
 每次 `view(context, model)` 返回一棵完整树；所有节点必须提供全树唯一、1–128 字节的
 稳定 `key`。宿主先完整解析、校验和布局，再原子替换上一棵成功树；回调或校验失败时
 继续显示上一棵树，不留下半棵树或空白交互区。
@@ -219,7 +221,7 @@ view.slider({
 （额外隐藏节点也会拒绝）和 `accessibility.label`，可以使用 `action`/`events.click`、doubleClick、pointer 状态与
 独立 contextMenu；宿主默认赋予 `listitem` 语义。一个树最多 256 个 listItem，仍受 512
 总节点和 256 交互区域上限约束。对应 feature 为 `view.collection.basic`。这是非虚拟化
-基础集合；大量或远程分页数据仍须等待 `virtualList/virtualGrid`，不能通过超配额树模拟。
+基础集合；大量或远程分页数据应使用下述 `virtualList/virtualGrid`，不能通过超配额树模拟。
 
 ```lua
 view.scroll({
@@ -247,6 +249,57 @@ view.scroll({
     },
 })
 ```
+
+`virtualList` 和 `virtualGrid` 是固定行高的纵向虚拟集合，对应 feature
+`view.collection.virtual`。Lua 先用 `view.virtualRange()` 查询当前宿主滚动位置需要实体化的
+1-based 闭区间，只为该区间创建连续 `listItem`；再把同一 `key/itemCount/itemExtent/
+rowGap/columns/overscan`、返回的 `firstIndex` 和窗口 children 提交给虚拟节点。宿主按全局
+索引布局这些项、使用完整逻辑 itemCount 计算滚动范围，并验证提交窗口覆盖真实可见行；
+窗口缺项会拒绝整棵树，不能显示错误但可点击的空洞。
+
+```lua
+local itemExtent = 44
+local rowGap = 4
+local viewportExtent = math.max(1, context.logicalHeight - 8)
+local range = view.virtualRange({
+    key = "feed-virtual",
+    itemCount = #articles,
+    itemExtent = itemExtent,
+    viewportExtent = viewportExtent,
+    rowGap = rowGap,
+    overscan = 2,
+})
+local children = {}
+for index = range.firstIndex, range.lastIndex do
+    local article = articles[index]
+    children[#children + 1] = view.listItem({
+        key = "article:" .. article.id,
+        action = { id = "article.open", value = { index = index } },
+        accessibility = { label = article.title },
+        children = {
+            view.text({ key = "title:" .. article.id,
+                text = article.title }),
+        },
+    })
+end
+return view.virtualList({
+    key = "feed-virtual",
+    height = "fill",
+    itemCount = #articles,
+    itemExtent = itemExtent,
+    firstIndex = range.firstIndex,
+    rowGap = rowGap,
+    overscan = 2,
+    children = children,
+})
+```
+
+`virtualGrid` 另要求 `columns=1..64`，`view.virtualRange` 必须收到同一 columns；
+`itemExtent` 表示行高而不是单格宽度。虚拟集合最多表示 1,000,000 项，但总逻辑 extent
+仍不得超过 1,000,000；每帧最多实体化 128 项，overscan 为 0–16 行，空集合使用
+`firstIndex=0` 和空 children。虚拟节点必须有固定或 fill 高度，`viewportExtent` 是扣除
+节点 padding 后的实际内容高度。当前不支持可变行高、横向虚拟集合、sticky header、
+程序化定位或保留已回收项的 Lua 局部状态；稳定状态应放在 model/state 并以 item key 索引。
 
 `shape` 支持 rectangle、roundedRectangle、circle 和 ellipse；填充与描边来自 style。
 `image` 的 `source` 只接受入口加载期间创建的 `resource.image()` 句柄，必须显式提供
@@ -291,7 +344,7 @@ view.waveform({
 区域；数据图形另有上述逐节点和全树样本额度。未知字段、错误枚举、非连续 children、
 重复 key、NaN/Infinity 和越界值会拒绝整次提交。桌面树只布局在底部标题栏之上的内容区。
 
-该 feature 不是完整 `view.tree`：当前每帧重建树，尚无 virtualList/virtualGrid、
+该 feature 不是完整 `view.tree`：当前每帧重建树，尚无可变高度虚拟集合、
 声明式文本输入/slot 节点，也没有键盘焦点、UIA 输出、RTL、文本换行、主题
 token、差量资源复用或声明式 panel。需要这些能力的组件应继续使用 v2 即时绘制或等待
 对应 feature；不得把 `view.tree.core` 当作稳定完整控件集声明。

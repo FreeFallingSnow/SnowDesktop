@@ -339,6 +339,32 @@ bool ReadSizeField(lua_State* state, int table, const char* field,
     return true;
 }
 
+bool ReadNonNegativeSizeField(lua_State* state, int table,
+    const char* field, std::size_t& value, bool required,
+    std::string& error)
+{
+    table = lua_absindex(state, table);
+    lua_getfield(state, table, field);
+    if (lua_isnil(state, -1))
+    {
+        lua_pop(state, 1);
+        if (!required) return true;
+        error = std::string("view node requires integer field '") +
+            field + "'";
+        return false;
+    }
+    if (!lua_isinteger(state, -1) || lua_tointeger(state, -1) < 0)
+    {
+        lua_pop(state, 1);
+        error = std::string("view field '") + field +
+            "' must be a non-negative integer";
+        return false;
+    }
+    value = static_cast<std::size_t>(lua_tointeger(state, -1));
+    lua_pop(state, 1);
+    return true;
+}
+
 bool ReadNumberArrayField(lua_State* state, int table, const char* field,
     std::vector<float>& values, bool required, std::string& error)
 {
@@ -821,6 +847,8 @@ bool ParseNodeType(std::string_view type, ViewNodeType& result)
     else if (type == "scroll") result = ViewNodeType::Scroll;
     else if (type == "list") result = ViewNodeType::List;
     else if (type == "gridList") result = ViewNodeType::GridList;
+    else if (type == "virtualList") result = ViewNodeType::VirtualList;
+    else if (type == "virtualGrid") result = ViewNodeType::VirtualGrid;
     else if (type == "listItem") result = ViewNodeType::ListItem;
     else if (type == "text") result = ViewNodeType::Text;
     else if (type == "image") result = ViewNodeType::Image;
@@ -910,6 +938,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
                 "thickness", "trackOpacity",
                 "fillOpacity", "width", "height",
                 "padding", "gap", "columns", "columnGap", "rowGap",
+                "itemCount", "itemExtent", "firstIndex", "overscan",
                 "flexGrow", "fontSize", "bold",
                 "checked", "visible", "enabled", "cursor", "alignItems",
                 "showScrollbar",
@@ -932,6 +961,12 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     const bool radioNode = node.type == ViewNodeType::RadioGroup;
     const bool sliderNode = node.type == ViewNodeType::Slider;
     const bool scrollNode = node.type == ViewNodeType::Scroll;
+    const bool virtualListNode =
+        node.type == ViewNodeType::VirtualList;
+    const bool virtualGridNode =
+        node.type == ViewNodeType::VirtualGrid;
+    const bool virtualCollectionNode = virtualListNode || virtualGridNode;
+    const bool scrollContainerNode = scrollNode || virtualCollectionNode;
     const bool listItemNode = node.type == ViewNodeType::ListItem;
     const bool controlNode = checkControlNode || radioNode || sliderNode;
     const bool linkNode = node.type == ViewNodeType::Link;
@@ -954,7 +989,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     const bool imageNode = node.type == ViewNodeType::Image;
     const bool dividerNode = node.type == ViewNodeType::Divider;
     const bool gridNode = node.type == ViewNodeType::Grid ||
-        node.type == ViewNodeType::GridList;
+        node.type == ViewNodeType::GridList || virtualGridNode;
     const bool flowNode = node.type == ViewNodeType::Flow;
     const bool textResourceNode = textNode || labelNode || radioNode;
     if (labelNode &&
@@ -1006,24 +1041,46 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     }
     if (!gridNode && FieldPresent(state, index, "columns"))
     {
-        error = "only grid and gridList nodes accept columns";
+        error = "only grid, gridList, and virtualGrid nodes accept columns";
         return false;
     }
-    if (!gridNode && !flowNode &&
+    if (!gridNode && !flowNode && !virtualListNode &&
         (FieldPresent(state, index, "columnGap") ||
             FieldPresent(state, index, "rowGap")))
     {
-        error = "only grid, gridList, and flow nodes accept columnGap and rowGap";
+        error = "only grid, collection-grid, flow, and virtualList nodes accept axis gaps";
+        return false;
+    }
+    if (virtualListNode && FieldPresent(state, index, "columnGap"))
+    {
+        error = "virtualList nodes accept rowGap but reject columnGap";
         return false;
     }
     if (gridNode && !FieldPresent(state, index, "columns"))
     {
-        error = "grid and gridList nodes require columns";
+        error = "grid, gridList, and virtualGrid nodes require columns";
         return false;
     }
-    if (!scrollNode && FieldPresent(state, index, "showScrollbar"))
+    if (!scrollContainerNode && FieldPresent(state, index, "showScrollbar"))
     {
-        error = "only scroll nodes accept showScrollbar";
+        error = "only scroll and virtual collection nodes accept showScrollbar";
+        return false;
+    }
+    if (!virtualCollectionNode &&
+        (FieldPresent(state, index, "itemCount") ||
+            FieldPresent(state, index, "itemExtent") ||
+            FieldPresent(state, index, "firstIndex") ||
+            FieldPresent(state, index, "overscan")))
+    {
+        error = "virtual collection fields are reserved for virtualList and virtualGrid";
+        return false;
+    }
+    if (virtualCollectionNode &&
+        (!FieldPresent(state, index, "itemCount") ||
+            !FieldPresent(state, index, "itemExtent") ||
+            !FieldPresent(state, index, "firstIndex")))
+    {
+        error = "virtual collection nodes require itemCount, itemExtent, and firstIndex";
         return false;
     }
     if (!progressNode && !sliderNode && FieldPresent(state, index, "value"))
@@ -1129,6 +1186,14 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadFloatField(state, index, "padding", node.padding, error) ||
         !ReadFloatField(state, index, "gap", node.gap, error) ||
         !ReadSizeField(state, index, "columns", node.columns, error) ||
+        !ReadNonNegativeSizeField(state, index, "itemCount",
+            node.itemCount, virtualCollectionNode, error) ||
+        !ReadFloatField(state, index, "itemExtent",
+            node.itemExtent, error) ||
+        !ReadNonNegativeSizeField(state, index, "firstIndex",
+            node.firstIndex, virtualCollectionNode, error) ||
+        !ReadNonNegativeSizeField(state, index, "overscan",
+            node.overscan, false, error) ||
         !ReadOptionalNodeFloatField(state, index, "columnGap",
             node.columnGap, error) ||
         !ReadOptionalNodeFloatField(state, index, "rowGap",
@@ -1166,7 +1231,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             node.checkedStyle, error))
         return false;
 
-    if (scrollNode && !FieldPresent(state, index, "orientation"))
+    if (scrollContainerNode && !FieldPresent(state, index, "orientation"))
         node.orientation = ViewOrientation::Vertical;
 
     if (dividerNode && node.orientation == ViewOrientation::Vertical)
@@ -1381,6 +1446,14 @@ int LuaViewList(lua_State* state) { return MakeNode(state, "list"); }
 int LuaViewGridList(lua_State* state)
 {
     return MakeNode(state, "gridList");
+}
+int LuaViewVirtualList(lua_State* state)
+{
+    return MakeNode(state, "virtualList");
+}
+int LuaViewVirtualGrid(lua_State* state)
+{
+    return MakeNode(state, "virtualGrid");
 }
 int LuaViewListItem(lua_State* state)
 {
