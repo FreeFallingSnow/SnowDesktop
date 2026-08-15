@@ -515,6 +515,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "view.styledText.basic") &&
             snowdesktop::widget_api::SupportsFeature(
+                "view.surface.panel") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "view.tree.core") &&
             !snowdesktop::widget_api::SupportsFeature("view.tree"),
         "host feature lookup must distinguish supported features");

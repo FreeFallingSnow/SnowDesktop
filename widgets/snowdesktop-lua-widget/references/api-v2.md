@@ -69,9 +69,10 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 
 - `widget.define(definition)`：校验并返回 v2 描述符。`render` 与 `view` 必须二选一，可选
   `setup`、`panel`、`event`、`menu` 和 `dispose`。`panel` 只在
-  `widget.openPanel` 打开的宿主辅助面板中绘制，收到的 `context.surface` 为
-  `panel`；面板中的 `control.textInput/textArea` 与桌面 surface 使用同一套
-  storage-bound 输入契约。
+  `widget.openPanel` 打开的宿主辅助面板中执行，收到的 `context.surface` 为
+  `panel`。探测 `view.surface.panel` 后，回调可返回一棵声明式视图；返回 `nil`
+  则保留即时绘制。面板中的声明式输入与 `control.textInput/textArea` 均复用宿主
+  输入代理和 storage-bound 契约。
 - `widget.apiInfo()`：返回当前 API 版本、支持版本和 feature ID。
 - `widget.hasFeature(id)`：探测 feature。
 - `widget.context()`：返回逻辑/像素尺寸、DPI、网格跨度、显示器范围、主题、
@@ -91,7 +92,7 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `badge/divider/meter`，`view.selectionControls` 提供 `toggle/checkbox`，
 `view.actionControls` 提供 `link/radioGroup/slider`，
 `view.inputControls` 一次提供 `textInput/textArea/searchBox/numberInput/select`，
-`view.keyboardNavigation.basic` 提供桌面 surface 的通用宿主键盘焦点与激活，
+`view.keyboardNavigation.basic` 提供桌面与活动 panel surface 的通用宿主键盘焦点与激活，
 `view.keyboard.events` 提供聚焦元素不可取消的按下/释放观察事件，
 `view.focus.request` 将可信手势焦点请求扩展到任意可聚焦声明式元素，
 `view.flex.layout` 提供 row/column 主轴切换、换行与多行交叉轴对齐，
@@ -371,16 +372,17 @@ view.searchBox({
 需要持续可见，组件仍应显式渲染相邻 `text`，不能只依靠颜色或辅助技术。校验状态是受控显示
 属性，不会替组件阻止 change、修改 model 或写入存储。
 
-`view.keyboardNavigation.basic` 只作用于桌面 surface 中当前唯一选中的 Lua 组件。宿主按照最后一棵
-成功提交的交互树顺序收集启用的可点击节点、受控控件和文本输入：Tab/Shift+Tab 循环焦点，
+`view.keyboardNavigation.basic` 作用于桌面 surface 中当前唯一选中的 Lua 组件，以及当前活动的
+panel surface。宿主按照对应 surface 最后一棵成功提交的交互树顺序收集启用的可点击节点、
+受控控件和文本输入：Tab/Shift+Tab 循环焦点，
 方向键按元素几何位置移动焦点，Enter/空格激活按钮、链接、选择控件等，Escape 清除焦点；滑块
 用左/下减一档、右/上加一档。键盘激活仍投递普通 action/change 事件，但带
 `source="keyboard"` 和可信手势标记。鼠标点击可操作元素也会同步宿主
-焦点。逻辑槽位继续在这一焦点序列中使用 `Alt+方向键` 重排和 Delete 移除。该基础 feature
-不承诺任意键绑定或 panel 焦点遍历。
+焦点。桌面逻辑槽位继续在这一焦点序列中使用 `Alt+方向键` 重排和 Delete 移除；panel
+不开放这组宿主槽位操作。该基础 feature 不承诺任意键绑定。
 
 探测 `view.keyboard.events` 后，可聚焦节点可声明 `events.keyDown/keyUp`。事件仅投递给桌面
-surface 中当前唯一选中 Lua 组件的当前聚焦元素，包含稳定符号名 `key`、Windows
+surface 中当前唯一选中 Lua 组件或活动 panel surface 的当前聚焦元素，包含稳定符号名 `key`、Windows
 `virtualKey`、`repeat`、`ctrlKey/shiftKey/altKey`、`targetKey`、`source="keyboard"` 和
 可信手势。宿主在按下时记录目标，因此普通重渲染或 Escape 清焦后仍会把对应 keyUp 配对到
 原元素；窗口失焦时清空未完成配对。该观察事件不能返回 handled、取消 Enter/空格默认激活，
@@ -679,10 +681,17 @@ Grid/GridItem；任意未实体化集合项仍未形成完整 UIA VirtualizedIte
 每个有意义的元素填写稳定 `key`、`accessibility.role` 与 `accessibility.label`；纯命中区域若不
 声明语义不会出现在无障碍树中。快照只收集当前可见、有效且非预览的 v2 实例。
 
-该 feature 不是完整 `view.tree`：当前每帧重建树，尚无可变高度虚拟集合、
-可操作行内 span，也没有完整 UIA 虚拟集合/ScrollItem Pattern、RTL、主题
-token、差量资源复用或声明式 panel。需要这些能力的组件应继续使用 v2 即时绘制或等待
-对应 feature；不得把 `view.tree.core` 当作稳定完整控件集声明。
+探测 `view.surface.panel` 后，`panel(context, model)` 可返回同一份受限声明式树。宿主为 panel
+单独维护上一成功树、交互区域、滚动偏移、输入控件与焦点，桌面重渲染不会清空这些状态；
+指针、滚轮、元素级菜单、键盘与 action/change 事件均路由到 panel，并在上下文或事件中标识
+`surface="panel"`。panel 返回 `nil` 时仍可使用即时绘制与即时控件。panel 的声明式语义树尚未
+导出到当前桌面 UIA Fragment Provider，`view.logicalSlots` 的原生重排/移除也仍以桌面 surface
+为边界；作者不得据此宣称 panel 已有完整辅助技术或宿主槽位支持。
+
+`view.tree.core` 仍不是完整 `view.tree`：当前每帧重建树，尚无可变高度虚拟集合、
+可操作行内 span，也没有完整 UIA 虚拟集合/ScrollItem Pattern、RTL、主题 token 或差量资源复用。
+需要这些能力的组件应继续使用已经公开的细粒度 feature 或等待对应能力；不得把
+`view.tree.core` 当作稳定完整控件集声明。
 
 ### `slots.model` 与 `view.logicalSlots`
 
@@ -904,11 +913,12 @@ storageKey 是 1–128 字节有效 UTF-8。颜色是 `0xRRGGBB`，alpha 是 0�
 Shift 选择、Ctrl+A/C/X/V、Escape 恢复焦点前内容；多行 Enter 插入换行、
 Ctrl+Enter 提交，滚轮与光标跟随会调整实例内滚动位置。普通文本输入不要求权限，
 剪贴板只由宿主在聚焦控件内处理，并没有开放通用剪贴板 API。探测
-`view.keyboardNavigation.basic` 后，这两个即时兼容控件也进入桌面组件的 Tab 顺序。
+`view.keyboardNavigation.basic` 后，这两个即时兼容控件也进入所属 desktop/panel
+surface 的 Tab 顺序。
 
 `control.focus(key)` 只能在直接 click/doubleClick/pointerDown/pointerUp/wheel、菜单命令
-或宿主明确标记的打开回调同步栈中接受；render、schedule、data.change 和
-task.complete 不能抢走桌面键盘焦点。探测 `view.focus.request` 后，key 除文本输入外还可
+或宿主明确标记的打开回调同步栈中接受；render、panel render、schedule、data.change 和
+task.complete 不能抢走键盘焦点。探测 `view.focus.request` 后，key 除文本输入外还可
 指向最后一棵成功视图中的任意启用、可聚焦元素，包括普通按钮、列表项和逻辑槽位项；槽位焦点
 状态会同步更新。若该操作同时把目标加入界面树，宿主会把
 最新一次聚焦请求保留到同一 surface 的下一次成功渲染，并在提交控件后聚焦；若届时

@@ -1030,8 +1030,9 @@ region generation 校验，旧菜单不会落到新一代 region。普通区域�
 key 隔离，宿主负责 wheel、钳制、重绘和滚动条，组件使用 `draw.pushClip/popClip`
 裁剪并按返回 offset 绘制。声明式轨道现已另行开放 `view.scroll`：支持纵向/横向单子树、
 宿主 offset、测量、滚轮、裁剪绘制和裁剪命中，滚出视口的元素不会继续响应交互。
-当前只覆盖 desktop 即时绘制 surface；`view.keyboardNavigation.basic` 已让可点击、受控和
-文本输入 region 进入宿主焦点序列。触控长按、UIA 语义输出、受控 submenu、包内菜单图标
+desktop 与 panel 的即时绘制 surface 均有各自原子提交的 region 集合；
+`view.keyboardNavigation.basic` 已让可点击、受控和文本输入 region 进入所属 surface 的宿主
+焦点序列。触控长按、受控 submenu、包内菜单图标
 和完整 UIA scene tree 仍按 M6 后续交付物推进。
 
 文本编辑的过渡宿主控件已增加 `control.textInput/textArea/focus`：组件在 render 中
@@ -1043,11 +1044,12 @@ key 隔离，宿主负责 wheel、钳制、重绘和滚动条，组件使用 `dr
 `view.keyboardNavigation.basic` 接管，UIA 输出仍未完成，不能把此过渡控件计作第 13.4 节
 声明式控件全集完成。
 
-`widget.define.panel(context, model)` 已接入 `widget.openPanel` 创建的宿主辅助 surface，
-其 `context.surface` 为 `panel`，可提交同一套 storage-bound 文本控件和滚动区域；面板
-render 与桌面 render 一样禁止持久存储写入。面板按钮暂由序列化 raw panel pointer
-事件驱动，尚未接入独立 region 集合、键盘语义树和 UIA，因此它是迁移 agenda 编辑器
-的过渡 surface，不代表 M6 面板控件树完成。
+`widget.define.panel(context, model)` 已接入 `widget.openPanel` 创建的宿主辅助 surface。
+探测 `view.surface.panel` 后可返回与桌面 `view` 相同的声明式节点，返回 `nil` 仍走即时绘制；
+宿主分别保存 panel 的上一成功树、region、滚动偏移、host control 与焦点状态，并把指针、
+滚轮、元素菜单、键盘和 action/change 路由到 `surface="panel"`。面板 render 与桌面 render
+一样禁止持久存储写入，失败提交保留上一成功场景。当前仍缺 panel 语义树的 UIA Fragment
+导出，逻辑槽位的原生重排/移除也只面向 desktop，因此还不能把 M6 面板表面计为完整验收。
 
 ### 13.3 参考优先级与完整性边界
 
@@ -1764,7 +1766,7 @@ v2.0 资源契约：
 - 音频分析分别记录 1/5/10 个订阅下的捕获线程数、CPU、内存、FFT 耗时和发布丢帧；实例数增长不得线性增加捕获客户端。
 - 图片解码、字体解析和 GPU 上传必须计入独立资源预算；缓存不得绕过 Lua 实例内存限制形成无上限宿主内存占用。
 
-当前过渡实现（2026-08-15）发布 `view.tree.core`，支持 `box/row/column/stack/text/image/button/icon/iconButton/shape/progressBar/progressRing/spacer`，以 `view.grid.uniform` 提供 1–64 个等宽列、行优先顺序和独立行列间距的基础 `grid`，以 `view.grid.placement` 提供 1-based 显式行列、跨行跨列和受限自动放置，并以 `view.grid.tracks` 提供 fixed/auto/fr/minmax 的有界显式列轨与行轨（虚拟网格仍使用整数等宽列），再以 `view.flow.wrap` 提供跳过隐藏项、独立行列间距、逐行 justify 和行内 align 的横向换行 `flow`（不包含纵向 flow/masonry/滚动/虚拟化）；`view.statusVisuals` 公开 `badge/divider/meter`，`view.dataSeries` 公开 `sparkline/lineChart/barChart/waveform/spectrum`，`view.selectionControls` 公开受控 `toggle/checkbox`，`view.actionControls` 一次公开 `link/radioGroup/slider`：link 使用宿主链接语义与实时 hover/pressed 绘制，radioGroup 为每个选项生成独立稳定命中区和 `previousSelection/selection` 建议值，slider 以捕获的左键拖动持续返回 step 对齐的 `previousControlValue/controlValue`；`view.inputControls` 一次公开 `textInput/textArea/searchBox/numberInput/select`，输入复用宿主键盘、IME、选择和剪贴板代理并投递受控文本/数值建议，select 以组件受控 expanded 状态绘制顶层有界选项；所有受控值均由组件写回，宿主不替组件持久化，元素各自支持 contextMenu；meter、slider 与数据图形要求无障碍标签，数据图形每节点最多 512 个有限样本、全树最多 4096 个并支持自动或显式 `min/max` 值域、
+当前过渡实现（2026-08-16）发布 `view.tree.core`，支持 `box/row/column/stack/text/image/button/icon/iconButton/shape/progressBar/progressRing/spacer`，以 `view.grid.uniform` 提供 1–64 个等宽列、行优先顺序和独立行列间距的基础 `grid`，以 `view.grid.placement` 提供 1-based 显式行列、跨行跨列和受限自动放置，并以 `view.grid.tracks` 提供 fixed/auto/fr/minmax 的有界显式列轨与行轨（虚拟网格仍使用整数等宽列），再以 `view.flow.wrap` 提供跳过隐藏项、独立行列间距、逐行 justify 和行内 align 的横向换行 `flow`（不包含纵向 flow/masonry/滚动/虚拟化）；`view.statusVisuals` 公开 `badge/divider/meter`，`view.dataSeries` 公开 `sparkline/lineChart/barChart/waveform/spectrum`，`view.selectionControls` 公开受控 `toggle/checkbox`，`view.actionControls` 一次公开 `link/radioGroup/slider`：link 使用宿主链接语义与实时 hover/pressed 绘制，radioGroup 为每个选项生成独立稳定命中区和 `previousSelection/selection` 建议值，slider 以捕获的左键拖动持续返回 step 对齐的 `previousControlValue/controlValue`；`view.inputControls` 一次公开 `textInput/textArea/searchBox/numberInput/select`，输入复用宿主键盘、IME、选择和剪贴板代理并投递受控文本/数值建议，select 以组件受控 expanded 状态绘制顶层有界选项；所有受控值均由组件写回，宿主不替组件持久化，元素各自支持 contextMenu；meter、slider 与数据图形要求无障碍标签，数据图形每节点最多 512 个有限样本、全树最多 4096 个并支持自动或显式 `min/max` 值域、
 稳定全树 key、基础线性布局、基础文本/边框样式、宿主 hover/pressed 视觉、元素 click/
 doubleClick/pointer/contextMenu action，以及“先完整校验布局、后原子提交；失败保留上一成功树”。
 受控状态继续按细粒度 feature 推进：`view.state.selected` 已贯通通用
@@ -1775,8 +1777,8 @@ UTF-8/UTF-16 边界换算和 selectionChange 建议，`view.keyboard.events` 已
 聚焦按键观察、按下/释放配对和失焦清理，`view.focus.request` 已把可信动作焦点请求扩展到
 任意可聚焦声明式节点并支持下一次成功提交解析；这些声明都不把状态持久化责任转移给宿主。
 其额度为 512 节点、32 层、单节点 4 KiB 文本、全树 64 KiB 文本和 256 个交互元素；未知字段、
-重复 key、非连续 children、错误枚举和越界数值拒绝整次提交。数据图形由宿主直接有界绘制，不展开为逐样本节点或命中区域。它尚不包含完整必选节点矩阵、
-UIA、RTL、文本换行、可变高度虚拟化、差量资源复用和声明式 panel；通用桌面键盘焦点已作为
+重复 key、非连续 children、错误枚举和越界数值拒绝整次提交。数据图形由宿主直接有界绘制，不展开为逐样本节点或命中区域。`view.surface.panel` 已把同一树、命中、滚动、控件和键盘管线扩展到独立 panel 状态；它尚不包含完整必选节点矩阵、
+完整 UIA、RTL、文本换行、可变高度虚拟化和差量资源复用；通用 surface 键盘焦点已作为
 `view.keyboardNavigation.basic` 单独发布，因此仍只发布
 细粒度 feature，不发布 `view.tree`，也不计作 M6 完成。
 

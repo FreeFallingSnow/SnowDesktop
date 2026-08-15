@@ -465,9 +465,13 @@ default border does not fit the component design.
   only after the next successful tree submission. Ordinary
   editing does not require `ui.input`; Lua never receives clipboard contents.
 - Put an auxiliary editor in the optional `widget.define.panel` callback and
-  open it with `widget.openPanel`; its context surface is `panel`, it accepts
-  the same storage-bound controls, and persistent writes still belong in
-  events rather than the panel render callback.
+  open it with `widget.openPanel`. After probing `view.surface.panel`, the
+  callback may return the same declarative nodes used by `view`; nil keeps the
+  immediate drawing path. The panel owns a separate scene, hit set, scroll
+  offsets, host controls, and focus state, and its actions identify
+  `surface="panel"`. Persistent writes still belong in events rather than the
+  panel callback. Panel UI Automation export and host logical-slot behavior
+  remain pending, so do not claim those capabilities.
 - Keep colors in `0xRRGGBB`.
 - Respect `widget.context().accessibility`, theme, DPI, visibility and preview
   state. Do not request permission for an ordinary pointer clock or static UI.
