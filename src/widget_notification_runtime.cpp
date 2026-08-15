@@ -31,11 +31,19 @@ bool InvokeHost(const WidgetNotificationCenter::HostCallback& host,
 std::string WidgetNotificationCenter::AllocateId(
     std::uint64_t ownerToken)
 {
-    std::uint64_t sequence = ++nextId_;
-    if (sequence == 0) sequence = ++nextId_;
-    std::ostringstream stream;
-    stream << "notification:" << std::hex << ownerToken << ':' << sequence;
-    return stream.str();
+    for (;;)
+    {
+        std::uint64_t sequence = ++nextId_;
+        if (sequence == 0) sequence = ++nextId_;
+        std::ostringstream stream;
+        stream << "notification:" << std::hex << ownerToken << ':'
+            << sequence;
+        std::string id = stream.str();
+        const bool collision = std::any_of(
+            records_.begin(), records_.end(),
+            [&id](const Record& record) { return record.id == id; });
+        if (!collision) return id;
+    }
 }
 
 void WidgetNotificationCenter::PruneExpired(Clock::time_point now)
@@ -134,6 +142,39 @@ WidgetNotificationOperationResult WidgetNotificationCenter::Schedule(
     const std::string id = record.id;
     records_.push_back(std::move(record));
     return { true, id, {} };
+}
+
+WidgetNotificationOperationResult WidgetNotificationCenter::RestoreScheduled(
+    std::uint64_t ownerToken, std::string id,
+    std::wstring title, std::wstring message,
+    Clock::time_point due, Clock::time_point now)
+{
+    if (ownerToken == 0 || id.empty() || id.size() > 128 ||
+        title.empty() || message.empty() ||
+        due - now > MaximumScheduleDelay)
+        return Failure("invalidArguments");
+    if (now - due > DeliveredRecordLifetime)
+        return Failure("expired");
+    PruneExpired(now);
+    if (FindOwned(ownerToken, id) != records_.end())
+        return Failure("alreadyExists");
+    const std::size_t ownerCount = CountForOwner(ownerToken);
+    if (ownerCount >= MaximumRecordsPerOwner)
+        return Failure("quotaExceeded");
+    const std::size_t scheduledCount =
+        static_cast<std::size_t>(std::count_if(
+            records_.begin(), records_.end(),
+            [ownerToken](const Record& record) {
+                return record.ownerToken == ownerToken &&
+                    record.state == State::Scheduled;
+            }));
+    if (scheduledCount >= MaximumScheduledPerOwner)
+        return Failure("quotaExceeded");
+
+    records_.push_back({ ownerToken, std::move(id),
+        std::move(title), std::move(message), State::Scheduled,
+        due, now });
+    return { true, records_.back().id, {} };
 }
 
 WidgetNotificationOperationResult WidgetNotificationCenter::Update(

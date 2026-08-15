@@ -285,8 +285,9 @@ menu.
   `task.complete.value.notificationId`, and use `notification.update` /
   `notification.dismiss` for delivered IDs or `notification.schedule` /
   `notification.cancel` for future delivery. Scheduled delivery reports
-  `notification.delivered`; it is session-scoped and must not be recreated in
-  a polling loop. Declare `notification.post` as optional when the widget can
+  `notification.delivered`, survives an app restart while the same instance
+  and package remain authorized, and must not be recreated in a polling loop.
+  Declare `notification.post` as optional when the widget can
   keep working without it, and never fall back to API v1 `system.notify`.
 - Create `resource.image/font` handles at entry scope. Use `resource.status`
   when diagnostics are needed.

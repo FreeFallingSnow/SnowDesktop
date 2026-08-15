@@ -39,6 +39,7 @@
 #include "widget_data_broker.h"
 #include "widget_task_broker.h"
 #include "widget_notification_runtime.h"
+#include "widget_notification_schedule_store.h"
 #include "widget_media_task_executor.h"
 #include "widget_audio_output_task_executor.h"
 #include "widget_clipboard_task_executor.h"
@@ -1415,6 +1416,10 @@ private:
     void ReleaseWidgetDataSubscriptions(LuaWidget& widget);
     void InitializeWidgetTaskBroker();
     void ApplyWidgetTaskBrokerActions();
+    void LoadNotificationSchedules();
+    bool SaveNotificationSchedules();
+    void RestoreNotificationSchedules(LuaWidget& widget);
+    void RemoveNotificationSchedules(const std::wstring& widgetId);
     void ReleaseWidgetTasks(LuaWidget& widget,
         snowdesktop::widget_runtime::TaskBrokerCancelReason reason);
     void EnsureSystemSnapshotServiceStarted();
@@ -1459,6 +1464,10 @@ private:
         taskBroker_;
     std::unique_ptr<snowdesktop::widget_runtime::WidgetNotificationCenter>
         notificationCenter_;
+    std::unique_ptr<
+        snowdesktop::widget_runtime::WidgetNotificationScheduleStore>
+        notificationScheduleStore_;
+    std::filesystem::path notificationSchedulePath_;
     std::unique_ptr<
         snowdesktop::widget_runtime::WidgetMediaTaskExecutor>
         mediaTaskExecutor_;

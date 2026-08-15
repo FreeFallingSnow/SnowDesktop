@@ -1160,10 +1160,13 @@ task.start("notification.cancel", {
 ```
 
 宿主限制每实例每分钟实际投递最多 5 次、每实例最多保留 64 个 ID（其中预约最多
-32 个）；已投递 ID 保留 24 小时，组件卸载、重载或权限撤销时统一清理。预约目前属于
-当前宿主运行会话，应用退出后不会恢复。预览异步返回确定性 ID，但不会产生系统通知。
+32 个）；已投递 ID 保留 24 小时。预约以原子文件绑定组件实例 ID、包 ID 和不透明通知
+ID，应用重启后会绑定新的 Lua VM generation，错过不超过 24 小时的到期时间会在组件
+恢复后补投；组件卸载、禁用、热重载或权限撤销会删除其预约，不让旧包代码继续后台
+通知。预览异步返回确定性 ID，但不会写入预约文件或产生系统通知。
 除通用的 `permissionRevoked` 和 `canceled` 外，稳定错误包括 `invalidArguments`、
-`notFound`、`invalidState`、`quotaExceeded`、`providerUnavailable` 和
+`notFound`、`invalidState`、`quotaExceeded`、`providerUnavailable`、
+`persistenceFailed` 和
 `notificationFailed`。组件应把权限放在 `optionalPermissions`，拒绝通知时仍完成自身
 主功能。当前托盘提供者支持文本更新与关闭；包资源图、按钮、进度和动作回传仍未开放，
 不得使用 API v1 `system.notify` 绕过任务与权限模型。

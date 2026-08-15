@@ -249,6 +249,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget_data_broker.cpp
     src/widget_task_broker.cpp
     src/widget_notification_runtime.cpp
+    src/widget_notification_schedule_store.cpp
     src/widget_media_task_executor.cpp
     src/widget_audio_output_task_executor.cpp
     src/widget_clipboard_task_executor.cpp
@@ -777,6 +778,15 @@ if (BUILD_TESTING)
             src/widget_notification_runtime.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract lifecycle task lua widget)
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetNotificationScheduleStoreTests
+        widget_notification_schedule_store
+        SOURCES
+            tests/widget_notification_schedule_store_tests.cpp
+            src/widget_notification_schedule_store.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS contract lifecycle storage task lua widget)
 
     snowdesktop_add_test(
         SnowDesktopWidgetMediaTaskExecutorTests

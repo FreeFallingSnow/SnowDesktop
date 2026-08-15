@@ -1576,12 +1576,16 @@ int main()
         "{ \"source\": \"complete-backup-modified\" }\n";
     const std::string originalCalendar =
         "{ \"schemaVersion\": 1, \"events\": [] }\n";
+    const std::string originalNotificationSchedules =
+        "{ \"schemaVersion\": 1, \"entries\": [] }\n";
     Write(fullBackupData / L"SnowDesktop.layout.json",
         originalLayout);
     Write(fullBackupData / L"SnowDesktop.general.json",
         "{ \"language\": \"zh-CN\" }\n");
     Write(fullBackupData / L"SnowDesktop.calendar.json",
         originalCalendar);
+    Write(fullBackupData / L"SnowDesktop.widget-notifications.json",
+        originalNotificationSchedules);
     Write(fullBackupData / L"widgets" / L"installed" /
         L"package-id" / L"1.0.0" / L"main.lua",
         "function render() end\n");
@@ -1624,8 +1628,11 @@ int main()
             createdFullBackup.backup.data / L"widgets" / L"storage" /
                 L"package-id" / L"instance-id.json") &&
         Read(createdFullBackup.backup.data /
-            L"SnowDesktop.calendar.json") == originalCalendar,
-        "complete backup preserves layout, settings, calendar, packages, and storage");
+            L"SnowDesktop.calendar.json") == originalCalendar &&
+        Read(createdFullBackup.backup.data /
+            L"SnowDesktop.widget-notifications.json") ==
+                originalNotificationSchedules,
+        "complete backup preserves layout, settings, calendar, widget notifications, packages, and storage");
     Expect(!std::filesystem::exists(
             createdFullBackup.backup.data /
                 L"SnowDesktop_crash.log") &&
@@ -1669,6 +1676,8 @@ int main()
         modifiedLayout);
     Write(fullBackupData / L"SnowDesktop.calendar.json",
         "{ \"schemaVersion\": 1, \"events\": [1] }\n");
+    Write(fullBackupData / L"SnowDesktop.widget-notifications.json",
+        "{ \"schemaVersion\": 1, \"entries\": [1] }\n");
     const auto queuedRestore =
         fullBackupManager.QueueRestore(createdFullBackup.backup);
     Expect(queuedRestore.ok,
@@ -1682,8 +1691,10 @@ int main()
         Read(fullBackupData / L"SnowDesktop.layout.json") ==
             originalLayout &&
         Read(fullBackupData / L"SnowDesktop.calendar.json") ==
-            originalCalendar,
-        "complete backup atomically restores layout and calendar on the next startup");
+            originalCalendar &&
+        Read(fullBackupData / L"SnowDesktop.widget-notifications.json") ==
+            originalNotificationSchedules,
+        "complete backup atomically restores layout, calendar, and widget notification schedules on the next startup");
     Expect(Read(appliedRestore.backup /
             L"SnowDesktop.layout.json") == modifiedLayout,
         "pre-restore active data is retained as a rollback backup");

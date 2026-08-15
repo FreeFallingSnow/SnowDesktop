@@ -42,6 +42,7 @@
 #include "widget_text_input_rules.h"
 #include "widget_storage_transaction.h"
 #include "widget_system_settings.h"
+#include "atomic_file.h"
 #include "widgets/widget_chrome_rules.h"
 
 #include <imgui.h>
@@ -8964,6 +8965,125 @@ void WidgetEngine::InitializeWidgetTaskBroker()
     }
 }
 
+void WidgetEngine::LoadNotificationSchedules()
+{
+    notificationScheduleStore_ = std::make_unique<
+        snowdesktop::widget_runtime::WidgetNotificationScheduleStore>();
+    notificationSchedulePath_ = GetDataFilePath(
+        L"SnowDesktop.widget-notifications.json");
+    std::error_code fileError;
+    if (!std::filesystem::is_regular_file(
+            notificationSchedulePath_, fileError))
+        return;
+    std::string text;
+    std::string error;
+    if (!snowdesktop::atomic_file::ReadAll(
+            notificationSchedulePath_, text, &error) ||
+        !notificationScheduleStore_->LoadText(text, error))
+    {
+        OutputDebugStringA(("SnowDesktop: notification schedule load "
+            "failed: " + error + "\n").c_str());
+        notificationScheduleStore_ = std::make_unique<
+            snowdesktop::widget_runtime::
+                WidgetNotificationScheduleStore>();
+        (void)SaveNotificationSchedules();
+        return;
+    }
+    const std::int64_t nowMs =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            snowdesktop::widget_runtime::WidgetNotificationCenter::
+                Clock::now().time_since_epoch()).count();
+    constexpr std::int64_t catchUpWindowMs =
+        24LL * 60 * 60 * 1000;
+    bool pruned = false;
+    const auto loadedEntries = notificationScheduleStore_->Entries();
+    for (const auto& entry : loadedEntries)
+    {
+        if (entry.dueMs < nowMs - catchUpWindowMs)
+        {
+            pruned = notificationScheduleStore_->Remove(
+                entry.instanceId, entry.notificationId) || pruned;
+        }
+    }
+    if (pruned) (void)SaveNotificationSchedules();
+}
+
+bool WidgetEngine::SaveNotificationSchedules()
+{
+    if (!notificationScheduleStore_ ||
+        notificationSchedulePath_.empty())
+        return false;
+    std::string error;
+    const bool saved = snowdesktop::atomic_file::WriteAll(
+        notificationSchedulePath_,
+        notificationScheduleStore_->Serialize(),
+        notificationSchedulePath_.wstring() + L".bak", &error);
+    if (!saved)
+    {
+        OutputDebugStringA(("SnowDesktop: notification schedule save "
+            "failed: " + error + "\n").c_str());
+    }
+    return saved;
+}
+
+void WidgetEngine::RestoreNotificationSchedules(LuaWidget& widget)
+{
+    if (!notificationCenter_ || !notificationScheduleStore_ ||
+        widget.preview)
+        return;
+    const std::string instanceId = WidgetWideToUtf8(widget.widgetId);
+    if (!snowdesktop::widget::WidgetPermissionBroker::AllowsPermission(
+            widget.permissions, kNotificationPostPermission))
+    {
+        if (notificationScheduleStore_->RemoveInstance(instanceId) > 0)
+            (void)SaveNotificationSchedules();
+        return;
+    }
+    const bool ownerMismatch = std::any_of(
+        notificationScheduleStore_->Entries().begin(),
+        notificationScheduleStore_->Entries().end(),
+        [&instanceId, &widget](const auto& entry) {
+            return entry.instanceId == instanceId &&
+                entry.packageId != widget.packageId;
+        });
+    if (ownerMismatch)
+    {
+        if (notificationScheduleStore_->RemoveInstance(instanceId) > 0)
+            (void)SaveNotificationSchedules();
+        return;
+    }
+
+    bool changed = false;
+    const auto now = snowdesktop::widget_runtime::
+        WidgetNotificationCenter::Clock::now();
+    for (const auto& entry : notificationScheduleStore_->ForInstance(
+            instanceId, widget.packageId))
+    {
+        const auto due = snowdesktop::widget_runtime::
+            WidgetNotificationCenter::Clock::time_point(
+                std::chrono::milliseconds(entry.dueMs));
+        const auto restored = notificationCenter_->RestoreScheduled(
+            widget.runtimeToken, entry.notificationId,
+            Utf8ToWideLocal(entry.title), Utf8ToWideLocal(entry.message),
+            due, now);
+        if (!restored.ok)
+        {
+            changed = notificationScheduleStore_->Remove(
+                instanceId, entry.notificationId) || changed;
+        }
+    }
+    if (changed) (void)SaveNotificationSchedules();
+}
+
+void WidgetEngine::RemoveNotificationSchedules(
+    const std::wstring& widgetId)
+{
+    if (!notificationScheduleStore_) return;
+    if (notificationScheduleStore_->RemoveInstance(
+            WidgetWideToUtf8(widgetId)) > 0)
+        (void)SaveNotificationSchedules();
+}
+
 void WidgetEngine::ApplyWidgetTaskBrokerActions()
 {
     using snowdesktop::widget_runtime::TaskBrokerActionType;
@@ -9582,6 +9702,8 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             action.name == "notification.cancel";
         if (notificationTask)
         {
+            const std::string notificationInstanceId =
+                WidgetWideToUtf8(owner->widgetId);
             if (action.preview)
             {
                 if (action.name == "notification.show" ||
@@ -9647,12 +9769,20 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                     ? std::from_chars_result{}
                     : std::from_chars(at->second.data(),
                         at->second.data() + at->second.size(), atMs);
+                const std::int64_t nowMs =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        snowdesktop::widget_runtime::
+                            WidgetNotificationCenter::Clock::now().
+                                time_since_epoch()).count();
+                constexpr std::int64_t maximumDelayMs =
+                    366LL * 24 * 60 * 60 * 1000;
                 if (title == action.arguments.end() ||
                     message == action.arguments.end() ||
                     at == action.arguments.end() ||
                     action.arguments.size() != 3 ||
                     parsed.ec != std::errc{} ||
-                    parsed.ptr != at->second.data() + at->second.size())
+                    parsed.ptr != at->second.data() + at->second.size() ||
+                    atMs <= nowMs || atMs > nowMs + maximumDelayMs)
                 {
                     result.error = "invalidArguments";
                 }
@@ -9667,6 +9797,28 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                         Utf8ToWideLocal(message->second), due,
                         snowdesktop::widget_runtime::
                             WidgetNotificationCenter::Clock::now());
+                    if (result.ok)
+                    {
+                        std::string persistenceError;
+                        const bool stored = notificationScheduleStore_ &&
+                            notificationScheduleStore_->Upsert({
+                                notificationInstanceId,
+                                owner->packageId, result.id,
+                                title->second, message->second, atMs },
+                                persistenceError) &&
+                            SaveNotificationSchedules();
+                        if (!stored)
+                        {
+                            if (notificationScheduleStore_)
+                            {
+                                (void)notificationScheduleStore_->Remove(
+                                    notificationInstanceId, result.id);
+                            }
+                            (void)notificationCenter_->Cancel(
+                                owner->runtimeToken, result.id);
+                            result = { false, {}, "persistenceFailed" };
+                        }
+                    }
                 }
             }
             else
@@ -9686,6 +9838,10 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                         newTitle = Utf8ToWideLocal(title->second);
                     if (message != action.arguments.end())
                         newMessage = Utf8ToWideLocal(message->second);
+                    const auto persisted = notificationScheduleStore_
+                        ? notificationScheduleStore_->Find(
+                            notificationInstanceId, id->second)
+                        : std::nullopt;
                     std::string admissionError;
                     result = notificationCenter_->Update(
                         owner->runtimeToken, id->second,
@@ -9699,6 +9855,30 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                         });
                     if (!admissionError.empty())
                         result.error = std::move(admissionError);
+                    if (result.ok && persisted)
+                    {
+                        const std::optional<std::string> persistedTitle =
+                            title != action.arguments.end()
+                            ? std::optional(title->second) : std::nullopt;
+                        const std::optional<std::string> persistedMessage =
+                            message != action.arguments.end()
+                            ? std::optional(message->second) : std::nullopt;
+                        if (!notificationScheduleStore_->UpdateText(
+                                notificationInstanceId, id->second,
+                                persistedTitle, persistedMessage) ||
+                            !SaveNotificationSchedules())
+                        {
+                            std::string ignored;
+                            (void)notificationScheduleStore_->Upsert(
+                                *persisted, ignored);
+                            (void)SaveNotificationSchedules();
+                            (void)notificationCenter_->Update(
+                                owner->runtimeToken, id->second,
+                                Utf8ToWideLocal(persisted->title),
+                                Utf8ToWideLocal(persisted->message), host);
+                            result = { false, {}, "persistenceFailed" };
+                        }
+                    }
                 }
                 else if (action.name == "notification.dismiss")
                 {
@@ -9707,8 +9887,43 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 }
                 else
                 {
+                    const auto persisted = notificationScheduleStore_
+                        ? notificationScheduleStore_->Find(
+                            notificationInstanceId, id->second)
+                        : std::nullopt;
                     result = notificationCenter_->Cancel(
                         owner->runtimeToken, id->second);
+                    if (result.ok)
+                    {
+                        const bool removed = persisted &&
+                            notificationScheduleStore_ &&
+                            notificationScheduleStore_->Remove(
+                                notificationInstanceId, id->second);
+                        if (!removed || !SaveNotificationSchedules())
+                        {
+                            if (persisted && notificationScheduleStore_)
+                            {
+                                std::string ignored;
+                                (void)notificationScheduleStore_->Upsert(
+                                    *persisted, ignored);
+                                (void)SaveNotificationSchedules();
+                                const auto due = snowdesktop::widget_runtime::
+                                    WidgetNotificationCenter::Clock::
+                                        time_point(std::chrono::milliseconds(
+                                            persisted->dueMs));
+                                (void)notificationCenter_->RestoreScheduled(
+                                    owner->runtimeToken,
+                                    persisted->notificationId,
+                                    Utf8ToWideLocal(persisted->title),
+                                    Utf8ToWideLocal(persisted->message),
+                                    due,
+                                    snowdesktop::widget_runtime::
+                                        WidgetNotificationCenter::Clock::
+                                            now());
+                            }
+                            result = { false, {}, "persistenceFailed" };
+                        }
+                    }
                 }
             }
             if (result.ok && (action.name == "notification.show" ||
@@ -11131,6 +11346,7 @@ bool WidgetEngine::Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFa
     httpService_ = std::make_unique<AsyncHttpService>();
     InitializeWidgetDataBroker();
     InitializeWidgetTaskBroker();
+    LoadNotificationSchedules();
     return true;
 }
 
@@ -11235,6 +11451,8 @@ void WidgetEngine::Shutdown()
     networkRequestTasks_.clear();
     taskBroker_.reset();
     notificationCenter_.reset();
+    notificationScheduleStore_.reset();
+    notificationSchedulePath_.clear();
     widgetHostFailures_.clear();
     delete d2dState_; d2dState_ = nullptr;
 }
@@ -11243,6 +11461,7 @@ void WidgetEngine::UnloadWidget(const std::wstring& widgetId)
 {
     int idx = FindWidget(widgetId);
     if (idx < 0) return;
+    RemoveNotificationSchedules(widgetId);
     PreviewExecutionScope previewScope(
         widgets_[idx].preview ? &widgets_[idx].previewStorage : nullptr);
     if (focusedHostInput_.active && focusedHostInput_.widgetId == widgetId)
@@ -11282,6 +11501,7 @@ void WidgetEngine::UnloadWidget(const std::wstring& widgetId)
 
 void WidgetEngine::DeleteWidgetInstance(const std::wstring& widgetId)
 {
+    RemoveNotificationSchedules(widgetId);
     if (filesystemHandleStore_)
     {
         std::string error;
@@ -12091,6 +12311,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
             stored.refreshTimerId = tid;
         }
     }
+    RestoreNotificationSchedules(widgets_.back());
     return true;
 }
 
@@ -14965,11 +15186,46 @@ void WidgetEngine::TickRuntime()
     }
     DrainFilesystemWatchCompletions();
     ApplyWidgetTaskBrokerActions();
-    if (notificationCenter_)
+    if (notificationCenter_ && notificationScheduleStore_)
     {
-        const auto deliveries = notificationCenter_->DispatchDue(
-            snowdesktop::widget_runtime::
-                WidgetNotificationCenter::Clock::now(),
+        const auto notificationNow = snowdesktop::widget_runtime::
+            WidgetNotificationCenter::Clock::now();
+        const std::int64_t notificationNowMs =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                notificationNow.time_since_epoch()).count();
+        std::vector<snowdesktop::widget_runtime::
+            WidgetPersistedNotificationSchedule> durableDue;
+        for (const auto& entry :
+            notificationScheduleStore_->Due(notificationNowMs))
+        {
+            const bool loaded = std::any_of(
+                widgets_.begin(), widgets_.end(),
+                [&entry](const LuaWidget& widget) {
+                    return widget.valid && !widget.preview &&
+                        WidgetWideToUtf8(widget.widgetId) ==
+                            entry.instanceId &&
+                        widget.packageId == entry.packageId;
+                });
+            if (loaded) durableDue.push_back(entry);
+        }
+        bool dispatchDue = !durableDue.empty();
+        if (dispatchDue)
+        {
+            for (const auto& entry : durableDue)
+            {
+                (void)notificationScheduleStore_->Remove(
+                    entry.instanceId, entry.notificationId);
+            }
+            if (!SaveNotificationSchedules())
+            {
+                std::string ignored;
+                for (const auto& entry : durableDue)
+                    (void)notificationScheduleStore_->Upsert(entry, ignored);
+                dispatchDue = false;
+            }
+        }
+        const auto deliveries = dispatchDue
+            ? notificationCenter_->DispatchDue(notificationNow,
             [this](std::uint64_t ownerToken) {
                 const auto owner = std::find_if(
                     widgets_.begin(), widgets_.end(),
@@ -14984,7 +15240,9 @@ void WidgetEngine::TickRuntime()
             [this](const snowdesktop::widget_runtime::
                 WidgetNotificationHostRequest& request) {
                 return notifyCallback_ && notifyCallback_(request);
-            });
+            })
+            : std::vector<snowdesktop::widget_runtime::
+                WidgetNotificationDelivery>{};
         for (const auto& delivery : deliveries)
         {
             const auto owner = std::find_if(

@@ -136,6 +136,31 @@ void TestCancelFailureAndCleanup()
     Check(dismissals == 1 && center.CountForOwner(501) == 0,
         "instance disposal must dismiss delivered records and cancel schedules");
 }
+
+void TestRestoreAcrossRuntimeGeneration()
+{
+    WidgetNotificationCenter center;
+    const auto now = WidgetNotificationCenter::Clock::time_point(
+        std::chrono::hours(400));
+    const auto restored = center.RestoreScheduled(601,
+        "notification:259:1", L"Restored", L"Pending",
+        now + std::chrono::minutes(2), now);
+    Check(restored.ok &&
+            restored.id == "notification:259:1" &&
+            center.Update(601, restored.id, std::nullopt,
+                L"Rebound", {}).ok,
+        "a persisted ID must rebind to the new runtime owner token");
+    Check(!center.Cancel(602, restored.id).ok &&
+            center.Show(601, L"New", L"Unique", now,
+                [](const WidgetNotificationHostRequest&) {
+                    return true;
+                }).id != restored.id &&
+            center.Cancel(601, restored.id).ok,
+        "restored IDs must remain isolated from other VM generations");
+    Check(!center.RestoreScheduled(601, "expired", L"Old", L"Missed",
+            now - std::chrono::hours(25), now).ok,
+        "startup catch-up must discard schedules missed by more than one day");
+}
 }
 
 int main()
@@ -143,6 +168,7 @@ int main()
     TestImmediateLifecycleAndOwnership();
     TestSchedulingAndDelivery();
     TestCancelFailureAndCleanup();
+    TestRestoreAcrossRuntimeGeneration();
     std::cout << "widget notification runtime tests passed\n";
     return 0;
 }

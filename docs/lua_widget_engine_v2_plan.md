@@ -786,9 +786,11 @@ multimedia render endpoint；音量钳制到 0–1，Core Audio 调用携带 Sno
 GUID，同一实例以 100 ms 最小间隔限速，不开放逐进程或非默认设备控制。
 通知生命周期内核为 show/schedule 返回宿主不透明 ID，允许更新已投递或预约文本、
 区分 dismiss 与 cancel，并在统一 runtime tick 到期投递 `notification.delivered`；每实例
-最多 64 个记录/32 个预约、每分钟最多实际投递 5 次，卸载、热重载、撤权和 shutdown
-统一清理。当前托盘气泡提供者以同 ID 重发实现文本更新并可清除当前气泡；预约尚未跨
-应用重启持久化，包资源图、按钮、进度和 `notification.action` 仍是 M4C 剩余项。
+最多 64 个记录/32 个预约、每分钟最多实际投递 5 次；卸载、热重载和撤权删除预约，
+shutdown 只清理当前提供者状态。预约已用原子文件绑定实例 ID、包 ID 和 opaque ID，
+重启后重新绑定 VM token，
+并对 24 小时内错过的期限补投；当前托盘气泡提供者以同 ID 重发实现文本更新并可清除
+当前气泡，包资源图、按钮、进度和 `notification.action` 仍是 M4C 剩余项。
 `system.openSettings` 只接受宿主枚举的 notifications/audio/display/network/
 bluetooth/power/storage/apps/personalization 页面，并在可信手势和 `shell.launch` 权限下
 映射为固定 `ms-settings:` URI；Lua 不能传 scheme、查询参数或原始 URI。
@@ -831,7 +833,7 @@ SDK 的其他调用串行。两类搜索都只返回实例作用域的不透明�
 - 媒体会话列表、当前会话、时间线、限尺寸封面句柄、seek/stop 和逐源动作能力已形成首批
   公共面；后续缺口是 GSMTC 事件驱动更新以及更多播放器的兼容性矩阵和实机验证。
 - 音频分析已经设计，但普通 endpoint 读取、音量/静音订阅和受控修改尚未列入公共面。
-- v2 通知已补齐 ID、文本更新、撤销、会话内调度、频控和失败状态；当前 tray balloon
+- v2 通知已补齐 ID、文本更新、撤销、持久调度、频控和失败状态；当前 tray balloon
   provider 仍缺包资源图、按钮、进度、动作回传和跨应用重启的预约恢复。
 - 缺少 OS/架构 feature probe，以及更完整的时区/区域格式化等常见组件能力。
 
@@ -1804,7 +1806,8 @@ M7 切换完成后，发布运行时必须删除 API v1 注册和执行分支。
 - 现有系统、媒体、日历、桌面和 HTTP 能力接入代理层，并按 v2 细粒度权限和异步结果迁移。
 - `audio.output.analysis` 权限、共享捕获/FFT provider、模拟预览和运行状态指示。
 - 当前 M4C 通知子波次已接通 `show/update/dismiss/schedule/cancel`、实例作用域 ID、频控、
-  统一 tick 调度、到期事件及清理；跨重启预约、包资源图、按钮、进度和动作回传尚未完成。
+  统一 tick 调度、到期事件、跨重启预约恢复及清理；包资源图、按钮、进度和动作回传
+  尚未完成。
 - 内置组件现有计时器、数据回调和可见性回调的明确迁移映射及测试。
 
 退出条件：

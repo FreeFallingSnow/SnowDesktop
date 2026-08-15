@@ -66,6 +66,10 @@ public:
     WidgetNotificationOperationResult Schedule(std::uint64_t ownerToken,
         std::wstring title, std::wstring message, Clock::time_point due,
         Clock::time_point now);
+    WidgetNotificationOperationResult RestoreScheduled(
+        std::uint64_t ownerToken, std::string id,
+        std::wstring title, std::wstring message, Clock::time_point due,
+        Clock::time_point now);
     WidgetNotificationOperationResult Update(std::uint64_t ownerToken,
         std::string_view id, std::optional<std::wstring> title,
         std::optional<std::wstring> message, const HostCallback& host);
