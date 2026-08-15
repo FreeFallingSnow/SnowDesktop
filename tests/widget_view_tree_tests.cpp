@@ -1708,6 +1708,44 @@ void TestBoundedSizeConstraints()
             error.find("finite and bounded") != std::string::npos,
         "a minimum larger than its maximum must reject the tree");
 
+    ViewNode aspectRoot;
+    aspectRoot.type = ViewNodeType::Box;
+    aspectRoot.key = "aspect-root";
+    ViewNode aspectChild;
+    aspectChild.type = ViewNodeType::Shape;
+    aspectChild.key = "aspect-child";
+    aspectChild.width = { ViewLengthKind::Fill, 0.0f };
+    aspectChild.height = { ViewLengthKind::Auto, 0.0f };
+    aspectChild.maximumWidth = 160.0f;
+    aspectChild.aspectRatio = 2.0f;
+    aspectRoot.children.push_back(aspectChild);
+    Check(ValidateAndLayoutViewTree(aspectRoot, 300.0f, 200.0f, error) &&
+            aspectRoot.children[0].frame.width == 160.0f &&
+            aspectRoot.children[0].frame.height == 80.0f,
+        "aspectRatio must derive the auto axis after size constraints");
+
+    ViewNode conflictingRatio;
+    conflictingRatio.type = ViewNodeType::Shape;
+    conflictingRatio.key = "conflicting-ratio";
+    conflictingRatio.minimumWidth = 200.0f;
+    conflictingRatio.maximumHeight = 50.0f;
+    conflictingRatio.aspectRatio = 2.0f;
+    Check(!ValidateAndLayoutViewTree(
+            conflictingRatio, 300.0f, 200.0f, error) &&
+            error == "aspectRatio conflicts with size constraints",
+        "mutually impossible ratio constraints must reject the tree");
+
+    ViewNode mismatchedFixed;
+    mismatchedFixed.type = ViewNodeType::Shape;
+    mismatchedFixed.key = "mismatched-fixed";
+    mismatchedFixed.width = { ViewLengthKind::Fixed, 100.0f };
+    mismatchedFixed.height = { ViewLengthKind::Fixed, 100.0f };
+    mismatchedFixed.aspectRatio = 2.0f;
+    Check(!ValidateAndLayoutViewTree(
+            mismatchedFixed, 300.0f, 200.0f, error) &&
+            error == "fixed width and height must match aspectRatio",
+        "mismatched double-fixed dimensions must reject the tree");
+
     lua_State* state = luaL_newstate();
     Check(state != nullptr, "Lua state must be available");
     luaL_openlibs(state);
@@ -1719,6 +1757,7 @@ void TestBoundedSizeConstraints()
             maxWidth = 256,
             minHeight = 48,
             maxHeight = 192,
+            aspectRatio = 1.5,
         })
     )lua") == LUA_OK,
         "bounded size constraint Lua fixture must evaluate");
@@ -1727,7 +1766,8 @@ void TestBoundedSizeConstraints()
             parsed.minimumWidth == 64.0f &&
             parsed.maximumWidth == 256.0f &&
             parsed.minimumHeight == 48.0f &&
-            parsed.maximumHeight == 192.0f,
+            parsed.maximumHeight == 192.0f &&
+            parsed.aspectRatio == 1.5f,
         "Lua parsing must retain all bounded size constraints");
     lua_close(state);
 }

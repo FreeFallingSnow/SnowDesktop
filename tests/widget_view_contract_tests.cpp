@@ -93,7 +93,8 @@ void TestRepresentativeApplicability()
             ViewNodeAllowsProperty(ViewNodeType::Text, "disabledStyle"),
         "focus and disabled state styles must be common properties");
     Check(ViewNodeAllowsProperty(ViewNodeType::Box, "minWidth") &&
-            ViewNodeAllowsProperty(ViewNodeType::Text, "maxHeight"),
+            ViewNodeAllowsProperty(ViewNodeType::Text, "maxHeight") &&
+            ViewNodeAllowsProperty(ViewNodeType::Image, "aspectRatio"),
         "bounded size constraints must be common machine-readable properties");
     Check(ViewNodeAllowsProperty(ViewNodeType::MonthCalendar, "eventDates") &&
             !ViewNodeAllowsProperty(ViewNodeType::List, "eventDates"),
