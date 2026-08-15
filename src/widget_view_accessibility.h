@@ -36,6 +36,9 @@ struct ViewAccessibilityNode
     std::optional<float> value;
     std::optional<float> minimum;
     std::optional<float> maximum;
+    std::optional<float> step;
+    bool valueReadOnly = true;
+    bool rangeValueReadOnly = true;
 };
 
 bool CollectViewAccessibilityNodes(const ViewNode& root,

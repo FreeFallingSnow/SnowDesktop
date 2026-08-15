@@ -185,6 +185,8 @@ public:
         float x = 0.0f, float y = 0.0f, int button = 0) const;
     std::optional<InteractionResolvedAction> ResolveKeyboardStep(
         std::string_view key, int direction) const;
+    std::optional<InteractionResolvedAction> ResolveRangeValue(
+        std::string_view key, float value) const;
     const InteractionAction* ActionAt(
         float x, float y, std::string_view eventName,
         std::string* targetKey = nullptr) const noexcept;

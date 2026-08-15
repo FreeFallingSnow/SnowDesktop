@@ -7,6 +7,27 @@
 
 #include <windows.h>
 
+enum class LuaWidgetAccessibilityActionKind
+{
+    Invoke,
+    Toggle,
+    Select,
+    SetRangeValue,
+    SetValue,
+    Expand,
+    Collapse,
+};
+
+struct LuaWidgetAccessibilityActionRequest
+{
+    LuaWidgetAccessibilityActionKind kind =
+        LuaWidgetAccessibilityActionKind::Invoke;
+    std::wstring widgetId;
+    std::string nodeKey;
+    double numericValue = 0.0;
+    std::wstring textValue;
+};
+
 struct LuaWidgetAccessibilitySnapshot
 {
     std::wstring widgetId;

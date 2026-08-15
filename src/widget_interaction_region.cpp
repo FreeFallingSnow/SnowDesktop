@@ -301,6 +301,32 @@ WidgetInteractionRegions::ResolveKeyboardStep(
     return result;
 }
 
+std::optional<InteractionResolvedAction>
+WidgetInteractionRegions::ResolveRangeValue(
+    std::string_view key, float value) const
+{
+    const InteractionRegion* region = Find(key);
+    if (!region || !region->enabled || !std::isfinite(value) ||
+        region->controlKind != InteractionControlKind::Slider ||
+        value < region->minimum || value > region->maximum)
+        return std::nullopt;
+    const auto action = region->events.find("change");
+    if (action == region->events.end()) return std::nullopt;
+
+    float proposed = region->minimum + std::round(
+        (value - region->minimum) / region->step) * region->step;
+    if (value <= region->minimum) proposed = region->minimum;
+    if (value >= region->maximum) proposed = region->maximum;
+
+    InteractionResolvedAction result;
+    result.action = action->second;
+    result.eventName = "change";
+    result.previousControlValue = region->controlValue;
+    result.controlValue = std::clamp(
+        proposed, region->minimum, region->maximum);
+    return result;
+}
+
 void WidgetInteractionRegions::CancelPointerPress() noexcept
 {
     pressedKey_.clear();

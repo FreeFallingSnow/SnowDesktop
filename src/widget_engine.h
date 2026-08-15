@@ -1339,6 +1339,8 @@ public:
         RuntimeAccessibilitySnapshots() const;
     bool RuntimeSetAccessibilityFocus(const std::wstring& widgetId,
         const std::string& nodeKey);
+    bool RuntimePerformAccessibilityAction(
+        const LuaWidgetAccessibilityActionRequest& request);
     std::wstring RuntimeSelectedWidgetPackageId() const;
     bool HandleHostInputKey(WPARAM key);
     bool HandleHostViewKey(const std::wstring& widgetId, WPARAM key,
@@ -1421,7 +1423,8 @@ private:
         const std::string& targetKey, const char* eventName,
         int x, int y, int button, int delta, int clickCount = 0,
         bool includeRetired = false, const char* source = "pointer",
-        int keyboardStepDirection = 0);
+        int keyboardStepDirection = 0,
+        std::optional<float> requestedControlValue = std::nullopt);
     void DispatchHostInputChange(const std::wstring& widgetId,
         const std::string& targetKey,
         const snowdesktop::widget_runtime::InteractionAction& action,

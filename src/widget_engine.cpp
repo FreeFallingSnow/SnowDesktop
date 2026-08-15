@@ -19455,7 +19455,8 @@ bool WidgetEngine::RuntimeInteractionPressed(
 void WidgetEngine::DispatchInteractionAction(LuaWidget& widget,
     const std::string& targetKey, const char* eventName,
     int x, int y, int button, int delta, int clickCount,
-    bool includeRetired, const char* source, int keyboardStepDirection)
+    bool includeRetired, const char* source, int keyboardStepDirection,
+    std::optional<float> requestedControlValue)
 {
     if (targetKey.empty() || !eventName || !*eventName) return;
     snowdesktop::widget_runtime::InteractionAction action;
@@ -19480,12 +19481,15 @@ void WidgetEngine::DispatchInteractionAction(LuaWidget& widget,
     }
     else
     {
-        const auto resolved = keyboardStepDirection == 0
-            ? widget.interactionRegions.ResolveAction(
-                targetKey, eventName, static_cast<float>(x),
-                static_cast<float>(y), button)
-            : widget.interactionRegions.ResolveKeyboardStep(
-                targetKey, keyboardStepDirection);
+        const auto resolved = requestedControlValue
+            ? widget.interactionRegions.ResolveRangeValue(
+                targetKey, *requestedControlValue)
+            : keyboardStepDirection == 0
+                ? widget.interactionRegions.ResolveAction(
+                    targetKey, eventName, static_cast<float>(x),
+                    static_cast<float>(y), button)
+                : widget.interactionRegions.ResolveKeyboardStep(
+                    targetKey, keyboardStepDirection);
         if (!resolved) return;
         action = resolved->action;
         resolvedEventName = resolved->eventName;
@@ -21373,6 +21377,48 @@ WidgetEngine::RuntimeAccessibilitySnapshots() const
                     widget.viewKeyboardFocusKey,
                     snapshot.nodes, snapshot.error);
         (void)collected;
+        for (auto& node : snapshot.nodes)
+        {
+            if (node.key.empty()) continue;
+            const auto control = std::find_if(
+                widget.hostControls.rbegin(),
+                widget.hostControls.rend(), [&](const auto& candidate) {
+                    return candidate.type ==
+                            LuaWidget::HostControl::Type::Input &&
+                        candidate.id == node.key;
+                });
+            if (control == widget.hostControls.rend()) continue;
+            if (focusedHostInput_.active &&
+                focusedHostInput_.widgetId == widget.widgetId &&
+                focusedHostInput_.id == node.key)
+            {
+                node.valueText = WidgetWideToUtf8(
+                    focusedHostInput_.text);
+            }
+            else
+            {
+                node.valueText = control->controlled
+                    ? control->controlledText
+                    : RuntimeGetStorageValue(
+                        widget.widgetId, control->storageKey);
+            }
+            node.valueReadOnly = false;
+            if (control->numeric)
+            {
+                node.minimum = control->minimum;
+                node.maximum = control->maximum;
+                node.step = control->step;
+                node.rangeValueReadOnly = false;
+                float parsed = 0.0f;
+                const auto parsedResult = std::from_chars(
+                    node.valueText.data(),
+                    node.valueText.data() + node.valueText.size(), parsed);
+                if (parsedResult.ec == std::errc{} &&
+                    parsedResult.ptr == node.valueText.data() +
+                        node.valueText.size() && std::isfinite(parsed))
+                    node.value = parsed;
+            }
+        }
         result.push_back(std::move(snapshot));
     }
     return result;
@@ -21415,6 +21461,174 @@ bool WidgetEngine::RuntimeSetAccessibilityFocus(
         widget.logicalSlotFocus = LuaWidget::LogicalSlotFocus{
             slot->slotId, slot->itemId };
     RuntimeInvalidateHost(widgetId);
+    return true;
+}
+
+bool WidgetEngine::RuntimePerformAccessibilityAction(
+    const LuaWidgetAccessibilityActionRequest& request)
+{
+    const int index = FindWidget(request.widgetId);
+    if (index < 0 || !RuntimeIsWidgetSelected(request.widgetId))
+        return false;
+    auto& widget = widgets_[index];
+    if (!widget.valid || widget.preview || !widget.hostVisible ||
+        widget.manifest.apiVersion < 2 || request.nodeKey.empty())
+        return false;
+
+    const auto setHostValue = [&](std::wstring value) {
+        const auto control = std::find_if(widget.hostControls.rbegin(),
+            widget.hostControls.rend(), [&](const auto& candidate) {
+                return candidate.type ==
+                        LuaWidget::HostControl::Type::Input &&
+                    candidate.id == request.nodeKey;
+            });
+        if (control == widget.hostControls.rend() || !control->enabled ||
+            (!control->controlled && control->storageKey.empty()) ||
+            !snowdesktop::widget_runtime::HostTextReplacementFits(
+                {}, 0, 0, value, control->maximumUtf8Bytes))
+            return false;
+        if (control->numeric)
+        {
+            if (value.empty()) return false;
+            wchar_t* end = nullptr;
+            const double parsed = std::wcstod(value.c_str(), &end);
+            if (!end || end != value.c_str() + value.size() ||
+                !std::isfinite(parsed) || parsed < control->minimum ||
+                parsed > control->maximum)
+                return false;
+        }
+
+        std::wstring previous = Utf8ToWideLocal(control->controlled
+            ? control->controlledText
+            : RuntimeGetStorageValue(
+                request.widgetId, control->storageKey));
+        if (focusedHostInput_.active &&
+            focusedHostInput_.widgetId == request.widgetId &&
+            focusedHostInput_.id == request.nodeKey)
+            previous = focusedHostInput_.text;
+        if (previous == value) return true;
+
+        if (control->controlled)
+        {
+            DispatchHostInputChange(request.widgetId, request.nodeKey,
+                control->changeAction, previous, value,
+                control->numeric, control->minimum, control->maximum,
+                true, false, "accessibility");
+        }
+        else
+        {
+            RuntimeSetStorageValue(request.widgetId,
+                control->storageKey, WidgetWideToUtf8(value));
+        }
+        if (focusedHostInput_.active &&
+            focusedHostInput_.widgetId == request.widgetId &&
+            focusedHostInput_.id == request.nodeKey)
+        {
+            focusedHostInput_.text = value;
+            focusedHostInput_.originalText = value;
+            focusedHostInput_.cursor = value.size();
+            focusedHostInput_.selectionAnchor = value.size();
+            focusedHostInput_.compositionText.clear();
+            focusedHostInput_.compositionCursor = 0;
+        }
+        RuntimeInvalidateHost(request.widgetId);
+        return true;
+    };
+
+    if (request.kind == LuaWidgetAccessibilityActionKind::SetValue)
+        return setHostValue(request.textValue);
+    if (request.kind ==
+        LuaWidgetAccessibilityActionKind::SetRangeValue)
+    {
+        if (!std::isfinite(request.numericValue)) return false;
+        const auto input = std::find_if(widget.hostControls.rbegin(),
+            widget.hostControls.rend(), [&](const auto& control) {
+                return control.type ==
+                        LuaWidget::HostControl::Type::Input &&
+                    control.numeric && control.id == request.nodeKey;
+            });
+        if (input != widget.hostControls.rend())
+        {
+            char buffer[64]{};
+            const auto converted = std::to_chars(buffer,
+                buffer + sizeof(buffer), request.numericValue,
+                std::chars_format::general,
+                std::numeric_limits<double>::max_digits10);
+            if (converted.ec != std::errc{}) return false;
+            return setHostValue(Utf8ToWideLocal(std::string(
+                buffer, converted.ptr)));
+        }
+    }
+
+    const auto* region =
+        widget.interactionRegions.Find(request.nodeKey);
+    if (!region || !region->enabled) return false;
+    const auto& shape = region->shape;
+    const int x = static_cast<int>(std::lround(
+        shape.type == snowdesktop::widget_runtime::
+                InteractionShapeType::Circle
+            ? shape.x : shape.x + shape.width * 0.5f));
+    const int y = static_cast<int>(std::lround(
+        shape.type == snowdesktop::widget_runtime::
+                InteractionShapeType::Circle
+            ? shape.y : shape.y + shape.height * 0.5f));
+
+    if (request.kind ==
+        LuaWidgetAccessibilityActionKind::SetRangeValue)
+    {
+        const float value = static_cast<float>(request.numericValue);
+        if (!widget.interactionRegions.ResolveRangeValue(
+                request.nodeKey, value))
+            return false;
+        DispatchInteractionAction(widget, request.nodeKey, "change",
+            x, y, 0, 0, 0, false, "accessibility", 0, value);
+        RuntimeInvalidateHost(request.widgetId);
+        return true;
+    }
+
+    const char* eventName = "click";
+    if (request.kind == LuaWidgetAccessibilityActionKind::Toggle)
+    {
+        if ((region->controlKind != snowdesktop::widget_runtime::
+                    InteractionControlKind::Toggle &&
+                region->controlKind != snowdesktop::widget_runtime::
+                    InteractionControlKind::Checkbox) ||
+            !widget.interactionRegions.FindAction(
+                request.nodeKey, "change"))
+            return false;
+    }
+    else if (request.kind == LuaWidgetAccessibilityActionKind::Select)
+    {
+        if (region->controlKind == snowdesktop::widget_runtime::
+                InteractionControlKind::Radio)
+        {
+            if (!widget.interactionRegions.FindAction(
+                    request.nodeKey, "change"))
+                return false;
+        }
+        else if (!widget.interactionRegions.FindAction(
+                     request.nodeKey, "click"))
+            return false;
+    }
+    else if (request.kind == LuaWidgetAccessibilityActionKind::Expand ||
+        request.kind == LuaWidgetAccessibilityActionKind::Collapse)
+    {
+        const bool expand = request.kind ==
+            LuaWidgetAccessibilityActionKind::Expand;
+        if (!region->hasExpandedProposal ||
+            !widget.interactionRegions.FindAction(
+                request.nodeKey, "click"))
+            return false;
+        if (region->expanded == expand) return true;
+    }
+    else if (request.kind != LuaWidgetAccessibilityActionKind::Invoke ||
+        !widget.interactionRegions.FindAction(
+            request.nodeKey, "click"))
+        return false;
+
+    DispatchInteractionAction(widget, request.nodeKey, eventName,
+        x, y, 0, 0, 1, false, "accessibility");
+    RuntimeInvalidateHost(request.widgetId);
     return true;
 }
 

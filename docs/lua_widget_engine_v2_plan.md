@@ -1181,7 +1181,10 @@ feature、默认 accessibility role、允许属性和直接必需属性由同一
 快照。桌面窗口已响应 `WM_GETOBJECT`，通过 Windows UIA Fragment Provider 暴露当前组件与元素的
 名称、ControlType、AutomationId、RuntimeId、边界、可见性、启用/焦点状态、父子/兄弟导航、
 点命中和焦点定位；窗口销毁或 Explorer 重建时旧 Provider 会失效，避免继续访问宿主旧状态。
-Pattern 动作、属性/结构事件和 radio/select/calendar 的内部虚拟子项仍未接通，也尚未使用真实
+Invoke、Toggle、RangeValue、Value、ExpandCollapse 和 SelectionItem Pattern 已连接到现有
+interaction region 与宿主输入动作通道；辅助技术触发的 action 使用 `source="accessibility"`，
+且不会获得 trusted gesture 身份，因此不会绕过已有权限和用户手势门槛。属性/结构事件和
+radio/select/calendar 的内部虚拟子项仍未接通，也尚未使用真实
 Narrator 场景验收；默认值/范围、子节点、事件、RTL、动画、额度和错误码仍未全部迁入矩阵，
 也尚未由它生成 LuaLS 与本文档，因此这仍不表示契约已经冻结或完整无障碍已经可用。
 
@@ -1882,8 +1885,9 @@ M7 切换完成后，发布运行时必须删除 API v1 注册和执行分支。
 - 第 13.4 节全部 v2.0 必选布局、内容、控件、集合、图表和宿主表面节点，不以未定义的“首批节点”替代稳定版清单。
 - 冻结的机器可读 node-property applicability matrix，以及由它生成的 LuaLS 类型、文档、校验器、默认值表和测试参数集。
   当前节点/属性矩阵已进入宿主校验器并有独立契约测试，UIA ControlType/基础 Pattern/
-  键盘焦点列、只读语义快照及 Windows Fragment Provider 已建立；Pattern 动作、生成物、
-  虚拟子项、属性/结构事件及默认值/范围等列仍需继续并入，尚未达到冻结条件。
+  键盘焦点列、语义快照及 Windows Fragment Provider 已建立，Invoke/Toggle/RangeValue/Value/
+  ExpandCollapse/SelectionItem 动作已接入现有受控 action 通道；生成物、虚拟子项、属性/结构
+  事件及默认值/范围等列仍需继续并入，尚未达到冻结条件。
 - 环境上下文、响应式尺寸和减少动态效果。
 - 元素级 hover/pressed/focus、click/double click、指针捕获和独立原生右键菜单。
 - `LuaLogicalSlot`、`slots.binding/collection`、`slotSurface/slotItem`、宿主引用存储和现有 slot contract 全矩阵接入；v2.0 实现 binding 的 reference/replace/clear 和 collection 的 reference/reorder/remove。

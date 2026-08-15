@@ -912,6 +912,21 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             if (focused)
                 InvalidateRect(hwnd_, nullptr, FALSE);
             return focused;
+        },
+        [this](const LuaWidgetAccessibilityActionRequest& request) {
+            if (!hwnd_ || !IsWindow(hwnd_) || !widgetEngine_)
+                return false;
+            const size_t index = FindWidgetIndexById(request.widgetId);
+            if (index >= widgets_.size() ||
+                widgets_[index].type != DesktopWidgetType::LuaScript)
+                return false;
+            SelectWidgetOnly(index);
+            ::SetFocus(hwnd_);
+            const bool accepted =
+                widgetEngine_->RuntimePerformAccessibilityAction(request);
+            if (accepted)
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            return accepted;
         });
     widgetAccessibilityProvider_->AttachWindow(hwnd_);
     StartSteamWorkshopWatcher();

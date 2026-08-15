@@ -449,9 +449,12 @@ view.waveform({
 accessibility role、允许属性和直接必需属性。Lua 解析器会在布局前按该表拒绝拼错字段或
 用在错误节点上的字段；例如 `columns` 不能用于 `row`，`source` 不能用于
 `referenceIcon`。该表也登记 UIA ControlType、基础 Pattern 和宿主键盘可聚焦性，宿主能从
-布局结果生成只读语义快照，并已通过 Windows UIA Fragment Provider 暴露组件/元素树、基础
-属性、边界、父子/兄弟导航、点命中与宿主焦点。Pattern 动作、属性/结构事件、复杂控件内部
-虚拟子项和真实 Narrator 验收尚未完成；默认值/范围、子节点、事件和错误码也未全部迁入，
+布局结果生成语义快照，并已通过 Windows UIA Fragment Provider 暴露组件/元素树、基础属性、
+边界、父子/兄弟导航、点命中与宿主焦点。Invoke、Toggle、RangeValue、Value、
+ExpandCollapse 和 SelectionItem Pattern 已连接到同一套 Lua action/受控输入通道，事件中的
+`source` 为 `accessibility` 且 `trustedGesture=false`，不会借辅助技术操作扩大权限。UIA
+属性/结构变更事件、复杂控件内部虚拟子项和真实 Narrator 验收尚未完成；默认值/范围、子节点、
+事件和错误码也未全部迁入，
 作者仍应以本节各 feature 的细化说明为准。
 
 即时模式的 `interaction.region` 也进入同一种宿主语义快照，因此使用 `render()` 的组件应为
@@ -459,7 +462,7 @@ accessibility role、允许属性和直接必需属性。Lua 解析器会在布�
 声明语义不会出现在无障碍树中。快照只收集当前可见、有效且非预览的 v2 实例。
 
 该 feature 不是完整 `view.tree`：当前每帧重建树，尚无可变高度虚拟集合、
-可操作行内 span，也没有 UIA 输出、RTL、主题
+可操作行内 span，也没有完整 UIA 虚拟集合/滚动 Pattern、RTL、主题
 token、差量资源复用或声明式 panel。需要这些能力的组件应继续使用 v2 即时绘制或等待
 对应 feature；不得把 `view.tree.core` 当作稳定完整控件集声明。
 

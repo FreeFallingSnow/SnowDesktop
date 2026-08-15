@@ -292,6 +292,14 @@ void TestRadioAndSliderActionResolution()
             std::abs(*steppedDown->controlValue - 2.0f) < 0.01f,
         "slider keyboard steps must propose one bounded declared step");
 
+    const auto accessibleValue =
+        regions.ResolveRangeValue("volume", 7.1f);
+    Check(accessibleValue && accessibleValue->eventName == "change" &&
+            accessibleValue->previousControlValue == 4.0f &&
+            accessibleValue->controlValue == 8.0f &&
+            !regions.ResolveRangeValue("volume", 12.0f),
+        "accessibility range values must snap to step and reject bounds violations");
+
     regions.PointerDown(20.0f, 52.0f, 2);
     Check(!regions.ResolveAction(
             "volume", "pointerDown", 20.0f, 52.0f, 2),

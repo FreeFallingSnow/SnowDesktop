@@ -24,6 +24,8 @@ namespace
 {
 using AccessibilityNode =
     snowdesktop::widget_runtime::ViewAccessibilityNode;
+using AccessibilityPattern =
+    snowdesktop::widget_runtime::ViewAccessibilityPattern;
 
 enum class ElementKind
 {
@@ -43,6 +45,7 @@ struct ProviderState
     HWND window = nullptr;
     WidgetAccessibilityProviderHost::SnapshotProvider snapshotProvider;
     WidgetAccessibilityProviderHost::FocusProvider focusProvider;
+    WidgetAccessibilityProviderHost::ActionProvider actionProvider;
     bool connected = true;
 
     bool Capture(
@@ -63,6 +66,49 @@ struct ProviderState
         }
     }
 };
+
+bool SupportsPattern(
+    const AccessibilityNode& node, AccessibilityPattern pattern) noexcept
+{
+    return snowdesktop::widget_runtime::HasViewAccessibilityPattern(
+        node.patterns, pattern);
+}
+
+std::optional<AccessibilityPattern> PatternForId(
+    PATTERNID patternId) noexcept
+{
+    if (patternId == UIA_InvokePatternId)
+        return AccessibilityPattern::Invoke;
+    if (patternId == UIA_TogglePatternId)
+        return AccessibilityPattern::Toggle;
+    if (patternId == UIA_RangeValuePatternId)
+        return AccessibilityPattern::RangeValue;
+    if (patternId == UIA_ValuePatternId)
+        return AccessibilityPattern::Value;
+    if (patternId == UIA_ExpandCollapsePatternId)
+        return AccessibilityPattern::ExpandCollapse;
+    if (patternId == UIA_SelectionItemPatternId)
+        return AccessibilityPattern::SelectionItem;
+    return std::nullopt;
+}
+
+std::optional<AccessibilityPattern> AvailabilityPropertyPattern(
+    PROPERTYID propertyId) noexcept
+{
+    if (propertyId == UIA_IsInvokePatternAvailablePropertyId)
+        return AccessibilityPattern::Invoke;
+    if (propertyId == UIA_IsTogglePatternAvailablePropertyId)
+        return AccessibilityPattern::Toggle;
+    if (propertyId == UIA_IsRangeValuePatternAvailablePropertyId)
+        return AccessibilityPattern::RangeValue;
+    if (propertyId == UIA_IsValuePatternAvailablePropertyId)
+        return AccessibilityPattern::Value;
+    if (propertyId == UIA_IsExpandCollapsePatternAvailablePropertyId)
+        return AccessibilityPattern::ExpandCollapse;
+    if (propertyId == UIA_IsSelectionItemPatternAvailablePropertyId)
+        return AccessibilityPattern::SelectionItem;
+    return std::nullopt;
+}
 
 struct ResolvedElement
 {
@@ -536,7 +582,13 @@ private:
 
 class FragmentProvider final :
     public IRawElementProviderSimple,
-    public IRawElementProviderFragment
+    public IRawElementProviderFragment,
+    public IInvokeProvider,
+    public IToggleProvider,
+    public IRangeValueProvider,
+    public IValueProvider,
+    public IExpandCollapseProvider,
+    public ISelectionItemProvider
 {
 public:
     FragmentProvider(std::shared_ptr<ProviderState> state,
@@ -556,6 +608,18 @@ public:
             *object = static_cast<IRawElementProviderSimple*>(this);
         else if (iid == IID_IRawElementProviderFragment)
             *object = static_cast<IRawElementProviderFragment*>(this);
+        else if (iid == IID_IInvokeProvider)
+            *object = static_cast<IInvokeProvider*>(this);
+        else if (iid == IID_IToggleProvider)
+            *object = static_cast<IToggleProvider*>(this);
+        else if (iid == IID_IRangeValueProvider)
+            *object = static_cast<IRangeValueProvider*>(this);
+        else if (iid == IID_IValueProvider)
+            *object = static_cast<IValueProvider*>(this);
+        else if (iid == IID_IExpandCollapseProvider)
+            *object = static_cast<IExpandCollapseProvider*>(this);
+        else if (iid == IID_ISelectionItemProvider)
+            *object = static_cast<ISelectionItemProvider*>(this);
         else
             return E_NOINTERFACE;
         AddRef();
@@ -583,10 +647,38 @@ public:
     }
 
     HRESULT STDMETHODCALLTYPE GetPatternProvider(
-        PATTERNID, IUnknown** result) override
+        PATTERNID patternId, IUnknown** result) override
     {
         if (!result) return E_POINTER;
         *result = nullptr;
+        std::vector<LuaWidgetAccessibilitySnapshot> snapshots;
+        if (!state_->Capture(snapshots))
+            return UIA_E_ELEMENTNOTAVAILABLE;
+        const auto resolved = ResolveElement(snapshots, reference_);
+        if (!resolved) return UIA_E_ELEMENTNOTAVAILABLE;
+        if (!resolved->nodeIndex) return S_OK;
+        const auto pattern = PatternForId(patternId);
+        const auto& node = snapshots[resolved->widgetIndex]
+            .nodes[*resolved->nodeIndex];
+        if (!pattern || !SupportsPattern(node, *pattern)) return S_OK;
+        if (patternId == UIA_InvokePatternId)
+            return QueryInterface(IID_IInvokeProvider,
+                reinterpret_cast<void**>(result));
+        if (patternId == UIA_TogglePatternId)
+            return QueryInterface(IID_IToggleProvider,
+                reinterpret_cast<void**>(result));
+        if (patternId == UIA_RangeValuePatternId)
+            return QueryInterface(IID_IRangeValueProvider,
+                reinterpret_cast<void**>(result));
+        if (patternId == UIA_ValuePatternId)
+            return QueryInterface(IID_IValueProvider,
+                reinterpret_cast<void**>(result));
+        if (patternId == UIA_ExpandCollapsePatternId)
+            return QueryInterface(IID_IExpandCollapseProvider,
+                reinterpret_cast<void**>(result));
+        if (patternId == UIA_SelectionItemPatternId)
+            return QueryInterface(IID_ISelectionItemProvider,
+                reinterpret_cast<void**>(result));
         return S_OK;
     }
 
@@ -603,6 +695,18 @@ public:
         const auto& widget = snapshots[resolved->widgetIndex];
         const AccessibilityNode* node = resolved->nodeIndex
             ? &widget.nodes[*resolved->nodeIndex] : nullptr;
+
+        if (node)
+        {
+            const auto availability =
+                AvailabilityPropertyPattern(propertyId);
+            if (availability)
+            {
+                SetBoolVariant(result,
+                    SupportsPattern(*node, *availability));
+                return S_OK;
+            }
+        }
 
         if (propertyId == UIA_ControlTypePropertyId)
             SetIntVariant(result, node
@@ -825,7 +929,288 @@ public:
         return root_.CopyTo(result);
     }
 
+    HRESULT STDMETHODCALLTYPE Invoke() override
+    {
+        return PerformAction(
+            AccessibilityPattern::Invoke,
+            LuaWidgetAccessibilityActionKind::Invoke);
+    }
+
+    HRESULT STDMETHODCALLTYPE Toggle() override
+    {
+        return PerformAction(
+            AccessibilityPattern::Toggle,
+            LuaWidgetAccessibilityActionKind::Toggle);
+    }
+
+    HRESULT STDMETHODCALLTYPE get_ToggleState(
+        ToggleState* result) override
+    {
+        if (!result) return E_POINTER;
+        AccessibilityNode node;
+        const HRESULT hr = ResolvePatternNode(
+            AccessibilityPattern::Toggle, node);
+        if (FAILED(hr)) return hr;
+        *result = !node.checked
+            ? ToggleState_Indeterminate
+            : *node.checked ? ToggleState_On : ToggleState_Off;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE SetValue(double value) override
+    {
+        AccessibilityNode node;
+        const HRESULT hr = ResolvePatternNode(
+            AccessibilityPattern::RangeValue, node);
+        if (FAILED(hr)) return hr;
+        if (node.rangeValueReadOnly) return UIA_E_NOTSUPPORTED;
+        if (!std::isfinite(value) || !node.minimum || !node.maximum ||
+            value < *node.minimum || value > *node.maximum)
+            return E_INVALIDARG;
+        return PerformAction(
+            AccessibilityPattern::RangeValue,
+            LuaWidgetAccessibilityActionKind::SetRangeValue,
+            value);
+    }
+
+    HRESULT STDMETHODCALLTYPE get_Value(double* result) override
+    {
+        if (!result) return E_POINTER;
+        AccessibilityNode node;
+        const HRESULT hr = ResolvePatternNode(
+            AccessibilityPattern::RangeValue, node);
+        if (FAILED(hr)) return hr;
+        if (!node.value) return UIA_E_NOTSUPPORTED;
+        *result = *node.value;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE get_IsReadOnly(BOOL* result) override
+    {
+        if (!result) return E_POINTER;
+        std::vector<LuaWidgetAccessibilitySnapshot> snapshots;
+        if (!state_->Capture(snapshots))
+            return UIA_E_ELEMENTNOTAVAILABLE;
+        const auto resolved = ResolveElement(snapshots, reference_);
+        if (!resolved || !resolved->nodeIndex)
+            return UIA_E_ELEMENTNOTAVAILABLE;
+        const auto& node = snapshots[resolved->widgetIndex]
+            .nodes[*resolved->nodeIndex];
+        *result = node.valueReadOnly && node.rangeValueReadOnly;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE get_Maximum(double* result) override
+    {
+        if (!result) return E_POINTER;
+        AccessibilityNode node;
+        const HRESULT hr = ResolvePatternNode(
+            AccessibilityPattern::RangeValue, node);
+        if (FAILED(hr)) return hr;
+        if (!node.maximum) return UIA_E_NOTSUPPORTED;
+        *result = *node.maximum;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE get_Minimum(double* result) override
+    {
+        if (!result) return E_POINTER;
+        AccessibilityNode node;
+        const HRESULT hr = ResolvePatternNode(
+            AccessibilityPattern::RangeValue, node);
+        if (FAILED(hr)) return hr;
+        if (!node.minimum) return UIA_E_NOTSUPPORTED;
+        *result = *node.minimum;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE get_LargeChange(double* result) override
+    {
+        if (!result) return E_POINTER;
+        AccessibilityNode node;
+        const HRESULT hr = ResolvePatternNode(
+            AccessibilityPattern::RangeValue, node);
+        if (FAILED(hr)) return hr;
+        if (!node.minimum || !node.maximum)
+            return UIA_E_NOTSUPPORTED;
+        const double span = std::max(
+            0.0, static_cast<double>(*node.maximum - *node.minimum));
+        const double step = node.step
+            ? std::max(0.0, static_cast<double>(*node.step)) : 0.0;
+        *result = std::max(step, span / 10.0);
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE get_SmallChange(double* result) override
+    {
+        if (!result) return E_POINTER;
+        AccessibilityNode node;
+        const HRESULT hr = ResolvePatternNode(
+            AccessibilityPattern::RangeValue, node);
+        if (FAILED(hr)) return hr;
+        *result = node.step
+            ? std::max(0.0, static_cast<double>(*node.step)) : 0.0;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE SetValue(LPCWSTR value) override
+    {
+        if (!value) return E_INVALIDARG;
+        AccessibilityNode node;
+        const HRESULT hr = ResolvePatternNode(
+            AccessibilityPattern::Value, node);
+        if (FAILED(hr)) return hr;
+        if (node.valueReadOnly) return UIA_E_NOTSUPPORTED;
+        return PerformAction(
+            AccessibilityPattern::Value,
+            LuaWidgetAccessibilityActionKind::SetValue,
+            0.0, value);
+    }
+
+    HRESULT STDMETHODCALLTYPE get_Value(BSTR* result) override
+    {
+        if (!result) return E_POINTER;
+        *result = nullptr;
+        AccessibilityNode node;
+        const HRESULT hr = ResolvePatternNode(
+            AccessibilityPattern::Value, node);
+        if (FAILED(hr)) return hr;
+        const std::wstring value = Utf8ToWide(node.valueText);
+        *result = SysAllocStringLen(value.data(),
+            static_cast<UINT>(value.size()));
+        return *result || value.empty() ? S_OK : E_OUTOFMEMORY;
+    }
+
+    HRESULT STDMETHODCALLTYPE Expand() override
+    {
+        return PerformAction(
+            AccessibilityPattern::ExpandCollapse,
+            LuaWidgetAccessibilityActionKind::Expand);
+    }
+
+    HRESULT STDMETHODCALLTYPE Collapse() override
+    {
+        return PerformAction(
+            AccessibilityPattern::ExpandCollapse,
+            LuaWidgetAccessibilityActionKind::Collapse);
+    }
+
+    HRESULT STDMETHODCALLTYPE get_ExpandCollapseState(
+        ExpandCollapseState* result) override
+    {
+        if (!result) return E_POINTER;
+        AccessibilityNode node;
+        const HRESULT hr = ResolvePatternNode(
+            AccessibilityPattern::ExpandCollapse, node);
+        if (FAILED(hr)) return hr;
+        *result = !node.expanded
+            ? ExpandCollapseState_LeafNode
+            : *node.expanded
+                ? ExpandCollapseState_Expanded
+                : ExpandCollapseState_Collapsed;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE Select() override
+    {
+        return PerformAction(
+            AccessibilityPattern::SelectionItem,
+            LuaWidgetAccessibilityActionKind::Select);
+    }
+
+    HRESULT STDMETHODCALLTYPE AddToSelection() override
+    {
+        return Select();
+    }
+
+    HRESULT STDMETHODCALLTYPE RemoveFromSelection() override
+    {
+        AccessibilityNode node;
+        const HRESULT hr = ResolvePatternNode(
+            AccessibilityPattern::SelectionItem, node);
+        return FAILED(hr) ? hr : UIA_E_INVALIDOPERATION;
+    }
+
+    HRESULT STDMETHODCALLTYPE get_IsSelected(BOOL* result) override
+    {
+        if (!result) return E_POINTER;
+        AccessibilityNode node;
+        const HRESULT hr = ResolvePatternNode(
+            AccessibilityPattern::SelectionItem, node);
+        if (FAILED(hr)) return hr;
+        *result = node.checked.value_or(false) ? TRUE : FALSE;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE get_SelectionContainer(
+        IRawElementProviderSimple** result) override
+    {
+        if (!result) return E_POINTER;
+        *result = nullptr;
+        AccessibilityNode node;
+        const HRESULT hr = ResolvePatternNode(
+            AccessibilityPattern::SelectionItem, node);
+        if (FAILED(hr)) return hr;
+        Microsoft::WRL::ComPtr<IRawElementProviderFragment> parent;
+        const HRESULT navigation = Navigate(
+            NavigateDirection_Parent, &parent);
+        if (FAILED(navigation) || !parent) return navigation;
+        return parent->QueryInterface(IID_PPV_ARGS(result));
+    }
+
 private:
+    HRESULT ResolvePatternNode(AccessibilityPattern pattern,
+        AccessibilityNode& node) const
+    {
+        std::vector<LuaWidgetAccessibilitySnapshot> snapshots;
+        if (!state_->Capture(snapshots))
+            return UIA_E_ELEMENTNOTAVAILABLE;
+        const auto resolved = ResolveElement(snapshots, reference_);
+        if (!resolved || !resolved->nodeIndex)
+            return UIA_E_ELEMENTNOTAVAILABLE;
+        node = snapshots[resolved->widgetIndex]
+            .nodes[*resolved->nodeIndex];
+        if (!SupportsPattern(node, pattern))
+            return UIA_E_NOTSUPPORTED;
+        return S_OK;
+    }
+
+    HRESULT PerformAction(AccessibilityPattern pattern,
+        LuaWidgetAccessibilityActionKind kind,
+        double numericValue = 0.0,
+        std::wstring textValue = {}) const
+    {
+        std::vector<LuaWidgetAccessibilitySnapshot> snapshots;
+        if (!state_->Capture(snapshots))
+            return UIA_E_ELEMENTNOTAVAILABLE;
+        const auto resolved = ResolveElement(snapshots, reference_);
+        if (!resolved || !resolved->nodeIndex)
+            return UIA_E_ELEMENTNOTAVAILABLE;
+        const auto& widget = snapshots[resolved->widgetIndex];
+        const auto& node = widget.nodes[*resolved->nodeIndex];
+        if (!SupportsPattern(node, pattern))
+            return UIA_E_NOTSUPPORTED;
+        if (!node.enabled) return UIA_E_ELEMENTNOTENABLED;
+        if (node.key.empty() || !state_->actionProvider)
+            return UIA_E_NOTSUPPORTED;
+
+        LuaWidgetAccessibilityActionRequest request;
+        request.kind = kind;
+        request.widgetId = widget.widgetId;
+        request.nodeKey = node.key;
+        request.numericValue = numericValue;
+        request.textValue = std::move(textValue);
+        try
+        {
+            return state_->actionProvider(request)
+                ? S_OK : UIA_E_NOTSUPPORTED;
+        }
+        catch (...)
+        {
+            return E_FAIL;
+        }
+    }
+
     std::atomic<ULONG> references_{ 1 };
     std::shared_ptr<ProviderState> state_;
     Microsoft::WRL::ComPtr<IRawElementProviderFragmentRoot> root_;
@@ -854,17 +1239,20 @@ struct WidgetAccessibilityProviderHost::Impl
 {
     SnapshotProvider snapshotProvider;
     FocusProvider focusProvider;
+    ActionProvider actionProvider;
     std::shared_ptr<ProviderState> state;
     Microsoft::WRL::ComPtr<IRawElementProviderSimple> root;
 };
 
 WidgetAccessibilityProviderHost::WidgetAccessibilityProviderHost(
     SnapshotProvider snapshotProvider,
-    FocusProvider focusProvider)
+    FocusProvider focusProvider,
+    ActionProvider actionProvider)
     : impl_(std::make_unique<Impl>())
 {
     impl_->snapshotProvider = std::move(snapshotProvider);
     impl_->focusProvider = std::move(focusProvider);
+    impl_->actionProvider = std::move(actionProvider);
 }
 
 WidgetAccessibilityProviderHost::~WidgetAccessibilityProviderHost()
@@ -891,6 +1279,7 @@ bool WidgetAccessibilityProviderHost::AttachWindow(HWND window)
     state->window = window;
     state->snapshotProvider = impl_->snapshotProvider;
     state->focusProvider = impl_->focusProvider;
+    state->actionProvider = impl_->actionProvider;
     auto* root = new (std::nothrow) RootAutomationProvider(state);
     if (!root) return false;
     impl_->state = std::move(state);

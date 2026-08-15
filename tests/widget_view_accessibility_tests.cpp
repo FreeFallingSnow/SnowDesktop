@@ -40,6 +40,7 @@ void TestSemanticHierarchyAndState()
     slider.value = 0.5f;
     slider.minimum = 0.0f;
     slider.maximum = 1.0f;
+    slider.step = 0.1f;
     root.children = { title, button, slider };
 
     std::vector<ViewAccessibilityNode> nodes;
@@ -70,7 +71,8 @@ void TestSemanticHierarchyAndState()
             HasViewAccessibilityPattern(nodes[3].patterns,
                 ViewAccessibilityPattern::RangeValue) &&
             nodes[3].focused && nodes[3].value == 0.5f &&
-            nodes[3].minimum == 0.0f && nodes[3].maximum == 1.0f,
+            nodes[3].minimum == 0.0f && nodes[3].maximum == 1.0f &&
+            nodes[3].step == 0.1f && !nodes[3].rangeValueReadOnly,
         "sliders must expose range state and current host focus");
 }
 
@@ -95,7 +97,8 @@ void TestClipAndControlledState()
             nodes.size() == 3,
         "materialized clipped children must remain in the semantic snapshot");
     Check(nodes[1].checked == true && !nodes[1].offscreen &&
-            nodes[2].offscreen && nodes[2].valueText == "snow",
+            nodes[2].offscreen && nodes[2].valueText == "snow" &&
+            !nodes[2].valueReadOnly,
         "semantic state must retain controlled values and offscreen status");
 }
 
@@ -118,6 +121,7 @@ void TestImmediateRegionSemantics()
     slider.controlValue = 4.0f;
     slider.minimum = 0.0f;
     slider.maximum = 10.0f;
+    slider.step = 0.5f;
     slider.clip = InteractionClipRect{ 140, 0, 20, 20 };
     slider.events.emplace("change", InteractionAction{ "level", {} });
 
@@ -133,7 +137,8 @@ void TestImmediateRegionSemantics()
         "immediate buttons must expose Invoke and host focus");
     Check(nodes[1].controlType == "Slider" &&
             nodes[1].value == 4.0f && nodes[1].minimum == 0.0f &&
-            nodes[1].maximum == 10.0f && nodes[1].offscreen,
+            nodes[1].maximum == 10.0f && nodes[1].step == 0.5f &&
+            !nodes[1].rangeValueReadOnly && nodes[1].offscreen,
         "immediate sliders must expose bounded range state and effective clipping");
 }
 }

@@ -109,6 +109,7 @@ void PopulateValueState(const ViewNode& source,
         source.type == ViewNodeType::SearchBox)
     {
         target.valueText = source.inputValue;
+        target.valueReadOnly = false;
     }
     else if (source.type == ViewNodeType::NumberInput)
     {
@@ -116,6 +117,9 @@ void PopulateValueState(const ViewNode& source,
         target.value = source.value;
         target.minimum = source.minimum;
         target.maximum = source.maximum;
+        target.step = source.step;
+        target.valueReadOnly = false;
+        target.rangeValueReadOnly = false;
     }
     else if (source.type == ViewNodeType::Select ||
         source.type == ViewNodeType::RadioGroup)
@@ -131,6 +135,8 @@ void PopulateValueState(const ViewNode& source,
         target.value = source.value;
         target.minimum = source.minimum;
         target.maximum = source.maximum;
+        target.step = source.step;
+        target.rangeValueReadOnly = source.type != ViewNodeType::Slider;
     }
     else if (source.type == ViewNodeType::Text ||
         source.type == ViewNodeType::StyledText ||
@@ -280,8 +286,12 @@ bool CollectInteractionAccessibilityNodes(
             node.value = region.controlValue;
             node.minimum = region.minimum;
             node.maximum = region.maximum;
+            node.step = region.step;
             node.valueText = FormatNumber(region.controlValue);
+            node.rangeValueReadOnly = false;
         }
+        if (mapping.patterns == ViewAccessibilityPattern::Value)
+            node.valueReadOnly = false;
         if (region.hasExpandedProposal) node.expanded = region.expanded;
         if (!region.currentSelection.empty())
             node.valueText = region.currentSelection;

@@ -20,10 +20,13 @@ public:
         std::vector<LuaWidgetAccessibilitySnapshot>()>;
     using FocusProvider = std::function<bool(
         const std::wstring& widgetId, const std::string& nodeKey)>;
+    using ActionProvider = std::function<bool(
+        const LuaWidgetAccessibilityActionRequest& request)>;
 
     WidgetAccessibilityProviderHost(
         SnapshotProvider snapshotProvider,
-        FocusProvider focusProvider);
+        FocusProvider focusProvider,
+        ActionProvider actionProvider = {});
     ~WidgetAccessibilityProviderHost();
 
     WidgetAccessibilityProviderHost(
@@ -35,6 +38,7 @@ public:
     void DetachWindow(HWND window) noexcept;
     bool TryHandleGetObject(HWND window, WPARAM wParam, LPARAM lParam,
         LRESULT& result) const noexcept;
+    void RefreshEvents() noexcept;
 
     // Borrowed pointer for focused contract tests. Production callers use
     // TryHandleGetObject so UI Automation owns the marshalled reference.
