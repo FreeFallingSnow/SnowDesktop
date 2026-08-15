@@ -6,11 +6,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <array>
+#include <chrono>
 #include <functional>
 #include <map>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace snowdesktop::widget_runtime
@@ -293,6 +295,33 @@ struct ViewStyle
     std::optional<float> borderWidth;
     std::optional<float> cornerRadius;
     std::optional<float> opacity;
+
+    bool operator==(const ViewStyle&) const = default;
+};
+
+enum class ViewTransitionEasing
+{
+    Linear,
+    EaseIn,
+    EaseOut,
+    EaseInOut,
+};
+
+enum class ViewTransitionProperty
+{
+    Background,
+    Foreground,
+    BorderColor,
+    Opacity,
+};
+
+struct ViewTransition
+{
+    std::uint32_t durationMilliseconds = 120;
+    ViewTransitionEasing easing = ViewTransitionEasing::EaseOut;
+    std::vector<ViewTransitionProperty> properties;
+
+    bool operator==(const ViewTransition&) const = default;
 };
 
 struct ViewShadow
@@ -399,6 +428,7 @@ struct ViewNode
     ViewOverflow overflow = ViewOverflow::Visible;
     std::optional<ViewShadow> shadow;
     std::optional<ViewTransform> transform;
+    std::optional<ViewTransition> transition;
     float gap = 0.0f;
     std::size_t columns = 1;
     std::vector<ViewGridTrack> columnTracks;
@@ -568,6 +598,37 @@ struct ViewVirtualRange
 
 using ViewScrollOffsetResolver = std::function<float(
     std::string_view key, float maximum)>;
+
+class ViewTransitionRuntime
+{
+public:
+    using Clock = std::chrono::steady_clock;
+    using TimePoint = Clock::time_point;
+
+    void BeginFrame() noexcept;
+    ViewStyle Resolve(std::string_view key, const ViewStyle& target,
+        const std::optional<ViewTransition>& transition,
+        TimePoint now, bool reducedMotion);
+    void EndFrame();
+    bool Tick(TimePoint now) noexcept;
+    bool HasActive() const noexcept;
+    void Clear() noexcept;
+    std::size_t Size() const noexcept;
+
+private:
+    struct Entry
+    {
+        ViewStyle start;
+        ViewStyle target;
+        ViewTransition transition;
+        TimePoint started{};
+        std::uint64_t generation = 0;
+        bool active = false;
+    };
+
+    std::unordered_map<std::string, Entry> entries_;
+    std::uint64_t generation_ = 0;
+};
 
 struct ViewTreeLimits
 {

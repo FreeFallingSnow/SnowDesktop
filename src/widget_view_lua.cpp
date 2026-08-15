@@ -1129,6 +1129,110 @@ bool ReadTransformField(lua_State* state, int table,
 
 bool ReadStringArrayField(lua_State* state, int table, const char* field,
     std::vector<std::string>& values, std::size_t minimum,
+    std::size_t maximum, bool required, std::string& error);
+
+bool ReadTransitionField(lua_State* state, int table,
+    std::optional<ViewTransition>& transition, std::string& error)
+{
+    table = lua_absindex(state, table);
+    lua_getfield(state, table, "transition");
+    if (lua_isnil(state, -1))
+    {
+        lua_pop(state, 1);
+        return true;
+    }
+    if (!lua_istable(state, -1))
+    {
+        lua_pop(state, 1);
+        error = "view field 'transition' must be a table";
+        return false;
+    }
+    const int transitionTable = lua_absindex(state, -1);
+    ViewTransition parsed;
+    int duration = static_cast<int>(parsed.durationMilliseconds);
+    std::vector<std::string> propertyNames;
+    bool ok = ValidateObjectFields(state, transitionTable,
+            { "durationMs", "easing", "properties" },
+            "view transition", error) &&
+        ReadIntegerField(state, transitionTable, "durationMs",
+            duration, error) &&
+        ReadStringArrayField(state, transitionTable, "properties",
+            propertyNames, 1, 4, true, error);
+    if (ok)
+    {
+        lua_getfield(state, transitionTable, "easing");
+        if (!lua_isnil(state, -1) && lua_type(state, -1) != LUA_TSTRING)
+        {
+            error = "view transition easing must be a string";
+            ok = false;
+        }
+        else if (lua_type(state, -1) == LUA_TSTRING)
+        {
+            const std::string_view easing = lua_tostring(state, -1);
+            if (easing == "linear")
+                parsed.easing = ViewTransitionEasing::Linear;
+            else if (easing == "easeIn")
+                parsed.easing = ViewTransitionEasing::EaseIn;
+            else if (easing == "easeOut")
+                parsed.easing = ViewTransitionEasing::EaseOut;
+            else if (easing == "easeInOut")
+                parsed.easing = ViewTransitionEasing::EaseInOut;
+            else
+            {
+                error = "view transition easing must be linear, easeIn, easeOut, or easeInOut";
+                ok = false;
+            }
+        }
+        lua_pop(state, 1);
+    }
+    if (ok)
+    {
+        if (duration < 1 || duration > 2000)
+        {
+            error = "view transition durationMs must be between 1 and 2000";
+            ok = false;
+        }
+        else
+            parsed.durationMilliseconds =
+                static_cast<std::uint32_t>(duration);
+    }
+    if (ok)
+    {
+        for (const auto& name : propertyNames)
+        {
+            std::optional<ViewTransitionProperty> property;
+            if (name == "background")
+                property = ViewTransitionProperty::Background;
+            else if (name == "foreground")
+                property = ViewTransitionProperty::Foreground;
+            else if (name == "borderColor")
+                property = ViewTransitionProperty::BorderColor;
+            else if (name == "opacity")
+                property = ViewTransitionProperty::Opacity;
+            else
+            {
+                error = "view transition properties support background, foreground, borderColor, and opacity";
+                ok = false;
+                break;
+            }
+            if (std::find(parsed.properties.begin(), parsed.properties.end(),
+                    *property) != parsed.properties.end())
+            {
+                error = "view transition properties must be unique";
+                ok = false;
+                break;
+            }
+            parsed.properties.push_back(*property);
+        }
+    }
+    lua_pop(state, 1);
+    if (!ok) return false;
+    transition = std::move(parsed);
+    return true;
+}
+
+bool ReadStringArrayField(lua_State* state, int table, const char* field,
+    std::vector<std::string>& values, std::size_t minimum,
     std::size_t maximum, bool required, std::string& error)
 {
     table = lua_absindex(state, table);
@@ -2303,6 +2407,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadOverflowField(state, index, node.overflow, error) ||
         !ReadShadowField(state, index, node.shadow, error) ||
         !ReadTransformField(state, index, node.transform, error) ||
+        !ReadTransitionField(state, index, node.transition, error) ||
         !ReadFloatField(state, index, "gap", node.gap, error) ||
         !ReadGridTracksField(state, index, "columns",
             positionedGridNode, node.columns, node.columnTracks, error) ||

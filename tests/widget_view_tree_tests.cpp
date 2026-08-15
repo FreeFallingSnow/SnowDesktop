@@ -3037,6 +3037,96 @@ void TestBasicTransforms()
         "host input geometry and typography must follow cumulative transforms");
 }
 
+void TestVisualTransitionRuntime()
+{
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "Lua state must be available");
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    Check(luaL_dostring(state, R"lua(
+        return view.box({
+            key = "surface",
+            transition = {
+                durationMs = 200,
+                easing = "easeInOut",
+                properties = {
+                    "background", "foreground", "borderColor", "opacity",
+                },
+            },
+        })
+    )lua") == LUA_OK,
+        "visual transition Lua fixture must evaluate");
+    ViewNode parsed;
+    std::string error;
+    Check(ParseLuaViewTree(state, -1, parsed, error) && parsed.transition &&
+            parsed.transition->durationMilliseconds == 200 &&
+            parsed.transition->easing == ViewTransitionEasing::EaseInOut &&
+            parsed.transition->properties.size() == 4 &&
+            ValidateAndLayoutViewTree(parsed, 100.0f, 40.0f, error),
+        "Lua parsing must retain a bounded visual transition descriptor");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.box({ key = "duplicate-transition",
+            transition = {
+                properties = { "opacity", "opacity" },
+            },
+        })
+    )lua") == LUA_OK,
+        "duplicate transition property fixture must evaluate");
+    Check(!ParseLuaViewTree(state, -1, parsed, error) &&
+            error.find("unique") != std::string::npos,
+        "duplicate transition properties must reject the atomic tree parse");
+    lua_close(state);
+
+    ViewTransition transition;
+    transition.durationMilliseconds = 100;
+    transition.easing = ViewTransitionEasing::Linear;
+    transition.properties = {
+        ViewTransitionProperty::Background,
+        ViewTransitionProperty::Opacity,
+    };
+    ViewStyle start;
+    start.background = 0x000000;
+    start.opacity = 1.0f;
+    ViewStyle target = start;
+    target.background = 0xFFFFFF;
+    target.opacity = 0.0f;
+    ViewTransitionRuntime runtime;
+    const auto origin = ViewTransitionRuntime::TimePoint{};
+    runtime.BeginFrame();
+    Check(runtime.Resolve("surface", start, transition, origin, false) ==
+            start,
+        "the first observed transition target must render without animation");
+    runtime.EndFrame();
+    runtime.BeginFrame();
+    const ViewStyle initial = runtime.Resolve(
+        "surface", target, transition, origin, false);
+    runtime.EndFrame();
+    Check(initial == start && runtime.HasActive(),
+        "a changed visual target must begin from the last presentation");
+    runtime.BeginFrame();
+    const ViewStyle middle = runtime.Resolve("surface", target, transition,
+        origin + std::chrono::milliseconds(50), false);
+    runtime.EndFrame();
+    Check(middle.background == 0x808080u && middle.opacity &&
+            Near(*middle.opacity, 0.5f),
+        "linear visual transitions must interpolate color channels and opacity");
+    Check(runtime.Tick(origin + std::chrono::milliseconds(100)) &&
+            !runtime.HasActive(),
+        "the host transition clock must retire a completed animation");
+    runtime.BeginFrame();
+    Check(runtime.Resolve("surface", start, transition,
+            origin + std::chrono::milliseconds(110), true) == start &&
+            !runtime.HasActive(),
+        "reduced motion must snap a changed target without scheduling frames");
+    runtime.EndFrame();
+    runtime.BeginFrame();
+    runtime.EndFrame();
+    Check(runtime.Size() == 0,
+        "transition runtime must release nodes not observed in the next frame");
+}
+
 void TestVisibilityStates()
 {
     lua_State* state = luaL_newstate();
@@ -3123,6 +3213,7 @@ int main()
     TestStackPositioningAndClipping();
     TestTextLocaleValidation();
     TestBasicTransforms();
+    TestVisualTransitionRuntime();
     TestVisibilityStates();
     std::cout << "Widget view tree tests passed\n";
     return 0;

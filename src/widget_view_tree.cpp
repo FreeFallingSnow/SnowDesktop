@@ -1901,6 +1901,39 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
                     *style.cornerRadius, 0.0f, 4096.0f)) &&
             (!style.opacity || FiniteInRange(*style.opacity, 0.0f, 1.0f));
     };
+    if (node.transition)
+    {
+        if (node.transition->durationMilliseconds < 1 ||
+            node.transition->durationMilliseconds > 2000 ||
+            node.transition->properties.empty() ||
+            node.transition->properties.size() > 4)
+        {
+            error = "view transition must contain 1 to 4 properties and a duration from 1 to 2000ms";
+            return false;
+        }
+        std::array<bool, 4> seen{};
+        for (const auto property : node.transition->properties)
+        {
+            const auto index = static_cast<std::size_t>(property);
+            if (index >= seen.size() || seen[index])
+            {
+                error = "view transition properties must be supported and unique";
+                return false;
+            }
+            seen[index] = true;
+        }
+        switch (node.transition->easing)
+        {
+        case ViewTransitionEasing::Linear:
+        case ViewTransitionEasing::EaseIn:
+        case ViewTransitionEasing::EaseOut:
+        case ViewTransitionEasing::EaseInOut:
+            break;
+        default:
+            error = "view transition easing is unsupported";
+            return false;
+        }
+    }
     if (node.maximumLines > 64)
     {
         error = "view maxLines must be between 0 and 64";
@@ -3648,6 +3681,98 @@ bool ValidateTransforms(const ViewNode& node,
         if (!ValidateTransforms(child, current, error)) return false;
     return true;
 }
+
+bool HasTransitionProperty(const ViewTransition& transition,
+    ViewTransitionProperty property) noexcept
+{
+    return std::find(transition.properties.begin(),
+        transition.properties.end(), property) !=
+        transition.properties.end();
+}
+
+float ResolveTransitionProgress(ViewTransitionEasing easing,
+    float progress) noexcept
+{
+    progress = std::clamp(progress, 0.0f, 1.0f);
+    switch (easing)
+    {
+    case ViewTransitionEasing::EaseIn:
+        return progress * progress;
+    case ViewTransitionEasing::EaseOut:
+        return 1.0f - (1.0f - progress) * (1.0f - progress);
+    case ViewTransitionEasing::EaseInOut:
+        return progress < 0.5f
+            ? 2.0f * progress * progress
+            : 1.0f - 2.0f * (1.0f - progress) * (1.0f - progress);
+    default:
+        return progress;
+    }
+}
+
+std::uint32_t InterpolateTransitionColor(
+    std::uint32_t start, std::uint32_t target, float progress) noexcept
+{
+    const auto channel = [progress](std::uint32_t from,
+        std::uint32_t to) {
+        return static_cast<std::uint32_t>(std::lround(
+            static_cast<float>(from) +
+            (static_cast<float>(to) - static_cast<float>(from)) *
+                progress));
+    };
+    return (channel((start >> 16) & 0xFF, (target >> 16) & 0xFF) << 16) |
+        (channel((start >> 8) & 0xFF, (target >> 8) & 0xFF) << 8) |
+        channel(start & 0xFF, target & 0xFF);
+}
+
+bool HasTransitionDifference(const ViewStyle& start,
+    const ViewStyle& target, const ViewTransition& transition) noexcept
+{
+    const auto changedColor = [](const auto& first, const auto& second) {
+        return first && second && first != second;
+    };
+    return (HasTransitionProperty(transition,
+                ViewTransitionProperty::Background) &&
+            changedColor(start.background, target.background)) ||
+        (HasTransitionProperty(transition,
+                ViewTransitionProperty::Foreground) &&
+            changedColor(start.foreground, target.foreground)) ||
+        (HasTransitionProperty(transition,
+                ViewTransitionProperty::BorderColor) &&
+            changedColor(start.borderColor, target.borderColor)) ||
+        (HasTransitionProperty(transition,
+                ViewTransitionProperty::Opacity) &&
+            start.opacity.value_or(1.0f) != target.opacity.value_or(1.0f));
+}
+
+ViewStyle InterpolateTransitionStyle(const ViewStyle& start,
+    const ViewStyle& target, const ViewTransition& transition,
+    float progress) noexcept
+{
+    ViewStyle result = target;
+    progress = ResolveTransitionProgress(transition.easing, progress);
+    const auto applyColor = [progress](const auto& from, const auto& to,
+        auto& output) {
+        if (from && to)
+            output = InterpolateTransitionColor(*from, *to, progress);
+    };
+    if (HasTransitionProperty(
+            transition, ViewTransitionProperty::Background))
+        applyColor(start.background, target.background, result.background);
+    if (HasTransitionProperty(
+            transition, ViewTransitionProperty::Foreground))
+        applyColor(start.foreground, target.foreground, result.foreground);
+    if (HasTransitionProperty(
+            transition, ViewTransitionProperty::BorderColor))
+        applyColor(start.borderColor, target.borderColor, result.borderColor);
+    if (HasTransitionProperty(
+            transition, ViewTransitionProperty::Opacity))
+    {
+        const float from = start.opacity.value_or(1.0f);
+        const float to = target.opacity.value_or(1.0f);
+        result.opacity = from + (to - from) * progress;
+    }
+    return result;
+}
 }
 
 ViewRect ViewNodeContentRect(const ViewNode& node) noexcept
@@ -3708,6 +3833,124 @@ void ApplyViewTransform(const ViewNode& root,
             (region.vertical ? transform.translateY : transform.translateX);
         region.controlLength *= transform.scale;
     }
+}
+
+void ViewTransitionRuntime::BeginFrame() noexcept
+{
+    if (++generation_ == 0)
+    {
+        generation_ = 1;
+        for (auto& [key, entry] : entries_)
+        {
+            (void)key;
+            entry.generation = 0;
+        }
+    }
+}
+
+ViewStyle ViewTransitionRuntime::Resolve(std::string_view key,
+    const ViewStyle& target,
+    const std::optional<ViewTransition>& transition,
+    TimePoint now, bool reducedMotion)
+{
+    if (key.empty()) return target;
+    const ViewTransition configured = transition.value_or(ViewTransition{});
+    auto [position, inserted] = entries_.try_emplace(std::string(key));
+    Entry& entry = position->second;
+    entry.generation = generation_;
+    if (inserted)
+    {
+        entry.start = target;
+        entry.target = target;
+        entry.transition = configured;
+        return target;
+    }
+
+    const auto presentation = [&entry, now]() {
+        if (!entry.active || entry.transition.durationMilliseconds == 0)
+            return entry.target;
+        const auto elapsed = std::chrono::duration_cast<
+            std::chrono::duration<float, std::milli>>(
+                now - entry.started).count();
+        const float progress = elapsed /
+            static_cast<float>(entry.transition.durationMilliseconds);
+        return InterpolateTransitionStyle(entry.start, entry.target,
+            entry.transition, progress);
+    };
+    const bool targetChanged = entry.target != target;
+    const bool configurationChanged = entry.transition != configured;
+    if (targetChanged)
+    {
+        entry.start = presentation();
+        entry.target = target;
+        entry.transition = configured;
+        entry.started = now;
+        entry.active = transition.has_value() && !reducedMotion &&
+            HasTransitionDifference(
+                entry.start, entry.target, entry.transition);
+    }
+    else if (configurationChanged || reducedMotion)
+    {
+        entry.transition = configured;
+        entry.active = false;
+        entry.start = target;
+    }
+    if (!entry.active) return target;
+    const auto elapsed = std::chrono::duration_cast<
+        std::chrono::duration<float, std::milli>>(
+            now - entry.started).count();
+    if (elapsed >= static_cast<float>(
+            entry.transition.durationMilliseconds))
+    {
+        entry.active = false;
+        entry.start = target;
+        return target;
+    }
+    return InterpolateTransitionStyle(entry.start, entry.target,
+        entry.transition, elapsed /
+            static_cast<float>(entry.transition.durationMilliseconds));
+}
+
+void ViewTransitionRuntime::EndFrame()
+{
+    std::erase_if(entries_, [this](const auto& item) {
+        return item.second.generation != generation_;
+    });
+}
+
+bool ViewTransitionRuntime::Tick(TimePoint now) noexcept
+{
+    bool hadActive = false;
+    for (auto& [key, entry] : entries_)
+    {
+        (void)key;
+        if (!entry.active) continue;
+        hadActive = true;
+        if (now - entry.started >= std::chrono::milliseconds(
+                entry.transition.durationMilliseconds))
+        {
+            entry.active = false;
+            entry.start = entry.target;
+        }
+    }
+    return hadActive;
+}
+
+bool ViewTransitionRuntime::HasActive() const noexcept
+{
+    return std::any_of(entries_.begin(), entries_.end(),
+        [](const auto& item) { return item.second.active; });
+}
+
+void ViewTransitionRuntime::Clear() noexcept
+{
+    entries_.clear();
+    generation_ = 0;
+}
+
+std::size_t ViewTransitionRuntime::Size() const noexcept
+{
+    return entries_.size();
 }
 
 static bool InteractionRegionOverlapsClip(
