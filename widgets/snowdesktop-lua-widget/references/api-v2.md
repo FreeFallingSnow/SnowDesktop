@@ -108,6 +108,7 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.grid.tracks` 提供受限 fixed/auto/fr/minmax 列轨和行轨，
 `view.flow.wrap` 提供横向换行 `flow`。
 `view.scroll` 提供宿主滚动视口，`view.collection.basic` 提供基础集合，
+`view.collection.orientation` 提供普通 list 横纵方向，
 `view.collection.selection` 提供受控单选/多选，`view.collection.contentStates` 提供空态/加载态，
 `view.collection.virtual` 提供固定行高虚拟集合与可见范围查询；
 `view.styledText.basic` 提供有界样式 span，`view.monthCalendar` 提供受控月历日期网格，
@@ -395,12 +396,15 @@ Windows UI Automation Scroll Pattern 可以通过同一宿主滚动状态移动�
 UIA 滚动从末端之前首次到达最大偏移时投递一次 action，离开末端后可再次触发。没有可滚动范围、
 已位于末端的重复输入和渲染时偏移钳制不会重复投递；UIA 来源为 `accessibility` 且不携带可信手势。
 
-`list` 是纵向有界集合，`gridList` 是要求 `columns=1..64` 的行优先等宽集合；两者的直接
+`list` 是默认纵向的有界集合；探测 `view.collection.orientation` 后可声明
+`orientation="horizontal"|"vertical"`，横向会同时改变固有尺寸、basis/grow/shrink 分配和条目
+位置，但声明、键盘与语义顺序保持不变。`gridList` 是要求 `columns=1..64` 的行优先等宽集合；两者的直接
 子节点必须全部是 `listItem`。每个 `listItem` 要求全树唯一稳定 key、只含一个可见内容子节点
 （额外隐藏节点也会拒绝）和 `accessibility.label`，可以使用 `action`/`events.click`、doubleClick、pointer 状态与
 独立 contextMenu；宿主默认赋予 `listitem` 语义。一个树最多 256 个 listItem，仍受 512
 总节点和 256 交互区域上限约束。对应 feature 为 `view.collection.basic`。这是非虚拟化
 基础集合；大量或远程分页数据应使用下述 `virtualList/virtualGrid`，不能通过超配额树模拟。
+`gridList/virtualList/virtualGrid` 不接受 orientation；虚拟集合仍是固定行高的纵向范围模型。
 
 探测 `view.collection.selection` 后，四种集合容器都可声明
 `selectionMode="none"|"single"|"multiple"` 和受控 `selectedKeys`。非虚拟集合的键必须

@@ -765,7 +765,9 @@ float RawIntrinsicWidth(const ViewNode& node)
         return result + ViewHorizontalPadding(node);
     }
     float result = 0.0f;
-    if (IsFlexContainer(node.type) && IsHorizontalFlex(node))
+    if ((IsFlexContainer(node.type) && IsHorizontalFlex(node)) ||
+        (node.type == ViewNodeType::List &&
+            node.orientation == ViewOrientation::Horizontal))
     {
         std::size_t visible = 0;
         for (const auto& child : node.children)
@@ -949,7 +951,8 @@ float RawIntrinsicHeight(const ViewNode& node)
     }
     float result = 0.0f;
     if ((IsFlexContainer(node.type) && !IsHorizontalFlex(node)) ||
-        node.type == ViewNodeType::List ||
+        (node.type == ViewNodeType::List &&
+            node.orientation == ViewOrientation::Vertical) ||
         (IsFlexContainer(node.type) &&
             node.flexWrap != ViewFlexWrap::NoWrap))
     {
@@ -1842,7 +1845,8 @@ void LayoutNode(ViewNode& node, const ViewRect& frame)
             LayoutLinear(node, content, horizontal);
     }
     else if (node.type == ViewNodeType::List)
-        LayoutLinear(node, content, false);
+        LayoutLinear(node, content,
+            node.orientation == ViewOrientation::Horizontal);
     else if (IsVirtualCollection(node.type))
         LayoutVirtualCollection(node, content);
     else if (IsGridContainer(node.type))

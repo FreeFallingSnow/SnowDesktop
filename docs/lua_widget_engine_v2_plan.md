@@ -1084,7 +1084,9 @@ SnowDesktop 不照搬某一个框架，参考优先级如下：
 当前实现进度（2026-08-15）：`view.scroll` 已覆盖最多 32 个宿主管理的纵向/横向
 有界视口，统一保存偏移、钳制、滚轮、滚动条、绘制 clip 与交互 clip；
 `view.collection.basic` 已覆盖非虚拟 `list/gridList/listItem`，限制 256 个稳定项，
-每项有独立 action、hover、菜单目标与 listitem 语义；`view.collection.virtual` 进一步
+每项有独立 action、hover、菜单目标与 listitem 语义；`view.collection.orientation` 已让普通
+list 支持默认纵向与显式横向，并让固有尺寸、flex 分配和条目位置使用同一主轴；grid 与虚拟集合
+保持行优先纵向模型并拒绝 orientation。`view.collection.virtual` 进一步
 提供固定行高 `virtualList/virtualGrid` 和 `view.virtualRange`，按实例滚动位置只实体化
 最多 128 个连续项，宿主按全局 1-based 索引布局并校验窗口覆盖可见行。可操作的已实体化项
 已进入通用键盘焦点序列；`view.collection.selection` 又加入父集合统一拥有的 none/single/

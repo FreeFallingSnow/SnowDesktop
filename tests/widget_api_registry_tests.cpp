@@ -423,6 +423,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "view.collection.contentStates") &&
             snowdesktop::widget_api::SupportsFeature(
+                "view.collection.orientation") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "view.collection.selection") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.collection.virtual") &&

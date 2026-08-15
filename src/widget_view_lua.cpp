@@ -1821,9 +1821,10 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         return false;
     }
     if (!dividerNode && !radioNode && !sliderNode && !scrollNode &&
+        node.type != ViewNodeType::List &&
         FieldPresent(state, index, "orientation"))
     {
-        error = "only divider, radioGroup, slider, and scroll nodes accept orientation";
+        error = "only divider, radioGroup, slider, scroll, and list nodes accept orientation";
         return false;
     }
     if (!gridNode && FieldPresent(state, index, "columns"))
@@ -2352,6 +2353,9 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     }
 
     if (scrollContainerNode && !FieldPresent(state, index, "orientation"))
+        node.orientation = ViewOrientation::Vertical;
+    if (node.type == ViewNodeType::List &&
+        !FieldPresent(state, index, "orientation"))
         node.orientation = ViewOrientation::Vertical;
 
     if (dividerNode && node.orientation == ViewOrientation::Vertical)

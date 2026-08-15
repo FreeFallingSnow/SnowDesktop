@@ -237,7 +237,7 @@
 ---@field alt? string Required by image and referenceIcon nodes; use an empty string for decorative visuals.
 ---@field iconFont? 'fa'|'fluent'|'fluent-regular'
 ---@field shape? 'rectangle'|'roundedRectangle'|'circle'|'ellipse'
----@field orientation? 'horizontal'|'vertical' Divider direction, radioGroup/slider axis, or scroll axis; scroll defaults to vertical.
+---@field orientation? 'horizontal'|'vertical' Divider, radioGroup/slider, scroll, or eager list axis; scroll and list default to vertical.
 ---@field value? number|string Numeric progress/slider/numberInput value, or controlled textInput/textArea/searchBox string.
 ---@field values? number[] Required by data-series nodes; 1 to 512 finite samples, with at most 4096 samples across one tree.
 ---@field min? number Explicit data-series, slider, or numberInput minimum; defaults to 0 for controls.
@@ -746,7 +746,7 @@ function view.stack(options) end
 ---@return SnowViewNode
 function view.scroll(options) end
 
----Bounded vertical collection whose direct children are listItem nodes. Requires view.collection.basic.
+---Bounded vertical-by-default collection whose direct children are listItem nodes. Horizontal orientation requires view.collection.orientation.
 ---@param options SnowViewNodeOptions
 ---@return SnowViewNode
 function view.list(options) end

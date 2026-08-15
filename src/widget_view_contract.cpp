@@ -248,7 +248,7 @@ bool ViewNodeAllowsProperty(
     if (property == "orientation")
         return IsType(type, { ViewNodeType::Divider,
             ViewNodeType::RadioGroup, ViewNodeType::Slider,
-            ViewNodeType::Scroll });
+            ViewNodeType::Scroll, ViewNodeType::List });
     if (property == "value")
         return IsProgress(type) || type == ViewNodeType::Slider ||
             IsInput(type);

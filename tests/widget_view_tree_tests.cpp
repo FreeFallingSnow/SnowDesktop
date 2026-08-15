@@ -1289,6 +1289,7 @@ void TestScrollableCollections()
             root.orientation == ViewOrientation::Vertical &&
             root.children.size() == 1 &&
             root.children[0].type == ViewNodeType::List &&
+            root.children[0].orientation == ViewOrientation::Vertical &&
             root.events.at("scrollEnd").id == "feed.end" &&
             root.children[0].children.size() == 3 &&
             root.children[0].children[0].type ==
@@ -1465,6 +1466,74 @@ void TestScrollableCollections()
             Near(viewports[0].maximum, 140.0f) &&
             Near(horizontal.children[0].frame.x, -60.0f),
         "horizontal scroll must translate content on the x axis");
+}
+
+void TestListOrientation()
+{
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "Lua state must be available");
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    Check(luaL_dostring(state, R"lua(
+        return view.stack({
+            key = "host",
+            children = {
+                view.list({
+                    key = "horizontal-items",
+                    orientation = "horizontal",
+                    width = "auto",
+                    alignSelf = "start",
+                    gap = 4,
+                    children = {
+                        view.listItem({
+                            key = "first", width = 40, height = 30,
+                            accessibility = { label = "First" },
+                            children = {
+                                view.text({ key = "first-label", text = "First" }),
+                            },
+                        }),
+                        view.listItem({
+                            key = "second", width = 60, height = 30,
+                            accessibility = { label = "Second" },
+                            children = {
+                                view.text({ key = "second-label", text = "Second" }),
+                            },
+                        }),
+                    },
+                }),
+            },
+        })
+    )lua") == LUA_OK,
+        "horizontal list fixture must evaluate");
+    ViewNode horizontal;
+    std::string error;
+    Check(ParseLuaViewTree(state, -1, horizontal, error) &&
+            horizontal.children.size() == 1 &&
+            horizontal.children[0].orientation ==
+                ViewOrientation::Horizontal,
+        "horizontal list orientation must parse");
+    Check(ValidateAndLayoutViewTree(horizontal, 200.0f, 50.0f, error),
+        "horizontal list orientation must validate and lay out");
+    Check(Near(horizontal.children[0].frame.width, 104.0f) &&
+            Near(horizontal.children[0].frame.height, 30.0f),
+        "horizontal list orientation must drive intrinsic size");
+    Check(Near(horizontal.children[0].children[0].frame.x, 0.0f) &&
+            Near(horizontal.children[0].children[1].frame.x, 44.0f) &&
+            Near(horizontal.children[0].children[1].frame.y,
+                horizontal.children[0].children[0].frame.y),
+        "horizontal list orientation must place items on the x axis");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.gridList({ key = "grid", columns = 1,
+            orientation = "horizontal", children = {} })
+    )lua") == LUA_OK,
+        "unsupported collection orientation fixture must evaluate");
+    ViewNode invalid;
+    Check(!ParseLuaViewTree(state, -1, invalid, error) &&
+            error.find("accept orientation") != std::string::npos,
+        "grid and virtual collection orientation must stay rejected");
+    lua_close(state);
 }
 
 void TestVirtualizedCollections()
@@ -2834,6 +2903,7 @@ int main()
     TestUniformGridParsingAndLayout();
     TestFlowParsingAndLayout();
     TestScrollableCollections();
+    TestListOrientation();
     TestVirtualizedCollections();
     TestCollectionContentStates();
     TestDeclarativeInputControls();
