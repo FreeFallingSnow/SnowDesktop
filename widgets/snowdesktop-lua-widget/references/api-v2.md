@@ -245,6 +245,12 @@ view.searchBox({
 菜单；组件收到 click/change 后应更新 model 并 invalidate。当前弹层仍受组件及父滚动视口
 裁剪，跨组件表面的通用 popover 属于后续宿主 surface API。
 
+`textInput/textArea/searchBox/numberInput` 可设置 `readOnly=true`。只读输入仍可获得焦点、
+移动光标、选择并复制文字，也可触发 focus/blur/submit；宿主会拒绝键入、IME 提交、粘贴、
+剪切删除、退格/Delete、数字方向键步进以及 UI Automation SetValue。只读输入不要求
+`action/events.change`，即使作者提供也不会因用户编辑触发。`enabled=false` 仍表示完全禁用，
+与只读语义不同。对应能力包含在 `view.inputControls`。
+
 `view.keyboardNavigation.basic` 只作用于桌面 surface 中当前唯一选中的 Lua 组件。宿主按照最后一棵
 成功提交的交互树顺序收集启用的可点击节点、受控控件和文本输入：Tab/Shift+Tab 循环焦点，
 方向键按元素几何位置移动焦点，Enter/空格激活按钮、链接、选择控件等，Escape 清除焦点；滑块

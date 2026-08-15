@@ -182,11 +182,15 @@ Probe `view.layout.constraints` before using numeric `minWidth`, `maxWidth`,
 ratios within 0.01 through 100, and do not declare mutually incompatible
 constraints or mismatched fixed width and height.
 Probe `view.keyboardNavigation.basic` for ordinary actionable declarative
-nodes and storage-bound immediate text controls. The subset still does not
-provide UI Automation, variable-height
-virtualization, or the complete `view.tree` contract. Optional
+nodes and storage-bound immediate text controls. The subset does not provide
+custom tab order, raw key bindings, variable-height virtualization, or the
+complete `view.tree` contract. Optional
 `menu(context, model, request)` builds an element's synchronous native context
 menu.
+Use `readOnly=true` on text-like or numeric declarative inputs that should
+remain focusable, selectable, and copyable without accepting any mutation.
+A read-only input does not need a change action; do not emulate it with
+`enabled=false`.
 
 ## Manifest rules
 

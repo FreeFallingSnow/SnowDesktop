@@ -87,7 +87,9 @@ void TestRepresentativeApplicability()
             !ViewNodeAllowsProperty(ViewNodeType::ReferenceIcon, "source"),
         "package images and opaque reference icons must remain distinct");
     Check(ViewNodeAllowsProperty(ViewNodeType::TextInput, "liveUpdate") &&
-            !ViewNodeAllowsProperty(ViewNodeType::Button, "liveUpdate"),
+            ViewNodeAllowsProperty(ViewNodeType::TextArea, "readOnly") &&
+            !ViewNodeAllowsProperty(ViewNodeType::Button, "liveUpdate") &&
+            !ViewNodeAllowsProperty(ViewNodeType::Select, "readOnly"),
         "input editing properties must be scoped to input nodes");
     Check(ViewNodeAllowsProperty(ViewNodeType::Button, "focusStyle") &&
             ViewNodeAllowsProperty(ViewNodeType::Text, "disabledStyle"),

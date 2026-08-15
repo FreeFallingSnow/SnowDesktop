@@ -1096,6 +1096,9 @@ focus/blur/submit、提交模式、字节上限、数字有效性和方向键 st
 已由 `view.keyboardNavigation.basic` 覆盖；当前仍缺 UIA Pattern 和可逃逸父 surface 的
 popover，因此这里只发布细粒度 feature，不能把
 五类控件计作第 13.4 节“控件契约完整”。
+四类文本/数值输入现已支持 `readOnly`：仍保留焦点、选择、复制和 submit，但统一阻止键入、
+IME、粘贴/剪切删除、退格/Delete、数值步进和 UIA SetValue；只读节点不再强制声明不会触发的
+change 动作。`select` 的只读语义未混入本批次，继续使用受控 expanded/selection 或 enabled。
 
 同日后续实现已增加 `view.styledText.basic` 与 `view.monthCalendar`。前者提供 1–64 个
 有界样式 span，并由单个 DirectWrite layout 完成颜色、字号、粗体、斜体、下划线、删除线、

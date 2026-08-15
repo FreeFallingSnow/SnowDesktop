@@ -16359,6 +16359,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                             };
                         }
                         control.enabled = input.enabled;
+                        control.readOnly = input.readOnly;
                         control.controlled = true;
                         control.numeric = input.type ==
                             snowdesktop::widget_runtime::
@@ -20861,6 +20862,7 @@ void WidgetEngine::RuntimeRegisterHostControl(const std::wstring& widgetId,
         focusedHostInput_.id == control.id)
     {
         focusedHostInput_.controlled = control.controlled;
+        focusedHostInput_.readOnly = control.readOnly;
         focusedHostInput_.numeric = control.numeric;
         focusedHostInput_.changeAction = control.changeAction;
         focusedHostInput_.focusAction = control.focusAction;
@@ -20989,6 +20991,7 @@ bool WidgetEngine::RuntimeFocusHostInput(const std::wstring& widgetId,
         }
         focusedHostInput_.multiline = found->multiline;
         focusedHostInput_.controlled = found->controlled;
+        focusedHostInput_.readOnly = found->readOnly;
         focusedHostInput_.numeric = found->numeric;
         focusedHostInput_.changeAction = found->changeAction;
         focusedHostInput_.focusAction = found->focusAction;
@@ -21021,6 +21024,7 @@ bool WidgetEngine::RuntimeFocusHostInput(const std::wstring& widgetId,
     focusedHostInput_.liveUpdate = found->liveUpdate;
     focusedHostInput_.multiline = found->multiline;
     focusedHostInput_.controlled = found->controlled;
+    focusedHostInput_.readOnly = found->readOnly;
     focusedHostInput_.numeric = found->numeric;
     focusedHostInput_.changeAction = found->changeAction;
     focusedHostInput_.focusAction = found->focusAction;
@@ -21805,13 +21809,13 @@ WidgetEngine::RuntimeAccessibilitySnapshots() const
                     : RuntimeGetStorageValue(
                         widget.widgetId, control->storageKey);
             }
-            node.valueReadOnly = false;
+            node.valueReadOnly = control->readOnly;
             if (control->numeric)
             {
                 node.minimum = control->minimum;
                 node.maximum = control->maximum;
                 node.step = control->step;
-                node.rangeValueReadOnly = false;
+                node.rangeValueReadOnly = control->readOnly;
                 float parsed = 0.0f;
                 const auto parsedResult = std::from_chars(
                     node.valueText.data(),
@@ -21885,7 +21889,9 @@ bool WidgetEngine::RuntimePerformAccessibilityAction(
                         LuaWidget::HostControl::Type::Input &&
                     candidate.id == request.nodeKey;
             });
-        if (control == widget.hostControls.rend() || !control->enabled ||
+        if (control == widget.hostControls.rend() ||
+            !snowdesktop::widget_runtime::HostInputAllowsMutation(
+                control->enabled, control->readOnly) ||
             (!control->controlled && control->storageKey.empty()) ||
             !snowdesktop::widget_runtime::HostTextReplacementFits(
                 {}, 0, 0, value, control->maximumUtf8Bytes))
@@ -22244,6 +22250,13 @@ bool WidgetEngine::SetHostInputComposition(
 {
     if (!focusedHostInput_.active)
         return false;
+    if (!snowdesktop::widget_runtime::HostInputAllowsMutation(
+            true, focusedHostInput_.readOnly))
+    {
+        focusedHostInput_.compositionText.clear();
+        focusedHostInput_.compositionCursor = 0;
+        return true;
+    }
     focusedHostInput_.pendingHighSurrogate = 0;
     const size_t boundedCursor = std::min(
         focusedHostInput_.cursor, focusedHostInput_.text.size());
@@ -22275,6 +22288,13 @@ bool WidgetEngine::CommitHostInputComposition(
 {
     if (!focusedHostInput_.active)
         return false;
+    if (!snowdesktop::widget_runtime::HostInputAllowsMutation(
+            true, focusedHostInput_.readOnly))
+    {
+        focusedHostInput_.compositionText.clear();
+        focusedHostInput_.compositionCursor = 0;
+        return true;
+    }
     focusedHostInput_.pendingHighSurrogate = 0;
 
     const std::wstring previousText = focusedHostInput_.text;
@@ -22335,6 +22355,8 @@ bool WidgetEngine::HandleHostInputChar(wchar_t ch)
 {
     if (!focusedHostInput_.active || ch < 0x20 || ch == 0x7F)
         return false;
+    if (!snowdesktop::widget_runtime::HostInputAllowsMutation(
+            true, focusedHostInput_.readOnly)) return true;
     if (ch >= 0xD800 && ch <= 0xDBFF)
     {
         focusedHostInput_.pendingHighSurrogate = ch;
@@ -22476,6 +22498,8 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
             RuntimeInvalidateHost(focusedHostInput_.widgetId);
             return true;
         }
+        if (!snowdesktop::widget_runtime::HostInputAllowsMutation(
+                true, focusedHostInput_.readOnly)) return true;
         focusedHostInput_.cursor = nextCursor;
         focusedHostInput_.selectionAnchor =
             focusedHostInput_.cursor;
@@ -22517,11 +22541,15 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
             }
             CloseClipboard();
         }
-        if (key == 'X' && copied)
+        if (key == 'X' && copied &&
+            snowdesktop::widget_runtime::HostInputAllowsMutation(
+                true, focusedHostInput_.readOnly))
             changed = eraseSelection();
     }
     else if (ctrl && key == 'V')
     {
+        if (!snowdesktop::widget_runtime::HostInputAllowsMutation(
+                true, focusedHostInput_.readOnly)) return true;
         std::wstring pasted;
         bool pasteExceededLimit = false;
         const std::size_t pasteUnitLimit =
@@ -22577,6 +22605,8 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
     }
     else if (key == VK_BACK)
     {
+        if (!snowdesktop::widget_runtime::HostInputAllowsMutation(
+                true, focusedHostInput_.readOnly)) return true;
         changed = eraseSelection();
         if (!changed && focusedHostInput_.cursor > 0)
         {
@@ -22588,6 +22618,8 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
     }
     else if (key == VK_DELETE)
     {
+        if (!snowdesktop::widget_runtime::HostInputAllowsMutation(
+                true, focusedHostInput_.readOnly)) return true;
         changed = eraseSelection();
         if (!changed &&
             focusedHostInput_.cursor < focusedHostInput_.text.size())
@@ -22598,7 +22630,8 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
             changed = true;
         }
     }
-    else if (focusedHostInput_.numeric &&
+    else if (snowdesktop::widget_runtime::HostInputAllowsMutation(
+            true, focusedHostInput_.readOnly) && focusedHostInput_.numeric &&
         (key == VK_UP || key == VK_DOWN))
     {
         wchar_t* end = nullptr;

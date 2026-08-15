@@ -1698,11 +1698,15 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
     }
     else if (IsControlledNode(node.type))
     {
-        if (!node.events.contains("change") ||
+        const bool changeRequired =
+            !IsInputNode(node.type) || !node.readOnly;
+        if ((changeRequired && !node.events.contains("change")) ||
             node.events.contains("click"))
         {
             error = std::string(ViewNodeTypeName(node.type)) +
-                " nodes require change and reject click";
+                (changeRequired
+                    ? " nodes require change and reject click"
+                    : " nodes reject click");
             return false;
         }
     }
@@ -2112,13 +2116,15 @@ bool CollectInputs(const ViewNode& node,
         control.fontSize = node.fontSize;
         control.padding = node.padding;
         control.enabled = node.enabled;
+        control.readOnly = node.readOnly;
         control.selectAll = node.selectAll;
         control.liveUpdate = node.liveUpdate;
         control.maximumUtf8Bytes = node.maximumUtf8Bytes;
         control.minimum = node.minimum;
         control.maximum = node.maximum;
         control.step = node.step;
-        control.changeAction = node.events.at("change");
+        if (const auto action = node.events.find("change");
+            action != node.events.end()) control.changeAction = action->second;
         if (const auto action = node.events.find("focus");
             action != node.events.end()) control.focusAction = action->second;
         if (const auto action = node.events.find("blur");

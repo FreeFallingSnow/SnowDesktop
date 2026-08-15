@@ -60,7 +60,7 @@ constexpr auto kProperties = std::to_array<std::string_view>({
     "source", "font", "fit", "alignment", "interpolation", "alt",
     "shape", "orientation", "value", "values", "min", "max", "step",
     "options", "selectedValue", "placeholder", "expanded", "selectAll",
-    "liveUpdate", "maxBytes", "year", "month", "firstDayOfWeek",
+    "liveUpdate", "readOnly", "maxBytes", "year", "month", "firstDayOfWeek",
     "selectedDate", "todayDate", "eventDates", "weekdayLabels",
     "showAdjacentDates", "binding", "collection", "revision", "reference",
     "child", "thickness", "trackOpacity", "fillOpacity", "width", "height",
@@ -241,6 +241,7 @@ bool ViewNodeAllowsProperty(
     if (property == "expanded") return type == ViewNodeType::Select;
     if (property == "selectAll" || property == "liveUpdate" ||
         property == "maxBytes") return IsInput(type);
+    if (property == "readOnly") return IsInput(type);
     if (property == "year" || property == "month" ||
         property == "firstDayOfWeek" || property == "selectedDate" ||
         property == "todayDate" || property == "eventDates" ||

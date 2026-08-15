@@ -23,6 +23,8 @@ private:
 
 std::size_t Utf8BytesForHostText(std::wstring_view text) noexcept;
 
+bool HostInputAllowsMutation(bool enabled, bool readOnly) noexcept;
+
 bool HostTextReplacementFits(
     const std::wstring& text,
     std::size_t selectionStart,

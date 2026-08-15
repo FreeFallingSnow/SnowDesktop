@@ -49,6 +49,18 @@ void TestBoundedReplacement()
         "a zero limit preserves the API v1 unlimited compatibility path");
 }
 
+void TestReadOnlyMutationGate()
+{
+    using snowdesktop::widget_runtime::HostInputAllowsMutation;
+    Check(HostInputAllowsMutation(true, false),
+        "enabled editable controls allow mutations");
+    Check(!HostInputAllowsMutation(true, true),
+        "read-only controls reject mutations while remaining enabled");
+    Check(!HostInputAllowsMutation(false, false) &&
+            !HostInputAllowsMutation(false, true),
+        "disabled controls always reject mutations");
+}
+
 void TestDeferredFocusRequest()
 {
     using snowdesktop::widget_runtime::DeferredHostInputFocus;
@@ -75,6 +87,7 @@ int main()
 {
     TestUtf8Counting();
     TestBoundedReplacement();
+    TestReadOnlyMutationGate();
     TestDeferredFocusRequest();
     if (failures != 0)
     {

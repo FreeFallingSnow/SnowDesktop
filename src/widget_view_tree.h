@@ -246,6 +246,7 @@ struct ViewNode
     bool expanded = false;
     bool selectAll = false;
     bool liveUpdate = true;
+    bool readOnly = false;
     std::size_t maximumUtf8Bytes = 0;
     bool showScrollbar = true;
     std::string selectedValue;
@@ -308,6 +309,7 @@ struct ViewInputControl
     float fontSize = 15.0f;
     float padding = 8.0f;
     bool enabled = true;
+    bool readOnly = false;
     bool selectAll = false;
     bool liveUpdate = true;
     std::size_t maximumUtf8Bytes = 0;

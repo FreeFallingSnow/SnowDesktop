@@ -1500,6 +1500,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadBoolField(state, index, "expanded", node.expanded, error) ||
         !ReadBoolField(state, index, "selectAll", node.selectAll, error) ||
         !ReadBoolField(state, index, "liveUpdate", node.liveUpdate, error) ||
+        !ReadBoolField(state, index, "readOnly", node.readOnly, error) ||
         !ReadBoolField(state, index, "showScrollbar",
             node.showScrollbar, error) ||
         !ReadBoolField(state, index, "showAdjacentDates",

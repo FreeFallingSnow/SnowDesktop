@@ -1312,7 +1312,7 @@ void TestDeclarativeInputControls()
                 }),
                 view.textArea({
                     key = "notes", value = "one\ntwo", height = 80,
-                    liveUpdate = false, action = { id = "notes.change" },
+                    liveUpdate = false, readOnly = true,
                     accessibility = { label = "Notes" },
                 }),
                 view.searchBox({
@@ -1348,7 +1348,7 @@ void TestDeclarativeInputControls()
             root.children[0].type == ViewNodeType::TextInput &&
             root.children[0].inputValue == "Snow" &&
             root.children[1].type == ViewNodeType::TextArea &&
-            !root.children[1].liveUpdate &&
+            !root.children[1].liveUpdate && root.children[1].readOnly &&
             root.children[2].type == ViewNodeType::SearchBox &&
             root.children[3].type == ViewNodeType::NumberInput &&
             Near(root.children[3].value, 5.0f) &&
@@ -1365,6 +1365,7 @@ void TestDeclarativeInputControls()
             controls[0].changeAction.id == "name.change" &&
             controls[0].focusAction.id == "name.focus" &&
             controls[1].type == ViewNodeType::TextArea &&
+            controls[1].readOnly && controls[1].changeAction.id.empty() &&
             controls[3].type == ViewNodeType::NumberInput &&
             controls[3].value == "5",
         "text-like inputs must produce typed host-control descriptors");

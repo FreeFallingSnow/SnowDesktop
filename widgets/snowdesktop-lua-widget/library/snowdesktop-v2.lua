@@ -217,6 +217,7 @@
 ---@field expanded? boolean Required controlled select popup state; defaults to false when omitted.
 ---@field selectAll? boolean Select all text on first focus.
 ---@field liveUpdate? boolean Emit each input edit when true (default); emit on commit when false.
+---@field readOnly? boolean Text-like and numeric inputs remain focusable/selectable but reject typing, IME, paste, cut, delete, UIA value changes, and numeric stepping.
 ---@field maxBytes? integer Input UTF-8 limit from 0/default through 65536; declarative default is the 4096-byte node limit.
 ---@field thickness? number Progress or data-series stroke thickness.
 ---@field trackOpacity? number Progress track or chart guide opacity between 0 and 1.

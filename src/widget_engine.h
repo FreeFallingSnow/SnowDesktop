@@ -444,6 +444,7 @@ struct LuaWidget
         std::optional<RECT> clipRect;
         bool value = false;
         bool enabled = true;
+        bool readOnly = false;
         bool controlled = false;
         bool numeric = false;
         bool selectAll = true;
@@ -1650,6 +1651,7 @@ private:
         wchar_t pendingHighSurrogate = 0;
         bool pointerSelecting = false;
         bool controlled = false;
+        bool readOnly = false;
         bool numeric = false;
         bool liveUpdate = true;
         bool multiline = false;
