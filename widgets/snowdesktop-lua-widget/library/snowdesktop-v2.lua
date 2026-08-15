@@ -246,6 +246,8 @@
 ---@field style? SnowViewStyle
 ---@field hoverStyle? SnowViewStyle
 ---@field pressedStyle? SnowViewStyle
+---@field focusStyle? SnowViewStyle Keyboard/UI Automation focus style; defaults to a visible host outline when omitted.
+---@field disabledStyle? SnowViewStyle Applied last when enabled is false.
 ---@field checkedStyle? SnowViewStyle Applied before hover/pressed when a toggle/checkbox or radio option is selected.
 ---@field selectedStyle? SnowViewStyle MonthCalendar selected-date style.
 ---@field todayStyle? SnowViewStyle MonthCalendar today outline style.

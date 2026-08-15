@@ -14428,8 +14428,9 @@ static void OverlayViewStyle(
 
 static snowdesktop::widget_runtime::ViewStyle ResolveViewStyle(
     const snowdesktop::widget_runtime::ViewNode& node,
-    bool hovered, bool pressed,
-    std::optional<bool> checkedOverride = std::nullopt)
+    bool hovered, bool pressed, bool focused,
+    std::optional<bool> checkedOverride = std::nullopt,
+    std::optional<bool> enabledOverride = std::nullopt)
 {
     using snowdesktop::widget_runtime::ViewStyle;
     ViewStyle result = node.style;
@@ -14437,6 +14438,21 @@ static snowdesktop::widget_runtime::ViewStyle ResolveViewStyle(
         OverlayViewStyle(result, node.checkedStyle);
     if (hovered) OverlayViewStyle(result, node.hoverStyle);
     if (pressed) OverlayViewStyle(result, node.pressedStyle);
+    if (focused)
+    {
+        OverlayViewStyle(result, node.focusStyle);
+        if (!result.borderColor) result.borderColor = 0x72C7FF;
+        if (!result.borderWidth) result.borderWidth = 1.5f;
+    }
+    if (!enabledOverride.value_or(node.enabled))
+    {
+        OverlayViewStyle(result, node.disabledStyle);
+        if (!node.disabledStyle.opacity)
+        {
+            result.opacity = std::clamp(
+                result.opacity.value_or(1.0f) * 0.42f, 0.0f, 1.0f);
+        }
+    }
     return result;
 }
 
@@ -14740,7 +14756,7 @@ static void DrawDeclarativeViewInput(D2DState* state,
     }
     ID2D1SolidColorBrush* textBrush = GetCachedBrush(state,
         static_cast<int>(showingPlaceholder ? 0x94A3B8 : foreground),
-        opacity * (node.enabled ? 1.0f : 0.45f));
+        opacity);
     if (textBrush)
         state->ctx->DrawTextLayout(D2D1::Point2F(
             state->widgetRect.left + originX,
@@ -14813,7 +14829,7 @@ static void DrawDeclarativeSelect(D2DState* state,
         ID2D1SolidColorBrush* brush = GetCachedBrush(state,
             static_cast<int>(style.foreground.value_or(
                 node.selectedValue.empty() ? 0x94A3B8 : 0xFFFFFF)),
-            opacity * (node.enabled ? 1.0f : 0.45f));
+            opacity);
         const std::wstring text = Utf8ToWideLocal(label);
         if (format && brush)
             state->ctx->DrawText(text.data(),
@@ -14930,7 +14946,8 @@ static void DrawWidgetStyledText(D2DState* state,
 static void DrawWidgetMonthCalendar(D2DState* state,
     const snowdesktop::widget_runtime::ViewNode& node,
     const snowdesktop::widget_runtime::ViewStyle& style, float opacity,
-    const snowdesktop::widget_runtime::WidgetInteractionRegions& regions)
+    const snowdesktop::widget_runtime::WidgetInteractionRegions& regions,
+    std::string_view focusedKey)
 {
     using snowdesktop::widget_runtime::ViewMonthCalendarCellFrame;
     using snowdesktop::widget_runtime::ViewMonthCalendarWeekdayFrame;
@@ -15000,6 +15017,7 @@ static void DrawWidgetMonthCalendar(D2DState* state,
         const std::string key = node.key + "/" + cell.date;
         const bool hovered = regions.IsHovered(key);
         const bool pressed = regions.IsPressed(key);
+        const bool focused = key == focusedKey;
         ViewStyle cellStyle;
         cellStyle.foreground = baseForeground;
         cellStyle.opacity = style.opacity;
@@ -15010,9 +15028,16 @@ static void DrawWidgetMonthCalendar(D2DState* state,
             OverlayViewStyle(cellStyle, node.selectedStyle);
         if (hovered) OverlayViewStyle(cellStyle, node.hoverStyle);
         if (pressed) OverlayViewStyle(cellStyle, node.pressedStyle);
-        const float cellOpacity = opacity * std::clamp(
-            cellStyle.opacity.value_or(1.0f), 0.0f, 1.0f) *
-            (node.enabled ? 1.0f : 0.42f) *
+        if (focused)
+        {
+            OverlayViewStyle(cellStyle, node.focusStyle);
+            if (!cellStyle.borderColor) cellStyle.borderColor = 0x72C7FF;
+            if (!cellStyle.borderWidth) cellStyle.borderWidth = 1.5f;
+        }
+        if (!node.enabled)
+            OverlayViewStyle(cellStyle, node.disabledStyle);
+        const float cellOpacity = std::clamp(
+            cellStyle.opacity.value_or(opacity), 0.0f, 1.0f) *
             (cell.currentMonth ? 1.0f :
                 (node.adjacentStyle.opacity ? 1.0f : 0.42f));
         const float diameter = std::max(0.0f,
@@ -15044,6 +15069,14 @@ static void DrawWidgetMonthCalendar(D2DState* state,
                 state->ctx->DrawEllipse(indicator, border,
                     std::max(1.0f,
                         node.todayStyle.borderWidth.value_or(1.25f)));
+        }
+        if (focused && cellStyle.borderColor)
+        {
+            if (ID2D1SolidColorBrush* border = GetCachedBrush(state,
+                    static_cast<int>(*cellStyle.borderColor), cellOpacity))
+                state->ctx->DrawEllipse(indicator, border,
+                    std::max(1.0f,
+                        cellStyle.borderWidth.value_or(1.5f)));
         }
         const auto textFrame = snowdesktop::widget_runtime::ViewRect{
             frame.x + (frame.width - diameter) * 0.5f,
@@ -15116,7 +15149,8 @@ static void DrawWidgetViewBitmap(D2DState* state,
 
 static void DrawWidgetViewNode(D2DState* state,
     const snowdesktop::widget_runtime::ViewNode& node,
-    const snowdesktop::widget_runtime::WidgetInteractionRegions& regions)
+    const snowdesktop::widget_runtime::WidgetInteractionRegions& regions,
+    std::string_view focusedKey)
 {
     using snowdesktop::widget_runtime::ViewNodeType;
     using snowdesktop::widget_runtime::ViewShapeKind;
@@ -15132,7 +15166,8 @@ static void DrawWidgetViewNode(D2DState* state,
 
     const bool hovered = regions.IsHovered(node.key);
     const bool pressed = regions.IsPressed(node.key);
-    auto style = ResolveViewStyle(node, hovered, pressed);
+    const bool focused = node.key == focusedKey;
+    auto style = ResolveViewStyle(node, hovered, pressed, focused);
     if (node.type == ViewNodeType::Link)
     {
         if (!style.foreground) style.foreground = 0x72C7FF;
@@ -15223,7 +15258,8 @@ static void DrawWidgetViewNode(D2DState* state,
     }
     if (node.type == ViewNodeType::MonthCalendar)
     {
-        DrawWidgetMonthCalendar(state, node, style, opacity, regions);
+        DrawWidgetMonthCalendar(
+            state, node, style, opacity, regions, focusedKey);
         return;
     }
     if (node.type == ViewNodeType::Toggle)
@@ -15340,12 +15376,13 @@ static void DrawWidgetViewNode(D2DState* state,
             const std::string optionKey = node.key + "/" + option.key;
             const bool optionHovered = regions.IsHovered(optionKey);
             const bool optionPressed = regions.IsPressed(optionKey);
+            const bool optionFocused = optionKey == focusedKey;
             const bool selected = option.value == node.selectedValue;
             const auto optionStyle = ResolveViewStyle(
-                node, optionHovered, optionPressed, selected);
+                node, optionHovered, optionPressed, optionFocused,
+                selected, node.enabled && option.enabled);
             const float optionOpacity = std::clamp(
-                optionStyle.opacity.value_or(1.0f), 0.0f, 1.0f) *
-                (node.enabled && option.enabled ? 1.0f : 0.42f);
+                optionStyle.opacity.value_or(1.0f), 0.0f, 1.0f);
             const auto frame = snowdesktop::widget_runtime::
                 ViewRadioOptionFrame(node, index);
             const D2D1_RECT_F optionRect = D2D1::RectF(
@@ -15367,6 +15404,17 @@ static void DrawWidgetViewNode(D2DState* state,
                     state->ctx->FillRoundedRectangle(
                         D2D1::RoundedRect(optionRect,
                             optionRadius, optionRadius), brush);
+            }
+            if (optionFocused && optionStyle.borderColor)
+            {
+                if (ID2D1SolidColorBrush* border = GetCachedBrush(state,
+                        static_cast<int>(*optionStyle.borderColor),
+                        optionOpacity))
+                    state->ctx->DrawRoundedRectangle(
+                        D2D1::RoundedRect(optionRect,
+                            optionRadius, optionRadius), border,
+                        std::max(1.0f,
+                            optionStyle.borderWidth.value_or(1.5f)));
             }
             const float indicatorRadius = std::min(8.0f,
                 std::max(0.0f, frame.height * 0.28f));
@@ -15782,7 +15830,7 @@ static void DrawWidgetViewNode(D2DState* state,
             D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         ++state->widgetClipDepth;
         for (const auto& child : node.children)
-            DrawWidgetViewNode(state, child, regions);
+            DrawWidgetViewNode(state, child, regions, focusedKey);
         state->ctx->PopAxisAlignedClip();
         --state->widgetClipDepth;
 
@@ -15846,7 +15894,16 @@ static void DrawWidgetViewNode(D2DState* state,
         return;
     }
     for (const auto& child : node.children)
-        DrawWidgetViewNode(state, child, regions);
+        DrawWidgetViewNode(state, child, regions, focusedKey);
+    if (focused && specialGeometry && style.borderColor)
+    {
+        if (ID2D1SolidColorBrush* focus = GetCachedBrush(state,
+                static_cast<int>(*style.borderColor), opacity))
+            state->ctx->DrawRoundedRectangle(
+                D2D1::RoundedRect(rect, std::max(3.0f, radius),
+                    std::max(3.0f, radius)), focus,
+                std::max(1.0f, style.borderWidth.value_or(1.5f)));
+    }
 }
 
 static std::optional<snowdesktop::widget_runtime::ViewRect>
@@ -16378,7 +16435,8 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
         if (found->viewTree)
         {
             DrawWidgetViewNode(d2dState_, *found->viewTree,
-                found->interactionRegions);
+                found->interactionRegions,
+                found->viewKeyboardFocusKey);
             DrawWidgetSelectOverlays(d2dState_, *found->viewTree,
                 found->interactionRegions, std::nullopt,
                 found->viewTree->frame.height);

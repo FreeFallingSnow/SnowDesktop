@@ -1217,13 +1217,12 @@ ScrollItem、未实体化项的 VirtualizedItem 以及真实 Narrator 场景验�
 ```lua
 view.row({
     key = "feed:" .. item.id,
-    style = { backgroundColor = 0x00000000 },
-    hoverStyle = { backgroundColor = 0x18FFFFFF },
-    pressedStyle = { backgroundColor = 0x2AFFFFFF },
-    focusStyle = { strokeColor = 0xFFFFFFFF, strokeWidth = 1 },
+    hoverStyle = { background = 0x2E3640 },
+    pressedStyle = { background = 0x3A4654 },
+    focusStyle = { borderColor = 0xFFFFFF, borderWidth = 1 },
     transition = {
         durationMs = 120,
-        properties = { "backgroundColor", "opacity", "transform" }
+        properties = { "background", "opacity", "transform" }
     },
     children = { ... }
 })
@@ -1232,6 +1231,7 @@ view.row({
 规则：
 
 - hover、pressed 和 focus 的纯视觉样式由宿主命中测试与动画器直接更新，不需要先进入 Lua，因此指针反馈可以在下一次可用呈现中出现。
+- `focusStyle` 与 `disabledStyle` 已进入公共属性矩阵、Lua 解析和 Direct2D 渲染；未声明 focus 样式时宿主提供默认可见轮廓，disabled 样式最后覆盖其他状态样式。
 - 只有组件绑定了业务事件时才调用 Lua；状态更新、多个订阅通知和同一帧内的重复 `invalidate` 合并为至多一次 `view()` 求值和一次 scene diff。
 - 布局、绘制、命中区域和 UI Automation 边界来自同一棵提交成功的 scene tree；不允许视觉已经变化而点击仍指向旧树。
 - 声明式 transition 由宿主运行，默认只允许可合成的颜色、透明度和 transform；布局动画必须显式声明并受节点数量限制。
@@ -1293,7 +1293,7 @@ view.button({
 ```lua
 view.row({
     key = "item:" .. item.id,
-    hoverStyle = { backgroundColor = 0x18FFFFFF },
+    hoverStyle = { background = 0x2E3640 },
     events = {
         click = { id = "item.open", value = { itemId = item.id } },
         doubleClick = { id = "item.openDetails", value = { itemId = item.id } },

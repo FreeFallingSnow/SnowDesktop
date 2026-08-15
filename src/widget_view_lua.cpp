@@ -1511,6 +1511,10 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             node.hoverStyle, error) ||
         !ReadStyleField(state, index, "pressedStyle",
             node.pressedStyle, error) ||
+        !ReadStyleField(state, index, "focusStyle",
+            node.focusStyle, error) ||
+        !ReadStyleField(state, index, "disabledStyle",
+            node.disabledStyle, error) ||
         !ReadStyleField(state, index, "checkedStyle",
             node.checkedStyle, error) ||
         !ReadStyleField(state, index, "selectedStyle",

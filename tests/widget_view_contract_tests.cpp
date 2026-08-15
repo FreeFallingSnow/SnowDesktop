@@ -89,6 +89,9 @@ void TestRepresentativeApplicability()
     Check(ViewNodeAllowsProperty(ViewNodeType::TextInput, "liveUpdate") &&
             !ViewNodeAllowsProperty(ViewNodeType::Button, "liveUpdate"),
         "input editing properties must be scoped to input nodes");
+    Check(ViewNodeAllowsProperty(ViewNodeType::Button, "focusStyle") &&
+            ViewNodeAllowsProperty(ViewNodeType::Text, "disabledStyle"),
+        "focus and disabled state styles must be common properties");
     Check(ViewNodeAllowsProperty(ViewNodeType::MonthCalendar, "eventDates") &&
             !ViewNodeAllowsProperty(ViewNodeType::List, "eventDates"),
         "calendar properties must be scoped to monthCalendar");

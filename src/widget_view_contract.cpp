@@ -68,7 +68,8 @@ constexpr auto kProperties = std::to_array<std::string_view>({
     "itemExtent", "firstIndex", "overscan", "flexGrow", "fontSize", "bold",
     "checked", "visible", "enabled", "cursor", "alignItems", "showScrollbar",
     "alignSelf", "justifyContent", "textAlign", "style", "hoverStyle",
-    "pressedStyle", "checkedStyle", "selectedStyle", "todayStyle",
+    "pressedStyle", "focusStyle", "disabledStyle", "checkedStyle",
+    "selectedStyle", "todayStyle",
     "adjacentStyle", "eventStyle", "accessibility", "events", "action",
     "children",
 });
@@ -77,7 +78,8 @@ constexpr auto kCommonProperties = std::to_array<std::string_view>({
     "type", "key", "width", "height", "padding", "gap", "flexGrow",
     "fontSize", "bold", "visible", "enabled", "cursor", "alignItems",
     "alignSelf", "justifyContent", "textAlign", "style", "hoverStyle",
-    "pressedStyle", "accessibility", "events", "children",
+    "pressedStyle", "focusStyle", "disabledStyle", "accessibility",
+    "events", "children",
 });
 
 template <std::size_t Size>

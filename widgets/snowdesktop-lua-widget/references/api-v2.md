@@ -152,9 +152,11 @@ down/up、doubleClick 和 contextMenu，动作通过 `event.kind == "action"` �
 投递 `event.action == "change"`，并附带当前 `previousChecked` 与建议的新值 `checked`。
 宿主不会替组件修改或持久化状态；组件应在 `event` 中更新自己的 model/storage 并调用
 `widget.invalidate()`，下一棵树仍以组件提供的 `checked` 为准。`checkedStyle` 先于
-`hoverStyle/pressedStyle` 合并，轨道、勾选标记、hover、pressed 和元素命中均由宿主实时
-绘制；两类控件也支持各自的 `contextMenu`。探测 `view.keyboardNavigation.basic` 后，
-Enter/空格会生成同样的受控 change 建议；UI Automation 输出仍未开放。
+`hoverStyle/pressedStyle/focusStyle` 合并，`disabledStyle` 最后覆盖其他状态样式；未声明
+`focusStyle` 时宿主仍提供可见焦点轮廓。轨道、勾选标记、hover、pressed、focus 和元素命中
+均由宿主实时绘制；两类控件也支持各自的 `contextMenu`。探测
+`view.keyboardNavigation.basic` 后，Enter/空格会生成同样的受控 change 建议。基础
+UI Automation 输出已开放，深层虚拟化与全部 Pattern/事件仍按升级计划继续补齐。
 
 ```lua
 view.toggle({

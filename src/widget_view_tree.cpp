@@ -933,6 +933,8 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         !FiniteInRange(node.fillOpacity, 0.0f, 1.0f) ||
         !validStyle(node.style) || !validStyle(node.hoverStyle) ||
         !validStyle(node.pressedStyle) ||
+        !validStyle(node.focusStyle) ||
+        !validStyle(node.disabledStyle) ||
         !validStyle(node.checkedStyle) ||
         !validStyle(node.selectedStyle) ||
         !validStyle(node.todayStyle) ||

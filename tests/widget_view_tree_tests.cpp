@@ -237,6 +237,8 @@ void TestLuaParsing()
                         cornerRadius = 6,
                     },
                     hoverStyle = { background = 0x345678 },
+                    focusStyle = { borderColor = 0x72C7FF, borderWidth = 2 },
+                    disabledStyle = { opacity = 0.35 },
                     action = { id = "open", value = { source = "test" } },
                     events = {
                         contextMenu = {
@@ -267,6 +269,10 @@ void TestLuaParsing()
                 std::uint32_t{ 0x123456 } &&
             root.children[1].hoverStyle.background ==
                 std::uint32_t{ 0x345678 } &&
+            root.children[1].focusStyle.borderColor ==
+                std::uint32_t{ 0x72C7FF } &&
+            root.children[1].focusStyle.borderWidth == 2.0f &&
+            root.children[1].disabledStyle.opacity == 0.35f &&
             root.children[1].accessibilityLabel ==
                 "Open the selected item",
         "Lua parsing must retain typed nodes, styles, actions, and semantics");

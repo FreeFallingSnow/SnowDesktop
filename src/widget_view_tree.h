@@ -265,6 +265,8 @@ struct ViewNode
     ViewStyle style;
     ViewStyle hoverStyle;
     ViewStyle pressedStyle;
+    ViewStyle focusStyle;
+    ViewStyle disabledStyle;
     ViewStyle checkedStyle;
     ViewStyle selectedStyle;
     ViewStyle todayStyle;
