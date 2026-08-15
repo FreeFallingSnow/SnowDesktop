@@ -148,9 +148,17 @@ void TestPackageResourceRenderPurity(const fs::path& repository)
             std::string_view::npos &&
             imageHandle.find("__widget_resource_content_keys") !=
                 std::string_view::npos &&
-            imageHandle.find("packageImageCache.Acquire(contentKey, *path)") !=
+            imageHandle.find("packageImageCache.Acquire(") !=
                 std::string_view::npos,
         "package image handles must bind to decoded content, not mutable paths");
+    for (const std::string_view stableError : {
+        "loadPhaseRequired", "invalidName", "notDeclared", "typeMismatch",
+        "hostUnavailable", "unavailable", "quotaExceeded", "decodeFailed",
+        "deviceUnavailable" })
+    {
+        Check(imageHandle.find(stableError) != std::string_view::npos,
+            "package image loading must expose stable error codes");
+    }
     Check(cacheSource.find("WidgetPackageImageCache::Release(") !=
             std::string::npos &&
             cacheSource.find("references") != std::string::npos &&
@@ -173,6 +181,14 @@ void TestPackageResourceRenderPurity(const fs::path& repository)
             exists.find("CurrentPackageResourcePath") !=
                 std::string_view::npos,
         "resource.exists must not touch the filesystem from arbitrary callbacks");
+
+    const std::string_view resourceStatus = Section(source,
+        "static int lua_ResourceStatus(",
+        "\nstatic ComPtr<ID2D1Bitmap1> BitmapFromHBitmap(");
+    Check(resourceStatus.find("\"pending\"") == std::string_view::npos &&
+            resourceStatus.find("\"unavailable\"") !=
+                std::string_view::npos,
+        "synchronously created resource handles must report ready or a stable error");
 }
 
 void TestAudioAnalysisSubscriptionOptions(const fs::path& repository)

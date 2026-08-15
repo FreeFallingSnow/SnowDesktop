@@ -327,8 +327,10 @@ menu.
   actions array to clear buttons. Runtime image handles are not accepted.
   Declare `notification.post` as optional when the widget can
   keep working without it, and never fall back to API v1 `system.notify`.
-- Create `resource.image/font` handles at entry scope. Use `resource.status`
-  when diagnostics are needed.
+- Create `resource.image/font` handles synchronously at entry scope. Handle
+  stable `resource.image: code` / `resource.font: code` load failures; use
+  `resource.status` for later ready/error diagnostics and do not poll it for a
+  pending state.
 - Use `draw.measureText`, clipping, explicit `maxWidth`, and separate opacity.
 - Probe `draw.advanced` before using `draw.arc/path/gradientRect/imageFit/shadow/
   sparkline`. Keep paths within 256 strict commands and sparklines within 512

@@ -2,7 +2,8 @@
 
 ---@alias SnowWidgetSizeClass 'small'|'medium'|'large'
 ---@alias SnowWidgetSurfaceKind 'desktop'|'panel'|'preview'
----@alias SnowResourceState 'pending'|'ready'|'error'
+---@alias SnowResourceState 'ready'|'error'
+---@alias SnowResourceLoadError 'loadPhaseRequired'|'invalidName'|'notDeclared'|'typeMismatch'|'hostUnavailable'|'unavailable'|'quotaExceeded'|'decodeFailed'|'deviceUnavailable'|'fontLoadFailed'|'invalidHandle'
 ---@alias SnowDateStyle 'none'|'short'|'long'
 ---@alias SnowTimeStyle 'none'|'short'|'long'
 ---@alias SnowDurationStyle 'short'|'clock'
@@ -600,6 +601,7 @@
 ---@field state SnowResourceState
 ---@field type 'image'|'font'
 ---@field name string
+---@field error? 'unavailable' Stable when state is error.
 
 ---@class SnowTextMetrics
 ---@field width number
@@ -1675,17 +1677,17 @@ resource = {}
 ---@return boolean
 function resource.exists(name) end
 
----Create a declared image handle during entry evaluation.
+---Create a declared image handle synchronously during entry evaluation. Failure raises `resource.image: <SnowResourceLoadError>`.
 ---@param name string
 ---@return SnowImageResource
 function resource.image(name) end
 
----Create a declared package-private font handle during entry evaluation.
+---Create a declared package-private font handle synchronously during entry evaluation. Failure raises `resource.font: <SnowResourceLoadError>`.
 ---@param name string
 ---@return SnowFontResource
 function resource.font(name) end
 
----@param handle SnowImageResource|SnowFontResource
+---@param handle SnowImageResource|SnowFontResource Invalid handles raise `resource.status: invalidHandle`.
 ---@return SnowResourceStatus
 function resource.status(handle) end
 

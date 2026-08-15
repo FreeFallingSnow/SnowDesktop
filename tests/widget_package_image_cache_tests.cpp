@@ -11,6 +11,7 @@ namespace
 {
 namespace fs = std::filesystem;
 using snowdesktop::widget_runtime::WidgetPackageImageCache;
+using snowdesktop::widget_runtime::PackageImageAcquireError;
 
 void Check(bool condition, const char* message)
 {
@@ -68,10 +69,14 @@ int main()
     }
 
     WidgetPackageImageCache cache;
-    const auto* decoded = cache.Acquire("first-content", first.wstring());
+    PackageImageAcquireError acquireError =
+        PackageImageAcquireError::DecodeFailed;
+    const auto* decoded = cache.Acquire(
+        "first-content", first.wstring(), &acquireError);
     Check(decoded && decoded->width == 1 && decoded->height == 1 &&
             decoded->stride == 4 && decoded->pixels.size() == 4 &&
-            cache.Size() == 1 && cache.Bytes() == 4,
+            cache.Size() == 1 && cache.Bytes() == 4 &&
+            acquireError == PackageImageAcquireError::None,
         "valid package image must decode into bounded BGRA pixels");
     const auto* reused = cache.Acquire("first-content", second.wstring());
     Check(reused == decoded && cache.ReferenceCount("first-content") == 2,
@@ -82,8 +87,10 @@ int main()
             cache.Acquire("first-content", first.wstring()) == decoded &&
             cache.ReferenceCount("first-content") == 3,
         "render-side lookup must survive source removal without file access");
-    Check(!cache.Acquire("invalid-content", invalid.wstring()) &&
-            cache.Failed("invalid-content"),
+    Check(!cache.Acquire("invalid-content", invalid.wstring(),
+                &acquireError) &&
+            cache.Failed("invalid-content") &&
+            acquireError == PackageImageAcquireError::DecodeFailed,
         "decode failures must be stable and negatively cached");
     WriteBitmap(first, 0xff112233u);
     const auto* changed = cache.Acquire(
@@ -103,7 +110,9 @@ int main()
     WidgetPackageImageCache quotaCache(4, 4);
     WriteBitmap(first, 0xff336699u);
     Check(quotaCache.Acquire("quota-first", first.wstring()) &&
-            !quotaCache.Acquire("quota-second", second.wstring()) &&
+            !quotaCache.Acquire("quota-second", second.wstring(),
+                &acquireError) &&
+            acquireError == PackageImageAcquireError::QuotaExceeded &&
             !quotaCache.Failed("quota-second") && quotaCache.Bytes() == 4,
         "active decoded images must enforce the total byte quota");
     Check(quotaCache.Release("quota-first") &&

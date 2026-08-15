@@ -1398,6 +1398,7 @@ static void SetWidgetRectContext(D2DState* state, RECT bounds)
 }
 
 using snowdesktop::widget_runtime::LuaResourceType;
+using snowdesktop::widget_runtime::PackageImageAcquireError;
 using snowdesktop::widget_runtime::PushResourceHandle;
 using snowdesktop::widget_runtime::TestResourceHandle;
 
@@ -9108,6 +9109,12 @@ static bool ResourceCreationAllowed(lua_State* L)
     return loading;
 }
 
+static int ResourceApiError(
+    lua_State* state, const char* functionName, const char* code)
+{
+    return luaL_error(state, "%s: %s", functionName, code);
+}
+
 static int lua_ResourceExists(lua_State* L)
 {
     size_t length = 0;
@@ -9122,51 +9129,60 @@ static int lua_ResourceExists(lua_State* L)
 static int lua_ResourceImage(lua_State* L)
 {
     if (!ResourceCreationAllowed(L))
-    {
-        return luaL_error(L,
-            "resource.image: handles must be created while the entry script is loading");
-    }
+        return ResourceApiError(L, "resource.image", "loadPhaseRequired");
     size_t length = 0;
     const char* nameRaw = luaL_checklstring(L, 1, &length);
     if (length == 0 || length > 64)
-        return luaL_error(L, "resource.image: invalid resource name");
+        return ResourceApiError(L, "resource.image", "invalidName");
     const std::string name(nameRaw, length);
+    const auto declaration = CurrentPackageResource(L, name);
+    if (!declaration)
+        return ResourceApiError(L, "resource.image", "notDeclared");
+    if (declaration->type != "image")
+        return ResourceApiError(L, "resource.image", "typeMismatch");
     auto* state = GetD2D(L);
+    if (!state)
+        return ResourceApiError(L, "resource.image", "hostUnavailable");
     const auto existingContentKey =
         CurrentPackageImageContentKey(L, name);
     if (existingContentKey)
     {
-        if (!state ||
-            !state->packageImageCache.Find(*existingContentKey) ||
+        if (!state->packageImageCache.Find(*existingContentKey) ||
             (state->ctx &&
                 !LoadImageBitmap(state, *existingContentKey)))
-        {
-            return luaL_error(L,
-                "resource.image: cached resource is unavailable");
-        }
+            return ResourceApiError(L, "resource.image", "unavailable");
         PushResourceHandle(L, LuaResourceType::Image, name);
         return 1;
     }
     const auto path = CurrentPackageResourcePath(L, name, "image");
-    const std::string contentKey = path ? Sha256File(*path) : std::string{};
-    if (!path || !state || contentKey.empty() ||
-        !state->packageImageCache.Acquire(contentKey, *path))
-        return luaL_error(L, "resource.image: resource is missing or cannot be decoded");
+    if (!path)
+        return ResourceApiError(L, "resource.image", "unavailable");
+    const std::string contentKey = Sha256File(*path);
+    if (contentKey.empty())
+        return ResourceApiError(L, "resource.image", "unavailable");
+    PackageImageAcquireError acquireError = PackageImageAcquireError::None;
+    if (!state->packageImageCache.Acquire(
+            contentKey, *path, &acquireError))
+    {
+        return ResourceApiError(L, "resource.image",
+            acquireError == PackageImageAcquireError::QuotaExceeded
+                ? "quotaExceeded" :
+            acquireError == PackageImageAcquireError::InvalidInput
+                ? "unavailable" : "decodeFailed");
+    }
     lua_getfield(L, LUA_REGISTRYINDEX,
         "__widget_resource_content_keys");
     if (!lua_istable(L, -1))
     {
         lua_pop(L, 1);
         (void)state->packageImageCache.Release(contentKey);
-        return luaL_error(L,
-            "resource.image: resource registry is unavailable");
+        return ResourceApiError(L, "resource.image", "hostUnavailable");
     }
     lua_pushlstring(L, contentKey.data(), contentKey.size());
     lua_setfield(L, -2, name.c_str());
     lua_pop(L, 1);
     if (state->ctx && !LoadImageBitmap(state, contentKey))
-        return luaL_error(L,
-            "resource.image: device bitmap creation failed");
+        return ResourceApiError(L, "resource.image", "deviceUnavailable");
     PushResourceHandle(L, LuaResourceType::Image, name);
     return 1;
 }
@@ -9174,20 +9190,25 @@ static int lua_ResourceImage(lua_State* L)
 static int lua_ResourceFont(lua_State* L)
 {
     if (!ResourceCreationAllowed(L))
-    {
-        return luaL_error(L,
-            "resource.font: handles must be created while the entry script is loading");
-    }
+        return ResourceApiError(L, "resource.font", "loadPhaseRequired");
     size_t length = 0;
     const char* nameRaw = luaL_checklstring(L, 1, &length);
     if (length == 0 || length > 64)
-        return luaL_error(L, "resource.font: invalid resource name");
+        return ResourceApiError(L, "resource.font", "invalidName");
     const std::string name(nameRaw, length);
+    const auto declaration = CurrentPackageResource(L, name);
+    if (!declaration)
+        return ResourceApiError(L, "resource.font", "notDeclared");
+    if (declaration->type != "font")
+        return ResourceApiError(L, "resource.font", "typeMismatch");
     auto* state = GetD2D(L);
+    if (!state || !state->dwrite)
+        return ResourceApiError(L, "resource.font", "hostUnavailable");
     const auto path = CurrentPackageResourcePath(L, name, "font");
-    if (!path || !state || !state->dwrite ||
-        !LoadPrivateFont(state, *path))
-        return luaL_error(L, "resource.font: resource is missing or invalid");
+    if (!path)
+        return ResourceApiError(L, "resource.font", "unavailable");
+    if (!LoadPrivateFont(state, *path))
+        return ResourceApiError(L, "resource.font", "fontLoadFailed");
     PushResourceHandle(L, LuaResourceType::Font, name);
     return 1;
 }
@@ -9196,7 +9217,7 @@ static int lua_ResourceStatus(lua_State* L)
 {
     const auto* handle = TestResourceHandle(L, 1);
     if (!handle)
-        return luaL_error(L, "resource.status: invalid resource handle");
+        return ResourceApiError(L, "resource.status", "invalidHandle");
     const char* type = handle->type == LuaResourceType::Image
         ? "image" : "font";
     auto* state = GetD2D(L);
@@ -9224,13 +9245,17 @@ static int lua_ResourceStatus(lua_State* L)
             : state->privateFonts.contains(*path);
     }
     lua_createtable(L, 0, 3);
-    lua_pushstring(L, ready ? "ready" :
-        ((path || runtimeImage) ? "pending" : "error"));
+    lua_pushstring(L, ready ? "ready" : "error");
     lua_setfield(L, -2, "state");
     lua_pushstring(L, type);
     lua_setfield(L, -2, "type");
     lua_pushstring(L, handle->name);
     lua_setfield(L, -2, "name");
+    if (!ready)
+    {
+        lua_pushliteral(L, "unavailable");
+        lua_setfield(L, -2, "error");
+    }
     return 1;
 }
 

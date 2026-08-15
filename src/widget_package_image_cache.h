@@ -17,6 +17,14 @@ struct PackageImageSource
     std::uint32_t stride = 0;
 };
 
+enum class PackageImageAcquireError : unsigned char
+{
+    None,
+    InvalidInput,
+    DecodeFailed,
+    QuotaExceeded,
+};
+
 class WidgetPackageImageCache
 {
 public:
@@ -31,7 +39,8 @@ public:
         std::size_t maximumTotalBytes);
 
     const PackageImageSource* Acquire(
-        const std::string& contentKey, const std::wstring& path);
+        const std::string& contentKey, const std::wstring& path,
+        PackageImageAcquireError* error = nullptr);
     bool Release(const std::string& contentKey) noexcept;
     const PackageImageSource* Find(
         const std::string& contentKey) const noexcept;
@@ -49,7 +58,8 @@ private:
         std::size_t references = 0;
     };
 
-    const PackageImageSource* Fail(const std::string& contentKey);
+    const PackageImageSource* Fail(const std::string& contentKey,
+        PackageImageAcquireError* error);
 
     std::size_t maximumSingleBytes_ = DefaultMaximumSingleBytes;
     std::size_t maximumTotalBytes_ = DefaultMaximumTotalBytes;

@@ -1570,7 +1570,13 @@ view.image({ key = "logo", source = logo, alt = "SnowDesktop" })
 view.text({ key = "title", text = "SnowDesktop", font = display })
 ```
 
-可用 `resource.exists(name)` 和 `resource.status(handle)` 查询。资源路径、数量、
+可用 `resource.exists(name)` 和 `resource.status(handle)` 查询。句柄在入口求值期间同步创建，
+所以状态只会是 `ready` 或带 `error = "unavailable"` 的 `error`，不会留下需要轮询的
+`pending`。创建失败会拒绝本次 VM 加载，并以 `resource.image: code` 或
+`resource.font: code` 抛出稳定错误：`loadPhaseRequired`、`invalidName`、
+`notDeclared`、`typeMismatch`、`hostUnavailable`、`unavailable`、
+`quotaExceeded`、`decodeFailed`、`deviceUnavailable`、`fontLoadFailed`；
+`resource.status` 对错误参数使用 `invalidHandle`。资源路径、数量、
 文件大小、图片像素、字体格式与许可字段受包校验器限制；不允许绝对路径、父级
 跳转、符号链接、junction 或其他重解析点。
 
@@ -1581,7 +1587,7 @@ view.text({ key = "title", text = "SnowDesktop", font = display })
 对应内容键的内存像素创建设备位图；失败加载、热重载、卸载和关机会释放当前 VM 创建的句柄，
 最后一个同内容句柄释放后宿主回收其 CPU 像素和 D2D 位图；
 `resource.font` 同样必须在入口加载期完成私有字体集合创建。解码、字体加载或总缓存额度
-失败会直接拒绝句柄，而不是把同步磁盘 I/O 推迟到首帧。
+失败会直接拒绝句柄和本次 VM，而不是把同步磁盘 I/O 推迟到首帧。
 
 ## 清单 v2 最小要求
 
