@@ -34,9 +34,11 @@ void TestSemanticHierarchyAndState()
         "", 8, 8, 180, 24);
     title.text = "System monitor";
     title.tooltip = "Current CPU and memory status";
+    title.focusable = true;
     ViewNode button = Node(ViewNodeType::Button,
         "refresh", 8, 40, 100, 32);
     button.text = "Refresh";
+    button.focusable = false;
     ViewNode slider = Node(ViewNodeType::Slider,
         "volume", 8, 84, 180, 24);
     slider.accessibilityLabel = "Volume";
@@ -64,13 +66,13 @@ void TestSemanticHierarchyAndState()
     Check(nodes[1].controlType == "Text" &&
             nodes[1].name == "System monitor" &&
             nodes[1].helpText == "Current CPU and memory status" &&
-            !nodes[1].focusable,
-        "text nodes must expose bounded read-only semantics");
+            nodes[1].focusable,
+        "explicit focusability must promote a named semantic text node");
     Check(nodes[2].controlType == "Button" &&
             HasViewAccessibilityPattern(nodes[2].patterns,
                 ViewAccessibilityPattern::Invoke) &&
-            nodes[2].focusable,
-        "buttons must expose Invoke and keyboard focus semantics");
+            !nodes[2].focusable,
+        "explicit focusable=false must remove a control from host focus semantics");
     Check(nodes[3].controlType == "Slider" &&
             HasViewAccessibilityPattern(nodes[3].patterns,
                 ViewAccessibilityPattern::RangeValue) &&

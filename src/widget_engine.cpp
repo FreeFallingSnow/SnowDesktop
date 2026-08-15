@@ -16810,6 +16810,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                             };
                         }
                         control.enabled = input.enabled;
+                        control.focusable = input.focusable;
                         control.readOnly = input.readOnly;
                         control.controlled = true;
                         control.numeric = input.type ==
@@ -21434,7 +21435,7 @@ bool WidgetEngine::RuntimeFocusHostInput(const std::wstring& widgetId,
     auto found = std::find_if(controls.rbegin(), controls.rend(), [&](const auto& control) {
         return control.type == LuaWidget::HostControl::Type::Input && control.id == id;
     });
-    if (found == controls.rend() || !found->enabled ||
+    if (found == controls.rend() || !found->enabled || !found->focusable ||
         (!found->controlled && found->storageKey.empty())) return false;
 
     if (focusedHostInput_.active && focusedHostInput_.widgetId == widgetId &&

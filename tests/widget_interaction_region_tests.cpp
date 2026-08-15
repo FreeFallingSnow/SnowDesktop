@@ -337,17 +337,22 @@ void TestKeyboardFocusableOrderAndFiltering()
     std::string error;
     auto button = Rect("button", 0, 0, 80, 32);
     button.events.emplace("click", InteractionAction{ "button.open", {} });
+    button.tabIndex = 3;
     auto input = Rect("query", 0, 40, 120, 32);
     input.accessibilityRole = "searchbox";
+    input.tabIndex = -1;
     auto slider = Rect("volume", 0, 80, 120, 24);
     slider.controlKind = InteractionControlKind::Slider;
     slider.accessibilityRole = "slider";
     slider.accessibilityLabel = "Volume";
     slider.events.emplace("change",
         InteractionAction{ "volume.change", {} });
+    slider.tabIndex = 1;
     auto pointerOnly = Rect("pointer", 0, 112, 80, 32);
     pointerOnly.events.emplace("pointerMove",
         InteractionAction{ "pointer.move", {} });
+    pointerOnly.focusable = true;
+    pointerOnly.tabIndex = 2;
     auto disabled = Rect("disabled", 0, 152, 80, 32);
     disabled.events.emplace("click",
         InteractionAction{ "disabled.open", {} });
@@ -363,14 +368,14 @@ void TestKeyboardFocusableOrderAndFiltering()
     regions.CommitFrame();
 
     const auto keys = regions.KeyboardFocusableKeys();
-    Check(keys.size() == 3 && keys[0] == "button" &&
-            keys[1] == "query" && keys[2] == "volume",
-        "focus candidates must preserve committed logical order");
+    Check(keys.size() == 3 && keys[0] == "volume" &&
+            keys[1] == "pointer" && keys[2] == "button",
+        "positive tab indices must sort before source-order nodes and -1 must skip traversal");
     Check(regions.IsKeyboardFocusable("query") &&
-            !regions.IsKeyboardFocusable("pointer") &&
+            regions.IsKeyboardFocusable("pointer") &&
             !regions.IsKeyboardFocusable("disabled") &&
             !regions.IsKeyboardFocusable("missing"),
-        "focus filtering must include inputs and exclude disabled or pointer-only regions");
+        "focusability must remain independent from sequential tab inclusion");
 
     const auto semantics = regions.AccessibilityRegions();
     Check(semantics.size() == 2 && semantics[0].key == "query" &&

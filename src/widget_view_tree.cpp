@@ -398,6 +398,20 @@ const char* DefaultAccessibilityRole(ViewNodeType type) noexcept
     return contract ? contract->defaultAccessibilityRole.data() : "";
 }
 
+bool IsNodeKeyboardFocusable(const ViewNode& node) noexcept
+{
+    const ViewNodeContract* contract = FindViewNodeContract(node.type);
+    return node.focusable.value_or(
+        contract && contract->keyboardFocusable);
+}
+
+void ApplyNodeFocusPolicy(const ViewNode& node,
+    InteractionRegion& region) noexcept
+{
+    region.focusable = IsNodeKeyboardFocusable(node);
+    region.tabIndex = node.tabIndex.value_or(0);
+}
+
 ViewRect ContentRect(const ViewNode& node) noexcept
 {
     const ViewEdgeInsets insets = ResolveInsets(
@@ -1836,6 +1850,31 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         error = "view required is only valid for input and select nodes";
         return false;
     }
+    if (node.tabIndex && (*node.tabIndex < -1 || *node.tabIndex > 32767))
+    {
+        error = "view tabIndex must be between -1 and 32767";
+        return false;
+    }
+    const ViewNodeContract* nodeContract = FindViewNodeContract(node.type);
+    const bool keyboardFocusable = IsNodeKeyboardFocusable(node);
+    if (node.tabIndex && !keyboardFocusable)
+    {
+        error = "view tabIndex requires a focusable node";
+        return false;
+    }
+    if (node.focusable.value_or(false) &&
+        (!nodeContract || nodeContract->uiaControlType.empty()))
+    {
+        error = "view focusable=true requires a semantic node";
+        return false;
+    }
+    if (node.focusable.value_or(false) &&
+        node.accessibilityLabel.empty() && node.text.empty() &&
+        node.alt.empty())
+    {
+        error = "view focusable=true requires accessible text or accessibility.label";
+        return false;
+    }
     if (!IsFlexContainer(node.type) &&
         (node.flexDirection != ViewFlexDirection::Auto ||
             node.flexWrap != ViewFlexWrap::NoWrap ||
@@ -2683,6 +2722,7 @@ bool CollectRegions(const ViewNode& node,
                 ? "grid" : node.accessibilityRole;
             surface.accessibilityLabel = node.accessibilityLabel;
             surface.enabled = node.enabled;
+            surface.focusable = false;
             regions.push_back(std::move(surface));
         }
         for (std::size_t index = 0; index < cells.size(); ++index)
@@ -2723,6 +2763,7 @@ bool CollectRegions(const ViewNode& node,
             region.accessibilityRole = "gridcell";
             region.accessibilityLabel = cell.date;
             region.enabled = node.enabled;
+            ApplyNodeFocusPolicy(node, region);
             regions.push_back(std::move(region));
         }
         return true;
@@ -2771,6 +2812,7 @@ bool CollectRegions(const ViewNode& node,
             region.accessibilityRole = "radio";
             region.accessibilityLabel = option.label;
             region.enabled = node.enabled && option.enabled;
+            ApplyNodeFocusPolicy(node, region);
             regions.push_back(std::move(region));
         }
         return true;
@@ -2810,6 +2852,7 @@ bool CollectRegions(const ViewNode& node,
                 : node.accessibilityRole;
             region.accessibilityLabel = node.accessibilityLabel;
             region.enabled = node.enabled;
+            ApplyNodeFocusPolicy(node, region);
             regions.push_back(std::move(region));
         }
         return true;
@@ -2847,11 +2890,13 @@ bool CollectRegions(const ViewNode& node,
             trigger.hasExpandedProposal = true;
             trigger.expanded = node.expanded;
             trigger.enabled = node.enabled;
+            ApplyNodeFocusPolicy(node, trigger);
             regions.push_back(std::move(trigger));
         }
         return true;
     }
     if ((!node.events.empty() || !node.tooltip.empty() ||
+            IsNodeKeyboardFocusable(node) ||
             IsButtonNode(node.type) ||
             node.type == ViewNodeType::ListItem ||
             node.type == ViewNodeType::SlotItem) &&
@@ -2935,6 +2980,7 @@ bool CollectRegions(const ViewNode& node,
         region.accessibilityLabel = node.accessibilityLabel.empty()
             ? node.text : node.accessibilityLabel;
         region.enabled = node.enabled;
+        ApplyNodeFocusPolicy(node, region);
         regions.push_back(std::move(region));
     }
     std::optional<ViewRect> childClip = inheritedClip;
@@ -2993,6 +3039,7 @@ bool CollectSelectOptions(const ViewNode& node,
             region.accessibilityRole = "option";
             region.accessibilityLabel = option.label;
             region.enabled = node.enabled && option.enabled;
+            ApplyNodeFocusPolicy(node, region);
             regions.push_back(std::move(region));
         }
         return true;
@@ -3042,6 +3089,7 @@ bool CollectInputs(const ViewNode& node,
         control.fontSize = node.fontSize;
         control.padding = node.padding;
         control.enabled = node.enabled;
+        control.focusable = IsNodeKeyboardFocusable(node);
         control.readOnly = node.readOnly;
         control.selectAll = node.selectAll;
         control.liveUpdate = node.liveUpdate;

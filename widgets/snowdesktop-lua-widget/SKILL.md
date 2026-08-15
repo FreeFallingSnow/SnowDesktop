@@ -112,6 +112,11 @@ Tab/Shift+Tab traversal, spatial arrows, Enter/Space activation, or slider
 arrow-step changes. The host routes these keys without exposing raw key streams
 to Lua; it publishes basic UI Automation patterns and state, while deep
 virtualization and every platform pattern are not implied by this feature.
+Probe `view.keyboardNavigation.order` before overriding `focusable` or
+`tabIndex`. Use -1 only to keep pointer/UIA focus while skipping sequential
+keyboard traversal; positive indices run before 0/source order and retain
+declaration order when equal. Do not use custom order to make visual and
+semantic reading order disagree.
 Probe `view.inputControls` for declarative textInput/textArea/searchBox/
 numberInput/select nodes. Treat every value and select expansion as controlled:
 write `text`, valid `controlValue`, `selection`, or `expanded` proposals into the

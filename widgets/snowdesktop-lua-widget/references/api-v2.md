@@ -102,6 +102,7 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.image.tint` 提供保留图片 alpha 的 RGB 着色，
 `view.state.selected` 提供通用受控选中样式，`view.checkbox.indeterminate` 提供复选框混合态，
 `view.input.required` 提供表单必填语义，
+`view.keyboardNavigation.order` 提供显式焦点参与和顺序，
 `view.grid.uniform` 提供基础 `grid`，`view.grid.placement` 提供显式格位与跨度，
 `view.grid.tracks` 提供受限 fixed/auto/fr/minmax 列轨和行轨，
 `view.flow.wrap` 提供横向换行 `flow`。
@@ -342,7 +343,13 @@ view.searchBox({
 用左/下减一档、右/上加一档。键盘激活仍投递普通 action/change 事件，但带
 `source="keyboard"` 和可信手势标记，Lua 不会获得原始按键流。鼠标点击可操作元素也会同步宿主
 焦点。逻辑槽位继续在这一焦点序列中使用 `Alt+方向键` 重排和 Delete 移除。该基础 feature
-不承诺自定义 `tabIndex`、任意键绑定、panel 焦点遍历或 UI Automation 输出。
+不承诺任意键绑定或 panel 焦点遍历。
+
+探测 `view.keyboardNavigation.order` 后，任意有语义的节点可声明 `focusable`，并在实际可聚焦时
+声明 `tabIndex=-1..32767`。`focusable=false` 同时退出鼠标、键盘和 UI Automation 焦点；
+`tabIndex=-1` 仍允许鼠标/UIA 聚焦，但不进入 Tab 和方向键遍历；正数按升序排在默认 0 的文档
+顺序之前，同值保持声明顺序。把原本不可聚焦的节点设为 true 时必须有可访问名称，spacer 等
+无语义节点不能被提升。该属性只改变焦点参与和遍历，不暴露原始按键，也不改变绘制/UIA 阅读顺序。
 
 `grid` 是行优先的均匀网格容器，必须提供 1–64 的整数 `columns`；每列等宽，
 `columnGap/rowGap` 分别控制水平和垂直间距，未提供时回退到 `gap`。隐藏子节点不占格，

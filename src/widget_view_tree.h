@@ -418,6 +418,8 @@ struct ViewNode
     std::string logicalSlotReference;
     bool visible = true;
     bool enabled = true;
+    std::optional<bool> focusable;
+    std::optional<int> tabIndex;
     std::string cursor;
     std::string tooltip;
     std::string accessibilityRole;
@@ -464,6 +466,7 @@ struct ViewInputControl
     float fontSize = 15.0f;
     ViewEdgeInsets padding{ 8.0f };
     bool enabled = true;
+    bool focusable = true;
     bool readOnly = false;
     bool selectAll = false;
     bool liveUpdate = true;

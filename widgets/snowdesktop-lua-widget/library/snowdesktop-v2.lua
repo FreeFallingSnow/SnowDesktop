@@ -318,6 +318,8 @@
 ---@field overflowText? SnowViewTextOverflow Defaults to ellipsis, except styledText defaults to clip.
 ---@field visible? boolean
 ---@field enabled? boolean
+---@field focusable? boolean Override whether the semantic node can receive host pointer/UIA focus; defaults to the node contract.
+---@field tabIndex? integer Sequential host focus order from -1 through 32767. -1 skips Tab/spatial traversal; positive values sort before 0/source order.
 ---@field cursor? string
 ---@field tooltip? string Bounded plain-text host tooltip; also used as semantic help text when no validation message is present.
 ---@field style? SnowViewStyle

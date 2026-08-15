@@ -110,8 +110,10 @@ void TestRepresentativeApplicability()
     Check(ViewNodeAllowsProperty(ViewNodeType::Button, "focusStyle") &&
             ViewNodeAllowsProperty(ViewNodeType::Text, "disabledStyle") &&
             ViewNodeAllowsProperty(ViewNodeType::ListItem, "selected") &&
-            ViewNodeAllowsProperty(ViewNodeType::Box, "selectedStyle"),
-        "focus, disabled, and selected state styles must be common properties");
+            ViewNodeAllowsProperty(ViewNodeType::Box, "selectedStyle") &&
+            ViewNodeAllowsProperty(ViewNodeType::Text, "focusable") &&
+            ViewNodeAllowsProperty(ViewNodeType::Button, "tabIndex"),
+        "focus, disabled, selected, and focus-order fields must be common properties");
     Check(ViewNodeAllowsProperty(ViewNodeType::Checkbox,
                 "indeterminate") &&
             !ViewNodeAllowsProperty(ViewNodeType::Toggle,

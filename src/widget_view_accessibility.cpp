@@ -265,7 +265,7 @@ bool AppendVirtualAccessibilityNode(const ViewNode& source,
     target.clip = clip;
     target.parentIndex = parentIndex;
     target.enabled = enabled;
-    target.focusable = enabled;
+    target.focusable = source.focusable.value_or(true) && enabled;
     target.focused = enabled && target.key == focusedKey;
     target.offscreen = bounds.width <= 0.0f || bounds.height <= 0.0f ||
         (clip && !Overlaps(bounds, *clip));
@@ -382,7 +382,8 @@ bool CollectNode(const ViewNode& source, std::string_view semanticPath,
         target.clip = inheritedClip;
         target.parentIndex = parentIndex;
         target.enabled = source.enabled;
-        target.focusable = contract->keyboardFocusable && source.enabled;
+        target.focusable = source.focusable.value_or(
+            contract->keyboardFocusable) && source.enabled;
         target.focused = target.focusable && source.key == focusedKey;
         target.offscreen = source.frame.width <= 0.0f ||
             source.frame.height <= 0.0f ||
@@ -494,7 +495,8 @@ bool CollectInteractionAccessibilityNodes(
             node.clip = ViewRect{ region.clip->x, region.clip->y,
                 region.clip->width, region.clip->height };
         node.enabled = region.enabled;
-        node.focusable = mapping.focusable && region.enabled;
+        node.focusable = region.focusable.value_or(mapping.focusable) &&
+            region.enabled;
         node.focused = node.focusable && region.key == focusedKey;
         const std::optional<ViewRect> visibleClip = region.clip
             ? Intersect(surface, *node.clip)

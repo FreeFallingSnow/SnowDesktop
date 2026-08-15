@@ -134,6 +134,8 @@ struct InteractionRegion
     bool hasExpandedProposal = false;
     bool expanded = false;
     bool enabled = true;
+    std::optional<bool> focusable;
+    int tabIndex = 0;
 
     bool operator==(const InteractionRegion&) const = default;
 };

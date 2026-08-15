@@ -2046,6 +2046,10 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         (labelNode ? "label" : "text");
     const bool clipSpecified = FieldPresent(state, index, "clip");
     const bool overflowSpecified = FieldPresent(state, index, "overflow");
+    const bool focusableSpecified = FieldPresent(state, index, "focusable");
+    const bool tabIndexSpecified = FieldPresent(state, index, "tabIndex");
+    bool focusable = false;
+    int tabIndex = 0;
     std::size_t rowTrackCount = 0;
     if (!ReadStringField(state, index, contentField,
             node.text, false, error) ||
@@ -2150,6 +2154,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             node.showAdjacentDates, error) ||
         !ReadBoolField(state, index, "visible", node.visible, error) ||
         !ReadBoolField(state, index, "enabled", node.enabled, error) ||
+        !ReadBoolField(state, index, "focusable", focusable, error) ||
+        !ReadIntegerField(state, index, "tabIndex", tabIndex, error) ||
         !ReadStringField(state, index, "cursor", node.cursor, false, error) ||
         !ReadStringField(state, index, "tooltip",
             node.tooltip, false, error) ||
@@ -2191,6 +2197,9 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadStyleField(state, index, "eventStyle",
             node.eventStyle, error))
         return false;
+
+    if (focusableSpecified) node.focusable = focusable;
+    if (tabIndexSpecified) node.tabIndex = tabIndex;
 
     if (rowTrackCount > 0 && node.rowTracks.empty())
         node.rowTracks.resize(rowTrackCount);

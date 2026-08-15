@@ -39,8 +39,8 @@ bool IsTextEntryRole(std::string_view role) noexcept
 
 bool IsKeyboardFocusableRegion(const InteractionRegion& region) noexcept
 {
-    return region.enabled &&
-        (region.controlKind != InteractionControlKind::None ||
+    return region.enabled && region.focusable.value_or(
+        region.controlKind != InteractionControlKind::None ||
             region.events.contains("click") ||
             IsTextEntryRole(region.accessibilityRole));
 }
@@ -487,10 +487,23 @@ const InteractionAction* WidgetInteractionRegions::ActionAt(
 std::vector<std::string>
 WidgetInteractionRegions::KeyboardFocusableKeys() const
 {
-    std::vector<std::string> result;
-    result.reserve(active_.size());
+    std::vector<const InteractionRegion*> ordered;
+    ordered.reserve(active_.size());
     for (const auto& region : active_)
-        if (IsKeyboardFocusableRegion(region)) result.push_back(region.key);
+        if (IsKeyboardFocusableRegion(region) && region.tabIndex >= 0)
+            ordered.push_back(&region);
+    std::stable_sort(ordered.begin(), ordered.end(),
+        [](const InteractionRegion* left,
+            const InteractionRegion* right) {
+            const bool leftExplicit = left->tabIndex > 0;
+            const bool rightExplicit = right->tabIndex > 0;
+            if (leftExplicit != rightExplicit) return leftExplicit;
+            return leftExplicit && left->tabIndex != right->tabIndex
+                ? left->tabIndex < right->tabIndex : false;
+        });
+    std::vector<std::string> result;
+    result.reserve(ordered.size());
+    for (const auto* region : ordered) result.push_back(region->key);
     return result;
 }
 

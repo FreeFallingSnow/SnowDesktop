@@ -444,6 +444,7 @@ struct LuaWidget
         std::optional<RECT> clipRect;
         bool value = false;
         bool enabled = true;
+        bool focusable = true;
         bool readOnly = false;
         bool controlled = false;
         bool numeric = false;

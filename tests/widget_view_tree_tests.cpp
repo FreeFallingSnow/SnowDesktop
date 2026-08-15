@@ -688,6 +688,7 @@ void TestSelectionControlParsing()
                     key = "notifications",
                     label = "Notifications",
                     checked = false,
+                    tabIndex = 2,
                     action = { id = "notifications.change" },
                     checkedStyle = { background = 0x4C9AFF },
                     hoverStyle = { opacity = 0.9 },
@@ -697,6 +698,8 @@ void TestSelectionControlParsing()
                     label = "Compact layout",
                     checked = false,
                     indeterminate = true,
+                    focusable = true,
+                    tabIndex = 1,
                     events = {
                         change = { id = "compact.change" },
                         contextMenu = {
@@ -715,6 +718,7 @@ void TestSelectionControlParsing()
             root.selectedStyle.background == std::uint32_t{ 0x101820 } &&
             root.children[0].type == ViewNodeType::Toggle &&
             !root.children[0].checked &&
+            root.children[0].tabIndex == 2 &&
             root.children[0].events.at("change").id ==
                 "notifications.change" &&
             root.children[0].checkedStyle.background ==
@@ -722,6 +726,8 @@ void TestSelectionControlParsing()
             root.children[1].type == ViewNodeType::Checkbox &&
             !root.children[1].checked &&
             root.children[1].indeterminate &&
+            root.children[1].focusable == true &&
+            root.children[1].tabIndex == 1 &&
             root.children[1].events.at("contextMenu").id ==
                 "compact.menu" &&
             root.children[1].events.at("contextMenu").contextMenuScope ==
@@ -736,10 +742,22 @@ void TestSelectionControlParsing()
             !regions[0].checked &&
             regions[0].accessibilityRole == "switch" &&
             regions[0].cursor == "hand" &&
+            regions[0].focusable == true && regions[0].tabIndex == 2 &&
             regions[1].controlKind == InteractionControlKind::Checkbox &&
             !regions[1].checked && regions[1].indeterminate &&
+            regions[1].focusable == true && regions[1].tabIndex == 1 &&
             regions[1].accessibilityRole == "checkbox",
         "selection controls must produce semantic controlled regions");
+    WidgetInteractionRegions focusRegions;
+    focusRegions.BeginFrame();
+    for (auto& region : regions)
+        Check(focusRegions.Submit(std::move(region), error),
+            "focus-order regions must submit");
+    focusRegions.CommitFrame();
+    const auto focusKeys = focusRegions.KeyboardFocusableKeys();
+    Check(focusKeys.size() == 2 && focusKeys[0] == "compact" &&
+            focusKeys[1] == "notifications",
+        "declarative tabIndex must control stable keyboard traversal order");
 
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(
@@ -771,6 +789,23 @@ void TestSelectionControlParsing()
             !ValidateAndLayoutViewTree(invalid, 200.0f, 40.0f, error) &&
             error.find("checked=false") != std::string::npos,
         "an indeterminate checkbox must reject a simultaneously checked value");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.button({
+            key = "invalid-focus-order",
+            label = "Invalid focus order",
+            focusable = false,
+            tabIndex = 1,
+            action = { id = "invalid-focus-order.open" },
+        })
+    )lua") == LUA_OK,
+        "invalid focus-order fixture must evaluate");
+    invalid = {};
+    Check(ParseLuaViewTree(state, -1, invalid, error) &&
+            !ValidateAndLayoutViewTree(invalid, 200.0f, 40.0f, error) &&
+            error.find("requires a focusable node") != std::string::npos,
+        "tabIndex must reject an explicitly non-focusable node");
 
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(
@@ -1559,6 +1594,7 @@ void TestDeclarativeInputControls()
                 view.textArea({
                     key = "notes", value = "one\ntwo", height = 80,
                     liveUpdate = false, readOnly = true,
+                    focusable = false,
                     accessibility = { label = "Notes" },
                 }),
                 view.searchBox({
@@ -1601,6 +1637,7 @@ void TestDeclarativeInputControls()
             root.children[0].validationStyle.borderWidth == 2.0f &&
             root.children[1].type == ViewNodeType::TextArea &&
             !root.children[1].liveUpdate && root.children[1].readOnly &&
+            root.children[1].focusable == false &&
             root.children[2].type == ViewNodeType::SearchBox &&
             root.children[3].type == ViewNodeType::NumberInput &&
             Near(root.children[3].value, 5.0f) &&
@@ -1617,7 +1654,8 @@ void TestDeclarativeInputControls()
             controls[0].changeAction.id == "name.change" &&
             controls[0].focusAction.id == "name.focus" &&
             controls[1].type == ViewNodeType::TextArea &&
-            controls[1].readOnly && controls[1].changeAction.id.empty() &&
+            controls[1].readOnly && !controls[1].focusable &&
+            controls[1].changeAction.id.empty() &&
             controls[3].type == ViewNodeType::NumberInput &&
             controls[3].value == "5",
         "text-like inputs must produce typed host-control descriptors");
