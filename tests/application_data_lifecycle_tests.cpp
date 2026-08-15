@@ -618,6 +618,8 @@ int main()
     PackageManifest manifest;
     auto report = validator.ValidateDirectory(sourceV1, &manifest);
     Expect(report.Ok(), "valid folder package is accepted");
+    Expect(!IsExecutablePackageContract(manifest),
+        "schema/API v1 is migration input and cannot enter the runtime");
     Expect(std::any_of(report.issues.begin(), report.issues.end(),
             [](const ValidationIssue& issue) {
                 return issue.severity == ValidationSeverity::Warning &&
@@ -678,6 +680,7 @@ int main()
     report = validator.ValidateDirectory(contractV2Package, &manifestV2);
     Expect(report.Ok() && manifestV2.schemaVersion == 2 &&
             manifestV2.apiVersion == 2 &&
+            IsExecutablePackageContract(manifestV2) &&
             manifestV2.requiredFeatures ==
                 std::vector<std::string>{ "draw.immediate",
                     "interaction.contextMenu" } &&
@@ -685,6 +688,10 @@ int main()
                 std::vector<std::string>{ "data.app.indexStatus",
                     "view.tree" },
         "schema/API v2 lower-camel feature segments are parsed and accepted");
+    PackageManifest mixedContract = manifestV2;
+    mixedContract.apiVersion = 1;
+    Expect(!IsExecutablePackageContract(mixedContract),
+        "mixed schema/API contracts cannot enter the runtime");
 
     const auto logicalSlotPackage = root / L"logical-slot-package";
     MakePackage(logicalSlotPackage, "2.0.0",

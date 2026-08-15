@@ -12749,6 +12749,25 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     const std::unordered_map<std::string, std::string>*
         previewStorageOverrides)
 {
+    LuaWidget pending;
+    pending.widgetId = widgetId;
+    pending.filePath = path;
+    pending.manifest = GetWidgetManifest(path);
+    pending.packageId = pending.manifest.packageId;
+    pending.preview = preview;
+    if (!snowdesktop::widget::IsExecutablePackageContract(
+            pending.manifest.schemaVersion,
+            pending.manifest.apiVersion))
+    {
+        const bool legacy = pending.manifest.schemaVersion ==
+                snowdesktop::widget::kLegacyPackageSchemaVersion &&
+            pending.manifest.apiVersion ==
+                snowdesktop::widget::kLegacyApiVersion;
+        RuntimeRecordError(widgetId, legacy
+            ? "Widget schema/API v1 is migration-only and cannot execute"
+            : "Widget schema/API contract is not supported by this host");
+        return false;
+    }
     std::string source = ReadTextFile(path);
     if (source.empty())
     {
@@ -12756,13 +12775,6 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
             "Widget entry script is empty or cannot be read");
         return false;
     }
-
-    LuaWidget pending;
-    pending.widgetId = widgetId;
-    pending.filePath = path;
-    pending.manifest = GetWidgetManifest(path);
-    pending.packageId = pending.manifest.packageId;
-    pending.preview = preview;
     if (preview)
     {
         const std::string prefix = WidgetWideToUtf8(widgetId) + ".";
@@ -12860,35 +12872,20 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
             "Cannot allocate isolated Lua state", quota->memoryExceeded);
         return false;
     }
-    const bool legacyContract = pending.manifest.schemaVersion ==
-            snowdesktop::widget::kLegacyPackageSchemaVersion &&
-        pending.manifest.apiVersion == snowdesktop::widget::kLegacyApiVersion;
-    const bool currentContract = pending.manifest.schemaVersion ==
-            snowdesktop::widget::kPackageSchemaVersion &&
-        pending.manifest.apiVersion == snowdesktop::widget::kHostApiVersion;
-    if (!legacyContract && !currentContract)
+    const auto missing = snowdesktop::widget_api::MissingFeatures(
+        pending.manifest.requiredFeatures);
+    if (!missing.empty())
     {
-        RuntimeRecordError(widgetId,
-            "Widget schema/API contract is not supported by this host");
-        return false;
-    }
-    if (currentContract)
-    {
-        const auto missing = snowdesktop::widget_api::MissingFeatures(
-            pending.manifest.requiredFeatures);
-        if (!missing.empty())
+        std::string message = "Widget requires unsupported host feature";
+        if (missing.size() > 1) message += "s";
+        message += ": ";
+        for (std::size_t index = 0; index < missing.size(); ++index)
         {
-            std::string message = "Widget requires unsupported host feature";
-            if (missing.size() > 1) message += "s";
-            message += ": ";
-            for (std::size_t index = 0; index < missing.size(); ++index)
-            {
-                if (index) message += ", ";
-                message += missing[index];
-            }
-            RuntimeRecordError(widgetId, message);
-            return false;
+            if (index) message += ", ";
+            message += missing[index];
         }
+        RuntimeRecordError(widgetId, message);
+        return false;
     }
     std::unique_ptr<lua_State, decltype(&lua_close)> stateGuard(
         state, lua_close);
@@ -12982,7 +12979,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         }
         lua_pushvalue(state, -2);  // push sandbox as argument
         if (snowdesktop::lua_runtime::ProtectedCall(
-                state, 1, currentContract ? 1 : 0, 1000000,
+                state, 1, 1, 1000000,
                 std::chrono::milliseconds(100)) != LUA_OK)
         {
             const char* err = lua_tostring(state, -1);
@@ -12998,7 +12995,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     {
         // Execute the chunk
         if (snowdesktop::lua_runtime::ProtectedCall(
-                state, 0, currentContract ? 1 : 0, 1000000,
+                state, 0, 1, 1000000,
                 std::chrono::milliseconds(100)) != LUA_OK)
         {
             const char* err = lua_tostring(state, -1);
@@ -13015,24 +13012,15 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     lua_setfield(state, LUA_REGISTRYINDEX, "__widget_loading");
 
     int ref = LUA_NOREF;
-    if (currentContract)
+    if (!snowdesktop::widget_api::IsDefinedWidget(state, -1))
     {
-        if (!snowdesktop::widget_api::IsDefinedWidget(state, -1))
-        {
-            RuntimeRecordError(widgetId,
-                "API v2 entry must return widget.define({...})");
-            lua_pop(state, 2);
-            return false;
-        }
-        ref = luaL_ref(state, LUA_REGISTRYINDEX);
-        lua_pop(state, 1); // sandbox
+        RuntimeRecordError(widgetId,
+            "API v2 entry must return widget.define({...})");
+        lua_pop(state, 2);
+        return false;
     }
-    else
-    {
-        // API v1 stores callbacks as globals in the sandbox. This branch is
-        // retained only while bundled components are migrated to v2.
-        ref = luaL_ref(state, LUA_REGISTRYINDEX);
-    }
+    ref = luaL_ref(state, LUA_REGISTRYINDEX);
+    lua_pop(state, 1); // sandbox
     (void)snowdesktop::widget_api::ConsumeTransientStateDirty(state);
 
     std::string name = pending.manifest.name.empty()
@@ -13206,8 +13194,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     if (GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &attr))
         w.lastModified = attr.ftLastWriteTime;
     widgets_.push_back(std::move(w));
-    if (currentContract &&
-        !InitializeWidgetLifecycle(widgets_.back()))
+    if (!InitializeWidgetLifecycle(widgets_.back()))
     {
         LuaWidget& failed = widgets_.back();
         ReleaseWidgetDataSubscriptions(failed);

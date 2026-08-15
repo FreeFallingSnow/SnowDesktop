@@ -1204,6 +1204,18 @@ PackageManifest LocalizePackageManifest(PackageManifest manifest,
     return LocalizedManifest(std::move(manifest), requestedLocale);
 }
 
+bool IsExecutablePackageContract(int schemaVersion, int apiVersion) noexcept
+{
+    return schemaVersion == kPackageSchemaVersion &&
+        apiVersion == kHostApiVersion;
+}
+
+bool IsExecutablePackageContract(const PackageManifest& manifest) noexcept
+{
+    return IsExecutablePackageContract(
+        manifest.schemaVersion, manifest.apiVersion);
+}
+
 std::vector<std::string> DeclaredPermissions(
     const PackageManifest& manifest)
 {

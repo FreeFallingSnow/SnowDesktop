@@ -55,7 +55,8 @@ development packages live under `data\widgets\installed` and
 Read `references/api-v2.md` completely before implementing API calls, features,
 resources or troubleshooting. Use `library/snowdesktop-v2.lua` as the LuaLS
 library. Read `references/package-v1.md` only when diagnosing or migrating an
-old schema/API v1 package; do not create new v1 packages.
+old schema/API v1 package. The host recognizes v1 only as migration input and
+never executes its entry script; do not create new v1 packages.
 
 ## Required entry
 

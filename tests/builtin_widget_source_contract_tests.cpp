@@ -63,12 +63,34 @@ void TestRemindersRenderPurity(const fs::path& repository)
     Check(manifest.find("\"dataVersion\": 3") != std::string::npos,
         "reminders selection cleanup requires dataVersion 3");
 }
+
+void TestV2OnlyWidgetActivation(const fs::path& repository)
+{
+    const std::string source = ReadFile(
+        repository / "src" / "widget_engine.cpp");
+    const std::string_view loadWidget = Section(source,
+        "bool WidgetEngine::LoadWidget(",
+        "\nvoid WidgetEngine::RenderAll(");
+    const std::size_t contractGate = loadWidget.find(
+        "IsExecutablePackageContract");
+    const std::size_t sourceRead = loadWidget.find("ReadTextFile(path)");
+    const std::size_t vmCreation = loadWidget.find("lua_newstate(");
+    Check(contractGate != std::string_view::npos &&
+            sourceRead != std::string_view::npos &&
+            vmCreation != std::string_view::npos &&
+            contractGate < sourceRead && sourceRead < vmCreation,
+        "schema/API v2 must be accepted before reading or allocating an entry VM");
+    Check(loadWidget.find("legacyContract") == std::string_view::npos &&
+            loadWidget.find("currentContract ?") == std::string_view::npos,
+        "LoadWidget must not retain an API v1 execution branch");
+}
 }
 
 int main(int argc, char** argv)
 {
     Check(argc == 2, "expected the repository root argument");
     TestRemindersRenderPurity(fs::path(argv[1]));
+    TestV2OnlyWidgetActivation(fs::path(argv[1]));
     std::cout << "Built-in widget source contract tests passed\n";
     return 0;
 }

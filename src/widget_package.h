@@ -128,6 +128,9 @@ struct PackageManifest
 
 PackageManifest LocalizePackageManifest(PackageManifest manifest,
     const std::string& requestedLocale);
+bool IsExecutablePackageContract(int schemaVersion,
+    int apiVersion) noexcept;
+bool IsExecutablePackageContract(const PackageManifest& manifest) noexcept;
 std::vector<std::string> DeclaredPermissions(
     const PackageManifest& manifest);
 

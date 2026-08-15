@@ -1,8 +1,8 @@
 # SnowDesktop Lua Widget API v1（迁移参考）
 
 > 本页只记录旧 schema/API v1。新组件与迁移目标请使用
-> [API v2](api-v2.md) 和 `library/snowdesktop-v2.lua`。v1 运行时是内置组件迁移
-> 期间的过渡层，不是新组件的开发目标。
+> [API v2](api-v2.md) 和 `library/snowdesktop-v2.lua`。正式宿主不再执行 v1
+> 入口脚本；本页只用于静态读取旧代码、解释迁移诊断和人工改写，不是可运行开发目标。
 
 ## Contents
 
@@ -21,7 +21,7 @@
 
 ## Runtime model
 
-Scripts run in a sandbox containing:
+旧版脚本曾在包含以下能力的沙箱中运行；当前宿主不会为它创建 Lua VM：
 
 - Base functions: `assert`, `error`, `ipairs`, `next`, `pairs`, `pcall`, `select`, `tonumber`, `tostring`, `type`, `xpcall`.
 - Libraries: `string`, `table`, `math`, `utf8`.

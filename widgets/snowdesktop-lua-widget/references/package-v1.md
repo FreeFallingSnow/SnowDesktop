@@ -1,8 +1,9 @@
 # SnowDesktop Lua 组件包 v1
 
 > 仅用于读取旧包和迁移诊断。SnowDesktop 尚未发行，不建议新建 API v1 包；
-> 新组件必须使用 schema/API v2 和 `return widget.define({...})`。v1 运行时是
-> 过渡实现，待内置组件迁移完成后将收缩为只读迁移输入，而不是长期维护两套 API。
+> 新组件必须使用 schema/API v2 和 `return widget.define({...})`。正式宿主已将 v1
+> 收缩为只读迁移输入：可以识别清单并给出诊断，但在读取入口正文、创建 Lua VM 或注册
+> v1 API 前会拒绝激活，因此不长期维护两套可执行 API。
 
 SnowDesktop 将 Lua 组件作为渠道无关的文件夹包运行。布局只保存不可变的
 `packageId` 和实例 `id`，不会保存或执行 Lua 文件路径。自有社区、静态目录和
