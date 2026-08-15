@@ -2754,8 +2754,9 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         error = "only image nodes can retain an image resource";
         return false;
     }
-    if (node.imageTint && (node.type != ViewNodeType::Image ||
-            *node.imageTint > 0xFFFFFF))
+    if ((node.imageTint || node.imageTintToken) &&
+        (node.type != ViewNodeType::Image ||
+            (node.imageTint && *node.imageTint > 0xFFFFFF)))
     {
         error = "image tint is only valid for image nodes and must be an RGB color";
         return false;
@@ -4005,6 +4006,68 @@ void ApplyViewTransform(const ViewNode& root,
         region.controlEndX = end.x;
         region.controlEndY = end.y;
     }
+}
+
+std::uint32_t ResolveViewThemeColor(ViewThemeColorToken token,
+    const ViewThemePalette& palette) noexcept
+{
+    switch (token)
+    {
+    case ViewThemeColorToken::WidgetBackground:
+        return palette.widgetBackground;
+    case ViewThemeColorToken::Surface:
+        return palette.surface;
+    case ViewThemeColorToken::SurfaceVariant:
+        return palette.surfaceVariant;
+    case ViewThemeColorToken::TextPrimary:
+        return palette.textPrimary;
+    case ViewThemeColorToken::TextSecondary:
+        return palette.textSecondary;
+    case ViewThemeColorToken::TextDisabled:
+        return palette.textDisabled;
+    case ViewThemeColorToken::Border:
+        return palette.border;
+    case ViewThemeColorToken::BorderStrong:
+        return palette.borderStrong;
+    case ViewThemeColorToken::SystemAccent:
+        return palette.systemAccent;
+    case ViewThemeColorToken::AccentText:
+        return palette.accentText;
+    case ViewThemeColorToken::Info:
+        return palette.info;
+    case ViewThemeColorToken::Success:
+        return palette.success;
+    case ViewThemeColorToken::Warning:
+        return palette.warning;
+    case ViewThemeColorToken::Error:
+        return palette.error;
+    }
+    return palette.textPrimary;
+}
+
+std::optional<std::uint32_t> ResolveViewThemeColor(
+    const std::optional<std::uint32_t>& literal,
+    const std::optional<ViewThemeColorToken>& token,
+    const ViewThemePalette& palette) noexcept
+{
+    if (token) return ResolveViewThemeColor(*token, palette);
+    return literal;
+}
+
+ViewStyle ResolveViewThemeStyle(const ViewStyle& style,
+    const ViewThemePalette& palette) noexcept
+{
+    ViewStyle result = style;
+    result.background = ResolveViewThemeColor(
+        style.background, style.backgroundToken, palette);
+    result.foreground = ResolveViewThemeColor(
+        style.foreground, style.foregroundToken, palette);
+    result.borderColor = ResolveViewThemeColor(
+        style.borderColor, style.borderColorToken, palette);
+    result.backgroundToken.reset();
+    result.foregroundToken.reset();
+    result.borderColorToken.reset();
+    return result;
 }
 
 void ViewTransitionRuntime::BeginFrame() noexcept

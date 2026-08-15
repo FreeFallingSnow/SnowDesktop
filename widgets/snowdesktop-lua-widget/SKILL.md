@@ -227,6 +227,14 @@ the host applies the same content rectangle to descendant paint, pointer hit,
 inputs, and semantic visibility. `clip=true` remains compatibility syntax and
 must not contradict overflow. Probe `view.shadow` for bounded frame shadows and
 `view.image.tint` for alpha-preserving RGB tint on package image nodes.
+Probe `view.theme.tokens` before replacing declarative RGB values with the
+host semantic colors `widgetBackground`, `surface`, `surfaceVariant`,
+`textPrimary`, `textSecondary`, `textDisabled`, `border`, `borderStrong`,
+`systemAccent`, `accentText`, `info`, `success`, `warning`, or `error`.
+They work in all state styles, styled-text span colors, shadow color, and image
+tint. The host resolves them after state overlay and before transitions and
+uses Windows system colors in high contrast. They do not apply to immediate
+drawing commands.
 Probe `view.transform.basic` before declaring a node `transform` with bounded
 `translateX`, `translateY`, positive uniform `scale`, or normalized
 `originX`/`originY`. Transforms are post-layout, inherit through descendants,

@@ -115,6 +115,7 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.text.flow` 提供文本块的换行、行数、溢出和垂直对齐，
 `view.text.typography` 提供字体粗细、字形、行高和字距，
 `view.text.locale` 提供 BCP 47 locale 与双向文本基准方向，
+`view.theme.tokens` 提供宿主解析的声明式语义颜色，
 `view.tooltip` 提供宿主管理的纯文本元素提示，
 `view.layout.overflow` 提供容器后代裁剪，`view.shadow` 提供有界宿主阴影，
 `view.image.tint` 提供保留图片 alpha 的 RGB 着色，
@@ -159,6 +160,29 @@ scroll content extent 和虚拟 item extent；同级间的公共间隔仍优先�
 由宿主最多 16 层受控衰减绘制，blur 限制为 0 到 64，不参与布局或扩大命中区；对应 feature
 为 `view.shadow`。图片在探测 `view.image.tint` 后可声明 `tint=0xRRGGBB`，宿主替换 RGB、
 保留源 alpha，并继续遵循 fit、alignment、interpolation 和节点 opacity。
+
+探测 `view.theme.tokens` 后，所有声明式 RGB 颜色槽都可用下列字符串代替
+`0xRRGGBB`：
+
+```lua
+style = {
+    background = "surface",
+    foreground = "textPrimary",
+    borderColor = "border",
+}
+hoverStyle = { background = "surfaceVariant" }
+```
+
+稳定 Token 为 `widgetBackground/surface/surfaceVariant`、
+`textPrimary/textSecondary/textDisabled`、`border/borderStrong`、
+`systemAccent/accentText` 和 `info/success/warning/error`。它们适用于
+`style` 及全部状态样式的 `background/foreground/borderColor`、styledText span 的
+`foreground/hoverForeground/pressedForeground`、`shadow.color` 和图片 `tint`。
+宿主在状态样式合并之后、transition 之前按当前组件主题和系统强调色解析，因此 Token
+之间的状态变化仍可由 `view.transition.visual` 插值。高对比度模式改用 Windows 系统窗口、
+文本、选中和禁用色；Token 不会把系统颜色数值暴露为可持久化品牌色，也不适用于即时绘制 API。
+该能力无需权限。未知字符串会拒绝整棵新树并保留上一棵成功树。
+
 探测 `view.transform.basic` 后，任意节点可声明
 `transform={translateX?,translateY?,scale?,originX?,originY?}`。平移每轴限制在
 -4096–4096，统一正数 scale 限制为 0.05–8，归一化原点限制为 0–1；嵌套累计缩放必须保持
@@ -769,7 +793,7 @@ Grid/GridItem；任意未实体化集合项仍未形成完整 UIA VirtualizedIte
 
 `view.tree.core` 仍不是完整 `view.tree`：业务状态失效时仍提交完整树；只有
 `view.transition.visual` 的插值帧会复用上一棵成功树。当前尚无可变高度虚拟集合、
-完整 UIA 虚拟集合/ScrollItem Pattern、主题 token 或差量资源复用。
+完整 UIA 虚拟集合/ScrollItem Pattern 或差量资源复用。
 需要这些能力的组件应继续使用已经公开的细粒度 feature 或等待对应能力；不得把
 `view.tree.core` 当作稳定完整控件集声明。
 

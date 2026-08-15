@@ -287,11 +287,52 @@ struct ViewEdgeInsets
     bool operator==(const ViewEdgeInsets&) const = default;
 };
 
+enum class ViewThemeColorToken
+{
+    WidgetBackground,
+    Surface,
+    SurfaceVariant,
+    TextPrimary,
+    TextSecondary,
+    TextDisabled,
+    Border,
+    BorderStrong,
+    SystemAccent,
+    AccentText,
+    Info,
+    Success,
+    Warning,
+    Error,
+};
+
+struct ViewThemePalette
+{
+    std::uint32_t widgetBackground = 0x151A21;
+    std::uint32_t surface = 0x23272D;
+    std::uint32_t surfaceVariant = 0x32363B;
+    std::uint32_t textPrimary = 0xFFFFFF;
+    std::uint32_t textSecondary = 0xB9BBC0;
+    std::uint32_t textDisabled = 0x777A80;
+    std::uint32_t border = 0xFFFFFF;
+    std::uint32_t borderStrong = 0xFFFFFF;
+    std::uint32_t systemAccent = 0x0078D4;
+    std::uint32_t accentText = 0xFFFFFF;
+    std::uint32_t info = 0x72C7FF;
+    std::uint32_t success = 0x55C271;
+    std::uint32_t warning = 0xF2C94C;
+    std::uint32_t error = 0xFF6B6B;
+
+    bool operator==(const ViewThemePalette&) const = default;
+};
+
 struct ViewStyle
 {
     std::optional<std::uint32_t> background;
+    std::optional<ViewThemeColorToken> backgroundToken;
     std::optional<std::uint32_t> foreground;
+    std::optional<ViewThemeColorToken> foregroundToken;
     std::optional<std::uint32_t> borderColor;
+    std::optional<ViewThemeColorToken> borderColorToken;
     std::optional<float> borderWidth;
     std::optional<float> cornerRadius;
     std::optional<float> opacity;
@@ -327,6 +368,7 @@ struct ViewTransition
 struct ViewShadow
 {
     std::uint32_t color = 0x000000;
+    std::optional<ViewThemeColorToken> colorToken;
     float blur = 12.0f;
     float offsetX = 0.0f;
     float offsetY = 4.0f;
@@ -385,8 +427,11 @@ struct ViewTextSpan
     std::string key;
     std::string text;
     std::optional<std::uint32_t> foreground;
+    std::optional<ViewThemeColorToken> foregroundToken;
     std::optional<std::uint32_t> hoverForeground;
+    std::optional<ViewThemeColorToken> hoverForegroundToken;
     std::optional<std::uint32_t> pressedForeground;
+    std::optional<ViewThemeColorToken> pressedForegroundToken;
     std::optional<float> fontSize;
     bool bold = false;
     bool italic = false;
@@ -477,6 +522,7 @@ struct ViewNode
     ViewImageInterpolation imageInterpolation =
         ViewImageInterpolation::Linear;
     std::optional<std::uint32_t> imageTint;
+    std::optional<ViewThemeColorToken> imageTintToken;
     ViewOrientation orientation = ViewOrientation::Horizontal;
     ViewShapeKind shapeKind = ViewShapeKind::Rectangle;
     ViewIconFont iconFont = ViewIconFont::FontAwesome;
@@ -637,6 +683,15 @@ private:
     std::unordered_map<std::string, Entry> entries_;
     std::uint64_t generation_ = 0;
 };
+
+std::uint32_t ResolveViewThemeColor(ViewThemeColorToken token,
+    const ViewThemePalette& palette) noexcept;
+std::optional<std::uint32_t> ResolveViewThemeColor(
+    const std::optional<std::uint32_t>& literal,
+    const std::optional<ViewThemeColorToken>& token,
+    const ViewThemePalette& palette) noexcept;
+ViewStyle ResolveViewThemeStyle(const ViewStyle& style,
+    const ViewThemePalette& palette) noexcept;
 
 struct ViewTreeLimits
 {

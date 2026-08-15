@@ -131,6 +131,8 @@
 ---@alias SnowViewVisibility 'visible'|'hidden'|'collapsed'
 ---@alias SnowViewTransitionEasing 'linear'|'easeIn'|'easeOut'|'easeInOut'
 ---@alias SnowViewTransitionProperty 'background'|'foreground'|'borderColor'|'opacity'
+---@alias SnowViewThemeColor 'widgetBackground'|'surface'|'surfaceVariant'|'textPrimary'|'textSecondary'|'textDisabled'|'border'|'borderStrong'|'systemAccent'|'accentText'|'info'|'success'|'warning'|'error'
+---@alias SnowViewColor integer|SnowViewThemeColor
 ---@alias SnowViewGridTrack number|'auto'|SnowViewGridFractionTrack|SnowViewGridMinMaxTrack
 ---@alias SnowViewValidationState 'none'|'info'|'success'|'warning'|'error'
 ---@alias SnowViewSelectionMode 'none'|'single'|'multiple'
@@ -153,7 +155,7 @@
 ---@field y? number Vertical visual offset from -4096 through 4096.
 
 ---@class SnowViewShadow
----@field color? integer RGB shadow color; defaults to black.
+---@field color? SnowViewColor RGB or host theme token; defaults to black. Theme tokens require view.theme.tokens.
 ---@field blur? number Bounded soft-shadow spread from 0 through 64; defaults to 12.
 ---@field offsetX? number Horizontal offset from -4096 through 4096; defaults to 0.
 ---@field offsetY? number Vertical offset from -4096 through 4096; defaults to 4.
@@ -184,9 +186,9 @@
 ---@field max number|'auto'|SnowViewGridFractionTrack Fixed cap, intrinsic cap, or fractional maximum.
 
 ---@class SnowViewStyle
----@field background? integer RGB color.
----@field foreground? integer RGB color.
----@field borderColor? integer RGB color.
+---@field background? SnowViewColor RGB or host theme token.
+---@field foreground? SnowViewColor RGB or host theme token.
+---@field borderColor? SnowViewColor RGB or host theme token.
 ---@field borderWidth? number
 ---@field cornerRadius? number
 ---@field opacity? number Between 0 and 1.
@@ -227,9 +229,9 @@
 ---@class SnowViewTextSpan
 ---@field key? string Required when the span has actions, events, tooltip, accessibility metadata, or interactive colors; target becomes '<styledText-key>/<span-key>'.
 ---@field text string Non-empty bounded UTF-8 text.
----@field foreground? integer Per-span RGB color.
----@field hoverForeground? integer RGB color while the exact span fragments are hovered; requires view.styledText.actions.
----@field pressedForeground? integer RGB color while the exact span fragments are pressed; requires view.styledText.actions.
+---@field foreground? SnowViewColor Per-span RGB or host theme token.
+---@field hoverForeground? SnowViewColor Color while the exact span fragments are hovered; requires view.styledText.actions.
+---@field pressedForeground? SnowViewColor Color while the exact span fragments are pressed; requires view.styledText.actions.
 ---@field fontSize? number Per-span font size from 1 through 512.
 ---@field bold? boolean
 ---@field italic? boolean
@@ -282,7 +284,7 @@
 ---@field fit? SnowViewImageFit Image scaling mode; defaults to contain.
 ---@field alignment? SnowViewImageAlignment Image alignment on both axes; defaults to center.
 ---@field interpolation? SnowViewImageInterpolation Image sampling mode; defaults to linear.
----@field tint? integer Image-only RGB tint that replaces source RGB while preserving source alpha.
+---@field tint? SnowViewColor Image-only RGB or host theme tint that replaces source RGB while preserving source alpha.
 ---@field alt? string Required by image and referenceIcon nodes; use an empty string for decorative visuals.
 ---@field iconFont? 'fa'|'fluent'|'fluent-regular'
 ---@field shape? 'rectangle'|'roundedRectangle'|'circle'|'ellipse'

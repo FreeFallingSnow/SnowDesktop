@@ -1284,6 +1284,7 @@ view.row({
 - `view.layout.edgeInsets` 已将 `margin/padding` 扩展为 scalar、`horizontal/vertical` 与 `top/right/bottom/left` 结构；轴值先展开、显式边值覆盖，四边值进入固有尺寸、全部容器布局、滚动范围、文本/图片内容区和宿主输入命中。仍不解析 CSS shorthand 字符串，也不支持负边距。
 - `view.positioning.basic` 已为 stack 直接子节点加入有界 `offset{x,y}` 与稳定 `zIndex`，绘制和命中使用同一排序而语义顺序保持声明顺序；容器 `clip=true` 同时约束后代绘制、命中、宿主输入和语义可见范围。任意 absolute 布局、裁剪路径与跨容器视觉重排仍不开放。
 - `view.layout.overflow` 现以 `overflow=visible|clip` 正式承接容器后代溢出策略，旧 `clip` 仅作一致性兼容入口；`view.shadow` 使用与即时绘制相同的最多 16 层有界衰减模型，`view.image.tint` 通过宿主 ColorMatrix 保留源 alpha 并替换 RGB。阴影不改变布局/命中。
+- `view.theme.tokens` 已公开 `widgetBackground/surface/surfaceVariant`、三档文本、两档边框、系统强调色及其前景色和四种状态色。style/全部状态 style、styledText span、shadow color 与 image tint 共用同一解析器；宿主在状态叠加后、transition 前按组件主题解析，高对比度改用 Windows 系统色，未知 token 原子拒绝。即时绘制仍只接受显式 RGB；实际深浅主题切换、高对比度和辅助 surface 场景待验证。
 - `view.transform.basic` 已加入布局后的 `translateX/translateY`、正数统一 `scale` 和归一化 `originX/originY`；`view.transform.affine` 又加入正数 `scaleX/scaleY` 乘数、-360–360 度 `rotate` 与各 -80–80 度 `skewX/skewY`，固定顺序为 scale→skew→rotate→translate。单节点最终轴限制为 0.05–8，嵌套仿射矩阵以奇异值限制累计伸缩为 1/64–64；Direct2D 直接消费 scene 的同一局部矩阵，元素命中通过逆矩阵保持 roundedRect/circle/文本片段精度，slider 通过变换后的轴向量解析值，UIA 使用四角包围框。宿主管理输入、scroll 和逻辑槽位以及执行裁剪的节点仍要求正向轴对齐矩阵，透视不开放；当前真实桌面绘制、命中和辅助技术场景待验证。
 - `view.transition.visual` 已公开节点级 `background/foreground/borderColor/opacity` 过渡，限制为 1–4 个唯一属性、1–2000 ms 与 linear/easeIn/easeOut/easeInOut。宿主在桌面及辅助 surface 上复用统一 16 ms 计时器，并直接重绘上一棵成功树，不在每个插值帧重复执行 Lua `view()`；预览、无计时器和 `reducedMotion` 直接落到最终样式。颜色端点任一未显式声明时切换而不插值，布局、transform、enter/exit 仍待后续批次；实际 hover、面板与减少动态效果场景待验证。
 - `view.flex.sizing` 现已为 row/column/list 子项补齐 `flexBasis/flexGrow/flexShrink`：basis 先参与外尺寸求解，正空间按 grow 分配，溢出按 shrink×basis 迭代收缩并在命中 min 约束后重新分配；`fill` 保留隐式 grow=1。`view.flex.layout` 已为 row/column 补齐 row/rowReverse/column/columnReverse 主轴、noWrap/wrap/wrapReverse，以及 start/center/end/stretch/spaceBetween/spaceAround/spaceEvenly 多行对齐；每行独立执行 sizing/justify，逻辑绘制、命中、键盘和 UIA 顺序不随视觉反转。
@@ -1795,7 +1796,7 @@ UTF-8/UTF-16 边界换算和 selectionChange 建议，`view.keyboard.events` 已
 聚焦按键观察、按下/释放配对和失焦清理，`view.focus.request` 已把可信动作焦点请求扩展到
 任意可聚焦声明式节点并支持下一次成功提交解析；这些声明都不把状态持久化责任转移给宿主。
 其额度为 512 节点、32 层、单节点 4 KiB 文本、全树 64 KiB 文本和 256 个交互元素；未知字段、
-重复 key、非连续 children、错误枚举和越界数值拒绝整次提交。数据图形由宿主直接有界绘制，不展开为逐样本节点或命中区域。`view.transform.basic` 已将有界平移、统一缩放与变换原点贯通绘制、命中、宿主输入、裁剪和 UIA 边界，`view.transform.affine` 又开放非统一缩放、旋转、斜切、逆矩阵精确命中和变换后 slider 轴；非轴对齐裁剪、宿主管理控件仿射变换与透视仍未开放。`view.transition.visual` 已为四种视觉样式加入宿主逐帧插值，transform、布局和 enter/exit 动画仍未开放。`view.surface.panel`、`view.surface.dialog` 与 `view.surface.popover` 已把同一树、命中、滚动、控件和键盘管线扩展到互斥的宿主辅助 surface 状态；dialog 另有居中遮罩和非阻塞背景输入隔离，popover 由稳定桌面元素 key 锚定。它们尚不包含完整必选节点矩阵、
+重复 key、非连续 children、错误枚举和越界数值拒绝整次提交。数据图形由宿主直接有界绘制，不展开为逐样本节点或命中区域。`view.theme.tokens` 已让所有声明式 RGB 槽按宿主题、高对比度和系统强调色解析；`view.transform.basic` 已将有界平移、统一缩放与变换原点贯通绘制、命中、宿主输入、裁剪和 UIA 边界，`view.transform.affine` 又开放非统一缩放、旋转、斜切、逆矩阵精确命中和变换后 slider 轴；非轴对齐裁剪、宿主管理控件仿射变换与透视仍未开放。`view.transition.visual` 已为四种视觉样式加入宿主逐帧插值，transform、布局和 enter/exit 动画仍未开放。`view.surface.panel`、`view.surface.dialog` 与 `view.surface.popover` 已把同一树、命中、滚动、控件和键盘管线扩展到互斥的宿主辅助 surface 状态；dialog 另有居中遮罩和非阻塞背景输入隔离，popover 由稳定桌面元素 key 锚定。它们尚不包含完整必选节点矩阵、
 完整 UIA、RTL、文本换行、可变高度虚拟化和差量资源复用；通用 surface 键盘焦点已作为
 `view.keyboardNavigation.basic` 单独发布，因此仍只发布
 细粒度 feature，不发布 `view.tree`，也不计作 M6 完成。

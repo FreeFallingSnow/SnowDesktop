@@ -14651,13 +14651,126 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
     return true;
 }
 
+static std::uint32_t WidgetRgbFromColorRef(COLORREF color) noexcept
+{
+    return (static_cast<std::uint32_t>(GetRValue(color)) << 16) |
+        (static_cast<std::uint32_t>(GetGValue(color)) << 8) |
+        static_cast<std::uint32_t>(GetBValue(color));
+}
+
+static std::uint32_t MixWidgetRgb(std::uint32_t first,
+    std::uint32_t second, float amount) noexcept
+{
+    amount = std::clamp(amount, 0.0f, 1.0f);
+    const auto mixChannel = [amount](std::uint32_t a, std::uint32_t b) {
+        return static_cast<std::uint32_t>(std::lround(
+            static_cast<float>(a) +
+            (static_cast<float>(b) - static_cast<float>(a)) * amount));
+    };
+    const std::uint32_t red = mixChannel(
+        (first >> 16) & 0xffu, (second >> 16) & 0xffu);
+    const std::uint32_t green = mixChannel(
+        (first >> 8) & 0xffu, (second >> 8) & 0xffu);
+    const std::uint32_t blue = mixChannel(
+        first & 0xffu, second & 0xffu);
+    return (red << 16) | (green << 8) | blue;
+}
+
+static std::uint32_t WidgetContrastText(std::uint32_t background) noexcept
+{
+    const auto linearChannel = [](std::uint32_t value) {
+        const float channel = static_cast<float>(value) / 255.0f;
+        return channel <= 0.04045f
+            ? channel / 12.92f
+            : std::pow((channel + 0.055f) / 1.055f, 2.4f);
+    };
+    const float luminance =
+        linearChannel((background >> 16) & 0xffu) * 0.2126f +
+        linearChannel((background >> 8) & 0xffu) * 0.7152f +
+        linearChannel(background & 0xffu) * 0.0722f;
+    const float blackContrast = (luminance + 0.05f) / 0.05f;
+    const float whiteContrast = 1.05f / (luminance + 0.05f);
+    return blackContrast >= whiteContrast ? 0x000000u : 0xFFFFFFu;
+}
+
+static snowdesktop::widget_runtime::ViewThemePalette
+BuildWidgetViewThemePalette(D2DState* state)
+{
+    using snowdesktop::widget_runtime::ViewThemePalette;
+    const WidgetSystemEnvironment system = QueryWidgetSystemEnvironment();
+    const LuaWidgetTheme theme = state && state->engine
+        ? state->engine->RuntimeGetWidgetTheme(state->currentWidgetId)
+        : LuaWidgetTheme{};
+    ViewThemePalette result;
+    if (system.highContrast)
+    {
+        result.widgetBackground = WidgetRgbFromColorRef(
+            GetSysColor(COLOR_WINDOW));
+        result.surface = WidgetRgbFromColorRef(GetSysColor(COLOR_WINDOW));
+        result.surfaceVariant = WidgetRgbFromColorRef(
+            GetSysColor(COLOR_BTNFACE));
+        result.textPrimary = WidgetRgbFromColorRef(
+            GetSysColor(COLOR_WINDOWTEXT));
+        result.textSecondary = result.textPrimary;
+        result.textDisabled = WidgetRgbFromColorRef(
+            GetSysColor(COLOR_GRAYTEXT));
+        result.border = result.textPrimary;
+        result.borderStrong = result.textPrimary;
+        result.systemAccent = WidgetRgbFromColorRef(
+            GetSysColor(COLOR_HIGHLIGHT));
+        result.accentText = WidgetRgbFromColorRef(
+            GetSysColor(COLOR_HIGHLIGHTTEXT));
+        result.info = result.textPrimary;
+        result.success = result.textPrimary;
+        result.warning = result.textPrimary;
+        result.error = result.textPrimary;
+        return result;
+    }
+
+    const bool light = theme.contentTheme == 1;
+    result.widgetBackground =
+        static_cast<std::uint32_t>(theme.bg) & 0x00ffffffu;
+    result.textPrimary = light ? 0x161616u : 0xFFFFFFu;
+    result.surface = MixWidgetRgb(result.widgetBackground,
+        result.textPrimary, light ? 0.04f : 0.07f);
+    result.surfaceVariant = MixWidgetRgb(result.widgetBackground,
+        result.textPrimary, light ? 0.09f : 0.14f);
+    result.textSecondary = MixWidgetRgb(
+        result.textPrimary, result.widgetBackground, 0.32f);
+    result.textDisabled = MixWidgetRgb(
+        result.textPrimary, result.widgetBackground, 0.56f);
+    result.border = static_cast<std::uint32_t>(theme.border) & 0x00ffffffu;
+    result.borderStrong = MixWidgetRgb(result.border,
+        result.textPrimary, 0.55f);
+    result.systemAccent =
+        static_cast<std::uint32_t>(system.accentColor) & 0x00ffffffu;
+    result.accentText = WidgetContrastText(result.systemAccent);
+    result.info = light ? 0x005A9Eu : 0x72C7FFu;
+    result.success = light ? 0x107C10u : 0x55C271u;
+    result.warning = light ? 0x8A4B00u : 0xF2C94Cu;
+    result.error = light ? 0xC42B1Cu : 0xFF6B6Bu;
+    return result;
+}
+
 static void OverlayViewStyle(
     snowdesktop::widget_runtime::ViewStyle& result,
     const snowdesktop::widget_runtime::ViewStyle& style)
 {
-    if (style.background) result.background = style.background;
-    if (style.foreground) result.foreground = style.foreground;
-    if (style.borderColor) result.borderColor = style.borderColor;
+    if (style.background || style.backgroundToken)
+    {
+        result.background = style.background;
+        result.backgroundToken = style.backgroundToken;
+    }
+    if (style.foreground || style.foregroundToken)
+    {
+        result.foreground = style.foreground;
+        result.foregroundToken = style.foregroundToken;
+    }
+    if (style.borderColor || style.borderColorToken)
+    {
+        result.borderColor = style.borderColor;
+        result.borderColorToken = style.borderColorToken;
+    }
     if (style.borderWidth) result.borderWidth = style.borderWidth;
     if (style.cornerRadius) result.cornerRadius = style.cornerRadius;
     if (style.opacity) result.opacity = style.opacity;
@@ -14681,22 +14794,27 @@ static snowdesktop::widget_runtime::ViewStyle ResolveViewStyle(
         snowdesktop::widget_runtime::ViewValidationState::None)
     {
         OverlayViewStyle(result, node.validationStyle);
-        if (!node.validationStyle.borderColor)
+        if (!node.validationStyle.borderColor &&
+            !node.validationStyle.borderColorToken)
         {
             using snowdesktop::widget_runtime::ViewValidationState;
             switch (node.validationState)
             {
             case ViewValidationState::Info:
-                result.borderColor = 0x72C7FF;
+                result.borderColorToken = snowdesktop::widget_runtime::
+                    ViewThemeColorToken::Info;
                 break;
             case ViewValidationState::Success:
-                result.borderColor = 0x55C271;
+                result.borderColorToken = snowdesktop::widget_runtime::
+                    ViewThemeColorToken::Success;
                 break;
             case ViewValidationState::Warning:
-                result.borderColor = 0xF2C94C;
+                result.borderColorToken = snowdesktop::widget_runtime::
+                    ViewThemeColorToken::Warning;
                 break;
             case ViewValidationState::Error:
-                result.borderColor = 0xFF6B6B;
+                result.borderColorToken = snowdesktop::widget_runtime::
+                    ViewThemeColorToken::Error;
                 break;
             default:
                 break;
@@ -14709,7 +14827,9 @@ static snowdesktop::widget_runtime::ViewStyle ResolveViewStyle(
     if (focused)
     {
         OverlayViewStyle(result, node.focusStyle);
-        if (!result.borderColor) result.borderColor = 0x72C7FF;
+        if (!result.borderColor && !result.borderColorToken)
+            result.borderColorToken = snowdesktop::widget_runtime::
+                ViewThemeColorToken::SystemAccent;
         if (!result.borderWidth) result.borderWidth = 1.5f;
     }
     if (!enabledOverride.value_or(node.enabled))
@@ -15323,7 +15443,8 @@ static void SetViewTextOverflow(D2DState* state,
 static void DrawWidgetStyledText(D2DState* state,
     const snowdesktop::widget_runtime::ViewNode& node,
     const snowdesktop::widget_runtime::ViewStyle& style, float opacity,
-    const snowdesktop::widget_runtime::WidgetInteractionRegions& regions)
+    const snowdesktop::widget_runtime::WidgetInteractionRegions& regions,
+    const snowdesktop::widget_runtime::ViewThemePalette& palette)
 {
     if (!state || !state->ctx || !state->dwrite || node.spans.empty())
         return;
@@ -15386,13 +15507,20 @@ static void DrawWidgetStyledText(D2DState* state,
         if (span->underline || (!span->events.empty() && hovered))
             layout->SetUnderline(TRUE, range);
         if (span->strikethrough) layout->SetStrikethrough(TRUE, range);
-        std::optional<std::uint32_t> foreground = span->foreground;
-        if (pressed && span->pressedForeground)
-            foreground = span->pressedForeground;
-        else if (hovered && span->hoverForeground)
-            foreground = span->hoverForeground;
+        std::optional<std::uint32_t> foreground =
+            snowdesktop::widget_runtime::ResolveViewThemeColor(
+                span->foreground, span->foregroundToken, palette);
+        if (pressed &&
+            (span->pressedForeground || span->pressedForegroundToken))
+            foreground = snowdesktop::widget_runtime::ResolveViewThemeColor(
+                span->pressedForeground, span->pressedForegroundToken,
+                palette);
+        else if (hovered &&
+            (span->hoverForeground || span->hoverForegroundToken))
+            foreground = snowdesktop::widget_runtime::ResolveViewThemeColor(
+                span->hoverForeground, span->hoverForegroundToken, palette);
         else if (!foreground && !span->events.empty())
-            foreground = 0x72C7FF;
+            foreground = palette.systemAccent;
         if (foreground)
         {
             if (ID2D1SolidColorBrush* brush = GetCachedBrush(state,
@@ -15671,7 +15799,8 @@ static void DrawWidgetMonthCalendar(D2DState* state,
     const snowdesktop::widget_runtime::ViewNode& node,
     const snowdesktop::widget_runtime::ViewStyle& style, float opacity,
     const snowdesktop::widget_runtime::WidgetInteractionRegions& regions,
-    std::string_view focusedKey)
+    std::string_view focusedKey,
+    const snowdesktop::widget_runtime::ViewThemePalette& palette)
 {
     using snowdesktop::widget_runtime::ViewMonthCalendarCellFrame;
     using snowdesktop::widget_runtime::ViewMonthCalendarWeekdayFrame;
@@ -15760,6 +15889,8 @@ static void DrawWidgetMonthCalendar(D2DState* state,
         }
         if (!node.enabled)
             OverlayViewStyle(cellStyle, node.disabledStyle);
+        cellStyle = snowdesktop::widget_runtime::ResolveViewThemeStyle(
+            cellStyle, palette);
         const float cellOpacity = std::clamp(
             cellStyle.opacity.value_or(opacity), 0.0f, 1.0f) *
             (cell.currentMonth ? 1.0f :
@@ -15786,13 +15917,15 @@ static void DrawWidgetMonthCalendar(D2DState* state,
         }
         if (cell.today && !cell.selected)
         {
+            const ViewStyle todayStyle = snowdesktop::widget_runtime::
+                ResolveViewThemeStyle(node.todayStyle, palette);
             const std::uint32_t borderColor =
-                node.todayStyle.borderColor.value_or(baseForeground);
+                todayStyle.borderColor.value_or(baseForeground);
             if (ID2D1SolidColorBrush* border = GetCachedBrush(state,
                     static_cast<int>(borderColor), cellOpacity * 0.78f))
                 state->ctx->DrawEllipse(indicator, border,
                     std::max(1.0f,
-                        node.todayStyle.borderWidth.value_or(1.25f)));
+                        todayStyle.borderWidth.value_or(1.25f)));
         }
         if (focused && cellStyle.borderColor)
         {
@@ -15812,6 +15945,8 @@ static void DrawWidgetMonthCalendar(D2DState* state,
         {
             ViewStyle eventStyle = cellStyle;
             OverlayViewStyle(eventStyle, node.eventStyle);
+            eventStyle = snowdesktop::widget_runtime::ResolveViewThemeStyle(
+                eventStyle, palette);
             const float radius = std::max(1.0f,
                 std::min(frame.width, frame.height) * 0.035f);
             if (ID2D1SolidColorBrush* marker = GetCachedBrush(state,
@@ -15828,7 +15963,8 @@ static void DrawWidgetMonthCalendar(D2DState* state,
 static void DrawWidgetViewBitmap(D2DState* state,
     const snowdesktop::widget_runtime::ViewNode& node,
     ID2D1Bitmap1* bitmap, const D2D1_RECT_F& rect,
-    float opacity, float borderWidth)
+    float opacity, float borderWidth,
+    const snowdesktop::widget_runtime::ViewThemePalette& palette)
 {
     if (!state || !state->ctx || !bitmap) return;
     using snowdesktop::widget_runtime::DrawImageAlignment;
@@ -15873,13 +16009,16 @@ static void DrawWidgetViewBitmap(D2DState* state,
         placement.source.x, placement.source.y,
         placement.source.x + placement.source.width,
         placement.source.y + placement.source.height);
-    if (node.imageTint)
+    const std::optional<std::uint32_t> imageTint =
+        snowdesktop::widget_runtime::ResolveViewThemeColor(
+            node.imageTint, node.imageTintToken, palette);
+    if (imageTint)
     {
         ComPtr<ID2D1Effect> tintEffect;
         if (SUCCEEDED(state->ctx->CreateEffect(
                 CLSID_D2D1ColorMatrix, &tintEffect)) && tintEffect)
         {
-            const D2D1_COLOR_F tint = D2D1::ColorF(*node.imageTint);
+            const D2D1_COLOR_F tint = D2D1::ColorF(*imageTint);
             const D2D1_MATRIX_5X4_F matrix = {
                 0.0f, 0.0f, 0.0f, 0.0f,
                 0.0f, 0.0f, 0.0f, 0.0f,
@@ -15926,7 +16065,8 @@ static void DrawWidgetViewBitmap(D2DState* state,
 
 static void DrawWidgetViewShadow(D2DState* state,
     const snowdesktop::widget_runtime::ViewNode& node,
-    float radius, float opacity)
+    float radius, float opacity,
+    const snowdesktop::widget_runtime::ViewThemePalette& palette)
 {
     if (!state || !state->ctx || !node.shadow || opacity <= 0.0f) return;
     std::vector<snowdesktop::widget_runtime::DrawShadowLayer> layers;
@@ -15942,8 +16082,12 @@ static void DrawWidgetViewShadow(D2DState* state,
         return;
     for (const auto& layer : layers)
     {
+        const std::uint32_t shadowColor = node.shadow->colorToken
+            ? snowdesktop::widget_runtime::ResolveViewThemeColor(
+                *node.shadow->colorToken, palette)
+            : node.shadow->color;
         ID2D1SolidColorBrush* brush = GetCachedBrush(state,
-            static_cast<int>(node.shadow->color), layer.alpha);
+            static_cast<int>(shadowColor), layer.alpha);
         if (!brush) continue;
         const D2D1_RECT_F shadowRect = D2D1::RectF(
             state->widgetRect.left + layer.bounds.x,
@@ -16014,7 +16158,9 @@ static void DrawWidgetViewNode(D2DState* state,
     std::string_view focusedKey,
     snowdesktop::widget_runtime::ViewTransitionRuntime* transitions,
     snowdesktop::widget_runtime::ViewTransitionRuntime::TimePoint now,
-    bool reducedMotion, float inheritedScale = 1.0f)
+    bool reducedMotion,
+    const snowdesktop::widget_runtime::ViewThemePalette& palette,
+    float inheritedScale = 1.0f)
 {
     using snowdesktop::widget_runtime::ViewNodeType;
     using snowdesktop::widget_runtime::ViewShapeKind;
@@ -16037,10 +16183,11 @@ static void DrawWidgetViewNode(D2DState* state,
     const bool hovered = regions.IsHovered(node.key);
     const bool pressed = regions.IsPressed(node.key);
     const bool focused = node.key == focusedKey;
-    auto style = ResolveViewStyle(node, hovered, pressed, focused);
+    auto style = snowdesktop::widget_runtime::ResolveViewThemeStyle(
+        ResolveViewStyle(node, hovered, pressed, focused), palette);
     if (node.type == ViewNodeType::Link)
     {
-        if (!style.foreground) style.foreground = 0x72C7FF;
+        if (!style.foreground) style.foreground = palette.systemAccent;
         if (pressed && !node.pressedStyle.opacity)
             style.opacity = 0.65f;
         else if (hovered && !node.hoverStyle.opacity)
@@ -16061,7 +16208,7 @@ static void DrawWidgetViewNode(D2DState* state,
         state->widgetRect.left + node.frame.x + node.frame.width,
         state->widgetRect.top + node.frame.y + node.frame.height);
 
-    DrawWidgetViewShadow(state, node, radius, opacity);
+    DrawWidgetViewShadow(state, node, radius, opacity, palette);
 
     const bool buttonNode = node.type == ViewNodeType::Button ||
         node.type == ViewNodeType::IconButton;
@@ -16129,13 +16276,13 @@ static void DrawWidgetViewNode(D2DState* state,
     }
     if (node.type == ViewNodeType::StyledText)
     {
-        DrawWidgetStyledText(state, node, style, opacity, regions);
+        DrawWidgetStyledText(state, node, style, opacity, regions, palette);
         return;
     }
     if (node.type == ViewNodeType::MonthCalendar)
     {
         DrawWidgetMonthCalendar(
-            state, node, style, opacity, regions, focusedKey);
+            state, node, style, opacity, regions, focusedKey, palette);
         return;
     }
     if (node.type == ViewNodeType::Toggle)
@@ -16280,9 +16427,10 @@ static void DrawWidgetViewNode(D2DState* state,
             const bool optionPressed = regions.IsPressed(optionKey);
             const bool optionFocused = optionKey == focusedKey;
             const bool selected = option.value == node.selectedValue;
-            const auto optionStyle = ResolveViewStyle(
-                node, optionHovered, optionPressed, optionFocused,
-                selected, node.enabled && option.enabled);
+            const auto optionStyle = snowdesktop::widget_runtime::
+                ResolveViewThemeStyle(ResolveViewStyle(
+                    node, optionHovered, optionPressed, optionFocused,
+                    selected, node.enabled && option.enabled), palette);
             const float optionOpacity = std::clamp(
                 optionStyle.opacity.value_or(1.0f), 0.0f, 1.0f);
             const auto frame = snowdesktop::widget_runtime::
@@ -16648,7 +16796,7 @@ static void DrawWidgetViewNode(D2DState* state,
             }
         }
         DrawWidgetViewBitmap(
-            state, node, bitmap, rect, opacity, borderWidth);
+            state, node, bitmap, rect, opacity, borderWidth, palette);
     }
 
     if ((node.type == ViewNodeType::Text ||
@@ -16770,7 +16918,7 @@ static void DrawWidgetViewNode(D2DState* state,
                 ViewChildrenInPaintOrder(node))
             DrawWidgetViewNode(
                 state, *child, regions, focusedKey, transitions,
-                now, reducedMotion, cumulativeScale);
+                now, reducedMotion, palette, cumulativeScale);
         state->ctx->PopAxisAlignedClip();
         --state->widgetClipDepth;
 
@@ -16837,7 +16985,7 @@ static void DrawWidgetViewNode(D2DState* state,
             ViewChildrenInPaintOrder(node))
         DrawWidgetViewNode(
             state, *child, regions, focusedKey, transitions,
-            now, reducedMotion, cumulativeScale);
+            now, reducedMotion, palette, cumulativeScale);
     if (focused && specialGeometry && style.borderColor)
     {
         if (ID2D1SolidColorBrush* focus = GetCachedBrush(state,
@@ -16858,9 +17006,10 @@ static bool DrawWidgetViewTree(D2DState* state,
 {
     const auto now = snowdesktop::widget_runtime::
         ViewTransitionRuntime::Clock::now();
+    const auto palette = BuildWidgetViewThemePalette(state);
     transitions.BeginFrame();
     DrawWidgetViewNode(state, tree, regions, focusedKey,
-        &transitions, now, reducedMotion);
+        &transitions, now, reducedMotion, palette);
     transitions.EndFrame();
     return transitions.HasActive();
 }

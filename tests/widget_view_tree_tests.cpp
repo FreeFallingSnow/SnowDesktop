@@ -3242,6 +3242,91 @@ void TestVisualTransitionRuntime()
         "transition runtime must release nodes not observed in the next frame");
 }
 
+void TestThemeColorTokens()
+{
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "Lua state must be available");
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    PushResourceHandle(state, LuaResourceType::Image, "theme-mask");
+    lua_setglobal(state, "themeMask");
+    Check(luaL_dostring(state, R"lua(
+        return view.column({
+            key = "theme-root",
+            style = {
+                background = "widgetBackground",
+                foreground = "textPrimary",
+                borderColor = "border",
+            },
+            hoverStyle = { background = "surfaceVariant" },
+            shadow = { color = "borderStrong" },
+            children = {
+                view.image({ key = "mask", source = themeMask,
+                    alt = "", tint = "systemAccent" }),
+                view.styledText({ key = "status", spans = {
+                    { text = "Ready", foreground = "success" },
+                    { key = "details", text = " details",
+                        foreground = "textSecondary",
+                        hoverForeground = "info",
+                        pressedForeground = "warning",
+                        action = { id = "details.open" } },
+                }}),
+            },
+        })
+    )lua") == LUA_OK,
+        "theme-token fixture must evaluate");
+    ViewNode root;
+    std::string error;
+    Check(ParseLuaViewTree(state, -1, root, error) &&
+            root.style.backgroundToken ==
+                ViewThemeColorToken::WidgetBackground &&
+            root.style.foregroundToken ==
+                ViewThemeColorToken::TextPrimary &&
+            root.style.borderColorToken == ViewThemeColorToken::Border &&
+            root.hoverStyle.backgroundToken ==
+                ViewThemeColorToken::SurfaceVariant &&
+            root.shadow && root.shadow->colorToken ==
+                ViewThemeColorToken::BorderStrong &&
+            root.children.size() == 2 &&
+            root.children[0].imageTintToken ==
+                ViewThemeColorToken::SystemAccent &&
+            root.children[1].spans.size() == 2 &&
+            root.children[1].spans[0].foregroundToken ==
+                ViewThemeColorToken::Success &&
+            root.children[1].spans[1].hoverForegroundToken ==
+                ViewThemeColorToken::Info &&
+            root.children[1].spans[1].pressedForegroundToken ==
+                ViewThemeColorToken::Warning &&
+            ValidateAndLayoutViewTree(root, 240.0f, 100.0f, error),
+        "all declarative RGB slots must retain typed host theme tokens");
+
+    ViewThemePalette palette;
+    palette.widgetBackground = 0x010203;
+    palette.textPrimary = 0x111213;
+    palette.border = 0x212223;
+    palette.systemAccent = 0x313233;
+    const ViewStyle resolved = ResolveViewThemeStyle(root.style, palette);
+    Check(resolved.background == 0x010203u &&
+            resolved.foreground == 0x111213u &&
+            resolved.borderColor == 0x212223u &&
+            !resolved.backgroundToken && !resolved.foregroundToken &&
+            !resolved.borderColorToken &&
+            ResolveViewThemeColor(ViewThemeColorToken::SystemAccent,
+                palette) == 0x313233u,
+        "theme tokens must resolve to an immutable per-frame palette before transitions");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.box({ key = "bad-theme",
+            style = { foreground = "brandPrimary" } })
+    )lua") == LUA_OK,
+        "unsupported theme-token fixture must evaluate");
+    Check(!ParseLuaViewTree(state, -1, root, error) &&
+            error.find("unsupported theme token") != std::string::npos,
+        "unknown theme tokens must reject the atomic scene parse");
+    lua_close(state);
+}
+
 void TestVisibilityStates()
 {
     lua_State* state = luaL_newstate();
@@ -3329,6 +3414,7 @@ int main()
     TestTextLocaleValidation();
     TestBasicTransforms();
     TestVisualTransitionRuntime();
+    TestThemeColorTokens();
     TestVisibilityStates();
     std::cout << "Widget view tree tests passed\n";
     return 0;

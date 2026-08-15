@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstring>
 #include <initializer_list>
+#include <iterator>
 #include <limits>
 #include <unordered_set>
 
@@ -953,7 +954,8 @@ bool ReadGridTracksField(lua_State* state, int table, const char* field,
 }
 
 bool ReadOptionalColor(lua_State* state, int table, const char* field,
-    std::optional<std::uint32_t>& value, std::string& error)
+    std::optional<std::uint32_t>& value, std::string& error,
+    std::optional<ViewThemeColorToken>* token = nullptr)
 {
     table = lua_absindex(state, table);
     lua_getfield(state, table, field);
@@ -962,22 +964,62 @@ bool ReadOptionalColor(lua_State* state, int table, const char* field,
         lua_pop(state, 1);
         return true;
     }
+    if (token && lua_type(state, -1) == LUA_TSTRING)
+    {
+        const std::string_view name = lua_tostring(state, -1);
+        lua_pop(state, 1);
+        const struct Entry
+        {
+            std::string_view name;
+            ViewThemeColorToken token;
+        } entries[] = {
+            { "widgetBackground", ViewThemeColorToken::WidgetBackground },
+            { "surface", ViewThemeColorToken::Surface },
+            { "surfaceVariant", ViewThemeColorToken::SurfaceVariant },
+            { "textPrimary", ViewThemeColorToken::TextPrimary },
+            { "textSecondary", ViewThemeColorToken::TextSecondary },
+            { "textDisabled", ViewThemeColorToken::TextDisabled },
+            { "border", ViewThemeColorToken::Border },
+            { "borderStrong", ViewThemeColorToken::BorderStrong },
+            { "systemAccent", ViewThemeColorToken::SystemAccent },
+            { "accentText", ViewThemeColorToken::AccentText },
+            { "info", ViewThemeColorToken::Info },
+            { "success", ViewThemeColorToken::Success },
+            { "warning", ViewThemeColorToken::Warning },
+            { "error", ViewThemeColorToken::Error },
+        };
+        const auto found = std::find_if(std::begin(entries),
+            std::end(entries), [name](const Entry& entry) {
+                return entry.name == name;
+            });
+        if (found == std::end(entries))
+        {
+            error = std::string("view color field '") + field +
+                "' contains an unsupported theme token";
+            return false;
+        }
+        value.reset();
+        *token = found->token;
+        return true;
+    }
     if (!lua_isinteger(state, -1))
     {
         lua_pop(state, 1);
-        error = std::string("view style field '") + field +
-            "' must be an integer color";
+        error = std::string("view color field '") + field +
+            (token ? "' must be an integer color or theme token" :
+                "' must be an integer color");
         return false;
     }
     const lua_Integer color = lua_tointeger(state, -1);
     lua_pop(state, 1);
     if (color < 0 || color > 0xFFFFFF)
     {
-        error = std::string("view style field '") + field +
+        error = std::string("view color field '") + field +
             "' must be between 0 and 0xFFFFFF";
         return false;
     }
     value = static_cast<std::uint32_t>(color);
+    if (token) token->reset();
     return true;
 }
 
@@ -1027,11 +1069,11 @@ bool ReadStyle(lua_State* state, int table, ViewStyle& style,
             { "background", "foreground", "borderColor", "borderWidth",
                 "cornerRadius", "opacity" }, "view style", error) &&
         ReadOptionalColor(state, table, "background", style.background,
-            error) &&
+            error, &style.backgroundToken) &&
         ReadOptionalColor(state, table, "foreground", style.foreground,
-            error) &&
+            error, &style.foregroundToken) &&
         ReadOptionalColor(state, table, "borderColor", style.borderColor,
-            error) &&
+            error, &style.borderColorToken) &&
         ReadOptionalFloat(state, table, "borderWidth", style.borderWidth,
             error) &&
         ReadOptionalFloat(state, table, "cornerRadius", style.cornerRadius,
@@ -1081,7 +1123,8 @@ bool ReadShadowField(lua_State* state, int table,
     const bool ok = ValidateObjectFields(state, -1,
             { "color", "blur", "offsetX", "offsetY", "alpha" },
             "view shadow", error) &&
-        ReadOptionalColor(state, -1, "color", color, error) &&
+        ReadOptionalColor(state, -1, "color", color, error,
+            &parsed.colorToken) &&
         ReadFloatField(state, -1, "blur", parsed.blur, error) &&
         ReadFloatField(state, -1, "offsetX", parsed.offsetX, error) &&
         ReadFloatField(state, -1, "offsetY", parsed.offsetY, error) &&
@@ -1331,11 +1374,13 @@ bool ReadTextSpansField(lua_State* state, int table,
         if (!ReadStringField(state, -1, "key", span.key, false, error) ||
             !ReadStringField(state, -1, "text", span.text, true, error) ||
             !ReadOptionalColor(state, -1, "foreground",
-                span.foreground, error) ||
+                span.foreground, error, &span.foregroundToken) ||
             !ReadOptionalColor(state, -1, "hoverForeground",
-                span.hoverForeground, error) ||
+                span.hoverForeground, error,
+                &span.hoverForegroundToken) ||
             !ReadOptionalColor(state, -1, "pressedForeground",
-                span.pressedForeground, error) ||
+                span.pressedForeground, error,
+                &span.pressedForegroundToken) ||
             !ReadOptionalNodeFloatField(state, -1, "fontSize",
                 span.fontSize, error) ||
             !ReadBoolField(state, -1, "bold", span.bold, error) ||
@@ -2390,7 +2435,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             node.imageAlignment, error) ||
         !ReadImageInterpolationField(state, index,
             node.imageInterpolation, error) ||
-        !ReadOptionalColor(state, index, "tint", node.imageTint, error) ||
+        !ReadOptionalColor(state, index, "tint", node.imageTint, error,
+            &node.imageTintToken) ||
         !ReadOrientationField(state, index, node.orientation, error) ||
         !ReadLengthField(state, index, "width", node.width, error) ||
         !ReadLengthField(state, index, "height", node.height, error) ||
