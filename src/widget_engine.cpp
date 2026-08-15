@@ -12507,6 +12507,18 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
     return true;
 }
 
+static void OverlayViewStyle(
+    snowdesktop::widget_runtime::ViewStyle& result,
+    const snowdesktop::widget_runtime::ViewStyle& style)
+{
+    if (style.background) result.background = style.background;
+    if (style.foreground) result.foreground = style.foreground;
+    if (style.borderColor) result.borderColor = style.borderColor;
+    if (style.borderWidth) result.borderWidth = style.borderWidth;
+    if (style.cornerRadius) result.cornerRadius = style.cornerRadius;
+    if (style.opacity) result.opacity = style.opacity;
+}
+
 static snowdesktop::widget_runtime::ViewStyle ResolveViewStyle(
     const snowdesktop::widget_runtime::ViewNode& node,
     bool hovered, bool pressed,
@@ -12514,17 +12526,10 @@ static snowdesktop::widget_runtime::ViewStyle ResolveViewStyle(
 {
     using snowdesktop::widget_runtime::ViewStyle;
     ViewStyle result = node.style;
-    const auto overlay = [&result](const ViewStyle& style) {
-        if (style.background) result.background = style.background;
-        if (style.foreground) result.foreground = style.foreground;
-        if (style.borderColor) result.borderColor = style.borderColor;
-        if (style.borderWidth) result.borderWidth = style.borderWidth;
-        if (style.cornerRadius) result.cornerRadius = style.cornerRadius;
-        if (style.opacity) result.opacity = style.opacity;
-    };
-    if (checkedOverride.value_or(node.checked)) overlay(node.checkedStyle);
-    if (hovered) overlay(node.hoverStyle);
-    if (pressed) overlay(node.pressedStyle);
+    if (checkedOverride.value_or(node.checked))
+        OverlayViewStyle(result, node.checkedStyle);
+    if (hovered) OverlayViewStyle(result, node.hoverStyle);
+    if (pressed) OverlayViewStyle(result, node.pressedStyle);
     return result;
 }
 
@@ -12932,6 +12937,230 @@ static void DrawDeclarativeSelect(D2DState* state,
     }
 }
 
+static void SetViewTextLayoutAlignment(IDWriteTextLayout* layout,
+    snowdesktop::widget_runtime::ViewTextAlignment alignment)
+{
+    using snowdesktop::widget_runtime::ViewTextAlignment;
+    if (!layout) return;
+    if (alignment == ViewTextAlignment::Center)
+        layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    else if (alignment == ViewTextAlignment::End)
+        layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+    else
+        layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+}
+
+static void DrawWidgetStyledText(D2DState* state,
+    const snowdesktop::widget_runtime::ViewNode& node,
+    const snowdesktop::widget_runtime::ViewStyle& style, float opacity)
+{
+    if (!state || !state->ctx || !state->dwrite || node.spans.empty())
+        return;
+    std::optional<std::wstring> privateFontPath;
+    if (!node.fontResourceName.empty() && state->engine)
+        privateFontPath = state->engine->RuntimeResolvePackageResource(
+            state->currentWidgetId, node.fontResourceName, "font");
+    IDWriteTextFormat* format = node.fontResourceName.empty() ||
+            privateFontPath
+        ? GetCachedTextFormat(state, node.fontSize,
+            node.bold ? DWRITE_FONT_WEIGHT_BOLD : state->itemFontWeight,
+            false, DWRITE_WORD_WRAPPING_WRAP, false, false, false,
+            privateFontPath ? &*privateFontPath : nullptr)
+        : nullptr;
+    if (!format) return;
+
+    std::wstring text;
+    std::vector<std::pair<const snowdesktop::widget_runtime::ViewTextSpan*,
+        DWRITE_TEXT_RANGE>> ranges;
+    ranges.reserve(node.spans.size());
+    for (const auto& span : node.spans)
+    {
+        const std::wstring part = Utf8ToWideLocal(span.text);
+        const UINT32 start = static_cast<UINT32>(text.size());
+        text += part;
+        ranges.emplace_back(&span,
+            DWRITE_TEXT_RANGE{ start, static_cast<UINT32>(part.size()) });
+    }
+    if (text.empty()) return;
+    const float inset = std::min(node.padding,
+        std::max(0.0f,
+            std::min(node.frame.width, node.frame.height) * 0.5f));
+    const float width = std::max(0.0f, node.frame.width - inset * 2.0f);
+    const float height = std::max(0.0f, node.frame.height - inset * 2.0f);
+    ComPtr<IDWriteTextLayout> layout;
+    if (width <= 0.0f || height <= 0.0f || FAILED(
+            state->dwrite->CreateTextLayout(text.data(),
+                static_cast<UINT32>(text.size()), format, width, height,
+                &layout)) || !layout)
+        return;
+    SetViewTextLayoutAlignment(layout.Get(), node.textAlign);
+    layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    for (const auto& [span, range] : ranges)
+    {
+        if (span->fontSize) layout->SetFontSize(*span->fontSize, range);
+        if (span->bold)
+            layout->SetFontWeight(DWRITE_FONT_WEIGHT_BOLD, range);
+        if (span->italic)
+            layout->SetFontStyle(DWRITE_FONT_STYLE_ITALIC, range);
+        if (span->underline) layout->SetUnderline(TRUE, range);
+        if (span->strikethrough) layout->SetStrikethrough(TRUE, range);
+        if (span->foreground)
+        {
+            if (ID2D1SolidColorBrush* brush = GetCachedBrush(state,
+                    static_cast<int>(*span->foreground), opacity))
+                layout->SetDrawingEffect(brush, range);
+        }
+    }
+    ID2D1SolidColorBrush* brush = GetCachedBrush(state,
+        static_cast<int>(style.foreground.value_or(0xFFFFFF)), opacity);
+    if (brush)
+        state->ctx->DrawTextLayout(D2D1::Point2F(
+            state->widgetRect.left + node.frame.x + inset,
+            state->widgetRect.top + node.frame.y + inset),
+            layout.Get(), brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+}
+
+static void DrawWidgetMonthCalendar(D2DState* state,
+    const snowdesktop::widget_runtime::ViewNode& node,
+    const snowdesktop::widget_runtime::ViewStyle& style, float opacity,
+    const snowdesktop::widget_runtime::WidgetInteractionRegions& regions)
+{
+    using snowdesktop::widget_runtime::ViewMonthCalendarCellFrame;
+    using snowdesktop::widget_runtime::ViewMonthCalendarWeekdayFrame;
+    using snowdesktop::widget_runtime::ViewStyle;
+    if (!state || !state->ctx || !state->dwrite) return;
+    std::array<snowdesktop::widget_runtime::ViewMonthCalendarCell, 42> cells;
+    std::string error;
+    if (!snowdesktop::widget_runtime::BuildViewMonthCalendarCells(
+            node, cells, error))
+        return;
+
+    std::optional<std::wstring> privateFontPath;
+    if (!node.fontResourceName.empty() && state->engine)
+        privateFontPath = state->engine->RuntimeResolvePackageResource(
+            state->currentWidgetId, node.fontResourceName, "font");
+    IDWriteTextFormat* dayFormat = node.fontResourceName.empty() ||
+            privateFontPath
+        ? GetCachedTextFormat(state, node.fontSize,
+            node.bold ? DWRITE_FONT_WEIGHT_BOLD : state->itemFontWeight,
+            false, DWRITE_WORD_WRAPPING_NO_WRAP, false, false, false,
+            privateFontPath ? &*privateFontPath : nullptr)
+        : nullptr;
+    IDWriteTextFormat* weekdayFormat = node.fontResourceName.empty() ||
+            privateFontPath
+        ? GetCachedTextFormat(state, std::max(8.0f, node.fontSize * 0.78f),
+            DWRITE_FONT_WEIGHT_SEMI_BOLD, false,
+            DWRITE_WORD_WRAPPING_NO_WRAP, false, false, false,
+            privateFontPath ? &*privateFontPath : nullptr)
+        : nullptr;
+    if (!dayFormat || !weekdayFormat) return;
+
+    const auto drawCentered = [&](std::wstring_view text,
+            const snowdesktop::widget_runtime::ViewRect& frame,
+            IDWriteTextFormat* format, std::uint32_t color, float alpha) {
+        if (text.empty() || frame.width <= 0.0f || frame.height <= 0.0f)
+            return;
+        ComPtr<IDWriteTextLayout> layout;
+        if (FAILED(state->dwrite->CreateTextLayout(text.data(),
+                static_cast<UINT32>(text.size()), format,
+                frame.width, frame.height, &layout)) || !layout)
+            return;
+        layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        if (ID2D1SolidColorBrush* brush = GetCachedBrush(state,
+                static_cast<int>(color), alpha))
+            state->ctx->DrawTextLayout(D2D1::Point2F(
+                state->widgetRect.left + frame.x,
+                state->widgetRect.top + frame.y), layout.Get(), brush,
+                D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    };
+
+    const std::uint32_t baseForeground = style.foreground.value_or(0xFFFFFF);
+    for (std::size_t column = 0; column < 7; ++column)
+    {
+        const std::size_t labelIndex = static_cast<std::size_t>(
+            (node.firstDayOfWeek - 1 + static_cast<int>(column)) % 7);
+        drawCentered(Utf8ToWideLocal(node.weekdayLabels[labelIndex]),
+            ViewMonthCalendarWeekdayFrame(node, column), weekdayFormat,
+            baseForeground, opacity * 0.62f);
+    }
+
+    for (std::size_t index = 0; index < cells.size(); ++index)
+    {
+        const auto& cell = cells[index];
+        if (!cell.currentMonth && !node.showAdjacentDates) continue;
+        const auto frame = ViewMonthCalendarCellFrame(node, index);
+        const std::string key = node.key + "/" + cell.date;
+        const bool hovered = regions.IsHovered(key);
+        const bool pressed = regions.IsPressed(key);
+        ViewStyle cellStyle;
+        cellStyle.foreground = baseForeground;
+        cellStyle.opacity = style.opacity;
+        if (!cell.currentMonth)
+            OverlayViewStyle(cellStyle, node.adjacentStyle);
+        if (cell.today) OverlayViewStyle(cellStyle, node.todayStyle);
+        if (cell.selected)
+            OverlayViewStyle(cellStyle, node.selectedStyle);
+        if (hovered) OverlayViewStyle(cellStyle, node.hoverStyle);
+        if (pressed) OverlayViewStyle(cellStyle, node.pressedStyle);
+        const float cellOpacity = opacity * std::clamp(
+            cellStyle.opacity.value_or(1.0f), 0.0f, 1.0f) *
+            (node.enabled ? 1.0f : 0.42f) *
+            (cell.currentMonth ? 1.0f :
+                (node.adjacentStyle.opacity ? 1.0f : 0.42f));
+        const float diameter = std::max(0.0f,
+            std::min(frame.width, frame.height) * 0.76f);
+        const float centerX = state->widgetRect.left + frame.x +
+            frame.width * 0.5f;
+        const float centerY = state->widgetRect.top + frame.y +
+            frame.height * 0.46f;
+        const D2D1_ELLIPSE indicator = D2D1::Ellipse(
+            D2D1::Point2F(centerX, centerY), diameter * 0.5f,
+            diameter * 0.5f);
+        if (cell.selected || cellStyle.background || hovered || pressed)
+        {
+            const std::uint32_t fillColor = cellStyle.background.value_or(
+                cell.selected ? 0x4C9AFF : 0xFFFFFF);
+            const float fillAlpha = cellOpacity *
+                (cellStyle.background || cell.selected ? 1.0f :
+                    (pressed ? 0.18f : 0.11f));
+            if (ID2D1SolidColorBrush* fill = GetCachedBrush(state,
+                    static_cast<int>(fillColor), fillAlpha))
+                state->ctx->FillEllipse(indicator, fill);
+        }
+        if (cell.today && !cell.selected)
+        {
+            const std::uint32_t borderColor =
+                node.todayStyle.borderColor.value_or(baseForeground);
+            if (ID2D1SolidColorBrush* border = GetCachedBrush(state,
+                    static_cast<int>(borderColor), cellOpacity * 0.78f))
+                state->ctx->DrawEllipse(indicator, border,
+                    std::max(1.0f,
+                        node.todayStyle.borderWidth.value_or(1.25f)));
+        }
+        const auto textFrame = snowdesktop::widget_runtime::ViewRect{
+            frame.x + (frame.width - diameter) * 0.5f,
+            frame.y + frame.height * 0.46f - diameter * 0.5f,
+            diameter, diameter };
+        drawCentered(std::to_wstring(cell.day), textFrame, dayFormat,
+            cellStyle.foreground.value_or(baseForeground), cellOpacity);
+        if (cell.hasEvent)
+        {
+            ViewStyle eventStyle = cellStyle;
+            OverlayViewStyle(eventStyle, node.eventStyle);
+            const float radius = std::max(1.0f,
+                std::min(frame.width, frame.height) * 0.035f);
+            if (ID2D1SolidColorBrush* marker = GetCachedBrush(state,
+                    static_cast<int>(eventStyle.foreground.value_or(
+                        baseForeground)), cellOpacity))
+                state->ctx->FillEllipse(D2D1::Ellipse(D2D1::Point2F(
+                    centerX, state->widgetRect.top + frame.y +
+                        frame.height - radius * 2.0f), radius, radius),
+                    marker);
+        }
+    }
+}
+
 static void DrawWidgetViewNode(D2DState* state,
     const snowdesktop::widget_runtime::ViewNode& node,
     const snowdesktop::widget_runtime::WidgetInteractionRegions& regions)
@@ -13032,6 +13261,16 @@ static void DrawWidgetViewNode(D2DState* state,
     if (node.type == ViewNodeType::Select)
     {
         DrawDeclarativeSelect(state, node, style, opacity);
+        return;
+    }
+    if (node.type == ViewNodeType::StyledText)
+    {
+        DrawWidgetStyledText(state, node, style, opacity);
+        return;
+    }
+    if (node.type == ViewNodeType::MonthCalendar)
+    {
+        DrawWidgetMonthCalendar(state, node, style, opacity, regions);
         return;
     }
     if (node.type == ViewNodeType::Toggle)
@@ -21126,6 +21365,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "virtualRange", lua_ViewVirtualRange, 2 },
         { "listItem", snowdesktop::widget_runtime::LuaViewListItem, 2 },
         { "text", snowdesktop::widget_runtime::LuaViewText, 2 },
+        { "styledText", snowdesktop::widget_runtime::LuaViewStyledText, 2 },
         { "textInput", snowdesktop::widget_runtime::LuaViewTextInput, 2 },
         { "textArea", snowdesktop::widget_runtime::LuaViewTextArea, 2 },
         { "searchBox", snowdesktop::widget_runtime::LuaViewSearchBox, 2 },
@@ -21151,6 +21391,8 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "barChart", snowdesktop::widget_runtime::LuaViewBarChart, 2 },
         { "waveform", snowdesktop::widget_runtime::LuaViewWaveform, 2 },
         { "spectrum", snowdesktop::widget_runtime::LuaViewSpectrum, 2 },
+        { "monthCalendar",
+            snowdesktop::widget_runtime::LuaViewMonthCalendar, 2 },
         { "spacer", snowdesktop::widget_runtime::LuaViewSpacer, 2 },
     };
     static constexpr FunctionDescriptor widget[] = {

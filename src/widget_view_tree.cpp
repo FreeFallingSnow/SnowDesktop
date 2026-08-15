@@ -1,9 +1,12 @@
 #include "widget_view_tree.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdio>
 #include <limits>
 #include <unordered_set>
+#include <utility>
 
 namespace snowdesktop::widget_runtime
 {
@@ -11,6 +14,93 @@ namespace
 {
 constexpr float MaximumDimension = 100000.0f;
 constexpr float MaximumScrollExtent = 1000000.0f;
+
+struct CivilDate
+{
+    int year = 0;
+    int month = 0;
+    int day = 0;
+    int weekday = 0;
+};
+
+int DaysInMonth(int year, int month) noexcept
+{
+    static constexpr std::array<int, 12> days = {
+        31, 28, 31, 30, 31, 30,
+        31, 31, 30, 31, 30, 31,
+    };
+    if (month < 1 || month > 12) return 0;
+    if (month != 2) return days[static_cast<std::size_t>(month - 1)];
+    return year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
+        ? 29 : 28;
+}
+
+long long DaysFromCivil(int year, unsigned month, unsigned day) noexcept
+{
+    year -= month <= 2;
+    const int era = (year >= 0 ? year : year - 399) / 400;
+    const unsigned yoe = static_cast<unsigned>(year - era * 400);
+    const unsigned doy =
+        (153 * (month + (month > 2 ? -3 : 9)) + 2) / 5 + day - 1;
+    const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return static_cast<long long>(era) * 146097 + doe - 719468;
+}
+
+CivilDate CivilFromDays(long long days) noexcept
+{
+    days += 719468;
+    const long long era = (days >= 0 ? days : days - 146096) / 146097;
+    const unsigned doe = static_cast<unsigned>(days - era * 146097);
+    const unsigned yoe =
+        (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    int year = static_cast<int>(yoe) + static_cast<int>(era) * 400;
+    const unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    const unsigned mp = (5 * doy + 2) / 153;
+    const unsigned day = doy - (153 * mp + 2) / 5 + 1;
+    const int month = static_cast<int>(mp) + (mp < 10 ? 3 : -9);
+    year += month <= 2;
+    int weekday = static_cast<int>((days - 719468 + 4) % 7);
+    if (weekday < 0) weekday += 7;
+    return { year, month, static_cast<int>(day), weekday + 1 };
+}
+
+bool ParseCivilDate(std::string_view value, CivilDate& date) noexcept
+{
+    if (value.size() != 10 || value[4] != '-' || value[7] != '-')
+        return false;
+    int parts[3]{};
+    const std::array<std::pair<std::size_t, std::size_t>, 3> ranges = {
+        std::pair<std::size_t, std::size_t>{ 0, 4 }, { 5, 2 }, { 8, 2 }
+    };
+    for (std::size_t part = 0; part < ranges.size(); ++part)
+    {
+        const auto [offset, length] = ranges[part];
+        for (std::size_t index = 0; index < length; ++index)
+        {
+            const char ch = value[offset + index];
+            if (ch < '0' || ch > '9') return false;
+            parts[part] = parts[part] * 10 + (ch - '0');
+        }
+    }
+    if (parts[0] < 1 || parts[0] > 9999 || parts[1] < 1 ||
+        parts[1] > 12 || parts[2] < 1 ||
+        parts[2] > DaysInMonth(parts[0], parts[1]))
+        return false;
+    const long long serial = DaysFromCivil(parts[0],
+        static_cast<unsigned>(parts[1]), static_cast<unsigned>(parts[2]));
+    int weekday = static_cast<int>((serial + 4) % 7);
+    if (weekday < 0) weekday += 7;
+    date = { parts[0], parts[1], parts[2], weekday + 1 };
+    return true;
+}
+
+std::string FormatCivilDate(const CivilDate& date)
+{
+    char buffer[11]{};
+    std::snprintf(buffer, sizeof(buffer), "%04d-%02d-%02d",
+        date.year, date.month, date.day);
+    return buffer;
+}
 
 bool FiniteInRange(float value, float minimum, float maximum) noexcept
 {
@@ -67,7 +157,8 @@ bool IsControlledNode(ViewNodeType type) noexcept
 {
     return IsCheckControlNode(type) ||
         IsChoiceNode(type) || IsInputNode(type) ||
-        type == ViewNodeType::Slider;
+        type == ViewNodeType::Slider ||
+        type == ViewNodeType::MonthCalendar;
 }
 
 bool IsDataSeriesNode(ViewNodeType type) noexcept
@@ -81,7 +172,9 @@ bool IsDataSeriesNode(ViewNodeType type) noexcept
 
 bool IsLeafNode(ViewNodeType type) noexcept
 {
-    return type == ViewNodeType::Text || type == ViewNodeType::Image ||
+    return type == ViewNodeType::Text ||
+        type == ViewNodeType::StyledText ||
+        type == ViewNodeType::Image ||
         IsButtonNode(type) || type == ViewNodeType::Link ||
         IsControlledNode(type) ||
         type == ViewNodeType::Icon || type == ViewNodeType::Shape ||
@@ -89,7 +182,7 @@ bool IsLeafNode(ViewNodeType type) noexcept
         type == ViewNodeType::ProgressBar ||
         type == ViewNodeType::ProgressRing ||
         type == ViewNodeType::Meter ||
-        IsDataSeriesNode(type) ||
+        IsDataSeriesNode(type) || type == ViewNodeType::MonthCalendar ||
         type == ViewNodeType::Spacer;
 }
 
@@ -133,6 +226,7 @@ const char* DefaultAccessibilityRole(ViewNodeType type) noexcept
     if (type == ViewNodeType::Divider) return "separator";
     if (type == ViewNodeType::Badge) return "status";
     if (type == ViewNodeType::ListItem) return "listitem";
+    if (type == ViewNodeType::MonthCalendar) return "grid";
     return "";
 }
 
@@ -176,6 +270,7 @@ float IntrinsicWidth(const ViewNode& node)
     if (node.width.kind == ViewLengthKind::Fixed)
         return node.width.value;
     if (node.type == ViewNodeType::Text ||
+        node.type == ViewNodeType::StyledText ||
         node.type == ViewNodeType::Badge ||
         node.type == ViewNodeType::Button ||
         node.type == ViewNodeType::Link)
@@ -226,6 +321,8 @@ float IntrinsicWidth(const ViewNode& node)
             ? node.thickness : 24.0f) + node.padding * 2.0f;
     if (node.type == ViewNodeType::Meter)
         return 64.0f + node.padding * 2.0f;
+    if (node.type == ViewNodeType::MonthCalendar)
+        return 224.0f + node.padding * 2.0f;
     if (IsDataSeriesNode(node.type))
         return 64.0f + node.padding * 2.0f;
     if (node.type == ViewNodeType::Spacer)
@@ -304,6 +401,7 @@ float IntrinsicHeight(const ViewNode& node)
     if (node.height.kind == ViewLengthKind::Fixed)
         return node.height.value;
     if (node.type == ViewNodeType::Text ||
+        node.type == ViewNodeType::StyledText ||
         node.type == ViewNodeType::Link)
         return node.fontSize * 1.4f + node.padding * 2.0f;
     if (node.type == ViewNodeType::Badge)
@@ -353,6 +451,8 @@ float IntrinsicHeight(const ViewNode& node)
             ? node.thickness : 24.0f) + node.padding * 2.0f;
     if (IsDataSeriesNode(node.type))
         return 40.0f + node.padding * 2.0f;
+    if (node.type == ViewNodeType::MonthCalendar)
+        return 224.0f + node.padding * 2.0f;
     if (node.type == ViewNodeType::Spacer)
         return 0.0f;
     if (IsVirtualCollection(node.type))
@@ -842,7 +942,11 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         !FiniteInRange(node.fillOpacity, 0.0f, 1.0f) ||
         !validStyle(node.style) || !validStyle(node.hoverStyle) ||
         !validStyle(node.pressedStyle) ||
-        !validStyle(node.checkedStyle))
+        !validStyle(node.checkedStyle) ||
+        !validStyle(node.selectedStyle) ||
+        !validStyle(node.todayStyle) ||
+        !validStyle(node.adjacentStyle) ||
+        !validStyle(node.eventStyle))
     {
         error = "view node dimensions and typography must be finite and bounded";
         return false;
@@ -1021,6 +1125,103 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
     }
     textBytes += node.text.size() + node.inputValue.size() +
         node.placeholder.size() + node.alt.size();
+    if (node.type == ViewNodeType::StyledText)
+    {
+        if (node.spans.empty() ||
+            node.spans.size() > ViewTreeLimits::MaximumTextSpans)
+        {
+            error = "styledText spans must contain 1 to 64 items";
+            return false;
+        }
+        std::string combined;
+        combined.reserve(node.text.size());
+        for (const auto& span : node.spans)
+        {
+            if (span.text.empty() ||
+                (span.fontSize &&
+                    !FiniteInRange(*span.fontSize, 1.0f, 512.0f)))
+            {
+                error = "styledText spans require non-empty bounded text and font sizes";
+                return false;
+            }
+            combined += span.text;
+        }
+        if (combined != node.text)
+        {
+            error = "styledText flattened text does not match its spans";
+            return false;
+        }
+    }
+    else if (!node.spans.empty())
+    {
+        error = "text spans are reserved for styledText nodes";
+        return false;
+    }
+    if (node.type == ViewNodeType::MonthCalendar)
+    {
+        if (node.key.size() > 117 ||
+            node.calendarYear < 1 || node.calendarYear > 9999 ||
+            node.calendarMonth < 1 || node.calendarMonth > 12 ||
+            node.firstDayOfWeek < 1 || node.firstDayOfWeek > 7 ||
+            node.accessibilityLabel.empty())
+        {
+            error = "monthCalendar requires a bounded key, year/month, firstDayOfWeek, and accessibility.label";
+            return false;
+        }
+        std::array<ViewMonthCalendarCell, 42> cells;
+        if (!BuildViewMonthCalendarCells(node, cells, error)) return false;
+        std::unordered_set<std::string> generatedDates;
+        std::size_t calendarTextBytes = node.calendarSelectedDate.size() +
+            node.calendarTodayDate.size();
+        for (const auto& label : node.weekdayLabels)
+        {
+            if (label.empty() ||
+                label.size() > ViewTreeLimits::MaximumTextBytes)
+            {
+                error = "monthCalendar weekdayLabels must be seven non-empty bounded strings";
+                return false;
+            }
+            calendarTextBytes += label.size();
+        }
+        for (const auto& date : node.calendarEventDates)
+        {
+            if (!generatedDates.insert(date).second)
+            {
+                error = "monthCalendar eventDates must be unique";
+                return false;
+            }
+            calendarTextBytes += date.size();
+        }
+        if (calendarTextBytes >
+            ViewTreeLimits::MaximumTotalTextBytes - textBytes)
+        {
+            error = "view tree calendar text limit exceeded";
+            return false;
+        }
+        textBytes += calendarTextBytes;
+        for (const auto& cell : cells)
+        {
+            const std::string generatedKey = node.key + "/" + cell.date;
+            if (!keys.insert(generatedKey).second)
+            {
+                error = "duplicate generated monthCalendar key: " +
+                    generatedKey;
+                return false;
+            }
+        }
+    }
+    else if (node.calendarYear != 0 || node.calendarMonth != 0 ||
+        node.firstDayOfWeek != 1 ||
+        !node.calendarSelectedDate.empty() ||
+        !node.calendarTodayDate.empty() ||
+        !node.calendarEventDates.empty() ||
+        std::any_of(node.weekdayLabels.begin(), node.weekdayLabels.end(),
+            [](const std::string& value) { return !value.empty(); }) ||
+        !node.showAdjacentDates)
+    {
+        error = "calendar state is reserved for monthCalendar nodes";
+        return false;
+    }
     if (IsInputNode(node.type) &&
         (node.maximumUtf8Bytes > 64 * 1024 ||
             (node.maximumUtf8Bytes > 0 &&
@@ -1153,11 +1354,13 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
     }
     if (!node.fontResourceName.empty() &&
         node.type != ViewNodeType::Text &&
+        node.type != ViewNodeType::StyledText &&
         node.type != ViewNodeType::Button &&
         node.type != ViewNodeType::Link &&
         node.type != ViewNodeType::Badge &&
         !IsCheckControlNode(node.type) &&
-        node.type != ViewNodeType::RadioGroup)
+        node.type != ViewNodeType::RadioGroup &&
+        node.type != ViewNodeType::MonthCalendar)
     {
         error = "only text and label-bearing nodes can retain a font resource";
         return false;
@@ -1190,6 +1393,11 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
     if (node.type == ViewNodeType::Badge && node.text.empty())
     {
         error = "badge nodes require text";
+        return false;
+    }
+    if (node.type == ViewNodeType::StyledText && node.text.empty())
+    {
+        error = "styledText nodes require non-empty spans";
         return false;
     }
     if (IsCheckControlNode(node.type) && node.text.empty())
@@ -1297,6 +1505,85 @@ bool CollectRegions(const ViewNode& node,
     std::string& error)
 {
     if (!node.visible) return true;
+    if (node.type == ViewNodeType::MonthCalendar)
+    {
+        std::array<ViewMonthCalendarCell, 42> cells;
+        if (!BuildViewMonthCalendarCells(node, cells, error)) return false;
+        std::map<std::string, InteractionAction, std::less<>> surfaceEvents;
+        for (const auto& [name, action] : node.events)
+            if (name != "change") surfaceEvents.emplace(name, action);
+        if (!surfaceEvents.empty() &&
+            (!inheritedClip || Overlaps(node.frame, *inheritedClip)))
+        {
+            if (regions.size() >=
+                WidgetInteractionRegions::kMaximumRegions)
+            {
+                error = "view interaction region limit exceeded (256)";
+                return false;
+            }
+            InteractionRegion surface;
+            surface.key = node.key;
+            surface.shape.type = node.style.cornerRadius.value_or(0.0f) >
+                    0.0f
+                ? InteractionShapeType::RoundedRect
+                : InteractionShapeType::Rect;
+            surface.shape.x = node.frame.x;
+            surface.shape.y = node.frame.y;
+            surface.shape.width = node.frame.width;
+            surface.shape.height = node.frame.height;
+            surface.shape.radius = node.style.cornerRadius.value_or(0.0f);
+            if (inheritedClip)
+                surface.clip = InteractionClipRect{ inheritedClip->x,
+                    inheritedClip->y, inheritedClip->width,
+                    inheritedClip->height };
+            surface.events = std::move(surfaceEvents);
+            surface.accessibilityRole = node.accessibilityRole.empty()
+                ? "grid" : node.accessibilityRole;
+            surface.accessibilityLabel = node.accessibilityLabel;
+            surface.enabled = node.enabled;
+            regions.push_back(std::move(surface));
+        }
+        for (std::size_t index = 0; index < cells.size(); ++index)
+        {
+            const auto& cell = cells[index];
+            if (!cell.currentMonth && !node.showAdjacentDates) continue;
+            const ViewRect frame = ViewMonthCalendarCellFrame(node, index);
+            if (inheritedClip && !Overlaps(frame, *inheritedClip)) continue;
+            if (regions.size() >=
+                WidgetInteractionRegions::kMaximumRegions)
+            {
+                error = "view interaction region limit exceeded (256)";
+                return false;
+            }
+            if (frame.width <= 0.0f || frame.height <= 0.0f)
+            {
+                error = "monthCalendar cell has an empty layout";
+                return false;
+            }
+            InteractionRegion region;
+            region.key = node.key + "/" + cell.date;
+            region.shape.type = InteractionShapeType::Rect;
+            region.shape.x = frame.x;
+            region.shape.y = frame.y;
+            region.shape.width = frame.width;
+            region.shape.height = frame.height;
+            if (inheritedClip)
+                region.clip = InteractionClipRect{ inheritedClip->x,
+                    inheritedClip->y, inheritedClip->width,
+                    inheritedClip->height };
+            region.cursor = node.cursor.empty() ? "hand" : node.cursor;
+            region.events = node.events;
+            region.controlKind = InteractionControlKind::Radio;
+            region.checked = cell.selected;
+            region.currentSelection = node.calendarSelectedDate;
+            region.proposedSelection = cell.date;
+            region.accessibilityRole = "gridcell";
+            region.accessibilityLabel = cell.date;
+            region.enabled = node.enabled;
+            regions.push_back(std::move(region));
+        }
+        return true;
+    }
     if (node.type == ViewNodeType::RadioGroup)
     {
         for (std::size_t index = 0; index < node.options.size(); ++index)
@@ -1796,6 +2083,113 @@ ViewRect ViewSelectOptionFrame(const ViewNode& node,
         node.frame.width, optionHeight };
 }
 
+ViewRect ViewMonthCalendarWeekdayFrame(
+    const ViewNode& node, std::size_t weekdayIndex) noexcept
+{
+    if (weekdayIndex >= 7) return {};
+    const ViewRect content = ContentRect(node);
+    const float width = content.width / 7.0f;
+    const float height = content.height / 7.0f;
+    return { content.x + width * static_cast<float>(weekdayIndex),
+        content.y, width, height };
+}
+
+ViewRect ViewMonthCalendarCellFrame(
+    const ViewNode& node, std::size_t cellIndex) noexcept
+{
+    if (cellIndex >= 42) return {};
+    const ViewRect content = ContentRect(node);
+    const float width = content.width / 7.0f;
+    const float headerHeight = content.height / 7.0f;
+    const float height = (content.height - headerHeight) / 6.0f;
+    const std::size_t column = cellIndex % 7;
+    const std::size_t row = cellIndex / 7;
+    return { content.x + width * static_cast<float>(column),
+        content.y + headerHeight + height * static_cast<float>(row),
+        width, height };
+}
+
+bool BuildViewMonthCalendarCells(const ViewNode& node,
+    std::array<ViewMonthCalendarCell, 42>& cells, std::string& error)
+{
+    error.clear();
+    cells = {};
+    if (node.calendarYear < 1 || node.calendarYear > 9999 ||
+        node.calendarMonth < 1 || node.calendarMonth > 12 ||
+        node.firstDayOfWeek < 1 || node.firstDayOfWeek > 7)
+    {
+        error = "monthCalendar date fields are out of range";
+        return false;
+    }
+    CivilDate first{ node.calendarYear, node.calendarMonth, 1, 0 };
+    const long long firstSerial = DaysFromCivil(first.year,
+        static_cast<unsigned>(first.month), 1);
+    int firstWeekday = static_cast<int>((firstSerial + 4) % 7);
+    if (firstWeekday < 0) firstWeekday += 7;
+    first.weekday = firstWeekday + 1;
+    const int leading =
+        (first.weekday - node.firstDayOfWeek + 7) % 7;
+
+    CivilDate selected;
+    if (!node.calendarSelectedDate.empty() &&
+        !ParseCivilDate(node.calendarSelectedDate, selected))
+    {
+        error = "monthCalendar selectedDate must be empty or ISO YYYY-MM-DD";
+        return false;
+    }
+    CivilDate today;
+    if (!node.calendarTodayDate.empty() &&
+        !ParseCivilDate(node.calendarTodayDate, today))
+    {
+        error = "monthCalendar todayDate must be empty or ISO YYYY-MM-DD";
+        return false;
+    }
+    std::unordered_set<std::string> eventDates;
+    if (node.calendarEventDates.size() >
+        ViewTreeLimits::MaximumCalendarEventDates)
+    {
+        error = "monthCalendar eventDates exceed 366 entries";
+        return false;
+    }
+    for (const auto& value : node.calendarEventDates)
+    {
+        CivilDate eventDate;
+        if (!ParseCivilDate(value, eventDate))
+        {
+            error = "monthCalendar eventDates must use ISO YYYY-MM-DD";
+            return false;
+        }
+        if (!eventDates.insert(value).second)
+        {
+            error = "monthCalendar eventDates must be unique";
+            return false;
+        }
+    }
+
+    const long long gridStart = firstSerial - leading;
+    for (std::size_t index = 0; index < cells.size(); ++index)
+    {
+        const CivilDate date = CivilFromDays(
+            gridStart + static_cast<long long>(index));
+        if (date.year < 1 || date.year > 9999)
+        {
+            error = "monthCalendar grid falls outside supported dates";
+            cells = {};
+            return false;
+        }
+        ViewMonthCalendarCell cell;
+        cell.date = FormatCivilDate(date);
+        cell.day = date.day;
+        cell.currentMonth = date.year == node.calendarYear &&
+            date.month == node.calendarMonth;
+        cell.selected = cell.date == node.calendarSelectedDate;
+        cell.today = cell.date == node.calendarTodayDate;
+        cell.hasEvent = eventDates.contains(cell.date);
+        cells[index] = std::move(cell);
+    }
+    return true;
+}
+
 bool ValidateAndLayoutViewTree(ViewNode& root, float width, float height,
     std::string& error)
 {
@@ -1944,6 +2338,7 @@ const char* ViewNodeTypeName(ViewNodeType type) noexcept
     case ViewNodeType::VirtualGrid: return "virtualGrid";
     case ViewNodeType::ListItem: return "listItem";
     case ViewNodeType::Text: return "text";
+    case ViewNodeType::StyledText: return "styledText";
     case ViewNodeType::TextInput: return "textInput";
     case ViewNodeType::TextArea: return "textArea";
     case ViewNodeType::SearchBox: return "searchBox";
@@ -1969,6 +2364,7 @@ const char* ViewNodeTypeName(ViewNodeType type) noexcept
     case ViewNodeType::BarChart: return "barChart";
     case ViewNodeType::Waveform: return "waveform";
     case ViewNodeType::Spectrum: return "spectrum";
+    case ViewNodeType::MonthCalendar: return "monthCalendar";
     case ViewNodeType::Spacer: return "spacer";
     }
     return "unknown";

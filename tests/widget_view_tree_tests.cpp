@@ -168,6 +168,7 @@ void RegisterViewLibrary(lua_State* state)
         { "virtualGrid", LuaViewVirtualGrid },
         { "listItem", LuaViewListItem },
         { "text", LuaViewText },
+        { "styledText", LuaViewStyledText },
         { "textInput", LuaViewTextInput },
         { "textArea", LuaViewTextArea },
         { "searchBox", LuaViewSearchBox },
@@ -193,6 +194,7 @@ void RegisterViewLibrary(lua_State* state)
         { "barChart", LuaViewBarChart },
         { "waveform", LuaViewWaveform },
         { "spectrum", LuaViewSpectrum },
+        { "monthCalendar", LuaViewMonthCalendar },
         { "spacer", LuaViewSpacer },
     };
     for (const auto& entry : entries)
@@ -1376,6 +1378,129 @@ void TestDeclarativeInputControls()
         "controlled text inputs must reject ambiguous click actions");
     lua_close(state);
 }
+
+void TestStyledTextAndMonthCalendar()
+{
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "Lua state must be available");
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    Check(luaL_dostring(state, R"lua(
+        return view.column({
+            key = "content",
+            gap = 8,
+            children = {
+                view.styledText({
+                    key = "summary",
+                    height = 40,
+                    spans = {
+                        { text = "Build ", foreground = 0x94A3B8 },
+                        { text = "passed", foreground = 0x4ADE80,
+                            bold = true, underline = true },
+                        { text = " · validation pending", italic = true,
+                            fontSize = 13 },
+                    },
+                    accessibility = { label = "Build passed, validation pending" },
+                }),
+                view.monthCalendar({
+                    key = "calendar",
+                    year = 2026,
+                    month = 8,
+                    firstDayOfWeek = 2,
+                    selectedDate = "2026-08-15",
+                    todayDate = "2026-08-14",
+                    eventDates = { "2026-08-15", "2026-08-21" },
+                    weekdayLabels = { "Sun", "Mon", "Tue", "Wed",
+                        "Thu", "Fri", "Sat" },
+                    height = 224,
+                    action = { id = "calendar.select" },
+                    events = {
+                        contextMenu = { id = "calendar.menu" },
+                    },
+                    selectedStyle = { background = 0x4C9AFF },
+                    todayStyle = { borderColor = 0xFFFFFF, borderWidth = 2 },
+                    adjacentStyle = { opacity = 0.35 },
+                    eventStyle = { foreground = 0xFBBF24 },
+                    accessibility = { label = "August 2026" },
+                }),
+            },
+        })
+    )lua") == LUA_OK,
+        "styledText and monthCalendar Lua fixture must evaluate");
+    ViewNode root;
+    std::string error;
+    Check(ParseLuaViewTree(state, -1, root, error) &&
+            root.children.size() == 2 &&
+            root.children[0].type == ViewNodeType::StyledText &&
+            root.children[0].spans.size() == 3 &&
+            root.children[0].text ==
+                "Build passed · validation pending" &&
+            root.children[0].spans[1].bold &&
+            root.children[0].spans[1].underline &&
+            root.children[1].type == ViewNodeType::MonthCalendar &&
+            root.children[1].calendarYear == 2026 &&
+            root.children[1].calendarMonth == 8 &&
+            root.children[1].firstDayOfWeek == 2 &&
+            root.children[1].calendarEventDates.size() == 2 &&
+            root.children[1].weekdayLabels[1] == "Mon",
+        "styled text spans and calendar fields must remain strongly typed");
+    Check(ValidateAndLayoutViewTree(root, 320.0f, 272.0f, error),
+        "styledText and monthCalendar must validate and lay out together");
+
+    std::array<ViewMonthCalendarCell, 42> cells;
+    Check(BuildViewMonthCalendarCells(root.children[1], cells, error) &&
+            cells[0].date == "2026-07-27" &&
+            cells[19].date == "2026-08-15" &&
+            cells[19].selected && cells[19].hasEvent,
+        "monthCalendar must generate a deterministic six-week Monday-first grid");
+    const ViewRect firstCell = ViewMonthCalendarCellFrame(
+        root.children[1], 0);
+    Check(firstCell.width > 0.0f && firstCell.height > 0.0f,
+        "monthCalendar cells must receive positive bounded frames");
+
+    std::vector<InteractionRegion> regions;
+    Check(CollectViewInteractionRegions(root, regions, error) &&
+            regions.size() == 43 &&
+            regions[0].key == "calendar" &&
+            regions[1].key == "calendar/2026-07-27" &&
+            regions[20].key == "calendar/2026-08-15" &&
+            regions[20].controlKind == InteractionControlKind::Radio &&
+            regions[20].checked &&
+            regions[20].accessibilityRole == "gridcell",
+        "monthCalendar must expose one surface and 42 independently selectable date regions");
+    WidgetInteractionRegions interaction;
+    interaction.BeginFrame();
+    for (auto& region : regions)
+        Check(interaction.Submit(std::move(region), error),
+            "monthCalendar regions must satisfy the interaction contract");
+    interaction.CommitFrame();
+    const auto nextDate = interaction.ResolveAction(
+        "calendar/2026-08-21", "click");
+    Check(nextDate && nextDate->eventName == "change" &&
+            nextDate->previousSelection == "2026-08-15" &&
+            nextDate->selection == "2026-08-21",
+        "monthCalendar clicks must propose a controlled ISO date selection");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.monthCalendar({
+            key = "bad-calendar",
+            year = 2026,
+            month = 2,
+            selectedDate = "2026-02-30",
+            weekdayLabels = { "S", "M", "T", "W", "T", "F", "S" },
+            action = { id = "select" },
+            accessibility = { label = "Invalid" },
+        })
+    )lua") == LUA_OK,
+        "invalid calendar date fixture must evaluate");
+    ViewNode invalid;
+    Check(ParseLuaViewTree(state, -1, invalid, error) &&
+            !ValidateAndLayoutViewTree(invalid, 280.0f, 224.0f, error) &&
+            error.find("selectedDate") != std::string::npos,
+        "monthCalendar must reject impossible controlled dates");
+    lua_close(state);
+}
 }
 
 int main()
@@ -1393,6 +1518,7 @@ int main()
     TestScrollableCollections();
     TestVirtualizedCollections();
     TestDeclarativeInputControls();
+    TestStyledTextAndMonthCalendar();
     std::cout << "Widget view tree tests passed\n";
     return 0;
 }

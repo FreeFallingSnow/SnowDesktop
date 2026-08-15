@@ -640,6 +640,115 @@ bool ReadStyleField(lua_State* state, int table, const char* field,
     return ok;
 }
 
+bool ReadStringArrayField(lua_State* state, int table, const char* field,
+    std::vector<std::string>& values, std::size_t minimum,
+    std::size_t maximum, bool required, std::string& error)
+{
+    table = lua_absindex(state, table);
+    lua_getfield(state, table, field);
+    if (lua_isnil(state, -1))
+    {
+        lua_pop(state, 1);
+        if (!required) return true;
+        error = std::string("view node requires array field '") +
+            field + "'";
+        return false;
+    }
+    const std::string context = std::string("view ") + field;
+    if (!lua_istable(state, -1) ||
+        !ValidateArray(state, -1, context, error))
+    {
+        if (error.empty()) error = std::string("view field '") + field +
+            "' must be an array";
+        lua_pop(state, 1);
+        return false;
+    }
+    const std::size_t count = lua_rawlen(state, -1);
+    if (count < minimum || count > maximum)
+    {
+        lua_pop(state, 1);
+        error = std::string("view field '") + field +
+            "' has an invalid item count";
+        return false;
+    }
+    values.clear();
+    values.reserve(count);
+    for (std::size_t index = 0; index < count; ++index)
+    {
+        lua_rawgeti(state, -1, static_cast<lua_Integer>(index + 1));
+        if (lua_type(state, -1) != LUA_TSTRING)
+        {
+            lua_pop(state, 2);
+            error = std::string("view field '") + field +
+                "' must contain only strings";
+            return false;
+        }
+        std::size_t length = 0;
+        const char* text = lua_tolstring(state, -1, &length);
+        values.emplace_back(text ? text : "", length);
+        lua_pop(state, 1);
+    }
+    lua_pop(state, 1);
+    return true;
+}
+
+bool ReadTextSpansField(lua_State* state, int table,
+    std::vector<ViewTextSpan>& spans, std::string& error)
+{
+    table = lua_absindex(state, table);
+    lua_getfield(state, table, "spans");
+    if (!lua_istable(state, -1) ||
+        !ValidateArray(state, -1, "view styledText spans", error))
+    {
+        if (error.empty()) error = "styledText spans must be an array";
+        lua_pop(state, 1);
+        return false;
+    }
+    const std::size_t count = lua_rawlen(state, -1);
+    if (count == 0 || count > ViewTreeLimits::MaximumTextSpans)
+    {
+        lua_pop(state, 1);
+        error = "styledText spans must contain 1 to 64 items";
+        return false;
+    }
+    spans.clear();
+    spans.reserve(count);
+    for (std::size_t index = 0; index < count; ++index)
+    {
+        lua_rawgeti(state, -1, static_cast<lua_Integer>(index + 1));
+        if (!lua_istable(state, -1) ||
+            !ValidateObjectFields(state, -1,
+                { "text", "foreground", "fontSize", "bold", "italic",
+                    "underline", "strikethrough" },
+                "styledText span", error))
+        {
+            if (error.empty()) error = "styledText spans must be objects";
+            lua_pop(state, 2);
+            return false;
+        }
+        ViewTextSpan span;
+        if (!ReadStringField(state, -1, "text", span.text, true, error) ||
+            !ReadOptionalColor(state, -1, "foreground",
+                span.foreground, error) ||
+            !ReadOptionalNodeFloatField(state, -1, "fontSize",
+                span.fontSize, error) ||
+            !ReadBoolField(state, -1, "bold", span.bold, error) ||
+            !ReadBoolField(state, -1, "italic", span.italic, error) ||
+            !ReadBoolField(state, -1, "underline", span.underline,
+                error) ||
+            !ReadBoolField(state, -1, "strikethrough",
+                span.strikethrough, error))
+        {
+            lua_pop(state, 2);
+            return false;
+        }
+        spans.push_back(std::move(span));
+        lua_pop(state, 1);
+    }
+    lua_pop(state, 1);
+    return true;
+}
+
 bool ReadResourceField(lua_State* state, int table, const char* field,
     LuaResourceType expected, bool required, std::string& name,
     std::string& error)
@@ -868,6 +977,7 @@ bool ParseNodeType(std::string_view type, ViewNodeType& result)
     else if (type == "virtualGrid") result = ViewNodeType::VirtualGrid;
     else if (type == "listItem") result = ViewNodeType::ListItem;
     else if (type == "text") result = ViewNodeType::Text;
+    else if (type == "styledText") result = ViewNodeType::StyledText;
     else if (type == "textInput") result = ViewNodeType::TextInput;
     else if (type == "textArea") result = ViewNodeType::TextArea;
     else if (type == "searchBox") result = ViewNodeType::SearchBox;
@@ -893,6 +1003,8 @@ bool ParseNodeType(std::string_view type, ViewNodeType& result)
     else if (type == "barChart") result = ViewNodeType::BarChart;
     else if (type == "waveform") result = ViewNodeType::Waveform;
     else if (type == "spectrum") result = ViewNodeType::Spectrum;
+    else if (type == "monthCalendar")
+        result = ViewNodeType::MonthCalendar;
     else if (type == "spacer") result = ViewNodeType::Spacer;
     else return false;
     return true;
@@ -952,12 +1064,15 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         return false;
     }
     if (!ValidateObjectFields(state, index,
-            { "type", "key", "text", "label", "glyph", "iconFont",
+            { "type", "key", "text", "spans", "label", "glyph", "iconFont",
                 "source", "font", "fit", "alignment", "interpolation",
                 "alt",
                 "shape", "orientation", "value", "values", "min", "max",
                 "step", "options", "selectedValue", "placeholder",
                 "expanded", "selectAll", "liveUpdate", "maxBytes",
+                "year", "month", "firstDayOfWeek", "selectedDate",
+                "todayDate", "eventDates", "weekdayLabels",
+                "showAdjacentDates",
                 "thickness", "trackOpacity",
                 "fillOpacity", "width", "height",
                 "padding", "gap", "columns", "columnGap", "rowGap",
@@ -967,6 +1082,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
                 "showScrollbar",
                 "alignSelf", "justifyContent", "textAlign", "style",
                 "hoverStyle", "pressedStyle", "checkedStyle",
+                "selectedStyle", "todayStyle", "adjacentStyle",
+                "eventStyle",
                 "accessibility", "events",
                 "action", "children" }, "view node", error))
         return false;
@@ -998,8 +1115,11 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     const bool virtualCollectionNode = virtualListNode || virtualGridNode;
     const bool scrollContainerNode = scrollNode || virtualCollectionNode;
     const bool listItemNode = node.type == ViewNodeType::ListItem;
+    const bool styledTextNode = node.type == ViewNodeType::StyledText;
+    const bool monthCalendarNode =
+        node.type == ViewNodeType::MonthCalendar;
     const bool controlNode = checkControlNode || choiceNode || sliderNode ||
-        inputNode;
+        inputNode || monthCalendarNode;
     const bool linkNode = node.type == ViewNodeType::Link;
     const bool labelNode = node.type == ViewNodeType::Button ||
         linkNode || checkControlNode;
@@ -1008,6 +1128,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     const bool iconNode = node.type == ViewNodeType::Icon ||
         node.type == ViewNodeType::IconButton;
     const bool textNode = node.type == ViewNodeType::Text ||
+        styledTextNode ||
         node.type == ViewNodeType::Badge;
     const bool progressNode = node.type == ViewNodeType::ProgressBar ||
         node.type == ViewNodeType::ProgressRing ||
@@ -1022,7 +1143,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     const bool gridNode = node.type == ViewNodeType::Grid ||
         node.type == ViewNodeType::GridList || virtualGridNode;
     const bool flowNode = node.type == ViewNodeType::Flow;
-    const bool textResourceNode = textNode || labelNode || radioNode;
+    const bool textResourceNode = textNode || labelNode || radioNode ||
+        monthCalendarNode;
     if (labelNode &&
         (FieldPresent(state, index, "text") ||
             FieldPresent(state, index, "glyph")))
@@ -1044,6 +1166,16 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     if (!actionNode && FieldPresent(state, index, "action"))
     {
         error = "only action-capable nodes accept 'action'";
+        return false;
+    }
+    if (!styledTextNode && FieldPresent(state, index, "spans"))
+    {
+        error = "only styledText nodes accept spans";
+        return false;
+    }
+    if (styledTextNode && FieldPresent(state, index, "text"))
+    {
+        error = "styledText nodes use spans, not text";
         return false;
     }
     if (!textNode && !labelNode && !iconNode &&
@@ -1129,6 +1261,32 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         FieldPresent(state, index, "checkedStyle"))
     {
         error = "only selection controls accept checkedStyle";
+        return false;
+    }
+    if (!monthCalendarNode &&
+        (FieldPresent(state, index, "year") ||
+            FieldPresent(state, index, "month") ||
+            FieldPresent(state, index, "firstDayOfWeek") ||
+            FieldPresent(state, index, "selectedDate") ||
+            FieldPresent(state, index, "todayDate") ||
+            FieldPresent(state, index, "eventDates") ||
+            FieldPresent(state, index, "weekdayLabels") ||
+            FieldPresent(state, index, "showAdjacentDates") ||
+            FieldPresent(state, index, "selectedStyle") ||
+            FieldPresent(state, index, "todayStyle") ||
+            FieldPresent(state, index, "adjacentStyle") ||
+            FieldPresent(state, index, "eventStyle")))
+    {
+        error = "calendar fields and styles are reserved for monthCalendar";
+        return false;
+    }
+    if (monthCalendarNode &&
+        (!FieldPresent(state, index, "year") ||
+            !FieldPresent(state, index, "month") ||
+            !FieldPresent(state, index, "selectedDate") ||
+            !FieldPresent(state, index, "weekdayLabels")))
+    {
+        error = "monthCalendar requires year, month, selectedDate, and weekdayLabels";
         return false;
     }
     if (!seriesNode && FieldPresent(state, index, "values"))
@@ -1270,6 +1428,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadBoolField(state, index, "liveUpdate", node.liveUpdate, error) ||
         !ReadBoolField(state, index, "showScrollbar",
             node.showScrollbar, error) ||
+        !ReadBoolField(state, index, "showAdjacentDates",
+            node.showAdjacentDates, error) ||
         !ReadBoolField(state, index, "visible", node.visible, error) ||
         !ReadBoolField(state, index, "enabled", node.enabled, error) ||
         !ReadStringField(state, index, "cursor", node.cursor, false, error) ||
@@ -1288,8 +1448,52 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadStyleField(state, index, "pressedStyle",
             node.pressedStyle, error) ||
         !ReadStyleField(state, index, "checkedStyle",
-            node.checkedStyle, error))
+            node.checkedStyle, error) ||
+        !ReadStyleField(state, index, "selectedStyle",
+            node.selectedStyle, error) ||
+        !ReadStyleField(state, index, "todayStyle",
+            node.todayStyle, error) ||
+        !ReadStyleField(state, index, "adjacentStyle",
+            node.adjacentStyle, error) ||
+        !ReadStyleField(state, index, "eventStyle",
+            node.eventStyle, error))
         return false;
+
+    if (styledTextNode)
+    {
+        if (!ReadTextSpansField(state, index, node.spans, error))
+            return false;
+        node.text.clear();
+        for (const auto& span : node.spans) node.text += span.text;
+    }
+
+    if (monthCalendarNode)
+    {
+        std::size_t year = 0;
+        std::size_t month = 0;
+        std::size_t firstDay = 1;
+        std::vector<std::string> weekdayLabels;
+        if (!ReadSizeField(state, index, "year", year, error) ||
+            !ReadSizeField(state, index, "month", month, error) ||
+            !ReadSizeField(state, index, "firstDayOfWeek", firstDay,
+                error) ||
+            !ReadStringField(state, index, "selectedDate",
+                node.calendarSelectedDate, true, error) ||
+            !ReadStringField(state, index, "todayDate",
+                node.calendarTodayDate, false, error) ||
+            !ReadStringArrayField(state, index, "eventDates",
+                node.calendarEventDates, 0,
+                ViewTreeLimits::MaximumCalendarEventDates, false,
+                error) ||
+            !ReadStringArrayField(state, index, "weekdayLabels",
+                weekdayLabels, 7, 7, true, error))
+            return false;
+        node.calendarYear = static_cast<int>(year);
+        node.calendarMonth = static_cast<int>(month);
+        node.firstDayOfWeek = static_cast<int>(firstDay);
+        std::copy(weekdayLabels.begin(), weekdayLabels.end(),
+            node.weekdayLabels.begin());
+    }
 
     if (textInputNode)
     {
@@ -1545,6 +1749,10 @@ int LuaViewListItem(lua_State* state)
     return MakeNode(state, "listItem");
 }
 int LuaViewText(lua_State* state) { return MakeNode(state, "text"); }
+int LuaViewStyledText(lua_State* state)
+{
+    return MakeNode(state, "styledText");
+}
 int LuaViewTextInput(lua_State* state)
 {
     return MakeNode(state, "textInput");
@@ -1611,6 +1819,10 @@ int LuaViewWaveform(lua_State* state)
 int LuaViewSpectrum(lua_State* state)
 {
     return MakeNode(state, "spectrum");
+}
+int LuaViewMonthCalendar(lua_State* state)
+{
+    return MakeNode(state, "monthCalendar");
 }
 int LuaViewSpacer(lua_State* state) { return MakeNode(state, "spacer"); }
 }

@@ -26,6 +26,7 @@ int LuaViewVirtualList(lua_State* state);
 int LuaViewVirtualGrid(lua_State* state);
 int LuaViewListItem(lua_State* state);
 int LuaViewText(lua_State* state);
+int LuaViewStyledText(lua_State* state);
 int LuaViewTextInput(lua_State* state);
 int LuaViewTextArea(lua_State* state);
 int LuaViewSearchBox(lua_State* state);
@@ -51,5 +52,6 @@ int LuaViewLineChart(lua_State* state);
 int LuaViewBarChart(lua_State* state);
 int LuaViewWaveform(lua_State* state);
 int LuaViewSpectrum(lua_State* state);
+int LuaViewMonthCalendar(lua_State* state);
 int LuaViewSpacer(lua_State* state);
 }

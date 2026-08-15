@@ -156,6 +156,15 @@
 ---@field label string Non-empty visible and accessible label.
 ---@field enabled? boolean Defaults to true.
 
+---@class SnowViewTextSpan
+---@field text string Non-empty bounded UTF-8 text.
+---@field foreground? integer Per-span RGB color.
+---@field fontSize? number Per-span font size from 1 through 512.
+---@field bold? boolean
+---@field italic? boolean
+---@field underline? boolean
+---@field strikethrough? boolean
+
 ---@class SnowViewVirtualRangeOptions
 ---@field key string Stable virtual collection key.
 ---@field itemCount integer Total logical items from 0 through 1000000.
@@ -176,6 +185,7 @@
 ---@class SnowViewNodeOptions
 ---@field key string Globally unique stable key in the returned tree.
 ---@field text? string Used by text nodes.
+---@field spans? SnowViewTextSpan[] Required by styledText; 1 to 64 style-only spans.
 ---@field label? string Required by button, link, toggle, and checkbox nodes.
 ---@field glyph? string Required by icon and iconButton nodes.
 ---@field source? SnowImageResource Required by image nodes.
@@ -194,6 +204,14 @@
 ---@field step? number Positive slider/numberInput step no larger than max-min; defaults to 0.01.
 ---@field options? SnowViewChoiceOption[] Required by radioGroup/select; 1 to 64 unique keys and values.
 ---@field selectedValue? string Required controlled radioGroup/select value; empty means no selection.
+---@field year? integer Required Gregorian year from 1 through 9999 for monthCalendar.
+---@field month? integer Required month from 1 through 12 for monthCalendar.
+---@field firstDayOfWeek? integer MonthCalendar week start, 1=Sunday through 7=Saturday; defaults to 1.
+---@field selectedDate? string Required controlled ISO YYYY-MM-DD selection for monthCalendar; empty means none.
+---@field todayDate? string Optional ISO YYYY-MM-DD date highlighted as today.
+---@field eventDates? string[] Up to 366 unique ISO dates rendered with event markers.
+---@field weekdayLabels? string[] Required seven localized labels ordered Sunday through Saturday.
+---@field showAdjacentDates? boolean Render leading/trailing adjacent-month dates; defaults to true.
 ---@field placeholder? string Input or select placeholder.
 ---@field expanded? boolean Required controlled select popup state; defaults to false when omitted.
 ---@field selectAll? boolean Select all text on first focus.
@@ -229,13 +247,17 @@
 ---@field hoverStyle? SnowViewStyle
 ---@field pressedStyle? SnowViewStyle
 ---@field checkedStyle? SnowViewStyle Applied before hover/pressed when a toggle/checkbox or radio option is selected.
+---@field selectedStyle? SnowViewStyle MonthCalendar selected-date style.
+---@field todayStyle? SnowViewStyle MonthCalendar today outline style.
+---@field adjacentStyle? SnowViewStyle MonthCalendar adjacent-month date style.
+---@field eventStyle? SnowViewStyle MonthCalendar event-marker style.
 ---@field accessibility? SnowViewAccessibility
 ---@field events? SnowViewEvents
 ---@field action? SnowInteractionAction Button/link click or controlled selection/value change shorthand.
 ---@field children? SnowViewNode[]
 
 ---@class SnowViewNode: SnowViewNodeOptions
----@field type 'box'|'row'|'column'|'grid'|'flow'|'stack'|'scroll'|'list'|'gridList'|'virtualList'|'virtualGrid'|'listItem'|'text'|'textInput'|'textArea'|'searchBox'|'numberInput'|'select'|'image'|'button'|'link'|'toggle'|'checkbox'|'radioGroup'|'slider'|'icon'|'iconButton'|'shape'|'badge'|'divider'|'progressBar'|'progressRing'|'meter'|'sparkline'|'lineChart'|'barChart'|'waveform'|'spectrum'|'spacer'
+---@field type 'box'|'row'|'column'|'grid'|'flow'|'stack'|'scroll'|'list'|'gridList'|'virtualList'|'virtualGrid'|'listItem'|'text'|'styledText'|'textInput'|'textArea'|'searchBox'|'numberInput'|'select'|'image'|'button'|'link'|'toggle'|'checkbox'|'radioGroup'|'slider'|'icon'|'iconButton'|'shape'|'badge'|'divider'|'progressBar'|'progressRing'|'meter'|'sparkline'|'lineChart'|'barChart'|'waveform'|'spectrum'|'monthCalendar'|'spacer'
 
 ---@class SnowInteractionShape
 ---@field type 'rect'|'roundedRect'|'circle'
@@ -596,6 +618,11 @@ function view.listItem(options) end
 ---@return SnowViewNode
 function view.text(options) end
 
+---Bounded style-only rich text. Icons and actionable spans remain outside view.styledText.basic.
+---@param options SnowViewNodeOptions Requires 1..64 spans; probes with view.styledText.basic.
+---@return SnowViewNode
+function view.styledText(options) end
+
 ---Controlled single-line host input with keyboard, selection, clipboard proxy, and IME. Requires view.inputControls.
 ---@param options SnowViewNodeOptions
 ---@return SnowViewNode
@@ -700,6 +727,11 @@ function view.waveform(options) end
 ---@param options SnowViewNodeOptions Requires values and accessibility.label; defaults to the 0..1 range and probes with view.dataSeries.
 ---@return SnowViewNode
 function view.spectrum(options) end
+
+---Controlled six-week Gregorian date grid with per-date hover, selection proposal, context menu, and event marker. Requires view.monthCalendar.
+---@param options SnowViewNodeOptions Requires year/month/selectedDate/weekdayLabels, change/action, and accessibility.label.
+---@return SnowViewNode
+function view.monthCalendar(options) end
 
 ---@param options SnowViewNodeOptions
 ---@return SnowViewNode

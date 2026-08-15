@@ -93,7 +93,8 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.inputControls` 一次提供 `textInput/textArea/searchBox/numberInput/select`，
 `view.grid.uniform` 提供基础 `grid`，`view.flow.wrap` 提供横向换行 `flow`。
 `view.scroll` 提供宿主滚动视口，`view.collection.basic` 提供基础集合，
-`view.collection.virtual` 提供固定行高虚拟集合与可见范围查询。
+`view.collection.virtual` 提供固定行高虚拟集合与可见范围查询；
+`view.styledText.basic` 提供有界样式 span，`view.monthCalendar` 提供受控月历日期网格。
 每次 `view(context, model)` 返回一棵完整树；所有节点必须提供全树唯一、1–128 字节的
 稳定 `key`。宿主先完整解析、校验和布局，再原子替换上一棵成功树；回调或校验失败时
 继续显示上一棵树，不留下半棵树或空白交互区。
@@ -347,6 +348,43 @@ return view.virtualList({
 `thickness`、track/fill opacity，并分别使用 style.background/foreground 作为轨道和
 进度色。这些节点均由宿主直接绘制，不开放路径、字体文件或原生绘图对象。
 
+`styledText` 要求 1–64 个非空 `spans`，每个 span 可独立指定
+`foreground/fontSize/bold/italic/underline/strikethrough`。宿主把全部 span 合并为一个 DirectWrite layout，统一
+执行换行、裁剪、对齐和包私有字体解析，而不是为每段创建子节点。该首批契约通过
+`view.styledText.basic` 探测；它刻意不包含 inline icon 和可点击 action span，作者不得
+把整个节点的命中区误当作行内链接语义。
+
+```lua
+view.styledText({
+    key = "status",
+    spans = {
+        { text = "Build ", foreground = 0x94A3B8 },
+        { text = "passed", foreground = 0x4ADE80, bold = true },
+    },
+    accessibility = { label = "Build passed" },
+})
+```
+
+`monthCalendar` 是受控的六周 Gregorian 日期网格。它要求 `year/month/selectedDate`、
+按周日至周六排列的七个本地化 `weekdayLabels`、change `action` 和
+`accessibility.label`；`firstDayOfWeek=1..7` 决定显示顺序。`todayDate`、最多 366 个唯一
+`eventDates`、`showAdjacentDates` 以及 `selectedStyle/todayStyle/adjacentStyle/eventStyle`
+用于有限状态绘制。每个可见日期拥有稳定的 `<calendar-key>/<YYYY-MM-DD>` 命中目标和
+独立 hover/pressed/contextMenu；点击投递 `previousSelection/selection`，组件必须写回
+自己的 model，宿主不会修改持久状态。
+
+```lua
+view.monthCalendar({
+    key = "month",
+    year = 2026, month = 8, firstDayOfWeek = 2,
+    selectedDate = model.selectedDate,
+    todayDate = model.todayDate,
+    weekdayLabels = { "日", "一", "二", "三", "四", "五", "六" },
+    action = { id = "calendar.select" },
+    accessibility = { label = "2026 年 8 月" },
+})
+```
+
 `badge` 要求非空 `text`，默认使用 4 单位 padding 和胶囊圆角，适合紧凑状态标记；
 `divider` 通过 `orientation="horizontal"|"vertical"` 表示分隔方向，以 `thickness` 和
 `style.foreground` 控制线宽与颜色，垂直分隔线未显式指定尺寸时使用 intrinsic width 并
@@ -378,7 +416,7 @@ view.waveform({
 重复 key、NaN/Infinity 和越界值会拒绝整次提交。桌面树只布局在底部标题栏之上的内容区。
 
 该 feature 不是完整 `view.tree`：当前每帧重建树，尚无可变高度虚拟集合、
-声明式文本输入/slot 节点，也没有键盘焦点、UIA 输出、RTL、文本换行、主题
+可操作行内 span/slot 节点，也没有通用键盘焦点、UIA 输出、RTL、主题
 token、差量资源复用或声明式 panel。需要这些能力的组件应继续使用 v2 即时绘制或等待
 对应 feature；不得把 `view.tree.core` 当作稳定完整控件集声明。
 

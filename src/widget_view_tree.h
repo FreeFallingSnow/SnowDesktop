@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <array>
 #include <functional>
 #include <map>
 #include <optional>
@@ -28,6 +29,7 @@ enum class ViewNodeType
     VirtualGrid,
     ListItem,
     Text,
+    StyledText,
     TextInput,
     TextArea,
     SearchBox,
@@ -53,6 +55,7 @@ enum class ViewNodeType
     BarChart,
     Waveform,
     Spectrum,
+    MonthCalendar,
     Spacer,
 };
 
@@ -162,6 +165,27 @@ struct ViewChoiceOption
     bool enabled = true;
 };
 
+struct ViewTextSpan
+{
+    std::string text;
+    std::optional<std::uint32_t> foreground;
+    std::optional<float> fontSize;
+    bool bold = false;
+    bool italic = false;
+    bool underline = false;
+    bool strikethrough = false;
+};
+
+struct ViewMonthCalendarCell
+{
+    std::string date;
+    int day = 0;
+    bool currentMonth = false;
+    bool selected = false;
+    bool today = false;
+    bool hasEvent = false;
+};
+
 struct ViewNode
 {
     ViewNodeType type = ViewNodeType::Box;
@@ -172,6 +196,7 @@ struct ViewNode
     std::string imageResourceName;
     std::string fontResourceName;
     std::string alt;
+    std::vector<ViewTextSpan> spans;
     ViewLength width{ ViewLengthKind::Fill, 0.0f };
     ViewLength height{};
     float padding = 0.0f;
@@ -215,6 +240,14 @@ struct ViewNode
     bool showScrollbar = true;
     std::string selectedValue;
     std::vector<ViewChoiceOption> options;
+    int calendarYear = 0;
+    int calendarMonth = 0;
+    int firstDayOfWeek = 1;
+    std::string calendarSelectedDate;
+    std::string calendarTodayDate;
+    std::vector<std::string> calendarEventDates;
+    std::array<std::string, 7> weekdayLabels{};
+    bool showAdjacentDates = true;
     bool visible = true;
     bool enabled = true;
     std::string cursor;
@@ -224,6 +257,10 @@ struct ViewNode
     ViewStyle hoverStyle;
     ViewStyle pressedStyle;
     ViewStyle checkedStyle;
+    ViewStyle selectedStyle;
+    ViewStyle todayStyle;
+    ViewStyle adjacentStyle;
+    ViewStyle eventStyle;
     std::map<std::string, InteractionAction, std::less<>> events;
     std::vector<ViewNode> children;
     ViewRect frame;
@@ -290,6 +327,8 @@ struct ViewTreeLimits
     static constexpr std::size_t MaximumSeriesPoints = 512;
     static constexpr std::size_t MaximumTotalSeriesPoints = 4096;
     static constexpr std::size_t MaximumChoiceOptions = 64;
+    static constexpr std::size_t MaximumTextSpans = 64;
+    static constexpr std::size_t MaximumCalendarEventDates = 366;
     static constexpr std::size_t MaximumCollectionItems = 256;
     static constexpr std::size_t MaximumScrollContainers = 32;
     static constexpr std::size_t MaximumVirtualItemCount = 1'000'000;
@@ -314,5 +353,11 @@ ViewRect ViewRadioOptionFrame(
     const ViewNode& node, std::size_t optionIndex) noexcept;
 ViewRect ViewSelectOptionFrame(const ViewNode& node,
     std::size_t optionIndex, float viewportHeight) noexcept;
+ViewRect ViewMonthCalendarWeekdayFrame(
+    const ViewNode& node, std::size_t weekdayIndex) noexcept;
+ViewRect ViewMonthCalendarCellFrame(
+    const ViewNode& node, std::size_t cellIndex) noexcept;
+bool BuildViewMonthCalendarCells(const ViewNode& node,
+    std::array<ViewMonthCalendarCell, 42>& cells, std::string& error);
 const char* ViewNodeTypeName(ViewNodeType type) noexcept;
 }

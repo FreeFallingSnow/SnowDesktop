@@ -1053,6 +1053,14 @@ focus/blur/submit、提交模式、字节上限、数字有效性和方向键 st
 Pattern、通用焦点遍历和可逃逸父 surface 的 popover，因此这里只发布细粒度 feature，不能把
 五类控件计作第 13.4 节“控件契约完整”。
 
+同日后续实现已增加 `view.styledText.basic` 与 `view.monthCalendar`。前者提供 1–64 个
+有界样式 span，并由单个 DirectWrite layout 完成颜色、字号、粗体、斜体、下划线、删除线、
+换行和裁剪；inline icon 与 action span 仍未包含在 basic feature 中。后者提供固定六周的
+Gregorian 网格、可配置周起始、受控 ISO 日期选择、今日/相邻月份/事件状态样式，以及每个
+日期独立的 hover、pressed、change 建议值和元素右键目标。两者已有解析、限额、布局、命中、
+feature probe、LuaLS 和契约测试，但通用键盘导航及 UIA Text/Calendar Pattern 仍归 M6
+完整性门禁，不能仅因节点可以绘制就宣称声明式视图已稳定。
+
 节点规则：
 
 - 兄弟节点 key 必须稳定且唯一；集合 item key 同时作为 diff、焦点恢复、选择和 AutomationId 的输入。

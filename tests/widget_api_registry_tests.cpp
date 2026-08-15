@@ -396,11 +396,15 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature("view.image") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.inputControls") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "view.monthCalendar") &&
             snowdesktop::widget_api::SupportsFeature("view.scroll") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.selectionControls") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.statusVisuals") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "view.styledText.basic") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.tree.core") &&
             !snowdesktop::widget_api::SupportsFeature("view.tree"),
