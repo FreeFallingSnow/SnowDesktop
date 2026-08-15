@@ -1104,6 +1104,12 @@ none/info/success/warning/error，宿主在未定制时提供可见状态边框�
 UI Automation HelpText。校验状态只负责受控呈现与语义，不隐式拦截 change 或替组件修改数据；
 需要常驻可见说明时仍由组件添加相邻文本，避免仅以颜色传达错误。
 
+布局主线新增 `view.grid.placement`：`grid/gridList` 的直接子节点可声明 1-based
+`gridColumn/gridRow` 和 1 到 64 的 `columnSpan/rowSpan`，也可只约束一轴并由宿主按声明顺序
+寻找首个空位。显式重叠、越过列边界或超出 64 行会在原子提交前拒绝；布局、绘制、命中和
+网格位置语义共用同一 resolved frame。当前列仍为 `view.grid.uniform` 的等宽列，属性表中计划的
+`rows` 以及 fixed/auto/fr/minmax track 定义尚未实现，不能将本批次计作完整 Grid 契约。
+
 同日后续实现已增加 `view.styledText.basic` 与 `view.monthCalendar`。前者提供 1–64 个
 有界样式 span，并由单个 DirectWrite layout 完成颜色、字号、粗体、斜体、下划线、删除线、
 换行和裁剪；inline icon 与 action span 仍未包含在 basic feature 中。后者提供固定六周的
@@ -1736,7 +1742,7 @@ v2.0 资源契约：
 - 音频分析分别记录 1/5/10 个订阅下的捕获线程数、CPU、内存、FFT 耗时和发布丢帧；实例数增长不得线性增加捕获客户端。
 - 图片解码、字体解析和 GPU 上传必须计入独立资源预算；缓存不得绕过 Lua 实例内存限制形成无上限宿主内存占用。
 
-当前过渡实现（2026-08-15）发布 `view.tree.core`，支持 `box/row/column/stack/text/image/button/icon/iconButton/shape/progressBar/progressRing/spacer`，以 `view.grid.uniform` 提供 1–64 个等宽列、行优先顺序和独立行列间距的基础 `grid`（不包含 track/span/虚拟化），并以 `view.flow.wrap` 提供跳过隐藏项、独立行列间距、逐行 justify 和行内 align 的横向换行 `flow`（不包含纵向 flow/masonry/滚动/虚拟化）；`view.statusVisuals` 公开 `badge/divider/meter`，`view.dataSeries` 公开 `sparkline/lineChart/barChart/waveform/spectrum`，`view.selectionControls` 公开受控 `toggle/checkbox`，`view.actionControls` 一次公开 `link/radioGroup/slider`：link 使用宿主链接语义与实时 hover/pressed 绘制，radioGroup 为每个选项生成独立稳定命中区和 `previousSelection/selection` 建议值，slider 以捕获的左键拖动持续返回 step 对齐的 `previousControlValue/controlValue`；`view.inputControls` 一次公开 `textInput/textArea/searchBox/numberInput/select`，输入复用宿主键盘、IME、选择和剪贴板代理并投递受控文本/数值建议，select 以组件受控 expanded 状态绘制顶层有界选项；所有受控值均由组件写回，宿主不替组件持久化，元素各自支持 contextMenu；meter、slider 与数据图形要求无障碍标签，数据图形每节点最多 512 个有限样本、全树最多 4096 个并支持自动或显式 `min/max` 值域、
+当前过渡实现（2026-08-15）发布 `view.tree.core`，支持 `box/row/column/stack/text/image/button/icon/iconButton/shape/progressBar/progressRing/spacer`，以 `view.grid.uniform` 提供 1–64 个等宽列、行优先顺序和独立行列间距的基础 `grid`，并以 `view.grid.placement` 提供 1-based 显式行列、跨行跨列和受限自动放置（仍不包含自定义 track/虚拟化），再以 `view.flow.wrap` 提供跳过隐藏项、独立行列间距、逐行 justify 和行内 align 的横向换行 `flow`（不包含纵向 flow/masonry/滚动/虚拟化）；`view.statusVisuals` 公开 `badge/divider/meter`，`view.dataSeries` 公开 `sparkline/lineChart/barChart/waveform/spectrum`，`view.selectionControls` 公开受控 `toggle/checkbox`，`view.actionControls` 一次公开 `link/radioGroup/slider`：link 使用宿主链接语义与实时 hover/pressed 绘制，radioGroup 为每个选项生成独立稳定命中区和 `previousSelection/selection` 建议值，slider 以捕获的左键拖动持续返回 step 对齐的 `previousControlValue/controlValue`；`view.inputControls` 一次公开 `textInput/textArea/searchBox/numberInput/select`，输入复用宿主键盘、IME、选择和剪贴板代理并投递受控文本/数值建议，select 以组件受控 expanded 状态绘制顶层有界选项；所有受控值均由组件写回，宿主不替组件持久化，元素各自支持 contextMenu；meter、slider 与数据图形要求无障碍标签，数据图形每节点最多 512 个有限样本、全树最多 4096 个并支持自动或显式 `min/max` 值域、
 稳定全树 key、基础线性布局、基础文本/边框样式、宿主 hover/pressed 视觉、元素 click/
 doubleClick/pointer/contextMenu action，以及“先完整校验布局、后原子提交；失败保留上一成功树”。
 其额度为 512 节点、32 层、单节点 4 KiB 文本、全树 64 KiB 文本和 256 个交互元素；未知字段、

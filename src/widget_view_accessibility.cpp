@@ -51,6 +51,8 @@ struct GridPosition
 {
     int row = 0;
     int column = 0;
+    int rowSpan = 1;
+    int columnSpan = 1;
 };
 
 bool IsGridContainer(ViewNodeType type) noexcept
@@ -69,12 +71,24 @@ void PopulateContainerState(const ViewNode& source,
         const std::size_t columns = source.type ==
                 ViewNodeType::MonthCalendar
             ? 7 : std::max<std::size_t>(1, source.columns);
-        const std::size_t items = source.type ==
-                ViewNodeType::MonthCalendar
-            ? 42 : source.children.size();
+        std::size_t rows = 0;
+        if (source.type == ViewNodeType::Grid ||
+            source.type == ViewNodeType::GridList)
+        {
+            for (const auto& child : source.children)
+                if (child.visible)
+                    rows = std::max(rows,
+                        child.resolvedGridRow + child.rowSpan);
+        }
+        else
+        {
+            const std::size_t items = source.type ==
+                    ViewNodeType::MonthCalendar
+                ? 42 : source.children.size();
+            rows = items == 0 ? 0 : (items + columns - 1) / columns;
+        }
         target.gridColumnCount = static_cast<int>(columns);
-        target.gridRowCount = static_cast<int>(items == 0 ? 0 :
-            (items + columns - 1) / columns);
+        target.gridRowCount = static_cast<int>(rows);
     }
     if (source.type == ViewNodeType::Scroll ||
         source.type == ViewNodeType::VirtualList ||
@@ -100,8 +114,8 @@ void PopulateGridItemState(const GridPosition& position,
         ViewAccessibilityPattern::GridItem;
     target.gridRow = position.row;
     target.gridColumn = position.column;
-    target.gridRowSpan = 1;
-    target.gridColumnSpan = 1;
+    target.gridRowSpan = position.rowSpan;
+    target.gridColumnSpan = position.columnSpan;
 }
 
 struct ImmediateAccessibilityMapping
@@ -393,12 +407,25 @@ bool CollectNode(const ViewNode& source, std::string_view semanticPath,
         std::optional<GridPosition> childGridPosition;
         if (IsGridContainer(source.type))
         {
-            const std::size_t columns = source.type ==
-                    ViewNodeType::MonthCalendar
-                ? 7 : std::max<std::size_t>(1, source.columns);
-            childGridPosition = GridPosition{
-                static_cast<int>(index / columns),
-                static_cast<int>(index % columns) };
+            const auto& child = source.children[index];
+            if (source.type == ViewNodeType::Grid ||
+                source.type == ViewNodeType::GridList)
+            {
+                childGridPosition = GridPosition{
+                    static_cast<int>(child.resolvedGridRow),
+                    static_cast<int>(child.resolvedGridColumn),
+                    static_cast<int>(child.rowSpan),
+                    static_cast<int>(child.columnSpan) };
+            }
+            else
+            {
+                const std::size_t columns = source.type ==
+                        ViewNodeType::MonthCalendar
+                    ? 7 : std::max<std::size_t>(1, source.columns);
+                childGridPosition = GridPosition{
+                    static_cast<int>(index / columns),
+                    static_cast<int>(index % columns) };
+            }
         }
         const std::string childPath = std::string(semanticPath) + "/" +
             std::to_string(index);

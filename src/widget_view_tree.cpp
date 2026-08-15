@@ -358,6 +358,11 @@ bool IsGridContainer(ViewNodeType type) noexcept
         type == ViewNodeType::VirtualGrid;
 }
 
+bool IsPositionedGridContainer(ViewNodeType type) noexcept
+{
+    return type == ViewNodeType::Grid || type == ViewNodeType::GridList;
+}
+
 bool IsVirtualCollection(ViewNodeType type) noexcept
 {
     return type == ViewNodeType::VirtualList ||
@@ -511,20 +516,28 @@ float RawIntrinsicWidth(const ViewNode& node)
     if (IsGridContainer(node.type))
     {
         std::vector<float> widths(node.columns, 0.0f);
-        std::size_t visible = 0;
+        std::size_t usedColumns = 0;
+        const float columnGap = node.columnGap.value_or(node.gap);
         for (const auto& child : node.children)
         {
             if (!child.visible) continue;
-            widths[visible % node.columns] = std::max(
-                widths[visible % node.columns], OuterIntrinsicWidth(child));
-            ++visible;
+            const std::size_t column = child.resolvedGridColumn;
+            const std::size_t span = std::min(
+                child.columnSpan, node.columns - column);
+            const float contribution = std::max(0.0f,
+                (OuterIntrinsicWidth(child) -
+                    columnGap * static_cast<float>(span - 1)) /
+                    static_cast<float>(span));
+            for (std::size_t track = column;
+                track < column + span; ++track)
+                widths[track] = std::max(widths[track], contribution);
+            usedColumns = std::max(usedColumns, column + span);
         }
-        const std::size_t usedColumns = std::min(node.columns, visible);
         float result = 0.0f;
         for (std::size_t column = 0; column < usedColumns; ++column)
             result += widths[column];
         if (usedColumns > 1)
-            result += node.columnGap.value_or(node.gap) *
+            result += columnGap *
                 static_cast<float>(usedColumns - 1);
         return result + ViewHorizontalPadding(node);
     }
@@ -646,20 +659,30 @@ float RawIntrinsicHeight(const ViewNode& node)
     if (IsGridContainer(node.type))
     {
         std::vector<float> heights;
-        std::size_t visible = 0;
+        const float rowGap = node.rowGap.value_or(node.gap);
         for (const auto& child : node.children)
         {
             if (!child.visible) continue;
-            const std::size_t row = visible / node.columns;
-            if (row >= heights.size()) heights.push_back(0.0f);
-            heights[row] = std::max(
-                heights[row], OuterIntrinsicHeight(child));
-            ++visible;
+            const std::size_t requiredRows =
+                child.resolvedGridRow + child.rowSpan;
+            if (heights.size() < requiredRows)
+                heights.resize(requiredRows, 0.0f);
+            float current = rowGap *
+                static_cast<float>(child.rowSpan - 1);
+            for (std::size_t row = child.resolvedGridRow;
+                row < requiredRows; ++row)
+                current += heights[row];
+            const float addition = std::max(
+                0.0f, OuterIntrinsicHeight(child) - current) /
+                static_cast<float>(child.rowSpan);
+            for (std::size_t row = child.resolvedGridRow;
+                row < requiredRows; ++row)
+                heights[row] += addition;
         }
         float result = 0.0f;
         for (float height : heights) result += height;
         if (heights.size() > 1)
-            result += node.rowGap.value_or(node.gap) *
+            result += rowGap *
                 static_cast<float>(heights.size() - 1);
         return result + ViewVerticalPadding(node);
     }
@@ -733,6 +756,99 @@ float AlignOffset(ViewAlignment alignment, float available,
 }
 
 void LayoutNode(ViewNode& node, const ViewRect& frame);
+
+bool ResolveGridPlacements(ViewNode& node, std::string& error)
+{
+    constexpr std::size_t maximumTracks = 64;
+    if (IsPositionedGridContainer(node.type))
+    {
+        std::vector<std::vector<bool>> occupied;
+        const auto ensureRows = [&](std::size_t count) {
+            while (occupied.size() < count)
+                occupied.emplace_back(node.columns, false);
+        };
+        const auto fits = [&](std::size_t row, std::size_t column,
+                              std::size_t rowSpan,
+                              std::size_t columnSpan) {
+            if (row + rowSpan > maximumTracks ||
+                column + columnSpan > node.columns)
+                return false;
+            for (std::size_t currentRow = row;
+                currentRow < row + rowSpan; ++currentRow)
+            {
+                if (currentRow >= occupied.size()) continue;
+                for (std::size_t currentColumn = column;
+                    currentColumn < column + columnSpan; ++currentColumn)
+                    if (occupied[currentRow][currentColumn]) return false;
+            }
+            return true;
+        };
+        const auto occupy = [&](std::size_t row, std::size_t column,
+                                std::size_t rowSpan,
+                                std::size_t columnSpan) {
+            ensureRows(row + rowSpan);
+            for (std::size_t currentRow = row;
+                currentRow < row + rowSpan; ++currentRow)
+                for (std::size_t currentColumn = column;
+                    currentColumn < column + columnSpan; ++currentColumn)
+                    occupied[currentRow][currentColumn] = true;
+        };
+
+        for (auto& child : node.children)
+        {
+            child.resolvedGridColumn = 0;
+            child.resolvedGridRow = 0;
+            const std::size_t columnSpan = child.columnSpan;
+            const std::size_t rowSpan = child.rowSpan;
+            if (columnSpan > node.columns || rowSpan > maximumTracks ||
+                (child.gridColumn && *child.gridColumn > node.columns) ||
+                (child.gridRow && *child.gridRow > maximumTracks) ||
+                (child.gridColumn &&
+                    *child.gridColumn - 1 + columnSpan > node.columns) ||
+                (child.gridRow &&
+                    *child.gridRow - 1 + rowSpan > maximumTracks))
+            {
+                error = "grid item placement exceeds the 64-track grid bounds";
+                return false;
+            }
+            if (!child.visible) continue;
+
+            const std::size_t firstRow = child.gridRow
+                ? *child.gridRow - 1 : 0;
+            const std::size_t lastRow = child.gridRow
+                ? firstRow : maximumTracks - rowSpan;
+            const std::size_t firstColumn = child.gridColumn
+                ? *child.gridColumn - 1 : 0;
+            const std::size_t lastColumn = child.gridColumn
+                ? firstColumn : node.columns - columnSpan;
+            bool found = false;
+            for (std::size_t row = firstRow;
+                row <= lastRow && !found; ++row)
+            {
+                for (std::size_t column = firstColumn;
+                    column <= lastColumn; ++column)
+                {
+                    if (!fits(row, column, rowSpan, columnSpan)) continue;
+                    child.resolvedGridRow = row;
+                    child.resolvedGridColumn = column;
+                    occupy(row, column, rowSpan, columnSpan);
+                    found = true;
+                    break;
+                }
+            }
+            if (!found)
+            {
+                error = child.gridRow && child.gridColumn
+                    ? "grid item placement overlaps an occupied cell"
+                    : "grid auto-placement exceeds the 64-track limit";
+                return false;
+            }
+        }
+    }
+    for (auto& child : node.children)
+        if (!ResolveGridPlacements(child, error)) return false;
+    return true;
+}
 
 void LayoutLinear(ViewNode& node, const ViewRect& content, bool horizontal)
 {
@@ -890,19 +1006,31 @@ void LayoutGrid(ViewNode& node, const ViewRect& content)
         if (child.visible) visible.push_back(&child);
     if (visible.empty()) return;
 
-    const std::size_t columns = std::min(node.columns, visible.size());
-    const std::size_t rows =
-        (visible.size() + columns - 1) / columns;
+    const std::size_t columns = node.columns;
+    std::size_t rows = 0;
+    for (const ViewNode* child : visible)
+        rows = std::max(rows, child->resolvedGridRow + child->rowSpan);
+    if (rows == 0) return;
     const float columnGap = node.columnGap.value_or(node.gap);
     float rowGap = node.rowGap.value_or(node.gap);
     const float cellWidth = std::max(0.0f,
         (content.width - columnGap * static_cast<float>(columns - 1)) /
             static_cast<float>(columns));
     std::vector<float> rowHeights(rows, 0.0f);
-    for (std::size_t index = 0; index < visible.size(); ++index)
-        rowHeights[index / columns] = std::max(
-            rowHeights[index / columns],
-            OuterIntrinsicHeight(*visible[index]));
+    for (const ViewNode* child : visible)
+    {
+        float current = rowGap * static_cast<float>(child->rowSpan - 1);
+        for (std::size_t row = child->resolvedGridRow;
+            row < child->resolvedGridRow + child->rowSpan; ++row)
+            current += rowHeights[row];
+        const float deficit = std::max(
+            0.0f, OuterIntrinsicHeight(*child) - current);
+        const float addition = deficit /
+            static_cast<float>(child->rowSpan);
+        for (std::size_t row = child->resolvedGridRow;
+            row < child->resolvedGridRow + child->rowSpan; ++row)
+            rowHeights[row] += addition;
+    }
 
     float rowsHeight = 0.0f;
     for (float height : rowHeights) rowsHeight += height;
@@ -916,8 +1044,8 @@ void LayoutGrid(ViewNode& node, const ViewRect& content)
         rowsHeight = availableRowsHeight;
     }
 
-    float y = content.y;
     const float usedHeight = rowsHeight + gapsHeight;
+    float y = content.y;
     if (node.justifyContent == ViewJustification::Center)
         y += std::max(0.0f, (content.height - usedHeight) * 0.5f);
     else if (node.justifyContent == ViewJustification::End)
@@ -929,26 +1057,38 @@ void LayoutGrid(ViewNode& node, const ViewRect& content)
             static_cast<float>(rows - 1);
     }
 
-    for (std::size_t index = 0; index < visible.size(); ++index)
+    std::vector<float> rowOffsets(rows, y);
+    for (std::size_t row = 1; row < rows; ++row)
+        rowOffsets[row] = rowOffsets[row - 1] +
+            rowHeights[row - 1] + rowGap;
+
+    for (ViewNode* childPointer : visible)
     {
-        ViewNode& child = *visible[index];
-        const std::size_t column = index % columns;
-        const std::size_t row = index / columns;
+        ViewNode& child = *childPointer;
+        const std::size_t column = child.resolvedGridColumn;
+        const std::size_t row = child.resolvedGridRow;
+        const float spannedWidth = cellWidth *
+                static_cast<float>(child.columnSpan) +
+            columnGap * static_cast<float>(child.columnSpan - 1);
+        float spannedHeight = rowGap *
+            static_cast<float>(child.rowSpan - 1);
+        for (std::size_t currentRow = row;
+            currentRow < row + child.rowSpan; ++currentRow)
+            spannedHeight += rowHeights[currentRow];
         const ViewAlignment alignment = child.alignSelf == ViewAlignment::Auto
             ? node.alignItems : child.alignSelf;
         const ResolvedNodeSize resolved = ResolveOuterNodeSize(child,
             ResolveOuterCrossSize(child, child.width, IntrinsicWidth(child),
-                cellWidth, alignment, true),
+                spannedWidth, alignment, true),
             ResolveOuterCrossSize(child, child.height, IntrinsicHeight(child),
-                rowHeights[row], alignment, false));
+                spannedHeight, alignment, false));
         const float x = content.x +
             static_cast<float>(column) * (cellWidth + columnGap) +
-            AlignOffset(alignment, cellWidth, resolved.width);
+            AlignOffset(alignment, spannedWidth, resolved.width);
         LayoutNode(child, { x,
-            y + AlignOffset(alignment, rowHeights[row], resolved.height),
+            rowOffsets[row] + AlignOffset(
+                alignment, spannedHeight, resolved.height),
             resolved.width, resolved.height });
-        if (column + 1 == columns || index + 1 == visible.size())
-            y += rowHeights[row] + rowGap;
     }
 }
 
@@ -1238,6 +1378,13 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         error = "view offset and zIndex are only valid for direct stack children";
         return false;
     }
+    if ((node.gridColumn || node.gridRow || node.columnSpan != 1 ||
+            node.rowSpan != 1) &&
+        (!parentType || !IsPositionedGridContainer(*parentType)))
+    {
+        error = "grid placement properties are only valid for direct grid or gridList children";
+        return false;
+    }
     if (node.clipChildren && IsLeafNode(node.type))
     {
         error = "view clip is only valid for container nodes";
@@ -1271,6 +1418,11 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         !FiniteInRange(node.offsetX, -4096.0f, 4096.0f) ||
         !FiniteInRange(node.offsetY, -4096.0f, 4096.0f) ||
         node.zIndex < -1024 || node.zIndex > 1024 ||
+        node.columnSpan == 0 || node.columnSpan > 64 ||
+        node.rowSpan == 0 || node.rowSpan > 64 ||
+        (node.gridColumn && (*node.gridColumn == 0 ||
+            *node.gridColumn > 64)) ||
+        (node.gridRow && (*node.gridRow == 0 || *node.gridRow > 64)) ||
         !FiniteInRange(node.gap, 0.0f, 4096.0f) ||
         (node.columnGap && !FiniteInRange(*node.columnGap, 0.0f, 4096.0f)) ||
         (node.rowGap && !FiniteInRange(*node.rowGap, 0.0f, 4096.0f)) ||
@@ -2704,6 +2856,7 @@ bool ValidateAndLayoutViewTree(ViewNode& root, float width, float height,
     if (!ValidateNode(root, 0, nodes, textBytes, seriesPoints,
             collectionItems, keys, resources, std::nullopt, error))
         return false;
+    if (!ResolveGridPlacements(root, error)) return false;
     LayoutNode(root, { 0.0f, 0.0f, width, height });
     return true;
 }

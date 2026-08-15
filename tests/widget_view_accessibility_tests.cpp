@@ -241,13 +241,24 @@ void TestVirtualControlChildren()
             ? "Tile A" : index == 1 ? "Tile B" : "Tile C";
         grid.children.push_back(std::move(item));
     }
+    grid.children[0].resolvedGridColumn = 0;
+    grid.children[0].resolvedGridRow = 0;
+    grid.children[0].columnSpan = 2;
+    grid.children[1].resolvedGridColumn = 0;
+    grid.children[1].resolvedGridRow = 1;
+    grid.children[2].resolvedGridColumn = 1;
+    grid.children[2].resolvedGridRow = 1;
+    grid.children[2].rowSpan = 2;
     Check(CollectViewAccessibilityNodes(grid, {}, nodes, error) &&
-            nodes.size() == 4 && nodes[0].gridRowCount == 2 &&
+            nodes.size() == 4 && nodes[0].gridRowCount == 3 &&
             nodes[0].gridColumnCount == 2 &&
-            nodes[3].gridRow == 1 && nodes[3].gridColumn == 0 &&
+            nodes[1].gridRow == 0 && nodes[1].gridColumn == 0 &&
+            nodes[1].gridColumnSpan == 2 &&
+            nodes[3].gridRow == 1 && nodes[3].gridColumn == 1 &&
+            nodes[3].gridRowSpan == 2 &&
             HasViewAccessibilityPattern(nodes[3].patterns,
                 ViewAccessibilityPattern::GridItem),
-        "grid collections must expose zero-based row-major item metadata");
+        "grid collections must expose resolved positions and spans");
 }
 }
 

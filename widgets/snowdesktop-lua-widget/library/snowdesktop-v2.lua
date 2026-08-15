@@ -257,6 +257,10 @@
 ---@field columns? integer Required by grid, gridList, and virtualGrid; 1 to 64 equal-width columns.
 ---@field columnGap? number Grid/gridList/virtualGrid/flow horizontal gap; defaults to gap.
 ---@field rowGap? number Grid/gridList/virtualList/virtualGrid/flow vertical gap; defaults to gap.
+---@field gridColumn? integer Explicit 1-based column for a direct grid/gridList child; 1 through 64.
+---@field gridRow? integer Explicit 1-based row for a direct grid/gridList child; 1 through 64.
+---@field columnSpan? integer Number of equal-width columns occupied by a direct grid/gridList child; 1 through 64, defaults to 1.
+---@field rowSpan? integer Number of rows occupied by a direct grid/gridList child; 1 through 64, defaults to 1.
 ---@field itemCount? integer Required total logical item count for virtualList/virtualGrid; 0 through 1000000.
 ---@field itemExtent? number Required fixed row height for virtualList/virtualGrid.
 ---@field firstIndex? integer Required first 1-based materialized item for virtualList/virtualGrid; 0 only when empty.
@@ -681,7 +685,7 @@ function view.row(options) end
 ---@return SnowViewNode
 function view.column(options) end
 
----@param options SnowViewNodeOptions Requires columns; row-major equal-width layout, probes with view.grid.uniform.
+---@param options SnowViewNodeOptions Requires columns; equal-width layout with optional explicit placement/spans through view.grid.placement.
 ---@return SnowViewNode
 function view.grid(options) end
 

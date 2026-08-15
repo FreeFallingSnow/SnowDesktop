@@ -551,6 +551,17 @@ bool ReadSizeField(lua_State* state, int table, const char* field,
     return true;
 }
 
+bool ReadOptionalPositiveSizeField(lua_State* state, int table,
+    const char* field, std::optional<std::size_t>& value,
+    std::string& error)
+{
+    if (!FieldPresent(state, table, field)) return true;
+    std::size_t parsed = 1;
+    if (!ReadSizeField(state, table, field, parsed, error)) return false;
+    value = parsed;
+    return true;
+}
+
 bool ReadNonNegativeSizeField(lua_State* state, int table,
     const char* field, std::size_t& value, bool required,
     std::string& error)
@@ -1760,6 +1771,13 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             node.columnGap, error) ||
         !ReadOptionalNodeFloatField(state, index, "rowGap",
             node.rowGap, error) ||
+        !ReadOptionalPositiveSizeField(state, index, "gridColumn",
+            node.gridColumn, error) ||
+        !ReadOptionalPositiveSizeField(state, index, "gridRow",
+            node.gridRow, error) ||
+        !ReadSizeField(state, index, "columnSpan",
+            node.columnSpan, error) ||
+        !ReadSizeField(state, index, "rowSpan", node.rowSpan, error) ||
         !ReadLengthField(state, index, "flexBasis",
             node.flexBasis, error) ||
         !ReadFloatField(state, index, "flexGrow", node.flexGrow, error) ||

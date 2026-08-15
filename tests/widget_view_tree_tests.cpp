@@ -954,6 +954,84 @@ void TestUniformGridParsingAndLayout()
 
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(
+        return view.grid({
+            key = "placed-grid",
+            columns = 3,
+            columnGap = 4,
+            rowGap = 6,
+            children = {
+                view.shape({ key = "wide", width = "fill", height = 20,
+                    gridColumn = 1, gridRow = 1, columnSpan = 2 }),
+                view.shape({ key = "right", width = "fill", height = 30,
+                    gridColumn = 3, gridRow = 1, rowSpan = 2 }),
+                view.shape({ key = "auto", width = "fill", height = 16 }),
+                view.shape({ key = "partial", width = "fill", height = 10,
+                    gridColumn = 2 }),
+            },
+        })
+    )lua") == LUA_OK,
+        "explicit-grid-placement Lua fixture must evaluate");
+    root = {};
+    Check(ParseLuaViewTree(state, -1, root, error) &&
+            root.children.size() == 4 &&
+            root.children[0].gridColumn == 1 &&
+            root.children[0].gridRow == 1 &&
+            root.children[0].columnSpan == 2 &&
+            root.children[1].rowSpan == 2,
+        "grid placement parsing must retain 1-based coordinates and spans");
+    Check(ValidateAndLayoutViewTree(root, 158.0f, 100.0f, error) &&
+            root.children[0].resolvedGridColumn == 0 &&
+            root.children[0].resolvedGridRow == 0 &&
+            Near(root.children[0].frame.x, 0.0f) &&
+            Near(root.children[0].frame.width, 104.0f) &&
+            root.children[1].resolvedGridColumn == 2 &&
+            root.children[1].resolvedGridRow == 0 &&
+            Near(root.children[1].frame.x, 108.0f) &&
+            Near(root.children[1].frame.width, 50.0f) &&
+            root.children[2].resolvedGridColumn == 0 &&
+            root.children[2].resolvedGridRow == 1 &&
+            Near(root.children[2].frame.y, 28.0f) &&
+            root.children[3].resolvedGridColumn == 1 &&
+            root.children[3].resolvedGridRow == 1 &&
+            Near(root.children[3].frame.x, 54.0f),
+        "grid placement must span tracks and auto-place into the first free cell");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.grid({
+            key = "overlap",
+            columns = 2,
+            children = {
+                view.shape({ key = "first", gridColumn = 1, gridRow = 1 }),
+                view.shape({ key = "second", gridColumn = 1, gridRow = 1 }),
+            },
+        })
+    )lua") == LUA_OK,
+        "overlapping-grid-placement Lua fixture must evaluate");
+    root = {};
+    Check(ParseLuaViewTree(state, -1, root, error) &&
+            !ValidateAndLayoutViewTree(root, 100.0f, 100.0f, error) &&
+            error.find("overlaps an occupied cell") != std::string::npos,
+        "explicit grid placement must reject occupied cells");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.row({
+            key = "not-grid",
+            children = {
+                view.shape({ key = "placed", gridColumn = 1 }),
+            },
+        })
+    )lua") == LUA_OK,
+        "misplaced-grid-child-property Lua fixture must evaluate");
+    root = {};
+    Check(ParseLuaViewTree(state, -1, root, error) &&
+            !ValidateAndLayoutViewTree(root, 100.0f, 100.0f, error) &&
+            error.find("only valid for direct grid") != std::string::npos,
+        "grid placement properties must reject non-grid parents");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
         return view.grid({ key = "invalid", columns = 0 })
     )lua") == LUA_OK,
         "zero-column grid fixture must evaluate");

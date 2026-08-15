@@ -284,6 +284,12 @@ struct ViewNode
     float itemExtent = 0.0f;
     std::optional<float> columnGap;
     std::optional<float> rowGap;
+    std::optional<std::size_t> gridColumn;
+    std::optional<std::size_t> gridRow;
+    std::size_t columnSpan = 1;
+    std::size_t rowSpan = 1;
+    std::size_t resolvedGridColumn = 0;
+    std::size_t resolvedGridRow = 0;
     ViewLength flexBasis{};
     float flexGrow = 0.0f;
     float flexShrink = 1.0f;

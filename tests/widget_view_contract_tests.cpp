@@ -79,6 +79,11 @@ void TestRepresentativeApplicability()
     Check(ViewNodeAllowsProperty(ViewNodeType::Grid, "columns") &&
             !ViewNodeAllowsProperty(ViewNodeType::Row, "columns"),
         "grid-only properties must be machine readable");
+    Check(ViewNodeAllowsProperty(ViewNodeType::Shape, "gridColumn") &&
+            ViewNodeAllowsProperty(ViewNodeType::ListItem, "gridRow") &&
+            ViewNodeAllowsProperty(ViewNodeType::Button, "columnSpan") &&
+            ViewNodeAllowsProperty(ViewNodeType::Text, "rowSpan"),
+        "grid child placement properties must be machine readable");
     Check(ViewNodeAllowsProperty(ViewNodeType::VirtualGrid, "itemCount") &&
             !ViewNodeAllowsProperty(ViewNodeType::GridList, "itemCount"),
         "virtual collection properties must not leak to eager collections");

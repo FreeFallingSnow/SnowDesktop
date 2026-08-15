@@ -97,7 +97,8 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.text.typography` 提供字体粗细、字形、行高和字距，
 `view.text.locale` 提供 BCP 47 locale 与双向文本基准方向，
 `view.tooltip` 提供宿主管理的纯文本元素提示，
-`view.grid.uniform` 提供基础 `grid`，`view.flow.wrap` 提供横向换行 `flow`。
+`view.grid.uniform` 提供基础 `grid`，`view.grid.placement` 提供显式格位与跨度，
+`view.flow.wrap` 提供横向换行 `flow`。
 `view.scroll` 提供宿主滚动视口，`view.collection.basic` 提供基础集合，
 `view.collection.virtual` 提供固定行高虚拟集合与可见范围查询；
 `view.styledText.basic` 提供有界样式 span，`view.monthCalendar` 提供受控月历日期网格，
@@ -316,8 +317,11 @@ view.searchBox({
 `columnGap/rowGap` 分别控制水平和垂直间距，未提供时回退到 `gap`。隐藏子节点不占格，
 其余子节点保持原顺序，现有 `alignItems/alignSelf` 控制格内拉伸或对齐，
 `justifyContent` 控制整组行在纵向剩余空间中的位置。对应 feature 为
-`view.grid.uniform`。该 feature 不包含自定义 track、显式行定义、跨行/跨列、自动填充、
-瀑布流或虚拟化；需要这些能力时不得假设基础 `grid` 会静默模拟。
+`view.grid.uniform`。`view.grid.placement` 另允许 `grid` 和 `gridList` 的直接子节点使用
+1-based `gridColumn/gridRow`，以及 1 到 64 的 `columnSpan/rowSpan`；只指定一个坐标时，
+另一轴以及完全未指定的子项按声明顺序在首个可用位置行优先放置。显式格位重叠、跨度越过
+列边界或第 64 行会拒绝整棵树，不会覆盖已有子项。该 feature 仍不包含 fixed/auto/fr/minmax
+track、自定义显式行尺寸、瀑布流或虚拟化；需要这些能力时不得假设基础 `grid` 会静默模拟。
 
 `flow` 按子节点原顺序从左到右放置，当前行剩余宽度不足时整体换到下一行；隐藏子节点
 不占位置，单个超宽子节点钳制到内容区宽度。`columnGap/rowGap` 独立控制项间距与行间距，
