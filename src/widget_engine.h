@@ -42,6 +42,7 @@
 #include "widget_audio_output_task_executor.h"
 #include "widget_clipboard_task_executor.h"
 #include "widget_filesystem_handle_store.h"
+#include "widget_filesystem_task_executor.h"
 #include "widget_app_task_executor.h"
 #include "widget_trusted_gesture.h"
 #include "widget_system_data_provider.h"
@@ -1259,6 +1260,9 @@ private:
         snowdesktop::widget_runtime::WidgetFilesystemHandleStore>
         filesystemHandleStore_;
     std::unique_ptr<
+        snowdesktop::widget_runtime::WidgetFilesystemTaskExecutor>
+        filesystemTaskExecutor_;
+    std::unique_ptr<
         snowdesktop::widget_runtime::WidgetAppTaskExecutor>
         appTaskExecutor_;
     std::unique_ptr<
@@ -1298,6 +1302,11 @@ private:
     std::unordered_map<std::uint64_t,
         snowdesktop::widget_runtime::WidgetFilesystemHandleEntry>
         filesystemPickerCompletions_;
+    std::unordered_map<std::uint64_t,
+        snowdesktop::widget_runtime::WidgetFilesystemTaskCompletion>
+        filesystemTaskCompletions_;
+    std::unordered_map<std::uint64_t, std::string>
+        filesystemTaskHandles_;
     std::unordered_map<std::uint64_t, int> networkTaskRequests_;
     std::unordered_map<int, std::uint64_t> networkRequestTasks_;
     snowdesktop::widget_runtime::WidgetTrustedGestureState

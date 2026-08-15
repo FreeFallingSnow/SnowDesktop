@@ -199,9 +199,10 @@ WidgetFilesystemHandleGrantResult WidgetFilesystemHandleStore::Grant(
     WidgetFilesystemHandleKind kind, WidgetFilesystemHandleAccess access)
 {
     if (owner.instanceId.empty() || owner.packageId.empty())
-        return { std::nullopt, "invalidOwner" };
+        return { std::nullopt, false, "invalidOwner" };
     const auto normalized = NormalizeGrantedPath(path, kind);
-    if (!normalized) return { std::nullopt, "invalidSelection" };
+    if (!normalized)
+        return { std::nullopt, false, "invalidSelection" };
 
     std::scoped_lock lock(mutex_);
     std::size_t ownerCount = 0;
@@ -212,11 +213,11 @@ WidgetFilesystemHandleGrantResult WidgetFilesystemHandleStore::Grant(
         if (entry.owner.packageId == owner.packageId &&
             entry.path == *normalized && entry.kind == kind &&
             entry.access == access)
-            return { entry, {} };
+            return { entry, false, {} };
     }
     if (entries_.size() >= MaximumEntries ||
         ownerCount >= MaximumEntriesPerInstance)
-        return { std::nullopt, "handleQuotaExceeded" };
+        return { std::nullopt, false, "handleQuotaExceeded" };
 
     WidgetFilesystemHandleEntry entry;
     for (int attempt = 0; attempt < 8; ++attempt)
@@ -226,7 +227,7 @@ WidgetFilesystemHandleGrantResult WidgetFilesystemHandleStore::Grant(
         entry.handle.clear();
     }
     if (entry.handle.empty())
-        return { std::nullopt, "handleGenerationFailed" };
+        return { std::nullopt, false, "handleGenerationFailed" };
     entry.owner = std::move(owner);
     entry.path = *normalized;
     entry.kind = kind;
@@ -236,10 +237,10 @@ WidgetFilesystemHandleGrantResult WidgetFilesystemHandleStore::Grant(
     if (!SaveLocked(error))
     {
         entries_.erase(entry.handle);
-        return { std::nullopt,
+        return { std::nullopt, false,
             error.empty() ? "handlePersistenceFailed" : std::move(error) };
     }
-    return { std::move(entry), {} };
+    return { std::move(entry), true, {} };
 }
 
 std::optional<WidgetFilesystemHandleEntry>

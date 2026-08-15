@@ -166,10 +166,12 @@ menu.
 - Ask the user to grant a concrete file or folder only through
   `filesystem.pickOpen/pickSave/pickFolder` in a direct trusted gesture.
   Declare `filesystem.userSelected.read` and/or `.write` for the requested
-  access, retain only the returned opaque handle, and show its display-only
-  name. Never persist, parse, log, or replace a handle with a filesystem path.
-  Probe `task.filesystem.picker`; file stat/read/write/list/watch operations
-  are not available until their own feature IDs are published.
+  access, retain or persist only the returned opaque handle token, and show
+  its display-only name. Probe `task.filesystem.access` before using bounded
+  `filesystem.stat/list/read/write/release` tasks. Preserve revisions and pass
+  `expectedRevision` when updating content. Never parse, log, or replace a
+  handle with a filesystem path; recursive traversal and watch are not yet
+  available.
 - Search applications with the bounded `task.start("app.search", { query,
   limit, offset })` task and retain only its opaque `ref` values. Launch one
   with `task.start("app.launch", { ref = item.ref })` inside the direct click

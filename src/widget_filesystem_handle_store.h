@@ -41,6 +41,7 @@ struct WidgetFilesystemHandleEntry
 struct WidgetFilesystemHandleGrantResult
 {
     std::optional<WidgetFilesystemHandleEntry> entry;
+    bool created = false;
     std::string error;
 
     explicit operator bool() const noexcept

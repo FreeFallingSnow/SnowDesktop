@@ -321,9 +321,9 @@
 ---@field topic? string Updated data subscription topic for data.change.
 ---@field revision? integer Monotonic provider revision for data.change.
 ---@field taskId? integer
----@field task? 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'filesystem.pickOpen'|'filesystem.pickSave'|'filesystem.pickFolder'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'|string
+---@field task? 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'filesystem.pickOpen'|'filesystem.pickSave'|'filesystem.pickFolder'|'filesystem.stat'|'filesystem.list'|'filesystem.read'|'filesystem.write'|'filesystem.release'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'|string
 ---@field ok? boolean
----@field value? SnowMediaTaskValue|SnowAudioOutputTaskValue|SnowSystemSettingsTaskValue|SnowClipboardReadTaskValue|SnowFilesystemPickerTaskValue|SnowAppSearchTaskValue|SnowItemSearchTaskValue|SnowCalendarMutationTaskValue|SnowNetworkTaskValue|SnowStateValue
+---@field value? SnowMediaTaskValue|SnowAudioOutputTaskValue|SnowSystemSettingsTaskValue|SnowClipboardReadTaskValue|SnowFilesystemPickerTaskValue|SnowFilesystemMetadata|SnowFilesystemListTaskValue|SnowFilesystemReadTaskValue|SnowFilesystemWriteTaskValue|SnowAppSearchTaskValue|SnowItemSearchTaskValue|SnowCalendarMutationTaskValue|SnowNetworkTaskValue|SnowStateValue
 ---@field error? string
 ---@field currentRevision? integer Latest revision returned by a failed calendar update conflict.
 ---@field status? integer HTTP status returned by a failed network.request after a response was received.
@@ -905,6 +905,48 @@ function data.subscribe(topic, options) end
 ---@field access 'read'|'write'|'readWrite'
 ---@field name string Display-only selected item name.
 
+---@class SnowFilesystemHandleArguments
+---@field handle string Opaque handle returned by a filesystem picker or list task.
+
+---@class SnowFilesystemListArguments: SnowFilesystemHandleArguments
+---@field offset? integer Entry offset from 0 through 10000; defaults to 0.
+---@field limit? integer Entry count from 1 through 100; defaults to 50.
+
+---@class SnowFilesystemReadArguments: SnowFilesystemHandleArguments
+---@field encoding? 'utf8' The only file encoding currently exposed by v2.
+---@field maxBytes? integer Caller byte ceiling from 1 through 1048576; defaults to 524288.
+
+---@class SnowFilesystemWriteArguments: SnowFilesystemHandleArguments
+---@field encoding? 'utf8' The only file encoding currently exposed by v2.
+---@field text string Valid UTF-8 containing at most 1048576 bytes and no NUL.
+---@field expectedRevision? string Revision returned by stat/read/write; a mismatch rejects the write with conflict.
+
+---@class SnowFilesystemMetadata
+---@field handle string Opaque instance-and-package-scoped handle.
+---@field kind 'file'|'folder'
+---@field name string Display-only item name; never a path.
+---@field size? integer File byte count; absent for folders.
+---@field modifiedMs integer Unix epoch milliseconds.
+---@field readOnly boolean
+---@field revision string Opaque conflict-detection revision.
+
+---@class SnowFilesystemListTaskValue
+---@field items SnowFilesystemMetadata[] Direct children only; reparse points are omitted.
+---@field nextOffset integer
+---@field hasMore boolean
+
+---@class SnowFilesystemReadTaskValue
+---@field encoding 'utf8'
+---@field text string
+---@field size integer
+---@field revision string
+
+---@class SnowFilesystemWriteTaskValue
+---@field accepted boolean
+---@field size integer
+---@field modifiedMs integer
+---@field revision string
+
 ---@class SnowAppSearchArguments
 ---@field query string UTF-8 query containing 1 to 256 bytes.
 ---@field limit? integer Result count from 1 through 100; defaults to 50.
@@ -1005,6 +1047,11 @@ task = {}
 ---@overload fun(name: 'filesystem.pickOpen', arguments?: SnowFilesystemPickOpenArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'filesystem.pickSave', arguments?: SnowFilesystemPickSaveArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'filesystem.pickFolder', arguments?: SnowFilesystemPickFolderArguments): taskId: integer?, error: string?
+---@overload fun(name: 'filesystem.stat', arguments: SnowFilesystemHandleArguments): taskId: integer?, error: string?
+---@overload fun(name: 'filesystem.list', arguments: SnowFilesystemListArguments): taskId: integer?, error: string?
+---@overload fun(name: 'filesystem.read', arguments: SnowFilesystemReadArguments): taskId: integer?, error: string?
+---@overload fun(name: 'filesystem.write', arguments: SnowFilesystemWriteArguments): taskId: integer?, error: string?
+---@overload fun(name: 'filesystem.release', arguments: SnowFilesystemHandleArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'app.search', arguments: SnowAppSearchArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'app.launch', arguments: SnowAppLaunchArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'desktop.search', arguments: SnowItemSearchArguments): taskId: integer?, error: string?
@@ -1018,7 +1065,7 @@ task = {}
 ---@overload fun(name: 'calendar.remove', arguments: SnowCalendarRemoveArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'network.request', arguments: SnowNetworkRequestArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'shell.openUri', arguments: SnowShellOpenUriArguments): taskId: integer?, error: string?
----@param name 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'filesystem.pickOpen'|'filesystem.pickSave'|'filesystem.pickFolder'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'
+---@param name 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'filesystem.pickOpen'|'filesystem.pickSave'|'filesystem.pickFolder'|'filesystem.stat'|'filesystem.list'|'filesystem.read'|'filesystem.write'|'filesystem.release'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'
 ---@param arguments? table Strict task-specific argument table.
 ---@return integer? taskId
 ---@return string? error

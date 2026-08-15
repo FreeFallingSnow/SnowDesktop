@@ -463,7 +463,7 @@ CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.pow
 feature ID `task.start`、`task.media.control`、`task.audio.output.control`、`task.app.search`、`task.app.launch`
 、`task.notification.show`、`task.calendar.write`、`task.network.request` 和
 `task.shell.openUri`、`task.system.openSettings`、`task.clipboard.text`、
-`task.filesystem.picker`，以及 `task.desktop.search`、`task.everything.search`、
+`task.filesystem.picker`、`task.filesystem.access`，以及 `task.desktop.search`、`task.everything.search`、
 `task.shell.item`、`task.desktop.refresh`。媒体动作要求 `media.action` 权限，而且只能在
 `click/doubleClick/pointerDown/pointerUp/wheel`、宿主按钮、菜单命令或由宿主明确
 标记来源的打开回调同步调用栈内启动：
@@ -558,8 +558,48 @@ local folderTask = task.start("filesystem.pickFolder", {
 其他实例也不能解析或撤销该句柄。稳定错误包括 `permissionDenied`、
 `userGestureRequired`、`userCanceled`、`pickerUnavailable`、`pickerFailed`、
 `invalidSelection`、`handleQuotaExceeded`、`handlePersistenceFailed` 和 `canceled`。
-预览返回固定虚拟句柄且不打开系统对话框。当前 `task.filesystem.picker` 只冻结选择与
-授权句柄契约；`stat/list/read/write/watch` 要等各自 feature 发布后才能使用。
+预览返回固定虚拟句柄且不打开系统对话框。
+
+`task.filesystem.access` 在同一句柄边界上公开 `stat/list/read/write/release`：
+
+```lua
+local statTask = task.start("filesystem.stat", { handle = selectedHandle })
+local listTask = task.start("filesystem.list", {
+    handle = selectedFolder,
+    offset = 0,
+    limit = 50,
+})
+local readTask = task.start("filesystem.read", {
+    handle = selectedFile,
+    encoding = "utf8",
+    maxBytes = 512 * 1024,
+})
+local writeTask = task.start("filesystem.write", {
+    handle = selectedFile,
+    encoding = "utf8",
+    text = nextText,
+    expectedRevision = previouslyReadRevision,
+})
+local releaseTask = task.start("filesystem.release", {
+    handle = selectedHandle,
+})
+```
+
+`stat`、`list`、`read` 要求 `filesystem.userSelected.read` 和可读句柄；`write` 要求
+`filesystem.userSelected.write` 和可写句柄。`release` 只撤销当前实例自己的句柄，不要求
+额外权限或手势；句柄仍有任务执行时返回 `handleBusy`。`stat` 返回
+`{ handle,kind,name,size?,modifiedMs,readOnly,revision }`；`list` 只枚举一层，分页范围
+0–10000、每页 1–100，并把非 reparse 子项转换为同一实例的新 opaque handle；超过
+10000 个可枚举子项返回 `directoryTooLarge`。`read` 当前只接受 `encoding=utf8`，调用方
+上限与宿主硬上限均不超过 1 MiB，NUL 或非 UTF-8 内容返回 `invalidEncoding`。
+
+`write` 当前是 1 MiB 内的 UTF-8 原子整文件替换，同一实例最短间隔 100 ms；传入
+`expectedRevision` 时，文件不存在或 revision 已变化均返回 `conflict`。成功返回新的
+`{ accepted,size,modifiedMs,revision }`。其他稳定错误包括 `invalidReference`、
+`handleAccessDenied`、`notFile`、`notFolder`、`notFound`、`accessDenied`、
+`reparsePointDenied`、`fileTooLarge`、`fileChanged`、`readFailed`、`writeFailed`、
+`rateLimited`、`permissionRevoked` 和 `canceled`。这些任务不接受路径，也不递归遍历；
+`filesystem.watch` 仍未发布。
 
 `app.search` 要求 `app.discovery`，不要求用户手势；参数是严格的普通表：`query`
 为 1–256 字节有效 UTF-8，`limit` 默认为 50、范围 1–100，`offset` 默认为 0、范围
