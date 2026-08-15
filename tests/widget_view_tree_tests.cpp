@@ -2070,8 +2070,10 @@ void TestStyledTextAndMonthCalendar()
             root.children[0].spans[1].bold &&
             root.children[0].spans[1].underline &&
             root.children[0].spans[1].key == "result" &&
-            root.children[0].spans[1].hoverForeground == 0x86EFAC &&
-            root.children[0].spans[1].pressedForeground == 0x22C55E &&
+            root.children[0].spans[1].hoverForeground ==
+                std::uint32_t{ 0x86EFAC } &&
+            root.children[0].spans[1].pressedForeground ==
+                std::uint32_t{ 0x22C55E } &&
             root.children[0].spans[1].events.contains("click") &&
             root.children[0].spans[1].events.contains("contextMenu") &&
             root.children[0].spans[1].events.contains("pointerMove") &&
