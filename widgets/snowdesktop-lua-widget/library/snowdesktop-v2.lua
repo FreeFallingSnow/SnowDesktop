@@ -223,6 +223,10 @@
 ---@field fillOpacity? number Progress or data-series foreground opacity between 0 and 1.
 ---@field width? SnowViewLength
 ---@field height? SnowViewLength
+---@field minWidth? number Minimum bounded logical width, from 0 through 4096.
+---@field maxWidth? number Maximum bounded logical width, from 0 through 4096.
+---@field minHeight? number Minimum bounded logical height, from 0 through 4096.
+---@field maxHeight? number Maximum bounded logical height, from 0 through 4096.
 ---@field padding? number
 ---@field gap? number
 ---@field columns? integer Required by grid, gridList, and virtualGrid; 1 to 64 equal-width columns.

@@ -1666,6 +1666,71 @@ void TestLogicalSlotSceneContract()
         "slotSurface and slotItem constructors must retain typed scene fields");
     lua_close(state);
 }
+
+void TestBoundedSizeConstraints()
+{
+    ViewNode root;
+    root.type = ViewNodeType::Column;
+    root.key = "constraints-root";
+
+    ViewNode boundedText;
+    boundedText.type = ViewNodeType::Text;
+    boundedText.key = "bounded-text";
+    boundedText.text = "Bounded";
+    boundedText.width = { ViewLengthKind::Fixed, 40.0f };
+    boundedText.height = { ViewLengthKind::Fixed, 80.0f };
+    boundedText.minimumWidth = 120.0f;
+    boundedText.maximumHeight = 32.0f;
+    root.children.push_back(boundedText);
+
+    ViewNode boundedFill;
+    boundedFill.type = ViewNodeType::Spacer;
+    boundedFill.key = "bounded-fill";
+    boundedFill.width = { ViewLengthKind::Fill, 0.0f };
+    boundedFill.height = { ViewLengthKind::Fill, 0.0f };
+    boundedFill.maximumWidth = 90.0f;
+    boundedFill.minimumHeight = 48.0f;
+    root.children.push_back(boundedFill);
+
+    std::string error;
+    Check(ValidateAndLayoutViewTree(root, 300.0f, 200.0f, error) &&
+            root.children[0].frame.width == 120.0f &&
+            root.children[0].frame.height == 32.0f &&
+            root.children[1].frame.width == 90.0f &&
+            root.children[1].frame.height == 168.0f,
+        "size constraints must participate in fixed and fill layout");
+
+    ViewNode invalid = root;
+    invalid.key = "invalid-constraints";
+    invalid.minimumWidth = 200.0f;
+    invalid.maximumWidth = 100.0f;
+    Check(!ValidateAndLayoutViewTree(invalid, 300.0f, 200.0f, error) &&
+            error.find("finite and bounded") != std::string::npos,
+        "a minimum larger than its maximum must reject the tree");
+
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "Lua state must be available");
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    Check(luaL_dostring(state, R"lua(
+        return view.box({
+            key = "lua-constraints",
+            minWidth = 64,
+            maxWidth = 256,
+            minHeight = 48,
+            maxHeight = 192,
+        })
+    )lua") == LUA_OK,
+        "bounded size constraint Lua fixture must evaluate");
+    ViewNode parsed;
+    Check(ParseLuaViewTree(state, -1, parsed, error) &&
+            parsed.minimumWidth == 64.0f &&
+            parsed.maximumWidth == 256.0f &&
+            parsed.minimumHeight == 48.0f &&
+            parsed.maximumHeight == 192.0f,
+        "Lua parsing must retain all bounded size constraints");
+    lua_close(state);
+}
 }
 
 int main()
@@ -1685,6 +1750,7 @@ int main()
     TestDeclarativeInputControls();
     TestStyledTextAndMonthCalendar();
     TestLogicalSlotSceneContract();
+    TestBoundedSizeConstraints();
     std::cout << "Widget view tree tests passed\n";
     return 0;
 }

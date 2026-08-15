@@ -64,7 +64,8 @@ constexpr auto kProperties = std::to_array<std::string_view>({
     "selectedDate", "todayDate", "eventDates", "weekdayLabels",
     "showAdjacentDates", "binding", "collection", "revision", "reference",
     "child", "thickness", "trackOpacity", "fillOpacity", "width", "height",
-    "padding", "gap", "columns", "columnGap", "rowGap", "itemCount",
+    "minWidth", "maxWidth", "minHeight", "maxHeight", "padding", "gap",
+    "columns", "columnGap", "rowGap", "itemCount",
     "itemExtent", "firstIndex", "overscan", "flexGrow", "fontSize", "bold",
     "checked", "visible", "enabled", "cursor", "alignItems", "showScrollbar",
     "alignSelf", "justifyContent", "textAlign", "style", "hoverStyle",
@@ -75,8 +76,9 @@ constexpr auto kProperties = std::to_array<std::string_view>({
 });
 
 constexpr auto kCommonProperties = std::to_array<std::string_view>({
-    "type", "key", "width", "height", "padding", "gap", "flexGrow",
-    "fontSize", "bold", "visible", "enabled", "cursor", "alignItems",
+    "type", "key", "width", "height", "minWidth", "maxWidth",
+    "minHeight", "maxHeight", "padding", "gap", "flexGrow", "fontSize",
+    "bold", "visible", "enabled", "cursor", "alignItems",
     "alignSelf", "justifyContent", "textAlign", "style", "hoverStyle",
     "pressedStyle", "focusStyle", "disabledStyle", "accessibility",
     "events", "children",

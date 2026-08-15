@@ -98,6 +98,9 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.styledText.basic` 提供有界样式 span，`view.monthCalendar` 提供受控月历日期网格，
 `view.logicalSlots` 提供与 manifest 宿主管理槽位严格对应的 `slotSurface/slotItem`，
 `view.referenceIcon` 提供只接收实例自有 opaque ref 的宿主图标节点。
+`view.layout.constraints` 为所有节点提供 `minWidth/maxWidth/minHeight/maxHeight` 数值约束；
+每项都是 0–4096 的有限逻辑单位，同一轴的最小值不得大于最大值。约束会参与固有尺寸、
+fill/flex 分配以及 grid/flow/scroll 子项布局，而不是只在绘制时裁切。
 每次 `view(context, model)` 返回一棵完整树；所有节点必须提供全树唯一、1–128 字节的
 稳定 `key`。宿主先完整解析、校验和布局，再原子替换上一棵成功树；回调或校验失败时
 继续显示上一棵树，不留下半棵树或空白交互区。

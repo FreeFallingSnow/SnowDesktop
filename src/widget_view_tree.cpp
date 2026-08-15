@@ -114,6 +114,26 @@ bool ValidateLength(const ViewLength& length) noexcept
         FiniteInRange(length.value, 0.0f, MaximumDimension);
 }
 
+float ConstrainDimension(float value, const std::optional<float>& minimum,
+    const std::optional<float>& maximum) noexcept
+{
+    if (minimum) value = std::max(value, *minimum);
+    if (maximum) value = std::min(value, *maximum);
+    return std::max(0.0f, value);
+}
+
+float ConstrainWidth(const ViewNode& node, float value) noexcept
+{
+    return ConstrainDimension(
+        value, node.minimumWidth, node.maximumWidth);
+}
+
+float ConstrainHeight(const ViewNode& node, float value) noexcept
+{
+    return ConstrainDimension(
+        value, node.minimumHeight, node.maximumHeight);
+}
+
 float TextIntrinsicWidth(const ViewNode& node) noexcept
 {
     const float approximateGlyphs = static_cast<float>(
@@ -251,8 +271,15 @@ bool Overlaps(const ViewRect& rect, const ViewRect& clip) noexcept
 
 float IntrinsicWidth(const ViewNode& node);
 float IntrinsicHeight(const ViewNode& node);
+float RawIntrinsicWidth(const ViewNode& node);
+float RawIntrinsicHeight(const ViewNode& node);
 
 float IntrinsicWidth(const ViewNode& node)
+{
+    return ConstrainWidth(node, RawIntrinsicWidth(node));
+}
+
+float RawIntrinsicWidth(const ViewNode& node)
 {
     if (node.width.kind == ViewLengthKind::Fixed)
         return node.width.value;
@@ -385,6 +412,11 @@ float IntrinsicWidth(const ViewNode& node)
 }
 
 float IntrinsicHeight(const ViewNode& node)
+{
+    return ConstrainHeight(node, RawIntrinsicHeight(node));
+}
+
+float RawIntrinsicHeight(const ViewNode& node)
 {
     if (node.height.kind == ViewLengthKind::Fixed)
         return node.height.value;
@@ -563,6 +595,9 @@ void LayoutLinear(ViewNode& node, const ViewRect& content, bool horizontal)
             ? IntrinsicWidth(child) : IntrinsicHeight(child);
         mainSizes[index] = mainLength.kind == ViewLengthKind::Fixed
             ? mainLength.value : intrinsic;
+        mainSizes[index] = horizontal
+            ? ConstrainWidth(child, mainSizes[index])
+            : ConstrainHeight(child, mainSizes[index]);
         fixed += mainSizes[index];
     }
     const float remaining = std::max(0.0f, availableMain - fixed - gaps);
@@ -574,8 +609,13 @@ void LayoutLinear(ViewNode& node, const ViewRect& content, bool horizontal)
             const ViewLength& mainLength = horizontal
                 ? child.width : child.height;
             if (mainLength.kind == ViewLengthKind::Fill || child.flexGrow > 0.0f)
-                mainSizes[index] = remaining *
+            {
+                const float proposed = remaining *
                     (std::max(1.0f, child.flexGrow) / flex);
+                mainSizes[index] = horizontal
+                    ? ConstrainWidth(child, proposed)
+                    : ConstrainHeight(child, proposed);
+            }
         }
     }
 
@@ -603,8 +643,11 @@ void LayoutLinear(ViewNode& node, const ViewRect& content, bool horizontal)
             ? IntrinsicHeight(child) : IntrinsicWidth(child);
         const ViewAlignment alignment = child.alignSelf == ViewAlignment::Auto
             ? node.alignItems : child.alignSelf;
-        const float crossSize = ResolveCrossSize(
-            crossLength, intrinsicCross, availableCross, alignment);
+        const float crossSize = horizontal
+            ? ConstrainHeight(child, ResolveCrossSize(
+                crossLength, intrinsicCross, availableCross, alignment))
+            : ConstrainWidth(child, ResolveCrossSize(
+                crossLength, intrinsicCross, availableCross, alignment));
         const float crossOffset = AlignOffset(
             alignment, availableCross, crossSize);
         ViewRect childFrame;
@@ -672,10 +715,10 @@ void LayoutGrid(ViewNode& node, const ViewRect& content)
         const std::size_t row = index / columns;
         const ViewAlignment alignment = child.alignSelf == ViewAlignment::Auto
             ? node.alignItems : child.alignSelf;
-        const float width = ResolveCrossSize(child.width,
-            IntrinsicWidth(child), cellWidth, alignment);
-        const float height = ResolveCrossSize(child.height,
-            IntrinsicHeight(child), rowHeights[row], alignment);
+        const float width = ConstrainWidth(child, ResolveCrossSize(child.width,
+            IntrinsicWidth(child), cellWidth, alignment));
+        const float height = ConstrainHeight(child, ResolveCrossSize(
+            child.height, IntrinsicHeight(child), rowHeights[row], alignment));
         const float x = content.x +
             static_cast<float>(column) * (cellWidth + columnGap) +
             AlignOffset(alignment, cellWidth, width);
@@ -712,8 +755,9 @@ void LayoutFlow(ViewNode& node, const ViewRect& content)
             width = child.width.value;
         else if (child.width.kind == ViewLengthKind::Fill)
             width = content.width;
-        width = std::clamp(width, 0.0f, content.width);
-        const float height = IntrinsicHeight(child);
+        width = ConstrainWidth(child,
+            std::clamp(width, 0.0f, content.width));
+        const float height = ConstrainHeight(child, IntrinsicHeight(child));
         if (lines.empty() || (!lines.back().items.empty() &&
                 lines.back().width + columnGap + width > content.width))
             lines.push_back({});
@@ -759,8 +803,8 @@ void LayoutFlow(ViewNode& node, const ViewRect& content)
             const ViewAlignment alignment =
                 child.alignSelf == ViewAlignment::Auto
                 ? node.alignItems : child.alignSelf;
-            const float height = ResolveCrossSize(child.height,
-                item.intrinsicHeight, line.height, alignment);
+            const float height = ConstrainHeight(child, ResolveCrossSize(
+                child.height, item.intrinsicHeight, line.height, alignment));
             LayoutNode(child, { x,
                 y + AlignOffset(alignment, line.height, height),
                 item.width, height });
@@ -778,12 +822,13 @@ void LayoutScroll(ViewNode& node, const ViewRect& content)
     {
         const ViewAlignment alignment = child.alignSelf == ViewAlignment::Auto
             ? ViewAlignment::Stretch : child.alignSelf;
-        const float width = ResolveCrossSize(child.width,
-            IntrinsicWidth(child), content.width, alignment);
+        const float width = ConstrainWidth(child, ResolveCrossSize(child.width,
+            IntrinsicWidth(child), content.width, alignment));
         float height = child.height.kind == ViewLengthKind::Fixed
             ? child.height.value : IntrinsicHeight(child);
         if (child.height.kind == ViewLengthKind::Fill)
             height = std::max(height, content.height);
+        height = ConstrainHeight(child, height);
         LayoutNode(child, { content.x + AlignOffset(alignment,
             content.width, width), content.y, width, height });
     }
@@ -791,12 +836,13 @@ void LayoutScroll(ViewNode& node, const ViewRect& content)
     {
         const ViewAlignment alignment = child.alignSelf == ViewAlignment::Auto
             ? ViewAlignment::Stretch : child.alignSelf;
-        const float height = ResolveCrossSize(child.height,
-            IntrinsicHeight(child), content.height, alignment);
+        const float height = ConstrainHeight(child, ResolveCrossSize(
+            child.height, IntrinsicHeight(child), content.height, alignment));
         float width = child.width.kind == ViewLengthKind::Fixed
             ? child.width.value : IntrinsicWidth(child);
         if (child.width.kind == ViewLengthKind::Fill)
             width = std::max(width, content.width);
+        width = ConstrainWidth(child, width);
         LayoutNode(child, { content.x, content.y + AlignOffset(alignment,
             content.height, height), width, height });
     }
@@ -835,18 +881,21 @@ void LayoutVirtualCollection(ViewNode& node, const ViewRect& content)
 
 void LayoutNode(ViewNode& node, const ViewRect& frame)
 {
-    node.frame = frame;
+    node.frame = { frame.x, frame.y,
+        ConstrainWidth(node, frame.width),
+        ConstrainHeight(node, frame.height) };
     node.clipFrame.reset();
     node.scrollOffset = 0.0f;
     node.scrollViewportExtent = 0.0f;
     node.scrollContentExtent = 0.0f;
     const float inset = std::min(node.padding,
-        std::max(0.0f, std::min(frame.width, frame.height) * 0.5f));
+        std::max(0.0f,
+            std::min(node.frame.width, node.frame.height) * 0.5f));
     const ViewRect content{
-        frame.x + inset,
-        frame.y + inset,
-        std::max(0.0f, frame.width - inset * 2.0f),
-        std::max(0.0f, frame.height - inset * 2.0f),
+        node.frame.x + inset,
+        node.frame.y + inset,
+        std::max(0.0f, node.frame.width - inset * 2.0f),
+        std::max(0.0f, node.frame.height - inset * 2.0f),
     };
     if (node.type == ViewNodeType::Row)
         LayoutLinear(node, content, true);
@@ -873,10 +922,11 @@ void LayoutNode(ViewNode& node, const ViewRect& frame)
             const ViewAlignment alignment =
                 child.alignSelf == ViewAlignment::Auto
                 ? ViewAlignment::Stretch : child.alignSelf;
-            const float width = ResolveCrossSize(child.width,
-                IntrinsicWidth(child), content.width, alignment);
-            const float height = ResolveCrossSize(child.height,
-                IntrinsicHeight(child), content.height, alignment);
+            const float width = ConstrainWidth(child, ResolveCrossSize(
+                child.width, IntrinsicWidth(child), content.width, alignment));
+            const float height = ConstrainHeight(child, ResolveCrossSize(
+                child.height, IntrinsicHeight(child), content.height,
+                alignment));
             LayoutNode(child, {
                 content.x + AlignOffset(alignment,
                     content.width, width),
@@ -922,6 +972,18 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             (!style.opacity || FiniteInRange(*style.opacity, 0.0f, 1.0f));
     };
     if (!ValidateLength(node.width) || !ValidateLength(node.height) ||
+        (node.minimumWidth && !FiniteInRange(
+            *node.minimumWidth, 0.0f, MaximumDimension)) ||
+        (node.maximumWidth && !FiniteInRange(
+            *node.maximumWidth, 0.0f, MaximumDimension)) ||
+        (node.minimumHeight && !FiniteInRange(
+            *node.minimumHeight, 0.0f, MaximumDimension)) ||
+        (node.maximumHeight && !FiniteInRange(
+            *node.maximumHeight, 0.0f, MaximumDimension)) ||
+        (node.minimumWidth && node.maximumWidth &&
+            *node.minimumWidth > *node.maximumWidth) ||
+        (node.minimumHeight && node.maximumHeight &&
+            *node.minimumHeight > *node.maximumHeight) ||
         !FiniteInRange(node.padding, 0.0f, 4096.0f) ||
         !FiniteInRange(node.gap, 0.0f, 4096.0f) ||
         (node.columnGap && !FiniteInRange(*node.columnGap, 0.0f, 4096.0f)) ||

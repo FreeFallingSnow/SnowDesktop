@@ -204,6 +204,10 @@ struct ViewNode
     std::vector<ViewTextSpan> spans;
     ViewLength width{ ViewLengthKind::Fill, 0.0f };
     ViewLength height{};
+    std::optional<float> minimumWidth;
+    std::optional<float> maximumWidth;
+    std::optional<float> minimumHeight;
+    std::optional<float> maximumHeight;
     float padding = 0.0f;
     float gap = 0.0f;
     std::size_t columns = 1;

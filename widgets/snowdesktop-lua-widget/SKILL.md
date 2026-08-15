@@ -177,6 +177,9 @@ the future track/span/virtual-grid contract.
 Probe `view.flow.wrap` before using `view.flow`; it wraps fixed/auto-width
 children horizontally, skips hidden children, and supports per-line
 `columnGap`/`rowGap`, but it is not a scrolling or virtualized collection.
+Probe `view.layout.constraints` before using numeric `minWidth`, `maxWidth`,
+`minHeight`, or `maxHeight`. Keep each value within 0 through 4096 and never
+declare a minimum larger than the matching maximum.
 Probe `view.keyboardNavigation.basic` for ordinary actionable declarative
 nodes and storage-bound immediate text controls. The subset still does not
 provide UI Automation, variable-height
