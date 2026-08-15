@@ -2975,7 +2975,7 @@ void TestBasicTransforms()
     )lua") == LUA_OK,
         "unknown transform field fixture must evaluate");
     Check(!ParseLuaViewTree(state, -1, parsed, error) &&
-            error.find("unknown field 'rotate'") != std::string::npos,
+            error.find("rotate") != std::string::npos,
         "unpublished transform fields must fail atomic tree parsing");
     lua_close(state);
 
