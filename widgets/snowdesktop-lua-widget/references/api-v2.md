@@ -358,6 +358,9 @@ view.searchBox({
 关闭滚动。每棵树最多 32 个 scroll，单轴内容 extent 最大 1,000,000 逻辑单位；该能力
 对应 feature `view.scroll`，当前不提供 Lua 自绘滚动条、惯性动画、滚动链或 Lua 程序化定位；
 Windows UI Automation Scroll Pattern 可以通过同一宿主滚动状态移动视口，但不会获得可信手势。
+探测 `view.scroll.events` 后，`scroll/virtualList/virtualGrid` 可声明 `events.scrollEnd`；滚轮或
+UIA 滚动从末端之前首次到达最大偏移时投递一次 action，离开末端后可再次触发。没有可滚动范围、
+已位于末端的重复输入和渲染时偏移钳制不会重复投递；UIA 来源为 `accessibility` 且不携带可信手势。
 
 `list` 是纵向有界集合，`gridList` 是要求 `columns=1..64` 的行优先等宽集合；两者的直接
 子节点必须全部是 `listItem`。每个 `listItem` 要求全树唯一稳定 key、只含一个可见内容子节点

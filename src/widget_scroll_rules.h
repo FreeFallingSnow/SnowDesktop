@@ -9,7 +9,15 @@ struct WheelResult
 {
     int offset = 0;
     bool moved = false;
+    bool reachedEnd = false;
 };
+
+inline bool ReachedScrollEnd(int previousOffset, int currentOffset,
+    int maximum) noexcept
+{
+    maximum = std::max(0, maximum);
+    return previousOffset < maximum && currentOffset == maximum;
+}
 
 inline WheelResult ApplyWheelDelta(
     int offset, int maximum, int delta, int step = 48)
@@ -24,7 +32,8 @@ inline WheelResult ApplyWheelDelta(
         normalizedStep = delta > 0 ? 1 : -1;
     const int next =
         std::clamp(offset - normalizedStep, 0, maximum);
-    return { next, next != offset };
+    return { next, next != offset,
+        ReachedScrollEnd(offset, next, maximum) };
 }
 
 } // namespace snowdesktop::widget_scroll_rules

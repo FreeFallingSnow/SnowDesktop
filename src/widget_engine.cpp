@@ -22398,8 +22398,19 @@ bool WidgetEngine::RuntimePerformAccessibilityAction(
                     control.enabled && control.id == request.nodeKey;
             });
         if (scroll == widget.hostControls.rend()) return false;
+        const int maximum = scroll->horizontal
+            ? std::max(0, scroll->contentWidth - scroll->viewportWidth)
+            : std::max(0, scroll->contentHeight - scroll->viewportHeight);
+        const int previousOffset = RuntimeGetScrollOffset(
+            request.widgetId, request.nodeKey);
         RuntimeSetScrollOffset(request.widgetId, request.nodeKey,
             static_cast<int>(std::lround(request.numericValue)));
+        const int currentOffset = RuntimeGetScrollOffset(
+            request.widgetId, request.nodeKey);
+        if (snowdesktop::widget_scroll_rules::ReachedScrollEnd(
+                previousOffset, currentOffset, maximum))
+            DispatchInteractionAction(widget, request.nodeKey, "scrollEnd",
+                0, 0, 0, 0, 0, false, "accessibility");
         RuntimeInvalidateHost(request.widgetId);
         return true;
     }
@@ -23303,6 +23314,9 @@ bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int 
             if (!result.moved)
                 continue;
             offset = result.offset;
+            if (result.reachedEnd)
+                DispatchInteractionAction(widget, it->id, "scrollEnd",
+                    x, y, 0, delta, 0, false, "pointer");
             RuntimeInvalidateHost(widgetId);
             return true;
         }

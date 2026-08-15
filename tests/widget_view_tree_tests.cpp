@@ -1217,6 +1217,7 @@ void TestScrollableCollections()
             key = "feed",
             height = 100,
             padding = 4,
+            events = { scrollEnd = { id = "feed.end" } },
             children = {
                 view.list({ key = "items", gap = 4, children = items }),
             },
@@ -1230,6 +1231,7 @@ void TestScrollableCollections()
             root.orientation == ViewOrientation::Vertical &&
             root.children.size() == 1 &&
             root.children[0].type == ViewNodeType::List &&
+            root.events.at("scrollEnd").id == "feed.end" &&
             root.children[0].children.size() == 3 &&
             root.children[0].children[0].type ==
                 ViewNodeType::ListItem,
@@ -1250,15 +1252,17 @@ void TestScrollableCollections()
         "scroll state must clamp a host offset to measured content extent");
     std::vector<InteractionRegion> regions;
     Check(CollectViewInteractionRegions(root, regions, error) &&
-            regions.size() == 3 && regions[0].key == "item-1" &&
-            regions[0].clip && Near(regions[0].clip->y, 4.0f) &&
-            Near(regions[0].clip->height, 92.0f) &&
-            regions[0].events.at("click").id == "item.open" &&
-            regions[0].events.at("contextMenu").id == "item.menu" &&
-            regions[0].accessibilityRole == "listitem" &&
-            regions[0].accessibilityLabel == "Item 1" &&
+            regions.size() == 4 && regions[0].key == "feed" &&
+            regions[0].events.at("scrollEnd").id == "feed.end" &&
+            regions[1].key == "item-1" &&
+            regions[1].clip && Near(regions[1].clip->y, 4.0f) &&
+            Near(regions[1].clip->height, 92.0f) &&
+            regions[1].events.at("click").id == "item.open" &&
+            regions[1].events.at("contextMenu").id == "item.menu" &&
+            regions[1].accessibilityRole == "listitem" &&
+            regions[1].accessibilityLabel == "Item 1" &&
             root.children[0].children[0].frame.y < root.clipFrame->y,
-        "list items must keep independent actions and clipped hit regions");
+        "scroll-end and list-item actions must keep independent clipped regions");
 
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(
@@ -1321,6 +1325,19 @@ void TestScrollableCollections()
             !ValidateAndLayoutViewTree(unlabelled, 200.0f, 80.0f, error) &&
             error.find("accessibility.label") != std::string::npos,
         "list items must require stable accessibility labels");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.shape({ key = "invalid-scroll-event",
+            events = { scrollEnd = { id = "invalid.end" } } })
+    )lua") == LUA_OK,
+        "misapplied scroll-end fixture must evaluate");
+    ViewNode invalidScrollEvent;
+    Check(ParseLuaViewTree(state, -1, invalidScrollEvent, error) &&
+            !ValidateAndLayoutViewTree(
+                invalidScrollEvent, 100.0f, 40.0f, error) &&
+            error.find("reserved for scroll") != std::string::npos,
+        "scrollEnd must remain scoped to host-managed scroll containers");
     lua_close(state);
 
     ViewNode horizontal;

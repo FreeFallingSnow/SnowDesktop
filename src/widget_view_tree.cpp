@@ -2564,7 +2564,7 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             eventName != "pointerLeave" && eventName != "pointerDown" &&
             eventName != "pointerUp" && eventName != "change" &&
             eventName != "focus" && eventName != "blur" &&
-            eventName != "submit")
+            eventName != "submit" && eventName != "scrollEnd")
         {
             error = "unsupported view event: " + eventName;
             return false;
@@ -2580,6 +2580,11 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             node.events.contains("submit")))
     {
         error = "focus, blur, and submit are reserved for input nodes";
+        return false;
+    }
+    if (!IsScrollContainer(node.type) && node.events.contains("scrollEnd"))
+    {
+        error = "scrollEnd events are reserved for scroll and virtual collection nodes";
         return false;
     }
     if (node.type == ViewNodeType::Select)

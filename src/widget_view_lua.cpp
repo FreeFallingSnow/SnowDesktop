@@ -2351,7 +2351,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         if (!ValidateObjectFields(state, events,
                 { "pointerEnter", "pointerLeave", "pointerDown",
                     "pointerUp", "click", "doubleClick", "contextMenu",
-                    "change", "focus", "blur", "submit" },
+                    "change", "focus", "blur", "submit", "scrollEnd" },
                 "view events", error))
         {
             lua_pop(state, 1);
@@ -2359,7 +2359,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         }
         for (const char* eventName : { "pointerEnter", "pointerLeave",
             "pointerDown", "pointerUp", "click", "doubleClick",
-            "contextMenu", "change", "focus", "blur", "submit" })
+            "contextMenu", "change", "focus", "blur", "submit",
+            "scrollEnd" })
         {
             lua_getfield(state, events, eventName);
             if (!lua_isnil(state, -1))

@@ -158,6 +158,9 @@ widget also receives host Ctrl+Z, Ctrl+Shift+Z, and Ctrl+Y for this history.
 Probe `view.scroll` for a host-owned vertical or horizontal viewport. Give it
 exactly one child, keep that child visible, and keep the same key so the host
 retains its clamped offset; never offset descendants yourself. Probe
+`view.scroll.events` before declaring `events.scrollEnd`; it fires once when a
+host wheel or accessibility scroll moves from before the end to the maximum
+offset, and accessibility never gains trusted-gesture status. Probe
 `view.collection.basic` for
 non-virtual `list/gridList/listItem`: collection children must be listItem,
 each item needs exactly one visible child, a globally stable key, and

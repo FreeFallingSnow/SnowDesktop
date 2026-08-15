@@ -186,6 +186,7 @@
 ---@field focus? SnowInteractionAction Input gained host keyboard/IME focus.
 ---@field blur? SnowInteractionAction Input lost host keyboard/IME focus.
 ---@field submit? SnowInteractionAction Single-line Enter or textArea Ctrl+Enter.
+---@field scrollEnd? SnowInteractionAction Scroll/virtual collection reached its maximum offset after a host wheel or accessibility scroll.
 
 ---@class SnowViewChoiceOption
 ---@field key string Stable option key; its interaction target is '<group-key>/<option-key>'.

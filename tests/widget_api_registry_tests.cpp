@@ -483,6 +483,8 @@ void TestV2Contract()
                 "view.monthCalendar") &&
             snowdesktop::widget_api::SupportsFeature("view.scroll") &&
             snowdesktop::widget_api::SupportsFeature(
+                "view.scroll.events") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "view.selectionControls") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.statusVisuals") &&

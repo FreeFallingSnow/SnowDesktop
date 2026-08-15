@@ -728,23 +728,32 @@ void TestNestedWidgetScrolling()
     const auto innerBoundary =
         ApplyWheelDelta(0, 0, 120);
     Check(!innerBoundary.moved &&
-            innerBoundary.offset == 0,
+            !innerBoundary.reachedEnd && innerBoundary.offset == 0,
         "wheel at a nested scroll boundary can bubble");
     const auto outerScroll =
         ApplyWheelDelta(48, 240, 120);
     Check(outerScroll.moved &&
-            outerScroll.offset == 0,
+            !outerScroll.reachedEnd && outerScroll.offset == 0,
         "wheel moves the first enclosing scroll area that can move");
     const auto lowerBoundary =
         ApplyWheelDelta(240, 240, -120);
     Check(!lowerBoundary.moved &&
-            lowerBoundary.offset == 240,
+            !lowerBoundary.reachedEnd && lowerBoundary.offset == 240,
         "wheel at the lower boundary can bubble");
     const auto precisionWheel =
         ApplyWheelDelta(20, 240, 15);
     Check(precisionWheel.moved &&
             precisionWheel.offset < 20,
         "precision touchpad wheel deltas still scroll");
+    const auto reachesEnd = ApplyWheelDelta(220, 240, -120);
+    Check(reachesEnd.moved && reachesEnd.offset == 240 &&
+            reachesEnd.reachedEnd,
+        "a wheel movement reports the transition that first reaches the end");
+    Check(!snowdesktop::widget_scroll_rules::ReachedScrollEnd(
+            240, 240, 240) &&
+            snowdesktop::widget_scroll_rules::ReachedScrollEnd(
+                120, 240, 240),
+        "scroll-end transitions do not repeat while already at the boundary");
 }
 
 void TestListDetailRules()
