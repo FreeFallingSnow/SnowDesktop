@@ -897,11 +897,14 @@ CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.pow
 
 ### `task`
 
-当前公开异步媒体动作 `media.play/pause/toggle/stop/next/previous/seek/setRate/setShuffle/setRepeat`，
+当前公开异步媒体动作 `media.play`、`media.pause`、`media.toggle`、`media.stop`、
+`media.next`、`media.previous`、`media.seek`、`media.setRate`、`media.setShuffle`、
+`media.setRepeat`，
 默认音频输出动作 `audio.output.setVolume/setMute`，应用任务
 `app.search`、`app.launch`，桌面项目任务 `desktop.search`、`everything.search`、
 `shell.openItem`、`shell.revealItem`、`desktop.refresh`，通知任务
-`notification.show/update/dismiss/schedule/cancel`，以及本地日历写入任务 `calendar.create/update/remove`、公网读取
+`notification.show/update/dismiss/schedule/cancel`，以及本地日历写入任务
+`calendar.create`、`calendar.update`、`calendar.remove`、公网读取
 任务 `network.request`、外部链接动作 `shell.openUri`、受控设置动作
 `system.openSettings`、有界剪贴板任务 `clipboard.read/write/clear`，以及用户选择文件
 范围的 `filesystem.pickOpen/pickSave/pickFolder`。它们对应
@@ -1232,7 +1235,7 @@ ID，应用重启后会绑定新的 Lua VM generation，错过不超过 24 小�
 窗。运行时图片句柄不能作为通知图片，操作按钮最多两个且 ID 在单条通知内必须唯一。
 不得使用 API v1 `system.notify` 绕过任务与权限模型。
 
-`calendar.create/update/remove` 要求 `calendar.write`，参数只接受严格字段。
+`calendar.create`、`calendar.update`、`calendar.remove` 要求 `calendar.write`，参数只接受严格字段。
 create/update 共用 `title/date/allDay/startMinutes/endMinutes/notes/reminderMinutes`；
 update 另需宿主事件 `id` 和正整数 `expectedRevision`，remove 只接受 `id`。提醒值
 限定为 `-1/0/5/15/30/60/1440`，日期必须是有效 `YYYY-MM-DD`，文本和时间范围在
@@ -1500,8 +1503,8 @@ storage、日志或 `.snowbackup` 数据目录。对应 feature 为 `settings.se
 ### `l10n`
 
 - `l10n.tr(literalKey, ...)`、`l10n.language()`。
-- `l10n.formatNumber`、`formatBytes`、`formatDuration`、
-  `formatRelativeTime`、`formatList`。
+- `l10n.formatNumber`、`l10n.formatBytes`、`l10n.formatDuration`、
+  `l10n.formatRelativeTime`、`l10n.formatList`。
 
 所有用户可见文本都应使用清单 `locales` 中存在的字面量 key。宿主语言文件不是
 组件翻译目录。
