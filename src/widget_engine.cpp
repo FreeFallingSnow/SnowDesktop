@@ -42,6 +42,7 @@
 #include "widget_text_input_rules.h"
 #include "widget_storage_transaction.h"
 #include "widget_storage_value.h"
+#include "widget_storage_write_budget.h"
 #include "widget_system_settings.h"
 #include "atomic_file.h"
 #include "widgets/widget_chrome_rules.h"
@@ -12556,6 +12557,8 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
 
     WidgetExecutionContextGuard loadContext(d2dState_, widgetId);
     auto quota = std::make_unique<LuaRuntimeQuota>();
+    auto storageWriteBudget = std::make_unique<
+        snowdesktop::widget_runtime::WidgetStorageWriteBudget>();
     lua_State* state = lua_newstate(LuaQuotaAllocator, quota.get());
     if (!state)
     {
@@ -12608,6 +12611,9 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     lua_setfield(state, LUA_REGISTRYINDEX, "__d2d_ptr");
     lua_pushlightuserdata(state, quota.get());
     lua_setfield(state, LUA_REGISTRYINDEX, "__quota_ptr");
+    lua_pushlightuserdata(state, storageWriteBudget.get());
+    lua_setfield(state, LUA_REGISTRYINDEX,
+        "__storage_write_budget_ptr");
     lua_pushstring(state, WidgetWideToUtf8(widgetId).c_str());
     lua_setfield(state, LUA_REGISTRYINDEX, "__widget_id");
     lua_createtable(state, 0,
@@ -12846,6 +12852,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     lua_setfield(w.state, LUA_REGISTRYINDEX,
         "__widget_runtime_token");
     w.quota = std::move(quota);
+    w.storageWriteBudget = std::move(storageWriteBudget);
     w.name = name;
     w.filePath = path;
     w.manifest = pending.manifest;
@@ -23510,6 +23517,29 @@ static int RejectStorageWriteDuringRender(lua_State* state,
     }
     return 0;
 }
+
+static int RejectStorageWriteFrequency(lua_State* state, const char* api)
+{
+    if (snowdesktop::widget_runtime::HasStorageOverlay()) return 0;
+    lua_getfield(state, LUA_REGISTRYINDEX, "__widget_preview");
+    const bool preview = lua_toboolean(state, -1) != 0;
+    lua_pop(state, 1);
+    if (preview) return 0;
+
+    lua_getfield(state, LUA_REGISTRYINDEX,
+        "__storage_write_budget_ptr");
+    auto* budget = static_cast<
+        snowdesktop::widget_runtime::WidgetStorageWriteBudget*>(
+            lua_touserdata(state, -1));
+    lua_pop(state, 1);
+    if (!budget) return 0;
+    const auto decision = budget->Consume(
+        snowdesktop::widget_runtime::WidgetStorageWriteBudget::Clock::now());
+    if (decision.allowed) return 0;
+    return luaL_error(state,
+        "%s: persistent storage write frequency quota exceeded; retry after %llu ms",
+        api, static_cast<unsigned long long>(decision.retryAfter.count()));
+}
 }
 
 static int lua_StorageGet(lua_State* L)
@@ -23628,6 +23658,8 @@ static int lua_StorageSet(lua_State* L)
     if (!metadataOk || !transaction.ValidateCommit(error))
         return luaL_error(L, "storage.set: %s", error.c_str());
     if (!transaction.Changed()) return 0;
+    if (const int rejected = RejectStorageWriteFrequency(L, "storage.set"))
+        return rejected;
     auto candidate = transaction.TakeCandidate();
     storage.swap(candidate);
     if (!snowdesktop::widget_runtime::HasStorageOverlay() &&
@@ -23900,6 +23932,9 @@ static int lua_StorageRemove(lua_State* L)
             metadataChanged, error) || !transaction.ValidateCommit(error))
         return luaL_error(L, "storage.remove: %s", error.c_str());
     if (!transaction.Changed()) return 0;
+    if (const int rejected = RejectStorageWriteFrequency(
+            L, "storage.remove"))
+        return rejected;
     auto candidate = transaction.TakeCandidate();
     storage.swap(candidate);
     if (!snowdesktop::widget_runtime::HasStorageOverlay() &&
@@ -24090,6 +24125,9 @@ static int lua_StorageTransaction(lua_State* state)
         lua_pushboolean(state, 0);
         return 1;
     }
+    if (const int rejected = RejectStorageWriteFrequency(
+            state, "storage.transaction"))
+        return rejected;
 
     auto candidate = transaction.TakeCandidate();
     activeStorage.swap(candidate);

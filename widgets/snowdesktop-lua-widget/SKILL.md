@@ -204,6 +204,9 @@ menu.
 - `storage.typed` preserves booleans, finite numbers, strings, arrays, objects,
   and null while keeping legacy unmarked values as strings. Use
   `storage.keys()` when stored null must be distinguished from a missing key.
+- `storage.writeBudget` permits a burst of 32 changed persistent commits per
+  instance and refills one commit per second. A transaction counts once; an
+  unchanged write, preview, or migration overlay does not consume the budget.
 - Use `schedule.every/after/at/cancel` for v2 timers and handle
   `event.kind == "schedule"`; do not add new `widget.setTimer` usage.
 - Use `schedule.timeline` for 1–64 strictly increasing absolute state entries.

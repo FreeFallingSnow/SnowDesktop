@@ -53,6 +53,7 @@
 #include "widget_interaction_region.h"
 #include "widget_view_tree.h"
 #include "widget_text_input_rules.h"
+#include "widget_storage_write_budget.h"
 
 struct ImGuiContext;
 struct PersonalizationSettings;
@@ -486,6 +487,8 @@ struct LuaWidget
     std::filesystem::path packageRoot;    ///< 已校验组件包根目录
     lua_State* state = nullptr;           ///< Per-instance Lua VM
     std::unique_ptr<LuaRuntimeQuota> quota; ///< VM memory/instruction accounting
+    std::unique_ptr<snowdesktop::widget_runtime::WidgetStorageWriteBudget>
+        storageWriteBudget;                ///< Persistent commit rate accounting
     std::string name;                    ///< 小部件名称
     std::wstring filePath;               ///< Lua 脚本文件的完整路径
     LuaWidgetManifest manifest;          ///< 从清单文件解析的元数据

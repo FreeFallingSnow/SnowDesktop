@@ -465,7 +465,9 @@ JSON-like 深拷贝；循环、metatable、混合数组/对象、非有限数和
 `storage.transaction`：回调使用隔离快照读写，回调错误、最终配额失败或写盘失败时
 整批回滚，最终快照一次原子替换；`storage.typed` 让直接写入和事务保存受限 JSON-like
 值，同时以宿主保留元数据区分既有原始字符串；v2 的直接写入和事务均禁止从 `render`
-调用。写入频率预算和 secret reference 仍属于 M4 后续工作。
+调用。`storage.writeBudget` 对每个真实实例提供 32 次突发提交，之后每秒恢复一次；事务
+只按最终真实变化计一次，未改变、预览和迁移覆盖层不计。secret reference 仍属于 M4
+后续工作。
 
 - `state.set` 在同一事件周期内批量合并，只触发一次视图更新。
 - `storage` 支持 string、number、boolean、null、array 和 object，序列化语义固定。

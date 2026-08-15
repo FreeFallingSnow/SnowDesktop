@@ -355,6 +355,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "storage.transaction") &&
             snowdesktop::widget_api::SupportsFeature("storage.typed") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "storage.writeBudget") &&
             snowdesktop::widget_api::SupportsFeature("slots.model") &&
             snowdesktop::widget_api::SupportsFeature(
                 "slots.mutation.userGesture") &&

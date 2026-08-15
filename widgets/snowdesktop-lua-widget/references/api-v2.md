@@ -1358,14 +1358,18 @@ end)
 节点、8 层和合计 16 KiB 的字符串内容。循环表、metatable、混合数组/对象、非有限数和
 无效 UTF-8 会被拒绝。既有未标记值始终按原字符串读取；新字符串也保持原始字符串编码，
 非字符串值使用宿主保留的实例元数据标记，避免把用户历史字符串误判成序列化对象。
-对应 feature 为 `storage.transaction` 和 `storage.typed`。
+对应 feature 为 `storage.transaction`、`storage.typed` 和
+`storage.writeBudget`。
 
 API v2 的 `storage.set/remove/transaction` 不能在 `render` 内调用；持久化只允许在
 setup、事件、菜单动作或迁移回调等副作用阶段执行。预览和迁移使用隔离覆盖层，成功
 后再由宿主决定是否持久化。存储 null 与缺失键都会由 `get` 返回 nil，需要区分时使用
 `storage.keys()`；secret reference 尚未开放。
 
-只在值变化时写入；新组件不必再手工 `tostring/tonumber` 编解码结构化状态。
+每个真实实例可突发提交 32 次持久变化，之后每秒恢复 1 次；一次事务只计一次，未改变
+的提交、预览和迁移覆盖层不计。超过预算时调用抛出包含建议等待毫秒数的稳定错误。
+宿主 storage-bound 文本控件不占用 Lua 写入预算，用户输入不会因正常键速被拒绝。只在
+值变化时写入；新组件不必再手工 `tostring/tonumber` 编解码结构化状态。
 
 ### `state`
 
