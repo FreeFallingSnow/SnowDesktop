@@ -1355,7 +1355,7 @@ void TestDeclarativeInputControls()
             root.children[0].validationState ==
                 ViewValidationState::Error &&
             root.children[0].validationMessage == "Name is required" &&
-            root.children[0].validationStyle.borderColor == 0xAA0000 &&
+            root.children[0].validationStyle.borderColor == 0xAA0000u &&
             root.children[0].validationStyle.borderWidth == 2.0f &&
             root.children[1].type == ViewNodeType::TextArea &&
             !root.children[1].liveUpdate && root.children[1].readOnly &&
