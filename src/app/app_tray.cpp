@@ -46,7 +46,7 @@ void DesktopApp::ShowBalloonNotification(const std::wstring& title, const std::w
 {
     HWND owner = controlHwnd_ ? controlHwnd_ : hwnd_;
     trayIconController_.ShowBalloon(
-        owner, title, message);
+        owner, {}, title, message);
 }
 
 /**

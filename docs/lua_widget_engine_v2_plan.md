@@ -762,14 +762,16 @@ local taskId, err = task.start("media.toggle", { sessionId = session.id })
 
 当前已公开 `task.start`、`task.cancel`、`task.media.control`、
 `task.audio.output.control`、`task.app.search`、
-`task.app.launch`、`task.notification.show`、`task.calendar.write`、
+`task.app.launch`、`task.notification.show`、`task.notification.lifecycle`、
+`task.notification.schedule`、`task.calendar.write`、
 `task.network.request`、`task.shell.openUri`、`task.desktop.search`、
 `task.everything.search`、`task.shell.item`、`task.system.openSettings`、
 `task.clipboard.text`、`task.clipboard.image`、`task.clipboard.fileReference`、
 `task.filesystem.picker`、`task.filesystem.access`、
 `data.filesystem.watch` 和
 `task.desktop.refresh` feature，完整媒体
-控制动作、两个应用任务、一次性通知、本地日历 create/update/remove、公网 HTTPS GET、
+控制动作、两个应用任务、实例作用域通知 ID 与 show/update/dismiss/schedule/cancel、
+本地日历 create/update/remove、公网 HTTPS GET、
 可信手势外链、用户选择文件/目录、桌面/Everything 项目搜索及受控打开、定位和刷新任务。
 `WidgetTaskBroker` 生命周期内核负责任务描述符注册、全局/实例/
 任务类型并发上限、权限和可信手势门禁、preview 标记、显式取消、撤权取消、实例
@@ -782,6 +784,11 @@ seek 以时间线起点为基准且受最小/最大可跳转范围约束，预�
 默认音频输出控制只接受 `setVolume/setMute`，始终在独立 COM MTA 线程重新解析当前
 multimedia render endpoint；音量钳制到 0–1，Core Audio 调用携带 SnowDesktop 来源
 GUID，同一实例以 100 ms 最小间隔限速，不开放逐进程或非默认设备控制。
+通知生命周期内核为 show/schedule 返回宿主不透明 ID，允许更新已投递或预约文本、
+区分 dismiss 与 cancel，并在统一 runtime tick 到期投递 `notification.delivered`；每实例
+最多 64 个记录/32 个预约、每分钟最多实际投递 5 次，卸载、热重载、撤权和 shutdown
+统一清理。当前托盘气泡提供者以同 ID 重发实现文本更新并可清除当前气泡；预约尚未跨
+应用重启持久化，包资源图、按钮、进度和 `notification.action` 仍是 M4C 剩余项。
 `system.openSettings` 只接受宿主枚举的 notifications/audio/display/network/
 bluetooth/power/storage/apps/personalization 页面，并在可信手势和 `shell.launch` 权限下
 映射为固定 `ms-settings:` URI；Lua 不能传 scheme、查询参数或原始 URI。
@@ -824,7 +831,8 @@ SDK 的其他调用串行。两类搜索都只返回实例作用域的不透明�
 - 媒体会话列表、当前会话、时间线、限尺寸封面句柄、seek/stop 和逐源动作能力已形成首批
   公共面；后续缺口是 GSMTC 事件驱动更新以及更多播放器的兼容性矩阵和实机验证。
 - 音频分析已经设计，但普通 endpoint 读取、音量/静音订阅和受控修改尚未列入公共面。
-- 当前 `sys.notify` 是 tray balloon 级接口，缺少通知 ID、更新、撤销、动作回传、调度、频控和失败状态。
+- v2 通知已补齐 ID、文本更新、撤销、会话内调度、频控和失败状态；当前 tray balloon
+  provider 仍缺包资源图、按钮、进度、动作回传和跨应用重启的预约恢复。
 - 缺少 OS/架构 feature probe，以及更完整的时区/区域格式化等常见组件能力。
 
 API v2 不把 Win32、COM 或 WinRT 原样暴露给 Lua，而是固定为四个平面：
@@ -1795,6 +1803,8 @@ M7 切换完成后，发布运行时必须删除 API v1 注册和执行分支。
 - 所有 provider 按数据主题引用计数启停、共享采样、可见性节流和诊断；事件可用时不保留多余轮询。
 - 现有系统、媒体、日历、桌面和 HTTP 能力接入代理层，并按 v2 细粒度权限和异步结果迁移。
 - `audio.output.analysis` 权限、共享捕获/FFT provider、模拟预览和运行状态指示。
+- 当前 M4C 通知子波次已接通 `show/update/dismiss/schedule/cancel`、实例作用域 ID、频控、
+  统一 tick 调度、到期事件及清理；跨重启预约、包资源图、按钮、进度和动作回传尚未完成。
 - 内置组件现有计时器、数据回调和可见性回调的明确迁移映射及测试。
 
 退出条件：

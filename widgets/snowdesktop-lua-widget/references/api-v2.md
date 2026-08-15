@@ -851,13 +851,14 @@ CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.pow
 当前公开异步媒体动作 `media.play/pause/toggle/stop/next/previous/seek/setRate/setShuffle/setRepeat`，
 默认音频输出动作 `audio.output.setVolume/setMute`，应用任务
 `app.search`、`app.launch`，桌面项目任务 `desktop.search`、`everything.search`、
-`shell.openItem`、`shell.revealItem`、`desktop.refresh`，一次性通知任务
-`notification.show`，以及本地日历写入任务 `calendar.create/update/remove`、公网读取
+`shell.openItem`、`shell.revealItem`、`desktop.refresh`，通知任务
+`notification.show/update/dismiss/schedule/cancel`，以及本地日历写入任务 `calendar.create/update/remove`、公网读取
 任务 `network.request`、外部链接动作 `shell.openUri`、受控设置动作
 `system.openSettings`、有界剪贴板任务 `clipboard.read/write/clear`，以及用户选择文件
 范围的 `filesystem.pickOpen/pickSave/pickFolder`。它们对应
 feature ID `task.start`、`task.media.control`、`task.audio.output.control`、`task.app.search`、`task.app.launch`
-、`task.notification.show`、`task.calendar.write`、`task.network.request` 和
+、`task.notification.show`、`task.notification.lifecycle`、`task.notification.schedule`、
+`task.calendar.write`、`task.network.request` 和
 `task.shell.openUri`、`task.system.openSettings`、`task.clipboard.text`、
 `task.clipboard.image`、`task.clipboard.fileReference`、
 `task.filesystem.picker`、`task.filesystem.access`，以及 `task.desktop.search`、`task.everything.search`、
@@ -1123,23 +1124,49 @@ local refreshTask = task.start("desktop.refresh")
 `openRejected`、`revealRejected`、`permissionDenied`、`userGestureRequired` 和
 `canceled`。应用 ref 仍只能交给 `app.launch`，项目 ref 不能交给 `app.launch`。
 
-`notification.show` 要求 `notification.post` 权限，但不要求用户手势，因此可以从
-`schedule` 到期事件启动。参数是只允许 `title/message` 两个字段的严格普通表：标题为
-1–256 字节、正文为 1–2048 字节的有效 UTF-8，均不得包含 NUL。宿主沿用每实例每分钟
-最多 5 次的通知配额；预览会异步返回确定性的成功结果，但不会产生系统通知：
+通知任务要求 `notification.post` 权限，但不要求用户手势。`notification.show` 接受
+`title/message`；标题为 1–256 字节、正文为 1–2048 字节的有效 UTF-8，均不得包含
+NUL。其 `task.complete.value.notificationId` 是宿主生成、仅当前组件实例可用的不透明
+ID：
 
 ```lua
-local notificationId, err = task.start("notification.show", {
+local taskId, err = task.start("notification.show", {
     title = l10n.tr("widget.name"),
     message = l10n.tr("widget.completed"),
 })
 ```
 
-组件应把 `notification.post` 放在 `optionalPermissions`，在授权拒绝、撤销或超额时
-继续完成自身主功能。成功值为 `accepted=true`；除通用的 `permissionRevoked` 和
-`canceled` 外，通知还可能返回 `quotaExceeded`、`providerUnavailable` 或
-`notificationFailed`。当前 v2 只开放一次性 `show`；更新、关闭、预约和操作按钮仍在
-后续计划内，不得使用 API v1 `system.notify` 代替。
+拿到 ID 后可用 `notification.update` 替换 `title`、`message` 中至少一项，用
+`notification.dismiss` 关闭已投递通知。`notification.schedule` 在 `atMs` 指定的未来
+Unix 毫秒时间由宿主按需唤醒投递，无需 Lua 轮询；时间最多可提前 366 天，成功同样返回
+`notificationId`。尚未投递的 ID 可更新或用 `notification.cancel` 取消；已投递 ID 应使用
+`dismiss`。预约投递后会收到 `event.kind == "notification.delivered"`，其中包含
+`notificationId/ok/error`：
+
+```lua
+local scheduledTask = task.start("notification.schedule", {
+    title = "休息时间",
+    message = "起来活动一下",
+    atMs = time.now() + 5 * 60 * 1000,
+})
+
+task.start("notification.update", {
+    notificationId = savedNotificationId,
+    message = "延长两分钟",
+})
+task.start("notification.cancel", {
+    notificationId = savedNotificationId,
+})
+```
+
+宿主限制每实例每分钟实际投递最多 5 次、每实例最多保留 64 个 ID（其中预约最多
+32 个）；已投递 ID 保留 24 小时，组件卸载、重载或权限撤销时统一清理。预约目前属于
+当前宿主运行会话，应用退出后不会恢复。预览异步返回确定性 ID，但不会产生系统通知。
+除通用的 `permissionRevoked` 和 `canceled` 外，稳定错误包括 `invalidArguments`、
+`notFound`、`invalidState`、`quotaExceeded`、`providerUnavailable` 和
+`notificationFailed`。组件应把权限放在 `optionalPermissions`，拒绝通知时仍完成自身
+主功能。当前托盘提供者支持文本更新与关闭；包资源图、按钮、进度和动作回传仍未开放，
+不得使用 API v1 `system.notify` 绕过任务与权限模型。
 
 `calendar.create/update/remove` 要求 `calendar.write`，参数只接受严格字段。
 create/update 共用 `title/date/allDay/startMinutes/endMinutes/notes/reminderMinutes`；

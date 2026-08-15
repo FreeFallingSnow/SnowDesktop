@@ -785,8 +785,25 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             RestoreInteractionInputFocus();
             UpdateHostInputImePosition();
         });
-        widgetEngine_->SetNotifyCallback([this](const std::wstring& title, const std::wstring& message) {
-            ShowBalloonNotification(title, message);
+        widgetEngine_->SetNotifyCallback([this](
+            const snowdesktop::widget_runtime::
+                WidgetNotificationHostRequest& request) {
+            HWND owner = controlHwnd_ ? controlHwnd_ : hwnd_;
+            using Operation = snowdesktop::widget_runtime::
+                WidgetNotificationHostOperation;
+            switch (request.operation)
+            {
+            case Operation::Show:
+                return trayIconController_.ShowBalloon(owner,
+                    request.id, request.title, request.message);
+            case Operation::Update:
+                return trayIconController_.UpdateBalloon(owner,
+                    request.id, request.title, request.message);
+            case Operation::Dismiss:
+                return trayIconController_.DismissBalloon(
+                    owner, request.id);
+            }
+            return false;
         });
         widgetEngine_->SetFilePickerCallback(
             [this](const LuaWidgetFilePickerRequest& request) {

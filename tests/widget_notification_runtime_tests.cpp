@@ -1,0 +1,148 @@
+#include "widget_notification_runtime.h"
+
+#include <chrono>
+#include <cstdlib>
+#include <iostream>
+#include <string>
+#include <vector>
+
+namespace
+{
+using snowdesktop::widget_runtime::WidgetNotificationCenter;
+using snowdesktop::widget_runtime::WidgetNotificationHostOperation;
+using snowdesktop::widget_runtime::WidgetNotificationHostRequest;
+
+void Check(bool condition, const char* message)
+{
+    if (!condition)
+    {
+        std::cerr << "FAIL: " << message << '\n';
+        std::exit(1);
+    }
+}
+
+void TestImmediateLifecycleAndOwnership()
+{
+    WidgetNotificationCenter center;
+    const auto now = WidgetNotificationCenter::Clock::time_point(
+        std::chrono::hours(100));
+    std::vector<WidgetNotificationHostRequest> requests;
+    const auto host = [&requests](const WidgetNotificationHostRequest& request) {
+        requests.push_back(request);
+        return true;
+    };
+    const auto shown = center.Show(
+        101, L"Timer", L"Complete", now, host);
+    Check(shown.ok && !shown.id.empty() && requests.size() == 1 &&
+            requests.back().operation ==
+                WidgetNotificationHostOperation::Show &&
+            requests.back().id == shown.id,
+        "show must allocate an opaque ID before presenting through the host");
+
+    const auto foreign = center.Update(
+        202, shown.id, L"Other", std::nullopt, host);
+    Check(!foreign.ok && foreign.error == "notFound" &&
+            requests.size() == 1,
+        "notification IDs must remain scoped to their owning VM generation");
+
+    const auto updated = center.Update(
+        101, shown.id, std::nullopt, L"Ready", host);
+    Check(updated.ok && requests.size() == 2 &&
+            requests.back().operation ==
+                WidgetNotificationHostOperation::Update &&
+            requests.back().title == L"Timer" &&
+            requests.back().message == L"Ready",
+        "update must preserve omitted fields and target the same host ID");
+
+    const auto dismissed = center.Dismiss(101, shown.id, host);
+    Check(dismissed.ok && requests.size() == 3 &&
+            requests.back().operation ==
+                WidgetNotificationHostOperation::Dismiss &&
+            center.CountForOwner(101) == 0,
+        "dismiss must remove a delivered notification after host acceptance");
+    Check(!center.Dismiss(101, shown.id, host).ok,
+        "dismissed IDs must not be reusable");
+}
+
+void TestSchedulingAndDelivery()
+{
+    WidgetNotificationCenter center;
+    const auto now = WidgetNotificationCenter::Clock::time_point(
+        std::chrono::hours(200));
+    const auto due = now + std::chrono::minutes(5);
+    int hostCalls = 0;
+    const auto host = [&hostCalls](const WidgetNotificationHostRequest&) {
+        ++hostCalls;
+        return true;
+    };
+    const auto scheduled = center.Schedule(
+        301, L"Break", L"Stand up", due, now);
+    Check(scheduled.ok && center.CountForOwner(301) == 1,
+        "schedule must reserve a bounded instance-scoped notification ID");
+    Check(center.DispatchDue(now + std::chrono::minutes(4),
+            [](std::uint64_t) { return std::string{}; }, host).empty() &&
+            hostCalls == 0,
+        "scheduled notifications must not poll or deliver before their deadline");
+
+    const auto deliveries = center.DispatchDue(due,
+        [](std::uint64_t owner) {
+            return owner == 301 ? std::string{} :
+                std::string("instanceDisposed");
+        }, host);
+    Check(deliveries.size() == 1 && deliveries[0].ok &&
+            deliveries[0].id == scheduled.id && hostCalls == 1,
+        "a due notification must pass admission once and report delivery");
+    Check(!center.Cancel(301, scheduled.id).ok &&
+            center.Dismiss(301, scheduled.id, host).ok,
+        "delivered schedules must transition from cancelable to dismissible");
+}
+
+void TestCancelFailureAndCleanup()
+{
+    WidgetNotificationCenter center;
+    const auto now = WidgetNotificationCenter::Clock::time_point(
+        std::chrono::hours(300));
+    const auto first = center.Schedule(401, L"One", L"First",
+        now + std::chrono::seconds(1), now);
+    const auto second = center.Schedule(402, L"Two", L"Second",
+        now + std::chrono::seconds(1), now);
+    Check(first.ok && second.ok && center.Cancel(401, first.id).ok &&
+            center.CountForOwner(401) == 0,
+        "cancel must remove only a still-scheduled owned record");
+    const auto failed = center.DispatchDue(now + std::chrono::seconds(1),
+        [](std::uint64_t) { return std::string("quotaExceeded"); },
+        [](const WidgetNotificationHostRequest&) { return true; });
+    Check(failed.size() == 1 && !failed[0].ok &&
+            failed[0].error == "quotaExceeded" &&
+            center.CountForOwner(402) == 0,
+        "failed due delivery must report a stable error and release its record");
+
+    int dismissals = 0;
+    const auto shown = center.Show(501, L"Live", L"Visible", now,
+        [&dismissals](const WidgetNotificationHostRequest& request) {
+            if (request.operation ==
+                WidgetNotificationHostOperation::Dismiss)
+                ++dismissals;
+            return true;
+        });
+    Check(shown.ok, "cleanup fixture notification must show");
+    center.RemoveOwner(501,
+        [&dismissals](const WidgetNotificationHostRequest& request) {
+            if (request.operation ==
+                WidgetNotificationHostOperation::Dismiss)
+                ++dismissals;
+            return true;
+        });
+    Check(dismissals == 1 && center.CountForOwner(501) == 0,
+        "instance disposal must dismiss delivered records and cancel schedules");
+}
+}
+
+int main()
+{
+    TestImmediateLifecycleAndOwnership();
+    TestSchedulingAndDelivery();
+    TestCancelFailureAndCleanup();
+    std::cout << "widget notification runtime tests passed\n";
+    return 0;
+}

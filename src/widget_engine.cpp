@@ -4355,11 +4355,16 @@ static int lua_TaskStart(lua_State* state)
                 actionName.c_str());
         arguments.emplace("ref", std::move(reference));
     }
-    else if (taskName == "notification.show")
+    else if (taskName == "notification.show" ||
+        taskName == "notification.update" ||
+        taskName == "notification.dismiss" ||
+        taskName == "notification.schedule" ||
+        taskName == "notification.cancel")
     {
         if (!hasArguments)
             return luaL_error(state,
-                "task.start: notification.show requires an arguments table");
+                "task.start: %s requires an arguments table",
+                taskName.c_str());
         lua_pushnil(state);
         while (lua_next(state, 2) != 0)
         {
@@ -4367,23 +4372,41 @@ static int lua_TaskStart(lua_State* state)
             {
                 lua_pop(state, 2);
                 return luaL_error(state,
-                    "task.start: notification.show argument keys must be strings");
+                    "task.start: %s argument keys must be strings",
+                    taskName.c_str());
             }
             size_t keyLength = 0;
             const char* keyValue = lua_tolstring(state, -2, &keyLength);
             const std::string_view key(keyValue ? keyValue : "", keyLength);
-            if (key != "title" && key != "message")
+            const bool textKey = key == "title" || key == "message";
+            const bool idKey = key == "notificationId";
+            const bool atKey = key == "atMs";
+            const bool allowed =
+                ((taskName == "notification.show") && textKey) ||
+                ((taskName == "notification.schedule") &&
+                    (textKey || atKey)) ||
+                ((taskName == "notification.update") &&
+                    (textKey || idKey)) ||
+                ((taskName == "notification.dismiss" ||
+                    taskName == "notification.cancel") && idKey);
+            if (!allowed)
             {
                 lua_pop(state, 2);
                 return luaL_error(state,
-                    "task.start: notification.show received an unknown argument");
+                    "task.start: %s received an unknown argument",
+                    taskName.c_str());
             }
             lua_pop(state, 1);
         }
 
-        const auto readText = [&](const char* field,
-            std::size_t maximum, std::string& output) -> bool {
+        const auto readText = [&](const char* field, std::size_t maximum,
+            bool required, std::string& output) -> bool {
             lua_getfield(state, 2, field);
+            if (lua_isnil(state, -1) && !required)
+            {
+                lua_pop(state, 1);
+                return true;
+            }
             if (lua_type(state, -1) != LUA_TSTRING)
             {
                 lua_pop(state, 1);
@@ -4397,16 +4420,50 @@ static int lua_TaskStart(lua_State* state)
                 output.find('\0') == std::string::npos &&
                 IsValidUtf8Local(output);
         };
-        std::string title;
-        std::string message;
-        if (!readText("title", 256, title))
-            return luaL_error(state,
-                "task.start: notification.show title must contain 1 to 256 bytes of valid UTF-8");
-        if (!readText("message", 2048, message))
-            return luaL_error(state,
-                "task.start: notification.show message must contain 1 to 2048 bytes of valid UTF-8");
-        arguments.emplace("title", std::move(title));
-        arguments.emplace("message", std::move(message));
+        if (taskName == "notification.show" ||
+            taskName == "notification.schedule" ||
+            taskName == "notification.update")
+        {
+            const bool required = taskName != "notification.update";
+            std::string title;
+            std::string message;
+            if (!readText("title", 256, required, title))
+                return luaL_error(state,
+                    "task.start: %s title must contain 1 to 256 bytes of valid UTF-8",
+                    taskName.c_str());
+            if (!readText("message", 2048, required, message))
+                return luaL_error(state,
+                    "task.start: %s message must contain 1 to 2048 bytes of valid UTF-8",
+                    taskName.c_str());
+            if (!title.empty()) arguments.emplace("title", std::move(title));
+            if (!message.empty()) arguments.emplace("message", std::move(message));
+            if (taskName == "notification.update" && arguments.empty())
+                return luaL_error(state,
+                    "task.start: notification.update requires title or message");
+        }
+        if (taskName == "notification.update" ||
+            taskName == "notification.dismiss" ||
+            taskName == "notification.cancel")
+        {
+            std::string notificationId;
+            if (!readText("notificationId", 128, true, notificationId))
+                return luaL_error(state,
+                    "task.start: %s notificationId must contain 1 to 128 bytes of valid UTF-8",
+                    taskName.c_str());
+            arguments.emplace("notificationId", std::move(notificationId));
+        }
+        if (taskName == "notification.schedule")
+        {
+            lua_getfield(state, 2, "atMs");
+            int isInteger = 0;
+            const lua_Integer atMs =
+                lua_tointegerx(state, -1, &isInteger);
+            lua_pop(state, 1);
+            if (!isInteger || atMs <= 0)
+                return luaL_error(state,
+                    "task.start: notification.schedule atMs must be a positive epoch millisecond integer");
+            arguments.emplace("atMs", std::to_string(atMs));
+        }
     }
     else if (taskName == "network.request")
     {
@@ -8751,6 +8808,8 @@ void WidgetEngine::InitializeWidgetTaskBroker()
     using snowdesktop::widget_runtime::TaskDescriptor;
     taskBroker_ = std::make_unique<
         snowdesktop::widget_runtime::WidgetTaskBroker>();
+    notificationCenter_ = std::make_unique<
+        snowdesktop::widget_runtime::WidgetNotificationCenter>();
     std::string error;
     (void)taskBroker_->RegisterTask(TaskDescriptor{
         "media.toggle", kMediaActionPermission, true, 1 }, error);
@@ -8798,6 +8857,18 @@ void WidgetEngine::InitializeWidgetTaskBroker()
     error.clear();
     (void)taskBroker_->RegisterTask(TaskDescriptor{
         "notification.show", kNotificationPostPermission, false, 2 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "notification.update", kNotificationPostPermission, false, 2 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "notification.dismiss", kNotificationPostPermission, false, 2 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "notification.schedule", kNotificationPostPermission, false, 2 }, error);
+    error.clear();
+    (void)taskBroker_->RegisterTask(TaskDescriptor{
+        "notification.cancel", kNotificationPostPermission, false, 2 }, error);
     error.clear();
     (void)taskBroker_->RegisterTask(TaskDescriptor{
         "calendar.create", kCalendarWritePermission, false, 1 }, error);
@@ -9078,6 +9149,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             appSearchCompletions_.erase(action.id);
             itemSearchCompletions_.erase(action.id);
             calendarMutationCompletions_.erase(action.id);
+            notificationTaskCompletions_.erase(action.id);
             clipboardTaskCompletions_.erase(action.id);
             filesystemPickerCompletions_.erase(action.id);
             filesystemTaskCompletions_.erase(action.id);
@@ -9502,28 +9574,151 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             continue;
         }
 
-        if (action.name == "notification.show")
+        const bool notificationTask =
+            action.name == "notification.show" ||
+            action.name == "notification.update" ||
+            action.name == "notification.dismiss" ||
+            action.name == "notification.schedule" ||
+            action.name == "notification.cancel";
+        if (notificationTask)
         {
-            const auto title = action.arguments.find("title");
-            const auto message = action.arguments.find("message");
-            if (title == action.arguments.end() ||
-                message == action.arguments.end() ||
-                action.arguments.size() != 2)
-            {
-                (void)taskBroker_->Complete(
-                    action.id, false, "invalidArguments");
-                continue;
-            }
             if (action.preview)
             {
+                if (action.name == "notification.show" ||
+                    action.name == "notification.schedule")
+                {
+                    notificationTaskCompletions_.insert_or_assign(
+                        action.id, "notification:preview:" +
+                            std::to_string(action.id));
+                }
                 (void)taskBroker_->Complete(action.id, true);
                 continue;
             }
-            const std::string notificationError = RuntimePostNotification(
-                owner->widgetId, Utf8ToWideLocal(title->second),
-                Utf8ToWideLocal(message->second));
+            if (!notificationCenter_)
+            {
+                (void)taskBroker_->Complete(
+                    action.id, false, "providerUnavailable");
+                continue;
+            }
+
+            using Result = snowdesktop::widget_runtime::
+                WidgetNotificationOperationResult;
+            Result result;
+            const auto host = [this](const snowdesktop::widget_runtime::
+                WidgetNotificationHostRequest& request) {
+                return notifyCallback_ && notifyCallback_(request);
+            };
+            if (action.name == "notification.show")
+            {
+                const auto title = action.arguments.find("title");
+                const auto message = action.arguments.find("message");
+                if (title == action.arguments.end() ||
+                    message == action.arguments.end() ||
+                    action.arguments.size() != 2)
+                {
+                    result.error = "invalidArguments";
+                }
+                else
+                {
+                    std::string admissionError;
+                    result = notificationCenter_->Show(owner->runtimeToken,
+                        Utf8ToWideLocal(title->second),
+                        Utf8ToWideLocal(message->second),
+                        snowdesktop::widget_runtime::
+                            WidgetNotificationCenter::Clock::now(),
+                        [this, owner, &admissionError, &host](
+                            const snowdesktop::widget_runtime::
+                                WidgetNotificationHostRequest& request) {
+                            admissionError =
+                                RuntimeAdmitNotification(owner->widgetId);
+                            return admissionError.empty() && host(request);
+                        });
+                    if (!admissionError.empty())
+                        result.error = std::move(admissionError);
+                }
+            }
+            else if (action.name == "notification.schedule")
+            {
+                const auto title = action.arguments.find("title");
+                const auto message = action.arguments.find("message");
+                const auto at = action.arguments.find("atMs");
+                std::int64_t atMs = 0;
+                const auto parsed = at == action.arguments.end()
+                    ? std::from_chars_result{}
+                    : std::from_chars(at->second.data(),
+                        at->second.data() + at->second.size(), atMs);
+                if (title == action.arguments.end() ||
+                    message == action.arguments.end() ||
+                    at == action.arguments.end() ||
+                    action.arguments.size() != 3 ||
+                    parsed.ec != std::errc{} ||
+                    parsed.ptr != at->second.data() + at->second.size())
+                {
+                    result.error = "invalidArguments";
+                }
+                else
+                {
+                    const auto due = snowdesktop::widget_runtime::
+                        WidgetNotificationCenter::Clock::time_point(
+                            std::chrono::milliseconds(atMs));
+                    result = notificationCenter_->Schedule(
+                        owner->runtimeToken,
+                        Utf8ToWideLocal(title->second),
+                        Utf8ToWideLocal(message->second), due,
+                        snowdesktop::widget_runtime::
+                            WidgetNotificationCenter::Clock::now());
+                }
+            }
+            else
+            {
+                const auto id = action.arguments.find("notificationId");
+                if (id == action.arguments.end())
+                {
+                    result.error = "invalidArguments";
+                }
+                else if (action.name == "notification.update")
+                {
+                    const auto title = action.arguments.find("title");
+                    const auto message = action.arguments.find("message");
+                    std::optional<std::wstring> newTitle;
+                    std::optional<std::wstring> newMessage;
+                    if (title != action.arguments.end())
+                        newTitle = Utf8ToWideLocal(title->second);
+                    if (message != action.arguments.end())
+                        newMessage = Utf8ToWideLocal(message->second);
+                    std::string admissionError;
+                    result = notificationCenter_->Update(
+                        owner->runtimeToken, id->second,
+                        std::move(newTitle), std::move(newMessage),
+                        [this, owner, &admissionError, &host](
+                            const snowdesktop::widget_runtime::
+                                WidgetNotificationHostRequest& request) {
+                            admissionError =
+                                RuntimeAdmitNotification(owner->widgetId);
+                            return admissionError.empty() && host(request);
+                        });
+                    if (!admissionError.empty())
+                        result.error = std::move(admissionError);
+                }
+                else if (action.name == "notification.dismiss")
+                {
+                    result = notificationCenter_->Dismiss(
+                        owner->runtimeToken, id->second, host);
+                }
+                else
+                {
+                    result = notificationCenter_->Cancel(
+                        owner->runtimeToken, id->second);
+                }
+            }
+            if (result.ok && (action.name == "notification.show" ||
+                    action.name == "notification.schedule"))
+            {
+                notificationTaskCompletions_.insert_or_assign(
+                    action.id, result.id);
+            }
             (void)taskBroker_->Complete(action.id,
-                notificationError.empty(), notificationError);
+                result.ok, std::move(result.error));
             continue;
         }
 
@@ -10210,6 +10405,8 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             itemSearchCompletions_.find(completion.id);
         const auto calendarCompletion =
             calendarMutationCompletions_.find(completion.id);
+        const auto notificationCompletion =
+            notificationTaskCompletions_.find(completion.id);
         const auto networkCompletion =
             networkTaskCompletions_.find(completion.id);
         const auto clipboardCompletion =
@@ -10227,6 +10424,10 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 itemSearchCompletions_.erase(itemSearchCompletion);
             if (calendarCompletion != calendarMutationCompletions_.end())
                 calendarMutationCompletions_.erase(calendarCompletion);
+            if (notificationCompletion !=
+                    notificationTaskCompletions_.end())
+                notificationTaskCompletions_.erase(
+                    notificationCompletion);
             if (networkCompletion != networkTaskCompletions_.end())
                 networkTaskCompletions_.erase(networkCompletion);
             if (clipboardCompletion != clipboardTaskCompletions_.end())
@@ -10258,6 +10459,15 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             completion.error = "taskResultUnavailable";
         }
         const bool networkTask = completion.name == "network.request";
+        const bool notificationIdTask =
+            completion.name == "notification.show" ||
+            completion.name == "notification.schedule";
+        if (completion.ok && notificationIdTask &&
+            notificationCompletion == notificationTaskCompletions_.end())
+        {
+            completion.ok = false;
+            completion.error = "taskResultUnavailable";
+        }
         if (completion.ok && networkTask &&
             networkCompletion == networkTaskCompletions_.end())
         {
@@ -10497,7 +10707,8 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 clipboardImageToken,
                 nextOffset, hasMore,
                 catalogRevision, calendarTask, itemSearchTask,
-                calendarResult, networkTask,
+                calendarResult, notificationIdTask,
+                notificationCompletion, networkTask,
                 networkResult, clipboardReadTask,
                 clipboardResult, filesystemPickerTask,
                 filesystemPickerResult, filesystemDataTask,
@@ -10557,6 +10768,15 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                         lua_pushinteger(eventState,
                             calendarResult->revision);
                         lua_setfield(eventState, -2, "revision");
+                    }
+                    else if (notificationIdTask)
+                    {
+                        lua_createtable(eventState, 0, 1);
+                        lua_pushlstring(eventState,
+                            notificationCompletion->second.data(),
+                            notificationCompletion->second.size());
+                        lua_setfield(eventState, -2,
+                            "notificationId");
                     }
                     else if (networkTask)
                     {
@@ -10783,6 +11003,9 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             itemSearchCompletions_.erase(itemSearchCompletion);
         if (calendarCompletion != calendarMutationCompletions_.end())
             calendarMutationCompletions_.erase(calendarCompletion);
+        if (notificationCompletion !=
+                notificationTaskCompletions_.end())
+            notificationTaskCompletions_.erase(notificationCompletion);
         if (networkCompletion != networkTaskCompletions_.end())
             networkTaskCompletions_.erase(networkCompletion);
         if (clipboardCompletion != clipboardTaskCompletions_.end())
@@ -10799,6 +11022,9 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
 void WidgetEngine::ReleaseWidgetTasks(LuaWidget& widget,
     snowdesktop::widget_runtime::TaskBrokerCancelReason reason)
 {
+    if (notificationCenter_)
+        notificationCenter_->RemoveOwner(
+            widget.runtimeToken, notifyCallback_);
     if (!taskBroker_)
     {
         widget.taskIds.clear();
@@ -10824,6 +11050,7 @@ void WidgetEngine::ReleaseWidgetTasks(LuaWidget& widget,
         appSearchCompletions_.erase(taskId);
         itemSearchCompletions_.erase(taskId);
         calendarMutationCompletions_.erase(taskId);
+        notificationTaskCompletions_.erase(taskId);
         networkTaskCompletions_.erase(taskId);
         clipboardTaskCompletions_.erase(taskId);
         filesystemPickerCompletions_.erase(taskId);
@@ -10893,9 +11120,11 @@ bool WidgetEngine::Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFa
             const snowdesktop::calendar::CalendarEvent& event) {
             if (!notifyCallback_)
                 return;
-            notifyCallback_(
-                _LW("calendar.notification_title"),
-                Utf8ToWideLocal(event.title));
+            (void)notifyCallback_({
+                snowdesktop::widget_runtime::
+                    WidgetNotificationHostOperation::Show,
+                {}, _LW("calendar.notification_title"),
+                Utf8ToWideLocal(event.title) });
         });
     (void)calendarService_->Load();
     systemSnapshotService_ = std::make_unique<SystemSnapshotService>();
@@ -10928,6 +11157,8 @@ void WidgetEngine::Shutdown()
     focusedHostInput_ = {};
     if (taskBroker_)
         taskBroker_->Shutdown();
+    if (notificationCenter_)
+        notificationCenter_->Clear(notifyCallback_);
     if (d2dState_)
         d2dState_->shellIconLoader.reset();
     for (auto& widget : widgets_)
@@ -10993,6 +11224,7 @@ void WidgetEngine::Shutdown()
     appSearchCompletions_.clear();
     itemSearchCompletions_.clear();
     calendarMutationCompletions_.clear();
+    notificationTaskCompletions_.clear();
     networkTaskCompletions_.clear();
     clipboardTaskCompletions_.clear();
     filesystemPickerCompletions_.clear();
@@ -11002,6 +11234,7 @@ void WidgetEngine::Shutdown()
     networkTaskRequests_.clear();
     networkRequestTasks_.clear();
     taskBroker_.reset();
+    notificationCenter_.reset();
     widgetHostFailures_.clear();
     delete d2dState_; d2dState_ = nullptr;
 }
@@ -14732,6 +14965,51 @@ void WidgetEngine::TickRuntime()
     }
     DrainFilesystemWatchCompletions();
     ApplyWidgetTaskBrokerActions();
+    if (notificationCenter_)
+    {
+        const auto deliveries = notificationCenter_->DispatchDue(
+            snowdesktop::widget_runtime::
+                WidgetNotificationCenter::Clock::now(),
+            [this](std::uint64_t ownerToken) {
+                const auto owner = std::find_if(
+                    widgets_.begin(), widgets_.end(),
+                    [ownerToken](const LuaWidget& widget) {
+                        return widget.runtimeToken == ownerToken &&
+                            widget.valid && !widget.preview;
+                    });
+                return owner == widgets_.end()
+                    ? std::string("instanceDisposed")
+                    : RuntimeAdmitNotification(owner->widgetId);
+            },
+            [this](const snowdesktop::widget_runtime::
+                WidgetNotificationHostRequest& request) {
+                return notifyCallback_ && notifyCallback_(request);
+            });
+        for (const auto& delivery : deliveries)
+        {
+            const auto owner = std::find_if(
+                widgets_.begin(), widgets_.end(),
+                [&delivery](const LuaWidget& widget) {
+                    return widget.runtimeToken == delivery.ownerToken;
+                });
+            if (owner == widgets_.end() || !owner->valid) continue;
+            (void)InvokeLifecycleEvent(*owner, "notification.delivered",
+                [&delivery](lua_State* eventState) {
+                    lua_pushlstring(eventState, delivery.id.data(),
+                        delivery.id.size());
+                    lua_setfield(eventState, -2, "notificationId");
+                    lua_pushboolean(eventState, delivery.ok ? 1 : 0);
+                    lua_setfield(eventState, -2, "ok");
+                    if (!delivery.ok)
+                    {
+                        lua_pushlstring(eventState, delivery.error.data(),
+                            delivery.error.size());
+                        lua_setfield(eventState, -2, "error");
+                    }
+                });
+            RuntimeInvalidateHost(owner->widgetId);
+        }
+    }
     if (widgetSystemDataProvider_)
     {
         const auto changedTopics =
@@ -17982,9 +18260,30 @@ std::string WidgetEngine::RuntimePostNotification(
     const std::wstring& message)
 {
     if (snowdesktop::widget_runtime::IsDryLoad()) return {};
+    if (title.empty() || message.empty()) return "invalidArguments";
+    const std::string admissionError =
+        RuntimeAdmitNotification(widgetId);
+    if (!admissionError.empty()) return admissionError;
+    try
+    {
+        if (!notifyCallback_({ snowdesktop::widget_runtime::
+                WidgetNotificationHostOperation::Show,
+                {}, title, message }))
+            return "notificationFailed";
+    }
+    catch (...)
+    {
+        return "notificationFailed";
+    }
+    return {};
+}
+
+std::string WidgetEngine::RuntimeAdmitNotification(
+    const std::wstring& widgetId)
+{
+    if (snowdesktop::widget_runtime::IsDryLoad()) return {};
     const int index = FindWidget(widgetId);
     if (index < 0) return "instanceDisposed";
-    if (title.empty() || message.empty()) return "invalidArguments";
     auto& widget = widgets_[index];
     const auto now = std::chrono::steady_clock::now();
     if (widget.notificationWindow.time_since_epoch().count() == 0 ||
@@ -17997,14 +18296,6 @@ std::string WidgetEngine::RuntimePostNotification(
         return "quotaExceeded";
     if (!notifyCallback_) return "providerUnavailable";
     ++widget.notificationsInWindow;
-    try
-    {
-        notifyCallback_(title, message);
-    }
-    catch (...)
-    {
-        return "notificationFailed";
-    }
     return {};
 }
 
@@ -18249,6 +18540,8 @@ bool WidgetEngine::RuntimeCancelTask(
         itemSearchCompletions_.erase(taskId);
     if (canceled)
         calendarMutationCompletions_.erase(taskId);
+    if (canceled)
+        notificationTaskCompletions_.erase(taskId);
     if (canceled)
         networkTaskCompletions_.erase(taskId);
     if (canceled)

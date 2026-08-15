@@ -128,6 +128,18 @@ void TestApplicationTaskGesturePolicy()
                 { "notification.show", "notification.post", false, 2 },
                 error) &&
             broker.RegisterTask(
+                { "notification.update", "notification.post", false, 2 },
+                error) &&
+            broker.RegisterTask(
+                { "notification.dismiss", "notification.post", false, 2 },
+                error) &&
+            broker.RegisterTask(
+                { "notification.schedule", "notification.post", false, 2 },
+                error) &&
+            broker.RegisterTask(
+                { "notification.cancel", "notification.post", false, 2 },
+                error) &&
+            broker.RegisterTask(
                 { "calendar.create", "calendar.write", false, 1 },
                 error) &&
             broker.RegisterTask(

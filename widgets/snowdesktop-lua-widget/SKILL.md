@@ -281,11 +281,13 @@ menu.
   `draw.icon`, and use `shell.openItem` / `shell.revealItem` only inside a
   direct trusted action. `desktop.refresh` is also gesture-gated. Never expose,
   persist, parse, or replace these refs with filesystem paths.
-- Post background completion notices only with
-  `task.start("notification.show", { title, message })`, declare
-  `notification.post` as optional when the widget can keep working without it,
-  and handle the matching `task.complete` result. Do not loop notifications or
-  fall back to the API v1 `system.notify` call.
+- Post optional notifications with `notification.show`, keep the host-issued
+  `task.complete.value.notificationId`, and use `notification.update` /
+  `notification.dismiss` for delivered IDs or `notification.schedule` /
+  `notification.cancel` for future delivery. Scheduled delivery reports
+  `notification.delivered`; it is session-scoped and must not be recreated in
+  a polling loop. Declare `notification.post` as optional when the widget can
+  keep working without it, and never fall back to API v1 `system.notify`.
 - Create `resource.image/font` handles at entry scope. Use `resource.status`
   when diagnostics are needed.
 - Use `draw.measureText`, clipping, explicit `maxWidth`, and separate opacity.

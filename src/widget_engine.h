@@ -38,6 +38,7 @@
 #include "widget_lua_lifecycle.h"
 #include "widget_data_broker.h"
 #include "widget_task_broker.h"
+#include "widget_notification_runtime.h"
 #include "widget_media_task_executor.h"
 #include "widget_audio_output_task_executor.h"
 #include "widget_clipboard_task_executor.h"
@@ -624,7 +625,8 @@ public:
     using WidgetPanelOpenCallback = std::function<void(const LuaWidgetPanelRequest&)>;
     using WidgetPanelCloseCallback = std::function<void(const std::wstring&)>;
     using HostInputFocusCallback = std::function<void()>;
-    using NotifyCallback = std::function<void(const std::wstring&, const std::wstring&)>;
+    using NotifyCallback = std::function<bool(
+        const snowdesktop::widget_runtime::WidgetNotificationHostRequest&)>;
     using FilePickerCallback = std::function<LuaWidgetFilePickerResult(
         const LuaWidgetFilePickerRequest&)>;
     using LogicalSlotPickerCallback =
@@ -1268,6 +1270,7 @@ public:
         const std::wstring& title, const std::wstring& message);
     std::string RuntimePostNotification(const std::wstring& widgetId,
         const std::wstring& title, const std::wstring& message);
+    std::string RuntimeAdmitNotification(const std::wstring& widgetId);
     CpuSnapshot RuntimeGetCpuSnapshot(const std::wstring& widgetId);
     MemorySnapshot RuntimeGetMemorySnapshot(const std::wstring& widgetId);
     BatterySnapshot RuntimeGetBatterySnapshot(const std::wstring& widgetId);
@@ -1454,6 +1457,8 @@ private:
         dataBroker_;
     std::unique_ptr<snowdesktop::widget_runtime::WidgetTaskBroker>
         taskBroker_;
+    std::unique_ptr<snowdesktop::widget_runtime::WidgetNotificationCenter>
+        notificationCenter_;
     std::unique_ptr<
         snowdesktop::widget_runtime::WidgetMediaTaskExecutor>
         mediaTaskExecutor_;
@@ -1504,6 +1509,8 @@ private:
     std::unordered_map<std::uint64_t,
         snowdesktop::calendar::MutationResult>
         calendarMutationCompletions_;
+    std::unordered_map<std::uint64_t, std::string>
+        notificationTaskCompletions_;
     std::unordered_map<std::uint64_t, HttpResponse>
         networkTaskCompletions_;
     std::unordered_map<std::uint64_t,

@@ -248,6 +248,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget_preview_context.cpp
     src/widget_data_broker.cpp
     src/widget_task_broker.cpp
+    src/widget_notification_runtime.cpp
     src/widget_media_task_executor.cpp
     src/widget_audio_output_task_executor.cpp
     src/widget_clipboard_task_executor.cpp
@@ -765,6 +766,15 @@ if (BUILD_TESTING)
         SOURCES
             tests/widget_task_broker_tests.cpp
             src/widget_task_broker.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS contract lifecycle task lua widget)
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetNotificationRuntimeTests
+        widget_notification_runtime
+        SOURCES
+            tests/widget_notification_runtime_tests.cpp
+            src/widget_notification_runtime.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract lifecycle task lua widget)
 
