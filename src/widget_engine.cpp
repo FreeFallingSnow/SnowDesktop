@@ -694,6 +694,19 @@ struct RuntimeImageResource
     std::string source;
 };
 
+struct PackageImageSource
+{
+    std::vector<std::uint8_t> pixels;
+    UINT32 width = 0;
+    UINT32 height = 0;
+    UINT32 stride = 0;
+};
+
+constexpr std::size_t kMaxSinglePackageImageSourceBytes =
+    64ull * 1024ull * 1024ull;
+constexpr std::size_t kMaxPackageImageSourceCacheBytes =
+    128ull * 1024ull * 1024ull;
+
 struct D2DState
 {
     ID2D1DeviceContext* ctx = nullptr;
@@ -713,6 +726,9 @@ struct D2DState
     int widgetClipDepth = 0;
     ComPtr<ID2D1Device> bitmapDevice;
     std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>> imageCache;
+    std::unordered_map<std::wstring, PackageImageSource> packageImageSources;
+    std::unordered_set<std::wstring> packageImageFailures;
+    std::size_t packageImageSourceBytes = 0;
     std::unordered_map<std::string, RuntimeImageResource> runtimeImages;
     std::unordered_map<std::string, ComPtr<ID2D1Bitmap1>>
         runtimeImageBitmaps;
@@ -1410,7 +1426,43 @@ static std::optional<std::wstring> ResolveResourceHandlePath(
     const char* type = expected == LuaResourceType::Image ? "image" : "font";
     const auto resource = CurrentPackageResource(L, handle->name, type);
     if (!resource) return std::nullopt;
-    return ResolveCurrentPackageAsset(L, Utf8ToWideLocal(resource->path));
+    lua_getfield(L, LUA_REGISTRYINDEX, "__widget_resource_paths");
+    if (!lua_istable(L, -1))
+    {
+        lua_pop(L, 1);
+        return std::nullopt;
+    }
+    lua_getfield(L, -1, handle->name);
+    size_t length = 0;
+    const char* value = lua_tolstring(L, -1, &length);
+    const std::optional<std::wstring> path = value
+        ? std::optional<std::wstring>(Utf8ToWideLocal(
+            std::string(value, length)))
+        : std::nullopt;
+    lua_pop(L, 2);
+    return path;
+}
+
+static std::optional<std::wstring> CurrentPackageResourcePath(
+    lua_State* state, const std::string& name, const char* expectedType)
+{
+    if (!CurrentPackageResource(state, name, expectedType))
+        return std::nullopt;
+    lua_getfield(state, LUA_REGISTRYINDEX, "__widget_resource_paths");
+    if (!lua_istable(state, -1))
+    {
+        lua_pop(state, 1);
+        return std::nullopt;
+    }
+    lua_getfield(state, -1, name.c_str());
+    size_t length = 0;
+    const char* value = lua_tolstring(state, -1, &length);
+    const std::optional<std::wstring> path = value
+        ? std::optional<std::wstring>(Utf8ToWideLocal(
+            std::string(value, length)))
+        : std::nullopt;
+    lua_pop(state, 2);
+    return path;
 }
 
 static int lua_DrawText(lua_State* L)
@@ -7994,32 +8046,83 @@ static void EnsureBitmapCachesForCurrentDevice(D2DState* state)
     state->shellIconFailures.clear();
 }
 
+static PackageImageSource* LoadPackageImageSource(
+    D2DState* state, const std::wstring& path)
+{
+    if (!state || path.empty()) return nullptr;
+    if (auto found = state->packageImageSources.find(path);
+        found != state->packageImageSources.end())
+        return &found->second;
+    if (state->packageImageFailures.contains(path)) return nullptr;
+
+    const auto fail = [&]() -> PackageImageSource* {
+        state->packageImageFailures.insert(path);
+        return nullptr;
+    };
+    ComPtr<IWICImagingFactory> factory;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) || !factory)
+        return fail();
+    ComPtr<IWICBitmapDecoder> decoder;
+    if (FAILED(factory->CreateDecoderFromFilename(path.c_str(), nullptr,
+            GENERIC_READ, WICDecodeMetadataCacheOnLoad, &decoder)) || !decoder)
+        return fail();
+    ComPtr<IWICBitmapFrameDecode> frame;
+    if (FAILED(decoder->GetFrame(0, &frame)) || !frame) return fail();
+    ComPtr<IWICFormatConverter> converter;
+    if (FAILED(factory->CreateFormatConverter(&converter)) || !converter ||
+        FAILED(converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA,
+            WICBitmapDitherTypeNone, nullptr, 0.0,
+            WICBitmapPaletteTypeMedianCut)))
+        return fail();
+
+    UINT32 width = 0;
+    UINT32 height = 0;
+    if (FAILED(converter->GetSize(&width, &height)) || width == 0 ||
+        height == 0 || width > UINT32_MAX / 4)
+        return fail();
+    const std::uint64_t stride64 = static_cast<std::uint64_t>(width) * 4;
+    const std::uint64_t bytes64 = stride64 * height;
+    if (bytes64 == 0 || bytes64 > kMaxSinglePackageImageSourceBytes ||
+        bytes64 > (std::numeric_limits<UINT>::max)() ||
+        bytes64 > kMaxPackageImageSourceCacheBytes -
+            std::min(state->packageImageSourceBytes,
+                kMaxPackageImageSourceCacheBytes))
+        return fail();
+
+    PackageImageSource source;
+    source.width = width;
+    source.height = height;
+    source.stride = static_cast<UINT32>(stride64);
+    source.pixels.resize(static_cast<std::size_t>(bytes64));
+    if (FAILED(converter->CopyPixels(nullptr, source.stride,
+            static_cast<UINT>(source.pixels.size()), source.pixels.data())))
+        return fail();
+    state->packageImageSourceBytes += source.pixels.size();
+    auto [inserted, added] = state->packageImageSources.emplace(
+        path, std::move(source));
+    return added ? &inserted->second : nullptr;
+}
+
 static ID2D1Bitmap1* LoadImageBitmap(D2DState* s, const std::wstring& path)
 {
     if (!s || !s->ctx || path.empty()) return nullptr;
     EnsureBitmapCachesForCurrentDevice(s);
     auto it = s->imageCache.find(path);
     if (it != s->imageCache.end()) return it->second.Get();
-
-    ComPtr<IWICImagingFactory> factory;
-    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
-        IID_PPV_ARGS(&factory))) || !factory)
-        return nullptr;
-    ComPtr<IWICBitmapDecoder> decoder;
-    if (FAILED(factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
-        WICDecodeMetadataCacheOnDemand, &decoder)) || !decoder)
-        return nullptr;
-    ComPtr<IWICBitmapFrameDecode> frame;
-    if (FAILED(decoder->GetFrame(0, &frame)) || !frame)
-        return nullptr;
-    ComPtr<IWICFormatConverter> converter;
-    if (FAILED(factory->CreateFormatConverter(&converter)) || !converter)
-        return nullptr;
-    if (FAILED(converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA,
-        WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeMedianCut)))
+    const auto source = s->packageImageSources.find(path);
+    if (source == s->packageImageSources.end() ||
+        source->second.pixels.empty())
         return nullptr;
     ComPtr<ID2D1Bitmap1> bitmap;
-    if (FAILED(s->ctx->CreateBitmapFromWicBitmap(converter.Get(), nullptr, &bitmap)) || !bitmap)
+    const auto properties = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_NONE,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
+            D2D1_ALPHA_MODE_PREMULTIPLIED));
+    if (FAILED(s->ctx->CreateBitmap(
+            D2D1::SizeU(source->second.width, source->second.height),
+            source->second.pixels.data(), source->second.stride,
+            &properties, &bitmap)) || !bitmap)
         return nullptr;
     ID2D1Bitmap1* result = bitmap.Get();
     if (s->imageCache.size() >= 128)
@@ -8800,14 +8903,9 @@ static int lua_ResourceExists(lua_State* L)
 {
     size_t length = 0;
     const char* name = luaL_checklstring(L, 1, &length);
-    const auto resource = length <= 64
-        ? CurrentPackageResource(L, std::string(name, length))
-        : std::nullopt;
-    const auto path = resource ? ResolveCurrentPackageAsset(
-        L, Utf8ToWideLocal(resource->path)) : std::nullopt;
-    std::error_code error;
-    const bool exists = path &&
-        std::filesystem::is_regular_file(*path, error);
+    const bool exists = length <= 64 &&
+        CurrentPackageResourcePath(
+            L, std::string(name, length), nullptr).has_value();
     lua_pushboolean(L, exists ? 1 : 0);
     return 1;
 }
@@ -8825,11 +8923,9 @@ static int lua_ResourceImage(lua_State* L)
         return luaL_error(L, "resource.image: invalid resource name");
     const std::string name(nameRaw, length);
     auto* state = GetD2D(L);
-    const auto resource = CurrentPackageResource(L, name, "image");
-    const auto path = resource
-        ? ResolveCurrentPackageAsset(L, Utf8ToWideLocal(resource->path))
-        : std::nullopt;
-    if (!path || (state && state->ctx && !LoadImageBitmap(state, *path)))
+    const auto path = CurrentPackageResourcePath(L, name, "image");
+    if (!path || !state || !LoadPackageImageSource(state, *path) ||
+        (state->ctx && !LoadImageBitmap(state, *path)))
         return luaL_error(L, "resource.image: resource is missing or cannot be decoded");
     PushResourceHandle(L, LuaResourceType::Image, name);
     return 1;
@@ -8848,11 +8944,9 @@ static int lua_ResourceFont(lua_State* L)
         return luaL_error(L, "resource.font: invalid resource name");
     const std::string name(nameRaw, length);
     auto* state = GetD2D(L);
-    const auto resource = CurrentPackageResource(L, name, "font");
-    const auto path = resource
-        ? ResolveCurrentPackageAsset(L, Utf8ToWideLocal(resource->path))
-        : std::nullopt;
-    if (!path || (state && state->dwrite && !LoadPrivateFont(state, *path)))
+    const auto path = CurrentPackageResourcePath(L, name, "font");
+    if (!path || !state || !state->dwrite ||
+        !LoadPrivateFont(state, *path))
         return luaL_error(L, "resource.font: resource is missing or invalid");
     PushResourceHandle(L, LuaResourceType::Font, name);
     return 1;
@@ -8881,7 +8975,7 @@ static int lua_ResourceStatus(lua_State* L)
     else if (path && state)
     {
         ready = handle->type == LuaResourceType::Image
-            ? state->imageCache.contains(*path)
+            ? state->packageImageSources.contains(*path)
             : state->privateFonts.contains(*path);
     }
     lua_createtable(L, 0, 3);
@@ -12383,8 +12477,6 @@ void WidgetEngine::UnloadWidget(const std::wstring& widgetId)
     {
         ClearRuntimeImagesForWidget(d2dState_, widgetId);
         d2dState_->privateTextFormatCache.clear();
-        d2dState_->privateFonts.clear();
-        d2dState_->imageCache.clear();
     }
     widgets_.erase(widgets_.begin() + idx);
     std::erase_if(widgets_, [&widgetId](const LuaWidget& widget) {
@@ -12924,6 +13016,18 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         lua_setfield(state, -2, name.c_str());
     }
     lua_setfield(state, LUA_REGISTRYINDEX, "__widget_resources");
+    lua_createtable(state, 0,
+        static_cast<int>(pending.manifest.resources.size()));
+    for (const auto& [name, resource] : pending.manifest.resources)
+    {
+        const auto resolved = ResolvePackageAssetWithinRoot(
+            pending.packageRoot, Utf8ToWideLocal(resource.path));
+        if (!resolved) continue;
+        const std::string utf8Path = WidgetWideToUtf8(*resolved);
+        lua_pushlstring(state, utf8Path.data(), utf8Path.size());
+        lua_setfield(state, -2, name.c_str());
+    }
+    lua_setfield(state, LUA_REGISTRYINDEX, "__widget_resource_paths");
     lua_pushboolean(state, preview ? 1 : 0);
     lua_setfield(state, LUA_REGISTRYINDEX, "__widget_preview");
     lua_pushboolean(state, 1);

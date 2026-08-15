@@ -99,6 +99,47 @@ void TestV2OnlyWidgetActivation(const fs::path& repository)
             "formal VM registration must not create API v1 library tables");
     }
 }
+
+void TestPackageResourceRenderPurity(const fs::path& repository)
+{
+    const std::string source = ReadFile(
+        repository / "src" / "widget_engine.cpp");
+    const std::string_view bitmapLoad = Section(source,
+        "static ID2D1Bitmap1* LoadImageBitmap(",
+        "\nstatic ID2D1Bitmap1* LoadRuntimeImageBitmap(");
+    Check(bitmapLoad.find("CreateDecoderFromFilename") ==
+            std::string_view::npos,
+        "package image drawing must not decode files on the render path");
+    Check(bitmapLoad.find("packageImageSources.find") !=
+            std::string_view::npos,
+        "package image drawing must consume the predecoded source cache");
+
+    const std::string_view imageSourceLoad = Section(source,
+        "static PackageImageSource* LoadPackageImageSource(",
+        "\nstatic ID2D1Bitmap1* LoadImageBitmap(");
+    Check(imageSourceLoad.find("CreateDecoderFromFilename") !=
+            std::string_view::npos &&
+            imageSourceLoad.find("kMaxPackageImageSourceCacheBytes") !=
+                std::string_view::npos,
+        "package images must decode before drawing under a host cache quota");
+
+    const std::string_view handleResolve = Section(source,
+        "static std::optional<std::wstring> ResolveResourceHandlePath(",
+        "\nstatic std::optional<std::wstring> CurrentPackageResourcePath(");
+    Check(handleResolve.find("ResolveCurrentPackageAsset") ==
+            std::string_view::npos &&
+            handleResolve.find("__widget_resource_paths") !=
+                std::string_view::npos,
+        "resource handles must use paths resolved once during VM setup");
+
+    const std::string_view exists = Section(source,
+        "static int lua_ResourceExists(",
+        "\nstatic int lua_ResourceImage(");
+    Check(exists.find("is_regular_file") == std::string_view::npos &&
+            exists.find("CurrentPackageResourcePath") !=
+                std::string_view::npos,
+        "resource.exists must not touch the filesystem from arbitrary callbacks");
+}
 }
 
 int main(int argc, char** argv)
@@ -106,6 +147,7 @@ int main(int argc, char** argv)
     Check(argc == 2, "expected the repository root argument");
     TestRemindersRenderPurity(fs::path(argv[1]));
     TestV2OnlyWidgetActivation(fs::path(argv[1]));
+    TestPackageResourceRenderPurity(fs::path(argv[1]));
     std::cout << "Built-in widget source contract tests passed\n";
     return 0;
 }
