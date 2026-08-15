@@ -22920,8 +22920,9 @@ LuaWidgetContextState WidgetEngine::RuntimeGetWidgetContextState(
     result.surface = widget.surfaceContext;
     result.visible = widget.hostVisible;
     result.preview = widget.preview;
-    result.focused = focusedHostInput_.active &&
-        focusedHostInput_.widgetId == widgetId;
+    result.focused = !widget.viewKeyboardFocusKey.empty() ||
+        (focusedHostInput_.active &&
+            focusedHostInput_.widgetId == widgetId);
     result.selected = widgetSelectedProvider_
         ? widgetSelectedProvider_(widgetId) : false;
     return result;

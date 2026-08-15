@@ -158,6 +158,9 @@ down/up、doubleClick 和 contextMenu，动作通过 `event.kind == "action"` �
 `view.keyboardNavigation.basic` 后，Enter/空格会生成同样的受控 change 建议。基础
 UI Automation 输出已开放，深层虚拟化与全部 Pattern/事件仍按升级计划继续补齐。
 
+`widget.context().focused` 在宿主管理的文本输入或任一可聚焦声明式元素取得键盘/UIA
+焦点时为 `true`，不再只表示文本编辑状态。
+
 ```lua
 view.toggle({
     key = "notifications",

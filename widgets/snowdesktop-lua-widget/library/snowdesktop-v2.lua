@@ -65,7 +65,7 @@
 ---@field inputLanguage string BCP-47 input language when available
 ---@field visible boolean
 ---@field preview boolean
----@field focused boolean Host-managed input focus in the current build
+---@field focused boolean Whether any host-managed input or declarative element on this surface owns focus.
 ---@field selected boolean
 ---@field surface SnowWidgetSurfaceKind
 

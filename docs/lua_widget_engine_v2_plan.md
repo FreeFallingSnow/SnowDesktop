@@ -669,7 +669,8 @@ task/action broker 提供，并在执行时复核权限、会话能力和可信�
 回调，不增加轮询线程。events 支持可选、成对的 ISO 日期闭区间并限制在 366 天，
 未指定时围绕当前选中日期取前后各 62 天；每次最多返回 512 项并显式报告
 `truncated`。事件修改与选择变化分别推进 revision，预览使用固定日期和事件。
-calendar 写入仍需后续 task/action broker，不能借只读订阅直接调用。
+calendar 写入已通过 task/action broker 提供 `calendar.create/update/remove`，并保留 revision
+冲突检查；remove 在执行时要求可信用户动作，不能借只读订阅直接修改事件。
 
 `app.indexStatus` 已作为宿主应用索引事件的轻量状态订阅接入，返回
 `indexing/ready/unavailable + revision`，不在每次变化时复制完整应用目录；预览固定
@@ -881,7 +882,7 @@ API v2 不把 Win32、COM 或 WinRT 原样暴露给 Lua，而是固定为四个�
 | `time.parts/format/add/compare()` | 明确 time zone 和 locale 的日期拆分、格式化、安全加减与比较；处理 DST、闰日和系统时区变化 | 基础 |
 | `l10n.formatNumber/bytes/duration/relativeTime/list()` | 使用当前或显式 locale 的宿主格式化，不要求组件自己拼接单位和复数 | 基础 |
 
-当前过渡实现（2026-08-14）已提供 `widget.context()` 和 `widget.context` feature。返回值同时区分 logical/pixel size，包含 DPI/scale、size class、栅格跨度、当前显示器及工作区的 logical/pixel 摘要、主题与系统 accent、高对比度、reduced motion、text scale、locale、region、time zone、UTC offset、输入语言，以及 visible/preview/focused/selected 状态。预览使用显式预览 DPI 且将显示器摘要标记为 unavailable，避免把开发机真实显示器误当预览契约；当前 `focused` 只覆盖宿主管理的文本输入焦点，待声明式节点焦点系统落地后扩展为完整 surface focus。
+当前实现（2026-08-15）已提供 `widget.context()` 和 `widget.context` feature。返回值同时区分 logical/pixel size，包含 DPI/scale、size class、栅格跨度、当前显示器及工作区的 logical/pixel 摘要、主题与系统 accent、高对比度、reduced motion、text scale、locale、region、time zone、UTC offset、输入语言，以及 visible/preview/focused/selected 状态。预览使用显式预览 DPI 且将显示器摘要标记为 unavailable，避免把开发机真实显示器误当预览契约；`focused` 已覆盖宿主管理的文本输入和声明式元素键盘/UIA 焦点，表示当前 surface 是否拥有任一宿主焦点。
 
 #### 12.6.2 可订阅系统状态
 
@@ -1821,7 +1822,7 @@ M7 切换完成后，发布运行时必须删除 API v1 注册和执行分支。
 
 ### M2：权限代理和首次授权
 
-当前实现进度（2026-08-14）：已落地集中权限代理、来源绑定范围指纹、非阻塞首次授权、受阻占位卡及恢复入口；当前 schema v1 过渡字段以 `permissions` 表示必需权限、`optionalPermissions` 表示可选权限。现有 CPU/内存/GPU、电源/电池和网络快照已分别映射到 `system.performance.read`、`system.power.read`、`system.network.read`，并提供 `widget.hasPermission()` 供可选能力降级；组件管理页可查询并逐项调整授权，撤销必需权限会让实例进入可恢复的暂停占位。M2 公开权限词表已集中到单一 descriptor 契约，包校验、风险分类、首次授权和管理页标签共同使用该契约；`system.storage.read`、`system.display.read`、`audio.output.read/analyze/control`、v2 网络/通知/剪贴板/应用动作和用户选择文件范围已可声明并分别授权，但对应 M3/M4/M5 API 尚未因此提前启用。用户选择文件句柄的持久实现和更新权限差异页仍属于本里程碑后续工作。
+当前实现进度（2026-08-15）：已落地集中权限代理、来源绑定范围指纹、非阻塞首次授权、受阻占位卡及恢复入口；schema/API v2 以 `permissions` 表示必需权限、`optionalPermissions` 表示可选权限。CPU/内存/GPU、电源、存储、网络、显示、媒体、音频、通知、剪贴板、应用动作和用户选择文件范围已映射到分离权限，组件管理页可查询、调整和撤销授权，撤销必需权限会让实例进入可恢复的暂停占位。公开权限词表已集中到单一 descriptor 契约，包校验、风险分类、首次授权、管理页标签和 15/24/41 系统 API 契约共同使用该来源；剩余工作是更新扩权差异页和各权限撤销/设备变化的真实场景验收，不再以“权限已声明但 API 尚未启用”描述当前状态。
 
 交付物：
 
