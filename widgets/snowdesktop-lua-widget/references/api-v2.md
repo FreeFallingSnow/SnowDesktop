@@ -506,10 +506,13 @@ Ctrl+Enter 提交，滚轮与光标跟随会调整实例内滚动位置。普通
 剪贴板只由宿主在聚焦控件内处理，并没有开放通用剪贴板 API。
 
 `control.focus(key)` 只能在直接 click/doubleClick/pointerDown/pointerUp/wheel、菜单命令
-或宿主明确标记的打开回调同步栈中成功；render、schedule、data.change 和
-task.complete 不能抢走桌面键盘焦点。返回 `(focused, error)`，稳定失败码为
-`trustedGestureRequired`、`controlNotFound` 或 `hostUnavailable`。对应 feature 为
-`control.textInput`、`control.textArea` 和 `control.focus`。
+或宿主明确标记的打开回调同步栈中接受；render、schedule、data.change 和
+task.complete 不能抢走桌面键盘焦点。若该操作同时把目标输入框加入界面树，宿主会把
+最新一次聚焦请求保留到同一 surface 的下一次成功渲染，并在提交控件后聚焦；若届时
+仍未提交目标控件，则清除请求并记录诊断，不会在更晚的无关界面中意外聚焦。返回
+`(accepted, error)`，稳定失败码为 `trustedGestureRequired`、`controlNotFound` 或
+`hostUnavailable`。对应 feature 为 `control.textInput`、`control.textArea` 和
+`control.focus`。
 
 ### `schedule`
 

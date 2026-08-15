@@ -50,6 +50,7 @@
 #include "widget_audio_analysis_provider.h"
 #include "widget_interaction_region.h"
 #include "widget_view_tree.h"
+#include "widget_text_input_rules.h"
 
 struct ImGuiContext;
 struct PersonalizationSettings;
@@ -482,6 +483,8 @@ struct LuaWidget
     UINT_PTR namedTimerId = 0;          ///< widget.setTimer 命名定时器共用的下一次唤醒令牌
     snowdesktop::widget_runtime::NamedTimerSchedule namedTimers;
     std::vector<HostControl> hostControls;
+    snowdesktop::widget_runtime::DeferredHostInputFocus
+        deferredHostInputFocus;
     std::unordered_map<std::string, int> scrollOffsets;
     std::unordered_map<std::uint64_t, std::string> dataSubscriptions;
     std::unordered_set<std::uint64_t> taskIds;
@@ -1154,6 +1157,8 @@ public:
     bool RuntimeRegisterV2HostControl(const std::wstring& widgetId,
         LuaWidget::HostControl control, std::string& error);
     bool RuntimeFocusHostInput(const std::wstring& widgetId, const std::string& id);
+    void ResolveDeferredHostInputFocus(
+        const std::wstring& widgetId, std::string_view surface);
     bool RuntimeFocusHostInputFromTrustedGesture(
         const std::wstring& widgetId, const std::string& id,
         std::string& error);

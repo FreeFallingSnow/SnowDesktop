@@ -106,11 +106,13 @@ local function summarizeGpu(value)
             adapter.usagePercent or 0)
         local dedicatedTotal = math.max(0,
             adapter.dedicatedMemoryBytes or 0)
-        if dedicatedTotal > summary.dedicatedMemoryBytes then
-            summary.dedicatedMemoryBytes = dedicatedTotal
-            summary.dedicatedUsedBytes = math.max(0, math.min(
-                dedicatedTotal, adapter.dedicatedUsedBytes or 0))
-        end
+        summary.dedicatedMemoryBytes = math.max(
+            summary.dedicatedMemoryBytes, dedicatedTotal)
+        -- Match the pre-v2 PDH sampling contract: total capacity represents
+        -- the largest dedicated adapter, while usage aggregates every
+        -- GPU Adapter Memory instance exposed by the system.
+        summary.dedicatedUsedBytes = summary.dedicatedUsedBytes +
+            math.max(0, adapter.dedicatedUsedBytes or 0)
         if adapter.name and adapter.name ~= "" then
             summary.names[#summary.names + 1] = adapter.name
         end

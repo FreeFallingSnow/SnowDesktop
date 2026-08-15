@@ -430,8 +430,7 @@ local function render(context, model)
                 key = "edit-task-" .. task.id,
                 storageKey = taskTextKey(task.id),
                 shape = { type = "rect", x = textX,
-                    y = cardY + layout.cu(4), width = textW,
-                    height = cardH - layout.cu(8) },
+                    y = cardY, width = textW, height = cardH },
                 fontSize = fontSize,
                 textColor = palette.inputText,
                 placeholder = l10n.tr("lua_widget.reminders.untitled"),
@@ -440,11 +439,11 @@ local function render(context, model)
                 borderColor = palette.inputBorder,
                 focusedBorderColor = palette.inputFocus,
                 backgroundAlpha = 0.0,
-                focusedBackgroundAlpha = 0.08,
+                focusedBackgroundAlpha = 0.0,
                 borderAlpha = 0.0,
-                focusedBorderAlpha = 0.50,
-                radius = layout.cu(6),
-                padding = layout.cu(5),
+                focusedBorderAlpha = 0.0,
+                radius = 0,
+                padding = 0,
                 borderThickness = layout.cu(1),
                 selectAll = true,
                 liveUpdate = true,
@@ -501,10 +500,9 @@ local function event(_context, model, value)
         storage.set("selectedId", id)
         model.editingTaskId = nil
     elseif value.id == "task.edit" and id then
-        local alreadyEditing = model.editingTaskId == id
         storage.set("selectedId", id)
         model.editingTaskId = id
-        if alreadyEditing then control.focus("edit-task-" .. id) end
+        control.focus("edit-task-" .. id)
     elseif value.id == "task.toggle" and id then
         model.editingTaskId = nil
         toggleTask(id)

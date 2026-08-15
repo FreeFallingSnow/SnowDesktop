@@ -98,12 +98,6 @@ local function rebuildRows(model)
         end
     end
     model.selectedRef = nil
-    for _, row in ipairs(model.rows) do
-        if row.kind == "item" then
-            model.selectedRef = row.item.ref
-            break
-        end
-    end
 end
 
 local function startSearchTask(model, taskName, source, limit)
@@ -214,10 +208,11 @@ local function registerRegion(key, shape, events, label)
     })
 end
 
-local function drawCenteredStatus(text, x, y, width, font, color)
+local function drawCenteredStatus(text, x, y, width, height, font, color)
     local measured = draw.measureText(text, font, width, false)
     local measuredWidth = math.min(width, measured.width)
-    draw.text(x + math.max(0, (width - measuredWidth) / 2), y,
+    local drawY = y + math.max(0, (height - measured.height) / 2)
+    draw.text(x + math.max(0, (width - measuredWidth) / 2), drawY,
         text, font, color, math.max(1, measuredWidth + layout.cu(1)),
         false, true)
 end
@@ -261,7 +256,7 @@ local function render(context, model)
     if model.query == "" then
         drawCenteredStatus(
             l10n.tr("lua_widget.quick_launcher.empty_prompt"),
-            pad, listTop + viewportHeight * 0.32, width - pad * 2,
+            pad, listTop, width - pad * 2, viewportHeight,
             layout.fontCu(math.max(11, fontSize - 2)), colors.muted)
         return
     end
@@ -272,7 +267,7 @@ local function render(context, model)
             searching and
                 l10n.tr("lua_widget.quick_launcher.searching") or
                 l10n.tr("lua_widget.quick_launcher.no_matches"),
-            pad, listTop + viewportHeight * 0.32, width - pad * 2,
+            pad, listTop, width - pad * 2, viewportHeight,
             layout.fontCu(math.max(11, fontSize - 2)), colors.muted)
         return
     end

@@ -360,8 +360,8 @@ local function buildView(context)
     local sessionsInSet = getSessions() % config.longBreakInterval
 
     local shortSide = math.max(1, math.min(width, contentHeight))
-    local padding = math.max(layout.cu(6), shortSide * 0.05)
-    local gap = math.max(layout.cu(3), contentHeight * 0.022)
+    local padding = math.max(layout.cu(7), shortSide * 0.05)
+    local minimumGap = math.max(layout.cu(4), contentHeight * 0.018)
     local buttonDiameter = math.max(layout.cu(26), math.min(
         layout.cu(42), width * 0.16, contentHeight * 0.15))
     local buttonRadius = buttonDiameter / 2
@@ -385,12 +385,15 @@ local function buildView(context)
     local label = stateLabel(state) .. subline
     local timeText = formatTime(remaining)
     local labelHeight = labelFont * 1.4
+    local showRounds = state ~= "paused"
     local availableHeight = math.max(1, contentHeight - padding * 2)
-    local reservedHeight = labelHeight + dotDiameter + buttonDiameter +
-        gap * 3
+    local auxiliaryHeight = labelHeight + buttonDiameter +
+        (showRounds and dotDiameter or 0)
+    local gapCount = showRounds and 3 or 2
     local ringDiameter = math.max(layout.cu(38), math.min(
-        width - padding * 2, availableHeight - reservedHeight,
-        shortSide * 0.48))
+        width - padding * 2,
+        availableHeight - auxiliaryHeight - minimumGap * gapCount,
+        shortSide * 0.60))
     local ringThickness = math.max(layout.cu(3), ringDiameter * 0.065)
     local timeFont = math.max(layout.fontCu(15), math.min(
         layout.fontCu(40), ringDiameter * 0.28))
@@ -402,7 +405,7 @@ local function buildView(context)
             shape = "circle",
             width = dotDiameter,
             height = dotDiameter,
-            visible = state ~= "paused",
+            visible = showRounds,
             style = {
                 background = index <= sessionsInSet and accent or 0xFFFFFF,
                 opacity = index <= sessionsInSet and 1.0 or 0.30,
@@ -468,9 +471,9 @@ local function buildView(context)
         width = "fill",
         height = "fill",
         padding = padding,
-        gap = gap,
+        gap = 0,
         alignItems = "center",
-        justifyContent = "center",
+        justifyContent = "spaceBetween",
         events = {
             doubleClick = { id = "pomodoro.reset" },
             contextMenu = { id = "pomodoro.menu", scope = "component" },
@@ -525,6 +528,7 @@ local function buildView(context)
             view.row({
                 key = "pomodoro.rounds",
                 height = dotDiameter,
+                visible = showRounds,
                 gap = math.max(0, dotGap - dotDiameter),
                 alignItems = "center",
                 justifyContent = "center",

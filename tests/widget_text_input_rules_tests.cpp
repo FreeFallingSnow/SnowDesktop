@@ -48,12 +48,34 @@ void TestBoundedReplacement()
             text == L"1便笺",
         "a zero limit preserves the API v1 unlimited compatibility path");
 }
+
+void TestDeferredFocusRequest()
+{
+    using snowdesktop::widget_runtime::DeferredHostInputFocus;
+
+    DeferredHostInputFocus request;
+    Check(!request.Active(), "deferred focus starts empty");
+    request.Request("edit-task-1", "desktop");
+    Check(request.Active() && request.ControlId() == "edit-task-1",
+        "deferred focus retains the requested control");
+    Check(request.MatchesSurface("desktop") &&
+            !request.MatchesSurface("panel"),
+        "deferred focus is scoped to its originating surface");
+    request.Request("edit-task-2", "panel");
+    Check(request.ControlId() == "edit-task-2" &&
+            request.MatchesSurface("panel"),
+        "the newest deferred focus request replaces the previous request");
+    request.Clear();
+    Check(!request.Active() && request.ControlId().empty(),
+        "consuming deferred focus clears the request");
+}
 }
 
 int main()
 {
     TestUtf8Counting();
     TestBoundedReplacement();
+    TestDeferredFocusRequest();
     if (failures != 0)
     {
         std::cerr << failures << " widget text-input rule checks failed\n";

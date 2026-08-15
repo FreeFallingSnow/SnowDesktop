@@ -6,6 +6,21 @@
 
 namespace snowdesktop::widget_runtime
 {
+class DeferredHostInputFocus
+{
+public:
+    void Request(std::string controlId, std::string surface);
+    void Clear() noexcept;
+
+    bool Active() const noexcept;
+    bool MatchesSurface(std::string_view surface) const noexcept;
+    const std::string& ControlId() const noexcept;
+
+private:
+    std::string controlId_;
+    std::string surface_;
+};
+
 std::size_t Utf8BytesForHostText(std::wstring_view text) noexcept;
 
 bool HostTextReplacementFits(

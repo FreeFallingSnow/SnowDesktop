@@ -20,6 +20,35 @@ std::size_t Utf8CodePointBytes(std::uint32_t codePoint) noexcept
 }
 }
 
+void DeferredHostInputFocus::Request(
+    std::string controlId, std::string surface)
+{
+    controlId_ = std::move(controlId);
+    surface_ = std::move(surface);
+}
+
+void DeferredHostInputFocus::Clear() noexcept
+{
+    controlId_.clear();
+    surface_.clear();
+}
+
+bool DeferredHostInputFocus::Active() const noexcept
+{
+    return !controlId_.empty();
+}
+
+bool DeferredHostInputFocus::MatchesSurface(
+    std::string_view surface) const noexcept
+{
+    return Active() && surface_ == surface;
+}
+
+const std::string& DeferredHostInputFocus::ControlId() const noexcept
+{
+    return controlId_;
+}
+
 std::size_t Utf8BytesForHostText(std::wstring_view text) noexcept
 {
     std::size_t bytes = 0;

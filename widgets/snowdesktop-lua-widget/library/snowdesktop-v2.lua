@@ -1680,10 +1680,12 @@ function control.textInput(descriptor) end
 ---@return string value
 function control.textArea(descriptor) end
 
----Focus a text control from a direct trusted action/menu/open callback. Calls
----from render, schedules and asynchronous completions return false.
+---Accept a text-control focus request from a direct trusted action/menu/open
+---callback. A control added by that action is focused after the next successful
+---render of the same surface. Calls from render, schedules and asynchronous
+---completions return false.
 ---@param key string
----@return boolean focused
+---@return boolean accepted
 ---@return 'trustedGestureRequired'|'controlNotFound'|'hostUnavailable'|nil error
 function control.focus(key) end
 

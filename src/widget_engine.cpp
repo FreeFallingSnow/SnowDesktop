@@ -14186,6 +14186,8 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                     static_cast<int>(pointerY));
                 RuntimeInvalidateHost(widgetId);
             }
+            ResolveDeferredHostInputFocus(widgetId,
+                d2dState_->surfaceKind ? d2dState_->surfaceKind : "desktop");
         }
         if (snowdesktop::widget_api::ConsumeTransientStateDirty(state))
             RuntimeInvalidateHost(widgetId);
@@ -14306,6 +14308,8 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                     static_cast<int>(pointerY));
                 RuntimeInvalidateHost(widgetId);
             }
+            ResolveDeferredHostInputFocus(widgetId,
+                d2dState_->surfaceKind ? d2dState_->surfaceKind : "desktop");
         }
     }
     else
@@ -14381,6 +14385,8 @@ bool WidgetEngine::RenderWidgetPanel(
     const bool succeeded = snowdesktop::lua_runtime::ProtectedCall(
         state, argumentCount, 0) == LUA_OK;
     widget.panelFrameOpen = false;
+    if (succeeded)
+        ResolveDeferredHostInputFocus(widgetId, "panel");
     if (!succeeded)
     {
         const char* error = lua_tostring(state, -1);
@@ -19831,6 +19837,22 @@ bool WidgetEngine::ApplyWidgetPermissionDecision(
     return true;
 }
 
+void WidgetEngine::ResolveDeferredHostInputFocus(
+    const std::wstring& widgetId, std::string_view surface)
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0) return;
+    auto& request = widgets_[index].deferredHostInputFocus;
+    if (!request.MatchesSurface(surface)) return;
+    const std::string controlId = request.ControlId();
+    request.Clear();
+    if (!RuntimeFocusHostInput(widgetId, controlId))
+    {
+        RuntimeRecordError(widgetId,
+            "Deferred control.focus target was not submitted: " + controlId);
+    }
+}
+
 bool WidgetEngine::RuntimeFocusHostInputFromTrustedGesture(
     const std::wstring& widgetId, const std::string& id,
     std::string& error)
@@ -19841,11 +19863,29 @@ bool WidgetEngine::RuntimeFocusHostInputFromTrustedGesture(
         error = "trustedGestureRequired";
         return false;
     }
-    if (!RuntimeFocusHostInput(widgetId, id))
+    if (RuntimeFocusHostInput(widgetId, id))
+        return true;
+
+    const int index = FindWidget(widgetId);
+    if (index < 0)
+    {
+        error = "hostUnavailable";
+        return false;
+    }
+    const auto& controls = widgets_[index].hostControls;
+    const bool submittedWithKey = std::any_of(
+        controls.begin(), controls.end(), [&](const auto& control) {
+            return control.id == id;
+        });
+    if (submittedWithKey)
     {
         error = "controlNotFound";
         return false;
     }
+    const char* surface = d2dState_ && d2dState_->surfaceKind
+        ? d2dState_->surfaceKind : "desktop";
+    widgets_[index].deferredHostInputFocus.Request(id, surface);
+    RuntimeInvalidateHost(widgetId);
     return true;
 }
 
