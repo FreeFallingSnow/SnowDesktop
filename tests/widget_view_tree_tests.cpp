@@ -2321,7 +2321,7 @@ void TestFlexLayout()
     Check(luaL_dostring(state, R"lua(
         return view.row({
             key = "direction",
-            flexDirection = "column",
+            flexDirection = "columnReverse",
             alignItems = "start",
             gap = 5,
             children = {
@@ -2334,24 +2334,26 @@ void TestFlexLayout()
     ViewNode direction;
     std::string error;
     Check(ParseLuaViewTree(state, -1, direction, error) &&
-            direction.flexDirection == ViewFlexDirection::Column &&
+            direction.flexDirection == ViewFlexDirection::ColumnReverse &&
             direction.flexWrap == ViewFlexWrap::NoWrap &&
             direction.alignContent == ViewContentAlignment::Stretch,
         "row and column must parse typed flex-container properties");
     Check(ValidateAndLayoutViewTree(direction, 100.0f, 70.0f, error) &&
             Near(direction.children[0].frame.x, 0.0f) &&
-            Near(direction.children[0].frame.y, 0.0f) &&
+            Near(direction.children[0].frame.y, 50.0f) &&
             Near(direction.children[1].frame.x, 0.0f) &&
-            Near(direction.children[1].frame.y, 25.0f),
-        "flexDirection must override the row constructor's default main axis");
+            Near(direction.children[1].frame.y, 35.0f),
+        "reverse flexDirection must override the main axis without changing source order");
 
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(
         return view.row({
             key = "wrapped",
-            flexWrap = "wrap",
+            flexDirection = "rowReverse",
+            flexWrap = "wrapReverse",
             alignItems = "start",
-            alignContent = "spaceBetween",
+            alignContent = "spaceAround",
+            justifyContent = "spaceEvenly",
             gap = 10,
             children = {
                 view.shape({ key = "one", width = 60, height = 20 }),
@@ -2363,16 +2365,37 @@ void TestFlexLayout()
         "wrapped-flex Lua fixture must evaluate");
     ViewNode wrapped;
     Check(ParseLuaViewTree(state, -1, wrapped, error) &&
-            wrapped.flexWrap == ViewFlexWrap::Wrap &&
-            wrapped.alignContent == ViewContentAlignment::SpaceBetween,
-        "flexWrap and alignContent must retain typed values");
+            wrapped.flexDirection == ViewFlexDirection::RowReverse &&
+            wrapped.flexWrap == ViewFlexWrap::WrapReverse &&
+            wrapped.alignContent == ViewContentAlignment::SpaceAround &&
+            wrapped.justifyContent == ViewJustification::SpaceEvenly,
+        "reverse flex and distributed alignment enums must retain typed values");
     Check(ValidateAndLayoutViewTree(wrapped, 130.0f, 100.0f, error) &&
-            Near(wrapped.children[0].frame.x, 0.0f) &&
-            Near(wrapped.children[1].frame.x, 70.0f) &&
-            Near(wrapped.children[0].frame.y, 0.0f) &&
-            Near(wrapped.children[2].frame.x, 0.0f) &&
-            Near(wrapped.children[2].frame.y, 80.0f),
-        "wrapped flex lines must honor per-line gaps and alignContent");
+            Near(wrapped.children[0].frame.x, 70.0f) &&
+            Near(wrapped.children[1].frame.x, 0.0f) &&
+            Near(wrapped.children[0].frame.y, 67.5f) &&
+            Near(wrapped.children[2].frame.x, 35.0f) &&
+            Near(wrapped.children[2].frame.y, 12.5f),
+        "main and wrap reversal must compose with around/evenly distribution");
+
+    ViewNode around;
+    around.type = ViewNodeType::Row;
+    around.key = "around";
+    around.alignItems = ViewAlignment::Start;
+    around.justifyContent = ViewJustification::SpaceAround;
+    for (int index = 0; index < 2; ++index)
+    {
+        ViewNode child;
+        child.type = ViewNodeType::Shape;
+        child.key = "around-" + std::to_string(index);
+        child.width = { ViewLengthKind::Fixed, 20.0f };
+        child.height = { ViewLengthKind::Fixed, 10.0f };
+        around.children.push_back(std::move(child));
+    }
+    Check(ValidateAndLayoutViewTree(around, 100.0f, 20.0f, error) &&
+            Near(around.children[0].frame.x, 15.0f) &&
+            Near(around.children[1].frame.x, 65.0f),
+        "spaceAround must reserve half a distributed share at both edges");
 
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(

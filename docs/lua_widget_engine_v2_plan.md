@@ -1248,12 +1248,12 @@ view.row({
 - hover、pressed 和 focus 的纯视觉样式由宿主命中测试与动画器直接更新，不需要先进入 Lua，因此指针反馈可以在下一次可用呈现中出现。
 - `focusStyle` 与 `disabledStyle` 已进入公共属性矩阵、Lua 解析和 Direct2D 渲染；未声明 focus 样式时宿主提供默认可见轮廓，disabled 样式最后覆盖其他状态样式。
 - `validationState/validationMessage/validationStyle` 已进入输入和 select 的公共属性矩阵；校验样式在 pressed 后、focus/disabled 前叠加，消息同时进入语义 HelpText，但不会改变受控值提交规则。
-- `view.layout.constraints` 已把 `minWidth/maxWidth/minHeight/maxHeight/aspectRatio` 纳入公共属性矩阵、Lua 解析、固有尺寸和各容器布局；尺寸使用 0–4096 的有限逻辑单位，宽高比使用 0.01–100，并拒绝同轴上下限、宽高比约束或双固定尺寸互相冲突的树。Flex reverse 等剩余布局枚举仍按属性矩阵逐批实现。
+- `view.layout.constraints` 已把 `minWidth/maxWidth/minHeight/maxHeight/aspectRatio` 纳入公共属性矩阵、Lua 解析、固有尺寸和各容器布局；尺寸使用 0–4096 的有限逻辑单位，宽高比使用 0.01–100，并拒绝同轴上下限、宽高比约束或双固定尺寸互相冲突的树。
 - `view.layout.constraints` 的首批盒模型已加入 0–4096 的统一 `margin`：父布局在节点 frame 外保留空间，线性布局、grid、flow、stack、scroll content extent 与虚拟 item 都使用同一外尺寸模型。
 - `view.layout.edgeInsets` 已将 `margin/padding` 扩展为 scalar、`horizontal/vertical` 与 `top/right/bottom/left` 结构；轴值先展开、显式边值覆盖，四边值进入固有尺寸、全部容器布局、滚动范围、文本/图片内容区和宿主输入命中。仍不解析 CSS shorthand 字符串，也不支持负边距。
 - `view.positioning.basic` 已为 stack 直接子节点加入有界 `offset{x,y}` 与稳定 `zIndex`，绘制和命中使用同一排序而语义顺序保持声明顺序；容器 `clip=true` 同时约束后代绘制、命中、宿主输入和语义可见范围。任意 absolute 布局、裁剪路径与跨容器视觉重排仍不开放。
 - `view.layout.overflow` 现以 `overflow=visible|clip` 正式承接容器后代溢出策略，旧 `clip` 仅作一致性兼容入口；`view.shadow` 使用与即时绘制相同的最多 16 层有界衰减模型，`view.image.tint` 通过宿主 ColorMatrix 保留源 alpha 并替换 RGB。阴影不改变布局/命中，任意 transform 与声明式 transition 仍待后续批次。
-- `view.flex.sizing` 现已为 row/column/list 子项补齐 `flexBasis/flexGrow/flexShrink`：basis 先参与外尺寸求解，正空间按 grow 分配，溢出按 shrink×basis 迭代收缩并在命中 min 约束后重新分配；`fill` 保留隐式 grow=1。`view.flex.layout` 又为 row/column 加入 row/column 主轴覆盖、noWrap/wrap 和 start/center/end/stretch/spaceBetween 多行对齐，每行独立执行 sizing/justify。reverse、wrapReverse、spaceAround/spaceEvenly 仍待后续契约。
+- `view.flex.sizing` 现已为 row/column/list 子项补齐 `flexBasis/flexGrow/flexShrink`：basis 先参与外尺寸求解，正空间按 grow 分配，溢出按 shrink×basis 迭代收缩并在命中 min 约束后重新分配；`fill` 保留隐式 grow=1。`view.flex.layout` 已为 row/column 补齐 row/rowReverse/column/columnReverse 主轴、noWrap/wrap/wrapReverse，以及 start/center/end/stretch/spaceBetween/spaceAround/spaceEvenly 多行对齐；每行独立执行 sizing/justify，逻辑绘制、命中、键盘和 UIA 顺序不随视觉反转。
 - `view.text.flow` 现已让普通 text、label 节点与 styledText 共用 `textWrap/maxLines/overflowText/verticalAlign` 的 DirectWrite layout 规则；普通文本默认 noWrap+ellipsis，styledText 默认 wrap+clip，行数限制为 0（无限）到 64。
 - `view.text.typography` 现已补入 100–900 的 `fontWeight`、normal/italic `fontStyle`、1–1024 `lineHeight` 与 -64–256 `letterSpacing`；行高参与固有高度和 DirectWrite 行距，字距参与近似固有宽度和 TextLayout1 字符间距；宿主编辑器排版不由本 feature 暗示。
 - `view.text.locale` 已为文本、标签、输入和 select 加入有界 BCP 47 `locale` 与 auto/ltr/rtl `textDirection`：auto 使用首个强方向字符并以 locale 兜底，DirectWrite shaping、start/end 对齐及 select/radio/checkbox/toggle 的控件相对位置共用同一方向；声明、Tab 和 UIA 顺序不反转。

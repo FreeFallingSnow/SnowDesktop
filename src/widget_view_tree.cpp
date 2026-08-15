@@ -370,9 +370,17 @@ bool IsFlexContainer(ViewNodeType type) noexcept
 
 bool IsHorizontalFlex(const ViewNode& node) noexcept
 {
-    if (node.flexDirection == ViewFlexDirection::Row) return true;
-    if (node.flexDirection == ViewFlexDirection::Column) return false;
+    if (node.flexDirection == ViewFlexDirection::Row ||
+        node.flexDirection == ViewFlexDirection::RowReverse) return true;
+    if (node.flexDirection == ViewFlexDirection::Column ||
+        node.flexDirection == ViewFlexDirection::ColumnReverse) return false;
     return node.type == ViewNodeType::Row;
+}
+
+bool IsFlexMainReversed(const ViewNode& node) noexcept
+{
+    return node.flexDirection == ViewFlexDirection::RowReverse ||
+        node.flexDirection == ViewFlexDirection::ColumnReverse;
 }
 
 bool IsVirtualCollection(ViewNodeType type) noexcept
@@ -756,7 +764,7 @@ float RawIntrinsicWidth(const ViewNode& node)
             result += node.gap * static_cast<float>(visible - 1);
     }
     else if (IsFlexContainer(node.type) &&
-        node.flexWrap == ViewFlexWrap::Wrap)
+        node.flexWrap != ViewFlexWrap::NoWrap)
     {
         std::size_t visible = 0;
         for (const auto& child : node.children)
@@ -921,7 +929,7 @@ float RawIntrinsicHeight(const ViewNode& node)
     if ((IsFlexContainer(node.type) && !IsHorizontalFlex(node)) ||
         node.type == ViewNodeType::List ||
         (IsFlexContainer(node.type) &&
-            node.flexWrap == ViewFlexWrap::Wrap))
+            node.flexWrap != ViewFlexWrap::NoWrap))
     {
         std::size_t visible = 0;
         for (const auto& child : node.children)
@@ -971,6 +979,66 @@ float AlignOffset(ViewAlignment alignment, float available,
     if (alignment == ViewAlignment::End)
         return std::max(0.0f, available - size);
     return 0.0f;
+}
+
+struct AxisSpacing
+{
+    float leading = 0.0f;
+    float gap = 0.0f;
+};
+
+AxisSpacing ResolveAxisSpacing(ViewJustification alignment,
+    float baseGap, float available, float used,
+    std::size_t count) noexcept
+{
+    AxisSpacing result{ 0.0f, baseGap };
+    const float extra = std::max(0.0f, available - used);
+    if (alignment == ViewJustification::Center)
+        result.leading = extra * 0.5f;
+    else if (alignment == ViewJustification::End)
+        result.leading = extra;
+    else if (alignment == ViewJustification::SpaceBetween && count > 1)
+        result.gap += extra / static_cast<float>(count - 1);
+    else if (alignment == ViewJustification::SpaceAround && count > 0)
+    {
+        const float share = extra / static_cast<float>(count);
+        result.leading = share * 0.5f;
+        result.gap += share;
+    }
+    else if (alignment == ViewJustification::SpaceEvenly && count > 0)
+    {
+        const float share = extra / static_cast<float>(count + 1);
+        result.leading = share;
+        result.gap += share;
+    }
+    return result;
+}
+
+AxisSpacing ResolveAxisSpacing(ViewContentAlignment alignment,
+    float baseGap, float available, float used,
+    std::size_t count) noexcept
+{
+    AxisSpacing result{ 0.0f, baseGap };
+    const float extra = std::max(0.0f, available - used);
+    if (alignment == ViewContentAlignment::Center)
+        result.leading = extra * 0.5f;
+    else if (alignment == ViewContentAlignment::End)
+        result.leading = extra;
+    else if (alignment == ViewContentAlignment::SpaceBetween && count > 1)
+        result.gap += extra / static_cast<float>(count - 1);
+    else if (alignment == ViewContentAlignment::SpaceAround && count > 0)
+    {
+        const float share = extra / static_cast<float>(count);
+        result.leading = share * 0.5f;
+        result.gap += share;
+    }
+    else if (alignment == ViewContentAlignment::SpaceEvenly && count > 0)
+    {
+        const float share = extra / static_cast<float>(count + 1);
+        result.leading = share;
+        result.gap += share;
+    }
+    return result;
 }
 
 void LayoutNode(ViewNode& node, const ViewRect& frame);
@@ -1184,18 +1252,15 @@ void LayoutLinear(ViewNode& node, const ViewRect& content, bool horizontal)
 
     float used = gaps;
     for (float value : mainSizes) used += value;
-    float cursor = horizontal ? content.x : content.y;
-    float dynamicGap = node.gap;
-    if (node.justifyContent == ViewJustification::Center)
-        cursor += std::max(0.0f, (availableMain - used) * 0.5f);
-    else if (node.justifyContent == ViewJustification::End)
-        cursor += std::max(0.0f, availableMain - used);
-    else if (node.justifyContent == ViewJustification::SpaceBetween &&
-        visible.size() > 1 && availableMain > used)
-    {
-        dynamicGap += (availableMain - used) /
-            static_cast<float>(visible.size() - 1);
-    }
+    const AxisSpacing spacing = ResolveAxisSpacing(
+        node.justifyContent, node.gap, availableMain,
+        used, visible.size());
+    const bool reversed = IsFlexContainer(node.type) &&
+        IsFlexMainReversed(node);
+    const float axisStart = horizontal ? content.x : content.y;
+    float cursor = reversed
+        ? axisStart + availableMain - spacing.leading
+        : axisStart + spacing.leading;
 
     for (std::size_t index = 0; index < visible.size(); ++index)
     {
@@ -1204,6 +1269,7 @@ void LayoutLinear(ViewNode& node, const ViewRect& content, bool horizontal)
             ? node.alignItems : child.alignSelf;
         const float crossOffset = AlignOffset(
             alignment, availableCross, crossSizes[index]);
+        if (reversed) cursor -= mainSizes[index];
         ViewRect childFrame;
         if (horizontal)
             childFrame = { cursor, content.y + crossOffset,
@@ -1212,7 +1278,8 @@ void LayoutLinear(ViewNode& node, const ViewRect& content, bool horizontal)
             childFrame = { content.x + crossOffset, cursor,
                 crossSizes[index], mainSizes[index] };
         LayoutNode(child, childFrame);
-        cursor += mainSizes[index] + dynamicGap;
+        if (reversed) cursor -= spacing.gap;
+        else cursor += mainSizes[index] + spacing.gap;
     }
 }
 
@@ -1365,41 +1432,40 @@ void LayoutWrappedFlex(ViewNode& node, const ViewRect& content,
         usedCross = std::min(availableCross, usedCross);
     }
 
-    float crossCursor = horizontal ? content.y : content.x;
     if (availableCross > usedCross)
     {
         const float extra = availableCross - usedCross;
-        if (node.alignContent == ViewContentAlignment::Center)
-            crossCursor += extra * 0.5f;
-        else if (node.alignContent == ViewContentAlignment::End)
-            crossCursor += extra;
-        else if (node.alignContent == ViewContentAlignment::Stretch)
+        if (node.alignContent == ViewContentAlignment::Stretch)
         {
             const float addition = extra / static_cast<float>(lines.size());
             for (Line& line : lines) line.cross += addition;
             usedCross = availableCross;
         }
-        else if (node.alignContent == ViewContentAlignment::SpaceBetween &&
-            lines.size() > 1)
-            lineGap += extra / static_cast<float>(lines.size() - 1);
     }
 
+    const AxisSpacing crossSpacing = ResolveAxisSpacing(
+        node.alignContent, lineGap, availableCross,
+        usedCross, lines.size());
+    const bool crossReversed = node.flexWrap == ViewFlexWrap::WrapReverse;
+    const float crossStart = horizontal ? content.y : content.x;
+    float crossCursor = crossReversed
+        ? crossStart + availableCross - crossSpacing.leading
+        : crossStart + crossSpacing.leading;
+    const bool mainReversed = IsFlexMainReversed(node);
     for (Line& line : lines)
     {
         float usedMain = node.gap *
             static_cast<float>(line.items.size() - 1);
         for (const Item& item : line.items) usedMain += item.main;
-        float mainCursor = horizontal ? content.x : content.y;
-        float mainGap = node.gap;
-        if (node.justifyContent == ViewJustification::Center)
-            mainCursor += std::max(0.0f,
-                (availableMain - usedMain) * 0.5f);
-        else if (node.justifyContent == ViewJustification::End)
-            mainCursor += std::max(0.0f, availableMain - usedMain);
-        else if (node.justifyContent == ViewJustification::SpaceBetween &&
-            line.items.size() > 1 && availableMain > usedMain)
-            mainGap += (availableMain - usedMain) /
-                static_cast<float>(line.items.size() - 1);
+        const AxisSpacing mainSpacing = ResolveAxisSpacing(
+            node.justifyContent, node.gap, availableMain,
+            usedMain, line.items.size());
+        const float mainStart = horizontal ? content.x : content.y;
+        float mainCursor = mainReversed
+            ? mainStart + availableMain - mainSpacing.leading
+            : mainStart + mainSpacing.leading;
+        if (crossReversed) crossCursor -= line.cross;
+        const float lineCrossStart = crossCursor;
 
         for (Item& item : line.items)
         {
@@ -1423,16 +1489,19 @@ void LayoutWrappedFlex(ViewNode& node, const ViewRect& content,
                 ? resolved.height : resolved.width;
             const float crossOffset = AlignOffset(
                 alignment, line.cross, resolvedCross);
+            if (mainReversed) mainCursor -= resolvedMain;
             if (horizontal)
                 LayoutNode(child, { mainCursor,
-                    crossCursor + crossOffset,
+                    lineCrossStart + crossOffset,
                     resolvedMain, resolvedCross });
             else
-                LayoutNode(child, { crossCursor + crossOffset,
+                LayoutNode(child, { lineCrossStart + crossOffset,
                     mainCursor, resolvedCross, resolvedMain });
-            mainCursor += resolvedMain + mainGap;
+            if (mainReversed) mainCursor -= mainSpacing.gap;
+            else mainCursor += resolvedMain + mainSpacing.gap;
         }
-        crossCursor += line.cross + lineGap;
+        if (crossReversed) crossCursor -= crossSpacing.gap;
+        else crossCursor += line.cross + crossSpacing.gap;
     }
 }
 
@@ -1501,17 +1570,11 @@ void LayoutGrid(ViewNode& node, const ViewRect& content)
     }
 
     const float usedHeight = rowsHeight + gapsHeight;
-    float y = content.y;
-    if (node.justifyContent == ViewJustification::Center)
-        y += std::max(0.0f, (content.height - usedHeight) * 0.5f);
-    else if (node.justifyContent == ViewJustification::End)
-        y += std::max(0.0f, content.height - usedHeight);
-    else if (node.justifyContent == ViewJustification::SpaceBetween &&
-        rows > 1 && content.height > usedHeight)
-    {
-        rowGap += (content.height - usedHeight) /
-            static_cast<float>(rows - 1);
-    }
+    const AxisSpacing rowSpacing = ResolveAxisSpacing(
+        node.justifyContent, rowGap, content.height,
+        usedHeight, rows);
+    float y = content.y + rowSpacing.leading;
+    rowGap = rowSpacing.gap;
 
     std::vector<float> rowOffsets(rows, y);
     for (std::size_t row = 1; row < rows; ++row)
@@ -1611,18 +1674,10 @@ void LayoutFlow(ViewNode& node, const ViewRect& content)
     float y = content.y;
     for (auto& line : lines)
     {
-        float x = content.x;
-        float dynamicGap = columnGap;
-        if (node.justifyContent == ViewJustification::Center)
-            x += std::max(0.0f, (content.width - line.width) * 0.5f);
-        else if (node.justifyContent == ViewJustification::End)
-            x += std::max(0.0f, content.width - line.width);
-        else if (node.justifyContent == ViewJustification::SpaceBetween &&
-            line.items.size() > 1 && content.width > line.width)
-        {
-            dynamicGap += (content.width - line.width) /
-                static_cast<float>(line.items.size() - 1);
-        }
+        const AxisSpacing spacing = ResolveAxisSpacing(
+            node.justifyContent, columnGap, content.width,
+            line.width, line.items.size());
+        float x = content.x + spacing.leading;
         for (const Item& item : line.items)
         {
             ViewNode& child = *item.node;
@@ -1637,7 +1692,7 @@ void LayoutFlow(ViewNode& node, const ViewRect& content)
             LayoutNode(child, { x,
                 y + AlignOffset(alignment, line.height, resolved.height),
                 resolved.width, resolved.height });
-            x += resolved.width + dynamicGap;
+            x += resolved.width + spacing.gap;
         }
         y += line.height + rowGap;
     }
@@ -1734,7 +1789,7 @@ void LayoutNode(ViewNode& node, const ViewRect& frame)
     if (IsFlexContainer(node.type))
     {
         const bool horizontal = IsHorizontalFlex(node);
-        if (node.flexWrap == ViewFlexWrap::Wrap)
+        if (node.flexWrap != ViewFlexWrap::NoWrap)
             LayoutWrappedFlex(node, content, horizontal);
         else
             LayoutLinear(node, content, horizontal);

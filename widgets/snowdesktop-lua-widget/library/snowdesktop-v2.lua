@@ -116,9 +116,9 @@
 
 ---@alias SnowViewLength number|'auto'|'fill'
 ---@alias SnowViewFlexBasis number|'auto'
----@alias SnowViewFlexDirection 'row'|'column'
----@alias SnowViewFlexWrap 'noWrap'|'wrap'
----@alias SnowViewContentAlignment 'start'|'center'|'end'|'stretch'|'spaceBetween'
+---@alias SnowViewFlexDirection 'row'|'rowReverse'|'column'|'columnReverse'
+---@alias SnowViewFlexWrap 'noWrap'|'wrap'|'wrapReverse'
+---@alias SnowViewContentAlignment 'start'|'center'|'end'|'stretch'|'spaceBetween'|'spaceAround'|'spaceEvenly'
 ---@alias SnowViewTextWrap 'noWrap'|'wrap'
 ---@alias SnowViewTextOverflow 'clip'|'ellipsis'
 ---@alias SnowViewTextDirection 'auto'|'ltr'|'rtl'
@@ -298,7 +298,7 @@
 ---@field alignContent? SnowViewContentAlignment Distribution of wrapped lines on the cross axis; defaults to stretch.
 ---@field alignItems? SnowViewAlignment
 ---@field alignSelf? SnowViewSelfAlignment
----@field justifyContent? 'start'|'center'|'end'|'spaceBetween'
+---@field justifyContent? 'start'|'center'|'end'|'spaceBetween'|'spaceAround'|'spaceEvenly'
 ---@field fontSize? number
 ---@field fontWeight? integer One of 100, 200, ..., 900; overrides the compatibility bold flag.
 ---@field fontStyle? 'normal'|'italic'

@@ -105,19 +105,24 @@ enum class ViewJustification
     Center,
     End,
     SpaceBetween,
+    SpaceAround,
+    SpaceEvenly,
 };
 
 enum class ViewFlexDirection
 {
     Auto,
     Row,
+    RowReverse,
     Column,
+    ColumnReverse,
 };
 
 enum class ViewFlexWrap
 {
     NoWrap,
     Wrap,
+    WrapReverse,
 };
 
 enum class ViewContentAlignment
@@ -127,6 +132,8 @@ enum class ViewContentAlignment
     End,
     Stretch,
     SpaceBetween,
+    SpaceAround,
+    SpaceEvenly,
 };
 
 enum class ViewTextAlignment

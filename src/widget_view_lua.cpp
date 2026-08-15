@@ -1276,6 +1276,10 @@ bool ReadJustificationField(lua_State* state, int table,
     else if (text == "end") value = ViewJustification::End;
     else if (text == "spaceBetween")
         value = ViewJustification::SpaceBetween;
+    else if (text == "spaceAround")
+        value = ViewJustification::SpaceAround;
+    else if (text == "spaceEvenly")
+        value = ViewJustification::SpaceEvenly;
     else
     {
         error = "view field 'justifyContent' has an unsupported value";
@@ -1292,10 +1296,14 @@ bool ReadFlexDirectionField(lua_State* state, int table,
         return false;
     if (text.empty()) return true;
     if (text == "row") value = ViewFlexDirection::Row;
+    else if (text == "rowReverse")
+        value = ViewFlexDirection::RowReverse;
     else if (text == "column") value = ViewFlexDirection::Column;
+    else if (text == "columnReverse")
+        value = ViewFlexDirection::ColumnReverse;
     else
     {
-        error = "view field 'flexDirection' must be row or column";
+        error = "view field 'flexDirection' has an unsupported value";
         return false;
     }
     return true;
@@ -1310,9 +1318,10 @@ bool ReadFlexWrapField(lua_State* state, int table,
     if (text.empty()) return true;
     if (text == "noWrap") value = ViewFlexWrap::NoWrap;
     else if (text == "wrap") value = ViewFlexWrap::Wrap;
+    else if (text == "wrapReverse") value = ViewFlexWrap::WrapReverse;
     else
     {
-        error = "view field 'flexWrap' must be noWrap or wrap";
+        error = "view field 'flexWrap' has an unsupported value";
         return false;
     }
     return true;
@@ -1331,6 +1340,10 @@ bool ReadContentAlignmentField(lua_State* state, int table,
     else if (text == "stretch") value = ViewContentAlignment::Stretch;
     else if (text == "spaceBetween")
         value = ViewContentAlignment::SpaceBetween;
+    else if (text == "spaceAround")
+        value = ViewContentAlignment::SpaceAround;
+    else if (text == "spaceEvenly")
+        value = ViewContentAlignment::SpaceEvenly;
     else
     {
         error = "view field 'alignContent' has an unsupported value";
