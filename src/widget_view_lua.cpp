@@ -1131,6 +1131,23 @@ bool ReadFontStyleField(lua_State* state, int table,
     return true;
 }
 
+bool ReadTextDirectionField(lua_State* state, int table,
+    ViewTextDirection& value, std::string& error)
+{
+    std::string text;
+    if (!ReadStringField(state, table, "textDirection", text, false, error))
+        return false;
+    if (text.empty() || text == "auto") value = ViewTextDirection::Auto;
+    else if (text == "ltr") value = ViewTextDirection::LeftToRight;
+    else if (text == "rtl") value = ViewTextDirection::RightToLeft;
+    else
+    {
+        error = "view textDirection must be auto, ltr, or rtl";
+        return false;
+    }
+    return true;
+}
+
 bool ReadValidationStateField(lua_State* state, int table,
     ViewValidationState& value, std::string& error)
 {
@@ -1752,6 +1769,9 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadNonNegativeSizeField(state, index, "fontWeight",
             node.fontWeight, false, error) ||
         !ReadFontStyleField(state, index, node.fontStyle, error) ||
+        !ReadStringField(state, index, "locale", node.locale, false, error) ||
+        !ReadTextDirectionField(state, index,
+            node.textDirection, error) ||
         !ReadOptionalNodeFloatField(state, index, "lineHeight",
             node.lineHeight, error) ||
         !ReadFloatField(state, index, "letterSpacing",

@@ -95,6 +95,33 @@ bool ParseCivilDate(std::string_view value, CivilDate& date) noexcept
     return true;
 }
 
+bool IsValidLocaleTag(std::string_view value) noexcept
+{
+    if (value.empty()) return true;
+    if (value.size() > 85 || value.front() == '-' || value.back() == '-')
+        return false;
+    std::size_t subtagLength = 0;
+    std::size_t subtagIndex = 0;
+    for (const unsigned char character : value)
+    {
+        if (character == '-')
+        {
+            if (subtagLength == 0 || subtagLength > 8) return false;
+            ++subtagIndex;
+            subtagLength = 0;
+            continue;
+        }
+        const bool alpha = (character >= 'A' && character <= 'Z') ||
+            (character >= 'a' && character <= 'z');
+        const bool digit = character >= '0' && character <= '9';
+        if ((!alpha && !digit) || (subtagIndex == 0 && !alpha))
+            return false;
+        ++subtagLength;
+    }
+    return subtagLength > 0 && subtagLength <= 8 &&
+        (subtagIndex > 0 || subtagLength >= 2);
+}
+
 std::string FormatCivilDate(const CivilDate& date)
 {
     char buffer[11]{};
@@ -1199,6 +1226,11 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         error = "view verticalAlign must be start, center, or end";
         return false;
     }
+    if (!IsValidLocaleTag(node.locale))
+    {
+        error = "view locale must be an empty or bounded BCP 47 language tag";
+        return false;
+    }
     if ((node.offsetX != 0.0f || node.offsetY != 0.0f ||
             node.zIndex != 0) &&
         (!parentType || *parentType != ViewNodeType::Stack))
@@ -1537,7 +1569,7 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         node.validationMessage.size() > ViewTreeLimits::MaximumTextBytes ||
         textBytes + node.text.size() + node.inputValue.size() +
             node.placeholder.size() + node.alt.size() + node.tooltip.size() +
-            node.validationMessage.size() >
+            node.validationMessage.size() + node.locale.size() >
             ViewTreeLimits::MaximumTotalTextBytes)
     {
         error = "view tree text limit exceeded";
@@ -1545,7 +1577,7 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
     }
     textBytes += node.text.size() + node.inputValue.size() +
         node.placeholder.size() + node.alt.size() + node.tooltip.size() +
-        node.validationMessage.size();
+        node.validationMessage.size() + node.locale.size();
     if (node.type == ViewNodeType::StyledText)
     {
         if (node.spans.empty() ||

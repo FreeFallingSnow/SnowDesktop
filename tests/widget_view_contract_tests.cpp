@@ -113,6 +113,10 @@ void TestRepresentativeApplicability()
             ViewNodeAllowsProperty(ViewNodeType::Button, "flexBasis") &&
             ViewNodeAllowsProperty(ViewNodeType::Text, "flexShrink") &&
             ViewNodeAllowsProperty(ViewNodeType::StyledText, "textWrap") &&
+            ViewNodeAllowsProperty(ViewNodeType::Text, "locale") &&
+            ViewNodeAllowsProperty(ViewNodeType::TextInput,
+                "textDirection") &&
+            !ViewNodeAllowsProperty(ViewNodeType::Shape, "locale") &&
             ViewNodeAllowsProperty(ViewNodeType::Button, "maxLines") &&
             ViewNodeAllowsProperty(ViewNodeType::Link, "overflowText") &&
             ViewNodeAllowsProperty(ViewNodeType::Text, "verticalAlign") &&

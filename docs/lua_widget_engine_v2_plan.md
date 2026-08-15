@@ -1246,8 +1246,9 @@ view.row({
 - `view.layout.edgeInsets` 已将 `margin/padding` 扩展为 scalar、`horizontal/vertical` 与 `top/right/bottom/left` 结构；轴值先展开、显式边值覆盖，四边值进入固有尺寸、全部容器布局、滚动范围、文本/图片内容区和宿主输入命中。仍不解析 CSS shorthand 字符串，也不支持负边距。
 - `view.positioning.basic` 已为 stack 直接子节点加入有界 `offset{x,y}` 与稳定 `zIndex`，绘制和命中使用同一排序而语义顺序保持声明顺序；容器 `clip=true` 同时约束后代绘制、命中、宿主输入和语义可见范围。任意 absolute 布局、裁剪路径与跨容器视觉重排仍不开放。
 - `view.flex.sizing` 现已为 row/column/list 子项补齐 `flexBasis/flexGrow/flexShrink`：basis 先参与外尺寸求解，正空间按 grow 分配，溢出按 shrink×basis 迭代收缩并在命中 min 约束后重新分配；`fill` 保留隐式 grow=1。flexWrap/alignContent 仍由 flow 与后续完整 flex 契约承担。
-- `view.text.flow` 现已让普通 text、label 节点与 styledText 共用 `textWrap/maxLines/overflowText/verticalAlign` 的 DirectWrite layout 规则；普通文本默认 noWrap+ellipsis，styledText 默认 wrap+clip，行数限制为 0（无限）到 64。locale 与 bidi 方向仍待后续文本批次。
-- `view.text.typography` 现已补入 100–900 的 `fontWeight`、normal/italic `fontStyle`、1–1024 `lineHeight` 与 -64–256 `letterSpacing`；行高参与固有高度和 DirectWrite 行距，字距参与近似固有宽度和 TextLayout1 字符间距。locale 与 bidi 方向仍待后续文本批次，宿主编辑器排版不由本 feature 暗示。
+- `view.text.flow` 现已让普通 text、label 节点与 styledText 共用 `textWrap/maxLines/overflowText/verticalAlign` 的 DirectWrite layout 规则；普通文本默认 noWrap+ellipsis，styledText 默认 wrap+clip，行数限制为 0（无限）到 64。
+- `view.text.typography` 现已补入 100–900 的 `fontWeight`、normal/italic `fontStyle`、1–1024 `lineHeight` 与 -64–256 `letterSpacing`；行高参与固有高度和 DirectWrite 行距，字距参与近似固有宽度和 TextLayout1 字符间距；宿主编辑器排版不由本 feature 暗示。
+- `view.text.locale` 已为文本、标签、输入和 select 加入有界 BCP 47 `locale` 与 auto/ltr/rtl `textDirection`：auto 使用首个强方向字符并以 locale 兜底，DirectWrite shaping、start/end 对齐及 select/radio/checkbox/toggle 的控件相对位置共用同一方向；声明、Tab 和 UIA 顺序不反转。
 - `view.tooltip` 现已提供所有节点通用的有界纯文本提示：tooltip-only 节点也生成裁剪命中区，提示在 view/select/input 覆盖层之后绘制并限制在组件 surface 内，同时在无 validationMessage 时映射为 UIA HelpText；富提示、markup、任意窗口和把必要信息仅藏在 hover 中仍不允许。
 - 只有组件绑定了业务事件时才调用 Lua；状态更新、多个订阅通知和同一帧内的重复 `invalidate` 合并为至多一次 `view()` 求值和一次 scene diff。
 - 布局、绘制、命中区域和 UI Automation 边界来自同一棵提交成功的 scene tree；不允许视觉已经变化而点击仍指向旧树。

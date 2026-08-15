@@ -443,6 +443,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "view.text.flow") &&
             snowdesktop::widget_api::SupportsFeature(
+                "view.text.locale") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "view.text.typography") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.tooltip") &&

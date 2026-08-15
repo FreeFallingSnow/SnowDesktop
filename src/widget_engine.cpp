@@ -14728,6 +14728,15 @@ static std::string DeclarativeInputValue(
     return value;
 }
 
+static DWRITE_READING_DIRECTION ResolveViewTextDirection(
+    const snowdesktop::widget_runtime::ViewNode& node,
+    const std::wstring& text);
+static void SetViewTextLayoutAlignment(IDWriteTextLayout* layout,
+    snowdesktop::widget_runtime::ViewTextAlignment alignment);
+static void ApplyViewTextLocaleAndDirection(IDWriteTextLayout* layout,
+    const snowdesktop::widget_runtime::ViewNode& node,
+    const std::wstring& text);
+
 static void DrawDeclarativeViewInput(D2DState* state,
     const snowdesktop::widget_runtime::ViewNode& node,
     const snowdesktop::widget_runtime::ViewStyle& style, float opacity)
@@ -14787,6 +14796,8 @@ static void DrawDeclarativeViewInput(D2DState* state,
         : CreateHostSingleLineTextLayout(state, displayText,
             node.fontSize, innerWidth, content.height);
     if (!layout) return;
+    ApplyViewTextLocaleAndDirection(layout.Get(), node, displayText);
+    SetViewTextLayoutAlignment(layout.Get(), node.textAlign);
 
     int scrollOffset = multiline && state->engine
         ? state->engine->RuntimeGetScrollOffset(
@@ -14877,10 +14888,13 @@ static void DrawDeclarativeSelect(D2DState* state,
         if (option.value == node.selectedValue) label = option.label;
     const auto content = snowdesktop::widget_runtime::
         ViewNodeContentRect(node);
+    const std::wstring text = Utf8ToWideLocal(label);
+    const bool rightToLeft = ResolveViewTextDirection(node, text) ==
+        DWRITE_READING_DIRECTION_RIGHT_TO_LEFT;
     const float textLeft = std::max(
-        node.frame.x + 8.0f, content.x);
+        node.frame.x + (rightToLeft ? 28.0f : 8.0f), content.x);
     const float textRight = std::min(
-        node.frame.x + node.frame.width - 28.0f,
+        node.frame.x + node.frame.width - (rightToLeft ? 8.0f : 28.0f),
         content.x + content.width);
     if (state->dwrite && !label.empty())
     {
@@ -14891,22 +14905,29 @@ static void DrawDeclarativeSelect(D2DState* state,
             static_cast<int>(style.foreground.value_or(
                 node.selectedValue.empty() ? 0x94A3B8 : 0xFFFFFF)),
             opacity);
-        const std::wstring text = Utf8ToWideLocal(label);
-        if (format && brush)
-            state->ctx->DrawText(text.data(),
-                static_cast<UINT32>(text.size()), format,
-                D2D1::RectF(state->widgetRect.left + textLeft,
-                    state->widgetRect.top + content.y,
-                    state->widgetRect.left + std::max(textLeft, textRight),
-                    state->widgetRect.top + content.y + content.height),
-                brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        ComPtr<IDWriteTextLayout> layout;
+        const float textWidth = std::max(0.0f, textRight - textLeft);
+        if (format && brush && textWidth > 0.0f && SUCCEEDED(
+                state->dwrite->CreateTextLayout(text.data(),
+                    static_cast<UINT32>(text.size()), format,
+                    textWidth, content.height, &layout)) && layout)
+        {
+            ApplyViewTextLocaleAndDirection(layout.Get(), node, text);
+            SetViewTextLayoutAlignment(layout.Get(), node.textAlign);
+            layout->SetParagraphAlignment(
+                DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            state->ctx->DrawTextLayout(D2D1::Point2F(
+                state->widgetRect.left + textLeft,
+                state->widgetRect.top + content.y), layout.Get(), brush,
+                D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        }
     }
     if (ID2D1SolidColorBrush* brush = GetCachedBrush(state,
             static_cast<int>(style.foreground.value_or(0xFFFFFF)),
             opacity * 0.8f))
     {
         const float cx = state->widgetRect.left + node.frame.x +
-            node.frame.width - 14.0f;
+            (rightToLeft ? 14.0f : node.frame.width - 14.0f);
         const float cy = state->widgetRect.top + node.frame.y +
             node.frame.height * 0.5f;
         const float direction = node.expanded ? -1.0f : 1.0f;
@@ -14931,6 +14952,66 @@ static void SetViewTextLayoutAlignment(IDWriteTextLayout* layout,
         layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
     else
         layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+}
+
+static bool ViewLocaleDefaultsToRtl(std::string_view locale) noexcept
+{
+    const std::size_t separator = locale.find('-');
+    std::string language(locale.substr(0, separator));
+    std::transform(language.begin(), language.end(), language.begin(),
+        [](unsigned char character) {
+            return static_cast<char>(std::tolower(character));
+        });
+    return language == "ar" || language == "ckb" || language == "dv" ||
+        language == "fa" || language == "he" || language == "ps" ||
+        language == "sd" || language == "ug" || language == "ur" ||
+        language == "yi";
+}
+
+static DWRITE_READING_DIRECTION ResolveViewTextDirection(
+    const snowdesktop::widget_runtime::ViewNode& node,
+    const std::wstring& text)
+{
+    using snowdesktop::widget_runtime::ViewTextDirection;
+    if (node.textDirection == ViewTextDirection::LeftToRight)
+        return DWRITE_READING_DIRECTION_LEFT_TO_RIGHT;
+    if (node.textDirection == ViewTextDirection::RightToLeft)
+        return DWRITE_READING_DIRECTION_RIGHT_TO_LEFT;
+
+    if (!text.empty())
+    {
+        std::vector<WORD> characterTypes(text.size());
+        if (GetStringTypeW(CT_CTYPE2, text.data(),
+                static_cast<int>(text.size()), characterTypes.data()))
+        {
+            for (const WORD type : characterTypes)
+            {
+                if (type == C2_RIGHTTOLEFT)
+                    return DWRITE_READING_DIRECTION_RIGHT_TO_LEFT;
+                if (type == C2_LEFTTORIGHT)
+                    return DWRITE_READING_DIRECTION_LEFT_TO_RIGHT;
+            }
+        }
+    }
+    return ViewLocaleDefaultsToRtl(node.locale)
+        ? DWRITE_READING_DIRECTION_RIGHT_TO_LEFT
+        : DWRITE_READING_DIRECTION_LEFT_TO_RIGHT;
+}
+
+static void ApplyViewTextLocaleAndDirection(IDWriteTextLayout* layout,
+    const snowdesktop::widget_runtime::ViewNode& node,
+    const std::wstring& text)
+{
+    if (!layout) return;
+    layout->SetReadingDirection(ResolveViewTextDirection(node, text));
+    layout->SetFlowDirection(DWRITE_FLOW_DIRECTION_TOP_TO_BOTTOM);
+    if (!node.locale.empty() && !text.empty())
+    {
+        const std::wstring locale = Utf8ToWideLocal(node.locale);
+        if (!locale.empty())
+            layout->SetLocaleName(locale.c_str(), DWRITE_TEXT_RANGE{
+                0, static_cast<UINT32>(text.size()) });
+    }
 }
 
 static DWRITE_WORD_WRAPPING ViewTextWrapping(
@@ -15065,6 +15146,7 @@ static void DrawWidgetStyledText(D2DState* state,
                 static_cast<UINT32>(text.size()), format, width, layoutHeight,
                 &layout)) || !layout)
         return;
+    ApplyViewTextLocaleAndDirection(layout.Get(), node, text);
     SetViewTextLayoutAlignment(layout.Get(), node.textAlign);
     layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
     SetViewTextOverflow(state, format, layout.Get(), node);
@@ -15431,12 +15513,17 @@ static void DrawWidgetViewNode(D2DState* state,
     {
         const auto content = snowdesktop::widget_runtime::
             ViewNodeContentRect(node);
+        const bool rightToLeft = ResolveViewTextDirection(
+            node, Utf8ToWideLocal(node.text)) ==
+            DWRITE_READING_DIRECTION_RIGHT_TO_LEFT;
         const float trackWidth = std::min(36.0f,
             std::max(0.0f, content.width));
         const float trackHeight = std::min(20.0f, content.height);
-        const float right = state->widgetRect.left +
-            content.x + content.width;
-        const float left = std::max(rect.left, right - trackWidth);
+        const float contentLeft = state->widgetRect.left + content.x;
+        const float contentRight = contentLeft + content.width;
+        const float left = rightToLeft ? contentLeft :
+            std::max(contentLeft, contentRight - trackWidth);
+        const float right = std::min(contentRight, left + trackWidth);
         const float top = state->widgetRect.top + content.y +
             (content.height - trackHeight) * 0.5f;
         const D2D1_RECT_F trackRect = D2D1::RectF(
@@ -15477,9 +15564,14 @@ static void DrawWidgetViewNode(D2DState* state,
     {
         const auto content = snowdesktop::widget_runtime::
             ViewNodeContentRect(node);
+        const bool rightToLeft = ResolveViewTextDirection(
+            node, Utf8ToWideLocal(node.text)) ==
+            DWRITE_READING_DIRECTION_RIGHT_TO_LEFT;
         const float boxSize = std::min(18.0f, std::max(0.0f,
             std::min(content.width, content.height)));
-        const float left = state->widgetRect.left + content.x;
+        const float contentLeft = state->widgetRect.left + content.x;
+        const float left = rightToLeft
+            ? contentLeft + content.width - boxSize : contentLeft;
         const float top = state->widgetRect.top + content.y +
             (content.height - boxSize) * 0.5f;
         const D2D1_RECT_F box = D2D1::RectF(
@@ -15585,8 +15677,15 @@ static void DrawWidgetViewNode(D2DState* state,
             }
             const float indicatorRadius = std::min(8.0f,
                 std::max(0.0f, frame.height * 0.28f));
-            const float indicatorX = optionRect.left +
-                std::min(frame.width * 0.5f, node.padding.left + 10.0f);
+            const std::wstring label = Utf8ToWideLocal(option.label);
+            const bool rightToLeft = ResolveViewTextDirection(node, label) ==
+                DWRITE_READING_DIRECTION_RIGHT_TO_LEFT;
+            const float indicatorInset = std::min(frame.width * 0.5f,
+                (rightToLeft ? node.padding.right : node.padding.left) +
+                    10.0f);
+            const float indicatorX = rightToLeft
+                ? optionRect.right - indicatorInset
+                : optionRect.left + indicatorInset;
             const float indicatorY =
                 (optionRect.top + optionRect.bottom) * 0.5f;
             const std::uint32_t foreground =
@@ -15611,16 +15710,23 @@ static void DrawWidgetViewNode(D2DState* state,
             }
             if (format && state->dwrite)
             {
-                const std::wstring label = Utf8ToWideLocal(option.label);
                 ComPtr<IDWriteTextLayout> layout;
-                const float textLeft = indicatorX + indicatorRadius + 8.0f;
-                const float textWidth = std::max(0.0f,
-                    optionRect.right - textLeft - node.padding.right);
+                const float textLeft = rightToLeft
+                    ? optionRect.left + node.padding.left
+                    : indicatorX + indicatorRadius + 8.0f;
+                const float textRight = rightToLeft
+                    ? indicatorX - indicatorRadius - 8.0f
+                    : optionRect.right - node.padding.right;
+                const float textWidth = std::max(
+                    0.0f, textRight - textLeft);
                 if (!label.empty() && SUCCEEDED(
                         state->dwrite->CreateTextLayout(label.data(),
                             static_cast<UINT32>(label.size()), format,
                             textWidth, frame.height, &layout)) && layout)
                 {
+                    ApplyViewTextLocaleAndDirection(
+                        layout.Get(), node, label);
+                    SetViewTextLayoutAlignment(layout.Get(), node.textAlign);
                     layout->SetParagraphAlignment(
                         DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                     DWRITE_TRIMMING trimming{};
@@ -15938,9 +16044,23 @@ static void DrawWidgetViewNode(D2DState* state,
             float textLeft = state->widgetRect.left + content.x;
             float textRight = textLeft + content.width;
             if (node.type == ViewNodeType::Checkbox)
-                textLeft = std::min(textRight, textLeft + 26.0f);
+            {
+                const bool rightToLeft = ResolveViewTextDirection(
+                    node, text) == DWRITE_READING_DIRECTION_RIGHT_TO_LEFT;
+                if (rightToLeft)
+                    textRight = std::max(textLeft, textRight - 26.0f);
+                else
+                    textLeft = std::min(textRight, textLeft + 26.0f);
+            }
             else if (node.type == ViewNodeType::Toggle)
-                textRight = std::max(textLeft, textRight - 44.0f);
+            {
+                const bool rightToLeft = ResolveViewTextDirection(
+                    node, text) == DWRITE_READING_DIRECTION_RIGHT_TO_LEFT;
+                if (rightToLeft)
+                    textLeft = std::min(textRight, textLeft + 44.0f);
+                else
+                    textRight = std::max(textLeft, textRight - 44.0f);
+            }
             const float textWidth = std::max(0.0f,
                 textRight - textLeft);
             const float textHeight = content.height;
@@ -15952,6 +16072,7 @@ static void DrawWidgetViewNode(D2DState* state,
                     format, textWidth, layoutHeight,
                     &layout)) && layout)
             {
+                ApplyViewTextLocaleAndDirection(layout.Get(), node, text);
                 if (iconNode || node.textAlign == ViewTextAlignment::Center)
                     layout->SetTextAlignment(
                         DWRITE_TEXT_ALIGNMENT_CENTER);
@@ -16211,11 +16332,26 @@ static void DrawWidgetSelectOverlays(D2DState* state,
                 if (ID2D1SolidColorBrush* brush = GetCachedBrush(state,
                         0xFFFFFF, option.enabled && node.enabled
                             ? 1.0f : 0.42f))
-                    state->ctx->DrawText(text.data(),
-                        static_cast<UINT32>(text.size()), format,
-                        D2D1::RectF(rect.left + 10.0f, rect.top,
-                            rect.right - 10.0f, rect.bottom), brush,
-                        D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                {
+                    ComPtr<IDWriteTextLayout> layout;
+                    const float width = std::max(
+                        0.0f, frame.width - 20.0f);
+                    if (width > 0.0f && SUCCEEDED(
+                            state->dwrite->CreateTextLayout(text.data(),
+                                static_cast<UINT32>(text.size()), format,
+                                width, frame.height, &layout)) && layout)
+                    {
+                        ApplyViewTextLocaleAndDirection(
+                            layout.Get(), node, text);
+                        SetViewTextLayoutAlignment(
+                            layout.Get(), node.textAlign);
+                        layout->SetParagraphAlignment(
+                            DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                        state->ctx->DrawTextLayout(D2D1::Point2F(
+                            rect.left + 10.0f, rect.top), layout.Get(),
+                            brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                    }
+                }
             }
         }
         if (inheritedClip) state->ctx->PopAxisAlignedClip();

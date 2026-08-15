@@ -220,6 +220,7 @@ void TestLuaParsing()
             maxLines = 2, overflowText = "clip", verticalAlign = "end",
             fontWeight = 600, fontStyle = "italic",
             lineHeight = 24, letterSpacing = 1.5,
+            locale = "ar-SA", textDirection = "rtl",
             tooltip = "Current status",
         }
         local title = view.text(source)
@@ -274,6 +275,9 @@ void TestLuaParsing()
             root.children[0].verticalAlign == ViewAlignment::End &&
             root.children[0].fontWeight == 600 &&
             root.children[0].fontStyle == ViewFontStyle::Italic &&
+            root.children[0].locale == "ar-SA" &&
+            root.children[0].textDirection ==
+                ViewTextDirection::RightToLeft &&
             root.children[0].lineHeight == 24.0f &&
             Near(root.children[0].letterSpacing, 1.5f) &&
             root.children[0].tooltip == "Current status" &&
@@ -2160,6 +2164,42 @@ void TestStackPositioningAndClipping()
         "clip must reject nodes that cannot have descendants");
     lua_close(state);
 }
+
+void TestTextLocaleValidation()
+{
+    ViewNode valid;
+    valid.type = ViewNodeType::Text;
+    valid.key = "localized";
+    valid.text = "مرحبا";
+    valid.locale = "ar-Arab-SA";
+    valid.textDirection = ViewTextDirection::Auto;
+    std::string error;
+    Check(ValidateAndLayoutViewTree(valid, 120.0f, 40.0f, error),
+        "bounded BCP 47 locale tags must validate");
+
+    ViewNode invalid = valid;
+    invalid.key = "invalid-locale";
+    invalid.locale = "ar_SA";
+    Check(!ValidateAndLayoutViewTree(invalid, 120.0f, 40.0f, error) &&
+            error ==
+                "view locale must be an empty or bounded BCP 47 language tag",
+        "locale tags with unsupported separators must reject the tree");
+
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "Lua state must be available");
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    Check(luaL_dostring(state, R"lua(
+        return view.text({ key = "direction", text = "text",
+            textDirection = "sideways" })
+    )lua") == LUA_OK,
+        "invalid direction Lua fixture must evaluate");
+    ViewNode parsed;
+    Check(!ParseLuaViewTree(state, -1, parsed, error) &&
+            error == "view textDirection must be auto, ltr, or rtl",
+        "unknown text directions must fail during atomic tree parsing");
+    lua_close(state);
+}
 }
 
 int main()
@@ -2183,6 +2223,7 @@ int main()
     TestUniformMargins();
     TestFlexSizing();
     TestStackPositioningAndClipping();
+    TestTextLocaleValidation();
     std::cout << "Widget view tree tests passed\n";
     return 0;
 }

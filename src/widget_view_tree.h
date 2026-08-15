@@ -132,6 +132,13 @@ enum class ViewFontStyle
     Italic,
 };
 
+enum class ViewTextDirection
+{
+    Auto,
+    LeftToRight,
+    RightToLeft,
+};
+
 enum class ViewValidationState
 {
     None,
@@ -298,6 +305,8 @@ struct ViewNode
     float fontSize = 15.0f;
     std::size_t fontWeight = 0;
     ViewFontStyle fontStyle = ViewFontStyle::Normal;
+    std::string locale;
+    ViewTextDirection textDirection = ViewTextDirection::Auto;
     std::optional<float> lineHeight;
     float letterSpacing = 0.0f;
     float value = 0.0f;

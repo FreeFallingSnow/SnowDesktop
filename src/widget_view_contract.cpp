@@ -70,7 +70,7 @@ constexpr auto kProperties = std::to_array<std::string_view>({
     "columnGap", "rowGap", "itemCount",
     "itemExtent", "firstIndex", "overscan", "flexBasis", "flexGrow",
     "flexShrink", "fontSize", "fontWeight", "fontStyle", "lineHeight",
-    "letterSpacing", "bold",
+    "letterSpacing", "locale", "textDirection", "bold",
     "checked", "visible", "enabled", "cursor", "tooltip", "alignItems", "showScrollbar",
     "alignSelf", "justifyContent", "textAlign", "verticalAlign",
     "textWrap", "maxLines", "overflowText", "style", "hoverStyle",
@@ -162,6 +162,13 @@ constexpr bool IsTextResourceNode(ViewNodeType type) noexcept
         ViewNodeType::RadioGroup, ViewNodeType::MonthCalendar });
 }
 
+constexpr bool IsTextualNode(ViewNodeType type) noexcept
+{
+    return (IsTextResourceNode(type) &&
+            type != ViewNodeType::MonthCalendar) || IsInput(type) ||
+        type == ViewNodeType::Select;
+}
+
 constexpr bool IsActionNode(ViewNodeType type) noexcept
 {
     return IsType(type, { ViewNodeType::Button, ViewNodeType::IconButton,
@@ -225,6 +232,8 @@ bool ViewNodeAllowsProperty(
         return type == ViewNodeType::Icon || type == ViewNodeType::IconButton;
     if (property == "source") return type == ViewNodeType::Image;
     if (property == "font") return IsTextResourceNode(type);
+    if (property == "locale" || property == "textDirection")
+        return IsTextualNode(type);
     if (property == "fit" || property == "alignment" ||
         property == "interpolation" || property == "alt")
         return type == ViewNodeType::Image ||

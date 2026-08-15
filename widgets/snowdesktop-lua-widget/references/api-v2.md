@@ -95,6 +95,7 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.flex.sizing` 提供线性布局的 basis/grow/shrink 尺寸分配，
 `view.text.flow` 提供文本块的换行、行数、溢出和垂直对齐，
 `view.text.typography` 提供字体粗细、字形、行高和字距，
+`view.text.locale` 提供 BCP 47 locale 与双向文本基准方向，
 `view.tooltip` 提供宿主管理的纯文本元素提示，
 `view.grid.uniform` 提供基础 `grid`，`view.flow.wrap` 提供横向换行 `flow`。
 `view.scroll` 提供宿主滚动视口，`view.collection.basic` 提供基础集合，
@@ -184,6 +185,12 @@ down/up、doubleClick 和 contextMenu，动作通过 `event.kind == "action"` �
 `letterSpacing`。显式 fontWeight 优先于兼容属性 `bold`；lineHeight 同时参与固有高度和
 DirectWrite 行距，letterSpacing 同时参与近似固有宽度与 TextLayout1 字符间距。该 feature
 不改变宿主文本编辑器的输入、选择或 IME 度量，输入控件排版将在对应控件契约中单独开放。
+
+探测 `view.text.locale` 后，text/styledText、输入、select 和带文字标签的节点可使用
+`locale` 与 `textDirection="auto|ltr|rtl"`。locale 必须是最长 85 字节、以连字符分隔的
+BCP 47 标签；空值继承宿主语言。auto 先按首个强方向字符确定段落方向，没有强字符时再按
+locale 决定。LTR/RTL 会同时影响 DirectWrite shaping、start/end 对齐、select 指示器、
+radio/checkbox/toggle 的标签与控件相对位置；方向不会反转声明、Tab 或 UIA 子节点顺序。
 
 探测 `view.tooltip` 后，任意声明式节点可设置最多 4096 UTF-8 字节的纯字符串 `tooltip`。
 宿主会为只有提示而没有 action 的节点创建裁剪命中区，在元素 hover 时将提示限制在组件 surface

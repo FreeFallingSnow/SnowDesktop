@@ -118,6 +118,7 @@
 ---@alias SnowViewFlexBasis number|'auto'
 ---@alias SnowViewTextWrap 'noWrap'|'wrap'
 ---@alias SnowViewTextOverflow 'clip'|'ellipsis'
+---@alias SnowViewTextDirection 'auto'|'ltr'|'rtl'
 ---@alias SnowViewAlignment 'start'|'center'|'end'|'stretch'
 ---@alias SnowViewSelfAlignment 'auto'|'start'|'center'|'end'|'stretch'
 ---@alias SnowViewImageFit 'fill'|'contain'|'cover'|'none'
@@ -271,6 +272,8 @@
 ---@field fontStyle? 'normal'|'italic'
 ---@field lineHeight? number Uniform line height from 1 through 1024 logical units.
 ---@field letterSpacing? number Additional spacing from -64 through 256 logical units.
+---@field locale? string Bounded BCP 47 language tag used for shaping and font fallback; defaults to the host locale.
+---@field textDirection? SnowViewTextDirection Base paragraph direction; auto uses the first strong character and then the locale.
 ---@field bold? boolean
 ---@field checked? boolean Required explicit controlled value for toggle and checkbox nodes.
 ---@field showScrollbar? boolean Scroll or virtual-collection host scrollbar visibility; defaults to true.
