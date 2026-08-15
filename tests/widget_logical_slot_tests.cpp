@@ -169,6 +169,41 @@ void TestPersistenceRoundTrip()
             error.find("primaryApp") != std::string::npos,
         "corrupt host slot state must fail closed with its slot id");
 }
+
+void TestBoundedUndoRedoHistory()
+{
+    LogicalSlotModel model;
+    std::string error;
+    Check(model.Configure(ParseDeclarations(), error),
+        "history fixture must configure");
+    LogicalSlotHistory history;
+    LogicalSlotChange change;
+    auto previous = model;
+    Check(model.Bind("primaryApp",
+            Item("app.reference", "Calendar", "app:calendar"),
+            change, error),
+        "history fixture mutation must succeed");
+    history.Record(std::move(previous), change);
+    Check(history.CanUndo() && !history.CanRedo(),
+        "a committed slot mutation must open one undo branch");
+
+    Check(history.Undo(model, change, error) &&
+            change.operation == "undone" &&
+            model.Find("primaryApp")->items.empty() &&
+            history.CanRedo(),
+        "undo must atomically restore the exact prior slot model");
+    Check(history.Redo(model, change, error) &&
+            change.operation == "redone" &&
+            model.Find("primaryApp")->items.size() == 1,
+        "redo must restore the forward slot model and metadata");
+
+    previous = model;
+    Check(model.Clear("primaryApp", change, error),
+        "a new branch mutation must succeed");
+    history.Record(std::move(previous), change);
+    Check(!history.CanRedo(),
+        "recording a new slot transaction must discard the redo branch");
+}
 }
 
 int main()
@@ -176,6 +211,7 @@ int main()
     TestManifestValidation();
     TestBindingAndCollectionTransactions();
     TestPersistenceRoundTrip();
+    TestBoundedUndoRedoHistory();
     std::cout << "widget logical slot tests passed\n";
     return 0;
 }

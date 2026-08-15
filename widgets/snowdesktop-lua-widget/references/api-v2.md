@@ -486,7 +486,13 @@ return view.slotSurface({
 宿主拖放提交后会派发 `event.kind == "slot.changed"`，字段为 `slotId`、`slotKind`、
 `revision`、`operation`、opaque `itemIds` 和 `source == "host.drop"`。Lua 应重新读取对应
 句柄并重算 view，不能把事件内容当作可写模型。可分别探测 `slots.nativeDrop` 与
-`slots.event.changed`。宿主选择器、原生槽位项拖出/同槽重排、删除手势和 undo 仍未接入。
+`slots.event.changed`。宿主选择器、原生槽位项拖出/同槽重排和删除手势仍未接入。
+
+探测 `slots.history` 后，可在当前可信用户 action 中调用 `slots.undo()` / `slots.redo()`；
+它们按组件实例维护最近 32 次宿主槽位事务，返回 operation 为 `undone` / `redone` 的
+`SnowLogicalSlotChange`。`slots.canUndo()` / `slots.canRedo()` 可在 view 中读取。新事务会清空
+redo 栈，热重载或重启不会恢复历史。当前这仍是组件动作入口，宿主通用 Ctrl+Z、原生
+槽位项右键删除和键盘移动尚未接入。
 
 ### `interaction` 与元素级菜单
 

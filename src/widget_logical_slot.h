@@ -124,4 +124,36 @@ private:
     LogicalSlotDeclarations declarations_;
     std::map<std::string, LogicalSlotSnapshot, std::less<>> snapshots_;
 };
+
+class LogicalSlotHistory
+{
+public:
+    static constexpr std::size_t MaximumEntries = 32;
+
+    void Record(LogicalSlotModel previous,
+        const LogicalSlotChange& change);
+    bool CanUndo() const noexcept { return !undo_.empty(); }
+    bool CanRedo() const noexcept { return !redo_.empty(); }
+    bool Undo(LogicalSlotModel& model, LogicalSlotChange& change,
+        std::string& error);
+    bool Redo(LogicalSlotModel& model, LogicalSlotChange& change,
+        std::string& error);
+    void Clear() noexcept
+    {
+        undo_.clear();
+        redo_.clear();
+    }
+
+private:
+    struct Entry
+    {
+        LogicalSlotModel model;
+        LogicalSlotChange change;
+    };
+
+    bool Restore(bool redo, LogicalSlotModel& model,
+        LogicalSlotChange& change, std::string& error);
+    std::vector<Entry> undo_;
+    std::vector<Entry> redo_;
+};
 }

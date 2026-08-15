@@ -503,6 +503,7 @@ struct LuaWidget
         applicationReferences;
     std::unordered_map<std::string, ItemReference> itemReferences;
     snowdesktop::widget_runtime::LogicalSlotModel logicalSlots;
+    snowdesktop::widget_runtime::LogicalSlotHistory logicalSlotHistory;
     snowdesktop::widget_runtime::WidgetInteractionRegions interactionRegions;
     std::optional<snowdesktop::widget_runtime::ViewNode> viewTree;
     bool panelFrameOpen = false;
@@ -1090,6 +1091,18 @@ public:
     bool RuntimeMoveLogicalSlotItem(const std::wstring& widgetId,
         std::uint64_t ownerToken, std::string_view slotId,
         std::string_view itemId, std::size_t targetIndex,
+        snowdesktop::widget_runtime::LogicalSlotChange& change,
+        std::string& error);
+    bool RuntimeCanUndoLogicalSlot(const std::wstring& widgetId,
+        std::uint64_t ownerToken) const;
+    bool RuntimeCanRedoLogicalSlot(const std::wstring& widgetId,
+        std::uint64_t ownerToken) const;
+    bool RuntimeUndoLogicalSlot(const std::wstring& widgetId,
+        std::uint64_t ownerToken,
+        snowdesktop::widget_runtime::LogicalSlotChange& change,
+        std::string& error);
+    bool RuntimeRedoLogicalSlot(const std::wstring& widgetId,
+        std::uint64_t ownerToken,
         snowdesktop::widget_runtime::LogicalSlotChange& change,
         std::string& error);
     std::optional<std::wstring> RuntimeResolvePackageAsset(

@@ -715,4 +715,49 @@ bool LogicalSlotModel::ParseSnapshot(std::string_view text,
     }
     return true;
 }
+
+void LogicalSlotHistory::Record(LogicalSlotModel previous,
+    const LogicalSlotChange& change)
+{
+    if (undo_.size() >= MaximumEntries)
+        undo_.erase(undo_.begin());
+    undo_.push_back({ std::move(previous), change });
+    redo_.clear();
+}
+
+bool LogicalSlotHistory::Restore(bool redo, LogicalSlotModel& model,
+    LogicalSlotChange& change, std::string& error)
+{
+    auto& source = redo ? redo_ : undo_;
+    auto& destination = redo ? undo_ : redo_;
+    if (source.empty())
+    {
+        error = redo ? "nothingToRedo" : "nothingToUndo";
+        return false;
+    }
+    Entry entry = std::move(source.back());
+    source.pop_back();
+    if (destination.size() >= MaximumEntries)
+        destination.erase(destination.begin());
+    destination.push_back({ std::move(model), entry.change });
+    model = std::move(entry.model);
+    change = std::move(entry.change);
+    change.operation = redo ? "redone" : "undone";
+    if (const auto* snapshot = model.Find(change.slotId))
+        change.revision = snapshot->revision;
+    error.clear();
+    return true;
+}
+
+bool LogicalSlotHistory::Undo(LogicalSlotModel& model,
+    LogicalSlotChange& change, std::string& error)
+{
+    return Restore(false, model, change, error);
+}
+
+bool LogicalSlotHistory::Redo(LogicalSlotModel& model,
+    LogicalSlotChange& change, std::string& error)
+{
+    return Restore(true, model, change, error);
+}
 }

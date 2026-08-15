@@ -407,6 +407,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "slots.event.changed") &&
             snowdesktop::widget_api::SupportsFeature(
+                "slots.history") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "view.monthCalendar") &&
             snowdesktop::widget_api::SupportsFeature("view.scroll") &&
             snowdesktop::widget_api::SupportsFeature(

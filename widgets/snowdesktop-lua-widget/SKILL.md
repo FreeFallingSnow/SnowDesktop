@@ -124,9 +124,14 @@ grant file contents, expose paths, or move source objects. Probe
 desktop/Application/Explorer object with host insertion preview, and handle
 `slot.changed` only after probing `slots.event.changed`; re-read the slot model
 instead of trusting event data as writable state. Multi-object native ingress,
-native item drag-out/reorder, host picker, and undo are not available yet. A
+native item drag-out/reorder and the host picker are not available yet. A
 source reference used by Lua mutation must still come from a bounded host
 search or explicit file-reference task.
+Probe `slots.history` to expose explicit component actions for the bounded
+per-instance undo/redo history. Call undo/redo only from the current trusted
+action and use canUndo/canRedo while rendering; history is not restored after
+reload or restart. Host Ctrl+Z and native item removal/reorder are still
+separate unavailable interactions.
 Probe `view.scroll` for a host-owned vertical or horizontal viewport. Give it
 exactly one child, keep that child visible, and keep the same key so the host
 retains its clamped offset; never offset descendants yourself. Probe

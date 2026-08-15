@@ -16844,6 +16844,7 @@ void RebuildLogicalSlotReferences(LuaWidget& widget)
 bool CommitLogicalSlotMutation(WidgetEngine& engine, LuaWidget& widget,
     snowdesktop::widget_runtime::LogicalSlotModel previousModel,
     std::unordered_map<std::string, std::string> previousStorage,
+    const snowdesktop::widget_runtime::LogicalSlotChange& change,
     std::string& error)
 {
     auto& storage = ActiveStorage();
@@ -16856,6 +16857,7 @@ bool CommitLogicalSlotMutation(WidgetEngine& engine, LuaWidget& widget,
         error = "logical slot persistence failed";
         return false;
     }
+    widget.logicalSlotHistory.Record(std::move(previousModel), change);
     RebuildLogicalSlotReferences(widget);
     engine.RuntimeInvalidateHost(widget.widgetId);
     return true;
@@ -16997,7 +16999,8 @@ bool WidgetEngine::RuntimeBindHostLogicalSlot(
         return false;
     if (change.operation == "unchanged") return true;
     if (!CommitLogicalSlotMutation(*this, *widget,
-            std::move(previousModel), std::move(previousStorage), error))
+            std::move(previousModel), std::move(previousStorage),
+            change, error))
         return false;
 
     const auto eventChange = change;
@@ -17127,7 +17130,7 @@ bool WidgetEngine::RuntimeBindLogicalSlot(const std::wstring& widgetId,
         return false;
     if (change.operation == "unchanged") return true;
     return CommitLogicalSlotMutation(*this, *widget,
-        std::move(previousModel), std::move(previousStorage), error);
+        std::move(previousModel), std::move(previousStorage), change, error);
 }
 
 bool WidgetEngine::RuntimeClearLogicalSlot(const std::wstring& widgetId,
@@ -17156,7 +17159,7 @@ bool WidgetEngine::RuntimeClearLogicalSlot(const std::wstring& widgetId,
     if (!widget->logicalSlots.Clear(slotId, change, error)) return false;
     if (change.operation == "unchanged") return true;
     return CommitLogicalSlotMutation(*this, *widget,
-        std::move(previousModel), std::move(previousStorage), error);
+        std::move(previousModel), std::move(previousStorage), change, error);
 }
 
 bool WidgetEngine::RuntimeRemoveLogicalSlotItem(
@@ -17186,7 +17189,7 @@ bool WidgetEngine::RuntimeRemoveLogicalSlotItem(
     if (!widget->logicalSlots.Remove(slotId, itemId, change, error))
         return false;
     return CommitLogicalSlotMutation(*this, *widget,
-        std::move(previousModel), std::move(previousStorage), error);
+        std::move(previousModel), std::move(previousStorage), change, error);
 }
 
 bool WidgetEngine::RuntimeMoveLogicalSlotItem(const std::wstring& widgetId,
@@ -17218,7 +17221,109 @@ bool WidgetEngine::RuntimeMoveLogicalSlotItem(const std::wstring& widgetId,
         return false;
     if (change.operation == "unchanged") return true;
     return CommitLogicalSlotMutation(*this, *widget,
-        std::move(previousModel), std::move(previousStorage), error);
+        std::move(previousModel), std::move(previousStorage), change, error);
+}
+
+bool WidgetEngine::RuntimeCanUndoLogicalSlot(
+    const std::wstring& widgetId, std::uint64_t ownerToken) const
+{
+    const auto widget = std::find_if(widgets_.begin(), widgets_.end(),
+        [&widgetId, ownerToken](const LuaWidget& candidate) {
+            return candidate.widgetId == widgetId &&
+                candidate.runtimeToken == ownerToken;
+        });
+    return widget != widgets_.end() && !widget->preview &&
+        widget->logicalSlotHistory.CanUndo();
+}
+
+bool WidgetEngine::RuntimeCanRedoLogicalSlot(
+    const std::wstring& widgetId, std::uint64_t ownerToken) const
+{
+    const auto widget = std::find_if(widgets_.begin(), widgets_.end(),
+        [&widgetId, ownerToken](const LuaWidget& candidate) {
+            return candidate.widgetId == widgetId &&
+                candidate.runtimeToken == ownerToken;
+        });
+    return widget != widgets_.end() && !widget->preview &&
+        widget->logicalSlotHistory.CanRedo();
+}
+
+namespace
+{
+bool RestoreLogicalSlotHistory(WidgetEngine& engine, LuaWidget& widget,
+    bool redo, snowdesktop::widget_runtime::LogicalSlotChange& change,
+    std::string& error)
+{
+    auto previousHistory = widget.logicalSlotHistory;
+    auto currentModel = widget.logicalSlots;
+    auto previousStorage = ActiveStorage();
+    const bool restored = redo
+        ? widget.logicalSlotHistory.Redo(widget.logicalSlots, change, error)
+        : widget.logicalSlotHistory.Undo(widget.logicalSlots, change, error);
+    if (!restored) return false;
+    auto& storage = ActiveStorage();
+    widget.logicalSlots.Export(storage, WidgetWideToUtf8(widget.widgetId));
+    if (!snowdesktop::widget_runtime::HasStorageOverlay() &&
+        !SaveStorageFile())
+    {
+        storage = std::move(previousStorage);
+        widget.logicalSlots = std::move(currentModel);
+        widget.logicalSlotHistory = std::move(previousHistory);
+        error = "logical slot persistence failed";
+        return false;
+    }
+    RebuildLogicalSlotReferences(widget);
+    engine.RuntimeInvalidateHost(widget.widgetId);
+    return true;
+}
+}
+
+bool WidgetEngine::RuntimeUndoLogicalSlot(const std::wstring& widgetId,
+    std::uint64_t ownerToken,
+    snowdesktop::widget_runtime::LogicalSlotChange& change,
+    std::string& error)
+{
+    error.clear();
+    auto widget = std::find_if(widgets_.begin(), widgets_.end(),
+        [&widgetId, ownerToken](const LuaWidget& candidate) {
+            return candidate.widgetId == widgetId &&
+                candidate.runtimeToken == ownerToken;
+        });
+    if (widget == widgets_.end())
+    {
+        error = "logical slot owner is stale";
+        return false;
+    }
+    if (widget->preview || !trustedGestureState_.Active())
+    {
+        error = widget->preview ? "previewReadOnly" : "userGestureRequired";
+        return false;
+    }
+    return RestoreLogicalSlotHistory(*this, *widget, false, change, error);
+}
+
+bool WidgetEngine::RuntimeRedoLogicalSlot(const std::wstring& widgetId,
+    std::uint64_t ownerToken,
+    snowdesktop::widget_runtime::LogicalSlotChange& change,
+    std::string& error)
+{
+    error.clear();
+    auto widget = std::find_if(widgets_.begin(), widgets_.end(),
+        [&widgetId, ownerToken](const LuaWidget& candidate) {
+            return candidate.widgetId == widgetId &&
+                candidate.runtimeToken == ownerToken;
+        });
+    if (widget == widgets_.end())
+    {
+        error = "logical slot owner is stale";
+        return false;
+    }
+    if (widget->preview || !trustedGestureState_.Active())
+    {
+        error = widget->preview ? "previewReadOnly" : "userGestureRequired";
+        return false;
+    }
+    return RestoreLogicalSlotHistory(*this, *widget, true, change, error);
 }
 
 void WidgetEngine::RuntimeRefreshDesktop()
@@ -21178,6 +21283,56 @@ static int lua_SlotsCollection(lua_State* state)
     return 1;
 }
 
+static int lua_SlotsCanUndo(lua_State* state)
+{
+    auto* d2d = GetD2D(state);
+    const std::uint64_t ownerToken = BoundWidgetRuntimeToken(state);
+    lua_pushboolean(state, d2d && d2d->engine && ownerToken != 0 &&
+        d2d->engine->RuntimeCanUndoLogicalSlot(
+            BoundWidgetId(state), ownerToken));
+    return 1;
+}
+
+static int lua_SlotsCanRedo(lua_State* state)
+{
+    auto* d2d = GetD2D(state);
+    const std::uint64_t ownerToken = BoundWidgetRuntimeToken(state);
+    lua_pushboolean(state, d2d && d2d->engine && ownerToken != 0 &&
+        d2d->engine->RuntimeCanRedoLogicalSlot(
+            BoundWidgetId(state), ownerToken));
+    return 1;
+}
+
+static int lua_SlotsUndo(lua_State* state)
+{
+    auto* d2d = GetD2D(state);
+    const std::uint64_t ownerToken = BoundWidgetRuntimeToken(state);
+    if (!d2d || !d2d->engine || ownerToken == 0)
+        return luaL_error(state, "logical slot host is unavailable");
+    snowdesktop::widget_runtime::LogicalSlotChange change;
+    std::string error;
+    if (!d2d->engine->RuntimeUndoLogicalSlot(BoundWidgetId(state),
+            ownerToken, change, error))
+        return luaL_error(state, "slots.undo: %s", error.c_str());
+    PushLogicalSlotChange(state, change);
+    return 1;
+}
+
+static int lua_SlotsRedo(lua_State* state)
+{
+    auto* d2d = GetD2D(state);
+    const std::uint64_t ownerToken = BoundWidgetRuntimeToken(state);
+    if (!d2d || !d2d->engine || ownerToken == 0)
+        return luaL_error(state, "logical slot host is unavailable");
+    snowdesktop::widget_runtime::LogicalSlotChange change;
+    std::string error;
+    if (!d2d->engine->RuntimeRedoLogicalSlot(BoundWidgetId(state),
+            ownerToken, change, error))
+        return luaL_error(state, "slots.redo: %s", error.c_str());
+    PushLogicalSlotChange(state, change);
+    return 1;
+}
+
 constexpr char kStorageTransactionMetatable[] =
     "SnowDesktop.StorageTransaction";
 char kActiveStorageTransactionRegistryKey = 0;
@@ -22336,6 +22491,10 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
     static constexpr FunctionDescriptor slots[] = {
         { "binding", lua_SlotsBinding, 2 },
         { "collection", lua_SlotsCollection, 2 },
+        { "canUndo", lua_SlotsCanUndo, 2 },
+        { "canRedo", lua_SlotsCanRedo, 2 },
+        { "undo", lua_SlotsUndo, 2 },
+        { "redo", lua_SlotsRedo, 2 },
     };
     static constexpr FunctionDescriptor state[] = {
         { "get", snowdesktop::widget_api::LuaTransientStateGet, 2 },

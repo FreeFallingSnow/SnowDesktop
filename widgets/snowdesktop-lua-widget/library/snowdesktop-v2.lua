@@ -277,7 +277,7 @@
 ---@field slotId string
 ---@field kind 'binding'|'collection'
 ---@field revision integer
----@field operation 'unchanged'|'bound'|'replaced'|'cleared'|'added'|'removed'|'moved'
+---@field operation 'unchanged'|'bound'|'replaced'|'cleared'|'added'|'removed'|'moved'|'undone'|'redone'
 ---@field itemIds string[]
 
 ---@class SnowLogicalBinding
@@ -453,7 +453,7 @@
 ---@field revision? integer Monotonic provider revision for data.change.
 ---@field slotId? string Manifest logical-slot ID for slot.changed.
 ---@field slotKind? 'binding'|'collection' Logical slot model kind for slot.changed.
----@field operation? 'bound'|'replaced'|'added'|'removed'|'moved'|'cleared' Logical slot transaction for slot.changed.
+---@field operation? 'bound'|'replaced'|'added'|'removed'|'moved'|'cleared'|'undone'|'redone' Logical slot transaction for slot.changed.
 ---@field itemIds? string[] Opaque affected host item IDs for slot.changed.
 ---@field source? 'host.drop'|string Host change source for slot.changed.
 ---@field taskId? integer
@@ -804,6 +804,22 @@ function slots.binding(id) end
 ---@param id string
 ---@return SnowLogicalCollection
 function slots.collection(id) end
+
+---Whether this instance has a logical-slot transaction to undo. Probe with slots.history.
+---@return boolean
+function slots.canUndo() end
+
+---Whether this instance has an undone logical-slot transaction to redo. Probe with slots.history.
+---@return boolean
+function slots.canRedo() end
+
+---Undo the most recent logical-slot transaction for this instance. Requires a trusted user gesture.
+---@return SnowLogicalSlotChange
+function slots.undo() end
+
+---Redo the most recently undone logical-slot transaction for this instance. Requires a trusted user gesture.
+---@return SnowLogicalSlotChange
+function slots.redo() end
 
 ---@class snow.widget
 widget = {}

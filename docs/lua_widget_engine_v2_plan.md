@@ -1068,7 +1068,9 @@ feature probe、LuaLS 和契约测试，但通用键盘导航及 UIA Text/Calend
 上一棵可用树。后续批次已加入固定的 `LuaLogicalSlot` 原生 surface、完整 slot contract
 矩阵、桌面/Explorer 单对象 reference ingress、容量/替换策略命中、插入预览和
 `slot.changed` 主动事件；宿主不会把路径、PIDL、`IDataObject` 或 DropRoute 交给 Lua。
-尚缺宿主选择器、原生槽位项拖出与同槽重排、删除手势和 undo，因此 M6 槽位退出条件仍未达成。
+后续又加入每实例 32 步、受可信动作约束且清空 redo 分支的 `slots.undo/redo` 事务历史。
+尚缺宿主选择器、原生槽位项拖出与同槽重排、删除/键盘手势和宿主通用 Ctrl+Z，因此 M6
+槽位退出条件仍未达成。
 
 节点规则：
 
