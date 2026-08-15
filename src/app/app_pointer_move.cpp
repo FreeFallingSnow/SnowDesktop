@@ -7,6 +7,9 @@
 void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
 {
     (void)wp;
+    if (!luaWidgetPanelRequest_.widgetId.empty() &&
+        luaWidgetPanelRequest_.modal)
+        return;
     if (renameEdit_ != nullptr || mouseDown_ || dragSession_.IsActive() ||
         widgetAction_ != WidgetAction::None)
         return;
@@ -115,16 +118,18 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         {
             widgetEngine_->ClearInteractionHover("desktop");
             const RECT content = GetLuaWidgetPanelContentRect();
+            const std::string& surface =
+                luaWidgetPanelRequest_.surface;
             if (PtInRect(&content, current))
             {
                 widgetEngine_->UpdateInteractionHover(
                     luaWidgetPanelRequest_.widgetId,
                     current.x - content.left,
-                    current.y - content.top, "panel");
+                    current.y - content.top, surface);
                 interactionHoverRouted = true;
             }
             else
-                widgetEngine_->ClearInteractionHover("panel");
+                widgetEngine_->ClearInteractionHover(surface);
         }
         else
         {
@@ -162,20 +167,32 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             current.x - content.left;
         const int localY =
             current.y - content.top;
+        const std::string& surface =
+            luaWidgetPanelRequest_.surface;
         const bool handled =
             widgetEngine_->HandleHostInputPointerMove(
                 luaWidgetPanelRequest_.widgetId,
-                localX, localY, "panel");
+                localX, localY, surface);
         if (!handled &&
             PtInRect(&content, current))
         {
+            const char* eventName = surface == "dialog"
+                ? "onDialogMouseMove"
+                : "onPanelMouseMove";
             widgetEngine_->InvokeMouseEvent(
                 luaWidgetPanelRequest_.widgetId,
-                "onPanelMouseMove",
+                eventName,
                 localX, localY, 1, 0);
         }
         UpdateHostInputImePosition();
         InvalidateRect(hwnd_, nullptr, FALSE);
+        PresentDesktopPointerUpdate();
+        return;
+    }
+
+    if (!luaWidgetPanelRequest_.widgetId.empty() &&
+        luaWidgetPanelRequest_.modal)
+    {
         PresentDesktopPointerUpdate();
         return;
     }

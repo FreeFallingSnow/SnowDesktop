@@ -262,8 +262,12 @@ struct LuaWidgetPanelRequest
 {
     std::wstring widgetId;
     std::wstring title;
+    std::string surface = "panel";
     int width = 520;
     int height = 620;
+    bool dismissOnOutside = true;
+    bool dismissOnEscape = true;
+    bool modal = false;
 };
 
 enum class LuaWidgetFilePickerKind
@@ -554,6 +558,7 @@ struct LuaWidget
     snowdesktop::widget_runtime::WidgetInteractionRegions
         panelInteractionRegions;
     std::optional<snowdesktop::widget_runtime::ViewNode> panelViewTree;
+    std::string panelSurface = "panel";
     bool panelActive = false;
     bool panelFrameOpen = false;
     std::uint64_t runtimeToken = 0;
@@ -779,7 +784,8 @@ public:
     void RenderWidget(const std::wstring& widgetId, const std::wstring& scriptPath,
         ID2D1DeviceContext* context, RECT bounds, int columns = 1, int rows = 1);
     bool RenderWidgetPanel(const std::wstring& widgetId,
-        ID2D1DeviceContext* context, RECT bounds);
+        ID2D1DeviceContext* context, RECT bounds,
+        std::string_view surface = "panel");
     void TickRuntime();
     /**
      * @brief 处理宿主转发的组件调度截止时间到期
@@ -1301,6 +1307,9 @@ public:
     void RuntimeOpenWidgetSettings(const std::wstring& widgetId);
     void RuntimeOpenWidgetPanel(const std::wstring& widgetId,
         std::wstring title, int width, int height);
+    void RuntimeOpenWidgetDialog(const std::wstring& widgetId,
+        std::wstring title, int width, int height,
+        bool dismissOnOutside, bool dismissOnEscape);
     void RuntimeCloseWidgetPanel(const std::wstring& widgetId);
 
     /**
@@ -1405,7 +1414,8 @@ public:
     std::vector<LuaWidget::HostControl> GetScrollControls(
         const std::wstring& widgetId,
         std::string_view surface = "desktop") const;
-    void CloseWidgetPanelSurface(const std::wstring& widgetId);
+    void CloseWidgetPanelSurface(const std::wstring& widgetId,
+        std::string_view surface = {});
 
 private:
     void BeginHostLogicalSlotPointer(

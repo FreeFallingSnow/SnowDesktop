@@ -730,21 +730,24 @@ void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
             upPoint.x - content.left;
         const int localY =
             upPoint.y - content.top;
+        const std::string& surface =
+            luaWidgetPanelRequest_.surface;
         const bool hostInputHandled =
             widgetEngine_ &&
             widgetEngine_->HandleHostInputPointerUp(
-                panelWidgetId, localX, localY, "panel");
+                panelWidgetId, localX, localY, surface);
         if (!hostInputHandled &&
             PtInRect(&content, upPoint) &&
             widgetEngine_)
         {
+            const bool dialog = surface == "dialog";
             widgetEngine_->InvokeMouseEvent(
                 panelWidgetId,
-                "onPanelMouseUp",
+                dialog ? "onDialogMouseUp" : "onPanelMouseUp",
                 localX, localY, 1, 0);
             widgetEngine_->InvokeMouseEvent(
                 panelWidgetId,
-                "onPanelClick",
+                dialog ? "onDialogClick" : "onPanelClick",
                 localX, localY, 1, 0);
         }
         luaWidgetPanelMouseDown_ = false;
@@ -754,6 +757,10 @@ void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
+
+    if (!luaWidgetPanelRequest_.widgetId.empty() &&
+        luaWidgetPanelRequest_.modal)
+        return;
 
     for (auto& container : containers_)
     {

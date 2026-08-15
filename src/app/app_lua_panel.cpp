@@ -78,8 +78,10 @@ void DesktopApp::OpenLuaWidgetPanel(
     }
     if (widgetEngine_)
     {
+        const char* openedEvent = request.surface == "dialog"
+            ? "onDialogOpened" : "onPanelOpened";
         widgetEngine_->InvokeMouseEvent(
-            request.widgetId, "onPanelOpened",
+            request.widgetId, openedEvent,
             0, 0, 0, 0);
     }
     PrepareLuaWidgetPanelAnimationCache();
@@ -100,12 +102,17 @@ void DesktopApp::FinalizeCloseLuaWidgetPanel()
 {
     const std::wstring closingId =
         luaWidgetPanelRequest_.widgetId;
+    const std::string closingSurface =
+        luaWidgetPanelRequest_.surface;
     if (!closingId.empty() && widgetEngine_)
     {
+        const char* closedEvent = closingSurface == "dialog"
+            ? "onDialogClosed" : "onPanelClosed";
         widgetEngine_->InvokeMouseEvent(
-            closingId, "onPanelClosed",
+            closingId, closedEvent,
             0, 0, 0, 0);
-        widgetEngine_->CloseWidgetPanelSurface(closingId);
+        widgetEngine_->CloseWidgetPanelSurface(
+            closingId, closingSurface);
     }
     luaWidgetPanelAnimation_.ResetHidden();
     ResetLuaWidgetPanelAnimationCache();

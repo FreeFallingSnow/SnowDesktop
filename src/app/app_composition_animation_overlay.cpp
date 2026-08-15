@@ -417,12 +417,15 @@ bool DesktopApp::UpdateLuaWidgetPanelCompositionAnimation(
         return false;
     const auto visual = luaWidgetPanelAnimation_.GetVisual();
     const RECT panel = GetLuaWidgetPanelRect();
-    POINT anchor{
-        std::clamp(
-            luaWidgetPanelAnchorPoint_.x, panel.left, panel.right),
-        std::clamp(
-            luaWidgetPanelAnchorPoint_.y, panel.top, panel.bottom),
-    };
+    POINT anchor = luaWidgetPanelRequest_.surface == "dialog"
+        ? POINT{ (panel.left + panel.right) / 2,
+            (panel.top + panel.bottom) / 2 }
+        : POINT{
+            std::clamp(luaWidgetPanelAnchorPoint_.x,
+                panel.left, panel.right),
+            std::clamp(luaWidgetPanelAnchorPoint_.y,
+                panel.top, panel.bottom),
+        };
     return UpdateCompositionAnimationOverlay(
         luaWidgetPanelAnimationOverlay_, visual.scale,
         anchor, visual.visible ? 1.0f : 0.0f,
@@ -529,12 +532,15 @@ bool DesktopApp::StartLuaWidgetPanelCompositionAnimation()
                 ? snowdesktop::popup_animation_rules::kOpenDurationMs
                 : snowdesktop::popup_animation_rules::kCloseDurationMs))));
     const RECT panel = GetLuaWidgetPanelRect();
-    const POINT anchor{
-        std::clamp(
-            luaWidgetPanelAnchorPoint_.x, panel.left, panel.right),
-        std::clamp(
-            luaWidgetPanelAnchorPoint_.y, panel.top, panel.bottom),
-    };
+    const POINT anchor = luaWidgetPanelRequest_.surface == "dialog"
+        ? POINT{ (panel.left + panel.right) / 2,
+            (panel.top + panel.bottom) / 2 }
+        : POINT{
+            std::clamp(luaWidgetPanelAnchorPoint_.x,
+                panel.left, panel.right),
+            std::clamp(luaWidgetPanelAnchorPoint_.y,
+                panel.top, panel.bottom),
+        };
     if (!AnimateCompositionAnimationOverlay(
             luaWidgetPanelAnimationOverlay_,
             visual.scale,

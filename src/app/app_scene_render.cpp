@@ -450,7 +450,16 @@ void DesktopApp::DrawDynamicOverlays(
                 source->keepWhenDesktopHidden;
         }
         if (renderLuaPanel)
+        {
+            if (luaWidgetPanelRequest_.modal)
+            {
+                RECT scrim{};
+                GetClientRect(hwnd_, &scrim);
+                DrawD2DSeparator(ctx, scrim,
+                    D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.38f));
+            }
             DrawLuaWidgetPanel(ctx);
+        }
     }
 
     // Dragged items at offset

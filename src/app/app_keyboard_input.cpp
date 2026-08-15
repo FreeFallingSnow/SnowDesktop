@@ -60,12 +60,16 @@ void DesktopApp::OnKeyDown(WPARAM key)
         !luaWidgetPanelRequest_.widgetId.empty() &&
         widgetEngine_->HandleHostViewKey(
             luaWidgetPanelRequest_.widgetId,
-            key, ctrl, shift, alt, "panel"))
+            key, ctrl, shift, alt,
+            luaWidgetPanelRequest_.surface))
     {
         InvalidateRect(hwnd_, nullptr, FALSE);
         RestoreInteractionInputFocus();
         return;
     }
+    if (!luaWidgetPanelRequest_.widgetId.empty() &&
+        luaWidgetPanelRequest_.modal && key != VK_ESCAPE)
+        return;
 
     if (ctrl && (key == 'Z' || key == 'Y') && widgetEngine_)
     {
@@ -417,9 +421,12 @@ void DesktopApp::OnKeyDown(WPARAM key)
     case VK_ESCAPE:
         restoreFloatingDockLayer = true;
         if (!luaWidgetPanelRequest_.widgetId.empty())
-            CloseLuaWidgetPanel(
-                luaWidgetPanelRequest_.widgetId,
-                "escape");
+        {
+            if (luaWidgetPanelRequest_.dismissOnEscape)
+                CloseLuaWidgetPanel(
+                    luaWidgetPanelRequest_.widgetId,
+                    "escape");
+        }
         else if (IsCollectionPopupInteractive())
             CloseCollectionPopup();
         else if (keyboardNavInsideWidget_)

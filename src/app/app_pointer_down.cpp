@@ -17,9 +17,12 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         const RECT panel = GetLuaWidgetPanelRect();
         if (!PtInRect(&panel, pt))
         {
-            CloseLuaWidgetPanel(
-                luaWidgetPanelRequest_.widgetId,
-                "outside");
+            if (luaWidgetPanelRequest_.dismissOnOutside)
+                CloseLuaWidgetPanel(
+                    luaWidgetPanelRequest_.widgetId,
+                    "outside");
+            if (luaWidgetPanelRequest_.modal)
+                return;
         }
         else
         {
@@ -41,11 +44,13 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 pt.x - content.left;
             const int localY =
                 pt.y - content.top;
+            const std::string& surface =
+                luaWidgetPanelRequest_.surface;
             if (widgetEngine_ &&
                 widgetEngine_->HasFocusedHostInput() &&
                 !widgetEngine_->IsFocusedHostInputAt(
                     luaWidgetPanelRequest_.widgetId,
-                    localX, localY, "panel"))
+                    localX, localY, surface))
             {
                 widgetEngine_->BlurHostInput(false);
             }
@@ -56,13 +61,18 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             if (!widgetEngine_ ||
                 !widgetEngine_->HandleHostUiPointer(
                     luaWidgetPanelRequest_.widgetId,
-                    localX, localY, 0, false, "panel"))
+                    localX, localY, 0, false, surface))
             {
                 if (widgetEngine_)
+                {
+                    const char* eventName = surface == "dialog"
+                        ? "onDialogMouseDown"
+                        : "onPanelMouseDown";
                     widgetEngine_->InvokeMouseEvent(
                         luaWidgetPanelRequest_.widgetId,
-                        "onPanelMouseDown",
+                        eventName,
                         localX, localY, 1, 0);
+                }
             }
             UpdateHostInputImePosition();
             InvalidateRect(

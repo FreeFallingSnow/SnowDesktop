@@ -9,13 +9,17 @@ inline bool IsTrustedWidgetGestureCallback(
 {
     return callback == "onClick" ||
         callback == "onPanelClick" ||
+        callback == "onDialogClick" ||
         callback == "onDoubleClick" ||
         callback == "onMouseDown" ||
         callback == "onPanelMouseDown" ||
+        callback == "onDialogMouseDown" ||
         callback == "onMouseUp" ||
         callback == "onPanelMouseUp" ||
+        callback == "onDialogMouseUp" ||
         callback == "onWheel" ||
-        callback == "onPanelWheel";
+        callback == "onPanelWheel" ||
+        callback == "onDialogWheel";
 }
 
 class WidgetTrustedGestureState

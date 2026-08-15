@@ -32,16 +32,22 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
                 pt.x - content.left;
             const int localY =
                 pt.y - content.top;
+            const std::string& surface =
+                luaWidgetPanelRequest_.surface;
             if (!widgetEngine_ ||
                 !widgetEngine_->HandleHostUiPointer(
                     luaWidgetPanelRequest_.widgetId,
-                    localX, localY, delta, true, "panel"))
+                    localX, localY, delta, true, surface))
             {
                 if (widgetEngine_)
+                {
+                    const char* eventName = surface == "dialog"
+                        ? "onDialogWheel" : "onPanelWheel";
                     widgetEngine_->InvokeMouseEvent(
                         luaWidgetPanelRequest_.widgetId,
-                        "onPanelWheel",
+                        eventName,
                         localX, localY, 0, delta);
+                }
             }
             UpdateHostInputImePosition();
             InvalidateRect(hwnd_, nullptr, FALSE);

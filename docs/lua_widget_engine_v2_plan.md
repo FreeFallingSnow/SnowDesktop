@@ -1051,6 +1051,13 @@ desktop 与 panel 的即时绘制 surface 均有各自原子提交的 region 集
 一样禁止持久存储写入，失败提交保留上一成功场景。当前仍缺 panel 语义树的 UIA Fragment
 导出，逻辑槽位的原生重排/移除也只面向 desktop，因此还不能把 M6 面板表面计为完整验收。
 
+`widget.define.dialog(context, model)` 已通过 `view.surface.dialog` 复用同一辅助 surface
+场景管线：`widget.openDialog` 创建居中的非阻塞模态 surface，宿主绘制遮罩并阻断背景桌面的
+左/右/中键、滚轮、移动和双击输入，声明式焦点、输入、菜单及 action 均保持
+`surface="dialog"`。默认 Escape 关闭、点击遮罩不关闭，可分别用 `dismissOnEscape` 和
+`dismissOnOutside` 调整；宿主关闭按钮始终保留。panel 与 dialog 互斥，打开新 surface 会关闭
+旧 surface。当前仍缺 dialog UIA Fragment 导出与真实桌面交互验收，故按已编译待验证能力记录。
+
 ### 13.3 参考优先级与完整性边界
 
 SnowDesktop 不照搬某一个框架，参考优先级如下：
@@ -1779,7 +1786,7 @@ UTF-8/UTF-16 边界换算和 selectionChange 建议，`view.keyboard.events` 已
 聚焦按键观察、按下/释放配对和失焦清理，`view.focus.request` 已把可信动作焦点请求扩展到
 任意可聚焦声明式节点并支持下一次成功提交解析；这些声明都不把状态持久化责任转移给宿主。
 其额度为 512 节点、32 层、单节点 4 KiB 文本、全树 64 KiB 文本和 256 个交互元素；未知字段、
-重复 key、非连续 children、错误枚举和越界数值拒绝整次提交。数据图形由宿主直接有界绘制，不展开为逐样本节点或命中区域。`view.surface.panel` 已把同一树、命中、滚动、控件和键盘管线扩展到独立 panel 状态；它尚不包含完整必选节点矩阵、
+重复 key、非连续 children、错误枚举和越界数值拒绝整次提交。数据图形由宿主直接有界绘制，不展开为逐样本节点或命中区域。`view.surface.panel` 与 `view.surface.dialog` 已把同一树、命中、滚动、控件和键盘管线扩展到互斥的宿主辅助 surface 状态；dialog 另有居中遮罩和非阻塞背景输入隔离。它们尚不包含完整必选节点矩阵、
 完整 UIA、RTL、文本换行、可变高度虚拟化和差量资源复用；通用 surface 键盘焦点已作为
 `view.keyboardNavigation.basic` 单独发布，因此仍只发布
 细粒度 feature，不发布 `view.tree`，也不计作 M6 完成。

@@ -58,6 +58,15 @@ RECT DesktopApp::GetLuaWidgetPanelRect() const
         luaWidgetPanelRequest_.height,
         std::min(280, availableHeight),
         availableHeight);
+    if (luaWidgetPanelRequest_.surface == "dialog")
+    {
+        const int left = work.left +
+            (availableWidth + 24 - width) / 2;
+        const int top = work.top +
+            (availableHeight + 24 - height) / 2;
+        return MakeRect(
+            left, top, left + width, top + height);
+    }
     int left =
         luaWidgetPanelAnchorPoint_.x + 12;
     int top =
@@ -191,21 +200,31 @@ void DesktopApp::DrawLuaWidgetPanel(
     {
         ctx->GetTransform(&previousTransform);
         const D2D1_POINT_2F origin =
-            D2D1::Point2F(
-                std::clamp(
+            luaWidgetPanelRequest_.surface == "dialog"
+                ? D2D1::Point2F(
                     static_cast<float>(
-                        luaWidgetPanelAnchorPoint_.x),
+                        luaWidgetPanelRect_.left +
+                        (luaWidgetPanelRect_.right -
+                            luaWidgetPanelRect_.left) / 2),
                     static_cast<float>(
-                        luaWidgetPanelRect_.left),
-                    static_cast<float>(
-                        luaWidgetPanelRect_.right)),
-                std::clamp(
-                    static_cast<float>(
-                        luaWidgetPanelAnchorPoint_.y),
-                    static_cast<float>(
-                        luaWidgetPanelRect_.top),
-                    static_cast<float>(
-                        luaWidgetPanelRect_.bottom)));
+                        luaWidgetPanelRect_.top +
+                        (luaWidgetPanelRect_.bottom -
+                            luaWidgetPanelRect_.top) / 2))
+                : D2D1::Point2F(
+                    std::clamp(
+                        static_cast<float>(
+                            luaWidgetPanelAnchorPoint_.x),
+                        static_cast<float>(
+                            luaWidgetPanelRect_.left),
+                        static_cast<float>(
+                            luaWidgetPanelRect_.right)),
+                    std::clamp(
+                        static_cast<float>(
+                            luaWidgetPanelAnchorPoint_.y),
+                        static_cast<float>(
+                            luaWidgetPanelRect_.top),
+                        static_cast<float>(
+                            luaWidgetPanelRect_.bottom)));
         ctx->SetTransform(
             D2D1::Matrix3x2F::Scale(
                 animation.scale,
@@ -305,7 +324,8 @@ void DesktopApp::DrawLuaWidgetPanel(
         ToD2DRect(content),
         D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     widgetEngine_->RenderWidgetPanel(
-        source->id, ctx, content);
+        source->id, ctx, content,
+        luaWidgetPanelRequest_.surface);
     ctx->PopAxisAlignedClip();
     if (animationApplied)
         ctx->SetTransform(previousTransform);

@@ -84,11 +84,13 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
                         std::nullopt,
                         POINT{ pt.x - content.left,
                             pt.y - content.top },
-                        "panel");
+                        luaWidgetPanelRequest_.surface);
                 }
             }
             return;
         }
+        if (luaWidgetPanelRequest_.modal)
+            return;
     }
 
     if (DockContainer* dock = GetDockContainerAtPoint(pt))

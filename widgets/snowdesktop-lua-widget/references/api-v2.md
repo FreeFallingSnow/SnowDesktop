@@ -50,7 +50,7 @@ reason)`。没有 `setup` 时 model 为
 VM。
 
 event 覆盖宿主 surface 级事件：`visibility`、`resize`、`pointer`、`timer`、
-`schedule`、`action`、`selection`、`environment`、`panel`、`data.change` 和
+`schedule`、`action`、`selection`、`environment`、`panel`、`dialog`、`data.change` 和
 `task.complete`。
 指针事件包含 `action`、`surface`、`x/y`、`button`、`delta`，命中即时绘制
 region 时还包含 `targetKey`；schedule 事件包含 `id`、UTC epoch 毫秒 `now`、
@@ -68,11 +68,13 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 ### `widget`
 
 - `widget.define(definition)`：校验并返回 v2 描述符。`render` 与 `view` 必须二选一，可选
-  `setup`、`panel`、`event`、`menu` 和 `dispose`。`panel` 只在
+  `setup`、`panel`、`dialog`、`event`、`menu` 和 `dispose`。`panel` 只在
   `widget.openPanel` 打开的宿主辅助面板中执行，收到的 `context.surface` 为
   `panel`。探测 `view.surface.panel` 后，回调可返回一棵声明式视图；返回 `nil`
   则保留即时绘制。面板中的声明式输入与 `control.textInput/textArea` 均复用宿主
   输入代理和 storage-bound 契约。
+  `dialog` 由 `widget.openDialog` 打开并收到 `context.surface="dialog"`；它复用同一套
+  声明式/即时渲染、滚动、输入和 action 管线，但由宿主居中显示、绘制遮罩并隔离桌面输入。
 - `widget.apiInfo()`：返回当前 API 版本、支持版本和 feature ID。
 - `widget.hasFeature(id)`：探测 feature。
 - `widget.context()`：返回逻辑/像素尺寸、DPI、网格跨度、显示器范围、主题、
@@ -82,7 +84,10 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 - `widget.setTitle(text)`、`widget.invalidate()`、`widget.log(level, text)`。
 - `widget.setTimer`、`widget.cancelTimer`：API v1 兼容入口；新 v2 组件使用
   `schedule`。
-- `widget.openSettings()`、`widget.openPanel(options)`、`widget.closePanel()`。
+- `widget.openSettings()`、`widget.openPanel(options)`、`widget.closePanel()`、
+  `widget.openDialog(options)`、`widget.closeDialog()`。dialog 默认允许 Escape 关闭、
+  不允许点击遮罩关闭；可用 `dismissOnEscape` 与 `dismissOnOutside` 显式调整。它不使用
+  阻塞式系统模态循环。
 
 ### `view.tree.core` 声明式视图
 
@@ -700,6 +705,12 @@ Grid/GridItem；任意未实体化集合项仍未形成完整 UIA VirtualizedIte
 `surface="panel"`。panel 返回 `nil` 时仍可使用即时绘制与即时控件。panel 的声明式语义树尚未
 导出到当前桌面 UIA Fragment Provider，`view.logicalSlots` 的原生重排/移除也仍以桌面 surface
 为边界；作者不得据此宣称 panel 已有完整辅助技术或宿主槽位支持。
+
+探测 `view.surface.dialog` 后，`dialog(context, model)` 使用同一份辅助 surface 场景管线，
+但宿主将其居中并加非阻塞模态遮罩。dialog 活动时，遮罩外的左/右/中键、滚轮、移动与双击
+不会穿透桌面；焦点和键盘事件留在 dialog，关闭按钮始终可用。`dismissOnOutside` 默认 false，
+`dismissOnEscape` 默认 true。一个实例同时只拥有一个 panel 或 dialog；打开新辅助 surface 会
+关闭旧 surface。dialog 同样尚未导出到桌面 UIA Fragment Provider。
 
 `view.tree.core` 仍不是完整 `view.tree`：当前每帧重建树，尚无可变高度虚拟集合、
 可操作行内 span，也没有完整 UIA 虚拟集合/ScrollItem Pattern、RTL、主题 token 或差量资源复用。

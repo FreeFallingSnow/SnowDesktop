@@ -477,6 +477,14 @@ default border does not fit the component design.
   `surface="panel"`. Persistent writes still belong in events rather than the
   panel callback. Panel UI Automation export and host logical-slot behavior
   remain pending, so do not claim those capabilities.
+- Put confirmation, focused editing, or short modal workflows in the optional
+  `widget.define.dialog` callback and open them with `widget.openDialog` after
+  probing `view.surface.dialog`. The host centers the surface, draws a scrim,
+  blocks background desktop input without entering a blocking modal loop, and
+  keeps focus on the dialog. Outside-click dismissal defaults to false and
+  Escape dismissal defaults to true; set either option explicitly when the
+  workflow requires different behavior. Close it with `widget.closeDialog`.
+  Only one panel or dialog can be active for the host at a time.
 - Keep colors in `0xRRGGBB`.
 - Respect `widget.context().accessibility`, theme, DPI, visibility and preview
   state. Do not request permission for an ordinary pointer clock or static UI.

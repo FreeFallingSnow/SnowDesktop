@@ -1,7 +1,7 @@
 ---@meta SnowDesktop API v2
 
 ---@alias SnowWidgetSizeClass 'small'|'medium'|'large'
----@alias SnowWidgetSurfaceKind 'desktop'|'panel'|'preview'
+---@alias SnowWidgetSurfaceKind 'desktop'|'panel'|'dialog'|'preview'
 ---@alias SnowResourceState 'ready'|'error'
 ---@alias SnowResourceLoadError 'loadPhaseRequired'|'invalidName'|'notDeclared'|'typeMismatch'|'hostUnavailable'|'unavailable'|'quotaExceeded'|'decodeFailed'|'deviceUnavailable'|'fontLoadFailed'|'invalidHandle'
 ---@alias SnowDateStyle 'none'|'short'|'long'
@@ -501,7 +501,7 @@
 ---@field id string The region contextMenu binding ID.
 ---@field value? SnowStateValue The region contextMenu binding payload.
 ---@field targetKey string
----@field surface 'desktop'|'panel'
+---@field surface 'desktop'|'panel'|'dialog'
 ---@field source 'pointer'
 ---@field scope 'element'|'component'
 
@@ -521,6 +521,7 @@
 ---@field render? fun(context: SnowWidgetContext, model: any) Exactly one of render or view is required in API v2.
 ---@field view? fun(context: SnowWidgetContext, model: any): SnowViewNode Exactly one of view or render is required; requires view.tree.core for the current node subset.
 ---@field panel? fun(context: SnowWidgetContext, model: any): SnowViewNode? Renders the host-owned auxiliary panel surface opened with widget.openPanel. Return a declarative view after probing view.surface.panel, or nil for immediate drawing.
+---@field dialog? fun(context: SnowWidgetContext, model: any): SnowViewNode? Renders the non-blocking modal surface opened with widget.openDialog. Return a declarative view after probing view.surface.dialog, or nil for immediate drawing.
 ---@field setup? fun(context: SnowWidgetContext): any Runs once and returns the instance model passed to render and dispose.
 ---@field event? fun(context: SnowWidgetContext, model: any, event: SnowWidgetEvent) Receives host surface and declarative action events.
 ---@field menu? fun(context: SnowWidgetContext, model: any, request: SnowMenuRequest): SnowMenuModel? Builds an immediate-region context menu synchronously.
@@ -539,7 +540,7 @@
 ---@field settings? SnowWidgetSettings
 
 ---@class SnowWidgetEvent
----@field kind 'visibility'|'resize'|'pointer'|'timer'|'schedule'|'frame'|'action'|'selection'|'environment'|'panel'|'data.change'|'task.complete'|'slot.changed'|'notification.delivered'|'notification.action'
+---@field kind 'visibility'|'resize'|'pointer'|'timer'|'schedule'|'frame'|'action'|'selection'|'environment'|'panel'|'dialog'|'data.change'|'task.complete'|'slot.changed'|'notification.delivered'|'notification.action'
 ---@field action? 'click'|'change'|'selectionChange'|'focus'|'blur'|'submit'|'doubleClick'|'pointerDown'|'pointerMove'|'pointerUp'|'wheel'|'keyDown'|'keyUp'|'opened'|'closed'|string
 ---@field id? string
 ---@field name? string
@@ -585,7 +586,7 @@
 ---@field cancelled? boolean True when Escape reverts an input or reports blur cancellation.
 ---@field clickCount? integer
 ---@field trustedGesture? boolean
----@field surface? 'desktop'|'panel'
+---@field surface? 'desktop'|'panel'|'dialog'
 ---@field reason? string
 ---@field topic? string Updated data subscription topic for data.change.
 ---@field revision? integer Monotonic provider revision for data.change.
@@ -707,6 +708,10 @@
 ---@field title? string
 ---@field width? integer
 ---@field height? integer
+
+---@class SnowWidgetDialogOptions: SnowWidgetPanelOptions
+---@field dismissOnOutside? boolean Defaults to false so an accidental desktop click cannot discard the dialog.
+---@field dismissOnEscape? boolean Defaults to true.
 
 ---@class SnowInlineTextEditOptions
 ---@field storageKey string
@@ -1017,6 +1022,11 @@ function widget.openSettings() end
 function widget.openPanel(options) end
 
 function widget.closePanel() end
+
+---@param options? SnowWidgetDialogOptions
+function widget.openDialog(options) end
+
+function widget.closeDialog() end
 
 function widget.invalidate() end
 

@@ -130,7 +130,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                         widgetEngine_->InteractionCursorAt(
                             luaWidgetPanelRequest_.widgetId,
                             point.x - content.left,
-                            point.y - content.top, "panel");
+                            point.y - content.top,
+                            luaWidgetPanelRequest_.surface);
                     LPCWSTR cursorId = nullptr;
                     if (cursor == "hand") cursorId = IDC_HAND;
                     else if (cursor == "text") cursorId = IDC_IBEAM;
@@ -423,6 +424,26 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_LBUTTONDBLCLK:
     {
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+
+        if (!luaWidgetPanelRequest_.widgetId.empty() &&
+            luaWidgetPanelAnimation_.IsInteractive())
+        {
+            const RECT content = GetLuaWidgetPanelContentRect();
+            if (PtInRect(&content, pt) && widgetEngine_)
+            {
+                const bool dialog =
+                    luaWidgetPanelRequest_.surface == "dialog";
+                widgetEngine_->InvokeMouseEvent(
+                    luaWidgetPanelRequest_.widgetId,
+                    dialog ? "onDialogDoubleClick"
+                        : "onPanelDoubleClick",
+                    pt.x - content.left,
+                    pt.y - content.top, 1, 0);
+                return 0;
+            }
+            if (luaWidgetPanelRequest_.modal)
+                return 0;
+        }
 
         if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt))
         {

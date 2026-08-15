@@ -412,6 +412,7 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "time.previewClock") &&
             snowdesktop::widget_api::SupportsFeature("widget.context") &&
+            snowdesktop::widget_api::SupportsFeature("widget.dialog") &&
             snowdesktop::widget_api::SupportsFeature("widget.panel") &&
             snowdesktop::widget_api::SupportsFeature(
                 "system.environment") &&
@@ -517,6 +518,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "view.styledText.basic") &&
             snowdesktop::widget_api::SupportsFeature(
+                "view.surface.dialog") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "view.surface.panel") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.tree.core") &&
@@ -599,9 +602,11 @@ void TestV2Contract()
     lua_setfield(state, -2, "render");
     lua_pushcfunction(state, Noop);
     lua_setfield(state, -2, "panel");
+    lua_pushcfunction(state, Noop);
+    lua_setfield(state, -2, "dialog");
     Check(lua_pcall(state, 1, 1, 0) == LUA_OK &&
             snowdesktop::widget_api::IsDefinedWidget(state, -1),
-        "widget.define must accept a panel surface callback");
+        "widget.define must accept panel and dialog surface callbacks");
     lua_pop(state, 2);
 
     lua_getglobal(state, "widget");

@@ -1432,7 +1432,14 @@ private:
 
 static bool IsPanelSurface(std::string_view surface) noexcept
 {
-    return surface == "panel";
+    return surface == "panel" || surface == "dialog";
+}
+
+static std::string NormalizeWidgetSurface(std::string_view surface)
+{
+    if (surface == "dialog") return "dialog";
+    if (surface == "panel") return "panel";
+    return "desktop";
 }
 
 static std::string_view CurrentWidgetSurface(const D2DState* state) noexcept
@@ -8752,6 +8759,42 @@ static int lua_DrawArc(lua_State* state)
     if (FAILED(sink->Close())) return 0;
     if (ID2D1SolidColorBrush* brush = GetCachedBrush(d2d, color, alpha))
         d2d->ctx->DrawGeometry(geometry.Get(), brush, thickness);
+    return 0;
+}
+
+static int lua_WidgetOpenDialog(lua_State* L)
+{
+    std::string title;
+    int width = 520;
+    int height = 420;
+    bool dismissOnOutside = false;
+    bool dismissOnEscape = true;
+    if (lua_istable(L, 1))
+    {
+        title = LuaReadStorageField(L, 1, "title");
+        lua_getfield(L, 1, "width");
+        if (lua_isnumber(L, -1))
+            width = static_cast<int>(lua_tointeger(L, -1));
+        lua_pop(L, 1);
+        lua_getfield(L, 1, "height");
+        if (lua_isnumber(L, -1))
+            height = static_cast<int>(lua_tointeger(L, -1));
+        lua_pop(L, 1);
+        lua_getfield(L, 1, "dismissOnOutside");
+        if (!lua_isnil(L, -1))
+            dismissOnOutside = lua_toboolean(L, -1) != 0;
+        lua_pop(L, 1);
+        lua_getfield(L, 1, "dismissOnEscape");
+        if (!lua_isnil(L, -1))
+            dismissOnEscape = lua_toboolean(L, -1) != 0;
+        lua_pop(L, 1);
+    }
+    auto* s = GetD2D(L);
+    if (s && s->engine)
+        s->engine->RuntimeOpenWidgetDialog(
+            BoundWidgetId(L), Utf8ToWideLocal(title),
+            width, height, dismissOnOutside,
+            dismissOnEscape);
     return 0;
 }
 
@@ -17604,7 +17647,8 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
 
 bool WidgetEngine::RenderWidgetPanel(
     const std::wstring& widgetId,
-    ID2D1DeviceContext* context, RECT bounds)
+    ID2D1DeviceContext* context, RECT bounds,
+    std::string_view surface)
 {
     const int index = FindWidget(widgetId);
     if (index < 0 || !context)
@@ -17615,13 +17659,22 @@ bool WidgetEngine::RenderWidgetPanel(
     lua_State* state = widget.state;
     if (!state)
         return false;
+    const std::string normalizedSurface =
+        NormalizeWidgetSurface(surface);
+    if (!IsPanelSurface(normalizedSurface))
+        return false;
+    const std::string callbackName =
+        normalizedSurface == "dialog" ? "dialog" :
+        (widget.manifest.apiVersion >= 2 ? "panel" : "renderPanel");
     WidgetExecutionContextGuard contextGuard(d2dState_, widgetId);
-    WidgetSurfaceScope surfaceScope(d2dState_, "panel");
+    WidgetSurfaceScope surfaceScope(
+        d2dState_, normalizedSurface.c_str());
     snowdesktop::lua_runtime::StackGuard stackGuard(state);
 
     d2dState_->ctx = context;
     DrainShellIconResults(d2dState_);
     widget.panelBounds = bounds;
+    widget.panelSurface = normalizedSurface;
     widget.panelActive = true;
     SetWidgetRectContext(d2dState_, bounds);
     widget.lastRenderTime =
@@ -17629,23 +17682,26 @@ bool WidgetEngine::RenderWidgetPanel(
     std::vector<LuaWidget::HostControl> previousPanelControls;
     for (const auto& control : widget.hostControls)
     {
-        if (HostControlBelongsToSurface(control, "panel"))
+        if (HostControlBelongsToSurface(control, normalizedSurface))
             previousPanelControls.push_back(control);
     }
-    std::erase_if(widget.hostControls, [](const auto& control) {
-        return HostControlBelongsToSurface(control, "panel");
+    std::erase_if(widget.hostControls, [&normalizedSurface](
+            const auto& control) {
+        return HostControlBelongsToSurface(
+            control, normalizedSurface);
     });
     if (widget.manifest.apiVersion >= 2)
         widget.panelInteractionRegions.BeginFrame();
     d2dState_->widgetClipDepth = 0;
 
     const auto restorePanelControls = [this, &widgetId,
-        &previousPanelControls]() {
+        &previousPanelControls, &normalizedSurface]() {
         const int currentIndex = FindWidget(widgetId);
         if (currentIndex < 0) return;
         auto& controls = widgets_[currentIndex].hostControls;
-        std::erase_if(controls, [](const auto& control) {
-            return HostControlBelongsToSurface(control, "panel");
+        std::erase_if(controls, [&normalizedSurface](const auto& control) {
+            return HostControlBelongsToSurface(
+                control, normalizedSurface);
         });
         controls.insert(controls.end(), previousPanelControls.begin(),
             previousPanelControls.end());
@@ -17660,8 +17716,7 @@ bool WidgetEngine::RenderWidgetPanel(
         lua_pop(state, 1);
         return false;
     }
-    lua_getfield(state, -1,
-        widget.manifest.apiVersion >= 2 ? "panel" : "renderPanel");
+    lua_getfield(state, -1, callbackName.c_str());
     if (!lua_isfunction(state, -1))
     {
         if (widget.manifest.apiVersion >= 2)
@@ -17724,7 +17779,7 @@ bool WidgetEngine::RenderWidgetPanel(
                 state, -1, candidate, viewError))
         {
             panelAccepted = false;
-            viewError = "panel(): " + viewError;
+            viewError = callbackName + "(): " + viewError;
         }
         else if (hasView && !snowdesktop::widget_runtime::
                 ValidateAndLayoutViewTree(candidate,
@@ -17734,14 +17789,14 @@ bool WidgetEngine::RenderWidgetPanel(
                         d2dState_->widgetRect.top), viewError))
         {
             panelAccepted = false;
-            viewError = "panel(): " + viewError;
+            viewError = callbackName + "(): " + viewError;
         }
         else if (hasView && !snowdesktop::widget_runtime::
                 ValidateViewLogicalSlots(
                     candidate, widget.logicalSlots, viewError))
         {
             panelAccepted = false;
-            viewError = "panel(): " + viewError;
+            viewError = callbackName + "(): " + viewError;
         }
         else if (hasView && !snowdesktop::widget_runtime::
                 ApplyViewScrollOffsets(candidate,
@@ -17753,28 +17808,28 @@ bool WidgetEngine::RenderWidgetPanel(
                     }, scrollViewports, viewError))
         {
             panelAccepted = false;
-            viewError = "panel(): " + viewError;
+            viewError = callbackName + "(): " + viewError;
         }
         else if (hasView && !snowdesktop::widget_runtime::
                 CollectViewInteractionRegions(
                     candidate, regions, viewError))
         {
             panelAccepted = false;
-            viewError = "panel(): " + viewError;
+            viewError = callbackName + "(): " + viewError;
         }
         else if (hasView && !CollectStyledTextActionRegions(
                 d2dState_, candidate, regions, std::nullopt,
                 viewError))
         {
             panelAccepted = false;
-            viewError = "panel(): " + viewError;
+            viewError = callbackName + "(): " + viewError;
         }
         else if (hasView && !snowdesktop::widget_runtime::
                 CollectViewInputControls(
                     candidate, inputControls, viewError))
         {
             panelAccepted = false;
-            viewError = "panel(): " + viewError;
+            viewError = callbackName + "(): " + viewError;
         }
 
         std::vector<LuaWidget::HostControl> viewControls;
@@ -17785,21 +17840,24 @@ bool WidgetEngine::RenderWidgetPanel(
             const std::size_t existingCount =
                 static_cast<std::size_t>(std::count_if(
                     widget.hostControls.begin(), widget.hostControls.end(),
-                    [](const auto& control) {
-                        return HostControlBelongsToSurface(control, "panel");
+                    [&normalizedSurface](const auto& control) {
+                        return HostControlBelongsToSurface(
+                            control, normalizedSurface);
                     }));
             if (existingCount + viewControls.size() > 128)
             {
                 panelAccepted = false;
                 viewError =
-                    "panel(): host control limit exceeded (128)";
+                    callbackName +
+                    "(): host control limit exceeded (128)";
             }
             std::unordered_set<std::string> keys;
             if (panelAccepted)
             {
                 for (const auto& control : widget.hostControls)
                 {
-                    if (HostControlBelongsToSurface(control, "panel"))
+                    if (HostControlBelongsToSurface(
+                            control, normalizedSurface))
                         keys.insert(control.id);
                 }
                 for (const auto& control : viewControls)
@@ -17808,7 +17866,8 @@ bool WidgetEngine::RenderWidgetPanel(
                     {
                         panelAccepted = false;
                         viewError =
-                            "panel(): duplicate host control key: " +
+                            callbackName +
+                            "(): duplicate host control key: " +
                             control.id;
                         break;
                     }
@@ -17822,7 +17881,7 @@ bool WidgetEngine::RenderWidgetPanel(
                             std::move(region), viewError))
                     {
                         panelAccepted = false;
-                        viewError = "panel(): " + viewError;
+                        viewError = callbackName + "(): " + viewError;
                         break;
                     }
                 }
@@ -17861,10 +17920,11 @@ bool WidgetEngine::RenderWidgetPanel(
                         pointerX, pointerY);
                     DispatchInteractionTransition(current, transition,
                         static_cast<int>(pointerX),
-                        static_cast<int>(pointerY), "panel");
+                        static_cast<int>(pointerY), normalizedSurface);
                     RuntimeInvalidateHost(widgetId);
                 }
-                ResolveDeferredHostInputFocus(widgetId, "panel");
+                ResolveDeferredHostInputFocus(
+                    widgetId, normalizedSurface);
                 if (current.panelViewTree)
                 {
                     DrawWidgetViewNode(d2dState_, *current.panelViewTree,
@@ -17893,7 +17953,7 @@ bool WidgetEngine::RenderWidgetPanel(
     }
     else if (succeeded)
     {
-        ResolveDeferredHostInputFocus(widgetId, "panel");
+        ResolveDeferredHostInputFocus(widgetId, normalizedSurface);
     }
     if (!panelAccepted && widget.manifest.apiVersion >= 2)
     {
@@ -18429,27 +18489,38 @@ void WidgetEngine::InvokeMouseEvent(const std::wstring& widgetId, const char* ca
         trustedGestureState_, trustedGesture);
     if (w.manifest.apiVersion >= 2)
     {
-        const bool panel = std::strstr(callbackName, "Panel") != nullptr;
+        const std::string eventSurface =
+            std::strstr(callbackName, "Dialog") != nullptr
+                ? "dialog"
+                : (std::strstr(callbackName, "Panel") != nullptr
+                    ? "panel" : "desktop");
         WidgetSurfaceScope surfaceScope(
-            d2dState_, panel ? "panel" : "desktop");
+            d2dState_, eventSurface.c_str());
         const char* kind = "pointer";
         const char* action = callbackName;
         if (std::strcmp(callbackName, "onClick") == 0 ||
-            std::strcmp(callbackName, "onPanelClick") == 0)
+            std::strcmp(callbackName, "onPanelClick") == 0 ||
+            std::strcmp(callbackName, "onDialogClick") == 0)
             action = "click";
-        else if (std::strcmp(callbackName, "onDoubleClick") == 0)
+        else if (std::strcmp(callbackName, "onDoubleClick") == 0 ||
+            std::strcmp(callbackName, "onPanelDoubleClick") == 0 ||
+            std::strcmp(callbackName, "onDialogDoubleClick") == 0)
             action = "doubleClick";
         else if (std::strcmp(callbackName, "onMouseDown") == 0 ||
-            std::strcmp(callbackName, "onPanelMouseDown") == 0)
+            std::strcmp(callbackName, "onPanelMouseDown") == 0 ||
+            std::strcmp(callbackName, "onDialogMouseDown") == 0)
             action = "pointerDown";
         else if (std::strcmp(callbackName, "onMouseMove") == 0 ||
-            std::strcmp(callbackName, "onPanelMouseMove") == 0)
+            std::strcmp(callbackName, "onPanelMouseMove") == 0 ||
+            std::strcmp(callbackName, "onDialogMouseMove") == 0)
             action = "pointerMove";
         else if (std::strcmp(callbackName, "onMouseUp") == 0 ||
-            std::strcmp(callbackName, "onPanelMouseUp") == 0)
+            std::strcmp(callbackName, "onPanelMouseUp") == 0 ||
+            std::strcmp(callbackName, "onDialogMouseUp") == 0)
             action = "pointerUp";
         else if (std::strcmp(callbackName, "onWheel") == 0 ||
-            std::strcmp(callbackName, "onPanelWheel") == 0)
+            std::strcmp(callbackName, "onPanelWheel") == 0 ||
+            std::strcmp(callbackName, "onDialogWheel") == 0)
             action = "wheel";
         else if (std::strcmp(callbackName, "onPanelOpened") == 0)
         {
@@ -18461,9 +18532,19 @@ void WidgetEngine::InvokeMouseEvent(const std::wstring& widgetId, const char* ca
             kind = "panel";
             action = "closed";
         }
+        else if (std::strcmp(callbackName, "onDialogOpened") == 0)
+        {
+            kind = "dialog";
+            action = "opened";
+        }
+        else if (std::strcmp(callbackName, "onDialogClosed") == 0)
+        {
+            kind = "dialog";
+            action = "closed";
+        }
         std::string targetKey;
         auto& interactionRegions = InteractionRegionsForSurface(
-            w, panel ? "panel" : "desktop");
+            w, eventSurface);
         if (std::strcmp(kind, "pointer") == 0)
         {
             const auto transition = interactionRegions.UpdateHover(
@@ -18471,46 +18552,52 @@ void WidgetEngine::InvokeMouseEvent(const std::wstring& widgetId, const char* ca
             if (transition.Changed())
             {
                 DispatchInteractionTransition(w, transition, x, y,
-                    panel ? "panel" : "desktop");
+                    eventSurface);
                 RuntimeInvalidateHost(widgetId);
             }
             if (std::strcmp(action, "pointerDown") == 0)
             {
-                targetKey = interactionRegions.PointerDown(x, y, button).
+                targetKey = interactionRegions.PointerDown(
+                    static_cast<float>(x), static_cast<float>(y), button).
                     targetKey;
                 RuntimeInvalidateHost(widgetId);
             }
             else if (std::strcmp(action, "pointerUp") == 0)
             {
-                targetKey = interactionRegions.PointerUp(x, y, button).
+                targetKey = interactionRegions.PointerUp(
+                    static_cast<float>(x), static_cast<float>(y), button).
                     targetKey;
                 RuntimeInvalidateHost(widgetId);
             }
             else if (std::strcmp(action, "click") == 0)
             {
-                targetKey = interactionRegions.ConsumeClickTarget(x, y);
+                targetKey = interactionRegions.ConsumeClickTarget(
+                    static_cast<float>(x), static_cast<float>(y));
             }
             else if (std::strcmp(action, "pointerMove") == 0)
             {
-                targetKey = interactionRegions.PointerMoveTarget(x, y);
+                targetKey = interactionRegions.PointerMoveTarget(
+                    static_cast<float>(x), static_cast<float>(y));
             }
             else
             {
-                targetKey = interactionRegions.TargetAt(x, y);
+                targetKey = interactionRegions.TargetAt(
+                    static_cast<float>(x), static_cast<float>(y));
             }
             DispatchInteractionAction(w, targetKey, action, x, y,
                 button, delta,
                 std::strcmp(action, "doubleClick") == 0 ? 2 :
                     (std::strcmp(action, "click") == 0 ? 1 : 0),
                 false, "pointer", 0, std::nullopt, std::nullopt,
-                panel ? "panel" : "desktop");
+                eventSurface);
         }
         (void)InvokeLifecycleEvent(w, kind,
-            [action, panel, x, y, button, delta, trustedGesture,
+            [action, eventSurface, x, y, button, delta, trustedGesture,
                 &targetKey](lua_State* eventState) {
                 lua_pushstring(eventState, action);
                 lua_setfield(eventState, -2, "action");
-                lua_pushstring(eventState, panel ? "panel" : "desktop");
+                lua_pushlstring(eventState, eventSurface.data(),
+                    eventSurface.size());
                 lua_setfield(eventState, -2, "surface");
                 lua_pushinteger(eventState, x);
                 lua_setfield(eventState, -2, "x");
@@ -18569,6 +18656,8 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
     auto& w = widgets_[idx];
     lua_State* state = w.state;
     if (!state) return result;
+    const std::string normalizedSurface =
+        NormalizeWidgetSurface(surface);
 
     if (w.manifest.apiVersion >= 2)
     {
@@ -18576,14 +18665,16 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
             InteractionRegionsForSurface(w, surface);
         std::string targetKey;
         const auto* requestActionPointer =
-            interactionRegions.ActionAt(x, y, "contextMenu", &targetKey);
+            interactionRegions.ActionAt(
+                static_cast<float>(x), static_cast<float>(y),
+                "contextMenu", &targetKey);
         if (!requestActionPointer || targetKey.empty()) return result;
         const auto requestAction = *requestActionPointer;
         const std::uint64_t generation =
             interactionRegions.Generation();
         WidgetExecutionContextGuard contextGuard(d2dState_, widgetId);
         WidgetSurfaceScope surfaceScope(d2dState_,
-            IsPanelSurface(surface) ? "panel" : "desktop");
+            normalizedSurface.c_str());
         snowdesktop::lua_runtime::StackGuard stackGuard(state);
         SetWidgetRectContext(d2dState_, BoundsForSurface(w, surface));
         lua_createtable(state, 0, 6);
@@ -18679,8 +18770,7 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
                     snowdesktop::widget_runtime::InteractionAction::
                         ContextMenuScope::Element;
                 item.targetKey = targetKey;
-                item.surface = IsPanelSurface(surface)
-                    ? "panel" : "desktop";
+                item.surface = normalizedSurface;
                 item.contextValue = requestAction.value;
                 item.interactionGeneration = generation;
             }
@@ -18696,7 +18786,7 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
         return result;
     WidgetExecutionContextGuard contextGuard(d2dState_, widgetId);
     WidgetSurfaceScope surfaceScope(d2dState_,
-        IsPanelSurface(surface) ? "panel" : "desktop");
+        normalizedSurface.c_str());
     snowdesktop::lua_runtime::StackGuard stackGuard(state);
     SetWidgetRectContext(d2dState_, BoundsForSurface(w, surface));
     lua_rawgeti(state, LUA_REGISTRYINDEX, w.ref);
@@ -21072,8 +21162,8 @@ void WidgetEngine::DispatchInteractionAction(LuaWidget& widget,
     std::optional<bool> expanded;
     const bool trustedGesture = trustedGestureState_.Active();
     const std::string eventSource = source && *source ? source : "pointer";
-    const std::string eventSurface = IsPanelSurface(surface)
-        ? "panel" : "desktop";
+    const std::string eventSurface =
+        NormalizeWidgetSurface(surface);
     WidgetSurfaceScope surfaceScope(d2dState_, eventSurface.c_str());
     auto& interactionRegions =
         InteractionRegionsForSurface(widget, eventSurface);
@@ -21503,7 +21593,8 @@ void WidgetEngine::ClearInteractionHover(std::string_view surface)
         if (surface.empty())
         {
             clearSurface("desktop");
-            clearSurface("panel");
+            if (widget.panelActive)
+                clearSurface(widget.panelSurface);
         }
         else
             clearSurface(surface);
@@ -23041,7 +23132,8 @@ bool WidgetEngine::DispatchHostViewKeyEvent(WPARAM key, bool pressed,
         widgetId = focused->widgetId;
         surface = focused->panelActive &&
                 !focused->panelViewKeyboardFocusKey.empty()
-            ? "panel" : "desktop";
+            ? NormalizeWidgetSurface(focused->panelSurface)
+            : "desktop";
         nodeKey = ViewFocusForSurface(*focused, surface);
     }
 
@@ -23119,8 +23211,8 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
     if (index < 0 || ctrl) return false;
     auto& widget = widgets_[index];
     if (widget.preview || !widget.valid) return false;
-    const std::string normalizedSurface = IsPanelSurface(surface)
-        ? "panel" : "desktop";
+    const std::string normalizedSurface =
+        NormalizeWidgetSurface(surface);
     WidgetSurfaceScope surfaceScope(d2dState_, normalizedSurface.c_str());
     if (IsPanelSurface(normalizedSurface))
     {
@@ -23147,7 +23239,8 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
                     return control.type ==
                             LuaWidget::HostControl::Type::Input &&
                         control.enabled && control.id == targetKey &&
-                        HostControlBelongsToSurface(control, "panel");
+                        HostControlBelongsToSurface(
+                            control, normalizedSurface);
                 });
             if (input != widget.hostControls.rend())
             {
@@ -23181,7 +23274,7 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
             if (focusedHostInput_.active &&
                 focusedHostInput_.widgetId == widgetId &&
                 focusedHostInput_.id == focusedKey &&
-                focusedHostInput_.surface == "panel")
+                IsPanelSurface(focusedHostInput_.surface))
                 BlurHostInput(true);
             focusKey.clear();
             RuntimeInvalidateHost(widgetId);
@@ -23219,7 +23312,8 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
                         gestureScope(trustedGestureState_, true);
                     DispatchInteractionAction(widget, focusedKey, "change",
                         x, y, 0, 0, 0, false, "keyboard", direction,
-                        std::nullopt, std::nullopt, "panel");
+                        std::nullopt, std::nullopt,
+                        normalizedSurface);
                     RuntimeInvalidateHost(widgetId);
                 }
                 return true;
@@ -23283,7 +23377,8 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
                     return control.type ==
                             LuaWidget::HostControl::Type::Input &&
                         control.enabled && control.id == focusedKey &&
-                        HostControlBelongsToSurface(control, "panel");
+                        HostControlBelongsToSurface(
+                            control, normalizedSurface);
                 });
             if (input != widget.hostControls.rend())
                 return RuntimeFocusHostInput(
@@ -23307,7 +23402,8 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
                     gestureScope(trustedGestureState_, true);
                 DispatchInteractionAction(widget, focusedKey, "click",
                     x, y, 0, 0, 1, false, "keyboard", 0,
-                    std::nullopt, std::nullopt, "panel");
+                    std::nullopt, std::nullopt,
+                    normalizedSurface);
                 RuntimeInvalidateHost(widgetId);
             }
             return true;
@@ -24832,8 +24928,8 @@ bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int 
     int index = FindWidget(widgetId);
     if (index < 0) return false;
     auto& widget = widgets_[index];
-    const std::string normalizedSurface = IsPanelSurface(surface)
-        ? "panel" : "desktop";
+    const std::string normalizedSurface =
+        NormalizeWidgetSurface(surface);
     WidgetSurfaceScope surfaceScope(d2dState_, normalizedSurface.c_str());
     POINT point{ x, y };
     for (auto it = widget.hostControls.rbegin(); it != widget.hostControls.rend(); ++it)
@@ -24945,30 +25041,36 @@ bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int 
     return false;
 }
 
-void WidgetEngine::CloseWidgetPanelSurface(const std::wstring& widgetId)
+void WidgetEngine::CloseWidgetPanelSurface(
+    const std::wstring& widgetId, std::string_view surface)
 {
     const int index = FindWidget(widgetId);
     if (index < 0) return;
     auto& widget = widgets_[index];
+    const std::string closingSurface = IsPanelSurface(surface)
+        ? NormalizeWidgetSurface(surface)
+        : NormalizeWidgetSurface(widget.panelSurface);
     if (focusedHostInput_.active &&
         focusedHostInput_.widgetId == widgetId &&
-        focusedHostInput_.surface == "panel")
+        IsPanelSurface(focusedHostInput_.surface))
     {
         BlurHostInput(false);
     }
     widget.panelActive = false;
+    widget.panelSurface = "panel";
     widget.panelViewKeyboardFocusKey.clear();
     widget.panelInteractionRegions.CancelPointerPress();
     const auto transition = widget.panelInteractionRegions.ClearHover();
     if (transition.Changed())
-        DispatchInteractionTransition(widget, transition, 0, 0, "panel");
+        DispatchInteractionTransition(
+            widget, transition, 0, 0, closingSurface);
     std::erase_if(widget.hostControls, [](const auto& control) {
-        return HostControlBelongsToSurface(control, "panel");
+        return IsPanelSurface(control.surface);
     });
     std::erase_if(pressedViewKeyTargets_,
         [&widgetId](const auto& entry) {
             return entry.second.widgetId == widgetId &&
-                entry.second.surface == "panel";
+                IsPanelSurface(entry.second.surface);
         });
 }
 
@@ -25110,8 +25212,29 @@ void WidgetEngine::RuntimeOpenWidgetPanel(
     LuaWidgetPanelRequest request;
     request.widgetId = widgetId;
     request.title = std::move(title);
+    request.surface = "panel";
     request.width = std::clamp(width, 320, 900);
     request.height = std::clamp(height, 280, 900);
+    openWidgetPanelCallback_(request);
+}
+
+void WidgetEngine::RuntimeOpenWidgetDialog(
+    const std::wstring& widgetId, std::wstring title,
+    int width, int height, bool dismissOnOutside,
+    bool dismissOnEscape)
+{
+    if (snowdesktop::widget_runtime::IsDryLoad() ||
+        !openWidgetPanelCallback_)
+        return;
+    LuaWidgetPanelRequest request;
+    request.widgetId = widgetId;
+    request.title = std::move(title);
+    request.surface = "dialog";
+    request.width = std::clamp(width, 320, 900);
+    request.height = std::clamp(height, 280, 900);
+    request.dismissOnOutside = dismissOnOutside;
+    request.dismissOnEscape = dismissOnEscape;
+    request.modal = true;
     openWidgetPanelCallback_(request);
 }
 
@@ -26324,8 +26447,8 @@ void WidgetEngine::ResolveDeferredHostInputFocus(
     if (!request.MatchesSurface(surface)) return;
     const std::string controlId = request.ControlId();
     request.Clear();
-    const std::string normalizedSurface = IsPanelSurface(surface)
-        ? "panel" : "desktop";
+    const std::string normalizedSurface =
+        NormalizeWidgetSurface(surface);
     WidgetSurfaceScope surfaceScope(d2dState_, normalizedSurface.c_str());
     if (!RuntimeFocusViewTarget(widgetId, controlId, "programmatic"))
     {
@@ -28271,7 +28394,9 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
         { "setTitle", lua_WidgetSetTitle },
         { "openSettings", lua_WidgetOpenSettings },
         { "openPanel", lua_WidgetOpenPanel },
+        { "openDialog", lua_WidgetOpenDialog, 2 },
         { "closePanel", lua_WidgetClosePanel },
+        { "closeDialog", lua_WidgetClosePanel, 2 },
         { "invalidate", lua_WidgetInvalidate },
         { "log", lua_WidgetLog },
         { "theme", lua_WidgetTheme },
