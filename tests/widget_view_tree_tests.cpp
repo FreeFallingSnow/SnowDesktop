@@ -1884,6 +1884,7 @@ void TestUniformMargins()
     ViewNode scroll;
     scroll.type = ViewNodeType::Scroll;
     scroll.key = "margin-scroll";
+    scroll.orientation = ViewOrientation::Vertical;
     ViewNode scrollChild;
     scrollChild.type = ViewNodeType::Shape;
     scrollChild.key = "scroll-child";
