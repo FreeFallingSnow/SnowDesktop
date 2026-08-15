@@ -145,7 +145,7 @@ bool ValidateNodeFields(lua_State* state, int index, ViewNodeType type,
         if (!FieldPresent(state, index, name.c_str()))
         {
             error = std::string(ViewNodeTypeName(type)) +
-                " nodes require field '" + name + "'";
+                " nodes require " + name;
             return false;
         }
     }
