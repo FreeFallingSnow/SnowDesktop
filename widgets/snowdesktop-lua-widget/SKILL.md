@@ -163,6 +163,13 @@ menu.
   from a direct trusted gesture. Declare `clipboard.read` separately from
   `clipboard.write`, keep text within 256 KiB, and do not claim image, file
   reference, or history access until those feature probes are published.
+- Ask the user to grant a concrete file or folder only through
+  `filesystem.pickOpen/pickSave/pickFolder` in a direct trusted gesture.
+  Declare `filesystem.userSelected.read` and/or `.write` for the requested
+  access, retain only the returned opaque handle, and show its display-only
+  name. Never persist, parse, log, or replace a handle with a filesystem path.
+  Probe `task.filesystem.picker`; file stat/read/write/list/watch operations
+  are not available until their own feature IDs are published.
 - Search applications with the bounded `task.start("app.search", { query,
   limit, offset })` task and retain only its opaque `ref` values. Launch one
   with `task.start("app.launch", { ref = item.ref })` inside the direct click

@@ -761,10 +761,10 @@ local taskId, err = task.start("media.toggle", { sessionId = session.id })
 `task.app.launch`、`task.notification.show`、`task.calendar.write`、
 `task.network.request`、`task.shell.openUri`、`task.desktop.search`、
 `task.everything.search`、`task.shell.item`、`task.system.openSettings`、
-`task.clipboard.text` 和
+`task.clipboard.text`、`task.filesystem.picker` 和
 `task.desktop.refresh` feature，完整媒体
 控制动作、两个应用任务、一次性通知、本地日历 create/update/remove、公网 HTTPS GET、
-可信手势外链、桌面/Everything 项目搜索及受控打开、定位和刷新任务。
+可信手势外链、用户选择文件/目录、桌面/Everything 项目搜索及受控打开、定位和刷新任务。
 `WidgetTaskBroker` 生命周期内核负责任务描述符注册、全局/实例/
 任务类型并发上限、权限和可信手势门禁、preview 标记、显式取消、撤权取消、实例
 dispose 与 shutdown 原因，以及执行器完成确认均有独立契约测试。实时与预览引擎均
@@ -781,7 +781,12 @@ bluetooth/power/storage/apps/personalization 页面，并在可信手势和 `she
 映射为固定 `ms-settings:` URI；Lua 不能传 scheme、查询参数或原始 URI。
 文本剪贴板首批公开 `clipboard.read/write/clear`：读取和修改分别要求独立权限，三者
 均要求可信手势、256 KiB UTF-8 上限、100 ms 每实例限速、异步取消和确定性预览；
-当前不开放图片、文件引用或历史，也不允许把文本路径冒充文件句柄。API v1
+当前不开放图片、文件引用或历史，也不允许把文本路径冒充文件句柄。
+`filesystem.pickOpen/pickSave/pickFolder` 已通过系统选择器公开首批用户授予范围；
+返回值只包含随机 opaque handle、kind、access 和显示名称，注册记录在 Lua 普通存储之外
+持久化并同时绑定 package ID 与实例 ID，删除实例或卸载包时撤销。当前只发布
+`task.filesystem.picker`，尚未发布 `stat/list/read/write/watch`，因此组件不能自行解释
+句柄或回退为路径。API v1
 同步 `media.playPause/next/previous` 已通过函数版本上限从 v2 VM 隐藏，不能绕过
 手势门禁。应用搜索从 UI 线程复制宿主索引为不可变、有上限的目录快照，在独立任务
 线程完成名称/拼音排序与分页，只向 Lua 返回展示字段和实例作用域的不透明引用；
@@ -801,7 +806,8 @@ SDK 的其他调用串行。两类搜索都只返回实例作用域的不透明�
 
 - `system.read` 把性能、电源、存储、网络和显示混成一个权限，无法做到最小授权。
 - 只有单一聚合 CPU/GPU/网络快照，缺少多 GPU/多卷/多显示器结构、网络连接状态与流量拆分，以及统一的单位、时间戳和 warming/stale 语义。
-- 已在权限计划中出现 clipboard 和用户选择文件/目录，却没有相应任务、句柄、撤销和额度契约。
+- clipboard 文本与文件选择句柄已经有首批任务；文件 stat/list/read/write/watch、
+  剪贴板图片/文件引用以及句柄读写额度仍未完成。
 - 媒体只支持四个调用，缺少会话列表、时间线、封面句柄、seek/stop，以及按源能力报告可用动作。
 - 音频分析已经设计，但普通 endpoint 读取、音量/静音订阅和受控修改尚未列入公共面。
 - 当前 `sys.notify` 是 tray balloon 级接口，缺少通知 ID、更新、撤销、动作回传、调度、频控和失败状态。

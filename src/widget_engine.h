@@ -41,6 +41,7 @@
 #include "widget_media_task_executor.h"
 #include "widget_audio_output_task_executor.h"
 #include "widget_clipboard_task_executor.h"
+#include "widget_filesystem_handle_store.h"
 #include "widget_app_task_executor.h"
 #include "widget_trusted_gesture.h"
 #include "widget_system_data_provider.h"
@@ -249,6 +250,34 @@ struct LuaWidgetPanelRequest
     std::wstring title;
     int width = 520;
     int height = 620;
+};
+
+enum class LuaWidgetFilePickerKind
+{
+    OpenFile,
+    SaveFile,
+    Folder,
+};
+
+struct LuaWidgetFilePickerRequest
+{
+    LuaWidgetFilePickerKind kind = LuaWidgetFilePickerKind::OpenFile;
+    snowdesktop::widget_runtime::WidgetFilesystemHandleAccess access =
+        snowdesktop::widget_runtime::WidgetFilesystemHandleAccess::Read;
+    std::vector<std::wstring> extensions;
+    std::wstring suggestedName;
+};
+
+struct LuaWidgetFilePickerResult
+{
+    std::filesystem::path path;
+    bool canceled = false;
+    std::string error;
+
+    explicit operator bool() const noexcept
+    {
+        return !path.empty() && !canceled && error.empty();
+    }
 };
 
 /**
@@ -494,6 +523,8 @@ public:
     using WidgetPanelCloseCallback = std::function<void(const std::wstring&)>;
     using HostInputFocusCallback = std::function<void()>;
     using NotifyCallback = std::function<void(const std::wstring&, const std::wstring&)>;
+    using FilePickerCallback = std::function<LuaWidgetFilePickerResult(
+        const LuaWidgetFilePickerRequest&)>;
     using WidgetTimerRequestCallback = std::function<UINT_PTR(const std::wstring& widgetId, UINT intervalMs)>;
     using WidgetTimerKillCallback = std::function<void(UINT_PTR timerId)>;
 
@@ -544,6 +575,11 @@ public:
     void SetCloseWidgetPanelCallback(WidgetPanelCloseCallback callback) { closeWidgetPanelCallback_ = std::move(callback); }
     /** @brief 设置系统通知回调 */
     void SetNotifyCallback(NotifyCallback callback) { notifyCallback_ = std::move(callback); }
+    /** @brief 设置由可信用户动作触发的系统文件选择器回调 */
+    void SetFilePickerCallback(FilePickerCallback callback)
+    {
+        filePickerCallback_ = std::move(callback);
+    }
     /** @brief 设置组件刷新截止时间请求回调（宿主返回统一调度令牌） */
     void SetWidgetTimerRequestCallback(WidgetTimerRequestCallback callback) { widgetTimerRequestCallback_ = std::move(callback); }
     /** @brief 设置组件独立刷新定时器关闭回调 */
@@ -570,6 +606,8 @@ public:
      */
     void UnloadWidget(const std::wstring& widgetId);
     void DeleteWidgetInstance(const std::wstring& widgetId);
+    void RevokeFilesystemHandlesForPackage(
+        const std::string& packageId);
 
     /**
      * @brief 重新加载指定小部件实例
@@ -1200,6 +1238,7 @@ private:
     InlineTextEditCallback inlineTextEditCallback_;    ///< 内联文本编辑请求的回调
     HostInputFocusCallback hostInputFocusCallback_;    ///< 让隐藏桌面输入窗口取得键盘焦点的回调
     NotifyCallback notifyCallback_;                     ///< 系统通知回调
+    FilePickerCallback filePickerCallback_;             ///< 系统文件选择器回调
     WidgetTimerRequestCallback widgetTimerRequestCallback_; ///< 请求宿主为 widget 开独立 timer
     WidgetTimerKillCallback widgetTimerKillCallback_;   ///< 请求宿主关闭 widget 独立 timer
     std::unique_ptr<SystemSnapshotService> systemSnapshotService_;
@@ -1216,6 +1255,9 @@ private:
     std::unique_ptr<
         snowdesktop::widget_runtime::WidgetClipboardTaskExecutor>
         clipboardTaskExecutor_;
+    std::unique_ptr<
+        snowdesktop::widget_runtime::WidgetFilesystemHandleStore>
+        filesystemHandleStore_;
     std::unique_ptr<
         snowdesktop::widget_runtime::WidgetAppTaskExecutor>
         appTaskExecutor_;
@@ -1253,6 +1295,9 @@ private:
     std::unordered_map<std::uint64_t,
         snowdesktop::widget_runtime::WidgetClipboardTaskCompletion>
         clipboardTaskCompletions_;
+    std::unordered_map<std::uint64_t,
+        snowdesktop::widget_runtime::WidgetFilesystemHandleEntry>
+        filesystemPickerCompletions_;
     std::unordered_map<std::uint64_t, int> networkTaskRequests_;
     std::unordered_map<int, std::uint64_t> networkRequestTasks_;
     snowdesktop::widget_runtime::WidgetTrustedGestureState

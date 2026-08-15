@@ -458,10 +458,12 @@ CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.pow
 `shell.openItem`、`shell.revealItem`、`desktop.refresh`，一次性通知任务
 `notification.show`，以及本地日历写入任务 `calendar.create/update/remove`、公网读取
 任务 `network.request`、外部链接动作 `shell.openUri`、受控设置动作
-`system.openSettings` 和文本剪贴板任务 `clipboard.read/write/clear`。它们对应
+`system.openSettings`、文本剪贴板任务 `clipboard.read/write/clear`，以及用户选择文件
+范围的 `filesystem.pickOpen/pickSave/pickFolder`。它们对应
 feature ID `task.start`、`task.media.control`、`task.audio.output.control`、`task.app.search`、`task.app.launch`
 、`task.notification.show`、`task.calendar.write`、`task.network.request` 和
-`task.shell.openUri`、`task.system.openSettings`、`task.clipboard.text`，以及 `task.desktop.search`、`task.everything.search`、
+`task.shell.openUri`、`task.system.openSettings`、`task.clipboard.text`、
+`task.filesystem.picker`，以及 `task.desktop.search`、`task.everything.search`、
 `task.shell.item`、`task.desktop.refresh`。媒体动作要求 `media.action` 权限，而且只能在
 `click/doubleClick/pointerDown/pointerUp/wheel`、宿主按钮、菜单命令或由宿主明确
 标记来源的打开回调同步调用栈内启动：
@@ -526,6 +528,38 @@ local clearTask = task.start("clipboard.clear")
 `clipboardReadFailed`、`clipboardWriteFailed`、`permissionRevoked` 和 `canceled`。
 预览读取固定 mock，不访问真实剪贴板。当前 feature 只代表文本；图片、文件引用和
 剪贴板历史尚未开放，组件不得用文本路径代替文件句柄。
+
+文件选择器只在当前可信用户手势中启动，并且只把用户实际选择的范围授予当前组件
+包与当前实例。`filesystem.pickOpen` 要求 `filesystem.userSelected.read`；
+`filesystem.pickSave` 要求 `filesystem.userSelected.write`；`filesystem.pickFolder`
+的 `access=read/write/readWrite` 分别要求对应的一项或两项权限：
+
+```lua
+local openTask = task.start("filesystem.pickOpen", {
+    extensions = { "txt", "md" },
+})
+local saveTask = task.start("filesystem.pickSave", {
+    extensions = { "json" },
+    suggestedName = "export.json",
+})
+local folderTask = task.start("filesystem.pickFolder", {
+    access = "readWrite",
+})
+
+-- 成功：event.value = {
+--   handle = "filesystem:...", kind = "file"|"folder",
+--   access = "read"|"write"|"readWrite", name = "仅用于显示的名称"
+-- }
+```
+
+`extensions` 最多 16 项，只接受无通配符的安全扩展名；`suggestedName` 只能是文件名，
+不能传路径。句柄使用系统随机 token，保存于 Lua 普通存储之外的宿主注册表，并同时
+绑定 package ID 与实例 ID；组件删除或软件包卸载时撤销。Lua 永远得不到绝对路径，
+其他实例也不能解析或撤销该句柄。稳定错误包括 `permissionDenied`、
+`userGestureRequired`、`userCanceled`、`pickerUnavailable`、`pickerFailed`、
+`invalidSelection`、`handleQuotaExceeded`、`handlePersistenceFailed` 和 `canceled`。
+预览返回固定虚拟句柄且不打开系统对话框。当前 `task.filesystem.picker` 只冻结选择与
+授权句柄契约；`stat/list/read/write/watch` 要等各自 feature 发布后才能使用。
 
 `app.search` 要求 `app.discovery`，不要求用户手势；参数是严格的普通表：`query`
 为 1–256 字节有效 UTF-8，`limit` 默认为 50、范围 1–100，`offset` 默认为 0、范围

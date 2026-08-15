@@ -251,6 +251,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget_media_task_executor.cpp
     src/widget_audio_output_task_executor.cpp
     src/widget_clipboard_task_executor.cpp
+    src/widget_filesystem_handle_store.cpp
     src/widget_app_task_executor.cpp
     src/widget_system_settings.cpp
     src/widget_system_data_provider.cpp
@@ -788,6 +789,17 @@ if (BUILD_TESTING)
             src/widget_clipboard_task_executor.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract clipboard task lua widget)
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetFilesystemHandleStoreTests
+        widget_filesystem_handle_store
+        SOURCES
+            tests/widget_filesystem_handle_store_tests.cpp
+            src/widget_filesystem_handle_store.cpp
+            src/atomic_file.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES bcrypt
+        LABELS contract filesystem security task lua widget)
 
     snowdesktop_add_test(
         SnowDesktopWidgetAppTaskExecutorTests

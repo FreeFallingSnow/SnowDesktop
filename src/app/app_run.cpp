@@ -3,6 +3,108 @@
 #include <commoncontrols.h>
 #include <imm.h>
 #include <new>
+#include <shobjidl.h>
+
+namespace
+{
+LuaWidgetFilePickerResult ShowLuaWidgetFilePicker(HWND owner,
+    const LuaWidgetFilePickerRequest& request)
+{
+    LuaWidgetFilePickerResult result;
+    ComPtr<IFileDialog> dialog;
+    const CLSID& classId = request.kind == LuaWidgetFilePickerKind::SaveFile
+        ? CLSID_FileSaveDialog : CLSID_FileOpenDialog;
+    if (FAILED(CoCreateInstance(classId, nullptr, CLSCTX_INPROC_SERVER,
+            IID_PPV_ARGS(&dialog))) || !dialog)
+    {
+        result.error = "pickerUnavailable";
+        return result;
+    }
+
+    DWORD options = 0;
+    if (FAILED(dialog->GetOptions(&options)))
+    {
+        result.error = "pickerFailed";
+        return result;
+    }
+    options |= FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST;
+    if (request.kind == LuaWidgetFilePickerKind::OpenFile)
+        options |= FOS_FILEMUSTEXIST;
+    else if (request.kind == LuaWidgetFilePickerKind::SaveFile)
+        options |= FOS_OVERWRITEPROMPT;
+    else
+        options |= FOS_PICKFOLDERS;
+    if (FAILED(dialog->SetOptions(options)))
+    {
+        result.error = "pickerFailed";
+        return result;
+    }
+
+    std::vector<std::wstring> patterns;
+    std::vector<COMDLG_FILTERSPEC> filters;
+    if (request.kind != LuaWidgetFilePickerKind::Folder &&
+        !request.extensions.empty())
+    {
+        patterns.reserve(request.extensions.size());
+        for (const auto& extension : request.extensions)
+            patterns.push_back(L"*." + extension);
+        filters.reserve(patterns.size());
+        for (const auto& pattern : patterns)
+            filters.push_back({ pattern.c_str(), pattern.c_str() });
+        if (FAILED(dialog->SetFileTypes(
+                static_cast<UINT>(filters.size()), filters.data())))
+        {
+            result.error = "pickerFailed";
+            return result;
+        }
+    }
+
+    if (request.kind == LuaWidgetFilePickerKind::SaveFile)
+    {
+        ComPtr<IFileSaveDialog> saveDialog;
+        if (FAILED(dialog.As(&saveDialog)) || !saveDialog)
+        {
+            result.error = "pickerFailed";
+            return result;
+        }
+        if (!request.suggestedName.empty())
+            (void)saveDialog->SetFileName(request.suggestedName.c_str());
+        if (!request.extensions.empty())
+            (void)saveDialog->SetDefaultExtension(
+                request.extensions.front().c_str());
+    }
+
+    const HRESULT shown = dialog->Show(owner);
+    if (shown == HRESULT_FROM_WIN32(ERROR_CANCELLED))
+    {
+        result.canceled = true;
+        return result;
+    }
+    if (FAILED(shown))
+    {
+        result.error = "pickerFailed";
+        return result;
+    }
+
+    ComPtr<IShellItem> item;
+    if (FAILED(dialog->GetResult(&item)) || !item)
+    {
+        result.error = "invalidSelection";
+        return result;
+    }
+    PWSTR selected = nullptr;
+    if (FAILED(item->GetDisplayName(SIGDN_FILESYSPATH, &selected)) ||
+        !selected)
+    {
+        if (selected) CoTaskMemFree(selected);
+        result.error = "invalidSelection";
+        return result;
+    }
+    result.path = std::filesystem::path(selected);
+    CoTaskMemFree(selected);
+    return result;
+}
+}
 
 // Application bootstrap and top-level message loop.
 
@@ -686,6 +788,10 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         widgetEngine_->SetNotifyCallback([this](const std::wstring& title, const std::wstring& message) {
             ShowBalloonNotification(title, message);
         });
+        widgetEngine_->SetFilePickerCallback(
+            [this](const LuaWidgetFilePickerRequest& request) {
+                return ShowLuaWidgetFilePicker(hwnd_, request);
+            });
         widgetEngine_->SetWidgetTimerRequestCallback([this](const std::wstring& widgetId, UINT intervalMs) -> UINT_PTR {
             if (!hwnd_) return 0;
             const snowdesktop::UiScheduleToken token =

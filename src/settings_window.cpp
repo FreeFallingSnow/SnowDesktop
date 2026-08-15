@@ -5556,6 +5556,9 @@ void SettingsWindow::DrawWidgetPackagesPage()
             if (mayUninstall &&
                 WidgetEngine::UninstallWidgetPackage(packageId, error))
             {
+                if (widgetEngine_)
+                    widgetEngine_->RevokeFilesystemHandlesForPackage(
+                        packageId);
                 widgetPackageStatus_ = _L(
                     pendingWidgetPackageUninstallWorkshopItem_.empty()
                         ? "app.settings.widgets_uninstall_ok"
