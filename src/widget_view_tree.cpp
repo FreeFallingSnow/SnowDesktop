@@ -395,6 +395,12 @@ bool IsCollectionContainer(ViewNodeType type) noexcept
         IsVirtualCollection(type);
 }
 
+bool HasCollectionPlaceholder(const ViewNode& node) noexcept
+{
+    return IsCollectionContainer(node.type) &&
+        node.collectionContent != ViewCollectionContent::Items;
+}
+
 bool IsScrollContainer(ViewNodeType type) noexcept
 {
     return type == ViewNodeType::Scroll || IsVirtualCollection(type);
@@ -681,6 +687,14 @@ float RawIntrinsicWidth(const ViewNode& node)
         return 64.0f + ViewHorizontalPadding(node);
     if (node.type == ViewNodeType::Spacer)
         return 0.0f;
+    if (HasCollectionPlaceholder(node))
+    {
+        float result = 0.0f;
+        for (const auto& child : node.children)
+            if (child.visible)
+                result = std::max(result, OuterIntrinsicWidth(child));
+        return result + ViewHorizontalPadding(node);
+    }
     if (IsVirtualCollection(node.type))
     {
         float cellWidth = 0.0f;
@@ -851,6 +865,14 @@ float RawIntrinsicHeight(const ViewNode& node)
         return 224.0f + ViewVerticalPadding(node);
     if (node.type == ViewNodeType::Spacer)
         return 0.0f;
+    if (HasCollectionPlaceholder(node))
+    {
+        float result = 0.0f;
+        for (const auto& child : node.children)
+            if (child.visible)
+                result = std::max(result, OuterIntrinsicHeight(child));
+        return result + ViewVerticalPadding(node);
+    }
     if (IsVirtualCollection(node.type))
     {
         const std::size_t columns = node.type == ViewNodeType::VirtualGrid
@@ -1046,7 +1068,8 @@ void LayoutNode(ViewNode& node, const ViewRect& frame);
 bool ResolveGridPlacements(ViewNode& node, std::string& error)
 {
     constexpr std::size_t maximumTracks = 64;
-    if (IsPositionedGridContainer(node.type))
+    if (IsPositionedGridContainer(node.type) &&
+        !HasCollectionPlaceholder(node))
     {
         std::vector<std::vector<bool>> occupied;
         const auto ensureRows = [&](std::size_t count) {
@@ -1786,7 +1809,31 @@ void LayoutNode(ViewNode& node, const ViewRect& frame)
     node.scrollViewportExtent = 0.0f;
     node.scrollContentExtent = 0.0f;
     const ViewRect content = ContentRect(node);
-    if (IsFlexContainer(node.type))
+    const auto layoutOverlayChildren = [&]() {
+        for (auto& child : node.children)
+        {
+            if (!child.visible) continue;
+            const ViewAlignment alignment =
+                child.alignSelf == ViewAlignment::Auto
+                ? ViewAlignment::Stretch : child.alignSelf;
+            const ResolvedNodeSize childSize = ResolveOuterNodeSize(child,
+                ResolveOuterCrossSize(child, child.width,
+                    IntrinsicWidth(child),
+                    content.width, alignment, true),
+                ResolveOuterCrossSize(child, child.height,
+                    IntrinsicHeight(child),
+                    content.height, alignment, false));
+            LayoutNode(child, {
+                content.x + AlignOffset(alignment,
+                    content.width, childSize.width),
+                content.y + AlignOffset(alignment,
+                    content.height, childSize.height),
+                childSize.width, childSize.height });
+        }
+    };
+    if (HasCollectionPlaceholder(node))
+        layoutOverlayChildren();
+    else if (IsFlexContainer(node.type))
     {
         const bool horizontal = IsHorizontalFlex(node);
         if (node.flexWrap != ViewFlexWrap::NoWrap)
@@ -1810,26 +1857,7 @@ void LayoutNode(ViewNode& node, const ViewRect& frame)
         node.type == ViewNodeType::SlotSurface ||
         node.type == ViewNodeType::SlotItem)
     {
-        for (auto& child : node.children)
-        {
-            if (!child.visible) continue;
-            const ViewAlignment alignment =
-                child.alignSelf == ViewAlignment::Auto
-                ? ViewAlignment::Stretch : child.alignSelf;
-            const ResolvedNodeSize childSize = ResolveOuterNodeSize(child,
-                ResolveOuterCrossSize(child, child.width,
-                    IntrinsicWidth(child),
-                    content.width, alignment, true),
-                ResolveOuterCrossSize(child, child.height,
-                    IntrinsicHeight(child),
-                    content.height, alignment, false));
-            LayoutNode(child, {
-                content.x + AlignOffset(alignment,
-                    content.width, childSize.width),
-                content.y + AlignOffset(alignment,
-                    content.height, childSize.height),
-                childSize.width, childSize.height });
-        }
+        layoutOverlayChildren();
     }
     if (node.clipChildren || node.overflow == ViewOverflow::Clip)
         node.clipFrame = ContentRect(node);
@@ -2167,13 +2195,28 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
     }
     if (IsCollectionContainer(node.type))
     {
-        if (!std::all_of(node.children.begin(), node.children.end(),
+        const bool itemContent = node.collectionContent ==
+            ViewCollectionContent::Items;
+        if (itemContent &&
+            !std::all_of(node.children.begin(), node.children.end(),
                 [](const ViewNode& child) {
                     return child.type == ViewNodeType::ListItem;
                 }))
         {
             error = std::string(ViewNodeTypeName(node.type)) +
                 " children must all be listItem nodes";
+            return false;
+        }
+        if (!itemContent &&
+            (node.children.size() != 1 || !node.children.front().visible))
+        {
+            error = "collection empty/loading content must be one visible node";
+            return false;
+        }
+        if (node.collectionContent == ViewCollectionContent::Empty &&
+            !node.selectedKeys.empty())
+        {
+            error = "empty collections cannot retain selectedKeys";
             return false;
         }
         if ((node.selectionMode == ViewSelectionMode::None &&
@@ -2201,7 +2244,7 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             }
             textBytes += key.size();
         }
-        if (!IsVirtualCollection(node.type))
+        if (itemContent && !IsVirtualCollection(node.type))
         {
             for (const auto& key : node.selectedKeys)
             {
@@ -2215,7 +2258,8 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
                 }
             }
         }
-        if (node.selectionMode != ViewSelectionMode::None &&
+        if (itemContent &&
+            node.selectionMode != ViewSelectionMode::None &&
             std::any_of(node.children.begin(), node.children.end(),
                 [](const ViewNode& child) {
                     return child.events.contains("click") ||
@@ -2227,7 +2271,8 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         }
     }
     else if (node.selectionMode != ViewSelectionMode::None ||
-        !node.selectedKeys.empty())
+        !node.selectedKeys.empty() ||
+        node.collectionContent != ViewCollectionContent::Items)
     {
         error = "selectionMode and selectedKeys are reserved for collection nodes";
         return false;
@@ -2262,7 +2307,16 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
                 node.rowGap.value_or(node.gap), 1.0f, 0.0f,
                 node.overscan, range, error))
             return false;
-        if (node.itemCount == 0)
+        if (node.collectionContent != ViewCollectionContent::Items)
+        {
+            if (node.collectionContent == ViewCollectionContent::Empty &&
+                node.itemCount != 0)
+            {
+                error = "virtual emptyContent requires itemCount 0";
+                return false;
+            }
+        }
+        else if (node.itemCount == 0)
         {
             if (node.firstIndex != 0 || !node.children.empty())
             {
@@ -2802,6 +2856,7 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
 void ApplyCollectionSelectionState(ViewNode& node)
 {
     if (IsCollectionContainer(node.type) &&
+        node.collectionContent == ViewCollectionContent::Items &&
         node.selectionMode != ViewSelectionMode::None)
     {
         const auto change = node.events.find("change");
@@ -3101,6 +3156,9 @@ bool CollectRegions(const ViewNode& node,
             (IsButtonNode(node.type) || IsCheckControlNode(node.type) ||
                 node.type == ViewNodeType::Link ||
                 node.type == ViewNodeType::Slider ||
+                (node.type == ViewNodeType::ListItem &&
+                    node.inheritedSelectionMode !=
+                        ViewSelectionMode::None) ||
                 node.events.contains("click"))
             ? "hand" : node.cursor;
         region.tooltip = node.tooltip;
@@ -3346,7 +3404,8 @@ bool ApplyScrollState(ViewNode& node,
         float contentExtent = viewportExtent;
         float maximum = 0.0f;
         ViewVirtualRange virtualRange;
-        if (IsVirtualCollection(node.type))
+        if (IsVirtualCollection(node.type) &&
+            !HasCollectionPlaceholder(node))
         {
             if (!ComputeViewVirtualRange(node.itemCount, node.itemExtent,
                     node.type == ViewNodeType::VirtualGrid
@@ -3383,7 +3442,8 @@ bool ApplyScrollState(ViewNode& node,
         node.scrollOffset = offset;
         node.scrollViewportExtent = viewportExtent;
         node.scrollContentExtent = contentExtent;
-        if (IsVirtualCollection(node.type))
+        if (IsVirtualCollection(node.type) &&
+            !HasCollectionPlaceholder(node))
         {
             ViewVirtualRange visibleRange;
             if (!ComputeViewVirtualRange(node.itemCount, node.itemExtent,
@@ -3406,7 +3466,7 @@ bool ApplyScrollState(ViewNode& node,
             for (auto& child : node.children)
                 TranslateTree(child, 0.0f, -offset);
         }
-        else
+        else if (!IsVirtualCollection(node.type))
         {
             TranslateTree(node.children.front(),
                 vertical ? 0.0f : -offset,

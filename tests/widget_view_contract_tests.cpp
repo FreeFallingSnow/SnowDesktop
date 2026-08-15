@@ -103,6 +103,13 @@ void TestRepresentativeApplicability()
                 "selectionMode") &&
             !ViewNodeAllowsProperty(ViewNodeType::Grid, "selectedKeys"),
         "controlled selection properties must stay on collection containers");
+    Check(ViewNodeAllowsProperty(ViewNodeType::List, "emptyContent") &&
+            ViewNodeAllowsProperty(ViewNodeType::VirtualList,
+                "loadingContent") &&
+            !ViewNodeAllowsProperty(ViewNodeType::Grid, "emptyContent") &&
+            ViewNodeAllowsProperty(ViewNodeType::Grid, "busy") &&
+            ViewNodeAllowsProperty(ViewNodeType::Button, "busy"),
+        "collection content alternatives and common busy state must remain scoped");
     Check(ViewNodeAllowsProperty(ViewNodeType::Image, "source") &&
             ViewNodeAllowsProperty(ViewNodeType::ReferenceIcon, "reference") &&
             ViewNodeAllowsProperty(ViewNodeType::Image, "tint") &&

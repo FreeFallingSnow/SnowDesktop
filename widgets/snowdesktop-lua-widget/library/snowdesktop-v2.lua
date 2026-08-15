@@ -293,6 +293,8 @@
 ---@field overscan? integer Virtual collection overscan rows from 0 through 16; defaults to 2.
 ---@field selectionMode? SnowViewSelectionMode Controlled collection selection; defaults to none and probes with view.collection.selection.
 ---@field selectedKeys? string[] Unique controlled listItem keys; single accepts at most one, none accepts none, and virtual selections may include unmaterialized item keys.
+---@field emptyContent? SnowViewNode One visible fallback node used when an eager collection has no children or a virtual collection has itemCount=0.
+---@field loadingContent? SnowViewNode One visible fallback node used instead of collection items while busy=true.
 ---@field flexBasis? SnowViewFlexBasis Main-axis base size in row/column/list before free-space distribution; defaults to auto.
 ---@field flexGrow? number Non-negative positive-space factor; fill keeps an implicit factor of 1 when this is omitted.
 ---@field flexShrink? number Non-negative overflow factor; defaults to 1, use 0 to preserve the basis.
@@ -313,6 +315,7 @@
 ---@field checked? boolean Required explicit controlled value for toggle and checkbox nodes.
 ---@field indeterminate? boolean Checkbox-only controlled mixed state. Requires checked=false; activation proposes checked=true and indeterminate=false.
 ---@field selected? boolean Generic controlled selection state used by selectedStyle and SelectionItem semantics where the node contract provides them.
+---@field busy? boolean Common host-observable busy state; collection loadingContent becomes active when supplied.
 ---@field showScrollbar? boolean Scroll or virtual-collection host scrollbar visibility; defaults to true.
 ---@field textAlign? 'start'|'center'|'end'
 ---@field verticalAlign? 'start'|'center'|'end' Text block alignment inside the node; defaults to center.

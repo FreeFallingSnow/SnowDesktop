@@ -982,6 +982,9 @@ public:
                 Utf8ToWide(node ? node->name : widget.name));
         else if (propertyId == UIA_HelpTextPropertyId && node)
             return SetStringVariant(result, Utf8ToWide(node->helpText));
+        else if (propertyId == UIA_AriaPropertiesPropertyId && node)
+            return SetStringVariant(result,
+                node->busy ? L"busy=true" : L"");
         else if (propertyId == UIA_AutomationIdPropertyId)
         {
             if (!node)

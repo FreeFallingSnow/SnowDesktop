@@ -30,6 +30,7 @@ void TestSemanticHierarchyAndState()
 {
     ViewNode root = Node(ViewNodeType::Column,
         "root", 0, 0, 240, 180);
+    root.busy = true;
     ViewNode title = Node(ViewNodeType::Text,
         "", 8, 8, 180, 24);
     title.text = "System monitor";
@@ -60,6 +61,7 @@ void TestSemanticHierarchyAndState()
             nodes[3].parentIndex == 0,
         "semantic hierarchy must preserve view parentage");
     Check(nodes[0].semanticId == "key:root" &&
+            nodes[0].busy &&
             nodes[1].semanticId == "path:0/0" &&
             nodes[2].semanticId == "key:refresh",
         "semantic ids must prefer stable keys and fall back to structure paths");

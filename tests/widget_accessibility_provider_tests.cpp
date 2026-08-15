@@ -78,6 +78,7 @@ LuaWidgetAccessibilitySnapshot Snapshot()
     group.semanticId = "key:root";
     group.key = "root";
     group.name = "Panel";
+    group.busy = true;
     group.controlType = "Group";
     group.bounds = { 0, 0, 300, 330 };
     group.children = { 1, 2, 3, 4, 5, 6, 9, 10, 13 };
@@ -403,6 +404,9 @@ void TestProviderTreeAndLifetime()
             PropertyString(AsSimple(status.Get()).Get(),
                 UIA_AutomationIdPropertyId) == L"path:0/1",
         "keyed and keyless elements must expose deterministic automation ids");
+    Check(PropertyString(AsSimple(group.Get()).Get(),
+            UIA_AriaPropertiesPropertyId) == L"busy=true",
+        "busy view state must be exposed without localized placeholder text");
 
     SAFEARRAY* buttonId = nullptr;
     SAFEARRAY* statusId = nullptr;

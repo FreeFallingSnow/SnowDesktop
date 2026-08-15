@@ -225,6 +225,13 @@ enum class ViewSelectionMode
     Multiple,
 };
 
+enum class ViewCollectionContent
+{
+    Items,
+    Empty,
+    Loading,
+};
+
 struct ViewRect
 {
     float x = 0.0f;
@@ -417,6 +424,7 @@ struct ViewNode
     bool liveUpdate = true;
     bool readOnly = false;
     bool required = false;
+    bool busy = false;
     ViewValidationState validationState = ViewValidationState::None;
     std::string validationMessage;
     std::size_t maximumUtf8Bytes = 0;
@@ -439,6 +447,7 @@ struct ViewNode
     bool enabled = true;
     std::optional<bool> focusable;
     std::optional<int> tabIndex;
+    ViewCollectionContent collectionContent = ViewCollectionContent::Items;
     std::string cursor;
     std::string tooltip;
     std::string accessibilityRole;

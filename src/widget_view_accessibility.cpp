@@ -79,10 +79,11 @@ void PopulateContainerState(const ViewNode& source,
         if (source.type == ViewNodeType::Grid ||
             source.type == ViewNodeType::GridList)
         {
-            for (const auto& child : source.children)
-                if (child.visible)
-                    rows = std::max(rows,
-                        child.resolvedGridRow + child.rowSpan);
+            if (source.collectionContent == ViewCollectionContent::Items)
+                for (const auto& child : source.children)
+                    if (child.visible)
+                        rows = std::max(rows,
+                            child.resolvedGridRow + child.rowSpan);
         }
         else
         {
@@ -386,6 +387,7 @@ bool CollectNode(const ViewNode& source, std::string_view semanticPath,
         target.clip = inheritedClip;
         target.parentIndex = parentIndex;
         target.enabled = source.enabled;
+        target.busy = source.busy;
         target.focusable = source.focusable.value_or(
             contract->keyboardFocusable) && source.enabled;
         target.focused = target.focusable && source.key == focusedKey;
@@ -417,7 +419,8 @@ bool CollectNode(const ViewNode& source, std::string_view semanticPath,
     for (std::size_t index = 0; index < source.children.size(); ++index)
     {
         std::optional<GridPosition> childGridPosition;
-        if (IsGridContainer(source.type))
+        if (IsGridContainer(source.type) &&
+            source.collectionContent == ViewCollectionContent::Items)
         {
             const auto& child = source.children[index];
             if (source.type == ViewNodeType::Grid ||

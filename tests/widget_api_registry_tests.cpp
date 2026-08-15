@@ -421,6 +421,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "view.collection.basic") &&
             snowdesktop::widget_api::SupportsFeature(
+                "view.collection.contentStates") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "view.collection.selection") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.collection.virtual") &&
@@ -461,6 +463,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "view.text.typography") &&
             snowdesktop::widget_api::SupportsFeature("view.shadow") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "view.state.busy") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.tooltip") &&
             snowdesktop::widget_api::SupportsFeature(

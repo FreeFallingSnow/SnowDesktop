@@ -1611,6 +1611,96 @@ void TestVirtualizedCollections()
     lua_close(state);
 }
 
+void TestCollectionContentStates()
+{
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "Lua state must be available");
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    Check(luaL_dostring(state, R"lua(
+        return view.list({
+            key = "feed",
+            busy = true,
+            loadingContent = view.column({
+                key = "feed-loading",
+                alignItems = "center",
+                justifyContent = "center",
+                children = {
+                    view.text({ key = "feed-loading-label",
+                        text = "Loading" }),
+                },
+            }),
+            emptyContent = view.text({
+                key = "feed-empty", text = "No items",
+            }),
+            children = {
+                view.listItem({
+                    key = "stale-item",
+                    accessibility = { label = "Stale" },
+                    children = {
+                        view.text({ key = "stale-label", text = "Stale" }),
+                    },
+                }),
+            },
+        })
+    )lua") == LUA_OK,
+        "loading collection content fixture must evaluate");
+    ViewNode loading;
+    std::string error;
+    Check(ParseLuaViewTree(state, -1, loading, error) && loading.busy &&
+            loading.collectionContent == ViewCollectionContent::Loading &&
+            loading.children.size() == 1 &&
+            loading.children[0].key == "feed-loading" &&
+            ValidateAndLayoutViewTree(loading, 200.0f, 80.0f, error) &&
+            Near(loading.children[0].frame.width, 200.0f) &&
+            Near(loading.children[0].frame.height, 80.0f),
+        "busy collections must atomically replace item children with loadingContent");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.virtualList({
+            key = "empty-virtual",
+            height = 100,
+            itemCount = 0,
+            itemExtent = 44,
+            firstIndex = 0,
+            emptyContent = view.text({
+                key = "empty-label", text = "Nothing here",
+                textAlign = "center",
+            }),
+        })
+    )lua") == LUA_OK,
+        "empty virtual collection fixture must evaluate");
+    ViewNode empty;
+    Check(ParseLuaViewTree(state, -1, empty, error) &&
+            empty.collectionContent == ViewCollectionContent::Empty &&
+            empty.children.size() == 1 &&
+            ValidateAndLayoutViewTree(empty, 200.0f, 100.0f, error),
+        "itemCount zero must activate a validated virtual emptyContent node");
+    std::vector<ViewScrollViewport> viewports;
+    Check(ApplyViewScrollOffsets(empty,
+            [](std::string_view, float) { return 90.0f; },
+            viewports, error) && viewports.size() == 1 &&
+            Near(viewports[0].maximum, 0.0f) &&
+            Near(viewports[0].contentExtent, 100.0f) &&
+            Near(empty.children[0].frame.y, 0.0f),
+        "virtual emptyContent must fill the viewport without a stale scroll range");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.box({
+            key = "invalid",
+            emptyContent = view.text({ key = "empty", text = "Empty" }),
+        })
+    )lua") == LUA_OK,
+        "invalid non-collection content fixture must evaluate");
+    ViewNode invalid;
+    Check(!ParseLuaViewTree(state, -1, invalid, error) &&
+            error.find("emptyContent") != std::string::npos,
+        "emptyContent must remain scoped to collection containers");
+    lua_close(state);
+}
+
 void TestDeclarativeInputControls()
 {
     lua_State* state = luaL_newstate();
@@ -2687,6 +2777,7 @@ int main()
     TestFlowParsingAndLayout();
     TestScrollableCollections();
     TestVirtualizedCollections();
+    TestCollectionContentStates();
     TestDeclarativeInputControls();
     TestStyledTextAndMonthCalendar();
     TestLogicalSlotSceneContract();

@@ -60,7 +60,7 @@ constexpr auto kProperties = std::to_array<std::string_view>({
     "source", "font", "fit", "alignment", "interpolation", "alt",
     "shape", "orientation", "value", "values", "min", "max", "step",
     "options", "selectedValue", "placeholder", "expanded", "selectAll",
-    "liveUpdate", "readOnly", "required", "validationState", "validationMessage",
+    "liveUpdate", "readOnly", "required", "busy", "validationState", "validationMessage",
     "maxBytes", "year", "month", "firstDayOfWeek",
     "selectedDate", "todayDate", "eventDates", "weekdayLabels",
     "showAdjacentDates", "binding", "collection", "revision", "reference",
@@ -71,7 +71,7 @@ constexpr auto kProperties = std::to_array<std::string_view>({
     "columnGap", "rowGap", "gridColumn", "gridRow", "columnSpan",
     "rowSpan", "itemCount",
     "itemExtent", "firstIndex", "overscan", "selectionMode",
-    "selectedKeys", "flexBasis", "flexGrow",
+    "selectedKeys", "emptyContent", "loadingContent", "flexBasis", "flexGrow",
     "flexShrink", "flexDirection", "flexWrap", "alignContent",
     "fontSize", "fontWeight", "fontStyle", "lineHeight",
     "letterSpacing", "locale", "textDirection", "bold",
@@ -92,7 +92,7 @@ constexpr auto kCommonProperties = std::to_array<std::string_view>({
     "gridColumn", "gridRow", "columnSpan", "rowSpan",
     "flexBasis", "flexGrow", "flexShrink",
     "fontSize", "fontWeight", "fontStyle", "lineHeight", "letterSpacing",
-    "bold", "visible", "enabled", "focusable", "tabIndex", "cursor", "tooltip", "alignItems",
+    "bold", "visible", "enabled", "busy", "focusable", "tabIndex", "cursor", "tooltip", "alignItems",
     "alignSelf", "justifyContent", "textAlign", "verticalAlign",
     "textWrap", "maxLines", "overflowText", "style", "hoverStyle",
     "pressedStyle", "focusStyle", "disabledStyle", "selectedStyle", "selected", "accessibility",
@@ -305,6 +305,9 @@ bool ViewNodeAllowsProperty(
         property == "firstIndex" || property == "overscan")
         return IsVirtual(type);
     if (property == "selectionMode" || property == "selectedKeys")
+        return IsType(type, { ViewNodeType::List, ViewNodeType::GridList,
+            ViewNodeType::VirtualList, ViewNodeType::VirtualGrid });
+    if (property == "emptyContent" || property == "loadingContent")
         return IsType(type, { ViewNodeType::List, ViewNodeType::GridList,
             ViewNodeType::VirtualList, ViewNodeType::VirtualGrid });
     if (property == "flexDirection" || property == "flexWrap" ||

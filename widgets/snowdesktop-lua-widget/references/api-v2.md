@@ -107,7 +107,8 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.grid.tracks` 提供受限 fixed/auto/fr/minmax 列轨和行轨，
 `view.flow.wrap` 提供横向换行 `flow`。
 `view.scroll` 提供宿主滚动视口，`view.collection.basic` 提供基础集合，
-`view.collection.selection` 提供受控单选/多选，`view.collection.virtual` 提供固定行高虚拟集合与可见范围查询；
+`view.collection.selection` 提供受控单选/多选，`view.collection.contentStates` 提供空态/加载态，
+`view.collection.virtual` 提供固定行高虚拟集合与可见范围查询；
 `view.styledText.basic` 提供有界样式 span，`view.monthCalendar` 提供受控月历日期网格，
 `view.logicalSlots` 提供与 manifest 宿主管理槽位严格对应的 `slotSurface/slotItem`，
 `view.referenceIcon` 提供只接收实例自有 opaque ref 的宿主图标节点。
@@ -411,6 +412,29 @@ view.list({
     selectionMode = "multiple",
     selectedKeys = model.selectedKeys,
     events = { change = { id = "messages.select" } },
+    children = items,
+})
+```
+
+探测 `view.collection.contentStates` 后，集合可声明单个 `emptyContent` 和
+`loadingContent` 节点。非忙且 eager children 为空、或 virtual `itemCount=0` 时，宿主用
+emptyContent 替代项目；`busy=true` 且提供 loadingContent 时，无论已有项目与否都原子切到
+loadingContent。替代节点按集合 content box 布局并经过同一绘制、命中、键盘和语义树，不再
+出现视觉空白但旧项目仍可点击的状态。virtual 替代态的滚动范围归零；loading 可保留受控
+selectedKeys，empty 必须清空选择。没有提供对应替代节点时宿主保留作者提交的普通 children，
+不会擅自生成或本地化状态文字。通用 `busy` 可通过 `view.state.busy` 探测，并以
+UI Automation `busy=true` 语义暴露；它本身不会禁用控件或启动隐式逐帧动画。
+
+```lua
+view.virtualList({
+    key = "results",
+    height = "fill",
+    itemCount = model.total,
+    itemExtent = 44,
+    firstIndex = range.firstIndex,
+    busy = model.loading,
+    loadingContent = view.text({ key = "loading", text = l10n.t("loading") }),
+    emptyContent = view.text({ key = "empty", text = l10n.t("noResults") }),
     children = items,
 })
 ```

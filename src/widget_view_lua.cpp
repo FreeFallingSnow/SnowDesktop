@@ -1709,6 +1709,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     const bool virtualGridNode =
         node.type == ViewNodeType::VirtualGrid;
     const bool virtualCollectionNode = virtualListNode || virtualGridNode;
+    const bool collectionNode = node.type == ViewNodeType::List ||
+        node.type == ViewNodeType::GridList || virtualCollectionNode;
     const bool scrollContainerNode = scrollNode || virtualCollectionNode;
     const bool listItemNode = node.type == ViewNodeType::ListItem;
     const bool styledTextNode = node.type == ViewNodeType::StyledText;
@@ -2179,6 +2181,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadBoolField(state, index, "liveUpdate", node.liveUpdate, error) ||
         !ReadBoolField(state, index, "readOnly", node.readOnly, error) ||
         !ReadBoolField(state, index, "required", node.required, error) ||
+        !ReadBoolField(state, index, "busy", node.busy, error) ||
         !ReadValidationStateField(state, index,
             node.validationState, error) ||
         !ReadStringField(state, index, "validationMessage",
@@ -2500,6 +2503,58 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         return false;
     }
     lua_pop(state, 1);
+
+    if (collectionNode)
+    {
+        const auto readContent = [&](const char* field,
+            std::optional<ViewNode>& output) {
+            lua_getfield(state, index, field);
+            if (lua_isnil(state, -1))
+            {
+                lua_pop(state, 1);
+                return true;
+            }
+            if (!lua_istable(state, -1))
+            {
+                lua_pop(state, 1);
+                error = std::string("view field '") + field +
+                    "' must be a view node";
+                return false;
+            }
+            ViewNode parsed;
+            if (!ParseNode(state, -1, parsed, depth + 1,
+                    parsedNodes, error))
+            {
+                lua_pop(state, 1);
+                return false;
+            }
+            lua_pop(state, 1);
+            output = std::move(parsed);
+            return true;
+        };
+        std::optional<ViewNode> emptyContent;
+        std::optional<ViewNode> loadingContent;
+        if (!readContent("emptyContent", emptyContent) ||
+            !readContent("loadingContent", loadingContent))
+            return false;
+        if (node.busy && loadingContent)
+        {
+            node.children.clear();
+            node.children.push_back(std::move(*loadingContent));
+            node.collectionContent = ViewCollectionContent::Loading;
+        }
+        else
+        {
+            const bool empty = virtualCollectionNode
+                ? node.itemCount == 0 : node.children.empty();
+            if (empty && emptyContent)
+            {
+                node.children.clear();
+                node.children.push_back(std::move(*emptyContent));
+                node.collectionContent = ViewCollectionContent::Empty;
+            }
+        }
+    }
     return true;
 }
 
