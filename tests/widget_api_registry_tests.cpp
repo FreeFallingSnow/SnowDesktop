@@ -423,6 +423,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "view.inputControls") &&
             snowdesktop::widget_api::SupportsFeature(
+                "view.keyboardNavigation.basic") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "view.logicalSlots") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.referenceIcon") &&

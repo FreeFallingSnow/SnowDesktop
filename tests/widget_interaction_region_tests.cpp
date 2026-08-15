@@ -282,11 +282,61 @@ void TestRadioAndSliderActionResolution()
     Check(regions.PointerMoveTarget(140.0f, 52.0f).empty(),
         "slider capture must end on pointer up");
 
+    const auto steppedUp = regions.ResolveKeyboardStep("volume", 1);
+    const auto steppedDown = regions.ResolveKeyboardStep("volume", -1);
+    Check(steppedUp && steppedUp->eventName == "change" &&
+            steppedUp->previousControlValue && steppedUp->controlValue &&
+            std::abs(*steppedUp->previousControlValue - 4.0f) < 0.01f &&
+            std::abs(*steppedUp->controlValue - 6.0f) < 0.01f &&
+            steppedDown && steppedDown->controlValue &&
+            std::abs(*steppedDown->controlValue - 2.0f) < 0.01f,
+        "slider keyboard steps must propose one bounded declared step");
+
     regions.PointerDown(20.0f, 52.0f, 2);
     Check(!regions.ResolveAction(
             "volume", "pointerDown", 20.0f, 52.0f, 2),
         "right button presses must not change slider values");
     regions.PointerUp(20.0f, 52.0f, 2);
+}
+
+void TestKeyboardFocusableOrderAndFiltering()
+{
+    WidgetInteractionRegions regions;
+    std::string error;
+    auto button = Rect("button", 0, 0, 80, 32);
+    button.events.emplace("click", InteractionAction{ "button.open", {} });
+    auto input = Rect("query", 0, 40, 120, 32);
+    input.accessibilityRole = "searchbox";
+    auto slider = Rect("volume", 0, 80, 120, 24);
+    slider.controlKind = InteractionControlKind::Slider;
+    slider.events.emplace("change",
+        InteractionAction{ "volume.change", {} });
+    auto pointerOnly = Rect("pointer", 0, 112, 80, 32);
+    pointerOnly.events.emplace("pointerMove",
+        InteractionAction{ "pointer.move", {} });
+    auto disabled = Rect("disabled", 0, 152, 80, 32);
+    disabled.events.emplace("click",
+        InteractionAction{ "disabled.open", {} });
+    disabled.enabled = false;
+
+    regions.BeginFrame();
+    Check(regions.Submit(std::move(button), error) &&
+            regions.Submit(std::move(input), error) &&
+            regions.Submit(std::move(slider), error) &&
+            regions.Submit(std::move(pointerOnly), error) &&
+            regions.Submit(std::move(disabled), error),
+        "keyboard focus fixtures must stage");
+    regions.CommitFrame();
+
+    const auto keys = regions.KeyboardFocusableKeys();
+    Check(keys.size() == 3 && keys[0] == "button" &&
+            keys[1] == "query" && keys[2] == "volume",
+        "focus candidates must preserve committed logical order");
+    Check(regions.IsKeyboardFocusable("query") &&
+            !regions.IsKeyboardFocusable("pointer") &&
+            !regions.IsKeyboardFocusable("disabled") &&
+            !regions.IsKeyboardFocusable("missing"),
+        "focus filtering must include inputs and exclude disabled or pointer-only regions");
 }
 }
 
@@ -298,6 +348,7 @@ int main()
     TestClippedHitTesting();
     TestControlledActionResolution();
     TestRadioAndSliderActionResolution();
+    TestKeyboardFocusableOrderAndFiltering();
     std::cout << "widget interaction region tests passed\n";
     return 0;
 }

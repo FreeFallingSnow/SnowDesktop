@@ -183,10 +183,14 @@ public:
     std::optional<InteractionResolvedAction> ResolveAction(
         std::string_view key, std::string_view eventName,
         float x = 0.0f, float y = 0.0f, int button = 0) const;
+    std::optional<InteractionResolvedAction> ResolveKeyboardStep(
+        std::string_view key, int direction) const;
     const InteractionAction* ActionAt(
         float x, float y, std::string_view eventName,
         std::string* targetKey = nullptr) const noexcept;
 
+    std::vector<std::string> KeyboardFocusableKeys() const;
+    bool IsKeyboardFocusable(std::string_view key) const noexcept;
     bool IsHovered(std::string_view key) const noexcept;
     bool IsPressed(std::string_view key) const noexcept;
     const std::string& HoveredKey() const noexcept;

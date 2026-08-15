@@ -97,7 +97,10 @@ Treat radioGroup and slider as controlled: update component-owned state from
 `selection` or `controlValue`, then invalidate. Radio options use generated
 `<group-key>/<option-key>` targets for independent hover, press, semantics, and
 context menus; slider changes are emitted during captured left-button drag.
-Do not assume keyboard or UI Automation support yet.
+Probe `view.keyboardNavigation.basic` before relying on host focus outlines,
+Tab/Shift+Tab traversal, spatial arrows, Enter/Space activation, or slider
+arrow-step changes. The host routes these keys without exposing raw key streams
+to Lua; UI Automation output is still not included.
 Probe `view.inputControls` for declarative textInput/textArea/searchBox/
 numberInput/select nodes. Treat every value and select expansion as controlled:
 write `text`, valid `controlValue`, `selection`, or `expanded` proposals into the
@@ -154,8 +157,9 @@ retains its clamped offset; never offset descendants yourself. Probe
 non-virtual `list/gridList/listItem`: collection children must be listItem,
 each item needs exactly one visible child, a globally stable key, and
 `accessibility.label`.
-Keep a tree within 256 list items and use per-item actions/context menus. These
-basic collections do not provide keyboard/UIA support. For larger data, probe
+Keep a tree within 256 list items and use per-item actions/context menus. With
+`view.keyboardNavigation.basic`, actionable materialized items join host
+keyboard traversal; UI Automation collection patterns are not included. For larger data, probe
 `view.collection.virtual`, call `view.virtualRange` with the stable collection
 key and actual content-viewport height, create only its inclusive 1-based
 window, then submit `virtualList` or `virtualGrid` with matching fixed extent,
@@ -168,8 +172,9 @@ the future track/span/virtual-grid contract.
 Probe `view.flow.wrap` before using `view.flow`; it wraps fixed/auto-width
 children horizontally, skips hidden children, and supports per-line
 `columnGap`/`rowGap`, but it is not a scrolling or virtualized collection.
-Outside declarative host inputs and logical slot items, the subset does not yet provide keyboard focus;
-it still does not provide UI Automation, variable-height
+Probe `view.keyboardNavigation.basic` for ordinary actionable declarative
+nodes and storage-bound immediate text controls. The subset still does not
+provide UI Automation, variable-height
 virtualization, or the complete `view.tree` contract. Optional
 `menu(context, model, request)` builds an element's synchronous native context
 menu.

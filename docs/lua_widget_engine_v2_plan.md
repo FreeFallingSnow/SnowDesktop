@@ -1018,16 +1018,18 @@ region generation 校验，旧菜单不会落到新一代 region。普通区域�
 key 隔离，宿主负责 wheel、钳制、重绘和滚动条，组件使用 `draw.pushClip/popClip`
 裁剪并按返回 offset 绘制。声明式轨道现已另行开放 `view.scroll`：支持纵向/横向单子树、
 宿主 offset、测量、滚轮、裁剪绘制和裁剪命中，滚出视口的元素不会继续响应交互。
-当前只覆盖 desktop 即时绘制 surface；通用 region 焦点与键盘、触控长按、UIA
-语义输出、受控 submenu、包内菜单图标和完整 UIA scene tree 仍按 M6 后续交付物推进。
+当前只覆盖 desktop 即时绘制 surface；`view.keyboardNavigation.basic` 已让可点击、受控和
+文本输入 region 进入宿主焦点序列。触控长按、UIA 语义输出、受控 submenu、包内菜单图标
+和完整 UIA scene tree 仍按 M6 后续交付物推进。
 
 文本编辑的过渡宿主控件已增加 `control.textInput/textArea/focus`：组件在 render 中
 提交严格的稳定 key、storageKey、rect 与白名单视觉属性，宿主复用 Direct2D 光标、
 选择、滚动、剪贴板规范化和 IME 候选位置。单行默认 4 KiB、多行默认 64 KiB，所有
 插入按最终 UTF-8 大小原子校验；程序化聚焦只接受直接可信用户手势。该能力用于在
 完整声明式 view tree 到来前迁移现有编辑型组件，不把 `ui.input` 当成普通文本编辑的
-高风险权限，也不向 Lua 开放通用剪贴板读取。通用 region 键盘焦点、Tab 顺序和 UIA
-输出仍未完成，不能把此过渡控件计作第 13.4 节声明式控件全集完成。
+高风险权限，也不向 Lua 开放通用剪贴板读取。桌面 surface 的 Tab 顺序已经由
+`view.keyboardNavigation.basic` 接管，UIA 输出仍未完成，不能把此过渡控件计作第 13.4 节
+声明式控件全集完成。
 
 `widget.define.panel(context, model)` 已接入 `widget.openPanel` 创建的宿主辅助 surface，
 其 `context.surface` 为 `panel`，可提交同一套 storage-bound 文本控件和滚动区域；面板
@@ -1072,13 +1074,15 @@ SnowDesktop 不照搬某一个框架，参考优先级如下：
 `view.collection.basic` 已覆盖非虚拟 `list/gridList/listItem`，限制 256 个稳定项，
 每项有独立 action、hover、菜单目标与 listitem 语义；`view.collection.virtual` 进一步
 提供固定行高 `virtualList/virtualGrid` 和 `view.virtualRange`，按实例滚动位置只实体化
-最多 128 个连续项，宿主按全局 1-based 索引布局并校验窗口覆盖可见行。可变行高、集合键盘
-导航和 UIA Collection/Scroll pattern 仍未完成，因此本进度不代表第 13.4 节集合全集完成。
+最多 128 个连续项，宿主按全局 1-based 索引布局并校验窗口覆盖可见行。可操作的已实体化项
+已进入通用键盘焦点序列；可变行高和 UIA Collection/Scroll pattern 仍未完成，因此本进度
+不代表第 13.4 节集合全集完成。
 `view.inputControls` 已一次覆盖 `textInput/textArea/searchBox/numberInput/select`：四类输入
 复用宿主键盘、选择、剪贴板代理和 IME 编辑器，使用组件受控 value 与 change 建议值，支持
 focus/blur/submit、提交模式、字节上限、数字有效性和方向键 step；select 的展开状态和选择值
-同样受控，宿主在组件表面顶层绘制有界选项并返回 expansion/selection 建议。当前仍缺 UIA
-Pattern、通用焦点遍历和可逃逸父 surface 的 popover，因此这里只发布细粒度 feature，不能把
+同样受控，宿主在组件表面顶层绘制有界选项并返回 expansion/selection 建议。通用焦点遍历
+已由 `view.keyboardNavigation.basic` 覆盖；当前仍缺 UIA Pattern 和可逃逸父 surface 的
+popover，因此这里只发布细粒度 feature，不能把
 五类控件计作第 13.4 节“控件契约完整”。
 
 同日后续实现已增加 `view.styledText.basic` 与 `view.monthCalendar`。前者提供 1–64 个
@@ -1086,8 +1090,8 @@ Pattern、通用焦点遍历和可逃逸父 surface 的 popover，因此这里�
 换行和裁剪；inline icon 与 action span 仍未包含在 basic feature 中。后者提供固定六周的
 Gregorian 网格、可配置周起始、受控 ISO 日期选择、今日/相邻月份/事件状态样式，以及每个
 日期独立的 hover、pressed、change 建议值和元素右键目标。两者已有解析、限额、布局、命中、
-feature probe、LuaLS 和契约测试，但通用键盘导航及 UIA Text/Calendar Pattern 仍归 M6
-完整性门禁，不能仅因节点可以绘制就宣称声明式视图已稳定。
+feature probe、LuaLS 和契约测试；日期单元已经进入通用键盘导航，UIA Text/Calendar Pattern
+仍归 M6 完整性门禁，不能仅因节点可以绘制就宣称声明式视图已稳定。
 
 同日逻辑槽位基础契约也已落地：v2 manifest 可声明最多 16 个 binding/collection，
 宿主按实例持久保存 `reference` 模型并为 Lua 恢复可启动/打开的 opaque 引用；
@@ -1099,8 +1103,9 @@ feature probe、LuaLS 和契约测试，但通用键盘导航及 UIA Text/Calend
 后续又加入每实例 32 步、受可信动作约束且清空 redo 分支的 `slots.undo/redo` 事务历史，
 以及槽位项独立右键菜单、宿主移除/前后重排和选中单组件时的 Ctrl+Z/Ctrl+Shift+Z/Ctrl+Y。
 最新批次又接入受可信 action 约束的 `handle:pick()` 宿主选择器，复用快速导航的桌面、应用
-和 Everything 索引并按 manifest `accepts` 过滤，选择后仍走原子持久化事务。尚缺原生槽位项
-拖出与指针同槽重排、槽位项键盘焦点/移动，因此 M6 槽位退出条件仍未达成。
+和 Everything 索引并按 manifest `accepts` 过滤，选择后仍走原子持久化事务。原生同槽指针
+重排和槽位项键盘焦点/移动已经接入；尚缺槽位项拖出、跨槽重排和 UIA 输出，因此 M6 槽位
+退出条件仍未达成。
 
 节点规则：
 
@@ -1681,7 +1686,8 @@ v2.0 资源契约：
 doubleClick/pointer/contextMenu action，以及“先完整校验布局、后原子提交；失败保留上一成功树”。
 其额度为 512 节点、32 层、单节点 4 KiB 文本、全树 64 KiB 文本和 256 个交互元素；未知字段、
 重复 key、非连续 children、错误枚举和越界数值拒绝整次提交。数据图形由宿主直接有界绘制，不展开为逐样本节点或命中区域。它尚不包含完整必选节点矩阵、
-除输入编辑器和逻辑槽位项外的通用键盘焦点、UIA、RTL、文本换行、可变高度虚拟化、差量资源复用和声明式 panel，因此只发布
+UIA、RTL、文本换行、可变高度虚拟化、差量资源复用和声明式 panel；通用桌面键盘焦点已作为
+`view.keyboardNavigation.basic` 单独发布，因此仍只发布
 细粒度 feature，不发布 `view.tree`，也不计作 M6 完成。
 
 ### 18.9 最终验证入口

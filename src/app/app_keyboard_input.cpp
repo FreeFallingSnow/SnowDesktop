@@ -111,7 +111,7 @@ void DesktopApp::OnKeyDown(WPARAM key)
             const auto& widgetId = widgets_[selectedLua].id;
             widgetEngine_->EnsureWidgetLoaded(
                 widgetId, widgets_[selectedLua].packageId);
-            if (widgetEngine_->HandleHostLogicalSlotKey(
+            if (widgetEngine_->HandleHostViewKey(
                     widgetId, key, ctrl, shift, alt))
             {
                 InvalidateRect(hwnd_, nullptr, FALSE);

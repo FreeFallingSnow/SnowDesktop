@@ -531,6 +531,7 @@ struct LuaWidget
     snowdesktop::widget_runtime::LogicalSlotHistory logicalSlotHistory;
     std::optional<LogicalSlotPointerDrag> logicalSlotPointerDrag;
     std::optional<LogicalSlotFocus> logicalSlotFocus;
+    std::string viewKeyboardFocusKey;
     snowdesktop::widget_runtime::WidgetInteractionRegions interactionRegions;
     std::optional<snowdesktop::widget_runtime::ViewNode> viewTree;
     bool panelFrameOpen = false;
@@ -1321,7 +1322,8 @@ public:
     void RuntimeRegisterHostControl(const std::wstring& widgetId, LuaWidget::HostControl control);
     bool RuntimeRegisterV2HostControl(const std::wstring& widgetId,
         LuaWidget::HostControl control, std::string& error);
-    bool RuntimeFocusHostInput(const std::wstring& widgetId, const std::string& id);
+    bool RuntimeFocusHostInput(const std::wstring& widgetId,
+        const std::string& id, const char* source = "pointer");
     void ResolveDeferredHostInputFocus(
         const std::wstring& widgetId, std::string_view surface);
     bool RuntimeFocusHostInputFromTrustedGesture(
@@ -1333,7 +1335,7 @@ public:
     bool RuntimeIsWidgetSelected(const std::wstring& widgetId) const;
     std::wstring RuntimeSelectedWidgetPackageId() const;
     bool HandleHostInputKey(WPARAM key);
-    bool HandleHostLogicalSlotKey(const std::wstring& widgetId, WPARAM key,
+    bool HandleHostViewKey(const std::wstring& widgetId, WPARAM key,
         bool ctrl, bool shift, bool alt);
     bool HandleHostInputChar(wchar_t ch);
     bool SetHostInputComposition(
@@ -1360,7 +1362,7 @@ private:
         LuaWidget& widget, int x, int y);
     bool EndHostLogicalSlotPointer(
         const std::wstring& widgetId);
-    void DrawHostLogicalSlotOverlays(
+    void DrawHostViewInteractionOverlays(
         const LuaWidget& widget);
     bool VerifyInstalledWidgetPackage(const std::string& packageId,
         const std::optional<std::string>& previousVersion,
@@ -1412,7 +1414,8 @@ private:
     void DispatchInteractionAction(LuaWidget& widget,
         const std::string& targetKey, const char* eventName,
         int x, int y, int button, int delta, int clickCount = 0,
-        bool includeRetired = false, const char* source = "pointer");
+        bool includeRetired = false, const char* source = "pointer",
+        int keyboardStepDirection = 0);
     void DispatchHostInputChange(const std::wstring& widgetId,
         const std::string& targetKey,
         const snowdesktop::widget_runtime::InteractionAction& action,

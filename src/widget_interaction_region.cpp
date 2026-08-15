@@ -30,6 +30,20 @@ bool IsSupportedEvent(std::string_view eventName) noexcept
         eventName == "doubleClick" || eventName == "wheel" ||
         eventName == "contextMenu" || eventName == "change";
 }
+
+bool IsTextEntryRole(std::string_view role) noexcept
+{
+    return role == "textbox" || role == "searchbox" ||
+        role == "spinbutton";
+}
+
+bool IsKeyboardFocusableRegion(const InteractionRegion& region) noexcept
+{
+    return region.enabled &&
+        (region.controlKind != InteractionControlKind::None ||
+            region.events.contains("click") ||
+            IsTextEntryRole(region.accessibilityRole));
+}
 }
 
 bool InteractionShape::Contains(float pointX, float pointY) const noexcept
@@ -265,6 +279,28 @@ InteractionPointerResult WidgetInteractionRegions::PointerUp(
     return result;
 }
 
+std::optional<InteractionResolvedAction>
+WidgetInteractionRegions::ResolveKeyboardStep(
+    std::string_view key, int direction) const
+{
+    const InteractionRegion* region = Find(key);
+    if (!region || !region->enabled || direction == 0 ||
+        region->controlKind != InteractionControlKind::Slider)
+        return std::nullopt;
+    const auto action = region->events.find("change");
+    if (action == region->events.end()) return std::nullopt;
+
+    InteractionResolvedAction result;
+    result.action = action->second;
+    result.eventName = "change";
+    result.previousControlValue = region->controlValue;
+    result.controlValue = std::clamp(
+        region->controlValue +
+            (direction < 0 ? -region->step : region->step),
+        region->minimum, region->maximum);
+    return result;
+}
+
 void WidgetInteractionRegions::CancelPointerPress() noexcept
 {
     pressedKey_.clear();
@@ -410,6 +446,23 @@ const InteractionAction* WidgetInteractionRegions::ActionAt(
     if (targetKey) *targetKey = region->key;
     const auto action = region->events.find(eventName);
     return action == region->events.end() ? nullptr : &action->second;
+}
+
+std::vector<std::string>
+WidgetInteractionRegions::KeyboardFocusableKeys() const
+{
+    std::vector<std::string> result;
+    result.reserve(active_.size());
+    for (const auto& region : active_)
+        if (IsKeyboardFocusableRegion(region)) result.push_back(region.key);
+    return result;
+}
+
+bool WidgetInteractionRegions::IsKeyboardFocusable(
+    std::string_view key) const noexcept
+{
+    const InteractionRegion* region = Find(key);
+    return region && IsKeyboardFocusableRegion(*region);
 }
 
 bool WidgetInteractionRegions::IsHovered(std::string_view key) const noexcept

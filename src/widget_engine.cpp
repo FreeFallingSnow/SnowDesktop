@@ -5956,6 +5956,7 @@ static int lua_UiTextInput(lua_State* L)
             static_cast<LONG>(std::lround(x + width)), static_cast<LONG>(std::lround(y + height)) };
         control.selectAll = selectAll;
         control.liveUpdate = liveUpdate;
+        control.placeholder = placeholder;
         control.fontSize = fontSize;
         control.padding = padding;
         control.maximumUtf8Bytes = maximumUtf8Bytes;
@@ -6125,6 +6126,7 @@ static int lua_UiTextArea(lua_State* L)
         control.selectAll = selectAll;
         control.liveUpdate = liveUpdate;
         control.multiline = true;
+        control.placeholder = placeholder;
         control.fontSize = fontSize;
         control.padding = padding;
         control.contentHeight = contentHeight;
@@ -16176,9 +16178,15 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             DrawWidgetSelectOverlays(d2dState_, *found->viewTree,
                 found->interactionRegions, std::nullopt,
                 found->viewTree->frame.height);
-            if (!RuntimeIsWidgetSelected(found->widgetId))
+            if (!RuntimeIsWidgetSelected(found->widgetId) ||
+                (!found->viewKeyboardFocusKey.empty() &&
+                    !found->interactionRegions.IsKeyboardFocusable(
+                        found->viewKeyboardFocusKey)))
+            {
+                found->viewKeyboardFocusKey.clear();
                 found->logicalSlotFocus.reset();
-            DrawHostLogicalSlotOverlays(*found);
+            }
+            DrawHostViewInteractionOverlays(*found);
         }
         while (d2dState_->widgetClipDepth > 0)
         {
@@ -16303,6 +16311,20 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     {
         d2dState_->ctx->PopAxisAlignedClip();
         --d2dState_->widgetClipDepth;
+    }
+    if (const int currentIndex = FindWidget(widgetId); currentIndex >= 0 &&
+        widgets_[currentIndex].manifest.apiVersion >= 2)
+    {
+        auto& current = widgets_[currentIndex];
+        if (!RuntimeIsWidgetSelected(current.widgetId) ||
+            (!current.viewKeyboardFocusKey.empty() &&
+                !current.interactionRegions.IsKeyboardFocusable(
+                    current.viewKeyboardFocusKey)))
+        {
+            current.viewKeyboardFocusKey.clear();
+            current.logicalSlotFocus.reset();
+        }
+        DrawHostViewInteractionOverlays(current);
     }
     lua_pop(state, 1);
 }
@@ -19433,7 +19455,7 @@ bool WidgetEngine::RuntimeInteractionPressed(
 void WidgetEngine::DispatchInteractionAction(LuaWidget& widget,
     const std::string& targetKey, const char* eventName,
     int x, int y, int button, int delta, int clickCount,
-    bool includeRetired, const char* source)
+    bool includeRetired, const char* source, int keyboardStepDirection)
 {
     if (targetKey.empty() || !eventName || !*eventName) return;
     snowdesktop::widget_runtime::InteractionAction action;
@@ -19458,9 +19480,12 @@ void WidgetEngine::DispatchInteractionAction(LuaWidget& widget,
     }
     else
     {
-        const auto resolved = widget.interactionRegions.ResolveAction(
-            targetKey, eventName, static_cast<float>(x),
-            static_cast<float>(y), button);
+        const auto resolved = keyboardStepDirection == 0
+            ? widget.interactionRegions.ResolveAction(
+                targetKey, eventName, static_cast<float>(x),
+                static_cast<float>(y), button)
+            : widget.interactionRegions.ResolveKeyboardStep(
+                targetKey, keyboardStepDirection);
         if (!resolved) return;
         action = resolved->action;
         resolvedEventName = resolved->eventName;
@@ -20488,11 +20513,43 @@ bool WidgetEngine::RuntimeRegisterV2HostControl(
         error = "duplicate host control key: " + control.id;
         return false;
     }
+    if (control.type == LuaWidget::HostControl::Type::Input &&
+        widget.interactionRegions.FrameOpen())
+    {
+        snowdesktop::widget_runtime::InteractionRegion region;
+        region.key = control.id;
+        region.shape.type =
+            snowdesktop::widget_runtime::InteractionShapeType::Rect;
+        region.shape.x = static_cast<float>(control.rect.left);
+        region.shape.y = static_cast<float>(control.rect.top);
+        region.shape.width = static_cast<float>(
+            control.rect.right - control.rect.left);
+        region.shape.height = static_cast<float>(
+            control.rect.bottom - control.rect.top);
+        if (control.clipRect)
+        {
+            region.clip = snowdesktop::widget_runtime::InteractionClipRect{
+                static_cast<float>(control.clipRect->left),
+                static_cast<float>(control.clipRect->top),
+                static_cast<float>(control.clipRect->right -
+                    control.clipRect->left),
+                static_cast<float>(control.clipRect->bottom -
+                    control.clipRect->top) };
+        }
+        region.cursor = "text";
+        region.accessibilityRole = "textbox";
+        region.accessibilityLabel = control.placeholder.empty()
+            ? control.id : control.placeholder;
+        region.enabled = control.enabled;
+        if (!widget.interactionRegions.Submit(std::move(region), error))
+            return false;
+    }
     RuntimeRegisterHostControl(widgetId, std::move(control));
     return true;
 }
 
-bool WidgetEngine::RuntimeFocusHostInput(const std::wstring& widgetId, const std::string& id)
+bool WidgetEngine::RuntimeFocusHostInput(const std::wstring& widgetId,
+    const std::string& id, const char* source)
 {
     int index = FindWidget(widgetId);
     if (index < 0 || id.empty()) return false;
@@ -20506,6 +20563,8 @@ bool WidgetEngine::RuntimeFocusHostInput(const std::wstring& widgetId, const std
     if (focusedHostInput_.active && focusedHostInput_.widgetId == widgetId &&
         focusedHostInput_.id == id)
     {
+        widgets_[index].viewKeyboardFocusKey = id;
+        widgets_[index].logicalSlotFocus.reset();
         if (!found->controlled && found->liveUpdate)
         {
             const std::wstring storedText = Utf8ToWideLocal(
@@ -20539,6 +20598,8 @@ bool WidgetEngine::RuntimeFocusHostInput(const std::wstring& widgetId, const std
     }
 
     BlurHostInput(false);
+    widgets_[index].viewKeyboardFocusKey = id;
+    widgets_[index].logicalSlotFocus.reset();
     focusedHostInput_.active = true;
     focusedHostInput_.widgetId = widgetId;
     focusedHostInput_.id = id;
@@ -20565,7 +20626,8 @@ bool WidgetEngine::RuntimeFocusHostInput(const std::wstring& widgetId, const std
         found->maximumUtf8Bytes;
     DispatchHostInputAction(widgetId, id,
         focusedHostInput_.focusAction, "focus",
-        focusedHostInput_.text, false, "pointer");
+        focusedHostInput_.text, false,
+        source && *source ? source : "pointer");
     if (hostInputFocusCallback_)
         hostInputFocusCallback_();
     RuntimeInvalidateHost(widgetId);
@@ -20718,9 +20780,26 @@ void WidgetEngine::BeginHostLogicalSlotPointer(
     LuaWidget& widget, int x, int y)
 {
     widget.logicalSlotPointerDrag.reset();
-    if (widget.preview || !widget.valid || !widget.viewTree)
+    const std::string previousViewFocus = widget.viewKeyboardFocusKey;
+    const auto previousSlotFocus = widget.logicalSlotFocus;
+    if (widget.preview || !widget.valid)
+    {
+        widget.viewKeyboardFocusKey.clear();
+        widget.logicalSlotFocus.reset();
+        return;
+    }
+    const std::string pointerTarget =
+        widget.interactionRegions.TargetAt(
+            static_cast<float>(x), static_cast<float>(y));
+    widget.viewKeyboardFocusKey =
+        widget.interactionRegions.IsKeyboardFocusable(pointerTarget)
+        ? pointerTarget : std::string{};
+    if (!widget.viewTree)
     {
         widget.logicalSlotFocus.reset();
+        if (previousViewFocus != widget.viewKeyboardFocusKey ||
+            previousSlotFocus.has_value())
+            RuntimeInvalidateHost(widget.widgetId);
         return;
     }
     const POINT point{ widget.lastBounds.left + x,
@@ -20730,17 +20809,21 @@ void WidgetEngine::BeginHostLogicalSlotPointer(
         [&](const auto& candidate) {
             return PtInRect(&candidate.bounds, point) != FALSE;
         });
-    const auto previousFocus = widget.logicalSlotFocus;
     if (hit == items.rend())
     {
         widget.logicalSlotFocus.reset();
-        if (previousFocus) RuntimeInvalidateHost(widget.widgetId);
+        if (previousViewFocus != widget.viewKeyboardFocusKey ||
+            previousSlotFocus.has_value())
+            RuntimeInvalidateHost(widget.widgetId);
         return;
     }
     widget.logicalSlotFocus = LuaWidget::LogicalSlotFocus{
         hit->slotId, hit->itemId };
-    if (!previousFocus || previousFocus->slotId != hit->slotId ||
-        previousFocus->itemId != hit->itemId)
+    if (widget.interactionRegions.IsKeyboardFocusable(hit->itemId))
+        widget.viewKeyboardFocusKey = hit->itemId;
+    if (previousViewFocus != widget.viewKeyboardFocusKey ||
+        !previousSlotFocus || previousSlotFocus->slotId != hit->slotId ||
+        previousSlotFocus->itemId != hit->itemId)
         RuntimeInvalidateHost(widget.widgetId);
     if (hit->kind !=
             snowdesktop::widget_runtime::LogicalSlotKind::Collection ||
@@ -20835,36 +20918,69 @@ bool WidgetEngine::EndHostLogicalSlotPointer(
     return true;
 }
 
-void WidgetEngine::DrawHostLogicalSlotOverlays(
+void WidgetEngine::DrawHostViewInteractionOverlays(
     const LuaWidget& widget)
 {
     if (!d2dState_ || !d2dState_->ctx) return;
-    if (widget.logicalSlotFocus && RuntimeIsWidgetSelected(widget.widgetId))
+    if (!widget.viewKeyboardFocusKey.empty() &&
+        RuntimeIsWidgetSelected(widget.widgetId))
     {
-        const auto surface = RuntimeLogicalSlotSurface(
-            widget.widgetId, widget.logicalSlotFocus->slotId);
-        if (surface)
+        const auto* region = widget.interactionRegions.Find(
+            widget.viewKeyboardFocusKey);
+        if (region && region->enabled)
         {
-            const auto focused = std::find_if(surface->items.begin(),
-                surface->items.end(), [&](const auto& item) {
-                    return item.itemId == widget.logicalSlotFocus->itemId;
-                });
-            if (focused != surface->items.end())
+            bool clipped = false;
+            if (region->clip)
+            {
+                d2dState_->ctx->PushAxisAlignedClip(D2D1::RectF(
+                    d2dState_->widgetRect.left + region->clip->x,
+                    d2dState_->widgetRect.top + region->clip->y,
+                    d2dState_->widgetRect.left + region->clip->x +
+                        region->clip->width,
+                    d2dState_->widgetRect.top + region->clip->y +
+                        region->clip->height),
+                    D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                clipped = true;
+            }
+            ID2D1SolidColorBrush* halo = GetCachedBrush(
+                d2dState_, 0x0B1220, 0.72f);
+            ID2D1SolidColorBrush* focus = GetCachedBrush(
+                d2dState_, 0x72C7FF, 1.0f);
+            if (region->shape.type == snowdesktop::widget_runtime::
+                    InteractionShapeType::Circle)
+            {
+                const D2D1_ELLIPSE ellipse = D2D1::Ellipse(
+                    D2D1::Point2F(
+                        d2dState_->widgetRect.left + region->shape.x,
+                        d2dState_->widgetRect.top + region->shape.y),
+                    std::max(0.0f, region->shape.radius - 1.0f),
+                    std::max(0.0f, region->shape.radius - 1.0f));
+                if (halo) d2dState_->ctx->DrawEllipse(ellipse, halo, 3.5f);
+                if (focus) d2dState_->ctx->DrawEllipse(ellipse, focus, 2.0f);
+            }
+            else
             {
                 const D2D1_RECT_F bounds = D2D1::RectF(
-                    static_cast<float>(focused->bounds.left) + 1.0f,
-                    static_cast<float>(focused->bounds.top) + 1.0f,
-                    static_cast<float>(focused->bounds.right) - 1.0f,
-                    static_cast<float>(focused->bounds.bottom) - 1.0f);
-                if (ID2D1SolidColorBrush* halo = GetCachedBrush(
-                        d2dState_, 0x0B1220, 0.72f))
+                    d2dState_->widgetRect.left + region->shape.x + 1.0f,
+                    d2dState_->widgetRect.top + region->shape.y + 1.0f,
+                    d2dState_->widgetRect.left + region->shape.x +
+                        region->shape.width - 1.0f,
+                    d2dState_->widgetRect.top + region->shape.y +
+                        region->shape.height - 1.0f);
+                const float radius = region->shape.type ==
+                        snowdesktop::widget_runtime::
+                            InteractionShapeType::RoundedRect
+                    ? std::max(0.0f, region->shape.radius - 1.0f) : 3.0f;
+                const D2D1_ROUNDED_RECT rounded =
+                    D2D1::RoundedRect(bounds, radius, radius);
+                if (halo)
                     d2dState_->ctx->DrawRoundedRectangle(
-                        D2D1::RoundedRect(bounds, 6.0f, 6.0f), halo, 3.5f);
-                if (ID2D1SolidColorBrush* focus = GetCachedBrush(
-                        d2dState_, 0x72C7FF, 1.0f))
+                        rounded, halo, 3.5f);
+                if (focus)
                     d2dState_->ctx->DrawRoundedRectangle(
-                        D2D1::RoundedRect(bounds, 6.0f, 6.0f), focus, 2.0f);
+                        rounded, focus, 2.0f);
             }
+            if (clipped) d2dState_->ctx->PopAxisAlignedClip();
         }
     }
     if (!widget.logicalSlotPointerDrag ||
@@ -20895,64 +21011,146 @@ void WidgetEngine::DrawHostLogicalSlotOverlays(
             D2D1::RoundedRect(indicator, 2.0f, 2.0f), brush);
 }
 
-bool WidgetEngine::HandleHostLogicalSlotKey(const std::wstring& widgetId,
+bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
     WPARAM key, bool ctrl, bool shift, bool alt)
 {
     const int index = FindWidget(widgetId);
     if (index < 0 || ctrl || !RuntimeIsWidgetSelected(widgetId)) return false;
     auto& widget = widgets_[index];
-    if (widget.preview || !widget.valid || !widget.viewTree) return false;
-    const auto items = CollectHostLogicalSlotKeyboardItems(*this, widget);
-    if (items.empty())
+    if (widget.preview || !widget.valid) return false;
+    const auto focusKeys = widget.interactionRegions.KeyboardFocusableKeys();
+    if (focusKeys.empty())
     {
+        widget.viewKeyboardFocusKey.clear();
         widget.logicalSlotFocus.reset();
         return false;
     }
+    const auto slotItems = CollectHostLogicalSlotKeyboardItems(*this, widget);
     const auto focusedIndex = [&]() -> std::optional<std::size_t> {
-        if (!widget.logicalSlotFocus) return std::nullopt;
-        const auto found = std::find_if(items.begin(), items.end(),
+        if (widget.viewKeyboardFocusKey.empty()) return std::nullopt;
+        const auto found = std::find(
+            focusKeys.begin(), focusKeys.end(),
+            widget.viewKeyboardFocusKey);
+        if (found == focusKeys.end()) return std::nullopt;
+        return static_cast<std::size_t>(
+            std::distance(focusKeys.begin(), found));
+    }();
+
+    auto synchronizeSlotFocus = [&](std::string_view targetKey) {
+        const auto slot = std::find_if(slotItems.begin(), slotItems.end(),
+            [targetKey](const auto& item) {
+                return item.itemId == targetKey;
+            });
+        if (slot == slotItems.end())
+            widget.logicalSlotFocus.reset();
+        else
+        {
+            widget.logicalSlotFocus = LuaWidget::LogicalSlotFocus{
+                slot->slotId, slot->itemId };
+        }
+    };
+    auto focusTarget = [&](const std::string& targetKey) {
+        const auto input = std::find_if(widget.hostControls.rbegin(),
+            widget.hostControls.rend(), [&](const auto& control) {
+                return control.type == LuaWidget::HostControl::Type::Input &&
+                    control.enabled && control.id == targetKey;
+            });
+        if (input != widget.hostControls.rend())
+        {
+            if (!RuntimeFocusHostInput(widgetId, targetKey, "keyboard"))
+                return false;
+        }
+        else
+        {
+            if (focusedHostInput_.active &&
+                focusedHostInput_.widgetId == widgetId)
+                BlurHostInput(false);
+            widget.viewKeyboardFocusKey = targetKey;
+        }
+        synchronizeSlotFocus(targetKey);
+        RuntimeInvalidateHost(widgetId);
+        return true;
+    };
+    auto focusedSlot = [&]() -> const HostLogicalSlotKeyboardItem* {
+        if (!widget.logicalSlotFocus) return nullptr;
+        const auto found = std::find_if(slotItems.begin(), slotItems.end(),
             [&](const auto& item) {
                 return item.slotId == widget.logicalSlotFocus->slotId &&
                     item.itemId == widget.logicalSlotFocus->itemId;
             });
-        if (found == items.end()) return std::nullopt;
-        return static_cast<std::size_t>(std::distance(items.begin(), found));
-    }();
+        return found == slotItems.end() ? nullptr : &*found;
+    };
+
     if (key == VK_TAB && !alt)
     {
         const auto next = snowdesktop::widget_runtime::CycleLogicalSlotFocus(
-            items.size(), focusedIndex, shift);
+            focusKeys.size(), focusedIndex, shift);
         if (!next) return false;
-        widget.logicalSlotFocus = LuaWidget::LogicalSlotFocus{
-            items[*next].slotId, items[*next].itemId };
-        RuntimeInvalidateHost(widgetId);
-        return true;
+        return focusTarget(focusKeys[*next]);
     }
     if (!focusedIndex) return false;
-    const auto& focused = items[*focusedIndex];
+    const std::string focusedKey = focusKeys[*focusedIndex];
+    const auto* focusedRegion =
+        widget.interactionRegions.Find(focusedKey);
+    if (!focusedRegion) return false;
     if (key == VK_ESCAPE)
     {
+        if (focusedHostInput_.active &&
+            focusedHostInput_.widgetId == widgetId &&
+            focusedHostInput_.id == focusedKey)
+            BlurHostInput(true);
         widget.logicalSlotFocus.reset();
+        widget.viewKeyboardFocusKey.clear();
         RuntimeInvalidateHost(widgetId);
         return true;
     }
     if (key == VK_LEFT || key == VK_RIGHT ||
         key == VK_UP || key == VK_DOWN)
     {
+        if (!alt && focusedRegion->controlKind ==
+                snowdesktop::widget_runtime::InteractionControlKind::Slider)
+        {
+            const int direction = key == VK_LEFT || key == VK_DOWN ? -1 : 1;
+            const auto stepped = widget.interactionRegions.ResolveKeyboardStep(
+                focusedKey, direction);
+            if (stepped && stepped->controlValue &&
+                stepped->previousControlValue &&
+                std::abs(*stepped->controlValue -
+                    *stepped->previousControlValue) > 0.000001f)
+            {
+                const auto& shape = focusedRegion->shape;
+                const int x = static_cast<int>(std::lround(
+                    shape.type == snowdesktop::widget_runtime::
+                            InteractionShapeType::Circle
+                        ? shape.x : shape.x + shape.width * 0.5f));
+                const int y = static_cast<int>(std::lround(
+                    shape.type == snowdesktop::widget_runtime::
+                            InteractionShapeType::Circle
+                        ? shape.y : shape.y + shape.height * 0.5f));
+                snowdesktop::widget_runtime::WidgetTrustedGestureScope
+                    gestureScope(trustedGestureState_, true);
+                DispatchInteractionAction(widget, focusedKey, "change",
+                    x, y, 0, 0, 0, false, "keyboard", direction);
+                RuntimeInvalidateHost(widgetId);
+            }
+            return true;
+        }
         if (alt)
         {
-            if (focused.kind != snowdesktop::widget_runtime::
+            const auto* slot = focusedSlot();
+            if (!slot) return false;
+            if (slot->kind != snowdesktop::widget_runtime::
                     LogicalSlotKind::Collection)
                 return true;
             const int direction = key == VK_LEFT || key == VK_UP ? -1 : 1;
             const auto target = snowdesktop::widget_runtime::
                 MoveLogicalSlotItemTarget(
-                    focused.itemCount, focused.modelIndex, direction);
+                    slot->itemCount, slot->modelIndex, direction);
             if (!target) return true;
             snowdesktop::widget_runtime::LogicalSlotChange change;
             std::string error;
-            if (!RuntimeMoveHostLogicalSlotItem(widgetId, focused.slotId,
-                    focused.itemId, *target, change, error,
+            if (!RuntimeMoveHostLogicalSlotItem(widgetId, slot->slotId,
+                    slot->itemId, *target, change, error,
                     "host.keyboard"))
             {
                 RuntimeRecordError(widgetId,
@@ -20961,10 +21159,40 @@ bool WidgetEngine::HandleHostLogicalSlotKey(const std::wstring& widgetId,
             return true;
         }
         std::vector<snowdesktop::widget_runtime::LogicalSlotFocusRect> bounds;
-        bounds.reserve(items.size());
-        for (const auto& item : items)
-            bounds.push_back({ item.bounds.left, item.bounds.top,
-                item.bounds.right, item.bounds.bottom });
+        bounds.reserve(focusKeys.size());
+        for (const auto& candidateKey : focusKeys)
+        {
+            const auto* candidate =
+                widget.interactionRegions.Find(candidateKey);
+            if (!candidate) return true;
+            const auto& shape = candidate->shape;
+            float left = shape.type == snowdesktop::widget_runtime::
+                    InteractionShapeType::Circle
+                ? shape.x - shape.radius : shape.x;
+            float top = shape.type == snowdesktop::widget_runtime::
+                    InteractionShapeType::Circle
+                ? shape.y - shape.radius : shape.y;
+            float right = shape.type == snowdesktop::widget_runtime::
+                    InteractionShapeType::Circle
+                ? shape.x + shape.radius : shape.x + shape.width;
+            float bottom = shape.type == snowdesktop::widget_runtime::
+                    InteractionShapeType::Circle
+                ? shape.y + shape.radius : shape.y + shape.height;
+            if (candidate->clip)
+            {
+                left = std::max(left, candidate->clip->x);
+                top = std::max(top, candidate->clip->y);
+                right = std::min(right,
+                    candidate->clip->x + candidate->clip->width);
+                bottom = std::min(bottom,
+                    candidate->clip->y + candidate->clip->height);
+            }
+            bounds.push_back({
+                static_cast<int>(std::floor(left)),
+                static_cast<int>(std::floor(top)),
+                static_cast<int>(std::ceil(right)),
+                static_cast<int>(std::ceil(bottom)) });
+        }
         const auto direction = key == VK_LEFT
             ? snowdesktop::widget_runtime::LogicalSlotFocusDirection::Left
             : key == VK_RIGHT
@@ -20975,31 +21203,31 @@ bool WidgetEngine::HandleHostLogicalSlotKey(const std::wstring& widgetId,
         const auto next = snowdesktop::widget_runtime::
             FindLogicalSlotSpatialFocus(bounds, *focusedIndex, direction);
         if (next)
-        {
-            widget.logicalSlotFocus = LuaWidget::LogicalSlotFocus{
-                items[*next].slotId, items[*next].itemId };
-            RuntimeInvalidateHost(widgetId);
-        }
+            focusTarget(focusKeys[*next]);
         return true;
     }
     if (key == VK_DELETE && !alt)
     {
-        const bool removable = focused.kind == snowdesktop::widget_runtime::
-                LogicalSlotKind::Collection || focused.allowClear;
+        const auto* slot = focusedSlot();
+        if (!slot) return false;
+        const bool removable = slot->kind == snowdesktop::widget_runtime::
+                LogicalSlotKind::Collection || slot->allowClear;
         if (!removable) return true;
-        std::optional<LuaWidget::LogicalSlotFocus> fallback;
-        if (items.size() > 1)
+        std::string fallback;
+        if (focusKeys.size() > 1)
         {
-            const std::size_t next = *focusedIndex + 1 < items.size()
+            const std::size_t next = *focusedIndex + 1 < focusKeys.size()
                 ? *focusedIndex + 1 : *focusedIndex - 1;
-            fallback = LuaWidget::LogicalSlotFocus{
-                items[next].slotId, items[next].itemId };
+            fallback = focusKeys[next];
         }
         snowdesktop::widget_runtime::LogicalSlotChange change;
         std::string error;
-        if (RuntimeRemoveHostLogicalSlotItem(widgetId, focused.slotId,
-                focused.itemId, change, error, "host.keyboard"))
-            widget.logicalSlotFocus = std::move(fallback);
+        if (RuntimeRemoveHostLogicalSlotItem(widgetId, slot->slotId,
+                slot->itemId, change, error, "host.keyboard"))
+        {
+            widget.viewKeyboardFocusKey = std::move(fallback);
+            synchronizeSlotFocus(widget.viewKeyboardFocusKey);
+        }
         else
             RuntimeRecordError(widgetId,
                 "logical slot keyboard remove: " + error);
@@ -21008,15 +21236,28 @@ bool WidgetEngine::HandleHostLogicalSlotKey(const std::wstring& widgetId,
     }
     if ((key == VK_RETURN || key == VK_SPACE) && !alt)
     {
-        if (widget.interactionRegions.FindAction(focused.itemId, "click"))
+        const auto input = std::find_if(widget.hostControls.rbegin(),
+            widget.hostControls.rend(), [&](const auto& control) {
+                return control.type == LuaWidget::HostControl::Type::Input &&
+                    control.enabled && control.id == focusedKey;
+            });
+        if (input != widget.hostControls.rend())
+            return RuntimeFocusHostInput(widgetId, focusedKey, "keyboard");
+        if (focusedRegion->controlKind != snowdesktop::widget_runtime::
+                InteractionControlKind::Slider)
         {
-            const int x = (focused.bounds.left + focused.bounds.right) / 2 -
-                widget.lastBounds.left;
-            const int y = (focused.bounds.top + focused.bounds.bottom) / 2 -
-                widget.lastBounds.top;
+            const auto& shape = focusedRegion->shape;
+            const int x = static_cast<int>(std::lround(
+                shape.type == snowdesktop::widget_runtime::
+                        InteractionShapeType::Circle
+                    ? shape.x : shape.x + shape.width * 0.5f));
+            const int y = static_cast<int>(std::lround(
+                shape.type == snowdesktop::widget_runtime::
+                        InteractionShapeType::Circle
+                    ? shape.y : shape.y + shape.height * 0.5f));
             snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(
                 trustedGestureState_, true);
-            DispatchInteractionAction(widget, focused.itemId, "click",
+            DispatchInteractionAction(widget, focusedKey, "click",
                 x, y, 0, 0, 1, false, "keyboard");
             RuntimeInvalidateHost(widgetId);
         }
@@ -21243,6 +21484,7 @@ void WidgetEngine::BlurHostInput(bool cancel)
     if (!focusedHostInput_.active) return;
 
     const std::wstring widgetId = focusedHostInput_.widgetId;
+    const std::string inputId = focusedHostInput_.id;
     if (focusedHostInput_.controlled)
     {
         if (cancel && focusedHostInput_.liveUpdate &&
@@ -21279,6 +21521,11 @@ void WidgetEngine::BlurHostInput(bool cancel)
         focusedHostInput_.blurAction, "blur",
         cancel ? focusedHostInput_.originalText : focusedHostInput_.text,
         cancel, "keyboard");
+    if (const int index = FindWidget(widgetId); index >= 0 &&
+        widgets_[index].viewKeyboardFocusKey == inputId)
+    {
+        widgets_[index].viewKeyboardFocusKey.clear();
+    }
     focusedHostInput_ = {};
     RuntimeInvalidateHost(widgetId);
 }
@@ -21448,6 +21695,13 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
 
     const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
     const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
+    if (key == VK_TAB && !ctrl && !alt)
+    {
+        const std::wstring widgetId = focusedHostInput_.widgetId;
+        (void)HandleHostViewKey(widgetId, key, false, shift, false);
+        return true;
+    }
     focusedHostInput_.cursor = std::min(
         focusedHostInput_.cursor, focusedHostInput_.text.size());
     focusedHostInput_.selectionAnchor = std::min(

@@ -91,6 +91,7 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `badge/divider/meter`，`view.selectionControls` 提供 `toggle/checkbox`，
 `view.actionControls` 提供 `link/radioGroup/slider`，
 `view.inputControls` 一次提供 `textInput/textArea/searchBox/numberInput/select`，
+`view.keyboardNavigation.basic` 提供桌面 surface 的通用宿主键盘焦点与激活，
 `view.grid.uniform` 提供基础 `grid`，`view.flow.wrap` 提供横向换行 `flow`。
 `view.scroll` 提供宿主滚动视口，`view.collection.basic` 提供基础集合，
 `view.collection.virtual` 提供固定行高虚拟集合与可见范围查询；
@@ -152,8 +153,8 @@ down/up、doubleClick 和 contextMenu，动作通过 `event.kind == "action"` �
 宿主不会替组件修改或持久化状态；组件应在 `event` 中更新自己的 model/storage 并调用
 `widget.invalidate()`，下一棵树仍以组件提供的 `checked` 为准。`checkedStyle` 先于
 `hoverStyle/pressedStyle` 合并，轨道、勾选标记、hover、pressed 和元素命中均由宿主实时
-绘制；两类控件也支持各自的 `contextMenu`。直接指针 change 保留可信用户手势，但当前
-过渡实现尚未提供键盘操作与 UI Automation 输出。
+绘制；两类控件也支持各自的 `contextMenu`。探测 `view.keyboardNavigation.basic` 后，
+Enter/空格会生成同样的受控 change 建议；UI Automation 输出仍未开放。
 
 ```lua
 view.toggle({
@@ -177,7 +178,8 @@ radio 语义、hover/pressed/checked 绘制和右键菜单目标。选中选项�
 0/1/0.01）及水平/垂直方向。鼠标左键按下后由宿主捕获拖动，持续投递 step 对齐且限制在
 范围内的 `previousControlValue/controlValue`；右键只用于菜单，不改变数值。组件收到建议值
 后仍需更新自己的 model/storage 并调用 `widget.invalidate()`。这三个节点对应
-`view.actionControls`；当前尚不提供键盘调节与 UI Automation 输出。
+`view.actionControls`；探测 `view.keyboardNavigation.basic` 后，单选项可用 Enter/空格选择，
+滑块可用左/下减一档、右/上加一档。UI Automation 输出仍未开放。
 
 ```lua
 view.radioGroup({
@@ -210,6 +212,8 @@ Lua 不会获得剪贴板内容或原生句柄。`liveUpdate=false` 将 change �
 实时模式下用 `cancelled=true` 建议恢复初始值。`focus/blur/submit` 为可选动作；单行 Enter
 提交，`textArea` Enter 换行而 Ctrl+Enter 提交。`numberInput` 的上下方向键按 step 调整，
 文本是完整且位于范围内的数字时，change 还带 `numberValid=true` 和 `controlValue`。
+探测 `view.keyboardNavigation.basic` 后，Tab/Shift+Tab 可在这些输入与同树其他可操作元素
+之间循环；进入输入后仍由上述宿主编辑器处理文本键、选择、IME 和提交。
 
 ```lua
 view.searchBox({
@@ -229,6 +233,14 @@ view.searchBox({
 `previousSelection/selection`。宿主在组件内表面顶层绘制选项并优先命中，不调用阻塞式系统
 菜单；组件收到 click/change 后应更新 model 并 invalidate。当前弹层仍受组件及父滚动视口
 裁剪，跨组件表面的通用 popover 属于后续宿主 surface API。
+
+`view.keyboardNavigation.basic` 只作用于桌面 surface 中当前唯一选中的 Lua 组件。宿主按照最后一棵
+成功提交的交互树顺序收集启用的可点击节点、受控控件和文本输入：Tab/Shift+Tab 循环焦点，
+方向键按元素几何位置移动焦点，Enter/空格激活按钮、链接、选择控件等，Escape 清除焦点；滑块
+用左/下减一档、右/上加一档。键盘激活仍投递普通 action/change 事件，但带
+`source="keyboard"` 和可信手势标记，Lua 不会获得原始按键流。鼠标点击可操作元素也会同步宿主
+焦点。逻辑槽位继续在这一焦点序列中使用 `Alt+方向键` 重排和 Delete 移除。该基础 feature
+不承诺自定义 `tabIndex`、任意键绑定、panel 焦点遍历或 UI Automation 输出。
 
 `grid` 是行优先的均匀网格容器，必须提供 1–64 的整数 `columns`；每列等宽，
 `columnGap/rowGap` 分别控制水平和垂直间距，未提供时回退到 `gap`。隐藏子节点不占格，
@@ -434,7 +446,7 @@ view.waveform({
 重复 key、NaN/Infinity 和越界值会拒绝整次提交。桌面树只布局在底部标题栏之上的内容区。
 
 该 feature 不是完整 `view.tree`：当前每帧重建树，尚无可变高度虚拟集合、
-可操作行内 span，也没有通用键盘焦点、UIA 输出、RTL、主题
+可操作行内 span，也没有 UIA 输出、RTL、主题
 token、差量资源复用或声明式 panel。需要这些能力的组件应继续使用 v2 即时绘制或等待
 对应 feature；不得把 `view.tree.core` 当作稳定完整控件集声明。
 
@@ -509,7 +521,7 @@ undo/redo 历史。成功变化通过 `slot.changed` 以 `source="host.pointer"`
 不会猜测或代替触发其任意子控件。collection 焦点项可用 `Alt+方向键` 在同槽内原子移动，
 `Delete` 可移除 collection 项或 `allowClear=true` 的 binding，二者都进入同一 undo/redo
 历史，并以 `slot.changed source="host.keyboard"` 通知 Lua。宿主直接绘制焦点轮廓，不向 Lua
-投递高频按键；该 feature 不表示通用声明式控件键盘焦点或 UI Automation 已完成。
+投递高频按键；普通声明式控件使用 `view.keyboardNavigation.basic`，UI Automation 仍未完成。
 
 提交成功的 `slotSurface` 现在也是宿主原生拖放面。桌面项目、应用快捷方式或 Explorer
 文件拖到该区域时，宿主先按 manifest 的 `accepts`、binding 替换策略及 collection 容量
@@ -657,7 +669,8 @@ storageKey 是 1–128 字节有效 UTF-8。颜色是 `0xRRGGBB`，alpha 是 0�
 `textArea` 额外支持 `placeholderWhenWhitespace`。两个控件都支持点击定位、拖选、
 Shift 选择、Ctrl+A/C/X/V、Escape 恢复焦点前内容；多行 Enter 插入换行、
 Ctrl+Enter 提交，滚轮与光标跟随会调整实例内滚动位置。普通文本输入不要求权限，
-剪贴板只由宿主在聚焦控件内处理，并没有开放通用剪贴板 API。
+剪贴板只由宿主在聚焦控件内处理，并没有开放通用剪贴板 API。探测
+`view.keyboardNavigation.basic` 后，这两个即时兼容控件也进入桌面组件的 Tab 顺序。
 
 `control.focus(key)` 只能在直接 click/doubleClick/pointerDown/pointerUp/wheel、菜单命令
 或宿主明确标记的打开回调同步栈中接受；render、schedule、data.change 和
@@ -1531,7 +1544,8 @@ view.text({ key = "title", text = "SnowDesktop", font = display })
 
 ## 当前明确未开放
 
-API v2 暂未向沙箱提供完整 `view.tree`、通用即时 region 和非输入节点的键盘焦点/UIA 输出、
+API v2 暂未向沙箱提供完整 `view.tree`、UI Automation 输出、通用即时 region 的自定义
+Tab 顺序与任意原始键盘事件、
 受控二级菜单、`desktop`、旧的同步 `media` 库、HTTP、尚未列出的系统状态、
 通用剪贴板、文件选择和应用启动库。声明式输入与 `control.textInput/textArea` 只在聚焦的
 宿主管理编辑器内部代理标准剪贴板操作，不允许 Lua 读取剪贴板。其余能力将在对应宿主实现、配额与按需生命周期完成后
