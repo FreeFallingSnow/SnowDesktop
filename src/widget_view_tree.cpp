@@ -55,8 +55,10 @@ bool IsLeafNode(ViewNodeType type) noexcept
     return type == ViewNodeType::Text || type == ViewNodeType::Image ||
         IsButtonNode(type) ||
         type == ViewNodeType::Icon || type == ViewNodeType::Shape ||
+        type == ViewNodeType::Badge || type == ViewNodeType::Divider ||
         type == ViewNodeType::ProgressBar ||
         type == ViewNodeType::ProgressRing ||
+        type == ViewNodeType::Meter ||
         IsDataSeriesNode(type) ||
         type == ViewNodeType::Spacer;
 }
@@ -69,6 +71,7 @@ float IntrinsicWidth(const ViewNode& node)
     if (node.width.kind == ViewLengthKind::Fixed)
         return node.width.value;
     if (node.type == ViewNodeType::Text ||
+        node.type == ViewNodeType::Badge ||
         node.type == ViewNodeType::Button)
         return TextIntrinsicWidth(node);
     if (node.type == ViewNodeType::Image)
@@ -79,6 +82,11 @@ float IntrinsicWidth(const ViewNode& node)
         return 32.0f + node.padding * 2.0f;
     if (node.type == ViewNodeType::Shape)
         return 8.0f + node.padding * 2.0f;
+    if (node.type == ViewNodeType::Divider)
+        return (node.orientation == ViewOrientation::Vertical
+            ? node.thickness : 24.0f) + node.padding * 2.0f;
+    if (node.type == ViewNodeType::Meter)
+        return 64.0f + node.padding * 2.0f;
     if (IsDataSeriesNode(node.type))
         return 64.0f + node.padding * 2.0f;
     if (node.type == ViewNodeType::Spacer)
@@ -110,6 +118,9 @@ float IntrinsicHeight(const ViewNode& node)
         return node.height.value;
     if (node.type == ViewNodeType::Text)
         return node.fontSize * 1.4f + node.padding * 2.0f;
+    if (node.type == ViewNodeType::Badge)
+        return std::max(20.0f, node.fontSize * 1.4f) +
+            node.padding * 2.0f;
     if (node.type == ViewNodeType::Image)
         return 48.0f + node.padding * 2.0f;
     if (node.type == ViewNodeType::Button)
@@ -120,12 +131,16 @@ float IntrinsicHeight(const ViewNode& node)
             node.padding * 2.0f;
     if (node.type == ViewNodeType::Icon)
         return node.fontSize * 1.4f + node.padding * 2.0f;
-    if (node.type == ViewNodeType::ProgressBar)
+    if (node.type == ViewNodeType::ProgressBar ||
+        node.type == ViewNodeType::Meter)
         return std::max(4.0f, node.thickness) + node.padding * 2.0f;
     if (node.type == ViewNodeType::ProgressRing)
         return 32.0f + node.padding * 2.0f;
     if (node.type == ViewNodeType::Shape)
         return 8.0f + node.padding * 2.0f;
+    if (node.type == ViewNodeType::Divider)
+        return (node.orientation == ViewOrientation::Horizontal
+            ? node.thickness : 24.0f) + node.padding * 2.0f;
     if (IsDataSeriesNode(node.type))
         return 40.0f + node.padding * 2.0f;
     if (node.type == ViewNodeType::Spacer)
@@ -420,9 +435,10 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
     }
     if (!node.fontResourceName.empty() &&
         node.type != ViewNodeType::Text &&
-        node.type != ViewNodeType::Button)
+        node.type != ViewNodeType::Button &&
+        node.type != ViewNodeType::Badge)
     {
-        error = "only text and button nodes can retain a font resource";
+        error = "only text, badge, and button nodes can retain a font resource";
         return false;
     }
     if (!node.imageResourceName.empty())
@@ -445,6 +461,11 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         error = "button nodes require label text";
         return false;
     }
+    if (node.type == ViewNodeType::Badge && node.text.empty())
+    {
+        error = "badge nodes require text";
+        return false;
+    }
     if (IsIconNode(node.type) && node.text.empty())
     {
         error = std::string(ViewNodeTypeName(node.type)) +
@@ -455,6 +476,12 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         node.accessibilityLabel.empty())
     {
         error = "iconButton nodes require accessibility.label";
+        return false;
+    }
+    if (node.type == ViewNodeType::Meter &&
+        node.accessibilityLabel.empty())
+    {
+        error = "meter nodes require accessibility.label";
         return false;
     }
     for (const auto& [eventName, action] : node.events)
@@ -521,7 +548,12 @@ bool CollectRegions(const ViewNode& node,
         region.events = node.events;
         region.accessibilityRole = node.accessibilityRole.empty()
             ? (IsButtonNode(node.type) ? "button" :
-                (IsDataSeriesNode(node.type) ? "img" : ""))
+                (IsDataSeriesNode(node.type) ? "img" :
+                    (node.type == ViewNodeType::Meter ? "meter" :
+                        (node.type == ViewNodeType::Divider
+                            ? "separator" :
+                            (node.type == ViewNodeType::Badge
+                                ? "status" : "")))))
             : node.accessibilityRole;
         region.accessibilityLabel = node.accessibilityLabel.empty()
             ? node.text : node.accessibilityLabel;
@@ -585,8 +617,11 @@ const char* ViewNodeTypeName(ViewNodeType type) noexcept
     case ViewNodeType::Icon: return "icon";
     case ViewNodeType::IconButton: return "iconButton";
     case ViewNodeType::Shape: return "shape";
+    case ViewNodeType::Badge: return "badge";
+    case ViewNodeType::Divider: return "divider";
     case ViewNodeType::ProgressBar: return "progressBar";
     case ViewNodeType::ProgressRing: return "progressRing";
+    case ViewNodeType::Meter: return "meter";
     case ViewNodeType::Sparkline: return "sparkline";
     case ViewNodeType::LineChart: return "lineChart";
     case ViewNodeType::BarChart: return "barChart";

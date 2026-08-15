@@ -12039,6 +12039,7 @@ static void DrawWidgetViewNode(D2DState* state,
     using snowdesktop::widget_runtime::ViewImageAlignment;
     using snowdesktop::widget_runtime::ViewImageFit;
     using snowdesktop::widget_runtime::ViewImageInterpolation;
+    using snowdesktop::widget_runtime::ViewOrientation;
     using snowdesktop::widget_runtime::ViewTextAlignment;
     if (!state || !state->ctx || !node.visible ||
         node.frame.width <= 0.0f || node.frame.height <= 0.0f)
@@ -12047,10 +12048,12 @@ static void DrawWidgetViewNode(D2DState* state,
     const bool hovered = regions.IsHovered(node.key);
     const bool pressed = regions.IsPressed(node.key);
     const auto style = ResolveViewStyle(node, hovered, pressed);
+    const bool badgeNode = node.type == ViewNodeType::Badge;
     const float opacity = std::clamp(
         style.opacity.value_or(1.0f), 0.0f, 1.0f);
     const float radius = std::max(0.0f,
-        style.cornerRadius.value_or(0.0f));
+        style.cornerRadius.value_or(badgeNode
+            ? node.frame.height * 0.5f : 0.0f));
     const D2D1_RECT_F rect = D2D1::RectF(
         state->widgetRect.left + node.frame.x,
         state->widgetRect.top + node.frame.y,
@@ -12062,17 +12065,20 @@ static void DrawWidgetViewNode(D2DState* state,
     const bool iconNode = node.type == ViewNodeType::Icon ||
         node.type == ViewNodeType::IconButton;
     const bool specialGeometry = node.type == ViewNodeType::Shape ||
+        node.type == ViewNodeType::Divider ||
         node.type == ViewNodeType::ProgressBar ||
         node.type == ViewNodeType::ProgressRing ||
+        node.type == ViewNodeType::Meter ||
         node.type == ViewNodeType::Icon;
-    const bool implicitButtonBackground = !style.background && buttonNode;
+    const bool implicitSurfaceBackground = !style.background &&
+        (buttonNode || badgeNode);
     std::optional<std::uint32_t> background = style.background;
-    if (!background && buttonNode)
+    if (!background && (buttonNode || badgeNode))
         background = 0xFFFFFF;
     if (background && !specialGeometry)
     {
         const float defaultButtonAlpha =
-            implicitButtonBackground ? 0.12f : 1.0f;
+            implicitSurfaceBackground ? 0.12f : 1.0f;
         ID2D1SolidColorBrush* brush = GetCachedBrush(state,
             static_cast<int>(*background), opacity * defaultButtonAlpha);
         if (brush)
@@ -12101,7 +12107,32 @@ static void DrawWidgetViewNode(D2DState* state,
         }
     }
 
-    if (node.type == ViewNodeType::Shape)
+    if (node.type == ViewNodeType::Divider)
+    {
+        const std::uint32_t dividerColor = style.foreground.value_or(
+            style.background.value_or(0xFFFFFF));
+        if (ID2D1SolidColorBrush* brush = GetCachedBrush(state,
+                static_cast<int>(dividerColor), opacity))
+        {
+            const float stroke = std::min(node.thickness,
+                std::max(0.5f, node.orientation ==
+                        ViewOrientation::Horizontal
+                    ? node.frame.height : node.frame.width));
+            if (node.orientation == ViewOrientation::Horizontal)
+            {
+                const float y = (rect.top + rect.bottom) * 0.5f;
+                state->ctx->DrawLine(D2D1::Point2F(rect.left, y),
+                    D2D1::Point2F(rect.right, y), brush, stroke);
+            }
+            else
+            {
+                const float x = (rect.left + rect.right) * 0.5f;
+                state->ctx->DrawLine(D2D1::Point2F(x, rect.top),
+                    D2D1::Point2F(x, rect.bottom), brush, stroke);
+            }
+        }
+    }
+    else if (node.type == ViewNodeType::Shape)
     {
         const bool ellipse = node.shapeKind == ViewShapeKind::Circle ||
             node.shapeKind == ViewShapeKind::Ellipse;
@@ -12146,7 +12177,8 @@ static void DrawWidgetViewNode(D2DState* state,
             }
         }
     }
-    else if (node.type == ViewNodeType::ProgressBar)
+    else if (node.type == ViewNodeType::ProgressBar ||
+        node.type == ViewNodeType::Meter)
     {
         const std::uint32_t trackColor =
             style.background.value_or(0xFFFFFF);
@@ -12278,6 +12310,7 @@ static void DrawWidgetViewNode(D2DState* state,
     }
 
     if ((node.type == ViewNodeType::Text ||
+            node.type == ViewNodeType::Badge ||
             node.type == ViewNodeType::Button || iconNode) &&
         !node.text.empty() && state->dwrite)
     {
@@ -19131,8 +19164,11 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "icon", snowdesktop::widget_runtime::LuaViewIcon, 2 },
         { "iconButton", snowdesktop::widget_runtime::LuaViewIconButton, 2 },
         { "shape", snowdesktop::widget_runtime::LuaViewShape, 2 },
+        { "badge", snowdesktop::widget_runtime::LuaViewBadge, 2 },
+        { "divider", snowdesktop::widget_runtime::LuaViewDivider, 2 },
         { "progressBar", snowdesktop::widget_runtime::LuaViewProgressBar, 2 },
         { "progressRing", snowdesktop::widget_runtime::LuaViewProgressRing, 2 },
+        { "meter", snowdesktop::widget_runtime::LuaViewMeter, 2 },
         { "sparkline", snowdesktop::widget_runtime::LuaViewSparkline, 2 },
         { "lineChart", snowdesktop::widget_runtime::LuaViewLineChart, 2 },
         { "barChart", snowdesktop::widget_runtime::LuaViewBarChart, 2 },

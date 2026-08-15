@@ -86,7 +86,9 @@ package resource handles, hover/pressed styles, and per-element context-menu
 bindings. Probe `view.dataSeries` for bounded sparkline/lineChart/barChart/
 waveform/spectrum nodes; keep each series within 512 finite samples and the
 whole tree within 4096, and always provide `accessibility.label`. The subset
-does not yet provide keyboard focus, UI Automation, collections, or the
+also publishes `view.statusVisuals` for badge/divider/meter; give every meter
+an `accessibility.label` and use meter only for a current reading, not task
+progress. It does not yet provide keyboard focus, UI Automation, collections, or the
 complete `view.tree` contract. Optional
 `menu(context, model, request)` builds an element's synchronous native context
 menu.

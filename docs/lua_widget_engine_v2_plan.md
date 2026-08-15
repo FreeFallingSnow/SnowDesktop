@@ -1601,7 +1601,7 @@ v2.0 资源契约：
 - 音频分析分别记录 1/5/10 个订阅下的捕获线程数、CPU、内存、FFT 耗时和发布丢帧；实例数增长不得线性增加捕获客户端。
 - 图片解码、字体解析和 GPU 上传必须计入独立资源预算；缓存不得绕过 Lua 实例内存限制形成无上限宿主内存占用。
 
-当前过渡实现（2026-08-15）发布 `view.tree.core`，支持 `box/row/column/stack/text/image/button/icon/iconButton/shape/progressBar/progressRing/spacer`，并以 `view.dataSeries` 公开 `sparkline/lineChart/barChart/waveform/spectrum`；数据图形每节点最多 512 个有限样本、全树最多 4096 个，要求无障碍标签并支持自动或显式 `min/max` 值域、
+当前过渡实现（2026-08-15）发布 `view.tree.core`，支持 `box/row/column/stack/text/image/button/icon/iconButton/shape/progressBar/progressRing/spacer`，以 `view.statusVisuals` 公开 `badge/divider/meter`，并以 `view.dataSeries` 公开 `sparkline/lineChart/barChart/waveform/spectrum`；meter 与数据图形要求无障碍标签，数据图形每节点最多 512 个有限样本、全树最多 4096 个并支持自动或显式 `min/max` 值域、
 稳定全树 key、基础线性布局、基础文本/边框样式、宿主 hover/pressed 视觉、元素 click/
 doubleClick/pointer/contextMenu action，以及“先完整校验布局、后原子提交；失败保留上一成功树”。
 其额度为 512 节点、32 层、单节点 4 KiB 文本、全树 64 KiB 文本和 256 个交互元素；未知字段、

@@ -384,6 +384,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature("view.dataSeries") &&
             snowdesktop::widget_api::SupportsFeature("view.image") &&
             snowdesktop::widget_api::SupportsFeature(
+                "view.statusVisuals") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "view.tree.core") &&
             !snowdesktop::widget_api::SupportsFeature("view.tree"),
         "host feature lookup must distinguish supported features");

@@ -24,8 +24,11 @@ enum class ViewNodeType
     Icon,
     IconButton,
     Shape,
+    Badge,
+    Divider,
     ProgressBar,
     ProgressRing,
+    Meter,
     Sparkline,
     LineChart,
     BarChart,
@@ -106,6 +109,12 @@ enum class ViewImageInterpolation
     Linear,
 };
 
+enum class ViewOrientation
+{
+    Horizontal,
+    Vertical,
+};
+
 struct ViewRect
 {
     float x = 0.0f;
@@ -145,6 +154,7 @@ struct ViewNode
     ViewImageAlignment imageAlignment = ViewImageAlignment::Center;
     ViewImageInterpolation imageInterpolation =
         ViewImageInterpolation::Linear;
+    ViewOrientation orientation = ViewOrientation::Horizontal;
     ViewShapeKind shapeKind = ViewShapeKind::Rectangle;
     ViewIconFont iconFont = ViewIconFont::FontAwesome;
     float fontSize = 15.0f;

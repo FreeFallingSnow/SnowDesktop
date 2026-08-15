@@ -683,6 +683,24 @@ bool ReadImageInterpolationField(lua_State* state, int table,
     return true;
 }
 
+bool ReadOrientationField(lua_State* state, int table,
+    ViewOrientation& value, std::string& error)
+{
+    std::string text;
+    if (!ReadStringField(state, table, "orientation", text, false, error))
+        return false;
+    if (text.empty() || text == "horizontal")
+        value = ViewOrientation::Horizontal;
+    else if (text == "vertical")
+        value = ViewOrientation::Vertical;
+    else
+    {
+        error = "view field 'orientation' must be horizontal or vertical";
+        return false;
+    }
+    return true;
+}
+
 bool ParseAction(lua_State* state, int index, InteractionAction& action,
     std::string& error)
 {
@@ -718,8 +736,11 @@ bool ParseNodeType(std::string_view type, ViewNodeType& result)
     else if (type == "icon") result = ViewNodeType::Icon;
     else if (type == "iconButton") result = ViewNodeType::IconButton;
     else if (type == "shape") result = ViewNodeType::Shape;
+    else if (type == "badge") result = ViewNodeType::Badge;
+    else if (type == "divider") result = ViewNodeType::Divider;
     else if (type == "progressBar") result = ViewNodeType::ProgressBar;
     else if (type == "progressRing") result = ViewNodeType::ProgressRing;
+    else if (type == "meter") result = ViewNodeType::Meter;
     else if (type == "sparkline") result = ViewNodeType::Sparkline;
     else if (type == "lineChart") result = ViewNodeType::LineChart;
     else if (type == "barChart") result = ViewNodeType::BarChart;
@@ -787,7 +808,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             { "type", "key", "text", "label", "glyph", "iconFont",
                 "source", "font", "fit", "alignment", "interpolation",
                 "alt",
-                "shape", "value", "values", "min", "max",
+                "shape", "orientation", "value", "values", "min", "max",
                 "thickness", "trackOpacity",
                 "fillOpacity", "width", "height",
                 "padding", "gap", "flexGrow", "fontSize", "bold",
@@ -807,15 +828,19 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         node.type == ViewNodeType::IconButton;
     const bool iconNode = node.type == ViewNodeType::Icon ||
         node.type == ViewNodeType::IconButton;
+    const bool textNode = node.type == ViewNodeType::Text ||
+        node.type == ViewNodeType::Badge;
     const bool progressNode = node.type == ViewNodeType::ProgressBar ||
-        node.type == ViewNodeType::ProgressRing;
+        node.type == ViewNodeType::ProgressRing ||
+        node.type == ViewNodeType::Meter;
     const bool seriesNode = node.type == ViewNodeType::Sparkline ||
         node.type == ViewNodeType::LineChart ||
         node.type == ViewNodeType::BarChart ||
         node.type == ViewNodeType::Waveform ||
         node.type == ViewNodeType::Spectrum;
     const bool imageNode = node.type == ViewNodeType::Image;
-    const bool textResourceNode = node.type == ViewNodeType::Text ||
+    const bool dividerNode = node.type == ViewNodeType::Divider;
+    const bool textResourceNode = textNode ||
         node.type == ViewNodeType::Button;
     if (buttonNode && !iconNode &&
         (FieldPresent(state, index, "text") ||
@@ -837,7 +862,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         error = "only button nodes accept 'label' and 'action'";
         return false;
     }
-    if (node.type != ViewNodeType::Text && !buttonNode && !iconNode &&
+    if (!textNode && !buttonNode && !iconNode &&
         FieldPresent(state, index, "text"))
     {
         error = "only text nodes accept 'text'";
@@ -855,6 +880,11 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         error = "only shape nodes accept 'shape'";
         return false;
     }
+    if (!dividerNode && FieldPresent(state, index, "orientation"))
+    {
+        error = "only divider nodes accept orientation";
+        return false;
+    }
     if (!progressNode && FieldPresent(state, index, "value"))
     {
         error = "only progress nodes accept 'value'";
@@ -867,7 +897,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         error = "only data-series nodes accept values, min, and max";
         return false;
     }
-    if (!progressNode && !seriesNode && (
+    if (!progressNode && !seriesNode && !dividerNode && (
             FieldPresent(state, index, "thickness") ||
             FieldPresent(state, index, "trackOpacity") ||
             FieldPresent(state, index, "fillOpacity")))
@@ -886,7 +916,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     }
     if (!textResourceNode && FieldPresent(state, index, "font"))
     {
-        error = "only text and button nodes accept a font resource";
+        error = "only text, badge, and button nodes accept a font resource";
         return false;
     }
     if (imageNode && !FieldPresent(state, index, "alt"))
@@ -896,6 +926,9 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     }
     if (!ReadStringField(state, index, "key", node.key, true, error))
         return false;
+    if (node.type == ViewNodeType::Badge &&
+        !FieldPresent(state, index, "padding"))
+        node.padding = 4.0f;
     const char* contentField = iconNode ? "glyph" :
         (buttonNode ? "label" : "text");
     if (!ReadStringField(state, index, contentField,
@@ -910,6 +943,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             node.imageAlignment, error) ||
         !ReadImageInterpolationField(state, index,
             node.imageInterpolation, error) ||
+        !ReadOrientationField(state, index, node.orientation, error) ||
         !ReadLengthField(state, index, "width", node.width, error) ||
         !ReadLengthField(state, index, "height", node.height, error) ||
         !ReadFloatField(state, index, "padding", node.padding, error) ||
@@ -941,6 +975,14 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadStyleField(state, index, "pressedStyle",
             node.pressedStyle, error))
         return false;
+
+    if (dividerNode && node.orientation == ViewOrientation::Vertical)
+    {
+        if (!FieldPresent(state, index, "width"))
+            node.width = { ViewLengthKind::Auto, 0.0f };
+        if (!FieldPresent(state, index, "height"))
+            node.height = { ViewLengthKind::Fill, 0.0f };
+    }
 
     if (seriesNode)
     {
@@ -1123,6 +1165,8 @@ int LuaViewIconButton(lua_State* state)
     return MakeNode(state, "iconButton");
 }
 int LuaViewShape(lua_State* state) { return MakeNode(state, "shape"); }
+int LuaViewBadge(lua_State* state) { return MakeNode(state, "badge"); }
+int LuaViewDivider(lua_State* state) { return MakeNode(state, "divider"); }
 int LuaViewProgressBar(lua_State* state)
 {
     return MakeNode(state, "progressBar");
@@ -1131,6 +1175,7 @@ int LuaViewProgressRing(lua_State* state)
 {
     return MakeNode(state, "progressRing");
 }
+int LuaViewMeter(lua_State* state) { return MakeNode(state, "meter"); }
 int LuaViewSparkline(lua_State* state)
 {
     return MakeNode(state, "sparkline");

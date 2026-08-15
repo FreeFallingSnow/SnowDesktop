@@ -153,6 +153,7 @@
 ---@field alt? string Required by image nodes; use an empty string for decorative images.
 ---@field iconFont? 'fa'|'fluent'|'fluent-regular'
 ---@field shape? 'rectangle'|'roundedRectangle'|'circle'|'ellipse'
+---@field orientation? 'horizontal'|'vertical' Divider direction; vertical dividers default to auto width and fill height.
 ---@field value? number Progress value between 0 and 1.
 ---@field values? number[] Required by data-series nodes; 1 to 512 finite samples, with at most 4096 samples across one tree.
 ---@field min? number Explicit data-series minimum; must be paired with max and be smaller than it.
@@ -183,7 +184,7 @@
 ---@field children? SnowViewNode[]
 
 ---@class SnowViewNode: SnowViewNodeOptions
----@field type 'box'|'row'|'column'|'stack'|'text'|'image'|'button'|'icon'|'iconButton'|'shape'|'progressBar'|'progressRing'|'sparkline'|'lineChart'|'barChart'|'waveform'|'spectrum'|'spacer'
+---@field type 'box'|'row'|'column'|'stack'|'text'|'image'|'button'|'icon'|'iconButton'|'shape'|'badge'|'divider'|'progressBar'|'progressRing'|'meter'|'sparkline'|'lineChart'|'barChart'|'waveform'|'spectrum'|'spacer'
 
 ---@class SnowInteractionShape
 ---@field type 'rect'|'roundedRect'|'circle'
@@ -491,6 +492,14 @@ function view.iconButton(options) end
 ---@return SnowViewNode
 function view.shape(options) end
 
+---@param options SnowViewNodeOptions Requires non-empty text; probes with view.statusVisuals.
+---@return SnowViewNode
+function view.badge(options) end
+
+---@param options SnowViewNodeOptions Probes with view.statusVisuals.
+---@return SnowViewNode
+function view.divider(options) end
+
 ---@param options SnowViewNodeOptions
 ---@return SnowViewNode
 function view.progressBar(options) end
@@ -498,6 +507,10 @@ function view.progressBar(options) end
 ---@param options SnowViewNodeOptions
 ---@return SnowViewNode
 function view.progressRing(options) end
+
+---@param options SnowViewNodeOptions Requires a 0..1 value and accessibility.label; probes with view.statusVisuals.
+---@return SnowViewNode
+function view.meter(options) end
 
 ---@param options SnowViewNodeOptions Requires values and accessibility.label; probes with view.dataSeries.
 ---@return SnowViewNode

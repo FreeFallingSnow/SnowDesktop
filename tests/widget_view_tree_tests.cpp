@@ -136,6 +136,15 @@ void TestValidationFailures()
             unlabeledSeries, 100.0f, 100.0f, error) &&
             error.find("accessibility.label") != std::string::npos,
         "data-series nodes must require an accessible label");
+
+    ViewNode unlabeledMeter;
+    unlabeledMeter.type = ViewNodeType::Meter;
+    unlabeledMeter.key = "meter";
+    unlabeledMeter.value = 0.5f;
+    Check(!ValidateAndLayoutViewTree(
+            unlabeledMeter, 100.0f, 100.0f, error) &&
+            error.find("accessibility.label") != std::string::npos,
+        "meter nodes must require an accessible label");
 }
 
 void RegisterViewLibrary(lua_State* state)
@@ -156,8 +165,11 @@ void RegisterViewLibrary(lua_State* state)
         { "icon", LuaViewIcon },
         { "iconButton", LuaViewIconButton },
         { "shape", LuaViewShape },
+        { "badge", LuaViewBadge },
+        { "divider", LuaViewDivider },
         { "progressBar", LuaViewProgressBar },
         { "progressRing", LuaViewProgressRing },
+        { "meter", LuaViewMeter },
         { "sparkline", LuaViewSparkline },
         { "lineChart", LuaViewLineChart },
         { "barChart", LuaViewBarChart },
@@ -484,6 +496,77 @@ void TestDataSeriesParsingAndLimits()
             error.find("point limit") != std::string::npos,
         "one tree must reject more than 4096 total series samples");
 }
+
+void TestStatusVisualParsing()
+{
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "Lua state must be available");
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    Check(luaL_dostring(state, R"lua(
+        return view.row({
+            key = "status",
+            height = 48,
+            gap = 8,
+            children = {
+                view.badge({
+                    key = "online",
+                    text = "Online",
+                    width = 72,
+                    accessibility = { label = "Connection online" },
+                    style = { background = 0x167A45 },
+                }),
+                view.divider({
+                    key = "separator",
+                    orientation = "vertical",
+                    thickness = 2,
+                    style = { foreground = 0x808080 },
+                }),
+                view.meter({
+                    key = "battery",
+                    width = 120,
+                    value = 0.65,
+                    thickness = 8,
+                    trackOpacity = 0.2,
+                    accessibility = { label = "Battery 65 percent" },
+                }),
+            },
+        })
+    )lua") == LUA_OK,
+        "status-visual Lua fixture must evaluate");
+    ViewNode root;
+    std::string error;
+    Check(ParseLuaViewTree(state, -1, root, error) &&
+            root.children.size() == 3 &&
+            root.children[0].type == ViewNodeType::Badge &&
+            root.children[0].text == "Online" &&
+            Near(root.children[0].padding, 4.0f) &&
+            root.children[1].type == ViewNodeType::Divider &&
+            root.children[1].orientation == ViewOrientation::Vertical &&
+            root.children[1].width.kind == ViewLengthKind::Auto &&
+            root.children[1].height.kind == ViewLengthKind::Fill &&
+            root.children[2].type == ViewNodeType::Meter &&
+            Near(root.children[2].value, 0.65f),
+        "badge, divider, and meter constructors must retain typed fields");
+    Check(ValidateAndLayoutViewTree(root, 320.0f, 48.0f, error) &&
+            Near(root.children[1].frame.width, 2.0f) &&
+            Near(root.children[1].frame.height, 48.0f),
+        "a vertical divider must use intrinsic thickness and fill height");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.divider({
+            key = "bad-divider",
+            orientation = "diagonal",
+        })
+    )lua") == LUA_OK,
+        "invalid-divider fixture must evaluate");
+    ViewNode invalid;
+    Check(!ParseLuaViewTree(state, -1, invalid, error) &&
+            error.find("horizontal or vertical") != std::string::npos,
+        "divider orientation must reject unsupported values");
+    lua_close(state);
+}
 }
 
 int main()
@@ -493,6 +576,7 @@ int main()
     TestLuaParsing();
     TestVisualNodeParsing();
     TestDataSeriesParsingAndLimits();
+    TestStatusVisualParsing();
     std::cout << "Widget view tree tests passed\n";
     return 0;
 }

@@ -87,7 +87,8 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 
 当前过渡 feature `view.tree.core` 提供 `view.box/row/column/stack/text/image/button/
 iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` feature 提供
-`sparkline/lineChart/barChart/waveform/spectrum`。
+`sparkline/lineChart/barChart/waveform/spectrum`，`view.statusVisuals` 提供
+`badge/divider/meter`。
 每次 `view(context, model)` 返回一棵完整树；所有节点必须提供全树唯一、1–128 字节的
 稳定 `key`。宿主先完整解析、校验和布局，再原子替换上一棵成功树；回调或校验失败时
 继续显示上一棵树，不留下半棵树或空白交互区。
@@ -138,12 +139,19 @@ down/up、doubleClick 和 contextMenu，动作通过 `event.kind == "action"` �
 `image` 的 `source` 只接受入口加载期间创建的 `resource.image()` 句柄，必须显式提供
 `alt`（装饰图片使用空字符串），支持 `fill/contain/cover/none` fit、
 `start/center/end` alignment 和 `nearest/linear` interpolation；对应 feature 为
-`view.image`。`text` 和 `button` 可通过 `font` 使用 `resource.font()` 返回的包私有字体
+`view.image`。`text`、`badge` 和 `button` 可通过 `font` 使用 `resource.font()` 返回的包私有字体
 句柄，对应 feature 为 `view.font`。这些属性不接受文件路径或跨包句柄。
 `icon`/`iconButton` 的 `glyph` 使用宿主 Font Awesome 或 Fluent 字体，`iconButton` 必须
 提供 `accessibility.label`。`progressBar`/`progressRing` 接受 0–1 的 `value`、正数
 `thickness`、track/fill opacity，并分别使用 style.background/foreground 作为轨道和
 进度色。这些节点均由宿主直接绘制，不开放路径、字体文件或原生绘图对象。
+
+`badge` 要求非空 `text`，默认使用 4 单位 padding 和胶囊圆角，适合紧凑状态标记；
+`divider` 通过 `orientation="horizontal"|"vertical"` 表示分隔方向，以 `thickness` 和
+`style.foreground` 控制线宽与颜色，垂直分隔线未显式指定尺寸时使用 intrinsic width 并
+填满父级高度；`meter` 接受 0–1 `value`，绘制方式与确定进度条相同，但语义是当前读数
+而不是任务完成进度，因此必须提供 `accessibility.label`。三者对应
+`view.statusVisuals`，不创建原生窗口或逐帧 Lua 回调。
 
 五个数据图形节点只接受 `values` 连续数值数组，每节点 1–512 个有限样本、全树最多
 4096 个样本，并要求 `accessibility.label`。`sparkline` 和 `lineChart` 默认按当前数列
