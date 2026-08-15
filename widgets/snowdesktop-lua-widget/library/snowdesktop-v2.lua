@@ -252,6 +252,10 @@
 ---@field alignSelf? SnowViewSelfAlignment
 ---@field justifyContent? 'start'|'center'|'end'|'spaceBetween'
 ---@field fontSize? number
+---@field fontWeight? integer One of 100, 200, ..., 900; overrides the compatibility bold flag.
+---@field fontStyle? 'normal'|'italic'
+---@field lineHeight? number Uniform line height from 1 through 1024 logical units.
+---@field letterSpacing? number Additional spacing from -64 through 256 logical units.
 ---@field bold? boolean
 ---@field checked? boolean Required explicit controlled value for toggle and checkbox nodes.
 ---@field showScrollbar? boolean Scroll or virtual-collection host scrollbar visibility; defaults to true.

@@ -187,6 +187,12 @@ Probe `view.text.flow` before using `textWrap`, `maxLines`, `overflowText`, or
 to `noWrap` plus `ellipsis`; `styledText` defaults to `wrap` plus `clip`.
 `maxLines=0` is unlimited and the bounded maximum is 64. Use explicit heights
 or parent constraints when vertical alignment or multi-line clipping matters.
+Probe `view.text.typography` before using `fontWeight`, `fontStyle`,
+`lineHeight`, or `letterSpacing`. Weight uses 100-step values from 100 through
+900 and overrides the compatibility `bold` flag; style is normal/italic,
+lineHeight is 1..1024, and letterSpacing is -64..256 logical units. These
+properties apply to plain/styled text and label-bearing declarative nodes, not
+to host text editors in this feature.
 Probe `view.layout.constraints` before using numeric `minWidth`, `maxWidth`,
 `minHeight`, `maxHeight`, `aspectRatio`, or `margin`. Keep sizes and uniform
 outer margins within 0 through 4096, ratios within 0.01 through 100, and do

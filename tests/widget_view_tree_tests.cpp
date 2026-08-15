@@ -218,6 +218,8 @@ void TestLuaParsing()
         local source = {
             key = "title", text = "Ready", textWrap = "wrap",
             maxLines = 2, overflowText = "clip", verticalAlign = "end",
+            fontWeight = 600, fontStyle = "italic",
+            lineHeight = 24, letterSpacing = 1.5,
         }
         local title = view.text(source)
         assert(source.type == nil)
@@ -269,6 +271,10 @@ void TestLuaParsing()
             root.children[0].maximumLines == 2 &&
             root.children[0].overflowText == ViewTextOverflow::Clip &&
             root.children[0].verticalAlign == ViewAlignment::End &&
+            root.children[0].fontWeight == 600 &&
+            root.children[0].fontStyle == ViewFontStyle::Italic &&
+            root.children[0].lineHeight == 24.0f &&
+            Near(root.children[0].letterSpacing, 1.5f) &&
             root.children[1].type == ViewNodeType::Button &&
             root.children[1].events.at("click").id == "open" &&
             root.children[1].events.at("contextMenu").id == "open.menu" &&
@@ -312,6 +318,18 @@ void TestLuaParsing()
             !ValidateAndLayoutViewTree(root, 100.0f, 40.0f, error) &&
             error == "view maxLines must be between 0 and 64",
         "maxLines must reject values above the bounded public range");
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.text({
+            key = "bad-weight", text = "Text", fontWeight = 650,
+        })
+    )lua") == LUA_OK,
+        "font-weight boundary fixture must evaluate");
+    root = {};
+    Check(ParseLuaViewTree(state, -1, root, error) &&
+            !ValidateAndLayoutViewTree(root, 100.0f, 40.0f, error) &&
+            error.find("fontWeight") != std::string::npos,
+        "fontWeight must use bounded 100-step values");
     lua_close(state);
 }
 

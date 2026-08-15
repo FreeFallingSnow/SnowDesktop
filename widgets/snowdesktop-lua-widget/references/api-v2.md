@@ -94,6 +94,7 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.keyboardNavigation.basic` 提供桌面 surface 的通用宿主键盘焦点与激活，
 `view.flex.sizing` 提供线性布局的 basis/grow/shrink 尺寸分配，
 `view.text.flow` 提供文本块的换行、行数、溢出和垂直对齐，
+`view.text.typography` 提供字体粗细、字形、行高和字距，
 `view.grid.uniform` 提供基础 `grid`，`view.flow.wrap` 提供横向换行 `flow`。
 `view.scroll` 提供宿主滚动视口，`view.collection.basic` 提供基础集合，
 `view.collection.virtual` 提供固定行高虚拟集合与可见范围查询；
@@ -165,6 +166,12 @@ down/up、doubleClick 和 contextMenu，动作通过 `event.kind == "action"` �
 `verticalAlign="start|center|end"`。普通文本/label 默认 noWrap+ellipsis，styledText 为保持
 多段正文语义默认 wrap+clip；两者默认垂直居中。宿主在同一个 DirectWrite layout 中应用
 换行、行数高度门限、字符级省略和文本块偏移，最终绘制仍受节点 frame 裁剪。
+
+探测 `view.text.typography` 后，上述文本与 label 节点还可使用 100–900、步长 100 的
+`fontWeight`、`fontStyle="normal|italic"`、1–1024 的统一 `lineHeight` 和 -64–256 的
+`letterSpacing`。显式 fontWeight 优先于兼容属性 `bold`；lineHeight 同时参与固有高度和
+DirectWrite 行距，letterSpacing 同时参与近似固有宽度与 TextLayout1 字符间距。该 feature
+不改变宿主文本编辑器的输入、选择或 IME 度量，输入控件排版将在对应控件契约中单独开放。
 
 `toggle` 和 `checkbox` 是受控选择控件：必须提供非空 `label`、显式 `checked`，以及
 `action` 简写或 `events.change`；不得绑定 `events.click`。指针完成一次有效点击时，宿主

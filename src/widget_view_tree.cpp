@@ -199,8 +199,16 @@ float TextIntrinsicWidth(const ViewNode& node) noexcept
 {
     const float approximateGlyphs = static_cast<float>(
         std::min<std::size_t>(node.text.size(), 256));
-    return std::max(node.fontSize, approximateGlyphs * node.fontSize * 0.55f) +
+    const float spacing = std::max(0.0f, approximateGlyphs - 1.0f) *
+        node.letterSpacing;
+    return std::max(node.fontSize,
+        approximateGlyphs * node.fontSize * 0.55f + spacing) +
         node.padding * 2.0f;
+}
+
+float TextIntrinsicLineHeight(const ViewNode& node) noexcept
+{
+    return node.lineHeight.value_or(node.fontSize * 1.4f);
 }
 
 bool IsIconNode(ViewNodeType type) noexcept
@@ -495,23 +503,24 @@ float RawIntrinsicHeight(const ViewNode& node)
     if (node.type == ViewNodeType::Text ||
         node.type == ViewNodeType::StyledText ||
         node.type == ViewNodeType::Link)
-        return node.fontSize * 1.4f + node.padding * 2.0f;
+        return TextIntrinsicLineHeight(node) + node.padding * 2.0f;
     if (node.type == ViewNodeType::Badge)
-        return std::max(20.0f, node.fontSize * 1.4f) +
+        return std::max(20.0f, TextIntrinsicLineHeight(node)) +
             node.padding * 2.0f;
     if (node.type == ViewNodeType::Image ||
         node.type == ViewNodeType::ReferenceIcon)
         return 48.0f + node.padding * 2.0f;
     if (node.type == ViewNodeType::Button)
-        return std::max(32.0f, node.fontSize * 1.8f) +
+        return std::max(32.0f, TextIntrinsicLineHeight(node)) +
             node.padding * 2.0f;
     if (node.type == ViewNodeType::Toggle ||
         node.type == ViewNodeType::Checkbox)
-        return std::max(32.0f, node.fontSize * 1.8f) +
+        return std::max(32.0f, TextIntrinsicLineHeight(node)) +
             node.padding * 2.0f;
     if (node.type == ViewNodeType::RadioGroup)
     {
-        const float optionHeight = std::max(32.0f, node.fontSize * 1.8f);
+        const float optionHeight = std::max(
+            32.0f, TextIntrinsicLineHeight(node));
         const float content = node.orientation == ViewOrientation::Vertical
             ? optionHeight * static_cast<float>(node.options.size()) +
                 node.gap * static_cast<float>(
@@ -1130,6 +1139,13 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         error = "view maxLines must be between 0 and 64";
         return false;
     }
+    if (node.fontWeight != 0 &&
+        (node.fontWeight < 100 || node.fontWeight > 900 ||
+            node.fontWeight % 100 != 0))
+    {
+        error = "view fontWeight must be 0 or a multiple of 100 from 100 to 900";
+        return false;
+    }
     if (node.verticalAlign != ViewAlignment::Start &&
         node.verticalAlign != ViewAlignment::Center &&
         node.verticalAlign != ViewAlignment::End)
@@ -1162,6 +1178,9 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         !FiniteInRange(node.flexGrow, 0.0f, 1000.0f) ||
         !FiniteInRange(node.flexShrink, 0.0f, 1000.0f) ||
         !FiniteInRange(node.fontSize, 1.0f, 512.0f) ||
+        (node.lineHeight &&
+            !FiniteInRange(*node.lineHeight, 1.0f, 1024.0f)) ||
+        !FiniteInRange(node.letterSpacing, -64.0f, 256.0f) ||
         !FiniteInRange(node.thickness, 0.5f, 4096.0f) ||
         !FiniteInRange(node.trackOpacity, 0.0f, 1.0f) ||
         !FiniteInRange(node.fillOpacity, 0.0f, 1.0f) ||

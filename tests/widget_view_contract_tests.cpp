@@ -112,7 +112,11 @@ void TestRepresentativeApplicability()
             ViewNodeAllowsProperty(ViewNodeType::StyledText, "textWrap") &&
             ViewNodeAllowsProperty(ViewNodeType::Button, "maxLines") &&
             ViewNodeAllowsProperty(ViewNodeType::Link, "overflowText") &&
-            ViewNodeAllowsProperty(ViewNodeType::Text, "verticalAlign"),
+            ViewNodeAllowsProperty(ViewNodeType::Text, "verticalAlign") &&
+            ViewNodeAllowsProperty(ViewNodeType::StyledText, "fontWeight") &&
+            ViewNodeAllowsProperty(ViewNodeType::Button, "fontStyle") &&
+            ViewNodeAllowsProperty(ViewNodeType::Text, "lineHeight") &&
+            ViewNodeAllowsProperty(ViewNodeType::Link, "letterSpacing"),
         "bounded size and flex constraints must be common machine-readable properties");
     Check(ViewNodeAllowsProperty(ViewNodeType::MonthCalendar, "eventDates") &&
             !ViewNodeAllowsProperty(ViewNodeType::List, "eventDates"),

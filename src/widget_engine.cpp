@@ -14938,10 +14938,44 @@ static DWRITE_WORD_WRAPPING ViewTextWrapping(
 static float ViewTextLineHeight(
     const snowdesktop::widget_runtime::ViewNode& node) noexcept
 {
+    if (node.lineHeight) return *node.lineHeight;
     float size = node.fontSize;
     for (const auto& span : node.spans)
         if (span.fontSize) size = std::max(size, *span.fontSize);
     return std::max(1.0f, size * 1.4f);
+}
+
+static DWRITE_FONT_WEIGHT ViewFontWeight(
+    const snowdesktop::widget_runtime::ViewNode& node,
+    DWRITE_FONT_WEIGHT fallback) noexcept
+{
+    if (node.fontWeight != 0)
+        return static_cast<DWRITE_FONT_WEIGHT>(node.fontWeight);
+    return node.bold ? DWRITE_FONT_WEIGHT_BOLD : fallback;
+}
+
+static void ApplyViewTextTypography(IDWriteTextLayout* layout,
+    const snowdesktop::widget_runtime::ViewNode& node,
+    UINT32 textLength)
+{
+    if (!layout || textLength == 0) return;
+    const DWRITE_TEXT_RANGE range{ 0, textLength };
+    if (node.fontStyle ==
+        snowdesktop::widget_runtime::ViewFontStyle::Italic)
+        layout->SetFontStyle(DWRITE_FONT_STYLE_ITALIC, range);
+    if (node.lineHeight)
+        layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
+            *node.lineHeight, std::max(1.0f, *node.lineHeight * 0.8f));
+    if (node.letterSpacing != 0.0f)
+    {
+        ComPtr<IDWriteTextLayout1> advanced;
+        if (SUCCEEDED(layout->QueryInterface(IID_PPV_ARGS(&advanced))) &&
+            advanced)
+        {
+            advanced->SetCharacterSpacing(node.letterSpacing * 0.5f,
+                node.letterSpacing * 0.5f, 0.0f, range);
+        }
+    }
 }
 
 static float ViewTextLayoutHeight(
@@ -14995,7 +15029,7 @@ static void DrawWidgetStyledText(D2DState* state,
     IDWriteTextFormat* format = node.fontResourceName.empty() ||
             privateFontPath
         ? GetCachedTextFormat(state, node.fontSize,
-            node.bold ? DWRITE_FONT_WEIGHT_BOLD : state->itemFontWeight,
+            ViewFontWeight(node, state->itemFontWeight),
             false, ViewTextWrapping(node), false, false, false,
             privateFontPath ? &*privateFontPath : nullptr)
         : nullptr;
@@ -15029,6 +15063,8 @@ static void DrawWidgetStyledText(D2DState* state,
     SetViewTextLayoutAlignment(layout.Get(), node.textAlign);
     layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
     SetViewTextOverflow(state, format, layout.Get(), node);
+    ApplyViewTextTypography(layout.Get(), node,
+        static_cast<UINT32>(text.size()));
     for (const auto& [span, range] : ranges)
     {
         if (span->fontSize) layout->SetFontSize(*span->fontSize, range);
@@ -15863,7 +15899,7 @@ static void DrawWidgetViewNode(D2DState* state,
                 privateFontPath
             ? GetCachedTextFormat(state,
             node.fontSize,
-            node.bold ? DWRITE_FONT_WEIGHT_BOLD : state->itemFontWeight,
+            ViewFontWeight(node, state->itemFontWeight),
             iconNode, ViewTextWrapping(node),
             iconNode && node.iconFont == ViewIconFont::FontAwesome,
             iconNode,
@@ -15909,6 +15945,8 @@ static void DrawWidgetViewNode(D2DState* state,
                         DWRITE_TEXT_ALIGNMENT_LEADING);
                 layout->SetParagraphAlignment(
                     DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+                ApplyViewTextTypography(layout.Get(), node,
+                    static_cast<UINT32>(text.size()));
                 if (node.type == ViewNodeType::Link)
                     layout->SetUnderline(TRUE,
                         DWRITE_TEXT_RANGE{ 0,

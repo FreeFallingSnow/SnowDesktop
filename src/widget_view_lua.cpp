@@ -956,6 +956,23 @@ bool ReadTextOverflowField(lua_State* state, int table,
     return true;
 }
 
+bool ReadFontStyleField(lua_State* state, int table,
+    ViewFontStyle& value, std::string& error)
+{
+    std::string text;
+    if (!ReadStringField(state, table, "fontStyle", text, false, error))
+        return false;
+    if (text.empty()) return true;
+    if (text == "normal") value = ViewFontStyle::Normal;
+    else if (text == "italic") value = ViewFontStyle::Italic;
+    else
+    {
+        error = "view field 'fontStyle' has an unsupported value";
+        return false;
+    }
+    return true;
+}
+
 bool ReadValidationStateField(lua_State* state, int table,
     ViewValidationState& value, std::string& error)
 {
@@ -1571,6 +1588,13 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadFloatField(state, index, "flexShrink",
             node.flexShrink, error) ||
         !ReadFloatField(state, index, "fontSize", node.fontSize, error) ||
+        !ReadNonNegativeSizeField(state, index, "fontWeight",
+            node.fontWeight, false, error) ||
+        !ReadFontStyleField(state, index, node.fontStyle, error) ||
+        !ReadOptionalNodeFloatField(state, index, "lineHeight",
+            node.lineHeight, error) ||
+        !ReadFloatField(state, index, "letterSpacing",
+            node.letterSpacing, error) ||
         !ReadFloatField(state, index, "thickness", node.thickness, error) ||
         !ReadFloatField(state, index, "trackOpacity",
             node.trackOpacity, error) ||

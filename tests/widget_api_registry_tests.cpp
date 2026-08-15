@@ -439,6 +439,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "view.text.flow") &&
             snowdesktop::widget_api::SupportsFeature(
+                "view.text.typography") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "view.logicalSlots") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.referenceIcon") &&
