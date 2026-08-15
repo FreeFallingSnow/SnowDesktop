@@ -696,7 +696,9 @@ timeline 跨过多个条目时也只分发最新到期值，并额外返回 `val
 直接重跑 Lua；最终事件会设置 `reload=true`，组件应在事件回调中发布下一组 timeline。
 它对应 feature `schedule.timeline`。`schedule.at` 对应 feature `schedule.absolute`；
 系统时钟在宿主重新计算截止时间时会重新投影到单调时钟，避免用可回拨的 wall clock
-计算经过时长。当前尚不支持预览虚拟时钟。API v1 继续使用 `onTimer`
+计算经过时长。预览执行使用固定虚拟 wall/monotonic 时钟；schedule 会完成参数校验并
+登记到预览实例，但不创建系统计时器或自行推进时间，对应 feature
+`time.previewClock`。API v1 继续使用 `onTimer`
 兼容路径；新 v2 组件不得再依赖清单 `refreshIntervalMs` 过渡事件。
 
 ### `data`
@@ -1384,6 +1386,9 @@ metatable、混合数组/对象以及超出深度、节点、字符串或 256-ke
 
 这些基础环境与时间接口不要求高风险权限。CPU、内存、网络、媒体、音频波形等
 按需数据订阅属于后续 API，不要用 API v1 的 `sys` 代替。
+在组件预览中，`time.now()`、无参数的 `time.parts/format`、`time.monotonic()` 和
+`system.uptime()` 使用固定虚拟值，保证重复预览不会随等待时间变化；正式实例仍读取
+宿主当前时间。可通过 `time.previewClock` feature 查询该保证。
 
 ### `calendar` 日期计算与选择
 

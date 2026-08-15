@@ -2661,10 +2661,8 @@ static int lua_ScheduleAt(lua_State* state)
             "schedule.at: id must contain 1 to 128 bytes");
     }
     const lua_Integer epochMilliseconds = luaL_checkinteger(state, 2);
-    const auto wallNow = std::chrono::system_clock::now();
-    const auto wallNowMilliseconds =
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            wallNow.time_since_epoch()).count();
+    const auto wallNowMilliseconds = snowdesktop::widget_runtime::
+        CurrentWallClockMilliseconds();
     if (epochMilliseconds < 0 ||
         epochMilliseconds > wallNowMilliseconds +
             snowdesktop::widget_runtime::NamedTimerSchedule::
@@ -2742,10 +2740,8 @@ static int lua_ScheduleTimeline(lua_State* state)
         return luaL_error(state,
             "schedule.timeline: entries must be a contiguous array");
 
-    const auto wallNow = std::chrono::system_clock::now();
     const std::int64_t wallNowMilliseconds =
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            wallNow.time_since_epoch()).count();
+        snowdesktop::widget_runtime::CurrentWallClockMilliseconds();
     std::vector<Schedule::TimelineEntry> entries;
     entries.reserve(entryCount);
     std::int64_t previousAt = -1;
@@ -6689,19 +6685,15 @@ static int lua_WidgetInfo(lua_State* L)
 
 static int lua_TimeNow(lua_State* L)
 {
-    const auto milliseconds = std::chrono::duration_cast<
-        std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count();
-    lua_pushinteger(L, static_cast<lua_Integer>(milliseconds));
+    lua_pushinteger(L, static_cast<lua_Integer>(
+        snowdesktop::widget_runtime::CurrentWallClockMilliseconds()));
     return 1;
 }
 
 static int lua_TimeMonotonic(lua_State* L)
 {
-    const auto milliseconds = std::chrono::duration_cast<
-        std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count();
-    lua_pushinteger(L, static_cast<lua_Integer>(milliseconds));
+    lua_pushinteger(L, static_cast<lua_Integer>(
+        snowdesktop::widget_runtime::CurrentMonotonicMilliseconds()));
     return 1;
 }
 
@@ -6754,8 +6746,8 @@ static std::int64_t LuaTimeDeltaField(lua_State* L, int delta,
 
 static int lua_TimeParts(lua_State* L)
 {
-    const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
+    const auto now = snowdesktop::widget_runtime::
+        CurrentWallClockMilliseconds();
     const auto milliseconds = lua_isnoneornil(L, 1)
         ? now : static_cast<long long>(luaL_checkinteger(L, 1));
     const char* zone = luaL_optstring(L, 2, "local");
@@ -6785,8 +6777,8 @@ static int lua_TimeParts(lua_State* L)
 
 static int lua_TimeFormat(lua_State* L)
 {
-    const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
+    const auto now = snowdesktop::widget_runtime::
+        CurrentWallClockMilliseconds();
     const auto milliseconds = lua_isnoneornil(L, 1)
         ? now : static_cast<std::int64_t>(luaL_checkinteger(L, 1));
     const int options = LuaTimeOptions(L, 2);
@@ -6944,7 +6936,11 @@ static int lua_SystemInfoV2(lua_State* L)
 static int lua_SystemUptime(lua_State* L)
 {
     lua_createtable(L, 0, 2);
-    lua_pushinteger(L, static_cast<lua_Integer>(GetTickCount64()));
+    const auto milliseconds = snowdesktop::widget_runtime::
+            IsPreviewExecution()
+        ? snowdesktop::widget_runtime::PreviewMonotonicMilliseconds
+        : static_cast<std::int64_t>(GetTickCount64());
+    lua_pushinteger(L, static_cast<lua_Integer>(milliseconds));
     lua_setfield(L, -2, "milliseconds");
     lua_pushboolean(L, 1);
     lua_setfield(L, -2, "includesSleep");
@@ -15183,8 +15179,12 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     if (!found->hostVisible)
     {
         found->hostVisible = true;
-        if (found->namedTimers.SetVisible(true,
-                snowdesktop::widget_runtime::NamedTimerSchedule::Clock::now()))
+        const auto timerNow = found->preview
+            ? snowdesktop::widget_runtime::NamedTimerSchedule::TimePoint{
+                std::chrono::milliseconds(snowdesktop::widget_runtime::
+                    PreviewMonotonicMilliseconds) }
+            : snowdesktop::widget_runtime::NamedTimerSchedule::Clock::now();
+        if (found->namedTimers.SetVisible(true, timerNow))
         {
             RescheduleNamedTimer(*found);
         }
@@ -19480,16 +19480,23 @@ bool WidgetEngine::RuntimeSetTimer(const std::wstring& widgetId,
     const std::string& name, int intervalMs, bool repeat,
     snowdesktop::widget_runtime::ScheduleHiddenPolicy hiddenPolicy)
 {
-    if (snowdesktop::widget_runtime::IsDryLoad()) return false;
+    if (snowdesktop::widget_runtime::IsDryLoad() &&
+        !snowdesktop::widget_runtime::IsPreviewExecution())
+        return false;
     int index = FindWidget(widgetId);
     if (index < 0 || name.empty()) return false;
+    const bool preview = widgets_[index].preview;
+    const auto now = preview
+        ? snowdesktop::widget_runtime::NamedTimerSchedule::TimePoint{
+            std::chrono::milliseconds(snowdesktop::widget_runtime::
+                PreviewMonotonicMilliseconds) }
+        : std::chrono::steady_clock::now();
     if (!widgets_[index].namedTimers.Set(
-            name, intervalMs, repeat, std::chrono::steady_clock::now(),
-            hiddenPolicy))
+            name, intervalMs, repeat, now, hiddenPolicy))
     {
         return false;
     }
-    RescheduleNamedTimer(widgets_[index]);
+    if (!preview) RescheduleNamedTimer(widgets_[index]);
     return true;
 }
 
@@ -19639,6 +19646,9 @@ void WidgetEngine::RescheduleNamedTimer(LuaWidget& widget)
         widgetTimerKillCallback_(widget.namedTimerId);
     widget.namedTimerId = 0;
 
+    if (widget.preview)
+        return;
+
     if (!widgetTimerRequestCallback_)
         return;
 
@@ -19654,16 +19664,28 @@ bool WidgetEngine::RuntimeSetTimerAt(const std::wstring& widgetId,
     const std::string& name, std::int64_t epochMilliseconds,
     snowdesktop::widget_runtime::ScheduleHiddenPolicy hiddenPolicy)
 {
-    if (snowdesktop::widget_runtime::IsDryLoad()) return false;
+    if (snowdesktop::widget_runtime::IsDryLoad() &&
+        !snowdesktop::widget_runtime::IsPreviewExecution())
+        return false;
     int index = FindWidget(widgetId);
     if (index < 0 || name.empty()) return false;
+    const bool preview = widgets_[index].preview;
+    const auto steadyNow = preview
+        ? snowdesktop::widget_runtime::NamedTimerSchedule::TimePoint{
+            std::chrono::milliseconds(snowdesktop::widget_runtime::
+                PreviewMonotonicMilliseconds) }
+        : std::chrono::steady_clock::now();
+    const auto wallNow = preview
+        ? snowdesktop::widget_runtime::NamedTimerSchedule::WallTimePoint{
+            std::chrono::milliseconds(snowdesktop::widget_runtime::
+                PreviewWallClockMilliseconds) }
+        : std::chrono::system_clock::now();
     if (!widgets_[index].namedTimers.SetAt(name, epochMilliseconds,
-            std::chrono::steady_clock::now(),
-            std::chrono::system_clock::now(), hiddenPolicy))
+            steadyNow, wallNow, hiddenPolicy))
     {
         return false;
     }
-    RescheduleNamedTimer(widgets_[index]);
+    if (!preview) RescheduleNamedTimer(widgets_[index]);
     return true;
 }
 
@@ -19674,17 +19696,29 @@ bool WidgetEngine::RuntimeSetTimeline(const std::wstring& widgetId,
     snowdesktop::widget_runtime::ScheduleHiddenPolicy hiddenPolicy,
     bool reloadAtEnd)
 {
-    if (snowdesktop::widget_runtime::IsDryLoad()) return false;
+    if (snowdesktop::widget_runtime::IsDryLoad() &&
+        !snowdesktop::widget_runtime::IsPreviewExecution())
+        return false;
     const int index = FindWidget(widgetId);
     if (index < 0 || name.empty()) return false;
+    const bool preview = widgets_[index].preview;
+    const auto steadyNow = preview
+        ? snowdesktop::widget_runtime::NamedTimerSchedule::TimePoint{
+            std::chrono::milliseconds(snowdesktop::widget_runtime::
+                PreviewMonotonicMilliseconds) }
+        : std::chrono::steady_clock::now();
+    const auto wallNow = preview
+        ? snowdesktop::widget_runtime::NamedTimerSchedule::WallTimePoint{
+            std::chrono::milliseconds(snowdesktop::widget_runtime::
+                PreviewWallClockMilliseconds) }
+        : std::chrono::system_clock::now();
     if (!widgets_[index].namedTimers.SetTimeline(name,
-            std::move(entries), std::chrono::steady_clock::now(),
-            std::chrono::system_clock::now(), hiddenPolicy,
-            reloadAtEnd))
+            std::move(entries), steadyNow, wallNow,
+            hiddenPolicy, reloadAtEnd))
     {
         return false;
     }
-    RescheduleNamedTimer(widgets_[index]);
+    if (!preview) RescheduleNamedTimer(widgets_[index]);
     return true;
 }
 

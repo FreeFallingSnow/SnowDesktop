@@ -390,6 +390,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "task.shell.item") &&
             snowdesktop::widget_api::SupportsFeature("time.calendar") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "time.previewClock") &&
             snowdesktop::widget_api::SupportsFeature("widget.context") &&
             snowdesktop::widget_api::SupportsFeature("widget.panel") &&
             snowdesktop::widget_api::SupportsFeature(

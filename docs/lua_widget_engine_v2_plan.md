@@ -531,7 +531,9 @@ timeline 事件还会携带 `value/timelineIndex/timelineCount/timelineEnded/rel
 自动取消。`schedule.absolute` 将最远 366 天的 UTC 绝对截止时间重新投影到单调时钟，
 过去截止时间在下一宿主唤醒合并触发。`schedule.timeline` 已支持每计划 1–64 个严格
 递增绝对条目、受限 JSON-like value、跨条目合并和 `reload="atEnd"` 最终事件标志；
-预览虚拟时钟尚未实现，不能计入完整调度契约。
+预览已通过 `time.previewClock` 使用固定 wall/monotonic 时间；schedule 在预览实例内
+完成同等参数校验和登记，但不创建系统计时器或自动推进虚拟时间。至此统一调度的
+基础、绝对时间、timeline、可见性和确定性预览契约均已落地。
 
 ## 12. 数据订阅与任务
 

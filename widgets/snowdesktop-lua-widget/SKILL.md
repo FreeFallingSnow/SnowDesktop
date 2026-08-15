@@ -210,6 +210,9 @@ menu.
 - Set `whenHidden` deliberately: prefer `pause` for purely visual clocks and
   animation, `throttle` for low-frequency freshness, and `continue` only when
   deadlines must remain active while the component is hidden.
+- Preview time is deterministic (`time.previewClock`): do not expect preview
+  schedules to advance or wait for real deadlines. Use manifest preview data
+  to present the intended state.
 - Create `data.subscribe` handles once in `setup` or module scope, read their
   immutable envelopes during render, and declare `system.performance.read`
   `system.power.read`, or `system.network.read` as optional when system data

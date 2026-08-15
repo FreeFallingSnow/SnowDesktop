@@ -56,12 +56,14 @@ void TestStorageOverlayAndNestedRestoration()
 void TestDryLoadAndPreviewScope()
 {
     StorageMap preview;
-    Check(!snowdesktop::widget_runtime::IsDryLoad(),
-        "dry-load mode must be disabled by default");
+    Check(!snowdesktop::widget_runtime::IsDryLoad() &&
+            !snowdesktop::widget_runtime::IsPreviewExecution(),
+        "dry-load and preview modes must be disabled by default");
     {
         snowdesktop::widget_runtime::DryLoadScope dryLoad;
-        Check(snowdesktop::widget_runtime::IsDryLoad(),
-            "dry-load scope must enable dry-load mode");
+        Check(snowdesktop::widget_runtime::IsDryLoad() &&
+                !snowdesktop::widget_runtime::IsPreviewExecution(),
+            "dry-load scope must not impersonate a preview");
         {
             snowdesktop::widget_runtime::DryLoadScope liveScope(false);
             Check(!snowdesktop::widget_runtime::IsDryLoad(),
@@ -74,13 +76,24 @@ void TestDryLoadAndPreviewScope()
         snowdesktop::widget_runtime::PreviewExecutionScope previewScope(
             &preview);
         Check(snowdesktop::widget_runtime::IsDryLoad() &&
+                snowdesktop::widget_runtime::IsPreviewExecution() &&
                 snowdesktop::widget_runtime::CurrentStorageOverlay() ==
                     &preview,
-            "preview scope must combine dry-load mode and storage overlay");
+            "preview scope must combine preview, dry-load, and storage overlay state");
+        Check(snowdesktop::widget_runtime::
+                    CurrentWallClockMilliseconds() ==
+                snowdesktop::widget_runtime::
+                    PreviewWallClockMilliseconds &&
+                snowdesktop::widget_runtime::
+                    CurrentMonotonicMilliseconds() ==
+                snowdesktop::widget_runtime::
+                    PreviewMonotonicMilliseconds,
+            "preview scope must expose a deterministic virtual clock");
     }
     Check(!snowdesktop::widget_runtime::IsDryLoad() &&
+            !snowdesktop::widget_runtime::IsPreviewExecution() &&
             !snowdesktop::widget_runtime::HasStorageOverlay(),
-        "preview scope must restore both context fields");
+        "preview scope must restore every execution-context field");
 
     snowdesktop::widget_runtime::PreviewExecutionScope inactive(nullptr);
     Check(!snowdesktop::widget_runtime::IsDryLoad() &&
@@ -97,6 +110,7 @@ void TestThreadIsolation()
     {
         workerWasIsolated =
             !snowdesktop::widget_runtime::IsDryLoad() &&
+            !snowdesktop::widget_runtime::IsPreviewExecution() &&
             !snowdesktop::widget_runtime::HasStorageOverlay();
     });
     worker.join();
