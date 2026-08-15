@@ -208,8 +208,22 @@ bool WidgetSecretStore::Load(std::string& error)
     records_.clear();
     error.clear();
     std::error_code filesystemError;
-    if (!std::filesystem::is_regular_file(path_, filesystemError))
-        return !filesystemError;
+    const auto status = std::filesystem::symlink_status(
+        path_, filesystemError);
+    if (filesystemError ==
+        std::errc::no_such_file_or_directory)
+        return true;
+    if (filesystemError)
+    {
+        error = "cannot inspect widget secret store";
+        return false;
+    }
+    if (!std::filesystem::exists(status)) return true;
+    if (!std::filesystem::is_regular_file(status))
+    {
+        error = "widget secret store is not a regular file";
+        return false;
+    }
     const auto size = std::filesystem::file_size(path_, filesystemError);
     if (filesystemError || size > MaximumFileBytes)
     {
