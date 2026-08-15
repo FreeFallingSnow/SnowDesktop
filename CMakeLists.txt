@@ -244,6 +244,7 @@ set(SNOWDESKTOP_SOURCES
     src/everything_search.cpp
     src/lua_runtime.cpp
     src/widget_api_registry.cpp
+    src/widget_package_image_cache.cpp
     src/widget_l10n_format.cpp
     src/widget_time.cpp
     src/widget_preview_context.cpp
@@ -894,6 +895,16 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32
         LABELS contract data audio widget)
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetPackageImageCacheTests
+        widget_package_image_cache
+        SOURCES
+            tests/widget_package_image_cache_tests.cpp
+            src/widget_package_image_cache.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES ole32 windowscodecs
+        LABELS contract resource render widget)
 
     snowdesktop_add_test(
         SnowDesktopWidgetLuaLifecycleTests

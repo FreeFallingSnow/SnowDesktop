@@ -110,16 +110,18 @@ void TestPackageResourceRenderPurity(const fs::path& repository)
     Check(bitmapLoad.find("CreateDecoderFromFilename") ==
             std::string_view::npos,
         "package image drawing must not decode files on the render path");
-    Check(bitmapLoad.find("packageImageSources.find") !=
+    Check(bitmapLoad.find("packageImageCache.Find") !=
             std::string_view::npos,
         "package image drawing must consume the predecoded source cache");
 
-    const std::string_view imageSourceLoad = Section(source,
-        "static PackageImageSource* LoadPackageImageSource(",
-        "\nstatic ID2D1Bitmap1* LoadImageBitmap(");
+    const std::string cacheSource = ReadFile(
+        repository / "src" / "widget_package_image_cache.cpp");
+    const std::string_view imageSourceLoad = Section(cacheSource,
+        "const PackageImageSource* WidgetPackageImageCache::Load(",
+        "\nconst PackageImageSource* WidgetPackageImageCache::Find(");
     Check(imageSourceLoad.find("CreateDecoderFromFilename") !=
             std::string_view::npos &&
-            imageSourceLoad.find("kMaxPackageImageSourceCacheBytes") !=
+            imageSourceLoad.find("maximumTotalBytes_") !=
                 std::string_view::npos,
         "package images must decode before drawing under a host cache quota");
 

@@ -39,6 +39,7 @@
 #include "widget_view_lua.h"
 #include "widget_view_tree.h"
 #include "widget_resource_lua.h"
+#include "widget_package_image_cache.h"
 #include "widget_text_input_rules.h"
 #include "widget_storage_transaction.h"
 #include "widget_storage_value.h"
@@ -58,7 +59,6 @@
 #include <shlwapi.h>
 #include <shellapi.h>
 #include <shlobj.h>
-#include <wincodec.h>
 #include <bcrypt.h>
 #include <algorithm>
 #include <array>
@@ -83,8 +83,6 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
-
-#pragma comment(lib, "windowscodecs.lib")
 
 /**
  * @brief 以二进制模式读取文本文件全部内容
@@ -694,19 +692,6 @@ struct RuntimeImageResource
     std::string source;
 };
 
-struct PackageImageSource
-{
-    std::vector<std::uint8_t> pixels;
-    UINT32 width = 0;
-    UINT32 height = 0;
-    UINT32 stride = 0;
-};
-
-constexpr std::size_t kMaxSinglePackageImageSourceBytes =
-    64ull * 1024ull * 1024ull;
-constexpr std::size_t kMaxPackageImageSourceCacheBytes =
-    128ull * 1024ull * 1024ull;
-
 struct D2DState
 {
     ID2D1DeviceContext* ctx = nullptr;
@@ -726,9 +711,7 @@ struct D2DState
     int widgetClipDepth = 0;
     ComPtr<ID2D1Device> bitmapDevice;
     std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>> imageCache;
-    std::unordered_map<std::wstring, PackageImageSource> packageImageSources;
-    std::unordered_set<std::wstring> packageImageFailures;
-    std::size_t packageImageSourceBytes = 0;
+    snowdesktop::widget_runtime::WidgetPackageImageCache packageImageCache;
     std::unordered_map<std::string, RuntimeImageResource> runtimeImages;
     std::unordered_map<std::string, ComPtr<ID2D1Bitmap1>>
         runtimeImageBitmaps;
@@ -8046,82 +8029,22 @@ static void EnsureBitmapCachesForCurrentDevice(D2DState* state)
     state->shellIconFailures.clear();
 }
 
-static PackageImageSource* LoadPackageImageSource(
-    D2DState* state, const std::wstring& path)
-{
-    if (!state || path.empty()) return nullptr;
-    if (auto found = state->packageImageSources.find(path);
-        found != state->packageImageSources.end())
-        return &found->second;
-    if (state->packageImageFailures.contains(path)) return nullptr;
-
-    const auto fail = [&]() -> PackageImageSource* {
-        state->packageImageFailures.insert(path);
-        return nullptr;
-    };
-    ComPtr<IWICImagingFactory> factory;
-    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
-            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) || !factory)
-        return fail();
-    ComPtr<IWICBitmapDecoder> decoder;
-    if (FAILED(factory->CreateDecoderFromFilename(path.c_str(), nullptr,
-            GENERIC_READ, WICDecodeMetadataCacheOnLoad, &decoder)) || !decoder)
-        return fail();
-    ComPtr<IWICBitmapFrameDecode> frame;
-    if (FAILED(decoder->GetFrame(0, &frame)) || !frame) return fail();
-    ComPtr<IWICFormatConverter> converter;
-    if (FAILED(factory->CreateFormatConverter(&converter)) || !converter ||
-        FAILED(converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA,
-            WICBitmapDitherTypeNone, nullptr, 0.0,
-            WICBitmapPaletteTypeMedianCut)))
-        return fail();
-
-    UINT32 width = 0;
-    UINT32 height = 0;
-    if (FAILED(converter->GetSize(&width, &height)) || width == 0 ||
-        height == 0 || width > UINT32_MAX / 4)
-        return fail();
-    const std::uint64_t stride64 = static_cast<std::uint64_t>(width) * 4;
-    const std::uint64_t bytes64 = stride64 * height;
-    if (bytes64 == 0 || bytes64 > kMaxSinglePackageImageSourceBytes ||
-        bytes64 > (std::numeric_limits<UINT>::max)() ||
-        bytes64 > kMaxPackageImageSourceCacheBytes -
-            std::min(state->packageImageSourceBytes,
-                kMaxPackageImageSourceCacheBytes))
-        return fail();
-
-    PackageImageSource source;
-    source.width = width;
-    source.height = height;
-    source.stride = static_cast<UINT32>(stride64);
-    source.pixels.resize(static_cast<std::size_t>(bytes64));
-    if (FAILED(converter->CopyPixels(nullptr, source.stride,
-            static_cast<UINT>(source.pixels.size()), source.pixels.data())))
-        return fail();
-    state->packageImageSourceBytes += source.pixels.size();
-    auto [inserted, added] = state->packageImageSources.emplace(
-        path, std::move(source));
-    return added ? &inserted->second : nullptr;
-}
-
 static ID2D1Bitmap1* LoadImageBitmap(D2DState* s, const std::wstring& path)
 {
     if (!s || !s->ctx || path.empty()) return nullptr;
     EnsureBitmapCachesForCurrentDevice(s);
     auto it = s->imageCache.find(path);
     if (it != s->imageCache.end()) return it->second.Get();
-    const auto source = s->packageImageSources.find(path);
-    if (source == s->packageImageSources.end() ||
-        source->second.pixels.empty())
-        return nullptr;
+    const auto* source = s->packageImageCache.Find(path);
+    if (!source || source->pixels.empty()) return nullptr;
     ComPtr<ID2D1Bitmap1> bitmap;
     const auto properties = D2D1::BitmapProperties1(
         D2D1_BITMAP_OPTIONS_NONE,
         D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
-            D2D1_ALPHA_MODE_PREMULTIPLIED));
+        D2D1_ALPHA_MODE_PREMULTIPLIED));
     if (FAILED(s->ctx->CreateBitmap(
-            D2D1::SizeU(source->second.width, source->second.height),
-            source->second.pixels.data(), source->second.stride,
+            D2D1::SizeU(source->width, source->height),
+            source->pixels.data(), source->stride,
             &properties, &bitmap)) || !bitmap)
         return nullptr;
     ID2D1Bitmap1* result = bitmap.Get();
@@ -8924,7 +8847,7 @@ static int lua_ResourceImage(lua_State* L)
     const std::string name(nameRaw, length);
     auto* state = GetD2D(L);
     const auto path = CurrentPackageResourcePath(L, name, "image");
-    if (!path || !state || !LoadPackageImageSource(state, *path) ||
+    if (!path || !state || !state->packageImageCache.Load(*path) ||
         (state->ctx && !LoadImageBitmap(state, *path)))
         return luaL_error(L, "resource.image: resource is missing or cannot be decoded");
     PushResourceHandle(L, LuaResourceType::Image, name);
@@ -8975,7 +8898,7 @@ static int lua_ResourceStatus(lua_State* L)
     else if (path && state)
     {
         ready = handle->type == LuaResourceType::Image
-            ? state->packageImageSources.contains(*path)
+            ? state->packageImageCache.Find(*path) != nullptr
             : state->privateFonts.contains(*path);
     }
     lua_createtable(L, 0, 3);
