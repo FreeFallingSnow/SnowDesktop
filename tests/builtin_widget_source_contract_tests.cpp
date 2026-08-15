@@ -1,4 +1,5 @@
 #include <cstdlib>
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -201,6 +202,49 @@ void TestAudioAnalysisSubscriptionOptions(const fs::path& repository)
                 std::string_view::npos,
         "audio provider must aggregate eligible subscription configurations");
 }
+
+void TestAllBuiltinWidgetsUseV2(const fs::path& repository)
+{
+    static constexpr std::array<std::string_view, 11> packages = {
+        "agenda", "analog-clock", "digital-clock", "media-controls",
+        "month-calendar", "pomodoro", "quick-launcher", "reminders",
+        "rss-reader", "sticky-note", "system-monitor"
+    };
+    const fs::path widgets = repository / "widgets";
+    std::size_t discovered = 0;
+    for (const auto& entry : fs::directory_iterator(widgets))
+    {
+        if (entry.is_directory() &&
+            fs::is_regular_file(entry.path() / "widget.json"))
+            ++discovered;
+    }
+    Check(discovered == packages.size(),
+        "the built-in package list must stay explicit and complete");
+
+    for (const std::string_view package : packages)
+    {
+        const fs::path directory = widgets / package;
+        const std::string manifest = ReadFile(directory / "widget.json");
+        Check(manifest.find("\"schemaVersion\": 2") !=
+                std::string::npos &&
+                manifest.find("\"apiVersion\": 2") !=
+                    std::string::npos,
+            "every built-in package must declare schema/API v2");
+
+        const std::string source = ReadFile(directory / "main.lua");
+        Check(source.find("return widget.define(") != std::string::npos,
+            "every built-in entry must return a widget.define descriptor");
+        for (const std::string_view legacyCall : {
+            "sys.", "imgui.", "http.request(", "http.get(",
+            "media.current(", "media.playPause(", "media.next(",
+            "media.previous(", "desktop.search(", "desktop.open(",
+            "everything.search(" })
+        {
+            Check(source.find(legacyCall) == std::string::npos,
+                "built-in entries must not call an API v1 library");
+        }
+    }
+}
 }
 
 int main(int argc, char** argv)
@@ -210,6 +254,7 @@ int main(int argc, char** argv)
     TestV2OnlyWidgetActivation(fs::path(argv[1]));
     TestPackageResourceRenderPurity(fs::path(argv[1]));
     TestAudioAnalysisSubscriptionOptions(fs::path(argv[1]));
+    TestAllBuiltinWidgetsUseV2(fs::path(argv[1]));
     std::cout << "Built-in widget source contract tests passed\n";
     return 0;
 }
