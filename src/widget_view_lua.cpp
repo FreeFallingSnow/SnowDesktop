@@ -1084,7 +1084,6 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         if (error.empty()) error = "unsupported view node type: " + type;
         return false;
     }
-    if (!ValidateNodeFields(state, index, node.type, error)) return false;
     const bool buttonNode = node.type == ViewNodeType::Button ||
         node.type == ViewNodeType::IconButton;
     const bool checkControlNode = node.type == ViewNodeType::Toggle ||
@@ -1415,6 +1414,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         error = "radioGroup and select nodes require selectedValue";
         return false;
     }
+    if (!ValidateNodeFields(state, index, node.type, error)) return false;
     if (!ReadStringField(state, index, "key", node.key, true, error))
         return false;
     if (slotSurfaceNode)
