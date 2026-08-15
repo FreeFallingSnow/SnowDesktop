@@ -28,7 +28,7 @@ bool IsSupportedEvent(std::string_view eventName) noexcept
         eventName == "pointerDown" || eventName == "pointerUp" ||
         eventName == "pointerMove" || eventName == "click" ||
         eventName == "doubleClick" || eventName == "wheel" ||
-        eventName == "contextMenu";
+        eventName == "contextMenu" || eventName == "change";
 }
 }
 
@@ -132,6 +132,19 @@ bool WidgetInteractionRegions::Submit(
             error = "interaction action id must contain 1 to 128 bytes";
             return false;
         }
+    }
+    const bool controlled = region.controlKind !=
+        InteractionControlKind::None;
+    if (controlled && (!region.events.contains("change") ||
+            region.events.contains("click")))
+    {
+        error = "controlled interaction regions require change and reject click";
+        return false;
+    }
+    if (!controlled && region.events.contains("change"))
+    {
+        error = "change is reserved for controlled interaction regions";
+        return false;
     }
     staging_.push_back(std::move(region));
     return true;
@@ -270,6 +283,30 @@ const InteractionAction* WidgetInteractionRegions::FindTransitionAction(
     const auto action = retiredHoverRegion_->events.find(eventName);
     return action == retiredHoverRegion_->events.end()
         ? nullptr : &action->second;
+}
+
+std::optional<InteractionResolvedAction>
+WidgetInteractionRegions::ResolveAction(
+    std::string_view key, std::string_view eventName) const
+{
+    const InteractionRegion* region = Find(key);
+    if (!region) return std::nullopt;
+    std::string_view resolvedName = eventName;
+    if (eventName == "click" && region->controlKind !=
+            InteractionControlKind::None)
+        resolvedName = "change";
+    const auto action = region->events.find(resolvedName);
+    if (action == region->events.end()) return std::nullopt;
+    InteractionResolvedAction result;
+    result.action = action->second;
+    result.eventName = resolvedName;
+    if (resolvedName == "change" && region->controlKind !=
+            InteractionControlKind::None)
+    {
+        result.previousChecked = region->checked;
+        result.checked = !region->checked;
+    }
+    return result;
 }
 
 const InteractionAction* WidgetInteractionRegions::ActionAt(

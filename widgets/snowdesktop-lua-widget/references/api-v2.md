@@ -85,10 +85,10 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 
 ### `view.tree.core` 声明式视图
 
-当前过渡 feature `view.tree.core` 提供 `view.box/row/column/stack/text/image/button/
+当前过渡 feature `view.tree.core` 提供 `view.box/row/column/stack/text/image/button/icon/
 iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` feature 提供
 `sparkline/lineChart/barChart/waveform/spectrum`，`view.statusVisuals` 提供
-`badge/divider/meter`。
+`badge/divider/meter`，`view.selectionControls` 提供 `toggle/checkbox`。
 每次 `view(context, model)` 返回一棵完整树；所有节点必须提供全树唯一、1–128 字节的
 稳定 `key`。宿主先完整解析、校验和布局，再原子替换上一棵成功树；回调或校验失败时
 继续显示上一棵树，不留下半棵树或空白交互区。
@@ -135,11 +135,31 @@ end
 hover/pressed 覆盖。按钮 `action` 是 click 简写；events 还支持 pointer enter/leave/
 down/up、doubleClick 和 contextMenu，动作通过 `event.kind == "action"` 投递。
 
+`toggle` 和 `checkbox` 是受控选择控件：必须提供非空 `label`、显式 `checked`，以及
+`action` 简写或 `events.change`；不得绑定 `events.click`。指针完成一次有效点击时，宿主
+投递 `event.action == "change"`，并附带当前 `previousChecked` 与建议的新值 `checked`。
+宿主不会替组件修改或持久化状态；组件应在 `event` 中更新自己的 model/storage 并调用
+`widget.invalidate()`，下一棵树仍以组件提供的 `checked` 为准。`checkedStyle` 先于
+`hoverStyle/pressedStyle` 合并，轨道、勾选标记、hover、pressed 和元素命中均由宿主实时
+绘制；两类控件也支持各自的 `contextMenu`。直接指针 change 保留可信用户手势，但当前
+过渡实现尚未提供键盘操作与 UI Automation 输出。
+
+```lua
+view.toggle({
+    key = "notifications",
+    label = "Notifications",
+    checked = model.notifications,
+    action = { id = "notifications.change" },
+    checkedStyle = { background = 0x4C9AFF },
+})
+```
+
 `shape` 支持 rectangle、roundedRectangle、circle 和 ellipse；填充与描边来自 style。
 `image` 的 `source` 只接受入口加载期间创建的 `resource.image()` 句柄，必须显式提供
 `alt`（装饰图片使用空字符串），支持 `fill/contain/cover/none` fit、
 `start/center/end` alignment 和 `nearest/linear` interpolation；对应 feature 为
-`view.image`。`text`、`badge` 和 `button` 可通过 `font` 使用 `resource.font()` 返回的包私有字体
+`view.image`。`text`、`badge`、`button`、`toggle` 和 `checkbox` 可通过 `font` 使用
+`resource.font()` 返回的包私有字体
 句柄，对应 feature 为 `view.font`。这些属性不接受文件路径或跨包句柄。
 `icon`/`iconButton` 的 `glyph` 使用宿主 Font Awesome 或 Fluent 字体，`iconButton` 必须
 提供 `accessibility.label`。`progressBar`/`progressRing` 接受 0–1 的 `value`、正数

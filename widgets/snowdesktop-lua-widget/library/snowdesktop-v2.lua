@@ -139,14 +139,15 @@
 ---@field click? SnowInteractionAction
 ---@field doubleClick? SnowInteractionAction
 ---@field contextMenu? SnowInteractionAction
+---@field change? SnowInteractionAction Toggle/checkbox controlled-value proposal.
 
 ---@class SnowViewNodeOptions
 ---@field key string Globally unique stable key in the returned tree.
 ---@field text? string Used by text nodes.
----@field label? string Required by button nodes.
+---@field label? string Required by button, toggle, and checkbox nodes.
 ---@field glyph? string Required by icon and iconButton nodes.
 ---@field source? SnowImageResource Required by image nodes.
----@field font? SnowFontResource Package-private font for text and button nodes.
+---@field font? SnowFontResource Package-private font for text, badge, button, toggle, and checkbox nodes.
 ---@field fit? SnowViewImageFit Image scaling mode; defaults to contain.
 ---@field alignment? SnowViewImageAlignment Image alignment on both axes; defaults to center.
 ---@field interpolation? SnowViewImageInterpolation Image sampling mode; defaults to linear.
@@ -171,6 +172,7 @@
 ---@field justifyContent? 'start'|'center'|'end'|'spaceBetween'
 ---@field fontSize? number
 ---@field bold? boolean
+---@field checked? boolean Required explicit controlled value for toggle and checkbox nodes.
 ---@field textAlign? 'start'|'center'|'end'
 ---@field visible? boolean
 ---@field enabled? boolean
@@ -178,13 +180,14 @@
 ---@field style? SnowViewStyle
 ---@field hoverStyle? SnowViewStyle
 ---@field pressedStyle? SnowViewStyle
+---@field checkedStyle? SnowViewStyle Applied before hover/pressed when a toggle or checkbox is checked.
 ---@field accessibility? SnowViewAccessibility
 ---@field events? SnowViewEvents
----@field action? SnowInteractionAction Button click shorthand.
+---@field action? SnowInteractionAction Button click or toggle/checkbox change shorthand.
 ---@field children? SnowViewNode[]
 
 ---@class SnowViewNode: SnowViewNodeOptions
----@field type 'box'|'row'|'column'|'stack'|'text'|'image'|'button'|'icon'|'iconButton'|'shape'|'badge'|'divider'|'progressBar'|'progressRing'|'meter'|'sparkline'|'lineChart'|'barChart'|'waveform'|'spectrum'|'spacer'
+---@field type 'box'|'row'|'column'|'stack'|'text'|'image'|'button'|'toggle'|'checkbox'|'icon'|'iconButton'|'shape'|'badge'|'divider'|'progressBar'|'progressRing'|'meter'|'sparkline'|'lineChart'|'barChart'|'waveform'|'spectrum'|'spacer'
 
 ---@class SnowInteractionShape
 ---@field type 'rect'|'roundedRect'|'circle'
@@ -303,7 +306,7 @@
 
 ---@class SnowWidgetEvent
 ---@field kind 'visibility'|'resize'|'pointer'|'timer'|'schedule'|'action'|'selection'|'environment'|'panel'|'data.change'|'task.complete'
----@field action? 'click'|'doubleClick'|'pointerDown'|'pointerMove'|'pointerUp'|'wheel'|'opened'|'closed'|string
+---@field action? 'click'|'change'|'doubleClick'|'pointerDown'|'pointerMove'|'pointerUp'|'wheel'|'opened'|'closed'|string
 ---@field id? string
 ---@field name? string
 ---@field missed? integer
@@ -318,6 +321,8 @@
 ---@field button? integer
 ---@field delta? integer
 ---@field targetKey? string Stable immediate interaction region key.
+---@field previousChecked? boolean Current controlled value for toggle/checkbox change events.
+---@field checked? boolean Proposed next controlled value for toggle/checkbox change events; the host does not persist it.
 ---@field clickCount? integer
 ---@field trustedGesture? boolean
 ---@field surface? 'desktop'|'panel'
@@ -479,6 +484,14 @@ function view.image(options) end
 ---@param options SnowViewNodeOptions
 ---@return SnowViewNode
 function view.button(options) end
+
+---@param options SnowViewNodeOptions Requires label, explicit checked, and change/action; probes with view.selectionControls.
+---@return SnowViewNode
+function view.toggle(options) end
+
+---@param options SnowViewNodeOptions Requires label, explicit checked, and change/action; probes with view.selectionControls.
+---@return SnowViewNode
+function view.checkbox(options) end
 
 ---@param options SnowViewNodeOptions
 ---@return SnowViewNode

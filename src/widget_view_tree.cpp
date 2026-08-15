@@ -41,6 +41,12 @@ bool IsButtonNode(ViewNodeType type) noexcept
         type == ViewNodeType::IconButton;
 }
 
+bool IsCheckControlNode(ViewNodeType type) noexcept
+{
+    return type == ViewNodeType::Toggle ||
+        type == ViewNodeType::Checkbox;
+}
+
 bool IsDataSeriesNode(ViewNodeType type) noexcept
 {
     return type == ViewNodeType::Sparkline ||
@@ -53,7 +59,7 @@ bool IsDataSeriesNode(ViewNodeType type) noexcept
 bool IsLeafNode(ViewNodeType type) noexcept
 {
     return type == ViewNodeType::Text || type == ViewNodeType::Image ||
-        IsButtonNode(type) ||
+        IsButtonNode(type) || IsCheckControlNode(type) ||
         type == ViewNodeType::Icon || type == ViewNodeType::Shape ||
         type == ViewNodeType::Badge || type == ViewNodeType::Divider ||
         type == ViewNodeType::ProgressBar ||
@@ -74,6 +80,10 @@ float IntrinsicWidth(const ViewNode& node)
         node.type == ViewNodeType::Badge ||
         node.type == ViewNodeType::Button)
         return TextIntrinsicWidth(node);
+    if (node.type == ViewNodeType::Toggle)
+        return TextIntrinsicWidth(node) + 44.0f;
+    if (node.type == ViewNodeType::Checkbox)
+        return TextIntrinsicWidth(node) + 26.0f;
     if (node.type == ViewNodeType::Image)
         return 48.0f + node.padding * 2.0f;
     if (IsIconNode(node.type))
@@ -124,6 +134,10 @@ float IntrinsicHeight(const ViewNode& node)
     if (node.type == ViewNodeType::Image)
         return 48.0f + node.padding * 2.0f;
     if (node.type == ViewNodeType::Button)
+        return std::max(32.0f, node.fontSize * 1.8f) +
+            node.padding * 2.0f;
+    if (node.type == ViewNodeType::Toggle ||
+        node.type == ViewNodeType::Checkbox)
         return std::max(32.0f, node.fontSize * 1.8f) +
             node.padding * 2.0f;
     if (node.type == ViewNodeType::IconButton)
@@ -354,7 +368,8 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         !FiniteInRange(node.trackOpacity, 0.0f, 1.0f) ||
         !FiniteInRange(node.fillOpacity, 0.0f, 1.0f) ||
         !validStyle(node.style) || !validStyle(node.hoverStyle) ||
-        !validStyle(node.pressedStyle))
+        !validStyle(node.pressedStyle) ||
+        !validStyle(node.checkedStyle))
     {
         error = "view node dimensions and typography must be finite and bounded";
         return false;
@@ -436,9 +451,10 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
     if (!node.fontResourceName.empty() &&
         node.type != ViewNodeType::Text &&
         node.type != ViewNodeType::Button &&
-        node.type != ViewNodeType::Badge)
+        node.type != ViewNodeType::Badge &&
+        !IsCheckControlNode(node.type))
     {
-        error = "only text, badge, and button nodes can retain a font resource";
+        error = "only text, badge, button, toggle, and checkbox nodes can retain a font resource";
         return false;
     }
     if (!node.imageResourceName.empty())
@@ -466,6 +482,12 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         error = "badge nodes require text";
         return false;
     }
+    if (IsCheckControlNode(node.type) && node.text.empty())
+    {
+        error = std::string(ViewNodeTypeName(node.type)) +
+            " nodes require label text";
+        return false;
+    }
     if (IsIconNode(node.type) && node.text.empty())
     {
         error = std::string(ViewNodeTypeName(node.type)) +
@@ -489,7 +511,7 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         if (eventName != "click" && eventName != "doubleClick" &&
             eventName != "contextMenu" && eventName != "pointerEnter" &&
             eventName != "pointerLeave" && eventName != "pointerDown" &&
-            eventName != "pointerUp")
+            eventName != "pointerUp" && eventName != "change")
         {
             error = "unsupported view event: " + eventName;
             return false;
@@ -499,6 +521,21 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             error = "view action id must contain 1 to 128 bytes";
             return false;
         }
+    }
+    if (IsCheckControlNode(node.type))
+    {
+        if (!node.events.contains("change") ||
+            node.events.contains("click"))
+        {
+            error = std::string(ViewNodeTypeName(node.type)) +
+                " nodes require change and reject click";
+            return false;
+        }
+    }
+    else if (node.events.contains("change"))
+    {
+        error = "change is reserved for controlled view nodes";
+        return false;
     }
     for (const auto& child : node.children)
         if (!ValidateNode(child, depth + 1, nodes, textBytes,
@@ -542,18 +579,25 @@ bool CollectRegions(const ViewNode& node,
                 node.style.cornerRadius.value_or(0.0f);
         }
         region.cursor = node.cursor.empty() &&
-            (IsButtonNode(node.type) ||
+            (IsButtonNode(node.type) || IsCheckControlNode(node.type) ||
                 node.events.contains("click"))
             ? "hand" : node.cursor;
         region.events = node.events;
+        if (node.type == ViewNodeType::Toggle)
+            region.controlKind = InteractionControlKind::Toggle;
+        else if (node.type == ViewNodeType::Checkbox)
+            region.controlKind = InteractionControlKind::Checkbox;
+        region.checked = node.checked;
         region.accessibilityRole = node.accessibilityRole.empty()
             ? (IsButtonNode(node.type) ? "button" :
+                (node.type == ViewNodeType::Toggle ? "switch" :
+                    (node.type == ViewNodeType::Checkbox ? "checkbox" :
                 (IsDataSeriesNode(node.type) ? "img" :
                     (node.type == ViewNodeType::Meter ? "meter" :
                         (node.type == ViewNodeType::Divider
                             ? "separator" :
                             (node.type == ViewNodeType::Badge
-                                ? "status" : "")))))
+                                ? "status" : "")))))))
             : node.accessibilityRole;
         region.accessibilityLabel = node.accessibilityLabel.empty()
             ? node.text : node.accessibilityLabel;
@@ -614,6 +658,8 @@ const char* ViewNodeTypeName(ViewNodeType type) noexcept
     case ViewNodeType::Text: return "text";
     case ViewNodeType::Image: return "image";
     case ViewNodeType::Button: return "button";
+    case ViewNodeType::Toggle: return "toggle";
+    case ViewNodeType::Checkbox: return "checkbox";
     case ViewNodeType::Icon: return "icon";
     case ViewNodeType::IconButton: return "iconButton";
     case ViewNodeType::Shape: return "shape";

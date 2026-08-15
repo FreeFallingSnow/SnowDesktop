@@ -21,6 +21,8 @@ enum class ViewNodeType
     Text,
     Image,
     Button,
+    Toggle,
+    Checkbox,
     Icon,
     IconButton,
     Shape,
@@ -166,6 +168,7 @@ struct ViewNode
     std::optional<float> seriesMinimum;
     std::optional<float> seriesMaximum;
     bool bold = false;
+    bool checked = false;
     bool visible = true;
     bool enabled = true;
     std::string cursor;
@@ -174,6 +177,7 @@ struct ViewNode
     ViewStyle style;
     ViewStyle hoverStyle;
     ViewStyle pressedStyle;
+    ViewStyle checkedStyle;
     std::map<std::string, InteractionAction, std::less<>> events;
     std::vector<ViewNode> children;
     ViewRect frame;

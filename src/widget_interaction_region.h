@@ -41,6 +41,21 @@ struct InteractionAction
     bool operator==(const InteractionAction&) const = default;
 };
 
+enum class InteractionControlKind
+{
+    None,
+    Toggle,
+    Checkbox,
+};
+
+struct InteractionResolvedAction
+{
+    InteractionAction action;
+    std::string eventName;
+    std::optional<bool> previousChecked;
+    std::optional<bool> checked;
+};
+
 enum class InteractionShapeType
 {
     Rect,
@@ -69,6 +84,8 @@ struct InteractionRegion
     std::map<std::string, InteractionAction, std::less<>> events;
     std::string accessibilityRole;
     std::string accessibilityLabel;
+    InteractionControlKind controlKind = InteractionControlKind::None;
+    bool checked = false;
     bool enabled = true;
 
     bool operator==(const InteractionRegion&) const = default;
@@ -118,6 +135,8 @@ public:
         std::string_view key, std::string_view eventName) const noexcept;
     const InteractionAction* FindTransitionAction(
         std::string_view key, std::string_view eventName) const noexcept;
+    std::optional<InteractionResolvedAction> ResolveAction(
+        std::string_view key, std::string_view eventName) const;
     const InteractionAction* ActionAt(
         float x, float y, std::string_view eventName,
         std::string* targetKey = nullptr) const noexcept;

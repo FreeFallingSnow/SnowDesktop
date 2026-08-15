@@ -733,6 +733,8 @@ bool ParseNodeType(std::string_view type, ViewNodeType& result)
     else if (type == "text") result = ViewNodeType::Text;
     else if (type == "image") result = ViewNodeType::Image;
     else if (type == "button") result = ViewNodeType::Button;
+    else if (type == "toggle") result = ViewNodeType::Toggle;
+    else if (type == "checkbox") result = ViewNodeType::Checkbox;
     else if (type == "icon") result = ViewNodeType::Icon;
     else if (type == "iconButton") result = ViewNodeType::IconButton;
     else if (type == "shape") result = ViewNodeType::Shape;
@@ -812,9 +814,10 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
                 "thickness", "trackOpacity",
                 "fillOpacity", "width", "height",
                 "padding", "gap", "flexGrow", "fontSize", "bold",
-                "visible", "enabled", "cursor", "alignItems",
+                "checked", "visible", "enabled", "cursor", "alignItems",
                 "alignSelf", "justifyContent", "textAlign", "style",
-                "hoverStyle", "pressedStyle", "accessibility", "events",
+                "hoverStyle", "pressedStyle", "checkedStyle",
+                "accessibility", "events",
                 "action", "children" }, "view node", error))
         return false;
     std::string type;
@@ -826,6 +829,11 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     }
     const bool buttonNode = node.type == ViewNodeType::Button ||
         node.type == ViewNodeType::IconButton;
+    const bool controlNode = node.type == ViewNodeType::Toggle ||
+        node.type == ViewNodeType::Checkbox;
+    const bool labelNode = node.type == ViewNodeType::Button ||
+        controlNode;
+    const bool actionNode = buttonNode || controlNode;
     const bool iconNode = node.type == ViewNodeType::Icon ||
         node.type == ViewNodeType::IconButton;
     const bool textNode = node.type == ViewNodeType::Text ||
@@ -840,13 +848,12 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         node.type == ViewNodeType::Spectrum;
     const bool imageNode = node.type == ViewNodeType::Image;
     const bool dividerNode = node.type == ViewNodeType::Divider;
-    const bool textResourceNode = textNode ||
-        node.type == ViewNodeType::Button;
-    if (buttonNode && !iconNode &&
+    const bool textResourceNode = textNode || labelNode;
+    if (labelNode &&
         (FieldPresent(state, index, "text") ||
             FieldPresent(state, index, "glyph")))
     {
-        error = "button nodes use 'label', not 'text' or 'glyph'";
+        error = "button, toggle, and checkbox nodes use 'label', not 'text' or 'glyph'";
         return false;
     }
     if (iconNode && (FieldPresent(state, index, "text") ||
@@ -855,14 +862,14 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         error = "icon nodes use 'glyph', not 'text' or 'label'";
         return false;
     }
-    if (!buttonNode &&
+    if (!actionNode &&
         (FieldPresent(state, index, "label") ||
             FieldPresent(state, index, "action")))
     {
-        error = "only button nodes accept 'label' and 'action'";
+        error = "only button, toggle, and checkbox nodes accept 'label' and 'action'";
         return false;
     }
-    if (!textNode && !buttonNode && !iconNode &&
+    if (!textNode && !labelNode && !iconNode &&
         FieldPresent(state, index, "text"))
     {
         error = "only text nodes accept 'text'";
@@ -888,6 +895,16 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     if (!progressNode && FieldPresent(state, index, "value"))
     {
         error = "only progress nodes accept 'value'";
+        return false;
+    }
+    if (!controlNode && FieldPresent(state, index, "checked"))
+    {
+        error = "only toggle and checkbox nodes accept checked";
+        return false;
+    }
+    if (!controlNode && FieldPresent(state, index, "checkedStyle"))
+    {
+        error = "only toggle and checkbox nodes accept checkedStyle";
         return false;
     }
     if (!seriesNode && (FieldPresent(state, index, "values") ||
@@ -916,12 +933,17 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     }
     if (!textResourceNode && FieldPresent(state, index, "font"))
     {
-        error = "only text, badge, and button nodes accept a font resource";
+        error = "only text, badge, button, toggle, and checkbox nodes accept a font resource";
         return false;
     }
     if (imageNode && !FieldPresent(state, index, "alt"))
     {
         error = "image nodes require an explicit 'alt' field";
+        return false;
+    }
+    if (controlNode && !FieldPresent(state, index, "checked"))
+    {
+        error = "toggle and checkbox nodes require checked";
         return false;
     }
     if (!ReadStringField(state, index, "key", node.key, true, error))
@@ -930,7 +952,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !FieldPresent(state, index, "padding"))
         node.padding = 4.0f;
     const char* contentField = iconNode ? "glyph" :
-        (buttonNode ? "label" : "text");
+        (labelNode ? "label" : "text");
     if (!ReadStringField(state, index, contentField,
             node.text, false, error) ||
         !ReadResourceField(state, index, "source", LuaResourceType::Image,
@@ -957,6 +979,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadFloatField(state, index, "fillOpacity",
             node.fillOpacity, error) ||
         !ReadBoolField(state, index, "bold", node.bold, error) ||
+        !ReadBoolField(state, index, "checked", node.checked, error) ||
         !ReadBoolField(state, index, "visible", node.visible, error) ||
         !ReadBoolField(state, index, "enabled", node.enabled, error) ||
         !ReadStringField(state, index, "cursor", node.cursor, false, error) ||
@@ -973,7 +996,9 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadStyleField(state, index, "hoverStyle",
             node.hoverStyle, error) ||
         !ReadStyleField(state, index, "pressedStyle",
-            node.pressedStyle, error))
+            node.pressedStyle, error) ||
+        !ReadStyleField(state, index, "checkedStyle",
+            node.checkedStyle, error))
         return false;
 
     if (dividerNode && node.orientation == ViewOrientation::Vertical)
@@ -1036,7 +1061,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         const int events = lua_absindex(state, -1);
         if (!ValidateObjectFields(state, events,
                 { "pointerEnter", "pointerLeave", "pointerDown",
-                    "pointerUp", "click", "doubleClick", "contextMenu" },
+                    "pointerUp", "click", "doubleClick", "contextMenu",
+                    "change" },
                 "view events", error))
         {
             lua_pop(state, 1);
@@ -1044,7 +1070,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         }
         for (const char* eventName : { "pointerEnter", "pointerLeave",
             "pointerDown", "pointerUp", "click", "doubleClick",
-            "contextMenu" })
+            "contextMenu", "change" })
         {
             lua_getfield(state, events, eventName);
             if (!lua_isnil(state, -1))
@@ -1068,7 +1094,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     }
     lua_pop(state, 1);
 
-    if (buttonNode)
+    if (actionNode)
     {
         lua_getfield(state, index, "action");
         if (!lua_isnil(state, -1))
@@ -1079,7 +1105,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
                 lua_pop(state, 1);
                 return false;
             }
-            node.events.insert_or_assign("click", std::move(action));
+            node.events.insert_or_assign(
+                controlNode ? "change" : "click", std::move(action));
         }
         lua_pop(state, 1);
     }
@@ -1159,6 +1186,11 @@ int LuaViewStack(lua_State* state) { return MakeNode(state, "stack"); }
 int LuaViewText(lua_State* state) { return MakeNode(state, "text"); }
 int LuaViewImage(lua_State* state) { return MakeNode(state, "image"); }
 int LuaViewButton(lua_State* state) { return MakeNode(state, "button"); }
+int LuaViewToggle(lua_State* state) { return MakeNode(state, "toggle"); }
+int LuaViewCheckbox(lua_State* state)
+{
+    return MakeNode(state, "checkbox");
+}
 int LuaViewIcon(lua_State* state) { return MakeNode(state, "icon"); }
 int LuaViewIconButton(lua_State* state)
 {

@@ -20,6 +20,8 @@ int LuaViewStack(lua_State* state);
 int LuaViewText(lua_State* state);
 int LuaViewImage(lua_State* state);
 int LuaViewButton(lua_State* state);
+int LuaViewToggle(lua_State* state);
+int LuaViewCheckbox(lua_State* state);
 int LuaViewIcon(lua_State* state);
 int LuaViewIconButton(lua_State* state);
 int LuaViewShape(lua_State* state);

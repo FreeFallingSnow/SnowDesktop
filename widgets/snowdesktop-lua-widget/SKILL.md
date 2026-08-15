@@ -88,7 +88,10 @@ waveform/spectrum nodes; keep each series within 512 finite samples and the
 whole tree within 4096, and always provide `accessibility.label`. The subset
 also publishes `view.statusVisuals` for badge/divider/meter; give every meter
 an `accessibility.label` and use meter only for a current reading, not task
-progress. It does not yet provide keyboard focus, UI Automation, collections, or the
+progress. Probe `view.selectionControls` for controlled toggle/checkbox nodes:
+always pass an explicit `checked` value and handle their `change` action by
+updating component-owned state; never bind `click` or assume the host persists
+the proposed value. It does not yet provide keyboard focus, UI Automation, collections, or the
 complete `view.tree` contract. Optional
 `menu(context, model, request)` builds an element's synchronous native context
 menu.

@@ -11828,6 +11828,7 @@ static snowdesktop::widget_runtime::ViewStyle ResolveViewStyle(
         if (style.cornerRadius) result.cornerRadius = style.cornerRadius;
         if (style.opacity) result.opacity = style.opacity;
     };
+    if (node.checked) overlay(node.checkedStyle);
     if (hovered) overlay(node.hoverStyle);
     if (pressed) overlay(node.pressedStyle);
     return result;
@@ -12062,6 +12063,8 @@ static void DrawWidgetViewNode(D2DState* state,
 
     const bool buttonNode = node.type == ViewNodeType::Button ||
         node.type == ViewNodeType::IconButton;
+    const bool checkControlNode = node.type == ViewNodeType::Toggle ||
+        node.type == ViewNodeType::Checkbox;
     const bool iconNode = node.type == ViewNodeType::Icon ||
         node.type == ViewNodeType::IconButton;
     const bool specialGeometry = node.type == ViewNodeType::Shape ||
@@ -12069,7 +12072,7 @@ static void DrawWidgetViewNode(D2DState* state,
         node.type == ViewNodeType::ProgressBar ||
         node.type == ViewNodeType::ProgressRing ||
         node.type == ViewNodeType::Meter ||
-        node.type == ViewNodeType::Icon;
+        node.type == ViewNodeType::Icon || checkControlNode;
     const bool implicitSurfaceBackground = !style.background &&
         (buttonNode || badgeNode);
     std::optional<std::uint32_t> background = style.background;
@@ -12107,7 +12110,102 @@ static void DrawWidgetViewNode(D2DState* state,
         }
     }
 
-    if (node.type == ViewNodeType::Divider)
+    if (node.type == ViewNodeType::Toggle)
+    {
+        const float inset = std::min(node.padding,
+            std::max(0.0f, node.frame.width * 0.5f));
+        const float trackWidth = std::min(36.0f,
+            std::max(0.0f, node.frame.width - inset * 2.0f));
+        const float trackHeight = std::min(20.0f, node.frame.height);
+        const float right = std::max(rect.left, rect.right - inset);
+        const float left = std::max(rect.left, right - trackWidth);
+        const float top = (rect.top + rect.bottom - trackHeight) * 0.5f;
+        const D2D1_RECT_F trackRect = D2D1::RectF(
+            left, top, right, top + trackHeight);
+        const std::uint32_t trackColor = style.background.value_or(
+            node.checked ? 0x4C9AFF : 0xFFFFFF);
+        const float trackAlpha = opacity *
+            (style.background || node.checked ? 1.0f : 0.18f);
+        if (ID2D1SolidColorBrush* track = GetCachedBrush(state,
+                static_cast<int>(trackColor), trackAlpha))
+            state->ctx->FillRoundedRectangle(
+                D2D1::RoundedRect(trackRect,
+                    trackHeight * 0.5f, trackHeight * 0.5f), track);
+        if (borderWidth > 0.0f && style.borderColor)
+        {
+            if (ID2D1SolidColorBrush* border = GetCachedBrush(state,
+                    static_cast<int>(*style.borderColor), opacity))
+                state->ctx->DrawRoundedRectangle(
+                    D2D1::RoundedRect(trackRect,
+                        trackHeight * 0.5f, trackHeight * 0.5f), border,
+                    borderWidth);
+        }
+        const float knobRadius = std::max(0.0f, std::min(
+            7.0f, std::min(trackHeight * 0.35f, trackWidth * 0.25f)));
+        const float knobInset = std::min(trackWidth * 0.5f,
+            knobRadius + std::min(3.0f, trackWidth * 0.1f));
+        const float knobX = node.checked
+            ? trackRect.right - knobInset : trackRect.left + knobInset;
+        if (ID2D1SolidColorBrush* knob = GetCachedBrush(state,
+                static_cast<int>(style.foreground.value_or(0xFFFFFF)),
+                opacity))
+            state->ctx->FillEllipse(D2D1::Ellipse(
+                D2D1::Point2F(knobX,
+                    (trackRect.top + trackRect.bottom) * 0.5f),
+                knobRadius, knobRadius), knob);
+    }
+    else if (node.type == ViewNodeType::Checkbox)
+    {
+        const float inset = std::min(node.padding,
+            std::max(0.0f, node.frame.width * 0.5f));
+        const float boxSize = std::min(18.0f, std::max(0.0f,
+            std::min(node.frame.width - inset * 2.0f,
+                node.frame.height)));
+        const float left = rect.left + inset;
+        const float top = (rect.top + rect.bottom - boxSize) * 0.5f;
+        const D2D1_RECT_F box = D2D1::RectF(
+            left, top, left + boxSize, top + boxSize);
+        if (node.checked || style.background)
+        {
+            const std::uint32_t fillColor = style.background.value_or(
+                node.checked ? 0x4C9AFF : 0xFFFFFF);
+            if (ID2D1SolidColorBrush* fill = GetCachedBrush(state,
+                    static_cast<int>(fillColor), opacity))
+                state->ctx->FillRoundedRectangle(
+                    D2D1::RoundedRect(box,
+                        std::min(3.0f, boxSize * 0.2f),
+                        std::min(3.0f, boxSize * 0.2f)), fill);
+        }
+        const std::uint32_t borderColor = style.borderColor.value_or(
+            style.foreground.value_or(0xFFFFFF));
+        if (ID2D1SolidColorBrush* border = GetCachedBrush(state,
+                static_cast<int>(borderColor), opacity *
+                    (style.borderColor ? 1.0f : 0.55f)))
+            state->ctx->DrawRoundedRectangle(
+                D2D1::RoundedRect(box,
+                    std::min(3.0f, boxSize * 0.2f),
+                    std::min(3.0f, boxSize * 0.2f)), border,
+                std::max(1.0f, borderWidth));
+        if (node.checked)
+        {
+            if (ID2D1SolidColorBrush* mark = GetCachedBrush(state,
+                    static_cast<int>(style.foreground.value_or(0xFFFFFF)),
+                    opacity))
+            {
+                state->ctx->DrawLine(D2D1::Point2F(
+                        left + boxSize * 0.22f, top + boxSize * 0.50f),
+                    D2D1::Point2F(
+                        left + boxSize * 0.42f, top + boxSize * 0.72f),
+                    mark, std::min(2.0f, boxSize * 0.12f));
+                state->ctx->DrawLine(D2D1::Point2F(
+                        left + boxSize * 0.42f, top + boxSize * 0.72f),
+                    D2D1::Point2F(
+                        left + boxSize * 0.81f, top + boxSize * 0.31f),
+                    mark, std::min(2.0f, boxSize * 0.12f));
+            }
+        }
+    }
+    else if (node.type == ViewNodeType::Divider)
     {
         const std::uint32_t dividerColor = style.foreground.value_or(
             style.background.value_or(0xFFFFFF));
@@ -12311,7 +12409,8 @@ static void DrawWidgetViewNode(D2DState* state,
 
     if ((node.type == ViewNodeType::Text ||
             node.type == ViewNodeType::Badge ||
-            node.type == ViewNodeType::Button || iconNode) &&
+            node.type == ViewNodeType::Button || checkControlNode ||
+            iconNode) &&
         !node.text.empty() && state->dwrite)
     {
         std::optional<std::wstring> privateFontPath;
@@ -12341,8 +12440,14 @@ static void DrawWidgetViewNode(D2DState* state,
             const float textInset = std::min(node.padding,
                 std::max(0.0f, std::min(
                     node.frame.width, node.frame.height) * 0.5f));
+            float textLeft = rect.left + textInset;
+            float textRight = rect.right - textInset;
+            if (node.type == ViewNodeType::Checkbox)
+                textLeft = std::min(textRight, textLeft + 26.0f);
+            else if (node.type == ViewNodeType::Toggle)
+                textRight = std::max(textLeft, textRight - 44.0f);
             const float textWidth = std::max(0.0f,
-                node.frame.width - textInset * 2.0f);
+                textRight - textLeft);
             const float textHeight = std::max(0.0f,
                 node.frame.height - textInset * 2.0f);
             ComPtr<IDWriteTextLayout> layout;
@@ -12370,7 +12475,7 @@ static void DrawWidgetViewNode(D2DState* state,
                         format, &ellipsis)) && ellipsis)
                     layout->SetTrimming(&trimming, ellipsis.Get());
                 D2D1_POINT_2F origin = D2D1::Point2F(
-                    rect.left + textInset, rect.top + textInset);
+                    textLeft, rect.top + textInset);
                 if (iconNode)
                 {
                     DWRITE_OVERHANG_METRICS overhang{};
@@ -14938,13 +15043,32 @@ void WidgetEngine::DispatchInteractionAction(LuaWidget& widget,
     bool includeRetired)
 {
     if (targetKey.empty() || !eventName || !*eventName) return;
-    const auto* actionPointer = includeRetired
-        ? widget.interactionRegions.FindTransitionAction(targetKey, eventName)
-        : widget.interactionRegions.FindAction(targetKey, eventName);
-    if (!actionPointer) return;
-    const auto action = *actionPointer;
+    snowdesktop::widget_runtime::InteractionAction action;
+    std::string resolvedEventName(eventName);
+    std::optional<bool> previousChecked;
+    std::optional<bool> checked;
+    const bool trustedGesture = trustedGestureState_.Active();
+    if (includeRetired)
+    {
+        const auto* actionPointer =
+            widget.interactionRegions.FindTransitionAction(
+                targetKey, eventName);
+        if (!actionPointer) return;
+        action = *actionPointer;
+    }
+    else
+    {
+        const auto resolved = widget.interactionRegions.ResolveAction(
+            targetKey, eventName);
+        if (!resolved) return;
+        action = resolved->action;
+        resolvedEventName = resolved->eventName;
+        previousChecked = resolved->previousChecked;
+        checked = resolved->checked;
+    }
     (void)InvokeLifecycleEvent(widget, "action",
-        [&action, &targetKey, eventName, x, y, button, delta,
+        [&action, &targetKey, &resolvedEventName,
+            previousChecked, checked, trustedGesture, x, y, button, delta,
             clickCount](lua_State* eventState) {
             lua_pushlstring(eventState, action.id.data(), action.id.size());
             lua_setfield(eventState, -2, "id");
@@ -14952,8 +15076,18 @@ void WidgetEngine::DispatchInteractionAction(LuaWidget& widget,
             lua_setfield(eventState, -2, "value");
             lua_pushlstring(eventState, targetKey.data(), targetKey.size());
             lua_setfield(eventState, -2, "targetKey");
-            lua_pushstring(eventState, eventName);
+            lua_pushlstring(eventState, resolvedEventName.data(),
+                resolvedEventName.size());
             lua_setfield(eventState, -2, "action");
+            if (previousChecked.has_value() && checked.has_value())
+            {
+                lua_pushboolean(eventState, *previousChecked ? 1 : 0);
+                lua_setfield(eventState, -2, "previousChecked");
+                lua_pushboolean(eventState, *checked ? 1 : 0);
+                lua_setfield(eventState, -2, "checked");
+            }
+            lua_pushboolean(eventState, trustedGesture ? 1 : 0);
+            lua_setfield(eventState, -2, "trustedGesture");
             lua_pushliteral(eventState, "pointer");
             lua_setfield(eventState, -2, "source");
             lua_pushliteral(eventState, "desktop");
@@ -19161,6 +19295,8 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "text", snowdesktop::widget_runtime::LuaViewText, 2 },
         { "image", snowdesktop::widget_runtime::LuaViewImage, 2 },
         { "button", snowdesktop::widget_runtime::LuaViewButton, 2 },
+        { "toggle", snowdesktop::widget_runtime::LuaViewToggle, 2 },
+        { "checkbox", snowdesktop::widget_runtime::LuaViewCheckbox, 2 },
         { "icon", snowdesktop::widget_runtime::LuaViewIcon, 2 },
         { "iconButton", snowdesktop::widget_runtime::LuaViewIconButton, 2 },
         { "shape", snowdesktop::widget_runtime::LuaViewShape, 2 },

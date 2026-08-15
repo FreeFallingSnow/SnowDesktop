@@ -7,6 +7,7 @@
 namespace
 {
 using snowdesktop::widget_runtime::InteractionAction;
+using snowdesktop::widget_runtime::InteractionControlKind;
 using snowdesktop::widget_runtime::InteractionRegion;
 using snowdesktop::widget_runtime::InteractionShapeType;
 using snowdesktop::widget_runtime::WidgetInteractionRegions;
@@ -157,6 +158,46 @@ void TestShapesAndValidation()
         "non-positive geometry must be rejected");
     regions.AbortFrame();
 }
+
+void TestControlledActionResolution()
+{
+    WidgetInteractionRegions regions;
+    std::string error;
+    auto toggle = Rect("enabled", 0, 0, 80, 32);
+    toggle.controlKind = InteractionControlKind::Toggle;
+    toggle.checked = false;
+    toggle.events.emplace("change",
+        InteractionAction{ "enabled.change", {} });
+    regions.BeginFrame();
+    Check(regions.Submit(std::move(toggle), error),
+        "a controlled region with change must stage");
+    regions.CommitFrame();
+
+    const auto resolved = regions.ResolveAction("enabled", "click");
+    Check(resolved && resolved->eventName == "change" &&
+            resolved->action.id == "enabled.change" &&
+            resolved->previousChecked == false &&
+            resolved->checked == true,
+        "a control click must resolve to change with a proposed value");
+    Check(!regions.ResolveAction("enabled", "doubleClick"),
+        "a control must not synthesize unbound pointer actions");
+
+    regions.BeginFrame();
+    auto invalidControl = Rect("bad-control", 0, 0, 80, 32);
+    invalidControl.controlKind = InteractionControlKind::Checkbox;
+    invalidControl.events.emplace("click",
+        InteractionAction{ "bad.click", {} });
+    Check(!regions.Submit(std::move(invalidControl), error) &&
+            error.find("require change") != std::string::npos,
+        "controlled regions must reject click bindings");
+    auto invalidPlain = Rect("bad-plain", 0, 0, 80, 32);
+    invalidPlain.events.emplace("change",
+        InteractionAction{ "bad.change", {} });
+    Check(!regions.Submit(std::move(invalidPlain), error) &&
+            error.find("reserved") != std::string::npos,
+        "plain regions must reject controlled change bindings");
+    regions.AbortFrame();
+}
 }
 
 int main()
@@ -164,6 +205,7 @@ int main()
     TestFrameTransactionAndStableState();
     TestPointerPairingAndActions();
     TestShapesAndValidation();
+    TestControlledActionResolution();
     std::cout << "widget interaction region tests passed\n";
     return 0;
 }

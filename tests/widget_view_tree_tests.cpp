@@ -162,6 +162,8 @@ void RegisterViewLibrary(lua_State* state)
         { "text", LuaViewText },
         { "image", LuaViewImage },
         { "button", LuaViewButton },
+        { "toggle", LuaViewToggle },
+        { "checkbox", LuaViewCheckbox },
         { "icon", LuaViewIcon },
         { "iconButton", LuaViewIconButton },
         { "shape", LuaViewShape },
@@ -567,6 +569,98 @@ void TestStatusVisualParsing()
         "divider orientation must reject unsupported values");
     lua_close(state);
 }
+
+void TestSelectionControlParsing()
+{
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "Lua state must be available");
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    Check(luaL_dostring(state, R"lua(
+        return view.column({
+            key = "controls",
+            children = {
+                view.toggle({
+                    key = "notifications",
+                    label = "Notifications",
+                    checked = false,
+                    action = { id = "notifications.change" },
+                    checkedStyle = { background = 0x4C9AFF },
+                    hoverStyle = { opacity = 0.9 },
+                }),
+                view.checkbox({
+                    key = "compact",
+                    label = "Compact layout",
+                    checked = true,
+                    events = {
+                        change = { id = "compact.change" },
+                        contextMenu = { id = "compact.menu" },
+                    },
+                }),
+            },
+        })
+    )lua") == LUA_OK,
+        "selection-control Lua fixture must evaluate");
+    ViewNode root;
+    std::string error;
+    Check(ParseLuaViewTree(state, -1, root, error) &&
+            root.children.size() == 2 &&
+            root.children[0].type == ViewNodeType::Toggle &&
+            !root.children[0].checked &&
+            root.children[0].events.at("change").id ==
+                "notifications.change" &&
+            root.children[0].checkedStyle.background ==
+                std::uint32_t{ 0x4C9AFF } &&
+            root.children[1].type == ViewNodeType::Checkbox &&
+            root.children[1].checked &&
+            root.children[1].events.at("contextMenu").id ==
+                "compact.menu",
+        "selection controls must retain controlled values and actions");
+    Check(ValidateAndLayoutViewTree(root, 280.0f, 96.0f, error),
+        "selection controls must validate and lay out");
+    std::vector<InteractionRegion> regions;
+    Check(CollectViewInteractionRegions(root, regions, error) &&
+            regions.size() == 2 &&
+            regions[0].controlKind == InteractionControlKind::Toggle &&
+            !regions[0].checked &&
+            regions[0].accessibilityRole == "switch" &&
+            regions[0].cursor == "hand" &&
+            regions[1].controlKind == InteractionControlKind::Checkbox &&
+            regions[1].checked &&
+            regions[1].accessibilityRole == "checkbox",
+        "selection controls must produce semantic controlled regions");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.toggle({
+            key = "missing-value",
+            label = "Missing",
+            action = { id = "missing.change" },
+        })
+    )lua") == LUA_OK,
+        "missing-controlled-value fixture must evaluate");
+    ViewNode invalid;
+    Check(!ParseLuaViewTree(state, -1, invalid, error) &&
+            error.find("require checked") != std::string::npos,
+        "selection controls must require an explicit controlled value");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.checkbox({
+            key = "wrong-event",
+            label = "Wrong event",
+            checked = false,
+            events = { click = { id = "wrong.click" } },
+        })
+    )lua") == LUA_OK,
+        "wrong-control-event fixture must evaluate");
+    invalid = {};
+    Check(ParseLuaViewTree(state, -1, invalid, error) &&
+            !ValidateAndLayoutViewTree(invalid, 200.0f, 40.0f, error) &&
+            error.find("require change") != std::string::npos,
+        "selection controls must reject click in favor of change");
+    lua_close(state);
+}
 }
 
 int main()
@@ -577,6 +671,7 @@ int main()
     TestVisualNodeParsing();
     TestDataSeriesParsingAndLimits();
     TestStatusVisualParsing();
+    TestSelectionControlParsing();
     std::cout << "Widget view tree tests passed\n";
     return 0;
 }
