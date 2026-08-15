@@ -1399,7 +1399,9 @@ private:
     void ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCommand);
     /** @brief 显示指定部件的上下文菜单。 @param screenPoint 屏幕坐标 @param widgetIndex 部件索引 */
     void ShowWidgetContextMenu(POINT screenPoint, size_t widgetIndex,
-        std::optional<RECT> dockRenameAnchor = std::nullopt);
+        std::optional<RECT> dockRenameAnchor = std::nullopt,
+        std::optional<POINT> luaLocalPoint = std::nullopt,
+        std::string_view luaSurface = "desktop");
     /** @brief 显示集合组标签上下文菜单。 */
     void ShowCollectionGroupTabContextMenu(
         POINT screenPoint, size_t groupIndex,

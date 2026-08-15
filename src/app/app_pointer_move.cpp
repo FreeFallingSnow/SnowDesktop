@@ -110,7 +110,23 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
     if (widgetEngine_)
     {
         bool interactionHoverRouted = false;
-        if (luaWidgetPanelRequest_.widgetId.empty())
+        if (!luaWidgetPanelRequest_.widgetId.empty() &&
+            luaWidgetPanelAnimation_.IsInteractive())
+        {
+            widgetEngine_->ClearInteractionHover("desktop");
+            const RECT content = GetLuaWidgetPanelContentRect();
+            if (PtInRect(&content, current))
+            {
+                widgetEngine_->UpdateInteractionHover(
+                    luaWidgetPanelRequest_.widgetId,
+                    current.x - content.left,
+                    current.y - content.top, "panel");
+                interactionHoverRouted = true;
+            }
+            else
+                widgetEngine_->ClearInteractionHover("panel");
+        }
+        else
         {
             const size_t interactionWidget =
                 HitTestStandaloneWidgetIndex(current);
@@ -149,7 +165,7 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         const bool handled =
             widgetEngine_->HandleHostInputPointerMove(
                 luaWidgetPanelRequest_.widgetId,
-                localX, localY);
+                localX, localY, "panel");
         if (!handled &&
             PtInRect(&content, current))
         {

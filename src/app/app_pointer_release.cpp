@@ -733,7 +733,7 @@ void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
         const bool hostInputHandled =
             widgetEngine_ &&
             widgetEngine_->HandleHostInputPointerUp(
-                panelWidgetId, localX, localY);
+                panelWidgetId, localX, localY, "panel");
         if (!hostInputHandled &&
             PtInRect(&content, upPoint) &&
             widgetEngine_)

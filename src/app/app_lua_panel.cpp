@@ -105,6 +105,7 @@ void DesktopApp::FinalizeCloseLuaWidgetPanel()
         widgetEngine_->InvokeMouseEvent(
             closingId, "onPanelClosed",
             0, 0, 0, 0);
+        widgetEngine_->CloseWidgetPanelSurface(closingId);
     }
     luaWidgetPanelAnimation_.ResetHidden();
     ResetLuaWidgetPanelAnimationCache();

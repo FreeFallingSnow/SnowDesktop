@@ -222,7 +222,9 @@ void DesktopApp::ShowLuaLogicalSlotItemContextMenu(
 
 void DesktopApp::ShowWidgetContextMenu(
     POINT screenPoint, size_t widgetIndex,
-    std::optional<RECT> dockRenameAnchor)
+    std::optional<RECT> dockRenameAnchor,
+    std::optional<POINT> luaLocalPoint,
+    std::string_view luaSurface)
 {
     if (widgetIndex >= widgets_.size()) return;
     PrepareMenuIconsForPoint(screenPoint);
@@ -503,9 +505,11 @@ void DesktopApp::ShowWidgetContextMenu(
             POINT clientPoint = screenPoint;
             ScreenToClient(hwnd_, &clientPoint);
             const RECT frame = GetStandaloneWidgetFrameRect(widget);
-            luaMenuItems = widgetEngine_->GetContextMenu(widget.id,
+            const POINT localPoint = luaLocalPoint.value_or(POINT{
                 clientPoint.x - frame.left,
-                clientPoint.y - frame.top);
+                clientPoint.y - frame.top });
+            luaMenuItems = widgetEngine_->GetContextMenu(widget.id,
+                localPoint.x, localPoint.y, luaSurface);
             const bool hasElementAction = std::any_of(
                 luaMenuItems.begin(), luaMenuItems.end(),
                 [](const LuaWidgetMenuItem& item) {

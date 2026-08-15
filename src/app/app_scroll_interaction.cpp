@@ -35,7 +35,7 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
             if (!widgetEngine_ ||
                 !widgetEngine_->HandleHostUiPointer(
                     luaWidgetPanelRequest_.widgetId,
-                    localX, localY, delta, true))
+                    localX, localY, delta, true, "panel"))
             {
                 if (widgetEngine_)
                     widgetEngine_->InvokeMouseEvent(

@@ -6,7 +6,6 @@ void DesktopApp::DispatchLuaWidgetViewKeyEvent(
     WPARAM key, bool pressed, bool repeated)
 {
     if (!widgetEngine_ || quickNavigationOpen_ ||
-        !luaWidgetPanelRequest_.widgetId.empty() ||
         IsCollectionPopupInteractive())
         return;
     const bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
@@ -56,6 +55,17 @@ void DesktopApp::OnKeyDown(WPARAM key)
     bool shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
     bool alt = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
     bool restoreFloatingDockLayer = false;
+
+    if (widgetEngine_ && !quickNavigationOpen_ &&
+        !luaWidgetPanelRequest_.widgetId.empty() &&
+        widgetEngine_->HandleHostViewKey(
+            luaWidgetPanelRequest_.widgetId,
+            key, ctrl, shift, alt, "panel"))
+    {
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        RestoreInteractionInputFocus();
+        return;
+    }
 
     if (ctrl && (key == 'Z' || key == 'Y') && widgetEngine_)
     {

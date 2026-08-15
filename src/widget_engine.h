@@ -197,6 +197,7 @@ struct LuaWidgetMenuItem
     bool elementContext = false;
     std::string actionId;
     std::string targetKey;
+    std::string surface = "desktop";
     snowdesktop::widget_runtime::InteractionValue contextValue;
     std::uint64_t interactionGeneration = 0;
 };
@@ -439,6 +440,7 @@ struct LuaWidget
         enum class Type { Button, Toggle, Input, Scroll };
         Type type = Type::Button;
         std::string id;
+        std::string surface = "desktop";
         std::string storageKey;
         RECT rect{};
         std::optional<RECT> clipRect;
@@ -514,6 +516,7 @@ struct LuaWidget
     std::vector<LuaWidgetManifest::SettingPreset> scriptPresets; ///< Lua 顶层声明式预设
     FILETIME lastModified = {};          ///< 脚本文件最后修改时间，用于变更检测
     RECT lastBounds{};                   ///< 最后一次渲染时的边界矩形
+    RECT panelBounds{};                  ///< 最后一次面板渲染时的边界矩形
     int lastColumns = 1;
     int lastRows = 1;
     snowdesktop::widget_runtime::LayoutMetrics layoutMetrics;
@@ -534,6 +537,7 @@ struct LuaWidget
     snowdesktop::widget_runtime::DeferredHostInputFocus
         deferredHostInputFocus;
     std::unordered_map<std::string, int> scrollOffsets;
+    std::unordered_map<std::string, int> panelScrollOffsets;
     std::unordered_map<std::uint64_t, std::string> dataSubscriptions;
     std::unordered_set<std::uint64_t> taskIds;
     std::unordered_map<std::string, ApplicationReference>
@@ -546,6 +550,11 @@ struct LuaWidget
     std::string viewKeyboardFocusKey;
     snowdesktop::widget_runtime::WidgetInteractionRegions interactionRegions;
     std::optional<snowdesktop::widget_runtime::ViewNode> viewTree;
+    std::string panelViewKeyboardFocusKey;
+    snowdesktop::widget_runtime::WidgetInteractionRegions
+        panelInteractionRegions;
+    std::optional<snowdesktop::widget_runtime::ViewNode> panelViewTree;
+    bool panelActive = false;
     bool panelFrameOpen = false;
     std::uint64_t runtimeToken = 0;
     bool preview = false;
@@ -828,7 +837,8 @@ public:
      * @return 菜单项数组
      */
     std::vector<LuaWidgetMenuItem> GetContextMenu(
-        const std::wstring& widgetId, int x = -1, int y = -1);
+        const std::wstring& widgetId, int x = -1, int y = -1,
+        std::string_view surface = "desktop");
 
     /**
      * @brief 触发小部件的菜单项点击回调
@@ -1226,10 +1236,11 @@ public:
         std::string_view key) const;
     bool RuntimeInteractionPressed(const std::wstring& widgetId,
         std::string_view key) const;
-    void UpdateInteractionHover(const std::wstring& widgetId, int x, int y);
-    void ClearInteractionHover();
+    void UpdateInteractionHover(const std::wstring& widgetId, int x, int y,
+        std::string_view surface = "desktop");
+    void ClearInteractionHover(std::string_view surface = {});
     std::string InteractionCursorAt(const std::wstring& widgetId,
-        int x, int y) const;
+        int x, int y, std::string_view surface = "desktop") const;
     bool RuntimeCanWriteWidgetStorage(
         const std::wstring& widgetId) const;
 
@@ -1367,7 +1378,8 @@ public:
         bool ctrl, bool shift, bool alt);
     void ClearHostViewKeyState() noexcept;
     bool HandleHostViewKey(const std::wstring& widgetId, WPARAM key,
-        bool ctrl, bool shift, bool alt);
+        bool ctrl, bool shift, bool alt,
+        std::string_view surface = "desktop");
     bool HandleHostInputChar(wchar_t ch);
     bool SetHostInputComposition(
         const std::wstring& text, size_t cursor);
@@ -1375,16 +1387,25 @@ public:
     void ClearHostInputComposition();
     bool HasFocusedHostInput() const;
     bool GetFocusedHostInputCaretRect(RECT& rect) const;
-    bool IsHostInputAt(const std::wstring& widgetId, int x, int y) const;
-    bool IsFocusedHostInputAt(const std::wstring& widgetId, int x, int y) const;
-    bool HandleHostInputPointerMove(const std::wstring& widgetId, int x, int y);
-    bool HandleHostInputPointerUp(const std::wstring& widgetId, int x, int y);
+    bool IsHostInputAt(const std::wstring& widgetId, int x, int y,
+        std::string_view surface = "desktop") const;
+    bool IsFocusedHostInputAt(const std::wstring& widgetId, int x, int y,
+        std::string_view surface = "desktop") const;
+    bool HandleHostInputPointerMove(const std::wstring& widgetId, int x, int y,
+        std::string_view surface = "desktop");
+    bool HandleHostInputPointerUp(const std::wstring& widgetId, int x, int y,
+        std::string_view surface = "desktop");
     void BlurHostInput(bool cancel = false);
-    int RuntimeGetScrollOffset(const std::wstring& widgetId, const std::string& id) const;
+    int RuntimeGetScrollOffset(const std::wstring& widgetId,
+        const std::string& id, std::string_view surface = {}) const;
     void RuntimeSetScrollOffset(const std::wstring& widgetId,
-        const std::string& id, int offset);
-    bool HandleHostUiPointer(const std::wstring& widgetId, int x, int y, int delta, bool wheel);
-    std::vector<LuaWidget::HostControl> GetScrollControls(const std::wstring& widgetId) const;
+        const std::string& id, int offset, std::string_view surface = {});
+    bool HandleHostUiPointer(const std::wstring& widgetId, int x, int y,
+        int delta, bool wheel, std::string_view surface = "desktop");
+    std::vector<LuaWidget::HostControl> GetScrollControls(
+        const std::wstring& widgetId,
+        std::string_view surface = "desktop") const;
+    void CloseWidgetPanelSurface(const std::wstring& widgetId);
 
 private:
     void BeginHostLogicalSlotPointer(
@@ -1394,7 +1415,9 @@ private:
     bool EndHostLogicalSlotPointer(
         const std::wstring& widgetId);
     void DrawHostViewInteractionOverlays(
-        const LuaWidget& widget);
+        const LuaWidget& widget,
+        const snowdesktop::widget_runtime::WidgetInteractionRegions& regions,
+        std::string_view focusedKey, bool drawLogicalSlotDrag);
     bool VerifyInstalledWidgetPackage(const std::string& packageId,
         const std::optional<std::string>& previousVersion,
         std::wstring& error);
@@ -1449,7 +1472,7 @@ private:
         int keyboardStepDirection = 0,
         std::optional<float> requestedControlValue = std::nullopt,
         std::optional<std::vector<std::string>> requestedSelectedKeys =
-            std::nullopt);
+            std::nullopt, std::string_view surface = "desktop");
     void DispatchHostInputChange(const std::wstring& widgetId,
         const std::string& targetKey,
         const snowdesktop::widget_runtime::InteractionAction& action,
@@ -1469,7 +1492,7 @@ private:
         bool cancelled, const char* source);
     void DispatchInteractionTransition(LuaWidget& widget,
         const snowdesktop::widget_runtime::InteractionHoverTransition& transition,
-        int x, int y);
+        int x, int y, std::string_view surface = "desktop");
     void DisposeWidgetLifecycle(LuaWidget& widget, const char* reason);
     void InitializeWidgetDataBroker();
     void ApplyWidgetDataBrokerActions();
@@ -1655,6 +1678,7 @@ private:
         bool active = false;
         std::wstring widgetId;
         std::string id;
+        std::string surface = "desktop";
         std::string storageKey;
         snowdesktop::widget_runtime::InteractionAction changeAction;
         snowdesktop::widget_runtime::InteractionAction focusAction;
@@ -1689,6 +1713,7 @@ private:
     {
         std::wstring widgetId;
         std::string nodeKey;
+        std::string surface = "desktop";
     };
     std::unordered_map<WPARAM, PressedViewKeyTarget>
         pressedViewKeyTargets_;

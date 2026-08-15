@@ -67,6 +67,30 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
     POINT screenPt = pt;
     ClientToScreen(hwnd_, &screenPt);
 
+    if (!luaWidgetPanelRequest_.widgetId.empty() &&
+        luaWidgetPanelAnimation_.IsInteractive())
+    {
+        const RECT panel = GetLuaWidgetPanelRect();
+        if (PtInRect(&panel, pt))
+        {
+            const RECT content = GetLuaWidgetPanelContentRect();
+            if (PtInRect(&content, pt))
+            {
+                const size_t widgetIndex = FindWidgetIndexById(
+                    luaWidgetPanelRequest_.widgetId);
+                if (widgetIndex < widgets_.size())
+                {
+                    ShowWidgetContextMenu(screenPt, widgetIndex,
+                        std::nullopt,
+                        POINT{ pt.x - content.left,
+                            pt.y - content.top },
+                        "panel");
+                }
+            }
+            return;
+        }
+    }
+
     if (DockContainer* dock = GetDockContainerAtPoint(pt))
     {
         if (DockEntryItem* dockItem = dock->EntryAtPoint(pt))

@@ -45,7 +45,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 widgetEngine_->HasFocusedHostInput() &&
                 !widgetEngine_->IsFocusedHostInputAt(
                     luaWidgetPanelRequest_.widgetId,
-                    localX, localY))
+                    localX, localY, "panel"))
             {
                 widgetEngine_->BlurHostInput(false);
             }
@@ -56,7 +56,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             if (!widgetEngine_ ||
                 !widgetEngine_->HandleHostUiPointer(
                     luaWidgetPanelRequest_.widgetId,
-                    localX, localY, 0, false))
+                    localX, localY, 0, false, "panel"))
             {
                 if (widgetEngine_)
                     widgetEngine_->InvokeMouseEvent(

@@ -120,6 +120,28 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         }
         if (widgetEngine_ && cursorPointAvailable)
         {
+            if (!luaWidgetPanelRequest_.widgetId.empty() &&
+                luaWidgetPanelAnimation_.IsInteractive())
+            {
+                const RECT content = GetLuaWidgetPanelContentRect();
+                if (PtInRect(&content, point))
+                {
+                    const std::string cursor =
+                        widgetEngine_->InteractionCursorAt(
+                            luaWidgetPanelRequest_.widgetId,
+                            point.x - content.left,
+                            point.y - content.top, "panel");
+                    LPCWSTR cursorId = nullptr;
+                    if (cursor == "hand") cursorId = IDC_HAND;
+                    else if (cursor == "text") cursorId = IDC_IBEAM;
+                    else if (cursor == "crosshair") cursorId = IDC_CROSS;
+                    if (cursorId)
+                    {
+                        SetCursor(LoadCursorW(nullptr, cursorId));
+                        return TRUE;
+                    }
+                }
+            }
             const size_t widgetIndex =
                 HitTestStandaloneWidgetIndex(point);
             if (widgetIndex < widgets_.size() &&
