@@ -253,6 +253,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget_clipboard_task_executor.cpp
     src/widget_filesystem_handle_store.cpp
     src/widget_filesystem_task_executor.cpp
+    src/widget_filesystem_watch_service.cpp
     src/widget_app_task_executor.cpp
     src/widget_system_settings.cpp
     src/widget_system_data_provider.cpp
@@ -811,6 +812,15 @@ if (BUILD_TESTING)
             src/atomic_file.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract filesystem security task lua widget)
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetFilesystemWatchServiceTests
+        widget_filesystem_watch_service
+        SOURCES
+            tests/widget_filesystem_watch_service_tests.cpp
+            src/widget_filesystem_watch_service.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS integration filesystem security data lua widget)
 
     snowdesktop_add_test(
         SnowDesktopWidgetAppTaskExecutorTests

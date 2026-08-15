@@ -1832,6 +1832,8 @@ constexpr char kFilesystemReadPermission[] =
     "filesystem.userSelected.read";
 constexpr char kFilesystemWritePermission[] =
     "filesystem.userSelected.write";
+constexpr char kFilesystemWatchPermission[] =
+    "filesystem.userSelected.watch";
 
 static bool IsFilesystemPickerTask(std::string_view taskName)
 {
@@ -3075,6 +3077,45 @@ static void PushDataSnapshotEnvelope(lua_State* state,
         PushMediaTimelineDataValue(state, snapshot->mediaTimeline);
         lua_setfield(state, -2, "timeline");
     }
+    else if (snapshot->topic == "filesystem.watch")
+    {
+        lua_createtable(state,
+            static_cast<int>(snapshot->filesystemWatchEvents.size()), 0);
+        int eventIndex = 1;
+        for (const auto& event : snapshot->filesystemWatchEvents)
+        {
+            lua_createtable(state, 0, 5);
+            lua_pushlstring(state, event.kind.data(), event.kind.size());
+            lua_setfield(state, -2, "kind");
+            lua_pushlstring(state, event.name.data(), event.name.size());
+            lua_setfield(state, -2, "name");
+            if (!event.oldName.empty())
+            {
+                lua_pushlstring(state,
+                    event.oldName.data(), event.oldName.size());
+                lua_setfield(state, -2, "oldName");
+            }
+            if (!event.handle.empty())
+            {
+                lua_pushlstring(state,
+                    event.handle.data(), event.handle.size());
+                lua_setfield(state, -2, "handle");
+            }
+            if (!event.itemKind.empty())
+            {
+                lua_pushlstring(state,
+                    event.itemKind.data(), event.itemKind.size());
+                lua_setfield(state, -2, "itemKind");
+            }
+            lua_rawseti(state, -2, eventIndex++);
+        }
+        lua_setfield(state, -2, "events");
+        lua_pushinteger(state, static_cast<lua_Integer>(
+            snapshot->filesystemWatchRevision));
+        lua_setfield(state, -2, "revision");
+        lua_pushboolean(state, snapshot->filesystemWatchOverflow);
+        lua_setfield(state, -2, "overflow");
+    }
     else if (snapshot->topic == "desktop.items" ||
         snapshot->topic == "desktop.selection")
     {
@@ -3207,12 +3248,14 @@ static int lua_DataSubscribe(lua_State* state)
         return luaL_error(state,
             "data.subscribe: expected topic and optional options");
 
-    lua_Integer maxAgeMs = 1000;
     const std::string topicValue(topic, topicLength);
+    lua_Integer maxAgeMs = 1000;
     std::string rangeStart;
     std::string rangeEnd;
-    auto hiddenPolicy =
-        snowdesktop::widget_runtime::DataHiddenPolicy::Throttle;
+    std::string scopeHandle;
+    auto hiddenPolicy = topicValue == "filesystem.watch"
+        ? snowdesktop::widget_runtime::DataHiddenPolicy::Pause
+        : snowdesktop::widget_runtime::DataHiddenPolicy::Throttle;
     if (!lua_isnoneornil(state, 2))
     {
         luaL_checktype(state, 2, LUA_TTABLE);
@@ -3260,6 +3303,31 @@ static int lua_DataSubscribe(lua_State* state)
         };
         readDateOption("fromDate", rangeStart);
         readDateOption("toDate", rangeEnd);
+
+        lua_getfield(state, 2, "handle");
+        if (!lua_isnil(state, -1))
+        {
+            size_t handleLength = 0;
+            const char* handle = luaL_checklstring(
+                state, -1, &handleLength);
+            if (handleLength == 0 || handleLength > 128)
+                return luaL_error(state,
+                    "data.subscribe: handle must contain 1 to 128 bytes");
+            scopeHandle.assign(handle, handleLength);
+        }
+        lua_pop(state, 1);
+    }
+
+    if (topicValue == "filesystem.watch")
+    {
+        if (scopeHandle.empty())
+            return luaL_error(state,
+                "data.subscribe: filesystem.watch requires a folder handle");
+    }
+    else if (!scopeHandle.empty())
+    {
+        return luaL_error(state,
+            "data.subscribe: handle is only valid for filesystem.watch");
     }
 
     if (!rangeStart.empty() || !rangeEnd.empty())
@@ -3289,7 +3357,8 @@ static int lua_DataSubscribe(lua_State* state)
     auto result = d2d->engine->RuntimeSubscribeData(
         BoundWidgetId(state), topicValue,
         std::chrono::milliseconds(maxAgeMs), hiddenPolicy,
-        std::move(rangeStart), std::move(rangeEnd));
+        std::move(rangeStart), std::move(rangeEnd),
+        std::move(scopeHandle));
     if (!result)
         return luaL_error(state, "data.subscribe: %s", result.error.c_str());
 
@@ -7510,6 +7579,10 @@ void WidgetEngine::InitializeWidgetDataBroker()
     (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
         "app.indexStatus", kAppDiscoveryPermission,
         100ms, 1000ms, 0ms, false, true }, error);
+    error.clear();
+    (void)dataBroker_->RegisterProvider(DataProviderDescriptor{
+        "filesystem.watch", kFilesystemWatchPermission,
+        100ms, 1000ms, 0ms, true, false }, error);
 
     if (previewOnly_)
     {
@@ -7539,7 +7612,8 @@ void WidgetEngine::ApplyWidgetDataBrokerActions()
             action.topic == "desktop.changes" ||
             action.topic == "calendar.events" ||
             action.topic == "calendar.selectedDate" ||
-            action.topic == "app.indexStatus";
+            action.topic == "app.indexStatus" ||
+            action.topic == "filesystem.watch";
         switch (action.type)
         {
         case DataBrokerActionType::Start:
@@ -7590,18 +7664,196 @@ void WidgetEngine::ApplyWidgetDataBrokerActions()
             break;
         }
     }
+    ReconcileFilesystemWatches();
+}
+
+void WidgetEngine::ReconcileFilesystemWatches()
+{
+    if (!dataBroker_) return;
+    for (auto& [subscriptionId, watch] : filesystemWatchBindings_)
+    {
+        if (watch.preview) continue;
+        const auto subscription =
+            dataBroker_->SubscriptionSnapshot(subscriptionId);
+        const bool shouldRun = subscription && subscription->eligible;
+        if (shouldRun == watch.desiredActive) continue;
+
+        watch.desiredActive = shouldRun;
+        watch.events.clear();
+        watch.overflow = false;
+        watch.available = false;
+        watch.warmingUp = shouldRun;
+        watch.error.clear();
+        if (!shouldRun)
+        {
+            if (filesystemWatchService_)
+                (void)filesystemWatchService_->Stop(subscriptionId);
+            continue;
+        }
+        if (!filesystemWatchService_)
+        {
+            watch.warmingUp = false;
+            watch.error = "providerUnavailable";
+            continue;
+        }
+        auto started = filesystemWatchService_->Start(subscriptionId,
+            watch.owner.instanceId, watch.directory);
+        if (!started)
+        {
+            watch.warmingUp = false;
+            watch.error = started.error.empty()
+                ? "providerUnavailable" : started.error;
+        }
+    }
+}
+
+void WidgetEngine::DrainFilesystemWatchCompletions()
+{
+    if (!filesystemWatchService_) return;
+    for (auto& completion :
+        filesystemWatchService_->DrainCompletions())
+    {
+        auto binding = filesystemWatchBindings_.find(completion.id);
+        if (binding == filesystemWatchBindings_.end()) continue;
+        auto& watch = binding->second;
+        const auto subscription = dataBroker_
+            ? dataBroker_->SubscriptionSnapshot(completion.id)
+            : std::nullopt;
+        const bool eligible = subscription && subscription->eligible &&
+            watch.desiredActive;
+
+        if (completion.kind == snowdesktop::widget_runtime::
+                WidgetFilesystemWatchCompletionKind::Started)
+        {
+            if (!eligible) continue;
+            watch.available = true;
+            watch.warmingUp = false;
+            watch.error.clear();
+            watch.timestampMs =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch())
+                    .count();
+            continue;
+        }
+        if (completion.kind == snowdesktop::widget_runtime::
+                WidgetFilesystemWatchCompletionKind::Stopped)
+        {
+            if (!watch.desiredActive)
+            {
+                watch.available = false;
+                watch.warmingUp = false;
+                watch.events.clear();
+                watch.overflow = false;
+            }
+            continue;
+        }
+        if (completion.kind == snowdesktop::widget_runtime::
+                WidgetFilesystemWatchCompletionKind::Error)
+        {
+            if (!eligible) continue;
+            watch.available = false;
+            watch.warmingUp = false;
+            watch.events.clear();
+            watch.overflow = false;
+            watch.error = completion.error.empty()
+                ? "watchFailed" : completion.error;
+            continue;
+        }
+        if (!eligible) continue;
+
+        watch.events.clear();
+        watch.overflow = completion.overflow;
+        for (const auto& event : completion.events)
+        {
+            LuaWidgetDataSnapshot::FilesystemWatchEvent publicEvent;
+            publicEvent.kind = event.kind;
+            publicEvent.name = WidgetWideToUtf8(event.name);
+            publicEvent.oldName = WidgetWideToUtf8(event.oldName);
+            if (publicEvent.name.empty()) continue;
+
+            if (event.kind != "removed")
+            {
+                const std::filesystem::path child =
+                    watch.directory / event.name;
+                const DWORD attributes = GetFileAttributesW(child.c_str());
+                if (attributes != INVALID_FILE_ATTRIBUTES &&
+                    (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0)
+                {
+                    const auto kind =
+                        (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0
+                        ? snowdesktop::widget_runtime::
+                            WidgetFilesystemHandleKind::Folder
+                        : snowdesktop::widget_runtime::
+                            WidgetFilesystemHandleKind::File;
+                    publicEvent.itemKind = std::string(
+                        snowdesktop::widget_runtime::
+                            WidgetFilesystemHandleStore::KindName(kind));
+                    if (filesystemHandleStore_)
+                    {
+                        auto grant = filesystemHandleStore_->Grant(
+                            watch.owner, child, kind, watch.access);
+                        if (grant)
+                            publicEvent.handle = grant.entry->handle;
+                    }
+                }
+            }
+            watch.events.push_back(std::move(publicEvent));
+        }
+        if (watch.events.empty() && !watch.overflow) continue;
+        watch.available = true;
+        watch.warmingUp = false;
+        watch.error.clear();
+        ++watch.revision;
+        watch.timestampMs =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch())
+                .count();
+
+        const int widgetIndex = FindWidget(
+            Utf8ToWideLocal(watch.owner.instanceId));
+        if (widgetIndex < 0 || !widgets_[widgetIndex].valid) continue;
+        LuaWidget& widget = widgets_[widgetIndex];
+        const std::uint64_t revision = watch.revision;
+        const bool overflow = watch.overflow;
+        (void)InvokeLifecycleEvent(widget, "data.change",
+            [subscriptionId = completion.id, revision, overflow]
+            (lua_State* eventState) {
+                lua_pushliteral(eventState, "filesystem.watch");
+                lua_setfield(eventState, -2, "topic");
+                lua_pushinteger(eventState,
+                    static_cast<lua_Integer>(subscriptionId));
+                lua_setfield(eventState, -2, "subscriptionId");
+                lua_pushinteger(eventState,
+                    static_cast<lua_Integer>(revision));
+                lua_setfield(eventState, -2, "revision");
+                lua_pushboolean(eventState, overflow);
+                lua_setfield(eventState, -2, "overflow");
+            });
+        RuntimeInvalidateHost(widget.widgetId);
+    }
 }
 
 void WidgetEngine::ReleaseWidgetDataSubscriptions(LuaWidget& widget)
 {
     if (!dataBroker_)
     {
+        for (const auto& [subscriptionId, _] : widget.dataSubscriptions)
+        {
+            if (filesystemWatchService_)
+                (void)filesystemWatchService_->Stop(subscriptionId);
+            filesystemWatchBindings_.erase(subscriptionId);
+        }
         widget.dataSubscriptions.clear();
         return;
     }
     const auto now = snowdesktop::widget_runtime::WidgetDataBroker::Clock::now();
     for (const auto& [subscriptionId, _] : widget.dataSubscriptions)
+    {
+        if (filesystemWatchService_)
+            (void)filesystemWatchService_->Stop(subscriptionId);
+        filesystemWatchBindings_.erase(subscriptionId);
         (void)dataBroker_->Unsubscribe(subscriptionId, now);
+    }
     widget.dataSubscriptions.clear();
     ApplyWidgetDataBrokerActions();
 }
@@ -8741,7 +8993,13 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                     filesystemTaskHandles_.end(),
                     [&handle](const auto& active) {
                         return active.second == handle->second;
-                    });
+                    }) || std::any_of(
+                        filesystemWatchBindings_.begin(),
+                        filesystemWatchBindings_.end(),
+                        [&handle](const auto& active) {
+                            return active.second.sourceHandle ==
+                                handle->second;
+                        });
                 if (busy)
                 {
                     (void)taskBroker_->Complete(
@@ -9573,6 +9831,8 @@ bool WidgetEngine::Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFa
             filesystemHandleError + "\n";
         OutputDebugStringA(diagnostic.c_str());
     }
+    filesystemWatchService_ = std::make_unique<
+        snowdesktop::widget_runtime::WidgetFilesystemWatchService>();
     calendarService_ =
         std::make_unique<
             snowdesktop::calendar::CalendarService>(
@@ -9681,6 +9941,7 @@ void WidgetEngine::Shutdown()
     mediaTaskExecutor_.reset();
     audioOutputTaskExecutor_.reset();
     clipboardTaskExecutor_.reset();
+    filesystemWatchService_.reset();
     filesystemHandleStore_.reset();
     filesystemTaskExecutor_.reset();
     appTaskExecutor_.reset();
@@ -9694,6 +9955,7 @@ void WidgetEngine::Shutdown()
     filesystemPickerCompletions_.clear();
     filesystemTaskCompletions_.clear();
     filesystemTaskHandles_.clear();
+    filesystemWatchBindings_.clear();
     networkTaskRequests_.clear();
     networkRequestTasks_.clear();
     taskBroker_.reset();
@@ -9768,6 +10030,14 @@ void WidgetEngine::RevokeFilesystemHandlesForPackage(
     const std::string& packageId)
 {
     if (!filesystemHandleStore_ || packageId.empty()) return;
+    std::vector<std::uint64_t> subscriptions;
+    for (const auto& [subscriptionId, watch] : filesystemWatchBindings_)
+    {
+        if (watch.owner.packageId == packageId)
+            subscriptions.push_back(subscriptionId);
+    }
+    for (const auto subscriptionId : subscriptions)
+        (void)RuntimeUnsubscribeData(subscriptionId);
     std::string error;
     (void)filesystemHandleStore_->RevokePackage(packageId, error);
 }
@@ -12028,6 +12298,7 @@ void WidgetEngine::TickRuntime()
         dataBroker_->Tick(runtimeNow);
         ApplyWidgetDataBrokerActions();
     }
+    DrainFilesystemWatchCompletions();
     ApplyWidgetTaskBrokerActions();
     if (widgetSystemDataProvider_)
     {
@@ -13068,7 +13339,8 @@ WidgetEngine::RuntimeSubscribeData(
     const std::wstring& widgetId, std::string topic,
     std::chrono::milliseconds maxAge,
     snowdesktop::widget_runtime::DataHiddenPolicy whenHidden,
-    std::string rangeStart, std::string rangeEnd)
+    std::string rangeStart, std::string rangeEnd,
+    std::string scopeHandle)
 {
     using snowdesktop::widget_runtime::DataSubscriptionOptions;
     if (!dataBroker_)
@@ -13078,6 +13350,43 @@ WidgetEngine::RuntimeSubscribeData(
         return { 0, "widget instance is not loaded" };
 
     LuaWidget& widget = widgets_[index];
+    std::optional<FilesystemWatchBinding> filesystemWatch;
+    if (topic == "filesystem.watch")
+    {
+        if (scopeHandle.empty()) return { 0, "folder handle is required" };
+        FilesystemWatchBinding binding;
+        binding.owner = {
+            WidgetWideToUtf8(widget.widgetId), widget.packageId };
+        binding.sourceHandle = scopeHandle;
+        binding.preview = widget.preview;
+        if (widget.preview && IsPreviewFilesystemHandle(scopeHandle))
+        {
+            binding.directory = L"Preview Folder";
+            binding.access = snowdesktop::widget_runtime::
+                WidgetFilesystemHandleAccess::Read;
+            binding.available = true;
+            binding.warmingUp = false;
+        }
+        else
+        {
+            if (!filesystemHandleStore_)
+                return { 0, "filesystem handle provider is unavailable" };
+            const auto entry = filesystemHandleStore_->Resolve(
+                binding.owner, scopeHandle);
+            if (!entry) return { 0, "invalid filesystem handle" };
+            if (entry->kind != snowdesktop::widget_runtime::
+                    WidgetFilesystemHandleKind::Folder)
+                return { 0, "filesystem handle is not a folder" };
+            binding.directory = entry->path;
+            binding.access = entry->access;
+        }
+        filesystemWatch = std::move(binding);
+    }
+    else if (!scopeHandle.empty())
+    {
+        return { 0, "scope handle is not supported for this topic" };
+    }
+
     DataSubscriptionOptions options;
     options.requestedInterval = maxAge;
     options.whenHidden = whenHidden;
@@ -13096,6 +13405,9 @@ WidgetEngine::RuntimeSubscribeData(
     if (result)
     {
         widget.dataSubscriptions.emplace(result.id, std::move(topic));
+        if (filesystemWatch)
+            filesystemWatchBindings_.emplace(
+                result.id, std::move(*filesystemWatch));
         ApplyWidgetDataBrokerActions();
     }
     return result;
@@ -13115,6 +13427,9 @@ bool WidgetEngine::RuntimeUnsubscribeData(
         }
     }
     if (!owned) return false;
+    if (filesystemWatchService_)
+        (void)filesystemWatchService_->Stop(subscriptionId);
+    filesystemWatchBindings_.erase(subscriptionId);
     const bool removed = dataBroker_->Unsubscribe(subscriptionId,
         snowdesktop::widget_runtime::WidgetDataBroker::Clock::now());
     ApplyWidgetDataBrokerActions();
@@ -13380,11 +13695,38 @@ WidgetEngine::RuntimeGetDataSnapshot(
             result.appIndexState = "ready";
             result.appIndexRevision = 1;
         }
+        else if (result.topic == "filesystem.watch")
+        {
+            result.filesystemWatchEvents.push_back({
+                "added", "Preview.txt", {},
+                "filesystem:11111111111111111111111111111111",
+                "file" });
+            result.filesystemWatchRevision = 1;
+            result.filesystemWatchOverflow = false;
+        }
         return result;
     }
     if (!binding->options.permissionGranted)
     {
         result.error = "permissionDenied";
+        return result;
+    }
+    if (result.topic == "filesystem.watch")
+    {
+        const auto watch = filesystemWatchBindings_.find(subscriptionId);
+        if (watch == filesystemWatchBindings_.end())
+        {
+            result.error = "invalidReference";
+            return result;
+        }
+        result.available = watch->second.available;
+        result.warmingUp = watch->second.warmingUp;
+        result.timestampMs = watch->second.timestampMs;
+        result.stale = false;
+        result.error = watch->second.error;
+        result.filesystemWatchEvents = watch->second.events;
+        result.filesystemWatchRevision = watch->second.revision;
+        result.filesystemWatchOverflow = watch->second.overflow;
         return result;
     }
     if (!widgetSystemDataProvider_)

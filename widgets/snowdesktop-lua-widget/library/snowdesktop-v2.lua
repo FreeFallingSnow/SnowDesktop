@@ -595,6 +595,9 @@ function schedule.cancel(id) end
 ---@field fromDate? string YYYY-MM-DD; must be paired with toDate.
 ---@field toDate? string YYYY-MM-DD; range is limited to 366 days.
 
+---@class SnowFilesystemWatchSubscribeOptions: SnowDataSubscribeOptions
+---@field handle string Opaque folder handle returned by filesystem.pickFolder.
+
 ---@class SnowCpuDataValue
 ---@field usagePercent number
 ---@field logicalProcessors integer
@@ -803,6 +806,18 @@ function schedule.cancel(id) end
 ---@field state 'ready'|'indexing'|'error'|'unavailable'
 ---@field revision integer
 
+---@class SnowFilesystemWatchEvent
+---@field kind 'added'|'removed'|'modified'|'renamed'
+---@field name string Display-only direct child name.
+---@field oldName? string Display-only previous name for renamed events.
+---@field handle? string Opaque child handle when the child still exists and can be granted.
+---@field itemKind? 'file'|'folder'
+
+---@class SnowFilesystemWatchDataValue
+---@field events SnowFilesystemWatchEvent[] At most 256 coalesced direct-child events.
+---@field revision integer
+---@field overflow boolean True when changes were lost and the caller should run filesystem.list again.
+
 ---@class SnowDataSnapshot<T>
 ---@field available boolean
 ---@field value? T
@@ -841,6 +856,7 @@ data = {}
 ---@overload fun(topic: 'calendar.events', options?: SnowCalendarEventsSubscribeOptions): SnowDataSubscription<SnowCalendarEventsDataValue>
 ---@overload fun(topic: 'calendar.selectedDate', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowCalendarSelectedDateDataValue>
 ---@overload fun(topic: 'app.indexStatus', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowAppIndexStatusDataValue>
+---@overload fun(topic: 'filesystem.watch', options: SnowFilesystemWatchSubscribeOptions): SnowDataSubscription<SnowFilesystemWatchDataValue>
 ---@param topic string
 ---@param options? SnowDataSubscribeOptions
 ---@return SnowDataSubscription<table>

@@ -597,7 +597,8 @@ local snapshot = cpu:value()
 `data.audio.output.volume`、`data.audio.output.analysis`，和
 `data.media.sessions/current/timeline`、
 `data.desktop.items/selection/changes`、
-`data.calendar.events/selectedDate`、`data.app.indexStatus` feature。
+`data.calendar.events/selectedDate`、`data.app.indexStatus` 和
+`data.filesystem.watch` feature。
 Lua 订阅句柄已接通 `WidgetDataBroker` 与独立工作线程 provider：首个合格订阅按需
 启动对应 topic，多实例共享有效采样率，数据变化只使依赖实例失效，隐藏状态进入
 pause/throttle，最后订阅进入 idle grace，卸载、热重载和关闭自动释放。CPU 冷启动
@@ -761,7 +762,8 @@ local taskId, err = task.start("media.toggle", { sessionId = session.id })
 `task.app.launch`、`task.notification.show`、`task.calendar.write`、
 `task.network.request`、`task.shell.openUri`、`task.desktop.search`、
 `task.everything.search`、`task.shell.item`、`task.system.openSettings`、
-`task.clipboard.text`、`task.filesystem.picker`、`task.filesystem.access` 和
+`task.clipboard.text`、`task.filesystem.picker`、`task.filesystem.access`、
+`data.filesystem.watch` 和
 `task.desktop.refresh` feature，完整媒体
 控制动作、两个应用任务、一次性通知、本地日历 create/update/remove、公网 HTTPS GET、
 可信手势外链、用户选择文件/目录、桌面/Everything 项目搜索及受控打开、定位和刷新任务。
@@ -787,8 +789,11 @@ bluetooth/power/storage/apps/personalization 页面，并在可信手势和 `she
 持久化并同时绑定 package ID 与实例 ID，删除实例或卸载包时撤销。
 `task.filesystem.access` 在同一边界上增加异步 `stat/list/read/write/release`：只枚举
 一层目录并分页，将子项继续转换为 opaque handle；文本读写限制为 1 MiB UTF-8，写入
-使用原子替换、可选 expected revision 冲突检测和每实例限速。当前尚未发布
-`filesystem.watch`，组件也不能解释句柄或回退为路径。API v1
+使用原子替换、可选 expected revision 冲突检测和每实例限速。
+`filesystem.watch` 现已作为实例参数化数据订阅公开：只接受 folder handle，以 IOCP
+承载非递归 `ReadDirectoryChangesW`，合并 added/removed/modified/renamed 并在丢失变化时
+报告 overflow；隐藏默认且强制 pause，退订、实例 dispose、撤权和 shutdown 会关闭目录
+句柄并清空事件。组件仍不能解释句柄或回退为路径。API v1
 同步 `media.playPause/next/previous` 已通过函数版本上限从 v2 VM 隐藏，不能绕过
 手势门禁。应用搜索从 UI 线程复制宿主索引为不可变、有上限的目录快照，在独立任务
 线程完成名称/拼音排序与分页，只向 Lua 返回展示字段和实例作用域的不透明引用；
@@ -808,12 +813,12 @@ SDK 的其他调用串行。两类搜索都只返回实例作用域的不透明�
 
 - `system.read` 把性能、电源、存储、网络和显示混成一个权限，无法做到最小授权。
 - 只有单一聚合 CPU/GPU/网络快照，缺少多 GPU/多卷/多显示器结构、网络连接状态与流量拆分，以及统一的单位、时间戳和 warming/stale 语义。
-- clipboard 文本、文件选择句柄和 stat/list/read/write 已有首批任务；文件 watch、
-  剪贴板图片/文件引用、二进制/流式文件访问与递归目录能力仍未完成。
+- clipboard 文本、文件选择句柄、stat/list/read/write 和非递归文件 watch 已有首批
+  能力；剪贴板图片/文件引用、二进制/流式文件访问与递归目录能力仍未完成。
 - 媒体只支持四个调用，缺少会话列表、时间线、封面句柄、seek/stop，以及按源能力报告可用动作。
 - 音频分析已经设计，但普通 endpoint 读取、音量/静音订阅和受控修改尚未列入公共面。
 - 当前 `sys.notify` 是 tray balloon 级接口，缺少通知 ID、更新、撤销、动作回传、调度、频控和失败状态。
-- 缺少 OS/架构 feature probe、时区/区域格式化、显示环境、存储卷、文件变化和网络 cost/metered 等常见组件能力。
+- 缺少 OS/架构 feature probe，以及更完整的时区/区域格式化等常见组件能力。
 
 API v2 不把 Win32、COM 或 WinRT 原样暴露给 Lua，而是固定为四个平面：
 

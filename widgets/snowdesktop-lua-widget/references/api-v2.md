@@ -303,13 +303,13 @@ ID 为 1–128 字节，每个实例最多 32 个计划；周期请求范围是 
 
 ### `data`
 
-当前公开二十二个按需数据源：`system.cpu`、`system.memory`、`system.gpu`、`system.power`、
+当前公开二十三个按需数据源：`system.cpu`、`system.memory`、`system.gpu`、`system.power`、
 `system.network.status`、`system.network.traffic`、`system.storage.volumes`、
 `system.storage.io`、`system.display.topology`、`system.display.current`、
 `audio.output.default`、`audio.output.volume`、`audio.output.analysis`、
 `media.sessions`、`media.current`、`media.timeline`、`desktop.items`、
 `desktop.selection`、`desktop.changes`、`calendar.events` 和
-`calendar.selectedDate`，以及 `app.indexStatus`。在 `setup` 或模块
+`calendar.selectedDate`、`app.indexStatus`，以及 `filesystem.watch`。在 `setup` 或模块
 入口创建订阅，不要在每次 `render` 中重复订阅：
 
 ```lua
@@ -599,7 +599,38 @@ local releaseTask = task.start("filesystem.release", {
 `handleAccessDenied`、`notFile`、`notFolder`、`notFound`、`accessDenied`、
 `reparsePointDenied`、`fileTooLarge`、`fileChanged`、`readFailed`、`writeFailed`、
 `rateLimited`、`permissionRevoked` 和 `canceled`。这些任务不接受路径，也不递归遍历；
-`filesystem.watch` 仍未发布。
+目录监听使用独立权限 `filesystem.userSelected.watch`，只接受
+`filesystem.pickFolder` 返回且仍属于当前包、当前实例的 folder handle：
+
+```lua
+local changes = data.subscribe("filesystem.watch", {
+    handle = selectedFolder,
+    whenHidden = "pause",
+})
+
+local snapshot = changes:value()
+if snapshot.available then
+    for _, change in ipairs(snapshot.value.events) do
+        -- kind: added / removed / modified / renamed
+        -- name/oldName 仅用于显示；仍存在的子项可能带 opaque handle
+    end
+    if snapshot.value.overflow then
+        task.start("filesystem.list", { handle = selectedFolder })
+    end
+end
+```
+
+监听只覆盖所选目录的一层，不递归、不跟随 reparse point，也不返回绝对路径。宿主通过
+`ReadDirectoryChangesW` 按 subscription 隔离监听，并把连续通知合并到最多 256 个事件；
+内核缓冲溢出时返回 `overflow=true`，调用方必须重新 `filesystem.list`，不能把事件列表
+当作完整目录状态。隐藏策略固定收敛为 pause；隐藏、退订、卸载、撤权与关闭都会立即取消
+监听并清空待发事件。`data.change` 会带 `topic="filesystem.watch"`、`subscriptionId`、
+`revision` 和 `overflow`，同一组件监听多个目录时应按 subscription ID 区分。
+
+`filesystem.release` 在对应目录仍被订阅时返回 `handleBusy`。稳定监听错误包括
+`invalidReference`、`notFolder`、`permissionDenied`、`invalidDirectory`、
+`watchOpenFailed`、`watchStartFailed`、`watchReadFailed` 和 `watchRestartFailed`。
+feature 为 `data.filesystem.watch`。
 
 `app.search` 要求 `app.discovery`，不要求用户手势；参数是严格的普通表：`query`
 为 1–256 字节有效 UTF-8，`limit` 默认为 50、范围 1–100，`offset` 默认为 0、范围

@@ -43,6 +43,7 @@
 #include "widget_clipboard_task_executor.h"
 #include "widget_filesystem_handle_store.h"
 #include "widget_filesystem_task_executor.h"
+#include "widget_filesystem_watch_service.h"
 #include "widget_app_task_executor.h"
 #include "widget_trusted_gesture.h"
 #include "widget_system_data_provider.h"
@@ -321,6 +322,15 @@ struct LuaWidgetContextState
 
 struct LuaWidgetDataSnapshot
 {
+    struct FilesystemWatchEvent
+    {
+        std::string kind;
+        std::string name;
+        std::string oldName;
+        std::string handle;
+        std::string itemKind;
+    };
+
     std::string topic;
     bool available = false;
     bool stale = true;
@@ -364,6 +374,9 @@ struct LuaWidgetDataSnapshot
     bool calendarTruncated = false;
     std::string appIndexState;
     std::uint64_t appIndexRevision = 0;
+    std::vector<FilesystemWatchEvent> filesystemWatchEvents;
+    std::uint64_t filesystemWatchRevision = 0;
+    bool filesystemWatchOverflow = false;
 };
 
 struct LuaApplicationCatalogSnapshot
@@ -926,7 +939,8 @@ public:
             const std::wstring& widgetId, std::string topic,
             std::chrono::milliseconds maxAge,
             snowdesktop::widget_runtime::DataHiddenPolicy whenHidden,
-            std::string rangeStart = {}, std::string rangeEnd = {});
+            std::string rangeStart = {}, std::string rangeEnd = {},
+            std::string scopeHandle = {});
     bool RuntimeUnsubscribeData(std::uint64_t subscriptionId);
     std::optional<LuaWidgetDataSnapshot> RuntimeGetDataSnapshot(
         std::uint64_t subscriptionId) const;
@@ -1203,6 +1217,8 @@ private:
     void DisposeWidgetLifecycle(LuaWidget& widget, const char* reason);
     void InitializeWidgetDataBroker();
     void ApplyWidgetDataBrokerActions();
+    void ReconcileFilesystemWatches();
+    void DrainFilesystemWatchCompletions();
     void ReleaseWidgetDataSubscriptions(LuaWidget& widget);
     void InitializeWidgetTaskBroker();
     void ApplyWidgetTaskBrokerActions();
@@ -1263,6 +1279,9 @@ private:
         snowdesktop::widget_runtime::WidgetFilesystemTaskExecutor>
         filesystemTaskExecutor_;
     std::unique_ptr<
+        snowdesktop::widget_runtime::WidgetFilesystemWatchService>
+        filesystemWatchService_;
+    std::unique_ptr<
         snowdesktop::widget_runtime::WidgetAppTaskExecutor>
         appTaskExecutor_;
     std::unique_ptr<
@@ -1307,6 +1326,25 @@ private:
         filesystemTaskCompletions_;
     std::unordered_map<std::uint64_t, std::string>
         filesystemTaskHandles_;
+    struct FilesystemWatchBinding
+    {
+        snowdesktop::widget_runtime::WidgetFilesystemHandleOwner owner;
+        std::filesystem::path directory;
+        std::string sourceHandle;
+        snowdesktop::widget_runtime::WidgetFilesystemHandleAccess access =
+            snowdesktop::widget_runtime::WidgetFilesystemHandleAccess::Read;
+        std::vector<LuaWidgetDataSnapshot::FilesystemWatchEvent> events;
+        std::uint64_t revision = 0;
+        std::int64_t timestampMs = 0;
+        bool desiredActive = false;
+        bool preview = false;
+        bool available = false;
+        bool warmingUp = true;
+        bool overflow = false;
+        std::string error;
+    };
+    std::unordered_map<std::uint64_t, FilesystemWatchBinding>
+        filesystemWatchBindings_;
     std::unordered_map<std::uint64_t, int> networkTaskRequests_;
     std::unordered_map<int, std::uint64_t> networkRequestTasks_;
     snowdesktop::widget_runtime::WidgetTrustedGestureState

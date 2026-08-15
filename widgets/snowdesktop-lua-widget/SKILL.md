@@ -170,8 +170,11 @@ menu.
   its display-only name. Probe `task.filesystem.access` before using bounded
   `filesystem.stat/list/read/write/release` tasks. Preserve revisions and pass
   `expectedRevision` when updating content. Never parse, log, or replace a
-  handle with a filesystem path; recursive traversal and watch are not yet
-  available.
+  handle with a filesystem path. For direct-child change notifications,
+  declare `filesystem.userSelected.watch`, probe `data.filesystem.watch`, and
+  subscribe with the selected folder handle. Treat `overflow=true` as a signal
+  to run a fresh bounded `filesystem.list`; watching pauses while hidden and
+  never recurses or follows reparse points.
 - Search applications with the bounded `task.start("app.search", { query,
   limit, offset })` task and retain only its opaque `ref` values. Launch one
   with `task.start("app.launch", { ref = item.ref })` inside the direct click
