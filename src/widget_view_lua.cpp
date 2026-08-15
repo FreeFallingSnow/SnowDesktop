@@ -907,7 +907,7 @@ bool ReadGridTracksField(lua_State* state, int table, const char* field,
         if (parsed <= 0 || parsed > 64)
         {
             error = std::string("view field '") + field +
-                "' must contain 1 to 64 tracks";
+                "' must be a positive integer from 1 to 64 or a track array";
             return false;
         }
         count = static_cast<std::size_t>(parsed);
