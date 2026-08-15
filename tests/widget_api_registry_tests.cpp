@@ -272,6 +272,10 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "task.clipboard.text") &&
             snowdesktop::widget_api::SupportsFeature(
+                "task.clipboard.image") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "task.clipboard.fileReference") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "task.filesystem.picker") &&
             snowdesktop::widget_api::SupportsFeature(
                 "task.filesystem.access") &&

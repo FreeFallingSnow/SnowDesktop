@@ -903,15 +903,32 @@ function data.subscribe(topic, options) end
 ---@field accepted boolean Whether Windows accepted the settings URI, or true for the deterministic preview mock.
 
 ---@class SnowClipboardReadArguments
----@field format 'text' The only clipboard format currently exposed by v2.
+---@field format 'text'|'image'|'file-reference' Explicit bounded clipboard format to read.
 
 ---@class SnowClipboardWriteArguments
 ---@field format 'text' The only clipboard format currently exposed by v2.
 ---@field text string Valid UTF-8 containing at most 262144 bytes and no NUL.
 
----@class SnowClipboardReadTaskValue
+---@class SnowClipboardTextReadTaskValue
 ---@field format 'text'
 ---@field text string Bounded UTF-8 clipboard text.
+
+---@class SnowClipboardImageReadTaskValue
+---@field format 'image'
+---@field image SnowImageResource Temporary instance-scoped image handle for draw.image or view.image.source; do not persist it.
+---@field width integer Decoded width after host scaling, from 1 through 512.
+---@field height integer Decoded height after host scaling, from 1 through 512.
+
+---@class SnowClipboardFileReference
+---@field ref string Opaque instance-scoped item reference accepted by draw.icon and shell.openItem/revealItem; never a path or file-content grant.
+---@field name string Display-only file or folder name.
+---@field type 'file'|'folder'
+
+---@class SnowClipboardFileReferenceReadTaskValue
+---@field format 'file-reference'
+---@field items SnowClipboardFileReference[] At most 32 current clipboard file references.
+
+---@alias SnowClipboardReadTaskValue SnowClipboardTextReadTaskValue|SnowClipboardImageReadTaskValue|SnowClipboardFileReferenceReadTaskValue
 
 ---@class SnowFilesystemPickOpenArguments
 ---@field extensions? string[] Up to 16 safe extension names without wildcards, for example {'png', 'jpg'}.

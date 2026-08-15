@@ -276,28 +276,6 @@ std::string BoundedMediaString(std::wstring_view value)
     return result;
 }
 
-std::string ArtworkResourceToken(const WidgetMediaArtworkPixels& pixels)
-{
-    constexpr std::uint64_t offset = 14695981039346656037ull;
-    constexpr std::uint64_t prime = 1099511628211ull;
-    std::uint64_t hash = offset;
-    const auto mix = [&](std::uint64_t value) {
-        for (int shift = 0; shift < 64; shift += 8)
-        {
-            hash ^= (value >> shift) & 0xffu;
-            hash *= prime;
-        }
-    };
-    mix(pixels.width);
-    mix(pixels.height);
-    for (const std::uint8_t value : pixels.bgraPremultiplied)
-    {
-        hash ^= value;
-        hash *= prime;
-    }
-    return "@media:" + std::to_string(hash);
-}
-
 std::uint64_t MediaArtworkIdentity(std::string_view sessionId,
     std::string_view title, std::string_view artist, std::string_view album)
 {
@@ -431,7 +409,7 @@ WidgetMediaArtworkDataSnapshot DecodeMediaArtwork(
             snapshot.error = "artworkDecodeFailed";
             return snapshot;
         }
-        auto pixels = std::make_shared<WidgetMediaArtworkPixels>();
+        auto pixels = std::make_shared<WidgetRuntimeImagePixels>();
         pixels->width = width;
         pixels->height = height;
         pixels->stride = width * 4;
@@ -444,7 +422,8 @@ WidgetMediaArtworkDataSnapshot DecodeMediaArtwork(
             snapshot.error = "artworkDecodeFailed";
             return snapshot;
         }
-        snapshot.resourceToken = ArtworkResourceToken(*pixels);
+        snapshot.resourceToken = MakeWidgetRuntimeImageToken(
+            "media", *pixels);
         snapshot.pixels = std::move(pixels);
         snapshot.available = true;
     }

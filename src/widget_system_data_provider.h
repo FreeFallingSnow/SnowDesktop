@@ -1,5 +1,7 @@
 #pragma once
 
+#include "widget_runtime_image.h"
+
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -244,20 +246,12 @@ struct WidgetMediaSessionDataSnapshot
     WidgetMediaTimelineDataSnapshot timeline;
 };
 
-struct WidgetMediaArtworkPixels
-{
-    std::uint32_t width = 0;
-    std::uint32_t height = 0;
-    std::uint32_t stride = 0;
-    std::vector<std::uint8_t> bgraPremultiplied;
-};
-
 struct WidgetMediaArtworkDataSnapshot
 {
     bool available = false;
     std::string sessionId;
     std::string resourceToken;
-    std::shared_ptr<const WidgetMediaArtworkPixels> pixels;
+    std::shared_ptr<const WidgetRuntimeImagePixels> pixels;
     std::uint64_t mediaIdentity = 0;
     std::int64_t timestampMs = 0;
     std::uint64_t revision = 0;

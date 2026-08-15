@@ -765,7 +765,8 @@ local taskId, err = task.start("media.toggle", { sessionId = session.id })
 `task.app.launch`、`task.notification.show`、`task.calendar.write`、
 `task.network.request`、`task.shell.openUri`、`task.desktop.search`、
 `task.everything.search`、`task.shell.item`、`task.system.openSettings`、
-`task.clipboard.text`、`task.filesystem.picker`、`task.filesystem.access`、
+`task.clipboard.text`、`task.clipboard.image`、`task.clipboard.fileReference`、
+`task.filesystem.picker`、`task.filesystem.access`、
 `data.filesystem.watch` 和
 `task.desktop.refresh` feature，完整媒体
 控制动作、两个应用任务、一次性通知、本地日历 create/update/remove、公网 HTTPS GET、
@@ -784,9 +785,11 @@ GUID，同一实例以 100 ms 最小间隔限速，不开放逐进程或非默�
 `system.openSettings` 只接受宿主枚举的 notifications/audio/display/network/
 bluetooth/power/storage/apps/personalization 页面，并在可信手势和 `shell.launch` 权限下
 映射为固定 `ms-settings:` URI；Lua 不能传 scheme、查询参数或原始 URI。
-文本剪贴板首批公开 `clipboard.read/write/clear`：读取和修改分别要求独立权限，三者
-均要求可信手势、256 KiB UTF-8 上限、100 ms 每实例限速、异步取消和确定性预览；
-当前不开放图片、文件引用或历史，也不允许把文本路径冒充文件句柄。
+剪贴板公开 `clipboard.read/write/clear`：读取和修改分别要求独立权限，三者均要求
+可信手势、100 ms 每实例限速、异步取消和确定性预览。read 显式支持 text、image 和
+file-reference；文本限制为 256 KiB UTF-8，图片限制 64 MiB 输入、16384 源尺寸并缩放
+到 512 像素以内的实例临时图片句柄，文件引用一次最多 32 项且只返回可用于图标、打开
+和定位的不透明引用，不授予路径或内容读取。write/clear 仍只支持文本，历史不开放。
 `filesystem.pickOpen/pickSave/pickFolder` 已通过系统选择器公开首批用户授予范围；
 返回值只包含随机 opaque handle、kind、access 和显示名称，注册记录在 Lua 普通存储之外
 持久化并同时绑定 package ID 与实例 ID，删除实例或卸载包时撤销。
@@ -816,8 +819,8 @@ SDK 的其他调用串行。两类搜索都只返回实例作用域的不透明�
 
 - `system.read` 把性能、电源、存储、网络和显示混成一个权限，无法做到最小授权。
 - 只有单一聚合 CPU/GPU/网络快照，缺少多 GPU/多卷/多显示器结构、网络连接状态与流量拆分，以及统一的单位、时间戳和 warming/stale 语义。
-- clipboard 文本、文件选择句柄、stat/list/read/write 和非递归文件 watch 已有首批
-  能力；剪贴板图片/文件引用、二进制/流式文件访问与递归目录能力仍未完成。
+- clipboard 文本/图片/文件引用、文件选择句柄、stat/list/read/write 和非递归文件
+  watch 已有首批能力；二进制/流式文件访问、递归目录和剪贴板历史仍未完成。
 - 媒体会话列表、当前会话、时间线、限尺寸封面句柄、seek/stop 和逐源动作能力已形成首批
   公共面；后续缺口是 GSMTC 事件驱动更新以及更多播放器的兼容性矩阵和实机验证。
 - 音频分析已经设计，但普通 endpoint 读取、音量/静音订阅和受控修改尚未列入公共面。

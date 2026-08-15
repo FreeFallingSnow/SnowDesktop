@@ -163,10 +163,15 @@ menu.
 - Open Windows Settings only with `system.openSettings` and one documented
   page name. Declare `shell.launch`, start it from a direct trusted gesture,
   and never accept or construct a raw `ms-settings:` URI in widget code.
-- Read, write, or clear clipboard text only through `clipboard.read/write/clear`
-  from a direct trusted gesture. Declare `clipboard.read` separately from
-  `clipboard.write`, keep text within 256 KiB, and do not claim image, file
-  reference, or history access until those feature probes are published.
+- Read clipboard `text`, `image`, or `file-reference` only through
+  `clipboard.read` from a direct trusted gesture. Probe
+  `task.clipboard.image` or `task.clipboard.fileReference` before using the
+  latter formats. Treat returned image handles and item refs as temporary and
+  instance-scoped; never infer a path or file-content grant from a file ref.
+  Clipboard write and clear remain text-only through
+  `clipboard.write/clear`; declare `clipboard.read` separately from
+  `clipboard.write`, keep text within 256 KiB, and do not claim clipboard
+  history access.
 - Ask the user to grant a concrete file or folder only through
   `filesystem.pickOpen/pickSave/pickFolder` in a direct trusted gesture.
   Declare `filesystem.userSelected.read` and/or `.write` for the requested

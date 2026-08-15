@@ -672,7 +672,9 @@ struct PrivateFontResource
 struct RuntimeImageResource
 {
     std::shared_ptr<const snowdesktop::widget_runtime::
-        WidgetMediaArtworkPixels> pixels;
+        WidgetRuntimeImagePixels> pixels;
+    std::wstring ownerWidgetId;
+    std::string source;
 };
 
 struct D2DState
@@ -708,27 +710,99 @@ struct D2DState
         privateTextFormatCache;
 };
 
-static void RegisterRuntimeImageSource(D2DState* state,
-    const snowdesktop::widget_runtime::WidgetMediaArtworkDataSnapshot& artwork)
+static std::string BindRuntimeImageToken(
+    std::string_view token, std::wstring_view widgetId)
 {
-    if (!state || !artwork.available || !artwork.pixels ||
-        !artwork.resourceToken.starts_with("@media:") ||
-        artwork.resourceToken.size() > 64 ||
-        artwork.pixels->width == 0 || artwork.pixels->height == 0 ||
-        artwork.pixels->width > 512 || artwork.pixels->height > 512 ||
-        artwork.pixels->stride != artwork.pixels->width * 4 ||
-        artwork.pixels->bgraPremultiplied.size() !=
-            static_cast<std::size_t>(artwork.pixels->stride) *
-                artwork.pixels->height)
-        return;
-    if (!state->runtimeImages.contains(artwork.resourceToken) &&
-        state->runtimeImages.size() >= 64)
+    if (!snowdesktop::widget_runtime::IsWidgetRuntimeImageToken(token) ||
+        widgetId.empty())
+        return {};
+    constexpr std::uint64_t offset = 14695981039346656037ull;
+    constexpr std::uint64_t prime = 1099511628211ull;
+    std::uint64_t hash = offset;
+    for (const wchar_t character : widgetId)
     {
-        state->runtimeImages.clear();
-        state->runtimeImageBitmaps.clear();
+        hash ^= static_cast<std::uint16_t>(character);
+        hash *= prime;
+    }
+    std::string result(token);
+    result.push_back(':');
+    result.append(std::to_string(hash));
+    return result.size() <= 64 ? result : std::string{};
+}
+
+static std::string RegisterRuntimeImageSource(D2DState* state,
+    const std::wstring& widgetId, std::string_view token,
+    std::shared_ptr<const snowdesktop::widget_runtime::
+        WidgetRuntimeImagePixels> pixels,
+    std::string source)
+{
+    const std::string boundToken = BindRuntimeImageToken(token, widgetId);
+    if (!state || boundToken.empty() || !pixels ||
+        !snowdesktop::widget_runtime::IsValidWidgetRuntimeImage(*pixels) ||
+        source.empty())
+        return {};
+    const std::size_t ownerCount = static_cast<std::size_t>(std::count_if(
+        state->runtimeImages.begin(), state->runtimeImages.end(),
+        [&widgetId](const auto& item) {
+            return item.second.ownerWidgetId == widgetId;
+        }));
+    if ((!state->runtimeImages.contains(boundToken) && ownerCount >= 16) ||
+        state->runtimeImages.size() >= 128)
+    {
+        std::vector<std::string> removed;
+        for (const auto& [key, resource] : state->runtimeImages)
+        {
+            if (resource.ownerWidgetId == widgetId) removed.push_back(key);
+        }
+        for (const auto& key : removed)
+        {
+            state->runtimeImages.erase(key);
+            state->runtimeImageBitmaps.erase(key);
+        }
+    }
+    if (!state->runtimeImages.contains(boundToken) &&
+        state->runtimeImages.size() >= 128)
+    {
+        const std::string evicted = state->runtimeImages.begin()->first;
+        state->runtimeImages.erase(evicted);
+        state->runtimeImageBitmaps.erase(evicted);
     }
     state->runtimeImages.insert_or_assign(
-        artwork.resourceToken, RuntimeImageResource{ artwork.pixels });
+        boundToken, RuntimeImageResource{
+            std::move(pixels), widgetId, std::move(source) });
+    return boundToken;
+}
+
+static void ClearRuntimeImagesForWidget(
+    D2DState* state, const std::wstring& widgetId)
+{
+    if (!state || widgetId.empty()) return;
+    std::vector<std::string> removed;
+    for (const auto& [key, resource] : state->runtimeImages)
+    {
+        if (resource.ownerWidgetId == widgetId) removed.push_back(key);
+    }
+    for (const auto& key : removed)
+    {
+        state->runtimeImages.erase(key);
+        state->runtimeImageBitmaps.erase(key);
+    }
+}
+
+static void ClearRuntimeImagesForSource(
+    D2DState* state, std::string_view source)
+{
+    if (!state || source.empty()) return;
+    std::vector<std::string> removed;
+    for (const auto& [key, resource] : state->runtimeImages)
+    {
+        if (resource.source == source) removed.push_back(key);
+    }
+    for (const auto& key : removed)
+    {
+        state->runtimeImages.erase(key);
+        state->runtimeImageBitmaps.erase(key);
+    }
 }
 
 static PrivateFontResource* LoadPrivateFont(
@@ -3111,12 +3185,14 @@ static void PushDataSnapshotEnvelope(lua_State* state,
     }
     else if (snapshot->topic == "media.artwork")
     {
-        RegisterRuntimeImageSource(GetD2D(state), snapshot->mediaArtwork);
+        const std::string token = RegisterRuntimeImageSource(GetD2D(state),
+            BoundWidgetId(state), snapshot->mediaArtwork.resourceToken,
+            snapshot->mediaArtwork.pixels, "media");
         lua_pushlstring(state, snapshot->mediaArtwork.sessionId.data(),
             snapshot->mediaArtwork.sessionId.size());
         lua_setfield(state, -2, "sessionId");
         PushResourceHandle(state, LuaResourceType::Image,
-            snapshot->mediaArtwork.resourceToken);
+            token);
         lua_setfield(state, -2, "image");
         if (snapshot->mediaArtwork.pixels)
         {
@@ -3738,16 +3814,22 @@ static int lua_TaskStart(lua_State* state)
             size_t formatLength = 0;
             const char* formatValue = lua_type(state, -1) == LUA_TSTRING
                 ? lua_tolstring(state, -1, &formatLength) : nullptr;
-            if (!formatValue ||
-                std::string_view(formatValue, formatLength) != "text")
+            const std::string format(
+                formatValue ? formatValue : "", formatLength);
+            const bool supported = write
+                ? format == "text"
+                : (format == "text" || format == "image" ||
+                    format == "file-reference");
+            if (!formatValue || !supported)
             {
                 lua_pop(state, 1);
                 return luaL_error(state,
-                    "task.start: %s currently supports only format text",
-                    taskName.c_str());
+                    write
+                        ? "task.start: clipboard.write supports only format text"
+                        : "task.start: clipboard.read format must be text, image, or file-reference");
             }
             lua_pop(state, 1);
-            arguments.emplace("format", "text");
+            arguments.emplace("format", format);
         }
         if (write)
         {
@@ -7176,9 +7258,11 @@ static ID2D1Bitmap1* LoadImageBitmap(D2DState* s, const std::wstring& path)
 }
 
 static ID2D1Bitmap1* LoadRuntimeImageBitmap(
-    D2DState* state, std::string_view token)
+    D2DState* state, const std::wstring& widgetId,
+    std::string_view token)
 {
-    if (!state || !state->ctx || !token.starts_with("@media:"))
+    if (!state || !state->ctx || widgetId.empty() ||
+        !snowdesktop::widget_runtime::IsWidgetRuntimeImageToken(token))
         return nullptr;
     EnsureBitmapCachesForCurrentDevice(state);
     const std::string key(token);
@@ -7186,7 +7270,8 @@ static ID2D1Bitmap1* LoadRuntimeImageBitmap(
         cached != state->runtimeImageBitmaps.end())
         return cached->second.Get();
     const auto source = state->runtimeImages.find(key);
-    if (source == state->runtimeImages.end() || !source->second.pixels)
+    if (source == state->runtimeImages.end() || !source->second.pixels ||
+        source->second.ownerWidgetId != widgetId)
         return nullptr;
     const auto& pixels = *source->second.pixels;
     D2D1_BITMAP_PROPERTIES1 properties = D2D1::BitmapProperties1(
@@ -7220,8 +7305,10 @@ static int lua_DrawImage(lua_State* L)
     {
         if (handle->type != LuaResourceType::Image)
             return luaL_error(L, "draw.image: invalid image resource handle");
-        if (std::string_view(handle->name).starts_with("@media:"))
-            bmp = LoadRuntimeImageBitmap(s, handle->name);
+        if (snowdesktop::widget_runtime::IsWidgetRuntimeImageToken(
+                handle->name))
+            bmp = LoadRuntimeImageBitmap(
+                s, BoundWidgetId(L), handle->name);
         else
             fullPath = ResolveResourceHandlePath(
                 L, 1, LuaResourceType::Image);
@@ -7331,13 +7418,17 @@ static int lua_ResourceStatus(lua_State* L)
         ? "image" : "font";
     auto* state = GetD2D(L);
     const bool runtimeImage = handle->type == LuaResourceType::Image &&
-        std::string_view(handle->name).starts_with("@media:");
+        snowdesktop::widget_runtime::IsWidgetRuntimeImageToken(handle->name);
     const auto path = runtimeImage
         ? std::optional<std::wstring>{}
         : ResolveResourceHandlePath(L, 1, handle->type);
     bool ready = false;
     if (runtimeImage && state)
-        ready = state->runtimeImages.contains(handle->name);
+    {
+        const auto resource = state->runtimeImages.find(handle->name);
+        ready = resource != state->runtimeImages.end() &&
+            resource->second.ownerWidgetId == BoundWidgetId(L);
+    }
     else if (path && state)
     {
         ready = handle->type == LuaResourceType::Image
@@ -7759,8 +7850,7 @@ void WidgetEngine::ApplyWidgetDataBrokerActions()
                 (void)widgetSystemDataProvider_->StopTopic(action.topic);
                 if (action.topic == "media.artwork" && d2dState_)
                 {
-                    d2dState_->runtimeImages.clear();
-                    d2dState_->runtimeImageBitmaps.clear();
+                    ClearRuntimeImagesForSource(d2dState_, "media");
                 }
             }
             break;
@@ -8900,11 +8990,57 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             {
                 if (action.name == "clipboard.read")
                 {
-                    clipboardTaskCompletions_.insert_or_assign(action.id,
-                        snowdesktop::widget_runtime::
-                            WidgetClipboardTaskCompletion{
-                                action.id, action.name, true, "text",
-                                "Preview clipboard", {} });
+                    snowdesktop::widget_runtime::
+                        WidgetClipboardTaskCompletion completion;
+                    completion.id = action.id;
+                    completion.action = action.name;
+                    completion.ok = true;
+                    completion.format = clipboardRequest.format;
+                    if (completion.format == "text")
+                    {
+                        completion.text = "Preview clipboard";
+                    }
+                    else if (completion.format == "image")
+                    {
+                        auto pixels = std::make_shared<snowdesktop::
+                            widget_runtime::WidgetRuntimeImagePixels>();
+                        pixels->width = 64;
+                        pixels->height = 64;
+                        pixels->stride = pixels->width * 4;
+                        pixels->bgraPremultiplied.resize(
+                            pixels->stride * pixels->height);
+                        for (std::uint32_t y = 0; y < pixels->height; ++y)
+                        {
+                            for (std::uint32_t x = 0; x < pixels->width; ++x)
+                            {
+                                const std::size_t offset =
+                                    static_cast<std::size_t>(
+                                        y * pixels->stride + x * 4);
+                                pixels->bgraPremultiplied[offset] =
+                                    static_cast<std::uint8_t>(48 + x * 3);
+                                pixels->bgraPremultiplied[offset + 1] =
+                                    static_cast<std::uint8_t>(80 + y * 2);
+                                pixels->bgraPremultiplied[offset + 2] = 210;
+                                pixels->bgraPremultiplied[offset + 3] = 255;
+                            }
+                        }
+                        completion.resourceToken = snowdesktop::widget_runtime::
+                            MakeWidgetRuntimeImageToken(
+                                "clipboard", *pixels);
+                        completion.image = std::move(pixels);
+                    }
+                    else
+                    {
+                        completion.files.push_back({
+                            std::filesystem::path(
+                                L"C:\\Users\\Maya\\Documents\\Preview.txt"),
+                            false });
+                        completion.files.push_back({
+                            std::filesystem::path(
+                                L"C:\\Users\\Maya\\Pictures"), true });
+                    }
+                    clipboardTaskCompletions_.insert_or_assign(
+                        action.id, std::move(completion));
                 }
                 (void)taskBroker_->Complete(action.id, true);
                 continue;
@@ -9474,6 +9610,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             std::string type;
         };
         std::vector<PublicAppSearchItem> publicItems;
+        std::vector<PublicAppSearchItem> publicClipboardItems;
         std::size_t nextOffset = 0;
         bool hasMore = false;
         std::uint64_t catalogRevision = 0;
@@ -9580,6 +9717,65 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             clipboardResult =
                 clipboardCompletion != clipboardTaskCompletions_.end()
                 ? &clipboardCompletion->second : nullptr;
+        std::string clipboardImageToken;
+        if (completion.ok && clipboardResult &&
+            clipboardResult->format == "image")
+        {
+            clipboardImageToken = RegisterRuntimeImageSource(
+                d2dState_, widget->widgetId,
+                clipboardResult->resourceToken,
+                clipboardResult->image, "clipboard");
+            if (clipboardImageToken.empty())
+            {
+                completion.ok = false;
+                completion.error = "taskResultUnavailable";
+            }
+        }
+        if (completion.ok && clipboardResult &&
+            clipboardResult->format == "file-reference")
+        {
+            constexpr std::size_t MaximumReferences = 4096;
+            std::erase_if(widget->itemReferences, [](const auto& entry) {
+                return entry.second.sourceTask == "clipboard.read";
+            });
+            if (widget->itemReferences.size() +
+                    clipboardResult->files.size() > MaximumReferences)
+            {
+                widget->itemReferences.clear();
+            }
+            publicClipboardItems.reserve(clipboardResult->files.size());
+            for (const auto& file : clipboardResult->files)
+            {
+                const std::string target = WidgetWideToUtf8(
+                    file.path.wstring());
+                std::wstring displayName = file.path.filename().wstring();
+                if (displayName.empty())
+                    displayName = file.path.root_name().wstring();
+                const std::string name = WidgetWideToUtf8(displayName);
+                const std::string reference = snowdesktop::widget_runtime::
+                    MakeWidgetItemReference(
+                        "clipboard.read:" +
+                            std::to_string(widget->runtimeToken),
+                        target);
+                if (target.empty() || name.empty() || reference.empty())
+                {
+                    completion.ok = false;
+                    completion.error = "taskResultUnavailable";
+                    publicClipboardItems.clear();
+                    std::erase_if(widget->itemReferences,
+                        [](const auto& entry) {
+                            return entry.second.sourceTask ==
+                                "clipboard.read";
+                        });
+                    break;
+                }
+                widget->itemReferences.insert_or_assign(reference,
+                    LuaWidget::ItemReference{ target, "clipboard.read",
+                        completion.id });
+                publicClipboardItems.push_back({ reference, name,
+                    "clipboard", file.folder ? "folder" : "file" });
+            }
+        }
         const snowdesktop::widget_runtime::WidgetFilesystemHandleEntry*
             filesystemPickerResult =
                 filesystemPickerCompletion !=
@@ -9593,7 +9789,9 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
         snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(
             trustedGestureState_, false);
         (void)InvokeLifecycleEvent(*widget, "task.complete",
-            [&completion, &publicItems, nextOffset, hasMore,
+            [&completion, &publicItems, &publicClipboardItems,
+                clipboardImageToken,
+                nextOffset, hasMore,
                 catalogRevision, calendarTask, itemSearchTask,
                 calendarResult, networkTask,
                 networkResult, clipboardReadTask,
@@ -9671,15 +9869,54 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                     }
                     else if (clipboardReadTask)
                     {
-                        lua_createtable(eventState, 0, 2);
+                        lua_createtable(eventState, 0, 5);
                         lua_pushlstring(eventState,
                             clipboardResult->format.data(),
                             clipboardResult->format.size());
                         lua_setfield(eventState, -2, "format");
-                        lua_pushlstring(eventState,
-                            clipboardResult->text.data(),
-                            clipboardResult->text.size());
-                        lua_setfield(eventState, -2, "text");
+                        if (clipboardResult->format == "text")
+                        {
+                            lua_pushlstring(eventState,
+                                clipboardResult->text.data(),
+                                clipboardResult->text.size());
+                            lua_setfield(eventState, -2, "text");
+                        }
+                        else if (clipboardResult->format == "image")
+                        {
+                            PushResourceHandle(eventState,
+                                LuaResourceType::Image,
+                                clipboardImageToken);
+                            lua_setfield(eventState, -2, "image");
+                            lua_pushinteger(eventState,
+                                clipboardResult->image->width);
+                            lua_setfield(eventState, -2, "width");
+                            lua_pushinteger(eventState,
+                                clipboardResult->image->height);
+                            lua_setfield(eventState, -2, "height");
+                        }
+                        else
+                        {
+                            lua_createtable(eventState,
+                                static_cast<int>(
+                                    publicClipboardItems.size()), 0);
+                            int index = 1;
+                            for (const auto& item : publicClipboardItems)
+                            {
+                                lua_createtable(eventState, 0, 3);
+                                lua_pushlstring(eventState,
+                                    item.reference.data(),
+                                    item.reference.size());
+                                lua_setfield(eventState, -2, "ref");
+                                lua_pushlstring(eventState,
+                                    item.title.data(), item.title.size());
+                                lua_setfield(eventState, -2, "name");
+                                lua_pushlstring(eventState,
+                                    item.type.data(), item.type.size());
+                                lua_setfield(eventState, -2, "type");
+                                lua_rawseti(eventState, -2, index++);
+                            }
+                            lua_setfield(eventState, -2, "items");
+                        }
                     }
                     else if (filesystemPickerTask)
                     {
@@ -10094,6 +10331,7 @@ void WidgetEngine::UnloadWidget(const std::wstring& widgetId)
     }
     if (d2dState_)
     {
+        ClearRuntimeImagesForWidget(d2dState_, widgetId);
         d2dState_->privateTextFormatCache.clear();
         d2dState_->privateFonts.clear();
         d2dState_->imageCache.clear();
@@ -11803,9 +12041,10 @@ static void DrawWidgetViewNode(D2DState* state,
     else if (node.type == ViewNodeType::Image && state->engine)
     {
         ID2D1Bitmap1* bitmap = nullptr;
-        if (node.imageResourceName.starts_with("@media:"))
+        if (snowdesktop::widget_runtime::IsWidgetRuntimeImageToken(
+                node.imageResourceName))
             bitmap = LoadRuntimeImageBitmap(
-                state, node.imageResourceName);
+                state, state->currentWidgetId, node.imageResourceName);
         else
         {
             const auto path = state->engine->RuntimeResolvePackageResource(
@@ -13348,6 +13587,7 @@ bool WidgetEngine::ReloadWidget(const std::wstring& widgetId)
     ReleaseWidgetDataSubscriptions(old);
     ReleaseWidgetTasks(old,
         snowdesktop::widget_runtime::TaskBrokerCancelReason::InstanceDisposed);
+    ClearRuntimeImagesForWidget(d2dState_, widgetId);
     if (old.refreshTimerId && widgetTimerKillCallback_)
         widgetTimerKillCallback_(old.refreshTimerId);
     if (old.namedTimerId && widgetTimerKillCallback_)
@@ -13758,7 +13998,7 @@ WidgetEngine::RuntimeGetDataSnapshot(
         else if (result.topic == "media.artwork")
         {
             auto pixels = std::make_shared<snowdesktop::widget_runtime::
-                WidgetMediaArtworkPixels>();
+                WidgetRuntimeImagePixels>();
             pixels->width = 64;
             pixels->height = 64;
             pixels->stride = pixels->width * 4;

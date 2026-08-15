@@ -464,11 +464,12 @@ CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.pow
 `shell.openItem`、`shell.revealItem`、`desktop.refresh`，一次性通知任务
 `notification.show`，以及本地日历写入任务 `calendar.create/update/remove`、公网读取
 任务 `network.request`、外部链接动作 `shell.openUri`、受控设置动作
-`system.openSettings`、文本剪贴板任务 `clipboard.read/write/clear`，以及用户选择文件
+`system.openSettings`、有界剪贴板任务 `clipboard.read/write/clear`，以及用户选择文件
 范围的 `filesystem.pickOpen/pickSave/pickFolder`。它们对应
 feature ID `task.start`、`task.media.control`、`task.audio.output.control`、`task.app.search`、`task.app.launch`
 、`task.notification.show`、`task.calendar.write`、`task.network.request` 和
 `task.shell.openUri`、`task.system.openSettings`、`task.clipboard.text`、
+`task.clipboard.image`、`task.clipboard.fileReference`、
 `task.filesystem.picker`、`task.filesystem.access`，以及 `task.desktop.search`、`task.everything.search`、
 `task.shell.item`、`task.desktop.refresh`。媒体动作要求 `media.action` 权限，而且只能在
 `click/doubleClick/pointerDown/pointerUp/wheel`、宿主按钮、菜单命令或由宿主明确
@@ -513,12 +514,16 @@ local settingsTask = task.start("system.openSettings", {
 `openRejected`、`permissionDenied`、`userGestureRequired` 和 `canceled`。预览只返回
 确定性成功结果，不启动 Windows 设置。
 
-文本剪贴板任务都要求当前可信用户手势，并按读取与修改分别检查 `clipboard.read` 和
-`clipboard.write`。读取必须显式请求 `{ format = "text" }`；写入需要同一 format 和
-最多 262144 字节、无 NUL 的有效 UTF-8 `text`；清空不接受参数：
+剪贴板任务都要求当前可信用户手势，并按读取与修改分别检查 `clipboard.read` 和
+`clipboard.write`。读取必须显式请求 `text`、`image` 或 `file-reference` format；写入
+仍只接受 `text`，且最多 262144 字节、无 NUL、有效 UTF-8；清空不接受参数：
 
 ```lua
 local readTask = task.start("clipboard.read", { format = "text" })
+local imageTask = task.start("clipboard.read", { format = "image" })
+local filesTask = task.start("clipboard.read", {
+    format = "file-reference",
+})
 local writeTask = task.start("clipboard.write", {
     format = "text",
     text = "SnowDesktop",
@@ -526,14 +531,30 @@ local writeTask = task.start("clipboard.write", {
 local clearTask = task.start("clipboard.clear")
 
 -- readTask 成功：event.value = { format = "text", text = "..." }
+-- imageTask 成功：event.value = {
+--     format = "image", image = imageHandle, width = 256, height = 256,
+-- }
+-- filesTask 成功：event.value = {
+--     format = "file-reference",
+--     items = { { ref = itemRef, name = "photo.png", type = "file" } },
+-- }
 -- write/clear 成功：event.value = { accepted = true }
 ```
 
 任务在独立 worker 访问 Win32 剪贴板，同一实例最短间隔 100 ms；稳定错误包括
 `rateLimited`、`clipboardBusy`、`formatUnavailable`、`clipboardTooLarge`、
-`clipboardReadFailed`、`clipboardWriteFailed`、`permissionRevoked` 和 `canceled`。
-预览读取固定 mock，不访问真实剪贴板。当前 feature 只代表文本；图片、文件引用和
-剪贴板历史尚未开放，组件不得用文本路径代替文件句柄。
+`clipboardReadFailed`、`clipboardWriteFailed`、`clipboardImageDecodeFailed`、
+`clipboardImageDimensionsInvalid`、`clipboardReferenceUnavailable`、
+`permissionRevoked` 和 `canceled`。预览按所请求 format 返回确定性 mock，不访问真实
+剪贴板。
+
+图片输入块上限为 64 MiB，源尺寸每边上限 16384；宿主解码并等比缩放到每边不超过
+512 像素，返回的临时 `SnowImageResource` 可直接用于 `draw.image` 或
+`view.image.source`。句柄绑定当前组件实例，在热重载、实例卸载或运行时资源限额回收
+后失效，不得持久化。文件引用一次最多返回 32 项，每项仅有 `{ref,name,type}`；`ref`
+可用于 `draw.icon`、`shell.openItem` 和 `shell.revealItem`，但不暴露路径、不允许读取
+文件内容，也不等同于 `filesystem` 授权。剪贴板历史仍未开放，组件不得用文本路径
+冒充文件引用。
 
 文件选择器只在当前可信用户手势中启动，并且只把用户实际选择的范围授予当前组件
 包与当前实例。`filesystem.pickOpen` 要求 `filesystem.userSelected.read`；

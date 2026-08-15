@@ -1,10 +1,14 @@
 #pragma once
 
+#include "widget_runtime_image.h"
+
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <filesystem>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -22,12 +26,21 @@ struct WidgetClipboardTaskRequest
     std::string text;
 };
 
+struct WidgetClipboardFileReference
+{
+    std::filesystem::path path;
+    bool folder = false;
+};
+
 struct WidgetClipboardTaskRunResult
 {
     bool ok = false;
     std::string format;
     std::string text;
     std::string error;
+    std::string resourceToken;
+    std::shared_ptr<const WidgetRuntimeImagePixels> image;
+    std::vector<WidgetClipboardFileReference> files;
 };
 
 struct WidgetClipboardTaskCompletion
@@ -38,6 +51,9 @@ struct WidgetClipboardTaskCompletion
     std::string format;
     std::string text;
     std::string error;
+    std::string resourceToken;
+    std::shared_ptr<const WidgetRuntimeImagePixels> image;
+    std::vector<WidgetClipboardFileReference> files;
 };
 
 struct WidgetClipboardTaskStartResult
@@ -60,6 +76,10 @@ public:
     using NowProvider = std::function<Clock::time_point()>;
 
     static constexpr std::size_t MaximumTextBytes = 256 * 1024;
+    static constexpr std::size_t MaximumImageBytes = 64 * 1024 * 1024;
+    static constexpr std::uint32_t MaximumImageSourceDimension = 16384;
+    static constexpr std::uint32_t MaximumImageOutputDimension = 512;
+    static constexpr std::size_t MaximumFileReferences = 32;
     static constexpr auto MinimumActionInterval =
         std::chrono::milliseconds(100);
 

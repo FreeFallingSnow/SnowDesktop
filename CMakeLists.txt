@@ -790,6 +790,7 @@ if (BUILD_TESTING)
             tests/widget_clipboard_task_executor_tests.cpp
             src/widget_clipboard_task_executor.cpp
         INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES gdi32 ole32 shell32 windowscodecs
         LABELS contract clipboard task lua widget)
 
     snowdesktop_add_test(

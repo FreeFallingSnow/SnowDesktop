@@ -1,9 +1,15 @@
 #include "widget_clipboard_task_executor.h"
 
 #include <windows.h>
+#include <shellapi.h>
+#include <wincodec.h>
+#include <wrl/client.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <utility>
 
 namespace snowdesktop::widget_runtime
@@ -87,6 +93,215 @@ WidgetClipboardTaskRunResult ReadText()
     if (!wide.empty() && text.empty())
         return { false, {}, {}, "clipboardTooLarge" };
     return { true, "text", std::move(text), {} };
+}
+
+WidgetClipboardTaskRunResult DecodeClipboardBitmap(
+    HBITMAP bitmap, bool preserveAlpha)
+{
+    using Microsoft::WRL::ComPtr;
+    if (!bitmap)
+        return { false, {}, {}, "clipboardReadFailed" };
+    ComPtr<IWICImagingFactory> factory;
+    ComPtr<IWICBitmap> sourceBitmap;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) || !factory ||
+        FAILED(factory->CreateBitmapFromHBITMAP(bitmap, nullptr,
+            preserveAlpha ? WICBitmapUseAlpha : WICBitmapIgnoreAlpha,
+            &sourceBitmap)) || !sourceBitmap)
+        return { false, {}, {}, "clipboardImageDecodeFailed" };
+
+    UINT sourceWidth = 0;
+    UINT sourceHeight = 0;
+    if (FAILED(sourceBitmap->GetSize(&sourceWidth, &sourceHeight)) ||
+        sourceWidth == 0 || sourceHeight == 0 ||
+        sourceWidth > WidgetClipboardTaskExecutor::
+            MaximumImageSourceDimension ||
+        sourceHeight > WidgetClipboardTaskExecutor::
+            MaximumImageSourceDimension)
+        return { false, {}, {}, "clipboardImageDimensionsInvalid" };
+
+    const double scale = std::min(1.0,
+        static_cast<double>(WidgetClipboardTaskExecutor::
+            MaximumImageOutputDimension) /
+            static_cast<double>(std::max(sourceWidth, sourceHeight)));
+    const UINT width = std::max<UINT>(1,
+        static_cast<UINT>(std::lround(sourceWidth * scale)));
+    const UINT height = std::max<UINT>(1,
+        static_cast<UINT>(std::lround(sourceHeight * scale)));
+    ComPtr<IWICBitmapSource> source;
+    if (width != sourceWidth || height != sourceHeight)
+    {
+        ComPtr<IWICBitmapScaler> scaler;
+        if (FAILED(factory->CreateBitmapScaler(&scaler)) || !scaler ||
+            FAILED(scaler->Initialize(sourceBitmap.Get(), width, height,
+                WICBitmapInterpolationModeFant)) ||
+            FAILED(scaler.As(&source)))
+            return { false, {}, {}, "clipboardImageDecodeFailed" };
+    }
+    else if (FAILED(sourceBitmap.As(&source)))
+    {
+        return { false, {}, {}, "clipboardImageDecodeFailed" };
+    }
+
+    ComPtr<IWICFormatConverter> converter;
+    if (FAILED(factory->CreateFormatConverter(&converter)) || !converter ||
+        FAILED(converter->Initialize(source.Get(),
+            GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone,
+            nullptr, 0.0, WICBitmapPaletteTypeMedianCut)))
+        return { false, {}, {}, "clipboardImageDecodeFailed" };
+
+    auto pixels = std::make_shared<WidgetRuntimeImagePixels>();
+    pixels->width = width;
+    pixels->height = height;
+    pixels->stride = width * 4;
+    pixels->bgraPremultiplied.resize(
+        static_cast<std::size_t>(pixels->stride) * height);
+    if (FAILED(converter->CopyPixels(nullptr, pixels->stride,
+            static_cast<UINT>(pixels->bgraPremultiplied.size()),
+            pixels->bgraPremultiplied.data())))
+        return { false, {}, {}, "clipboardImageDecodeFailed" };
+
+    WidgetClipboardTaskRunResult result;
+    result.ok = true;
+    result.format = "image";
+    result.resourceToken = MakeWidgetRuntimeImageToken(
+        "clipboard", *pixels);
+    result.image = std::move(pixels);
+    if (result.resourceToken.empty())
+        return { false, {}, {}, "clipboardImageDecodeFailed" };
+    return result;
+}
+
+std::optional<std::pair<HBITMAP, bool>> BitmapFromClipboardDib(
+    UINT format)
+{
+    const HANDLE handle = GetClipboardData(format);
+    if (!handle) return std::nullopt;
+    const SIZE_T bytes = GlobalSize(handle);
+    if (bytes < sizeof(BITMAPINFOHEADER) ||
+        bytes > WidgetClipboardTaskExecutor::MaximumImageBytes)
+        return std::nullopt;
+    const auto* base = static_cast<const std::uint8_t*>(GlobalLock(handle));
+    if (!base) return std::nullopt;
+    const auto* header = reinterpret_cast<const BITMAPINFOHEADER*>(base);
+    const std::int64_t absoluteHeight = header->biHeight < 0
+        ? -static_cast<std::int64_t>(header->biHeight)
+        : static_cast<std::int64_t>(header->biHeight);
+    const bool supportedCompression = header->biCompression == BI_RGB ||
+        header->biCompression == BI_BITFIELDS ||
+        header->biCompression == 6;
+    const bool supportedBitDepth = header->biBitCount == 1 ||
+        header->biBitCount == 4 || header->biBitCount == 8 ||
+        header->biBitCount == 16 || header->biBitCount == 24 ||
+        header->biBitCount == 32;
+    bool valid = header->biSize >= sizeof(BITMAPINFOHEADER) &&
+        header->biSize <= bytes && header->biWidth > 0 &&
+        absoluteHeight > 0 && header->biPlanes == 1 &&
+        supportedCompression && supportedBitDepth &&
+        static_cast<std::uint32_t>(header->biWidth) <=
+            WidgetClipboardTaskExecutor::MaximumImageSourceDimension &&
+        absoluteHeight <= WidgetClipboardTaskExecutor::
+            MaximumImageSourceDimension;
+    std::size_t colorCount = header->biClrUsed;
+    if (colorCount == 0 && header->biBitCount <= 8)
+        colorCount = std::size_t{ 1 } << header->biBitCount;
+    if (header->biBitCount <= 8)
+        valid = valid && colorCount <=
+            (std::size_t{ 1 } << header->biBitCount);
+    else
+        valid = valid && colorCount <= 256;
+    std::size_t extraMasks = 0;
+    if (header->biSize == sizeof(BITMAPINFOHEADER) &&
+        (header->biCompression == BI_BITFIELDS ||
+            header->biCompression == 6))
+        extraMasks = header->biCompression == 6 ? 4 : 3;
+    const std::size_t bitsOffset = static_cast<std::size_t>(header->biSize) +
+        colorCount * sizeof(RGBQUAD) + extraMasks * sizeof(DWORD);
+    const std::uint64_t rowBits =
+        static_cast<std::uint64_t>(header->biWidth) * header->biBitCount;
+    const std::uint64_t rowBytes = ((rowBits + 31) / 32) * 4;
+    const std::uint64_t pixelBytes = rowBytes *
+        static_cast<std::uint64_t>(absoluteHeight);
+    valid = valid && bitsOffset <= bytes && pixelBytes <= bytes - bitsOffset;
+    HBITMAP bitmap = nullptr;
+    bool preserveAlpha = false;
+    if (valid)
+    {
+        HDC device = GetDC(nullptr);
+        if (device)
+        {
+            bitmap = CreateDIBitmap(device, header, CBM_INIT,
+                base + bitsOffset,
+                reinterpret_cast<const BITMAPINFO*>(base), DIB_RGB_COLORS);
+            ReleaseDC(nullptr, device);
+        }
+        if (format == CF_DIBV5 &&
+            header->biSize >= sizeof(BITMAPV5HEADER))
+        {
+            const auto* headerV5 =
+                reinterpret_cast<const BITMAPV5HEADER*>(base);
+            preserveAlpha = headerV5->bV5AlphaMask != 0;
+        }
+    }
+    GlobalUnlock(handle);
+    if (!bitmap) return std::nullopt;
+    return std::pair<HBITMAP, bool>{ bitmap, preserveAlpha };
+}
+
+WidgetClipboardTaskRunResult ReadImage()
+{
+    ClipboardScope clipboard;
+    if (!clipboard) return { false, {}, {}, "clipboardBusy" };
+    for (const UINT format : { CF_DIBV5, CF_DIB })
+    {
+        if (!IsClipboardFormatAvailable(format)) continue;
+        const auto bitmap = BitmapFromClipboardDib(format);
+        if (!bitmap) continue;
+        auto result = DecodeClipboardBitmap(bitmap->first, bitmap->second);
+        DeleteObject(bitmap->first);
+        return result;
+    }
+    if (IsClipboardFormatAvailable(CF_BITMAP))
+    {
+        return DecodeClipboardBitmap(
+            static_cast<HBITMAP>(GetClipboardData(CF_BITMAP)), false);
+    }
+    return { false, {}, {}, "formatUnavailable" };
+}
+
+WidgetClipboardTaskRunResult ReadFileReferences()
+{
+    ClipboardScope clipboard;
+    if (!clipboard) return { false, {}, {}, "clipboardBusy" };
+    if (!IsClipboardFormatAvailable(CF_HDROP))
+        return { false, {}, {}, "formatUnavailable" };
+    const auto drop = static_cast<HDROP>(GetClipboardData(CF_HDROP));
+    if (!drop) return { false, {}, {}, "clipboardReadFailed" };
+    const UINT count = DragQueryFileW(drop, 0xffffffffu, nullptr, 0);
+    if (count == 0) return { false, {}, {}, "formatUnavailable" };
+    if (count > WidgetClipboardTaskExecutor::MaximumFileReferences)
+        return { false, {}, {}, "clipboardTooLarge" };
+
+    WidgetClipboardTaskRunResult result;
+    result.ok = true;
+    result.format = "file-reference";
+    result.files.reserve(count);
+    for (UINT index = 0; index < count; ++index)
+    {
+        const UINT length = DragQueryFileW(drop, index, nullptr, 0);
+        if (length == 0 || length >= 32767)
+            return { false, {}, {}, "clipboardReadFailed" };
+        std::wstring path(static_cast<std::size_t>(length) + 1, L'\0');
+        if (DragQueryFileW(drop, index, path.data(), length + 1) != length)
+            return { false, {}, {}, "clipboardReadFailed" };
+        path.resize(length);
+        const DWORD attributes = GetFileAttributesW(path.c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES)
+            return { false, {}, {}, "clipboardReferenceUnavailable" };
+        result.files.push_back({ std::filesystem::path(std::move(path)),
+            (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 });
+    }
+    return result;
 }
 
 WidgetClipboardTaskRunResult WriteText(std::string_view text)
@@ -229,7 +444,9 @@ bool WidgetClipboardTaskExecutor::ValidateRequest(
 {
     if (!SupportsAction(request.action)) return false;
     if (request.action == "clipboard.read")
-        return request.format == "text" && request.text.empty();
+        return (request.format == "text" || request.format == "image" ||
+                request.format == "file-reference") &&
+            request.text.empty();
     if (request.action == "clipboard.write")
         return request.format == "text" &&
             request.text.size() <= MaximumTextBytes &&
@@ -243,7 +460,13 @@ WidgetClipboardTaskExecutor::RunSystemAction(
 {
     if (!ValidateRequest(request))
         return { false, {}, {}, "invalidArguments" };
-    if (request.action == "clipboard.read") return ReadText();
+    if (request.action == "clipboard.read")
+    {
+        if (request.format == "image") return ReadImage();
+        if (request.format == "file-reference")
+            return ReadFileReferences();
+        return ReadText();
+    }
     if (request.action == "clipboard.write")
         return WriteText(request.text);
     return ClearClipboardData();
@@ -252,6 +475,7 @@ WidgetClipboardTaskExecutor::RunSystemAction(
 void WidgetClipboardTaskExecutor::WorkerMain(
     std::stop_token stopToken)
 {
+    const HRESULT apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     while (!stopToken.stop_requested())
     {
         QueuedRequest request;
@@ -282,16 +506,51 @@ void WidgetClipboardTaskExecutor::WorkerMain(
         {
             result = { false, {}, {}, "clipboardTaskFailed" };
         }
+        if (result.ok)
+        {
+            const bool validText = result.format == "text" &&
+                result.text.size() <= MaximumTextBytes &&
+                result.resourceToken.empty() && !result.image &&
+                result.files.empty();
+            const bool validImage = result.format == "image" &&
+                result.text.empty() && result.image &&
+                IsValidWidgetRuntimeImage(*result.image,
+                    MaximumImageOutputDimension) &&
+                IsWidgetRuntimeImageToken(result.resourceToken) &&
+                result.files.empty();
+            const bool validFiles = result.format == "file-reference" &&
+                result.text.empty() && !result.image &&
+                result.resourceToken.empty() && !result.files.empty() &&
+                result.files.size() <= MaximumFileReferences &&
+                std::all_of(result.files.begin(), result.files.end(),
+                    [](const WidgetClipboardFileReference& reference) {
+                        return !reference.path.empty() &&
+                            reference.path.is_absolute();
+                    });
+            if (!validText && !validImage && !validFiles &&
+                request.request.action == "clipboard.read")
+            {
+                result = { false, {}, {}, "clipboardTaskFailed" };
+            }
+        }
         {
             std::scoped_lock lock(mutex_);
             if (canceled_.erase(request.id) > 0)
                 result = { false, {}, {}, "canceled" };
             active_.erase(request.id);
-            completions_.push_back({ request.id,
-                std::move(request.request.action), result.ok,
-                std::move(result.format), std::move(result.text),
-                std::move(result.error) });
+            WidgetClipboardTaskCompletion completion;
+            completion.id = request.id;
+            completion.action = std::move(request.request.action);
+            completion.ok = result.ok;
+            completion.format = std::move(result.format);
+            completion.text = std::move(result.text);
+            completion.error = std::move(result.error);
+            completion.resourceToken = std::move(result.resourceToken);
+            completion.image = std::move(result.image);
+            completion.files = std::move(result.files);
+            completions_.push_back(std::move(completion));
         }
     }
+    if (SUCCEEDED(apartment)) CoUninitialize();
 }
 }
