@@ -121,9 +121,22 @@ void TestPackageResourceRenderPurity(const fs::path& repository)
         "\nconst PackageImageSource* WidgetPackageImageCache::Find(");
     Check(imageSourceLoad.find("CreateDecoderFromFilename") !=
             std::string_view::npos &&
+            imageSourceLoad.find("sources_.find(contentKey)") !=
+                std::string_view::npos &&
             imageSourceLoad.find("maximumTotalBytes_") !=
                 std::string_view::npos,
-        "package images must decode before drawing under a host cache quota");
+        "package images must decode under a content-keyed host cache quota");
+
+    const std::string_view imageHandle = Section(source,
+        "static int lua_ResourceImage(",
+        "\nstatic int lua_ResourceFont(");
+    Check(imageHandle.find("Sha256File(*path)") !=
+            std::string_view::npos &&
+            imageHandle.find("__widget_resource_content_keys") !=
+                std::string_view::npos &&
+            imageHandle.find("packageImageCache.Load(contentKey, *path)") !=
+                std::string_view::npos,
+        "package image handles must bind to decoded content, not mutable paths");
 
     const std::string_view handleResolve = Section(source,
         "static std::optional<std::wstring> ResolveResourceHandlePath(",

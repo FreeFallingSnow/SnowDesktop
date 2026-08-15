@@ -710,7 +710,7 @@ struct D2DState
     DWRITE_FONT_WEIGHT itemFontWeight = DWRITE_FONT_WEIGHT_SEMI_BOLD;
     int widgetClipDepth = 0;
     ComPtr<ID2D1Device> bitmapDevice;
-    std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>> imageCache;
+    std::unordered_map<std::string, ComPtr<ID2D1Bitmap1>> imageCache;
     snowdesktop::widget_runtime::WidgetPackageImageCache packageImageCache;
     std::unordered_map<std::string, RuntimeImageResource> runtimeImages;
     std::unordered_map<std::string, ComPtr<ID2D1Bitmap1>>
@@ -1446,6 +1446,38 @@ static std::optional<std::wstring> CurrentPackageResourcePath(
         : std::nullopt;
     lua_pop(state, 2);
     return path;
+}
+
+static std::optional<std::string> CurrentPackageImageContentKey(
+    lua_State* state, const std::string& name)
+{
+    if (!CurrentPackageResource(state, name, "image"))
+        return std::nullopt;
+    lua_getfield(state, LUA_REGISTRYINDEX,
+        "__widget_resource_content_keys");
+    if (!lua_istable(state, -1))
+    {
+        lua_pop(state, 1);
+        return std::nullopt;
+    }
+    lua_getfield(state, -1, name.c_str());
+    size_t length = 0;
+    const char* value = lua_tolstring(state, -1, &length);
+    const std::optional<std::string> key = value
+        ? std::optional<std::string>(std::string(value, length))
+        : std::nullopt;
+    lua_pop(state, 2);
+    return key;
+}
+
+static std::optional<std::string> ResolveResourceHandleImageContentKey(
+    lua_State* state, int index)
+{
+    const auto* handle = TestResourceHandle(state, index);
+    if (!handle || handle->type != LuaResourceType::Image ||
+        snowdesktop::widget_runtime::IsWidgetRuntimeImageToken(handle->name))
+        return std::nullopt;
+    return CurrentPackageImageContentKey(state, handle->name);
 }
 
 static int lua_DrawText(lua_State* L)
@@ -8029,13 +8061,14 @@ static void EnsureBitmapCachesForCurrentDevice(D2DState* state)
     state->shellIconFailures.clear();
 }
 
-static ID2D1Bitmap1* LoadImageBitmap(D2DState* s, const std::wstring& path)
+static ID2D1Bitmap1* LoadImageBitmap(
+    D2DState* s, const std::string& contentKey)
 {
-    if (!s || !s->ctx || path.empty()) return nullptr;
+    if (!s || !s->ctx || contentKey.empty()) return nullptr;
     EnsureBitmapCachesForCurrentDevice(s);
-    auto it = s->imageCache.find(path);
+    auto it = s->imageCache.find(contentKey);
     if (it != s->imageCache.end()) return it->second.Get();
-    const auto* source = s->packageImageCache.Find(path);
+    const auto* source = s->packageImageCache.Find(contentKey);
     if (!source || source->pixels.empty()) return nullptr;
     ComPtr<ID2D1Bitmap1> bitmap;
     const auto properties = D2D1::BitmapProperties1(
@@ -8050,7 +8083,7 @@ static ID2D1Bitmap1* LoadImageBitmap(D2DState* s, const std::wstring& path)
     ID2D1Bitmap1* result = bitmap.Get();
     if (s->imageCache.size() >= 128)
         s->imageCache.clear();
-    s->imageCache[path] = bitmap;
+    s->imageCache[contentKey] = bitmap;
     return result;
 }
 
@@ -8276,10 +8309,9 @@ static float LuaDrawAlpha(lua_State* state, int index, const char* api)
 }
 
 static ID2D1Bitmap1* ResolveDrawImageBitmap(lua_State* state,
-    D2DState* d2d, int index, const char* api, bool allowLegacyPath)
+    D2DState* d2d, int index, const char* api)
 {
     if (!d2d || !d2d->engine) return nullptr;
-    std::optional<std::wstring> fullPath;
     ID2D1Bitmap1* bitmap = nullptr;
     if (const auto* handle = TestResourceHandle(state, index))
     {
@@ -8290,22 +8322,17 @@ static ID2D1Bitmap1* ResolveDrawImageBitmap(lua_State* state,
             bitmap = LoadRuntimeImageBitmap(
                 d2d, BoundWidgetId(state), handle->name);
         else
-            fullPath = ResolveResourceHandlePath(
-                state, index, LuaResourceType::Image);
-        if (!bitmap && !fullPath)
+        {
+            const auto contentKey =
+                ResolveResourceHandleImageContentKey(state, index);
+            if (contentKey)
+                bitmap = LoadImageBitmap(d2d, *contentKey);
+        }
+        if (!bitmap)
             luaL_error(state, "%s: invalid image resource handle", api);
     }
     else
-    {
-        if (!allowLegacyPath)
-            luaL_error(state, "%s: API v2 requires an image handle", api);
-        const char* pathRaw = luaL_checkstring(state, index);
-        const std::wstring path = Utf8ToWideLocal(pathRaw ? pathRaw : "");
-        if (path.empty()) return nullptr;
-        fullPath = d2d->engine->RuntimeResolvePackageAsset(
-            BoundWidgetId(state), path);
-    }
-    if (!bitmap && fullPath) bitmap = LoadImageBitmap(d2d, *fullPath);
+        luaL_error(state, "%s: API v2 requires an image handle", api);
     return bitmap;
 }
 
@@ -8742,11 +8769,8 @@ static int lua_DrawImage(lua_State* L)
     float alpha = static_cast<float>(luaL_optnumber(L, 6, 1.0));
     auto* s = GetD2D(L);
     if (!s || !s->engine) return 0;
-    lua_getfield(L, LUA_REGISTRYINDEX, "__widget_api_version");
-    const bool allowLegacyPath = lua_tointeger(L, -1) < 2;
-    lua_pop(L, 1);
     ID2D1Bitmap1* bmp = ResolveDrawImageBitmap(
-        L, s, 1, "draw.image", allowLegacyPath);
+        L, s, 1, "draw.image");
     if (!s || !s->ctx || !bmp) return 0;
     D2D1_RECT_F dst = D2D1::RectF(x + s->widgetRect.left, y + s->widgetRect.top,
         x + s->widgetRect.left + w, y + s->widgetRect.top + h);
@@ -8787,7 +8811,7 @@ static int lua_DrawImageFit(lua_State* state)
     auto* d2d = GetD2D(state);
     if (!d2d || !d2d->engine) return 0;
     ID2D1Bitmap1* bitmap = ResolveDrawImageBitmap(
-        state, d2d, 1, "draw.imageFit", false);
+        state, d2d, 1, "draw.imageFit");
     if (!bitmap || !d2d->ctx) return 0;
     const D2D1_SIZE_F sourceSize = bitmap->GetSize();
     const auto placement = snowdesktop::widget_runtime::
@@ -8847,9 +8871,22 @@ static int lua_ResourceImage(lua_State* L)
     const std::string name(nameRaw, length);
     auto* state = GetD2D(L);
     const auto path = CurrentPackageResourcePath(L, name, "image");
-    if (!path || !state || !state->packageImageCache.Load(*path) ||
-        (state->ctx && !LoadImageBitmap(state, *path)))
+    const std::string contentKey = path ? Sha256File(*path) : std::string{};
+    if (!path || !state || contentKey.empty() ||
+        !state->packageImageCache.Load(contentKey, *path) ||
+        (state->ctx && !LoadImageBitmap(state, contentKey)))
         return luaL_error(L, "resource.image: resource is missing or cannot be decoded");
+    lua_getfield(L, LUA_REGISTRYINDEX,
+        "__widget_resource_content_keys");
+    if (!lua_istable(L, -1))
+    {
+        lua_pop(L, 1);
+        return luaL_error(L,
+            "resource.image: resource registry is unavailable");
+    }
+    lua_pushlstring(L, contentKey.data(), contentKey.size());
+    lua_setfield(L, -2, name.c_str());
+    lua_pop(L, 1);
     PushResourceHandle(L, LuaResourceType::Image, name);
     return 1;
 }
@@ -8888,6 +8925,10 @@ static int lua_ResourceStatus(lua_State* L)
     const auto path = runtimeImage
         ? std::optional<std::wstring>{}
         : ResolveResourceHandlePath(L, 1, handle->type);
+    const auto imageContentKey = runtimeImage ||
+            handle->type != LuaResourceType::Image
+        ? std::optional<std::string>{}
+        : ResolveResourceHandleImageContentKey(L, 1);
     bool ready = false;
     if (runtimeImage && state)
     {
@@ -8898,7 +8939,8 @@ static int lua_ResourceStatus(lua_State* L)
     else if (path && state)
     {
         ready = handle->type == LuaResourceType::Image
-            ? state->packageImageCache.Find(*path) != nullptr
+            ? imageContentKey &&
+                state->packageImageCache.Find(*imageContentKey) != nullptr
             : state->privateFonts.contains(*path);
     }
     lua_createtable(L, 0, 3);
@@ -12951,6 +12993,10 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         lua_setfield(state, -2, name.c_str());
     }
     lua_setfield(state, LUA_REGISTRYINDEX, "__widget_resource_paths");
+    lua_createtable(state, 0,
+        static_cast<int>(pending.manifest.resources.size()));
+    lua_setfield(state, LUA_REGISTRYINDEX,
+        "__widget_resource_content_keys");
     lua_pushboolean(state, preview ? 1 : 0);
     lua_setfield(state, LUA_REGISTRYINDEX, "__widget_preview");
     lua_pushboolean(state, 1);
@@ -13156,6 +13202,30 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     w.name = name;
     w.filePath = path;
     w.manifest = pending.manifest;
+    lua_getfield(w.state, LUA_REGISTRYINDEX,
+        "__widget_resource_content_keys");
+    if (lua_istable(w.state, -1))
+    {
+        lua_pushnil(w.state);
+        while (lua_next(w.state, -2) != 0)
+        {
+            size_t nameLength = 0;
+            size_t keyLength = 0;
+            const char* resourceName = lua_tolstring(
+                w.state, -2, &nameLength);
+            const char* contentKey = lua_tolstring(
+                w.state, -1, &keyLength);
+            if (resourceName && contentKey && nameLength > 0 &&
+                keyLength > 0)
+            {
+                w.packageImageContentKeys.insert_or_assign(
+                    std::string(resourceName, nameLength),
+                    std::string(contentKey, keyLength));
+            }
+            lua_pop(w.state, 1);
+        }
+    }
+    lua_pop(w.state, 1);
     w.permissions = pending.permissions;
     w.ref = ref;
     w.valid = true;
@@ -15229,11 +15299,12 @@ static void DrawWidgetViewNode(D2DState* state,
                     node.imageResourceName);
             else
             {
-                const auto path =
-                    state->engine->RuntimeResolvePackageResource(
+                const auto contentKey = state->engine->
+                    RuntimeResolvePackageImageContentKey(
                         state->currentWidgetId,
-                        node.imageResourceName, "image");
-                if (path) bitmap = LoadImageBitmap(state, *path);
+                        node.imageResourceName);
+                if (contentKey)
+                    bitmap = LoadImageBitmap(state, *contentKey);
             }
         }
         else
@@ -22515,6 +22586,19 @@ std::optional<std::wstring> WidgetEngine::RuntimeResolvePackageResource(
         return std::nullopt;
     return ResolvePackageAssetWithinRoot(widgets_[index].packageRoot,
         Utf8ToWideLocal(resource->second.path));
+}
+
+std::optional<std::string>
+WidgetEngine::RuntimeResolvePackageImageContentKey(
+    const std::wstring& widgetId, std::string_view name) const
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0 || name.empty()) return std::nullopt;
+    const auto key = widgets_[index].packageImageContentKeys.find(
+        std::string(name));
+    if (key == widgets_[index].packageImageContentKeys.end())
+        return std::nullopt;
+    return key->second;
 }
 
 LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)

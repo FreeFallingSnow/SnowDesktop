@@ -495,6 +495,8 @@ struct LuaWidget
     std::string name;                    ///< 小部件名称
     std::wstring filePath;               ///< Lua 脚本文件的完整路径
     LuaWidgetManifest manifest;          ///< 从清单文件解析的元数据
+    std::unordered_map<std::string, std::string>
+        packageImageContentKeys;         ///< Resource name to decoded image content digest
     std::unordered_set<std::string> permissions; ///< 已授予的权限集合
     int ref = LUA_NOREF;                 ///< Lua 注册表引用，LUA_NOREF 表示无效
     bool valid = false;                  ///< 是否已成功加载且可执行
@@ -1188,6 +1190,8 @@ public:
     std::optional<std::wstring> RuntimeResolvePackageResource(
         const std::wstring& widgetId, std::string_view name,
         std::string_view expectedType) const;
+    std::optional<std::string> RuntimeResolvePackageImageContentKey(
+        const std::wstring& widgetId, std::string_view name) const;
 
     /**
      * @brief 请求宿主刷新桌面内容
