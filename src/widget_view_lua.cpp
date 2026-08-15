@@ -1508,7 +1508,11 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             node.columnGap, error) ||
         !ReadOptionalNodeFloatField(state, index, "rowGap",
             node.rowGap, error) ||
+        !ReadLengthField(state, index, "flexBasis",
+            node.flexBasis, error) ||
         !ReadFloatField(state, index, "flexGrow", node.flexGrow, error) ||
+        !ReadFloatField(state, index, "flexShrink",
+            node.flexShrink, error) ||
         !ReadFloatField(state, index, "fontSize", node.fontSize, error) ||
         !ReadFloatField(state, index, "thickness", node.thickness, error) ||
         !ReadFloatField(state, index, "trackOpacity",

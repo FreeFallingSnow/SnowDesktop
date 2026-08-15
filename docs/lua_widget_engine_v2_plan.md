@@ -1243,6 +1243,7 @@ view.row({
 - `validationState/validationMessage/validationStyle` 已进入输入和 select 的公共属性矩阵；校验样式在 pressed 后、focus/disabled 前叠加，消息同时进入语义 HelpText，但不会改变受控值提交规则。
 - `view.layout.constraints` 已把 `minWidth/maxWidth/minHeight/maxHeight/aspectRatio` 纳入公共属性矩阵、Lua 解析、固有尺寸和各容器布局；尺寸使用 0–4096 的有限逻辑单位，宽高比使用 0.01–100，并拒绝同轴上下限、宽高比约束或双固定尺寸互相冲突的树。更完整的 flex/grid track 仍按属性矩阵逐批实现。
 - 同一 feature 现已加入 0–4096 的统一 `margin`：父布局在节点 frame 外保留空间，线性布局、grid、flow、stack、scroll content extent 与虚拟 item 都使用同一外尺寸模型；方向独立 margin 和负 margin 不在本批次。
+- `view.flex.sizing` 现已为 row/column/list 子项补齐 `flexBasis/flexGrow/flexShrink`：basis 先参与外尺寸求解，正空间按 grow 分配，溢出按 shrink×basis 迭代收缩并在命中 min 约束后重新分配；`fill` 保留隐式 grow=1。flexWrap/alignContent 仍由 flow 与后续完整 flex 契约承担。
 - 只有组件绑定了业务事件时才调用 Lua；状态更新、多个订阅通知和同一帧内的重复 `invalidate` 合并为至多一次 `view()` 求值和一次 scene diff。
 - 布局、绘制、命中区域和 UI Automation 边界来自同一棵提交成功的 scene tree；不允许视觉已经变化而点击仍指向旧树。
 - 声明式 transition 由宿主运行，默认只允许可合成的颜色、透明度和 transform；布局动画必须显式声明并受节点数量限制。

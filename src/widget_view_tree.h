@@ -228,7 +228,9 @@ struct ViewNode
     float itemExtent = 0.0f;
     std::optional<float> columnGap;
     std::optional<float> rowGap;
+    ViewLength flexBasis{};
     float flexGrow = 0.0f;
+    float flexShrink = 1.0f;
     ViewAlignment alignItems = ViewAlignment::Stretch;
     ViewAlignment alignSelf = ViewAlignment::Auto;
     ViewJustification justifyContent = ViewJustification::Start;

@@ -177,6 +177,11 @@ the future track/span/virtual-grid contract.
 Probe `view.flow.wrap` before using `view.flow`; it wraps fixed/auto-width
 children horizontally, skips hidden children, and supports per-line
 `columnGap`/`rowGap`, but it is not a scrolling or virtualized collection.
+Probe `view.flex.sizing` before using `flexBasis` or `flexShrink` on children
+of row, column, or list. A numeric/auto basis participates before free-space
+distribution; grow handles positive space and shrink handles overflow while
+respecting min sizes. `flexShrink=0` preserves an item's basis, and `fill`
+keeps an implicit grow factor of 1 when `flexGrow` is omitted.
 Probe `view.layout.constraints` before using numeric `minWidth`, `maxWidth`,
 `minHeight`, `maxHeight`, `aspectRatio`, or `margin`. Keep sizes and uniform
 outer margins within 0 through 4096, ratios within 0.01 through 100, and do

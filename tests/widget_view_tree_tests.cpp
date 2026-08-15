@@ -1910,6 +1910,98 @@ void TestUniformMargins()
         "negative margins must reject the complete view tree");
     lua_close(state);
 }
+
+void TestFlexSizing()
+{
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "Lua state must be available");
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    Check(luaL_dostring(state, R"lua(
+        return view.row({
+            key = "grow-row",
+            alignItems = "start",
+            children = {
+                view.shape({ key = "one", width = "auto", height = 20,
+                    flexBasis = 100, flexGrow = 1, flexShrink = 0 }),
+                view.shape({ key = "two", width = "auto", height = 20,
+                    flexBasis = 50, flexGrow = 2 }),
+            },
+        })
+    )lua") == LUA_OK,
+        "flex sizing Lua fixture must evaluate");
+    ViewNode grow;
+    std::string error;
+    Check(ParseLuaViewTree(state, -1, grow, error) &&
+            grow.children.size() == 2 &&
+            grow.children[0].flexBasis.kind == ViewLengthKind::Fixed &&
+            Near(grow.children[0].flexBasis.value, 100.0f) &&
+            Near(grow.children[0].flexGrow, 1.0f) &&
+            Near(grow.children[0].flexShrink, 0.0f),
+        "Lua parsing must retain basis, grow, and shrink factors");
+    Check(ValidateAndLayoutViewTree(grow, 300.0f, 40.0f, error) &&
+            Near(grow.children[0].frame.width, 150.0f) &&
+            Near(grow.children[1].frame.x, 150.0f) &&
+            Near(grow.children[1].frame.width, 150.0f),
+        "positive free space must be distributed by flexGrow after flexBasis");
+
+    ViewNode shrink;
+    shrink.type = ViewNodeType::Row;
+    shrink.key = "shrink-row";
+    shrink.alignItems = ViewAlignment::Start;
+    for (int index = 0; index < 2; ++index)
+    {
+        ViewNode child;
+        child.type = ViewNodeType::Shape;
+        child.key = "shrink-" + std::to_string(index);
+        child.width = { ViewLengthKind::Auto, 0.0f };
+        child.height = { ViewLengthKind::Fixed, 20.0f };
+        child.flexBasis = { ViewLengthKind::Fixed, 100.0f };
+        child.flexShrink = 1.0f;
+        shrink.children.push_back(std::move(child));
+    }
+    shrink.children[0].minimumWidth = 80.0f;
+    Check(ValidateAndLayoutViewTree(shrink, 120.0f, 40.0f, error) &&
+            Near(shrink.children[0].frame.width, 80.0f) &&
+            Near(shrink.children[1].frame.x, 80.0f) &&
+            Near(shrink.children[1].frame.width, 40.0f),
+        "flexShrink must redistribute overflow after one item reaches its minimum");
+
+    shrink.children[0].minimumWidth.reset();
+    shrink.children[0].flexShrink = 0.0f;
+    Check(ValidateAndLayoutViewTree(shrink, 150.0f, 40.0f, error) &&
+            Near(shrink.children[0].frame.width, 100.0f) &&
+            Near(shrink.children[1].frame.width, 50.0f),
+        "a zero flexShrink factor must preserve that item's basis");
+
+    ViewNode fill;
+    fill.type = ViewNodeType::Row;
+    fill.key = "fill-row";
+    fill.alignItems = ViewAlignment::Start;
+    ViewNode filler;
+    filler.type = ViewNodeType::Shape;
+    filler.key = "filler";
+    filler.height = { ViewLengthKind::Fixed, 20.0f };
+    ViewNode fixed;
+    fixed.type = ViewNodeType::Shape;
+    fixed.key = "fixed";
+    fixed.width = { ViewLengthKind::Fixed, 50.0f };
+    fixed.height = { ViewLengthKind::Fixed, 20.0f };
+    fill.children = { filler, fixed };
+    Check(ValidateAndLayoutViewTree(fill, 200.0f, 40.0f, error) &&
+            Near(fill.children[0].frame.width, 150.0f) &&
+            Near(fill.children[1].frame.x, 150.0f),
+        "fill must keep its existing implicit flexGrow factor");
+
+    ViewNode invalid = fixed;
+    invalid.key = "fill-basis";
+    invalid.flexBasis = { ViewLengthKind::Fill, 0.0f };
+    Check(!ValidateAndLayoutViewTree(invalid, 100.0f, 40.0f, error) &&
+            error ==
+                "view node dimensions and typography must be finite and bounded",
+        "flexBasis must accept only auto or a bounded numeric value");
+    lua_close(state);
+}
 }
 
 int main()
@@ -1931,6 +2023,7 @@ int main()
     TestLogicalSlotSceneContract();
     TestBoundedSizeConstraints();
     TestUniformMargins();
+    TestFlexSizing();
     std::cout << "Widget view tree tests passed\n";
     return 0;
 }

@@ -115,6 +115,7 @@
 ---@field scope? 'element'|'component' Context-menu scope; defaults to element. Component scope is appended to the widget menu.
 
 ---@alias SnowViewLength number|'auto'|'fill'
+---@alias SnowViewFlexBasis number|'auto'
 ---@alias SnowViewAlignment 'start'|'center'|'end'|'stretch'
 ---@alias SnowViewSelfAlignment 'auto'|'start'|'center'|'end'|'stretch'
 ---@alias SnowViewImageFit 'fill'|'contain'|'cover'|'none'
@@ -242,7 +243,9 @@
 ---@field itemExtent? number Required fixed row height for virtualList/virtualGrid.
 ---@field firstIndex? integer Required first 1-based materialized item for virtualList/virtualGrid; 0 only when empty.
 ---@field overscan? integer Virtual collection overscan rows from 0 through 16; defaults to 2.
----@field flexGrow? number
+---@field flexBasis? SnowViewFlexBasis Main-axis base size in row/column/list before free-space distribution; defaults to auto.
+---@field flexGrow? number Non-negative positive-space factor; fill keeps an implicit factor of 1 when this is omitted.
+---@field flexShrink? number Non-negative overflow factor; defaults to 1, use 0 to preserve the basis.
 ---@field alignItems? SnowViewAlignment
 ---@field alignSelf? SnowViewSelfAlignment
 ---@field justifyContent? 'start'|'center'|'end'|'spaceBetween'

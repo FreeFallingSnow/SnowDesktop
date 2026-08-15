@@ -661,47 +661,83 @@ void LayoutLinear(ViewNode& node, const ViewRect& content, bool horizontal)
     const float availableMain = horizontal ? content.width : content.height;
     const float availableCross = horizontal ? content.height : content.width;
     const float gaps = node.gap * static_cast<float>(visible.size() - 1);
-    float fixed = 0.0f;
-    float flex = 0.0f;
     std::vector<float> mainSizes(visible.size(), 0.0f);
+    std::vector<float> growWeights(visible.size(), 0.0f);
+    std::vector<float> shrinkWeights(visible.size(), 0.0f);
+    float baseTotal = 0.0f;
+    float growTotal = 0.0f;
     for (std::size_t index = 0; index < visible.size(); ++index)
     {
         const auto& child = *visible[index];
         const ViewLength& mainLength = horizontal
             ? child.width : child.height;
-        if (mainLength.kind == ViewLengthKind::Fill || child.flexGrow > 0.0f)
-        {
-            flex += std::max(1.0f, child.flexGrow);
-            continue;
-        }
         const float intrinsic = horizontal
             ? IntrinsicWidth(child) : IntrinsicHeight(child);
-        const float innerSize = mainLength.kind == ViewLengthKind::Fixed
-            ? mainLength.value : intrinsic;
+        float innerSize = intrinsic;
+        if (child.flexBasis.kind == ViewLengthKind::Fixed)
+            innerSize = child.flexBasis.value;
+        else if (mainLength.kind == ViewLengthKind::Fixed)
+            innerSize = mainLength.value;
+        else if (mainLength.kind == ViewLengthKind::Fill)
+            innerSize = 0.0f;
         mainSizes[index] = (horizontal
             ? ConstrainWidth(child, innerSize)
             : ConstrainHeight(child, innerSize)) + ViewMarginExtent(child);
-        fixed += mainSizes[index];
+        baseTotal += mainSizes[index];
+        growWeights[index] = child.flexGrow > 0.0f
+            ? child.flexGrow :
+            (mainLength.kind == ViewLengthKind::Fill ? 1.0f : 0.0f);
+        growTotal += growWeights[index];
+        shrinkWeights[index] = child.flexShrink *
+            std::max(1.0f,
+                mainSizes[index] - ViewMarginExtent(child));
     }
-    const float remaining = std::max(0.0f, availableMain - fixed - gaps);
-    if (flex > 0.0f)
+
+    const float availableForItems = std::max(0.0f, availableMain - gaps);
+    const float freeSpace = availableForItems - baseTotal;
+    if (freeSpace > 0.0f && growTotal > 0.0f)
     {
         for (std::size_t index = 0; index < visible.size(); ++index)
+            if (growWeights[index] > 0.0f)
+                mainSizes[index] += freeSpace *
+                    (growWeights[index] / growTotal);
+    }
+    else if (freeSpace < 0.0f)
+    {
+        float overflow = -freeSpace;
+        std::vector<bool> active(visible.size(), true);
+        for (std::size_t pass = 0;
+            pass < visible.size() && overflow > 0.001f; ++pass)
         {
-            const auto& child = *visible[index];
-            const ViewLength& mainLength = horizontal
-                ? child.width : child.height;
-            if (mainLength.kind == ViewLengthKind::Fill || child.flexGrow > 0.0f)
+            float weightTotal = 0.0f;
+            for (std::size_t index = 0; index < visible.size(); ++index)
+                if (active[index]) weightTotal += shrinkWeights[index];
+            if (weightTotal <= 0.0f) break;
+
+            const float requested = overflow;
+            float reduced = 0.0f;
+            for (std::size_t index = 0; index < visible.size(); ++index)
             {
-                const float proposedOuter = remaining *
-                    (std::max(1.0f, child.flexGrow) / flex);
-                const float proposedInner = std::max(0.0f,
-                    proposedOuter - ViewMarginExtent(child));
-                mainSizes[index] = (horizontal
-                    ? ConstrainWidth(child, proposedInner)
-                    : ConstrainHeight(child, proposedInner)) +
+                if (!active[index] || shrinkWeights[index] <= 0.0f)
+                    continue;
+                const ViewNode& child = *visible[index];
+                const float minimumInner = horizontal
+                    ? child.minimumWidth.value_or(0.0f)
+                    : child.minimumHeight.value_or(0.0f);
+                const float minimumOuter = minimumInner +
                     ViewMarginExtent(child);
+                const float capacity = std::max(
+                    0.0f, mainSizes[index] - minimumOuter);
+                const float share = requested *
+                    (shrinkWeights[index] / weightTotal);
+                const float delta = std::min(capacity, share);
+                mainSizes[index] -= delta;
+                reduced += delta;
+                if (capacity <= share + 0.001f)
+                    active[index] = false;
             }
+            if (reduced <= 0.001f) break;
+            overflow = std::max(0.0f, overflow - reduced);
         }
     }
 
@@ -1090,6 +1126,8 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             (!style.opacity || FiniteInRange(*style.opacity, 0.0f, 1.0f));
     };
     if (!ValidateLength(node.width) || !ValidateLength(node.height) ||
+        !ValidateLength(node.flexBasis) ||
+        node.flexBasis.kind == ViewLengthKind::Fill ||
         (node.minimumWidth && !FiniteInRange(
             *node.minimumWidth, 0.0f, MaximumDimension)) ||
         (node.maximumWidth && !FiniteInRange(
@@ -1110,6 +1148,7 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         (node.columnGap && !FiniteInRange(*node.columnGap, 0.0f, 4096.0f)) ||
         (node.rowGap && !FiniteInRange(*node.rowGap, 0.0f, 4096.0f)) ||
         !FiniteInRange(node.flexGrow, 0.0f, 1000.0f) ||
+        !FiniteInRange(node.flexShrink, 0.0f, 1000.0f) ||
         !FiniteInRange(node.fontSize, 1.0f, 512.0f) ||
         !FiniteInRange(node.thickness, 0.5f, 4096.0f) ||
         !FiniteInRange(node.trackOpacity, 0.0f, 1.0f) ||

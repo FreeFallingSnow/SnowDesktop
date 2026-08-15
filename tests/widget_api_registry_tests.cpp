@@ -424,6 +424,8 @@ void TestV2Contract()
                 "view.collection.virtual") &&
             snowdesktop::widget_api::SupportsFeature("view.dataSeries") &&
             snowdesktop::widget_api::SupportsFeature(
+                "view.flex.sizing") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "view.flow.wrap") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.grid.uniform") &&

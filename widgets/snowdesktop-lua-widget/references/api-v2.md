@@ -92,6 +92,7 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.actionControls` 提供 `link/radioGroup/slider`，
 `view.inputControls` 一次提供 `textInput/textArea/searchBox/numberInput/select`，
 `view.keyboardNavigation.basic` 提供桌面 surface 的通用宿主键盘焦点与激活，
+`view.flex.sizing` 提供线性布局的 basis/grow/shrink 尺寸分配，
 `view.grid.uniform` 提供基础 `grid`，`view.flow.wrap` 提供横向换行 `flow`。
 `view.scroll` 提供宿主滚动视口，`view.collection.basic` 提供基础集合，
 `view.collection.virtual` 提供固定行高虚拟集合与可见范围查询；
@@ -146,7 +147,11 @@ end
 ```
 
 尺寸接受有限非负数字、`auto` 或 `fill`；线性布局支持 `padding`、`gap`、
-`flexGrow`、`alignItems/alignSelf` 和 `justifyContent`。文本支持 `fontSize`、`bold`、
+`flexBasis/flexGrow/flexShrink`、`alignItems/alignSelf` 和 `justifyContent`。`flexBasis`
+接受 0–4096 数值或 `auto`，先确定主轴基础外尺寸；正剩余空间按非负 `flexGrow` 分配，
+空间不足时按 `flexShrink × basis` 收缩并重新分配触及 `minWidth/minHeight` 后的溢出。
+`flexShrink` 默认 1，设为 0 可保持基础尺寸；`fill` 在未写 grow 时继续隐含 grow=1。
+上述完整行为需探测 `view.flex.sizing`。文本支持 `fontSize`、`bold`、
 `textAlign`；基础样式支持 RGB 前景/背景/边框、边框宽度、圆角、0–1 opacity 及
 hover/pressed 覆盖。按钮 `action` 是 click 简写；events 还支持 pointer enter/leave/
 down/up、doubleClick 和 contextMenu，动作通过 `event.kind == "action"` 投递。
