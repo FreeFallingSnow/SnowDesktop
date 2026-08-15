@@ -130,6 +130,7 @@
 ---@alias SnowViewOverflow 'visible'|'clip'
 ---@alias SnowViewGridTrack number|'auto'|SnowViewGridFractionTrack|SnowViewGridMinMaxTrack
 ---@alias SnowViewValidationState 'none'|'info'|'success'|'warning'|'error'
+---@alias SnowViewSelectionMode 'none'|'single'|'multiple'
 ---@alias SnowDrawImageFit 'fill'|'contain'|'cover'|'none'
 ---@alias SnowDrawImageAlignment 'start'|'center'|'end'
 ---@alias SnowDrawImageInterpolation 'nearest'|'linear'
@@ -290,6 +291,8 @@
 ---@field itemExtent? number Required fixed row height for virtualList/virtualGrid.
 ---@field firstIndex? integer Required first 1-based materialized item for virtualList/virtualGrid; 0 only when empty.
 ---@field overscan? integer Virtual collection overscan rows from 0 through 16; defaults to 2.
+---@field selectionMode? SnowViewSelectionMode Controlled collection selection; defaults to none and probes with view.collection.selection.
+---@field selectedKeys? string[] Unique controlled listItem keys; single accepts at most one, none accepts none, and virtual selections may include unmaterialized item keys.
 ---@field flexBasis? SnowViewFlexBasis Main-axis base size in row/column/list before free-space distribution; defaults to auto.
 ---@field flexGrow? number Non-negative positive-space factor; fill keeps an implicit factor of 1 when this is omitted.
 ---@field flexShrink? number Non-negative overflow factor; defaults to 1, use 0 to preserve the basis.
@@ -527,6 +530,8 @@
 ---@field indeterminate? boolean Proposed checkbox mixed state; activation always proposes false and the host does not persist it.
 ---@field previousSelection? string Current radioGroup/select selectedValue for change events.
 ---@field selection? string Proposed radioGroup/select option value; the host does not persist it.
+---@field previousSelectedKeys? string[] Previous controlled collection keys.
+---@field selectedKeys? string[] Proposed controlled collection keys; the host does not persist them.
 ---@field previousExpanded? boolean Current select expanded state for click events.
 ---@field expanded? boolean Proposed select expanded state; the host does not persist it.
 ---@field previousControlValue? number Current slider value for change events.

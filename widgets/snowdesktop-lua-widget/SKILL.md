@@ -180,7 +180,12 @@ each item needs exactly one visible child, a globally stable key, and
 `accessibility.label`.
 Keep a tree within 256 list items and use per-item actions/context menus. With
 `view.keyboardNavigation.basic`, actionable materialized items join host
-keyboard traversal; UI Automation collection patterns are not included. For larger data, probe
+keyboard traversal. Probe `view.collection.selection` when the container owns
+controlled single/multiple selection: declare the container's `selectedKeys`
+and `events.change`, consume `previousSelectedKeys/selectedKeys`, and do not put
+click/change on its listItem children (use doubleClick, a nested button, or the
+item context menu for activation). Selection state, keyboard input, and UI
+Automation collection patterns share that controlled source. For larger data, probe
 `view.collection.virtual`, call `view.virtualRange` with the stable collection
 key and actual content-viewport height, create only its inclusive 1-based
 window, then submit `virtualList` or `virtualGrid` with matching fixed extent,

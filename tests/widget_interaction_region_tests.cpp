@@ -331,6 +331,54 @@ void TestRadioAndSliderActionResolution()
     regions.PointerUp(20.0f, 52.0f, 2);
 }
 
+void TestCollectionSelectionResolution()
+{
+    WidgetInteractionRegions regions;
+    std::string error;
+    auto single = Rect("mail:b", 0, 0, 100, 32);
+    single.controlKind = InteractionControlKind::SelectionSingle;
+    single.currentSelectedKeys = { "mail:a" };
+    single.proposedSelectedKey = "mail:b";
+    single.events.emplace("change",
+        InteractionAction{ "mail.select", {} });
+    auto multiple = Rect("tag:b", 0, 40, 100, 32);
+    multiple.controlKind = InteractionControlKind::SelectionMultiple;
+    multiple.currentSelectedKeys = { "tag:a", "tag:b" };
+    multiple.proposedSelectedKey = "tag:b";
+    multiple.events.emplace("change",
+        InteractionAction{ "tag.select", {} });
+    auto add = Rect("tag:c", 0, 80, 100, 32);
+    add.controlKind = InteractionControlKind::SelectionMultiple;
+    add.currentSelectedKeys = { "tag:a", "tag:b" };
+    add.proposedSelectedKey = "tag:c";
+    add.events.emplace("change",
+        InteractionAction{ "tag.select", {} });
+    regions.BeginFrame();
+    Check(regions.Submit(std::move(single), error) &&
+            regions.Submit(std::move(multiple), error) &&
+            regions.Submit(std::move(add), error),
+        "single and multiple collection regions must stage");
+    regions.CommitFrame();
+
+    const auto singleResult = regions.ResolveAction("mail:b", "click");
+    Check(singleResult && singleResult->eventName == "change" &&
+            singleResult->previousSelectedKeys ==
+                std::vector<std::string>{ "mail:a" } &&
+            singleResult->selectedKeys ==
+                std::vector<std::string>{ "mail:b" },
+        "single selection must propose replacing the controlled key");
+    const auto removeResult = regions.ResolveAction("tag:b", "click");
+    Check(removeResult && removeResult->previousSelectedKeys ==
+                std::vector<std::string>{ "tag:a", "tag:b" } &&
+            removeResult->selectedKeys ==
+                std::vector<std::string>{ "tag:a" },
+        "multiple selection must propose removing an active key");
+    const auto addResult = regions.ResolveAction("tag:c", "click");
+    Check(addResult && addResult->selectedKeys ==
+                std::vector<std::string>{ "tag:a", "tag:b", "tag:c" },
+        "multiple selection must append a newly selected key");
+}
+
 void TestKeyboardFocusableOrderAndFiltering()
 {
     WidgetInteractionRegions regions;
@@ -392,6 +440,7 @@ int main()
     TestClippedHitTesting();
     TestControlledActionResolution();
     TestRadioAndSliderActionResolution();
+    TestCollectionSelectionResolution();
     TestKeyboardFocusableOrderAndFiltering();
     std::cout << "widget interaction region tests passed\n";
     return 0;

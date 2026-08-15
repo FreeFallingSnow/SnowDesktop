@@ -1476,6 +1476,23 @@ bool ReadValidationStateField(lua_State* state, int table,
     return true;
 }
 
+bool ReadSelectionModeField(lua_State* state, int table,
+    ViewSelectionMode& value, std::string& error)
+{
+    std::string text;
+    if (!ReadStringField(state, table, "selectionMode", text, false, error))
+        return false;
+    if (text.empty() || text == "none") value = ViewSelectionMode::None;
+    else if (text == "single") value = ViewSelectionMode::Single;
+    else if (text == "multiple") value = ViewSelectionMode::Multiple;
+    else
+    {
+        error = "view field 'selectionMode' must be none, single, or multiple";
+        return false;
+    }
+    return true;
+}
+
 bool ReadImageFitField(lua_State* state, int table,
     ViewImageFit& value, std::string& error)
 {
@@ -2110,6 +2127,11 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             node.firstIndex, virtualCollectionNode, error) ||
         !ReadNonNegativeSizeField(state, index, "overscan",
             node.overscan, false, error) ||
+        !ReadSelectionModeField(state, index,
+            node.selectionMode, error) ||
+        !ReadStringArrayField(state, index, "selectedKeys",
+            node.selectedKeys, 0,
+            ViewTreeLimits::MaximumCollectionItems, false, error) ||
         !ReadOptionalNodeFloatField(state, index, "columnGap",
             node.columnGap, error) ||
         !ReadOptionalNodeFloatField(state, index, "rowGap",

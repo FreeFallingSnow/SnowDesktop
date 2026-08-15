@@ -218,6 +218,13 @@ enum class ViewOrientation
     Vertical,
 };
 
+enum class ViewSelectionMode
+{
+    None,
+    Single,
+    Multiple,
+};
+
 struct ViewRect
 {
     float x = 0.0f;
@@ -349,6 +356,11 @@ struct ViewNode
     std::size_t firstIndex = 0;
     std::size_t overscan = 2;
     float itemExtent = 0.0f;
+    ViewSelectionMode selectionMode = ViewSelectionMode::None;
+    std::vector<std::string> selectedKeys;
+    ViewSelectionMode inheritedSelectionMode = ViewSelectionMode::None;
+    std::vector<std::string> inheritedSelectedKeys;
+    std::optional<InteractionAction> inheritedSelectionChangeAction;
     std::optional<float> columnGap;
     std::optional<float> rowGap;
     std::optional<std::size_t> gridColumn;

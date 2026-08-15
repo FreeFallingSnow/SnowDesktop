@@ -20250,7 +20250,8 @@ void WidgetEngine::DispatchInteractionAction(LuaWidget& widget,
     const std::string& targetKey, const char* eventName,
     int x, int y, int button, int delta, int clickCount,
     bool includeRetired, const char* source, int keyboardStepDirection,
-    std::optional<float> requestedControlValue)
+    std::optional<float> requestedControlValue,
+    std::optional<std::vector<std::string>> requestedSelectedKeys)
 {
     if (targetKey.empty() || !eventName || !*eventName) return;
     snowdesktop::widget_runtime::InteractionAction action;
@@ -20263,11 +20264,29 @@ void WidgetEngine::DispatchInteractionAction(LuaWidget& widget,
     std::optional<float> controlValue;
     std::optional<std::string> previousSelection;
     std::optional<std::string> selection;
+    std::optional<std::vector<std::string>> previousSelectedKeys;
+    std::optional<std::vector<std::string>> selectedKeys;
     std::optional<bool> previousExpanded;
     std::optional<bool> expanded;
     const bool trustedGesture = trustedGestureState_.Active();
     const std::string eventSource = source && *source ? source : "pointer";
-    if (includeRetired)
+    if (requestedSelectedKeys)
+    {
+        const auto* region = widget.interactionRegions.Find(targetKey);
+        const auto* actionPointer = widget.interactionRegions.FindAction(
+            targetKey, "change");
+        if (!region || !actionPointer ||
+            (region->controlKind != snowdesktop::widget_runtime::
+                    InteractionControlKind::SelectionSingle &&
+                region->controlKind != snowdesktop::widget_runtime::
+                    InteractionControlKind::SelectionMultiple))
+            return;
+        action = *actionPointer;
+        resolvedEventName = "change";
+        previousSelectedKeys = region->currentSelectedKeys;
+        selectedKeys = std::move(requestedSelectedKeys);
+    }
+    else if (includeRetired)
     {
         const auto* actionPointer =
             widget.interactionRegions.FindTransitionAction(
@@ -20297,6 +20316,8 @@ void WidgetEngine::DispatchInteractionAction(LuaWidget& widget,
         controlValue = resolved->controlValue;
         previousSelection = resolved->previousSelection;
         selection = resolved->selection;
+        previousSelectedKeys = resolved->previousSelectedKeys;
+        selectedKeys = resolved->selectedKeys;
         previousExpanded = resolved->previousExpanded;
         expanded = resolved->expanded;
     }
@@ -20304,7 +20325,9 @@ void WidgetEngine::DispatchInteractionAction(LuaWidget& widget,
         [&action, &targetKey, &resolvedEventName,
             previousChecked, checked, previousIndeterminate, indeterminate,
             previousControlValue, controlValue,
-            previousSelection, selection, previousExpanded, expanded,
+            previousSelection, selection,
+            previousSelectedKeys, selectedKeys,
+            previousExpanded, expanded,
             trustedGesture, &eventSource, x, y, button,
             delta, clickCount](lua_State* eventState) {
             lua_pushlstring(eventState, action.id.data(), action.id.size());
@@ -20348,6 +20371,26 @@ void WidgetEngine::DispatchInteractionAction(LuaWidget& widget,
                 lua_pushlstring(eventState, selection->data(),
                     selection->size());
                 lua_setfield(eventState, -2, "selection");
+            }
+            if (previousSelectedKeys.has_value() &&
+                selectedKeys.has_value())
+            {
+                const auto pushKeys = [eventState](
+                    const std::vector<std::string>& keys) {
+                    lua_createtable(eventState,
+                        static_cast<int>(keys.size()), 0);
+                    for (std::size_t index = 0; index < keys.size(); ++index)
+                    {
+                        lua_pushlstring(eventState, keys[index].data(),
+                            keys[index].size());
+                        lua_rawseti(eventState, -2,
+                            static_cast<lua_Integer>(index + 1));
+                    }
+                };
+                pushKeys(*previousSelectedKeys);
+                lua_setfield(eventState, -2, "previousSelectedKeys");
+                pushKeys(*selectedKeys);
+                lua_setfield(eventState, -2, "selectedKeys");
             }
             if (previousExpanded.has_value() && expanded.has_value())
             {
@@ -22495,6 +22538,48 @@ bool WidgetEngine::RuntimePerformAccessibilityAction(
     }
 
     const char* eventName = "click";
+    if (request.kind == LuaWidgetAccessibilityActionKind::Select ||
+        request.kind == LuaWidgetAccessibilityActionKind::AddToSelection ||
+        request.kind ==
+            LuaWidgetAccessibilityActionKind::RemoveFromSelection)
+    {
+        const bool single = region->controlKind ==
+            snowdesktop::widget_runtime::
+                InteractionControlKind::SelectionSingle;
+        const bool multiple = region->controlKind ==
+            snowdesktop::widget_runtime::
+                InteractionControlKind::SelectionMultiple;
+        if (single || multiple)
+        {
+            if (!widget.interactionRegions.FindAction(
+                    request.nodeKey, "change"))
+                return false;
+            std::vector<std::string> selectedKeys =
+                region->currentSelectedKeys;
+            const auto selected = std::find(selectedKeys.begin(),
+                selectedKeys.end(), region->proposedSelectedKey);
+            if (request.kind == LuaWidgetAccessibilityActionKind::Select)
+                selectedKeys = { region->proposedSelectedKey };
+            else if (!multiple)
+                return false;
+            else if (request.kind ==
+                LuaWidgetAccessibilityActionKind::AddToSelection)
+            {
+                if (selected == selectedKeys.end())
+                    selectedKeys.push_back(region->proposedSelectedKey);
+            }
+            else if (selected != selectedKeys.end())
+                selectedKeys.erase(selected);
+            if (selectedKeys == region->currentSelectedKeys) return true;
+            DispatchInteractionAction(widget, request.nodeKey, "change",
+                x, y, 0, 0, 0, false, "accessibility", 0,
+                std::nullopt, std::move(selectedKeys));
+            RuntimeInvalidateHost(request.widgetId);
+            return true;
+        }
+        if (request.kind != LuaWidgetAccessibilityActionKind::Select)
+            return false;
+    }
     if (request.kind == LuaWidgetAccessibilityActionKind::Toggle)
     {
         if ((region->controlKind != snowdesktop::widget_runtime::

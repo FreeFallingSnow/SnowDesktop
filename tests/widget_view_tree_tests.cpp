@@ -1350,6 +1350,54 @@ void TestScrollableCollections()
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(
         return view.list({
+            key = "selectable",
+            selectionMode = "multiple",
+            selectedKeys = { "item-b" },
+            events = { change = { id = "items.select" } },
+            children = {
+                view.listItem({
+                    key = "item-a", height = 32,
+                    accessibility = { label = "Item A" },
+                    children = {
+                        view.text({ key = "item-a-label", text = "A" }),
+                    },
+                }),
+                view.listItem({
+                    key = "item-b", height = 32,
+                    events = { doubleClick = { id = "item.open" } },
+                    accessibility = { label = "Item B" },
+                    children = {
+                        view.text({ key = "item-b-label", text = "B" }),
+                    },
+                }),
+            },
+        })
+    )lua") == LUA_OK,
+        "controlled collection selection fixture must evaluate");
+    ViewNode selectable;
+    Check(ParseLuaViewTree(state, -1, selectable, error) &&
+            selectable.selectionMode == ViewSelectionMode::Multiple &&
+            selectable.selectedKeys ==
+                std::vector<std::string>{ "item-b" } &&
+            ValidateAndLayoutViewTree(selectable, 200.0f, 80.0f, error) &&
+            !selectable.children[0].selected &&
+            selectable.children[1].selected,
+        "collection selection must normalize controlled keys onto item state");
+    regions.clear();
+    Check(CollectViewInteractionRegions(selectable, regions, error) &&
+            regions.size() == 2 && regions[0].key == "item-a" &&
+            regions[0].controlKind ==
+                InteractionControlKind::SelectionMultiple &&
+            regions[0].currentSelectedKeys ==
+                std::vector<std::string>{ "item-b" } &&
+            regions[0].proposedSelectedKey == "item-a" &&
+            regions[0].events.at("change").id == "items.select" &&
+            regions[1].events.at("doubleClick").id == "item.open",
+        "collection items must expose one controlled selection region each");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.list({
             key = "invalid-list",
             children = {
                 view.text({ key = "not-item", text = "Invalid" }),

@@ -193,6 +193,29 @@ bool WidgetInteractionRegions::Submit(
         error = "radio interaction regions require a proposed selection";
         return false;
     }
+    if (region.controlKind == InteractionControlKind::SelectionSingle ||
+        region.controlKind == InteractionControlKind::SelectionMultiple)
+    {
+        if (region.proposedSelectedKey.empty() ||
+            region.proposedSelectedKey.size() > 128 ||
+            region.currentSelectedKeys.size() > kMaximumRegions ||
+            (region.controlKind == InteractionControlKind::SelectionSingle &&
+                region.currentSelectedKeys.size() > 1))
+        {
+            error = "collection selection region has invalid selected keys";
+            return false;
+        }
+        std::unordered_set<std::string> keys;
+        for (const auto& key : region.currentSelectedKeys)
+        {
+            if (key.empty() || key.size() > 128 ||
+                !keys.insert(key).second)
+            {
+                error = "collection selection keys must be unique and bounded";
+                return false;
+            }
+        }
+    }
     staging_.push_back(std::move(region));
     return true;
 }
@@ -440,6 +463,23 @@ WidgetInteractionRegions::ResolveAction(
     {
         result.previousSelection = region->currentSelection;
         result.selection = region->proposedSelection;
+    }
+    else if (resolvedName == "change" &&
+        (region->controlKind == InteractionControlKind::SelectionSingle ||
+            region->controlKind ==
+                InteractionControlKind::SelectionMultiple))
+    {
+        result.previousSelectedKeys = region->currentSelectedKeys;
+        std::vector<std::string> proposed = region->currentSelectedKeys;
+        const auto found = std::find(proposed.begin(), proposed.end(),
+            region->proposedSelectedKey);
+        if (region->controlKind == InteractionControlKind::SelectionSingle)
+            proposed = { region->proposedSelectedKey };
+        else if (found == proposed.end())
+            proposed.push_back(region->proposedSelectedKey);
+        else
+            proposed.erase(found);
+        result.selectedKeys = std::move(proposed);
     }
     else if (resolvedName == "change" &&
         region->controlKind == InteractionControlKind::Slider)

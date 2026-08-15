@@ -80,7 +80,7 @@ LuaWidgetAccessibilitySnapshot Snapshot()
     group.name = "Panel";
     group.controlType = "Group";
     group.bounds = { 0, 0, 300, 330 };
-    group.children = { 1, 2, 3, 4, 5, 6, 9, 10 };
+    group.children = { 1, 2, 3, 4, 5, 6, 9, 10, 13 };
 
     ViewAccessibilityNode button;
     button.semanticId = "key:open";
@@ -213,9 +213,39 @@ LuaWidgetAccessibilitySnapshot Snapshot()
     cellB.bounds.x = 230;
     cellB.gridColumn = 1;
 
+    ViewAccessibilityNode multi;
+    multi.semanticId = "key:messages";
+    multi.key = "messages";
+    multi.name = "Messages";
+    multi.controlType = "List";
+    multi.bounds = { 10, 300, 160, 40 };
+    multi.parentIndex = 0;
+    multi.patterns = ViewAccessibilityPattern::Selection;
+    multi.canSelectMultiple = true;
+    multi.children = { 14, 15 };
+
+    ViewAccessibilityNode messageA;
+    messageA.semanticId = "key:message-a";
+    messageA.key = "message-a";
+    messageA.name = "Message A";
+    messageA.controlType = "ListItem";
+    messageA.bounds = { 10, 300, 80, 40 };
+    messageA.parentIndex = 13;
+    messageA.patterns = ViewAccessibilityPattern::SelectionItem;
+    messageA.checked = true;
+    messageA.canSelectMultiple = true;
+
+    ViewAccessibilityNode messageB = messageA;
+    messageB.semanticId = "key:message-b";
+    messageB.key = "message-b";
+    messageB.name = "Message B";
+    messageB.bounds.x = 90;
+    messageB.checked = false;
+
     widget.bounds = RECT{ 10, 20, 310, 350 };
     widget.nodes = { group, button, status, toggle, slider, input, combo,
-        optionA, optionB, scroll, grid, cellA, cellB };
+        optionA, optionB, scroll, grid, cellA, cellB, multi,
+        messageA, messageB };
     return widget;
 }
 
@@ -537,6 +567,38 @@ void TestProviderTreeAndLifetime()
         "Selection must preserve the selected option identity");
     selectedUnknown->Release();
     SafeArrayDestroy(selection);
+
+    ComPtr<IRawElementProviderFragment> multi;
+    Check(SUCCEEDED(group->Navigate(
+            NavigateDirection_LastChild, &multi)) && multi,
+        "multiple-selection collection must remain a semantic child");
+    pattern.Reset();
+    Check(SUCCEEDED(AsSimple(multi.Get())->GetPatternProvider(
+            UIA_SelectionPatternId, &pattern)) && pattern,
+        "multiple-selection collection must expose Selection");
+    ComPtr<ISelectionProvider> multiSelection;
+    BOOL canSelectMultiple = FALSE;
+    Check(SUCCEEDED(pattern.As(&multiSelection)) &&
+            SUCCEEDED(multiSelection->get_CanSelectMultiple(
+                &canSelectMultiple)) && canSelectMultiple,
+        "Selection must report multiple-selection capability");
+    ComPtr<IRawElementProviderFragment> messageA;
+    Check(SUCCEEDED(multi->Navigate(
+            NavigateDirection_FirstChild, &messageA)) && messageA,
+        "multiple-selection items must remain navigable");
+    pattern.Reset();
+    Check(SUCCEEDED(AsSimple(messageA.Get())->GetPatternProvider(
+            UIA_SelectionItemPatternId, &pattern)) && pattern,
+        "multiple-selection items must expose SelectionItem");
+    ComPtr<ISelectionItemProvider> multiItem;
+    Check(SUCCEEDED(pattern.As(&multiItem)) &&
+            SUCCEEDED(multiItem->RemoveFromSelection()) &&
+            actions.back().kind ==
+                LuaWidgetAccessibilityActionKind::RemoveFromSelection &&
+            SUCCEEDED(multiItem->AddToSelection()) &&
+            actions.back().kind ==
+                LuaWidgetAccessibilityActionKind::AddToSelection,
+        "multiple SelectionItem add/remove must route distinct host actions");
 
     ComPtr<IRawElementProviderFragment> scroll;
     ComPtr<IRawElementProviderFragment> grid;

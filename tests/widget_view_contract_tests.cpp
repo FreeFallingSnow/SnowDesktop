@@ -96,6 +96,13 @@ void TestRepresentativeApplicability()
     Check(ViewNodeAllowsProperty(ViewNodeType::VirtualGrid, "itemCount") &&
             !ViewNodeAllowsProperty(ViewNodeType::GridList, "itemCount"),
         "virtual collection properties must not leak to eager collections");
+    Check(ViewNodeAllowsProperty(ViewNodeType::List, "selectionMode") &&
+            ViewNodeAllowsProperty(ViewNodeType::VirtualGrid,
+                "selectedKeys") &&
+            !ViewNodeAllowsProperty(ViewNodeType::ListItem,
+                "selectionMode") &&
+            !ViewNodeAllowsProperty(ViewNodeType::Grid, "selectedKeys"),
+        "controlled selection properties must stay on collection containers");
     Check(ViewNodeAllowsProperty(ViewNodeType::Image, "source") &&
             ViewNodeAllowsProperty(ViewNodeType::ReferenceIcon, "reference") &&
             ViewNodeAllowsProperty(ViewNodeType::Image, "tint") &&

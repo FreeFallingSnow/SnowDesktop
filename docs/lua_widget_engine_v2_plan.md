@@ -1087,7 +1087,10 @@ SnowDesktop 不照搬某一个框架，参考优先级如下：
 每项有独立 action、hover、菜单目标与 listitem 语义；`view.collection.virtual` 进一步
 提供固定行高 `virtualList/virtualGrid` 和 `view.virtualRange`，按实例滚动位置只实体化
 最多 128 个连续项，宿主按全局 1-based 索引布局并校验窗口覆盖可见行。可操作的已实体化项
-已进入通用键盘焦点序列；可变行高和 UIA Collection/Scroll pattern 仍未完成，因此本进度
+已进入通用键盘焦点序列；`view.collection.selection` 又加入父集合统一拥有的 none/single/
+multiple 与受控 selectedKeys，条目 selectedStyle、指针/键盘建议事件及 UIA Selection 的
+单选、多选、添加和移除使用同一状态来源。可变行高、未实体化项的 VirtualizedItem 与
+ScrollItem 仍未完成，因此本进度
 不代表第 13.4 节集合全集完成。
 `view.inputControls` 已一次覆盖 `textInput/textArea/searchBox/numberInput/select`：四类输入
 复用宿主键盘、选择、剪贴板代理和 IME 编辑器，使用组件受控 value 与 change 建议值，支持

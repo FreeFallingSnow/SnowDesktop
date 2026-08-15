@@ -107,7 +107,7 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.grid.tracks` 提供受限 fixed/auto/fr/minmax 列轨和行轨，
 `view.flow.wrap` 提供横向换行 `flow`。
 `view.scroll` 提供宿主滚动视口，`view.collection.basic` 提供基础集合，
-`view.collection.virtual` 提供固定行高虚拟集合与可见范围查询；
+`view.collection.selection` 提供受控单选/多选，`view.collection.virtual` 提供固定行高虚拟集合与可见范围查询；
 `view.styledText.basic` 提供有界样式 span，`view.monthCalendar` 提供受控月历日期网格，
 `view.logicalSlots` 提供与 manifest 宿主管理槽位严格对应的 `slotSurface/slotItem`，
 `view.referenceIcon` 提供只接收实例自有 opaque ref 的宿主图标节点。
@@ -395,6 +395,26 @@ UIA 滚动从末端之前首次到达最大偏移时投递一次 action，离开
 总节点和 256 交互区域上限约束。对应 feature 为 `view.collection.basic`。这是非虚拟化
 基础集合；大量或远程分页数据应使用下述 `virtualList/virtualGrid`，不能通过超配额树模拟。
 
+探测 `view.collection.selection` 后，四种集合容器都可声明
+`selectionMode="none"|"single"|"multiple"` 和受控 `selectedKeys`。非虚拟集合的键必须
+对应直接 `listItem`，虚拟集合则允许保留当前窗口外的逻辑项键；键必须唯一，single 最多一个，
+none 不接受任何键。single/multiple 要求在集合容器声明 `events.change`。宿主把选择状态统一
+应用到条目的 `selectedStyle`、键盘/指针命中和 UIA Selection/SelectionItem，并在 action 事件
+中返回 `previousSelectedKeys/selectedKeys`；Lua 必须更新 model 并重新提交，宿主不自行持久化。
+选择集合的条目不能再声明 click/change，单击和 Enter/Space 留给选择；需要打开条目时使用
+`doubleClick` 或条目内独立按钮，contextMenu 仍保持元素级目标。多选的辅助技术 Add/Remove
+操作也只产生同一种受控建议。
+
+```lua
+view.list({
+    key = "messages",
+    selectionMode = "multiple",
+    selectedKeys = model.selectedKeys,
+    events = { change = { id = "messages.select" } },
+    children = items,
+})
+```
+
 ```lua
 view.scroll({
     key = "feed-scroll",
@@ -581,7 +601,8 @@ ExpandCollapse、SelectionItem 和 Scroll Pattern 已连接到同一套 Lua acti
 Provider 会在成功桌面帧后按稳定语义 ID 差分并发送结构、焦点、边界、名称、启用、离屏、开关、
 选择、RangeValue、Value、展开和滚动状态变化，不会每帧广播未变化属性。其中 `radioGroup` 的选项、展开 `select` 的选项和
 `monthCalendar` 的日期已经作为稳定的 SelectionItem 子元素输出，父控件提供 Selection Pattern，
-可由辅助技术单独聚焦和选择。滚动容器提供 Scroll，网格及当前已实体化的单元提供
+可由辅助技术单独聚焦和选择；受控集合的单选/多选、添加和移除选择也复用
+`previousSelectedKeys/selectedKeys` 建议。滚动容器提供 Scroll，网格及当前已实体化的单元提供
 Grid/GridItem；任意未实体化集合项仍未形成完整 UIA VirtualizedItem/ScrollItem 协议，真实 Narrator
 验收也尚未完成；默认值/范围、子节点、
 事件和错误码也未全部迁入，

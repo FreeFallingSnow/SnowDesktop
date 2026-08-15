@@ -66,6 +66,10 @@ bool IsGridContainer(ViewNodeType type) noexcept
 void PopulateContainerState(const ViewNode& source,
     ViewAccessibilityNode& target)
 {
+    target.canSelectMultiple = source.selectionMode ==
+        ViewSelectionMode::Multiple;
+    target.selectionRequired = source.type == ViewNodeType::RadioGroup ||
+        source.type == ViewNodeType::MonthCalendar;
     if (IsGridContainer(source.type))
     {
         const std::size_t columns = source.type ==
@@ -385,6 +389,8 @@ bool CollectNode(const ViewNode& source, std::string_view semanticPath,
         target.focusable = source.focusable.value_or(
             contract->keyboardFocusable) && source.enabled;
         target.focused = target.focusable && source.key == focusedKey;
+        target.canSelectMultiple = source.inheritedSelectionMode ==
+            ViewSelectionMode::Multiple;
         target.offscreen = source.frame.width <= 0.0f ||
             source.frame.height <= 0.0f ||
             (inheritedClip && !Overlaps(source.frame, *inheritedClip));

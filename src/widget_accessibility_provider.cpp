@@ -1389,7 +1389,15 @@ public:
 
     HRESULT STDMETHODCALLTYPE AddToSelection() override
     {
-        return Select();
+        AccessibilityNode node;
+        const HRESULT hr = ResolvePatternNode(
+            AccessibilityPattern::SelectionItem, node);
+        if (FAILED(hr)) return hr;
+        return PerformAction(
+            AccessibilityPattern::SelectionItem,
+            node.canSelectMultiple
+                ? LuaWidgetAccessibilityActionKind::AddToSelection
+                : LuaWidgetAccessibilityActionKind::Select);
     }
 
     HRESULT STDMETHODCALLTYPE RemoveFromSelection() override
@@ -1397,7 +1405,11 @@ public:
         AccessibilityNode node;
         const HRESULT hr = ResolvePatternNode(
             AccessibilityPattern::SelectionItem, node);
-        return FAILED(hr) ? hr : UIA_E_INVALIDOPERATION;
+        if (FAILED(hr)) return hr;
+        if (!node.canSelectMultiple) return UIA_E_INVALIDOPERATION;
+        return PerformAction(
+            AccessibilityPattern::SelectionItem,
+            LuaWidgetAccessibilityActionKind::RemoveFromSelection);
     }
 
     HRESULT STDMETHODCALLTYPE get_IsSelected(BOOL* result) override
@@ -1485,7 +1497,7 @@ public:
         const HRESULT hr = ResolvePatternNode(
             AccessibilityPattern::Selection, node);
         if (FAILED(hr)) return hr;
-        *result = FALSE;
+        *result = node.canSelectMultiple ? TRUE : FALSE;
         return S_OK;
     }
 
@@ -1496,10 +1508,7 @@ public:
         const HRESULT hr = ResolvePatternNode(
             AccessibilityPattern::Selection, node);
         if (FAILED(hr)) return hr;
-        *result = node.sourceType ==
-                snowdesktop::widget_runtime::ViewNodeType::RadioGroup ||
-            node.sourceType ==
-                snowdesktop::widget_runtime::ViewNodeType::MonthCalendar;
+        *result = node.selectionRequired ? TRUE : FALSE;
         return S_OK;
     }
 

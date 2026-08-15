@@ -54,6 +54,8 @@ enum class InteractionControlKind
     Toggle,
     Checkbox,
     Radio,
+    SelectionSingle,
+    SelectionMultiple,
     Slider,
 };
 
@@ -69,6 +71,8 @@ struct InteractionResolvedAction
     std::optional<float> controlValue;
     std::optional<std::string> previousSelection;
     std::optional<std::string> selection;
+    std::optional<std::vector<std::string>> previousSelectedKeys;
+    std::optional<std::vector<std::string>> selectedKeys;
     std::optional<bool> previousExpanded;
     std::optional<bool> expanded;
 };
@@ -131,6 +135,8 @@ struct InteractionRegion
     bool vertical = false;
     std::string currentSelection;
     std::string proposedSelection;
+    std::vector<std::string> currentSelectedKeys;
+    std::string proposedSelectedKey;
     bool hasExpandedProposal = false;
     bool expanded = false;
     bool enabled = true;

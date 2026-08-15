@@ -234,6 +234,7 @@ void TestVirtualControlChildren()
         "tiles", 0, 0, 200, 100);
     grid.accessibilityLabel = "Tiles";
     grid.columns = 2;
+    grid.selectionMode = ViewSelectionMode::Multiple;
     for (int index = 0; index < 3; ++index)
     {
         ViewNode item = Node(ViewNodeType::ListItem,
@@ -258,12 +259,13 @@ void TestVirtualControlChildren()
             nodes[0].gridColumnCount == 2 &&
             nodes[1].gridRow == 0 && nodes[1].gridColumn == 0 &&
             nodes[1].gridColumnSpan == 2 &&
+            nodes[0].canSelectMultiple && !nodes[0].selectionRequired &&
             nodes[1].checked == false && nodes[2].checked == true &&
             nodes[3].gridRow == 1 && nodes[3].gridColumn == 1 &&
             nodes[3].gridRowSpan == 2 &&
             HasViewAccessibilityPattern(nodes[3].patterns,
                 ViewAccessibilityPattern::GridItem),
-        "grid collections must expose resolved positions and spans");
+        "grid collections must expose selection capability, positions, and spans");
 }
 }
 

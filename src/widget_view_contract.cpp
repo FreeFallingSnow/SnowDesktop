@@ -70,7 +70,8 @@ constexpr auto kProperties = std::to_array<std::string_view>({
     "shadow", "gap", "columns", "rows",
     "columnGap", "rowGap", "gridColumn", "gridRow", "columnSpan",
     "rowSpan", "itemCount",
-    "itemExtent", "firstIndex", "overscan", "flexBasis", "flexGrow",
+    "itemExtent", "firstIndex", "overscan", "selectionMode",
+    "selectedKeys", "flexBasis", "flexGrow",
     "flexShrink", "flexDirection", "flexWrap", "alignContent",
     "fontSize", "fontWeight", "fontStyle", "lineHeight",
     "letterSpacing", "locale", "textDirection", "bold",
@@ -303,6 +304,9 @@ bool ViewNodeAllowsProperty(
     if (property == "itemCount" || property == "itemExtent" ||
         property == "firstIndex" || property == "overscan")
         return IsVirtual(type);
+    if (property == "selectionMode" || property == "selectedKeys")
+        return IsType(type, { ViewNodeType::List, ViewNodeType::GridList,
+            ViewNodeType::VirtualList, ViewNodeType::VirtualGrid });
     if (property == "flexDirection" || property == "flexWrap" ||
         property == "alignContent")
         return type == ViewNodeType::Row || type == ViewNodeType::Column;

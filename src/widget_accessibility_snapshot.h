@@ -12,6 +12,8 @@ enum class LuaWidgetAccessibilityActionKind
     Invoke,
     Toggle,
     Select,
+    AddToSelection,
+    RemoveFromSelection,
     SetRangeValue,
     SetValue,
     Expand,

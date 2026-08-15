@@ -2176,6 +2176,61 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
                 " children must all be listItem nodes";
             return false;
         }
+        if ((node.selectionMode == ViewSelectionMode::None &&
+                !node.selectedKeys.empty()) ||
+            (node.selectionMode == ViewSelectionMode::Single &&
+                node.selectedKeys.size() > 1))
+        {
+            error = "collection selectedKeys do not match selectionMode";
+            return false;
+        }
+        std::unordered_set<std::string> selectedKeys;
+        for (const auto& key : node.selectedKeys)
+        {
+            if (key.empty() || key.size() > 128 ||
+                !selectedKeys.insert(key).second)
+            {
+                error = "collection selectedKeys must be unique bounded item keys";
+                return false;
+            }
+            if (textBytes > ViewTreeLimits::MaximumTotalTextBytes -
+                    key.size())
+            {
+                error = "view tree collection key limit exceeded";
+                return false;
+            }
+            textBytes += key.size();
+        }
+        if (!IsVirtualCollection(node.type))
+        {
+            for (const auto& key : node.selectedKeys)
+            {
+                if (std::none_of(node.children.begin(), node.children.end(),
+                        [&key](const ViewNode& child) {
+                            return child.key == key;
+                        }))
+                {
+                    error = "collection selectedKeys must reference direct listItem children";
+                    return false;
+                }
+            }
+        }
+        if (node.selectionMode != ViewSelectionMode::None &&
+            std::any_of(node.children.begin(), node.children.end(),
+                [](const ViewNode& child) {
+                    return child.events.contains("click") ||
+                        child.events.contains("change");
+                }))
+        {
+            error = "selectable collection items reserve click/change; use doubleClick for activation";
+            return false;
+        }
+    }
+    else if (node.selectionMode != ViewSelectionMode::None ||
+        !node.selectedKeys.empty())
+    {
+        error = "selectionMode and selectedKeys are reserved for collection nodes";
+        return false;
     }
     if (IsVirtualCollection(node.type))
     {
@@ -2702,6 +2757,16 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             return false;
         }
     }
+    else if (IsCollectionContainer(node.type) &&
+        node.selectionMode != ViewSelectionMode::None)
+    {
+        if (!node.events.contains("change") ||
+            node.events.contains("click"))
+        {
+            error = "selectable collection nodes require change and reject click";
+            return false;
+        }
+    }
     else if (IsControlledNode(node.type))
     {
         const bool changeRequired =
@@ -2732,6 +2797,38 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
                 seriesPoints, collectionItems, keys, resources,
                 node.type, error)) return false;
     return true;
+}
+
+void ApplyCollectionSelectionState(ViewNode& node)
+{
+    if (IsCollectionContainer(node.type) &&
+        node.selectionMode != ViewSelectionMode::None)
+    {
+        const auto change = node.events.find("change");
+        for (auto& child : node.children)
+        {
+            child.inheritedSelectionMode = node.selectionMode;
+            child.inheritedSelectedKeys = node.selectedKeys;
+            child.selected = std::find(node.selectedKeys.begin(),
+                node.selectedKeys.end(), child.key) !=
+                node.selectedKeys.end();
+            if (change != node.events.end())
+                child.inheritedSelectionChangeAction = change->second;
+        }
+    }
+    for (auto& child : node.children)
+        ApplyCollectionSelectionState(child);
+}
+
+void ClearCollectionSelectionState(ViewNode& node)
+{
+    if (node.inheritedSelectionMode != ViewSelectionMode::None)
+        node.selected = false;
+    node.inheritedSelectionMode = ViewSelectionMode::None;
+    node.inheritedSelectedKeys.clear();
+    node.inheritedSelectionChangeAction.reset();
+    for (auto& child : node.children)
+        ClearCollectionSelectionState(child);
 }
 
 bool CollectRegions(const ViewNode& node,
@@ -2950,7 +3047,12 @@ bool CollectRegions(const ViewNode& node,
         }
         return true;
     }
-    if ((!node.events.empty() || !node.tooltip.empty() ||
+    const bool hasDirectRegionEvent = std::any_of(node.events.begin(),
+        node.events.end(), [&node](const auto& entry) {
+            return !IsCollectionContainer(node.type) ||
+                entry.first != "change";
+        });
+    if ((hasDirectRegionEvent || !node.tooltip.empty() ||
             IsNodeKeyboardFocusable(node) ||
             IsButtonNode(node.type) ||
             node.type == ViewNodeType::ListItem ||
@@ -3002,7 +3104,9 @@ bool CollectRegions(const ViewNode& node,
                 node.events.contains("click"))
             ? "hand" : node.cursor;
         region.tooltip = node.tooltip;
-        region.events = node.events;
+        for (const auto& [name, action] : node.events)
+            if (!IsCollectionContainer(node.type) || name != "change")
+                region.events.emplace(name, action);
         if (node.type == ViewNodeType::Toggle)
             region.controlKind = InteractionControlKind::Toggle;
         else if (node.type == ViewNodeType::Checkbox)
@@ -3027,7 +3131,22 @@ bool CollectRegions(const ViewNode& node,
             region.controlLength = std::max(0.0f,
                 mainLength - radiusInset * 2.0f);
         }
-        region.checked = node.checked;
+        else if (node.type == ViewNodeType::ListItem &&
+            node.inheritedSelectionMode != ViewSelectionMode::None)
+        {
+            region.controlKind = node.inheritedSelectionMode ==
+                    ViewSelectionMode::Single
+                ? InteractionControlKind::SelectionSingle
+                : InteractionControlKind::SelectionMultiple;
+            region.currentSelectedKeys = node.inheritedSelectedKeys;
+            region.proposedSelectedKey = node.key;
+            if (node.inheritedSelectionChangeAction)
+                region.events.insert_or_assign("change",
+                    *node.inheritedSelectionChangeAction);
+        }
+        region.checked = node.type == ViewNodeType::ListItem &&
+                node.inheritedSelectionMode != ViewSelectionMode::None
+            ? node.selected : node.checked;
         region.indeterminate = node.indeterminate;
         region.accessibilityRole = node.accessibilityRole.empty()
             ? DefaultAccessibilityRole(node.type)
@@ -3492,6 +3611,8 @@ bool ValidateAndLayoutViewTree(ViewNode& root, float width, float height,
     if (!ValidateNode(root, 0, nodes, textBytes, seriesPoints,
             collectionItems, keys, resources, std::nullopt, error))
         return false;
+    ClearCollectionSelectionState(root);
+    ApplyCollectionSelectionState(root);
     if (!ResolveGridPlacements(root, error)) return false;
     LayoutNode(root, { 0.0f, 0.0f, width, height });
     return true;
