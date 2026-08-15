@@ -115,6 +115,8 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.tooltip` 提供宿主管理的纯文本元素提示，
 `view.layout.overflow` 提供容器后代裁剪，`view.shadow` 提供有界宿主阴影，
 `view.image.tint` 提供保留图片 alpha 的 RGB 着色，
+`view.transform.basic` 提供布局后的平移、统一缩放和变换原点，
+`view.transition.visual` 提供宿主驱动的有限视觉样式过渡，
 `view.state.selected` 提供通用受控选中样式，`view.checkbox.indeterminate` 提供复选框混合态，
 `view.state.visibility` 明确区分参与布局的隐藏状态与完全折叠状态，
 `view.input.selection` 提供文本输入的受控选区，`view.input.required` 提供表单必填语义，
@@ -153,6 +155,33 @@ scroll content extent 和虚拟 item extent；同级间的公共间隔仍优先�
 由宿主最多 16 层受控衰减绘制，blur 限制为 0 到 64，不参与布局或扩大命中区；对应 feature
 为 `view.shadow`。图片在探测 `view.image.tint` 后可声明 `tint=0xRRGGBB`，宿主替换 RGB、
 保留源 alpha，并继续遵循 fit、alignment、interpolation 和节点 opacity。
+探测 `view.transform.basic` 后，任意节点可声明
+`transform={translateX?,translateY?,scale?,originX?,originY?}`。平移每轴限制在
+-4096–4096，统一正数 scale 限制为 0.05–8，归一化原点限制为 0–1；嵌套累计缩放必须保持
+在 1/64–64。变换在布局后应用并由后代继承，绘制、命中、宿主输入、裁剪和 UIA 边界使用
+同一结果；当前不包含旋转、斜切或非统一缩放。
+
+探测 `view.transition.visual` 后，任意节点可声明：
+
+```lua
+transition = {
+    durationMs = 120,
+    easing = "easeOut",
+    properties = { "background", "foreground", "borderColor", "opacity" },
+}
+```
+
+`properties` 必须包含 1–4 个不重复的白名单名称；`durationMs` 默认为 120、范围为
+1–2000，`easing` 默认为 `easeOut`，也可使用 `linear/easeIn/easeInOut`。稳定 key 节点的
+解析后样式目标变化时，宿主插值 background/foreground/borderColor/opacity；颜色只有旧值和
+新值都显式存在时才插值，颜色出现或消失会直接切换，未声明 opacity 按 1 参与插值。
+节点首次出现直接显示目标样式，删除节点不产生 exit 动画；布局、transform、阴影、圆角、
+边框宽度以及 enter/exit transition 均不属于该 feature。
+
+桌面与 panel/dialog/popover 各自维护过渡状态，插值帧只重绘上一棵成功提交的 scene tree，
+不会每帧重新调用 Lua `view()`。目标样式来自新 scene 或宿主 hover/pressed/focus 等状态；
+预览、宿主计时器不可用或系统开启“减少动态效果”时直接显示最终样式。隐藏、关闭 surface、
+热重载和卸载会清理待执行过渡。该能力不要求权限，也不能用于绕过 reducedMotion。
 探测 `view.state.visibility` 后，节点可声明 `visibility="visible"|"hidden"|"collapsed"`。
 `hidden` 仍参与父布局，但整棵子树不绘制、不可命中、不创建宿主输入，也不进入 UI Automation；
 `collapsed` 则不占用布局空间。旧 `visible=false` 固定等价于 collapsed，`visible=true` 等价于 visible。
@@ -726,8 +755,9 @@ Grid/GridItem；任意未实体化集合项仍未形成完整 UIA VirtualizedIte
 外部点击与 Escape 均关闭，与 panel/dialog 互斥；嵌套辅助 surface 打开被拒绝。popover 语义树
 同样尚未导出到桌面 UIA Fragment Provider。
 
-`view.tree.core` 仍不是完整 `view.tree`：当前每帧重建树，尚无可变高度虚拟集合、
-可操作行内 span，也没有完整 UIA 虚拟集合/ScrollItem Pattern、RTL、主题 token 或差量资源复用。
+`view.tree.core` 仍不是完整 `view.tree`：业务状态失效时仍提交完整树；只有
+`view.transition.visual` 的插值帧会复用上一棵成功树。当前尚无可变高度虚拟集合、
+完整 UIA 虚拟集合/ScrollItem Pattern、主题 token 或差量资源复用。
 需要这些能力的组件应继续使用已经公开的细粒度 feature 或等待对应能力；不得把
 `view.tree.core` 当作稳定完整控件集声明。
 

@@ -231,7 +231,14 @@ Probe `view.transform.basic` before declaring a node `transform` with bounded
 `translateX`, `translateY`, positive uniform `scale`, or normalized
 `originX`/`originY`. Transforms are post-layout, inherit through descendants,
 and move drawing, hit targets, host inputs, clips, and accessibility bounds
-together; rotation and declarative transitions are not part of this feature.
+together; rotation is not part of this feature. Probe
+`view.transition.visual` separately before declaring `transition`. It accepts
+1–4 unique `background`/`foreground`/`borderColor`/`opacity` properties, a
+1–2000 ms duration, and linear/easeIn/easeOut/easeInOut easing. The host
+interpolates committed styles without rerunning `view()` on every animation
+frame and snaps to the final style for preview, unavailable timing, or reduced
+motion. Color appearance/disappearance, layout, transform, enter, and exit
+changes still snap; do not emulate them with an unconditional Lua frame loop.
 Probe `view.state.visibility` before using `visibility`. `hidden` keeps layout
 space but removes the whole subtree from paint, hit testing, host inputs, and
 UI Automation; `collapsed` also removes its layout space. Legacy `visible=false`
