@@ -368,11 +368,15 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "task.network.request") &&
             snowdesktop::widget_api::SupportsFeature(
+                "task.notification.actions") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "task.notification.lifecycle") &&
             snowdesktop::widget_api::SupportsFeature(
                 "task.notification.schedule") &&
             snowdesktop::widget_api::SupportsFeature(
                 "task.notification.show") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "task.notification.structured") &&
             snowdesktop::widget_api::SupportsFeature(
                 "task.app.launch") &&
             snowdesktop::widget_api::SupportsFeature(

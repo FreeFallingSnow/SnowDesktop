@@ -287,6 +287,12 @@ menu.
   `notification.cancel` for future delivery. Scheduled delivery reports
   `notification.delivered`, survives an app restart while the same instance
   and package remain authorized, and must not be recreated in a polling loop.
+  Structured notifications may use one package `resource.image`, progress from
+  0 through 1, and at most two uniquely identified action buttons. Handle
+  `notification.action` by its `notificationId` and `actionId`; the callback is
+  a trusted gesture, but is safely dropped if the owning VM no longer exists.
+  Use `false` in `notification.update` to clear image or progress, and an empty
+  actions array to clear buttons. Runtime image handles are not accepted.
   Declare `notification.post` as optional when the widget can
   keep working without it, and never fall back to API v1 `system.notify`.
 - Create `resource.image/font` handles at entry scope. Use `resource.status`

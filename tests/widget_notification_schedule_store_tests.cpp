@@ -4,6 +4,7 @@
 #include <iostream>
 #include <optional>
 #include <string>
+#include <utility>
 
 namespace
 {
@@ -42,6 +43,24 @@ void TestRoundTripAndOrdering()
             first->message == "quoted \"text\"" &&
             first->dueMs == 2000,
         "round trip must preserve owner binding, UTF-8 text, and deadline");
+
+    WidgetPersistedNotificationSchedule structured{
+        "widget-c", "package-c", "notification:3",
+        "Download", "In progress", 4000 };
+    structured.imageResource = "preview";
+    structured.progress = 0.625;
+    structured.actions = { { "open", "Open" }, { "cancel", "Cancel" } };
+    Check(restored.Upsert(std::move(structured), error),
+        "structured schedule fixture must be accepted");
+    WidgetNotificationScheduleStore structuredRestored;
+    Check(structuredRestored.LoadText(restored.Serialize(), error),
+        "schema v2 structured schedules must round trip");
+    const auto saved = structuredRestored.Find(
+        "widget-c", "notification:3");
+    Check(saved && saved->imageResource == "preview" &&
+            saved->progress == 0.625 && saved->actions.size() == 2 &&
+            saved->actions[1].id == "cancel",
+        "structured schedule round trip must preserve presentation fields");
 }
 
 void TestOwnershipMutationAndDueSelection()
@@ -52,11 +71,13 @@ void TestOwnershipMutationAndDueSelection()
             "Title", "Message", 1000 }, error),
         "schedule fixture must be accepted");
     Check(!store.Remove("foreign", "notification:1") &&
-            !store.UpdateText("foreign", "notification:1",
-                std::string("No"), std::nullopt),
+            !store.UpdateContent("foreign", "notification:1",
+                std::string("No"), std::nullopt, std::nullopt,
+                std::nullopt, std::nullopt),
         "foreign instances must not mutate another schedule");
-    Check(store.UpdateText("widget", "notification:1",
-            std::nullopt, std::string("Updated")),
+    Check(store.UpdateContent("widget", "notification:1",
+            std::nullopt, std::string("Updated"), std::nullopt,
+            std::nullopt, std::nullopt),
         "the owning instance must update persisted text");
     Check(store.Due(999).empty() && store.Due(1000).size() == 1,
         "due selection must include the exact epoch-millisecond deadline");
@@ -91,6 +112,14 @@ void TestStrictSchemaRejection()
             "\"notificationId\":\"n\",\"title\":\"t\","
             "\"message\":\"m\",\"dueMs\":2}]} ", error),
         "duplicate opaque IDs must be rejected even within one owner");
+    Check(!store.LoadText(
+            "{\"schemaVersion\":2,\"entries\":["
+            "{\"instanceId\":\"w\",\"packageId\":\"p\","
+            "\"notificationId\":\"n\",\"title\":\"t\","
+            "\"message\":\"m\",\"dueMs\":1,"
+            "\"imageResource\":\"\",\"progress\":2,"
+            "\"actions\":[]}]} ", error),
+        "out-of-range structured progress must be rejected");
 }
 }
 

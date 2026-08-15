@@ -1,7 +1,9 @@
 #include "widget_notification_runtime.h"
 
 #include <algorithm>
+#include <cmath>
 #include <sstream>
+#include <unordered_set>
 #include <utility>
 
 namespace snowdesktop::widget_runtime
@@ -25,6 +27,35 @@ bool InvokeHost(const WidgetNotificationCenter::HostCallback& host,
     {
         return false;
     }
+}
+
+bool ValidContent(const WidgetNotificationContent& content)
+{
+    if (content.title.empty() || content.message.empty() ||
+        (content.progress && (!std::isfinite(*content.progress) ||
+            *content.progress < 0.0 || *content.progress > 1.0)) ||
+        content.actions.size() > 2)
+        return false;
+    std::unordered_set<std::string> ids;
+    for (const auto& action : content.actions)
+    {
+        if (action.id.empty() || action.id.size() > 64 ||
+            action.label.empty() || !ids.insert(action.id).second)
+            return false;
+    }
+    return true;
+}
+
+WidgetNotificationHostRequest HostRequest(
+    WidgetNotificationHostOperation operation,
+    const std::string& id,
+    const std::wstring& title = {},
+    const std::wstring& message = {},
+    const std::wstring& imagePath = {},
+    const std::optional<double>& progress = std::nullopt,
+    const std::vector<WidgetNotificationAction>& actions = {})
+{
+    return { operation, id, title, message, imagePath, progress, actions };
 }
 }
 
@@ -85,10 +116,10 @@ std::size_t WidgetNotificationCenter::CountForOwner(
 }
 
 WidgetNotificationOperationResult WidgetNotificationCenter::Show(
-    std::uint64_t ownerToken, std::wstring title, std::wstring message,
+    std::uint64_t ownerToken, WidgetNotificationContent content,
     Clock::time_point now, const HostCallback& host)
 {
-    if (ownerToken == 0 || title.empty() || message.empty())
+    if (ownerToken == 0 || !ValidContent(content))
         return Failure("invalidArguments");
     if (!host) return Failure("providerUnavailable");
     PruneExpired(now);
@@ -98,12 +129,17 @@ WidgetNotificationOperationResult WidgetNotificationCenter::Show(
     Record record;
     record.ownerToken = ownerToken;
     record.id = AllocateId(ownerToken);
-    record.title = std::move(title);
-    record.message = std::move(message);
+    record.title = std::move(content.title);
+    record.message = std::move(content.message);
+    record.imagePath = std::move(content.imagePath);
+    record.progress = content.progress;
+    record.actions = std::move(content.actions);
     record.state = State::Delivered;
     record.updated = now;
-    if (!InvokeHost(host, { WidgetNotificationHostOperation::Show,
-            record.id, record.title, record.message }))
+    if (!InvokeHost(host, HostRequest(
+            WidgetNotificationHostOperation::Show, record.id,
+            record.title, record.message, record.imagePath,
+            record.progress, record.actions)))
         return Failure("notificationFailed");
     const std::string id = record.id;
     records_.push_back(std::move(record));
@@ -111,10 +147,10 @@ WidgetNotificationOperationResult WidgetNotificationCenter::Show(
 }
 
 WidgetNotificationOperationResult WidgetNotificationCenter::Schedule(
-    std::uint64_t ownerToken, std::wstring title, std::wstring message,
+    std::uint64_t ownerToken, WidgetNotificationContent content,
     Clock::time_point due, Clock::time_point now)
 {
-    if (ownerToken == 0 || title.empty() || message.empty() || due <= now ||
+    if (ownerToken == 0 || !ValidContent(content) || due <= now ||
         due - now > MaximumScheduleDelay)
         return Failure("invalidArguments");
     PruneExpired(now);
@@ -134,8 +170,11 @@ WidgetNotificationOperationResult WidgetNotificationCenter::Schedule(
     Record record;
     record.ownerToken = ownerToken;
     record.id = AllocateId(ownerToken);
-    record.title = std::move(title);
-    record.message = std::move(message);
+    record.title = std::move(content.title);
+    record.message = std::move(content.message);
+    record.imagePath = std::move(content.imagePath);
+    record.progress = content.progress;
+    record.actions = std::move(content.actions);
     record.state = State::Scheduled;
     record.due = due;
     record.updated = now;
@@ -146,11 +185,11 @@ WidgetNotificationOperationResult WidgetNotificationCenter::Schedule(
 
 WidgetNotificationOperationResult WidgetNotificationCenter::RestoreScheduled(
     std::uint64_t ownerToken, std::string id,
-    std::wstring title, std::wstring message,
+    WidgetNotificationContent content,
     Clock::time_point due, Clock::time_point now)
 {
     if (ownerToken == 0 || id.empty() || id.size() > 128 ||
-        title.empty() || message.empty() ||
+        !ValidContent(content) ||
         due - now > MaximumScheduleDelay)
         return Failure("invalidArguments");
     if (now - due > DeliveredRecordLifetime)
@@ -171,33 +210,57 @@ WidgetNotificationOperationResult WidgetNotificationCenter::RestoreScheduled(
     if (scheduledCount >= MaximumScheduledPerOwner)
         return Failure("quotaExceeded");
 
-    records_.push_back({ ownerToken, std::move(id),
-        std::move(title), std::move(message), State::Scheduled,
-        due, now });
+    Record record;
+    record.ownerToken = ownerToken;
+    record.id = std::move(id);
+    record.title = std::move(content.title);
+    record.message = std::move(content.message);
+    record.imagePath = std::move(content.imagePath);
+    record.progress = content.progress;
+    record.actions = std::move(content.actions);
+    record.state = State::Scheduled;
+    record.due = due;
+    record.updated = now;
+    records_.push_back(std::move(record));
     return { true, records_.back().id, {} };
 }
 
 WidgetNotificationOperationResult WidgetNotificationCenter::Update(
     std::uint64_t ownerToken, std::string_view id,
-    std::optional<std::wstring> title,
-    std::optional<std::wstring> message, const HostCallback& host)
+    WidgetNotificationPatch patch, const HostCallback& host)
 {
-    if (ownerToken == 0 || id.empty() || (!title && !message) ||
-        (title && title->empty()) || (message && message->empty()))
+    const bool supplied = patch.title || patch.message || patch.imagePath ||
+        patch.progress || patch.actions;
+    if (ownerToken == 0 || id.empty() || !supplied ||
+        (patch.title && patch.title->empty()) ||
+        (patch.message && patch.message->empty()))
         return Failure("invalidArguments");
     const auto found = FindOwned(ownerToken, id);
     if (found == records_.end()) return Failure("notFound");
-    std::wstring updatedTitle = title ? std::move(*title) : found->title;
-    std::wstring updatedMessage = message ? std::move(*message) : found->message;
+    WidgetNotificationContent updated;
+    updated.title = patch.title ? std::move(*patch.title) : found->title;
+    updated.message = patch.message ? std::move(*patch.message) : found->message;
+    updated.imagePath = patch.imagePath
+        ? std::move(*patch.imagePath) : found->imagePath;
+    updated.progress = patch.progress
+        ? *patch.progress : found->progress;
+    updated.actions = patch.actions
+        ? std::move(*patch.actions) : found->actions;
+    if (!ValidContent(updated)) return Failure("invalidArguments");
     if (found->state == State::Delivered)
     {
         if (!host) return Failure("providerUnavailable");
-        if (!InvokeHost(host, { WidgetNotificationHostOperation::Update,
-                found->id, updatedTitle, updatedMessage }))
+        if (!InvokeHost(host, HostRequest(
+                WidgetNotificationHostOperation::Update, found->id,
+                updated.title, updated.message, updated.imagePath,
+                updated.progress, updated.actions)))
             return Failure("notificationFailed");
     }
-    found->title = std::move(updatedTitle);
-    found->message = std::move(updatedMessage);
+    found->title = std::move(updated.title);
+    found->message = std::move(updated.message);
+    found->imagePath = std::move(updated.imagePath);
+    found->progress = updated.progress;
+    found->actions = std::move(updated.actions);
     found->updated = Clock::now();
     return { true, found->id, {} };
 }
@@ -212,8 +275,8 @@ WidgetNotificationOperationResult WidgetNotificationCenter::Dismiss(
     if (found->state != State::Delivered)
         return Failure("invalidState");
     if (!host) return Failure("providerUnavailable");
-    if (!InvokeHost(host, { WidgetNotificationHostOperation::Dismiss,
-            found->id, {}, {} }))
+    if (!InvokeHost(host, HostRequest(
+            WidgetNotificationHostOperation::Dismiss, found->id)))
         return Failure("notificationFailed");
     const std::string resultId = found->id;
     records_.erase(found);
@@ -231,6 +294,27 @@ WidgetNotificationOperationResult WidgetNotificationCenter::Cancel(
     const std::string resultId = found->id;
     records_.erase(found);
     return { true, resultId, {} };
+}
+
+WidgetNotificationActivation WidgetNotificationCenter::Activate(
+    std::string_view id, std::string_view actionId)
+{
+    if (id.empty() || actionId.empty()) return {};
+    const auto found = std::find_if(records_.begin(), records_.end(),
+        [id](const Record& record) {
+            return record.id == id && record.state == State::Delivered;
+        });
+    if (found == records_.end()) return {};
+    const bool allowed = std::any_of(
+        found->actions.begin(), found->actions.end(),
+        [actionId](const WidgetNotificationAction& action) {
+            return action.id == actionId;
+        });
+    if (!allowed) return {};
+    WidgetNotificationActivation activation{
+        true, found->ownerToken, found->id, std::string(actionId) };
+    records_.erase(found);
+    return activation;
 }
 
 std::vector<WidgetNotificationDelivery>
@@ -263,10 +347,11 @@ WidgetNotificationCenter::DispatchDue(Clock::time_point now,
             {
                 delivery.error = "providerUnavailable";
             }
-            else if (!InvokeHost(host,
-                    { WidgetNotificationHostOperation::Show,
-                        iterator->id, iterator->title,
-                        iterator->message }))
+            else if (!InvokeHost(host, HostRequest(
+                    WidgetNotificationHostOperation::Show,
+                    iterator->id, iterator->title, iterator->message,
+                    iterator->imagePath, iterator->progress,
+                    iterator->actions)))
             {
                 delivery.error = "notificationFailed";
             }
@@ -295,9 +380,8 @@ void WidgetNotificationCenter::RemoveOwner(
         if (record.ownerToken == ownerToken &&
             record.state == State::Delivered && host)
         {
-            (void)InvokeHost(host,
-                { WidgetNotificationHostOperation::Dismiss,
-                    record.id, {}, {} });
+            (void)InvokeHost(host, HostRequest(
+                WidgetNotificationHostOperation::Dismiss, record.id));
         }
     }
     std::erase_if(records_, [ownerToken](const Record& record) {
@@ -313,9 +397,8 @@ void WidgetNotificationCenter::Clear(const HostCallback& host)
         {
             if (record.state == State::Delivered)
             {
-                (void)InvokeHost(host,
-                    { WidgetNotificationHostOperation::Dismiss,
-                        record.id, {}, {} });
+                (void)InvokeHost(host, HostRequest(
+                    WidgetNotificationHostOperation::Dismiss, record.id));
             }
         }
     }

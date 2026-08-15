@@ -206,6 +206,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/drag_render_cache.cpp
     src/app/ole_drag_drop_adapter.cpp
     src/app/tray_icon_controller.cpp
+    src/app/widget_notification_presenter.cpp
     src/app/desktop_backdrop_compositor.cpp
     src/atomic_file.cpp
     src/dock_window_preview.cpp

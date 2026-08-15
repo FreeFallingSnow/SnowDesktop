@@ -9,6 +9,12 @@
 
 namespace snowdesktop::widget_runtime
 {
+struct WidgetPersistedNotificationAction
+{
+    std::string id;
+    std::string label;
+};
+
 struct WidgetPersistedNotificationSchedule
 {
     std::string instanceId;
@@ -17,6 +23,9 @@ struct WidgetPersistedNotificationSchedule
     std::string title;
     std::string message;
     std::int64_t dueMs = 0;
+    std::string imageResource;
+    std::optional<double> progress;
+    std::vector<WidgetPersistedNotificationAction> actions;
 };
 
 class WidgetNotificationScheduleStore
@@ -33,10 +42,14 @@ public:
     bool Remove(std::string_view instanceId,
         std::string_view notificationId);
     std::size_t RemoveInstance(std::string_view instanceId);
-    bool UpdateText(std::string_view instanceId,
+    bool UpdateContent(std::string_view instanceId,
         std::string_view notificationId,
         const std::optional<std::string>& title,
-        const std::optional<std::string>& message);
+        const std::optional<std::string>& message,
+        const std::optional<std::string>& imageResource,
+        const std::optional<std::optional<double>>& progress,
+        const std::optional<
+            std::vector<WidgetPersistedNotificationAction>>& actions);
     std::optional<WidgetPersistedNotificationSchedule> Find(
         std::string_view instanceId,
         std::string_view notificationId) const;

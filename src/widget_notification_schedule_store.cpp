@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <locale>
 #include <sstream>
 #include <unordered_set>
 #include <utility>
@@ -12,7 +13,7 @@ namespace snowdesktop::widget_runtime
 {
 namespace
 {
-constexpr int SchemaVersion = 1;
+constexpr int SchemaVersion = 2;
 constexpr double MaximumDueMs = 32503680000000.0; // 3000-01-01 UTC
 
 bool IsValidUtf8(std::string_view value)
@@ -118,7 +119,10 @@ bool WidgetNotificationScheduleStore::Validate(
             entry.notificationId.size() > 128 ||
         entry.title.empty() || entry.title.size() > 256 ||
         entry.message.empty() || entry.message.size() > 2048 ||
-        entry.dueMs <= 0)
+        entry.dueMs <= 0 || entry.imageResource.size() > 64 ||
+        (entry.progress && (!std::isfinite(*entry.progress) ||
+            *entry.progress < 0.0 || *entry.progress > 1.0)) ||
+        entry.actions.size() > 2)
     {
         error = "notification schedule fields are out of range";
         return false;
@@ -127,10 +131,24 @@ bool WidgetNotificationScheduleStore::Validate(
         !IsValidUtf8(entry.packageId) ||
         !IsValidUtf8(entry.notificationId) ||
         !IsValidUtf8(entry.title) ||
-        !IsValidUtf8(entry.message))
+        !IsValidUtf8(entry.message) ||
+        (!entry.imageResource.empty() &&
+            !IsValidUtf8(entry.imageResource)))
     {
         error = "notification schedule text is not valid UTF-8";
         return false;
+    }
+    std::unordered_set<std::string> actionIds;
+    for (const auto& action : entry.actions)
+    {
+        if (action.id.empty() || action.id.size() > 64 ||
+            action.label.empty() || action.label.size() > 64 ||
+            !IsValidUtf8(action.id) || !IsValidUtf8(action.label) ||
+            !actionIds.insert(action.id).second)
+        {
+            error = "notification schedule actions are invalid";
+            return false;
+        }
     }
     return true;
 }
@@ -153,7 +171,7 @@ bool WidgetNotificationScheduleStore::LoadText(
     const JsonValue* schema = root.Find("schemaVersion");
     const JsonValue* entries = root.Find("entries");
     if (!schema || !schema->IsNumber() ||
-        schema->number != SchemaVersion ||
+        (schema->number != 1 && schema->number != SchemaVersion) ||
         !entries || !entries->IsArray() ||
         entries->array.size() > MaximumEntries)
     {
@@ -192,6 +210,43 @@ bool WidgetNotificationScheduleStore::LoadText(
             instanceId->string, packageId->string,
             notificationId->string, title->string, message->string,
             static_cast<std::int64_t>(dueMs->number) };
+        if (schema->number >= 2)
+        {
+            const JsonValue* imageResource =
+                StringField(value, "imageResource");
+            const JsonValue* progress = value.Find("progress");
+            const JsonValue* actions = value.Find("actions");
+            if (!imageResource || !progress || !actions ||
+                (!progress->IsNull() &&
+                    (!progress->IsNumber() ||
+                        !std::isfinite(progress->number))) ||
+                !actions->IsArray() || actions->array.size() > 2)
+            {
+                error = "notification schedule structured fields are invalid";
+                return false;
+            }
+            entry.imageResource = imageResource->string;
+            if (progress->IsNumber()) entry.progress = progress->number;
+            for (const JsonValue& actionValue : actions->array)
+            {
+                if (!actionValue.IsObject())
+                {
+                    error = "notification schedule action is invalid";
+                    return false;
+                }
+                const JsonValue* actionId =
+                    StringField(actionValue, "id");
+                const JsonValue* actionLabel =
+                    StringField(actionValue, "label");
+                if (!actionId || !actionLabel)
+                {
+                    error = "notification schedule action fields are invalid";
+                    return false;
+                }
+                entry.actions.push_back(
+                    { actionId->string, actionLabel->string });
+            }
+        }
         if (!Validate(entry, error) ||
             !ids.insert(entry.notificationId).second)
         {
@@ -214,6 +269,7 @@ std::string WidgetNotificationScheduleStore::Serialize() const
             return left.notificationId < right.notificationId;
         });
     std::ostringstream output;
+    output.imbue(std::locale::classic());
     output << "{\n  \"schemaVersion\": " << SchemaVersion
         << ",\n  \"entries\": [";
     for (std::size_t index = 0; index < sorted.size(); ++index)
@@ -226,7 +282,25 @@ std::string WidgetNotificationScheduleStore::Serialize() const
             << EscapeJson(entry.notificationId)
             << "\",\"title\":\"" << EscapeJson(entry.title)
             << "\",\"message\":\"" << EscapeJson(entry.message)
-            << "\",\"dueMs\":" << entry.dueMs << '}';
+            << "\",\"dueMs\":" << entry.dueMs
+            << ",\"imageResource\":\""
+            << EscapeJson(entry.imageResource) << "\",\"progress\":";
+        if (entry.progress)
+            output << *entry.progress;
+        else
+            output << "null";
+        output << ",\"actions\":[";
+        for (std::size_t actionIndex = 0;
+            actionIndex < entry.actions.size(); ++actionIndex)
+        {
+            if (actionIndex) output << ',';
+            output << "{\"id\":\""
+                << EscapeJson(entry.actions[actionIndex].id)
+                << "\",\"label\":\""
+                << EscapeJson(entry.actions[actionIndex].label)
+                << "\"}";
+        }
+        output << "]}";
     }
     if (!sorted.empty()) output << '\n';
     output << "  ]\n}\n";
@@ -284,10 +358,14 @@ std::size_t WidgetNotificationScheduleStore::RemoveInstance(
     return previous - entries_.size();
 }
 
-bool WidgetNotificationScheduleStore::UpdateText(
+bool WidgetNotificationScheduleStore::UpdateContent(
     std::string_view instanceId, std::string_view notificationId,
     const std::optional<std::string>& title,
-    const std::optional<std::string>& message)
+    const std::optional<std::string>& message,
+    const std::optional<std::string>& imageResource,
+    const std::optional<std::optional<double>>& progress,
+    const std::optional<
+        std::vector<WidgetPersistedNotificationAction>>& actions)
 {
     const auto found = std::find_if(entries_.begin(), entries_.end(),
         [instanceId, notificationId](const auto& entry) {
@@ -298,6 +376,9 @@ bool WidgetNotificationScheduleStore::UpdateText(
     WidgetPersistedNotificationSchedule updated = *found;
     if (title) updated.title = *title;
     if (message) updated.message = *message;
+    if (imageResource) updated.imageResource = *imageResource;
+    if (progress) updated.progress = *progress;
+    if (actions) updated.actions = *actions;
     std::string error;
     if (!Validate(updated, error)) return false;
     *found = std::move(updated);

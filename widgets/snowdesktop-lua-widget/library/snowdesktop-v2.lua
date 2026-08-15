@@ -418,7 +418,7 @@
 ---@field settings? SnowWidgetSettings
 
 ---@class SnowWidgetEvent
----@field kind 'visibility'|'resize'|'pointer'|'timer'|'schedule'|'action'|'selection'|'environment'|'panel'|'data.change'|'task.complete'|'slot.changed'|'notification.delivered'
+---@field kind 'visibility'|'resize'|'pointer'|'timer'|'schedule'|'action'|'selection'|'environment'|'panel'|'data.change'|'task.complete'|'slot.changed'|'notification.delivered'|'notification.action'
 ---@field action? 'click'|'change'|'focus'|'blur'|'submit'|'doubleClick'|'pointerDown'|'pointerMove'|'pointerUp'|'wheel'|'opened'|'closed'|string
 ---@field id? string
 ---@field name? string
@@ -464,6 +464,7 @@
 ---@field value? SnowMediaTaskValue|SnowAudioOutputTaskValue|SnowSystemSettingsTaskValue|SnowClipboardReadTaskValue|SnowFilesystemPickerTaskValue|SnowFilesystemMetadata|SnowFilesystemListTaskValue|SnowFilesystemReadTaskValue|SnowFilesystemWriteTaskValue|SnowAppSearchTaskValue|SnowItemSearchTaskValue|SnowNotificationTaskValue|SnowCalendarMutationTaskValue|SnowNetworkTaskValue|SnowStateValue
 ---@field error? string
 ---@field notificationId? string Host-issued notification ID for notification.delivered.
+---@field actionId? string Declared action ID for notification.action.
 ---@field currentRevision? integer Latest revision returned by a failed calendar update conflict.
 ---@field status? integer HTTP status returned by a failed network.request after a response was received.
 
@@ -1356,17 +1357,27 @@ function data.subscribe(topic, options) end
 ---@class SnowItemReferenceArguments
 ---@field ref string An opaque ref returned by desktop.search or everything.search for this widget instance.
 
+---@class SnowNotificationAction
+---@field id string Unique action ID containing 1 to 64 bytes of valid UTF-8.
+---@field label string Button label containing 1 to 64 bytes of valid UTF-8.
+
 ---@class SnowNotificationShowArguments
 ---@field title string Valid UTF-8 containing 1 to 256 bytes.
 ---@field message string Valid UTF-8 containing 1 to 2048 bytes.
+---@field image? SnowImageResource Package resource.image handle; runtime image handles are not accepted.
+---@field progress? number Progress from 0 through 1.
+---@field actions? SnowNotificationAction[] Up to two buttons. Activation emits notification.action as a trusted gesture.
 
 ---@class SnowNotificationScheduleArguments: SnowNotificationShowArguments
 ---@field atMs integer Future Unix epoch time in milliseconds, no more than 366 days away.
 
 ---@class SnowNotificationUpdateArguments
 ---@field notificationId string Opaque ID returned by notification.show or notification.schedule.
----@field title? string Replacement title; title or message is required.
----@field message? string Replacement message; title or message is required.
+---@field title? string Replacement title.
+---@field message? string Replacement message.
+---@field image? SnowImageResource|false Replacement package image, or false to clear it.
+---@field progress? number|false Replacement progress from 0 through 1, or false to clear it.
+---@field actions? SnowNotificationAction[] Replacement buttons; an empty array clears them. At least one content field is required.
 
 ---@class SnowNotificationReferenceArguments
 ---@field notificationId string Opaque ID returned for this widget instance.

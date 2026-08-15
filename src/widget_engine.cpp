@@ -4382,12 +4382,15 @@ static int lua_TaskStart(lua_State* state)
             const bool textKey = key == "title" || key == "message";
             const bool idKey = key == "notificationId";
             const bool atKey = key == "atMs";
+            const bool structuredKey = key == "image" ||
+                key == "progress" || key == "actions";
             const bool allowed =
-                ((taskName == "notification.show") && textKey) ||
+                ((taskName == "notification.show") &&
+                    (textKey || structuredKey)) ||
                 ((taskName == "notification.schedule") &&
-                    (textKey || atKey)) ||
+                    (textKey || atKey || structuredKey)) ||
                 ((taskName == "notification.update") &&
-                    (textKey || idKey)) ||
+                    (textKey || idKey || structuredKey)) ||
                 ((taskName == "notification.dismiss" ||
                     taskName == "notification.cancel") && idKey);
             if (!allowed)
@@ -4438,9 +4441,208 @@ static int lua_TaskStart(lua_State* state)
                     taskName.c_str());
             if (!title.empty()) arguments.emplace("title", std::move(title));
             if (!message.empty()) arguments.emplace("message", std::move(message));
+        }
+        if (taskName == "notification.show" ||
+            taskName == "notification.schedule" ||
+            taskName == "notification.update")
+        {
+            lua_getfield(state, 2, "image");
+            if (!lua_isnil(state, -1))
+            {
+                if (taskName == "notification.update" &&
+                    lua_isboolean(state, -1) &&
+                    lua_toboolean(state, -1) == 0)
+                {
+                    arguments.emplace("imageResource", "");
+                }
+                else
+                {
+                    const auto* handle = TestResourceHandle(state, -1);
+                    const auto resolved = handle &&
+                            handle->type == LuaResourceType::Image &&
+                            !snowdesktop::widget_runtime::
+                                IsWidgetRuntimeImageToken(handle->name)
+                        ? ResolveResourceHandlePath(
+                            state, -1, LuaResourceType::Image)
+                        : std::nullopt;
+                    if (!resolved)
+                    {
+                        lua_pop(state, 1);
+                        return luaL_error(state,
+                            "task.start: %s image must be a package resource.image handle%s",
+                            taskName.c_str(),
+                            taskName == "notification.update"
+                                ? " or false" : "");
+                    }
+                    arguments.emplace("imageResource", handle->name);
+                }
+            }
+            lua_pop(state, 1);
+
+            lua_getfield(state, 2, "progress");
+            if (!lua_isnil(state, -1))
+            {
+                if (taskName == "notification.update" &&
+                    lua_isboolean(state, -1) &&
+                    lua_toboolean(state, -1) == 0)
+                {
+                    arguments.emplace("progress", "");
+                }
+                else
+                {
+                    int isNumber = 0;
+                    const double progress =
+                        lua_tonumberx(state, -1, &isNumber);
+                    if (!isNumber || !std::isfinite(progress) ||
+                        progress < 0.0 || progress > 1.0)
+                    {
+                        lua_pop(state, 1);
+                        return luaL_error(state,
+                            "task.start: %s progress must be between 0 and 1%s",
+                            taskName.c_str(),
+                            taskName == "notification.update"
+                                ? " or false" : "");
+                    }
+                    char buffer[64]{};
+                    const auto encoded = std::to_chars(
+                        buffer, buffer + sizeof(buffer), progress,
+                        std::chars_format::general);
+                    if (encoded.ec != std::errc{})
+                    {
+                        lua_pop(state, 1);
+                        return luaL_error(state,
+                            "task.start: notification progress cannot be represented");
+                    }
+                    arguments.emplace("progress",
+                        std::string(buffer, encoded.ptr));
+                }
+            }
+            lua_pop(state, 1);
+
+            lua_getfield(state, 2, "actions");
+            if (!lua_isnil(state, -1))
+            {
+                if (lua_type(state, -1) != LUA_TTABLE ||
+                    lua_getmetatable(state, -1) != 0)
+                {
+                    if (lua_istable(state, -1)) lua_pop(state, 1);
+                    lua_pop(state, 1);
+                    return luaL_error(state,
+                        "task.start: %s actions must be a plain array",
+                        taskName.c_str());
+                }
+                const int actionsTable = lua_absindex(state, -1);
+                const std::size_t actionCount = lua_rawlen(
+                    state, actionsTable);
+                if (actionCount > 2)
+                {
+                    lua_pop(state, 1);
+                    return luaL_error(state,
+                        "task.start: notifications accept at most 2 actions");
+                }
+                std::unordered_set<std::string> actionIds;
+                for (std::size_t actionIndex = 1;
+                    actionIndex <= actionCount; ++actionIndex)
+                {
+                    lua_rawgeti(state, actionsTable,
+                        static_cast<lua_Integer>(actionIndex));
+                    if (lua_type(state, -1) != LUA_TTABLE ||
+                        lua_getmetatable(state, -1) != 0)
+                    {
+                        if (lua_istable(state, -1)) lua_pop(state, 1);
+                        lua_pop(state, 2);
+                        return luaL_error(state,
+                            "task.start: notification actions must be plain tables");
+                    }
+                    const int actionTable = lua_absindex(state, -1);
+                    lua_pushnil(state);
+                    while (lua_next(state, actionTable) != 0)
+                    {
+                        if (lua_type(state, -2) != LUA_TSTRING)
+                        {
+                            lua_pop(state, 4);
+                            return luaL_error(state,
+                                "task.start: notification action keys must be strings");
+                        }
+                        size_t actionKeyLength = 0;
+                        const char* actionKeyRaw = lua_tolstring(
+                            state, -2, &actionKeyLength);
+                        const std::string_view actionKey(
+                            actionKeyRaw ? actionKeyRaw : "",
+                            actionKeyLength);
+                        if (actionKey != "id" && actionKey != "label")
+                        {
+                            lua_pop(state, 4);
+                            return luaL_error(state,
+                                "task.start: notification action received an unknown field");
+                        }
+                        lua_pop(state, 1);
+                    }
+                    const auto readActionField = [&](const char* field,
+                        std::string& output) {
+                        lua_getfield(state, actionTable, field);
+                        if (lua_type(state, -1) != LUA_TSTRING)
+                        {
+                            lua_pop(state, 1);
+                            return false;
+                        }
+                        size_t length = 0;
+                        const char* value = lua_tolstring(
+                            state, -1, &length);
+                        output.assign(value ? value : "", length);
+                        lua_pop(state, 1);
+                        return !output.empty() && output.size() <= 64 &&
+                            output.find('\0') == std::string::npos &&
+                            IsValidUtf8Local(output);
+                    };
+                    std::string actionId;
+                    std::string actionLabel;
+                    if (!readActionField("id", actionId) ||
+                        !readActionField("label", actionLabel) ||
+                        !actionIds.insert(actionId).second)
+                    {
+                        lua_pop(state, 2);
+                        return luaL_error(state,
+                            "task.start: notification action id and label must be unique non-empty UTF-8 strings up to 64 bytes");
+                    }
+                    arguments.emplace(
+                        "action" + std::to_string(actionIndex - 1) + "Id",
+                        std::move(actionId));
+                    arguments.emplace(
+                        "action" + std::to_string(actionIndex - 1) + "Label",
+                        std::move(actionLabel));
+                    lua_pop(state, 1);
+                }
+                lua_pushnil(state);
+                std::size_t enumerated = 0;
+                while (lua_next(state, actionsTable) != 0)
+                {
+                    ++enumerated;
+                    const bool validIndex = lua_isinteger(state, -2) &&
+                        lua_tointeger(state, -2) >= 1 &&
+                        static_cast<std::size_t>(
+                            lua_tointeger(state, -2)) <= actionCount;
+                    lua_pop(state, 1);
+                    if (!validIndex)
+                    {
+                        lua_pop(state, 2);
+                        return luaL_error(state,
+                            "task.start: notification actions must be a contiguous array");
+                    }
+                }
+                if (enumerated != actionCount)
+                {
+                    lua_pop(state, 1);
+                    return luaL_error(state,
+                        "task.start: notification actions must be a contiguous array");
+                }
+                arguments.emplace("actionCount",
+                    std::to_string(actionCount));
+            }
+            lua_pop(state, 1);
             if (taskName == "notification.update" && arguments.empty())
                 return luaL_error(state,
-                    "task.start: notification.update requires title or message");
+                    "task.start: notification.update requires a content field");
         }
         if (taskName == "notification.update" ||
             taskName == "notification.dismiss" ||
@@ -9059,13 +9261,33 @@ void WidgetEngine::RestoreNotificationSchedules(LuaWidget& widget)
     for (const auto& entry : notificationScheduleStore_->ForInstance(
             instanceId, widget.packageId))
     {
+        snowdesktop::widget_runtime::WidgetNotificationContent content;
+        content.title = Utf8ToWideLocal(entry.title);
+        content.message = Utf8ToWideLocal(entry.message);
+        if (!entry.imageResource.empty())
+        {
+            const auto imagePath = RuntimeResolvePackageResource(
+                widget.widgetId, entry.imageResource, "image");
+            if (!imagePath)
+            {
+                changed = notificationScheduleStore_->Remove(
+                    instanceId, entry.notificationId) || changed;
+                continue;
+            }
+            content.imagePath = *imagePath;
+        }
+        content.progress = entry.progress;
+        for (const auto& action : entry.actions)
+        {
+            content.actions.push_back(
+                { action.id, Utf8ToWideLocal(action.label) });
+        }
         const auto due = snowdesktop::widget_runtime::
             WidgetNotificationCenter::Clock::time_point(
                 std::chrono::milliseconds(entry.dueMs));
         const auto restored = notificationCenter_->RestoreScheduled(
             widget.runtimeToken, entry.notificationId,
-            Utf8ToWideLocal(entry.title), Utf8ToWideLocal(entry.message),
-            due, now);
+            std::move(content), due, now);
         if (!restored.ok)
         {
             changed = notificationScheduleStore_->Remove(
@@ -9730,31 +9952,106 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 WidgetNotificationHostRequest& request) {
                 return notifyCallback_ && notifyCallback_(request);
             };
+            const auto parseProgress = [](const std::string& value,
+                double& output) {
+                if (value.empty()) return false;
+                const auto parsed = std::from_chars(
+                    value.data(), value.data() + value.size(), output,
+                    std::chars_format::general);
+                return parsed.ec == std::errc{} &&
+                    parsed.ptr == value.data() + value.size() &&
+                    std::isfinite(output) && output >= 0.0 && output <= 1.0;
+            };
+            const auto readActions = [&action](
+                std::vector<snowdesktop::widget_runtime::
+                    WidgetNotificationAction>& actions) {
+                const auto count = action.arguments.find("actionCount");
+                if (count == action.arguments.end()) return true;
+                int actionCount = -1;
+                const auto parsed = std::from_chars(
+                    count->second.data(),
+                    count->second.data() + count->second.size(),
+                    actionCount);
+                if (parsed.ec != std::errc{} ||
+                    parsed.ptr != count->second.data() +
+                        count->second.size() ||
+                    actionCount < 0 || actionCount > 2)
+                    return false;
+                actions.clear();
+                actions.reserve(static_cast<std::size_t>(actionCount));
+                for (int index = 0; index < actionCount; ++index)
+                {
+                    const auto id = action.arguments.find(
+                        "action" + std::to_string(index) + "Id");
+                    const auto label = action.arguments.find(
+                        "action" + std::to_string(index) + "Label");
+                    if (id == action.arguments.end() ||
+                        label == action.arguments.end())
+                        return false;
+                    actions.push_back({
+                        id->second, Utf8ToWideLocal(label->second) });
+                }
+                return true;
+            };
+            const auto applyStructuredContent =
+                [this, owner, &action, &parseProgress, &readActions](
+                    snowdesktop::widget_runtime::
+                        WidgetNotificationContent& content) {
+                    const auto image =
+                        action.arguments.find("imageResource");
+                    if (image != action.arguments.end() &&
+                        !image->second.empty())
+                    {
+                        const auto path = RuntimeResolvePackageResource(
+                            owner->widgetId, image->second, "image");
+                        if (!path) return false;
+                        content.imagePath = *path;
+                    }
+                    const auto progress =
+                        action.arguments.find("progress");
+                    if (progress != action.arguments.end())
+                    {
+                        double value = 0.0;
+                        if (!parseProgress(progress->second, value))
+                            return false;
+                        content.progress = value;
+                    }
+                    return readActions(content.actions);
+                };
             if (action.name == "notification.show")
             {
                 const auto title = action.arguments.find("title");
                 const auto message = action.arguments.find("message");
                 if (title == action.arguments.end() ||
-                    message == action.arguments.end() ||
-                    action.arguments.size() != 2)
+                    message == action.arguments.end())
                 {
                     result.error = "invalidArguments";
                 }
                 else
                 {
+                    snowdesktop::widget_runtime::
+                        WidgetNotificationContent content;
+                    content.title = Utf8ToWideLocal(title->second);
+                    content.message = Utf8ToWideLocal(message->second);
+                    if (!applyStructuredContent(content))
+                    {
+                        result.error = "invalidArguments";
+                    }
                     std::string admissionError;
-                    result = notificationCenter_->Show(owner->runtimeToken,
-                        Utf8ToWideLocal(title->second),
-                        Utf8ToWideLocal(message->second),
-                        snowdesktop::widget_runtime::
-                            WidgetNotificationCenter::Clock::now(),
-                        [this, owner, &admissionError, &host](
-                            const snowdesktop::widget_runtime::
-                                WidgetNotificationHostRequest& request) {
-                            admissionError =
-                                RuntimeAdmitNotification(owner->widgetId);
-                            return admissionError.empty() && host(request);
-                        });
+                    if (result.error.empty())
+                    {
+                        result = notificationCenter_->Show(
+                            owner->runtimeToken, std::move(content),
+                            snowdesktop::widget_runtime::
+                                WidgetNotificationCenter::Clock::now(),
+                            [this, owner, &admissionError, &host](
+                                const snowdesktop::widget_runtime::
+                                    WidgetNotificationHostRequest& request) {
+                                admissionError =
+                                    RuntimeAdmitNotification(owner->widgetId);
+                                return admissionError.empty() && host(request);
+                            });
+                    }
                     if (!admissionError.empty())
                         result.error = std::move(admissionError);
                 }
@@ -9779,7 +10076,6 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 if (title == action.arguments.end() ||
                     message == action.arguments.end() ||
                     at == action.arguments.end() ||
-                    action.arguments.size() != 3 ||
                     parsed.ec != std::errc{} ||
                     parsed.ptr != at->second.data() + at->second.size() ||
                     atMs <= nowMs || atMs > nowMs + maximumDelayMs)
@@ -9788,23 +10084,48 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 }
                 else
                 {
+                    snowdesktop::widget_runtime::
+                        WidgetNotificationContent content;
+                    content.title = Utf8ToWideLocal(title->second);
+                    content.message = Utf8ToWideLocal(message->second);
+                    if (!applyStructuredContent(content))
+                    {
+                        result.error = "invalidArguments";
+                    }
                     const auto due = snowdesktop::widget_runtime::
                         WidgetNotificationCenter::Clock::time_point(
                             std::chrono::milliseconds(atMs));
-                    result = notificationCenter_->Schedule(
-                        owner->runtimeToken,
-                        Utf8ToWideLocal(title->second),
-                        Utf8ToWideLocal(message->second), due,
-                        snowdesktop::widget_runtime::
-                            WidgetNotificationCenter::Clock::now());
+                    if (result.error.empty())
+                    {
+                        result = notificationCenter_->Schedule(
+                            owner->runtimeToken, content, due,
+                            snowdesktop::widget_runtime::
+                                WidgetNotificationCenter::Clock::now());
+                    }
                     if (result.ok)
                     {
-                        std::string persistenceError;
-                        const bool stored = notificationScheduleStore_ &&
-                            notificationScheduleStore_->Upsert({
+                        snowdesktop::widget_runtime::
+                            WidgetPersistedNotificationSchedule persisted{
                                 notificationInstanceId,
                                 owner->packageId, result.id,
-                                title->second, message->second, atMs },
+                                title->second, message->second, atMs };
+                        if (const auto image = action.arguments.find(
+                                "imageResource");
+                            image != action.arguments.end())
+                            persisted.imageResource = image->second;
+                        persisted.progress = content.progress;
+                        for (const auto& notificationAction :
+                            content.actions)
+                        {
+                            persisted.actions.push_back({
+                                notificationAction.id,
+                                WidgetWideToUtf8(
+                                    notificationAction.label) });
+                        }
+                        std::string persistenceError;
+                        const bool stored = notificationScheduleStore_ &&
+                            notificationScheduleStore_->Upsert(
+                                std::move(persisted),
                                 persistenceError) &&
                             SaveNotificationSchedules();
                         if (!stored)
@@ -9832,27 +10153,71 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 {
                     const auto title = action.arguments.find("title");
                     const auto message = action.arguments.find("message");
-                    std::optional<std::wstring> newTitle;
-                    std::optional<std::wstring> newMessage;
+                    snowdesktop::widget_runtime::WidgetNotificationPatch patch;
                     if (title != action.arguments.end())
-                        newTitle = Utf8ToWideLocal(title->second);
+                        patch.title = Utf8ToWideLocal(title->second);
                     if (message != action.arguments.end())
-                        newMessage = Utf8ToWideLocal(message->second);
+                        patch.message = Utf8ToWideLocal(message->second);
+                    const auto image = action.arguments.find("imageResource");
+                    if (image != action.arguments.end())
+                    {
+                        if (image->second.empty())
+                        {
+                            patch.imagePath = std::wstring{};
+                        }
+                        else
+                        {
+                            const auto imagePath = RuntimeResolvePackageResource(
+                                owner->widgetId, image->second, "image");
+                            if (!imagePath) result.error = "invalidArguments";
+                            else patch.imagePath = *imagePath;
+                        }
+                    }
+                    const auto progress = action.arguments.find("progress");
+                    if (progress != action.arguments.end())
+                    {
+                        if (progress->second.empty())
+                        {
+                            patch.progress.emplace(std::optional<double>{});
+                        }
+                        else
+                        {
+                            double progressValue = 0.0;
+                            if (!parseProgress(progress->second, progressValue))
+                                result.error = "invalidArguments";
+                            else
+                                patch.progress.emplace(progressValue);
+                        }
+                    }
+                    const auto actionCount =
+                        action.arguments.find("actionCount");
+                    if (actionCount != action.arguments.end())
+                    {
+                        std::vector<snowdesktop::widget_runtime::
+                            WidgetNotificationAction> actions;
+                        if (!readActions(actions))
+                            result.error = "invalidArguments";
+                        else
+                            patch.actions = std::move(actions);
+                    }
                     const auto persisted = notificationScheduleStore_
                         ? notificationScheduleStore_->Find(
                             notificationInstanceId, id->second)
                         : std::nullopt;
                     std::string admissionError;
-                    result = notificationCenter_->Update(
-                        owner->runtimeToken, id->second,
-                        std::move(newTitle), std::move(newMessage),
-                        [this, owner, &admissionError, &host](
-                            const snowdesktop::widget_runtime::
-                                WidgetNotificationHostRequest& request) {
-                            admissionError =
-                                RuntimeAdmitNotification(owner->widgetId);
-                            return admissionError.empty() && host(request);
-                        });
+                    if (result.error.empty())
+                    {
+                        result = notificationCenter_->Update(
+                            owner->runtimeToken, id->second,
+                            std::move(patch),
+                            [this, owner, &admissionError, &host](
+                                const snowdesktop::widget_runtime::
+                                    WidgetNotificationHostRequest& request) {
+                                admissionError =
+                                    RuntimeAdmitNotification(owner->widgetId);
+                                return admissionError.empty() && host(request);
+                            });
+                    }
                     if (!admissionError.empty())
                         result.error = std::move(admissionError);
                     if (result.ok && persisted)
@@ -9863,19 +10228,77 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                         const std::optional<std::string> persistedMessage =
                             message != action.arguments.end()
                             ? std::optional(message->second) : std::nullopt;
-                        if (!notificationScheduleStore_->UpdateText(
+                        const std::optional<std::string> persistedImage =
+                            image != action.arguments.end()
+                            ? std::optional(image->second) : std::nullopt;
+                        std::optional<std::optional<double>> persistedProgress;
+                        if (progress != action.arguments.end())
+                        {
+                            if (progress->second.empty())
+                                persistedProgress.emplace(
+                                    std::optional<double>{});
+                            else
+                            {
+                                double value = 0.0;
+                                (void)parseProgress(progress->second, value);
+                                persistedProgress.emplace(value);
+                            }
+                        }
+                        std::optional<std::vector<
+                            snowdesktop::widget_runtime::
+                                WidgetPersistedNotificationAction>>
+                            persistedActions;
+                        if (actionCount != action.arguments.end())
+                        {
+                            persistedActions.emplace();
+                            int count = 0;
+                            (void)std::from_chars(
+                                actionCount->second.data(),
+                                actionCount->second.data() +
+                                    actionCount->second.size(), count);
+                            for (int index = 0; index < count; ++index)
+                            {
+                                persistedActions->push_back({
+                                    action.arguments.at("action" +
+                                        std::to_string(index) + "Id"),
+                                    action.arguments.at("action" +
+                                        std::to_string(index) + "Label") });
+                            }
+                        }
+                        if (!notificationScheduleStore_->UpdateContent(
                                 notificationInstanceId, id->second,
-                                persistedTitle, persistedMessage) ||
+                                persistedTitle, persistedMessage,
+                                persistedImage, persistedProgress,
+                                persistedActions) ||
                             !SaveNotificationSchedules())
                         {
                             std::string ignored;
                             (void)notificationScheduleStore_->Upsert(
                                 *persisted, ignored);
                             (void)SaveNotificationSchedules();
+                            snowdesktop::widget_runtime::
+                                WidgetNotificationPatch rollback;
+                            rollback.title = Utf8ToWideLocal(persisted->title);
+                            rollback.message = Utf8ToWideLocal(
+                                persisted->message);
+                            if (persisted->imageResource.empty())
+                                rollback.imagePath = std::wstring{};
+                            else if (const auto oldImage =
+                                RuntimeResolvePackageResource(owner->widgetId,
+                                    persisted->imageResource, "image"))
+                                rollback.imagePath = *oldImage;
+                            else
+                                rollback.imagePath = std::wstring{};
+                            rollback.progress.emplace(persisted->progress);
+                            rollback.actions.emplace();
+                            for (const auto& oldAction : persisted->actions)
+                            {
+                                rollback.actions->push_back({ oldAction.id,
+                                    Utf8ToWideLocal(oldAction.label) });
+                            }
                             (void)notificationCenter_->Update(
                                 owner->runtimeToken, id->second,
-                                Utf8ToWideLocal(persisted->title),
-                                Utf8ToWideLocal(persisted->message), host);
+                                std::move(rollback), host);
                             result = { false, {}, "persistenceFailed" };
                         }
                     }
@@ -9911,12 +10334,32 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                                     WidgetNotificationCenter::Clock::
                                         time_point(std::chrono::milliseconds(
                                             persisted->dueMs));
+                                snowdesktop::widget_runtime::
+                                    WidgetNotificationContent content;
+                                content.title = Utf8ToWideLocal(
+                                    persisted->title);
+                                content.message = Utf8ToWideLocal(
+                                    persisted->message);
+                                if (!persisted->imageResource.empty())
+                                {
+                                    if (const auto imagePath =
+                                        RuntimeResolvePackageResource(
+                                            owner->widgetId,
+                                            persisted->imageResource,
+                                            "image"))
+                                        content.imagePath = *imagePath;
+                                }
+                                content.progress = persisted->progress;
+                                for (const auto& oldAction :
+                                    persisted->actions)
+                                {
+                                    content.actions.push_back({ oldAction.id,
+                                        Utf8ToWideLocal(oldAction.label) });
+                                }
                                 (void)notificationCenter_->RestoreScheduled(
                                     owner->runtimeToken,
                                     persisted->notificationId,
-                                    Utf8ToWideLocal(persisted->title),
-                                    Utf8ToWideLocal(persisted->message),
-                                    due,
+                                    std::move(content), due,
                                     snowdesktop::widget_runtime::
                                         WidgetNotificationCenter::Clock::
                                             now());
@@ -15173,6 +15616,35 @@ bool WidgetEngine::RenderWidgetPanel(
     }
     lua_pop(state, 1);
     return succeeded;
+}
+
+void WidgetEngine::OnNotificationAction(
+    std::string_view notificationId, std::string_view actionId)
+{
+    if (!notificationCenter_) return;
+    const auto activation = notificationCenter_->Activate(
+        notificationId, actionId);
+    if (!activation.ok) return;
+    const auto owner = std::find_if(widgets_.begin(), widgets_.end(),
+        [&activation](const LuaWidget& widget) {
+            return widget.runtimeToken == activation.ownerToken &&
+                widget.valid && !widget.preview;
+        });
+    if (owner == widgets_.end()) return;
+
+    snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(
+        trustedGestureState_, true);
+    (void)InvokeLifecycleEvent(*owner, "notification.action",
+        [&activation](lua_State* eventState) {
+            lua_pushlstring(eventState,
+                activation.notificationId.data(),
+                activation.notificationId.size());
+            lua_setfield(eventState, -2, "notificationId");
+            lua_pushlstring(eventState, activation.actionId.data(),
+                activation.actionId.size());
+            lua_setfield(eventState, -2, "actionId");
+        });
+    RuntimeInvalidateHost(owner->widgetId);
 }
 
 void WidgetEngine::TickRuntime()

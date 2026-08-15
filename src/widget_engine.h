@@ -64,6 +64,7 @@ extern "C" {
 }
 
 #include <string>
+#include <string_view>
 #include <vector>
 #include <functional>
 #include <chrono>
@@ -682,6 +683,9 @@ public:
     void SetCloseWidgetPanelCallback(WidgetPanelCloseCallback callback) { closeWidgetPanelCallback_ = std::move(callback); }
     /** @brief 设置系统通知回调 */
     void SetNotifyCallback(NotifyCallback callback) { notifyCallback_ = std::move(callback); }
+    /** @brief 将宿主通知操作按钮回传给创建该通知的组件实例。 */
+    void OnNotificationAction(std::string_view notificationId,
+        std::string_view actionId);
     /** @brief 设置由可信用户动作触发的系统文件选择器回调 */
     void SetFilePickerCallback(FilePickerCallback callback)
     {

@@ -18,6 +18,33 @@ enum class WidgetNotificationHostOperation
     Dismiss,
 };
 
+struct WidgetNotificationAction
+{
+    std::string id;
+    std::wstring label;
+};
+
+struct WidgetNotificationContent
+{
+    std::wstring title;
+    std::wstring message;
+    std::wstring imagePath;
+    std::optional<double> progress;
+    std::vector<WidgetNotificationAction> actions;
+};
+
+struct WidgetNotificationPatch
+{
+    std::optional<std::wstring> title;
+    std::optional<std::wstring> message;
+    // Empty path explicitly clears the image.
+    std::optional<std::wstring> imagePath;
+    // Outer value means supplied; inner nullopt explicitly clears progress.
+    std::optional<std::optional<double>> progress;
+    // Supplied empty vector explicitly clears actions.
+    std::optional<std::vector<WidgetNotificationAction>> actions;
+};
+
 struct WidgetNotificationHostRequest
 {
     WidgetNotificationHostOperation operation =
@@ -25,6 +52,9 @@ struct WidgetNotificationHostRequest
     std::string id;
     std::wstring title;
     std::wstring message;
+    std::wstring imagePath;
+    std::optional<double> progress;
+    std::vector<WidgetNotificationAction> actions;
 };
 
 struct WidgetNotificationOperationResult
@@ -40,6 +70,14 @@ struct WidgetNotificationDelivery
     std::string id;
     bool ok = false;
     std::string error;
+};
+
+struct WidgetNotificationActivation
+{
+    bool ok = false;
+    std::uint64_t ownerToken = 0;
+    std::string notificationId;
+    std::string actionId;
 };
 
 /**
@@ -61,22 +99,24 @@ public:
     static constexpr auto DeliveredRecordLifetime = std::chrono::hours(24);
 
     WidgetNotificationOperationResult Show(std::uint64_t ownerToken,
-        std::wstring title, std::wstring message, Clock::time_point now,
+        WidgetNotificationContent content, Clock::time_point now,
         const HostCallback& host);
     WidgetNotificationOperationResult Schedule(std::uint64_t ownerToken,
-        std::wstring title, std::wstring message, Clock::time_point due,
+        WidgetNotificationContent content, Clock::time_point due,
         Clock::time_point now);
     WidgetNotificationOperationResult RestoreScheduled(
         std::uint64_t ownerToken, std::string id,
-        std::wstring title, std::wstring message, Clock::time_point due,
+        WidgetNotificationContent content, Clock::time_point due,
         Clock::time_point now);
     WidgetNotificationOperationResult Update(std::uint64_t ownerToken,
-        std::string_view id, std::optional<std::wstring> title,
-        std::optional<std::wstring> message, const HostCallback& host);
+        std::string_view id, WidgetNotificationPatch patch,
+        const HostCallback& host);
     WidgetNotificationOperationResult Dismiss(std::uint64_t ownerToken,
         std::string_view id, const HostCallback& host);
     WidgetNotificationOperationResult Cancel(std::uint64_t ownerToken,
         std::string_view id);
+    WidgetNotificationActivation Activate(
+        std::string_view id, std::string_view actionId);
 
     std::vector<WidgetNotificationDelivery> DispatchDue(
         Clock::time_point now, const DeliveryAdmission& admit,
@@ -98,6 +138,9 @@ private:
         std::string id;
         std::wstring title;
         std::wstring message;
+        std::wstring imagePath;
+        std::optional<double> progress;
+        std::vector<WidgetNotificationAction> actions;
         State state = State::Scheduled;
         Clock::time_point due{};
         Clock::time_point updated{};

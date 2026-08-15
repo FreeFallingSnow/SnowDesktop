@@ -78,6 +78,7 @@
 #include "rename_controller.h"
 #include "selection_controller.h"
 #include "tray_icon_controller.h"
+#include "widget_notification_presenter.h"
 #include "ui_animation_scheduler.h"
 #include "taskbar_dynamic/search_visibility_detector.h"
 #include "../crashlog.h"
@@ -2938,6 +2939,7 @@ private:
     /** @name 托盘图标 */
     /** @{ */
     TrayIconController trayIconController_;
+    WidgetNotificationPresenter widgetNotificationPresenter_;
     /** @} */
 
     /** @name 鼠标/交互状态 */

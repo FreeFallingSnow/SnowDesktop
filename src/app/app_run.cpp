@@ -785,6 +785,13 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             RestoreInteractionInputFocus();
             UpdateHostInputImePosition();
         });
+        widgetNotificationPresenter_.SetActionCallback(
+            [this](const std::string& notificationId,
+                const std::string& actionId) {
+                if (widgetEngine_)
+                    widgetEngine_->OnNotificationAction(
+                        notificationId, actionId);
+            });
         widgetEngine_->SetNotifyCallback([this](
             const snowdesktop::widget_runtime::
                 WidgetNotificationHostRequest& request) {
@@ -794,12 +801,25 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             switch (request.operation)
             {
             case Operation::Show:
+                if (!request.imagePath.empty() || request.progress ||
+                    !request.actions.empty())
+                    return widgetNotificationPresenter_.Show(owner, request);
                 return trayIconController_.ShowBalloon(owner,
                     request.id, request.title, request.message);
             case Operation::Update:
+                if (widgetNotificationPresenter_.Contains(request.id))
+                    return widgetNotificationPresenter_.Update(owner, request);
+                if (!request.imagePath.empty() || request.progress ||
+                    !request.actions.empty())
+                {
+                    (void)trayIconController_.DismissBalloon(owner, request.id);
+                    return widgetNotificationPresenter_.Show(owner, request);
+                }
                 return trayIconController_.UpdateBalloon(owner,
                     request.id, request.title, request.message);
             case Operation::Dismiss:
+                if (widgetNotificationPresenter_.Contains(request.id))
+                    return widgetNotificationPresenter_.Dismiss(request.id);
                 return trayIconController_.DismissBalloon(
                     owner, request.id);
             }

@@ -858,6 +858,7 @@ CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.pow
 范围的 `filesystem.pickOpen/pickSave/pickFolder`。它们对应
 feature ID `task.start`、`task.media.control`、`task.audio.output.control`、`task.app.search`、`task.app.launch`
 、`task.notification.show`、`task.notification.lifecycle`、`task.notification.schedule`、
+`task.notification.structured`、`task.notification.actions`、
 `task.calendar.write`、`task.network.request` 和
 `task.shell.openUri`、`task.system.openSettings`、`task.clipboard.text`、
 `task.clipboard.image`、`task.clipboard.fileReference`、
@@ -1125,7 +1126,8 @@ local refreshTask = task.start("desktop.refresh")
 `canceled`。应用 ref 仍只能交给 `app.launch`，项目 ref 不能交给 `app.launch`。
 
 通知任务要求 `notification.post` 权限，但不要求用户手势。`notification.show` 接受
-`title/message`；标题为 1–256 字节、正文为 1–2048 字节的有效 UTF-8，均不得包含
+`title/message`，并可选接受包内 `resource.image` 句柄、0–1 的 `progress` 和最多两个
+`{ id, label }` 操作按钮；标题为 1–256 字节、正文为 1–2048 字节的有效 UTF-8，均不得包含
 NUL。其 `task.complete.value.notificationId` 是宿主生成、仅当前组件实例可用的不透明
 ID：
 
@@ -1133,15 +1135,23 @@ ID：
 local taskId, err = task.start("notification.show", {
     title = l10n.tr("widget.name"),
     message = l10n.tr("widget.completed"),
+    image = resource.image("completed"),
+    progress = 1,
+    actions = {
+        { id = "open", label = l10n.tr("widget.open") },
+    },
 })
 ```
 
-拿到 ID 后可用 `notification.update` 替换 `title`、`message` 中至少一项，用
+拿到 ID 后可用 `notification.update` 替换任一内容字段；`image=false`、
+`progress=false` 和空 `actions` 数组分别清除图片、进度和按钮。用
 `notification.dismiss` 关闭已投递通知。`notification.schedule` 在 `atMs` 指定的未来
 Unix 毫秒时间由宿主按需唤醒投递，无需 Lua 轮询；时间最多可提前 366 天，成功同样返回
 `notificationId`。尚未投递的 ID 可更新或用 `notification.cancel` 取消；已投递 ID 应使用
 `dismiss`。预约投递后会收到 `event.kind == "notification.delivered"`，其中包含
-`notificationId/ok/error`：
+`notificationId/ok/error`。按钮激活会向创建通知且仍存活的实例投递
+`event.kind == "notification.action"`，携带 `notificationId/actionId`，该回调处于可信用户
+手势作用域；实例已经卸载或热重载时安全丢弃：
 
 ```lua
 local scheduledTask = task.start("notification.schedule", {
@@ -1163,12 +1173,14 @@ task.start("notification.cancel", {
 32 个）；已投递 ID 保留 24 小时。预约以原子文件绑定组件实例 ID、包 ID 和不透明通知
 ID，应用重启后会绑定新的 Lua VM generation，错过不超过 24 小时的到期时间会在组件
 恢复后补投；组件卸载、禁用、热重载或权限撤销会删除其预约，不让旧包代码继续后台
-通知。预览异步返回确定性 ID，但不会写入预约文件或产生系统通知。
+通知。预约文件保存资源名而不是绝对路径，并持久化进度和按钮；恢复时重新在当前包根解析
+图片。预览异步返回确定性 ID，但不会写入预约文件或产生系统通知。
 除通用的 `permissionRevoked` 和 `canceled` 外，稳定错误包括 `invalidArguments`、
 `notFound`、`invalidState`、`quotaExceeded`、`providerUnavailable`、
 `persistenceFailed` 和
 `notificationFailed`。组件应把权限放在 `optionalPermissions`，拒绝通知时仍完成自身
-主功能。当前托盘提供者支持文本更新与关闭；包资源图、按钮、进度和动作回传仍未开放，
+主功能。纯文本通知使用系统托盘；带图片、进度或按钮的通知使用不抢占桌面焦点的宿主通知
+窗。运行时图片句柄不能作为通知图片，操作按钮最多两个且 ID 在单条通知内必须唯一。
 不得使用 API v1 `system.notify` 绕过任务与权限模型。
 
 `calendar.create/update/remove` 要求 `calendar.write`，参数只接受严格字段。
