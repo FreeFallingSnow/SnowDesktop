@@ -129,6 +129,10 @@ desktop/Application/Explorer object with host insertion preview. Probe
 `slots.pointerReorder` when collection slotItem nodes should support direct
 same-surface dragging; the host owns the drag threshold, insertion indicator,
 atomic move, undo record, and `slot.changed` event. Probe
+`slots.keyboardNavigation` for host focus outlines, Tab/Shift+Tab cycling,
+spatial arrow navigation, Enter/Space activation of the slotItem's own click,
+Alt+arrow same-slot reorder, Escape, and policy-aware Delete. These keys are
+handled by the host and do not expose raw key streams to Lua. Probe
 `slots.nativeContextMenu` for host-owned per-item move/remove menus, and handle
 `slot.changed` only after probing `slots.event.changed`; re-read the slot model
 instead of trusting event data as writable state. Probe `slots.hostPicker` and
@@ -164,7 +168,7 @@ the future track/span/virtual-grid contract.
 Probe `view.flow.wrap` before using `view.flow`; it wraps fixed/auto-width
 children horizontally, skips hidden children, and supports per-line
 `columnGap`/`rowGap`, but it is not a scrolling or virtualized collection.
-Outside declarative host inputs, the subset does not yet provide keyboard focus;
+Outside declarative host inputs and logical slot items, the subset does not yet provide keyboard focus;
 it still does not provide UI Automation, variable-height
 virtualization, or the complete `view.tree` contract. Optional
 `menu(context, model, request)` builds an element's synchronous native context

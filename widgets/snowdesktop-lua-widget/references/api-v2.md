@@ -503,6 +503,14 @@ undo/redo 历史。成功变化通过 `slot.changed` 以 `source="host.pointer"`
 高频拖动坐标，也不能伪造插入位置。binding、单项目 collection、槽位外拖出和跨槽拖动
 不属于该 feature。
 
+探测 `slots.keyboardNavigation` 后，选中单个 Lua 组件时按 `Tab` / `Shift+Tab` 可进入并循环
+当前已提交且可见的 `slotItem`，方向键按屏幕空间位置移动宿主焦点，`Escape` 退出。若焦点项
+自己声明了 `events.click`，`Enter` 或空格会以可信 `source="keyboard"` action 激活它；宿主
+不会猜测或代替触发其任意子控件。collection 焦点项可用 `Alt+方向键` 在同槽内原子移动，
+`Delete` 可移除 collection 项或 `allowClear=true` 的 binding，二者都进入同一 undo/redo
+历史，并以 `slot.changed source="host.keyboard"` 通知 Lua。宿主直接绘制焦点轮廓，不向 Lua
+投递高频按键；该 feature 不表示通用声明式控件键盘焦点或 UI Automation 已完成。
+
 提交成功的 `slotSurface` 现在也是宿主原生拖放面。桌面项目、应用快捷方式或 Explorer
 文件拖到该区域时，宿主先按 manifest 的 `accepts`、binding 替换策略及 collection 容量
 进行命中判断，再显示插入预览并原子保存引用；不会移动、复制或删除真实对象。当前原生
@@ -516,8 +524,8 @@ undo/redo 历史。成功变化通过 `slot.changed` 以 `source="host.pointer"`
 宿主拖放、选择器或槽位项菜单提交后会派发 `event.kind == "slot.changed"`，字段为 `slotId`、
 `slotKind`、`revision`、`operation`、opaque `itemIds`，以及 `source == "host.drop"`、
 `"host.picker"`、`"host.menu"`、`"host.pointer"` 或 `"host.keyboard"`。Lua 应重新读取对应句柄并重算 view，不能把事件内容
-当作可写模型。可分别探测 `slots.nativeDrop`、`slots.nativeContextMenu` 与
-`slots.pointerReorder`、`slots.event.changed`。原生槽位项菜单只显示该项的向前/向后移动和移除操作，不会附加
+当作可写模型。可分别探测 `slots.nativeDrop`、`slots.nativeContextMenu`、
+`slots.pointerReorder`、`slots.keyboardNavigation` 与 `slots.event.changed`。原生槽位项菜单只显示该项的向前/向后移动和移除操作，不会附加
 组件总菜单；binding 是否能移除遵守 manifest 的 `allowClear`。原生槽位项拖出和指针
 跨槽重排仍未接入。
 
@@ -526,7 +534,7 @@ undo/redo 历史。成功变化通过 `slot.changed` 以 `source="host.pointer"`
 `SnowLogicalSlotChange`。`slots.canUndo()` / `slots.canRedo()` 可在 view 中读取。新事务会清空
 redo 栈，热重载或重启不会恢复历史。探测 `slots.hostHistory` 后，选中单个 Lua 组件时
 宿主还会将 Ctrl+Z、Ctrl+Shift+Z 和 Ctrl+Y 路由到同一历史；没有可用槽位历史时不会
-吞掉原桌面快捷键。槽位项键盘焦点和键盘移动仍未接入。
+吞掉原桌面快捷键。键盘槽位操作与 Lua 主动调用的历史操作共享相同的最近 32 次边界。
 
 ### `interaction` 与元素级菜单
 

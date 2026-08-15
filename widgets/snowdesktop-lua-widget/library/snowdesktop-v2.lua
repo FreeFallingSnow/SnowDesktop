@@ -666,7 +666,7 @@ function view.listItem(options) end
 ---@return SnowViewNode
 function view.slotSurface(options) end
 
----One host-owned logical slot reference with exactly one visible child and accessibility.label. Probes with view.logicalSlots.
+---One host-owned logical slot reference with exactly one visible child and accessibility.label. Probe slots.keyboardNavigation for host focus/navigation; Enter/Space activates only this node's own click action.
 ---@param options SnowViewNodeOptions
 ---@return SnowViewNode
 function view.slotItem(options) end

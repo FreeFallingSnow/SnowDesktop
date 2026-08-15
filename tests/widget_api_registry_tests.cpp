@@ -407,6 +407,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "slots.nativeDrop") &&
             snowdesktop::widget_api::SupportsFeature(
+                "slots.keyboardNavigation") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "slots.pointerReorder") &&
             snowdesktop::widget_api::SupportsFeature(
                 "slots.nativeContextMenu") &&

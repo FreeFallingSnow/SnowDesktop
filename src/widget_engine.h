@@ -472,6 +472,12 @@ struct LuaWidget
         RECT indicatorBounds{};
         bool moved = false;
     };
+
+    struct LogicalSlotFocus
+    {
+        std::string slotId;
+        std::string itemId;
+    };
     std::wstring widgetId;               ///< 小部件实例唯一 ID
     std::string packageId;                ///< 组件包 UUID
     std::filesystem::path packageRoot;    ///< 已校验组件包根目录
@@ -517,6 +523,7 @@ struct LuaWidget
     snowdesktop::widget_runtime::LogicalSlotModel logicalSlots;
     snowdesktop::widget_runtime::LogicalSlotHistory logicalSlotHistory;
     std::optional<LogicalSlotPointerDrag> logicalSlotPointerDrag;
+    std::optional<LogicalSlotFocus> logicalSlotFocus;
     snowdesktop::widget_runtime::WidgetInteractionRegions interactionRegions;
     std::optional<snowdesktop::widget_runtime::ViewNode> viewTree;
     bool panelFrameOpen = false;
@@ -1115,7 +1122,8 @@ public:
     bool RuntimeRemoveHostLogicalSlotItem(const std::wstring& widgetId,
         std::string_view slotId, std::string_view itemId,
         snowdesktop::widget_runtime::LogicalSlotChange& change,
-        std::string& error);
+        std::string& error,
+        std::string_view source = "host.menu");
     bool RuntimeMoveHostLogicalSlotItem(const std::wstring& widgetId,
         std::string_view slotId, std::string_view itemId,
         std::size_t targetIndex,
@@ -1302,6 +1310,8 @@ public:
     bool RuntimeIsWidgetSelected(const std::wstring& widgetId) const;
     std::wstring RuntimeSelectedWidgetPackageId() const;
     bool HandleHostInputKey(WPARAM key);
+    bool HandleHostLogicalSlotKey(const std::wstring& widgetId, WPARAM key,
+        bool ctrl, bool shift, bool alt);
     bool HandleHostInputChar(wchar_t ch);
     bool SetHostInputComposition(
         const std::wstring& text, size_t cursor);
@@ -1327,7 +1337,7 @@ private:
         LuaWidget& widget, int x, int y);
     bool EndHostLogicalSlotPointer(
         const std::wstring& widgetId);
-    void DrawHostLogicalSlotPointerPreview(
+    void DrawHostLogicalSlotOverlays(
         const LuaWidget& widget);
     bool VerifyInstalledWidgetPackage(const std::string& packageId,
         const std::optional<std::string>& previousVersion,
@@ -1379,7 +1389,7 @@ private:
     void DispatchInteractionAction(LuaWidget& widget,
         const std::string& targetKey, const char* eventName,
         int x, int y, int button, int delta, int clickCount = 0,
-        bool includeRetired = false);
+        bool includeRetired = false, const char* source = "pointer");
     void DispatchHostInputChange(const std::wstring& widgetId,
         const std::string& targetKey,
         const snowdesktop::widget_runtime::InteractionAction& action,

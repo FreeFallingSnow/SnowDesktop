@@ -1653,7 +1653,7 @@ v2.0 资源契约：
 doubleClick/pointer/contextMenu action，以及“先完整校验布局、后原子提交；失败保留上一成功树”。
 其额度为 512 节点、32 层、单节点 4 KiB 文本、全树 64 KiB 文本和 256 个交互元素；未知字段、
 重复 key、非连续 children、错误枚举和越界数值拒绝整次提交。数据图形由宿主直接有界绘制，不展开为逐样本节点或命中区域。它尚不包含完整必选节点矩阵、
-除输入编辑器外的通用键盘焦点、UIA、RTL、文本换行、可变高度虚拟化、差量资源复用和声明式 panel，因此只发布
+除输入编辑器和逻辑槽位项外的通用键盘焦点、UIA、RTL、文本换行、可变高度虚拟化、差量资源复用和声明式 panel，因此只发布
 细粒度 feature，不发布 `view.tree`，也不计作 M6 完成。
 
 ### 18.9 最终验证入口
@@ -1829,7 +1829,7 @@ M7 切换完成后，发布运行时必须删除 API v1 注册和执行分支。
 - 环境上下文、响应式尺寸和减少动态效果。
 - 元素级 hover/pressed/focus、click/double click、指针捕获和独立原生右键菜单。
 - `LuaLogicalSlot`、`slots.binding/collection`、`slotSurface/slotItem`、宿主引用存储和现有 slot contract 全矩阵接入；v2.0 实现 binding 的 reference/replace/clear 和 collection 的 reference/reorder/remove。
-- 当前过渡实现已提供 collection slotItem 的宿主指针阈值、插入提示、同槽原子重排、历史记录及 `host.pointer` 变化来源；跨槽拖动和原生拖出仍待后续批次。
+- 当前过渡实现已提供 collection slotItem 的宿主指针阈值、插入提示、同槽原子重排、历史记录及 `host.pointer` 变化来源；并以 `slots.keyboardNavigation` 提供可见 slotItem 的 Tab/空间方向焦点、焦点轮廓、Enter/Space 自身 click、Alt+方向键同槽重排、Delete 策略化移除和 `host.keyboard` 变化来源。跨槽拖动、原生拖出、通用节点键盘矩阵和 UIA 仍待后续批次。
 - 即时绘制交互 region 与语义树接口。
 
 退出条件：

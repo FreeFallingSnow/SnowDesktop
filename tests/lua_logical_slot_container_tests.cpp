@@ -1,6 +1,7 @@
 #include "widgets/lua_logical_slot.h"
 #include "logical_slot_picker_rules.h"
 #include "logical_slot_pointer_rules.h"
+#include "logical_slot_keyboard_rules.h"
 
 #include "core/item.h"
 
@@ -197,6 +198,40 @@ void TestPointerReorderTargets()
             0, POINT{ 120, 120 }, surface),
         "a one-item collection must not enter pointer reorder mode");
 }
+
+void TestKeyboardFocusRules()
+{
+    using namespace snowdesktop::widget_runtime;
+    Check(CycleLogicalSlotFocus(3, std::nullopt, false) == 0 &&
+            CycleLogicalSlotFocus(3, std::nullopt, true) == 2 &&
+            CycleLogicalSlotFocus(3, 2, false) == 0 &&
+            CycleLogicalSlotFocus(3, 0, true) == 2 &&
+            !CycleLogicalSlotFocus(0, std::nullopt, false),
+        "Tab focus must initialize, wrap, and handle an empty slot surface");
+    Check(MoveLogicalSlotItemTarget(3, 1, -1) == 0 &&
+            MoveLogicalSlotItemTarget(3, 1, 1) == 2 &&
+            !MoveLogicalSlotItemTarget(3, 0, -1) &&
+            !MoveLogicalSlotItemTarget(3, 2, 1),
+        "keyboard reorder must stop at collection boundaries");
+
+    const std::vector<LogicalSlotFocusRect> grid{
+        { 0, 0, 80, 40 },
+        { 100, 0, 180, 40 },
+        { 0, 60, 80, 100 },
+        { 100, 60, 180, 100 },
+    };
+    Check(FindLogicalSlotSpatialFocus(
+            grid, 0, LogicalSlotFocusDirection::Right) == 1 &&
+            FindLogicalSlotSpatialFocus(
+                grid, 0, LogicalSlotFocusDirection::Down) == 2 &&
+            FindLogicalSlotSpatialFocus(
+                grid, 3, LogicalSlotFocusDirection::Left) == 2 &&
+            FindLogicalSlotSpatialFocus(
+                grid, 3, LogicalSlotFocusDirection::Up) == 1 &&
+            !FindLogicalSlotSpatialFocus(
+                grid, 0, LogicalSlotFocusDirection::Left),
+        "arrow focus must follow spatial rows and columns without wrapping");
+}
 }
 
 int main()
@@ -205,6 +240,7 @@ int main()
     TestCapacityAndBindingPolicy();
     TestHostPickerCandidatePolicy();
     TestPointerReorderTargets();
+    TestKeyboardFocusRules();
     std::cout << "Lua logical slot container tests passed\n";
     return 0;
 }

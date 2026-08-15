@@ -40,6 +40,7 @@ void DesktopApp::OnKeyDown(WPARAM key)
 
     bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
     bool shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+    bool alt = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
     bool restoreFloatingDockLayer = false;
 
     if (ctrl && (key == 'Z' || key == 'Y') && widgetEngine_)
@@ -81,6 +82,38 @@ void DesktopApp::OnKeyDown(WPARAM key)
                         "logical slot host history: " + error);
                     MessageBeep(MB_ICONWARNING);
                 }
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                RestoreInteractionInputFocus();
+                return;
+            }
+        }
+    }
+
+    if (widgetEngine_ && !quickNavigationOpen_ &&
+        luaWidgetPanelRequest_.widgetId.empty() &&
+        !IsCollectionPopupInteractive())
+    {
+        size_t selectedLua = static_cast<size_t>(-1);
+        bool multipleSelected = false;
+        for (size_t index = 0; index < widgets_.size(); ++index)
+        {
+            if (!widgets_[index].selected) continue;
+            if (selectedLua != static_cast<size_t>(-1) ||
+                widgets_[index].type != DesktopWidgetType::LuaScript)
+            {
+                multipleSelected = true;
+                break;
+            }
+            selectedLua = index;
+        }
+        if (!multipleSelected && selectedLua < widgets_.size())
+        {
+            const auto& widgetId = widgets_[selectedLua].id;
+            widgetEngine_->EnsureWidgetLoaded(
+                widgetId, widgets_[selectedLua].packageId);
+            if (widgetEngine_->HandleHostLogicalSlotKey(
+                    widgetId, key, ctrl, shift, alt))
+            {
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 RestoreInteractionInputFocus();
                 return;

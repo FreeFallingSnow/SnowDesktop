@@ -13,6 +13,7 @@
 
 #include "widget_engine.h"
 #include "widget_logical_slot_manifest.h"
+#include "logical_slot_keyboard_rules.h"
 #include "logical_slot_pointer_rules.h"
 #include "widget_scroll_rules.h"
 #include "data_paths.h"
@@ -14511,7 +14512,9 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             DrawWidgetSelectOverlays(d2dState_, *found->viewTree,
                 found->interactionRegions, std::nullopt,
                 found->viewTree->frame.height);
-            DrawHostLogicalSlotPointerPreview(*found);
+            if (!RuntimeIsWidgetSelected(found->widgetId))
+                found->logicalSlotFocus.reset();
+            DrawHostLogicalSlotOverlays(*found);
         }
         while (d2dState_->widgetClipDepth > 0)
         {
@@ -17146,7 +17149,7 @@ bool WidgetEngine::RuntimeRemoveHostLogicalSlotItem(
     const std::wstring& widgetId, std::string_view slotId,
     std::string_view itemId,
     snowdesktop::widget_runtime::LogicalSlotChange& change,
-    std::string& error)
+    std::string& error, std::string_view source)
 {
     error.clear();
     auto widget = std::find_if(widgets_.begin(), widgets_.end(),
@@ -17186,7 +17189,7 @@ bool WidgetEngine::RuntimeRemoveHostLogicalSlotItem(
             std::move(previousModel), std::move(previousStorage),
             change, error))
         return false;
-    DispatchHostLogicalSlotChange(*widget, change, "host.menu");
+    DispatchHostLogicalSlotChange(*widget, change, source);
     return true;
 }
 
@@ -17634,7 +17637,7 @@ bool WidgetEngine::RuntimeInteractionPressed(
 void WidgetEngine::DispatchInteractionAction(LuaWidget& widget,
     const std::string& targetKey, const char* eventName,
     int x, int y, int button, int delta, int clickCount,
-    bool includeRetired)
+    bool includeRetired, const char* source)
 {
     if (targetKey.empty() || !eventName || !*eventName) return;
     snowdesktop::widget_runtime::InteractionAction action;
@@ -17648,6 +17651,7 @@ void WidgetEngine::DispatchInteractionAction(LuaWidget& widget,
     std::optional<bool> previousExpanded;
     std::optional<bool> expanded;
     const bool trustedGesture = trustedGestureState_.Active();
+    const std::string eventSource = source && *source ? source : "pointer";
     if (includeRetired)
     {
         const auto* actionPointer =
@@ -17677,7 +17681,7 @@ void WidgetEngine::DispatchInteractionAction(LuaWidget& widget,
         [&action, &targetKey, &resolvedEventName,
             previousChecked, checked, previousControlValue, controlValue,
             previousSelection, selection, previousExpanded, expanded,
-            trustedGesture, x, y, button,
+            trustedGesture, &eventSource, x, y, button,
             delta, clickCount](lua_State* eventState) {
             lua_pushlstring(eventState, action.id.data(), action.id.size());
             lua_setfield(eventState, -2, "id");
@@ -17721,7 +17725,7 @@ void WidgetEngine::DispatchInteractionAction(LuaWidget& widget,
             }
             lua_pushboolean(eventState, trustedGesture ? 1 : 0);
             lua_setfield(eventState, -2, "trustedGesture");
-            lua_pushliteral(eventState, "pointer");
+            lua_pushlstring(eventState, eventSource.data(), eventSource.size());
             lua_setfield(eventState, -2, "source");
             lua_pushliteral(eventState, "desktop");
             lua_setfield(eventState, -2, "surface");
@@ -18719,33 +18723,94 @@ bool WidgetEngine::IsFocusedHostInputAt(
     return false;
 }
 
+namespace
+{
+struct HostLogicalSlotKeyboardItem
+{
+    std::string slotId;
+    std::string itemId;
+    snowdesktop::widget_runtime::LogicalSlotKind kind =
+        snowdesktop::widget_runtime::LogicalSlotKind::Binding;
+    std::size_t modelIndex = 0;
+    std::size_t surfaceIndex = 0;
+    std::size_t itemCount = 0;
+    bool allowClear = true;
+    RECT bounds{};
+};
+
+std::vector<HostLogicalSlotKeyboardItem> CollectHostLogicalSlotKeyboardItems(
+    WidgetEngine& engine, const LuaWidget& widget)
+{
+    std::vector<HostLogicalSlotKeyboardItem> result;
+    for (const auto& snapshot : widget.logicalSlots.Snapshots())
+    {
+        const auto surface = engine.RuntimeLogicalSlotSurface(
+            widget.widgetId, snapshot.id);
+        if (!surface) continue;
+        for (std::size_t surfaceIndex = 0;
+            surfaceIndex < surface->items.size(); ++surfaceIndex)
+        {
+            const auto& region = surface->items[surfaceIndex];
+            const auto modelItem = std::find_if(snapshot.items.begin(),
+                snapshot.items.end(), [&](const auto& candidate) {
+                    return candidate.id == region.itemId;
+                });
+            if (modelItem == snapshot.items.end()) continue;
+            result.push_back({ snapshot.id, region.itemId, snapshot.kind,
+                static_cast<std::size_t>(std::distance(
+                    snapshot.items.begin(), modelItem)),
+                surfaceIndex, snapshot.items.size(), surface->allowClear,
+                region.bounds });
+        }
+    }
+    std::stable_sort(result.begin(), result.end(),
+        [](const auto& left, const auto& right) {
+            return std::tie(left.bounds.top, left.bounds.left,
+                       left.bounds.bottom, left.bounds.right,
+                       left.slotId, left.itemId) <
+                std::tie(right.bounds.top, right.bounds.left,
+                       right.bounds.bottom, right.bounds.right,
+                       right.slotId, right.itemId);
+        });
+    return result;
+}
+}
+
 void WidgetEngine::BeginHostLogicalSlotPointer(
     LuaWidget& widget, int x, int y)
 {
     widget.logicalSlotPointerDrag.reset();
-    if (widget.preview || !widget.valid || !widget.viewTree) return;
+    if (widget.preview || !widget.valid || !widget.viewTree)
+    {
+        widget.logicalSlotFocus.reset();
+        return;
+    }
     const POINT point{ widget.lastBounds.left + x,
         widget.lastBounds.top + y };
-    for (const auto& snapshot : widget.logicalSlots.Snapshots())
+    const auto items = CollectHostLogicalSlotKeyboardItems(*this, widget);
+    const auto hit = std::find_if(items.rbegin(), items.rend(),
+        [&](const auto& candidate) {
+            return PtInRect(&candidate.bounds, point) != FALSE;
+        });
+    const auto previousFocus = widget.logicalSlotFocus;
+    if (hit == items.rend())
     {
-        if (snapshot.kind !=
-                snowdesktop::widget_runtime::LogicalSlotKind::Collection ||
-            snapshot.items.size() < 2)
-            continue;
-        const auto surface = RuntimeLogicalSlotSurface(
-            widget.widgetId, snapshot.id);
-        if (!surface) continue;
-        for (std::size_t index = 0; index < surface->items.size(); ++index)
-        {
-            if (!PtInRect(&surface->items[index].bounds, point)) continue;
-            widget.logicalSlotPointerDrag =
-                LuaWidget::LogicalSlotPointerDrag{
-                    snapshot.id, surface->items[index].itemId,
-                    index, index, POINT{ x, y },
-                    surface->items[index].bounds, RECT{}, false };
-            return;
-        }
+        widget.logicalSlotFocus.reset();
+        if (previousFocus) RuntimeInvalidateHost(widget.widgetId);
+        return;
     }
+    widget.logicalSlotFocus = LuaWidget::LogicalSlotFocus{
+        hit->slotId, hit->itemId };
+    if (!previousFocus || previousFocus->slotId != hit->slotId ||
+        previousFocus->itemId != hit->itemId)
+        RuntimeInvalidateHost(widget.widgetId);
+    if (hit->kind !=
+            snowdesktop::widget_runtime::LogicalSlotKind::Collection ||
+        hit->itemCount < 2)
+        return;
+    widget.logicalSlotPointerDrag = LuaWidget::LogicalSlotPointerDrag{
+        hit->slotId, hit->itemId, hit->surfaceIndex, hit->surfaceIndex,
+        POINT{ x, y }, hit->bounds, RECT{}, false };
 }
 
 bool WidgetEngine::UpdateHostLogicalSlotPointer(
@@ -18832,11 +18897,39 @@ bool WidgetEngine::EndHostLogicalSlotPointer(
     return true;
 }
 
-void WidgetEngine::DrawHostLogicalSlotPointerPreview(
+void WidgetEngine::DrawHostLogicalSlotOverlays(
     const LuaWidget& widget)
 {
-    if (!d2dState_ || !d2dState_->ctx ||
-        !widget.logicalSlotPointerDrag ||
+    if (!d2dState_ || !d2dState_->ctx) return;
+    if (widget.logicalSlotFocus && RuntimeIsWidgetSelected(widget.widgetId))
+    {
+        const auto surface = RuntimeLogicalSlotSurface(
+            widget.widgetId, widget.logicalSlotFocus->slotId);
+        if (surface)
+        {
+            const auto focused = std::find_if(surface->items.begin(),
+                surface->items.end(), [&](const auto& item) {
+                    return item.itemId == widget.logicalSlotFocus->itemId;
+                });
+            if (focused != surface->items.end())
+            {
+                const D2D1_RECT_F bounds = D2D1::RectF(
+                    static_cast<float>(focused->bounds.left) + 1.0f,
+                    static_cast<float>(focused->bounds.top) + 1.0f,
+                    static_cast<float>(focused->bounds.right) - 1.0f,
+                    static_cast<float>(focused->bounds.bottom) - 1.0f);
+                if (ID2D1SolidColorBrush* halo = GetCachedBrush(
+                        d2dState_, 0x0B1220, 0.72f))
+                    d2dState_->ctx->DrawRoundedRectangle(
+                        D2D1::RoundedRect(bounds, 6.0f, 6.0f), halo, 3.5f);
+                if (ID2D1SolidColorBrush* focus = GetCachedBrush(
+                        d2dState_, 0x72C7FF, 1.0f))
+                    d2dState_->ctx->DrawRoundedRectangle(
+                        D2D1::RoundedRect(bounds, 6.0f, 6.0f), focus, 2.0f);
+            }
+        }
+    }
+    if (!widget.logicalSlotPointerDrag ||
         !widget.logicalSlotPointerDrag->moved)
         return;
     const auto& drag = *widget.logicalSlotPointerDrag;
@@ -18862,6 +18955,136 @@ void WidgetEngine::DrawHostLogicalSlotPointerPreview(
             d2dState_, 0x4C9AFF, 1.0f))
         d2dState_->ctx->FillRoundedRectangle(
             D2D1::RoundedRect(indicator, 2.0f, 2.0f), brush);
+}
+
+bool WidgetEngine::HandleHostLogicalSlotKey(const std::wstring& widgetId,
+    WPARAM key, bool ctrl, bool shift, bool alt)
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0 || ctrl || !RuntimeIsWidgetSelected(widgetId)) return false;
+    auto& widget = widgets_[index];
+    if (widget.preview || !widget.valid || !widget.viewTree) return false;
+    const auto items = CollectHostLogicalSlotKeyboardItems(*this, widget);
+    if (items.empty())
+    {
+        widget.logicalSlotFocus.reset();
+        return false;
+    }
+    const auto focusedIndex = [&]() -> std::optional<std::size_t> {
+        if (!widget.logicalSlotFocus) return std::nullopt;
+        const auto found = std::find_if(items.begin(), items.end(),
+            [&](const auto& item) {
+                return item.slotId == widget.logicalSlotFocus->slotId &&
+                    item.itemId == widget.logicalSlotFocus->itemId;
+            });
+        if (found == items.end()) return std::nullopt;
+        return static_cast<std::size_t>(std::distance(items.begin(), found));
+    }();
+    if (key == VK_TAB && !alt)
+    {
+        const auto next = snowdesktop::widget_runtime::CycleLogicalSlotFocus(
+            items.size(), focusedIndex, shift);
+        if (!next) return false;
+        widget.logicalSlotFocus = LuaWidget::LogicalSlotFocus{
+            items[*next].slotId, items[*next].itemId };
+        RuntimeInvalidateHost(widgetId);
+        return true;
+    }
+    if (!focusedIndex) return false;
+    const auto& focused = items[*focusedIndex];
+    if (key == VK_ESCAPE)
+    {
+        widget.logicalSlotFocus.reset();
+        RuntimeInvalidateHost(widgetId);
+        return true;
+    }
+    if (key == VK_LEFT || key == VK_RIGHT ||
+        key == VK_UP || key == VK_DOWN)
+    {
+        if (alt)
+        {
+            if (focused.kind != snowdesktop::widget_runtime::
+                    LogicalSlotKind::Collection)
+                return true;
+            const int direction = key == VK_LEFT || key == VK_UP ? -1 : 1;
+            const auto target = snowdesktop::widget_runtime::
+                MoveLogicalSlotItemTarget(
+                    focused.itemCount, focused.modelIndex, direction);
+            if (!target) return true;
+            snowdesktop::widget_runtime::LogicalSlotChange change;
+            std::string error;
+            if (!RuntimeMoveHostLogicalSlotItem(widgetId, focused.slotId,
+                    focused.itemId, *target, change, error,
+                    "host.keyboard"))
+            {
+                RuntimeRecordError(widgetId,
+                    "logical slot keyboard reorder: " + error);
+            }
+            return true;
+        }
+        std::vector<snowdesktop::widget_runtime::LogicalSlotFocusRect> bounds;
+        bounds.reserve(items.size());
+        for (const auto& item : items)
+            bounds.push_back({ item.bounds.left, item.bounds.top,
+                item.bounds.right, item.bounds.bottom });
+        const auto direction = key == VK_LEFT
+            ? snowdesktop::widget_runtime::LogicalSlotFocusDirection::Left
+            : key == VK_RIGHT
+                ? snowdesktop::widget_runtime::LogicalSlotFocusDirection::Right
+                : key == VK_UP
+                    ? snowdesktop::widget_runtime::LogicalSlotFocusDirection::Up
+                    : snowdesktop::widget_runtime::LogicalSlotFocusDirection::Down;
+        const auto next = snowdesktop::widget_runtime::
+            FindLogicalSlotSpatialFocus(bounds, *focusedIndex, direction);
+        if (next)
+        {
+            widget.logicalSlotFocus = LuaWidget::LogicalSlotFocus{
+                items[*next].slotId, items[*next].itemId };
+            RuntimeInvalidateHost(widgetId);
+        }
+        return true;
+    }
+    if (key == VK_DELETE && !alt)
+    {
+        const bool removable = focused.kind == snowdesktop::widget_runtime::
+                LogicalSlotKind::Collection || focused.allowClear;
+        if (!removable) return true;
+        std::optional<LuaWidget::LogicalSlotFocus> fallback;
+        if (items.size() > 1)
+        {
+            const std::size_t next = *focusedIndex + 1 < items.size()
+                ? *focusedIndex + 1 : *focusedIndex - 1;
+            fallback = LuaWidget::LogicalSlotFocus{
+                items[next].slotId, items[next].itemId };
+        }
+        snowdesktop::widget_runtime::LogicalSlotChange change;
+        std::string error;
+        if (RuntimeRemoveHostLogicalSlotItem(widgetId, focused.slotId,
+                focused.itemId, change, error, "host.keyboard"))
+            widget.logicalSlotFocus = std::move(fallback);
+        else
+            RuntimeRecordError(widgetId,
+                "logical slot keyboard remove: " + error);
+        RuntimeInvalidateHost(widgetId);
+        return true;
+    }
+    if ((key == VK_RETURN || key == VK_SPACE) && !alt)
+    {
+        if (widget.interactionRegions.FindAction(focused.itemId, "click"))
+        {
+            const int x = (focused.bounds.left + focused.bounds.right) / 2 -
+                widget.lastBounds.left;
+            const int y = (focused.bounds.top + focused.bounds.bottom) / 2 -
+                widget.lastBounds.top;
+            snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(
+                trustedGestureState_, true);
+            DispatchInteractionAction(widget, focused.itemId, "click",
+                x, y, 0, 0, 1, false, "keyboard");
+            RuntimeInvalidateHost(widgetId);
+        }
+        return true;
+    }
+    return false;
 }
 
 bool WidgetEngine::HandleHostInputPointerMove(
