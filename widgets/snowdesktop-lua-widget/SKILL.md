@@ -96,7 +96,12 @@ an `accessibility.label` and use meter only for a current reading, not task
 progress. Probe `view.selectionControls` for controlled toggle/checkbox nodes:
 always pass an explicit `checked` value and handle their `change` action by
 updating component-owned state; never bind `click` or assume the host persists
-the proposed value.
+the proposed value. Probe `view.checkbox.indeterminate` before using a mixed
+checkbox; mixed requires `checked=false`, reports both previous/proposed mixed
+state, and activation proposes a checked, determinate state. Probe
+`view.state.selected` before applying generic controlled `selected` plus
+`selectedStyle`; listItem/slotItem selection is also exposed through host
+SelectionItem semantics.
 Probe `view.actionControls` for host-rendered link/radioGroup/slider nodes.
 Treat radioGroup and slider as controlled: update component-owned state from
 `selection` or `controlValue`, then invalidate. Radio options use generated
@@ -105,7 +110,8 @@ context menus; slider changes are emitted during captured left-button drag.
 Probe `view.keyboardNavigation.basic` before relying on host focus outlines,
 Tab/Shift+Tab traversal, spatial arrows, Enter/Space activation, or slider
 arrow-step changes. The host routes these keys without exposing raw key streams
-to Lua; UI Automation output is still not included.
+to Lua; it publishes basic UI Automation patterns and state, while deep
+virtualization and every platform pattern are not implied by this feature.
 Probe `view.inputControls` for declarative textInput/textArea/searchBox/
 numberInput/select nodes. Treat every value and select expansion as controlled:
 write `text`, valid `controlValue`, `selection`, or `expanded` proposals into the
@@ -114,7 +120,9 @@ clipboard proxy, and IME behavior and may emit focus/blur/submit; they still do
 not expose clipboard data or native handles. Select requires both click (toggle
 proposal) and change (option proposal), and its bounded popup is clipped by the
 widget/parent scroll surface. Do not confuse these nodes with the storage-bound
-immediate `control.textInput/textArea` compatibility calls.
+immediate `control.textInput/textArea` compatibility calls. Probe
+`view.input.required` before declaring `required`; it supplies form semantics
+to accessibility clients but does not validate values or block component actions.
 Probe `view.styledText.basic` for 1-64 bounded text spans with per-span color,
 size, bold, italic, underline, and strikethrough. This basic feature does not
 yet include inline icons or actionable spans. Probe `view.monthCalendar` for a

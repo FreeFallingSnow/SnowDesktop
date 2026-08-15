@@ -224,6 +224,22 @@ void TestControlledActionResolution()
         "a control must not synthesize unbound pointer actions");
 
     regions.BeginFrame();
+    auto mixed = Rect("mixed", 0, 40, 80, 32);
+    mixed.controlKind = InteractionControlKind::Checkbox;
+    mixed.indeterminate = true;
+    mixed.events.emplace("change",
+        InteractionAction{ "mixed.change", {} });
+    Check(regions.Submit(std::move(mixed), error),
+        "an indeterminate checkbox region must stage");
+    regions.CommitFrame();
+    const auto resolvedMixed = regions.ResolveAction("mixed", "click");
+    Check(resolvedMixed && resolvedMixed->previousChecked == false &&
+            resolvedMixed->checked == true &&
+            resolvedMixed->previousIndeterminate == true &&
+            resolvedMixed->indeterminate == false,
+        "an indeterminate checkbox must propose a checked determinate state");
+
+    regions.BeginFrame();
     auto invalidControl = Rect("bad-control", 0, 0, 80, 32);
     invalidControl.controlKind = InteractionControlKind::Checkbox;
     invalidControl.events.emplace("click",

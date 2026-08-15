@@ -20,6 +20,7 @@ enum class WidgetAccessibilityChangeKind
     Focus,
     Name,
     Enabled,
+    Required,
     Offscreen,
     Toggle,
     SelectionItem,

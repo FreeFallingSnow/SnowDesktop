@@ -1748,6 +1748,10 @@ v2.0 资源契约：
 当前过渡实现（2026-08-15）发布 `view.tree.core`，支持 `box/row/column/stack/text/image/button/icon/iconButton/shape/progressBar/progressRing/spacer`，以 `view.grid.uniform` 提供 1–64 个等宽列、行优先顺序和独立行列间距的基础 `grid`，以 `view.grid.placement` 提供 1-based 显式行列、跨行跨列和受限自动放置，并以 `view.grid.tracks` 提供 fixed/auto/fr/minmax 的有界显式列轨与行轨（虚拟网格仍使用整数等宽列），再以 `view.flow.wrap` 提供跳过隐藏项、独立行列间距、逐行 justify 和行内 align 的横向换行 `flow`（不包含纵向 flow/masonry/滚动/虚拟化）；`view.statusVisuals` 公开 `badge/divider/meter`，`view.dataSeries` 公开 `sparkline/lineChart/barChart/waveform/spectrum`，`view.selectionControls` 公开受控 `toggle/checkbox`，`view.actionControls` 一次公开 `link/radioGroup/slider`：link 使用宿主链接语义与实时 hover/pressed 绘制，radioGroup 为每个选项生成独立稳定命中区和 `previousSelection/selection` 建议值，slider 以捕获的左键拖动持续返回 step 对齐的 `previousControlValue/controlValue`；`view.inputControls` 一次公开 `textInput/textArea/searchBox/numberInput/select`，输入复用宿主键盘、IME、选择和剪贴板代理并投递受控文本/数值建议，select 以组件受控 expanded 状态绘制顶层有界选项；所有受控值均由组件写回，宿主不替组件持久化，元素各自支持 contextMenu；meter、slider 与数据图形要求无障碍标签，数据图形每节点最多 512 个有限样本、全树最多 4096 个并支持自动或显式 `min/max` 值域、
 稳定全树 key、基础线性布局、基础文本/边框样式、宿主 hover/pressed 视觉、元素 click/
 doubleClick/pointer/contextMenu action，以及“先完整校验布局、后原子提交；失败保留上一成功树”。
+受控状态继续按细粒度 feature 推进：`view.state.selected` 已贯通通用
+`selected/selectedStyle` 与 SelectionItem 语义，`view.checkbox.indeterminate` 已贯通
+混合态绘制、交互建议和 UIA Toggle Indeterminate，`view.input.required` 已贯通
+input/select 的 UIA IsRequiredForForm 语义；这些声明都不把状态持久化责任转移给宿主。
 其额度为 512 节点、32 层、单节点 4 KiB 文本、全树 64 KiB 文本和 256 个交互元素；未知字段、
 重复 key、非连续 children、错误枚举和越界数值拒绝整次提交。数据图形由宿主直接有界绘制，不展开为逐样本节点或命中区域。它尚不包含完整必选节点矩阵、
 UIA、RTL、文本换行、可变高度虚拟化、差量资源复用和声明式 panel；通用桌面键盘焦点已作为

@@ -178,6 +178,7 @@ void PopulateValueState(const ViewNode& source,
 {
     target.helpText = source.validationMessage.empty()
         ? source.tooltip : source.validationMessage;
+    target.required = source.required;
     if (source.type == ViewNodeType::TextInput ||
         source.type == ViewNodeType::TextArea ||
         source.type == ViewNodeType::SearchBox)
@@ -219,9 +220,13 @@ void PopulateValueState(const ViewNode& source,
         target.valueText = source.text;
     }
 
-    if (source.type == ViewNodeType::Toggle ||
-        source.type == ViewNodeType::Checkbox)
+    if (source.type == ViewNodeType::Toggle)
         target.checked = source.checked;
+    else if (source.type == ViewNodeType::Checkbox && !source.indeterminate)
+        target.checked = source.checked;
+    if (HasViewAccessibilityPattern(target.patterns,
+            ViewAccessibilityPattern::SelectionItem))
+        target.checked = source.selected;
     if (source.type == ViewNodeType::Select)
         target.expanded = source.expanded;
 }
@@ -498,8 +503,9 @@ bool CollectInteractionAccessibilityNodes(
             node.bounds.height <= 0.0f || !visibleClip ||
             !Overlaps(node.bounds, *visibleClip);
         if (region.controlKind == InteractionControlKind::Toggle ||
-            region.controlKind == InteractionControlKind::Checkbox ||
-            region.controlKind == InteractionControlKind::Radio)
+            region.controlKind == InteractionControlKind::Radio ||
+            (region.controlKind == InteractionControlKind::Checkbox &&
+                !region.indeterminate))
             node.checked = region.checked;
         if (region.controlKind == InteractionControlKind::Slider)
         {

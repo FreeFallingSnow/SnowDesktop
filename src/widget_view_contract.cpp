@@ -60,7 +60,7 @@ constexpr auto kProperties = std::to_array<std::string_view>({
     "source", "font", "fit", "alignment", "interpolation", "alt",
     "shape", "orientation", "value", "values", "min", "max", "step",
     "options", "selectedValue", "placeholder", "expanded", "selectAll",
-    "liveUpdate", "readOnly", "validationState", "validationMessage",
+    "liveUpdate", "readOnly", "required", "validationState", "validationMessage",
     "maxBytes", "year", "month", "firstDayOfWeek",
     "selectedDate", "todayDate", "eventDates", "weekdayLabels",
     "showAdjacentDates", "binding", "collection", "revision", "reference",
@@ -74,7 +74,7 @@ constexpr auto kProperties = std::to_array<std::string_view>({
     "flexShrink", "flexDirection", "flexWrap", "alignContent",
     "fontSize", "fontWeight", "fontStyle", "lineHeight",
     "letterSpacing", "locale", "textDirection", "bold",
-    "checked", "visible", "enabled", "cursor", "tooltip", "alignItems", "showScrollbar",
+    "checked", "indeterminate", "selected", "visible", "enabled", "cursor", "tooltip", "alignItems", "showScrollbar",
     "alignSelf", "justifyContent", "textAlign", "verticalAlign",
     "textWrap", "maxLines", "overflowText", "style", "hoverStyle",
     "pressedStyle", "focusStyle", "disabledStyle", "validationStyle",
@@ -94,7 +94,7 @@ constexpr auto kCommonProperties = std::to_array<std::string_view>({
     "bold", "visible", "enabled", "cursor", "tooltip", "alignItems",
     "alignSelf", "justifyContent", "textAlign", "verticalAlign",
     "textWrap", "maxLines", "overflowText", "style", "hoverStyle",
-    "pressedStyle", "focusStyle", "disabledStyle", "accessibility",
+    "pressedStyle", "focusStyle", "disabledStyle", "selectedStyle", "selected", "accessibility",
     "events", "children",
 });
 
@@ -266,6 +266,10 @@ bool ViewNodeAllowsProperty(
     if (property == "selectAll" || property == "liveUpdate" ||
         property == "maxBytes") return IsInput(type);
     if (property == "readOnly") return IsInput(type);
+    if (property == "required")
+        return IsInput(type) || type == ViewNodeType::Select;
+    if (property == "indeterminate")
+        return type == ViewNodeType::Checkbox;
     if (property == "validationState" || property == "validationMessage" ||
         property == "validationStyle")
         return IsInput(type) || type == ViewNodeType::Select;
@@ -273,7 +277,7 @@ bool ViewNodeAllowsProperty(
         property == "firstDayOfWeek" || property == "selectedDate" ||
         property == "todayDate" || property == "eventDates" ||
         property == "weekdayLabels" || property == "showAdjacentDates" ||
-        property == "selectedStyle" || property == "todayStyle" ||
+        property == "todayStyle" ||
         property == "adjacentStyle" || property == "eventStyle")
         return type == ViewNodeType::MonthCalendar;
     if (property == "binding" || property == "collection" ||

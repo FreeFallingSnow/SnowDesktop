@@ -256,6 +256,7 @@
 ---@field selectAll? boolean Select all text on first focus.
 ---@field liveUpdate? boolean Emit each input edit when true (default); emit on commit when false.
 ---@field readOnly? boolean Text-like and numeric inputs remain focusable/selectable but reject typing, IME, paste, cut, delete, UIA value changes, and numeric stepping.
+---@field required? boolean Text-like, numeric, and select form requirement exposed through host accessibility semantics; it does not validate or block submission.
 ---@field validationState? SnowViewValidationState Input/select validation state; defaults to none.
 ---@field validationMessage? string Bounded validation detail exposed as semantic help text; render a text node too when the message must be visibly persistent.
 ---@field maxBytes? integer Input UTF-8 limit from 0/default through 65536; declarative default is the 4096-byte node limit.
@@ -307,6 +308,8 @@
 ---@field textDirection? SnowViewTextDirection Base paragraph direction; auto uses the first strong character and then the locale.
 ---@field bold? boolean
 ---@field checked? boolean Required explicit controlled value for toggle and checkbox nodes.
+---@field indeterminate? boolean Checkbox-only controlled mixed state. Requires checked=false; activation proposes checked=true and indeterminate=false.
+---@field selected? boolean Generic controlled selection state used by selectedStyle and SelectionItem semantics where the node contract provides them.
 ---@field showScrollbar? boolean Scroll or virtual-collection host scrollbar visibility; defaults to true.
 ---@field textAlign? 'start'|'center'|'end'
 ---@field verticalAlign? 'start'|'center'|'end' Text block alignment inside the node; defaults to center.
@@ -324,7 +327,7 @@
 ---@field disabledStyle? SnowViewStyle Applied last when enabled is false.
 ---@field validationStyle? SnowViewStyle Applied after pressed and before focus/disabled; the host supplies a state-colored border when omitted.
 ---@field checkedStyle? SnowViewStyle Applied before hover/pressed when a toggle/checkbox or radio option is selected.
----@field selectedStyle? SnowViewStyle MonthCalendar selected-date style.
+---@field selectedStyle? SnowViewStyle Generic selected-node style; also used by MonthCalendar selected date cells.
 ---@field todayStyle? SnowViewStyle MonthCalendar today outline style.
 ---@field adjacentStyle? SnowViewStyle MonthCalendar adjacent-month date style.
 ---@field eventStyle? SnowViewStyle MonthCalendar event-marker style.
@@ -518,6 +521,8 @@
 ---@field targetKey? string Stable immediate interaction region key.
 ---@field previousChecked? boolean Current controlled value for toggle/checkbox change events.
 ---@field checked? boolean Proposed next controlled value for toggle/checkbox change events; the host does not persist it.
+---@field previousIndeterminate? boolean Current checkbox mixed state for checkbox change events.
+---@field indeterminate? boolean Proposed checkbox mixed state; activation always proposes false and the host does not persist it.
 ---@field previousSelection? string Current radioGroup/select selectedValue for change events.
 ---@field selection? string Proposed radioGroup/select option value; the host does not persist it.
 ---@field previousExpanded? boolean Current select expanded state for click events.

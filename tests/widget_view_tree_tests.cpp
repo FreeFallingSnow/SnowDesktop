@@ -681,6 +681,8 @@ void TestSelectionControlParsing()
     Check(luaL_dostring(state, R"lua(
         return view.column({
             key = "controls",
+            selected = true,
+            selectedStyle = { background = 0x101820 },
             children = {
                 view.toggle({
                     key = "notifications",
@@ -693,7 +695,8 @@ void TestSelectionControlParsing()
                 view.checkbox({
                     key = "compact",
                     label = "Compact layout",
-                    checked = true,
+                    checked = false,
+                    indeterminate = true,
                     events = {
                         change = { id = "compact.change" },
                         contextMenu = {
@@ -708,6 +711,8 @@ void TestSelectionControlParsing()
     std::string error;
     Check(ParseLuaViewTree(state, -1, root, error) &&
             root.children.size() == 2 &&
+            root.selected &&
+            root.selectedStyle.background == std::uint32_t{ 0x101820 } &&
             root.children[0].type == ViewNodeType::Toggle &&
             !root.children[0].checked &&
             root.children[0].events.at("change").id ==
@@ -715,7 +720,8 @@ void TestSelectionControlParsing()
             root.children[0].checkedStyle.background ==
                 std::uint32_t{ 0x4C9AFF } &&
             root.children[1].type == ViewNodeType::Checkbox &&
-            root.children[1].checked &&
+            !root.children[1].checked &&
+            root.children[1].indeterminate &&
             root.children[1].events.at("contextMenu").id ==
                 "compact.menu" &&
             root.children[1].events.at("contextMenu").contextMenuScope ==
@@ -731,7 +737,7 @@ void TestSelectionControlParsing()
             regions[0].accessibilityRole == "switch" &&
             regions[0].cursor == "hand" &&
             regions[1].controlKind == InteractionControlKind::Checkbox &&
-            regions[1].checked &&
+            !regions[1].checked && regions[1].indeterminate &&
             regions[1].accessibilityRole == "checkbox",
         "selection controls must produce semantic controlled regions");
 
@@ -748,6 +754,23 @@ void TestSelectionControlParsing()
     Check(!ParseLuaViewTree(state, -1, invalid, error) &&
             error.find("require checked") != std::string::npos,
         "selection controls must require an explicit controlled value");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.checkbox({
+            key = "invalid-mixed",
+            label = "Invalid mixed",
+            checked = true,
+            indeterminate = true,
+            action = { id = "invalid-mixed.change" },
+        })
+    )lua") == LUA_OK,
+        "invalid mixed-checkbox fixture must evaluate");
+    invalid = {};
+    Check(ParseLuaViewTree(state, -1, invalid, error) &&
+            !ValidateAndLayoutViewTree(invalid, 200.0f, 40.0f, error) &&
+            error.find("checked=false") != std::string::npos,
+        "an indeterminate checkbox must reject a simultaneously checked value");
 
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(
@@ -1518,6 +1541,7 @@ void TestDeclarativeInputControls()
             children = {
                 view.textInput({
                     key = "name", value = "Snow", placeholder = "Name",
+                    required = true,
                     maxBytes = 64, action = { id = "name.change" },
                     validationState = "error",
                     validationMessage = "Name is required",
@@ -1569,6 +1593,7 @@ void TestDeclarativeInputControls()
             root.children.size() == 5 &&
             root.children[0].type == ViewNodeType::TextInput &&
             root.children[0].inputValue == "Snow" &&
+            root.children[0].required &&
             root.children[0].validationState ==
                 ViewValidationState::Error &&
             root.children[0].validationMessage == "Name is required" &&

@@ -92,12 +92,13 @@ void TestClipAndControlledState()
     ViewNode visible = Node(ViewNodeType::Checkbox,
         "visible", 8, 8, 120, 28);
     visible.text = "Visible";
-    visible.checked = true;
+    visible.indeterminate = true;
     ViewNode offscreen = Node(ViewNodeType::TextInput,
         "offscreen", 8, 120, 120, 28);
     offscreen.accessibilityLabel = "Query";
     offscreen.inputValue = "snow";
     offscreen.readOnly = true;
+    offscreen.required = true;
     offscreen.validationMessage = "Query is unavailable";
     scroll.children = { visible, offscreen };
 
@@ -106,9 +107,9 @@ void TestClipAndControlledState()
     Check(CollectViewAccessibilityNodes(scroll, {}, nodes, error) &&
             nodes.size() == 3,
         "materialized clipped children must remain in the semantic snapshot");
-    Check(nodes[1].checked == true && !nodes[1].offscreen &&
+    Check(!nodes[1].checked.has_value() && !nodes[1].offscreen &&
             nodes[2].offscreen && nodes[2].valueText == "snow" &&
-            nodes[2].valueReadOnly &&
+            nodes[2].valueReadOnly && nodes[2].required &&
             nodes[2].helpText == "Query is unavailable",
         "semantic state must retain values, validation help, read-only state, and offscreen status");
     Check(HasViewAccessibilityPattern(nodes[0].patterns,
@@ -249,11 +250,13 @@ void TestVirtualControlChildren()
     grid.children[2].resolvedGridColumn = 1;
     grid.children[2].resolvedGridRow = 1;
     grid.children[2].rowSpan = 2;
+    grid.children[1].selected = true;
     Check(CollectViewAccessibilityNodes(grid, {}, nodes, error) &&
             nodes.size() == 4 && nodes[0].gridRowCount == 3 &&
             nodes[0].gridColumnCount == 2 &&
             nodes[1].gridRow == 0 && nodes[1].gridColumn == 0 &&
             nodes[1].gridColumnSpan == 2 &&
+            nodes[1].checked == false && nodes[2].checked == true &&
             nodes[3].gridRow == 1 && nodes[3].gridColumn == 1 &&
             nodes[3].gridRowSpan == 2 &&
             HasViewAccessibilityPattern(nodes[3].patterns,

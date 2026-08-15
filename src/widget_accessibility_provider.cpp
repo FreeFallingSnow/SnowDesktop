@@ -480,6 +480,8 @@ std::optional<PROPERTYID> ChangePropertyId(
         return UIA_NamePropertyId;
     case WidgetAccessibilityChangeKind::Enabled:
         return UIA_IsEnabledPropertyId;
+    case WidgetAccessibilityChangeKind::Required:
+        return UIA_IsRequiredForFormPropertyId;
     case WidgetAccessibilityChangeKind::Offscreen:
         return UIA_IsOffscreenPropertyId;
     case WidgetAccessibilityChangeKind::Toggle:
@@ -535,6 +537,9 @@ HRESULT SetChangeVariant(VARIANT* result,
             Utf8ToWide(node ? node->name : widget->name));
     case WidgetAccessibilityChangeKind::Enabled:
         SetBoolVariant(result, node ? node->enabled : true);
+        return S_OK;
+    case WidgetAccessibilityChangeKind::Required:
+        SetBoolVariant(result, node && node->required);
         return S_OK;
     case WidgetAccessibilityChangeKind::Offscreen:
         SetBoolVariant(result, node
@@ -995,6 +1000,8 @@ public:
             SetBoolVariant(result, true);
         else if (propertyId == UIA_IsEnabledPropertyId)
             SetBoolVariant(result, node ? node->enabled : true);
+        else if (propertyId == UIA_IsRequiredForFormPropertyId)
+            SetBoolVariant(result, node && node->required);
         else if (propertyId == UIA_IsKeyboardFocusablePropertyId)
             SetBoolVariant(result, node ? node->focusable : true);
         else if (propertyId == UIA_HasKeyboardFocusPropertyId)

@@ -44,6 +44,18 @@ std::wstring PropertyString(
     return result;
 }
 
+bool PropertyBool(IRawElementProviderSimple* provider, PROPERTYID property)
+{
+    VARIANT value;
+    VariantInit(&value);
+    Check(SUCCEEDED(provider->GetPropertyValue(property, &value)) &&
+            value.vt == VT_BOOL,
+        "boolean property must return VT_BOOL");
+    const bool result = value.boolVal == VARIANT_TRUE;
+    VariantClear(&value);
+    return result;
+}
+
 ComPtr<IRawElementProviderSimple> AsSimple(
     IRawElementProviderFragment* fragment)
 {
@@ -123,6 +135,7 @@ LuaWidgetAccessibilitySnapshot Snapshot()
     input.valueText = "before";
     input.helpText = "Enter a search term";
     input.valueReadOnly = false;
+    input.required = true;
 
     ViewAccessibilityNode combo;
     combo.semanticId = "key:choice";
@@ -235,6 +248,7 @@ void TestSnapshotDiff()
     current[0].nodes[3].checked = true;
     current[0].nodes[4].value = 6.0f;
     current[0].nodes[5].valueText = "after";
+    current[0].nodes[5].required = false;
     current[0].nodes[6].expanded = true;
     current[0].nodes[2].name = "Updated";
     current[0].nodes[2].enabled = false;
@@ -261,6 +275,9 @@ void TestSnapshotDiff()
                 WidgetAccessibilityElementKind::Node, "key:level") &&
             ContainsChange(changes,
                 WidgetAccessibilityChangeKind::Value,
+                WidgetAccessibilityElementKind::Node, "key:query") &&
+            ContainsChange(changes,
+                WidgetAccessibilityChangeKind::Required,
                 WidgetAccessibilityElementKind::Node, "key:query") &&
             ContainsChange(changes,
                 WidgetAccessibilityChangeKind::ExpandCollapse,
@@ -468,6 +485,8 @@ void TestProviderTreeAndLifetime()
             std::wstring(inputValue, SysStringLen(inputValue)) == L"before" &&
             PropertyString(AsSimple(input.Get()).Get(),
                 UIA_HelpTextPropertyId) == L"Enter a search term" &&
+            PropertyBool(AsSimple(input.Get()).Get(),
+                UIA_IsRequiredForFormPropertyId) &&
             SUCCEEDED(valuePattern->SetValue(L"after")) &&
             actions.back().kind ==
                 LuaWidgetAccessibilityActionKind::SetValue &&

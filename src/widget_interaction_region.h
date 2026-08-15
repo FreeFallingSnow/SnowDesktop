@@ -63,6 +63,8 @@ struct InteractionResolvedAction
     std::string eventName;
     std::optional<bool> previousChecked;
     std::optional<bool> checked;
+    std::optional<bool> previousIndeterminate;
+    std::optional<bool> indeterminate;
     std::optional<float> previousControlValue;
     std::optional<float> controlValue;
     std::optional<std::string> previousSelection;
@@ -119,6 +121,7 @@ struct InteractionRegion
     std::string accessibilityLabel;
     InteractionControlKind controlKind = InteractionControlKind::None;
     bool checked = false;
+    bool indeterminate = false;
     float controlValue = 0.0f;
     float minimum = 0.0f;
     float maximum = 1.0f;

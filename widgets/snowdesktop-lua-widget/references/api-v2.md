@@ -100,6 +100,8 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.tooltip` 提供宿主管理的纯文本元素提示，
 `view.layout.overflow` 提供容器后代裁剪，`view.shadow` 提供有界宿主阴影，
 `view.image.tint` 提供保留图片 alpha 的 RGB 着色，
+`view.state.selected` 提供通用受控选中样式，`view.checkbox.indeterminate` 提供复选框混合态，
+`view.input.required` 提供表单必填语义，
 `view.grid.uniform` 提供基础 `grid`，`view.grid.placement` 提供显式格位与跨度，
 `view.grid.tracks` 提供受限 fixed/auto/fr/minmax 列轨和行轨，
 `view.flow.wrap` 提供横向换行 `flow`。
@@ -224,6 +226,16 @@ tooltip 同时作为 UI Automation HelpText 的后备值，输入节点存在 `v
 `view.keyboardNavigation.basic` 后，Enter/空格会生成同样的受控 change 建议。基础
 UI Automation 输出已开放，深层虚拟化与全部 Pattern/事件仍按升级计划继续补齐。
 
+探测 `view.checkbox.indeterminate` 后，checkbox 可在 `checked=false` 时声明受控
+`indeterminate=true`。宿主绘制横线混合态，指针、键盘或 UI Automation 激活都会建议
+`checked=true, indeterminate=false`，事件同时带 `previousIndeterminate/indeterminate`；
+宿主仍不写回状态。`checked=true` 与 `indeterminate=true` 同时出现会拒绝整棵树。
+
+探测 `view.state.selected` 后，任意节点可声明受控 `selected` 和 `selectedStyle`；样式在
+checked、hover、pressed、validation、focus、disabled 之前合并。带 SelectionItem 契约的
+`listItem/slotItem` 还会向 UI Automation 暴露选中值，其他普通节点只获得视觉状态。
+月历日期格继续复用 `selectedStyle`，但其日期选择仍由 `selectedDate` 控制。
+
 `widget.context().focused` 在宿主管理的文本输入或任一可聚焦声明式元素取得键盘/UIA
 焦点时为 `true`，不再只表示文本编辑状态。
 
@@ -286,6 +298,11 @@ Lua 不会获得剪贴板内容或原生句柄。`liveUpdate=false` 将 change �
 文本是完整且位于范围内的数字时，change 还带 `numberValid=true` 和 `controlValue`。
 探测 `view.keyboardNavigation.basic` 后，Tab/Shift+Tab 可在这些输入与同树其他可操作元素
 之间循环；进入输入后仍由上述宿主编辑器处理文本键、选择、IME 和提交。
+
+探测 `view.input.required` 后，textInput/textArea/searchBox/numberInput/select 可声明
+`required=true`。它会映射为 UI Automation 的 IsRequiredForForm，方便辅助技术理解表单，
+但不会自行校验、阻止提交或生成错误文案；组件仍应显式维护 `validationState`、
+`validationMessage` 与可见提示。
 
 ```lua
 view.searchBox({

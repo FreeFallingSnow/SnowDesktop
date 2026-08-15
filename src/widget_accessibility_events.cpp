@@ -175,6 +175,9 @@ std::vector<WidgetAccessibilityChange> DiffWidgetAccessibilitySnapshots(
         if (old.enabled != now.enabled)
             AddNodeChange(changes,
                 WidgetAccessibilityChangeKind::Enabled, key);
+        if (old.required != now.required)
+            AddNodeChange(changes,
+                WidgetAccessibilityChangeKind::Required, key);
         if (old.offscreen != now.offscreen)
             AddNodeChange(changes,
                 WidgetAccessibilityChangeKind::Offscreen, key);

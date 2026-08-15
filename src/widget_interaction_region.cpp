@@ -428,7 +428,12 @@ WidgetInteractionRegions::ResolveAction(
             region->controlKind == InteractionControlKind::Checkbox))
     {
         result.previousChecked = region->checked;
-        result.checked = !region->checked;
+        result.checked = region->indeterminate ? true : !region->checked;
+        if (region->controlKind == InteractionControlKind::Checkbox)
+        {
+            result.previousIndeterminate = region->indeterminate;
+            result.indeterminate = false;
+        }
     }
     else if (resolvedName == "change" &&
         region->controlKind == InteractionControlKind::Radio)

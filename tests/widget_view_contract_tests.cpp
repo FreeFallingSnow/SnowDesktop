@@ -108,8 +108,18 @@ void TestRepresentativeApplicability()
             !ViewNodeAllowsProperty(ViewNodeType::Select, "readOnly"),
         "input editing properties must be scoped to input nodes");
     Check(ViewNodeAllowsProperty(ViewNodeType::Button, "focusStyle") &&
-            ViewNodeAllowsProperty(ViewNodeType::Text, "disabledStyle"),
-        "focus and disabled state styles must be common properties");
+            ViewNodeAllowsProperty(ViewNodeType::Text, "disabledStyle") &&
+            ViewNodeAllowsProperty(ViewNodeType::ListItem, "selected") &&
+            ViewNodeAllowsProperty(ViewNodeType::Box, "selectedStyle"),
+        "focus, disabled, and selected state styles must be common properties");
+    Check(ViewNodeAllowsProperty(ViewNodeType::Checkbox,
+                "indeterminate") &&
+            !ViewNodeAllowsProperty(ViewNodeType::Toggle,
+                "indeterminate") &&
+            ViewNodeAllowsProperty(ViewNodeType::TextInput, "required") &&
+            ViewNodeAllowsProperty(ViewNodeType::Select, "required") &&
+            !ViewNodeAllowsProperty(ViewNodeType::Button, "required"),
+        "mixed checkbox and required form states must remain scoped to their controls");
     Check(ViewNodeAllowsProperty(ViewNodeType::TextInput,
                 "validationState") &&
             ViewNodeAllowsProperty(ViewNodeType::NumberInput,

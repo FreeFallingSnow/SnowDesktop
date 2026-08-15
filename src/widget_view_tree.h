@@ -391,10 +391,13 @@ struct ViewNode
     std::optional<float> seriesMaximum;
     bool bold = false;
     bool checked = false;
+    bool indeterminate = false;
+    bool selected = false;
     bool expanded = false;
     bool selectAll = false;
     bool liveUpdate = true;
     bool readOnly = false;
+    bool required = false;
     ViewValidationState validationState = ViewValidationState::None;
     std::string validationMessage;
     std::size_t maximumUtf8Bytes = 0;

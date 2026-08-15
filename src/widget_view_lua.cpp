@@ -1860,7 +1860,6 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             FieldPresent(state, index, "eventDates") ||
             FieldPresent(state, index, "weekdayLabels") ||
             FieldPresent(state, index, "showAdjacentDates") ||
-            FieldPresent(state, index, "selectedStyle") ||
             FieldPresent(state, index, "todayStyle") ||
             FieldPresent(state, index, "adjacentStyle") ||
             FieldPresent(state, index, "eventStyle")))
@@ -2133,10 +2132,14 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             node.fillOpacity, error) ||
         !ReadBoolField(state, index, "bold", node.bold, error) ||
         !ReadBoolField(state, index, "checked", node.checked, error) ||
+        !ReadBoolField(state, index, "indeterminate",
+            node.indeterminate, error) ||
+        !ReadBoolField(state, index, "selected", node.selected, error) ||
         !ReadBoolField(state, index, "expanded", node.expanded, error) ||
         !ReadBoolField(state, index, "selectAll", node.selectAll, error) ||
         !ReadBoolField(state, index, "liveUpdate", node.liveUpdate, error) ||
         !ReadBoolField(state, index, "readOnly", node.readOnly, error) ||
+        !ReadBoolField(state, index, "required", node.required, error) ||
         !ReadValidationStateField(state, index,
             node.validationState, error) ||
         !ReadStringField(state, index, "validationMessage",

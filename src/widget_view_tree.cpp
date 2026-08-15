@@ -1824,6 +1824,18 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         error = "view locale must be an empty or bounded BCP 47 language tag";
         return false;
     }
+    if (node.indeterminate &&
+        (node.type != ViewNodeType::Checkbox || node.checked))
+    {
+        error = "view indeterminate requires a checkbox with checked=false";
+        return false;
+    }
+    if (node.required &&
+        !IsInputNode(node.type) && node.type != ViewNodeType::Select)
+    {
+        error = "view required is only valid for input and select nodes";
+        return false;
+    }
     if (!IsFlexContainer(node.type) &&
         (node.flexDirection != ViewFlexDirection::Auto ||
             node.flexWrap != ViewFlexWrap::NoWrap ||
@@ -2916,6 +2928,7 @@ bool CollectRegions(const ViewNode& node,
                 mainLength - radiusInset * 2.0f);
         }
         region.checked = node.checked;
+        region.indeterminate = node.indeterminate;
         region.accessibilityRole = node.accessibilityRole.empty()
             ? DefaultAccessibilityRole(node.type)
             : node.accessibilityRole;

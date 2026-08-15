@@ -14460,7 +14460,9 @@ static snowdesktop::widget_runtime::ViewStyle ResolveViewStyle(
 {
     using snowdesktop::widget_runtime::ViewStyle;
     ViewStyle result = node.style;
-    if (checkedOverride.value_or(node.checked))
+    if (node.selected)
+        OverlayViewStyle(result, node.selectedStyle);
+    if (checkedOverride.value_or(node.checked) || node.indeterminate)
         OverlayViewStyle(result, node.checkedStyle);
     if (hovered) OverlayViewStyle(result, node.hoverStyle);
     if (pressed) OverlayViewStyle(result, node.pressedStyle);
@@ -15660,10 +15662,10 @@ static void DrawWidgetViewNode(D2DState* state,
             (content.height - boxSize) * 0.5f;
         const D2D1_RECT_F box = D2D1::RectF(
             left, top, left + boxSize, top + boxSize);
-        if (node.checked || style.background)
+        if (node.checked || node.indeterminate || style.background)
         {
             const std::uint32_t fillColor = style.background.value_or(
-                node.checked ? 0x4C9AFF : 0xFFFFFF);
+                node.checked || node.indeterminate ? 0x4C9AFF : 0xFFFFFF);
             if (ID2D1SolidColorBrush* fill = GetCachedBrush(state,
                     static_cast<int>(fillColor), opacity))
                 state->ctx->FillRoundedRectangle(
@@ -15681,22 +15683,36 @@ static void DrawWidgetViewNode(D2DState* state,
                     std::min(3.0f, boxSize * 0.2f),
                     std::min(3.0f, boxSize * 0.2f)), border,
                 std::max(1.0f, borderWidth));
-        if (node.checked)
+        if (node.checked || node.indeterminate)
         {
             if (ID2D1SolidColorBrush* mark = GetCachedBrush(state,
                     static_cast<int>(style.foreground.value_or(0xFFFFFF)),
                     opacity))
             {
-                state->ctx->DrawLine(D2D1::Point2F(
-                        left + boxSize * 0.22f, top + boxSize * 0.50f),
-                    D2D1::Point2F(
-                        left + boxSize * 0.42f, top + boxSize * 0.72f),
-                    mark, std::min(2.0f, boxSize * 0.12f));
-                state->ctx->DrawLine(D2D1::Point2F(
-                        left + boxSize * 0.42f, top + boxSize * 0.72f),
-                    D2D1::Point2F(
-                        left + boxSize * 0.81f, top + boxSize * 0.31f),
-                    mark, std::min(2.0f, boxSize * 0.12f));
+                if (node.indeterminate)
+                {
+                    state->ctx->DrawLine(D2D1::Point2F(
+                            left + boxSize * 0.24f,
+                            top + boxSize * 0.50f),
+                        D2D1::Point2F(left + boxSize * 0.76f,
+                            top + boxSize * 0.50f), mark,
+                        std::min(2.0f, boxSize * 0.12f));
+                }
+                else
+                {
+                    state->ctx->DrawLine(D2D1::Point2F(
+                            left + boxSize * 0.22f,
+                            top + boxSize * 0.50f),
+                        D2D1::Point2F(left + boxSize * 0.42f,
+                            top + boxSize * 0.72f), mark,
+                        std::min(2.0f, boxSize * 0.12f));
+                    state->ctx->DrawLine(D2D1::Point2F(
+                            left + boxSize * 0.42f,
+                            top + boxSize * 0.72f),
+                        D2D1::Point2F(left + boxSize * 0.81f,
+                            top + boxSize * 0.31f), mark,
+                        std::min(2.0f, boxSize * 0.12f));
+                }
             }
         }
     }
@@ -20240,6 +20256,8 @@ void WidgetEngine::DispatchInteractionAction(LuaWidget& widget,
     std::string resolvedEventName(eventName);
     std::optional<bool> previousChecked;
     std::optional<bool> checked;
+    std::optional<bool> previousIndeterminate;
+    std::optional<bool> indeterminate;
     std::optional<float> previousControlValue;
     std::optional<float> controlValue;
     std::optional<std::string> previousSelection;
@@ -20272,6 +20290,8 @@ void WidgetEngine::DispatchInteractionAction(LuaWidget& widget,
         resolvedEventName = resolved->eventName;
         previousChecked = resolved->previousChecked;
         checked = resolved->checked;
+        previousIndeterminate = resolved->previousIndeterminate;
+        indeterminate = resolved->indeterminate;
         previousControlValue = resolved->previousControlValue;
         controlValue = resolved->controlValue;
         previousSelection = resolved->previousSelection;
@@ -20281,7 +20301,8 @@ void WidgetEngine::DispatchInteractionAction(LuaWidget& widget,
     }
     (void)InvokeLifecycleEvent(widget, "action",
         [&action, &targetKey, &resolvedEventName,
-            previousChecked, checked, previousControlValue, controlValue,
+            previousChecked, checked, previousIndeterminate, indeterminate,
+            previousControlValue, controlValue,
             previousSelection, selection, previousExpanded, expanded,
             trustedGesture, &eventSource, x, y, button,
             delta, clickCount](lua_State* eventState) {
@@ -20300,6 +20321,15 @@ void WidgetEngine::DispatchInteractionAction(LuaWidget& widget,
                 lua_setfield(eventState, -2, "previousChecked");
                 lua_pushboolean(eventState, *checked ? 1 : 0);
                 lua_setfield(eventState, -2, "checked");
+            }
+            if (previousIndeterminate.has_value() &&
+                indeterminate.has_value())
+            {
+                lua_pushboolean(eventState,
+                    *previousIndeterminate ? 1 : 0);
+                lua_setfield(eventState, -2, "previousIndeterminate");
+                lua_pushboolean(eventState, *indeterminate ? 1 : 0);
+                lua_setfield(eventState, -2, "indeterminate");
             }
             if (previousControlValue.has_value() &&
                 controlValue.has_value())

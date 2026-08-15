@@ -32,6 +32,7 @@ struct ViewAccessibilityNode
     bool focusable = false;
     bool focused = false;
     bool offscreen = false;
+    bool required = false;
     std::optional<bool> checked;
     std::optional<bool> expanded;
     std::optional<float> value;
