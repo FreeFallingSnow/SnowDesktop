@@ -80,10 +80,13 @@ supports optional `setup(context)` and `dispose(context, model, reason)`;
 `setup` runs once and its return value is passed to `render` or `view`, `event`, and
 `dispose`. Optional `event(context, model, event)` receives host surface events;
 immediate-mode elements use `interaction.region`. The transitional
-`view.tree.core` subset supports box/row/column/stack/text/button/icon/iconButton/
-shape/progressBar/progressRing/spacer nodes, stable element actions,
-hover/pressed styles, and per-element context-menu bindings; it does not yet
-provide keyboard focus, UI Automation, resource nodes, collections, or the
+`view.tree.core` subset supports box/row/column/stack/text/image/button/icon/
+iconButton/shape/progressBar/progressRing/spacer nodes, stable element actions,
+package resource handles, hover/pressed styles, and per-element context-menu
+bindings. Probe `view.dataSeries` for bounded sparkline/lineChart/barChart/
+waveform/spectrum nodes; keep each series within 512 finite samples and the
+whole tree within 4096, and always provide `accessibility.label`. The subset
+does not yet provide keyboard focus, UI Automation, collections, or the
 complete `view.tree` contract. Optional
 `menu(context, model, request)` builds an element's synchronous native context
 menu.

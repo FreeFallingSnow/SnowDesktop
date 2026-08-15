@@ -25,5 +25,10 @@ int LuaViewIconButton(lua_State* state);
 int LuaViewShape(lua_State* state);
 int LuaViewProgressBar(lua_State* state);
 int LuaViewProgressRing(lua_State* state);
+int LuaViewSparkline(lua_State* state);
+int LuaViewLineChart(lua_State* state);
+int LuaViewBarChart(lua_State* state);
+int LuaViewWaveform(lua_State* state);
+int LuaViewSpectrum(lua_State* state);
 int LuaViewSpacer(lua_State* state);
 }

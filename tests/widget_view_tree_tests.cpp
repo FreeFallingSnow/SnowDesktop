@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 extern "C" {
@@ -126,6 +127,15 @@ void TestValidationFailures()
             unlabeledIconButton, 100.0f, 100.0f, error) &&
             error.find("accessibility.label") != std::string::npos,
         "iconButton must require an accessible label");
+
+    ViewNode unlabeledSeries;
+    unlabeledSeries.type = ViewNodeType::Waveform;
+    unlabeledSeries.key = "waveform";
+    unlabeledSeries.values = { -0.5f, 0.5f };
+    Check(!ValidateAndLayoutViewTree(
+            unlabeledSeries, 100.0f, 100.0f, error) &&
+            error.find("accessibility.label") != std::string::npos,
+        "data-series nodes must require an accessible label");
 }
 
 void RegisterViewLibrary(lua_State* state)
@@ -148,6 +158,11 @@ void RegisterViewLibrary(lua_State* state)
         { "shape", LuaViewShape },
         { "progressBar", LuaViewProgressBar },
         { "progressRing", LuaViewProgressRing },
+        { "sparkline", LuaViewSparkline },
+        { "lineChart", LuaViewLineChart },
+        { "barChart", LuaViewBarChart },
+        { "waveform", LuaViewWaveform },
+        { "spectrum", LuaViewSpectrum },
         { "spacer", LuaViewSpacer },
     };
     for (const auto& entry : entries)
@@ -360,6 +375,115 @@ void TestVisualNodeParsing()
         "image nodes must reject font handles as their source");
     lua_close(state);
 }
+
+void TestDataSeriesParsingAndLimits()
+{
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "Lua state must be available");
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    Check(luaL_dostring(state, R"lua(
+        return view.column({
+            key = "charts",
+            children = {
+                view.sparkline({
+                    key = "cpu",
+                    values = { 0.1, 0.4, 0.2, 0.8 },
+                    thickness = 2,
+                    accessibility = { label = "CPU history" },
+                }),
+                view.lineChart({
+                    key = "network",
+                    values = { 12, 30, 18 },
+                    min = 0,
+                    max = 40,
+                    accessibility = { label = "Network traffic" },
+                }),
+                view.barChart({
+                    key = "storage",
+                    values = { -2, 4, 6 },
+                    accessibility = { label = "Storage activity" },
+                }),
+                view.waveform({
+                    key = "wave",
+                    values = { -1, -0.25, 0.5, 1 },
+                    accessibility = { label = "Audio waveform" },
+                }),
+                view.spectrum({
+                    key = "spectrum",
+                    values = { 0.1, 0.5, 1.0 },
+                    accessibility = { label = "Audio spectrum" },
+                }),
+            },
+        })
+    )lua") == LUA_OK,
+        "data-series Lua fixture must evaluate");
+    ViewNode root;
+    std::string error;
+    Check(ParseLuaViewTree(state, -1, root, error) &&
+            root.children.size() == 5 &&
+            root.children[0].type == ViewNodeType::Sparkline &&
+            root.children[0].values.size() == 4 &&
+            Near(root.children[0].values[3], 0.8f) &&
+            root.children[1].type == ViewNodeType::LineChart &&
+            root.children[1].seriesMinimum &&
+            root.children[1].seriesMaximum &&
+            Near(*root.children[1].seriesMinimum, 0.0f) &&
+            Near(*root.children[1].seriesMaximum, 40.0f) &&
+            root.children[2].type == ViewNodeType::BarChart &&
+            root.children[3].type == ViewNodeType::Waveform &&
+            root.children[4].type == ViewNodeType::Spectrum,
+        "data-series constructors must retain bounded typed samples");
+    Check(ValidateAndLayoutViewTree(root, 320.0f, 240.0f, error),
+        "five bounded data-series nodes must validate and lay out");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.sparkline({
+            key = "bad-range",
+            values = { 1, 2 },
+            min = 0,
+            accessibility = { label = "Bad range" },
+        })
+    )lua") == LUA_OK,
+        "incomplete-range fixture must evaluate");
+    ViewNode invalid;
+    Check(!ParseLuaViewTree(state, -1, invalid, error) &&
+            error.find("both min and max") != std::string::npos,
+        "data-series nodes must reject one-sided explicit ranges");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        local values = {}
+        for i = 1, 513 do values[i] = i end
+        return view.waveform({
+            key = "too-many",
+            values = values,
+            accessibility = { label = "Too many samples" },
+        })
+    )lua") == LUA_OK,
+        "oversized-series fixture must evaluate");
+    Check(!ParseLuaViewTree(state, -1, invalid, error) &&
+            error.find("1 to 512") != std::string::npos,
+        "one node must reject more than 512 samples");
+    lua_close(state);
+
+    ViewNode many;
+    many.type = ViewNodeType::Column;
+    many.key = "many";
+    for (int index = 0; index < 9; ++index)
+    {
+        ViewNode series;
+        series.type = ViewNodeType::Sparkline;
+        series.key = "series-" + std::to_string(index);
+        series.values.assign(512, static_cast<float>(index));
+        series.accessibilityLabel = "Series";
+        many.children.push_back(std::move(series));
+    }
+    Check(!ValidateAndLayoutViewTree(many, 320.0f, 240.0f, error) &&
+            error.find("point limit") != std::string::npos,
+        "one tree must reject more than 4096 total series samples");
+}
 }
 
 int main()
@@ -368,6 +492,7 @@ int main()
     TestValidationFailures();
     TestLuaParsing();
     TestVisualNodeParsing();
+    TestDataSeriesParsingAndLimits();
     std::cout << "Widget view tree tests passed\n";
     return 0;
 }

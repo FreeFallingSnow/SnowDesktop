@@ -41,6 +41,15 @@ bool IsButtonNode(ViewNodeType type) noexcept
         type == ViewNodeType::IconButton;
 }
 
+bool IsDataSeriesNode(ViewNodeType type) noexcept
+{
+    return type == ViewNodeType::Sparkline ||
+        type == ViewNodeType::LineChart ||
+        type == ViewNodeType::BarChart ||
+        type == ViewNodeType::Waveform ||
+        type == ViewNodeType::Spectrum;
+}
+
 bool IsLeafNode(ViewNodeType type) noexcept
 {
     return type == ViewNodeType::Text || type == ViewNodeType::Image ||
@@ -48,6 +57,7 @@ bool IsLeafNode(ViewNodeType type) noexcept
         type == ViewNodeType::Icon || type == ViewNodeType::Shape ||
         type == ViewNodeType::ProgressBar ||
         type == ViewNodeType::ProgressRing ||
+        IsDataSeriesNode(type) ||
         type == ViewNodeType::Spacer;
 }
 
@@ -69,6 +79,8 @@ float IntrinsicWidth(const ViewNode& node)
         return 32.0f + node.padding * 2.0f;
     if (node.type == ViewNodeType::Shape)
         return 8.0f + node.padding * 2.0f;
+    if (IsDataSeriesNode(node.type))
+        return 64.0f + node.padding * 2.0f;
     if (node.type == ViewNodeType::Spacer)
         return 0.0f;
     float result = 0.0f;
@@ -114,6 +126,8 @@ float IntrinsicHeight(const ViewNode& node)
         return 32.0f + node.padding * 2.0f;
     if (node.type == ViewNodeType::Shape)
         return 8.0f + node.padding * 2.0f;
+    if (IsDataSeriesNode(node.type))
+        return 40.0f + node.padding * 2.0f;
     if (node.type == ViewNodeType::Spacer)
         return 0.0f;
     float result = 0.0f;
@@ -284,6 +298,7 @@ void LayoutNode(ViewNode& node, const ViewRect& frame)
 
 bool ValidateNode(const ViewNode& node, std::size_t depth,
     std::size_t& nodes, std::size_t& textBytes,
+    std::size_t& seriesPoints,
     std::unordered_set<std::string>& keys,
     std::unordered_set<std::string>& resources, std::string& error)
 {
@@ -338,6 +353,59 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         return false;
     }
     textBytes += node.text.size() + node.alt.size();
+    if (node.accessibilityRole.size() > 128 ||
+        node.accessibilityLabel.size() >
+            ViewTreeLimits::MaximumTextBytes ||
+        textBytes + node.accessibilityLabel.size() >
+            ViewTreeLimits::MaximumTotalTextBytes)
+    {
+        error = "view tree accessibility text limit exceeded";
+        return false;
+    }
+    textBytes += node.accessibilityLabel.size();
+    if (IsDataSeriesNode(node.type))
+    {
+        if (node.values.empty() ||
+            node.values.size() > ViewTreeLimits::MaximumSeriesPoints ||
+            seriesPoints > ViewTreeLimits::MaximumTotalSeriesPoints -
+                node.values.size())
+        {
+            error = "view data-series point limit exceeded";
+            return false;
+        }
+        seriesPoints += node.values.size();
+        if (!std::all_of(node.values.begin(), node.values.end(),
+                [](float value) {
+                    return FiniteInRange(value, -1.0e9f, 1.0e9f);
+                }))
+        {
+            error = "view data-series values must be finite and bounded";
+            return false;
+        }
+        if (node.seriesMinimum.has_value() !=
+                node.seriesMaximum.has_value() ||
+            (node.seriesMinimum &&
+                (!FiniteInRange(*node.seriesMinimum, -1.0e9f, 1.0e9f) ||
+                    !FiniteInRange(*node.seriesMaximum,
+                        -1.0e9f, 1.0e9f) ||
+                    *node.seriesMinimum >= *node.seriesMaximum)))
+        {
+            error = "view data-series min must be less than max";
+            return false;
+        }
+        if (node.accessibilityLabel.empty())
+        {
+            error = std::string(ViewNodeTypeName(node.type)) +
+                " nodes require accessibility.label";
+            return false;
+        }
+    }
+    else if (!node.values.empty() || node.seriesMinimum ||
+        node.seriesMaximum)
+    {
+        error = "only data-series nodes can retain series data";
+        return false;
+    }
     if (node.type == ViewNodeType::Image &&
         node.imageResourceName.empty())
     {
@@ -407,7 +475,7 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
     }
     for (const auto& child : node.children)
         if (!ValidateNode(child, depth + 1, nodes, textBytes,
-                keys, resources, error)) return false;
+                seriesPoints, keys, resources, error)) return false;
     return true;
 }
 
@@ -451,9 +519,10 @@ bool CollectRegions(const ViewNode& node,
                 node.events.contains("click"))
             ? "hand" : node.cursor;
         region.events = node.events;
-        region.accessibilityRole = node.accessibilityRole.empty() &&
-            IsButtonNode(node.type)
-            ? "button" : node.accessibilityRole;
+        region.accessibilityRole = node.accessibilityRole.empty()
+            ? (IsButtonNode(node.type) ? "button" :
+                (IsDataSeriesNode(node.type) ? "img" : ""))
+            : node.accessibilityRole;
         region.accessibilityLabel = node.accessibilityLabel.empty()
             ? node.text : node.accessibilityLabel;
         region.enabled = node.enabled;
@@ -477,9 +546,11 @@ bool ValidateAndLayoutViewTree(ViewNode& root, float width, float height,
     }
     std::size_t nodes = 0;
     std::size_t textBytes = 0;
+    std::size_t seriesPoints = 0;
     std::unordered_set<std::string> keys;
     std::unordered_set<std::string> resources;
-    if (!ValidateNode(root, 0, nodes, textBytes, keys, resources, error))
+    if (!ValidateNode(root, 0, nodes, textBytes, seriesPoints,
+            keys, resources, error))
         return false;
     LayoutNode(root, { 0.0f, 0.0f, width, height });
     return true;
@@ -516,6 +587,11 @@ const char* ViewNodeTypeName(ViewNodeType type) noexcept
     case ViewNodeType::Shape: return "shape";
     case ViewNodeType::ProgressBar: return "progressBar";
     case ViewNodeType::ProgressRing: return "progressRing";
+    case ViewNodeType::Sparkline: return "sparkline";
+    case ViewNodeType::LineChart: return "lineChart";
+    case ViewNodeType::BarChart: return "barChart";
+    case ViewNodeType::Waveform: return "waveform";
+    case ViewNodeType::Spectrum: return "spectrum";
     case ViewNodeType::Spacer: return "spacer";
     }
     return "unknown";

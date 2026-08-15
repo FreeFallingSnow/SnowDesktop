@@ -86,7 +86,8 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 ### `view.tree.core` 声明式视图
 
 当前过渡 feature `view.tree.core` 提供 `view.box/row/column/stack/text/image/button/
-iconButton/shape/progressBar/progressRing/spacer`。
+iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` feature 提供
+`sparkline/lineChart/barChart/waveform/spectrum`。
 每次 `view(context, model)` 返回一棵完整树；所有节点必须提供全树唯一、1–128 字节的
 稳定 `key`。宿主先完整解析、校验和布局，再原子替换上一棵成功树；回调或校验失败时
 继续显示上一棵树，不留下半棵树或空白交互区。
@@ -144,12 +145,31 @@ down/up、doubleClick 和 contextMenu，动作通过 `event.kind == "action"` �
 `thickness`、track/fill opacity，并分别使用 style.background/foreground 作为轨道和
 进度色。这些节点均由宿主直接绘制，不开放路径、字体文件或原生绘图对象。
 
+五个数据图形节点只接受 `values` 连续数值数组，每节点 1–512 个有限样本、全树最多
+4096 个样本，并要求 `accessibility.label`。`sparkline` 和 `lineChart` 默认按当前数列
+自动取值域；`barChart` 自动包含零基线；`waveform` 默认范围为 -1–1，`spectrum` 默认
+范围为 0–1。需要固定尺度时必须同时提供有限且满足 `min < max` 的 `min/max`；超出范围
+的样本只在绘制时钳制，不修改 Lua 数据。`lineChart` 绘制有界参考线，`waveform` 和跨零
+柱图绘制零线；`style.foreground`、`thickness`、`trackOpacity` 和 `fillOpacity` 控制前景。
+节点由宿主在已提交树内直接绘制，不创建逐样本子节点或逐样本事件区域：
+
+```lua
+view.waveform({
+    key = "waveform",
+    values = audio.waveform,
+    height = 64,
+    style = { foreground = 0x72C7FF },
+    trackOpacity = 0.5,
+    accessibility = { label = "Output audio waveform" },
+})
+```
+
 树限制为 512 节点、32 层、单节点 4 KiB 文本、全树 64 KiB 文本和最多 256 个交互
-区域。未知字段、错误枚举、非连续 children、重复 key、NaN/Infinity 和越界值会拒绝
-整次提交。桌面树只布局在底部标题栏之上的内容区。
+区域；数据图形另有上述逐节点和全树样本额度。未知字段、错误枚举、非连续 children、
+重复 key、NaN/Infinity 和越界值会拒绝整次提交。桌面树只布局在底部标题栏之上的内容区。
 
 该 feature 不是完整 `view.tree`：当前每帧重建树，尚无 grid/scroll/list/
-input/chart/slot 节点，也没有键盘焦点、UIA 输出、RTL、文本换行、主题
+input/slot 节点，也没有键盘焦点、UIA 输出、RTL、文本换行、主题
 token、差量资源复用或声明式 panel。需要这些能力的组件应继续使用 v2 即时绘制或等待
 对应 feature；不得把 `view.tree.core` 当作稳定完整控件集声明。
 

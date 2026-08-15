@@ -154,9 +154,12 @@
 ---@field iconFont? 'fa'|'fluent'|'fluent-regular'
 ---@field shape? 'rectangle'|'roundedRectangle'|'circle'|'ellipse'
 ---@field value? number Progress value between 0 and 1.
----@field thickness? number Progress stroke or intrinsic bar thickness.
----@field trackOpacity? number Progress track opacity between 0 and 1.
----@field fillOpacity? number Progress fill opacity between 0 and 1.
+---@field values? number[] Required by data-series nodes; 1 to 512 finite samples, with at most 4096 samples across one tree.
+---@field min? number Explicit data-series minimum; must be paired with max and be smaller than it.
+---@field max? number Explicit data-series maximum; must be paired with min and be larger than it.
+---@field thickness? number Progress or data-series stroke thickness.
+---@field trackOpacity? number Progress track or chart guide opacity between 0 and 1.
+---@field fillOpacity? number Progress or data-series foreground opacity between 0 and 1.
 ---@field width? SnowViewLength
 ---@field height? SnowViewLength
 ---@field padding? number
@@ -180,7 +183,7 @@
 ---@field children? SnowViewNode[]
 
 ---@class SnowViewNode: SnowViewNodeOptions
----@field type 'box'|'row'|'column'|'stack'|'text'|'image'|'button'|'icon'|'iconButton'|'shape'|'progressBar'|'progressRing'|'spacer'
+---@field type 'box'|'row'|'column'|'stack'|'text'|'image'|'button'|'icon'|'iconButton'|'shape'|'progressBar'|'progressRing'|'sparkline'|'lineChart'|'barChart'|'waveform'|'spectrum'|'spacer'
 
 ---@class SnowInteractionShape
 ---@field type 'rect'|'roundedRect'|'circle'
@@ -495,6 +498,26 @@ function view.progressBar(options) end
 ---@param options SnowViewNodeOptions
 ---@return SnowViewNode
 function view.progressRing(options) end
+
+---@param options SnowViewNodeOptions Requires values and accessibility.label; probes with view.dataSeries.
+---@return SnowViewNode
+function view.sparkline(options) end
+
+---@param options SnowViewNodeOptions Requires values and accessibility.label; probes with view.dataSeries.
+---@return SnowViewNode
+function view.lineChart(options) end
+
+---@param options SnowViewNodeOptions Requires values and accessibility.label; probes with view.dataSeries.
+---@return SnowViewNode
+function view.barChart(options) end
+
+---@param options SnowViewNodeOptions Requires values and accessibility.label; defaults to the -1..1 range and probes with view.dataSeries.
+---@return SnowViewNode
+function view.waveform(options) end
+
+---@param options SnowViewNodeOptions Requires values and accessibility.label; defaults to the 0..1 range and probes with view.dataSeries.
+---@return SnowViewNode
+function view.spectrum(options) end
 
 ---@param options SnowViewNodeOptions
 ---@return SnowViewNode

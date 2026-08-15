@@ -26,6 +26,11 @@ enum class ViewNodeType
     Shape,
     ProgressBar,
     ProgressRing,
+    Sparkline,
+    LineChart,
+    BarChart,
+    Waveform,
+    Spectrum,
     Spacer,
 };
 
@@ -147,6 +152,9 @@ struct ViewNode
     float thickness = 4.0f;
     float trackOpacity = 1.0f;
     float fillOpacity = 1.0f;
+    std::vector<float> values;
+    std::optional<float> seriesMinimum;
+    std::optional<float> seriesMaximum;
     bool bold = false;
     bool visible = true;
     bool enabled = true;
@@ -168,6 +176,8 @@ struct ViewTreeLimits
     static constexpr std::size_t MaximumTextBytes = 4096;
     static constexpr std::size_t MaximumTotalTextBytes = 64 * 1024;
     static constexpr std::size_t MaximumResources = 64;
+    static constexpr std::size_t MaximumSeriesPoints = 512;
+    static constexpr std::size_t MaximumTotalSeriesPoints = 4096;
 };
 
 bool ValidateAndLayoutViewTree(ViewNode& root, float width, float height,

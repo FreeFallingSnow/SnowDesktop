@@ -11884,6 +11884,151 @@ static void DrawWidgetProgressRing(D2DState* state,
         state->ctx->DrawGeometry(geometry.Get(), fill, thickness);
 }
 
+static bool IsWidgetDataSeriesNode(
+    snowdesktop::widget_runtime::ViewNodeType type) noexcept
+{
+    using snowdesktop::widget_runtime::ViewNodeType;
+    return type == ViewNodeType::Sparkline ||
+        type == ViewNodeType::LineChart ||
+        type == ViewNodeType::BarChart ||
+        type == ViewNodeType::Waveform ||
+        type == ViewNodeType::Spectrum;
+}
+
+static void DrawWidgetDataSeries(D2DState* state,
+    const snowdesktop::widget_runtime::ViewNode& node,
+    const snowdesktop::widget_runtime::ViewStyle& style,
+    const D2D1_RECT_F& bounds, float opacity)
+{
+    using snowdesktop::widget_runtime::ViewNodeType;
+    if (!state || !state->ctx || node.values.empty()) return;
+    const float inset = std::min(node.padding,
+        std::max(0.0f, std::min(
+            bounds.right - bounds.left,
+            bounds.bottom - bounds.top) * 0.5f));
+    const D2D1_RECT_F rect = D2D1::RectF(
+        bounds.left + inset, bounds.top + inset,
+        bounds.right - inset, bounds.bottom - inset);
+    const float width = std::max(0.0f, rect.right - rect.left);
+    const float height = std::max(0.0f, rect.bottom - rect.top);
+    if (width <= 0.0f || height <= 0.0f) return;
+
+    float minimum = 0.0f;
+    float maximum = 1.0f;
+    if (node.seriesMinimum && node.seriesMaximum)
+    {
+        minimum = *node.seriesMinimum;
+        maximum = *node.seriesMaximum;
+    }
+    else if (node.type == ViewNodeType::Waveform)
+    {
+        minimum = -1.0f;
+        maximum = 1.0f;
+    }
+    else if (node.type == ViewNodeType::Spectrum)
+    {
+        minimum = 0.0f;
+        maximum = 1.0f;
+    }
+    else
+    {
+        const auto range = std::minmax_element(
+            node.values.begin(), node.values.end());
+        minimum = *range.first;
+        maximum = *range.second;
+        if (node.type == ViewNodeType::BarChart)
+        {
+            minimum = std::min(0.0f, minimum);
+            maximum = std::max(0.0f, maximum);
+        }
+        if (minimum == maximum)
+        {
+            const float padding = std::max(1.0f,
+                std::abs(minimum) * 0.1f);
+            minimum -= padding;
+            maximum += padding;
+        }
+    }
+    const float span = maximum - minimum;
+    if (!std::isfinite(span) || span <= 0.0f) return;
+    const auto valueY = [&](float value) {
+        const float normalized = std::clamp(
+            (value - minimum) / span, 0.0f, 1.0f);
+        return rect.bottom - normalized * height;
+    };
+
+    const std::uint32_t color = style.foreground.value_or(0xFFFFFF);
+    ID2D1SolidColorBrush* brush = GetCachedBrush(state,
+        static_cast<int>(color), opacity * node.fillOpacity);
+    ID2D1SolidColorBrush* track = GetCachedBrush(state,
+        static_cast<int>(color), opacity * node.trackOpacity * 0.2f);
+    if (!brush) return;
+
+    if (track && node.type == ViewNodeType::LineChart)
+    {
+        for (int line = 1; line < 4; ++line)
+        {
+            const float y = rect.top + height * line / 4.0f;
+            state->ctx->DrawLine(D2D1::Point2F(rect.left, y),
+                D2D1::Point2F(rect.right, y), track, 1.0f);
+        }
+    }
+    else if (track && (node.type == ViewNodeType::Waveform ||
+            node.type == ViewNodeType::BarChart) &&
+        minimum <= 0.0f && maximum >= 0.0f)
+    {
+        const float y = valueY(0.0f);
+        state->ctx->DrawLine(D2D1::Point2F(rect.left, y),
+            D2D1::Point2F(rect.right, y), track, 1.0f);
+    }
+
+    if (node.type == ViewNodeType::BarChart ||
+        node.type == ViewNodeType::Spectrum)
+    {
+        const float slot = width /
+            static_cast<float>(node.values.size());
+        const float gap = std::min(2.0f, slot * 0.2f);
+        const float baseline = node.type == ViewNodeType::Spectrum
+            ? rect.bottom : valueY(0.0f);
+        for (std::size_t index = 0; index < node.values.size(); ++index)
+        {
+            const float y = valueY(node.values[index]);
+            const float left = rect.left + slot *
+                static_cast<float>(index) + gap * 0.5f;
+            const float right = std::max(left,
+                rect.left + slot * static_cast<float>(index + 1) -
+                    gap * 0.5f);
+            state->ctx->FillRectangle(D2D1::RectF(
+                left, std::min(y, baseline), right,
+                std::max(y, baseline)), brush);
+        }
+        return;
+    }
+
+    const float stroke = std::min(node.thickness,
+        std::max(0.5f, std::min(width, height)));
+    if (node.values.size() == 1)
+    {
+        state->ctx->FillEllipse(D2D1::Ellipse(
+            D2D1::Point2F(rect.left + width * 0.5f,
+                valueY(node.values.front())),
+            stroke, stroke), brush);
+        return;
+    }
+    const float step = width /
+        static_cast<float>(node.values.size() - 1);
+    D2D1_POINT_2F previous = D2D1::Point2F(
+        rect.left, valueY(node.values.front()));
+    for (std::size_t index = 1; index < node.values.size(); ++index)
+    {
+        const D2D1_POINT_2F next = D2D1::Point2F(
+            rect.left + step * static_cast<float>(index),
+            valueY(node.values[index]));
+        state->ctx->DrawLine(previous, next, brush, stroke);
+        previous = next;
+    }
+}
+
 static void DrawWidgetViewNode(D2DState* state,
     const snowdesktop::widget_runtime::ViewNode& node,
     const snowdesktop::widget_runtime::WidgetInteractionRegions& regions)
@@ -12037,6 +12182,10 @@ static void DrawWidgetViewNode(D2DState* state,
             opacity * node.trackOpacity,
             style.foreground.value_or(0xFFFFFF),
             opacity * node.fillOpacity);
+    }
+    else if (IsWidgetDataSeriesNode(node.type))
+    {
+        DrawWidgetDataSeries(state, node, style, rect, opacity);
     }
     else if (node.type == ViewNodeType::Image && state->engine)
     {
@@ -18984,6 +19133,11 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L, int apiVersion)
         { "shape", snowdesktop::widget_runtime::LuaViewShape, 2 },
         { "progressBar", snowdesktop::widget_runtime::LuaViewProgressBar, 2 },
         { "progressRing", snowdesktop::widget_runtime::LuaViewProgressRing, 2 },
+        { "sparkline", snowdesktop::widget_runtime::LuaViewSparkline, 2 },
+        { "lineChart", snowdesktop::widget_runtime::LuaViewLineChart, 2 },
+        { "barChart", snowdesktop::widget_runtime::LuaViewBarChart, 2 },
+        { "waveform", snowdesktop::widget_runtime::LuaViewWaveform, 2 },
+        { "spectrum", snowdesktop::widget_runtime::LuaViewSpectrum, 2 },
         { "spacer", snowdesktop::widget_runtime::LuaViewSpacer, 2 },
     };
     static constexpr FunctionDescriptor widget[] = {

@@ -317,6 +317,58 @@ bool ReadFloatField(lua_State* state, int table, const char* field,
     return true;
 }
 
+bool ReadNumberArrayField(lua_State* state, int table, const char* field,
+    std::vector<float>& values, bool required, std::string& error)
+{
+    table = lua_absindex(state, table);
+    lua_getfield(state, table, field);
+    if (lua_isnil(state, -1))
+    {
+        lua_pop(state, 1);
+        if (!required) return true;
+        error = std::string("view node requires array field '") +
+            field + "'";
+        return false;
+    }
+    if (!lua_istable(state, -1) ||
+        !ValidateArray(state, -1, "view values", error))
+    {
+        if (error.empty()) error = "view field 'values' must be an array";
+        lua_pop(state, 1);
+        return false;
+    }
+    const std::size_t count = lua_rawlen(state, -1);
+    if (count == 0 || count > ViewTreeLimits::MaximumSeriesPoints)
+    {
+        lua_pop(state, 1);
+        error = "view values must contain 1 to 512 numbers";
+        return false;
+    }
+    values.clear();
+    values.reserve(count);
+    for (std::size_t index = 0; index < count; ++index)
+    {
+        lua_rawgeti(state, -1, static_cast<lua_Integer>(index + 1));
+        if (lua_type(state, -1) != LUA_TNUMBER)
+        {
+            lua_pop(state, 2);
+            error = "view values must contain only numbers";
+            return false;
+        }
+        const double parsed = static_cast<double>(lua_tonumber(state, -1));
+        lua_pop(state, 1);
+        if (!std::isfinite(parsed) || parsed < -1.0e9 || parsed > 1.0e9)
+        {
+            lua_pop(state, 1);
+            error = "view values must be finite and between -1e9 and 1e9";
+            return false;
+        }
+        values.push_back(static_cast<float>(parsed));
+    }
+    lua_pop(state, 1);
+    return true;
+}
+
 bool ReadBoolField(lua_State* state, int table, const char* field,
     bool& value, std::string& error)
 {
@@ -668,6 +720,11 @@ bool ParseNodeType(std::string_view type, ViewNodeType& result)
     else if (type == "shape") result = ViewNodeType::Shape;
     else if (type == "progressBar") result = ViewNodeType::ProgressBar;
     else if (type == "progressRing") result = ViewNodeType::ProgressRing;
+    else if (type == "sparkline") result = ViewNodeType::Sparkline;
+    else if (type == "lineChart") result = ViewNodeType::LineChart;
+    else if (type == "barChart") result = ViewNodeType::BarChart;
+    else if (type == "waveform") result = ViewNodeType::Waveform;
+    else if (type == "spectrum") result = ViewNodeType::Spectrum;
     else if (type == "spacer") result = ViewNodeType::Spacer;
     else return false;
     return true;
@@ -730,7 +787,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             { "type", "key", "text", "label", "glyph", "iconFont",
                 "source", "font", "fit", "alignment", "interpolation",
                 "alt",
-                "shape", "value", "thickness", "trackOpacity",
+                "shape", "value", "values", "min", "max",
+                "thickness", "trackOpacity",
                 "fillOpacity", "width", "height",
                 "padding", "gap", "flexGrow", "fontSize", "bold",
                 "visible", "enabled", "cursor", "alignItems",
@@ -751,6 +809,11 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         node.type == ViewNodeType::IconButton;
     const bool progressNode = node.type == ViewNodeType::ProgressBar ||
         node.type == ViewNodeType::ProgressRing;
+    const bool seriesNode = node.type == ViewNodeType::Sparkline ||
+        node.type == ViewNodeType::LineChart ||
+        node.type == ViewNodeType::BarChart ||
+        node.type == ViewNodeType::Waveform ||
+        node.type == ViewNodeType::Spectrum;
     const bool imageNode = node.type == ViewNodeType::Image;
     const bool textResourceNode = node.type == ViewNodeType::Text ||
         node.type == ViewNodeType::Button;
@@ -792,12 +855,24 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         error = "only shape nodes accept 'shape'";
         return false;
     }
-    if (!progressNode && (FieldPresent(state, index, "value") ||
+    if (!progressNode && FieldPresent(state, index, "value"))
+    {
+        error = "only progress nodes accept 'value'";
+        return false;
+    }
+    if (!seriesNode && (FieldPresent(state, index, "values") ||
+            FieldPresent(state, index, "min") ||
+            FieldPresent(state, index, "max")))
+    {
+        error = "only data-series nodes accept values, min, and max";
+        return false;
+    }
+    if (!progressNode && !seriesNode && (
             FieldPresent(state, index, "thickness") ||
             FieldPresent(state, index, "trackOpacity") ||
             FieldPresent(state, index, "fillOpacity")))
     {
-        error = "only progress nodes accept progress fields";
+        error = "only progress and data-series nodes accept drawing fields";
         return false;
     }
     if (!imageNode && (FieldPresent(state, index, "source") ||
@@ -866,6 +941,30 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadStyleField(state, index, "pressedStyle",
             node.pressedStyle, error))
         return false;
+
+    if (seriesNode)
+    {
+        if (!ReadNumberArrayField(state, index, "values",
+                node.values, true, error))
+            return false;
+        const bool hasMinimum = FieldPresent(state, index, "min");
+        const bool hasMaximum = FieldPresent(state, index, "max");
+        if (hasMinimum != hasMaximum)
+        {
+            error = "data-series nodes must provide both min and max";
+            return false;
+        }
+        if (hasMinimum)
+        {
+            float minimum = 0.0f;
+            float maximum = 0.0f;
+            if (!ReadFloatField(state, index, "min", minimum, error) ||
+                !ReadFloatField(state, index, "max", maximum, error))
+                return false;
+            node.seriesMinimum = minimum;
+            node.seriesMaximum = maximum;
+        }
+    }
 
     lua_getfield(state, index, "accessibility");
     if (lua_istable(state, -1))
@@ -1031,6 +1130,26 @@ int LuaViewProgressBar(lua_State* state)
 int LuaViewProgressRing(lua_State* state)
 {
     return MakeNode(state, "progressRing");
+}
+int LuaViewSparkline(lua_State* state)
+{
+    return MakeNode(state, "sparkline");
+}
+int LuaViewLineChart(lua_State* state)
+{
+    return MakeNode(state, "lineChart");
+}
+int LuaViewBarChart(lua_State* state)
+{
+    return MakeNode(state, "barChart");
+}
+int LuaViewWaveform(lua_State* state)
+{
+    return MakeNode(state, "waveform");
+}
+int LuaViewSpectrum(lua_State* state)
+{
+    return MakeNode(state, "spectrum");
 }
 int LuaViewSpacer(lua_State* state) { return MakeNode(state, "spacer"); }
 }
