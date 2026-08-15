@@ -317,6 +317,28 @@ bool ReadFloatField(lua_State* state, int table, const char* field,
     return true;
 }
 
+bool ReadSizeField(lua_State* state, int table, const char* field,
+    std::size_t& value, std::string& error)
+{
+    table = lua_absindex(state, table);
+    lua_getfield(state, table, field);
+    if (lua_isnil(state, -1))
+    {
+        lua_pop(state, 1);
+        return true;
+    }
+    if (!lua_isinteger(state, -1) || lua_tointeger(state, -1) <= 0)
+    {
+        lua_pop(state, 1);
+        error = std::string("view field '") + field +
+            "' must be a positive integer";
+        return false;
+    }
+    value = static_cast<std::size_t>(lua_tointeger(state, -1));
+    lua_pop(state, 1);
+    return true;
+}
+
 bool ReadNumberArrayField(lua_State* state, int table, const char* field,
     std::vector<float>& values, bool required, std::string& error)
 {
@@ -484,6 +506,16 @@ bool ReadOptionalFloat(lua_State* state, int table, const char* field,
             "' must be finite";
         return false;
     }
+    value = parsed;
+    return true;
+}
+
+bool ReadOptionalNodeFloatField(lua_State* state, int table,
+    const char* field, std::optional<float>& value, std::string& error)
+{
+    if (!FieldPresent(state, table, field)) return true;
+    float parsed = 0.0f;
+    if (!ReadFloatField(state, table, field, parsed, error)) return false;
     value = parsed;
     return true;
 }
@@ -729,6 +761,7 @@ bool ParseNodeType(std::string_view type, ViewNodeType& result)
     if (type == "box") result = ViewNodeType::Box;
     else if (type == "row") result = ViewNodeType::Row;
     else if (type == "column") result = ViewNodeType::Column;
+    else if (type == "grid") result = ViewNodeType::Grid;
     else if (type == "stack") result = ViewNodeType::Stack;
     else if (type == "text") result = ViewNodeType::Text;
     else if (type == "image") result = ViewNodeType::Image;
@@ -813,7 +846,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
                 "shape", "orientation", "value", "values", "min", "max",
                 "thickness", "trackOpacity",
                 "fillOpacity", "width", "height",
-                "padding", "gap", "flexGrow", "fontSize", "bold",
+                "padding", "gap", "columns", "columnGap", "rowGap",
+                "flexGrow", "fontSize", "bold",
                 "checked", "visible", "enabled", "cursor", "alignItems",
                 "alignSelf", "justifyContent", "textAlign", "style",
                 "hoverStyle", "pressedStyle", "checkedStyle",
@@ -848,6 +882,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         node.type == ViewNodeType::Spectrum;
     const bool imageNode = node.type == ViewNodeType::Image;
     const bool dividerNode = node.type == ViewNodeType::Divider;
+    const bool gridNode = node.type == ViewNodeType::Grid;
     const bool textResourceNode = textNode || labelNode;
     if (labelNode &&
         (FieldPresent(state, index, "text") ||
@@ -890,6 +925,18 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     if (!dividerNode && FieldPresent(state, index, "orientation"))
     {
         error = "only divider nodes accept orientation";
+        return false;
+    }
+    if (!gridNode && (FieldPresent(state, index, "columns") ||
+            FieldPresent(state, index, "columnGap") ||
+            FieldPresent(state, index, "rowGap")))
+    {
+        error = "only grid nodes accept columns, columnGap, and rowGap";
+        return false;
+    }
+    if (gridNode && !FieldPresent(state, index, "columns"))
+    {
+        error = "grid nodes require columns";
         return false;
     }
     if (!progressNode && FieldPresent(state, index, "value"))
@@ -970,6 +1017,11 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadLengthField(state, index, "height", node.height, error) ||
         !ReadFloatField(state, index, "padding", node.padding, error) ||
         !ReadFloatField(state, index, "gap", node.gap, error) ||
+        !ReadSizeField(state, index, "columns", node.columns, error) ||
+        !ReadOptionalNodeFloatField(state, index, "columnGap",
+            node.columnGap, error) ||
+        !ReadOptionalNodeFloatField(state, index, "rowGap",
+            node.rowGap, error) ||
         !ReadFloatField(state, index, "flexGrow", node.flexGrow, error) ||
         !ReadFloatField(state, index, "fontSize", node.fontSize, error) ||
         !ReadFloatField(state, index, "value", node.value, error) ||
@@ -1182,6 +1234,7 @@ bool ParseLuaViewTree(lua_State* state, int index, ViewNode& root,
 int LuaViewBox(lua_State* state) { return MakeNode(state, "box"); }
 int LuaViewRow(lua_State* state) { return MakeNode(state, "row"); }
 int LuaViewColumn(lua_State* state) { return MakeNode(state, "column"); }
+int LuaViewGrid(lua_State* state) { return MakeNode(state, "grid"); }
 int LuaViewStack(lua_State* state) { return MakeNode(state, "stack"); }
 int LuaViewText(lua_State* state) { return MakeNode(state, "text"); }
 int LuaViewImage(lua_State* state) { return MakeNode(state, "image"); }

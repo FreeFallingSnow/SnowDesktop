@@ -17,6 +17,7 @@ enum class ViewNodeType
     Box,
     Row,
     Column,
+    Grid,
     Stack,
     Text,
     Image,
@@ -147,6 +148,9 @@ struct ViewNode
     ViewLength height{};
     float padding = 0.0f;
     float gap = 0.0f;
+    std::size_t columns = 1;
+    std::optional<float> columnGap;
+    std::optional<float> rowGap;
     float flexGrow = 0.0f;
     ViewAlignment alignItems = ViewAlignment::Stretch;
     ViewAlignment alignSelf = ViewAlignment::Auto;

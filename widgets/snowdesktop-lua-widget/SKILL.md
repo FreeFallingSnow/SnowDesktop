@@ -91,8 +91,11 @@ an `accessibility.label` and use meter only for a current reading, not task
 progress. Probe `view.selectionControls` for controlled toggle/checkbox nodes:
 always pass an explicit `checked` value and handle their `change` action by
 updating component-owned state; never bind `click` or assume the host persists
-the proposed value. It does not yet provide keyboard focus, UI Automation, collections, or the
-complete `view.tree` contract. Optional
+the proposed value.
+Probe `view.grid.uniform` before using `view.grid`; it is a bounded row-major
+equal-column layout with 1–64 columns and optional `columnGap`/`rowGap`, not
+the future track/span/virtual-grid contract. It does not yet provide keyboard
+focus, UI Automation, collections, or the complete `view.tree` contract. Optional
 `menu(context, model, request)` builds an element's synchronous native context
 menu.
 

@@ -16,6 +16,7 @@ bool ParseLuaViewTree(lua_State* state, int index, ViewNode& root,
 int LuaViewBox(lua_State* state);
 int LuaViewRow(lua_State* state);
 int LuaViewColumn(lua_State* state);
+int LuaViewGrid(lua_State* state);
 int LuaViewStack(lua_State* state);
 int LuaViewText(lua_State* state);
 int LuaViewImage(lua_State* state);

@@ -101,6 +101,26 @@ float IntrinsicWidth(const ViewNode& node)
         return 64.0f + node.padding * 2.0f;
     if (node.type == ViewNodeType::Spacer)
         return 0.0f;
+    if (node.type == ViewNodeType::Grid)
+    {
+        std::vector<float> widths(node.columns, 0.0f);
+        std::size_t visible = 0;
+        for (const auto& child : node.children)
+        {
+            if (!child.visible) continue;
+            widths[visible % node.columns] = std::max(
+                widths[visible % node.columns], IntrinsicWidth(child));
+            ++visible;
+        }
+        const std::size_t usedColumns = std::min(node.columns, visible);
+        float result = 0.0f;
+        for (std::size_t column = 0; column < usedColumns; ++column)
+            result += widths[column];
+        if (usedColumns > 1)
+            result += node.columnGap.value_or(node.gap) *
+                static_cast<float>(usedColumns - 1);
+        return result + node.padding * 2.0f;
+    }
     float result = 0.0f;
     if (node.type == ViewNodeType::Row)
     {
@@ -159,6 +179,25 @@ float IntrinsicHeight(const ViewNode& node)
         return 40.0f + node.padding * 2.0f;
     if (node.type == ViewNodeType::Spacer)
         return 0.0f;
+    if (node.type == ViewNodeType::Grid)
+    {
+        std::vector<float> heights;
+        std::size_t visible = 0;
+        for (const auto& child : node.children)
+        {
+            if (!child.visible) continue;
+            const std::size_t row = visible / node.columns;
+            if (row >= heights.size()) heights.push_back(0.0f);
+            heights[row] = std::max(heights[row], IntrinsicHeight(child));
+            ++visible;
+        }
+        float result = 0.0f;
+        for (float height : heights) result += height;
+        if (heights.size() > 1)
+            result += node.rowGap.value_or(node.gap) *
+                static_cast<float>(heights.size() - 1);
+        return result + node.padding * 2.0f;
+    }
     float result = 0.0f;
     if (node.type == ViewNodeType::Column)
     {
@@ -287,6 +326,74 @@ void LayoutLinear(ViewNode& node, const ViewRect& content, bool horizontal)
     }
 }
 
+void LayoutGrid(ViewNode& node, const ViewRect& content)
+{
+    std::vector<ViewNode*> visible;
+    visible.reserve(node.children.size());
+    for (auto& child : node.children)
+        if (child.visible) visible.push_back(&child);
+    if (visible.empty()) return;
+
+    const std::size_t columns = std::min(node.columns, visible.size());
+    const std::size_t rows =
+        (visible.size() + columns - 1) / columns;
+    const float columnGap = node.columnGap.value_or(node.gap);
+    float rowGap = node.rowGap.value_or(node.gap);
+    const float cellWidth = std::max(0.0f,
+        (content.width - columnGap * static_cast<float>(columns - 1)) /
+            static_cast<float>(columns));
+    std::vector<float> rowHeights(rows, 0.0f);
+    for (std::size_t index = 0; index < visible.size(); ++index)
+        rowHeights[index / columns] = std::max(
+            rowHeights[index / columns], IntrinsicHeight(*visible[index]));
+
+    float rowsHeight = 0.0f;
+    for (float height : rowHeights) rowsHeight += height;
+    const float gapsHeight = rowGap * static_cast<float>(rows - 1);
+    const float availableRowsHeight = std::max(
+        0.0f, content.height - gapsHeight);
+    if (rowsHeight > availableRowsHeight && rowsHeight > 0.0f)
+    {
+        const float scale = availableRowsHeight / rowsHeight;
+        for (float& height : rowHeights) height *= scale;
+        rowsHeight = availableRowsHeight;
+    }
+
+    float y = content.y;
+    const float usedHeight = rowsHeight + gapsHeight;
+    if (node.justifyContent == ViewJustification::Center)
+        y += std::max(0.0f, (content.height - usedHeight) * 0.5f);
+    else if (node.justifyContent == ViewJustification::End)
+        y += std::max(0.0f, content.height - usedHeight);
+    else if (node.justifyContent == ViewJustification::SpaceBetween &&
+        rows > 1 && content.height > usedHeight)
+    {
+        rowGap += (content.height - usedHeight) /
+            static_cast<float>(rows - 1);
+    }
+
+    for (std::size_t index = 0; index < visible.size(); ++index)
+    {
+        ViewNode& child = *visible[index];
+        const std::size_t column = index % columns;
+        const std::size_t row = index / columns;
+        const ViewAlignment alignment = child.alignSelf == ViewAlignment::Auto
+            ? node.alignItems : child.alignSelf;
+        const float width = ResolveCrossSize(child.width,
+            IntrinsicWidth(child), cellWidth, alignment);
+        const float height = ResolveCrossSize(child.height,
+            IntrinsicHeight(child), rowHeights[row], alignment);
+        const float x = content.x +
+            static_cast<float>(column) * (cellWidth + columnGap) +
+            AlignOffset(alignment, cellWidth, width);
+        LayoutNode(child, { x,
+            y + AlignOffset(alignment, rowHeights[row], height),
+            width, height });
+        if (column + 1 == columns || index + 1 == visible.size())
+            y += rowHeights[row] + rowGap;
+    }
+}
+
 void LayoutNode(ViewNode& node, const ViewRect& frame)
 {
     node.frame = frame;
@@ -302,6 +409,8 @@ void LayoutNode(ViewNode& node, const ViewRect& frame)
         LayoutLinear(node, content, true);
     else if (node.type == ViewNodeType::Column)
         LayoutLinear(node, content, false);
+    else if (node.type == ViewNodeType::Grid)
+        LayoutGrid(node, content);
     else if (node.type == ViewNodeType::Box ||
         node.type == ViewNodeType::Stack)
     {
@@ -361,6 +470,8 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
     if (!ValidateLength(node.width) || !ValidateLength(node.height) ||
         !FiniteInRange(node.padding, 0.0f, 4096.0f) ||
         !FiniteInRange(node.gap, 0.0f, 4096.0f) ||
+        (node.columnGap && !FiniteInRange(*node.columnGap, 0.0f, 4096.0f)) ||
+        (node.rowGap && !FiniteInRange(*node.rowGap, 0.0f, 4096.0f)) ||
         !FiniteInRange(node.flexGrow, 0.0f, 1000.0f) ||
         !FiniteInRange(node.fontSize, 1.0f, 512.0f) ||
         !FiniteInRange(node.value, 0.0f, 1.0f) ||
@@ -372,6 +483,18 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         !validStyle(node.checkedStyle))
     {
         error = "view node dimensions and typography must be finite and bounded";
+        return false;
+    }
+    if (node.type == ViewNodeType::Grid &&
+        (node.columns == 0 || node.columns > 64))
+    {
+        error = "grid columns must be between 1 and 64";
+        return false;
+    }
+    if (node.type != ViewNodeType::Grid &&
+        (node.columns != 1 || node.columnGap || node.rowGap))
+    {
+        error = "grid layout fields are reserved for grid nodes";
         return false;
     }
     if (node.text.size() > ViewTreeLimits::MaximumTextBytes ||
@@ -654,6 +777,7 @@ const char* ViewNodeTypeName(ViewNodeType type) noexcept
     case ViewNodeType::Box: return "box";
     case ViewNodeType::Row: return "row";
     case ViewNodeType::Column: return "column";
+    case ViewNodeType::Grid: return "grid";
     case ViewNodeType::Stack: return "stack";
     case ViewNodeType::Text: return "text";
     case ViewNodeType::Image: return "image";

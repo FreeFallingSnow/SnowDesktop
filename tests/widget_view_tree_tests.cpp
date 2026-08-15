@@ -158,6 +158,7 @@ void RegisterViewLibrary(lua_State* state)
         { "box", LuaViewBox },
         { "row", LuaViewRow },
         { "column", LuaViewColumn },
+        { "grid", LuaViewGrid },
         { "stack", LuaViewStack },
         { "text", LuaViewText },
         { "image", LuaViewImage },
@@ -661,6 +662,80 @@ void TestSelectionControlParsing()
         "selection controls must reject click in favor of change");
     lua_close(state);
 }
+
+void TestUniformGridParsingAndLayout()
+{
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "Lua state must be available");
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    Check(luaL_dostring(state, R"lua(
+        local children = {}
+        for index = 1, 6 do
+            children[index] = view.shape({
+                key = "cell-" .. index,
+                shape = "roundedRectangle",
+                height = 30,
+            })
+        end
+        return view.grid({
+            key = "grid",
+            columns = 3,
+            padding = 10,
+            columnGap = 5,
+            rowGap = 7,
+            children = children,
+        })
+    )lua") == LUA_OK,
+        "uniform-grid Lua fixture must evaluate");
+    ViewNode root;
+    std::string error;
+    Check(ParseLuaViewTree(state, -1, root, error) &&
+            root.type == ViewNodeType::Grid &&
+            root.columns == 3 &&
+            root.columnGap && Near(*root.columnGap, 5.0f) &&
+            root.rowGap && Near(*root.rowGap, 7.0f) &&
+            root.children.size() == 6,
+        "uniform-grid parsing must retain columns and independent gaps");
+    Check(ValidateAndLayoutViewTree(root, 300.0f, 110.0f, error) &&
+            Near(root.children[0].frame.x, 10.0f) &&
+            Near(root.children[0].frame.y, 10.0f) &&
+            Near(root.children[0].frame.width, 90.0f) &&
+            Near(root.children[0].frame.height, 30.0f) &&
+            Near(root.children[1].frame.x, 105.0f) &&
+            Near(root.children[2].frame.x, 200.0f) &&
+            Near(root.children[3].frame.x, 10.0f) &&
+            Near(root.children[3].frame.y, 47.0f),
+        "uniform grid must lay out visible children row-major in equal columns");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.grid({ key = "invalid", columns = 0 })
+    )lua") == LUA_OK,
+        "zero-column grid fixture must evaluate");
+    ViewNode invalid;
+    Check(!ParseLuaViewTree(state, -1, invalid, error) &&
+            error.find("positive integer") != std::string::npos,
+        "grid columns must reject zero at the Lua boundary");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.row({ key = "invalid-gap", columnGap = 4 })
+    )lua") == LUA_OK,
+        "misapplied grid-field fixture must evaluate");
+    invalid = {};
+    Check(!ParseLuaViewTree(state, -1, invalid, error) &&
+            error.find("only grid") != std::string::npos,
+        "grid-only fields must be rejected on other containers");
+    invalid = {};
+    invalid.type = ViewNodeType::Grid;
+    invalid.key = "too-many-columns";
+    invalid.columns = 65;
+    Check(!ValidateAndLayoutViewTree(invalid, 300.0f, 100.0f, error) &&
+            error.find("1 and 64") != std::string::npos,
+        "grid layout must enforce the documented column limit");
+    lua_close(state);
+}
 }
 
 int main()
@@ -672,6 +747,7 @@ int main()
     TestDataSeriesParsingAndLimits();
     TestStatusVisualParsing();
     TestSelectionControlParsing();
+    TestUniformGridParsingAndLayout();
     std::cout << "Widget view tree tests passed\n";
     return 0;
 }
