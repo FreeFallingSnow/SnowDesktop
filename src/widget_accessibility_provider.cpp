@@ -3,6 +3,7 @@
 #include <UIAutomationCoreApi.h>
 
 #include "widget_accessibility_provider.h"
+#include "widget_accessibility_events.h"
 
 #include <oleauto.h>
 #include <wrl/client.h>
@@ -202,6 +203,39 @@ void SetIntVariant(VARIANT* value, LONG number) noexcept
     value->lVal = number;
 }
 
+void SetDoubleVariant(VARIANT* value, double number) noexcept
+{
+    value->vt = VT_R8;
+    value->dblVal = number;
+}
+
+HRESULT SetRectVariant(VARIANT* value, const UiaRect& bounds)
+{
+    SAFEARRAY* array = SafeArrayCreateVector(VT_R8, 0, 4);
+    if (!array) return E_OUTOFMEMORY;
+    double* numbers = nullptr;
+    HRESULT hr = SafeArrayAccessData(
+        array, reinterpret_cast<void**>(&numbers));
+    if (FAILED(hr))
+    {
+        SafeArrayDestroy(array);
+        return hr;
+    }
+    numbers[0] = bounds.left;
+    numbers[1] = bounds.top;
+    numbers[2] = bounds.width;
+    numbers[3] = bounds.height;
+    hr = SafeArrayUnaccessData(array);
+    if (FAILED(hr))
+    {
+        SafeArrayDestroy(array);
+        return hr;
+    }
+    value->vt = VT_ARRAY | VT_R8;
+    value->parray = array;
+    return S_OK;
+}
+
 LONG ControlTypeId(std::string_view type) noexcept
 {
     if (type == "Button") return UIA_ButtonControlTypeId;
@@ -357,6 +391,126 @@ bool WidgetOffscreen(HWND window,
         bounds.left + bounds.width <= root.left ||
         bounds.top >= root.top + root.height ||
         bounds.top + bounds.height <= root.top;
+}
+
+const LuaWidgetAccessibilitySnapshot* FindWidgetSnapshot(
+    const std::vector<LuaWidgetAccessibilitySnapshot>& snapshots,
+    std::wstring_view widgetId) noexcept
+{
+    const auto found = std::find_if(snapshots.begin(), snapshots.end(),
+        [widgetId](const auto& widget) {
+            return widget.widgetId == widgetId;
+        });
+    return found == snapshots.end() ? nullptr : &*found;
+}
+
+const AccessibilityNode* FindAccessibilityNode(
+    const LuaWidgetAccessibilitySnapshot& widget,
+    std::string_view semanticId) noexcept
+{
+    const auto found = std::find_if(widget.nodes.begin(),
+        widget.nodes.end(), [semanticId](const auto& node) {
+            return node.semanticId == semanticId;
+        });
+    return found == widget.nodes.end() ? nullptr : &*found;
+}
+
+ElementReference ChangeReference(
+    const WidgetAccessibilityChange& change)
+{
+    return change.element == WidgetAccessibilityElementKind::Node
+        ? ElementReference{ ElementKind::Node,
+            change.widgetId, change.semanticId }
+        : ElementReference{ ElementKind::Widget,
+            change.widgetId, {} };
+}
+
+std::optional<PROPERTYID> ChangePropertyId(
+    WidgetAccessibilityChangeKind kind) noexcept
+{
+    switch (kind)
+    {
+    case WidgetAccessibilityChangeKind::Name:
+        return UIA_NamePropertyId;
+    case WidgetAccessibilityChangeKind::Enabled:
+        return UIA_IsEnabledPropertyId;
+    case WidgetAccessibilityChangeKind::Offscreen:
+        return UIA_IsOffscreenPropertyId;
+    case WidgetAccessibilityChangeKind::Toggle:
+        return UIA_ToggleToggleStatePropertyId;
+    case WidgetAccessibilityChangeKind::SelectionItem:
+        return UIA_SelectionItemIsSelectedPropertyId;
+    case WidgetAccessibilityChangeKind::RangeValue:
+        return UIA_RangeValueValuePropertyId;
+    case WidgetAccessibilityChangeKind::Value:
+        return UIA_ValueValuePropertyId;
+    case WidgetAccessibilityChangeKind::ExpandCollapse:
+        return UIA_ExpandCollapseExpandCollapseStatePropertyId;
+    case WidgetAccessibilityChangeKind::Bounds:
+        return UIA_BoundingRectanglePropertyId;
+    default:
+        return std::nullopt;
+    }
+}
+
+HRESULT SetChangeVariant(VARIANT* result,
+    WidgetAccessibilityChangeKind kind, HWND window,
+    const std::vector<LuaWidgetAccessibilitySnapshot>& snapshots,
+    const WidgetAccessibilityChange& change)
+{
+    if (!result) return E_POINTER;
+    VariantInit(result);
+    const auto* widget = FindWidgetSnapshot(
+        snapshots, change.widgetId);
+    if (!widget) return UIA_E_ELEMENTNOTAVAILABLE;
+    const AccessibilityNode* node =
+        change.element == WidgetAccessibilityElementKind::Node
+            ? FindAccessibilityNode(*widget, change.semanticId)
+            : nullptr;
+    if (change.element == WidgetAccessibilityElementKind::Node && !node)
+        return UIA_E_ELEMENTNOTAVAILABLE;
+
+    switch (kind)
+    {
+    case WidgetAccessibilityChangeKind::Name:
+        return SetStringVariant(result,
+            Utf8ToWide(node ? node->name : widget->name));
+    case WidgetAccessibilityChangeKind::Enabled:
+        SetBoolVariant(result, node ? node->enabled : true);
+        return S_OK;
+    case WidgetAccessibilityChangeKind::Offscreen:
+        SetBoolVariant(result, node
+            ? node->offscreen || WidgetOffscreen(window, *widget)
+            : WidgetOffscreen(window, *widget));
+        return S_OK;
+    case WidgetAccessibilityChangeKind::Toggle:
+        SetIntVariant(result, !node->checked
+            ? ToggleState_Indeterminate
+            : *node->checked ? ToggleState_On : ToggleState_Off);
+        return S_OK;
+    case WidgetAccessibilityChangeKind::SelectionItem:
+        SetBoolVariant(result, node->checked.value_or(false));
+        return S_OK;
+    case WidgetAccessibilityChangeKind::RangeValue:
+        if (!node->value) return UIA_E_NOTSUPPORTED;
+        SetDoubleVariant(result, *node->value);
+        return S_OK;
+    case WidgetAccessibilityChangeKind::Value:
+        return SetStringVariant(result, Utf8ToWide(node->valueText));
+    case WidgetAccessibilityChangeKind::ExpandCollapse:
+        SetIntVariant(result, !node->expanded
+            ? ExpandCollapseState_LeafNode
+            : *node->expanded
+                ? ExpandCollapseState_Expanded
+                : ExpandCollapseState_Collapsed);
+        return S_OK;
+    case WidgetAccessibilityChangeKind::Bounds:
+        return SetRectVariant(result, node
+            ? NodeBounds(window, *widget, *node)
+            : WidgetBounds(window, *widget));
+    default:
+        return UIA_E_NOTSUPPORTED;
+    }
 }
 
 class FragmentProvider;
@@ -1242,6 +1396,7 @@ struct WidgetAccessibilityProviderHost::Impl
     ActionProvider actionProvider;
     std::shared_ptr<ProviderState> state;
     Microsoft::WRL::ComPtr<IRawElementProviderSimple> root;
+    std::vector<LuaWidgetAccessibilitySnapshot> lastSnapshots;
 };
 
 WidgetAccessibilityProviderHost::WidgetAccessibilityProviderHost(
@@ -1284,6 +1439,8 @@ bool WidgetAccessibilityProviderHost::AttachWindow(HWND window)
     if (!root) return false;
     impl_->state = std::move(state);
     impl_->root.Attach(static_cast<IRawElementProviderSimple*>(root));
+    impl_->lastSnapshots.clear();
+    (void)impl_->state->Capture(impl_->lastSnapshots);
     return true;
 }
 
@@ -1296,6 +1453,7 @@ void WidgetAccessibilityProviderHost::DetachWindow(HWND window) noexcept
     impl_->state->connected = false;
     impl_->root.Reset();
     impl_->state.reset();
+    impl_->lastSnapshots.clear();
 }
 
 bool WidgetAccessibilityProviderHost::TryHandleGetObject(
@@ -1308,6 +1466,68 @@ bool WidgetAccessibilityProviderHost::TryHandleGetObject(
     result = UiaReturnRawElementProvider(
         window, wParam, lParam, impl_->root.Get());
     return true;
+}
+
+void WidgetAccessibilityProviderHost::RefreshEvents() noexcept
+{
+    if (!impl_ || !impl_->state || !impl_->root) return;
+    std::vector<LuaWidgetAccessibilitySnapshot> current;
+    if (!impl_->state->Capture(current)) return;
+    std::vector<LuaWidgetAccessibilitySnapshot> previous =
+        std::move(impl_->lastSnapshots);
+    impl_->lastSnapshots = current;
+    const auto changes = DiffWidgetAccessibilitySnapshots(
+        previous, impl_->lastSnapshots);
+    if (changes.empty() || !UiaClientsAreListening()) return;
+
+    Microsoft::WRL::ComPtr<IRawElementProviderFragmentRoot> root;
+    if (FAILED(impl_->root.As(&root)) || !root) return;
+    const auto providerFor = [&](const WidgetAccessibilityChange& change,
+        Microsoft::WRL::ComPtr<IRawElementProviderSimple>& provider) {
+        provider.Reset();
+        if (change.element == WidgetAccessibilityElementKind::Root)
+            return SUCCEEDED(impl_->root.CopyTo(
+                provider.GetAddressOf()));
+        Microsoft::WRL::ComPtr<IRawElementProviderFragment> fragment;
+        if (FAILED(CreateFragmentProvider(impl_->state, root.Get(),
+                ChangeReference(change), &fragment)) || !fragment)
+            return false;
+        return SUCCEEDED(fragment.As(&provider)) && provider;
+    };
+
+    for (const auto& change : changes)
+    {
+        if (change.kind == WidgetAccessibilityChangeKind::Structure)
+        {
+            (void)UiaRaiseStructureChangedEvent(impl_->root.Get(),
+                StructureChangeType_ChildrenInvalidated, nullptr, 0);
+            continue;
+        }
+        Microsoft::WRL::ComPtr<IRawElementProviderSimple> provider;
+        if (!providerFor(change, provider)) continue;
+        if (change.kind == WidgetAccessibilityChangeKind::Focus)
+        {
+            (void)UiaRaiseAutomationEvent(
+                provider.Get(), UIA_AutomationFocusChangedEventId);
+            continue;
+        }
+        const auto propertyId = ChangePropertyId(change.kind);
+        if (!propertyId) continue;
+        VARIANT oldValue;
+        VARIANT newValue;
+        VariantInit(&oldValue);
+        VariantInit(&newValue);
+        if (SUCCEEDED(SetChangeVariant(&oldValue, change.kind,
+                impl_->state->window, previous, change)) &&
+            SUCCEEDED(SetChangeVariant(&newValue, change.kind,
+                impl_->state->window, impl_->lastSnapshots, change)))
+        {
+            (void)UiaRaiseAutomationPropertyChangedEvent(
+                provider.Get(), *propertyId, oldValue, newValue);
+        }
+        VariantClear(&oldValue);
+        VariantClear(&newValue);
+    }
 }
 
 IRawElementProviderSimple*

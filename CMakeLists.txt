@@ -263,6 +263,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget_audio_analysis_provider.cpp
     src/widget_draw_geometry.cpp
     src/widget_interaction_region.cpp
+    src/widget_accessibility_events.cpp
     src/widget_accessibility_provider.cpp
     src/widget_view_accessibility.cpp
     src/widget_view_contract.cpp
@@ -1046,6 +1047,7 @@ if (BUILD_TESTING)
         widget_accessibility_provider
         SOURCES
             tests/widget_accessibility_provider_tests.cpp
+            src/widget_accessibility_events.cpp
             src/widget_accessibility_provider.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 oleaut32 uiautomationcore user32

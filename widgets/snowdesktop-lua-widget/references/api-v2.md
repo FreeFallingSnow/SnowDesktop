@@ -453,7 +453,9 @@ accessibility role、允许属性和直接必需属性。Lua 解析器会在布�
 边界、父子/兄弟导航、点命中与宿主焦点。Invoke、Toggle、RangeValue、Value、
 ExpandCollapse 和 SelectionItem Pattern 已连接到同一套 Lua action/受控输入通道，事件中的
 `source` 为 `accessibility` 且 `trustedGesture=false`，不会借辅助技术操作扩大权限。UIA
-属性/结构变更事件、复杂控件内部虚拟子项和真实 Narrator 验收尚未完成；默认值/范围、子节点、
+Provider 会在成功桌面帧后按稳定语义 ID 差分并发送结构、焦点、边界、名称、启用、离屏、开关、
+选择、RangeValue、Value 和展开状态变化，不会每帧广播未变化属性。复杂控件内部虚拟子项和
+真实 Narrator 验收尚未完成；默认值/范围、子节点、
 事件和错误码也未全部迁入，
 作者仍应以本节各 feature 的细化说明为准。
 

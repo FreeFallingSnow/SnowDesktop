@@ -139,6 +139,8 @@ void DesktopApp::OnPaint(const RECT* updateRect)
             return;
         }
         compositionRenderRecoveryPending_ = false;
+        if (widgetAccessibilityProvider_)
+            widgetAccessibilityProvider_->RefreshEvents();
         RecordShellHoverTrace(
             ShellHoverTraceEvent::PaintEnd);
     }

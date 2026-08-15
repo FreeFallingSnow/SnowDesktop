@@ -1183,8 +1183,10 @@ feature、默认 accessibility role、允许属性和直接必需属性由同一
 点命中和焦点定位；窗口销毁或 Explorer 重建时旧 Provider 会失效，避免继续访问宿主旧状态。
 Invoke、Toggle、RangeValue、Value、ExpandCollapse 和 SelectionItem Pattern 已连接到现有
 interaction region 与宿主输入动作通道；辅助技术触发的 action 使用 `source="accessibility"`，
-且不会获得 trusted gesture 身份，因此不会绕过已有权限和用户手势门槛。属性/结构事件和
-radio/select/calendar 的内部虚拟子项仍未接通，也尚未使用真实
+且不会获得 trusted gesture 身份，因此不会绕过已有权限和用户手势门槛。成功桌面帧现在会按
+稳定语义 ID 差分并发送结构、焦点、边界、名称、启用、离屏、开关、选择、RangeValue、Value
+和展开状态 UIA 变化，未变化的帧不广播。radio/select/calendar 的内部虚拟子项仍未接通，也
+尚未使用真实
 Narrator 场景验收；默认值/范围、子节点、事件、RTL、动画、额度和错误码仍未全部迁入矩阵，
 也尚未由它生成 LuaLS 与本文档，因此这仍不表示契约已经冻结或完整无障碍已经可用。
 
@@ -1886,8 +1888,9 @@ M7 切换完成后，发布运行时必须删除 API v1 注册和执行分支。
 - 冻结的机器可读 node-property applicability matrix，以及由它生成的 LuaLS 类型、文档、校验器、默认值表和测试参数集。
   当前节点/属性矩阵已进入宿主校验器并有独立契约测试，UIA ControlType/基础 Pattern/
   键盘焦点列、语义快照及 Windows Fragment Provider 已建立，Invoke/Toggle/RangeValue/Value/
-  ExpandCollapse/SelectionItem 动作已接入现有受控 action 通道；生成物、虚拟子项、属性/结构
-  事件及默认值/范围等列仍需继续并入，尚未达到冻结条件。
+  ExpandCollapse/SelectionItem 动作已接入现有受控 action 通道，基础结构/焦点/属性变化也已
+  差分通知；生成物、虚拟子项、其余 Pattern/事件及默认值/范围等列仍需继续并入，尚未达到
+  冻结条件。
 - 环境上下文、响应式尺寸和减少动态效果。
 - 元素级 hover/pressed/focus、click/double click、指针捕获和独立原生右键菜单。
 - `LuaLogicalSlot`、`slots.binding/collection`、`slotSurface/slotItem`、宿主引用存储和现有 slot contract 全矩阵接入；v2.0 实现 binding 的 reference/replace/clear 和 collection 的 reference/reorder/remove。

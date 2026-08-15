@@ -2,19 +2,24 @@
 #include <UIAutomation.h>
 
 #include "widget_accessibility_provider.h"
+#include "widget_accessibility_events.h"
 
 #include <oleauto.h>
 #include <wrl/client.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace
 {
 using Microsoft::WRL::ComPtr;
 using snowdesktop::WidgetAccessibilityProviderHost;
+using snowdesktop::WidgetAccessibilityChangeKind;
+using snowdesktop::WidgetAccessibilityElementKind;
 using snowdesktop::widget_runtime::ViewAccessibilityNode;
 using snowdesktop::widget_runtime::ViewAccessibilityPattern;
 
@@ -131,6 +136,83 @@ LuaWidgetAccessibilitySnapshot Snapshot()
     widget.bounds = RECT{ 10, 20, 310, 350 };
     widget.nodes = { group, button, status, toggle, slider, input, combo };
     return widget;
+}
+
+bool ContainsChange(
+    const std::vector<snowdesktop::WidgetAccessibilityChange>& changes,
+    WidgetAccessibilityChangeKind kind,
+    WidgetAccessibilityElementKind element,
+    std::string_view semanticId = {})
+{
+    return std::any_of(changes.begin(), changes.end(),
+        [&](const auto& change) {
+            return change.kind == kind && change.element == element &&
+                change.semanticId == semanticId;
+        });
+}
+
+void TestSnapshotDiff()
+{
+    const std::vector<LuaWidgetAccessibilitySnapshot> previous{
+        Snapshot() };
+    auto current = previous;
+    Check(snowdesktop::DiffWidgetAccessibilitySnapshots(
+            previous, current).empty(),
+        "identical accessibility frames must not emit changes");
+
+    current[0].name = "Renamed widget";
+    current[0].bounds.right += 10;
+    current[0].nodes[1].focused = false;
+    current[0].nodes[3].focused = true;
+    current[0].nodes[3].checked = true;
+    current[0].nodes[4].value = 6.0f;
+    current[0].nodes[5].valueText = "after";
+    current[0].nodes[6].expanded = true;
+    current[0].nodes[2].name = "Updated";
+    current[0].nodes[2].enabled = false;
+    current[0].nodes[2].offscreen = true;
+    current[0].nodes[2].bounds.x += 5.0f;
+    const auto changes = snowdesktop::DiffWidgetAccessibilitySnapshots(
+        previous, current);
+    Check(ContainsChange(changes,
+            WidgetAccessibilityChangeKind::Name,
+            WidgetAccessibilityElementKind::Widget) &&
+            ContainsChange(changes,
+                WidgetAccessibilityChangeKind::Bounds,
+                WidgetAccessibilityElementKind::Widget) &&
+            ContainsChange(changes,
+                WidgetAccessibilityChangeKind::Focus,
+                WidgetAccessibilityElementKind::Node, "key:enabled") &&
+            ContainsChange(changes,
+                WidgetAccessibilityChangeKind::Toggle,
+                WidgetAccessibilityElementKind::Node, "key:enabled") &&
+            ContainsChange(changes,
+                WidgetAccessibilityChangeKind::RangeValue,
+                WidgetAccessibilityElementKind::Node, "key:level") &&
+            ContainsChange(changes,
+                WidgetAccessibilityChangeKind::Value,
+                WidgetAccessibilityElementKind::Node, "key:query") &&
+            ContainsChange(changes,
+                WidgetAccessibilityChangeKind::ExpandCollapse,
+                WidgetAccessibilityElementKind::Node, "key:choice") &&
+            ContainsChange(changes,
+                WidgetAccessibilityChangeKind::Enabled,
+                WidgetAccessibilityElementKind::Node, "path:0/1") &&
+            ContainsChange(changes,
+                WidgetAccessibilityChangeKind::Offscreen,
+                WidgetAccessibilityElementKind::Node, "path:0/1") &&
+            ContainsChange(changes,
+                WidgetAccessibilityChangeKind::Bounds,
+                WidgetAccessibilityElementKind::Node, "path:0/1"),
+        "snapshot diff must classify focus, property, state, and bounds changes");
+
+    current[0].nodes.pop_back();
+    const auto structure = snowdesktop::DiffWidgetAccessibilitySnapshots(
+        previous, current);
+    Check(ContainsChange(structure,
+            WidgetAccessibilityChangeKind::Structure,
+            WidgetAccessibilityElementKind::Root),
+        "semantic additions, removals, and ordering changes must invalidate structure");
 }
 
 void TestProviderTreeAndLifetime()
@@ -324,6 +406,10 @@ void TestProviderTreeAndLifetime()
                 LuaWidgetAccessibilityActionKind::Expand,
         "ExpandCollapse must expose state and route expansion");
 
+    snapshots[0].nodes[3].checked = true;
+    host.RefreshEvents();
+    host.RefreshEvents();
+
     host.DetachWindow(window);
     VARIANT unavailable;
     VariantInit(&unavailable);
@@ -339,6 +425,7 @@ void TestProviderTreeAndLifetime()
 
 int main()
 {
+    TestSnapshotDiff();
     TestProviderTreeAndLifetime();
     std::cout << "widget accessibility provider tests passed\n";
     return 0;
