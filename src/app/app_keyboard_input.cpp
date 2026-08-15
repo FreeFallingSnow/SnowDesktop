@@ -2,6 +2,20 @@
 
 // Top-level keyboard command dispatch.
 
+void DesktopApp::DispatchLuaWidgetViewKeyEvent(
+    WPARAM key, bool pressed, bool repeated)
+{
+    if (!widgetEngine_ || quickNavigationOpen_ ||
+        !luaWidgetPanelRequest_.widgetId.empty() ||
+        IsCollectionPopupInteractive())
+        return;
+    const bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+    const bool shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+    const bool alt = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+    (void)widgetEngine_->DispatchHostViewKeyEvent(
+        key, pressed, repeated, ctrl, shift, alt);
+}
+
 void DesktopApp::OnKeyDown(WPARAM key)
 {
     if (key == VK_CONTROL || key == VK_MENU || key == VK_SHIFT)

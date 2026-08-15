@@ -255,6 +255,8 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         }
         break;
     case WM_KEYDOWN:
+        DispatchLuaWidgetViewKeyEvent(wp, true,
+            (static_cast<ULONG_PTR>(lp) & (ULONG_PTR{1} << 30)) != 0);
         if (widgetEngine_ && widgetEngine_->HandleHostInputKey(wp))
         {
             UpdateHostInputImePosition();
@@ -290,8 +292,12 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         return 0;
     }
     case WM_KEYUP:
+        DispatchLuaWidgetViewKeyEvent(wp, false, false);
         RefreshDragHintFromKeyboard();
         return 0;
+    case WM_KILLFOCUS:
+        if (widgetEngine_) widgetEngine_->ClearHostViewKeyState();
+        break;
     case WM_TIMER:
         OnTimer(wp);
         return 0;

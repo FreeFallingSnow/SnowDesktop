@@ -397,8 +397,10 @@ void TestKeyboardFocusableOrderAndFiltering()
         InteractionAction{ "volume.change", {} });
     slider.tabIndex = 1;
     auto pointerOnly = Rect("pointer", 0, 112, 80, 32);
-    pointerOnly.events.emplace("pointerMove",
-        InteractionAction{ "pointer.move", {} });
+    pointerOnly.events.emplace("keyDown",
+        InteractionAction{ "pointer.key-down", {} });
+    pointerOnly.events.emplace("keyUp",
+        InteractionAction{ "pointer.key-up", {} });
     pointerOnly.focusable = true;
     pointerOnly.tabIndex = 2;
     auto disabled = Rect("disabled", 0, 152, 80, 32);

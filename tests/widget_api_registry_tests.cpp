@@ -449,6 +449,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "view.input.selection") &&
             snowdesktop::widget_api::SupportsFeature(
+                "view.keyboard.events") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "view.keyboardNavigation.basic") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.keyboardNavigation.order") &&

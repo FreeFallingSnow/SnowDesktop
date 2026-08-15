@@ -109,8 +109,11 @@ Treat radioGroup and slider as controlled: update component-owned state from
 context menus; slider changes are emitted during captured left-button drag.
 Probe `view.keyboardNavigation.basic` before relying on host focus outlines,
 Tab/Shift+Tab traversal, spatial arrows, Enter/Space activation, or slider
-arrow-step changes. The host routes these keys without exposing raw key streams
-to Lua; it publishes basic UI Automation patterns and state, while deep
+arrow-step changes. Probe `view.keyboard.events` only when a focused node must
+observe `events.keyDown/keyUp`. These actions receive a symbolic `key`, Windows
+`virtualKey`, repeat/modifier state, and a stable key-up pairing; they cannot
+cancel host activation or SnowDesktop shortcuts and are not a character/IME
+input channel. The host publishes basic UI Automation patterns and state, while deep
 virtualization and every platform pattern are not implied by this feature.
 Probe `view.keyboardNavigation.order` before overriding `focusable` or
 `tabIndex`. Use -1 only to keep pointer/UIA focus while skipping sequential
@@ -262,7 +265,7 @@ stack, scroll, and virtual layouts; use parent `gap` for spacing that should
 exist only between siblings.
 Probe `view.keyboardNavigation.basic` for ordinary actionable declarative
 nodes and storage-bound immediate text controls. The subset does not provide
-custom tab order, raw key bindings, variable-height virtualization, or the
+arbitrary shortcut interception, variable-height virtualization, or the
 complete `view.tree` contract. Optional
 `menu(context, model, request)` builds an element's synchronous native context
 menu.

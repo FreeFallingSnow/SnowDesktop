@@ -718,6 +718,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_GETDLGCODE:
         return DLGC_WANTALLKEYS | DLGC_WANTARROWS;
     case WM_KEYDOWN:
+        DispatchLuaWidgetViewKeyEvent(wp, true,
+            (static_cast<ULONG_PTR>(lp) & (ULONG_PTR{1} << 30)) != 0);
         OnKeyDown(wp);
         return 0;
     case WM_HOTKEY:
@@ -747,8 +749,12 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         }
         break;
     case WM_KEYUP:
+        DispatchLuaWidgetViewKeyEvent(wp, false, false);
         RefreshDragHintFromKeyboard();
         return 0;
+    case WM_KILLFOCUS:
+        if (widgetEngine_) widgetEngine_->ClearHostViewKeyState();
+        break;
     case WM_DISPLAYCHANGE:
         ScheduleDisplayTopologyRefresh();
         InvalidateRect(hwnd_, nullptr, FALSE);

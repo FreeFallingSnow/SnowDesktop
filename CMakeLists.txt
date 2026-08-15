@@ -495,7 +495,7 @@ target_include_directories(SnowDesktop PRIVATE
 
 if (MSVC)
     set_property(TARGET SnowDesktop PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    target_compile_options(SnowDesktop PRIVATE /MP4 /W4 /permissive- /EHsc /utf-8 /Z7)
+    target_compile_options(SnowDesktop PRIVATE /MP4 /bigobj /W4 /permissive- /EHsc /utf-8 /Z7)
     target_compile_definitions(SnowDesktop PRIVATE
         _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
         WINVER=0x0A00 _WIN32_WINNT=0x0A00

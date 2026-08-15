@@ -1231,6 +1231,9 @@ private:
     void OnRightButtonUp(LPARAM lp);
     /** @brief 处理键盘按键消息。 @param key 按键虚拟键码 */
     void OnKeyDown(WPARAM key);
+    /** @brief 向当前聚焦的 Lua 声明式元素投递受限按键事件。 */
+    void DispatchLuaWidgetViewKeyEvent(
+        WPARAM key, bool pressed, bool repeated);
     /** @brief 根据键盘修饰键状态刷新拖拽提示文本。 */
     void RefreshDragHintFromKeyboard();
     /**

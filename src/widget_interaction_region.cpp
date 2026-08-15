@@ -28,7 +28,8 @@ bool IsSupportedEvent(std::string_view eventName) noexcept
         eventName == "pointerDown" || eventName == "pointerUp" ||
         eventName == "pointerMove" || eventName == "click" ||
         eventName == "doubleClick" || eventName == "wheel" ||
-        eventName == "contextMenu" || eventName == "change";
+        eventName == "contextMenu" || eventName == "keyDown" ||
+        eventName == "keyUp" || eventName == "change";
 }
 
 bool IsTextEntryRole(std::string_view role) noexcept

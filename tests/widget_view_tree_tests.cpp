@@ -690,6 +690,10 @@ void TestSelectionControlParsing()
                     checked = false,
                     tabIndex = 2,
                     action = { id = "notifications.change" },
+                    events = {
+                        keyDown = { id = "notifications.key-down" },
+                        keyUp = { id = "notifications.key-up" },
+                    },
                     checkedStyle = { background = 0x4C9AFF },
                     hoverStyle = { opacity = 0.9 },
                 }),
@@ -721,6 +725,10 @@ void TestSelectionControlParsing()
             root.children[0].tabIndex == 2 &&
             root.children[0].events.at("change").id ==
                 "notifications.change" &&
+            root.children[0].events.at("keyDown").id ==
+                "notifications.key-down" &&
+            root.children[0].events.at("keyUp").id ==
+                "notifications.key-up" &&
             root.children[0].checkedStyle.background ==
                 std::uint32_t{ 0x4C9AFF } &&
             root.children[1].type == ViewNodeType::Checkbox &&
@@ -742,6 +750,10 @@ void TestSelectionControlParsing()
             !regions[0].checked &&
             regions[0].accessibilityRole == "switch" &&
             regions[0].cursor == "hand" &&
+            regions[0].events.at("keyDown").id ==
+                "notifications.key-down" &&
+            regions[0].events.at("keyUp").id ==
+                "notifications.key-up" &&
             regions[0].focusable == true && regions[0].tabIndex == 2 &&
             regions[1].controlKind == InteractionControlKind::Checkbox &&
             !regions[1].checked && regions[1].indeterminate &&
@@ -806,6 +818,22 @@ void TestSelectionControlParsing()
             !ValidateAndLayoutViewTree(invalid, 200.0f, 40.0f, error) &&
             error.find("requires a focusable node") != std::string::npos,
         "tabIndex must reject an explicitly non-focusable node");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.text({
+            key = "invalid-key-target",
+            text = "Cannot focus",
+            events = { keyDown = { id = "invalid.key" } },
+        })
+    )lua") == LUA_OK,
+        "invalid raw-key target fixture must evaluate");
+    invalid = {};
+    Check(ParseLuaViewTree(state, -1, invalid, error) &&
+            !ValidateAndLayoutViewTree(invalid, 200.0f, 40.0f, error) &&
+            error.find("events require a focusable node") !=
+                std::string::npos,
+        "raw key events must reject a node outside the focus order");
 
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(

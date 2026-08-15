@@ -2781,7 +2781,8 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         if (eventName != "click" && eventName != "doubleClick" &&
             eventName != "contextMenu" && eventName != "pointerEnter" &&
             eventName != "pointerLeave" && eventName != "pointerDown" &&
-            eventName != "pointerUp" && eventName != "change" &&
+            eventName != "pointerUp" && eventName != "keyDown" &&
+            eventName != "keyUp" && eventName != "change" &&
             eventName != "selectionChange" && eventName != "focus" &&
             eventName != "blur" &&
             eventName != "submit" && eventName != "scrollEnd")
@@ -2811,6 +2812,12 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             !node.events.contains("selectionChange")))
     {
         error = "controlled text selection requires selection and selectionChange on a text input";
+        return false;
+    }
+    if ((node.events.contains("keyDown") ||
+            node.events.contains("keyUp")) && !keyboardFocusable)
+    {
+        error = "view keyDown and keyUp events require a focusable node";
         return false;
     }
     if (!IsScrollContainer(node.type) && node.events.contains("scrollEnd"))

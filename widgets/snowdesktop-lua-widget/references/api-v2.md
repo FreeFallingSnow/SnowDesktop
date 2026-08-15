@@ -92,6 +92,7 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.actionControls` 提供 `link/radioGroup/slider`，
 `view.inputControls` 一次提供 `textInput/textArea/searchBox/numberInput/select`，
 `view.keyboardNavigation.basic` 提供桌面 surface 的通用宿主键盘焦点与激活，
+`view.keyboard.events` 提供聚焦元素不可取消的按下/释放观察事件，
 `view.flex.layout` 提供 row/column 主轴切换、换行与多行交叉轴对齐，
 `view.flex.sizing` 提供线性布局的 basis/grow/shrink 尺寸分配，
 `view.text.flow` 提供文本块的换行、行数、溢出和垂直对齐，
@@ -373,15 +374,24 @@ view.searchBox({
 成功提交的交互树顺序收集启用的可点击节点、受控控件和文本输入：Tab/Shift+Tab 循环焦点，
 方向键按元素几何位置移动焦点，Enter/空格激活按钮、链接、选择控件等，Escape 清除焦点；滑块
 用左/下减一档、右/上加一档。键盘激活仍投递普通 action/change 事件，但带
-`source="keyboard"` 和可信手势标记，Lua 不会获得原始按键流。鼠标点击可操作元素也会同步宿主
+`source="keyboard"` 和可信手势标记。鼠标点击可操作元素也会同步宿主
 焦点。逻辑槽位继续在这一焦点序列中使用 `Alt+方向键` 重排和 Delete 移除。该基础 feature
 不承诺任意键绑定或 panel 焦点遍历。
+
+探测 `view.keyboard.events` 后，可聚焦节点可声明 `events.keyDown/keyUp`。事件仅投递给桌面
+surface 中当前唯一选中 Lua 组件的当前聚焦元素，包含稳定符号名 `key`、Windows
+`virtualKey`、`repeat`、`ctrlKey/shiftKey/altKey`、`targetKey`、`source="keyboard"` 和
+可信手势。宿主在按下时记录目标，因此普通重渲染或 Escape 清焦后仍会把对应 keyUp 配对到
+原元素；窗口失焦时清空未完成配对。该观察事件不能返回 handled、取消 Enter/空格默认激活，
+也不能阻止 SnowDesktop 管理快捷键。它不是字符输入接口：文本、输入法组合和剪贴板结果仍只
+通过宿主输入控件及其 change/selectionChange 契约处理。
 
 探测 `view.keyboardNavigation.order` 后，任意有语义的节点可声明 `focusable`，并在实际可聚焦时
 声明 `tabIndex=-1..32767`。`focusable=false` 同时退出鼠标、键盘和 UI Automation 焦点；
 `tabIndex=-1` 仍允许鼠标/UIA 聚焦，但不进入 Tab 和方向键遍历；正数按升序排在默认 0 的文档
 顺序之前，同值保持声明顺序。把原本不可聚焦的节点设为 true 时必须有可访问名称，spacer 等
-无语义节点不能被提升。该属性只改变焦点参与和遍历，不暴露原始按键，也不改变绘制/UIA 阅读顺序。
+无语义节点不能被提升。该属性只改变焦点参与和遍历；只有单独探测
+`view.keyboard.events` 并声明动作时才观察按键，且不会改变绘制/UIA 阅读顺序。
 
 `grid` 是行优先的均匀网格容器，必须提供 1–64 的整数 `columns`；每列等宽，
 `columnGap/rowGap` 分别控制水平和垂直间距，未提供时回退到 `gap`。隐藏子节点不占格，

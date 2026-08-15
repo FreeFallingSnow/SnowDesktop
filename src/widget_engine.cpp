@@ -134,6 +134,46 @@ static bool IsValidUtf8Local(const std::string& value)
         value.data(), static_cast<int>(value.size()), nullptr, 0) > 0;
 }
 
+static std::string ViewVirtualKeyName(WPARAM key)
+{
+    if (key >= '0' && key <= '9')
+        return std::string(1, static_cast<char>(key));
+    if (key >= 'A' && key <= 'Z')
+        return std::string(1, static_cast<char>(key));
+    if (key >= VK_F1 && key <= VK_F24)
+        return "F" + std::to_string(key - VK_F1 + 1);
+    switch (key)
+    {
+    case VK_BACK: return "Backspace";
+    case VK_TAB: return "Tab";
+    case VK_RETURN: return "Enter";
+    case VK_SHIFT: return "Shift";
+    case VK_CONTROL: return "Control";
+    case VK_MENU: return "Alt";
+    case VK_PAUSE: return "Pause";
+    case VK_CAPITAL: return "CapsLock";
+    case VK_ESCAPE: return "Escape";
+    case VK_SPACE: return "Space";
+    case VK_PRIOR: return "PageUp";
+    case VK_NEXT: return "PageDown";
+    case VK_END: return "End";
+    case VK_HOME: return "Home";
+    case VK_LEFT: return "ArrowLeft";
+    case VK_UP: return "ArrowUp";
+    case VK_RIGHT: return "ArrowRight";
+    case VK_DOWN: return "ArrowDown";
+    case VK_SNAPSHOT: return "PrintScreen";
+    case VK_INSERT: return "Insert";
+    case VK_DELETE: return "Delete";
+    case VK_LWIN: return "MetaLeft";
+    case VK_RWIN: return "MetaRight";
+    case VK_APPS: return "ContextMenu";
+    case VK_NUMLOCK: return "NumLock";
+    case VK_SCROLL: return "ScrollLock";
+    default: return "Unidentified";
+    }
+}
+
 /**
  * @brief 简易 JSON 字符串字段解析器（不依赖第三方库）
  * @param text  待解析的 JSON 文本
@@ -22084,6 +22124,97 @@ void WidgetEngine::DrawHostViewInteractionOverlays(
             d2dState_, 0x4C9AFF, 1.0f))
         d2dState_->ctx->FillRoundedRectangle(
             D2D1::RoundedRect(indicator, 2.0f, 2.0f), brush);
+}
+
+bool WidgetEngine::DispatchHostViewKeyEvent(WPARAM key, bool pressed,
+    bool repeated, bool ctrl, bool shift, bool alt)
+{
+    std::wstring widgetId;
+    std::string nodeKey;
+    if (!pressed)
+    {
+        const auto paired = pressedViewKeyTargets_.find(key);
+        if (paired != pressedViewKeyTargets_.end())
+        {
+            widgetId = paired->second.widgetId;
+            nodeKey = paired->second.nodeKey;
+            pressedViewKeyTargets_.erase(paired);
+        }
+    }
+    if (widgetId.empty())
+    {
+        const auto focused = std::find_if(widgets_.begin(), widgets_.end(),
+            [this](const LuaWidget& candidate) {
+                return candidate.valid && !candidate.preview &&
+                    candidate.hostVisible &&
+                    !candidate.viewKeyboardFocusKey.empty() &&
+                    RuntimeIsWidgetSelected(candidate.widgetId);
+            });
+        if (focused == widgets_.end()) return false;
+        widgetId = focused->widgetId;
+        nodeKey = focused->viewKeyboardFocusKey;
+    }
+
+    const int index = FindWidget(widgetId);
+    if (index < 0) return false;
+    auto& widget = widgets_[index];
+    if (!widget.valid || widget.preview || !widget.hostVisible ||
+        !RuntimeIsWidgetSelected(widgetId) ||
+        !widget.interactionRegions.IsKeyboardFocusable(nodeKey))
+        return false;
+
+    const char* eventName = pressed ? "keyDown" : "keyUp";
+    const auto* actionPointer = widget.interactionRegions.FindAction(
+        nodeKey, eventName);
+    if (pressed &&
+        (widget.interactionRegions.FindAction(nodeKey, "keyDown") ||
+            widget.interactionRegions.FindAction(nodeKey, "keyUp")))
+    {
+        pressedViewKeyTargets_.insert_or_assign(
+            key, PressedViewKeyTarget{ widgetId, nodeKey });
+    }
+    if (!actionPointer) return false;
+
+    const auto action = *actionPointer;
+    const std::string keyName = ViewVirtualKeyName(key);
+    snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(
+        trustedGestureState_, true);
+    WidgetSurfaceScope surfaceScope(d2dState_, "desktop");
+    return InvokeLifecycleEvent(widget, "action",
+        [&action, &nodeKey, &keyName, key, eventName, repeated,
+            ctrl, shift, alt](lua_State* eventState) {
+            lua_pushlstring(eventState, action.id.data(), action.id.size());
+            lua_setfield(eventState, -2, "id");
+            PushInteractionValue(eventState, action.value);
+            lua_setfield(eventState, -2, "value");
+            lua_pushlstring(eventState, nodeKey.data(), nodeKey.size());
+            lua_setfield(eventState, -2, "targetKey");
+            lua_pushstring(eventState, eventName);
+            lua_setfield(eventState, -2, "action");
+            lua_pushlstring(eventState, keyName.data(), keyName.size());
+            lua_setfield(eventState, -2, "key");
+            lua_pushinteger(eventState, static_cast<lua_Integer>(key));
+            lua_setfield(eventState, -2, "virtualKey");
+            lua_pushboolean(eventState, repeated ? 1 : 0);
+            lua_setfield(eventState, -2, "repeat");
+            lua_pushboolean(eventState, ctrl ? 1 : 0);
+            lua_setfield(eventState, -2, "ctrlKey");
+            lua_pushboolean(eventState, shift ? 1 : 0);
+            lua_setfield(eventState, -2, "shiftKey");
+            lua_pushboolean(eventState, alt ? 1 : 0);
+            lua_setfield(eventState, -2, "altKey");
+            lua_pushboolean(eventState, 1);
+            lua_setfield(eventState, -2, "trustedGesture");
+            lua_pushliteral(eventState, "keyboard");
+            lua_setfield(eventState, -2, "source");
+            lua_pushliteral(eventState, "desktop");
+            lua_setfield(eventState, -2, "surface");
+        });
+}
+
+void WidgetEngine::ClearHostViewKeyState() noexcept
+{
+    pressedViewKeyTargets_.clear();
 }
 
 bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,

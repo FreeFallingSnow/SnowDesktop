@@ -188,6 +188,8 @@
 ---@field click? SnowInteractionAction
 ---@field doubleClick? SnowInteractionAction
 ---@field contextMenu? SnowInteractionAction
+---@field keyDown? SnowInteractionAction Focused-node key press observation; requires view.keyboard.events and cannot cancel host behavior.
+---@field keyUp? SnowInteractionAction Paired focused-node key release observation; requires view.keyboard.events.
 ---@field change? SnowInteractionAction Controlled selection, slider, or input value proposal.
 ---@field selectionChange? SnowInteractionAction Controlled text selection proposal from pointer or keyboard movement.
 ---@field focus? SnowInteractionAction Input gained host keyboard/IME focus.
@@ -515,7 +517,7 @@
 
 ---@class SnowWidgetEvent
 ---@field kind 'visibility'|'resize'|'pointer'|'timer'|'schedule'|'frame'|'action'|'selection'|'environment'|'panel'|'data.change'|'task.complete'|'slot.changed'|'notification.delivered'|'notification.action'
----@field action? 'click'|'change'|'selectionChange'|'focus'|'blur'|'submit'|'doubleClick'|'pointerDown'|'pointerMove'|'pointerUp'|'wheel'|'opened'|'closed'|string
+---@field action? 'click'|'change'|'selectionChange'|'focus'|'blur'|'submit'|'doubleClick'|'pointerDown'|'pointerMove'|'pointerUp'|'wheel'|'keyDown'|'keyUp'|'opened'|'closed'|string
 ---@field id? string
 ---@field name? string
 ---@field missed? integer
@@ -534,6 +536,12 @@
 ---@field y? integer
 ---@field button? integer
 ---@field delta? integer
+---@field key? string Stable symbolic virtual-key name such as Enter, ArrowLeft, A, or F5; Unidentified when unmapped.
+---@field virtualKey? integer Windows virtual-key value for keyDown/keyUp observation; do not interpret it as text input.
+---@field repeat? boolean Whether a keyDown was generated while the key was already held.
+---@field ctrlKey? boolean
+---@field shiftKey? boolean
+---@field altKey? boolean
 ---@field targetKey? string Stable immediate interaction region key.
 ---@field previousChecked? boolean Current controlled value for toggle/checkbox change events.
 ---@field checked? boolean Proposed next controlled value for toggle/checkbox change events; the host does not persist it.

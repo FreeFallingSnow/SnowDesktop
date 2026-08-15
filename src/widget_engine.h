@@ -1361,6 +1361,9 @@ public:
         const LuaWidgetAccessibilityActionRequest& request);
     std::wstring RuntimeSelectedWidgetPackageId() const;
     bool HandleHostInputKey(WPARAM key);
+    bool DispatchHostViewKeyEvent(WPARAM key, bool pressed, bool repeated,
+        bool ctrl, bool shift, bool alt);
+    void ClearHostViewKeyState() noexcept;
     bool HandleHostViewKey(const std::wstring& widgetId, WPARAM key,
         bool ctrl, bool shift, bool alt);
     bool HandleHostInputChar(wchar_t ch);
@@ -1680,4 +1683,11 @@ private:
         std::size_t maximumUtf8Bytes = 0;
     };
     FocusedHostInput focusedHostInput_;
+    struct PressedViewKeyTarget
+    {
+        std::wstring widgetId;
+        std::string nodeKey;
+    };
+    std::unordered_map<WPARAM, PressedViewKeyTarget>
+        pressedViewKeyTargets_;
 };
