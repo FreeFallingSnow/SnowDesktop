@@ -70,7 +70,8 @@ constexpr auto kProperties = std::to_array<std::string_view>({
     "columnGap", "rowGap", "gridColumn", "gridRow", "columnSpan",
     "rowSpan", "itemCount",
     "itemExtent", "firstIndex", "overscan", "flexBasis", "flexGrow",
-    "flexShrink", "fontSize", "fontWeight", "fontStyle", "lineHeight",
+    "flexShrink", "flexDirection", "flexWrap", "alignContent",
+    "fontSize", "fontWeight", "fontStyle", "lineHeight",
     "letterSpacing", "locale", "textDirection", "bold",
     "checked", "visible", "enabled", "cursor", "tooltip", "alignItems", "showScrollbar",
     "alignSelf", "justifyContent", "textAlign", "verticalAlign",
@@ -294,6 +295,9 @@ bool ViewNodeAllowsProperty(
     if (property == "itemCount" || property == "itemExtent" ||
         property == "firstIndex" || property == "overscan")
         return IsVirtual(type);
+    if (property == "flexDirection" || property == "flexWrap" ||
+        property == "alignContent")
+        return type == ViewNodeType::Row || type == ViewNodeType::Column;
     if (property == "checked") return IsCheck(type);
     if (property == "checkedStyle") return IsCheck(type) || IsChoice(type);
     if (property == "showScrollbar")

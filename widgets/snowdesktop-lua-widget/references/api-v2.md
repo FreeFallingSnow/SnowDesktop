@@ -92,6 +92,7 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.actionControls` 提供 `link/radioGroup/slider`，
 `view.inputControls` 一次提供 `textInput/textArea/searchBox/numberInput/select`，
 `view.keyboardNavigation.basic` 提供桌面 surface 的通用宿主键盘焦点与激活，
+`view.flex.layout` 提供 row/column 主轴切换、换行与多行交叉轴对齐，
 `view.flex.sizing` 提供线性布局的 basis/grow/shrink 尺寸分配，
 `view.text.flow` 提供文本块的换行、行数、溢出和垂直对齐，
 `view.text.typography` 提供字体粗细、字形、行高和字距，
@@ -163,7 +164,12 @@ end
 ```
 
 尺寸接受有限非负数字、`auto` 或 `fill`；线性布局支持数值或四边结构的 `padding`、`gap`、
-`flexBasis/flexGrow/flexShrink`、`alignItems/alignSelf` 和 `justifyContent`。`flexBasis`
+`flexBasis/flexGrow/flexShrink`、`alignItems/alignSelf` 和 `justifyContent`。`row/column`
+还可在探测 `view.flex.layout` 后使用 `flexDirection="row"|"column"` 覆盖构造器默认主轴，
+以 `flexWrap="wrap"` 按可用主轴空间分行，并用
+`alignContent="start"|"center"|"end"|"stretch"|"spaceBetween"` 分配多行交叉轴空间。
+每行独立执行 grow/shrink 和 justify，声明顺序、绘制顺序与键盘顺序不因主轴切换而变化；
+reverse、wrapReverse、spaceAround 和 spaceEvenly 尚未开放。`flexBasis`
 接受 0–4096 数值或 `auto`，先确定主轴基础外尺寸；正剩余空间按非负 `flexGrow` 分配，
 空间不足时按 `flexShrink × basis` 收缩并重新分配触及 `minWidth/minHeight` 后的溢出。
 `flexShrink` 默认 1，设为 0 可保持基础尺寸；`fill` 在未写 grow 时继续隐含 grow=1。

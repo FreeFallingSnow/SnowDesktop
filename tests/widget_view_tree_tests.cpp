@@ -2158,6 +2158,80 @@ void TestFlexSizing()
     lua_close(state);
 }
 
+void TestFlexLayout()
+{
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "Lua state must be available");
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    Check(luaL_dostring(state, R"lua(
+        return view.row({
+            key = "direction",
+            flexDirection = "column",
+            alignItems = "start",
+            gap = 5,
+            children = {
+                view.shape({ key = "first", width = 20, height = 20 }),
+                view.shape({ key = "second", width = 30, height = 10 }),
+            },
+        })
+    )lua") == LUA_OK,
+        "flex-direction Lua fixture must evaluate");
+    ViewNode direction;
+    std::string error;
+    Check(ParseLuaViewTree(state, -1, direction, error) &&
+            direction.flexDirection == ViewFlexDirection::Column &&
+            direction.flexWrap == ViewFlexWrap::NoWrap &&
+            direction.alignContent == ViewContentAlignment::Stretch,
+        "row and column must parse typed flex-container properties");
+    Check(ValidateAndLayoutViewTree(direction, 100.0f, 70.0f, error) &&
+            Near(direction.children[0].frame.x, 0.0f) &&
+            Near(direction.children[0].frame.y, 0.0f) &&
+            Near(direction.children[1].frame.x, 0.0f) &&
+            Near(direction.children[1].frame.y, 25.0f),
+        "flexDirection must override the row constructor's default main axis");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.row({
+            key = "wrapped",
+            flexWrap = "wrap",
+            alignItems = "start",
+            alignContent = "spaceBetween",
+            gap = 10,
+            children = {
+                view.shape({ key = "one", width = 60, height = 20 }),
+                view.shape({ key = "two", width = 60, height = 20 }),
+                view.shape({ key = "three", width = 60, height = 20 }),
+            },
+        })
+    )lua") == LUA_OK,
+        "wrapped-flex Lua fixture must evaluate");
+    ViewNode wrapped;
+    Check(ParseLuaViewTree(state, -1, wrapped, error) &&
+            wrapped.flexWrap == ViewFlexWrap::Wrap &&
+            wrapped.alignContent == ViewContentAlignment::SpaceBetween,
+        "flexWrap and alignContent must retain typed values");
+    Check(ValidateAndLayoutViewTree(wrapped, 130.0f, 100.0f, error) &&
+            Near(wrapped.children[0].frame.x, 0.0f) &&
+            Near(wrapped.children[1].frame.x, 70.0f) &&
+            Near(wrapped.children[0].frame.y, 0.0f) &&
+            Near(wrapped.children[2].frame.x, 0.0f) &&
+            Near(wrapped.children[2].frame.y, 80.0f),
+        "wrapped flex lines must honor per-line gaps and alignContent");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.box({ key = "invalid", flexDirection = "row" })
+    )lua") == LUA_OK,
+        "misapplied flex-container property fixture must evaluate");
+    ViewNode invalid;
+    Check(!ParseLuaViewTree(state, -1, invalid, error) &&
+            error.find("flexDirection") != std::string::npos,
+        "non-flex containers must reject flex-container properties");
+    lua_close(state);
+}
+
 void TestStackPositioningAndClipping()
 {
     lua_State* state = luaL_newstate();
@@ -2300,6 +2374,7 @@ int main()
     TestBoundedSizeConstraints();
     TestUniformMargins();
     TestFlexSizing();
+    TestFlexLayout();
     TestStackPositioningAndClipping();
     TestTextLocaleValidation();
     std::cout << "Widget view tree tests passed\n";

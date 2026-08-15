@@ -107,6 +107,28 @@ enum class ViewJustification
     SpaceBetween,
 };
 
+enum class ViewFlexDirection
+{
+    Auto,
+    Row,
+    Column,
+};
+
+enum class ViewFlexWrap
+{
+    NoWrap,
+    Wrap,
+};
+
+enum class ViewContentAlignment
+{
+    Start,
+    Center,
+    End,
+    Stretch,
+    SpaceBetween,
+};
+
 enum class ViewTextAlignment
 {
     Start,
@@ -293,6 +315,9 @@ struct ViewNode
     ViewLength flexBasis{};
     float flexGrow = 0.0f;
     float flexShrink = 1.0f;
+    ViewFlexDirection flexDirection = ViewFlexDirection::Auto;
+    ViewFlexWrap flexWrap = ViewFlexWrap::NoWrap;
+    ViewContentAlignment alignContent = ViewContentAlignment::Stretch;
     ViewAlignment alignItems = ViewAlignment::Stretch;
     ViewAlignment alignSelf = ViewAlignment::Auto;
     ViewJustification justifyContent = ViewJustification::Start;

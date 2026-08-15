@@ -363,6 +363,18 @@ bool IsPositionedGridContainer(ViewNodeType type) noexcept
     return type == ViewNodeType::Grid || type == ViewNodeType::GridList;
 }
 
+bool IsFlexContainer(ViewNodeType type) noexcept
+{
+    return type == ViewNodeType::Row || type == ViewNodeType::Column;
+}
+
+bool IsHorizontalFlex(const ViewNode& node) noexcept
+{
+    if (node.flexDirection == ViewFlexDirection::Row) return true;
+    if (node.flexDirection == ViewFlexDirection::Column) return false;
+    return node.type == ViewNodeType::Row;
+}
+
 bool IsVirtualCollection(ViewNodeType type) noexcept
 {
     return type == ViewNodeType::VirtualList ||
@@ -557,7 +569,20 @@ float RawIntrinsicWidth(const ViewNode& node)
         return result + ViewHorizontalPadding(node);
     }
     float result = 0.0f;
-    if (node.type == ViewNodeType::Row)
+    if (IsFlexContainer(node.type) && IsHorizontalFlex(node))
+    {
+        std::size_t visible = 0;
+        for (const auto& child : node.children)
+        {
+            if (!child.visible) continue;
+            result += OuterIntrinsicWidth(child);
+            ++visible;
+        }
+        if (visible > 1)
+            result += node.gap * static_cast<float>(visible - 1);
+    }
+    else if (IsFlexContainer(node.type) &&
+        node.flexWrap == ViewFlexWrap::Wrap)
     {
         std::size_t visible = 0;
         for (const auto& child : node.children)
@@ -702,8 +727,10 @@ float RawIntrinsicHeight(const ViewNode& node)
         return result + ViewVerticalPadding(node);
     }
     float result = 0.0f;
-    if (node.type == ViewNodeType::Column ||
-        node.type == ViewNodeType::List)
+    if ((IsFlexContainer(node.type) && !IsHorizontalFlex(node)) ||
+        node.type == ViewNodeType::List ||
+        (IsFlexContainer(node.type) &&
+            node.flexWrap == ViewFlexWrap::Wrap))
     {
         std::size_t visible = 0;
         for (const auto& child : node.children)
@@ -998,6 +1025,226 @@ void LayoutLinear(ViewNode& node, const ViewRect& content, bool horizontal)
     }
 }
 
+void LayoutWrappedFlex(ViewNode& node, const ViewRect& content,
+    bool horizontal)
+{
+    struct Item
+    {
+        ViewNode* node = nullptr;
+        float main = 0.0f;
+        float cross = 0.0f;
+        float grow = 0.0f;
+        float shrink = 0.0f;
+    };
+    struct Line
+    {
+        std::vector<Item> items;
+        float baseMain = 0.0f;
+        float cross = 0.0f;
+    };
+
+    const float availableMain = horizontal ? content.width : content.height;
+    const float availableCross = horizontal ? content.height : content.width;
+    std::vector<Line> lines;
+    for (auto& child : node.children)
+    {
+        if (!child.visible) continue;
+        const ViewLength& mainLength = horizontal
+            ? child.width : child.height;
+        const float intrinsicMain = horizontal
+            ? IntrinsicWidth(child) : IntrinsicHeight(child);
+        float innerMain = intrinsicMain;
+        if (child.flexBasis.kind == ViewLengthKind::Fixed)
+            innerMain = child.flexBasis.value;
+        else if (mainLength.kind == ViewLengthKind::Fixed)
+            innerMain = mainLength.value;
+        else if (mainLength.kind == ViewLengthKind::Fill)
+            innerMain = 0.0f;
+        const float mainMargin = horizontal
+            ? ViewHorizontalMargin(child) : ViewVerticalMargin(child);
+        const float baseMain = (horizontal
+            ? ConstrainWidth(child, innerMain)
+            : ConstrainHeight(child, innerMain)) + mainMargin;
+        if (lines.empty() || (!lines.back().items.empty() &&
+                lines.back().baseMain + node.gap + baseMain >
+                    availableMain + 0.001f))
+            lines.emplace_back();
+        Line& line = lines.back();
+        if (!line.items.empty()) line.baseMain += node.gap;
+        line.baseMain += baseMain;
+        line.items.push_back({ &child, baseMain, 0.0f,
+            child.flexGrow > 0.0f ? child.flexGrow :
+                (mainLength.kind == ViewLengthKind::Fill ? 1.0f : 0.0f),
+            child.flexShrink * std::max(1.0f, baseMain - mainMargin) });
+    }
+    if (lines.empty()) return;
+
+    for (Line& line : lines)
+    {
+        const float gaps = node.gap *
+            static_cast<float>(line.items.size() - 1);
+        float baseTotal = 0.0f;
+        float growTotal = 0.0f;
+        for (const Item& item : line.items)
+        {
+            baseTotal += item.main;
+            growTotal += item.grow;
+        }
+        const float availableForItems = std::max(0.0f,
+            availableMain - gaps);
+        const float freeSpace = availableForItems - baseTotal;
+        if (freeSpace > 0.0f && growTotal > 0.0f)
+        {
+            for (Item& item : line.items)
+                if (item.grow > 0.0f)
+                    item.main += freeSpace * (item.grow / growTotal);
+        }
+        else if (freeSpace < 0.0f)
+        {
+            float overflow = -freeSpace;
+            std::vector<bool> active(line.items.size(), true);
+            for (std::size_t pass = 0;
+                pass < line.items.size() && overflow > 0.001f; ++pass)
+            {
+                float weightTotal = 0.0f;
+                for (std::size_t index = 0;
+                    index < line.items.size(); ++index)
+                    if (active[index])
+                        weightTotal += line.items[index].shrink;
+                if (weightTotal <= 0.0f) break;
+
+                const float requested = overflow;
+                float reduced = 0.0f;
+                for (std::size_t index = 0;
+                    index < line.items.size(); ++index)
+                {
+                    Item& item = line.items[index];
+                    if (!active[index] || item.shrink <= 0.0f) continue;
+                    const float minimumInner = horizontal
+                        ? item.node->minimumWidth.value_or(0.0f)
+                        : item.node->minimumHeight.value_or(0.0f);
+                    const float minimumOuter = minimumInner + (horizontal
+                        ? ViewHorizontalMargin(*item.node)
+                        : ViewVerticalMargin(*item.node));
+                    const float capacity = std::max(
+                        0.0f, item.main - minimumOuter);
+                    const float share = requested *
+                        (item.shrink / weightTotal);
+                    const float delta = std::min(capacity, share);
+                    item.main -= delta;
+                    reduced += delta;
+                    if (capacity <= share + 0.001f)
+                        active[index] = false;
+                }
+                if (reduced <= 0.001f) break;
+                overflow = std::max(0.0f, overflow - reduced);
+            }
+        }
+
+        for (Item& item : line.items)
+        {
+            ViewNode& child = *item.node;
+            const ViewLength& crossLength = horizontal
+                ? child.height : child.width;
+            const float intrinsicCross = horizontal
+                ? IntrinsicHeight(child) : IntrinsicWidth(child);
+            const float naturalAvailable = intrinsicCross + (horizontal
+                ? ViewVerticalMargin(child) : ViewHorizontalMargin(child));
+            const float naturalCross = ResolveOuterCrossSize(child,
+                crossLength, intrinsicCross, naturalAvailable,
+                ViewAlignment::Start, !horizontal);
+            const ResolvedNodeSize resolved = ResolveOuterNodeSize(child,
+                horizontal ? item.main : naturalCross,
+                horizontal ? naturalCross : item.main);
+            item.main = horizontal ? resolved.width : resolved.height;
+            item.cross = horizontal ? resolved.height : resolved.width;
+            line.cross = std::max(line.cross, item.cross);
+        }
+    }
+
+    float lineGap = node.gap;
+    float usedCross = lineGap * static_cast<float>(lines.size() - 1);
+    for (const Line& line : lines) usedCross += line.cross;
+    if (usedCross > availableCross && usedCross > 0.0f)
+    {
+        const float gaps = lineGap * static_cast<float>(lines.size() - 1);
+        const float scale = std::max(0.0f, availableCross - gaps) /
+            std::max(0.001f, usedCross - gaps);
+        for (Line& line : lines) line.cross *= scale;
+        usedCross = std::min(availableCross, usedCross);
+    }
+
+    float crossCursor = horizontal ? content.y : content.x;
+    if (availableCross > usedCross)
+    {
+        const float extra = availableCross - usedCross;
+        if (node.alignContent == ViewContentAlignment::Center)
+            crossCursor += extra * 0.5f;
+        else if (node.alignContent == ViewContentAlignment::End)
+            crossCursor += extra;
+        else if (node.alignContent == ViewContentAlignment::Stretch)
+        {
+            const float addition = extra / static_cast<float>(lines.size());
+            for (Line& line : lines) line.cross += addition;
+            usedCross = availableCross;
+        }
+        else if (node.alignContent == ViewContentAlignment::SpaceBetween &&
+            lines.size() > 1)
+            lineGap += extra / static_cast<float>(lines.size() - 1);
+    }
+
+    for (Line& line : lines)
+    {
+        float usedMain = node.gap *
+            static_cast<float>(line.items.size() - 1);
+        for (const Item& item : line.items) usedMain += item.main;
+        float mainCursor = horizontal ? content.x : content.y;
+        float mainGap = node.gap;
+        if (node.justifyContent == ViewJustification::Center)
+            mainCursor += std::max(0.0f,
+                (availableMain - usedMain) * 0.5f);
+        else if (node.justifyContent == ViewJustification::End)
+            mainCursor += std::max(0.0f, availableMain - usedMain);
+        else if (node.justifyContent == ViewJustification::SpaceBetween &&
+            line.items.size() > 1 && availableMain > usedMain)
+            mainGap += (availableMain - usedMain) /
+                static_cast<float>(line.items.size() - 1);
+
+        for (Item& item : line.items)
+        {
+            ViewNode& child = *item.node;
+            const ViewAlignment alignment =
+                child.alignSelf == ViewAlignment::Auto
+                ? node.alignItems : child.alignSelf;
+            const ViewLength& crossLength = horizontal
+                ? child.height : child.width;
+            const float intrinsicCross = horizontal
+                ? IntrinsicHeight(child) : IntrinsicWidth(child);
+            const float proposedCross = ResolveOuterCrossSize(child,
+                crossLength, intrinsicCross, line.cross, alignment,
+                !horizontal);
+            const ResolvedNodeSize resolved = ResolveOuterNodeSize(child,
+                horizontal ? item.main : proposedCross,
+                horizontal ? proposedCross : item.main);
+            const float resolvedMain = horizontal
+                ? resolved.width : resolved.height;
+            const float resolvedCross = horizontal
+                ? resolved.height : resolved.width;
+            const float crossOffset = AlignOffset(
+                alignment, line.cross, resolvedCross);
+            if (horizontal)
+                LayoutNode(child, { mainCursor,
+                    crossCursor + crossOffset,
+                    resolvedMain, resolvedCross });
+            else
+                LayoutNode(child, { crossCursor + crossOffset,
+                    mainCursor, resolvedCross, resolvedMain });
+            mainCursor += resolvedMain + mainGap;
+        }
+        crossCursor += line.cross + lineGap;
+    }
+}
+
 void LayoutGrid(ViewNode& node, const ViewRect& content)
 {
     std::vector<ViewNode*> visible;
@@ -1269,10 +1516,15 @@ void LayoutNode(ViewNode& node, const ViewRect& frame)
     node.scrollViewportExtent = 0.0f;
     node.scrollContentExtent = 0.0f;
     const ViewRect content = ContentRect(node);
-    if (node.type == ViewNodeType::Row)
-        LayoutLinear(node, content, true);
-    else if (node.type == ViewNodeType::Column ||
-        node.type == ViewNodeType::List)
+    if (IsFlexContainer(node.type))
+    {
+        const bool horizontal = IsHorizontalFlex(node);
+        if (node.flexWrap == ViewFlexWrap::Wrap)
+            LayoutWrappedFlex(node, content, horizontal);
+        else
+            LayoutLinear(node, content, horizontal);
+    }
+    else if (node.type == ViewNodeType::List)
         LayoutLinear(node, content, false);
     else if (IsVirtualCollection(node.type))
         LayoutVirtualCollection(node, content);
@@ -1369,6 +1621,14 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
     if (!IsValidLocaleTag(node.locale))
     {
         error = "view locale must be an empty or bounded BCP 47 language tag";
+        return false;
+    }
+    if (!IsFlexContainer(node.type) &&
+        (node.flexDirection != ViewFlexDirection::Auto ||
+            node.flexWrap != ViewFlexWrap::NoWrap ||
+            node.alignContent != ViewContentAlignment::Stretch))
+    {
+        error = "flexDirection, flexWrap, and alignContent are reserved for row and column nodes";
         return false;
     }
     if ((node.offsetX != 0.0f || node.offsetY != 0.0f ||

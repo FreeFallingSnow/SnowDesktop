@@ -116,6 +116,9 @@
 
 ---@alias SnowViewLength number|'auto'|'fill'
 ---@alias SnowViewFlexBasis number|'auto'
+---@alias SnowViewFlexDirection 'row'|'column'
+---@alias SnowViewFlexWrap 'noWrap'|'wrap'
+---@alias SnowViewContentAlignment 'start'|'center'|'end'|'stretch'|'spaceBetween'
 ---@alias SnowViewTextWrap 'noWrap'|'wrap'
 ---@alias SnowViewTextOverflow 'clip'|'ellipsis'
 ---@alias SnowViewTextDirection 'auto'|'ltr'|'rtl'
@@ -268,6 +271,9 @@
 ---@field flexBasis? SnowViewFlexBasis Main-axis base size in row/column/list before free-space distribution; defaults to auto.
 ---@field flexGrow? number Non-negative positive-space factor; fill keeps an implicit factor of 1 when this is omitted.
 ---@field flexShrink? number Non-negative overflow factor; defaults to 1, use 0 to preserve the basis.
+---@field flexDirection? SnowViewFlexDirection Main axis for row/column; defaults to row for row and column for column.
+---@field flexWrap? SnowViewFlexWrap Line wrapping for row/column; defaults to noWrap.
+---@field alignContent? SnowViewContentAlignment Distribution of wrapped lines on the cross axis; defaults to stretch.
 ---@field alignItems? SnowViewAlignment
 ---@field alignSelf? SnowViewSelfAlignment
 ---@field justifyContent? 'start'|'center'|'end'|'spaceBetween'

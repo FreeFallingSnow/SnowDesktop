@@ -79,6 +79,12 @@ void TestRepresentativeApplicability()
     Check(ViewNodeAllowsProperty(ViewNodeType::Grid, "columns") &&
             !ViewNodeAllowsProperty(ViewNodeType::Row, "columns"),
         "grid-only properties must be machine readable");
+    Check(ViewNodeAllowsProperty(ViewNodeType::Row, "flexDirection") &&
+            ViewNodeAllowsProperty(ViewNodeType::Column, "flexWrap") &&
+            ViewNodeAllowsProperty(ViewNodeType::Row, "alignContent") &&
+            !ViewNodeAllowsProperty(ViewNodeType::Box, "flexDirection") &&
+            !ViewNodeAllowsProperty(ViewNodeType::List, "flexWrap"),
+        "flex-container properties must be scoped to row and column");
     Check(ViewNodeAllowsProperty(ViewNodeType::Shape, "gridColumn") &&
             ViewNodeAllowsProperty(ViewNodeType::ListItem, "gridRow") &&
             ViewNodeAllowsProperty(ViewNodeType::Button, "columnSpan") &&

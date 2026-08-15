@@ -1054,6 +1054,61 @@ bool ReadJustificationField(lua_State* state, int table,
     return true;
 }
 
+bool ReadFlexDirectionField(lua_State* state, int table,
+    ViewFlexDirection& value, std::string& error)
+{
+    std::string text;
+    if (!ReadStringField(state, table, "flexDirection", text, false, error))
+        return false;
+    if (text.empty()) return true;
+    if (text == "row") value = ViewFlexDirection::Row;
+    else if (text == "column") value = ViewFlexDirection::Column;
+    else
+    {
+        error = "view field 'flexDirection' must be row or column";
+        return false;
+    }
+    return true;
+}
+
+bool ReadFlexWrapField(lua_State* state, int table,
+    ViewFlexWrap& value, std::string& error)
+{
+    std::string text;
+    if (!ReadStringField(state, table, "flexWrap", text, false, error))
+        return false;
+    if (text.empty()) return true;
+    if (text == "noWrap") value = ViewFlexWrap::NoWrap;
+    else if (text == "wrap") value = ViewFlexWrap::Wrap;
+    else
+    {
+        error = "view field 'flexWrap' must be noWrap or wrap";
+        return false;
+    }
+    return true;
+}
+
+bool ReadContentAlignmentField(lua_State* state, int table,
+    ViewContentAlignment& value, std::string& error)
+{
+    std::string text;
+    if (!ReadStringField(state, table, "alignContent", text, false, error))
+        return false;
+    if (text.empty()) return true;
+    if (text == "start") value = ViewContentAlignment::Start;
+    else if (text == "center") value = ViewContentAlignment::Center;
+    else if (text == "end") value = ViewContentAlignment::End;
+    else if (text == "stretch") value = ViewContentAlignment::Stretch;
+    else if (text == "spaceBetween")
+        value = ViewContentAlignment::SpaceBetween;
+    else
+    {
+        error = "view field 'alignContent' has an unsupported value";
+        return false;
+    }
+    return true;
+}
+
 bool ReadTextAlignmentField(lua_State* state, int table,
     ViewTextAlignment& value, std::string& error)
 {
@@ -1413,6 +1468,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     const bool gridNode = node.type == ViewNodeType::Grid ||
         node.type == ViewNodeType::GridList || virtualGridNode;
     const bool flowNode = node.type == ViewNodeType::Flow;
+    const bool flexContainerNode = node.type == ViewNodeType::Row ||
+        node.type == ViewNodeType::Column;
     const bool textResourceNode = textNode || labelNode || radioNode ||
         monthCalendarNode;
     if (labelNode &&
@@ -1487,6 +1544,14 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     if (virtualListNode && FieldPresent(state, index, "columnGap"))
     {
         error = "virtualList nodes accept rowGap but reject columnGap";
+        return false;
+    }
+    if (!flexContainerNode &&
+        (FieldPresent(state, index, "flexDirection") ||
+            FieldPresent(state, index, "flexWrap") ||
+            FieldPresent(state, index, "alignContent")))
+    {
+        error = "flexDirection, flexWrap, and alignContent are reserved for row and column nodes";
         return false;
     }
     if (gridNode && !FieldPresent(state, index, "columns"))
@@ -1783,6 +1848,11 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadFloatField(state, index, "flexGrow", node.flexGrow, error) ||
         !ReadFloatField(state, index, "flexShrink",
             node.flexShrink, error) ||
+        !ReadFlexDirectionField(state, index,
+            node.flexDirection, error) ||
+        !ReadFlexWrapField(state, index, node.flexWrap, error) ||
+        !ReadContentAlignmentField(state, index,
+            node.alignContent, error) ||
         !ReadFloatField(state, index, "fontSize", node.fontSize, error) ||
         !ReadNonNegativeSizeField(state, index, "fontWeight",
             node.fontWeight, false, error) ||

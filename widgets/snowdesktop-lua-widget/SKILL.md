@@ -185,6 +185,11 @@ of row, column, or list. A numeric/auto basis participates before free-space
 distribution; grow handles positive space and shrink handles overflow while
 respecting min sizes. `flexShrink=0` preserves an item's basis, and `fill`
 keeps an implicit grow factor of 1 when `flexGrow` is omitted.
+Probe `view.flex.layout` before setting `flexDirection`, `flexWrap`, or
+`alignContent` on row/column. Direction accepts row/column, wrap accepts
+noWrap/wrap, and wrapped lines distribute independently with bounded grow and
+shrink. Reverse directions, wrapReverse, spaceAround, and spaceEvenly are not
+part of this feature.
 Probe `view.text.flow` before using `textWrap`, `maxLines`, `overflowText`, or
 `verticalAlign` on text and label-bearing nodes. Plain text and labels default
 to `noWrap` plus `ellipsis`; `styledText` defaults to `wrap` plus `clip`.
