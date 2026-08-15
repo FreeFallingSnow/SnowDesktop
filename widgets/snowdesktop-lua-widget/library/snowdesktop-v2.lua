@@ -144,7 +144,10 @@
 ---@field click? SnowInteractionAction
 ---@field doubleClick? SnowInteractionAction
 ---@field contextMenu? SnowInteractionAction
----@field change? SnowInteractionAction Controlled toggle/checkbox/radioGroup/slider value proposal.
+---@field change? SnowInteractionAction Controlled selection, slider, or input value proposal.
+---@field focus? SnowInteractionAction Input gained host keyboard/IME focus.
+---@field blur? SnowInteractionAction Input lost host keyboard/IME focus.
+---@field submit? SnowInteractionAction Single-line Enter or textArea Ctrl+Enter.
 
 ---@class SnowViewChoiceOption
 ---@field key string Stable option key; its interaction target is '<group-key>/<option-key>'.
@@ -183,13 +186,18 @@
 ---@field iconFont? 'fa'|'fluent'|'fluent-regular'
 ---@field shape? 'rectangle'|'roundedRectangle'|'circle'|'ellipse'
 ---@field orientation? 'horizontal'|'vertical' Divider direction, radioGroup/slider axis, or scroll axis; scroll defaults to vertical.
----@field value? number Progress value between 0 and 1, or the explicit controlled slider value.
+---@field value? number|string Numeric progress/slider/numberInput value, or controlled textInput/textArea/searchBox string.
 ---@field values? number[] Required by data-series nodes; 1 to 512 finite samples, with at most 4096 samples across one tree.
----@field min? number Explicit data-series or slider minimum; defaults to 0 for slider.
----@field max? number Explicit data-series or slider maximum; defaults to 1 for slider.
----@field step? number Positive slider step no larger than max-min; defaults to 0.01.
----@field options? SnowViewChoiceOption[] Required by radioGroup; 1 to 64 unique keys and values.
----@field selectedValue? string Required controlled radioGroup value; empty means no selection.
+---@field min? number Explicit data-series, slider, or numberInput minimum; defaults to 0 for controls.
+---@field max? number Explicit data-series, slider, or numberInput maximum; defaults to 1 for controls.
+---@field step? number Positive slider/numberInput step no larger than max-min; defaults to 0.01.
+---@field options? SnowViewChoiceOption[] Required by radioGroup/select; 1 to 64 unique keys and values.
+---@field selectedValue? string Required controlled radioGroup/select value; empty means no selection.
+---@field placeholder? string Input or select placeholder.
+---@field expanded? boolean Required controlled select popup state; defaults to false when omitted.
+---@field selectAll? boolean Select all text on first focus.
+---@field liveUpdate? boolean Emit each input edit when true (default); emit on commit when false.
+---@field maxBytes? integer Input UTF-8 limit from 0/default through 65536; declarative default is the 4096-byte node limit.
 ---@field thickness? number Progress or data-series stroke thickness.
 ---@field trackOpacity? number Progress track or chart guide opacity between 0 and 1.
 ---@field fillOpacity? number Progress or data-series foreground opacity between 0 and 1.
@@ -226,7 +234,7 @@
 ---@field children? SnowViewNode[]
 
 ---@class SnowViewNode: SnowViewNodeOptions
----@field type 'box'|'row'|'column'|'grid'|'flow'|'stack'|'scroll'|'list'|'gridList'|'virtualList'|'virtualGrid'|'listItem'|'text'|'image'|'button'|'link'|'toggle'|'checkbox'|'radioGroup'|'slider'|'icon'|'iconButton'|'shape'|'badge'|'divider'|'progressBar'|'progressRing'|'meter'|'sparkline'|'lineChart'|'barChart'|'waveform'|'spectrum'|'spacer'
+---@field type 'box'|'row'|'column'|'grid'|'flow'|'stack'|'scroll'|'list'|'gridList'|'virtualList'|'virtualGrid'|'listItem'|'text'|'textInput'|'textArea'|'searchBox'|'numberInput'|'select'|'image'|'button'|'link'|'toggle'|'checkbox'|'radioGroup'|'slider'|'icon'|'iconButton'|'shape'|'badge'|'divider'|'progressBar'|'progressRing'|'meter'|'sparkline'|'lineChart'|'barChart'|'waveform'|'spectrum'|'spacer'
 
 ---@class SnowInteractionShape
 ---@field type 'rect'|'roundedRect'|'circle'
@@ -345,7 +353,7 @@
 
 ---@class SnowWidgetEvent
 ---@field kind 'visibility'|'resize'|'pointer'|'timer'|'schedule'|'action'|'selection'|'environment'|'panel'|'data.change'|'task.complete'
----@field action? 'click'|'change'|'doubleClick'|'pointerDown'|'pointerMove'|'pointerUp'|'wheel'|'opened'|'closed'|string
+---@field action? 'click'|'change'|'focus'|'blur'|'submit'|'doubleClick'|'pointerDown'|'pointerMove'|'pointerUp'|'wheel'|'opened'|'closed'|string
 ---@field id? string
 ---@field name? string
 ---@field missed? integer
@@ -362,10 +370,17 @@
 ---@field targetKey? string Stable immediate interaction region key.
 ---@field previousChecked? boolean Current controlled value for toggle/checkbox change events.
 ---@field checked? boolean Proposed next controlled value for toggle/checkbox change events; the host does not persist it.
----@field previousSelection? string Current radioGroup selectedValue for change events.
----@field selection? string Proposed radioGroup option value; the host does not persist it.
+---@field previousSelection? string Current radioGroup/select selectedValue for change events.
+---@field selection? string Proposed radioGroup/select option value; the host does not persist it.
+---@field previousExpanded? boolean Current select expanded state for click events.
+---@field expanded? boolean Proposed select expanded state; the host does not persist it.
 ---@field previousControlValue? number Current slider value for change events.
----@field controlValue? number Proposed step-rounded slider value; the host does not persist it.
+---@field controlValue? number Proposed slider value or valid numberInput text value; the host does not persist it.
+---@field previousText? string Input value before a change proposal.
+---@field text? string Proposed input value, or the current value for focus/blur/submit.
+---@field numberValid? boolean Whether numberInput text is a complete finite value within min/max.
+---@field committed? boolean True for commit-mode or cancellation-reversion change events.
+---@field cancelled? boolean True when Escape reverts an input or reports blur cancellation.
 ---@field clickCount? integer
 ---@field trustedGesture? boolean
 ---@field surface? 'desktop'|'panel'
@@ -578,6 +593,31 @@ function view.listItem(options) end
 ---@param options SnowViewNodeOptions
 ---@return SnowViewNode
 function view.text(options) end
+
+---Controlled single-line host input with keyboard, selection, clipboard proxy, and IME. Requires view.inputControls.
+---@param options SnowViewNodeOptions
+---@return SnowViewNode
+function view.textInput(options) end
+
+---Controlled multiline host input; Enter inserts a line and Ctrl+Enter submits. Requires view.inputControls.
+---@param options SnowViewNodeOptions
+---@return SnowViewNode
+function view.textArea(options) end
+
+---Controlled search input with searchbox semantics and Enter submit. Requires view.inputControls.
+---@param options SnowViewNodeOptions
+---@return SnowViewNode
+function view.searchBox(options) end
+
+---Controlled numeric text input; Up/Down apply step and change reports numberValid/controlValue. Requires view.inputControls.
+---@param options SnowViewNodeOptions
+---@return SnowViewNode
+function view.numberInput(options) end
+
+---Controlled select; click proposes expanded and option change proposes selection. Requires view.inputControls.
+---@param options SnowViewNodeOptions
+---@return SnowViewNode
+function view.select(options) end
 
 ---@param options SnowViewNodeOptions
 ---@return SnowViewNode

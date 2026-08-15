@@ -1046,6 +1046,12 @@ SnowDesktop 不照搬某一个框架，参考优先级如下：
 提供固定行高 `virtualList/virtualGrid` 和 `view.virtualRange`，按实例滚动位置只实体化
 最多 128 个连续项，宿主按全局 1-based 索引布局并校验窗口覆盖可见行。可变行高、集合键盘
 导航和 UIA Collection/Scroll pattern 仍未完成，因此本进度不代表第 13.4 节集合全集完成。
+`view.inputControls` 已一次覆盖 `textInput/textArea/searchBox/numberInput/select`：四类输入
+复用宿主键盘、选择、剪贴板代理和 IME 编辑器，使用组件受控 value 与 change 建议值，支持
+focus/blur/submit、提交模式、字节上限、数字有效性和方向键 step；select 的展开状态和选择值
+同样受控，宿主在组件表面顶层绘制有界选项并返回 expansion/selection 建议。当前仍缺 UIA
+Pattern、通用焦点遍历和可逃逸父 surface 的 popover，因此这里只发布细粒度 feature，不能把
+五类控件计作第 13.4 节“控件契约完整”。
 
 节点规则：
 
@@ -1617,12 +1623,12 @@ v2.0 资源契约：
 - 音频分析分别记录 1/5/10 个订阅下的捕获线程数、CPU、内存、FFT 耗时和发布丢帧；实例数增长不得线性增加捕获客户端。
 - 图片解码、字体解析和 GPU 上传必须计入独立资源预算；缓存不得绕过 Lua 实例内存限制形成无上限宿主内存占用。
 
-当前过渡实现（2026-08-15）发布 `view.tree.core`，支持 `box/row/column/stack/text/image/button/icon/iconButton/shape/progressBar/progressRing/spacer`，以 `view.grid.uniform` 提供 1–64 个等宽列、行优先顺序和独立行列间距的基础 `grid`（不包含 track/span/虚拟化），并以 `view.flow.wrap` 提供跳过隐藏项、独立行列间距、逐行 justify 和行内 align 的横向换行 `flow`（不包含纵向 flow/masonry/滚动/虚拟化）；`view.statusVisuals` 公开 `badge/divider/meter`，`view.dataSeries` 公开 `sparkline/lineChart/barChart/waveform/spectrum`，`view.selectionControls` 公开受控 `toggle/checkbox`，`view.actionControls` 一次公开 `link/radioGroup/slider`：link 使用宿主链接语义与实时 hover/pressed 绘制，radioGroup 为每个选项生成独立稳定命中区和 `previousSelection/selection` 建议值，slider 以捕获的左键拖动持续返回 step 对齐的 `previousControlValue/controlValue`；所有受控值均由组件写回，宿主不替组件持久化，元素各自支持 contextMenu；meter、slider 与数据图形要求无障碍标签，数据图形每节点最多 512 个有限样本、全树最多 4096 个并支持自动或显式 `min/max` 值域、
+当前过渡实现（2026-08-15）发布 `view.tree.core`，支持 `box/row/column/stack/text/image/button/icon/iconButton/shape/progressBar/progressRing/spacer`，以 `view.grid.uniform` 提供 1–64 个等宽列、行优先顺序和独立行列间距的基础 `grid`（不包含 track/span/虚拟化），并以 `view.flow.wrap` 提供跳过隐藏项、独立行列间距、逐行 justify 和行内 align 的横向换行 `flow`（不包含纵向 flow/masonry/滚动/虚拟化）；`view.statusVisuals` 公开 `badge/divider/meter`，`view.dataSeries` 公开 `sparkline/lineChart/barChart/waveform/spectrum`，`view.selectionControls` 公开受控 `toggle/checkbox`，`view.actionControls` 一次公开 `link/radioGroup/slider`：link 使用宿主链接语义与实时 hover/pressed 绘制，radioGroup 为每个选项生成独立稳定命中区和 `previousSelection/selection` 建议值，slider 以捕获的左键拖动持续返回 step 对齐的 `previousControlValue/controlValue`；`view.inputControls` 一次公开 `textInput/textArea/searchBox/numberInput/select`，输入复用宿主键盘、IME、选择和剪贴板代理并投递受控文本/数值建议，select 以组件受控 expanded 状态绘制顶层有界选项；所有受控值均由组件写回，宿主不替组件持久化，元素各自支持 contextMenu；meter、slider 与数据图形要求无障碍标签，数据图形每节点最多 512 个有限样本、全树最多 4096 个并支持自动或显式 `min/max` 值域、
 稳定全树 key、基础线性布局、基础文本/边框样式、宿主 hover/pressed 视觉、元素 click/
 doubleClick/pointer/contextMenu action，以及“先完整校验布局、后原子提交；失败保留上一成功树”。
 其额度为 512 节点、32 层、单节点 4 KiB 文本、全树 64 KiB 文本和 256 个交互元素；未知字段、
 重复 key、非连续 children、错误枚举和越界数值拒绝整次提交。数据图形由宿主直接有界绘制，不展开为逐样本节点或命中区域。它尚不包含完整必选节点矩阵、
-键盘焦点、UIA、RTL、文本换行、可变高度虚拟化、差量资源复用和声明式 panel，因此只发布
+除输入编辑器外的通用键盘焦点、UIA、RTL、文本换行、可变高度虚拟化、差量资源复用和声明式 panel，因此只发布
 细粒度 feature，不发布 `view.tree`，也不计作 M6 完成。
 
 ### 18.9 最终验证入口

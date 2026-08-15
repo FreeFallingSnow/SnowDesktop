@@ -168,6 +168,11 @@ void RegisterViewLibrary(lua_State* state)
         { "virtualGrid", LuaViewVirtualGrid },
         { "listItem", LuaViewListItem },
         { "text", LuaViewText },
+        { "textInput", LuaViewTextInput },
+        { "textArea", LuaViewTextArea },
+        { "searchBox", LuaViewSearchBox },
+        { "numberInput", LuaViewNumberInput },
+        { "select", LuaViewSelect },
         { "image", LuaViewImage },
         { "button", LuaViewButton },
         { "link", LuaViewLink },
@@ -1241,6 +1246,133 @@ void TestVirtualizedCollections()
         "virtualGrid must only materialize interaction regions for visible rows");
     lua_close(state);
 }
+
+void TestDeclarativeInputControls()
+{
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "Lua state must be available");
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    Check(luaL_dostring(state, R"lua(
+        return view.column({
+            key = "form",
+            gap = 4,
+            children = {
+                view.textInput({
+                    key = "name", value = "Snow", placeholder = "Name",
+                    maxBytes = 64, action = { id = "name.change" },
+                    events = {
+                        focus = { id = "name.focus" },
+                        blur = { id = "name.blur" },
+                        submit = { id = "name.submit" },
+                        contextMenu = { id = "name.menu" },
+                    },
+                    accessibility = { label = "Name" },
+                }),
+                view.textArea({
+                    key = "notes", value = "one\ntwo", height = 80,
+                    liveUpdate = false, action = { id = "notes.change" },
+                    accessibility = { label = "Notes" },
+                }),
+                view.searchBox({
+                    key = "search", value = "clock",
+                    action = { id = "search.change" },
+                    events = { submit = { id = "search.submit" } },
+                    accessibility = { label = "Search" },
+                }),
+                view.numberInput({
+                    key = "count", value = 5, min = 0, max = 10, step = 1,
+                    selectAll = true, action = { id = "count.change" },
+                    accessibility = { label = "Count" },
+                }),
+                view.select({
+                    key = "theme", selectedValue = "dark", expanded = true,
+                    placeholder = "Theme",
+                    options = {
+                        { key = "light", value = "light", label = "Light" },
+                        { key = "dark", value = "dark", label = "Dark" },
+                    },
+                    action = { id = "theme.change" },
+                    events = { click = { id = "theme.toggle" } },
+                    accessibility = { label = "Theme" },
+                }),
+            },
+        })
+    )lua") == LUA_OK,
+        "declarative input fixture must evaluate");
+    ViewNode root;
+    std::string error;
+    Check(ParseLuaViewTree(state, -1, root, error) &&
+            root.children.size() == 5 &&
+            root.children[0].type == ViewNodeType::TextInput &&
+            root.children[0].inputValue == "Snow" &&
+            root.children[1].type == ViewNodeType::TextArea &&
+            !root.children[1].liveUpdate &&
+            root.children[2].type == ViewNodeType::SearchBox &&
+            root.children[3].type == ViewNodeType::NumberInput &&
+            Near(root.children[3].value, 5.0f) &&
+            root.children[4].type == ViewNodeType::Select &&
+            root.children[4].expanded,
+        "all five declarative input types must retain controlled fields");
+    Check(ValidateAndLayoutViewTree(root, 260.0f, 320.0f, error),
+        "declarative input fixture must validate and lay out");
+
+    std::vector<ViewInputControl> controls;
+    Check(CollectViewInputControls(root, controls, error) &&
+            controls.size() == 4 &&
+            controls[0].key == "name" &&
+            controls[0].changeAction.id == "name.change" &&
+            controls[0].focusAction.id == "name.focus" &&
+            controls[1].type == ViewNodeType::TextArea &&
+            controls[3].type == ViewNodeType::NumberInput &&
+            controls[3].value == "5",
+        "text-like inputs must produce typed host-control descriptors");
+
+    std::vector<InteractionRegion> regions;
+    Check(CollectViewInteractionRegions(root, regions, error) &&
+            regions.size() == 7 && regions[0].key == "name" &&
+            regions[0].cursor == "text" &&
+            !regions[0].events.contains("change") &&
+            !regions[0].events.contains("focus") &&
+            regions[4].key == "theme" &&
+            regions[4].hasExpandedProposal &&
+            regions[5].key == "theme/light" &&
+            regions[6].key == "theme/dark",
+        "inputs and expanded select options must expose non-overlapping host and pointer regions");
+
+    WidgetInteractionRegions interaction;
+    interaction.BeginFrame();
+    for (auto& region : regions)
+        Check(interaction.Submit(std::move(region), error),
+            "declarative input regions must submit");
+    interaction.CommitFrame();
+    const auto toggle = interaction.ResolveAction(
+        "theme", "click");
+    const auto choice = interaction.ResolveAction(
+        "theme/light", "click");
+    Check(toggle && toggle->previousExpanded == true &&
+            toggle->expanded == false && choice &&
+            choice->previousSelection == "dark" &&
+            choice->selection == "light",
+        "select must propose controlled expansion and selection values");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.textInput({
+            key = "bad", value = "x",
+            action = { id = "bad.change" },
+            events = { click = { id = "bad.click" } },
+            accessibility = { label = "Bad" },
+        })
+    )lua") == LUA_OK,
+        "invalid input event fixture must evaluate");
+    ViewNode invalid;
+    Check(ParseLuaViewTree(state, -1, invalid, error) &&
+            !ValidateAndLayoutViewTree(invalid, 200.0f, 40.0f, error) &&
+            error.find("reject click") != std::string::npos,
+        "controlled text inputs must reject ambiguous click actions");
+    lua_close(state);
+}
 }
 
 int main()
@@ -1257,6 +1389,7 @@ int main()
     TestFlowParsingAndLayout();
     TestScrollableCollections();
     TestVirtualizedCollections();
+    TestDeclarativeInputControls();
     std::cout << "Widget view tree tests passed\n";
     return 0;
 }

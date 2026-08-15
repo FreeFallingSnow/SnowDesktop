@@ -394,6 +394,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "view.grid.uniform") &&
             snowdesktop::widget_api::SupportsFeature("view.image") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "view.inputControls") &&
             snowdesktop::widget_api::SupportsFeature("view.scroll") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.selectionControls") &&

@@ -851,6 +851,11 @@ bool ParseNodeType(std::string_view type, ViewNodeType& result)
     else if (type == "virtualGrid") result = ViewNodeType::VirtualGrid;
     else if (type == "listItem") result = ViewNodeType::ListItem;
     else if (type == "text") result = ViewNodeType::Text;
+    else if (type == "textInput") result = ViewNodeType::TextInput;
+    else if (type == "textArea") result = ViewNodeType::TextArea;
+    else if (type == "searchBox") result = ViewNodeType::SearchBox;
+    else if (type == "numberInput") result = ViewNodeType::NumberInput;
+    else if (type == "select") result = ViewNodeType::Select;
     else if (type == "image") result = ViewNodeType::Image;
     else if (type == "button") result = ViewNodeType::Button;
     else if (type == "link") result = ViewNodeType::Link;
@@ -934,7 +939,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
                 "source", "font", "fit", "alignment", "interpolation",
                 "alt",
                 "shape", "orientation", "value", "values", "min", "max",
-                "step", "options", "selectedValue",
+                "step", "options", "selectedValue", "placeholder",
+                "expanded", "selectAll", "liveUpdate", "maxBytes",
                 "thickness", "trackOpacity",
                 "fillOpacity", "width", "height",
                 "padding", "gap", "columns", "columnGap", "rowGap",
@@ -959,6 +965,13 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     const bool checkControlNode = node.type == ViewNodeType::Toggle ||
         node.type == ViewNodeType::Checkbox;
     const bool radioNode = node.type == ViewNodeType::RadioGroup;
+    const bool selectNode = node.type == ViewNodeType::Select;
+    const bool textInputNode = node.type == ViewNodeType::TextInput ||
+        node.type == ViewNodeType::TextArea ||
+        node.type == ViewNodeType::SearchBox;
+    const bool numberInputNode = node.type == ViewNodeType::NumberInput;
+    const bool inputNode = textInputNode || numberInputNode;
+    const bool choiceNode = radioNode || selectNode;
     const bool sliderNode = node.type == ViewNodeType::Slider;
     const bool scrollNode = node.type == ViewNodeType::Scroll;
     const bool virtualListNode =
@@ -968,7 +981,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     const bool virtualCollectionNode = virtualListNode || virtualGridNode;
     const bool scrollContainerNode = scrollNode || virtualCollectionNode;
     const bool listItemNode = node.type == ViewNodeType::ListItem;
-    const bool controlNode = checkControlNode || radioNode || sliderNode;
+    const bool controlNode = checkControlNode || choiceNode || sliderNode ||
+        inputNode;
     const bool linkNode = node.type == ViewNodeType::Link;
     const bool labelNode = node.type == ViewNodeType::Button ||
         linkNode || checkControlNode;
@@ -1083,9 +1097,10 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         error = "virtual collection nodes require itemCount, itemExtent, and firstIndex";
         return false;
     }
-    if (!progressNode && !sliderNode && FieldPresent(state, index, "value"))
+    if (!progressNode && !sliderNode && !inputNode &&
+        FieldPresent(state, index, "value"))
     {
-        error = "only progress and slider nodes accept 'value'";
+        error = "only progress, slider, and input nodes accept 'value'";
         return false;
     }
     if (!checkControlNode && FieldPresent(state, index, "checked"))
@@ -1093,28 +1108,51 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         error = "only toggle and checkbox nodes accept checked";
         return false;
     }
-    if (!checkControlNode && !radioNode &&
+    if (!checkControlNode && !choiceNode &&
         FieldPresent(state, index, "checkedStyle"))
     {
         error = "only selection controls accept checkedStyle";
         return false;
     }
-    if (!seriesNode && !sliderNode && (FieldPresent(state, index, "values") ||
-            FieldPresent(state, index, "min") ||
+    if (!seriesNode && FieldPresent(state, index, "values"))
+    {
+        error = "only data-series nodes accept values";
+        return false;
+    }
+    if (!seriesNode && !sliderNode && !numberInputNode &&
+        (FieldPresent(state, index, "min") ||
             FieldPresent(state, index, "max")))
     {
-        error = "only data-series and slider nodes accept values, min, and max";
+        error = "only data-series, slider, and numberInput nodes accept values, min, and max";
         return false;
     }
-    if (!sliderNode && FieldPresent(state, index, "step"))
+    if (!sliderNode && !numberInputNode && FieldPresent(state, index, "step"))
     {
-        error = "only slider nodes accept step";
+        error = "only slider and numberInput nodes accept step";
         return false;
     }
-    if (!radioNode && (FieldPresent(state, index, "options") ||
+    if (!choiceNode && (FieldPresent(state, index, "options") ||
             FieldPresent(state, index, "selectedValue")))
     {
-        error = "only radioGroup nodes accept options and selectedValue";
+        error = "only radioGroup and select nodes accept options and selectedValue";
+        return false;
+    }
+    if (!inputNode && (FieldPresent(state, index, "selectAll") ||
+            FieldPresent(state, index, "liveUpdate") ||
+            FieldPresent(state, index, "maxBytes")))
+    {
+        error = "input fields are reserved for textInput, textArea, searchBox, and numberInput";
+        return false;
+    }
+    if (!inputNode && !selectNode &&
+        FieldPresent(state, index, "placeholder"))
+    {
+        error = "placeholder is reserved for input and select nodes";
+        return false;
+    }
+    if (!selectNode && FieldPresent(state, index, "expanded"))
+    {
+        error = "expanded is reserved for select nodes";
         return false;
     }
     if (!progressNode && !seriesNode && !dividerNode && (
@@ -1149,14 +1187,15 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         error = "toggle and checkbox nodes require checked";
         return false;
     }
-    if (sliderNode && !FieldPresent(state, index, "value"))
+    if ((sliderNode || inputNode) &&
+        !FieldPresent(state, index, "value"))
     {
-        error = "slider nodes require value";
+        error = "slider and input nodes require value";
         return false;
     }
-    if (radioNode && !FieldPresent(state, index, "selectedValue"))
+    if (choiceNode && !FieldPresent(state, index, "selectedValue"))
     {
-        error = "radioGroup nodes require selectedValue";
+        error = "radioGroup and select nodes require selectedValue";
         return false;
     }
     if (!ReadStringField(state, index, "key", node.key, true, error))
@@ -1166,6 +1205,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         node.padding = 4.0f;
     if (radioNode && !FieldPresent(state, index, "gap"))
         node.gap = 8.0f;
+    if (inputNode && !FieldPresent(state, index, "padding"))
+        node.padding = 8.0f;
     const char* contentField = iconNode ? "glyph" :
         (labelNode ? "label" : "text");
     if (!ReadStringField(state, index, contentField,
@@ -1200,7 +1241,6 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             node.rowGap, error) ||
         !ReadFloatField(state, index, "flexGrow", node.flexGrow, error) ||
         !ReadFloatField(state, index, "fontSize", node.fontSize, error) ||
-        !ReadFloatField(state, index, "value", node.value, error) ||
         !ReadFloatField(state, index, "thickness", node.thickness, error) ||
         !ReadFloatField(state, index, "trackOpacity",
             node.trackOpacity, error) ||
@@ -1208,6 +1248,9 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             node.fillOpacity, error) ||
         !ReadBoolField(state, index, "bold", node.bold, error) ||
         !ReadBoolField(state, index, "checked", node.checked, error) ||
+        !ReadBoolField(state, index, "expanded", node.expanded, error) ||
+        !ReadBoolField(state, index, "selectAll", node.selectAll, error) ||
+        !ReadBoolField(state, index, "liveUpdate", node.liveUpdate, error) ||
         !ReadBoolField(state, index, "showScrollbar",
             node.showScrollbar, error) ||
         !ReadBoolField(state, index, "visible", node.visible, error) ||
@@ -1231,6 +1274,31 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             node.checkedStyle, error))
         return false;
 
+    if (textInputNode)
+    {
+        if (!ReadStringField(state, index, "value",
+                node.inputValue, true, error))
+            return false;
+    }
+    else if (progressNode || sliderNode || numberInputNode)
+    {
+        if (!ReadFloatField(state, index, "value", node.value, error))
+            return false;
+    }
+    if (inputNode || selectNode)
+    {
+        if (!ReadStringField(state, index, "placeholder",
+                node.placeholder, false, error))
+            return false;
+    }
+    if (inputNode)
+    {
+        if (
+            !ReadNonNegativeSizeField(state, index, "maxBytes",
+                node.maximumUtf8Bytes, false, error))
+            return false;
+    }
+
     if (scrollContainerNode && !FieldPresent(state, index, "orientation"))
         node.orientation = ViewOrientation::Vertical;
 
@@ -1242,13 +1310,13 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             node.height = { ViewLengthKind::Fill, 0.0f };
     }
 
-    if (sliderNode)
+    if (sliderNode || numberInputNode)
     {
         if (!ReadFloatField(state, index, "min", node.minimum, error) ||
             !ReadFloatField(state, index, "max", node.maximum, error) ||
             !ReadFloatField(state, index, "step", node.step, error))
             return false;
-        if (node.orientation == ViewOrientation::Vertical)
+        if (sliderNode && node.orientation == ViewOrientation::Vertical)
         {
             if (!FieldPresent(state, index, "width"))
                 node.width = { ViewLengthKind::Auto, 0.0f };
@@ -1257,7 +1325,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         }
     }
 
-    if (radioNode)
+    if (choiceNode)
     {
         if (!ReadStringField(state, index, "selectedValue",
                 node.selectedValue, true, error) ||
@@ -1318,7 +1386,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         if (!ValidateObjectFields(state, events,
                 { "pointerEnter", "pointerLeave", "pointerDown",
                     "pointerUp", "click", "doubleClick", "contextMenu",
-                    "change" },
+                    "change", "focus", "blur", "submit" },
                 "view events", error))
         {
             lua_pop(state, 1);
@@ -1326,7 +1394,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         }
         for (const char* eventName : { "pointerEnter", "pointerLeave",
             "pointerDown", "pointerUp", "click", "doubleClick",
-            "contextMenu", "change" })
+            "contextMenu", "change", "focus", "blur", "submit" })
         {
             lua_getfield(state, events, eventName);
             if (!lua_isnil(state, -1))
@@ -1460,6 +1528,23 @@ int LuaViewListItem(lua_State* state)
     return MakeNode(state, "listItem");
 }
 int LuaViewText(lua_State* state) { return MakeNode(state, "text"); }
+int LuaViewTextInput(lua_State* state)
+{
+    return MakeNode(state, "textInput");
+}
+int LuaViewTextArea(lua_State* state)
+{
+    return MakeNode(state, "textArea");
+}
+int LuaViewSearchBox(lua_State* state)
+{
+    return MakeNode(state, "searchBox");
+}
+int LuaViewNumberInput(lua_State* state)
+{
+    return MakeNode(state, "numberInput");
+}
+int LuaViewSelect(lua_State* state) { return MakeNode(state, "select"); }
 int LuaViewImage(lua_State* state) { return MakeNode(state, "image"); }
 int LuaViewButton(lua_State* state) { return MakeNode(state, "button"); }
 int LuaViewLink(lua_State* state) { return MakeNode(state, "link"); }

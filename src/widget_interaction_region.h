@@ -60,6 +60,8 @@ struct InteractionResolvedAction
     std::optional<float> controlValue;
     std::optional<std::string> previousSelection;
     std::optional<std::string> selection;
+    std::optional<bool> previousExpanded;
+    std::optional<bool> expanded;
 };
 
 enum class InteractionShapeType
@@ -118,6 +120,8 @@ struct InteractionRegion
     bool vertical = false;
     std::string currentSelection;
     std::string proposedSelection;
+    bool hasExpandedProposal = false;
+    bool expanded = false;
     bool enabled = true;
 
     bool operator==(const InteractionRegion&) const = default;

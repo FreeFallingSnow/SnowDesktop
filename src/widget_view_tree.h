@@ -28,6 +28,11 @@ enum class ViewNodeType
     VirtualGrid,
     ListItem,
     Text,
+    TextInput,
+    TextArea,
+    SearchBox,
+    NumberInput,
+    Select,
     Image,
     Button,
     Link,
@@ -162,6 +167,8 @@ struct ViewNode
     ViewNodeType type = ViewNodeType::Box;
     std::string key;
     std::string text;
+    std::string inputValue;
+    std::string placeholder;
     std::string imageResourceName;
     std::string fontResourceName;
     std::string alt;
@@ -201,6 +208,10 @@ struct ViewNode
     std::optional<float> seriesMaximum;
     bool bold = false;
     bool checked = false;
+    bool expanded = false;
+    bool selectAll = false;
+    bool liveUpdate = true;
+    std::size_t maximumUtf8Bytes = 0;
     bool showScrollbar = true;
     std::string selectedValue;
     std::vector<ViewChoiceOption> options;
@@ -231,6 +242,29 @@ struct ViewScrollViewport
     float contentExtent = 0.0f;
     float offset = 0.0f;
     float maximum = 0.0f;
+};
+
+struct ViewInputControl
+{
+    ViewNodeType type = ViewNodeType::TextInput;
+    std::string key;
+    std::string value;
+    std::string placeholder;
+    ViewRect frame;
+    std::optional<ViewRect> clip;
+    float fontSize = 15.0f;
+    float padding = 8.0f;
+    bool enabled = true;
+    bool selectAll = false;
+    bool liveUpdate = true;
+    std::size_t maximumUtf8Bytes = 0;
+    float minimum = 0.0f;
+    float maximum = 1.0f;
+    float step = 0.01f;
+    InteractionAction changeAction;
+    InteractionAction focusAction;
+    InteractionAction blurAction;
+    InteractionAction submitAction;
 };
 
 struct ViewVirtualRange
@@ -267,6 +301,8 @@ bool ValidateAndLayoutViewTree(ViewNode& root, float width, float height,
     std::string& error);
 bool CollectViewInteractionRegions(const ViewNode& root,
     std::vector<InteractionRegion>& regions, std::string& error);
+bool CollectViewInputControls(const ViewNode& root,
+    std::vector<ViewInputControl>& controls, std::string& error);
 bool ApplyViewScrollOffsets(ViewNode& root,
     const ViewScrollOffsetResolver& resolver,
     std::vector<ViewScrollViewport>& viewports, std::string& error);
@@ -276,5 +312,7 @@ bool ComputeViewVirtualRange(std::size_t itemCount, float itemExtent,
     ViewVirtualRange& range, std::string& error);
 ViewRect ViewRadioOptionFrame(
     const ViewNode& node, std::size_t optionIndex) noexcept;
+ViewRect ViewSelectOptionFrame(const ViewNode& node,
+    std::size_t optionIndex, float viewportHeight) noexcept;
 const char* ViewNodeTypeName(ViewNodeType type) noexcept;
 }

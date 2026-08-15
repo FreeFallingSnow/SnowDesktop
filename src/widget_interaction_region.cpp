@@ -386,6 +386,11 @@ WidgetInteractionRegions::ResolveAction(
         result.controlValue = std::clamp(
             proposed, region->minimum, region->maximum);
     }
+    else if (resolvedName == "click" && region->hasExpandedProposal)
+    {
+        result.previousExpanded = region->expanded;
+        result.expanded = !region->expanded;
+    }
     return result;
 }
 

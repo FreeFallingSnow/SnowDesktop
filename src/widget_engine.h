@@ -421,10 +421,23 @@ struct LuaWidget
         std::string id;
         std::string storageKey;
         RECT rect{};
+        std::optional<RECT> clipRect;
         bool value = false;
+        bool enabled = true;
+        bool controlled = false;
+        bool numeric = false;
         bool selectAll = true;
         bool liveUpdate = false;
         bool multiline = false;
+        std::string controlledText;
+        std::string placeholder;
+        snowdesktop::widget_runtime::InteractionAction changeAction;
+        snowdesktop::widget_runtime::InteractionAction focusAction;
+        snowdesktop::widget_runtime::InteractionAction blurAction;
+        snowdesktop::widget_runtime::InteractionAction submitAction;
+        float minimum = 0.0f;
+        float maximum = 1.0f;
+        float step = 0.01f;
         float fontSize = 15.0f;
         float padding = 8.0f;
         int contentHeight = 0;
@@ -1216,6 +1229,17 @@ private:
         const std::string& targetKey, const char* eventName,
         int x, int y, int button, int delta, int clickCount = 0,
         bool includeRetired = false);
+    void DispatchHostInputChange(const std::wstring& widgetId,
+        const std::string& targetKey,
+        const snowdesktop::widget_runtime::InteractionAction& action,
+        const std::wstring& previousText, const std::wstring& text,
+        bool numeric, float minimum, float maximum,
+        bool committed, bool cancelled, const char* source);
+    void DispatchHostInputAction(const std::wstring& widgetId,
+        const std::string& targetKey,
+        const snowdesktop::widget_runtime::InteractionAction& action,
+        const char* eventName, const std::wstring& text,
+        bool cancelled, const char* source);
     void DispatchInteractionTransition(LuaWidget& widget,
         const snowdesktop::widget_runtime::InteractionHoverTransition& transition,
         int x, int y);
@@ -1381,6 +1405,10 @@ private:
         std::wstring widgetId;
         std::string id;
         std::string storageKey;
+        snowdesktop::widget_runtime::InteractionAction changeAction;
+        snowdesktop::widget_runtime::InteractionAction focusAction;
+        snowdesktop::widget_runtime::InteractionAction blurAction;
+        snowdesktop::widget_runtime::InteractionAction submitAction;
         std::wstring text;
         std::wstring originalText;
         size_t cursor = 0;
@@ -1389,8 +1417,13 @@ private:
         size_t compositionCursor = 0;
         wchar_t pendingHighSurrogate = 0;
         bool pointerSelecting = false;
+        bool controlled = false;
+        bool numeric = false;
         bool liveUpdate = true;
         bool multiline = false;
+        float minimum = 0.0f;
+        float maximum = 1.0f;
+        float step = 0.01f;
         std::size_t maximumUtf8Bytes = 0;
     };
     FocusedHostInput focusedHostInput_;

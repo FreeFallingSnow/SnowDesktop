@@ -90,6 +90,7 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `sparkline/lineChart/barChart/waveform/spectrum`，`view.statusVisuals` 提供
 `badge/divider/meter`，`view.selectionControls` 提供 `toggle/checkbox`，
 `view.actionControls` 提供 `link/radioGroup/slider`，
+`view.inputControls` 一次提供 `textInput/textArea/searchBox/numberInput/select`，
 `view.grid.uniform` 提供基础 `grid`，`view.flow.wrap` 提供横向换行 `flow`。
 `view.scroll` 提供宿主滚动视口，`view.collection.basic` 提供基础集合，
 `view.collection.virtual` 提供固定行高虚拟集合与可见范围查询。
@@ -193,6 +194,35 @@ view.slider({
     accessibility = { label = "Volume" },
 })
 ```
+
+`view.inputControls` 的五类节点都是声明式受控控件。`textInput/textArea/searchBox`
+必须提供字符串 `value`，`numberInput` 必须提供有限数值 `value/min/max/step`，四类输入
+都要求 `action` 简写或 `events.change` 和 `accessibility.label`，不得绑定 `events.click`。
+宿主复用同一套键盘、选择、剪贴板代理和 IME 编辑器：聚焦期间宿主持有编辑缓冲，
+`change` 通过 `previousText/text` 只报告建议值；组件更新 model 后下一棵树才成为权威值，
+Lua 不会获得剪贴板内容或原生句柄。`liveUpdate=false` 将 change 延迟到提交，Escape 在
+实时模式下用 `cancelled=true` 建议恢复初始值。`focus/blur/submit` 为可选动作；单行 Enter
+提交，`textArea` Enter 换行而 Ctrl+Enter 提交。`numberInput` 的上下方向键按 step 调整，
+文本是完整且位于范围内的数字时，change 还带 `numberValid=true` 和 `controlValue`。
+
+```lua
+view.searchBox({
+    key = "query",
+    value = model.query,
+    placeholder = "Search",
+    maxBytes = 256,
+    action = { id = "query.change" },
+    events = { submit = { id = "query.submit" } },
+    accessibility = { label = "Search" },
+})
+```
+
+`select` 需要 `selectedValue`、1–64 个稳定选项、`events.change`（可用 `action` 简写）、
+`events.click` 和 `accessibility.label`。展开状态同样由组件通过 `expanded` 控制：触发区 click
+报告 `previousExpanded/expanded`，展开后每个 `<select-key>/<option-key>` 选项 change 报告
+`previousSelection/selection`。宿主在组件内表面顶层绘制选项并优先命中，不调用阻塞式系统
+菜单；组件收到 click/change 后应更新 model 并 invalidate。当前弹层仍受组件及父滚动视口
+裁剪，跨组件表面的通用 popover 属于后续宿主 surface API。
 
 `grid` 是行优先的均匀网格容器，必须提供 1–64 的整数 `columns`；每列等宽，
 `columnGap/rowGap` 分别控制水平和垂直间距，未提供时回退到 `gap`。隐藏子节点不占格，
@@ -432,10 +462,11 @@ end
 
 ### `control` 文本编辑
 
-`control.textInput(spec)` 和 `control.textArea(spec)` 是当前即时绘制 surface 的
+`control.textInput(spec)` 和 `control.textArea(spec)` 是即时绘制 surface 的兼容入口；新声明式
+组件应优先使用 `view.inputControls`。这两个函数仍是
 宿主管理文本编辑器。组件在每次 `render` 中提交稳定描述符，宿主继续使用 Direct2D
 绘制透明背景、光标、选择、占位文本和 IME 组合下划线；输入值绑定到实例
-`storageKey`，函数返回当前字符串。它们不是 `view.tree.core` 节点，也不向
+`storageKey`，函数返回当前字符串。它们不属于声明式节点，也不向
 Lua 暴露剪贴板内容或原生窗口句柄。
 
 ```lua
@@ -1235,8 +1266,8 @@ view.text({ key = "title", text = "SnowDesktop", font = display })
 
 ## 当前明确未开放
 
-API v2 暂未向沙箱提供完整 `view.tree`、通用即时 region/`view.tree.core` 的键盘焦点/UIA 输出、
+API v2 暂未向沙箱提供完整 `view.tree`、通用即时 region 和非输入节点的键盘焦点/UIA 输出、
 受控二级菜单、`desktop`、旧的同步 `media` 库、HTTP、尚未列出的系统状态、
-通用剪贴板、文件选择和应用启动库。`control.textInput/textArea` 只在聚焦的
+通用剪贴板、文件选择和应用启动库。声明式输入与 `control.textInput/textArea` 只在聚焦的
 宿主管理编辑器内部代理标准剪贴板操作，不允许 Lua 读取剪贴板。其余能力将在对应宿主实现、配额与按需生命周期完成后
 再加入 feature 目录和 LuaLS 定义；不要根据权限词汇自行推测函数名。

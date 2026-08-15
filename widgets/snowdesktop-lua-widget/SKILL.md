@@ -98,6 +98,15 @@ Treat radioGroup and slider as controlled: update component-owned state from
 `<group-key>/<option-key>` targets for independent hover, press, semantics, and
 context menus; slider changes are emitted during captured left-button drag.
 Do not assume keyboard or UI Automation support yet.
+Probe `view.inputControls` for declarative textInput/textArea/searchBox/
+numberInput/select nodes. Treat every value and select expansion as controlled:
+write `text`, valid `controlValue`, `selection`, or `expanded` proposals into the
+component model, then invalidate. Inputs reuse host keyboard, selection,
+clipboard proxy, and IME behavior and may emit focus/blur/submit; they still do
+not expose clipboard data or native handles. Select requires both click (toggle
+proposal) and change (option proposal), and its bounded popup is clipped by the
+widget/parent scroll surface. Do not confuse these nodes with the storage-bound
+immediate `control.textInput/textArea` compatibility calls.
 Probe `view.scroll` for a host-owned vertical or horizontal viewport. Give it
 exactly one child, keep that child visible, and keep the same key so the host
 retains its clamped offset; never offset descendants yourself. Probe
@@ -119,7 +128,8 @@ the future track/span/virtual-grid contract.
 Probe `view.flow.wrap` before using `view.flow`; it wraps fixed/auto-width
 children horizontally, skips hidden children, and supports per-line
 `columnGap`/`rowGap`, but it is not a scrolling or virtualized collection.
-The subset does not yet provide keyboard focus, UI Automation, variable-height
+Outside declarative host inputs, the subset does not yet provide keyboard focus;
+it still does not provide UI Automation, variable-height
 virtualization, or the complete `view.tree` contract. Optional
 `menu(context, model, request)` builds an element's synchronous native context
 menu.

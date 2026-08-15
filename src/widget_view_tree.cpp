@@ -49,10 +49,24 @@ bool IsCheckControlNode(ViewNodeType type) noexcept
         type == ViewNodeType::Checkbox;
 }
 
+bool IsInputNode(ViewNodeType type) noexcept
+{
+    return type == ViewNodeType::TextInput ||
+        type == ViewNodeType::TextArea ||
+        type == ViewNodeType::SearchBox ||
+        type == ViewNodeType::NumberInput;
+}
+
+bool IsChoiceNode(ViewNodeType type) noexcept
+{
+    return type == ViewNodeType::RadioGroup ||
+        type == ViewNodeType::Select;
+}
+
 bool IsControlledNode(ViewNodeType type) noexcept
 {
     return IsCheckControlNode(type) ||
-        type == ViewNodeType::RadioGroup ||
+        IsChoiceNode(type) || IsInputNode(type) ||
         type == ViewNodeType::Slider;
 }
 
@@ -109,6 +123,11 @@ const char* DefaultAccessibilityRole(ViewNodeType type) noexcept
     if (type == ViewNodeType::Slider) return "slider";
     if (type == ViewNodeType::Toggle) return "switch";
     if (type == ViewNodeType::Checkbox) return "checkbox";
+    if (type == ViewNodeType::TextInput ||
+        type == ViewNodeType::TextArea) return "textbox";
+    if (type == ViewNodeType::SearchBox) return "searchbox";
+    if (type == ViewNodeType::NumberInput) return "spinbutton";
+    if (type == ViewNodeType::Select) return "combobox";
     if (IsDataSeriesNode(type)) return "img";
     if (type == ViewNodeType::Meter) return "meter";
     if (type == ViewNodeType::Divider) return "separator";
@@ -189,6 +208,8 @@ float IntrinsicWidth(const ViewNode& node)
         }
         return result + node.padding * 2.0f;
     }
+    if (IsInputNode(node.type) || node.type == ViewNodeType::Select)
+        return 144.0f + node.padding * 2.0f;
     if (node.type == ViewNodeType::Slider)
         return (node.orientation == ViewOrientation::Horizontal
             ? 96.0f : 24.0f) + node.padding * 2.0f;
@@ -307,6 +328,11 @@ float IntrinsicHeight(const ViewNode& node)
             : optionHeight;
         return content + node.padding * 2.0f;
     }
+    if (node.type == ViewNodeType::TextArea)
+        return 96.0f + node.padding * 2.0f;
+    if (IsInputNode(node.type) || node.type == ViewNodeType::Select)
+        return std::max(36.0f, node.fontSize * 1.8f) +
+            node.padding * 2.0f;
     if (node.type == ViewNodeType::Slider)
         return (node.orientation == ViewOrientation::Horizontal
             ? 24.0f : 96.0f) + node.padding * 2.0f;
@@ -841,6 +867,18 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         error = "slider requires min < max, a value in range, and a positive bounded step";
         return false;
     }
+    if (node.type == ViewNodeType::NumberInput &&
+        (!FiniteInRange(node.minimum, -1.0e9f, 1.0e9f) ||
+            !FiniteInRange(node.maximum, -1.0e9f, 1.0e9f) ||
+            !FiniteInRange(node.value, -1.0e9f, 1.0e9f) ||
+            !FiniteInRange(node.step, 0.000001f, 1.0e9f) ||
+            node.minimum >= node.maximum || node.value < node.minimum ||
+            node.value > node.maximum ||
+            node.step > node.maximum - node.minimum))
+    {
+        error = "numberInput requires min < max, a value in range, and a positive bounded step";
+        return false;
+    }
     if (IsGridContainer(node.type) &&
         (node.columns == 0 || node.columns > 64))
     {
@@ -971,14 +1009,26 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         }
     }
     if (node.text.size() > ViewTreeLimits::MaximumTextBytes ||
+        node.inputValue.size() > ViewTreeLimits::MaximumTextBytes ||
+        node.placeholder.size() > ViewTreeLimits::MaximumTextBytes ||
         node.alt.size() > ViewTreeLimits::MaximumTextBytes ||
-        textBytes + node.text.size() + node.alt.size() >
+        textBytes + node.text.size() + node.inputValue.size() +
+            node.placeholder.size() + node.alt.size() >
             ViewTreeLimits::MaximumTotalTextBytes)
     {
         error = "view tree text limit exceeded";
         return false;
     }
-    textBytes += node.text.size() + node.alt.size();
+    textBytes += node.text.size() + node.inputValue.size() +
+        node.placeholder.size() + node.alt.size();
+    if (IsInputNode(node.type) &&
+        (node.maximumUtf8Bytes > 64 * 1024 ||
+            (node.maximumUtf8Bytes > 0 &&
+                node.inputValue.size() > node.maximumUtf8Bytes)))
+    {
+        error = "input maxBytes must be at most 65536 and contain the controlled value";
+        return false;
+    }
     if (node.accessibilityRole.size() > 128 ||
         node.accessibilityLabel.size() >
             ViewTreeLimits::MaximumTextBytes ||
@@ -989,12 +1039,12 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         return false;
     }
     textBytes += node.accessibilityLabel.size();
-    if (node.type == ViewNodeType::RadioGroup)
+    if (IsChoiceNode(node.type))
     {
         if (node.options.empty() ||
             node.options.size() > ViewTreeLimits::MaximumChoiceOptions)
         {
-            error = "radioGroup options must contain 1 to 64 items";
+            error = "choice options must contain 1 to 64 items";
             return false;
         }
         std::unordered_set<std::string> optionKeys;
@@ -1010,18 +1060,18 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
                 option.label.size() > ViewTreeLimits::MaximumTextBytes ||
                 regionKey.size() > 128)
             {
-                error = "radioGroup option keys, values, and labels must be non-empty and bounded";
+                error = "choice option keys, values, and labels must be non-empty and bounded";
                 return false;
             }
             if (!optionKeys.insert(option.key).second ||
                 !optionValues.insert(option.value).second)
             {
-                error = "radioGroup option keys and values must be unique";
+                error = "choice option keys and values must be unique";
                 return false;
             }
             if (!keys.insert(regionKey).second)
             {
-                error = "duplicate generated radio option key: " + regionKey;
+                error = "duplicate generated choice option key: " + regionKey;
                 return false;
             }
             const std::size_t optionBytes = option.key.size() +
@@ -1037,13 +1087,13 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         }
         if (!selectionFound)
         {
-            error = "radioGroup selectedValue must match an option or be empty";
+            error = "choice selectedValue must match an option or be empty";
             return false;
         }
     }
     else if (!node.options.empty() || !node.selectedValue.empty())
     {
-        error = "radio options are reserved for radioGroup nodes";
+        error = "choice options are reserved for radioGroup and select nodes";
         return false;
     }
     if (IsDataSeriesNode(node.type))
@@ -1172,12 +1222,21 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         error = "slider nodes require accessibility.label";
         return false;
     }
+    if ((IsInputNode(node.type) || node.type == ViewNodeType::Select) &&
+        node.accessibilityLabel.empty())
+    {
+        error = std::string(ViewNodeTypeName(node.type)) +
+            " nodes require accessibility.label";
+        return false;
+    }
     for (const auto& [eventName, action] : node.events)
     {
         if (eventName != "click" && eventName != "doubleClick" &&
             eventName != "contextMenu" && eventName != "pointerEnter" &&
             eventName != "pointerLeave" && eventName != "pointerDown" &&
-            eventName != "pointerUp" && eventName != "change")
+            eventName != "pointerUp" && eventName != "change" &&
+            eventName != "focus" && eventName != "blur" &&
+            eventName != "submit")
         {
             error = "unsupported view event: " + eventName;
             return false;
@@ -1188,7 +1247,23 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             return false;
         }
     }
-    if (IsControlledNode(node.type))
+    if (!IsInputNode(node.type) &&
+        (node.events.contains("focus") || node.events.contains("blur") ||
+            node.events.contains("submit")))
+    {
+        error = "focus, blur, and submit are reserved for input nodes";
+        return false;
+    }
+    if (node.type == ViewNodeType::Select)
+    {
+        if (!node.events.contains("change") ||
+            !node.events.contains("click"))
+        {
+            error = "select nodes require click and change";
+            return false;
+        }
+    }
+    else if (IsControlledNode(node.type))
     {
         if (!node.events.contains("change") ||
             node.events.contains("click"))
@@ -1218,7 +1293,8 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
 
 bool CollectRegions(const ViewNode& node,
     std::vector<InteractionRegion>& regions,
-    const std::optional<ViewRect>& inheritedClip, std::string& error)
+    const std::optional<ViewRect>& inheritedClip, float viewportHeight,
+    std::string& error)
 {
     if (!node.visible) return true;
     if (node.type == ViewNodeType::RadioGroup)
@@ -1265,6 +1341,80 @@ bool CollectRegions(const ViewNode& node,
             region.accessibilityLabel = option.label;
             region.enabled = node.enabled && option.enabled;
             regions.push_back(std::move(region));
+        }
+        return true;
+    }
+    if (IsInputNode(node.type))
+    {
+        if (!inheritedClip || Overlaps(node.frame, *inheritedClip))
+        {
+            if (regions.size() >=
+                WidgetInteractionRegions::kMaximumRegions)
+            {
+                error = "view interaction region limit exceeded (256)";
+                return false;
+            }
+            InteractionRegion region;
+            region.key = node.key;
+            region.shape.type = node.style.cornerRadius.value_or(0.0f) > 0.0f
+                ? InteractionShapeType::RoundedRect
+                : InteractionShapeType::Rect;
+            region.shape.x = node.frame.x;
+            region.shape.y = node.frame.y;
+            region.shape.width = node.frame.width;
+            region.shape.height = node.frame.height;
+            region.shape.radius = node.style.cornerRadius.value_or(0.0f);
+            if (inheritedClip)
+                region.clip = InteractionClipRect{ inheritedClip->x,
+                    inheritedClip->y, inheritedClip->width,
+                    inheritedClip->height };
+            region.cursor = node.cursor.empty() ? "text" : node.cursor;
+            for (const auto& [name, action] : node.events)
+                if (name != "change" && name != "focus" &&
+                    name != "blur" && name != "submit")
+                    region.events.emplace(name, action);
+            region.accessibilityRole = node.accessibilityRole.empty()
+                ? DefaultAccessibilityRole(node.type)
+                : node.accessibilityRole;
+            region.accessibilityLabel = node.accessibilityLabel;
+            region.enabled = node.enabled;
+            regions.push_back(std::move(region));
+        }
+        return true;
+    }
+    if (node.type == ViewNodeType::Select)
+    {
+        if (regions.size() >= WidgetInteractionRegions::kMaximumRegions)
+        {
+            error = "view interaction region limit exceeded (256)";
+            return false;
+        }
+        if (!inheritedClip || Overlaps(node.frame, *inheritedClip))
+        {
+            InteractionRegion trigger;
+            trigger.key = node.key;
+            trigger.shape.type = node.style.cornerRadius.value_or(0.0f) > 0.0f
+                ? InteractionShapeType::RoundedRect
+                : InteractionShapeType::Rect;
+            trigger.shape.x = node.frame.x;
+            trigger.shape.y = node.frame.y;
+            trigger.shape.width = node.frame.width;
+            trigger.shape.height = node.frame.height;
+            trigger.shape.radius = node.style.cornerRadius.value_or(0.0f);
+            if (inheritedClip)
+                trigger.clip = InteractionClipRect{ inheritedClip->x,
+                    inheritedClip->y, inheritedClip->width,
+                    inheritedClip->height };
+            trigger.cursor = node.cursor.empty() ? "hand" : node.cursor;
+            for (const auto& [name, action] : node.events)
+                if (name != "change") trigger.events.emplace(name, action);
+            trigger.accessibilityRole = node.accessibilityRole.empty()
+                ? "combobox" : node.accessibilityRole;
+            trigger.accessibilityLabel = node.accessibilityLabel;
+            trigger.hasExpandedProposal = true;
+            trigger.expanded = node.expanded;
+            trigger.enabled = node.enabled;
+            regions.push_back(std::move(trigger));
         }
         return true;
     }
@@ -1357,7 +1507,119 @@ bool CollectRegions(const ViewNode& node,
         childClip = IntersectRects(inheritedClip, *node.clipFrame);
     }
     for (const auto& child : node.children)
-        if (!CollectRegions(child, regions, childClip, error)) return false;
+        if (!CollectRegions(child, regions, childClip,
+                viewportHeight, error)) return false;
+    return true;
+}
+
+bool CollectSelectOptions(const ViewNode& node,
+    std::vector<InteractionRegion>& regions,
+    const std::optional<ViewRect>& inheritedClip, float viewportHeight,
+    std::string& error)
+{
+    if (!node.visible) return true;
+    if (node.type == ViewNodeType::Select && node.expanded)
+    {
+        for (std::size_t index = 0; index < node.options.size(); ++index)
+        {
+            const auto& option = node.options[index];
+            const ViewRect frame = ViewSelectOptionFrame(
+                node, index, viewportHeight);
+            if (inheritedClip && !Overlaps(frame, *inheritedClip))
+                continue;
+            if (regions.size() >=
+                WidgetInteractionRegions::kMaximumRegions)
+            {
+                error = "view interaction region limit exceeded (256)";
+                return false;
+            }
+            InteractionRegion region;
+            region.key = node.key + "/" + option.key;
+            region.shape.type = InteractionShapeType::Rect;
+            region.shape.x = frame.x;
+            region.shape.y = frame.y;
+            region.shape.width = frame.width;
+            region.shape.height = frame.height;
+            if (inheritedClip)
+                region.clip = InteractionClipRect{ inheritedClip->x,
+                    inheritedClip->y, inheritedClip->width,
+                    inheritedClip->height };
+            region.cursor = "hand";
+            for (const auto& [name, action] : node.events)
+                if (name != "click") region.events.emplace(name, action);
+            region.controlKind = InteractionControlKind::Radio;
+            region.checked = option.value == node.selectedValue;
+            region.currentSelection = node.selectedValue;
+            region.proposedSelection = option.value;
+            region.accessibilityRole = "option";
+            region.accessibilityLabel = option.label;
+            region.enabled = node.enabled && option.enabled;
+            regions.push_back(std::move(region));
+        }
+        return true;
+    }
+    std::optional<ViewRect> childClip = inheritedClip;
+    if (IsScrollContainer(node.type) && node.clipFrame)
+        childClip = IntersectRects(inheritedClip, *node.clipFrame);
+    for (const auto& child : node.children)
+        if (!CollectSelectOptions(child, regions, childClip,
+                viewportHeight, error)) return false;
+    return true;
+}
+
+bool CollectInputs(const ViewNode& node,
+    std::vector<ViewInputControl>& controls,
+    const std::optional<ViewRect>& inheritedClip, std::string& error)
+{
+    if (!node.visible) return true;
+    if (IsInputNode(node.type))
+    {
+        if (inheritedClip && !Overlaps(node.frame, *inheritedClip))
+            return true;
+        if (controls.size() >= 128)
+        {
+            error = "view input control limit exceeded (128)";
+            return false;
+        }
+        ViewInputControl control;
+        control.type = node.type;
+        control.key = node.key;
+        control.value = node.type == ViewNodeType::NumberInput
+            ? std::to_string(node.value) : node.inputValue;
+        if (node.type == ViewNodeType::NumberInput)
+        {
+            while (control.value.size() > 1 && control.value.back() == '0')
+                control.value.pop_back();
+            if (!control.value.empty() && control.value.back() == '.')
+                control.value.pop_back();
+        }
+        control.placeholder = node.placeholder;
+        control.frame = node.frame;
+        control.clip = inheritedClip;
+        control.fontSize = node.fontSize;
+        control.padding = node.padding;
+        control.enabled = node.enabled;
+        control.selectAll = node.selectAll;
+        control.liveUpdate = node.liveUpdate;
+        control.maximumUtf8Bytes = node.maximumUtf8Bytes;
+        control.minimum = node.minimum;
+        control.maximum = node.maximum;
+        control.step = node.step;
+        control.changeAction = node.events.at("change");
+        if (const auto action = node.events.find("focus");
+            action != node.events.end()) control.focusAction = action->second;
+        if (const auto action = node.events.find("blur");
+            action != node.events.end()) control.blurAction = action->second;
+        if (const auto action = node.events.find("submit");
+            action != node.events.end()) control.submitAction = action->second;
+        controls.push_back(std::move(control));
+        return true;
+    }
+    std::optional<ViewRect> childClip = inheritedClip;
+    if (IsScrollContainer(node.type) && node.clipFrame)
+        childClip = IntersectRects(inheritedClip, *node.clipFrame);
+    for (const auto& child : node.children)
+        if (!CollectInputs(child, controls, childClip, error)) return false;
     return true;
 }
 
@@ -1513,6 +1775,27 @@ ViewRect ViewRadioOptionFrame(
             (height + node.gap), content.width, height };
 }
 
+ViewRect ViewSelectOptionFrame(const ViewNode& node,
+    std::size_t optionIndex, float viewportHeight) noexcept
+{
+    if (node.options.empty() || optionIndex >= node.options.size())
+        return {};
+    const float optionHeight = std::max(28.0f,
+        std::min(48.0f, node.fontSize * 1.8f));
+    const float popupHeight = optionHeight *
+        static_cast<float>(node.options.size());
+    const float below = viewportHeight -
+        (node.frame.y + node.frame.height);
+    const bool openAbove = below < popupHeight &&
+        node.frame.y >= popupHeight;
+    const float popupTop = openAbove
+        ? node.frame.y - popupHeight
+        : node.frame.y + node.frame.height;
+    return { node.frame.x,
+        popupTop + optionHeight * static_cast<float>(optionIndex),
+        node.frame.width, optionHeight };
+}
+
 bool ValidateAndLayoutViewTree(ViewNode& root, float width, float height,
     std::string& error)
 {
@@ -1541,7 +1824,10 @@ bool CollectViewInteractionRegions(const ViewNode& root,
 {
     error.clear();
     regions.clear();
-    if (!CollectRegions(root, regions, std::nullopt, error)) return false;
+    if (!CollectRegions(root, regions, std::nullopt,
+            root.frame.height, error)) return false;
+    if (!CollectSelectOptions(root, regions, std::nullopt,
+            root.frame.height, error)) return false;
     if (regions.size() > WidgetInteractionRegions::kMaximumRegions)
     {
         error = "view interaction region limit exceeded (256)";
@@ -1549,6 +1835,14 @@ bool CollectViewInteractionRegions(const ViewNode& root,
         return false;
     }
     return true;
+}
+
+bool CollectViewInputControls(const ViewNode& root,
+    std::vector<ViewInputControl>& controls, std::string& error)
+{
+    error.clear();
+    controls.clear();
+    return CollectInputs(root, controls, std::nullopt, error);
 }
 
 bool ApplyViewScrollOffsets(ViewNode& root,
@@ -1650,6 +1944,11 @@ const char* ViewNodeTypeName(ViewNodeType type) noexcept
     case ViewNodeType::VirtualGrid: return "virtualGrid";
     case ViewNodeType::ListItem: return "listItem";
     case ViewNodeType::Text: return "text";
+    case ViewNodeType::TextInput: return "textInput";
+    case ViewNodeType::TextArea: return "textArea";
+    case ViewNodeType::SearchBox: return "searchBox";
+    case ViewNodeType::NumberInput: return "numberInput";
+    case ViewNodeType::Select: return "select";
     case ViewNodeType::Image: return "image";
     case ViewNodeType::Button: return "button";
     case ViewNodeType::Link: return "link";
