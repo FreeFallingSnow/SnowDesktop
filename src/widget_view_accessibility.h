@@ -22,6 +22,7 @@ struct ViewAccessibilityNode
     std::string role;
     std::string controlType;
     std::string valueText;
+    std::string helpText;
     ViewAccessibilityPattern patterns = ViewAccessibilityPattern::None;
     ViewRect bounds;
     std::optional<ViewRect> clip;

@@ -1302,6 +1302,11 @@ void TestDeclarativeInputControls()
                 view.textInput({
                     key = "name", value = "Snow", placeholder = "Name",
                     maxBytes = 64, action = { id = "name.change" },
+                    validationState = "error",
+                    validationMessage = "Name is required",
+                    validationStyle = {
+                        borderColor = 0xAA0000, borderWidth = 2,
+                    },
                     events = {
                         focus = { id = "name.focus" },
                         blur = { id = "name.blur" },
@@ -1347,6 +1352,11 @@ void TestDeclarativeInputControls()
             root.children.size() == 5 &&
             root.children[0].type == ViewNodeType::TextInput &&
             root.children[0].inputValue == "Snow" &&
+            root.children[0].validationState ==
+                ViewValidationState::Error &&
+            root.children[0].validationMessage == "Name is required" &&
+            root.children[0].validationStyle.borderColor == 0xAA0000 &&
+            root.children[0].validationStyle.borderWidth == 2.0f &&
             root.children[1].type == ViewNodeType::TextArea &&
             !root.children[1].liveUpdate && root.children[1].readOnly &&
             root.children[2].type == ViewNodeType::SearchBox &&
@@ -1413,6 +1423,19 @@ void TestDeclarativeInputControls()
             !ValidateAndLayoutViewTree(invalid, 200.0f, 40.0f, error) &&
             error.find("reject click") != std::string::npos,
         "controlled text inputs must reject ambiguous click actions");
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.numberInput({
+            key = "bad-state", value = 1,
+            validationState = "fatal",
+            action = { id = "bad-state.change" },
+            accessibility = { label = "Bad state" },
+        })
+    )lua") == LUA_OK,
+        "invalid validation-state fixture must evaluate");
+    Check(!ParseLuaViewTree(state, -1, invalid, error) &&
+            error.find("validationState") != std::string::npos,
+        "validationState must reject values outside the public enum");
     lua_close(state);
 }
 

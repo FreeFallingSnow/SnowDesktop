@@ -95,6 +95,8 @@ void TestClipAndControlledState()
         "offscreen", 8, 120, 120, 28);
     offscreen.accessibilityLabel = "Query";
     offscreen.inputValue = "snow";
+    offscreen.readOnly = true;
+    offscreen.validationMessage = "Query is unavailable";
     scroll.children = { visible, offscreen };
 
     std::vector<ViewAccessibilityNode> nodes;
@@ -104,8 +106,9 @@ void TestClipAndControlledState()
         "materialized clipped children must remain in the semantic snapshot");
     Check(nodes[1].checked == true && !nodes[1].offscreen &&
             nodes[2].offscreen && nodes[2].valueText == "snow" &&
-            !nodes[2].valueReadOnly,
-        "semantic state must retain controlled values and offscreen status");
+            nodes[2].valueReadOnly &&
+            nodes[2].helpText == "Query is unavailable",
+        "semantic state must retain values, validation help, read-only state, and offscreen status");
     Check(HasViewAccessibilityPattern(nodes[0].patterns,
                 ViewAccessibilityPattern::Scroll) &&
             !nodes[0].scrollHorizontal &&

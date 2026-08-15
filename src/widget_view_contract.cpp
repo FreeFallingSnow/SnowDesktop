@@ -60,7 +60,8 @@ constexpr auto kProperties = std::to_array<std::string_view>({
     "source", "font", "fit", "alignment", "interpolation", "alt",
     "shape", "orientation", "value", "values", "min", "max", "step",
     "options", "selectedValue", "placeholder", "expanded", "selectAll",
-    "liveUpdate", "readOnly", "maxBytes", "year", "month", "firstDayOfWeek",
+    "liveUpdate", "readOnly", "validationState", "validationMessage",
+    "maxBytes", "year", "month", "firstDayOfWeek",
     "selectedDate", "todayDate", "eventDates", "weekdayLabels",
     "showAdjacentDates", "binding", "collection", "revision", "reference",
     "child", "thickness", "trackOpacity", "fillOpacity", "width", "height",
@@ -69,7 +70,8 @@ constexpr auto kProperties = std::to_array<std::string_view>({
     "itemExtent", "firstIndex", "overscan", "flexGrow", "fontSize", "bold",
     "checked", "visible", "enabled", "cursor", "alignItems", "showScrollbar",
     "alignSelf", "justifyContent", "textAlign", "style", "hoverStyle",
-    "pressedStyle", "focusStyle", "disabledStyle", "checkedStyle",
+    "pressedStyle", "focusStyle", "disabledStyle", "validationStyle",
+    "checkedStyle",
     "selectedStyle", "todayStyle",
     "adjacentStyle", "eventStyle", "accessibility", "events", "action",
     "children",
@@ -242,6 +244,9 @@ bool ViewNodeAllowsProperty(
     if (property == "selectAll" || property == "liveUpdate" ||
         property == "maxBytes") return IsInput(type);
     if (property == "readOnly") return IsInput(type);
+    if (property == "validationState" || property == "validationMessage" ||
+        property == "validationStyle")
+        return IsInput(type) || type == ViewNodeType::Select;
     if (property == "year" || property == "month" ||
         property == "firstDayOfWeek" || property == "selectedDate" ||
         property == "todayDate" || property == "eventDates" ||

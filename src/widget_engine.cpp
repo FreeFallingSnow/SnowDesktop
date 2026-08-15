@@ -14463,6 +14463,35 @@ static snowdesktop::widget_runtime::ViewStyle ResolveViewStyle(
         OverlayViewStyle(result, node.checkedStyle);
     if (hovered) OverlayViewStyle(result, node.hoverStyle);
     if (pressed) OverlayViewStyle(result, node.pressedStyle);
+    if (node.validationState !=
+        snowdesktop::widget_runtime::ViewValidationState::None)
+    {
+        OverlayViewStyle(result, node.validationStyle);
+        if (!node.validationStyle.borderColor)
+        {
+            using snowdesktop::widget_runtime::ViewValidationState;
+            switch (node.validationState)
+            {
+            case ViewValidationState::Info:
+                result.borderColor = 0x72C7FF;
+                break;
+            case ViewValidationState::Success:
+                result.borderColor = 0x55C271;
+                break;
+            case ViewValidationState::Warning:
+                result.borderColor = 0xF2C94C;
+                break;
+            case ViewValidationState::Error:
+                result.borderColor = 0xFF6B6B;
+                break;
+            default:
+                break;
+            }
+        }
+        if (!node.validationStyle.borderWidth)
+            result.borderWidth = std::max(
+                result.borderWidth.value_or(0.0f), 1.5f);
+    }
     if (focused)
     {
         OverlayViewStyle(result, node.focusStyle);

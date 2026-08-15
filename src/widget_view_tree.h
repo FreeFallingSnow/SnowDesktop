@@ -114,6 +114,15 @@ enum class ViewTextAlignment
     End,
 };
 
+enum class ViewValidationState
+{
+    None,
+    Info,
+    Success,
+    Warning,
+    Error,
+};
+
 enum class ViewImageFit
 {
     Fill,
@@ -247,6 +256,8 @@ struct ViewNode
     bool selectAll = false;
     bool liveUpdate = true;
     bool readOnly = false;
+    ViewValidationState validationState = ViewValidationState::None;
+    std::string validationMessage;
     std::size_t maximumUtf8Bytes = 0;
     bool showScrollbar = true;
     std::string selectedValue;
@@ -273,6 +284,7 @@ struct ViewNode
     ViewStyle pressedStyle;
     ViewStyle focusStyle;
     ViewStyle disabledStyle;
+    ViewStyle validationStyle;
     ViewStyle checkedStyle;
     ViewStyle selectedStyle;
     ViewStyle todayStyle;

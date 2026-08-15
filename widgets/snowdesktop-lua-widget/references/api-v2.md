@@ -251,6 +251,13 @@ view.searchBox({
 `action/events.change`，即使作者提供也不会因用户编辑触发。`enabled=false` 仍表示完全禁用，
 与只读语义不同。对应能力包含在 `view.inputControls`。
 
+上述五类输入/选择节点还支持 `validationState="none|info|success|warning|error"`、
+`validationMessage` 和 `validationStyle`。非 `none` 状态会在 pressed 之后、focus/disabled 之前
+叠加校验样式；未提供校验边框时，宿主按状态提供蓝/绿/黄/红边框和至少 1.5 逻辑像素宽度。
+`validationMessage` 受单节点及整树文本配额限制，并通过 UI Automation HelpText 暴露；如果信息
+需要持续可见，组件仍应显式渲染相邻 `text`，不能只依靠颜色或辅助技术。校验状态是受控显示
+属性，不会替组件阻止 change、修改 model 或写入存储。
+
 `view.keyboardNavigation.basic` 只作用于桌面 surface 中当前唯一选中的 Lua 组件。宿主按照最后一棵
 成功提交的交互树顺序收集启用的可点击节点、受控控件和文本输入：Tab/Shift+Tab 循环焦点，
 方向键按元素几何位置移动焦点，Enter/空格激活按钮、链接、选择控件等，Escape 清除焦点；滑块

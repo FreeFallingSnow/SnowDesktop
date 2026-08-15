@@ -975,6 +975,8 @@ public:
         else if (propertyId == UIA_NamePropertyId)
             return SetStringVariant(result,
                 Utf8ToWide(node ? node->name : widget.name));
+        else if (propertyId == UIA_HelpTextPropertyId && node)
+            return SetStringVariant(result, Utf8ToWide(node->helpText));
         else if (propertyId == UIA_AutomationIdPropertyId)
         {
             if (!node)

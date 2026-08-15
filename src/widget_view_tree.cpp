@@ -1064,6 +1064,7 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         !validStyle(node.pressedStyle) ||
         !validStyle(node.focusStyle) ||
         !validStyle(node.disabledStyle) ||
+        !validStyle(node.validationStyle) ||
         !validStyle(node.checkedStyle) ||
         !validStyle(node.selectedStyle) ||
         !validStyle(node.todayStyle) ||
@@ -1341,15 +1342,18 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         node.inputValue.size() > ViewTreeLimits::MaximumTextBytes ||
         node.placeholder.size() > ViewTreeLimits::MaximumTextBytes ||
         node.alt.size() > ViewTreeLimits::MaximumTextBytes ||
+        node.validationMessage.size() > ViewTreeLimits::MaximumTextBytes ||
         textBytes + node.text.size() + node.inputValue.size() +
-            node.placeholder.size() + node.alt.size() >
+            node.placeholder.size() + node.alt.size() +
+            node.validationMessage.size() >
             ViewTreeLimits::MaximumTotalTextBytes)
     {
         error = "view tree text limit exceeded";
         return false;
     }
     textBytes += node.text.size() + node.inputValue.size() +
-        node.placeholder.size() + node.alt.size();
+        node.placeholder.size() + node.alt.size() +
+        node.validationMessage.size();
     if (node.type == ViewNodeType::StyledText)
     {
         if (node.spans.empty() ||

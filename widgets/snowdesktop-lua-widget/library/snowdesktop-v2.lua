@@ -120,6 +120,7 @@
 ---@alias SnowViewImageFit 'fill'|'contain'|'cover'|'none'
 ---@alias SnowViewImageAlignment 'start'|'center'|'end'
 ---@alias SnowViewImageInterpolation 'nearest'|'linear'
+---@alias SnowViewValidationState 'none'|'info'|'success'|'warning'|'error'
 ---@alias SnowDrawImageFit 'fill'|'contain'|'cover'|'none'
 ---@alias SnowDrawImageAlignment 'start'|'center'|'end'
 ---@alias SnowDrawImageInterpolation 'nearest'|'linear'
@@ -135,7 +136,7 @@
 ---@field opacity? number Between 0 and 1.
 
 ---@class SnowViewAccessibility
----@field role? string Transitional semantic role; core trees do not expose UI Automation yet.
+---@field role? string Optional semantic role override.
 ---@field label? string
 
 ---@class SnowViewEvents
@@ -218,6 +219,8 @@
 ---@field selectAll? boolean Select all text on first focus.
 ---@field liveUpdate? boolean Emit each input edit when true (default); emit on commit when false.
 ---@field readOnly? boolean Text-like and numeric inputs remain focusable/selectable but reject typing, IME, paste, cut, delete, UIA value changes, and numeric stepping.
+---@field validationState? SnowViewValidationState Input/select validation state; defaults to none.
+---@field validationMessage? string Bounded validation detail exposed as semantic help text; render a text node too when the message must be visibly persistent.
 ---@field maxBytes? integer Input UTF-8 limit from 0/default through 65536; declarative default is the 4096-byte node limit.
 ---@field thickness? number Progress or data-series stroke thickness.
 ---@field trackOpacity? number Progress track or chart guide opacity between 0 and 1.
@@ -255,6 +258,7 @@
 ---@field pressedStyle? SnowViewStyle
 ---@field focusStyle? SnowViewStyle Keyboard/UI Automation focus style; defaults to a visible host outline when omitted.
 ---@field disabledStyle? SnowViewStyle Applied last when enabled is false.
+---@field validationStyle? SnowViewStyle Applied after pressed and before focus/disabled; the host supplies a state-colored border when omitted.
 ---@field checkedStyle? SnowViewStyle Applied before hover/pressed when a toggle/checkbox or radio option is selected.
 ---@field selectedStyle? SnowViewStyle MonthCalendar selected-date style.
 ---@field todayStyle? SnowViewStyle MonthCalendar today outline style.

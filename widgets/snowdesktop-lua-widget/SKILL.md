@@ -191,6 +191,12 @@ Use `readOnly=true` on text-like or numeric declarative inputs that should
 remain focusable, selectable, and copyable without accepting any mutation.
 A read-only input does not need a change action; do not emulate it with
 `enabled=false`.
+Use `validationState` and `validationMessage` on declarative inputs/selects
+for bounded validation feedback. The host renders a default state-colored
+border and exposes the message as semantic help text. If the message must
+always be visible, also render it in a sibling text node; never communicate an
+error by color alone. Customize the state with `validationStyle` only when the
+default border does not fit the component design.
 
 ## Manifest rules
 

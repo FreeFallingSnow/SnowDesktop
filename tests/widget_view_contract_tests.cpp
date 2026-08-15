@@ -94,6 +94,15 @@ void TestRepresentativeApplicability()
     Check(ViewNodeAllowsProperty(ViewNodeType::Button, "focusStyle") &&
             ViewNodeAllowsProperty(ViewNodeType::Text, "disabledStyle"),
         "focus and disabled state styles must be common properties");
+    Check(ViewNodeAllowsProperty(ViewNodeType::TextInput,
+                "validationState") &&
+            ViewNodeAllowsProperty(ViewNodeType::NumberInput,
+                "validationMessage") &&
+            ViewNodeAllowsProperty(ViewNodeType::Select,
+                "validationStyle") &&
+            !ViewNodeAllowsProperty(ViewNodeType::Button,
+                "validationState"),
+        "validation fields must remain scoped to inputs and selects");
     Check(ViewNodeAllowsProperty(ViewNodeType::Box, "minWidth") &&
             ViewNodeAllowsProperty(ViewNodeType::Text, "maxHeight") &&
             ViewNodeAllowsProperty(ViewNodeType::Image, "aspectRatio"),

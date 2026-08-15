@@ -121,6 +121,7 @@ LuaWidgetAccessibilitySnapshot Snapshot()
     input.parentIndex = 0;
     input.patterns = ViewAccessibilityPattern::Value;
     input.valueText = "before";
+    input.helpText = "Enter a search term";
     input.valueReadOnly = false;
 
     ViewAccessibilityNode combo;
@@ -465,6 +466,8 @@ void TestProviderTreeAndLifetime()
     Check(SUCCEEDED(pattern.As(&valuePattern)) &&
             SUCCEEDED(valuePattern->get_Value(&inputValue)) &&
             std::wstring(inputValue, SysStringLen(inputValue)) == L"before" &&
+            PropertyString(AsSimple(input.Get()).Get(),
+                UIA_HelpTextPropertyId) == L"Enter a search term" &&
             SUCCEEDED(valuePattern->SetValue(L"after")) &&
             actions.back().kind ==
                 LuaWidgetAccessibilityActionKind::SetValue &&

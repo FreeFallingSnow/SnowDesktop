@@ -1099,6 +1099,10 @@ popover，因此这里只发布细粒度 feature，不能把
 四类文本/数值输入现已支持 `readOnly`：仍保留焦点、选择、复制和 submit，但统一阻止键入、
 IME、粘贴/剪切删除、退格/Delete、数值步进和 UIA SetValue；只读节点不再强制声明不会触发的
 change 动作。`select` 的只读语义未混入本批次，继续使用受控 expanded/selection 或 enabled。
+五类输入/选择节点现已同时接入 `validationState/validationMessage/validationStyle`：状态枚举为
+none/info/success/warning/error，宿主在未定制时提供可见状态边框，校验消息纳入文本配额并映射到
+UI Automation HelpText。校验状态只负责受控呈现与语义，不隐式拦截 change 或替组件修改数据；
+需要常驻可见说明时仍由组件添加相邻文本，避免仅以颜色传达错误。
 
 同日后续实现已增加 `view.styledText.basic` 与 `view.monthCalendar`。前者提供 1–64 个
 有界样式 span，并由单个 DirectWrite layout 完成颜色、字号、粗体、斜体、下划线、删除线、
@@ -1236,6 +1240,7 @@ view.row({
 
 - hover、pressed 和 focus 的纯视觉样式由宿主命中测试与动画器直接更新，不需要先进入 Lua，因此指针反馈可以在下一次可用呈现中出现。
 - `focusStyle` 与 `disabledStyle` 已进入公共属性矩阵、Lua 解析和 Direct2D 渲染；未声明 focus 样式时宿主提供默认可见轮廓，disabled 样式最后覆盖其他状态样式。
+- `validationState/validationMessage/validationStyle` 已进入输入和 select 的公共属性矩阵；校验样式在 pressed 后、focus/disabled 前叠加，消息同时进入语义 HelpText，但不会改变受控值提交规则。
 - `view.layout.constraints` 已把 `minWidth/maxWidth/minHeight/maxHeight/aspectRatio` 纳入公共属性矩阵、Lua 解析、固有尺寸和各容器布局；尺寸使用 0–4096 的有限逻辑单位，宽高比使用 0.01–100，并拒绝同轴上下限、宽高比约束或双固定尺寸互相冲突的树。更完整的 flex/grid track 仍按属性矩阵逐批实现。
 - 只有组件绑定了业务事件时才调用 Lua；状态更新、多个订阅通知和同一帧内的重复 `invalidate` 合并为至多一次 `view()` 求值和一次 scene diff。
 - 布局、绘制、命中区域和 UI Automation 边界来自同一棵提交成功的 scene tree；不允许视觉已经变化而点击仍指向旧树。

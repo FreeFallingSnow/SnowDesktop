@@ -903,6 +903,25 @@ bool ReadTextAlignmentField(lua_State* state, int table,
     return true;
 }
 
+bool ReadValidationStateField(lua_State* state, int table,
+    ViewValidationState& value, std::string& error)
+{
+    std::string text;
+    if (!ReadStringField(state, table, "validationState", text, false, error))
+        return false;
+    if (text.empty() || text == "none") value = ViewValidationState::None;
+    else if (text == "info") value = ViewValidationState::Info;
+    else if (text == "success") value = ViewValidationState::Success;
+    else if (text == "warning") value = ViewValidationState::Warning;
+    else if (text == "error") value = ViewValidationState::Error;
+    else
+    {
+        error = "view field 'validationState' has an unsupported value";
+        return false;
+    }
+    return true;
+}
+
 bool ReadImageFitField(lua_State* state, int table,
     ViewImageFit& value, std::string& error)
 {
@@ -1501,6 +1520,10 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadBoolField(state, index, "selectAll", node.selectAll, error) ||
         !ReadBoolField(state, index, "liveUpdate", node.liveUpdate, error) ||
         !ReadBoolField(state, index, "readOnly", node.readOnly, error) ||
+        !ReadValidationStateField(state, index,
+            node.validationState, error) ||
+        !ReadStringField(state, index, "validationMessage",
+            node.validationMessage, false, error) ||
         !ReadBoolField(state, index, "showScrollbar",
             node.showScrollbar, error) ||
         !ReadBoolField(state, index, "showAdjacentDates",
@@ -1526,6 +1549,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             node.focusStyle, error) ||
         !ReadStyleField(state, index, "disabledStyle",
             node.disabledStyle, error) ||
+        !ReadStyleField(state, index, "validationStyle",
+            node.validationStyle, error) ||
         !ReadStyleField(state, index, "checkedStyle",
             node.checkedStyle, error) ||
         !ReadStyleField(state, index, "selectedStyle",

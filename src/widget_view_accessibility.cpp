@@ -162,12 +162,13 @@ ViewRect ImmediateBounds(const InteractionShape& shape) noexcept
 void PopulateValueState(const ViewNode& source,
     ViewAccessibilityNode& target)
 {
+    target.helpText = source.validationMessage;
     if (source.type == ViewNodeType::TextInput ||
         source.type == ViewNodeType::TextArea ||
         source.type == ViewNodeType::SearchBox)
     {
         target.valueText = source.inputValue;
-        target.valueReadOnly = false;
+        target.valueReadOnly = source.readOnly;
     }
     else if (source.type == ViewNodeType::NumberInput)
     {
@@ -176,8 +177,8 @@ void PopulateValueState(const ViewNode& source,
         target.minimum = source.minimum;
         target.maximum = source.maximum;
         target.step = source.step;
-        target.valueReadOnly = false;
-        target.rangeValueReadOnly = false;
+        target.valueReadOnly = source.readOnly;
+        target.rangeValueReadOnly = source.readOnly;
     }
     else if (source.type == ViewNodeType::Select ||
         source.type == ViewNodeType::RadioGroup)
