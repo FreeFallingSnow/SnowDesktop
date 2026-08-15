@@ -1905,7 +1905,8 @@ void TestUniformMargins()
     invalid.key = "negative-margin";
     invalid.margin = -1.0f;
     Check(!ValidateAndLayoutViewTree(invalid, 40.0f, 40.0f, error) &&
-            error == "view node contains an invalid numeric field",
+            error ==
+                "view node dimensions and typography must be finite and bounded",
         "negative margins must reject the complete view tree");
     lua_close(state);
 }
