@@ -3273,7 +3273,7 @@ void TestVisualTransitionRuntime()
                 durationMs = 200,
                 easing = "easeInOut",
                 properties = {
-                    "background", "foreground", "borderColor", "opacity",
+                    "background", "borderColor", "opacity", "transform",
                 },
             },
         })
@@ -3285,6 +3285,8 @@ void TestVisualTransitionRuntime()
             parsed.transition->durationMilliseconds == 200 &&
             parsed.transition->easing == ViewTransitionEasing::EaseInOut &&
             parsed.transition->properties.size() == 4 &&
+            parsed.transition->properties.back() ==
+                ViewTransitionProperty::Transform &&
             ValidateAndLayoutViewTree(parsed, 100.0f, 40.0f, error),
         "Lua parsing must retain a bounded visual transition descriptor");
 
@@ -3348,6 +3350,45 @@ void TestVisualTransitionRuntime()
     runtime.EndFrame();
     Check(runtime.Size() == 0,
         "transition runtime must release nodes not observed in the next frame");
+
+    ViewTransition transformTransition;
+    transformTransition.durationMilliseconds = 100;
+    transformTransition.easing = ViewTransitionEasing::Linear;
+    transformTransition.properties = {
+        ViewTransitionProperty::Transform,
+    };
+    ViewTransform startTransform;
+    startTransform.translateX = 0.0f;
+    startTransform.scale = 1.0f;
+    startTransform.rotate = 170.0f;
+    ViewTransform targetTransform = startTransform;
+    targetTransform.translateX = 100.0f;
+    targetTransform.scale = 2.0f;
+    targetTransform.rotate = -170.0f;
+    ViewTransitionRuntime transformRuntime;
+    transformRuntime.BeginFrame();
+    const auto firstTransform = transformRuntime.ResolvePresentation(
+        "moving", {}, startTransform, transformTransition,
+        origin, false);
+    transformRuntime.EndFrame();
+    transformRuntime.BeginFrame();
+    const auto changedTransform = transformRuntime.ResolvePresentation(
+        "moving", {}, targetTransform, transformTransition,
+        origin, false);
+    transformRuntime.EndFrame();
+    transformRuntime.BeginFrame();
+    const auto middleTransform = transformRuntime.ResolvePresentation(
+        "moving", {}, targetTransform, transformTransition,
+        origin + std::chrono::milliseconds(50), false);
+    transformRuntime.EndFrame();
+    Check(firstTransform.transform == startTransform &&
+            changedTransform.transform == startTransform &&
+            middleTransform.transform &&
+            Near(middleTransform.transform->translateX, 50.0f) &&
+            Near(middleTransform.transform->scale, 1.5f) &&
+            Near(middleTransform.transform->rotate, 180.0f) &&
+            transformRuntime.HasActive(),
+        "host transform transitions must interpolate decomposed values and use the shortest rotation arc");
 }
 
 void TestThemeColorTokens()

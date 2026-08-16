@@ -354,6 +354,7 @@ enum class ViewTransitionProperty
     Foreground,
     BorderColor,
     Opacity,
+    Transform,
 };
 
 struct ViewTransition
@@ -389,6 +390,14 @@ struct ViewTransform
     float skewY = 0.0f;
 
     bool operator==(const ViewTransform&) const = default;
+};
+
+struct ViewTransitionPresentation
+{
+    ViewStyle style;
+    std::optional<ViewTransform> transform;
+
+    bool operator==(const ViewTransitionPresentation&) const = default;
 };
 
 struct ViewResolvedTransform
@@ -662,6 +671,11 @@ public:
     using TimePoint = Clock::time_point;
 
     void BeginFrame() noexcept;
+    ViewTransitionPresentation ResolvePresentation(std::string_view key,
+        const ViewStyle& targetStyle,
+        const std::optional<ViewTransform>& targetTransform,
+        const std::optional<ViewTransition>& transition,
+        TimePoint now, bool reducedMotion);
     ViewStyle Resolve(std::string_view key, const ViewStyle& target,
         const std::optional<ViewTransition>& transition,
         TimePoint now, bool reducedMotion);
@@ -674,8 +688,8 @@ public:
 private:
     struct Entry
     {
-        ViewStyle start;
-        ViewStyle target;
+        ViewTransitionPresentation start;
+        ViewTransitionPresentation target;
         ViewTransition transition;
         TimePoint started{};
         std::uint64_t generation = 0;
@@ -734,6 +748,8 @@ ViewResolvedTransform ResolveViewTransformForKey(
     const ViewNode& root, std::string_view key) noexcept;
 ViewResolvedTransform ResolveViewLocalTransform(
     const ViewNode& node) noexcept;
+ViewResolvedTransform ResolveViewLocalTransform(const ViewRect& frame,
+    const std::optional<ViewTransform>& transform) noexcept;
 std::optional<ViewRect> ResolveViewClipForKey(
     const ViewNode& root, std::string_view key,
     bool includeMatchedNode) noexcept;

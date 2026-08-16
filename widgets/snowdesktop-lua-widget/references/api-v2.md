@@ -126,6 +126,7 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.transform.basic` 提供布局后的平移、统一缩放和变换原点，
 `view.transform.affine` 提供非统一缩放、旋转、斜切和精确逆矩阵命中，
 `view.transition.visual` 提供宿主驱动的有限视觉样式过渡，
+`view.transition.transform` 将该过渡扩展到声明式 transform，
 `view.state.selected` 提供通用受控选中样式，`view.checkbox.indeterminate` 提供复选框混合态，
 `view.state.visibility` 明确区分参与布局的隐藏状态与完全折叠状态，
 `view.input.selection` 提供文本输入的受控选区，`view.input.required` 提供表单必填语义，
@@ -205,7 +206,7 @@ scroll viewport 和逻辑槽位只接受正向轴对齐变换，带裁剪的节�
 transition = {
     durationMs = 120,
     easing = "easeOut",
-    properties = { "background", "foreground", "borderColor", "opacity" },
+    properties = { "background", "opacity", "transform" },
 }
 ```
 
@@ -213,8 +214,11 @@ transition = {
 1–2000，`easing` 默认为 `easeOut`，也可使用 `linear/easeIn/easeInOut`。稳定 key 节点的
 解析后样式目标变化时，宿主插值 background/foreground/borderColor/opacity；颜色只有旧值和
 新值都显式存在时才插值，颜色出现或消失会直接切换，未声明 opacity 按 1 参与插值。
-节点首次出现直接显示目标样式，删除节点不产生 exit 动画；布局、transform、阴影、圆角、
-边框宽度以及 enter/exit transition 均不属于该 feature。
+探测 `view.transition.transform` 后，`properties` 还可包含 `transform`：宿主逐项插值平移、
+缩放、原点和斜切，并沿最短角度路径插值旋转；未声明 transform 按单位变换参与过渡。
+transform 插值只改变呈现矩阵，命中、宿主控件和 UIA 几何会在新 scene 提交时原子切换到
+目标矩阵，不会暴露逐帧中间几何。节点首次出现直接显示目标样式，删除节点不产生 exit 动画；
+布局、阴影、圆角、边框宽度以及 enter/exit transition 仍不属于这些 feature。
 
 桌面与 panel/dialog/popover 各自维护过渡状态，插值帧只重绘上一棵成功提交的 scene tree，
 不会每帧重新调用 Lua `view()`。未绑定节点 pointer action 的 hover/pressed 状态变化也走
@@ -812,7 +816,7 @@ Grid/GridItem；任意未实体化集合项仍未形成完整 UIA VirtualizedIte
 同样尚未导出到桌面 UIA Fragment Provider。
 
 `view.tree.core` 仍不是完整 `view.tree`：业务状态失效时仍提交完整树；只有
-`view.transition.visual` 的插值帧会复用上一棵成功树。当前尚无可变高度虚拟集合、
+`view.transition.visual/view.transition.transform` 的插值帧会复用上一棵成功树。当前尚无可变高度虚拟集合、
 完整 UIA 虚拟集合/ScrollItem Pattern 或差量资源复用。
 需要这些能力的组件应继续使用已经公开的细粒度 feature 或等待对应能力；不得把
 `view.tree.core` 当作稳定完整控件集声明。

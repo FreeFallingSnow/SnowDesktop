@@ -16215,30 +16215,38 @@ class WidgetViewTransformScope
 public:
     WidgetViewTransformScope(D2DState* state,
         const snowdesktop::widget_runtime::ViewNode& node)
+        : WidgetViewTransformScope(state, node, node.transform)
+    {
+    }
+
+    WidgetViewTransformScope(D2DState* state,
+        const snowdesktop::widget_runtime::ViewNode& node,
+        const std::optional<snowdesktop::widget_runtime::ViewTransform>&
+            transform)
         : context_(state ? state->ctx : nullptr)
     {
-        if (!context_ || !node.transform) return;
-        const auto transform = snowdesktop::widget_runtime::
-            ResolveViewLocalTransform(node);
-        if (std::abs(transform.m11 - 1.0f) <= 0.000001f &&
-            std::abs(transform.m22 - 1.0f) <= 0.000001f &&
-            std::abs(transform.m12) <= 0.000001f &&
-            std::abs(transform.m21) <= 0.000001f &&
-            std::abs(transform.dx) <= 0.000001f &&
-            std::abs(transform.dy) <= 0.000001f)
+        if (!context_ || !transform) return;
+        const auto resolved = snowdesktop::widget_runtime::
+            ResolveViewLocalTransform(node.frame, transform);
+        if (std::abs(resolved.m11 - 1.0f) <= 0.000001f &&
+            std::abs(resolved.m22 - 1.0f) <= 0.000001f &&
+            std::abs(resolved.m12) <= 0.000001f &&
+            std::abs(resolved.m21) <= 0.000001f &&
+            std::abs(resolved.dx) <= 0.000001f &&
+            std::abs(resolved.dy) <= 0.000001f)
             return;
         context_->GetTransform(&previous_);
         const float left = state->widgetRect.left;
         const float top = state->widgetRect.top;
         const D2D1_MATRIX_3X2_F local{
-            transform.m11,
-            transform.m12,
-            transform.m21,
-            transform.m22,
-            transform.dx + left - left * transform.m11 -
-                top * transform.m21,
-            transform.dy + top - left * transform.m12 -
-                top * transform.m22,
+            resolved.m11,
+            resolved.m12,
+            resolved.m21,
+            resolved.m22,
+            resolved.dx + left - left * resolved.m11 -
+                top * resolved.m21,
+            resolved.dy + top - left * resolved.m12 -
+                top * resolved.m22,
         };
         context_->SetTransform(local * previous_);
         active_ = true;
@@ -16282,11 +16290,6 @@ static void DrawWidgetViewNode(D2DState* state,
             ViewVisibility::Hidden ||
         node.frame.width <= 0.0f || node.frame.height <= 0.0f)
         return;
-    WidgetViewTransformScope transformScope(state, node);
-    const float cumulativeScale = inheritedScale *
-        (node.transform
-            ? node.transform->scale * node.transform->scaleY : 1.0f);
-
     const bool hovered = regions.IsHovered(node.key);
     const bool pressed = regions.IsPressed(node.key);
     const bool focused = node.key == focusedKey;
@@ -16300,9 +16303,20 @@ static void DrawWidgetViewNode(D2DState* state,
         else if (hovered && !node.hoverStyle.opacity)
             style.opacity = 0.82f;
     }
+    auto presentedTransform = node.transform;
     if (transitions)
-        style = transitions->Resolve(
-            node.key, style, node.transition, now, reducedMotion);
+    {
+        auto presentation = transitions->ResolvePresentation(node.key,
+            style, node.transform, node.transition, now, reducedMotion);
+        style = std::move(presentation.style);
+        presentedTransform = std::move(presentation.transform);
+    }
+    WidgetViewTransformScope transformScope(
+        state, node, presentedTransform);
+    const float cumulativeScale = inheritedScale *
+        (presentedTransform
+            ? presentedTransform->scale * presentedTransform->scaleY
+            : 1.0f);
     const bool badgeNode = node.type == ViewNodeType::Badge;
     const float opacity = std::clamp(
         style.opacity.value_or(1.0f), 0.0f, 1.0f);

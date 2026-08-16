@@ -3615,14 +3615,13 @@ ViewResolvedTransform ComposeTransform(
     };
 }
 
-ViewResolvedTransform LocalTransform(const ViewNode& node) noexcept
+ViewResolvedTransform LocalTransform(const ViewRect& frame,
+    const std::optional<ViewTransform>& transform) noexcept
 {
-    if (!node.transform) return {};
-    const auto& value = *node.transform;
-    const float originX = node.frame.x +
-        node.frame.width * value.originX;
-    const float originY = node.frame.y +
-        node.frame.height * value.originY;
+    if (!transform) return {};
+    const auto& value = *transform;
+    const float originX = frame.x + frame.width * value.originX;
+    const float originY = frame.y + frame.height * value.originY;
     const float radians = value.rotate *
         (3.14159265358979323846f / 180.0f);
     const float cosine = std::cos(radians);
@@ -3646,6 +3645,11 @@ ViewResolvedTransform LocalTransform(const ViewNode& node) noexcept
             value.translateX,
         originY - originX * result.m12 - originY * result.m22 +
             value.translateY };
+}
+
+ViewResolvedTransform LocalTransform(const ViewNode& node) noexcept
+{
+    return LocalTransform(node.frame, node.transform);
 }
 
 struct TransformedPoint
@@ -3869,31 +3873,69 @@ std::uint32_t InterpolateTransitionColor(
         channel(start & 0xFF, target & 0xFF);
 }
 
-bool HasTransitionDifference(const ViewStyle& start,
-    const ViewStyle& target, const ViewTransition& transition) noexcept
+bool HasTransitionDifference(const ViewTransitionPresentation& start,
+    const ViewTransitionPresentation& target,
+    const ViewTransition& transition) noexcept
 {
     const auto changedColor = [](const auto& first, const auto& second) {
         return first && second && first != second;
     };
     return (HasTransitionProperty(transition,
                 ViewTransitionProperty::Background) &&
-            changedColor(start.background, target.background)) ||
+            changedColor(start.style.background, target.style.background)) ||
         (HasTransitionProperty(transition,
                 ViewTransitionProperty::Foreground) &&
-            changedColor(start.foreground, target.foreground)) ||
+            changedColor(start.style.foreground, target.style.foreground)) ||
         (HasTransitionProperty(transition,
                 ViewTransitionProperty::BorderColor) &&
-            changedColor(start.borderColor, target.borderColor)) ||
+            changedColor(start.style.borderColor,
+                target.style.borderColor)) ||
         (HasTransitionProperty(transition,
                 ViewTransitionProperty::Opacity) &&
-            start.opacity.value_or(1.0f) != target.opacity.value_or(1.0f));
+            start.style.opacity.value_or(1.0f) !=
+                target.style.opacity.value_or(1.0f)) ||
+        (HasTransitionProperty(transition,
+                ViewTransitionProperty::Transform) &&
+            start.transform.value_or(ViewTransform{}) !=
+                target.transform.value_or(ViewTransform{}));
 }
 
-ViewStyle InterpolateTransitionStyle(const ViewStyle& start,
-    const ViewStyle& target, const ViewTransition& transition,
+float InterpolateTransitionAngle(float start, float target,
     float progress) noexcept
 {
-    ViewStyle result = target;
+    float delta = std::fmod(target - start, 360.0f);
+    if (delta > 180.0f) delta -= 360.0f;
+    else if (delta < -180.0f) delta += 360.0f;
+    return start + delta * progress;
+}
+
+ViewTransform InterpolateTransitionTransform(const ViewTransform& start,
+    const ViewTransform& target, float progress) noexcept
+{
+    const auto interpolate = [progress](float from, float to) {
+        return from + (to - from) * progress;
+    };
+    return {
+        interpolate(start.translateX, target.translateX),
+        interpolate(start.translateY, target.translateY),
+        interpolate(start.scale, target.scale),
+        interpolate(start.originX, target.originX),
+        interpolate(start.originY, target.originY),
+        interpolate(start.scaleX, target.scaleX),
+        interpolate(start.scaleY, target.scaleY),
+        InterpolateTransitionAngle(start.rotate, target.rotate, progress),
+        interpolate(start.skewX, target.skewX),
+        interpolate(start.skewY, target.skewY),
+    };
+}
+
+ViewTransitionPresentation InterpolateTransitionPresentation(
+    const ViewTransitionPresentation& start,
+    const ViewTransitionPresentation& target,
+    const ViewTransition& transition,
+    float progress) noexcept
+{
+    ViewTransitionPresentation result = target;
     progress = ResolveTransitionProgress(transition.easing, progress);
     const auto applyColor = [progress](const auto& from, const auto& to,
         auto& output) {
@@ -3902,19 +3944,29 @@ ViewStyle InterpolateTransitionStyle(const ViewStyle& start,
     };
     if (HasTransitionProperty(
             transition, ViewTransitionProperty::Background))
-        applyColor(start.background, target.background, result.background);
+        applyColor(start.style.background, target.style.background,
+            result.style.background);
     if (HasTransitionProperty(
             transition, ViewTransitionProperty::Foreground))
-        applyColor(start.foreground, target.foreground, result.foreground);
+        applyColor(start.style.foreground, target.style.foreground,
+            result.style.foreground);
     if (HasTransitionProperty(
             transition, ViewTransitionProperty::BorderColor))
-        applyColor(start.borderColor, target.borderColor, result.borderColor);
+        applyColor(start.style.borderColor, target.style.borderColor,
+            result.style.borderColor);
     if (HasTransitionProperty(
             transition, ViewTransitionProperty::Opacity))
     {
-        const float from = start.opacity.value_or(1.0f);
-        const float to = target.opacity.value_or(1.0f);
-        result.opacity = from + (to - from) * progress;
+        const float from = start.style.opacity.value_or(1.0f);
+        const float to = target.style.opacity.value_or(1.0f);
+        result.style.opacity = from + (to - from) * progress;
+    }
+    if (HasTransitionProperty(
+            transition, ViewTransitionProperty::Transform))
+    {
+        result.transform = InterpolateTransitionTransform(
+            start.transform.value_or(ViewTransform{}),
+            target.transform.value_or(ViewTransform{}), progress);
     }
     return result;
 }
@@ -3937,6 +3989,12 @@ ViewResolvedTransform ResolveViewLocalTransform(
     const ViewNode& node) noexcept
 {
     return LocalTransform(node);
+}
+
+ViewResolvedTransform ResolveViewLocalTransform(const ViewRect& frame,
+    const std::optional<ViewTransform>& transform) noexcept
+{
+    return LocalTransform(frame, transform);
 }
 
 std::optional<ViewRect> ResolveViewClipForKey(
@@ -4121,11 +4179,14 @@ void ViewTransitionRuntime::BeginFrame() noexcept
     }
 }
 
-ViewStyle ViewTransitionRuntime::Resolve(std::string_view key,
-    const ViewStyle& target,
+ViewTransitionPresentation ViewTransitionRuntime::ResolvePresentation(
+    std::string_view key, const ViewStyle& targetStyle,
+    const std::optional<ViewTransform>& targetTransform,
     const std::optional<ViewTransition>& transition,
     TimePoint now, bool reducedMotion)
 {
+    const ViewTransitionPresentation target{
+        targetStyle, targetTransform };
     if (key.empty()) return target;
     const ViewTransition configured = transition.value_or(ViewTransition{});
     auto [position, inserted] = entries_.try_emplace(std::string(key));
@@ -4147,7 +4208,7 @@ ViewStyle ViewTransitionRuntime::Resolve(std::string_view key,
                 now - entry.started).count();
         const float progress = elapsed /
             static_cast<float>(entry.transition.durationMilliseconds);
-        return InterpolateTransitionStyle(entry.start, entry.target,
+        return InterpolateTransitionPresentation(entry.start, entry.target,
             entry.transition, progress);
     };
     const bool targetChanged = entry.target != target;
@@ -4179,9 +4240,18 @@ ViewStyle ViewTransitionRuntime::Resolve(std::string_view key,
         entry.start = target;
         return target;
     }
-    return InterpolateTransitionStyle(entry.start, entry.target,
+    return InterpolateTransitionPresentation(entry.start, entry.target,
         entry.transition, elapsed /
             static_cast<float>(entry.transition.durationMilliseconds));
+}
+
+ViewStyle ViewTransitionRuntime::Resolve(std::string_view key,
+    const ViewStyle& target,
+    const std::optional<ViewTransition>& transition,
+    TimePoint now, bool reducedMotion)
+{
+    return ResolvePresentation(key, target, std::nullopt,
+        transition, now, reducedMotion).style;
 }
 
 void ViewTransitionRuntime::EndFrame()

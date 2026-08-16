@@ -1257,9 +1257,11 @@ bool ReadTransitionField(lua_State* state, int table,
                 property = ViewTransitionProperty::BorderColor;
             else if (name == "opacity")
                 property = ViewTransitionProperty::Opacity;
+            else if (name == "transform")
+                property = ViewTransitionProperty::Transform;
             else
             {
-                error = "view transition properties support background, foreground, borderColor, and opacity";
+                error = "view transition properties support background, foreground, borderColor, opacity, and transform";
                 ok = false;
                 break;
             }

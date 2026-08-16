@@ -130,7 +130,7 @@
 ---@alias SnowViewOverflow 'visible'|'clip'
 ---@alias SnowViewVisibility 'visible'|'hidden'|'collapsed'
 ---@alias SnowViewTransitionEasing 'linear'|'easeIn'|'easeOut'|'easeInOut'
----@alias SnowViewTransitionProperty 'background'|'foreground'|'borderColor'|'opacity'
+---@alias SnowViewTransitionProperty 'background'|'foreground'|'borderColor'|'opacity'|'transform'
 ---@alias SnowViewThemeColor 'widgetBackground'|'surface'|'surfaceVariant'|'textPrimary'|'textSecondary'|'textDisabled'|'border'|'borderStrong'|'systemAccent'|'accentText'|'info'|'success'|'warning'|'error'
 ---@alias SnowViewColor integer|SnowViewThemeColor
 ---@alias SnowViewGridTrack number|'auto'|SnowViewGridFractionTrack|SnowViewGridMinMaxTrack
@@ -176,7 +176,7 @@
 ---@class SnowViewTransition
 ---@field durationMs? integer Host-driven duration from 1 through 2000 milliseconds; defaults to 120.
 ---@field easing? SnowViewTransitionEasing Defaults to easeOut.
----@field properties SnowViewTransitionProperty[] One to four unique visual properties; color endpoints must both be explicit to interpolate.
+---@field properties SnowViewTransitionProperty[] One to four unique visual properties; color endpoints must both be explicit to interpolate. Transform interpolation requires view.transition.transform.
 
 ---@class SnowViewGridFractionTrack
 ---@field fr number Positive fraction weight no greater than 1000.
