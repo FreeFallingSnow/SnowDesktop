@@ -527,11 +527,17 @@ surface 中当前唯一选中 Lua 组件或活动 panel surface 的当前聚焦�
 触控板 wheel、钳制到内容边界、移动子树并同时裁剪绘制和元素命中。滚出视口的按钮或
 列表项不能 hover、点击或打开右键菜单。`showScrollbar=false` 可隐藏宿主滚动条，但不会
 关闭滚动。每棵树最多 32 个 scroll，单轴内容 extent 最大 1,000,000 逻辑单位；该能力
-对应 feature `view.scroll`，当前不提供 Lua 自绘滚动条、惯性动画、滚动链或 Lua 程序化定位；
+对应 feature `view.scroll`，当前不提供 Lua 自绘滚动条、惯性动画或滚动链；
 Windows UI Automation Scroll Pattern 可以通过同一宿主滚动状态移动视口，但不会获得可信手势。
 探测 `view.scroll.events` 后，`scroll/virtualList/virtualGrid` 可声明 `events.scrollEnd`；滚轮或
 UIA 滚动从末端之前首次到达最大偏移时投递一次 action，离开末端后可再次触发。没有可滚动范围、
 已位于末端的重复输入和渲染时偏移钳制不会重复投递；UIA 来源为 `accessibility` 且不携带可信手势。
+探测 `view.scroll.programmatic` 后，action/event/schedule 等非渲染回调可调用
+`view.scrollTo(key, offset)` 或 `view.scrollBy(key, delta)`；宿主按当前已提交 scroll/virtual
+节点范围钳制并返回 `{offset,maximum,changed}`。`view.scrollToIndex(key,index,alignment?)`
+只接受已提交的固定行高 `virtualList/virtualGrid`，使用 1-based 全局索引和
+`nearest/start/center/end` 对齐。三个函数都禁止在 `view()`/`render()` 中改变偏移，未知 key
+返回 `scrollTargetNotFound`，索引越界返回 `indexOutOfRange`，且不会产生可信用户手势。
 
 `list` 是默认纵向的有界集合；探测 `view.collection.orientation` 后可声明
 `orientation="horizontal"|"vertical"`，横向会同时改变固有尺寸、basis/grow/shrink 分配和条目
@@ -662,7 +668,8 @@ return view.virtualList({
 仍不得超过 1,000,000；每帧最多实体化 128 项，overscan 为 0–16 行，空集合使用
 `firstIndex=0` 和空 children。虚拟节点必须有固定或 fill 高度，`viewportExtent` 是扣除
 节点 padding 后的实际内容高度。当前不支持可变行高、横向虚拟集合、sticky header、
-程序化定位或保留已回收项的 Lua 局部状态；稳定状态应放在 model/state 并以 item key 索引。
+或保留已回收项的 Lua 局部状态；固定行高程序化定位由 `view.scroll.programmatic` 提供，
+稳定状态应放在 model/state 并以 item key 索引。
 
 `shape` 支持 rectangle、roundedRectangle、circle 和 ellipse；填充与描边来自 style。
 `image` 的 `source` 只接受入口加载期间创建的 `resource.image()` 句柄，必须显式提供

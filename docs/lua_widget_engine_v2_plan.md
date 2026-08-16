@@ -1039,7 +1039,9 @@ region generation 校验，旧菜单不会落到新一代 region。普通区域�
 即时绘制纵向溢出已增加 `interaction.scroll/setScrollOffset`：滚动位置按实例和稳定
 key 隔离，宿主负责 wheel、钳制、重绘和滚动条，组件使用 `draw.pushClip/popClip`
 裁剪并按返回 offset 绘制。声明式轨道现已另行开放 `view.scroll`：支持纵向/横向单子树、
-宿主 offset、测量、滚轮、裁剪绘制和裁剪命中，滚出视口的元素不会继续响应交互。
+宿主 offset、测量、滚轮、裁剪绘制和裁剪命中，滚出视口的元素不会继续响应交互；
+`view.scroll.programmatic` 允许非渲染回调按绝对/相对偏移定位，并按 1-based 索引定位固定行高
+virtualList/virtualGrid，所有结果仍由宿主范围钳制。
 desktop 与宿主辅助 surface 的即时绘制均有各自原子提交的 region 集合；
 `view.keyboardNavigation.basic` 已让可点击、受控和文本输入 region 进入所属 surface 的宿主
 焦点序列。触控长按、受控 submenu、包内菜单图标
@@ -1114,7 +1116,9 @@ SnowDesktop 不照搬某一个框架，参考优先级如下：
 list 支持默认纵向与显式横向，并让固有尺寸、flex 分配和条目位置使用同一主轴；grid 与虚拟集合
 保持行优先纵向模型并拒绝 orientation。`view.collection.virtual` 进一步
 提供固定行高 `virtualList/virtualGrid` 和 `view.virtualRange`，按实例滚动位置只实体化
-最多 128 个连续项，宿主按全局 1-based 索引布局并校验窗口覆盖可见行。可操作的已实体化项
+最多 128 个连续项，宿主按全局 1-based 索引布局并校验窗口覆盖可见行；
+`view.scroll.programmatic` 已补充 scrollTo/scrollBy 和 nearest/start/center/end 的
+scrollToIndex。可操作的已实体化项
 已进入通用键盘焦点序列；`view.collection.selection` 又加入父集合统一拥有的 none/single/
 multiple 与受控 selectedKeys，条目 selectedStyle、指针/键盘建议事件及 UIA Selection 的
 单选、多选、添加和移除使用同一状态来源。`view.collection.contentStates` 现以单个

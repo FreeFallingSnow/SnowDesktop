@@ -1425,6 +1425,15 @@ public:
         const std::string& id, std::string_view surface = {}) const;
     void RuntimeSetScrollOffset(const std::wstring& widgetId,
         const std::string& id, int offset, std::string_view surface = {});
+    bool RuntimeScrollView(const std::wstring& widgetId,
+        const std::string& id, int value, bool relative,
+        int& offset, int& maximum, bool& changed, std::string& error,
+        std::string_view surface = {});
+    bool RuntimeScrollViewToIndex(const std::wstring& widgetId,
+        const std::string& id, std::size_t itemIndex,
+        std::string_view alignment, int& offset, int& maximum,
+        bool& changed, std::string& error,
+        std::string_view surface = {});
     bool HandleHostUiPointer(const std::wstring& widgetId, int x, int y,
         int delta, bool wheel, std::string_view surface = "desktop");
     std::vector<LuaWidget::HostControl> GetScrollControls(

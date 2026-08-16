@@ -743,6 +743,10 @@ bool ComputeViewVirtualRange(std::size_t itemCount, float itemExtent,
     std::size_t columns, float rowGap, float viewportExtent,
     float requestedOffset, std::size_t overscan,
     ViewVirtualRange& range, std::string& error);
+bool ComputeViewVirtualItemScrollOffset(std::size_t itemCount,
+    float itemExtent, std::size_t columns, float rowGap,
+    float viewportExtent, float currentOffset, std::size_t index,
+    std::string_view alignment, float& offset, std::string& error);
 ViewRect ViewNodeContentRect(const ViewNode& node) noexcept;
 ViewResolvedTransform ResolveViewTransformForKey(
     const ViewNode& root, std::string_view key) noexcept;

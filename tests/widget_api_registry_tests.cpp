@@ -513,6 +513,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "view.scroll.events") &&
             snowdesktop::widget_api::SupportsFeature(
+                "view.scroll.programmatic") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "view.selectionControls") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.checkbox.indeterminate") &&

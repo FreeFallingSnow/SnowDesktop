@@ -1706,6 +1706,20 @@ void TestVirtualizedCollections()
             200.0f, 0.0f, 0, calculated, error) &&
             error.find("128") != std::string::npos,
         "virtual range calculation must reject oversized visible windows");
+    float itemOffset = 0.0f;
+    Check(ComputeViewVirtualItemScrollOffset(1000, 40.0f, 1, 4.0f,
+            100.0f, 220.0f, 10, "nearest", itemOffset, error) &&
+            Near(itemOffset, 336.0f) &&
+            ComputeViewVirtualItemScrollOffset(1000, 40.0f, 1, 4.0f,
+                100.0f, 220.0f, 10, "center", itemOffset, error) &&
+            Near(itemOffset, 366.0f),
+        "virtual item scrolling must reveal or center a 1-based list item");
+    Check(ComputeViewVirtualItemScrollOffset(100, 30.0f, 4, 5.0f,
+            70.0f, 0.0f, 9, "nearest", itemOffset, error) &&
+            Near(itemOffset, 30.0f) &&
+            !ComputeViewVirtualItemScrollOffset(100, 30.0f, 4, 5.0f,
+                70.0f, 0.0f, 0, "nearest", itemOffset, error),
+        "virtual-grid item scrolling must use row-major indices and reject zero");
 
     lua_State* state = luaL_newstate();
     Check(state != nullptr, "Lua state must be available");

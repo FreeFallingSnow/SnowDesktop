@@ -136,6 +136,7 @@
 ---@alias SnowViewGridTrack number|'auto'|SnowViewGridFractionTrack|SnowViewGridMinMaxTrack
 ---@alias SnowViewValidationState 'none'|'info'|'success'|'warning'|'error'
 ---@alias SnowViewSelectionMode 'none'|'single'|'multiple'
+---@alias SnowViewScrollAlignment 'nearest'|'start'|'center'|'end'
 ---@alias SnowDrawImageFit 'fill'|'contain'|'cover'|'none'
 ---@alias SnowDrawImageAlignment 'start'|'center'|'end'
 ---@alias SnowDrawImageInterpolation 'nearest'|'linear'
@@ -272,6 +273,11 @@
 ---@field maximum number Maximum scroll offset.
 ---@field viewportExtent number Validated viewport extent.
 ---@field contentExtent number Total bounded logical content extent.
+
+---@class SnowViewScrollResult
+---@field offset integer Applied logical offset.
+---@field maximum integer Current maximum logical offset.
+---@field changed boolean Whether the host offset changed.
 
 ---@class SnowViewNodeOptions
 ---@field key string Globally unique stable key in the returned tree.
@@ -844,6 +850,28 @@ function view.gridList(options) end
 ---@param options SnowViewVirtualRangeOptions
 ---@return SnowViewVirtualRange
 function view.virtualRange(options) end
+
+---Set a committed declarative scroll or virtual-collection offset outside view/render. Requires view.scroll.programmatic.
+---@param key string Stable scroll node key.
+---@param offset integer Absolute logical offset from 0 through 1000000; clamped to the current maximum.
+---@return SnowViewScrollResult? result
+---@return string? error
+function view.scrollTo(key, offset) end
+
+---Move a committed declarative scroll or virtual-collection offset outside view/render. Requires view.scroll.programmatic.
+---@param key string Stable scroll node key.
+---@param delta integer Relative logical delta from -1000000 through 1000000.
+---@return SnowViewScrollResult? result
+---@return string? error
+function view.scrollBy(key, delta) end
+
+---Reveal a 1-based item in a committed virtualList/virtualGrid outside view/render. Requires view.scroll.programmatic.
+---@param key string Stable virtual collection key.
+---@param index integer 1-based logical item index.
+---@param alignment? SnowViewScrollAlignment Defaults to nearest.
+---@return SnowViewScrollResult? result
+---@return string? error
+function view.scrollToIndex(key, index, alignment) end
 
 ---Fixed-row virtual vertical list. Children are the contiguous listItem window beginning at firstIndex. Requires view.collection.virtual.
 ---@param options SnowViewNodeOptions

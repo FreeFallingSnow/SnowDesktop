@@ -1473,6 +1473,28 @@ static bool HasDeclarativeViewForSurface(
         ? widget.panelViewTree.has_value() : widget.viewTree.has_value();
 }
 
+static const snowdesktop::widget_runtime::ViewNode*
+DeclarativeViewForSurface(
+    const LuaWidget& widget, std::string_view surface) noexcept
+{
+    const auto& tree = IsPanelSurface(surface)
+        ? widget.panelViewTree : widget.viewTree;
+    return tree ? &*tree : nullptr;
+}
+
+static const snowdesktop::widget_runtime::ViewNode* FindViewNodeByKey(
+    const snowdesktop::widget_runtime::ViewNode& node,
+    std::string_view key) noexcept
+{
+    if (node.key == key) return &node;
+    for (const auto& child : node.children)
+    {
+        if (const auto* found = FindViewNodeByKey(child, key))
+            return found;
+    }
+    return nullptr;
+}
+
 static void QueueDeclarativeVisualFrame(
     LuaWidget& widget, std::string_view surface) noexcept
 {
@@ -8777,6 +8799,108 @@ static int lua_ViewVirtualRange(lua_State* state)
     lua_pushnumber(state, range.contentExtent);
     lua_setfield(state, -2, "contentExtent");
     return 1;
+}
+
+static std::string LuaViewScrollKey(lua_State* state, const char* api)
+{
+    std::size_t length = 0;
+    const char* raw = luaL_checklstring(state, 1, &length);
+    std::string key(raw ? raw : "", length);
+    if (key.empty() || key.size() > 128 ||
+        key.find('\0') != std::string::npos || !IsValidUtf8Local(key))
+    {
+        luaL_error(state,
+            "%s: key must contain 1 to 128 bytes of valid UTF-8", api);
+    }
+    return key;
+}
+
+static int PushViewScrollResult(lua_State* state, bool succeeded,
+    int offset, int maximum, bool changed, const std::string& error)
+{
+    if (!succeeded)
+    {
+        lua_pushnil(state);
+        lua_pushlstring(state, error.data(), error.size());
+        return 2;
+    }
+    lua_createtable(state, 0, 3);
+    lua_pushinteger(state, offset);
+    lua_setfield(state, -2, "offset");
+    lua_pushinteger(state, maximum);
+    lua_setfield(state, -2, "maximum");
+    lua_pushboolean(state, changed ? 1 : 0);
+    lua_setfield(state, -2, "changed");
+    return 1;
+}
+
+static int LuaViewScroll(lua_State* state, bool relative)
+{
+    const char* api = relative ? "view.scrollBy" : "view.scrollTo";
+    if (lua_gettop(state) != 2)
+        return luaL_error(state, "%s: expected key and offset", api);
+    const std::string key = LuaViewScrollKey(state, api);
+    const lua_Integer requested = luaL_checkinteger(state, 2);
+    if ((!relative && requested < 0) || requested < -1'000'000 ||
+        requested > 1'000'000)
+        return luaL_error(state, "%s: offset exceeds its limit", api);
+    auto* d2d = GetD2D(state);
+    if (!d2d || !d2d->engine)
+        return luaL_error(state, "%s: host context is unavailable", api);
+    if (!d2d->engine->RuntimeCanWriteWidgetStorage(BoundWidgetId(state)))
+        return luaL_error(state, "%s cannot mutate scroll state during render", api);
+    int offset = 0;
+    int maximum = 0;
+    bool changed = false;
+    std::string error;
+    const bool succeeded = d2d->engine->RuntimeScrollView(
+        BoundWidgetId(state), key, static_cast<int>(requested), relative,
+        offset, maximum, changed, error);
+    return PushViewScrollResult(
+        state, succeeded, offset, maximum, changed, error);
+}
+
+static int lua_ViewScrollTo(lua_State* state)
+{
+    return LuaViewScroll(state, false);
+}
+
+static int lua_ViewScrollBy(lua_State* state)
+{
+    return LuaViewScroll(state, true);
+}
+
+static int lua_ViewScrollToIndex(lua_State* state)
+{
+    if (lua_gettop(state) < 2 || lua_gettop(state) > 3)
+        return luaL_error(state,
+            "view.scrollToIndex: expected key, index, and optional alignment");
+    const std::string key = LuaViewScrollKey(state, "view.scrollToIndex");
+    const lua_Integer index = luaL_checkinteger(state, 2);
+    if (index <= 0 || index > 1'000'000)
+        return luaL_error(state,
+            "view.scrollToIndex: index must be between 1 and 1000000");
+    const std::string_view alignment = luaL_optstring(state, 3, "nearest");
+    if (alignment != "nearest" && alignment != "start" &&
+        alignment != "center" && alignment != "end")
+        return luaL_error(state,
+            "view.scrollToIndex: alignment must be nearest, start, center, or end");
+    auto* d2d = GetD2D(state);
+    if (!d2d || !d2d->engine)
+        return luaL_error(state,
+            "view.scrollToIndex: host context is unavailable");
+    if (!d2d->engine->RuntimeCanWriteWidgetStorage(BoundWidgetId(state)))
+        return luaL_error(state,
+            "view.scrollToIndex cannot mutate scroll state during render");
+    int offset = 0;
+    int maximum = 0;
+    bool changed = false;
+    std::string error;
+    const bool succeeded = d2d->engine->RuntimeScrollViewToIndex(
+        BoundWidgetId(state), key, static_cast<std::size_t>(index),
+        alignment, offset, maximum, changed, error);
+    return PushViewScrollResult(
+        state, succeeded, offset, maximum, changed, error);
 }
 
 static int LuaDrawColor(lua_State* state, int index,
@@ -25593,6 +25717,103 @@ void WidgetEngine::RuntimeSetScrollOffset(
         std::clamp(offset, 0, maximum);
 }
 
+bool WidgetEngine::RuntimeScrollView(const std::wstring& widgetId,
+    const std::string& id, int value, bool relative,
+    int& offset, int& maximum, bool& changed, std::string& error,
+    std::string_view surface)
+{
+    offset = 0;
+    maximum = 0;
+    changed = false;
+    error.clear();
+    const int index = FindWidget(widgetId);
+    if (index < 0)
+    {
+        error = "hostUnavailable";
+        return false;
+    }
+    if (surface.empty()) surface = CurrentWidgetSurface(d2dState_);
+    auto& widget = widgets_[index];
+    const auto control = std::find_if(widget.hostControls.rbegin(),
+        widget.hostControls.rend(), [&](const auto& candidate) {
+            return candidate.type == LuaWidget::HostControl::Type::Scroll &&
+                candidate.id == id &&
+                HostControlBelongsToSurface(candidate, surface);
+        });
+    if (control == widget.hostControls.rend())
+    {
+        error = "scrollTargetNotFound";
+        return false;
+    }
+    maximum = control->horizontal
+        ? std::max(0, control->contentWidth - control->viewportWidth)
+        : std::max(0, control->contentHeight - control->viewportHeight);
+    auto& offsets = ScrollOffsetsForSurface(widget, surface);
+    const int previous = std::clamp(offsets[id], 0, maximum);
+    const std::int64_t requested = relative
+        ? static_cast<std::int64_t>(previous) + value : value;
+    offset = static_cast<int>(std::clamp<std::int64_t>(
+        requested, 0, maximum));
+    changed = offset != previous;
+    offsets[id] = offset;
+    if (changed) RuntimeInvalidateHost(widgetId);
+    return true;
+}
+
+bool WidgetEngine::RuntimeScrollViewToIndex(
+    const std::wstring& widgetId, const std::string& id,
+    std::size_t itemIndex, std::string_view alignment,
+    int& offset, int& maximum, bool& changed, std::string& error,
+    std::string_view surface)
+{
+    const int widgetIndex = FindWidget(widgetId);
+    if (widgetIndex < 0)
+    {
+        error = "hostUnavailable";
+        return false;
+    }
+    if (surface.empty()) surface = CurrentWidgetSurface(d2dState_);
+    const auto& widget = widgets_[widgetIndex];
+    const auto* tree = DeclarativeViewForSurface(widget, surface);
+    const auto* node = tree ? FindViewNodeByKey(*tree, id) : nullptr;
+    if (!node || (node->type != snowdesktop::widget_runtime::
+            ViewNodeType::VirtualList &&
+            node->type != snowdesktop::widget_runtime::
+                ViewNodeType::VirtualGrid))
+    {
+        error = "virtualScrollTargetNotFound";
+        return false;
+    }
+    const auto control = std::find_if(widget.hostControls.rbegin(),
+        widget.hostControls.rend(), [&](const auto& candidate) {
+            return candidate.type == LuaWidget::HostControl::Type::Scroll &&
+                candidate.id == id &&
+                HostControlBelongsToSurface(candidate, surface);
+        });
+    if (control == widget.hostControls.rend())
+    {
+        error = "scrollTargetNotFound";
+        return false;
+    }
+    const int current = RuntimeGetScrollOffset(widgetId, id, surface);
+    float requested = 0.0f;
+    std::string rangeError;
+    if (!snowdesktop::widget_runtime::ComputeViewVirtualItemScrollOffset(
+            node->itemCount, node->itemExtent, node->columns,
+            node->rowGap.value_or(node->gap),
+            static_cast<float>(control->viewportHeight),
+            static_cast<float>(current), itemIndex, alignment,
+            requested, rangeError))
+    {
+        error = itemIndex == 0 || itemIndex > node->itemCount
+            ? "indexOutOfRange" : "invalidVirtualCollection";
+        return false;
+    }
+    return RuntimeScrollView(widgetId, id,
+        static_cast<int>(std::lround(requested)), false,
+        offset, maximum, changed, error, surface);
+}
+
 std::vector<LuaWidget::HostControl> WidgetEngine::GetScrollControls(
     const std::wstring& widgetId, std::string_view surface) const
 {
@@ -29120,6 +29341,9 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
         { "virtualList", snowdesktop::widget_runtime::LuaViewVirtualList, 2 },
         { "virtualGrid", snowdesktop::widget_runtime::LuaViewVirtualGrid, 2 },
         { "virtualRange", lua_ViewVirtualRange, 2 },
+        { "scrollTo", lua_ViewScrollTo, 2 },
+        { "scrollBy", lua_ViewScrollBy, 2 },
+        { "scrollToIndex", lua_ViewScrollToIndex, 2 },
         { "listItem", snowdesktop::widget_runtime::LuaViewListItem, 2 },
         { "text", snowdesktop::widget_runtime::LuaViewText, 2 },
         { "styledText", snowdesktop::widget_runtime::LuaViewStyledText, 2 },

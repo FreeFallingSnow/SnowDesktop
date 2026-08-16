@@ -4742,6 +4742,44 @@ bool ComputeViewVirtualRange(std::size_t itemCount, float itemExtent,
     return true;
 }
 
+bool ComputeViewVirtualItemScrollOffset(std::size_t itemCount,
+    float itemExtent, std::size_t columns, float rowGap,
+    float viewportExtent, float currentOffset, std::size_t index,
+    std::string_view alignment, float& offset, std::string& error)
+{
+    offset = 0.0f;
+    ViewVirtualRange range;
+    if (!ComputeViewVirtualRange(itemCount, itemExtent, columns, rowGap,
+            viewportExtent, currentOffset, 0, range, error))
+        return false;
+    if (index == 0 || index > itemCount)
+    {
+        error = "virtual item index is outside the collection";
+        return false;
+    }
+    if (alignment != "nearest" && alignment != "start" &&
+        alignment != "center" && alignment != "end")
+    {
+        error = "virtual item alignment must be nearest, start, center, or end";
+        return false;
+    }
+    const std::size_t row = (index - 1) / columns;
+    const float itemStart = static_cast<float>(row) *
+        (itemExtent + rowGap);
+    const float itemEnd = itemStart + itemExtent;
+    float requested = range.offset;
+    if (alignment == "start") requested = itemStart;
+    else if (alignment == "center")
+        requested = itemStart - (viewportExtent - itemExtent) * 0.5f;
+    else if (alignment == "end")
+        requested = itemEnd - viewportExtent;
+    else if (itemStart < range.offset) requested = itemStart;
+    else if (itemEnd > range.offset + viewportExtent)
+        requested = itemEnd - viewportExtent;
+    offset = std::clamp(requested, 0.0f, range.maximum);
+    return true;
+}
+
 const char* ViewNodeTypeName(ViewNodeType type) noexcept
 {
     const ViewNodeContract* contract = FindViewNodeContract(type);
