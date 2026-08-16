@@ -166,6 +166,8 @@ return widget.define({
         assert(snapshot.available == true and snapshot.stale == true and
             snapshot.warmingUp == false and snapshot.error == nil,
             "stale preview data state was not injected")
+        assert(snapshot.timestamp == 1785662999499,
+            "preview data timestamp did not use the virtual clock")
         return {}
     end,
     render = function()

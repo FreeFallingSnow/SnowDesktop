@@ -22792,8 +22792,9 @@ WidgetEngine::RuntimeGetDataSnapshot(
 
     LuaWidgetDataSnapshot result;
     result.topic = binding->topic;
-    const auto timestampNow =
-        std::chrono::duration_cast<std::chrono::milliseconds>(
+    const auto timestampNow = binding->options.preview
+        ? snowdesktop::widget_runtime::PreviewWallClockMilliseconds
+        : std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
     if (binding->options.preview)
     {

@@ -38,7 +38,8 @@ Shell、系统数据、存储或其他副作用 API。命令输出文件数、�
 `--dpi` 支持 96–480，`--locale` 选择宿主已安装语言，`--theme` 可为 `dark/light`。
 `--data-state` 可为 `ready/empty/loading/error/stale/permission-denied`，用于让全部预览数据订阅
 返回对应的确定性包络；`empty` 保留 `available=true` 但使用空/零值，`error` 返回
-`providerUnavailable`，拒权返回 `permissionDenied`。这些环境在 Lua `setup()` 前注入，预览
+`providerUnavailable`，拒权返回 `permissionDenied`；包络时间戳与 `time.now()` 共用固定预览
+时钟，stale 时间固定落在请求 `maxAgeMs` 之前。以上环境在 Lua `setup()` 前注入，预览
 显示器摘要固定标记为 unavailable，不泄漏开发机显示器。命令返回包含稳定 `stage`、最终像素
 尺寸、栅格尺寸、DPI、locale、theme 和 dataState 的 JSON。复制到
 SnowDesktop 安装目录外的 CLI 可用 `--host <SnowDesktop.exe>` 或 `SNOWDESKTOP_HOST` 指定宿主。

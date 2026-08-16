@@ -1751,7 +1751,8 @@ v2.0 资源契约：
 - `snowwidget preview <directory> <output.png> --columns ... --rows ... --dpi ...
   --locale ... --theme ... --data-state ...`：已通过真实 API v2/D2D 离屏宿主输出 PNG；尺寸、
   DPI、语言、明暗主题和 ready/empty/loading/error/stale/permission-denied 确定性数据包络均在
-  `setup()` 前注入，预览显示器摘要固定 unavailable，存储使用隔离覆盖层且不写持久状态。
+  `setup()` 前注入，数据包络与 `time.now()` 共用固定虚拟时钟，预览显示器摘要固定
+  unavailable，存储使用隔离覆盖层且不写持久状态。
 - `snowwidget permissions <directory>`：生成权限与 origin 报告。
 - `snowwidget migrate-v2 <directory>`：生成迁移草案，不覆盖原文件。
 - LuaLS 类型文件和 API 自动补全。
