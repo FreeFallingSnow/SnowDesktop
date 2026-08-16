@@ -86,11 +86,23 @@
 ---@field cornerRadius number
 ---@field contentTheme integer
 
+---@class SnowSettingCondition
+---@field key string Stable key of another declared setting field.
+---@field operator 'equals'|'notEquals'|'oneOf'|'notOneOf'|'contains'|'notContains'|'set'|'unset'|'truthy'|'falsy'
+---@field value? string|number|boolean|(string|number|boolean)[] Required by comparison operators and omitted by set/unset/truthy/falsy.
+
 ---@class SnowSettingField
 ---@field key string
 ---@field label string
 ---@field description? string Localized supporting text rendered below the field; up to 2048 UTF-8 bytes.
 ---@field group? string ID of one declared SnowSettingGroup.
+---@field validationMessage? string Localized error text required when required/minLength/maxLength is declared.
+---@field required? boolean Require a non-empty value; for bool this requires true and for host-managed references this requires a selected value.
+---@field minLength? integer Minimum Unicode code-point count for text/url/date/time.
+---@field maxLength? integer Maximum Unicode code-point count for text/url/date/time; up to 2048.
+---@field dependsOn? string Shorthand for enabledWhen={key=dependsOn,operator='truthy'}.
+---@field showWhen? SnowSettingCondition Hide the field while the condition is false without clearing its value.
+---@field enabledWhen? SnowSettingCondition Disable the field while the condition is false without clearing its value.
 ---@field type 'text'|'password'|'bool'|'int'|'float'|'select'|'color'|'url'|'date'|'time'|'range'|'multiSelect'|'fileHandle'|'folderHandle'|'appReference'|'desktopItemReference'|'fileReference'|'folderReference'|'appSearch'
 ---@field default? string|number|boolean|string[] multiSelect defaults are stable option arrays; range defaults are exposed to Lua as numbers. Ignored for password, filesystem-handle, and entity reference fields.
 ---@field searchKey? string Required by appSearch; stores the user's query separately from the selected display title.

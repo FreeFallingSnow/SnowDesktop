@@ -24,4 +24,11 @@ bool NormalizeFilesystemSettingExtensions(
     const std::vector<std::string>& input,
     std::vector<std::string>& output) noexcept;
 bool IsValidSettingGroupId(std::string_view value) noexcept;
+bool IsValidSettingCondition(std::string_view operation,
+    std::size_t valueCount) noexcept;
+bool EvaluateSettingCondition(std::string_view operation,
+    const std::vector<std::string>& current,
+    const std::vector<std::string>& expected) noexcept;
+bool ValidateSettingTextValue(std::string_view value, bool required,
+    int minimumLength, int maximumLength) noexcept;
 }

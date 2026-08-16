@@ -190,7 +190,13 @@ either as delimiter-separated text. Probe
 field descriptions must be localized package text, not host-language keys.
 Use non-collapsible groups for short sections and collapsible groups only when
 the hidden controls remain discoverable. Probe `settings.description` before
-adding bounded supporting text below a field. Probe
+adding bounded supporting text below a field. Probe `settings.validation`
+before declaring `required`, `minLength`, `maxLength`, and a localized
+`validationMessage`. Probe `settings.dependencies` for `dependsOn` or
+`enabledWhen`, and `settings.showWhen` for conditional visibility. Conditions
+may reference only another declared field, may not form cycles, and preserve
+the controlled field's value while hidden or disabled. Use `contains` only for
+multiSelect fields and presence/truthiness tests for host-managed references. Probe
 `settings.fileHandle` or `settings.folderHandle` when a persistent settings
 field must own one user-selected filesystem capability. Declare read, write,
 or readWrite access and optional safe file extensions; read the opaque handle

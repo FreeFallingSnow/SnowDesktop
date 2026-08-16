@@ -96,12 +96,20 @@ struct D2DState;
  */
 struct LuaWidgetManifest
 {
+    struct SettingCondition
+    {
+        std::string key;
+        std::string operation;
+        std::vector<std::string> values;
+    };
     struct Setting
     {
         std::string key;
         std::string label;
         std::string description;
         std::string group;
+        std::string validationMessage;
+        std::string dependsOn;
         std::string type;
         std::string defaultValue;
         std::string searchKey;
@@ -112,6 +120,11 @@ struct LuaWidgetManifest
         double minValue = 0.0;
         double maxValue = 100.0;
         double stepValue = 1.0;
+        int minLength = -1;
+        int maxLength = -1;
+        bool required = false;
+        std::optional<SettingCondition> showWhen;
+        std::optional<SettingCondition> enabledWhen;
         std::vector<std::string> options;
         std::vector<std::string> optionLabels;
         std::vector<std::string> defaultValues;

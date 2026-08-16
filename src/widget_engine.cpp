@@ -1083,6 +1083,59 @@ static std::vector<std::string> ReadLuaStringArray(
     return values;
 }
 
+static std::optional<LuaWidgetManifest::SettingCondition>
+ReadLuaSettingConditionField(lua_State* L, int tableIndex,
+    const char* field)
+{
+    tableIndex = lua_absindex(L, tableIndex);
+    lua_getfield(L, tableIndex, field);
+    if (lua_isnil(L, -1))
+    {
+        lua_pop(L, 1);
+        return std::nullopt;
+    }
+    LuaWidgetManifest::SettingCondition condition;
+    if (!lua_istable(L, -1))
+    {
+        condition.operation = "__invalid";
+        lua_pop(L, 1);
+        return condition;
+    }
+    const int conditionTable = lua_absindex(L, -1);
+    condition.key = LuaReadStorageField(L, conditionTable, "key");
+    condition.operation =
+        LuaReadStorageField(L, conditionTable, "operator");
+    lua_getfield(L, conditionTable, "value");
+    if (lua_istable(L, -1))
+    {
+        const int valuesTable = lua_absindex(L, -1);
+        for (int index = 1; index <= 65; ++index)
+        {
+            lua_rawgeti(L, valuesTable, index);
+            if (lua_isnil(L, -1))
+            {
+                lua_pop(L, 1);
+                break;
+            }
+            if (!lua_isboolean(L, -1) && !lua_isnumber(L, -1) &&
+                !lua_isstring(L, -1))
+                condition.operation = "__invalid";
+            condition.values.push_back(
+                LuaValueToStorageString(L, -1));
+            lua_pop(L, 1);
+        }
+    }
+    else if (!lua_isnil(L, -1))
+    {
+        if (!lua_isboolean(L, -1) && !lua_isnumber(L, -1) &&
+            !lua_isstring(L, -1))
+            condition.operation = "__invalid";
+        condition.values.push_back(LuaValueToStorageString(L, -1));
+    }
+    lua_pop(L, 2);
+    return condition;
+}
+
 static LuaWidgetManifest::Setting ReadLuaSettingTable(lua_State* L, int tableIndex)
 {
     tableIndex = lua_absindex(L, tableIndex);
@@ -1092,6 +1145,10 @@ static LuaWidgetManifest::Setting ReadLuaSettingTable(lua_State* L, int tableInd
     setting.description =
         LuaReadStorageField(L, tableIndex, "description");
     setting.group = LuaReadStorageField(L, tableIndex, "group");
+    setting.validationMessage =
+        LuaReadStorageField(L, tableIndex, "validationMessage");
+    setting.dependsOn =
+        LuaReadStorageField(L, tableIndex, "dependsOn");
     setting.type = LuaReadStorageField(L, tableIndex, "type");
     setting.defaultValue = LuaReadStorageField(L, tableIndex, "default");
     setting.searchKey = LuaReadStorageField(L, tableIndex, "searchKey");
@@ -1110,6 +1167,38 @@ static LuaWidgetManifest::Setting ReadLuaSettingTable(lua_State* L, int tableInd
     lua_getfield(L, tableIndex, "step");
     if (lua_isnumber(L, -1)) setting.stepValue = lua_tonumber(L, -1);
     lua_pop(L, 1);
+    lua_getfield(L, tableIndex, "minLength");
+    if (!lua_isnil(L, -1))
+    {
+        const lua_Integer value = lua_isinteger(L, -1)
+            ? lua_tointeger(L, -1)
+            : static_cast<lua_Integer>(-2);
+        setting.minLength = value >= (std::numeric_limits<int>::min)() &&
+            value <= (std::numeric_limits<int>::max)()
+            ? static_cast<int>(value) : -2;
+    }
+    lua_pop(L, 1);
+    lua_getfield(L, tableIndex, "maxLength");
+    if (!lua_isnil(L, -1))
+    {
+        const lua_Integer value = lua_isinteger(L, -1)
+            ? lua_tointeger(L, -1)
+            : static_cast<lua_Integer>(-2);
+        setting.maxLength = value >= (std::numeric_limits<int>::min)() &&
+            value <= (std::numeric_limits<int>::max)()
+            ? static_cast<int>(value) : -2;
+    }
+    lua_pop(L, 1);
+    lua_getfield(L, tableIndex, "required");
+    if (lua_isboolean(L, -1))
+        setting.required = lua_toboolean(L, -1) != 0;
+    else if (!lua_isnil(L, -1))
+        setting.minLength = -2;
+    lua_pop(L, 1);
+    setting.showWhen = ReadLuaSettingConditionField(
+        L, tableIndex, "showWhen");
+    setting.enabledWhen = ReadLuaSettingConditionField(
+        L, tableIndex, "enabledWhen");
 
     if (setting.type == "multiSelect")
     {
@@ -1537,6 +1626,190 @@ static bool ValidateSettingPresentation(
     }
     return validateSettings(manifestSettings) &&
         validateSettings(scriptSettings);
+}
+
+static bool ValidateSettingConditionsAndConstraints(
+    const std::vector<LuaWidgetManifest::Setting>& manifestSettings,
+    const std::vector<LuaWidgetManifest::Setting>& scriptSettings,
+    int apiVersion, std::string& error)
+{
+    error.clear();
+    if (manifestSettings.size() + scriptSettings.size() > 256)
+    {
+        error = "settings accept at most 256 fields";
+        return false;
+    }
+    std::unordered_map<std::string, const LuaWidgetManifest::Setting*>
+        declarations;
+    for (const auto& setting : manifestSettings)
+        declarations.emplace(setting.key, &setting);
+    for (const auto& setting : scriptSettings)
+        declarations.emplace(setting.key, &setting);
+
+    std::unordered_map<std::string, std::vector<std::string>> edges;
+    const auto validateCondition = [&](const LuaWidgetManifest::Setting& owner,
+        const LuaWidgetManifest::SettingCondition& condition) {
+        if (condition.key.empty() || condition.key == owner.key ||
+            !snowdesktop::widget_runtime::IsValidSettingCondition(
+                condition.operation, condition.values.size()))
+        {
+            error = "setting '" + owner.key +
+                "' has an invalid condition";
+            return false;
+        }
+        const auto source = declarations.find(condition.key);
+        if (source == declarations.end())
+        {
+            error = "setting '" + owner.key +
+                "' condition references undeclared setting '" +
+                condition.key + "'";
+            return false;
+        }
+        const auto& sourceSetting = *source->second;
+        const bool existenceOnly = condition.operation == "set" ||
+            condition.operation == "unset" ||
+            condition.operation == "truthy" ||
+            condition.operation == "falsy";
+        if (!existenceOnly &&
+            (sourceSetting.type == "password" ||
+                IsFilesystemHandleSettingType(sourceSetting.type) ||
+                IsEntityReferenceSettingType(sourceSetting.type)))
+        {
+            error = "setting '" + owner.key +
+                "' may only test presence/truthiness of host-managed setting '" +
+                condition.key + "'";
+            return false;
+        }
+        const bool contains = condition.operation == "contains" ||
+            condition.operation == "notContains";
+        if (contains != (sourceSetting.type == "multiSelect"))
+        {
+            if (contains || (!existenceOnly &&
+                    sourceSetting.type == "multiSelect"))
+            {
+                error = "setting '" + owner.key +
+                    "' uses an incompatible condition for '" +
+                    condition.key + "'";
+                return false;
+            }
+        }
+        if ((sourceSetting.type == "select" ||
+                sourceSetting.type == "multiSelect") && !existenceOnly)
+        {
+            for (const auto& expected : condition.values)
+            {
+                if (std::find(sourceSetting.options.begin(),
+                        sourceSetting.options.end(), expected) ==
+                    sourceSetting.options.end())
+                {
+                    error = "setting '" + owner.key +
+                        "' condition uses an undeclared option from '" +
+                        condition.key + "'";
+                    return false;
+                }
+            }
+        }
+        if (sourceSetting.type == "bool" && !existenceOnly)
+        {
+            for (const auto& expected : condition.values)
+            {
+                if (expected != "0" && expected != "1")
+                {
+                    error = "setting '" + owner.key +
+                        "' boolean condition values must be booleans";
+                    return false;
+                }
+            }
+        }
+        if (sourceSetting.type == "range" && !existenceOnly)
+        {
+            for (const auto& expected : condition.values)
+            {
+                double number = 0.0;
+                if (!snowdesktop::widget_runtime::ParseFiniteSettingNumber(
+                        expected, number) || number < sourceSetting.minValue ||
+                    number > sourceSetting.maxValue)
+                {
+                    error = "setting '" + owner.key +
+                        "' range condition is outside the source bounds";
+                    return false;
+                }
+            }
+        }
+        edges[owner.key].push_back(condition.key);
+        return true;
+    };
+
+    for (const auto& [key, settingPtr] : declarations)
+    {
+        (void)key;
+        const auto& setting = *settingPtr;
+        const bool hasConstraints = setting.required ||
+            setting.minLength != -1 || setting.maxLength != -1;
+        const bool hasConditions = setting.showWhen.has_value() ||
+            setting.enabledWhen.has_value() || !setting.dependsOn.empty();
+        if (apiVersion < 2 && (hasConstraints || hasConditions ||
+                !setting.validationMessage.empty()))
+        {
+            error = "setting validation and conditions require API v2";
+            return false;
+        }
+        const bool textType = setting.type == "text" ||
+            setting.type == "url" || setting.type == "date" ||
+            setting.type == "time";
+        if (setting.minLength < -1 || setting.maxLength < -1 ||
+            setting.minLength > 2048 || setting.maxLength > 2048 ||
+            (setting.minLength >= 0 && setting.maxLength >= 0 &&
+                setting.minLength > setting.maxLength) ||
+            ((!textType) &&
+                (setting.minLength != -1 || setting.maxLength != -1)) ||
+            setting.validationMessage.size() > 2048 ||
+            (hasConstraints && setting.validationMessage.empty()))
+        {
+            error = "setting '" + setting.key +
+                "' has invalid validation constraints";
+            return false;
+        }
+        if (!setting.dependsOn.empty() && setting.enabledWhen)
+        {
+            error = "setting '" + setting.key +
+                "' cannot declare both dependsOn and enabledWhen";
+            return false;
+        }
+        if (setting.showWhen &&
+            !validateCondition(setting, *setting.showWhen)) return false;
+        if (setting.enabledWhen &&
+            !validateCondition(setting, *setting.enabledWhen)) return false;
+        if (!setting.dependsOn.empty())
+        {
+            LuaWidgetManifest::SettingCondition dependency;
+            dependency.key = setting.dependsOn;
+            dependency.operation = "truthy";
+            if (!validateCondition(setting, dependency)) return false;
+        }
+    }
+
+    std::unordered_map<std::string, int> state;
+    const std::function<bool(const std::string&)> visit =
+        [&](const std::string& key) {
+            int& current = state[key];
+            if (current == 2) return true;
+            if (current == 1)
+            {
+                error = "setting conditions contain a dependency cycle at '" +
+                    key + "'";
+                return false;
+            }
+            current = 1;
+            if (const auto found = edges.find(key); found != edges.end())
+                for (const auto& dependency : found->second)
+                    if (!visit(dependency)) return false;
+            current = 2;
+            return true;
+        };
+    for (const auto& [key, _] : declarations)
+        if (!visit(key)) return false;
+    return true;
 }
 
 static bool ValidateOrdinaryDeclarativeSettings(
@@ -14897,6 +15170,15 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         lua_pop(state, 1);
         return false;
     }
+    if (!ValidateSettingConditionsAndConstraints(
+            pending.manifest.settings, scriptSettings,
+            pending.manifest.apiVersion, settingsError))
+    {
+        RuntimeRecordError(widgetId, settingsError);
+        RecordWidgetHostFailure(widgetId, settingsError, false);
+        lua_pop(state, 1);
+        return false;
+    }
     if (!ValidateOrdinaryDeclarativeSettings(
             pending.manifest.settings, scriptSettings,
             pending.manifest.presets, scriptPresets,
@@ -15457,6 +15739,151 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
             RuntimeRecordError(widgetId,
                 "settings filesystem handle revoke: " + error);
     };
+    auto findSetting = [&](std::string_view key) ->
+        const LuaWidgetManifest::Setting* {
+        const auto found = std::find_if(settings.begin(), settings.end(),
+            [&](const LuaWidgetManifest::Setting& setting) {
+                return setting.key == key;
+            });
+        return found == settings.end() ? nullptr : &*found;
+    };
+    auto rangeString = [](double value,
+        const LuaWidgetManifest::Setting& setting) {
+        std::ostringstream stream;
+        stream << snowdesktop::widget_runtime::SnapRangeSettingValue(
+            value, setting.minValue, setting.maxValue, setting.stepValue);
+        return stream.str();
+    };
+    auto settingConditionValues = [&](std::string_view key) {
+        std::vector<std::string> values;
+        const auto* setting = findSetting(key);
+        if (!setting) return values;
+        if (setting->type == "password")
+        {
+            std::string reference;
+            if (RuntimeGetSecretReference(
+                    widgetId, setting->key, reference) &&
+                !reference.empty())
+                values.push_back("1");
+            return values;
+        }
+        if (IsFilesystemHandleSettingType(setting->type))
+        {
+            std::string handle;
+            if (RuntimeGetFilesystemSettingHandle(
+                    widgetId, setting->key, handle) && !handle.empty())
+                values.push_back("1");
+            return values;
+        }
+        if (IsEntityReferenceSettingType(setting->type))
+        {
+            const auto* slotSnapshot = setting->binding.empty()
+                ? nullptr : widget.logicalSlots.Find(setting->binding);
+            if (slotSnapshot && !slotSnapshot->items.empty())
+                values.push_back("1");
+            return values;
+        }
+        if (setting->type == "multiSelect")
+        {
+            snowdesktop::widget_runtime::InteractionValue stored;
+            if (!getTypedStorage(setting->key, stored))
+                (void)RuntimeGetTypedSettingDefault(
+                    widgetId, setting->key, stored);
+            if (stored.type == snowdesktop::widget_runtime::
+                    InteractionValue::Type::Array)
+                for (const auto& item : stored.array)
+                    if (item.type == snowdesktop::widget_runtime::
+                            InteractionValue::Type::String)
+                        values.push_back(item.string);
+            return values;
+        }
+        if (setting->type == "range")
+        {
+            snowdesktop::widget_runtime::InteractionValue stored;
+            if (!getTypedStorage(setting->key, stored))
+                (void)RuntimeGetTypedSettingDefault(
+                    widgetId, setting->key, stored);
+            double number = setting->minValue;
+            if (stored.type == snowdesktop::widget_runtime::
+                    InteractionValue::Type::Number)
+                number = stored.number;
+            else if (stored.type == snowdesktop::widget_runtime::
+                    InteractionValue::Type::Integer)
+                number = static_cast<double>(stored.integer);
+            values.push_back(rangeString(number, *setting));
+            return values;
+        }
+        std::string value = getStorage(
+            setting->key, setting->defaultValue);
+        if (setting->type == "bool")
+            value = value == "1" || value == "true" ? "1" : "0";
+        if (!value.empty() || setting->type == "bool")
+            values.push_back(std::move(value));
+        return values;
+    };
+    auto evaluateSettingCondition = [&](const auto& condition) {
+        std::vector<std::string> expected = condition.values;
+        if (const auto* source = findSetting(condition.key);
+            source && source->type == "range")
+        {
+            for (auto& value : expected)
+            {
+                double number = source->minValue;
+                if (snowdesktop::widget_runtime::ParseFiniteSettingNumber(
+                        value, number))
+                    value = rangeString(number, *source);
+            }
+        }
+        return snowdesktop::widget_runtime::EvaluateSettingCondition(
+            condition.operation,
+            settingConditionValues(condition.key), expected);
+    };
+    auto settingVisible = [&](const LuaWidgetManifest::Setting& setting) {
+        return !setting.showWhen ||
+            evaluateSettingCondition(*setting.showWhen);
+    };
+    auto settingEnabled = [&](const LuaWidgetManifest::Setting& setting) {
+        if (setting.enabledWhen &&
+            !evaluateSettingCondition(*setting.enabledWhen))
+            return false;
+        if (!setting.dependsOn.empty())
+        {
+            LuaWidgetManifest::SettingCondition dependency;
+            dependency.key = setting.dependsOn;
+            dependency.operation = "truthy";
+            return evaluateSettingCondition(dependency);
+        }
+        return true;
+    };
+    auto settingHasValidationError = [&]
+        (const LuaWidgetManifest::Setting& setting) {
+        const auto values = settingConditionValues(setting.key);
+        if (setting.required)
+        {
+            const std::string_view operation = setting.type == "bool"
+                ? "truthy" : "set";
+            if (!snowdesktop::widget_runtime::EvaluateSettingCondition(
+                    operation, values, {}))
+                return true;
+        }
+        if (setting.type == "text" || setting.type == "url" ||
+            setting.type == "date" || setting.type == "time")
+        {
+            const std::string value = values.empty()
+                ? std::string{} : values.front();
+            if (!snowdesktop::widget_runtime::ValidateSettingTextValue(
+                    value, setting.required,
+                    setting.minLength, setting.maxLength))
+                return true;
+            if (setting.type == "url" && !snowdesktop::widget_runtime::
+                    IsValidUrlSettingValue(value)) return true;
+            if (setting.type == "date" && !snowdesktop::widget_runtime::
+                    IsValidDateSettingValue(value)) return true;
+            if (setting.type == "time" && !snowdesktop::widget_runtime::
+                    IsValidTimeSettingValue(value)) return true;
+        }
+        return false;
+    };
     auto renderSetting = [&](const LuaWidgetManifest::Setting& setting) {
         if (setting.key.empty() || IsHostStructureSettingKey(setting.key) ||
             IsHostAppearanceSettingKey(setting.key))
@@ -15469,6 +15896,10 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
                 : getStorage(setting.key, setting.defaultValue));
         std::string next = current;
         bool changed = false;
+        bool draftInvalid = false;
+        const bool constrainedText = setting.type == "text" &&
+            (setting.required || setting.minLength >= 0 ||
+                setting.maxLength >= 0);
         ImGui::PushID(setting.key.c_str());
         if (setting.type == "password")
         {
@@ -16177,8 +16608,8 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
                 ImGui::EndListBox();
             }
         }
-        else if (setting.type == "url" || setting.type == "date" ||
-            setting.type == "time")
+        else if (constrainedText || setting.type == "url" ||
+            setting.type == "date" || setting.type == "time")
         {
             const std::string draftKey = editorId + "\n" + setting.key;
             auto& draft = validatedSettingDrafts_[draftKey];
@@ -16188,16 +16619,22 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
                 draft.sourceValue = current;
             }
             const auto valid = [&]() {
+                if (!snowdesktop::widget_runtime::ValidateSettingTextValue(
+                        draft.value, setting.required,
+                        setting.minLength, setting.maxLength))
+                    return false;
                 if (setting.type == "url")
                     return snowdesktop::widget_runtime::
                         IsValidUrlSettingValue(draft.value);
                 if (setting.type == "date")
                     return snowdesktop::widget_runtime::
                         IsValidDateSettingValue(draft.value);
-                return snowdesktop::widget_runtime::
-                    IsValidTimeSettingValue(draft.value);
+                if (setting.type == "time")
+                    return snowdesktop::widget_runtime::
+                        IsValidTimeSettingValue(draft.value);
+                return true;
             };
-            std::array<char, 2049> buffer{};
+            std::array<char, 8193> buffer{};
             strncpy_s(buffer.data(), buffer.size(), draft.value.c_str(),
                 _TRUNCATE);
             ImGui::SetNextItemWidth(beginEditorRow(
@@ -16235,6 +16672,7 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
                 draft.sourceValue = current;
                 draft.dirty = false;
             }
+            draftInvalid = draft.dirty && !valid();
         }
         else
         {
@@ -16256,6 +16694,17 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
             ImGui::PushTextWrapPos(
                 ImGui::GetCursorPosX() + descriptionWidth);
             ImGui::TextDisabled("%s", setting.description.c_str());
+            ImGui::PopTextWrapPos();
+        }
+        if ((draftInvalid || settingHasValidationError(setting)) &&
+            !setting.validationMessage.empty())
+        {
+            const float validationWidth = alignEditorControl(
+                kEditorControlWidth);
+            ImGui::PushTextWrapPos(
+                ImGui::GetCursorPosX() + validationWidth);
+            ImGui::TextColored(ImVec4(0.9f, 0.24f, 0.18f, 1.0f),
+                "%s", setting.validationMessage.c_str());
             ImGui::PopTextWrapPos();
         }
     };
@@ -16556,15 +17005,26 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
             for (size_t settingIndex = 0;
                 settingIndex < settings.size(); ++settingIndex)
             {
-                if (settings[settingIndex].group != groupId) continue;
+                if (settings[settingIndex].group != groupId ||
+                    !settingVisible(settings[settingIndex])) continue;
                 ImGui::PushID(static_cast<int>(settingIndex));
+                const bool enabled = settingEnabled(settings[settingIndex]);
+                if (!enabled) ImGui::BeginDisabled();
                 renderSetting(settings[settingIndex]);
+                if (!enabled) ImGui::EndDisabled();
                 ImGui::PopID();
             }
         };
         renderFieldsForGroup(std::string_view{});
         for (const auto& group : settingGroups)
         {
+            const bool hasVisibleFields = std::any_of(
+                settings.begin(), settings.end(),
+                [&](const LuaWidgetManifest::Setting& setting) {
+                    return setting.group == group.id &&
+                        settingVisible(setting);
+                });
+            if (!hasVisibleFields) continue;
             ImGui::PushID(group.id.c_str());
             bool expanded = true;
             if (group.collapsible)
@@ -29029,6 +29489,41 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
         output = value->boolean;
         return true;
     };
+    auto readSettingCondition = [&](const JsonValue& object,
+        const char* field) ->
+        std::optional<LuaWidgetManifest::SettingCondition> {
+        const JsonValue* value = object.Find(field);
+        if (!value) return std::nullopt;
+        LuaWidgetManifest::SettingCondition condition;
+        if (!value->IsObject())
+        {
+            condition.operation = "__invalid";
+            return condition;
+        }
+        readString(*value, "key", condition.key);
+        readString(*value, "operator", condition.operation);
+        if (const JsonValue* expected = value->Find("value"))
+        {
+            if (expected->IsArray())
+            {
+                for (const auto& item : expected->array)
+                {
+                    if (!item.IsString() && !item.IsNumber() &&
+                        !item.IsBoolean())
+                        condition.operation = "__invalid";
+                    condition.values.push_back(valueString(item));
+                }
+            }
+            else
+            {
+                if (!expected->IsString() && !expected->IsNumber() &&
+                    !expected->IsBoolean())
+                    condition.operation = "__invalid";
+                condition.values.push_back(valueString(*expected));
+            }
+        }
+        return condition;
+    };
 
     readString(root, "id", manifest.packageId);
     readString(root, "slug", manifest.slug);
@@ -29210,6 +29705,9 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
             readString(object, "label", setting.label);
             readString(object, "description", setting.description);
             readString(object, "group", setting.group);
+            readString(object, "validationMessage",
+                setting.validationMessage);
+            readString(object, "dependsOn", setting.dependsOn);
             readString(object, "type", setting.type);
             readString(object, "searchKey", setting.searchKey);
             readString(object, "binding", setting.binding);
@@ -29233,6 +29731,32 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
             readNumber(object, "min", setting.minValue);
             readNumber(object, "max", setting.maxValue);
             readNumber(object, "step", setting.stepValue);
+            if (const JsonValue* minimum = object.Find("minLength"))
+            {
+                setting.minLength = minimum->IsNumber() &&
+                    std::isfinite(minimum->number) &&
+                    std::floor(minimum->number) == minimum->number &&
+                    minimum->number >= (std::numeric_limits<int>::min)() &&
+                    minimum->number <= (std::numeric_limits<int>::max)()
+                    ? static_cast<int>(minimum->number) : -2;
+            }
+            if (const JsonValue* maximum = object.Find("maxLength"))
+            {
+                setting.maxLength = maximum->IsNumber() &&
+                    std::isfinite(maximum->number) &&
+                    std::floor(maximum->number) == maximum->number &&
+                    maximum->number >= (std::numeric_limits<int>::min)() &&
+                    maximum->number <= (std::numeric_limits<int>::max)()
+                    ? static_cast<int>(maximum->number) : -2;
+            }
+            if (const JsonValue* required = object.Find("required"))
+            {
+                if (required->IsBoolean()) setting.required = required->boolean;
+                else setting.minLength = -2;
+            }
+            setting.showWhen = readSettingCondition(object, "showWhen");
+            setting.enabledWhen =
+                readSettingCondition(object, "enabledWhen");
             setting.options = readStringArray(object, "options");
             setting.optionLabels =
                 readStringArray(object, "optionLabels");

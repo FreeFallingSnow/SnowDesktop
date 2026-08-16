@@ -2180,6 +2180,52 @@ settings = {
 }
 ```
 
+字段校验由宿主执行。`text/url/date/time` 可声明 `minLength/maxLength`（0-2048，按 Unicode
+code point 而不是 UTF-8 字节计数），任意字段可声明 `required=true`；`bool` 的 required 表示
+必须为 true，password、filesystem handle 和实体 reference 表示必须已有宿主管理值。只要声明
+`required/minLength/maxLength`，就必须同时提供组件自行本地化的 `validationMessage`。文本输入在
+满足约束前只保留为设置页草稿，不写入组件 storage；其他控件或宿主管理值不满足 required 时，
+宿主在字段下显示同一错误文本。对应 feature 为 `settings.validation`。
+
+字段可通过另一个已声明字段控制可用性或可见性：
+
+```lua
+settings = {
+    fields = {
+        {
+            key = "advanced",
+            type = "bool",
+            label = l10n.tr("widget.settings.advanced"),
+            default = false,
+        },
+        {
+            key = "endpoint",
+            type = "url",
+            label = l10n.tr("widget.settings.endpoint"),
+            required = true,
+            validationMessage = l10n.tr("widget.settings.endpoint_invalid"),
+            dependsOn = "advanced",
+            showWhen = {
+                key = "advanced",
+                operator = "truthy",
+            },
+        },
+    },
+}
+```
+
+- `dependsOn="key"` 是 `enabledWhen={key="key", operator="truthy"}` 的简写，两者不能并用；
+- `showWhen` 为 false 时不渲染字段，`enabledWhen` 为 false 时保留但禁止编辑；两者都保留已有值；
+- `equals/notEquals/contains/notContains` 接收一个 `value`，`oneOf/notOneOf` 接收 1-64 个值；
+- `set/unset/truthy/falsy` 不接收 `value`；`contains/notContains` 只用于 multiSelect，select 与
+  multiSelect 的比较值必须来自其稳定 `options`；
+- password、file/folder handle 与实体 reference 只能参与 `set/unset/truthy/falsy`，条件不会
+  取得它们的 secret、handle 或 reference；
+- 条件只能引用其他已声明字段。未知键、自引用、类型不兼容或跨多字段形成的循环都会使组件
+  加载失败。
+
+使用前分别探测 `settings.dependencies`（`dependsOn/enabledWhen`）和 `settings.showWhen`。
+
 `appSearch` 设置使用 `key` 保存用户选中的应用显示名，使用 `searchKey` 保存搜索文字；
 宿主复用应用索引并在后台完成匹配，在设置页直接显示候选项。`emptyLabel` 和
 `noResultsLabel` 必须使用组件清单中的本地化文本。该控件只负责设置交互；组件运行时仍应

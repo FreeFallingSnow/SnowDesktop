@@ -66,6 +66,34 @@ int main()
             !IsValidSettingGroupId("") &&
             !IsValidSettingGroupId("content/advanced"),
         "setting group IDs use a bounded stable ASCII identifier");
+    Check(IsValidSettingCondition("equals", 1) &&
+            IsValidSettingCondition("truthy", 0) &&
+            IsValidSettingCondition("oneOf", 3) &&
+            !IsValidSettingCondition("contains", 0) &&
+            EvaluateSettingCondition("truthy", { "1" }, {}) &&
+            !EvaluateSettingCondition("truthy", { "false" }, {}) &&
+            EvaluateSettingCondition("contains",
+                { "news", "media" }, { "media" }) &&
+            EvaluateSettingCondition("notContains",
+                { "news" }, { "media" }) &&
+            EvaluateSettingCondition("equals", { "compact" },
+                { "compact" }) &&
+            EvaluateSettingCondition("notEquals", {}, { "compact" }) &&
+            EvaluateSettingCondition("oneOf", { "wide" },
+                { "compact", "wide" }) &&
+            EvaluateSettingCondition("notOneOf",
+                { "compact" }, { "wide", "dense" }) &&
+            EvaluateSettingCondition("set", { "0" }, {}) &&
+            EvaluateSettingCondition("unset", {}, {}) &&
+            EvaluateSettingCondition("falsy", { "off" }, {}),
+        "setting conditions validate arity and evaluate scalar and array values");
+    Check(ValidateSettingTextValue("雪桌面", true, 3, 3) &&
+            !ValidateSettingTextValue("雪桌面", true, 4, 8) &&
+            !ValidateSettingTextValue("12345", false, 0, 4) &&
+            !ValidateSettingTextValue("", true, 0, 8) &&
+            ValidateSettingTextValue("", false, 0, 8) &&
+            !ValidateSettingTextValue("\xF0\x80\x80\x80", false, 0, 8),
+        "setting text validation counts Unicode code points and required values");
 
     if (failures != 0)
     {

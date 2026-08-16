@@ -5,6 +5,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstddef>
+#include <optional>
 #include <unordered_set>
 
 namespace snowdesktop::widget_runtime
@@ -167,5 +168,107 @@ bool IsValidSettingGroupId(std::string_view value) noexcept
                 return std::isalnum(character) || character == '_' ||
                     character == '-' || character == '.';
             });
+}
+
+bool IsValidSettingCondition(std::string_view operation,
+    std::size_t valueCount) noexcept
+{
+    if (operation == "set" || operation == "unset" ||
+        operation == "truthy" || operation == "falsy")
+        return valueCount == 0;
+    if (operation == "equals" || operation == "notEquals" ||
+        operation == "contains" || operation == "notContains")
+        return valueCount == 1;
+    if (operation == "oneOf" || operation == "notOneOf")
+        return valueCount >= 1 && valueCount <= 64;
+    return false;
+}
+
+bool EvaluateSettingCondition(std::string_view operation,
+    const std::vector<std::string>& current,
+    const std::vector<std::string>& expected) noexcept
+{
+    const bool set = std::any_of(current.begin(), current.end(),
+        [](const std::string& value) { return !value.empty(); });
+    const auto truthyValue = [](std::string value) {
+        std::transform(value.begin(), value.end(), value.begin(),
+            [](const unsigned char character) {
+                return static_cast<char>(std::tolower(character));
+            });
+        return !value.empty() && value != "0" && value != "false" &&
+            value != "nil" && value != "null" && value != "off";
+    };
+    const bool truthy = current.size() > 1
+        ? !current.empty()
+        : (!current.empty() && truthyValue(current.front()));
+    if (operation == "set") return set;
+    if (operation == "unset") return !set;
+    if (operation == "truthy") return truthy;
+    if (operation == "falsy") return !truthy;
+    if (expected.empty()) return false;
+    if (operation == "equals" || operation == "notEquals")
+    {
+        const bool equals = current.size() == 1 &&
+            current.front() == expected.front();
+        return operation == "equals" ? equals : !equals;
+    }
+    if (operation == "contains" || operation == "notContains")
+    {
+        const bool contains = std::find(current.begin(), current.end(),
+            expected.front()) != current.end();
+        return operation == "contains" ? contains : !contains;
+    }
+    const bool oneOf = current.size() == 1 &&
+        std::find(expected.begin(), expected.end(), current.front()) !=
+            expected.end();
+    if (operation == "oneOf") return oneOf;
+    if (operation == "notOneOf") return !oneOf;
+    return false;
+}
+
+bool ValidateSettingTextValue(std::string_view value, bool required,
+    int minimumLength, int maximumLength) noexcept
+{
+    if (value.empty()) return !required;
+    std::size_t length = 0;
+    for (std::size_t index = 0; index < value.size();)
+    {
+        const unsigned char lead =
+            static_cast<unsigned char>(value[index]);
+        std::size_t width = 0;
+        if (lead <= 0x7f) width = 1;
+        else if (lead >= 0xc2 && lead <= 0xdf) width = 2;
+        else if (lead >= 0xe0 && lead <= 0xef) width = 3;
+        else if (lead >= 0xf0 && lead <= 0xf4) width = 4;
+        else return false;
+        if (index + width > value.size()) return false;
+        for (std::size_t offset = 1; offset < width; ++offset)
+        {
+            const unsigned char continuation =
+                static_cast<unsigned char>(value[index + offset]);
+            if ((continuation & 0xc0) != 0x80) return false;
+        }
+        if (width == 3)
+        {
+            const unsigned char second =
+                static_cast<unsigned char>(value[index + 1]);
+            if ((lead == 0xe0 && second < 0xa0) ||
+                (lead == 0xed && second >= 0xa0)) return false;
+        }
+        if (width == 4)
+        {
+            const unsigned char second =
+                static_cast<unsigned char>(value[index + 1]);
+            if ((lead == 0xf0 && second < 0x90) ||
+                (lead == 0xf4 && second >= 0x90)) return false;
+        }
+        index += width;
+        ++length;
+    }
+    if (minimumLength >= 0 &&
+        length < static_cast<std::size_t>(minimumLength)) return false;
+    if (maximumLength >= 0 &&
+        length > static_cast<std::size_t>(maximumLength)) return false;
+    return true;
 }
 }

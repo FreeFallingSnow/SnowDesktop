@@ -1582,7 +1582,7 @@ v2.0 不开放：真实文件 move/copy/delete、组件嵌套、把 Lua 组件�
 - `fileHandle`、`folderHandle`（已实现设置页系统选择器、独立 opaque 授权、替换/清除撤销及只读 storage 投影）
 - `appReference`、`desktopItemReference`、`fileReference`、`folderReference` 动态 entity selector；可以直接写入第 14.5 节 binding，而不是把 path/AUMID 当普通字符串
 - 分组、说明（已实现有界字段说明、最多 32 个顺序分组及可选折叠）
-- 校验、依赖和 `showWhen`
+- 校验、依赖和 `showWhen`（已实现本地化错误提示、Unicode 长度约束、条件显隐/禁用、值保留及静态循环检查）
 
 普通配置值进入类型化实例存储；secret、file/folder handle 和宿主 item/app reference 只保存绑定/授权记录，不进入普通字符串存储和预览。entity selector 由宿主展示，组件只取得用户最终选择的 opaque reference；组件若自行枚举候选，仍需对应 read/discovery 权限。
 
@@ -1593,6 +1593,13 @@ v2.0 不开放：真实文件 move/copy/delete、组件嵌套、把 Lua 组件�
 `settings.fileHandle/folderHandle` 已接入现有文件句柄仓库和系统选择器。字段按 read/write/readWrite 取得当前包与实例独占的 opaque capability；Lua 只能经只读 storage 投影读取，不能设置、删除或用 `filesystem.release` 绕过用户控制。替换或清除会取消旧句柄关联的任务/监听并撤销授权；路径不进入普通 storage、preset、预览或 Lua。
 
 `settings.description/groups` 已提供宿主管理的设置页信息结构：字段说明限制 2048 字节；最多 32 个稳定 ASCII group ID 可按声明顺序显示 section 或 collapsible header，并携带有界本地化说明。字段和分组重复、未知分组引用以及 API v1 使用会在加载阶段拒绝。
+
+`settings.validation/dependencies/showWhen` 已提供宿主管理的配置约束。字段可声明 `required`、
+`minLength/maxLength` 和本地化 `validationMessage`；文本长度按 Unicode code point 计算，无效草稿
+不会写入持久存储。`dependsOn` 是 truthy 禁用条件的简写，`enabledWhen/showWhen` 支持稳定字段键与
+`equals/notEquals/oneOf/notOneOf/contains/notContains/set/unset/truthy/falsy`；隐藏或禁用不清除
+已有值。加载阶段拒绝未知/自身引用、类型不兼容、越界选项以及任意条件循环，宿主引用仅允许测试
+是否存在或 truthy，不向条件表达式泄露 secret、文件句柄或实体引用。
 
 ### 15.2 包内模块
 
