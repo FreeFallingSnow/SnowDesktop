@@ -13,7 +13,7 @@
 用它确定函数及版本是否存在，再使用 `library/snowdesktop-v2.lua` 获取参数与返回值类型。
 
 运行 `snowwidget view-contract` 可获得宿主当前公开的声明式视图 JSON 契约。顶层
-`schemaVersion=2` 版本化该导出格式，`apiVersion` 表示组件 API；`nodes`、`properties` 和
+`schemaVersion=3` 版本化该导出格式，`apiVersion` 表示组件 API；`nodes`、`properties` 和
 `events` 分别登记节点适用属性与逐节点默认值、属性类型/枚举/范围/影响域，以及事件 payload
 类别。属性策略为 `closed-world`，每个节点的 `properties` 与 `prohibitedProperties` 明确划分
 全部公共属性；未知字段和节点禁止字段都不会被静默忽略。`limits` 直接导出宿主当前使用的
@@ -22,6 +22,9 @@
 每个属性的 `transitionEffects` 进一步标出该字段变化可驱动 visual、transform 或 layout
 过渡。`directionality` 固定 auto/ltr/rtl 的解析、start/end 对齐以及声明顺序不随视觉方向反转；
 `validation` 则说明未知/禁止/错误值会原子拒绝整棵候选树并保留上一棵成功树。
+视图链路错误统一写成 `[code] message`；`diagnosticCodes` 导出稳定的阶段码，例如
+`view.parse`、`view.layout` 和 `view.hostControls`。工具可以依赖阶段码分类，但不应依赖后面的
+人类可读说明逐字不变。
 `preview` 表明预览复用宿主校验和渲染、使用隔离存储覆盖层。作者工具应读取该命令，不要复制
 维护另一份节点、属性、动画或额度白名单。
 

@@ -389,7 +389,19 @@ void WriteValidation(std::ostream& output)
               "\"invalidValue\":\"reject-tree\","
               "\"commit\":\"atomic\","
               "\"onFailure\":\"retain-last-successful-tree\","
-              "\"diagnostic\":\"bounded-message\"}";
+              "\"diagnostic\":\"stable-code-and-bounded-message\","
+              "\"diagnosticFormat\":\"[code] message\","
+              "\"diagnosticCodes\":";
+    WriteJsonArray(output, ViewValidationDiagnosticContracts(),
+        [](std::ostream& stream,
+            const ViewValidationDiagnosticContract& contract) {
+            stream << "{\"code\":";
+            WriteJsonString(stream, contract.code);
+            stream << ",\"stage\":";
+            WriteJsonString(stream, contract.stage);
+            stream << '}';
+        });
+    output << '}';
 }
 }
 
@@ -398,7 +410,7 @@ std::string SerializeViewContractJson()
     std::ostringstream output;
     output.imbue(std::locale::classic());
     output << std::setprecision(17)
-           << "{\"ok\":true,\"schemaVersion\":2,\"apiVersion\":2,"
+           << "{\"ok\":true,\"schemaVersion\":3,\"apiVersion\":2,"
               "\"propertyPolicy\":\"closed-world\","
               "\"nodes\":";
     WriteJsonArray(output, ViewNodeContracts(), WriteNode);

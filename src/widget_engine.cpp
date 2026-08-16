@@ -2338,6 +2338,15 @@ static bool ValidateAndLayoutWidgetView(
         root, width, height, error);
 }
 
+static std::string FormatViewValidationDiagnostic(
+    std::string_view code, std::string_view message)
+{
+    if (!snowdesktop::widget_runtime::
+            IsKnownViewValidationDiagnosticCode(code))
+        code = "view.layout";
+    return "[" + std::string(code) + "] " + std::string(message);
+}
+
 static bool CommitVariableVirtualMeasurements(
     snowdesktop::widget_runtime::ViewNode& node,
     LuaWidget& widget, std::string_view surface)
@@ -20131,16 +20140,19 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
         };
         bool accepted = false;
         std::string viewError;
+        std::string_view viewErrorCode;
         if (!found->lifecycle.PushRenderArguments(state, pushContext))
         {
             lua_pop(state, 1);
             viewError = "Widget lifecycle is not initialized";
+            viewErrorCode = "view.lifecycle";
         }
         else if (snowdesktop::lua_runtime::ProtectedCall(
                 state, 2, 1) != LUA_OK)
         {
             const char* error = lua_tostring(state, -1);
             viewError = error ? error : "Widget view evaluation failed";
+            viewErrorCode = "view.evaluate";
             lua_pop(state, 1);
         }
         else
@@ -20156,6 +20168,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                     state, -1, candidate, viewError))
             {
                 viewError = "view(): " + viewError;
+                viewErrorCode = "view.parse";
             }
             else if (!ValidateAndLayoutWidgetView(candidate, *found,
                     "desktop",
@@ -20172,11 +20185,13 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                         viewError))
             {
                 viewError = "view(): " + viewError;
+                viewErrorCode = "view.layout";
             }
             else if (!snowdesktop::widget_runtime::ValidateViewLogicalSlots(
                     candidate, found->logicalSlots, viewError))
             {
                 viewError = "view(): " + viewError;
+                viewErrorCode = "view.slots";
             }
             else if (!snowdesktop::widget_runtime::ApplyViewScrollOffsets(
                     candidate,
@@ -20191,24 +20206,28 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                     }, scrollViewports, viewError))
             {
                 viewError = "view(): " + viewError;
+                viewErrorCode = "view.scroll";
             }
             else if (!snowdesktop::widget_runtime::
                     CollectViewInteractionRegions(candidate,
                         regions, viewError))
             {
                 viewError = "view(): " + viewError;
+                viewErrorCode = "view.interaction";
             }
             else if (!CollectStyledTextActionRegions(
                     d2dState_, candidate, candidate, regions, std::nullopt,
                     viewError))
             {
                 viewError = "view(): " + viewError;
+                viewErrorCode = "view.styledText";
             }
             else if (!snowdesktop::widget_runtime::
                     CollectViewInputControls(candidate,
                         inputControls, viewError))
             {
                 viewError = "view(): " + viewError;
+                viewErrorCode = "view.input";
             }
             else
             {
@@ -20220,6 +20239,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                     {
                         accepted = false;
                         viewError = "view(): " + viewError;
+                        viewErrorCode = "view.interaction";
                         break;
                     }
                 }
@@ -20234,6 +20254,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                 {
                     accepted = false;
                     viewError = "view(): host control limit exceeded (128)";
+                    viewErrorCode = "view.hostControls";
                 }
                 if (accepted)
                 {
@@ -20250,6 +20271,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                             accepted = false;
                             viewError = "view(): duplicate host control key: " +
                                 viewport.key;
+                            viewErrorCode = "view.hostControls";
                             break;
                         }
                     }
@@ -20262,6 +20284,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                                 accepted = false;
                                 viewError = "view(): duplicate host control key: " +
                                     input.key;
+                                viewErrorCode = "view.hostControls";
                                 break;
                             }
                         }
@@ -20447,7 +20470,9 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
         {
             found->interactionRegions.AbortFrame();
             if (!viewError.empty())
-                RuntimeRecordError(widgetId, viewError);
+                RuntimeRecordError(widgetId,
+                    FormatViewValidationDiagnostic(
+                        viewErrorCode, viewError));
         }
         else
         {
@@ -20768,8 +20793,9 @@ bool WidgetEngine::RenderWidgetPanel(
             widget.panelInteractionRegions.AbortFrame();
             restorePanelControls();
             lua_pop(state, 2);
-            RuntimeRecordError(widgetId,
-                "Widget lifecycle is not initialized");
+            RuntimeRecordError(widgetId, FormatViewValidationDiagnostic(
+                "view.lifecycle",
+                "Widget lifecycle is not initialized"));
             return false;
         }
         argumentCount = 2;
@@ -20787,10 +20813,9 @@ bool WidgetEngine::RenderWidgetPanel(
             widget.panelInteractionRegions.AbortFrame();
         restorePanelControls();
         const char* error = lua_tostring(state, -1);
-        RuntimeRecordError(
-            widgetId,
-            error ? std::string(error)
-                : callbackName + " render error");
+        RuntimeRecordError(widgetId, FormatViewValidationDiagnostic(
+            "view.evaluate", error ? std::string(error)
+                : callbackName + " render error"));
         lua_pop(state, 1);
     }
     else if (widget.manifest.apiVersion >= 2)
@@ -20802,6 +20827,7 @@ bool WidgetEngine::RenderWidgetPanel(
         }
         const bool hasView = !lua_isnil(state, -1);
         std::string viewError;
+        std::string_view viewErrorCode;
         snowdesktop::widget_runtime::ViewNode candidate;
         std::vector<snowdesktop::widget_runtime::InteractionRegion> regions;
         std::vector<snowdesktop::widget_runtime::ViewScrollViewport>
@@ -20813,6 +20839,7 @@ bool WidgetEngine::RenderWidgetPanel(
         {
             panelAccepted = false;
             viewError = callbackName + "(): " + viewError;
+            viewErrorCode = "view.parse";
         }
         else if (hasView && !ValidateAndLayoutWidgetView(
                 candidate, widget, normalizedSurface,
@@ -20823,6 +20850,7 @@ bool WidgetEngine::RenderWidgetPanel(
         {
             panelAccepted = false;
             viewError = callbackName + "(): " + viewError;
+            viewErrorCode = "view.layout";
         }
         else if (hasView && !snowdesktop::widget_runtime::
                 ValidateViewLogicalSlots(
@@ -20830,6 +20858,7 @@ bool WidgetEngine::RenderWidgetPanel(
         {
             panelAccepted = false;
             viewError = callbackName + "(): " + viewError;
+            viewErrorCode = "view.slots";
         }
         else if (hasView && !snowdesktop::widget_runtime::
                 ApplyViewScrollOffsets(candidate,
@@ -20845,6 +20874,7 @@ bool WidgetEngine::RenderWidgetPanel(
         {
             panelAccepted = false;
             viewError = callbackName + "(): " + viewError;
+            viewErrorCode = "view.scroll";
         }
         else if (hasView && !snowdesktop::widget_runtime::
                 CollectViewInteractionRegions(
@@ -20852,6 +20882,7 @@ bool WidgetEngine::RenderWidgetPanel(
         {
             panelAccepted = false;
             viewError = callbackName + "(): " + viewError;
+            viewErrorCode = "view.interaction";
         }
         else if (hasView && !CollectStyledTextActionRegions(
                 d2dState_, candidate, candidate, regions, std::nullopt,
@@ -20859,6 +20890,7 @@ bool WidgetEngine::RenderWidgetPanel(
         {
             panelAccepted = false;
             viewError = callbackName + "(): " + viewError;
+            viewErrorCode = "view.styledText";
         }
         else if (hasView && !snowdesktop::widget_runtime::
                 CollectViewInputControls(
@@ -20866,6 +20898,7 @@ bool WidgetEngine::RenderWidgetPanel(
         {
             panelAccepted = false;
             viewError = callbackName + "(): " + viewError;
+            viewErrorCode = "view.input";
         }
 
         std::vector<LuaWidget::HostControl> viewControls;
@@ -20886,6 +20919,7 @@ bool WidgetEngine::RenderWidgetPanel(
                 viewError =
                     callbackName +
                     "(): host control limit exceeded (128)";
+                viewErrorCode = "view.hostControls";
             }
             std::unordered_set<std::string> keys;
             if (panelAccepted)
@@ -20905,6 +20939,7 @@ bool WidgetEngine::RenderWidgetPanel(
                             callbackName +
                             "(): duplicate host control key: " +
                             control.id;
+                        viewErrorCode = "view.hostControls";
                         break;
                     }
                 }
@@ -20918,6 +20953,7 @@ bool WidgetEngine::RenderWidgetPanel(
                     {
                         panelAccepted = false;
                         viewError = callbackName + "(): " + viewError;
+                        viewErrorCode = "view.interaction";
                         break;
                     }
                 }
@@ -20934,7 +20970,12 @@ bool WidgetEngine::RenderWidgetPanel(
         {
             widget.panelInteractionRegions.AbortFrame();
             restorePanelControls();
-            if (!viewError.empty()) RuntimeRecordError(widgetId, viewError);
+            if (!viewError.empty())
+            {
+                RuntimeRecordError(widgetId,
+                    FormatViewValidationDiagnostic(
+                        viewErrorCode, viewError));
+            }
         }
         else
         {

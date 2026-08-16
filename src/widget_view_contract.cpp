@@ -56,6 +56,20 @@ constexpr auto kContracts = std::to_array<ViewNodeContract>({
     { ViewNodeType::Spacer, "spacer", "layout", "view.tree.core", "", "", ViewChildPolicy::None },
 });
 
+constexpr auto kValidationDiagnostics =
+    std::to_array<ViewValidationDiagnosticContract>({
+        { "view.lifecycle", "lifecycle" },
+        { "view.evaluate", "callback" },
+        { "view.parse", "parse" },
+        { "view.layout", "validation-layout" },
+        { "view.slots", "logical-slots" },
+        { "view.scroll", "scroll-state" },
+        { "view.interaction", "interaction-regions" },
+        { "view.styledText", "styled-text-hit-testing" },
+        { "view.input", "host-input-controls" },
+        { "view.hostControls", "host-control-commit" },
+    });
+
 constexpr auto NodeTypeNames() noexcept
 {
     std::array<std::string_view, kContracts.size()> result{};
@@ -1250,5 +1264,20 @@ std::vector<std::string_view> ViewNodeAllowedEvents(ViewNodeType type)
         if (ViewNodeAllowsEvent(type, contract.name))
             result.push_back(contract.name);
     return result;
+}
+
+std::span<const ViewValidationDiagnosticContract>
+ViewValidationDiagnosticContracts() noexcept
+{
+    return kValidationDiagnostics;
+}
+
+bool IsKnownViewValidationDiagnosticCode(
+    std::string_view code) noexcept
+{
+    return std::any_of(kValidationDiagnostics.begin(),
+        kValidationDiagnostics.end(), [code](const auto& contract) {
+            return contract.code == code;
+        });
 }
 }

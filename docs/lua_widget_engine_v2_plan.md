@@ -1320,8 +1320,8 @@ heading/live、集合位置和语义隐藏；声明式节点还支持稳定 key 
 一基 grid 行列覆盖。宿主将这些字段映射为 AriaRole、ItemStatus、HelpText、LabeledBy、
 DescribedBy、HeadingLevel、LiveSetting、PositionInSet、SizeOfSet 和 GridItem，并为 live 内容变化
 发送 LiveRegionChanged；加载/提交阶段拒绝无名或自身关系、越界索引以及隐藏交互子树。
-ScrollItem、未实体化项的 VirtualizedItem 以及真实 Narrator 场景验收仍未完成；节点相关联动范围、
-RTL、逐属性动画映射和错误码仍未全部迁入矩阵，
+ScrollItem、未实体化项的 VirtualizedItem、真实 Narrator 场景验收以及逐规则细粒度诊断仍未完成；
+RTL、逐属性动画映射和稳定的视图管线阶段码已经迁入机器契约，
 也尚未由它生成 LuaLS 与本文档，因此这仍不表示契约已经冻结或完整无障碍已经可用。
 
 `snowwidget view-contract` 现已把该运行时目录导出为带 `schemaVersion` 的 JSON：除 44 个节点、
@@ -1329,9 +1329,11 @@ RTL、逐属性动画映射和错误码仍未全部迁入矩阵，
 划分完整公共目录；还直接读取 `ViewTreeLimits` 导出全树、文本、资源、图表、集合和
 虚拟化额度；动画部分公开更新 transition 的六种允许属性、入退场的 opacity/transform 字段、
 1–2000 ms、四种 easing 和 1–4 项唯一属性约束，并明确宿主驱动、不逐帧执行 Lua、预览与
-`reducedMotion` 落到最终状态。预览部分同时登记宿主渲染/校验和隔离存储覆盖层。当前 schema 2
+`reducedMotion` 落到最终状态。预览部分同时登记宿主渲染/校验和隔离存储覆盖层。schema 2
 又为每个属性登记 visual/transform/layout 过渡影响，并导出 auto/ltr/rtl 解析、方向感知对齐、
-声明顺序规则以及候选树原子拒绝/保留上一成功树的行为。节点联动稳定错误码仍需继续并入，
+声明顺序规则以及候选树原子拒绝/保留上一成功树的行为。schema 3 进一步导出十个稳定的
+视图管线阶段码，并让 desktop 与辅助 surface 的运行时诊断统一使用 `[code] message`；工具可按
+阶段码分类，后续仍可在不破坏阶段分类的前提下增加节点/属性规则子码。
 当前导出不能视为 M6 已冻结。
 
 即时绘制的 `interaction.region` 现在也会按 role、label、受控状态、形状/clip 和最后提交的宿主
@@ -2107,9 +2109,10 @@ M7 切换完成后，发布运行时必须删除 API v1 注册和执行分支。
   键盘焦点列、语义快照及 Windows Fragment Provider 已建立，Invoke/Toggle/RangeValue/Value/
   ExpandCollapse/SelectionItem 动作已接入现有受控 action 通道，基础结构/焦点/属性变化也已
   差分通知，radio/select/calendar 常用内部项也已形成 Selection/SelectionItem 树；生成物、
-  运行时全树/资源额度、动画允许词汇和预览降级已进入 JSON 导出。任意虚拟化集合子项、其余
-  Pattern/事件和稳定错误码等列仍需继续并入；逐属性过渡影响与 RTL 解析/顺序规则已进入
-  schema 2 导出，但尚未达到冻结条件。
+  运行时全树/资源额度、动画允许词汇和预览降级已进入 JSON 导出。任意虚拟化集合子项及其余
+  Pattern/事件仍需继续并入；逐属性过渡影响与 RTL 解析/顺序规则已进入 schema 2，十个稳定的
+  视图管线阶段码已进入 schema 3 并用于 desktop/辅助 surface 运行时诊断，但逐节点规则子码与
+  生成物仍未达到冻结条件。
 - 环境上下文、响应式尺寸和减少动态效果。
 - 即时绘制的按需 `animation.requestFrame/cancelFrame` 已接入宿主单次帧计时器、可见性清理和 `reducedMotion` 拒绝；真实桌面帧节奏、休眠恢复和多实例合帧仍需完成第 18.5 节场景验证。
 - 元素级 hover/pressed/focus、click/double click、指针捕获和独立原生右键菜单。

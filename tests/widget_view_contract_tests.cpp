@@ -18,6 +18,7 @@ using snowdesktop::widget_runtime::HasViewPropertyEffect;
 using snowdesktop::widget_runtime::HasViewPropertyTransitionEffect;
 using snowdesktop::widget_runtime::IsKnownViewEvent;
 using snowdesktop::widget_runtime::IsKnownViewNodeProperty;
+using snowdesktop::widget_runtime::IsKnownViewValidationDiagnosticCode;
 using snowdesktop::widget_runtime::ViewAccessibilityPattern;
 using snowdesktop::widget_runtime::ViewChildPolicy;
 using snowdesktop::widget_runtime::ViewEventContracts;
@@ -42,6 +43,7 @@ using snowdesktop::widget_runtime::ViewPropertyDefaultKind;
 using snowdesktop::widget_runtime::ViewPropertyNumericValueInRange;
 using snowdesktop::widget_runtime::ViewPropertyValueKind;
 using snowdesktop::widget_runtime::ViewPropertyValueKindName;
+using snowdesktop::widget_runtime::ViewValidationDiagnosticContracts;
 using snowdesktop::widget_runtime::SerializeViewContractJson;
 
 void Check(bool condition, const char* message)
@@ -633,6 +635,30 @@ void TestEventContract()
         "event payload categories must be machine readable");
 }
 
+void TestValidationDiagnosticContract()
+{
+    const auto diagnostics = ViewValidationDiagnosticContracts();
+    Check(diagnostics.size() == 10,
+        "the view pipeline must publish every stable diagnostic stage");
+    std::set<std::string> codes;
+    std::set<std::string> stages;
+    for (const auto& diagnostic : diagnostics)
+    {
+        Check(!diagnostic.code.empty() && !diagnostic.stage.empty(),
+            "diagnostic codes and stages must be non-empty");
+        Check(codes.emplace(diagnostic.code).second,
+            "diagnostic codes must be unique");
+        Check(stages.emplace(diagnostic.stage).second,
+            "diagnostic stages must be unique");
+        Check(IsKnownViewValidationDiagnosticCode(diagnostic.code),
+            "diagnostic codes must round-trip through the public catalog");
+    }
+    Check(IsKnownViewValidationDiagnosticCode("view.parse") &&
+            IsKnownViewValidationDiagnosticCode("view.hostControls") &&
+            !IsKnownViewValidationDiagnosticCode("view.unknown"),
+        "published and unknown diagnostic codes must remain distinguishable");
+}
+
 void TestMachineReadableContract()
 {
     const std::string serialized = SerializeViewContractJson();
@@ -655,7 +681,7 @@ void TestMachineReadableContract()
     const JsonValue* validation = root.Find("validation");
     Check(ok && ok->IsBoolean() && ok->boolean &&
             schemaVersion && schemaVersion->IsNumber() &&
-            schemaVersion->number == 2.0 &&
+            schemaVersion->number == 3.0 &&
             apiVersion && apiVersion->IsNumber() &&
             apiVersion->number == 2.0 &&
             propertyPolicy && propertyPolicy->IsString() &&
@@ -758,8 +784,31 @@ void TestMachineReadableContract()
             validation->Find("commit")->string == "atomic" &&
             validation->Find("onFailure") &&
             validation->Find("onFailure")->string ==
-                "retain-last-successful-tree",
+                "retain-last-successful-tree" &&
+            validation->Find("diagnostic") &&
+            validation->Find("diagnostic")->string ==
+                "stable-code-and-bounded-message" &&
+            validation->Find("diagnosticFormat") &&
+            validation->Find("diagnosticFormat")->string ==
+                "[code] message" &&
+            validation->Find("diagnosticCodes") &&
+            validation->Find("diagnosticCodes")->IsArray() &&
+            validation->Find("diagnosticCodes")->array.size() == 10,
         "view JSON must expose directionality and transactional rejection behavior");
+    const JsonValue* diagnosticCodes =
+        validation->Find("diagnosticCodes");
+    const auto parseDiagnostic = std::find_if(
+        diagnosticCodes->array.begin(), diagnosticCodes->array.end(),
+        [](const JsonValue& entry) {
+            const JsonValue* code = entry.Find("code");
+            return code && code->IsString() &&
+                code->string == "view.parse";
+        });
+    Check(parseDiagnostic != diagnosticCodes->array.end() &&
+            parseDiagnostic->Find("stage") &&
+            parseDiagnostic->Find("stage")->IsString() &&
+            parseDiagnostic->Find("stage")->string == "parse",
+        "view JSON must export stable diagnostic code-to-stage mappings");
 }
 }
 
@@ -770,6 +819,7 @@ int main()
     TestNodePropertyDefaults();
     TestRepresentativeApplicability();
     TestEventContract();
+    TestValidationDiagnosticContract();
     TestMachineReadableContract();
     std::cout << "widget view contract tests passed\n";
     return 0;

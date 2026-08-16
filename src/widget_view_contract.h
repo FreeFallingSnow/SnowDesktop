@@ -84,6 +84,12 @@ struct ViewEventContract
     ViewEventPayloadKind payload = ViewEventPayloadKind::Action;
 };
 
+struct ViewValidationDiagnosticContract
+{
+    std::string_view code;
+    std::string_view stage;
+};
+
 enum class ViewPropertyValueKind : std::uint8_t
 {
     String,
@@ -265,4 +271,8 @@ bool ViewNodeAllowsEvent(
     ViewNodeType type, std::string_view event) noexcept;
 std::vector<std::string_view> ViewNodeAllowedEvents(
     ViewNodeType type);
+std::span<const ViewValidationDiagnosticContract>
+ViewValidationDiagnosticContracts() noexcept;
+bool IsKnownViewValidationDiagnosticCode(
+    std::string_view code) noexcept;
 }
