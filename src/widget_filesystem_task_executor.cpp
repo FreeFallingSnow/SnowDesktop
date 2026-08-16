@@ -245,13 +245,15 @@ WidgetFilesystemTaskRunResult RunRead(
     if (!ReadMetadata(request.path, after, error) ||
         after.revision != metadata.revision)
         return { false, {}, {}, {}, 0, false, "fileChanged" };
-    if (text.find('\0') != std::string::npos || !IsValidUtf8(text))
+    if (request.encoding == "utf8" &&
+        (text.find('\0') != std::string::npos || !IsValidUtf8(text)))
         return { false, {}, {}, {}, 0, false, "invalidEncoding" };
 
     WidgetFilesystemTaskRunResult result;
     result.ok = true;
     result.metadata = std::move(after);
     result.text = std::move(text);
+    result.encoding = request.encoding;
     return result;
 }
 
@@ -388,7 +390,8 @@ bool WidgetFilesystemTaskExecutor::ValidateRequest(
     const WidgetFilesystemTaskRequest& request) noexcept
 {
     if (!SupportsAction(request.action) || request.path.empty() ||
-        !request.path.is_absolute())
+        !request.path.is_absolute() ||
+        (request.encoding != "utf8" && request.encoding != "binary"))
         return false;
     if (request.action == "filesystem.stat")
         return request.text.empty() && request.expectedRevision.empty();
@@ -400,8 +403,10 @@ bool WidgetFilesystemTaskExecutor::ValidateRequest(
         return request.text.empty() && request.expectedRevision.empty() &&
             request.maxBytes >= 1 && request.maxBytes <= MaximumTextBytes;
     return request.text.size() <= MaximumTextBytes &&
-        request.text.find('\0') == std::string::npos &&
-        IsValidUtf8(request.text) && request.expectedRevision.size() <= 64;
+        (request.encoding == "binary" ||
+            (request.text.find('\0') == std::string::npos &&
+                IsValidUtf8(request.text))) &&
+        request.expectedRevision.size() <= 64;
 }
 
 WidgetFilesystemTaskRunResult
@@ -459,11 +464,13 @@ void WidgetFilesystemTaskExecutor::WorkerMain(
             if (canceled_.erase(request.id) > 0)
                 result = { false, {}, {}, {}, 0, false, "canceled" };
             active_.erase(request.id);
-            completions_.push_back({ request.id,
+            WidgetFilesystemTaskCompletion completion{ request.id,
                 std::move(request.request.action), result.ok,
                 std::move(result.metadata), std::move(result.items),
                 std::move(result.text), result.nextOffset,
-                result.hasMore, std::move(result.error) });
+                result.hasMore, std::move(result.error) };
+            completion.encoding = std::move(result.encoding);
+            completions_.push_back(std::move(completion));
         }
     }
 }

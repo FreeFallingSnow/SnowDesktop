@@ -428,7 +428,8 @@ default border does not fit the component design.
   Declare `filesystem.userSelected.read` and/or `.write` for the requested
   access, retain or persist only the returned opaque handle token, and show
   its display-only name. Probe `task.filesystem.access` before using bounded
-  `filesystem.stat/list/read/write/release` tasks. Preserve revisions and pass
+  `filesystem.stat/list/read/write/release` tasks, and probe
+  `task.filesystem.binary` before selecting `encoding = "binary"`. Preserve revisions and pass
   `expectedRevision` when updating content. Never parse, log, or replace a
   handle with a filesystem path. For direct-child change notifications,
   declare `filesystem.userSelected.watch`, probe `data.filesystem.watch`, and

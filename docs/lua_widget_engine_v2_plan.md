@@ -787,7 +787,7 @@ local taskId, err = task.start("media.toggle", { sessionId = session.id })
 `task.network.secretReference`、`task.shell.openUri`、`task.desktop.search`、
 `task.everything.search`、`task.shell.item`、`task.system.openSettings`、
 `task.clipboard.text`、`task.clipboard.image`、`task.clipboard.fileReference`、
-`task.filesystem.picker`、`task.filesystem.access`、
+`task.filesystem.picker`、`task.filesystem.access`、`task.filesystem.binary`、
 `data.filesystem.watch` 和
 `task.desktop.refresh` feature，完整媒体
 控制动作、两个应用任务、实例作用域通知 ID 与 show/update/dismiss/schedule/cancel、
@@ -825,8 +825,9 @@ file-reference；文本限制为 256 KiB UTF-8，图片限制 64 MiB 输入、16
 返回值只包含随机 opaque handle、kind、access 和显示名称，注册记录在 Lua 普通存储之外
 持久化并同时绑定 package ID 与实例 ID，删除实例或卸载包时撤销。
 `task.filesystem.access` 在同一边界上增加异步 `stat/list/read/write/release`：只枚举
-一层目录并分页，将子项继续转换为 opaque handle；文本读写限制为 1 MiB UTF-8，写入
-使用原子替换、可选 expected revision 冲突检测和每实例限速。
+一层目录并分页，将子项继续转换为 opaque handle；UTF-8 与 `task.filesystem.binary`
+探测后的原始字节整文件读写都限制为 1 MiB，写入使用原子替换、可选 expected revision
+冲突检测和每实例限速。
 `filesystem.watch` 现已作为实例参数化数据订阅公开：只接受 folder handle，以 IOCP
 承载非递归 `ReadDirectoryChangesW`，合并 added/removed/modified/renamed 并在丢失变化时
 报告 overflow；隐藏默认且强制 pause，退订、实例 dispose、撤权和 shutdown 会关闭目录
@@ -850,8 +851,8 @@ SDK 的其他调用串行。两类搜索都只返回实例作用域的不透明�
 
 - `system.read` 把性能、电源、存储、网络和显示混成一个权限，无法做到最小授权。
 - 只有单一聚合 CPU/GPU/网络快照，缺少多 GPU/多卷/多显示器结构、网络连接状态与流量拆分，以及统一的单位、时间戳和 warming/stale 语义。
-- clipboard 文本/图片/文件引用、文件选择句柄、stat/list/read/write 和非递归文件
-  watch 已有首批能力；二进制/流式文件访问、递归目录和剪贴板历史仍未完成。
+- clipboard 文本/图片/文件引用、文件选择句柄、stat/list、UTF-8/二进制整文件 read/write
+  和非递归文件 watch 已有首批能力；分块流式文件访问、递归目录和剪贴板历史仍未完成。
 - 媒体会话列表、当前会话、时间线、限尺寸封面句柄、seek/stop 和逐源动作能力已形成首批
   公共面；后续缺口是 GSMTC 事件驱动更新以及更多播放器的兼容性矩阵和实机验证。
 - 音频分析已经设计，但普通 endpoint 读取、音量/静音订阅和受控修改尚未列入公共面。

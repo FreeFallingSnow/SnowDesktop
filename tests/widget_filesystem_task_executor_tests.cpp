@@ -55,8 +55,15 @@ int main()
     const auto root = CreateProbeDirectory();
     const auto file = root / L"note.txt";
     const auto second = root / L"second.txt";
+    const auto binaryFile = root / L"payload.bin";
     std::ofstream(file, std::ios::binary) << "hello";
     std::ofstream(second, std::ios::binary) << "second";
+    const std::string binaryBytes("\x00\x01\x7f\xff", 4);
+    {
+        std::ofstream output(binaryFile, std::ios::binary);
+        output.write(binaryBytes.data(),
+            static_cast<std::streamsize>(binaryBytes.size()));
+    }
 
     WidgetFilesystemTaskExecutor executor;
     WidgetFilesystemTaskRequest stat;
@@ -120,6 +127,44 @@ int main()
     const auto smallReadResult = WaitFor(executor, 6);
     Expect(!smallReadResult.ok && smallReadResult.error == "fileTooLarge",
         "read respects the caller byte ceiling");
+
+    WidgetFilesystemTaskRequest invalidTextRead = read;
+    invalidTextRead.path = binaryFile;
+    Expect(static_cast<bool>(executor.Start(7, "instance", invalidTextRead)),
+        "UTF-8 validation read starts");
+    const auto invalidTextReadResult = WaitFor(executor, 7);
+    Expect(!invalidTextReadResult.ok &&
+            invalidTextReadResult.error == "invalidEncoding",
+        "UTF-8 mode rejects binary payloads");
+
+    WidgetFilesystemTaskRequest binaryRead = invalidTextRead;
+    binaryRead.encoding = "binary";
+    Expect(static_cast<bool>(executor.Start(8, "instance", binaryRead)),
+        "binary read starts");
+    const auto binaryReadResult = WaitFor(executor, 8);
+    Expect(binaryReadResult.ok && binaryReadResult.encoding == "binary" &&
+            binaryReadResult.text == binaryBytes,
+        "binary read preserves embedded NUL and non-UTF-8 bytes");
+
+    WidgetFilesystemTaskRequest binaryWrite;
+    binaryWrite.action = "filesystem.write";
+    binaryWrite.path = binaryFile;
+    binaryWrite.encoding = "binary";
+    binaryWrite.text = std::string("\xff\x00\x42", 3);
+    binaryWrite.expectedRevision = binaryReadResult.metadata.revision;
+    Expect(static_cast<bool>(executor.Start(9, "binary-writer", binaryWrite)),
+        "binary write starts");
+    const auto binaryWriteResult = WaitFor(executor, 9);
+    Expect(binaryWriteResult.ok && binaryWriteResult.metadata.size == 3,
+        "binary write atomically replaces the selected file");
+
+    binaryRead.maxBytes = 3;
+    Expect(static_cast<bool>(executor.Start(10, "instance", binaryRead)),
+        "binary verification read starts");
+    const auto binaryVerification = WaitFor(executor, 10);
+    Expect(binaryVerification.ok &&
+            binaryVerification.text == binaryWrite.text,
+        "binary write round-trips exact bytes");
 
     std::error_code cleanupError;
     std::filesystem::remove_all(root, cleanupError);

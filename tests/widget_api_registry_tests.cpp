@@ -289,6 +289,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "task.filesystem.access") &&
             snowdesktop::widget_api::SupportsFeature(
+                "task.filesystem.binary") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "data.filesystem.watch") &&
             snowdesktop::widget_api::SupportsFeature(
                 "data.media.artwork") &&

@@ -1527,13 +1527,20 @@ function data.subscribe(topic, options) end
 ---@field limit? integer Entry count from 1 through 100; defaults to 50.
 
 ---@class SnowFilesystemReadArguments: SnowFilesystemHandleArguments
----@field encoding? 'utf8' The only file encoding currently exposed by v2.
+---@field encoding? 'utf8'|'binary' Defaults to utf8; binary returns an exact byte string in data.
 ---@field maxBytes? integer Caller byte ceiling from 1 through 1048576; defaults to 524288.
 
----@class SnowFilesystemWriteArguments: SnowFilesystemHandleArguments
----@field encoding? 'utf8' The only file encoding currently exposed by v2.
+---@class SnowFilesystemTextWriteArguments: SnowFilesystemHandleArguments
+---@field encoding? 'utf8' Defaults to utf8.
 ---@field text string Valid UTF-8 containing at most 1048576 bytes and no NUL.
 ---@field expectedRevision? string Revision returned by stat/read/write; a mismatch rejects the write with conflict.
+
+---@class SnowFilesystemBinaryWriteArguments: SnowFilesystemHandleArguments
+---@field encoding 'binary'
+---@field data string Exact byte string containing at most 1048576 bytes; embedded NUL and non-UTF-8 bytes are preserved.
+---@field expectedRevision? string Revision returned by stat/read/write; a mismatch rejects the write with conflict.
+
+---@alias SnowFilesystemWriteArguments SnowFilesystemTextWriteArguments|SnowFilesystemBinaryWriteArguments
 
 ---@class SnowFilesystemMetadata
 ---@field handle string Opaque instance-and-package-scoped handle.
@@ -1549,11 +1556,19 @@ function data.subscribe(topic, options) end
 ---@field nextOffset integer
 ---@field hasMore boolean
 
----@class SnowFilesystemReadTaskValue
+---@class SnowFilesystemTextReadTaskValue
 ---@field encoding 'utf8'
 ---@field text string
 ---@field size integer
 ---@field revision string
+
+---@class SnowFilesystemBinaryReadTaskValue
+---@field encoding 'binary'
+---@field data string Exact byte string; Lua length and substring operations are binary-safe.
+---@field size integer
+---@field revision string
+
+---@alias SnowFilesystemReadTaskValue SnowFilesystemTextReadTaskValue|SnowFilesystemBinaryReadTaskValue
 
 ---@class SnowFilesystemWriteTaskValue
 ---@field accepted boolean

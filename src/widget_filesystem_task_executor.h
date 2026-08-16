@@ -38,6 +38,7 @@ struct WidgetFilesystemTaskRequest
     std::size_t offset = 0;
     std::size_t limit = 50;
     std::size_t maxBytes = 512 * 1024;
+    std::string encoding = "utf8";
     std::string text;
     std::string expectedRevision;
 };
@@ -51,6 +52,7 @@ struct WidgetFilesystemTaskRunResult
     std::size_t nextOffset = 0;
     bool hasMore = false;
     std::string error;
+    std::string encoding = "utf8";
 };
 
 struct WidgetFilesystemTaskCompletion
@@ -64,6 +66,7 @@ struct WidgetFilesystemTaskCompletion
     std::size_t nextOffset = 0;
     bool hasMore = false;
     std::string error;
+    std::string encoding = "utf8";
 };
 
 struct WidgetFilesystemTaskStartResult

@@ -1289,7 +1289,7 @@ feature ID `task.start`、`task.media.control`、`task.audio.output.control`、`
 `task.calendar.write`、`task.network.request` 和
 `task.shell.openUri`、`task.system.openSettings`、`task.clipboard.text`、
 `task.clipboard.image`、`task.clipboard.fileReference`、
-`task.filesystem.picker`、`task.filesystem.access`，以及 `task.desktop.search`、`task.everything.search`、
+`task.filesystem.picker`、`task.filesystem.access`、`task.filesystem.binary`，以及 `task.desktop.search`、`task.everything.search`、
 `task.shell.item`、`task.desktop.refresh`。媒体动作要求 `media.action` 权限，而且只能在
 `click/doubleClick/pointerDown/pointerUp/wheel`、宿主按钮、菜单命令或由宿主明确
 标记来源的打开回调同步调用栈内启动：
@@ -1426,6 +1426,17 @@ local writeTask = task.start("filesystem.write", {
     text = nextText,
     expectedRevision = previouslyReadRevision,
 })
+local binaryReadTask = task.start("filesystem.read", {
+    handle = selectedFile,
+    encoding = "binary",
+    maxBytes = 1024 * 1024,
+})
+local binaryWriteTask = task.start("filesystem.write", {
+    handle = selectedFile,
+    encoding = "binary",
+    data = byteString,
+    expectedRevision = previouslyReadRevision,
+})
 local releaseTask = task.start("filesystem.release", {
     handle = selectedHandle,
 })
@@ -1436,10 +1447,13 @@ local releaseTask = task.start("filesystem.release", {
 额外权限或手势；句柄仍有任务执行时返回 `handleBusy`。`stat` 返回
 `{ handle,kind,name,size?,modifiedMs,readOnly,revision }`；`list` 只枚举一层，分页范围
 0–10000、每页 1–100，并把非 reparse 子项转换为同一实例的新 opaque handle；超过
-10000 个可枚举子项返回 `directoryTooLarge`。`read` 当前只接受 `encoding=utf8`，调用方
-上限与宿主硬上限均不超过 1 MiB，NUL 或非 UTF-8 内容返回 `invalidEncoding`。
+10000 个可枚举子项返回 `directoryTooLarge`。`read`/`write` 默认使用 `encoding=utf8`；
+UTF-8 读取返回 `text`，NUL 或非法编码返回 `invalidEncoding`。探测到
+`task.filesystem.binary` 后可显式使用 `encoding=binary`，读取结果改为 `data`，写入也必须
+传 `data`；Lua 字符串中的 NUL 和非 UTF-8 字节会被原样保留。两种模式的调用方上限与宿主
+硬上限都不超过 1 MiB，整文件读写不会因此开放路径或扩展句柄范围。
 
-`write` 当前是 1 MiB 内的 UTF-8 原子整文件替换，同一实例最短间隔 100 ms；传入
+`write` 是 1 MiB 内的原子整文件替换，同一实例最短间隔 100 ms；传入
 `expectedRevision` 时，文件不存在或 revision 已变化均返回 `conflict`。成功返回新的
 `{ accepted,size,modifiedMs,revision }`。其他稳定错误包括 `invalidReference`、
 `handleAccessDenied`、`notFile`、`notFolder`、`notFound`、`accessDenied`、

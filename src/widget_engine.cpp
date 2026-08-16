@@ -4749,7 +4749,7 @@ static int lua_TaskStart(lua_State* state)
                 (taskName == "filesystem.read" &&
                     (key == "encoding" || key == "maxBytes")) ||
                 (taskName == "filesystem.write" &&
-                    (key == "encoding" || key == "text" ||
+                    (key == "encoding" || key == "text" || key == "data" ||
                         key == "expectedRevision"));
             if (!allowed)
             {
@@ -4808,22 +4808,26 @@ static int lua_TaskStart(lua_State* state)
         if (taskName == "filesystem.read" ||
             taskName == "filesystem.write")
         {
+            std::string encoding = "utf8";
             lua_getfield(state, 2, "encoding");
             if (!lua_isnil(state, -1))
             {
                 size_t length = 0;
                 const char* value = lua_type(state, -1) == LUA_TSTRING
                     ? lua_tolstring(state, -1, &length) : nullptr;
+                const std::string_view requested(
+                    value ? value : "", length);
                 if (!value ||
-                    std::string_view(value, length) != "utf8")
+                    (requested != "utf8" && requested != "binary"))
                 {
                     lua_pop(state, 1);
                     return luaL_error(state,
-                        "task.start: filesystem encoding must be utf8");
+                        "task.start: filesystem encoding must be utf8 or binary");
                 }
+                encoding.assign(requested.data(), requested.size());
             }
             lua_pop(state, 1);
-            arguments.emplace("encoding", "utf8");
+            arguments.emplace("encoding", encoding);
         }
         if (taskName == "filesystem.read")
         {
@@ -4838,7 +4842,17 @@ static int lua_TaskStart(lua_State* state)
         }
         else if (taskName == "filesystem.write")
         {
-            lua_getfield(state, 2, "text");
+            const std::string& encoding = arguments.at("encoding");
+            const char* payloadField = encoding == "binary" ? "data" : "text";
+            const char* rejectedField = encoding == "binary" ? "text" : "data";
+            lua_getfield(state, 2, rejectedField);
+            const bool hasRejectedPayload = !lua_isnil(state, -1);
+            lua_pop(state, 1);
+            if (hasRejectedPayload)
+                return luaL_error(state,
+                    "task.start: filesystem.write payload does not match encoding");
+
+            lua_getfield(state, 2, payloadField);
             size_t length = 0;
             const char* value = lua_type(state, -1) == LUA_TSTRING
                 ? lua_tolstring(state, -1, &length) : nullptr;
@@ -4846,11 +4860,12 @@ static int lua_TaskStart(lua_State* state)
             lua_pop(state, 1);
             if (!value || text.size() > snowdesktop::widget_runtime::
                     WidgetFilesystemTaskExecutor::MaximumTextBytes ||
-                text.find('\0') != std::string::npos ||
-                !IsValidUtf8Local(text))
+                (encoding == "utf8" &&
+                    (text.find('\0') != std::string::npos ||
+                        !IsValidUtf8Local(text))))
                 return luaL_error(state,
-                    "task.start: filesystem.write text must be at most 1048576 bytes of valid UTF-8 without NUL");
-            arguments.emplace("text", std::move(text));
+                    "task.start: filesystem.write payload is invalid or exceeds 1048576 bytes");
+            arguments.emplace(payloadField, std::move(text));
 
             lua_getfield(state, 2, "expectedRevision");
             if (!lua_isnil(state, -1))
@@ -11878,6 +11893,9 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             request.action = action.name;
             request.handle = handle->second;
             if (entry) request.path = entry->path;
+            if (const auto encoding = action.arguments.find("encoding");
+                encoding != action.arguments.end())
+                request.encoding = encoding->second;
             const auto parseSize = [&action](const char* field,
                 std::size_t fallback, std::size_t& output) {
                 const auto value = action.arguments.find(field);
@@ -11908,7 +11926,8 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             }
             if (action.name == "filesystem.write")
             {
-                const auto text = action.arguments.find("text");
+                const auto text = action.arguments.find(
+                    request.encoding == "binary" ? "data" : "text");
                 if (text == action.arguments.end())
                 {
                     (void)taskBroker_->Complete(
@@ -11945,7 +11964,13 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 completion.metadata.revision =
                     "r1-0000000000000001-0000000000000001-f";
                 if (action.name == "filesystem.read")
-                    completion.text = "Preview file content";
+                {
+                    completion.encoding = request.encoding;
+                    completion.text = request.encoding == "binary"
+                        ? std::string("\x00\x01\x7f\xff", 4)
+                        : "Preview file content";
+                    completion.metadata.size = completion.text.size();
+                }
                 if (action.name == "filesystem.list")
                 {
                     snowdesktop::widget_runtime::WidgetFilesystemMetadata item;
@@ -12663,12 +12688,16 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                         else if (completion.name == "filesystem.read")
                         {
                             lua_createtable(eventState, 0, 4);
-                            lua_pushliteral(eventState, "utf8");
+                            lua_pushlstring(eventState,
+                                filesystemTaskResult->encoding.data(),
+                                filesystemTaskResult->encoding.size());
                             lua_setfield(eventState, -2, "encoding");
                             lua_pushlstring(eventState,
                                 filesystemTaskResult->text.data(),
                                 filesystemTaskResult->text.size());
-                            lua_setfield(eventState, -2, "text");
+                            lua_setfield(eventState, -2,
+                                filesystemTaskResult->encoding == "binary"
+                                    ? "data" : "text");
                             lua_pushinteger(eventState,
                                 static_cast<lua_Integer>(
                                     filesystemTaskResult->metadata.size));
