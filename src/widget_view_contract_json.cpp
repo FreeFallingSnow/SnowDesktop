@@ -1,6 +1,7 @@
 #include "widget_view_contract_json.h"
 
 #include "widget_view_contract.h"
+#include "widget_view_tree.h"
 
 #include <array>
 #include <iomanip>
@@ -247,6 +248,84 @@ void WriteEvent(std::ostream& output, const ViewEventContract& event)
     WriteJsonString(output, EventPayloadName(event.payload));
     output << '}';
 }
+
+void WriteLimits(std::ostream& output)
+{
+    output << "{\"maximumNodes\":" << ViewTreeLimits::MaximumNodes
+           << ",\"maximumDepth\":" << ViewTreeLimits::MaximumDepth
+           << ",\"maximumTextBytes\":" << ViewTreeLimits::MaximumTextBytes
+           << ",\"maximumTooltipTitleBytes\":"
+           << ViewTreeLimits::MaximumTooltipTitleBytes
+           << ",\"maximumTotalTextBytes\":"
+           << ViewTreeLimits::MaximumTotalTextBytes
+           << ",\"maximumResources\":" << ViewTreeLimits::MaximumResources
+           << ",\"maximumSeriesPoints\":"
+           << ViewTreeLimits::MaximumSeriesPoints
+           << ",\"maximumTotalSeriesPoints\":"
+           << ViewTreeLimits::MaximumTotalSeriesPoints
+           << ",\"maximumChoiceOptions\":"
+           << ViewTreeLimits::MaximumChoiceOptions
+           << ",\"maximumTextSpans\":" << ViewTreeLimits::MaximumTextSpans
+           << ",\"maximumCalendarEventDates\":"
+           << ViewTreeLimits::MaximumCalendarEventDates
+           << ",\"maximumCollectionItems\":"
+           << ViewTreeLimits::MaximumCollectionItems
+           << ",\"maximumScrollContainers\":"
+           << ViewTreeLimits::MaximumScrollContainers
+           << ",\"maximumVirtualItemCount\":"
+           << ViewTreeLimits::MaximumVirtualItemCount
+           << ",\"maximumVirtualWindowItems\":"
+           << ViewTreeLimits::MaximumVirtualWindowItems
+           << ",\"maximumVirtualOverscan\":"
+           << ViewTreeLimits::MaximumVirtualOverscan
+           << ",\"maximumVirtualSectionHeaders\":"
+           << ViewTreeLimits::MaximumVirtualSectionHeaders
+           << ",\"maximumDebugNameBytes\":"
+           << ViewTreeLimits::MaximumDebugNameBytes
+           << ",\"maximumTestIdBytes\":"
+           << ViewTreeLimits::MaximumTestIdBytes << '}';
+}
+
+void WriteTransitions(std::ostream& output)
+{
+    constexpr auto easings = std::to_array<std::string_view>({
+        "linear", "easeIn", "easeOut", "easeInOut",
+    });
+    constexpr auto updateProperties = std::to_array<std::string_view>({
+        "background", "foreground", "borderColor", "opacity",
+        "transform", "layout",
+    });
+    constexpr auto presenceFields = std::to_array<std::string_view>({
+        "opacity", "transform",
+    });
+    const auto writeString = [](std::ostream& stream,
+                                 std::string_view value) {
+        WriteJsonString(stream, value);
+    };
+
+    output << "{\"durationMs\":{\"minimum\":1,\"maximum\":2000,"
+              "\"default\":120},\"easings\":";
+    WriteJsonArray(output, easings, writeString);
+    output << ",\"defaultEasing\":\"easeOut\","
+              "\"update\":{\"properties\":";
+    WriteJsonArray(output, updateProperties, writeString);
+    output << ",\"minimumProperties\":1,\"maximumProperties\":4},"
+              "\"presence\":{\"fields\":";
+    WriteJsonArray(output, presenceFields, writeString);
+    output << ",\"minimumFields\":1},"
+              "\"runtime\":{\"driver\":\"host\","
+              "\"runsLuaPerFrame\":false,"
+              "\"preview\":\"final-state\","
+              "\"reducedMotion\":\"final-state\"}}";
+}
+
+void WritePreview(std::ostream& output)
+{
+    output << "{\"renderer\":\"host\",\"context\":\"preview\","
+              "\"storage\":\"isolated-overlay\","
+              "\"validatesTree\":true,"
+              "\"transitions\":\"final-state\"}";
+}
 }
 
 std::string SerializeViewContractJson()
@@ -261,6 +340,12 @@ std::string SerializeViewContractJson()
     WriteJsonArray(output, ViewPropertyContracts(), WriteProperty);
     output << ",\"events\":";
     WriteJsonArray(output, ViewEventContracts(), WriteEvent);
+    output << ",\"limits\":";
+    WriteLimits(output);
+    output << ",\"transitions\":";
+    WriteTransitions(output);
+    output << ",\"preview\":";
+    WritePreview(output);
     output << '}';
     return output.str();
 }

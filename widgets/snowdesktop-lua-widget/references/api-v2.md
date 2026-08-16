@@ -10,7 +10,10 @@
 运行 `snowwidget view-contract` 可获得宿主当前公开的声明式视图 JSON 契约。顶层
 `schemaVersion` 版本化该导出格式，`apiVersion` 表示组件 API；`nodes`、`properties` 和
 `events` 分别登记节点适用属性与逐节点默认值、属性类型/枚举/范围/影响域，以及事件 payload
-类别。作者工具应读取该命令，不要复制维护另一份节点或属性白名单。
+类别。`limits` 直接导出宿主当前使用的全树、文本、资源、集合与虚拟化额度；`transitions`
+登记更新/入退场动画允许字段、时长、easing 及 preview/reducedMotion 的静态终点策略；
+`preview` 表明预览复用宿主校验和渲染、使用隔离存储覆盖层。作者工具应读取该命令，不要复制
+维护另一份节点、属性、动画或额度白名单。
 
 运行 `snowwidget system-contract` 可离线获得与 `system.capabilities()` 同源的系统能力目录。
 其中 `functions`、`dataTopics`、`tasks` 分别公开 feature 与权限；数据主题还公开可见/隐藏采样

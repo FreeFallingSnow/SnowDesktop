@@ -1318,8 +1318,15 @@ heading/live、集合位置和语义隐藏；声明式节点还支持稳定 key 
 DescribedBy、HeadingLevel、LiveSetting、PositionInSet、SizeOfSet 和 GridItem，并为 live 内容变化
 发送 LiveRegionChanged；加载/提交阶段拒绝无名或自身关系、越界索引以及隐藏交互子树。
 ScrollItem、未实体化项的 VirtualizedItem 以及真实 Narrator 场景验收仍未完成；节点相关联动范围、
-默认值、枚举值、RTL、动画/effect、额度和错误码仍未全部迁入矩阵，
+RTL、逐属性动画映射和错误码仍未全部迁入矩阵，
 也尚未由它生成 LuaLS 与本文档，因此这仍不表示契约已经冻结或完整无障碍已经可用。
+
+`snowwidget view-contract` 现已把该运行时目录导出为带 `schemaVersion` 的 JSON：除 44 个节点、
+146 个属性和 17 个事件外，还直接读取 `ViewTreeLimits` 导出全树、文本、资源、图表、集合和
+虚拟化额度；动画部分公开更新 transition 的六种允许属性、入退场的 opacity/transform 字段、
+1–2000 ms、四种 easing 和 1–4 项唯一属性约束，并明确宿主驱动、不逐帧执行 Lua、预览与
+`reducedMotion` 落到最终状态。预览部分同时登记宿主渲染/校验和隔离存储覆盖层。逐属性是否可
+动画、节点联动错误和 RTL 规则仍需继续并入，当前导出不能视为 M6 已冻结。
 
 即时绘制的 `interaction.region` 现在也会按 role、label、受控状态、形状/clip 和最后提交的宿主
 焦点转换为同一种语义节点；`WidgetEngine` 只汇总当前可见、有效、非预览的 v2 实例，并保留
@@ -1719,7 +1726,8 @@ v2.0 资源契约：
 
 - `snowwidget view-contract`：输出带独立 schema 版本的 API v2 声明式视图 JSON 契约；
   节点适用属性、必填项、逐节点默认值、事件、类型、枚举、范围、影响域和无障碍映射均来自
-  宿主运行时使用的同一份目录，供 LuaLS、文档生成器和编辑器校验复用。
+  宿主运行时使用的同一份目录；全树/资源额度、动画词汇与约束、宿主驱动策略以及预览隔离/
+  静态降级也随同导出，供 LuaLS、文档生成器和编辑器校验复用。
 - `snowwidget system-contract`：离线输出 `system.capabilities()` 使用的 15 项系统函数、25 个
   数据主题和 41 类任务；权限、预览策略、订阅刷新/隐藏/空闲边界、风险标记、可信手势和
   每实例并发限制直接读取运行时目录，不另建作者工具白名单。
@@ -2091,7 +2099,8 @@ M7 切换完成后，发布运行时必须删除 API v1 注册和执行分支。
   键盘焦点列、语义快照及 Windows Fragment Provider 已建立，Invoke/Toggle/RangeValue/Value/
   ExpandCollapse/SelectionItem 动作已接入现有受控 action 通道，基础结构/焦点/属性变化也已
   差分通知，radio/select/calendar 常用内部项也已形成 Selection/SelectionItem 树；生成物、
-  任意虚拟化集合子项、其余 Pattern/事件及默认值/范围等列仍需继续并入，尚未达到冻结条件。
+  运行时全树/资源额度、动画允许词汇和预览降级已进入 JSON 导出。任意虚拟化集合子项、其余
+  Pattern/事件、逐属性动画映射、RTL 和稳定错误码等列仍需继续并入，尚未达到冻结条件。
 - 环境上下文、响应式尺寸和减少动态效果。
 - 即时绘制的按需 `animation.requestFrame/cancelFrame` 已接入宿主单次帧计时器、可见性清理和 `reducedMotion` 拒绝；真实桌面帧节奏、休眠恢复和多实例合帧仍需完成第 18.5 节场景验证。
 - 元素级 hover/pressed/focus、click/double click、指针捕获和独立原生右键菜单。

@@ -615,6 +615,9 @@ void TestMachineReadableContract()
     const JsonValue* nodes = root.Find("nodes");
     const JsonValue* properties = root.Find("properties");
     const JsonValue* events = root.Find("events");
+    const JsonValue* limits = root.Find("limits");
+    const JsonValue* transitions = root.Find("transitions");
+    const JsonValue* preview = root.Find("preview");
     Check(ok && ok->IsBoolean() && ok->boolean &&
             schemaVersion && schemaVersion->IsNumber() &&
             schemaVersion->number == 1.0 &&
@@ -657,6 +660,45 @@ void TestMachineReadableContract()
             click->Find("payload")->IsString() &&
             click->Find("payload")->string == "action",
         "event JSON must expose its stable payload category");
+    Check(limits && limits->IsObject() &&
+            limits->Find("maximumNodes") &&
+            limits->Find("maximumNodes")->number == 512.0 &&
+            limits->Find("maximumDepth") &&
+            limits->Find("maximumDepth")->number == 32.0 &&
+            limits->Find("maximumResources") &&
+            limits->Find("maximumResources")->number == 64.0 &&
+            limits->Find("maximumVirtualItemCount") &&
+            limits->Find("maximumVirtualItemCount")->number == 1000000.0,
+        "view JSON must export the runtime tree and resource limits");
+    const JsonValue* duration = transitions && transitions->IsObject()
+        ? transitions->Find("durationMs") : nullptr;
+    const JsonValue* update = transitions && transitions->IsObject()
+        ? transitions->Find("update") : nullptr;
+    const JsonValue* runtime = transitions && transitions->IsObject()
+        ? transitions->Find("runtime") : nullptr;
+    Check(duration && duration->IsObject() &&
+            duration->Find("minimum") &&
+            duration->Find("minimum")->number == 1.0 &&
+            duration->Find("maximum") &&
+            duration->Find("maximum")->number == 2000.0 &&
+            update && update->IsObject() &&
+            update->Find("properties") &&
+            update->Find("properties")->IsArray() &&
+            update->Find("properties")->array.size() == 6 &&
+            runtime && runtime->IsObject() &&
+            runtime->Find("runsLuaPerFrame") &&
+            runtime->Find("runsLuaPerFrame")->IsBoolean() &&
+            !runtime->Find("runsLuaPerFrame")->boolean,
+        "view JSON must export the bounded host transition contract");
+    Check(preview && preview->IsObject() &&
+            preview->Find("renderer") &&
+            preview->Find("renderer")->string == "host" &&
+            preview->Find("storage") &&
+            preview->Find("storage")->string == "isolated-overlay" &&
+            preview->Find("validatesTree") &&
+            preview->Find("validatesTree")->IsBoolean() &&
+            preview->Find("validatesTree")->boolean,
+        "view JSON must expose preview rendering and isolation behavior");
 }
 }
 
