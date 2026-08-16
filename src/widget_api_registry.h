@@ -41,10 +41,19 @@ enum class SystemCapabilityPreview
     NoSideEffects,
 };
 
+struct SystemFunctionParameterContract
+{
+    const char* name = nullptr;
+    const char* type = nullptr;
+    bool optional = false;
+};
+
 struct SystemFunctionContract
 {
     const char* name = nullptr;
     const char* feature = nullptr;
+    std::span<const SystemFunctionParameterContract> parameters;
+    const char* resultType = nullptr;
 };
 
 struct SystemDataTopicContract

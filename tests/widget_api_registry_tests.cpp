@@ -797,7 +797,21 @@ void TestSystemCapabilityContract()
             "capability permission must exist in the permission catalog");
     };
     for (const auto& contract : functions)
+    {
         checkCommon(contract.name, contract.feature, nullptr);
+        Check(contract.resultType && contract.resultType[0] != '\0',
+            "system functions must publish a result type");
+        bool sawOptional = false;
+        for (const auto& parameter : contract.parameters)
+        {
+            Check(parameter.name && parameter.name[0] != '\0' &&
+                    parameter.type && parameter.type[0] != '\0',
+                "system function parameters must publish names and types");
+            Check(!sawOptional || parameter.optional,
+                "required positional parameters cannot follow optional ones");
+            sawOptional = sawOptional || parameter.optional;
+        }
+    }
     for (const auto& contract : topics)
     {
         checkCommon(contract.name, contract.feature,
@@ -831,6 +845,20 @@ void TestSystemCapabilityContract()
             "every system function must have a LuaLS declaration");
         Check(documentation.find(contract.name) != std::string::npos,
             "every system function must be documented");
+        Check(luaDefinitions.find(contract.resultType) != std::string::npos ||
+                std::string_view(contract.resultType) == "integer" ||
+                std::string_view(contract.resultType) == "string" ||
+                std::string_view(contract.resultType) == "-1|0|1" ||
+                std::string_view(contract.resultType) ==
+                    "SnowCapabilities|SnowCapability",
+            "every named system function result type must exist in LuaLS");
+        for (const auto& parameter : contract.parameters)
+        {
+            if (!std::string_view(parameter.type).starts_with("Snow"))
+                continue;
+            Check(luaDefinitions.find(parameter.type) != std::string::npos,
+                "every named system function parameter type must exist in LuaLS");
+        }
     }
     for (const auto& contract : topics)
     {
@@ -904,6 +932,25 @@ void TestSystemCapabilityContract()
         "capability must distinguish host support from instance permission");
     lua_pop(state, 3);
 
+    lua_getglobal(state, "system");
+    lua_getfield(state, -1, "capabilities");
+    lua_pushliteral(state, "time.add");
+    Check(lua_pcall(state, 1, 1, 0) == LUA_OK && lua_istable(state, -1),
+        "system.capabilities must resolve a synchronous function name");
+    lua_getfield(state, -1, "parameters");
+    Check(lua_istable(state, -1) && lua_rawlen(state, -1) == 3,
+        "runtime function capability must expose positional parameters");
+    lua_rawgeti(state, -1, 3);
+    lua_getfield(state, -1, "optional");
+    Check(lua_toboolean(state, -1) != 0,
+        "runtime function parameters must preserve optionality");
+    lua_pop(state, 3);
+    lua_getfield(state, -1, "resultType");
+    Check(lua_isstring(state, -1) &&
+            std::string(lua_tostring(state, -1)) == "integer",
+        "runtime function capability must expose its result type");
+    lua_pop(state, 3);
+
     lua_createtable(state, 0, 1);
     lua_pushboolean(state, 1);
     lua_setfield(state, -2, "system.performance.read");
@@ -970,6 +1017,13 @@ void TestMachineReadableSystemContract()
     const JsonValue* analysis = findNamed(*topics,
         "audio.output.analysis");
     const JsonValue* request = findNamed(*tasks, "network.request");
+    const JsonValue* format = findNamed(*functions, "time.format");
+    Check(format && format->Find("parameters") &&
+            format->Find("parameters")->IsArray() &&
+            format->Find("parameters")->array.size() == 2 &&
+            format->Find("resultType") &&
+            format->Find("resultType")->string == "string",
+        "function JSON must expose positional parameters and result type");
     Check(analysis && analysis->Find("permission") &&
             analysis->Find("permission")->IsString() &&
             analysis->Find("permission")->string ==

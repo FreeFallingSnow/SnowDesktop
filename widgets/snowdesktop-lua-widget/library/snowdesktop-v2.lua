@@ -737,6 +737,11 @@
 ---@field supported integer[]
 ---@field features string[]
 
+---@class SnowFunctionParameter
+---@field name string
+---@field type string LuaLS-compatible primitive, union, or named type.
+---@field optional boolean
+
 ---@class SnowCapability
 ---@field id string
 ---@field name? string Public function, data topic, or task name.
@@ -750,6 +755,7 @@
 ---@field permission? string Narrow permission required by this entry.
 ---@field requiresTrustedGesture? boolean
 ---@field preview? 'deterministic'|'noSideEffects'
+---@field parameters? SnowFunctionParameter[] Positional parameters for a synchronous function.
 ---@field minimumIntervalMs? integer Data-topic lower refresh bound.
 ---@field hiddenIntervalMs? integer Data-topic hidden refresh interval.
 ---@field optionsType? string LuaLS subscription-options type exported for a data topic.

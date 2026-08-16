@@ -220,23 +220,75 @@ constexpr std::array<std::string_view, 198> kHostFeatures = {
     "view.transition.visual",
     "view.tree.core",
 };
+using FunctionParameter = SystemFunctionParameterContract;
+constexpr std::array<FunctionParameter, 0> kNoFunctionParameters{};
+constexpr auto kCapabilityParameters = std::to_array<FunctionParameter>({
+    { "featureOrApi", "string", true },
+});
+constexpr auto kTimePartsParameters = std::to_array<FunctionParameter>({
+    { "epochMilliseconds", "integer", true },
+    { "timeZone", "'local'|'utc'|string", true },
+});
+constexpr auto kTimeFormatParameters = std::to_array<FunctionParameter>({
+    { "epochMilliseconds", "integer", true },
+    { "options", "SnowTimeFormatOptions", true },
+});
+constexpr auto kTimeAddParameters = std::to_array<FunctionParameter>({
+    { "epochMilliseconds", "integer", false },
+    { "delta", "SnowTimeDelta", false },
+    { "options", "SnowTimeZoneOptions", true },
+});
+constexpr auto kTimeCompareParameters = std::to_array<FunctionParameter>({
+    { "left", "integer", false },
+    { "right", "integer", false },
+});
+constexpr auto kFormatNumberParameters = std::to_array<FunctionParameter>({
+    { "value", "number", false },
+    { "options", "SnowNumberFormatOptions", true },
+});
+constexpr auto kFormatBytesParameters = std::to_array<FunctionParameter>({
+    { "bytes", "number", false },
+    { "options", "SnowBytesFormatOptions", true },
+});
+constexpr auto kFormatDurationParameters = std::to_array<FunctionParameter>({
+    { "milliseconds", "integer", false },
+    { "options", "SnowDurationFormatOptions", true },
+});
+constexpr auto kFormatRelativeTimeParameters =
+    std::to_array<FunctionParameter>({
+        { "deltaMilliseconds", "integer", false },
+        { "options", "SnowRelativeTimeFormatOptions", true },
+    });
+constexpr auto kFormatListParameters = std::to_array<FunctionParameter>({
+    { "values", "string[]", false },
+    { "options", "SnowLocaleOptions", true },
+});
+
 constexpr std::array<SystemFunctionContract, 15>
 kSystemFunctionContracts = {{
-    { "widget.context", "widget.context" },
-    { "system.capabilities", "system.environment" },
-    { "system.info", "system.environment" },
-    { "system.uptime", "system.uptime" },
-    { "time.now", "time.basic" },
-    { "time.monotonic", "time.basic" },
-    { "time.parts", "time.calendar" },
-    { "time.format", "time.calendar" },
-    { "time.add", "time.calendar" },
-    { "time.compare", "time.calendar" },
-    { "l10n.formatNumber", "l10n.format" },
-    { "l10n.formatBytes", "l10n.format" },
-    { "l10n.formatDuration", "l10n.format" },
-    { "l10n.formatRelativeTime", "l10n.format" },
-    { "l10n.formatList", "l10n.format" },
+    { "widget.context", "widget.context", kNoFunctionParameters,
+        "SnowWidgetContext" },
+    { "system.capabilities", "system.environment", kCapabilityParameters,
+        "SnowCapabilities|SnowCapability" },
+    { "system.info", "system.environment", kNoFunctionParameters,
+        "SnowSystemInfo" },
+    { "system.uptime", "system.uptime", kNoFunctionParameters,
+        "SnowSystemUptime" },
+    { "time.now", "time.basic", kNoFunctionParameters, "integer" },
+    { "time.monotonic", "time.basic", kNoFunctionParameters, "integer" },
+    { "time.parts", "time.calendar", kTimePartsParameters,
+        "SnowDateTimeParts" },
+    { "time.format", "time.calendar", kTimeFormatParameters, "string" },
+    { "time.add", "time.calendar", kTimeAddParameters, "integer" },
+    { "time.compare", "time.calendar", kTimeCompareParameters, "-1|0|1" },
+    { "l10n.formatNumber", "l10n.format", kFormatNumberParameters,
+        "string" },
+    { "l10n.formatBytes", "l10n.format", kFormatBytesParameters, "string" },
+    { "l10n.formatDuration", "l10n.format", kFormatDurationParameters,
+        "string" },
+    { "l10n.formatRelativeTime", "l10n.format",
+        kFormatRelativeTimeParameters, "string" },
+    { "l10n.formatList", "l10n.format", kFormatListParameters, "string" },
 }};
 constexpr std::array<SystemDataTopicContract, 25>
 kSystemDataTopicContracts = {{
@@ -766,6 +818,22 @@ void PushCapability(lua_State* state,
 {
     PushCapabilityBase(state, contract.name, contract.feature, "function",
         nullptr, false, SystemCapabilityPreview::Deterministic);
+    lua_createtable(state, static_cast<int>(contract.parameters.size()), 0);
+    int index = 1;
+    for (const auto& parameter : contract.parameters)
+    {
+        lua_createtable(state, 0, 3);
+        lua_pushstring(state, parameter.name);
+        lua_setfield(state, -2, "name");
+        lua_pushstring(state, parameter.type);
+        lua_setfield(state, -2, "type");
+        lua_pushboolean(state, parameter.optional);
+        lua_setfield(state, -2, "optional");
+        lua_rawseti(state, -2, index++);
+    }
+    lua_setfield(state, -2, "parameters");
+    lua_pushstring(state, contract.resultType);
+    lua_setfield(state, -2, "resultType");
 }
 
 void PushCapability(lua_State* state,

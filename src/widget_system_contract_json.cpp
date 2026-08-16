@@ -89,6 +89,19 @@ void WriteFunction(std::ostream& output,
     output << '{';
     WriteCommon(output, contract.name, contract.feature, nullptr,
         SystemCapabilityPreview::Deterministic);
+    output << ",\"parameters\":";
+    WriteJsonArray(output, contract.parameters,
+        [](std::ostream& stream,
+            const SystemFunctionParameterContract& parameter) {
+            stream << "{\"name\":";
+            WriteJsonString(stream, parameter.name);
+            stream << ",\"type\":";
+            WriteJsonString(stream, parameter.type);
+            stream << ",\"optional\":"
+                   << (parameter.optional ? "true" : "false") << '}';
+        });
+    output << ",\"resultType\":";
+    WriteJsonString(output, contract.resultType);
     output << '}';
 }
 

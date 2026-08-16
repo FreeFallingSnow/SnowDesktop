@@ -1735,7 +1735,8 @@ v2.0 资源契约：
 - `snowwidget system-contract`：离线输出 `system.capabilities()` 使用的 15 项系统函数、25 个
   数据主题和 41 类任务；权限、预览策略、订阅刷新/隐藏/空闲边界、风险标记、可信手势和
   每实例并发限制直接读取运行时目录；数据 options/value 与任务 arguments/result 还直接引用
-  随工具分发的 LuaLS 类型，不另建作者工具白名单或结构猜测表。
+  随工具分发的 LuaLS 类型，同步函数则导出有序参数名/类型/可选性和结果类型，不另建作者
+  工具白名单或结构猜测表。
 - `snowwidget lint <directory>`：静态 API、权限、硬编码文案和视图 key 检查。
 - `snowwidget test <directory>`：在无副作用沙箱中执行组件测试。
 - `snowwidget preview <directory> --size ... --locale ... --theme ...`。
