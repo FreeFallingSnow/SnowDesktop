@@ -274,9 +274,9 @@ bool WidgetInteractionRegions::Submit(
         error = "interaction tab index requires a focusable region";
         return false;
     }
-    if (region.tooltip.size() > 4096)
+    if (region.tooltipTitle.size() > 256 || region.tooltip.size() > 4096)
     {
-        error = "interaction tooltip must contain at most 4096 bytes";
+        error = "interaction tooltip title/body must contain at most 256/4096 bytes";
         return false;
     }
     const bool controlled = region.controlKind !=

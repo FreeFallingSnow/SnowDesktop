@@ -2686,9 +2686,62 @@ static int lua_InteractionRegion(lua_State* state)
     lua_getfield(state, descriptor, "tooltip");
     if (!lua_isnil(state, -1))
     {
-        std::size_t length = 0;
-        const char* value = luaL_checklstring(state, -1, &length);
-        region.tooltip.assign(value ? value : "", length);
+        if (lua_isstring(state, -1))
+        {
+            std::size_t length = 0;
+            const char* value = lua_tolstring(state, -1, &length);
+            region.tooltip.assign(value ? value : "", length);
+        }
+        else if (lua_istable(state, -1))
+        {
+            const int tooltip = lua_absindex(state, -1);
+            lua_pushnil(state);
+            while (lua_next(state, tooltip) != 0)
+            {
+                std::size_t keyLength = 0;
+                const char* key = lua_tolstring(state, -2, &keyLength);
+                const std::string_view field(key ? key : "", keyLength);
+                if (lua_type(state, -2) != LUA_TSTRING ||
+                    (field != "title" && field != "text"))
+                {
+                    lua_pop(state, 3);
+                    return luaL_error(state,
+                        "interaction.region: tooltip supports only title and text");
+                }
+                lua_pop(state, 1);
+            }
+            lua_getfield(state, tooltip, "title");
+            if (!lua_isnil(state, -1))
+            {
+                std::size_t length = 0;
+                const char* value = luaL_checklstring(state, -1, &length);
+                region.tooltipTitle.assign(value ? value : "", length);
+            }
+            lua_pop(state, 1);
+            lua_getfield(state, tooltip, "text");
+            if (!lua_isstring(state, -1))
+            {
+                lua_pop(state, 2);
+                return luaL_error(state,
+                    "interaction.region: rich tooltip requires string text");
+            }
+            std::size_t length = 0;
+            const char* value = lua_tolstring(state, -1, &length);
+            region.tooltip.assign(value ? value : "", length);
+            lua_pop(state, 1);
+            if (region.tooltip.empty())
+            {
+                lua_pop(state, 1);
+                return luaL_error(state,
+                    "interaction.region: rich tooltip text must not be empty");
+            }
+        }
+        else
+        {
+            lua_pop(state, 1);
+            return luaL_error(state,
+                "interaction.region: tooltip must be a string or tooltip descriptor");
+        }
     }
     lua_pop(state, 1);
     lua_getfield(state, descriptor, "enabled");
@@ -16429,6 +16482,7 @@ static bool CollectStyledTextActionRegions(D2DState* state,
                     region.cursor = span->cursor.empty()
                         ? (!span->events.empty() ? "hand" : "default")
                         : span->cursor;
+                    region.tooltipTitle = span->tooltipTitle;
                     region.tooltip = span->tooltip;
                     region.events = span->events;
                     region.accessibilityRole = span->events.empty()
@@ -17853,7 +17907,16 @@ static void DrawWidgetViewTooltip(D2DState* state,
         1.0f, std::min(192.0f, surfaceHeight - 8.0f));
     IDWriteTextFormat* format = GetCachedTextFormat(state, 13.0f,
         DWRITE_FONT_WEIGHT_NORMAL, false, DWRITE_WORD_WRAPPING_WRAP);
-    const std::wstring text = Utf8ToWideLocal(region->tooltip);
+    const std::wstring title = Utf8ToWideLocal(region->tooltipTitle);
+    const std::wstring body = Utf8ToWideLocal(region->tooltip);
+    std::wstring text;
+    text.reserve(title.size() + body.size() + 1);
+    if (!title.empty())
+    {
+        text += title;
+        text.push_back(L'\n');
+    }
+    text += body;
     if (!format || text.empty()) return;
     ComPtr<IDWriteTextLayout> layout;
     if (FAILED(state->dwrite->CreateTextLayout(text.data(),
@@ -17861,6 +17924,13 @@ static void DrawWidgetViewTooltip(D2DState* state,
             std::max(1.0f, maximumWidth - 16.0f),
             std::max(1.0f, maximumHeight - 12.0f), &layout)) || !layout)
         return;
+    if (!title.empty())
+    {
+        const DWRITE_TEXT_RANGE titleRange{
+            0, static_cast<UINT32>(title.size()) };
+        layout->SetFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD, titleRange);
+        layout->SetFontSize(14.0f, titleRange);
+    }
     DWRITE_TRIMMING trimming{};
     trimming.granularity = DWRITE_TRIMMING_GRANULARITY_CHARACTER;
     ComPtr<IDWriteInlineObject> ellipsis;

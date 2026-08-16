@@ -208,6 +208,10 @@
 ---@field start integer Zero-based inclusive UTF-8 byte offset at a code-point boundary.
 ---@field finish integer Zero-based exclusive UTF-8 byte offset at a code-point boundary; no smaller than start.
 
+---@class SnowTooltipDescriptor
+---@field title? string Optional UTF-8 title up to 256 bytes.
+---@field text string Required non-empty UTF-8 body up to 4096 bytes.
+
 ---@class SnowViewEvents
 ---@field pointerEnter? SnowInteractionAction
 ---@field pointerLeave? SnowInteractionAction
@@ -247,7 +251,7 @@
 ---@field underline? boolean
 ---@field strikethrough? boolean
 ---@field cursor? 'default'|'hand'|'text'|'crosshair'
----@field tooltip? string Host-owned bounded plain-text tooltip.
+---@field tooltip? string|SnowTooltipDescriptor Host-owned tooltip; descriptor form requires view.tooltip.rich.
 ---@field accessibility? SnowViewAccessibility
 ---@field events? SnowViewTextSpanEvents Pointer, menu, and focused key actions for this span.
 ---@field action? SnowInteractionAction Click shorthand.
@@ -415,7 +419,7 @@
 ---@field focusable? boolean Override whether the semantic node can receive host pointer/UIA focus; defaults to the node contract.
 ---@field tabIndex? integer Sequential host focus order from -1 through 32767. -1 skips Tab/spatial traversal; positive values sort before 0/source order.
 ---@field cursor? string
----@field tooltip? string Bounded plain-text host tooltip; also used as semantic help text when no validation message is present.
+---@field tooltip? string|SnowTooltipDescriptor Bounded host tooltip; descriptor form requires view.tooltip.rich and also enters semantic help text when no validation message is present.
 ---@field accessKey? string One ASCII letter or digit, unique in the tree; Alt+key focuses or activates this node after probing view.keyboard.accessKey.
 ---@field acceleratorText? string UI Automation shortcut description up to 64 UTF-8 bytes; it does not register a shortcut. Requires view.keyboard.accessKey.
 ---@field style? SnowViewStyle
@@ -509,7 +513,7 @@
 ---@field key string Stable key, 1..128 UTF-8 bytes.
 ---@field shape SnowInteractionShape
 ---@field cursor? 'default'|'hand'|'text'|'crosshair'
----@field tooltip? string Bounded host tooltip; requires interaction.tooltip.
+---@field tooltip? string|SnowTooltipDescriptor Bounded host tooltip; descriptor form additionally requires interaction.tooltip.rich.
 ---@field events? SnowInteractionEvents
 ---@field accessibility? SnowInteractionAccessibility
 ---@field enabled? boolean

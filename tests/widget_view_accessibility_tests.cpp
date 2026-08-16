@@ -34,6 +34,7 @@ void TestSemanticHierarchyAndState()
     ViewNode title = Node(ViewNodeType::Text,
         "", 8, 8, 180, 24);
     title.text = "System monitor";
+    title.tooltipTitle = "Status details";
     title.tooltip = "Current CPU and memory status";
     title.focusable = true;
     ViewNode button = Node(ViewNodeType::Button,
@@ -69,7 +70,8 @@ void TestSemanticHierarchyAndState()
         "semantic ids must prefer stable keys and fall back to structure paths");
     Check(nodes[1].controlType == "Text" &&
             nodes[1].name == "System monitor" &&
-            nodes[1].helpText == "Current CPU and memory status" &&
+            nodes[1].helpText ==
+                "Status details\nCurrent CPU and memory status" &&
             nodes[1].focusable,
         "explicit focusability must promote a named semantic text node");
     Check(nodes[2].controlType == "Button" &&
@@ -137,6 +139,8 @@ void TestImmediateRegionSemantics()
         8, 8, 80, 32, 6 };
     button.accessibilityRole = "button";
     button.accessibilityLabel = "Open";
+    button.tooltipTitle = "Open item";
+    button.tooltip = "Launch the selected item";
     button.events.emplace("click", InteractionAction{ "open", {} });
     InteractionRegion slider;
     slider.key = "level";
@@ -159,6 +163,7 @@ void TestImmediateRegionSemantics()
         "immediate regions must share the declarative semantic model");
     Check(nodes[0].controlType == "Button" && nodes[0].focused &&
             nodes[0].semanticId == "key:open" &&
+            nodes[0].helpText == "Open item\nLaunch the selected item" &&
             HasViewAccessibilityPattern(nodes[0].patterns,
                 ViewAccessibilityPattern::Invoke),
         "immediate buttons must expose Invoke and host focus");

@@ -178,6 +178,16 @@ void TestShapesAndValidation()
             error.find("tooltip") != std::string::npos,
         "interaction tooltips must enforce the bounded text quota");
     regions.AbortFrame();
+
+    regions.BeginFrame();
+    auto oversizedTooltipTitle = Rect(
+        "oversized-tooltip-title", 0, 0, 10, 10);
+    oversizedTooltipTitle.tooltipTitle.assign(257, 'x');
+    oversizedTooltipTitle.tooltip = "Body";
+    Check(!regions.Submit(std::move(oversizedTooltipTitle), error) &&
+            error.find("tooltip") != std::string::npos,
+        "rich interaction tooltips must enforce the bounded title quota");
+    regions.AbortFrame();
 }
 
 void TestClippedHitTesting()

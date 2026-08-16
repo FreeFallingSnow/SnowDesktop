@@ -313,10 +313,12 @@ lineHeight is 1..1024, and letterSpacing is -64..256 logical units. These
 properties apply to plain/styled text and label-bearing declarative nodes, not
 to host text editors in this feature.
 Probe `view.tooltip` before using a plain-string `tooltip` on any declarative
-node. The host creates a clipped hover region even for non-actionable text,
-draws the bounded tooltip above view/select/input overlays, and exposes it as
-semantic help text when no validation message is present. Do not put secrets,
-commands, rich markup, or essential always-visible instructions in tooltips.
+node. Probe `view.tooltip.rich` for `{ title?, text }`; title/body are bounded
+to 256/4096 UTF-8 bytes and remain host-rendered text, not markup. The host
+creates a clipped hover region even for non-actionable text, draws the tooltip
+above view/select/input overlays, and exposes it as semantic help text when no
+validation message is present. Do not put secrets, commands, or essential
+always-visible instructions in tooltips.
 Probe `view.layout.constraints` before using numeric `minWidth`, `maxWidth`,
 `minHeight`, `maxHeight`, `aspectRatio`, or `margin`. Keep sizes and uniform
 outer margins within 0 through 4096, ratios within 0.01 through 100, and do
@@ -506,7 +508,8 @@ default border does not fit the component design.
   handle serialized region actions in `event`; never synthesize click from raw
   down/up callbacks. Build an element menu only through `widget.define.menu`
   and `ui.menu`, keeping the callback synchronous and I/O-free.
-  Probe `interaction.tooltip` before adding bounded plain-text tooltips. Probe
+  Probe `interaction.tooltip` before adding bounded string tooltips and
+  `interaction.tooltip.rich` before using `{ title?, text }`. Probe
   `interaction.keyboard` before setting `focusable/tabIndex` or observing
   `keyDown/keyUp`; use `interaction.isFocused(key)` to draw the focus state.
   Key observers cannot cancel host activation or text input.

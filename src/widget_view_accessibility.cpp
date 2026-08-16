@@ -190,8 +190,15 @@ ViewRect ImmediateBounds(const InteractionShape& shape) noexcept
 void PopulateValueState(const ViewNode& source,
     ViewAccessibilityNode& target)
 {
-    target.helpText = source.validationMessage.empty()
-        ? source.tooltip : source.validationMessage;
+    if (!source.validationMessage.empty())
+        target.helpText = source.validationMessage;
+    else
+    {
+        target.helpText = source.tooltipTitle;
+        if (!source.tooltipTitle.empty() && !source.tooltip.empty())
+            target.helpText.push_back('\n');
+        target.helpText += source.tooltip;
+    }
     target.required = source.required;
     if (source.type == ViewNodeType::TextInput ||
         source.type == ViewNodeType::TextArea ||
@@ -519,6 +526,10 @@ bool CollectInteractionAccessibilityNodes(
         node.accessKey = FormatAccessKey(region.accessKey);
         node.acceleratorText = region.acceleratorText;
         node.role = region.accessibilityRole;
+        node.helpText = region.tooltipTitle;
+        if (!region.tooltipTitle.empty() && !region.tooltip.empty())
+            node.helpText.push_back('\n');
+        node.helpText += region.tooltip;
         node.controlType = mapping.controlType;
         node.patterns = mapping.patterns;
         node.bounds = ImmediateBounds(region.shape);

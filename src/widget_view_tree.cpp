@@ -2897,11 +2897,14 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         node.inputValue.size() > ViewTreeLimits::MaximumTextBytes ||
         node.placeholder.size() > ViewTreeLimits::MaximumTextBytes ||
         node.alt.size() > ViewTreeLimits::MaximumTextBytes ||
+        node.tooltipTitle.size() >
+            ViewTreeLimits::MaximumTooltipTitleBytes ||
         node.tooltip.size() > ViewTreeLimits::MaximumTextBytes ||
         node.validationMessage.size() > ViewTreeLimits::MaximumTextBytes ||
         textBytes + node.debugName.size() + node.testId.size() +
             node.text.size() + node.inputValue.size() +
-            node.placeholder.size() + node.alt.size() + node.tooltip.size() +
+            node.placeholder.size() + node.alt.size() +
+            node.tooltipTitle.size() + node.tooltip.size() +
             node.validationMessage.size() + node.locale.size() >
             ViewTreeLimits::MaximumTotalTextBytes)
     {
@@ -2910,7 +2913,8 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
     }
     textBytes += node.debugName.size() + node.testId.size() +
         node.text.size() + node.inputValue.size() +
-        node.placeholder.size() + node.alt.size() + node.tooltip.size() +
+        node.placeholder.size() + node.alt.size() +
+        node.tooltipTitle.size() + node.tooltip.size() +
         node.validationMessage.size() + node.locale.size();
     if (node.type == ViewNodeType::StyledText)
     {
@@ -2943,7 +2947,8 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
                 return false;
             }
             const bool hasInteractionMetadata = !span.events.empty() ||
-                !span.cursor.empty() || !span.tooltip.empty() ||
+                !span.cursor.empty() || !span.tooltipTitle.empty() ||
+                !span.tooltip.empty() ||
                 !span.accessibilityLabel.empty() ||
                 span.hoverForeground.has_value() ||
                 span.pressedForeground.has_value();
@@ -2973,7 +2978,15 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
                     return false;
                 }
                 const std::size_t extraBytes = span.key.size() +
-                    span.tooltip.size() + span.accessibilityLabel.size();
+                    span.tooltipTitle.size() + span.tooltip.size() +
+                    span.accessibilityLabel.size();
+                if (span.tooltipTitle.size() >
+                    ViewTreeLimits::MaximumTooltipTitleBytes ||
+                    span.tooltip.size() > ViewTreeLimits::MaximumTextBytes)
+                {
+                    error = "styledText tooltip title/body exceeds its limit";
+                    return false;
+                }
                 if (extraBytes >
                     ViewTreeLimits::MaximumTotalTextBytes - textBytes)
                 {
@@ -3454,6 +3467,7 @@ bool CollectRegions(const ViewNode& node,
                     inheritedClip->y, inheritedClip->width,
                     inheritedClip->height };
             surface.events = std::move(surfaceEvents);
+            surface.tooltipTitle = node.tooltipTitle;
             surface.tooltip = node.tooltip;
             surface.accessibilityRole = node.accessibilityRole.empty()
                 ? "grid" : node.accessibilityRole;
@@ -3490,6 +3504,7 @@ bool CollectRegions(const ViewNode& node,
                     inheritedClip->y, inheritedClip->width,
                     inheritedClip->height };
             region.cursor = node.cursor.empty() ? "hand" : node.cursor;
+            region.tooltipTitle = node.tooltipTitle;
             region.tooltip = node.tooltip;
             region.events = node.events;
             region.controlKind = InteractionControlKind::Radio;
@@ -3537,6 +3552,7 @@ bool CollectRegions(const ViewNode& node,
                     inheritedClip->y, inheritedClip->width,
                     inheritedClip->height };
             region.cursor = node.cursor.empty() ? "hand" : node.cursor;
+            region.tooltipTitle = node.tooltipTitle;
             region.tooltip = node.tooltip;
             region.events = node.events;
             region.controlKind = InteractionControlKind::Radio;
@@ -3574,6 +3590,7 @@ bool CollectRegions(const ViewNode& node,
                 inheritedClip->y, inheritedClip->width,
                 inheritedClip->height };
         region.cursor = node.cursor.empty() ? "text" : node.cursor;
+        region.tooltipTitle = node.tooltipTitle;
         region.tooltip = node.tooltip;
         for (const auto& [name, action] : node.events)
             if (name != "change" && name != "focus" &&
@@ -3611,6 +3628,7 @@ bool CollectRegions(const ViewNode& node,
                 inheritedClip->y, inheritedClip->width,
                 inheritedClip->height };
         trigger.cursor = node.cursor.empty() ? "hand" : node.cursor;
+        trigger.tooltipTitle = node.tooltipTitle;
         trigger.tooltip = node.tooltip;
         for (const auto& [name, action] : node.events)
             if (name != "change") trigger.events.emplace(name, action);
@@ -3682,6 +3700,7 @@ bool CollectRegions(const ViewNode& node,
                         ViewSelectionMode::None) ||
                 node.events.contains("click"))
             ? "hand" : node.cursor;
+        region.tooltipTitle = node.tooltipTitle;
         region.tooltip = node.tooltip;
         for (const auto& [name, action] : node.events)
             if (!IsCollectionContainer(node.type) || name != "change")
@@ -3779,6 +3798,7 @@ bool CollectSelectOptions(const ViewNode& node,
                     inheritedClip->y, inheritedClip->width,
                     inheritedClip->height };
             region.cursor = "hand";
+            region.tooltipTitle = node.tooltipTitle;
             region.tooltip = node.tooltip;
             for (const auto& [name, action] : node.events)
                 if (name != "click") region.events.emplace(name, action);

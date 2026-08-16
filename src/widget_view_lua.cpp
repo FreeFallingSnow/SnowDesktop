@@ -347,6 +347,48 @@ bool ReadStringField(lua_State* state, int table, const char* field,
     return true;
 }
 
+bool ReadTooltipField(lua_State* state, int table,
+    std::string& title, std::string& text, std::string& error)
+{
+    table = lua_absindex(state, table);
+    lua_getfield(state, table, "tooltip");
+    if (lua_isnil(state, -1))
+    {
+        lua_pop(state, 1);
+        return true;
+    }
+    if (lua_isstring(state, -1))
+    {
+        std::size_t length = 0;
+        const char* value = lua_tolstring(state, -1, &length);
+        text.assign(value ? value : "", length);
+        lua_pop(state, 1);
+        return true;
+    }
+    if (!lua_istable(state, -1))
+    {
+        lua_pop(state, 1);
+        error = "view field 'tooltip' must be a string or tooltip descriptor";
+        return false;
+    }
+    const int tooltip = lua_absindex(state, -1);
+    if (!ValidateObjectFields(state, tooltip, { "title", "text" },
+            "view tooltip", error) ||
+        !ReadStringField(state, tooltip, "title", title, false, error) ||
+        !ReadStringField(state, tooltip, "text", text, true, error))
+    {
+        lua_pop(state, 1);
+        return false;
+    }
+    lua_pop(state, 1);
+    if (text.empty())
+    {
+        error = "view rich tooltip text must not be empty";
+        return false;
+    }
+    return true;
+}
+
 bool ReadFloatField(lua_State* state, int table, const char* field,
     float& value, std::string& error)
 {
@@ -1544,8 +1586,8 @@ bool ReadTextSpansField(lua_State* state, int table,
                 span.strikethrough, error) ||
             !ReadStringField(state, -1, "cursor", span.cursor,
                 false, error) ||
-            !ReadStringField(state, -1, "tooltip", span.tooltip,
-                false, error))
+            !ReadTooltipField(state, -1, span.tooltipTitle,
+                span.tooltip, error))
         {
             lua_pop(state, 2);
             return false;
@@ -2766,8 +2808,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadBoolField(state, index, "focusable", focusable, error) ||
         !ReadIntegerField(state, index, "tabIndex", tabIndex, error) ||
         !ReadStringField(state, index, "cursor", node.cursor, false, error) ||
-        !ReadStringField(state, index, "tooltip",
-            node.tooltip, false, error) ||
+        !ReadTooltipField(state, index, node.tooltipTitle,
+            node.tooltip, error) ||
         !ReadStringField(state, index, "accessKey",
             node.accessKey, false, error) ||
         !ReadStringField(state, index, "acceleratorText",

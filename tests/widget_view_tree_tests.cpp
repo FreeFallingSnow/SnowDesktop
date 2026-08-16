@@ -266,7 +266,10 @@ void TestLuaParsing()
             fontWeight = 600, fontStyle = "italic",
             lineHeight = 24, letterSpacing = 1.5,
             locale = "ar-SA", textDirection = "rtl",
-            tooltip = "Current status",
+            tooltip = {
+                title = "Status",
+                text = "Current status",
+            },
         }
         local title = view.text(source)
         assert(source.type == nil)
@@ -329,6 +332,7 @@ void TestLuaParsing()
                 ViewTextDirection::RightToLeft &&
             root.children[0].lineHeight == 24.0f &&
             Near(root.children[0].letterSpacing, 1.5f) &&
+            root.children[0].tooltipTitle == "Status" &&
             root.children[0].tooltip == "Current status" &&
             root.children[1].type == ViewNodeType::Button &&
             root.children[1].debugName == "Open action" &&
@@ -351,8 +355,9 @@ void TestLuaParsing()
     std::vector<InteractionRegion> regions;
     Check(CollectViewInteractionRegions(root, regions, error) &&
             regions.size() == 2 && regions[0].key == "title" &&
+            regions[0].tooltipTitle == "Status" &&
             regions[0].tooltip == "Current status",
-        "a tooltip-only node must receive a bounded host hover region");
+        "a rich-tooltip-only node must receive a bounded host hover region");
 
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(
@@ -2754,7 +2759,10 @@ void TestStyledTextAndMonthCalendar()
                             hoverForeground = 0x86EFAC,
                             pressedForeground = 0x22C55E,
                             bold = true, underline = true,
-                            tooltip = "Open build result",
+                            tooltip = {
+                                title = "Build result",
+                                text = "Open build result",
+                            },
                             action = { id = "build.open" },
                             events = {
                                 contextMenu = { id = "build.menu" },
@@ -2809,6 +2817,8 @@ void TestStyledTextAndMonthCalendar()
             root.children[0].spans[1].events.contains("click") &&
             root.children[0].spans[1].events.contains("contextMenu") &&
             root.children[0].spans[1].events.contains("pointerMove") &&
+            root.children[0].spans[1].tooltipTitle == "Build result" &&
+            root.children[0].spans[1].tooltip == "Open build result" &&
             root.children[0].spans[1].accessibilityLabel == "Build result" &&
             root.children[0].textWrap == ViewTextWrap::Wrap &&
             root.children[0].overflowText == ViewTextOverflow::Clip &&

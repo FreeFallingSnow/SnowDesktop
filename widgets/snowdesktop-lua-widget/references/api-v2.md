@@ -120,7 +120,7 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.text.typography` 提供字体粗细、字形、行高和字距，
 `view.text.locale` 提供 BCP 47 locale 与双向文本基准方向，
 `view.theme.tokens` 提供宿主解析的声明式语义颜色，
-`view.tooltip` 提供宿主管理的纯文本元素提示，
+`view.tooltip` 提供宿主管理的字符串元素提示，`view.tooltip.rich` 提供有界标题+正文描述，
 `view.layout.overflow` 提供容器后代裁剪，`view.shadow` 提供有界宿主阴影，
 `view.image.tint` 提供保留图片 alpha 的 RGB 着色，
 `view.transform.basic` 提供布局后的平移、统一缩放和变换原点，
@@ -358,10 +358,12 @@ BCP 47 标签；空值继承宿主语言。auto 先按首个强方向字符确�
 locale 决定。LTR/RTL 会同时影响 DirectWrite shaping、start/end 对齐、select 指示器、
 radio/checkbox/toggle 的标签与控件相对位置；方向不会反转声明、Tab 或 UIA 子节点顺序。
 
-探测 `view.tooltip` 后，任意声明式节点可设置最多 4096 UTF-8 字节的纯字符串 `tooltip`。
+探测 `view.tooltip` 后，任意声明式节点可设置最多 4096 UTF-8 字节的字符串 `tooltip`；探测
+`view.tooltip.rich` 后可改用 `{title?, text}`，标题最多 256 字节，正文必填、非空且最多 4096 字节。
 宿主会为只有提示而没有 action 的节点创建裁剪命中区，在元素 hover 时将提示限制在组件 surface
-内并绘制于 select 与输入覆盖层之上；它不创建 HWND、不执行 markup，也不调用 Lua 回调。
-tooltip 同时作为 UI Automation HelpText 的后备值，输入节点存在 `validationMessage` 时以后者优先。
+内并绘制于 select 与输入覆盖层之上；标题使用宿主强调字重。两种形式都不创建 HWND、不执行
+markup，也不调用 Lua 回调。标题与正文同时作为 UI Automation HelpText 的后备值，输入节点存在
+`validationMessage` 时以后者优先。
 提示不得承载秘密、命令或必须常驻可见的说明；这些内容应使用正常文本节点或宿主 panel。
 
 `toggle` 和 `checkbox` 是受控选择控件：必须提供非空 `label`、显式 `checked`，以及
@@ -1161,8 +1163,9 @@ shape 首版支持 `rect`、`roundedRect` 和 `circle`；cursor 支持 `default`
 动作 `value` 会被深拷贝，只允许 nil、布尔、有限数字、字符串、连续数组和字符串键
 对象，限制 8 层、256 个节点和合计 16 KiB 字符串。普通 hover/click 不需要权限。
 
-探测 `interaction.tooltip` 后，region 可声明最多 4096 UTF-8 字节的纯文本 `tooltip`，由宿主
-在命中区域内显示；它不是任意 markup 或窗口。探测 `interaction.keyboard` 后，region 可声明
+探测 `interaction.tooltip` 后，region 可声明最多 4096 UTF-8 字节的字符串 `tooltip`；探测
+`interaction.tooltip.rich` 后也可使用与声明式节点相同的 `{title?, text}`。两者都由宿主在命中区域内
+显示，不是任意 markup 或窗口。探测 `interaction.keyboard` 后，region 可声明
 `focusable`、`tabIndex=-1..32767` 及 `events.keyDown/keyUp`。默认仍从受控类型、click 或文本输入
 role 推导焦点；显式 `focusable=false` 会退出焦点，key 观察目标必须可聚焦。按键事件与声明式
 版本使用相同负载和按下/释放配对，`interaction.isFocused(key)` 可用于绘制焦点状态；这些事件

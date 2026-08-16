@@ -462,6 +462,7 @@ struct ViewTextSpan
     bool underline = false;
     bool strikethrough = false;
     std::string cursor;
+    std::string tooltipTitle;
     std::string tooltip;
     std::string accessibilityLabel;
     std::map<std::string, InteractionAction, std::less<>> events;
@@ -621,6 +622,7 @@ struct ViewNode
     std::optional<int> tabIndex;
     ViewCollectionContent collectionContent = ViewCollectionContent::Items;
     std::string cursor;
+    std::string tooltipTitle;
     std::string tooltip;
     std::string accessKey;
     std::string acceleratorText;
@@ -799,6 +801,7 @@ struct ViewTreeLimits
     static constexpr std::size_t MaximumNodes = 512;
     static constexpr std::size_t MaximumDepth = 32;
     static constexpr std::size_t MaximumTextBytes = 4096;
+    static constexpr std::size_t MaximumTooltipTitleBytes = 256;
     static constexpr std::size_t MaximumTotalTextBytes = 64 * 1024;
     static constexpr std::size_t MaximumResources = 64;
     static constexpr std::size_t MaximumSeriesPoints = 512;

@@ -141,6 +141,7 @@ struct InteractionRegion
     std::optional<InteractionAffineTransform> hitTransform;
     std::optional<InteractionClipRect> clip;
     std::string cursor;
+    std::string tooltipTitle;
     std::string tooltip;
     std::string accessKey;
     std::string acceleratorText;

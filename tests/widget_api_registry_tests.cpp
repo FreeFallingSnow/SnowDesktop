@@ -355,6 +355,8 @@ void TestV2Contract()
                 "interaction.scroll.orientation") &&
             snowdesktop::widget_api::SupportsFeature(
                 "interaction.tooltip") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "interaction.tooltip.rich") &&
             snowdesktop::widget_api::SupportsFeature("l10n.format") &&
             snowdesktop::widget_api::SupportsFeature("module.package") &&
             snowdesktop::widget_api::SupportsFeature("resource.package") &&
@@ -495,6 +497,8 @@ void TestV2Contract()
                 "view.state.busy") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.tooltip") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "view.tooltip.rich") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.logicalSlots") &&
             snowdesktop::widget_api::SupportsFeature(
