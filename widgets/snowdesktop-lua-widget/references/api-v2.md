@@ -19,6 +19,13 @@ package/coroutine`。对于使用字面量属性表的声明式节点，它还�
 并警告明显的硬编码 `text/label/title/placeholder/alt` 等界面文案。结果是带文件、行号、稳定
 问题码和错误/警告计数的 JSON；动态拼装的调用、能力名或属性表仍由运行时最终校验。
 
+运行 `snowwidget test <组件目录>` 可执行包内 `tests/` 下的 Lua 测试文件。每个文件必须返回
+`{ ["测试名"] = function() ... end }`，函数无返回值/返回 true 即通过，返回 false 或抛错即失败。
+每个文件使用独立的 16 MiB Lua 状态和宿主相同的指令/时间上限，只开放基础纯函数、string、
+table、math、utf8 以及仅能读取包内 `modules/*.lua` 的 `module.require`；不注册网络、文件、
+Shell、系统数据、存储或其他副作用 API。命令输出文件数、用例数、通过/失败数、稳定问题码和
+有界错误文本 JSON。它适合纯逻辑与模块测试；完整 view/宿主 mock 场景继续由 preview 工具负责。
+
 运行 `snowwidget view-contract` 可获得宿主当前公开的声明式视图 JSON 契约。顶层
 `schemaVersion=3` 版本化该导出格式，`apiVersion` 表示组件 API；`nodes`、`properties` 和
 `events` 分别登记节点适用属性与逐节点默认值、属性类型/枚举/范围/影响域，以及事件 payload

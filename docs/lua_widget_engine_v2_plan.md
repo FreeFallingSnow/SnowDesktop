@@ -1744,7 +1744,9 @@ v2.0 资源契约：
 - `snowwidget lint <directory>`：已接入同源 API/系统能力/视图节点目录，静态检查不存在或版本
   不匹配的宿主调用、字面量 data/task 能力权限、v2 禁用库、字面量视图 key 和明显硬编码文案；
   输出带文件、行号和稳定问题码的 JSON。动态调用和动态属性表仍交由运行时最终校验。
-- `snowwidget test <directory>`：在无副作用沙箱中执行组件测试。
+- `snowwidget test <directory>`：已提供 `tests/*.lua` 命名函数表约定；每个文件在独立 16 MiB、
+  指令/时间受限的纯 Lua 沙箱中运行，只开放基础纯函数和受控 `module.require(modules/*.lua)`，
+  不注册任何宿主副作用 API，并输出稳定 JSON。完整 view/系统 mock 场景留给 preview 工具。
 - `snowwidget preview <directory> --size ... --locale ... --theme ...`。
 - `snowwidget permissions <directory>`：生成权限与 origin 报告。
 - `snowwidget migrate-v2 <directory>`：生成迁移草案，不覆盖原文件。

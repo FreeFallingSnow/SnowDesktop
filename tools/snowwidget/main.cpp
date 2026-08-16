@@ -1,5 +1,6 @@
 #include "widget_package.h"
 #include "widget_author_lint.h"
+#include "widget_author_test.h"
 #include "widget_api_contract_json.h"
 #include "widget_system_contract_json.h"
 #include "widget_view_contract_json.h"
@@ -25,6 +26,7 @@ void PrintUsage()
         << "  snowwidget view-contract\n"
         << "  snowwidget inspect <package-directory>\n"
         << "  snowwidget lint <package-directory>\n"
+        << "  snowwidget test <package-directory>\n"
         << "  snowwidget validate <package-directory>\n"
         << "  snowwidget pack <package-directory> <output.snowwidget>\n"
         << "  snowwidget publish-local <package-directory> <catalog-directory>\n";
@@ -104,7 +106,7 @@ int wmain(int argc, wchar_t** argv)
                "\"recommendedApiVersion\":2,\"supportedSchemaVersions\":[1,2],"
                "\"supportedApiVersions\":[1,2],\"commands\":["
                "\"api-contract\",\"system-contract\",\"view-contract\",\"inspect\","
-               "\"lint\",\"validate\",\"pack\",\"publish-local\"]}"
+               "\"lint\",\"test\",\"validate\",\"pack\",\"publish-local\"]}"
             << '\n';
         return 0;
     }
@@ -203,6 +205,25 @@ int wmain(int argc, wchar_t** argv)
             LintWidgetDirectory(source, manifest);
         std::cout << lint.ToJson() << '\n';
         return lint.Ok() ? 0 : 1;
+    }
+    if (command == L"test")
+    {
+        if (argc != 3 || source.extension() == L".snowwidget")
+        {
+            std::cerr << "{\"ok\":false,\"error\":\"test requires an unpacked component directory\"}\n";
+            return 2;
+        }
+        report = manager.ValidateDirectory(source);
+        if (!report.Ok())
+        {
+            std::cout << "{\"ok\":false,\"validation\":"
+                << report.ToJson() << ",\"tests\":null}\n";
+            return 1;
+        }
+        const auto tests = snowdesktop::widget_authoring::
+            RunWidgetTests(source);
+        std::cout << tests.ToJson() << '\n';
+        return tests.Ok() ? 0 : 1;
     }
     if (command == L"pack")
     {
