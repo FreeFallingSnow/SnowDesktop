@@ -8464,6 +8464,22 @@ struct WidgetSystemEnvironment
 
 static WidgetSystemEnvironment QueryWidgetSystemEnvironment()
 {
+    if (snowdesktop::widget_runtime::IsPreviewExecution())
+    {
+        WidgetSystemEnvironment preview;
+        preview.locale = Locale::Instance().GetEffectiveLanguage();
+        preview.inputLanguage = preview.locale;
+        preview.timeZone = "UTC";
+        preview.utcOffsetMinutes = 0;
+        const std::wstring localeName =
+            Utf8ToWideLocal(preview.locale);
+        wchar_t region[LOCALE_NAME_MAX_LENGTH]{};
+        if (!localeName.empty() && GetLocaleInfoEx(localeName.c_str(),
+                LOCALE_SISO3166CTRYNAME, region,
+                LOCALE_NAME_MAX_LENGTH) > 0)
+            preview.region = WidgetWideToUtf8(region);
+        return preview;
+    }
     static std::mutex cacheMutex;
     static WidgetSystemEnvironment cached;
     static ULONGLONG lastRefresh = 0;

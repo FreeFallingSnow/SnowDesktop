@@ -161,6 +161,15 @@ return widget.define({
             "size was not injected before setup")
         assert(context.monitor.available == false,
             "preview must not expose the developer monitor")
+        assert(context.accessibility.highContrast == false and
+            context.accessibility.reducedMotion == false and
+            context.accessibility.textScale == 1,
+            "preview accessibility defaults were not deterministic")
+        assert(context.theme.accentColor == 0x0078D4 and
+            context.region == "CN" and context.timeZone == "UTC" and
+            context.utcOffsetMinutes == 0 and
+            context.inputLanguage == "zh-CN",
+            "preview system environment was not deterministic")
         cpu = data.subscribe("system.cpu", { maxAgeMs = 500 })
         local snapshot = cpu:value()
         assert(snapshot.available == true and snapshot.stale == true and

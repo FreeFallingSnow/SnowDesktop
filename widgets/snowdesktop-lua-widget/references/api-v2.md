@@ -40,7 +40,8 @@ Shell、系统数据、存储或其他副作用 API。命令输出文件数、�
 返回对应的确定性包络；`empty` 保留 `available=true` 但使用空/零值，`error` 返回
 `providerUnavailable`，拒权返回 `permissionDenied`；包络时间戳与 `time.now()` 共用固定预览
 时钟，stale 时间固定落在请求 `maxAgeMs` 之前。以上环境在 Lua `setup()` 前注入，预览
-显示器摘要固定标记为 unavailable，不泄漏开发机显示器。命令返回包含稳定 `stage`、最终像素
+显示器摘要固定标记为 unavailable；accent、无障碍默认值、region、UTC 时区和输入语言也由
+所选 locale 的确定性预览环境提供，不读取开发机对应设置。命令返回包含稳定 `stage`、最终像素
 尺寸、栅格尺寸、DPI、locale、theme 和 dataState 的 JSON。复制到
 SnowDesktop 安装目录外的 CLI 可用 `--host <SnowDesktop.exe>` 或 `SNOWDESKTOP_HOST` 指定宿主。
 
