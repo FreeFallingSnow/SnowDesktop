@@ -3328,10 +3328,9 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
     }
     for (const auto& [eventName, action] : node.events)
     {
-        if (!ViewNodeAllowsEvent(node.type, eventName))
+        if (!IsKnownViewEvent(eventName))
         {
-            error = std::string(ViewNodeTypeName(node.type)) +
-                " nodes do not accept event '" + eventName + "'";
+            error = "unsupported view event: " + eventName;
             return false;
         }
         if (action.id.empty() || action.id.size() > 128)
@@ -3340,9 +3339,15 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             return false;
         }
     }
-    const bool textSelectionInput = node.type == ViewNodeType::TextInput ||
-        node.type == ViewNodeType::TextArea ||
-        node.type == ViewNodeType::SearchBox;
+    if (!ViewNodeAllowsEvent(node.type, "focus") &&
+        (node.events.contains("focus") || node.events.contains("blur") ||
+            node.events.contains("submit")))
+    {
+        error = "focus, blur, and submit are reserved for input nodes";
+        return false;
+    }
+    const bool textSelectionInput =
+        ViewNodeAllowsEvent(node.type, "selectionChange");
     if ((node.textSelection.has_value() ||
             node.events.contains("selectionChange")) &&
         (!textSelectionInput || !node.textSelection ||
@@ -3355,6 +3360,12 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             node.events.contains("keyUp")) && !keyboardFocusable)
     {
         error = "view keyDown and keyUp events require a focusable node";
+        return false;
+    }
+    if (!ViewNodeAllowsEvent(node.type, "scrollEnd") &&
+        node.events.contains("scrollEnd"))
+    {
+        error = "scrollEnd events are reserved for scroll and virtual collection nodes";
         return false;
     }
     if (node.capturePointer &&
