@@ -2,6 +2,8 @@
 #include "widget_media_contract.h"
 
 #include <windows.h>
+#include <tlhelp32.h>
+#include <psapi.h>
 #include <dxgi1_6.h>
 #include <endpointvolume.h>
 #include <propkeydef.h>
@@ -36,6 +38,7 @@ namespace
 {
 constexpr std::string_view CpuTopic = "system.cpu";
 constexpr std::string_view MemoryTopic = "system.memory";
+constexpr std::string_view ProcessSummaryTopic = "process.summary";
 constexpr std::string_view PowerTopic = "system.power";
 constexpr std::string_view NetworkStatusTopic = "system.network.status";
 constexpr std::string_view NetworkTrafficTopic = "system.network.traffic";
@@ -148,6 +151,22 @@ std::string WideToUtf8(const wchar_t* value)
         result.data(), length, nullptr, nullptr);
     result.resize(static_cast<std::size_t>(length - 1));
     return result;
+}
+
+std::string OpaqueProcessId(DWORD processId,
+    std::uint64_t creationTime)
+{
+    std::uint64_t hash = 14695981039346656037ull;
+    const auto mix = [&hash](std::uint64_t value) {
+        for (unsigned int shift = 0; shift < 64; shift += 8)
+        {
+            hash ^= static_cast<std::uint8_t>(value >> shift);
+            hash *= 1099511628211ull;
+        }
+    };
+    mix(processId);
+    mix(creationTime);
+    return "process-" + std::to_string(hash);
 }
 
 std::uint64_t LuidKey(const LUID& luid)
@@ -624,6 +643,7 @@ bool WidgetSystemDataProvider::SupportsTopic(
     std::string_view topic) noexcept
 {
     return topic == CpuTopic || topic == MemoryTopic ||
+        topic == ProcessSummaryTopic ||
         topic == PowerTopic || topic == NetworkStatusTopic ||
         topic == NetworkTrafficTopic || topic == GpuTopic ||
         topic == StorageVolumesTopic || topic == StorageIoTopic ||
@@ -650,6 +670,8 @@ bool WidgetSystemDataProvider::StartTopic(
         {
             schedules_.emplace(key, TopicSchedule{ interval, now });
             if (topic == CpuTopic) resetCpuBaseline_.store(true);
+            if (topic == ProcessSummaryTopic)
+                resetProcessBaseline_.store(true);
             if (topic == NetworkTrafficTopic)
                 resetNetworkBaseline_.store(true);
             if (topic == GpuTopic)
@@ -691,7 +713,10 @@ bool WidgetSystemDataProvider::StopTopic(std::string_view topic)
         removed = schedules_.erase(std::string(topic)) > 0;
         if (!removed) return false;
         if (topic == MediaArtworkTopic) mediaArtwork_.reset();
+        if (topic == ProcessSummaryTopic) processSummary_.reset();
         if (topic == CpuTopic) resetCpuBaseline_.store(true);
+        if (topic == ProcessSummaryTopic)
+            resetProcessBaseline_.store(true);
         if (topic == NetworkTrafficTopic)
             resetNetworkBaseline_.store(true);
         if (topic == GpuTopic)
@@ -718,9 +743,11 @@ void WidgetSystemDataProvider::StopAll()
         schedules_.clear();
         changedTopics_.clear();
         mediaArtwork_.reset();
+        processSummary_.reset();
         ++configurationGeneration_;
     }
     resetCpuBaseline_.store(true);
+    resetProcessBaseline_.store(true);
     resetNetworkBaseline_.store(true);
     resetGpuBaseline_.store(true);
     closeGpuRequested_.store(true);
@@ -735,6 +762,8 @@ void WidgetSystemDataProvider::StopAll()
     previousIdle_ = 0;
     previousKernel_ = 0;
     previousUser_ = 0;
+    previousProcessCpuTimes_.clear();
+    previousProcessSample_ = {};
     previousReceived_ = 0;
     previousSent_ = 0;
     previousNetworkSample_ = {};
@@ -754,6 +783,13 @@ WidgetSystemDataProvider::Memory() const
 {
     std::scoped_lock lock(mutex_);
     return memory_;
+}
+
+std::optional<WidgetProcessSummaryDataSnapshot>
+WidgetSystemDataProvider::ProcessSummary() const
+{
+    std::scoped_lock lock(mutex_);
+    return processSummary_;
 }
 
 std::optional<WidgetPowerDataSnapshot>
@@ -952,6 +988,8 @@ void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
                 PublishCpu(SampleCpu());
             else if (topic == MemoryTopic)
                 PublishMemory(SampleMemory());
+            else if (topic == ProcessSummaryTopic)
+                PublishProcessSummary(SampleProcessSummary());
             else if (topic == PowerTopic)
                 PublishPower(SamplePower());
             else if (topic == NetworkStatusTopic)
@@ -1060,6 +1098,119 @@ WidgetMemoryDataSnapshot WidgetSystemDataProvider::SampleMemory()
     snapshot.freeBytes = status.ullAvailPhys;
     snapshot.usedBytes = snapshot.totalBytes - snapshot.freeBytes;
     snapshot.usagePercent = static_cast<double>(status.dwMemoryLoad);
+    return snapshot;
+}
+
+WidgetProcessSummaryDataSnapshot
+WidgetSystemDataProvider::SampleProcessSummary()
+{
+    WidgetProcessSummaryDataSnapshot snapshot;
+    snapshot.timestampMs = TimestampMilliseconds();
+    const auto sampleTime = Clock::now();
+    if (resetProcessBaseline_.exchange(false))
+    {
+        previousProcessCpuTimes_.clear();
+        previousProcessSample_ = {};
+    }
+
+    const HANDLE processSnapshot = CreateToolhelp32Snapshot(
+        TH32CS_SNAPPROCESS, 0);
+    if (processSnapshot == INVALID_HANDLE_VALUE)
+    {
+        snapshot.warmingUp = false;
+        snapshot.error = "processEnumerationFailed";
+        return snapshot;
+    }
+
+    SYSTEM_INFO systemInfo{};
+    GetNativeSystemInfo(&systemInfo);
+    const double logicalProcessors = static_cast<double>(
+        std::max<DWORD>(1, systemInfo.dwNumberOfProcessors));
+    const bool hasBaseline =
+        previousProcessSample_.time_since_epoch().count() != 0 &&
+        sampleTime > previousProcessSample_;
+    const double elapsedHundredNanoseconds = hasBaseline
+        ? std::chrono::duration<double>(
+            sampleTime - previousProcessSample_).count() *
+            10000000.0 * logicalProcessors
+        : 0.0;
+    std::unordered_map<std::string, std::uint64_t> nextCpuTimes;
+
+    PROCESSENTRY32W entry{};
+    entry.dwSize = sizeof(entry);
+    if (!Process32FirstW(processSnapshot, &entry))
+    {
+        CloseHandle(processSnapshot);
+        snapshot.warmingUp = false;
+        snapshot.error = "processEnumerationFailed";
+        return snapshot;
+    }
+    do
+    {
+        const HANDLE process = OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ,
+            FALSE, entry.th32ProcessID);
+        if (!process) continue;
+
+        FILETIME creation{}, exit{}, kernel{}, user{};
+        PROCESS_MEMORY_COUNTERS_EX memory{};
+        memory.cb = sizeof(memory);
+        const bool timesAvailable = GetProcessTimes(process, &creation,
+            &exit, &kernel, &user) != FALSE;
+        const bool memoryAvailable = K32GetProcessMemoryInfo(process,
+            reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&memory),
+            sizeof(memory)) != FALSE;
+        CloseHandle(process);
+        if (!timesAvailable || !memoryAvailable) continue;
+
+        const std::string name = WideToUtf8(entry.szExeFile);
+        if (name.empty()) continue;
+        const std::uint64_t creationValue = FileTimeValue(creation);
+        const std::string id = OpaqueProcessId(
+            entry.th32ProcessID, creationValue);
+        const std::uint64_t cpuTime =
+            FileTimeValue(kernel) + FileTimeValue(user);
+        double cpuPercent = 0.0;
+        if (hasBaseline && elapsedHundredNanoseconds > 0.0)
+        {
+            const auto previous = previousProcessCpuTimes_.find(id);
+            if (previous != previousProcessCpuTimes_.end() &&
+                cpuTime >= previous->second)
+            {
+                cpuPercent = std::clamp(
+                    100.0 * static_cast<double>(
+                        cpuTime - previous->second) /
+                        elapsedHundredNanoseconds,
+                    0.0, 100.0);
+            }
+        }
+        nextCpuTimes.emplace(id, cpuTime);
+        snapshot.processes.push_back({ id, name, cpuPercent,
+            static_cast<std::uint64_t>(memory.WorkingSetSize),
+            static_cast<std::uint64_t>(memory.PrivateUsage) });
+    } while (Process32NextW(processSnapshot, &entry));
+    CloseHandle(processSnapshot);
+
+    previousProcessCpuTimes_ = std::move(nextCpuTimes);
+    previousProcessSample_ = sampleTime;
+    snapshot.observedCount = snapshot.processes.size();
+    std::sort(snapshot.processes.begin(), snapshot.processes.end(),
+        [](const auto& left, const auto& right) {
+            if (left.cpuPercent != right.cpuPercent)
+                return left.cpuPercent > right.cpuPercent;
+            if (left.privateBytes != right.privateBytes)
+                return left.privateBytes > right.privateBytes;
+            if (left.workingSetBytes != right.workingSetBytes)
+                return left.workingSetBytes > right.workingSetBytes;
+            return left.id < right.id;
+        });
+    if (snapshot.processes.size() > MaximumProcessSummaryEntries)
+    {
+        snapshot.processes.resize(MaximumProcessSummaryEntries);
+        snapshot.truncated = true;
+    }
+    snapshot.available = true;
+    snapshot.warmingUp = !hasBaseline;
     return snapshot;
 }
 
@@ -1982,6 +2133,17 @@ void WidgetSystemDataProvider::PublishMemory(
     snapshot.revision = memory_ ? memory_->revision + 1 : 1;
     memory_ = std::move(snapshot);
     changedTopics_.insert(std::string(MemoryTopic));
+}
+
+void WidgetSystemDataProvider::PublishProcessSummary(
+    WidgetProcessSummaryDataSnapshot snapshot)
+{
+    std::scoped_lock lock(mutex_);
+    if (!schedules_.contains(std::string(ProcessSummaryTopic))) return;
+    snapshot.revision = processSummary_
+        ? processSummary_->revision + 1 : 1;
+    processSummary_ = std::move(snapshot);
+    changedTopics_.insert(std::string(ProcessSummaryTopic));
 }
 
 void WidgetSystemDataProvider::PublishPower(

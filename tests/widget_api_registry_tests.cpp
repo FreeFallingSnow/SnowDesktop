@@ -320,6 +320,8 @@ void TestV2Contract()
                 "data.media.current") &&
             snowdesktop::widget_api::SupportsFeature(
                 "data.media.timeline") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "data.process.summary") &&
             snowdesktop::widget_api::SupportsFeature("data.subscribe") &&
             snowdesktop::widget_api::SupportsFeature("data.system.cpu") &&
             snowdesktop::widget_api::SupportsFeature(
@@ -696,7 +698,7 @@ void TestSystemCapabilityContract()
         snowdesktop::widget_api::SystemDataTopicContracts();
     const auto tasks = snowdesktop::widget_api::SystemTaskContracts();
     Check(functions.size() == 15, "v2 system function catalog must be frozen");
-    Check(topics.size() == 24, "v2 data topic catalog must be frozen");
+    Check(topics.size() == 25, "v2 data topic catalog must be frozen");
     Check(tasks.size() == 41, "v2 task catalog must be frozen");
 
     std::unordered_set<std::string> names;

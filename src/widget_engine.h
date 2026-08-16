@@ -359,6 +359,8 @@ struct LuaWidgetDataSnapshot
     std::string error;
     snowdesktop::widget_runtime::WidgetCpuDataSnapshot cpu;
     snowdesktop::widget_runtime::WidgetMemoryDataSnapshot memory;
+    snowdesktop::widget_runtime::WidgetProcessSummaryDataSnapshot
+        processSummary;
     snowdesktop::widget_runtime::WidgetPowerDataSnapshot power;
     snowdesktop::widget_runtime::WidgetNetworkStatusDataSnapshot
         networkStatus;

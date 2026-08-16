@@ -43,6 +43,27 @@ struct WidgetMemoryDataSnapshot
     std::string error;
 };
 
+struct WidgetProcessSummaryEntryDataSnapshot
+{
+    std::string id;
+    std::string name;
+    double cpuPercent = 0.0;
+    std::uint64_t workingSetBytes = 0;
+    std::uint64_t privateBytes = 0;
+};
+
+struct WidgetProcessSummaryDataSnapshot
+{
+    bool available = false;
+    bool warmingUp = true;
+    std::vector<WidgetProcessSummaryEntryDataSnapshot> processes;
+    std::size_t observedCount = 0;
+    bool truncated = false;
+    std::int64_t timestampMs = 0;
+    std::uint64_t revision = 0;
+    std::string error;
+};
+
 struct WidgetPowerDataSnapshot
 {
     bool available = false;
@@ -290,6 +311,7 @@ public:
     static constexpr std::chrono::milliseconds MinimumInterval{ 10 };
     static constexpr std::chrono::milliseconds MaximumInterval{
         24 * 60 * 60 * 1000 };
+    static constexpr std::size_t MaximumProcessSummaryEntries = 12;
 
     WidgetSystemDataProvider() = default;
     ~WidgetSystemDataProvider();
@@ -305,6 +327,7 @@ public:
 
     std::optional<WidgetCpuDataSnapshot> Cpu() const;
     std::optional<WidgetMemoryDataSnapshot> Memory() const;
+    std::optional<WidgetProcessSummaryDataSnapshot> ProcessSummary() const;
     std::optional<WidgetPowerDataSnapshot> Power() const;
     std::optional<WidgetNetworkStatusDataSnapshot> NetworkStatus() const;
     std::optional<WidgetNetworkTrafficDataSnapshot> NetworkTraffic() const;
@@ -339,6 +362,7 @@ private:
     void WorkerMain(std::stop_token stopToken);
     WidgetCpuDataSnapshot SampleCpu();
     WidgetMemoryDataSnapshot SampleMemory();
+    WidgetProcessSummaryDataSnapshot SampleProcessSummary();
     WidgetPowerDataSnapshot SamplePower();
     WidgetNetworkStatusDataSnapshot SampleNetworkStatus();
     WidgetNetworkTrafficDataSnapshot SampleNetworkTraffic();
@@ -352,6 +376,7 @@ private:
         bool includeArtwork = false);
     void PublishCpu(WidgetCpuDataSnapshot snapshot);
     void PublishMemory(WidgetMemoryDataSnapshot snapshot);
+    void PublishProcessSummary(WidgetProcessSummaryDataSnapshot snapshot);
     void PublishPower(WidgetPowerDataSnapshot snapshot);
     void PublishNetworkStatus(WidgetNetworkStatusDataSnapshot snapshot);
     void PublishNetworkTraffic(WidgetNetworkTrafficDataSnapshot snapshot);
@@ -379,6 +404,7 @@ private:
     std::unordered_set<std::string> changedTopics_;
     std::optional<WidgetCpuDataSnapshot> cpu_;
     std::optional<WidgetMemoryDataSnapshot> memory_;
+    std::optional<WidgetProcessSummaryDataSnapshot> processSummary_;
     std::optional<WidgetPowerDataSnapshot> power_;
     std::optional<WidgetNetworkStatusDataSnapshot> networkStatus_;
     std::optional<WidgetNetworkTrafficDataSnapshot> networkTraffic_;
@@ -396,6 +422,7 @@ private:
     std::uint64_t configurationGeneration_ = 0;
     std::jthread worker_;
     std::atomic<bool> resetCpuBaseline_{ true };
+    std::atomic<bool> resetProcessBaseline_{ true };
     std::atomic<bool> resetNetworkBaseline_{ true };
     std::atomic<bool> resetGpuBaseline_{ true };
     std::atomic<bool> closeGpuRequested_{ false };
@@ -407,6 +434,8 @@ private:
     std::uint64_t previousIdle_ = 0;
     std::uint64_t previousKernel_ = 0;
     std::uint64_t previousUser_ = 0;
+    std::unordered_map<std::string, std::uint64_t> previousProcessCpuTimes_;
+    Clock::time_point previousProcessSample_{};
     std::uint64_t previousReceived_ = 0;
     std::uint64_t previousSent_ = 0;
     Clock::time_point previousNetworkSample_{};

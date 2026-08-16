@@ -3458,6 +3458,35 @@ static void PushDataSnapshotEnvelope(lua_State* state,
         lua_pushnumber(state, snapshot->memory.usagePercent);
         lua_setfield(state, -2, "usagePercent");
     }
+    else if (snapshot->topic == "process.summary")
+    {
+        lua_createtable(state,
+            static_cast<int>(snapshot->processSummary.processes.size()), 0);
+        int processIndex = 1;
+        for (const auto& process : snapshot->processSummary.processes)
+        {
+            lua_createtable(state, 0, 5);
+            lua_pushlstring(state, process.id.data(), process.id.size());
+            lua_setfield(state, -2, "id");
+            lua_pushlstring(state, process.name.data(), process.name.size());
+            lua_setfield(state, -2, "name");
+            lua_pushnumber(state, process.cpuPercent);
+            lua_setfield(state, -2, "cpuPercent");
+            lua_pushinteger(state, static_cast<lua_Integer>(
+                process.workingSetBytes));
+            lua_setfield(state, -2, "workingSetBytes");
+            lua_pushinteger(state, static_cast<lua_Integer>(
+                process.privateBytes));
+            lua_setfield(state, -2, "privateBytes");
+            lua_rawseti(state, -2, processIndex++);
+        }
+        lua_setfield(state, -2, "processes");
+        lua_pushinteger(state, static_cast<lua_Integer>(
+            snapshot->processSummary.observedCount));
+        lua_setfield(state, -2, "observedCount");
+        lua_pushboolean(state, snapshot->processSummary.truncated);
+        lua_setfield(state, -2, "truncated");
+    }
     else if (snapshot->topic == "system.power")
     {
         lua_pushboolean(state, snapshot->power.acPower);
@@ -19895,6 +19924,20 @@ WidgetEngine::RuntimeGetDataSnapshot(
             result.memory.usagePercent = 56.25;
             result.memory.timestampMs = timestampNow;
         }
+        else if (result.topic == "process.summary")
+        {
+            result.processSummary.available = true;
+            result.processSummary.warmingUp = false;
+            result.processSummary.processes = {
+                { "process-preview-editor", "Editor.exe", 18.5,
+                    640ull * 1024 * 1024, 512ull * 1024 * 1024 },
+                { "process-preview-player", "Player.exe", 7.25,
+                    384ull * 1024 * 1024, 320ull * 1024 * 1024 },
+            };
+            result.processSummary.observedCount = 24;
+            result.processSummary.truncated = true;
+            result.processSummary.timestampMs = timestampNow;
+        }
         else if (result.topic == "system.power")
         {
             result.power.available = true;
@@ -20219,6 +20262,22 @@ WidgetEngine::RuntimeGetDataSnapshot(
             result.available = snapshot->available;
             result.error = snapshot->error;
             setFreshness(snapshot->timestampMs);
+        }
+    }
+    else if (result.topic == "process.summary")
+    {
+        const auto snapshot = widgetSystemDataProvider_->ProcessSummary();
+        if (snapshot)
+        {
+            result.processSummary = *snapshot;
+            result.available = snapshot->available;
+            result.warmingUp = snapshot->warmingUp;
+            result.error = snapshot->error;
+            setFreshness(snapshot->timestampMs);
+        }
+        else
+        {
+            result.warmingUp = true;
         }
     }
     else if (result.topic == "system.power")

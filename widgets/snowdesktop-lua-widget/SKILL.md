@@ -407,6 +407,11 @@ default border does not fit the component design.
   `image` handle directly to `draw.image` or `view.image.source`; never expect
   encoded bytes or a cache path, never persist the handle after unsubscribing,
   and treat `notPresent` as a normal no-cover state.
+- Use `process.summary` only for a visible, bounded system monitor after
+  declaring `process.summary.read`. Treat `id` as opaque and ephemeral, and
+  render only the returned display name and aggregate CPU/memory counters;
+  never infer a PID, path, command line, window title, user, token, or process
+  control capability from the summary.
 - Change only the current default audio endpoint with
   `audio.output.setVolume` or `audio.output.setMute` from a direct trusted
   gesture. Declare `audio.output.control`, treat `rateLimited` as a normal

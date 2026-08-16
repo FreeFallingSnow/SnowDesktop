@@ -315,6 +315,45 @@ void TestTopicLifecycleAndSampling()
             provider.ActiveTopicCount() == 2,
         "media topics must stop independently from other sources");
 
+    Check(provider.StartTopic("process.summary", 20ms) &&
+            provider.ActiveTopicCount() == 3,
+        "process summary sampling must start only when subscribed");
+    Check(WaitFor([&] {
+            const auto snapshot = provider.ProcessSummary();
+            return snapshot && snapshot->revision >= 2 &&
+                !snapshot->warmingUp;
+        }),
+        "process summary must publish a shared differential sample");
+    const auto processSummary = provider.ProcessSummary();
+    Check(processSummary && processSummary->available &&
+            processSummary->timestampMs > 0 &&
+            !processSummary->processes.empty() &&
+            processSummary->processes.size() <=
+                WidgetSystemDataProvider::MaximumProcessSummaryEntries &&
+            processSummary->observedCount >=
+                processSummary->processes.size() &&
+            processSummary->truncated ==
+                (processSummary->observedCount >
+                    processSummary->processes.size()),
+        "process summary must expose a bounded top-N view");
+    if (processSummary && processSummary->available)
+    {
+        for (const auto& process : processSummary->processes)
+        {
+            Check(process.id.starts_with("process-") &&
+                    !process.name.empty() &&
+                    process.name.find('\\') == std::string::npos &&
+                    process.name.find('/') == std::string::npos &&
+                    process.cpuPercent >= 0.0 &&
+                    process.cpuPercent <= 100.0,
+                "process entries must be opaque, path-free, and bounded");
+        }
+    }
+    Check(provider.StopTopic("process.summary") &&
+            provider.ActiveTopicCount() == 2 &&
+            !provider.ProcessSummary(),
+        "stopping process summary must clear it while preserving CPU and memory topics");
+
     Check(provider.StopTopic("system.memory") && provider.Running() &&
             provider.ActiveTopicCount() == 1,
         "stopping one topic must preserve another active topic");

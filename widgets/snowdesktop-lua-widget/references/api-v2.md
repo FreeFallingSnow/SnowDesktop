@@ -1110,7 +1110,7 @@ ID 必须是 1–128 字节有效 UTF-8；同名请求在同一帧内合并，�
 
 ### `data`
 
-当前公开二十四个按需数据源：`system.cpu`、`system.memory`、`system.gpu`、`system.power`、
+当前公开二十五个按需数据源：`system.cpu`、`system.memory`、`process.summary`、`system.gpu`、`system.power`、
 `system.network.status`、`system.network.traffic`、`system.storage.volumes`、
 `system.storage.io`、`system.display.topology`、`system.display.current`、
 `audio.output.default`、`audio.output.volume`、`audio.output.analysis`、
@@ -1141,7 +1141,7 @@ end
 ```
 
 `data.subscribe(topic, options?)` 返回句柄。`options.maxAgeMs` 为 1–86400000，
-同时表达请求采样周期与快照过期阈值；CPU 最快 500 ms，内存最快 1000 ms，
+同时表达请求采样周期与快照过期阈值；CPU 最快 500 ms，内存和进程摘要最快 1000 ms，
 电源、存储卷和显示拓扑最快 2000 ms；存储 I/O、默认音频端点和主音量最快
 1000 ms，媒体三个 topic 最快 500 ms，桌面和日历事件 topic 最快 100 ms，
 音频分析最快 16 ms。`whenHidden` 可为
@@ -1155,6 +1155,15 @@ end
 差分采样可能暂时 `warmingUp=true`；无电池设备返回
 `available=false,error="notPresent"`。`handle:unsubscribe()` 主动释放；卸载、
 热重载和关闭也会自动释放。
+
+`process.summary` 受独立的 `process.summary.read` 保护。value 的 `processes` 固定最多
+12 项，按总机器 CPU 占比、private bytes 和 working set 排序；每项只含进程生命周期内
+稳定的 opaque `id`、用于显示的可执行文件基本名、0–100 的 `cpuPercent`、
+`workingSetBytes` 和 `privateBytes`。`observedCount/truncated` 明确报告宿主实际可查询的
+候选是否被截断。首轮尚无 CPU 差分基线时返回内存排序并标记 `warmingUp=true`；该高风险
+topic 隐藏时强制暂停，最后一个可见订阅释放后立即停止枚举并清除快照。它不返回 PID、路径、命令行、窗口标题、用户名、token、
+进程内存内容或任何控制句柄，受保护/不可查询的进程也不会伪造成零值条目；预览只返回固定
+模拟进程。
 
 GPU value 的 `adapters` 是数组；每项包含不透明 `id`、显示 `name`、
 `usagePercent`、`dedicatedMemoryBytes/dedicatedUsedBytes` 和
@@ -1248,6 +1257,7 @@ selectedDate value 返回 `date/revision`。创建、修改和删除日程仍不
 `app.search` 任务获取。
 
 CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.power.read` 保护，
+进程摘要单独受 `process.summary.read` 保护，
 两个网络 topic 受 `system.network.read` 保护，两个存储 topic 受
 `system.storage.read` 保护，显示拓扑受 `system.display.read` 保护。
 基础两个音频输出 topic 受 `audio.output.read` 保护；分析 topic 单独受
@@ -1257,7 +1267,7 @@ CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.pow
 需要无权限降级的组件应把对应权限声明在 `optionalPermissions`，并处理
 `available=false,error="permissionDenied"`；预览返回稳定模拟值且不会读取本机
 状态。对应 feature ID 是 `data.subscribe`、`data.system.cpu`、
-`data.system.memory`、`data.system.gpu`、`data.system.power`、
+`data.system.memory`、`data.process.summary`、`data.system.gpu`、`data.system.power`、
 `data.system.network.status` 和
 `data.system.network.traffic`、`data.system.storage.volumes` 和
 `data.system.storage.io`、`data.system.display.topology` 和

@@ -1183,6 +1183,18 @@ function animation.cancelFrame(id) end
 ---@field freeBytes integer
 ---@field usagePercent number
 
+---@class SnowProcessSummaryEntryDataValue
+---@field id string Opaque identity derived from the process lifetime; never a PID or path.
+---@field name string Display-only executable base name; never a path or command line.
+---@field cpuPercent number Share of total machine CPU capacity, clamped to 0..100.
+---@field workingSetBytes integer Current physical working set.
+---@field privateBytes integer Current private committed bytes.
+
+---@class SnowProcessSummaryDataValue
+---@field processes SnowProcessSummaryEntryDataValue[] At most 12 entries, ordered by CPU then memory.
+---@field observedCount integer Number of accessible processes considered before truncation.
+---@field truncated boolean True when more accessible processes existed than were returned.
+
 ---@class SnowGpuAdapterDataValue
 ---@field id string Opaque adapter identifier.
 ---@field name string
@@ -1416,6 +1428,7 @@ data = {}
 ---Subscribe to a host-shared on-demand data topic.
 ---@overload fun(topic: 'system.cpu', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowCpuDataValue>
 ---@overload fun(topic: 'system.memory', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowMemoryDataValue>
+---@overload fun(topic: 'process.summary', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowProcessSummaryDataValue>
 ---@overload fun(topic: 'system.gpu', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowGpuDataValue>
 ---@overload fun(topic: 'system.power', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowPowerDataValue>
 ---@overload fun(topic: 'system.network.status', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowNetworkStatusDataValue>

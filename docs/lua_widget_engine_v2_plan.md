@@ -571,6 +571,7 @@ local snapshot = cpu:value()
 
 - `system.cpu`
 - `system.memory`
+- `process.summary`
 - `system.gpu`
 - `system.power`
 - `system.network.status`
@@ -595,7 +596,7 @@ local snapshot = cpu:value()
 
 这些主题不表示底层必须轮询：状态变化优先使用系统事件，差分指标才进行周期采样。后续评估：
 
-- 进程摘要、逐应用音频会话、Wi-Fi、蓝牙、VPN 和硬件温度/风扇。
+- 逐应用音频会话、Wi-Fi、蓝牙、VPN 和硬件温度/风扇。
 - 天气和位置不作为无权限系统数据源；必须使用明确的网络/位置授权。
 - 不提供通用 WMI 查询数据源。
 
@@ -603,8 +604,8 @@ local snapshot = cpu:value()
 
 所有提供者采用引用计数生命周期，而不是应用启动即常驻：
 
-当前已发布 `data.subscribe`、`data.system.cpu`、`data.system.memory` 和
-`data.system.gpu`、`data.system.power`，以及相互独立的 `data.system.network.status` /
+当前已发布 `data.subscribe`、`data.system.cpu`、`data.system.memory`、
+`data.process.summary` 和 `data.system.gpu`、`data.system.power`，以及相互独立的 `data.system.network.status` /
 `data.system.network.traffic`、`data.system.storage.volumes`、
 `data.system.storage.io`、`data.system.display.topology` 和
 `data.system.display.current`，以及 `data.audio.output.default`、
@@ -629,6 +630,12 @@ provider 能力收敛为隐藏 throttle。
 `system.storage.io` 使用独立 PDH query 读取物理磁盘聚合读写速率与忙碌度，
 冷启动通过 `warmingUp` 表达，不公开磁盘序列号或文件路径；最后一个 I/O 订阅
 释放时即使共享 worker 仍在运行也会关闭该 query。
+
+`process.summary` 使用共享系统 provider 按需枚举宿主可查询的进程，固定返回按 CPU 与
+内存排序的前 12 项。公开字段只含生命周期 opaque ID、显示名、总机器 CPU 占比、working
+set/private bytes 和截断状态；不公开 PID、路径、命令行、窗口标题、用户名、token、内存
+内容或控制句柄。首轮建立 CPU 时间基线并标记 warming，隐藏时强制 pause，最后可见订阅
+释放后立即清除公开快照。
 
 `system.display.topology` 枚举全部活动显示器，返回不透明 ID、用户可见名称、
 逻辑/像素边界及工作区、有效 DPI/scale、刷新率、方向和可用时的 HDR 状态；
@@ -701,6 +708,7 @@ Stopped
 | 数据源 | 默认行为 | 可见刷新 | 隐藏策略 | 最后订阅释放 |
 |---|---|---:|---|---|
 | `system.cpu` / `system.network.traffic` / `system.storage.io` | 周期差分采样 | 1000 ms，可受限提高 | throttle 5000 ms | 短暂 grace 后停止 |
+| `process.summary` | 受限进程枚举与差分采样 | 1000 ms | 强制 pause | 立即停止并清除快照 |
 | `system.gpu` | 高成本周期采样 | 1000 ms，设硬下限 | 默认 pause | 短暂 grace 后释放 PDH |
 | `system.memory` | 廉价按需快照 | 1000 ms | throttle | 短暂 grace 后停止 |
 | `system.power` / `system.network.status` / `system.display.current` | 事件优先、低频兜底 | 变化时 | 事件保留 | 无轮询时无持续成本 |
@@ -891,6 +899,7 @@ API v2 不把 Win32、COM 或 WinRT 原样暴露给 Lua，而是固定为四个�
 |---|---|---|
 | `system.cpu` | aggregate usage、logical processor count；可选受限 per-logical usage；明确 warming 和采样区间 | `system.performance.read` |
 | `system.memory` | physical total/available/used、commit limit/used、usage percent；全部使用 bytes | `system.performance.read` |
+| `process.summary` | 最多 12 个可查询进程的 opaque ID、显示名、总机器 CPU 占比、working set/private bytes 和截断状态；不返回 PID、路径、命令行、窗口标题、用户或控制能力 | `process.summary.read` |
 | `system.gpu` | adapter 数组、opaque adapter ID、display name、usage、dedicated/shared memory；不得只返回第一块 GPU | `system.performance.read` |
 | `system.power` | AC/battery/charging/saver、percent、可用时的 estimated remaining、状态变化；无电池设备正常返回 unavailable | `system.power.read` |
 | `system.storage.volumes` | opaque volume ID、display name、mount point display value、kind、capacity/free、removable/readOnly；不因此授予文件读取 | `system.storage.read` |
@@ -934,7 +943,7 @@ API v2 不把 Win32、COM 或 WinRT 原样暴露给 Lua，而是固定为四个�
 
 v2.0 稳定后再评估以下独立能力；它们不能借 `system.*` 通配权限提前进入：
 
-- `process.summary.read`：只提供受限 top-N 进程资源摘要；不含命令行、窗口标题、环境变量、内存或 token。
+- `process.summary` 已以独立 `process.summary.read` 权限提供受限 top-N 资源摘要；更细的进程历史、筛选、I/O/GPU、逐进程动作和诊断仍不进入 v2.0。
 - `audio.sessions.read/control`：逐应用音频会话和音量控制，独立于 master endpoint 权限。
 - Wi-Fi SSID/BSSID、蓝牙、VPN、位置、摄像头、麦克风、环境光和其他传感器；需要独立隐私设计和 Windows 系统授权。
 - 系统/账户日历、联系人、邮件和云账户；当前 `calendar.*` 只是 SnowDesktop 本地日历，不能把它描述成 Windows 或 Outlook 数据访问。
@@ -958,7 +967,7 @@ API v2 明确禁止：任意 WMI 查询、注册表读写、PowerShell/cmd/进�
 - 输出默认去标识化并最小化；路径、IP/MAC、SSID/BSSID、用户名、机器名、序列号等不能因“读取系统状态”顺带泄露。
 - 每个能力有独立额度、诊断、审计事件、拒绝降级示例和确定性预览数据。
 
-当前实现已将第 12.6 节的 15 个基础函数、24 个数据主题和 41 个任务集中到
+当前实现已将第 12.6 节的 15 个基础函数、25 个数据主题和 41 个任务集中到
 `widget_api_registry` 的系统能力契约。data/task broker 直接由该契约注册，
 `system.capabilities()` 可按 feature 或公开 API 名返回权限、手势、预览、刷新率与并发上限；
 契约测试同时校验 feature、权限目录、LuaLS 和开发者文档覆盖。硬件存在性和 provider
@@ -1898,7 +1907,7 @@ M7 切换完成后，发布运行时必须删除 API v1 注册和执行分支。
 
 ### M2：权限代理和首次授权
 
-当前实现进度（2026-08-15）：已落地集中权限代理、来源绑定范围指纹、非阻塞首次授权、受阻占位卡及恢复入口；schema/API v2 以 `permissions` 表示必需权限、`optionalPermissions` 表示可选权限。CPU/内存/GPU、电源、存储、网络、显示、媒体、音频、通知、剪贴板、应用动作和用户选择文件范围已映射到分离权限，组件管理页可查询、调整和撤销授权，撤销必需权限会让实例进入可恢复的暂停占位。公开权限词表已集中到单一 descriptor 契约，包校验、风险分类、首次授权、管理页标签和 15/24/41 系统 API 契约共同使用该来源；剩余工作是更新扩权差异页和各权限撤销/设备变化的真实场景验收，不再以“权限已声明但 API 尚未启用”描述当前状态。
+当前实现进度（2026-08-15）：已落地集中权限代理、来源绑定范围指纹、非阻塞首次授权、受阻占位卡及恢复入口；schema/API v2 以 `permissions` 表示必需权限、`optionalPermissions` 表示可选权限。CPU/内存/GPU、进程摘要、电源、存储、网络、显示、媒体、音频、通知、剪贴板、应用动作和用户选择文件范围已映射到分离权限，组件管理页可查询、调整和撤销授权，撤销必需权限会让实例进入可恢复的暂停占位。公开权限词表已集中到单一 descriptor 契约，包校验、风险分类、首次授权、管理页标签和 15/25/41 系统 API 契约共同使用该来源；剩余工作是更新扩权差异页和各权限撤销/设备变化的真实场景验收，不再以“权限已声明但 API 尚未启用”描述当前状态。
 
 交付物：
 
