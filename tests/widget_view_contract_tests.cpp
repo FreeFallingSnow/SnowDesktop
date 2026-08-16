@@ -639,7 +639,7 @@ void TestMachineReadableContract()
         return nullptr;
     };
     const JsonValue* button = findNamed(*nodes, "button");
-    const JsonValue* opacity = findNamed(*properties, "opacity");
+    const JsonValue* opacity = findNamed(*properties, "trackOpacity");
     const JsonValue* click = findNamed(*events, "click");
     Check(button && button->Find("properties") &&
             button->Find("properties")->IsArray() &&
