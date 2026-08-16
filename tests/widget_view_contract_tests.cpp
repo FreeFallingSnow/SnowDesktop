@@ -14,6 +14,7 @@ using snowdesktop::widget_runtime::HasViewAccessibilityPattern;
 using snowdesktop::widget_runtime::IsKnownViewEvent;
 using snowdesktop::widget_runtime::IsKnownViewNodeProperty;
 using snowdesktop::widget_runtime::ViewAccessibilityPattern;
+using snowdesktop::widget_runtime::ViewChildPolicy;
 using snowdesktop::widget_runtime::ViewEventContracts;
 using snowdesktop::widget_runtime::ViewEventPayloadKind;
 using snowdesktop::widget_runtime::ViewNodeAllowedProperties;
@@ -46,6 +47,9 @@ void TestContractCoverageAndRoundTrip()
         Check(contract.type == ViewNodeType::Spacer ||
                 !contract.uiaControlType.empty(),
             "every semantic node must publish a UIA control type");
+        Check(contract.childPolicy >= ViewChildPolicy::Any &&
+                contract.childPolicy <= ViewChildPolicy::LogicalSlot,
+            "every node must publish a recognized child policy");
         Check(types.insert(contract.type).second,
             "node contract types must be unique");
         Check(names.emplace(contract.name).second,
@@ -87,6 +91,11 @@ void TestRepresentativeApplicability()
             !ViewNodeAllowsProperty(ViewNodeType::VirtualGrid, "rows") &&
             !ViewNodeAllowsProperty(ViewNodeType::Row, "columns"),
         "grid-only properties must be machine readable");
+    Check(ViewNodeAllowsProperty(ViewNodeType::Box, "children") &&
+            ViewNodeAllowsProperty(ViewNodeType::Scroll, "children") &&
+            !ViewNodeAllowsProperty(ViewNodeType::Text, "children") &&
+            !ViewNodeAllowsProperty(ViewNodeType::Button, "children"),
+        "leaf nodes must reject children in the property matrix");
     Check(ViewNodeAllowsProperty(ViewNodeType::Box, "debugName") &&
             ViewNodeAllowsProperty(ViewNodeType::Text, "testId") &&
             !ViewNodeRequiresProperty(ViewNodeType::Button,
@@ -267,6 +276,17 @@ void TestRepresentativeApplicability()
     const auto* button = FindViewNodeContract(ViewNodeType::Button);
     const auto* slider = FindViewNodeContract(ViewNodeType::Slider);
     const auto* input = FindViewNodeContract(ViewNodeType::TextInput);
+    const auto* box = FindViewNodeContract(ViewNodeType::Box);
+    const auto* scroll = FindViewNodeContract(ViewNodeType::Scroll);
+    const auto* list = FindViewNodeContract(ViewNodeType::List);
+    const auto* slot = FindViewNodeContract(ViewNodeType::SlotSurface);
+    const auto* text = FindViewNodeContract(ViewNodeType::Text);
+    Check(box && box->childPolicy == ViewChildPolicy::Any &&
+            scroll && scroll->childPolicy == ViewChildPolicy::Single &&
+            list && list->childPolicy == ViewChildPolicy::Collection &&
+            slot && slot->childPolicy == ViewChildPolicy::LogicalSlot &&
+            text && text->childPolicy == ViewChildPolicy::None,
+        "representative node child policies must be machine readable");
     Check(button && button->uiaControlType == "Button" &&
             HasViewAccessibilityPattern(button->uiaPatterns,
                 ViewAccessibilityPattern::Invoke) &&

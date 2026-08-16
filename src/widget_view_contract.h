@@ -42,6 +42,15 @@ constexpr bool HasViewAccessibilityPattern(
         static_cast<std::uint32_t>(pattern)) != 0;
 }
 
+enum class ViewChildPolicy : std::uint8_t
+{
+    Any,
+    None,
+    Single,
+    Collection,
+    LogicalSlot,
+};
+
 struct ViewNodeContract
 {
     ViewNodeType type = ViewNodeType::Box;
@@ -50,6 +59,7 @@ struct ViewNodeContract
     std::string_view feature;
     std::string_view defaultAccessibilityRole;
     std::string_view uiaControlType;
+    ViewChildPolicy childPolicy = ViewChildPolicy::Any;
     ViewAccessibilityPattern uiaPatterns =
         ViewAccessibilityPattern::None;
     bool keyboardFocusable = false;

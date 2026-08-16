@@ -408,6 +408,19 @@ void TestLuaParsing()
             !ValidateAndLayoutViewTree(root, 100.0f, 40.0f, error) &&
             error.find("fontWeight") != std::string::npos,
         "fontWeight must use bounded 100-step values");
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.text({
+            key = "leaf-with-child", text = "Text",
+            children = { view.spacer({ key = "illegal-child" }) },
+        })
+    )lua") == LUA_OK,
+        "leaf-child fixture must evaluate");
+    root = {};
+    Check(!ParseLuaViewTree(state, -1, root, error) &&
+            error.find("do not accept field 'children'") !=
+                std::string::npos,
+        "leaf child policy must reject children during Lua parsing");
     lua_close(state);
 }
 

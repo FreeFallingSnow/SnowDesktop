@@ -405,19 +405,8 @@ bool IsDataSeriesNode(ViewNodeType type) noexcept
 
 bool IsLeafNode(ViewNodeType type) noexcept
 {
-    return type == ViewNodeType::Text ||
-        type == ViewNodeType::StyledText ||
-        type == ViewNodeType::Image ||
-        type == ViewNodeType::ReferenceIcon ||
-        IsButtonNode(type) || type == ViewNodeType::Link ||
-        IsControlledNode(type) ||
-        type == ViewNodeType::Icon || type == ViewNodeType::Shape ||
-        type == ViewNodeType::Badge || type == ViewNodeType::Divider ||
-        type == ViewNodeType::ProgressBar ||
-        type == ViewNodeType::ProgressRing ||
-        type == ViewNodeType::Meter ||
-        IsDataSeriesNode(type) || type == ViewNodeType::MonthCalendar ||
-        type == ViewNodeType::Spacer;
+    const ViewNodeContract* contract = FindViewNodeContract(type);
+    return contract && contract->childPolicy == ViewChildPolicy::None;
 }
 
 bool IsGridContainer(ViewNodeType type) noexcept
@@ -466,8 +455,9 @@ float VirtualCollectionMainGap(const ViewNode& node) noexcept
 
 bool IsCollectionContainer(ViewNodeType type) noexcept
 {
-    return type == ViewNodeType::List || type == ViewNodeType::GridList ||
-        IsVirtualCollection(type);
+    const ViewNodeContract* contract = FindViewNodeContract(type);
+    return contract &&
+        contract->childPolicy == ViewChildPolicy::Collection;
 }
 
 bool HasCollectionPlaceholder(const ViewNode& node) noexcept

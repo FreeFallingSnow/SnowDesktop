@@ -480,7 +480,7 @@
 ---@field events? SnowViewEvents
 ---@field action? SnowInteractionAction Button/link click or controlled selection/value change shorthand.
 ---@field child? SnowViewNode Exactly one child for slotItem; optional placeholder or bound child for a binding slotSurface.
----@field children? SnowViewNode[]
+---@field children? SnowViewNode[] Accepted only by non-leaf node child policies; scroll/listItem/slotItem require one, collections require listItem children outside empty/loading states, and ordinary containers accept bounded composition.
 
 ---@class SnowViewNode: SnowViewNodeOptions
 ---@field type 'box'|'row'|'column'|'grid'|'flow'|'stack'|'scroll'|'list'|'gridList'|'virtualList'|'virtualGrid'|'listItem'|'slotSurface'|'slotItem'|'text'|'styledText'|'textInput'|'textArea'|'searchBox'|'numberInput'|'select'|'image'|'referenceIcon'|'button'|'link'|'toggle'|'checkbox'|'radioGroup'|'slider'|'icon'|'iconButton'|'shape'|'badge'|'divider'|'progressBar'|'progressRing'|'meter'|'sparkline'|'lineChart'|'barChart'|'waveform'|'spectrum'|'monthCalendar'|'spacer'

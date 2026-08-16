@@ -992,9 +992,19 @@ view.waveform({
 重复 key、NaN/Infinity 和越界值会拒绝整次提交。桌面树只布局在底部标题栏之上的内容区。
 
 宿主现在从同一份可枚举节点契约表读取 44 个已公开节点的名称、所属 feature、默认
-accessibility role、允许属性和直接必需属性。Lua 解析器会在布局前按该表拒绝拼错字段或
+accessibility role、允许属性、直接必需属性和子节点策略。Lua 解析器会在布局前按该表拒绝拼错字段或
 用在错误节点上的字段；例如 `columns` 不能用于 `row`，`source` 不能用于
-`referenceIcon`。该表也登记 UIA ControlType、基础 Pattern 和宿主键盘可聚焦性，宿主能从
+`referenceIcon`，叶节点也不接受 `children`。子节点策略固定为：
+
+| 策略 | 节点 | 约束 |
+|---|---|---|
+| 任意组合 | `box/row/column/grid/flow/stack` | 0 个或多个普通节点，仍受全树深度和数量额度限制 |
+| 单一内容 | `scroll/listItem/slotItem` | 必须恰好一个可见内容节点 |
+| 集合窗口 | `list/gridList/virtualList/virtualGrid` | 正常态只接受直接 `listItem`；empty/loading 替代态恰好一个可见节点 |
+| 宿主槽位 | `slotSurface` | binding 最多一个 `slotItem`，collection 只接受 `slotItem`；空态可有一个非槽位节点 |
+| 叶节点 | 文本、图片、控件、状态、图表、日历和 `spacer` | 不接受 `children` |
+
+该表也登记 17 个公开事件的负载类别和逐节点适用性，以及 UIA ControlType、基础 Pattern 和宿主键盘可聚焦性，宿主能从
 布局结果生成语义快照，并已通过 Windows UIA Fragment Provider 暴露组件/元素树、基础属性、
 边界、父子/兄弟导航、点命中与宿主焦点。Invoke、Toggle、RangeValue、Value、
 ExpandCollapse、SelectionItem 和 Scroll Pattern 已连接到同一套 Lua action/受控输入或宿主滚动
@@ -1006,8 +1016,7 @@ Provider 会在成功桌面帧后按稳定语义 ID 差分并发送结构、焦�
 可由辅助技术单独聚焦和选择；受控集合的单选/多选、添加和移除选择也复用
 `previousSelectedKeys/selectedKeys` 建议。滚动容器提供 Scroll，网格及当前已实体化的单元提供
 Grid/GridItem；任意未实体化集合项仍未形成完整 UIA VirtualizedItem/ScrollItem 协议，真实 Narrator
-验收也尚未完成；默认值/范围、子节点、
-事件和错误码也未全部迁入，
+验收也尚未完成；默认值/范围、视觉状态、动画额度和错误码也未全部迁入，
 作者仍应以本节各 feature 的细化说明为准。
 
 探测 `view.accessibility.metadata` 后，声明式节点的 `accessibility` 表除 `role/label` 外还支持：
