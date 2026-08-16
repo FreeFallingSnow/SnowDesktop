@@ -23,6 +23,7 @@ using snowdesktop::widget_runtime::ViewNodeAllowedProperties;
 using snowdesktop::widget_runtime::ViewNodeAllowedEvents;
 using snowdesktop::widget_runtime::ViewNodeAllowsEvent;
 using snowdesktop::widget_runtime::ViewNodeContracts;
+using snowdesktop::widget_runtime::ViewNodePropertyDefault;
 using snowdesktop::widget_runtime::ViewNodeRequiresProperty;
 using snowdesktop::widget_runtime::ViewNodeRequiredProperties;
 using snowdesktop::widget_runtime::ViewNodeType;
@@ -32,6 +33,7 @@ using snowdesktop::widget_runtime::ViewPropertyAllowsEnumValue;
 using snowdesktop::widget_runtime::ViewPropertyEnumSet;
 using snowdesktop::widget_runtime::ViewPropertyEnumValues;
 using snowdesktop::widget_runtime::ViewPropertyEffect;
+using snowdesktop::widget_runtime::ViewPropertyDefaultKind;
 using snowdesktop::widget_runtime::ViewPropertyNumericValueInRange;
 using snowdesktop::widget_runtime::ViewPropertyValueKind;
 using snowdesktop::widget_runtime::ViewPropertyValueKindName;
@@ -84,6 +86,27 @@ void TestContractCoverageAndRoundTrip()
                     allowed.end(),
                 "required properties must also be allowed");
         }
+        for (const auto property : allowed)
+        {
+            const auto defaultValue =
+                ViewNodePropertyDefault(contract.type, property);
+            if (ViewNodeRequiresProperty(contract.type, property))
+            {
+                Check(defaultValue.kind ==
+                        ViewPropertyDefaultKind::Required &&
+                        defaultValue.expression.empty(),
+                    "required node properties must not publish defaults");
+            }
+            else
+            {
+                Check((defaultValue.kind ==
+                            ViewPropertyDefaultKind::Literal ||
+                        defaultValue.kind ==
+                            ViewPropertyDefaultKind::Conditional) &&
+                        !defaultValue.expression.empty(),
+                    "every optional node property must publish its resolved or conditional default");
+            }
+        }
         Check(ViewNodeRequiresProperty(contract.type, "type") &&
                 ViewNodeRequiresProperty(contract.type, "key"),
             "every node must require type and key");
@@ -91,6 +114,44 @@ void TestContractCoverageAndRoundTrip()
     Check(!FindViewNodeType("webView") &&
             FindViewNodeContract("webView") == nullptr,
         "unpublished nodes must not appear in the public matrix");
+}
+
+void TestNodePropertyDefaults()
+{
+    const auto badgePadding = ViewNodePropertyDefault(
+        ViewNodeType::Badge, "padding");
+    const auto inputPadding = ViewNodePropertyDefault(
+        ViewNodeType::TextInput, "padding");
+    const auto radioGap = ViewNodePropertyDefault(
+        ViewNodeType::RadioGroup, "gap");
+    const auto styledWrap = ViewNodePropertyDefault(
+        ViewNodeType::StyledText, "textWrap");
+    const auto scrollOrientation = ViewNodePropertyDefault(
+        ViewNodeType::Scroll, "orientation");
+    Check(badgePadding.kind == ViewPropertyDefaultKind::Literal &&
+            badgePadding.expression == "4" &&
+            inputPadding.expression == "8" &&
+            radioGap.expression == "8" &&
+            styledWrap.expression == "wrap" &&
+            scrollOrientation.expression == "vertical",
+        "node-specific parser defaults must be machine readable");
+
+    const auto dividerWidth = ViewNodePropertyDefault(
+        ViewNodeType::Divider, "width");
+    const auto seriesMinimum = ViewNodePropertyDefault(
+        ViewNodeType::Sparkline, "min");
+    const auto sliderMinimum = ViewNodePropertyDefault(
+        ViewNodeType::Slider, "min");
+    Check(dividerWidth.kind == ViewPropertyDefaultKind::Conditional &&
+            seriesMinimum.kind == ViewPropertyDefaultKind::Conditional &&
+            sliderMinimum.kind == ViewPropertyDefaultKind::Literal &&
+            sliderMinimum.expression == "0",
+        "context-dependent defaults must not be misreported as literals");
+    Check(ViewNodePropertyDefault(ViewNodeType::Image, "source").kind ==
+                ViewPropertyDefaultKind::Required &&
+            ViewNodePropertyDefault(ViewNodeType::Text, "source").kind ==
+                ViewPropertyDefaultKind::NotApplicable,
+        "required and inapplicable properties must remain distinct from defaults");
 }
 
 void TestPropertyMetadata()
@@ -542,6 +603,7 @@ int main()
 {
     TestContractCoverageAndRoundTrip();
     TestPropertyMetadata();
+    TestNodePropertyDefaults();
     TestRepresentativeApplicability();
     TestEventContract();
     std::cout << "widget view contract tests passed\n";

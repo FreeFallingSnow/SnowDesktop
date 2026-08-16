@@ -183,6 +183,21 @@ struct ViewPropertyContract
     double numericMaximum = 0.0;
 };
 
+enum class ViewPropertyDefaultKind : std::uint8_t
+{
+    NotApplicable,
+    Required,
+    Literal,
+    Conditional,
+};
+
+struct ViewPropertyDefault
+{
+    ViewPropertyDefaultKind kind =
+        ViewPropertyDefaultKind::NotApplicable;
+    std::string_view expression;
+};
+
 std::span<const ViewNodeContract> ViewNodeContracts() noexcept;
 const ViewNodeContract* FindViewNodeContract(
     ViewNodeType type) noexcept;
@@ -212,6 +227,8 @@ std::vector<std::string_view> ViewNodeAllowedProperties(
     ViewNodeType type);
 std::vector<std::string_view> ViewNodeRequiredProperties(
     ViewNodeType type);
+ViewPropertyDefault ViewNodePropertyDefault(
+    ViewNodeType type, std::string_view property) noexcept;
 
 std::span<const ViewEventContract> ViewEventContracts() noexcept;
 bool IsKnownViewEvent(std::string_view event) noexcept;

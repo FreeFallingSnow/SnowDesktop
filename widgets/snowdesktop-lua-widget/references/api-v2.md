@@ -1029,6 +1029,9 @@ length、edge-insets、resource、color、array/node、style、transition、tool
 和 action 等结构值先按目录检查 Lua 外形，再由对应解析器校验内部字段与额度。
 每项属性同时登记可能影响的 layout、paint、hit-test、input、accessibility、resource 和 tree
 宿主域；这套信息用于工具审计及后续增量失效，不改变组件声明式提交模型。
+工具还可逐节点查询属性默认：`required`、不适用、固定 Lua 表达式和条件默认是不同状态。
+例如 badge padding 为 4、输入 padding 为 8、radioGroup gap 为 8、scroll/list 默认为纵向；
+divider 尺寸和数据图自动范围保留为条件默认，不会生成错误的固定值提示。
 
 该表也登记 17 个公开事件的负载类别和逐节点适用性，以及 UIA ControlType、基础 Pattern 和宿主键盘可聚焦性，宿主能从
 布局结果生成语义快照，并已通过 Windows UIA Fragment Provider 暴露组件/元素树、基础属性、

@@ -1002,6 +1002,159 @@ bool ViewNodeRequiresProperty(
     return false;
 }
 
+ViewPropertyDefault ViewNodePropertyDefault(
+    ViewNodeType type, std::string_view property) noexcept
+{
+    if (!ViewNodeAllowsProperty(type, property))
+        return { ViewPropertyDefaultKind::NotApplicable, {} };
+    if (ViewNodeRequiresProperty(type, property))
+        return { ViewPropertyDefaultKind::Required, {} };
+
+    const auto literal = [](std::string_view expression) {
+        return ViewPropertyDefault{
+            ViewPropertyDefaultKind::Literal, expression };
+    };
+    const auto conditional = [](std::string_view expression) {
+        return ViewPropertyDefault{
+            ViewPropertyDefaultKind::Conditional, expression };
+    };
+
+    if (property == "binding" || property == "collection")
+        return conditional("exactly one of binding or collection is required");
+    if ((property == "child" || property == "children") &&
+        IsType(type, { ViewNodeType::Scroll, ViewNodeType::ListItem,
+            ViewNodeType::SlotItem }))
+        return conditional("exactly one content child is required");
+    if ((property == "itemExtent" || property == "estimatedItemSize") &&
+        type == ViewNodeType::VirtualList)
+        return conditional(
+            "one fixed itemExtent or estimatedItemSize is required");
+    if (property == "min" || property == "max")
+    {
+        if (IsSeries(type)) return conditional("automatic range from values");
+        return literal(property == "min" ? "0" : "1");
+    }
+    if (property == "width")
+        return type == ViewNodeType::Divider
+            ? conditional("fill; auto when orientation is vertical")
+            : literal("fill");
+    if (property == "height")
+        return type == ViewNodeType::Divider
+            ? conditional("auto; fill when orientation is vertical")
+            : literal("auto");
+    if (property == "padding")
+    {
+        if (type == ViewNodeType::Badge) return literal("4");
+        if (IsInput(type)) return literal("8");
+        return literal("0");
+    }
+    if (property == "gap")
+        return literal(type == ViewNodeType::RadioGroup ? "8" : "0");
+    if (property == "orientation")
+        return literal(IsType(type, { ViewNodeType::Scroll,
+            ViewNodeType::List, ViewNodeType::VirtualList })
+            ? "vertical" : "horizontal");
+    if (property == "flexDirection")
+        return literal(type == ViewNodeType::Column ? "column" : "row");
+    if (property == "textWrap")
+        return literal(type == ViewNodeType::StyledText
+            ? "wrap" : "noWrap");
+    if (property == "overflowText")
+        return literal(type == ViewNodeType::StyledText
+            ? "clip" : "ellipsis");
+    if (property == "accessibility")
+        return conditional("host role and state derived from node type");
+
+    const ViewPropertyContract* contract =
+        FindViewPropertyContract(property);
+    if (!contract)
+        return { ViewPropertyDefaultKind::NotApplicable, {} };
+    switch (contract->valueKind)
+    {
+    case ViewPropertyValueKind::String:
+        return literal("\"\"");
+    case ViewPropertyValueKind::Boolean:
+        return literal(IsNamed(property, { "liveUpdate", "showScrollbar",
+            "showAdjacentDates", "visible", "enabled" })
+            ? "true" : "false");
+    case ViewPropertyValueKind::Number:
+        if (property == "step") return literal("0.01");
+        if (property == "thickness") return literal("4");
+        if (property == "trackOpacity" || property == "fillOpacity")
+            return literal("1");
+        if (property == "fontSize") return literal("15");
+        if (property == "flexShrink") return literal("1");
+        if (property == "lineHeight" || property == "estimatedItemSize" ||
+            IsNamed(property, { "minWidth", "maxWidth", "minHeight",
+                "maxHeight", "aspectRatio", "columnGap", "rowGap" }))
+            return literal("nil");
+        return literal("0");
+    case ViewPropertyValueKind::Integer:
+        if (property == "firstDayOfWeek" || property == "columnSpan" ||
+            property == "rowSpan") return literal("1");
+        if (property == "overscan") return literal("2");
+        if (property == "stickyHeaderIndex" ||
+            property == "initialScrollIndex" || property == "gridColumn" ||
+            property == "gridRow" || property == "tabIndex")
+            return literal("nil");
+        return literal("0");
+    case ViewPropertyValueKind::StringOrNumber:
+        return literal("0");
+    case ViewPropertyValueKind::Length:
+        return literal("auto");
+    case ViewPropertyValueKind::EdgeInsets:
+        return literal("0");
+    case ViewPropertyValueKind::Offset:
+        return literal("{ x=0, y=0 }");
+    case ViewPropertyValueKind::Resource:
+    case ViewPropertyValueKind::Color:
+    case ViewPropertyValueKind::Shadow:
+    case ViewPropertyValueKind::Transform:
+    case ViewPropertyValueKind::Transition:
+    case ViewPropertyValueKind::PresenceTransition:
+    case ViewPropertyValueKind::Tooltip:
+    case ViewPropertyValueKind::Node:
+    case ViewPropertyValueKind::Action:
+    case ViewPropertyValueKind::TextSelection:
+        return literal("nil");
+    case ViewPropertyValueKind::StringArray:
+    case ViewPropertyValueKind::NumberArray:
+    case ViewPropertyValueKind::IndexArray:
+    case ViewPropertyValueKind::Spans:
+    case ViewPropertyValueKind::ChoiceOptions:
+    case ViewPropertyValueKind::NodeArray:
+    case ViewPropertyValueKind::Events:
+        return literal("{}");
+    case ViewPropertyValueKind::Style:
+        return literal("{}");
+    case ViewPropertyValueKind::GridTracks:
+        return literal("nil");
+    case ViewPropertyValueKind::Enum:
+        if (property == "iconFont") return literal("fa");
+        if (property == "fit") return literal("contain");
+        if (property == "alignment") return literal("center");
+        if (property == "interpolation") return literal("linear");
+        if (property == "shape") return literal("rectangle");
+        if (property == "validationState") return literal("none");
+        if (property == "overflow") return literal("visible");
+        if (property == "selectionMode") return literal("none");
+        if (property == "flexWrap") return literal("noWrap");
+        if (property == "alignContent") return literal("stretch");
+        if (property == "fontStyle") return literal("normal");
+        if (property == "textDirection") return literal("auto");
+        if (property == "visibility") return literal("visible");
+        if (property == "alignItems") return literal("stretch");
+        if (property == "alignSelf") return literal("auto");
+        if (property == "justifyContent") return literal("start");
+        if (property == "textAlign") return literal("start");
+        if (property == "verticalAlign") return literal("center");
+        return literal("nil");
+    case ViewPropertyValueKind::Accessibility:
+        return conditional("host role and state derived from node type");
+    }
+    return { ViewPropertyDefaultKind::NotApplicable, {} };
+}
+
 std::vector<std::string_view> ViewNodeAllowedProperties(ViewNodeType type)
 {
     std::vector<std::string_view> result;

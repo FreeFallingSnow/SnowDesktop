@@ -1293,6 +1293,9 @@ events 和 action 等结构类型也已接入同一入口外形校验，再由�
 全部属性现进一步登记 layout、paint、hit-test、input、accessibility、resource 和 tree 影响域位集；
 该列描述属性变化需要失效的宿主子系统，为后续差量 scene 更新提供契约，而不是把动画能力或
 是否允许该属性混入同一个布尔值。
+逐节点属性默认值现也可从契约查询：必填、不可用、固定 Lua 表达式和条件默认分开表示；badge/input
+padding、radioGroup gap、styledText 文本流、scroll/list 方向等解析器特例已经进入查询，divider
+方向尺寸、数据图自动范围、逻辑槽位二选一和 virtualList 尺寸二选一不会被误报为固定默认。
 17 个公开节点事件也已进入同一契约源，登记统一 payload 类别和逐节点适用性；Lua 解析器、
 scene 校验与契约测试不再分别维护 change、selectionChange、输入生命周期和 scrollEnd 的类型白名单。
 当前已进一步为每个语义节点登记 UIA ControlType、基础 Pattern 和是否参与宿主键盘焦点，并可从
