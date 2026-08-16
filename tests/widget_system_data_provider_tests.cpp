@@ -51,7 +51,12 @@ void TestTopicLifecycleAndSampling()
         "memory sampling must publish an immutable revision");
     const auto memory = provider.Memory();
     Check(memory && memory->timestampMs > 0 &&
-            (memory->available || !memory->error.empty()),
+            (memory->available || !memory->error.empty()) &&
+            (!memory->available ||
+                (memory->commitLimitBytes >= memory->commitUsedBytes &&
+                    memory->commitAvailableBytes ==
+                        memory->commitLimitBytes -
+                            memory->commitUsedBytes)),
         "memory snapshots must include availability or a stable error");
     const auto changed = provider.DrainChangedTopics();
     Check(changed.size() == 1 && changed[0] == "system.memory",

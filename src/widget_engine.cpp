@@ -3455,6 +3455,15 @@ static void PushDataSnapshotEnvelope(lua_State* state,
         lua_pushinteger(state,
             static_cast<lua_Integer>(snapshot->memory.freeBytes));
         lua_setfield(state, -2, "freeBytes");
+        lua_pushinteger(state, static_cast<lua_Integer>(
+            snapshot->memory.commitLimitBytes));
+        lua_setfield(state, -2, "commitLimitBytes");
+        lua_pushinteger(state, static_cast<lua_Integer>(
+            snapshot->memory.commitUsedBytes));
+        lua_setfield(state, -2, "commitUsedBytes");
+        lua_pushinteger(state, static_cast<lua_Integer>(
+            snapshot->memory.commitAvailableBytes));
+        lua_setfield(state, -2, "commitAvailableBytes");
         lua_pushnumber(state, snapshot->memory.usagePercent);
         lua_setfield(state, -2, "usagePercent");
     }
@@ -19921,6 +19930,10 @@ WidgetEngine::RuntimeGetDataSnapshot(
             result.memory.totalBytes = 16ull * 1024 * 1024 * 1024;
             result.memory.usedBytes = 9ull * 1024 * 1024 * 1024;
             result.memory.freeBytes = 7ull * 1024 * 1024 * 1024;
+            result.memory.commitLimitBytes = 32ull * 1024 * 1024 * 1024;
+            result.memory.commitUsedBytes = 13ull * 1024 * 1024 * 1024;
+            result.memory.commitAvailableBytes =
+                19ull * 1024 * 1024 * 1024;
             result.memory.usagePercent = 56.25;
             result.memory.timestampMs = timestampNow;
         }

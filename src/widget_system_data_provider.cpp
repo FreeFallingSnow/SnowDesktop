@@ -1093,11 +1093,27 @@ WidgetMemoryDataSnapshot WidgetSystemDataProvider::SampleMemory()
         snapshot.error = "Memory sampling failed";
         return snapshot;
     }
-    snapshot.available = true;
     snapshot.totalBytes = status.ullTotalPhys;
     snapshot.freeBytes = status.ullAvailPhys;
     snapshot.usedBytes = snapshot.totalBytes - snapshot.freeBytes;
+    PERFORMANCE_INFORMATION performance{};
+    performance.cb = sizeof(performance);
+    if (!K32GetPerformanceInfo(&performance, sizeof(performance)))
+    {
+        snapshot.error = "Memory commit sampling failed";
+        return snapshot;
+    }
+    const std::uint64_t pageSize = static_cast<std::uint64_t>(
+        performance.PageSize);
+    snapshot.commitLimitBytes = static_cast<std::uint64_t>(
+        performance.CommitLimit) * pageSize;
+    snapshot.commitUsedBytes = static_cast<std::uint64_t>(
+        performance.CommitTotal) * pageSize;
+    snapshot.commitAvailableBytes = snapshot.commitLimitBytes >=
+            snapshot.commitUsedBytes
+        ? snapshot.commitLimitBytes - snapshot.commitUsedBytes : 0;
     snapshot.usagePercent = static_cast<double>(status.dwMemoryLoad);
+    snapshot.available = true;
     return snapshot;
 }
 

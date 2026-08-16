@@ -898,7 +898,7 @@ API v2 不把 Win32、COM 或 WinRT 原样暴露给 Lua，而是固定为四个�
 | 数据主题 | v2.0 最小字段/行为 | 权限 |
 |---|---|---|
 | `system.cpu` | aggregate usage、logical processor count；可选受限 per-logical usage；明确 warming 和采样区间 | `system.performance.read` |
-| `system.memory` | physical total/available/used、commit limit/used、usage percent；全部使用 bytes | `system.performance.read` |
+| `system.memory` | physical total/available/used、commit limit/used/available、usage percent；全部使用 bytes | `system.performance.read` |
 | `process.summary` | 最多 12 个可查询进程的 opaque ID、显示名、总机器 CPU 占比、working set/private bytes 和截断状态；不返回 PID、路径、命令行、窗口标题、用户或控制能力 | `process.summary.read` |
 | `system.gpu` | adapter 数组、opaque adapter ID、display name、usage、dedicated/shared memory；不得只返回第一块 GPU | `system.performance.read` |
 | `system.power` | AC/battery/charging/saver、percent、可用时的 estimated remaining、状态变化；无电池设备正常返回 unavailable | `system.power.read` |

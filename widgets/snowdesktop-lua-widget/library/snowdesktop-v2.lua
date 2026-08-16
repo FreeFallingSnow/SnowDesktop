@@ -1181,6 +1181,9 @@ function animation.cancelFrame(id) end
 ---@field totalBytes integer
 ---@field usedBytes integer
 ---@field freeBytes integer
+---@field commitLimitBytes integer System commit limit in bytes.
+---@field commitUsedBytes integer Current system committed bytes.
+---@field commitAvailableBytes integer Remaining commit capacity in bytes.
 ---@field usagePercent number
 
 ---@class SnowProcessSummaryEntryDataValue

@@ -37,6 +37,9 @@ struct WidgetMemoryDataSnapshot
     std::uint64_t totalBytes = 0;
     std::uint64_t usedBytes = 0;
     std::uint64_t freeBytes = 0;
+    std::uint64_t commitLimitBytes = 0;
+    std::uint64_t commitUsedBytes = 0;
+    std::uint64_t commitAvailableBytes = 0;
     double usagePercent = 0.0;
     std::int64_t timestampMs = 0;
     std::uint64_t revision = 0;

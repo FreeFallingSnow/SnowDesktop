@@ -1150,7 +1150,7 @@ end
 `handle:value()` 返回
 `available/value/timestamp/stale/warmingUp/error` 包络，CPU value 包含
 `usagePercent/logicalProcessors/name`，内存 value 包含
-`totalBytes/usedBytes/freeBytes/usagePercent`，电源 value 包含
+`totalBytes/usedBytes/freeBytes/commitLimitBytes/commitUsedBytes/commitAvailableBytes/usagePercent`，电源 value 包含
 `acPower/charging/saver/batteryPercent/estimatedRemainingSeconds?`。CPU 首次
 差分采样可能暂时 `warmingUp=true`；无电池设备返回
 `available=false,error="notPresent"`。`handle:unsubscribe()` 主动释放；卸载、
