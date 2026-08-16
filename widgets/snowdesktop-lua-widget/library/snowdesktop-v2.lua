@@ -1196,16 +1196,6 @@ function widget.invalidate() end
 ---@param message string
 function widget.log(level, message) end
 
----@param name string
----@param intervalMilliseconds integer
----@param repeatTimer? boolean
----@return boolean
-function widget.setTimer(name, intervalMilliseconds, repeatTimer) end
-
----@param name string
----@return boolean
-function widget.cancelTimer(name) end
-
 ---@class snow.schedule
 schedule = {}
 
@@ -1870,21 +1860,6 @@ function task.start(name, arguments) end
 ---@param taskId integer
 ---@return boolean canceled
 function task.cancel(taskId) end
-
----Compatibility editor retained by the host; new v2 widgets should wait for
----the declarative control tree instead of building new interaction on it.
----@param storageKey string
----@param x number
----@param y number
----@param width number
----@param height number
----@param multiline? boolean
----@param initialValue? string
----@param selectAll? boolean
----@param textColor? integer
----@param fontSize? number
----@param backgroundColor? integer
-function widget.editText(storageKey, x, y, width, height, multiline, initialValue, selectAll, textColor, fontSize, backgroundColor) end
 
 ---@class snow.system
 system = {}

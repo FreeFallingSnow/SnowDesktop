@@ -412,7 +412,8 @@ default border does not fit the component design.
   instance and refills one commit per second. A transaction counts once; an
   unchanged write, preview, or migration overlay does not consume the budget.
 - Use `schedule.every/after/at/cancel` for v2 timers and handle
-  `event.kind == "schedule"`; do not add new `widget.setTimer` usage.
+  `event.kind == "schedule"`; API v2 does not expose `widget.setTimer` or
+  `widget.cancelTimer`.
 - Use `schedule.timeline` for 1–64 strictly increasing absolute state entries.
   Elapsed entries coalesce to the newest due value; inspect `timelineIndex`,
   `timelineCount`, `timelineEnded`, and `missed`. With `reload = "atEnd"`,

@@ -112,6 +112,23 @@ void TestV2OnlyWidgetActivation(const fs::path& repository)
         Check(registration.find(legacyLibrary) == std::string_view::npos,
             "formal VM registration must not create API v1 library tables");
     }
+    for (const std::string_view legacyFunction : {
+            "lua_WidgetSetTimer", "lua_WidgetCancelTimer",
+            "lua_WidgetEditText" })
+    {
+        Check(source.find(legacyFunction) == std::string_view::npos,
+            "formal VM source must not retain an API v1 widget callback");
+    }
+
+    const std::string luaLs = ReadFile(repository / "widgets" /
+        "snowdesktop-lua-widget" / "library" / "snowdesktop-v2.lua");
+    for (const std::string_view legacyDeclaration : {
+            "function widget.setTimer", "function widget.cancelTimer",
+            "function widget.editText" })
+    {
+        Check(luaLs.find(legacyDeclaration) == std::string_view::npos,
+            "API v2 LuaLS must not advertise an API v1 widget function");
+    }
 }
 
 void TestPackageResourceRenderPurity(const fs::path& repository)

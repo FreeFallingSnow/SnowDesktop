@@ -259,7 +259,7 @@ constexpr float kIconBeautifyCornerRadiusRatio = 0.35f;
 constexpr float kIconBeautifyCornerExponent = 4.0f;
 
 // ── 组件刷新截止时间约束 ──────────────────────
-// manifest.refreshIntervalMs 与 widget.setTimer 均进入统一截止时间队列；
+// 旧 manifest.refreshIntervalMs 与 v2 schedule 均进入统一截止时间队列；
 // 这里仅保留公开计时语义原有的间隔上下限。
 constexpr UINT kWidgetRefreshMinIntervalMs = 16;      // 单组件声明刷新间隔下限
 constexpr UINT kWidgetRefreshMaxIntervalMs = 86400000; // 上限（24h）

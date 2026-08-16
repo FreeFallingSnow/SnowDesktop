@@ -603,7 +603,7 @@ struct LuaWidget
     std::uint32_t notificationsInWindow = 0;
     std::chrono::steady_clock::time_point lastRenderTime{};
     UINT_PTR refreshTimerId = 0;        ///< 宿主统一截止时间队列分配的周期令牌（0 = 未开）
-    UINT_PTR namedTimerId = 0;          ///< widget.setTimer 命名定时器共用的下一次唤醒令牌
+    UINT_PTR namedTimerId = 0;          ///< v2 schedule 命名计划共用的下一次唤醒令牌
     UINT_PTR animationTimerId = 0;      ///< animation.requestFrame 共用的单次下一帧令牌
     snowdesktop::widget_runtime::NamedTimerSchedule namedTimers;
     snowdesktop::widget_runtime::AnimationFrameRequests animationFrames;
@@ -874,7 +874,7 @@ public:
      * @param widgetId 触发刷新的小部件实例 ID
      * @param timerId 宿主触发的调度令牌
      *
-     * 同时处理 manifest.refreshIntervalMs 的周期刷新和 widget.setTimer 命名定时器。
+     * 同时处理旧 manifest.refreshIntervalMs 周期刷新和 v2 schedule 命名计划。
      * 命名定时器只为最近一次到期时间申请单次宿主唤醒，避免全局轮询全部组件。
      */
     void OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId);

@@ -3996,26 +3996,6 @@ static int lua_MediaPrevious(lua_State* L)
     return 1;
 }
 
-static int lua_WidgetSetTimer(lua_State* L)
-{
-    const char* name = luaL_checkstring(L, 1);
-    int intervalMs = static_cast<int>(luaL_checkinteger(L, 2));
-    bool repeat = lua_isnoneornil(L, 3) || lua_toboolean(L, 3) != 0;
-    auto* s = GetD2D(L);
-    lua_pushboolean(L, s && s->engine &&
-        s->engine->RuntimeSetTimer(BoundWidgetId(L), name ? name : "", intervalMs, repeat));
-    return 1;
-}
-
-static int lua_WidgetCancelTimer(lua_State* L)
-{
-    const char* name = luaL_checkstring(L, 1);
-    auto* s = GetD2D(L);
-    lua_pushboolean(L, s && s->engine &&
-        s->engine->RuntimeCancelTimer(BoundWidgetId(L), name ? name : ""));
-    return 1;
-}
-
 static int LuaScheduleSet(lua_State* state, bool repeat,
     const char* functionName)
 {
@@ -9149,38 +9129,6 @@ static int lua_WidgetTheme(lua_State* L)
     lua_pushnumber(L, theme.cornerRadius); lua_setfield(L, -2, "cornerRadius");
     lua_pushinteger(L, theme.contentTheme); lua_setfield(L, -2, "contentTheme");
     return 1;
-}
-
-static int lua_WidgetEditText(lua_State* L)
-{
-    const char* key = luaL_checkstring(L, 1);
-    int x = static_cast<int>(luaL_checknumber(L, 2));
-    int y = static_cast<int>(luaL_checknumber(L, 3));
-    int w = static_cast<int>(luaL_checknumber(L, 4));
-    int h = static_cast<int>(luaL_checknumber(L, 5));
-    bool multiline = lua_toboolean(L, 6) != 0;
-    auto* s = GetD2D(L);
-    if (!s || !s->engine || !key || !*key)
-        return 0;
-
-    std::string initial;
-    if (lua_isstring(L, 7))
-        initial = lua_tostring(L, 7);
-    else
-        initial = s->engine->RuntimeGetStorageValue(BoundWidgetId(L), key);
-
-    LuaInlineTextEditRequest request;
-    request.widgetId = BoundWidgetId(L);
-    request.storageKey = key;
-    request.text = initial;
-    request.localRect = { x, y, x + std::max(1, w), y + std::max(1, h) };
-    request.multiline = multiline;
-    request.selectAll = lua_isnil(L, 8) ? true : (lua_toboolean(L, 8) != 0);
-    request.textColor = static_cast<int>(luaL_optinteger(L, 9, 0x000000));
-    request.fontSize = static_cast<float>(luaL_optnumber(L, 10, 15.0));
-    request.backgroundColor = static_cast<int>(luaL_optinteger(L, 11, 0xFFFFFF));
-    s->engine->RuntimeBeginInlineTextEdit(request);
-    return 0;
 }
 
 static int lua_DesktopItems(lua_State* L)
@@ -32782,9 +32730,6 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
         { "invalidate", lua_WidgetInvalidate },
         { "log", lua_WidgetLog },
         { "theme", lua_WidgetTheme },
-        { "editText", lua_WidgetEditText },
-        { "setTimer", lua_WidgetSetTimer },
-        { "cancelTimer", lua_WidgetCancelTimer },
         { "define", snowdesktop::widget_api::LuaDefineWidget, 2 },
         { "apiInfo", snowdesktop::widget_api::LuaApiInfo, 2 },
         { "hasFeature", snowdesktop::widget_api::LuaHasFeature, 2 },

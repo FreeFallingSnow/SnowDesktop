@@ -90,8 +90,8 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 - `widget.info()`、`widget.theme()`：兼容的实例与外观快照。
 - `widget.hasPermission(name)`：查询当前实例已授予权限。
 - `widget.setTitle(text)`、`widget.invalidate()`、`widget.log(level, text)`。
-- `widget.setTimer`、`widget.cancelTimer`：API v1 兼容入口；新 v2 组件使用
-  `schedule`。
+- v2 不暴露旧 `widget.setTimer/cancelTimer`；周期、延迟和绝对时间调度统一使用
+  `schedule.every/after/at/timeline`。
 - `widget.openSettings()`、`widget.openPanel(options)`、`widget.closePanel()`、
   `widget.openDialog(options)`、`widget.closeDialog()`。dialog 默认允许 Escape 关闭、
   不允许点击遮罩关闭；可用 `dismissOnEscape` 与 `dismissOnOutside` 显式调整。它不使用
@@ -1263,7 +1263,8 @@ end
 移除入口合并。该 API 不要求 `ui.contextMenu` 权限；对应 feature 为
 `interaction.region`、`interaction.pointerActions` 和 `interaction.contextMenu`；嵌套菜单另需
 `interaction.contextMenu.submenu`，包内图片另需 `interaction.contextMenu.resourceImage`。
-- `widget.editText(...)`：旧宿主编辑器兼容调用，不建议新 v2 组件依赖。
+- v2 不暴露旧 `widget.editText(...)`；文本编辑统一使用声明式输入节点或
+  `control.textInput/textArea`。
 
 ### `control` 文本编辑
 
@@ -1349,8 +1350,8 @@ timeline 跨过多个条目时也只分发最新到期值，并额外返回 `val
 系统时钟在宿主重新计算截止时间时会重新投影到单调时钟，避免用可回拨的 wall clock
 计算经过时长。预览执行使用固定虚拟 wall/monotonic 时钟；schedule 会完成参数校验并
 登记到预览实例，但不创建系统计时器或自行推进时间，对应 feature
-`time.previewClock`。API v1 继续使用 `onTimer`
-兼容路径；新 v2 组件不得再依赖清单 `refreshIntervalMs` 过渡事件。
+`time.previewClock`。API v1 `onTimer` 只保留在迁移报告中，不进入正式 VM；新 v2 组件不得再
+依赖清单 `refreshIntervalMs` 过渡事件。
 
 ### `animation`
 
