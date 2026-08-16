@@ -1208,10 +1208,12 @@ scroll key 同样是实例内稳定的 1–128 字节 UTF-8 字符串；只接�
 右键命中带 `contextMenu` 绑定的 region 后，宿主同步调用 descriptor 的 `menu`：
 
 ```lua
+local menuOpenImage = resource.image("menuOpen")
+
 local function menu(_context, _model, request)
     if request.id ~= "item.menu" then return nil end
     return ui.menu({
-        { id = "item.open", label = "Open" },
+        { id = "item.open", label = "Open", image = menuOpenImage },
         { id = "item.pin", label = "Pin", checked = false },
         { label = "Open with", children = {
             { id = "item.open.editor", label = "Editor" },
@@ -1226,6 +1228,11 @@ end
 基础菜单项支持唯一字符串 `id`、`label`、`enabled`、`checked`、separator 和宿主
 字体 glyph。探测 `interaction.contextMenu.submenu` 后，无 `id` 的普通项可通过 `children`
 形成子菜单；动作 `id` 在整棵树中唯一，最多嵌套 3 层，整棵树（含父项和分隔线）最多 64 项。
+探测 `interaction.contextMenu.resourceImage` 后，普通项或子菜单父项可用 `image=resource.image(...)`
+显示已声明的包内图片；它与宿主字形 `icon` 互斥，不接受媒体封面、剪贴板图片等临时运行时句柄。
+宿主从已解码的包资源缓存生成按菜单 DPI 限制尺寸的预乘 alpha 位图，菜单关闭后释放副本；禁用项
+降低整体图像不透明度。图片解码失败时 `resource.image(...)` 已在组件入口加载阶段报错，不在打开
+菜单时同步读取文件。
 回调必须同步、快速且不执行 I/O。用户选择叶子项后收到
 `event.kind == "action"`，其中 `id` 为菜单项 ID，`source == "contextMenu"`，并带
 原 region 的 `targetKey` 与 `value`。菜单打开后只要 region 集合产生新一代提交，
@@ -1233,7 +1240,7 @@ end
 `component`；元素级菜单独立显示，组件级菜单才与 SnowDesktop 的设置、授权、诊断和
 移除入口合并。该 API 不要求 `ui.contextMenu` 权限；对应 feature 为
 `interaction.region`、`interaction.pointerActions` 和 `interaction.contextMenu`；嵌套菜单另需
-`interaction.contextMenu.submenu`。
+`interaction.contextMenu.submenu`，包内图片另需 `interaction.contextMenu.resourceImage`。
 - `widget.editText(...)`：旧宿主编辑器兼容调用，不建议新 v2 组件依赖。
 
 ### `control` 文本编辑

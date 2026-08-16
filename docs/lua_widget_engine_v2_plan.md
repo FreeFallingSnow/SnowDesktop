@@ -1048,10 +1048,12 @@ virtualList/virtualGrid 及已测量的可变高度 virtualList，所有结果�
 surface 尚无容器偏移时采用声明值，成功提交后不再用重渲染覆盖用户位置。
 desktop 与宿主辅助 surface 的即时绘制均有各自原子提交的 region 集合；
 `view.keyboardNavigation.basic` 已让可点击、受控和文本输入 region 进入所属 surface 的宿主
-焦点序列。触控长按、包内菜单图标和完整 UIA scene tree 仍按 M6 后续交付物推进。受控 submenu
+焦点序列。触控长按和完整 UIA scene tree 仍按 M6 后续交付物推进。受控 submenu
 已通过 `interaction.contextMenu.submenu` 提供三层、全树 64 项的宿主原生子菜单；
 `interaction.pointerCapture` 已允许声明式节点和即时 region 显式捕获主指针，在目标删除、surface
-关闭、窗口失焦或系统取消捕获时由宿主释放。
+关闭、窗口失焦或系统取消捕获时由宿主释放；包内菜单图片通过
+`interaction.contextMenu.resourceImage` 复用已声明、已解码的 `resource.image`，由宿主按菜单 DPI
+缩放并在菜单关闭时释放显示副本。
 
 文本编辑的过渡宿主控件已增加 `control.textInput/textArea/focus`：组件在 render 中
 提交严格的稳定 key、storageKey、rect 与白名单视觉属性，宿主复用 Direct2D 光标、

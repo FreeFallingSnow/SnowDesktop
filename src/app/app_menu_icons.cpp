@@ -1,5 +1,7 @@
 #include "app.h"
+#include "../menu_icon_render.h"
 #include "../modern_menu.h"
+#include "../widget_package_image_cache.h"
 
 // Converts the existing HMENU command model into fully custom popup windows.
 
@@ -378,6 +380,11 @@ void DesktopApp::SetMenuItemIcon(
         }
 
         entry->glyph.clear();
+        if (entry->imageBitmap)
+        {
+            DeleteObject(entry->imageBitmap);
+            entry->imageBitmap = nullptr;
+        }
         entry->fontAwesome = font == MenuIconFont::FontAwesomeSolid;
         if (!entry->quickAction)
         {
@@ -398,6 +405,56 @@ void DesktopApp::SetMenuItemIcon(
         }
         return;
     }
+}
+
+void DesktopApp::SetMenuItemImage(HMENU menu, UINT_PTR command,
+    const snowdesktop::widget_runtime::PackageImageSource& source)
+{
+    if (!menu || source.pixels.empty()) return;
+    const snowdesktop::menu_icon::ImageSourceView sourceView{
+        source.pixels.data(), source.pixels.size(), source.width,
+        source.height, source.stride,
+    };
+    HBITMAP bitmap = snowdesktop::menu_icon::CreateImageBitmap(
+        sourceView, std::max(1, MulDiv(18,
+            static_cast<int>(menuIconDpi_), USER_DEFAULT_SCREEN_DPI)));
+    if (!bitmap) return;
+
+    const int count = GetMenuItemCount(menu);
+    for (int i = 0; i < count; ++i)
+    {
+        MENUITEMINFOW probe{ sizeof(probe) };
+        probe.fMask = MIIM_ID | MIIM_SUBMENU;
+        if (!GetMenuItemInfoW(menu, static_cast<UINT>(i), TRUE, &probe))
+            continue;
+        if (probe.wID != command &&
+            reinterpret_cast<UINT_PTR>(probe.hSubMenu) != command)
+            continue;
+
+        MenuIconEntry* entry = nullptr;
+        for (auto& existing : menuIconPool_)
+        {
+            if (existing->menu == menu &&
+                existing->position == static_cast<UINT>(i))
+            {
+                entry = existing.get();
+                break;
+            }
+        }
+        if (!entry)
+        {
+            auto created = std::make_unique<MenuIconEntry>();
+            created->menu = menu;
+            created->position = static_cast<UINT>(i);
+            entry = created.get();
+            menuIconPool_.push_back(std::move(created));
+        }
+        entry->glyph.clear();
+        if (entry->imageBitmap) DeleteObject(entry->imageBitmap);
+        entry->imageBitmap = bitmap;
+        return;
+    }
+    DeleteObject(bitmap);
 }
 
 void DesktopApp::SetMenuItemQuickAction(
@@ -566,6 +623,7 @@ UINT DesktopApp::ShowModernMenu(
                     icon->position == static_cast<UINT>(i))
                 {
                     item.glyph = icon->glyph;
+                    item.image = icon->imageBitmap;
                     item.iconFont = icon->fontAwesome
                         ? snowdesktop::modern_menu::IconFont::FontAwesomeSolid
                         : snowdesktop::modern_menu::IconFont::FluentRegular;

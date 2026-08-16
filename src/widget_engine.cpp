@@ -20207,6 +20207,27 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
                 if (lua_isstring(state, -1))
                     item.iconFont = lua_tostring(state, -1);
                 lua_pop(state, 1);
+                lua_getfield(state, -1, "image");
+                if (!lua_isnil(state, -1))
+                {
+                    const auto* handle = TestResourceHandle(state, -1);
+                    if (!handle || handle->type != LuaResourceType::Image ||
+                        snowdesktop::widget_runtime::
+                            IsWidgetRuntimeImageToken(handle->name))
+                    {
+                        menuError =
+                            "Widget menu image must be a package resource.image handle";
+                        return false;
+                    }
+                    item.imageResourceName = handle->name;
+                }
+                lua_pop(state, 1);
+                if (!item.icon.empty() && !item.imageResourceName.empty())
+                {
+                    menuError =
+                        "Widget menu items cannot combine icon and image";
+                    return false;
+                }
                 lua_getfield(state, -1, "enabled");
                 item.enabled = lua_isnil(state, -1) ||
                     lua_toboolean(state, -1) != 0;
@@ -27308,6 +27329,17 @@ WidgetEngine::RuntimeResolvePackageImageContentKey(
     if (key == widgets_[index].packageImageContentKeys.end())
         return std::nullopt;
     return key->second;
+}
+
+const snowdesktop::widget_runtime::PackageImageSource*
+WidgetEngine::RuntimeFindPackageImageSource(
+    const std::wstring& widgetId, std::string_view name) const noexcept
+{
+    if (!d2dState_) return nullptr;
+    const auto contentKey = RuntimeResolvePackageImageContentKey(
+        widgetId, name);
+    return contentKey
+        ? d2dState_->packageImageCache.Find(*contentKey) : nullptr;
 }
 
 LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)

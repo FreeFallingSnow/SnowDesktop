@@ -60,6 +60,10 @@
 
 struct ImGuiContext;
 struct PersonalizationSettings;
+namespace snowdesktop::widget_runtime
+{
+struct PackageImageSource;
+}
 
 extern "C" {
 #include <lua.h>
@@ -190,6 +194,7 @@ struct LuaWidgetMenuItem
     std::string label;         ///< 菜单项显示文本
     std::string icon;          ///< 可选图标字符
     std::string iconFont = "fa"; ///< "fa"（兼容默认）或 "fluent"
+    std::string imageResourceName; ///< API v2 包内 image resource 名称
     bool enabled = true;       ///< 是否可用（灰显）
     bool checked = false;      ///< 是否显示选中标记
     bool separator = false;    ///< 是否为分隔线（为 true 时忽略其他字段）
@@ -1263,6 +1268,9 @@ public:
         std::string_view expectedType) const;
     std::optional<std::string> RuntimeResolvePackageImageContentKey(
         const std::wstring& widgetId, std::string_view name) const;
+    const snowdesktop::widget_runtime::PackageImageSource*
+        RuntimeFindPackageImageSource(const std::wstring& widgetId,
+            std::string_view name) const noexcept;
 
     /**
      * @brief 请求宿主刷新桌面内容

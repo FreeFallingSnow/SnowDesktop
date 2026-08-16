@@ -589,6 +589,7 @@
 ---@field checked? boolean
 ---@field icon? string Optional host glyph.
 ---@field iconFont? 'fa'|'fluent'|'fluent-regular'
+---@field image? SnowImageResource Optional declared package image; mutually exclusive with icon and requires interaction.contextMenu.resourceImage.
 ---@field children? SnowMenuItem[] Nested items; requires interaction.contextMenu.submenu and cannot be combined with id.
 
 ---@alias SnowMenuModel SnowMenuItem[]

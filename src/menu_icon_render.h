@@ -4,6 +4,9 @@
 
 #include <windows.h>
 
+#include <cstddef>
+#include <cstdint>
+
 namespace snowdesktop::menu_icon
 {
 
@@ -50,6 +53,17 @@ struct ItemView
     bool hasSubmenu = false;
     bool checked = false;
     MenuQuickIcon semanticIcon = MenuQuickIcon::FontGlyph;
+    /** Optional non-owning premultiplied package image for the icon column. */
+    HBITMAP image = nullptr;
+};
+
+struct ImageSourceView
+{
+    const std::uint8_t* pixels = nullptr;
+    std::size_t bytes = 0;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    std::uint32_t stride = 0;
 };
 
 struct TextInputView
@@ -68,6 +82,9 @@ Palette ResolvePalette(bool lightTheme);
 
 /** @brief 返回按显示器 DPI 缩放的菜单尺寸。 */
 Metrics ResolveMetrics(UINT dpi);
+
+/** Build a bounded square premultiplied bitmap for a menu image. */
+HBITMAP CreateImageBitmap(const ImageSourceView& source, int pixelSize);
 
 /** @brief 测量完整 owner-draw 菜单项。 */
 SIZE MeasureItem(HDC dc, HFONT textFont, const ItemView& item,

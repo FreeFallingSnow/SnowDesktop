@@ -1466,6 +1466,8 @@ private:
     void SetMenuItemIcon(HMENU menu, UINT_PTR command,
         const wchar_t* text,
         MenuIconFont font = MenuIconFont::BuiltinFluentFromLegacy);
+    void SetMenuItemImage(HMENU menu, UINT_PTR command,
+        const snowdesktop::widget_runtime::PackageImageSource& source);
     /** @brief 将根菜单项移到 Windows 11 风格的顶部快捷操作区。 */
     void SetMenuItemQuickAction(HMENU menu, UINT_PTR command);
     /** @brief 将连续菜单项标记为同一行的紧凑操作。 */
@@ -2587,9 +2589,14 @@ private:
     int menuAppearanceStyle_ = 0;
     struct MenuIconEntry
     {
+        ~MenuIconEntry()
+        {
+            if (imageBitmap) DeleteObject(imageBitmap);
+        }
         HMENU menu = nullptr;
         UINT position = 0;
         std::wstring glyph;
+        HBITMAP imageBitmap = nullptr;
         bool fontAwesome = false;
         bool quickAction = false;
         bool inlineAction = false;

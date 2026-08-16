@@ -3,6 +3,7 @@
 #include "menu_fluent_glyphs.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cwchar>
 #include <map>
@@ -519,6 +520,49 @@ bool DrawOpticallyWeightedFluentGlyph(HDC dc, const wchar_t* glyph,
     return drawn != FALSE;
 }
 
+bool DrawImageLayer(HDC dc, HBITMAP image, const RECT& bounds,
+    bool disabled)
+{
+    if (!dc || !image || bounds.right <= bounds.left ||
+        bounds.bottom <= bounds.top)
+        return false;
+    BITMAP bitmap{};
+    if (GetObjectW(image, sizeof(bitmap), &bitmap) == 0 ||
+        bitmap.bmWidth <= 0 || bitmap.bmHeight <= 0)
+        return false;
+    using AlphaBlendFn = BOOL(WINAPI*)(HDC, int, int, int, int,
+        HDC, int, int, int, int, BLENDFUNCTION);
+    static const HMODULE alphaBlendModule = LoadLibraryW(L"msimg32.dll");
+    static const auto alphaBlend = alphaBlendModule
+        ? reinterpret_cast<AlphaBlendFn>(
+            GetProcAddress(alphaBlendModule, "AlphaBlend"))
+        : nullptr;
+    if (!alphaBlend) return false;
+
+    HDC sourceDc = CreateCompatibleDC(dc);
+    if (!sourceDc) return false;
+    HGDIOBJ oldBitmap = SelectObject(sourceDc, image);
+    const int boundsWidth = static_cast<int>(bounds.right - bounds.left);
+    const int boundsHeight = static_cast<int>(bounds.bottom - bounds.top);
+    const int maximum = std::max(1,
+        std::min(boundsWidth, boundsHeight));
+    const int width = std::max(1,
+        std::min(maximum, static_cast<int>(bitmap.bmWidth)));
+    const int height = std::max(1,
+        std::min(maximum, static_cast<int>(bitmap.bmHeight)));
+    const int left = (bounds.left + bounds.right - width) / 2;
+    const int top = (bounds.top + bounds.bottom - height) / 2;
+    const BLENDFUNCTION blend{
+        AC_SRC_OVER, 0, static_cast<BYTE>(disabled ? 112 : 255),
+        AC_SRC_ALPHA,
+    };
+    const BOOL drawn = alphaBlend(dc, left, top, width, height,
+        sourceDc, 0, 0, bitmap.bmWidth, bitmap.bmHeight, blend);
+    if (oldBitmap) SelectObject(sourceDc, oldBitmap);
+    DeleteDC(sourceDc);
+    return drawn != FALSE;
+}
+
 void DrawGlyphLayer(HDC dc, const wchar_t* glyph,
     const RECT& bounds, COLORREF color, const RECT* clip)
 {
@@ -726,6 +770,92 @@ Metrics ResolveMetrics(UINT dpi)
     };
 }
 
+HBITMAP CreateImageBitmap(const ImageSourceView& source, int pixelSize)
+{
+    if (!source.pixels || pixelSize < 1 || pixelSize > 512 ||
+        source.width == 0 || source.height == 0)
+        return nullptr;
+    const std::uint64_t rowBytes =
+        static_cast<std::uint64_t>(source.width) * 4;
+    const std::uint64_t requiredBytes =
+        static_cast<std::uint64_t>(source.height - 1) * source.stride +
+        rowBytes;
+    if (rowBytes > source.stride || requiredBytes > source.bytes)
+        return nullptr;
+
+    BITMAPINFO info{};
+    info.bmiHeader.biSize = sizeof(info.bmiHeader);
+    info.bmiHeader.biWidth = pixelSize;
+    info.bmiHeader.biHeight = -pixelSize;
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+    void* rawPixels = nullptr;
+    HBITMAP bitmap = CreateDIBSection(nullptr, &info,
+        DIB_RGB_COLORS, &rawPixels, nullptr, 0);
+    if (!bitmap || !rawPixels)
+    {
+        if (bitmap) DeleteObject(bitmap);
+        return nullptr;
+    }
+    auto* target = static_cast<std::uint8_t*>(rawPixels);
+    std::fill_n(target,
+        static_cast<std::size_t>(pixelSize) * pixelSize * 4,
+        std::uint8_t{ 0 });
+
+    const double scale = std::min(
+        static_cast<double>(pixelSize) / source.width,
+        static_cast<double>(pixelSize) / source.height);
+    const int drawWidth = std::clamp(
+        static_cast<int>(std::lround(source.width * scale)), 1, pixelSize);
+    const int drawHeight = std::clamp(
+        static_cast<int>(std::lround(source.height * scale)), 1, pixelSize);
+    const int offsetX = (pixelSize - drawWidth) / 2;
+    const int offsetY = (pixelSize - drawHeight) / 2;
+    for (int y = 0; y < drawHeight; ++y)
+    {
+        const double sampleY = std::clamp(
+            (static_cast<double>(y) + 0.5) * source.height / drawHeight -
+                0.5,
+            0.0, static_cast<double>(source.height - 1));
+        const auto y0 = static_cast<std::uint32_t>(std::floor(sampleY));
+        const auto y1 = std::min(y0 + 1, source.height - 1);
+        const double fy = sampleY - y0;
+        for (int x = 0; x < drawWidth; ++x)
+        {
+            const double sampleX = std::clamp(
+                (static_cast<double>(x) + 0.5) * source.width / drawWidth -
+                    0.5,
+                0.0, static_cast<double>(source.width - 1));
+            const auto x0 = static_cast<std::uint32_t>(std::floor(sampleX));
+            const auto x1 = std::min(x0 + 1, source.width - 1);
+            const double fx = sampleX - x0;
+            const std::uint8_t* p00 = source.pixels +
+                static_cast<std::size_t>(y0) * source.stride + x0 * 4;
+            const std::uint8_t* p10 = source.pixels +
+                static_cast<std::size_t>(y0) * source.stride + x1 * 4;
+            const std::uint8_t* p01 = source.pixels +
+                static_cast<std::size_t>(y1) * source.stride + x0 * 4;
+            const std::uint8_t* p11 = source.pixels +
+                static_cast<std::size_t>(y1) * source.stride + x1 * 4;
+            std::uint8_t* destination = target +
+                (static_cast<std::size_t>(offsetY + y) * pixelSize +
+                    offsetX + x) * 4;
+            for (int channel = 0; channel < 4; ++channel)
+            {
+                const double top = p00[channel] +
+                    (p10[channel] - p00[channel]) * fx;
+                const double bottom = p01[channel] +
+                    (p11[channel] - p01[channel]) * fx;
+                destination[channel] = static_cast<std::uint8_t>(
+                    std::clamp(std::lround(top + (bottom - top) * fy),
+                        0l, 255l));
+            }
+        }
+    }
+    return bitmap;
+}
+
 SIZE MeasureItem(HDC dc, HFONT textFont, const ItemView& item,
     const Metrics& metrics)
 {
@@ -803,6 +933,15 @@ bool DrawItem(HDC dc, HFONT textFont, HFONT iconFont,
     if (item.checked || (itemState & ODS_CHECKED) != 0)
     {
         DrawCheckmark(dc, bounds, metrics, foreground);
+    }
+    else if (item.image)
+    {
+        RECT iconBounds = bounds;
+        iconBounds.left += metrics.leftPadding;
+        iconBounds.right = iconBounds.left + metrics.iconColumnWidth;
+        iconBounds.top += metrics.outerInset;
+        iconBounds.bottom -= metrics.outerInset;
+        DrawImageLayer(dc, item.image, iconBounds, disabled);
     }
     else if (item.glyph && *item.glyph)
     {
@@ -897,20 +1036,27 @@ bool DrawQuickAction(HDC dc, HFONT textFont, HFONT iconFont,
         ? palette.disabledText : palette.text;
     const int oldBackgroundMode = SetBkMode(dc, TRANSPARENT);
     const COLORREF oldTextColor = SetTextColor(dc, foreground);
-    HGDIOBJ oldFont = SelectObject(dc,
-        iconFont ? static_cast<HGDIOBJ>(iconFont)
-                 : GetStockObject(DEFAULT_GUI_FONT));
     RECT iconBounds = bounds;
     iconBounds.left += metrics.outerInset;
     iconBounds.right -= metrics.outerInset;
     iconBounds.top += metrics.outerInset;
     iconBounds.bottom = iconBounds.top + metrics.quickActionIconHeight;
-    const COLORREF accent = disabled
-        ? palette.disabledText : palette.accent;
-    DrawQuickLayeredGlyph(dc, quickIcon, item.glyph, iconBounds,
-        foreground, accent, disabled);
-    if (oldFont)
-        SelectObject(dc, oldFont);
+    HGDIOBJ oldFont = nullptr;
+    if (item.image)
+    {
+        DrawImageLayer(dc, item.image, iconBounds, disabled);
+    }
+    else
+    {
+        oldFont = SelectObject(dc,
+            iconFont ? static_cast<HGDIOBJ>(iconFont)
+                     : GetStockObject(DEFAULT_GUI_FONT));
+        const COLORREF accent = disabled
+            ? palette.disabledText : palette.accent;
+        DrawQuickLayeredGlyph(dc, quickIcon, item.glyph, iconBounds,
+            foreground, accent, disabled);
+        if (oldFont) SelectObject(dc, oldFont);
+    }
 
     oldFont = SelectObject(dc,
         textFont ? static_cast<HGDIOBJ>(textFont)
@@ -961,9 +1107,27 @@ bool DrawInlineAction(HDC dc, HFONT textFont, HFONT iconFont,
         : (item.checked ? palette.accent : palette.text);
     const int oldMode = SetBkMode(dc, TRANSPARENT);
     const COLORREF oldColor = SetTextColor(dc, foreground);
-    const bool hasGlyph = item.glyph && *item.glyph;
+    const bool hasGlyph = (item.glyph && *item.glyph) || item.image;
     const bool hasLabel = item.label && *item.label;
-    if (hasGlyph)
+    if (item.image)
+    {
+        RECT imageBounds = bounds;
+        if (hasLabel)
+        {
+            imageBounds.left += metrics.leftPadding;
+            imageBounds.right =
+                imageBounds.left + metrics.iconColumnWidth;
+        }
+        else
+        {
+            imageBounds.left += metrics.outerInset * 2;
+            imageBounds.right -= metrics.outerInset * 2;
+        }
+        imageBounds.top += metrics.outerInset;
+        imageBounds.bottom -= metrics.outerInset;
+        DrawImageLayer(dc, item.image, imageBounds, disabled);
+    }
+    else if (hasGlyph)
     {
         HGDIOBJ oldFont = SelectObject(dc,
             iconFont ? static_cast<HGDIOBJ>(iconFont)

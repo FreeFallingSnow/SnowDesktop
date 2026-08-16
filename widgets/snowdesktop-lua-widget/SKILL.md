@@ -515,6 +515,9 @@ default border does not fit the component design.
   Probe `interaction.contextMenu.submenu` before adding non-actionable menu
   parents with `children`; keep the whole tree within 64 descriptors and three
   submenu levels, with globally unique action IDs on leaves.
+  Probe `interaction.contextMenu.resourceImage` before putting a declared
+  package `resource.image(...)` handle in a menu item's `image` field. Do not
+  combine it with the host-glyph `icon` field or pass runtime image handles.
   Probe `interaction.tooltip` before adding bounded string tooltips and
   `interaction.tooltip.rich` before using `{ title?, text }`. Probe
   `interaction.keyboard` before setting `focusable/tabIndex` or observing

@@ -526,9 +526,18 @@ void DesktopApp::ShowWidgetContextMenu(
                 AppendMenuW(menu, MF_STRING, kContextWidgetEdit,
                     _LW("app.interact.detailed_settings"));
             }
-            const auto setLuaItemIcon = [this](HMENU targetMenu,
-                                                UINT_PTR itemId,
-                                                const LuaWidgetMenuItem& item) {
+            const auto setLuaItemIcon = [this, &widget](HMENU targetMenu,
+                                                 UINT_PTR itemId,
+                                                 const LuaWidgetMenuItem& item) {
+                if (!item.imageResourceName.empty())
+                {
+                    const auto* source = widgetEngine_->
+                        RuntimeFindPackageImageSource(widget.id,
+                            item.imageResourceName);
+                    if (source)
+                        SetMenuItemImage(targetMenu, itemId, *source);
+                    return;
+                }
                 if (item.icon.empty()) return;
                 const std::wstring icon = Utf8ToWide(item.icon);
                 const bool useFluent =

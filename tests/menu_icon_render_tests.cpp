@@ -425,6 +425,40 @@ int wmain(int argc, wchar_t** argv)
     Expect(accentColorPixels > 0,
         "quick-action Fluent icon contains a blue accent layer");
 
+    const std::array<std::uint8_t, 8> packageImagePixels{
+        0, 0, 255, 255,
+        255, 0, 0, 255,
+    };
+    const snowdesktop::menu_icon::ImageSourceView packageImageSource{
+        packageImagePixels.data(), packageImagePixels.size(), 2, 1, 8,
+    };
+    HBITMAP packageImage = snowdesktop::menu_icon::CreateImageBitmap(
+        packageImageSource, metrics96.iconFontHeight);
+    BITMAP packageImageInfo{};
+    Expect(packageImage &&
+            GetObjectW(packageImage, sizeof(packageImageInfo),
+                &packageImageInfo) != 0 &&
+            packageImageInfo.bmWidth == metrics96.iconFontHeight &&
+            packageImageInfo.bmHeight == metrics96.iconFontHeight,
+        "package menu image is converted to a bounded DPI-sized bitmap");
+    const snowdesktop::menu_icon::ItemView packageImageItem{
+        L"Package icon", L"", false, false, false,
+        snowdesktop::MenuQuickIcon::FontGlyph, packageImage,
+    };
+    std::fill_n(pixels, kWidth * kHeight, 0u);
+    Expect(snowdesktop::menu_icon::DrawItem(dc, font, fluentFont,
+            packageImageItem, normalBounds, 0, light, metrics96),
+        "package image menu item renders");
+    const RECT packageImageColumn{
+        metrics96.leftPadding, normalBounds.top,
+        metrics96.leftPadding + metrics96.iconColumnWidth,
+        normalBounds.bottom,
+    };
+    Expect(CountBlueAccentPixelsInRect(pixels, kWidth, kHeight,
+            packageImageColumn) > 0,
+        "package image pixels remain visible in the menu icon column");
+    DeleteObject(packageImage);
+
     const snowdesktop::menu_icon::ItemView inlinePrevious{
         L"", L"\uF15B", false, false, false,
     };
