@@ -55,40 +55,209 @@ constexpr auto kContracts = std::to_array<ViewNodeContract>({
     { ViewNodeType::Spacer, "spacer", "layout", "view.tree.core", "", "", ViewChildPolicy::None },
 });
 
-constexpr auto kProperties = std::to_array<std::string_view>({
-    "type", "key", "debugName", "testId", "text", "spans", "label", "glyph", "iconFont",
-    "source", "font", "fit", "alignment", "interpolation", "alt",
-    "shape", "orientation", "value", "values", "min", "max", "step",
-    "options", "selectedValue", "placeholder", "expanded", "selectAll", "selection",
-    "liveUpdate", "readOnly", "required", "busy", "validationState", "validationMessage",
-    "maxBytes", "year", "month", "firstDayOfWeek",
-    "selectedDate", "todayDate", "eventDates", "weekdayLabels",
-    "showAdjacentDates", "binding", "collection", "revision", "reference",
-    "child", "thickness", "trackOpacity", "fillOpacity", "width", "height",
-    "minWidth", "maxWidth", "minHeight", "maxHeight", "aspectRatio",
-    "margin", "padding", "offset", "zIndex", "clip", "overflow",
-    "shadow", "transform", "transition", "enterTransition",
-    "exitTransition", "gap", "columns", "rows",
-    "columnGap", "rowGap", "gridColumn", "gridRow", "columnSpan",
-    "rowSpan", "itemCount",
-    "itemExtent", "estimatedItemSize", "layoutRevision",
-    "sectionHeaderIndices", "stickyHeaderIndex", "firstIndex", "overscan",
-    "initialScrollKey", "initialScrollIndex", "selectionMode",
-    "selectedKeys", "emptyContent", "loadingContent", "flexBasis", "flexGrow",
-    "flexShrink", "flexDirection", "flexWrap", "alignContent",
-    "fontSize", "fontWeight", "fontStyle", "lineHeight",
-    "letterSpacing", "locale", "textDirection", "bold",
-    "checked", "indeterminate", "selected", "sticky", "visible", "visibility",
-    "enabled", "focusable", "tabIndex", "cursor", "tooltip", "capturePointer",
-    "accessKey", "acceleratorText", "alignItems", "showScrollbar",
-    "alignSelf", "justifyContent", "textAlign", "verticalAlign",
-    "textWrap", "maxLines", "overflowText", "style", "hoverStyle",
-    "pressedStyle", "focusStyle", "disabledStyle", "validationStyle",
-    "checkedStyle", "tint",
-    "selectedStyle", "dropStyle", "todayStyle",
-    "adjacentStyle", "eventStyle", "accessibility", "events", "action",
-    "children",
+constexpr ViewPropertyContract Property(
+    std::string_view name, ViewPropertyValueKind valueKind) noexcept
+{
+    return { name, valueKind };
+}
+
+constexpr ViewPropertyContract RangedProperty(std::string_view name,
+    ViewPropertyValueKind valueKind, double minimum,
+    double maximum) noexcept
+{
+    return { name, valueKind, true, minimum, maximum };
+}
+
+constexpr auto kProperties = std::to_array<ViewPropertyContract>({
+    Property("type", ViewPropertyValueKind::Enum),
+    Property("key", ViewPropertyValueKind::String),
+    Property("debugName", ViewPropertyValueKind::String),
+    Property("testId", ViewPropertyValueKind::String),
+    Property("text", ViewPropertyValueKind::String),
+    Property("spans", ViewPropertyValueKind::Spans),
+    Property("label", ViewPropertyValueKind::String),
+    Property("glyph", ViewPropertyValueKind::String),
+    Property("iconFont", ViewPropertyValueKind::Enum),
+    Property("source", ViewPropertyValueKind::Resource),
+    Property("font", ViewPropertyValueKind::Resource),
+    Property("fit", ViewPropertyValueKind::Enum),
+    Property("alignment", ViewPropertyValueKind::Enum),
+    Property("interpolation", ViewPropertyValueKind::Enum),
+    Property("alt", ViewPropertyValueKind::String),
+    Property("shape", ViewPropertyValueKind::Enum),
+    Property("orientation", ViewPropertyValueKind::Enum),
+    Property("value", ViewPropertyValueKind::StringOrNumber),
+    Property("values", ViewPropertyValueKind::NumberArray),
+    Property("min", ViewPropertyValueKind::Number),
+    Property("max", ViewPropertyValueKind::Number),
+    RangedProperty("step", ViewPropertyValueKind::Number,
+        0.000001, 1.0e9),
+    Property("options", ViewPropertyValueKind::ChoiceOptions),
+    Property("selectedValue", ViewPropertyValueKind::String),
+    Property("placeholder", ViewPropertyValueKind::String),
+    Property("expanded", ViewPropertyValueKind::Boolean),
+    Property("selectAll", ViewPropertyValueKind::Boolean),
+    Property("selection", ViewPropertyValueKind::TextSelection),
+    Property("liveUpdate", ViewPropertyValueKind::Boolean),
+    Property("readOnly", ViewPropertyValueKind::Boolean),
+    Property("required", ViewPropertyValueKind::Boolean),
+    Property("busy", ViewPropertyValueKind::Boolean),
+    Property("validationState", ViewPropertyValueKind::Enum),
+    Property("validationMessage", ViewPropertyValueKind::String),
+    RangedProperty("maxBytes", ViewPropertyValueKind::Integer,
+        0.0, 65536.0),
+    RangedProperty("year", ViewPropertyValueKind::Integer,
+        1.0, 9999.0),
+    RangedProperty("month", ViewPropertyValueKind::Integer,
+        1.0, 12.0),
+    RangedProperty("firstDayOfWeek", ViewPropertyValueKind::Integer,
+        1.0, 7.0),
+    Property("selectedDate", ViewPropertyValueKind::String),
+    Property("todayDate", ViewPropertyValueKind::String),
+    Property("eventDates", ViewPropertyValueKind::StringArray),
+    Property("weekdayLabels", ViewPropertyValueKind::StringArray),
+    Property("showAdjacentDates", ViewPropertyValueKind::Boolean),
+    Property("binding", ViewPropertyValueKind::String),
+    Property("collection", ViewPropertyValueKind::String),
+    Property("revision", ViewPropertyValueKind::Integer),
+    Property("reference", ViewPropertyValueKind::String),
+    Property("child", ViewPropertyValueKind::Node),
+    RangedProperty("thickness", ViewPropertyValueKind::Number,
+        0.5, 4096.0),
+    RangedProperty("trackOpacity", ViewPropertyValueKind::Number,
+        0.0, 1.0),
+    RangedProperty("fillOpacity", ViewPropertyValueKind::Number,
+        0.0, 1.0),
+    Property("width", ViewPropertyValueKind::Length),
+    Property("height", ViewPropertyValueKind::Length),
+    RangedProperty("minWidth", ViewPropertyValueKind::Number,
+        0.0, 100000.0),
+    RangedProperty("maxWidth", ViewPropertyValueKind::Number,
+        0.0, 100000.0),
+    RangedProperty("minHeight", ViewPropertyValueKind::Number,
+        0.0, 100000.0),
+    RangedProperty("maxHeight", ViewPropertyValueKind::Number,
+        0.0, 100000.0),
+    RangedProperty("aspectRatio", ViewPropertyValueKind::Number,
+        0.01, 100.0),
+    Property("margin", ViewPropertyValueKind::EdgeInsets),
+    Property("padding", ViewPropertyValueKind::EdgeInsets),
+    Property("offset", ViewPropertyValueKind::Offset),
+    RangedProperty("zIndex", ViewPropertyValueKind::Integer,
+        -1024.0, 1024.0),
+    Property("clip", ViewPropertyValueKind::Boolean),
+    Property("overflow", ViewPropertyValueKind::Enum),
+    Property("shadow", ViewPropertyValueKind::Shadow),
+    Property("transform", ViewPropertyValueKind::Transform),
+    Property("transition", ViewPropertyValueKind::Transition),
+    Property("enterTransition", ViewPropertyValueKind::PresenceTransition),
+    Property("exitTransition", ViewPropertyValueKind::PresenceTransition),
+    RangedProperty("gap", ViewPropertyValueKind::Number,
+        0.0, 4096.0),
+    Property("columns", ViewPropertyValueKind::GridTracks),
+    Property("rows", ViewPropertyValueKind::GridTracks),
+    RangedProperty("columnGap", ViewPropertyValueKind::Number,
+        0.0, 4096.0),
+    RangedProperty("rowGap", ViewPropertyValueKind::Number,
+        0.0, 4096.0),
+    RangedProperty("gridColumn", ViewPropertyValueKind::Integer,
+        1.0, 64.0),
+    RangedProperty("gridRow", ViewPropertyValueKind::Integer,
+        1.0, 64.0),
+    RangedProperty("columnSpan", ViewPropertyValueKind::Integer,
+        1.0, 64.0),
+    RangedProperty("rowSpan", ViewPropertyValueKind::Integer,
+        1.0, 64.0),
+    Property("itemCount", ViewPropertyValueKind::Integer),
+    RangedProperty("itemExtent", ViewPropertyValueKind::Number,
+        0.000001, 1000000.0),
+    RangedProperty("estimatedItemSize", ViewPropertyValueKind::Number,
+        0.000001, 1000000.0),
+    Property("layoutRevision", ViewPropertyValueKind::Integer),
+    Property("sectionHeaderIndices", ViewPropertyValueKind::IndexArray),
+    Property("stickyHeaderIndex", ViewPropertyValueKind::Integer),
+    Property("firstIndex", ViewPropertyValueKind::Integer),
+    RangedProperty("overscan", ViewPropertyValueKind::Integer,
+        0.0, 16.0),
+    Property("initialScrollKey", ViewPropertyValueKind::String),
+    Property("initialScrollIndex", ViewPropertyValueKind::Integer),
+    Property("selectionMode", ViewPropertyValueKind::Enum),
+    Property("selectedKeys", ViewPropertyValueKind::StringArray),
+    Property("emptyContent", ViewPropertyValueKind::Node),
+    Property("loadingContent", ViewPropertyValueKind::Node),
+    Property("flexBasis", ViewPropertyValueKind::Length),
+    RangedProperty("flexGrow", ViewPropertyValueKind::Number,
+        0.0, 1000.0),
+    RangedProperty("flexShrink", ViewPropertyValueKind::Number,
+        0.0, 1000.0),
+    Property("flexDirection", ViewPropertyValueKind::Enum),
+    Property("flexWrap", ViewPropertyValueKind::Enum),
+    Property("alignContent", ViewPropertyValueKind::Enum),
+    RangedProperty("fontSize", ViewPropertyValueKind::Number,
+        1.0, 512.0),
+    RangedProperty("fontWeight", ViewPropertyValueKind::Integer,
+        0.0, 900.0),
+    Property("fontStyle", ViewPropertyValueKind::Enum),
+    RangedProperty("lineHeight", ViewPropertyValueKind::Number,
+        1.0, 1024.0),
+    RangedProperty("letterSpacing", ViewPropertyValueKind::Number,
+        -64.0, 256.0),
+    Property("locale", ViewPropertyValueKind::String),
+    Property("textDirection", ViewPropertyValueKind::Enum),
+    Property("bold", ViewPropertyValueKind::Boolean),
+    Property("checked", ViewPropertyValueKind::Boolean),
+    Property("indeterminate", ViewPropertyValueKind::Boolean),
+    Property("selected", ViewPropertyValueKind::Boolean),
+    Property("sticky", ViewPropertyValueKind::Boolean),
+    Property("visible", ViewPropertyValueKind::Boolean),
+    Property("visibility", ViewPropertyValueKind::Enum),
+    Property("enabled", ViewPropertyValueKind::Boolean),
+    Property("focusable", ViewPropertyValueKind::Boolean),
+    RangedProperty("tabIndex", ViewPropertyValueKind::Integer,
+        -1.0, 32767.0),
+    Property("cursor", ViewPropertyValueKind::String),
+    Property("tooltip", ViewPropertyValueKind::Tooltip),
+    Property("capturePointer", ViewPropertyValueKind::Boolean),
+    Property("accessKey", ViewPropertyValueKind::String),
+    Property("acceleratorText", ViewPropertyValueKind::String),
+    Property("alignItems", ViewPropertyValueKind::Enum),
+    Property("showScrollbar", ViewPropertyValueKind::Boolean),
+    Property("alignSelf", ViewPropertyValueKind::Enum),
+    Property("justifyContent", ViewPropertyValueKind::Enum),
+    Property("textAlign", ViewPropertyValueKind::Enum),
+    Property("verticalAlign", ViewPropertyValueKind::Enum),
+    Property("textWrap", ViewPropertyValueKind::Enum),
+    RangedProperty("maxLines", ViewPropertyValueKind::Integer,
+        0.0, 64.0),
+    Property("overflowText", ViewPropertyValueKind::Enum),
+    Property("style", ViewPropertyValueKind::Style),
+    Property("hoverStyle", ViewPropertyValueKind::Style),
+    Property("pressedStyle", ViewPropertyValueKind::Style),
+    Property("focusStyle", ViewPropertyValueKind::Style),
+    Property("disabledStyle", ViewPropertyValueKind::Style),
+    Property("validationStyle", ViewPropertyValueKind::Style),
+    Property("checkedStyle", ViewPropertyValueKind::Style),
+    Property("tint", ViewPropertyValueKind::Color),
+    Property("selectedStyle", ViewPropertyValueKind::Style),
+    Property("dropStyle", ViewPropertyValueKind::Style),
+    Property("todayStyle", ViewPropertyValueKind::Style),
+    Property("adjacentStyle", ViewPropertyValueKind::Style),
+    Property("eventStyle", ViewPropertyValueKind::Style),
+    Property("accessibility", ViewPropertyValueKind::Accessibility),
+    Property("events", ViewPropertyValueKind::Events),
+    Property("action", ViewPropertyValueKind::Action),
+    Property("children", ViewPropertyValueKind::NodeArray),
 });
+
+constexpr auto PropertyNames() noexcept
+{
+    std::array<std::string_view, kProperties.size()> result{};
+    for (std::size_t index = 0; index < kProperties.size(); ++index)
+        result[index] = kProperties[index].name;
+    return result;
+}
+
+constexpr auto kPropertyNames = PropertyNames();
 
 constexpr auto kCommonProperties = std::to_array<std::string_view>({
     "type", "key", "debugName", "testId", "width", "height", "minWidth", "maxWidth",
@@ -310,14 +479,29 @@ std::optional<ViewNodeType> FindViewNodeType(std::string_view name) noexcept
     return contract ? std::optional<ViewNodeType>(contract->type) : std::nullopt;
 }
 
-std::span<const std::string_view> ViewNodePropertyNames() noexcept
+std::span<const ViewPropertyContract> ViewPropertyContracts() noexcept
 {
     return kProperties;
 }
 
+const ViewPropertyContract* FindViewPropertyContract(
+    std::string_view name) noexcept
+{
+    const auto found = std::find_if(kProperties.begin(), kProperties.end(),
+        [name](const ViewPropertyContract& contract) {
+            return contract.name == name;
+        });
+    return found == kProperties.end() ? nullptr : &*found;
+}
+
+std::span<const std::string_view> ViewNodePropertyNames() noexcept
+{
+    return kPropertyNames;
+}
+
 bool IsKnownViewNodeProperty(std::string_view property) noexcept
 {
-    return Contains(kProperties, property);
+    return FindViewPropertyContract(property) != nullptr;
 }
 
 bool ViewNodeAllowsProperty(
@@ -512,16 +696,18 @@ std::vector<std::string_view> ViewNodeAllowedProperties(ViewNodeType type)
 {
     std::vector<std::string_view> result;
     result.reserve(kProperties.size());
-    for (const std::string_view property : kProperties)
-        if (ViewNodeAllowsProperty(type, property)) result.push_back(property);
+    for (const ViewPropertyContract& property : kProperties)
+        if (ViewNodeAllowsProperty(type, property.name))
+            result.push_back(property.name);
     return result;
 }
 
 std::vector<std::string_view> ViewNodeRequiredProperties(ViewNodeType type)
 {
     std::vector<std::string_view> result;
-    for (const std::string_view property : kProperties)
-        if (ViewNodeRequiresProperty(type, property)) result.push_back(property);
+    for (const ViewPropertyContract& property : kProperties)
+        if (ViewNodeRequiresProperty(type, property.name))
+            result.push_back(property.name);
     return result;
 }
 

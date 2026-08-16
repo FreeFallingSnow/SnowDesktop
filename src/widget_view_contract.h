@@ -84,6 +84,48 @@ struct ViewEventContract
     ViewEventPayloadKind payload = ViewEventPayloadKind::Action;
 };
 
+enum class ViewPropertyValueKind : std::uint8_t
+{
+    String,
+    Boolean,
+    Number,
+    Integer,
+    StringOrNumber,
+    Length,
+    EdgeInsets,
+    Offset,
+    Resource,
+    Color,
+    StringArray,
+    NumberArray,
+    IndexArray,
+    Node,
+    NodeArray,
+    Enum,
+    Spans,
+    ChoiceOptions,
+    TextSelection,
+    Style,
+    Shadow,
+    Transform,
+    Transition,
+    PresenceTransition,
+    GridTracks,
+    Tooltip,
+    Accessibility,
+    Events,
+    Action,
+};
+
+struct ViewPropertyContract
+{
+    std::string_view name;
+    ViewPropertyValueKind valueKind = ViewPropertyValueKind::String;
+    bool hasNumericRange = false;
+    double numericMinimum = 0.0;
+    double numericMaximum = 0.0;
+};
+
 std::span<const ViewNodeContract> ViewNodeContracts() noexcept;
 const ViewNodeContract* FindViewNodeContract(
     ViewNodeType type) noexcept;
@@ -92,6 +134,9 @@ const ViewNodeContract* FindViewNodeContract(
 std::optional<ViewNodeType> FindViewNodeType(
     std::string_view name) noexcept;
 
+std::span<const ViewPropertyContract> ViewPropertyContracts() noexcept;
+const ViewPropertyContract* FindViewPropertyContract(
+    std::string_view name) noexcept;
 std::span<const std::string_view> ViewNodePropertyNames() noexcept;
 bool IsKnownViewNodeProperty(std::string_view property) noexcept;
 bool ViewNodeAllowsProperty(

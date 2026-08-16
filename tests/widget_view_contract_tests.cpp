@@ -10,6 +10,7 @@ namespace
 {
 using snowdesktop::widget_runtime::FindViewNodeContract;
 using snowdesktop::widget_runtime::FindViewNodeType;
+using snowdesktop::widget_runtime::FindViewPropertyContract;
 using snowdesktop::widget_runtime::HasViewAccessibilityPattern;
 using snowdesktop::widget_runtime::IsKnownViewEvent;
 using snowdesktop::widget_runtime::IsKnownViewNodeProperty;
@@ -24,6 +25,9 @@ using snowdesktop::widget_runtime::ViewNodeContracts;
 using snowdesktop::widget_runtime::ViewNodeRequiresProperty;
 using snowdesktop::widget_runtime::ViewNodeRequiredProperties;
 using snowdesktop::widget_runtime::ViewNodeType;
+using snowdesktop::widget_runtime::ViewNodePropertyNames;
+using snowdesktop::widget_runtime::ViewPropertyContracts;
+using snowdesktop::widget_runtime::ViewPropertyValueKind;
 
 void Check(bool condition, const char* message)
 {
@@ -80,6 +84,52 @@ void TestContractCoverageAndRoundTrip()
     Check(!FindViewNodeType("webView") &&
             FindViewNodeContract("webView") == nullptr,
         "unpublished nodes must not appear in the public matrix");
+}
+
+void TestPropertyMetadata()
+{
+    const auto properties = ViewPropertyContracts();
+    const auto names = ViewNodePropertyNames();
+    Check(properties.size() == 146 && names.size() == properties.size(),
+        "the property metadata must cover the complete public vocabulary");
+    std::set<std::string> uniqueNames;
+    for (std::size_t index = 0; index < properties.size(); ++index)
+    {
+        const auto& property = properties[index];
+        Check(!property.name.empty() && names[index] == property.name,
+            "property name enumeration must reuse the metadata catalog");
+        Check(uniqueNames.emplace(property.name).second,
+            "property metadata names must be unique");
+        Check(property.valueKind >= ViewPropertyValueKind::String &&
+                property.valueKind <= ViewPropertyValueKind::Action,
+            "every property must publish a recognized semantic value kind");
+        Check(!property.hasNumericRange ||
+                property.numericMinimum <= property.numericMaximum,
+            "published numeric ranges must be ordered");
+        Check(FindViewPropertyContract(property.name) == &property,
+            "property metadata must round-trip by canonical name");
+    }
+    Check(FindViewPropertyContract("notAProperty") == nullptr,
+        "unknown properties must not resolve to metadata");
+
+    const auto* fontSize = FindViewPropertyContract("fontSize");
+    const auto* opacity = FindViewPropertyContract("trackOpacity");
+    const auto* children = FindViewPropertyContract("children");
+    const auto* value = FindViewPropertyContract("value");
+    Check(fontSize && fontSize->valueKind == ViewPropertyValueKind::Number &&
+            fontSize->hasNumericRange &&
+            fontSize->numericMinimum == 1.0 &&
+            fontSize->numericMaximum == 512.0 &&
+            opacity && opacity->valueKind == ViewPropertyValueKind::Number &&
+            opacity->hasNumericRange &&
+            opacity->numericMinimum == 0.0 &&
+            opacity->numericMaximum == 1.0,
+        "bounded scalar properties must publish their host validation range");
+    Check(children &&
+            children->valueKind == ViewPropertyValueKind::NodeArray &&
+            value &&
+            value->valueKind == ViewPropertyValueKind::StringOrNumber,
+        "structured and overloaded properties must publish semantic kinds");
 }
 
 void TestRepresentativeApplicability()
@@ -431,6 +481,7 @@ void TestEventContract()
 int main()
 {
     TestContractCoverageAndRoundTrip();
+    TestPropertyMetadata();
     TestRepresentativeApplicability();
     TestEventContract();
     std::cout << "widget view contract tests passed\n";

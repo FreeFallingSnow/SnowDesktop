@@ -1278,7 +1278,10 @@ feature、默认 accessibility role、允许属性和直接必需属性由同一
 原本会被解析后忽略的通用 typography、gap、容器对齐和后代裁剪字段也已按真实消费节点收窄；
 作者写错节点时会拒绝 scene，不再出现“属性合法但没有效果”的假 API。
 后续消费审计又拆开基础字号/对齐与高级排版，移除 divider 的无效 track/fill opacity，
-并停止向 select 暴露未被其宿主选项层读取的 checkedStyle。
+停止向 select 暴露未被其宿主选项层读取的 checkedStyle，并按真实绘制路径区分图表的
+thickness/trackOpacity。146 个公开属性现已进入同一份可枚举元数据，逐项登记 string、number、
+length、resource、node、style、events 等语义值类型；跨节点保持一致的字号、透明度、尺寸约束、
+网格位置、虚拟范围等标量也登记宿主数值上下限，属性名称枚举不再维护第二份清单。
 17 个公开节点事件也已进入同一契约源，登记统一 payload 类别和逐节点适用性；Lua 解析器、
 scene 校验与契约测试不再分别维护 change、selectionChange、输入生命周期和 scrollEnd 的类型白名单。
 当前已进一步为每个语义节点登记 UIA ControlType、基础 Pattern 和是否参与宿主键盘焦点，并可从
@@ -1300,8 +1303,8 @@ heading/live、集合位置和语义隐藏；声明式节点还支持稳定 key 
 一基 grid 行列覆盖。宿主将这些字段映射为 AriaRole、ItemStatus、HelpText、LabeledBy、
 DescribedBy、HeadingLevel、LiveSetting、PositionInSet、SizeOfSet 和 GridItem，并为 live 内容变化
 发送 LiveRegionChanged；加载/提交阶段拒绝无名或自身关系、越界索引以及隐藏交互子树。
-ScrollItem、未实体化项的 VirtualizedItem 以及真实 Narrator 场景验收仍未完成；默认值/范围、
-子节点、事件、RTL、动画、额度和错误码仍未全部迁入矩阵，
+ScrollItem、未实体化项的 VirtualizedItem 以及真实 Narrator 场景验收仍未完成；节点相关联动范围、
+默认值、枚举值、RTL、动画/effect、额度和错误码仍未全部迁入矩阵，
 也尚未由它生成 LuaLS 与本文档，因此这仍不表示契约已经冻结或完整无障碍已经可用。
 
 即时绘制的 `interaction.region` 现在也会按 role、label、受控状态、形状/clip 和最后提交的宿主
