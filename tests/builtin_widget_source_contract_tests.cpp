@@ -109,7 +109,8 @@ void TestPublishedV2Catalog(const fs::path& repository)
     const std::string published = api + '\n' + skill + '\n' + luaLs;
 
     const auto features = QuotedStrings(Section(registry,
-        "kHostFeatures = {", "constexpr std::array<SystemFunctionContract"));
+        "kHostFeatures = {",
+        "using FunctionParameter = SystemFunctionParameterContract;"));
     Check(features.size() == 198,
         "host feature catalog size must match the reviewed v2 contract");
     for (const auto& feature : features)
