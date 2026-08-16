@@ -1192,15 +1192,18 @@ manifest `accepts`、容量和替换策略确认当前对象可以放置时才�
 也不能改变命中范围。`background`、`borderColor`、`borderWidth`、`cornerRadius` 和 `opacity`
 作用于整个经过裁剪的合法 surface，`foreground` 只设置宿主插入线或空槽轮廓颜色。语义颜色
 token 会按组件主题和系统高对比度解析；省略某个颜色时保留对应的宿主默认反馈。桌面/Explorer
-原生拖入和 `slots.pointerReorder` 的同槽重排使用同一目标样式，但插入位置、线宽和拖放对象仍
+原生拖入、`slots.pointerReorder` 的同槽重排和 `slots.pointerTransfer` 的跨槽转移使用同一目标样式，但插入位置、线宽和拖放对象仍
 完全由宿主管理，Lua 不会收到逐帧坐标或原生对象。
 
 探测 `slots.pointerReorder` 后，collection 中有至少两个项目时，用户可从任一已提交
 `slotItem` 内直接按住拖动。未越过系统拖动阈值时仍按普通声明式 click 处理；越过后由宿主
 接管捕获，实时绘制源项目轮廓和插入线，释放时按 item ID 原子调用同槽 move，并写入同一
 undo/redo 历史。成功变化通过 `slot.changed` 以 `source="host.pointer"` 投递；Lua 不接收
-高频拖动坐标，也不能伪造插入位置。binding、单项目 collection、槽位外拖出和跨槽拖动
-不属于该 feature。
+高频拖动坐标，也不能伪造插入位置。binding 和槽位外拖出不属于该 feature。
+
+探测 `slots.pointerTransfer` 后，即使来源 collection 只有一个项目，也可继续拖到同一组件内
+另一个已提交、类型兼容且未满的 collection。目标已有同一 kind/target 时拒绝重复；释放后
+宿主保留原 opaque item ID/reference，同时更新两个 revision，并把转移记为一个历史事务。
 
 探测 `slots.keyboardNavigation` 后，选中单个 Lua 组件时按 `Tab` / `Shift+Tab` 可进入并循环
 当前已提交且可见的 `slotItem`，方向键按屏幕空间位置移动宿主焦点，`Escape` 退出。若焦点项
@@ -1225,8 +1228,11 @@ undo/redo 历史。成功变化通过 `slot.changed` 以 `source="host.pointer"`
 `"host.picker"`、`"host.menu"`、`"host.pointer"` 或 `"host.keyboard"`。Lua 应重新读取对应句柄并重算 view，不能把事件内容
 当作可写模型。可分别探测 `slots.nativeDrop`、`slots.nativeContextMenu`、
 `slots.pointerReorder`、`slots.keyboardNavigation` 与 `slots.event.changed`。原生槽位项菜单只显示该项的向前/向后移动和移除操作，不会附加
-组件总菜单；binding 是否能移除遵守 manifest 的 `allowClear`。原生槽位项拖出和指针
-跨槽重排仍未接入。
+组件总菜单；binding 是否能移除遵守 manifest 的 `allowClear`。同一组件内从一个 collection
+拖到另一个兼容 collection 时，`operation="transferred"`，主 `slotId/revision` 表示目标，
+`relatedSlotId/relatedRevision` 表示来源；opaque item ID/reference 保持不变，两个槽位作为
+一个事务持久化和撤销。目标类型不接受、已有同一引用或容量已满时不提交。原生槽位项拖出及
+跨组件/跨实例转移仍未接入。
 
 探测 `slots.history` 后，可在当前可信用户 action 中调用 `slots.undo()` / `slots.redo()`；
 它们按组件实例维护最近 32 次宿主槽位事务，返回 operation 为 `undone` / `redone` 的

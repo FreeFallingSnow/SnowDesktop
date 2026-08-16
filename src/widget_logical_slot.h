@@ -72,6 +72,8 @@ struct LogicalSlotChange
     std::uint64_t revision = 0;
     std::string operation;
     std::vector<std::string> itemIds;
+    std::string relatedSlotId;
+    std::uint64_t relatedRevision = 0;
 };
 
 class LogicalSlotModel
@@ -104,6 +106,10 @@ public:
     bool Remove(std::string_view slotId, std::string_view itemId,
         LogicalSlotChange& change, std::string& error);
     bool Move(std::string_view slotId, std::string_view itemId,
+        std::size_t targetIndex, LogicalSlotChange& change,
+        std::string& error);
+    bool Transfer(std::string_view sourceSlotId,
+        std::string_view itemId, std::string_view targetSlotId,
         std::size_t targetIndex, LogicalSlotChange& change,
         std::string& error);
 

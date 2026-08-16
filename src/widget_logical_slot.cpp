@@ -660,6 +660,84 @@ bool LogicalSlotModel::Move(std::string_view slotId,
     return true;
 }
 
+bool LogicalSlotModel::Transfer(std::string_view sourceSlotId,
+    std::string_view itemId, std::string_view targetSlotId,
+    std::size_t targetIndex, LogicalSlotChange& change,
+    std::string& error)
+{
+    error.clear();
+    change = {};
+    if (sourceSlotId == targetSlotId)
+    {
+        error = "logical slot transfer requires distinct slots";
+        return false;
+    }
+    const auto sourceDeclaration = declarations_.find(sourceSlotId);
+    const auto targetDeclaration = declarations_.find(targetSlotId);
+    auto source = snapshots_.find(sourceSlotId);
+    auto target = snapshots_.find(targetSlotId);
+    if (sourceDeclaration == declarations_.end() ||
+        targetDeclaration == declarations_.end() ||
+        source == snapshots_.end() || target == snapshots_.end())
+    {
+        error = "logical slot is not declared";
+        return false;
+    }
+    if (sourceDeclaration->second.kind != LogicalSlotKind::Collection ||
+        targetDeclaration->second.kind != LogicalSlotKind::Collection)
+    {
+        error = "logical slot transfer is reserved for collection slots";
+        return false;
+    }
+    if (targetIndex > target->second.items.size())
+    {
+        error = "logical slot target index is out of range";
+        return false;
+    }
+    const auto item = std::find_if(source->second.items.begin(),
+        source->second.items.end(), [itemId](const auto& candidate) {
+            return candidate.id == itemId;
+        });
+    if (item == source->second.items.end())
+    {
+        error = "logical slot item does not exist";
+        return false;
+    }
+    if (!Accepts(targetDeclaration->second, item->kind))
+    {
+        error = "logical slot does not accept this reference kind";
+        return false;
+    }
+    if (target->second.items.size() >= targetDeclaration->second.capacity)
+    {
+        error = "logical slot capacity exceeded";
+        return false;
+    }
+    if (std::any_of(target->second.items.begin(), target->second.items.end(),
+            [&item](const auto& candidate) {
+                return candidate.kind == item->kind &&
+                    candidate.target == item->target;
+            }))
+    {
+        error = "logical slot already contains this reference";
+        return false;
+    }
+
+    LogicalSlotItem moving = std::move(*item);
+    const std::string movingId = moving.id;
+    source->second.items.erase(item);
+    target->second.items.insert(target->second.items.begin() +
+        static_cast<std::ptrdiff_t>(targetIndex), std::move(moving));
+    ++source->second.revision;
+    if (source->second.revision == 0) ++source->second.revision;
+    ++target->second.revision;
+    if (target->second.revision == 0) ++target->second.revision;
+    change = { target->second.id, target->second.kind,
+        target->second.revision, "transferred", { movingId },
+        source->second.id, source->second.revision };
+    return true;
+}
+
 std::string LogicalSlotModel::SerializeSnapshot(
     const LogicalSlotSnapshot& snapshot)
 {
@@ -780,6 +858,11 @@ bool LogicalSlotHistory::Restore(bool redo, LogicalSlotModel& model,
     change.operation = redo ? "redone" : "undone";
     if (const auto* snapshot = model.Find(change.slotId))
         change.revision = snapshot->revision;
+    if (!change.relatedSlotId.empty())
+    {
+        if (const auto* related = model.Find(change.relatedSlotId))
+            change.relatedRevision = related->revision;
+    }
     error.clear();
     return true;
 }

@@ -53,6 +53,20 @@ LogicalSlotItem Item(std::string kind, std::string title,
         "application", std::move(target), true };
 }
 
+LogicalSlotDeclarations TransferDeclarations()
+{
+    return {
+        { "source", { LogicalSlotKind::Collection,
+            { "app.reference", "desktop.item" }, "reference", {},
+            false, 3 } },
+        { "target", { LogicalSlotKind::Collection,
+            { "app.reference", "desktop.item" }, "reference", {},
+            false, 2 } },
+        { "files", { LogicalSlotKind::Collection,
+            { "filesystem.reference" }, "reference", {}, false, 2 } },
+    };
+}
+
 void TestManifestValidation()
 {
     const auto declarations = ParseDeclarations();
@@ -183,6 +197,64 @@ void TestPersistenceRoundTrip()
         "corrupt host slot state must fail closed with its slot id");
 }
 
+void TestCrossCollectionTransfer()
+{
+    LogicalSlotModel model;
+    std::string error;
+    Check(model.Configure(TransferDeclarations(), error),
+        "cross-collection fixture must configure");
+    LogicalSlotChange change;
+    Check(model.Bind("source",
+            Item("app.reference", "Calendar", "app:calendar"),
+            change, error) &&
+        model.Bind("source",
+            Item("desktop.item", "Notes", "desktop:notes"),
+            change, error) &&
+        model.Bind("target",
+            Item("app.reference", "Mail", "app:mail"),
+            change, error),
+        "cross-collection fixture items must bind");
+
+    const LogicalSlotItem moving = model.Find("source")->items.front();
+    const auto previous = model;
+    Check(model.Transfer("source", moving.id, "target", 1,
+            change, error) && change.operation == "transferred" &&
+            change.slotId == "target" &&
+            change.relatedSlotId == "source" &&
+            change.itemIds.size() == 1 &&
+            change.itemIds.front() == moving.id &&
+            model.Find("source")->items.size() == 1 &&
+            model.Find("target")->items.size() == 2 &&
+            model.Find("target")->items[1].id == moving.id &&
+            model.Find("target")->items[1].reference == moving.reference,
+        "cross-collection transfer must atomically preserve opaque identity");
+
+    const auto afterTransfer = model;
+    LogicalSlotHistory history;
+    history.Record(previous, change);
+    Check(history.Undo(model, change, error) &&
+            change.relatedSlotId == "source" &&
+            model.Find("source")->items.size() == 2 &&
+            model.Find("target")->items.size() == 1,
+        "cross-collection transfer must undo as one model transaction");
+    Check(history.Redo(model, change, error) &&
+            model.Find("source")->items ==
+                afterTransfer.Find("source")->items &&
+            model.Find("target")->items ==
+                afterTransfer.Find("target")->items,
+        "cross-collection transfer must redo both affected slots together");
+
+    const auto beforeRejected = model;
+    const std::string remainingId =
+        model.Find("source")->items.front().id;
+    Check(!model.Transfer("source", remainingId, "files", 0,
+            change, error) && error.find("accept") != std::string::npos &&
+            model.Find("source")->items ==
+                beforeRejected.Find("source")->items &&
+            model.Find("files")->items.empty(),
+        "incompatible cross-collection transfer must fail without mutation");
+}
+
 void TestBoundedUndoRedoHistory()
 {
     LogicalSlotModel model;
@@ -224,6 +296,7 @@ int main()
     TestManifestValidation();
     TestBindingAndCollectionTransactions();
     TestPersistenceRoundTrip();
+    TestCrossCollectionTransfer();
     TestBoundedUndoRedoHistory();
     std::cout << "widget logical slot tests passed\n";
     return 0;

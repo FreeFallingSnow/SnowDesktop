@@ -498,8 +498,10 @@
 ---@field slotId string
 ---@field kind 'binding'|'collection'
 ---@field revision integer
----@field operation 'unchanged'|'bound'|'replaced'|'cleared'|'added'|'removed'|'moved'|'availability'|'undone'|'redone'
+---@field operation 'unchanged'|'bound'|'replaced'|'cleared'|'added'|'removed'|'moved'|'transferred'|'availability'|'undone'|'redone'
 ---@field itemIds string[]
+---@field relatedSlotId? string Source collection for transferred/undone/redone cross-slot transactions.
+---@field relatedRevision? integer Source collection revision after the same transaction.
 
 ---@class SnowLogicalBinding
 ---@field id fun(self: SnowLogicalBinding): string
@@ -715,8 +717,10 @@
 ---@field revision? integer Monotonic provider revision for data.change.
 ---@field slotId? string Manifest logical-slot ID for slot.changed.
 ---@field slotKind? 'binding'|'collection' Logical slot model kind for slot.changed.
----@field operation? 'bound'|'replaced'|'added'|'removed'|'moved'|'cleared'|'availability'|'undone'|'redone' Logical slot transaction for slot.changed.
+---@field operation? 'bound'|'replaced'|'added'|'removed'|'moved'|'transferred'|'cleared'|'availability'|'undone'|'redone' Logical slot transaction for slot.changed.
 ---@field itemIds? string[] Opaque affected host item IDs for slot.changed.
+---@field relatedSlotId? string Source collection ID for an atomic cross-slot transfer, including its undo/redo event.
+---@field relatedRevision? integer Revision of relatedSlotId after the same transaction.
 ---@field source? 'pointer'|'keyboard'|'ime'|'commit'|'host.drop'|'host.picker'|'host.menu'|'host.keyboard'|string Host interaction source; host.* values identify slot.changed transactions.
 ---@field taskId? integer
 ---@field task? 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'filesystem.pickOpen'|'filesystem.pickSave'|'filesystem.pickFolder'|'filesystem.stat'|'filesystem.list'|'filesystem.read'|'filesystem.write'|'filesystem.release'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'notification.update'|'notification.dismiss'|'notification.schedule'|'notification.cancel'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'|string

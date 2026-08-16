@@ -5,6 +5,7 @@
 
 #include "core/item.h"
 
+#include <array>
 #include <cstdlib>
 #include <iostream>
 
@@ -166,6 +167,7 @@ void TestHostPickerCandidatePolicy()
 
 void TestPointerReorderTargets()
 {
+    using snowdesktop::widget_runtime::ResolveLogicalSlotInsertionTarget;
     using snowdesktop::widget_runtime::ResolveLogicalSlotPointerTarget;
     const RECT surface{ 100, 100, 300, 300 };
     const std::vector<RECT> vertical{
@@ -201,6 +203,23 @@ void TestPointerReorderTargets()
             std::span<const RECT>(horizontal.data(), 1),
             0, POINT{ 120, 120 }, surface),
         "a one-item collection must not enter pointer reorder mode");
+
+    const auto emptyTarget = ResolveLogicalSlotInsertionTarget(
+        {}, POINT{ 150, 150 }, surface);
+    Check(emptyTarget && emptyTarget->insertionIndex == 0 &&
+            emptyTarget->targetIndex == 0 &&
+            emptyTarget->indicator.top >= surface.top,
+        "an empty collection must expose a bounded cross-slot insertion target");
+    const std::array<RECT, 1> single{{ { 110, 110, 290, 150 } }};
+    const auto appendTarget = ResolveLogicalSlotInsertionTarget(
+        single, POINT{ 150, 190 }, surface);
+    Check(appendTarget && appendTarget->insertionIndex == 1 &&
+            appendTarget->targetIndex == 1 &&
+            appendTarget->indicator.top == 148,
+        "a cross-slot drop below one item must append after it");
+    Check(!ResolveLogicalSlotInsertionTarget(
+            single, POINT{ 50, 50 }, surface),
+        "a cross-slot insertion target must stay inside its surface");
 }
 
 void TestKeyboardFocusRules()

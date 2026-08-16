@@ -558,6 +558,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "slots.pointerReorder") &&
             snowdesktop::widget_api::SupportsFeature(
+                "slots.pointerTransfer") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "slots.nativeContextMenu") &&
             snowdesktop::widget_api::SupportsFeature(
                 "slots.event.changed") &&

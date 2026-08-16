@@ -2096,7 +2096,7 @@ M7 切换完成后，发布运行时必须删除 API v1 注册和执行分支。
 - 即时绘制的按需 `animation.requestFrame/cancelFrame` 已接入宿主单次帧计时器、可见性清理和 `reducedMotion` 拒绝；真实桌面帧节奏、休眠恢复和多实例合帧仍需完成第 18.5 节场景验证。
 - 元素级 hover/pressed/focus、click/double click、指针捕获和独立原生右键菜单。
 - `LuaLogicalSlot`、`slots.binding/collection`、`slotSurface/slotItem`、宿主引用存储和现有 slot contract 全矩阵接入；v2.0 实现 binding 的 reference/replace/clear 和 collection 的 reference/reorder/remove。
-- 当前过渡实现已提供 collection slotItem 的宿主指针阈值、插入提示、同槽原子重排、历史记录及 `host.pointer` 变化来源；并以 `slots.keyboardNavigation` 提供可见 slotItem 的 Tab/空间方向焦点、焦点轮廓、Enter/Space 自身 click、Alt+方向键同槽重排、Delete 策略化移除和 `host.keyboard` 变化来源。跨槽拖动、原生拖出、通用节点键盘矩阵和 UIA 仍待后续批次。
+- 当前过渡实现已提供 collection slotItem 的宿主指针阈值、插入提示、同槽原子重排，以及同一组件内兼容 collection 间保持 opaque 身份的原子转移；两槽修改共用一个撤销历史项并以 `operation="transferred"`、目标/来源 revision 和 `host.pointer` 通知 Lua。`slots.keyboardNavigation` 提供可见 slotItem 的 Tab/空间方向焦点、焦点轮廓、Enter/Space 自身 click、Alt+方向键同槽重排、Delete 策略化移除和 `host.keyboard` 变化来源。原生拖出、跨组件/跨实例转移、通用节点键盘矩阵和 UIA 仍待后续批次。
 - 即时绘制交互 region 与语义树接口。
 
 退出条件：

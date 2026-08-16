@@ -23975,6 +23975,16 @@ void WidgetEngine::DispatchHostLogicalSlotChange(LuaWidget& widget,
                     static_cast<lua_Integer>(index + 1));
             }
             lua_setfield(state, -2, "itemIds");
+            if (!eventChange.relatedSlotId.empty())
+            {
+                lua_pushlstring(state, eventChange.relatedSlotId.data(),
+                    eventChange.relatedSlotId.size());
+                lua_setfield(state, -2, "relatedSlotId");
+                lua_pushinteger(state,
+                    static_cast<lua_Integer>(
+                        eventChange.relatedRevision));
+                lua_setfield(state, -2, "relatedRevision");
+            }
             lua_pushlstring(state, eventSource.data(), eventSource.size());
             lua_setfield(state, -2, "source");
         });
@@ -24205,6 +24215,41 @@ bool WidgetEngine::RuntimeMoveHostLogicalSlotItem(
             std::move(previousModel), std::move(previousStorage),
             change, error))
         return false;
+    DispatchHostLogicalSlotChange(*widget, change, source);
+    return true;
+}
+
+bool WidgetEngine::RuntimeTransferHostLogicalSlotItem(
+    const std::wstring& widgetId, std::string_view sourceSlotId,
+    std::string_view itemId, std::string_view targetSlotId,
+    std::size_t targetIndex,
+    snowdesktop::widget_runtime::LogicalSlotChange& change,
+    std::string& error, std::string_view source)
+{
+    error.clear();
+    auto widget = std::find_if(widgets_.begin(), widgets_.end(),
+        [&widgetId](const LuaWidget& candidate) {
+            return candidate.widgetId == widgetId;
+        });
+    if (widget == widgets_.end() || widget->preview || !widget->valid ||
+        widget->manifest.apiVersion < 2)
+    {
+        error = "logical slot host owner is unavailable";
+        return false;
+    }
+    auto previousModel = widget->logicalSlots;
+    auto previousStorage = ActiveStorage();
+    if (!widget->logicalSlots.Transfer(sourceSlotId, itemId,
+            targetSlotId, targetIndex, change, error))
+        return false;
+    if (!CommitLogicalSlotMutation(*this, *widget,
+            std::move(previousModel), std::move(previousStorage),
+            change, error))
+        return false;
+    if (widget->logicalSlotFocus &&
+        widget->logicalSlotFocus->slotId == sourceSlotId &&
+        widget->logicalSlotFocus->itemId == itemId)
+        widget->logicalSlotFocus->slotId = std::string(targetSlotId);
     DispatchHostLogicalSlotChange(*widget, change, source);
     return true;
 }
@@ -26642,12 +26687,11 @@ void WidgetEngine::BeginHostLogicalSlotPointer(
         previousSlotFocus->itemId != hit->itemId)
         RuntimeInvalidateHost(widget.widgetId);
     if (hit->kind !=
-            snowdesktop::widget_runtime::LogicalSlotKind::Collection ||
-        hit->itemCount < 2)
+            snowdesktop::widget_runtime::LogicalSlotKind::Collection)
         return;
     widget.logicalSlotPointerDrag = LuaWidget::LogicalSlotPointerDrag{
-        hit->slotId, hit->itemId, hit->surfaceIndex, hit->surfaceIndex,
-        POINT{ x, y }, hit->bounds, RECT{}, false };
+        hit->slotId, hit->slotId, hit->itemId, hit->surfaceIndex,
+        hit->surfaceIndex, POINT{ x, y }, hit->bounds, RECT{}, false };
 }
 
 bool WidgetEngine::UpdateHostLogicalSlotPointer(
@@ -26663,49 +26707,101 @@ bool WidgetEngine::UpdateHostLogicalSlotPointer(
             std::abs(y - drag.start.y) <= thresholdY)
             return false;
     }
-
-    const auto surface = RuntimeLogicalSlotSurface(
-        widget.widgetId, drag.slotId);
-    if (!surface || surface->items.size() < 2)
-    {
-        widget.logicalSlotPointerDrag.reset();
-        return false;
-    }
-    std::vector<RECT> itemBounds;
-    itemBounds.reserve(surface->items.size());
-    std::size_t sourceIndex = surface->items.size();
-    for (std::size_t index = 0; index < surface->items.size(); ++index)
-    {
-        itemBounds.push_back(surface->items[index].bounds);
-        if (surface->items[index].itemId == drag.itemId)
-            sourceIndex = index;
-    }
-    if (sourceIndex >= itemBounds.size())
-    {
-        widget.logicalSlotPointerDrag.reset();
-        return false;
-    }
     const POINT point{ widget.lastBounds.left + x,
         widget.lastBounds.top + y };
-    const auto target = snowdesktop::widget_runtime::
-        ResolveLogicalSlotPointerTarget(
-            itemBounds, sourceIndex, point, surface->bounds);
-    if (!target)
+
+    const auto* sourceSnapshot =
+        widget.logicalSlots.Find(drag.sourceSlotId);
+    if (!sourceSnapshot)
     {
         widget.logicalSlotPointerDrag.reset();
         return false;
     }
+    const auto sourceItem = std::find_if(sourceSnapshot->items.begin(),
+        sourceSnapshot->items.end(), [&drag](const auto& candidate) {
+            return candidate.id == drag.itemId;
+        });
+    if (sourceItem == sourceSnapshot->items.end())
+    {
+        widget.logicalSlotPointerDrag.reset();
+        return false;
+    }
+
+    std::string targetSlotId;
+    std::optional<snowdesktop::widget_runtime::
+        LogicalSlotPointerTarget> target;
+    RECT sourceBounds = drag.sourceBounds;
+    std::size_t sourceIndex = drag.sourceIndex;
+    for (const auto& snapshot : widget.logicalSlots.Snapshots())
+    {
+        if (snapshot.kind !=
+            snowdesktop::widget_runtime::LogicalSlotKind::Collection)
+            continue;
+        const auto surface = RuntimeLogicalSlotSurface(
+            widget.widgetId, snapshot.id);
+        if (!surface || !PtInRect(&surface->bounds, point)) continue;
+
+        std::vector<RECT> itemBounds;
+        itemBounds.reserve(surface->items.size());
+        for (std::size_t index = 0; index < surface->items.size(); ++index)
+        {
+            itemBounds.push_back(surface->items[index].bounds);
+            if (snapshot.id == drag.sourceSlotId &&
+                surface->items[index].itemId == drag.itemId)
+            {
+                sourceIndex = index;
+                sourceBounds = surface->items[index].bounds;
+            }
+        }
+
+        if (snapshot.id == drag.sourceSlotId)
+        {
+            target = snowdesktop::widget_runtime::
+                ResolveLogicalSlotPointerTarget(
+                    itemBounds, sourceIndex, point, surface->bounds);
+        }
+        else
+        {
+            const auto declaration =
+                widget.logicalSlots.Declarations().find(snapshot.id);
+            const bool accepts = declaration !=
+                    widget.logicalSlots.Declarations().end() &&
+                std::find(declaration->second.accepts.begin(),
+                    declaration->second.accepts.end(), sourceItem->kind) !=
+                    declaration->second.accepts.end();
+            const bool duplicate = std::any_of(snapshot.items.begin(),
+                snapshot.items.end(), [&sourceItem](const auto& candidate) {
+                    return candidate.kind == sourceItem->kind &&
+                        candidate.target == sourceItem->target;
+                });
+            if (!accepts || duplicate ||
+                snapshot.items.size() >= snapshot.capacity)
+                continue;
+            target = snowdesktop::widget_runtime::
+                ResolveLogicalSlotInsertionTarget(
+                    itemBounds, point, surface->bounds);
+        }
+        if (target)
+        {
+            targetSlotId = snapshot.id;
+            break;
+        }
+    }
+
     if (!drag.moved)
         widget.interactionRegions.CancelPointerPress();
     const bool changed = !drag.moved ||
-        drag.targetIndex != target->targetIndex ||
-        !EqualRect(&drag.indicatorBounds, &target->indicator) ||
-        !EqualRect(&drag.sourceBounds, &itemBounds[sourceIndex]);
+        drag.targetSlotId != targetSlotId ||
+        (target && (drag.targetIndex != target->targetIndex ||
+            !EqualRect(&drag.indicatorBounds, &target->indicator))) ||
+        (!target && !IsRectEmpty(&drag.indicatorBounds)) ||
+        !EqualRect(&drag.sourceBounds, &sourceBounds);
     drag.moved = true;
     drag.sourceIndex = sourceIndex;
-    drag.targetIndex = target->targetIndex;
-    drag.sourceBounds = itemBounds[sourceIndex];
-    drag.indicatorBounds = target->indicator;
+    drag.targetSlotId = std::move(targetSlotId);
+    drag.targetIndex = target ? target->targetIndex : 0;
+    drag.sourceBounds = sourceBounds;
+    drag.indicatorBounds = target ? target->indicator : RECT{};
     if (changed) RuntimeInvalidateHost(widget.widgetId);
     return true;
 }
@@ -26721,15 +26817,21 @@ bool WidgetEngine::EndHostLogicalSlotPointer(
     widgets_[index].logicalSlotPointerDrag.reset();
     RuntimeInvalidateHost(widgetId);
     if (!drag.moved) return false;
+    if (drag.targetSlotId.empty()) return true;
 
     snowdesktop::widget_runtime::LogicalSlotChange change;
     std::string error;
-    if (!RuntimeMoveHostLogicalSlotItem(widgetId, drag.slotId,
+    const bool committed = drag.targetSlotId == drag.sourceSlotId
+        ? RuntimeMoveHostLogicalSlotItem(widgetId, drag.sourceSlotId,
             drag.itemId, drag.targetIndex, change, error,
-            "host.pointer"))
+            "host.pointer")
+        : RuntimeTransferHostLogicalSlotItem(widgetId,
+            drag.sourceSlotId, drag.itemId, drag.targetSlotId,
+            drag.targetIndex, change, error, "host.pointer");
+    if (!committed)
     {
         RuntimeRecordError(widgetId,
-            "logical slot pointer reorder: " + error);
+            "logical slot pointer move: " + error);
     }
     return true;
 }
@@ -26845,8 +26947,9 @@ void WidgetEngine::DrawHostViewInteractionOverlays(
         !widget.logicalSlotPointerDrag->moved)
         return;
     const auto& drag = *widget.logicalSlotPointerDrag;
-    const auto dropSurface = RuntimeLogicalSlotSurface(
-        widget.widgetId, drag.slotId);
+    const auto dropSurface = drag.targetSlotId.empty()
+        ? std::optional<LogicalSlotHostSurface>{}
+        : RuntimeLogicalSlotSurface(widget.widgetId, drag.targetSlotId);
     if (dropSurface)
         DrawLogicalSlotDropSurface(d2dState_, *dropSurface);
     const D2D1_RECT_F source = D2D1::RectF(
@@ -26862,6 +26965,8 @@ void WidgetEngine::DrawHostViewInteractionOverlays(
             d2dState_, 0x72C7FF, 0.76f))
         d2dState_->ctx->DrawRoundedRectangle(
             D2D1::RoundedRect(source, 6.0f, 6.0f), outline, 1.5f);
+    if (drag.targetSlotId.empty() || IsRectEmpty(&drag.indicatorBounds))
+        return;
     const D2D1_RECT_F indicator = D2D1::RectF(
         static_cast<float>(drag.indicatorBounds.left),
         static_cast<float>(drag.indicatorBounds.top),
@@ -31076,6 +31181,15 @@ void PushLogicalSlotChange(lua_State* state,
         lua_rawseti(state, -2, static_cast<lua_Integer>(index + 1));
     }
     lua_setfield(state, -2, "itemIds");
+    if (!change.relatedSlotId.empty())
+    {
+        lua_pushlstring(state, change.relatedSlotId.data(),
+            change.relatedSlotId.size());
+        lua_setfield(state, -2, "relatedSlotId");
+        lua_pushinteger(state,
+            static_cast<lua_Integer>(change.relatedRevision));
+        lua_setfield(state, -2, "relatedRevision");
+    }
 }
 
 static int lua_LogicalSlotId(lua_State* state)

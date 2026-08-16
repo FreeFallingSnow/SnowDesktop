@@ -551,7 +551,8 @@ struct LuaWidget
 
     struct LogicalSlotPointerDrag
     {
-        std::string slotId;
+        std::string sourceSlotId;
+        std::string targetSlotId;
         std::string itemId;
         std::size_t sourceIndex = 0;
         std::size_t targetIndex = 0;
@@ -1257,6 +1258,13 @@ public:
         snowdesktop::widget_runtime::LogicalSlotChange& change,
         std::string& error,
         std::string_view source = "host.menu");
+    bool RuntimeTransferHostLogicalSlotItem(
+        const std::wstring& widgetId, std::string_view sourceSlotId,
+        std::string_view itemId, std::string_view targetSlotId,
+        std::size_t targetIndex,
+        snowdesktop::widget_runtime::LogicalSlotChange& change,
+        std::string& error,
+        std::string_view source = "host.pointer");
     bool RuntimeCanUndoHostLogicalSlot(const std::wstring& widgetId) const;
     bool RuntimeCanRedoHostLogicalSlot(const std::wstring& widgetId) const;
     bool RuntimeUndoHostLogicalSlot(const std::wstring& widgetId,
