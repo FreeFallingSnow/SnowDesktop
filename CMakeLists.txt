@@ -561,15 +561,17 @@ add_custom_command(TARGET SnowDesktop POST_BUILD
 
 add_executable(snowwidget
     tools/snowwidget/main.cpp
+    src/widget_api_registry.cpp
     src/widget_logical_slot.cpp
     src/widget_package.cpp
     src/widget_permission_broker.cpp
     src/widget_permission_state.cpp
+    src/widget_system_contract_json.cpp
     src/widget_view_contract.cpp
     src/widget_view_contract_json.cpp)
 target_compile_features(snowwidget PRIVATE cxx_std_20)
 target_include_directories(snowwidget PRIVATE src)
-target_link_libraries(snowwidget PRIVATE bcrypt ole32)
+target_link_libraries(snowwidget PRIVATE SnowDesktopLua bcrypt ole32)
 if (MSVC)
     set_property(TARGET snowwidget PROPERTY
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -711,6 +713,7 @@ if (BUILD_TESTING)
             tests/widget_api_registry_tests.cpp
             src/widget_api_registry.cpp
             src/widget_permission_state.cpp
+            src/widget_system_contract_json.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES SnowDesktopLua
         LABELS contract lua widget)

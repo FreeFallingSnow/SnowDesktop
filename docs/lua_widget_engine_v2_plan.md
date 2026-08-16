@@ -1720,6 +1720,9 @@ v2.0 资源契约：
 - `snowwidget view-contract`：输出带独立 schema 版本的 API v2 声明式视图 JSON 契约；
   节点适用属性、必填项、逐节点默认值、事件、类型、枚举、范围、影响域和无障碍映射均来自
   宿主运行时使用的同一份目录，供 LuaLS、文档生成器和编辑器校验复用。
+- `snowwidget system-contract`：离线输出 `system.capabilities()` 使用的 15 项系统函数、25 个
+  数据主题和 41 类任务；权限、预览策略、订阅刷新/隐藏/空闲边界、风险标记、可信手势和
+  每实例并发限制直接读取运行时目录，不另建作者工具白名单。
 - `snowwidget lint <directory>`：静态 API、权限、硬编码文案和视图 key 检查。
 - `snowwidget test <directory>`：在无副作用沙箱中执行组件测试。
 - `snowwidget preview <directory> --size ... --locale ... --theme ...`。

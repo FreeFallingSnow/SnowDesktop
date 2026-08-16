@@ -12,6 +12,11 @@
 `events` 分别登记节点适用属性与逐节点默认值、属性类型/枚举/范围/影响域，以及事件 payload
 类别。作者工具应读取该命令，不要复制维护另一份节点或属性白名单。
 
+运行 `snowwidget system-contract` 可离线获得与 `system.capabilities()` 同源的系统能力目录。
+其中 `functions`、`dataTopics`、`tasks` 分别公开 feature 与权限；数据主题还公开可见/隐藏采样
+间隔、空闲释放和风险属性，任务公开可信手势要求与每实例并发上限。该导出只描述系统能力，
+不会读取当前组件的授权状态；实例是否已授权仍应在运行时查询 `system.capabilities(id)`。
+
 ## 入口契约
 
 `main.lua` 必须返回 `widget.define({...})` 的结果，并且必须且只能提供

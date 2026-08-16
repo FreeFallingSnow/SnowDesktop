@@ -1,5 +1,7 @@
 #include "widget_api_registry.h"
 #include "widget_permission_state.h"
+#include "widget_system_contract_json.h"
+#include "json_value.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -898,6 +900,66 @@ void TestSystemCapabilityContract()
     lua_pop(state, 3);
 }
 
+void TestMachineReadableSystemContract()
+{
+    JsonValue root;
+    std::string error;
+    const std::string serialized = snowdesktop::widget_api::
+        SerializeSystemCapabilityContractJson();
+    Check(ParseJson(serialized, root, &error) && root.IsObject(),
+        "offline system capability contract must be valid JSON");
+
+    const JsonValue* ok = root.Find("ok");
+    const JsonValue* schemaVersion = root.Find("schemaVersion");
+    const JsonValue* apiVersion = root.Find("apiVersion");
+    const JsonValue* functions = root.Find("functions");
+    const JsonValue* topics = root.Find("dataTopics");
+    const JsonValue* tasks = root.Find("tasks");
+    Check(ok && ok->IsBoolean() && ok->boolean &&
+            schemaVersion && schemaVersion->IsNumber() &&
+            schemaVersion->number == 1.0 &&
+            apiVersion && apiVersion->IsNumber() &&
+            apiVersion->number == 2.0,
+        "offline system contract must expose schema and API versions");
+    Check(functions && functions->IsArray() &&
+            functions->array.size() == 15 &&
+            topics && topics->IsArray() && topics->array.size() == 25 &&
+            tasks && tasks->IsArray() && tasks->array.size() == 41,
+        "offline system contract must expose every runtime catalog entry");
+
+    const auto findNamed = [](const JsonValue& array,
+        std::string_view name) -> const JsonValue* {
+        for (const auto& entry : array.array)
+        {
+            const JsonValue* entryName = entry.Find("name");
+            if (entryName && entryName->IsString() &&
+                entryName->string == name)
+                return &entry;
+        }
+        return nullptr;
+    };
+    const JsonValue* analysis = findNamed(*topics,
+        "audio.output.analysis");
+    const JsonValue* request = findNamed(*tasks, "network.request");
+    Check(analysis && analysis->Find("permission") &&
+            analysis->Find("permission")->IsString() &&
+            analysis->Find("permission")->string ==
+                "audio.output.analyze" &&
+            analysis->Find("minimumIntervalMs") &&
+            analysis->Find("minimumIntervalMs")->number == 16.0 &&
+            analysis->Find("highRisk") &&
+            analysis->Find("highRisk")->boolean,
+        "data topic JSON must preserve permission, cadence, and risk metadata");
+    Check(request && request->Find("permission") &&
+            request->Find("permission")->IsString() &&
+            request->Find("permission")->string == "network.internet" &&
+            request->Find("requiresTrustedGesture") &&
+            !request->Find("requiresTrustedGesture")->boolean &&
+            request->Find("maximumPerInstance") &&
+            request->Find("maximumPerInstance")->number == 2.0,
+        "task JSON must preserve permission, gesture, and concurrency metadata");
+}
+
 void TestTransientState()
 {
     LuaState state;
@@ -1158,6 +1220,7 @@ int main()
     TestVersionedRegistration();
     TestV2Contract();
     TestSystemCapabilityContract();
+    TestMachineReadableSystemContract();
     TestTransientState();
     TestCatalogValidation();
     TestCatalogRegistration();
