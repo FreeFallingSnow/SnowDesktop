@@ -1536,12 +1536,13 @@ static const std::unordered_map<std::string,
 
 static bool VariableVirtualStateMatches(
     const LuaWidget::VariableVirtualState& state,
-    std::size_t itemCount, float estimatedItemSize, float rowGap,
-    std::uint64_t layoutRevision) noexcept
+    std::size_t itemCount, float estimatedItemSize, float mainGap,
+    bool horizontal, std::uint64_t layoutRevision) noexcept
 {
     return state.itemCount == itemCount &&
         state.estimatedItemSize == estimatedItemSize &&
-        state.rowGap == rowGap &&
+        state.mainGap == mainGap &&
+        state.horizontal == horizontal &&
         state.layoutRevision == layoutRevision;
 }
 
@@ -1568,9 +1569,14 @@ static void AttachVariableVirtualMeasurements(
     {
         const auto& states = VariableVirtualStatesForSurface(widget, surface);
         const auto found = states.find(node.key);
+        const bool horizontal = node.orientation ==
+            snowdesktop::widget_runtime::ViewOrientation::Horizontal;
+        const float mainGap = horizontal
+            ? node.columnGap.value_or(node.gap)
+            : node.rowGap.value_or(node.gap);
         if (found != states.end() && VariableVirtualStateMatches(
                 found->second, node.itemCount, *node.estimatedItemSize,
-                node.rowGap.value_or(node.gap),
+                mainGap, horizontal,
                 node.virtualLayoutRevision))
             node.virtualMeasurements =
                 VariableVirtualMeasurements(found->second);
@@ -1608,7 +1614,11 @@ static bool CommitVariableVirtualMeasurements(
         node.virtualMeasuredExtents.size() == node.children.size() &&
         node.virtualMeasuredIndices.size() == node.children.size())
     {
-        const float rowGap = node.rowGap.value_or(node.gap);
+        const bool horizontal = node.orientation ==
+            snowdesktop::widget_runtime::ViewOrientation::Horizontal;
+        const float mainGap = horizontal
+            ? node.columnGap.value_or(node.gap)
+            : node.rowGap.value_or(node.gap);
         const auto oldMeasurements = node.virtualMeasurements;
         ViewVirtualRange oldRange;
         std::string rangeError;
@@ -1616,13 +1626,13 @@ static bool CommitVariableVirtualMeasurements(
         float oldAnchorStart = 0.0f;
         if (node.itemCount > 0 &&
             ComputeViewVariableVirtualRange(node.itemCount,
-                *node.estimatedItemSize, rowGap,
+                *node.estimatedItemSize, mainGap,
                 node.scrollViewportExtent, node.scrollOffset, 0,
                 oldMeasurements, oldRange, rangeError))
         {
             anchorIndex = oldRange.firstIndex;
             (void)ComputeViewVariableVirtualItemStart(node.itemCount,
-                *node.estimatedItemSize, rowGap, anchorIndex,
+                *node.estimatedItemSize, mainGap, anchorIndex,
                 oldMeasurements, oldAnchorStart, rangeError);
         }
 
@@ -1630,14 +1640,15 @@ static bool CommitVariableVirtualMeasurements(
         const auto existing = states.find(node.key);
         if (existing != states.end() && VariableVirtualStateMatches(
                 existing->second, node.itemCount,
-                *node.estimatedItemSize, rowGap,
+                *node.estimatedItemSize, mainGap, horizontal,
                 node.virtualLayoutRevision))
             nextState = existing->second;
         else
         {
             nextState.itemCount = node.itemCount;
             nextState.estimatedItemSize = *node.estimatedItemSize;
-            nextState.rowGap = rowGap;
+            nextState.mainGap = mainGap;
+            nextState.horizontal = horizontal;
             nextState.layoutRevision = node.virtualLayoutRevision;
             changed = true;
         }
@@ -1679,12 +1690,12 @@ static bool CommitVariableVirtualMeasurements(
                 VariableVirtualMeasurements(nextState);
             float newAnchorStart = oldAnchorStart;
             if (ComputeViewVariableVirtualItemStart(node.itemCount,
-                    *node.estimatedItemSize, rowGap, anchorIndex,
+                    *node.estimatedItemSize, mainGap, anchorIndex,
                     newMeasurements, newAnchorStart, rangeError))
             {
                 ViewVirtualRange newRange;
                 if (ComputeViewVariableVirtualRange(node.itemCount,
-                        *node.estimatedItemSize, rowGap,
+                        *node.estimatedItemSize, mainGap,
                         node.scrollViewportExtent, node.scrollOffset, 0,
                         newMeasurements, newRange, rangeError))
                 {
@@ -2848,29 +2859,61 @@ static int lua_InteractionScroll(lua_State* state)
             "interaction.scroll: shape geometry must be finite, positive, and bounded");
     }
 
-    lua_getfield(state, descriptor, "contentHeight");
-    const lua_Integer requestedContentHeight =
-        luaL_checkinteger(state, -1);
-    lua_pop(state, 1);
-    if (requestedContentHeight < 0 ||
-        requestedContentHeight > 1'000'000)
+    std::string orientation = "vertical";
+    lua_getfield(state, descriptor, "orientation");
+    if (!lua_isnil(state, -1))
     {
+        std::size_t length = 0;
+        const char* value = luaL_checklstring(state, -1, &length);
+        orientation.assign(value ? value : "", length);
+    }
+    lua_pop(state, 1);
+    if (orientation != "vertical" && orientation != "horizontal")
         return luaL_error(state,
-            "interaction.scroll: contentHeight must be from 0 to 1000000");
+            "interaction.scroll: orientation must be vertical or horizontal");
+    const bool horizontal = orientation == "horizontal";
+    const char* contentField = horizontal ? "contentWidth" : "contentHeight";
+    const char* rejectedField = horizontal ? "contentHeight" : "contentWidth";
+    lua_getfield(state, descriptor, rejectedField);
+    const bool hasRejectedExtent = !lua_isnil(state, -1);
+    lua_pop(state, 1);
+    if (hasRejectedExtent)
+        return luaL_error(state, horizontal
+            ? "interaction.scroll: horizontal scrolling uses contentWidth, not contentHeight"
+            : "interaction.scroll: vertical scrolling uses contentHeight, not contentWidth");
+    lua_getfield(state, descriptor, contentField);
+    if (!lua_isinteger(state, -1))
+        return luaL_error(state, horizontal
+            ? "interaction.scroll: contentWidth must be an integer"
+            : "interaction.scroll: contentHeight must be an integer");
+    const lua_Integer requestedContentExtent = lua_tointeger(state, -1);
+    lua_pop(state, 1);
+    if (requestedContentExtent < 0 ||
+        requestedContentExtent > 1'000'000)
+    {
+        return luaL_error(state, horizontal
+            ? "interaction.scroll: contentWidth must be from 0 to 1000000"
+            : "interaction.scroll: contentHeight must be from 0 to 1000000");
     }
 
     auto* d2d = GetD2D(state);
     if (!d2d || !d2d->engine)
         return luaL_error(state,
             "interaction.scroll: host context is unavailable");
+    const int viewportWidth = std::max(
+        1, static_cast<int>(std::lround(width)));
     const int viewportHeight = std::max(
         1, static_cast<int>(std::lround(height)));
-    const int contentHeight = std::max(
-        viewportHeight, static_cast<int>(requestedContentHeight));
+    const int viewportExtent = horizontal ? viewportWidth : viewportHeight;
+    const int contentExtent = std::max(
+        viewportExtent, static_cast<int>(requestedContentExtent));
     LuaWidget::HostControl control;
     control.type = LuaWidget::HostControl::Type::Scroll;
     control.id = key;
-    control.contentHeight = contentHeight;
+    control.horizontal = horizontal;
+    control.contentWidth = horizontal ? contentExtent : viewportWidth;
+    control.viewportWidth = viewportWidth;
+    control.contentHeight = horizontal ? viewportHeight : contentExtent;
     control.viewportHeight = viewportHeight;
     control.rect = {
         static_cast<LONG>(std::lround(x)),
@@ -2882,15 +2925,23 @@ static int lua_InteractionScroll(lua_State* state)
         BoundWidgetId(state), std::move(control));
     const int offset = d2d->engine->RuntimeGetScrollOffset(
         BoundWidgetId(state), key);
-    lua_createtable(state, 0, 4);
+    lua_createtable(state, 0, 7);
     lua_pushinteger(state, offset);
     lua_setfield(state, -2, "offset");
-    lua_pushinteger(state, std::max(0, contentHeight - viewportHeight));
+    lua_pushinteger(state, std::max(0, contentExtent - viewportExtent));
     lua_setfield(state, -2, "maximum");
-    lua_pushinteger(state, viewportHeight);
-    lua_setfield(state, -2, "viewportHeight");
-    lua_pushinteger(state, contentHeight);
-    lua_setfield(state, -2, "contentHeight");
+    lua_pushlstring(state, orientation.data(), orientation.size());
+    lua_setfield(state, -2, "orientation");
+    lua_pushinteger(state, viewportExtent);
+    lua_setfield(state, -2, "viewportExtent");
+    lua_pushinteger(state, contentExtent);
+    lua_setfield(state, -2, "contentExtent");
+    lua_pushinteger(state, viewportExtent);
+    lua_setfield(state, -2,
+        horizontal ? "viewportWidth" : "viewportHeight");
+    lua_pushinteger(state, contentExtent);
+    lua_setfield(state, -2,
+        horizontal ? "contentWidth" : "contentHeight");
     return 1;
 }
 
@@ -9062,11 +9113,11 @@ static int lua_ViewVirtualRange(lua_State* state)
     if (fixedExtent == variableExtent ||
         (variableExtent && columnsValue != 1) ||
         (!sectionHeaderIndices.empty() && columnsValue != 1) ||
-        (horizontal && (variableExtent || columnsValue != 1 ||
+        (horizontal && (columnsValue != 1 ||
             !sectionHeaderIndices.empty())))
     {
         return luaL_error(state,
-            "view.virtualRange: provide exactly one extent; horizontal ranges require one fixed-extent list column and reject section headers");
+            "view.virtualRange: provide exactly one extent; horizontal ranges require one list column and reject section headers");
     }
     ViewVirtualRange range;
     ViewVirtualRange visibleRange;
@@ -9078,6 +9129,7 @@ static int lua_ViewVirtualRange(lua_State* state)
                 static_cast<float>(estimatedItemSizeValue),
                 static_cast<float>(mainGapValue),
                 static_cast<float>(viewportExtentValue),
+                horizontal,
                 static_cast<std::uint64_t>(layoutRevisionValue),
                 static_cast<std::size_t>(overscanValue),
                 static_cast<std::size_t>(initialScrollIndexValue),
@@ -9089,6 +9141,7 @@ static int lua_ViewVirtualRange(lua_State* state)
                 static_cast<float>(estimatedItemSizeValue),
                 static_cast<float>(mainGapValue),
                 static_cast<float>(viewportExtentValue),
+                horizontal,
                 static_cast<std::uint64_t>(layoutRevisionValue), 0,
                 static_cast<std::size_t>(initialScrollIndexValue),
                 visibleRange, error))
@@ -26372,8 +26425,8 @@ bool WidgetEngine::RuntimeHasScrollOffset(const std::wstring& widgetId,
 
 bool WidgetEngine::RuntimeComputeVariableVirtualRange(
     const std::wstring& widgetId, const std::string& id,
-    std::size_t itemCount, float estimatedItemSize, float rowGap,
-    float viewportExtent, std::uint64_t layoutRevision,
+    std::size_t itemCount, float estimatedItemSize, float mainGap,
+    float viewportExtent, bool horizontal, std::uint64_t layoutRevision,
     std::size_t overscan, std::size_t initialScrollIndex,
     snowdesktop::widget_runtime::ViewVirtualRange& range,
     std::string& error, std::string_view surface) const
@@ -26395,8 +26448,8 @@ bool WidgetEngine::RuntimeComputeVariableVirtualRange(
     const auto& states = VariableVirtualStatesForSurface(widget, surface);
     const auto state = states.find(id);
     if (state != states.end() && VariableVirtualStateMatches(
-            state->second, itemCount, estimatedItemSize, rowGap,
-            layoutRevision))
+            state->second, itemCount, estimatedItemSize, mainGap,
+            horizontal, layoutRevision))
         measurements = VariableVirtualMeasurements(state->second);
 
     const auto& offsets = ScrollOffsetsForSurface(widget, surface);
@@ -26406,13 +26459,13 @@ bool WidgetEngine::RuntimeComputeVariableVirtualRange(
     if (stored == offsets.end() && initialScrollIndex > 0)
     {
         if (!ComputeViewVariableVirtualItemScrollOffset(itemCount,
-                estimatedItemSize, rowGap, viewportExtent, 0.0f,
+                estimatedItemSize, mainGap, viewportExtent, 0.0f,
                 initialScrollIndex, "nearest", measurements,
                 requestedOffset, error))
             return false;
     }
     return ComputeViewVariableVirtualRange(itemCount,
-        estimatedItemSize, rowGap, viewportExtent, requestedOffset,
+        estimatedItemSize, mainGap, viewportExtent, requestedOffset,
         overscan, measurements, range, error);
 }
 

@@ -227,9 +227,10 @@ replaces items only while busy, empty content activates only for a truly empty
 collection, and neither state creates an implicit timer or localized label.
 Probe `view.collection.orientation` before setting an eager `list` to horizontal;
 vertical remains the default. Probe `view.collection.virtual.orientation` for
-a fixed-extent horizontal `virtualList`; pass the same horizontal orientation,
-content viewport width, item width, and column gap to `view.virtualRange`.
-Horizontal variable extents, section headers, and virtualGrid remain rejected.
+a horizontal `virtualList`; pass the same horizontal orientation, content
+viewport width, main-axis size, and column gap to `view.virtualRange`.
+Estimated widths additionally require `view.collection.virtual.variableExtent`.
+Horizontal section headers and virtualGrid remain rejected.
 For larger data, probe
 `view.collection.virtual`, call `view.virtualRange` with the stable collection
 key and actual main-axis content-viewport extent, create only its inclusive 1-based
@@ -237,12 +238,13 @@ window, then submit `virtualList` or `virtualGrid` with matching fixed extent,
 row gap, columns, overscan, firstIndex, and contiguous listItem children. Keep
 the materialized window within 128 items. Probe
 `view.collection.virtual.variableExtent` to replace fixed itemExtent with a
-virtualList estimate plus layoutRevision; the host measures committed items.
+virtualList estimate plus layoutRevision; the host measures committed heights
+or widths according to orientation.
 Probe `view.collection.virtual.stickyHeaders` to pass one sorted global section
 index array to both calls, use the returned stickyHeaderIndex, and prepend that
 one item only when it falls before firstIndex. Probe
 `view.scroll.programmatic` for scrollTo/scrollBy/scrollToIndex. Do not emulate
-horizontal virtualization or variable-height virtualGrid.
+horizontal virtualGrid or variable-height virtualGrid.
 Probe `view.grid.uniform` before using `view.grid`; it is a bounded row-major
 equal-column layout with 1–64 columns and optional `columnGap`/`rowGap`. Probe
 `view.grid.placement` before setting `gridColumn`, `gridRow`, `columnSpan`, or
@@ -523,9 +525,11 @@ default border does not fit the component design.
   Grid/GridItem coordinates. ScrollItem, unrealized virtual collection items,
   and real Narrator validation remain pending, so do not claim complete
   screen-reader support.
-- Register vertical immediate-mode overflow with `interaction.scroll`, translate
-  content by its returned offset, and pair the viewport with
-  `draw.pushClip/popClip`. Do not use the v1 `ui.scrollArea` compatibility API.
+- Register immediate-mode overflow with `interaction.scroll`, translate content
+  along the returned main-axis offset, and pair the viewport with
+  `draw.pushClip/popClip`. Vertical is the default; probe
+  `interaction.scroll.orientation` before using horizontal `contentWidth`.
+  Do not use the v1 `ui.scrollArea` compatibility API.
 - Submit storage-bound text editors with `control.textInput/textArea` during
   render. Keep keys stable, set an explicit practical `maxBytes`, and call
   `control.focus` only inside a direct trusted action or menu callback. After

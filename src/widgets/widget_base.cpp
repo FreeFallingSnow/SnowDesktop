@@ -2209,6 +2209,71 @@ void DrawScrollbarAt(ID2D1DeviceContext* context, RECT body, int contentHeight,
     }
 }
 
+void DrawHorizontalScrollbarAt(ID2D1DeviceContext* context, RECT body,
+    int contentWidth, int visibleWidth, int scrollOffset, bool hovered,
+    bool lightTheme, float cellScale)
+{
+    if (contentWidth <= visibleWidth || visibleWidth <= 0 || !hovered) return;
+
+    const int maxScroll = std::max(0, contentWidth - visibleWidth);
+    if (maxScroll <= 0) return;
+
+    const int trackHeight = std::max(
+        2, static_cast<int>(std::round(5.0f * cellScale)));
+    const int trackMargin = std::max(
+        1, static_cast<int>(std::round(2.0f * cellScale)));
+    const int trackLeft = body.left + std::max(
+        1, static_cast<int>(std::round(4.0f * cellScale)));
+    const int trackRight = body.right - std::max(
+        1, static_cast<int>(std::round(4.0f * cellScale)));
+    const int trackTop = body.bottom - trackHeight - trackMargin;
+    const int trackWidth = std::max(1, trackRight - trackLeft);
+
+    ComPtr<ID2D1SolidColorBrush> trackBrush;
+    context->CreateSolidColorBrush(
+        lightTheme ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.08f)
+                   : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f),
+        &trackBrush);
+    if (trackBrush)
+    {
+        const auto track = D2D1::RoundedRect(D2D1::RectF(
+            static_cast<float>(trackLeft), static_cast<float>(trackTop),
+            static_cast<float>(trackRight),
+            static_cast<float>(trackTop + trackHeight)),
+            static_cast<float>(trackHeight) * 0.5f,
+            static_cast<float>(trackHeight) * 0.5f);
+        context->FillRoundedRectangle(track, trackBrush.Get());
+    }
+
+    const float ratio = std::clamp(
+        static_cast<float>(visibleWidth) / static_cast<float>(contentWidth),
+        0.08f, 1.0f);
+    const float scrollRatio = std::clamp(
+        static_cast<float>(scrollOffset) / static_cast<float>(maxScroll),
+        0.0f, 1.0f);
+    const int thumbWidth = std::min(trackWidth, std::max(
+        std::max(8, static_cast<int>(std::round(20.0f * cellScale))),
+        static_cast<int>(trackWidth * ratio)));
+    const int thumbLeft = trackLeft + static_cast<int>(
+        (trackWidth - thumbWidth) * scrollRatio);
+
+    ComPtr<ID2D1SolidColorBrush> thumbBrush;
+    context->CreateSolidColorBrush(
+        lightTheme ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.28f)
+                   : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.35f),
+        &thumbBrush);
+    if (thumbBrush)
+    {
+        const auto thumb = D2D1::RoundedRect(D2D1::RectF(
+            static_cast<float>(thumbLeft), static_cast<float>(trackTop),
+            static_cast<float>(thumbLeft + thumbWidth),
+            static_cast<float>(trackTop + trackHeight)),
+            static_cast<float>(trackHeight) * 0.5f,
+            static_cast<float>(trackHeight) * 0.5f);
+        context->FillRoundedRectangle(thumb, thumbBrush.Get());
+    }
+}
+
 /**
  * @brief 绘制组件滚动条（通过 DrawScrollbarAt 实现）
  * @param context D2D 设备上下文

@@ -138,12 +138,12 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.scroll` 提供宿主滚动视口，`view.scroll.initialTarget` 提供首次声明式定位，
 `view.collection.basic` 提供基础集合，
 `view.collection.orientation` 提供普通 list 横纵方向，
-`view.collection.virtual.orientation` 提供固定尺寸 virtualList 横向主轴，
+`view.collection.virtual.orientation` 提供 fixed/variable virtualList 横向主轴，
 `view.collection.selection` 提供受控单选/多选，`view.collection.stickyHeaders` 提供 eager 纵向分组标题，
 `view.collection.contentStates` 提供空态/加载态，
 `view.collection.virtual` 提供固定行高虚拟集合与可见范围查询，
 `view.collection.virtual.stickyHeaders` 提供 virtualList 的全局分组索引与窗口外活动标题，
-`view.collection.virtual.variableExtent` 为 virtualList 增加宿主测量的可变行高；
+`view.collection.virtual.variableExtent` 为 virtualList 增加宿主测量的可变主轴尺寸；
 `view.styledText.basic` 提供有界样式 span，`view.styledText.inlineIcons` 提供宿主图标字体 span，
 `view.styledText.actions` 提供精确行内交互目标，
 `view.monthCalendar` 提供受控月历日期网格，
@@ -604,8 +604,8 @@ UIA 滚动从末端之前首次到达最大偏移时投递一次 action，离开
 总节点和 256 交互区域上限约束。对应 feature 为 `view.collection.basic`。这是非虚拟化
 基础集合；大量或远程分页数据应使用下述 `virtualList/virtualGrid`，不能通过超配额树模拟。
 `gridList/virtualGrid` 不接受 orientation；`virtualList` 只有探测
-`view.collection.virtual.orientation` 后才能使用下述固定尺寸横向模型，可变行高仍只属于纵向
-单列 virtualList 的独立 feature。
+`view.collection.virtual.orientation` 后才能使用下述横向模型，横向 estimatedItemSize 还必须同时
+探测 `view.collection.virtual.variableExtent`。
 
 探测 `view.collection.stickyHeaders` 后，纵向 eager `list` 的直接 `listItem` 可声明
 `sticky=true`。当该 list 位于纵向 `scroll` 内时，宿主把已经越过视口顶部的最近标题固定在
@@ -737,21 +737,25 @@ return view.virtualList({
 `firstIndex=0` 和空 children。虚拟节点必须有固定或 fill 高度，`viewportExtent` 是扣除
 节点 padding 后的实际内容高度。
 
-探测 `view.collection.virtual.orientation` 后，固定尺寸 `virtualList` 可声明
-`orientation="horizontal"`。此时 `itemExtent` 表示单项宽度，主轴间隔使用 `columnGap`，节点
-必须有 fixed/fill 宽度；`view.virtualRange` 必须收到相同 orientation、itemExtent、columnGap，
+探测 `view.collection.virtual.orientation` 后，`virtualList` 可声明
+`orientation="horizontal"`。固定尺寸时 `itemExtent` 表示单项宽度；探测
+`view.collection.virtual.variableExtent` 后也可用 `estimatedItemSize` 估算并测量单项宽度。主轴间隔
+使用 `columnGap`，节点必须有 fixed/fill 宽度；`view.virtualRange` 必须收到相同 orientation、
+尺寸参数和 columnGap，
 且 `viewportExtent` 改为扣除 padding 后的内容宽度。宿主在 x 轴完成窗口布局、裁剪、滚轮、
-滚动条和 `scrollToIndex`。首版横向虚拟列表只允许 `columns=1` 的固定尺寸模型，不接受
-`estimatedItemSize`、`rowGap`、section/sticky header；`virtualGrid` 仍固定纵向。
+滚动条和 `scrollToIndex`。横向虚拟列表只允许 `columns=1`，不接受 `rowGap` 或
+section/sticky header；`virtualGrid` 仍固定纵向。
 
 探测 `view.collection.virtual.variableExtent` 后，`virtualList` 可用正数
 `estimatedItemSize` 替代 `itemExtent`。`view.virtualRange` 必须传入同一个 estimate、
-`layoutRevision`、rowGap 和 overscan；宿主先以 estimate 计算首帧范围，成功 scene 布局后测量
-当前连续 `listItem` 窗口，最多为每个容器缓存 4096 个 1-based 索引尺寸，并触发下一次合并重绘。
-缓存修正内容总高度和后续范围，且以修正前第一个可见项为锚点同步调整偏移，避免测得上方项目后
+`layoutRevision`、主轴 gap 和 overscan；宿主先以 estimate 计算首帧范围，成功 scene 布局后测量
+当前连续 `listItem` 窗口的高度（纵向）或宽度（横向），最多为每个容器缓存 4096 个 1-based
+索引尺寸，并触发下一次合并重绘。缓存修正内容主轴总长度和后续范围，且以修正前第一个可见项为
+锚点同步调整偏移，避免测得前方项目后
 让当前内容跳动。测量缓存只在整棵候选 scene 成功后提交；失败 scene 不污染后续范围。
-当项目顺序、字体、宽度策略或其他会改变行高的 model 内容变化时，作者必须递增非负
-`layoutRevision`，宿主会原子丢弃旧代测量；itemCount、estimate 或 rowGap 变化也会自动换代。
+当项目顺序、字体、尺寸策略或其他会改变主轴尺寸的 model 内容变化时，作者必须递增非负
+`layoutRevision`，宿主会原子丢弃旧代测量；itemCount、estimate、主轴 gap 或 orientation 变化也会
+自动换代。
 固定和估算尺寸不可同时声明，`virtualGrid` 仍只接受固定 `itemExtent`。
 
 ```lua
@@ -819,7 +823,8 @@ return view.virtualList({
 })
 ```
 
-当前仍不支持横向虚拟集合、可变行高 virtualGrid、未实体化项目的 UIA VirtualizedItem，
+当前仍不支持横向 virtualGrid、可变行高 virtualGrid、横向 sticky header、未实体化项目的
+UIA VirtualizedItem，
 或保留已回收项的 Lua 局部状态；固定与可变列表的程序化定位由 `view.scroll.programmatic` 提供，
 稳定状态应放在 model/state 并以 item key 索引。
 
@@ -1163,7 +1168,7 @@ role 推导焦点；显式 `focusable=false` 会退出焦点，key 观察目标�
 版本使用相同负载和按下/释放配对，`interaction.isFocused(key)` 可用于绘制焦点状态；这些事件
 不能取消宿主激活、组件槽位快捷键或字符/IME 输入。
 
-即时绘制的纵向滚动区域使用 `interaction.scroll(spec)`，不要调用 v1
+即时绘制滚动区域使用 `interaction.scroll(spec)`，不要调用 v1
 `ui.scrollArea`：
 
 ```lua
@@ -1178,12 +1183,15 @@ draw.pushClip(0, 0, layout.width(), layout.height())
 draw.popClip()
 ```
 
-scroll key 同样是实例内稳定的 1–128 字节 UTF-8 字符串；只接受正尺寸 rect，
-`contentHeight` 上限为 1,000,000 逻辑单位。返回值包含 `offset`、`maximum`、
-`viewportHeight` 和 `contentHeight`。宿主处理滚轮和触控板 wheel 增量、钳制偏移、重绘及
-滚动条；组件必须用成对的 `draw.pushClip/popClip` 裁剪内容。
+scroll key 同样是实例内稳定的 1–128 字节 UTF-8 字符串；只接受正尺寸 rect。默认纵向并要求
+`contentHeight`；探测 `interaction.scroll.orientation` 后可声明 `orientation="horizontal"` 并改用
+`contentWidth`，两个 content 字段互斥且上限均为 1,000,000 逻辑单位。返回值始终包含主轴
+`offset/maximum/orientation/viewportExtent/contentExtent`，并按轴额外返回
+`viewportHeight/contentHeight` 或 `viewportWidth/contentWidth`。宿主处理滚轮和触控板 wheel
+增量、钳制偏移、重绘及对应方向滚动条；组件必须用成对的 `draw.pushClip/popClip` 裁剪内容。
 `interaction.setScrollOffset(key, offset)` 只在当前 render 已注册同 key 区域后设置并
-返回实际偏移。滚动不需要 `ui.input` 权限，对应 feature 为 `interaction.scroll`。
+返回实际偏移。滚动不需要 `ui.input` 权限，基础 feature 为 `interaction.scroll`，横向扩展为
+`interaction.scroll.orientation`。
 
 右键命中带 `contextMenu` 绑定的 region 后，宿主同步调用 descriptor 的 `menu`：
 

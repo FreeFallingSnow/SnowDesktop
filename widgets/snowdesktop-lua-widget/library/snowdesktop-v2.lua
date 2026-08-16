@@ -269,11 +269,11 @@
 ---@field key string Stable virtual collection key.
 ---@field itemCount integer Total logical items from 0 through 1000000.
 ---@field itemExtent? number Fixed logical main-axis item extent; row height for vertical collections and item width for horizontal virtualList. Mutually exclusive with estimatedItemSize.
----@field estimatedItemSize? number Variable virtualList estimate used instead of itemExtent after probing view.collection.virtual.variableExtent.
+---@field estimatedItemSize? number Variable virtualList main-axis estimate used instead of itemExtent after probing view.collection.virtual.variableExtent.
 ---@field layoutRevision? integer Bump when variable-list ordering or height-affecting content changes so stale measurements are discarded.
 ---@field viewportExtent number Positive logical content-viewport extent after padding: height for vertical and width for horizontal.
 ---@field columns? integer Grid column count from 1 through 64; defaults to 1.
----@field orientation? 'horizontal'|'vertical' Defaults to vertical. Horizontal requires view.collection.virtual.orientation, fixed itemExtent, columns=1, and no section headers.
+---@field orientation? 'horizontal'|'vertical' Defaults to vertical. Horizontal requires view.collection.virtual.orientation, columns=1, and no section headers; estimated widths also require view.collection.virtual.variableExtent.
 ---@field columnGap? number Horizontal virtualList item gap; defaults to 0.
 ---@field rowGap? number Logical gap between rows; defaults to 0.
 ---@field overscan? integer Extra rows on each side from 0 through 16; defaults to 2.
@@ -311,7 +311,7 @@
 ---@field alt? string Required by image and referenceIcon nodes; use an empty string for decorative visuals.
 ---@field iconFont? 'fa'|'fluent'|'fluent-regular'
 ---@field shape? 'rectangle'|'roundedRectangle'|'circle'|'ellipse'
----@field orientation? 'horizontal'|'vertical' Divider, radioGroup/slider, scroll, eager list, or fixed-extent virtualList axis; scroll and lists default to vertical.
+---@field orientation? 'horizontal'|'vertical' Divider, radioGroup/slider, scroll, eager list, or virtualList axis; scroll and lists default to vertical.
 ---@field value? number|string Numeric progress/slider/numberInput value, or controlled textInput/textArea/searchBox string.
 ---@field values? number[] Required by data-series nodes; 1 to 512 finite samples, with at most 4096 samples across one tree.
 ---@field min? number Explicit data-series, slider, or numberInput minimum; defaults to 0 for controls.
@@ -369,8 +369,8 @@
 ---@field rowSpan? integer Number of rows occupied by a direct grid/gridList child; 1 through 64, defaults to 1.
 ---@field itemCount? integer Required total logical item count for virtualList/virtualGrid; 0 through 1000000.
 ---@field itemExtent? number Required fixed row height for virtualList/virtualGrid.
----@field estimatedItemSize? number VirtualList-only positive estimate used instead of itemExtent; materialized item heights are measured and cached by the host. Requires view.collection.virtual.variableExtent.
----@field layoutRevision? integer Variable virtualList measurement generation; bump after reorder or height-affecting model changes. Defaults to 0.
+---@field estimatedItemSize? number VirtualList-only positive main-axis estimate used instead of itemExtent; materialized heights or widths are measured and cached by the host. Horizontal use also requires view.collection.virtual.orientation.
+---@field layoutRevision? integer Variable virtualList measurement generation; bump after reorder or main-axis-size-affecting model changes. Defaults to 0.
 ---@field sectionHeaderIndices? integer[] VirtualList-only sorted unique 1-based section-header indices; pass the same array to view.virtualRange. Requires view.collection.virtual.stickyHeaders.
 ---@field stickyHeaderIndex? integer VirtualList-only active section index returned by view.virtualRange; when it is before firstIndex, prepend that one auxiliary listItem before the contiguous window.
 ---@field firstIndex? integer Required first 1-based materialized item for virtualList/virtualGrid; 0 only when empty.
@@ -519,13 +519,20 @@
 ---@class SnowInteractionScrollDescriptor
 ---@field key string Stable instance-scoped key, 1..128 UTF-8 bytes.
 ---@field shape SnowInteractionShape Must be a positive rect viewport.
----@field contentHeight integer Logical content height from 0..1000000.
+---@field orientation? SnowViewOrientation Defaults to vertical; horizontal requires interaction.scroll.orientation.
+---@field contentHeight? integer Required logical content height from 0..1000000 for vertical scrolling; mutually exclusive with contentWidth.
+---@field contentWidth? integer Required logical content width from 0..1000000 for horizontal scrolling; mutually exclusive with contentHeight.
 
 ---@class SnowInteractionScrollState
----@field offset integer Current logical vertical offset.
----@field maximum integer Maximum logical vertical offset.
----@field viewportHeight integer Rounded logical viewport height.
----@field contentHeight integer Effective content height, never below viewportHeight.
+---@field offset integer Current logical main-axis offset.
+---@field maximum integer Maximum logical main-axis offset.
+---@field orientation SnowViewOrientation Resolved axis.
+---@field viewportExtent integer Rounded logical main-axis viewport extent.
+---@field contentExtent integer Effective main-axis content extent, never below viewportExtent.
+---@field viewportHeight? integer Vertical viewport extent when orientation is vertical.
+---@field contentHeight? integer Vertical content extent when orientation is vertical.
+---@field viewportWidth? integer Horizontal viewport extent when orientation is horizontal.
+---@field contentWidth? integer Horizontal content extent when orientation is horizontal.
 
 ---@class SnowTextControlShape
 ---@field type 'rect'
@@ -900,7 +907,7 @@ function view.scrollBy(key, delta) end
 ---@return string? error
 function view.scrollToIndex(key, index, alignment) end
 
----Fixed-extent virtual list. Children are the contiguous listItem window beginning at firstIndex. Horizontal orientation additionally requires view.collection.virtual.orientation.
+---Virtual list with fixed or host-measured main-axis extents. Children are the contiguous listItem window beginning at firstIndex. Horizontal orientation additionally requires view.collection.virtual.orientation.
 ---@param options SnowViewNodeOptions
 ---@return SnowViewNode
 function view.virtualList(options) end
@@ -2148,8 +2155,9 @@ function interaction.isPressed(key) end
 ---@return boolean
 function interaction.isFocused(key) end
 
----Register a vertical scroll viewport for the current render and return its
----instance-scoped position. Pair it with draw.pushClip/popClip while drawing.
+---Register a vertical or horizontal scroll viewport for the current render and
+---return its instance-scoped main-axis position. Pair it with
+---draw.pushClip/popClip and translate drawing by the returned offset.
 ---@param descriptor SnowInteractionScrollDescriptor
 ---@return SnowInteractionScrollState
 function interaction.scroll(descriptor) end

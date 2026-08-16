@@ -1036,8 +1036,9 @@ pointer enter/leave/down/up/move、click、doubleClick、wheel 动作以及 regi
 原生右键菜单。成功 render 原子提交，失败 render 保留上一成功集合；菜单选择按
 region generation 校验，旧菜单不会落到新一代 region。普通区域交互和菜单本身不
 要求权限，菜单内触发的启动、媒体控制等动作仍由各自 broker 校验权限与可信手势。
-即时绘制纵向溢出已增加 `interaction.scroll/setScrollOffset`：滚动位置按实例和稳定
-key 隔离，宿主负责 wheel、钳制、重绘和滚动条，组件使用 `draw.pushClip/popClip`
+即时绘制溢出已增加 `interaction.scroll/setScrollOffset`：默认纵向，探测
+`interaction.scroll.orientation` 后可使用横向 contentWidth；滚动位置按实例和稳定 key 隔离，
+宿主负责对应主轴的 wheel、钳制、重绘和滚动条，组件使用 `draw.pushClip/popClip`
 裁剪并按返回 offset 绘制。声明式轨道现已另行开放 `view.scroll`：支持纵向/横向单子树、
 宿主 offset、测量、滚轮、裁剪绘制和裁剪命中，滚出视口的元素不会继续响应交互；
 `view.scroll.programmatic` 允许非渲染回调按绝对/相对偏移定位，并按 1-based 索引定位固定行高
@@ -1117,13 +1118,14 @@ SnowDesktop 不照搬某一个框架，参考优先级如下：
 `view.collection.basic` 已覆盖非虚拟 `list/gridList/listItem`，限制 256 个稳定项，
 每项有独立 action、hover、菜单目标与 listitem 语义；`view.collection.orientation` 已让普通
 list 支持默认纵向与显式横向，并让固有尺寸、flex 分配和条目位置使用同一主轴；grid 与虚拟集合
-原先保持行优先纵向模型。后续 `view.collection.virtual.orientation` 已把固定尺寸 virtualList
+原先保持行优先纵向模型。后续 `view.collection.virtual.orientation` 已把 fixed/variable virtualList
 扩展到横向主轴，窗口布局、裁剪、滚轮、滚动条和按索引定位共用内容宽度与 columnGap；横向
-可变尺寸、分组 sticky header 和 virtualGrid orientation 继续拒绝。`view.collection.virtual` 进一步
+可变宽度由 `view.collection.virtual.variableExtent` 共用测量缓存与首个可见项锚定，分组 sticky
+header 和 virtualGrid orientation 继续拒绝。`view.collection.virtual` 进一步
 提供固定行高 `virtualList/virtualGrid` 和 `view.virtualRange`，按实例滚动位置只实体化
 最多 128 个连续项，宿主按全局 1-based 索引布局并校验窗口覆盖可见行；
 `view.collection.virtual.variableExtent` 又允许 virtualList 以 estimatedItemSize 启动，成功 scene
-后缓存最多 4096 个实测条目高度，通过 layoutRevision 失效旧代缓存，并锚定首个可见项修正偏移；
+后缓存最多 4096 个实测条目主轴尺寸，通过 layoutRevision 失效旧代缓存，并锚定首个可见项修正偏移；
 `view.collection.virtual.stickyHeaders` 以最多 4096 个全局 section 索引补足虚拟分组标题，
 `view.virtualRange` 返回当前活动标题，Lua 仅在标题早于连续窗口时额外实体化一个 listItem，宿主
 按逻辑索引布局、测量、推挤并校验可见窗口；
@@ -1329,7 +1331,7 @@ view.row({
 - `view.pointer.events` 已补通普通声明式节点此前在 LuaLS 与交互运行时之间断裂的 `pointerMove/wheel`：只有显式绑定才进入 Lua，宿主滚动先更新偏移且仍向 scroll/virtual collection 自身投递可信 wheel action，动作不能取消滚动。即时 `interaction.region` 同时通过 `interaction.tooltip/keyboard` 开放已有的纯文本提示、focusable/tabIndex、`isFocused` 和配对 keyDown/keyUp；真实触控板、高频合帧与辅助 surface 场景待验证。
 - `view.scroll.events` 已把 `events.scrollEnd` 限定到 scroll/virtual collection；滚轮或 UIA 操作从末端前到达最大宿主偏移时只投递一次，离开末端后才能再次触发，UIA 来源不获得可信手势。
 - `view.scroll.initialTarget` 已为新出现的稳定容器 key 加入一次性 nearest 初始定位：普通 scroll 解析可见后代 key，fixed/variable virtual 解析 1-based 逻辑索引，`view.virtualRange` 用同一索引生成首帧窗口；成功 scene 才提交宿主偏移，失败事务和 loading 替代态不会提前消费目标，已有用户/脚本位置优先。
-- `view.collection.virtual.variableExtent` 已让 virtualList 以 estimatedItemSize 生成首帧范围，并在成功 scene 后缓存最多 4096 个 1-based 实测高度；itemCount/estimate/rowGap/layoutRevision 共同界定缓存代，测量变化以原首个可见项为锚点修正宿主偏移后触发合并重绘。virtualGrid 继续要求固定行高，未完成的项目级 UIA 虚拟化不由本 feature 暗示。
+- `view.collection.virtual.variableExtent` 已让纵向/横向 virtualList 以 estimatedItemSize 生成首帧范围，并在成功 scene 后缓存最多 4096 个 1-based 实测主轴尺寸；itemCount/estimate/主轴 gap/orientation/layoutRevision 共同界定缓存代，测量变化以原首个可见项为锚点修正宿主偏移后触发合并重绘。virtualGrid 继续要求固定行高，未完成的项目级 UIA 虚拟化不由本 feature 暗示。
 - `view.collection.stickyHeaders` 已让纵向 eager list 的直接 listItem 以 sticky=true 固定在最近纵向 scroll 顶部，由下一标题推挤并在所属 list 底部退出；宿主在滚动状态应用阶段移动整棵标题子树，并让呈现中的 sticky 项排在普通兄弟之后绘制/命中。虚拟 section 索引和横向 sticky 不由本 feature 暗示。
 - `view.collection.virtual.stickyHeaders` 已为 fixed/variable virtualList 增加最多 4096 个有序唯一的 1-based section 索引；`view.virtualRange` 根据零 overscan 可见窗口返回活动 `stickyHeaderIndex`，Lua 只在其早于连续窗口时前置一个额外标题，宿主以显式逻辑索引完成布局、变高测量、窗口覆盖校验、下一标题推挤和统一绘制/命中。virtualGrid 与横向 sticky 仍不在本 feature 内。
 - `view.styledText.inlineIcons` 已为 styledText span 增加与 text 互斥的 `glyph/iconFont`，把宿主内嵌 Font Awesome/Fluent collection 按 range 应用于同一 DirectWrite layout；图标沿用字号、颜色、hover/pressed、精确命中和 action 路由，带 key 的图标必须提供可读 label，任意 inline 图片/HTML/Markdown 仍不开放。

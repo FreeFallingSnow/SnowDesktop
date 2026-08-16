@@ -502,7 +502,8 @@ struct LuaWidget
     {
         std::size_t itemCount = 0;
         float estimatedItemSize = 0.0f;
-        float rowGap = 0.0f;
+        float mainGap = 0.0f;
+        bool horizontal = false;
         std::uint64_t layoutRevision = 0;
         std::uint64_t sequence = 0;
         std::unordered_map<std::size_t, VariableVirtualMeasurement>
@@ -1457,7 +1458,8 @@ public:
         const std::string& id, std::string_view surface = {}) const;
     bool RuntimeComputeVariableVirtualRange(const std::wstring& widgetId,
         const std::string& id, std::size_t itemCount,
-        float estimatedItemSize, float rowGap, float viewportExtent,
+        float estimatedItemSize, float mainGap, float viewportExtent,
+        bool horizontal,
         std::uint64_t layoutRevision, std::size_t overscan,
         std::size_t initialScrollIndex,
         snowdesktop::widget_runtime::ViewVirtualRange& range,

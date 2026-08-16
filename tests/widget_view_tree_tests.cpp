@@ -2079,12 +2079,14 @@ void TestVirtualizedCollections()
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(
         return view.virtualList({
-            key = "invalid-horizontal-variable",
+            key = "invalid-horizontal-sections",
             orientation = "horizontal",
             width = 120,
             itemCount = 1,
-            estimatedItemSize = 40,
+            itemExtent = 40,
             firstIndex = 1,
+            sectionHeaderIndices = { 1 },
+            stickyHeaderIndex = 1,
             children = {
                 view.listItem({ key = "item",
                     accessibility = { label = "Item" },
@@ -2095,13 +2097,13 @@ void TestVirtualizedCollections()
             },
         })
     )lua") == LUA_OK,
-        "invalid horizontal variable-list fixture must evaluate");
+        "invalid horizontal section-list fixture must evaluate");
     ViewNode invalidHorizontal;
     Check(ParseLuaViewTree(state, -1, invalidHorizontal, error) &&
             !ValidateAndLayoutViewTree(
                 invalidHorizontal, 120.0f, 60.0f, error) &&
-            error.find("fixed itemExtent") != std::string::npos,
-        "horizontal virtualList must reject variable extents");
+            error.find("rejects section headers") != std::string::npos,
+        "horizontal virtualList must reject section headers");
 
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(
@@ -2331,6 +2333,56 @@ void TestVariableVirtualizedCollections()
             }, viewports, error) && viewports.size() == 1 &&
             Near(viewports[0].contentExtent, 100.0f),
         "variable virtualList must expose an estimated bounded scroll range");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        local function item(index, width)
+            return view.listItem({
+                key = "horizontal-variable-" .. index,
+                width = width,
+                accessibility = { label = "Horizontal variable " .. index },
+                children = { view.text({
+                    key = "horizontal-variable-label-" .. index,
+                    text = tostring(index),
+                }) },
+            })
+        end
+        return view.virtualList({
+            key = "horizontal-variable-feed",
+            orientation = "horizontal",
+            width = 80,
+            height = 40,
+            itemCount = 5,
+            estimatedItemSize = 40,
+            layoutRevision = 4,
+            firstIndex = 1,
+            overscan = 0,
+            columnGap = 5,
+            children = { item(1, 30), item(2, 60), item(3, 45) },
+        })
+    )lua") == LUA_OK,
+        "horizontal variable virtualList fixture must evaluate");
+    ViewNode horizontalVariable;
+    Check(ParseLuaViewTree(state, -1, horizontalVariable, error) &&
+            ValidateAndLayoutViewTree(
+                horizontalVariable, 80.0f, 40.0f, error) &&
+            horizontalVariable.orientation == ViewOrientation::Horizontal &&
+            horizontalVariable.virtualMeasuredExtents ==
+                std::vector<float>{ 30.0f, 60.0f, 45.0f } &&
+            Near(horizontalVariable.children[1].frame.x, 35.0f) &&
+            Near(horizontalVariable.children[2].frame.x, 100.0f),
+        "horizontal variable virtualList must measure widths and lay out on x");
+    horizontalVariable.virtualMeasurements = {
+        { 1, 30.0f }, { 2, 60.0f }, { 3, 45.0f },
+    };
+    viewports.clear();
+    Check(ApplyViewScrollOffsets(horizontalVariable,
+            [](std::string_view, float) { return 35.0f; },
+            viewports, error) && viewports.size() == 1 &&
+            viewports[0].orientation == ViewOrientation::Horizontal &&
+            Near(viewports[0].contentExtent, 235.0f) &&
+            Near(horizontalVariable.children[1].frame.x, 0.0f),
+        "horizontal variable measurements must drive range and x-axis offset");
 
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(

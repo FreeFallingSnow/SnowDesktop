@@ -1876,7 +1876,9 @@ void LayoutVirtualCollection(ViewNode& node, const ViewRect& content)
         float cursor = 0.0f;
         std::size_t previousIndex = 0;
         std::string rangeError;
-        const float rowGap = node.rowGap.value_or(node.gap);
+        const bool horizontal = node.orientation ==
+            ViewOrientation::Horizontal;
+        const float mainGap = VirtualCollectionMainGap(node);
         for (std::size_t childIndex = 0;
             childIndex < node.children.size(); ++childIndex)
         {
@@ -1887,22 +1889,39 @@ void LayoutVirtualCollection(ViewNode& node, const ViewRect& content)
             if (previousIndex == 0 || itemIndex != previousIndex + 1)
             {
                 if (!ComputeViewVariableVirtualItemStart(node.itemCount,
-                        *node.estimatedItemSize, rowGap, itemIndex,
+                        *node.estimatedItemSize, mainGap, itemIndex,
                         node.virtualMeasurements, cursor, rangeError))
                     return;
             }
-            const float intrinsic = child.height.kind ==
-                ViewLengthKind::Fixed
-                ? child.height.value + ViewVerticalMargin(child)
-                : std::max(1.0f, OuterIntrinsicHeight(child));
-            const ResolvedNodeSize resolved = ResolveOuterNodeSize(
-                child, content.width, intrinsic);
-            const float measuredExtent = std::max(1.0f, resolved.height);
-            LayoutNode(child, { content.x, content.y + cursor,
-                resolved.width, measuredExtent });
+            ResolvedNodeSize resolved;
+            float measuredExtent = 0.0f;
+            if (horizontal)
+            {
+                const float intrinsic = child.width.kind ==
+                    ViewLengthKind::Fixed
+                    ? child.width.value + ViewHorizontalMargin(child)
+                    : std::max(1.0f, OuterIntrinsicWidth(child));
+                resolved = ResolveOuterNodeSize(
+                    child, intrinsic, content.height);
+                measuredExtent = std::max(1.0f, resolved.width);
+                LayoutNode(child, { content.x + cursor, content.y,
+                    measuredExtent, resolved.height });
+            }
+            else
+            {
+                const float intrinsic = child.height.kind ==
+                    ViewLengthKind::Fixed
+                    ? child.height.value + ViewVerticalMargin(child)
+                    : std::max(1.0f, OuterIntrinsicHeight(child));
+                resolved = ResolveOuterNodeSize(
+                    child, content.width, intrinsic);
+                measuredExtent = std::max(1.0f, resolved.height);
+                LayoutNode(child, { content.x, content.y + cursor,
+                    resolved.width, measuredExtent });
+            }
             node.virtualMeasuredExtents.push_back(measuredExtent);
             node.virtualMeasuredIndices.push_back(itemIndex);
-            cursor += measuredExtent + rowGap;
+            cursor += measuredExtent + mainGap;
             previousIndex = itemIndex;
         }
         return;
@@ -2624,10 +2643,9 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             return false;
         }
         if (node.orientation == ViewOrientation::Horizontal &&
-            (variable || !node.sectionHeaderIndices.empty() ||
-                node.stickyHeaderIndex))
+            (!node.sectionHeaderIndices.empty() || node.stickyHeaderIndex))
         {
-            error = "horizontal virtualList requires fixed itemExtent and rejects section headers";
+            error = "horizontal virtualList rejects section headers";
             return false;
         }
         const ViewLength& viewportLength =

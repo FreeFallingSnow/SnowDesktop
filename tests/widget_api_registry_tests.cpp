@@ -352,6 +352,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "interaction.scroll") &&
             snowdesktop::widget_api::SupportsFeature(
+                "interaction.scroll.orientation") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "interaction.tooltip") &&
             snowdesktop::widget_api::SupportsFeature("l10n.format") &&
             snowdesktop::widget_api::SupportsFeature("module.package") &&

@@ -504,19 +504,30 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
         auto scrollControls = engine->GetScrollControls(data_->id);
         for (const auto& ctrl : scrollControls)
         {
-            if (ctrl.contentHeight <= ctrl.viewportHeight)
-                continue;
-            const LONG sbWidth = Cu(6.0f);
-            RECT sbRect = {
-                frame.right - sbWidth - Cu(2.0f),
+            const int contentExtent = ctrl.horizontal
+                ? ctrl.contentWidth : ctrl.contentHeight;
+            const int viewportExtent = ctrl.horizontal
+                ? ctrl.viewportWidth : ctrl.viewportHeight;
+            if (contentExtent <= viewportExtent) continue;
+            const RECT viewport = {
+                frame.left + ctrl.rect.left,
                 frame.top + ctrl.rect.top,
-                frame.right - Cu(2.0f),
+                frame.left + ctrl.rect.right,
                 frame.top + ctrl.rect.bottom
             };
-            int scrollOff = engine->RuntimeGetScrollOffset(data_->id, ctrl.id);
-            bool showScrollbar = hovered || !data_->bottomBarHover;
-            DrawScrollbarAt(context, sbRect, ctrl.contentHeight, ctrl.viewportHeight,
-                scrollOff, showScrollbar, app_->IsLightContentTheme(), GetCellScale());
+            const int scrollOff = engine->RuntimeGetScrollOffset(
+                data_->id, ctrl.id);
+            const bool showScrollbar = hovered || !data_->bottomBarHover;
+            if (ctrl.horizontal)
+                DrawHorizontalScrollbarAt(context, viewport,
+                    ctrl.contentWidth, ctrl.viewportWidth, scrollOff,
+                    showScrollbar, app_->IsLightContentTheme(),
+                    GetCellScale());
+            else
+                DrawScrollbarAt(context, viewport,
+                    ctrl.contentHeight, ctrl.viewportHeight, scrollOff,
+                    showScrollbar, app_->IsLightContentTheme(),
+                    GetCellScale());
         }
     }
 

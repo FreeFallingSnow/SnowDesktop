@@ -1017,3 +1017,7 @@ std::unique_ptr<Widget> CreateWidget(DesktopWidget* data, DesktopApp* app);
  */
 void DrawScrollbarAt(ID2D1DeviceContext* context, RECT body, int contentHeight,
     int visibleHeight, int scrollOffset, bool hovered, bool lightTheme, float cellScale = 1.0f);
+
+void DrawHorizontalScrollbarAt(ID2D1DeviceContext* context, RECT body,
+    int contentWidth, int visibleWidth, int scrollOffset, bool hovered,
+    bool lightTheme, float cellScale = 1.0f);
