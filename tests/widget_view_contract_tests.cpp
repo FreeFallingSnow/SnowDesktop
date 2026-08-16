@@ -15,6 +15,7 @@ using snowdesktop::widget_runtime::FindViewNodeType;
 using snowdesktop::widget_runtime::FindViewPropertyContract;
 using snowdesktop::widget_runtime::HasViewAccessibilityPattern;
 using snowdesktop::widget_runtime::HasViewPropertyEffect;
+using snowdesktop::widget_runtime::HasViewPropertyTransitionEffect;
 using snowdesktop::widget_runtime::IsKnownViewEvent;
 using snowdesktop::widget_runtime::IsKnownViewNodeProperty;
 using snowdesktop::widget_runtime::ViewAccessibilityPattern;
@@ -36,6 +37,7 @@ using snowdesktop::widget_runtime::ViewPropertyAllowsEnumValue;
 using snowdesktop::widget_runtime::ViewPropertyEnumSet;
 using snowdesktop::widget_runtime::ViewPropertyEnumValues;
 using snowdesktop::widget_runtime::ViewPropertyEffect;
+using snowdesktop::widget_runtime::ViewPropertyTransitionEffect;
 using snowdesktop::widget_runtime::ViewPropertyDefaultKind;
 using snowdesktop::widget_runtime::ViewPropertyNumericValueInRange;
 using snowdesktop::widget_runtime::ViewPropertyValueKind;
@@ -229,6 +231,9 @@ void TestPropertyMetadata()
     const auto* accessibility =
         FindViewPropertyContract("accessibility");
     const auto* source = FindViewPropertyContract("source");
+    const auto* transform = FindViewPropertyContract("transform");
+    const auto* transition = FindViewPropertyContract("transition");
+    const auto* selectedStyle = FindViewPropertyContract("selectedStyle");
     Check(fontSize && fontSize->valueKind == ViewPropertyValueKind::Number &&
             fontSize->hasNumericRange &&
             fontSize->numericMinimum == 1.0 &&
@@ -267,6 +272,20 @@ void TestPropertyMetadata()
             HasViewPropertyEffect(source->effects,
                 ViewPropertyEffect::Resource),
         "property effects must distinguish layout, paint, input, UIA, and resources");
+    Check(HasViewPropertyTransitionEffect(width->transitionEffects,
+                ViewPropertyTransitionEffect::Layout) &&
+            transform &&
+            HasViewPropertyTransitionEffect(transform->transitionEffects,
+                ViewPropertyTransitionEffect::Transform) &&
+            selectedStyle &&
+            HasViewPropertyTransitionEffect(
+                selectedStyle->transitionEffects,
+                ViewPropertyTransitionEffect::Visual) &&
+            transition && transition->transitionEffects ==
+                ViewPropertyTransitionEffect::None &&
+            !HasViewPropertyTransitionEffect(source->transitionEffects,
+                ViewPropertyTransitionEffect::Visual),
+        "property metadata must distinguish layout, transform, and resolved-style transition effects");
 }
 
 void TestRepresentativeApplicability()
@@ -632,9 +651,11 @@ void TestMachineReadableContract()
     const JsonValue* limits = root.Find("limits");
     const JsonValue* transitions = root.Find("transitions");
     const JsonValue* preview = root.Find("preview");
+    const JsonValue* directionality = root.Find("directionality");
+    const JsonValue* validation = root.Find("validation");
     Check(ok && ok->IsBoolean() && ok->boolean &&
             schemaVersion && schemaVersion->IsNumber() &&
-            schemaVersion->number == 1.0 &&
+            schemaVersion->number == 2.0 &&
             apiVersion && apiVersion->IsNumber() &&
             apiVersion->number == 2.0 &&
             propertyPolicy && propertyPolicy->IsString() &&
@@ -675,8 +696,10 @@ void TestMachineReadableContract()
             opacity->Find("type")->string == "number" &&
             opacity->Find("numericRange") &&
             opacity->Find("numericRange")->IsObject() &&
-            opacity->Find("effects") && opacity->Find("effects")->IsArray(),
-        "property JSON must expose type, range, and effect metadata");
+            opacity->Find("effects") && opacity->Find("effects")->IsArray() &&
+            opacity->Find("transitionEffects") &&
+            opacity->Find("transitionEffects")->IsArray(),
+        "property JSON must expose type, range, invalidation, and transition metadata");
     Check(click && click->Find("payload") &&
             click->Find("payload")->IsString() &&
             click->Find("payload")->string == "action",
@@ -720,6 +743,23 @@ void TestMachineReadableContract()
             preview->Find("validatesTree")->IsBoolean() &&
             preview->Find("validatesTree")->boolean,
         "view JSON must expose preview rendering and isolation behavior");
+    Check(directionality && directionality->IsObject() &&
+            directionality->Find("directionProperty") &&
+            directionality->Find("directionProperty")->string ==
+                "textDirection" &&
+            directionality->Find("autoResolution") &&
+            directionality->Find("autoResolution")->IsArray() &&
+            directionality->Find("autoResolution")->array.size() == 3 &&
+            directionality->Find("layoutOrder") &&
+            directionality->Find("layoutOrder")->string ==
+                "declaration-order" &&
+            validation && validation->IsObject() &&
+            validation->Find("commit") &&
+            validation->Find("commit")->string == "atomic" &&
+            validation->Find("onFailure") &&
+            validation->Find("onFailure")->string ==
+                "retain-last-successful-tree",
+        "view JSON must expose directionality and transactional rejection behavior");
 }
 }
 

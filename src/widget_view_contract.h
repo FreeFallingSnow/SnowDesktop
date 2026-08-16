@@ -172,12 +172,39 @@ constexpr bool HasViewPropertyEffect(
         static_cast<std::uint8_t>(effect)) != 0;
 }
 
+enum class ViewPropertyTransitionEffect : std::uint8_t
+{
+    None = 0,
+    Visual = 1u << 0,
+    Transform = 1u << 1,
+    Layout = 1u << 2,
+};
+
+constexpr ViewPropertyTransitionEffect operator|(
+    ViewPropertyTransitionEffect left,
+    ViewPropertyTransitionEffect right) noexcept
+{
+    return static_cast<ViewPropertyTransitionEffect>(
+        static_cast<std::uint8_t>(left) |
+        static_cast<std::uint8_t>(right));
+}
+
+constexpr bool HasViewPropertyTransitionEffect(
+    ViewPropertyTransitionEffect value,
+    ViewPropertyTransitionEffect effect) noexcept
+{
+    return (static_cast<std::uint8_t>(value) &
+        static_cast<std::uint8_t>(effect)) != 0;
+}
+
 struct ViewPropertyContract
 {
     std::string_view name;
     ViewPropertyValueKind valueKind = ViewPropertyValueKind::String;
     ViewPropertyEnumSet enumSet = ViewPropertyEnumSet::None;
     ViewPropertyEffect effects = ViewPropertyEffect::None;
+    ViewPropertyTransitionEffect transitionEffects =
+        ViewPropertyTransitionEffect::None;
     bool hasNumericRange = false;
     double numericMinimum = 0.0;
     double numericMaximum = 0.0;

@@ -138,6 +138,19 @@ constexpr auto kPropertyEffects = std::to_array<PropertyEffectName>({
     { ViewPropertyEffect::Tree, "tree" },
 });
 
+struct PropertyTransitionEffectName
+{
+    ViewPropertyTransitionEffect effect;
+    std::string_view name;
+};
+
+constexpr auto kPropertyTransitionEffects =
+    std::to_array<PropertyTransitionEffectName>({
+        { ViewPropertyTransitionEffect::Visual, "visual" },
+        { ViewPropertyTransitionEffect::Transform, "transform" },
+        { ViewPropertyTransitionEffect::Layout, "layout" },
+    });
+
 void WriteAccessibilityPatterns(std::ostream& output,
     ViewAccessibilityPattern patterns)
 {
@@ -160,6 +173,22 @@ void WritePropertyEffects(std::ostream& output, ViewPropertyEffect effects)
     for (const auto& entry : kPropertyEffects)
     {
         if (!HasViewPropertyEffect(effects, entry.effect)) continue;
+        if (!first) output << ',';
+        first = false;
+        WriteJsonString(output, entry.name);
+    }
+    output << ']';
+}
+
+void WritePropertyTransitionEffects(std::ostream& output,
+    ViewPropertyTransitionEffect effects)
+{
+    output << '[';
+    bool first = true;
+    for (const auto& entry : kPropertyTransitionEffects)
+    {
+        if (!HasViewPropertyTransitionEffect(effects, entry.effect))
+            continue;
         if (!first) output << ',';
         first = false;
         WriteJsonString(output, entry.name);
@@ -244,6 +273,8 @@ void WriteProperty(std::ostream& output,
     }
     output << ",\"effects\":";
     WritePropertyEffects(output, property.effects);
+    output << ",\"transitionEffects\":";
+    WritePropertyTransitionEffects(output, property.transitionEffects);
     output << '}';
 }
 
@@ -333,6 +364,33 @@ void WritePreview(std::ostream& output)
               "\"validatesTree\":true,"
               "\"transitions\":\"final-state\"}";
 }
+
+void WriteDirectionality(std::ostream& output)
+{
+    output << "{\"localeProperty\":\"locale\","
+              "\"directionProperty\":\"textDirection\","
+              "\"values\":[\"auto\",\"ltr\",\"rtl\"],"
+              "\"autoResolution\":[\"first-strong-character\","
+              "\"locale-language\",\"ltr-fallback\"],"
+              "\"textShaping\":\"directwrite\","
+              "\"startEndAlignment\":\"direction-aware\","
+              "\"controlAdornmentPlacement\":\"direction-aware\","
+              "\"layoutOrder\":\"declaration-order\","
+              "\"keyboardOrder\":\"declaration-order\","
+              "\"accessibilityOrder\":\"declaration-order\","
+              "\"inherited\":false}";
+}
+
+void WriteValidation(std::ostream& output)
+{
+    output << "{\"unknownNode\":\"reject-tree\","
+              "\"unknownProperty\":\"reject-tree\","
+              "\"prohibitedProperty\":\"reject-tree\","
+              "\"invalidValue\":\"reject-tree\","
+              "\"commit\":\"atomic\","
+              "\"onFailure\":\"retain-last-successful-tree\","
+              "\"diagnostic\":\"bounded-message\"}";
+}
 }
 
 std::string SerializeViewContractJson()
@@ -340,7 +398,7 @@ std::string SerializeViewContractJson()
     std::ostringstream output;
     output.imbue(std::locale::classic());
     output << std::setprecision(17)
-           << "{\"ok\":true,\"schemaVersion\":1,\"apiVersion\":2,"
+           << "{\"ok\":true,\"schemaVersion\":2,\"apiVersion\":2,"
               "\"propertyPolicy\":\"closed-world\","
               "\"nodes\":";
     WriteJsonArray(output, ViewNodeContracts(), WriteNode);
@@ -354,6 +412,10 @@ std::string SerializeViewContractJson()
     WriteTransitions(output);
     output << ",\"preview\":";
     WritePreview(output);
+    output << ",\"directionality\":";
+    WriteDirectionality(output);
+    output << ",\"validation\":";
+    WriteValidation(output);
     output << '}';
     return output.str();
 }

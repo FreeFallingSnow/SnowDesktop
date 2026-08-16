@@ -1329,8 +1329,10 @@ RTL、逐属性动画映射和错误码仍未全部迁入矩阵，
 划分完整公共目录；还直接读取 `ViewTreeLimits` 导出全树、文本、资源、图表、集合和
 虚拟化额度；动画部分公开更新 transition 的六种允许属性、入退场的 opacity/transform 字段、
 1–2000 ms、四种 easing 和 1–4 项唯一属性约束，并明确宿主驱动、不逐帧执行 Lua、预览与
-`reducedMotion` 落到最终状态。预览部分同时登记宿主渲染/校验和隔离存储覆盖层。逐属性是否可
-动画、节点联动错误和 RTL 规则仍需继续并入，当前导出不能视为 M6 已冻结。
+`reducedMotion` 落到最终状态。预览部分同时登记宿主渲染/校验和隔离存储覆盖层。当前 schema 2
+又为每个属性登记 visual/transform/layout 过渡影响，并导出 auto/ltr/rtl 解析、方向感知对齐、
+声明顺序规则以及候选树原子拒绝/保留上一成功树的行为。节点联动稳定错误码仍需继续并入，
+当前导出不能视为 M6 已冻结。
 
 即时绘制的 `interaction.region` 现在也会按 role、label、受控状态、形状/clip 和最后提交的宿主
 焦点转换为同一种语义节点；`WidgetEngine` 只汇总当前可见、有效、非预览的 v2 实例，并保留
@@ -2106,7 +2108,8 @@ M7 切换完成后，发布运行时必须删除 API v1 注册和执行分支。
   ExpandCollapse/SelectionItem 动作已接入现有受控 action 通道，基础结构/焦点/属性变化也已
   差分通知，radio/select/calendar 常用内部项也已形成 Selection/SelectionItem 树；生成物、
   运行时全树/资源额度、动画允许词汇和预览降级已进入 JSON 导出。任意虚拟化集合子项、其余
-  Pattern/事件、逐属性动画映射、RTL 和稳定错误码等列仍需继续并入，尚未达到冻结条件。
+  Pattern/事件和稳定错误码等列仍需继续并入；逐属性过渡影响与 RTL 解析/顺序规则已进入
+  schema 2 导出，但尚未达到冻结条件。
 - 环境上下文、响应式尺寸和减少动态效果。
 - 即时绘制的按需 `animation.requestFrame/cancelFrame` 已接入宿主单次帧计时器、可见性清理和 `reducedMotion` 拒绝；真实桌面帧节奏、休眠恢复和多实例合帧仍需完成第 18.5 节场景验证。
 - 元素级 hover/pressed/focus、click/double click、指针捕获和独立原生右键菜单。

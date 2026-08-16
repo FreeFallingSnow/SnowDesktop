@@ -261,23 +261,50 @@ constexpr ViewPropertyEffect PropertyEffects(std::string_view name,
 constexpr ViewPropertyContract Property(
     std::string_view name, ViewPropertyValueKind valueKind) noexcept
 {
+    const ViewPropertyEffect effects = PropertyEffects(name, valueKind);
+    ViewPropertyTransitionEffect transitionEffects =
+        ViewPropertyTransitionEffect::None;
+    if (HasViewPropertyEffect(effects, ViewPropertyEffect::Layout) &&
+        !IsNamed(name, { "type", "key", "debugName", "testId" }))
+    {
+        transitionEffects = transitionEffects |
+            ViewPropertyTransitionEffect::Layout;
+    }
+    if (name == "transform")
+    {
+        transitionEffects = transitionEffects |
+            ViewPropertyTransitionEffect::Transform;
+    }
+    if (IsNamed(name, { "style", "hoverStyle", "pressedStyle",
+            "focusStyle", "disabledStyle", "validationStyle",
+            "checkedStyle", "selectedStyle", "selected", "checked",
+            "indeterminate", "enabled", "validationState" }))
+    {
+        transitionEffects = transitionEffects |
+            ViewPropertyTransitionEffect::Visual;
+    }
     return { name, valueKind, ViewPropertyEnumSet::None,
-        PropertyEffects(name, valueKind) };
+        effects, transitionEffects };
 }
 
 constexpr ViewPropertyContract EnumProperty(std::string_view name,
     ViewPropertyEnumSet enumSet) noexcept
 {
-    return { name, ViewPropertyValueKind::Enum, enumSet,
-        PropertyEffects(name, ViewPropertyValueKind::Enum) };
+    ViewPropertyContract contract =
+        Property(name, ViewPropertyValueKind::Enum);
+    contract.enumSet = enumSet;
+    return contract;
 }
 
 constexpr ViewPropertyContract RangedProperty(std::string_view name,
     ViewPropertyValueKind valueKind, double minimum,
     double maximum) noexcept
 {
-    return { name, valueKind, ViewPropertyEnumSet::None,
-        PropertyEffects(name, valueKind), true, minimum, maximum };
+    ViewPropertyContract contract = Property(name, valueKind);
+    contract.hasNumericRange = true;
+    contract.numericMinimum = minimum;
+    contract.numericMaximum = maximum;
+    return contract;
 }
 
 constexpr auto kProperties = std::to_array<ViewPropertyContract>({
