@@ -495,6 +495,45 @@ const ViewPropertyContract* FindViewPropertyContract(
     return found == kProperties.end() ? nullptr : &*found;
 }
 
+std::string_view ViewPropertyValueKindName(
+    ViewPropertyValueKind kind) noexcept
+{
+    switch (kind)
+    {
+    case ViewPropertyValueKind::String: return "string";
+    case ViewPropertyValueKind::Boolean: return "boolean";
+    case ViewPropertyValueKind::Number: return "number";
+    case ViewPropertyValueKind::Integer: return "integer";
+    case ViewPropertyValueKind::StringOrNumber: return "string-or-number";
+    case ViewPropertyValueKind::Length: return "length";
+    case ViewPropertyValueKind::EdgeInsets: return "edge-insets";
+    case ViewPropertyValueKind::Offset: return "offset";
+    case ViewPropertyValueKind::Resource: return "resource";
+    case ViewPropertyValueKind::Color: return "color";
+    case ViewPropertyValueKind::StringArray: return "string-array";
+    case ViewPropertyValueKind::NumberArray: return "number-array";
+    case ViewPropertyValueKind::IndexArray: return "index-array";
+    case ViewPropertyValueKind::Node: return "node";
+    case ViewPropertyValueKind::NodeArray: return "node-array";
+    case ViewPropertyValueKind::Enum: return "enum";
+    case ViewPropertyValueKind::Spans: return "styled-text-spans";
+    case ViewPropertyValueKind::ChoiceOptions: return "choice-options";
+    case ViewPropertyValueKind::TextSelection: return "text-selection";
+    case ViewPropertyValueKind::Style: return "style";
+    case ViewPropertyValueKind::Shadow: return "shadow";
+    case ViewPropertyValueKind::Transform: return "transform";
+    case ViewPropertyValueKind::Transition: return "transition";
+    case ViewPropertyValueKind::PresenceTransition:
+        return "presence-transition";
+    case ViewPropertyValueKind::GridTracks: return "grid-tracks";
+    case ViewPropertyValueKind::Tooltip: return "tooltip";
+    case ViewPropertyValueKind::Accessibility: return "accessibility";
+    case ViewPropertyValueKind::Events: return "events";
+    case ViewPropertyValueKind::Action: return "action";
+    }
+    return {};
+}
+
 bool ViewPropertyNumericValueInRange(
     const ViewPropertyContract& contract, double value) noexcept
 {

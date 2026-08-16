@@ -174,6 +174,39 @@ bool ValidateNodeFields(lua_State* state, int index, ViewNodeType type,
                 std::string(field) + "'";
             return false;
         }
+        const int valueType = lua_type(state, -1);
+        const auto rejectType = [&](const char* expectation) {
+            lua_pop(state, 2);
+            error = "view field '" + std::string(field) +
+                "' " + expectation;
+            return false;
+        };
+        switch (property->valueKind)
+        {
+        case ViewPropertyValueKind::String:
+        case ViewPropertyValueKind::Enum:
+            if (valueType != LUA_TSTRING)
+                return rejectType("must be a string");
+            break;
+        case ViewPropertyValueKind::Boolean:
+            if (valueType != LUA_TBOOLEAN)
+                return rejectType("must be boolean");
+            break;
+        case ViewPropertyValueKind::Number:
+            if (valueType != LUA_TNUMBER)
+                return rejectType("must be a number");
+            break;
+        case ViewPropertyValueKind::Integer:
+            if (!lua_isinteger(state, -1))
+                return rejectType("must be an integer");
+            break;
+        case ViewPropertyValueKind::StringOrNumber:
+            if (valueType != LUA_TSTRING && valueType != LUA_TNUMBER)
+                return rejectType("must be a string or number");
+            break;
+        default:
+            break;
+        }
         if (property->hasNumericRange && lua_isnumber(state, -1) &&
             !ViewPropertyNumericValueInRange(
                 *property, lua_tonumber(state, -1)))

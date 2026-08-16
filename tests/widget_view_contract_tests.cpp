@@ -29,6 +29,7 @@ using snowdesktop::widget_runtime::ViewNodePropertyNames;
 using snowdesktop::widget_runtime::ViewPropertyContracts;
 using snowdesktop::widget_runtime::ViewPropertyNumericValueInRange;
 using snowdesktop::widget_runtime::ViewPropertyValueKind;
+using snowdesktop::widget_runtime::ViewPropertyValueKindName;
 
 void Check(bool condition, const char* message)
 {
@@ -104,6 +105,8 @@ void TestPropertyMetadata()
         Check(property.valueKind >= ViewPropertyValueKind::String &&
                 property.valueKind <= ViewPropertyValueKind::Action,
             "every property must publish a recognized semantic value kind");
+        Check(!ViewPropertyValueKindName(property.valueKind).empty(),
+            "every semantic value kind must expose a stable tool-facing name");
         Check(!property.hasNumericRange ||
                 property.numericMinimum <= property.numericMaximum,
             "published numeric ranges must be ordered");

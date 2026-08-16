@@ -1020,6 +1020,9 @@ toggle/checkbox/radioGroup 使用的 `checkedStyle`。图表属性也按实际�
 fontSize 1–512、grid span 1–64）由同一契约登记。节点相关的组合约束仍会在场景校验阶段执行，
 例如 slider/numberInput 必须满足 `min < max`、`value` 位于范围内且 `step` 不大于跨度。
 Lua 解析器会在构造节点前按该契约拒绝通用标量越界值，不会把它们延迟为布局时空白。
+基础 string/enum/boolean/number/integer 类型同样严格按目录检查；数字不会隐式成为文本，
+数字字符串也不会隐式成为 number。`value` 是明确登记的 string-or-number 联合类型，随后再由
+text input 或数值控件的节点契约收窄。
 
 该表也登记 17 个公开事件的负载类别和逐节点适用性，以及 UIA ControlType、基础 Pattern 和宿主键盘可聚焦性，宿主能从
 布局结果生成语义快照，并已通过 Windows UIA Fragment Provider 暴露组件/元素树、基础属性、

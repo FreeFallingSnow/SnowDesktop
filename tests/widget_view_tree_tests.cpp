@@ -387,6 +387,28 @@ void TestLuaParsing()
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(
         return view.text({
+            key = "numeric-text", text = 123,
+        })
+    )lua") == LUA_OK,
+        "strict string-property fixture must evaluate");
+    root = {};
+    Check(!ParseLuaViewTree(state, -1, root, error) &&
+            error == "view field 'text' must be a string",
+        "declared string properties must reject Lua number coercion");
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.text({
+            key = "string-size", text = "Text", fontSize = "24",
+        })
+    )lua") == LUA_OK,
+        "strict number-property fixture must evaluate");
+    root = {};
+    Check(!ParseLuaViewTree(state, -1, root, error) &&
+            error == "view field 'fontSize' must be a number",
+        "declared number properties must reject numeric strings");
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.text({
             key = "too-many-lines", text = "Text", maxLines = 65,
         })
     )lua") == LUA_OK,
