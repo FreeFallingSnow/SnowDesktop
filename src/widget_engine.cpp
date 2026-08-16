@@ -45,6 +45,7 @@
 #include "widget_storage_value.h"
 #include "widget_storage_write_budget.h"
 #include "widget_secret_store.h"
+#include "widget_setting_rules.h"
 #include "widget_system_settings.h"
 #include "atomic_file.h"
 #include "widgets/widget_chrome_rules.h"
@@ -1063,6 +1064,25 @@ static bool LuaReadBoolField(lua_State* L, int tableIndex, const char* key, bool
     return value;
 }
 
+static std::vector<std::string> ReadLuaStringArray(
+    lua_State* L, int tableIndex)
+{
+    std::vector<std::string> values;
+    tableIndex = lua_absindex(L, tableIndex);
+    for (int index = 1; index <= 65; ++index)
+    {
+        lua_rawgeti(L, tableIndex, index);
+        if (lua_isnil(L, -1))
+        {
+            lua_pop(L, 1);
+            break;
+        }
+        values.push_back(LuaValueToStorageString(L, -1));
+        lua_pop(L, 1);
+    }
+    return values;
+}
+
 static LuaWidgetManifest::Setting ReadLuaSettingTable(lua_State* L, int tableIndex)
 {
     tableIndex = lua_absindex(L, tableIndex);
@@ -1083,35 +1103,27 @@ static LuaWidgetManifest::Setting ReadLuaSettingTable(lua_State* L, int tableInd
     lua_getfield(L, tableIndex, "max");
     if (lua_isnumber(L, -1)) setting.maxValue = lua_tonumber(L, -1);
     lua_pop(L, 1);
+    lua_getfield(L, tableIndex, "step");
+    if (lua_isnumber(L, -1)) setting.stepValue = lua_tonumber(L, -1);
+    lua_pop(L, 1);
+
+    if (setting.type == "multiSelect")
+    {
+        lua_getfield(L, tableIndex, "default");
+        if (lua_istable(L, -1))
+            setting.defaultValues = ReadLuaStringArray(L, -1);
+        lua_pop(L, 1);
+        setting.defaultValue.clear();
+    }
 
     lua_getfield(L, tableIndex, "options");
     if (lua_istable(L, -1))
-    {
-        int optionsIndex = lua_absindex(L, -1);
-        for (int i = 1;; ++i)
-        {
-            lua_rawgeti(L, optionsIndex, i);
-            if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
-            std::string option = LuaValueToStorageString(L, -1);
-            if (!option.empty()) setting.options.push_back(option);
-            lua_pop(L, 1);
-        }
-    }
+        setting.options = ReadLuaStringArray(L, -1);
     lua_pop(L, 1);
 
     lua_getfield(L, tableIndex, "optionLabels");
     if (lua_istable(L, -1))
-    {
-        int labelsIndex = lua_absindex(L, -1);
-        for (int i = 1;; ++i)
-        {
-            lua_rawgeti(L, labelsIndex, i);
-            if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
-            setting.optionLabels.push_back(
-                LuaValueToStorageString(L, -1));
-            lua_pop(L, 1);
-        }
-    }
+        setting.optionLabels = ReadLuaStringArray(L, -1);
     lua_pop(L, 1);
 
     if (setting.label.empty()) setting.label = setting.key;
@@ -1120,6 +1132,7 @@ static LuaWidgetManifest::Setting ReadLuaSettingTable(lua_State* L, int tableInd
     {
         // Secret defaults would put plaintext in the package or Lua source.
         setting.defaultValue.clear();
+        setting.defaultValues.clear();
         setting.options.clear();
         setting.optionLabels.clear();
     }
@@ -1130,6 +1143,7 @@ static LuaWidgetManifest::Setting ReadLuaSettingTable(lua_State* L, int tableInd
     {
         // Host-owned references never enter ordinary setting storage.
         setting.defaultValue.clear();
+        setting.defaultValues.clear();
         setting.searchKey.clear();
         setting.options.clear();
         setting.optionLabels.clear();
@@ -1157,9 +1171,9 @@ static void ReadLuaSettingsArray(lua_State* L, int arrayIndex,
     }
 }
 
-static std::unordered_map<std::string, std::string> ReadLuaValueMap(lua_State* L, int tableIndex)
+static void ReadLuaPresetValues(lua_State* L, int tableIndex,
+    LuaWidgetManifest::SettingPreset& preset)
 {
-    std::unordered_map<std::string, std::string> values;
     tableIndex = lua_absindex(L, tableIndex);
     lua_pushnil(L);
     while (lua_next(L, tableIndex) != 0)
@@ -1169,13 +1183,19 @@ static std::unordered_map<std::string, std::string> ReadLuaValueMap(lua_State* L
             std::string key = lua_tostring(L, -2);
             if (!IsHostStructureSettingKey(key))
             {
-                std::string value = LuaValueToStorageString(L, -1);
-                if (!value.empty()) values[key] = value;
+                if (lua_istable(L, -1))
+                    preset.arrayValues[key] =
+                        ReadLuaStringArray(L, -1);
+                else
+                {
+                    std::string value = LuaValueToStorageString(L, -1);
+                    if (!value.empty())
+                        preset.values[key] = std::move(value);
+                }
             }
         }
         lua_pop(L, 1);
     }
-    return values;
 }
 
 static LuaWidgetManifest::SettingPreset ReadLuaPresetTable(lua_State* L, int tableIndex)
@@ -1191,7 +1211,7 @@ static LuaWidgetManifest::SettingPreset ReadLuaPresetTable(lua_State* L, int tab
 
     lua_getfield(L, tableIndex, "values");
     if (lua_istable(L, -1))
-        preset.values = ReadLuaValueMap(L, -1);
+        ReadLuaPresetValues(L, -1, preset);
     lua_pop(L, 1);
 
     if (preset.id.empty()) preset.id = preset.label;
@@ -1210,7 +1230,8 @@ static void ReadLuaPresetsArray(lua_State* L, int arrayIndex,
         if (lua_istable(L, -1))
         {
             LuaWidgetManifest::SettingPreset preset = ReadLuaPresetTable(L, -1);
-            if (!preset.id.empty() && !preset.label.empty() && !preset.values.empty())
+            if (!preset.id.empty() && !preset.label.empty() &&
+                (!preset.values.empty() || !preset.arrayValues.empty()))
                 out.push_back(std::move(preset));
         }
         lua_pop(L, 1);
@@ -1349,6 +1370,170 @@ static bool ValidateEntityReferenceSettings(
         return true;
     };
     return validate(manifestSettings) && validate(scriptSettings);
+}
+
+static bool ValidateOrdinaryDeclarativeSettings(
+    const std::vector<LuaWidgetManifest::Setting>& manifestSettings,
+    const std::vector<LuaWidgetManifest::Setting>& scriptSettings,
+    const std::vector<LuaWidgetManifest::SettingPreset>& manifestPresets,
+    const std::vector<LuaWidgetManifest::SettingPreset>& scriptPresets,
+    int apiVersion, std::string& error)
+{
+    using snowdesktop::widget_runtime::IsValidDateSettingValue;
+    using snowdesktop::widget_runtime::IsValidMultiSelectSettingValue;
+    using snowdesktop::widget_runtime::IsValidTimeSettingValue;
+    using snowdesktop::widget_runtime::IsValidUrlSettingValue;
+    using snowdesktop::widget_runtime::ParseFiniteSettingNumber;
+
+    error.clear();
+    std::unordered_map<std::string, const LuaWidgetManifest::Setting*>
+        typedSettings;
+    const auto validateSettings = [&](const auto& settings) {
+        for (const auto& setting : settings)
+        {
+            const bool typed = setting.type == "url" ||
+                setting.type == "date" || setting.type == "time" ||
+                setting.type == "range" || setting.type == "multiSelect";
+            if (!typed) continue;
+            if (apiVersion < 2)
+            {
+                error = setting.type + " settings require API v2";
+                return false;
+            }
+            if (!typedSettings.emplace(setting.key, &setting).second)
+            {
+                error = "typed setting key '" + setting.key +
+                    "' is declared more than once";
+                return false;
+            }
+            if (setting.type != "multiSelect" &&
+                !setting.defaultValues.empty())
+            {
+                error = setting.type + " setting '" + setting.key +
+                    "' does not accept an array default";
+                return false;
+            }
+            if (setting.type == "url" &&
+                !IsValidUrlSettingValue(setting.defaultValue))
+            {
+                error = "url setting '" + setting.key +
+                    "' has an invalid HTTP(S) default";
+                return false;
+            }
+            if (setting.type == "date" &&
+                !IsValidDateSettingValue(setting.defaultValue))
+            {
+                error = "date setting '" + setting.key +
+                    "' must use YYYY-MM-DD";
+                return false;
+            }
+            if (setting.type == "time" &&
+                !IsValidTimeSettingValue(setting.defaultValue))
+            {
+                error = "time setting '" + setting.key +
+                    "' must use HH:MM";
+                return false;
+            }
+            if (setting.type == "range")
+            {
+                if (!std::isfinite(setting.minValue) ||
+                    !std::isfinite(setting.maxValue) ||
+                    !std::isfinite(setting.stepValue) ||
+                    setting.minValue > setting.maxValue ||
+                    setting.stepValue <= 0.0)
+                {
+                    error = "range setting '" + setting.key +
+                        "' requires finite min <= max and step > 0";
+                    return false;
+                }
+                if (!setting.defaultValue.empty())
+                {
+                    double value = 0.0;
+                    if (!ParseFiniteSettingNumber(
+                            setting.defaultValue, value) ||
+                        value < setting.minValue || value > setting.maxValue)
+                    {
+                        error = "range setting '" + setting.key +
+                            "' has an out-of-range default";
+                        return false;
+                    }
+                }
+            }
+            if (setting.type == "multiSelect" &&
+                (!setting.defaultValue.empty() ||
+                    !IsValidMultiSelectSettingValue(
+                    setting.options, setting.defaultValues) ||
+                    (!setting.optionLabels.empty() &&
+                        setting.optionLabels.size() !=
+                            setting.options.size())))
+            {
+                error = "multiSelect setting '" + setting.key +
+                    "' requires 1-64 unique options, matching labels, and valid defaults";
+                return false;
+            }
+        }
+        return true;
+    };
+    if (!validateSettings(manifestSettings) ||
+        !validateSettings(scriptSettings))
+        return false;
+
+    const auto validatePresets = [&](const auto& presets) {
+        for (const auto& preset : presets)
+        {
+            for (const auto& [key, value] : preset.values)
+            {
+                const auto declared = typedSettings.find(key);
+                if (declared == typedSettings.end()) continue;
+                const auto& setting = *declared->second;
+                if (setting.type == "multiSelect")
+                {
+                    error = "preset '" + preset.id +
+                        "' must use an array for multiSelect setting '" + key + "'";
+                    return false;
+                }
+                if ((setting.type == "url" &&
+                        !IsValidUrlSettingValue(value)) ||
+                    (setting.type == "date" &&
+                        !IsValidDateSettingValue(value)) ||
+                    (setting.type == "time" &&
+                        !IsValidTimeSettingValue(value)))
+                {
+                    error = "preset '" + preset.id +
+                        "' has an invalid value for setting '" + key + "'";
+                    return false;
+                }
+                if (setting.type == "range")
+                {
+                    double number = 0.0;
+                    if (!ParseFiniteSettingNumber(value, number) ||
+                        number < setting.minValue ||
+                        number > setting.maxValue)
+                    {
+                        error = "preset '" + preset.id +
+                            "' has an out-of-range value for setting '" + key + "'";
+                        return false;
+                    }
+                }
+            }
+            for (const auto& [key, values] : preset.arrayValues)
+            {
+                const auto declared = typedSettings.find(key);
+                if (declared == typedSettings.end() ||
+                    declared->second->type != "multiSelect" ||
+                    !IsValidMultiSelectSettingValue(
+                        declared->second->options, values))
+                {
+                    error = "preset '" + preset.id +
+                        "' has an invalid array value for setting '" + key + "'";
+                    return false;
+                }
+            }
+        }
+        return true;
+    };
+    return validatePresets(manifestPresets) &&
+        validatePresets(scriptPresets);
 }
 
 static std::uint64_t BoundWidgetRuntimeToken(lua_State* state)
@@ -14499,6 +14684,16 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         lua_pop(state, 1);
         return false;
     }
+    if (!ValidateOrdinaryDeclarativeSettings(
+            pending.manifest.settings, scriptSettings,
+            pending.manifest.presets, scriptPresets,
+            pending.manifest.apiVersion, settingsError))
+    {
+        RuntimeRecordError(widgetId, settingsError);
+        RecordWidgetHostFailure(widgetId, settingsError, false);
+        lua_pop(state, 1);
+        return false;
+    }
 
     const std::string storagePrefix = WidgetWideToUtf8(widgetId) + ".";
     const std::string dataVersionKey = storagePrefix + "__host.dataVersion";
@@ -14784,10 +14979,60 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
             IsHostSharedGlassSettingKey(key) ||
             IsRemovedPanelEffectSettingKey(key)) return;
         std::string fullKey = prefix + key;
+        const std::string metadataKey = prefix +
+            snowdesktop::widget_runtime::TypedStorageMetadataKey(key);
         auto it = g_storage.find(fullKey);
-        if (it != g_storage.end() && it->second == value) return;
-        g_storage[fullKey] = value;
-        storageChanged = true;
+        if (it == g_storage.end() || it->second != value)
+        {
+            g_storage[fullKey] = value;
+            storageChanged = true;
+        }
+        if (g_storage.erase(metadataKey) > 0)
+            storageChanged = true;
+    };
+    auto getTypedStorage = [&](const std::string& key,
+        snowdesktop::widget_runtime::InteractionValue& value) {
+        const auto stored = g_storage.find(prefix + key);
+        const auto marker = g_storage.find(prefix +
+            snowdesktop::widget_runtime::TypedStorageMetadataKey(key));
+        if (stored == g_storage.end() || marker == g_storage.end() ||
+            marker->second != snowdesktop::widget_runtime::TypedStorageMarker)
+            return false;
+        std::string error;
+        return snowdesktop::widget_runtime::DecodeTypedStorageValue(
+            stored->second, value, error);
+    };
+    auto setTypedStorage = [&](const std::string& key,
+        const snowdesktop::widget_runtime::InteractionValue& value) {
+        if (key.empty() || IsHostStructureSettingKey(key) ||
+            IsHostSharedGlassSettingKey(key) ||
+            IsRemovedPanelEffectSettingKey(key)) return;
+        std::string encoded;
+        std::string error;
+        if (!snowdesktop::widget_runtime::EncodeTypedStorageValue(
+                value, encoded, error))
+        {
+            RuntimeRecordError(widgetId,
+                "settings typed storage encode: " + error);
+            return;
+        }
+        const std::string fullKey = prefix + key;
+        const std::string metadataKey = prefix +
+            snowdesktop::widget_runtime::TypedStorageMetadataKey(key);
+        const auto stored = g_storage.find(fullKey);
+        if (stored == g_storage.end() || stored->second != encoded)
+        {
+            g_storage[fullKey] = std::move(encoded);
+            storageChanged = true;
+        }
+        const auto marker = g_storage.find(metadataKey);
+        if (marker == g_storage.end() ||
+            marker->second != snowdesktop::widget_runtime::TypedStorageMarker)
+        {
+            g_storage[metadataKey] = std::string(
+                snowdesktop::widget_runtime::TypedStorageMarker);
+            storageChanged = true;
+        }
     };
     auto isOpaqueSettingKey = [&](std::string_view key) {
         return std::any_of(settings.begin(), settings.end(),
@@ -14797,10 +15042,58 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
                         IsEntityReferenceSettingType(setting.type));
             });
     };
-    auto applyValues = [&](const std::unordered_map<std::string, std::string>& values) {
-        for (const auto& kv : values)
-            if (!isOpaqueSettingKey(kv.first))
-                setStorage(kv.first, kv.second);
+    auto setTypedStringArray = [&](const std::string& key,
+        const std::vector<std::string>& values) {
+        snowdesktop::widget_runtime::InteractionValue array;
+        array.type = snowdesktop::widget_runtime::InteractionValue::
+            Type::Array;
+        for (const auto& value : values)
+        {
+            snowdesktop::widget_runtime::InteractionValue item;
+            item.type = snowdesktop::widget_runtime::InteractionValue::
+                Type::String;
+            item.string = value;
+            array.array.push_back(std::move(item));
+        }
+        setTypedStorage(key, array);
+    };
+    auto setTypedNumber = [&](const std::string& key, double value) {
+        snowdesktop::widget_runtime::InteractionValue number;
+        number.type = snowdesktop::widget_runtime::InteractionValue::
+            Type::Number;
+        number.number = value;
+        setTypedStorage(key, number);
+    };
+    auto applyPreset = [&](const LuaWidgetManifest::SettingPreset& preset) {
+        for (const auto& [key, value] : preset.values)
+        {
+            if (isOpaqueSettingKey(key)) continue;
+            const auto setting = std::find_if(settings.begin(),
+                settings.end(), [&](const auto& candidate) {
+                    return candidate.key == key;
+                });
+            if (setting != settings.end() && setting->type == "range")
+            {
+                double number = setting->minValue;
+                if (snowdesktop::widget_runtime::ParseFiniteSettingNumber(
+                        value, number))
+                {
+                    setTypedNumber(key,
+                        snowdesktop::widget_runtime::SnapRangeSettingValue(
+                            number, setting->minValue, setting->maxValue,
+                            setting->stepValue));
+                }
+            }
+            else
+                setStorage(key, value);
+            validatedSettingDrafts_.erase(editorId + "\n" + key);
+        }
+        for (const auto& [key, values] : preset.arrayValues)
+            if (!isOpaqueSettingKey(key))
+            {
+                setTypedStringArray(key, values);
+                validatedSettingDrafts_.erase(editorId + "\n" + key);
+            }
     };
     auto flushStorageChanges = [&]() {
         if (!storageChanged) return;
@@ -15030,6 +15323,35 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
                 changed = true;
             }
         }
+        else if (setting.type == "range")
+        {
+            snowdesktop::widget_runtime::InteractionValue stored;
+            if (!getTypedStorage(setting.key, stored))
+                (void)RuntimeGetTypedSettingDefault(
+                    widgetId, setting.key, stored);
+            double number = setting.minValue;
+            if (stored.type == snowdesktop::widget_runtime::
+                    InteractionValue::Type::Number)
+                number = stored.number;
+            else if (stored.type == snowdesktop::widget_runtime::
+                    InteractionValue::Type::Integer)
+                number = static_cast<double>(stored.integer);
+            float value = static_cast<float>(
+                snowdesktop::widget_runtime::SnapRangeSettingValue(
+                    number, setting.minValue, setting.maxValue,
+                    setting.stepValue));
+            ImGui::SetNextItemWidth(beginEditorRow(
+                setting.label.c_str(), kEditorSliderWidth));
+            if (ImGui::SliderFloat("##Value", &value,
+                    static_cast<float>(setting.minValue),
+                    static_cast<float>(setting.maxValue)))
+            {
+                setTypedNumber(setting.key,
+                    snowdesktop::widget_runtime::SnapRangeSettingValue(
+                        value, setting.minValue, setting.maxValue,
+                        setting.stepValue));
+            }
+        }
         else if (setting.type == "color")
         {
             int color = parseColor(current, parseColor(setting.defaultValue, 0xFFFFFF));
@@ -15071,6 +15393,71 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
             {
                 next = setting.options[selected];
                 changed = true;
+            }
+        }
+        else if (setting.type == "multiSelect" &&
+            !setting.options.empty())
+        {
+            snowdesktop::widget_runtime::InteractionValue stored;
+            if (!getTypedStorage(setting.key, stored))
+                (void)RuntimeGetTypedSettingDefault(
+                    widgetId, setting.key, stored);
+            std::vector<std::string> selected;
+            if (stored.type == snowdesktop::widget_runtime::
+                    InteractionValue::Type::Array)
+            {
+                for (const auto& item : stored.array)
+                    if (item.type == snowdesktop::widget_runtime::
+                            InteractionValue::Type::String &&
+                        std::find(setting.options.begin(),
+                            setting.options.end(), item.string) !=
+                            setting.options.end() &&
+                        std::find(selected.begin(), selected.end(),
+                            item.string) == selected.end())
+                        selected.push_back(item.string);
+            }
+            const float listWidth = beginEditorRow(
+                setting.label.c_str(), kEditorControlWidth);
+            const float rowHeight = ImGui::GetTextLineHeightWithSpacing();
+            const int visibleRows = std::clamp(
+                static_cast<int>(setting.options.size()), 2, 6);
+            bool selectionChanged = false;
+            if (ImGui::BeginListBox("##Value", ImVec2(listWidth,
+                    rowHeight * visibleRows +
+                        ImGui::GetStyle().FramePadding.y * 2.0f)))
+            {
+                for (std::size_t optionIndex = 0;
+                    optionIndex < setting.options.size(); ++optionIndex)
+                {
+                    const auto& option = setting.options[optionIndex];
+                    bool enabled = std::find(selected.begin(),
+                        selected.end(), option) != selected.end();
+                    const std::string& visibleLabel =
+                        optionIndex < setting.optionLabels.size() &&
+                            !setting.optionLabels[optionIndex].empty()
+                        ? setting.optionLabels[optionIndex] : option;
+                    const std::string label = visibleLabel +
+                        "###MultiSelectOption" +
+                        std::to_string(optionIndex);
+                    if (ImGui::Checkbox(label.c_str(), &enabled))
+                    {
+                        selectionChanged = true;
+                        if (enabled)
+                            selected.push_back(option);
+                        else
+                            std::erase(selected, option);
+                    }
+                }
+                ImGui::EndListBox();
+            }
+            if (selectionChanged)
+            {
+                std::vector<std::string> ordered;
+                for (const auto& option : setting.options)
+                    if (std::find(selected.begin(), selected.end(),
+                            option) != selected.end())
+                        ordered.push_back(option);
+                setTypedStringArray(setting.key, ordered);
             }
         }
         else if (setting.type == "appReference" &&
@@ -15412,6 +15799,65 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
                 ImGui::EndListBox();
             }
         }
+        else if (setting.type == "url" || setting.type == "date" ||
+            setting.type == "time")
+        {
+            const std::string draftKey = editorId + "\n" + setting.key;
+            auto& draft = validatedSettingDrafts_[draftKey];
+            if (!draft.dirty && draft.sourceValue != current)
+            {
+                draft.value = current;
+                draft.sourceValue = current;
+            }
+            const auto valid = [&]() {
+                if (setting.type == "url")
+                    return snowdesktop::widget_runtime::
+                        IsValidUrlSettingValue(draft.value);
+                if (setting.type == "date")
+                    return snowdesktop::widget_runtime::
+                        IsValidDateSettingValue(draft.value);
+                return snowdesktop::widget_runtime::
+                    IsValidTimeSettingValue(draft.value);
+            };
+            std::array<char, 2049> buffer{};
+            strncpy_s(buffer.data(), buffer.size(), draft.value.c_str(),
+                _TRUNCATE);
+            ImGui::SetNextItemWidth(beginEditorRow(
+                setting.label.c_str(), kEditorControlWidth));
+            const bool invalid = draft.dirty && !valid();
+            if (invalid)
+            {
+                ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+                ImGui::PushStyleColor(ImGuiCol_Border,
+                    ImVec4(0.9f, 0.24f, 0.18f, 1.0f));
+            }
+            const bool edited = ImGui::InputText(
+                "##Value", buffer.data(), buffer.size());
+            const bool deactivated = ImGui::IsItemDeactivatedAfterEdit();
+            if (invalid)
+            {
+                ImGui::PopStyleColor();
+                ImGui::PopStyleVar();
+            }
+            if (edited)
+            {
+                draft.value = buffer.data();
+                draft.dirty = true;
+                if (valid())
+                {
+                    next = draft.value;
+                    changed = true;
+                    draft.sourceValue = draft.value;
+                    draft.dirty = false;
+                }
+            }
+            if (deactivated && draft.dirty && !valid())
+            {
+                draft.value = current;
+                draft.sourceValue = current;
+                draft.dirty = false;
+            }
+        }
         else
         {
             char buffer[512]{};
@@ -15436,12 +15882,12 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
             break;
         }
     }
-    auto defaultPresetValues = [&]() -> const std::unordered_map<std::string, std::string>* {
+    auto defaultPreset = [&]() -> const LuaWidgetManifest::SettingPreset* {
         if (defaultPresetIndex < 0) return nullptr;
-        return &presets[static_cast<size_t>(defaultPresetIndex)].values;
+        return &presets[static_cast<size_t>(defaultPresetIndex)];
     };
     auto applyDefaultSettingValues = [&]() {
-        const auto* values = defaultPresetValues();
+        const auto* preset = defaultPreset();
         for (const auto& setting : settings)
         {
             if (setting.key.empty() || IsHostStructureSettingKey(setting.key) ||
@@ -15450,14 +15896,39 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
                 IsEntityReferenceSettingType(setting.type))
                 continue;
 
-            std::string value = setting.defaultValue;
-            if (value.empty() && values)
+            if (setting.type == "multiSelect")
             {
-                auto it = values->find(setting.key);
-                if (it != values->end())
+                std::vector<std::string> values = setting.defaultValues;
+                if (values.empty() && preset)
+                {
+                    const auto found = preset->arrayValues.find(setting.key);
+                    if (found != preset->arrayValues.end())
+                        values = found->second;
+                }
+                setTypedStringArray(setting.key, values);
+                continue;
+            }
+            std::string value = setting.defaultValue;
+            if (value.empty() && preset)
+            {
+                auto it = preset->values.find(setting.key);
+                if (it != preset->values.end())
                     value = it->second;
             }
-            setStorage(setting.key, value);
+            if (setting.type == "range")
+            {
+                double number = setting.minValue;
+                (void)snowdesktop::widget_runtime::ParseFiniteSettingNumber(
+                    value, number);
+                setTypedNumber(setting.key,
+                    snowdesktop::widget_runtime::SnapRangeSettingValue(
+                        number, setting.minValue, setting.maxValue,
+                        setting.stepValue));
+            }
+            else
+                setStorage(setting.key, value);
+            validatedSettingDrafts_.erase(
+                editorId + "\n" + setting.key);
             if (setting.type == "appSearch" &&
                 !setting.searchKey.empty())
                 setStorage(setting.searchKey, "");
@@ -15674,7 +16145,7 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
         if (ImGui::Combo("##WidgetPreset", &selectedPreset, presetLabels.data(),
             static_cast<int>(presetLabels.size())))
         {
-            applyValues(presets[static_cast<size_t>(selectedPreset)].values);
+            applyPreset(presets[static_cast<size_t>(selectedPreset)]);
             setStorage("__preset", presets[static_cast<size_t>(selectedPreset)].id);
         }
         const char* resetPresetLabel = _L("app.settings.restore_script_default");
@@ -15683,7 +16154,7 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
             beginEditorRow(_L("app.settings.preview_default"), editorButtonWidth(resetPresetLabel));
             if (whiteTextButton(resetPresetLabel))
             {
-                applyValues(presets[static_cast<size_t>(defaultPresetIndex)].values);
+                applyPreset(presets[static_cast<size_t>(defaultPresetIndex)]);
                 setStorage("__preset", presets[static_cast<size_t>(defaultPresetIndex)].id);
             }
         }
@@ -23788,6 +24259,81 @@ std::string WidgetEngine::RuntimeGetStorageValue(const std::wstring& widgetId, c
     return FindDeclaredDefaultValue(widget, key);
 }
 
+bool WidgetEngine::RuntimeGetTypedSettingDefault(
+    const std::wstring& widgetId, const std::string& key,
+    snowdesktop::widget_runtime::InteractionValue& value) const
+{
+    using Value = snowdesktop::widget_runtime::InteractionValue;
+    const int index = FindWidget(widgetId);
+    if (index < 0 || widgets_[index].manifest.apiVersion < 2)
+        return false;
+    const LuaWidget& widget = widgets_[index];
+    const LuaWidgetManifest::Setting* declared = nullptr;
+    const auto findSetting = [&](const auto& settings) {
+        return std::find_if(settings.begin(), settings.end(),
+            [&](const LuaWidgetManifest::Setting& setting) {
+                return setting.key == key &&
+                    (setting.type == "range" ||
+                        setting.type == "multiSelect");
+            });
+    };
+    if (const auto found = findSetting(widget.manifest.settings);
+        found != widget.manifest.settings.end())
+        declared = &*found;
+    else if (const auto scriptFound = findSetting(widget.scriptSettings);
+        scriptFound != widget.scriptSettings.end())
+        declared = &*scriptFound;
+    if (!declared) return false;
+
+    const auto defaultPreset = [&](const auto& presets) ->
+        const LuaWidgetManifest::SettingPreset* {
+        const auto found = std::find_if(presets.begin(), presets.end(),
+            [](const LuaWidgetManifest::SettingPreset& preset) {
+                return preset.isDefault || preset.id == "default";
+            });
+        return found == presets.end() ? nullptr : &*found;
+    };
+    const LuaWidgetManifest::SettingPreset* preset =
+        defaultPreset(widget.manifest.presets);
+    if (!preset) preset = defaultPreset(widget.scriptPresets);
+
+    if (declared->type == "range")
+    {
+        std::string encoded = declared->defaultValue;
+        if (encoded.empty() && preset)
+        {
+            const auto found = preset->values.find(key);
+            if (found != preset->values.end()) encoded = found->second;
+        }
+        double number = declared->minValue;
+        (void)snowdesktop::widget_runtime::ParseFiniteSettingNumber(
+            encoded, number);
+        value = {};
+        value.type = Value::Type::Number;
+        value.number = snowdesktop::widget_runtime::SnapRangeSettingValue(
+            number, declared->minValue, declared->maxValue,
+            declared->stepValue);
+        return true;
+    }
+
+    std::vector<std::string> selected = declared->defaultValues;
+    if (selected.empty() && preset)
+    {
+        const auto found = preset->arrayValues.find(key);
+        if (found != preset->arrayValues.end()) selected = found->second;
+    }
+    value = {};
+    value.type = Value::Type::Array;
+    for (const auto& item : selected)
+    {
+        Value entry;
+        entry.type = Value::Type::String;
+        entry.string = item;
+        value.array.push_back(std::move(entry));
+    }
+    return true;
+}
+
 void WidgetEngine::RuntimeSetStorageValue(const std::wstring& widgetId, const std::string& key, const std::string& value)
 {
     if (key.empty() || IsRemovedPanelEffectSettingKey(key)) return;
@@ -28150,9 +28696,21 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
             readString(object, "noResultsLabel",
                 setting.noResultsLabel);
             if (const JsonValue* defaultValue = object.Find("default"))
-                setting.defaultValue = valueString(*defaultValue);
+            {
+                if (defaultValue->IsArray())
+                {
+                    for (const JsonValue& value : defaultValue->array)
+                    {
+                        const std::string item = valueString(value);
+                        setting.defaultValues.push_back(item);
+                    }
+                }
+                else
+                    setting.defaultValue = valueString(*defaultValue);
+            }
             readNumber(object, "min", setting.minValue);
             readNumber(object, "max", setting.maxValue);
+            readNumber(object, "step", setting.stepValue);
             setting.options = readStringArray(object, "options");
             setting.optionLabels =
                 readStringArray(object, "optionLabels");
@@ -28162,12 +28720,14 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
                 if (setting.type == "password")
                 {
                     setting.defaultValue.clear();
+                    setting.defaultValues.clear();
                     setting.options.clear();
                     setting.optionLabels.clear();
                 }
                 else if (IsEntityReferenceSettingType(setting.type))
                 {
                     setting.defaultValue.clear();
+                    setting.defaultValues.clear();
                     setting.searchKey.clear();
                     setting.options.clear();
                     setting.optionLabels.clear();
@@ -28197,11 +28757,20 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
                 for (const auto& [key, value] : values->object)
                 {
                     if (!IsHostStructureSettingKey(key))
-                        preset.values[key] = valueString(value);
+                    {
+                        if (value.IsArray())
+                        {
+                            auto& array = preset.arrayValues[key];
+                            for (const JsonValue& item : value.array)
+                                array.push_back(valueString(item));
+                        }
+                        else
+                            preset.values[key] = valueString(value);
+                    }
                 }
             }
             if (!preset.id.empty() && !preset.label.empty() &&
-                !preset.values.empty())
+                (!preset.values.empty() || !preset.arrayValues.empty()))
                 manifest.presets.push_back(std::move(preset));
         }
     }
@@ -30053,6 +30622,13 @@ static int lua_StorageGet(lua_State* L)
     }
     if (s->engine)
     {
+        snowdesktop::widget_runtime::InteractionValue typedDefault;
+        if (s->engine->RuntimeGetTypedSettingDefault(
+                BoundWidgetId(L), key, typedDefault))
+        {
+            PushInteractionValue(L, typedDefault);
+            return 1;
+        }
         std::string defaultValue =
             s->engine->RuntimeGetStorageValue(BoundWidgetId(L), key);
         if (!defaultValue.empty())

@@ -108,14 +108,18 @@ struct LuaWidgetManifest
         std::string noResultsLabel;
         double minValue = 0.0;
         double maxValue = 100.0;
+        double stepValue = 1.0;
         std::vector<std::string> options;
         std::vector<std::string> optionLabels;
+        std::vector<std::string> defaultValues;
     };
     struct SettingPreset
     {
         std::string id;
         std::string label;
         std::unordered_map<std::string, std::string> values;
+        std::unordered_map<std::string, std::vector<std::string>>
+            arrayValues;
         bool isDefault = false;
     };
     bool hasManifest = false;          ///< 是否存在清单文件
@@ -1318,6 +1322,10 @@ public:
      * @return 存储的字符串值，键不存在返回空字符串
      */
     std::string RuntimeGetStorageValue(const std::wstring& widgetId, const std::string& key) const;
+    /** Return a typed default for settings whose public storage type is not string. */
+    bool RuntimeGetTypedSettingDefault(const std::wstring& widgetId,
+        const std::string& key,
+        snowdesktop::widget_runtime::InteractionValue& value) const;
     /** Return true when key is a host-managed password setting. */
     bool RuntimeGetSecretReference(const std::wstring& widgetId,
         const std::string& key, std::string& reference) const;
@@ -1701,6 +1709,14 @@ private:
     };
     std::unordered_map<std::string, SecretSettingDraft>
         secretSettingDrafts_;
+    struct ValidatedSettingDraft
+    {
+        std::string value;
+        std::string sourceValue;
+        bool dirty = false;
+    };
+    std::unordered_map<std::string, ValidatedSettingDraft>
+        validatedSettingDrafts_;
     std::uint64_t nextSettingsAppSearchTaskId_ = 0;
     std::unordered_map<std::uint64_t,
         snowdesktop::widget_runtime::WidgetAppSearchCompletion>

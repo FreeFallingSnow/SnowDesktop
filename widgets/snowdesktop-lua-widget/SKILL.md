@@ -180,6 +180,12 @@ an unavailable reference cannot be launched. Probe
 `desktop.item` or `filesystem.reference`. File and folder fields filter both
 visible results and committed candidates by type, write only the selected
 opaque slot item, and grant neither enumeration nor file-content access. Probe
+`settings.url`, `settings.date`, and `settings.time` before declaring validated
+HTTP(S), ISO-date, or 24-hour-time text fields. Probe `settings.range` for a
+finite min/max/positive-step numeric slider and `settings.multiSelect` for a
+1-64 option host checklist. Range values are Lua numbers and multi-select
+values are string arrays in defaults, presets, and typed storage; do not encode
+either as delimiter-separated text. Probe
 `view.referenceIcon` to render a bound/search result's opaque reference as a
 host-resolved icon without requiring a package image or exposing its target;
 this visual node does not grant launch, open, reveal, or file-content access.

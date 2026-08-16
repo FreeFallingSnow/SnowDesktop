@@ -275,6 +275,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget_storage_value.cpp
     src/widget_storage_write_budget.cpp
     src/widget_secret_store.cpp
+    src/widget_setting_rules.cpp
     src/widget_logical_slot.cpp
     src/widget_lua_lifecycle.cpp
     src/widget_runtime_diagnostics.cpp
@@ -1120,6 +1121,15 @@ if (BUILD_TESTING)
             src/widget_storage_write_budget.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract lua storage widget)
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetSettingRulesTests
+        widget_setting_rules
+        SOURCES
+            tests/widget_setting_rules_tests.cpp
+            src/widget_setting_rules.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS contract lua settings widget)
 
     snowdesktop_add_test(
         SnowDesktopWidgetSecretStoreTests

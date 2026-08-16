@@ -89,22 +89,23 @@
 ---@class SnowSettingField
 ---@field key string
 ---@field label string
----@field type 'text'|'password'|'bool'|'int'|'float'|'select'|'color'|'appReference'|'desktopItemReference'|'fileReference'|'folderReference'|'appSearch'
----@field default? string|number|boolean Ignored for password and entity reference fields; opaque values must never be shipped as defaults.
+---@field type 'text'|'password'|'bool'|'int'|'float'|'select'|'color'|'url'|'date'|'time'|'range'|'multiSelect'|'appReference'|'desktopItemReference'|'fileReference'|'folderReference'|'appSearch'
+---@field default? string|number|boolean|string[] multiSelect defaults are stable option arrays; range defaults are exposed to Lua as numbers. Ignored for password and entity reference fields.
 ---@field searchKey? string Required by appSearch; stores the user's query separately from the selected display title.
 ---@field binding? string Required by appReference, desktopItemReference, fileReference, and folderReference; names one uniquely used replacePolicy='allow' manifest binding accepting only the matching reference kind.
 ---@field emptyLabel? string Localized empty-state label used by appSearch and entity reference fields.
 ---@field noResultsLabel? string Localized label shown after an application search returns no results.
 ---@field min? number
 ---@field max? number
----@field options? string[]
----@field optionLabels? string[] Localized labels parallel to stable select option values.
+---@field step? number Positive range increment; defaults to 1.
+---@field options? string[] Stable select or multiSelect values; multiSelect accepts 1-64 unique values.
+---@field optionLabels? string[] Localized labels parallel to stable select or multiSelect option values.
 
 ---@class SnowSettingPreset
 ---@field id string
 ---@field label string
 ---@field default? boolean
----@field values table<string, string|number|boolean>
+---@field values table<string, string|number|boolean|string[]>
 
 ---@class SnowWidgetSettings
 ---@field fields? SnowSettingField[]

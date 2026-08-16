@@ -2135,6 +2135,21 @@ API v1 的同步 `sys` 代替。
 显示文本；宿主保存值而不是翻译，切换语言不会使现有设置失效。对应 feature 为
 `settings.select.localizedOptions`。
 
+API v2 还提供以下普通值设置控件：
+
+- `url`：空值或不超过 2048 字节、带 authority 且不含空白和反斜杠的 `http://` / `https://` URL；
+- `date`：空值或严格 Gregorian `YYYY-MM-DD`；
+- `time`：空值或 24 小时制 `HH:MM`；
+- `range`：声明有限的 `min <= max` 和正 `step`，宿主对值钳制并吸附到步长；
+- `multiSelect`：声明 1-64 个唯一稳定 `options`，可配等长本地化 `optionLabels`，`default`
+  与 preset 值均为这些选项组成的无重复数组。
+
+`url/date/time` 通过 `storage.get` 返回 string，`range` 返回 number，`multiSelect` 返回
+string[]；后两项使用 `storage.typed` 持久化，首次读取默认值、应用 preset、恢复默认以及用户修改
+保持相同 Lua 类型。无效清单或 preset 会使组件加载失败；设置页不会提交输入过程中的无效
+URL、日期或时间。对应 feature 分别为 `settings.url`、`settings.date`、`settings.time`、
+`settings.range`、`settings.multiSelect`。
+
 `appSearch` 设置使用 `key` 保存用户选中的应用显示名，使用 `searchKey` 保存搜索文字；
 宿主复用应用索引并在后台完成匹配，在设置页直接显示候选项。`emptyLabel` 和
 `noResultsLabel` 必须使用组件清单中的本地化文本。该控件只负责设置交互；组件运行时仍应

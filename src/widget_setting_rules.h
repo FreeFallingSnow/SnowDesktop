@@ -1,0 +1,21 @@
+#pragma once
+
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace snowdesktop::widget_runtime
+{
+bool IsValidUrlSettingValue(std::string_view value) noexcept;
+bool IsValidDateSettingValue(std::string_view value) noexcept;
+bool IsValidTimeSettingValue(std::string_view value) noexcept;
+
+bool ParseFiniteSettingNumber(std::string_view value,
+    double& output) noexcept;
+double SnapRangeSettingValue(double value, double minimum,
+    double maximum, double step) noexcept;
+
+bool IsValidMultiSelectSettingValue(
+    const std::vector<std::string>& options,
+    const std::vector<std::string>& values) noexcept;
+}
