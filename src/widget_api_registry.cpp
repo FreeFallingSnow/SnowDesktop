@@ -474,6 +474,17 @@ constexpr std::array<std::string_view, 24> kV2SandboxLibraries = {
     "resource", "data", "task", "interaction", "control", "calendar",
     "ui", "l10n", "view", "slots",
 };
+
+constexpr auto kPublicApiFunctionContracts =
+    std::to_array<PublicApiFunctionContract>({
+#define SNOW_WIDGET_PUBLIC_FUNCTION(                                      \
+    library, name, callback, sinceApi, permission, untilApi)              \
+    { library, name, sinceApi, permission, untilApi },
+#define SNOW_WIDGET_MANIFEST_FUNCTION SNOW_WIDGET_PUBLIC_FUNCTION
+#include "widget_public_api.inc"
+#undef SNOW_WIDGET_MANIFEST_FUNCTION
+#undef SNOW_WIDGET_PUBLIC_FUNCTION
+    });
 char kDefinedWidgetMarker = 0;
 char kTransientStateTableKey = 0;
 char kTransientStateDirtyKey = 0;
@@ -900,6 +911,12 @@ std::span<const SystemTaskContract> SystemTaskContracts() noexcept
 std::span<const std::string_view> SandboxLibraries() noexcept
 {
     return kV2SandboxLibraries;
+}
+
+std::span<const PublicApiFunctionContract>
+PublicApiFunctionContracts() noexcept
+{
+    return kPublicApiFunctionContracts;
 }
 
 std::vector<std::string> MissingFeatures(
@@ -1471,6 +1488,66 @@ void RegisterLibraries(
         lua_settop(state, entryTop);
         throw std::logic_error(
             "widget API catalog registration did not preserve the Lua stack");
+    }
+}
+
+void RegisterFunctionCatalog(
+    lua_State* state,
+    std::span<const CatalogFunctionDescriptor> functions,
+    std::uint32_t apiVersion)
+{
+    if (!state)
+        throw std::invalid_argument(
+            "cannot register a widget API catalog on a null Lua state");
+
+    struct MutableLibrary
+    {
+        std::string name;
+        std::vector<FunctionDescriptor> functions;
+    };
+    std::vector<MutableLibrary> libraries;
+    for (const CatalogFunctionDescriptor& entry : functions)
+    {
+        if (!entry.library || entry.library[0] == '\0')
+            throw std::invalid_argument(
+                "invalid flattened widget API catalog: missing library name");
+        auto library = std::find_if(libraries.begin(), libraries.end(),
+            [&entry](const MutableLibrary& candidate) {
+                return candidate.name == entry.library;
+            });
+        if (library == libraries.end())
+        {
+            libraries.push_back({ entry.library, {} });
+            library = std::prev(libraries.end());
+        }
+        library->functions.push_back(entry.function);
+    }
+
+    // Validate the entire flattened source before publishing its first global
+    // so a malformed shared catalog cannot leave a partially registered VM.
+    for (const MutableLibrary& library : libraries)
+    {
+        const LibraryValidationError validation = ValidateLibrary(
+            library.name.c_str(), library.functions);
+        if (validation != LibraryValidationError::None)
+        {
+            throw std::invalid_argument(
+                "invalid flattened widget API catalog at library '" +
+                library.name + "': " + DescribeValidationError(validation));
+        }
+    }
+
+    const int entryTop = lua_gettop(state);
+    for (const MutableLibrary& library : libraries)
+    {
+        RegisterLibrary(state, library.name.c_str(), library.functions,
+            apiVersion);
+    }
+    if (lua_gettop(state) != entryTop)
+    {
+        lua_settop(state, entryTop);
+        throw std::logic_error(
+            "flattened widget API catalog registration did not preserve the Lua stack");
     }
 }
 }

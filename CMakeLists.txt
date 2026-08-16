@@ -561,6 +561,7 @@ add_custom_command(TARGET SnowDesktop POST_BUILD
 
 add_executable(snowwidget
     tools/snowwidget/main.cpp
+    src/widget_api_contract_json.cpp
     src/widget_api_registry.cpp
     src/widget_logical_slot.cpp
     src/widget_package.cpp
@@ -711,6 +712,7 @@ if (BUILD_TESTING)
         widget_api_registry
         SOURCES
             tests/widget_api_registry_tests.cpp
+            src/widget_api_contract_json.cpp
             src/widget_api_registry.cpp
             src/widget_permission_state.cpp
             src/widget_system_contract_json.cpp

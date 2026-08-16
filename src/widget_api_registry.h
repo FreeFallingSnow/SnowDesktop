@@ -28,6 +28,25 @@ struct LibraryDescriptor
     std::span<const FunctionDescriptor> functions;
 };
 
+// A flattened runtime entry used by the shared host API catalog. Keeping the
+// library name beside each callback lets the desktop host and offline
+// authoring tools consume the same source list without exporting host callback
+// symbols from widget_engine.cpp.
+struct CatalogFunctionDescriptor
+{
+    const char* library = nullptr;
+    FunctionDescriptor function;
+};
+
+struct PublicApiFunctionContract
+{
+    const char* library = nullptr;
+    const char* name = nullptr;
+    std::uint32_t sinceApi = 1;
+    const char* requiredPermission = nullptr;
+    std::uint32_t untilApi = 0;
+};
+
 enum class SystemCapabilityKind
 {
     Function,
@@ -136,6 +155,8 @@ std::span<const SystemDataTopicContract>
 SystemDataTopicContracts() noexcept;
 std::span<const SystemTaskContract> SystemTaskContracts() noexcept;
 std::span<const std::string_view> SandboxLibraries() noexcept;
+std::span<const PublicApiFunctionContract>
+PublicApiFunctionContracts() noexcept;
 std::vector<std::string> MissingFeatures(
     std::span<const std::string> requiredFeatures);
 
@@ -201,6 +222,11 @@ void RegisterLibraries(
 void RegisterLibraries(
     lua_State* state,
     std::span<const LibraryDescriptor> libraries,
+    std::uint32_t apiVersion);
+
+void RegisterFunctionCatalog(
+    lua_State* state,
+    std::span<const CatalogFunctionDescriptor> functions,
     std::uint32_t apiVersion);
 
 template<std::size_t N>

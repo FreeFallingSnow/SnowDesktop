@@ -1,4 +1,5 @@
 #include "widget_api_registry.h"
+#include "widget_api_contract_json.h"
 #include "widget_permission_state.h"
 #include "widget_system_contract_json.h"
 #include "json_value.h"
@@ -1054,6 +1055,95 @@ void TestMachineReadableSystemContract()
         "task JSON must preserve permission, gesture, and concurrency metadata");
 }
 
+void TestPublicApiContract()
+{
+    const auto contracts =
+        snowdesktop::widget_api::PublicApiFunctionContracts();
+    Check(contracts.size() == 156,
+        "public Lua host API function count must match the reviewed catalog");
+
+    std::unordered_set<std::string> sandboxLibraries;
+    for (const std::string_view library :
+        snowdesktop::widget_api::SandboxLibraries())
+    {
+        sandboxLibraries.emplace(library);
+    }
+    std::unordered_set<std::string> libraries;
+    std::unordered_set<std::string> qualifiedNames;
+    const std::string luaDefinitions = ReadTextFile(FindSourceRoot() /
+        "widgets/snowdesktop-lua-widget/library/snowdesktop-v2.lua");
+    for (const auto& contract : contracts)
+    {
+        Check(contract.library && contract.library[0] != '\0' &&
+                contract.name && contract.name[0] != '\0',
+            "public API entries must publish library and function names");
+        Check(contract.sinceApi > 0 &&
+                (contract.untilApi == 0 ||
+                    contract.untilApi >= contract.sinceApi),
+            "public API entries must publish a valid version range");
+        Check(!contract.requiredPermission ||
+                snowdesktop::widget::IsKnownWidgetPermission(
+                    contract.requiredPermission),
+            "public API entry permissions must use the host vocabulary");
+        libraries.emplace(contract.library);
+        Check(sandboxLibraries.contains(contract.library),
+            "every host API library must be present in the sandbox catalog");
+        const std::string qualifiedName =
+            std::string(contract.library) + "." + contract.name;
+        Check(qualifiedNames.insert(qualifiedName).second,
+            "public API qualified names must be unique");
+        Check(luaDefinitions.find("function " + qualifiedName + "(") !=
+                std::string::npos,
+            "every public API function must have a LuaLS signature");
+    }
+    Check(libraries.size() == 20 && libraries.contains("l10n") &&
+            libraries.contains("view") && libraries.contains("storage"),
+        "public API contract must expose all host-provided Lua libraries");
+
+    JsonValue root;
+    std::string error;
+    const std::string serialized = snowdesktop::widget_api::
+        SerializePublicApiContractJson();
+    Check(ParseJson(serialized, root, &error) && root.IsObject(),
+        "offline public API contract must be valid JSON");
+    const JsonValue* schemaVersion = root.Find("schemaVersion");
+    const JsonValue* apiVersion = root.Find("apiVersion");
+    const JsonValue* sandbox = root.Find("sandboxLibraries");
+    const JsonValue* serializedLibraries = root.Find("libraries");
+    Check(schemaVersion && schemaVersion->IsNumber() &&
+            schemaVersion->number == 1.0 &&
+            apiVersion && apiVersion->IsNumber() &&
+            apiVersion->number == 2.0 &&
+            sandbox && sandbox->IsArray() && sandbox->array.size() == 24 &&
+            serializedLibraries && serializedLibraries->IsArray() &&
+            serializedLibraries->array.size() == 20,
+        "offline public API contract must expose versions and complete libraries");
+
+    std::size_t serializedFunctionCount = 0;
+    bool foundPermissionGate = false;
+    for (const JsonValue& library : serializedLibraries->array)
+    {
+        const JsonValue* name = library.Find("name");
+        const JsonValue* functions = library.Find("functions");
+        Check(name && name->IsString() && functions && functions->IsArray(),
+            "serialized API libraries must contain named function arrays");
+        serializedFunctionCount += functions->array.size();
+        for (const JsonValue& function : functions->array)
+        {
+            const JsonValue* qualifiedName = function.Find("qualifiedName");
+            const JsonValue* permission = function.Find("requiredPermission");
+            if (qualifiedName && qualifiedName->IsString() &&
+                qualifiedName->string == "draw.icon")
+            {
+                foundPermissionGate = permission && permission->IsString() &&
+                    permission->string == "desktop.read";
+            }
+        }
+    }
+    Check(serializedFunctionCount == contracts.size() && foundPermissionGate,
+        "serialized API contract must preserve every function and permission gate");
+}
+
 void TestTransientState()
 {
     LuaState state;
@@ -1220,6 +1310,46 @@ void TestCatalogRegistration()
         "catalog test cleanup must restore stack height");
 }
 
+void TestFlattenedCatalogRegistration()
+{
+    using snowdesktop::widget_api::CatalogFunctionDescriptor;
+    LuaState state;
+    static constexpr CatalogFunctionDescriptor functions[] = {
+        { "first", { "answer", ReturnFortyTwo, 1 } },
+        { "second", { "add", Add, 2 } },
+    };
+    snowdesktop::widget_api::RegisterFunctionCatalog(state, functions, 1);
+    lua_getglobal(state, "first");
+    lua_getfield(state, -1, "answer");
+    Check(lua_pcall(state, 0, 1, 0) == LUA_OK &&
+            lua_tointeger(state, -1) == 42,
+        "flattened catalog must publish callable grouped libraries");
+    lua_pop(state, 2);
+    lua_getglobal(state, "second");
+    lua_getfield(state, -1, "add");
+    Check(lua_isnil(state, -1),
+        "flattened catalog must retain API version filtering");
+    lua_pop(state, 2);
+
+    static constexpr CatalogFunctionDescriptor invalid[] = {
+        { "wouldPublish", { "answer", ReturnFortyTwo, 1 } },
+        { "invalid", { nullptr, Add, 1 } },
+    };
+    bool threw = false;
+    try
+    {
+        snowdesktop::widget_api::RegisterFunctionCatalog(state, invalid, 2);
+    }
+    catch (const std::invalid_argument&)
+    {
+        threw = true;
+    }
+    lua_getglobal(state, "wouldPublish");
+    Check(threw && lua_isnil(state, -1),
+        "flattened catalog validation must remain atomic");
+    lua_pop(state, 1);
+}
+
 void TestInvalidRegistrationIsAtomic()
 {
     LuaState state;
@@ -1315,9 +1445,11 @@ int main()
     TestV2Contract();
     TestSystemCapabilityContract();
     TestMachineReadableSystemContract();
+    TestPublicApiContract();
     TestTransientState();
     TestCatalogValidation();
     TestCatalogRegistration();
+    TestFlattenedCatalogRegistration();
     TestInvalidRegistrationIsAtomic();
     TestInvalidCatalogRegistrationIsAtomic();
     std::cout << "widget API registry tests passed\n";

@@ -47,7 +47,7 @@ SnowDesktop 开发许可的 Steam 客户端。脚本从 `packaging\steam-identit
 组件创建流程位于 SnowDesktop 主程序的“组件开发工具”页。该页可将开放 Agent
 Skill 一键同步到共享目录及 Codex、Claude Code、Cursor、GitHub Copilot、Gemini
 CLI 的兼容目录；每份 Skill 自带 `bin\snowwidget.exe`，并提供 `capabilities`、
-`validate` 与 `pack` 命令。创意工坊管理器只处理 Steam 发布，并且默认只发现
+`api-contract`、`validate` 与 `pack` 命令。创意工坊管理器只处理 Steam 发布，并且默认只发现
 `.build\Release\data\widgets\dev` 中的开发组件，不读取内置组件。
 
 发布流程的完整说明见 `packaging\README.md`。

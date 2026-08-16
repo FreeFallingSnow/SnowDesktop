@@ -7,6 +7,11 @@
 编辑器类型定义位于 `library/snowdesktop-v2.lua`，其函数签名是本文档的配套
 机器可读契约。
 
+运行 `snowwidget api-contract` 可获得当前沙箱完整的宿主 Lua 函数目录。导出按库列出
+`qualifiedName`、`sinceApi`、`untilApi` 和函数级 `requiredPermission`，同时给出沙箱中
+允许使用的 Lua 标准库与宿主库集合。桌面运行时和该命令由同一个注册清单生成；作者工具应先
+用它确定函数及版本是否存在，再使用 `library/snowdesktop-v2.lua` 获取参数与返回值类型。
+
 运行 `snowwidget view-contract` 可获得宿主当前公开的声明式视图 JSON 契约。顶层
 `schemaVersion` 版本化该导出格式，`apiVersion` 表示组件 API；`nodes`、`properties` 和
 `events` 分别登记节点适用属性与逐节点默认值、属性类型/枚举/范围/影响域，以及事件 payload
