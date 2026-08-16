@@ -71,6 +71,21 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 
 ## 已实现能力
 
+### 基础 feature 探测索引
+
+以下基础能力也有稳定 feature ID，组件需要按版本降级时应使用
+`widget.hasFeature(id)` 或 `system.capabilities(id)`，不要通过函数是否为 `nil` 猜测宿主版本：
+
+- `system.environment`：`system.info/capabilities`；`time.basic`：`time.now/monotonic`；
+  `time.calendar`：`time.parts/format/add/compare`；
+- `module.package`：安全包内模块；`resource.package`：包内图片、字体和资源状态；
+- `state.transient`：仅存活于当前实例 VM 的瞬态状态；`schedule.visibility`：计划的
+  `whenHidden=pause|throttle|continue` 生命周期；
+- `slots.mutation.userGesture`：binding/collection 的选择、清除、移除、撤销与重做仍要求
+  当前可信用户动作；
+- `widget.panel`、`widget.dialog`、`widget.popover`：对应宿主 surface 的打开和关闭能力；
+  surface 内返回声明式树时还应分别探测 `view.surface.panel/dialog/popover`。
+
 ### `widget`
 
 - `widget.define(definition)`：校验并返回 v2 描述符。`render` 与 `view` 必须二选一，可选

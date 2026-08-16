@@ -6,6 +6,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace
 {
@@ -48,6 +49,127 @@ std::size_t CountOccurrences(
         offset += needle.size();
     }
     return count;
+}
+
+std::vector<std::string> QuotedStrings(std::string_view source)
+{
+    std::vector<std::string> result;
+    std::size_t offset = 0;
+    while ((offset = source.find('"', offset)) != std::string_view::npos)
+    {
+        const std::size_t end = source.find('"', offset + 1);
+        Check(end != std::string_view::npos,
+            "unterminated quoted contract value");
+        result.emplace_back(source.substr(offset + 1, end - offset - 1));
+        offset = end + 1;
+    }
+    return result;
+}
+
+std::vector<std::string> FirstQuotedInitializerFields(
+    std::string_view source)
+{
+    std::vector<std::string> result;
+    std::size_t offset = 0;
+    while (offset < source.size())
+    {
+        const std::size_t end = source.find('\n', offset);
+        const std::string_view line = source.substr(offset,
+            end == std::string_view::npos ? source.size() - offset
+                                          : end - offset);
+        const std::size_t initializer = line.find('{');
+        const std::size_t quote = line.find('"', initializer);
+        if (initializer != std::string_view::npos &&
+            quote != std::string_view::npos)
+        {
+            const std::size_t quoteEnd = line.find('"', quote + 1);
+            Check(quoteEnd != std::string_view::npos,
+                "unterminated contract initializer value");
+            result.emplace_back(
+                line.substr(quote + 1, quoteEnd - quote - 1));
+        }
+        if (end == std::string_view::npos) break;
+        offset = end + 1;
+    }
+    return result;
+}
+
+void TestPublishedV2Catalog(const fs::path& repository)
+{
+    const std::string registry = ReadFile(
+        repository / "src" / "widget_api_registry.cpp");
+    const std::string viewContract = ReadFile(
+        repository / "src" / "widget_view_contract.cpp");
+    const std::string luaLs = ReadFile(repository / "widgets" /
+        "snowdesktop-lua-widget" / "library" / "snowdesktop-v2.lua");
+    const std::string api = ReadFile(repository / "widgets" /
+        "snowdesktop-lua-widget" / "references" / "api-v2.md");
+    const std::string skill = ReadFile(repository / "widgets" /
+        "snowdesktop-lua-widget" / "SKILL.md");
+    const std::string published = api + '\n' + skill + '\n' + luaLs;
+
+    const auto features = QuotedStrings(Section(registry,
+        "kHostFeatures = {", "constexpr std::array<SystemFunctionContract"));
+    Check(features.size() == 197,
+        "host feature catalog size must match the reviewed v2 contract");
+    for (const auto& feature : features)
+    {
+        Check(published.find(feature) != std::string::npos,
+            std::string("host feature is absent from authoring artifacts: ") +
+                feature);
+    }
+
+    const auto systemFunctions = FirstQuotedInitializerFields(
+        Section(registry, "kSystemFunctionContracts = {{",
+            "constexpr std::array<SystemDataTopicContract"));
+    const auto dataTopics = FirstQuotedInitializerFields(
+        Section(registry, "kSystemDataTopicContracts = {{",
+            "constexpr std::array<SystemTaskContract"));
+    const auto tasks = FirstQuotedInitializerFields(
+        Section(registry, "kSystemTaskContracts = {{",
+            "constexpr std::array<std::string_view, 24> kV2SandboxLibraries"));
+    Check(systemFunctions.size() == 15 && dataTopics.size() == 25 &&
+            tasks.size() == 41,
+        "system function/data/task catalog sizes must match the reviewed v2 contract");
+    for (const auto& name : systemFunctions)
+    {
+        Check(luaLs.find("function " + name + "(") != std::string::npos,
+            std::string("system function is absent from LuaLS: ") + name);
+        Check(api.find(name) != std::string::npos,
+            std::string("system function is absent from API v2 docs: ") + name);
+    }
+    for (const auto* catalog : { &dataTopics, &tasks })
+    {
+        for (const auto& name : *catalog)
+        {
+            Check(luaLs.find("'" + name + "'") != std::string::npos,
+                std::string("system capability is absent from LuaLS: ") +
+                    name);
+            Check(api.find(name) != std::string::npos,
+                std::string("system capability is absent from API v2 docs: ") +
+                    name);
+        }
+    }
+
+    const auto nodes = FirstQuotedInitializerFields(Section(viewContract,
+        "constexpr auto kContracts", "constexpr auto kProperties"));
+    const auto properties = QuotedStrings(Section(viewContract,
+        "constexpr auto kProperties", "constexpr auto kCommonProperties"));
+    Check(nodes.size() == 44 && properties.size() == 146,
+        "view node/property catalog sizes must match the reviewed v2 contract");
+    for (const auto& node : nodes)
+    {
+        Check(luaLs.find("function view." + node + "(") !=
+                std::string::npos,
+            std::string("view node is absent from LuaLS: ") + node);
+        Check(api.find(node) != std::string::npos,
+            std::string("view node is absent from API v2 docs: ") + node);
+    }
+    for (const auto& property : properties)
+    {
+        Check(luaLs.find("---@field " + property) != std::string::npos,
+            std::string("view property is absent from LuaLS: ") + property);
+    }
 }
 
 void TestRemindersRenderPurity(const fs::path& repository)
@@ -283,6 +405,7 @@ void TestAllBuiltinWidgetsUseV2(const fs::path& repository)
 int main(int argc, char** argv)
 {
     Check(argc == 2, "expected the repository root argument");
+    TestPublishedV2Catalog(fs::path(argv[1]));
     TestRemindersRenderPurity(fs::path(argv[1]));
     TestV2OnlyWidgetActivation(fs::path(argv[1]));
     TestPackageResourceRenderPurity(fs::path(argv[1]));
