@@ -1093,6 +1093,7 @@ static LuaWidgetManifest::Setting ReadLuaSettingTable(lua_State* L, int tableInd
     setting.defaultValue = LuaReadStorageField(L, tableIndex, "default");
     setting.searchKey = LuaReadStorageField(L, tableIndex, "searchKey");
     setting.binding = LuaReadStorageField(L, tableIndex, "binding");
+    setting.access = LuaReadStorageField(L, tableIndex, "access");
     setting.emptyLabel = LuaReadStorageField(L, tableIndex, "emptyLabel");
     setting.noResultsLabel =
         LuaReadStorageField(L, tableIndex, "noResultsLabel");
@@ -1126,8 +1127,14 @@ static LuaWidgetManifest::Setting ReadLuaSettingTable(lua_State* L, int tableInd
         setting.optionLabels = ReadLuaStringArray(L, -1);
     lua_pop(L, 1);
 
+    lua_getfield(L, tableIndex, "extensions");
+    if (lua_istable(L, -1))
+        setting.extensions = ReadLuaStringArray(L, -1);
+    lua_pop(L, 1);
+
     if (setting.label.empty()) setting.label = setting.key;
     if (setting.type.empty()) setting.type = "text";
+    if (setting.access.empty()) setting.access = "read";
     if (setting.type == "password")
     {
         // Secret defaults would put plaintext in the package or Lua source.
@@ -1135,6 +1142,7 @@ static LuaWidgetManifest::Setting ReadLuaSettingTable(lua_State* L, int tableInd
         setting.defaultValues.clear();
         setting.options.clear();
         setting.optionLabels.clear();
+        setting.extensions.clear();
     }
     else if (setting.type == "appReference" ||
         setting.type == "desktopItemReference" ||
@@ -1145,6 +1153,18 @@ static LuaWidgetManifest::Setting ReadLuaSettingTable(lua_State* L, int tableInd
         setting.defaultValue.clear();
         setting.defaultValues.clear();
         setting.searchKey.clear();
+        setting.options.clear();
+        setting.optionLabels.clear();
+        setting.extensions.clear();
+    }
+    else if (setting.type == "fileHandle" ||
+        setting.type == "folderHandle")
+    {
+        // Handles are host-owned grants and never ordinary setting values.
+        setting.defaultValue.clear();
+        setting.defaultValues.clear();
+        setting.searchKey.clear();
+        setting.binding.clear();
         setting.options.clear();
         setting.optionLabels.clear();
     }
@@ -1299,6 +1319,28 @@ static bool IsEntityReferenceSettingType(std::string_view type) noexcept
         type == "fileReference" || type == "folderReference";
 }
 
+static bool IsFilesystemHandleSettingType(std::string_view type) noexcept
+{
+    return type == "fileHandle" || type == "folderHandle";
+}
+
+static std::optional<snowdesktop::widget_runtime::
+    WidgetFilesystemHandleAccess> FilesystemSettingAccess(
+        std::string_view access) noexcept
+{
+    using Access = snowdesktop::widget_runtime::
+        WidgetFilesystemHandleAccess;
+    if (access == "read") return Access::Read;
+    if (access == "write") return Access::Write;
+    if (access == "readWrite") return Access::ReadWrite;
+    return std::nullopt;
+}
+
+static std::string FilesystemSettingMetadataKey(std::string_view key)
+{
+    return "__host.settingHandle." + std::string(key);
+}
+
 static std::string_view EntityReferenceSettingKind(
     std::string_view type) noexcept
 {
@@ -1393,7 +1435,8 @@ static bool ValidateOrdinaryDeclarativeSettings(
         {
             const bool typed = setting.type == "url" ||
                 setting.type == "date" || setting.type == "time" ||
-                setting.type == "range" || setting.type == "multiSelect";
+                setting.type == "range" || setting.type == "multiSelect" ||
+                IsFilesystemHandleSettingType(setting.type);
             if (!typed) continue;
             if (apiVersion < 2)
             {
@@ -1412,6 +1455,25 @@ static bool ValidateOrdinaryDeclarativeSettings(
                 error = setting.type + " setting '" + setting.key +
                     "' does not accept an array default";
                 return false;
+            }
+            if (IsFilesystemHandleSettingType(setting.type))
+            {
+                std::vector<std::string> normalizedExtensions;
+                if (!snowdesktop::widget_runtime::
+                        IsValidFilesystemSettingAccess(setting.access) ||
+                    (setting.type == "folderHandle" &&
+                        !setting.extensions.empty()) ||
+                    (setting.type == "fileHandle" &&
+                        !snowdesktop::widget_runtime::
+                            NormalizeFilesystemSettingExtensions(
+                                setting.extensions,
+                                normalizedExtensions)))
+                {
+                    error = setting.type + " setting '" + setting.key +
+                        "' has invalid access or extensions";
+                    return false;
+                }
+                continue;
             }
             if (setting.type == "url" &&
                 !IsValidUrlSettingValue(setting.defaultValue))
@@ -1486,6 +1548,12 @@ static bool ValidateOrdinaryDeclarativeSettings(
                 const auto declared = typedSettings.find(key);
                 if (declared == typedSettings.end()) continue;
                 const auto& setting = *declared->second;
+                if (IsFilesystemHandleSettingType(setting.type))
+                {
+                    error = "preset '" + preset.id +
+                        "' cannot assign host-managed setting '" + key + "'";
+                    return false;
+                }
                 if (setting.type == "multiSelect")
                 {
                     error = "preset '" + preset.id +
@@ -12795,6 +12863,14 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                     (void)taskBroker_->Complete(action.id, true);
                     continue;
                 }
+                if (RuntimeIsFilesystemSettingHandleValue(
+                        Utf8ToWideLocal(action.instanceId),
+                        handle->second))
+                {
+                    (void)taskBroker_->Complete(
+                        action.id, false, "hostManagedReference");
+                    continue;
+                }
                 const bool busy = std::any_of(
                     filesystemTaskHandles_.begin(),
                     filesystemTaskHandles_.end(),
@@ -15039,6 +15115,7 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
             [&](const LuaWidgetManifest::Setting& setting) {
                 return setting.key == key &&
                     (setting.type == "password" ||
+                        IsFilesystemHandleSettingType(setting.type) ||
                         IsEntityReferenceSettingType(setting.type));
             });
     };
@@ -15213,13 +15290,39 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
         }
         search.taskId = taskId;
     };
+    auto revokeOwnedFilesystemHandle = [&](std::string_view handle) {
+        if (handle.empty() || !filesystemHandleStore_) return;
+        std::vector<std::uint64_t> taskIds;
+        for (const auto& [taskId, taskHandle] : filesystemTaskHandles_)
+            if (taskHandle == handle) taskIds.push_back(taskId);
+        for (const auto taskId : taskIds)
+            (void)RuntimeCancelTask(
+                widgetId, widget.runtimeToken, taskId);
+
+        std::vector<std::uint64_t> subscriptionIds;
+        for (const auto& [subscriptionId, binding] :
+            filesystemWatchBindings_)
+            if (binding.sourceHandle == handle)
+                subscriptionIds.push_back(subscriptionId);
+        for (const auto subscriptionId : subscriptionIds)
+            (void)RuntimeUnsubscribeData(subscriptionId);
+
+        std::string error;
+        if (!filesystemHandleStore_->Revoke(
+                { editorId, widget.packageId }, handle, error) &&
+            !error.empty())
+            RuntimeRecordError(widgetId,
+                "settings filesystem handle revoke: " + error);
+    };
     auto renderSetting = [&](const LuaWidgetManifest::Setting& setting) {
         if (setting.key.empty() || IsHostStructureSettingKey(setting.key) ||
             IsHostAppearanceSettingKey(setting.key))
             return;
         std::string current = setting.type == "password"
             ? getStorage(setting.key)
-            : (IsEntityReferenceSettingType(setting.type) ? std::string{}
+            : ((IsEntityReferenceSettingType(setting.type) ||
+                    IsFilesystemHandleSettingType(setting.type))
+                ? std::string{}
                 : getStorage(setting.key, setting.defaultValue));
         std::string next = current;
         bool changed = false;
@@ -15458,6 +15561,138 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
                             option) != selected.end())
                         ordered.push_back(option);
                 setTypedStringArray(setting.key, ordered);
+            }
+        }
+        else if (IsFilesystemHandleSettingType(setting.type))
+        {
+            const std::string metadataKey = prefix +
+                FilesystemSettingMetadataKey(setting.key);
+            const auto rawStored = g_storage.find(metadataKey);
+            const std::string rawHandle = rawStored == g_storage.end()
+                ? std::string{} : rawStored->second;
+            std::string handle;
+            (void)RuntimeGetFilesystemSettingHandle(
+                widgetId, setting.key, handle);
+            std::optional<snowdesktop::widget_runtime::
+                WidgetFilesystemHandleEntry> entry;
+            if (!handle.empty() && filesystemHandleStore_)
+                entry = filesystemHandleStore_->Resolve(
+                    { editorId, widget.packageId }, handle);
+
+            const std::string emptyLabel = setting.emptyLabel.empty()
+                ? std::string("-") : setting.emptyLabel;
+            std::string display = emptyLabel;
+            if (entry)
+            {
+                std::filesystem::path name = entry->path.filename();
+                if (name.empty()) name = entry->path.root_name();
+                display = WidgetWideToUtf8(name.wstring());
+            }
+            else if (!rawHandle.empty())
+                display += std::string(" · ") +
+                    _L("app.settings.widgets_skill_unavailable");
+
+            std::array<char, 512> displayBuffer{};
+            strncpy_s(displayBuffer.data(), displayBuffer.size(),
+                display.c_str(), _TRUNCATE);
+            const float controlWidth = beginEditorRow(
+                setting.label.c_str(), kEditorControlWidth);
+            const float buttonWidth = ImGui::GetFrameHeight();
+            ImGui::SetNextItemWidth(std::max(ImGui::GetFrameHeight(),
+                controlWidth - buttonWidth * 2.0f -
+                    ImGui::GetStyle().ItemSpacing.x * 2.0f));
+            ImGui::InputText("##Handle", displayBuffer.data(),
+                displayBuffer.size(), ImGuiInputTextFlags_ReadOnly);
+            ImGui::SameLine();
+            const bool canChoose = !widget.preview &&
+                filePickerCallback_ && filesystemHandleStore_;
+            if (!canChoose) ImGui::BeginDisabled();
+            const bool choose = ImGui::Button(
+                "...##ChooseFilesystemHandle",
+                ImVec2(buttonWidth, 0.0f));
+            if (!canChoose) ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (rawHandle.empty()) ImGui::BeginDisabled();
+            const bool clear = ImGui::Button(
+                "×##ClearFilesystemHandle",
+                ImVec2(buttonWidth, 0.0f));
+            if (rawHandle.empty()) ImGui::EndDisabled();
+
+            if (choose)
+            {
+                const auto access = FilesystemSettingAccess(setting.access);
+                std::vector<std::string> extensions;
+                const bool extensionsOk = snowdesktop::widget_runtime::
+                    NormalizeFilesystemSettingExtensions(
+                        setting.extensions, extensions);
+                if (!access || !extensionsOk)
+                {
+                    RuntimeRecordError(widgetId,
+                        "settings filesystem handle declaration is invalid");
+                }
+                else
+                {
+                    LuaWidgetFilePickerRequest request;
+                    request.access = *access;
+                    if (setting.type == "folderHandle")
+                        request.kind = LuaWidgetFilePickerKind::Folder;
+                    else if (*access == snowdesktop::widget_runtime::
+                            WidgetFilesystemHandleAccess::Write)
+                        request.kind = LuaWidgetFilePickerKind::SaveFile;
+                    else
+                        request.kind = LuaWidgetFilePickerKind::OpenFile;
+                    for (const auto& extension : extensions)
+                        request.extensions.push_back(
+                            Utf8ToWideLocal(extension));
+
+                    LuaWidgetFilePickerResult selected;
+                    try
+                    {
+                        selected = filePickerCallback_(request);
+                    }
+                    catch (...)
+                    {
+                        selected.error = "pickerFailed";
+                    }
+                    if (selected)
+                    {
+                        const auto kind = setting.type == "folderHandle"
+                            ? snowdesktop::widget_runtime::
+                                WidgetFilesystemHandleKind::Folder
+                            : snowdesktop::widget_runtime::
+                                WidgetFilesystemHandleKind::File;
+                        auto grant = filesystemHandleStore_->Grant(
+                            { editorId, widget.packageId }, selected.path,
+                            kind, *access, false);
+                        if (grant)
+                        {
+                            const std::string newHandle =
+                                grant.entry->handle;
+                            if (rawHandle != newHandle)
+                            {
+                                g_storage[metadataKey] = newHandle;
+                                storageChanged = true;
+                                revokeOwnedFilesystemHandle(rawHandle);
+                            }
+                        }
+                        else
+                            RuntimeRecordError(widgetId,
+                                "settings filesystem handle grant: " +
+                                    grant.error);
+                    }
+                    else if (!selected.canceled)
+                        RuntimeRecordError(widgetId,
+                            "settings filesystem picker: " +
+                                (selected.error.empty()
+                                    ? std::string("pickerFailed")
+                                    : selected.error));
+                }
+            }
+            if (clear && !rawHandle.empty())
+            {
+                revokeOwnedFilesystemHandle(rawHandle);
+                if (g_storage.erase(metadataKey) > 0)
+                    storageChanged = true;
             }
         }
         else if (setting.type == "appReference" &&
@@ -15893,6 +16128,7 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
             if (setting.key.empty() || IsHostStructureSettingKey(setting.key) ||
                 IsHostAppearanceSettingKey(setting.key) ||
                 setting.type == "password" ||
+                IsFilesystemHandleSettingType(setting.type) ||
                 IsEntityReferenceSettingType(setting.type))
                 continue;
 
@@ -24229,11 +24465,106 @@ bool WidgetEngine::RuntimeCanWriteWidgetStorage(
             !widgets_[index].panelFrameOpen);
 }
 
+bool WidgetEngine::RuntimeGetFilesystemSettingHandle(
+    const std::wstring& widgetId, const std::string& key,
+    std::string& handle) const
+{
+    handle.clear();
+    const int index = FindWidget(widgetId);
+    if (index < 0 || widgets_[index].manifest.apiVersion < 2)
+        return false;
+    const LuaWidget& widget = widgets_[index];
+    const LuaWidgetManifest::Setting* declared = nullptr;
+    const auto findSetting = [&](const auto& settings) {
+        return std::find_if(settings.begin(), settings.end(),
+            [&](const LuaWidgetManifest::Setting& setting) {
+                return setting.key == key &&
+                    IsFilesystemHandleSettingType(setting.type);
+            });
+    };
+    if (const auto found = findSetting(widget.manifest.settings);
+        found != widget.manifest.settings.end())
+        declared = &*found;
+    else if (const auto scriptFound = findSetting(widget.scriptSettings);
+        scriptFound != widget.scriptSettings.end())
+        declared = &*scriptFound;
+    if (!declared) return false;
+    if (widget.preview || !filesystemHandleStore_) return true;
+
+    const std::string prefix = WidgetWideToUtf8(widgetId) + ".";
+    const auto stored = ActiveStorage().find(
+        prefix + FilesystemSettingMetadataKey(key));
+    if (stored == ActiveStorage().end()) return true;
+    const auto entry = filesystemHandleStore_->Resolve(
+        { WidgetWideToUtf8(widgetId), widget.packageId }, stored->second);
+    const auto expectedAccess = FilesystemSettingAccess(declared->access);
+    const auto expectedKind = declared->type == "folderHandle"
+        ? snowdesktop::widget_runtime::WidgetFilesystemHandleKind::Folder
+        : snowdesktop::widget_runtime::WidgetFilesystemHandleKind::File;
+    if (!entry || !expectedAccess || entry->kind != expectedKind ||
+        entry->access != *expectedAccess)
+        return true;
+    handle = entry->handle;
+    return true;
+}
+
+bool WidgetEngine::RuntimeIsFilesystemSettingHandleValue(
+    const std::wstring& widgetId, std::string_view handle) const
+{
+    if (handle.empty()) return false;
+    const int index = FindWidget(widgetId);
+    if (index < 0) return false;
+    const LuaWidget& widget = widgets_[index];
+    const auto matches = [&](const auto& settings) {
+        for (const auto& setting : settings)
+        {
+            if (!IsFilesystemHandleSettingType(setting.type)) continue;
+            const auto stored = ActiveStorage().find(
+                WidgetWideToUtf8(widgetId) + "." +
+                    FilesystemSettingMetadataKey(setting.key));
+            if (stored != ActiveStorage().end() && stored->second == handle)
+                return true;
+        }
+        return false;
+    };
+    return matches(widget.manifest.settings) ||
+        matches(widget.scriptSettings);
+}
+
+std::vector<std::string> WidgetEngine::RuntimeFilesystemSettingKeys(
+    const std::wstring& widgetId) const
+{
+    std::vector<std::string> result;
+    const int index = FindWidget(widgetId);
+    if (index < 0) return result;
+    const LuaWidget& widget = widgets_[index];
+    const auto append = [&](const auto& settings) {
+        for (const auto& setting : settings)
+        {
+            if (!IsFilesystemHandleSettingType(setting.type)) continue;
+            std::string handle;
+            if (RuntimeGetFilesystemSettingHandle(
+                    widgetId, setting.key, handle) && !handle.empty() &&
+                std::find(result.begin(), result.end(), setting.key) ==
+                    result.end())
+                result.push_back(setting.key);
+        }
+    };
+    append(widget.manifest.settings);
+    append(widget.scriptSettings);
+    std::sort(result.begin(), result.end());
+    return result;
+}
+
 std::string WidgetEngine::RuntimeGetStorageValue(const std::wstring& widgetId, const std::string& key) const
 {
     std::string secretReference;
     if (RuntimeGetSecretReference(widgetId, key, secretReference))
         return secretReference;
+    std::string filesystemHandle;
+    if (RuntimeGetFilesystemSettingHandle(
+            widgetId, key, filesystemHandle))
+        return filesystemHandle;
     if (RuntimeIsEntityReferenceSetting(widgetId, key)) return {};
     const std::string prefix = WidgetWideToUtf8(widgetId);
     const std::string fullKey = prefix + "." + key;
@@ -24339,6 +24670,9 @@ void WidgetEngine::RuntimeSetStorageValue(const std::wstring& widgetId, const st
     if (key.empty() || IsRemovedPanelEffectSettingKey(key)) return;
     std::string secretReference;
     if (RuntimeGetSecretReference(widgetId, key, secretReference)) return;
+    std::string filesystemHandle;
+    if (RuntimeGetFilesystemSettingHandle(
+            widgetId, key, filesystemHandle)) return;
     if (RuntimeIsEntityReferenceSetting(widgetId, key)) return;
     const std::string prefix = WidgetWideToUtf8(widgetId);
     if (!StorageWriteWithinQuota(prefix, key, value))
@@ -28692,6 +29026,7 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
             readString(object, "type", setting.type);
             readString(object, "searchKey", setting.searchKey);
             readString(object, "binding", setting.binding);
+            readString(object, "access", setting.access);
             readString(object, "emptyLabel", setting.emptyLabel);
             readString(object, "noResultsLabel",
                 setting.noResultsLabel);
@@ -28714,6 +29049,8 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
             setting.options = readStringArray(object, "options");
             setting.optionLabels =
                 readStringArray(object, "optionLabels");
+            setting.extensions =
+                readStringArray(object, "extensions");
             if (!setting.key.empty() && !setting.label.empty())
             {
                 if (setting.type.empty()) setting.type = "text";
@@ -28729,6 +29066,15 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
                     setting.defaultValue.clear();
                     setting.defaultValues.clear();
                     setting.searchKey.clear();
+                    setting.options.clear();
+                    setting.optionLabels.clear();
+                }
+                else if (IsFilesystemHandleSettingType(setting.type))
+                {
+                    setting.defaultValue.clear();
+                    setting.defaultValues.clear();
+                    setting.searchKey.clear();
+                    setting.binding.clear();
                     setting.options.clear();
                     setting.optionLabels.clear();
                 }
@@ -30382,6 +30728,19 @@ static bool BoundSecretSetting(lua_State* state, const std::string& key,
     return secret;
 }
 
+static bool BoundFilesystemHandleSetting(lua_State* state,
+    const std::string& key, std::string* handle = nullptr)
+{
+    if (BoundWidgetApiVersion(state) < 2) return false;
+    auto* d2d = GetD2D(state);
+    std::string value;
+    const bool declared = d2d && d2d->engine &&
+        d2d->engine->RuntimeGetFilesystemSettingHandle(
+            BoundWidgetId(state), key, value);
+    if (declared && handle) *handle = std::move(value);
+    return declared;
+}
+
 static bool BoundEntityReferenceSetting(lua_State* state,
     const std::string& key)
 {
@@ -30398,6 +30757,10 @@ static int RejectHostManagedSettingWrite(lua_State* state,
     if (BoundSecretSetting(state, key))
         return luaL_error(state,
             "%s: password settings are host-managed and read-only to Lua",
+            api);
+    if (BoundFilesystemHandleSetting(state, key))
+        return luaL_error(state,
+            "%s: filesystem handle settings are host-managed and read-only to Lua",
             api);
     if (BoundEntityReferenceSetting(state, key))
         return luaL_error(state,
@@ -30419,6 +30782,14 @@ static int lua_StorageTransactionGet(lua_State* state)
         if (secretReference.empty()) lua_pushnil(state);
         else lua_pushlstring(state, secretReference.data(),
             secretReference.size());
+        return 1;
+    }
+    std::string filesystemHandle;
+    if (BoundFilesystemHandleSetting(state, key, &filesystemHandle))
+    {
+        if (filesystemHandle.empty()) lua_pushnil(state);
+        else lua_pushlstring(state, filesystemHandle.data(),
+            filesystemHandle.size());
         return 1;
     }
     if (BoundEntityReferenceSetting(state, key))
@@ -30600,6 +30971,14 @@ static int lua_StorageGet(lua_State* L)
         if (secretReference.empty()) lua_pushnil(L);
         else lua_pushlstring(L, secretReference.data(),
             secretReference.size());
+        return 1;
+    }
+    std::string filesystemHandle;
+    if (BoundFilesystemHandleSetting(L, key, &filesystemHandle))
+    {
+        if (filesystemHandle.empty()) lua_pushnil(L);
+        else lua_pushlstring(L, filesystemHandle.data(),
+            filesystemHandle.size());
         return 1;
     }
     if (BoundEntityReferenceSetting(L, key))
@@ -31029,6 +31408,7 @@ static int lua_StorageKeys(lua_State* L)
         std::string key = prefix.empty() ? kv.first : kv.first.substr(prefix.size());
         if (IsReservedStorageTransactionKey(key)) continue;
         if (BoundSecretSetting(L, key) ||
+            BoundFilesystemHandleSetting(L, key) ||
             BoundEntityReferenceSetting(L, key))
             continue;
         lua_pushstring(L, key.c_str());
@@ -31038,6 +31418,12 @@ static int lua_StorageKeys(lua_State* L)
     {
         for (const auto& key : s->engine->RuntimeSecretStorageKeys(
                 BoundWidgetId(L)))
+        {
+            lua_pushlstring(L, key.data(), key.size());
+            lua_rawseti(L, -2, idx++);
+        }
+        for (const auto& key :
+            s->engine->RuntimeFilesystemSettingKeys(BoundWidgetId(L)))
         {
             lua_pushlstring(L, key.data(), key.size());
             lua_rawseti(L, -2, idx++);

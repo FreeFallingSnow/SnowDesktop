@@ -89,17 +89,19 @@
 ---@class SnowSettingField
 ---@field key string
 ---@field label string
----@field type 'text'|'password'|'bool'|'int'|'float'|'select'|'color'|'url'|'date'|'time'|'range'|'multiSelect'|'appReference'|'desktopItemReference'|'fileReference'|'folderReference'|'appSearch'
----@field default? string|number|boolean|string[] multiSelect defaults are stable option arrays; range defaults are exposed to Lua as numbers. Ignored for password and entity reference fields.
+---@field type 'text'|'password'|'bool'|'int'|'float'|'select'|'color'|'url'|'date'|'time'|'range'|'multiSelect'|'fileHandle'|'folderHandle'|'appReference'|'desktopItemReference'|'fileReference'|'folderReference'|'appSearch'
+---@field default? string|number|boolean|string[] multiSelect defaults are stable option arrays; range defaults are exposed to Lua as numbers. Ignored for password, filesystem-handle, and entity reference fields.
 ---@field searchKey? string Required by appSearch; stores the user's query separately from the selected display title.
 ---@field binding? string Required by appReference, desktopItemReference, fileReference, and folderReference; names one uniquely used replacePolicy='allow' manifest binding accepting only the matching reference kind.
----@field emptyLabel? string Localized empty-state label used by appSearch and entity reference fields.
+---@field access? 'read'|'write'|'readWrite' fileHandle/folderHandle capability; defaults to read.
+---@field emptyLabel? string Localized empty-state label used by appSearch, filesystem-handle, and entity reference fields.
 ---@field noResultsLabel? string Localized label shown after an application search returns no results.
 ---@field min? number
 ---@field max? number
 ---@field step? number Positive range increment; defaults to 1.
 ---@field options? string[] Stable select or multiSelect values; multiSelect accepts 1-64 unique values.
 ---@field optionLabels? string[] Localized labels parallel to stable select or multiSelect option values.
+---@field extensions? string[] Up to 16 safe file extensions for fileHandle; leading dots are optional. Not accepted by folderHandle.
 
 ---@class SnowSettingPreset
 ---@field id string

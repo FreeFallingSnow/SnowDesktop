@@ -51,6 +51,18 @@ int main()
             !IsValidMultiSelectSettingValue(options, { "news", "news" }),
         "multi-select settings accept unique values from declared options");
 
+    std::vector<std::string> normalizedExtensions;
+    Check(IsValidFilesystemSettingAccess("read") &&
+            IsValidFilesystemSettingAccess("readWrite") &&
+            !IsValidFilesystemSettingAccess("all") &&
+            NormalizeFilesystemSettingExtensions(
+                { ".PNG", "tar.gz", "png" }, normalizedExtensions) &&
+            normalizedExtensions ==
+                std::vector<std::string>({ "png", "tar.gz" }) &&
+            !NormalizeFilesystemSettingExtensions(
+                { "../exe" }, normalizedExtensions),
+        "filesystem-handle settings validate access and normalize safe extensions");
+
     if (failures != 0)
     {
         std::cerr << failures << " widget setting rule checks failed\n";

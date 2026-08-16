@@ -63,6 +63,13 @@ int main()
     Expect(duplicateGrant && duplicateGrant.entry->handle ==
             fileGrant.entry->handle && store.Size() == 1,
         "identical grants reuse the existing handle");
+    const auto isolatedGrant = store.Grant(ownerA, file,
+        WidgetFilesystemHandleKind::File,
+        WidgetFilesystemHandleAccess::Read, false);
+    Expect(isolatedGrant && isolatedGrant.created &&
+            isolatedGrant.entry->handle != fileGrant.entry->handle &&
+            store.Size() == 2,
+        "host-managed settings can request independently revocable handles");
     Expect(store.Resolve(ownerA, fileGrant.entry->handle).has_value() &&
             !store.Resolve(ownerB, fileGrant.entry->handle).has_value(),
         "handles are scoped to both instance and package ownership");
@@ -70,7 +77,7 @@ int main()
     const auto folderGrant = store.Grant(ownerA, folder,
         WidgetFilesystemHandleKind::Folder,
         WidgetFilesystemHandleAccess::ReadWrite);
-    Expect(folderGrant && store.Size() == 2,
+    Expect(folderGrant && store.Size() == 3,
         "folder and file grants remain distinct");
 
     WidgetFilesystemHandleStore reloaded(registry);
@@ -84,7 +91,7 @@ int main()
     Expect(!reloaded.Revoke(ownerB, folderGrant.entry->handle, error) &&
             reloaded.Resolve(ownerA, folderGrant.entry->handle).has_value(),
         "another instance cannot revoke a handle");
-    Expect(reloaded.RevokeInstance(ownerA.instanceId, error) == 1 &&
+    Expect(reloaded.RevokeInstance(ownerA.instanceId, error) == 2 &&
             reloaded.Size() == 0,
         "deleting an instance revokes its remaining grants");
 

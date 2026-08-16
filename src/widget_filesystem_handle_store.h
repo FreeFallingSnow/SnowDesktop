@@ -64,7 +64,8 @@ public:
         WidgetFilesystemHandleOwner owner,
         const std::filesystem::path& path,
         WidgetFilesystemHandleKind kind,
-        WidgetFilesystemHandleAccess access);
+        WidgetFilesystemHandleAccess access,
+        bool reuseExisting = true);
     std::optional<WidgetFilesystemHandleEntry> Resolve(
         const WidgetFilesystemHandleOwner& owner,
         std::string_view handle) const;

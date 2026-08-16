@@ -104,6 +104,7 @@ struct LuaWidgetManifest
         std::string defaultValue;
         std::string searchKey;
         std::string binding;
+        std::string access = "read";
         std::string emptyLabel;
         std::string noResultsLabel;
         double minValue = 0.0;
@@ -112,6 +113,7 @@ struct LuaWidgetManifest
         std::vector<std::string> options;
         std::vector<std::string> optionLabels;
         std::vector<std::string> defaultValues;
+        std::vector<std::string> extensions;
     };
     struct SettingPreset
     {
@@ -1329,6 +1331,13 @@ public:
     /** Return true when key is a host-managed password setting. */
     bool RuntimeGetSecretReference(const std::wstring& widgetId,
         const std::string& key, std::string& reference) const;
+    /** Return true when key is a host-managed file or folder handle setting. */
+    bool RuntimeGetFilesystemSettingHandle(const std::wstring& widgetId,
+        const std::string& key, std::string& handle) const;
+    bool RuntimeIsFilesystemSettingHandleValue(
+        const std::wstring& widgetId, std::string_view handle) const;
+    std::vector<std::string> RuntimeFilesystemSettingKeys(
+        const std::wstring& widgetId) const;
     /** Return true when key is a host-managed entity reference setting. */
     bool RuntimeIsEntityReferenceSetting(const std::wstring& widgetId,
         const std::string& key) const;

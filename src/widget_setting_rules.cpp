@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cctype>
 #include <cmath>
 #include <cstddef>
 #include <unordered_set>
@@ -117,6 +118,43 @@ bool IsValidMultiSelectSettingValue(
     {
         if (!allowed.contains(value) || !selected.emplace(value).second)
             return false;
+    }
+    return true;
+}
+
+bool IsValidFilesystemSettingAccess(std::string_view value) noexcept
+{
+    return value == "read" || value == "write" || value == "readWrite";
+}
+
+bool NormalizeFilesystemSettingExtensions(
+    const std::vector<std::string>& input,
+    std::vector<std::string>& output) noexcept
+{
+    output.clear();
+    if (input.size() > 16) return false;
+    for (std::string extension : input)
+    {
+        if (!extension.empty() && extension.front() == '.')
+            extension.erase(extension.begin());
+        const bool valid = !extension.empty() && extension.size() <= 32 &&
+            extension.front() != '.' && extension.back() != '.' &&
+            extension.find("..") == std::string::npos &&
+            std::all_of(extension.begin(), extension.end(),
+                [](const unsigned char character) {
+                    return std::isalnum(character) || character == '.';
+                });
+        if (!valid)
+        {
+            output.clear();
+            return false;
+        }
+        std::transform(extension.begin(), extension.end(),
+            extension.begin(), [](const unsigned char character) {
+                return static_cast<char>(std::tolower(character));
+            });
+        if (std::find(output.begin(), output.end(), extension) == output.end())
+            output.push_back(std::move(extension));
     }
     return true;
 }

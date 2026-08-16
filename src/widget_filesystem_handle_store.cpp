@@ -196,7 +196,8 @@ bool WidgetFilesystemHandleStore::Load(std::string& error)
 
 WidgetFilesystemHandleGrantResult WidgetFilesystemHandleStore::Grant(
     WidgetFilesystemHandleOwner owner, const std::filesystem::path& path,
-    WidgetFilesystemHandleKind kind, WidgetFilesystemHandleAccess access)
+    WidgetFilesystemHandleKind kind, WidgetFilesystemHandleAccess access,
+    bool reuseExisting)
 {
     if (owner.instanceId.empty() || owner.packageId.empty())
         return { std::nullopt, false, "invalidOwner" };
@@ -210,7 +211,7 @@ WidgetFilesystemHandleGrantResult WidgetFilesystemHandleStore::Grant(
     {
         if (entry.owner.instanceId != owner.instanceId) continue;
         ++ownerCount;
-        if (entry.owner.packageId == owner.packageId &&
+        if (reuseExisting && entry.owner.packageId == owner.packageId &&
             entry.path == *normalized && entry.kind == kind &&
             entry.access == access)
             return { entry, false, {} };

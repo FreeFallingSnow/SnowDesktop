@@ -1579,8 +1579,7 @@ v2.0 不开放：真实文件 move/copy/delete、组件嵌套、把 Lua 组件�
 - `url`、`date`、`time`（已实现严格格式校验和设置页无效草稿隔离）
 - `range`（已实现 min/max/step 吸附及 number 类型默认、preset、持久化）
 - `multiSelect`（已实现 1-64 稳定选项、本地化标签及 string[] 类型默认、preset、持久化）
-- `fileHandle`
-- `folderHandle`
+- `fileHandle`、`folderHandle`（已实现设置页系统选择器、独立 opaque 授权、替换/清除撤销及只读 storage 投影）
 - `appReference`、`desktopItemReference`、`fileReference`、`folderReference` 动态 entity selector；可以直接写入第 14.5 节 binding，而不是把 path/AUMID 当普通字符串
 - 分组、说明、校验、依赖和 `showWhen`
 
@@ -1589,6 +1588,8 @@ v2.0 不开放：真实文件 move/copy/delete、组件嵌套、把 Lua 组件�
 `settings.appReference` 已提供最终的单应用引用选择器：字段绑定 manifest 的 `app.reference` binding，宿主应用索引在 worker 匹配，选择、替换和清除直接进入逻辑槽位持久事务及撤销历史，不再把显示名、路径或 AUMID 写进普通 storage。应用目录变化会重新核对 `available/unavailable`，不可用引用不能启动。选择器不要求组件取得全量 `app.discovery`；实际启动仍走 `app.launch` 权限和可信手势。`settings.desktopItemReference`、`settings.fileReference`、`settings.folderReference` 也已接入同一 binding、清除和撤销链路；后两者在结果列表及提交候选两层区分文件/文件夹，路径失效时降级为 unavailable，且不会授予枚举或内容读取权限。原 `settings.appSearch` 保留为“选择一个显示文本”的普通配置控件，媒体控制组件用它匹配会话标题，不再承担持久实体引用语义。`settings.secretReference` 已提供 `password` 字段：无 default/preset、遮罩编辑、显式清除、DPAPI 私有持久化及只读 opaque reference；secret 文件位于普通 data 目录之外，不随 `.snowbackup` 导出。
 
 `settings.url/date/time/range/multiSelect` 已补齐：前三者在清单、preset 和设置页提交边界执行严格格式校验；range 按有限 min/max/正 step 吸附并以 Lua number 持久化；multiSelect 限制 1-64 个唯一稳定选项，以 Lua string[] 保存并支持数组 default/preset。宿主在无持久值时也返回同型默认值，恢复默认和切换 preset 不会退化为字符串编码。
+
+`settings.fileHandle/folderHandle` 已接入现有文件句柄仓库和系统选择器。字段按 read/write/readWrite 取得当前包与实例独占的 opaque capability；Lua 只能经只读 storage 投影读取，不能设置、删除或用 `filesystem.release` 绕过用户控制。替换或清除会取消旧句柄关联的任务/监听并撤销授权；路径不进入普通 storage、preset、预览或 Lua。
 
 ### 15.2 包内模块
 

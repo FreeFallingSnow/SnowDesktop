@@ -18,4 +18,9 @@ double SnapRangeSettingValue(double value, double minimum,
 bool IsValidMultiSelectSettingValue(
     const std::vector<std::string>& options,
     const std::vector<std::string>& values) noexcept;
+
+bool IsValidFilesystemSettingAccess(std::string_view value) noexcept;
+bool NormalizeFilesystemSettingExtensions(
+    const std::vector<std::string>& input,
+    std::vector<std::string>& output) noexcept;
 }

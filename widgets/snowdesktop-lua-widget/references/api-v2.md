@@ -2206,6 +2206,23 @@ Lua 的 `storage.get(key)` 只能得到形如 `secret:v1:…` 的实例作用域
 返回 nil；没有 `secrets.reveal()`，引用不能跨包或跨组件实例解析，也不会进入组件预览、普通
 storage、日志或 `.snowbackup` 数据目录。对应 feature 为 `settings.secretReference`。
 
+`fileHandle` 与 `folderHandle` 把系统文件选择器直接放进设置页。字段声明 `key`、本地化
+`label/emptyLabel` 和 `access="read"|"write"|"readWrite"`（默认 `read`）；`fileHandle`
+还可声明最多 16 个安全 `extensions`，开头的点可省略，`folderHandle` 不接收扩展名。
+`fileHandle` 的 `write` 使用保存选择器，`read` 与 `readWrite` 选择现有文件；`folderHandle`
+始终选择目录。
+
+用户选择后，`storage.get(key)` 与 `storage.transaction(function(tx) tx:get(key) end)` 返回绑定
+当前包和实例的 opaque filesystem handle，未选择或授权失效时返回 nil；`storage.keys()` 仅在
+已选择时列出该字段。字段不接收 default/preset，不能由 Lua 写入或移除，也不进入组件预览。
+每个字段取得独立 handle，替换或点击 `×` 会取消仍使用旧 handle 的任务与目录监听并撤销旧授权；
+Lua 调用 `filesystem.release` 释放这种宿主管理 handle 会得到 `hostManagedReference`，只能由用户在
+设置页撤销。宿主持久化的字段映射和句柄仓库不向 Lua 暴露路径。
+
+选择器本身只授予用户选中的对象；后续 `filesystem.stat/list/read/write` 仍分别受
+`filesystem.userSelected.read/write` 权限、handle kind/access 和任务配额约束。对应 feature 为
+`settings.fileHandle`、`settings.folderHandle`。
+
 ### `l10n`
 
 - `l10n.tr(literalKey, ...)`、`l10n.language()`。

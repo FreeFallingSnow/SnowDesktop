@@ -186,6 +186,13 @@ finite min/max/positive-step numeric slider and `settings.multiSelect` for a
 1-64 option host checklist. Range values are Lua numbers and multi-select
 values are string arrays in defaults, presets, and typed storage; do not encode
 either as delimiter-separated text. Probe
+`settings.fileHandle` or `settings.folderHandle` when a persistent settings
+field must own one user-selected filesystem capability. Declare read, write,
+or readWrite access and optional safe file extensions; read the opaque handle
+with storage.get, never persist a path, default, or preset. These handles are
+independently revocable host-managed values, so Lua must not call
+filesystem.release on them; filesystem tasks still require the matching
+userSelected permission. Probe
 `view.referenceIcon` to render a bound/search result's opaque reference as a
 host-resolved icon without requiring a package image or exposing its target;
 this visual node does not grant launch, open, reveal, or file-content access.

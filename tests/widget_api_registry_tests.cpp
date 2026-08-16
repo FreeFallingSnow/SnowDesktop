@@ -382,7 +382,11 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "settings.fileReference") &&
             snowdesktop::widget_api::SupportsFeature(
+                "settings.fileHandle") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "settings.folderReference") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "settings.folderHandle") &&
             snowdesktop::widget_api::SupportsFeature(
                 "settings.multiSelect") &&
             snowdesktop::widget_api::SupportsFeature(
