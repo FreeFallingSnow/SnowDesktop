@@ -96,6 +96,18 @@ return view.column({
             json.find("main.lua") != std::string::npos,
         "lint JSON must expose counts, source paths, and line numbers");
 }
+
+void TestSyntaxFailure()
+{
+    PackageManifest manifest;
+    manifest.apiVersion = 2;
+    const auto report = LintWidgetSource(manifest, "broken.lua",
+        "local value = 1\nreturn function(\n");
+    Check(!report.Ok() && report.ErrorCount() == 1 &&
+            HasIssue(report, "lua.syntax") &&
+            report.issues[0].line == 2,
+        "lint must stop at Lua compiler errors and retain the source line");
+}
 }
 
 int main()
@@ -103,6 +115,7 @@ int main()
     TestCleanLocalizedSource();
     TestApiPermissionAndSandboxFailures();
     TestViewKeysAndLiteralText();
+    TestSyntaxFailure();
     std::cout << "widget author lint tests passed\n";
     return 0;
 }

@@ -3,6 +3,11 @@
 #include "widget_api_registry.h"
 #include "widget_view_contract.h"
 
+extern "C" {
+#include <lauxlib.h>
+#include <lua.h>
+}
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -178,6 +183,59 @@ void AddIssue(LintReport& report, LintSeverity severity,
 {
     report.issues.push_back({ severity, std::move(code), path, line,
         std::move(message) });
+}
+
+std::string PathUtf8(const std::filesystem::path& path);
+
+std::size_t LuaErrorLine(std::string_view message) noexcept
+{
+    for (std::size_t offset = 0; offset < message.size(); ++offset)
+    {
+        if (message[offset] != ':') continue;
+        std::size_t cursor = offset + 1;
+        std::size_t value = 0;
+        bool hasDigit = false;
+        while (cursor < message.size() &&
+                std::isdigit(static_cast<unsigned char>(message[cursor])))
+        {
+            hasDigit = true;
+            value = value * 10 + static_cast<std::size_t>(
+                message[cursor] - '0');
+            ++cursor;
+        }
+        if (hasDigit && cursor < message.size() &&
+                message[cursor] == ':')
+            return std::max<std::size_t>(1, value);
+    }
+    return 1;
+}
+
+bool LintLuaSyntax(LintReport& report,
+    const std::filesystem::path& path, std::string_view source)
+{
+    lua_State* state = luaL_newstate();
+    if (!state)
+    {
+        AddIssue(report, LintSeverity::Error, "lua.memory", path, 1,
+            "cannot allocate a Lua syntax-check state");
+        return false;
+    }
+    const std::string chunkName = "@" + PathUtf8(path);
+    const int status = luaL_loadbuffer(state, source.data(), source.size(),
+        chunkName.c_str());
+    if (status == LUA_OK)
+    {
+        lua_close(state);
+        return true;
+    }
+    const char* raw = lua_tostring(state, -1);
+    std::string message = raw ? raw : "invalid Lua syntax";
+    if (message.size() > 4096) message.resize(4096);
+    const std::size_t line = LuaErrorLine(message);
+    AddIssue(report, LintSeverity::Error, "lua.syntax", path, line,
+        std::move(message));
+    lua_close(state);
+    return false;
 }
 
 std::string JsonEscape(std::string_view value)
@@ -511,6 +569,7 @@ LintReport LintWidgetSource(
 {
     LintReport report;
     report.fileCount = 1;
+    if (!LintLuaSyntax(report, relativePath, source)) return report;
     const auto tokens = Tokenize(source);
     LintApiCalls(report, manifest, relativePath, tokens);
     LintViewConstructors(report, relativePath, tokens);

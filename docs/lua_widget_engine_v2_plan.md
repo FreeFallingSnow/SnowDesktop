@@ -1741,7 +1741,8 @@ v2.0 资源契约：
   每实例并发限制直接读取运行时目录；数据 options/value 与任务 arguments/result 还直接引用
   随工具分发的 LuaLS 类型，同步函数则导出有序参数名/类型/可选性和结果类型，不另建作者
   工具白名单或结构猜测表。
-- `snowwidget lint <directory>`：已接入同源 API/系统能力/视图节点目录，静态检查不存在或版本
+- `snowwidget lint <directory>`：先用 Lua 编译器给出稳定 `lua.syntax` 与行号，再接入同源
+  API/系统能力/视图节点目录，静态检查不存在或版本
   不匹配的宿主调用、字面量 data/task 能力权限、v2 禁用库、字面量视图 key 和明显硬编码文案；
   输出带文件、行号和稳定问题码的 JSON。动态调用和动态属性表仍交由运行时最终校验。
 - `snowwidget test <directory>`：已提供 `tests/*.lua` 命名函数表约定；每个文件在独立 16 MiB、

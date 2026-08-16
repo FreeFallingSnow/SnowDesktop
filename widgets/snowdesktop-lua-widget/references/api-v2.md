@@ -12,12 +12,14 @@
 允许使用的 Lua 标准库与宿主库集合。桌面运行时和该命令由同一个注册清单生成；作者工具应先
 用它确定函数及版本是否存在，再使用 `library/snowdesktop-v2.lua` 获取参数与返回值类型。
 
-运行 `snowwidget lint <组件目录>` 可在启动组件前静态检查 Lua 源码。它从同一宿主 API、系统
+运行 `snowwidget lint <组件目录>` 可在启动组件前先调用 Lua 编译器检查语法，再静态检查源码。
+它从同一宿主 API、系统
 能力和视图节点目录识别不存在或版本不匹配的调用，核对字面量 `data.subscribe`/`task.start`
 能力所需权限是否已经由 manifest 必选或可选声明，并拒绝 API v2 沙箱没有的 `require/os/io/debug/
 package/coroutine`。对于使用字面量属性表的声明式节点，它还检查缺失、空或重复的字面量 `key`，
 并警告明显的硬编码 `text/label/title/placeholder/alt` 等界面文案。结果是带文件、行号、稳定
-问题码和错误/警告计数的 JSON；动态拼装的调用、能力名或属性表仍由运行时最终校验。
+问题码和错误/警告计数的 JSON；语法失败使用 `lua.syntax` 并保留编译器行号，动态拼装的调用、
+能力名或属性表仍由运行时最终校验。
 
 运行 `snowwidget test <组件目录>` 可执行包内 `tests/` 下的 Lua 测试文件。每个文件必须返回
 `{ ["测试名"] = function() ... end }`，函数无返回值/返回 true 即通过，返回 false 或抛错即失败。
