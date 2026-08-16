@@ -1322,7 +1322,8 @@ RTL、逐属性动画映射和错误码仍未全部迁入矩阵，
 也尚未由它生成 LuaLS 与本文档，因此这仍不表示契约已经冻结或完整无障碍已经可用。
 
 `snowwidget view-contract` 现已把该运行时目录导出为带 `schemaVersion` 的 JSON：除 44 个节点、
-146 个属性和 17 个事件外，还直接读取 `ViewTreeLimits` 导出全树、文本、资源、图表、集合和
+146 个属性和 17 个事件外，每个节点还以 closed-world 策略明确导出允许与禁止属性，两者严格
+划分完整公共目录；还直接读取 `ViewTreeLimits` 导出全树、文本、资源、图表、集合和
 虚拟化额度；动画部分公开更新 transition 的六种允许属性、入退场的 opacity/transform 字段、
 1–2000 ms、四种 easing 和 1–4 项唯一属性约束，并明确宿主驱动、不逐帧执行 Lua、预览与
 `reducedMotion` 落到最终状态。预览部分同时登记宿主渲染/校验和隔离存储覆盖层。逐属性是否可
@@ -1725,7 +1726,7 @@ v2.0 资源契约：
 在现有 `snowwidget validate`、`pack`、`publish-local` 基础上增加：
 
 - `snowwidget view-contract`：输出带独立 schema 版本的 API v2 声明式视图 JSON 契约；
-  节点适用属性、必填项、逐节点默认值、事件、类型、枚举、范围、影响域和无障碍映射均来自
+  节点允许/禁止属性、必填项、逐节点默认值、事件、类型、枚举、范围、影响域和无障碍映射均来自
   宿主运行时使用的同一份目录；全树/资源额度、动画词汇与约束、宿主驱动策略以及预览隔离/
   静态降级也随同导出，供 LuaLS、文档生成器和编辑器校验复用。
 - `snowwidget system-contract`：离线输出 `system.capabilities()` 使用的 15 项系统函数、25 个

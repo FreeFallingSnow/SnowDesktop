@@ -1165,6 +1165,16 @@ std::vector<std::string_view> ViewNodeAllowedProperties(ViewNodeType type)
     return result;
 }
 
+std::vector<std::string_view> ViewNodeProhibitedProperties(ViewNodeType type)
+{
+    std::vector<std::string_view> result;
+    result.reserve(kProperties.size());
+    for (const ViewPropertyContract& property : kProperties)
+        if (!ViewNodeAllowsProperty(type, property.name))
+            result.push_back(property.name);
+    return result;
+}
+
 std::vector<std::string_view> ViewNodeRequiredProperties(ViewNodeType type)
 {
     std::vector<std::string_view> result;

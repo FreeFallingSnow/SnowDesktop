@@ -25,6 +25,7 @@ using snowdesktop::widget_runtime::ViewNodeAllowedProperties;
 using snowdesktop::widget_runtime::ViewNodeAllowedEvents;
 using snowdesktop::widget_runtime::ViewNodeAllowsEvent;
 using snowdesktop::widget_runtime::ViewNodeContracts;
+using snowdesktop::widget_runtime::ViewNodeProhibitedProperties;
 using snowdesktop::widget_runtime::ViewNodePropertyDefault;
 using snowdesktop::widget_runtime::ViewNodeRequiresProperty;
 using snowdesktop::widget_runtime::ViewNodeRequiredProperties;
@@ -78,6 +79,8 @@ void TestContractCoverageAndRoundTrip()
             "contract lookups must resolve the canonical matrix entry");
 
         const auto allowed = ViewNodeAllowedProperties(contract.type);
+        const auto prohibited =
+            ViewNodeProhibitedProperties(contract.type);
         const auto required = ViewNodeRequiredProperties(contract.type);
         Check(!allowed.empty(),
             "every public node must have an enumerable property contract");
@@ -113,6 +116,16 @@ void TestContractCoverageAndRoundTrip()
         Check(ViewNodeRequiresProperty(contract.type, "type") &&
                 ViewNodeRequiresProperty(contract.type, "key"),
             "every node must require type and key");
+        Check(allowed.size() + prohibited.size() ==
+                ViewPropertyContracts().size(),
+            "allowed and prohibited properties must cover the catalog");
+        for (const auto property : prohibited)
+        {
+            Check(IsKnownViewNodeProperty(property) &&
+                    std::find(allowed.begin(), allowed.end(), property) ==
+                        allowed.end(),
+                "prohibited properties must be known and disjoint from allowed properties");
+        }
     }
     Check(!FindViewNodeType("webView") &&
             FindViewNodeContract("webView") == nullptr,
@@ -612,6 +625,7 @@ void TestMachineReadableContract()
     const JsonValue* ok = root.Find("ok");
     const JsonValue* schemaVersion = root.Find("schemaVersion");
     const JsonValue* apiVersion = root.Find("apiVersion");
+    const JsonValue* propertyPolicy = root.Find("propertyPolicy");
     const JsonValue* nodes = root.Find("nodes");
     const JsonValue* properties = root.Find("properties");
     const JsonValue* events = root.Find("events");
@@ -622,7 +636,9 @@ void TestMachineReadableContract()
             schemaVersion && schemaVersion->IsNumber() &&
             schemaVersion->number == 1.0 &&
             apiVersion && apiVersion->IsNumber() &&
-            apiVersion->number == 2.0,
+            apiVersion->number == 2.0 &&
+            propertyPolicy && propertyPolicy->IsString() &&
+            propertyPolicy->string == "closed-world",
         "the authoring contract must expose its schema and API versions");
     Check(nodes && nodes->IsArray() && nodes->array.size() == 44 &&
             properties && properties->IsArray() &&
@@ -646,10 +662,15 @@ void TestMachineReadableContract()
     const JsonValue* click = findNamed(*events, "click");
     Check(button && button->Find("properties") &&
             button->Find("properties")->IsArray() &&
+            button->Find("prohibitedProperties") &&
+            button->Find("prohibitedProperties")->IsArray() &&
             button->Find("events") && button->Find("events")->IsArray() &&
             button->Find("accessibility") &&
             button->Find("accessibility")->IsObject(),
         "node JSON must expose applicability, defaults, events, and UIA metadata");
+    Check(button->Find("properties")->array.size() +
+            button->Find("prohibitedProperties")->array.size() == 146,
+        "node JSON must explicitly partition allowed and prohibited properties");
     Check(opacity && opacity->Find("type") &&
             opacity->Find("type")->string == "number" &&
             opacity->Find("numericRange") &&

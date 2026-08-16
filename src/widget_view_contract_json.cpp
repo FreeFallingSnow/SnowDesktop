@@ -204,6 +204,13 @@ void WriteNode(std::ostream& output, const ViewNodeContract& node)
             stream << "}}";
         });
 
+    output << ",\"prohibitedProperties\":";
+    const auto prohibited = ViewNodeProhibitedProperties(node.type);
+    WriteJsonArray(output, prohibited,
+        [](std::ostream& stream, std::string_view name) {
+            WriteJsonString(stream, name);
+        });
+
     output << ",\"events\":";
     const auto events = ViewNodeAllowedEvents(node.type);
     WriteJsonArray(output, events,
@@ -334,6 +341,7 @@ std::string SerializeViewContractJson()
     output.imbue(std::locale::classic());
     output << std::setprecision(17)
            << "{\"ok\":true,\"schemaVersion\":1,\"apiVersion\":2,"
+              "\"propertyPolicy\":\"closed-world\","
               "\"nodes\":";
     WriteJsonArray(output, ViewNodeContracts(), WriteNode);
     output << ",\"properties\":";

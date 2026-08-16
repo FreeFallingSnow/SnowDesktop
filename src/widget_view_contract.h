@@ -225,6 +225,8 @@ bool ViewNodeRequiresProperty(
     ViewNodeType type, std::string_view property) noexcept;
 std::vector<std::string_view> ViewNodeAllowedProperties(
     ViewNodeType type);
+std::vector<std::string_view> ViewNodeProhibitedProperties(
+    ViewNodeType type);
 std::vector<std::string_view> ViewNodeRequiredProperties(
     ViewNodeType type);
 ViewPropertyDefault ViewNodePropertyDefault(
