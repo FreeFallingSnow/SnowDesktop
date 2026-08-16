@@ -805,6 +805,9 @@ void TestSystemCapabilityContract()
         Check(contract.minimumIntervalMs > 0 &&
                 contract.hiddenIntervalMs >= contract.minimumIntervalMs,
             "data topics must define bounded visible and hidden intervals");
+        Check(contract.optionsType && contract.optionsType[0] != '\0' &&
+                contract.valueType && contract.valueType[0] != '\0',
+            "data topics must link their LuaLS option and value types");
     }
     for (const auto& contract : tasks)
     {
@@ -813,6 +816,8 @@ void TestSystemCapabilityContract()
         Check(contract.maximumPerInstance > 0 &&
                 contract.maximumPerInstance <= 16,
             "tasks must define a valid per-instance concurrency limit");
+        Check(contract.resultType && contract.resultType[0] != '\0',
+            "tasks must link their LuaLS result type");
     }
 
     const std::filesystem::path sourceRoot = FindSourceRoot();
@@ -833,6 +838,11 @@ void TestSystemCapabilityContract()
             "every data topic must have a LuaLS declaration");
         Check(documentation.find(contract.name) != std::string::npos,
             "every data topic must be documented");
+        Check(luaDefinitions.find(contract.optionsType) !=
+                    std::string::npos &&
+                luaDefinitions.find(contract.valueType) !=
+                    std::string::npos,
+            "every data topic schema type must exist in LuaLS");
     }
     for (const auto& contract : tasks)
     {
@@ -840,6 +850,12 @@ void TestSystemCapabilityContract()
             "every task must have a LuaLS declaration");
         Check(documentation.find(contract.name) != std::string::npos,
             "every task must be documented");
+        Check((!contract.argumentsType ||
+                    luaDefinitions.find(contract.argumentsType) !=
+                        std::string::npos) &&
+                luaDefinitions.find(contract.resultType) !=
+                    std::string::npos,
+            "every task schema type must exist in LuaLS");
     }
 
     LuaState state;
@@ -864,6 +880,17 @@ void TestSystemCapabilityContract()
     Check(lua_isstring(state, -1) && std::string(lua_tostring(state, -1)) ==
             "system.performance.read",
         "data topic capability must expose its permission");
+    lua_pop(state, 1);
+    lua_getfield(state, -1, "optionsType");
+    Check(lua_isstring(state, -1) &&
+            std::string(lua_tostring(state, -1)) ==
+                "SnowDataSubscribeOptions",
+        "runtime data capability must expose its LuaLS options type");
+    lua_pop(state, 1);
+    lua_getfield(state, -1, "valueType");
+    Check(lua_isstring(state, -1) &&
+            std::string(lua_tostring(state, -1)) == "SnowCpuDataValue",
+        "runtime data capability must expose its LuaLS value type");
     lua_pop(state, 1);
     lua_getfield(state, -1, "hostAvailable");
     const bool hostAvailable = lua_toboolean(state, -1) != 0;
@@ -950,7 +977,13 @@ void TestMachineReadableSystemContract()
             analysis->Find("minimumIntervalMs") &&
             analysis->Find("minimumIntervalMs")->number == 16.0 &&
             analysis->Find("highRisk") &&
-            analysis->Find("highRisk")->boolean,
+            analysis->Find("highRisk")->boolean &&
+            analysis->Find("optionsType") &&
+            analysis->Find("optionsType")->string ==
+                "SnowAudioAnalysisSubscribeOptions" &&
+            analysis->Find("valueType") &&
+            analysis->Find("valueType")->string ==
+                "SnowAudioOutputAnalysisDataValue",
         "data topic JSON must preserve permission, cadence, and risk metadata");
     Check(request && request->Find("permission") &&
             request->Find("permission")->IsString() &&
@@ -958,7 +991,12 @@ void TestMachineReadableSystemContract()
             request->Find("requiresTrustedGesture") &&
             !request->Find("requiresTrustedGesture")->boolean &&
             request->Find("maximumPerInstance") &&
-            request->Find("maximumPerInstance")->number == 2.0,
+            request->Find("maximumPerInstance")->number == 2.0 &&
+            request->Find("argumentsType") &&
+            request->Find("argumentsType")->string ==
+                "SnowNetworkRequestArguments" &&
+            request->Find("resultType") &&
+            request->Find("resultType")->string == "SnowNetworkTaskValue",
         "task JSON must preserve permission, gesture, and concurrency metadata");
 }
 

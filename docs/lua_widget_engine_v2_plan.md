@@ -863,7 +863,8 @@ SDK 的其他调用串行。两类搜索都只返回实例作用域的不透明�
   和非递归文件 watch 已有首批能力；分块流式文件访问、递归目录和剪贴板历史仍未完成。
 - 媒体会话列表、当前会话、时间线、限尺寸封面句柄、seek/stop 和逐源动作能力已形成首批
   公共面；后续缺口是 GSMTC 事件驱动更新以及更多播放器的兼容性矩阵和实机验证。
-- 音频分析已经设计，但普通 endpoint 读取、音量/静音订阅和受控修改尚未列入公共面。
+- 默认音频 endpoint、主音量/静音订阅、受控修改和音频分析均已进入公共面；非默认 endpoint
+  枚举、逐应用会话和音量控制仍属于 v2.x 独立权限评估项。
 - v2 通知已补齐 ID、结构化更新、撤销、持久调度、频控、失败状态、包资源图、进度、
   最多两个按钮、动作回传和跨应用重启的预约恢复；后续只保留系统免打扰策略及不同 Windows
   通知提供者的实机兼容矩阵。
@@ -970,7 +971,9 @@ API v2 明确禁止：任意 WMI 查询、注册表读写、PowerShell/cmd/进�
 当前实现已将第 12.6 节的 15 个基础函数、25 个数据主题和 41 个任务集中到
 `widget_api_registry` 的系统能力契约。data/task broker 直接由该契约注册，
 `system.capabilities()` 可按 feature 或公开 API 名返回权限、手势、预览、刷新率与并发上限；
-契约测试同时校验 feature、权限目录、LuaLS 和开发者文档覆盖。硬件存在性和 provider
+数据主题还返回 LuaLS options/value 类型，任务返回 arguments/result 类型；离线
+`snowwidget system-contract` 复用这些引用，契约测试同时校验每个类型在随产品分发的 LuaLS 中
+存在，以及 feature、权限目录和开发者文档覆盖。硬件存在性和 provider
 运行状态仍由订阅快照表达，不能把 host feature 存在误写成设备一定存在。
 
 ## 13. 视图与绘制
@@ -1731,7 +1734,8 @@ v2.0 资源契约：
   静态降级也随同导出，供 LuaLS、文档生成器和编辑器校验复用。
 - `snowwidget system-contract`：离线输出 `system.capabilities()` 使用的 15 项系统函数、25 个
   数据主题和 41 类任务；权限、预览策略、订阅刷新/隐藏/空闲边界、风险标记、可信手势和
-  每实例并发限制直接读取运行时目录，不另建作者工具白名单。
+  每实例并发限制直接读取运行时目录；数据 options/value 与任务 arguments/result 还直接引用
+  随工具分发的 LuaLS 类型，不另建作者工具白名单或结构猜测表。
 - `snowwidget lint <directory>`：静态 API、权限、硬编码文案和视图 key 检查。
 - `snowwidget test <directory>`：在无副作用沙箱中执行组件测试。
 - `snowwidget preview <directory> --size ... --locale ... --theme ...`。

@@ -104,7 +104,11 @@ void WriteDataTopic(std::ostream& output,
            << ",\"highRisk\":" << (contract.highRisk ? "true" : "false")
            << ",\"supportsHiddenContinue\":"
            << (contract.supportsHiddenContinue ? "true" : "false")
-           << '}';
+           << ",\"optionsType\":";
+    WriteJsonString(output, contract.optionsType);
+    output << ",\"valueType\":";
+    WriteJsonString(output, contract.valueType);
+    output << '}';
 }
 
 void WriteTask(std::ostream& output, const SystemTaskContract& contract)
@@ -115,7 +119,11 @@ void WriteTask(std::ostream& output, const SystemTaskContract& contract)
     output << ",\"requiresTrustedGesture\":"
            << (contract.requiresTrustedGesture ? "true" : "false")
            << ",\"maximumPerInstance\":"
-           << contract.maximumPerInstance << '}';
+           << contract.maximumPerInstance << ",\"argumentsType\":";
+    WriteNullableString(output, contract.argumentsType);
+    output << ",\"resultType\":";
+    WriteJsonString(output, contract.resultType);
+    output << '}';
 }
 }
 

@@ -19,7 +19,9 @@
 
 运行 `snowwidget system-contract` 可离线获得与 `system.capabilities()` 同源的系统能力目录。
 其中 `functions`、`dataTopics`、`tasks` 分别公开 feature 与权限；数据主题还公开可见/隐藏采样
-间隔、空闲释放和风险属性，任务公开可信手势要求与每实例并发上限。该导出只描述系统能力，
+间隔、空闲释放、风险属性以及对应的 LuaLS `optionsType/valueType`，任务公开可信手势要求、
+每实例并发上限和 `argumentsType/resultType`。无参数任务的 `argumentsType` 为 null；类型名均指向
+随工具分发的 `library/snowdesktop-v2.lua`，作者工具不应再靠任务名猜测结构。该导出只描述系统能力，
 不会读取当前组件的授权状态；实例是否已授权仍应在运行时查询 `system.capabilities(id)`。
 
 ## 入口契约

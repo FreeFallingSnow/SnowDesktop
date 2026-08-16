@@ -752,7 +752,11 @@
 ---@field preview? 'deterministic'|'noSideEffects'
 ---@field minimumIntervalMs? integer Data-topic lower refresh bound.
 ---@field hiddenIntervalMs? integer Data-topic hidden refresh interval.
+---@field optionsType? string LuaLS subscription-options type exported for a data topic.
+---@field valueType? string LuaLS snapshot-value type exported for a data topic.
 ---@field maximumPerInstance? integer Task concurrency limit.
+---@field argumentsType? string LuaLS arguments type exported for a task; absent for no-argument tasks.
+---@field resultType? string LuaLS successful task-completion value type.
 ---@field apis? SnowCapability[] Entries owned by a queried feature.
 
 ---@class SnowCapabilities
@@ -1566,6 +1570,9 @@ data = {}
 ---@param options? SnowDataSubscribeOptions
 ---@return SnowDataSubscription<table>
 function data.subscribe(topic, options) end
+
+---@class SnowAcceptedTaskValue
+---@field accepted boolean Whether the host or OS accepted the requested operation.
 
 ---@class SnowMediaTaskValue
 ---@field accepted boolean The OS media action accepted the request, or true for the deterministic preview mock.

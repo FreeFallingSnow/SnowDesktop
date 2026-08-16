@@ -57,6 +57,8 @@ struct SystemDataTopicContract
     std::uint32_t idleGraceMs = 2000;
     bool highRisk = false;
     bool supportsHiddenContinue = false;
+    const char* optionsType = "SnowDataSubscribeOptions";
+    const char* valueType = nullptr;
     SystemCapabilityPreview preview =
         SystemCapabilityPreview::Deterministic;
 };
@@ -68,6 +70,8 @@ struct SystemTaskContract
     const char* requiredPermission = nullptr;
     bool requiresTrustedGesture = false;
     std::size_t maximumPerInstance = 4;
+    const char* argumentsType = nullptr;
+    const char* resultType = nullptr;
     SystemCapabilityPreview preview =
         SystemCapabilityPreview::NoSideEffects;
 };
