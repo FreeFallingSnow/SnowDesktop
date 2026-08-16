@@ -1941,31 +1941,38 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             return false;
         }
     }
-    if (node.enterTransition)
-    {
-        if (node.enterTransition->durationMilliseconds < 1 ||
-            node.enterTransition->durationMilliseconds > 2000 ||
-            (!node.enterTransition->opacity &&
-                !node.enterTransition->transform) ||
-            (node.enterTransition->opacity &&
-                !FiniteInRange(*node.enterTransition->opacity,
-                    0.0f, 1.0f)))
+    const auto validatePresenceTransition = [&error](
+        const std::optional<ViewPresenceTransition>& presence,
+        std::string_view name) {
+        if (!presence) return true;
+        if (presence->durationMilliseconds < 1 ||
+            presence->durationMilliseconds > 2000 ||
+            (!presence->opacity && !presence->transform) ||
+            (presence->opacity &&
+                !FiniteInRange(*presence->opacity, 0.0f, 1.0f)))
         {
-            error = "view enterTransition requires bounded opacity or transform and a duration from 1 to 2000ms";
+            error = "view " + std::string(name) +
+                " requires bounded opacity or transform and a duration from 1 to 2000ms";
             return false;
         }
-        switch (node.enterTransition->easing)
+        switch (presence->easing)
         {
         case ViewTransitionEasing::Linear:
         case ViewTransitionEasing::EaseIn:
         case ViewTransitionEasing::EaseOut:
         case ViewTransitionEasing::EaseInOut:
-            break;
+            return true;
         default:
-            error = "view enterTransition easing is unsupported";
+            error = "view " + std::string(name) +
+                " easing is unsupported";
             return false;
         }
-    }
+    };
+    if (!validatePresenceTransition(
+            node.enterTransition, "enterTransition") ||
+        !validatePresenceTransition(
+            node.exitTransition, "exitTransition"))
+        return false;
     if (node.maximumLines > 64)
     {
         error = "view maxLines must be between 0 and 64";
@@ -3805,13 +3812,25 @@ void FindTransform(const ViewNode& node, std::string_view key,
             childClipActive, match);
 }
 
+enum class ViewPresencePhase
+{
+    Target,
+    Enter,
+    Exit,
+};
+
 bool ValidateTransforms(const ViewNode& node,
     const ViewResolvedTransform& parent, std::string& error,
-    bool entering = false)
+    ViewPresencePhase phase = ViewPresencePhase::Target)
 {
-    const std::optional<ViewTransform>& transform = entering &&
-        node.enterTransition && node.enterTransition->transform
-        ? node.enterTransition->transform : node.transform;
+    const ViewPresenceTransition* presence = nullptr;
+    if (phase == ViewPresencePhase::Enter && node.enterTransition)
+        presence = &*node.enterTransition;
+    else if (phase == ViewPresencePhase::Exit && node.exitTransition)
+        presence = &*node.exitTransition;
+    const std::optional<ViewTransform>& transform =
+        presence && presence->transform
+        ? presence->transform : node.transform;
     if (transform)
     {
         const auto& value = *transform;
@@ -3830,9 +3849,11 @@ bool ValidateTransforms(const ViewNode& node,
             !FiniteInRange(value.originX, 0.0f, 1.0f) ||
             !FiniteInRange(value.originY, 0.0f, 1.0f))
         {
-            error = entering
+            error = phase == ViewPresencePhase::Enter
                 ? "view enterTransition transform fields are outside their limits"
-                : "view transform fields are outside their limits";
+                : (phase == ViewPresencePhase::Exit
+                    ? "view exitTransition transform fields are outside their limits"
+                    : "view transform fields are outside their limits");
             return false;
         }
     }
@@ -3872,7 +3893,7 @@ bool ValidateTransforms(const ViewNode& node,
         return false;
     }
     for (const auto& child : node.children)
-        if (!ValidateTransforms(child, current, error, entering))
+        if (!ValidateTransforms(child, current, error, phase))
             return false;
     return true;
 }
@@ -4278,6 +4299,22 @@ void ViewTransitionRuntime::BeginFrame() noexcept
     }
 }
 
+ViewTransitionPresentation ViewTransitionRuntime::CurrentPresentation(
+    const Entry& entry, TimePoint now) noexcept
+{
+    if (!entry.active ||
+        entry.activeTransition.durationMilliseconds == 0)
+        return entry.target;
+    const auto elapsed = std::chrono::duration_cast<
+        std::chrono::duration<float, std::milli>>(
+            now - entry.started).count();
+    const float progress = elapsed /
+        static_cast<float>(
+            entry.activeTransition.durationMilliseconds);
+    return InterpolateTransitionPresentation(entry.start, entry.target,
+        entry.activeTransition, progress);
+}
+
 ViewTransitionPresentation ViewTransitionRuntime::ResolvePresentation(
     std::string_view key, const ViewStyle& targetStyle,
     const std::optional<ViewTransform>& targetTransform,
@@ -4327,25 +4364,12 @@ ViewTransitionPresentation ViewTransitionRuntime::ResolvePresentation(
         return target;
     }
 
-    const auto presentation = [&entry, now]() {
-        if (!entry.active ||
-            entry.activeTransition.durationMilliseconds == 0)
-            return entry.target;
-        const auto elapsed = std::chrono::duration_cast<
-            std::chrono::duration<float, std::milli>>(
-                now - entry.started).count();
-        const float progress = elapsed /
-            static_cast<float>(
-                entry.activeTransition.durationMilliseconds);
-        return InterpolateTransitionPresentation(entry.start, entry.target,
-            entry.activeTransition, progress);
-    };
     const bool targetChanged = entry.target != target;
     const bool configurationChanged =
         entry.configuredTransition != configured;
     if (targetChanged)
     {
-        entry.start = presentation();
+        entry.start = CurrentPresentation(entry, now);
         entry.target = target;
         entry.configuredTransition = configured;
         if (!entry.entering)
@@ -4403,6 +4427,164 @@ ViewStyle ViewTransitionRuntime::Resolve(std::string_view key,
         now, reducedMotion).style;
 }
 
+void ViewTransitionRuntime::QueueExitTransitions(
+    const ViewNode& previous, const ViewNode& current,
+    TimePoint now, bool reducedMotion)
+{
+    std::unordered_set<std::string> currentKeys;
+    const auto collectKeys = [&](const auto& self,
+        const ViewNode& node) -> void {
+        currentKeys.insert(node.key);
+        for (const auto& child : node.children) self(self, child);
+    };
+    collectKeys(collectKeys, current);
+    const auto pruneCurrent = [&currentKeys](const auto& self,
+        ViewNode& node) -> void {
+        std::erase_if(node.children,
+            [&currentKeys](const ViewNode& child) {
+                return currentKeys.contains(child.key);
+            });
+        for (auto& child : node.children) self(self, child);
+    };
+    std::erase_if(exits_, [&currentKeys](const ExitEntry& entry) {
+        return currentKeys.contains(entry.node.key);
+    });
+    const auto countNodes = [](const auto& self,
+        const ViewNode& node) -> std::size_t {
+        std::size_t count = 1;
+        for (const auto& child : node.children)
+            count += self(self, child);
+        return count;
+    };
+    std::size_t retainedNodes = 0;
+    for (auto& exit : exits_)
+    {
+        pruneCurrent(pruneCurrent, exit.node);
+        exit.nodeCount = countNodes(countNodes, exit.node);
+        retainedNodes += exit.nodeCount;
+    }
+    if (reducedMotion)
+    {
+        exits_.clear();
+        return;
+    }
+
+    std::unordered_set<std::string> exitingKeys;
+    for (const auto& exit : exits_) exitingKeys.insert(exit.node.key);
+    const auto collectExits = [&](const auto& self,
+        const ViewNode& node,
+        const ViewResolvedTransform& parentTransform,
+        const std::optional<ViewRect>& inheritedClip,
+        bool inheritedClipActive) -> void {
+        if (!node.visible || node.visibility == ViewVisibility::Hidden ||
+            node.frame.width <= 0.0f || node.frame.height <= 0.0f)
+            return;
+        const bool present = currentKeys.contains(node.key);
+        if (!present && node.exitTransition &&
+            !exitingKeys.contains(node.key))
+        {
+            ViewTransition descriptor;
+            descriptor.durationMilliseconds =
+                node.exitTransition->durationMilliseconds;
+            descriptor.easing = node.exitTransition->easing;
+            ViewTransitionPresentation start{
+                node.style, node.transform, node.layoutTransitionFrame };
+            if (const auto found = entries_.find(node.key);
+                found != entries_.end())
+                start = CurrentPresentation(found->second, now);
+            ViewTransitionPresentation target = start;
+            if (node.exitTransition->opacity)
+            {
+                target.style.opacity = node.exitTransition->opacity;
+                descriptor.properties.push_back(
+                    ViewTransitionProperty::Opacity);
+            }
+            if (node.exitTransition->transform)
+            {
+                target.transform = node.exitTransition->transform;
+                descriptor.properties.push_back(
+                    ViewTransitionProperty::Transform);
+            }
+            bool queued = false;
+            if (HasTransitionDifference(start, target, descriptor))
+            {
+                ExitEntry exit;
+                exit.node = node;
+                pruneCurrent(pruneCurrent, exit.node);
+                exit.nodeCount = countNodes(countNodes, exit.node);
+                while (retainedNodes + exit.nodeCount >
+                        ViewTreeLimits::MaximumNodes && !exits_.empty())
+                {
+                    retainedNodes -= exits_.front().nodeCount;
+                    exitingKeys.erase(exits_.front().node.key);
+                    exits_.erase(exits_.begin());
+                }
+                if (exit.nodeCount > ViewTreeLimits::MaximumNodes)
+                    return;
+                exit.parentTransform = parentTransform;
+                exit.parentClip = inheritedClipActive
+                    ? std::optional<ViewRect>(
+                        inheritedClip.value_or(ViewRect{}))
+                    : std::nullopt;
+                exit.start = std::move(start);
+                exit.target = std::move(target);
+                exit.transition = std::move(descriptor);
+                exit.started = now;
+                retainedNodes += exit.nodeCount;
+                exitingKeys.insert(exit.node.key);
+                exits_.push_back(std::move(exit));
+                queued = true;
+            }
+            if (queued) return;
+        }
+
+        const ViewResolvedTransform nodeTransform = ComposeTransform(
+            LocalTransform(node), parentTransform);
+        std::optional<ViewRect> childClip = inheritedClip;
+        bool childClipActive = inheritedClipActive;
+        if (node.clipFrame)
+        {
+            const ViewRect transformedClip =
+                ApplyViewTransform(*node.clipFrame, nodeTransform);
+            childClip = inheritedClipActive
+                ? (inheritedClip
+                    ? IntersectRects(inheritedClip, transformedClip)
+                    : std::nullopt)
+                : std::optional<ViewRect>(transformedClip);
+            childClipActive = true;
+        }
+        for (const auto& child : node.children)
+            self(self, child, nodeTransform,
+                childClip, childClipActive);
+    };
+    collectExits(collectExits, previous, {}, std::nullopt, false);
+}
+
+std::vector<ViewExitTransitionFrame> ViewTransitionRuntime::ExitFrames(
+    TimePoint now, bool reducedMotion)
+{
+    std::vector<ViewExitTransitionFrame> frames;
+    if (reducedMotion)
+    {
+        exits_.clear();
+        return frames;
+    }
+    frames.reserve(exits_.size());
+    for (const auto& exit : exits_)
+    {
+        const auto elapsed = std::chrono::duration_cast<
+            std::chrono::duration<float, std::milli>>(
+                now - exit.started).count();
+        const float progress = elapsed /
+            static_cast<float>(exit.transition.durationMilliseconds);
+        frames.push_back({ &exit.node, exit.parentTransform,
+            exit.parentClip,
+            InterpolateTransitionPresentation(exit.start, exit.target,
+                exit.transition, progress) });
+    }
+    return frames;
+}
+
 void ViewTransitionRuntime::EndFrame()
 {
     std::erase_if(entries_, [this](const auto& item) {
@@ -4412,7 +4594,7 @@ void ViewTransitionRuntime::EndFrame()
 
 bool ViewTransitionRuntime::Tick(TimePoint now) noexcept
 {
-    bool hadActive = false;
+    bool hadActive = !exits_.empty();
     for (auto& [key, entry] : entries_)
     {
         (void)key;
@@ -4426,24 +4608,30 @@ bool ViewTransitionRuntime::Tick(TimePoint now) noexcept
             entry.start = entry.target;
         }
     }
+    std::erase_if(exits_, [now](const ExitEntry& exit) {
+        return now - exit.started >= std::chrono::milliseconds(
+            exit.transition.durationMilliseconds);
+    });
     return hadActive;
 }
 
 bool ViewTransitionRuntime::HasActive() const noexcept
 {
-    return std::any_of(entries_.begin(), entries_.end(),
+    return !exits_.empty() ||
+        std::any_of(entries_.begin(), entries_.end(),
         [](const auto& item) { return item.second.active; });
 }
 
 void ViewTransitionRuntime::Clear() noexcept
 {
     entries_.clear();
+    exits_.clear();
     generation_ = 0;
 }
 
 std::size_t ViewTransitionRuntime::Size() const noexcept
 {
-    return entries_.size();
+    return entries_.size() + exits_.size();
 }
 
 static bool InteractionRegionOverlapsClip(
@@ -4652,7 +4840,8 @@ bool ValidateAndLayoutViewTree(ViewNode& root, float width, float height,
     LayoutNode(root, { 0.0f, 0.0f, width, height });
     CaptureLayoutTransitionFrames(root, std::nullopt);
     return ValidateTransforms(root, {}, error) &&
-        ValidateTransforms(root, {}, error, true);
+        ValidateTransforms(root, {}, error, ViewPresencePhase::Enter) &&
+        ValidateTransforms(root, {}, error, ViewPresencePhase::Exit);
 }
 
 bool ValidateViewLogicalSlots(const ViewNode& root,
@@ -4804,7 +4993,10 @@ bool ApplyViewScrollOffsets(ViewNode& root,
     if (!ApplyScrollState(root, resolver, viewports, std::nullopt,
             scrollContainers, error) ||
         !ValidateTransforms(root, {}, error) ||
-        !ValidateTransforms(root, {}, error, true))
+        !ValidateTransforms(root, {}, error,
+            ViewPresencePhase::Enter) ||
+        !ValidateTransforms(root, {}, error,
+            ViewPresencePhase::Exit))
     {
         viewports.clear();
         return false;

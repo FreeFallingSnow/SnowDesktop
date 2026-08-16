@@ -504,6 +504,7 @@ struct ViewNode
     std::optional<ViewTransform> transform;
     std::optional<ViewTransition> transition;
     std::optional<ViewPresenceTransition> enterTransition;
+    std::optional<ViewPresenceTransition> exitTransition;
     float gap = 0.0f;
     std::size_t columns = 1;
     std::vector<ViewGridTrack> columnTracks;
@@ -680,6 +681,14 @@ struct ViewVirtualRange
 using ViewScrollOffsetResolver = std::function<float(
     std::string_view key, float maximum)>;
 
+struct ViewExitTransitionFrame
+{
+    const ViewNode* node = nullptr;
+    ViewResolvedTransform parentTransform;
+    std::optional<ViewRect> parentClip;
+    ViewTransitionPresentation presentation;
+};
+
 class ViewTransitionRuntime
 {
 public:
@@ -696,6 +705,10 @@ public:
         TimePoint now, bool reducedMotion);
     ViewStyle Resolve(std::string_view key, const ViewStyle& target,
         const std::optional<ViewTransition>& transition,
+        TimePoint now, bool reducedMotion);
+    void QueueExitTransitions(const ViewNode& previous,
+        const ViewNode& current, TimePoint now, bool reducedMotion);
+    std::vector<ViewExitTransitionFrame> ExitFrames(
         TimePoint now, bool reducedMotion);
     void EndFrame();
     bool Tick(TimePoint now) noexcept;
@@ -716,7 +729,23 @@ private:
         bool entering = false;
     };
 
+    struct ExitEntry
+    {
+        ViewNode node;
+        ViewResolvedTransform parentTransform;
+        std::optional<ViewRect> parentClip;
+        ViewTransitionPresentation start;
+        ViewTransitionPresentation target;
+        ViewTransition transition;
+        TimePoint started{};
+        std::size_t nodeCount = 0;
+    };
+
+    static ViewTransitionPresentation CurrentPresentation(
+        const Entry& entry, TimePoint now) noexcept;
+
     std::unordered_map<std::string, Entry> entries_;
+    std::vector<ExitEntry> exits_;
     std::uint64_t generation_ = 0;
 };
 

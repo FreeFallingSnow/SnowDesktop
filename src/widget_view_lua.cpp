@@ -2546,6 +2546,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadTransitionField(state, index, node.transition, error) ||
         !ReadPresenceTransitionField(state, index, "enterTransition",
             node.enterTransition, error) ||
+        !ReadPresenceTransitionField(state, index, "exitTransition",
+            node.exitTransition, error) ||
         !ReadFloatField(state, index, "gap", node.gap, error) ||
         !ReadGridTracksField(state, index, "columns",
             positionedGridNode, node.columns, node.columnTracks, error) ||

@@ -16350,14 +16350,19 @@ public:
             transform,
         const std::optional<snowdesktop::widget_runtime::ViewRect>&
             presentedLayoutFrame)
-        : context_(state ? state->ctx : nullptr)
-    {
-        if (!context_) return;
-        const auto resolved = snowdesktop::widget_runtime::
+        : WidgetViewTransformScope(state, snowdesktop::widget_runtime::
             ResolveViewPresentationTransform(node.frame,
                 node.layoutTransitionFrame,
                 presentedLayoutFrame.value_or(
-                    node.layoutTransitionFrame), transform);
+                    node.layoutTransitionFrame), transform))
+    {
+    }
+
+    WidgetViewTransformScope(D2DState* state,
+        const snowdesktop::widget_runtime::ViewResolvedTransform& resolved)
+        : context_(state ? state->ctx : nullptr)
+    {
+        if (!context_) return;
         if (std::abs(resolved.m11 - 1.0f) <= 0.000001f &&
             std::abs(resolved.m22 - 1.0f) <= 0.000001f &&
             std::abs(resolved.m12) <= 0.000001f &&
@@ -16405,7 +16410,9 @@ static void DrawWidgetViewNode(D2DState* state,
     snowdesktop::widget_runtime::ViewTransitionRuntime::TimePoint now,
     bool reducedMotion,
     const snowdesktop::widget_runtime::ViewThemePalette& palette,
-    float inheritedScale = 1.0f)
+    float inheritedScale = 1.0f,
+    const snowdesktop::widget_runtime::ViewTransitionPresentation*
+        forcedPresentation = nullptr)
 {
     using snowdesktop::widget_runtime::ViewNodeType;
     using snowdesktop::widget_runtime::ViewShapeKind;
@@ -16436,7 +16443,13 @@ static void DrawWidgetViewNode(D2DState* state,
     auto presentedTransform = node.transform;
     std::optional<snowdesktop::widget_runtime::ViewRect>
         presentedLayoutFrame = node.layoutTransitionFrame;
-    if (transitions)
+    if (forcedPresentation)
+    {
+        style = forcedPresentation->style;
+        presentedTransform = forcedPresentation->transform;
+        presentedLayoutFrame = forcedPresentation->layoutFrame;
+    }
+    else if (transitions)
     {
         auto presentation = transitions->ResolvePresentation(node.key,
             style, node.transform, node.layoutTransitionFrame,
@@ -17272,6 +17285,39 @@ static bool DrawWidgetViewTree(D2DState* state,
     DrawWidgetViewNode(state, tree, regions, focusedKey,
         &transitions, now, reducedMotion, palette);
     transitions.EndFrame();
+    for (const auto& exit : transitions.ExitFrames(now, reducedMotion))
+    {
+        if (!exit.node) continue;
+        bool pushedClip = false;
+        if (exit.parentClip)
+        {
+            const auto& clip = *exit.parentClip;
+            state->ctx->PushAxisAlignedClip(D2D1::RectF(
+                state->widgetRect.left + clip.x,
+                state->widgetRect.top + clip.y,
+                state->widgetRect.left + clip.x + clip.width,
+                state->widgetRect.top + clip.y + clip.height),
+                D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+            ++state->widgetClipDepth;
+            pushedClip = true;
+        }
+        {
+            WidgetViewTransformScope parentTransform(
+                state, exit.parentTransform);
+            const float inheritedScale = std::hypot(
+                exit.parentTransform.m21,
+                exit.parentTransform.m22);
+            DrawWidgetViewNode(state, *exit.node, regions, {}, nullptr,
+                now, reducedMotion, palette,
+                std::max(0.000001f, inheritedScale),
+                &exit.presentation);
+        }
+        if (pushedClip)
+        {
+            state->ctx->PopAxisAlignedClip();
+            --state->widgetClipDepth;
+        }
+    }
     return transitions.HasActive();
 }
 
@@ -18009,6 +18055,17 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                 if (currentIndex >= 0)
                 {
                     found = &widgets_[currentIndex];
+                    if (found->viewTree)
+                    {
+                        found->viewTransitions.QueueExitTransitions(
+                            *found->viewTree, candidate,
+                            snowdesktop::widget_runtime::
+                                ViewTransitionRuntime::Clock::now(),
+                            found->preview ||
+                                !widgetTimerRequestCallback_ ||
+                                QueryWidgetSystemEnvironment().
+                                    reducedMotion);
+                    }
                     found->viewTree = std::move(candidate);
                 }
                 else
@@ -18512,7 +18569,20 @@ bool WidgetEngine::RenderWidgetPanel(
             {
                 auto& current = widgets_[currentIndex];
                 if (hasView)
+                {
+                    if (current.panelViewTree)
+                    {
+                        current.panelViewTransitions.QueueExitTransitions(
+                            *current.panelViewTree, candidate,
+                            snowdesktop::widget_runtime::
+                                ViewTransitionRuntime::Clock::now(),
+                            current.preview ||
+                                !widgetTimerRequestCallback_ ||
+                                QueryWidgetSystemEnvironment().
+                                    reducedMotion);
+                    }
                     current.panelViewTree = std::move(candidate);
+                }
                 else
                 {
                     current.panelViewTree.reset();

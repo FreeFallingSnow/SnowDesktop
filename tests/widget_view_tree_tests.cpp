@@ -3305,6 +3305,12 @@ void TestVisualTransitionRuntime()
                 opacity = 0,
                 transform = { scale = 0.8 },
             },
+            exitTransition = {
+                durationMs = 180,
+                easing = "easeIn",
+                opacity = 0,
+                transform = { scale = 0.9, translateY = -4 },
+            },
         })
     )lua") == LUA_OK,
         "visual transition Lua fixture must evaluate");
@@ -3323,8 +3329,16 @@ void TestVisualTransitionRuntime()
             parsed.enterTransition->opacity == 0.0f &&
             parsed.enterTransition->transform &&
             Near(parsed.enterTransition->transform->scale, 0.8f) &&
+            parsed.exitTransition &&
+            parsed.exitTransition->durationMilliseconds == 180 &&
+            parsed.exitTransition->easing ==
+                ViewTransitionEasing::EaseIn &&
+            parsed.exitTransition->opacity == 0.0f &&
+            parsed.exitTransition->transform &&
+            Near(parsed.exitTransition->transform->scale, 0.9f) &&
+            Near(parsed.exitTransition->transform->translateY, -4.0f) &&
             ValidateAndLayoutViewTree(parsed, 100.0f, 40.0f, error),
-        "Lua parsing must retain bounded update and enter transitions");
+        "Lua parsing must retain bounded update, enter, and exit transitions");
 
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(
@@ -3528,6 +3542,70 @@ void TestVisualTransitionRuntime()
     enterRuntime.EndFrame();
     Check(reducedEnter.style == enteredStyle && !reducedEnter.transform,
         "reducedMotion must suppress enterTransition for newly inserted nodes");
+
+    ViewNode previousRoot;
+    previousRoot.type = ViewNodeType::Box;
+    previousRoot.key = "exit-root";
+    previousRoot.frame = { 0.0f, 0.0f, 100.0f, 100.0f };
+    previousRoot.layoutTransitionFrame = previousRoot.frame;
+    previousRoot.clipFrame = ViewRect{ 0.0f, 0.0f, 80.0f, 80.0f };
+    previousRoot.transform = ViewTransform{};
+    previousRoot.transform->translateX = 5.0f;
+    ViewNode removedChild;
+    removedChild.type = ViewNodeType::Box;
+    removedChild.key = "removed";
+    removedChild.frame = { 10.0f, 20.0f, 30.0f, 40.0f };
+    removedChild.layoutTransitionFrame = removedChild.frame;
+    removedChild.style.opacity = 1.0f;
+    removedChild.exitTransition = ViewPresenceTransition{};
+    removedChild.exitTransition->durationMilliseconds = 100;
+    removedChild.exitTransition->easing = ViewTransitionEasing::Linear;
+    removedChild.exitTransition->opacity = 0.0f;
+    ViewTransform exitTransform;
+    exitTransform.scale = 0.5f;
+    removedChild.exitTransition->transform = exitTransform;
+    previousRoot.children.push_back(removedChild);
+    ViewNode currentRoot = previousRoot;
+    currentRoot.children.clear();
+    ViewTransitionRuntime exitRuntime;
+    exitRuntime.BeginFrame();
+    (void)exitRuntime.ResolvePresentation(previousRoot.key,
+        previousRoot.style, previousRoot.transform,
+        previousRoot.layoutTransitionFrame, previousRoot.transition,
+        previousRoot.enterTransition, origin, false);
+    (void)exitRuntime.ResolvePresentation(removedChild.key,
+        removedChild.style, removedChild.transform,
+        removedChild.layoutTransitionFrame, removedChild.transition,
+        removedChild.enterTransition, origin, false);
+    exitRuntime.EndFrame();
+    exitRuntime.QueueExitTransitions(
+        previousRoot, currentRoot, origin, false);
+    const auto firstExitFrames = exitRuntime.ExitFrames(origin, false);
+    const auto middleExitFrames = exitRuntime.ExitFrames(
+        origin + std::chrono::milliseconds(50), false);
+    Check(firstExitFrames.size() == 1 &&
+            firstExitFrames[0].node &&
+            firstExitFrames[0].node->key == "removed" &&
+            Near(firstExitFrames[0].parentTransform.dx, 5.0f) &&
+            firstExitFrames[0].parentClip &&
+            Near(firstExitFrames[0].parentClip->x, 5.0f) &&
+            middleExitFrames.size() == 1 &&
+            middleExitFrames[0].presentation.style.opacity &&
+            Near(*middleExitFrames[0].presentation.style.opacity, 0.5f) &&
+            middleExitFrames[0].presentation.transform &&
+            Near(middleExitFrames[0].presentation.transform->scale, 0.75f),
+        "removed nodes must retain their old parent transform and clip while interpolating a presentation-only exit snapshot");
+    Check(exitRuntime.Tick(origin + std::chrono::milliseconds(100)) &&
+            exitRuntime.ExitFrames(
+                origin + std::chrono::milliseconds(100), false).empty(),
+        "completed exit snapshots must be released by the host transition clock");
+
+    ViewTransitionRuntime reducedExitRuntime;
+    reducedExitRuntime.QueueExitTransitions(
+        previousRoot, currentRoot, origin, true);
+    Check(reducedExitRuntime.ExitFrames(origin, true).empty() &&
+            !reducedExitRuntime.HasActive(),
+        "reducedMotion must suppress and release queued exit snapshots");
 }
 
 void TestThemeColorTokens()

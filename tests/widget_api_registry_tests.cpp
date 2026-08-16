@@ -547,6 +547,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "view.transition.enter") &&
             snowdesktop::widget_api::SupportsFeature(
+                "view.transition.exit") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "view.transition.layout") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.transition.transform") &&

@@ -241,7 +241,16 @@ transform。transform 是完整起始变换，省略字段使用单位变换默�
 出现的新稳定 key 才执行。预览、计时器不可用或 `reducedMotion` 开启时直接显示终点。入场只影响
 呈现，节点的命中、宿主控件和 UIA 从 scene 提交起即使用目标几何。
 
-删除节点仍不产生 exit 动画；阴影参数、圆角、边框宽度以及 `exitTransition` 尚未开放。
+探测 `view.transition.exit` 后，同一描述结构也可用于 `exitTransition`，其中 opacity/transform
+表示退场终点。新 scene 不再包含稳定 key 时，宿主从上一呈现状态创建不可交互的旧子树快照，
+保留旧父变换和裁剪并插值到终点；新 scene 的命中、焦点、宿主控件和 UIA 会立即提交，快照不会
+继续接收动作、右键菜单或可信手势。移除的父节点声明退场时由它承载仍被移除的后代，已经在新
+scene 中复用的后代 key 会从快照剔除；没有退场的祖先不会阻止更深层节点使用自己的声明。
+同一 surface 最多保留 512 个快照节点，快速连续更新超过额度时最早的退场直接结束；key 在后续
+scene 重新出现会取消同 key 的旧快照。预览、无计时器或 `reducedMotion` 下不保留快照。
+
+阴影参数、圆角和边框宽度仍不能作为 transition 插值属性；出现/移除期间只开放 opacity 与
+完整 transform 端点。
 
 桌面与 panel/dialog/popover 各自维护过渡状态，插值帧只重绘上一棵成功提交的 scene tree，
 不会每帧重新调用 Lua `view()`。未绑定节点 pointer action 的 hover/pressed 状态变化也走
