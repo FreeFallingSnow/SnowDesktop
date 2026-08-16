@@ -61,6 +61,8 @@ event 覆盖宿主 surface 级事件：`visibility`、`resize`、`timer`、
 `missed` 和 `coalesced`。
 region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择统一以
 `event.kind == "action"` 投递。
+探测 `view.pointer.events` 后，声明式节点还可显式观察高频 `pointerMove` 和 `wheel`；
+宿主滚动消费 wheel 时仍先更新滚动偏移并投递对应节点动作，动作不能取消滚动。
 事件驱动的数据 topic 发生变更时，持有对应订阅的组件收到 `data.change`，其中包含
 `topic/revision`；组件可在该事件中重建依赖日期范围等参数的订阅。
 
@@ -110,6 +112,7 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.keyboardNavigation.basic` 提供桌面与活动 panel surface 的通用宿主键盘焦点与激活，
 `view.keyboard.events` 提供聚焦元素不可取消的按下/释放观察事件，
 `view.keyboard.accessKey` 提供宿主管理的组件内 Alt 访问键和快捷键语义文本，
+`view.pointer.events` 提供显式的声明式 pointerMove/wheel 观察，
 `view.focus.request` 将可信手势焦点请求扩展到任意可聚焦声明式元素，
 `view.flex.layout` 提供 row/column 主轴切换、换行与多行交叉轴对齐，
 `view.flex.sizing` 提供线性布局的 basis/grow/shrink 尺寸分配，
@@ -478,6 +481,11 @@ surface 中当前唯一选中 Lua 组件或活动 panel surface 的当前聚焦�
 原元素；窗口失焦时清空未完成配对。该观察事件不能返回 handled、取消 Enter/空格默认激活，
 也不能阻止 SnowDesktop 管理快捷键。它不是字符输入接口：文本、输入法组合和剪贴板结果仍只
 通过宿主输入控件及其 change/selectionChange 契约处理。
+
+探测 `view.pointer.events` 后，任意可命中的声明式节点可声明 `events.pointerMove/wheel`。
+`pointerMove` 只在指针位于该元素或其捕获仍有效时高频投递；没有绑定时 hover/pressed 继续由
+宿主重绘，不执行 Lua。`wheel` 带原始 `delta` 和可信手势；scroll/virtual collection 即使先由
+宿主移动内容，也会向自身显式 wheel action 投递，事件不能阻止、回滚或替代宿主滚动。
 
 探测 `view.keyboardNavigation.order` 后，任意有语义的节点可声明 `focusable`，并在实际可聚焦时
 声明 `tabIndex=-1..32767`。`focusable=false` 同时退出鼠标、键盘和 UI Automation 焦点；
@@ -942,6 +950,13 @@ shape 首版支持 `rect`、`roundedRect` 和 `circle`；cursor 支持 `default`
 `pointerUp`、`pointerMove`、`click`、`doubleClick`、`wheel` 和 `contextMenu`。
 动作 `value` 会被深拷贝，只允许 nil、布尔、有限数字、字符串、连续数组和字符串键
 对象，限制 8 层、256 个节点和合计 16 KiB 字符串。普通 hover/click 不需要权限。
+
+探测 `interaction.tooltip` 后，region 可声明最多 4096 UTF-8 字节的纯文本 `tooltip`，由宿主
+在命中区域内显示；它不是任意 markup 或窗口。探测 `interaction.keyboard` 后，region 可声明
+`focusable`、`tabIndex=-1..32767` 及 `events.keyDown/keyUp`。默认仍从受控类型、click 或文本输入
+role 推导焦点；显式 `focusable=false` 会退出焦点，key 观察目标必须可聚焦。按键事件与声明式
+版本使用相同负载和按下/释放配对，`interaction.isFocused(key)` 可用于绘制焦点状态；这些事件
+不能取消宿主激活、组件槽位快捷键或字符/IME 输入。
 
 即时绘制的纵向滚动区域使用 `interaction.scroll(spec)`，不要调用 v1
 `ui.scrollArea`：

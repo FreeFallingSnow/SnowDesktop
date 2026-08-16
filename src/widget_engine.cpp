@@ -2454,8 +2454,38 @@ static int lua_InteractionRegion(lua_State* state)
     if (!lua_isnil(state, -1))
         region.cursor = luaL_checkstring(state, -1);
     lua_pop(state, 1);
+    lua_getfield(state, descriptor, "tooltip");
+    if (!lua_isnil(state, -1))
+    {
+        std::size_t length = 0;
+        const char* value = luaL_checklstring(state, -1, &length);
+        region.tooltip.assign(value ? value : "", length);
+    }
+    lua_pop(state, 1);
     lua_getfield(state, descriptor, "enabled");
     region.enabled = lua_isnil(state, -1) || lua_toboolean(state, -1) != 0;
+    lua_pop(state, 1);
+    lua_getfield(state, descriptor, "focusable");
+    if (!lua_isnil(state, -1))
+    {
+        if (!lua_isboolean(state, -1))
+            return luaL_error(state,
+                "interaction.region: focusable must be a boolean");
+        region.focusable = lua_toboolean(state, -1) != 0;
+    }
+    lua_pop(state, 1);
+    lua_getfield(state, descriptor, "tabIndex");
+    if (!lua_isnil(state, -1))
+    {
+        if (!lua_isinteger(state, -1))
+            return luaL_error(state,
+                "interaction.region: tabIndex must be an integer");
+        const lua_Integer value = lua_tointeger(state, -1);
+        if (value < -1 || value > 32767)
+            return luaL_error(state,
+                "interaction.region: tabIndex must be between -1 and 32767");
+        region.tabIndex = static_cast<int>(value);
+    }
     lua_pop(state, 1);
 
     lua_getfield(state, descriptor, "accessibility");
@@ -2478,7 +2508,7 @@ static int lua_InteractionRegion(lua_State* state)
         const int events = lua_absindex(state, -1);
         for (const char* eventName : { "pointerEnter", "pointerLeave",
             "pointerDown", "pointerUp", "pointerMove", "click",
-            "doubleClick", "wheel", "contextMenu" })
+            "doubleClick", "wheel", "contextMenu", "keyDown", "keyUp" })
         {
             lua_getfield(state, events, eventName);
             if (lua_isnil(state, -1))
@@ -2545,6 +2575,16 @@ static int lua_InteractionIsPressed(lua_State* state)
     auto* d2d = GetD2D(state);
     lua_pushboolean(state, d2d && d2d->engine &&
         d2d->engine->RuntimeInteractionPressed(
+            BoundWidgetId(state), key ? key : ""));
+    return 1;
+}
+
+static int lua_InteractionIsFocused(lua_State* state)
+{
+    const char* key = luaL_checkstring(state, 1);
+    auto* d2d = GetD2D(state);
+    lua_pushboolean(state, d2d && d2d->engine &&
+        d2d->engine->RuntimeInteractionFocused(
             BoundWidgetId(state), key ? key : ""));
     return 1;
 }
@@ -21569,6 +21609,15 @@ bool WidgetEngine::RuntimeInteractionPressed(
             CurrentWidgetSurface(d2dState_)).IsPressed(key);
 }
 
+bool WidgetEngine::RuntimeInteractionFocused(
+    const std::wstring& widgetId, std::string_view key) const
+{
+    const int index = FindWidget(widgetId);
+    return index >= 0 && !key.empty() &&
+        ViewFocusForSurface(widgets_[index],
+            CurrentWidgetSurface(d2dState_)) == key;
+}
+
 void WidgetEngine::DispatchInteractionAction(LuaWidget& widget,
     const std::string& targetKey, const char* eventName,
     int x, int y, int button, int delta, int clickCount,
@@ -25477,8 +25526,16 @@ bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int 
             if (!result.moved)
                 continue;
             offset = result.offset;
+            const std::string targetKey = it->id;
+            {
+                snowdesktop::widget_runtime::WidgetTrustedGestureScope
+                    gestureScope(trustedGestureState_, true);
+                DispatchInteractionAction(widget, targetKey, "wheel",
+                    x, y, 0, delta, 0, false, "pointer", 0,
+                    std::nullopt, std::nullopt, normalizedSurface);
+            }
             if (result.reachedEnd)
-                DispatchInteractionAction(widget, it->id, "scrollEnd",
+                DispatchInteractionAction(widget, targetKey, "scrollEnd",
                     x, y, 0, delta, 0, false, "pointer", 0,
                     std::nullopt, std::nullopt, normalizedSurface);
             RuntimeInvalidateHost(widgetId);
@@ -28931,6 +28988,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
         { "region", lua_InteractionRegion, 2 },
         { "isHovered", lua_InteractionIsHovered, 2 },
         { "isPressed", lua_InteractionIsPressed, 2 },
+        { "isFocused", lua_InteractionIsFocused, 2 },
         { "scroll", lua_InteractionScroll, 2 },
         { "setScrollOffset", lua_InteractionSetScrollOffset, 2 },
     };

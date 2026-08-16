@@ -436,6 +436,7 @@ void TestKeyboardFocusableOrderAndFiltering()
         InteractionAction{ "pointer.key-up", {} });
     pointerOnly.focusable = true;
     pointerOnly.tabIndex = 2;
+    pointerOnly.tooltip = "Pointer keyboard target";
     auto disabled = Rect("disabled", 0, 152, 80, 32);
     disabled.events.emplace("click",
         InteractionAction{ "disabled.open", {} });
@@ -459,11 +460,25 @@ void TestKeyboardFocusableOrderAndFiltering()
             !regions.IsKeyboardFocusable("disabled") &&
             !regions.IsKeyboardFocusable("missing"),
         "focusability must remain independent from sequential tab inclusion");
+    const auto* pointer = regions.Find("pointer");
+    Check(pointer && pointer->tooltip == "Pointer keyboard target" &&
+            pointer->events.contains("keyDown") &&
+            pointer->events.contains("keyUp"),
+        "immediate regions must retain tooltip and keyboard metadata");
 
     const auto semantics = regions.AccessibilityRegions();
     Check(semantics.size() == 2 && semantics[0].key == "query" &&
             semantics[1].key == "volume",
         "accessibility snapshots must omit regions without declared semantics");
+
+    WidgetInteractionRegions invalid;
+    auto keyOnly = Rect("key-only", 0, 0, 80, 32);
+    keyOnly.events.emplace("keyDown",
+        InteractionAction{ "key-only.down", {} });
+    invalid.BeginFrame();
+    Check(!invalid.Submit(std::move(keyOnly), error) &&
+            error.find("require a focusable region") != std::string::npos,
+        "immediate key observers must reject unreachable focus targets");
 }
 }
 

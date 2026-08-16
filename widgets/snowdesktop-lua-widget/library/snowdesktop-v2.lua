@@ -205,11 +205,11 @@
 ---@field pointerEnter? SnowInteractionAction
 ---@field pointerLeave? SnowInteractionAction
 ---@field pointerDown? SnowInteractionAction
----@field pointerMove? SnowInteractionAction
+---@field pointerMove? SnowInteractionAction High-frequency explicit observation; declarative nodes require view.pointer.events.
 ---@field pointerUp? SnowInteractionAction
 ---@field click? SnowInteractionAction
 ---@field doubleClick? SnowInteractionAction
----@field wheel? SnowInteractionAction
+---@field wheel? SnowInteractionAction Declarative nodes require view.pointer.events; host scrolling still proceeds.
 ---@field contextMenu? SnowInteractionAction
 ---@field keyDown? SnowInteractionAction Focused-node key press observation; requires view.keyboard.events and cannot cancel host behavior.
 ---@field keyUp? SnowInteractionAction Paired focused-node key release observation; requires view.keyboard.events.
@@ -253,8 +253,8 @@
 ---@field doubleClick? SnowInteractionAction
 ---@field wheel? SnowInteractionAction
 ---@field contextMenu? SnowInteractionAction
----@field keyDown? SnowInteractionAction
----@field keyUp? SnowInteractionAction
+---@field keyDown? SnowInteractionAction Focused-span key press observation; requires view.keyboard.events and cannot cancel host behavior.
+---@field keyUp? SnowInteractionAction Paired focused-span key release observation; requires view.keyboard.events.
 
 ---@class SnowViewVirtualRangeOptions
 ---@field key string Stable virtual collection key.
@@ -465,6 +465,8 @@
 ---@field doubleClick? SnowInteractionAction
 ---@field wheel? SnowInteractionAction
 ---@field contextMenu? SnowInteractionAction
+---@field keyDown? SnowInteractionAction Focused-region key press observation; requires interaction.keyboard and cannot cancel host behavior.
+---@field keyUp? SnowInteractionAction Paired focused-region key release observation; requires interaction.keyboard.
 
 ---@class SnowInteractionAccessibility
 ---@field role? string
@@ -474,9 +476,12 @@
 ---@field key string Stable key, 1..128 UTF-8 bytes.
 ---@field shape SnowInteractionShape
 ---@field cursor? 'default'|'hand'|'text'|'crosshair'
+---@field tooltip? string Bounded host tooltip; requires interaction.tooltip.
 ---@field events? SnowInteractionEvents
 ---@field accessibility? SnowInteractionAccessibility
 ---@field enabled? boolean
+---@field focusable? boolean Explicit keyboard focus participation; requires interaction.keyboard.
+---@field tabIndex? integer Sequential order from -1 through 32767; requires interaction.keyboard.
 
 ---@class SnowInteractionScrollDescriptor
 ---@field key string Stable instance-scoped key, 1..128 UTF-8 bytes.
@@ -2051,6 +2056,11 @@ function interaction.isHovered(key) end
 ---@param key string
 ---@return boolean
 function interaction.isPressed(key) end
+
+---Return whether this region owns the current host keyboard focus. Requires interaction.keyboard.
+---@param key string
+---@return boolean
+function interaction.isFocused(key) end
 
 ---Register a vertical scroll viewport for the current render and return its
 ---instance-scoped position. Pair it with draw.pushClip/popClip while drawing.

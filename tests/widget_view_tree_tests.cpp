@@ -1394,7 +1394,11 @@ void TestScrollableCollections()
             key = "feed",
             height = 100,
             padding = 4,
-            events = { scrollEnd = { id = "feed.end" } },
+            events = {
+                pointerMove = { id = "feed.move" },
+                wheel = { id = "feed.wheel" },
+                scrollEnd = { id = "feed.end" },
+            },
             children = {
                 view.list({ key = "items", gap = 4, children = items }),
             },
@@ -1409,6 +1413,8 @@ void TestScrollableCollections()
             root.children.size() == 1 &&
             root.children[0].type == ViewNodeType::List &&
             root.children[0].orientation == ViewOrientation::Vertical &&
+            root.events.at("pointerMove").id == "feed.move" &&
+            root.events.at("wheel").id == "feed.wheel" &&
             root.events.at("scrollEnd").id == "feed.end" &&
             root.children[0].children.size() == 3 &&
             root.children[0].children[0].type ==
@@ -1431,6 +1437,8 @@ void TestScrollableCollections()
     std::vector<InteractionRegion> regions;
     Check(CollectViewInteractionRegions(root, regions, error) &&
             regions.size() == 4 && regions[0].key == "feed" &&
+            regions[0].events.at("pointerMove").id == "feed.move" &&
+            regions[0].events.at("wheel").id == "feed.wheel" &&
             regions[0].events.at("scrollEnd").id == "feed.end" &&
             regions[1].key == "item-1" &&
             regions[1].clip && Near(regions[1].clip->y, 4.0f) &&
@@ -1440,15 +1448,24 @@ void TestScrollableCollections()
             regions[1].accessibilityRole == "listitem" &&
             regions[1].accessibilityLabel == "Item 1" &&
             root.children[0].children[0].frame.y < root.clipFrame->y,
-        "scroll-end and list-item actions must keep independent clipped regions");
+        "pointer, wheel, scroll-end, and list-item actions must keep "
+        "independent clipped regions");
     WidgetInteractionRegions stagedRegions;
     stagedRegions.BeginFrame();
     bool staged = true;
     for (auto& region : regions)
         staged = staged && stagedRegions.Submit(std::move(region), error);
     Check(staged,
-        "scrollEnd regions must pass the host interaction transaction validator");
+        "declarative pointer and scroll regions must pass the host "
+        "interaction transaction validator");
     stagedRegions.CommitFrame();
+    const auto pointerMove = stagedRegions.ResolveAction(
+        "feed", "pointerMove");
+    const auto wheel = stagedRegions.ResolveAction("feed", "wheel");
+    Check(pointerMove && pointerMove->action.id == "feed.move" &&
+            wheel && wheel->action.id == "feed.wheel",
+        "committed declarative regions must resolve explicit move and "
+        "wheel actions");
 
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(

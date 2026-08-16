@@ -342,9 +342,13 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "interaction.contextMenu") &&
             snowdesktop::widget_api::SupportsFeature(
+                "interaction.keyboard") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "interaction.region") &&
             snowdesktop::widget_api::SupportsFeature(
                 "interaction.scroll") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "interaction.tooltip") &&
             snowdesktop::widget_api::SupportsFeature("l10n.format") &&
             snowdesktop::widget_api::SupportsFeature("module.package") &&
             snowdesktop::widget_api::SupportsFeature("resource.package") &&
@@ -466,6 +470,8 @@ void TestV2Contract()
                 "view.layout.overflow") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.positioning.basic") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "view.pointer.events") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.text.flow") &&
             snowdesktop::widget_api::SupportsFeature(

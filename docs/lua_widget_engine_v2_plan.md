@@ -1292,6 +1292,7 @@ view.row({
 - `view.text.typography` 现已补入 100–900 的 `fontWeight`、normal/italic `fontStyle`、1–1024 `lineHeight` 与 -64–256 `letterSpacing`；行高参与固有高度和 DirectWrite 行距，字距参与近似固有宽度和 TextLayout1 字符间距；宿主编辑器排版不由本 feature 暗示。
 - `view.text.locale` 已为文本、标签、输入和 select 加入有界 BCP 47 `locale` 与 auto/ltr/rtl `textDirection`：auto 使用首个强方向字符并以 locale 兜底，DirectWrite shaping、start/end 对齐及 select/radio/checkbox/toggle 的控件相对位置共用同一方向；声明、Tab 和 UIA 顺序不反转。
 - `view.tooltip` 现已提供所有节点通用的有界纯文本提示：tooltip-only 节点也生成裁剪命中区，提示在 view/select/input 覆盖层之后绘制并限制在组件 surface 内，同时在无 validationMessage 时映射为 UIA HelpText；富提示、markup、任意窗口和把必要信息仅藏在 hover 中仍不允许。
+- `view.pointer.events` 已补通普通声明式节点此前在 LuaLS 与交互运行时之间断裂的 `pointerMove/wheel`：只有显式绑定才进入 Lua，宿主滚动先更新偏移且仍向 scroll/virtual collection 自身投递可信 wheel action，动作不能取消滚动。即时 `interaction.region` 同时通过 `interaction.tooltip/keyboard` 开放已有的纯文本提示、focusable/tabIndex、`isFocused` 和配对 keyDown/keyUp；真实触控板、高频合帧与辅助 surface 场景待验证。
 - `view.scroll.events` 已把 `events.scrollEnd` 限定到 scroll/virtual collection；滚轮或 UIA 操作从末端前到达最大宿主偏移时只投递一次，离开末端后才能再次触发，UIA 来源不获得可信手势。
 - `view.keyboardNavigation.order` 已加入 `focusable/tabIndex`：-1 只退出顺序遍历，正数先按升序、再接默认 0 的声明顺序；焦点样式、鼠标焦点、键盘遍历和 UIA IsKeyboardFocusable 使用同一有效状态。
 - `view.keyboard.accessKey` 已为单一直接交互目标加入树内唯一的 ASCII 字母/数字访问键；活动辅助 surface 或唯一选中的桌面组件用 Alt+键聚焦输入/slider，并按既有受控 click/change 语义激活其他目标，重复按下不重复触发。Windows 的 `WM_SYSCHAR` 仅在命中时消费，未命中的 Alt 组合键、Alt+Space 和 Alt+F4 继续交给默认窗口过程。UIA 同时公开规范化 AccessKey 和仅作语义描述、不注册全局热键的 acceleratorText；radioGroup/monthCalendar 等多虚拟目标节点不接受父级访问键。真实键盘布局、Alt 系统键与 Narrator 场景仍待现场验证。

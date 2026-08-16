@@ -1250,6 +1250,8 @@ public:
         std::string_view key) const;
     bool RuntimeInteractionPressed(const std::wstring& widgetId,
         std::string_view key) const;
+    bool RuntimeInteractionFocused(const std::wstring& widgetId,
+        std::string_view key) const;
     void UpdateInteractionHover(const std::wstring& widgetId, int x, int y,
         std::string_view surface = "desktop");
     void ClearInteractionHover(std::string_view surface = {});

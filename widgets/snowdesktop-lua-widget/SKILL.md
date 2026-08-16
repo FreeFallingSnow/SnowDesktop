@@ -120,6 +120,9 @@ observe `events.keyDown/keyUp`. These actions receive a symbolic `key`, Windows
 cancel host activation or SnowDesktop shortcuts and are not a character/IME
 input channel. The host publishes basic UI Automation patterns and state, while deep
 virtualization and every platform pattern are not implied by this feature.
+Probe `view.pointer.events` before observing declarative `pointerMove` or
+`wheel`. Keep pointerMove actions lightweight; a wheel action observes but
+cannot cancel host-managed scroll movement.
 Probe `view.keyboardNavigation.order` before overriding `focusable` or
 `tabIndex`. Use -1 only to keep pointer/UIA focus while skipping sequential
 keyboard traversal; positive indices run before 0/source order and retain
@@ -473,6 +476,10 @@ default border does not fit the component design.
   handle serialized region actions in `event`; never synthesize click from raw
   down/up callbacks. Build an element menu only through `widget.define.menu`
   and `ui.menu`, keeping the callback synchronous and I/O-free.
+  Probe `interaction.tooltip` before adding bounded plain-text tooltips. Probe
+  `interaction.keyboard` before setting `focusable/tabIndex` or observing
+  `keyDown/keyUp`; use `interaction.isFocused(key)` to draw the focus state.
+  Key observers cannot cancel host activation or text input.
   Only regions with `accessibility.role` or `accessibility.label` enter the
   host semantic snapshot. Supply both for meaningful elements. The Windows
   UIA provider exposes the current tree, properties, navigation, hit testing,

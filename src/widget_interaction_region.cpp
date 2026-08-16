@@ -84,12 +84,19 @@ bool IsTextEntryRole(std::string_view role) noexcept
         role == "spinbutton";
 }
 
-bool IsKeyboardFocusableRegion(const InteractionRegion& region) noexcept
+bool IsPotentiallyKeyboardFocusableRegion(
+    const InteractionRegion& region) noexcept
 {
-    return region.enabled && region.focusable.value_or(
+    return region.focusable.value_or(
         region.controlKind != InteractionControlKind::None ||
             region.events.contains("click") ||
             IsTextEntryRole(region.accessibilityRole));
+}
+
+bool IsKeyboardFocusableRegion(const InteractionRegion& region) noexcept
+{
+    return region.enabled &&
+        IsPotentiallyKeyboardFocusableRegion(region);
 }
 
 char NormalizeAccessKey(char key) noexcept
@@ -248,6 +255,24 @@ bool WidgetInteractionRegions::Submit(
             error = "interaction action id must contain 1 to 128 bytes";
             return false;
         }
+    }
+    if (region.tabIndex < -1 || region.tabIndex > 32767)
+    {
+        error = "interaction tab index must be between -1 and 32767";
+        return false;
+    }
+    if ((region.events.contains("keyDown") ||
+            region.events.contains("keyUp")) &&
+        !IsPotentiallyKeyboardFocusableRegion(region))
+    {
+        error = "interaction key events require a focusable region";
+        return false;
+    }
+    if (region.tabIndex != 0 &&
+        !IsPotentiallyKeyboardFocusableRegion(region))
+    {
+        error = "interaction tab index requires a focusable region";
+        return false;
     }
     if (region.tooltip.size() > 4096)
     {

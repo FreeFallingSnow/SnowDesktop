@@ -2888,7 +2888,8 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         if (eventName != "click" && eventName != "doubleClick" &&
             eventName != "contextMenu" && eventName != "pointerEnter" &&
             eventName != "pointerLeave" && eventName != "pointerDown" &&
-            eventName != "pointerUp" && eventName != "keyDown" &&
+            eventName != "pointerUp" && eventName != "pointerMove" &&
+            eventName != "wheel" && eventName != "keyDown" &&
             eventName != "keyUp" && eventName != "change" &&
             eventName != "selectionChange" && eventName != "focus" &&
             eventName != "blur" &&
