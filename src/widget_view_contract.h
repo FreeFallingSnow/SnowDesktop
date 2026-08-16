@@ -55,6 +55,25 @@ struct ViewNodeContract
     bool keyboardFocusable = false;
 };
 
+enum class ViewEventPayloadKind : std::uint8_t
+{
+    Pointer,
+    Wheel,
+    Key,
+    Action,
+    Change,
+    SelectionChange,
+    Focus,
+    Submit,
+    ScrollEnd,
+};
+
+struct ViewEventContract
+{
+    std::string_view name;
+    ViewEventPayloadKind payload = ViewEventPayloadKind::Action;
+};
+
 std::span<const ViewNodeContract> ViewNodeContracts() noexcept;
 const ViewNodeContract* FindViewNodeContract(
     ViewNodeType type) noexcept;
@@ -72,5 +91,12 @@ bool ViewNodeRequiresProperty(
 std::vector<std::string_view> ViewNodeAllowedProperties(
     ViewNodeType type);
 std::vector<std::string_view> ViewNodeRequiredProperties(
+    ViewNodeType type);
+
+std::span<const ViewEventContract> ViewEventContracts() noexcept;
+bool IsKnownViewEvent(std::string_view event) noexcept;
+bool ViewNodeAllowsEvent(
+    ViewNodeType type, std::string_view event) noexcept;
+std::vector<std::string_view> ViewNodeAllowedEvents(
     ViewNodeType type);
 }

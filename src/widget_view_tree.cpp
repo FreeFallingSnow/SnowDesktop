@@ -3328,17 +3328,10 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
     }
     for (const auto& [eventName, action] : node.events)
     {
-        if (eventName != "click" && eventName != "doubleClick" &&
-            eventName != "contextMenu" && eventName != "pointerEnter" &&
-            eventName != "pointerLeave" && eventName != "pointerDown" &&
-            eventName != "pointerUp" && eventName != "pointerMove" &&
-            eventName != "wheel" && eventName != "keyDown" &&
-            eventName != "keyUp" && eventName != "change" &&
-            eventName != "selectionChange" && eventName != "focus" &&
-            eventName != "blur" &&
-            eventName != "submit" && eventName != "scrollEnd")
+        if (!ViewNodeAllowsEvent(node.type, eventName))
         {
-            error = "unsupported view event: " + eventName;
+            error = std::string(ViewNodeTypeName(node.type)) +
+                " nodes do not accept event '" + eventName + "'";
             return false;
         }
         if (action.id.empty() || action.id.size() > 128)
@@ -3346,13 +3339,6 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             error = "view action id must contain 1 to 128 bytes";
             return false;
         }
-    }
-    if (!IsInputNode(node.type) &&
-        (node.events.contains("focus") || node.events.contains("blur") ||
-            node.events.contains("submit")))
-    {
-        error = "focus, blur, and submit are reserved for input nodes";
-        return false;
     }
     const bool textSelectionInput = node.type == ViewNodeType::TextInput ||
         node.type == ViewNodeType::TextArea ||
@@ -3369,11 +3355,6 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             node.events.contains("keyUp")) && !keyboardFocusable)
     {
         error = "view keyDown and keyUp events require a focusable node";
-        return false;
-    }
-    if (!IsScrollContainer(node.type) && node.events.contains("scrollEnd"))
-    {
-        error = "scrollEnd events are reserved for scroll and virtual collection nodes";
         return false;
     }
     if (node.capturePointer &&

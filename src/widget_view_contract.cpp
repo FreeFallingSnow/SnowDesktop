@@ -105,6 +105,26 @@ constexpr auto kCommonProperties = std::to_array<std::string_view>({
     "events", "children",
 });
 
+constexpr auto kEventContracts = std::to_array<ViewEventContract>({
+    { "pointerEnter", ViewEventPayloadKind::Pointer },
+    { "pointerLeave", ViewEventPayloadKind::Pointer },
+    { "pointerDown", ViewEventPayloadKind::Pointer },
+    { "pointerMove", ViewEventPayloadKind::Pointer },
+    { "pointerUp", ViewEventPayloadKind::Pointer },
+    { "click", ViewEventPayloadKind::Action },
+    { "doubleClick", ViewEventPayloadKind::Action },
+    { "wheel", ViewEventPayloadKind::Wheel },
+    { "contextMenu", ViewEventPayloadKind::Action },
+    { "keyDown", ViewEventPayloadKind::Key },
+    { "keyUp", ViewEventPayloadKind::Key },
+    { "change", ViewEventPayloadKind::Change },
+    { "selectionChange", ViewEventPayloadKind::SelectionChange },
+    { "focus", ViewEventPayloadKind::Focus },
+    { "blur", ViewEventPayloadKind::Focus },
+    { "submit", ViewEventPayloadKind::Submit },
+    { "scrollEnd", ViewEventPayloadKind::ScrollEnd },
+});
+
 template <std::size_t Size>
 constexpr bool Contains(const std::array<std::string_view, Size>& values,
     std::string_view value) noexcept
@@ -189,6 +209,19 @@ constexpr bool IsActionNode(ViewNodeType type) noexcept
         ViewNodeType::SearchBox, ViewNodeType::NumberInput,
         ViewNodeType::MonthCalendar, ViewNodeType::ListItem,
         ViewNodeType::SlotItem });
+}
+
+constexpr bool IsControlledNode(ViewNodeType type) noexcept
+{
+    return IsCheck(type) || IsChoice(type) || IsInput(type) ||
+        type == ViewNodeType::Slider ||
+        type == ViewNodeType::MonthCalendar;
+}
+
+constexpr bool IsCollectionNode(ViewNodeType type) noexcept
+{
+    return IsType(type, { ViewNodeType::List, ViewNodeType::GridList,
+        ViewNodeType::VirtualList, ViewNodeType::VirtualGrid });
 }
 }
 
@@ -408,6 +441,47 @@ std::vector<std::string_view> ViewNodeRequiredProperties(ViewNodeType type)
     std::vector<std::string_view> result;
     for (const std::string_view property : kProperties)
         if (ViewNodeRequiresProperty(type, property)) result.push_back(property);
+    return result;
+}
+
+std::span<const ViewEventContract> ViewEventContracts() noexcept
+{
+    return kEventContracts;
+}
+
+bool IsKnownViewEvent(std::string_view event) noexcept
+{
+    return std::any_of(kEventContracts.begin(), kEventContracts.end(),
+        [event](const ViewEventContract& contract) {
+            return contract.name == event;
+        });
+}
+
+bool ViewNodeAllowsEvent(
+    ViewNodeType type, std::string_view event) noexcept
+{
+    if (!IsKnownViewEvent(event)) return false;
+    if (event == "change")
+        return IsControlledNode(type) || IsCollectionNode(type);
+    if (event == "selectionChange")
+        return IsType(type, { ViewNodeType::TextInput,
+            ViewNodeType::TextArea, ViewNodeType::SearchBox });
+    if (event == "focus" || event == "blur" || event == "submit")
+        return IsInput(type);
+    if (event == "scrollEnd")
+        return type == ViewNodeType::Scroll ||
+            type == ViewNodeType::VirtualList ||
+            type == ViewNodeType::VirtualGrid;
+    return true;
+}
+
+std::vector<std::string_view> ViewNodeAllowedEvents(ViewNodeType type)
+{
+    std::vector<std::string_view> result;
+    result.reserve(kEventContracts.size());
+    for (const ViewEventContract& contract : kEventContracts)
+        if (ViewNodeAllowsEvent(type, contract.name))
+            result.push_back(contract.name);
     return result;
 }
 }

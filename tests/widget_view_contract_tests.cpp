@@ -11,9 +11,14 @@ namespace
 using snowdesktop::widget_runtime::FindViewNodeContract;
 using snowdesktop::widget_runtime::FindViewNodeType;
 using snowdesktop::widget_runtime::HasViewAccessibilityPattern;
+using snowdesktop::widget_runtime::IsKnownViewEvent;
 using snowdesktop::widget_runtime::IsKnownViewNodeProperty;
 using snowdesktop::widget_runtime::ViewAccessibilityPattern;
+using snowdesktop::widget_runtime::ViewEventContracts;
+using snowdesktop::widget_runtime::ViewEventPayloadKind;
 using snowdesktop::widget_runtime::ViewNodeAllowedProperties;
+using snowdesktop::widget_runtime::ViewNodeAllowedEvents;
+using snowdesktop::widget_runtime::ViewNodeAllowsEvent;
 using snowdesktop::widget_runtime::ViewNodeContracts;
 using snowdesktop::widget_runtime::ViewNodeRequiresProperty;
 using snowdesktop::widget_runtime::ViewNodeRequiredProperties;
@@ -276,12 +281,71 @@ void TestRepresentativeApplicability()
                 ViewAccessibilityPattern::Value),
         "text input UIA mapping must expose Value");
 }
+
+void TestEventContract()
+{
+    const auto events = ViewEventContracts();
+    Check(events.size() == 17,
+        "the event matrix must enumerate the complete public event vocabulary");
+    std::set<std::string> names;
+    for (const auto& event : events)
+    {
+        Check(!event.name.empty() && names.emplace(event.name).second,
+            "event contract names must be non-empty and unique");
+        Check(IsKnownViewEvent(event.name),
+            "event names must round-trip through the public vocabulary");
+    }
+    for (const auto& node : ViewNodeContracts())
+    {
+        const auto allowed = ViewNodeAllowedEvents(node.type);
+        Check(!allowed.empty(),
+            "every public node must have an enumerable event contract");
+        for (const auto event : allowed)
+            Check(IsKnownViewEvent(event) &&
+                    ViewNodeAllowsEvent(node.type, event),
+                "enumerated node events must belong to the public matrix");
+    }
+    Check(!IsKnownViewEvent("dragDrop") &&
+            !ViewNodeAllowsEvent(ViewNodeType::Button, "dragDrop"),
+        "unpublished events must not enter the node matrix");
+
+    Check(ViewNodeAllowsEvent(ViewNodeType::Box, "click") &&
+            ViewNodeAllowsEvent(ViewNodeType::Text, "pointerMove") &&
+            ViewNodeAllowsEvent(ViewNodeType::Button, "keyDown"),
+        "common pointer, action, and key events must remain composable");
+    Check(ViewNodeAllowsEvent(ViewNodeType::Slider, "change") &&
+            ViewNodeAllowsEvent(ViewNodeType::List, "change") &&
+            !ViewNodeAllowsEvent(ViewNodeType::Text, "change"),
+        "change must stay scoped to controlled nodes and collections");
+    Check(ViewNodeAllowsEvent(ViewNodeType::TextInput,
+                "selectionChange") &&
+            !ViewNodeAllowsEvent(ViewNodeType::NumberInput,
+                "selectionChange") &&
+            ViewNodeAllowsEvent(ViewNodeType::NumberInput, "submit") &&
+            !ViewNodeAllowsEvent(ViewNodeType::Select, "submit"),
+        "text-selection and input lifecycle events must remain scoped");
+    Check(ViewNodeAllowsEvent(ViewNodeType::Scroll, "scrollEnd") &&
+            ViewNodeAllowsEvent(ViewNodeType::VirtualGrid, "scrollEnd") &&
+            !ViewNodeAllowsEvent(ViewNodeType::List, "scrollEnd"),
+        "scrollEnd must stay on host-managed scroll containers");
+
+    const auto key = std::find_if(events.begin(), events.end(),
+        [](const auto& event) { return event.name == "keyDown"; });
+    const auto change = std::find_if(events.begin(), events.end(),
+        [](const auto& event) { return event.name == "change"; });
+    Check(key != events.end() &&
+            key->payload == ViewEventPayloadKind::Key &&
+            change != events.end() &&
+            change->payload == ViewEventPayloadKind::Change,
+        "event payload categories must be machine readable");
+}
 }
 
 int main()
 {
     TestContractCoverageAndRoundTrip();
     TestRepresentativeApplicability();
+    TestEventContract();
     std::cout << "widget view contract tests passed\n";
     return 0;
 }

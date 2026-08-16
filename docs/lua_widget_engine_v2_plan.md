@@ -1272,8 +1272,10 @@ M6 冻结前必须生成并评审一份机器可读的 **node-property applicabi
 
 当前已建立第一层宿主契约表 `widget_view_contract`：44 个已公开节点的规范名称、类别、细粒度
 feature、默认 accessibility role、允许属性和直接必需属性由同一份可枚举矩阵提供，Lua view
-解析器已使用该矩阵拒绝未知或不适用属性，节点名称解析和默认 role 也不再各自维护副本。当前
-现已进一步为每个语义节点登记 UIA ControlType、基础 Pattern 和是否参与宿主键盘焦点，并可从
+解析器已使用该矩阵拒绝未知或不适用属性，节点名称解析和默认 role 也不再各自维护副本。
+17 个公开节点事件也已进入同一契约源，登记统一 payload 类别和逐节点适用性；Lua 解析器、
+scene 校验与契约测试不再分别维护 change、selectionChange、输入生命周期和 scrollEnd 的类型白名单。
+当前已进一步为每个语义节点登记 UIA ControlType、基础 Pattern 和是否参与宿主键盘焦点，并可从
 布局后的 view tree 生成保持父子关系、裁剪/offscreen、enabled/focused 和受控值状态的只读语义
 快照。桌面窗口已响应 `WM_GETOBJECT`，通过 Windows UIA Fragment Provider 暴露当前组件与元素的
 名称、ControlType、AutomationId、RuntimeId、边界、可见性、启用/焦点状态、父子/兄弟导航、

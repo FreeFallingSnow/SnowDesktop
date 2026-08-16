@@ -155,8 +155,12 @@ void TestPublishedV2Catalog(const fs::path& repository)
         "constexpr auto kContracts", "constexpr auto kProperties"));
     const auto properties = QuotedStrings(Section(viewContract,
         "constexpr auto kProperties", "constexpr auto kCommonProperties"));
+    const auto events = FirstQuotedInitializerFields(Section(viewContract,
+        "constexpr auto kEventContracts", "template <std::size_t Size>"));
     Check(nodes.size() == 44 && properties.size() == 146,
         "view node/property catalog sizes must match the reviewed v2 contract");
+    Check(events.size() == 17,
+        "view event catalog size must match the reviewed v2 contract");
     for (const auto& node : nodes)
     {
         Check(luaLs.find("function view." + node + "(") !=
@@ -169,6 +173,13 @@ void TestPublishedV2Catalog(const fs::path& repository)
     {
         Check(luaLs.find("---@field " + property) != std::string::npos,
             std::string("view property is absent from LuaLS: ") + property);
+    }
+    for (const auto& event : events)
+    {
+        Check(luaLs.find("---@field " + event) != std::string::npos,
+            std::string("view event is absent from LuaLS: ") + event);
+        Check(api.find(event) != std::string::npos,
+            std::string("view event is absent from API v2 docs: ") + event);
     }
 }
 

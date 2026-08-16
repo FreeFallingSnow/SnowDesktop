@@ -355,6 +355,23 @@ down/up、doubleClick 和 contextMenu，动作通过 `event.kind == "action"` �
 设置、悬浮和移除等总菜单。覆盖整张组件表面的菜单应显式写
 `{ id="component.menu", scope="component" }`，其返回项会附加到组件总菜单。
 
+事件名称和节点适用性由宿主公共契约固定，未知名称会拒绝整棵 scene，而不是被静默忽略：
+
+| 事件 | 可声明节点 | 主要负载 |
+|---|---|---|
+| `pointerEnter/Leave/Down/Move/Up` | 任意节点 | `targetKey`、局部 `x/y`、指针按钮与修饰键；move 需 `view.pointer.events` |
+| `click/doubleClick/contextMenu` | 任意节点 | `targetKey`、`source`、点击次数或菜单目标 |
+| `wheel` | 任意节点 | `targetKey`、`delta`、修饰键；需 `view.pointer.events` |
+| `keyDown/keyUp` | 运行时实际可聚焦的节点 | `key`、`virtualKey`、`repeat`、修饰键；需 `view.keyboard.events` |
+| `change` | 输入、选择、滑块、日历和声明了 selection 的集合 | 原值及宿主建议的新值/选择；组件仍负责写回 model |
+| `selectionChange` | `textInput/textArea/searchBox` | UTF-8 字节边界的 `previousSelection/selection` |
+| `focus/blur/submit` | `textInput/textArea/searchBox/numberInput` | `targetKey`、`source`；submit 同时携带当前文本或数值 |
+| `scrollEnd` | `scroll/virtualList/virtualGrid` | `targetKey`、`source` 与已提交的滚动状态；需 `view.scroll.events` |
+
+表中“任意节点”只表示类型级适用性；事件仍受可见、命中、enabled、焦点、feature probe 和
+可信手势规则约束。例如没有实际焦点的节点不会收到 key 事件，selectionMode 为 none 的集合也
+不会产生 change。所有事件动作继续使用 `SnowInteractionAction`，不能保存 Lua 闭包或取消宿主默认行为。
+
 探测 `view.text.flow` 后，普通 `text`、按钮/链接等 label 节点和 `styledText` 可使用
 `textWrap="noWrap|wrap"`、`maxLines=0..64`、`overflowText="clip|ellipsis"` 和
 `verticalAlign="start|center|end"`。普通文本/label 默认 noWrap+ellipsis，styledText 为保持

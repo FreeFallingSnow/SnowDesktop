@@ -55,6 +55,40 @@ bool ValidateObjectFields(lua_State* state, int index,
     return true;
 }
 
+bool ValidateViewEventFields(lua_State* state, int index,
+    std::string_view context, std::string& error)
+{
+    index = lua_absindex(state, index);
+    if (lua_getmetatable(state, index) != 0)
+    {
+        lua_pop(state, 1);
+        error = std::string(context) + " cannot have a metatable";
+        return false;
+    }
+    lua_pushnil(state);
+    while (lua_next(state, index) != 0)
+    {
+        if (lua_type(state, -2) != LUA_TSTRING)
+        {
+            lua_pop(state, 2);
+            error = std::string(context) + " keys must be strings";
+            return false;
+        }
+        std::size_t length = 0;
+        const char* key = lua_tolstring(state, -2, &length);
+        const std::string_view field(key ? key : "", length);
+        if (!IsKnownViewEvent(field))
+        {
+            lua_pop(state, 2);
+            error = std::string(context) + " has unsupported field '" +
+                std::string(field) + "'";
+            return false;
+        }
+        lua_pop(state, 1);
+    }
+    return true;
+}
+
 bool ValidateArray(lua_State* state, int index,
     std::string_view context, std::string& error)
 {
@@ -3125,22 +3159,15 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     if (lua_istable(state, -1))
     {
         const int events = lua_absindex(state, -1);
-        if (!ValidateObjectFields(state, events,
-                { "pointerEnter", "pointerLeave", "pointerDown",
-                    "pointerMove", "pointerUp", "click", "doubleClick", "wheel", "contextMenu",
-                    "keyDown", "keyUp", "change", "selectionChange",
-                    "focus", "blur", "submit", "scrollEnd" },
-                "view events", error))
+        if (!ValidateViewEventFields(
+                state, events, "view events", error))
         {
             lua_pop(state, 1);
             return false;
         }
-        for (const char* eventName : { "pointerEnter", "pointerLeave",
-            "pointerDown", "pointerMove", "pointerUp", "click", "doubleClick", "wheel",
-            "contextMenu", "keyDown", "keyUp", "change",
-            "selectionChange", "focus", "blur", "submit", "scrollEnd" })
+        for (const ViewEventContract& contract : ViewEventContracts())
         {
-            lua_getfield(state, events, eventName);
+            lua_getfield(state, events, contract.name.data());
             if (!lua_isnil(state, -1))
             {
                 InteractionAction action;
@@ -3149,7 +3176,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
                     lua_pop(state, 2);
                     return false;
                 }
-                node.events.emplace(eventName, std::move(action));
+                node.events.emplace(contract.name, std::move(action));
             }
             lua_pop(state, 1);
         }
