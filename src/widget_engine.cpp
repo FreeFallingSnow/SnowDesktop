@@ -3525,15 +3525,92 @@ static int lua_InteractionRegion(lua_State* state)
     lua_getfield(state, descriptor, "accessibility");
     if (lua_istable(state, -1))
     {
-        lua_getfield(state, -1, "role");
+        const int accessibility = lua_absindex(state, -1);
+        lua_pushnil(state);
+        while (lua_next(state, accessibility) != 0)
+        {
+            std::size_t keyLength = 0;
+            const char* key = lua_tolstring(state, -2, &keyLength);
+            const std::string_view field(key ? key : "", keyLength);
+            const bool supported = lua_type(state, -2) == LUA_TSTRING &&
+                (field == "role" || field == "label" ||
+                    field == "value" || field == "hint" ||
+                    field == "headingLevel" || field == "live" ||
+                    field == "positionInSet" || field == "setSize" ||
+                    field == "hidden");
+            lua_pop(state, 1);
+            if (!supported)
+            {
+                lua_pop(state, 2);
+                return luaL_error(state,
+                    "interaction.region: unsupported accessibility field");
+            }
+        }
+        const auto readAccessibilityString = [&](const char* field,
+            std::string& output) {
+            lua_getfield(state, accessibility, field);
+            if (!lua_isnil(state, -1))
+            {
+                std::size_t length = 0;
+                const char* value = luaL_checklstring(
+                    state, -1, &length);
+                output.assign(value ? value : "", length);
+            }
+            lua_pop(state, 1);
+        };
+        readAccessibilityString("role", region.accessibilityRole);
+        readAccessibilityString("label", region.accessibilityLabel);
+        readAccessibilityString("value", region.accessibilityValue);
+        readAccessibilityString("hint", region.accessibilityHint);
+        const auto readAccessibilityInteger = [&](const char* field,
+            int& output) {
+            lua_getfield(state, accessibility, field);
+            if (!lua_isnil(state, -1))
+            {
+                if (!lua_isinteger(state, -1))
+                    return false;
+                const lua_Integer value = lua_tointeger(state, -1);
+                if (value < (std::numeric_limits<int>::min)() ||
+                    value > (std::numeric_limits<int>::max)())
+                    return false;
+                output = static_cast<int>(value);
+            }
+            lua_pop(state, 1);
+            return true;
+        };
+        if (!readAccessibilityInteger("headingLevel",
+                region.accessibilityHeadingLevel) ||
+            !readAccessibilityInteger("positionInSet",
+                region.accessibilityPositionInSet) ||
+            !readAccessibilityInteger("setSize",
+                region.accessibilitySetSize))
+            return luaL_error(state,
+                "interaction.region: accessibility indices must be integers");
+        std::string live;
+        readAccessibilityString("live", live);
+        if (live.empty() || live == "off")
+            region.accessibilityLive = AccessibilityLive::Off;
+        else if (live == "polite")
+            region.accessibilityLive = AccessibilityLive::Polite;
+        else if (live == "assertive")
+            region.accessibilityLive = AccessibilityLive::Assertive;
+        else
+            return luaL_error(state,
+                "interaction.region: accessibility live must be off, polite, or assertive");
+        lua_getfield(state, accessibility, "hidden");
         if (!lua_isnil(state, -1))
-            region.accessibilityRole = luaL_checkstring(state, -1);
-        lua_pop(state, 1);
-        lua_getfield(state, -1, "label");
-        if (!lua_isnil(state, -1))
-            region.accessibilityLabel = luaL_checkstring(state, -1);
+        {
+            if (!lua_isboolean(state, -1))
+                return luaL_error(state,
+                    "interaction.region: accessibility hidden must be a boolean");
+            region.accessibilityHidden =
+                lua_toboolean(state, -1) != 0;
+        }
         lua_pop(state, 1);
     }
+    else if (!lua_isnil(state, -1))
+        return luaL_error(state,
+            "interaction.region: accessibility must be a table");
     lua_pop(state, 1);
 
     lua_getfield(state, descriptor, "events");

@@ -85,6 +85,13 @@ enum class InteractionShapeType
     Circle,
 };
 
+enum class AccessibilityLive
+{
+    Off,
+    Polite,
+    Assertive,
+};
+
 struct InteractionShape
 {
     InteractionShapeType type = InteractionShapeType::Rect;
@@ -149,6 +156,13 @@ struct InteractionRegion
     std::map<std::string, InteractionAction, std::less<>> events;
     std::string accessibilityRole;
     std::string accessibilityLabel;
+    std::string accessibilityValue;
+    std::string accessibilityHint;
+    AccessibilityLive accessibilityLive = AccessibilityLive::Off;
+    int accessibilityHeadingLevel = 0;
+    int accessibilityPositionInSet = 0;
+    int accessibilitySetSize = 0;
+    bool accessibilityHidden = false;
     bool capturePointer = false;
     InteractionControlKind controlKind = InteractionControlKind::None;
     bool checked = false;

@@ -478,6 +478,20 @@ std::optional<PROPERTYID> ChangePropertyId(
     {
     case WidgetAccessibilityChangeKind::Name:
         return UIA_NamePropertyId;
+    case WidgetAccessibilityChangeKind::AriaRole:
+        return UIA_AriaRolePropertyId;
+    case WidgetAccessibilityChangeKind::HelpText:
+        return UIA_HelpTextPropertyId;
+    case WidgetAccessibilityChangeKind::ItemStatus:
+        return UIA_ItemStatusPropertyId;
+    case WidgetAccessibilityChangeKind::HeadingLevel:
+        return UIA_HeadingLevelPropertyId;
+    case WidgetAccessibilityChangeKind::LiveSetting:
+        return UIA_LiveSettingPropertyId;
+    case WidgetAccessibilityChangeKind::PositionInSet:
+        return UIA_PositionInSetPropertyId;
+    case WidgetAccessibilityChangeKind::SizeOfSet:
+        return UIA_SizeOfSetPropertyId;
     case WidgetAccessibilityChangeKind::Enabled:
         return UIA_IsEnabledPropertyId;
     case WidgetAccessibilityChangeKind::Required:
@@ -535,6 +549,27 @@ HRESULT SetChangeVariant(VARIANT* result,
     case WidgetAccessibilityChangeKind::Name:
         return SetStringVariant(result,
             Utf8ToWide(node ? node->name : widget->name));
+    case WidgetAccessibilityChangeKind::AriaRole:
+        return SetStringVariant(result, Utf8ToWide(node->role));
+    case WidgetAccessibilityChangeKind::HelpText:
+        return SetStringVariant(result, Utf8ToWide(node->helpText));
+    case WidgetAccessibilityChangeKind::ItemStatus:
+        return SetStringVariant(result, Utf8ToWide(node->valueText));
+    case WidgetAccessibilityChangeKind::HeadingLevel:
+        SetIntVariant(result, node->headingLevel == 0
+            ? HeadingLevel_None
+            : HeadingLevel_None + node->headingLevel);
+        return S_OK;
+    case WidgetAccessibilityChangeKind::LiveSetting:
+        SetIntVariant(result, static_cast<LONG>(node->live));
+        return S_OK;
+    case WidgetAccessibilityChangeKind::PositionInSet:
+        if (node->positionInSet)
+            SetIntVariant(result, *node->positionInSet);
+        return S_OK;
+    case WidgetAccessibilityChangeKind::SizeOfSet:
+        if (node->setSize) SetIntVariant(result, *node->setSize);
+        return S_OK;
     case WidgetAccessibilityChangeKind::Enabled:
         SetBoolVariant(result, node ? node->enabled : true);
         return S_OK;
@@ -960,6 +995,20 @@ public:
         const auto& widget = snapshots[resolved->widgetIndex];
         const AccessibilityNode* node = resolved->nodeIndex
             ? &widget.nodes[*resolved->nodeIndex] : nullptr;
+        const auto relatedProvider = [&](std::string_view semanticId,
+            Microsoft::WRL::ComPtr<IRawElementProviderSimple>& provider) {
+            provider.Reset();
+            if (semanticId.empty()) return false;
+            const auto* related = FindAccessibilityNode(
+                widget, semanticId);
+            if (!related) return false;
+            Microsoft::WRL::ComPtr<IRawElementProviderFragment> fragment;
+            if (FAILED(CreateFragmentProvider(state_, root_.Get(),
+                    NodeReference(widget, *related), &fragment)) ||
+                !fragment)
+                return false;
+            return SUCCEEDED(fragment.As(&provider)) && provider;
+        };
 
         if (node)
         {
@@ -982,6 +1031,51 @@ public:
                 Utf8ToWide(node ? node->name : widget.name));
         else if (propertyId == UIA_HelpTextPropertyId && node)
             return SetStringVariant(result, Utf8ToWide(node->helpText));
+        else if (propertyId == UIA_ItemStatusPropertyId && node)
+            return SetStringVariant(result, Utf8ToWide(node->valueText));
+        else if (propertyId == UIA_AriaRolePropertyId && node)
+            return SetStringVariant(result, Utf8ToWide(node->role));
+        else if (propertyId == UIA_HeadingLevelPropertyId && node)
+            SetIntVariant(result, node->headingLevel == 0
+                ? HeadingLevel_None
+                : HeadingLevel_None + node->headingLevel);
+        else if (propertyId == UIA_LiveSettingPropertyId && node)
+            SetIntVariant(result, static_cast<LONG>(node->live));
+        else if (propertyId == UIA_PositionInSetPropertyId && node &&
+                 node->positionInSet)
+            SetIntVariant(result, *node->positionInSet);
+        else if (propertyId == UIA_SizeOfSetPropertyId && node &&
+                 node->setSize)
+            SetIntVariant(result, *node->setSize);
+        else if (propertyId == UIA_LabeledByPropertyId && node)
+        {
+            Microsoft::WRL::ComPtr<IRawElementProviderSimple> provider;
+            if (!relatedProvider(node->labelledBySemanticId, provider))
+                return S_OK;
+            result->vt = VT_UNKNOWN;
+            result->punkVal = provider.Detach();
+            return S_OK;
+        }
+        else if (propertyId == UIA_DescribedByPropertyId && node)
+        {
+            Microsoft::WRL::ComPtr<IRawElementProviderSimple> provider;
+            if (!relatedProvider(node->describedBySemanticId, provider))
+                return S_OK;
+            SAFEARRAYBOUND bounds{ 1, 0 };
+            SAFEARRAY* values = SafeArrayCreate(VT_UNKNOWN, 1, &bounds);
+            if (!values) return E_OUTOFMEMORY;
+            LONG index = 0;
+            const HRESULT inserted = SafeArrayPutElement(
+                values, &index, provider.Get());
+            if (FAILED(inserted))
+            {
+                SafeArrayDestroy(values);
+                return inserted;
+            }
+            result->vt = VT_ARRAY | VT_UNKNOWN;
+            result->parray = values;
+            return S_OK;
+        }
         else if (propertyId == UIA_AccessKeyPropertyId && node)
             return SetStringVariant(result, Utf8ToWide(node->accessKey));
         else if (propertyId == UIA_AcceleratorKeyPropertyId && node)
@@ -1970,6 +2064,12 @@ void WidgetAccessibilityProviderHost::RefreshEvents() noexcept
         {
             (void)UiaRaiseAutomationEvent(
                 provider.Get(), UIA_AutomationFocusChangedEventId);
+            continue;
+        }
+        if (change.kind == WidgetAccessibilityChangeKind::LiveRegion)
+        {
+            (void)UiaRaiseAutomationEvent(
+                provider.Get(), UIA_LiveRegionChangedEventId);
             continue;
         }
         const auto propertyId = ChangePropertyId(change.kind);

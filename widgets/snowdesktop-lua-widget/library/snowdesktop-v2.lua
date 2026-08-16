@@ -229,6 +229,17 @@
 ---@class SnowViewAccessibility
 ---@field role? string Optional semantic role override.
 ---@field label? string
+---@field value? string Localized semantic value override without changing the controlled model value.
+---@field hint? string Localized operation or validation guidance exposed as UIA HelpText.
+---@field labelledBy? string Stable key of another declared node whose accessible text becomes this node's name.
+---@field describedBy? string Stable key of another declared node whose accessible text is appended to HelpText.
+---@field headingLevel? integer Heading level from 1 through 9; omit or use 0 for none.
+---@field live? 'off'|'polite'|'assertive' UIA live-region priority; defaults to off.
+---@field positionInSet? integer One-based position from 1 through 32767.
+---@field setSize? integer Total set size from 1 through 32767 and no smaller than positionInSet.
+---@field rowIndex? integer One-based semantic row for a direct child of grid/gridList/virtualGrid.
+---@field columnIndex? integer One-based semantic column for a direct child of grid/gridList/virtualGrid.
+---@field hidden? boolean Remove this non-interactive subtree from UI Automation while preserving visual layout.
 
 ---@class SnowViewTextSelection
 ---@field start integer Zero-based inclusive UTF-8 byte offset at a code-point boundary.
@@ -535,6 +546,13 @@
 ---@class SnowInteractionAccessibility
 ---@field role? string
 ---@field label? string
+---@field value? string Localized semantic value override.
+---@field hint? string Localized UIA HelpText.
+---@field headingLevel? integer Heading level from 1 through 9.
+---@field live? 'off'|'polite'|'assertive'
+---@field positionInSet? integer One-based position from 1 through 32767.
+---@field setSize? integer Total set size from 1 through 32767.
+---@field hidden? boolean Only valid for a region without controls, actions, key events, or focusability.
 
 ---@class SnowInteractionRegion
 ---@field key string Stable key, 1..128 UTF-8 bytes.

@@ -190,9 +190,14 @@ ViewRect ImmediateBounds(const InteractionShape& shape) noexcept
 void PopulateValueState(const ViewNode& source,
     ViewAccessibilityNode& target)
 {
+    target.helpText = source.accessibilityHint;
     if (!source.validationMessage.empty())
-        target.helpText = source.validationMessage;
-    else
+    {
+        if (!target.helpText.empty())
+            target.helpText.insert(0, "\n");
+        target.helpText.insert(0, source.validationMessage);
+    }
+    else if (target.helpText.empty())
     {
         target.helpText = source.tooltipTitle;
         if (!source.tooltipTitle.empty() && !source.tooltip.empty())
@@ -240,6 +245,8 @@ void PopulateValueState(const ViewNode& source,
     {
         target.valueText = source.text;
     }
+    if (!source.accessibilityValue.empty())
+        target.valueText = source.accessibilityValue;
 
     if (source.type == ViewNodeType::Toggle)
         target.checked = source.checked;
@@ -372,7 +379,8 @@ bool CollectNode(const ViewNode& source, std::string_view semanticPath,
     std::vector<ViewAccessibilityNode>& nodes,
     std::string& error)
 {
-    if (!source.visible || source.visibility == ViewVisibility::Hidden)
+    if (!source.visible || source.visibility == ViewVisibility::Hidden ||
+        source.accessibilityHidden)
         return true;
     const ViewNodeContract* contract = FindViewNodeContract(source.type);
     if (!contract)
@@ -402,6 +410,20 @@ bool CollectNode(const ViewNode& source, std::string_view semanticPath,
             : source.accessibilityRole;
         target.controlType = std::string(contract->uiaControlType);
         target.patterns = contract->uiaPatterns;
+        target.labelledBySemanticId =
+            source.accessibilityLabelledBy.empty()
+            ? std::string{}
+            : "key:" + source.accessibilityLabelledBy;
+        target.describedBySemanticId =
+            source.accessibilityDescribedBy.empty()
+            ? std::string{}
+            : "key:" + source.accessibilityDescribedBy;
+        target.live = source.accessibilityLive;
+        target.headingLevel = source.accessibilityHeadingLevel;
+        if (source.accessibilityPositionInSet > 0)
+            target.positionInSet = source.accessibilityPositionInSet;
+        if (source.accessibilitySetSize > 0)
+            target.setSize = source.accessibilitySetSize;
         target.bounds = source.frame;
         target.clip = inheritedClip;
         target.parentIndex = parentIndex;
@@ -419,6 +441,16 @@ bool CollectNode(const ViewNode& source, std::string_view semanticPath,
         PopulateContainerState(source, target);
         if (gridPosition)
             PopulateGridItemState(*gridPosition, target);
+        if (source.accessibilityRowIndex > 0 &&
+            source.accessibilityColumnIndex > 0)
+        {
+            target.patterns = target.patterns |
+                ViewAccessibilityPattern::GridItem;
+            target.gridRow = source.accessibilityRowIndex - 1;
+            target.gridColumn = source.accessibilityColumnIndex - 1;
+            target.gridRowSpan = static_cast<int>(source.rowSpan);
+            target.gridColumnSpan = static_cast<int>(source.columnSpan);
+        }
         semanticParent = nodes.size();
         nodes.push_back(std::move(target));
         if (parentIndex != ViewAccessibilityNode::NoParent)
@@ -469,6 +501,64 @@ bool CollectNode(const ViewNode& source, std::string_view semanticPath,
     }
     return true;
 }
+
+const ViewNode* FindSourceNode(
+    const ViewNode& source, std::string_view key) noexcept
+{
+    if (source.key == key) return &source;
+    for (const auto& child : source.children)
+        if (const auto* found = FindSourceNode(child, key)) return found;
+    return nullptr;
+}
+
+void ResolveAccessibilityRelationships(const ViewNode& root,
+    std::vector<ViewAccessibilityNode>& nodes)
+{
+    for (auto& node : nodes)
+    {
+        if (!node.labelledBySemanticId.empty())
+        {
+            const std::string_view key = std::string_view(
+                node.labelledBySemanticId).substr(4);
+            if (const auto* source = FindSourceNode(root, key))
+                node.name = AccessibleName(*source);
+        }
+        if (!node.describedBySemanticId.empty())
+        {
+            const std::string_view key = std::string_view(
+                node.describedBySemanticId).substr(4);
+            if (const auto* source = FindSourceNode(root, key))
+            {
+                const std::string description = AccessibleName(*source);
+                if (!description.empty())
+                {
+                    if (!node.helpText.empty()) node.helpText.push_back('\n');
+                    node.helpText += description;
+                }
+            }
+        }
+    }
+    for (auto& node : nodes)
+    {
+        if (!HasViewAccessibilityPattern(
+                node.patterns, ViewAccessibilityPattern::Grid))
+            continue;
+        for (const std::size_t childIndex : node.children)
+        {
+            if (childIndex >= nodes.size()) continue;
+            const auto& child = nodes[childIndex];
+            if (child.gridRow)
+                node.gridRowCount = std::max(
+                    node.gridRowCount.value_or(0),
+                    *child.gridRow + child.gridRowSpan.value_or(1));
+            if (child.gridColumn)
+                node.gridColumnCount = std::max(
+                    node.gridColumnCount.value_or(0),
+                    *child.gridColumn +
+                        child.gridColumnSpan.value_or(1));
+        }
+    }
+}
 }
 
 bool CollectViewAccessibilityNodes(const ViewNode& root,
@@ -485,6 +575,7 @@ bool CollectViewAccessibilityNodes(const ViewNode& root,
         nodes.clear();
         return false;
     }
+    ResolveAccessibilityRelationships(root, nodes);
     for (auto& node : nodes)
     {
         node.bounds = ApplyViewTransform(node.bounds,
@@ -511,6 +602,7 @@ bool CollectInteractionAccessibilityNodes(
         std::max(0.0f, surfaceWidth), std::max(0.0f, surfaceHeight) };
     for (const auto& region : regions)
     {
+        if (region.accessibilityHidden) continue;
         if (nodes.size() >= WidgetInteractionRegions::kMaximumRegions)
         {
             nodes.clear();
@@ -526,10 +618,21 @@ bool CollectInteractionAccessibilityNodes(
         node.accessKey = FormatAccessKey(region.accessKey);
         node.acceleratorText = region.acceleratorText;
         node.role = region.accessibilityRole;
-        node.helpText = region.tooltipTitle;
-        if (!region.tooltipTitle.empty() && !region.tooltip.empty())
-            node.helpText.push_back('\n');
-        node.helpText += region.tooltip;
+        node.valueText = region.accessibilityValue;
+        node.live = region.accessibilityLive;
+        node.headingLevel = region.accessibilityHeadingLevel;
+        if (region.accessibilityPositionInSet > 0)
+            node.positionInSet = region.accessibilityPositionInSet;
+        if (region.accessibilitySetSize > 0)
+            node.setSize = region.accessibilitySetSize;
+        node.helpText = region.accessibilityHint;
+        if (node.helpText.empty())
+        {
+            node.helpText = region.tooltipTitle;
+            if (!region.tooltipTitle.empty() && !region.tooltip.empty())
+                node.helpText.push_back('\n');
+            node.helpText += region.tooltip;
+        }
         node.controlType = mapping.controlType;
         node.patterns = mapping.patterns;
         node.bounds = ImmediateBounds(region.shape);
@@ -557,13 +660,14 @@ bool CollectInteractionAccessibilityNodes(
             node.minimum = region.minimum;
             node.maximum = region.maximum;
             node.step = region.step;
-            node.valueText = FormatNumber(region.controlValue);
+            if (node.valueText.empty())
+                node.valueText = FormatNumber(region.controlValue);
             node.rangeValueReadOnly = false;
         }
         if (mapping.patterns == ViewAccessibilityPattern::Value)
             node.valueReadOnly = false;
         if (region.hasExpandedProposal) node.expanded = region.expanded;
-        if (!region.currentSelection.empty())
+        if (node.valueText.empty() && !region.currentSelection.empty())
             node.valueText = region.currentSelection;
         nodes.push_back(std::move(node));
     }

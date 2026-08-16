@@ -45,15 +45,17 @@ std::map<NodeKey, NodeEntry> IndexNodes(
 }
 
 std::vector<std::tuple<std::wstring, std::string, std::string,
-    std::string, std::uint32_t>> StructureSignature(
+    std::string, std::uint32_t, std::string, std::string>>
+StructureSignature(
     const std::vector<LuaWidgetAccessibilitySnapshot>& snapshots)
 {
     std::vector<std::tuple<std::wstring, std::string, std::string,
-        std::string, std::uint32_t>> result;
+        std::string, std::uint32_t, std::string, std::string>> result;
     for (const auto& widget : snapshots)
     {
         result.emplace_back(widget.widgetId, std::string{},
-            std::string{}, widget.packageId, 0u);
+            std::string{}, widget.packageId, 0u,
+            std::string{}, std::string{});
         for (const auto& node : widget.nodes)
         {
             std::string parent;
@@ -62,7 +64,9 @@ std::vector<std::tuple<std::wstring, std::string, std::string,
                 parent = widget.nodes[node.parentIndex].semanticId;
             result.emplace_back(widget.widgetId, node.semanticId,
                 std::move(parent), node.controlType,
-                static_cast<std::uint32_t>(node.patterns));
+                static_cast<std::uint32_t>(node.patterns),
+                node.labelledBySemanticId,
+                node.describedBySemanticId);
         }
     }
     return result;
@@ -172,6 +176,36 @@ std::vector<WidgetAccessibilityChange> DiffWidgetAccessibilitySnapshots(
         if (old.name != now.name)
             AddNodeChange(changes,
                 WidgetAccessibilityChangeKind::Name, key);
+        if (old.role != now.role)
+            AddNodeChange(changes,
+                WidgetAccessibilityChangeKind::AriaRole, key);
+        if (old.helpText != now.helpText)
+            AddNodeChange(changes,
+                WidgetAccessibilityChangeKind::HelpText, key);
+        if (old.valueText != now.valueText &&
+            !snowdesktop::widget_runtime::HasViewAccessibilityPattern(
+                now.patterns, snowdesktop::widget_runtime::
+                    ViewAccessibilityPattern::Value))
+            AddNodeChange(changes,
+                WidgetAccessibilityChangeKind::ItemStatus, key);
+        if (old.headingLevel != now.headingLevel)
+            AddNodeChange(changes,
+                WidgetAccessibilityChangeKind::HeadingLevel, key);
+        if (old.live != now.live)
+            AddNodeChange(changes,
+                WidgetAccessibilityChangeKind::LiveSetting, key);
+        if (old.positionInSet != now.positionInSet)
+            AddNodeChange(changes,
+                WidgetAccessibilityChangeKind::PositionInSet, key);
+        if (old.setSize != now.setSize)
+            AddNodeChange(changes,
+                WidgetAccessibilityChangeKind::SizeOfSet, key);
+        if (now.live != snowdesktop::widget_runtime::
+                AccessibilityLive::Off &&
+            (old.name != now.name || old.valueText != now.valueText ||
+                old.helpText != now.helpText))
+            AddNodeChange(changes,
+                WidgetAccessibilityChangeKind::LiveRegion, key);
         if (old.enabled != now.enabled)
             AddNodeChange(changes,
                 WidgetAccessibilityChangeKind::Enabled, key);

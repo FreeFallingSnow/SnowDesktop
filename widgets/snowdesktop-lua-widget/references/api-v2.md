@@ -978,9 +978,27 @@ Grid/GridItem；任意未实体化集合项仍未形成完整 UIA VirtualizedIte
 事件和错误码也未全部迁入，
 作者仍应以本节各 feature 的细化说明为准。
 
+探测 `view.accessibility.metadata` 后，声明式节点的 `accessibility` 表除 `role/label` 外还支持：
+
+- `value` 覆盖面向辅助技术的值文本，不修改组件受控值；`hint` 进入 UIA HelpText；
+- `labelledBy/describedBy` 引用同一棵树中另一个稳定节点 key。前者提供 Name 与 LabeledBy，
+  后者追加 HelpText 并提供 DescribedBy；未知、自引用或没有可读文本的目标会拒绝整棵树；
+- `headingLevel=1..9`、`live="off|polite|assertive"`、一基的
+  `positionInSet/setSize`；live 节点的名称、值或帮助变化会发送 LiveRegionChanged；
+- `rowIndex/columnIndex` 必须成对用于 grid/gridList/virtualGrid 的直接子节点，公共值从 1 开始，
+  UIA GridItem 输出转换为从 0 开始；
+- `hidden=true` 从语义树移除整棵子树但保留视觉布局。宿主拒绝用它隐藏可聚焦、带动作或带
+  交互控件的子树，避免产生只能用鼠标操作的目标。
+
+语义字符串受单节点 4 KiB 与全树 64 KiB 文本额度约束。`role` 同时输出 UIA AriaRole，
+`value/hint/heading/live/positionInSet/setSize` 分别映射到 ItemStatus、HelpText、HeadingLevel、
+LiveSetting、PositionInSet 和 SizeOfSet；关系目标仍在语义树中时还会输出原生 UIA provider 关系。
+
 即时模式的 `interaction.region` 也进入同一种宿主语义快照，因此使用 `render()` 的组件应为
 每个有意义的元素填写稳定 `key`、`accessibility.role` 与 `accessibility.label`；纯命中区域若不
-声明语义不会出现在无障碍树中。快照只收集当前可见、有效且非预览的 v2 实例。
+声明语义不会出现在无障碍树中。探测 `interaction.accessibility.metadata` 后还可声明
+`value/hint/headingLevel/live/positionInSet/setSize/hidden`；即时 region 是扁平语义集合，不接受
+跨 region 的 labelledBy/describedBy 或 grid 行列关系。快照只收集当前可见、有效且非预览的 v2 实例。
 
 探测 `view.surface.panel` 后，`panel(context, model)` 可返回同一份受限声明式树。宿主为 panel
 单独维护上一成功树、交互区域、滚动偏移、输入控件与焦点，桌面重渲染不会清空这些状态；

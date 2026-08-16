@@ -558,15 +558,21 @@ default border does not fit the component design.
   `interaction.keyboard` before setting `focusable/tabIndex` or observing
   `keyDown/keyUp`; use `interaction.isFocused(key)` to draw the focus state.
   Key observers cannot cancel host activation or text input.
-  Only regions with `accessibility.role` or `accessibility.label` enter the
-  host semantic snapshot. Supply both for meaningful elements. The Windows
+  Only regions with declared accessibility metadata enter the host semantic
+  snapshot. Supply role and label for meaningful elements. Probe
+  `interaction.accessibility.metadata` before adding value, hint, headingLevel,
+  live, positionInSet/setSize, or hidden. hidden is rejected on interactive or
+  focusable regions. Probe `view.accessibility.metadata` for the same semantic
+  values on declarative nodes, plus labelledBy/describedBy relationships,
+  one-based grid row/column indices, and non-interactive hidden subtrees. The Windows
   UIA provider exposes the current tree, properties, navigation, hit testing,
   host focus, and Invoke/Toggle/RangeValue/Value/ExpandCollapse/Selection/
   SelectionItem/Scroll/Grid/GridItem patterns. Accessibility actions are
   untrusted (`source="accessibility"`) and
   never grant permission authority. Successful desktop frames also emit
-  structure, focus, bounds, name, enabled, offscreen, toggle, value,
-  expand/collapse, and scroll UIA changes. Declarative radio options, expanded select
+  structure, focus, bounds, name, role, help/value metadata, live-region,
+  set-position, enabled, offscreen, toggle, value, expand/collapse, and scroll
+  UIA changes. Declarative radio options, expanded select
   options, and month-calendar dates are individual SelectionItem children;
   their parent exposes Selection. Scroll containers expose their current host
   offset through Scroll, while grids and materialized cells expose zero-based

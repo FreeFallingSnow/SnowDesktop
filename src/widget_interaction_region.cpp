@@ -286,6 +286,35 @@ bool WidgetInteractionRegions::Submit(
         error = "interaction tooltip title/body must contain at most 256/4096 bytes";
         return false;
     }
+    if (region.accessibilityRole.size() > 128 ||
+        region.accessibilityLabel.size() > 4096 ||
+        region.accessibilityValue.size() > 4096 ||
+        region.accessibilityHint.size() > 4096 ||
+        region.accessibilityLabel.size() +
+                region.accessibilityValue.size() +
+                region.accessibilityHint.size() > 8192 ||
+        region.accessibilityHeadingLevel < 0 ||
+        region.accessibilityHeadingLevel > 9 ||
+        region.accessibilityPositionInSet < 0 ||
+        region.accessibilityPositionInSet > 32767 ||
+        region.accessibilitySetSize < 0 ||
+        region.accessibilitySetSize > 32767 ||
+        (region.accessibilityPositionInSet != 0 &&
+            region.accessibilitySetSize != 0 &&
+            region.accessibilityPositionInSet >
+                region.accessibilitySetSize))
+    {
+        error = "interaction accessibility metadata is invalid or exceeds its limits";
+        return false;
+    }
+    if (region.accessibilityHidden &&
+        (IsPotentiallyKeyboardFocusableRegion(region) ||
+            !region.events.empty() ||
+            region.controlKind != InteractionControlKind::None))
+    {
+        error = "accessibility.hidden cannot conceal an interactive region";
+        return false;
+    }
     const bool controlled = region.controlKind !=
         InteractionControlKind::None;
     if (controlled && (!region.events.contains("change") ||
@@ -747,8 +776,15 @@ WidgetInteractionRegions::AccessibilityRegions() const
     result.reserve(active_.size());
     for (const auto& region : active_)
     {
-        if (!region.accessibilityRole.empty() ||
-            !region.accessibilityLabel.empty())
+        if (!region.accessibilityHidden &&
+            (!region.accessibilityRole.empty() ||
+                !region.accessibilityLabel.empty() ||
+                !region.accessibilityValue.empty() ||
+                !region.accessibilityHint.empty() ||
+                region.accessibilityHeadingLevel != 0 ||
+                region.accessibilityLive != AccessibilityLive::Off ||
+                region.accessibilityPositionInSet != 0 ||
+                region.accessibilitySetSize != 0))
             result.push_back(region);
     }
     return result;

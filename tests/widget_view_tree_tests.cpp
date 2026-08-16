@@ -4512,6 +4512,99 @@ void TestVisibilityStates()
         "legacy visible and explicit visibility must not contradict each other");
     lua_close(state);
 }
+
+void TestAccessibilityMetadataParsingAndValidation()
+{
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "Lua state must be available");
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    Check(luaL_dostring(state, R"lua(
+        return view.column({
+            key = "root",
+            children = {
+                view.text({ key = "title", text = "Search",
+                    accessibility = { headingLevel = 2 } }),
+                view.text({ key = "help", text = "Enter a query" }),
+                view.textInput({ key = "query", value = "",
+                    readOnly = true,
+                    accessibility = {
+                        role = "searchbox",
+                        labelledBy = "title",
+                        describedBy = "help",
+                        value = "Empty",
+                        hint = "Type to search",
+                        live = "polite",
+                        positionInSet = 2,
+                        setSize = 3,
+                    },
+                }),
+                view.grid({ key = "grid", columns = 2,
+                    children = {
+                        view.text({ key = "cell", text = "Cell",
+                            accessibility = {
+                                rowIndex = 1, columnIndex = 2,
+                            },
+                        }),
+                    },
+                }),
+                view.box({ key = "decoration",
+                    accessibility = { hidden = true },
+                    children = {
+                        view.text({ key = "spark", text = "*" }),
+                    },
+                }),
+            },
+        })
+    )lua") == LUA_OK,
+        "accessibility metadata fixture must evaluate");
+    ViewNode root;
+    std::string error;
+    Check(ParseLuaViewTree(state, -1, root, error) &&
+            root.children.size() == 5 &&
+            root.children[0].accessibilityHeadingLevel == 2 &&
+            root.children[2].accessibilityLabelledBy == "title" &&
+            root.children[2].accessibilityDescribedBy == "help" &&
+            root.children[2].accessibilityValue == "Empty" &&
+            root.children[2].accessibilityHint == "Type to search" &&
+            root.children[2].accessibilityLive ==
+                AccessibilityLive::Polite &&
+            root.children[2].accessibilityPositionInSet == 2 &&
+            root.children[2].accessibilitySetSize == 3 &&
+            root.children[3].children[0].accessibilityRowIndex == 1 &&
+            root.children[3].children[0].accessibilityColumnIndex == 2 &&
+            root.children[4].accessibilityHidden &&
+            ValidateAndLayoutViewTree(root, 240.0f, 180.0f, error),
+        "valid semantic relationships, indices, and hidden decoration must commit");
+    lua_pop(state, 1);
+
+    Check(luaL_dostring(state, R"lua(
+        return view.textInput({ key = "bad-ref", value = "",
+            readOnly = true,
+            accessibility = { labelledBy = "missing" } })
+    )lua") == LUA_OK,
+        "invalid accessibility relationship fixture must evaluate");
+    ViewNode invalid;
+    Check(ParseLuaViewTree(state, -1, invalid, error) &&
+            !ValidateAndLayoutViewTree(
+                invalid, 120.0f, 40.0f, error) &&
+            error.find("relationship") != std::string::npos,
+        "unknown accessibility relationships must reject the scene");
+    lua_pop(state, 1);
+
+    Check(luaL_dostring(state, R"lua(
+        return view.button({ key = "hidden-action", label = "Open",
+            action = { id = "open" },
+            accessibility = { hidden = true } })
+    )lua") == LUA_OK,
+        "hidden interactive fixture must evaluate");
+    Check(ParseLuaViewTree(state, -1, invalid, error) &&
+            !ValidateAndLayoutViewTree(
+                invalid, 120.0f, 40.0f, error) &&
+            error.find("interactive subtree") != std::string::npos,
+        "accessibility.hidden must reject interactive subtrees");
+    lua_close(state);
+}
 }
 
 int main()
@@ -4548,6 +4641,7 @@ int main()
     TestVisualTransitionRuntime();
     TestThemeColorTokens();
     TestVisibilityStates();
+    TestAccessibilityMetadataParsingAndValidation();
     std::cout << "Widget view tree tests passed\n";
     return 0;
 }

@@ -139,6 +139,12 @@ void TestImmediateRegionSemantics()
         8, 8, 80, 32, 6 };
     button.accessibilityRole = "button";
     button.accessibilityLabel = "Open";
+    button.accessibilityValue = "Available";
+    button.accessibilityHint = "Activates the selected item";
+    button.accessibilityHeadingLevel = 3;
+    button.accessibilityLive = AccessibilityLive::Polite;
+    button.accessibilityPositionInSet = 1;
+    button.accessibilitySetSize = 2;
     button.tooltipTitle = "Open item";
     button.tooltip = "Launch the selected item";
     button.events.emplace("click", InteractionAction{ "open", {} });
@@ -163,7 +169,11 @@ void TestImmediateRegionSemantics()
         "immediate regions must share the declarative semantic model");
     Check(nodes[0].controlType == "Button" && nodes[0].focused &&
             nodes[0].semanticId == "key:open" &&
-            nodes[0].helpText == "Open item\nLaunch the selected item" &&
+            nodes[0].helpText == "Activates the selected item" &&
+            nodes[0].valueText == "Available" &&
+            nodes[0].headingLevel == 3 &&
+            nodes[0].live == AccessibilityLive::Polite &&
+            nodes[0].positionInSet == 1 && nodes[0].setSize == 2 &&
             HasViewAccessibilityPattern(nodes[0].patterns,
                 ViewAccessibilityPattern::Invoke),
         "immediate buttons must expose Invoke and host focus");
@@ -172,6 +182,71 @@ void TestImmediateRegionSemantics()
             nodes[1].maximum == 10.0f && nodes[1].step == 0.5f &&
             !nodes[1].rangeValueReadOnly && nodes[1].offscreen,
         "immediate sliders must expose bounded range state and effective clipping");
+}
+
+void TestSemanticMetadataAndRelationships()
+{
+    ViewNode root = Node(ViewNodeType::Column,
+        "root", 0, 0, 240, 160);
+    ViewNode label = Node(ViewNodeType::Text,
+        "label", 8, 8, 180, 24);
+    label.text = "Search";
+    label.accessibilityHeadingLevel = 2;
+    ViewNode description = Node(ViewNodeType::Text,
+        "description", 8, 36, 180, 24);
+    description.text = "Search installed applications";
+    ViewNode input = Node(ViewNodeType::TextInput,
+        "query", 8, 68, 180, 28);
+    input.accessibilityLabelledBy = "label";
+    input.accessibilityDescribedBy = "description";
+    input.accessibilityValue = "No query";
+    input.accessibilityHint = "Type an application name";
+    input.accessibilityLive = AccessibilityLive::Assertive;
+    input.accessibilityPositionInSet = 2;
+    input.accessibilitySetSize = 4;
+    ViewNode grid = Node(ViewNodeType::Grid,
+        "results", 8, 104, 180, 40);
+    ViewNode gridCell = Node(ViewNodeType::Text,
+        "result", 8, 104, 80, 24);
+    gridCell.text = "Calculator";
+    gridCell.accessibilityRowIndex = 3;
+    gridCell.accessibilityColumnIndex = 2;
+    grid.children.push_back(gridCell);
+    ViewNode decoration = Node(ViewNodeType::Box,
+        "decoration", 8, 148, 180, 24);
+    decoration.accessibilityHidden = true;
+    ViewNode decorativeText = Node(ViewNodeType::Text,
+        "decorative-text", 8, 104, 180, 24);
+    decorativeText.text = "Decorative";
+    decoration.children.push_back(decorativeText);
+    root.children = { label, description, input, grid, decoration };
+
+    std::vector<ViewAccessibilityNode> nodes;
+    std::string error;
+    Check(CollectViewAccessibilityNodes(root, {}, nodes, error) &&
+            nodes.size() == 6,
+        "semantic hidden subtrees must be omitted without losing relationships");
+    const auto query = std::find_if(nodes.begin(), nodes.end(),
+        [](const auto& node) { return node.key == "query"; });
+    Check(query != nodes.end() && query->name == "Search" &&
+            query->valueText == "No query" &&
+            query->helpText ==
+                "Type an application name\nSearch installed applications" &&
+            query->labelledBySemanticId == "key:label" &&
+            query->describedBySemanticId == "key:description" &&
+            query->live == AccessibilityLive::Assertive &&
+            query->positionInSet == 2 && query->setSize == 4 &&
+            nodes[1].headingLevel == 2,
+        "semantic metadata must resolve names, descriptions, live priority, and set positions");
+    const auto results = std::find_if(nodes.begin(), nodes.end(),
+        [](const auto& node) { return node.key == "results"; });
+    const auto result = std::find_if(nodes.begin(), nodes.end(),
+        [](const auto& node) { return node.key == "result"; });
+    Check(results != nodes.end() && result != nodes.end() &&
+            result->gridRow == 2 && result->gridColumn == 1 &&
+            results->gridRowCount == 3 &&
+            results->gridColumnCount == 2,
+        "one-based accessibility grid indices must map to zero-based UIA positions and container extents");
 }
 
 void TestVirtualControlChildren()
@@ -334,6 +409,7 @@ int main()
     TestSemanticHierarchyAndState();
     TestClipAndControlledState();
     TestImmediateRegionSemantics();
+    TestSemanticMetadataAndRelationships();
     TestVirtualControlChildren();
     TestHiddenSemanticSubtree();
     TestTransformedSemanticBounds();

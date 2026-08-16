@@ -628,6 +628,17 @@ struct ViewNode
     std::string acceleratorText;
     std::string accessibilityRole;
     std::string accessibilityLabel;
+    std::string accessibilityValue;
+    std::string accessibilityHint;
+    std::string accessibilityLabelledBy;
+    std::string accessibilityDescribedBy;
+    AccessibilityLive accessibilityLive = AccessibilityLive::Off;
+    int accessibilityHeadingLevel = 0;
+    int accessibilityPositionInSet = 0;
+    int accessibilitySetSize = 0;
+    int accessibilityRowIndex = 0;
+    int accessibilityColumnIndex = 0;
+    bool accessibilityHidden = false;
     bool capturePointer = false;
     ViewStyle style;
     ViewStyle hoverStyle;

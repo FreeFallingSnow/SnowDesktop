@@ -23,6 +23,8 @@ struct ViewAccessibilityNode
     std::string controlType;
     std::string valueText;
     std::string helpText;
+    std::string labelledBySemanticId;
+    std::string describedBySemanticId;
     std::string accessKey;
     std::string acceleratorText;
     ViewAccessibilityPattern patterns = ViewAccessibilityPattern::None;
@@ -38,6 +40,10 @@ struct ViewAccessibilityNode
     bool busy = false;
     bool canSelectMultiple = false;
     bool selectionRequired = false;
+    AccessibilityLive live = AccessibilityLive::Off;
+    int headingLevel = 0;
+    std::optional<int> positionInSet;
+    std::optional<int> setSize;
     std::optional<bool> checked;
     std::optional<bool> expanded;
     std::optional<float> value;

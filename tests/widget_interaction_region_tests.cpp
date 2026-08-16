@@ -7,6 +7,7 @@
 
 namespace
 {
+using snowdesktop::widget_runtime::AccessibilityLive;
 using snowdesktop::widget_runtime::InteractionAction;
 using snowdesktop::widget_runtime::InteractionControlKind;
 using snowdesktop::widget_runtime::InteractionRegion;
@@ -468,6 +469,12 @@ void TestKeyboardFocusableOrderAndFiltering()
     button.tabIndex = 3;
     auto input = Rect("query", 0, 40, 120, 32);
     input.accessibilityRole = "searchbox";
+    input.accessibilityValue = "Empty";
+    input.accessibilityHint = "Type to search";
+    input.accessibilityHeadingLevel = 2;
+    input.accessibilityLive = AccessibilityLive::Polite;
+    input.accessibilityPositionInSet = 1;
+    input.accessibilitySetSize = 2;
     input.tabIndex = -1;
     auto slider = Rect("volume", 0, 80, 120, 24);
     slider.controlKind = InteractionControlKind::Slider;
@@ -515,8 +522,14 @@ void TestKeyboardFocusableOrderAndFiltering()
 
     const auto semantics = regions.AccessibilityRegions();
     Check(semantics.size() == 2 && semantics[0].key == "query" &&
+            semantics[0].accessibilityValue == "Empty" &&
+            semantics[0].accessibilityHint == "Type to search" &&
+            semantics[0].accessibilityHeadingLevel == 2 &&
+            semantics[0].accessibilityLive == AccessibilityLive::Polite &&
+            semantics[0].accessibilityPositionInSet == 1 &&
+            semantics[0].accessibilitySetSize == 2 &&
             semantics[1].key == "volume",
-        "accessibility snapshots must omit regions without declared semantics");
+        "accessibility snapshots must retain metadata and omit undeclared regions");
 
     WidgetInteractionRegions invalid;
     auto keyOnly = Rect("key-only", 0, 0, 80, 32);
@@ -526,6 +539,17 @@ void TestKeyboardFocusableOrderAndFiltering()
     Check(!invalid.Submit(std::move(keyOnly), error) &&
             error.find("require a focusable region") != std::string::npos,
         "immediate key observers must reject unreachable focus targets");
+
+    WidgetInteractionRegions hiddenInvalid;
+    auto hiddenAction = Rect("hidden-action", 0, 0, 80, 32);
+    hiddenAction.accessibilityHidden = true;
+    hiddenAction.events.emplace("click",
+        InteractionAction{ "hidden.open", {} });
+    hiddenInvalid.BeginFrame();
+    Check(!hiddenInvalid.Submit(std::move(hiddenAction), error) &&
+            error.find("conceal an interactive region") !=
+                std::string::npos,
+        "semantic hiding must reject interactive immediate regions");
 }
 }
 

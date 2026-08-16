@@ -1287,6 +1287,11 @@ action 使用 `source="accessibility"`，
 `monthCalendar` 日期生成为稳定
 SelectionItem 子元素，并为父控件实现 Selection Pattern；任意虚拟化集合的按需子项协议仍未
 接通。滚动容器现提供单轴 Scroll Pattern，网格和已实体化单元提供零基 Grid/GridItem；
+`view.accessibility.metadata` 与 `interaction.accessibility.metadata` 已进一步开放 value/hint、
+heading/live、集合位置和语义隐藏；声明式节点还支持稳定 key 的 labelledBy/describedBy 关系与
+一基 grid 行列覆盖。宿主将这些字段映射为 AriaRole、ItemStatus、HelpText、LabeledBy、
+DescribedBy、HeadingLevel、LiveSetting、PositionInSet、SizeOfSet 和 GridItem，并为 live 内容变化
+发送 LiveRegionChanged；加载/提交阶段拒绝无名或自身关系、越界索引以及隐藏交互子树。
 ScrollItem、未实体化项的 VirtualizedItem 以及真实 Narrator 场景验收仍未完成；默认值/范围、
 子节点、事件、RTL、动画、额度和错误码仍未全部迁入矩阵，
 也尚未由它生成 LuaLS 与本文档，因此这仍不表示契约已经冻结或完整无障碍已经可用。

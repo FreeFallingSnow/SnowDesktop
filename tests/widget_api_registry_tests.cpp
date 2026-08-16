@@ -352,6 +352,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "interaction.contextMenu.submenu") &&
             snowdesktop::widget_api::SupportsFeature(
+                "interaction.accessibility.metadata") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "interaction.keyboard") &&
             snowdesktop::widget_api::SupportsFeature(
                 "interaction.region") &&
@@ -470,6 +472,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature("view.font") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.actionControls") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "view.accessibility.metadata") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.collection.basic") &&
             snowdesktop::widget_api::SupportsFeature(

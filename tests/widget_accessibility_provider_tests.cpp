@@ -22,6 +22,7 @@ using snowdesktop::WidgetAccessibilityChangeKind;
 using snowdesktop::WidgetAccessibilityElementKind;
 using snowdesktop::widget_runtime::ViewAccessibilityNode;
 using snowdesktop::widget_runtime::ViewAccessibilityPattern;
+using snowdesktop::widget_runtime::AccessibilityLive;
 
 void Check(bool condition, const char* message)
 {
@@ -52,6 +53,18 @@ bool PropertyBool(IRawElementProviderSimple* provider, PROPERTYID property)
             value.vt == VT_BOOL,
         "boolean property must return VT_BOOL");
     const bool result = value.boolVal == VARIANT_TRUE;
+    VariantClear(&value);
+    return result;
+}
+
+int PropertyInt(IRawElementProviderSimple* provider, PROPERTYID property)
+{
+    VARIANT value;
+    VariantInit(&value);
+    Check(SUCCEEDED(provider->GetPropertyValue(property, &value)) &&
+            value.vt == VT_I4,
+        "integer property must return VT_I4");
+    const int result = value.lVal;
     VariantClear(&value);
     return result;
 }
@@ -99,6 +112,13 @@ LuaWidgetAccessibilitySnapshot Snapshot()
     ViewAccessibilityNode status;
     status.semanticId = "path:0/1";
     status.name = "Ready";
+    status.role = "status";
+    status.valueText = "All systems ready";
+    status.helpText = "Current system status";
+    status.live = AccessibilityLive::Polite;
+    status.headingLevel = 2;
+    status.positionInSet = 1;
+    status.setSize = 4;
     status.controlType = "Text";
     status.bounds = { 10, 60, 100, 20 };
     status.parentIndex = 0;
@@ -139,6 +159,8 @@ LuaWidgetAccessibilitySnapshot Snapshot()
     input.helpText = "Enter a search term";
     input.valueReadOnly = false;
     input.required = true;
+    input.labelledBySemanticId = "path:0/1";
+    input.describedBySemanticId = "path:0/1";
 
     ViewAccessibilityNode combo;
     combo.semanticId = "key:choice";
@@ -284,6 +306,13 @@ void TestSnapshotDiff()
     current[0].nodes[5].required = false;
     current[0].nodes[6].expanded = true;
     current[0].nodes[2].name = "Updated";
+    current[0].nodes[2].role = "alert";
+    current[0].nodes[2].valueText = "Attention required";
+    current[0].nodes[2].helpText = "Updated status";
+    current[0].nodes[2].headingLevel = 3;
+    current[0].nodes[2].live = AccessibilityLive::Assertive;
+    current[0].nodes[2].positionInSet = 2;
+    current[0].nodes[2].setSize = 5;
     current[0].nodes[2].enabled = false;
     current[0].nodes[2].offscreen = true;
     current[0].nodes[2].bounds.x += 5.0f;
@@ -317,6 +346,30 @@ void TestSnapshotDiff()
                 WidgetAccessibilityElementKind::Node, "key:choice") &&
             ContainsChange(changes,
                 WidgetAccessibilityChangeKind::Enabled,
+                WidgetAccessibilityElementKind::Node, "path:0/1") &&
+            ContainsChange(changes,
+                WidgetAccessibilityChangeKind::AriaRole,
+                WidgetAccessibilityElementKind::Node, "path:0/1") &&
+            ContainsChange(changes,
+                WidgetAccessibilityChangeKind::HelpText,
+                WidgetAccessibilityElementKind::Node, "path:0/1") &&
+            ContainsChange(changes,
+                WidgetAccessibilityChangeKind::ItemStatus,
+                WidgetAccessibilityElementKind::Node, "path:0/1") &&
+            ContainsChange(changes,
+                WidgetAccessibilityChangeKind::HeadingLevel,
+                WidgetAccessibilityElementKind::Node, "path:0/1") &&
+            ContainsChange(changes,
+                WidgetAccessibilityChangeKind::LiveSetting,
+                WidgetAccessibilityElementKind::Node, "path:0/1") &&
+            ContainsChange(changes,
+                WidgetAccessibilityChangeKind::PositionInSet,
+                WidgetAccessibilityElementKind::Node, "path:0/1") &&
+            ContainsChange(changes,
+                WidgetAccessibilityChangeKind::SizeOfSet,
+                WidgetAccessibilityElementKind::Node, "path:0/1") &&
+            ContainsChange(changes,
+                WidgetAccessibilityChangeKind::LiveRegion,
                 WidgetAccessibilityElementKind::Node, "path:0/1") &&
             ContainsChange(changes,
                 WidgetAccessibilityChangeKind::Offscreen,
@@ -414,6 +467,21 @@ void TestProviderTreeAndLifetime()
     Check(PropertyString(AsSimple(group.Get()).Get(),
             UIA_AriaPropertiesPropertyId) == L"busy=true",
         "busy view state must be exposed without localized placeholder text");
+    Check(PropertyString(AsSimple(status.Get()).Get(),
+                UIA_AriaRolePropertyId) == L"status" &&
+            PropertyString(AsSimple(status.Get()).Get(),
+                UIA_ItemStatusPropertyId) == L"All systems ready" &&
+            PropertyString(AsSimple(status.Get()).Get(),
+                UIA_HelpTextPropertyId) == L"Current system status" &&
+            PropertyInt(AsSimple(status.Get()).Get(),
+                UIA_HeadingLevelPropertyId) == HeadingLevel2 &&
+            PropertyInt(AsSimple(status.Get()).Get(),
+                UIA_LiveSettingPropertyId) == Polite &&
+            PropertyInt(AsSimple(status.Get()).Get(),
+                UIA_PositionInSetPropertyId) == 1 &&
+            PropertyInt(AsSimple(status.Get()).Get(),
+                UIA_SizeOfSetPropertyId) == 4,
+        "semantic metadata must map to native UIA properties");
 
     SAFEARRAY* buttonId = nullptr;
     SAFEARRAY* statusId = nullptr;
@@ -534,6 +602,41 @@ void TestProviderTreeAndLifetime()
             actions.back().textValue == L"after",
         "Value must expose text and route replacement values");
     SysFreeString(inputValue);
+
+    VARIANT labelledBy;
+    VariantInit(&labelledBy);
+    Check(SUCCEEDED(AsSimple(input.Get())->GetPropertyValue(
+            UIA_LabeledByPropertyId, &labelledBy)) &&
+            labelledBy.vt == VT_UNKNOWN && labelledBy.punkVal,
+        "LabeledBy must return the referenced element provider");
+    ComPtr<IRawElementProviderSimple> labelProvider;
+    Check(SUCCEEDED(labelledBy.punkVal->QueryInterface(
+            IID_PPV_ARGS(&labelProvider))) &&
+            PropertyString(labelProvider.Get(),
+                UIA_AutomationIdPropertyId) == L"path:0/1",
+        "LabeledBy must preserve the referenced semantic identity");
+    VariantClear(&labelledBy);
+
+    VARIANT describedBy;
+    VariantInit(&describedBy);
+    Check(SUCCEEDED(AsSimple(input.Get())->GetPropertyValue(
+            UIA_DescribedByPropertyId, &describedBy)) &&
+            describedBy.vt == (VT_ARRAY | VT_UNKNOWN) &&
+            describedBy.parray,
+        "DescribedBy must return a provider array");
+    LONG describedIndex = 0;
+    IUnknown* describedUnknown = nullptr;
+    Check(SUCCEEDED(SafeArrayGetElement(describedBy.parray,
+            &describedIndex, &describedUnknown)) && describedUnknown,
+        "DescribedBy must contain the referenced provider");
+    ComPtr<IRawElementProviderSimple> descriptionProvider;
+    Check(SUCCEEDED(describedUnknown->QueryInterface(
+            IID_PPV_ARGS(&descriptionProvider))) &&
+            PropertyString(descriptionProvider.Get(),
+                UIA_AutomationIdPropertyId) == L"path:0/1",
+        "DescribedBy must preserve the referenced semantic identity");
+    describedUnknown->Release();
+    VariantClear(&describedBy);
 
     pattern.Reset();
     Check(SUCCEEDED(AsSimple(combo.Get())->GetPatternProvider(

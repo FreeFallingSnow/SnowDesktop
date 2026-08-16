@@ -2055,6 +2055,9 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
     std::unordered_set<std::string>& resources,
     std::optional<ViewNodeType> parentType, std::string& error)
 {
+    const bool accessibleNameDeclared =
+        !node.accessibilityLabel.empty() ||
+        !node.accessibilityLabelledBy.empty();
     if (++nodes > ViewTreeLimits::MaximumNodes)
     {
         error = "view tree node limit exceeded (512)";
@@ -2260,9 +2263,9 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
     }
     if (node.focusable.value_or(false) &&
         node.accessibilityLabel.empty() && node.text.empty() &&
-        node.alt.empty())
+        node.alt.empty() && node.accessibilityLabelledBy.empty())
     {
-        error = "view focusable=true requires accessible text or accessibility.label";
+        error = "view focusable=true requires accessible text, accessibility.label, or accessibility.labelledBy";
         return false;
     }
     if (!IsFlexContainer(node.type) &&
@@ -2802,9 +2805,9 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             error = "listItem nodes require exactly one child and it must be visible";
             return false;
         }
-        if (node.accessibilityLabel.empty())
+        if (!accessibleNameDeclared)
         {
-            error = "listItem nodes require accessibility.label";
+            error = "listItem nodes require accessibility.label or accessibility.labelledBy";
             return false;
         }
     }
@@ -2864,9 +2867,9 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             error = "slotItem nodes require exactly one visible child";
             return false;
         }
-        if (node.accessibilityLabel.empty())
+        if (!accessibleNameDeclared)
         {
-            error = "slotItem nodes require accessibility.label";
+            error = "slotItem nodes require accessibility.label or accessibility.labelledBy";
             return false;
         }
         if (++collectionItems > ViewTreeLimits::MaximumCollectionItems)
@@ -3014,9 +3017,9 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             node.calendarYear < 1 || node.calendarYear > 9999 ||
             node.calendarMonth < 1 || node.calendarMonth > 12 ||
             node.firstDayOfWeek < 1 || node.firstDayOfWeek > 7 ||
-            node.accessibilityLabel.empty())
+            !accessibleNameDeclared)
         {
-            error = "monthCalendar requires a bounded key, year/month, firstDayOfWeek, and accessibility.label";
+            error = "monthCalendar requires a bounded key, year/month, firstDayOfWeek, and accessibility.label or accessibility.labelledBy";
             return false;
         }
         std::array<ViewMonthCalendarCell, 42> cells;
@@ -3081,16 +3084,44 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         error = "input maxBytes must be at most 65536 and contain the controlled value";
         return false;
     }
+    const std::size_t accessibilityTextBytes =
+        node.accessibilityLabel.size() +
+        node.accessibilityValue.size() +
+        node.accessibilityHint.size() +
+        node.accessibilityLabelledBy.size() +
+        node.accessibilityDescribedBy.size();
+    const bool indexedGridItem = node.accessibilityRowIndex != 0 ||
+        node.accessibilityColumnIndex != 0;
     if (node.accessibilityRole.size() > 128 ||
-        node.accessibilityLabel.size() >
-            ViewTreeLimits::MaximumTextBytes ||
-        textBytes + node.accessibilityLabel.size() >
-            ViewTreeLimits::MaximumTotalTextBytes)
+        node.accessibilityLabel.size() > ViewTreeLimits::MaximumTextBytes ||
+        node.accessibilityValue.size() > ViewTreeLimits::MaximumTextBytes ||
+        node.accessibilityHint.size() > ViewTreeLimits::MaximumTextBytes ||
+        node.accessibilityLabelledBy.size() > 128 ||
+        node.accessibilityDescribedBy.size() > 128 ||
+        accessibilityTextBytes >
+            ViewTreeLimits::MaximumTotalTextBytes - textBytes ||
+        node.accessibilityHeadingLevel < 0 ||
+        node.accessibilityHeadingLevel > 9 ||
+        node.accessibilityPositionInSet < 0 ||
+        node.accessibilityPositionInSet > 32767 ||
+        node.accessibilitySetSize < 0 ||
+        node.accessibilitySetSize > 32767 ||
+        (node.accessibilityPositionInSet != 0 &&
+            node.accessibilitySetSize != 0 &&
+            node.accessibilityPositionInSet > node.accessibilitySetSize) ||
+        node.accessibilityRowIndex < 0 ||
+        node.accessibilityRowIndex > 32767 ||
+        node.accessibilityColumnIndex < 0 ||
+        node.accessibilityColumnIndex > 32767 ||
+        (indexedGridItem &&
+            (node.accessibilityRowIndex == 0 ||
+                node.accessibilityColumnIndex == 0 || !parentType ||
+                !IsGridContainer(*parentType))))
     {
-        error = "view tree accessibility text limit exceeded";
+        error = "view accessibility metadata is invalid or exceeds its limits";
         return false;
     }
-    textBytes += node.accessibilityLabel.size();
+    textBytes += accessibilityTextBytes;
     if (IsChoiceNode(node.type))
     {
         if (node.options.empty() ||
@@ -3178,10 +3209,10 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             error = "view data-series min must be less than max";
             return false;
         }
-        if (node.accessibilityLabel.empty())
+        if (!accessibleNameDeclared)
         {
             error = std::string(ViewNodeTypeName(node.type)) +
-                " nodes require accessibility.label";
+                " nodes require accessibility.label or accessibility.labelledBy";
             return false;
         }
     }
@@ -3271,28 +3302,28 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         return false;
     }
     if (node.type == ViewNodeType::IconButton &&
-        node.accessibilityLabel.empty())
+        !accessibleNameDeclared)
     {
-        error = "iconButton nodes require accessibility.label";
+        error = "iconButton nodes require accessibility.label or accessibility.labelledBy";
         return false;
     }
     if (node.type == ViewNodeType::Meter &&
-        node.accessibilityLabel.empty())
+        !accessibleNameDeclared)
     {
-        error = "meter nodes require accessibility.label";
+        error = "meter nodes require accessibility.label or accessibility.labelledBy";
         return false;
     }
     if (node.type == ViewNodeType::Slider &&
-        node.accessibilityLabel.empty())
+        !accessibleNameDeclared)
     {
-        error = "slider nodes require accessibility.label";
+        error = "slider nodes require accessibility.label or accessibility.labelledBy";
         return false;
     }
     if ((IsInputNode(node.type) || node.type == ViewNodeType::Select) &&
-        node.accessibilityLabel.empty())
+        !accessibleNameDeclared)
     {
         error = std::string(ViewNodeTypeName(node.type)) +
-            " nodes require accessibility.label";
+            " nodes require accessibility.label or accessibility.labelledBy";
         return false;
     }
     for (const auto& [eventName, action] : node.events)
@@ -3401,6 +3432,86 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
                 seriesPoints, collectionItems, keys, accessKeys, resources,
                 node.type, error)) return false;
     return true;
+}
+
+const ViewNode* FindAccessibilityReferenceTarget(
+    const ViewNode& node, std::string_view key) noexcept
+{
+    if (node.key == key) return &node;
+    for (const auto& child : node.children)
+        if (const auto* target =
+                FindAccessibilityReferenceTarget(child, key))
+            return target;
+    return nullptr;
+}
+
+std::string_view AccessibilityReferenceText(const ViewNode& node) noexcept
+{
+    if (!node.accessibilityLabel.empty()) return node.accessibilityLabel;
+    if (!node.alt.empty()) return node.alt;
+    return node.text;
+}
+
+bool AccessibilitySubtreeContainsInteraction(const ViewNode& node) noexcept
+{
+    const auto* contract = FindViewNodeContract(node.type);
+    if ((contract && contract->keyboardFocusable) ||
+        node.focusable.value_or(false) || !node.events.empty())
+        return true;
+    return std::any_of(node.children.begin(), node.children.end(),
+        [](const ViewNode& child) {
+            return AccessibilitySubtreeContainsInteraction(child);
+        });
+}
+
+bool ValidateAccessibilityMetadata(const ViewNode& root,
+    std::string& error)
+{
+    const auto validate = [&](const auto& self,
+        const ViewNode& node) -> bool {
+        if (node.accessibilityHidden &&
+            AccessibilitySubtreeContainsInteraction(node))
+        {
+            error = "accessibility.hidden cannot conceal an interactive subtree";
+            return false;
+        }
+        for (const auto* reference : {
+                &node.accessibilityLabelledBy,
+                &node.accessibilityDescribedBy })
+        {
+            if (reference->empty()) continue;
+            const auto* target = FindAccessibilityReferenceTarget(
+                root, *reference);
+            if (!target || target == &node ||
+                AccessibilityReferenceText(*target).empty())
+            {
+                error = "view accessibility relationship references an invalid or unnamed node";
+                return false;
+            }
+        }
+        if (IsGridContainer(node.type))
+        {
+            std::unordered_set<std::uint64_t> explicitCells;
+            for (const auto& child : node.children)
+            {
+                if (child.accessibilityRowIndex == 0) continue;
+                const std::uint64_t identity =
+                    (static_cast<std::uint64_t>(
+                        child.accessibilityRowIndex) << 32) |
+                    static_cast<std::uint32_t>(
+                        child.accessibilityColumnIndex);
+                if (!explicitCells.insert(identity).second)
+                {
+                    error = "grid accessibility row/column indices must be unique";
+                    return false;
+                }
+            }
+        }
+        for (const auto& child : node.children)
+            if (!self(self, child)) return false;
+        return true;
+    };
+    return validate(validate, root);
 }
 
 void ApplyCollectionSelectionState(ViewNode& node)
@@ -5437,6 +5548,7 @@ bool ValidateAndLayoutViewTree(ViewNode& root, float width, float height,
     ClearCollectionSelectionState(root);
     ApplyCollectionSelectionState(root);
     if (!ResolveGridPlacements(root, error)) return false;
+    if (!ValidateAccessibilityMetadata(root, error)) return false;
     LayoutNode(root, { 0.0f, 0.0f, width, height });
     CaptureLayoutTransitionFrames(root, std::nullopt);
     return ValidateTransforms(root, {}, error) &&

@@ -3060,14 +3060,56 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     lua_getfield(state, index, "accessibility");
     if (lua_istable(state, -1))
     {
-        if (!ValidateObjectFields(state, -1, { "role", "label" },
+        if (!ValidateObjectFields(state, -1,
+                { "role", "label", "value", "hint", "labelledBy",
+                    "describedBy", "headingLevel", "live",
+                    "positionInSet", "setSize", "rowIndex",
+                    "columnIndex", "hidden" },
                 "view accessibility", error) ||
             !ReadStringField(state, -1, "role",
                 node.accessibilityRole, false, error) ||
             !ReadStringField(state, -1, "label",
-                node.accessibilityLabel, false, error))
+                node.accessibilityLabel, false, error) ||
+            !ReadStringField(state, -1, "value",
+                node.accessibilityValue, false, error) ||
+            !ReadStringField(state, -1, "hint",
+                node.accessibilityHint, false, error) ||
+            !ReadStringField(state, -1, "labelledBy",
+                node.accessibilityLabelledBy, false, error) ||
+            !ReadStringField(state, -1, "describedBy",
+                node.accessibilityDescribedBy, false, error) ||
+            !ReadIntegerField(state, -1, "headingLevel",
+                node.accessibilityHeadingLevel, error) ||
+            !ReadIntegerField(state, -1, "positionInSet",
+                node.accessibilityPositionInSet, error) ||
+            !ReadIntegerField(state, -1, "setSize",
+                node.accessibilitySetSize, error) ||
+            !ReadIntegerField(state, -1, "rowIndex",
+                node.accessibilityRowIndex, error) ||
+            !ReadIntegerField(state, -1, "columnIndex",
+                node.accessibilityColumnIndex, error) ||
+            !ReadBoolField(state, -1, "hidden",
+                node.accessibilityHidden, error))
         {
             lua_pop(state, 1);
+            return false;
+        }
+        std::string live;
+        if (!ReadStringField(state, -1, "live", live, false, error))
+        {
+            lua_pop(state, 1);
+            return false;
+        }
+        if (live.empty() || live == "off")
+            node.accessibilityLive = AccessibilityLive::Off;
+        else if (live == "polite")
+            node.accessibilityLive = AccessibilityLive::Polite;
+        else if (live == "assertive")
+            node.accessibilityLive = AccessibilityLive::Assertive;
+        else
+        {
+            lua_pop(state, 1);
+            error = "view accessibility live must be off, polite, or assertive";
             return false;
         }
     }
