@@ -434,6 +434,18 @@ void TestLuaParsing()
             error.find("do not accept field 'fontSize'") !=
                 std::string::npos,
         "non-text visuals must reject ignored typography during parsing");
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.divider({
+            key = "divider-with-track", trackOpacity = 0.5,
+        })
+    )lua") == LUA_OK,
+        "ignored-divider-track fixture must evaluate");
+    root = {};
+    Check(!ParseLuaViewTree(state, -1, root, error) &&
+            error.find("do not accept field 'trackOpacity'") !=
+                std::string::npos,
+        "divider must reject progress-only opacity during parsing");
     lua_close(state);
 }
 

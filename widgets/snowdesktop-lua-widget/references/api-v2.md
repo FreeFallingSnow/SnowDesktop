@@ -1008,6 +1008,11 @@ accessibility role、允许属性、直接必需属性和子节点策略。Lua �
 输入/选择、图标和月历等实际消费它们的节点；`gap` 只用于线性、网格、flow、虚拟集合和
 radioGroup；`alignItems/justifyContent` 只用于会执行对应对齐算法的布局；`clip/overflow` 只用于
 拥有后代的容器。需要给图片裁圆角或背景时应使用 `style`，不要把后代裁剪属性放在叶节点上。
+其中输入和 select 只消费 `fontSize/textAlign/locale/textDirection`，radioGroup 与月历额外消费
+`bold`，其余高级字重、字形、行高、字距和文本流字段只开放给真正使用 DirectWrite 通用文本
+管线的文本、标签和图标节点。divider 只使用 `thickness`，不接受进度/图表的
+`trackOpacity/fillOpacity`；select 的选中项当前使用宿主固定状态色，也不接受仅供
+toggle/checkbox/radioGroup 使用的 `checkedStyle`。
 
 该表也登记 17 个公开事件的负载类别和逐节点适用性，以及 UIA ControlType、基础 Pattern 和宿主键盘可聚焦性，宿主能从
 布局结果生成语义快照，并已通过 Windows UIA Fragment Provider 暴露组件/元素树、基础属性、

@@ -104,6 +104,17 @@ void TestRepresentativeApplicability()
             !ViewNodeAllowsProperty(ViewNodeType::ProgressRing,
                 "textWrap"),
         "typography properties must not be accepted by non-text visuals");
+    Check(ViewNodeAllowsProperty(ViewNodeType::TextInput, "fontSize") &&
+            ViewNodeAllowsProperty(ViewNodeType::Select, "textAlign") &&
+            ViewNodeAllowsProperty(ViewNodeType::RadioGroup, "bold") &&
+            ViewNodeAllowsProperty(ViewNodeType::MonthCalendar, "bold") &&
+            !ViewNodeAllowsProperty(ViewNodeType::TextInput,
+                "fontWeight") &&
+            !ViewNodeAllowsProperty(ViewNodeType::RadioGroup,
+                "maxLines") &&
+            !ViewNodeAllowsProperty(ViewNodeType::MonthCalendar,
+                "lineHeight"),
+        "advanced typography must stay on renderers that apply it");
     Check(ViewNodeAllowsProperty(ViewNodeType::Row, "gap") &&
             ViewNodeAllowsProperty(ViewNodeType::VirtualGrid, "gap") &&
             ViewNodeAllowsProperty(ViewNodeType::RadioGroup, "gap") &&
@@ -247,6 +258,21 @@ void TestRepresentativeApplicability()
             ViewNodeAllowsProperty(ViewNodeType::Select, "required") &&
             !ViewNodeAllowsProperty(ViewNodeType::Button, "required"),
         "mixed checkbox, indeterminate progress, and required form states must remain scoped to their controls");
+    Check(ViewNodeAllowsProperty(ViewNodeType::Divider, "thickness") &&
+            !ViewNodeAllowsProperty(ViewNodeType::Divider,
+                "trackOpacity") &&
+            !ViewNodeAllowsProperty(ViewNodeType::Divider,
+                "fillOpacity") &&
+            ViewNodeAllowsProperty(ViewNodeType::ProgressRing,
+                "trackOpacity") &&
+            ViewNodeAllowsProperty(ViewNodeType::Waveform,
+                "fillOpacity"),
+        "track and fill opacity must stay on progress and series renderers");
+    Check(ViewNodeAllowsProperty(ViewNodeType::RadioGroup,
+                "checkedStyle") &&
+            !ViewNodeAllowsProperty(ViewNodeType::Select,
+                "checkedStyle"),
+        "checkedStyle must not be accepted by the hard-coded select overlay");
     Check(ViewNodeAllowsProperty(ViewNodeType::TextInput,
                 "validationState") &&
             ViewNodeAllowsProperty(ViewNodeType::NumberInput,

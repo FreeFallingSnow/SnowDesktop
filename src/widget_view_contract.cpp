@@ -208,6 +208,27 @@ constexpr bool IsTypographyNode(ViewNodeType type) noexcept
         type == ViewNodeType::MonthCalendar;
 }
 
+constexpr bool IsAdvancedTypographyNode(ViewNodeType type) noexcept
+{
+    return IsType(type, { ViewNodeType::Text, ViewNodeType::StyledText,
+        ViewNodeType::Badge, ViewNodeType::Button, ViewNodeType::Link,
+        ViewNodeType::Toggle, ViewNodeType::Checkbox,
+        ViewNodeType::Icon, ViewNodeType::IconButton });
+}
+
+constexpr bool IsBoldTypographyNode(ViewNodeType type) noexcept
+{
+    return IsAdvancedTypographyNode(type) ||
+        type == ViewNodeType::RadioGroup ||
+        type == ViewNodeType::MonthCalendar;
+}
+
+constexpr bool IsTextAlignmentNode(ViewNodeType type) noexcept
+{
+    return IsAdvancedTypographyNode(type) || IsInput(type) ||
+        type == ViewNodeType::Select;
+}
+
 constexpr bool IsGapNode(ViewNodeType type) noexcept
 {
     return IsType(type, { ViewNodeType::Row, ViewNodeType::Column,
@@ -303,13 +324,14 @@ bool ViewNodeAllowsProperty(
     if (property == "gap") return IsGapNode(type);
     if (property == "alignItems" || property == "justifyContent")
         return IsAlignedLayoutNode(type);
-    if (property == "fontSize" || property == "fontWeight" ||
-        property == "fontStyle" || property == "lineHeight" ||
-        property == "letterSpacing" || property == "bold" ||
-        property == "textAlign" || property == "verticalAlign" ||
-        property == "textWrap" || property == "maxLines" ||
-        property == "overflowText")
-        return IsTypographyNode(type);
+    if (property == "fontSize") return IsTypographyNode(type);
+    if (property == "bold") return IsBoldTypographyNode(type);
+    if (property == "textAlign") return IsTextAlignmentNode(type);
+    if (property == "fontWeight" || property == "fontStyle" ||
+        property == "lineHeight" || property == "letterSpacing" ||
+        property == "verticalAlign" || property == "textWrap" ||
+        property == "maxLines" || property == "overflowText")
+        return IsAdvancedTypographyNode(type);
     if (Contains(kCommonProperties, property)) return true;
     if (property == "text")
         return type == ViewNodeType::Text || type == ViewNodeType::Badge;
@@ -378,10 +400,11 @@ bool ViewNodeAllowsProperty(
     if (property == "child")
         return type == ViewNodeType::SlotSurface ||
             type == ViewNodeType::SlotItem;
-    if (property == "thickness" || property == "trackOpacity" ||
-        property == "fillOpacity")
+    if (property == "thickness")
         return IsProgress(type) || IsSeries(type) ||
             type == ViewNodeType::Divider;
+    if (property == "trackOpacity" || property == "fillOpacity")
+        return IsProgress(type) || IsSeries(type);
     if (property == "columns") return IsGrid(type);
     if (property == "rows")
         return type == ViewNodeType::Grid || type == ViewNodeType::GridList;
@@ -417,7 +440,8 @@ bool ViewNodeAllowsProperty(
         return type == ViewNodeType::Row || type == ViewNodeType::Column;
     if (property == "checked") return IsCheck(type);
     if (property == "sticky") return type == ViewNodeType::ListItem;
-    if (property == "checkedStyle") return IsCheck(type) || IsChoice(type);
+    if (property == "checkedStyle")
+        return IsCheck(type) || type == ViewNodeType::RadioGroup;
     if (property == "showScrollbar")
         return type == ViewNodeType::Scroll || IsVirtual(type);
     if (property == "accessKey" || property == "acceleratorText")

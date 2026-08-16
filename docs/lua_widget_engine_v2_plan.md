@@ -1277,6 +1277,8 @@ feature、默认 accessibility role、允许属性和直接必需属性由同一
 叶节点的 `children` 在属性解析阶段即被拒绝，布局校验中的叶/集合分类复用同一契约。
 原本会被解析后忽略的通用 typography、gap、容器对齐和后代裁剪字段也已按真实消费节点收窄；
 作者写错节点时会拒绝 scene，不再出现“属性合法但没有效果”的假 API。
+后续消费审计又拆开基础字号/对齐与高级排版，移除 divider 的无效 track/fill opacity，
+并停止向 select 暴露未被其宿主选项层读取的 checkedStyle。
 17 个公开节点事件也已进入同一契约源，登记统一 payload 类别和逐节点适用性；Lua 解析器、
 scene 校验与契约测试不再分别维护 change、selectionChange、输入生命周期和 scrollEnd 的类型白名单。
 当前已进一步为每个语义节点登记 UIA ControlType、基础 Pattern 和是否参与宿主键盘焦点，并可从
