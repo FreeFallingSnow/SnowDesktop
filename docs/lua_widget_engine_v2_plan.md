@@ -1717,6 +1717,9 @@ v2.0 资源契约：
 
 在现有 `snowwidget validate`、`pack`、`publish-local` 基础上增加：
 
+- `snowwidget view-contract`：输出带独立 schema 版本的 API v2 声明式视图 JSON 契约；
+  节点适用属性、必填项、逐节点默认值、事件、类型、枚举、范围、影响域和无障碍映射均来自
+  宿主运行时使用的同一份目录，供 LuaLS、文档生成器和编辑器校验复用。
 - `snowwidget lint <directory>`：静态 API、权限、硬编码文案和视图 key 检查。
 - `snowwidget test <directory>`：在无副作用沙箱中执行组件测试。
 - `snowwidget preview <directory> --size ... --locale ... --theme ...`。

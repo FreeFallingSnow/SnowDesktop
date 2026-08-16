@@ -1,0 +1,267 @@
+#include "widget_view_contract_json.h"
+
+#include "widget_view_contract.h"
+
+#include <array>
+#include <iomanip>
+#include <locale>
+#include <ostream>
+#include <sstream>
+#include <string_view>
+
+namespace snowdesktop::widget_runtime
+{
+namespace
+{
+void WriteJsonString(std::ostream& output, std::string_view value)
+{
+    static constexpr char kHex[] = "0123456789abcdef";
+    output << '"';
+    for (const unsigned char character : value)
+    {
+        switch (character)
+        {
+        case '"': output << "\\\""; break;
+        case '\\': output << "\\\\"; break;
+        case '\b': output << "\\b"; break;
+        case '\f': output << "\\f"; break;
+        case '\n': output << "\\n"; break;
+        case '\r': output << "\\r"; break;
+        case '\t': output << "\\t"; break;
+        default:
+            if (character < 0x20)
+            {
+                output << "\\u00" << kHex[character >> 4]
+                       << kHex[character & 0x0f];
+            }
+            else
+            {
+                output << static_cast<char>(character);
+            }
+            break;
+        }
+    }
+    output << '"';
+}
+
+template <typename Range, typename Writer>
+void WriteJsonArray(std::ostream& output, const Range& values,
+    Writer&& writer)
+{
+    output << '[';
+    bool first = true;
+    for (const auto& value : values)
+    {
+        if (!first) output << ',';
+        first = false;
+        writer(output, value);
+    }
+    output << ']';
+}
+
+std::string_view ChildPolicyName(ViewChildPolicy policy) noexcept
+{
+    switch (policy)
+    {
+    case ViewChildPolicy::Any: return "any";
+    case ViewChildPolicy::None: return "none";
+    case ViewChildPolicy::Single: return "single";
+    case ViewChildPolicy::Collection: return "collection";
+    case ViewChildPolicy::LogicalSlot: return "logical-slot";
+    }
+    return {};
+}
+
+std::string_view EventPayloadName(ViewEventPayloadKind payload) noexcept
+{
+    switch (payload)
+    {
+    case ViewEventPayloadKind::Pointer: return "pointer";
+    case ViewEventPayloadKind::Wheel: return "wheel";
+    case ViewEventPayloadKind::Key: return "key";
+    case ViewEventPayloadKind::Action: return "action";
+    case ViewEventPayloadKind::Change: return "change";
+    case ViewEventPayloadKind::SelectionChange: return "selection-change";
+    case ViewEventPayloadKind::Focus: return "focus";
+    case ViewEventPayloadKind::Submit: return "submit";
+    case ViewEventPayloadKind::ScrollEnd: return "scroll-end";
+    }
+    return {};
+}
+
+std::string_view DefaultKindName(ViewPropertyDefaultKind kind) noexcept
+{
+    switch (kind)
+    {
+    case ViewPropertyDefaultKind::NotApplicable: return "not-applicable";
+    case ViewPropertyDefaultKind::Required: return "required";
+    case ViewPropertyDefaultKind::Literal: return "literal";
+    case ViewPropertyDefaultKind::Conditional: return "conditional";
+    }
+    return {};
+}
+
+struct AccessibilityPatternName
+{
+    ViewAccessibilityPattern pattern;
+    std::string_view name;
+};
+
+constexpr auto kAccessibilityPatterns =
+    std::to_array<AccessibilityPatternName>({
+        { ViewAccessibilityPattern::Invoke, "invoke" },
+        { ViewAccessibilityPattern::Toggle, "toggle" },
+        { ViewAccessibilityPattern::Selection, "selection" },
+        { ViewAccessibilityPattern::SelectionItem, "selection-item" },
+        { ViewAccessibilityPattern::RangeValue, "range-value" },
+        { ViewAccessibilityPattern::Value, "value" },
+        { ViewAccessibilityPattern::ExpandCollapse, "expand-collapse" },
+        { ViewAccessibilityPattern::Scroll, "scroll" },
+        { ViewAccessibilityPattern::Grid, "grid" },
+        { ViewAccessibilityPattern::GridItem, "grid-item" },
+    });
+
+struct PropertyEffectName
+{
+    ViewPropertyEffect effect;
+    std::string_view name;
+};
+
+constexpr auto kPropertyEffects = std::to_array<PropertyEffectName>({
+    { ViewPropertyEffect::Layout, "layout" },
+    { ViewPropertyEffect::Paint, "paint" },
+    { ViewPropertyEffect::HitTest, "hit-test" },
+    { ViewPropertyEffect::Input, "input" },
+    { ViewPropertyEffect::Accessibility, "accessibility" },
+    { ViewPropertyEffect::Resource, "resource" },
+    { ViewPropertyEffect::Tree, "tree" },
+});
+
+void WriteAccessibilityPatterns(std::ostream& output,
+    ViewAccessibilityPattern patterns)
+{
+    output << '[';
+    bool first = true;
+    for (const auto& entry : kAccessibilityPatterns)
+    {
+        if (!HasViewAccessibilityPattern(patterns, entry.pattern)) continue;
+        if (!first) output << ',';
+        first = false;
+        WriteJsonString(output, entry.name);
+    }
+    output << ']';
+}
+
+void WritePropertyEffects(std::ostream& output, ViewPropertyEffect effects)
+{
+    output << '[';
+    bool first = true;
+    for (const auto& entry : kPropertyEffects)
+    {
+        if (!HasViewPropertyEffect(effects, entry.effect)) continue;
+        if (!first) output << ',';
+        first = false;
+        WriteJsonString(output, entry.name);
+    }
+    output << ']';
+}
+
+void WriteNode(std::ostream& output, const ViewNodeContract& node)
+{
+    output << "{\"name\":";
+    WriteJsonString(output, node.name);
+    output << ",\"category\":";
+    WriteJsonString(output, node.category);
+    output << ",\"feature\":";
+    WriteJsonString(output, node.feature);
+    output << ",\"childPolicy\":";
+    WriteJsonString(output, ChildPolicyName(node.childPolicy));
+    output << ",\"accessibility\":{\"role\":";
+    WriteJsonString(output, node.defaultAccessibilityRole);
+    output << ",\"uiaControlType\":";
+    WriteJsonString(output, node.uiaControlType);
+    output << ",\"keyboardFocusable\":"
+           << (node.keyboardFocusable ? "true" : "false")
+           << ",\"patterns\":";
+    WriteAccessibilityPatterns(output, node.uiaPatterns);
+    output << "},\"properties\":";
+
+    const auto properties = ViewNodeAllowedProperties(node.type);
+    WriteJsonArray(output, properties,
+        [type = node.type](std::ostream& stream, std::string_view name) {
+            const ViewPropertyDefault defaultValue =
+                ViewNodePropertyDefault(type, name);
+            stream << "{\"name\":";
+            WriteJsonString(stream, name);
+            stream << ",\"required\":"
+                   << (ViewNodeRequiresProperty(type, name)
+                           ? "true" : "false")
+                   << ",\"default\":{\"kind\":";
+            WriteJsonString(stream, DefaultKindName(defaultValue.kind));
+            stream << ",\"expression\":";
+            WriteJsonString(stream, defaultValue.expression);
+            stream << "}}";
+        });
+
+    output << ",\"events\":";
+    const auto events = ViewNodeAllowedEvents(node.type);
+    WriteJsonArray(output, events,
+        [](std::ostream& stream, std::string_view event) {
+            WriteJsonString(stream, event);
+        });
+    output << '}';
+}
+
+void WriteProperty(std::ostream& output,
+    const ViewPropertyContract& property)
+{
+    output << "{\"name\":";
+    WriteJsonString(output, property.name);
+    output << ",\"type\":";
+    WriteJsonString(output, ViewPropertyValueKindName(property.valueKind));
+    output << ",\"enumValues\":";
+    WriteJsonArray(output, ViewPropertyEnumValues(property),
+        [](std::ostream& stream, std::string_view value) {
+            WriteJsonString(stream, value);
+        });
+    output << ",\"numericRange\":";
+    if (property.hasNumericRange)
+    {
+        output << "{\"minimum\":" << property.numericMinimum
+               << ",\"maximum\":" << property.numericMaximum << '}';
+    }
+    else
+    {
+        output << "null";
+    }
+    output << ",\"effects\":";
+    WritePropertyEffects(output, property.effects);
+    output << '}';
+}
+
+void WriteEvent(std::ostream& output, const ViewEventContract& event)
+{
+    output << "{\"name\":";
+    WriteJsonString(output, event.name);
+    output << ",\"payload\":";
+    WriteJsonString(output, EventPayloadName(event.payload));
+    output << '}';
+}
+}
+
+std::string SerializeViewContractJson()
+{
+    std::ostringstream output;
+    output.imbue(std::locale::classic());
+    output << std::setprecision(17)
+           << "{\"ok\":true,\"schemaVersion\":1,\"apiVersion\":2,"
+              "\"nodes\":";
+    WriteJsonArray(output, ViewNodeContracts(), WriteNode);
+    output << ",\"properties\":";
+    WriteJsonArray(output, ViewPropertyContracts(), WriteProperty);
+    output << ",\"events\":";
+    WriteJsonArray(output, ViewEventContracts(), WriteEvent);
+    output << '}';
+    return output.str();
+}
+}

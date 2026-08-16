@@ -7,6 +7,11 @@
 编辑器类型定义位于 `library/snowdesktop-v2.lua`，其函数签名是本文档的配套
 机器可读契约。
 
+运行 `snowwidget view-contract` 可获得宿主当前公开的声明式视图 JSON 契约。顶层
+`schemaVersion` 版本化该导出格式，`apiVersion` 表示组件 API；`nodes`、`properties` 和
+`events` 分别登记节点适用属性与逐节点默认值、属性类型/枚举/范围/影响域，以及事件 payload
+类别。作者工具应读取该命令，不要复制维护另一份节点或属性白名单。
+
 ## 入口契约
 
 `main.lua` 必须返回 `widget.define({...})` 的结果，并且必须且只能提供

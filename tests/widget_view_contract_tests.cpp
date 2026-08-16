@@ -1,4 +1,6 @@
 #include "widget_view_contract.h"
+#include "widget_view_contract_json.h"
+#include "json_value.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -37,6 +39,7 @@ using snowdesktop::widget_runtime::ViewPropertyDefaultKind;
 using snowdesktop::widget_runtime::ViewPropertyNumericValueInRange;
 using snowdesktop::widget_runtime::ViewPropertyValueKind;
 using snowdesktop::widget_runtime::ViewPropertyValueKindName;
+using snowdesktop::widget_runtime::SerializeViewContractJson;
 
 void Check(bool condition, const char* message)
 {
@@ -597,6 +600,64 @@ void TestEventContract()
             change->payload == ViewEventPayloadKind::Change,
         "event payload categories must be machine readable");
 }
+
+void TestMachineReadableContract()
+{
+    const std::string serialized = SerializeViewContractJson();
+    JsonValue root;
+    std::string error;
+    Check(ParseJson(serialized, root, &error) && root.IsObject(),
+        "the authoring contract must be valid JSON");
+
+    const JsonValue* ok = root.Find("ok");
+    const JsonValue* schemaVersion = root.Find("schemaVersion");
+    const JsonValue* apiVersion = root.Find("apiVersion");
+    const JsonValue* nodes = root.Find("nodes");
+    const JsonValue* properties = root.Find("properties");
+    const JsonValue* events = root.Find("events");
+    Check(ok && ok->IsBoolean() && ok->boolean &&
+            schemaVersion && schemaVersion->IsNumber() &&
+            schemaVersion->number == 1.0 &&
+            apiVersion && apiVersion->IsNumber() &&
+            apiVersion->number == 2.0,
+        "the authoring contract must expose its schema and API versions");
+    Check(nodes && nodes->IsArray() && nodes->array.size() == 44 &&
+            properties && properties->IsArray() &&
+            properties->array.size() == 146 &&
+            events && events->IsArray() && events->array.size() == 17,
+        "the JSON contract must expose the complete public catalogs");
+
+    const auto findNamed = [](const JsonValue& array,
+        std::string_view name) -> const JsonValue* {
+        for (const auto& entry : array.array)
+        {
+            const JsonValue* entryName = entry.Find("name");
+            if (entryName && entryName->IsString() &&
+                entryName->string == name)
+                return &entry;
+        }
+        return nullptr;
+    };
+    const JsonValue* button = findNamed(*nodes, "button");
+    const JsonValue* opacity = findNamed(*properties, "opacity");
+    const JsonValue* click = findNamed(*events, "click");
+    Check(button && button->Find("properties") &&
+            button->Find("properties")->IsArray() &&
+            button->Find("events") && button->Find("events")->IsArray() &&
+            button->Find("accessibility") &&
+            button->Find("accessibility")->IsObject(),
+        "node JSON must expose applicability, defaults, events, and UIA metadata");
+    Check(opacity && opacity->Find("type") &&
+            opacity->Find("type")->string == "number" &&
+            opacity->Find("numericRange") &&
+            opacity->Find("numericRange")->IsObject() &&
+            opacity->Find("effects") && opacity->Find("effects")->IsArray(),
+        "property JSON must expose type, range, and effect metadata");
+    Check(click && click->Find("payload") &&
+            click->Find("payload")->IsString() &&
+            click->Find("payload")->string == "action",
+        "event JSON must expose its stable payload category");
+}
 }
 
 int main()
@@ -606,6 +667,7 @@ int main()
     TestNodePropertyDefaults();
     TestRepresentativeApplicability();
     TestEventContract();
+    TestMachineReadableContract();
     std::cout << "widget view contract tests passed\n";
     return 0;
 }

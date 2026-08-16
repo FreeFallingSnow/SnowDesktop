@@ -1,4 +1,5 @@
 #include "widget_package.h"
+#include "widget_view_contract_json.h"
 
 #include <windows.h>
 
@@ -16,6 +17,7 @@ void PrintUsage()
         << "SnowDesktop widget package tool\n"
         << "  snowwidget --version\n"
         << "  snowwidget capabilities\n"
+        << "  snowwidget view-contract\n"
         << "  snowwidget inspect <package-directory>\n"
         << "  snowwidget validate <package-directory>\n"
         << "  snowwidget pack <package-directory> <output.snowwidget>\n"
@@ -95,7 +97,15 @@ int wmain(int argc, wchar_t** argv)
                "\"revision\":2},\"recommendedSchemaVersion\":2,"
                "\"recommendedApiVersion\":2,\"supportedSchemaVersions\":[1,2],"
                "\"supportedApiVersions\":[1,2],\"commands\":["
-               "\"inspect\",\"validate\",\"pack\",\"publish-local\"]}"
+               "\"view-contract\",\"inspect\",\"validate\",\"pack\","
+               "\"publish-local\"]}"
+            << '\n';
+        return 0;
+    }
+    if (argc == 2 && std::wstring_view(argv[1]) == L"view-contract")
+    {
+        std::cout
+            << snowdesktop::widget_runtime::SerializeViewContractJson()
             << '\n';
         return 0;
     }

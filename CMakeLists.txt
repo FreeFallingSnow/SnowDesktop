@@ -564,7 +564,9 @@ add_executable(snowwidget
     src/widget_logical_slot.cpp
     src/widget_package.cpp
     src/widget_permission_broker.cpp
-    src/widget_permission_state.cpp)
+    src/widget_permission_state.cpp
+    src/widget_view_contract.cpp
+    src/widget_view_contract_json.cpp)
 target_compile_features(snowwidget PRIVATE cxx_std_20)
 target_include_directories(snowwidget PRIVATE src)
 target_link_libraries(snowwidget PRIVATE bcrypt ole32)
@@ -1079,6 +1081,8 @@ if (BUILD_TESTING)
             src/widget_view_contract.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract layout lua widget)
+    target_sources(SnowDesktopWidgetViewContractTests PRIVATE
+        src/widget_view_contract_json.cpp)
 
     snowdesktop_add_test(
         SnowDesktopWidgetViewTreeTests
