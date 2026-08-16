@@ -176,6 +176,8 @@ void TestRepresentativeApplicability()
             ViewNodeAllowsProperty(ViewNodeType::Button, "shadow") &&
             ViewNodeAllowsProperty(ViewNodeType::Button, "transform") &&
             ViewNodeAllowsProperty(ViewNodeType::Button, "transition") &&
+            ViewNodeAllowsProperty(ViewNodeType::Button,
+                "enterTransition") &&
             ViewNodeAllowsProperty(ViewNodeType::Button, "offset") &&
             ViewNodeAllowsProperty(ViewNodeType::Button, "zIndex") &&
             ViewNodeAllowsProperty(ViewNodeType::Button, "flexBasis") &&

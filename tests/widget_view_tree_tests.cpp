@@ -3299,6 +3299,12 @@ void TestVisualTransitionRuntime()
                     "background", "opacity", "transform", "layout",
                 },
             },
+            enterTransition = {
+                durationMs = 160,
+                easing = "linear",
+                opacity = 0,
+                transform = { scale = 0.8 },
+            },
         })
     )lua") == LUA_OK,
         "visual transition Lua fixture must evaluate");
@@ -3310,8 +3316,15 @@ void TestVisualTransitionRuntime()
             parsed.transition->properties.size() == 4 &&
             parsed.transition->properties.back() ==
                 ViewTransitionProperty::Layout &&
+            parsed.enterTransition &&
+            parsed.enterTransition->durationMilliseconds == 160 &&
+            parsed.enterTransition->easing ==
+                ViewTransitionEasing::Linear &&
+            parsed.enterTransition->opacity == 0.0f &&
+            parsed.enterTransition->transform &&
+            Near(parsed.enterTransition->transform->scale, 0.8f) &&
             ValidateAndLayoutViewTree(parsed, 100.0f, 40.0f, error),
-        "Lua parsing must retain a bounded visual transition descriptor");
+        "Lua parsing must retain bounded update and enter transitions");
 
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(
@@ -3325,6 +3338,17 @@ void TestVisualTransitionRuntime()
     Check(!ParseLuaViewTree(state, -1, parsed, error) &&
             error.find("unique") != std::string::npos,
         "duplicate transition properties must reject the atomic tree parse");
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.box({ key = "empty-enter",
+            enterTransition = { durationMs = 120 },
+        })
+    )lua") == LUA_OK,
+        "empty enter transition fixture must evaluate");
+    Check(!ParseLuaViewTree(state, -1, parsed, error) &&
+            error.find("requires opacity or transform") !=
+                std::string::npos,
+        "enterTransition must reject descriptors without a starting presentation");
     lua_close(state);
 
     ViewTransition transition;
@@ -3392,17 +3416,17 @@ void TestVisualTransitionRuntime()
     transformRuntime.BeginFrame();
     const auto firstTransform = transformRuntime.ResolvePresentation(
         "moving", {}, startTransform, std::nullopt, transformTransition,
-        origin, false);
+        std::nullopt, origin, false);
     transformRuntime.EndFrame();
     transformRuntime.BeginFrame();
     const auto changedTransform = transformRuntime.ResolvePresentation(
         "moving", {}, targetTransform, std::nullopt, transformTransition,
-        origin, false);
+        std::nullopt, origin, false);
     transformRuntime.EndFrame();
     transformRuntime.BeginFrame();
     const auto middleTransform = transformRuntime.ResolvePresentation(
         "moving", {}, targetTransform, std::nullopt, transformTransition,
-        origin + std::chrono::milliseconds(50), false);
+        std::nullopt, origin + std::chrono::milliseconds(50), false);
     transformRuntime.EndFrame();
     Check(firstTransform.transform == startTransform &&
             changedTransform.transform == startTransform &&
@@ -3423,17 +3447,17 @@ void TestVisualTransitionRuntime()
     layoutRuntime.BeginFrame();
     const auto firstLayout = layoutRuntime.ResolvePresentation(
         "reflowing", {}, std::nullopt, startLayout, layoutTransition,
-        origin, false);
+        std::nullopt, origin, false);
     layoutRuntime.EndFrame();
     layoutRuntime.BeginFrame();
     const auto changedLayout = layoutRuntime.ResolvePresentation(
         "reflowing", {}, std::nullopt, targetLayout, layoutTransition,
-        origin, false);
+        std::nullopt, origin, false);
     layoutRuntime.EndFrame();
     layoutRuntime.BeginFrame();
     const auto middleLayout = layoutRuntime.ResolvePresentation(
         "reflowing", {}, std::nullopt, targetLayout, layoutTransition,
-        origin + std::chrono::milliseconds(50), false);
+        std::nullopt, origin + std::chrono::milliseconds(50), false);
     layoutRuntime.EndFrame();
     Check(firstLayout.layoutFrame == startLayout &&
             changedLayout.layoutFrame == startLayout &&
@@ -3457,6 +3481,53 @@ void TestVisualTransitionRuntime()
             Near(presentedBounds.width, 50.0f) &&
             Near(presentedBounds.height, 25.0f),
         "layout presentation transforms must map a scrolled rendered frame using only the relative layout delta");
+
+    ViewPresenceTransition enterTransition;
+    enterTransition.durationMilliseconds = 100;
+    enterTransition.easing = ViewTransitionEasing::Linear;
+    enterTransition.opacity = 0.0f;
+    ViewTransform enterTransform;
+    enterTransform.scale = 0.8f;
+    enterTransition.transform = enterTransform;
+    ViewStyle enteredStyle;
+    enteredStyle.opacity = 1.0f;
+    ViewTransitionRuntime enterRuntime;
+    enterRuntime.BeginFrame();
+    const auto initialScene = enterRuntime.ResolvePresentation(
+        "initial", enteredStyle, std::nullopt, std::nullopt,
+        std::nullopt, enterTransition, origin, false);
+    enterRuntime.EndFrame();
+    Check(initialScene.style == enteredStyle &&
+            !enterRuntime.HasActive(),
+        "the first committed scene must not animate every node on startup");
+    enterRuntime.BeginFrame();
+    const auto enteringScene = enterRuntime.ResolvePresentation(
+        "inserted", enteredStyle, std::nullopt, std::nullopt,
+        std::nullopt, enterTransition, origin, false);
+    enterRuntime.EndFrame();
+    Check(enteringScene.style.opacity == 0.0f &&
+            enteringScene.transform == enterTransform &&
+            enterRuntime.HasActive(),
+        "a stable key first observed after the initial scene must start from enterTransition");
+    enterRuntime.BeginFrame();
+    const auto middleEnter = enterRuntime.ResolvePresentation(
+        "inserted", enteredStyle, std::nullopt, std::nullopt,
+        std::nullopt, enterTransition,
+        origin + std::chrono::milliseconds(50), false);
+    enterRuntime.EndFrame();
+    Check(middleEnter.style.opacity &&
+            Near(*middleEnter.style.opacity, 0.5f) &&
+            middleEnter.transform &&
+            Near(middleEnter.transform->scale, 0.9f),
+        "enterTransition must interpolate opacity and transform without re-running Lua");
+    enterRuntime.BeginFrame();
+    const auto reducedEnter = enterRuntime.ResolvePresentation(
+        "reduced", enteredStyle, std::nullopt, std::nullopt,
+        std::nullopt, enterTransition,
+        origin + std::chrono::milliseconds(60), true);
+    enterRuntime.EndFrame();
+    Check(reducedEnter.style == enteredStyle && !reducedEnter.transform,
+        "reducedMotion must suppress enterTransition for newly inserted nodes");
 }
 
 void TestThemeColorTokens()

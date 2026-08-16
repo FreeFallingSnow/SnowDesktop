@@ -16440,7 +16440,7 @@ static void DrawWidgetViewNode(D2DState* state,
     {
         auto presentation = transitions->ResolvePresentation(node.key,
             style, node.transform, node.layoutTransitionFrame,
-            node.transition, now, reducedMotion);
+            node.transition, node.enterTransition, now, reducedMotion);
         style = std::move(presentation.style);
         presentedTransform = std::move(presentation.transform);
         presentedLayoutFrame = std::move(presentation.layoutFrame);

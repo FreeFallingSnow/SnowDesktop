@@ -179,6 +179,12 @@
 ---@field easing? SnowViewTransitionEasing Defaults to easeOut.
 ---@field properties SnowViewTransitionProperty[] One to four unique presentation properties; color endpoints must both be explicit. Transform and layout interpolation require their matching view.transition features.
 
+---@class SnowViewPresenceTransition
+---@field durationMs? integer Host-driven duration from 1 through 2000 milliseconds; defaults to 120.
+---@field easing? SnowViewTransitionEasing Defaults to easeOut.
+---@field opacity? number Starting opacity from 0 through 1.
+---@field transform? SnowViewTransform Starting full transform; omitted fields use normal transform defaults rather than inheriting the node target.
+
 ---@class SnowViewGridFractionTrack
 ---@field fr number Positive fraction weight no greater than 1000.
 
@@ -339,6 +345,7 @@
 ---@field shadow? SnowViewShadow Bounded host-rendered frame shadow that does not change layout or hit bounds.
 ---@field transform? SnowViewTransform Post-layout transform inherited by descendants. Probe view.transform.basic for translation/uniform scale and view.transform.affine for non-uniform scale, rotation, and skew.
 ---@field transition? SnowViewTransition Host-driven style, transform, or layout presentation transition after probing the matching view.transition feature; interpolation frames do not re-run view().
+---@field enterTransition? SnowViewPresenceTransition Host-driven starting opacity/transform for stable keys inserted after the initial scene. Requires view.transition.enter.
 ---@field gap? number
 ---@field columns? integer|SnowViewGridTrack[] Required by grid, gridList, and virtualGrid. Track arrays require view.grid.tracks and are rejected by virtualGrid.
 ---@field rows? integer|SnowViewGridTrack[] Optional explicit grid/gridList rows; integer creates that many auto tracks and implicit trailing rows remain auto.

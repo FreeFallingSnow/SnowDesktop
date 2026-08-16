@@ -223,8 +223,25 @@ transform 插值只改变呈现矩阵，命中、宿主控件和 UIA 几何会�
 相对位置或尺寸变化时，宿主用呈现矩阵从上一帧布局插值到新布局；父子都声明时按层级组合，
 而滚动偏移与虚拟窗口平移不会被误判为布局变化。插值帧不重新求值布局，命中、裁剪、宿主输入
 和 UIA 几何仍在 scene 提交时原子使用目标布局，因此动画中的视觉位置不扩大可点击区域。
-节点首次出现直接显示目标样式，删除节点不产生 exit 动画；阴影参数、圆角、边框宽度以及
-enter/exit transition 仍不属于这些 feature。
+
+探测 `view.transition.enter` 后，任意节点还可单独声明：
+
+```lua
+enterTransition = {
+    durationMs = 160,
+    easing = "easeOut",
+    opacity = 0,
+    transform = { scale = 0.92, translateY = 6 },
+}
+```
+
+`opacity` 与 `transform` 至少提供一个；它们表示入场起点，终点仍是节点正常解析出的目标样式和
+transform。transform 是完整起始变换，省略字段使用单位变换默认值，不从目标 transform 逐字段
+继承。首次整棵 scene 提交不会让全部节点集体入场；只有宿主已经成功提交过该 surface 后首次
+出现的新稳定 key 才执行。预览、计时器不可用或 `reducedMotion` 开启时直接显示终点。入场只影响
+呈现，节点的命中、宿主控件和 UIA 从 scene 提交起即使用目标几何。
+
+删除节点仍不产生 exit 动画；阴影参数、圆角、边框宽度以及 `exitTransition` 尚未开放。
 
 桌面与 panel/dialog/popover 各自维护过渡状态，插值帧只重绘上一棵成功提交的 scene tree，
 不会每帧重新调用 Lua `view()`。未绑定节点 pointer action 的 hover/pressed 状态变化也走

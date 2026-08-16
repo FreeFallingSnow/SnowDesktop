@@ -1941,6 +1941,31 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             return false;
         }
     }
+    if (node.enterTransition)
+    {
+        if (node.enterTransition->durationMilliseconds < 1 ||
+            node.enterTransition->durationMilliseconds > 2000 ||
+            (!node.enterTransition->opacity &&
+                !node.enterTransition->transform) ||
+            (node.enterTransition->opacity &&
+                !FiniteInRange(*node.enterTransition->opacity,
+                    0.0f, 1.0f)))
+        {
+            error = "view enterTransition requires bounded opacity or transform and a duration from 1 to 2000ms";
+            return false;
+        }
+        switch (node.enterTransition->easing)
+        {
+        case ViewTransitionEasing::Linear:
+        case ViewTransitionEasing::EaseIn:
+        case ViewTransitionEasing::EaseOut:
+        case ViewTransitionEasing::EaseInOut:
+            break;
+        default:
+            error = "view enterTransition easing is unsupported";
+            return false;
+        }
+    }
     if (node.maximumLines > 64)
     {
         error = "view maxLines must be between 0 and 64";
@@ -3781,11 +3806,15 @@ void FindTransform(const ViewNode& node, std::string_view key,
 }
 
 bool ValidateTransforms(const ViewNode& node,
-    const ViewResolvedTransform& parent, std::string& error)
+    const ViewResolvedTransform& parent, std::string& error,
+    bool entering = false)
 {
-    if (node.transform)
+    const std::optional<ViewTransform>& transform = entering &&
+        node.enterTransition && node.enterTransition->transform
+        ? node.enterTransition->transform : node.transform;
+    if (transform)
     {
-        const auto& value = *node.transform;
+        const auto& value = *transform;
         if (!FiniteInRange(value.translateX,
                 -MaximumDimension, MaximumDimension) ||
             !FiniteInRange(value.translateY,
@@ -3801,12 +3830,14 @@ bool ValidateTransforms(const ViewNode& node,
             !FiniteInRange(value.originX, 0.0f, 1.0f) ||
             !FiniteInRange(value.originY, 0.0f, 1.0f))
         {
-            error = "view transform fields are outside their limits";
+            error = entering
+                ? "view enterTransition transform fields are outside their limits"
+                : "view transform fields are outside their limits";
             return false;
         }
     }
     const ViewResolvedTransform current =
-        ComposeTransform(LocalTransform(node), parent);
+        ComposeTransform(LocalTransform(node.frame, transform), parent);
     float minimumScale = 0.0f;
     float maximumScale = 0.0f;
     if (!SingularValues(current, minimumScale, maximumScale) ||
@@ -3841,7 +3872,8 @@ bool ValidateTransforms(const ViewNode& node,
         return false;
     }
     for (const auto& child : node.children)
-        if (!ValidateTransforms(child, current, error)) return false;
+        if (!ValidateTransforms(child, current, error, entering))
+            return false;
     return true;
 }
 
@@ -4251,6 +4283,7 @@ ViewTransitionPresentation ViewTransitionRuntime::ResolvePresentation(
     const std::optional<ViewTransform>& targetTransform,
     const std::optional<ViewRect>& targetLayoutFrame,
     const std::optional<ViewTransition>& transition,
+    const std::optional<ViewPresenceTransition>& enterTransition,
     TimePoint now, bool reducedMotion)
 {
     const ViewTransitionPresentation target{
@@ -4264,53 +4297,100 @@ ViewTransitionPresentation ViewTransitionRuntime::ResolvePresentation(
     {
         entry.start = target;
         entry.target = target;
-        entry.transition = configured;
+        entry.configuredTransition = configured;
+        entry.activeTransition = configured;
+        if (generation_ > 1 && enterTransition && !reducedMotion)
+        {
+            ViewTransition entering;
+            entering.durationMilliseconds =
+                enterTransition->durationMilliseconds;
+            entering.easing = enterTransition->easing;
+            if (enterTransition->opacity)
+            {
+                entry.start.style.opacity = enterTransition->opacity;
+                entering.properties.push_back(
+                    ViewTransitionProperty::Opacity);
+            }
+            if (enterTransition->transform)
+            {
+                entry.start.transform = enterTransition->transform;
+                entering.properties.push_back(
+                    ViewTransitionProperty::Transform);
+            }
+            entry.activeTransition = std::move(entering);
+            entry.started = now;
+            entry.active = HasTransitionDifference(entry.start,
+                entry.target, entry.activeTransition);
+            entry.entering = entry.active;
+            if (entry.active) return entry.start;
+        }
         return target;
     }
 
     const auto presentation = [&entry, now]() {
-        if (!entry.active || entry.transition.durationMilliseconds == 0)
+        if (!entry.active ||
+            entry.activeTransition.durationMilliseconds == 0)
             return entry.target;
         const auto elapsed = std::chrono::duration_cast<
             std::chrono::duration<float, std::milli>>(
                 now - entry.started).count();
         const float progress = elapsed /
-            static_cast<float>(entry.transition.durationMilliseconds);
+            static_cast<float>(
+                entry.activeTransition.durationMilliseconds);
         return InterpolateTransitionPresentation(entry.start, entry.target,
-            entry.transition, progress);
+            entry.activeTransition, progress);
     };
     const bool targetChanged = entry.target != target;
-    const bool configurationChanged = entry.transition != configured;
+    const bool configurationChanged =
+        entry.configuredTransition != configured;
     if (targetChanged)
     {
         entry.start = presentation();
         entry.target = target;
-        entry.transition = configured;
+        entry.configuredTransition = configured;
+        if (!entry.entering)
+            entry.activeTransition = configured;
         entry.started = now;
-        entry.active = transition.has_value() && !reducedMotion &&
+        entry.active = !reducedMotion &&
+            (entry.entering || transition.has_value()) &&
             HasTransitionDifference(
-                entry.start, entry.target, entry.transition);
+                entry.start, entry.target, entry.activeTransition);
+        if (!entry.active) entry.entering = false;
     }
-    else if (configurationChanged || reducedMotion)
+    else if (reducedMotion)
     {
-        entry.transition = configured;
+        entry.configuredTransition = configured;
+        entry.activeTransition = configured;
         entry.active = false;
+        entry.entering = false;
         entry.start = target;
+    }
+    else if (configurationChanged)
+    {
+        entry.configuredTransition = configured;
+        if (!entry.entering)
+        {
+            entry.activeTransition = configured;
+            entry.active = false;
+            entry.start = target;
+        }
     }
     if (!entry.active) return target;
     const auto elapsed = std::chrono::duration_cast<
         std::chrono::duration<float, std::milli>>(
             now - entry.started).count();
     if (elapsed >= static_cast<float>(
-            entry.transition.durationMilliseconds))
+            entry.activeTransition.durationMilliseconds))
     {
         entry.active = false;
+        entry.entering = false;
         entry.start = target;
         return target;
     }
     return InterpolateTransitionPresentation(entry.start, entry.target,
-        entry.transition, elapsed /
-            static_cast<float>(entry.transition.durationMilliseconds));
+        entry.activeTransition, elapsed /
+            static_cast<float>(
+                entry.activeTransition.durationMilliseconds));
 }
 
 ViewStyle ViewTransitionRuntime::Resolve(std::string_view key,
@@ -4319,7 +4399,8 @@ ViewStyle ViewTransitionRuntime::Resolve(std::string_view key,
     TimePoint now, bool reducedMotion)
 {
     return ResolvePresentation(key, target, std::nullopt,
-        std::nullopt, transition, now, reducedMotion).style;
+        std::nullopt, transition, std::nullopt,
+        now, reducedMotion).style;
 }
 
 void ViewTransitionRuntime::EndFrame()
@@ -4338,9 +4419,10 @@ bool ViewTransitionRuntime::Tick(TimePoint now) noexcept
         if (!entry.active) continue;
         hadActive = true;
         if (now - entry.started >= std::chrono::milliseconds(
-                entry.transition.durationMilliseconds))
+                entry.activeTransition.durationMilliseconds))
         {
             entry.active = false;
+            entry.entering = false;
             entry.start = entry.target;
         }
     }
@@ -4569,7 +4651,8 @@ bool ValidateAndLayoutViewTree(ViewNode& root, float width, float height,
     if (!ResolveGridPlacements(root, error)) return false;
     LayoutNode(root, { 0.0f, 0.0f, width, height });
     CaptureLayoutTransitionFrames(root, std::nullopt);
-    return ValidateTransforms(root, {}, error);
+    return ValidateTransforms(root, {}, error) &&
+        ValidateTransforms(root, {}, error, true);
 }
 
 bool ValidateViewLogicalSlots(const ViewNode& root,
@@ -4719,7 +4802,9 @@ bool ApplyViewScrollOffsets(ViewNode& root,
     viewports.clear();
     std::size_t scrollContainers = 0;
     if (!ApplyScrollState(root, resolver, viewports, std::nullopt,
-            scrollContainers, error) || !ValidateTransforms(root, {}, error))
+            scrollContainers, error) ||
+        !ValidateTransforms(root, {}, error) ||
+        !ValidateTransforms(root, {}, error, true))
     {
         viewports.clear();
         return false;

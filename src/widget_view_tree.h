@@ -393,6 +393,16 @@ struct ViewTransform
     bool operator==(const ViewTransform&) const = default;
 };
 
+struct ViewPresenceTransition
+{
+    std::uint32_t durationMilliseconds = 120;
+    ViewTransitionEasing easing = ViewTransitionEasing::EaseOut;
+    std::optional<float> opacity;
+    std::optional<ViewTransform> transform;
+
+    bool operator==(const ViewPresenceTransition&) const = default;
+};
+
 struct ViewTransitionPresentation
 {
     ViewStyle style;
@@ -493,6 +503,7 @@ struct ViewNode
     std::optional<ViewShadow> shadow;
     std::optional<ViewTransform> transform;
     std::optional<ViewTransition> transition;
+    std::optional<ViewPresenceTransition> enterTransition;
     float gap = 0.0f;
     std::size_t columns = 1;
     std::vector<ViewGridTrack> columnTracks;
@@ -681,6 +692,7 @@ public:
         const std::optional<ViewTransform>& targetTransform,
         const std::optional<ViewRect>& targetLayoutFrame,
         const std::optional<ViewTransition>& transition,
+        const std::optional<ViewPresenceTransition>& enterTransition,
         TimePoint now, bool reducedMotion);
     ViewStyle Resolve(std::string_view key, const ViewStyle& target,
         const std::optional<ViewTransition>& transition,
@@ -696,10 +708,12 @@ private:
     {
         ViewTransitionPresentation start;
         ViewTransitionPresentation target;
-        ViewTransition transition;
+        ViewTransition configuredTransition;
+        ViewTransition activeTransition;
         TimePoint started{};
         std::uint64_t generation = 0;
         bool active = false;
+        bool entering = false;
     };
 
     std::unordered_map<std::string, Entry> entries_;
