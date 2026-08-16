@@ -427,7 +427,7 @@ int wmain(int argc, wchar_t** argv)
 
     const std::array<std::uint8_t, 8> packageImagePixels{
         0, 0, 255, 255,
-        255, 0, 0, 255,
+        255, 255, 0, 255,
     };
     const snowdesktop::menu_icon::ImageSourceView packageImageSource{
         packageImagePixels.data(), packageImagePixels.size(), 2, 1, 8,
