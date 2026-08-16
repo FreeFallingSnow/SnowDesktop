@@ -265,9 +265,23 @@ void TestRepresentativeApplicability()
                 "fillOpacity") &&
             ViewNodeAllowsProperty(ViewNodeType::ProgressRing,
                 "trackOpacity") &&
+            ViewNodeAllowsProperty(ViewNodeType::LineChart,
+                "trackOpacity") &&
+            ViewNodeAllowsProperty(ViewNodeType::BarChart,
+                "trackOpacity") &&
+            !ViewNodeAllowsProperty(ViewNodeType::Sparkline,
+                "trackOpacity") &&
+            !ViewNodeAllowsProperty(ViewNodeType::Spectrum,
+                "trackOpacity") &&
             ViewNodeAllowsProperty(ViewNodeType::Waveform,
-                "fillOpacity"),
-        "track and fill opacity must stay on progress and series renderers");
+                "fillOpacity") &&
+            ViewNodeAllowsProperty(ViewNodeType::Sparkline,
+                "thickness") &&
+            !ViewNodeAllowsProperty(ViewNodeType::BarChart,
+                "thickness") &&
+            !ViewNodeAllowsProperty(ViewNodeType::Spectrum,
+                "thickness"),
+        "series styling properties must stay on renderers that consume them");
     Check(ViewNodeAllowsProperty(ViewNodeType::RadioGroup,
                 "checkedStyle") &&
             !ViewNodeAllowsProperty(ViewNodeType::Select,

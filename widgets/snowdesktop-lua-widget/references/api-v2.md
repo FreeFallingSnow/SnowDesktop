@@ -973,7 +973,9 @@ view.monthCalendar({
 自动取值域；`barChart` 自动包含零基线；`waveform` 默认范围为 -1–1，`spectrum` 默认
 范围为 0–1。需要固定尺度时必须同时提供有限且满足 `min < max` 的 `min/max`；超出范围
 的样本只在绘制时钳制，不修改 Lua 数据。`lineChart` 绘制有界参考线，`waveform` 和跨零
-柱图绘制零线；`style.foreground`、`thickness`、`trackOpacity` 和 `fillOpacity` 控制前景。
+柱图绘制零线；`style.foreground` 和 `fillOpacity` 控制全部图形前景，`thickness` 只用于
+`sparkline/lineChart/waveform` 的折线宽度，`trackOpacity` 只用于
+`lineChart/barChart/waveform` 的参考线或零线。
 节点由宿主在已提交树内直接绘制，不创建逐样本子节点或逐样本事件区域：
 
 ```lua
@@ -1012,7 +1014,8 @@ radioGroup；`alignItems/justifyContent` 只用于会执行对应对齐算法的
 `bold`，其余高级字重、字形、行高、字距和文本流字段只开放给真正使用 DirectWrite 通用文本
 管线的文本、标签和图标节点。divider 只使用 `thickness`，不接受进度/图表的
 `trackOpacity/fillOpacity`；select 的选中项当前使用宿主固定状态色，也不接受仅供
-toggle/checkbox/radioGroup 使用的 `checkedStyle`。
+toggle/checkbox/radioGroup 使用的 `checkedStyle`。图表属性也按实际绘制路径区分：柱图和频谱
+不接受未消费的 `thickness`，sparkline 和频谱不接受未消费的 `trackOpacity`。
 
 该表也登记 17 个公开事件的负载类别和逐节点适用性，以及 UIA ControlType、基础 Pattern 和宿主键盘可聚焦性，宿主能从
 布局结果生成语义快照，并已通过 Windows UIA Fragment Provider 暴露组件/元素树、基础属性、

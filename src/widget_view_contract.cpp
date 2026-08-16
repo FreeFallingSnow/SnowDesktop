@@ -167,6 +167,18 @@ constexpr bool IsSeries(ViewNodeType type) noexcept
         ViewNodeType::Spectrum });
 }
 
+constexpr bool IsStrokedSeries(ViewNodeType type) noexcept
+{
+    return IsType(type, { ViewNodeType::Sparkline,
+        ViewNodeType::LineChart, ViewNodeType::Waveform });
+}
+
+constexpr bool IsTrackedSeries(ViewNodeType type) noexcept
+{
+    return IsType(type, { ViewNodeType::LineChart,
+        ViewNodeType::BarChart, ViewNodeType::Waveform });
+}
+
 constexpr bool IsVirtual(ViewNodeType type) noexcept
 {
     return type == ViewNodeType::VirtualList ||
@@ -401,9 +413,11 @@ bool ViewNodeAllowsProperty(
         return type == ViewNodeType::SlotSurface ||
             type == ViewNodeType::SlotItem;
     if (property == "thickness")
-        return IsProgress(type) || IsSeries(type) ||
+        return IsProgress(type) || IsStrokedSeries(type) ||
             type == ViewNodeType::Divider;
-    if (property == "trackOpacity" || property == "fillOpacity")
+    if (property == "trackOpacity")
+        return IsProgress(type) || IsTrackedSeries(type);
+    if (property == "fillOpacity")
         return IsProgress(type) || IsSeries(type);
     if (property == "columns") return IsGrid(type);
     if (property == "rows")
