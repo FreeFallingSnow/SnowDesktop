@@ -142,6 +142,8 @@ struct InteractionRegion
     std::optional<InteractionClipRect> clip;
     std::string cursor;
     std::string tooltip;
+    std::string accessKey;
+    std::string acceleratorText;
     std::map<std::string, InteractionAction, std::less<>> events;
     std::string accessibilityRole;
     std::string accessibilityLabel;
@@ -234,6 +236,8 @@ public:
         std::string* targetKey = nullptr) const noexcept;
 
     std::vector<std::string> KeyboardFocusableKeys() const;
+    const InteractionRegion* FindAccessKey(
+        char key) const noexcept;
     std::vector<InteractionRegion> AccessibilityRegions() const;
     bool IsKeyboardFocusable(std::string_view key) const noexcept;
     bool IsHovered(std::string_view key) const noexcept;

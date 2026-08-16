@@ -420,10 +420,16 @@ bool IsNodeKeyboardFocusable(const ViewNode& node) noexcept
 }
 
 void ApplyNodeFocusPolicy(const ViewNode& node,
-    InteractionRegion& region) noexcept
+    InteractionRegion& region,
+    bool includeAccessMetadata = true) noexcept
 {
     region.focusable = IsNodeKeyboardFocusable(node);
     region.tabIndex = node.tabIndex.value_or(0);
+    if (includeAccessMetadata)
+    {
+        region.accessKey = node.accessKey;
+        region.acceleratorText = node.acceleratorText;
+    }
 }
 
 ViewRect ContentRect(const ViewNode& node) noexcept
@@ -1871,6 +1877,7 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
     std::size_t& nodes, std::size_t& textBytes,
     std::size_t& seriesPoints, std::size_t& collectionItems,
     std::unordered_set<std::string>& keys,
+    std::unordered_set<char>& accessKeys,
     std::unordered_set<std::string>& resources,
     std::optional<ViewNodeType> parentType, std::string& error)
 {
@@ -1977,6 +1984,36 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
     }
     const ViewNodeContract* nodeContract = FindViewNodeContract(node.type);
     const bool keyboardFocusable = IsNodeKeyboardFocusable(node);
+    if (!node.accessKey.empty())
+    {
+        if (node.accessKey.size() != 1 ||
+            !((node.accessKey[0] >= 'A' && node.accessKey[0] <= 'Z') ||
+                (node.accessKey[0] >= 'a' && node.accessKey[0] <= 'z') ||
+                (node.accessKey[0] >= '0' && node.accessKey[0] <= '9')))
+        {
+            error = "view accessKey must be one ASCII letter or digit";
+            return false;
+        }
+        if (!keyboardFocusable)
+        {
+            error = "view accessKey requires a focusable node";
+            return false;
+        }
+        const char normalized = node.accessKey[0] >= 'a' &&
+                node.accessKey[0] <= 'z'
+            ? static_cast<char>(node.accessKey[0] - 'a' + 'A')
+            : node.accessKey[0];
+        if (!accessKeys.insert(normalized).second)
+        {
+            error = std::string("duplicate view accessKey: ") + normalized;
+            return false;
+        }
+    }
+    if (node.acceleratorText.size() > 64)
+    {
+        error = "view acceleratorText must contain at most 64 bytes";
+        return false;
+    }
     if (node.tabIndex && !keyboardFocusable)
     {
         error = "view tabIndex requires a focusable node";
@@ -2941,7 +2978,7 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
     }
     for (const auto& child : node.children)
         if (!ValidateNode(child, depth + 1, nodes, textBytes,
-                seriesPoints, collectionItems, keys, resources,
+                seriesPoints, collectionItems, keys, accessKeys, resources,
                 node.type, error)) return false;
     return true;
 }
@@ -3062,7 +3099,7 @@ bool CollectRegions(const ViewNode& node,
             region.accessibilityRole = "gridcell";
             region.accessibilityLabel = cell.date;
             region.enabled = node.enabled;
-            ApplyNodeFocusPolicy(node, region);
+            ApplyNodeFocusPolicy(node, region, false);
             regions.push_back(std::move(region));
         }
         return true;
@@ -3109,7 +3146,7 @@ bool CollectRegions(const ViewNode& node,
             region.accessibilityRole = "radio";
             region.accessibilityLabel = option.label;
             region.enabled = node.enabled && option.enabled;
-            ApplyNodeFocusPolicy(node, region);
+            ApplyNodeFocusPolicy(node, region, false);
             regions.push_back(std::move(region));
         }
         return true;
@@ -3352,7 +3389,7 @@ bool CollectSelectOptions(const ViewNode& node,
             region.accessibilityRole = "option";
             region.accessibilityLabel = option.label;
             region.enabled = node.enabled && option.enabled;
-            ApplyNodeFocusPolicy(node, region);
+            ApplyNodeFocusPolicy(node, region, false);
             regions.push_back(std::move(region));
         }
         return true;
@@ -4382,9 +4419,11 @@ bool ValidateAndLayoutViewTree(ViewNode& root, float width, float height,
     std::size_t seriesPoints = 0;
     std::size_t collectionItems = 0;
     std::unordered_set<std::string> keys;
+    std::unordered_set<char> accessKeys;
     std::unordered_set<std::string> resources;
     if (!ValidateNode(root, 0, nodes, textBytes, seriesPoints,
-            collectionItems, keys, resources, std::nullopt, error))
+            collectionItems, keys, accessKeys, resources,
+            std::nullopt, error))
         return false;
     ClearCollectionSelectionState(root);
     ApplyCollectionSelectionState(root);

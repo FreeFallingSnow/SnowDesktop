@@ -1294,6 +1294,7 @@ view.row({
 - `view.tooltip` 现已提供所有节点通用的有界纯文本提示：tooltip-only 节点也生成裁剪命中区，提示在 view/select/input 覆盖层之后绘制并限制在组件 surface 内，同时在无 validationMessage 时映射为 UIA HelpText；富提示、markup、任意窗口和把必要信息仅藏在 hover 中仍不允许。
 - `view.scroll.events` 已把 `events.scrollEnd` 限定到 scroll/virtual collection；滚轮或 UIA 操作从末端前到达最大宿主偏移时只投递一次，离开末端后才能再次触发，UIA 来源不获得可信手势。
 - `view.keyboardNavigation.order` 已加入 `focusable/tabIndex`：-1 只退出顺序遍历，正数先按升序、再接默认 0 的声明顺序；焦点样式、鼠标焦点、键盘遍历和 UIA IsKeyboardFocusable 使用同一有效状态。
+- `view.keyboard.accessKey` 已为单一直接交互目标加入树内唯一的 ASCII 字母/数字访问键；活动辅助 surface 或唯一选中的桌面组件用 Alt+键聚焦输入/slider，并按既有受控 click/change 语义激活其他目标，重复按下不重复触发。Windows 的 `WM_SYSCHAR` 仅在命中时消费，未命中的 Alt 组合键、Alt+Space 和 Alt+F4 继续交给默认窗口过程。UIA 同时公开规范化 AccessKey 和仅作语义描述、不注册全局热键的 acceleratorText；radioGroup/monthCalendar 等多虚拟目标节点不接受父级访问键。真实键盘布局、Alt 系统键与 Narrator 场景仍待现场验证。
 - `view.keyboard.events` 已为可聚焦节点加入 keyDown/keyUp 观察：事件包含稳定符号键名、Windows virtual key、重复与修饰键状态，输入代理与桌面窗口走同一入口；按下目标用于配对释放，窗口失焦清理。事件不提供取消返回值，宿主激活与管理快捷键继续执行，字符/IME 仍只走输入控件。
 - `view.focus.request` 已将可信手势内的 `control.focus(key)` 从文本输入扩展到最后一棵成功树中的任意启用、可聚焦元素，并同步逻辑槽位焦点；动作中新加入的目标仍只延迟到同 surface 下一次成功提交，失败后立即清理，不允许 render/schedule/异步完成抢焦点。
 - `view.state.visibility` 已加入显式 visible/hidden/collapsed：hidden 仍保留父布局空间，但绘制、后代命中、宿主输入、逻辑槽位和 UIA 语义都从同一棵提交树中省略；collapsed 继续复用旧 `visible=false` 的不占位语义，透明度为 0 不等同隐藏。

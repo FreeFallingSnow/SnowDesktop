@@ -91,6 +91,19 @@ bool IsKeyboardFocusableRegion(const InteractionRegion& region) noexcept
             region.events.contains("click") ||
             IsTextEntryRole(region.accessibilityRole));
 }
+
+char NormalizeAccessKey(char key) noexcept
+{
+    return key >= 'a' && key <= 'z'
+        ? static_cast<char>(key - 'a' + 'A') : key;
+}
+
+bool IsAccessKeyCharacter(char key) noexcept
+{
+    key = NormalizeAccessKey(key);
+    return (key >= 'A' && key <= 'Z') ||
+        (key >= '0' && key <= '9');
+}
 }
 
 bool InteractionShape::Contains(float pointX, float pointY) const noexcept
@@ -154,6 +167,31 @@ bool WidgetInteractionRegions::Submit(
     if (!IsSupportedCursor(region.cursor))
     {
         error = "unsupported interaction cursor";
+        return false;
+    }
+    if (!region.accessKey.empty())
+    {
+        if (region.accessKey.size() != 1 ||
+            !IsAccessKeyCharacter(region.accessKey[0]))
+        {
+            error = "interaction access key must be one ASCII letter or digit";
+            return false;
+        }
+        region.accessKey[0] = NormalizeAccessKey(region.accessKey[0]);
+        if (std::any_of(staging_.begin(), staging_.end(),
+                [&region](const InteractionRegion& candidate) {
+                    return !candidate.accessKey.empty() &&
+                        NormalizeAccessKey(candidate.accessKey[0]) ==
+                            region.accessKey[0];
+                }))
+        {
+            error = "duplicate interaction access key";
+            return false;
+        }
+    }
+    if (region.acceleratorText.size() > 64)
+    {
+        error = "interaction accelerator text must contain at most 64 bytes";
         return false;
     }
     if (!IsValidShape(region.shape))
@@ -626,6 +664,20 @@ WidgetInteractionRegions::KeyboardFocusableKeys() const
     result.reserve(ordered.size());
     for (const auto* region : ordered) result.push_back(region->key);
     return result;
+}
+
+const InteractionRegion* WidgetInteractionRegions::FindAccessKey(
+    char key) const noexcept
+{
+    key = NormalizeAccessKey(key);
+    if (!IsAccessKeyCharacter(key)) return nullptr;
+    const auto found = std::find_if(active_.begin(), active_.end(),
+        [key](const InteractionRegion& region) {
+            return IsKeyboardFocusableRegion(region) &&
+                region.accessKey.size() == 1 &&
+                NormalizeAccessKey(region.accessKey[0]) == key;
+        });
+    return found == active_.end() ? nullptr : &*found;
 }
 
 std::vector<InteractionRegion>

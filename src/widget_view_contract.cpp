@@ -75,7 +75,9 @@ constexpr auto kProperties = std::to_array<std::string_view>({
     "flexShrink", "flexDirection", "flexWrap", "alignContent",
     "fontSize", "fontWeight", "fontStyle", "lineHeight",
     "letterSpacing", "locale", "textDirection", "bold",
-    "checked", "indeterminate", "selected", "visible", "visibility", "enabled", "focusable", "tabIndex", "cursor", "tooltip", "alignItems", "showScrollbar",
+    "checked", "indeterminate", "selected", "visible", "visibility",
+    "enabled", "focusable", "tabIndex", "cursor", "tooltip",
+    "accessKey", "acceleratorText", "alignItems", "showScrollbar",
     "alignSelf", "justifyContent", "textAlign", "verticalAlign",
     "textWrap", "maxLines", "overflowText", "style", "hoverStyle",
     "pressedStyle", "focusStyle", "disabledStyle", "validationStyle",
@@ -321,6 +323,10 @@ bool ViewNodeAllowsProperty(
     if (property == "checkedStyle") return IsCheck(type) || IsChoice(type);
     if (property == "showScrollbar")
         return type == ViewNodeType::Scroll || IsVirtual(type);
+    if (property == "accessKey" || property == "acceleratorText")
+        return IsActionNode(type) &&
+            type != ViewNodeType::RadioGroup &&
+            type != ViewNodeType::MonthCalendar;
     if (property == "action") return IsActionNode(type);
     return false;
 }

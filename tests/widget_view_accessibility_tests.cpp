@@ -47,6 +47,8 @@ void TestSemanticHierarchyAndState()
     slider.minimum = 0.0f;
     slider.maximum = 1.0f;
     slider.step = 0.1f;
+    slider.accessKey = "V";
+    slider.acceleratorText = "Ctrl+Shift+V";
     root.children = { title, button, slider };
 
     std::vector<ViewAccessibilityNode> nodes;
@@ -80,8 +82,10 @@ void TestSemanticHierarchyAndState()
                 ViewAccessibilityPattern::RangeValue) &&
             nodes[3].focused && nodes[3].value == 0.5f &&
             nodes[3].minimum == 0.0f && nodes[3].maximum == 1.0f &&
-            nodes[3].step == 0.1f && !nodes[3].rangeValueReadOnly,
-        "sliders must expose range state and current host focus");
+            nodes[3].step == 0.1f && !nodes[3].rangeValueReadOnly &&
+            nodes[3].accessKey == "Alt+V" &&
+            nodes[3].acceleratorText == "Ctrl+Shift+V",
+        "sliders must expose range, focus, and keyboard metadata");
 }
 
 void TestClipAndControlledState()

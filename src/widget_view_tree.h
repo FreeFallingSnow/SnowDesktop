@@ -580,6 +580,8 @@ struct ViewNode
     ViewCollectionContent collectionContent = ViewCollectionContent::Items;
     std::string cursor;
     std::string tooltip;
+    std::string accessKey;
+    std::string acceleratorText;
     std::string accessibilityRole;
     std::string accessibilityLabel;
     ViewStyle style;

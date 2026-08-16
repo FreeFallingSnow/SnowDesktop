@@ -15,15 +15,15 @@ void DesktopApp::DispatchLuaWidgetViewKeyEvent(
         key, pressed, repeated, ctrl, shift, alt);
 }
 
-void DesktopApp::OnKeyDown(WPARAM key)
+bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
 {
     if (key == VK_CONTROL || key == VK_MENU || key == VK_SHIFT)
     {
         RefreshDragHintFromKeyboard();
-        return;
+        return false;
     }
 
-    if (renameEdit_ != nullptr) return;
+    if (renameEdit_ != nullptr) return false;
 
     // Handle searchable widget keyboard input.
     {
@@ -35,7 +35,7 @@ void DesktopApp::OnKeyDown(WPARAM key)
                 if (searchable->HandleSearchKey(key))
                 {
                     InvalidateRect(hwnd_, nullptr, FALSE);
-                    return;
+                    return true;
                 }
                 break;
             }
@@ -47,7 +47,7 @@ void DesktopApp::OnKeyDown(WPARAM key)
         if (key == VK_ESCAPE)
         {
             CloseQuickNavigation();
-            return;
+            return true;
         }
     }
 
@@ -61,15 +61,15 @@ void DesktopApp::OnKeyDown(WPARAM key)
         widgetEngine_->HandleHostViewKey(
             luaWidgetPanelRequest_.widgetId,
             key, ctrl, shift, alt,
-            luaWidgetPanelRequest_.surface))
+            luaWidgetPanelRequest_.surface, repeated))
     {
         InvalidateRect(hwnd_, nullptr, FALSE);
         RestoreInteractionInputFocus();
-        return;
+        return true;
     }
     if (!luaWidgetPanelRequest_.widgetId.empty() &&
         luaWidgetPanelRequest_.modal && key != VK_ESCAPE)
-        return;
+        return true;
 
     if (ctrl && (key == 'Z' || key == 'Y') && widgetEngine_)
     {
@@ -112,7 +112,7 @@ void DesktopApp::OnKeyDown(WPARAM key)
                 }
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 RestoreInteractionInputFocus();
-                return;
+                return true;
             }
         }
     }
@@ -140,29 +140,36 @@ void DesktopApp::OnKeyDown(WPARAM key)
             widgetEngine_->EnsureWidgetLoaded(
                 widgetId, widgets_[selectedLua].packageId);
             if (widgetEngine_->HandleHostViewKey(
-                    widgetId, key, ctrl, shift, alt))
+                    widgetId, key, ctrl, shift, alt,
+                    "desktop", repeated))
             {
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 RestoreInteractionInputFocus();
-                return;
+                return true;
             }
         }
     }
 
+    bool handled = false;
     switch (key)
     {
     case VK_F2:
     case 'R':
         if (key == 'R' && !ctrl) break;
         if (key == VK_F2 || ctrl)
+        {
             BeginRenameSelected();
+            handled = true;
+        }
         break;
     case VK_F5:
+        handled = true;
         restoreFloatingDockLayer = true;
         ReloadItems();
         break;
     case VK_DELETE:
     {
+        handled = true;
         restoreFloatingDockLayer = true;
         if (DockContainer* dock = GetDockContainer())
         {
@@ -218,6 +225,7 @@ void DesktopApp::OnKeyDown(WPARAM key)
     }
     case 'C':
         if (!ctrl) break;
+        handled = true;
         restoreFloatingDockLayer = true;
         if (CopyCutSelectedFolderEntries(false))
             break;
@@ -226,6 +234,7 @@ void DesktopApp::OnKeyDown(WPARAM key)
     case 'X':
         if (!ctrl) break;
     {
+        handled = true;
         restoreFloatingDockLayer = true;
         if (CopyCutSelectedFolderEntries(true))
             break;
@@ -279,6 +288,7 @@ void DesktopApp::OnKeyDown(WPARAM key)
     case 'V':
         if (!ctrl) break;
     {
+        handled = true;
         restoreFloatingDockLayer = true;
         if (dockFolderPopupOpen_ &&
             dockFolderPopupAvailable_ &&
@@ -368,6 +378,7 @@ void DesktopApp::OnKeyDown(WPARAM key)
     break;
     case 'A':
         if (!ctrl) break;
+        handled = true;
         restoreFloatingDockLayer = true;
     {
         if (IsCollectionPopupInteractive() &&
@@ -395,6 +406,7 @@ void DesktopApp::OnKeyDown(WPARAM key)
     }
     break;
     case VK_RETURN:
+        handled = true;
         restoreFloatingDockLayer = true;
         if (keyboardNavInsideWidget_)
         {
@@ -419,6 +431,7 @@ void DesktopApp::OnKeyDown(WPARAM key)
             OpenSelectedDesktopItem();
         break;
     case VK_ESCAPE:
+        handled = true;
         restoreFloatingDockLayer = true;
         if (!luaWidgetPanelRequest_.widgetId.empty())
         {
@@ -441,6 +454,7 @@ void DesktopApp::OnKeyDown(WPARAM key)
     case VK_DOWN:
     case VK_LEFT:
     case VK_RIGHT:
+        handled = true;
         if (keyboardNavInsideWidget_)
             NavigateWidgetMembers(key);
         else
@@ -457,6 +471,7 @@ void DesktopApp::OnKeyDown(WPARAM key)
         if (shellFileOperationInFlight_ == 0)
             RestoreInteractionInputFocus();
     }
+    return handled;
 }
 
 /**

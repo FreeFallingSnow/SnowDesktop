@@ -23,6 +23,8 @@ struct ViewAccessibilityNode
     std::string controlType;
     std::string valueText;
     std::string helpText;
+    std::string accessKey;
+    std::string acceleratorText;
     ViewAccessibilityPattern patterns = ViewAccessibilityPattern::None;
     ViewRect bounds;
     std::optional<ViewRect> clip;

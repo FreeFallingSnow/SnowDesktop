@@ -23657,7 +23657,7 @@ void WidgetEngine::ClearHostViewKeyState() noexcept
 
 bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
     WPARAM key, bool ctrl, bool shift, bool alt,
-    std::string_view surface)
+    std::string_view surface, bool repeated)
 {
     const int index = FindWidget(widgetId);
     if (index < 0 || ctrl) return false;
@@ -23666,9 +23666,82 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
     const std::string normalizedSurface =
         NormalizeWidgetSurface(surface);
     WidgetSurfaceScope surfaceScope(d2dState_, normalizedSurface.c_str());
+    const bool panelSurface = IsPanelSurface(normalizedSurface);
+    if ((panelSurface && !widget.panelActive) ||
+        (!panelSurface && !RuntimeIsWidgetSelected(widgetId)))
+        return false;
+    auto& surfaceRegions = InteractionRegionsForSurface(
+        widget, normalizedSurface);
+    auto& surfaceFocus = ViewFocusForSurface(widget, normalizedSurface);
+    if (alt && !repeated && key <= 0x7f)
+    {
+        const auto* foundAccessTarget = surfaceRegions.FindAccessKey(
+            static_cast<char>(key));
+        if (foundAccessTarget)
+        {
+            const auto accessTarget = *foundAccessTarget;
+            const std::string targetKey = accessTarget.key;
+            const auto input = std::find_if(widget.hostControls.rbegin(),
+                widget.hostControls.rend(), [&](const auto& control) {
+                    return control.type ==
+                            LuaWidget::HostControl::Type::Input &&
+                        control.enabled && control.id == targetKey &&
+                        HostControlBelongsToSurface(
+                            control, normalizedSurface);
+                });
+            if (input != widget.hostControls.rend())
+            {
+                if (!RuntimeFocusHostInput(
+                        widgetId, targetKey, "accessKey"))
+                    return false;
+            }
+            else
+            {
+                if (focusedHostInput_.active &&
+                    focusedHostInput_.widgetId == widgetId)
+                    BlurHostInput(false);
+                surfaceFocus = targetKey;
+            }
+            if (!panelSurface)
+            {
+                widget.logicalSlotFocus.reset();
+                const auto slotItems =
+                    CollectHostLogicalSlotKeyboardItems(*this, widget);
+                const auto slot = std::find_if(
+                    slotItems.begin(), slotItems.end(),
+                    [&targetKey](const auto& item) {
+                        return item.itemId == targetKey;
+                    });
+                if (slot != slotItems.end())
+                    widget.logicalSlotFocus = LuaWidget::LogicalSlotFocus{
+                        slot->slotId, slot->itemId };
+            }
+            if (accessTarget.controlKind !=
+                    snowdesktop::widget_runtime::
+                        InteractionControlKind::Slider &&
+                surfaceRegions.ResolveAction(targetKey, "click"))
+            {
+                const auto& shape = accessTarget.shape;
+                const int x = static_cast<int>(std::lround(
+                    shape.type == snowdesktop::widget_runtime::
+                            InteractionShapeType::Circle
+                        ? shape.x : shape.x + shape.width * 0.5f));
+                const int y = static_cast<int>(std::lround(
+                    shape.type == snowdesktop::widget_runtime::
+                            InteractionShapeType::Circle
+                        ? shape.y : shape.y + shape.height * 0.5f));
+                snowdesktop::widget_runtime::WidgetTrustedGestureScope
+                    gestureScope(trustedGestureState_, true);
+                DispatchInteractionAction(widget, targetKey, "click",
+                    x, y, 0, 0, 1, false, "accessKey", 0,
+                    std::nullopt, std::nullopt, normalizedSurface);
+            }
+            RuntimeInvalidateHost(widgetId);
+            return true;
+        }
+    }
     if (IsPanelSurface(normalizedSurface))
     {
-        if (!widget.panelActive) return false;
         auto& regions = widget.panelInteractionRegions;
         auto& focusKey = widget.panelViewKeyboardFocusKey;
         const auto focusKeys = regions.KeyboardFocusableKeys();
@@ -23862,7 +23935,6 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
         }
         return false;
     }
-    if (!RuntimeIsWidgetSelected(widgetId)) return false;
     const auto focusKeys = widget.interactionRegions.KeyboardFocusableKeys();
     if (focusKeys.empty())
     {

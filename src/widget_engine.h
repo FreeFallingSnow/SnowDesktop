@@ -1400,7 +1400,7 @@ public:
     void ClearHostViewKeyState() noexcept;
     bool HandleHostViewKey(const std::wstring& widgetId, WPARAM key,
         bool ctrl, bool shift, bool alt,
-        std::string_view surface = "desktop");
+        std::string_view surface = "desktop", bool repeated = false);
     bool HandleHostInputChar(wchar_t ch);
     bool SetHostInputComposition(
         const std::wstring& text, size_t cursor);

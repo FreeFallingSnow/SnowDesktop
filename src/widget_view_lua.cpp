@@ -2541,6 +2541,10 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadStringField(state, index, "cursor", node.cursor, false, error) ||
         !ReadStringField(state, index, "tooltip",
             node.tooltip, false, error) ||
+        !ReadStringField(state, index, "accessKey",
+            node.accessKey, false, error) ||
+        !ReadStringField(state, index, "acceleratorText",
+            node.acceleratorText, false, error) ||
         !ReadAlignmentField(state, index, "alignItems",
             node.alignItems, false, error) ||
         !ReadAlignmentField(state, index, "alignSelf",
@@ -2582,6 +2586,10 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
 
     if (focusableSpecified) node.focusable = focusable;
     if (tabIndexSpecified) node.tabIndex = tabIndex;
+    if (node.accessKey.size() == 1 &&
+        node.accessKey[0] >= 'a' && node.accessKey[0] <= 'z')
+        node.accessKey[0] = static_cast<char>(
+            node.accessKey[0] - 'a' + 'A');
 
     if (visibilitySpecified)
     {

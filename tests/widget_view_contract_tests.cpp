@@ -123,6 +123,15 @@ void TestRepresentativeApplicability()
             !ViewNodeAllowsProperty(ViewNodeType::ReferenceIcon, "tint") &&
             !ViewNodeAllowsProperty(ViewNodeType::ReferenceIcon, "source"),
         "package images and opaque reference icons must remain distinct");
+    Check(ViewNodeAllowsProperty(ViewNodeType::Button, "accessKey") &&
+            ViewNodeAllowsProperty(
+                ViewNodeType::TextInput, "acceleratorText") &&
+            !ViewNodeAllowsProperty(ViewNodeType::Text, "accessKey") &&
+            !ViewNodeAllowsProperty(
+                ViewNodeType::RadioGroup, "accessKey") &&
+            !ViewNodeAllowsProperty(
+                ViewNodeType::MonthCalendar, "acceleratorText"),
+        "access-key metadata must stay on single-target action nodes");
     Check(ViewNodeAllowsProperty(ViewNodeType::TextInput, "liveUpdate") &&
             ViewNodeAllowsProperty(ViewNodeType::TextInput, "selection") &&
             ViewNodeAllowsProperty(ViewNodeType::TextArea, "selection") &&

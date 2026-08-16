@@ -384,6 +384,8 @@
 ---@field tabIndex? integer Sequential host focus order from -1 through 32767. -1 skips Tab/spatial traversal; positive values sort before 0/source order.
 ---@field cursor? string
 ---@field tooltip? string Bounded plain-text host tooltip; also used as semantic help text when no validation message is present.
+---@field accessKey? string One ASCII letter or digit, unique in the tree; Alt+key focuses or activates this node after probing view.keyboard.accessKey.
+---@field acceleratorText? string UI Automation shortcut description up to 64 UTF-8 bytes; it does not register a shortcut. Requires view.keyboard.accessKey.
 ---@field style? SnowViewStyle
 ---@field hoverStyle? SnowViewStyle
 ---@field pressedStyle? SnowViewStyle

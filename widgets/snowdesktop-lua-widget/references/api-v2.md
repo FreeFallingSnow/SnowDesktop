@@ -109,6 +109,7 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.inputControls` 一次提供 `textInput/textArea/searchBox/numberInput/select`，
 `view.keyboardNavigation.basic` 提供桌面与活动 panel surface 的通用宿主键盘焦点与激活，
 `view.keyboard.events` 提供聚焦元素不可取消的按下/释放观察事件，
+`view.keyboard.accessKey` 提供宿主管理的组件内 Alt 访问键和快捷键语义文本，
 `view.focus.request` 将可信手势焦点请求扩展到任意可聚焦声明式元素，
 `view.flex.layout` 提供 row/column 主轴切换、换行与多行交叉轴对齐，
 `view.flex.sizing` 提供线性布局的 basis/grow/shrink 尺寸分配，
@@ -458,6 +459,17 @@ panel surface。宿主按照对应 surface 最后一棵成功提交的交互树�
 `source="keyboard"` 和可信手势标记。鼠标点击可操作元素也会同步宿主
 焦点。桌面逻辑槽位继续在这一焦点序列中使用 `Alt+方向键` 重排和 Delete 移除；panel
 不开放这组宿主槽位操作。该基础 feature 不承诺任意键绑定。
+
+探测 `view.keyboard.accessKey` 后，拥有单一直接交互目标的可聚焦节点可声明
+`accessKey="A"`（一个 ASCII 字母或数字）和可选 `acceleratorText="Ctrl+R"`。
+访问键在同一棵提交树内大小写不敏感且必须唯一；活动 panel/dialog/popover 优先于桌面，
+桌面仍要求该 Lua 组件是唯一选中组件。`Alt+访问键` 会把焦点移到目标：文本/数字输入和 slider
+只聚焦，按钮、链接、toggle/checkbox、select、listItem/slotItem 等则复用既有 click/change
+受控语义激活，并以 `source="accessKey"` 作为可信键盘手势。按住按键的重复消息不会再次激活。
+radioGroup、monthCalendar 等一个节点生成多个交互子项的控件不接受父级访问键，避免一个键对应
+多个目标。宿主通过 UI Automation `AccessKey` 暴露 `Alt+A`；`acceleratorText` 只进入
+`AcceleratorKey`，用于描述组件已经通过其他机制实现的快捷键，不注册系统或全局热键。
+两个字段都不要求权限，辅助 surface 关闭、组件取消选择或节点 disabled 后不会响应。
 
 探测 `view.keyboard.events` 后，可聚焦节点可声明 `events.keyDown/keyUp`。事件仅投递给桌面
 surface 中当前唯一选中 Lua 组件或活动 panel surface 的当前聚焦元素，包含稳定符号名 `key`、Windows

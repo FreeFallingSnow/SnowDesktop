@@ -93,6 +93,8 @@ LuaWidgetAccessibilitySnapshot Snapshot()
     button.focusable = true;
     button.focused = true;
     button.patterns = ViewAccessibilityPattern::Invoke;
+    button.accessKey = "Alt+O";
+    button.acceleratorText = "Ctrl+O";
 
     ViewAccessibilityNode status;
     status.semanticId = "path:0/1";
@@ -404,6 +406,11 @@ void TestProviderTreeAndLifetime()
             PropertyString(AsSimple(status.Get()).Get(),
                 UIA_AutomationIdPropertyId) == L"path:0/1",
         "keyed and keyless elements must expose deterministic automation ids");
+    Check(PropertyString(AsSimple(button.Get()).Get(),
+            UIA_AccessKeyPropertyId) == L"Alt+O" &&
+            PropertyString(AsSimple(button.Get()).Get(),
+                UIA_AcceleratorKeyPropertyId) == L"Ctrl+O",
+        "action elements must expose access-key and accelerator metadata");
     Check(PropertyString(AsSimple(group.Get()).Get(),
             UIA_AriaPropertiesPropertyId) == L"busy=true",
         "busy view state must be exposed without localized placeholder text");

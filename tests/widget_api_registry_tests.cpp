@@ -509,6 +509,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "view.input.required") &&
             snowdesktop::widget_api::SupportsFeature(
+                "view.keyboard.accessKey") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "view.state.selected") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.state.visibility") &&

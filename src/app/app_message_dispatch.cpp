@@ -765,10 +765,33 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_GETDLGCODE:
         return DLGC_WANTALLKEYS | DLGC_WANTARROWS;
     case WM_KEYDOWN:
+    {
+        const bool repeated =
+            (static_cast<ULONG_PTR>(lp) & (ULONG_PTR{1} << 30)) != 0;
         DispatchLuaWidgetViewKeyEvent(wp, true,
-            (static_cast<ULONG_PTR>(lp) & (ULONG_PTR{1} << 30)) != 0);
-        OnKeyDown(wp);
+            repeated);
+        OnKeyDown(wp, repeated);
         return 0;
+    }
+    case WM_SYSKEYDOWN:
+        if ((wp >= 'A' && wp <= 'Z') || (wp >= '0' && wp <= '9'))
+            DispatchLuaWidgetViewKeyEvent(wp, true,
+                (static_cast<ULONG_PTR>(lp) &
+                    (ULONG_PTR{1} << 30)) != 0);
+        break;
+    case WM_SYSCHAR:
+    {
+        if (wp > 0x7f) break;
+        const char key = static_cast<char>(wp);
+        if (!((key >= 'A' && key <= 'Z') ||
+                (key >= 'a' && key <= 'z') ||
+                (key >= '0' && key <= '9')))
+            break;
+        const bool repeated =
+            (static_cast<ULONG_PTR>(lp) & (ULONG_PTR{1} << 30)) != 0;
+        if (!OnKeyDown(static_cast<WPARAM>(key), repeated)) break;
+        return 0;
+    }
     case WM_HOTKEY:
         if (settingsWindow_ &&
             settingsWindow_->IsHotkeyCaptureActive())
@@ -799,6 +822,10 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         DispatchLuaWidgetViewKeyEvent(wp, false, false);
         RefreshDragHintFromKeyboard();
         return 0;
+    case WM_SYSKEYUP:
+        if ((wp >= 'A' && wp <= 'Z') || (wp >= '0' && wp <= '9'))
+            DispatchLuaWidgetViewKeyEvent(wp, false, false);
+        break;
     case WM_KILLFOCUS:
         if (widgetEngine_) widgetEngine_->ClearHostViewKeyState();
         break;

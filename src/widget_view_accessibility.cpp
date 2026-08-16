@@ -47,6 +47,15 @@ std::string AccessibleName(const ViewNode& node)
     return node.text;
 }
 
+std::string FormatAccessKey(std::string_view key)
+{
+    if (key.size() != 1) return {};
+    char character = key[0];
+    if (character >= 'a' && character <= 'z')
+        character = static_cast<char>(character - 'a' + 'A');
+    return std::string("Alt+") + character;
+}
+
 struct GridPosition
 {
     int row = 0;
@@ -379,6 +388,8 @@ bool CollectNode(const ViewNode& source, std::string_view semanticPath,
             : "key:" + source.key;
         target.key = source.key;
         target.name = AccessibleName(source);
+        target.accessKey = FormatAccessKey(source.accessKey);
+        target.acceleratorText = source.acceleratorText;
         target.role = source.accessibilityRole.empty()
             ? std::string(contract->defaultAccessibilityRole)
             : source.accessibilityRole;
@@ -505,6 +516,8 @@ bool CollectInteractionAccessibilityNodes(
         node.semanticId = "key:" + region.key;
         node.key = region.key;
         node.name = region.accessibilityLabel;
+        node.accessKey = FormatAccessKey(region.accessKey);
+        node.acceleratorText = region.acceleratorText;
         node.role = region.accessibilityRole;
         node.controlType = mapping.controlType;
         node.patterns = mapping.patterns;

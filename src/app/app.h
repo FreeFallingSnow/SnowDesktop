@@ -1229,8 +1229,8 @@ private:
     void OnMiddleButtonUp(WPARAM wp, LPARAM lp);
     /** @brief 处理鼠标右键释放消息（弹出上下文菜单）。 @param lp LPARAM */
     void OnRightButtonUp(LPARAM lp);
-    /** @brief 处理键盘按键消息。 @param key 按键虚拟键码 */
-    void OnKeyDown(WPARAM key);
+    /** @brief 处理键盘按键消息。 @return 消息是否由应用消费。 */
+    bool OnKeyDown(WPARAM key, bool repeated = false);
     /** @brief 向当前聚焦的 Lua 声明式元素投递受限按键事件。 */
     void DispatchLuaWidgetViewKeyEvent(
         WPARAM key, bool pressed, bool repeated);

@@ -853,6 +853,97 @@ void TestSelectionControlParsing()
     lua_close(state);
 }
 
+void TestAccessKeyParsingAndRouting()
+{
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "Lua state must be available");
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    Check(luaL_dostring(state, R"lua(
+        return view.column({
+            key = "access-root",
+            children = {
+                view.button({ key = "refresh", label = "Refresh",
+                    accessKey = "r", acceleratorText = "Ctrl+R",
+                    action = { id = "refresh.run" } }),
+                view.textInput({ key = "query", value = "snow",
+                    readOnly = true, accessKey = "Q",
+                    accessibility = { label = "Query" } }),
+                view.link({ key = "details", label = "Details",
+                    accessKey = "D", action = { id = "details.open" } }),
+            },
+        })
+    )lua") == LUA_OK,
+        "access-key fixture must evaluate");
+    ViewNode root;
+    std::string error;
+    Check(ParseLuaViewTree(state, -1, root, error) &&
+            root.children.size() == 3 &&
+            root.children[0].accessKey == "R" &&
+            root.children[0].acceleratorText == "Ctrl+R" &&
+            root.children[1].accessKey == "Q" &&
+            root.children[2].accessKey == "D" &&
+            ValidateAndLayoutViewTree(root, 240.0f, 120.0f, error),
+        "access keys must normalize and validate on single-target controls");
+    std::vector<InteractionRegion> regions;
+    Check(CollectViewInteractionRegions(root, regions, error) &&
+            regions.size() == 3 && regions[0].accessKey == "R" &&
+            regions[0].acceleratorText == "Ctrl+R",
+        "access-key metadata must enter the committed interaction tree");
+    WidgetInteractionRegions committed;
+    committed.BeginFrame();
+    for (auto& region : regions)
+        Check(committed.Submit(std::move(region), error),
+            "access-key regions must submit atomically");
+    committed.CommitFrame();
+    Check(committed.FindAccessKey('r') &&
+            committed.FindAccessKey('r')->key == "refresh" &&
+            committed.FindAccessKey('Q') &&
+            committed.FindAccessKey('Q')->key == "query" &&
+            !committed.FindAccessKey('X'),
+        "access-key lookup must be case-insensitive and enabled-only");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.row({ key = "duplicate-access", children = {
+            view.button({ key = "one", label = "One", accessKey = "A",
+                action = { id = "one" } }),
+            view.button({ key = "two", label = "Two", accessKey = "a",
+                action = { id = "two" } }),
+        }})
+    )lua") == LUA_OK,
+        "duplicate access-key fixture must evaluate");
+    ViewNode invalid;
+    Check(ParseLuaViewTree(state, -1, invalid, error) &&
+            !ValidateAndLayoutViewTree(invalid, 240.0f, 40.0f, error) &&
+            error.find("duplicate view accessKey") != std::string::npos,
+        "access keys must remain unique across one committed tree");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.button({ key = "bad-access", label = "Bad",
+            accessKey = "Open", action = { id = "bad" } })
+    )lua") == LUA_OK,
+        "invalid access-key fixture must evaluate");
+    invalid = {};
+    Check(ParseLuaViewTree(state, -1, invalid, error) &&
+            !ValidateAndLayoutViewTree(invalid, 120.0f, 40.0f, error) &&
+            error.find("one ASCII letter or digit") != std::string::npos,
+        "access keys must reject ambiguous multi-character values");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.text({ key = "bad-target", text = "Bad",
+            accessKey = "B" })
+    )lua") == LUA_OK,
+        "invalid access-key target fixture must evaluate");
+    Check(!ParseLuaViewTree(state, -1, invalid, error) &&
+            error.find("do not accept field 'accessKey'") !=
+                std::string::npos,
+        "non-action content must reject access-key metadata in the matrix");
+    lua_close(state);
+}
+
 void TestActionControlParsing()
 {
     lua_State* state = luaL_newstate();
@@ -3395,6 +3486,7 @@ int main()
     TestDataSeriesParsingAndLimits();
     TestStatusVisualParsing();
     TestSelectionControlParsing();
+    TestAccessKeyParsingAndRouting();
     TestActionControlParsing();
     TestUniformGridParsingAndLayout();
     TestFlowParsingAndLayout();
