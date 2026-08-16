@@ -486,6 +486,24 @@ struct LuaWidget
         std::size_t maximumUtf8Bytes = 0;
     };
 
+    struct VariableVirtualMeasurement
+    {
+        float extent = 0.0f;
+        std::uint64_t lastUsed = 0;
+        std::string itemKey;
+    };
+
+    struct VariableVirtualState
+    {
+        std::size_t itemCount = 0;
+        float estimatedItemSize = 0.0f;
+        float rowGap = 0.0f;
+        std::uint64_t layoutRevision = 0;
+        std::uint64_t sequence = 0;
+        std::unordered_map<std::size_t, VariableVirtualMeasurement>
+            measurements;
+    };
+
     struct LogicalSlotPointerDrag
     {
         std::string slotId;
@@ -548,6 +566,10 @@ struct LuaWidget
         deferredHostInputFocus;
     std::unordered_map<std::string, int> scrollOffsets;
     std::unordered_map<std::string, int> panelScrollOffsets;
+    std::unordered_map<std::string, VariableVirtualState>
+        variableVirtualStates;
+    std::unordered_map<std::string, VariableVirtualState>
+        panelVariableVirtualStates;
     std::unordered_map<std::uint64_t, std::string> dataSubscriptions;
     std::unordered_set<std::uint64_t> taskIds;
     std::unordered_map<std::string, ApplicationReference>
@@ -1425,6 +1447,13 @@ public:
         const std::string& id, std::string_view surface = {}) const;
     bool RuntimeHasScrollOffset(const std::wstring& widgetId,
         const std::string& id, std::string_view surface = {}) const;
+    bool RuntimeComputeVariableVirtualRange(const std::wstring& widgetId,
+        const std::string& id, std::size_t itemCount,
+        float estimatedItemSize, float rowGap, float viewportExtent,
+        std::uint64_t layoutRevision, std::size_t overscan,
+        std::size_t initialScrollIndex,
+        snowdesktop::widget_runtime::ViewVirtualRange& range,
+        std::string& error, std::string_view surface = {}) const;
     void RuntimeSetScrollOffset(const std::wstring& widgetId,
         const std::string& id, int offset, std::string_view surface = {});
     bool RuntimeScrollView(const std::wstring& widgetId,

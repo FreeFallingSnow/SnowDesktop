@@ -2286,18 +2286,37 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     if (!virtualCollectionNode &&
         (FieldPresent(state, index, "itemCount") ||
             FieldPresent(state, index, "itemExtent") ||
+            FieldPresent(state, index, "estimatedItemSize") ||
+            FieldPresent(state, index, "layoutRevision") ||
             FieldPresent(state, index, "firstIndex") ||
             FieldPresent(state, index, "overscan")))
     {
         error = "virtual collection fields are reserved for virtualList and virtualGrid";
         return false;
     }
+    const bool itemExtentSpecified =
+        FieldPresent(state, index, "itemExtent");
+    const bool estimatedItemSizeSpecified =
+        FieldPresent(state, index, "estimatedItemSize");
     if (virtualCollectionNode &&
         (!FieldPresent(state, index, "itemCount") ||
-            !FieldPresent(state, index, "itemExtent") ||
             !FieldPresent(state, index, "firstIndex")))
     {
-        error = "virtual collection nodes require itemCount, itemExtent, and firstIndex";
+        error = "virtual collection nodes require itemCount and firstIndex";
+        return false;
+    }
+    if ((virtualGridNode && (!itemExtentSpecified ||
+            estimatedItemSizeSpecified)) ||
+        (virtualListNode &&
+            itemExtentSpecified == estimatedItemSizeSpecified))
+    {
+        error = "virtualList requires exactly one of itemExtent or estimatedItemSize; virtualGrid requires itemExtent";
+        return false;
+    }
+    if ((!virtualListNode || !estimatedItemSizeSpecified) &&
+        FieldPresent(state, index, "layoutRevision"))
+    {
+        error = "layoutRevision is reserved for variable virtualList nodes";
         return false;
     }
     if (!progressNode && !sliderNode && !inputNode &&
@@ -2519,6 +2538,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     bool focusable = false;
     int tabIndex = 0;
     std::size_t rowTrackCount = 0;
+    std::size_t virtualLayoutRevision = 0;
     const bool initialScrollKeySpecified =
         FieldPresent(state, index, "initialScrollKey");
     std::string initialScrollKey;
@@ -2571,6 +2591,10 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             node.itemCount, virtualCollectionNode, error) ||
         !ReadFloatField(state, index, "itemExtent",
             node.itemExtent, error) ||
+        !ReadOptionalNodeFloatField(state, index, "estimatedItemSize",
+            node.estimatedItemSize, error) ||
+        !ReadNonNegativeSizeField(state, index, "layoutRevision",
+            virtualLayoutRevision, false, error) ||
         !ReadNonNegativeSizeField(state, index, "firstIndex",
             node.firstIndex, virtualCollectionNode, error) ||
         !ReadNonNegativeSizeField(state, index, "overscan",
@@ -2690,6 +2714,9 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadStyleField(state, index, "eventStyle",
             node.eventStyle, error))
         return false;
+
+    node.virtualLayoutRevision =
+        static_cast<std::uint64_t>(virtualLayoutRevision);
 
     if (initialScrollKeySpecified)
     {

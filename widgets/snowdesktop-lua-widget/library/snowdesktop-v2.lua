@@ -266,7 +266,9 @@
 ---@class SnowViewVirtualRangeOptions
 ---@field key string Stable virtual collection key.
 ---@field itemCount integer Total logical items from 0 through 1000000.
----@field itemExtent number Fixed logical row height.
+---@field itemExtent? number Fixed logical row height; mutually exclusive with estimatedItemSize.
+---@field estimatedItemSize? number Variable virtualList estimate used instead of itemExtent after probing view.collection.virtual.variableExtent.
+---@field layoutRevision? integer Bump when variable-list ordering or height-affecting content changes so stale measurements are discarded.
 ---@field viewportExtent number Positive logical content-viewport height after padding.
 ---@field columns? integer Grid column count from 1 through 64; defaults to 1.
 ---@field rowGap? number Logical gap between rows; defaults to 0.
@@ -359,6 +361,8 @@
 ---@field rowSpan? integer Number of rows occupied by a direct grid/gridList child; 1 through 64, defaults to 1.
 ---@field itemCount? integer Required total logical item count for virtualList/virtualGrid; 0 through 1000000.
 ---@field itemExtent? number Required fixed row height for virtualList/virtualGrid.
+---@field estimatedItemSize? number VirtualList-only positive estimate used instead of itemExtent; materialized item heights are measured and cached by the host. Requires view.collection.virtual.variableExtent.
+---@field layoutRevision? integer Variable virtualList measurement generation; bump after reorder or height-affecting model changes. Defaults to 0.
 ---@field firstIndex? integer Required first 1-based materialized item for virtualList/virtualGrid; 0 only when empty.
 ---@field overscan? integer Virtual collection overscan rows from 0 through 16; defaults to 2.
 ---@field initialScrollKey? string Scroll-only visible descendant key to reveal with nearest alignment when this stable container key is first accepted.

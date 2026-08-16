@@ -1962,6 +1962,93 @@ void TestInitialScrollTargets()
     lua_close(state);
 }
 
+void TestVariableVirtualizedCollections()
+{
+    std::string error;
+    const std::vector<ViewVirtualItemMeasurement> measurements = {
+        { 1, 30.0f }, { 2, 10.0f },
+    };
+    ViewVirtualRange range;
+    Check(ComputeViewVariableVirtualRange(5, 20.0f, 0.0f,
+            40.0f, 35.0f, 0, measurements, range, error) &&
+            range.firstIndex == 2 && range.lastIndex == 4 &&
+            Near(range.contentExtent, 100.0f) &&
+            Near(range.offset, 35.0f),
+        "variable virtual ranges must combine estimates with sparse measurements");
+    float targetOffset = 0.0f;
+    Check(ComputeViewVariableVirtualItemScrollOffset(5, 20.0f, 0.0f,
+            40.0f, 0.0f, 5, "nearest", measurements,
+            targetOffset, error) && Near(targetOffset, 60.0f),
+        "variable virtual item positioning must use measured prefix extents");
+
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "Lua state must be available");
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    Check(luaL_dostring(state, R"lua(
+        return view.virtualList({
+            key = "variable-feed",
+            height = 40,
+            itemCount = 5,
+            estimatedItemSize = 20,
+            layoutRevision = 3,
+            firstIndex = 1,
+            overscan = 0,
+            children = {
+                view.listItem({ key = "variable-1", height = 30,
+                    accessibility = { label = "Variable 1" },
+                    children = { view.text({ key = "variable-label-1",
+                        text = "Variable 1" }) },
+                }),
+                view.listItem({ key = "variable-2", height = 10,
+                    accessibility = { label = "Variable 2" },
+                    children = { view.text({ key = "variable-label-2",
+                        text = "Variable 2" }) },
+                }),
+            },
+        })
+    )lua") == LUA_OK,
+        "variable virtualList fixture must evaluate");
+    ViewNode list;
+    Check(ParseLuaViewTree(state, -1, list, error) &&
+            list.estimatedItemSize == 20.0f &&
+            list.virtualLayoutRevision == 3 &&
+            ValidateAndLayoutViewTree(list, 160.0f, 40.0f, error) &&
+            list.virtualMeasuredExtents.size() == 2 &&
+            Near(list.virtualMeasuredExtents[0], 30.0f) &&
+            Near(list.virtualMeasuredExtents[1], 10.0f) &&
+            Near(list.children[1].frame.y, 30.0f),
+        "variable virtualList must measure and place its materialized window");
+    std::vector<ViewScrollViewport> viewports;
+    Check(ApplyViewScrollOffsets(list,
+            [](std::string_view, float) -> std::optional<float> {
+                return std::nullopt;
+            }, viewports, error) && viewports.size() == 1 &&
+            Near(viewports[0].contentExtent, 100.0f),
+        "variable virtualList must expose an estimated bounded scroll range");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.virtualList({ key = "ambiguous-variable",
+            height = 40, itemCount = 1, itemExtent = 20,
+            estimatedItemSize = 20, firstIndex = 1,
+            children = {
+                view.listItem({ key = "ambiguous-item",
+                    accessibility = { label = "Ambiguous" },
+                    children = { view.text({ key = "ambiguous-label",
+                        text = "Ambiguous" }) },
+                }),
+            },
+        })
+    )lua") == LUA_OK,
+        "ambiguous virtual extent fixture must evaluate");
+    ViewNode invalid;
+    Check(!ParseLuaViewTree(state, -1, invalid, error) &&
+            error.find("exactly one") != std::string::npos,
+        "virtualList must reject simultaneous fixed and estimated extents");
+    lua_close(state);
+}
+
 void TestCollectionContentStates()
 {
     lua_State* state = luaL_newstate();
@@ -3884,6 +3971,7 @@ int main()
     TestListOrientation();
     TestVirtualizedCollections();
     TestInitialScrollTargets();
+    TestVariableVirtualizedCollections();
     TestCollectionContentStates();
     TestDeclarativeInputControls();
     TestStyledTextAndMonthCalendar();

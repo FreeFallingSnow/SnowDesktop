@@ -1773,6 +1773,34 @@ void LayoutScroll(ViewNode& node, const ViewRect& content)
 void LayoutVirtualCollection(ViewNode& node, const ViewRect& content)
 {
     if (node.children.empty()) return;
+    node.virtualMeasuredExtents.clear();
+    if (node.estimatedItemSize)
+    {
+        float cursor = 0.0f;
+        std::string rangeError;
+        if (!ComputeViewVariableVirtualItemStart(node.itemCount,
+                *node.estimatedItemSize,
+                node.rowGap.value_or(node.gap), node.firstIndex,
+                node.virtualMeasurements, cursor, rangeError))
+            return;
+        const float rowGap = node.rowGap.value_or(node.gap);
+        for (auto& child : node.children)
+        {
+            if (!child.visible) continue;
+            const float intrinsic = child.height.kind ==
+                ViewLengthKind::Fixed
+                ? child.height.value + ViewVerticalMargin(child)
+                : std::max(1.0f, OuterIntrinsicHeight(child));
+            const ResolvedNodeSize resolved = ResolveOuterNodeSize(
+                child, content.width, intrinsic);
+            const float measuredExtent = std::max(1.0f, resolved.height);
+            LayoutNode(child, { content.x, content.y + cursor,
+                resolved.width, measuredExtent });
+            node.virtualMeasuredExtents.push_back(measuredExtent);
+            cursor += measuredExtent + rowGap;
+        }
+        return;
+    }
     const std::size_t columns = node.type == ViewNodeType::VirtualGrid
         ? node.columns : 1;
     if (columns == 0 || node.firstIndex == 0) return;
@@ -2283,7 +2311,8 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
     }
     if (!IsVirtualCollection(node.type) &&
         (node.itemCount != 0 || node.firstIndex != 0 ||
-            node.itemExtent != 0.0f || node.overscan != 2))
+            node.itemExtent != 0.0f || node.estimatedItemSize ||
+            node.virtualLayoutRevision != 0 || node.overscan != 2))
     {
         error = "virtual collection metadata is reserved for virtual nodes";
         return false;
@@ -2398,6 +2427,18 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
     }
     if (IsVirtualCollection(node.type))
     {
+        const bool variable = node.estimatedItemSize.has_value();
+        if ((node.type == ViewNodeType::VirtualGrid && variable) ||
+            (!variable && node.itemExtent <= 0.0f) ||
+            (variable && (node.type != ViewNodeType::VirtualList ||
+                node.itemExtent != 0.0f ||
+                !FiniteInRange(*node.estimatedItemSize,
+                    0.000001f, MaximumScrollExtent))) ||
+            (!variable && node.virtualLayoutRevision != 0))
+        {
+            error = "virtualList requires one valid fixed or estimated item size; virtualGrid requires fixed itemExtent";
+            return false;
+        }
         if (node.orientation != ViewOrientation::Vertical)
         {
             error = "virtual collection nodes are vertical";
@@ -2428,7 +2469,16 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             return false;
         }
         ViewVirtualRange range;
-        if (!ComputeViewVirtualRange(node.itemCount, node.itemExtent,
+        if (variable)
+        {
+            if (!ComputeViewVariableVirtualRange(node.itemCount,
+                    *node.estimatedItemSize,
+                    node.rowGap.value_or(node.gap), 1.0f, 0.0f,
+                    node.overscan, node.virtualMeasurements,
+                    range, error))
+                return false;
+        }
+        else if (!ComputeViewVirtualRange(node.itemCount, node.itemExtent,
                 node.type == ViewNodeType::VirtualGrid ? node.columns : 1,
                 node.rowGap.value_or(node.gap), 1.0f, 0.0f,
                 node.overscan, range, error))
@@ -3604,7 +3654,17 @@ bool ApplyScrollState(ViewNode& node,
         if (IsVirtualCollection(node.type) &&
             !HasCollectionPlaceholder(node))
         {
-            if (!ComputeViewVirtualRange(node.itemCount, node.itemExtent,
+            if (node.estimatedItemSize)
+            {
+                if (!ComputeViewVariableVirtualRange(node.itemCount,
+                        *node.estimatedItemSize,
+                        node.rowGap.value_or(node.gap), viewportExtent,
+                        0.0f, node.overscan, node.virtualMeasurements,
+                        virtualRange, error))
+                    return false;
+            }
+            else if (!ComputeViewVirtualRange(node.itemCount,
+                    node.itemExtent,
                     node.type == ViewNodeType::VirtualGrid
                         ? node.columns : 1,
                     node.rowGap.value_or(node.gap), viewportExtent,
@@ -3657,7 +3717,16 @@ bool ApplyScrollState(ViewNode& node,
         else if (initialized && IsVirtualCollection(node.type) &&
             !HasCollectionPlaceholder(node) && node.initialScrollIndex)
         {
-            if (!ComputeViewVirtualItemScrollOffset(node.itemCount,
+            if (node.estimatedItemSize)
+            {
+                if (!ComputeViewVariableVirtualItemScrollOffset(
+                        node.itemCount, *node.estimatedItemSize,
+                        node.rowGap.value_or(node.gap), viewportExtent,
+                        0.0f, *node.initialScrollIndex, "nearest",
+                        node.virtualMeasurements, requested, error))
+                    return false;
+            }
+            else if (!ComputeViewVirtualItemScrollOffset(node.itemCount,
                     node.itemExtent,
                     node.type == ViewNodeType::VirtualGrid
                         ? node.columns : 1,
@@ -3679,7 +3748,16 @@ bool ApplyScrollState(ViewNode& node,
             !HasCollectionPlaceholder(node))
         {
             ViewVirtualRange visibleRange;
-            if (!ComputeViewVirtualRange(node.itemCount, node.itemExtent,
+            if (node.estimatedItemSize)
+            {
+                if (!ComputeViewVariableVirtualRange(node.itemCount,
+                        *node.estimatedItemSize,
+                        node.rowGap.value_or(node.gap), viewportExtent,
+                        offset, 0, node.virtualMeasurements,
+                        visibleRange, error))
+                    return false;
+            }
+            else if (!ComputeViewVirtualRange(node.itemCount, node.itemExtent,
                     node.type == ViewNodeType::VirtualGrid
                         ? node.columns : 1,
                     node.rowGap.value_or(node.gap), viewportExtent,
@@ -5189,6 +5267,206 @@ bool ComputeViewVirtualItemScrollOffset(std::size_t itemCount,
         requested = itemStart - (viewportExtent - itemExtent) * 0.5f;
     else if (alignment == "end")
         requested = itemEnd - viewportExtent;
+    else if (itemStart < range.offset) requested = itemStart;
+    else if (itemEnd > range.offset + viewportExtent)
+        requested = itemEnd - viewportExtent;
+    offset = std::clamp(requested, 0.0f, range.maximum);
+    return true;
+}
+
+namespace
+{
+bool ValidateVariableVirtualMeasurements(std::size_t itemCount,
+    float estimatedItemSize, float rowGap,
+    std::span<const ViewVirtualItemMeasurement> measurements,
+    float& contentExtent, std::string& error)
+{
+    if (itemCount > ViewTreeLimits::MaximumVirtualItemCount ||
+        measurements.size() > 4096 ||
+        !FiniteInRange(estimatedItemSize, 0.000001f,
+            MaximumScrollExtent) ||
+        !FiniteInRange(rowGap, 0.0f, 4096.0f))
+    {
+        error = "variable virtual collection arguments exceed their limits";
+        return false;
+    }
+    std::unordered_set<std::size_t> indices;
+    double total = static_cast<double>(itemCount) * estimatedItemSize +
+        static_cast<double>(itemCount > 0 ? itemCount - 1 : 0) * rowGap;
+    for (const auto& measurement : measurements)
+    {
+        if (measurement.index == 0 || measurement.index > itemCount ||
+            !FiniteInRange(measurement.extent, 0.000001f,
+                MaximumScrollExtent) ||
+            !indices.insert(measurement.index).second)
+        {
+            error = "variable virtual measurements must use unique bounded 1-based indices";
+            return false;
+        }
+        total += static_cast<double>(measurement.extent) -
+            estimatedItemSize;
+    }
+    if (!std::isfinite(total) || total < 0.0 ||
+        total > MaximumScrollExtent)
+    {
+        error = "variable virtual collection content extent exceeds 1000000";
+        return false;
+    }
+    contentExtent = static_cast<float>(total);
+    return true;
+}
+
+float VariableVirtualExtent(std::size_t index, float estimatedItemSize,
+    std::span<const ViewVirtualItemMeasurement> measurements) noexcept
+{
+    const auto found = std::find_if(measurements.begin(), measurements.end(),
+        [index](const auto& measurement) {
+            return measurement.index == index;
+        });
+    return found == measurements.end()
+        ? estimatedItemSize : found->extent;
+}
+
+float VariableVirtualStart(std::size_t index, float estimatedItemSize,
+    float rowGap,
+    std::span<const ViewVirtualItemMeasurement> measurements) noexcept
+{
+    double start = static_cast<double>(index - 1) *
+        (estimatedItemSize + rowGap);
+    for (const auto& measurement : measurements)
+    {
+        if (measurement.index < index)
+            start += static_cast<double>(measurement.extent) -
+                estimatedItemSize;
+    }
+    return static_cast<float>(start);
+}
+}
+
+bool ComputeViewVariableVirtualRange(std::size_t itemCount,
+    float estimatedItemSize, float rowGap, float viewportExtent,
+    float requestedOffset, std::size_t overscan,
+    std::span<const ViewVirtualItemMeasurement> measurements,
+    ViewVirtualRange& range, std::string& error)
+{
+    error.clear();
+    range = {};
+    float logicalContentExtent = 0.0f;
+    if (overscan > ViewTreeLimits::MaximumVirtualOverscan ||
+        !FiniteInRange(viewportExtent, 0.000001f,
+            MaximumScrollExtent) ||
+        !std::isfinite(requestedOffset) ||
+        !ValidateVariableVirtualMeasurements(itemCount,
+            estimatedItemSize, rowGap, measurements,
+            logicalContentExtent, error))
+    {
+        if (error.empty())
+            error = "variable virtual range arguments must be finite and within their limits";
+        return false;
+    }
+    range.viewportExtent = viewportExtent;
+    range.contentExtent = std::max(viewportExtent, logicalContentExtent);
+    range.maximum = std::max(0.0f,
+        range.contentExtent - viewportExtent);
+    range.offset = std::clamp(requestedOffset, 0.0f, range.maximum);
+    if (itemCount == 0) return true;
+
+    std::size_t low = 1;
+    std::size_t high = itemCount;
+    while (low < high)
+    {
+        const std::size_t middle = low + (high - low) / 2;
+        const float end = VariableVirtualStart(middle,
+            estimatedItemSize, rowGap, measurements) +
+            VariableVirtualExtent(middle, estimatedItemSize, measurements);
+        if (end <= range.offset) low = middle + 1;
+        else high = middle;
+    }
+    const std::size_t firstVisible = low;
+    const double visibleEnd = std::nextafter(
+        static_cast<double>(range.offset) + viewportExtent,
+        -std::numeric_limits<double>::infinity());
+    low = firstVisible;
+    high = itemCount + 1;
+    while (low < high)
+    {
+        const std::size_t middle = low + (high - low) / 2;
+        if (middle > itemCount ||
+            VariableVirtualStart(middle, estimatedItemSize,
+                rowGap, measurements) > visibleEnd)
+            high = middle;
+        else
+            low = middle + 1;
+    }
+    const std::size_t lastVisible = std::max(firstVisible, low - 1);
+    range.firstIndex = firstVisible > overscan
+        ? firstVisible - overscan : 1;
+    range.lastIndex = std::min(itemCount,
+        lastVisible + std::min(overscan, itemCount - lastVisible));
+    if (range.lastIndex - range.firstIndex + 1 >
+        ViewTreeLimits::MaximumVirtualWindowItems)
+    {
+        error = "variable virtual materialization window exceeds 128 items";
+        range = {};
+        return false;
+    }
+    return true;
+}
+
+bool ComputeViewVariableVirtualItemStart(std::size_t itemCount,
+    float estimatedItemSize, float rowGap, std::size_t index,
+    std::span<const ViewVirtualItemMeasurement> measurements,
+    float& start, std::string& error)
+{
+    start = 0.0f;
+    float contentExtent = 0.0f;
+    if (!ValidateVariableVirtualMeasurements(itemCount,
+            estimatedItemSize, rowGap, measurements,
+            contentExtent, error))
+        return false;
+    if (index == 0 || index > itemCount)
+    {
+        error = "variable virtual item index is outside the collection";
+        return false;
+    }
+    start = VariableVirtualStart(index, estimatedItemSize,
+        rowGap, measurements);
+    return true;
+}
+
+bool ComputeViewVariableVirtualItemScrollOffset(std::size_t itemCount,
+    float estimatedItemSize, float rowGap, float viewportExtent,
+    float currentOffset, std::size_t index, std::string_view alignment,
+    std::span<const ViewVirtualItemMeasurement> measurements,
+    float& offset, std::string& error)
+{
+    offset = 0.0f;
+    ViewVirtualRange range;
+    if (!ComputeViewVariableVirtualRange(itemCount, estimatedItemSize,
+            rowGap, viewportExtent, currentOffset, 0,
+            measurements, range, error))
+        return false;
+    if (index == 0 || index > itemCount)
+    {
+        error = "variable virtual item index is outside the collection";
+        return false;
+    }
+    if (alignment != "nearest" && alignment != "start" &&
+        alignment != "center" && alignment != "end")
+    {
+        error = "variable virtual item alignment must be nearest, start, center, or end";
+        return false;
+    }
+    const float itemStart = VariableVirtualStart(index,
+        estimatedItemSize, rowGap, measurements);
+    const float itemExtent = VariableVirtualExtent(index,
+        estimatedItemSize, measurements);
+    const float itemEnd = itemStart + itemExtent;
+    float requested = range.offset;
+    if (alignment == "start") requested = itemStart;
+    else if (alignment == "center")
+        requested = itemStart - (viewportExtent - itemExtent) * 0.5f;
+    else if (alignment == "end") requested = itemEnd - viewportExtent;
     else if (itemStart < range.offset) requested = itemStart;
     else if (itemEnd > range.offset + viewportExtent)
         requested = itemEnd - viewportExtent;

@@ -138,7 +138,8 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.collection.basic` 提供基础集合，
 `view.collection.orientation` 提供普通 list 横纵方向，
 `view.collection.selection` 提供受控单选/多选，`view.collection.contentStates` 提供空态/加载态，
-`view.collection.virtual` 提供固定行高虚拟集合与可见范围查询；
+`view.collection.virtual` 提供固定行高虚拟集合与可见范围查询，
+`view.collection.virtual.variableExtent` 为 virtualList 增加宿主测量的可变行高；
 `view.styledText.basic` 提供有界样式 span，`view.styledText.actions` 提供精确行内交互目标，
 `view.monthCalendar` 提供受控月历日期网格，
 `view.logicalSlots` 提供与 manifest 宿主管理槽位严格对应的 `slotSurface/slotItem`，
@@ -564,7 +565,7 @@ surface 中当前唯一选中 Lua 组件或活动 panel surface 的当前聚焦�
 Windows UI Automation Scroll Pattern 可以通过同一宿主滚动状态移动视口，但不会获得可信手势。
 探测 `view.scroll.initialTarget` 后，普通 `scroll` 可用 `initialScrollKey` 在该 surface
 第一次成功接收此容器稳定 key 时，以 nearest 语义显示一个可见后代；`virtualList/virtualGrid`
-则用 1-based `initialScrollIndex` 定位固定行高项目。初始定位只在宿主尚无该 key 的偏移时计算，
+则用 1-based `initialScrollIndex` 定位固定或估算高度项目。初始定位只在宿主尚无该 key 的偏移时计算，
 即使结果为 0 也会建立状态；后续重渲染、属性变化和组件主动滚动都不会覆盖用户位置。
 目标后代不存在、被 hidden/collapsed，或虚拟索引越界时，首次候选 scene 会按事务语义拒绝。
 虚拟集合首帧还必须把同一个 `initialScrollIndex` 传给 `view.virtualRange()`，使 Lua 实体化目标
@@ -575,7 +576,7 @@ UIA 滚动从末端之前首次到达最大偏移时投递一次 action，离开
 探测 `view.scroll.programmatic` 后，action/event/schedule 等非渲染回调可调用
 `view.scrollTo(key, offset)` 或 `view.scrollBy(key, delta)`；宿主按当前已提交 scroll/virtual
 节点范围钳制并返回 `{offset,maximum,changed}`。`view.scrollToIndex(key,index,alignment?)`
-只接受已提交的固定行高 `virtualList/virtualGrid`，使用 1-based 全局索引和
+接受已提交的固定行高 `virtualList/virtualGrid` 以及可变行高 `virtualList`，使用 1-based 全局索引和
 `nearest/start/center/end` 对齐。三个函数都禁止在 `view()`/`render()` 中改变偏移，未知 key
 返回 `scrollTargetNotFound`，索引越界返回 `indexOutOfRange`，且不会产生可信用户手势。
 
@@ -659,7 +660,7 @@ view.scroll({
 })
 ```
 
-`virtualList` 和 `virtualGrid` 是固定行高的纵向虚拟集合，对应 feature
+`virtualList` 和 `virtualGrid` 默认是固定行高的纵向虚拟集合，对应 feature
 `view.collection.virtual`。Lua 先用 `view.virtualRange()` 查询当前宿主滚动位置需要实体化的
 1-based 闭区间，只为该区间创建连续 `listItem`；再把同一 `key/itemCount/itemExtent/
 rowGap/columns/overscan`、返回的 `firstIndex` 和窗口 children 提交给虚拟节点。宿主按全局
@@ -709,8 +710,46 @@ return view.virtualList({
 `itemExtent` 表示行高而不是单格宽度。虚拟集合最多表示 1,000,000 项，但总逻辑 extent
 仍不得超过 1,000,000；每帧最多实体化 128 项，overscan 为 0–16 行，空集合使用
 `firstIndex=0` 和空 children。虚拟节点必须有固定或 fill 高度，`viewportExtent` 是扣除
-节点 padding 后的实际内容高度。当前不支持可变行高、横向虚拟集合、sticky header、
-或保留已回收项的 Lua 局部状态；固定行高程序化定位由 `view.scroll.programmatic` 提供，
+节点 padding 后的实际内容高度。
+
+探测 `view.collection.virtual.variableExtent` 后，`virtualList` 可用正数
+`estimatedItemSize` 替代 `itemExtent`。`view.virtualRange` 必须传入同一个 estimate、
+`layoutRevision`、rowGap 和 overscan；宿主先以 estimate 计算首帧范围，成功 scene 布局后测量
+当前连续 `listItem` 窗口，最多为每个容器缓存 4096 个 1-based 索引尺寸，并触发下一次合并重绘。
+缓存修正内容总高度和后续范围，且以修正前第一个可见项为锚点同步调整偏移，避免测得上方项目后
+让当前内容跳动。测量缓存只在整棵候选 scene 成功后提交；失败 scene 不污染后续范围。
+当项目顺序、字体、宽度策略或其他会改变行高的 model 内容变化时，作者必须递增非负
+`layoutRevision`，宿主会原子丢弃旧代测量；itemCount、estimate 或 rowGap 变化也会自动换代。
+固定和估算尺寸不可同时声明，`virtualGrid` 仍只接受固定 `itemExtent`。
+
+```lua
+local estimate = 48
+local revision = model.feedLayoutRevision
+local range = view.virtualRange({
+    key = "variable-feed",
+    itemCount = #articles,
+    estimatedItemSize = estimate,
+    layoutRevision = revision,
+    viewportExtent = viewportExtent,
+    rowGap = 4,
+    overscan = 3,
+})
+-- 只创建 range.firstIndex..range.lastIndex 的连续 listItem。
+return view.virtualList({
+    key = "variable-feed",
+    height = "fill",
+    itemCount = #articles,
+    estimatedItemSize = estimate,
+    layoutRevision = revision,
+    firstIndex = range.firstIndex,
+    rowGap = 4,
+    overscan = 3,
+    children = items,
+})
+```
+
+当前仍不支持横向虚拟集合、可变行高 virtualGrid、sticky header、
+或保留已回收项的 Lua 局部状态；固定与可变列表的程序化定位由 `view.scroll.programmatic` 提供，
 稳定状态应放在 model/state 并以 item key 索引。
 
 `shape` 支持 rectangle、roundedRectangle、circle 和 ellipse；填充与描边来自 style。

@@ -10,6 +10,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -474,6 +475,12 @@ struct ViewMonthCalendarCell
     bool hasEvent = false;
 };
 
+struct ViewVirtualItemMeasurement
+{
+    std::size_t index = 0;
+    float extent = 0.0f;
+};
+
 struct ViewNode
 {
     ViewNodeType type = ViewNodeType::Box;
@@ -513,6 +520,8 @@ struct ViewNode
     std::size_t firstIndex = 0;
     std::size_t overscan = 2;
     float itemExtent = 0.0f;
+    std::optional<float> estimatedItemSize;
+    std::uint64_t virtualLayoutRevision = 0;
     std::optional<std::string> initialScrollKey;
     std::optional<std::size_t> initialScrollIndex;
     ViewSelectionMode selectionMode = ViewSelectionMode::None;
@@ -630,6 +639,8 @@ struct ViewNode
     float scrollOffset = 0.0f;
     float scrollViewportExtent = 0.0f;
     float scrollContentExtent = 0.0f;
+    std::vector<ViewVirtualItemMeasurement> virtualMeasurements;
+    std::vector<float> virtualMeasuredExtents;
 };
 
 struct ViewScrollViewport
@@ -799,6 +810,20 @@ bool ComputeViewVirtualItemScrollOffset(std::size_t itemCount,
     float itemExtent, std::size_t columns, float rowGap,
     float viewportExtent, float currentOffset, std::size_t index,
     std::string_view alignment, float& offset, std::string& error);
+bool ComputeViewVariableVirtualRange(std::size_t itemCount,
+    float estimatedItemSize, float rowGap, float viewportExtent,
+    float requestedOffset, std::size_t overscan,
+    std::span<const ViewVirtualItemMeasurement> measurements,
+    ViewVirtualRange& range, std::string& error);
+bool ComputeViewVariableVirtualItemScrollOffset(std::size_t itemCount,
+    float estimatedItemSize, float rowGap, float viewportExtent,
+    float currentOffset, std::size_t index, std::string_view alignment,
+    std::span<const ViewVirtualItemMeasurement> measurements,
+    float& offset, std::string& error);
+bool ComputeViewVariableVirtualItemStart(std::size_t itemCount,
+    float estimatedItemSize, float rowGap, std::size_t index,
+    std::span<const ViewVirtualItemMeasurement> measurements,
+    float& start, std::string& error);
 ViewRect ViewNodeContentRect(const ViewNode& node) noexcept;
 ViewResolvedTransform ResolveViewTransformForKey(
     const ViewNode& root, std::string_view key) noexcept;

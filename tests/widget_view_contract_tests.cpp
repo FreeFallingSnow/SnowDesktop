@@ -102,7 +102,13 @@ void TestRepresentativeApplicability()
             ViewNodeAllowsProperty(ViewNodeType::VirtualList,
                 "initialScrollIndex") &&
             !ViewNodeAllowsProperty(ViewNodeType::Scroll,
-                "initialScrollIndex"),
+                "initialScrollIndex") &&
+            ViewNodeAllowsProperty(ViewNodeType::VirtualList,
+                "estimatedItemSize") &&
+            ViewNodeAllowsProperty(ViewNodeType::VirtualList,
+                "layoutRevision") &&
+            !ViewNodeAllowsProperty(ViewNodeType::VirtualGrid,
+                "estimatedItemSize"),
         "virtual collection properties must not leak to eager collections");
     Check(ViewNodeAllowsProperty(ViewNodeType::List, "selectionMode") &&
             ViewNodeAllowsProperty(ViewNodeType::VirtualGrid,

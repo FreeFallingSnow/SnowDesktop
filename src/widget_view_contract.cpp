@@ -71,8 +71,8 @@ constexpr auto kProperties = std::to_array<std::string_view>({
     "exitTransition", "gap", "columns", "rows",
     "columnGap", "rowGap", "gridColumn", "gridRow", "columnSpan",
     "rowSpan", "itemCount",
-    "itemExtent", "firstIndex", "overscan", "initialScrollKey",
-    "initialScrollIndex", "selectionMode",
+    "itemExtent", "estimatedItemSize", "layoutRevision", "firstIndex",
+    "overscan", "initialScrollKey", "initialScrollIndex", "selectionMode",
     "selectedKeys", "emptyContent", "loadingContent", "flexBasis", "flexGrow",
     "flexShrink", "flexDirection", "flexWrap", "alignContent",
     "fontSize", "fontWeight", "fontStyle", "lineHeight",
@@ -312,6 +312,8 @@ bool ViewNodeAllowsProperty(
     if (property == "itemCount" || property == "itemExtent" ||
         property == "firstIndex" || property == "overscan")
         return IsVirtual(type);
+    if (property == "estimatedItemSize" || property == "layoutRevision")
+        return type == ViewNodeType::VirtualList;
     if (property == "initialScrollKey")
         return type == ViewNodeType::Scroll;
     if (property == "initialScrollIndex") return IsVirtual(type);
@@ -341,8 +343,9 @@ bool ViewNodeRequiresProperty(
 {
     if (property == "type" || property == "key") return true;
     if (property == "columns") return IsGrid(type);
-    if (property == "itemCount" || property == "itemExtent" ||
-        property == "firstIndex") return IsVirtual(type);
+    if (property == "itemCount" || property == "firstIndex")
+        return IsVirtual(type);
+    if (property == "itemExtent") return type == ViewNodeType::VirtualGrid;
     if (property == "source") return type == ViewNodeType::Image;
     if (property == "reference")
         return type == ViewNodeType::ReferenceIcon ||
