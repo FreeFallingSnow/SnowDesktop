@@ -7,8 +7,13 @@
 
 #include <windows.h>
 
+#include <cerrno>
+#include <cwchar>
+#include <cwctype>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -27,6 +32,9 @@ void PrintUsage()
         << "  snowwidget inspect <package-directory>\n"
         << "  snowwidget lint <package-directory>\n"
         << "  snowwidget test <package-directory>\n"
+        << "  snowwidget preview <package-directory> <output.png>"
+           " [--columns N] [--rows N] [--dpi N]"
+           " [--storage key=value] [--host SnowDesktop.exe]\n"
         << "  snowwidget validate <package-directory>\n"
         << "  snowwidget pack <package-directory> <output.snowwidget>\n"
         << "  snowwidget publish-local <package-directory> <catalog-directory>\n";
@@ -85,6 +93,193 @@ void WriteStringArray(std::ostream& output,
     }
     output << ']';
 }
+
+std::filesystem::path CurrentExecutablePath()
+{
+    std::vector<wchar_t> buffer(MAX_PATH);
+    for (;;)
+    {
+        const DWORD length = GetModuleFileNameW(nullptr, buffer.data(),
+            static_cast<DWORD>(buffer.size()));
+        if (length == 0) return {};
+        if (length < buffer.size() - 1)
+            return std::filesystem::path(
+                std::wstring(buffer.data(), length));
+        if (buffer.size() >= 32768) return {};
+        buffer.resize(std::min<std::size_t>(buffer.size() * 2, 32768));
+    }
+}
+
+std::optional<std::filesystem::path> FindPreviewHost(
+    const std::filesystem::path& explicitHost)
+{
+    std::error_code error;
+    const auto accept = [&](const std::filesystem::path& candidate)
+        -> std::optional<std::filesystem::path> {
+        if (candidate.empty() ||
+            !std::filesystem::is_regular_file(candidate, error))
+        {
+            error.clear();
+            return std::nullopt;
+        }
+        return std::filesystem::weakly_canonical(candidate, error);
+    };
+    if (!explicitHost.empty()) return accept(explicitHost);
+
+    wchar_t environmentHost[32768]{};
+    const DWORD environmentLength = GetEnvironmentVariableW(
+        L"SNOWDESKTOP_HOST", environmentHost,
+        static_cast<DWORD>(std::size(environmentHost)));
+    if (environmentLength > 0 && environmentLength < std::size(environmentHost))
+        if (auto host = accept(environmentHost)) return host;
+
+    const auto executable = CurrentExecutablePath();
+    if (!executable.empty())
+    {
+        const auto bin = executable.parent_path();
+        if (auto host = accept(bin / L"SnowDesktop.exe")) return host;
+        auto bundledRoot = bin;
+        for (int level = 0; level < 3 && bundledRoot.has_parent_path(); ++level)
+            bundledRoot = bundledRoot.parent_path();
+        if (auto host = accept(bundledRoot / L"SnowDesktop.exe")) return host;
+    }
+
+    wchar_t searched[32768]{};
+    const DWORD searchedLength = SearchPathW(nullptr, L"SnowDesktop.exe",
+        nullptr, static_cast<DWORD>(std::size(searched)), searched, nullptr);
+    if (searchedLength > 0 && searchedLength < std::size(searched))
+        return accept(searched);
+    return std::nullopt;
+}
+
+std::wstring QuoteWindowsArgument(std::wstring_view argument)
+{
+    if (argument.find_first_of(L" \t\n\v\"") == std::wstring_view::npos)
+        return std::wstring(argument);
+    std::wstring result = L"\"";
+    std::size_t slashes = 0;
+    for (const wchar_t character : argument)
+    {
+        if (character == L'\\')
+        {
+            ++slashes;
+            continue;
+        }
+        if (character == L'\"')
+        {
+            result.append(slashes * 2 + 1, L'\\');
+            result.push_back(L'\"');
+            slashes = 0;
+            continue;
+        }
+        result.append(slashes, L'\\');
+        slashes = 0;
+        result.push_back(character);
+    }
+    result.append(slashes * 2, L'\\');
+    result.push_back(L'\"');
+    return result;
+}
+
+bool ParseInteger(std::wstring_view text, int minimum,
+    int maximum, int& output)
+{
+    if (text.empty()) return false;
+    const std::wstring owned(text);
+    wchar_t* end = nullptr;
+    errno = 0;
+    const long value = std::wcstol(owned.c_str(), &end, 10);
+    if (errno != 0 || !end || *end != L'\0' ||
+        value < minimum || value > maximum)
+        return false;
+    output = static_cast<int>(value);
+    return true;
+}
+
+std::optional<std::filesystem::path> CreateResultPath()
+{
+    wchar_t temporaryDirectory[MAX_PATH]{};
+    if (!GetTempPathW(MAX_PATH, temporaryDirectory)) return std::nullopt;
+    wchar_t temporaryFile[MAX_PATH]{};
+    if (!GetTempFileNameW(temporaryDirectory, L"swp", 0, temporaryFile))
+        return std::nullopt;
+    return std::filesystem::path(temporaryFile);
+}
+
+std::string ReadUtf8File(const std::filesystem::path& path)
+{
+    std::ifstream input(path, std::ios::binary);
+    if (!input) return {};
+    return std::string(std::istreambuf_iterator<char>(input), {});
+}
+
+int RunPreviewHost(const std::filesystem::path& host,
+    const std::filesystem::path& source,
+    const std::filesystem::path& output,
+    int columns, int rows, int dpi,
+    const std::vector<std::wstring>& storage)
+{
+    const auto resultPath = CreateResultPath();
+    if (!resultPath)
+    {
+        std::cerr << "{\"ok\":false,\"stage\":\"host.result\","
+            "\"error\":\"cannot create the preview result file\"}\n";
+        return 1;
+    }
+    std::wstring commandLine = QuoteWindowsArgument(host.wstring());
+    const auto append = [&](std::wstring_view value) {
+        commandLine.push_back(L' ');
+        commandLine += QuoteWindowsArgument(value);
+    };
+    append(L"--widget-author-preview");
+    append(source.wstring());
+    append(output.wstring());
+    append(std::to_wstring(columns));
+    append(std::to_wstring(rows));
+    append(std::to_wstring(dpi));
+    append(resultPath->wstring());
+    for (const auto& pair : storage) append(pair);
+
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    std::vector<wchar_t> mutableCommand(
+        commandLine.begin(), commandLine.end());
+    mutableCommand.push_back(L'\0');
+    const BOOL launched = CreateProcessW(host.c_str(),
+        mutableCommand.data(), nullptr, nullptr, FALSE,
+        CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process);
+    if (!launched)
+    {
+        std::error_code removeError;
+        std::filesystem::remove(*resultPath, removeError);
+        std::cerr << "{\"ok\":false,\"stage\":\"host.launch\","
+            "\"error\":\"cannot launch SnowDesktop preview host (Windows error "
+            << GetLastError() << ")\"}\n";
+        return 1;
+    }
+    CloseHandle(process.hThread);
+    const DWORD wait = WaitForSingleObject(process.hProcess, 120000);
+    if (wait == WAIT_TIMEOUT)
+    {
+        TerminateProcess(process.hProcess, ERROR_TIMEOUT);
+        WaitForSingleObject(process.hProcess, 5000);
+    }
+    DWORD exitCode = 1;
+    GetExitCodeProcess(process.hProcess, &exitCode);
+    CloseHandle(process.hProcess);
+    const std::string json = ReadUtf8File(*resultPath);
+    std::error_code removeError;
+    std::filesystem::remove(*resultPath, removeError);
+    if (!json.empty())
+        std::cout << json << (json.back() == '\n' ? "" : "\n");
+    else
+        std::cerr << "{\"ok\":false,\"stage\":\"host.result\","
+            "\"error\":\"preview host exited without a result\","
+            "\"exitCode\":" << exitCode << "}\n";
+    return wait == WAIT_OBJECT_0 && exitCode == 0 && !json.empty()
+        ? 0 : 1;
+}
 }
 
 int wmain(int argc, wchar_t** argv)
@@ -106,7 +301,7 @@ int wmain(int argc, wchar_t** argv)
                "\"recommendedApiVersion\":2,\"supportedSchemaVersions\":[1,2],"
                "\"supportedApiVersions\":[1,2],\"commands\":["
                "\"api-contract\",\"system-contract\",\"view-contract\",\"inspect\","
-               "\"lint\",\"test\",\"validate\",\"pack\",\"publish-local\"]}"
+               "\"lint\",\"test\",\"preview\",\"validate\",\"pack\",\"publish-local\"]}"
             << '\n';
         return 0;
     }
@@ -224,6 +419,106 @@ int wmain(int argc, wchar_t** argv)
             RunWidgetTests(source);
         std::cout << tests.ToJson() << '\n';
         return tests.Ok() ? 0 : 1;
+    }
+    if (command == L"preview")
+    {
+        if (argc < 4 || source.extension() == L".snowwidget")
+        {
+            std::cerr << "{\"ok\":false,\"error\":\"preview requires an unpacked component directory and output PNG\"}\n";
+            return 2;
+        }
+        const std::filesystem::path output = argv[3];
+        std::wstring extension = output.extension().wstring();
+        std::transform(extension.begin(), extension.end(), extension.begin(),
+            [](wchar_t character) { return static_cast<wchar_t>(
+                std::towlower(character)); });
+        if (extension != L".png")
+        {
+            std::cerr << "{\"ok\":false,\"error\":\"preview output must use the .png extension\"}\n";
+            return 2;
+        }
+        snowdesktop::widget::PackageManifest manifest;
+        report = manager.ValidateDirectory(source, &manifest);
+        if (!report.Ok())
+        {
+            std::cout << "{\"ok\":false,\"stage\":\"package.validate\",\"validation\":"
+                << report.ToJson() << "}\n";
+            return 1;
+        }
+        int columns = manifest.defaultColumns;
+        int rows = manifest.defaultRows;
+        int dpi = 96;
+        std::filesystem::path explicitHost;
+        std::vector<std::wstring> storage;
+        for (int index = 4; index < argc; ++index)
+        {
+            const std::wstring_view option(argv[index]);
+            if ((option == L"--columns" || option == L"--rows" ||
+                    option == L"--dpi" || option == L"--storage" ||
+                    option == L"--host") && index + 1 >= argc)
+            {
+                std::cerr << "{\"ok\":false,\"error\":\"preview option is missing its value\"}\n";
+                return 2;
+            }
+            if (option == L"--columns")
+            {
+                if (!ParseInteger(argv[++index], 1, 8, columns))
+                {
+                    std::cerr << "{\"ok\":false,\"error\":\"columns must be an integer from 1 to 8\"}\n";
+                    return 2;
+                }
+            }
+            else if (option == L"--rows")
+            {
+                if (!ParseInteger(argv[++index], 1, 8, rows))
+                {
+                    std::cerr << "{\"ok\":false,\"error\":\"rows must be an integer from 1 to 8\"}\n";
+                    return 2;
+                }
+            }
+            else if (option == L"--dpi")
+            {
+                if (!ParseInteger(argv[++index], 96, 480, dpi))
+                {
+                    std::cerr << "{\"ok\":false,\"error\":\"DPI must be an integer from 96 to 480\"}\n";
+                    return 2;
+                }
+            }
+            else if (option == L"--storage")
+            {
+                const std::wstring pair = argv[++index];
+                if (pair.find(L'=') == std::wstring::npos ||
+                    pair.starts_with(L"="))
+                {
+                    std::cerr << "{\"ok\":false,\"error\":\"storage must use key=value\"}\n";
+                    return 2;
+                }
+                storage.push_back(pair);
+            }
+            else if (option == L"--host")
+                explicitHost = argv[++index];
+            else
+            {
+                std::cerr << "{\"ok\":false,\"error\":\"unknown preview option\"}\n";
+                return 2;
+            }
+        }
+        if (columns < manifest.minColumns || rows < manifest.minRows ||
+            (manifest.maxColumns > 0 && columns > manifest.maxColumns) ||
+            (manifest.maxRows > 0 && rows > manifest.maxRows))
+        {
+            std::cerr << "{\"ok\":false,\"stage\":\"request.size\",\"error\":\"preview size is outside the component manifest bounds\"}\n";
+            return 2;
+        }
+        const auto host = FindPreviewHost(explicitHost);
+        if (!host)
+        {
+            std::cerr << "{\"ok\":false,\"stage\":\"host.locate\","
+                "\"error\":\"SnowDesktop.exe was not found; pass --host or set SNOWDESKTOP_HOST\"}\n";
+            return 1;
+        }
+        return RunPreviewHost(*host, source, output,
+            columns, rows, dpi, storage);
     }
     if (command == L"pack")
     {

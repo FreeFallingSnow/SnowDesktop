@@ -28,6 +28,13 @@ table、math、utf8 以及仅能读取包内 `modules/*.lua` 的 `module.require
 Shell、系统数据、存储或其他副作用 API。命令输出文件数、用例数、通过/失败数、稳定问题码和
 有界错误文本 JSON。它适合纯逻辑与模块测试；完整 view/宿主 mock 场景继续由 preview 工具负责。
 
+运行 `snowwidget preview <组件目录> <输出.png>` 会先复用包校验器，再启动真实 SnowDesktop
+预览宿主，以 `WidgetEngine::InitPreview` 注册完整 API v2 沙箱，执行入口、生命周期和 render/view，
+通过离屏 D2D/WIC 输出 PNG。它使用隔离的 manifest `previewData.storage` 覆盖层，不写实例持久化
+存储；`--storage key=value` 可重复覆盖预览值，`--columns/--rows` 必须落在清单尺寸范围内，
+`--dpi` 支持 96–480。命令返回包含稳定 `stage`、最终像素尺寸、栅格尺寸和 DPI 的 JSON。复制到
+SnowDesktop 安装目录外的 CLI 可用 `--host <SnowDesktop.exe>` 或 `SNOWDESKTOP_HOST` 指定宿主。
+
 运行 `snowwidget view-contract` 可获得宿主当前公开的声明式视图 JSON 契约。顶层
 `schemaVersion=3` 版本化该导出格式，`apiVersion` 表示组件 API；`nodes`、`properties` 和
 `events` 分别登记节点适用属性与逐节点默认值、属性类型/枚举/范围/影响域，以及事件 payload
@@ -41,7 +48,7 @@ Shell、系统数据、存储或其他副作用 API。命令输出文件数、�
 视图链路错误统一写成 `[code] message`；`diagnosticCodes` 导出稳定的阶段码，例如
 `view.parse`、`view.layout` 和 `view.hostControls`。工具可以依赖阶段码分类，但不应依赖后面的
 人类可读说明逐字不变。
-`preview` 表明预览复用宿主校验和渲染、使用隔离存储覆盖层。作者工具应读取该命令，不要复制
+`preview` 表明预览复用宿主校验和渲染、使用隔离存储覆盖层。作者工具应调用该命令，不要复制
 维护另一份节点、属性、动画或额度白名单。
 
 运行 `snowwidget system-contract` 可离线获得与 `system.capabilities()` 同源的系统能力目录。

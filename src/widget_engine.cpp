@@ -14852,6 +14852,63 @@ bool WidgetEngine::EnsureWidgetPreviewLoaded(
         path, widgetId, true, &storageOverrides);
 }
 
+bool WidgetEngine::EnsureWidgetDirectoryPreviewLoaded(
+    const std::wstring& widgetId,
+    const std::filesystem::path& packageRoot,
+    const std::unordered_map<std::string, std::string>& storageOverrides)
+{
+    if (!previewOnly_)
+    {
+        RuntimeRecordError(widgetId,
+            "development packages may only load in a preview engine");
+        return false;
+    }
+    snowdesktop::widget::PackageManifest manifest;
+    const auto report = GetWidgetPackageManager().ValidateDirectory(
+        packageRoot, &manifest);
+    if (!report.Ok())
+    {
+        std::string message = "component package validation failed";
+        for (const auto& issue : report.issues)
+        {
+            if (issue.severity !=
+                snowdesktop::widget::ValidationSeverity::Error)
+                continue;
+            message = issue.code + ": " + issue.message;
+            break;
+        }
+        RuntimeRecordError(widgetId, message);
+        return false;
+    }
+    std::error_code error;
+    const auto canonicalRoot = std::filesystem::weakly_canonical(
+        packageRoot, error);
+    if (error)
+    {
+        RuntimeRecordError(widgetId,
+            "component package root cannot be canonicalized");
+        return false;
+    }
+    const auto entry = std::filesystem::weakly_canonical(
+        canonicalRoot / Utf8ToWideLocal(manifest.entry), error);
+    if (error)
+    {
+        RuntimeRecordError(widgetId,
+            "component entry cannot be canonicalized");
+        return false;
+    }
+    if (const int index = FindWidget(widgetId); index >= 0)
+    {
+        std::error_code equivalentError;
+        return widgets_[index].preview &&
+            widgets_[index].packageId == manifest.id &&
+            std::filesystem::equivalent(widgets_[index].packageRoot,
+                canonicalRoot, equivalentError) && !equivalentError;
+    }
+    return LoadWidget(entry.wstring(), widgetId, true,
+        &storageOverrides, &canonicalRoot);
+}
+
 bool WidgetEngine::IsPreviewWidget(const std::wstring& widgetId) const
 {
     const int index = FindWidget(widgetId);
@@ -14861,7 +14918,8 @@ bool WidgetEngine::IsPreviewWidget(const std::wstring& widgetId) const
 bool WidgetEngine::LoadWidget(const std::wstring& path,
     const std::wstring& widgetId, bool preview,
     const std::unordered_map<std::string, std::string>*
-        previewStorageOverrides)
+        previewStorageOverrides,
+    const std::filesystem::path* packageRootOverride)
 {
     LuaWidget pending;
     pending.widgetId = widgetId;
@@ -14914,7 +14972,9 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
             return false;
         }
     }
-    if (const auto package =
+    if (packageRootOverride)
+        pending.packageRoot = *packageRootOverride;
+    else if (const auto package =
         GetWidgetPackageManager().ResolveEntryPath(path))
         pending.packageRoot = package->root;
     else
@@ -22558,6 +22618,16 @@ WidgetEngine::GetWidgetHostState(const std::wstring& widgetId,
     return { WidgetHostStateKind::LoadFailed, {} };
 }
 
+std::optional<snowdesktop::widget_runtime::WidgetHostState>
+WidgetEngine::GetWidgetRuntimeFailure(
+    const std::wstring& widgetId) const
+{
+    if (const auto failure = widgetHostFailures_.find(widgetId);
+        failure != widgetHostFailures_.end())
+        return failure->second;
+    return std::nullopt;
+}
+
 void WidgetEngine::NotifyLanguageChanged(const std::wstring& widgetId)
 {
     int index = FindWidget(widgetId);
@@ -23398,7 +23468,7 @@ void WidgetEngine::RuntimeRecordError(const std::wstring& widgetId, const std::s
 {
     std::string idUtf8 = WidgetWideToUtf8(widgetId);
     const int index = FindWidget(widgetId);
-    if (!snowdesktop::widget_runtime::IsDryLoad() &&
+    if (!previewOnly_ && !snowdesktop::widget_runtime::IsDryLoad() &&
         (index < 0 || !widgets_[index].preview))
     {
         g_storage[idUtf8 + ".lastError"] = message;

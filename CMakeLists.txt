@@ -233,6 +233,7 @@ set(SNOWDESKTOP_SOURCES
     src/general_settings.cpp
     src/category_settings.cpp
     src/component_preview.cpp
+    src/widget_author_preview.cpp
     src/widget_preview_scene.cpp
     src/widget_preview_scene_model.cpp
     src/l10n.cpp
@@ -1114,6 +1115,18 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES SnowDesktopLua
         LABELS authoring contract lua security widget)
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetAuthorPreviewCliTests
+        widget_author_preview_cli
+        SOURCES tests/widget_author_preview_cli_tests.cpp
+        COMMAND_ARGUMENTS
+            "$<TARGET_FILE:snowwidget>"
+            "$<TARGET_FILE:SnowDesktop>"
+            "${CMAKE_CURRENT_SOURCE_DIR}"
+        LABELS authoring integration lua preview render widget)
+    add_dependencies(SnowDesktopWidgetAuthorPreviewCliTests
+        snowwidget SnowDesktop)
 
     snowdesktop_add_test(
         SnowDesktopWidgetViewTreeTests

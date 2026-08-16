@@ -49,7 +49,10 @@ development packages live under `data\widgets\installed` and
    permission.
 10. Use `state` for JSON-like VM-lifetime values and `storage` for persistent
     JSON-like values. Write persistent values only when they change.
-11. Run `snowwidget validate <directory>` and
+11. Run `snowwidget lint <directory>`, `snowwidget test <directory>`, and
+    `snowwidget preview <directory> <preview.png>` at the default size. Repeat
+    preview with relevant `--columns`, `--rows`, `--dpi`, and `--storage`
+    values, then run `snowwidget validate <directory>` and
     `snowwidget pack <directory> <name.snowwidget>`.
 12. In the repository, also run `scripts\test.bat`, the standard Release build,
     and `scripts\widget-dev.bat <directory>` for transactional hot reload.
@@ -59,6 +62,11 @@ resources or troubleshooting. Use `library/snowdesktop-v2.lua` as the LuaLS
 library. Read `references/package-v1.md` only when diagnosing or migrating an
 old schema/API v1 package. The host recognizes v1 only as migration input and
 never executes its entry script; do not create new v1 packages.
+
+`snowwidget preview` launches the installed SnowDesktop renderer out of process
+and writes a real API v2/D2D PNG; it does not emulate the view tree. A CLI copied
+outside the SnowDesktop directory may need `--host <SnowDesktop.exe>` or the
+`SNOWDESKTOP_HOST` environment variable.
 
 ## Required entry
 

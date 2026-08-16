@@ -828,6 +828,11 @@ public:
         const std::wstring& packageId,
         const std::unordered_map<std::string, std::string>&
             storageOverrides = {});
+    /** Validate and load an unpacked development package without installing it. */
+    bool EnsureWidgetDirectoryPreviewLoaded(const std::wstring& widgetId,
+        const std::filesystem::path& packageRoot,
+        const std::unordered_map<std::string, std::string>&
+            storageOverrides = {});
 
     /**
      * @brief 卸载指定小部件实例
@@ -849,6 +854,9 @@ public:
     snowdesktop::widget_runtime::WidgetHostState GetWidgetHostState(
         const std::wstring& widgetId,
         const std::wstring& packageId) const;
+    /** Return a load/render failure without consulting the installed registry. */
+    std::optional<snowdesktop::widget_runtime::WidgetHostState>
+        GetWidgetRuntimeFailure(const std::wstring& widgetId) const;
     void NotifyLanguageChanged(const std::wstring& widgetId);
 
     /**
@@ -1578,7 +1586,8 @@ private:
     bool LoadWidget(const std::wstring& path, const std::wstring& widgetId,
         bool preview = false,
         const std::unordered_map<std::string, std::string>*
-            previewStorageOverrides = nullptr);
+            previewStorageOverrides = nullptr,
+        const std::filesystem::path* packageRootOverride = nullptr);
     bool IsPreviewWidget(const std::wstring& widgetId) const;
 
     /**

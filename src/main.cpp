@@ -19,6 +19,7 @@
 #include "general_settings.h"
 #include "l10n.h"
 #include "single_instance.h"
+#include "widget_author_preview.h"
 
 #include <commctrl.h>
 
@@ -321,6 +322,12 @@ LONG WINAPI UnhandledFilter(_EXCEPTION_POINTERS* info)
  */
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCommand)
 {
+    bool previewCommandHandled = false;
+    const int previewCommandResult = snowdesktop::widget_authoring::
+        TryRunWidgetAuthorPreviewHostCommand(previewCommandHandled);
+    if (previewCommandHandled)
+        return previewCommandResult;
+
     const std::uintptr_t watchedProcessHandle =
         snowdesktop::application_restart_policy::
             ParseWatchProcessHandle(

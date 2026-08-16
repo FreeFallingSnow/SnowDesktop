@@ -819,8 +819,12 @@ host.
 Declarative setting types are `text`, `bool`, `int`, `float`, `select`, and `color`.
 Values are stored in the same per-instance string storage used by `storage`.
 
-Validate and export with `snowwidget validate <directory>` and
-`snowwidget pack <directory> <output.snowwidget>`. Installation always stages
+Render the unpacked package with
+`snowwidget preview <directory> <output.png>` before export. This command uses
+the real API v2 host and D2D renderer with isolated preview storage; use
+`--columns`, `--rows`, `--dpi`, and repeatable `--storage key=value` to cover
+important states. Validate and export with `snowwidget validate <directory>`
+and `snowwidget pack <directory> <output.snowwidget>`. Installation always stages
 and validates the complete package. Package identity is the UUID, versions are
 SemVer, and last-known-good versions remain available for rollback. Source
 changes and permission/domain expansion require explicit confirmation.
