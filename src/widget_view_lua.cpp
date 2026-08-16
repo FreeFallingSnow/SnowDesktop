@@ -2574,8 +2574,21 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         return false;
     }
     if (!ValidateNodeFields(state, index, node.type, error)) return false;
-    if (!ReadStringField(state, index, "key", node.key, true, error))
+    const bool debugNameSpecified =
+        FieldPresent(state, index, "debugName");
+    const bool testIdSpecified = FieldPresent(state, index, "testId");
+    if (!ReadStringField(state, index, "key", node.key, true, error) ||
+        !ReadStringField(state, index, "debugName",
+            node.debugName, false, error) ||
+        !ReadStringField(state, index, "testId",
+            node.testId, false, error))
         return false;
+    if ((debugNameSpecified && node.debugName.empty()) ||
+        (testIdSpecified && node.testId.empty()))
+    {
+        error = "view debugName and testId must be non-empty when present";
+        return false;
+    }
     if (slotSurfaceNode)
     {
         const bool binding = FieldPresent(state, index, "binding");

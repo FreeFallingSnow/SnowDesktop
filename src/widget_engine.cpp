@@ -26652,6 +26652,17 @@ std::vector<WidgetDiagnosticEntry> WidgetEngine::GetWidgetDiagnostics() const
             entry.memoryQuotaExceeded = widget.quota->memoryExceeded;
         }
         entry.circuitOpen = widget.health.CircuitOpen();
+        if (widget.viewTree)
+            entry.desktopViewNodes =
+                snowdesktop::widget_runtime::InspectViewTree(
+                    *widget.viewTree);
+        if (widget.panelViewTree)
+        {
+            entry.auxiliaryViewNodes =
+                snowdesktop::widget_runtime::InspectViewTree(
+                    *widget.panelViewTree);
+            entry.auxiliarySurface = widget.panelSurface;
+        }
         std::string errorKey = WidgetWideToUtf8(widget.widgetId) + ".lastError";
         auto errIt = g_storage.find(errorKey);
         if (errIt != g_storage.end())

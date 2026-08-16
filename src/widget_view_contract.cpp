@@ -56,7 +56,7 @@ constexpr auto kContracts = std::to_array<ViewNodeContract>({
 });
 
 constexpr auto kProperties = std::to_array<std::string_view>({
-    "type", "key", "text", "spans", "label", "glyph", "iconFont",
+    "type", "key", "debugName", "testId", "text", "spans", "label", "glyph", "iconFont",
     "source", "font", "fit", "alignment", "interpolation", "alt",
     "shape", "orientation", "value", "values", "min", "max", "step",
     "options", "selectedValue", "placeholder", "expanded", "selectAll", "selection",
@@ -91,7 +91,7 @@ constexpr auto kProperties = std::to_array<std::string_view>({
 });
 
 constexpr auto kCommonProperties = std::to_array<std::string_view>({
-    "type", "key", "width", "height", "minWidth", "maxWidth",
+    "type", "key", "debugName", "testId", "width", "height", "minWidth", "maxWidth",
     "minHeight", "maxHeight", "aspectRatio", "margin", "padding",
     "offset", "zIndex", "clip", "overflow", "shadow", "transform",
     "transition", "enterTransition", "exitTransition", "gap",

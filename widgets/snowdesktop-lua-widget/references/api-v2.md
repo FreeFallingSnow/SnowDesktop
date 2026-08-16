@@ -133,7 +133,7 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.keyboardNavigation.order` 提供显式焦点参与和顺序，
 `view.grid.uniform` 提供基础 `grid`，`view.grid.placement` 提供显式格位与跨度，
 `view.grid.tracks` 提供受限 fixed/auto/fr/minmax 列轨和行轨，
-`view.flow.wrap` 提供横向换行 `flow`。
+`view.flow.wrap` 提供横向换行 `flow`，`view.identity.diagnostics` 提供开发者场景标识。
 `view.scroll` 提供宿主滚动视口，`view.scroll.initialTarget` 提供首次声明式定位，
 `view.collection.basic` 提供基础集合，
 `view.collection.orientation` 提供普通 list 横纵方向，
@@ -147,6 +147,14 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.monthCalendar` 提供受控月历日期网格，
 `view.logicalSlots` 提供与 manifest 宿主管理槽位严格对应的 `slotSurface/slotItem`，
 `view.referenceIcon` 提供只接收实例自有 opaque ref 的宿主图标节点。
+
+探测 `view.identity.diagnostics` 后，任意声明式节点可增加可选 `debugName` 和 `testId`。
+`debugName` 是 1–256 UTF-8 字节且不含控制字符的开发者可读名称；`testId` 是 1–128 字节、只接受 ASCII
+字母数字及 `._:-/` 的稳定测试选择器。两者只进入设置页“复制诊断”导出的 desktop 与辅助
+surface 场景快照，快照同时包含节点类型、全局 key、树深度和最终布局 frame。它们不参与
+diff、布局、绘制、命中、焦点、action target 或 UIA AutomationId；行为身份仍必须使用全局唯一
+`key`。省略字段不产生额外输出，显式空字符串会拒绝本次树提交。
+
 `view.layout.constraints` 为所有节点提供 `minWidth/maxWidth/minHeight/maxHeight` 数值约束、
 `aspectRatio` 和统一 `margin`。尺寸约束与外边距是 0–4096 的有限逻辑单位，同一轴的最小值不得大于最大值；
 宽高比表示 `width / height`，范围 0.01–100。约束会参与固有尺寸、fill/flex 分配以及

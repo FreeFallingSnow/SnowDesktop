@@ -82,6 +82,12 @@ void TestRepresentativeApplicability()
             !ViewNodeAllowsProperty(ViewNodeType::VirtualGrid, "rows") &&
             !ViewNodeAllowsProperty(ViewNodeType::Row, "columns"),
         "grid-only properties must be machine readable");
+    Check(ViewNodeAllowsProperty(ViewNodeType::Box, "debugName") &&
+            ViewNodeAllowsProperty(ViewNodeType::Text, "testId") &&
+            !ViewNodeRequiresProperty(ViewNodeType::Button,
+                "debugName") &&
+            !ViewNodeRequiresProperty(ViewNodeType::Button, "testId"),
+        "developer identity metadata must be optional on every node");
     Check(ViewNodeAllowsProperty(ViewNodeType::Row, "flexDirection") &&
             ViewNodeAllowsProperty(ViewNodeType::Column, "flexWrap") &&
             ViewNodeAllowsProperty(ViewNodeType::Row, "alignContent") &&

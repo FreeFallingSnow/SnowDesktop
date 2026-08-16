@@ -2009,6 +2009,25 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         error = "duplicate view node key: " + node.key;
         return false;
     }
+    if (node.debugName.size() > ViewTreeLimits::MaximumDebugNameBytes ||
+        node.testId.size() > ViewTreeLimits::MaximumTestIdBytes ||
+        (!node.debugName.empty() && std::any_of(
+            node.debugName.begin(), node.debugName.end(),
+            [](unsigned char value) {
+                return value < 0x20 || value == 0x7F;
+            })) ||
+        (!node.testId.empty() && !std::all_of(
+            node.testId.begin(), node.testId.end(), [](unsigned char value) {
+                return (value >= 'a' && value <= 'z') ||
+                    (value >= 'A' && value <= 'Z') ||
+                    (value >= '0' && value <= '9') ||
+                    value == '.' || value == '_' || value == '-' ||
+                    value == ':' || value == '/';
+            })))
+    {
+        error = "view debugName/testId exceeds its bound or contains unsupported characters";
+        return false;
+    }
     const auto validStyle = [](const ViewStyle& style) {
         return (!style.borderWidth || FiniteInRange(
                     *style.borderWidth, 0.0f, 4096.0f)) &&
@@ -2780,7 +2799,8 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         node.alt.size() > ViewTreeLimits::MaximumTextBytes ||
         node.tooltip.size() > ViewTreeLimits::MaximumTextBytes ||
         node.validationMessage.size() > ViewTreeLimits::MaximumTextBytes ||
-        textBytes + node.text.size() + node.inputValue.size() +
+        textBytes + node.debugName.size() + node.testId.size() +
+            node.text.size() + node.inputValue.size() +
             node.placeholder.size() + node.alt.size() + node.tooltip.size() +
             node.validationMessage.size() + node.locale.size() >
             ViewTreeLimits::MaximumTotalTextBytes)
@@ -2788,7 +2808,8 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         error = "view tree text limit exceeded";
         return false;
     }
-    textBytes += node.text.size() + node.inputValue.size() +
+    textBytes += node.debugName.size() + node.testId.size() +
+        node.text.size() + node.inputValue.size() +
         node.placeholder.size() + node.alt.size() + node.tooltip.size() +
         node.validationMessage.size() + node.locale.size();
     if (node.type == ViewNodeType::StyledText)
@@ -5427,6 +5448,21 @@ bool CollectViewInputControls(const ViewNode& root,
         return control.clip && !Overlaps(control.frame, *control.clip);
     });
     return true;
+}
+
+std::vector<ViewInspectionNode> InspectViewTree(const ViewNode& root)
+{
+    std::vector<ViewInspectionNode> result;
+    result.reserve(ViewTreeLimits::MaximumNodes);
+    const auto collect = [&](const auto& self, const ViewNode& node,
+                             std::size_t depth) -> void {
+        result.push_back({ node.type, node.key, node.debugName,
+            node.testId, node.frame, depth });
+        for (const auto& child : node.children)
+            self(self, child, depth + 1);
+    };
+    collect(collect, root, 0);
+    return result;
 }
 
 bool ApplyViewScrollOffsets(ViewNode& root,

@@ -453,6 +453,8 @@ void TestV2Contract()
                 "view.grid.tracks") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.grid.uniform") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "view.identity.diagnostics") &&
             snowdesktop::widget_api::SupportsFeature("view.image") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.image.tint") &&

@@ -6059,6 +6059,29 @@ void SettingsWindow::DrawWidgetDeveloperTools()
                 text += "lastError=" + d.lastError + "\n";
             for (const auto& log : d.logs)
                 text += log.level + ": " + log.message + "\n";
+            const auto appendViewNodes = [&](std::string_view surface,
+                                             const auto& nodes) {
+                for (const auto& node : nodes)
+                {
+                    text += "view[" + std::string(surface) + "] depth=" +
+                        std::to_string(node.depth) + ", type=" +
+                        snowdesktop::widget_runtime::ViewNodeTypeName(
+                            node.type) + ", key=" + node.key;
+                    if (!node.debugName.empty())
+                        text += ", debugName=" + node.debugName;
+                    if (!node.testId.empty())
+                        text += ", testId=" + node.testId;
+                    text += ", frame=" + std::to_string(node.frame.x) +
+                        "," + std::to_string(node.frame.y) + "," +
+                        std::to_string(node.frame.width) + "," +
+                        std::to_string(node.frame.height) + "\n";
+                }
+            };
+            appendViewNodes("desktop", d.desktopViewNodes);
+            appendViewNodes(d.auxiliarySurface.empty()
+                    ? std::string_view("auxiliary")
+                    : std::string_view(d.auxiliarySurface),
+                d.auxiliaryViewNodes);
             text += "\n";
         }
         ImGui::SetClipboardText(text.c_str());

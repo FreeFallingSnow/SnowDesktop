@@ -84,7 +84,11 @@ immediate-mode elements use `interaction.region`. The transitional
 view parser reads public node names, owning features, allowed properties, and
 direct required properties from one enumerable host contract matrix. Treat a
 "does not accept field" diagnostic as a node/property mismatch; do not retry
-with an ignored compatibility field. The transitional
+with an ignored compatibility field. Probe `view.identity.diagnostics` before
+adding optional `debugName` or `testId` metadata. They appear only in the
+copied developer diagnostic scene snapshot and never replace the globally
+unique behavioral `key`, alter layout/hit testing, or change UIA AutomationId.
+The transitional
 `view.tree.core` subset supports box/row/column/grid/flow/stack/text/image/
 button/icon/iconButton/shape/progressBar/progressRing/spacer nodes, stable element actions,
 package resource handles, hover/pressed styles, and per-element context-menu

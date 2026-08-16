@@ -487,6 +487,8 @@ struct ViewNode
 {
     ViewNodeType type = ViewNodeType::Box;
     std::string key;
+    std::string debugName;
+    std::string testId;
     std::string text;
     std::string inputValue;
     std::string placeholder;
@@ -651,6 +653,17 @@ struct ViewNode
     std::vector<std::size_t> virtualMeasuredIndices;
 };
 
+/** Developer-only snapshot of one committed declarative scene node. */
+struct ViewInspectionNode
+{
+    ViewNodeType type = ViewNodeType::Box;
+    std::string key;
+    std::string debugName;
+    std::string testId;
+    ViewRect frame;
+    std::size_t depth = 0;
+};
+
 struct ViewScrollViewport
 {
     std::string key;
@@ -798,6 +811,8 @@ struct ViewTreeLimits
     static constexpr std::size_t MaximumVirtualWindowItems = 128;
     static constexpr std::size_t MaximumVirtualOverscan = 16;
     static constexpr std::size_t MaximumVirtualSectionHeaders = 4096;
+    static constexpr std::size_t MaximumDebugNameBytes = 256;
+    static constexpr std::size_t MaximumTestIdBytes = 128;
 };
 
 bool ValidateAndLayoutViewTree(ViewNode& root, float width, float height,
@@ -808,6 +823,7 @@ bool CollectViewInteractionRegions(const ViewNode& root,
     std::vector<InteractionRegion>& regions, std::string& error);
 bool CollectViewInputControls(const ViewNode& root,
     std::vector<ViewInputControl>& controls, std::string& error);
+std::vector<ViewInspectionNode> InspectViewTree(const ViewNode& root);
 bool ApplyViewScrollOffsets(ViewNode& root,
     const ViewScrollOffsetResolver& resolver,
     std::vector<ViewScrollViewport>& viewports, std::string& error);

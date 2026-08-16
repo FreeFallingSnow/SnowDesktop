@@ -35,6 +35,8 @@ void TestLayoutAndRegions()
     ViewNode root;
     root.type = ViewNodeType::Column;
     root.key = "root";
+    root.debugName = "Primary content";
+    root.testId = "content/root";
     root.padding = 10.0f;
     root.gap = 5.0f;
     root.alignItems = ViewAlignment::Center;
@@ -71,6 +73,17 @@ void TestLayoutAndRegions()
     Check(Near(root.children[1].frame.x, 70.0f) &&
             Near(root.children[1].frame.y, 61.5f),
         "column layout must center a fixed-width button after the gap");
+
+    const auto inspection = InspectViewTree(root);
+    Check(inspection.size() == 3 && inspection[0].depth == 0 &&
+            inspection[0].type == ViewNodeType::Column &&
+            inspection[0].key == "root" &&
+            inspection[0].debugName == "Primary content" &&
+            inspection[0].testId == "content/root" &&
+            inspection[1].depth == 1 &&
+            inspection[2].key == "refresh" &&
+            Near(inspection[2].frame.x, 70.0f),
+        "view inspection must preserve scene order, identity, and layout frames");
 
     std::vector<InteractionRegion> regions;
     Check(CollectViewInteractionRegions(root, regions, error) &&
@@ -145,6 +158,37 @@ void TestValidationFailures()
             unlabeledMeter, 100.0f, 100.0f, error) &&
             error.find("accessibility.label") != std::string::npos,
         "meter nodes must require an accessible label");
+
+    ViewNode overlongDiagnostic;
+    overlongDiagnostic.type = ViewNodeType::Text;
+    overlongDiagnostic.key = "diagnostic-bound";
+    overlongDiagnostic.text = "Text";
+    overlongDiagnostic.debugName.assign(
+        ViewTreeLimits::MaximumDebugNameBytes + 1, 'd');
+    Check(!ValidateAndLayoutViewTree(
+            overlongDiagnostic, 100.0f, 40.0f, error) &&
+            error.find("debugName/testId") != std::string::npos,
+        "developer identity metadata must remain bounded");
+
+    ViewNode invalidTestId;
+    invalidTestId.type = ViewNodeType::Text;
+    invalidTestId.key = "test-id-format";
+    invalidTestId.text = "Text";
+    invalidTestId.testId = "contains whitespace";
+    Check(!ValidateAndLayoutViewTree(
+            invalidTestId, 100.0f, 40.0f, error) &&
+            error.find("unsupported characters") != std::string::npos,
+        "testId must stay safe for diagnostic and test selectors");
+
+    ViewNode multilineDebugName;
+    multilineDebugName.type = ViewNodeType::Text;
+    multilineDebugName.key = "debug-name-format";
+    multilineDebugName.text = "Text";
+    multilineDebugName.debugName = "spoofed\ndiagnostic";
+    Check(!ValidateAndLayoutViewTree(
+            multilineDebugName, 100.0f, 40.0f, error) &&
+            error.find("unsupported characters") != std::string::npos,
+        "debugName must not inject control characters into copied diagnostics");
 }
 
 void RegisterViewLibrary(lua_State* state)
@@ -217,6 +261,7 @@ void TestLuaParsing()
     const char* script = R"lua(
         local source = {
             key = "title", text = "Ready", textWrap = "wrap",
+            debugName = "Status title", testId = "status/title",
             maxLines = 2, overflowText = "clip", verticalAlign = "end",
             fontWeight = 600, fontStyle = "italic",
             lineHeight = 24, letterSpacing = 1.5,
@@ -235,6 +280,8 @@ void TestLuaParsing()
                 title,
                 view.button({
                     key = "open",
+                    debugName = "Open action",
+                    testId = "toolbar/open",
                     label = "Open",
                     width = 96,
                     height = 32,
@@ -269,6 +316,8 @@ void TestLuaParsing()
             root.type == ViewNodeType::Column &&
             root.children.size() == 2 &&
             root.children[0].type == ViewNodeType::Text &&
+            root.children[0].debugName == "Status title" &&
+            root.children[0].testId == "status/title" &&
             root.children[0].textWrap == ViewTextWrap::Wrap &&
             root.children[0].maximumLines == 2 &&
             root.children[0].overflowText == ViewTextOverflow::Clip &&
@@ -282,6 +331,8 @@ void TestLuaParsing()
             Near(root.children[0].letterSpacing, 1.5f) &&
             root.children[0].tooltip == "Current status" &&
             root.children[1].type == ViewNodeType::Button &&
+            root.children[1].debugName == "Open action" &&
+            root.children[1].testId == "toolbar/open" &&
             root.children[1].events.at("click").id == "open" &&
             root.children[1].events.at("contextMenu").id == "open.menu" &&
             root.children[1].style.background ==
@@ -317,6 +368,17 @@ void TestLuaParsing()
     Check(!ParseLuaViewTree(state, -1, root, error) &&
             error.find("fontSze") != std::string::npos,
         "view parsing must reject unknown fields instead of hiding typos");
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.text({
+            key = "empty-test-id", text = "Text", testId = "",
+        })
+    )lua") == LUA_OK,
+        "empty developer-identity fixture must evaluate");
+    root = {};
+    Check(!ParseLuaViewTree(state, -1, root, error) &&
+            error.find("must be non-empty") != std::string::npos,
+        "present debugName/testId fields must not collapse into omission");
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(
         return view.text({

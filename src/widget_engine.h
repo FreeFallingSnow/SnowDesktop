@@ -235,6 +235,11 @@ struct WidgetDiagnosticEntry
     bool executionQuotaExceeded = false;
     bool memoryQuotaExceeded = false;
     bool circuitOpen = false;
+    std::vector<snowdesktop::widget_runtime::ViewInspectionNode>
+        desktopViewNodes;
+    std::vector<snowdesktop::widget_runtime::ViewInspectionNode>
+        auxiliaryViewNodes;
+    std::string auxiliarySurface;
 };
 
 /**
