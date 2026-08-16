@@ -142,7 +142,8 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.collection.virtual` 提供固定行高虚拟集合与可见范围查询，
 `view.collection.virtual.stickyHeaders` 提供 virtualList 的全局分组索引与窗口外活动标题，
 `view.collection.virtual.variableExtent` 为 virtualList 增加宿主测量的可变行高；
-`view.styledText.basic` 提供有界样式 span，`view.styledText.actions` 提供精确行内交互目标，
+`view.styledText.basic` 提供有界样式 span，`view.styledText.inlineIcons` 提供宿主图标字体 span，
+`view.styledText.actions` 提供精确行内交互目标，
 `view.monthCalendar` 提供受控月历日期网格，
 `view.logicalSlots` 提供与 manifest 宿主管理槽位严格对应的 `slotSurface/slotItem`，
 `view.referenceIcon` 提供只接收实例自有 opaque ref 的宿主图标节点。
@@ -843,13 +844,24 @@ view.referenceIcon({
 命中，不会把两行之间或行尾之外的包围盒空白当作链接。click、双击、hover、pressed、键盘、
 提示和元素级右键菜单都复用普通 action surface 路由，事件的 `targetKey` 是上述生成键。
 存在任何交互字段的 span 必须提供 key；重复键、超长生成键或片段超配额会拒绝整棵新树并
-保留上一成功树。该 feature 仍不提供 inline icon 或任意 HTML/Markdown。
+保留上一成功树。
+
+探测 `view.styledText.inlineIcons` 后，一个 span 可用恰好一个有效 Unicode scalar 的 `glyph`
+替代 `text`，并通过
+`iconFont="fa"|"fluent"` 选择宿主内嵌 Font Awesome 或 Fluent 字体。图标与普通文本仍进入
+同一个 DirectWrite layout，因此共享换行、基线、对齐、裁剪和精确 span 命中；`fontSize`、颜色、
+hover/pressed、action、tooltip 与右键菜单继续有效。图标字体是固定字形，不接受 bold/italic；
+带 key 的图标 span 必须提供 `accessibility.label`，避免把私用区字符暴露成无意义名称。
+该 feature 不提供包内任意 inline 图片、HTML 或 Markdown。
 
 ```lua
 view.styledText({
     key = "status",
     spans = {
         { text = "Build ", foreground = 0x94A3B8 },
+        { glyph = "\u{f058}", iconFont = "fa",
+          foreground = 0x4ADE80 },
+        { text = " " },
         { key = "result", text = "passed", foreground = 0x4ADE80,
           hoverForeground = 0x86EFAC, bold = true,
           action = { id = "build.open" },

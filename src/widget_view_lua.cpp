@@ -1466,6 +1466,8 @@ bool ReadStringArrayField(lua_State* state, int table, const char* field,
 
 bool ParseAction(lua_State* state, int index, InteractionAction& action,
     std::string& error);
+bool ReadIconFontField(lua_State* state, int table,
+    ViewIconFont& value, std::string& error);
 
 bool ReadTextSpansField(lua_State* state, int table,
     std::vector<ViewTextSpan>& spans, std::string& error)
@@ -1493,7 +1495,8 @@ bool ReadTextSpansField(lua_State* state, int table,
         lua_rawgeti(state, -1, static_cast<lua_Integer>(index + 1));
         if (!lua_istable(state, -1) ||
             !ValidateObjectFields(state, -1,
-                { "key", "text", "foreground", "hoverForeground",
+                { "key", "text", "glyph", "iconFont",
+                    "foreground", "hoverForeground",
                     "pressedForeground", "fontSize", "bold", "italic",
                     "underline", "strikethrough", "cursor", "tooltip",
                     "accessibility", "events", "action" },
@@ -1504,8 +1507,25 @@ bool ReadTextSpansField(lua_State* state, int table,
             return false;
         }
         ViewTextSpan span;
+        const bool hasText = FieldPresent(state, -1, "text");
+        const bool hasGlyph = FieldPresent(state, -1, "glyph");
+        if (hasText == hasGlyph)
+        {
+            lua_pop(state, 2);
+            error = "styledText spans require exactly one of text or glyph";
+            return false;
+        }
+        if (!hasGlyph && FieldPresent(state, -1, "iconFont"))
+        {
+            lua_pop(state, 2);
+            error = "styledText span iconFont requires glyph";
+            return false;
+        }
+        span.icon = hasGlyph;
         if (!ReadStringField(state, -1, "key", span.key, false, error) ||
-            !ReadStringField(state, -1, "text", span.text, true, error) ||
+            !ReadStringField(state, -1,
+                hasGlyph ? "glyph" : "text", span.text, true, error) ||
+            !ReadIconFontField(state, -1, span.iconFont, error) ||
             !ReadOptionalColor(state, -1, "foreground",
                 span.foreground, error, &span.foregroundToken) ||
             !ReadOptionalColor(state, -1, "hoverForeground",

@@ -281,9 +281,77 @@ float TextIntrinsicWidth(const ViewNode& node) noexcept
         ViewHorizontalPadding(node);
 }
 
+bool IsSingleUtf8Scalar(std::string_view value) noexcept
+{
+    if (value.empty()) return false;
+    const auto byte = [&](std::size_t index) {
+        return static_cast<unsigned char>(value[index]);
+    };
+    const unsigned char first = byte(0);
+    std::size_t length = 0;
+    std::uint32_t scalar = 0;
+    if (first <= 0x7F)
+    {
+        length = 1;
+        scalar = first;
+    }
+    else if (first >= 0xC2 && first <= 0xDF)
+    {
+        length = 2;
+        scalar = first & 0x1F;
+    }
+    else if (first >= 0xE0 && first <= 0xEF)
+    {
+        length = 3;
+        scalar = first & 0x0F;
+    }
+    else if (first >= 0xF0 && first <= 0xF4)
+    {
+        length = 4;
+        scalar = first & 0x07;
+    }
+    else return false;
+    if (value.size() != length) return false;
+    for (std::size_t index = 1; index < length; ++index)
+    {
+        const unsigned char next = byte(index);
+        if ((next & 0xC0) != 0x80) return false;
+        scalar = (scalar << 6) | (next & 0x3F);
+    }
+    const std::uint32_t minimum = length == 1 ? 0 :
+        length == 2 ? 0x80 : length == 3 ? 0x800 : 0x10000;
+    return scalar >= minimum && scalar <= 0x10FFFF &&
+        !(scalar >= 0xD800 && scalar <= 0xDFFF);
+}
+
+float StyledTextIntrinsicWidth(const ViewNode& node) noexcept
+{
+    float width = 0.0f;
+    float approximateGlyphs = 0.0f;
+    for (const auto& span : node.spans)
+    {
+        const float size = span.fontSize.value_or(node.fontSize);
+        const float glyphs = span.icon ? 1.0f : static_cast<float>(
+            std::min<std::size_t>(span.text.size(), 256));
+        width += span.icon ? size : glyphs * size * 0.55f;
+        approximateGlyphs += glyphs;
+    }
+    width += std::max(0.0f, approximateGlyphs - 1.0f) *
+        node.letterSpacing;
+    return std::max(node.fontSize, width) + ViewHorizontalPadding(node);
+}
+
 float TextIntrinsicLineHeight(const ViewNode& node) noexcept
 {
-    return node.lineHeight.value_or(node.fontSize * 1.4f);
+    if (node.lineHeight) return *node.lineHeight;
+    float fontSize = node.fontSize;
+    if (node.type == ViewNodeType::StyledText)
+    {
+        for (const auto& span : node.spans)
+            fontSize = std::max(fontSize,
+                span.fontSize.value_or(node.fontSize));
+    }
+    return fontSize * 1.4f;
 }
 
 bool IsIconNode(ViewNodeType type) noexcept
@@ -634,8 +702,9 @@ float RawIntrinsicWidth(const ViewNode& node)
 {
     if (node.width.kind == ViewLengthKind::Fixed)
         return node.width.value;
+    if (node.type == ViewNodeType::StyledText)
+        return StyledTextIntrinsicWidth(node);
     if (node.type == ViewNodeType::Text ||
-        node.type == ViewNodeType::StyledText ||
         node.type == ViewNodeType::Badge ||
         node.type == ViewNodeType::Button ||
         node.type == ViewNodeType::Link)
@@ -2742,6 +2811,16 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
                 error = "styledText spans require non-empty bounded text and font sizes";
                 return false;
             }
+            if (span.icon && !IsSingleUtf8Scalar(span.text))
+            {
+                error = "styledText icon spans require one valid UTF-8 scalar glyph";
+                return false;
+            }
+            if (span.icon && (span.bold || span.italic))
+            {
+                error = "styledText icon spans do not accept bold or italic";
+                return false;
+            }
             const bool hasInteractionMetadata = !span.events.empty() ||
                 !span.cursor.empty() || !span.tooltip.empty() ||
                 !span.accessibilityLabel.empty() ||
@@ -2754,6 +2833,11 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             }
             if (!span.key.empty())
             {
+                if (span.icon && span.accessibilityLabel.empty())
+                {
+                    error = "keyed styledText icon spans require accessibility.label";
+                    return false;
+                }
                 const std::string regionKey = node.key + "/" + span.key;
                 if (span.key.size() > 128 || regionKey.size() > 128 ||
                     !spanKeys.insert(span.key).second)

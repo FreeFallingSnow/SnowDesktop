@@ -448,6 +448,8 @@ struct ViewTextSpan
 {
     std::string key;
     std::string text;
+    bool icon = false;
+    ViewIconFont iconFont = ViewIconFont::FontAwesome;
     std::optional<std::uint32_t> foreground;
     std::optional<ViewThemeColorToken> foregroundToken;
     std::optional<std::uint32_t> hoverForeground;

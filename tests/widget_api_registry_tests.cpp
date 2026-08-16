@@ -539,6 +539,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "view.styledText.basic") &&
             snowdesktop::widget_api::SupportsFeature(
+                "view.styledText.inlineIcons") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "view.surface.dialog") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.surface.panel") &&

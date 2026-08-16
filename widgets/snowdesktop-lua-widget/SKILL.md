@@ -151,8 +151,10 @@ size, bold, italic, underline, and strikethrough. Probe
 pointer/key `events`, element `contextMenu`, tooltip, accessibility label, or
 hover/pressed colors. The host uses exact wrapped-line fragments for hit
 testing and targets the span as `<styledText-key>/<span-key>`; persistent state
-changes still belong in the descriptor event callback. Inline icons remain
-unsupported. Probe `view.monthCalendar` for a
+changes still belong in the descriptor event callback. Probe
+`view.styledText.inlineIcons` to replace a span's `text` with one host icon-font
+`glyph` plus optional `iconFont="fa"|"fluent"`; keyed icon spans require an
+accessibility label and cannot request bold or italic. Probe `view.monthCalendar` for a
 host-rendered six-week Gregorian grid: provide seven localized weekday labels
 in Sunday-first order, keep `selectedDate` controlled, and apply the proposed
 ISO date from the action event's `selection` field. Date cells have stable

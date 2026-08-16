@@ -16002,6 +16002,61 @@ static void SetViewTextOverflow(D2DState* state,
         layout->SetTrimming(&trimming, ellipsis.Get());
 }
 
+static bool ApplyStyledTextSpanTypography(D2DState* state,
+    IDWriteTextLayout* layout,
+    const snowdesktop::widget_runtime::ViewTextSpan& span,
+    const DWRITE_TEXT_RANGE& range)
+{
+    using snowdesktop::widget_runtime::ViewIconFont;
+    if (!state || !layout) return false;
+    if (span.icon)
+    {
+        const bool fontAwesome =
+            span.iconFont == ViewIconFont::FontAwesome;
+        IDWriteTextFormat* iconFormat = GetCachedTextFormat(state,
+            span.fontSize.value_or(14.0f), DWRITE_FONT_WEIGHT_NORMAL,
+            false, DWRITE_WORD_WRAPPING_NO_WRAP, fontAwesome,
+            false, !fontAwesome);
+        if (!iconFormat) return false;
+        ComPtr<IDWriteFontCollection> collection;
+        if (FAILED(iconFormat->GetFontCollection(&collection)) ||
+            !collection)
+            return false;
+        const UINT32 familyLength =
+            iconFormat->GetFontFamilyNameLength();
+        if (familyLength == 0 || familyLength > 128) return false;
+        std::wstring family(familyLength + 1, L'\0');
+        if (FAILED(iconFormat->GetFontFamilyName(
+                family.data(), familyLength + 1)))
+            return false;
+        family.resize(familyLength);
+        if (FAILED(layout->SetFontCollection(collection.Get(), range)) ||
+            FAILED(layout->SetFontFamilyName(family.c_str(), range)) ||
+            FAILED(layout->SetFontWeight(
+                DWRITE_FONT_WEIGHT_NORMAL, range)) ||
+            FAILED(layout->SetFontStyle(
+                DWRITE_FONT_STYLE_NORMAL, range)) ||
+            FAILED(layout->SetFontStretch(
+                DWRITE_FONT_STRETCH_NORMAL, range)))
+            return false;
+    }
+    if (span.fontSize && FAILED(layout->SetFontSize(
+            *span.fontSize, range)))
+        return false;
+    if (span.bold && FAILED(layout->SetFontWeight(
+            DWRITE_FONT_WEIGHT_BOLD, range)))
+        return false;
+    if (span.italic && FAILED(layout->SetFontStyle(
+            DWRITE_FONT_STYLE_ITALIC, range)))
+        return false;
+    if (span.underline && FAILED(layout->SetUnderline(TRUE, range)))
+        return false;
+    if (span.strikethrough && FAILED(
+            layout->SetStrikethrough(TRUE, range)))
+        return false;
+    return true;
+}
+
 static void DrawWidgetStyledText(D2DState* state,
     const snowdesktop::widget_runtime::ViewNode& node,
     const snowdesktop::widget_runtime::ViewStyle& style, float opacity,
@@ -16061,14 +16116,11 @@ static void DrawWidgetStyledText(D2DState* state,
             regions.IsHovered(targetKey);
         const bool pressed = !targetKey.empty() &&
             regions.IsPressed(targetKey);
-        if (span->fontSize) layout->SetFontSize(*span->fontSize, range);
-        if (span->bold)
-            layout->SetFontWeight(DWRITE_FONT_WEIGHT_BOLD, range);
-        if (span->italic)
-            layout->SetFontStyle(DWRITE_FONT_STYLE_ITALIC, range);
-        if (span->underline || (!span->events.empty() && hovered))
+        if (!ApplyStyledTextSpanTypography(
+                state, layout.Get(), *span, range))
+            return;
+        if (!span->underline && !span->events.empty() && hovered)
             layout->SetUnderline(TRUE, range);
-        if (span->strikethrough) layout->SetStrikethrough(TRUE, range);
         std::optional<std::uint32_t> foreground =
             snowdesktop::widget_runtime::ResolveViewThemeColor(
                 span->foreground, span->foregroundToken, palette);
@@ -16171,16 +16223,12 @@ static bool BuildStyledTextHitLayout(D2DState* state,
         static_cast<UINT32>(text.size()));
     for (const auto& [span, range] : result.ranges)
     {
-        if (span->fontSize)
-            result.layout->SetFontSize(*span->fontSize, range);
-        if (span->bold)
-            result.layout->SetFontWeight(DWRITE_FONT_WEIGHT_BOLD, range);
-        if (span->italic)
-            result.layout->SetFontStyle(DWRITE_FONT_STYLE_ITALIC, range);
-        if (span->underline)
-            result.layout->SetUnderline(TRUE, range);
-        if (span->strikethrough)
-            result.layout->SetStrikethrough(TRUE, range);
+        if (!ApplyStyledTextSpanTypography(
+                state, result.layout.Get(), *span, range))
+        {
+            error = "styledText inline icon font is unavailable";
+            return false;
+        }
     }
     DWRITE_TEXT_METRICS metrics{};
     const float contentHeight =

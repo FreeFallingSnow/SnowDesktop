@@ -1168,8 +1168,9 @@ UI Automation HelpText。校验状态只负责受控呈现与语义，不隐式�
 同日后续实现已增加 `view.styledText.basic` 与 `view.monthCalendar`。前者提供 1–64 个
 有界样式 span，并由单个 DirectWrite layout 完成颜色、字号、粗体、斜体、下划线、删除线、
 换行和裁剪；后续 `view.styledText.actions` 又为带稳定 key 的 span 增加精确多片段命中、
-hover/pressed、click、pointer/key 事件、tooltip、键盘焦点和元素级右键菜单，inline icon
-仍未包含。后者提供固定六周的
+hover/pressed、click、pointer/key 事件、tooltip、键盘焦点和元素级右键菜单；
+`view.styledText.inlineIcons` 再允许 span 以宿主 Font Awesome/Fluent glyph 替代文本，并复用同一
+DirectWrite 排版、状态颜色和命中范围。后者提供固定六周的
 Gregorian 网格、可配置周起始、受控 ISO 日期选择、今日/相邻月份/事件状态样式，以及每个
 日期独立的 hover、pressed、change 建议值和元素右键目标。两者已有解析、限额、布局、命中、
 feature probe、LuaLS 和契约测试；日期单元已经进入通用键盘导航，UIA Text/Calendar Pattern
@@ -1323,6 +1324,7 @@ view.row({
 - `view.collection.virtual.variableExtent` 已让 virtualList 以 estimatedItemSize 生成首帧范围，并在成功 scene 后缓存最多 4096 个 1-based 实测高度；itemCount/estimate/rowGap/layoutRevision 共同界定缓存代，测量变化以原首个可见项为锚点修正宿主偏移后触发合并重绘。virtualGrid 继续要求固定行高，未完成的项目级 UIA 虚拟化不由本 feature 暗示。
 - `view.collection.stickyHeaders` 已让纵向 eager list 的直接 listItem 以 sticky=true 固定在最近纵向 scroll 顶部，由下一标题推挤并在所属 list 底部退出；宿主在滚动状态应用阶段移动整棵标题子树，并让呈现中的 sticky 项排在普通兄弟之后绘制/命中。虚拟 section 索引和横向 sticky 不由本 feature 暗示。
 - `view.collection.virtual.stickyHeaders` 已为 fixed/variable virtualList 增加最多 4096 个有序唯一的 1-based section 索引；`view.virtualRange` 根据零 overscan 可见窗口返回活动 `stickyHeaderIndex`，Lua 只在其早于连续窗口时前置一个额外标题，宿主以显式逻辑索引完成布局、变高测量、窗口覆盖校验、下一标题推挤和统一绘制/命中。virtualGrid 与横向 sticky 仍不在本 feature 内。
+- `view.styledText.inlineIcons` 已为 styledText span 增加与 text 互斥的 `glyph/iconFont`，把宿主内嵌 Font Awesome/Fluent collection 按 range 应用于同一 DirectWrite layout；图标沿用字号、颜色、hover/pressed、精确命中和 action 路由，带 key 的图标必须提供可读 label，任意 inline 图片/HTML/Markdown 仍不开放。
 - `view.keyboardNavigation.order` 已加入 `focusable/tabIndex`：-1 只退出顺序遍历，正数先按升序、再接默认 0 的声明顺序；焦点样式、鼠标焦点、键盘遍历和 UIA IsKeyboardFocusable 使用同一有效状态。
 - `view.keyboard.accessKey` 已为单一直接交互目标加入树内唯一的 ASCII 字母/数字访问键；活动辅助 surface 或唯一选中的桌面组件用 Alt+键聚焦输入/slider，并按既有受控 click/change 语义激活其他目标，重复按下不重复触发。Windows 的 `WM_SYSCHAR` 仅在命中时消费，未命中的 Alt 组合键、Alt+Space 和 Alt+F4 继续交给默认窗口过程。UIA 同时公开规范化 AccessKey 和仅作语义描述、不注册全局热键的 acceleratorText；radioGroup/monthCalendar 等多虚拟目标节点不接受父级访问键。真实键盘布局、Alt 系统键与 Narrator 场景仍待现场验证。
 - `view.keyboard.events` 已为可聚焦节点加入 keyDown/keyUp 观察：事件包含稳定符号键名、Windows virtual key、重复与修饰键状态，输入代理与桌面窗口走同一入口；按下目标用于配对释放，窗口失焦清理。事件不提供取消返回值，宿主激活与管理快捷键继续执行，字符/IME 仍只走输入控件。

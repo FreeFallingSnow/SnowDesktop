@@ -235,7 +235,9 @@
 
 ---@class SnowViewTextSpan
 ---@field key? string Required when the span has actions, events, tooltip, accessibility metadata, or interactive colors; target becomes '<styledText-key>/<span-key>'.
----@field text string Non-empty bounded UTF-8 text.
+---@field text? string Non-empty bounded UTF-8 text; exactly one of text or glyph is required.
+---@field glyph? string Exactly one valid Unicode scalar rendered from the host Font Awesome or Fluent icon font; mutually exclusive with text and requires view.styledText.inlineIcons.
+---@field iconFont? 'fa'|'fluent'|'fluent-regular' Host icon font for glyph; defaults to fa and is invalid on text spans.
 ---@field foreground? SnowViewColor Per-span RGB or host theme token.
 ---@field hoverForeground? SnowViewColor Color while the exact span fragments are hovered; requires view.styledText.actions.
 ---@field pressedForeground? SnowViewColor Color while the exact span fragments are pressed; requires view.styledText.actions.
@@ -922,7 +924,7 @@ function view.slotItem(options) end
 ---@return SnowViewNode
 function view.text(options) end
 
----Bounded rich text. Probe view.styledText.actions before using stable interactive spans; inline icons remain unsupported.
+---Bounded rich text. Probe view.styledText.actions before using stable interactive spans and view.styledText.inlineIcons before using glyph spans.
 ---@param options SnowViewNodeOptions Requires 1..64 spans; probes with view.styledText.basic.
 ---@return SnowViewNode
 function view.styledText(options) end

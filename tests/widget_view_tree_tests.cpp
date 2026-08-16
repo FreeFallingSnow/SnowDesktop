@@ -2632,6 +2632,88 @@ void TestStyledTextAndMonthCalendar()
 
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(
+        return view.column({
+            key = "inline-icon-root",
+            children = { view.styledText({
+                key = "inline-icon-status",
+                fontSize = 12,
+                spans = {
+                    { glyph = "\u{f058}", iconFont = "fa",
+                        fontSize = 20, foreground = 0x4ADE80 },
+                    { text = " Ready " },
+                    { key = "details-icon", glyph = "\u{e700}",
+                        iconFont = "fluent",
+                        action = { id = "details.open" },
+                        accessibility = { label = "Open details" } },
+                },
+                accessibility = { label = "Ready, open details" },
+            }) },
+        })
+    )lua") == LUA_OK,
+        "styledText inline-icon fixture must evaluate");
+    ViewNode inlineIconRoot;
+    Check(ParseLuaViewTree(state, -1, inlineIconRoot, error),
+        "styledText inline-icon spans must parse");
+    Check(inlineIconRoot.children.size() == 1,
+        "styledText inline-icon fixture must keep its measured child");
+    ViewNode& inlineIcons = inlineIconRoot.children.front();
+    Check(inlineIcons.spans.size() == 3 &&
+            inlineIcons.spans[0].icon &&
+            inlineIcons.spans[0].iconFont ==
+                ViewIconFont::FontAwesome &&
+            inlineIcons.spans[0].fontSize == 20.0f &&
+            !inlineIcons.spans[1].icon &&
+            inlineIcons.spans[2].icon &&
+            inlineIcons.spans[2].iconFont == ViewIconFont::Fluent &&
+            inlineIcons.spans[2].accessibilityLabel == "Open details",
+        "styledText inline-icon spans must preserve host-font metadata");
+    Check(ValidateAndLayoutViewTree(
+            inlineIconRoot, 240.0f, 40.0f, error),
+        "styledText inline-icon spans must validate and lay out");
+    Check(Near(inlineIcons.frame.height, 28.0f),
+        "inline icon span font size must participate in intrinsic line height");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.styledText({ key = "ambiguous-span", spans = {
+            { text = "text", glyph = "\u{f058}" },
+        } })
+    )lua") == LUA_OK,
+        "ambiguous styledText span fixture must evaluate");
+    ViewNode invalidIcon;
+    Check(!ParseLuaViewTree(state, -1, invalidIcon, error) &&
+            error.find("exactly one") != std::string::npos,
+        "styledText spans must reject simultaneous text and glyph content");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.styledText({ key = "unlabelled-icon", spans = {
+            { key = "action", glyph = "\u{f058}",
+                action = { id = "icon.open" } },
+        } })
+    )lua") == LUA_OK,
+        "unlabelled interactive icon fixture must evaluate");
+    Check(ParseLuaViewTree(state, -1, invalidIcon, error) &&
+            !ValidateAndLayoutViewTree(
+                invalidIcon, 120.0f, 40.0f, error) &&
+            error.find("accessibility.label") != std::string::npos,
+        "keyed inline icons must require a readable accessibility label");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.styledText({ key = "multi-glyph-icon", spans = {
+            { glyph = "ab", iconFont = "fa" },
+        } })
+    )lua") == LUA_OK,
+        "multi-scalar icon fixture must evaluate");
+    Check(ParseLuaViewTree(state, -1, invalidIcon, error) &&
+            !ValidateAndLayoutViewTree(
+                invalidIcon, 120.0f, 40.0f, error) &&
+            error.find("one valid UTF-8 scalar") != std::string::npos,
+        "inline icon spans must reject text disguised as an icon glyph");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
         return view.monthCalendar({
             key = "bad-calendar",
             year = 2026,
