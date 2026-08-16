@@ -3699,10 +3699,10 @@ void TestOverflowShadowAndImageTint()
     )lua") == LUA_OK,
         "leaf overflow fixture must evaluate");
     invalid = {};
-    Check(ParseLuaViewTree(state, -1, invalid, error) &&
-            !ValidateAndLayoutViewTree(invalid, 100.0f, 40.0f, error) &&
-            error == "view clip is only valid for container nodes",
-        "overflow clipping must reject leaf nodes just like clip=true");
+    Check(!ParseLuaViewTree(state, -1, invalid, error) &&
+            error.find("do not accept field 'overflow'") !=
+                std::string::npos,
+        "leaf overflow must be rejected by the shared property matrix");
 
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(
