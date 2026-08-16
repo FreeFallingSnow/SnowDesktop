@@ -1918,7 +1918,7 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             error = "view transition must contain 1 to 4 properties and a duration from 1 to 2000ms";
             return false;
         }
-        std::array<bool, 4> seen{};
+        std::array<bool, 5> seen{};
         for (const auto property : node.transition->properties)
         {
             const auto index = static_cast<std::size_t>(property);
