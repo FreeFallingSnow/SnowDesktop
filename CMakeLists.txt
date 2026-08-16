@@ -561,6 +561,7 @@ add_custom_command(TARGET SnowDesktop POST_BUILD
 
 add_executable(snowwidget
     tools/snowwidget/main.cpp
+    src/widget_author_lint.cpp
     src/widget_api_contract_json.cpp
     src/widget_api_registry.cpp
     src/widget_logical_slot.cpp
@@ -1088,6 +1089,18 @@ if (BUILD_TESTING)
         LABELS contract layout lua widget)
     target_sources(SnowDesktopWidgetViewContractTests PRIVATE
         src/widget_view_contract_json.cpp)
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetAuthorLintTests
+        widget_author_lint
+        SOURCES
+            tests/widget_author_lint_tests.cpp
+            src/widget_author_lint.cpp
+            src/widget_api_registry.cpp
+            src/widget_view_contract.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES SnowDesktopLua
+        LABELS authoring contract lua widget)
 
     snowdesktop_add_test(
         SnowDesktopWidgetViewTreeTests

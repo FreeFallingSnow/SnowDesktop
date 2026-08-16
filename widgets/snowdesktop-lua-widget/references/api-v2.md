@@ -12,6 +12,13 @@
 允许使用的 Lua 标准库与宿主库集合。桌面运行时和该命令由同一个注册清单生成；作者工具应先
 用它确定函数及版本是否存在，再使用 `library/snowdesktop-v2.lua` 获取参数与返回值类型。
 
+运行 `snowwidget lint <组件目录>` 可在启动组件前静态检查 Lua 源码。它从同一宿主 API、系统
+能力和视图节点目录识别不存在或版本不匹配的调用，核对字面量 `data.subscribe`/`task.start`
+能力所需权限是否已经由 manifest 必选或可选声明，并拒绝 API v2 沙箱没有的 `require/os/io/debug/
+package/coroutine`。对于使用字面量属性表的声明式节点，它还检查缺失、空或重复的字面量 `key`，
+并警告明显的硬编码 `text/label/title/placeholder/alt` 等界面文案。结果是带文件、行号、稳定
+问题码和错误/警告计数的 JSON；动态拼装的调用、能力名或属性表仍由运行时最终校验。
+
 运行 `snowwidget view-contract` 可获得宿主当前公开的声明式视图 JSON 契约。顶层
 `schemaVersion=3` 版本化该导出格式，`apiVersion` 表示组件 API；`nodes`、`properties` 和
 `events` 分别登记节点适用属性与逐节点默认值、属性类型/枚举/范围/影响域，以及事件 payload

@@ -1,4 +1,5 @@
 #include "widget_package.h"
+#include "widget_author_lint.h"
 #include "widget_api_contract_json.h"
 #include "widget_system_contract_json.h"
 #include "widget_view_contract_json.h"
@@ -23,6 +24,7 @@ void PrintUsage()
         << "  snowwidget system-contract\n"
         << "  snowwidget view-contract\n"
         << "  snowwidget inspect <package-directory>\n"
+        << "  snowwidget lint <package-directory>\n"
         << "  snowwidget validate <package-directory>\n"
         << "  snowwidget pack <package-directory> <output.snowwidget>\n"
         << "  snowwidget publish-local <package-directory> <catalog-directory>\n";
@@ -102,7 +104,7 @@ int wmain(int argc, wchar_t** argv)
                "\"recommendedApiVersion\":2,\"supportedSchemaVersions\":[1,2],"
                "\"supportedApiVersions\":[1,2],\"commands\":["
                "\"api-contract\",\"system-contract\",\"view-contract\",\"inspect\","
-               "\"validate\",\"pack\",\"publish-local\"]}"
+               "\"lint\",\"validate\",\"pack\",\"publish-local\"]}"
             << '\n';
         return 0;
     }
@@ -181,6 +183,26 @@ int wmain(int argc, wchar_t** argv)
             : manager.ValidateDirectory(source);
         std::cout << report.ToJson() << '\n';
         return report.Ok() ? 0 : 1;
+    }
+    if (command == L"lint")
+    {
+        if (argc != 3 || source.extension() == L".snowwidget")
+        {
+            std::cerr << "{\"ok\":false,\"error\":\"lint requires an unpacked component directory\"}\n";
+            return 2;
+        }
+        snowdesktop::widget::PackageManifest manifest;
+        report = manager.ValidateDirectory(source, &manifest);
+        if (!report.Ok())
+        {
+            std::cout << "{\"ok\":false,\"validation\":"
+                << report.ToJson() << ",\"lint\":null}\n";
+            return 1;
+        }
+        const auto lint = snowdesktop::widget_authoring::
+            LintWidgetDirectory(source, manifest);
+        std::cout << lint.ToJson() << '\n';
+        return lint.Ok() ? 0 : 1;
     }
     if (command == L"pack")
     {
