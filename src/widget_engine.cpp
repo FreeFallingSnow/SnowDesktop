@@ -8715,6 +8715,7 @@ static bool LuaTableIsContiguousArray(lua_State* state, int index,
 static int lua_ViewVirtualRange(lua_State* state)
 {
     using snowdesktop::widget_runtime::ComputeViewVirtualRange;
+    using snowdesktop::widget_runtime::ComputeViewVirtualItemScrollOffset;
     using snowdesktop::widget_runtime::ViewTreeLimits;
     using snowdesktop::widget_runtime::ViewVirtualRange;
     luaL_checktype(state, 1, LUA_TTABLE);
@@ -8723,7 +8724,7 @@ static int lua_ViewVirtualRange(lua_State* state)
     std::string error;
     if (!LuaTableUsesOnlyFields(state, descriptor,
             { "key", "itemCount", "itemExtent", "viewportExtent",
-                "columns", "rowGap", "overscan" },
+                "columns", "rowGap", "overscan", "initialScrollIndex" },
             "view.virtualRange", error))
         return luaL_error(state, "view.virtualRange: %s", error.c_str());
 
@@ -8752,6 +8753,8 @@ static int lua_ViewVirtualRange(lua_State* state)
     const lua_Integer itemCountValue = readInteger("itemCount", -1);
     const lua_Integer columnsValue = readInteger("columns", 1);
     const lua_Integer overscanValue = readInteger("overscan", 2);
+    const lua_Integer initialScrollIndexValue =
+        readInteger("initialScrollIndex", 0);
     const double itemExtentValue = readNumber(
         "itemExtent", std::numeric_limits<double>::quiet_NaN());
     const double viewportExtentValue = readNumber(
@@ -8763,7 +8766,9 @@ static int lua_ViewVirtualRange(lua_State* state)
         columnsValue <= 0 || columnsValue > 64 ||
         overscanValue < 0 ||
         overscanValue > static_cast<lua_Integer>(
-            ViewTreeLimits::MaximumVirtualOverscan))
+            ViewTreeLimits::MaximumVirtualOverscan) ||
+        initialScrollIndexValue < 0 ||
+        initialScrollIndexValue > itemCountValue)
     {
         return luaL_error(state,
             "view.virtualRange: integer arguments exceed their limits");
@@ -8773,6 +8778,21 @@ static int lua_ViewVirtualRange(lua_State* state)
     if (!d2d || !d2d->engine)
         return luaL_error(state,
             "view.virtualRange: host context is unavailable");
+    float requestedOffset = static_cast<float>(
+        d2d->engine->RuntimeGetScrollOffset(BoundWidgetId(state), key));
+    if (initialScrollIndexValue > 0 &&
+        !d2d->engine->RuntimeHasScrollOffset(BoundWidgetId(state), key))
+    {
+        if (!ComputeViewVirtualItemScrollOffset(
+                static_cast<std::size_t>(itemCountValue),
+                static_cast<float>(itemExtentValue),
+                static_cast<std::size_t>(columnsValue),
+                static_cast<float>(rowGapValue),
+                static_cast<float>(viewportExtentValue), 0.0f,
+                static_cast<std::size_t>(initialScrollIndexValue),
+                "nearest", requestedOffset, error))
+            return luaL_error(state, "view.virtualRange: %s", error.c_str());
+    }
     ViewVirtualRange range;
     if (!ComputeViewVirtualRange(
             static_cast<std::size_t>(itemCountValue),
@@ -8780,8 +8800,7 @@ static int lua_ViewVirtualRange(lua_State* state)
             static_cast<std::size_t>(columnsValue),
             static_cast<float>(rowGapValue),
             static_cast<float>(viewportExtentValue),
-            static_cast<float>(d2d->engine->RuntimeGetScrollOffset(
-                BoundWidgetId(state), key)),
+            requestedOffset,
             static_cast<std::size_t>(overscanValue), range, error))
         return luaL_error(state, "view.virtualRange: %s", error.c_str());
 
@@ -17829,11 +17848,14 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             }
             else if (!snowdesktop::widget_runtime::ApplyViewScrollOffsets(
                     candidate,
-                    [found](std::string_view key, float) {
+                    [found](std::string_view key, float)
+                        -> std::optional<float> {
                         const auto position = found->scrollOffsets.find(
                             std::string(key));
                         return position == found->scrollOffsets.end()
-                            ? 0.0f : static_cast<float>(position->second);
+                            ? std::nullopt
+                            : std::optional<float>(
+                                static_cast<float>(position->second));
                     }, scrollViewports, viewError))
             {
                 viewError = "view(): " + viewError;
@@ -18055,6 +18077,13 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                 if (currentIndex >= 0)
                 {
                     found = &widgets_[currentIndex];
+                    for (const auto& viewport : scrollViewports)
+                    {
+                        if (viewport.initialized)
+                            found->scrollOffsets.emplace(viewport.key,
+                                static_cast<int>(std::lround(
+                                    viewport.offset)));
+                    }
                     if (found->viewTree)
                     {
                         found->viewTransitions.QueueExitTransitions(
@@ -18462,11 +18491,14 @@ bool WidgetEngine::RenderWidgetPanel(
         }
         else if (hasView && !snowdesktop::widget_runtime::
                 ApplyViewScrollOffsets(candidate,
-                    [&widget](std::string_view key, float) {
+                    [&widget](std::string_view key, float)
+                        -> std::optional<float> {
                         const auto position =
                             widget.panelScrollOffsets.find(std::string(key));
                         return position == widget.panelScrollOffsets.end()
-                            ? 0.0f : static_cast<float>(position->second);
+                            ? std::nullopt
+                            : std::optional<float>(
+                                static_cast<float>(position->second));
                     }, scrollViewports, viewError))
         {
             panelAccepted = false;
@@ -18570,6 +18602,13 @@ bool WidgetEngine::RenderWidgetPanel(
                 auto& current = widgets_[currentIndex];
                 if (hasView)
                 {
+                    for (const auto& viewport : scrollViewports)
+                    {
+                        if (viewport.initialized)
+                            current.panelScrollOffsets.emplace(viewport.key,
+                                static_cast<int>(std::lround(
+                                    viewport.offset)));
+                    }
                     if (current.panelViewTree)
                     {
                         current.panelViewTransitions.QueueExitTransitions(
@@ -25774,6 +25813,16 @@ int WidgetEngine::RuntimeGetScrollOffset(const std::wstring& widgetId,
         widgets_[index], surface);
     const auto it = offsets.find(id);
     return it == offsets.end() ? 0 : it->second;
+}
+
+bool WidgetEngine::RuntimeHasScrollOffset(const std::wstring& widgetId,
+    const std::string& id, std::string_view surface) const
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0) return false;
+    if (surface.empty()) surface = CurrentWidgetSurface(d2dState_);
+    const auto& offsets = ScrollOffsetsForSurface(widgets_[index], surface);
+    return offsets.contains(id);
 }
 
 void WidgetEngine::RuntimeSetScrollOffset(

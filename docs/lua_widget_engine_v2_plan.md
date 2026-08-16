@@ -1041,7 +1041,9 @@ key 隔离，宿主负责 wheel、钳制、重绘和滚动条，组件使用 `dr
 裁剪并按返回 offset 绘制。声明式轨道现已另行开放 `view.scroll`：支持纵向/横向单子树、
 宿主 offset、测量、滚轮、裁剪绘制和裁剪命中，滚出视口的元素不会继续响应交互；
 `view.scroll.programmatic` 允许非渲染回调按绝对/相对偏移定位，并按 1-based 索引定位固定行高
-virtualList/virtualGrid，所有结果仍由宿主范围钳制。
+virtualList/virtualGrid，所有结果仍由宿主范围钳制。`view.scroll.initialTarget` 另提供普通 scroll
+按可见后代稳定 key、固定行高虚拟集合按 1-based 索引的一次性 nearest 初始定位；宿主只在该
+surface 尚无容器偏移时采用声明值，成功提交后不再用重渲染覆盖用户位置。
 desktop 与宿主辅助 surface 的即时绘制均有各自原子提交的 region 集合；
 `view.keyboardNavigation.basic` 已让可点击、受控和文本输入 region 进入所属 surface 的宿主
 焦点序列。触控长按、受控 submenu、包内菜单图标
@@ -1118,7 +1120,9 @@ list 支持默认纵向与显式横向，并让固有尺寸、flex 分配和条�
 提供固定行高 `virtualList/virtualGrid` 和 `view.virtualRange`，按实例滚动位置只实体化
 最多 128 个连续项，宿主按全局 1-based 索引布局并校验窗口覆盖可见行；
 `view.scroll.programmatic` 已补充 scrollTo/scrollBy 和 nearest/start/center/end 的
-scrollToIndex。可操作的已实体化项
+scrollToIndex；`view.scroll.initialTarget` 已补充 eager 后代 key 和 virtual 逻辑索引的首次定位，
+`view.virtualRange` 接收同名 initialScrollIndex 以在首帧实体化正确窗口，loading 替代态不会提前
+消费该初始目标。可操作的已实体化项
 已进入通用键盘焦点序列；`view.collection.selection` 又加入父集合统一拥有的 none/single/
 multiple 与受控 selectedKeys，条目 selectedStyle、指针/键盘建议事件及 UIA Selection 的
 单选、多选、添加和移除使用同一状态来源。`view.collection.contentStates` 现以单个
@@ -1209,7 +1213,7 @@ feature probe、LuaLS 和契约测试；日期单元已经进入通用键盘导�
 | 图片/图标 | `source`、`fit`、`alignment`、`interpolation`、`tint`、`alt`；source 必须是包资源或宿主受控句柄 |
 | 通用状态 | `visible`（兼容）、`visibility`、`enabled`、`readOnly`、`required`、`focusable`、`tabIndex`、`selected`、`expanded`、`busy`、`validationState`、`validationMessage` |
 | 值控件 | `value`、`checked`、`indeterminate`、`min`、`max`、`step`、`placeholder`、`selection`；按节点类型进行强类型约束 |
-| 集合 | `orientation`、`selectionMode`、`selectedKeys`、`estimatedItemSize`、`overscan`、`initialScrollKey`、`emptyContent`、`loadingContent` |
+| 集合 | `orientation`、`selectionMode`、`selectedKeys`、`itemExtent`、`overscan`、`initialScrollKey`（scroll 后代）、`initialScrollIndex`（固定行高 virtual）、`emptyContent`、`loadingContent` |
 | 宿主槽位 | `binding` 或 `collection`、`reference`、`emptyContent`、`dropStyle`；slot ID/kind 来自 manifest，reference 只能来自对应宿主模型，不能用字符串伪造 |
 | 事件 | `events` 中的 pointer/focus/key/click/doubleClick/contextMenu/change/submit/scrollEnd；值只能是序列化 action ID 和有界参数 |
 | 提示/菜单 | `tooltip`、`contextMenu`、`accessKey`、`acceleratorText`；简单 tooltip 可为字符串，富 tooltip 和菜单使用有界描述结构，实际命令仍经过 action 与权限代理 |
@@ -1308,6 +1312,7 @@ view.row({
 - `view.tooltip` 现已提供所有节点通用的有界纯文本提示：tooltip-only 节点也生成裁剪命中区，提示在 view/select/input 覆盖层之后绘制并限制在组件 surface 内，同时在无 validationMessage 时映射为 UIA HelpText；富提示、markup、任意窗口和把必要信息仅藏在 hover 中仍不允许。
 - `view.pointer.events` 已补通普通声明式节点此前在 LuaLS 与交互运行时之间断裂的 `pointerMove/wheel`：只有显式绑定才进入 Lua，宿主滚动先更新偏移且仍向 scroll/virtual collection 自身投递可信 wheel action，动作不能取消滚动。即时 `interaction.region` 同时通过 `interaction.tooltip/keyboard` 开放已有的纯文本提示、focusable/tabIndex、`isFocused` 和配对 keyDown/keyUp；真实触控板、高频合帧与辅助 surface 场景待验证。
 - `view.scroll.events` 已把 `events.scrollEnd` 限定到 scroll/virtual collection；滚轮或 UIA 操作从末端前到达最大宿主偏移时只投递一次，离开末端后才能再次触发，UIA 来源不获得可信手势。
+- `view.scroll.initialTarget` 已为新出现的稳定容器 key 加入一次性 nearest 初始定位：普通 scroll 解析可见后代 key，固定行高 virtual 解析 1-based 逻辑索引，`view.virtualRange` 用同一索引生成首帧窗口；成功 scene 才提交宿主偏移，失败事务和 loading 替代态不会提前消费目标，已有用户/脚本位置优先。
 - `view.keyboardNavigation.order` 已加入 `focusable/tabIndex`：-1 只退出顺序遍历，正数先按升序、再接默认 0 的声明顺序；焦点样式、鼠标焦点、键盘遍历和 UIA IsKeyboardFocusable 使用同一有效状态。
 - `view.keyboard.accessKey` 已为单一直接交互目标加入树内唯一的 ASCII 字母/数字访问键；活动辅助 surface 或唯一选中的桌面组件用 Alt+键聚焦输入/slider，并按既有受控 click/change 语义激活其他目标，重复按下不重复触发。Windows 的 `WM_SYSCHAR` 仅在命中时消费，未命中的 Alt 组合键、Alt+Space 和 Alt+F4 继续交给默认窗口过程。UIA 同时公开规范化 AccessKey 和仅作语义描述、不注册全局热键的 acceleratorText；radioGroup/monthCalendar 等多虚拟目标节点不接受父级访问键。真实键盘布局、Alt 系统键与 Narrator 场景仍待现场验证。
 - `view.keyboard.events` 已为可聚焦节点加入 keyDown/keyUp 观察：事件包含稳定符号键名、Windows virtual key、重复与修饰键状态，输入代理与桌面窗口走同一入口；按下目标用于配对释放，窗口失焦清理。事件不提供取消返回值，宿主激活与管理快捷键继续执行，字符/IME 仍只走输入控件。

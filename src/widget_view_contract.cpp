@@ -71,7 +71,8 @@ constexpr auto kProperties = std::to_array<std::string_view>({
     "exitTransition", "gap", "columns", "rows",
     "columnGap", "rowGap", "gridColumn", "gridRow", "columnSpan",
     "rowSpan", "itemCount",
-    "itemExtent", "firstIndex", "overscan", "selectionMode",
+    "itemExtent", "firstIndex", "overscan", "initialScrollKey",
+    "initialScrollIndex", "selectionMode",
     "selectedKeys", "emptyContent", "loadingContent", "flexBasis", "flexGrow",
     "flexShrink", "flexDirection", "flexWrap", "alignContent",
     "fontSize", "fontWeight", "fontStyle", "lineHeight",
@@ -311,6 +312,9 @@ bool ViewNodeAllowsProperty(
     if (property == "itemCount" || property == "itemExtent" ||
         property == "firstIndex" || property == "overscan")
         return IsVirtual(type);
+    if (property == "initialScrollKey")
+        return type == ViewNodeType::Scroll;
+    if (property == "initialScrollIndex") return IsVirtual(type);
     if (property == "selectionMode" || property == "selectedKeys")
         return IsType(type, { ViewNodeType::List, ViewNodeType::GridList,
             ViewNodeType::VirtualList, ViewNodeType::VirtualGrid });

@@ -134,7 +134,8 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.grid.uniform` 提供基础 `grid`，`view.grid.placement` 提供显式格位与跨度，
 `view.grid.tracks` 提供受限 fixed/auto/fr/minmax 列轨和行轨，
 `view.flow.wrap` 提供横向换行 `flow`。
-`view.scroll` 提供宿主滚动视口，`view.collection.basic` 提供基础集合，
+`view.scroll` 提供宿主滚动视口，`view.scroll.initialTarget` 提供首次声明式定位，
+`view.collection.basic` 提供基础集合，
 `view.collection.orientation` 提供普通 list 横纵方向，
 `view.collection.selection` 提供受控单选/多选，`view.collection.contentStates` 提供空态/加载态，
 `view.collection.virtual` 提供固定行高虚拟集合与可见范围查询；
@@ -561,6 +562,13 @@ surface 中当前唯一选中 Lua 组件或活动 panel surface 的当前聚焦�
 关闭滚动。每棵树最多 32 个 scroll，单轴内容 extent 最大 1,000,000 逻辑单位；该能力
 对应 feature `view.scroll`，当前不提供 Lua 自绘滚动条、惯性动画或滚动链；
 Windows UI Automation Scroll Pattern 可以通过同一宿主滚动状态移动视口，但不会获得可信手势。
+探测 `view.scroll.initialTarget` 后，普通 `scroll` 可用 `initialScrollKey` 在该 surface
+第一次成功接收此容器稳定 key 时，以 nearest 语义显示一个可见后代；`virtualList/virtualGrid`
+则用 1-based `initialScrollIndex` 定位固定行高项目。初始定位只在宿主尚无该 key 的偏移时计算，
+即使结果为 0 也会建立状态；后续重渲染、属性变化和组件主动滚动都不会覆盖用户位置。
+目标后代不存在、被 hidden/collapsed，或虚拟索引越界时，首次候选 scene 会按事务语义拒绝。
+虚拟集合首帧还必须把同一个 `initialScrollIndex` 传给 `view.virtualRange()`，使 Lua 实体化目标
+附近的连续窗口；如果 loadingContent 正在显示，宿主会把定位延后到项目内容首次成功提交。
 探测 `view.scroll.events` 后，`scroll/virtualList/virtualGrid` 可声明 `events.scrollEnd`；滚轮或
 UIA 滚动从末端之前首次到达最大偏移时投递一次 action，离开末端后可再次触发。没有可滚动范围、
 已位于末端的重复输入和渲染时偏移钳制不会重复投递；UIA 来源为 `accessibility` 且不携带可信手势。
@@ -669,6 +677,7 @@ local range = view.virtualRange({
     viewportExtent = viewportExtent,
     rowGap = rowGap,
     overscan = 2,
+    initialScrollIndex = model.initialArticleIndex,
 })
 local children = {}
 for index = range.firstIndex, range.lastIndex do
@@ -691,6 +700,7 @@ return view.virtualList({
     firstIndex = range.firstIndex,
     rowGap = rowGap,
     overscan = 2,
+    initialScrollIndex = model.initialArticleIndex,
     children = children,
 })
 ```

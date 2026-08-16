@@ -2288,6 +2288,19 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         error = "virtual collection metadata is reserved for virtual nodes";
         return false;
     }
+    if ((node.initialScrollKey && node.type != ViewNodeType::Scroll) ||
+        (node.initialScrollIndex && !IsVirtualCollection(node.type)))
+    {
+        error = "initial scroll targets are reserved for scroll containers";
+        return false;
+    }
+    if (node.initialScrollKey &&
+        (node.initialScrollKey->empty() ||
+            node.initialScrollKey->size() > 128))
+    {
+        error = "initialScrollKey must contain 1 to 128 bytes";
+        return false;
+    }
     if (!IsScrollContainer(node.type) && !node.showScrollbar)
     {
         error = "showScrollbar is reserved for scroll containers";
@@ -2399,6 +2412,13 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             node.overscan > ViewTreeLimits::MaximumVirtualOverscan)
         {
             error = "virtual collection itemCount or overscan exceeds its limit";
+            return false;
+        }
+        if (node.initialScrollIndex &&
+            (*node.initialScrollIndex == 0 ||
+                *node.initialScrollIndex > node.itemCount))
+        {
+            error = "initialScrollIndex is outside the virtual collection";
             return false;
         }
         if (node.children.size() >
@@ -3529,6 +3549,20 @@ void TranslateTree(ViewNode& node, float deltaX, float deltaY) noexcept
         TranslateTree(child, deltaX, deltaY);
 }
 
+const ViewNode* FindVisibleDescendantByKey(const ViewNode& node,
+    std::string_view key) noexcept
+{
+    if (!node.visible || node.visibility == ViewVisibility::Hidden)
+        return nullptr;
+    if (node.key == key) return &node;
+    for (const auto& child : node.children)
+    {
+        if (const auto* found = FindVisibleDescendantByKey(child, key))
+            return found;
+    }
+    return nullptr;
+}
+
 bool ApplyScrollState(ViewNode& node,
     const ViewScrollOffsetResolver& resolver,
     std::vector<ViewScrollViewport>& viewports,
@@ -3595,7 +3629,43 @@ bool ApplyScrollState(ViewNode& node,
             maximum = std::max(0.0f,
                 contentExtent - viewportExtent);
         }
-        const float requested = resolver ? resolver(node.key, maximum) : 0.0f;
+        const std::optional<float> resolved = resolver
+            ? resolver(node.key, maximum) : std::optional<float>{};
+        float requested = resolved.value_or(0.0f);
+        bool initialized = !resolved.has_value();
+        if (initialized && IsVirtualCollection(node.type) &&
+            HasCollectionPlaceholder(node) && node.initialScrollIndex)
+            initialized = false;
+        if (initialized && node.type == ViewNodeType::Scroll &&
+            node.initialScrollKey)
+        {
+            const ViewNode* target = FindVisibleDescendantByKey(
+                node.children.front(), *node.initialScrollKey);
+            if (!target)
+            {
+                error = "view initialScrollKey does not reference a visible descendant";
+                return false;
+            }
+            const float targetStart = vertical
+                ? target->frame.y - clip.y : target->frame.x - clip.x;
+            const float targetEnd = targetStart +
+                (vertical ? target->frame.height : target->frame.width);
+            if (targetStart < 0.0f) requested = targetStart;
+            else if (targetEnd > viewportExtent)
+                requested = targetEnd - viewportExtent;
+        }
+        else if (initialized && IsVirtualCollection(node.type) &&
+            !HasCollectionPlaceholder(node) && node.initialScrollIndex)
+        {
+            if (!ComputeViewVirtualItemScrollOffset(node.itemCount,
+                    node.itemExtent,
+                    node.type == ViewNodeType::VirtualGrid
+                        ? node.columns : 1,
+                    node.rowGap.value_or(node.gap), viewportExtent,
+                    0.0f, *node.initialScrollIndex, "nearest",
+                    requested, error))
+                return false;
+        }
         if (!std::isfinite(requested))
         {
             error = "view scroll resolver returned a non-finite offset";
@@ -3639,7 +3709,7 @@ bool ApplyScrollState(ViewNode& node,
         childClip = IntersectRects(inheritedClip, clip);
         const ViewRect visibleFrame = childClip.value_or(clip);
         viewports.push_back({ node.key, visibleFrame, node.orientation,
-            viewportExtent, contentExtent, offset, maximum });
+            viewportExtent, contentExtent, offset, maximum, initialized });
     }
     for (auto& child : node.children)
         if (!ApplyScrollState(child, resolver, viewports, childClip,

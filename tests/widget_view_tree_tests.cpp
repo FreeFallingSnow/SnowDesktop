@@ -1847,6 +1847,121 @@ void TestVirtualizedCollections()
     lua_close(state);
 }
 
+void TestInitialScrollTargets()
+{
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "Lua state must be available");
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    Check(luaL_dostring(state, R"lua(
+        return view.scroll({
+            key = "initial-feed",
+            height = 60,
+            initialScrollKey = "third-row",
+            children = {
+                view.column({
+                    key = "feed-content",
+                    children = {
+                        view.text({ key = "first-row", text = "First",
+                            height = 40 }),
+                        view.text({ key = "second-row", text = "Second",
+                            height = 40 }),
+                        view.text({ key = "third-row", text = "Third",
+                            height = 40 }),
+                    },
+                }),
+            },
+        })
+    )lua") == LUA_OK,
+        "initial eager scroll fixture must evaluate");
+    ViewNode eager;
+    std::string error;
+    Check(ParseLuaViewTree(state, -1, eager, error) &&
+            eager.initialScrollKey &&
+            *eager.initialScrollKey == "third-row" &&
+            ValidateAndLayoutViewTree(eager, 160.0f, 60.0f, error),
+        "scroll must parse a bounded initial descendant key");
+    const ViewNode eagerLayout = eager;
+    std::vector<ViewScrollViewport> viewports;
+    Check(ApplyViewScrollOffsets(eager,
+            [](std::string_view, float) -> std::optional<float> {
+                return std::nullopt;
+            }, viewports, error) && viewports.size() == 1 &&
+            viewports[0].initialized && Near(viewports[0].offset, 60.0f) &&
+            Near(eager.children[0].children[2].frame.y, 20.0f),
+        "a new scroll key must reveal its initial descendant with nearest alignment");
+
+    ViewNode retained = eagerLayout;
+    viewports.clear();
+    Check(ApplyViewScrollOffsets(retained,
+            [](std::string_view, float) -> std::optional<float> {
+                return 10.0f;
+            }, viewports, error) && viewports.size() == 1 &&
+            !viewports[0].initialized && Near(viewports[0].offset, 10.0f),
+        "an accepted host offset must override the one-shot declaration");
+
+    ViewNode missing = eagerLayout;
+    missing.initialScrollKey = "missing-row";
+    viewports.clear();
+    Check(!ApplyViewScrollOffsets(missing,
+            [](std::string_view, float) -> std::optional<float> {
+                return std::nullopt;
+            }, viewports, error) &&
+            error.find("visible descendant") != std::string::npos,
+        "an unresolved initial descendant must reject the candidate scene");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.virtualList({
+            key = "initial-virtual",
+            height = 40,
+            itemCount = 10,
+            itemExtent = 20,
+            firstIndex = 4,
+            overscan = 0,
+            initialScrollIndex = 5,
+            children = {
+                view.listItem({ key = "item-4",
+                    accessibility = { label = "Item 4" },
+                    children = { view.text({ key = "label-4",
+                        text = "Item 4" }) },
+                }),
+                view.listItem({ key = "item-5",
+                    accessibility = { label = "Item 5" },
+                    children = { view.text({ key = "label-5",
+                        text = "Item 5" }) },
+                }),
+            },
+        })
+    )lua") == LUA_OK,
+        "initial virtual scroll fixture must evaluate");
+    ViewNode virtualList;
+    Check(ParseLuaViewTree(state, -1, virtualList, error) &&
+            virtualList.initialScrollIndex == 5 &&
+            ValidateAndLayoutViewTree(virtualList, 160.0f, 40.0f, error),
+        "virtualList must parse a bounded 1-based initial item index");
+    viewports.clear();
+    Check(ApplyViewScrollOffsets(virtualList,
+            [](std::string_view, float) -> std::optional<float> {
+                return std::nullopt;
+            }, viewports, error) && viewports.size() == 1 &&
+            viewports[0].initialized && Near(viewports[0].offset, 60.0f) &&
+            Near(virtualList.children[0].frame.y, 0.0f),
+        "a new virtual key must reveal its initial item and validate that window");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.box({ key = "invalid-initial-target",
+            initialScrollKey = "child" })
+    )lua") == LUA_OK,
+        "invalid initial scroll scope fixture must evaluate");
+    ViewNode invalid;
+    Check(!ParseLuaViewTree(state, -1, invalid, error) &&
+            error.find("only scroll nodes") != std::string::npos,
+        "initialScrollKey must remain scoped to scroll nodes");
+    lua_close(state);
+}
+
 void TestCollectionContentStates()
 {
     lua_State* state = luaL_newstate();
@@ -3768,6 +3883,7 @@ int main()
     TestScrollableCollections();
     TestListOrientation();
     TestVirtualizedCollections();
+    TestInitialScrollTargets();
     TestCollectionContentStates();
     TestDeclarativeInputControls();
     TestStyledTextAndMonthCalendar();

@@ -271,6 +271,7 @@
 ---@field columns? integer Grid column count from 1 through 64; defaults to 1.
 ---@field rowGap? number Logical gap between rows; defaults to 0.
 ---@field overscan? integer Extra rows on each side from 0 through 16; defaults to 2.
+---@field initialScrollIndex? integer Same 1-based initial item passed to the virtual node; used only while this stable key has no accepted host scroll state.
 
 ---@class SnowViewVirtualRange
 ---@field firstIndex integer First 1-based item to materialize, or 0 when empty.
@@ -360,6 +361,8 @@
 ---@field itemExtent? number Required fixed row height for virtualList/virtualGrid.
 ---@field firstIndex? integer Required first 1-based materialized item for virtualList/virtualGrid; 0 only when empty.
 ---@field overscan? integer Virtual collection overscan rows from 0 through 16; defaults to 2.
+---@field initialScrollKey? string Scroll-only visible descendant key to reveal with nearest alignment when this stable container key is first accepted.
+---@field initialScrollIndex? integer VirtualList/virtualGrid-only 1-based item to reveal with nearest alignment when this stable container key is first accepted; pass the same value to view.virtualRange.
 ---@field selectionMode? SnowViewSelectionMode Controlled collection selection; defaults to none and probes with view.collection.selection.
 ---@field selectedKeys? string[] Unique controlled listItem keys; single accepts at most one, none accepts none, and virtual selections may include unmaterialized item keys.
 ---@field emptyContent? SnowViewNode One visible fallback node used when an eager collection has no children or a virtual collection has itemCount=0.

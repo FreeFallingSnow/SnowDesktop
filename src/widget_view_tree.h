@@ -513,6 +513,8 @@ struct ViewNode
     std::size_t firstIndex = 0;
     std::size_t overscan = 2;
     float itemExtent = 0.0f;
+    std::optional<std::string> initialScrollKey;
+    std::optional<std::size_t> initialScrollIndex;
     ViewSelectionMode selectionMode = ViewSelectionMode::None;
     std::vector<std::string> selectedKeys;
     ViewSelectionMode inheritedSelectionMode = ViewSelectionMode::None;
@@ -639,6 +641,7 @@ struct ViewScrollViewport
     float contentExtent = 0.0f;
     float offset = 0.0f;
     float maximum = 0.0f;
+    bool initialized = false;
 };
 
 struct ViewInputControl
@@ -678,7 +681,7 @@ struct ViewVirtualRange
     float contentExtent = 0.0f;
 };
 
-using ViewScrollOffsetResolver = std::function<float(
+using ViewScrollOffsetResolver = std::function<std::optional<float>(
     std::string_view key, float maximum)>;
 
 struct ViewExitTransitionFrame

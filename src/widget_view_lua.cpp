@@ -2272,6 +2272,17 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         error = "only scroll and virtual collection nodes accept showScrollbar";
         return false;
     }
+    if (!scrollNode && FieldPresent(state, index, "initialScrollKey"))
+    {
+        error = "only scroll nodes accept initialScrollKey";
+        return false;
+    }
+    if (!virtualCollectionNode &&
+        FieldPresent(state, index, "initialScrollIndex"))
+    {
+        error = "only virtual collection nodes accept initialScrollIndex";
+        return false;
+    }
     if (!virtualCollectionNode &&
         (FieldPresent(state, index, "itemCount") ||
             FieldPresent(state, index, "itemExtent") ||
@@ -2508,6 +2519,9 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     bool focusable = false;
     int tabIndex = 0;
     std::size_t rowTrackCount = 0;
+    const bool initialScrollKeySpecified =
+        FieldPresent(state, index, "initialScrollKey");
+    std::string initialScrollKey;
     if (!ReadStringField(state, index, contentField,
             node.text, false, error) ||
         !ReadResourceField(state, index, "source", LuaResourceType::Image,
@@ -2561,6 +2575,10 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             node.firstIndex, virtualCollectionNode, error) ||
         !ReadNonNegativeSizeField(state, index, "overscan",
             node.overscan, false, error) ||
+        !ReadStringField(state, index, "initialScrollKey",
+            initialScrollKey, false, error) ||
+        !ReadOptionalPositiveSizeField(state, index,
+            "initialScrollIndex", node.initialScrollIndex, error) ||
         !ReadSelectionModeField(state, index,
             node.selectionMode, error) ||
         !ReadStringArrayField(state, index, "selectedKeys",
@@ -2672,6 +2690,22 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadStyleField(state, index, "eventStyle",
             node.eventStyle, error))
         return false;
+
+    if (initialScrollKeySpecified)
+    {
+        if (initialScrollKey.empty() || initialScrollKey.size() > 128)
+        {
+            error = "view field 'initialScrollKey' must contain 1 to 128 bytes";
+            return false;
+        }
+        node.initialScrollKey = std::move(initialScrollKey);
+    }
+    if (node.initialScrollIndex &&
+        *node.initialScrollIndex > node.itemCount)
+    {
+        error = "view field 'initialScrollIndex' is outside the collection";
+        return false;
+    }
 
     if (focusableSpecified) node.focusable = focusable;
     if (tabIndexSpecified) node.tabIndex = tabIndex;

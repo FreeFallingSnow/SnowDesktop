@@ -1423,6 +1423,8 @@ public:
     void BlurHostInput(bool cancel = false);
     int RuntimeGetScrollOffset(const std::wstring& widgetId,
         const std::string& id, std::string_view surface = {}) const;
+    bool RuntimeHasScrollOffset(const std::wstring& widgetId,
+        const std::string& id, std::string_view surface = {}) const;
     void RuntimeSetScrollOffset(const std::wstring& widgetId,
         const std::string& id, int offset, std::string_view surface = {});
     bool RuntimeScrollView(const std::wstring& widgetId,
