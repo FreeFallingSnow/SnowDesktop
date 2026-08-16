@@ -128,6 +128,7 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.transition.visual` 提供宿主驱动的有限视觉样式过渡，
 `view.transition.transform` 将该过渡扩展到声明式 transform，
 `view.state.selected` 提供通用受控选中样式，`view.checkbox.indeterminate` 提供复选框混合态，
+`view.progress.indeterminate` 提供宿主驱动的不确定进度条与进度环，
 `view.state.visibility` 明确区分参与布局的隐藏状态与完全折叠状态，
 `view.input.selection` 提供文本输入的受控选区，`view.input.required` 提供表单必填语义，
 `view.keyboardNavigation.order` 提供显式焦点参与和顺序，
@@ -838,7 +839,11 @@ view.referenceIcon({
 `icon`/`iconButton` 的 `glyph` 使用宿主 Font Awesome 或 Fluent 字体，`iconButton` 必须
 提供 `accessibility.label`。`progressBar`/`progressRing` 接受 0–1 的 `value`、正数
 `thickness`、track/fill opacity，并分别使用 style.background/foreground 作为轨道和
-进度色。这些节点均由宿主直接绘制，不开放路径、字体文件或原生绘图对象。
+进度色。探测 `view.progress.indeterminate` 后，两者还可声明 `indeterminate=true`；此时
+`value` 仍须处于 0–1 但不参与绘制，`meter` 不接受该状态。宿主只在对应 desktop/panel
+surface 可见时推进动画，不向 Lua 投递逐帧回调；组件隐藏、面板关闭后停止请求帧，预览和
+系统“减少动态效果”状态使用静态片段。这些节点均由宿主直接绘制，不开放路径、字体文件或
+原生绘图对象。
 
 `styledText` 要求 1–64 个非空 `spans`，每个 span 可独立指定
 `foreground/fontSize/bold/italic/underline/strikethrough`。宿主把全部 span 合并为一个 DirectWrite layout，统一

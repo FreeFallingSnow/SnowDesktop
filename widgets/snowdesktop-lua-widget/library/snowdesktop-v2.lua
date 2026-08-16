@@ -397,7 +397,7 @@
 ---@field textDirection? SnowViewTextDirection Base paragraph direction; auto uses the first strong character and then the locale.
 ---@field bold? boolean
 ---@field checked? boolean Required explicit controlled value for toggle and checkbox nodes.
----@field indeterminate? boolean Checkbox-only controlled mixed state. Requires checked=false; activation proposes checked=true and indeterminate=false.
+---@field indeterminate? boolean Checkbox controlled mixed state, or host-driven ProgressBar/ProgressRing activity after probing view.progress.indeterminate. Checkbox requires checked=false; indeterminate progress ignores value for paint and never runs Lua per frame.
 ---@field selected? boolean Generic controlled selection state used by selectedStyle and SelectionItem semantics where the node contract provides them.
 ---@field sticky? boolean ListItem-only opt-in that pins headers inside the nearest vertical scroll while their eager list remains visible. Requires view.collection.stickyHeaders.
 ---@field busy? boolean Common host-observable busy state; collection loadingContent becomes active when supplied.
@@ -1009,11 +1009,11 @@ function view.badge(options) end
 ---@return SnowViewNode
 function view.divider(options) end
 
----@param options SnowViewNodeOptions
+---@param options SnowViewNodeOptions Uses a 0..1 value, or indeterminate=true after probing view.progress.indeterminate.
 ---@return SnowViewNode
 function view.progressBar(options) end
 
----@param options SnowViewNodeOptions
+---@param options SnowViewNodeOptions Uses a 0..1 value, or indeterminate=true after probing view.progress.indeterminate.
 ---@return SnowViewNode
 function view.progressRing(options) end
 

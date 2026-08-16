@@ -182,12 +182,18 @@ void TestRepresentativeApplicability()
         "focus, disabled, selected, and focus-order fields must be common properties");
     Check(ViewNodeAllowsProperty(ViewNodeType::Checkbox,
                 "indeterminate") &&
+            ViewNodeAllowsProperty(ViewNodeType::ProgressBar,
+                "indeterminate") &&
+            ViewNodeAllowsProperty(ViewNodeType::ProgressRing,
+                "indeterminate") &&
             !ViewNodeAllowsProperty(ViewNodeType::Toggle,
+                "indeterminate") &&
+            !ViewNodeAllowsProperty(ViewNodeType::Meter,
                 "indeterminate") &&
             ViewNodeAllowsProperty(ViewNodeType::TextInput, "required") &&
             ViewNodeAllowsProperty(ViewNodeType::Select, "required") &&
             !ViewNodeAllowsProperty(ViewNodeType::Button, "required"),
-        "mixed checkbox and required form states must remain scoped to their controls");
+        "mixed checkbox, indeterminate progress, and required form states must remain scoped to their controls");
     Check(ViewNodeAllowsProperty(ViewNodeType::TextInput,
                 "validationState") &&
             ViewNodeAllowsProperty(ViewNodeType::NumberInput,

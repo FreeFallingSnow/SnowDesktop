@@ -432,6 +432,7 @@ void TestVisualNodeParsing()
                     key = "bar",
                     width = 80,
                     value = 0.25,
+                    indeterminate = true,
                     thickness = 6,
                     trackOpacity = 0.2,
                     fillOpacity = 0.9,
@@ -441,6 +442,7 @@ void TestVisualNodeParsing()
                     width = 40,
                     height = 40,
                     value = 0.75,
+                    indeterminate = true,
                     thickness = 5,
                 }),
                 view.icon({
@@ -494,8 +496,10 @@ void TestVisualNodeParsing()
             root.children[0].shapeKind == ViewShapeKind::Circle &&
             root.children[1].type == ViewNodeType::ProgressBar &&
             Near(root.children[1].value, 0.25f) &&
+            root.children[1].indeterminate &&
             Near(root.children[1].trackOpacity, 0.2f) &&
             root.children[2].type == ViewNodeType::ProgressRing &&
+            root.children[2].indeterminate &&
             root.children[3].iconFont == ViewIconFont::Fluent &&
             root.children[4].type == ViewNodeType::IconButton &&
             root.children[5].type == ViewNodeType::Image &&
@@ -512,6 +516,14 @@ void TestVisualNodeParsing()
         "visual, reference icon, and package resource nodes must retain typed fields");
     Check(ValidateAndLayoutViewTree(root, 320.0f, 80.0f, error),
         "visual nodes must validate and lay out together");
+    Check(HasVisibleIndeterminateProgress(root),
+        "a visible indeterminate progress node must request host frames");
+    root.children[1].indeterminate = false;
+    root.children[2].visibility = ViewVisibility::Hidden;
+    Check(!HasVisibleIndeterminateProgress(root),
+        "determinate and hidden progress nodes must not request host frames");
+    root.children[1].indeterminate = true;
+    root.children[2].visibility = ViewVisibility::Visible;
     std::vector<InteractionRegion> regions;
     Check(CollectViewInteractionRegions(root, regions, error) &&
             regions.size() == 1 && regions[0].key == "next" &&
@@ -519,7 +531,22 @@ void TestVisualNodeParsing()
             regions[0].accessibilityRole == "button",
         "iconButton must produce an actionable semantic region");
 
-    lua_pop(state, lua_gettop(state));
+    lua_settop(state, 0);
+    Check(luaL_dostring(state, R"lua(
+        return view.meter({
+            key = "invalid-indeterminate-meter",
+            value = 0.5,
+            indeterminate = true,
+        })
+    )lua") == LUA_OK,
+        "invalid indeterminate-meter fixture must evaluate");
+    ViewNode invalid;
+    error.clear();
+    Check(!ParseLuaViewTree(state, -1, invalid, error) &&
+            error.find("indeterminate") != std::string::npos,
+        "meter must reject the progress-only indeterminate state");
+
+    lua_settop(state, 0);
     PushResourceHandle(state, LuaResourceType::Font, "display");
     lua_setglobal(state, "wrongImageResource");
     Check(luaL_dostring(state, R"lua(
@@ -530,7 +557,7 @@ void TestVisualNodeParsing()
         })
     )lua") == LUA_OK,
         "wrong-resource-type fixture must evaluate");
-    ViewNode invalid;
+    invalid = {};
     error.clear();
     Check(!ParseLuaViewTree(state, -1, invalid, error) &&
             error.find("wrong package resource type") != std::string::npos,

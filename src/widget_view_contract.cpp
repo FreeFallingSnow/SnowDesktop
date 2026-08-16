@@ -279,7 +279,9 @@ bool ViewNodeAllowsProperty(
     if (property == "required")
         return IsInput(type) || type == ViewNodeType::Select;
     if (property == "indeterminate")
-        return type == ViewNodeType::Checkbox;
+        return type == ViewNodeType::Checkbox ||
+            type == ViewNodeType::ProgressBar ||
+            type == ViewNodeType::ProgressRing;
     if (property == "validationState" || property == "validationMessage" ||
         property == "validationStyle")
         return IsInput(type) || type == ViewNodeType::Select;

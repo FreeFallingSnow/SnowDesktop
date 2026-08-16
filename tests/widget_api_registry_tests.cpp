@@ -479,6 +479,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "view.pointer.events") &&
             snowdesktop::widget_api::SupportsFeature(
+                "view.progress.indeterminate") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "view.text.flow") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.text.locale") &&

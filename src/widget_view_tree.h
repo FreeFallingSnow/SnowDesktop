@@ -824,6 +824,7 @@ bool CollectViewInteractionRegions(const ViewNode& root,
 bool CollectViewInputControls(const ViewNode& root,
     std::vector<ViewInputControl>& controls, std::string& error);
 std::vector<ViewInspectionNode> InspectViewTree(const ViewNode& root);
+bool HasVisibleIndeterminateProgress(const ViewNode& root) noexcept;
 bool ApplyViewScrollOffsets(ViewNode& root,
     const ViewScrollOffsetResolver& resolver,
     std::vector<ViewScrollViewport>& viewports, std::string& error);

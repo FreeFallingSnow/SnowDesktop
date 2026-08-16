@@ -1824,7 +1824,9 @@ v2.0 资源契约：
 doubleClick/pointer/contextMenu action，以及“先完整校验布局、后原子提交；失败保留上一成功树”。
 受控状态继续按细粒度 feature 推进：`view.state.selected` 已贯通通用
 `selected/selectedStyle` 与 SelectionItem 语义，`view.checkbox.indeterminate` 已贯通
-混合态绘制、交互建议和 UIA Toggle Indeterminate，`view.input.required` 已贯通
+混合态绘制、交互建议和 UIA Toggle Indeterminate；`view.progress.indeterminate` 已为
+progressBar/progressRing 加入仅在可见 surface 运行的宿主动画，隐藏或面板关闭时不再请求帧，
+预览与 reducedMotion 使用静态片段且不会向 Lua 投递逐帧事件；`view.input.required` 已贯通
 input/select 的 UIA IsRequiredForForm 语义，`view.input.selection` 已贯通文本输入受控选区、
 UTF-8/UTF-16 边界换算和 selectionChange 建议，`view.keyboard.events` 已贯通桌面与输入代理的
 聚焦按键观察、按下/释放配对和失焦清理，`view.focus.request` 已把可信动作焦点请求扩展到

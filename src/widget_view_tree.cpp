@@ -2124,10 +2124,18 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         error = "view locale must be an empty or bounded BCP 47 language tag";
         return false;
     }
-    if (node.indeterminate &&
-        (node.type != ViewNodeType::Checkbox || node.checked))
+    if (node.indeterminate && node.type == ViewNodeType::Checkbox &&
+        node.checked)
     {
         error = "view indeterminate requires a checkbox with checked=false";
+        return false;
+    }
+    if (node.indeterminate &&
+        node.type != ViewNodeType::Checkbox &&
+        node.type != ViewNodeType::ProgressBar &&
+        node.type != ViewNodeType::ProgressRing)
+    {
+        error = "view indeterminate is only valid for checkbox, progressBar, and progressRing nodes";
         return false;
     }
     if (node.required &&
@@ -5463,6 +5471,22 @@ std::vector<ViewInspectionNode> InspectViewTree(const ViewNode& root)
     };
     collect(collect, root, 0);
     return result;
+}
+
+bool HasVisibleIndeterminateProgress(const ViewNode& root) noexcept
+{
+    const auto contains = [&](const auto& self, const ViewNode& node) -> bool {
+        if (!node.visible || node.visibility != ViewVisibility::Visible ||
+            node.frame.width <= 0.0f || node.frame.height <= 0.0f)
+            return false;
+        if (node.indeterminate &&
+            (node.type == ViewNodeType::ProgressBar ||
+                node.type == ViewNodeType::ProgressRing))
+            return true;
+        return std::any_of(node.children.begin(), node.children.end(),
+            [&](const ViewNode& child) { return self(self, child); });
+    };
+    return contains(contains, root);
 }
 
 bool ApplyViewScrollOffsets(ViewNode& root,

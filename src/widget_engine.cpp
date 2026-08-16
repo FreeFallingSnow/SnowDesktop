@@ -15406,8 +15406,23 @@ static snowdesktop::widget_runtime::ViewStyle ResolveViewStyle(
     return result;
 }
 
+static float WidgetIndeterminateProgressPhase(
+    snowdesktop::widget_runtime::ViewTransitionRuntime::TimePoint now,
+    bool reducedMotion) noexcept
+{
+    if (reducedMotion) return 0.25f;
+    constexpr std::int64_t PeriodMilliseconds = 1400;
+    const auto elapsed = std::chrono::duration_cast<
+        std::chrono::milliseconds>(now.time_since_epoch()).count();
+    const auto wrapped = ((elapsed % PeriodMilliseconds) +
+        PeriodMilliseconds) % PeriodMilliseconds;
+    return static_cast<float>(wrapped) /
+        static_cast<float>(PeriodMilliseconds);
+}
+
 static void DrawWidgetProgressRing(D2DState* state,
-    const D2D1_RECT_F& rect, float value, float thickness,
+    const D2D1_RECT_F& rect, float value, bool indeterminate, float phase,
+    float thickness,
     std::uint32_t trackColor, float trackOpacity,
     std::uint32_t fillColor, float fillOpacity)
 {
@@ -15423,11 +15438,12 @@ static void DrawWidgetProgressRing(D2DState* state,
     if (ID2D1SolidColorBrush* track = GetCachedBrush(state,
             static_cast<int>(trackColor), trackOpacity))
         state->ctx->DrawEllipse(ellipse, track, thickness);
-    if (value <= 0.0f) return;
+    const float visibleFraction = indeterminate ? 0.24f : value;
+    if (visibleFraction <= 0.0f) return;
     ID2D1SolidColorBrush* fill = GetCachedBrush(state,
         static_cast<int>(fillColor), fillOpacity);
     if (!fill) return;
-    if (value >= 0.9999f)
+    if (!indeterminate && visibleFraction >= 0.9999f)
     {
         state->ctx->DrawEllipse(ellipse, fill, thickness);
         return;
@@ -15442,16 +15458,20 @@ static void DrawWidgetProgressRing(D2DState* state,
     ComPtr<ID2D1GeometrySink> sink;
     if (FAILED(geometry->Open(&sink)) || !sink) return;
     constexpr float Pi = 3.14159265358979323846f;
-    const float angle = value * 2.0f * Pi;
+    const float startAngle = indeterminate
+        ? phase * 2.0f * Pi : 0.0f;
+    const float angle = visibleFraction * 2.0f * Pi;
     const D2D1_POINT_2F start = D2D1::Point2F(
-        center.x, center.y - radius);
+        center.x + std::sin(startAngle) * radius,
+        center.y - std::cos(startAngle) * radius);
     const D2D1_POINT_2F end = D2D1::Point2F(
-        center.x + std::sin(angle) * radius,
-        center.y - std::cos(angle) * radius);
+        center.x + std::sin(startAngle + angle) * radius,
+        center.y - std::cos(startAngle + angle) * radius);
     sink->BeginFigure(start, D2D1_FIGURE_BEGIN_HOLLOW);
     sink->AddArc(D2D1::ArcSegment(end, D2D1::SizeF(radius, radius),
         0.0f, D2D1_SWEEP_DIRECTION_CLOCKWISE,
-        value > 0.5f ? D2D1_ARC_SIZE_LARGE : D2D1_ARC_SIZE_SMALL));
+        visibleFraction > 0.5f
+            ? D2D1_ARC_SIZE_LARGE : D2D1_ARC_SIZE_SMALL));
     sink->EndFigure(D2D1_FIGURE_END_OPEN);
     if (SUCCEEDED(sink->Close()))
         state->ctx->DrawGeometry(geometry.Get(), fill, thickness);
@@ -17355,7 +17375,27 @@ static void DrawWidgetViewNode(D2DState* state,
                 opacity * node.trackOpacity))
             state->ctx->FillRoundedRectangle(
                 D2D1::RoundedRect(rect, barRadius, barRadius), track);
-        if (node.value > 0.0f)
+        if (node.indeterminate && node.type == ViewNodeType::ProgressBar)
+        {
+            constexpr float SegmentFraction = 0.28f;
+            constexpr float Pi = 3.14159265358979323846f;
+            const float phase = WidgetIndeterminateProgressPhase(
+                now, reducedMotion);
+            const float travel = 0.5f - 0.5f *
+                std::cos(phase * 2.0f * Pi);
+            const float width = rect.right - rect.left;
+            const float segmentWidth = width * SegmentFraction;
+            D2D1_RECT_F fillRect = rect;
+            fillRect.left += (width - segmentWidth) * travel;
+            fillRect.right = fillRect.left + segmentWidth;
+            if (ID2D1SolidColorBrush* fill = GetCachedBrush(state,
+                    static_cast<int>(fillColor),
+                    opacity * node.fillOpacity))
+                state->ctx->FillRoundedRectangle(
+                    D2D1::RoundedRect(
+                        fillRect, barRadius, barRadius), fill);
+        }
+        else if (node.value > 0.0f)
         {
             D2D1_RECT_F fillRect = rect;
             fillRect.right = fillRect.left +
@@ -17371,6 +17411,8 @@ static void DrawWidgetViewNode(D2DState* state,
     else if (node.type == ViewNodeType::ProgressRing)
     {
         DrawWidgetProgressRing(state, rect, node.value,
+            node.indeterminate,
+            WidgetIndeterminateProgressPhase(now, reducedMotion),
             std::min(node.thickness,
                 std::min(node.frame.width, node.frame.height)),
             style.background.value_or(0xFFFFFF),
@@ -18104,7 +18146,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             d2dState_->ctx->PopAxisAlignedClip();
             --d2dState_->widgetClipDepth;
         }
-        if (transitionActive)
+        if (transitionActive || found->viewIndeterminateProgressActive)
             (void)ScheduleAnimationFrame(*found);
         return;
     }
@@ -18459,6 +18501,10 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                                     reducedMotion);
                     }
                     found->viewTree = std::move(candidate);
+                    found->viewIndeterminateProgressActive =
+                        snowdesktop::widget_runtime::
+                            HasVisibleIndeterminateProgress(
+                                *found->viewTree);
                     if (variableLayoutChanged)
                         RuntimeInvalidateHost(widgetId);
                 }
@@ -18517,7 +18563,8 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                 found->viewKeyboardFocusKey, true);
             DrawWidgetViewTooltip(
                 d2dState_, found->interactionRegions);
-            if (transitionActive)
+            if (transitionActive ||
+                found->viewIndeterminateProgressActive)
                 (void)ScheduleAnimationFrame(*found);
         }
         while (d2dState_->widgetClipDepth > 0)
@@ -18730,7 +18777,7 @@ bool WidgetEngine::RenderWidgetPanel(
             d2dState_->ctx->PopAxisAlignedClip();
             --d2dState_->widgetClipDepth;
         }
-        if (transitionActive)
+        if (transitionActive || widget.panelIndeterminateProgressActive)
             (void)ScheduleAnimationFrame(widget);
         return true;
     }
@@ -18989,6 +19036,10 @@ bool WidgetEngine::RenderWidgetPanel(
                                     reducedMotion);
                     }
                     current.panelViewTree = std::move(candidate);
+                    current.panelIndeterminateProgressActive =
+                        snowdesktop::widget_runtime::
+                            HasVisibleIndeterminateProgress(
+                                *current.panelViewTree);
                     if (variableLayoutChanged)
                         RuntimeInvalidateHost(widgetId);
                 }
@@ -18997,6 +19048,7 @@ bool WidgetEngine::RenderWidgetPanel(
                     current.panelViewTree.reset();
                     current.panelViewTransitions.Clear();
                     current.panelViewTransitionFramePending = false;
+                    current.panelIndeterminateProgressActive = false;
                 }
                 const auto transition =
                     current.panelInteractionRegions.CommitFrame();
@@ -19028,7 +19080,8 @@ bool WidgetEngine::RenderWidgetPanel(
                         current.panelViewTree->frame.height);
                     DrawWidgetViewTooltip(d2dState_,
                         current.panelInteractionRegions);
-                    if (transitionActive)
+                    if (transitionActive ||
+                        current.panelIndeterminateProgressActive)
                         (void)ScheduleAnimationFrame(current);
                 }
                 if (!current.panelViewKeyboardFocusKey.empty() &&
@@ -19070,7 +19123,8 @@ bool WidgetEngine::RenderWidgetPanel(
                     current.panelViewTree->frame.height);
                 DrawWidgetViewTooltip(d2dState_,
                     current.panelInteractionRegions);
-                if (transitionActive)
+                if (transitionActive ||
+                    current.panelIndeterminateProgressActive)
                     (void)ScheduleAnimationFrame(current);
             }
             DrawHostViewInteractionOverlays(current,
@@ -19402,9 +19456,18 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
             widget.viewTransitions.Tick(now);
         const bool panelTransitionFrame =
             widget.panelViewTransitions.Tick(now);
-        if (desktopTransitionFrame)
+        const bool animateIndeterminateProgress =
+            !QueryWidgetSystemEnvironment().reducedMotion;
+        const bool desktopProgressFrame = animateIndeterminateProgress &&
+            widget.hostVisible &&
+            widget.viewIndeterminateProgressActive;
+        const bool panelProgressFrame = animateIndeterminateProgress &&
+            widget.panelActive &&
+            widget.panelIndeterminateProgressActive;
+        if (desktopTransitionFrame || desktopProgressFrame)
             widget.viewTransitionFramePending = true;
-        if (panelTransitionFrame && widget.panelActive)
+        if ((panelTransitionFrame && widget.panelActive) ||
+            panelProgressFrame)
             widget.panelViewTransitionFramePending = true;
         const auto frames = widget.animationFrames.Consume(now);
         for (const auto& frame : frames)
@@ -19423,8 +19486,9 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
                     lua_setfield(eventState, -2, "deltaMs");
                 });
         }
-        if (desktopTransitionFrame ||
-            (panelTransitionFrame && widget.panelActive))
+        if (desktopTransitionFrame || desktopProgressFrame ||
+            (panelTransitionFrame && widget.panelActive) ||
+            panelProgressFrame)
             RuntimeInvalidateHost(activeWidgetId);
         (void)ScheduleAnimationFrame(widget);
         return;
@@ -23446,9 +23510,15 @@ bool WidgetEngine::RuntimeCancelAnimationFrame(
     if (index < 0) return false;
     LuaWidget& widget = widgets_[index];
     const bool removed = widget.animationFrames.Cancel(name);
+    const bool indeterminateProgressActive =
+        !QueryWidgetSystemEnvironment().reducedMotion &&
+        ((widget.hostVisible && widget.viewIndeterminateProgressActive) ||
+            (widget.panelActive &&
+                widget.panelIndeterminateProgressActive));
     if (!widget.animationFrames.HasPending() &&
         !widget.viewTransitions.HasActive() &&
         !widget.panelViewTransitions.HasActive() &&
+        !indeterminateProgressActive &&
         widget.animationTimerId)
     {
         if (widgetTimerKillCallback_)
@@ -23508,9 +23578,15 @@ bool WidgetEngine::ScheduleAnimationFrame(LuaWidget& widget)
 {
     if (widget.animationTimerId)
         return true;
+    const bool indeterminateProgressActive =
+        !QueryWidgetSystemEnvironment().reducedMotion &&
+        ((widget.hostVisible && widget.viewIndeterminateProgressActive) ||
+            (widget.panelActive &&
+                widget.panelIndeterminateProgressActive));
     const bool pending = widget.animationFrames.HasPending() ||
         widget.viewTransitions.HasActive() ||
-        (widget.panelActive && widget.panelViewTransitions.HasActive());
+        (widget.panelActive && widget.panelViewTransitions.HasActive()) ||
+        indeterminateProgressActive;
     if (widget.preview || (!widget.hostVisible && !widget.panelActive) ||
         !pending ||
         !widgetTimerRequestCallback_)
