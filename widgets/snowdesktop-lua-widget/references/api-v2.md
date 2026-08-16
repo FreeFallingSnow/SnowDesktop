@@ -1004,6 +1004,11 @@ accessibility role、允许属性、直接必需属性和子节点策略。Lua �
 | 宿主槽位 | `slotSurface` | binding 最多一个 `slotItem`，collection 只接受 `slotItem`；空态可有一个非槽位节点 |
 | 叶节点 | 文本、图片、控件、状态、图表、日历和 `spacer` | 不接受 `children` |
 
+属性矩阵同样拒绝“接收后无效果”的通用字段：字体、排版和文本流字段只允许用于文本/标签、
+输入/选择、图标和月历等实际消费它们的节点；`gap` 只用于线性、网格、flow、虚拟集合和
+radioGroup；`alignItems/justifyContent` 只用于会执行对应对齐算法的布局；`clip/overflow` 只用于
+拥有后代的容器。需要给图片裁圆角或背景时应使用 `style`，不要把后代裁剪属性放在叶节点上。
+
 该表也登记 17 个公开事件的负载类别和逐节点适用性，以及 UIA ControlType、基础 Pattern 和宿主键盘可聚焦性，宿主能从
 布局结果生成语义快照，并已通过 Windows UIA Fragment Provider 暴露组件/元素树、基础属性、
 边界、父子/兄弟导航、点命中与宿主焦点。Invoke、Toggle、RangeValue、Value、

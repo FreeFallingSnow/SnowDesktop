@@ -200,6 +200,29 @@ constexpr bool IsTextualNode(ViewNodeType type) noexcept
         type == ViewNodeType::Select;
 }
 
+constexpr bool IsTypographyNode(ViewNodeType type) noexcept
+{
+    return IsTextualNode(type) ||
+        type == ViewNodeType::Icon ||
+        type == ViewNodeType::IconButton ||
+        type == ViewNodeType::MonthCalendar;
+}
+
+constexpr bool IsGapNode(ViewNodeType type) noexcept
+{
+    return IsType(type, { ViewNodeType::Row, ViewNodeType::Column,
+        ViewNodeType::Grid, ViewNodeType::Flow, ViewNodeType::List,
+        ViewNodeType::GridList, ViewNodeType::VirtualList,
+        ViewNodeType::VirtualGrid, ViewNodeType::RadioGroup });
+}
+
+constexpr bool IsAlignedLayoutNode(ViewNodeType type) noexcept
+{
+    return IsType(type, { ViewNodeType::Row, ViewNodeType::Column,
+        ViewNodeType::Grid, ViewNodeType::Flow, ViewNodeType::List,
+        ViewNodeType::GridList });
+}
+
 constexpr bool IsActionNode(ViewNodeType type) noexcept
 {
     return IsType(type, { ViewNodeType::Button, ViewNodeType::IconButton,
@@ -272,6 +295,21 @@ bool ViewNodeAllowsProperty(
         const ViewNodeContract* contract = FindViewNodeContract(type);
         return contract && contract->childPolicy != ViewChildPolicy::None;
     }
+    if (property == "clip" || property == "overflow")
+    {
+        const ViewNodeContract* contract = FindViewNodeContract(type);
+        return contract && contract->childPolicy != ViewChildPolicy::None;
+    }
+    if (property == "gap") return IsGapNode(type);
+    if (property == "alignItems" || property == "justifyContent")
+        return IsAlignedLayoutNode(type);
+    if (property == "fontSize" || property == "fontWeight" ||
+        property == "fontStyle" || property == "lineHeight" ||
+        property == "letterSpacing" || property == "bold" ||
+        property == "textAlign" || property == "verticalAlign" ||
+        property == "textWrap" || property == "maxLines" ||
+        property == "overflowText")
+        return IsTypographyNode(type);
     if (Contains(kCommonProperties, property)) return true;
     if (property == "text")
         return type == ViewNodeType::Text || type == ViewNodeType::Badge;

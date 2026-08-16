@@ -96,6 +96,33 @@ void TestRepresentativeApplicability()
             !ViewNodeAllowsProperty(ViewNodeType::Text, "children") &&
             !ViewNodeAllowsProperty(ViewNodeType::Button, "children"),
         "leaf nodes must reject children in the property matrix");
+    Check(ViewNodeAllowsProperty(ViewNodeType::Text, "fontSize") &&
+            ViewNodeAllowsProperty(ViewNodeType::Icon, "fontSize") &&
+            ViewNodeAllowsProperty(ViewNodeType::MonthCalendar,
+                "fontSize") &&
+            !ViewNodeAllowsProperty(ViewNodeType::Shape, "fontSize") &&
+            !ViewNodeAllowsProperty(ViewNodeType::ProgressRing,
+                "textWrap"),
+        "typography properties must not be accepted by non-text visuals");
+    Check(ViewNodeAllowsProperty(ViewNodeType::Row, "gap") &&
+            ViewNodeAllowsProperty(ViewNodeType::VirtualGrid, "gap") &&
+            ViewNodeAllowsProperty(ViewNodeType::RadioGroup, "gap") &&
+            !ViewNodeAllowsProperty(ViewNodeType::Box, "gap") &&
+            !ViewNodeAllowsProperty(ViewNodeType::Button, "gap"),
+        "gap must stay on layouts and controls that consume it");
+    Check(ViewNodeAllowsProperty(ViewNodeType::Grid, "alignItems") &&
+            ViewNodeAllowsProperty(ViewNodeType::List,
+                "justifyContent") &&
+            !ViewNodeAllowsProperty(ViewNodeType::Stack,
+                "alignItems") &&
+            !ViewNodeAllowsProperty(ViewNodeType::VirtualList,
+                "justifyContent"),
+        "container alignment must stay on layouts that consume it");
+    Check(ViewNodeAllowsProperty(ViewNodeType::Scroll, "clip") &&
+            ViewNodeAllowsProperty(ViewNodeType::ListItem, "overflow") &&
+            !ViewNodeAllowsProperty(ViewNodeType::Image, "clip") &&
+            !ViewNodeAllowsProperty(ViewNodeType::Text, "overflow"),
+        "descendant clipping must stay on container nodes");
     Check(ViewNodeAllowsProperty(ViewNodeType::Box, "debugName") &&
             ViewNodeAllowsProperty(ViewNodeType::Text, "testId") &&
             !ViewNodeRequiresProperty(ViewNodeType::Button,

@@ -421,6 +421,19 @@ void TestLuaParsing()
             error.find("do not accept field 'children'") !=
                 std::string::npos,
         "leaf child policy must reject children during Lua parsing");
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.shape({
+            key = "shape-with-text-style", shape = "circle",
+            fontSize = 24,
+        })
+    )lua") == LUA_OK,
+        "ignored-typography fixture must evaluate");
+    root = {};
+    Check(!ParseLuaViewTree(state, -1, root, error) &&
+            error.find("do not accept field 'fontSize'") !=
+                std::string::npos,
+        "non-text visuals must reject ignored typography during parsing");
     lua_close(state);
 }
 
