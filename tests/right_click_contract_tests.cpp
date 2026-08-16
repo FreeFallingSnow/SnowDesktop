@@ -3,6 +3,7 @@
 
 #include <iostream>
 #include <string>
+#include <vector>
 
 namespace contract = snowdesktop::right_click_contract;
 namespace slot = snowdesktop::slot_contract;
@@ -179,6 +180,14 @@ void TestSelectionContract()
 
 void TestLuaWidgetMenuScope()
 {
+    struct MenuItem
+    {
+        bool v2Action = false;
+        bool elementContext = false;
+        bool separator = false;
+        std::vector<MenuItem> children;
+    };
+
     using Scope = contract::LuaWidgetMenuScope;
     Check(
         contract::ResolveLuaWidgetMenuScope(false) == Scope::Widget,
@@ -186,6 +195,18 @@ void TestLuaWidgetMenuScope()
     Check(
         contract::ResolveLuaWidgetMenuScope(true) == Scope::Element,
         "element actions must replace the widget menu at that target");
+    const std::vector<MenuItem> nestedComponentMenu = {
+        MenuItem{ false, false, false,
+            { MenuItem{ true, false, false, {} } } }
+    };
+    const std::vector<MenuItem> nestedElementMenu = {
+        MenuItem{ false, false, false,
+            { MenuItem{ true, true, false, {} } } }
+    };
+    Check(
+        !contract::HasLuaElementMenuAction(nestedComponentMenu) &&
+            contract::HasLuaElementMenuAction(nestedElementMenu),
+        "nested Lua menu leaves must participate in element scope routing");
 }
 
 void TestMenuFocusRestoreContract()

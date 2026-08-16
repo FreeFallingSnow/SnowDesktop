@@ -4,6 +4,8 @@
 #include "../right_click_contract.h"
 #include "../widgets/collection_group_rules.h"
 
+#include <functional>
+
 // Widget editor, group-tab and generic widget context menus.
 
 void DesktopApp::ShowWidgetEditorHost(size_t widgetIndex)
@@ -325,6 +327,7 @@ void DesktopApp::ShowWidgetContextMenu(
             ? _LW("app.interact.popup_container")
             : _LW("app.interact.large_folder"));
     std::vector<LuaWidgetMenuItem> luaMenuItems;
+    std::vector<LuaWidgetMenuItem> luaMenuActions;
     bool luaElementMenu = false;
     HMENU demoCategoryMenu = nullptr;
 
@@ -510,12 +513,9 @@ void DesktopApp::ShowWidgetContextMenu(
                 clientPoint.y - frame.top });
             luaMenuItems = widgetEngine_->GetContextMenu(widget.id,
                 localPoint.x, localPoint.y, luaSurface);
-            const bool hasElementAction = std::any_of(
-                luaMenuItems.begin(), luaMenuItems.end(),
-                [](const LuaWidgetMenuItem& item) {
-                    return item.v2Action && item.elementContext &&
-                        !item.separator;
-                });
+            const bool hasElementAction =
+                snowdesktop::right_click_contract::
+                    HasLuaElementMenuAction(luaMenuItems);
             luaElementMenu =
                 snowdesktop::right_click_contract::
                     ResolveLuaWidgetMenuScope(hasElementAction) ==
@@ -526,34 +526,63 @@ void DesktopApp::ShowWidgetContextMenu(
                 AppendMenuW(menu, MF_STRING, kContextWidgetEdit,
                     _LW("app.interact.detailed_settings"));
             }
-            for (size_t i = 0; i < luaMenuItems.size() &&
-                kContextLuaWidgetMenuFirst + static_cast<UINT>(i) <= kContextLuaWidgetMenuLast; ++i)
-            {
-                const auto& item = luaMenuItems[i];
-                if (item.separator)
+            const auto setLuaItemIcon = [this](HMENU targetMenu,
+                                                UINT_PTR itemId,
+                                                const LuaWidgetMenuItem& item) {
+                if (item.icon.empty()) return;
+                const std::wstring icon = Utf8ToWide(item.icon);
+                const bool useFluent =
+                    _stricmp(item.iconFont.c_str(), "fluent") == 0 ||
+                    _stricmp(item.iconFont.c_str(), "fluent-regular") == 0;
+                SetMenuItemIcon(targetMenu, itemId, icon.c_str(),
+                    useFluent
+                        ? MenuIconFont::FluentRegular
+                        : MenuIconFont::FontAwesomeSolid);
+            };
+            std::function<void(HMENU,
+                const std::vector<LuaWidgetMenuItem>&)> appendLuaMenuItems;
+            appendLuaMenuItems = [&](HMENU targetMenu,
+                                     const std::vector<LuaWidgetMenuItem>& items) {
+                for (const auto& item : items)
                 {
-                    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-                    continue;
+                    if (item.separator)
+                    {
+                        AppendMenuW(targetMenu, MF_SEPARATOR, 0, nullptr);
+                        continue;
+                    }
+                    UINT flags = (item.enabled ? 0 : MF_GRAYED) |
+                        (item.checked ? MF_CHECKED : 0);
+                    if (!item.children.empty())
+                    {
+                        HMENU submenu = CreatePopupMenu();
+                        if (!submenu) continue;
+                        appendLuaMenuItems(submenu, item.children);
+                        const UINT_PTR submenuId =
+                            reinterpret_cast<UINT_PTR>(submenu);
+                        if (!AppendMenuW(targetMenu, flags | MF_POPUP,
+                                submenuId,
+                                Utf8ToWide(item.label).c_str()))
+                        {
+                            DestroyMenu(submenu);
+                            continue;
+                        }
+                        setLuaItemIcon(targetMenu, submenuId, item);
+                        continue;
+                    }
+                    if (kContextLuaWidgetMenuFirst +
+                            static_cast<UINT>(luaMenuActions.size()) >
+                        kContextLuaWidgetMenuLast)
+                        continue;
+                    const UINT commandId = kContextLuaWidgetMenuFirst +
+                        static_cast<UINT>(luaMenuActions.size());
+                    if (!AppendMenuW(targetMenu, flags | MF_STRING,
+                            commandId, Utf8ToWide(item.label).c_str()))
+                        continue;
+                    setLuaItemIcon(targetMenu, commandId, item);
+                    luaMenuActions.push_back(item);
                 }
-                UINT flags = MF_STRING | (item.enabled ? 0 : MF_GRAYED) |
-                    (item.checked ? MF_CHECKED : 0);
-                AppendMenuW(menu, flags,
-                    kContextLuaWidgetMenuFirst + static_cast<UINT>(i),
-                    Utf8ToWide(item.label).c_str());
-                if (!item.icon.empty())
-                {
-                    std::wstring icon = Utf8ToWide(item.icon);
-                    const bool useFluent =
-                        _stricmp(item.iconFont.c_str(), "fluent") == 0 ||
-                        _stricmp(item.iconFont.c_str(), "fluent-regular") == 0;
-                    SetMenuItemIcon(menu,
-                        kContextLuaWidgetMenuFirst + static_cast<UINT>(i),
-                        icon.c_str(),
-                        useFluent
-                            ? MenuIconFont::FluentRegular
-                            : MenuIconFont::FontAwesomeSolid);
-                }
-            }
+            };
+            appendLuaMenuItems(menu, luaMenuItems);
         }
     }
 
@@ -760,10 +789,10 @@ void DesktopApp::ShowWidgetContextMenu(
     if (command >= kContextLuaWidgetMenuFirst && command <= kContextLuaWidgetMenuLast)
     {
         size_t itemIndex = static_cast<size_t>(command - kContextLuaWidgetMenuFirst);
-        if (itemIndex < luaMenuItems.size() && widgetEngine_)
+        if (itemIndex < luaMenuActions.size() && widgetEngine_)
         {
             widgetEngine_->InvokeMenu(
-                widgets_[widgetIndex].id, luaMenuItems[itemIndex]);
+                widgets_[widgetIndex].id, luaMenuActions[itemIndex]);
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
         RestoreDesktopWindowLayer();

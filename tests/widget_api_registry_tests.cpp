@@ -346,6 +346,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "interaction.contextMenu") &&
             snowdesktop::widget_api::SupportsFeature(
+                "interaction.contextMenu.submenu") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "interaction.keyboard") &&
             snowdesktop::widget_api::SupportsFeature(
                 "interaction.region") &&

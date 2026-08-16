@@ -48,6 +48,20 @@ constexpr LuaWidgetMenuScope ResolveLuaWidgetMenuScope(
         : LuaWidgetMenuScope::Widget;
 }
 
+template <typename MenuItems>
+constexpr bool HasLuaElementMenuAction(const MenuItems& items) noexcept
+{
+    for (const auto& item : items)
+    {
+        if (item.v2Action && item.elementContext && !item.separator)
+            return true;
+        if (!item.children.empty() &&
+            HasLuaElementMenuAction(item.children))
+            return true;
+    }
+    return false;
+}
+
 constexpr ContextMenuKind ResolveSlotItemMenu(
     slot_contract::SlotSurfaceKind surface,
     SlotItemKind item,

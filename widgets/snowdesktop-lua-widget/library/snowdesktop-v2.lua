@@ -580,13 +580,14 @@
 ---@field scope 'element'|'component'
 
 ---@class SnowMenuItem
----@field id? string Required except for separators.
+---@field id? string Required for actionable leaves; omitted for separators and submenus.
 ---@field label? string Required except for separators.
 ---@field type? 'separator'
 ---@field enabled? boolean
 ---@field checked? boolean
 ---@field icon? string Optional host glyph.
 ---@field iconFont? 'fa'|'fluent'|'fluent-regular'
+---@field children? SnowMenuItem[] Nested items; requires interaction.contextMenu.submenu and cannot be combined with id.
 
 ---@alias SnowMenuModel SnowMenuItem[]
 

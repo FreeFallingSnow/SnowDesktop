@@ -73,6 +73,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <initializer_list>
 #include <limits>
 #include <mutex>
@@ -20102,24 +20103,45 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
             return result;
         }
 
+        constexpr std::size_t kMaxMenuDescriptors = 64;
+        constexpr int kMaxSubmenuDepth = 3;
         std::unordered_set<std::string> ids;
-        const int count = std::min<int>(
-            static_cast<int>(lua_rawlen(state, -1)), 64);
-        for (int itemIndex = 1; itemIndex <= count; ++itemIndex)
-        {
-            lua_rawgeti(state, -1, itemIndex);
-            if (!lua_istable(state, -1))
+        std::size_t descriptorCount = 0;
+        std::string menuError;
+        std::function<bool(int, int, std::vector<LuaWidgetMenuItem>&)>
+            parseMenuItems;
+        parseMenuItems = [&](int tableIndex, int depth,
+                             std::vector<LuaWidgetMenuItem>& output) {
+            tableIndex = lua_absindex(state, tableIndex);
+            const std::size_t count = lua_rawlen(state, tableIndex);
+            if (count > kMaxMenuDescriptors - descriptorCount)
             {
-                lua_pop(state, 1);
-                continue;
+                menuError = "Widget menu exceeds the 64 descriptor limit";
+                return false;
             }
-            LuaWidgetMenuItem item;
-            lua_getfield(state, -1, "type");
-            item.separator = lua_isstring(state, -1) &&
-                std::strcmp(lua_tostring(state, -1), "separator") == 0;
-            lua_pop(state, 1);
-            if (!item.separator)
+            for (std::size_t itemIndex = 1; itemIndex <= count; ++itemIndex)
             {
+                lua_rawgeti(state, tableIndex,
+                    static_cast<lua_Integer>(itemIndex));
+                if (!lua_istable(state, -1))
+                {
+                    menuError = "Widget menu items must be descriptor tables";
+                    return false;
+                }
+                ++descriptorCount;
+
+                LuaWidgetMenuItem item;
+                lua_getfield(state, -1, "type");
+                item.separator = lua_isstring(state, -1) &&
+                    std::strcmp(lua_tostring(state, -1), "separator") == 0;
+                lua_pop(state, 1);
+                if (item.separator)
+                {
+                    output.push_back(std::move(item));
+                    lua_pop(state, 1);
+                    continue;
+                }
+
                 lua_getfield(state, -1, "id");
                 if (lua_isstring(state, -1))
                     item.actionId = lua_tostring(state, -1);
@@ -20143,25 +20165,72 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
                 lua_getfield(state, -1, "checked");
                 item.checked = lua_toboolean(state, -1) != 0;
                 lua_pop(state, 1);
-                if (item.actionId.empty() || item.actionId.size() > 128 ||
-                    item.label.empty() || item.label.size() > 512 ||
-                    !ids.insert(item.actionId).second)
+                if (item.label.empty() || item.label.size() > 512)
+                {
+                    menuError =
+                        "Widget menu item labels must contain 1..512 UTF-8 bytes";
+                    return false;
+                }
+
+                lua_getfield(state, -1, "children");
+                const bool hasChildren = lua_istable(state, -1);
+                if (!hasChildren && !lua_isnil(state, -1))
+                {
+                    menuError = "Widget menu children must be an array table";
+                    return false;
+                }
+                if (hasChildren)
+                {
+                    if (!item.actionId.empty())
+                    {
+                        menuError =
+                            "Widget submenu parents cannot also declare an id";
+                        return false;
+                    }
+                    if (depth >= kMaxSubmenuDepth)
+                    {
+                        menuError = "Widget menu exceeds three submenu levels";
+                        return false;
+                    }
+                    if (lua_rawlen(state, -1) == 0)
+                    {
+                        menuError = "Widget submenu children cannot be empty";
+                        return false;
+                    }
+                    if (!parseMenuItems(-1, depth + 1, item.children))
+                        return false;
+                    lua_pop(state, 1);
+                }
+                else
                 {
                     lua_pop(state, 1);
-                    continue;
+                    if (item.actionId.empty() ||
+                        item.actionId.size() > 128 ||
+                        !ids.insert(item.actionId).second)
+                    {
+                        menuError =
+                            "Widget menu leaf IDs must be unique and contain 1..128 UTF-8 bytes";
+                        return false;
+                    }
+                    item.v2Action = true;
+                    item.elementContext =
+                        requestAction.contextMenuScope ==
+                        snowdesktop::widget_runtime::InteractionAction::
+                            ContextMenuScope::Element;
+                    item.targetKey = targetKey;
+                    item.surface = normalizedSurface;
+                    item.contextValue = requestAction.value;
+                    item.interactionGeneration = generation;
                 }
-                item.v2Action = true;
-                item.elementContext =
-                    requestAction.contextMenuScope ==
-                    snowdesktop::widget_runtime::InteractionAction::
-                        ContextMenuScope::Element;
-                item.targetKey = targetKey;
-                item.surface = normalizedSurface;
-                item.contextValue = requestAction.value;
-                item.interactionGeneration = generation;
+                output.push_back(std::move(item));
+                lua_pop(state, 1);
             }
-            result.push_back(std::move(item));
-            lua_pop(state, 1);
+            return true;
+        };
+        if (!parseMenuItems(-1, 0, result))
+        {
+            result.clear();
+            RuntimeRecordError(widgetId, menuError);
         }
         if (snowdesktop::widget_api::ConsumeTransientStateDirty(state))
             RuntimeInvalidateHost(widgetId);
