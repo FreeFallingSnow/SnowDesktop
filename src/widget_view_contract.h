@@ -137,6 +137,8 @@ std::optional<ViewNodeType> FindViewNodeType(
 std::span<const ViewPropertyContract> ViewPropertyContracts() noexcept;
 const ViewPropertyContract* FindViewPropertyContract(
     std::string_view name) noexcept;
+bool ViewPropertyNumericValueInRange(
+    const ViewPropertyContract& contract, double value) noexcept;
 std::span<const std::string_view> ViewNodePropertyNames() noexcept;
 bool IsKnownViewNodeProperty(std::string_view property) noexcept;
 bool ViewNodeAllowsProperty(

@@ -1019,6 +1019,7 @@ toggle/checkbox/radioGroup 使用的 `checkedStyle`。图表属性也按实际�
 全部 146 个属性还具有可枚举的语义值类型；跨节点一致的标量范围（例如 opacity 0–1、
 fontSize 1–512、grid span 1–64）由同一契约登记。节点相关的组合约束仍会在场景校验阶段执行，
 例如 slider/numberInput 必须满足 `min < max`、`value` 位于范围内且 `step` 不大于跨度。
+Lua 解析器会在构造节点前按该契约拒绝通用标量越界值，不会把它们延迟为布局时空白。
 
 该表也登记 17 个公开事件的负载类别和逐节点适用性，以及 UIA ControlType、基础 Pattern 和宿主键盘可聚焦性，宿主能从
 布局结果生成语义快照，并已通过 Windows UIA Fragment Provider 暴露组件/元素树、基础属性、

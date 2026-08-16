@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <initializer_list>
 
 namespace snowdesktop::widget_runtime
@@ -492,6 +493,14 @@ const ViewPropertyContract* FindViewPropertyContract(
             return contract.name == name;
         });
     return found == kProperties.end() ? nullptr : &*found;
+}
+
+bool ViewPropertyNumericValueInRange(
+    const ViewPropertyContract& contract, double value) noexcept
+{
+    return std::isfinite(value) && (!contract.hasNumericRange ||
+        (value >= contract.numericMinimum &&
+            value <= contract.numericMaximum));
 }
 
 std::span<const std::string_view> ViewNodePropertyNames() noexcept

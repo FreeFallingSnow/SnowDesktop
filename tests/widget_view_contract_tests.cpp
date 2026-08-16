@@ -27,6 +27,7 @@ using snowdesktop::widget_runtime::ViewNodeRequiredProperties;
 using snowdesktop::widget_runtime::ViewNodeType;
 using snowdesktop::widget_runtime::ViewNodePropertyNames;
 using snowdesktop::widget_runtime::ViewPropertyContracts;
+using snowdesktop::widget_runtime::ViewPropertyNumericValueInRange;
 using snowdesktop::widget_runtime::ViewPropertyValueKind;
 
 void Check(bool condition, const char* message)
@@ -123,7 +124,9 @@ void TestPropertyMetadata()
             opacity && opacity->valueKind == ViewPropertyValueKind::Number &&
             opacity->hasNumericRange &&
             opacity->numericMinimum == 0.0 &&
-            opacity->numericMaximum == 1.0,
+            opacity->numericMaximum == 1.0 &&
+            ViewPropertyNumericValueInRange(*opacity, 0.5) &&
+            !ViewPropertyNumericValueInRange(*opacity, 1.01),
         "bounded scalar properties must publish their host validation range");
     Check(children &&
             children->valueKind == ViewPropertyValueKind::NodeArray &&

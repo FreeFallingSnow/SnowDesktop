@@ -157,7 +157,9 @@ bool ValidateNodeFields(lua_State* state, int index, ViewNodeType type,
         std::size_t length = 0;
         const char* key = lua_tolstring(state, -2, &length);
         const std::string_view field(key ? key : "", length);
-        if (!IsKnownViewNodeProperty(field))
+        const ViewPropertyContract* property =
+            FindViewPropertyContract(field);
+        if (!property)
         {
             lua_pop(state, 2);
             error = "view node has unsupported field '" +
@@ -170,6 +172,15 @@ bool ValidateNodeFields(lua_State* state, int index, ViewNodeType type,
             lua_pop(state, 2);
             error = std::string(typeName) + " nodes do not accept field '" +
                 std::string(field) + "'";
+            return false;
+        }
+        if (property->hasNumericRange && lua_isnumber(state, -1) &&
+            !ViewPropertyNumericValueInRange(
+                *property, lua_tonumber(state, -1)))
+        {
+            lua_pop(state, 2);
+            error = "view field '" + std::string(field) +
+                "' is outside its declared numeric range";
             return false;
         }
         lua_pop(state, 1);

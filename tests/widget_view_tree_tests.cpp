@@ -392,10 +392,9 @@ void TestLuaParsing()
     )lua") == LUA_OK,
         "max-lines boundary fixture must evaluate");
     root = {};
-    Check(ParseLuaViewTree(state, -1, root, error) &&
-            !ValidateAndLayoutViewTree(root, 100.0f, 40.0f, error) &&
-            error == "view maxLines must be between 0 and 64",
-        "maxLines must reject values above the bounded public range");
+    Check(!ParseLuaViewTree(state, -1, root, error) &&
+            error == "view field 'maxLines' is outside its declared numeric range",
+        "maxLines must use the public property range at the Lua boundary");
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(
         return view.text({
