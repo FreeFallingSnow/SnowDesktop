@@ -117,10 +117,39 @@ enum class ViewPropertyValueKind : std::uint8_t
     Action,
 };
 
+enum class ViewPropertyEnumSet : std::uint8_t
+{
+    None,
+    NodeType,
+    IconFont,
+    ImageFit,
+    ImageAlignment,
+    ImageInterpolation,
+    Shape,
+    Orientation,
+    ValidationState,
+    Overflow,
+    SelectionMode,
+    FlexDirection,
+    FlexWrap,
+    ContentAlignment,
+    FontStyle,
+    TextDirection,
+    Visibility,
+    Alignment,
+    SelfAlignment,
+    Justification,
+    TextAlignment,
+    VerticalAlignment,
+    TextWrap,
+    TextOverflow,
+};
+
 struct ViewPropertyContract
 {
     std::string_view name;
     ViewPropertyValueKind valueKind = ViewPropertyValueKind::String;
+    ViewPropertyEnumSet enumSet = ViewPropertyEnumSet::None;
     bool hasNumericRange = false;
     double numericMinimum = 0.0;
     double numericMaximum = 0.0;
@@ -139,6 +168,10 @@ const ViewPropertyContract* FindViewPropertyContract(
     std::string_view name) noexcept;
 std::string_view ViewPropertyValueKindName(
     ViewPropertyValueKind kind) noexcept;
+std::span<const std::string_view> ViewPropertyEnumValues(
+    const ViewPropertyContract& contract) noexcept;
+bool ViewPropertyAllowsEnumValue(const ViewPropertyContract& contract,
+    std::string_view value) noexcept;
 bool ViewPropertyNumericValueInRange(
     const ViewPropertyContract& contract, double value) noexcept;
 std::span<const std::string_view> ViewNodePropertyNames() noexcept;

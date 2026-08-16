@@ -184,9 +184,20 @@ bool ValidateNodeFields(lua_State* state, int index, ViewNodeType type,
         switch (property->valueKind)
         {
         case ViewPropertyValueKind::String:
+            if (valueType != LUA_TSTRING)
+                return rejectType("must be a string");
+            break;
         case ViewPropertyValueKind::Enum:
             if (valueType != LUA_TSTRING)
                 return rejectType("must be a string");
+            if (!ViewPropertyAllowsEnumValue(*property,
+                    lua_tostring(state, -1)))
+            {
+                lua_pop(state, 2);
+                error = "view field '" + std::string(field) +
+                    "' has an unsupported enum value";
+                return false;
+            }
             break;
         case ViewPropertyValueKind::Boolean:
             if (valueType != LUA_TBOOLEAN)

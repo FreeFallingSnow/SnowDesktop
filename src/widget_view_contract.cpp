@@ -56,21 +56,84 @@ constexpr auto kContracts = std::to_array<ViewNodeContract>({
     { ViewNodeType::Spacer, "spacer", "layout", "view.tree.core", "", "", ViewChildPolicy::None },
 });
 
+constexpr auto NodeTypeNames() noexcept
+{
+    std::array<std::string_view, kContracts.size()> result{};
+    for (std::size_t index = 0; index < kContracts.size(); ++index)
+        result[index] = kContracts[index].name;
+    return result;
+}
+
+constexpr auto kNodeTypeNames = NodeTypeNames();
+constexpr auto kIconFontValues = std::to_array<std::string_view>({
+    "fa", "fluent", "fluent-regular" });
+constexpr auto kImageFitValues = std::to_array<std::string_view>({
+    "contain", "fill", "cover", "none" });
+constexpr auto kImageAlignmentValues = std::to_array<std::string_view>({
+    "center", "start", "end" });
+constexpr auto kImageInterpolationValues = std::to_array<std::string_view>({
+    "linear", "nearest" });
+constexpr auto kShapeValues = std::to_array<std::string_view>({
+    "rectangle", "roundedRectangle", "circle", "ellipse" });
+constexpr auto kOrientationValues = std::to_array<std::string_view>({
+    "horizontal", "vertical" });
+constexpr auto kValidationStateValues = std::to_array<std::string_view>({
+    "none", "info", "success", "warning", "error" });
+constexpr auto kOverflowValues = std::to_array<std::string_view>({
+    "visible", "clip" });
+constexpr auto kSelectionModeValues = std::to_array<std::string_view>({
+    "none", "single", "multiple" });
+constexpr auto kFlexDirectionValues = std::to_array<std::string_view>({
+    "row", "rowReverse", "column", "columnReverse" });
+constexpr auto kFlexWrapValues = std::to_array<std::string_view>({
+    "noWrap", "wrap", "wrapReverse" });
+constexpr auto kContentAlignmentValues = std::to_array<std::string_view>({
+    "start", "center", "end", "stretch", "spaceBetween",
+    "spaceAround", "spaceEvenly" });
+constexpr auto kFontStyleValues = std::to_array<std::string_view>({
+    "normal", "italic" });
+constexpr auto kTextDirectionValues = std::to_array<std::string_view>({
+    "auto", "ltr", "rtl" });
+constexpr auto kVisibilityValues = std::to_array<std::string_view>({
+    "visible", "hidden", "collapsed" });
+constexpr auto kAlignmentValues = std::to_array<std::string_view>({
+    "start", "center", "end", "stretch" });
+constexpr auto kSelfAlignmentValues = std::to_array<std::string_view>({
+    "auto", "start", "center", "end", "stretch" });
+constexpr auto kJustificationValues = std::to_array<std::string_view>({
+    "start", "center", "end", "spaceBetween", "spaceAround",
+    "spaceEvenly" });
+constexpr auto kTextAlignmentValues = std::to_array<std::string_view>({
+    "start", "center", "end" });
+constexpr auto kVerticalAlignmentValues = std::to_array<std::string_view>({
+    "start", "center", "end" });
+constexpr auto kTextWrapValues = std::to_array<std::string_view>({
+    "noWrap", "wrap" });
+constexpr auto kTextOverflowValues = std::to_array<std::string_view>({
+    "ellipsis", "clip" });
+
 constexpr ViewPropertyContract Property(
     std::string_view name, ViewPropertyValueKind valueKind) noexcept
 {
     return { name, valueKind };
 }
 
+constexpr ViewPropertyContract EnumProperty(std::string_view name,
+    ViewPropertyEnumSet enumSet) noexcept
+{
+    return { name, ViewPropertyValueKind::Enum, enumSet };
+}
+
 constexpr ViewPropertyContract RangedProperty(std::string_view name,
     ViewPropertyValueKind valueKind, double minimum,
     double maximum) noexcept
 {
-    return { name, valueKind, true, minimum, maximum };
+    return { name, valueKind, ViewPropertyEnumSet::None,
+        true, minimum, maximum };
 }
 
 constexpr auto kProperties = std::to_array<ViewPropertyContract>({
-    Property("type", ViewPropertyValueKind::Enum),
+    EnumProperty("type", ViewPropertyEnumSet::NodeType),
     Property("key", ViewPropertyValueKind::String),
     Property("debugName", ViewPropertyValueKind::String),
     Property("testId", ViewPropertyValueKind::String),
@@ -78,15 +141,15 @@ constexpr auto kProperties = std::to_array<ViewPropertyContract>({
     Property("spans", ViewPropertyValueKind::Spans),
     Property("label", ViewPropertyValueKind::String),
     Property("glyph", ViewPropertyValueKind::String),
-    Property("iconFont", ViewPropertyValueKind::Enum),
+    EnumProperty("iconFont", ViewPropertyEnumSet::IconFont),
     Property("source", ViewPropertyValueKind::Resource),
     Property("font", ViewPropertyValueKind::Resource),
-    Property("fit", ViewPropertyValueKind::Enum),
-    Property("alignment", ViewPropertyValueKind::Enum),
-    Property("interpolation", ViewPropertyValueKind::Enum),
+    EnumProperty("fit", ViewPropertyEnumSet::ImageFit),
+    EnumProperty("alignment", ViewPropertyEnumSet::ImageAlignment),
+    EnumProperty("interpolation", ViewPropertyEnumSet::ImageInterpolation),
     Property("alt", ViewPropertyValueKind::String),
-    Property("shape", ViewPropertyValueKind::Enum),
-    Property("orientation", ViewPropertyValueKind::Enum),
+    EnumProperty("shape", ViewPropertyEnumSet::Shape),
+    EnumProperty("orientation", ViewPropertyEnumSet::Orientation),
     Property("value", ViewPropertyValueKind::StringOrNumber),
     Property("values", ViewPropertyValueKind::NumberArray),
     Property("min", ViewPropertyValueKind::Number),
@@ -103,7 +166,7 @@ constexpr auto kProperties = std::to_array<ViewPropertyContract>({
     Property("readOnly", ViewPropertyValueKind::Boolean),
     Property("required", ViewPropertyValueKind::Boolean),
     Property("busy", ViewPropertyValueKind::Boolean),
-    Property("validationState", ViewPropertyValueKind::Enum),
+    EnumProperty("validationState", ViewPropertyEnumSet::ValidationState),
     Property("validationMessage", ViewPropertyValueKind::String),
     RangedProperty("maxBytes", ViewPropertyValueKind::Integer,
         0.0, 65536.0),
@@ -147,7 +210,7 @@ constexpr auto kProperties = std::to_array<ViewPropertyContract>({
     RangedProperty("zIndex", ViewPropertyValueKind::Integer,
         -1024.0, 1024.0),
     Property("clip", ViewPropertyValueKind::Boolean),
-    Property("overflow", ViewPropertyValueKind::Enum),
+    EnumProperty("overflow", ViewPropertyEnumSet::Overflow),
     Property("shadow", ViewPropertyValueKind::Shadow),
     Property("transform", ViewPropertyValueKind::Transform),
     Property("transition", ViewPropertyValueKind::Transition),
@@ -182,7 +245,7 @@ constexpr auto kProperties = std::to_array<ViewPropertyContract>({
         0.0, 16.0),
     Property("initialScrollKey", ViewPropertyValueKind::String),
     Property("initialScrollIndex", ViewPropertyValueKind::Integer),
-    Property("selectionMode", ViewPropertyValueKind::Enum),
+    EnumProperty("selectionMode", ViewPropertyEnumSet::SelectionMode),
     Property("selectedKeys", ViewPropertyValueKind::StringArray),
     Property("emptyContent", ViewPropertyValueKind::Node),
     Property("loadingContent", ViewPropertyValueKind::Node),
@@ -191,27 +254,27 @@ constexpr auto kProperties = std::to_array<ViewPropertyContract>({
         0.0, 1000.0),
     RangedProperty("flexShrink", ViewPropertyValueKind::Number,
         0.0, 1000.0),
-    Property("flexDirection", ViewPropertyValueKind::Enum),
-    Property("flexWrap", ViewPropertyValueKind::Enum),
-    Property("alignContent", ViewPropertyValueKind::Enum),
+    EnumProperty("flexDirection", ViewPropertyEnumSet::FlexDirection),
+    EnumProperty("flexWrap", ViewPropertyEnumSet::FlexWrap),
+    EnumProperty("alignContent", ViewPropertyEnumSet::ContentAlignment),
     RangedProperty("fontSize", ViewPropertyValueKind::Number,
         1.0, 512.0),
     RangedProperty("fontWeight", ViewPropertyValueKind::Integer,
         0.0, 900.0),
-    Property("fontStyle", ViewPropertyValueKind::Enum),
+    EnumProperty("fontStyle", ViewPropertyEnumSet::FontStyle),
     RangedProperty("lineHeight", ViewPropertyValueKind::Number,
         1.0, 1024.0),
     RangedProperty("letterSpacing", ViewPropertyValueKind::Number,
         -64.0, 256.0),
     Property("locale", ViewPropertyValueKind::String),
-    Property("textDirection", ViewPropertyValueKind::Enum),
+    EnumProperty("textDirection", ViewPropertyEnumSet::TextDirection),
     Property("bold", ViewPropertyValueKind::Boolean),
     Property("checked", ViewPropertyValueKind::Boolean),
     Property("indeterminate", ViewPropertyValueKind::Boolean),
     Property("selected", ViewPropertyValueKind::Boolean),
     Property("sticky", ViewPropertyValueKind::Boolean),
     Property("visible", ViewPropertyValueKind::Boolean),
-    Property("visibility", ViewPropertyValueKind::Enum),
+    EnumProperty("visibility", ViewPropertyEnumSet::Visibility),
     Property("enabled", ViewPropertyValueKind::Boolean),
     Property("focusable", ViewPropertyValueKind::Boolean),
     RangedProperty("tabIndex", ViewPropertyValueKind::Integer,
@@ -221,16 +284,16 @@ constexpr auto kProperties = std::to_array<ViewPropertyContract>({
     Property("capturePointer", ViewPropertyValueKind::Boolean),
     Property("accessKey", ViewPropertyValueKind::String),
     Property("acceleratorText", ViewPropertyValueKind::String),
-    Property("alignItems", ViewPropertyValueKind::Enum),
+    EnumProperty("alignItems", ViewPropertyEnumSet::Alignment),
     Property("showScrollbar", ViewPropertyValueKind::Boolean),
-    Property("alignSelf", ViewPropertyValueKind::Enum),
-    Property("justifyContent", ViewPropertyValueKind::Enum),
-    Property("textAlign", ViewPropertyValueKind::Enum),
-    Property("verticalAlign", ViewPropertyValueKind::Enum),
-    Property("textWrap", ViewPropertyValueKind::Enum),
+    EnumProperty("alignSelf", ViewPropertyEnumSet::SelfAlignment),
+    EnumProperty("justifyContent", ViewPropertyEnumSet::Justification),
+    EnumProperty("textAlign", ViewPropertyEnumSet::TextAlignment),
+    EnumProperty("verticalAlign", ViewPropertyEnumSet::VerticalAlignment),
+    EnumProperty("textWrap", ViewPropertyEnumSet::TextWrap),
     RangedProperty("maxLines", ViewPropertyValueKind::Integer,
         0.0, 64.0),
-    Property("overflowText", ViewPropertyValueKind::Enum),
+    EnumProperty("overflowText", ViewPropertyEnumSet::TextOverflow),
     Property("style", ViewPropertyValueKind::Style),
     Property("hoverStyle", ViewPropertyValueKind::Style),
     Property("pressedStyle", ViewPropertyValueKind::Style),
@@ -532,6 +595,57 @@ std::string_view ViewPropertyValueKindName(
     case ViewPropertyValueKind::Action: return "action";
     }
     return {};
+}
+
+std::span<const std::string_view> ViewPropertyEnumValues(
+    const ViewPropertyContract& contract) noexcept
+{
+    switch (contract.enumSet)
+    {
+    case ViewPropertyEnumSet::None: return {};
+    case ViewPropertyEnumSet::NodeType: return kNodeTypeNames;
+    case ViewPropertyEnumSet::IconFont: return kIconFontValues;
+    case ViewPropertyEnumSet::ImageFit: return kImageFitValues;
+    case ViewPropertyEnumSet::ImageAlignment:
+        return kImageAlignmentValues;
+    case ViewPropertyEnumSet::ImageInterpolation:
+        return kImageInterpolationValues;
+    case ViewPropertyEnumSet::Shape: return kShapeValues;
+    case ViewPropertyEnumSet::Orientation: return kOrientationValues;
+    case ViewPropertyEnumSet::ValidationState:
+        return kValidationStateValues;
+    case ViewPropertyEnumSet::Overflow: return kOverflowValues;
+    case ViewPropertyEnumSet::SelectionMode:
+        return kSelectionModeValues;
+    case ViewPropertyEnumSet::FlexDirection:
+        return kFlexDirectionValues;
+    case ViewPropertyEnumSet::FlexWrap: return kFlexWrapValues;
+    case ViewPropertyEnumSet::ContentAlignment:
+        return kContentAlignmentValues;
+    case ViewPropertyEnumSet::FontStyle: return kFontStyleValues;
+    case ViewPropertyEnumSet::TextDirection:
+        return kTextDirectionValues;
+    case ViewPropertyEnumSet::Visibility: return kVisibilityValues;
+    case ViewPropertyEnumSet::Alignment: return kAlignmentValues;
+    case ViewPropertyEnumSet::SelfAlignment:
+        return kSelfAlignmentValues;
+    case ViewPropertyEnumSet::Justification:
+        return kJustificationValues;
+    case ViewPropertyEnumSet::TextAlignment:
+        return kTextAlignmentValues;
+    case ViewPropertyEnumSet::VerticalAlignment:
+        return kVerticalAlignmentValues;
+    case ViewPropertyEnumSet::TextWrap: return kTextWrapValues;
+    case ViewPropertyEnumSet::TextOverflow: return kTextOverflowValues;
+    }
+    return {};
+}
+
+bool ViewPropertyAllowsEnumValue(const ViewPropertyContract& contract,
+    std::string_view value) noexcept
+{
+    const auto values = ViewPropertyEnumValues(contract);
+    return std::find(values.begin(), values.end(), value) != values.end();
 }
 
 bool ViewPropertyNumericValueInRange(

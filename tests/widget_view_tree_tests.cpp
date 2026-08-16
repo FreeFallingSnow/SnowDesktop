@@ -820,8 +820,8 @@ void TestStatusVisualParsing()
         "invalid-divider fixture must evaluate");
     ViewNode invalid;
     Check(!ParseLuaViewTree(state, -1, invalid, error) &&
-            error.find("horizontal or vertical") != std::string::npos,
-        "divider orientation must reject unsupported values");
+            error == "view field 'orientation' has an unsupported enum value",
+        "divider orientation must use the public enum contract");
     lua_close(state);
 }
 
@@ -3877,8 +3877,8 @@ void TestTextLocaleValidation()
         "invalid direction Lua fixture must evaluate");
     ViewNode parsed;
     Check(!ParseLuaViewTree(state, -1, parsed, error) &&
-            error == "view textDirection must be auto, ltr, or rtl",
-        "unknown text directions must fail during atomic tree parsing");
+            error == "view field 'textDirection' has an unsupported enum value",
+        "textDirection must use the public enum contract");
     lua_close(state);
 }
 

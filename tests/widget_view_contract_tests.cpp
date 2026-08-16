@@ -27,6 +27,9 @@ using snowdesktop::widget_runtime::ViewNodeRequiredProperties;
 using snowdesktop::widget_runtime::ViewNodeType;
 using snowdesktop::widget_runtime::ViewNodePropertyNames;
 using snowdesktop::widget_runtime::ViewPropertyContracts;
+using snowdesktop::widget_runtime::ViewPropertyAllowsEnumValue;
+using snowdesktop::widget_runtime::ViewPropertyEnumSet;
+using snowdesktop::widget_runtime::ViewPropertyEnumValues;
 using snowdesktop::widget_runtime::ViewPropertyNumericValueInRange;
 using snowdesktop::widget_runtime::ViewPropertyValueKind;
 using snowdesktop::widget_runtime::ViewPropertyValueKindName;
@@ -107,6 +110,24 @@ void TestPropertyMetadata()
             "every property must publish a recognized semantic value kind");
         Check(!ViewPropertyValueKindName(property.valueKind).empty(),
             "every semantic value kind must expose a stable tool-facing name");
+        const auto enumValues = ViewPropertyEnumValues(property);
+        if (property.valueKind == ViewPropertyValueKind::Enum)
+        {
+            Check(property.enumSet != ViewPropertyEnumSet::None &&
+                    !enumValues.empty(),
+                "every enum property must publish its allowed values");
+            std::set<std::string> uniqueValues;
+            for (const auto enumValue : enumValues)
+                Check(!enumValue.empty() &&
+                        uniqueValues.emplace(enumValue).second,
+                    "enum values must be non-empty and unique");
+        }
+        else
+        {
+            Check(property.enumSet == ViewPropertyEnumSet::None &&
+                    enumValues.empty(),
+                "non-enum properties must not publish enum values");
+        }
         Check(!property.hasNumericRange ||
                 property.numericMinimum <= property.numericMaximum,
             "published numeric ranges must be ordered");
@@ -120,6 +141,7 @@ void TestPropertyMetadata()
     const auto* opacity = FindViewPropertyContract("trackOpacity");
     const auto* children = FindViewPropertyContract("children");
     const auto* value = FindViewPropertyContract("value");
+    const auto* orientation = FindViewPropertyContract("orientation");
     Check(fontSize && fontSize->valueKind == ViewPropertyValueKind::Number &&
             fontSize->hasNumericRange &&
             fontSize->numericMinimum == 1.0 &&
@@ -136,6 +158,11 @@ void TestPropertyMetadata()
             value &&
             value->valueKind == ViewPropertyValueKind::StringOrNumber,
         "structured and overloaded properties must publish semantic kinds");
+    Check(orientation &&
+            ViewPropertyAllowsEnumValue(*orientation, "horizontal") &&
+            ViewPropertyAllowsEnumValue(*orientation, "vertical") &&
+            !ViewPropertyAllowsEnumValue(*orientation, "diagonal"),
+        "enum metadata must expose and validate the public value set");
 }
 
 void TestRepresentativeApplicability()

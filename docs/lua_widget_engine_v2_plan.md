@@ -1286,6 +1286,8 @@ Lua view 解析入口已直接消费这些通用标量范围，在构造节点�
 的 min/value/max 联动、fontWeight 离散步进等节点相关规则仍由场景校验层负责。string、enum、
 boolean、number、integer 和 string-or-number 基础类型也由同一目录执行入口校验，不再沿用 Lua
 把数字隐式转换为字符串、把数字字符串隐式转换为 number 的宽松路径；每种语义类型另有稳定工具名。
+23 个 enum 属性的完整允许值集合现也由该目录登记并在入口执行，节点类型值直接复用 44 节点目录，
+不再由各专用解析函数单独承担拼写白名单。
 17 个公开节点事件也已进入同一契约源，登记统一 payload 类别和逐节点适用性；Lua 解析器、
 scene 校验与契约测试不再分别维护 change、selectionChange、输入生命周期和 scrollEnd 的类型白名单。
 当前已进一步为每个语义节点登记 UIA ControlType、基础 Pattern 和是否参与宿主键盘焦点，并可从

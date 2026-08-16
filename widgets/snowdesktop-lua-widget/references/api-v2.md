@@ -1023,6 +1023,8 @@ Lua 解析器会在构造节点前按该契约拒绝通用标量越界值，不�
 基础 string/enum/boolean/number/integer 类型同样严格按目录检查；数字不会隐式成为文本，
 数字字符串也不会隐式成为 number。`value` 是明确登记的 string-or-number 联合类型，随后再由
 text input 或数值控件的节点契约收窄。
+enum 属性的允许值也可从同一契约枚举并由 Lua 入口统一校验，包括节点 type、布局方向、图片
+fit/interpolation、文本流、可见性、校验状态和集合选择模式；拼错值会拒绝本次 tree commit。
 
 该表也登记 17 个公开事件的负载类别和逐节点适用性，以及 UIA ControlType、基础 Pattern 和宿主键盘可聚焦性，宿主能从
 布局结果生成语义快照，并已通过 Windows UIA Fragment Provider 暴露组件/元素树、基础属性、
