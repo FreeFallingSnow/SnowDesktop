@@ -12,6 +12,7 @@ using snowdesktop::widget_runtime::FindViewNodeContract;
 using snowdesktop::widget_runtime::FindViewNodeType;
 using snowdesktop::widget_runtime::FindViewPropertyContract;
 using snowdesktop::widget_runtime::HasViewAccessibilityPattern;
+using snowdesktop::widget_runtime::HasViewPropertyEffect;
 using snowdesktop::widget_runtime::IsKnownViewEvent;
 using snowdesktop::widget_runtime::IsKnownViewNodeProperty;
 using snowdesktop::widget_runtime::ViewAccessibilityPattern;
@@ -30,6 +31,7 @@ using snowdesktop::widget_runtime::ViewPropertyContracts;
 using snowdesktop::widget_runtime::ViewPropertyAllowsEnumValue;
 using snowdesktop::widget_runtime::ViewPropertyEnumSet;
 using snowdesktop::widget_runtime::ViewPropertyEnumValues;
+using snowdesktop::widget_runtime::ViewPropertyEffect;
 using snowdesktop::widget_runtime::ViewPropertyNumericValueInRange;
 using snowdesktop::widget_runtime::ViewPropertyValueKind;
 using snowdesktop::widget_runtime::ViewPropertyValueKindName;
@@ -131,6 +133,8 @@ void TestPropertyMetadata()
         Check(!property.hasNumericRange ||
                 property.numericMinimum <= property.numericMaximum,
             "published numeric ranges must be ordered");
+        Check(property.effects != ViewPropertyEffect::None,
+            "every public property must publish at least one invalidation effect");
         Check(FindViewPropertyContract(property.name) == &property,
             "property metadata must round-trip by canonical name");
     }
@@ -142,6 +146,12 @@ void TestPropertyMetadata()
     const auto* children = FindViewPropertyContract("children");
     const auto* value = FindViewPropertyContract("value");
     const auto* orientation = FindViewPropertyContract("orientation");
+    const auto* width = FindViewPropertyContract("width");
+    const auto* style = FindViewPropertyContract("style");
+    const auto* events = FindViewPropertyContract("events");
+    const auto* accessibility =
+        FindViewPropertyContract("accessibility");
+    const auto* source = FindViewPropertyContract("source");
     Check(fontSize && fontSize->valueKind == ViewPropertyValueKind::Number &&
             fontSize->hasNumericRange &&
             fontSize->numericMinimum == 1.0 &&
@@ -163,6 +173,23 @@ void TestPropertyMetadata()
             ViewPropertyAllowsEnumValue(*orientation, "vertical") &&
             !ViewPropertyAllowsEnumValue(*orientation, "diagonal"),
         "enum metadata must expose and validate the public value set");
+    Check(width &&
+            HasViewPropertyEffect(width->effects,
+                ViewPropertyEffect::Layout) &&
+            HasViewPropertyEffect(width->effects,
+                ViewPropertyEffect::HitTest) &&
+            style && style->effects == ViewPropertyEffect::Paint &&
+            events &&
+            HasViewPropertyEffect(events->effects,
+                ViewPropertyEffect::Input) &&
+            HasViewPropertyEffect(events->effects,
+                ViewPropertyEffect::HitTest) &&
+            accessibility &&
+            accessibility->effects == ViewPropertyEffect::Accessibility &&
+            source &&
+            HasViewPropertyEffect(source->effects,
+                ViewPropertyEffect::Resource),
+        "property effects must distinguish layout, paint, input, UIA, and resources");
 }
 
 void TestRepresentativeApplicability()

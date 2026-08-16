@@ -1290,6 +1290,9 @@ boolean、number、integer 和 string-or-number 基础类型也由同一目录�
 不再由各专用解析函数单独承担拼写白名单。
 其余 length、edge-insets、resource、color、array、node、style、transition、tooltip、accessibility、
 events 和 action 等结构类型也已接入同一入口外形校验，再由专用解析器检查内部字段、额度和关系。
+全部属性现进一步登记 layout、paint、hit-test、input、accessibility、resource 和 tree 影响域位集；
+该列描述属性变化需要失效的宿主子系统，为后续差量 scene 更新提供契约，而不是把动画能力或
+是否允许该属性混入同一个布尔值。
 17 个公开节点事件也已进入同一契约源，登记统一 payload 类别和逐节点适用性；Lua 解析器、
 scene 校验与契约测试不再分别维护 change、selectionChange、输入生命周期和 scrollEnd 的类型白名单。
 当前已进一步为每个语义节点登记 UIA ControlType、基础 Pattern 和是否参与宿主键盘焦点，并可从

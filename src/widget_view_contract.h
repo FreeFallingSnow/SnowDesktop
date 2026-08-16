@@ -145,11 +145,39 @@ enum class ViewPropertyEnumSet : std::uint8_t
     TextOverflow,
 };
 
+enum class ViewPropertyEffect : std::uint8_t
+{
+    None = 0,
+    Layout = 1u << 0,
+    Paint = 1u << 1,
+    HitTest = 1u << 2,
+    Input = 1u << 3,
+    Accessibility = 1u << 4,
+    Resource = 1u << 5,
+    Tree = 1u << 6,
+};
+
+constexpr ViewPropertyEffect operator|(
+    ViewPropertyEffect left, ViewPropertyEffect right) noexcept
+{
+    return static_cast<ViewPropertyEffect>(
+        static_cast<std::uint8_t>(left) |
+        static_cast<std::uint8_t>(right));
+}
+
+constexpr bool HasViewPropertyEffect(
+    ViewPropertyEffect value, ViewPropertyEffect effect) noexcept
+{
+    return (static_cast<std::uint8_t>(value) &
+        static_cast<std::uint8_t>(effect)) != 0;
+}
+
 struct ViewPropertyContract
 {
     std::string_view name;
     ViewPropertyValueKind valueKind = ViewPropertyValueKind::String;
     ViewPropertyEnumSet enumSet = ViewPropertyEnumSet::None;
+    ViewPropertyEffect effects = ViewPropertyEffect::None;
     bool hasNumericRange = false;
     double numericMinimum = 0.0;
     double numericMaximum = 0.0;

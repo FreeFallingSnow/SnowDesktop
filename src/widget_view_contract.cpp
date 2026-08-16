@@ -112,16 +112,164 @@ constexpr auto kTextWrapValues = std::to_array<std::string_view>({
 constexpr auto kTextOverflowValues = std::to_array<std::string_view>({
     "ellipsis", "clip" });
 
+constexpr bool IsNamed(std::string_view name,
+    std::initializer_list<std::string_view> values) noexcept
+{
+    return std::find(values.begin(), values.end(), name) != values.end();
+}
+
+constexpr ViewPropertyEffect PropertyEffects(std::string_view name,
+    ViewPropertyValueKind kind) noexcept
+{
+    ViewPropertyEffect effects = ViewPropertyEffect::None;
+    const auto add = [&effects](ViewPropertyEffect value) {
+        effects = effects | value;
+    };
+    switch (kind)
+    {
+    case ViewPropertyValueKind::Length:
+    case ViewPropertyValueKind::EdgeInsets:
+    case ViewPropertyValueKind::Offset:
+    case ViewPropertyValueKind::GridTracks:
+        add(ViewPropertyEffect::Layout | ViewPropertyEffect::Paint |
+            ViewPropertyEffect::HitTest);
+        break;
+    case ViewPropertyValueKind::Resource:
+        add(ViewPropertyEffect::Layout | ViewPropertyEffect::Paint |
+            ViewPropertyEffect::Resource);
+        break;
+    case ViewPropertyValueKind::Color:
+    case ViewPropertyValueKind::Style:
+    case ViewPropertyValueKind::Shadow:
+    case ViewPropertyValueKind::Transition:
+    case ViewPropertyValueKind::PresenceTransition:
+        add(ViewPropertyEffect::Paint);
+        break;
+    case ViewPropertyValueKind::Transform:
+        add(ViewPropertyEffect::Paint | ViewPropertyEffect::HitTest |
+            ViewPropertyEffect::Accessibility);
+        break;
+    case ViewPropertyValueKind::Node:
+    case ViewPropertyValueKind::NodeArray:
+        add(ViewPropertyEffect::Tree | ViewPropertyEffect::Layout |
+            ViewPropertyEffect::Paint | ViewPropertyEffect::HitTest |
+            ViewPropertyEffect::Accessibility);
+        break;
+    case ViewPropertyValueKind::Spans:
+    case ViewPropertyValueKind::ChoiceOptions:
+        add(ViewPropertyEffect::Layout | ViewPropertyEffect::Paint |
+            ViewPropertyEffect::HitTest | ViewPropertyEffect::Input |
+            ViewPropertyEffect::Accessibility);
+        break;
+    case ViewPropertyValueKind::TextSelection:
+        add(ViewPropertyEffect::Paint | ViewPropertyEffect::Input |
+            ViewPropertyEffect::Accessibility);
+        break;
+    case ViewPropertyValueKind::Tooltip:
+        add(ViewPropertyEffect::HitTest |
+            ViewPropertyEffect::Accessibility);
+        break;
+    case ViewPropertyValueKind::Accessibility:
+        add(ViewPropertyEffect::Accessibility);
+        break;
+    case ViewPropertyValueKind::Events:
+    case ViewPropertyValueKind::Action:
+        add(ViewPropertyEffect::HitTest | ViewPropertyEffect::Input);
+        break;
+    case ViewPropertyValueKind::NumberArray:
+        add(ViewPropertyEffect::Paint |
+            ViewPropertyEffect::Accessibility);
+        break;
+    case ViewPropertyValueKind::StringArray:
+        add(ViewPropertyEffect::Layout | ViewPropertyEffect::Paint |
+            ViewPropertyEffect::Accessibility);
+        break;
+    case ViewPropertyValueKind::IndexArray:
+        add(ViewPropertyEffect::Tree | ViewPropertyEffect::Layout |
+            ViewPropertyEffect::Paint);
+        break;
+    default:
+        break;
+    }
+
+    if (IsNamed(name, { "type", "key", "binding", "collection",
+            "revision", "reference", "layoutRevision", "firstIndex",
+            "overscan", "initialScrollKey", "initialScrollIndex" }))
+        add(ViewPropertyEffect::Tree);
+    if (IsNamed(name, { "text", "label", "glyph", "iconFont", "fit",
+            "alignment", "interpolation", "shape", "orientation",
+            "value", "min", "max", "step", "selectedValue",
+            "placeholder", "expanded", "validationMessage", "year",
+            "month", "firstDayOfWeek", "selectedDate", "todayDate",
+            "showAdjacentDates", "reference", "thickness",
+            "trackOpacity", "fillOpacity", "minWidth", "maxWidth",
+            "minHeight", "maxHeight", "aspectRatio", "zIndex", "clip",
+            "overflow", "gap", "columnGap", "rowGap", "gridColumn",
+            "gridRow", "columnSpan", "rowSpan", "itemCount",
+            "itemExtent", "estimatedItemSize", "layoutRevision",
+            "stickyHeaderIndex", "firstIndex", "overscan",
+            "initialScrollKey", "initialScrollIndex", "selectionMode",
+            "flexGrow", "flexShrink", "flexDirection", "flexWrap",
+            "alignContent", "fontSize", "fontWeight", "fontStyle",
+            "lineHeight", "letterSpacing", "locale", "textDirection",
+            "bold", "sticky", "visible", "visibility", "alignItems",
+            "showScrollbar", "alignSelf", "justifyContent", "textAlign",
+            "verticalAlign", "textWrap", "maxLines", "overflowText" }))
+        add(ViewPropertyEffect::Layout);
+    if (IsNamed(name, { "text", "label", "glyph", "iconFont", "fit",
+            "alignment", "interpolation", "shape", "orientation",
+            "value", "min", "max", "step", "selectedValue",
+            "placeholder", "expanded", "readOnly", "required", "busy",
+            "validationState", "validationMessage", "year", "month",
+            "firstDayOfWeek", "selectedDate", "todayDate",
+            "showAdjacentDates", "reference", "thickness",
+            "trackOpacity", "fillOpacity", "clip", "overflow", "zIndex",
+            "gap", "columnGap", "rowGap", "itemExtent", "firstIndex",
+            "selectionMode", "fontSize", "fontWeight", "fontStyle",
+            "lineHeight", "letterSpacing", "textDirection", "bold",
+            "checked", "indeterminate", "selected", "sticky", "visible",
+            "visibility", "enabled", "focusable", "cursor",
+            "showScrollbar", "textAlign", "verticalAlign", "textWrap",
+            "maxLines", "overflowText" }))
+        add(ViewPropertyEffect::Paint);
+    if (IsNamed(name, { "value", "min", "max", "step", "selectedValue",
+            "expanded", "selectAll", "liveUpdate", "readOnly", "required",
+            "maxBytes", "checked", "indeterminate", "selected", "enabled",
+            "focusable", "tabIndex", "cursor", "capturePointer",
+            "accessKey", "selectionMode", "initialScrollKey",
+            "initialScrollIndex" }))
+        add(ViewPropertyEffect::Input);
+    if (IsNamed(name, { "expanded", "readOnly", "visible", "visibility",
+            "enabled", "focusable", "tabIndex", "cursor",
+            "capturePointer", "accessKey", "zIndex", "clip", "overflow",
+            "showScrollbar" }))
+        add(ViewPropertyEffect::HitTest);
+    if (IsNamed(name, { "debugName", "testId", "text", "label", "glyph",
+            "alt", "value", "min", "max", "step", "selectedValue",
+            "placeholder", "expanded", "readOnly", "required", "busy",
+            "validationState", "validationMessage", "year", "month",
+            "selectedDate", "todayDate", "showAdjacentDates", "reference",
+            "selectionMode", "fontSize", "locale", "textDirection", "bold",
+            "checked", "indeterminate", "selected", "sticky", "visible",
+            "visibility", "enabled", "focusable", "tabIndex", "accessKey",
+            "acceleratorText" }))
+        add(ViewPropertyEffect::Accessibility);
+    if (name == "reference") add(ViewPropertyEffect::Resource);
+    return effects;
+}
+
 constexpr ViewPropertyContract Property(
     std::string_view name, ViewPropertyValueKind valueKind) noexcept
 {
-    return { name, valueKind };
+    return { name, valueKind, ViewPropertyEnumSet::None,
+        PropertyEffects(name, valueKind) };
 }
 
 constexpr ViewPropertyContract EnumProperty(std::string_view name,
     ViewPropertyEnumSet enumSet) noexcept
 {
-    return { name, ViewPropertyValueKind::Enum, enumSet };
+    return { name, ViewPropertyValueKind::Enum, enumSet,
+        PropertyEffects(name, ViewPropertyValueKind::Enum) };
 }
 
 constexpr ViewPropertyContract RangedProperty(std::string_view name,
@@ -129,7 +277,7 @@ constexpr ViewPropertyContract RangedProperty(std::string_view name,
     double maximum) noexcept
 {
     return { name, valueKind, ViewPropertyEnumSet::None,
-        true, minimum, maximum };
+        PropertyEffects(name, valueKind), true, minimum, maximum };
 }
 
 constexpr auto kProperties = std::to_array<ViewPropertyContract>({
