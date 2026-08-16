@@ -641,6 +641,54 @@ bool ReadNumberArrayField(lua_State* state, int table, const char* field,
     return true;
 }
 
+bool ReadPositiveSizeArrayField(lua_State* state, int table,
+    const char* field, std::vector<std::size_t>& values,
+    std::size_t maximumCount, std::string& error)
+{
+    table = lua_absindex(state, table);
+    lua_getfield(state, table, field);
+    if (lua_isnil(state, -1))
+    {
+        lua_pop(state, 1);
+        return true;
+    }
+    if (!lua_istable(state, -1) ||
+        !ValidateArray(state, -1, "view positive integer array", error))
+    {
+        if (error.empty())
+            error = std::string("view field '") + field +
+                "' must be an array";
+        lua_pop(state, 1);
+        return false;
+    }
+    const std::size_t count = lua_rawlen(state, -1);
+    if (count > maximumCount)
+    {
+        lua_pop(state, 1);
+        error = std::string("view field '") + field +
+            "' exceeds its item limit";
+        return false;
+    }
+    values.clear();
+    values.reserve(count);
+    for (std::size_t index = 0; index < count; ++index)
+    {
+        lua_rawgeti(state, -1, static_cast<lua_Integer>(index + 1));
+        if (!lua_isinteger(state, -1) || lua_tointeger(state, -1) <= 0)
+        {
+            lua_pop(state, 2);
+            error = std::string("view field '") + field +
+                "' must contain positive integers";
+            return false;
+        }
+        values.push_back(static_cast<std::size_t>(
+            lua_tointeger(state, -1)));
+        lua_pop(state, 1);
+    }
+    lua_pop(state, 1);
+    return true;
+}
+
 bool ReadBoolField(lua_State* state, int table, const char* field,
     bool& value, std::string& error);
 
@@ -2293,6 +2341,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             FieldPresent(state, index, "itemExtent") ||
             FieldPresent(state, index, "estimatedItemSize") ||
             FieldPresent(state, index, "layoutRevision") ||
+            FieldPresent(state, index, "sectionHeaderIndices") ||
+            FieldPresent(state, index, "stickyHeaderIndex") ||
             FieldPresent(state, index, "firstIndex") ||
             FieldPresent(state, index, "overscan")))
     {
@@ -2322,6 +2372,13 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         FieldPresent(state, index, "layoutRevision"))
     {
         error = "layoutRevision is reserved for variable virtualList nodes";
+        return false;
+    }
+    if (!virtualListNode &&
+        (FieldPresent(state, index, "sectionHeaderIndices") ||
+            FieldPresent(state, index, "stickyHeaderIndex")))
+    {
+        error = "virtual section headers are reserved for virtualList";
         return false;
     }
     if (!progressNode && !sliderNode && !inputNode &&
@@ -2600,6 +2657,11 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             node.estimatedItemSize, error) ||
         !ReadNonNegativeSizeField(state, index, "layoutRevision",
             virtualLayoutRevision, false, error) ||
+        !ReadPositiveSizeArrayField(state, index,
+            "sectionHeaderIndices", node.sectionHeaderIndices,
+            ViewTreeLimits::MaximumVirtualSectionHeaders, error) ||
+        !ReadOptionalPositiveSizeField(state, index,
+            "stickyHeaderIndex", node.stickyHeaderIndex, error) ||
         !ReadNonNegativeSizeField(state, index, "firstIndex",
             node.firstIndex, virtualCollectionNode, error) ||
         !ReadNonNegativeSizeField(state, index, "overscan",

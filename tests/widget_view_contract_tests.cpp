@@ -107,6 +107,12 @@ void TestRepresentativeApplicability()
                 "estimatedItemSize") &&
             ViewNodeAllowsProperty(ViewNodeType::VirtualList,
                 "layoutRevision") &&
+            ViewNodeAllowsProperty(ViewNodeType::VirtualList,
+                "sectionHeaderIndices") &&
+            ViewNodeAllowsProperty(ViewNodeType::VirtualList,
+                "stickyHeaderIndex") &&
+            !ViewNodeAllowsProperty(ViewNodeType::VirtualGrid,
+                "sectionHeaderIndices") &&
             !ViewNodeAllowsProperty(ViewNodeType::VirtualGrid,
                 "estimatedItemSize"),
         "virtual collection properties must not leak to eager collections");

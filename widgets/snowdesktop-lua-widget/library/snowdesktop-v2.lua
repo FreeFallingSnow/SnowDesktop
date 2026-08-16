@@ -274,6 +274,7 @@
 ---@field rowGap? number Logical gap between rows; defaults to 0.
 ---@field overscan? integer Extra rows on each side from 0 through 16; defaults to 2.
 ---@field initialScrollIndex? integer Same 1-based initial item passed to the virtual node; used only while this stable key has no accepted host scroll state.
+---@field sectionHeaderIndices? integer[] Sorted unique 1-based virtualList section-header indices. Requires view.collection.virtual.stickyHeaders.
 
 ---@class SnowViewVirtualRange
 ---@field firstIndex integer First 1-based item to materialize, or 0 when empty.
@@ -282,6 +283,7 @@
 ---@field maximum number Maximum scroll offset.
 ---@field viewportExtent number Validated viewport extent.
 ---@field contentExtent number Total bounded logical content extent.
+---@field stickyHeaderIndex? integer Active 1-based section header at the first visible item; prepend this item when it is before firstIndex.
 
 ---@class SnowViewScrollResult
 ---@field offset integer Applied logical offset.
@@ -363,6 +365,8 @@
 ---@field itemExtent? number Required fixed row height for virtualList/virtualGrid.
 ---@field estimatedItemSize? number VirtualList-only positive estimate used instead of itemExtent; materialized item heights are measured and cached by the host. Requires view.collection.virtual.variableExtent.
 ---@field layoutRevision? integer Variable virtualList measurement generation; bump after reorder or height-affecting model changes. Defaults to 0.
+---@field sectionHeaderIndices? integer[] VirtualList-only sorted unique 1-based section-header indices; pass the same array to view.virtualRange. Requires view.collection.virtual.stickyHeaders.
+---@field stickyHeaderIndex? integer VirtualList-only active section index returned by view.virtualRange; when it is before firstIndex, prepend that one auxiliary listItem before the contiguous window.
 ---@field firstIndex? integer Required first 1-based materialized item for virtualList/virtualGrid; 0 only when empty.
 ---@field overscan? integer Virtual collection overscan rows from 0 through 16; defaults to 2.
 ---@field initialScrollKey? string Scroll-only visible descendant key to reveal with nearest alignment when this stable container key is first accepted.

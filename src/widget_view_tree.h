@@ -522,6 +522,8 @@ struct ViewNode
     float itemExtent = 0.0f;
     std::optional<float> estimatedItemSize;
     std::uint64_t virtualLayoutRevision = 0;
+    std::vector<std::size_t> sectionHeaderIndices;
+    std::optional<std::size_t> stickyHeaderIndex;
     std::optional<std::string> initialScrollKey;
     std::optional<std::size_t> initialScrollIndex;
     ViewSelectionMode selectionMode = ViewSelectionMode::None;
@@ -643,6 +645,8 @@ struct ViewNode
     float scrollContentExtent = 0.0f;
     std::vector<ViewVirtualItemMeasurement> virtualMeasurements;
     std::vector<float> virtualMeasuredExtents;
+    std::vector<std::size_t> virtualChildIndices;
+    std::vector<std::size_t> virtualMeasuredIndices;
 };
 
 struct ViewScrollViewport
@@ -791,6 +795,7 @@ struct ViewTreeLimits
     static constexpr std::size_t MaximumVirtualItemCount = 1'000'000;
     static constexpr std::size_t MaximumVirtualWindowItems = 128;
     static constexpr std::size_t MaximumVirtualOverscan = 16;
+    static constexpr std::size_t MaximumVirtualSectionHeaders = 4096;
 };
 
 bool ValidateAndLayoutViewTree(ViewNode& root, float width, float height,

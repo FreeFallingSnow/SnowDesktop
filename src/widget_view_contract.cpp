@@ -71,8 +71,9 @@ constexpr auto kProperties = std::to_array<std::string_view>({
     "exitTransition", "gap", "columns", "rows",
     "columnGap", "rowGap", "gridColumn", "gridRow", "columnSpan",
     "rowSpan", "itemCount",
-    "itemExtent", "estimatedItemSize", "layoutRevision", "firstIndex",
-    "overscan", "initialScrollKey", "initialScrollIndex", "selectionMode",
+    "itemExtent", "estimatedItemSize", "layoutRevision",
+    "sectionHeaderIndices", "stickyHeaderIndex", "firstIndex", "overscan",
+    "initialScrollKey", "initialScrollIndex", "selectionMode",
     "selectedKeys", "emptyContent", "loadingContent", "flexBasis", "flexGrow",
     "flexShrink", "flexDirection", "flexWrap", "alignContent",
     "fontSize", "fontWeight", "fontStyle", "lineHeight",
@@ -313,6 +314,9 @@ bool ViewNodeAllowsProperty(
         property == "firstIndex" || property == "overscan")
         return IsVirtual(type);
     if (property == "estimatedItemSize" || property == "layoutRevision")
+        return type == ViewNodeType::VirtualList;
+    if (property == "sectionHeaderIndices" ||
+        property == "stickyHeaderIndex")
         return type == ViewNodeType::VirtualList;
     if (property == "initialScrollKey")
         return type == ViewNodeType::Scroll;

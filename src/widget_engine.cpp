@@ -1605,7 +1605,8 @@ static bool CommitVariableVirtualMeasurements(
     if (node.estimatedItemSize &&
         node.collectionContent == snowdesktop::widget_runtime::
             ViewCollectionContent::Items &&
-        node.virtualMeasuredExtents.size() == node.children.size())
+        node.virtualMeasuredExtents.size() == node.children.size() &&
+        node.virtualMeasuredIndices.size() == node.children.size())
     {
         const float rowGap = node.rowGap.value_or(node.gap);
         const auto oldMeasurements = node.virtualMeasurements;
@@ -1643,7 +1644,7 @@ static bool CommitVariableVirtualMeasurements(
         for (std::size_t child = 0;
             child < node.virtualMeasuredExtents.size(); ++child)
         {
-            const std::size_t index = node.firstIndex + child;
+            const std::size_t index = node.virtualMeasuredIndices[child];
             const float extent = node.virtualMeasuredExtents[child];
             const std::string& itemKey = node.children[child].key;
             auto& measurement = nextState.measurements[index];
@@ -1660,8 +1661,8 @@ static bool CommitVariableVirtualMeasurements(
             for (auto current = nextState.measurements.begin();
                 current != nextState.measurements.end(); ++current)
             {
-                if (current->first >= node.firstIndex &&
-                    current->first < node.firstIndex + node.children.size())
+                if (std::ranges::find(node.virtualMeasuredIndices,
+                        current->first) != node.virtualMeasuredIndices.end())
                     continue;
                 if (oldest == nextState.measurements.end() ||
                     current->second.lastUsed < oldest->second.lastUsed)
@@ -8920,7 +8921,8 @@ static int lua_ViewVirtualRange(lua_State* state)
     if (!LuaTableUsesOnlyFields(state, descriptor,
             { "key", "itemCount", "itemExtent", "viewportExtent",
                 "estimatedItemSize", "layoutRevision", "columns",
-                "rowGap", "overscan", "initialScrollIndex" },
+                "rowGap", "overscan", "initialScrollIndex",
+                "sectionHeaderIndices" },
             "view.virtualRange", error))
         return luaL_error(state, "view.virtualRange: %s", error.c_str());
 
@@ -8975,6 +8977,54 @@ static int lua_ViewVirtualRange(lua_State* state)
             "view.virtualRange: integer arguments exceed their limits");
     }
 
+    std::vector<std::size_t> sectionHeaderIndices;
+    lua_getfield(state, descriptor, "sectionHeaderIndices");
+    if (!lua_isnil(state, -1))
+    {
+        if (!lua_istable(state, -1))
+        {
+            lua_pop(state, 1);
+            return luaL_error(state,
+                "view.virtualRange: sectionHeaderIndices must be an array");
+        }
+        if (!LuaTableIsContiguousArray(state, -1,
+                "view.virtualRange.sectionHeaderIndices", error))
+        {
+            lua_pop(state, 1);
+            return luaL_error(state, "view.virtualRange: %s",
+                error.c_str());
+        }
+        const std::size_t count = lua_rawlen(state, -1);
+        if (count > ViewTreeLimits::MaximumVirtualSectionHeaders)
+        {
+            lua_pop(state, 1);
+            return luaL_error(state,
+                "view.virtualRange: sectionHeaderIndices exceeds its item limit");
+        }
+        sectionHeaderIndices.reserve(count);
+        std::size_t previous = 0;
+        for (std::size_t item = 1; item <= count; ++item)
+        {
+            lua_rawgeti(state, -1, static_cast<lua_Integer>(item));
+            const bool valid = lua_isinteger(state, -1) &&
+                lua_tointeger(state, -1) > 0 &&
+                lua_tointeger(state, -1) <= itemCountValue &&
+                static_cast<std::size_t>(lua_tointeger(state, -1)) >
+                    previous;
+            if (!valid)
+            {
+                lua_pop(state, 2);
+                return luaL_error(state,
+                    "view.virtualRange: sectionHeaderIndices must be sorted unique bounded 1-based indices");
+            }
+            previous = static_cast<std::size_t>(
+                lua_tointeger(state, -1));
+            sectionHeaderIndices.push_back(previous);
+            lua_pop(state, 1);
+        }
+    }
+    lua_pop(state, 1);
+
     auto* d2d = GetD2D(state);
     if (!d2d || !d2d->engine)
         return luaL_error(state,
@@ -8982,12 +9032,14 @@ static int lua_ViewVirtualRange(lua_State* state)
     const bool fixedExtent = std::isfinite(itemExtentValue);
     const bool variableExtent = std::isfinite(estimatedItemSizeValue);
     if (fixedExtent == variableExtent ||
-        (variableExtent && columnsValue != 1))
+        (variableExtent && columnsValue != 1) ||
+        (!sectionHeaderIndices.empty() && columnsValue != 1))
     {
         return luaL_error(state,
-            "view.virtualRange: provide exactly one of itemExtent or estimatedItemSize; variable ranges are list-only");
+            "view.virtualRange: provide exactly one of itemExtent or estimatedItemSize; variable ranges and section headers are list-only");
     }
     ViewVirtualRange range;
+    ViewVirtualRange visibleRange;
     if (variableExtent)
     {
         if (!d2d->engine->RuntimeComputeVariableVirtualRange(
@@ -9000,6 +9052,16 @@ static int lua_ViewVirtualRange(lua_State* state)
                 static_cast<std::size_t>(overscanValue),
                 static_cast<std::size_t>(initialScrollIndexValue),
                 range, error))
+            return luaL_error(state, "view.virtualRange: %s", error.c_str());
+        if (!d2d->engine->RuntimeComputeVariableVirtualRange(
+                BoundWidgetId(state), key,
+                static_cast<std::size_t>(itemCountValue),
+                static_cast<float>(estimatedItemSizeValue),
+                static_cast<float>(rowGapValue),
+                static_cast<float>(viewportExtentValue),
+                static_cast<std::uint64_t>(layoutRevisionValue), 0,
+                static_cast<std::size_t>(initialScrollIndexValue),
+                visibleRange, error))
             return luaL_error(state, "view.virtualRange: %s", error.c_str());
     }
     else
@@ -9031,9 +9093,24 @@ static int lua_ViewVirtualRange(lua_State* state)
             static_cast<std::size_t>(overscanValue), range, error))
             return luaL_error(state,
                 "view.virtualRange: %s", error.c_str());
+        if (!ComputeViewVirtualRange(
+            static_cast<std::size_t>(itemCountValue),
+            static_cast<float>(itemExtentValue),
+            static_cast<std::size_t>(columnsValue),
+            static_cast<float>(rowGapValue),
+            static_cast<float>(viewportExtentValue), range.offset, 0,
+            visibleRange, error))
+            return luaL_error(state,
+                "view.virtualRange: %s", error.c_str());
     }
 
-    lua_createtable(state, 0, 6);
+    std::optional<std::size_t> stickyHeaderIndex;
+    const auto nextHeader = std::upper_bound(sectionHeaderIndices.begin(),
+        sectionHeaderIndices.end(), visibleRange.firstIndex);
+    if (nextHeader != sectionHeaderIndices.begin())
+        stickyHeaderIndex = *std::prev(nextHeader);
+
+    lua_createtable(state, 0, 7);
     lua_pushinteger(state, static_cast<lua_Integer>(range.firstIndex));
     lua_setfield(state, -2, "firstIndex");
     lua_pushinteger(state, static_cast<lua_Integer>(range.lastIndex));
@@ -9046,6 +9123,12 @@ static int lua_ViewVirtualRange(lua_State* state)
     lua_setfield(state, -2, "viewportExtent");
     lua_pushnumber(state, range.contentExtent);
     lua_setfield(state, -2, "contentExtent");
+    if (stickyHeaderIndex)
+    {
+        lua_pushinteger(state,
+            static_cast<lua_Integer>(*stickyHeaderIndex));
+        lua_setfield(state, -2, "stickyHeaderIndex");
+    }
     return 1;
 }
 

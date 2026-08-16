@@ -219,8 +219,14 @@ vertical models and reject orientation. For larger data, probe
 key and actual content-viewport height, create only its inclusive 1-based
 window, then submit `virtualList` or `virtualGrid` with matching fixed extent,
 row gap, columns, overscan, firstIndex, and contiguous listItem children. Keep
-the materialized window within 128 items; do not emulate variable-height rows,
-horizontal virtualization, sticky headers, or programmatic scrolling.
+the materialized window within 128 items. Probe
+`view.collection.virtual.variableExtent` to replace fixed itemExtent with a
+virtualList estimate plus layoutRevision; the host measures committed items.
+Probe `view.collection.virtual.stickyHeaders` to pass one sorted global section
+index array to both calls, use the returned stickyHeaderIndex, and prepend that
+one item only when it falls before firstIndex. Probe
+`view.scroll.programmatic` for scrollTo/scrollBy/scrollToIndex. Do not emulate
+horizontal virtualization or variable-height virtualGrid.
 Probe `view.grid.uniform` before using `view.grid`; it is a bounded row-major
 equal-column layout with 1–64 columns and optional `columnGap`/`rowGap`. Probe
 `view.grid.placement` before setting `gridColumn`, `gridRow`, `columnSpan`, or

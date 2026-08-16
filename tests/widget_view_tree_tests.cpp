@@ -1678,6 +1678,54 @@ void TestStickyListHeaders()
 
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(
+        local function item(index)
+            return view.listItem({
+                key = "virtual-sticky-item-" .. index,
+                height = 30,
+                action = { id = "virtual-sticky.open", value = index },
+                accessibility = { label = "Virtual sticky item " .. index },
+                children = {
+                    view.text({ key = "virtual-sticky-label-" .. index,
+                        text = "Item " .. index }),
+                },
+            })
+        end
+        return view.virtualList({
+            key = "virtual-sticky-list",
+            height = 60,
+            itemCount = 12,
+            itemExtent = 30,
+            firstIndex = 4,
+            overscan = 0,
+            sectionHeaderIndices = { 1, 5, 9 },
+            stickyHeaderIndex = 1,
+            children = { item(1), item(4), item(5) },
+        })
+    )lua") == LUA_OK,
+        "virtual sticky-list fixture must evaluate");
+    ViewNode virtualList;
+    Check(ParseLuaViewTree(state, -1, virtualList, error) &&
+            ValidateAndLayoutViewTree(
+                virtualList, 160.0f, 60.0f, error) &&
+            virtualList.virtualChildIndices ==
+                std::vector<std::size_t>{ 1, 4, 5 },
+        "virtualList must map one auxiliary header before its contiguous window");
+    viewports.clear();
+    Check(ApplyViewScrollOffsets(virtualList,
+            [](std::string_view, float) { return 90.0f; },
+            viewports, error) && viewports.size() == 1 &&
+            Near(virtualList.children[0].frame.y, 0.0f) &&
+            virtualList.children[0].stickyPresented &&
+            Near(virtualList.children[1].frame.y, 0.0f) &&
+            Near(virtualList.children[2].frame.y, 30.0f),
+        "an auxiliary virtual section header must pin and leave window coverage contiguous");
+    const auto virtualPaintOrder = ViewChildrenInPaintOrder(virtualList);
+    Check(virtualPaintOrder.size() == 3 &&
+            virtualPaintOrder.back()->key == "virtual-sticky-item-1",
+        "a presented virtual header must paint above its materialized items");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
         return view.list({ key = "horizontal-sticky",
             orientation = "horizontal",
             children = {
@@ -2103,6 +2151,48 @@ void TestVariableVirtualizedCollections()
             }, viewports, error) && viewports.size() == 1 &&
             Near(viewports[0].contentExtent, 100.0f),
         "variable virtualList must expose an estimated bounded scroll range");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        local function item(index, height)
+            return view.listItem({ key = "variable-section-" .. index,
+                height = height,
+                accessibility = { label = "Variable section " .. index },
+                children = { view.text({
+                    key = "variable-section-label-" .. index,
+                    text = "Section " .. index,
+                }) },
+            })
+        end
+        return view.virtualList({
+            key = "variable-sections",
+            height = 40,
+            itemCount = 5,
+            estimatedItemSize = 20,
+            firstIndex = 3,
+            overscan = 0,
+            sectionHeaderIndices = { 1, 4 },
+            stickyHeaderIndex = 1,
+            children = { item(1, 30), item(3, 20), item(4, 25) },
+        })
+    )lua") == LUA_OK,
+        "variable virtual section fixture must evaluate");
+    ViewNode variableSections;
+    Check(ParseLuaViewTree(state, -1, variableSections, error) &&
+            ValidateAndLayoutViewTree(
+                variableSections, 160.0f, 40.0f, error) &&
+            variableSections.virtualMeasuredIndices ==
+                std::vector<std::size_t>{ 1, 3, 4 } &&
+            variableSections.virtualMeasuredExtents.size() == 3,
+        "variable virtual measurement output must preserve sparse logical indices");
+    viewports.clear();
+    Check(ApplyViewScrollOffsets(variableSections,
+            [](std::string_view, float) { return 40.0f; },
+            viewports, error) && viewports.size() == 1 &&
+            Near(variableSections.children[0].frame.y, -10.0f) &&
+            variableSections.children[0].stickyPresented &&
+            Near(variableSections.children[2].frame.y, 20.0f),
+        "the next variable-height section must push the active header upward");
 
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(

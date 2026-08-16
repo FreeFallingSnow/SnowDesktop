@@ -1774,19 +1774,27 @@ void LayoutVirtualCollection(ViewNode& node, const ViewRect& content)
 {
     if (node.children.empty()) return;
     node.virtualMeasuredExtents.clear();
+    node.virtualMeasuredIndices.clear();
     if (node.estimatedItemSize)
     {
         float cursor = 0.0f;
+        std::size_t previousIndex = 0;
         std::string rangeError;
-        if (!ComputeViewVariableVirtualItemStart(node.itemCount,
-                *node.estimatedItemSize,
-                node.rowGap.value_or(node.gap), node.firstIndex,
-                node.virtualMeasurements, cursor, rangeError))
-            return;
         const float rowGap = node.rowGap.value_or(node.gap);
-        for (auto& child : node.children)
+        for (std::size_t childIndex = 0;
+            childIndex < node.children.size(); ++childIndex)
         {
+            ViewNode& child = node.children[childIndex];
             if (!child.visible) continue;
+            const std::size_t itemIndex =
+                node.virtualChildIndices[childIndex];
+            if (previousIndex == 0 || itemIndex != previousIndex + 1)
+            {
+                if (!ComputeViewVariableVirtualItemStart(node.itemCount,
+                        *node.estimatedItemSize, rowGap, itemIndex,
+                        node.virtualMeasurements, cursor, rangeError))
+                    return;
+            }
             const float intrinsic = child.height.kind ==
                 ViewLengthKind::Fixed
                 ? child.height.value + ViewVerticalMargin(child)
@@ -1797,7 +1805,9 @@ void LayoutVirtualCollection(ViewNode& node, const ViewRect& content)
             LayoutNode(child, { content.x, content.y + cursor,
                 resolved.width, measuredExtent });
             node.virtualMeasuredExtents.push_back(measuredExtent);
+            node.virtualMeasuredIndices.push_back(itemIndex);
             cursor += measuredExtent + rowGap;
+            previousIndex = itemIndex;
         }
         return;
     }
@@ -1814,7 +1824,7 @@ void LayoutVirtualCollection(ViewNode& node, const ViewRect& content)
     {
         ViewNode& child = node.children[childIndex];
         if (!child.visible) continue;
-        const std::size_t itemIndex = node.firstIndex + childIndex;
+        const std::size_t itemIndex = node.virtualChildIndices[childIndex];
         const std::size_t zeroBased = itemIndex - 1;
         const std::size_t row = zeroBased / columns;
         const std::size_t column = zeroBased % columns;
@@ -2318,6 +2328,12 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         error = "virtual collection metadata is reserved for virtual nodes";
         return false;
     }
+    if (node.type != ViewNodeType::VirtualList &&
+        (!node.sectionHeaderIndices.empty() || node.stickyHeaderIndex))
+    {
+        error = "virtual section headers are reserved for virtualList";
+        return false;
+    }
     if ((node.initialScrollKey && node.type != ViewNodeType::Scroll) ||
         (node.initialScrollIndex && !IsVirtualCollection(node.type)))
     {
@@ -2476,8 +2492,37 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             error = "initialScrollIndex is outside the virtual collection";
             return false;
         }
-        if (node.children.size() >
-            ViewTreeLimits::MaximumVirtualWindowItems)
+        if (node.sectionHeaderIndices.size() >
+                ViewTreeLimits::MaximumVirtualSectionHeaders ||
+            !std::is_sorted(node.sectionHeaderIndices.begin(),
+                node.sectionHeaderIndices.end()) ||
+            std::adjacent_find(node.sectionHeaderIndices.begin(),
+                node.sectionHeaderIndices.end()) !=
+                    node.sectionHeaderIndices.end() ||
+            std::any_of(node.sectionHeaderIndices.begin(),
+                node.sectionHeaderIndices.end(), [&](std::size_t index) {
+                    return index == 0 || index > node.itemCount;
+                }))
+        {
+            error = "sectionHeaderIndices must be sorted unique bounded 1-based indices";
+            return false;
+        }
+        if (node.stickyHeaderIndex &&
+            !std::binary_search(node.sectionHeaderIndices.begin(),
+                node.sectionHeaderIndices.end(), *node.stickyHeaderIndex))
+        {
+            error = "stickyHeaderIndex must reference sectionHeaderIndices";
+            return false;
+        }
+        const std::size_t windowChildOffset = node.stickyHeaderIndex &&
+            *node.stickyHeaderIndex < node.firstIndex &&
+            node.collectionContent == ViewCollectionContent::Items ? 1 : 0;
+        const std::size_t windowChildCount =
+            node.children.size() >= windowChildOffset
+            ? node.children.size() - windowChildOffset : 0;
+        if (windowChildCount > ViewTreeLimits::MaximumVirtualWindowItems ||
+            node.children.size() >
+                ViewTreeLimits::MaximumVirtualWindowItems + 1)
         {
             error = "virtual collection materialized window exceeds 128 items";
             return false;
@@ -2508,7 +2553,8 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         }
         else if (node.itemCount == 0)
         {
-            if (node.firstIndex != 0 || !node.children.empty())
+            if (node.firstIndex != 0 || !node.children.empty() ||
+                !node.sectionHeaderIndices.empty() || node.stickyHeaderIndex)
             {
                 error = "empty virtual collections require firstIndex 0 and no children";
                 return false;
@@ -2517,13 +2563,40 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         else
         {
             if (node.firstIndex == 0 || node.firstIndex > node.itemCount ||
-                node.children.empty() ||
-                node.children.size() >
+                windowChildCount == 0 ||
+                windowChildCount >
                     node.itemCount - (node.firstIndex - 1) ||
+                node.virtualChildIndices.size() != node.children.size() ||
                 !std::all_of(node.children.begin(), node.children.end(),
                     [](const ViewNode& child) { return child.visible; }))
             {
                 error = "virtual collection window must be a non-empty visible contiguous item range";
+                return false;
+            }
+            if (windowChildOffset != 0 &&
+                (node.virtualChildIndices.front() !=
+                    *node.stickyHeaderIndex ||
+                 node.children.front().key.empty()))
+            {
+                error = "virtual sticky header child does not match stickyHeaderIndex";
+                return false;
+            }
+            for (std::size_t child = windowChildOffset;
+                child < node.virtualChildIndices.size(); ++child)
+            {
+                if (node.virtualChildIndices[child] !=
+                    node.firstIndex + child - windowChildOffset)
+                {
+                    error = "virtual collection window indices must remain contiguous";
+                    return false;
+                }
+            }
+            if (node.stickyHeaderIndex &&
+                *node.stickyHeaderIndex >= node.firstIndex &&
+                *node.stickyHeaderIndex >=
+                    node.firstIndex + windowChildCount)
+            {
+                error = "stickyHeaderIndex must be materialized in or before the visible window";
                 return false;
             }
         }
@@ -3656,6 +3729,45 @@ void ApplyStickyHeaders(ViewNode& node, const ViewRect& viewport) noexcept
         ApplyStickyHeaders(child, viewport);
 }
 
+void ApplyVirtualStickyHeaders(ViewNode& node,
+    const ViewRect& viewport) noexcept
+{
+    if (node.type != ViewNodeType::VirtualList ||
+        node.sectionHeaderIndices.empty() ||
+        node.virtualChildIndices.size() != node.children.size())
+        return;
+    std::vector<ViewNode*> headers;
+    headers.reserve(node.sectionHeaderIndices.size());
+    for (std::size_t childIndex = 0;
+        childIndex < node.children.size(); ++childIndex)
+    {
+        ViewNode& child = node.children[childIndex];
+        if (child.visible && child.visibility != ViewVisibility::Hidden &&
+            std::binary_search(node.sectionHeaderIndices.begin(),
+                node.sectionHeaderIndices.end(),
+                node.virtualChildIndices[childIndex]))
+            headers.push_back(&child);
+    }
+    const float listBottom = viewport.y +
+        node.scrollContentExtent - node.scrollOffset;
+    for (std::size_t index = 0; index < headers.size(); ++index)
+    {
+        ViewNode& header = *headers[index];
+        const float originalY = header.frame.y;
+        float presentedY = std::max(originalY, viewport.y);
+        presentedY = std::min(presentedY,
+            listBottom - header.frame.height);
+        if (index + 1 < headers.size())
+            presentedY = std::min(presentedY,
+                headers[index + 1]->frame.y - header.frame.height);
+        if (presentedY > originalY + 0.001f)
+        {
+            TranslateTree(header, 0.0f, presentedY - originalY);
+            header.stickyPresented = true;
+        }
+    }
+}
+
 const ViewNode* FindVisibleDescendantByKey(const ViewNode& node,
     std::string_view key) noexcept
 {
@@ -3822,8 +3934,25 @@ bool ApplyScrollState(ViewNode& node,
                 return false;
             if (node.itemCount > 0)
             {
+                std::optional<std::size_t> expectedStickyHeader;
+                const auto nextHeader = std::upper_bound(
+                    node.sectionHeaderIndices.begin(),
+                    node.sectionHeaderIndices.end(),
+                    visibleRange.firstIndex);
+                if (nextHeader != node.sectionHeaderIndices.begin())
+                    expectedStickyHeader = *std::prev(nextHeader);
+                if (node.stickyHeaderIndex != expectedStickyHeader)
+                {
+                    error = "virtualList stickyHeaderIndex does not match the current visible range";
+                    return false;
+                }
+                const std::size_t windowChildOffset =
+                    node.stickyHeaderIndex &&
+                    *node.stickyHeaderIndex < node.firstIndex ? 1 : 0;
+                const std::size_t windowChildCount =
+                    node.children.size() - windowChildOffset;
                 const std::size_t providedLast = node.firstIndex +
-                    node.children.size() - 1;
+                    windowChildCount - 1;
                 if (node.firstIndex > visibleRange.firstIndex ||
                     providedLast < visibleRange.lastIndex)
                 {
@@ -3833,6 +3962,7 @@ bool ApplyScrollState(ViewNode& node,
             }
             for (auto& child : node.children)
                 TranslateTree(child, 0.0f, -offset);
+            ApplyVirtualStickyHeaders(node, clip);
         }
         else if (!IsVirtualCollection(node.type))
         {
@@ -5032,6 +5162,29 @@ bool ValidateAndLayoutViewTree(ViewNode& root, float width, float height,
         error = "view surface dimensions must be finite and positive";
         return false;
     }
+    const auto refreshVirtualChildIndices = [&](const auto& self,
+        ViewNode& node) -> void {
+        node.virtualChildIndices.clear();
+        if (IsVirtualCollection(node.type) &&
+            node.collectionContent == ViewCollectionContent::Items)
+        {
+            node.virtualChildIndices.reserve(node.children.size());
+            const std::size_t windowChildOffset =
+                node.stickyHeaderIndex &&
+                *node.stickyHeaderIndex < node.firstIndex &&
+                !node.children.empty() ? 1 : 0;
+            if (windowChildOffset != 0)
+                node.virtualChildIndices.push_back(
+                    *node.stickyHeaderIndex);
+            for (std::size_t child = windowChildOffset;
+                child < node.children.size(); ++child)
+                node.virtualChildIndices.push_back(
+                    node.firstIndex + child - windowChildOffset);
+        }
+        for (auto& child : node.children) self(self, child);
+    };
+    refreshVirtualChildIndices(refreshVirtualChildIndices, root);
+
     std::size_t nodes = 0;
     std::size_t textBytes = 0;
     std::size_t seriesPoints = 0;

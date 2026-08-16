@@ -140,6 +140,7 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.collection.selection` 提供受控单选/多选，`view.collection.stickyHeaders` 提供 eager 纵向分组标题，
 `view.collection.contentStates` 提供空态/加载态，
 `view.collection.virtual` 提供固定行高虚拟集合与可见范围查询，
+`view.collection.virtual.stickyHeaders` 提供 virtualList 的全局分组索引与窗口外活动标题，
 `view.collection.virtual.variableExtent` 为 virtualList 增加宿主测量的可变行高；
 `view.styledText.basic` 提供有界样式 span，`view.styledText.actions` 提供精确行内交互目标，
 `view.monthCalendar` 提供受控月历日期网格，
@@ -589,14 +590,16 @@ UIA 滚动从末端之前首次到达最大偏移时投递一次 action，离开
 独立 contextMenu；宿主默认赋予 `listitem` 语义。一个树最多 256 个 listItem，仍受 512
 总节点和 256 交互区域上限约束。对应 feature 为 `view.collection.basic`。这是非虚拟化
 基础集合；大量或远程分页数据应使用下述 `virtualList/virtualGrid`，不能通过超配额树模拟。
-`gridList/virtualList/virtualGrid` 不接受 orientation；虚拟集合仍是固定行高的纵向范围模型。
+`gridList/virtualList/virtualGrid` 不接受 orientation；虚拟集合保持纵向范围模型，可变行高只由
+单列 virtualList 的独立 feature 开放。
 
 探测 `view.collection.stickyHeaders` 后，纵向 eager `list` 的直接 `listItem` 可声明
 `sticky=true`。当该 list 位于纵向 `scroll` 内时，宿主把已经越过视口顶部的最近标题固定在
 scroll content 顶部；下一个 sticky 项会把前一个标题向上推出，最后一个标题也不会越过所属
 list 的底部。固定后的绘制、裁剪、元素命中、右键菜单和 UIA 几何共用同一个 scene frame，
 标题会排在普通条目之上，但声明与语义顺序不改变。横向 list、gridList 和 virtual collection
-会原子拒绝 sticky；虚拟分组需要额外的全局 section 索引契约，不能假设本 feature 会保留窗口外标题。
+会原子拒绝 sticky；virtualList 的分组标题使用独立的
+`view.collection.virtual.stickyHeaders` 契约，不能直接给虚拟 listItem 设置 sticky。
 
 探测 `view.collection.selection` 后，四种集合容器都可声明
 `selectionMode="none"|"single"|"multiple"` 和受控 `selectedKeys`。非虚拟集合的键必须
@@ -756,7 +759,46 @@ return view.virtualList({
 })
 ```
 
-当前仍不支持横向虚拟集合、可变行高 virtualGrid、sticky header、
+探测 `view.collection.virtual.stickyHeaders` 后，`virtualList` 可把最多 4096 个已排序、唯一且
+位于 `1..itemCount` 的全局索引同时作为 `sectionHeaderIndices` 传给 `view.virtualRange()` 和
+virtualList 节点。范围结果的可选 `stickyHeaderIndex` 是当前首个可见项所属的最近分组标题。
+当它小于 `range.firstIndex` 时，Lua 必须先创建这个标题的一个额外 `listItem`，再按原顺序创建
+`range.firstIndex..range.lastIndex` 的连续窗口；标题已经位于窗口内时不得重复创建。节点的
+`children`、`firstIndex`、`sectionHeaderIndices` 和 `stickyHeaderIndex` 会被宿主联合校验，额外标题
+不占 128 项连续窗口配额。固定和可变行高 virtualList 共用这一契约；下一个已实体化分组标题会
+推出当前标题，呈现后的绘制、命中、右键菜单与 UIA 几何保持一致。
+
+```lua
+local sectionHeaders = { 1, 8, 19 }
+local range = view.virtualRange({
+    key = "grouped-feed",
+    itemCount = #articles,
+    itemExtent = 44,
+    viewportExtent = viewportExtent,
+    overscan = 2,
+    sectionHeaderIndices = sectionHeaders,
+})
+local children = {}
+if range.stickyHeaderIndex and
+        range.stickyHeaderIndex < range.firstIndex then
+    children[#children + 1] = makeItem(range.stickyHeaderIndex)
+end
+for index = range.firstIndex, range.lastIndex do
+    children[#children + 1] = makeItem(index)
+end
+return view.virtualList({
+    key = "grouped-feed",
+    height = "fill",
+    itemCount = #articles,
+    itemExtent = 44,
+    firstIndex = range.firstIndex,
+    sectionHeaderIndices = sectionHeaders,
+    stickyHeaderIndex = range.stickyHeaderIndex,
+    children = children,
+})
+```
+
+当前仍不支持横向虚拟集合、可变行高 virtualGrid、未实体化项目的 UIA VirtualizedItem，
 或保留已回收项的 Lua 局部状态；固定与可变列表的程序化定位由 `view.scroll.programmatic` 提供，
 稳定状态应放在 model/state 并以 item key 索引。
 
