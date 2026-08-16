@@ -215,7 +215,56 @@ bool ValidateNodeFields(lua_State* state, int index, ViewNodeType type,
             if (valueType != LUA_TSTRING && valueType != LUA_TNUMBER)
                 return rejectType("must be a string or number");
             break;
-        default:
+        case ViewPropertyValueKind::Length:
+            if (valueType != LUA_TSTRING && valueType != LUA_TNUMBER)
+                return rejectType("must match its declared length type");
+            break;
+        case ViewPropertyValueKind::EdgeInsets:
+            if (valueType != LUA_TNUMBER && valueType != LUA_TTABLE)
+                return rejectType(
+                    "must match its declared edge-insets type");
+            break;
+        case ViewPropertyValueKind::Resource:
+            if (valueType != LUA_TUSERDATA)
+                return rejectType("must be a package resource handle");
+            break;
+        case ViewPropertyValueKind::Color:
+            if (!lua_isinteger(state, -1) && valueType != LUA_TSTRING)
+                return rejectType(
+                    "must be an integer color or theme token");
+            break;
+        case ViewPropertyValueKind::GridTracks:
+            if (!lua_isinteger(state, -1) && valueType != LUA_TTABLE)
+                return rejectType("must match its declared grid-tracks type");
+            break;
+        case ViewPropertyValueKind::Tooltip:
+            if (valueType != LUA_TSTRING && valueType != LUA_TTABLE)
+                return rejectType("must match its declared tooltip type");
+            break;
+        case ViewPropertyValueKind::Offset:
+        case ViewPropertyValueKind::StringArray:
+        case ViewPropertyValueKind::NumberArray:
+        case ViewPropertyValueKind::IndexArray:
+        case ViewPropertyValueKind::Node:
+        case ViewPropertyValueKind::NodeArray:
+        case ViewPropertyValueKind::Spans:
+        case ViewPropertyValueKind::ChoiceOptions:
+        case ViewPropertyValueKind::TextSelection:
+        case ViewPropertyValueKind::Style:
+        case ViewPropertyValueKind::Shadow:
+        case ViewPropertyValueKind::Transform:
+        case ViewPropertyValueKind::Transition:
+        case ViewPropertyValueKind::PresenceTransition:
+        case ViewPropertyValueKind::Accessibility:
+        case ViewPropertyValueKind::Events:
+        case ViewPropertyValueKind::Action:
+            if (valueType != LUA_TTABLE)
+            {
+                const std::string kind(
+                    ViewPropertyValueKindName(property->valueKind));
+                return rejectType(("must match its declared " + kind +
+                    " type").c_str());
+            }
             break;
         }
         if (property->hasNumericRange && lua_isnumber(state, -1) &&

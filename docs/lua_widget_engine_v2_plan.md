@@ -1288,6 +1288,8 @@ boolean、number、integer 和 string-or-number 基础类型也由同一目录�
 把数字隐式转换为字符串、把数字字符串隐式转换为 number 的宽松路径；每种语义类型另有稳定工具名。
 23 个 enum 属性的完整允许值集合现也由该目录登记并在入口执行，节点类型值直接复用 44 节点目录，
 不再由各专用解析函数单独承担拼写白名单。
+其余 length、edge-insets、resource、color、array、node、style、transition、tooltip、accessibility、
+events 和 action 等结构类型也已接入同一入口外形校验，再由专用解析器检查内部字段、额度和关系。
 17 个公开节点事件也已进入同一契约源，登记统一 payload 类别和逐节点适用性；Lua 解析器、
 scene 校验与契约测试不再分别维护 change、selectionChange、输入生命周期和 scrollEnd 的类型白名单。
 当前已进一步为每个语义节点登记 UIA ControlType、基础 Pattern 和是否参与宿主键盘焦点，并可从

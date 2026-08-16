@@ -409,6 +409,28 @@ void TestLuaParsing()
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(
         return view.text({
+            key = "string-style", text = "Text", style = "accent",
+        })
+    )lua") == LUA_OK,
+        "strict structured-property fixture must evaluate");
+    root = {};
+    Check(!ParseLuaViewTree(state, -1, root, error) &&
+            error == "view field 'style' must match its declared style type",
+        "declared structured properties must reject scalar values early");
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.text({
+            key = "table-width", text = "Text", width = {},
+        })
+    )lua") == LUA_OK,
+        "strict length-property fixture must evaluate");
+    root = {};
+    Check(!ParseLuaViewTree(state, -1, root, error) &&
+            error == "view field 'width' must match its declared length type",
+        "declared length properties must reject arbitrary tables early");
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.text({
             key = "too-many-lines", text = "Text", maxLines = 65,
         })
     )lua") == LUA_OK,
