@@ -89,11 +89,12 @@
 ---@class SnowSettingField
 ---@field key string
 ---@field label string
----@field type 'text'|'password'|'bool'|'int'|'float'|'select'|'color'|'appSearch'
----@field default? string|number|boolean Ignored for password fields; secrets must never be shipped as defaults.
+---@field type 'text'|'password'|'bool'|'int'|'float'|'select'|'color'|'appReference'|'appSearch'
+---@field default? string|number|boolean Ignored for password and appReference fields; opaque values must never be shipped as defaults.
 ---@field searchKey? string Required by appSearch; stores the user's query separately from the selected display title.
----@field emptyLabel? string Localized label used to clear an appSearch selection.
----@field noResultsLabel? string Localized label shown after an appSearch returns no applications.
+---@field binding? string Required by appReference; names one replacePolicy='allow' manifest binding that accepts app.reference.
+---@field emptyLabel? string Localized empty-state label used by appSearch and appReference.
+---@field noResultsLabel? string Localized label shown after an application search returns no results.
 ---@field min? number
 ---@field max? number
 ---@field options? string[]
@@ -461,7 +462,7 @@
 ---@field slotId string
 ---@field kind 'binding'|'collection'
 ---@field revision integer
----@field operation 'unchanged'|'bound'|'replaced'|'cleared'|'added'|'removed'|'moved'|'undone'|'redone'
+---@field operation 'unchanged'|'bound'|'replaced'|'cleared'|'added'|'removed'|'moved'|'availability'|'undone'|'redone'
 ---@field itemIds string[]
 
 ---@class SnowLogicalBinding
@@ -671,7 +672,7 @@
 ---@field revision? integer Monotonic provider revision for data.change.
 ---@field slotId? string Manifest logical-slot ID for slot.changed.
 ---@field slotKind? 'binding'|'collection' Logical slot model kind for slot.changed.
----@field operation? 'bound'|'replaced'|'added'|'removed'|'moved'|'cleared'|'undone'|'redone' Logical slot transaction for slot.changed.
+---@field operation? 'bound'|'replaced'|'added'|'removed'|'moved'|'cleared'|'availability'|'undone'|'redone' Logical slot transaction for slot.changed.
 ---@field itemIds? string[] Opaque affected host item IDs for slot.changed.
 ---@field source? 'pointer'|'keyboard'|'ime'|'commit'|'host.drop'|'host.picker'|'host.menu'|'host.keyboard'|string Host interaction source; host.* values identify slot.changed transactions.
 ---@field taskId? integer

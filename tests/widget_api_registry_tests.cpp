@@ -372,6 +372,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature("schedule.timeline") &&
             snowdesktop::widget_api::SupportsFeature("schedule.visibility") &&
             snowdesktop::widget_api::SupportsFeature(
+                "settings.appReference") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "settings.appSearch") &&
             snowdesktop::widget_api::SupportsFeature(
                 "settings.secretReference") &&

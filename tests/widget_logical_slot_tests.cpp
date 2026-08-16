@@ -96,6 +96,15 @@ void TestBindingAndCollectionTransactions()
             first.items[0].reference.starts_with("lsr-") &&
             first.items[0].reference.find("calendar") == std::string::npos,
         "Lua-facing binding references must be stable and opaque");
+    Check(model.SetAvailability("primaryApp", first.items[0].id, false,
+            change, error) && change.operation == "availability" &&
+            !model.Find("primaryApp")->items[0].available &&
+        model.SetAvailability("primaryApp", first.items[0].id, false,
+            change, error) && change.operation == "unchanged" &&
+        model.SetAvailability("primaryApp", first.items[0].id, true,
+            change, error) &&
+            model.Find("primaryApp")->items[0].available,
+        "host catalog reconciliation must update availability without replacing the opaque reference");
     Check(model.Bind("primaryApp",
             Item("app.reference", "Mail", "app:mail"),
             change, error) && change.operation == "replaced" &&
@@ -148,6 +157,9 @@ void TestPersistenceRoundTrip()
             change, error) &&
         source.Bind("favorites",
             Item("filesystem.reference", "Plan", "file:plan"),
+            change, error) &&
+        source.SetAvailability("primaryApp",
+            source.Find("primaryApp")->items[0].id, false,
             change, error), "fixture mutations must succeed");
     std::unordered_map<std::string, std::string> storage;
     source.Export(storage, "instance-1");
@@ -160,6 +172,7 @@ void TestPersistenceRoundTrip()
             restored.Restore(storage, "instance-1", error) &&
             restored.Find("primaryApp")->items ==
                 source.Find("primaryApp")->items &&
+            !restored.Find("primaryApp")->items[0].available &&
             restored.Find("favorites")->revision ==
                 source.Find("favorites")->revision,
         "logical slot targets and opaque references must survive restart");

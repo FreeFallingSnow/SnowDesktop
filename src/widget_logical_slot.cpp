@@ -500,6 +500,41 @@ bool LogicalSlotModel::Bind(std::string_view slotId,
     return true;
 }
 
+bool LogicalSlotModel::SetAvailability(std::string_view slotId,
+    std::string_view itemId, bool available, LogicalSlotChange& change,
+    std::string& error)
+{
+    error.clear();
+    change = {};
+    auto snapshot = snapshots_.find(slotId);
+    if (snapshot == snapshots_.end())
+    {
+        error = "logical slot is not declared";
+        return false;
+    }
+    const auto item = std::find_if(snapshot->second.items.begin(),
+        snapshot->second.items.end(), [itemId](const auto& candidate) {
+            return candidate.id == itemId;
+        });
+    if (item == snapshot->second.items.end())
+    {
+        error = "logical slot item does not exist";
+        return false;
+    }
+    if (item->available == available)
+    {
+        change = { snapshot->second.id, snapshot->second.kind,
+            snapshot->second.revision, "unchanged", { item->id } };
+        return true;
+    }
+    item->available = available;
+    ++snapshot->second.revision;
+    if (snapshot->second.revision == 0) ++snapshot->second.revision;
+    change = { snapshot->second.id, snapshot->second.kind,
+        snapshot->second.revision, "availability", { item->id } };
+    return true;
+}
+
 bool LogicalSlotModel::Clear(std::string_view slotId,
     LogicalSlotChange& change, std::string& error)
 {

@@ -1040,6 +1040,8 @@ capacity/item/items` 可在 view 中调用；`bind/add/clear/remove/move` 会持
 返回 `SnowLogicalSlotChange`；槽位会发出新的持久 opaque `item.reference`，可继续交给
 `view.referenceIcon` 显示宿主图标，或交给对应的 `app.launch`、
 `shell.openItem/revealItem` 任务执行受权限和可信手势约束的操作。
+当宿主应用目录核对改变持久应用引用的可用性时，revision 同样递增并发送 operation 为
+`availability`、source 为 `host.catalog` 的 `slot.changed`；这类宿主状态更新不进入用户撤销历史。
 
 声明式树必须准确反映同一宿主快照。binding 的 surface 可有一个 placeholder 或一个
 `slotItem`；有绑定时必须提交该 item。collection 的直接 children 必须按宿主顺序完整提交
@@ -2136,6 +2138,34 @@ API v1 的同步 `sys` 代替。
 `noResultsLabel` 必须使用组件清单中的本地化文本。该控件只负责设置交互；组件运行时仍应
 通过 `app.search` 获取当前实例的 opaque `ref`，并在可信用户动作中用 `app.launch` 启动。
 对应 feature 为 `settings.appSearch`。
+
+`appReference` 是持久应用引用选择器，不保存显示名、路径或 AUMID。字段必须提供稳定的
+`key` 和 `binding`；`binding` 必须指向 manifest 中接受 `app.reference` 且
+`replacePolicy="allow"` 的单项槽位：
+
+```lua
+settings = {
+    fields = {
+        {
+            key = "primaryAppPicker",
+            label = l10n.tr("widget.primary_app"),
+            type = "appReference",
+            binding = "primaryApp",
+            emptyLabel = l10n.tr("widget.primary_app_empty"),
+            noResultsLabel = l10n.tr("widget.no_apps"),
+        },
+    },
+}
+```
+
+宿主在设置页搜索自己的应用索引；选择、替换和清除直接提交到逻辑槽位事务并进入同一
+撤销历史，搜索文字只保存在临时 UI 状态。`default`、preset、普通 storage 和组件预览都不
+接触引用内容；`storage.get/transaction:get` 对字段 `key` 返回 nil，写入或移除该键会被拒绝。
+组件用 `slots.binding("primaryApp"):item()` 读取宿主持久 opaque
+`reference`；项目的 `availability` 为 `available` 或 `unavailable`，应用索引变化时宿主会重新核对，
+不可用引用不能交给 `app.launch`。选择器本身不要求 `app.discovery`，但启动仍要求
+`app.launch` 权限和当前可信用户手势。对应 feature 为 `settings.appReference`，并同时依赖
+`slots.model`。
 
 `password` 设置由宿主显示遮罩输入框并使用 Windows DPAPI 写入独立私有状态文件；不要提供
 `default`，也不要把该键写进 preset。输入框失去焦点时提交新值，右侧 `×` 清除已有值。

@@ -1588,7 +1588,7 @@ v2.0 不开放：真实文件 move/copy/delete、组件嵌套、把 Lua 组件�
 
 普通配置值进入类型化实例存储；secret、file/folder handle 和宿主 item/app reference 只保存绑定/授权记录，不进入普通字符串存储和预览。entity selector 由宿主展示，组件只取得用户最终选择的 opaque reference；组件若自行枚举候选，仍需对应 read/discovery 权限。
 
-当前过渡实现已提供 `settings.appSearch`：搜索文字与已选显示名分别存储，候选匹配复用宿主应用索引并在 worker 执行，媒体控制组件已接入。它解决设置页动态搜索和选择交互，但尚不是最终的持久 `appReference` binding；后者仍按上段要求进入宿主管理的 opaque reference 存储。`settings.secretReference` 已提供 `password` 字段：无 default/preset、遮罩编辑、显式清除、DPAPI 私有持久化及只读 opaque reference；secret 文件位于普通 data 目录之外，不随 `.snowbackup` 导出。
+`settings.appReference` 已提供最终的单应用引用选择器：字段绑定 manifest 的 `app.reference` binding，宿主应用索引在 worker 匹配，选择、替换和清除直接进入逻辑槽位持久事务及撤销历史，不再把显示名、路径或 AUMID 写进普通 storage。应用目录变化会重新核对 `available/unavailable`，不可用引用不能启动。选择器不要求组件取得全量 `app.discovery`；实际启动仍走 `app.launch` 权限和可信手势。原 `settings.appSearch` 保留为“选择一个显示文本”的普通配置控件，媒体控制组件用它匹配会话标题，不再承担持久实体引用语义。`settings.secretReference` 已提供 `password` 字段：无 default/preset、遮罩编辑、显式清除、DPAPI 私有持久化及只读 opaque reference；secret 文件位于普通 data 目录之外，不随 `.snowbackup` 导出。
 
 ### 15.2 包内模块
 

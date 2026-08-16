@@ -97,6 +97,8 @@ public:
     bool Bind(std::string_view slotId, LogicalSlotItem candidate,
         LogicalSlotChange& change, std::string& error,
         std::optional<std::size_t> targetIndex = std::nullopt);
+    bool SetAvailability(std::string_view slotId, std::string_view itemId,
+        bool available, LogicalSlotChange& change, std::string& error);
     bool Clear(std::string_view slotId,
         LogicalSlotChange& change, std::string& error);
     bool Remove(std::string_view slotId, std::string_view itemId,

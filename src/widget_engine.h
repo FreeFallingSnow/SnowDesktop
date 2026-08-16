@@ -103,6 +103,7 @@ struct LuaWidgetManifest
         std::string type;
         std::string defaultValue;
         std::string searchKey;
+        std::string binding;
         std::string emptyLabel;
         std::string noResultsLabel;
         double minValue = 0.0;
@@ -442,6 +443,7 @@ struct LuaWidget
         std::string source;
         std::string type;
         bool persistent = false;
+        bool available = true;
     };
 
     struct ItemReference
@@ -454,6 +456,7 @@ struct LuaWidget
         std::string type;
         std::string referenceKind = "filesystem.reference";
         bool persistent = false;
+        bool available = true;
     };
 
     struct HostControl
@@ -1317,6 +1320,9 @@ public:
     /** Return true when key is a host-managed password setting. */
     bool RuntimeGetSecretReference(const std::wstring& widgetId,
         const std::string& key, std::string& reference) const;
+    /** Return true when key is a host-managed appReference setting. */
+    bool RuntimeIsAppReferenceSetting(const std::wstring& widgetId,
+        const std::string& key) const;
     std::vector<std::string> RuntimeSecretStorageKeys(
         const std::wstring& widgetId) const;
 
@@ -1553,6 +1559,7 @@ private:
     void DispatchHostLogicalSlotChange(LuaWidget& widget,
         const snowdesktop::widget_runtime::LogicalSlotChange& change,
         std::string_view source);
+    void RefreshApplicationLogicalSlotAvailability();
     void DispatchInteractionAction(LuaWidget& widget,
         const std::string& targetKey, const char* eventName,
         int x, int y, int button, int delta, int clickCount = 0,
@@ -1675,6 +1682,7 @@ private:
     struct SettingsAppSearchState
     {
         std::uint64_t taskId = 0;
+        std::string input;
         std::string query;
         std::string error;
         bool completed = false;

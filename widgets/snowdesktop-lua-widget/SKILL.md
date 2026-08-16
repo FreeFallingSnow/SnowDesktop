@@ -169,6 +169,12 @@ logical bindings or collections. Open them with `slots.binding(id)` or
 `view.slotSurface/slotItem`, and only call bind/add/clear/remove/move from the
 current trusted action event. These methods persist references; they do not
 grant file contents, expose paths, or move source objects. Probe
+`settings.appReference` for a host settings field whose `binding` names one
+replaceable manifest binding accepting `app.reference`. The selector writes directly to
+the host-owned slot, never to ordinary storage; replacement and clearing join
+slot history, and the component reads the result with `slots.binding(id):item()`.
+The host can mark a persisted item unavailable after app-catalog changes, and
+an unavailable reference cannot be launched. Probe
 `view.referenceIcon` to render a bound/search result's opaque reference as a
 host-resolved icon without requiring a package image or exposing its target;
 this visual node does not grant launch, open, reveal, or file-content access.
