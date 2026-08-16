@@ -20,7 +20,7 @@ namespace snowdesktop::widget_api
 namespace
 {
 constexpr std::uint32_t kCurrentApiVersion = 2;
-constexpr std::array<std::string_view, 160> kHostFeatures = {
+constexpr std::array<std::string_view, 161> kHostFeatures = {
     "animation.frame",
     "calendar.dateMath",
     "calendar.selection",
@@ -178,6 +178,7 @@ constexpr std::array<std::string_view, 160> kHostFeatures = {
     "view.tooltip",
     "view.transform.affine",
     "view.transform.basic",
+    "view.transition.layout",
     "view.transition.transform",
     "view.transition.visual",
     "view.tree.core",

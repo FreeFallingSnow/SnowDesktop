@@ -217,8 +217,14 @@ transition = {
 探测 `view.transition.transform` 后，`properties` 还可包含 `transform`：宿主逐项插值平移、
 缩放、原点和斜切，并沿最短角度路径插值旋转；未声明 transform 按单位变换参与过渡。
 transform 插值只改变呈现矩阵，命中、宿主控件和 UIA 几何会在新 scene 提交时原子切换到
-目标矩阵，不会暴露逐帧中间几何。节点首次出现直接显示目标样式，删除节点不产生 exit 动画；
-布局、阴影、圆角、边框宽度以及 enter/exit transition 仍不属于这些 feature。
+目标矩阵，不会暴露逐帧中间几何。
+
+探测 `view.transition.layout` 后，`properties` 还可包含 `layout`。同一稳定 key 节点在父布局内的
+相对位置或尺寸变化时，宿主用呈现矩阵从上一帧布局插值到新布局；父子都声明时按层级组合，
+而滚动偏移与虚拟窗口平移不会被误判为布局变化。插值帧不重新求值布局，命中、裁剪、宿主输入
+和 UIA 几何仍在 scene 提交时原子使用目标布局，因此动画中的视觉位置不扩大可点击区域。
+节点首次出现直接显示目标样式，删除节点不产生 exit 动画；阴影参数、圆角、边框宽度以及
+enter/exit transition 仍不属于这些 feature。
 
 桌面与 panel/dialog/popover 各自维护过渡状态，插值帧只重绘上一棵成功提交的 scene tree，
 不会每帧重新调用 Lua `view()`。未绑定节点 pointer action 的 hover/pressed 状态变化也走

@@ -1918,7 +1918,7 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             error = "view transition must contain 1 to 4 properties and a duration from 1 to 2000ms";
             return false;
         }
-        std::array<bool, 5> seen{};
+        std::array<bool, 6> seen{};
         for (const auto property : node.transition->properties)
         {
             const auto index = static_cast<std::size_t>(property);
@@ -3470,6 +3470,20 @@ bool CollectInputs(const ViewNode& node,
     return true;
 }
 
+void CaptureLayoutTransitionFrames(ViewNode& node,
+    const std::optional<ViewRect>& parentFrame) noexcept
+{
+    node.layoutTransitionFrame = node.frame;
+    if (parentFrame)
+    {
+        node.layoutTransitionFrame.x -= parentFrame->x;
+        node.layoutTransitionFrame.y -= parentFrame->y;
+    }
+    const ViewRect currentFrame = node.frame;
+    for (auto& child : node.children)
+        CaptureLayoutTransitionFrames(child, currentFrame);
+}
+
 void TranslateTree(ViewNode& node, float deltaX, float deltaY) noexcept
 {
     node.frame.x += deltaX;
@@ -3897,7 +3911,11 @@ bool HasTransitionDifference(const ViewTransitionPresentation& start,
         (HasTransitionProperty(transition,
                 ViewTransitionProperty::Transform) &&
             start.transform.value_or(ViewTransform{}) !=
-                target.transform.value_or(ViewTransform{}));
+                target.transform.value_or(ViewTransform{})) ||
+        (HasTransitionProperty(transition,
+                ViewTransitionProperty::Layout) &&
+            start.layoutFrame && target.layoutFrame &&
+            start.layoutFrame != target.layoutFrame);
 }
 
 float InterpolateTransitionAngle(float start, float target,
@@ -3968,6 +3986,22 @@ ViewTransitionPresentation InterpolateTransitionPresentation(
             start.transform.value_or(ViewTransform{}),
             target.transform.value_or(ViewTransform{}), progress);
     }
+    if (HasTransitionProperty(
+            transition, ViewTransitionProperty::Layout) &&
+        start.layoutFrame && target.layoutFrame)
+    {
+        const auto interpolate = [progress](float from, float to) {
+            return from + (to - from) * progress;
+        };
+        result.layoutFrame = ViewRect{
+            interpolate(start.layoutFrame->x, target.layoutFrame->x),
+            interpolate(start.layoutFrame->y, target.layoutFrame->y),
+            interpolate(start.layoutFrame->width,
+                target.layoutFrame->width),
+            interpolate(start.layoutFrame->height,
+                target.layoutFrame->height),
+        };
+    }
     return result;
 }
 }
@@ -3995,6 +4029,39 @@ ViewResolvedTransform ResolveViewLocalTransform(const ViewRect& frame,
     const std::optional<ViewTransform>& transform) noexcept
 {
     return LocalTransform(frame, transform);
+}
+
+ViewResolvedTransform ResolveViewPresentationTransform(
+    const ViewRect& renderedFrame,
+    const ViewRect& targetLayoutFrame,
+    const ViewRect& presentedLayoutFrame,
+    const std::optional<ViewTransform>& transform) noexcept
+{
+    constexpr float epsilon = 0.000001f;
+    if (renderedFrame.width <= epsilon || renderedFrame.height <= epsilon ||
+        targetLayoutFrame.width <= epsilon ||
+        targetLayoutFrame.height <= epsilon)
+        return LocalTransform(renderedFrame, transform);
+
+    const ViewRect presentedRenderedFrame{
+        renderedFrame.x +
+            (presentedLayoutFrame.x - targetLayoutFrame.x),
+        renderedFrame.y +
+            (presentedLayoutFrame.y - targetLayoutFrame.y),
+        presentedLayoutFrame.width,
+        presentedLayoutFrame.height,
+    };
+    const float scaleX = presentedRenderedFrame.width /
+        renderedFrame.width;
+    const float scaleY = presentedRenderedFrame.height /
+        renderedFrame.height;
+    const ViewResolvedTransform layout{
+        scaleX, 0.0f, 0.0f, scaleY,
+        presentedRenderedFrame.x - renderedFrame.x * scaleX,
+        presentedRenderedFrame.y - renderedFrame.y * scaleY,
+    };
+    return ComposeTransform(layout,
+        LocalTransform(presentedRenderedFrame, transform));
 }
 
 std::optional<ViewRect> ResolveViewClipForKey(
@@ -4182,11 +4249,12 @@ void ViewTransitionRuntime::BeginFrame() noexcept
 ViewTransitionPresentation ViewTransitionRuntime::ResolvePresentation(
     std::string_view key, const ViewStyle& targetStyle,
     const std::optional<ViewTransform>& targetTransform,
+    const std::optional<ViewRect>& targetLayoutFrame,
     const std::optional<ViewTransition>& transition,
     TimePoint now, bool reducedMotion)
 {
     const ViewTransitionPresentation target{
-        targetStyle, targetTransform };
+        targetStyle, targetTransform, targetLayoutFrame };
     if (key.empty()) return target;
     const ViewTransition configured = transition.value_or(ViewTransition{});
     auto [position, inserted] = entries_.try_emplace(std::string(key));
@@ -4251,7 +4319,7 @@ ViewStyle ViewTransitionRuntime::Resolve(std::string_view key,
     TimePoint now, bool reducedMotion)
 {
     return ResolvePresentation(key, target, std::nullopt,
-        transition, now, reducedMotion).style;
+        std::nullopt, transition, now, reducedMotion).style;
 }
 
 void ViewTransitionRuntime::EndFrame()
@@ -4500,6 +4568,7 @@ bool ValidateAndLayoutViewTree(ViewNode& root, float width, float height,
     ApplyCollectionSelectionState(root);
     if (!ResolveGridPlacements(root, error)) return false;
     LayoutNode(root, { 0.0f, 0.0f, width, height });
+    CaptureLayoutTransitionFrames(root, std::nullopt);
     return ValidateTransforms(root, {}, error);
 }
 

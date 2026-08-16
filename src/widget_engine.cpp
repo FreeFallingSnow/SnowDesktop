@@ -16339,19 +16339,25 @@ class WidgetViewTransformScope
 public:
     WidgetViewTransformScope(D2DState* state,
         const snowdesktop::widget_runtime::ViewNode& node)
-        : WidgetViewTransformScope(state, node, node.transform)
+        : WidgetViewTransformScope(state, node, node.transform,
+            node.layoutTransitionFrame)
     {
     }
 
     WidgetViewTransformScope(D2DState* state,
         const snowdesktop::widget_runtime::ViewNode& node,
         const std::optional<snowdesktop::widget_runtime::ViewTransform>&
-            transform)
+            transform,
+        const std::optional<snowdesktop::widget_runtime::ViewRect>&
+            presentedLayoutFrame)
         : context_(state ? state->ctx : nullptr)
     {
-        if (!context_ || !transform) return;
+        if (!context_) return;
         const auto resolved = snowdesktop::widget_runtime::
-            ResolveViewLocalTransform(node.frame, transform);
+            ResolveViewPresentationTransform(node.frame,
+                node.layoutTransitionFrame,
+                presentedLayoutFrame.value_or(
+                    node.layoutTransitionFrame), transform);
         if (std::abs(resolved.m11 - 1.0f) <= 0.000001f &&
             std::abs(resolved.m22 - 1.0f) <= 0.000001f &&
             std::abs(resolved.m12) <= 0.000001f &&
@@ -16428,16 +16434,26 @@ static void DrawWidgetViewNode(D2DState* state,
             style.opacity = 0.82f;
     }
     auto presentedTransform = node.transform;
+    std::optional<snowdesktop::widget_runtime::ViewRect>
+        presentedLayoutFrame = node.layoutTransitionFrame;
     if (transitions)
     {
         auto presentation = transitions->ResolvePresentation(node.key,
-            style, node.transform, node.transition, now, reducedMotion);
+            style, node.transform, node.layoutTransitionFrame,
+            node.transition, now, reducedMotion);
         style = std::move(presentation.style);
         presentedTransform = std::move(presentation.transform);
+        presentedLayoutFrame = std::move(presentation.layoutFrame);
     }
     WidgetViewTransformScope transformScope(
-        state, node, presentedTransform);
+        state, node, presentedTransform, presentedLayoutFrame);
+    const float layoutScaleY = node.layoutTransitionFrame.height > 0.000001f &&
+        presentedLayoutFrame
+        ? presentedLayoutFrame->height /
+            node.layoutTransitionFrame.height
+        : 1.0f;
     const float cumulativeScale = inheritedScale *
+        layoutScaleY *
         (presentedTransform
             ? presentedTransform->scale * presentedTransform->scaleY
             : 1.0f);

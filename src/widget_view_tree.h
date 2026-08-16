@@ -355,6 +355,7 @@ enum class ViewTransitionProperty
     BorderColor,
     Opacity,
     Transform,
+    Layout,
 };
 
 struct ViewTransition
@@ -396,6 +397,7 @@ struct ViewTransitionPresentation
 {
     ViewStyle style;
     std::optional<ViewTransform> transform;
+    std::optional<ViewRect> layoutFrame;
 
     bool operator==(const ViewTransitionPresentation&) const = default;
 };
@@ -607,6 +609,9 @@ struct ViewNode
     std::map<std::string, InteractionAction, std::less<>> events;
     std::vector<ViewNode> children;
     ViewRect frame;
+    // Parent-relative frame captured before scroll offsets are applied. This
+    // keeps scrolling separate from opt-in layout transitions.
+    ViewRect layoutTransitionFrame;
     std::optional<ViewRect> clipFrame;
     float scrollOffset = 0.0f;
     float scrollViewportExtent = 0.0f;
@@ -674,6 +679,7 @@ public:
     ViewTransitionPresentation ResolvePresentation(std::string_view key,
         const ViewStyle& targetStyle,
         const std::optional<ViewTransform>& targetTransform,
+        const std::optional<ViewRect>& targetLayoutFrame,
         const std::optional<ViewTransition>& transition,
         TimePoint now, bool reducedMotion);
     ViewStyle Resolve(std::string_view key, const ViewStyle& target,
@@ -753,6 +759,11 @@ ViewResolvedTransform ResolveViewTransformForKey(
 ViewResolvedTransform ResolveViewLocalTransform(
     const ViewNode& node) noexcept;
 ViewResolvedTransform ResolveViewLocalTransform(const ViewRect& frame,
+    const std::optional<ViewTransform>& transform) noexcept;
+ViewResolvedTransform ResolveViewPresentationTransform(
+    const ViewRect& renderedFrame,
+    const ViewRect& targetLayoutFrame,
+    const ViewRect& presentedLayoutFrame,
     const std::optional<ViewTransform>& transform) noexcept;
 std::optional<ViewRect> ResolveViewClipForKey(
     const ViewNode& root, std::string_view key,

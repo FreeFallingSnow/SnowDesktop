@@ -545,6 +545,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "view.theme.tokens") &&
             snowdesktop::widget_api::SupportsFeature(
+                "view.transition.layout") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "view.transition.transform") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.transition.visual") &&

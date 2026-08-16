@@ -1422,6 +1422,10 @@ void TestScrollableCollections()
         "scroll, list, and listItem constructors must retain typed nodes");
     Check(ValidateAndLayoutViewTree(root, 200.0f, 100.0f, error),
         "a bounded scrollable list must validate and lay out");
+    const ViewRect firstItemLayoutFrame =
+        root.children[0].children[0].layoutTransitionFrame;
+    const float firstItemRenderedY =
+        root.children[0].children[0].frame.y;
     std::vector<ViewScrollViewport> viewports;
     Check(ApplyViewScrollOffsets(root,
             [](std::string_view key, float) {
@@ -1432,8 +1436,13 @@ void TestScrollableCollections()
             Near(viewports[0].contentExtent, 128.0f) &&
             Near(viewports[0].maximum, 36.0f) &&
             Near(viewports[0].offset, 36.0f) &&
-            root.clipFrame && Near(root.clipFrame->y, 4.0f),
-        "scroll state must clamp a host offset to measured content extent");
+            root.clipFrame && Near(root.clipFrame->y, 4.0f) &&
+            root.children[0].children[0].layoutTransitionFrame ==
+                firstItemLayoutFrame &&
+            Near(root.children[0].children[0].frame.y,
+                firstItemRenderedY - 36.0f),
+        "scroll state must clamp a host offset without changing the "
+        "layout-transition target");
     std::vector<InteractionRegion> regions;
     Check(CollectViewInteractionRegions(root, regions, error) &&
             regions.size() == 4 && regions[0].key == "feed" &&
@@ -3287,7 +3296,7 @@ void TestVisualTransitionRuntime()
                 durationMs = 200,
                 easing = "easeInOut",
                 properties = {
-                    "background", "borderColor", "opacity", "transform",
+                    "background", "opacity", "transform", "layout",
                 },
             },
         })
@@ -3300,7 +3309,7 @@ void TestVisualTransitionRuntime()
             parsed.transition->easing == ViewTransitionEasing::EaseInOut &&
             parsed.transition->properties.size() == 4 &&
             parsed.transition->properties.back() ==
-                ViewTransitionProperty::Transform &&
+                ViewTransitionProperty::Layout &&
             ValidateAndLayoutViewTree(parsed, 100.0f, 40.0f, error),
         "Lua parsing must retain a bounded visual transition descriptor");
 
@@ -3382,17 +3391,17 @@ void TestVisualTransitionRuntime()
     ViewTransitionRuntime transformRuntime;
     transformRuntime.BeginFrame();
     const auto firstTransform = transformRuntime.ResolvePresentation(
-        "moving", {}, startTransform, transformTransition,
+        "moving", {}, startTransform, std::nullopt, transformTransition,
         origin, false);
     transformRuntime.EndFrame();
     transformRuntime.BeginFrame();
     const auto changedTransform = transformRuntime.ResolvePresentation(
-        "moving", {}, targetTransform, transformTransition,
+        "moving", {}, targetTransform, std::nullopt, transformTransition,
         origin, false);
     transformRuntime.EndFrame();
     transformRuntime.BeginFrame();
     const auto middleTransform = transformRuntime.ResolvePresentation(
-        "moving", {}, targetTransform, transformTransition,
+        "moving", {}, targetTransform, std::nullopt, transformTransition,
         origin + std::chrono::milliseconds(50), false);
     transformRuntime.EndFrame();
     Check(firstTransform.transform == startTransform &&
@@ -3403,6 +3412,51 @@ void TestVisualTransitionRuntime()
             Near(middleTransform.transform->rotate, 180.0f) &&
             transformRuntime.HasActive(),
         "host transform transitions must interpolate decomposed values and use the shortest rotation arc");
+
+    ViewTransition layoutTransition;
+    layoutTransition.durationMilliseconds = 100;
+    layoutTransition.easing = ViewTransitionEasing::Linear;
+    layoutTransition.properties = { ViewTransitionProperty::Layout };
+    const ViewRect startLayout{ 0.0f, 0.0f, 100.0f, 50.0f };
+    const ViewRect targetLayout{ 20.0f, 10.0f, 200.0f, 100.0f };
+    ViewTransitionRuntime layoutRuntime;
+    layoutRuntime.BeginFrame();
+    const auto firstLayout = layoutRuntime.ResolvePresentation(
+        "reflowing", {}, std::nullopt, startLayout, layoutTransition,
+        origin, false);
+    layoutRuntime.EndFrame();
+    layoutRuntime.BeginFrame();
+    const auto changedLayout = layoutRuntime.ResolvePresentation(
+        "reflowing", {}, std::nullopt, targetLayout, layoutTransition,
+        origin, false);
+    layoutRuntime.EndFrame();
+    layoutRuntime.BeginFrame();
+    const auto middleLayout = layoutRuntime.ResolvePresentation(
+        "reflowing", {}, std::nullopt, targetLayout, layoutTransition,
+        origin + std::chrono::milliseconds(50), false);
+    layoutRuntime.EndFrame();
+    Check(firstLayout.layoutFrame == startLayout &&
+            changedLayout.layoutFrame == startLayout &&
+            middleLayout.layoutFrame &&
+            Near(middleLayout.layoutFrame->x, 10.0f) &&
+            Near(middleLayout.layoutFrame->y, 5.0f) &&
+            Near(middleLayout.layoutFrame->width, 150.0f) &&
+            Near(middleLayout.layoutFrame->height, 75.0f) &&
+            layoutRuntime.HasActive(),
+        "host layout transitions must interpolate parent-relative position and size");
+
+    const ViewRect renderedFrame{ 60.0f, 80.0f, 100.0f, 50.0f };
+    const ViewRect targetRelative{ 10.0f, 20.0f, 100.0f, 50.0f };
+    const ViewRect presentedRelative{ 0.0f, 10.0f, 50.0f, 25.0f };
+    const auto presentationTransform = ResolveViewPresentationTransform(
+        renderedFrame, targetRelative, presentedRelative, std::nullopt);
+    const ViewRect presentedBounds = ApplyViewTransform(
+        renderedFrame, presentationTransform);
+    Check(Near(presentedBounds.x, 50.0f) &&
+            Near(presentedBounds.y, 70.0f) &&
+            Near(presentedBounds.width, 50.0f) &&
+            Near(presentedBounds.height, 25.0f),
+        "layout presentation transforms must map a scrolled rendered frame using only the relative layout delta");
 }
 
 void TestThemeColorTokens()
