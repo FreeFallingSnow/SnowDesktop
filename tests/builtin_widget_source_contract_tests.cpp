@@ -153,7 +153,8 @@ void TestPublishedV2Catalog(const fs::path& repository)
     }
 
     const auto nodes = FirstQuotedInitializerFields(Section(viewContract,
-        "constexpr auto kContracts", "constexpr auto NodeTypeNames"));
+        "constexpr auto kContracts",
+        "constexpr auto kValidationDiagnostics"));
     const auto properties = QuotedStrings(Section(viewContract,
         "constexpr auto kProperties", "constexpr auto kCommonProperties"));
     const auto events = FirstQuotedInitializerFields(Section(viewContract,
