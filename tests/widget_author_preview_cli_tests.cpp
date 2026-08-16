@@ -1,7 +1,6 @@
 #include <windows.h>
 
 #include <array>
-#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -49,16 +48,52 @@ public:
     std::filesystem::path path;
 };
 
-std::pair<int, std::string> Run(std::wstring command)
+std::pair<int, std::string> Run(
+    const std::filesystem::path& executable,
+    const std::vector<std::wstring>& arguments)
 {
-    FILE* pipe = _wpopen(command.c_str(), L"rt");
-    Check(pipe != nullptr, "snowwidget preview process starts");
+    SECURITY_ATTRIBUTES security{};
+    security.nLength = sizeof(security);
+    security.bInheritHandle = TRUE;
+    HANDLE readPipe = nullptr;
+    HANDLE writePipe = nullptr;
+    Check(CreatePipe(&readPipe, &writePipe, &security, 0) != FALSE,
+        "preview output pipe is created");
+    Check(SetHandleInformation(readPipe, HANDLE_FLAG_INHERIT, 0) != FALSE,
+        "preview output read handle is private to the test");
+
+    std::wstring command = Quote(executable.wstring());
+    for (const auto& argument : arguments)
+        command += L" " + Quote(argument);
+    std::vector<wchar_t> mutableCommand(command.begin(), command.end());
+    mutableCommand.push_back(L'\0');
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    startup.dwFlags = STARTF_USESTDHANDLES;
+    startup.hStdOutput = writePipe;
+    startup.hStdError = writePipe;
+    startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    PROCESS_INFORMATION process{};
+    const BOOL launched = CreateProcessW(executable.c_str(),
+        mutableCommand.data(), nullptr, nullptr, TRUE,
+        CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process);
+    CloseHandle(writePipe);
+    Check(launched != FALSE, "snowwidget preview process starts");
+    CloseHandle(process.hThread);
+
     std::string output;
     std::array<char, 1024> buffer{};
-    while (std::fgets(buffer.data(),
-            static_cast<int>(buffer.size()), pipe))
-        output += buffer.data();
-    return { _pclose(pipe), std::move(output) };
+    DWORD read = 0;
+    while (ReadFile(readPipe, buffer.data(),
+            static_cast<DWORD>(buffer.size()), &read, nullptr) && read > 0)
+        output.append(buffer.data(), read);
+    CloseHandle(readPipe);
+    Check(WaitForSingleObject(process.hProcess, 120000) == WAIT_OBJECT_0,
+        "snowwidget preview process completes");
+    DWORD exitCode = 1;
+    GetExitCodeProcess(process.hProcess, &exitCode);
+    CloseHandle(process.hProcess);
+    return { static_cast<int>(exitCode), std::move(output) };
 }
 
 void CheckPng(const std::filesystem::path& path)
@@ -91,11 +126,10 @@ int wmain(int argc, wchar_t** argv)
     TemporaryDirectory temporary;
     const auto output = temporary.path / L"analog-clock.png";
     const auto source = repository / L"widgets" / L"analog-clock";
-    const std::wstring command = Quote(snowwidget.wstring()) +
-        L" preview " + Quote(source.wstring()) + L" " +
-        Quote(output.wstring()) + L" --dpi 144 --storage showNumbers=1"
-        L" --host " + Quote(host.wstring());
-    const auto [exitCode, json] = Run(command);
+    const auto [exitCode, json] = Run(snowwidget, {
+        L"preview", source.wstring(), output.wstring(),
+        L"--dpi", L"144", L"--storage", L"showNumbers=1",
+        L"--host", host.wstring() });
     Check(exitCode == 0 &&
             json.find("\"ok\":true") != std::string::npos &&
             json.find("\"stage\":\"complete\"") != std::string::npos &&
@@ -106,11 +140,9 @@ int wmain(int argc, wchar_t** argv)
     CheckPng(output);
 
     const auto invalidOutput = temporary.path / L"invalid.png";
-    const std::wstring invalid = Quote(snowwidget.wstring()) +
-        L" preview " + Quote(source.wstring()) + L" " +
-        Quote(invalidOutput.wstring()) + L" --columns 8 --host " +
-        Quote(host.wstring());
-    const auto [invalidExit, invalidJson] = Run(invalid);
+    const auto [invalidExit, invalidJson] = Run(snowwidget, {
+        L"preview", source.wstring(), invalidOutput.wstring(),
+        L"--columns", L"8", L"--host", host.wstring() });
     Check(invalidExit != 0 &&
             invalidJson.find("\"stage\":\"request.size\"") !=
                 std::string::npos &&
