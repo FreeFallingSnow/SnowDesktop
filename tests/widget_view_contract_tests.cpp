@@ -239,6 +239,8 @@ void TestRepresentativeApplicability()
         "calendar properties must be scoped to monthCalendar");
     Check(ViewNodeAllowsProperty(ViewNodeType::SlotSurface, "binding") &&
             ViewNodeAllowsProperty(ViewNodeType::SlotSurface, "dropStyle") &&
+            ViewNodeAllowsProperty(ViewNodeType::SlotSurface, "emptyContent") &&
+            !ViewNodeAllowsProperty(ViewNodeType::SlotSurface, "loadingContent") &&
             ViewNodeAllowsProperty(ViewNodeType::SlotItem, "reference") &&
             !ViewNodeAllowsProperty(ViewNodeType::SlotItem, "binding") &&
             !ViewNodeAllowsProperty(ViewNodeType::SlotItem, "dropStyle") &&

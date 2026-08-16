@@ -178,6 +178,9 @@ desktop/Application/Explorer object with host insertion preview. Probe
 `view.logicalSlots.dropStyle` before styling that accepted target: background
 and border remain clipped to the slotSurface, foreground colors the host-owned
 insertion indicator, and the style never changes manifest acceptance policy.
+Probe `view.logicalSlots.emptyContent` before supplying one bounded fallback
+node for a host snapshot with no binding or collection items; never fabricate
+an empty scene while the host model still contains references.
 Probe
 `slots.pointerReorder` when collection slotItem nodes should support direct
 same-surface dragging; the host owns the drag threshold, insertion indicator,

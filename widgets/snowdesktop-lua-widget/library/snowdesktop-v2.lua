@@ -377,7 +377,7 @@
 ---@field initialScrollIndex? integer VirtualList/virtualGrid-only 1-based item to reveal with nearest alignment when this stable container key is first accepted; pass the same value to view.virtualRange.
 ---@field selectionMode? SnowViewSelectionMode Controlled collection selection; defaults to none and probes with view.collection.selection.
 ---@field selectedKeys? string[] Unique controlled listItem keys; single accepts at most one, none accepts none, and virtual selections may include unmaterialized item keys.
----@field emptyContent? SnowViewNode One visible fallback node used when an eager collection has no children or a virtual collection has itemCount=0.
+---@field emptyContent? SnowViewNode One visible fallback node used when a collection is empty, or when a manifest-backed slotSurface has no host items after probing view.logicalSlots.emptyContent.
 ---@field loadingContent? SnowViewNode One visible fallback node used instead of collection items while busy=true.
 ---@field flexBasis? SnowViewFlexBasis Main-axis base size in row/column/list before free-space distribution; defaults to auto.
 ---@field flexGrow? number Non-negative positive-space factor; fill keeps an implicit factor of 1 when this is omitted.
@@ -913,7 +913,7 @@ function view.virtualGrid(options) end
 ---@return SnowViewNode
 function view.listItem(options) end
 
----Host-owned logical slot surface. Requires exactly one binding/collection ID declared in widget.json and probes with view.logicalSlots; dropStyle additionally requires view.logicalSlots.dropStyle.
+---Host-owned logical slot surface. Requires exactly one binding/collection ID declared in widget.json and probes with view.logicalSlots; dropStyle and emptyContent use their matching view.logicalSlots feature probes.
 ---@param options SnowViewNodeOptions
 ---@return SnowViewNode
 function view.slotSurface(options) end

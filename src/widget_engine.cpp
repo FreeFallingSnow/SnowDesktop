@@ -21732,8 +21732,15 @@ WidgetEngine::RuntimeLogicalSlotSurface(const std::wstring& widgetId,
             }
             else
             {
-                if (sceneItems.size() != snapshot->items.size() ||
-                    node.children.size() != snapshot->items.size())
+                const bool declaredEmptyContent = snapshot->items.empty() &&
+                    node.collectionContent ==
+                        snowdesktop::widget_runtime::
+                            ViewCollectionContent::Empty;
+                if ((declaredEmptyContent &&
+                        (!sceneItems.empty() || node.children.size() != 1)) ||
+                    (!declaredEmptyContent &&
+                        (sceneItems.size() != snapshot->items.size() ||
+                         node.children.size() != snapshot->items.size())))
                     return false;
                 for (std::size_t index = 0;
                     index < sceneItems.size(); ++index)

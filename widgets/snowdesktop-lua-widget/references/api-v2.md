@@ -148,6 +148,7 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.monthCalendar` 提供受控月历日期网格，
 `view.logicalSlots` 提供与 manifest 宿主管理槽位严格对应的 `slotSurface/slotItem`，
 `view.logicalSlots.dropStyle` 提供主题感知、宿主有界的合法拖放目标样式，
+`view.logicalSlots.emptyContent` 提供与宿主空快照绑定的单节点槽位空态，
 `view.referenceIcon` 提供只接收实例自有 opaque ref 的宿主图标节点。
 
 探测 `view.identity.diagnostics` 后，任意声明式节点可增加可选 `debugName` 和 `testId`。
@@ -1047,9 +1048,20 @@ return view.slotSurface({
         cornerRadius = 10,
         opacity = 0.8,
     },
+    emptyContent = view.text({
+        key = "favorites.empty",
+        text = "Drop a favorite here",
+        textAlign = "center",
+    }),
     children = children,
 })
 ```
+
+探测 `view.logicalSlots.emptyContent` 后，binding 和 collection 的 `slotSurface` 都可携带一个
+可见 `emptyContent` 节点。宿主快照为空且本次没有 `slotItem` children 时，该节点成为唯一直接
+child 并填满 surface；快照非空时它不会替换真实条目，Lua 漏报条目或伪造空态仍会拒绝整棵新树。
+旧 binding 用单个 `child` 表示空态的写法继续兼容，但新组件应使用 `emptyContent`，以便与已绑定
+条目的 `child` 明确分离。`loadingContent` 仍只属于普通/虚拟集合，逻辑槽位没有 Lua 自定的加载态。
 
 探测 `view.logicalSlots.dropStyle` 后，`slotSurface` 可声明 `dropStyle`。只有宿主已经按
 manifest `accepts`、容量和替换策略确认当前对象可以放置时才显示该样式；它不能放宽接收规则，

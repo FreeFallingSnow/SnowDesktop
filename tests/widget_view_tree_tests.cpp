@@ -2391,7 +2391,7 @@ void TestCollectionContentStates()
     ViewNode invalid;
     Check(!ParseLuaViewTree(state, -1, invalid, error) &&
             error.find("emptyContent") != std::string::npos,
-        "emptyContent must remain scoped to collection containers");
+        "emptyContent must remain scoped to collection and logical-slot containers");
     lua_close(state);
 }
 
@@ -2832,6 +2832,9 @@ void TestLogicalSlotSceneContract()
         LogicalSlotKind::Collection,
         { "desktop.item", "filesystem.reference" },
         "reference", {}, false, 4 };
+    declarations["emptyFavorites"] = {
+        LogicalSlotKind::Collection,
+        { "desktop.item" }, "reference", {}, false, 4 };
     LogicalSlotModel model;
     std::string error;
     Check(model.Configure(declarations, error),
@@ -2934,6 +2937,9 @@ void TestLogicalSlotSceneContract()
                 cornerRadius = 9,
                 opacity = 0.65,
             },
+            emptyContent = view.text({
+                key = "unused-empty", text = "Choose an application",
+            }),
             child = view.slotItem({
                 key = "lsi-item",
                 reference = "lsr-item",
@@ -2965,6 +2971,30 @@ void TestLogicalSlotSceneContract()
             parsed.children[0].logicalSlotReference == "lsr-item" &&
             parsed.children[0].children.size() == 1,
         "slotSurface and slotItem constructors must retain typed scene fields");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.slotSurface({
+            key = "empty-favorites",
+            collection = "emptyFavorites",
+            emptyContent = view.text({
+                key = "favorites-placeholder",
+                text = "Drop a favorite here",
+                textAlign = "center",
+            }),
+        })
+    )lua") == LUA_OK,
+        "empty logical slot content fixture must evaluate");
+    ViewNode parsedEmpty;
+    Check(ParseLuaViewTree(state, -1, parsedEmpty, error) &&
+            parsedEmpty.collectionContent == ViewCollectionContent::Empty &&
+            parsedEmpty.children.size() == 1 &&
+            parsedEmpty.children[0].key == "favorites-placeholder" &&
+            ValidateAndLayoutViewTree(
+                parsedEmpty, 180.0f, 100.0f, error) &&
+            ValidateViewLogicalSlots(parsedEmpty, model, error) &&
+            parsedEmpty.children[0].frame == parsedEmpty.frame,
+        "an empty binding or collection slotSurface may activate one bounded emptyContent node");
 
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(

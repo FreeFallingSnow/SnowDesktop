@@ -327,7 +327,11 @@ bool ViewNodeAllowsProperty(
     if (property == "selectionMode" || property == "selectedKeys")
         return IsType(type, { ViewNodeType::List, ViewNodeType::GridList,
             ViewNodeType::VirtualList, ViewNodeType::VirtualGrid });
-    if (property == "emptyContent" || property == "loadingContent")
+    if (property == "emptyContent")
+        return type == ViewNodeType::SlotSurface ||
+            IsType(type, { ViewNodeType::List, ViewNodeType::GridList,
+                ViewNodeType::VirtualList, ViewNodeType::VirtualGrid });
+    if (property == "loadingContent")
         return IsType(type, { ViewNodeType::List, ViewNodeType::GridList,
             ViewNodeType::VirtualList, ViewNodeType::VirtualGrid });
     if (property == "flexDirection" || property == "flexWrap" ||

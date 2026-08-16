@@ -2547,7 +2547,9 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
     }
     else if (node.selectionMode != ViewSelectionMode::None ||
         !node.selectedKeys.empty() ||
-        node.collectionContent != ViewCollectionContent::Items)
+        (node.collectionContent != ViewCollectionContent::Items &&
+            !(node.type == ViewNodeType::SlotSurface &&
+                node.collectionContent == ViewCollectionContent::Empty)))
     {
         error = "selectionMode and selectedKeys are reserved for collection nodes";
         return false;
@@ -2733,6 +2735,14 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             error = "slotSurface requires a bounded logical slot id";
             return false;
         }
+        if (node.collectionContent == ViewCollectionContent::Empty &&
+            (node.children.size() != 1 ||
+                !node.children.front().visible ||
+                node.children.front().type == ViewNodeType::SlotItem))
+        {
+            error = "slotSurface emptyContent must be one visible non-slotItem node";
+            return false;
+        }
         if (node.logicalSlotKind == LogicalSlotKind::Binding)
         {
             if (node.children.size() > 1)
@@ -2741,7 +2751,8 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
                 return false;
             }
         }
-        else if (!std::all_of(node.children.begin(), node.children.end(),
+        else if (node.collectionContent != ViewCollectionContent::Empty &&
+            !std::all_of(node.children.begin(), node.children.end(),
                 [](const ViewNode& child) {
                     return child.type == ViewNodeType::SlotItem;
                 }))
@@ -5384,8 +5395,13 @@ bool ValidateViewLogicalSlots(const ViewNode& root,
             }
             else
             {
-                if (items.size() != snapshot->items.size() ||
-                    node.children.size() != snapshot->items.size())
+                const bool declaredEmptyContent = snapshot->items.empty() &&
+                    node.collectionContent == ViewCollectionContent::Empty;
+                if ((declaredEmptyContent &&
+                        (!items.empty() || node.children.size() != 1)) ||
+                    (!declaredEmptyContent &&
+                        (items.size() != snapshot->items.size() ||
+                         node.children.size() != snapshot->items.size())))
                 {
                     error = "collection slotSurface must report every host item: " +
                         node.logicalSlotId;

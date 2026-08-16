@@ -1192,6 +1192,9 @@ feature probe、LuaLS 和契约测试；日期单元已经进入通用键盘导�
 `view.logicalSlots.dropStyle` 也已进入机器契约：Lua 可用有界 `ViewStyle` 为已经通过宿主策略
 校验的目标 surface 设置主题背景、边框和插入线颜色，桌面/Explorer 原生拖入与同槽指针重排
 共用该样式；命中范围、插入位置、原生对象和拒绝态仍完全归宿主管理。
+`view.logicalSlots.emptyContent` 随后补齐计划中的槽位空态属性：binding 与 collection 都可在
+宿主快照确实没有项目时激活一个填满 surface 的可见节点，非空快照仍必须完整提交所有
+`slotItem`，且逻辑槽位继续拒绝组件自行伪造 loading 状态。
 
 节点规则：
 

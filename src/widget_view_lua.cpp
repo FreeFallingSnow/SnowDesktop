@@ -3137,7 +3137,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     }
     lua_pop(state, 1);
 
-    if (collectionNode)
+    if (collectionNode || slotSurfaceNode)
     {
         const auto readContent = [&](const char* field,
             std::optional<ViewNode>& output) {
@@ -3168,9 +3168,10 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         std::optional<ViewNode> emptyContent;
         std::optional<ViewNode> loadingContent;
         if (!readContent("emptyContent", emptyContent) ||
-            !readContent("loadingContent", loadingContent))
+            (collectionNode &&
+                !readContent("loadingContent", loadingContent)))
             return false;
-        if (node.busy && loadingContent)
+        if (collectionNode && node.busy && loadingContent)
         {
             node.children.clear();
             node.children.push_back(std::move(*loadingContent));
@@ -3178,8 +3179,10 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         }
         else
         {
-            const bool empty = virtualCollectionNode
-                ? node.itemCount == 0 : node.children.empty();
+            const bool empty = collectionNode
+                ? (virtualCollectionNode
+                    ? node.itemCount == 0 : node.children.empty())
+                : node.children.empty();
             if (empty && emptyContent)
             {
                 node.children.clear();
