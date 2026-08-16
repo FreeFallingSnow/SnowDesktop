@@ -2808,6 +2808,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             node.checkedStyle, error) ||
         !ReadStyleField(state, index, "selectedStyle",
             node.selectedStyle, error) ||
+        !ReadStyleField(state, index, "dropStyle",
+            node.dropStyle, error) ||
         !ReadStyleField(state, index, "todayStyle",
             node.todayStyle, error) ||
         !ReadStyleField(state, index, "adjacentStyle",

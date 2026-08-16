@@ -2288,6 +2288,7 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         !validStyle(node.validationStyle) ||
         !validStyle(node.checkedStyle) ||
         !validStyle(node.selectedStyle) ||
+        !validStyle(node.dropStyle) ||
         !validStyle(node.todayStyle) ||
         !validStyle(node.adjacentStyle) ||
         !validStyle(node.eventStyle))

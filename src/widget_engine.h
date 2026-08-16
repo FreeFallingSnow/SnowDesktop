@@ -637,6 +637,7 @@ struct LogicalSlotHostSurface
     bool allowClear = true;
     std::vector<std::string> accepts;
     std::string replacePolicy;
+    snowdesktop::widget_runtime::ViewStyle dropStyle;
     RECT bounds{};
     std::vector<ItemRegion> items;
 };

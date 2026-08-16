@@ -175,6 +175,10 @@ this visual node does not grant launch, open, reveal, or file-content access.
 Probe
 `slots.nativeDrop` when a committed slotSurface should accept one native
 desktop/Application/Explorer object with host insertion preview. Probe
+`view.logicalSlots.dropStyle` before styling that accepted target: background
+and border remain clipped to the slotSurface, foreground colors the host-owned
+insertion indicator, and the style never changes manifest acceptance policy.
+Probe
 `slots.pointerReorder` when collection slotItem nodes should support direct
 same-surface dragging; the host owns the drag threshold, insertion indicator,
 atomic move, undo record, and `slot.changed` event. Probe

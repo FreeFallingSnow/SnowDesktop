@@ -424,6 +424,7 @@
 ---@field validationStyle? SnowViewStyle Applied after pressed and before focus/disabled; the host supplies a state-colored border when omitted.
 ---@field checkedStyle? SnowViewStyle Applied before hover/pressed when a toggle/checkbox or radio option is selected.
 ---@field selectedStyle? SnowViewStyle Generic selected-node style; also used by MonthCalendar selected date cells.
+---@field dropStyle? SnowViewStyle SlotSurface-only accepted-drop overlay. Background and border style the bounded host target; foreground styles its native insertion indicator. Requires view.logicalSlots.dropStyle.
 ---@field todayStyle? SnowViewStyle MonthCalendar today outline style.
 ---@field adjacentStyle? SnowViewStyle MonthCalendar adjacent-month date style.
 ---@field eventStyle? SnowViewStyle MonthCalendar event-marker style.
@@ -912,7 +913,7 @@ function view.virtualGrid(options) end
 ---@return SnowViewNode
 function view.listItem(options) end
 
----Host-owned logical slot surface. Requires exactly one binding/collection ID declared in widget.json and probes with view.logicalSlots.
+---Host-owned logical slot surface. Requires exactly one binding/collection ID declared in widget.json and probes with view.logicalSlots; dropStyle additionally requires view.logicalSlots.dropStyle.
 ---@param options SnowViewNodeOptions
 ---@return SnowViewNode
 function view.slotSurface(options) end

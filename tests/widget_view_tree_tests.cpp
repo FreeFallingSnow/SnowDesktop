@@ -2926,6 +2926,14 @@ void TestLogicalSlotSceneContract()
             key = "primary",
             binding = "primaryApp",
             revision = 7,
+            dropStyle = {
+                background = "surfaceVariant",
+                foreground = "systemAccent",
+                borderColor = 0x445566,
+                borderWidth = 2,
+                cornerRadius = 9,
+                opacity = 0.65,
+            },
             child = view.slotItem({
                 key = "lsi-item",
                 reference = "lsr-item",
@@ -2943,11 +2951,37 @@ void TestLogicalSlotSceneContract()
             parsed.type == ViewNodeType::SlotSurface &&
             parsed.logicalSlotId == "primaryApp" &&
             parsed.logicalSlotRevision == 7 &&
+            parsed.dropStyle.backgroundToken ==
+                ViewThemeColorToken::SurfaceVariant &&
+            parsed.dropStyle.foregroundToken ==
+                ViewThemeColorToken::SystemAccent &&
+            parsed.dropStyle.borderColor ==
+                std::uint32_t{ 0x445566 } &&
+            parsed.dropStyle.borderWidth == 2.0f &&
+            parsed.dropStyle.cornerRadius == 9.0f &&
+            parsed.dropStyle.opacity == 0.65f &&
             parsed.children.size() == 1 &&
             parsed.children[0].type == ViewNodeType::SlotItem &&
             parsed.children[0].logicalSlotReference == "lsr-item" &&
             parsed.children[0].children.size() == 1,
         "slotSurface and slotItem constructors must retain typed scene fields");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.slotItem({
+            key = "invalid-item",
+            reference = "lsr-item",
+            dropStyle = { foreground = "systemAccent" },
+            child = view.text({ key = "label", text = "Calendar" }),
+            accessibility = { label = "Calendar" },
+        })
+    )lua") == LUA_OK,
+        "invalid logical slot dropStyle fixture must evaluate");
+    ViewNode invalidDropStyle;
+    Check(!ParseLuaViewTree(state, -1, invalidDropStyle, error) &&
+            error.find("dropStyle") != std::string::npos &&
+            error.find("slotItem") != std::string::npos,
+        "dropStyle must remain scoped to slotSurface");
     lua_close(state);
 }
 

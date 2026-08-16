@@ -1189,6 +1189,9 @@ feature probe、LuaLS 和契约测试；日期单元已经进入通用键盘导�
 和 Everything 索引并按 manifest `accepts` 过滤，选择后仍走原子持久化事务。原生同槽指针
 重排和槽位项键盘焦点/移动已经接入；尚缺槽位项拖出、跨槽重排和 UIA 输出，因此 M6 槽位
 退出条件仍未达成。
+`view.logicalSlots.dropStyle` 也已进入机器契约：Lua 可用有界 `ViewStyle` 为已经通过宿主策略
+校验的目标 surface 设置主题背景、边框和插入线颜色，桌面/Explorer 原生拖入与同槽指针重排
+共用该样式；命中范围、插入位置、原生对象和拒绝态仍完全归宿主管理。
 
 节点规则：
 

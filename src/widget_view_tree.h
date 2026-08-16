@@ -634,6 +634,7 @@ struct ViewNode
     ViewStyle validationStyle;
     ViewStyle checkedStyle;
     ViewStyle selectedStyle;
+    ViewStyle dropStyle;
     ViewStyle todayStyle;
     ViewStyle adjacentStyle;
     ViewStyle eventStyle;

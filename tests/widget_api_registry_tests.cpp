@@ -494,6 +494,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "view.logicalSlots") &&
             snowdesktop::widget_api::SupportsFeature(
+                "view.logicalSlots.dropStyle") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "view.referenceIcon") &&
             snowdesktop::widget_api::SupportsFeature(
                 "slots.nativeDrop") &&

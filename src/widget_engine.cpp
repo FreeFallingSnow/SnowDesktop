@@ -15256,12 +15256,13 @@ static std::uint32_t WidgetContrastText(std::uint32_t background) noexcept
 }
 
 static snowdesktop::widget_runtime::ViewThemePalette
-BuildWidgetViewThemePalette(D2DState* state)
+BuildWidgetViewThemePalette(D2DState* state,
+    const std::wstring& widgetId)
 {
     using snowdesktop::widget_runtime::ViewThemePalette;
     const WidgetSystemEnvironment system = QueryWidgetSystemEnvironment();
     const LuaWidgetTheme theme = state && state->engine
-        ? state->engine->RuntimeGetWidgetTheme(state->currentWidgetId)
+        ? state->engine->RuntimeGetWidgetTheme(widgetId)
         : LuaWidgetTheme{};
     ViewThemePalette result;
     if (system.highContrast)
@@ -15312,6 +15313,13 @@ BuildWidgetViewThemePalette(D2DState* state)
     result.warning = light ? 0x8A4B00u : 0xF2C94Cu;
     result.error = light ? 0xC42B1Cu : 0xFF6B6Bu;
     return result;
+}
+
+static snowdesktop::widget_runtime::ViewThemePalette
+BuildWidgetViewThemePalette(D2DState* state)
+{
+    return BuildWidgetViewThemePalette(state,
+        state ? state->currentWidgetId : std::wstring{});
 }
 
 static void OverlayViewStyle(
@@ -21749,6 +21757,10 @@ WidgetEngine::RuntimeLogicalSlotSurface(const std::wstring& widgetId,
             if (result.bounds.right <= result.bounds.left ||
                 result.bounds.bottom <= result.bounds.top)
                 return false;
+            result.dropStyle =
+                snowdesktop::widget_runtime::ResolveViewThemeStyle(
+                    node.dropStyle,
+                    BuildWidgetViewThemePalette(d2dState_, widgetId));
 
             for (const auto& child : node.children)
             {
@@ -24315,6 +24327,45 @@ bool WidgetEngine::EndHostLogicalSlotPointer(
     return true;
 }
 
+namespace
+{
+float LogicalSlotDropOpacity(
+    const snowdesktop::widget_runtime::ViewStyle& style) noexcept
+{
+    return std::clamp(style.opacity.value_or(1.0f), 0.0f, 1.0f);
+}
+
+void DrawLogicalSlotDropSurface(D2DState* state,
+    const LogicalSlotHostSurface& surface)
+{
+    if (!state || !state->ctx ||
+        (!surface.dropStyle.background &&
+         !surface.dropStyle.borderColor))
+        return;
+    const D2D1_RECT_F bounds = D2D1::RectF(
+        static_cast<float>(surface.bounds.left),
+        static_cast<float>(surface.bounds.top),
+        static_cast<float>(surface.bounds.right),
+        static_cast<float>(surface.bounds.bottom));
+    const float radius = std::max(
+        0.0f, surface.dropStyle.cornerRadius.value_or(0.0f));
+    const D2D1_ROUNDED_RECT rounded =
+        D2D1::RoundedRect(bounds, radius, radius);
+    const float opacity = LogicalSlotDropOpacity(surface.dropStyle);
+    if (surface.dropStyle.background)
+        if (ID2D1SolidColorBrush* fill = GetCachedBrush(state,
+                static_cast<int>(*surface.dropStyle.background), opacity))
+            state->ctx->FillRoundedRectangle(rounded, fill);
+    const float borderWidth = std::max(
+        0.0f, surface.dropStyle.borderWidth.value_or(1.0f));
+    if (surface.dropStyle.borderColor && borderWidth > 0.0f)
+        if (ID2D1SolidColorBrush* border = GetCachedBrush(state,
+                static_cast<int>(*surface.dropStyle.borderColor), opacity))
+            state->ctx->DrawRoundedRectangle(
+                rounded, border, borderWidth);
+}
+}
+
 void WidgetEngine::DrawHostViewInteractionOverlays(
     const LuaWidget& widget,
     const snowdesktop::widget_runtime::WidgetInteractionRegions& regions,
@@ -24387,6 +24438,10 @@ void WidgetEngine::DrawHostViewInteractionOverlays(
         !widget.logicalSlotPointerDrag->moved)
         return;
     const auto& drag = *widget.logicalSlotPointerDrag;
+    const auto dropSurface = RuntimeLogicalSlotSurface(
+        widget.widgetId, drag.slotId);
+    if (dropSurface)
+        DrawLogicalSlotDropSurface(d2dState_, *dropSurface);
     const D2D1_RECT_F source = D2D1::RectF(
         static_cast<float>(drag.sourceBounds.left),
         static_cast<float>(drag.sourceBounds.top),
@@ -24405,8 +24460,15 @@ void WidgetEngine::DrawHostViewInteractionOverlays(
         static_cast<float>(drag.indicatorBounds.top),
         static_cast<float>(drag.indicatorBounds.right),
         static_cast<float>(drag.indicatorBounds.bottom));
+    const int indicatorColor = dropSurface &&
+            dropSurface->dropStyle.foreground
+        ? static_cast<int>(*dropSurface->dropStyle.foreground)
+        : 0x4C9AFF;
+    const float indicatorOpacity = dropSurface &&
+            dropSurface->dropStyle.foreground
+        ? LogicalSlotDropOpacity(dropSurface->dropStyle) : 1.0f;
     if (ID2D1SolidColorBrush* brush = GetCachedBrush(
-            d2dState_, 0x4C9AFF, 1.0f))
+            d2dState_, indicatorColor, indicatorOpacity))
         d2dState_->ctx->FillRoundedRectangle(
             D2D1::RoundedRect(indicator, 2.0f, 2.0f), brush);
 }

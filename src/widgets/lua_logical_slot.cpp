@@ -4,6 +4,118 @@
 
 #include <algorithm>
 #include <cmath>
+#include <wrl/client.h>
+
+namespace
+{
+using Microsoft::WRL::ComPtr;
+
+float DropOpacity(
+    const snowdesktop::widget_runtime::ViewStyle& style) noexcept
+{
+    return std::clamp(style.opacity.value_or(1.0f), 0.0f, 1.0f);
+}
+
+ComPtr<ID2D1SolidColorBrush> MakeDropBrush(
+    ID2D1DeviceContext* context, std::uint32_t color, float opacity)
+{
+    ComPtr<ID2D1SolidColorBrush> brush;
+    if (context)
+        context->CreateSolidColorBrush(
+            D2D1::ColorF(color, opacity), &brush);
+    return brush;
+}
+
+bool DrawDropSurface(ID2D1DeviceContext* context,
+    const LogicalSlotHostSurface& surface)
+{
+    const auto& style = surface.dropStyle;
+    if (!context || (!style.background && !style.borderColor))
+        return false;
+    const D2D1_RECT_F bounds = D2D1::RectF(
+        static_cast<float>(surface.bounds.left),
+        static_cast<float>(surface.bounds.top),
+        static_cast<float>(surface.bounds.right),
+        static_cast<float>(surface.bounds.bottom));
+    const float radius = std::max(
+        0.0f, style.cornerRadius.value_or(0.0f));
+    const D2D1_ROUNDED_RECT rounded =
+        D2D1::RoundedRect(bounds, radius, radius);
+    const float opacity = DropOpacity(style);
+    if (style.background)
+    {
+        const auto fill = MakeDropBrush(
+            context, *style.background, opacity);
+        if (fill) context->FillRoundedRectangle(rounded, fill.Get());
+    }
+    const float borderWidth = std::max(
+        0.0f, style.borderWidth.value_or(1.0f));
+    if (style.borderColor && borderWidth > 0.0f)
+    {
+        const auto border = MakeDropBrush(
+            context, *style.borderColor, opacity);
+        if (border)
+            context->DrawRoundedRectangle(
+                rounded, border.Get(), borderWidth);
+    }
+    return true;
+}
+
+bool DrawDropIndicator(ID2D1DeviceContext* context,
+    const LogicalSlotHostSurface& surface, Slot* slot,
+    HitRegion region, BarStyle insertionStyle)
+{
+    if (!context || !slot || !surface.dropStyle.foreground ||
+        region == HitRegion::None || region == HitRegion::Handoff ||
+        region == HitRegion::Blocked)
+        return false;
+    const auto brush = MakeDropBrush(context,
+        *surface.dropStyle.foreground,
+        DropOpacity(surface.dropStyle));
+    if (!brush) return true;
+    const float lineWidth = 3.0f;
+    if (region == HitRegion::Empty)
+    {
+        RECT bounds = surface.bounds;
+        InflateRect(&bounds, -4, -4);
+        const D2D1_RECT_F rectangle = D2D1::RectF(
+            static_cast<float>(bounds.left),
+            static_cast<float>(bounds.top),
+            static_cast<float>(bounds.right),
+            static_cast<float>(bounds.bottom));
+        const float radius = std::max(0.0f,
+            surface.dropStyle.cornerRadius.value_or(0.0f) - 4.0f);
+        context->DrawRoundedRectangle(
+            D2D1::RoundedRect(rectangle, radius, radius), brush.Get(),
+            std::max(0.5f,
+                surface.dropStyle.borderWidth.value_or(2.0f)));
+        return true;
+    }
+
+    const RECT bounds = slot->GetBounds();
+    if (insertionStyle == BarStyle::VBar)
+    {
+        const float x = region == HitRegion::SortBefore
+            ? static_cast<float>(bounds.left) - lineWidth / 2.0f
+            : static_cast<float>(bounds.right) - lineWidth / 2.0f;
+        context->FillRectangle(D2D1::RectF(
+            x, static_cast<float>(bounds.top) + 2.0f,
+            x + lineWidth, static_cast<float>(bounds.bottom) - 2.0f),
+            brush.Get());
+    }
+    else
+    {
+        const float y = region == HitRegion::SortBefore
+            ? static_cast<float>(bounds.top) - lineWidth / 2.0f
+            : static_cast<float>(bounds.bottom) - lineWidth / 2.0f;
+        context->FillRectangle(D2D1::RectF(
+            static_cast<float>(bounds.left) + 4.0f, y,
+            static_cast<float>(bounds.right) - 4.0f, y + lineWidth),
+            brush.Get());
+    }
+    return true;
+}
+}
 
 LuaLogicalSlotContainer::LuaLogicalSlotContainer(
     std::wstring widgetId, std::string slotId,
@@ -216,5 +328,17 @@ std::wstring LuaLogicalSlotContainer::GetDragHint(
 void LuaLogicalSlotContainer::DrawDropPreview(
     ID2D1DeviceContext* context, Slot* slot, HitRegion region)
 {
-    if (slot) slot->DrawDropIndicator(context, region);
+    if (!slot) return;
+    const auto surface = Surface();
+    if (!surface)
+    {
+        slot->DrawDropIndicator(context, region);
+        return;
+    }
+    const bool styledSurface = DrawDropSurface(context, *surface);
+    const bool styledIndicator = DrawDropIndicator(
+        context, *surface, slot, region, GetInsertionStyle());
+    if (!styledIndicator &&
+        !(region == HitRegion::Empty && styledSurface))
+        slot->DrawDropIndicator(context, region);
 }

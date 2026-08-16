@@ -85,7 +85,7 @@ constexpr auto kProperties = std::to_array<std::string_view>({
     "textWrap", "maxLines", "overflowText", "style", "hoverStyle",
     "pressedStyle", "focusStyle", "disabledStyle", "validationStyle",
     "checkedStyle", "tint",
-    "selectedStyle", "todayStyle",
+    "selectedStyle", "dropStyle", "todayStyle",
     "adjacentStyle", "eventStyle", "accessibility", "events", "action",
     "children",
 });
@@ -294,6 +294,7 @@ bool ViewNodeAllowsProperty(
         return type == ViewNodeType::MonthCalendar;
     if (property == "binding" || property == "collection" ||
         property == "revision") return type == ViewNodeType::SlotSurface;
+    if (property == "dropStyle") return type == ViewNodeType::SlotSurface;
     if (property == "reference")
         return type == ViewNodeType::SlotItem ||
             type == ViewNodeType::ReferenceIcon;

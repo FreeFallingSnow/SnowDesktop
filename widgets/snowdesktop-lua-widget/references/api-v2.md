@@ -147,6 +147,7 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.styledText.actions` 提供精确行内交互目标，
 `view.monthCalendar` 提供受控月历日期网格，
 `view.logicalSlots` 提供与 manifest 宿主管理槽位严格对应的 `slotSurface/slotItem`，
+`view.logicalSlots.dropStyle` 提供主题感知、宿主有界的合法拖放目标样式，
 `view.referenceIcon` 提供只接收实例自有 opaque ref 的宿主图标节点。
 
 探测 `view.identity.diagnostics` 后，任意声明式节点可增加可选 `debugName` 和 `testId`。
@@ -1038,9 +1039,25 @@ return view.slotSurface({
     key = "favorites",
     collection = "favorites",
     revision = favorites:revision(),
+    dropStyle = {
+        background = "surfaceVariant",
+        borderColor = "borderStrong",
+        foreground = "systemAccent",
+        borderWidth = 2,
+        cornerRadius = 10,
+        opacity = 0.8,
+    },
     children = children,
 })
 ```
+
+探测 `view.logicalSlots.dropStyle` 后，`slotSurface` 可声明 `dropStyle`。只有宿主已经按
+manifest `accepts`、容量和替换策略确认当前对象可以放置时才显示该样式；它不能放宽接收规则，
+也不能改变命中范围。`background`、`borderColor`、`borderWidth`、`cornerRadius` 和 `opacity`
+作用于整个经过裁剪的合法 surface，`foreground` 只设置宿主插入线或空槽轮廓颜色。语义颜色
+token 会按组件主题和系统高对比度解析；省略某个颜色时保留对应的宿主默认反馈。桌面/Explorer
+原生拖入和 `slots.pointerReorder` 的同槽重排使用同一目标样式，但插入位置、线宽和拖放对象仍
+完全由宿主管理，Lua 不会收到逐帧坐标或原生对象。
 
 探测 `slots.pointerReorder` 后，collection 中有至少两个项目时，用户可从任一已提交
 `slotItem` 内直接按住拖动。未越过系统拖动阈值时仍按普通声明式 click 处理；越过后由宿主

@@ -238,9 +238,12 @@ void TestRepresentativeApplicability()
             !ViewNodeAllowsProperty(ViewNodeType::List, "eventDates"),
         "calendar properties must be scoped to monthCalendar");
     Check(ViewNodeAllowsProperty(ViewNodeType::SlotSurface, "binding") &&
+            ViewNodeAllowsProperty(ViewNodeType::SlotSurface, "dropStyle") &&
             ViewNodeAllowsProperty(ViewNodeType::SlotItem, "reference") &&
-            !ViewNodeAllowsProperty(ViewNodeType::SlotItem, "binding"),
-        "logical-slot model and item fields must remain separated");
+            !ViewNodeAllowsProperty(ViewNodeType::SlotItem, "binding") &&
+            !ViewNodeAllowsProperty(ViewNodeType::SlotItem, "dropStyle") &&
+            !ViewNodeAllowsProperty(ViewNodeType::Box, "dropStyle"),
+        "logical-slot model, item, and drop-style fields must remain separated");
 
     const auto* button = FindViewNodeContract(ViewNodeType::Button);
     const auto* slider = FindViewNodeContract(ViewNodeType::Slider);
