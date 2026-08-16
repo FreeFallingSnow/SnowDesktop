@@ -575,11 +575,29 @@ void TestRealPackageTool(const std::filesystem::path& executable,
         std::string capabilitiesError;
         Check(capabilitiesExit == 0 &&
             ParseJson(capabilitiesText, capabilities, capabilitiesError) &&
-            JsonUnsigned(capabilities, "protocolVersion") == 1u &&
+            JsonUnsigned(capabilities, "protocolVersion") == 2u &&
             JsonUnsigned(capabilities, "recommendedSchemaVersion") == 2u &&
             JsonUnsigned(capabilities, "recommendedApiVersion") == 2u &&
+            capabilities.Find("executableSchemaVersions") &&
+            capabilities.Find("executableSchemaVersions")->IsArray() &&
+            capabilities.Find("executableSchemaVersions")->array.size() == 1 &&
+            capabilities.Find("executableSchemaVersions")->array[0].number == 2 &&
+            capabilities.Find("executableApiVersions") &&
+            capabilities.Find("executableApiVersions")->IsArray() &&
+            capabilities.Find("executableApiVersions")->array.size() == 1 &&
+            capabilities.Find("executableApiVersions")->array[0].number == 2 &&
+            capabilities.Find("migrationInputSchemaVersions") &&
+            capabilities.Find("migrationInputSchemaVersions")->IsArray() &&
+            capabilities.Find("migrationInputSchemaVersions")->array.size() == 1 &&
+            capabilities.Find("migrationInputSchemaVersions")->array[0].number == 1 &&
+            capabilities.Find("migrationInputApiVersions") &&
+            capabilities.Find("migrationInputApiVersions")->IsArray() &&
+            capabilities.Find("migrationInputApiVersions")->array.size() == 1 &&
+            capabilities.Find("migrationInputApiVersions")->array[0].number == 1 &&
+            !capabilities.Find("supportedSchemaVersions") &&
+            !capabilities.Find("supportedApiVersions") &&
             JsonString(capabilities, "format") == "snowdesktop-widget",
-            "snowwidget capabilities exposes a versioned API v2 authoring contract");
+            "snowwidget capabilities distinguishes executable v2 from migration-only v1");
     }
     WidgetInspection inspection;
     PackagedWidget package;

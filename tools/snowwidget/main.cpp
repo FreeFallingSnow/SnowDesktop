@@ -306,13 +306,16 @@ int wmain(int argc, wchar_t** argv)
     if (argc == 2 && std::wstring_view(argv[1]) == L"capabilities")
     {
         std::cout
-            << "{\"ok\":true,\"protocolVersion\":1,\"version\":"
+            << "{\"ok\":true,\"protocolVersion\":2,\"version\":"
             << JsonEscape(SNOWDESKTOP_VERSION)
             << ",\"format\":\"snowdesktop-widget\","
                "\"authoringSkill\":{\"id\":\"snowdesktop-lua-widget\","
                "\"revision\":2},\"recommendedSchemaVersion\":2,"
-               "\"recommendedApiVersion\":2,\"supportedSchemaVersions\":[1,2],"
-               "\"supportedApiVersions\":[1,2],\"commands\":["
+               "\"recommendedApiVersion\":2,"
+               "\"executableSchemaVersions\":[2],"
+               "\"executableApiVersions\":[2],"
+               "\"migrationInputSchemaVersions\":[1],"
+               "\"migrationInputApiVersions\":[1],\"commands\":["
                "\"api-contract\",\"system-contract\",\"view-contract\",\"inspect\","
                "\"lint\",\"test\",\"preview\",\"permissions\","
                "\"migrate-v2\",\"validate\",\"pack\",\"publish-local\"]}"

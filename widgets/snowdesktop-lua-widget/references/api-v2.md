@@ -3,6 +3,9 @@
 本文档描述当前宿主已经实现并放入 API v2 沙箱的接口。清单中保留的权限名、
 路线图能力或 API v1 全局库不代表 v2 组件已经可以调用它们。可在运行时使用
 `widget.apiInfo()`、`widget.hasFeature(id)` 和 `system.capabilities()` 探测能力。
+作者工具的 `snowwidget capabilities` 协议 v2 将可执行契约明确列为
+`executableSchemaVersions:[2]` / `executableApiVersions:[2]`，并将 schema/API v1 仅列在
+`migrationInput*Versions`；不能把迁移输入误解成宿主保留了 v1 执行兼容层。
 
 编辑器类型定义位于 `library/snowdesktop-v2.lua`，其函数签名是本文档的配套
 机器可读契约。

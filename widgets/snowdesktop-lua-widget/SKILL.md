@@ -28,7 +28,9 @@ development packages live under `data\widgets\installed` and
    predates API v2, use the repository/runtime v2 contract and refresh the CLI
    before distributing the Skill. Run `bin\snowwidget.exe api-contract` when
    selecting callable host functions instead of inferring availability from
-   documentation prose.
+   documentation prose. Only `executableSchemaVersions` and
+   `executableApiVersions` can run; v1 appears only in the migration-input
+   arrays.
 2. Copy `assets/widget-template` as a complete package directory.
 3. Generate a new UUID for `id`, choose a lowercase hyphenated `slug`, and keep
    the UUID across all versions and channels.

@@ -1756,6 +1756,9 @@ v2.0 资源契约：
 - `snowwidget migrate-v2 <directory>`：生成迁移草案，不覆盖原文件。
 - LuaLS 类型文件和 API 自动补全。
 
+`snowwidget capabilities` 协议 v2 已将可执行 schema/API 固定为 `[2]`，并将 v1 单独标记为
+migration input；不再用含义模糊的 `supported*Versions:[1,2]` 暗示宿主保留双运行时。
+
 ## 17. API 契约源
 
 建立机器可读的 API 契约，例如：
