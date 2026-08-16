@@ -140,8 +140,10 @@ int wmain(int argc, wchar_t** argv)
     CheckPng(output);
 
     const auto invalidOutput = temporary.path / L"invalid.png";
+    const auto boundedSource =
+        repository / L"widgets" / L"media-controls";
     const auto [invalidExit, invalidJson] = Run(snowwidget, {
-        L"preview", source.wstring(), invalidOutput.wstring(),
+        L"preview", boundedSource.wstring(), invalidOutput.wstring(),
         L"--columns", L"8", L"--host", host.wstring() });
     Check(invalidExit != 0 &&
             invalidJson.find("\"stage\":\"request.size\"") !=
