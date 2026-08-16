@@ -175,10 +175,16 @@ HTTP/Steam Provider 使用同一 `PackageArtifact`、来源引用和暂存校验
 
 ```bat
 snowwidget validate widgets\my-widget
+snowwidget permissions widgets\my-widget
 snowwidget preview widgets\my-widget my-widget-preview.png
 snowwidget pack widgets\my-widget my-widget.snowwidget
 snowwidget publish-local widgets\my-widget D:\widget-catalog
 ```
+
+对仍为 schema/API v1 的未打包目录，使用
+`snowwidget migrate-v2 widgets\old-widget [widgets\old-widget-v2-draft]`。
+命令只创建新的、重新校验过的草案目录，保留旧入口并拒绝覆盖任何已有目录；它不会自动把 v1
+回调或全局函数语义伪装成已经迁移完成。
 
 校验报告是机器可读 JSON。本地发布命令生成 `catalog.json` 和制品目录，可在
 没有服务器或 Steam SDK 的情况下测试发布、消费、升级和回滚。

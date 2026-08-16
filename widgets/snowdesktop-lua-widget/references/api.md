@@ -829,6 +829,15 @@ and validates the complete package. Package identity is the UUID, versions are
 SemVer, and last-known-good versions remain available for rollback. Source
 changes and permission/domain expansion require explicit confirmation.
 
+Use `snowwidget permissions <directory>` for a declaration-only report of
+required/optional risks, consent, exact network domains, scope fingerprint, and
+the shared API/data/task capabilities protected by each permission. It never
+reads or changes a user's grants. For an unpacked schema/API v1 package,
+`snowwidget migrate-v2 <directory> [output-directory]` transactionally creates
+a separate validated v2 scaffold while preserving the legacy entry; it refuses
+to overwrite the source or an existing output and does not claim to translate
+legacy behavior automatically.
+
 ## Troubleshooting
 
 ### Component is absent from **添加组件**

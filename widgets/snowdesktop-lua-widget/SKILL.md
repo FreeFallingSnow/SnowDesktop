@@ -46,7 +46,9 @@ development packages live under `data\widgets\installed` and
    entry script is loading.
 9. Add only features and permissions used by the component. Basic time,
    context, drawing, localization and package resources require no high-risk
-   permission.
+   permission. Run `snowwidget permissions <directory>` to inspect required vs
+   optional risk classes, consent, network domains and the API/topic/task
+   capabilities associated with each declaration.
 10. Use `state` for JSON-like VM-lifetime values and `storage` for persistent
     JSON-like values. Write persistent values only when they change.
 11. Run `snowwidget lint <directory>`, `snowwidget test <directory>`, and
@@ -62,6 +64,10 @@ resources or troubleshooting. Use `library/snowdesktop-v2.lua` as the LuaLS
 library. Read `references/package-v1.md` only when diagnosing or migrating an
 old schema/API v1 package. The host recognizes v1 only as migration input and
 never executes its entry script; do not create new v1 packages.
+For a validated unpacked v1 package, `snowwidget migrate-v2 <directory>` creates
+a sibling `-v2-draft` package transactionally. It preserves the original entry,
+adds a separate v2 scaffold and migration guide, and refuses to overwrite either
+the source or an existing draft.
 
 `snowwidget preview` launches the installed SnowDesktop renderer out of process
 and writes a real API v2/D2D PNG; it does not emulate the view tree. A CLI copied

@@ -35,6 +35,17 @@ Shell、系统数据、存储或其他副作用 API。命令输出文件数、�
 `--dpi` 支持 96–480。命令返回包含稳定 `stage`、最终像素尺寸、栅格尺寸和 DPI 的 JSON。复制到
 SnowDesktop 安装目录外的 CLI 可用 `--host <SnowDesktop.exe>` 或 `SNOWDESKTOP_HOST` 指定宿主。
 
+运行 `snowwidget permissions <组件目录>` 可从宿主同一权限 descriptor、公共函数目录和 system
+topic/task 目录生成机器可读报告。每个必选/可选声明包含风险类别、是否需要用户同意以及受该权限
+保护的函数、数据或任务；网络段单独列出精确域名、Internet 与 local 范围，并给出与运行时授权
+状态使用同一算法的 scope fingerprint。该命令只分析包声明，不读取或修改用户授权。
+
+运行 `snowwidget migrate-v2 <v1 组件目录> [输出目录]` 会先完整验证 v1 包，再在同级临时目录复制
+完整包，保留原入口，写入独立 `main-v2.lua` scaffold、迁移指南以及指向新入口的 schema/API v2
+manifest，重新通过 v2 包校验后才原子提交。默认输出为 `<原目录>-v2-draft`；源目录和已存在的输出
+永不覆盖。工具只生成结构安全的草案，不假装自动翻译 v1 行为，作者仍需迁移生命周期、API、
+存储、权限、资源、本地化和交互，然后运行 lint/test/preview/validate。
+
 运行 `snowwidget view-contract` 可获得宿主当前公开的声明式视图 JSON 契约。顶层
 `schemaVersion=3` 版本化该导出格式，`apiVersion` 表示组件 API；`nodes`、`properties` 和
 `events` 分别登记节点适用属性与逐节点默认值、属性类型/枚举/范围/影响域，以及事件 payload
