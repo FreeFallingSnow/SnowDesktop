@@ -1123,7 +1123,10 @@ static LuaWidgetManifest::Setting ReadLuaSettingTable(lua_State* L, int tableInd
         setting.options.clear();
         setting.optionLabels.clear();
     }
-    else if (setting.type == "appReference")
+    else if (setting.type == "appReference" ||
+        setting.type == "desktopItemReference" ||
+        setting.type == "fileReference" ||
+        setting.type == "folderReference")
     {
         // Host-owned references never enter ordinary setting storage.
         setting.defaultValue.clear();
@@ -1269,7 +1272,31 @@ static std::wstring BoundWidgetId(lua_State* state)
     return result;
 }
 
-static bool ValidateAppReferenceSettings(
+static bool IsEntityReferenceSettingType(std::string_view type) noexcept
+{
+    return type == "appReference" || type == "desktopItemReference" ||
+        type == "fileReference" || type == "folderReference";
+}
+
+static std::string_view EntityReferenceSettingKind(
+    std::string_view type) noexcept
+{
+    if (type == "appReference") return "app.reference";
+    if (type == "desktopItemReference") return "desktop.item";
+    if (type == "fileReference" || type == "folderReference")
+        return "filesystem.reference";
+    return {};
+}
+
+static std::string_view EntityReferenceSettingTypeFilter(
+    std::string_view type) noexcept
+{
+    if (type == "fileReference") return "file";
+    if (type == "folderReference") return "folder";
+    return {};
+}
+
+static bool ValidateEntityReferenceSettings(
     const std::vector<LuaWidgetManifest::Setting>& manifestSettings,
     const std::vector<LuaWidgetManifest::Setting>& scriptSettings,
     int apiVersion,
@@ -1277,19 +1304,29 @@ static bool ValidateAppReferenceSettings(
     std::string& error)
 {
     error.clear();
+    std::unordered_map<std::string, std::string> bindingOwners;
     const auto validate = [&](const auto& settings) {
         for (const auto& setting : settings)
         {
-            if (setting.type != "appReference") continue;
+            if (!IsEntityReferenceSettingType(setting.type)) continue;
             if (apiVersion < 2)
             {
-                error = "appReference settings require API v2";
+                error = setting.type + " settings require API v2";
                 return false;
             }
             if (setting.binding.empty())
             {
-                error = "appReference setting '" + setting.key +
+                error = setting.type + " setting '" + setting.key +
                     "' requires a binding";
+                return false;
+            }
+            const std::string_view expectedKind =
+                EntityReferenceSettingKind(setting.type);
+            if (const auto [owner, inserted] = bindingOwners.emplace(
+                    setting.binding, setting.key); !inserted)
+            {
+                error = "entity reference binding '" + setting.binding +
+                    "' is already used by setting '" + owner->second + "'";
                 return false;
             }
             const auto declaration = slots.find(setting.binding);
@@ -1298,12 +1335,14 @@ static bool ValidateAppReferenceSettings(
                     snowdesktop::widget_runtime::LogicalSlotKind::Binding ||
                 declaration->second.operation != "reference" ||
                 declaration->second.replacePolicy != "allow" ||
+                declaration->second.accepts.size() != 1 ||
                 std::find(declaration->second.accepts.begin(),
-                    declaration->second.accepts.end(), "app.reference") ==
+                    declaration->second.accepts.end(), expectedKind) ==
                     declaration->second.accepts.end())
             {
-                error = "appReference setting '" + setting.key +
-                    "' must target a replaceable app.reference binding slot";
+                error = setting.type + " setting '" + setting.key +
+                    "' must target a replaceable " +
+                    std::string(expectedKind) + " binding slot";
                 return false;
             }
         }
@@ -14451,7 +14490,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     std::vector<LuaWidgetManifest::SettingPreset> scriptPresets;
     ReadLuaDeclaredSettings(state, -1, scriptSettings, scriptPresets);
     std::string settingsError;
-    if (!ValidateAppReferenceSettings(pending.manifest.settings,
+    if (!ValidateEntityReferenceSettings(pending.manifest.settings,
             scriptSettings, pending.manifest.apiVersion,
             pending.manifest.logicalSlots, settingsError))
     {
@@ -14591,7 +14630,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
             for (const auto& setting : settings)
             {
                 if (setting.type != "password" &&
-                    setting.type != "appReference")
+                    !IsEntityReferenceSettingType(setting.type))
                     continue;
                 removedPlaintextOpaqueSetting =
                     g_storage.erase(storagePrefix + setting.key) > 0 ||
@@ -14675,7 +14714,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         }
     }
     RestoreNotificationSchedules(widgets_.back());
-    RefreshApplicationLogicalSlotAvailability();
+    RefreshLogicalSlotAvailability();
     return true;
 }
 
@@ -14755,7 +14794,7 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
             [&](const LuaWidgetManifest::Setting& setting) {
                 return setting.key == key &&
                     (setting.type == "password" ||
-                        setting.type == "appReference");
+                        IsEntityReferenceSettingType(setting.type));
             });
     };
     auto applyValues = [&](const std::unordered_map<std::string, std::string>& values) {
@@ -14887,7 +14926,7 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
             return;
         std::string current = setting.type == "password"
             ? getStorage(setting.key)
-            : (setting.type == "appReference" ? std::string{}
+            : (IsEntityReferenceSettingType(setting.type) ? std::string{}
                 : getStorage(setting.key, setting.defaultValue));
         std::string next = current;
         bool changed = false;
@@ -15206,6 +15245,87 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
                 }
             }
         }
+        else if (IsEntityReferenceSettingType(setting.type) &&
+            !setting.binding.empty())
+        {
+            const auto declaration =
+                widget.logicalSlots.Declarations().find(setting.binding);
+            const auto* snapshot =
+                widget.logicalSlots.Find(setting.binding);
+            const bool validBinding = declaration !=
+                    widget.logicalSlots.Declarations().end() &&
+                snapshot && snapshot->kind ==
+                    snowdesktop::widget_runtime::LogicalSlotKind::Binding;
+            std::optional<snowdesktop::widget_runtime::LogicalSlotItem>
+                boundItem;
+            if (validBinding && !snapshot->items.empty())
+                boundItem = snapshot->items.front();
+
+            const std::string emptyLabel = setting.emptyLabel.empty()
+                ? std::string("-") : setting.emptyLabel;
+            std::string display = boundItem
+                ? boundItem->title : emptyLabel;
+            if (boundItem && !boundItem->available)
+            {
+                display += " (";
+                display += _L("app.settings.widgets_skill_unavailable");
+                display += ')';
+            }
+            std::array<char, 512> buffer{};
+            strncpy_s(buffer.data(), buffer.size(), display.c_str(),
+                _TRUNCATE);
+            const float controlWidth = beginEditorRow(
+                setting.label.c_str(), kEditorControlWidth);
+            const float chooseButtonWidth = editorButtonWidth("...");
+            const float clearButtonWidth = ImGui::GetFrameHeight();
+            ImGui::SetNextItemWidth(std::max(ImGui::GetFrameHeight(),
+                controlWidth - chooseButtonWidth - clearButtonWidth -
+                    ImGui::GetStyle().ItemSpacing.x * 2.0f));
+            ImGui::InputText("##Reference", buffer.data(), buffer.size(),
+                ImGuiInputTextFlags_ReadOnly);
+            ImGui::SameLine();
+            const bool canChoose = validBinding &&
+                logicalSlotPickerCallback_;
+            if (!canChoose) ImGui::BeginDisabled();
+            const bool chooseReference = ImGui::Button("...##ChooseReference",
+                ImVec2(chooseButtonWidth, 0.0f));
+            if (!canChoose) ImGui::EndDisabled();
+            ImGui::SameLine();
+            const bool canClear = validBinding && boundItem &&
+                declaration->second.allowClear;
+            if (!canClear) ImGui::BeginDisabled();
+            const bool clearReference = ImGui::Button(
+                "×##ClearEntityReference",
+                ImVec2(clearButtonWidth, 0.0f));
+            if (!canClear) ImGui::EndDisabled();
+
+            if (chooseReference)
+            {
+                LogicalSlotPickerRequest request;
+                request.widgetId = widgetId;
+                request.slotId = setting.binding;
+                request.kind = snowdesktop::widget_runtime::
+                    LogicalSlotKind::Binding;
+                request.accepts = {
+                    std::string(EntityReferenceSettingKind(setting.type)) };
+                request.referenceType = std::string(
+                    EntityReferenceSettingTypeFilter(setting.type));
+                request.targetIndex = 0;
+                if (!logicalSlotPickerCallback_(request))
+                    OutputDebugStringA(
+                        "SnowDesktop entity reference picker unavailable\n");
+            }
+            if (clearReference && boundItem)
+            {
+                snowdesktop::widget_runtime::LogicalSlotChange change;
+                std::string error;
+                if (!RuntimeRemoveHostLogicalSlotItem(widgetId,
+                        setting.binding, boundItem->id, change, error,
+                        "host.settings"))
+                    RuntimeRecordError(widgetId,
+                        "settings entity reference clear: " + error);
+            }
+        }
         else if (setting.type == "appSearch" &&
             !setting.searchKey.empty())
         {
@@ -15327,7 +15447,7 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
             if (setting.key.empty() || IsHostStructureSettingKey(setting.key) ||
                 IsHostAppearanceSettingKey(setting.key) ||
                 setting.type == "password" ||
-                setting.type == "appReference")
+                IsEntityReferenceSettingType(setting.type))
                 continue;
 
             std::string value = setting.defaultValue;
@@ -20711,7 +20831,6 @@ void WidgetEngine::NotifyDesktopChanged(const std::string& reason)
     if (reason == "applications")
     {
         ++appIndexRevision_;
-        RefreshApplicationLogicalSlotAvailability();
         for (const auto& widget : widgets_)
         {
             if (!widget.valid || widget.preview || !dataBroker_ ||
@@ -20731,6 +20850,7 @@ void WidgetEngine::NotifyDesktopChanged(const std::string& reason)
                 RuntimeInvalidateHost(widget.widgetId);
         }
     }
+    RefreshLogicalSlotAvailability();
     if (d2dState_)
     {
         d2dState_->shellIconCache.clear();
@@ -22483,34 +22603,46 @@ void WidgetEngine::DispatchHostLogicalSlotChange(LuaWidget& widget,
         });
 }
 
-void WidgetEngine::RefreshApplicationLogicalSlotAvailability()
+void WidgetEngine::RefreshLogicalSlotAvailability()
 {
-    if (!applicationCatalogProvider_) return;
     LuaApplicationCatalogSnapshot catalog;
-    try
+    bool catalogReady = false;
+    if (applicationCatalogProvider_)
     {
-        catalog = applicationCatalogProvider_();
+        try
+        {
+            catalog = applicationCatalogProvider_();
+            catalogReady = catalog.state == "ready";
+        }
+        catch (...)
+        {
+            catalogReady = false;
+        }
     }
-    catch (...)
-    {
-        return;
-    }
-    if (catalog.state != "ready") return;
 
     std::unordered_set<std::wstring> availableTargets;
-    availableTargets.reserve(catalog.entries.size());
-    for (const auto& entry : catalog.entries)
+    if (catalogReady)
     {
-        std::wstring target = ToUpperInvariant(
-            Utf8ToWideLocal(entry.launchTarget));
-        if (!target.empty()) availableTargets.insert(std::move(target));
+        availableTargets.reserve(catalog.entries.size());
+        for (const auto& entry : catalog.entries)
+        {
+            std::wstring target = ToUpperInvariant(
+                Utf8ToWideLocal(entry.launchTarget));
+            if (!target.empty())
+                availableTargets.insert(std::move(target));
+        }
     }
 
+    struct AvailabilityChange
+    {
+        snowdesktop::widget_runtime::LogicalSlotChange change;
+        std::string source;
+    };
     struct ChangedWidget
     {
         std::size_t index = 0;
         snowdesktop::widget_runtime::LogicalSlotModel previous;
-        std::vector<snowdesktop::widget_runtime::LogicalSlotChange> changes;
+        std::vector<AvailabilityChange> changes;
     };
     std::vector<ChangedWidget> changedWidgets;
     const auto previousStorage = ActiveStorage();
@@ -22525,15 +22657,57 @@ void WidgetEngine::RefreshApplicationLogicalSlotAvailability()
         ChangedWidget changed;
         changed.index = widgetIndex;
         changed.previous = widget.logicalSlots;
+        const auto expectedTypeForSlot = [&](std::string_view slotId) {
+            const auto find = [&](const auto& settings) -> std::string_view {
+                for (const auto& setting : settings)
+                    if (setting.binding == slotId)
+                        return EntityReferenceSettingTypeFilter(
+                            setting.type);
+                return {};
+            };
+            std::string_view result = find(widget.manifest.settings);
+            return result.empty() ? find(widget.scriptSettings) : result;
+        };
         for (const auto& snapshot : widget.logicalSlots.Snapshots())
         {
             for (const auto& item : snapshot.items)
             {
-                if (item.kind != "app.reference") continue;
-                const std::wstring target = ToUpperInvariant(
-                    Utf8ToWideLocal(item.target));
-                const bool available = !target.empty() &&
-                    availableTargets.contains(target);
+                bool available = item.available;
+                std::string source;
+                if (item.kind == "app.reference")
+                {
+                    if (!catalogReady) continue;
+                    const std::wstring target = ToUpperInvariant(
+                        Utf8ToWideLocal(item.target));
+                    available = !target.empty() &&
+                        availableTargets.contains(target);
+                    source = "host.catalog";
+                }
+                else if (item.kind == "filesystem.reference")
+                {
+                    const std::string_view expectedType =
+                        expectedTypeForSlot(snapshot.id);
+                    const std::wstring target =
+                        Utf8ToWideLocal(item.target);
+                    const DWORD attributes = target.empty()
+                        ? INVALID_FILE_ATTRIBUTES
+                        : GetFileAttributesW(target.c_str());
+                    available = attributes != INVALID_FILE_ATTRIBUTES;
+                    if (available && !expectedType.empty() &&
+                        item.type != expectedType)
+                        available = false;
+                    const std::string_view effectiveType =
+                        expectedType.empty()
+                        ? std::string_view(item.type) : expectedType;
+                    if (available && effectiveType == "folder")
+                        available =
+                            (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+                    else if (available && effectiveType == "file")
+                        available =
+                            (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+                    source = "host.filesystem";
+                }
+                else continue;
                 snowdesktop::widget_runtime::LogicalSlotChange change;
                 std::string error;
                 if (!widget.logicalSlots.SetAvailability(snapshot.id,
@@ -22545,7 +22719,8 @@ void WidgetEngine::RefreshApplicationLogicalSlotAvailability()
                     continue;
                 }
                 if (change.operation != "unchanged")
-                    changed.changes.push_back(std::move(change));
+                    changed.changes.push_back({
+                        std::move(change), std::move(source) });
             }
         }
         if (!changed.changes.empty())
@@ -22574,7 +22749,7 @@ void WidgetEngine::RefreshApplicationLogicalSlotAvailability()
         RuntimeInvalidateHost(widget.widgetId);
         for (const auto& change : changed.changes)
             DispatchHostLogicalSlotChange(
-                widget, change, "host.catalog");
+                widget, change.change, change.source);
     }
 }
 
@@ -23588,7 +23763,7 @@ std::string WidgetEngine::RuntimeGetStorageValue(const std::wstring& widgetId, c
     std::string secretReference;
     if (RuntimeGetSecretReference(widgetId, key, secretReference))
         return secretReference;
-    if (RuntimeIsAppReferenceSetting(widgetId, key)) return {};
+    if (RuntimeIsEntityReferenceSetting(widgetId, key)) return {};
     const std::string prefix = WidgetWideToUtf8(widgetId);
     const std::string fullKey = prefix + "." + key;
     int idx = FindWidget(widgetId);
@@ -23618,7 +23793,7 @@ void WidgetEngine::RuntimeSetStorageValue(const std::wstring& widgetId, const st
     if (key.empty() || IsRemovedPanelEffectSettingKey(key)) return;
     std::string secretReference;
     if (RuntimeGetSecretReference(widgetId, key, secretReference)) return;
-    if (RuntimeIsAppReferenceSetting(widgetId, key)) return;
+    if (RuntimeIsEntityReferenceSetting(widgetId, key)) return;
     const std::string prefix = WidgetWideToUtf8(widgetId);
     if (!StorageWriteWithinQuota(prefix, key, value))
     {
@@ -23667,7 +23842,7 @@ bool WidgetEngine::RuntimeGetSecretReference(
     return true;
 }
 
-bool WidgetEngine::RuntimeIsAppReferenceSetting(
+bool WidgetEngine::RuntimeIsEntityReferenceSetting(
     const std::wstring& widgetId, const std::string& key) const
 {
     const int index = FindWidget(widgetId);
@@ -23678,7 +23853,7 @@ bool WidgetEngine::RuntimeIsAppReferenceSetting(
         return std::any_of(settings.begin(), settings.end(),
             [&](const LuaWidgetManifest::Setting& setting) {
                 return setting.key == key &&
-                    setting.type == "appReference";
+                    IsEntityReferenceSettingType(setting.type);
             });
     };
     return declaresReference(widget.manifest.settings) ||
@@ -27990,7 +28165,7 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
                     setting.options.clear();
                     setting.optionLabels.clear();
                 }
-                else if (setting.type == "appReference")
+                else if (IsEntityReferenceSettingType(setting.type))
                 {
                     setting.defaultValue.clear();
                     setting.searchKey.clear();
@@ -29638,13 +29813,13 @@ static bool BoundSecretSetting(lua_State* state, const std::string& key,
     return secret;
 }
 
-static bool BoundAppReferenceSetting(lua_State* state,
+static bool BoundEntityReferenceSetting(lua_State* state,
     const std::string& key)
 {
     if (BoundWidgetApiVersion(state) < 2) return false;
     auto* d2d = GetD2D(state);
     return d2d && d2d->engine &&
-        d2d->engine->RuntimeIsAppReferenceSetting(
+        d2d->engine->RuntimeIsEntityReferenceSetting(
             BoundWidgetId(state), key);
 }
 
@@ -29655,9 +29830,9 @@ static int RejectHostManagedSettingWrite(lua_State* state,
         return luaL_error(state,
             "%s: password settings are host-managed and read-only to Lua",
             api);
-    if (BoundAppReferenceSetting(state, key))
+    if (BoundEntityReferenceSetting(state, key))
         return luaL_error(state,
-            "%s: appReference settings are host-managed and read-only to Lua",
+            "%s: entity reference settings are host-managed and read-only to Lua",
             api);
     return 0;
 }
@@ -29677,7 +29852,7 @@ static int lua_StorageTransactionGet(lua_State* state)
             secretReference.size());
         return 1;
     }
-    if (BoundAppReferenceSetting(state, key))
+    if (BoundEntityReferenceSetting(state, key))
     {
         lua_pushnil(state);
         return 1;
@@ -29858,7 +30033,7 @@ static int lua_StorageGet(lua_State* L)
             secretReference.size());
         return 1;
     }
-    if (BoundAppReferenceSetting(L, key))
+    if (BoundEntityReferenceSetting(L, key))
     {
         lua_pushnil(L);
         return 1;
@@ -30278,7 +30453,7 @@ static int lua_StorageKeys(lua_State* L)
         std::string key = prefix.empty() ? kv.first : kv.first.substr(prefix.size());
         if (IsReservedStorageTransactionKey(key)) continue;
         if (BoundSecretSetting(L, key) ||
-            BoundAppReferenceSetting(L, key))
+            BoundEntityReferenceSetting(L, key))
             continue;
         lua_pushstring(L, key.c_str());
         lua_rawseti(L, -2, idx++);

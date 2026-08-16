@@ -89,11 +89,11 @@
 ---@class SnowSettingField
 ---@field key string
 ---@field label string
----@field type 'text'|'password'|'bool'|'int'|'float'|'select'|'color'|'appReference'|'appSearch'
----@field default? string|number|boolean Ignored for password and appReference fields; opaque values must never be shipped as defaults.
+---@field type 'text'|'password'|'bool'|'int'|'float'|'select'|'color'|'appReference'|'desktopItemReference'|'fileReference'|'folderReference'|'appSearch'
+---@field default? string|number|boolean Ignored for password and entity reference fields; opaque values must never be shipped as defaults.
 ---@field searchKey? string Required by appSearch; stores the user's query separately from the selected display title.
----@field binding? string Required by appReference; names one replacePolicy='allow' manifest binding that accepts app.reference.
----@field emptyLabel? string Localized empty-state label used by appSearch and appReference.
+---@field binding? string Required by appReference, desktopItemReference, fileReference, and folderReference; names one uniquely used replacePolicy='allow' manifest binding accepting only the matching reference kind.
+---@field emptyLabel? string Localized empty-state label used by appSearch and entity reference fields.
 ---@field noResultsLabel? string Localized label shown after an application search returns no results.
 ---@field min? number
 ---@field max? number

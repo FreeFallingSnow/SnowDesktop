@@ -376,6 +376,12 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "settings.appSearch") &&
             snowdesktop::widget_api::SupportsFeature(
+                "settings.desktopItemReference") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "settings.fileReference") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "settings.folderReference") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "settings.secretReference") &&
             snowdesktop::widget_api::SupportsFeature(
                 "settings.select.localizedOptions") &&

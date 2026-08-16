@@ -14,6 +14,12 @@ inline bool Accepts(const std::vector<std::string>& accepts,
     return std::find(accepts.begin(), accepts.end(), kind) != accepts.end();
 }
 
+inline bool MatchesType(std::string_view requiredType,
+    std::string_view candidateType) noexcept
+{
+    return requiredType.empty() || requiredType == candidateType;
+}
+
 inline std::string_view DesktopCandidateKind(
     const std::vector<std::string>& accepts, bool applicationShortcut,
     bool hasFilesystemTarget) noexcept

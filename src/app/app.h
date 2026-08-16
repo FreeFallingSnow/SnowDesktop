@@ -2454,6 +2454,7 @@ private:
     bool OpenLuaLogicalSlotPicker(const LogicalSlotPickerRequest& request);
     bool IsLuaLogicalSlotPickerOpen() const;
     bool LuaLogicalSlotPickerAccepts(std::string_view kind) const;
+    bool LuaLogicalSlotPickerAcceptsType(std::string_view type) const;
     std::optional<snowdesktop::widget_runtime::LogicalSlotItem>
         BuildLuaLogicalSlotPickerCandidate(
             const QuickNavigationEntry& entry) const;

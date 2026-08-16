@@ -158,6 +158,10 @@ void TestHostPickerCandidatePolicy()
     Check(picker::DesktopCandidateKind(
             { "filesystem.reference" }, false, false).empty(),
         "a namespace-only object must not become a filesystem reference");
+    Check(picker::MatchesType({}, "file") &&
+            picker::MatchesType("file", "file") &&
+            !picker::MatchesType("folder", "file"),
+        "settings reference pickers must enforce optional file/folder filters");
 }
 
 void TestPointerReorderTargets()

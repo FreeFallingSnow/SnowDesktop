@@ -430,6 +430,10 @@ void DesktopApp::RefreshQuickNavigationEverythingResults()
     auto appendResult = [&](const EverythingSearchResult& result) {
         if (result.path.empty())
             return;
+        if (IsLuaLogicalSlotPickerOpen() &&
+            !LuaLogicalSlotPickerAcceptsType(
+                result.isDirectory ? "folder" : "file"))
+            return;
         if (snowdesktop::shell_item_visibility::
                 IsAlwaysHidden(
                     result.name.empty()

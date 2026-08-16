@@ -659,6 +659,7 @@ struct LogicalSlotPickerRequest
     snowdesktop::widget_runtime::LogicalSlotKind kind =
         snowdesktop::widget_runtime::LogicalSlotKind::Binding;
     std::vector<std::string> accepts;
+    std::string referenceType;
     std::size_t targetIndex = 0;
 };
 
@@ -1320,8 +1321,8 @@ public:
     /** Return true when key is a host-managed password setting. */
     bool RuntimeGetSecretReference(const std::wstring& widgetId,
         const std::string& key, std::string& reference) const;
-    /** Return true when key is a host-managed appReference setting. */
-    bool RuntimeIsAppReferenceSetting(const std::wstring& widgetId,
+    /** Return true when key is a host-managed entity reference setting. */
+    bool RuntimeIsEntityReferenceSetting(const std::wstring& widgetId,
         const std::string& key) const;
     std::vector<std::string> RuntimeSecretStorageKeys(
         const std::wstring& widgetId) const;
@@ -1559,7 +1560,7 @@ private:
     void DispatchHostLogicalSlotChange(LuaWidget& widget,
         const snowdesktop::widget_runtime::LogicalSlotChange& change,
         std::string_view source);
-    void RefreshApplicationLogicalSlotAvailability();
+    void RefreshLogicalSlotAvailability();
     void DispatchInteractionAction(LuaWidget& widget,
         const std::string& targetKey, const char* eventName,
         int x, int y, int button, int delta, int clickCount = 0,

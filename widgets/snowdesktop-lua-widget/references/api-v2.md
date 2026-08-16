@@ -1042,6 +1042,8 @@ capacity/item/items` 可在 view 中调用；`bind/add/clear/remove/move` 会持
 `shell.openItem/revealItem` 任务执行受权限和可信手势约束的操作。
 当宿主应用目录核对改变持久应用引用的可用性时，revision 同样递增并发送 operation 为
 `availability`、source 为 `host.catalog` 的 `slot.changed`；这类宿主状态更新不进入用户撤销历史。
+文件系统引用的路径或文件/文件夹类型发生变化时使用同一 operation，source 为
+`host.filesystem`。
 
 声明式树必须准确反映同一宿主快照。binding 的 surface 可有一个 placeholder 或一个
 `slotItem`；有绑定时必须提交该 item。collection 的直接 children 必须按宿主顺序完整提交
@@ -2141,7 +2143,7 @@ API v1 的同步 `sys` 代替。
 
 `appReference` 是持久应用引用选择器，不保存显示名、路径或 AUMID。字段必须提供稳定的
 `key` 和 `binding`；`binding` 必须指向 manifest 中接受 `app.reference` 且
-`replacePolicy="allow"` 的单项槽位：
+`replacePolicy="allow"`、且只接受 `app.reference` 的单项槽位；一个 binding 不能被多个实体设置字段复用：
 
 ```lua
 settings = {
@@ -2166,6 +2168,22 @@ settings = {
 不可用引用不能交给 `app.launch`。选择器本身不要求 `app.discovery`，但启动仍要求
 `app.launch` 权限和当前可信用户手势。对应 feature 为 `settings.appReference`，并同时依赖
 `slots.model`。
+
+其余单实体选择器使用相同的 host-owned binding 契约：
+
+| 设置类型 | binding 必须接受 | 宿主选择范围 | feature |
+| --- | --- | --- | --- |
+| `desktopItemReference` | `desktop.item` | SnowDesktop 当前桌面、集合和 Dock 中的项目 | `settings.desktopItemReference` |
+| `fileReference` | `filesystem.reference` | 快速导航与 Everything 结果中的文件 | `settings.fileReference` |
+| `folderReference` | `filesystem.reference` | 快速导航与 Everything 结果中的文件夹 | `settings.folderReference` |
+
+三个字段都要求 binding 只接受表中对应 kind、使用 `replacePolicy="allow"`，并提供
+`binding`、`emptyLabel`，不接收 default 或
+preset。设置页的 `...` 打开宿主选择器，`×` 按 manifest 的 `allowClear` 清除；文件和文件夹
+即使共享 `filesystem.reference` kind 也会在候选生成和结果列表两层严格过滤。宿主在实例加载及
+桌面内容变化时重新检查路径存在性和文件/文件夹类型；失效引用变为 `unavailable`，不能交给
+`shell.openItem/revealItem`。这些选择器只授予所选引用，不授予目录枚举或文件内容读取权限。
+运行时仍统一通过 `slots.binding(bindingId):item()` 读取，不通过设置字段的 storage key。
 
 `password` 设置由宿主显示遮罩输入框并使用 Windows DPAPI 写入独立私有状态文件；不要提供
 `default`，也不要把该键写进 preset。输入框失去焦点时提交新值，右侧 `×` 清除已有值。

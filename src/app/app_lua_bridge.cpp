@@ -270,12 +270,23 @@ bool DesktopApp::LuaLogicalSlotPickerAccepts(std::string_view kind) const
             logicalSlotPickerRequest_.accepts, kind);
 }
 
+bool DesktopApp::LuaLogicalSlotPickerAcceptsType(
+    std::string_view type) const
+{
+    return IsLuaLogicalSlotPickerOpen() &&
+        snowdesktop::logical_slot_picker_rules::MatchesType(
+            logicalSlotPickerRequest_.referenceType, type);
+}
+
 bool DesktopApp::OpenLuaLogicalSlotPicker(
     const LogicalSlotPickerRequest& request)
 {
     if (request.widgetId.empty() || request.slotId.empty() ||
         request.accepts.empty() || quickNavigationOpen_ ||
-        IsLuaLogicalSlotPickerOpen())
+        IsLuaLogicalSlotPickerOpen() ||
+        (!request.referenceType.empty() &&
+            request.referenceType != "file" &&
+            request.referenceType != "folder"))
         return false;
     const size_t widgetIndex = FindWidgetIndexById(request.widgetId);
     if (widgetIndex >= widgets_.size() ||
@@ -312,7 +323,10 @@ DesktopApp::BuildLuaLogicalSlotPickerCandidate(
     candidate.target = LuaWidgetWideToUtf8(target);
     candidate.available = true;
     if (candidate.title.empty()) candidate.title = candidate.target;
-    return candidate;
+    return LuaLogicalSlotPickerAcceptsType(candidate.type)
+        ? std::optional<snowdesktop::widget_runtime::LogicalSlotItem>(
+            std::move(candidate))
+        : std::nullopt;
 }
 
 std::optional<snowdesktop::widget_runtime::LogicalSlotItem>
@@ -330,7 +344,10 @@ DesktopApp::BuildLuaLogicalSlotPickerCandidate(
     candidate.target = LuaWidgetWideToUtf8(entry.path);
     candidate.available = true;
     if (candidate.title.empty()) candidate.title = candidate.target;
-    return candidate;
+    return LuaLogicalSlotPickerAcceptsType(candidate.type)
+        ? std::optional<snowdesktop::widget_runtime::LogicalSlotItem>(
+            std::move(candidate))
+        : std::nullopt;
 }
 
 std::optional<snowdesktop::widget_runtime::LogicalSlotItem>
@@ -370,12 +387,26 @@ DesktopApp::BuildLuaLogicalSlotPickerCandidate(
         candidate.kind = std::string(kind);
         candidate.title = LuaWidgetWideToUtf8(item.name);
         candidate.target = LuaWidgetWideToUtf8(target);
-        candidate.type = item.typeName.empty()
-            ? (item.isApplicationShortcut ? "application" : "desktop.item")
-            : LuaWidgetWideToUtf8(item.typeName);
+        if (candidate.kind == "filesystem.reference")
+        {
+            const DWORD attributes = GetFileAttributesW(target.c_str());
+            candidate.type = attributes != INVALID_FILE_ATTRIBUTES &&
+                    (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0
+                ? "folder" : "file";
+        }
+        else
+        {
+            candidate.type = item.typeName.empty()
+                ? (item.isApplicationShortcut
+                    ? "application" : "desktop.item")
+                : LuaWidgetWideToUtf8(item.typeName);
+        }
     }
     if (candidate.title.empty()) candidate.title = candidate.target;
-    return candidate;
+    return LuaLogicalSlotPickerAcceptsType(candidate.type)
+        ? std::optional<snowdesktop::widget_runtime::LogicalSlotItem>(
+            std::move(candidate))
+        : std::nullopt;
 }
 
 bool DesktopApp::CanPickLuaLogicalSlotEntry(

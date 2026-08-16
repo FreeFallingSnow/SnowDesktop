@@ -175,6 +175,11 @@ the host-owned slot, never to ordinary storage; replacement and clearing join
 slot history, and the component reads the result with `slots.binding(id):item()`.
 The host can mark a persisted item unavailable after app-catalog changes, and
 an unavailable reference cannot be launched. Probe
+`settings.desktopItemReference`, `settings.fileReference`, or
+`settings.folderReference` for the equivalent host picker bound to
+`desktop.item` or `filesystem.reference`. File and folder fields filter both
+visible results and committed candidates by type, write only the selected
+opaque slot item, and grant neither enumeration nor file-content access. Probe
 `view.referenceIcon` to render a bound/search result's opaque reference as a
 host-resolved icon without requiring a package image or exposing its target;
 this visual node does not grant launch, open, reveal, or file-content access.
