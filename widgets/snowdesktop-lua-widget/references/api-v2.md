@@ -2150,6 +2150,36 @@ string[]；后两项使用 `storage.typed` 持久化，首次读取默认值、�
 URL、日期或时间。对应 feature 分别为 `settings.url`、`settings.date`、`settings.time`、
 `settings.range`、`settings.multiSelect`。
 
+设置字段可提供不超过 2048 字节的本地化 `description`，宿主在控件下方以辅助文本显示。
+`settings.groups` 按声明顺序定义最多 32 个分组，每组包含稳定 ASCII `id`、本地化 `label`、
+可选 `description`，以及 `collapsible/defaultExpanded`；字段用 `group=id` 加入分组。未分组字段
+保持声明顺序并显示在分组前，同一分组内也保持字段声明顺序。重复 group/field ID、未知 group、
+超长文本或 API v1 声明会使组件加载失败。对应 feature 为 `settings.description`、
+`settings.groups`。
+
+```lua
+settings = {
+    groups = {
+        {
+            id = "content",
+            label = l10n.tr("widget.settings.content"),
+            description = l10n.tr("widget.settings.content_help"),
+            collapsible = true,
+            defaultExpanded = true,
+        },
+    },
+    fields = {
+        {
+            key = "feedUrl",
+            type = "url",
+            label = l10n.tr("widget.settings.feed"),
+            description = l10n.tr("widget.settings.feed_help"),
+            group = "content",
+        },
+    },
+}
+```
+
 `appSearch` 设置使用 `key` 保存用户选中的应用显示名，使用 `searchKey` 保存搜索文字；
 宿主复用应用索引并在后台完成匹配，在设置页直接显示候选项。`emptyLabel` 和
 `noResultsLabel` 必须使用组件清单中的本地化文本。该控件只负责设置交互；组件运行时仍应

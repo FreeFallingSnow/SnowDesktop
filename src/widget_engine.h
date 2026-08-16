@@ -100,6 +100,8 @@ struct LuaWidgetManifest
     {
         std::string key;
         std::string label;
+        std::string description;
+        std::string group;
         std::string type;
         std::string defaultValue;
         std::string searchKey;
@@ -114,6 +116,14 @@ struct LuaWidgetManifest
         std::vector<std::string> optionLabels;
         std::vector<std::string> defaultValues;
         std::vector<std::string> extensions;
+    };
+    struct SettingGroup
+    {
+        std::string id;
+        std::string label;
+        std::string description;
+        bool collapsible = false;
+        bool defaultExpanded = true;
     };
     struct SettingPreset
     {
@@ -153,6 +163,7 @@ struct LuaWidgetManifest
     /// v2 清单声明的宿主管理逻辑槽位。
     snowdesktop::widget_runtime::LogicalSlotDeclarations logicalSlots;
     std::vector<Setting> settings;        ///< 宿主生成的声明式设置
+    std::vector<SettingGroup> settingGroups; ///< 声明式设置分组
     std::vector<SettingPreset> presets;   ///< 宿主生成的声明式预设
     std::string publisher;
     std::string minHostVersion;
@@ -562,6 +573,7 @@ struct LuaWidget
     LuaWidgetTheme theme;                ///< 自定义主题配置（当 customStyle 为 true 时生效）
     LuaWidgetSurfaceContext surfaceContext; ///< 当前显示器、工作区与 DPI 摘要
     std::vector<LuaWidgetManifest::Setting> scriptSettings; ///< Lua 顶层声明式设置
+    std::vector<LuaWidgetManifest::SettingGroup> scriptSettingGroups; ///< Lua 顶层设置分组
     std::vector<LuaWidgetManifest::SettingPreset> scriptPresets; ///< Lua 顶层声明式预设
     FILETIME lastModified = {};          ///< 脚本文件最后修改时间，用于变更检测
     RECT lastBounds{};                   ///< 最后一次渲染时的边界矩形

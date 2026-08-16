@@ -158,4 +158,14 @@ bool NormalizeFilesystemSettingExtensions(
     }
     return true;
 }
+
+bool IsValidSettingGroupId(std::string_view value) noexcept
+{
+    return !value.empty() && value.size() <= 64 &&
+        std::all_of(value.begin(), value.end(),
+            [](const unsigned char character) {
+                return std::isalnum(character) || character == '_' ||
+                    character == '-' || character == '.';
+            });
+}
 }

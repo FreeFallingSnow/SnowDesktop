@@ -1581,7 +1581,8 @@ v2.0 不开放：真实文件 move/copy/delete、组件嵌套、把 Lua 组件�
 - `multiSelect`（已实现 1-64 稳定选项、本地化标签及 string[] 类型默认、preset、持久化）
 - `fileHandle`、`folderHandle`（已实现设置页系统选择器、独立 opaque 授权、替换/清除撤销及只读 storage 投影）
 - `appReference`、`desktopItemReference`、`fileReference`、`folderReference` 动态 entity selector；可以直接写入第 14.5 节 binding，而不是把 path/AUMID 当普通字符串
-- 分组、说明、校验、依赖和 `showWhen`
+- 分组、说明（已实现有界字段说明、最多 32 个顺序分组及可选折叠）
+- 校验、依赖和 `showWhen`
 
 普通配置值进入类型化实例存储；secret、file/folder handle 和宿主 item/app reference 只保存绑定/授权记录，不进入普通字符串存储和预览。entity selector 由宿主展示，组件只取得用户最终选择的 opaque reference；组件若自行枚举候选，仍需对应 read/discovery 权限。
 
@@ -1590,6 +1591,8 @@ v2.0 不开放：真实文件 move/copy/delete、组件嵌套、把 Lua 组件�
 `settings.url/date/time/range/multiSelect` 已补齐：前三者在清单、preset 和设置页提交边界执行严格格式校验；range 按有限 min/max/正 step 吸附并以 Lua number 持久化；multiSelect 限制 1-64 个唯一稳定选项，以 Lua string[] 保存并支持数组 default/preset。宿主在无持久值时也返回同型默认值，恢复默认和切换 preset 不会退化为字符串编码。
 
 `settings.fileHandle/folderHandle` 已接入现有文件句柄仓库和系统选择器。字段按 read/write/readWrite 取得当前包与实例独占的 opaque capability；Lua 只能经只读 storage 投影读取，不能设置、删除或用 `filesystem.release` 绕过用户控制。替换或清除会取消旧句柄关联的任务/监听并撤销授权；路径不进入普通 storage、preset、预览或 Lua。
+
+`settings.description/groups` 已提供宿主管理的设置页信息结构：字段说明限制 2048 字节；最多 32 个稳定 ASCII group ID 可按声明顺序显示 section 或 collapsible header，并携带有界本地化说明。字段和分组重复、未知分组引用以及 API v1 使用会在加载阶段拒绝。
 
 ### 15.2 包内模块
 

@@ -62,6 +62,10 @@ int main()
             !NormalizeFilesystemSettingExtensions(
                 { "../exe" }, normalizedExtensions),
         "filesystem-handle settings validate access and normalize safe extensions");
+    Check(IsValidSettingGroupId("content.behavior-2") &&
+            !IsValidSettingGroupId("") &&
+            !IsValidSettingGroupId("content/advanced"),
+        "setting group IDs use a bounded stable ASCII identifier");
 
     if (failures != 0)
     {

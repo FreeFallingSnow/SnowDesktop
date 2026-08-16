@@ -378,6 +378,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "settings.date") &&
             snowdesktop::widget_api::SupportsFeature(
+                "settings.description") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "settings.desktopItemReference") &&
             snowdesktop::widget_api::SupportsFeature(
                 "settings.fileReference") &&
@@ -387,6 +389,8 @@ void TestV2Contract()
                 "settings.folderReference") &&
             snowdesktop::widget_api::SupportsFeature(
                 "settings.folderHandle") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "settings.groups") &&
             snowdesktop::widget_api::SupportsFeature(
                 "settings.multiSelect") &&
             snowdesktop::widget_api::SupportsFeature(

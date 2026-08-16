@@ -186,6 +186,11 @@ finite min/max/positive-step numeric slider and `settings.multiSelect` for a
 1-64 option host checklist. Range values are Lua numbers and multi-select
 values are string arrays in defaults, presets, and typed storage; do not encode
 either as delimiter-separated text. Probe
+`settings.groups` before organizing fields under stable group IDs; group and
+field descriptions must be localized package text, not host-language keys.
+Use non-collapsible groups for short sections and collapsible groups only when
+the hidden controls remain discoverable. Probe `settings.description` before
+adding bounded supporting text below a field. Probe
 `settings.fileHandle` or `settings.folderHandle` when a persistent settings
 field must own one user-selected filesystem capability. Declare read, write,
 or readWrite access and optional safe file extensions; read the opaque handle

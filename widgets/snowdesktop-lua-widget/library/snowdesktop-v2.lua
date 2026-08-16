@@ -89,6 +89,8 @@
 ---@class SnowSettingField
 ---@field key string
 ---@field label string
+---@field description? string Localized supporting text rendered below the field; up to 2048 UTF-8 bytes.
+---@field group? string ID of one declared SnowSettingGroup.
 ---@field type 'text'|'password'|'bool'|'int'|'float'|'select'|'color'|'url'|'date'|'time'|'range'|'multiSelect'|'fileHandle'|'folderHandle'|'appReference'|'desktopItemReference'|'fileReference'|'folderReference'|'appSearch'
 ---@field default? string|number|boolean|string[] multiSelect defaults are stable option arrays; range defaults are exposed to Lua as numbers. Ignored for password, filesystem-handle, and entity reference fields.
 ---@field searchKey? string Required by appSearch; stores the user's query separately from the selected display title.
@@ -103,6 +105,13 @@
 ---@field optionLabels? string[] Localized labels parallel to stable select or multiSelect option values.
 ---@field extensions? string[] Up to 16 safe file extensions for fileHandle; leading dots are optional. Not accepted by folderHandle.
 
+---@class SnowSettingGroup
+---@field id string Stable ASCII identifier unique across manifest and Lua declarations.
+---@field label string Localized section or collapsible-header label.
+---@field description? string Localized supporting text rendered before the group's fields.
+---@field collapsible? boolean Whether the host renders a collapsible header; defaults to false.
+---@field defaultExpanded? boolean Initial open state for a collapsible group; defaults to true.
+
 ---@class SnowSettingPreset
 ---@field id string
 ---@field label string
@@ -110,6 +119,7 @@
 ---@field values table<string, string|number|boolean|string[]>
 
 ---@class SnowWidgetSettings
+---@field groups? SnowSettingGroup[]
 ---@field fields? SnowSettingField[]
 ---@field presets? SnowSettingPreset[]
 

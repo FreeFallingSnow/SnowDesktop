@@ -23,4 +23,5 @@ bool IsValidFilesystemSettingAccess(std::string_view value) noexcept;
 bool NormalizeFilesystemSettingExtensions(
     const std::vector<std::string>& input,
     std::vector<std::string>& output) noexcept;
+bool IsValidSettingGroupId(std::string_view value) noexcept;
 }

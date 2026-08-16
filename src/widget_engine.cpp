@@ -1089,6 +1089,9 @@ static LuaWidgetManifest::Setting ReadLuaSettingTable(lua_State* L, int tableInd
     LuaWidgetManifest::Setting setting;
     setting.key = LuaReadStorageField(L, tableIndex, "key");
     setting.label = LuaReadStorageField(L, tableIndex, "label");
+    setting.description =
+        LuaReadStorageField(L, tableIndex, "description");
+    setting.group = LuaReadStorageField(L, tableIndex, "group");
     setting.type = LuaReadStorageField(L, tableIndex, "type");
     setting.defaultValue = LuaReadStorageField(L, tableIndex, "default");
     setting.searchKey = LuaReadStorageField(L, tableIndex, "searchKey");
@@ -1169,6 +1172,44 @@ static LuaWidgetManifest::Setting ReadLuaSettingTable(lua_State* L, int tableInd
         setting.optionLabels.clear();
     }
     return setting;
+}
+
+static LuaWidgetManifest::SettingGroup ReadLuaSettingGroupTable(
+    lua_State* L, int tableIndex)
+{
+    tableIndex = lua_absindex(L, tableIndex);
+    LuaWidgetManifest::SettingGroup group;
+    group.id = LuaReadStorageField(L, tableIndex, "id");
+    group.label = LuaReadStorageField(L, tableIndex, "label");
+    group.description =
+        LuaReadStorageField(L, tableIndex, "description");
+    group.collapsible = LuaReadBoolField(
+        L, tableIndex, "collapsible");
+    group.defaultExpanded = LuaReadBoolField(
+        L, tableIndex, "defaultExpanded", true);
+    if (group.label.empty()) group.label = group.id;
+    return group;
+}
+
+static void ReadLuaSettingGroupsArray(lua_State* L, int arrayIndex,
+    std::vector<LuaWidgetManifest::SettingGroup>& out)
+{
+    arrayIndex = lua_absindex(L, arrayIndex);
+    for (int index = 1;; ++index)
+    {
+        lua_rawgeti(L, arrayIndex, index);
+        if (lua_isnil(L, -1))
+        {
+            lua_pop(L, 1);
+            break;
+        }
+        if (lua_istable(L, -1))
+        {
+            auto group = ReadLuaSettingGroupTable(L, -1);
+            out.push_back(std::move(group));
+        }
+        lua_pop(L, 1);
+    }
 }
 
 static void ReadLuaSettingsArray(lua_State* L, int arrayIndex,
@@ -1260,6 +1301,7 @@ static void ReadLuaPresetsArray(lua_State* L, int arrayIndex,
 
 static void ReadLuaDeclaredSettings(lua_State* L, int widgetTableIndex,
     std::vector<LuaWidgetManifest::Setting>& settings,
+    std::vector<LuaWidgetManifest::SettingGroup>& groups,
     std::vector<LuaWidgetManifest::SettingPreset>& presets)
 {
     widgetTableIndex = lua_absindex(L, widgetTableIndex);
@@ -1282,6 +1324,11 @@ static void ReadLuaDeclaredSettings(lua_State* L, int widgetTableIndex,
             if (directArray)
                 ReadLuaSettingsArray(L, settingsTable, settings);
         }
+
+        lua_getfield(L, settingsTable, "groups");
+        if (lua_istable(L, -1))
+            ReadLuaSettingGroupsArray(L, -1, groups);
+        lua_pop(L, 1);
 
         lua_getfield(L, settingsTable, "presets");
         if (lua_istable(L, -1))
@@ -1412,6 +1459,84 @@ static bool ValidateEntityReferenceSettings(
         return true;
     };
     return validate(manifestSettings) && validate(scriptSettings);
+}
+
+static bool ValidateSettingPresentation(
+    const std::vector<LuaWidgetManifest::Setting>& manifestSettings,
+    const std::vector<LuaWidgetManifest::Setting>& scriptSettings,
+    const std::vector<LuaWidgetManifest::SettingGroup>& manifestGroups,
+    const std::vector<LuaWidgetManifest::SettingGroup>& scriptGroups,
+    int apiVersion, std::string& error)
+{
+    error.clear();
+    if (manifestGroups.size() + scriptGroups.size() > 32)
+    {
+        error = "settings accept at most 32 groups";
+        return false;
+    }
+    std::unordered_set<std::string> groupIds;
+    const auto validateGroups = [&](const auto& groups) {
+        for (const auto& group : groups)
+        {
+            const bool safeId = snowdesktop::widget_runtime::
+                IsValidSettingGroupId(group.id);
+            if (!safeId || group.label.empty() ||
+                group.label.size() > 512 ||
+                group.description.size() > 4096)
+            {
+                error = "setting group declarations are invalid";
+                return false;
+            }
+            if (!groupIds.emplace(group.id).second)
+            {
+                error = "setting group '" + group.id +
+                    "' is declared more than once";
+                return false;
+            }
+        }
+        return true;
+    };
+    if (!validateGroups(manifestGroups) || !validateGroups(scriptGroups))
+        return false;
+
+    std::unordered_set<std::string> settingKeys;
+    const auto validateSettings = [&](const auto& settings) {
+        for (const auto& setting : settings)
+        {
+            if (!settingKeys.emplace(setting.key).second)
+            {
+                error = "setting key '" + setting.key +
+                    "' is declared more than once";
+                return false;
+            }
+            if (setting.description.size() > 2048)
+            {
+                error = "setting '" + setting.key +
+                    "' description exceeds 2048 bytes";
+                return false;
+            }
+            if (!setting.group.empty() && !groupIds.contains(setting.group))
+            {
+                error = "setting '" + setting.key +
+                    "' references undeclared group '" + setting.group + "'";
+                return false;
+            }
+            if (apiVersion < 2 &&
+                (!setting.group.empty() || !setting.description.empty()))
+            {
+                error = "setting groups and descriptions require API v2";
+                return false;
+            }
+        }
+        return true;
+    };
+    if (apiVersion < 2 && !groupIds.empty())
+    {
+        error = "setting groups require API v2";
+        return false;
+    }
+    return validateSettings(manifestSettings) &&
+        validateSettings(scriptSettings);
 }
 
 static bool ValidateOrdinaryDeclarativeSettings(
@@ -14748,12 +14873,24 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     lua_pop(state, 1);
 
     std::vector<LuaWidgetManifest::Setting> scriptSettings;
+    std::vector<LuaWidgetManifest::SettingGroup> scriptSettingGroups;
     std::vector<LuaWidgetManifest::SettingPreset> scriptPresets;
-    ReadLuaDeclaredSettings(state, -1, scriptSettings, scriptPresets);
+    ReadLuaDeclaredSettings(state, -1, scriptSettings,
+        scriptSettingGroups, scriptPresets);
     std::string settingsError;
     if (!ValidateEntityReferenceSettings(pending.manifest.settings,
             scriptSettings, pending.manifest.apiVersion,
             pending.manifest.logicalSlots, settingsError))
+    {
+        RuntimeRecordError(widgetId, settingsError);
+        RecordWidgetHostFailure(widgetId, settingsError, false);
+        lua_pop(state, 1);
+        return false;
+    }
+    if (!ValidateSettingPresentation(
+            pending.manifest.settings, scriptSettings,
+            pending.manifest.settingGroups, scriptSettingGroups,
+            pending.manifest.apiVersion, settingsError))
     {
         RuntimeRecordError(widgetId, settingsError);
         RecordWidgetHostFailure(widgetId, settingsError, false);
@@ -14890,6 +15027,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     w.customStyle = customStyle;
     w.followPersonalizationDefault = followPersonalizationDefault;
     w.scriptSettings = std::move(scriptSettings);
+    w.scriptSettingGroups = std::move(scriptSettingGroups);
     w.scriptPresets = std::move(scriptPresets);
     w.preview = preview;
     w.previewStorage = std::move(pending.previewStorage);
@@ -14901,6 +15039,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
             for (const auto& setting : settings)
             {
                 if (setting.type != "password" &&
+                    !IsFilesystemHandleSettingType(setting.type) &&
                     !IsEntityReferenceSettingType(setting.type))
                     continue;
                 removedPlaintextOpaqueSetting =
@@ -15038,6 +15177,10 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
     const LuaWidget& widget = widgets_[idx];
     std::vector<LuaWidgetManifest::Setting> settings = widget.manifest.settings;
     settings.insert(settings.end(), widget.scriptSettings.begin(), widget.scriptSettings.end());
+    std::vector<LuaWidgetManifest::SettingGroup> settingGroups =
+        widget.manifest.settingGroups;
+    settingGroups.insert(settingGroups.end(),
+        widget.scriptSettingGroups.begin(), widget.scriptSettingGroups.end());
     std::vector<LuaWidgetManifest::SettingPreset> presets = widget.manifest.presets;
     presets.insert(presets.end(), widget.scriptPresets.begin(), widget.scriptPresets.end());
 
@@ -16106,6 +16249,15 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
         }
         ImGui::PopID();
         if (changed) setStorage(setting.key, next);
+        if (!setting.description.empty())
+        {
+            const float descriptionWidth = alignEditorControl(
+                kEditorControlWidth);
+            ImGui::PushTextWrapPos(
+                ImGui::GetCursorPosX() + descriptionWidth);
+            ImGui::TextDisabled("%s", setting.description.c_str());
+            ImGui::PopTextWrapPos();
+        }
     };
 
     int defaultPresetIndex = -1;
@@ -16400,11 +16552,44 @@ bool WidgetEngine::RenderWidgetEditor(const std::wstring& widgetId,
     if (!settings.empty())
     {
         ImGui::SeparatorText(_L("app.settings.script_settings"));
-        for (size_t settingIndex = 0;
-            settingIndex < settings.size(); ++settingIndex)
+        const auto renderFieldsForGroup = [&](std::string_view groupId) {
+            for (size_t settingIndex = 0;
+                settingIndex < settings.size(); ++settingIndex)
+            {
+                if (settings[settingIndex].group != groupId) continue;
+                ImGui::PushID(static_cast<int>(settingIndex));
+                renderSetting(settings[settingIndex]);
+                ImGui::PopID();
+            }
+        };
+        renderFieldsForGroup(std::string_view{});
+        for (const auto& group : settingGroups)
         {
-            ImGui::PushID(static_cast<int>(settingIndex));
-            renderSetting(settings[settingIndex]);
+            ImGui::PushID(group.id.c_str());
+            bool expanded = true;
+            if (group.collapsible)
+            {
+                ImGuiTreeNodeFlags flags = group.defaultExpanded
+                    ? ImGuiTreeNodeFlags_DefaultOpen
+                    : ImGuiTreeNodeFlags_None;
+                expanded = ImGui::CollapsingHeader(
+                    group.label.c_str(), flags);
+            }
+            else
+                ImGui::SeparatorText(group.label.c_str());
+            if (expanded)
+            {
+                if (!group.description.empty())
+                {
+                    ImGui::PushTextWrapPos(
+                        ImGui::GetCursorPosX() +
+                            ImGui::GetContentRegionAvail().x);
+                    ImGui::TextDisabled(
+                        "%s", group.description.c_str());
+                    ImGui::PopTextWrapPos();
+                }
+                renderFieldsForGroup(group.id);
+            }
             ImGui::PopID();
         }
         const char* resetSettingsLabel = _L("app.settings.restore_default_settings");
@@ -29023,6 +29208,8 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
             LuaWidgetManifest::Setting setting;
             readString(object, "key", setting.key);
             readString(object, "label", setting.label);
+            readString(object, "description", setting.description);
+            readString(object, "group", setting.group);
             readString(object, "type", setting.type);
             readString(object, "searchKey", setting.searchKey);
             readString(object, "binding", setting.binding);
@@ -29082,6 +29269,22 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
                     !IsHostAppearanceSettingKey(setting.key))
                     manifest.settings.push_back(std::move(setting));
             }
+        }
+    }
+    if (const JsonValue* groups = root.Find("settingGroups");
+        groups && groups->IsArray())
+    {
+        for (const JsonValue& object : groups->array)
+        {
+            if (!object.IsObject()) continue;
+            LuaWidgetManifest::SettingGroup group;
+            readString(object, "id", group.id);
+            readString(object, "label", group.label);
+            readString(object, "description", group.description);
+            readBool(object, "collapsible", group.collapsible);
+            readBool(object, "defaultExpanded", group.defaultExpanded);
+            if (group.label.empty()) group.label = group.id;
+            manifest.settingGroups.push_back(std::move(group));
         }
     }
     if (const JsonValue* presets = root.Find("presets");
