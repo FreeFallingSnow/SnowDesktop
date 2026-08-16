@@ -1,6 +1,8 @@
 #include "widget_author_preview.h"
 
 #include "constants.h"
+#include "data_paths.h"
+#include "l10n.h"
 #include "widget_engine.h"
 #include "widget_package.h"
 
@@ -20,6 +22,7 @@
 #include <cstring>
 #include <fstream>
 #include <limits>
+#include <optional>
 #include <sstream>
 #include <string_view>
 #include <vector>
@@ -361,7 +364,10 @@ std::string PreviewRenderResult::ToJson() const
         << ",\"height\":" << height
         << ",\"columns\":" << columns
         << ",\"rows\":" << rows
-        << ",\"dpi\":" << dpi << '}';
+        << ",\"dpi\":" << dpi
+        << ",\"locale\":" << JsonString(locale)
+        << ",\"theme\":" << JsonString(theme)
+        << ",\"dataState\":" << JsonString(dataState) << '}';
     return output.str();
 }
 
@@ -373,6 +379,45 @@ PreviewRenderResult RenderWidgetPreview(
     result.columns = request.columns;
     result.rows = request.rows;
     result.dpi = request.dpi;
+    result.locale = request.locale;
+    result.theme = request.theme;
+    result.dataState = request.dataState;
+
+    if (request.theme != "dark" && request.theme != "light")
+    {
+        result.stage = "request.theme";
+        result.error = "preview theme must be dark or light";
+        return result;
+    }
+    const auto parseDataState = [](std::string_view state)
+        -> std::optional<LuaWidgetPreviewDataState> {
+        if (state == "ready") return LuaWidgetPreviewDataState::Ready;
+        if (state == "empty") return LuaWidgetPreviewDataState::Empty;
+        if (state == "loading") return LuaWidgetPreviewDataState::Loading;
+        if (state == "error") return LuaWidgetPreviewDataState::Error;
+        if (state == "stale") return LuaWidgetPreviewDataState::Stale;
+        if (state == "permission-denied")
+            return LuaWidgetPreviewDataState::PermissionDenied;
+        return std::nullopt;
+    };
+    const auto dataState = parseDataState(request.dataState);
+    if (!dataState)
+    {
+        result.stage = "request.dataState";
+        result.error = "preview data state is not supported";
+        return result;
+    }
+
+    const std::filesystem::path languageDirectory =
+        std::filesystem::path(GetExecutableDirectoryPath()) / L"lang";
+    Locale::Instance().Init(languageDirectory.c_str());
+    if (!Locale::Instance().HasLanguage(request.locale))
+    {
+        result.stage = "request.locale";
+        result.error = "preview locale is not installed in the host";
+        return result;
+    }
+    Locale::Instance().SetLanguage(request.locale.c_str());
 
     snowdesktop::widget::WidgetPackageValidator validator;
     snowdesktop::widget::PackageManifest manifest;
@@ -465,8 +510,31 @@ PreviewRenderResult RenderWidgetPreview(
         context->SetTarget(nullptr);
         return result;
     }
+    LuaWidgetAuthorPreviewConfiguration previewConfiguration;
+    previewConfiguration.bounds = {
+        0, 0, result.width, result.height };
+    previewConfiguration.columns = request.columns;
+    previewConfiguration.rows = request.rows;
+    previewConfiguration.cellWidth = cellWidth;
+    previewConfiguration.cellHeight = cellHeight;
+    previewConfiguration.gap = gap;
+    previewConfiguration.barHeight = barHeight;
+    previewConfiguration.surface.dpiX = request.dpi;
+    previewConfiguration.surface.dpiY = request.dpi;
+    previewConfiguration.surface.monitorAvailable = false;
+    previewConfiguration.surface.primaryMonitor = false;
+    previewConfiguration.dataState = *dataState;
+    if (request.theme == "light")
+    {
+        previewConfiguration.theme.bg = 0xF4F6FA;
+        previewConfiguration.theme.border = 0xFFFFFF;
+        previewConfiguration.theme.alpha = 0.78f;
+        previewConfiguration.theme.borderAlpha = 0.65f;
+        previewConfiguration.theme.contentTheme = 1;
+    }
     if (!engine.EnsureWidgetDirectoryPreviewLoaded(kPreviewWidgetId,
-            request.sourceDirectory, request.storage))
+            request.sourceDirectory, request.storage,
+            &previewConfiguration))
     {
         result.stage = "engine.load";
         const auto failure = engine.GetWidgetRuntimeFailure(kPreviewWidgetId);
@@ -476,18 +544,6 @@ PreviewRenderResult RenderWidgetPreview(
         context->SetTarget(nullptr);
         return result;
     }
-    engine.SetWidgetLayoutMetrics(kPreviewWidgetId,
-        cellWidth, cellHeight, gap, barHeight,
-        DWRITE_FONT_WEIGHT_SEMI_BOLD);
-    LuaWidgetSurfaceContext surface;
-    surface.dpiX = request.dpi;
-    surface.dpiY = request.dpi;
-    surface.monitorBounds = { 0, 0, result.width, result.height };
-    surface.workArea = surface.monitorBounds;
-    surface.monitorAvailable = true;
-    surface.primaryMonitor = true;
-    engine.SetWidgetSurfaceContext(kPreviewWidgetId, surface);
-
     const RECT bounds{ 0, 0, result.width, result.height };
     context->BeginDraw();
     context->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
@@ -579,7 +635,7 @@ int TryRunWidgetAuthorPreviewHostCommand(bool& handled)
     handled = true;
     PreviewRenderResult result;
     std::filesystem::path resultPath;
-    if (argumentCount < 8)
+    if (argumentCount < 11)
     {
         result.stage = "request.arguments";
         result.error = "invalid widget preview host arguments";
@@ -590,6 +646,9 @@ int TryRunWidgetAuthorPreviewHostCommand(bool& handled)
     request.sourceDirectory = arguments[2];
     request.outputPng = arguments[3];
     resultPath = arguments[7];
+    request.locale = WideToUtf8(arguments[8]);
+    request.theme = WideToUtf8(arguments[9]);
+    request.dataState = WideToUtf8(arguments[10]);
     int dpi = 0;
     if (!ParsePositiveInteger(arguments[4], 1, 8, request.columns) ||
         !ParsePositiveInteger(arguments[5], 1, 8, request.rows) ||
@@ -603,7 +662,7 @@ int TryRunWidgetAuthorPreviewHostCommand(bool& handled)
         return 2;
     }
     request.dpi = static_cast<unsigned>(dpi);
-    for (int index = 8; index < argumentCount; ++index)
+    for (int index = 11; index < argumentCount; ++index)
     {
         const std::wstring_view pair(arguments[index]);
         const std::size_t equals = pair.find(L'=');

@@ -176,7 +176,7 @@ HTTP/Steam Provider 使用同一 `PackageArtifact`、来源引用和暂存校验
 ```bat
 snowwidget validate widgets\my-widget
 snowwidget permissions widgets\my-widget
-snowwidget preview widgets\my-widget my-widget-preview.png
+snowwidget preview widgets\my-widget my-widget-preview.png --locale zh-CN --theme dark --data-state ready
 snowwidget pack widgets\my-widget my-widget.snowwidget
 snowwidget publish-local widgets\my-widget D:\widget-catalog
 ```

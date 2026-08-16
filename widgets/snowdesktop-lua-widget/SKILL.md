@@ -53,8 +53,9 @@ development packages live under `data\widgets\installed` and
     JSON-like values. Write persistent values only when they change.
 11. Run `snowwidget lint <directory>`, `snowwidget test <directory>`, and
     `snowwidget preview <directory> <preview.png>` at the default size. Repeat
-    preview with relevant `--columns`, `--rows`, `--dpi`, and `--storage`
-    values, then run `snowwidget validate <directory>` and
+    preview with relevant `--columns`, `--rows`, `--dpi`, `--locale`,
+    `--theme`, `--data-state`, and `--storage` values, then run
+    `snowwidget validate <directory>` and
     `snowwidget pack <directory> <name.snowwidget>`.
 12. In the repository, also run `scripts\test.bat`, the standard Release build,
     and `scripts\widget-dev.bat <directory>` for transactional hot reload.
@@ -72,7 +73,8 @@ the source or an existing draft.
 `snowwidget preview` launches the installed SnowDesktop renderer out of process
 and writes a real API v2/D2D PNG; it does not emulate the view tree. A CLI copied
 outside the SnowDesktop directory may need `--host <SnowDesktop.exe>` or the
-`SNOWDESKTOP_HOST` environment variable.
+`SNOWDESKTOP_HOST` environment variable. Use `--data-state` to exercise ready,
+empty, loading, error, stale, and permission-denied subscription envelopes.
 
 ## Required entry
 

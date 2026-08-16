@@ -363,6 +363,16 @@ struct LuaWidgetTheme
     int contentTheme = 0;       ///< 文字颜色主题 (0=浅色/白字, 1=深色/黑字)
 };
 
+enum class LuaWidgetPreviewDataState
+{
+    Ready,
+    Empty,
+    Loading,
+    Error,
+    Stale,
+    PermissionDenied,
+};
+
 struct LuaWidgetSurfaceContext
 {
     UINT dpiX = USER_DEFAULT_SCREEN_DPI;
@@ -371,6 +381,23 @@ struct LuaWidgetSurfaceContext
     RECT workArea{};
     bool monitorAvailable = false;
     bool primaryMonitor = false;
+};
+
+/** Initial host environment for an unpacked authoring preview. */
+struct LuaWidgetAuthorPreviewConfiguration
+{
+    LuaWidgetTheme theme;
+    LuaWidgetSurfaceContext surface;
+    RECT bounds{};
+    int columns = 1;
+    int rows = 1;
+    int cellWidth = 92;
+    int cellHeight = 116;
+    int gap = 8;
+    int barHeight = 24;
+    DWRITE_FONT_WEIGHT fontWeight = DWRITE_FONT_WEIGHT_SEMI_BOLD;
+    LuaWidgetPreviewDataState dataState =
+        LuaWidgetPreviewDataState::Ready;
 };
 
 struct LuaWidgetContextState
@@ -585,6 +612,8 @@ struct LuaWidget
     bool customStyle = false;            ///< 是否启用了自定义主题样式
     bool followPersonalizationDefault = false; ///< 尚未保存外观状态时是否默认跟随全局
     LuaWidgetTheme theme;                ///< 自定义主题配置（当 customStyle 为 true 时生效）
+    LuaWidgetPreviewDataState previewDataState =
+        LuaWidgetPreviewDataState::Ready; ///< 作者预览的确定性数据状态
     LuaWidgetSurfaceContext surfaceContext; ///< 当前显示器、工作区与 DPI 摘要
     std::vector<LuaWidgetManifest::Setting> scriptSettings; ///< Lua 顶层声明式设置
     std::vector<LuaWidgetManifest::SettingGroup> scriptSettingGroups; ///< Lua 顶层设置分组
@@ -832,7 +861,9 @@ public:
     bool EnsureWidgetDirectoryPreviewLoaded(const std::wstring& widgetId,
         const std::filesystem::path& packageRoot,
         const std::unordered_map<std::string, std::string>&
-            storageOverrides = {});
+            storageOverrides = {},
+        const LuaWidgetAuthorPreviewConfiguration*
+            previewConfiguration = nullptr);
 
     /**
      * @brief 卸载指定小部件实例
@@ -1587,7 +1618,9 @@ private:
         bool preview = false,
         const std::unordered_map<std::string, std::string>*
             previewStorageOverrides = nullptr,
-        const std::filesystem::path* packageRootOverride = nullptr);
+        const std::filesystem::path* packageRootOverride = nullptr,
+        const LuaWidgetAuthorPreviewConfiguration*
+            previewConfiguration = nullptr);
     bool IsPreviewWidget(const std::wstring& widgetId) const;
 
     /**

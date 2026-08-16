@@ -109,6 +109,76 @@ void CheckPng(const std::filesystem::path& path)
     Check(std::filesystem::file_size(path, error) > 512 && !error,
         "real renderer writes nontrivial preview pixels");
 }
+
+void Write(const std::filesystem::path& path, std::string_view text)
+{
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    output << text;
+    Check(static_cast<bool>(output), "preview fixture is written");
+}
+
+std::filesystem::path CreateEnvironmentFixture(
+    const std::filesystem::path& root)
+{
+    const auto source = root / L"environment-widget";
+    std::error_code error;
+    Check(std::filesystem::create_directory(source, error),
+        "preview environment fixture directory is created");
+    Write(source / L"widget.json", R"json({
+  "schemaVersion": 2,
+  "apiVersion": 2,
+  "dataVersion": 1,
+  "id": "86b63935-cb1e-4b97-8171-185a0cbd9fb4",
+  "slug": "preview-environment-fixture",
+  "version": "1.0.0",
+  "entry": "main.lua",
+  "minHostVersion": "1.0.1.0",
+  "name": "Preview environment fixture",
+  "description": "Validates the authoring preview context.",
+  "author": "SnowDesktop",
+  "license": "MIT",
+  "defaultSize": {"columns": 2, "rows": 1},
+  "permissions": ["system.performance.read"],
+  "requiredFeatures": [
+    "draw.immediate",
+    "lifecycle.model",
+    "widget.context",
+    "data.subscribe",
+    "data.system.cpu"
+  ]
+})json");
+    Write(source / L"main.lua", R"lua(
+local cpu
+
+return widget.define({
+    setup = function(context)
+        assert(context.preview == true, "preview flag was not injected")
+        assert(context.locale == "zh-CN", "locale was not injected")
+        assert(context.theme.mode == "light", "theme was not injected")
+        assert(context.dpi.x == 144 and context.dpi.y == 144,
+            "DPI was not injected before setup")
+        assert(context.grid.columns == 2 and context.grid.rows == 1,
+            "size was not injected before setup")
+        assert(context.monitor.available == false,
+            "preview must not expose the developer monitor")
+        cpu = data.subscribe("system.cpu", { maxAgeMs = 500 })
+        local snapshot = cpu:value()
+        assert(snapshot.available == true and snapshot.stale == true and
+            snapshot.warmingUp == false and snapshot.error == nil,
+            "stale preview data state was not injected")
+        return {}
+    end,
+    render = function()
+        draw.rect(0, 0, layout.width(), layout.height(), 0xE8EEF8, 8, 1)
+        draw.text(12, 12, "preview", 16, 0x172033)
+    end,
+    dispose = function()
+        if cpu then cpu:unsubscribe() end
+    end,
+})
+)lua");
+    return source;
+}
 }
 
 int wmain(int argc, wchar_t** argv)
@@ -139,6 +209,25 @@ int wmain(int argc, wchar_t** argv)
         "snowwidget preview reports a completed real API v2 render");
     CheckPng(output);
 
+    const auto environmentSource =
+        CreateEnvironmentFixture(temporary.path);
+    const auto environmentOutput = temporary.path / L"environment.png";
+    const auto [environmentExit, environmentJson] = Run(snowwidget, {
+        L"preview", environmentSource.wstring(),
+        environmentOutput.wstring(), L"--dpi", L"144",
+        L"--locale", L"zh-CN", L"--theme", L"light",
+        L"--data-state", L"stale", L"--host", host.wstring() });
+    Check(environmentExit == 0 &&
+            environmentJson.find("\"ok\":true") != std::string::npos &&
+            environmentJson.find("\"locale\":\"zh-CN\"") !=
+                std::string::npos &&
+            environmentJson.find("\"theme\":\"light\"") !=
+                std::string::npos &&
+            environmentJson.find("\"dataState\":\"stale\"") !=
+                std::string::npos &&
+            std::filesystem::is_regular_file(environmentOutput),
+        "preview injects locale, theme, size, DPI, and data state before setup");
+
     const auto invalidOutput = temporary.path / L"invalid.png";
     const auto boundedSource =
         repository / L"widgets" / L"media-controls";
@@ -150,6 +239,14 @@ int wmain(int argc, wchar_t** argv)
                 std::string::npos &&
             !std::filesystem::exists(invalidOutput),
         "preview rejects a size outside the manifest before rendering");
+
+    const auto [invalidStateExit, invalidStateJson] = Run(snowwidget, {
+        L"preview", source.wstring(), invalidOutput.wstring(),
+        L"--data-state", L"unknown", L"--host", host.wstring() });
+    Check(invalidStateExit == 2 &&
+            invalidStateJson.find("data state must be") !=
+                std::string::npos,
+        "preview rejects an unknown deterministic data state");
 
     std::cout << "widget author preview CLI tests passed\n";
     return 0;

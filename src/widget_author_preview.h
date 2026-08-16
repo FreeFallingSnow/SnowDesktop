@@ -14,6 +14,9 @@ struct PreviewRenderRequest
     int columns = 1;
     int rows = 1;
     unsigned dpi = 96;
+    std::string locale = "en-US";
+    std::string theme = "dark";
+    std::string dataState = "ready";
     std::unordered_map<std::string, std::string> storage;
 };
 
@@ -28,6 +31,9 @@ struct PreviewRenderResult
     int columns = 0;
     int rows = 0;
     unsigned dpi = 0;
+    std::string locale;
+    std::string theme;
+    std::string dataState;
 
     std::string ToJson() const;
 };

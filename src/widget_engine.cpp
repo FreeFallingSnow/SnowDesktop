@@ -14855,7 +14855,8 @@ bool WidgetEngine::EnsureWidgetPreviewLoaded(
 bool WidgetEngine::EnsureWidgetDirectoryPreviewLoaded(
     const std::wstring& widgetId,
     const std::filesystem::path& packageRoot,
-    const std::unordered_map<std::string, std::string>& storageOverrides)
+    const std::unordered_map<std::string, std::string>& storageOverrides,
+    const LuaWidgetAuthorPreviewConfiguration* previewConfiguration)
 {
     if (!previewOnly_)
     {
@@ -14906,7 +14907,7 @@ bool WidgetEngine::EnsureWidgetDirectoryPreviewLoaded(
                 canonicalRoot, equivalentError) && !equivalentError;
     }
     return LoadWidget(entry.wstring(), widgetId, true,
-        &storageOverrides, &canonicalRoot);
+        &storageOverrides, &canonicalRoot, previewConfiguration);
 }
 
 bool WidgetEngine::IsPreviewWidget(const std::wstring& widgetId) const
@@ -14919,7 +14920,8 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     const std::wstring& widgetId, bool preview,
     const std::unordered_map<std::string, std::string>*
         previewStorageOverrides,
-    const std::filesystem::path* packageRootOverride)
+    const std::filesystem::path* packageRootOverride,
+    const LuaWidgetAuthorPreviewConfiguration* previewConfiguration)
 {
     LuaWidget pending;
     pending.widgetId = widgetId;
@@ -15034,6 +15036,13 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
             pending.permissions.insert(permission);
     }
 
+    if (preview && previewConfiguration && d2dState_)
+    {
+        d2dState_->gridColumns = std::max(
+            1, previewConfiguration->columns);
+        d2dState_->gridRows = std::max(1, previewConfiguration->rows);
+        SetWidgetRectContext(d2dState_, previewConfiguration->bounds);
+    }
     WidgetExecutionContextGuard loadContext(d2dState_, widgetId);
     auto quota = std::make_unique<LuaRuntimeQuota>();
     auto storageWriteBudget = std::make_unique<
@@ -15402,6 +15411,22 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     w.valid = true;
     w.customStyle = customStyle;
     w.followPersonalizationDefault = followPersonalizationDefault;
+    if (preview && previewConfiguration)
+    {
+        w.theme = previewConfiguration->theme;
+        w.surfaceContext = previewConfiguration->surface;
+        w.lastBounds = previewConfiguration->bounds;
+        w.lastColumns = std::max(1, previewConfiguration->columns);
+        w.lastRows = std::max(1, previewConfiguration->rows);
+        w.layoutMetrics = snowdesktop::widget_runtime::
+            NormalizeLayoutMetrics(
+                previewConfiguration->cellWidth,
+                previewConfiguration->cellHeight,
+                previewConfiguration->gap,
+                previewConfiguration->barHeight,
+                previewConfiguration->fontWeight);
+        w.previewDataState = previewConfiguration->dataState;
+    }
     w.scriptSettings = std::move(scriptSettings);
     w.scriptSettingGroups = std::move(scriptSettingGroups);
     w.scriptPresets = std::move(scriptPresets);
@@ -22772,9 +22797,32 @@ WidgetEngine::RuntimeGetDataSnapshot(
             std::chrono::system_clock::now().time_since_epoch()).count();
     if (binding->options.preview)
     {
+        LuaWidgetPreviewDataState previewState =
+            LuaWidgetPreviewDataState::Ready;
+        const int previewWidgetIndex = FindWidget(
+            Utf8ToWideLocal(binding->instanceId));
+        if (previewWidgetIndex >= 0)
+            previewState = widgets_[previewWidgetIndex].previewDataState;
+        if (previewState == LuaWidgetPreviewDataState::PermissionDenied)
+        {
+            result.error = "permissionDenied";
+            return result;
+        }
+        if (previewState == LuaWidgetPreviewDataState::Loading)
+        {
+            result.warmingUp = true;
+            return result;
+        }
+        if (previewState == LuaWidgetPreviewDataState::Error)
+        {
+            result.error = "providerUnavailable";
+            return result;
+        }
         result.available = true;
         result.stale = false;
         result.timestampMs = timestampNow;
+        if (previewState == LuaWidgetPreviewDataState::Empty)
+            return result;
         if (result.topic == "system.cpu")
         {
             result.cpu.available = true;
@@ -23072,6 +23120,12 @@ WidgetEngine::RuntimeGetDataSnapshot(
                 "file" });
             result.filesystemWatchRevision = 1;
             result.filesystemWatchOverflow = false;
+        }
+        if (previewState == LuaWidgetPreviewDataState::Stale)
+        {
+            result.stale = true;
+            result.timestampMs = timestampNow -
+                binding->options.requestedInterval.count() - 1;
         }
         return result;
     }

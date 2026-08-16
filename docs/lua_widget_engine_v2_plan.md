@@ -1748,7 +1748,10 @@ v2.0 资源契约：
 - `snowwidget test <directory>`：已提供 `tests/*.lua` 命名函数表约定；每个文件在独立 16 MiB、
   指令/时间受限的纯 Lua 沙箱中运行，只开放基础纯函数和受控 `module.require(modules/*.lua)`，
   不注册任何宿主副作用 API，并输出稳定 JSON。完整 view/系统 mock 场景留给 preview 工具。
-- `snowwidget preview <directory> --size ... --locale ... --theme ...`。
+- `snowwidget preview <directory> <output.png> --columns ... --rows ... --dpi ...
+  --locale ... --theme ... --data-state ...`：已通过真实 API v2/D2D 离屏宿主输出 PNG；尺寸、
+  DPI、语言、明暗主题和 ready/empty/loading/error/stale/permission-denied 确定性数据包络均在
+  `setup()` 前注入，预览显示器摘要固定 unavailable，存储使用隔离覆盖层且不写持久状态。
 - `snowwidget permissions <directory>`：生成权限与 origin 报告。
 - `snowwidget migrate-v2 <directory>`：生成迁移草案，不覆盖原文件。
 - LuaLS 类型文件和 API 自动补全。

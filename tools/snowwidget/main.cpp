@@ -39,6 +39,8 @@ void PrintUsage()
            " [output-directory]\n"
         << "  snowwidget preview <package-directory> <output.png>"
            " [--columns N] [--rows N] [--dpi N]"
+           " [--locale CODE] [--theme dark|light]"
+           " [--data-state ready|empty|loading|error|stale|permission-denied]"
            " [--storage key=value] [--host SnowDesktop.exe]\n"
         << "  snowwidget validate <package-directory>\n"
         << "  snowwidget pack <package-directory> <output.snowwidget>\n"
@@ -222,6 +224,9 @@ int RunPreviewHost(const std::filesystem::path& host,
     const std::filesystem::path& source,
     const std::filesystem::path& output,
     int columns, int rows, int dpi,
+    std::wstring_view locale,
+    std::wstring_view theme,
+    std::wstring_view dataState,
     const std::vector<std::wstring>& storage)
 {
     const auto resultPath = CreateResultPath();
@@ -243,6 +248,9 @@ int RunPreviewHost(const std::filesystem::path& host,
     append(std::to_wstring(rows));
     append(std::to_wstring(dpi));
     append(resultPath->wstring());
+    append(locale);
+    append(theme);
+    append(dataState);
     for (const auto& pair : storage) append(pair);
 
     STARTUPINFOW startup{};
@@ -491,6 +499,9 @@ int wmain(int argc, wchar_t** argv)
         int columns = manifest.defaultColumns;
         int rows = manifest.defaultRows;
         int dpi = 96;
+        std::wstring locale = L"en-US";
+        std::wstring theme = L"dark";
+        std::wstring dataState = L"ready";
         std::filesystem::path explicitHost;
         std::vector<std::wstring> storage;
         for (int index = 4; index < argc; ++index)
@@ -498,7 +509,9 @@ int wmain(int argc, wchar_t** argv)
             const std::wstring_view option(argv[index]);
             if ((option == L"--columns" || option == L"--rows" ||
                     option == L"--dpi" || option == L"--storage" ||
-                    option == L"--host") && index + 1 >= argc)
+                    option == L"--host" || option == L"--locale" ||
+                    option == L"--theme" || option == L"--data-state") &&
+                index + 1 >= argc)
             {
                 std::cerr << "{\"ok\":false,\"error\":\"preview option is missing its value\"}\n";
                 return 2;
@@ -538,6 +551,36 @@ int wmain(int argc, wchar_t** argv)
                 }
                 storage.push_back(pair);
             }
+            else if (option == L"--locale")
+            {
+                locale = argv[++index];
+                if (locale.empty() || locale.size() > 35)
+                {
+                    std::cerr << "{\"ok\":false,\"error\":\"locale must contain 1 to 35 characters\"}\n";
+                    return 2;
+                }
+            }
+            else if (option == L"--theme")
+            {
+                theme = argv[++index];
+                if (theme != L"dark" && theme != L"light")
+                {
+                    std::cerr << "{\"ok\":false,\"error\":\"theme must be dark or light\"}\n";
+                    return 2;
+                }
+            }
+            else if (option == L"--data-state")
+            {
+                dataState = argv[++index];
+                if (dataState != L"ready" && dataState != L"empty" &&
+                    dataState != L"loading" && dataState != L"error" &&
+                    dataState != L"stale" &&
+                    dataState != L"permission-denied")
+                {
+                    std::cerr << "{\"ok\":false,\"error\":\"data state must be ready, empty, loading, error, stale, or permission-denied\"}\n";
+                    return 2;
+                }
+            }
             else if (option == L"--host")
                 explicitHost = argv[++index];
             else
@@ -561,7 +604,7 @@ int wmain(int argc, wchar_t** argv)
             return 1;
         }
         return RunPreviewHost(*host, source, output,
-            columns, rows, dpi, storage);
+            columns, rows, dpi, locale, theme, dataState, storage);
     }
     if (command == L"pack")
     {
