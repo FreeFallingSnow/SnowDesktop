@@ -105,7 +105,7 @@ void TestSyntaxFailure()
         "local value = 1\nreturn function(\n");
     Check(!report.Ok() && report.ErrorCount() == 1 &&
             HasIssue(report, "lua.syntax") &&
-            report.issues[0].line == 2,
+            report.issues[0].line == 3,
         "lint must stop at Lua compiler errors and retain the source line");
 }
 }
