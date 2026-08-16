@@ -581,6 +581,8 @@ struct ViewNode
     bool checked = false;
     bool indeterminate = false;
     bool selected = false;
+    bool sticky = false;
+    bool stickyPresented = false;
     bool expanded = false;
     bool selectAll = false;
     std::optional<ViewTextSelection> textSelection;

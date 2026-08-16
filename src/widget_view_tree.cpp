@@ -1845,6 +1845,7 @@ void LayoutNode(ViewNode& node, const ViewRect& frame)
     node.scrollOffset = 0.0f;
     node.scrollViewportExtent = 0.0f;
     node.scrollContentExtent = 0.0f;
+    node.stickyPresented = false;
     const ViewRect content = ContentRect(node);
     const auto layoutOverlayChildren = [&]() {
         for (auto& child : node.children)
@@ -2323,6 +2324,11 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         error = "initial scroll targets are reserved for scroll containers";
         return false;
     }
+    if (node.sticky && node.type != ViewNodeType::ListItem)
+    {
+        error = "sticky is reserved for listItem nodes";
+        return false;
+    }
     if (node.initialScrollKey &&
         (node.initialScrollKey->empty() ||
             node.initialScrollKey->size() > 128))
@@ -2415,6 +2421,14 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
                 }))
         {
             error = "selectable collection items reserve click/change; use doubleClick for activation";
+            return false;
+        }
+        if (std::any_of(node.children.begin(), node.children.end(),
+                [](const ViewNode& child) { return child.sticky; }) &&
+            (node.type != ViewNodeType::List ||
+                node.orientation != ViewOrientation::Vertical))
+        {
+            error = "sticky listItem nodes require a vertical eager list";
             return false;
         }
     }
@@ -2519,6 +2533,11 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         if (!parentType || !IsCollectionContainer(*parentType))
         {
             error = "listItem nodes must be direct children of a collection";
+            return false;
+        }
+        if (node.sticky && *parentType != ViewNodeType::List)
+        {
+            error = "sticky listItem nodes require a vertical eager list";
             return false;
         }
         if (++collectionItems > ViewTreeLimits::MaximumCollectionItems)
@@ -3599,6 +3618,44 @@ void TranslateTree(ViewNode& node, float deltaX, float deltaY) noexcept
         TranslateTree(child, deltaX, deltaY);
 }
 
+void ApplyStickyHeaders(ViewNode& node, const ViewRect& viewport) noexcept
+{
+    if (!node.visible || node.visibility == ViewVisibility::Hidden ||
+        IsScrollContainer(node.type))
+        return;
+    if (node.type == ViewNodeType::List &&
+        node.orientation == ViewOrientation::Vertical)
+    {
+        std::vector<ViewNode*> headers;
+        for (auto& child : node.children)
+        {
+            if (child.visible &&
+                child.visibility != ViewVisibility::Hidden && child.sticky)
+                headers.push_back(&child);
+        }
+        const ViewRect content = ContentRect(node);
+        const float listBottom = content.y + content.height;
+        for (std::size_t index = 0; index < headers.size(); ++index)
+        {
+            ViewNode& header = *headers[index];
+            const float originalY = header.frame.y;
+            float presentedY = std::max(originalY, viewport.y);
+            presentedY = std::min(presentedY,
+                listBottom - header.frame.height);
+            if (index + 1 < headers.size())
+                presentedY = std::min(presentedY,
+                    headers[index + 1]->frame.y - header.frame.height);
+            if (presentedY > originalY + 0.001f)
+            {
+                TranslateTree(header, 0.0f, presentedY - originalY);
+                header.stickyPresented = true;
+            }
+        }
+    }
+    for (auto& child : node.children)
+        ApplyStickyHeaders(child, viewport);
+}
+
 const ViewNode* FindVisibleDescendantByKey(const ViewNode& node,
     std::string_view key) noexcept
 {
@@ -3782,6 +3839,8 @@ bool ApplyScrollState(ViewNode& node,
             TranslateTree(node.children.front(),
                 vertical ? 0.0f : -offset,
                 vertical ? -offset : 0.0f);
+            if (vertical)
+                ApplyStickyHeaders(node.children.front(), clip);
         }
 
         childClip = IntersectRects(inheritedClip, clip);
@@ -4808,6 +4867,8 @@ std::vector<const ViewNode*> ViewChildrenInPaintOrder(const ViewNode& node)
     for (const auto& child : node.children) result.push_back(&child);
     std::stable_sort(result.begin(), result.end(),
         [](const ViewNode* left, const ViewNode* right) {
+            if (left->stickyPresented != right->stickyPresented)
+                return !left->stickyPresented;
             return left->zIndex < right->zIndex;
         });
     return result;

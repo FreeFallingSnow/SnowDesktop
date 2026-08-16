@@ -391,6 +391,7 @@
 ---@field checked? boolean Required explicit controlled value for toggle and checkbox nodes.
 ---@field indeterminate? boolean Checkbox-only controlled mixed state. Requires checked=false; activation proposes checked=true and indeterminate=false.
 ---@field selected? boolean Generic controlled selection state used by selectedStyle and SelectionItem semantics where the node contract provides them.
+---@field sticky? boolean ListItem-only opt-in that pins headers inside the nearest vertical scroll while their eager list remains visible. Requires view.collection.stickyHeaders.
 ---@field busy? boolean Common host-observable busy state; collection loadingContent becomes active when supplied.
 ---@field showScrollbar? boolean Scroll or virtual-collection host scrollbar visibility; defaults to true.
 ---@field textAlign? 'start'|'center'|'end'

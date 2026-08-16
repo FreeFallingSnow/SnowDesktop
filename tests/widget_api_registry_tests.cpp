@@ -521,6 +521,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "view.collection.virtual.variableExtent") &&
             snowdesktop::widget_api::SupportsFeature(
+                "view.collection.stickyHeaders") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "view.input.required") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.keyboard.accessKey") &&

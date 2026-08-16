@@ -1621,6 +1621,83 @@ void TestScrollableCollections()
         "horizontal scroll must translate content on the x axis");
 }
 
+void TestStickyListHeaders()
+{
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "Lua state must be available");
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    Check(luaL_dostring(state, R"lua(
+        local items = {}
+        for index = 1, 4 do
+            items[#items + 1] = view.listItem({
+                key = "sticky-item-" .. index,
+                height = 30,
+                sticky = index == 1 or index == 3,
+                action = { id = "sticky.open", value = index },
+                accessibility = { label = "Sticky item " .. index },
+                children = {
+                    view.text({ key = "sticky-label-" .. index,
+                        text = "Item " .. index }),
+                },
+            })
+        end
+        return view.scroll({
+            key = "sticky-scroll",
+            height = 60,
+            children = {
+                view.list({ key = "sticky-list", children = items }),
+            },
+        })
+    )lua") == LUA_OK,
+        "sticky eager-list fixture must evaluate");
+    ViewNode root;
+    std::string error;
+    Check(ParseLuaViewTree(state, -1, root, error) &&
+            root.children[0].children[0].sticky &&
+            root.children[0].children[2].sticky &&
+            ValidateAndLayoutViewTree(root, 160.0f, 60.0f, error),
+        "vertical eager listItem nodes must accept sticky headers");
+    std::vector<ViewScrollViewport> viewports;
+    Check(ApplyViewScrollOffsets(root,
+            [](std::string_view, float) { return 20.0f; },
+            viewports, error) && viewports.size() == 1 &&
+            Near(root.children[0].children[0].frame.y, 0.0f) &&
+            root.children[0].children[0].stickyPresented &&
+            Near(root.children[0].children[2].frame.y, 40.0f),
+        "the active sticky header must pin to the viewport before the next header");
+    const auto paintOrder = ViewChildrenInPaintOrder(root.children[0]);
+    Check(paintOrder.size() == 4 &&
+            paintOrder.back()->key == "sticky-item-1",
+        "a presented sticky header must paint and hit-test above ordinary items");
+    std::vector<InteractionRegion> regions;
+    Check(CollectViewInteractionRegions(root, regions, error) &&
+            !regions.empty() && regions.back().key == "sticky-item-1" &&
+            Near(regions.back().shape.y, 0.0f),
+        "sticky presentation geometry must be shared by interaction regions");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.list({ key = "horizontal-sticky",
+            orientation = "horizontal",
+            children = {
+                view.listItem({ key = "invalid-sticky", sticky = true,
+                    accessibility = { label = "Invalid sticky" },
+                    children = { view.text({ key = "invalid-sticky-label",
+                        text = "Invalid" }) },
+                }),
+            },
+        })
+    )lua") == LUA_OK,
+        "invalid horizontal sticky fixture must evaluate");
+    ViewNode invalid;
+    Check(ParseLuaViewTree(state, -1, invalid, error) &&
+            !ValidateAndLayoutViewTree(invalid, 160.0f, 60.0f, error) &&
+            error.find("vertical eager list") != std::string::npos,
+        "horizontal and virtual collections must not imply sticky behavior");
+    lua_close(state);
+}
+
 void TestListOrientation()
 {
     lua_State* state = luaL_newstate();
@@ -3968,6 +4045,7 @@ int main()
     TestUniformGridParsingAndLayout();
     TestFlowParsingAndLayout();
     TestScrollableCollections();
+    TestStickyListHeaders();
     TestListOrientation();
     TestVirtualizedCollections();
     TestInitialScrollTargets();

@@ -1131,6 +1131,8 @@ multiple 与受控 selectedKeys，条目 selectedStyle、指针/键盘建议事�
 单选、多选、添加和移除使用同一状态来源。`view.collection.contentStates` 现以单个
 emptyContent/loadingContent 节点承接 eager/virtual 空态与 busy 加载态，替代态复用同一布局、
 命中和语义树，virtual 滚动范围归零；通用 `view.state.busy` 不隐式禁用输入或启动动画。
+`view.collection.stickyHeaders` 允许纵向 eager list 的直接 listItem 作为分组标题，在最近纵向
+scroll 内由下一个标题推挤并受 list 底部约束；固定后的绘制、命中、菜单和 UIA 几何仍来自同一 scene。
 可变高度 virtualGrid、未实体化项的 VirtualizedItem 与 ScrollItem 仍未完成，因此本进度
 不代表第 13.4 节集合全集完成。
 `view.inputControls` 已一次覆盖 `textInput/textArea/searchBox/numberInput/select`：四类输入
@@ -1215,7 +1217,7 @@ feature probe、LuaLS 和契约测试；日期单元已经进入通用键盘导�
 | 图片/图标 | `source`、`fit`、`alignment`、`interpolation`、`tint`、`alt`；source 必须是包资源或宿主受控句柄 |
 | 通用状态 | `visible`（兼容）、`visibility`、`enabled`、`readOnly`、`required`、`focusable`、`tabIndex`、`selected`、`expanded`、`busy`、`validationState`、`validationMessage` |
 | 值控件 | `value`、`checked`、`indeterminate`、`min`、`max`、`step`、`placeholder`、`selection`；按节点类型进行强类型约束 |
-| 集合 | `orientation`、`selectionMode`、`selectedKeys`、`itemExtent` 或 `estimatedItemSize`、`layoutRevision`、`overscan`、`initialScrollKey`（scroll 后代）、`initialScrollIndex`（virtual）、`emptyContent`、`loadingContent` |
+| 集合 | `orientation`、`selectionMode`、`selectedKeys`、`sticky`（eager 纵向 listItem）、`itemExtent` 或 `estimatedItemSize`、`layoutRevision`、`overscan`、`initialScrollKey`（scroll 后代）、`initialScrollIndex`（virtual）、`emptyContent`、`loadingContent` |
 | 宿主槽位 | `binding` 或 `collection`、`reference`、`emptyContent`、`dropStyle`；slot ID/kind 来自 manifest，reference 只能来自对应宿主模型，不能用字符串伪造 |
 | 事件 | `events` 中的 pointer/focus/key/click/doubleClick/contextMenu/change/submit/scrollEnd；值只能是序列化 action ID 和有界参数 |
 | 提示/菜单 | `tooltip`、`contextMenu`、`accessKey`、`acceleratorText`；简单 tooltip 可为字符串，富 tooltip 和菜单使用有界描述结构，实际命令仍经过 action 与权限代理 |
@@ -1316,6 +1318,7 @@ view.row({
 - `view.scroll.events` 已把 `events.scrollEnd` 限定到 scroll/virtual collection；滚轮或 UIA 操作从末端前到达最大宿主偏移时只投递一次，离开末端后才能再次触发，UIA 来源不获得可信手势。
 - `view.scroll.initialTarget` 已为新出现的稳定容器 key 加入一次性 nearest 初始定位：普通 scroll 解析可见后代 key，fixed/variable virtual 解析 1-based 逻辑索引，`view.virtualRange` 用同一索引生成首帧窗口；成功 scene 才提交宿主偏移，失败事务和 loading 替代态不会提前消费目标，已有用户/脚本位置优先。
 - `view.collection.virtual.variableExtent` 已让 virtualList 以 estimatedItemSize 生成首帧范围，并在成功 scene 后缓存最多 4096 个 1-based 实测高度；itemCount/estimate/rowGap/layoutRevision 共同界定缓存代，测量变化以原首个可见项为锚点修正宿主偏移后触发合并重绘。virtualGrid 继续要求固定行高，未完成的项目级 UIA 虚拟化不由本 feature 暗示。
+- `view.collection.stickyHeaders` 已让纵向 eager list 的直接 listItem 以 sticky=true 固定在最近纵向 scroll 顶部，由下一标题推挤并在所属 list 底部退出；宿主在滚动状态应用阶段移动整棵标题子树，并让呈现中的 sticky 项排在普通兄弟之后绘制/命中。虚拟 section 索引和横向 sticky 不由本 feature 暗示。
 - `view.keyboardNavigation.order` 已加入 `focusable/tabIndex`：-1 只退出顺序遍历，正数先按升序、再接默认 0 的声明顺序；焦点样式、鼠标焦点、键盘遍历和 UIA IsKeyboardFocusable 使用同一有效状态。
 - `view.keyboard.accessKey` 已为单一直接交互目标加入树内唯一的 ASCII 字母/数字访问键；活动辅助 surface 或唯一选中的桌面组件用 Alt+键聚焦输入/slider，并按既有受控 click/change 语义激活其他目标，重复按下不重复触发。Windows 的 `WM_SYSCHAR` 仅在命中时消费，未命中的 Alt 组合键、Alt+Space 和 Alt+F4 继续交给默认窗口过程。UIA 同时公开规范化 AccessKey 和仅作语义描述、不注册全局热键的 acceleratorText；radioGroup/monthCalendar 等多虚拟目标节点不接受父级访问键。真实键盘布局、Alt 系统键与 Narrator 场景仍待现场验证。
 - `view.keyboard.events` 已为可聚焦节点加入 keyDown/keyUp 观察：事件包含稳定符号键名、Windows virtual key、重复与修饰键状态，输入代理与桌面窗口走同一入口；按下目标用于配对释放，窗口失焦清理。事件不提供取消返回值，宿主激活与管理快捷键继续执行，字符/IME 仍只走输入控件。

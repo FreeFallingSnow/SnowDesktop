@@ -131,6 +131,10 @@ void TestRepresentativeApplicability()
             ViewNodeAllowsProperty(ViewNodeType::Button, "visibility") &&
             ViewNodeAllowsProperty(ViewNodeType::Box, "visibility"),
         "collection content alternatives and common busy state must remain scoped");
+    Check(ViewNodeAllowsProperty(ViewNodeType::ListItem, "sticky") &&
+            !ViewNodeAllowsProperty(ViewNodeType::List, "sticky") &&
+            !ViewNodeAllowsProperty(ViewNodeType::VirtualList, "sticky"),
+        "sticky headers must remain an eager listItem-only contract");
     Check(ViewNodeAllowsProperty(ViewNodeType::Image, "source") &&
             ViewNodeAllowsProperty(ViewNodeType::ReferenceIcon, "reference") &&
             ViewNodeAllowsProperty(ViewNodeType::Image, "tint") &&

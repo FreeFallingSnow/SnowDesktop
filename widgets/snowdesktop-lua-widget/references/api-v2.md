@@ -137,7 +137,8 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.scroll` 提供宿主滚动视口，`view.scroll.initialTarget` 提供首次声明式定位，
 `view.collection.basic` 提供基础集合，
 `view.collection.orientation` 提供普通 list 横纵方向，
-`view.collection.selection` 提供受控单选/多选，`view.collection.contentStates` 提供空态/加载态，
+`view.collection.selection` 提供受控单选/多选，`view.collection.stickyHeaders` 提供 eager 纵向分组标题，
+`view.collection.contentStates` 提供空态/加载态，
 `view.collection.virtual` 提供固定行高虚拟集合与可见范围查询，
 `view.collection.virtual.variableExtent` 为 virtualList 增加宿主测量的可变行高；
 `view.styledText.basic` 提供有界样式 span，`view.styledText.actions` 提供精确行内交互目标，
@@ -589,6 +590,13 @@ UIA 滚动从末端之前首次到达最大偏移时投递一次 action，离开
 总节点和 256 交互区域上限约束。对应 feature 为 `view.collection.basic`。这是非虚拟化
 基础集合；大量或远程分页数据应使用下述 `virtualList/virtualGrid`，不能通过超配额树模拟。
 `gridList/virtualList/virtualGrid` 不接受 orientation；虚拟集合仍是固定行高的纵向范围模型。
+
+探测 `view.collection.stickyHeaders` 后，纵向 eager `list` 的直接 `listItem` 可声明
+`sticky=true`。当该 list 位于纵向 `scroll` 内时，宿主把已经越过视口顶部的最近标题固定在
+scroll content 顶部；下一个 sticky 项会把前一个标题向上推出，最后一个标题也不会越过所属
+list 的底部。固定后的绘制、裁剪、元素命中、右键菜单和 UIA 几何共用同一个 scene frame，
+标题会排在普通条目之上，但声明与语义顺序不改变。横向 list、gridList 和 virtual collection
+会原子拒绝 sticky；虚拟分组需要额外的全局 section 索引契约，不能假设本 feature 会保留窗口外标题。
 
 探测 `view.collection.selection` 后，四种集合容器都可声明
 `selectionMode="none"|"single"|"multiple"` 和受控 `selectedKeys`。非虚拟集合的键必须

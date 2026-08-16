@@ -2197,6 +2197,11 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         error = "only action-capable nodes accept 'action'";
         return false;
     }
+    if (!listItemNode && FieldPresent(state, index, "sticky"))
+    {
+        error = "only listItem nodes accept sticky";
+        return false;
+    }
     if (!styledTextNode && FieldPresent(state, index, "spans"))
     {
         error = "only styledText nodes accept spans";
@@ -2650,6 +2655,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadBoolField(state, index, "indeterminate",
             node.indeterminate, error) ||
         !ReadBoolField(state, index, "selected", node.selected, error) ||
+        !ReadBoolField(state, index, "sticky", node.sticky, error) ||
         !ReadBoolField(state, index, "expanded", node.expanded, error) ||
         !ReadBoolField(state, index, "selectAll", node.selectAll, error) ||
         !ReadBoolField(state, index, "liveUpdate", node.liveUpdate, error) ||
