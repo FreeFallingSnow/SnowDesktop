@@ -138,6 +138,7 @@ iconButton/shape/progressBar/progressRing/spacer`；额外的 `view.dataSeries` 
 `view.scroll` 提供宿主滚动视口，`view.scroll.initialTarget` 提供首次声明式定位，
 `view.collection.basic` 提供基础集合，
 `view.collection.orientation` 提供普通 list 横纵方向，
+`view.collection.virtual.orientation` 提供固定尺寸 virtualList 横向主轴，
 `view.collection.selection` 提供受控单选/多选，`view.collection.stickyHeaders` 提供 eager 纵向分组标题，
 `view.collection.contentStates` 提供空态/加载态，
 `view.collection.virtual` 提供固定行高虚拟集合与可见范围查询，
@@ -590,7 +591,7 @@ UIA 滚动从末端之前首次到达最大偏移时投递一次 action，离开
 探测 `view.scroll.programmatic` 后，action/event/schedule 等非渲染回调可调用
 `view.scrollTo(key, offset)` 或 `view.scrollBy(key, delta)`；宿主按当前已提交 scroll/virtual
 节点范围钳制并返回 `{offset,maximum,changed}`。`view.scrollToIndex(key,index,alignment?)`
-接受已提交的固定行高 `virtualList/virtualGrid` 以及可变行高 `virtualList`，使用 1-based 全局索引和
+接受已提交的固定主轴尺寸 `virtualList/virtualGrid` 以及可变行高 `virtualList`，使用 1-based 全局索引和
 `nearest/start/center/end` 对齐。三个函数都禁止在 `view()`/`render()` 中改变偏移，未知 key
 返回 `scrollTargetNotFound`，索引越界返回 `indexOutOfRange`，且不会产生可信用户手势。
 
@@ -602,8 +603,9 @@ UIA 滚动从末端之前首次到达最大偏移时投递一次 action，离开
 独立 contextMenu；宿主默认赋予 `listitem` 语义。一个树最多 256 个 listItem，仍受 512
 总节点和 256 交互区域上限约束。对应 feature 为 `view.collection.basic`。这是非虚拟化
 基础集合；大量或远程分页数据应使用下述 `virtualList/virtualGrid`，不能通过超配额树模拟。
-`gridList/virtualList/virtualGrid` 不接受 orientation；虚拟集合保持纵向范围模型，可变行高只由
-单列 virtualList 的独立 feature 开放。
+`gridList/virtualGrid` 不接受 orientation；`virtualList` 只有探测
+`view.collection.virtual.orientation` 后才能使用下述固定尺寸横向模型，可变行高仍只属于纵向
+单列 virtualList 的独立 feature。
 
 探测 `view.collection.stickyHeaders` 后，纵向 eager `list` 的直接 `listItem` 可声明
 `sticky=true`。当该 list 位于纵向 `scroll` 内时，宿主把已经越过视口顶部的最近标题固定在
@@ -734,6 +736,13 @@ return view.virtualList({
 仍不得超过 1,000,000；每帧最多实体化 128 项，overscan 为 0–16 行，空集合使用
 `firstIndex=0` 和空 children。虚拟节点必须有固定或 fill 高度，`viewportExtent` 是扣除
 节点 padding 后的实际内容高度。
+
+探测 `view.collection.virtual.orientation` 后，固定尺寸 `virtualList` 可声明
+`orientation="horizontal"`。此时 `itemExtent` 表示单项宽度，主轴间隔使用 `columnGap`，节点
+必须有 fixed/fill 宽度；`view.virtualRange` 必须收到相同 orientation、itemExtent、columnGap，
+且 `viewportExtent` 改为扣除 padding 后的内容宽度。宿主在 x 轴完成窗口布局、裁剪、滚轮、
+滚动条和 `scrollToIndex`。首版横向虚拟列表只允许 `columns=1` 的固定尺寸模型，不接受
+`estimatedItemSize`、`rowGap`、section/sticky header；`virtualGrid` 仍固定纵向。
 
 探测 `view.collection.virtual.variableExtent` 后，`virtualList` 可用正数
 `estimatedItemSize` 替代 `itemExtent`。`view.virtualRange` 必须传入同一个 estimate、

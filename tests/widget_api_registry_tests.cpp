@@ -438,6 +438,8 @@ void TestV2Contract()
                 "view.collection.selection") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.collection.virtual") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "view.collection.virtual.orientation") &&
             snowdesktop::widget_api::SupportsFeature("view.dataSeries") &&
             snowdesktop::widget_api::SupportsFeature(
                 "view.flex.layout") &&

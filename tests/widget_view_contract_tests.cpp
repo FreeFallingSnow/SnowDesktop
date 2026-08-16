@@ -130,10 +130,14 @@ void TestRepresentativeApplicability()
             !ViewNodeAllowsProperty(ViewNodeType::Grid, "selectedKeys"),
         "controlled selection properties must stay on collection containers");
     Check(ViewNodeAllowsProperty(ViewNodeType::List, "orientation") &&
+            ViewNodeAllowsProperty(ViewNodeType::VirtualList,
+                "orientation") &&
+            ViewNodeAllowsProperty(ViewNodeType::VirtualList,
+                "columnGap") &&
             !ViewNodeAllowsProperty(ViewNodeType::GridList, "orientation") &&
-            !ViewNodeAllowsProperty(ViewNodeType::VirtualList,
+            !ViewNodeAllowsProperty(ViewNodeType::VirtualGrid,
                 "orientation"),
-        "only eager linear lists must expose collection orientation");
+        "only eager and virtual linear lists must expose collection orientation");
     Check(ViewNodeAllowsProperty(ViewNodeType::List, "emptyContent") &&
             ViewNodeAllowsProperty(ViewNodeType::VirtualList,
                 "loadingContent") &&

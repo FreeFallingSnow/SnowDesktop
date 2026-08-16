@@ -254,7 +254,8 @@ bool ViewNodeAllowsProperty(
     if (property == "orientation")
         return IsType(type, { ViewNodeType::Divider,
             ViewNodeType::RadioGroup, ViewNodeType::Slider,
-            ViewNodeType::Scroll, ViewNodeType::List });
+            ViewNodeType::Scroll, ViewNodeType::List,
+            ViewNodeType::VirtualList });
     if (property == "value")
         return IsProgress(type) || type == ViewNodeType::Slider ||
             IsInput(type);
@@ -309,7 +310,8 @@ bool ViewNodeAllowsProperty(
     if (property == "rows")
         return type == ViewNodeType::Grid || type == ViewNodeType::GridList;
     if (property == "columnGap")
-        return IsGrid(type) || type == ViewNodeType::Flow;
+        return IsGrid(type) || type == ViewNodeType::Flow ||
+            type == ViewNodeType::VirtualList;
     if (property == "rowGap")
         return IsGrid(type) || type == ViewNodeType::Flow ||
             type == ViewNodeType::VirtualList;

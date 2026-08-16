@@ -457,6 +457,13 @@ bool IsVirtualCollection(ViewNodeType type) noexcept
         type == ViewNodeType::VirtualGrid;
 }
 
+float VirtualCollectionMainGap(const ViewNode& node) noexcept
+{
+    return node.orientation == ViewOrientation::Horizontal
+        ? node.columnGap.value_or(node.gap)
+        : node.rowGap.value_or(node.gap);
+}
+
 bool IsCollectionContainer(ViewNodeType type) noexcept
 {
     return type == ViewNodeType::List || type == ViewNodeType::GridList ||
@@ -772,6 +779,17 @@ float RawIntrinsicWidth(const ViewNode& node)
     }
     if (IsVirtualCollection(node.type))
     {
+        if (node.type == ViewNodeType::VirtualList &&
+            node.orientation == ViewOrientation::Horizontal)
+        {
+            const double extent =
+                static_cast<double>(node.itemCount) * node.itemExtent +
+                static_cast<double>(node.itemCount > 0
+                    ? node.itemCount - 1 : 0) *
+                    VirtualCollectionMainGap(node);
+            return static_cast<float>(std::min<double>(
+                MaximumScrollExtent, extent)) + ViewHorizontalPadding(node);
+        }
         float cellWidth = 0.0f;
         for (const auto& child : node.children)
             if (child.visible)
@@ -952,6 +970,15 @@ float RawIntrinsicHeight(const ViewNode& node)
     }
     if (IsVirtualCollection(node.type))
     {
+        if (node.type == ViewNodeType::VirtualList &&
+            node.orientation == ViewOrientation::Horizontal)
+        {
+            float result = 0.0f;
+            for (const auto& child : node.children)
+                if (child.visible)
+                    result = std::max(result, OuterIntrinsicHeight(child));
+            return result + ViewVerticalPadding(node);
+        }
         const std::size_t columns = node.type == ViewNodeType::VirtualGrid
             ? node.columns : 1;
         const std::size_t rows = columns == 0 ? 0 :
@@ -1885,6 +1912,26 @@ void LayoutVirtualCollection(ViewNode& node, const ViewRect& content)
     if (columns == 0 || node.firstIndex == 0) return;
     const float columnGap = node.columnGap.value_or(node.gap);
     const float rowGap = node.rowGap.value_or(node.gap);
+    if (node.type == ViewNodeType::VirtualList &&
+        node.orientation == ViewOrientation::Horizontal)
+    {
+        for (std::size_t childIndex = 0;
+            childIndex < node.children.size(); ++childIndex)
+        {
+            ViewNode& child = node.children[childIndex];
+            if (!child.visible) continue;
+            const std::size_t itemIndex =
+                node.virtualChildIndices[childIndex];
+            const ResolvedNodeSize resolved = ResolveOuterNodeSize(
+                child, node.itemExtent, content.height);
+            LayoutNode(child, {
+                content.x + static_cast<float>(itemIndex - 1) *
+                    (node.itemExtent + columnGap),
+                content.y, resolved.width, resolved.height,
+            });
+        }
+        return;
+    }
     const float cellWidth = std::max(0.0f,
         (content.width - columnGap * static_cast<float>(columns - 1)) /
             static_cast<float>(columns));
@@ -2412,9 +2459,11 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         error = "columnGap and rowGap are reserved for grid, flow, and virtual collection nodes";
         return false;
     }
-    if (node.type == ViewNodeType::VirtualList && node.columnGap)
+    if (node.type == ViewNodeType::VirtualList &&
+        ((node.orientation == ViewOrientation::Horizontal && node.rowGap) ||
+         (node.orientation == ViewOrientation::Vertical && node.columnGap)))
     {
-        error = "columnGap is reserved for grid nodes";
+        error = "virtualList gap must match its main axis";
         return false;
     }
     if (!IsVirtualCollection(node.type) &&
@@ -2568,14 +2617,27 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             error = "virtualList requires one valid fixed or estimated item size; virtualGrid requires fixed itemExtent";
             return false;
         }
-        if (node.orientation != ViewOrientation::Vertical)
+        if (node.type == ViewNodeType::VirtualGrid &&
+            node.orientation != ViewOrientation::Vertical)
         {
-            error = "virtual collection nodes are vertical";
+            error = "virtualGrid nodes are vertical";
             return false;
         }
-        if (node.height.kind == ViewLengthKind::Auto)
+        if (node.orientation == ViewOrientation::Horizontal &&
+            (variable || !node.sectionHeaderIndices.empty() ||
+                node.stickyHeaderIndex))
         {
-            error = "virtual collection nodes require fixed or fill height";
+            error = "horizontal virtualList requires fixed itemExtent and rejects section headers";
+            return false;
+        }
+        const ViewLength& viewportLength =
+            node.orientation == ViewOrientation::Horizontal
+            ? node.width : node.height;
+        if (viewportLength.kind == ViewLengthKind::Auto)
+        {
+            error = node.orientation == ViewOrientation::Horizontal
+                ? "horizontal virtualList requires fixed or fill width"
+                : "virtual collection nodes require fixed or fill height";
             return false;
         }
         if (node.itemCount > ViewTreeLimits::MaximumVirtualItemCount ||
@@ -2631,14 +2693,14 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         {
             if (!ComputeViewVariableVirtualRange(node.itemCount,
                     *node.estimatedItemSize,
-                    node.rowGap.value_or(node.gap), 1.0f, 0.0f,
+                    VirtualCollectionMainGap(node), 1.0f, 0.0f,
                     node.overscan, node.virtualMeasurements,
                     range, error))
                 return false;
         }
         else if (!ComputeViewVirtualRange(node.itemCount, node.itemExtent,
                 node.type == ViewNodeType::VirtualGrid ? node.columns : 1,
-                node.rowGap.value_or(node.gap), 1.0f, 0.0f,
+                VirtualCollectionMainGap(node), 1.0f, 0.0f,
                 node.overscan, range, error))
             return false;
         if (node.collectionContent != ViewCollectionContent::Items)
@@ -3952,7 +4014,7 @@ bool ApplyScrollState(ViewNode& node,
             {
                 if (!ComputeViewVariableVirtualRange(node.itemCount,
                         *node.estimatedItemSize,
-                        node.rowGap.value_or(node.gap), viewportExtent,
+                        VirtualCollectionMainGap(node), viewportExtent,
                         0.0f, node.overscan, node.virtualMeasurements,
                         virtualRange, error))
                     return false;
@@ -3961,7 +4023,7 @@ bool ApplyScrollState(ViewNode& node,
                     node.itemExtent,
                     node.type == ViewNodeType::VirtualGrid
                         ? node.columns : 1,
-                    node.rowGap.value_or(node.gap), viewportExtent,
+                    VirtualCollectionMainGap(node), viewportExtent,
                     0.0f, node.overscan, virtualRange, error))
                 return false;
             contentExtent = virtualRange.contentExtent;
@@ -4015,7 +4077,7 @@ bool ApplyScrollState(ViewNode& node,
             {
                 if (!ComputeViewVariableVirtualItemScrollOffset(
                         node.itemCount, *node.estimatedItemSize,
-                        node.rowGap.value_or(node.gap), viewportExtent,
+                        VirtualCollectionMainGap(node), viewportExtent,
                         0.0f, *node.initialScrollIndex, "nearest",
                         node.virtualMeasurements, requested, error))
                     return false;
@@ -4024,7 +4086,7 @@ bool ApplyScrollState(ViewNode& node,
                     node.itemExtent,
                     node.type == ViewNodeType::VirtualGrid
                         ? node.columns : 1,
-                    node.rowGap.value_or(node.gap), viewportExtent,
+                    VirtualCollectionMainGap(node), viewportExtent,
                     0.0f, *node.initialScrollIndex, "nearest",
                     requested, error))
                 return false;
@@ -4046,7 +4108,7 @@ bool ApplyScrollState(ViewNode& node,
             {
                 if (!ComputeViewVariableVirtualRange(node.itemCount,
                         *node.estimatedItemSize,
-                        node.rowGap.value_or(node.gap), viewportExtent,
+                        VirtualCollectionMainGap(node), viewportExtent,
                         offset, 0, node.virtualMeasurements,
                         visibleRange, error))
                     return false;
@@ -4054,7 +4116,7 @@ bool ApplyScrollState(ViewNode& node,
             else if (!ComputeViewVirtualRange(node.itemCount, node.itemExtent,
                     node.type == ViewNodeType::VirtualGrid
                         ? node.columns : 1,
-                    node.rowGap.value_or(node.gap), viewportExtent,
+                    VirtualCollectionMainGap(node), viewportExtent,
                     offset, 0, visibleRange, error))
                 return false;
             if (node.itemCount > 0)
@@ -4086,8 +4148,10 @@ bool ApplyScrollState(ViewNode& node,
                 }
             }
             for (auto& child : node.children)
-                TranslateTree(child, 0.0f, -offset);
-            ApplyVirtualStickyHeaders(node, clip);
+                TranslateTree(child,
+                    vertical ? 0.0f : -offset,
+                    vertical ? -offset : 0.0f);
+            if (vertical) ApplyVirtualStickyHeaders(node, clip);
         }
         else if (!IsVirtualCollection(node.type))
         {

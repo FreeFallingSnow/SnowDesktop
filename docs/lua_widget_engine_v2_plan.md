@@ -1117,7 +1117,9 @@ SnowDesktop 不照搬某一个框架，参考优先级如下：
 `view.collection.basic` 已覆盖非虚拟 `list/gridList/listItem`，限制 256 个稳定项，
 每项有独立 action、hover、菜单目标与 listitem 语义；`view.collection.orientation` 已让普通
 list 支持默认纵向与显式横向，并让固有尺寸、flex 分配和条目位置使用同一主轴；grid 与虚拟集合
-保持行优先纵向模型并拒绝 orientation。`view.collection.virtual` 进一步
+原先保持行优先纵向模型。后续 `view.collection.virtual.orientation` 已把固定尺寸 virtualList
+扩展到横向主轴，窗口布局、裁剪、滚轮、滚动条和按索引定位共用内容宽度与 columnGap；横向
+可变尺寸、分组 sticky header 和 virtualGrid orientation 继续拒绝。`view.collection.virtual` 进一步
 提供固定行高 `virtualList/virtualGrid` 和 `view.virtualRange`，按实例滚动位置只实体化
 最多 128 个连续项，宿主按全局 1-based 索引布局并校验窗口覆盖可见行；
 `view.collection.virtual.variableExtent` 又允许 virtualList 以 estimatedItemSize 启动，成功 scene

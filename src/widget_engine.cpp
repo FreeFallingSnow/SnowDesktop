@@ -8921,7 +8921,8 @@ static int lua_ViewVirtualRange(lua_State* state)
     if (!LuaTableUsesOnlyFields(state, descriptor,
             { "key", "itemCount", "itemExtent", "viewportExtent",
                 "estimatedItemSize", "layoutRevision", "columns",
-                "rowGap", "overscan", "initialScrollIndex",
+                "orientation", "columnGap", "rowGap", "overscan",
+                "initialScrollIndex",
                 "sectionHeaderIndices" },
             "view.virtualRange", error))
         return luaL_error(state, "view.virtualRange: %s", error.c_str());
@@ -8948,6 +8949,12 @@ static int lua_ViewVirtualRange(lua_State* state)
         lua_pop(state, 1);
         return value;
     };
+    const auto hasField = [&](const char* field) {
+        lua_getfield(state, descriptor, field);
+        const bool present = !lua_isnil(state, -1);
+        lua_pop(state, 1);
+        return present;
+    };
     const lua_Integer itemCountValue = readInteger("itemCount", -1);
     const lua_Integer columnsValue = readInteger("columns", 1);
     const lua_Integer overscanValue = readInteger("overscan", 2);
@@ -8961,7 +8968,28 @@ static int lua_ViewVirtualRange(lua_State* state)
         "estimatedItemSize", std::numeric_limits<double>::quiet_NaN());
     const double viewportExtentValue = readNumber(
         "viewportExtent", std::numeric_limits<double>::quiet_NaN());
+    const double columnGapValue = readNumber("columnGap", 0.0);
     const double rowGapValue = readNumber("rowGap", 0.0);
+    std::string orientation = "vertical";
+    lua_getfield(state, descriptor, "orientation");
+    if (!lua_isnil(state, -1))
+    {
+        size_t length = 0;
+        const char* value = luaL_checklstring(state, -1, &length);
+        orientation.assign(value, length);
+    }
+    lua_pop(state, 1);
+    if (orientation != "vertical" && orientation != "horizontal")
+        return luaL_error(state,
+            "view.virtualRange: orientation must be vertical or horizontal");
+    const bool horizontal = orientation == "horizontal";
+    if ((horizontal && hasField("rowGap")) ||
+        (!horizontal && hasField("columnGap")))
+        return luaL_error(state, horizontal
+            ? "view.virtualRange: horizontal ranges use columnGap, not rowGap"
+            : "view.virtualRange: vertical ranges use rowGap, not columnGap");
+    const double mainGapValue = horizontal
+        ? columnGapValue : rowGapValue;
     if (itemCountValue < 0 ||
         itemCountValue > static_cast<lua_Integer>(
             ViewTreeLimits::MaximumVirtualItemCount) ||
@@ -9033,10 +9061,12 @@ static int lua_ViewVirtualRange(lua_State* state)
     const bool variableExtent = std::isfinite(estimatedItemSizeValue);
     if (fixedExtent == variableExtent ||
         (variableExtent && columnsValue != 1) ||
-        (!sectionHeaderIndices.empty() && columnsValue != 1))
+        (!sectionHeaderIndices.empty() && columnsValue != 1) ||
+        (horizontal && (variableExtent || columnsValue != 1 ||
+            !sectionHeaderIndices.empty())))
     {
         return luaL_error(state,
-            "view.virtualRange: provide exactly one of itemExtent or estimatedItemSize; variable ranges and section headers are list-only");
+            "view.virtualRange: provide exactly one extent; horizontal ranges require one fixed-extent list column and reject section headers");
     }
     ViewVirtualRange range;
     ViewVirtualRange visibleRange;
@@ -9046,7 +9076,7 @@ static int lua_ViewVirtualRange(lua_State* state)
                 BoundWidgetId(state), key,
                 static_cast<std::size_t>(itemCountValue),
                 static_cast<float>(estimatedItemSizeValue),
-                static_cast<float>(rowGapValue),
+                static_cast<float>(mainGapValue),
                 static_cast<float>(viewportExtentValue),
                 static_cast<std::uint64_t>(layoutRevisionValue),
                 static_cast<std::size_t>(overscanValue),
@@ -9057,7 +9087,7 @@ static int lua_ViewVirtualRange(lua_State* state)
                 BoundWidgetId(state), key,
                 static_cast<std::size_t>(itemCountValue),
                 static_cast<float>(estimatedItemSizeValue),
-                static_cast<float>(rowGapValue),
+                static_cast<float>(mainGapValue),
                 static_cast<float>(viewportExtentValue),
                 static_cast<std::uint64_t>(layoutRevisionValue), 0,
                 static_cast<std::size_t>(initialScrollIndexValue),
@@ -9076,7 +9106,7 @@ static int lua_ViewVirtualRange(lua_State* state)
                     static_cast<std::size_t>(itemCountValue),
                     static_cast<float>(itemExtentValue),
                     static_cast<std::size_t>(columnsValue),
-                    static_cast<float>(rowGapValue),
+                    static_cast<float>(mainGapValue),
                     static_cast<float>(viewportExtentValue), 0.0f,
                     static_cast<std::size_t>(initialScrollIndexValue),
                     "nearest", requestedOffset, error))
@@ -9087,7 +9117,7 @@ static int lua_ViewVirtualRange(lua_State* state)
             static_cast<std::size_t>(itemCountValue),
             static_cast<float>(itemExtentValue),
             static_cast<std::size_t>(columnsValue),
-            static_cast<float>(rowGapValue),
+            static_cast<float>(mainGapValue),
             static_cast<float>(viewportExtentValue),
             requestedOffset,
             static_cast<std::size_t>(overscanValue), range, error))
@@ -9097,7 +9127,7 @@ static int lua_ViewVirtualRange(lua_State* state)
             static_cast<std::size_t>(itemCountValue),
             static_cast<float>(itemExtentValue),
             static_cast<std::size_t>(columnsValue),
-            static_cast<float>(rowGapValue),
+            static_cast<float>(mainGapValue),
             static_cast<float>(viewportExtentValue), range.offset, 0,
             visibleRange, error))
             return luaL_error(state,
@@ -26494,18 +26524,25 @@ bool WidgetEngine::RuntimeScrollViewToIndex(
     const int current = RuntimeGetScrollOffset(widgetId, id, surface);
     float requested = 0.0f;
     std::string rangeError;
+    const bool horizontal = node->orientation ==
+        snowdesktop::widget_runtime::ViewOrientation::Horizontal;
+    const float viewportExtent = static_cast<float>(horizontal
+        ? control->viewportWidth : control->viewportHeight);
+    const float mainGap = horizontal
+        ? node->columnGap.value_or(node->gap)
+        : node->rowGap.value_or(node->gap);
     const bool positioned = node->estimatedItemSize
         ? snowdesktop::widget_runtime::
             ComputeViewVariableVirtualItemScrollOffset(
                 node->itemCount, *node->estimatedItemSize,
-                node->rowGap.value_or(node->gap),
-                static_cast<float>(control->viewportHeight),
+                mainGap, viewportExtent,
                 static_cast<float>(current), itemIndex, alignment,
                 node->virtualMeasurements, requested, rangeError)
         : snowdesktop::widget_runtime::ComputeViewVirtualItemScrollOffset(
-            node->itemCount, node->itemExtent, node->columns,
-            node->rowGap.value_or(node->gap),
-            static_cast<float>(control->viewportHeight),
+            node->itemCount, node->itemExtent,
+            node->type == snowdesktop::widget_runtime::
+                    ViewNodeType::VirtualGrid ? node->columns : 1,
+            mainGap, viewportExtent,
             static_cast<float>(current), itemIndex, alignment,
             requested, rangeError);
     if (!positioned)

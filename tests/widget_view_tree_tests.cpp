@@ -1899,7 +1899,7 @@ void TestListOrientation()
     ViewNode invalid;
     Check(!ParseLuaViewTree(state, -1, invalid, error) &&
             error.find("accept orientation") != std::string::npos,
-        "grid and virtual collection orientation must stay rejected");
+        "grid collection orientation must stay rejected");
     lua_close(state);
 }
 
@@ -2011,6 +2011,97 @@ void TestVirtualizedCollections()
                 viewports, error) &&
             error.find("cover") != std::string::npos,
         "the host must reject a virtual window that misses visible items");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        local items = {}
+        for index = 2, 6 do
+            items[#items + 1] = view.listItem({
+                key = "horizontal-item-" .. index,
+                accessibility = { label = "Horizontal item " .. index },
+                children = {
+                    view.text({
+                        key = "horizontal-label-" .. index,
+                        text = tostring(index),
+                        textAlign = "center",
+                    }),
+                },
+            })
+        end
+        return view.virtualList({
+            key = "horizontal-feed",
+            orientation = "horizontal",
+            width = 120,
+            height = 60,
+            itemCount = 20,
+            itemExtent = 40,
+            firstIndex = 2,
+            overscan = 1,
+            columnGap = 4,
+            children = items,
+        })
+    )lua") == LUA_OK,
+        "horizontal virtual-list Lua fixture must evaluate");
+    ViewNode horizontal;
+    const bool horizontalParsed =
+        ParseLuaViewTree(state, -1, horizontal, error);
+    if (!horizontalParsed)
+        std::cerr << "horizontal parse error: " << error << '\n';
+    Check(horizontalParsed,
+        "fixed-extent horizontal virtualList must parse");
+    Check(horizontal.orientation == ViewOrientation::Horizontal &&
+            horizontal.columnGap == 4.0f,
+        "horizontal virtualList must retain its axis and main-axis gap");
+    const bool horizontalLaidOut = ValidateAndLayoutViewTree(
+        horizontal, 120.0f, 60.0f, error);
+    if (!horizontalLaidOut)
+        std::cerr << "horizontal layout error: " << error << '\n';
+    Check(horizontalLaidOut,
+        "fixed-extent horizontal virtualList must lay out");
+    viewports.clear();
+    Check(ApplyViewScrollOffsets(horizontal,
+            [](std::string_view key, float) {
+                return key == "horizontal-feed" ? 88.0f : 0.0f;
+            }, viewports, error) && viewports.size() == 1 &&
+            viewports[0].orientation == ViewOrientation::Horizontal &&
+            Near(viewports[0].contentExtent, 876.0f) &&
+            Near(viewports[0].offset, 88.0f) &&
+            Near(horizontal.children[1].frame.x, 0.0f),
+        "horizontal virtualList must place its global item window on the x axis");
+    regions.clear();
+    Check(CollectViewInteractionRegions(horizontal, regions, error) &&
+            regions.size() == 3 &&
+            regions.front().key == "horizontal-item-3" &&
+            regions.back().key == "horizontal-item-5" &&
+            regions.front().clip && Near(regions.front().clip->width, 120.0f),
+        "horizontal virtualList must clip interaction regions to its viewport");
+
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return view.virtualList({
+            key = "invalid-horizontal-variable",
+            orientation = "horizontal",
+            width = 120,
+            itemCount = 1,
+            estimatedItemSize = 40,
+            firstIndex = 1,
+            children = {
+                view.listItem({ key = "item",
+                    accessibility = { label = "Item" },
+                    children = {
+                        view.text({ key = "label", text = "Item" }),
+                    },
+                }),
+            },
+        })
+    )lua") == LUA_OK,
+        "invalid horizontal variable-list fixture must evaluate");
+    ViewNode invalidHorizontal;
+    Check(ParseLuaViewTree(state, -1, invalidHorizontal, error) &&
+            !ValidateAndLayoutViewTree(
+                invalidHorizontal, 120.0f, 60.0f, error) &&
+            error.find("fixed itemExtent") != std::string::npos,
+        "horizontal virtualList must reject variable extents");
 
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(

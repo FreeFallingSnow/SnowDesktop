@@ -226,10 +226,13 @@ fallbacks and `view.state.busy` for the controlled busy flag. Loading content
 replaces items only while busy, empty content activates only for a truly empty
 collection, and neither state creates an implicit timer or localized label.
 Probe `view.collection.orientation` before setting an eager `list` to horizontal;
-vertical remains the default. Grid and virtual collections remain row-major
-vertical models and reject orientation. For larger data, probe
+vertical remains the default. Probe `view.collection.virtual.orientation` for
+a fixed-extent horizontal `virtualList`; pass the same horizontal orientation,
+content viewport width, item width, and column gap to `view.virtualRange`.
+Horizontal variable extents, section headers, and virtualGrid remain rejected.
+For larger data, probe
 `view.collection.virtual`, call `view.virtualRange` with the stable collection
-key and actual content-viewport height, create only its inclusive 1-based
+key and actual main-axis content-viewport extent, create only its inclusive 1-based
 window, then submit `virtualList` or `virtualGrid` with matching fixed extent,
 row gap, columns, overscan, firstIndex, and contiguous listItem children. Keep
 the materialized window within 128 items. Probe

@@ -268,11 +268,13 @@
 ---@class SnowViewVirtualRangeOptions
 ---@field key string Stable virtual collection key.
 ---@field itemCount integer Total logical items from 0 through 1000000.
----@field itemExtent? number Fixed logical row height; mutually exclusive with estimatedItemSize.
+---@field itemExtent? number Fixed logical main-axis item extent; row height for vertical collections and item width for horizontal virtualList. Mutually exclusive with estimatedItemSize.
 ---@field estimatedItemSize? number Variable virtualList estimate used instead of itemExtent after probing view.collection.virtual.variableExtent.
 ---@field layoutRevision? integer Bump when variable-list ordering or height-affecting content changes so stale measurements are discarded.
----@field viewportExtent number Positive logical content-viewport height after padding.
+---@field viewportExtent number Positive logical content-viewport extent after padding: height for vertical and width for horizontal.
 ---@field columns? integer Grid column count from 1 through 64; defaults to 1.
+---@field orientation? 'horizontal'|'vertical' Defaults to vertical. Horizontal requires view.collection.virtual.orientation, fixed itemExtent, columns=1, and no section headers.
+---@field columnGap? number Horizontal virtualList item gap; defaults to 0.
 ---@field rowGap? number Logical gap between rows; defaults to 0.
 ---@field overscan? integer Extra rows on each side from 0 through 16; defaults to 2.
 ---@field initialScrollIndex? integer Same 1-based initial item passed to the virtual node; used only while this stable key has no accepted host scroll state.
@@ -309,7 +311,7 @@
 ---@field alt? string Required by image and referenceIcon nodes; use an empty string for decorative visuals.
 ---@field iconFont? 'fa'|'fluent'|'fluent-regular'
 ---@field shape? 'rectangle'|'roundedRectangle'|'circle'|'ellipse'
----@field orientation? 'horizontal'|'vertical' Divider, radioGroup/slider, scroll, or eager list axis; scroll and list default to vertical.
+---@field orientation? 'horizontal'|'vertical' Divider, radioGroup/slider, scroll, eager list, or fixed-extent virtualList axis; scroll and lists default to vertical.
 ---@field value? number|string Numeric progress/slider/numberInput value, or controlled textInput/textArea/searchBox string.
 ---@field values? number[] Required by data-series nodes; 1 to 512 finite samples, with at most 4096 samples across one tree.
 ---@field min? number Explicit data-series, slider, or numberInput minimum; defaults to 0 for controls.
@@ -359,8 +361,8 @@
 ---@field gap? number
 ---@field columns? integer|SnowViewGridTrack[] Required by grid, gridList, and virtualGrid. Track arrays require view.grid.tracks and are rejected by virtualGrid.
 ---@field rows? integer|SnowViewGridTrack[] Optional explicit grid/gridList rows; integer creates that many auto tracks and implicit trailing rows remain auto.
----@field columnGap? number Grid/gridList/virtualGrid/flow horizontal gap; defaults to gap.
----@field rowGap? number Grid/gridList/virtualList/virtualGrid/flow vertical gap; defaults to gap.
+---@field columnGap? number Grid/gridList/virtualGrid/flow horizontal gap, or horizontal virtualList main-axis gap; defaults to gap.
+---@field rowGap? number Grid/gridList/virtualGrid/flow vertical gap, or vertical virtualList main-axis gap; defaults to gap.
 ---@field gridColumn? integer Explicit 1-based column for a direct grid/gridList child; 1 through 64.
 ---@field gridRow? integer Explicit 1-based row for a direct grid/gridList child; 1 through 64.
 ---@field columnSpan? integer Number of equal-width columns occupied by a direct grid/gridList child; 1 through 64, defaults to 1.
@@ -898,7 +900,7 @@ function view.scrollBy(key, delta) end
 ---@return string? error
 function view.scrollToIndex(key, index, alignment) end
 
----Fixed-row virtual vertical list. Children are the contiguous listItem window beginning at firstIndex. Requires view.collection.virtual.
+---Fixed-extent virtual list. Children are the contiguous listItem window beginning at firstIndex. Horizontal orientation additionally requires view.collection.virtual.orientation.
 ---@param options SnowViewNodeOptions
 ---@return SnowViewNode
 function view.virtualList(options) end

@@ -2299,10 +2299,10 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         return false;
     }
     if (!dividerNode && !radioNode && !sliderNode && !scrollNode &&
-        node.type != ViewNodeType::List &&
+        node.type != ViewNodeType::List && !virtualListNode &&
         FieldPresent(state, index, "orientation"))
     {
-        error = "only divider, radioGroup, slider, scroll, and list nodes accept orientation";
+        error = "only divider, radioGroup, slider, scroll, list, and virtualList nodes accept orientation";
         return false;
     }
     if (!gridNode && FieldPresent(state, index, "columns"))
@@ -2320,11 +2320,6 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             FieldPresent(state, index, "rowGap")))
     {
         error = "only grid, collection-grid, flow, and virtualList nodes accept axis gaps";
-        return false;
-    }
-    if (virtualListNode && FieldPresent(state, index, "columnGap"))
-    {
-        error = "virtualList nodes accept rowGap but reject columnGap";
         return false;
     }
     if (!flexContainerNode &&
@@ -2829,6 +2824,20 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             return false;
         }
         node.initialScrollKey = std::move(initialScrollKey);
+    }
+
+    if (virtualListNode)
+    {
+        const bool horizontal = FieldPresent(state, index, "orientation") &&
+            node.orientation == ViewOrientation::Horizontal;
+        if ((horizontal && FieldPresent(state, index, "rowGap")) ||
+            (!horizontal && FieldPresent(state, index, "columnGap")))
+        {
+            error = horizontal
+                ? "horizontal virtualList uses columnGap, not rowGap"
+                : "vertical virtualList uses rowGap, not columnGap";
+            return false;
+        }
     }
     if (node.initialScrollIndex &&
         *node.initialScrollIndex > node.itemCount)
