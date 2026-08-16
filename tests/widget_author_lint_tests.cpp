@@ -36,7 +36,7 @@ return widget.define({
         return view.column({
             key = "root",
             children = {
-                view.text({ key = "title", text = l10n.t("title") }),
+                view.text({ key = "title", text = l10n.tr("title") }),
             },
         })
     end,
@@ -78,8 +78,8 @@ return view.column({
     children = {
         view.text({ text = "Hard coded" }),
         view.button({ key = "same", label = "Open" }),
-        view.button({ key = "same", label = l10n.t("close") }),
-        view.text({ key = "" , text = l10n.t("empty") }),
+        view.button({ key = "same", label = l10n.tr("close") }),
+        view.text({ key = "" , text = l10n.tr("empty") }),
     },
 })
 )lua");
