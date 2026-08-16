@@ -2,6 +2,7 @@
 
 #include <map>
 #include <cstdint>
+#include <chrono>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -148,6 +149,7 @@ struct InteractionRegion
     std::map<std::string, InteractionAction, std::less<>> events;
     std::string accessibilityRole;
     std::string accessibilityLabel;
+    bool capturePointer = false;
     InteractionControlKind controlKind = InteractionControlKind::None;
     bool checked = false;
     bool indeterminate = false;
@@ -214,9 +216,10 @@ public:
     InteractionPointerResult PointerDown(float x, float y, int button);
     InteractionPointerResult PointerUp(float x, float y, int button);
     void CancelPointerPress() noexcept;
+    bool HasPointerCapture() const noexcept;
     std::string ConsumeClickTarget(float x, float y);
     std::string TargetAt(float x, float y) const;
-    std::string PointerMoveTarget(float x, float y) const;
+    std::string PointerMoveTarget(float x, float y);
 
     const InteractionRegion* Find(std::string_view key) const noexcept;
     const InteractionAction* FindAction(
@@ -255,6 +258,7 @@ public:
 private:
     const InteractionRegion* HitTest(float x, float y) const noexcept;
     bool ContainsKey(std::string_view key) const noexcept;
+    bool PointerPressExpired() const noexcept;
 
     std::vector<InteractionRegion> active_;
     std::vector<InteractionRegion> staging_;
@@ -267,6 +271,7 @@ private:
     std::string clickCandidateKey_;
     std::optional<InteractionRegion> retiredHoverRegion_;
     int pressedButton_ = -1;
+    std::chrono::steady_clock::time_point pointerPressStarted_{};
     std::uint64_t generation_ = 0;
 };
 }

@@ -2748,6 +2748,15 @@ static int lua_InteractionRegion(lua_State* state)
     lua_getfield(state, descriptor, "enabled");
     region.enabled = lua_isnil(state, -1) || lua_toboolean(state, -1) != 0;
     lua_pop(state, 1);
+    lua_getfield(state, descriptor, "capturePointer");
+    if (!lua_isnil(state, -1))
+    {
+        if (!lua_isboolean(state, -1))
+            return luaL_error(state,
+                "interaction.region: capturePointer must be a boolean");
+        region.capturePointer = lua_toboolean(state, -1) != 0;
+    }
+    lua_pop(state, 1);
     lua_getfield(state, descriptor, "focusable");
     if (!lua_isnil(state, -1))
     {
@@ -2829,6 +2838,14 @@ static int lua_InteractionRegion(lua_State* state)
         }
     }
     lua_pop(state, 1);
+
+    if (region.capturePointer &&
+        !region.events.contains("pointerMove") &&
+        !region.events.contains("pointerUp"))
+    {
+        return luaL_error(state,
+            "interaction.region: capturePointer requires pointerMove or pointerUp");
+    }
 
     auto* d2d = GetD2D(state);
     std::string error;
@@ -20031,6 +20048,38 @@ void WidgetEngine::InvokeMouseEvent(const std::wstring& widgetId, const char* ca
         lua_pop(state, 1);
     }
     lua_pop(state, 1);
+}
+
+bool WidgetEngine::HasInteractionPointerCapture(
+    const std::wstring& widgetId, std::string_view surface) const
+{
+    const int index = FindWidget(widgetId);
+    return index >= 0 && widgets_[index].manifest.apiVersion >= 2 &&
+        InteractionRegionsForSurface(widgets_[index], surface).
+            HasPointerCapture();
+}
+
+void WidgetEngine::CancelInteractionPointerPress(std::string_view surface)
+{
+    for (auto& widget : widgets_)
+    {
+        if (widget.manifest.apiVersion < 2) continue;
+        bool changed = false;
+        if (surface.empty())
+        {
+            changed = !widget.interactionRegions.PressedKey().empty() ||
+                !widget.panelInteractionRegions.PressedKey().empty();
+            widget.interactionRegions.CancelPointerPress();
+            widget.panelInteractionRegions.CancelPointerPress();
+        }
+        else
+        {
+            auto& regions = InteractionRegionsForSurface(widget, surface);
+            changed = !regions.PressedKey().empty();
+            regions.CancelPointerPress();
+        }
+        if (changed) RuntimeInvalidateHost(widget.widgetId);
+    }
 }
 
 std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(

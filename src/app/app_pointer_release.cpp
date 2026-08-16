@@ -732,12 +732,15 @@ void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
             upPoint.y - content.top;
         const std::string& surface =
             luaWidgetPanelRequest_.surface;
+        const bool pointerCaptured = widgetEngine_ &&
+            widgetEngine_->HasInteractionPointerCapture(
+                panelWidgetId, surface);
         const bool hostInputHandled =
             widgetEngine_ &&
             widgetEngine_->HandleHostInputPointerUp(
                 panelWidgetId, localX, localY, surface);
         if (!hostInputHandled &&
-            PtInRect(&content, upPoint) &&
+            (PtInRect(&content, upPoint) || pointerCaptured) &&
             widgetEngine_)
         {
             const char* upEvent = surface == "dialog"
@@ -752,10 +755,13 @@ void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
                 panelWidgetId,
                 upEvent,
                 localX, localY, 1, 0);
-            widgetEngine_->InvokeMouseEvent(
-                panelWidgetId,
-                clickEvent,
-                localX, localY, 1, 0);
+            if (PtInRect(&content, upPoint))
+            {
+                widgetEngine_->InvokeMouseEvent(
+                    panelWidgetId,
+                    clickEvent,
+                    localX, localY, 1, 0);
+            }
         }
         luaWidgetPanelMouseDown_ = false;
         mouseDown_ = false;
@@ -991,6 +997,9 @@ void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
             }
             else if (loaded)
             {
+                const bool pointerCaptured =
+                    widgetEngine_->HasInteractionPointerCapture(
+                        widgets_[mouseDownWidgetIndex_].id);
                 const bool hostInputHandled =
                     widgetEngine_->HandleHostInputPointerUp(
                         widgets_[mouseDownWidgetIndex_].id,
@@ -998,16 +1007,20 @@ void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
                         upPoint.y - frame.top);
                 if (hostInputHandled)
                     UpdateHostInputImePosition();
-                if (!hostInputHandled && contentClicked)
+                if (!hostInputHandled &&
+                    (contentClicked || pointerCaptured))
                 {
                     widgetEngine_->InvokeMouseEvent(
                         widgets_[mouseDownWidgetIndex_].id,
                         "onMouseUp", upPoint.x - frame.left,
                         upPoint.y - frame.top, 1, 0);
-                    widgetEngine_->InvokeClick(
-                        widgets_[mouseDownWidgetIndex_].id,
-                        upPoint.x - frame.left,
-                        upPoint.y - frame.top);
+                    if (contentClicked)
+                    {
+                        widgetEngine_->InvokeClick(
+                            widgets_[mouseDownWidgetIndex_].id,
+                            upPoint.x - frame.left,
+                            upPoint.y - frame.top);
+                    }
                 }
             }
         }

@@ -1053,8 +1053,11 @@ void TestActionControlParsing()
                     label = "Open details",
                     height = 24,
                     action = { id = "details.open" },
+                    capturePointer = true,
                     events = {
                         contextMenu = { id = "details.menu" },
+                        pointerMove = { id = "details.drag" },
+                        pointerUp = { id = "details.drop" },
                     },
                 }),
                 view.radioGroup({
@@ -1094,6 +1097,7 @@ void TestActionControlParsing()
             root.children.size() == 3 &&
             root.children[0].type == ViewNodeType::Link &&
             root.children[0].events.at("click").id == "details.open" &&
+            root.children[0].capturePointer &&
             root.children[1].type == ViewNodeType::RadioGroup &&
             root.children[1].selectedValue == "comfortable" &&
             root.children[1].options.size() == 2 &&
@@ -1110,6 +1114,7 @@ void TestActionControlParsing()
     Check(CollectViewInteractionRegions(root, regions, error) &&
             regions.size() == 4 &&
             regions[0].key == "details" &&
+            regions[0].capturePointer &&
             regions[0].accessibilityRole == "link" &&
             regions[1].key == "density/comfortable" &&
             regions[1].controlKind == InteractionControlKind::Radio &&

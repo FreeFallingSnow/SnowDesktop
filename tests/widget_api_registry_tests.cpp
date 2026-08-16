@@ -344,6 +344,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "interaction.pointerActions") &&
             snowdesktop::widget_api::SupportsFeature(
+                "interaction.pointerCapture") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "interaction.contextMenu") &&
             snowdesktop::widget_api::SupportsFeature(
                 "interaction.contextMenu.submenu") &&

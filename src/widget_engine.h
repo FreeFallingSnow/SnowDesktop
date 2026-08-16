@@ -878,6 +878,9 @@ public:
      */
     void InvokeMouseEvent(const std::wstring& widgetId, const char* callbackName, int x, int y,
         int button = 0, int delta = 0);
+    bool HasInteractionPointerCapture(const std::wstring& widgetId,
+        std::string_view surface = "desktop") const;
+    void CancelInteractionPointerPress(std::string_view surface = {});
 
     /**
      * @brief 获取指定小部件的右键菜单项列表

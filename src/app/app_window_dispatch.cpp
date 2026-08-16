@@ -324,7 +324,16 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
             DispatchLuaWidgetViewKeyEvent(wp, false, false);
         break;
     case WM_KILLFOCUS:
-        if (widgetEngine_) widgetEngine_->ClearHostViewKeyState();
+        if (widgetEngine_)
+        {
+            widgetEngine_->ClearHostViewKeyState();
+            widgetEngine_->CancelInteractionPointerPress();
+        }
+        break;
+    case WM_CANCELMODE:
+    case WM_CAPTURECHANGED:
+        if (widgetEngine_)
+            widgetEngine_->CancelInteractionPointerPress();
         break;
     case WM_TIMER:
         OnTimer(wp);

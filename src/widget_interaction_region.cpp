@@ -268,6 +268,13 @@ bool WidgetInteractionRegions::Submit(
         error = "interaction key events require a focusable region";
         return false;
     }
+    if (region.capturePointer &&
+        !region.events.contains("pointerMove") &&
+        !region.events.contains("pointerUp"))
+    {
+        error = "interaction pointer capture requires pointerMove or pointerUp";
+        return false;
+    }
     if (region.tabIndex != 0 &&
         !IsPotentiallyKeyboardFocusableRegion(region))
     {
@@ -370,6 +377,7 @@ InteractionHoverTransition WidgetInteractionRegions::CommitFrame()
     {
         pressedKey_.clear();
         pressedButton_ = -1;
+        pointerPressStarted_ = {};
         clickCandidateKey_.clear();
     }
     if (!ContainsKey(clickCandidateKey_))
@@ -414,6 +422,9 @@ InteractionPointerResult WidgetInteractionRegions::PointerDown(
     UpdateHover(x, y);
     pressedKey_ = hoveredKey_;
     pressedButton_ = button;
+    pointerPressStarted_ = pressedKey_.empty()
+        ? std::chrono::steady_clock::time_point{}
+        : std::chrono::steady_clock::now();
     clickCandidateKey_.clear();
     return { pressedKey_, {} };
 }
@@ -421,9 +432,12 @@ InteractionPointerResult WidgetInteractionRegions::PointerDown(
 InteractionPointerResult WidgetInteractionRegions::PointerUp(
     float x, float y, int button)
 {
+    if (PointerPressExpired()) CancelPointerPress();
+    const bool captured = HasPointerCapture();
+    const std::string capturedKey = captured ? pressedKey_ : std::string{};
     UpdateHover(x, y);
     InteractionPointerResult result;
-    result.targetKey = hoveredKey_;
+    result.targetKey = captured ? capturedKey : hoveredKey_;
     if (button == pressedButton_ && !pressedKey_.empty() &&
         pressedKey_ == hoveredKey_)
     {
@@ -434,6 +448,7 @@ InteractionPointerResult WidgetInteractionRegions::PointerUp(
         clickCandidateKey_.clear();
     pressedKey_.clear();
     pressedButton_ = -1;
+    pointerPressStarted_ = {};
     return result;
 }
 
@@ -490,6 +505,15 @@ void WidgetInteractionRegions::CancelPointerPress() noexcept
     pressedKey_.clear();
     clickCandidateKey_.clear();
     pressedButton_ = -1;
+    pointerPressStarted_ = {};
+}
+
+bool WidgetInteractionRegions::HasPointerCapture() const noexcept
+{
+    if (pressedKey_.empty() || pressedButton_ != 1 ||
+        PointerPressExpired()) return false;
+    const InteractionRegion* pressed = Find(pressedKey_);
+    return pressed && pressed->enabled && pressed->capturePointer;
 }
 
 std::string WidgetInteractionRegions::ConsumeClickTarget(float x, float y)
@@ -510,8 +534,10 @@ std::string WidgetInteractionRegions::TargetAt(float x, float y) const
 }
 
 std::string WidgetInteractionRegions::PointerMoveTarget(
-    float x, float y) const
+    float x, float y)
 {
+    if (PointerPressExpired()) CancelPointerPress();
+    if (HasPointerCapture()) return pressedKey_;
     if (!pressedKey_.empty() && pressedButton_ == 1)
     {
         const InteractionRegion* pressed = Find(pressedKey_);
@@ -520,6 +546,15 @@ std::string WidgetInteractionRegions::PointerMoveTarget(
             return pressedKey_;
     }
     return TargetAt(x, y);
+}
+
+bool WidgetInteractionRegions::PointerPressExpired() const noexcept
+{
+    constexpr auto kMaximumPointerPress = std::chrono::seconds(30);
+    return !pressedKey_.empty() &&
+        pointerPressStarted_ != std::chrono::steady_clock::time_point{} &&
+        std::chrono::steady_clock::now() - pointerPressStarted_ >=
+            kMaximumPointerPress;
 }
 
 const InteractionRegion* WidgetInteractionRegions::Find(
@@ -733,7 +768,7 @@ bool WidgetInteractionRegions::IsHovered(std::string_view key) const noexcept
 
 bool WidgetInteractionRegions::IsPressed(std::string_view key) const noexcept
 {
-    return !key.empty() && pressedKey_ == key;
+    return !key.empty() && pressedKey_ == key && !PointerPressExpired();
 }
 
 const std::string& WidgetInteractionRegions::HoveredKey() const noexcept
@@ -786,6 +821,7 @@ void WidgetInteractionRegions::Reset() noexcept
     clickCandidateKey_.clear();
     retiredHoverRegion_.reset();
     pressedButton_ = -1;
+    pointerPressStarted_ = {};
     ++generation_;
 }
 

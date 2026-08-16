@@ -173,8 +173,11 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             widgetEngine_->HandleHostInputPointerMove(
                 luaWidgetPanelRequest_.widgetId,
                 localX, localY, surface);
+        const bool pointerCaptured =
+            widgetEngine_->HasInteractionPointerCapture(
+                luaWidgetPanelRequest_.widgetId, surface);
         if (!handled &&
-            PtInRect(&content, current))
+            (PtInRect(&content, current) || pointerCaptured))
         {
             const char* eventName = surface == "dialog"
                 ? "onDialogMouseMove"
@@ -272,7 +275,11 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                 current.y - frame.top);
         if (hostInputHandled)
             UpdateHostInputImePosition();
-        if (!hostInputHandled && hit == WidgetHit::Content)
+        const bool pointerCaptured =
+            widgetEngine_->HasInteractionPointerCapture(
+                widgets_[mouseDownWidgetIndex_].id);
+        if (!hostInputHandled &&
+            (hit == WidgetHit::Content || pointerCaptured))
         {
             widgetEngine_->InvokeMouseEvent(widgets_[mouseDownWidgetIndex_].id, "onMouseMove",
                 current.x - frame.left, current.y - frame.top,

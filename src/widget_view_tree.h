@@ -628,6 +628,7 @@ struct ViewNode
     std::string acceleratorText;
     std::string accessibilityRole;
     std::string accessibilityLabel;
+    bool capturePointer = false;
     ViewStyle style;
     ViewStyle hoverStyle;
     ViewStyle pressedStyle;

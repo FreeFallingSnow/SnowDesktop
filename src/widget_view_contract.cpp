@@ -79,7 +79,7 @@ constexpr auto kProperties = std::to_array<std::string_view>({
     "fontSize", "fontWeight", "fontStyle", "lineHeight",
     "letterSpacing", "locale", "textDirection", "bold",
     "checked", "indeterminate", "selected", "sticky", "visible", "visibility",
-    "enabled", "focusable", "tabIndex", "cursor", "tooltip",
+    "enabled", "focusable", "tabIndex", "cursor", "tooltip", "capturePointer",
     "accessKey", "acceleratorText", "alignItems", "showScrollbar",
     "alignSelf", "justifyContent", "textAlign", "verticalAlign",
     "textWrap", "maxLines", "overflowText", "style", "hoverStyle",
@@ -348,6 +348,9 @@ bool ViewNodeAllowsProperty(
         return IsActionNode(type) &&
             type != ViewNodeType::RadioGroup &&
             type != ViewNodeType::MonthCalendar;
+    if (property == "capturePointer")
+        return !IsInput(type) && type != ViewNodeType::Select &&
+            type != ViewNodeType::Spacer;
     if (property == "action") return IsActionNode(type);
     return false;
 }

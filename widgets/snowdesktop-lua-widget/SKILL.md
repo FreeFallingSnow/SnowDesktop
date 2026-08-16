@@ -508,6 +508,10 @@ default border does not fit the component design.
   handle serialized region actions in `event`; never synthesize click from raw
   down/up callbacks. Build an element menu only through `widget.define.menu`
   and `ui.menu`, keeping the callback synchronous and I/O-free.
+  Probe `interaction.pointerCapture` before setting `capturePointer=true` on a
+  view node or immediate region. Bind `pointerMove` or `pointerUp`, and treat
+  capture as a host-cancelable primary-pointer drag lifecycle rather than
+  global input access.
   Probe `interaction.contextMenu.submenu` before adding non-actionable menu
   parents with `children`; keep the whole tree within 64 descriptors and three
   submenu levels, with globally unique action IDs on leaves.

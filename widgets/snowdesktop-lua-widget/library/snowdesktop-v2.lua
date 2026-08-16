@@ -420,6 +420,7 @@
 ---@field tabIndex? integer Sequential host focus order from -1 through 32767. -1 skips Tab/spatial traversal; positive values sort before 0/source order.
 ---@field cursor? string
 ---@field tooltip? string|SnowTooltipDescriptor Bounded host tooltip; descriptor form requires view.tooltip.rich and also enters semantic help text when no validation message is present.
+---@field capturePointer? boolean Keep primary-pointer move/up routed to the pressed stable key until release or host cancellation; requires interaction.pointerCapture plus pointerMove or pointerUp.
 ---@field accessKey? string One ASCII letter or digit, unique in the tree; Alt+key focuses or activates this node after probing view.keyboard.accessKey.
 ---@field acceleratorText? string UI Automation shortcut description up to 64 UTF-8 bytes; it does not register a shortcut. Requires view.keyboard.accessKey.
 ---@field style? SnowViewStyle
@@ -514,6 +515,7 @@
 ---@field shape SnowInteractionShape
 ---@field cursor? 'default'|'hand'|'text'|'crosshair'
 ---@field tooltip? string|SnowTooltipDescriptor Bounded host tooltip; descriptor form additionally requires interaction.tooltip.rich.
+---@field capturePointer? boolean Keep primary-pointer move/up routed to this stable key until release or host cancellation; requires interaction.pointerCapture plus pointerMove or pointerUp.
 ---@field events? SnowInteractionEvents
 ---@field accessibility? SnowInteractionAccessibility
 ---@field enabled? boolean

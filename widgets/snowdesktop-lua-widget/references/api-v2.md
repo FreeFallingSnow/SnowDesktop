@@ -542,6 +542,12 @@ surface 中当前唯一选中 Lua 组件或活动 panel surface 的当前聚焦�
 宿主重绘，不执行 Lua。`wheel` 带原始 `delta` 和可信手势；scroll/virtual collection 即使先由
 宿主移动内容，也会向自身显式 wheel action 投递，事件不能阻止、回滚或替代宿主滚动。
 
+探测 `interaction.pointerCapture` 后，非宿主输入/select 节点可设置 `capturePointer=true`，并且必须
+绑定 `pointerMove` 或 `pointerUp`。主指针在该稳定 key 上按下后，即使移出元素或组件边界，move/up
+仍投递给原目标；移出后不会合成 click。释放按键、目标从成功 scene 消失、surface 关闭、窗口失焦、
+系统取消捕获、组件卸载或授权导致实例停用都会终止捕获。该能力不允许 Lua 捕获全局输入，也不改变
+hover 命中；连续按压 30 秒后宿主也会停止捕获路由。宿主 slider 原有拖动语义不要求作者重复声明。
+
 探测 `view.keyboardNavigation.order` 后，任意有语义的节点可声明 `focusable`，并在实际可聚焦时
 声明 `tabIndex=-1..32767`。`focusable=false` 同时退出鼠标、键盘和 UI Automation 焦点；
 `tabIndex=-1` 仍允许鼠标/UIA 聚焦，但不进入 Tab 和方向键遍历；正数按升序排在默认 0 的文档
@@ -1162,6 +1168,9 @@ shape 首版支持 `rect`、`roundedRect` 和 `circle`；cursor 支持 `default`
 `pointerUp`、`pointerMove`、`click`、`doubleClick`、`wheel` 和 `contextMenu`。
 动作 `value` 会被深拷贝，只允许 nil、布尔、有限数字、字符串、连续数组和字符串键
 对象，限制 8 层、256 个节点和合计 16 KiB 字符串。普通 hover/click 不需要权限。
+
+探测 `interaction.pointerCapture` 后，即时 region 也可声明 `capturePointer=true`，并同时绑定
+`pointerMove` 或 `pointerUp`。其主指针捕获、终止条件和不合成越界 click 的规则与声明式节点一致。
 
 探测 `interaction.tooltip` 后，region 可声明最多 4096 UTF-8 字节的字符串 `tooltip`；探测
 `interaction.tooltip.rich` 后也可使用与声明式节点相同的 `{title?, text}`。两者都由宿主在命中区域内

@@ -166,6 +166,14 @@ void TestRepresentativeApplicability()
             !ViewNodeAllowsProperty(
                 ViewNodeType::MonthCalendar, "acceleratorText"),
         "access-key metadata must stay on single-target action nodes");
+    Check(ViewNodeAllowsProperty(ViewNodeType::Shape, "capturePointer") &&
+            ViewNodeAllowsProperty(ViewNodeType::Button,
+                "capturePointer") &&
+            !ViewNodeAllowsProperty(ViewNodeType::TextInput,
+                "capturePointer") &&
+            !ViewNodeAllowsProperty(ViewNodeType::Select,
+                "capturePointer"),
+        "pointer capture must stay on host-independent interaction nodes");
     Check(ViewNodeAllowsProperty(ViewNodeType::TextInput, "liveUpdate") &&
             ViewNodeAllowsProperty(ViewNodeType::TextInput, "selection") &&
             ViewNodeAllowsProperty(ViewNodeType::TextArea, "selection") &&

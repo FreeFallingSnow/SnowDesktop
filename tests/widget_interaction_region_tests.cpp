@@ -136,6 +136,43 @@ void TestPointerPairingAndActions()
         "removed hovered region must retain its leave action for dispatch");
 }
 
+void TestOptInPointerCapture()
+{
+    WidgetInteractionRegions regions;
+    std::string error;
+    auto drag = Rect("drag", 0, 0, 40, 40);
+    drag.capturePointer = true;
+    drag.events.emplace("pointerMove",
+        InteractionAction{ "drag.move", {} });
+    drag.events.emplace("pointerUp",
+        InteractionAction{ "drag.end", {} });
+    regions.BeginFrame();
+    Check(regions.Submit(std::move(drag), error) &&
+            regions.Submit(Rect("sibling", 60, 0, 40, 40), error),
+        "an explicit pointer-capture region must stage");
+    regions.CommitFrame();
+
+    Check(regions.PointerDown(10, 10, 1).targetKey == "drag" &&
+            regions.HasPointerCapture() &&
+            regions.PointerMoveTarget(70, 10) == "drag",
+        "captured pointer movement must remain on the pressed stable key");
+    const auto released = regions.PointerUp(70, 10, 1);
+    Check(released.targetKey == "drag" &&
+            released.clickTargetKey.empty() &&
+            !regions.HasPointerCapture() &&
+            regions.PointerMoveTarget(70, 10) == "sibling",
+        "captured pointer up must reach the source without synthesizing an outside click");
+
+    auto invalid = Rect("invalid-capture", 0, 0, 40, 40);
+    invalid.capturePointer = true;
+    regions.BeginFrame();
+    Check(!regions.Submit(std::move(invalid), error) &&
+            error.find("requires pointerMove or pointerUp") !=
+                std::string::npos,
+        "pointer capture without a drag lifecycle must be rejected");
+    regions.AbortFrame();
+}
+
 void TestShapesAndValidation()
 {
     WidgetInteractionRegions regions;
@@ -496,6 +533,7 @@ int main()
 {
     TestFrameTransactionAndStableState();
     TestPointerPairingAndActions();
+    TestOptInPointerCapture();
     TestShapesAndValidation();
     TestClippedHitTesting();
     TestFragmentedHitTesting();

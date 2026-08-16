@@ -2805,6 +2805,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadBoolField(state, index, "visible", node.visible, error) ||
         !ReadVisibilityField(state, index, node.visibility, error) ||
         !ReadBoolField(state, index, "enabled", node.enabled, error) ||
+        !ReadBoolField(state, index, "capturePointer",
+            node.capturePointer, error) ||
         !ReadBoolField(state, index, "focusable", focusable, error) ||
         !ReadIntegerField(state, index, "tabIndex", tabIndex, error) ||
         !ReadStringField(state, index, "cursor", node.cursor, false, error) ||

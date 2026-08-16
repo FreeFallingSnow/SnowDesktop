@@ -3345,6 +3345,13 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         error = "scrollEnd events are reserved for scroll and virtual collection nodes";
         return false;
     }
+    if (node.capturePointer &&
+        !node.events.contains("pointerMove") &&
+        !node.events.contains("pointerUp"))
+    {
+        error = "view capturePointer requires pointerMove or pointerUp";
+        return false;
+    }
     if (node.type == ViewNodeType::Select)
     {
         if (!node.events.contains("change") ||
@@ -3472,6 +3479,7 @@ bool CollectRegions(const ViewNode& node,
             surface.accessibilityRole = node.accessibilityRole.empty()
                 ? "grid" : node.accessibilityRole;
             surface.accessibilityLabel = node.accessibilityLabel;
+            surface.capturePointer = node.capturePointer;
             surface.enabled = node.enabled;
             surface.focusable = false;
             regions.push_back(std::move(surface));
@@ -3513,6 +3521,7 @@ bool CollectRegions(const ViewNode& node,
             region.proposedSelection = cell.date;
             region.accessibilityRole = "gridcell";
             region.accessibilityLabel = cell.date;
+            region.capturePointer = node.capturePointer;
             region.enabled = node.enabled;
             ApplyNodeFocusPolicy(node, region, false);
             regions.push_back(std::move(region));
@@ -3561,6 +3570,7 @@ bool CollectRegions(const ViewNode& node,
             region.proposedSelection = option.value;
             region.accessibilityRole = "radio";
             region.accessibilityLabel = option.label;
+            region.capturePointer = node.capturePointer;
             region.enabled = node.enabled && option.enabled;
             ApplyNodeFocusPolicy(node, region, false);
             regions.push_back(std::move(region));
@@ -3751,6 +3761,7 @@ bool CollectRegions(const ViewNode& node,
             : node.accessibilityRole;
         region.accessibilityLabel = node.accessibilityLabel.empty()
             ? node.text : node.accessibilityLabel;
+        region.capturePointer = node.capturePointer;
         region.enabled = node.enabled;
         ApplyNodeFocusPolicy(node, region);
         regions.push_back(std::move(region));
