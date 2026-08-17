@@ -742,6 +742,7 @@
   "app.interact.hover_only": "ホバー時のみ表示",
   "app.interact.keep_when_hidden": "デスクトップ非表示時に保持",
   "app.interact.privacy_mode": "プライバシー モード",
+  "app.interact.large_folder_titleless": "大フォルダーのラベルを非表示",
   "app.interact.delete_widget": "ウィジェットの削除",
   "app.interact.computer": "コンピューター",
   "app.interact.user_files": "ユーザーのファイル",

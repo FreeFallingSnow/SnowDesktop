@@ -742,6 +742,7 @@
   "app.interact.hover_only": "마우스오버 시에만 표시",
   "app.interact.keep_when_hidden": "데스크탑이 숨겨졌을 때 유지",
   "app.interact.privacy_mode": "개인 정보 보호 모드",
+  "app.interact.large_folder_titleless": "큰 폴더 레이블 숨기기",
   "app.interact.delete_widget": "위젯 삭제",
   "app.interact.computer": "컴퓨터",
   "app.interact.user_files": "사용자 파일",

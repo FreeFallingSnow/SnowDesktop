@@ -415,6 +415,9 @@ void DesktopApp::LoadLayoutSlots()
         widget.showOnHoverOnly = saved.showOnHoverOnly;
         widget.privacyMode = saved.privacyMode;
         widget.scrollContainerMode = saved.scrollContainerMode;
+        widget.largeFolderTitleless =
+            widget.type == DesktopWidgetType::Collection &&
+            saved.largeFolderTitleless;
         widget.keepWhenDesktopHidden = saved.keepWhenDesktopHidden;
         widget.showTitle = saved.showTitle.value_or(
             widget.type != DesktopWidgetType::LuaScript);
@@ -955,6 +958,8 @@ void DesktopApp::SaveLayoutSlots()
              << ", \"showOnHoverOnly\": " << (w.showOnHoverOnly ? "true" : "false")
              << ", \"privacyMode\": " << (w.privacyMode ? "true" : "false")
              << ", \"scrollContainerMode\": " << (w.scrollContainerMode ? "true" : "false")
+             << ", \"largeFolderTitleless\": "
+             << (w.largeFolderTitleless ? "true" : "false")
              << ", \"keepWhenDesktopHidden\": "
              << (w.keepWhenDesktopHidden ? "true" : "false")
              << ", \"showTitle\": " << (w.showTitle ? "true" : "false")

@@ -390,6 +390,9 @@ bool DecodeWidgets(const JsonValue& root, Document& document,
             !ReadBoolean(object, "scrollContainerMode",
                 path + ".scrollContainerMode", record.scrollContainerMode,
                 error) ||
+            !ReadBoolean(object, "largeFolderTitleless",
+                path + ".largeFolderTitleless",
+                record.largeFolderTitleless, error) ||
             !ReadBoolean(object, "keepWhenDesktopHidden",
                 path + ".keepWhenDesktopHidden",
                 record.keepWhenDesktopHidden, error) ||

@@ -502,6 +502,8 @@ public:
 private:
     void DrawThumbnail(ID2D1DeviceContext* context, const DesktopItem& item,
         RECT rect, bool selected) const;
+    void DrawTitlelessTooltip(ID2D1DeviceContext* context,
+        const std::wstring& title, RECT anchor) const;
 };
 
 /**

@@ -742,6 +742,7 @@
     "app.interact.hover_only": "Show on Hover Only",
     "app.interact.keep_when_hidden": "Keep When Desktop Hidden",
     "app.interact.privacy_mode": "Privacy Mode",
+    "app.interact.large_folder_titleless": "Label-free Large Folder",
     "app.interact.delete_widget": "Delete Widget",
     "app.interact.computer": "Computer",
     "app.interact.user_files": "User's Files",

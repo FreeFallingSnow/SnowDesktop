@@ -22,6 +22,7 @@
 #include "ole_drag_rules.h"
 #include "display_topology_refresh.h"
 #include "item_visual_metrics.h"
+#include "collection_titleless_rules.h"
 #include "layout_spacing_rules.h"
 #include "grid_spacing_rules.h"
 #include "widget_item_layout.h"
@@ -431,6 +432,37 @@ int main()
     Check(clampedListIcon.bottom - clampedListIcon.top ==
             shortListRow.bottom - shortListRow.top,
         "list icons must clamp to an unexpectedly short row without escaping its bounds");
+    const RECT iconOnlyHighlight =
+        itemVisual::ResolveIconOnlyHighlightRect(
+            ordinaryItemCells[0],
+            itemVisual::ResolveGridItemIconRect(
+                ordinaryItemCells[0], pageVisual),
+            pageVisual.layoutScale);
+    Check(iconOnlyHighlight.left >= ordinaryItemCells[0].left &&
+            iconOnlyHighlight.top >= ordinaryItemCells[0].top &&
+            iconOnlyHighlight.right <= ordinaryItemCells[0].right &&
+            iconOnlyHighlight.bottom <= ordinaryItemCells[0].bottom &&
+            iconOnlyHighlight.bottom < ordinaryItemCells[0].bottom,
+        "titleless selection and hover highlights must stay around the icon instead of retaining the empty title band");
+
+    namespace titleless =
+        snowdesktop::collection_titleless_rules;
+    Check(titleless::IsLargeFolderMode(false, 1, 2) &&
+            titleless::IsLargeFolderMode(false, 3, 1) &&
+            !titleless::IsLargeFolderMode(false, 1, 1) &&
+            !titleless::IsLargeFolderMode(true, 3, 2) &&
+            titleless::IsActive(true, false, 2, 2) &&
+            !titleless::IsActive(false, false, 2, 2),
+        "the titleless option must affect only fixed non-compact Collection layouts");
+    const RECT tooltipFrame{ 0, 0, 240, 180 };
+    const RECT titlelessBottomAnchor{ 180, 138, 228, 178 };
+    const RECT bottomTooltip = titleless::ResolveTooltipBounds(
+        titlelessBottomAnchor, tooltipFrame, 120, 30, 2, 4);
+    Check(bottomTooltip.left >= 4 &&
+            bottomTooltip.right <= 236 &&
+            bottomTooltip.top < titlelessBottomAnchor.top &&
+            bottomTooltip.bottom <= 176,
+        "a titleless tooltip near the lower edge must flip above its icon and remain inside the Collection frame");
 
     const RECT roomyViewport{
         0, 0,

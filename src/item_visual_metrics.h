@@ -55,6 +55,20 @@ inline RECT ResolveListItemIconRect(
         left + iconSize, iconY + iconSize };
 }
 
+inline RECT ResolveIconOnlyHighlightRect(
+    RECT bounds, RECT iconRect, float layoutScale)
+{
+    const int padding = std::max(1, static_cast<int>(std::round(
+        4.0f * std::max(0.1f, layoutScale))));
+    RECT result = iconRect;
+    InflateRect(&result, padding, padding);
+    result.left = std::max(result.left, bounds.left);
+    result.top = std::max(result.top, bounds.top);
+    result.right = std::min(result.right, bounds.right);
+    result.bottom = std::min(result.bottom, bounds.bottom);
+    return result;
+}
+
 inline RECT ResolveGridItemTitleRect(
     RECT bounds, int top, int height)
 {

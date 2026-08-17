@@ -742,6 +742,7 @@
   "app.interact.hover_only": "Afficher en survol uniquement",
   "app.interact.keep_when_hidden": "Conserver lorsque le bureau est masqué",
   "app.interact.privacy_mode": "Mode de confidentialité",
+  "app.interact.large_folder_titleless": "Grand dossier sans libellés",
   "app.interact.delete_widget": "Supprimer le widget",
   "app.interact.computer": "Ordinateur",
   "app.interact.user_files": "Fichiers de l'utilisateur",

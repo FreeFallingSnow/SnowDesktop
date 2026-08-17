@@ -742,6 +742,7 @@
   "app.interact.hover_only": "僅在懸停時顯示",
   "app.interact.keep_when_hidden": "隱藏桌面時保留",
   "app.interact.privacy_mode": "隱私模式",
+  "app.interact.large_folder_titleless": "大資料夾無文字模式",
   "app.interact.delete_widget": "刪除元件",
   "app.interact.computer": "電腦",
   "app.interact.user_files": "使用者的文件",

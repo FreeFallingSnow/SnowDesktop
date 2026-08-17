@@ -1,5 +1,6 @@
 #include "app.h"
 #include "../desktop_hover_rules.h"
+#include "../collection_titleless_rules.h"
 #include "../widget_visibility_rules.h"
 
 // Middle-button behavior and pointer-move drag updates.
@@ -929,7 +930,19 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                             if (!IntersectRect(&visible, &slotRect, &content))
                                 continue;
                             Item* item = slot->GetItem();
-                            if (item && !item->IsSelected())
+                            const bool selectedNeedsHover =
+                                widgetData &&
+                                widgetData->type ==
+                                    DesktopWidgetType::Collection &&
+                                snowdesktop::collection_titleless_rules::
+                                    IsActive(
+                                        widgetData->largeFolderTitleless,
+                                        widgetData->scrollContainerMode,
+                                        widgetData->gridSpan.columns,
+                                        widgetData->gridSpan.rows);
+                            if (item &&
+                                (!item->IsSelected() ||
+                                    selectedNeedsHover))
                                 return { widgetData, slot.get(), 3, slot->GetIndex(), false };
                             break;
                         }

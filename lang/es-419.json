@@ -742,6 +742,7 @@
   "app.interact.hover_only": "Mostrar solo al pasar el mouse",
   "app.interact.keep_when_hidden": "Mantener cuando el escritorio está oculto",
   "app.interact.privacy_mode": "Modo de privacidad",
+  "app.interact.large_folder_titleless": "Carpeta grande sin etiquetas",
   "app.interact.delete_widget": "Eliminar widget",
   "app.interact.computer": "Computadora",
   "app.interact.user_files": "Archivos de usuario",

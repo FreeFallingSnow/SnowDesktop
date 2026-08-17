@@ -294,6 +294,10 @@ int main()
             "{\"widgets\":[{\"id\":\"w\",\"page\":\"p\",\"x\":0,"
             "\"y\":0,\"showDetails\":\"yes\"}]}",
             "widgets[0].showDetails" },
+        { "widget large-folder titleless type",
+            "{\"widgets\":[{\"id\":\"w\",\"page\":\"p\",\"x\":0,"
+            "\"y\":0,\"largeFolderTitleless\":\"yes\"}]}",
+            "widgets[0].largeFolderTitleless" },
         { "widget detail column type",
             "{\"widgets\":[{\"id\":\"w\",\"page\":\"p\",\"x\":0,"
             "\"y\":0,\"detailShowModified\":\"yes\"}]}",
@@ -403,7 +407,8 @@ int main()
         "\"detailModifiedPosition\":0.22,"
         "\"detailTypePosition\":0.61,"
         "\"detailSizePosition\":0.84,\"contentSortColumn\":\"size\","
-        "\"contentSortAscending\":false}]}";
+        "\"contentSortAscending\":false,"
+        "\"largeFolderTitleless\":true}]}";
     snowdesktop::layout_storage::Document detailsLayout;
     Expect(snowdesktop::layout_storage::ParseDocument(
             detailsLayoutText, detailsLayout, &layoutError) &&
@@ -423,7 +428,8 @@ int main()
             detailsLayout.widgets[0].detailSizePosition.value_or(0.0f) ==
                 0.84f &&
             detailsLayout.widgets[0].contentSortColumn == "size" &&
-            !detailsLayout.widgets[0].contentSortAscending,
+            !detailsLayout.widgets[0].contentSortAscending &&
+            detailsLayout.widgets[0].largeFolderTitleless,
         "list font and detail view state decode into the typed layout model");
     const auto detailsLayoutPath =
         root / L"layout-storage" / L"details.layout.json";
@@ -448,7 +454,8 @@ int main()
                 0.22f &&
             loadedDetailsLayout.widgets[0].detailSizePosition.value_or(0.0f) ==
                 0.84f &&
-            loadedDetailsLayout.widgets[0].contentSortColumn == "size",
+            loadedDetailsLayout.widgets[0].contentSortColumn == "size" &&
+            loadedDetailsLayout.widgets[0].largeFolderTitleless,
         "list font and detail view fields round-trip through layout storage");
     snowdesktop::layout_storage::Document legacyBeautifyLayout;
     Expect(snowdesktop::layout_storage::ParseDocument(

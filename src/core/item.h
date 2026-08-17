@@ -136,7 +136,8 @@ public:
     void Draw(ID2D1RenderTarget* context, RECT rect, int state,
         bool lightTheme = false, bool drawText = true,
         bool quickNavLayout = false,
-        const DesktopWidget* demoCollection = nullptr);
+        const DesktopWidget* demoCollection = nullptr,
+        bool iconOnlyHighlight = false);
     /** @brief 单独绘制标题，供选中标题前景层使用。 */
     void DrawTitle(ID2D1RenderTarget* context, RECT rect,
         bool selected, float opacity = 1.0f,

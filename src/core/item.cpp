@@ -102,7 +102,8 @@ void DesktopIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 
 void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool lightTheme,
     bool drawText, bool quickNavLayout,
-    const DesktopWidget* demoCollection)
+    const DesktopWidget* demoCollection,
+    bool iconOnlyHighlight)
 {
     if (!app_ || !item_) return;
     if (rect.left >= rect.right || rect.top >= rect.bottom) return;
@@ -114,12 +115,20 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
     const float dragOpacity = dragged ? 0.6f : 1.0f;
     const float alpha = dragOpacity * cutOpacity;
 
+    RECT iconRect = quickNavLayout
+        ? app_->GetQuickNavItemIconRect(rect)
+        : app_->GetItemIconRect(rect);
+    const RECT highlightRect = iconOnlyHighlight && !quickNavLayout
+        ? snowdesktop::ResolveIconOnlyHighlightRect(
+            rect, iconRect, app_->GetItemLayoutScale(rect))
+        : rect;
+
     if (hovered && !selected)
     {
         const float radius = quickNavLayout
             ? static_cast<float>(app_->QuickNavScale(6))
             : 6.0f * app_->GetItemLayoutScale(rect);
-        app_->DrawD2DRoundedRectangle(context, rect,
+        app_->DrawD2DRoundedRectangle(context, highlightRect,
             radius,
             lightTheme ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.06f * alpha)
                        : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f * alpha),
@@ -127,9 +136,6 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
                        : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f * alpha));
     }
 
-    RECT iconRect = quickNavLayout
-        ? app_->GetQuickNavItemIconRect(rect)
-        : app_->GetItemIconRect(rect);
     const bool useDemoIdentity = demoCollection
         ? app_->ShouldUseDemoCollectionIdentity(demoCollection)
         : app_->ShouldUseDemoIdentity(*item_);
@@ -139,7 +145,11 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
 
     if (selected && !dragged)
     {
-        RECT sel = quickNavLayout ? rect : app_->GetItemSelectionRect(rect, true);
+        RECT sel = iconOnlyHighlight
+            ? highlightRect
+            : (quickNavLayout
+                ? rect
+                : app_->GetItemSelectionRect(rect, true));
         const float radius = quickNavLayout
             ? static_cast<float>(app_->QuickNavScale(6))
             : 6.0f * app_->GetItemLayoutScale(rect);

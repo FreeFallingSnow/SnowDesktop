@@ -17,6 +17,7 @@
 #include "drop_model.h"
 #include "widget_preview_scene.h"
 #include "../item_render_layer_rules.h"
+#include "../collection_titleless_rules.h"
 #include "../widget_item_layout.h"
 #include <algorithm>
 #include <shlobj.h>
@@ -325,6 +326,77 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
     }
 }
 
+void Collection::DrawTitlelessTooltip(
+    ID2D1DeviceContext* context,
+    const std::wstring& title, RECT anchor) const
+{
+    if (!app_ || !context || title.empty() ||
+        IsRectEmptyRect(anchor))
+        return;
+
+    RECT frame = GetFrameRect();
+    const int frameInset = Cu(4.0f);
+    const int horizontalPadding = Cu(10.0f);
+    const int verticalPadding = Cu(5.0f);
+    const int maximumTextWidth = std::max(1,
+        std::min(Cu(280.0f),
+            static_cast<int>(frame.right - frame.left) -
+                frameInset * 2 - horizontalPadding * 2));
+    IDWriteTextFormat* format = GetCuTextFormatWeight(
+        app_->itemFontSizeCu_,
+        app_->IsLightContentTheme()
+            ? DWRITE_FONT_WEIGHT_LIGHT
+            : app_->itemFontWeight_, true);
+    if (!format || !app_->dwriteFactory_) return;
+
+    ComPtr<IDWriteTextLayout> layout;
+    const int measureHeight = std::max(Cu(22.0f),
+        static_cast<int>(std::ceil(
+            GetItemVisualMetrics().fontSize * 1.5f)));
+    if (FAILED(app_->dwriteFactory_->CreateTextLayout(
+            title.c_str(), static_cast<UINT32>(title.size()),
+            format, static_cast<float>(maximumTextWidth),
+            static_cast<float>(measureHeight), &layout)) || !layout)
+        return;
+    layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    DWRITE_TEXT_METRICS textMetrics{};
+    if (FAILED(layout->GetMetrics(&textMetrics))) return;
+
+    const int textWidth = std::max(1, std::min(
+        maximumTextWidth,
+        static_cast<int>(std::ceil(
+            textMetrics.widthIncludingTrailingWhitespace))));
+    const int tooltipWidth = textWidth + horizontalPadding * 2;
+    const int tooltipHeight = std::max(
+        Cu(28.0f),
+        static_cast<int>(std::ceil(textMetrics.height)) +
+            verticalPadding * 2);
+    const RECT tooltip =
+        snowdesktop::collection_titleless_rules::
+            ResolveTooltipBounds(anchor, frame,
+                tooltipWidth, tooltipHeight,
+                Cu(2.0f), frameInset);
+    const bool light = app_->IsLightContentTheme();
+    app_->DrawD2DRoundedRectangle(context, tooltip,
+        static_cast<float>(Cu(7.0f)),
+        light
+            ? D2D1::ColorF(0.94f, 0.95f, 0.97f, 0.96f)
+            : D2D1::ColorF(0.06f, 0.07f, 0.09f, 0.96f),
+        light
+            ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.14f)
+            : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f));
+    RECT textRect = tooltip;
+    textRect.left += horizontalPadding;
+    textRect.right -= horizontalPadding;
+    app_->DrawD2DTextEllipsis(context, title, textRect,
+        format,
+        light
+            ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.88f)
+            : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f),
+        DWRITE_TEXT_ALIGNMENT_CENTER,
+        DWRITE_PARAGRAPH_ALIGNMENT_CENTER, true);
+}
+
 /**
  * @brief 绘制集合控件的全部内容
  *
@@ -429,12 +501,33 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
     // ── Original: large folder / compact grid mode ────────────
     bool compact = snowdesktop::widget_item_layout::IsCompactCollectionSpan(
         data_->gridSpan.columns, data_->gridSpan.rows);
+    const bool titlelessLargeFolder =
+        snowdesktop::collection_titleless_rules::IsActive(
+            data_->largeFolderTitleless,
+            data_->scrollContainerMode,
+            data_->gridSpan.columns,
+            data_->gridSpan.rows);
     auto& slots = GetSlots();
     const size_t displayItemCount = CollectionItemCount(this);
     size_t inlineCapacity = std::min(
         GetCollectionInlineCapacity(*data_), displayItemCount);
     std::vector<std::pair<Item*, RECT>>
         foregroundTitles;
+    std::wstring hoveredTooltipTitle;
+    RECT hoveredTooltipAnchor{};
+    const bool canShowTitlelessTooltip =
+        titlelessLargeFolder && !preview && !privacyActive &&
+        !app_->dragSession_.IsActive() &&
+        !app_->dragDropController_.IsExternalDragActive();
+    const auto finishTitleLayers = [&]() {
+        for (const auto& [item, bounds] : foregroundTitles)
+            item->DrawTitle(
+                context, bounds, true, 1.0f, lt, data_);
+        if (canShowTitlelessTooltip &&
+            !hoveredTooltipTitle.empty())
+            DrawTitlelessTooltip(context,
+                hoveredTooltipTitle, hoveredTooltipAnchor);
+    };
 
     for (size_t i = 0; i < inlineCapacity && i < slots.size(); ++i)
     {
@@ -457,18 +550,53 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
         else
         {
             if (privacyActive)
-                DrawPrivacyPlaceholder(context, slotRect, di.name, false);
+                DrawPrivacyPlaceholder(context, slotRect,
+                    di.name, false, !titlelessLargeFolder);
             else
             {
-                RECT bodyRect = GetBodyRect();
-                bool hovered = !preview && PtInRect(&slotRect, app_->lastMousePoint_) != FALSE && !di.selected && PtInRect(&bodyRect, app_->lastMousePoint_);
-                const auto titleLayers =
-                    snowdesktop::item_render_layer_rules::
-                        ResolveTitleLayerPlan(di.selected);
-                icon->Draw(context, slotRect, di.selected ? 2 : (hovered ? 1 : 0),
-                    lt, titleLayers.drawWithItem, false, data_);
-                if (titleLayers.drawInForeground)
-                    foregroundTitles.emplace_back(icon, slotRect);
+                // Fixed large-folder tracks occupy the complete frame; the
+                // action bar floats above them and must not shorten hover.
+                RECT bodyRect = GetFrameRect();
+                const bool pointerOver = !preview &&
+                    PtInRect(&slotRect,
+                        app_->lastMousePoint_) != FALSE &&
+                    PtInRect(&bodyRect,
+                        app_->lastMousePoint_) != FALSE;
+                if (titlelessLargeFolder)
+                {
+                    icon->Draw(context, slotRect,
+                        di.selected ? 2 : (pointerOver ? 1 : 0),
+                        lt, false, false, data_, true);
+                    if (canShowTitlelessTooltip && pointerOver)
+                    {
+                        const std::wstring_view identity =
+                            di.layoutKey.empty()
+                                ? std::wstring_view(di.parsingName)
+                                : std::wstring_view(di.layoutKey);
+                        hoveredTooltipTitle =
+                            app_->ShouldUseDemoCollectionIdentity(data_)
+                                ? app_->GetDemoCollectionIdentityTitle(
+                                    *data_, identity)
+                                : di.name;
+                        hoveredTooltipAnchor =
+                            app_->GetItemIconRect(slotRect);
+                    }
+                }
+                else
+                {
+                    const bool hovered =
+                        pointerOver && !di.selected;
+                    const auto titleLayers =
+                        snowdesktop::item_render_layer_rules::
+                            ResolveTitleLayerPlan(di.selected);
+                    icon->Draw(context, slotRect,
+                        di.selected ? 2 : (hovered ? 1 : 0),
+                        lt, titleLayers.drawWithItem,
+                        false, data_);
+                    if (titleLayers.drawInForeground)
+                        foregroundTitles.emplace_back(
+                            icon, slotRect);
+                }
             }
         }
     }
@@ -494,9 +622,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
             }
             if (!hasRemainingIcon && !PtInRect(&allRect, app_->lastMousePoint_))
             {
-                for (const auto& [item, bounds] : foregroundTitles)
-                    item->DrawTitle(
-                        context, bounds, true, 1.0f, lt, data_);
+                finishTitleLayers();
                 return;
             }
 
@@ -514,7 +640,9 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                     {
                         const DesktopItem& di = *item;
                         if (privacyActive)
-                            DrawPrivacyPlaceholder(context, tile, di.name, false);
+                            DrawPrivacyPlaceholder(context, tile,
+                                di.name, false,
+                                !titlelessLargeFolder);
                         else
                             DrawThumbnail(context, di, tile, di.selected);
                     }
@@ -536,13 +664,22 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 ? app_->GetDemoCollectionCategoryTitle(*data_)
                 : (data_->title.empty()
                     ? _LW("widget.collection") : data_->title);
-            app_->DrawItemText(context, allRect, collectionTitle, false, 1.0f,
-                app_->IsLightContentTheme());
+            if (!titlelessLargeFolder)
+            {
+                app_->DrawItemText(context, allRect,
+                    collectionTitle, false, 1.0f,
+                    app_->IsLightContentTheme());
+            }
+            else if (canShowTitlelessTooltip &&
+                PtInRect(&allRect,
+                    app_->lastMousePoint_) != FALSE)
+            {
+                hoveredTooltipTitle = collectionTitle;
+                hoveredTooltipAnchor = mosaicRect;
+            }
         }
     }
-    for (const auto& [item, bounds] : foregroundTitles)
-        item->DrawTitle(
-            context, bounds, true, 1.0f, lt, data_);
+    finishTitleLayers();
 }
 
 /// @}

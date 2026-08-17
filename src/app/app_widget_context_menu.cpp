@@ -1,5 +1,6 @@
 #include "app.h"
 #include "../demo_collection_rules.h"
+#include "../collection_titleless_rules.h"
 #include "../menu_fluent_glyphs.h"
 #include "../right_click_contract.h"
 #include "../widgets/collection_group_rules.h"
@@ -651,6 +652,13 @@ void DesktopApp::ShowWidgetContextMenu(
     const UINT privacyToggleCommand = widget.privacyMode
         ? kContextWidgetPrivacyModeOff
         : kContextWidgetPrivacyModeOn;
+    const bool showLargeFolderTitlelessOption =
+        widget.type == DesktopWidgetType::Collection &&
+        snowdesktop::collection_titleless_rules::
+            IsLargeFolderMode(
+                widget.scrollContainerMode,
+                widget.gridSpan.columns,
+                widget.gridSpan.rows);
     if (!luaElementMenu)
     {
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -684,6 +692,15 @@ void DesktopApp::ShowWidgetContextMenu(
                 _LW("app.interact.privacy_mode"), widget.privacyMode);
             AppendMenuW(menu, MF_STRING,
                 privacyToggleCommand, privacyLabel.c_str());
+        }
+        if (showLargeFolderTitlelessOption)
+        {
+            const std::wstring titlelessLabel = toggleLabel(
+                _LW("app.interact.large_folder_titleless"),
+                widget.largeFolderTitleless);
+            AppendMenuW(menu, MF_STRING,
+                kContextWidgetToggleLargeFolderTitleless,
+                titlelessLabel.c_str());
         }
         AppendMenuW(menu, MF_STRING, kContextWidgetDelete,
             _LW("app.interact.delete_widget"));
@@ -728,6 +745,12 @@ void DesktopApp::ShowWidgetContextMenu(
     {
         setFluentIcon(menu, privacyToggleCommand,
             widget.privacyMode ? L"\uE78F" : L"\uE795");
+    }
+    if (showLargeFolderTitlelessOption)
+    {
+        setFluentIcon(menu,
+            kContextWidgetToggleLargeFolderTitleless,
+            snowdesktop::menu_fluent_glyphs::kHideLabels);
     }
     if (sortMenu)
     {
@@ -1275,6 +1298,16 @@ void DesktopApp::ShowWidgetContextMenu(
         widgets_[widgetIndex].privacyMode = false;
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
+        break;
+    case kContextWidgetToggleLargeFolderTitleless:
+        if (widgets_[widgetIndex].type ==
+            DesktopWidgetType::Collection)
+        {
+            widgets_[widgetIndex].largeFolderTitleless =
+                !widgets_[widgetIndex].largeFolderTitleless;
+            SaveLayoutSlots();
+            InvalidateRect(hwnd_, nullptr, TRUE);
+        }
         break;
     case kContextWidgetToggleCollectionMode:
         widgets_[widgetIndex].scrollContainerMode =
