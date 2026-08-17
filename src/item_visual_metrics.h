@@ -17,6 +17,7 @@ struct PageItemVisualMetrics
     float fontScale = 1.0f;
     float fontSize = static_cast<float>(kItemFontSize);
     int iconSize = 1;
+    int listIconSize = 1;
     int titleGap = 1;
     int titleHeight = 1;
     int topInset = 1;
@@ -46,9 +47,12 @@ inline RECT ResolveListItemIconRect(
     RECT row, int left, const PageItemVisualMetrics& metrics)
 {
     const int rowHeight = std::max<LONG>(1, row.bottom - row.top);
-    const int iconY = row.top + (rowHeight - metrics.iconSize) / 2;
+    const int availableWidth = std::max<LONG>(1, row.right - left);
+    const int iconSize = std::clamp(
+        metrics.listIconSize, 1, std::min(rowHeight, availableWidth));
+    const int iconY = row.top + (rowHeight - iconSize) / 2;
     return RECT{ left, iconY,
-        left + metrics.iconSize, iconY + metrics.iconSize };
+        left + iconSize, iconY + iconSize };
 }
 
 inline RECT ResolveGridItemTitleRect(
@@ -112,10 +116,19 @@ inline PageItemVisualMetrics ResolvePageItemVisualMetrics(
             iconSizeScale, kMinimumItemIconSizeScale,
             kMaximumItemIconSizeScale))),
         1, maximumIconSize);
+    // List rows use a deliberately compact visual baseline. They still follow
+    // the page-level icon-size setting, but must not inherit the much larger
+    // desktop-grid icon edge length.
+    result.listIconSize = std::clamp(
+        static_cast<int>(std::round(
+            kListItemIconSize * result.layoutScale * std::clamp(
+                iconSizeScale, kMinimumItemIconSizeScale,
+                kMaximumItemIconSizeScale))),
+        1, icon_render_rules::kMaximumSourcePixels);
     result.minimumGridWidth = result.iconSize + result.sideInset * 2;
     result.minimumGridHeight = result.topInset + result.iconSize +
         result.titleGap + result.titleHeight;
-    result.minimumListHeight = result.iconSize +
+    result.minimumListHeight = result.listIconSize +
         std::max(2, static_cast<int>(std::round(
             4.0f * result.layoutScale)));
     return result;

@@ -22,6 +22,7 @@ constexpr COLORREF kTransparentKey = RGB(1, 2, 3);
 
 // ── 图标与网格布局 ────────────────────────────
 constexpr int kIconSize = 64;
+constexpr float kListItemIconSize = 32.0f;
 // Baseline source resolution for call sites that do not have a concrete
 // destination yet. Layout-aware loaders choose a 64..256 pixel bucket.
 constexpr int kIconBitmapSize = 96;

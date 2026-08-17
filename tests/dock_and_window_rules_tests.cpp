@@ -340,6 +340,9 @@ int main()
     Check(smallIconVisual.iconSize < pageVisual.iconSize &&
             pageVisual.iconSize < largeIconVisual.iconSize,
         "the page-level icon-size control must change the ordinary icon edge length");
+    Check(smallIconVisual.listIconSize < pageVisual.listIconSize &&
+            pageVisual.listIconSize < largeIconVisual.listIconSize,
+        "the page-level icon-size control must scale the compact list icon baseline");
     Check(smallIconVisual.fontSize == pageVisual.fontSize &&
             largeIconVisual.fontSize == pageVisual.fontSize &&
             smallIconVisual.titleHeight == pageVisual.titleHeight &&
@@ -417,9 +420,17 @@ int main()
     const RECT listRow{ 0, 0, 420, pageVisual.minimumListHeight + 10 };
     const RECT listIcon = itemVisual::ResolveListItemIconRect(
         listRow, 8, pageVisual);
-    Check(listIcon.right - listIcon.left == pageVisual.iconSize &&
-            listIcon.bottom - listIcon.top == pageVisual.iconSize,
-        "list rows must use the same page icon edge length as desktop grids");
+    Check(listIcon.right - listIcon.left == pageVisual.listIconSize &&
+            listIcon.bottom - listIcon.top == pageVisual.listIconSize &&
+            pageVisual.listIconSize < pageVisual.iconSize,
+        "list rows must retain their compact icon baseline instead of inheriting the desktop-grid icon edge length");
+    const RECT shortListRow{ 0, 0, 420,
+        std::max(1, pageVisual.listIconSize - 5) };
+    const RECT clampedListIcon = itemVisual::ResolveListItemIconRect(
+        shortListRow, 8, pageVisual);
+    Check(clampedListIcon.bottom - clampedListIcon.top ==
+            shortListRow.bottom - shortListRow.top,
+        "list icons must clamp to an unexpectedly short row without escaping its bounds");
 
     const RECT roomyViewport{
         0, 0,
