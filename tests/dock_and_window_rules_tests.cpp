@@ -9,6 +9,7 @@
 #include "shell_item_visibility.h"
 #include "popup_drag_rules.h"
 #include "item_layout_rules.h"
+#include "item_render_layer_rules.h"
 #include "dock_window_rules.h"
 #include "dock_window_preview.h"
 #include "dock_window_transition.h"
@@ -363,6 +364,20 @@ int main()
             itemLayout::TextHeightForLineCount(
                 standardLineHeight, 3),
         "selected item titles must grow with every wrapped line instead of stopping at three lines");
+    constexpr auto normalTitleLayers =
+        snowdesktop::item_render_layer_rules::
+            ResolveTitleLayerPlan(false);
+    constexpr auto selectedTitleLayers =
+        snowdesktop::item_render_layer_rules::
+            ResolveTitleLayerPlan(true);
+    Check(
+        normalTitleLayers.drawWithItem &&
+            !normalTitleLayers.drawInForeground,
+        "normal item titles must remain in the item drawing pass");
+    Check(
+        !selectedTitleLayers.drawWithItem &&
+            selectedTitleLayers.drawInForeground,
+        "expanded selected titles must render in the foreground after all icons");
     Check(
         itemLayout::AvailableIconHeight(
             116, 2, standardTitleGap,

@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../item_render_layer_rules.h"
 #include "../widget_visibility_rules.h"
 #include "../widgets/collection_group_rules.h"
 
@@ -39,27 +40,53 @@ void DesktopApp::DrawStaticBackground(
     const bool mouseOverWidget = IsPointOverWidgetChrome(lastMousePoint_);
     if (!hiddenMode)
     {
+        struct ForegroundTitle
+        {
+            DesktopIcon* icon = nullptr;
+            RECT bounds{};
+        };
+        std::vector<ForegroundTitle>
+            foregroundTitles;
+        const bool desktopMarqueeActive =
+            marqueeActive_ &&
+            !marqueeDockFolderPopup_ &&
+            marqueeWidgetIndex_ >= widgets_.size();
         for (auto& ooItem : items_oo_)
         {
             auto* icon = dynamic_cast<DesktopIcon*>(ooItem.get());
             if (!icon) continue;
             DesktopItem* di = icon->GetDesktopItem();
             if (!di || IsRectEmptyRect(di->bounds)) continue;
-            if (!intersectsUpdate(di->bounds, 8))
-                continue;
             if (dragSession_.IsActive() && !dragSession_.Items().empty() &&
                 dragSession_.IsMoveAction() && di->selected)
                 continue;
 
-            const bool desktopMarqueeActive =
-                marqueeActive_ &&
-                !marqueeDockFolderPopup_ &&
-                marqueeWidgetIndex_ >= widgets_.size();
             const bool hovered = !desktopMarqueeActive && !mouseOverWidget &&
                 PtInRect(&di->bounds, lastMousePoint_) != FALSE;
             const bool selected = di->selected && !desktopMarqueeActive;
+            const auto titleLayers =
+                snowdesktop::item_render_layer_rules::
+                    ResolveTitleLayerPlan(selected);
+            if (titleLayers.drawInForeground)
+            {
+                foregroundTitles.push_back(
+                    { icon, di->bounds });
+            }
+            if (!intersectsUpdate(di->bounds, 8))
+                continue;
             int state = selected ? 2 : (hovered ? 1 : 0);
-            icon->Draw(ctx, di->bounds, state);
+            icon->Draw(
+                ctx, di->bounds, state,
+                false,
+                titleLayers.drawWithItem);
+        }
+
+        // Expanded selected titles may cross into lower grid cells. Draw them
+        // only after every desktop icon so later cells cannot cover the text.
+        for (const auto& title : foregroundTitles)
+        {
+            title.icon->DrawTitle(
+                ctx, title.bounds, true);
         }
     }
 

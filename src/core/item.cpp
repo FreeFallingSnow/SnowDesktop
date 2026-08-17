@@ -184,15 +184,29 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
         app_->DrawShortcutArrowOverlay(context, iconRect, alpha);
 
     if (!dragged && drawText)
-    {
-        const std::wstring title = useDemoIdentity
-            ? (demoCollection
-                ? app_->GetDemoCollectionIdentityTitle(
-                    *demoCollection, demoIdentity)
-                : app_->GetDemoIdentityTitle(demoIdentity))
-            : item_->name;
-        app_->DrawItemText(context, rect, title, selected, alpha, lightTheme);
-    }
+        DrawTitle(context, rect, selected, alpha, lightTheme, demoCollection);
+}
+
+void DesktopIcon::DrawTitle(ID2D1RenderTarget* context, RECT rect,
+    bool selected, float opacity, bool lightTheme,
+    const DesktopWidget* demoCollection)
+{
+    if (!app_ || !item_ || !context) return;
+    const bool useDemoIdentity = demoCollection
+        ? app_->ShouldUseDemoCollectionIdentity(demoCollection)
+        : app_->ShouldUseDemoIdentity(*item_);
+    const std::wstring_view demoIdentity = item_->layoutKey.empty()
+        ? std::wstring_view(item_->parsingName)
+        : std::wstring_view(item_->layoutKey);
+    const std::wstring title = useDemoIdentity
+        ? (demoCollection
+            ? app_->GetDemoCollectionIdentityTitle(
+                *demoCollection, demoIdentity)
+            : app_->GetDemoIdentityTitle(demoIdentity))
+        : item_->name;
+    app_->DrawItemText(
+        context, rect, title,
+        selected, opacity, lightTheme);
 }
 
 /**

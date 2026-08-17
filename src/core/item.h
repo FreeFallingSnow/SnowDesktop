@@ -121,6 +121,11 @@ public:
         bool lightTheme = false, bool drawText = true,
         bool quickNavLayout = false,
         const DesktopWidget* demoCollection = nullptr);
+    /** @brief 单独绘制标题，供选中标题前景层使用。 */
+    void DrawTitle(ID2D1RenderTarget* context, RECT rect,
+        bool selected, float opacity = 1.0f,
+        bool lightTheme = false,
+        const DesktopWidget* demoCollection = nullptr);
     ComPtr<IDataObject> CreateDataObject() override;
     DesktopItem* GetDesktopItem() const { return item_; }
     DesktopApp* GetApp() const { return app_; }
