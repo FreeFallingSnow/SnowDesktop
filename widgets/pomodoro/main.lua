@@ -405,12 +405,10 @@ local function buildView(context)
     local timeHeight = timeFont * 1.18
     local progressHeight = math.max(layout.cu(4), math.min(
         layout.cu(7), layout.vmin(2)))
-    local primaryHeight = math.max(layout.cu(39), math.min(
+    local buttonHeight = math.max(layout.cu(39), math.min(
         layout.cu(48), layout.vmin(14)))
-    local secondaryHeight = math.max(layout.cu(33), math.min(
-        layout.cu(40), layout.vmin(11.5)))
     local actionFont = math.max(layout.fontCu(11), math.min(
-        layout.fontCu(15), primaryHeight * 0.34))
+        layout.fontCu(15), buttonHeight * 0.34))
 
     local subline = ""
     if activePhase == "work" then
@@ -470,6 +468,22 @@ local function buildView(context)
             l10n.tr("lua_widget.pomodoro.skip") }
     end
 
+    local infoWidth
+    local actionWidth
+    if isWide then
+        infoWidth = (availableWidth - majorGap) * 0.61
+        actionWidth = availableWidth - majorGap - infoWidth
+    else
+        infoWidth = math.min(availableWidth, layout.vw(88))
+        actionWidth = math.min(availableWidth * 0.82, layout.cu(280))
+    end
+    local timeLayoutFactor = #timeText > 5 and 4.00 or 3.35
+    local timeLayoutWidth = math.min(infoWidth, math.max(
+        layout.cu(124), timeFont * timeLayoutFactor))
+    local progressWidthFactor = #timeText > 5 and 3.15 or 2.62
+    local progressWidth = math.min(infoWidth, math.max(
+        layout.cu(96), timeFont * progressWidthFactor))
+
     local status = view.badge({
         key = "pomodoro.state",
         text = label,
@@ -488,7 +502,7 @@ local function buildView(context)
     local timer = view.text({
         key = "pomodoro.time",
         text = timeText,
-        width = "fill",
+        width = timeLayoutWidth,
         height = timeHeight,
         fontSize = timeFont,
         bold = true,
@@ -498,7 +512,7 @@ local function buildView(context)
     })
     local progressBar = view.progressBar({
         key = "pomodoro.progress",
-        width = "fill",
+        width = progressWidth,
         height = progressHeight,
         thickness = progressHeight,
         value = progress(config, remaining),
@@ -515,16 +529,6 @@ local function buildView(context)
         },
     })
 
-    local infoWidth
-    local actionWidth
-    if isWide then
-        infoWidth = (availableWidth - majorGap) * 0.61
-        actionWidth = availableWidth - majorGap - infoWidth
-    else
-        infoWidth = math.min(availableWidth, layout.vw(88))
-        actionWidth = math.min(availableWidth * 0.82, layout.cu(280))
-    end
-
     local overviewHeight = statusHeight + timeHeight + progressHeight + infoGap * 2
     local overview = view.column({
         key = "pomodoro.overview",
@@ -538,14 +542,14 @@ local function buildView(context)
     local actions = view.column({
         key = "pomodoro.actions",
         width = actionWidth,
-        height = primaryHeight + secondaryHeight + buttonGap,
+        height = buttonHeight * 2 + buttonGap,
         gap = buttonGap,
         alignItems = "stretch",
         justifyContent = "center",
         children = {
-            actionButton(primaryAction[1], primaryAction[2], primaryHeight,
+            actionButton(primaryAction[1], primaryAction[2], buttonHeight,
                 accent, 0xFFFFFF, true),
-            actionButton(secondaryAction[1], secondaryAction[2], secondaryHeight,
+            actionButton(secondaryAction[1], secondaryAction[2], buttonHeight,
                 palette.button, palette.muted, false),
         },
     })
@@ -562,9 +566,6 @@ local function buildView(context)
         events = {
             doubleClick = { id = "pomodoro.reset" },
             contextMenu = { id = "pomodoro.menu", scope = "component" },
-        },
-        style = {
-            background = descriptor.bg,
         },
         accessibility = {
             role = "group",
