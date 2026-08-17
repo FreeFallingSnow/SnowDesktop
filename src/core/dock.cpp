@@ -271,6 +271,20 @@ ComPtr<IDataObject> DockEntryItem::CreateDataObject()
 DockContainer::DockContainer(DesktopApp* app, std::vector<DockEntry>* entries, RECT area)
     : app_(app), entries_(entries), area_(area) {}
 
+void DockContainer::SetReservedArea(RECT area)
+{
+    if (area_.left == area.left && area_.top == area.top &&
+        area_.right == area.right && area_.bottom == area.bottom)
+        return;
+
+    area_ = area;
+    InvalidateSlots();
+    hoveredTitleBoundsCacheText_.clear();
+    hoveredTitleBoundsCacheAnchor_ = {};
+    hoveredTitleBoundsCache_ = {};
+    magnificationFocusRect_ = {};
+}
+
 RECT DockContainer::GetDesktopItemVisualRect(
     size_t itemIndex, POINT pointer) const
 {

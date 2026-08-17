@@ -1,4 +1,5 @@
 #include "app.h"
+#include <algorithm>
 #include <numeric>
 
 // Dock container lookup, invalidation and work-area reservation.
@@ -33,6 +34,25 @@ void DesktopApp::InvalidateDockContainers()
         if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
             dock->InvalidateSlots();
     }
+}
+
+bool DesktopApp::SynchronizeDockContainerAreas()
+{
+    const size_t dockContainerCount = static_cast<size_t>(std::count_if(
+        containers_.begin(), containers_.end(), [](const auto& container) {
+            return dynamic_cast<DockContainer*>(container.get()) != nullptr;
+        }));
+    if (dockContainerCount != dockAreas_.size())
+        return false;
+
+    size_t areaIndex = 0;
+    for (const auto& container : containers_)
+    {
+        auto* dock = dynamic_cast<DockContainer*>(container.get());
+        if (!dock) continue;
+        dock->SetReservedArea(dockAreas_[areaIndex++]);
+    }
+    return true;
 }
 
 void DesktopApp::InvalidateDockRects(BOOL erase)

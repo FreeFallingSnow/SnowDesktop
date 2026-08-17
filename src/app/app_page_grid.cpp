@@ -329,6 +329,7 @@ void DesktopApp::PreviewItemIconSize(float value)
     itemIconSizeScale_ = clamped;
     for (auto& page : gridPages_)
         ApplyIconSpacingToPage(page);
+    ApplyDockWorkAreaReservation();
 
     for (auto& item : items_)
     {
@@ -346,12 +347,17 @@ void DesktopApp::PreviewItemIconSize(float value)
         widget.bounds = GetGridRect(
             gridPages_, widget.gridCell, widget.gridSpan);
     }
-    for (auto& container : containers_)
+    if (!SynchronizeDockContainerAreas())
+        LayoutItems();
+    else
     {
-        container->InvalidateSlots();
+        for (auto& container : containers_)
+            container->InvalidateSlots();
     }
     itemIconSizePreviewActive_ = true;
     InvalidateDragStaticScene();
+    if (floatingDockVisible_)
+        UpdateFloatingDockWindowBounds();
     if (hwnd_)
     {
         InvalidateRect(hwnd_, nullptr, FALSE);

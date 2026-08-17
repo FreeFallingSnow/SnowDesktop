@@ -116,12 +116,21 @@ int main(int argc, char** argv)
                 iconSizePreviewEnd - iconSizePreviewBegin);
         const std::size_t refreshSlots = iconSizePreview.find(
             "container->InvalidateSlots();");
+        const std::size_t reserveDock = iconSizePreview.find(
+            "ApplyDockWorkAreaReservation();");
+        const std::size_t synchronizeDock = iconSizePreview.find(
+            "SynchronizeDockContainerAreas()");
         const std::size_t paintIconSize = iconSizePreview.find(
             "PresentDesktopPointerUpdate();");
-        Check(refreshSlots != std::string::npos &&
+        Check(reserveDock != std::string::npos &&
+                synchronizeDock != std::string::npos &&
+                reserveDock < synchronizeDock &&
+                synchronizeDock < refreshSlots &&
+                refreshSlots != std::string::npos &&
                 paintIconSize != std::string::npos &&
                 refreshSlots < paintIconSize,
-            "icon-size preview refreshes shared item geometry before synchronous painting");
+            "icon-size preview synchronizes the Dock reservation and shared "
+            "item geometry before synchronous painting");
     }
 
     if (failures == 0)
