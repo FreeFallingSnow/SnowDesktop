@@ -377,6 +377,26 @@ int main()
             referenceTitle.right == referenceCell.right &&
             std::abs(horizontalVisualGap - verticalVisualGap) <= 1,
         "the default title width must make horizontal and vertical visual gaps equal within pixel rounding");
+    const RECT roomyLocalCell{
+        0, 0, referenceCell.right,
+        referenceCell.bottom + 20
+    };
+    const RECT roomyLocalIcon =
+        itemVisual::ResolveGridItemIconRect(
+            roomyLocalCell, pageVisual);
+    const RECT roomyLocalTitle =
+        itemVisual::ResolveGridItemTitleRect(
+            roomyLocalCell,
+            roomyLocalIcon.bottom + pageVisual.titleGap,
+            pageVisual.titleHeight);
+    const int roomyTopPadding =
+        roomyLocalIcon.top - pageVisual.topInset -
+        roomyLocalCell.top;
+    const int roomyBottomPadding =
+        roomyLocalCell.bottom - roomyLocalTitle.bottom;
+    Check(std::abs(roomyTopPadding - roomyBottomPadding) <= 1 &&
+            roomyTopPadding >= 9,
+        "local grid cells must distribute spare height around the complete icon-and-title block instead of pinning icons to the frame edge");
     const RECT ordinaryItemCells[] = {
         { 0, 0, 104, pageVisual.minimumGridHeight + 8 },
         { 0, 0, 116, pageVisual.minimumGridHeight + 12 },

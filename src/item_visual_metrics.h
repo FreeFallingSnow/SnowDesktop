@@ -30,8 +30,14 @@ inline RECT ResolveGridItemIconRect(
     RECT bounds, const PageItemVisualMetrics& metrics)
 {
     const int cellWidth = std::max<LONG>(1, bounds.right - bounds.left);
+    const int cellHeight = std::max<LONG>(1, bounds.bottom - bounds.top);
     const int iconX = bounds.left + (cellWidth - metrics.iconSize) / 2;
-    const int iconY = bounds.top + metrics.topInset;
+    // Local widget tracks can be taller than the page's minimum visual block.
+    // Split that spare height above and below the complete icon/title region
+    // so the first row does not look pinned to the glass frame.
+    const int visualOffset = std::max(
+        0, (cellHeight - metrics.minimumGridHeight) / 2);
+    const int iconY = bounds.top + visualOffset + metrics.topInset;
     return RECT{ iconX, iconY,
         iconX + metrics.iconSize, iconY + metrics.iconSize };
 }
