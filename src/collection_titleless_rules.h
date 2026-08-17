@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <optional>
 #include <windows.h>
 
 namespace snowdesktop::collection_titleless_rules
@@ -18,6 +19,12 @@ inline bool IsActive(bool enabled,
 {
     return enabled && IsLargeFolderMode(
         scrollContainerMode, columns, rows);
+}
+
+inline bool ResolveStoredMode(
+    std::optional<bool> globalMode, bool anyLegacyWidgetEnabled)
+{
+    return globalMode.value_or(anyLegacyWidgetEnabled);
 }
 
 inline RECT ResolveTooltipBounds(

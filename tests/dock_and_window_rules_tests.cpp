@@ -432,11 +432,25 @@ int main()
     Check(clampedListIcon.bottom - clampedListIcon.top ==
             shortListRow.bottom - shortListRow.top,
         "list icons must clamp to an unexpectedly short row without escaping its bounds");
+    const RECT ordinaryTitlelessIcon =
+        itemVisual::ResolveVerticallyCenteredIconRect(
+            ordinaryItemCells[0],
+            itemVisual::ResolveGridItemIconRect(
+                ordinaryItemCells[0], pageVisual));
+    Check(ordinaryTitlelessIcon.right - ordinaryTitlelessIcon.left ==
+                pageVisual.iconSize &&
+            ordinaryTitlelessIcon.bottom - ordinaryTitlelessIcon.top ==
+                pageVisual.iconSize &&
+            std::abs(
+                ordinaryTitlelessIcon.top +
+                ordinaryTitlelessIcon.bottom -
+                ordinaryItemCells[0].top -
+                ordinaryItemCells[0].bottom) <= 1,
+        "titleless Collection icons must keep the page icon edge length while centering vertically in their local cells");
     const RECT iconOnlyHighlight =
         itemVisual::ResolveIconOnlyHighlightRect(
             ordinaryItemCells[0],
-            itemVisual::ResolveGridItemIconRect(
-                ordinaryItemCells[0], pageVisual),
+            ordinaryTitlelessIcon,
             pageVisual.layoutScale);
     Check(iconOnlyHighlight.left >= ordinaryItemCells[0].left &&
             iconOnlyHighlight.top >= ordinaryItemCells[0].top &&
@@ -452,7 +466,10 @@ int main()
             !titleless::IsLargeFolderMode(false, 1, 1) &&
             !titleless::IsLargeFolderMode(true, 3, 2) &&
             titleless::IsActive(true, false, 2, 2) &&
-            !titleless::IsActive(false, false, 2, 2),
+            !titleless::IsActive(false, false, 2, 2) &&
+            titleless::ResolveStoredMode(std::nullopt, true) &&
+            !titleless::ResolveStoredMode(false, true) &&
+            titleless::ResolveStoredMode(true, false),
         "the titleless option must affect only fixed non-compact Collection layouts");
     const RECT tooltipFrame{ 0, 0, 240, 180 };
     const RECT titlelessBottomAnchor{ 180, 138, 228, 178 };

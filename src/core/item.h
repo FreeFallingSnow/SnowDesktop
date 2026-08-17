@@ -137,7 +137,8 @@ public:
         bool lightTheme = false, bool drawText = true,
         bool quickNavLayout = false,
         const DesktopWidget* demoCollection = nullptr,
-        bool iconOnlyHighlight = false);
+        bool iconOnlyHighlight = false,
+        bool centerIconVertically = false);
     /** @brief 单独绘制标题，供选中标题前景层使用。 */
     void DrawTitle(ID2D1RenderTarget* context, RECT rect,
         bool selected, float opacity = 1.0f,

@@ -503,7 +503,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
         data_->gridSpan.columns, data_->gridSpan.rows);
     const bool titlelessLargeFolder =
         snowdesktop::collection_titleless_rules::IsActive(
-            data_->largeFolderTitleless,
+            app_->collectionLargeFolderTitleless_,
             data_->scrollContainerMode,
             data_->gridSpan.columns,
             data_->gridSpan.rows);
@@ -551,7 +551,8 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
         {
             if (privacyActive)
                 DrawPrivacyPlaceholder(context, slotRect,
-                    di.name, false, !titlelessLargeFolder);
+                    di.name, false, !titlelessLargeFolder,
+                    titlelessLargeFolder);
             else
             {
                 // Fixed large-folder tracks occupy the complete frame; the
@@ -566,7 +567,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 {
                     icon->Draw(context, slotRect,
                         di.selected ? 2 : (pointerOver ? 1 : 0),
-                        lt, false, false, data_, true);
+                        lt, false, false, data_, true, true);
                     if (canShowTitlelessTooltip && pointerOver)
                     {
                         const std::wstring_view identity =
@@ -579,7 +580,9 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                                     *data_, identity)
                                 : di.name;
                         hoveredTooltipAnchor =
-                            app_->GetItemIconRect(slotRect);
+                            snowdesktop::ResolveVerticallyCenteredIconRect(
+                                slotRect,
+                                app_->GetItemIconRect(slotRect));
                     }
                 }
                 else
@@ -626,7 +629,11 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 return;
             }
 
-            const RECT mosaicRect = app_->GetItemIconRect(allRect);
+            RECT mosaicRect = app_->GetItemIconRect(allRect);
+            if (titlelessLargeFolder)
+                mosaicRect =
+                    snowdesktop::ResolveVerticallyCenteredIconRect(
+                        allRect, mosaicRect);
             for (int j = 0; j < 4; ++j)
             {
                 RECT tile = GetCollectionCompactSlotRect(this,
@@ -642,7 +649,8 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                         if (privacyActive)
                             DrawPrivacyPlaceholder(context, tile,
                                 di.name, false,
-                                !titlelessLargeFolder);
+                                !titlelessLargeFolder,
+                                titlelessLargeFolder);
                         else
                             DrawThumbnail(context, di, tile, di.selected);
                     }

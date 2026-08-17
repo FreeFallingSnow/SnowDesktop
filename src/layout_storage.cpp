@@ -496,6 +496,8 @@ bool DecodeDocument(const JsonValue& root, Document& document,
             decoded.componentSpacing, error) ||
         !ReadOptionalFloat(root, "iconSizeScale", "iconSizeScale",
             decoded.iconSizeScale, error) ||
+        !ReadOptionalRootBoolean(root, "collectionLargeFolderTitleless",
+            decoded.collectionLargeFolderTitleless, error) ||
         !ReadOptionalInteger(root, "shortcutArrowMode", "shortcutArrowMode",
             decoded.shortcutArrowMode, error) ||
         !ReadOptionalRootBoolean(root, "iconBeautifyEnabled",

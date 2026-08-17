@@ -2788,6 +2788,7 @@ private:
     bool iconSpacingPreviewActive_ = false;
     float itemIconSizeScale_ = kDefaultItemIconSizeScale;
     bool itemIconSizePreviewActive_ = false;
+    bool collectionLargeFolderTitleless_ = false;
     float itemFontSizeCu_ = kDefaultItemFontSizeCu;
     float listItemFontSizeCu_ = kDefaultItemFontSizeCu;
     DWRITE_FONT_WEIGHT itemFontWeight_ = DWRITE_FONT_WEIGHT_SEMI_BOLD;

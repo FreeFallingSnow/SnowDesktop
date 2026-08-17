@@ -2116,7 +2116,8 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
 }
 
 void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RECT rect,
-    const std::wstring& name, bool isDir, bool showLabel) const
+    const std::wstring& name, bool isDir, bool showLabel,
+    bool centerIconVertically) const
 {
     if (!app_ || !context || IsRectEmptyRect(rect)) return;
     (void)name;
@@ -2141,7 +2142,10 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
         std::round(50.0f * layoutScale));
     if (height >= regularLayoutThreshold)
     {
-        const RECT iconRect = app_->GetItemIconRect(rect);
+        RECT iconRect = app_->GetItemIconRect(rect);
+        if (centerIconVertically)
+            iconRect = snowdesktop::ResolveVerticallyCenteredIconRect(
+                rect, iconRect);
         app_->DrawPrivacyFaIcon(context, iconRect, isDir);
         if (showLabel)
             app_->DrawItemText(context, rect, label, false, 1.0f,

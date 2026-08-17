@@ -308,7 +308,8 @@ public:
     virtual const DesktopWidget* GetDetailsSortData() const;
 
     void DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RECT rect,
-        const std::wstring& name, bool isDir, bool showLabel = true) const;
+        const std::wstring& name, bool isDir, bool showLabel = true,
+        bool centerIconVertically = false) const;
 
     const std::wstring& GetSearchText() const { return searchText_; }
     void SetSearchText(const std::wstring& text);

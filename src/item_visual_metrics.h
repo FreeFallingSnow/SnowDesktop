@@ -69,6 +69,19 @@ inline RECT ResolveIconOnlyHighlightRect(
     return result;
 }
 
+inline RECT ResolveVerticallyCenteredIconRect(
+    RECT bounds, RECT iconRect)
+{
+    const int boundsHeight = std::max<LONG>(
+        1, bounds.bottom - bounds.top);
+    const int iconHeight = std::max<LONG>(
+        1, iconRect.bottom - iconRect.top);
+    const int top = bounds.top + (boundsHeight - iconHeight) / 2;
+    iconRect.top = top;
+    iconRect.bottom = top + iconHeight;
+    return iconRect;
+}
+
 inline RECT ResolveGridItemTitleRect(
     RECT bounds, int top, int height)
 {

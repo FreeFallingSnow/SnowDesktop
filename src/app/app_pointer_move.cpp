@@ -936,7 +936,7 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                                     DesktopWidgetType::Collection &&
                                 snowdesktop::collection_titleless_rules::
                                     IsActive(
-                                        widgetData->largeFolderTitleless,
+                                        collectionLargeFolderTitleless_,
                                         widgetData->scrollContainerMode,
                                         widgetData->gridSpan.columns,
                                         widgetData->gridSpan.rows);

@@ -276,6 +276,9 @@ int main()
             "componentSpacing" },
         { "icon size scale type", "{\"iconSizeScale\":\"1.1\"}",
             "iconSizeScale" },
+        { "collection titleless mode type",
+            "{\"collectionLargeFolderTitleless\":\"yes\"}",
+            "collectionLargeFolderTitleless" },
         { "integer exactness", "{\"shortcutArrowMode\":1.5}",
             "shortcutArrowMode" },
         { "page required field", "{\"pages\":[{\"columns\":4}]}",
@@ -380,12 +383,14 @@ int main()
         "legacy schema and reordered fields decode into one typed document");
     snowdesktop::layout_storage::Document spacingLayout;
     Expect(snowdesktop::layout_storage::ParseDocument(
-            "{\"componentSpacing\":1.5,\"iconSizeScale\":1.1}",
+            "{\"componentSpacing\":1.5,\"iconSizeScale\":1.1,"
+            "\"collectionLargeFolderTitleless\":true}",
             spacingLayout, &layoutError) &&
             spacingLayout.componentSpacing.has_value() &&
             *spacingLayout.componentSpacing == 1.5f &&
-            spacingLayout.iconSizeScale.value_or(0.0f) == 1.1f,
-        "component spacing and icon size are decoded as optional layout settings");
+            spacingLayout.iconSizeScale.value_or(0.0f) == 1.1f &&
+            spacingLayout.collectionLargeFolderTitleless.value_or(false),
+        "component spacing, icon size, and the global Collection titleless mode decode as optional layout settings");
     snowdesktop::layout_storage::Document legacyFontLayout;
     Expect(snowdesktop::layout_storage::ParseDocument(
             "{\"itemFontSize\":18,\"listItemFontSize\":16}",
@@ -400,6 +405,7 @@ int main()
         "\"widgetContentOptionsSchemaVersion\":4,"
         "\"itemFontSizeCu\":18,\"listItemFontSizeCu\":16,"
         "\"iconSizeScale\":1.2,"
+        "\"collectionLargeFolderTitleless\":false,"
         "\"widgets\":[{\"id\":\"details-widget\",\"page\":\"page-a\","
         "\"x\":0,\"y\":0,\"type\":\"folderMapping\","
         "\"showDetails\":true,\"detailShowModified\":true,"
@@ -416,6 +422,8 @@ int main()
             detailsLayout.itemFontSizeCu.value_or(0.0f) == 18.0f &&
             detailsLayout.listItemFontSizeCu.value_or(0.0f) == 16.0f &&
             detailsLayout.iconSizeScale.value_or(0.0f) == 1.2f &&
+            detailsLayout.collectionLargeFolderTitleless.has_value() &&
+            !*detailsLayout.collectionLargeFolderTitleless &&
             detailsLayout.widgets.size() == 1 &&
             detailsLayout.widgets[0].showDetails &&
             detailsLayout.widgets[0].detailShowModified &&
@@ -445,6 +453,8 @@ int main()
             loadedDetailsLayout.itemFontSizeCu.value_or(0.0f) == 18.0f &&
             loadedDetailsLayout.listItemFontSizeCu.value_or(0.0f) == 16.0f &&
             loadedDetailsLayout.iconSizeScale.value_or(0.0f) == 1.2f &&
+            loadedDetailsLayout.collectionLargeFolderTitleless.has_value() &&
+            !*loadedDetailsLayout.collectionLargeFolderTitleless &&
             loadedDetailsLayout.widgets.size() == 1 &&
             loadedDetailsLayout.widgets[0].showDetails &&
             loadedDetailsLayout.widgets[0].detailShowModified &&
