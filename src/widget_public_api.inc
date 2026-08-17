@@ -127,6 +127,12 @@ SNOW_WIDGET_PUBLIC_FUNCTION("calendar", "addDays", lua_CalendarAddDays, 1, nullp
 
 SNOW_WIDGET_PUBLIC_FUNCTION("layout", "width", lua_LayoutWidth, 1, nullptr, 0)
 SNOW_WIDGET_PUBLIC_FUNCTION("layout", "height", lua_LayoutHeight, 1, nullptr, 0)
+SNOW_WIDGET_PUBLIC_FUNCTION("layout", "contentWidth", lua_LayoutContentWidth, 2, nullptr, 0)
+SNOW_WIDGET_PUBLIC_FUNCTION("layout", "contentHeight", lua_LayoutContentHeight, 2, nullptr, 0)
+SNOW_WIDGET_PUBLIC_FUNCTION("layout", "vw", lua_LayoutVw, 2, nullptr, 0)
+SNOW_WIDGET_PUBLIC_FUNCTION("layout", "vh", lua_LayoutVh, 2, nullptr, 0)
+SNOW_WIDGET_PUBLIC_FUNCTION("layout", "vmin", lua_LayoutVmin, 2, nullptr, 0)
+SNOW_WIDGET_PUBLIC_FUNCTION("layout", "vmax", lua_LayoutVmax, 2, nullptr, 0)
 SNOW_WIDGET_PUBLIC_FUNCTION("layout", "columns", lua_LayoutColumns, 1, nullptr, 0)
 SNOW_WIDGET_PUBLIC_FUNCTION("layout", "rows", lua_LayoutRows, 1, nullptr, 0)
 SNOW_WIDGET_PUBLIC_FUNCTION("layout", "sizeClass", lua_LayoutSizeClass, 1, nullptr, 0)

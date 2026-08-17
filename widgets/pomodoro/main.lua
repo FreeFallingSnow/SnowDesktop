@@ -377,8 +377,8 @@ local function buildView(context)
     loadStyle()
     local config = loadConfig()
     local palette = getPalette()
-    local width = math.max(1, context.logicalSize.width)
-    local contentHeight = math.max(1, context.logicalSize.height)
+    local width = math.max(1, context.layoutSize.width)
+    local contentHeight = math.max(1, context.layoutSize.height)
     local state = getState()
     local remaining = remainingSeconds(config, nowSeconds())
     local activePhase = state
@@ -390,54 +390,43 @@ local function buildView(context)
         config.breakColor or config.workColor
     local sessionsInSet = getSessions() % config.longBreakInterval
 
-    local shortSide = math.max(1, math.min(width, contentHeight))
-    -- Calculate the complete layout in logical units, then apply the host scale
-    -- exactly once. Mixing cu() minimums with unscaled available dimensions
-    -- makes every reserved row grow at high DPI while the ring cap stays small.
-    local paddingBase = math.max(4, math.min(10, shortSide * 0.025))
-    local availableWidthBase = math.max(1, width - paddingBase * 2)
-    local availableHeightBase = math.max(1, contentHeight - paddingBase * 2)
-    local isWide = availableWidthBase >= availableHeightBase * 1.35
-    local verticalGapBase = math.max(4, math.min(7, contentHeight * 0.018))
-    local statusGapBase = math.max(1.5, math.min(3, shortSide * 0.008))
-    local majorGapBase = math.max(8, math.min(20, shortSide * 0.05))
-    local buttonDiameterBase = math.max(30, math.min(52, shortSide * 0.16))
-    local buttonGapBase = math.max(5, buttonDiameterBase * 0.16)
-    local dockPaddingBase = math.max(3, buttonDiameterBase * 0.08)
-    local dotDiameterBase = math.max(4, math.min(8, buttonDiameterBase * 0.14))
-    local dotGapBase = math.max(3, dotDiameterBase * 0.65)
-    local labelFontBase = math.max(10, math.min(18, shortSide * 0.052))
-    local labelHeightBase = labelFontBase * 1.25
-    local statusHeightBase = labelHeightBase + statusGapBase + dotDiameterBase
-    local actionHeightBase = buttonDiameterBase + dockPaddingBase * 2
-
-    local ringDiameterBase
-    if isWide then
-        ringDiameterBase = math.max(64, math.min(
-            availableHeightBase * 0.94,
-            availableWidthBase * 0.52))
-    else
-        local reservedHeight = statusHeightBase + actionHeightBase +
-            verticalGapBase * 2
-        ringDiameterBase = math.max(52, math.min(
-            availableWidthBase * 0.90,
-            availableHeightBase - reservedHeight))
-    end
-
-    local padding = layout.cu(paddingBase)
-    local availableWidth = layout.cu(availableWidthBase)
-    local verticalGap = layout.cu(verticalGapBase)
-    local statusGap = layout.cu(statusGapBase)
-    local majorGap = layout.cu(majorGapBase)
-    local buttonDiameter = layout.cu(buttonDiameterBase)
+    local padding = math.max(layout.cu(4), math.min(
+        layout.cu(10), layout.vmin(2.5)))
+    local availableWidth = math.max(1, width - padding * 2)
+    local availableHeight = math.max(1, contentHeight - padding * 2)
+    local isWide = availableWidth >= availableHeight * 1.35
+    local verticalGap = math.max(layout.cu(4), math.min(
+        layout.cu(7), layout.vh(1.8)))
+    local statusGap = math.max(layout.cu(1.5), math.min(
+        layout.cu(3), layout.vmin(0.8)))
+    local majorGap = math.max(layout.cu(8), math.min(
+        layout.cu(20), layout.vmin(5)))
+    local buttonDiameter = math.max(layout.cu(30), math.min(
+        layout.cu(52), layout.vmin(16)))
     local buttonRadius = buttonDiameter / 2
-    local buttonGap = layout.cu(buttonGapBase)
-    local dockPadding = layout.cu(dockPaddingBase)
+    local buttonGap = math.max(layout.cu(5), buttonDiameter * 0.16)
+    local dockPadding = math.max(layout.cu(3), buttonDiameter * 0.08)
     local actionHeight = buttonDiameter + dockPadding * 2
     local actionsWidth = buttonDiameter * 2 + buttonGap + dockPadding * 2
-    local dotDiameter = layout.cu(dotDiameterBase)
-    local dotGap = layout.cu(dotGapBase)
-    local labelFont = layout.fontCu(labelFontBase)
+    local dotDiameter = math.max(layout.cu(4), math.min(
+        layout.cu(8), buttonDiameter * 0.14))
+    local dotGap = math.max(layout.cu(3), dotDiameter * 0.65)
+    local labelFont = math.max(layout.fontCu(10), math.min(
+        layout.fontCu(18), layout.vmin(5.2)))
+    local labelHeight = labelFont * 1.25
+    local statusHeight = labelHeight + statusGap + dotDiameter
+
+    local ringDiameter
+    if isWide then
+        ringDiameter = math.max(layout.cu(64), math.min(
+            availableHeight * 0.94,
+            availableWidth * 0.52))
+    else
+        local reservedHeight = statusHeight + actionHeight + verticalGap * 2
+        ringDiameter = math.max(layout.cu(52), math.min(
+            availableWidth * 0.90,
+            availableHeight - reservedHeight))
+    end
 
     local subline = ""
     if state == "work" then
@@ -449,13 +438,10 @@ local function buildView(context)
     end
     local label = stateLabel(state) .. subline
     local timeText = formatTime(remaining)
-    local labelHeight = layout.cu(labelHeightBase)
-    local statusHeight = layout.cu(statusHeightBase)
-    local ringDiameter = layout.cu(ringDiameterBase)
-    local ringThickness = layout.cu(math.max(
-        4, math.min(12, ringDiameterBase * 0.055)))
-    local timeFont = layout.fontCu(math.max(
-        20, math.min(64, ringDiameterBase * 0.27)))
+    local ringThickness = math.max(layout.cu(4), math.min(
+        layout.cu(12), ringDiameter * 0.055))
+    local timeFont = math.max(layout.fontCu(20), math.min(
+        layout.fontCu(64), ringDiameter * 0.27))
 
     local dots = {}
     for index = 1, config.longBreakInterval do

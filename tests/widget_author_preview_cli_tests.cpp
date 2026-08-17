@@ -308,6 +308,7 @@ std::filesystem::path CreateEnvironmentFixture(
   "permissions": ["system.performance.read"],
   "requiredFeatures": [
     "draw.immediate",
+    "layout.relativeUnits",
     "lifecycle.model",
     "widget.context",
     "data.subscribe",
@@ -326,6 +327,22 @@ return widget.define({
             "DPI was not injected before setup")
         assert(context.grid.columns == 2 and context.grid.rows == 1,
             "size was not injected before setup")
+        assert(context.pixelSize.width == 288 and
+            context.pixelSize.height == 174 and
+            context.logicalSize.width == 192 and
+            context.logicalSize.height == 116,
+            "pixel and DPI-normalized sizes were not kept distinct")
+        assert(context.layoutSize.width == layout.contentWidth() and
+            context.layoutSize.height == layout.contentHeight() and
+            context.layoutSize.width == 288 and
+            context.layoutSize.height == 174,
+            "layoutSize must match the root content coordinate space")
+        assert(layout.vw(50) == 144 and layout.vh(50) == 87 and
+            layout.vmin(50) == 87 and layout.vmax(50) == 144,
+            "relative layout units must use the root content extents")
+        assert(pcall(layout.vw, -1) == false and
+            pcall(layout.vh, 101) == false,
+            "relative layout units must reject out-of-range percentages")
         assert(context.monitor.available == false,
             "preview must not expose the developer monitor")
         assert(context.accessibility.highContrast == false and

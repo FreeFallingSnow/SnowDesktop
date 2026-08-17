@@ -211,6 +211,7 @@
   },
   "requiredFeatures": [
     "draw.immediate",
+    "layout.relativeUnits",
     "lifecycle.model",
     "l10n.basic",
     "widget.context"

@@ -53,6 +53,7 @@
 ---@class SnowWidgetContext
 ---@field logicalSize SnowSize
 ---@field pixelSize SnowSize
+---@field layoutSize SnowSize Root content size in the same coordinate space as declarative view lengths and layout relative units.
 ---@field dpi SnowDpiContext
 ---@field sizeClass SnowWidgetSizeClass
 ---@field grid SnowGridContext
@@ -2255,6 +2256,28 @@ function layout.width() end
 
 ---@return number
 function layout.height() end
+
+---@return number
+function layout.contentWidth() end
+
+---@return number
+function layout.contentHeight() end
+
+---@param percent number 0..100 percentage of the root content width.
+---@return number
+function layout.vw(percent) end
+
+---@param percent number 0..100 percentage of the root content height.
+---@return number
+function layout.vh(percent) end
+
+---@param percent number 0..100 percentage of the shorter root content axis.
+---@return number
+function layout.vmin(percent) end
+
+---@param percent number 0..100 percentage of the longer root content axis.
+---@return number
+function layout.vmax(percent) end
 
 ---@return integer
 function layout.columns() end

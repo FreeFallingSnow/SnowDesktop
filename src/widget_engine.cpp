@@ -750,6 +750,8 @@ struct D2DState
     int gridCellH = 116;
     int gridGapY = 8;
     int barHeight = 24;
+    float layoutContentWidth = 0.0f;
+    float layoutContentHeight = 0.0f;
     DWRITE_FONT_WEIGHT itemFontWeight = DWRITE_FONT_WEIGHT_SEMI_BOLD;
     int widgetClipDepth = 0;
     ComPtr<ID2D1Device> bitmapDevice;
@@ -768,6 +770,24 @@ struct D2DState
     std::unordered_map<std::wstring, ComPtr<IDWriteTextFormat>>
         privateTextFormatCache;
 };
+
+static float CurrentLayoutContentWidth(const D2DState* state) noexcept
+{
+    if (!state) return 400.0f;
+    if (state->layoutContentWidth > 0.0f)
+        return state->layoutContentWidth;
+    return std::max(1.0f,
+        state->widgetRect.right - state->widgetRect.left);
+}
+
+static float CurrentLayoutContentHeight(const D2DState* state) noexcept
+{
+    if (!state) return 300.0f;
+    if (state->layoutContentHeight > 0.0f)
+        return state->layoutContentHeight;
+    return std::max(1.0f,
+        state->widgetRect.bottom - state->widgetRect.top);
+}
 
 static std::string BindRuntimeImageToken(
     std::string_view token, std::wstring_view widgetId)
@@ -2103,6 +2123,8 @@ public:
         surfaceKind_ = state_->surfaceKind;
         gridColumns_ = state_->gridColumns;
         gridRows_ = state_->gridRows;
+        layoutContentWidth_ = state_->layoutContentWidth;
+        layoutContentHeight_ = state_->layoutContentHeight;
         layoutMetrics_ = snowdesktop::widget_runtime::
             CaptureLayoutMetrics(*state_);
         widgetClipDepth_ = state_->widgetClipDepth;
@@ -2120,6 +2142,8 @@ public:
         state_->surfaceKind = surfaceKind_;
         state_->gridColumns = gridColumns_;
         state_->gridRows = gridRows_;
+        state_->layoutContentWidth = layoutContentWidth_;
+        state_->layoutContentHeight = layoutContentHeight_;
         state_->widgetClipDepth = widgetClipDepth_;
         snowdesktop::widget_runtime::RestoreLayoutMetrics(
             *state_, layoutMetrics_, [this]() {
@@ -2145,6 +2169,8 @@ private:
     const char* surfaceKind_ = "desktop";
     int gridColumns_ = 1;
     int gridRows_ = 1;
+    float layoutContentWidth_ = 0.0f;
+    float layoutContentHeight_ = 0.0f;
     snowdesktop::widget_runtime::LayoutMetrics layoutMetrics_;
     int widgetClipDepth_ = 0;
 };
@@ -2531,6 +2557,8 @@ static void SetWidgetRectContext(D2DState* state, RECT bounds)
     state->widgetRect = D2D1::RectF(
         static_cast<float>(bounds.left), static_cast<float>(bounds.top),
         static_cast<float>(bounds.right), static_cast<float>(bounds.bottom));
+    state->layoutContentWidth = static_cast<float>(bounds.right - bounds.left);
+    state->layoutContentHeight = static_cast<float>(bounds.bottom - bounds.top);
 }
 
 using snowdesktop::widget_runtime::LuaResourceType;
@@ -8626,7 +8654,7 @@ static int lua_WidgetContext(lua_State* L)
         ? d2d->engine->RuntimeGetWidgetTheme(widgetId)
         : LuaWidgetTheme{};
 
-    lua_createtable(L, 0, 18);
+    lua_createtable(L, 0, 19);
     lua_createtable(L, 0, 2);
     lua_pushnumber(L, pixelWidth / scaleX); lua_setfield(L, -2, "width");
     lua_pushnumber(L, pixelHeight / scaleY); lua_setfield(L, -2, "height");
@@ -8635,6 +8663,12 @@ static int lua_WidgetContext(lua_State* L)
     lua_pushnumber(L, pixelWidth); lua_setfield(L, -2, "width");
     lua_pushnumber(L, pixelHeight); lua_setfield(L, -2, "height");
     lua_setfield(L, -2, "pixelSize");
+    lua_createtable(L, 0, 2);
+    lua_pushnumber(L, CurrentLayoutContentWidth(d2d));
+    lua_setfield(L, -2, "width");
+    lua_pushnumber(L, CurrentLayoutContentHeight(d2d));
+    lua_setfield(L, -2, "height");
+    lua_setfield(L, -2, "layoutSize");
     lua_createtable(L, 0, 4);
     lua_pushinteger(L, state.surface.dpiX); lua_setfield(L, -2, "x");
     lua_pushinteger(L, state.surface.dpiY); lua_setfield(L, -2, "y");
@@ -20260,6 +20294,11 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     const int reservedBarHeight =
         snowdesktop::widget_chrome_rules::ReservedBottomBarHeight(
             showTitle, bottomBarHover, scaledBarHeight);
+    d2dState_->layoutContentWidth = std::max(1.0f,
+        d2dState_->widgetRect.right - d2dState_->widgetRect.left);
+    d2dState_->layoutContentHeight = std::max(1.0f,
+        d2dState_->widgetRect.bottom - d2dState_->widgetRect.top -
+            static_cast<float>(reservedBarHeight));
 
     lua_getfield(state, descriptorIndex, "view");
     if (lua_isfunction(state, -1))
@@ -20301,16 +20340,8 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             }
             else if (!ValidateAndLayoutWidgetView(candidate, *found,
                     "desktop",
-                        d2dState_->widgetRect.right -
-                            d2dState_->widgetRect.left,
-                        std::max(1.0f,
-                            d2dState_->widgetRect.bottom -
-                                d2dState_->widgetRect.top -
-                                (std::strcmp(d2dState_->surfaceKind,
-                                    "panel") == 0
-                                    ? 0.0f
-                                    : static_cast<float>(
-                                        reservedBarHeight))),
+                        CurrentLayoutContentWidth(d2dState_),
+                        CurrentLayoutContentHeight(d2dState_),
                         viewError))
             {
                 viewError = "view(): " + viewError;
@@ -32666,6 +32697,61 @@ static int lua_L10nLanguage(lua_State* L)
     const std::string language = Locale::Instance().GetEffectiveLanguage();
     lua_pushlstring(L, language.data(), language.size());
     return 1;
+}
+
+static int lua_LayoutContentWidth(lua_State* L)
+{
+    lua_pushnumber(L, CurrentLayoutContentWidth(GetD2D(L)));
+    return 1;
+}
+
+static int lua_LayoutContentHeight(lua_State* L)
+{
+    lua_pushnumber(L, CurrentLayoutContentHeight(GetD2D(L)));
+    return 1;
+}
+
+static int PushRelativeLayoutUnit(
+    lua_State* L, float extent, const char* functionName)
+{
+    const double percent = luaL_checknumber(L, 1);
+    if (!std::isfinite(percent) || percent < 0.0 || percent > 100.0)
+    {
+        return luaL_error(L,
+            "%s: percent must be finite and between 0 and 100",
+            functionName);
+    }
+    lua_pushnumber(L,
+        static_cast<double>(extent) * percent / 100.0);
+    return 1;
+}
+
+static int lua_LayoutVw(lua_State* L)
+{
+    return PushRelativeLayoutUnit(
+        L, CurrentLayoutContentWidth(GetD2D(L)), "layout.vw");
+}
+
+static int lua_LayoutVh(lua_State* L)
+{
+    return PushRelativeLayoutUnit(
+        L, CurrentLayoutContentHeight(GetD2D(L)), "layout.vh");
+}
+
+static int lua_LayoutVmin(lua_State* L)
+{
+    auto* state = GetD2D(L);
+    return PushRelativeLayoutUnit(L, std::min(
+        CurrentLayoutContentWidth(state),
+        CurrentLayoutContentHeight(state)), "layout.vmin");
+}
+
+static int lua_LayoutVmax(lua_State* L)
+{
+    auto* state = GetD2D(L);
+    return PushRelativeLayoutUnit(L, std::max(
+        CurrentLayoutContentWidth(state),
+        CurrentLayoutContentHeight(state)), "layout.vmax");
 }
 
 static int lua_StorageTransaction(lua_State* state)

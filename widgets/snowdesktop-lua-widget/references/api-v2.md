@@ -151,6 +151,9 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 
 - `system.environment`：`system.info/capabilities`；`time.basic`：`time.now/monotonic`；
   `time.calendar`：`time.parts/format/add/compare`；
+- `layout.relativeUnits`：与声明式 View Tree 根内容框同坐标系的
+  `layout.contentWidth/contentHeight/vw/vh/vmin/vmax`，以及
+  `widget.context().layoutSize`；
 - `module.package`：安全包内模块；`resource.package`：包内图片、字体和资源状态；
 - `state.transient`：仅存活于当前实例 VM 的瞬态状态；`schedule.visibility`：计划的
   `whenHidden=pause|throttle|continue` 生命周期；
@@ -2207,10 +2210,22 @@ HTTPS URL；`http:`、`file:`、自定义 scheme、localhost、局域网和 IP �
 
 ### `layout`
 
-`layout.width/height` 返回当前逻辑尺寸。`columns/rows/sizeClass` 返回跨度与尺寸
-档位。`cellWidth/cellHeight/cellScale/cellGap/barHeight` 提供宿主网格指标。
-使用 `layout.cu(value)` 和 `layout.fontCu(value)` 做 DPI/网格自适应，不要假定
-固定像素。
+`layout.width/height` 保留现有的完整 surface 渲染尺寸，适合需要覆盖整个即时绘制
+surface 的兼容代码。探测 `layout.relativeUnits` 后，响应式布局应改用
+`layout.contentWidth/contentHeight`；它们与声明式 View Tree 根节点实际收到的内容框
+处于同一坐标系，并与 `widget.context().layoutSize` 一致。桌面底栏需要固定占位时，
+content height 已扣除该保留区；panel/dialog/popover 则使用各自完整内容框。
+
+`layout.vw(percent)`、`layout.vh(percent)`、`layout.vmin(percent)` 和
+`layout.vmax(percent)` 接受 0–100 的有限百分比，分别返回根内容宽、高、短边和长边的
+对应比例。圆形、方形和跨宽高比保持一致的控件优先使用 `vmin`；横向或纵向结构分别
+使用 `vw`、`vh`。这些函数直接返回可用于声明式数值尺寸和即时绘制坐标的布局值，
+不要再与 DPI 归一化的 `context.logicalSize` 混用。
+
+`columns/rows/sizeClass` 返回跨度与尺寸档位。
+`cellWidth/cellHeight/cellScale/cellGap/barHeight` 提供宿主网格指标。
+`layout.cu(value)` 和 `layout.fontCu(value)` 用于保持最小点击尺寸、描边、局部间距和
+字体在不同网格密度下的视觉尺度；它们不会随组件跨度同比增长，不能代替总宽高比例单位。
 
 ### `storage`
 

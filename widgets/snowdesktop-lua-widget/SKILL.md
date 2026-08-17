@@ -40,8 +40,12 @@ development packages live under `data\widgets\installed` and
 5. Put every user-visible string behind a literal `l10n.tr("key")`. Add every
    key to every locale catalog in `widget.json`; never put component strings in
    the host `lang/` directory.
-6. Derive geometry from `layout.width/height`, `layout.cu/fontCu`, and
-   `widget.context()`. Test multiple spans, DPI values and preview mode.
+6. Probe `layout.relativeUnits` and derive responsive geometry from
+   `layout.contentWidth/contentHeight` plus `layout.vw/vh/vmin/vmax`. Use
+   `layout.cu/fontCu` for density-stable minimum sizes, strokes, spacing, and
+   typography, not as a substitute for total-surface proportions. Keep legacy
+   `layout.width/height` only when full-surface immediate drawing is intended.
+   Test multiple spans, DPI values and preview mode.
 7. Declare package images/fonts in `resources`, create their handles while the
    entry script loads, and pass only handles to v2 draw functions.
 8. Load package modules only with `module.require("modules/name.lua")` while the
@@ -86,7 +90,7 @@ local function render()
     draw.text(padding, padding,
         l10n.tr("lua_widget.my_widget.hello"),
         layout.fontCu(15), 0xFFFFFF,
-        layout.width() - padding * 2)
+        layout.contentWidth() - padding * 2)
 end
 
 return widget.define({

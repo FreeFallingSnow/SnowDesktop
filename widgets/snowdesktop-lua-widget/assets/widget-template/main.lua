@@ -8,9 +8,10 @@ end
 
 local function render(context, _model)
     local config = readConfig()
-    local width = layout.width()
-    local height = layout.height()
-    local padding = layout.cu(12)
+    local width = layout.contentWidth()
+    local height = layout.contentHeight()
+    local padding = math.max(layout.cu(8), math.min(
+        layout.cu(12), layout.vmin(4)))
     local fontSize = context.sizeClass == "small"
         and layout.fontCu(14) or layout.fontCu(16)
     local message = storage.get("message")
