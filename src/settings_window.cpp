@@ -1074,13 +1074,15 @@ void SettingsWindow::Render()
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
 
-    // Feed current mouse position so first click works without prior WM_MOUSEMOVE
+    ImGui::NewFrame();
+
+    // The Win32 backend queues input events for NewFrame to consume. Correct the
+    // position afterwards so batched stale WM_MOUSEMOVE events cannot override
+    // the current physical cursor position while a slider is being dragged.
     POINT mp;
     GetCursorPos(&mp);
     ScreenToClient(hwnd_, &mp);
     ImGui::GetIO().MousePos = ImVec2((float)mp.x, (float)mp.y);
-
-    ImGui::NewFrame();
 
     // Fill entire client area
     ImGui::SetNextWindowPos(ImVec2(0, 0));
