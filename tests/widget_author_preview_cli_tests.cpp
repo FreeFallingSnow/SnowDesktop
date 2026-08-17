@@ -177,7 +177,7 @@ RgbaBitmap ReadPng(const std::filesystem::path& path)
     return bitmap;
 }
 
-void CheckPomodoroPlayGlyphCentered(const std::filesystem::path& path)
+void CheckPomodoroPrimaryActionCentered(const std::filesystem::path& path)
 {
     const RgbaBitmap bitmap = ReadPng(path);
     const auto isTomato = [&](UINT x, UINT y) {
@@ -202,7 +202,7 @@ void CheckPomodoroPlayGlyphCentered(const std::filesystem::path& path)
         }
     }
 
-    PixelBounds playButton;
+    PixelBounds primaryButton;
     std::vector<std::size_t> pending;
     for (UINT y = 0; y < bitmap.height; ++y)
     {
@@ -238,21 +238,28 @@ void CheckPomodoroPlayGlyphCentered(const std::filesystem::path& path)
                 if (currentY + 1 < bitmap.height)
                     Visit(currentX, currentY + 1);
             }
-            if (component.count > playButton.count &&
-                component.bottom > static_cast<int>(bitmap.height * 3 / 4) &&
-                component.right < static_cast<int>(bitmap.width / 2))
+            if (component.count > primaryButton.count &&
+                component.bottom > static_cast<int>(bitmap.height / 2))
             {
-                playButton = component;
+                primaryButton = component;
             }
         }
     }
-    Check(playButton.count > 100,
-        "Pomodoro play button surface is found in the preview");
+    const int buttonWidth = primaryButton.right - primaryButton.left + 1;
+    const int buttonHeight = primaryButton.bottom - primaryButton.top + 1;
+    Check(primaryButton.count > 500 &&
+            buttonWidth > static_cast<int>(bitmap.width * 0.55) &&
+            buttonWidth > buttonHeight * 2,
+        "Pomodoro primary action surface is found in the preview");
+    const double buttonCenterX =
+        (primaryButton.left + primaryButton.right) * 0.5;
+    Check(std::abs(buttonCenterX - (bitmap.width - 1) * 0.5) <= 2.0,
+        "Pomodoro primary action is horizontally centered");
 
-    PixelBounds glyph;
-    for (int y = playButton.top; y <= playButton.bottom; ++y)
+    PixelBounds label;
+    for (int y = primaryButton.top; y <= primaryButton.bottom; ++y)
     {
-        for (int x = playButton.left; x <= playButton.right; ++x)
+        for (int x = primaryButton.left; x <= primaryButton.right; ++x)
         {
             const std::size_t offset =
                 (static_cast<std::size_t>(y) * bitmap.width + x) * 4;
@@ -263,18 +270,18 @@ void CheckPomodoroPlayGlyphCentered(const std::filesystem::path& path)
             const int darkest = std::min({ red, green, blue });
             const int lightest = std::max({ red, green, blue });
             if (alpha > 0 && darkest >= 200 && lightest - darkest <= 35)
-                glyph.Include(x, y);
+                label.Include(x, y);
         }
     }
-    Check(glyph.count > 20,
-        "Pomodoro Font Awesome play glyph is found in the preview");
-    const double buttonCenterX = (playButton.left + playButton.right) * 0.5;
-    const double buttonCenterY = (playButton.top + playButton.bottom) * 0.5;
-    const double glyphCenterX = (glyph.left + glyph.right) * 0.5;
-    const double glyphCenterY = (glyph.top + glyph.bottom) * 0.5;
-    Check(std::abs(glyphCenterX - buttonCenterX) <= 2.0 &&
-            std::abs(glyphCenterY - buttonCenterY) <= 2.0,
-        "Pomodoro Font Awesome play glyph is visually centered");
+    Check(label.count > 40,
+        "Pomodoro primary action label is found in the preview");
+    const double buttonCenterY =
+        (primaryButton.top + primaryButton.bottom) * 0.5;
+    const double labelCenterX = (label.left + label.right) * 0.5;
+    const double labelCenterY = (label.top + label.bottom) * 0.5;
+    Check(std::abs(labelCenterX - buttonCenterX) <= 2.0 &&
+            std::abs(labelCenterY - buttonCenterY) <= 2.0,
+        "Pomodoro primary action label is visually centered");
 }
 
 void Write(const std::filesystem::path& path, std::string_view text)
@@ -416,7 +423,7 @@ int wmain(int argc, wchar_t** argv)
             pomodoroJson.find("\"ok\":true") != std::string::npos,
         "Pomodoro paused-state preview renders successfully");
     CheckPng(pomodoroOutput);
-    CheckPomodoroPlayGlyphCentered(pomodoroOutput);
+    CheckPomodoroPrimaryActionCentered(pomodoroOutput);
 
     const auto environmentSource =
         CreateEnvironmentFixture(temporary.path);
