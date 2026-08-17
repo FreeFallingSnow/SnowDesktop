@@ -1,10 +1,16 @@
 #include <windows.h>
+#include <wincodec.h>
+#include <wrl/client.h>
 
+#include <algorithm>
 #include <array>
+#include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -110,6 +116,167 @@ void CheckPng(const std::filesystem::path& path)
         "real renderer writes nontrivial preview pixels");
 }
 
+struct PixelBounds
+{
+    int left = std::numeric_limits<int>::max();
+    int top = std::numeric_limits<int>::max();
+    int right = -1;
+    int bottom = -1;
+    std::size_t count = 0;
+
+    void Include(int x, int y)
+    {
+        left = std::min(left, x);
+        top = std::min(top, y);
+        right = std::max(right, x);
+        bottom = std::max(bottom, y);
+        ++count;
+    }
+
+    bool Empty() const noexcept { return count == 0; }
+};
+
+struct RgbaBitmap
+{
+    UINT width = 0;
+    UINT height = 0;
+    std::vector<std::uint8_t> pixels;
+};
+
+RgbaBitmap ReadPng(const std::filesystem::path& path)
+{
+    using Microsoft::WRL::ComPtr;
+    ComPtr<IWICImagingFactory> factory;
+    Check(SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+              CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))),
+        "WIC factory is created");
+    ComPtr<IWICBitmapDecoder> decoder;
+    Check(SUCCEEDED(factory->CreateDecoderFromFilename(path.c_str(), nullptr,
+              GENERIC_READ, WICDecodeMetadataCacheOnLoad, &decoder)),
+        "preview PNG decoder is created");
+    ComPtr<IWICBitmapFrameDecode> frame;
+    Check(SUCCEEDED(decoder->GetFrame(0, &frame)),
+        "preview PNG frame is available");
+    ComPtr<IWICFormatConverter> converter;
+    Check(SUCCEEDED(factory->CreateFormatConverter(&converter)) &&
+            SUCCEEDED(converter->Initialize(frame.Get(),
+                GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone,
+                nullptr, 0.0, WICBitmapPaletteTypeCustom)),
+        "preview PNG converts to RGBA pixels");
+
+    RgbaBitmap bitmap;
+    Check(SUCCEEDED(converter->GetSize(&bitmap.width, &bitmap.height)) &&
+            bitmap.width > 0 && bitmap.height > 0,
+        "preview PNG has nonzero dimensions");
+    const UINT stride = bitmap.width * 4;
+    bitmap.pixels.resize(static_cast<std::size_t>(stride) * bitmap.height);
+    Check(SUCCEEDED(converter->CopyPixels(nullptr, stride,
+              static_cast<UINT>(bitmap.pixels.size()),
+              bitmap.pixels.data())),
+        "preview PNG pixels are decoded");
+    return bitmap;
+}
+
+void CheckPomodoroPlayGlyphCentered(const std::filesystem::path& path)
+{
+    const RgbaBitmap bitmap = ReadPng(path);
+    const auto isTomato = [&](UINT x, UINT y) {
+        const std::size_t offset =
+            (static_cast<std::size_t>(y) * bitmap.width + x) * 4;
+        const int red = bitmap.pixels[offset];
+        const int green = bitmap.pixels[offset + 1];
+        const int blue = bitmap.pixels[offset + 2];
+        const int alpha = bitmap.pixels[offset + 3];
+        return alpha > 0 && red > 140 && red > green + 35 &&
+            red > blue + 30;
+    };
+
+    std::vector<std::uint8_t> candidates(
+        static_cast<std::size_t>(bitmap.width) * bitmap.height, 0);
+    for (UINT y = 0; y < bitmap.height; ++y)
+    {
+        for (UINT x = 0; x < bitmap.width; ++x)
+        {
+            if (isTomato(x, y))
+                candidates[static_cast<std::size_t>(y) * bitmap.width + x] = 1;
+        }
+    }
+
+    PixelBounds playButton;
+    std::vector<std::size_t> pending;
+    for (UINT y = 0; y < bitmap.height; ++y)
+    {
+        for (UINT x = 0; x < bitmap.width; ++x)
+        {
+            const std::size_t start =
+                static_cast<std::size_t>(y) * bitmap.width + x;
+            if (!candidates[start]) continue;
+            candidates[start] = 0;
+            pending.assign(1, start);
+            PixelBounds component;
+            while (!pending.empty())
+            {
+                const std::size_t index = pending.back();
+                pending.pop_back();
+                const UINT currentX =
+                    static_cast<UINT>(index % bitmap.width);
+                const UINT currentY =
+                    static_cast<UINT>(index / bitmap.width);
+                component.Include(static_cast<int>(currentX),
+                    static_cast<int>(currentY));
+                const auto Visit = [&](UINT nextX, UINT nextY) {
+                    const std::size_t next =
+                        static_cast<std::size_t>(nextY) * bitmap.width + nextX;
+                    if (!candidates[next]) return;
+                    candidates[next] = 0;
+                    pending.push_back(next);
+                };
+                if (currentX > 0) Visit(currentX - 1, currentY);
+                if (currentX + 1 < bitmap.width)
+                    Visit(currentX + 1, currentY);
+                if (currentY > 0) Visit(currentX, currentY - 1);
+                if (currentY + 1 < bitmap.height)
+                    Visit(currentX, currentY + 1);
+            }
+            if (component.count > playButton.count &&
+                component.bottom > static_cast<int>(bitmap.height * 3 / 4) &&
+                component.right < static_cast<int>(bitmap.width / 2))
+            {
+                playButton = component;
+            }
+        }
+    }
+    Check(playButton.count > 100,
+        "Pomodoro play button surface is found in the preview");
+
+    PixelBounds glyph;
+    for (int y = playButton.top; y <= playButton.bottom; ++y)
+    {
+        for (int x = playButton.left; x <= playButton.right; ++x)
+        {
+            const std::size_t offset =
+                (static_cast<std::size_t>(y) * bitmap.width + x) * 4;
+            const int red = bitmap.pixels[offset];
+            const int green = bitmap.pixels[offset + 1];
+            const int blue = bitmap.pixels[offset + 2];
+            const int alpha = bitmap.pixels[offset + 3];
+            const int darkest = std::min({ red, green, blue });
+            const int lightest = std::max({ red, green, blue });
+            if (alpha > 0 && darkest >= 200 && lightest - darkest <= 35)
+                glyph.Include(x, y);
+        }
+    }
+    Check(glyph.count > 20,
+        "Pomodoro Font Awesome play glyph is found in the preview");
+    const double buttonCenterX = (playButton.left + playButton.right) * 0.5;
+    const double buttonCenterY = (playButton.top + playButton.bottom) * 0.5;
+    const double glyphCenterX = (glyph.left + glyph.right) * 0.5;
+    const double glyphCenterY = (glyph.top + glyph.bottom) * 0.5;
+    Check(std::abs(glyphCenterX - buttonCenterX) <= 2.0 &&
+            std::abs(glyphCenterY - buttonCenterY) <= 2.0,
+        "Pomodoro Font Awesome play glyph is visually centered");
+}
+
 void Write(const std::filesystem::path& path, std::string_view text)
 {
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
@@ -194,6 +361,8 @@ return widget.define({
 
 int wmain(int argc, wchar_t** argv)
 {
+    Check(SUCCEEDED(CoInitializeEx(nullptr, COINIT_MULTITHREADED)),
+        "COM initializes for preview pixel decoding");
     Check(argc == 4,
         "test receives snowwidget, SnowDesktop, and repository root");
     const std::filesystem::path snowwidget = argv[1];
@@ -219,6 +388,18 @@ int wmain(int argc, wchar_t** argv)
             json.find("\"dpi\":144") != std::string::npos,
         "snowwidget preview reports a completed real API v2 render");
     CheckPng(output);
+
+    const auto pomodoroOutput = temporary.path / L"pomodoro.png";
+    const auto pomodoroSource = repository / L"widgets" / L"pomodoro";
+    const auto [pomodoroExit, pomodoroJson] = Run(snowwidget, {
+        L"preview", pomodoroSource.wstring(), pomodoroOutput.wstring(),
+        L"--dpi", L"96", L"--locale", L"zh-CN", L"--theme", L"dark",
+        L"--host", host.wstring() });
+    Check(pomodoroExit == 0 &&
+            pomodoroJson.find("\"ok\":true") != std::string::npos,
+        "Pomodoro paused-state preview renders successfully");
+    CheckPng(pomodoroOutput);
+    CheckPomodoroPlayGlyphCentered(pomodoroOutput);
 
     const auto environmentSource =
         CreateEnvironmentFixture(temporary.path);
@@ -260,5 +441,6 @@ int wmain(int argc, wchar_t** argv)
         "preview rejects an unknown deterministic data state");
 
     std::cout << "widget author preview CLI tests passed\n";
+    CoUninitialize();
     return 0;
 }

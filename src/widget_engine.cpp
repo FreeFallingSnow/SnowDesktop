@@ -19627,10 +19627,15 @@ static void DrawWidgetViewNode(D2DState* state,
                 const float contentHeight = SUCCEEDED(
                         layout->GetMetrics(&metrics))
                     ? std::min(layoutHeight, metrics.height) : layoutHeight;
+                // Icon ink is centered against the full layout box below.
+                // Applying the text metrics offset first would center the line
+                // box and then center the glyph a second time.
+                const float verticalOffset = iconNode ? 0.0f :
+                    ViewTextVerticalOffset(
+                        node, textHeight, contentHeight);
                 D2D1_POINT_2F origin = D2D1::Point2F(
                     textLeft, state->widgetRect.top + content.y +
-                        ViewTextVerticalOffset(
-                            node, textHeight, contentHeight));
+                        verticalOffset);
                 if (iconNode)
                 {
                     DWRITE_OVERHANG_METRICS overhang{};
