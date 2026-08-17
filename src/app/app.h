@@ -1553,6 +1553,8 @@ private:
     void ToggleLastPagePin(POINT screenPoint);
     /** @brief 设置图标间距比例。 @param value 间距倍率 */
     void SetIconSpacing(float value);
+    /** @brief 轻量预览图标间距，不保存布局或重新求解 Dock。 */
+    void PreviewIconSpacing(float value);
     float GetLayoutSpacingScale() const { return iconSpacingScale_; }
     /** @brief 调整图标间距比例。 @param delta 间距增量 */
     void AdjustIconSpacing(float delta);
@@ -2776,6 +2778,7 @@ private:
     std::vector<std::wstring> savedPageIds_;
     RECT layoutWorkArea_{};
     float iconSpacingScale_ = 1.0f;
+    bool iconSpacingPreviewActive_ = false;
     float itemFontSizeCu_ = kDefaultItemFontSizeCu;
     float listItemFontSizeCu_ = kDefaultItemFontSizeCu;
     DWRITE_FONT_WEIGHT itemFontWeight_ = DWRITE_FONT_WEIGHT_SEMI_BOLD;

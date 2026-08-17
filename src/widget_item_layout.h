@@ -191,4 +191,47 @@ inline int ScrollOffsetToReveal(
     return std::clamp(result, 0, std::max(0, maximumOffset));
 }
 
+inline bool SharesInsertionBoundary(
+    RECT before, RECT after, bool verticalBar)
+{
+    if (verticalBar)
+    {
+        return before.right <= after.left &&
+            std::max(before.top, after.top) <
+                std::min(before.bottom, after.bottom);
+    }
+    return before.bottom <= after.top &&
+        std::max(before.left, after.left) <
+            std::min(before.right, after.right);
+}
+
+inline bool PointInInsertionGap(
+    RECT before, RECT after, POINT point, bool verticalBar)
+{
+    if (!SharesInsertionBoundary(before, after, verticalBar))
+        return false;
+    if (verticalBar)
+    {
+        return point.x >= before.right &&
+            point.x < after.left &&
+            point.y >= std::max(before.top, after.top) &&
+            point.y < std::min(before.bottom, after.bottom);
+    }
+    return point.y >= before.bottom &&
+        point.y < after.top &&
+        point.x >= std::max(before.left, after.left) &&
+        point.x < std::min(before.right, after.right);
+}
+
+inline float InsertionBoundaryPad(
+    RECT before, RECT after, bool verticalBar)
+{
+    if (!SharesInsertionBoundary(before, after, verticalBar))
+        return 0.0f;
+    const int gap = verticalBar
+        ? after.left - before.right
+        : after.top - before.bottom;
+    return static_cast<float>(std::max(0, gap)) * 0.5f;
+}
+
 } // namespace snowdesktop::widget_item_layout

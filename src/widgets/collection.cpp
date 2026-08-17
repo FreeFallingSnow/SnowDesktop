@@ -969,6 +969,11 @@ int Collection::GetItemWidth() const
         const_cast<Collection*>(this)).horizontal.cell;
 }
 
+int Collection::GetBottomBarButtonCount() const
+{
+    return data_ && data_->scrollContainerMode ? 1 : 0;
+}
+
 void Collection::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered)
 {
     if (!data_ || !app_ || !data_->scrollContainerMode) return;

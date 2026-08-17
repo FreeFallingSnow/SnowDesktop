@@ -854,7 +854,7 @@ static RECT FileCategoryDateToggleRect(FileCategories* widget)
     const float bs = widget->GetBarScale();
     const int btnSize = widget->Cu(14.0f * bs);
     const int gap = widget->Cu(4.0f * bs);
-    const int gapBetween = widget->Cu(7.0f * bs);
+    const int gapBetween = widget->Cu(4.0f * bs);
     const int resizeReserve = widget->Cu(20.0f * bs);
     const int right = handle.right - resizeReserve - gap - btnSize - gapBetween;
     const int h = handle.bottom - handle.top;

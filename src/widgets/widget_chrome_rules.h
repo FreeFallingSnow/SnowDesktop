@@ -55,4 +55,16 @@ inline int BottomBarSideInset(
     return std::max(baseInset, roundedInset);
 }
 
+inline int BottomBarTitleTrailingReserve(
+    int buttonCount, int buttonSize, int edgeGap,
+    int betweenGap, int resizeReserve, int titleGap)
+{
+    const int count = std::max(0, buttonCount);
+    return std::max(0, resizeReserve) +
+        std::max(0, edgeGap) +
+        count * std::max(0, buttonSize) +
+        std::max(0, count - 1) * std::max(0, betweenGap) +
+        std::max(0, titleGap);
+}
+
 } // namespace snowdesktop::widget_chrome_rules

@@ -19,6 +19,7 @@
 #include "collection_group_rules.h"
 #include "widget_chrome_rules.h"
 #include "widget_preview_scene.h"
+#include "../widget_item_layout.h"
 #include <d2d1_1.h>
 #include <wrl/client.h>
 #include "../l10n.h"
@@ -391,10 +392,18 @@ RECT WidgetContainer::GetResizeHandleRect() const
 RECT WidgetContainer::GetTitleRect() const
 {
     RECT handle = GetMoveHandleRect();
-    LONG left = handle.left + Cu(4.0f);
-    const float bh = GetBarHeight();
-    const int reserved = Cu(data_->type == DesktopWidgetType::FolderMapping ? bh * 3.4f : bh * 1.08f);
+    const float barScale = GetBarScale();
+    LONG left = handle.left + Cu(2.0f * barScale);
+    const int reserved = snowdesktop::widget_chrome_rules::
+        BottomBarTitleTrailingReserve(
+            GetBottomBarButtonCount(),
+            Cu(14.0f * barScale),
+            Cu(4.0f * barScale),
+            Cu(4.0f * barScale),
+            Cu(20.0f * barScale),
+            Cu(2.0f * barScale));
     LONG right = std::max<LONG>(left + 1, handle.right - reserved);
+    const float bh = GetBarHeight();
     return { left, handle.top + Cu(bh * 0.083f), right, handle.bottom - Cu(bh * 0.083f) };
 }
 
@@ -444,6 +453,8 @@ HitRegion WidgetContainer::HitTestDrag(POINT pt, Slot*& outSlot)
     if (!PtInRect(&frame, pt)) return HitRegion::None;
 
     auto& slots = GetSlots();
+    const bool verticalBar =
+        GetInsertionStyle() == BarStyle::VBar;
     for (size_t i = 0; i < slots.size(); ++i)
     {
         HitRegion region = slots[i]->HitTest(pt);
@@ -456,31 +467,43 @@ HitRegion WidgetContainer::HitTestDrag(POINT pt, Slot*& outSlot)
                 if (item && item->IsSelected())
                 {
                     RECT r = outSlot->GetBounds();
-                    region = (pt.y < r.top + (r.bottom - r.top) / 2)
-                        ? HitRegion::SortBefore
-                        : HitRegion::SortAfter;
+                    region = verticalBar
+                        ? (pt.x < r.left + (r.right - r.left) / 2
+                            ? HitRegion::SortBefore
+                            : HitRegion::SortAfter)
+                        : (pt.y < r.top + (r.bottom - r.top) / 2
+                            ? HitRegion::SortBefore
+                            : HitRegion::SortAfter);
                 }
+            }
+
+            // Canonicalize the trailing half of an item to the leading half
+            // of its adjacent item. Together with the explicit gap hit below,
+            // all three pointer zones resolve to one insertion index and one
+            // indicator boundary.
+            if (region == HitRegion::SortAfter && i + 1 < slots.size() &&
+                snowdesktop::widget_item_layout::SharesInsertionBoundary(
+                    slots[i]->GetBounds(), slots[i + 1]->GetBounds(),
+                    verticalBar))
+            {
+                outSlot = slots[i + 1].get();
+                return HitRegion::SortBefore;
             }
             return region;
         }
     }
 
-    // List mode: check gaps between items
-    if (SingleColumn() && slots.size() >= 2)
+    // Gaps are first-class insertion targets. Map the complete gap to the
+    // following slot so it shares the same result as both neighboring halves.
+    if (slots.size() >= 2)
     {
-        int pad = Cu(2.0f);
         for (size_t i = 0; i + 1 < slots.size(); ++i)
         {
             RECT upper = slots[i]->GetBounds();
             RECT lower = slots[i + 1]->GetBounds();
-            if (pt.y > upper.bottom && pt.y < lower.top)
+            if (snowdesktop::widget_item_layout::PointInInsertionGap(
+                    upper, lower, pt, verticalBar))
             {
-                int mid = upper.bottom + pad;
-                if (pt.y < mid)
-                {
-                    outSlot = slots[i].get();
-                    return HitRegion::SortAfter;
-                }
                 outSlot = slots[i + 1].get();
                 return HitRegion::SortBefore;
             }
@@ -572,7 +595,29 @@ std::wstring WidgetContainer::GetDragHint(Slot* slot, HitRegion region,
 void WidgetContainer::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion region)
 {
     if (!slot || !ctx) return;
-    float itemPad = SingleColumn() ? static_cast<float>(Cu(2.0f)) : 0.0f;
+    const bool verticalBar =
+        GetInsertionStyle() == BarStyle::VBar;
+    float itemPad = 0.0f;
+    auto& slots = GetSlots();
+    for (size_t i = 0; i < slots.size(); ++i)
+    {
+        if (slots[i].get() != slot) continue;
+        if (region == HitRegion::SortBefore && i > 0)
+        {
+            itemPad = snowdesktop::widget_item_layout::
+                InsertionBoundaryPad(
+                    slots[i - 1]->GetBounds(),
+                    slots[i]->GetBounds(), verticalBar);
+        }
+        else if (region == HitRegion::SortAfter && i + 1 < slots.size())
+        {
+            itemPad = snowdesktop::widget_item_layout::
+                InsertionBoundaryPad(
+                    slots[i]->GetBounds(),
+                    slots[i + 1]->GetBounds(), verticalBar);
+        }
+        break;
+    }
     slot->DrawDropIndicator(ctx, region, itemPad);
 }
 

@@ -436,6 +436,31 @@ int main()
                 { 0, -30, 300, 40 }, 100, 500) == 50,
         "keyboard reveal must consume the same item rectangles used for drawing and hit testing");
 
+    const RECT leftInsertionItem{ 10, 20, 90, 120 };
+    const RECT rightInsertionItem{ 110, 20, 190, 120 };
+    Check(localLayout::SharesInsertionBoundary(
+            leftInsertionItem, rightInsertionItem, true) &&
+            localLayout::PointInInsertionGap(
+                leftInsertionItem, rightInsertionItem,
+                { 100, 70 }, true) &&
+            localLayout::InsertionBoundaryPad(
+                leftInsertionItem, rightInsertionItem, true) == 10.0f,
+        "grid item halves and their complete horizontal gap must share one centered insertion boundary");
+    const RECT upperInsertionItem{ 20, 10, 220, 50 };
+    const RECT lowerInsertionItem{ 20, 62, 220, 102 };
+    Check(localLayout::SharesInsertionBoundary(
+            upperInsertionItem, lowerInsertionItem, false) &&
+            localLayout::PointInInsertionGap(
+                upperInsertionItem, lowerInsertionItem,
+                { 120, 56 }, false) &&
+            localLayout::InsertionBoundaryPad(
+                upperInsertionItem, lowerInsertionItem, false) == 6.0f,
+        "list row halves and their complete vertical gap must share one centered insertion boundary");
+    Check(!localLayout::SharesInsertionBoundary(
+            leftInsertionItem,
+            { 10, 140, 90, 240 }, true),
+        "a wrapped grid row must not be mistaken for a horizontal insertion gap");
+
     Check(layoutSpacing::ResolveStoredScale(
             1.25f, 1.75f) == 1.25f,
         "iconSpacing must win when both current and legacy spacing keys exist");
@@ -453,6 +478,11 @@ int main()
             layoutSpacing::ComponentVisualGap(
                 16, 1.0f, 2.0f) == 16,
         "widget frames must keep the original compact baseline while following the one layout-spacing value");
+    Check(layoutSpacing::ComponentGapResponseScale(1.0f) == 1.0f &&
+            layoutSpacing::ComponentGapResponseScale(2.0f) == 3.0f &&
+            layoutSpacing::ComponentVisualGap(
+                64, 1.0f, 2.0f) == 24,
+        "the upper half of the shared spacing range must provide a wider widget-gap adjustment");
     Check(layoutSpacing::ComponentVisualGap(
             5, 1.0f, 2.0f) == 5 &&
             layoutSpacing::ComponentFrameOutset(

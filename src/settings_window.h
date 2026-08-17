@@ -230,6 +230,11 @@ public:
     { navigationSettings_ = settings; }
 
     void SetDisplaySettingsChangedCallback(std::function<void()> callback) { displaySettingsChangedCallback_ = std::move(callback); }
+    void SetLayoutSpacingChangedCallback(
+        std::function<void(float, bool)> callback)
+    {
+        layoutSpacingChangedCallback_ = std::move(callback);
+    }
     void SetIconBeautifySettingsChangedCallback(
         std::function<void(snowdesktop::IconBeautifyUpdateKind)> callback)
     { iconBeautifySettingsChangedCallback_ = std::move(callback); }
@@ -705,6 +710,7 @@ private:
 
     /// 显示设置变更回调
     std::function<void()> displaySettingsChangedCallback_;
+    std::function<void(float, bool)> layoutSpacingChangedCallback_;
     /// 图标美化预览/提交回调；false 仅刷新，true 持久化。
     std::function<void(snowdesktop::IconBeautifyUpdateKind)>
         iconBeautifySettingsChangedCallback_;

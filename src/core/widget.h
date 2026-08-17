@@ -230,6 +230,7 @@ public:
         (void)handleRect;
         (void)hovered;
     }
+    virtual int GetBottomBarButtonCount() const { return 0; }
 
     // ── Scrollbar — subclasses override ──────────────────
     virtual int  GetScrollOffset() const { return 0; }
@@ -472,6 +473,7 @@ public:
         Slot* targetSlot, HitRegion region, int mods) override;
     void DrawContent(ID2D1DeviceContext* context, RECT body) override;
     void DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered) override;
+    int GetBottomBarButtonCount() const override;
     WidgetHit HitTestWidget(POINT pt) const override;
     HitRegion HitTestDrag(POINT pt, Slot*& outSlot) override;
     std::vector<Item*> GetSelectedItems() const override;
@@ -535,6 +537,7 @@ public:
         Slot* targetSlot, HitRegion region, int mods) override;
     void DrawContent(ID2D1DeviceContext* context, RECT body) override;
     void DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered) override;
+    int GetBottomBarButtonCount() const override { return 2; }
     WidgetHit HitTestWidget(POINT pt) const override;
     std::wstring CategoryIdAtPoint(POINT pt) const override;
     bool IsPointInTabsRect(POINT pt) const;
@@ -632,6 +635,7 @@ public:
         Slot* targetSlot, HitRegion region, int mods) override;
     void DrawContent(ID2D1DeviceContext* context, RECT body) override;
     void DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered) override;
+    int GetBottomBarButtonCount() const override { return 3; }
     WidgetHit HitTestWidget(POINT pt) const override;
     std::vector<Item*> GetSelectedItems() const override;
     Item* GetMemberItem(size_t idx) const override;
@@ -744,6 +748,7 @@ public:
         Slot* targetSlot, HitRegion region, int mods) override;
     void DrawContent(ID2D1DeviceContext* context, RECT body) override;
     void DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered) override;
+    int GetBottomBarButtonCount() const override { return 1; }
     WidgetHit HitTestWidget(POINT pt) const override;
     HitRegion HitTestDrag(POINT pt, Slot*& outSlot) override;
     void DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot,
@@ -839,6 +844,7 @@ public:
     void DrawContent(ID2D1DeviceContext* context, RECT body) override;
     void DrawButtons(ID2D1DeviceContext* context, RECT handleRect,
         bool hovered) override;
+    int GetBottomBarButtonCount() const override;
     WidgetHit HitTestWidget(POINT pt) const override;
     HitRegion HitTestDrag(POINT pt, Slot*& outSlot) override;
     void DrawDropPreview(ID2D1DeviceContext* context, Slot* slot,
@@ -910,6 +916,7 @@ private:
     mutable std::unique_ptr<Item> hostedDropItem_;
     mutable RECT dropPreviewBounds_{};
     mutable size_t dropPreviewIndex_ = 0;
+    mutable float dropPreviewItemPad_ = 0.0f;
     mutable bool dropPreviewValid_ = false;
     mutable bool dropPreviewSourceTab_ = false;
     mutable std::vector<SearchResultRef> groupSearchResults_;

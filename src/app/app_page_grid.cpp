@@ -248,7 +248,7 @@ void DesktopApp::ToggleLastPagePin(POINT screenPoint)
  * @brief 设置图标间距比例（0.5 ~ 2.0），并重新布局。
  * @param value 新的间距倍率。
  */
-void DesktopApp::SetIconSpacing(float value)
+void DesktopApp::PreviewIconSpacing(float value)
 {
     const float clamped = snowdesktop::layout_spacing_rules::
         ClampScale(value);
@@ -256,10 +256,46 @@ void DesktopApp::SetIconSpacing(float value)
     iconSpacingScale_ = clamped;
     for (auto& page : gridPages_)
         ApplyIconSpacingToPage(page);
+
+    // A spacing preview changes only geometry. Existing runtime items point
+    // at these model records, so updating their bounds avoids rebuilding all
+    // containers for every one-percent slider step.
+    for (auto& item : items_)
+    {
+        if (item.name.empty()) continue;
+        item.bounds = GetGridRect(
+            gridPages_, item.gridCell, item.gridSpan);
+    }
+    for (auto& widget : widgets_)
+    {
+        if (IsGroupedWidget(widget)) continue;
+        const GridPage* page = FindGridPage(
+            gridPages_, widget.gridCell.pageId);
+        if (page)
+            widget.cellScale = CalculateWidgetCellScale(
+                page->cellWidth, page->cellHeight);
+        widget.bounds = GetGridRect(
+            gridPages_, widget.gridCell, widget.gridSpan);
+    }
+    iconSpacingPreviewActive_ = true;
+    InvalidateDragStaticScene();
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+void DesktopApp::SetIconSpacing(float value)
+{
+    const float clamped = snowdesktop::layout_spacing_rules::
+        ClampScale(value);
+    const bool changed = clamped != iconSpacingScale_;
+    if (!changed && !iconSpacingPreviewActive_) return;
+    iconSpacingScale_ = clamped;
+    for (auto& page : gridPages_)
+        ApplyIconSpacingToPage(page);
     ApplyDockWorkAreaReservation();
     LayoutItems();
     RefreshIconBitmapResolution();
     SaveLayoutSlots();
+    iconSpacingPreviewActive_ = false;
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 

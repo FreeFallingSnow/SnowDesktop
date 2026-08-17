@@ -29,30 +29,41 @@ inline float ResolveStoredScale(
     return ClampScale(fallback);
 }
 
+inline float ComponentGapResponseScale(float layoutSpacingScale)
+{
+    const float spacing = ClampScale(layoutSpacingScale);
+    if (spacing <= 1.0f) return spacing;
+
+    // Preserve the established compact 100% baseline, but give the upper
+    // half of the shared slider enough range for widget frames to visibly
+    // separate before the page gap becomes the limiting constraint.
+    return 1.0f + (spacing - 1.0f) * 2.0f;
+}
+
 inline int ComponentVisualGap(
-    int pageGap, float cellScale, float layoutSpacingScale)
+    int pageGap, float pageVisualScale, float layoutSpacingScale)
 {
     const int available = std::max(0, pageGap);
     const int preferred = std::max(0, static_cast<int>(std::round(
-        8.0f * std::max(0.1f, cellScale) *
-        ClampScale(layoutSpacingScale))));
+        8.0f * std::max(0.1f, pageVisualScale) *
+        ComponentGapResponseScale(layoutSpacingScale))));
     return std::min(available, preferred);
 }
 
 inline int ComponentFrameOutset(
-    int pageGap, float cellScale, float layoutSpacingScale)
+    int pageGap, float pageVisualScale, float layoutSpacingScale)
 {
     const int available = std::max(0, pageGap);
     return std::max(0, (available - ComponentVisualGap(
-        available, cellScale, layoutSpacingScale)) / 2);
+        available, pageVisualScale, layoutSpacingScale)) / 2);
 }
 
 inline int ComponentEdgeMargin(
-    int pageMargin, int pageGap, float cellScale,
+    int pageMargin, int pageGap, float pageVisualScale,
     float layoutSpacingScale)
 {
     return std::max(0, pageMargin - ComponentFrameOutset(
-        pageGap, cellScale, layoutSpacingScale));
+        pageGap, pageVisualScale, layoutSpacingScale));
 }
 
 } // namespace snowdesktop::layout_spacing_rules

@@ -1142,7 +1142,7 @@ void FolderMapping::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bo
     const float bs = GetBarScale();
     const int btnSize = Cu(14.0f * bs);
     const int gap = Cu(4.0f * bs);
-    const int gapBetween = Cu(7.0f * bs);
+    const int gapBetween = Cu(4.0f * bs);
     const int resizeReserve = Cu(20.0f * bs);
     const int h = handleRect.bottom - handleRect.top;
     RECT toggleBtn = {
@@ -1251,7 +1251,7 @@ WidgetHit FolderMapping::HitTestWidget(POINT pt) const
     const float bs = GetBarScale();
     const int btnSize = Cu(14.0f * bs);
     const int gap = Cu(4.0f * bs);
-    const int gapBetween = Cu(7.0f * bs);
+    const int gapBetween = Cu(4.0f * bs);
     const int resizeReserve = Cu(20.0f * bs);
     const int h = handle.bottom - handle.top;
     RECT toggleBtn = {

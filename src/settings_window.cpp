@@ -2548,18 +2548,30 @@ void SettingsWindow::DrawDisplayPage()
     BeginSettingRow(_L("app.settings.layout_spacing"), sliderActionW,
         _L("app.settings.layout_spacing_hint"));
     ImGui::SetNextItemWidth(actionSliderW);
-    if (ImGui::SliderInt("##IconSpacing", &displaySpacingPct_, 50, 200, "%d%%", ImGuiSliderFlags_None))
+    const bool spacingChanged = ImGui::SliderInt(
+        "##IconSpacing", &displaySpacingPct_, 50, 200,
+        "%d%%", ImGuiSliderFlags_None);
+    if (spacingChanged)
     {
         iconSpacingScale_ = displaySpacingPct_ / 100.0f;
-        markChanged();
+        if (layoutSpacingChangedCallback_)
+            layoutSpacingChangedCallback_(iconSpacingScale_, false);
+        else
+            markChanged();
     }
+    if (ImGui::IsItemDeactivatedAfterEdit() &&
+        layoutSpacingChangedCallback_)
+        layoutSpacingChangedCallback_(iconSpacingScale_, true);
     ImGui::SameLine();
     if (BlueButton((std::string(_L("app.settings.restore_default")) +
         "##IconSpacingDefault").c_str(), ImVec2(resetW, 0)))
     {
         displaySpacingPct_ = 100;
         iconSpacingScale_ = 1.0f;
-        markChanged();
+        if (layoutSpacingChangedCallback_)
+            layoutSpacingChangedCallback_(iconSpacingScale_, true);
+        else
+            markChanged();
     }
 
     BeginSettingRow(_L("app.settings.title_font_size"), sliderActionW);

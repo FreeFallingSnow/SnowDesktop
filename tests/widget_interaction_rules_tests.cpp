@@ -304,6 +304,12 @@ void TestBottomBarWidthFollowsCornerAndHeight()
     Check(
         chromeRules::BottomBarSideInset(56, 32, 8, 4) == 26,
         "bottom-bar side insets must scale with widget cell size");
+    Check(
+        chromeRules::BottomBarTitleTrailingReserve(
+            0, 14, 4, 4, 20, 2) == 26 &&
+        chromeRules::BottomBarTitleTrailingReserve(
+            3, 14, 4, 4, 20, 2) == 76,
+        "bottom-bar titles must reserve only the controls that are actually visible");
 }
 
 void TestGuidePlaceholderLifecycle()

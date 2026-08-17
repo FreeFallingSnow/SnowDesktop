@@ -166,6 +166,35 @@ size_t FileGroupSourceTabIndexAtPoint(
     return static_cast<size_t>(-1);
 }
 
+float ResolveInsertionItemPad(
+    Container* container, Slot* slot, HitRegion region)
+{
+    if (!container || !slot) return 0.0f;
+    const bool verticalBar =
+        container->GetInsertionStyle() == BarStyle::VBar;
+    const auto& slots = container->GetSlots();
+    for (size_t i = 0; i < slots.size(); ++i)
+    {
+        if (slots[i].get() != slot) continue;
+        if (region == HitRegion::SortBefore && i > 0)
+        {
+            return snowdesktop::widget_item_layout::
+                InsertionBoundaryPad(
+                    slots[i - 1]->GetBounds(),
+                    slots[i]->GetBounds(), verticalBar);
+        }
+        if (region == HitRegion::SortAfter && i + 1 < slots.size())
+        {
+            return snowdesktop::widget_item_layout::
+                InsertionBoundaryPad(
+                    slots[i]->GetBounds(),
+                    slots[i + 1]->GetBounds(), verticalBar);
+        }
+        break;
+    }
+    return 0.0f;
+}
+
 struct FileGroupButtonRects
 {
     RECT date{};
@@ -182,7 +211,7 @@ FileGroupButtonRects GetFileGroupButtonRects(
     const float scale = group->GetBarScale();
     const int size = group->Cu(14.0f * scale);
     const int gap = group->Cu(4.0f * scale);
-    const int between = group->Cu(7.0f * scale);
+    const int between = group->Cu(4.0f * scale);
     const int resizeReserve = group->Cu(20.0f * scale);
     const int height = handle.bottom - handle.top;
     LONG right = handle.right - resizeReserve - gap;
@@ -936,6 +965,7 @@ void FileGroup::InvalidateHostedView()
     groupSearchResults_.clear();
     dropPreviewValid_ = false;
     dropPreviewSourceTab_ = false;
+    dropPreviewItemPad_ = 0.0f;
     InvalidateSlots();
     for (auto& [id, source] : hostedSourceCache_)
     {
@@ -1550,6 +1580,7 @@ HitRegion FileGroup::HitTestDrag(
     outSlot = nullptr;
     dropPreviewValid_ = false;
     dropPreviewSourceTab_ = false;
+    dropPreviewItemPad_ = 0.0f;
     RECT frame = GetFrameRect();
     if (!PtInRect(&frame, pt))
         return HitRegion::None;
@@ -1601,6 +1632,8 @@ HitRegion FileGroup::HitTestDrag(
             searchSlot->GetBounds();
         dropPreviewIndex_ =
             searchSlot->GetIndex();
+        dropPreviewItemPad_ = ResolveInsertionItemPad(
+            this, searchSlot, result);
         dropPreviewValid_ = true;
         outSlot = hostedDropSlot_.get();
         return result;
@@ -1631,6 +1664,8 @@ HitRegion FileGroup::HitTestDrag(
     }
     dropPreviewBounds_ = sourceSlot->GetBounds();
     dropPreviewIndex_ = sourceSlot->GetIndex();
+    dropPreviewItemPad_ = ResolveInsertionItemPad(
+        source, sourceSlot, result);
     dropPreviewValid_ = true;
     outSlot = hostedDropSlot_.get();
     return result;
@@ -1694,11 +1729,8 @@ void FileGroup::DrawDropPreview(
         Slot stableSlot(
             this, dropPreviewBounds_,
             dropPreviewIndex_);
-        const float itemPad = SingleColumn()
-            ? static_cast<float>(Cu(2.0f))
-            : 0.0f;
         stableSlot.DrawDropIndicator(
-            context, region, itemPad);
+            context, region, dropPreviewItemPad_);
         return;
     }
     (void)slot;
@@ -2073,6 +2105,23 @@ void FileGroup::DrawContent(
                 PtInRect(&tab, app_->lastMousePoint_) != FALSE);
     }
     context->PopAxisAlignedClip();
+}
+
+int FileGroup::GetBottomBarButtonCount() const
+{
+    if (!data_ || !app_) return 2;
+    const std::wstring activeId = GetActiveSourceId();
+    const DesktopWidget* previewSource = GetPreviewScene()
+        ? GetPreviewScene()->FindWidget(activeId) : nullptr;
+    if (previewSource)
+    {
+        return previewSource->type ==
+            DesktopWidgetType::FolderMapping ? 3 : 2;
+    }
+    const size_t sourceIndex = app_->FindWidgetIndexById(activeId);
+    return sourceIndex < app_->widgets_.size() &&
+        app_->widgets_[sourceIndex].type ==
+            DesktopWidgetType::FolderMapping ? 3 : 2;
 }
 
 void FileGroup::DrawButtons(

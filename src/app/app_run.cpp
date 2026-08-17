@@ -638,6 +638,13 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             SetItemFontWeight(static_cast<DWRITE_FONT_WEIGHT>(static_cast<int>(settingsWindow_->GetItemFontWeightD())));
             SetShortcutArrowMode(settingsWindow_->GetShortcutArrowMode());
         });
+        settingsWindow_->SetLayoutSpacingChangedCallback(
+            [this](float spacingScale, bool commit) {
+                if (commit)
+                    SetIconSpacing(spacingScale);
+                else
+                    PreviewIconSpacing(spacingScale);
+            });
         settingsWindow_->SetIconBeautifySettingsChangedCallback(
             [this](snowdesktop::IconBeautifyUpdateKind updateKind) {
                 SetIconBeautifySettings(

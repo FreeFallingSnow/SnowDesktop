@@ -59,12 +59,12 @@ float DesktopApp::GetWidgetCellScale(const DesktopWidget& widget) const
 int DesktopApp::GetComponentEdgeMargin(
     const GridPage& page, bool vertical) const
 {
-    const float cellScale = CalculateWidgetCellScale(
-        page.cellWidth, page.cellHeight);
+    const float pageVisualScale =
+        GetPageItemVisualMetrics(page).layoutScale;
     return snowdesktop::layout_spacing_rules::ComponentEdgeMargin(
         vertical ? page.marginX : page.marginY,
         vertical ? page.gapX : page.gapY,
-        cellScale, iconSpacingScale_);
+        pageVisualScale, iconSpacingScale_);
 }
 
 RECT DesktopApp::GetStandaloneWidgetFrameRect(const DesktopWidget& widget) const
@@ -73,13 +73,14 @@ RECT DesktopApp::GetStandaloneWidgetFrameRect(const DesktopWidget& widget) const
     for (const auto& page : gridPages_)
     {
         if (page.id != widget.gridCell.pageId) continue;
-        const float cellScale = GetWidgetCellScale(widget);
+        const float pageVisualScale =
+            GetPageItemVisualMetrics(page).layoutScale;
         const int outsetX = snowdesktop::layout_spacing_rules::
             ComponentFrameOutset(
-                page.gapX, cellScale, iconSpacingScale_);
+                page.gapX, pageVisualScale, iconSpacingScale_);
         const int outsetY = snowdesktop::layout_spacing_rules::
             ComponentFrameOutset(
-                page.gapY, cellScale, iconSpacingScale_);
+                page.gapY, pageVisualScale, iconSpacingScale_);
         InflateRect(&frame, outsetX, outsetY);
         break;
     }
