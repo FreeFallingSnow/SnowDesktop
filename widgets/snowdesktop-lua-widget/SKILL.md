@@ -133,7 +133,10 @@ Treat radioGroup and slider as controlled: update component-owned state from
 context menus; slider changes are emitted during captured left-button drag.
 Probe `view.keyboardNavigation.basic` before relying on host focus outlines,
 Tab/Shift+Tab traversal, spatial arrows, Enter/Space activation, or slider
-arrow-step changes. Probe `view.keyboard.accessKey` before assigning a unique
+arrow-step changes. Pointer activation still updates semantic focus, but the
+host focus outline is reserved for keyboard, access-key, programmatic, text
+editing, and accessibility focus; use hover/pressed/selected styles for pointer
+feedback. Probe `view.keyboard.accessKey` before assigning a unique
 single ASCII letter/digit `accessKey` to a direct focus target. Alt+key focuses
 inputs and sliders and activates ordinary action/selection nodes through their
 existing controlled action. `acceleratorText` is UI Automation metadata for a

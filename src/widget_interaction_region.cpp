@@ -113,6 +113,13 @@ bool IsAccessKeyCharacter(char key) noexcept
 }
 }
 
+bool ShouldShowInteractionFocusCue(std::string_view source,
+    bool textEntry) noexcept
+{
+    return textEntry || source == "keyboard" || source == "accessKey" ||
+        source == "accessibility" || source == "programmatic";
+}
+
 bool InteractionShape::Contains(float pointX, float pointY) const noexcept
 {
     if (type == InteractionShapeType::Circle)

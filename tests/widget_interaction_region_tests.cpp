@@ -12,6 +12,7 @@ using snowdesktop::widget_runtime::InteractionAction;
 using snowdesktop::widget_runtime::InteractionControlKind;
 using snowdesktop::widget_runtime::InteractionRegion;
 using snowdesktop::widget_runtime::InteractionShapeType;
+using snowdesktop::widget_runtime::ShouldShowInteractionFocusCue;
 using snowdesktop::widget_runtime::WidgetInteractionRegions;
 
 void Check(bool condition, const char* message)
@@ -34,6 +35,19 @@ InteractionRegion Rect(std::string key, float x, float y,
     region.shape.width = width;
     region.shape.height = height;
     return region;
+}
+
+void TestFocusCueModality()
+{
+    Check(!ShouldShowInteractionFocusCue("pointer"),
+        "pointer focus must not add a keyboard-style focus outline");
+    Check(ShouldShowInteractionFocusCue("pointer", true),
+        "pointer-focused text inputs must keep their editing focus cue");
+    Check(ShouldShowInteractionFocusCue("keyboard") &&
+            ShouldShowInteractionFocusCue("accessKey") &&
+            ShouldShowInteractionFocusCue("accessibility") &&
+            ShouldShowInteractionFocusCue("programmatic"),
+        "non-pointer focus sources must retain a visible focus cue");
 }
 
 void TestFrameTransactionAndStableState()
@@ -555,6 +569,7 @@ void TestKeyboardFocusableOrderAndFiltering()
 
 int main()
 {
+    TestFocusCueModality();
     TestFrameTransactionAndStableState();
     TestPointerPairingAndActions();
     TestOptInPointerCapture();

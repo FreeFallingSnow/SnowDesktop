@@ -2491,6 +2491,28 @@ static const std::string& ViewFocusForSurface(
         ? widget.panelViewKeyboardFocusKey : widget.viewKeyboardFocusKey;
 }
 
+static bool& ViewFocusCueForSurface(
+    LuaWidget& widget, std::string_view surface)
+{
+    return IsPanelSurface(surface)
+        ? widget.panelViewFocusCueVisible : widget.viewFocusCueVisible;
+}
+
+static bool ViewFocusCueForSurface(
+    const LuaWidget& widget, std::string_view surface)
+{
+    return IsPanelSurface(surface)
+        ? widget.panelViewFocusCueVisible : widget.viewFocusCueVisible;
+}
+
+static std::string_view VisualViewFocusForSurface(
+    const LuaWidget& widget, std::string_view surface)
+{
+    return ViewFocusCueForSurface(widget, surface)
+        ? std::string_view(ViewFocusForSurface(widget, surface))
+        : std::string_view{};
+}
+
 static RECT BoundsForSurface(
     const LuaWidget& widget, std::string_view surface) noexcept
 {
@@ -20172,7 +20194,8 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
         d2dState_->widgetClipDepth = 0;
         const bool transitionActive = DrawWidgetViewTree(
             d2dState_, *found->viewTree, found->interactionRegions,
-            found->viewKeyboardFocusKey, found->viewTransitions,
+            VisualViewFocusForSurface(*found, "desktop"),
+            found->viewTransitions,
             found->preview || !widgetTimerRequestCallback_ ||
                 QueryWidgetSystemEnvironment().reducedMotion);
         DrawWidgetSelectOverlays(d2dState_, *found->viewTree,
@@ -20599,7 +20622,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             const bool transitionActive = DrawWidgetViewTree(
                 d2dState_, *found->viewTree,
                 found->interactionRegions,
-                found->viewKeyboardFocusKey,
+                VisualViewFocusForSurface(*found, "desktop"),
                 found->viewTransitions,
                 found->preview || !widgetTimerRequestCallback_ ||
                     QueryWidgetSystemEnvironment().reducedMotion);
@@ -20612,6 +20635,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                         found->viewKeyboardFocusKey)))
             {
                 found->viewKeyboardFocusKey.clear();
+                found->viewFocusCueVisible = false;
                 found->logicalSlotFocus.reset();
             }
             DrawHostViewInteractionOverlays(*found,
@@ -20757,6 +20781,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                     current.viewKeyboardFocusKey)))
         {
             current.viewKeyboardFocusKey.clear();
+            current.viewFocusCueVisible = false;
             current.logicalSlotFocus.reset();
         }
         DrawHostViewInteractionOverlays(current,
@@ -20816,7 +20841,7 @@ bool WidgetEngine::RenderWidgetPanel(
         const bool transitionActive = DrawWidgetViewTree(
             d2dState_, *widget.panelViewTree,
             widget.panelInteractionRegions,
-            widget.panelViewKeyboardFocusKey,
+            VisualViewFocusForSurface(widget, normalizedSurface),
             widget.panelViewTransitions,
             widget.preview || !widgetTimerRequestCallback_ ||
                 QueryWidgetSystemEnvironment().reducedMotion);
@@ -21142,7 +21167,8 @@ bool WidgetEngine::RenderWidgetPanel(
                     const bool transitionActive = DrawWidgetViewTree(
                         d2dState_, *current.panelViewTree,
                         current.panelInteractionRegions,
-                        current.panelViewKeyboardFocusKey,
+                        VisualViewFocusForSurface(
+                            current, normalizedSurface),
                         current.panelViewTransitions,
                         current.preview || !widgetTimerRequestCallback_ ||
                             QueryWidgetSystemEnvironment().reducedMotion);
@@ -21161,6 +21187,7 @@ bool WidgetEngine::RenderWidgetPanel(
                         current.panelViewKeyboardFocusKey))
                 {
                     current.panelViewKeyboardFocusKey.clear();
+                    current.panelViewFocusCueVisible = false;
                 }
                 DrawHostViewInteractionOverlays(current,
                     current.panelInteractionRegions,
@@ -21185,7 +21212,8 @@ bool WidgetEngine::RenderWidgetPanel(
                 const bool transitionActive = DrawWidgetViewTree(
                     d2dState_, *current.panelViewTree,
                     current.panelInteractionRegions,
-                    current.panelViewKeyboardFocusKey,
+                    VisualViewFocusForSurface(
+                        current, normalizedSurface),
                     current.panelViewTransitions,
                     current.preview || !widgetTimerRequestCallback_ ||
                         QueryWidgetSystemEnvironment().reducedMotion);
@@ -26510,6 +26538,9 @@ bool WidgetEngine::RuntimeFocusHostInput(const std::wstring& widgetId,
         focusedHostInput_.surface == surface)
     {
         ViewFocusForSurface(widgets_[index], surface) = id;
+        ViewFocusCueForSurface(widgets_[index], surface) =
+            snowdesktop::widget_runtime::ShouldShowInteractionFocusCue(
+                source ? source : "pointer", true);
         if (!IsPanelSurface(surface))
             widgets_[index].logicalSlotFocus.reset();
         if (!found->controlled && found->liveUpdate)
@@ -26566,6 +26597,9 @@ bool WidgetEngine::RuntimeFocusHostInput(const std::wstring& widgetId,
 
     BlurHostInput(false);
     ViewFocusForSurface(widgets_[index], surface) = id;
+    ViewFocusCueForSurface(widgets_[index], surface) =
+        snowdesktop::widget_runtime::ShouldShowInteractionFocusCue(
+            source ? source : "pointer", true);
     if (!IsPanelSurface(surface))
         widgets_[index].logicalSlotFocus.reset();
     focusedHostInput_.active = true;
@@ -26801,6 +26835,9 @@ bool WidgetEngine::RuntimeFocusViewTarget(const std::wstring& widgetId,
         !currentRegions.IsKeyboardFocusable(id))
         return false;
     ViewFocusForSurface(current, surface) = id;
+    ViewFocusCueForSurface(current, surface) =
+        snowdesktop::widget_runtime::ShouldShowInteractionFocusCue(
+            source ? source : "programmatic");
     if (!IsPanelSurface(surface))
     {
         current.logicalSlotFocus.reset();
@@ -26823,6 +26860,7 @@ void WidgetEngine::BeginHostLogicalSlotPointer(
     LuaWidget& widget, int x, int y)
 {
     widget.logicalSlotPointerDrag.reset();
+    widget.viewFocusCueVisible = false;
     const std::string previousViewFocus = widget.viewKeyboardFocusKey;
     const auto previousSlotFocus = widget.logicalSlotFocus;
     if (widget.preview || !widget.valid)
@@ -27063,7 +27101,13 @@ void WidgetEngine::DrawHostViewInteractionOverlays(
     std::string_view focusedKey, bool drawLogicalSlotDrag)
 {
     if (!d2dState_ || !d2dState_->ctx) return;
-    if (!focusedKey.empty() &&
+    const std::string_view surface = drawLogicalSlotDrag
+        ? std::string_view("desktop")
+        : std::string_view(widget.panelSurface);
+    const bool declarativeSurface = drawLogicalSlotDrag
+        ? widget.viewTree.has_value() : widget.panelViewTree.has_value();
+    if (!declarativeSurface &&
+        ViewFocusCueForSurface(widget, surface) && !focusedKey.empty() &&
         (drawLogicalSlotDrag
             ? RuntimeIsWidgetSelected(widget.widgetId)
             : widget.panelActive))
@@ -27316,6 +27360,7 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
                     focusedHostInput_.widgetId == widgetId)
                     BlurHostInput(false);
                 surfaceFocus = targetKey;
+                ViewFocusCueForSurface(widget, normalizedSurface) = true;
             }
             if (!panelSurface)
             {
@@ -27363,6 +27408,7 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
         if (focusKeys.empty())
         {
             focusKey.clear();
+            widget.panelViewFocusCueVisible = false;
             return false;
         }
         const auto focusedIndex = [&]() -> std::optional<std::size_t> {
@@ -27394,6 +27440,7 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
                     focusedHostInput_.widgetId == widgetId)
                     BlurHostInput(false);
                 focusKey = targetKey;
+                widget.panelViewFocusCueVisible = true;
             }
             RuntimeInvalidateHost(widgetId);
             return true;
@@ -27406,6 +27453,7 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
             return next ? focusTarget(focusKeys[*next]) : false;
         }
         if (!focusedIndex) return false;
+        widget.panelViewFocusCueVisible = true;
         const std::string focusedKey = focusKeys[*focusedIndex];
         const auto* focusedRegion = regions.Find(focusedKey);
         if (!focusedRegion) return false;
@@ -27417,6 +27465,7 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
                 IsPanelSurface(focusedHostInput_.surface))
                 BlurHostInput(true);
             focusKey.clear();
+            widget.panelViewFocusCueVisible = false;
             RuntimeInvalidateHost(widgetId);
             return true;
         }
@@ -27554,6 +27603,7 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
     if (focusKeys.empty())
     {
         widget.viewKeyboardFocusKey.clear();
+        widget.viewFocusCueVisible = false;
         widget.logicalSlotFocus.reset();
         return false;
     }
@@ -27598,6 +27648,7 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
                 focusedHostInput_.widgetId == widgetId)
                 BlurHostInput(false);
             widget.viewKeyboardFocusKey = targetKey;
+            widget.viewFocusCueVisible = true;
         }
         synchronizeSlotFocus(targetKey);
         RuntimeInvalidateHost(widgetId);
@@ -27621,6 +27672,7 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
         return focusTarget(focusKeys[*next]);
     }
     if (!focusedIndex) return false;
+    widget.viewFocusCueVisible = true;
     const std::string focusedKey = focusKeys[*focusedIndex];
     const auto* focusedRegion =
         widget.interactionRegions.Find(focusedKey);
@@ -27633,6 +27685,7 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
             BlurHostInput(true);
         widget.logicalSlotFocus.reset();
         widget.viewKeyboardFocusKey.clear();
+        widget.viewFocusCueVisible = false;
         RuntimeInvalidateHost(widgetId);
         return true;
     }
@@ -27994,6 +28047,7 @@ bool WidgetEngine::RuntimeSetAccessibilityFocus(
             focusedHostInput_.widgetId == widgetId)
             BlurHostInput(false);
         widget.viewKeyboardFocusKey = nodeKey;
+        widget.viewFocusCueVisible = true;
     }
 
     widget.logicalSlotFocus.reset();
@@ -28440,6 +28494,7 @@ void WidgetEngine::BlurHostInput(bool cancel)
         ViewFocusForSurface(widgets_[index], inputSurface) == inputId)
     {
         ViewFocusForSurface(widgets_[index], inputSurface).clear();
+        ViewFocusCueForSurface(widgets_[index], inputSurface) = false;
     }
     focusedHostInput_ = {};
     RuntimeInvalidateHost(widgetId);
@@ -29350,6 +29405,7 @@ bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int 
                 widget.panelInteractionRegions.IsKeyboardFocusable(
                     pointerTarget)
                 ? pointerTarget : std::string{};
+            widget.panelViewFocusCueVisible = false;
         }
         else
             BeginHostLogicalSlotPointer(widget, x, y);
@@ -29377,6 +29433,7 @@ void WidgetEngine::CloseWidgetPanelSurface(
     widget.panelViewTransitions.Clear();
     widget.panelViewTransitionFramePending = false;
     widget.panelViewKeyboardFocusKey.clear();
+    widget.panelViewFocusCueVisible = false;
     widget.panelInteractionRegions.CancelPointerPress();
     const auto transition = widget.panelInteractionRegions.ClearHover();
     if (transition.Changed())

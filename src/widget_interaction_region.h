@@ -10,6 +10,9 @@
 
 namespace snowdesktop::widget_runtime
 {
+bool ShouldShowInteractionFocusCue(std::string_view source,
+    bool textEntry = false) noexcept;
+
 struct InteractionValue
 {
     enum class Type

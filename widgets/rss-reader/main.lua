@@ -201,6 +201,8 @@ local function render(context, model)
     local viewportHeight = math.max(1, listBottom - listTop)
     local viewport = { type = "rect", x = pad, y = listTop,
         width = width - pad * 2, height = viewportHeight }
+    local scrollViewport = { type = "rect", x = pad, y = listTop,
+        width = width - pad, height = viewportHeight }
     interaction.region({
         key = "rss.surface", shape = viewport,
         events = { contextMenu = {
@@ -232,7 +234,7 @@ local function render(context, model)
 
     local rowHeight = layout.cu(math.max(48, cfg.fontSize * 2 + 22))
     local scroll = interaction.scroll({
-        key = "rss.scroll", shape = viewport,
+        key = "rss.scroll", shape = scrollViewport,
         contentHeight = math.ceil(#model.articles * rowHeight),
     })
     local first = math.max(1, math.floor(scroll.offset / rowHeight) + 1)

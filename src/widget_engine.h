@@ -656,12 +656,14 @@ struct LuaWidget
     std::optional<LogicalSlotPointerDrag> logicalSlotPointerDrag;
     std::optional<LogicalSlotFocus> logicalSlotFocus;
     std::string viewKeyboardFocusKey;
+    bool viewFocusCueVisible = false;
     snowdesktop::widget_runtime::WidgetInteractionRegions interactionRegions;
     std::optional<snowdesktop::widget_runtime::ViewNode> viewTree;
     snowdesktop::widget_runtime::ViewTransitionRuntime viewTransitions;
     bool viewTransitionFramePending = false;
     bool viewIndeterminateProgressActive = false;
     std::string panelViewKeyboardFocusKey;
+    bool panelViewFocusCueVisible = false;
     snowdesktop::widget_runtime::WidgetInteractionRegions
         panelInteractionRegions;
     std::optional<snowdesktop::widget_runtime::ViewNode> panelViewTree;
