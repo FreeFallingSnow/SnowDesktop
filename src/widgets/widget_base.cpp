@@ -320,10 +320,9 @@ RECT WidgetContainer::GetFrameRect() const
         return hostedFrame_;
     if (app_ && app_->IsGroupedWidget(*data_))
         return {};
-    // The occupied grid rectangle already excludes the shared page gap.
-    // Using it directly makes neighboring icons and widget frames follow the
-    // same spacing source without a second inset/compensation pass.
-    return data_->bounds;
+    return app_
+        ? app_->GetStandaloneWidgetFrameRect(*data_)
+        : data_->bounds;
 }
 
 snowdesktop::PageItemVisualMetrics WidgetContainer::GetItemVisualMetrics() const

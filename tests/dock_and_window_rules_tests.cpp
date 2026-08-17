@@ -444,13 +444,29 @@ int main()
             layoutSpacing::ResolveStoredScale(
                 std::nullopt, 0.25f) == 0.5f,
         "legacy componentSpacing-only layouts must migrate into the new supported range");
-    Check(localLayout::MinimumCollectionSpan(
-            false, 1, 1) == std::pair<int, int>{ 1, 1 } &&
-            localLayout::MinimumCollectionSpan(
-                false, 1, 2) == std::pair<int, int>{ 2, 2 } &&
-            localLayout::MinimumCollectionSpan(
-                true, 1, 1) == std::pair<int, int>{ 2, 2 },
-        "legacy expanded and scrolling Collections must normalize to a span that preserves normal icon geometry");
+    Check(layoutSpacing::ComponentVisualGap(
+            16, 1.0f, 1.0f) == 8 &&
+            layoutSpacing::ComponentFrameOutset(
+                16, 1.0f, 1.0f) == 4 &&
+            layoutSpacing::ComponentVisualGap(
+                16, 1.0f, 0.5f) == 4 &&
+            layoutSpacing::ComponentVisualGap(
+                16, 1.0f, 2.0f) == 16,
+        "widget frames must keep the original compact baseline while following the one layout-spacing value");
+    Check(layoutSpacing::ComponentVisualGap(
+            5, 1.0f, 2.0f) == 5 &&
+            layoutSpacing::ComponentFrameOutset(
+                5, 1.0f, 2.0f) == 0 &&
+            layoutSpacing::ComponentEdgeMargin(
+                14, 16, 1.0f, 1.0f) == 10,
+        "widget frame spacing must clamp to the page gap and preserve its matching edge margin");
+    Check(localLayout::IsCompactCollectionSpan(1, 1) &&
+            !localLayout::IsCompactCollectionSpan(1, 4) &&
+            !localLayout::IsCompactCollectionSpan(4, 1) &&
+            localLayout::CollectionUsesFullFrame(false, 1, 4) &&
+            localLayout::CollectionUsesFullFrame(false, 4, 1) &&
+            !localLayout::CollectionUsesFullFrame(true, 1, 4),
+        "only a 1x1 Collection is compact; single-row and single-column large-folder layouts must remain valid");
 
     constexpr float standardLineHeight =
         14.0f * 7.0f / 6.0f;

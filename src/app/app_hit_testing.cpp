@@ -59,12 +59,31 @@ float DesktopApp::GetWidgetCellScale(const DesktopWidget& widget) const
 int DesktopApp::GetComponentEdgeMargin(
     const GridPage& page, bool vertical) const
 {
-    return vertical ? page.marginX : page.marginY;
+    const float cellScale = CalculateWidgetCellScale(
+        page.cellWidth, page.cellHeight);
+    return snowdesktop::layout_spacing_rules::ComponentEdgeMargin(
+        vertical ? page.marginX : page.marginY,
+        vertical ? page.gapX : page.gapY,
+        cellScale, iconSpacingScale_);
 }
 
 RECT DesktopApp::GetStandaloneWidgetFrameRect(const DesktopWidget& widget) const
 {
-    return widget.bounds;
+    RECT frame = widget.bounds;
+    for (const auto& page : gridPages_)
+    {
+        if (page.id != widget.gridCell.pageId) continue;
+        const float cellScale = GetWidgetCellScale(widget);
+        const int outsetX = snowdesktop::layout_spacing_rules::
+            ComponentFrameOutset(
+                page.gapX, cellScale, iconSpacingScale_);
+        const int outsetY = snowdesktop::layout_spacing_rules::
+            ComponentFrameOutset(
+                page.gapY, cellScale, iconSpacingScale_);
+        InflateRect(&frame, outsetX, outsetY);
+        break;
+    }
+    return frame;
 }
 
 RECT DesktopApp::GetLuaWidgetHostActionRect(

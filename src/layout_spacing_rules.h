@@ -29,4 +29,30 @@ inline float ResolveStoredScale(
     return ClampScale(fallback);
 }
 
+inline int ComponentVisualGap(
+    int pageGap, float cellScale, float layoutSpacingScale)
+{
+    const int available = std::max(0, pageGap);
+    const int preferred = std::max(0, static_cast<int>(std::round(
+        8.0f * std::max(0.1f, cellScale) *
+        ClampScale(layoutSpacingScale))));
+    return std::min(available, preferred);
+}
+
+inline int ComponentFrameOutset(
+    int pageGap, float cellScale, float layoutSpacingScale)
+{
+    const int available = std::max(0, pageGap);
+    return std::max(0, (available - ComponentVisualGap(
+        available, cellScale, layoutSpacingScale)) / 2);
+}
+
+inline int ComponentEdgeMargin(
+    int pageMargin, int pageGap, float cellScale,
+    float layoutSpacingScale)
+{
+    return std::max(0, pageMargin - ComponentFrameOutset(
+        pageGap, cellScale, layoutSpacingScale));
+}
+
 } // namespace snowdesktop::layout_spacing_rules

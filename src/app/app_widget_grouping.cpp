@@ -1,7 +1,6 @@
 #include "app.h"
 #include "../widgets/collection_group_rules.h"
 #include "../steam_app_identity.h"
-#include "../widget_item_layout.h"
 
 #include <commctrl.h>
 #include <objbase.h>
@@ -338,27 +337,10 @@ GridSpan DesktopApp::ClampWidgetGridSpan(const DesktopWidget& widget, GridSpan s
     const int maxRows = widget.maxGridSpan.rows > 0
         ? std::min(pageMaxRows, widget.maxGridSpan.rows)
         : pageMaxRows;
-    int requestedMinColumns = std::max(1, widget.minGridSpan.columns);
-    int requestedMinRows = std::max(1, widget.minGridSpan.rows);
-
-    // A 1x1 Collection is the compact 2x2 thumbnail mosaic. Every expanded
-    // or scrolling Collection renders normal desktop items and therefore
-    // needs enough room for the shared page icon and the full title band.
-    // Normalize legacy/asymmetric expanded spans instead of shrinking icons.
-    if (widget.type == DesktopWidgetType::Collection &&
-        (widget.scrollContainerMode || span.columns > 1 || span.rows > 1))
-    {
-        const auto minimum = snowdesktop::widget_item_layout::
-            MinimumCollectionSpan(widget.scrollContainerMode,
-                span.columns, span.rows);
-        requestedMinColumns = std::max(
-            minimum.first, requestedMinColumns);
-        requestedMinRows = std::max(
-            minimum.second, requestedMinRows);
-    }
-
-    const int minColumns = std::min(maxColumns, requestedMinColumns);
-    const int minRows = std::min(maxRows, requestedMinRows);
+    const int minColumns = std::min(
+        maxColumns, std::max(1, widget.minGridSpan.columns));
+    const int minRows = std::min(
+        maxRows, std::max(1, widget.minGridSpan.rows));
 
     span.columns = std::clamp(span.columns, minColumns, maxColumns);
     span.rows = std::clamp(span.rows, minRows, maxRows);

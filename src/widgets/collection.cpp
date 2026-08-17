@@ -59,9 +59,17 @@ static snowdesktop::widget_item_layout::Layout CollectionLocalLayout(
 {
     if (!widget || !widget->GetWidgetData()) return {};
     DesktopWidget* data = widget->GetWidgetData();
-    const RECT content = data->scrollContainerMode
-        ? CollectionScrollContentRect(widget)
-        : widget->GetBodyRect();
+    RECT content{};
+    if (data->scrollContainerMode)
+        content = CollectionScrollContentRect(widget);
+    else if (snowdesktop::widget_item_layout::CollectionUsesFullFrame(
+            data->scrollContainerMode,
+            data->gridSpan.columns, data->gridSpan.rows))
+        // The large-folder action bar floats over the frame on hover. It does
+        // not own layout space, so fixed rows use the complete widget height.
+        content = widget->GetFrameRect();
+    else
+        content = widget->GetBodyRect();
     const auto metrics = CollectionVisualMetrics(widget);
     const float spacing = widget->GetLayoutSpacingScale();
     if (data->listMode)
@@ -151,7 +159,8 @@ static std::pair<size_t, size_t> CollectionVisibleIndexRange(
  */
 static size_t GetCollectionInlineCapacity(const DesktopWidget& widget)
 {
-    if (widget.gridSpan.columns <= 1 && widget.gridSpan.rows <= 1) return 4;
+    if (snowdesktop::widget_item_layout::IsCompactCollectionSpan(
+            widget.gridSpan.columns, widget.gridSpan.rows)) return 4;
     return static_cast<size_t>(std::max(1, widget.gridSpan.columns) * std::max(1, widget.gridSpan.rows) - 1);
 }
 
@@ -165,7 +174,8 @@ static size_t GetCollectionInlineCapacity(const DesktopWidget& widget)
  */
 static size_t GetCollectionAllButtonSlot(const DesktopWidget& widget)
 {
-    if (widget.gridSpan.columns <= 1 && widget.gridSpan.rows <= 1)
+    if (snowdesktop::widget_item_layout::IsCompactCollectionSpan(
+            widget.gridSpan.columns, widget.gridSpan.rows))
         return static_cast<size_t>(-1);
     return static_cast<size_t>(std::max(1, widget.gridSpan.columns) * std::max(1, widget.gridSpan.rows) - 1);
 }
@@ -220,7 +230,8 @@ static RECT GetCollectionSlotRect(const Collection* collection, size_t slot, REC
     DesktopApp* app = collection->GetApp();
     if (!data || !app) return {};
 
-    bool compact = data->gridSpan.columns <= 1 && data->gridSpan.rows <= 1;
+    bool compact = snowdesktop::widget_item_layout::IsCompactCollectionSpan(
+        data->gridSpan.columns, data->gridSpan.rows);
     if (compact)
         return GetCollectionCompactSlotRect(collection, slot, body,
             collection->Cu(6.0f));
@@ -416,7 +427,8 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
     }
 
     // ── Original: large folder / compact grid mode ────────────
-    bool compact = data_->gridSpan.columns <= 1 && data_->gridSpan.rows <= 1;
+    bool compact = snowdesktop::widget_item_layout::IsCompactCollectionSpan(
+        data_->gridSpan.columns, data_->gridSpan.rows);
     auto& slots = GetSlots();
     const size_t displayItemCount = CollectionItemCount(this);
     size_t inlineCapacity = std::min(

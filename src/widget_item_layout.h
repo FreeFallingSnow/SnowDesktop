@@ -28,14 +28,15 @@ struct Layout
     bool scrolling = false;
 };
 
-inline std::pair<int, int> MinimumCollectionSpan(
-    bool scrolling, int requestedColumns, int requestedRows)
+inline bool IsCompactCollectionSpan(int columns, int rows)
 {
-    const bool expanded = scrolling ||
-        requestedColumns > 1 || requestedRows > 1;
-    return expanded
-        ? std::pair<int, int>{ 2, 2 }
-        : std::pair<int, int>{ 1, 1 };
+    return columns <= 1 && rows <= 1;
+}
+
+inline bool CollectionUsesFullFrame(
+    bool scrolling, int columns, int rows)
+{
+    return !scrolling && !IsCompactCollectionSpan(columns, rows);
 }
 
 inline int DesiredGap(int pitch, float percent, float spacingScale)
