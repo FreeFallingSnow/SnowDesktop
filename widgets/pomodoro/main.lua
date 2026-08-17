@@ -362,7 +362,6 @@ local function buildView(context)
     local config = loadConfig()
     local palette = getPalette()
     local width = math.max(1, context.layoutSize.width)
-    local contentHeight = math.max(1, context.layoutSize.height)
     local state = getState()
     local remaining = remainingSeconds(config, nowSeconds())
     local activePhase = state
@@ -382,8 +381,6 @@ local function buildView(context)
     local padding = math.max(layout.cu(8), math.min(
         layout.cu(14), layout.vmin(4)))
     local availableWidth = math.max(1, width - padding * 2)
-    local availableHeight = math.max(1, contentHeight - padding * 2)
-    local isWide = availableWidth >= availableHeight * 1.42
     local infoGap = math.max(layout.cu(7), math.min(
         layout.cu(13), layout.vmin(3.8)))
     local majorGap = math.max(layout.cu(14), math.min(
@@ -394,14 +391,8 @@ local function buildView(context)
         layout.fontCu(14), layout.vmin(4)))
     local statusHeight = math.max(layout.cu(25), math.min(
         layout.cu(31), layout.vmin(9)))
-    local timeFont
-    if isWide then
-        timeFont = math.max(layout.fontCu(38), math.min(
-            layout.fontCu(72), layout.vh(24), layout.vw(17)))
-    else
-        timeFont = math.max(layout.fontCu(38), math.min(
-            layout.fontCu(68), layout.vmin(20)))
-    end
+    local timeFont = math.max(layout.fontCu(38), math.min(
+        layout.fontCu(68), layout.vmin(20)))
     local timeHeight = timeFont * 1.18
     local progressHeight = math.max(layout.cu(4), math.min(
         layout.cu(7), layout.vmin(2)))
@@ -468,15 +459,10 @@ local function buildView(context)
             l10n.tr("lua_widget.pomodoro.skip") }
     end
 
-    local infoWidth
-    local actionWidth
-    if isWide then
-        infoWidth = (availableWidth - majorGap) * 0.61
-        actionWidth = availableWidth - majorGap - infoWidth
-    else
-        infoWidth = math.min(availableWidth, layout.vw(88))
-        actionWidth = math.min(availableWidth * 0.82, layout.cu(280))
-    end
+    local infoWidth = math.min(availableWidth, math.max(
+        layout.cu(148), math.min(layout.cu(300), layout.vmin(88))))
+    local actionWidth = math.min(availableWidth * 0.82, math.max(
+        layout.cu(145), math.min(layout.cu(240), layout.vmin(75))))
     local timeLayoutFactor = #timeText > 5 and 4.00 or 3.35
     local timeLayoutWidth = math.min(infoWidth, math.max(
         layout.cu(124), timeFont * timeLayoutFactor))
@@ -554,8 +540,7 @@ local function buildView(context)
         },
     })
 
-    local root = isWide and view.row or view.column
-    return root({
+    return view.column({
         key = "pomodoro.surface",
         width = "fill",
         height = "fill",
