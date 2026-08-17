@@ -318,6 +318,17 @@ int main()
     namespace layoutSpacing = snowdesktop::layout_spacing_rules;
     namespace localLayout = snowdesktop::widget_item_layout;
 
+    Check(layoutSpacing::ResolveDeferredChangeAction(
+            false, false) ==
+            layoutSpacing::DeferredChangeAction::None &&
+        layoutSpacing::ResolveDeferredChangeAction(
+            true, false) ==
+            layoutSpacing::DeferredChangeAction::Preview &&
+        layoutSpacing::ResolveDeferredChangeAction(
+            true, true) ==
+            layoutSpacing::DeferredChangeAction::Commit,
+        "layout-spacing release must supersede any stale preview queued in the same settings frame");
+
     const auto pageVisual = itemVisual::ResolvePageItemVisualMetrics(
         104, 128, kDefaultItemFontSizeCu);
     const RECT ordinaryItemCells[] = {

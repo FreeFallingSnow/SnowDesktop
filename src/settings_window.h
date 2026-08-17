@@ -278,6 +278,8 @@ public:
             iconBeautifySettings_);
         displaySpacingPct_ = static_cast<int>(std::round(
             iconSpacingScale_ * 100.0f));
+        layoutSpacingPreviewPending_ = false;
+        layoutSpacingCommitPending_ = false;
     }
 
     /** @} */
@@ -422,6 +424,8 @@ private:
     void DrawSystemTaskbarPage();
 
     void DrawDisplayPage();
+
+    void DispatchPendingLayoutSpacingChange();
 
     void DrawCategorySettingsPage();
     void DrawWidgetPackagesPage();
@@ -772,6 +776,12 @@ private:
 
     /// 当前图标间距缩放
     float iconSpacingScale_ = 1.0f;
+
+    /// 将连续滑动合并到当前设置帧的最后一个预览值。
+    bool layoutSpacingPreviewPending_ = false;
+
+    /// 松手提交优先于同一设置帧中尚未派发的预览。
+    bool layoutSpacingCommitPending_ = false;
 
     /// 当前桌面项目字号（cu）
     float itemFontSizeCu_ = kDefaultItemFontSizeCu;

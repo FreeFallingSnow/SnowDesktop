@@ -884,6 +884,8 @@ void SettingsWindow::Shutdown()
         if (dockSettingsChangedCallback_)
             dockSettingsChangedCallback_();
     }
+    layoutSpacingPreviewPending_ = false;
+    layoutSpacingCommitPending_ = false;
     if (categorySettingsDirty_)
     {
         NormalizeCategoryRuleBuffers();
@@ -1241,6 +1243,11 @@ void SettingsWindow::Render()
     }
 
     ImGui::Render();
+
+    // Dispatch only after ImGui has finalized the complete settings frame.
+    // Dense mouse moves are coalesced to the newest value, and release wins
+    // over a preview queued earlier in this same frame.
+    DispatchPendingLayoutSpacingChange();
 
     if (pendingClose_)
     {
@@ -2555,13 +2562,16 @@ void SettingsWindow::DrawDisplayPage()
     {
         iconSpacingScale_ = displaySpacingPct_ / 100.0f;
         if (layoutSpacingChangedCallback_)
-            layoutSpacingChangedCallback_(iconSpacingScale_, false);
+            layoutSpacingPreviewPending_ = true;
         else
             markChanged();
     }
     if (ImGui::IsItemDeactivatedAfterEdit() &&
         layoutSpacingChangedCallback_)
-        layoutSpacingChangedCallback_(iconSpacingScale_, true);
+    {
+        layoutSpacingPreviewPending_ = false;
+        layoutSpacingCommitPending_ = true;
+    }
     ImGui::SameLine();
     if (BlueButton((std::string(_L("app.settings.restore_default")) +
         "##IconSpacingDefault").c_str(), ImVec2(resetW, 0)))
@@ -2569,7 +2579,10 @@ void SettingsWindow::DrawDisplayPage()
         displaySpacingPct_ = 100;
         iconSpacingScale_ = 1.0f;
         if (layoutSpacingChangedCallback_)
-            layoutSpacingChangedCallback_(iconSpacingScale_, true);
+        {
+            layoutSpacingPreviewPending_ = false;
+            layoutSpacingCommitPending_ = true;
+        }
         else
             markChanged();
     }
@@ -2921,6 +2934,29 @@ void SettingsWindow::DrawDisplayPage()
         commitContinuousIconBeautify();
     }
     ImGui::Unindent(8.0f * dpiScale_);
+    }
+}
+
+void SettingsWindow::DispatchPendingLayoutSpacingChange()
+{
+    const auto action = snowdesktop::layout_spacing_rules::
+        ResolveDeferredChangeAction(
+            layoutSpacingPreviewPending_,
+            layoutSpacingCommitPending_);
+    if (action == snowdesktop::layout_spacing_rules::
+            DeferredChangeAction::None)
+        return;
+
+    // Clear before invoking application code so a synchronous desktop paint
+    // cannot redispatch this value through a nested window message.
+    layoutSpacingPreviewPending_ = false;
+    layoutSpacingCommitPending_ = false;
+    if (layoutSpacingChangedCallback_)
+    {
+        layoutSpacingChangedCallback_(
+            iconSpacingScale_,
+            action == snowdesktop::layout_spacing_rules::
+                DeferredChangeAction::Commit);
     }
 }
 

@@ -10,6 +10,23 @@ namespace snowdesktop::layout_spacing_rules
 inline constexpr float kMinimumScale = 0.50f;
 inline constexpr float kMaximumScale = 2.00f;
 
+enum class DeferredChangeAction
+{
+    None,
+    Preview,
+    Commit,
+};
+
+inline DeferredChangeAction ResolveDeferredChangeAction(
+    bool previewPending, bool commitPending)
+{
+    if (commitPending)
+        return DeferredChangeAction::Commit;
+    if (previewPending)
+        return DeferredChangeAction::Preview;
+    return DeferredChangeAction::None;
+}
+
 inline float ClampScale(float value)
 {
     if (!std::isfinite(value)) return 1.0f;

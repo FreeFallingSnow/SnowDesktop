@@ -278,7 +278,16 @@ void DesktopApp::PreviewIconSpacing(float value)
     }
     iconSpacingPreviewActive_ = true;
     InvalidateDragStaticScene();
-    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+    if (hwnd_)
+    {
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        // Settings-slider mouse moves can continuously occupy the queue, and
+        // WM_PAINT is generated only after higher-priority input drains. Paint
+        // and submit this preview synchronously so the retained DComp surface
+        // cannot alternate between the committed value and a delayed preview.
+        PresentDesktopPointerUpdate();
+        FlushPendingCompositionCommit();
+    }
 }
 
 void DesktopApp::SetIconSpacing(float value)
