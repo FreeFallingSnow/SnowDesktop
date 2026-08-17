@@ -595,25 +595,25 @@ int main()
                 std::nullopt, 0.25f) == 0.5f,
         "legacy componentSpacing-only layouts must migrate into the new supported range");
     Check(layoutSpacing::ComponentVisualGap(
-            16, 1.0f, 1.0f) == 8 &&
+            16, 1.0f, 1.0f) == 12 &&
             layoutSpacing::ComponentFrameOutset(
-                16, 1.0f, 1.0f) == 4 &&
+                16, 1.0f, 1.0f) == 2 &&
             layoutSpacing::ComponentVisualGap(
-                16, 1.0f, 0.5f) == 4 &&
+                16, 1.0f, 0.5f) == 6 &&
             layoutSpacing::ComponentVisualGap(
                 16, 1.0f, 2.0f) == 16,
-        "widget frames must keep the original compact baseline while following the one layout-spacing value");
+        "widget frames must keep a comfortable compact baseline while following the one layout-spacing value");
     Check(layoutSpacing::ComponentGapResponseScale(1.0f) == 1.0f &&
             layoutSpacing::ComponentGapResponseScale(2.0f) == 3.0f &&
             layoutSpacing::ComponentVisualGap(
-                64, 1.0f, 2.0f) == 24,
+                64, 1.0f, 2.0f) == 36,
         "the upper half of the shared spacing range must provide a wider widget-gap adjustment");
     Check(layoutSpacing::ComponentVisualGap(
             5, 1.0f, 2.0f) == 5 &&
             layoutSpacing::ComponentFrameOutset(
                 5, 1.0f, 2.0f) == 0 &&
             layoutSpacing::ComponentEdgeMargin(
-                14, 16, 1.0f, 1.0f) == 10,
+                14, 16, 1.0f, 1.0f) == 12,
         "widget frame spacing must clamp to the page gap and preserve its matching edge margin");
     Check(localLayout::IsCompactCollectionSpan(1, 1) &&
             !localLayout::IsCompactCollectionSpan(1, 4) &&

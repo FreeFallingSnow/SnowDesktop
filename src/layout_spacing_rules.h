@@ -9,6 +9,7 @@ namespace snowdesktop::layout_spacing_rules
 
 inline constexpr float kMinimumScale = 0.50f;
 inline constexpr float kMaximumScale = 2.00f;
+inline constexpr float kComponentGapBaseline = 12.0f;
 
 enum class DeferredChangeAction
 {
@@ -62,7 +63,7 @@ inline int ComponentVisualGap(
 {
     const int available = std::max(0, pageGap);
     const int preferred = std::max(0, static_cast<int>(std::round(
-        8.0f * std::max(0.1f, pageVisualScale) *
+        kComponentGapBaseline * std::max(0.1f, pageVisualScale) *
         ComponentGapResponseScale(layoutSpacingScale))));
     return std::min(available, preferred);
 }
