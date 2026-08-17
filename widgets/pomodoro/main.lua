@@ -2,6 +2,14 @@
 local DEFAULT_WORK_COLOR = 0xFF6347
 local DEFAULT_BREAK_COLOR = 0x4ECDC4
 
+local fa = {
+    play = utf8.char(0xF04B),
+    pause = utf8.char(0xF04C),
+    stop = utf8.char(0xF04D),
+    next = utf8.char(0xF050),
+    reset = utf8.char(0xF0E2),
+}
+
 local fluent = {
     play = utf8.char(0xF605),
     pause = utf8.char(0xF8AE),
@@ -68,21 +76,33 @@ local function loadStyle()
 end
 
 local function getPalette()
-    local theme = widget.theme()
-    if theme and theme.contentTheme == 1 then
+    local background = descriptor and descriptor.bg or 0x151A21
+    local red = math.floor(background / 0x10000) % 0x100
+    local green = math.floor(background / 0x100) % 0x100
+    local blue = background % 0x100
+    local isLight = red * 299 + green * 587 + blue * 114 >= 160000
+    if isLight then
         return {
-            text = 0x1E293B,
-            muted = 0x334155,
-            track = 0xE2E8F0,
-            button = 0xE2E8F0,
+            text = 0x162033,
+            track = 0xD8DEE8,
+            timerSurface = 0xFFFFFF,
+            timerBorder = 0xE2E8F0,
+            controlSurface = 0xEEF2F7,
+            controlBorder = 0xCBD5E1,
+            button = 0xDCE4EE,
+            dot = 0xA8B3C4,
             pause = 0xD97706,
         }
     end
     return {
-        text = 0xF1F5F9,
-        muted = 0xF1F5F9,
-        track = 0x1E293B,
-        button = 0x1E293B,
+        text = 0xF8FAFC,
+        track = 0x263244,
+        timerSurface = 0x111927,
+        timerBorder = 0x263244,
+        controlSurface = 0x202B3B,
+        controlBorder = 0x34445A,
+        button = 0x2A374B,
+        dot = 0x66758A,
         pause = 0xFFB347,
     }
 end
@@ -132,7 +152,12 @@ end
 local function progress(config, remaining)
     local state = getState()
     if state == "idle" then return 0 end
-    local target = targetForState(state, config)
+    local phase = state
+    if state == "paused" then
+        phase = storage.get("prevState") or "work"
+        if phase ~= "work" and phase ~= "break" then phase = "work" end
+    end
+    local target = targetForState(phase, config)
     if target <= 0 then return 0 end
     return math.max(0, math.min(1, 1 - remaining / target))
 end
@@ -356,25 +381,37 @@ local function buildView(context)
     local contentHeight = math.max(1, context.logicalSize.height)
     local state = getState()
     local remaining = remainingSeconds(config, nowSeconds())
-    local accent = state == "break" and config.breakColor or config.workColor
+    local activePhase = state
+    if state == "paused" then
+        activePhase = storage.get("prevState") or "work"
+    end
+    if activePhase ~= "break" then activePhase = "work" end
+    local accent = activePhase == "break" and
+        config.breakColor or config.workColor
     local sessionsInSet = getSessions() % config.longBreakInterval
 
     local shortSide = math.max(1, math.min(width, contentHeight))
     local padding = math.max(layout.cu(8), math.min(
-        layout.cu(16), shortSide * 0.045))
-    local sectionGap = math.max(layout.cu(8), math.min(
-        layout.cu(14), contentHeight * 0.035))
-    local buttonDiameter = math.max(layout.cu(28), math.min(
-        layout.cu(42), width * 0.18, contentHeight * 0.16))
+        layout.cu(22), shortSide * 0.05))
+    local availableWidth = math.max(1, width - padding * 2)
+    local availableHeight = math.max(1, contentHeight - padding * 2)
+    local isWide = availableWidth >= availableHeight * 1.35
+    local verticalGap = math.max(layout.cu(5), math.min(
+        layout.cu(12), contentHeight * 0.025))
+    local majorGap = math.max(layout.cu(10), math.min(
+        layout.cu(24), shortSide * 0.07))
+    local buttonDiameter = math.max(layout.cu(34), math.min(
+        layout.cu(58), shortSide * 0.14))
     local buttonRadius = buttonDiameter / 2
-    local buttonGap = math.max(layout.cu(8), buttonDiameter * 0.42)
+    local buttonGap = math.max(layout.cu(7), buttonDiameter * 0.20)
+    local dockPadding = math.max(layout.cu(4), buttonDiameter * 0.12)
+    local actionHeight = buttonDiameter + dockPadding * 2
+    local actionsWidth = buttonDiameter * 2 + buttonGap + dockPadding * 2
     local dotDiameter = math.max(layout.cu(4), math.min(
-        layout.cu(8), buttonDiameter * 0.22))
-    local dotRadius = dotDiameter / 2
-    local dotGap = math.max(dotDiameter + layout.cu(3),
-        dotDiameter * 1.8)
-    local labelFont = math.max(layout.fontCu(9), math.min(
-        layout.fontCu(14), contentHeight * 0.055))
+        layout.cu(9), buttonDiameter * 0.16))
+    local dotGap = math.max(layout.cu(4), dotDiameter * 0.75)
+    local labelFont = math.max(layout.fontCu(10), math.min(
+        layout.fontCu(18), shortSide * 0.055))
 
     local subline = ""
     if state == "work" then
@@ -387,22 +424,21 @@ local function buildView(context)
     local label = stateLabel(state) .. subline
     local timeText = formatTime(remaining)
     local labelHeight = labelFont * 1.4
-    local showRounds = state ~= "paused"
-    local availableHeight = math.max(1, contentHeight - padding * 2)
-    local bodyBudget = math.max(1,
-        availableHeight - buttonDiameter - sectionGap)
-    local timerGap = math.max(layout.cu(5), math.min(
-        layout.cu(10), bodyBudget * 0.028))
-    local timerAuxiliaryHeight = labelHeight +
-        (showRounds and dotDiameter + timerGap or 0)
-    local ringDiameter = math.max(layout.cu(38), math.min(
-        width - padding * 2,
-        bodyBudget - timerAuxiliaryHeight - timerGap,
-        shortSide * 0.62,
-        layout.cu(150)))
-    local ringThickness = math.max(layout.cu(3), ringDiameter * 0.065)
-    local timeFont = math.max(layout.fontCu(15), math.min(
-        layout.fontCu(40), ringDiameter * 0.28))
+    local ringDiameter
+    if isWide then
+        ringDiameter = math.max(layout.cu(64), math.min(
+            availableHeight * 0.88,
+            availableWidth * 0.50))
+    else
+        local reservedHeight = labelHeight + dotDiameter + actionHeight +
+            verticalGap * 3
+        ringDiameter = math.max(layout.cu(52), math.min(
+            availableWidth * 0.78,
+            availableHeight - reservedHeight))
+    end
+    local ringThickness = math.max(layout.cu(3), ringDiameter * 0.055)
+    local timeFont = math.max(layout.fontCu(18), math.min(
+        layout.fontCu(64), ringDiameter * 0.27))
 
     local dots = {}
     for index = 1, config.longBreakInterval do
@@ -411,26 +447,23 @@ local function buildView(context)
             shape = "circle",
             width = dotDiameter,
             height = dotDiameter,
-            visible = showRounds,
             style = {
-                background = index <= sessionsInSet and accent or 0xFFFFFF,
-                opacity = index <= sessionsInSet and 1.0 or 0.30,
+                background = index <= sessionsInSet and accent or palette.dot,
             },
         })
     end
 
     local function iconButton(id, glyph, accessibilityLabel,
-        background, foreground)
+        background, foreground, borderColor)
         return view.iconButton({
             key = id,
             glyph = glyph,
             iconFont = "fa",
             width = buttonDiameter,
             height = buttonDiameter,
-            fontSize = buttonRadius * 1.1,
+            fontSize = buttonDiameter * 0.44,
             action = { id = id },
             events = {
-                doubleClick = { id = id },
                 contextMenu = { id = "pomodoro.menu", scope = "component" },
             },
             accessibility = {
@@ -441,100 +474,145 @@ local function buildView(context)
                 background = background,
                 foreground = foreground,
                 cornerRadius = buttonRadius,
-                opacity = 0.86,
+                borderColor = borderColor,
+                borderWidth = borderColor and 1 or 0,
             },
-            hoverStyle = { opacity = 0.94 },
-            pressedStyle = { opacity = 1.0 },
+            hoverStyle = { opacity = 0.90 },
+            pressedStyle = { opacity = 0.78 },
         })
     end
 
     local buttons = {}
     if state == "idle" then
-        buttons[1] = iconButton("pomodoro.start", "",
+        buttons[1] = iconButton("pomodoro.start", fa.play,
             l10n.tr("lua_widget.pomodoro.start"),
             config.workColor, 0xFFFFFF)
-        buttons[2] = iconButton("pomodoro.reset", "",
+        buttons[2] = iconButton("pomodoro.reset", fa.reset,
             l10n.tr("lua_widget.pomodoro.reset_count"),
-            palette.button, palette.text)
+            palette.button, palette.text, palette.controlBorder)
     elseif state == "paused" then
-        buttons[1] = iconButton("pomodoro.resume", "",
+        buttons[1] = iconButton("pomodoro.resume", fa.play,
             l10n.tr("lua_widget.pomodoro.resume"),
-            config.workColor, 0xFFFFFF)
-        buttons[2] = iconButton("pomodoro.stop", "",
+            accent, 0xFFFFFF)
+        buttons[2] = iconButton("pomodoro.stop", fa.stop,
             l10n.tr("lua_widget.pomodoro.stop"),
-            palette.button, palette.text)
+            palette.button, palette.text, palette.controlBorder)
     else
-        buttons[1] = iconButton("pomodoro.pause", "",
+        buttons[1] = iconButton("pomodoro.pause", fa.pause,
             l10n.tr("lua_widget.pomodoro.pause"),
             palette.pause, 0xFFFFFF)
-        buttons[2] = iconButton("pomodoro.skip", "",
+        buttons[2] = iconButton("pomodoro.skip", fa.next,
             l10n.tr("lua_widget.pomodoro.skip"),
-            palette.button, palette.text)
+            palette.button, palette.text, palette.controlBorder)
     end
 
-    local timerChildren = {
-        view.stack({
-            key = "pomodoro.timer",
-            width = ringDiameter,
-            height = ringDiameter,
-            children = {
-                view.progressRing({
-                    key = "pomodoro.progress",
-                    width = "fill",
-                    height = "fill",
-                    value = progress(config, remaining),
-                    thickness = ringThickness,
-                    trackOpacity = 0.5,
-                    style = {
-                        background = palette.track,
-                        foreground = accent,
-                    },
-                    accessibility = {
-                        role = "progressbar",
-                        label = label,
-                    },
-                }),
-                view.text({
-                    key = "pomodoro.time",
-                    text = timeText,
-                    width = "fill",
-                    height = "fill",
-                    fontSize = timeFont,
-                    bold = true,
-                    textAlign = "center",
-                    style = { foreground = palette.text },
-                }),
-            },
-        }),
-        view.text({
-            key = "pomodoro.state",
-            text = label,
-            width = "fill",
-            height = labelHeight,
-            fontSize = labelFont,
-            textAlign = "center",
-            style = { foreground = palette.muted },
-        }),
-    }
-    if showRounds then
-        timerChildren[#timerChildren + 1] = view.row({
-            key = "pomodoro.rounds",
-            height = dotDiameter,
-            gap = math.max(0, dotGap - dotDiameter),
-            alignItems = "center",
-            justifyContent = "center",
-            children = dots,
-        })
+    local timer = view.stack({
+        key = "pomodoro.timer",
+        width = ringDiameter,
+        height = ringDiameter,
+        style = {
+            background = palette.timerSurface,
+            borderColor = palette.timerBorder,
+            borderWidth = 1,
+            cornerRadius = ringDiameter / 2,
+        },
+        children = {
+            view.progressRing({
+                key = "pomodoro.progress",
+                width = "fill",
+                height = "fill",
+                value = progress(config, remaining),
+                thickness = ringThickness,
+                trackOpacity = 0.82,
+                style = {
+                    background = palette.track,
+                    foreground = accent,
+                },
+                accessibility = {
+                    role = "progressbar",
+                    label = label,
+                },
+            }),
+            view.text({
+                key = "pomodoro.time",
+                text = timeText,
+                width = "fill",
+                height = "fill",
+                fontSize = timeFont,
+                bold = true,
+                textAlign = "center",
+                style = { foreground = palette.text },
+            }),
+        },
+    })
+    local status = view.text({
+        key = "pomodoro.state",
+        text = stateLabel(state),
+        width = "fill",
+        height = labelHeight,
+        fontSize = labelFont,
+        bold = true,
+        textAlign = "center",
+        style = { foreground = accent },
+    })
+    local rounds = view.row({
+        key = "pomodoro.rounds",
+        width = "fill",
+        height = dotDiameter,
+        gap = dotGap,
+        alignItems = "center",
+        justifyContent = "center",
+        children = dots,
+    })
+    local actions = view.row({
+        key = "pomodoro.actions",
+        width = actionsWidth,
+        height = actionHeight,
+        padding = dockPadding,
+        gap = buttonGap,
+        alignItems = "center",
+        justifyContent = "center",
+        style = {
+            background = palette.controlSurface,
+            borderColor = palette.controlBorder,
+            borderWidth = 1,
+            cornerRadius = actionHeight / 2,
+        },
+        children = buttons,
+    })
+
+    local content
+    local rootGap
+    if isWide then
+        local sideWidth = math.max(actionsWidth,
+            availableWidth - ringDiameter - majorGap)
+        content = {
+            timer,
+            view.column({
+                key = "pomodoro.details",
+                width = sideWidth,
+                height = ringDiameter,
+                gap = verticalGap,
+                alignItems = "center",
+                justifyContent = "center",
+                children = { status, rounds, actions },
+            }),
+        }
+        rootGap = majorGap
+    else
+        content = { timer, status, rounds, actions }
+        rootGap = verticalGap
     end
 
-    return view.column({
+    local root = isWide and view.row or view.column
+    return root({
         key = "pomodoro.surface",
         width = "fill",
         height = "fill",
         padding = padding,
-        gap = sectionGap,
+        gap = rootGap,
         alignItems = "center",
-        justifyContent = "start",
+        justifyContent = "center",
         events = {
             doubleClick = { id = "pomodoro.reset" },
             contextMenu = { id = "pomodoro.menu", scope = "component" },
@@ -543,25 +621,7 @@ local function buildView(context)
             role = "group",
             label = l10n.tr("lua_widget.pomodoro.name"),
         },
-        children = {
-            view.column({
-                key = "pomodoro.body",
-                width = "fill",
-                height = "fill",
-                gap = timerGap,
-                alignItems = "center",
-                justifyContent = "center",
-                children = timerChildren,
-            }),
-            view.row({
-                key = "pomodoro.actions",
-                height = buttonDiameter,
-                gap = buttonGap,
-                alignItems = "center",
-                justifyContent = "center",
-                children = buttons,
-            }),
-        },
+        children = content,
     })
 end
 
