@@ -33,9 +33,9 @@ constexpr int kMarginX = kGridMarginX;
 constexpr int kMarginY = 6;
 constexpr int kTextTop = 70;
 // The 15 cu baseline keeps legacy row-height geometry stable. New layouts and
-// reset actions use the separate 17 cu configurable default below.
+// reset actions use the separate 16 cu configurable default below.
 constexpr float kItemFontSize = 15.0f;
-constexpr float kDefaultItemFontSizeCu = 17.0f;
+constexpr float kDefaultItemFontSizeCu = 16.0f;
 constexpr float kMinimumItemFontSizeCu = 10.0f;
 constexpr float kMaximumItemFontSizeCu = 24.0f;
 constexpr float kDefaultItemIconSizeScale = 1.0f;

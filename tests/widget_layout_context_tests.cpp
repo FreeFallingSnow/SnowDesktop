@@ -84,8 +84,8 @@ void TestLegacyPointSizesMigrateToCuOnce()
 {
     using snowdesktop::font_cu_rules::LegacyPointsToCu;
     using snowdesktop::font_cu_rules::ResolveStoredSize;
-    Expect(kDefaultItemFontSizeCu == 17.0f,
-        "new layouts default both configurable font sizes to 17 cu");
+    Expect(kDefaultItemFontSizeCu == 16.0f,
+        "new layouts default both configurable font sizes to 16 cu");
     Expect(LegacyPointsToCu(15.0f) == 20.0f,
         "legacy point sizes convert through the 96/72 ratio");
     Expect(LegacyPointsToCu(24.0f) == 24.0f,
