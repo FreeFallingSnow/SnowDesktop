@@ -74,6 +74,10 @@ struct GridPage
     std::wstring monitorId;
     RECT bounds{};
     RECT workArea{};
+    // System work area before SnowDesktop reserves space for its Dock.
+    // Page visual metrics use this stable area so changing layout spacing
+    // cannot resize icons when the floating Dock margin changes.
+    RECT visualWorkArea{};
     bool isPrimary = false;
     UINT dpiX = 96;
     UINT dpiY = 96;

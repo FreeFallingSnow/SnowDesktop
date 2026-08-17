@@ -23,11 +23,14 @@
 #include "display_topology_refresh.h"
 #include "item_visual_metrics.h"
 #include "layout_spacing_rules.h"
+#include "grid_spacing_rules.h"
 #include "widget_item_layout.h"
+#include "app/grid_geometry.h"
 
 #include <dwrite.h>
 #include <wrl/client.h>
 
+#include <climits>
 #include <iostream>
 
 namespace rules = snowdesktop::dock_window_rules;
@@ -311,6 +314,7 @@ int main()
         "Dock window previews must remain enabled after settings normalization");
 
     namespace itemVisual = snowdesktop;
+    namespace gridSpacing = snowdesktop::grid_spacing_rules;
     namespace layoutSpacing = snowdesktop::layout_spacing_rules;
     namespace localLayout = snowdesktop::widget_item_layout;
 
@@ -365,6 +369,70 @@ int main()
     Check(expandedGaps.horizontal.cell >= pageVisual.minimumGridWidth &&
             expandedGaps.vertical.cell >= pageVisual.minimumGridHeight,
         "larger requested gaps must never consume the fixed icon and two-line title cell");
+    const RECT compactLastTrack = localLayout::ItemRect(
+        compactGaps, 3);
+    const RECT expandedLastTrack = localLayout::ItemRect(
+        expandedGaps, 3);
+    Check((compactLastTrack.left + compactLastTrack.right) / 2 ==
+            (expandedLastTrack.left + expandedLastTrack.right) / 2,
+        "local bounded tracks must keep their centers fixed while spacing changes");
+
+    bool pageTrackCentersStable = true;
+    bool pageGapMonotonic = true;
+    bool pageCellMonotonic = true;
+    std::vector<int> baselineTrackCenters;
+    int previousPageGap = -1;
+    int previousPageCell = INT_MAX;
+    int firstPageCell = 0;
+    const auto jitterPageVisual =
+        itemVisual::ResolvePageItemVisualMetrics(
+            68, 90, kDefaultItemFontSizeCu);
+    for (int percent = 50; percent <= 200; ++percent)
+    {
+        const auto axis = gridSpacing::ResolveAxis(
+            1707, 25, 4, kGapPercentX,
+            jitterPageVisual.minimumGridWidth,
+            static_cast<float>(percent) / 100.0f);
+        if (percent == 50) firstPageCell = axis.cell;
+        pageGapMonotonic = pageGapMonotonic &&
+            axis.gap >= previousPageGap;
+        pageCellMonotonic = pageCellMonotonic &&
+            axis.cell <= previousPageCell;
+        previousPageGap = axis.gap;
+        previousPageCell = axis.cell;
+        if (baselineTrackCenters.empty())
+        {
+            for (int index = 0; index < axis.count; ++index)
+                baselineTrackCenters.push_back(
+                    gridSpacing::TrackCenter(axis, index));
+        }
+        else
+        {
+            for (int index = 0; index < axis.count; ++index)
+            {
+                pageTrackCentersStable = pageTrackCentersStable &&
+                    gridSpacing::TrackCenter(axis, index) ==
+                        baselineTrackCenters[index];
+            }
+        }
+    }
+    Check(pageTrackCentersStable,
+        "every one-percent spacing step must preserve page track centers without one-pixel reversals");
+    Check(pageGapMonotonic && pageCellMonotonic &&
+            previousPageGap > 0 && previousPageCell < firstPageCell,
+        "page gaps must grow and cells must shrink monotonically across the full spacing slider");
+
+    GridPage stableScalePage;
+    stableScalePage.itemPitchWidth = 68;
+    stableScalePage.itemPitchHeight = 90;
+    stableScalePage.cellWidth = 62;
+    stableScalePage.cellHeight = 82;
+    const float stableWidgetScale = GetGridPageCuScale(
+        stableScalePage);
+    stableScalePage.cellWidth = 44;
+    stableScalePage.cellHeight = 70;
+    Check(GetGridPageCuScale(stableScalePage) == stableWidgetScale,
+        "widget chrome scale must follow the stable page pitch instead of compressed spacing cells");
 
     const RECT tightViewport{
         0, 0,

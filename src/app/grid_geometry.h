@@ -2,6 +2,8 @@
 
 #include "../types.h"
 #include "../utils.h"
+#include "../font_cu_rules.h"
+#include "../grid_spacing_rules.h"
 
 #include <algorithm>
 #include <string>
@@ -41,8 +43,8 @@ inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const st
  */
 inline float GetGridPageCuScale(const GridPage& page)
 {
-    return CalculateWidgetCellScale(
-        page.cellWidth, page.cellHeight);
+    return snowdesktop::font_cu_rules::CellScale(
+        page.itemPitchWidth, page.itemPitchHeight);
 }
 
 /**
@@ -74,19 +76,23 @@ inline int GetGridAxisOffset(const GridPage& page, int index, bool horizontal)
 {
     const int count = horizontal ? page.columns : page.rows;
     const int cellSize = horizontal ? page.cellWidth : page.cellHeight;
-    if (index <= 0 || count <= 1) return std::max(0, index) * cellSize;
-
     const int extent = horizontal
         ? static_cast<int>(page.workArea.right - page.workArea.left)
         : static_cast<int>(page.workArea.bottom - page.workArea.top);
     const int margin = horizontal ? page.marginX : page.marginY;
-    const int gapSpace = std::max(0, extent - margin * 2 - count * cellSize);
-    const int gapCount = count - 1;
+    const int gap = horizontal ? page.gapX : page.gapY;
+    snowdesktop::grid_spacing_rules::AxisGeometry axis;
+    axis.extent = std::max(1, extent);
+    axis.count = std::max(1, count);
+    axis.baseMargin = std::max(0, margin - gap / 2);
+    axis.margin = margin;
+    axis.cell = std::max(1, cellSize);
+    axis.gap = std::max(0, gap);
 
-    // Use a cumulative ratio so integer remainders are spread across all
-    // internal gaps instead of being absorbed by the two outer margins.
-    const int distributedGap = (index * gapSpace + gapCount / 2) / gapCount;
-    return index * cellSize + distributedGap;
+    // Track centers come only from the page pitch. Changing the requested gap
+    // shrinks the cell around the same center instead of redistributing integer
+    // remainders and making icons oscillate by one or two pixels.
+    return snowdesktop::grid_spacing_rules::CellStart(axis, index) - margin;
 }
 
 /**

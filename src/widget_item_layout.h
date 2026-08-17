@@ -1,6 +1,7 @@
 #pragma once
 
 #include "constants.h"
+#include "grid_spacing_rules.h"
 
 #include <algorithm>
 #include <cmath>
@@ -53,17 +54,12 @@ inline Axis ResolveBoundedAxis(int start, int extent, int count,
     result.start = start;
     result.extent = std::max(1, extent);
     result.count = std::max(1, count);
-    const int pitch = std::max(1, result.extent / result.count);
-    const int maximumGap = std::max(0,
-        (result.extent - result.count * std::max(1, minimumCell)) /
-            result.count);
-    result.gap = std::min(
-        DesiredGap(pitch, gapPercent, spacingScale), maximumGap);
-    result.edge = result.gap / 2;
-    const int usable = std::max(result.count,
-        result.extent - result.edge * 2 -
-            result.gap * (result.count - 1));
-    result.cell = std::max(1, usable / result.count);
+    const auto geometry = grid_spacing_rules::ResolveAxis(
+        result.extent, result.count, 0,
+        gapPercent, minimumCell, spacingScale);
+    result.gap = geometry.gap;
+    result.edge = geometry.margin;
+    result.cell = geometry.cell;
     return result;
 }
 
@@ -130,6 +126,19 @@ inline int AxisCellStart(const Axis& axis, int index)
         clamped * (axis.cell + axis.gap);
 }
 
+inline int BoundedAxisCellStart(const Axis& axis, int index)
+{
+    grid_spacing_rules::AxisGeometry geometry;
+    geometry.extent = std::max(1, axis.extent);
+    geometry.count = std::max(1, axis.count);
+    geometry.baseMargin = std::max(0, axis.edge - axis.gap / 2);
+    geometry.margin = std::max(0, axis.edge);
+    geometry.cell = std::max(1, axis.cell);
+    geometry.gap = std::max(0, axis.gap);
+    return axis.start + grid_spacing_rules::CellStart(
+        geometry, index);
+}
+
 inline RECT ItemRect(const Layout& layout, std::size_t index,
     int scrollOffset = 0)
 {
@@ -138,8 +147,11 @@ inline RECT ItemRect(const Layout& layout, std::size_t index,
         static_cast<std::size_t>(columns));
     const int row = static_cast<int>(index /
         static_cast<std::size_t>(columns));
-    const int left = AxisCellStart(layout.horizontal, column);
-    const int top = AxisCellStart(layout.vertical, row) - scrollOffset;
+    const int left = BoundedAxisCellStart(
+        layout.horizontal, column);
+    const int top = (layout.scrolling
+        ? AxisCellStart(layout.vertical, row)
+        : BoundedAxisCellStart(layout.vertical, row)) - scrollOffset;
     return RECT{ left, top,
         left + layout.horizontal.cell,
         top + layout.vertical.cell };

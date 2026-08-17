@@ -117,6 +117,7 @@ BOOL CALLBACK EnumGridPageMonitorProc(HMONITOR monitor, HDC, LPRECT, LPARAM lPar
         monitorInfo.rcWork.right - context->virtualLeft,
         monitorInfo.rcWork.bottom - context->virtualTop,
     };
+    page.visualWorkArea = page.workArea;
 
     context->pages->push_back(page);
     return TRUE;

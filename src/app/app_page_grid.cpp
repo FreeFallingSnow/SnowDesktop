@@ -272,8 +272,7 @@ void DesktopApp::PreviewIconSpacing(float value)
         const GridPage* page = FindGridPage(
             gridPages_, widget.gridCell.pageId);
         if (page)
-            widget.cellScale = CalculateWidgetCellScale(
-                page->cellWidth, page->cellHeight);
+            widget.cellScale = GetGridPageCuScale(*page);
         widget.bounds = GetGridRect(
             gridPages_, widget.gridCell, widget.gridSpan);
     }
@@ -296,7 +295,7 @@ void DesktopApp::SetIconSpacing(float value)
     RefreshIconBitmapResolution();
     SaveLayoutSlots();
     iconSpacingPreviewActive_ = false;
-    InvalidateRect(hwnd_, nullptr, TRUE);
+    InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
 /**

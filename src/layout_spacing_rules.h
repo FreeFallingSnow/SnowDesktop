@@ -62,8 +62,11 @@ inline int ComponentEdgeMargin(
     int pageMargin, int pageGap, float pageVisualScale,
     float layoutSpacingScale)
 {
-    return std::max(0, pageMargin - ComponentFrameOutset(
-        pageGap, pageVisualScale, layoutSpacingScale));
+    const int available = std::max(0, pageGap);
+    const int baseMargin = std::max(
+        0, pageMargin - available / 2);
+    return baseMargin + ComponentVisualGap(
+        available, pageVisualScale, layoutSpacingScale) / 2;
 }
 
 } // namespace snowdesktop::layout_spacing_rules

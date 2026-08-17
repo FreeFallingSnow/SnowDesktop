@@ -423,8 +423,8 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         const GridPage* page = FindGridPage(gridPages_, widget.gridCell.pageId);
         if (page)
         {
-            int stepX = std::max(1, page->cellWidth + page->gapX);
-            int stepY = std::max(1, page->cellHeight + page->gapY);
+            int stepX = std::max(1, page->itemPitchWidth);
+            int stepY = std::max(1, page->itemPitchHeight);
             int dCol = static_cast<int>(std::round(static_cast<double>(current.x - mouseDownPoint_.x) / static_cast<double>(stepX)));
             int dRow = static_cast<int>(std::round(static_cast<double>(current.y - mouseDownPoint_.y) / static_cast<double>(stepY)));
 

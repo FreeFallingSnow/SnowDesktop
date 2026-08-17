@@ -38,6 +38,7 @@ void DesktopApp::UpdateLayoutWorkArea(bool preserveActiveDimensions)
         GridPage fb;
         fb.id = L"Primary"; fb.monitorId = fb.id; fb.isPrimary = true;
         fb.bounds = layoutWorkArea_; fb.workArea = layoutWorkArea_;
+        fb.visualWorkArea = fb.workArea;
         gridPages_.push_back(fb);
     }
 
@@ -58,6 +59,7 @@ void DesktopApp::UpdateLayoutWorkArea(bool preserveActiveDimensions)
         page.workArea.top    = std::clamp<LONG>(page.workArea.top,    0, static_cast<LONG>(virtualHeight_));
         page.workArea.right  = std::clamp<LONG>(page.workArea.right,  page.workArea.left, static_cast<LONG>(virtualWidth_));
         page.workArea.bottom = std::clamp<LONG>(page.workArea.bottom, page.workArea.top,  static_cast<LONG>(virtualHeight_));
+        page.visualWorkArea = page.workArea;
         ConfigureGridPage(page);
         ApplyIconSpacingToPage(page);
     }
@@ -115,23 +117,31 @@ void DesktopApp::ApplyIconSpacingToPage(GridPage& page)
     page.columns = std::max(1, page.columns);
     page.rows = std::max(1, page.rows);
 
-    const int pageW = static_cast<int>(std::max<LONG>(1, page.workArea.right - page.workArea.left));
-    const int pageH = static_cast<int>(std::max<LONG>(1, page.workArea.bottom - page.workArea.top));
+    const int pageW = static_cast<int>(std::max<LONG>(
+        1, page.workArea.right - page.workArea.left));
+    const int pageH = static_cast<int>(std::max<LONG>(
+        1, page.workArea.bottom - page.workArea.top));
+    const RECT visualArea = IsRectEmptyRect(page.visualWorkArea)
+        ? page.workArea : page.visualWorkArea;
+    const int visualW = static_cast<int>(std::max<LONG>(
+        1, visualArea.right - visualArea.left));
+    const int visualH = static_cast<int>(std::max<LONG>(
+        1, visualArea.bottom - visualArea.top));
 
-    const float pageCellScale = std::max(0.1f, std::min(
-        static_cast<float>(pageW) /
+    const float pageVisualScale = std::max(0.1f, std::min(
+        static_cast<float>(visualW) /
             static_cast<float>(page.columns * kCellWidth),
-        static_cast<float>(pageH) /
+        static_cast<float>(visualH) /
             static_cast<float>(page.rows * kMinCellHeight)));
     const int baseMarginX = std::max(1, static_cast<int>(
-        std::round(kGridMarginX * pageCellScale)));
+        std::round(kGridMarginX * pageVisualScale)));
     const int baseMarginY = std::max(1, static_cast<int>(
-        std::round(kGridMarginY * pageCellScale)));
+        std::round(kGridMarginY * pageVisualScale)));
 
     const int innerWidth = std::max(
-        page.columns, pageW - baseMarginX * 2);
+        page.columns, visualW - baseMarginX * 2);
     const int innerHeight = std::max(
-        page.rows, pageH - baseMarginY * 2);
+        page.rows, visualH - baseMarginY * 2);
     page.itemPitchWidth = std::max(
         1, static_cast<int>(std::round(
             static_cast<float>(innerWidth) /
@@ -142,47 +152,18 @@ void DesktopApp::ApplyIconSpacingToPage(GridPage& page)
             static_cast<float>(page.rows))));
     const auto visualMetrics = GetPageItemVisualMetrics(page);
 
-    auto calculateAxis = [this](int extent, int count, int baseMargin,
-        float gapPercent, int minimumCell,
-        int& margin, int& cellSize, int& gap)
-    {
-        const int innerExtent = std::max(count, extent - baseMargin * 2);
-        if (count <= 1)
-        {
-            margin = baseMargin;
-            cellSize = std::max(1, innerExtent);
-            gap = 0;
-            return;
-        }
-
-        const float pitch = static_cast<float>(innerExtent) /
-            static_cast<float>(count);
-        const int maxGap = std::max(0,
-            (innerExtent - count) / count);
-        const int targetGap = std::clamp(
-            static_cast<int>(std::round(
-                pitch * gapPercent * iconSpacingScale_)),
-            0, std::min(maxGap, std::max(0,
-                (innerExtent - count * std::max(1, minimumCell)) /
-                    count)));
-
-        // Half an internal gap is retained at each page edge. The remaining
-        // area is divided without ever changing the requested row/column count.
-        margin = baseMargin + targetGap / 2;
-        const int usableExtent = std::max(count, extent - margin * 2);
-        cellSize = std::max(1,
-            (usableExtent - targetGap * (count - 1)) / count);
-        const int remainingGapSpace = std::max(0,
-            usableExtent - count * cellSize);
-        gap = (remainingGapSpace + (count - 1) / 2) / (count - 1);
-    };
-
-    calculateAxis(pageW, page.columns, baseMarginX, kGapPercentX,
-        visualMetrics.minimumGridWidth,
-        page.marginX, page.cellWidth, page.gapX);
-    calculateAxis(pageH, page.rows, baseMarginY, kGapPercentY,
-        visualMetrics.minimumGridHeight,
-        page.marginY, page.cellHeight, page.gapY);
+    const auto horizontal = snowdesktop::grid_spacing_rules::ResolveAxis(
+        pageW, page.columns, baseMarginX, kGapPercentX,
+        visualMetrics.minimumGridWidth, iconSpacingScale_);
+    const auto vertical = snowdesktop::grid_spacing_rules::ResolveAxis(
+        pageH, page.rows, baseMarginY, kGapPercentY,
+        visualMetrics.minimumGridHeight, iconSpacingScale_);
+    page.marginX = horizontal.margin;
+    page.cellWidth = horizontal.cell;
+    page.gapX = horizontal.gap;
+    page.marginY = vertical.margin;
+    page.cellHeight = vertical.cell;
+    page.gapY = vertical.gap;
 }
 
 // ── 拖拽辅助函数 ──────────────────────────────────────────────

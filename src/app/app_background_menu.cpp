@@ -758,8 +758,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
                 std::max(0, previewPage->columns - root.gridSpan.columns));
             root.gridCell.row = std::clamp(root.gridCell.row, 0,
                 std::max(0, previewPage->rows - root.gridSpan.rows));
-            root.cellScale = CalculateWidgetCellScale(
-                previewPage->cellWidth, previewPage->cellHeight);
+            root.cellScale = GetGridPageCuScale(*previewPage);
             root.bounds = GetGridRect(
                 gridPages_, root.gridCell, root.gridSpan);
         }
