@@ -20,4 +20,14 @@ constexpr bool ShouldRenderWidget(
         pointerInside;
 }
 
+constexpr bool IsDesktopSurfaceVisible(
+    bool desktopHidden,
+    bool keepWhenDesktopHidden,
+    bool hasDesktopBounds,
+    bool interactionVisible)
+{
+    return (!desktopHidden || keepWhenDesktopHidden) &&
+        hasDesktopBounds && interactionVisible;
+}
+
 }

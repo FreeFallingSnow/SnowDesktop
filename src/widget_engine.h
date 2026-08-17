@@ -624,6 +624,7 @@ struct LuaWidget
     int lastColumns = 1;
     int lastRows = 1;
     snowdesktop::widget_runtime::LayoutMetrics layoutMetrics;
+    bool desktopVisible = false;
     bool hostVisible = false;
     bool usesSystemSnapshot = false;
     bool usesMediaSnapshot = false;
@@ -631,7 +632,6 @@ struct LuaWidget
     snowdesktop::widget_runtime::RuntimeHealth health;
     std::chrono::steady_clock::time_point notificationWindow{};
     std::uint32_t notificationsInWindow = 0;
-    std::chrono::steady_clock::time_point lastRenderTime{};
     UINT_PTR refreshTimerId = 0;        ///< 宿主统一截止时间队列分配的周期令牌（0 = 未开）
     UINT_PTR namedTimerId = 0;          ///< v2 schedule 命名计划共用的下一次唤醒令牌
     UINT_PTR animationTimerId = 0;      ///< animation.requestFrame 共用的单次下一帧令牌
@@ -907,6 +907,11 @@ public:
      */
     void RenderWidget(const std::wstring& widgetId, const std::wstring& scriptPath,
         ID2D1DeviceContext* context, RECT bounds, int columns = 1, int rows = 1);
+    /** Synchronize semantic visibility of one widget's desktop surface. */
+    void SetWidgetDesktopVisible(
+        const std::wstring& widgetId, bool visible);
+    /** Hide or show the desktop surface of every loaded non-preview widget. */
+    void SetAllWidgetDesktopVisible(bool visible);
     bool RenderWidgetPanel(const std::wstring& widgetId,
         ID2D1DeviceContext* context, RECT bounds,
         std::string_view surface = "panel");
@@ -1698,6 +1703,7 @@ private:
     void ReleaseWidgetTasks(LuaWidget& widget,
         snowdesktop::widget_runtime::TaskBrokerCancelReason reason);
     void EnsureSystemSnapshotServiceStarted();
+    void ApplyWidgetHostVisibility(LuaWidget& widget, bool visible);
     void RescheduleNamedTimer(LuaWidget& widget);
     bool ScheduleAnimationFrame(LuaWidget& widget);
     void StopAnimationFrames(LuaWidget& widget);

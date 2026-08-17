@@ -93,26 +93,15 @@ void DesktopApp::DrawStaticBackground(
     // Widgets
     for (auto& widgetData : widgets_)
     {
-        if (hiddenMode && !widgetData.keepWhenDesktopHidden)
-            continue;
+        const bool hasDesktopBounds =
+            !IsRectEmptyRect(widgetData.bounds);
         // Dock-exclusive and grouped collections deliberately keep an empty
         // desktop rectangle while retaining a runtime WidgetContainer for
         // popup interaction. Never let an empty rectangle reach widget
         // drawing: rounded geometry APIs can turn it into a visible 1x1
         // artifact at the desktop origin.
-        if (IsRectEmptyRect(widgetData.bounds))
-            continue;
         const RECT widgetFrame =
             GetStandaloneWidgetFrameRect(widgetData);
-        if (!intersectsUpdate(widgetFrame, 2))
-            continue;
-        if (widgetAction_ == WidgetAction::Move || widgetAction_ == WidgetAction::Resize)
-        {
-            if (mouseDownWidgetIndex_ < widgets_.size() &&
-                &widgetData == &widgets_[mouseDownWidgetIndex_])
-                continue;
-        }
-
         const bool popupOpen =
             popupWidgetIndex_ < widgets_.size() &&
             &widgetData == &widgets_[popupWidgetIndex_];
@@ -121,15 +110,38 @@ void DesktopApp::DrawStaticBackground(
             widgetData.id == interactionPinnedWidgetId_;
         const bool interactionRetained =
             popupOpen || interactionPinned;
-        if (!snowdesktop::widget_visibility_rules::ShouldRenderWidget(
+        const bool interactionVisible =
+            snowdesktop::widget_visibility_rules::ShouldRenderWidget(
                 widgetData.showOnHoverOnly,
                 dragSession_.IsActive(),
                 dragDropController_.IsExternalDragActive(),
                 widgetAction_ == WidgetAction::Move,
                 widgetData.selected,
                 interactionRetained,
-                PtInRect(&widgetFrame, lastMousePoint_) != FALSE))
+                PtInRect(&widgetFrame, lastMousePoint_) != FALSE);
+        const bool desktopSurfaceVisible =
+            snowdesktop::widget_visibility_rules::IsDesktopSurfaceVisible(
+                hiddenMode, widgetData.keepWhenDesktopHidden,
+                hasDesktopBounds, interactionVisible);
+        // Runtime visibility is semantic state, not a paint-frequency signal.
+        // Synchronize it before dirty-region culling because DirectComposition
+        // may retain a visible widget without asking the host to redraw it.
+        if (widgetEngine_ &&
+            widgetData.type == DesktopWidgetType::LuaScript)
+        {
+            widgetEngine_->SetWidgetDesktopVisible(
+                widgetData.id, desktopSurfaceVisible);
+        }
+        if (!desktopSurfaceVisible)
             continue;
+        if (!intersectsUpdate(widgetFrame, 2))
+            continue;
+        if (widgetAction_ == WidgetAction::Move || widgetAction_ == WidgetAction::Resize)
+        {
+            if (mouseDownWidgetIndex_ < widgets_.size() &&
+                &widgetData == &widgets_[mouseDownWidgetIndex_])
+                continue;
+        }
 
         bool drawn = false;
         for (auto& c : containers_)

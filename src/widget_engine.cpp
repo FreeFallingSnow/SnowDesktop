@@ -20158,28 +20158,8 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     d2dState_->gridRows = std::max(1, rows);
     SetWidgetRectContext(d2dState_, bounds);
 
-    if (!found->hostVisible)
-    {
-        found->hostVisible = true;
-        const auto timerNow = found->preview
-            ? snowdesktop::widget_runtime::NamedTimerSchedule::TimePoint{
-                std::chrono::milliseconds(snowdesktop::widget_runtime::
-                    PreviewMonotonicMilliseconds) }
-            : snowdesktop::widget_runtime::NamedTimerSchedule::Clock::now();
-        if (found->namedTimers.SetVisible(true, timerNow))
-        {
-            RescheduleNamedTimer(*found);
-        }
-        (void)found->animationFrames.SetVisible(true);
-        if (dataBroker_)
-        {
-            (void)dataBroker_->SetInstanceVisible(
-                WidgetWideToUtf8(found->widgetId), true,
-                snowdesktop::widget_runtime::WidgetDataBroker::Clock::now());
-            ApplyWidgetDataBrokerActions();
-        }
-        InvokeSimpleCallback(*found, "onVisible");
-    }
+    found->desktopVisible = true;
+    ApplyWidgetHostVisibility(*found, true);
     if (found->lastColumns != columns || found->lastRows != rows)
     {
         found->lastColumns = std::max(1, columns);
@@ -20221,7 +20201,6 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             lua_pop(state, 1);
         }
     }
-    found->lastRenderTime = std::chrono::steady_clock::now();
     const bool transitionFrameRequested =
         std::exchange(found->viewTransitionFramePending, false);
     const bool transitionGeometryUnchanged =
@@ -20864,8 +20843,7 @@ bool WidgetEngine::RenderWidgetPanel(
     widget.panelSurface = normalizedSurface;
     widget.panelActive = true;
     SetWidgetRectContext(d2dState_, bounds);
-    widget.lastRenderTime =
-        std::chrono::steady_clock::now();
+    ApplyWidgetHostVisibility(widget, true);
     const bool transitionFrameRequested =
         std::exchange(widget.panelViewTransitionFramePending, false);
     if (transitionFrameRequested && panelWasActive &&
@@ -21544,25 +21522,62 @@ void WidgetEngine::TickRuntime()
         }
     }
 
+}
+
+void WidgetEngine::ApplyWidgetHostVisibility(
+    LuaWidget& widget, bool visible)
+{
+    if (!widget.valid || widget.hostVisible == visible)
+        return;
+
+    widget.hostVisible = visible;
+    const auto timerNow = widget.preview
+        ? snowdesktop::widget_runtime::NamedTimerSchedule::TimePoint{
+            std::chrono::milliseconds(snowdesktop::widget_runtime::
+                PreviewMonotonicMilliseconds) }
+        : snowdesktop::widget_runtime::NamedTimerSchedule::Clock::now();
+    if (widget.namedTimers.SetVisible(visible, timerNow))
+        RescheduleNamedTimer(widget);
+
+    if (visible)
+        (void)widget.animationFrames.SetVisible(true);
+    else
+        StopAnimationFrames(widget);
+
+    if (dataBroker_)
+    {
+        (void)dataBroker_->SetInstanceVisible(
+            WidgetWideToUtf8(widget.widgetId), visible,
+            snowdesktop::widget_runtime::WidgetDataBroker::Clock::now());
+        ApplyWidgetDataBrokerActions();
+    }
+    InvokeSimpleCallback(widget, visible ? "onVisible" : "onHidden");
+}
+
+void WidgetEngine::SetWidgetDesktopVisible(
+    const std::wstring& widgetId, bool visible)
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0) return;
+    auto& widget = widgets_[index];
+    if (!widget.valid || widget.preview ||
+        widget.desktopVisible == visible)
+        return;
+    widget.desktopVisible = visible;
+    ApplyWidgetHostVisibility(
+        widget, widget.desktopVisible || widget.panelActive);
+}
+
+void WidgetEngine::SetAllWidgetDesktopVisible(bool visible)
+{
     for (auto& widget : widgets_)
     {
-        if (!widget.valid || widget.preview) continue;
-        if (widget.hostVisible && widget.lastRenderTime.time_since_epoch().count() > 0 &&
-            runtimeNow - widget.lastRenderTime > std::chrono::milliseconds(2500))
-        {
-            widget.hostVisible = false;
-            if (widget.namedTimers.SetVisible(false, runtimeNow))
-                RescheduleNamedTimer(widget);
-            StopAnimationFrames(widget);
-            if (dataBroker_)
-            {
-                (void)dataBroker_->SetInstanceVisible(
-                    WidgetWideToUtf8(widget.widgetId), false, runtimeNow);
-                ApplyWidgetDataBrokerActions();
-            }
-            InvokeSimpleCallback(widget, "onHidden");
-        }
-
+        if (!widget.valid || widget.preview ||
+            widget.desktopVisible == visible)
+            continue;
+        widget.desktopVisible = visible;
+        ApplyWidgetHostVisibility(
+            widget, widget.desktopVisible || widget.panelActive);
     }
 }
 
@@ -29465,6 +29480,8 @@ void WidgetEngine::CloseWidgetPanelSurface(
         BlurHostInput(false);
     }
     widget.panelActive = false;
+    ApplyWidgetHostVisibility(
+        widget, widget.desktopVisible || widget.panelActive);
     widget.panelSurface = "panel";
     widget.panelViewTransitions.Clear();
     widget.panelViewTransitionFramePending = false;

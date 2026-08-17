@@ -547,6 +547,8 @@ void DesktopApp::SetSoftwareDesktopEnabled(bool enabled, bool persist)
 
     if (!enabled)
     {
+        if (widgetEngine_)
+            widgetEngine_->SetAllWidgetDesktopVisible(false);
         if (wasEnabled)
         {
             SaveLayoutSlots();

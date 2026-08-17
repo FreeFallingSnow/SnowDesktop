@@ -607,6 +607,30 @@ void TestHoverOnlyWidgetVisibility()
         "pointer hover reveals hover-only widget");
 }
 
+void TestWidgetDesktopSurfaceVisibility()
+{
+    Check(
+        visibilityRules::IsDesktopSurfaceVisible(
+            false, false, true, true),
+        "visible desktop widget remains runtime-visible independently of repaint frequency");
+    Check(
+        !visibilityRules::IsDesktopSurfaceVisible(
+            true, false, true, true),
+        "hidden desktop pauses an ordinary widget");
+    Check(
+        visibilityRules::IsDesktopSurfaceVisible(
+            true, true, true, true),
+        "keep-when-hidden preserves widget runtime visibility");
+    Check(
+        !visibilityRules::IsDesktopSurfaceVisible(
+            false, false, false, true),
+        "dock-exclusive widget has no visible desktop surface");
+    Check(
+        !visibilityRules::IsDesktopSurfaceVisible(
+            false, false, true, false),
+        "interaction-hidden widget pauses its desktop surface");
+}
+
 void TestDesktopHoverDeactivation()
 {
     using hoverRules::ReconcileMode;
@@ -919,6 +943,7 @@ int main()
     TestFileGroupRules();
     TestGridPlacementInvariants();
     TestHoverOnlyWidgetVisibility();
+    TestWidgetDesktopSurfaceVisibility();
     TestDesktopHoverDeactivation();
     TestNestedWidgetScrolling();
     TestListDetailRules();

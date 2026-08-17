@@ -163,6 +163,8 @@ void DesktopApp::BeginDesktopPassthroughHold()
             if (!desktopPassthroughHoldActive_ ||
                 !hwnd_ || !IsWindow(hwnd_))
                 return;
+            if (widgetEngine_)
+                widgetEngine_->SetAllWidgetDesktopVisible(false);
             desktopBackdropCompositor_.SetVisible(false);
             ShowWindow(hwnd_, SW_HIDE);
         });
