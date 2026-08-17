@@ -1061,7 +1061,7 @@ void TestPublicApiContract()
 {
     const auto contracts =
         snowdesktop::widget_api::PublicApiFunctionContracts();
-    Check(contracts.size() == 156,
+    Check(contracts.size() == 162,
         "public Lua host API function count must match the reviewed catalog");
 
     std::unordered_set<std::string> sandboxLibraries;
