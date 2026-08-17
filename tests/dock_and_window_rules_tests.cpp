@@ -358,6 +358,12 @@ int main()
         standardTitleGap == 4,
         "item icons and titles must retain a readable four-pixel gap at 100% scale");
     Check(
+        itemLayout::TextHeightForLineCount(
+            standardLineHeight, 12) >
+            itemLayout::TextHeightForLineCount(
+                standardLineHeight, 3),
+        "selected item titles must grow with every wrapped line instead of stopping at three lines");
+    Check(
         itemLayout::AvailableIconHeight(
             116, 2, standardTitleGap,
             standardTextHeight) +
@@ -551,6 +557,38 @@ int main()
                             collapsedMetrics.
                                 lineCount == 2,
                         "collapsed DirectWrite title must contain exactly two visual lines");
+
+                    Microsoft::WRL::ComPtr<
+                        IDWriteTextLayout>
+                        expandedLayout;
+                    const int expandedHeight =
+                        itemLayout::
+                            TextHeightForLineCount(
+                                standardLineHeight,
+                                actualLineCount);
+                    dwriteFactory->
+                        CreateTextLayout(
+                            longChineseTitle.c_str(),
+                            static_cast<UINT32>(
+                                longChineseTitle.size()),
+                            format.Get(), 48.0f,
+                            static_cast<float>(
+                                expandedHeight),
+                            &expandedLayout);
+                    DWRITE_TEXT_METRICS
+                        expandedMetrics{};
+                    if (expandedLayout)
+                    {
+                        expandedLayout->
+                            GetMetrics(
+                                &expandedMetrics);
+                    }
+                    Check(
+                        expandedLayout &&
+                            expandedMetrics.
+                                lineCount ==
+                                    actualLineCount,
+                        "selected DirectWrite title height must preserve every visual line");
                 }
             }
         }
