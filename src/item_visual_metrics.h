@@ -45,6 +45,17 @@ inline RECT ResolveListItemIconRect(
         left + metrics.iconSize, iconY + metrics.iconSize };
 }
 
+inline RECT ResolveGridItemTitleRect(
+    RECT bounds, int top, int height)
+{
+    // Grid tracks already reserve the requested horizontal gap. Using the
+    // complete local cell width keeps that visible clearance aligned with the
+    // vertical clearance below the complete icon-and-title region instead of
+    // adding another title-only inset on both sides.
+    return RECT{ bounds.left, top, bounds.right,
+        top + std::max(1, height) };
+}
+
 inline PageItemVisualMetrics ResolvePageItemVisualMetrics(
     int pitchWidth, int pitchHeight, float itemFontSizeCu,
     float iconSizeScale = kDefaultItemIconSizeScale)

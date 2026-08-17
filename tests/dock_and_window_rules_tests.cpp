@@ -354,6 +354,29 @@ int main()
                 largeIconVisual.iconSize ==
             pageVisual.minimumGridHeight - pageVisual.iconSize,
         "the icon plus title region must change height only by the icon edge delta");
+    const int referenceGapX = static_cast<int>(std::round(
+        104.0f * kGapPercentX));
+    const int referenceGapY = static_cast<int>(std::round(
+        128.0f * kGapPercentY));
+    const RECT referenceCell{
+        0, 0, 104 - referenceGapX, 128 - referenceGapY
+    };
+    const RECT referenceIcon =
+        itemVisual::ResolveGridItemIconRect(
+            referenceCell, pageVisual);
+    const RECT referenceTitle =
+        itemVisual::ResolveGridItemTitleRect(
+            referenceCell,
+            referenceIcon.bottom + pageVisual.titleGap,
+            pageVisual.titleHeight);
+    const int horizontalVisualGap =
+        104 - (referenceTitle.right - referenceTitle.left);
+    const int verticalVisualGap =
+        128 - (referenceTitle.bottom - referenceCell.top);
+    Check(referenceTitle.left == referenceCell.left &&
+            referenceTitle.right == referenceCell.right &&
+            std::abs(horizontalVisualGap - verticalVisualGap) <= 1,
+        "the default title width must make horizontal and vertical visual gaps equal within pixel rounding");
     const RECT ordinaryItemCells[] = {
         { 0, 0, 104, pageVisual.minimumGridHeight + 8 },
         { 0, 0, 116, pageVisual.minimumGridHeight + 12 },

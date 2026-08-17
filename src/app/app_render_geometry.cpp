@@ -129,8 +129,6 @@ RECT DesktopApp::GetItemTextRect(RECT bounds, bool expanded) const
 {
     const auto metrics = GetItemVisualMetrics(bounds);
     RECT iconRect = GetItemIconRect(bounds);
-    const int inset = std::max(1, static_cast<int>(std::round(
-        4.0f * metrics.layoutScale)));
     const int textTop = iconRect.bottom +
         metrics.titleGap;
     const float lineHeight = metrics.fontSize * 7.0f / 6.0f;
@@ -144,8 +142,8 @@ RECT DesktopApp::GetItemTextRect(RECT bounds, bool expanded) const
     // The collapsed label is clipped just before a third line can begin.
     // Selected labels intentionally extend below the cell to reveal the lines
     // hidden in the normal two-line state.
-    return MakeRect(bounds.left + inset, textTop,
-        bounds.right - inset, textTop + textH);
+    return snowdesktop::ResolveGridItemTitleRect(
+        bounds, textTop, textH);
 }
 
 RECT DesktopApp::GetItemSelectionRect(RECT bounds, bool expanded) const
@@ -153,12 +151,10 @@ RECT DesktopApp::GetItemSelectionRect(RECT bounds, bool expanded) const
     const float layoutScale = GetItemVisualMetrics(bounds).layoutScale;
     RECT textRect = GetItemTextRect(bounds, expanded);
     RECT selection = UnionCopy(GetItemIconRect(bounds), textRect);
-    const int sideInset = std::max(1, static_cast<int>(std::round(3.0f * layoutScale)));
-    const int horizontalPad = std::max(1, static_cast<int>(std::round(4.0f * layoutScale)));
     const int verticalPad = std::max(1, static_cast<int>(std::round(2.0f * layoutScale)));
-    selection.left = std::max(bounds.left + sideInset, selection.left - horizontalPad);
+    selection.left = bounds.left;
     selection.top = std::max(bounds.top, selection.top - verticalPad);
-    selection.right = std::min(bounds.right - sideInset, selection.right + horizontalPad);
+    selection.right = bounds.right;
     selection.bottom = std::min(bounds.bottom - verticalPad, textRect.bottom);
     return selection;
 }
