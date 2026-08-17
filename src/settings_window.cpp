@@ -2545,20 +2545,13 @@ void SettingsWindow::DrawDisplayPage()
             notifyIconBeautify(snowdesktop::IconBeautifyUpdateKind::Commit);
     };
 
-    BeginSettingRow(_L("app.settings.icon_spacing"), sliderActionW);
+    BeginSettingRow(_L("app.settings.layout_spacing"), sliderActionW,
+        _L("app.settings.layout_spacing_hint"));
     ImGui::SetNextItemWidth(actionSliderW);
     if (ImGui::SliderInt("##IconSpacing", &displaySpacingPct_, 50, 200, "%d%%", ImGuiSliderFlags_None))
     {
         iconSpacingScale_ = displaySpacingPct_ / 100.0f;
         markChanged();
-        const float componentSpacingMaximum =
-            componentSpacingMaximumProvider_
-                ? componentSpacingMaximumProvider_()
-                : snowdesktop::widget_spacing_rules::kMaximumComponentScale;
-        componentSpacingScale_ = snowdesktop::widget_spacing_rules::
-            ClampComponentScale(componentSpacingScale_, componentSpacingMaximum);
-        componentSpacingPct_ = static_cast<int>(std::round(
-            componentSpacingScale_ * 100.0f));
     }
     ImGui::SameLine();
     if (BlueButton((std::string(_L("app.settings.restore_default")) +
@@ -2567,14 +2560,6 @@ void SettingsWindow::DrawDisplayPage()
         displaySpacingPct_ = 100;
         iconSpacingScale_ = 1.0f;
         markChanged();
-        const float componentSpacingMaximum =
-            componentSpacingMaximumProvider_
-                ? componentSpacingMaximumProvider_()
-                : snowdesktop::widget_spacing_rules::kMaximumComponentScale;
-        componentSpacingScale_ = snowdesktop::widget_spacing_rules::
-            ClampComponentScale(componentSpacingScale_, componentSpacingMaximum);
-        componentSpacingPct_ = static_cast<int>(std::round(
-            componentSpacingScale_ * 100.0f));
     }
 
     BeginSettingRow(_L("app.settings.title_font_size"), sliderActionW);
@@ -3364,41 +3349,6 @@ void SettingsWindow::DrawPersonalizationPage()
     ImGui::Spacing();
     ImGui::SeparatorText(_L("app.settings.widget_layout"));
     ImGui::Spacing();
-
-    const float componentSpacingMaximum =
-        componentSpacingMaximumProvider_
-            ? componentSpacingMaximumProvider_()
-            : snowdesktop::widget_spacing_rules::kMaximumComponentScale;
-    const int componentSpacingMax = std::max(50, static_cast<int>(std::round(
-        componentSpacingMaximum * 100.0f)));
-    componentSpacingScale_ = snowdesktop::widget_spacing_rules::
-        ClampComponentScale(componentSpacingScale_, componentSpacingMaximum);
-    componentSpacingPct_ = std::clamp(
-        static_cast<int>(std::round(componentSpacingScale_ * 100.0f)),
-        50, componentSpacingMax);
-    BeginSettingRow(_L("app.settings.component_spacing"), sliderActionW,
-        _L("app.settings.component_spacing_hint"));
-    ImGui::SetNextItemWidth(actionSliderW);
-    if (ImGui::SliderInt("##ComponentSpacing", &componentSpacingPct_,
-        50, componentSpacingMax, "%d%%", ImGuiSliderFlags_None))
-    {
-        componentSpacingScale_ = snowdesktop::widget_spacing_rules::
-            ClampComponentScale(
-                componentSpacingPct_ / 100.0f, componentSpacingMaximum);
-        if (displaySettingsChangedCallback_)
-            displaySettingsChangedCallback_();
-    }
-    ImGui::SameLine();
-    if (BlueButton((std::string(_L("app.settings.restore_default")) +
-        "##ComponentSpacingDefault").c_str(), ImVec2(resetW, 0)))
-    {
-        componentSpacingScale_ = snowdesktop::widget_spacing_rules::
-            ClampComponentScale(1.0f, componentSpacingMaximum);
-        componentSpacingPct_ = static_cast<int>(std::round(
-            componentSpacingScale_ * 100.0f));
-        if (displaySettingsChangedCallback_)
-            displaySettingsChangedCallback_();
-    }
 
     BeginSettingRow(_L("app.settings.corner_radius"), sliderActionW);
     ImGui::SetNextItemWidth(actionSliderW);

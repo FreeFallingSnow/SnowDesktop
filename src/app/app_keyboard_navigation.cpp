@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../widget_item_layout.h"
 
 // Keyboard drag hints, Shell verbs and desktop-grid navigation.
 
@@ -364,7 +365,31 @@ void DesktopApp::ScrollWidgetToMember(size_t widgetIndex, int memberIndex)
     int maxScroll = wc->GetMaxScrollOffset();
     if (maxScroll <= 0) return;
 
-    // 按行比例计算目标滚动位置（适配含 gapY 的 FolderMapping/Collection）
+    auto applyScroll = [&](int scroll) {
+        scroll = std::clamp(scroll, 0, maxScroll);
+        if (scroll == widget.scrollOffset) return;
+        widget.scrollOffset = scroll;
+        if (auto* group = dynamic_cast<FileGroup*>(wc))
+            group->InvalidateHostedView();
+        else
+            wc->InvalidateSlots();
+    };
+
+    // Drawing, hit testing and keyboard reveal all ask the component for the
+    // same local-track rectangle. This also accounts for search/date headers
+    // and for FileGroup-hosted source geometry.
+    const RECT viewport = wc->GetContentViewportRect();
+    const RECT target = wc->GetMemberLayoutRect(
+        static_cast<size_t>(memberIndex));
+    if (!IsRectEmptyRect(target) && !IsRectEmptyRect(viewport))
+    {
+        applyScroll(snowdesktop::widget_item_layout::
+            ScrollOffsetToReveal(viewport, target,
+                widget.scrollOffset, maxScroll));
+        return;
+    }
+
+    // Fallback for non-item surfaces that cannot provide member geometry.
     int columns = std::max(1, widget.gridSpan.columns);
     bool listMode = ((widget.type == DesktopWidgetType::CollectionGroup ||
                       widget.type == DesktopWidgetType::FileGroup) &&
@@ -406,16 +431,7 @@ void DesktopApp::ScrollWidgetToMember(size_t widgetIndex, int memberIndex)
     int scroll = (totalRows <= 1) ? 0
         : static_cast<int>((static_cast<int64_t>(row) * maxScroll) / (totalRows - 1));
 
-    scroll = std::clamp(scroll, 0, maxScroll);
-    if (scroll != widget.scrollOffset)
-    {
-        widget.scrollOffset = scroll;
-        if (auto* group =
-                dynamic_cast<FileGroup*>(wc))
-            group->InvalidateHostedView();
-        else
-            wc->InvalidateSlots();
-    }
+    applyScroll(scroll);
 }
 
 /**

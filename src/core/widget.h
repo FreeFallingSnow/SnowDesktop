@@ -21,6 +21,7 @@
 #include "item.h"
 #include "container.h"
 #include "slot.h"
+#include "../item_visual_metrics.h"
 #include <d2d1_1.h>
 #include <dwrite.h>
 #include <wrl/client.h>
@@ -112,7 +113,8 @@ public:
     DesktopWidget* GetWidgetData() const { return data_; }
     DesktopApp* GetApp() const { return app_; }
     float GetCellScale() const;
-    float GetComponentSpacingScale() const;
+    float GetLayoutSpacingScale() const;
+    virtual snowdesktop::PageItemVisualMetrics GetItemVisualMetrics() const;
     int Cu(float value) const;
     float FontCu(float value) const;
     IDWriteTextFormat* GetCuTextFormat(float value, bool bold, bool centered) const;
@@ -173,7 +175,13 @@ public:
 
     // ── Chrome geometry ──────────────────────────────────
     RECT GetFrameRect() const;
+    snowdesktop::PageItemVisualMetrics GetItemVisualMetrics() const override;
     RECT GetBodyRect() const;
+    virtual RECT GetMemberLayoutRect(size_t index) const
+    {
+        (void)index;
+        return {};
+    }
     RECT GetMoveHandleRect() const;
     RECT GetResizeHandleRect() const;
     RECT GetTitleRect() const;
@@ -277,6 +285,7 @@ public:
     int GetMaxScrollOffset() const override = 0;
     int GetTotalContentHeight() const override = 0;
     int GetVisibleContentHeight() const override = 0;
+    RECT GetMemberLayoutRect(size_t index) const override = 0;
 
     void DrawListItem(ID2D1DeviceContext* context, RECT cell,
         HBITMAP iconBitmap, int sysIconIndex,
@@ -480,6 +489,7 @@ public:
     int  GetMaxScrollOffset() const override;
     int  GetTotalContentHeight() const override;
     int  GetVisibleContentHeight() const override;
+    RECT GetMemberLayoutRect(size_t index) const override;
     bool SingleColumn() const override;
     BarStyle GetInsertionStyle() const override;
     RECT GetContentViewportRect() const override;
@@ -560,6 +570,7 @@ public:
     int GetMaxScrollOffset() const override;
     int GetTotalContentHeight() const override;
     int GetVisibleContentHeight() const override;
+    RECT GetMemberLayoutRect(size_t index) const override;
     RECT GetContentViewportRect() const override;
     void ApplyMarqueeSelection(const RECT& contentRect) override;
 
@@ -637,6 +648,7 @@ public:
     int GetMaxScrollOffset() const override;
     int GetTotalContentHeight() const override;
     int GetVisibleContentHeight() const override;
+    RECT GetMemberLayoutRect(size_t index) const override;
     RECT GetContentViewportRect() const override;
     void ApplyMarqueeSelection(const RECT& contentRect) override;
     bool NeedsShellReloadAfterDrop() const override { return false; }
@@ -752,6 +764,7 @@ public:
     int GetMaxScrollOffset() const override;
     int GetTotalContentHeight() const override;
     int GetVisibleContentHeight() const override;
+    RECT GetMemberLayoutRect(size_t index) const override;
     RECT GetContentViewportRect() const override;
     RECT GetSearchBoxRect() const override;
     const DesktopWidget* GetDetailsSortData() const override;
@@ -849,6 +862,7 @@ public:
     int GetMaxScrollOffset() const override;
     int GetTotalContentHeight() const override;
     int GetVisibleContentHeight() const override;
+    RECT GetMemberLayoutRect(size_t index) const override;
     RECT GetContentViewportRect() const override;
     RECT GetSearchBoxRect() const override;
     const DesktopWidget* GetDetailsSortData() const override;

@@ -73,7 +73,8 @@
 #include "desktop_backdrop_compositor.h"
 #include "drag_drop_controller.h"
 #include "grid_geometry.h"
-#include "../widget_spacing_rules.h"
+#include "../layout_spacing_rules.h"
+#include "../item_visual_metrics.h"
 #include "ole_drag_drop_adapter.h"
 #include "popup_dwell_controller.h"
 #include "rename_controller.h"
@@ -1552,14 +1553,7 @@ private:
     void ToggleLastPagePin(POINT screenPoint);
     /** @brief 设置图标间距比例。 @param value 间距倍率 */
     void SetIconSpacing(float value);
-    /** @brief 设置组件外框间距比例。 @param value 间距倍率 */
-    void SetComponentSpacing(float value);
-    float GetComponentSpacingScale() const
-    {
-        return componentSpacingScale_;
-    }
-    /** @brief 根据当前网格单元和图标间距计算组件间距上限。 */
-    float GetMaximumComponentSpacingScale() const;
+    float GetLayoutSpacingScale() const { return iconSpacingScale_; }
     /** @brief 调整图标间距比例。 @param delta 间距增量 */
     void AdjustIconSpacing(float delta);
     /** @brief 设置图标标题字号（cu）。 @param valueCu cu 字号 */
@@ -1917,6 +1911,10 @@ private:
         Container* target, Slot* slot, HitRegion region, int mods, POINT dragPoint);
 
     // ── Rendering helpers ───────────────────────────────────
+    snowdesktop::PageItemVisualMetrics GetPageItemVisualMetrics(
+        const GridPage& page) const;
+    snowdesktop::PageItemVisualMetrics GetItemVisualMetrics(
+        RECT bounds) const;
     /** @brief 从项边界矩形计算图标区域。 @param bounds 项边界 @return 图标矩形 */
     RECT GetItemIconRect(RECT bounds) const;
     /** @brief 从快捷导航项边界计算图标区域（独立于桌面网格缩放）。 @param bounds 项边界 @return 图标矩形 */
@@ -2778,7 +2776,6 @@ private:
     std::vector<std::wstring> savedPageIds_;
     RECT layoutWorkArea_{};
     float iconSpacingScale_ = 1.0f;
-    float componentSpacingScale_ = 1.0f;
     float itemFontSizeCu_ = kDefaultItemFontSizeCu;
     float listItemFontSizeCu_ = kDefaultItemFontSizeCu;
     DWRITE_FONT_WEIGHT itemFontWeight_ = DWRITE_FONT_WEIGHT_SEMI_BOLD;

@@ -14,6 +14,7 @@
 #include "widget_preview_scene.h"
 #include "../l10n.h"
 #include "../item_render_layer_rules.h"
+#include "../widget_item_layout.h"
 
 #include <algorithm>
 #include <unordered_set>
@@ -389,17 +390,24 @@ std::unique_ptr<Item> CloneHostedItem(
     return nullptr;
 }
 
-int FileGroupSearchCellHeight(FileGroup* group)
+snowdesktop::widget_item_layout::Layout FileGroupSearchLocalLayout(
+    FileGroup* group)
 {
-    if (!group || !group->GetApp() ||
-        !group->GetApp()->GetDesktopGrid())
-        return kMinCellHeight;
+    if (!group || !group->GetApp() || !group->GetWidgetData())
+        return {};
     DesktopWidget* data = group->GetWidgetData();
-    for (const auto& page :
-         group->GetApp()->GetDesktopGrid()->GetPages())
-        if (data && page.id == data->gridCell.pageId)
-            return page.cellHeight;
-    return kMinCellHeight;
+    const RECT content = group->GetContentViewportRect();
+    const auto metrics = group->GetItemVisualMetrics();
+    const float spacing = group->GetLayoutSpacingScale();
+    if (data->listMode)
+        return snowdesktop::widget_item_layout::ResolveList(
+            content,
+            std::max(group->GetListRowHeight(),
+                metrics.minimumListHeight), spacing);
+    return snowdesktop::widget_item_layout::ResolveGrid(
+        content, std::max(1, data->gridSpan.columns), 0,
+        metrics.minimumGridWidth, metrics.minimumGridHeight,
+        spacing);
 }
 
 int FileGroupSearchContentHeight(
@@ -408,15 +416,8 @@ int FileGroupSearchContentHeight(
     DesktopWidget* data =
         group ? group->GetWidgetData() : nullptr;
     if (!data) return 0;
-    if (data->listMode)
-        return static_cast<int>(count) *
-            group->GetListRowHeight();
-    const int columns =
-        std::max(1, data->gridSpan.columns);
-    const int rows = static_cast<int>(
-        (count + static_cast<size_t>(columns) - 1) /
-        static_cast<size_t>(columns));
-    return rows * FileGroupSearchCellHeight(group);
+    return snowdesktop::widget_item_layout::ContentHeight(
+        FileGroupSearchLocalLayout(group), count);
 }
 
 RECT FileGroupSearchItemRect(
@@ -425,44 +426,11 @@ RECT FileGroupSearchItemRect(
     DesktopWidget* data =
         group ? group->GetWidgetData() : nullptr;
     if (!data) return {};
-    RECT content = group->GetContentViewportRect();
     const int scroll = std::clamp(
         data->scrollOffset, 0,
         group->GetMaxScrollOffset());
-    if (data->listMode)
-    {
-        const int height = group->GetListRowHeight();
-        RECT result = MakeRect(
-            content.left,
-            content.top +
-                static_cast<LONG>(index * height) -
-                scroll,
-            content.right,
-            content.top +
-                static_cast<LONG>((index + 1) * height) -
-                scroll);
-        InflateRect(
-            &result, -group->Cu(4.0f),
-            -group->Cu(2.0f));
-        return result;
-    }
-
-    const int columns =
-        std::max(1, data->gridSpan.columns);
-    const int column = static_cast<int>(
-        index % static_cast<size_t>(columns));
-    const int row = static_cast<int>(
-        index / static_cast<size_t>(columns));
-    const int width = std::max<int>(
-        1, (content.right - content.left) / columns);
-    const int height = FileGroupSearchCellHeight(group);
-    return MakeRect(
-        content.left + column * width,
-        content.top + row * height - scroll,
-        column + 1 == columns
-            ? content.right
-            : content.left + (column + 1) * width,
-        content.top + (row + 1) * height - scroll);
+    return snowdesktop::widget_item_layout::ItemRect(
+        FileGroupSearchLocalLayout(group), index, scroll);
 }
 
 } // namespace
@@ -1082,40 +1050,11 @@ std::vector<std::unique_ptr<Slot>> FileGroup::BuildSlots()
         const int scroll = std::clamp(
             data_->scrollOffset, 0,
             GetMaxScrollOffset());
-        size_t first = 0;
-        size_t last = results.size();
-        if (data_->listMode)
-        {
-            const int height = std::max(
-                1, GetListRowHeight());
-            first = static_cast<size_t>(
-                std::max(0, scroll / height - 1));
-            last = std::min(
-                results.size(),
-                static_cast<size_t>(
-                    (scroll + visibleHeight +
-                     height - 1) / height + 1));
-        }
-        else
-        {
-            const int columns =
-                std::max(1, data_->gridSpan.columns);
-            const int height = std::max(
-                1, FileGroupSearchCellHeight(this));
-            const int firstRow =
-                std::max(0, scroll / height - 1);
-            const int lastRow =
-                (scroll + visibleHeight +
-                 height - 1) / height + 1;
-            first = std::min(
-                results.size(),
-                static_cast<size_t>(
-                    firstRow * columns));
-            last = std::min(
-                results.size(),
-                static_cast<size_t>(
-                    lastRow * columns));
-        }
+        const auto range = snowdesktop::widget_item_layout::VisibleRange(
+            FileGroupSearchLocalLayout(this), results.size(),
+            scroll, visibleHeight);
+        const size_t first = range.first;
+        const size_t last = range.second;
         result.reserve(last - first);
         for (size_t index = first;
              index < last; ++index)
@@ -1174,10 +1113,8 @@ size_t FileGroup::GetSlotCount() const
 int FileGroup::GetItemHeight() const
 {
     if (IsGroupSearchActive())
-        return data_ && data_->listMode
-            ? GetListRowHeight()
-            : FileGroupSearchCellHeight(
-                const_cast<FileGroup*>(this));
+        return FileGroupSearchLocalLayout(
+            const_cast<FileGroup*>(this)).vertical.cell;
     auto* source = GetActiveSourceContainer();
     if (!source) return GetListRowHeight();
     HostedFileSourceScope hosted(
@@ -1188,16 +1125,8 @@ int FileGroup::GetItemHeight() const
 int FileGroup::GetItemWidth() const
 {
     if (IsGroupSearchActive())
-    {
-        RECT content = GetContentViewportRect();
-        return data_ && data_->listMode
-            ? std::max<int>(
-                1, content.right - content.left)
-            : std::max<int>(
-                1, (content.right - content.left) /
-                    std::max(
-                        1, data_->gridSpan.columns));
-    }
+        return FileGroupSearchLocalLayout(
+            const_cast<FileGroup*>(this)).horizontal.cell;
     auto* source = GetActiveSourceContainer();
     if (!source) return 1;
     HostedFileSourceScope hosted(
@@ -1456,6 +1385,18 @@ RECT FileGroup::GetContentViewportRect() const
     return hosted
         ? source->GetContentViewportRect()
         : RECT{};
+}
+
+RECT FileGroup::GetMemberLayoutRect(size_t index) const
+{
+    if (IsGroupSearchActive())
+        return FileGroupSearchItemRect(
+            const_cast<FileGroup*>(this), index);
+    auto* source = GetActiveSourceContainer();
+    if (!source) return {};
+    HostedFileSourceScope hosted(
+        const_cast<FileGroup*>(this), source);
+    return hosted ? source->GetMemberLayoutRect(index) : RECT{};
 }
 
 const DesktopWidget* FileGroup::GetDetailsSortData() const

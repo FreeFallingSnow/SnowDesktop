@@ -632,8 +632,6 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         });
         settingsWindow_->SetDisplaySettingsChangedCallback([this]() {
             SetIconSpacing(settingsWindow_->GetIconSpacingScale());
-            SetComponentSpacing(
-                settingsWindow_->GetComponentSpacingScale());
             SetItemFontSize(settingsWindow_->GetItemFontSizeCu());
             SetListItemFontSize(
                 settingsWindow_->GetListItemFontSizeCu());
@@ -654,12 +652,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 AddLuaWidgetAt(POINT{ -32000, -32000 }, packageId);
                 return widgets_.size() > previousCount;
             });
-        settingsWindow_->SetComponentSpacingMaximumProvider([this]() {
-            return GetMaximumComponentSpacingScale();
-        });
-
         settingsWindow_->SyncDisplaySettings(iconSpacingScale_,
-            componentSpacingScale_, itemFontSizeCu_, listItemFontSizeCu_,
+            itemFontSizeCu_, listItemFontSizeCu_,
             static_cast<float>(itemFontWeight_), shortcutArrowMode_,
             iconBeautifySettings_);
         settingsWindow_->SyncDockEnabled(generalSettings_.dockEnabled);

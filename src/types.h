@@ -81,6 +81,10 @@ struct GridPage
     int rows = 1;
     int cellWidth = kCellWidth;
     int cellHeight = kMinCellHeight;
+    // Stable center-to-center pitch before the configurable gap is applied.
+    // Item visual metrics use this pitch so spacing cannot resize icons.
+    int itemPitchWidth = kCellWidth;
+    int itemPitchHeight = kMinCellHeight;
     int gapX = 0;
     int gapY = 0;
     int marginX = kGridMarginX;

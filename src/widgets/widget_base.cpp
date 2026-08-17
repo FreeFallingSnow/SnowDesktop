@@ -107,9 +107,17 @@ float Widget::GetCellScale() const
     return data_ ? data_->cellScale : 1.0f;
 }
 
-float Widget::GetComponentSpacingScale() const
+float Widget::GetLayoutSpacingScale() const
 {
-    return app_ ? app_->GetComponentSpacingScale() : 1.0f;
+    return app_ ? app_->GetLayoutSpacingScale() : 1.0f;
+}
+
+snowdesktop::PageItemVisualMetrics Widget::GetItemVisualMetrics() const
+{
+    return app_
+        ? app_->GetItemVisualMetrics(GetBounds())
+        : snowdesktop::ResolvePageItemVisualMetrics(
+            kCellWidth, kMinCellHeight, kDefaultItemFontSizeCu);
 }
 
 int Widget::Cu(float value) const
@@ -312,34 +320,17 @@ RECT WidgetContainer::GetFrameRect() const
         return hostedFrame_;
     if (app_ && app_->IsGroupedWidget(*data_))
         return {};
-    RECT rect = data_->bounds;
+    // The occupied grid rectangle already excludes the shared page gap.
+    // Using it directly makes neighboring icons and widget frames follow the
+    // same spacing source without a second inset/compensation pass.
+    return data_->bounds;
+}
 
-    // Absorb half the grid gap on all four sides so widget frames have
-    // consistent visual size regardless of grid position.
-    if (app_ && app_->GetDesktopGrid())
-    {
-        const auto& pages = app_->GetDesktopGrid()->GetPages();
-        const GridCell& cell = data_->gridCell;
-        for (const auto& p : pages)
-        {
-            if (p.id == cell.pageId)
-            {
-                int halfGapX = std::max(Cu(2.0f), p.gapX / 2);
-                int halfGapY = std::max(Cu(2.0f), p.gapY / 2);
-                rect.left   -= halfGapX;
-                rect.top    -= halfGapY;
-                rect.right  += halfGapX;
-                rect.bottom += halfGapY;
-                break;
-            }
-        }
-    }
-
-    const int inset = snowdesktop::widget_spacing_rules::ScaledComponentInset(
-        GetCellScale(), app_ ? app_->GetComponentSpacingScale() : 1.0f);
-    if (rect.right - rect.left > inset * 4 && rect.bottom - rect.top > inset * 4)
-        InflateRect(&rect, -inset, -inset);
-    return rect;
+snowdesktop::PageItemVisualMetrics WidgetContainer::GetItemVisualMetrics() const
+{
+    return app_
+        ? app_->GetItemVisualMetrics(GetFrameRect())
+        : Widget::GetItemVisualMetrics();
 }
 
 /**
@@ -1628,8 +1619,12 @@ int ScrollingItemWidget::GetListRowHeight() const
         ? FontCu(app_->listItemFontSizeCu_)
         : FontCu(kDefaultItemFontSizeCu);
     const float defaultFont = FontCu(kItemFontSize);
-    return snowdesktop::list_detail_rules::RowHeight(
+    const int textHeight = snowdesktop::list_detail_rules::RowHeight(
         Cu(36.0f), Cu(38.0f), currentFont, defaultFont);
+    const int iconHeight = app_
+        ? app_->GetItemVisualMetrics(GetFrameRect()).minimumListHeight
+        : Cu(38.0f);
+    return std::max(textHeight, iconHeight);
 }
 
 int ScrollingItemWidget::GetDetailsHeaderHeight() const
@@ -1986,14 +1981,9 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
         nameCell.right = std::min<LONG>(
             cell.right, cell.left + columns.nameWidth);
 
-    int itemH = std::max<int>(1, cell.bottom - cell.top);
-    int iconSz = std::max(1, std::min(Cu(32.0f),
-        std::max(1, itemH - Cu(4.0f))));
-    RECT iconRect = MakeRect(
-        nameCell.left + Cu(4.0f),
-        nameCell.top + (itemH - iconSz) / 2,
-        nameCell.left + Cu(4.0f) + iconSz,
-        nameCell.top + (itemH + iconSz) / 2);
+    const auto visualMetrics = GetItemVisualMetrics();
+    RECT iconRect = snowdesktop::ResolveListItemIconRect(
+        nameCell, nameCell.left + Cu(4.0f), visualMetrics);
 
     if (!demoIdentity.empty())
     {
@@ -2093,12 +2083,9 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
 
     if (width > height * 2)
     {
-        const int iconSize = std::max(1, std::min(Cu(32.0f),
-            std::max(1, height - Cu(4.0f))));
-        RECT iconRect = MakeRect(rect.left + Cu(4.0f),
-            rect.top + (height - iconSize) / 2,
-            rect.left + Cu(4.0f) + iconSize,
-            rect.top + (height + iconSize) / 2);
+        const auto visualMetrics = GetItemVisualMetrics();
+        RECT iconRect = snowdesktop::ResolveListItemIconRect(
+            rect, rect.left + Cu(4.0f), visualMetrics);
         app_->DrawPrivacyFaIcon(context, iconRect, isDir);
         if (showLabel)
             DrawListItemTitle(context, rect, iconRect, label);

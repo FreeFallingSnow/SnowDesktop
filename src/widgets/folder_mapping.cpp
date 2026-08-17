@@ -20,6 +20,7 @@
 #include "widget_preview_scene.h"
 #include "../category_settings.h"
 #include "../item_render_layer_rules.h"
+#include "../widget_item_layout.h"
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -478,48 +479,24 @@ void FolderMapping::ApplyMarqueeSelection(const RECT& contentRect)
  * @param widget FolderMapping 组件指针
  * @return 单元格高度（像素），失败时返回最小单元格高度 kMinCellHeight
  */
-static int FolderMappingCellHeight(FolderMapping* widget)
+static snowdesktop::widget_item_layout::Layout FolderMappingLocalLayout(
+    FolderMapping* widget)
 {
-    if (!widget || !widget->GetApp() || !widget->GetApp()->GetDesktopGrid())
-        return kMinCellHeight;
+    if (!widget || !widget->GetApp() || !widget->GetWidgetData())
+        return {};
     DesktopWidget* data = widget->GetWidgetData();
-    for (const auto& page : widget->GetApp()->GetDesktopGrid()->GetPages())
-        if (data && page.id == data->gridCell.pageId)
-            return page.cellHeight;
-    return kMinCellHeight;
-}
-
-/**
- * @brief 计算映射文件夹图标模式下的自适应纵向间距
- * @param widget FolderMapping 组件指针
- * @return 间距像素值。根据可视高度与单元格高度的余数，
- *         在可见行之间均分以消除底部不完整行。
- *         间距过大或过小则返回 0 回退到默认紧凑布局。
- */
-static int FolderMappingAdaptiveGapY(FolderMapping* widget)
-{
-    if (!widget) return 0;
-    DesktopWidget* data = widget->GetWidgetData();
-    if (!data || data->listMode) return 0;
-
-    RECT content = FolderMappingContentRect(widget);
-    int visibleHeight = content.bottom - content.top;
-    if (visibleHeight <= 0) return 0;
-
-    int cellH = FolderMappingCellHeight(widget);
-    if (cellH <= 0 || visibleHeight <= cellH) return 0;
-
-    int visibleRows = visibleHeight / cellH;
-    if (visibleRows <= 1) return 0;
-
-    int extraSpace = visibleHeight - visibleRows * cellH;
-    int gapY = extraSpace / (visibleRows - 1);
-    if (gapY < 0) return 0;
-
-    int maxGap = std::max(1, static_cast<int>(cellH * kGapPercentY));
-    if (gapY > maxGap) return 0;
-
-    return gapY;
+    const RECT content = FolderMappingContentRect(widget);
+    const auto metrics = widget->GetItemVisualMetrics();
+    const float spacing = widget->GetLayoutSpacingScale();
+    if (data->listMode)
+        return snowdesktop::widget_item_layout::ResolveList(
+            content,
+            std::max(widget->GetListRowHeight(),
+                metrics.minimumListHeight), spacing);
+    return snowdesktop::widget_item_layout::ResolveGrid(
+        content, std::max(1, data->gridSpan.columns), 0,
+        metrics.minimumGridWidth, metrics.minimumGridHeight,
+        spacing);
 }
 
 void FolderMapping::EnsureDateLayout() const
@@ -532,10 +509,10 @@ void FolderMapping::EnsureDateLayout() const
     }
 
     const auto& visibleEntries = GetVisibleEntryIndices();
-    const int currentItemHeight = data_->listMode
-        ? GetListRowHeight()
-        : FolderMappingCellHeight(
-            const_cast<FolderMapping*>(this));
+    const auto itemLayout = FolderMappingLocalLayout(
+        const_cast<FolderMapping*>(this));
+    const int currentItemHeight = itemLayout.vertical.cell +
+        itemLayout.vertical.gap;
     if (dateLayoutSource_ == visibleEntries &&
         dateLayoutListMode_ == data_->listMode &&
         dateLayoutItemHeight_ == currentItemHeight &&
@@ -549,11 +526,6 @@ void FolderMapping::EnsureDateLayout() const
     if (visibleEntries.empty()) return;
 
     const int headerHeight = data_->listMode ? Cu(28.0f) : Cu(36.0f);
-    const int itemHeight = currentItemHeight;
-    const int columns = data_->listMode
-        ? 1
-        : std::max(1, data_->gridSpan.columns);
-
     LONG y = 0;
     size_t groupStart = 0;
     std::wstring previousGroup;
@@ -583,11 +555,9 @@ void FolderMapping::EnsureDateLayout() const
                 items.firstItemIndex = groupStart;
                 items.itemCount = groupCount;
                 items.y = y;
-                items.height = data_->listMode
-                    ? static_cast<LONG>(groupCount) * itemHeight
-                    : static_cast<LONG>(
-                        (groupCount + static_cast<size_t>(columns) - 1) /
-                        static_cast<size_t>(columns)) * itemHeight;
+                items.height = static_cast<LONG>(
+                    snowdesktop::widget_item_layout::ContentHeight(
+                        itemLayout, groupCount));
                 dateLayoutCache_.push_back(items);
                 y += items.height;
             }
@@ -617,14 +587,8 @@ static int FolderMappingContentHeight(FolderMapping* widget, size_t itemCount)
             ? 0
             : static_cast<int>(segments.back().y + segments.back().height);
     }
-    if (data->listMode)
-        return static_cast<int>(itemCount) * widget->GetListRowHeight();
-    int columns = std::max(1, data->gridSpan.columns);
-    int rows = static_cast<int>((itemCount + static_cast<size_t>(columns) - 1) / static_cast<size_t>(columns));
-    if (rows <= 0) return 0;
-    int cellH = FolderMappingCellHeight(widget);
-    int gapY = FolderMappingAdaptiveGapY(widget);
-    return rows * cellH + (rows - 1) * gapY;
+    return snowdesktop::widget_item_layout::ContentHeight(
+        FolderMappingLocalLayout(widget), itemCount);
 }
 
 /**
@@ -655,6 +619,7 @@ static RECT FolderMappingItemRect(FolderMapping* widget, size_t linearIndex)
     DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
     if (!data) return {};
     RECT content = FolderMappingContentRect(widget);
+    const auto layout = FolderMappingLocalLayout(widget);
     int scroll = std::clamp(data->scrollOffset, 0, FolderMappingMaxScrollOffset(widget));
     if (data->dateHeaders && !widget->IsSearchActive())
     {
@@ -685,60 +650,15 @@ static RECT FolderMappingItemRect(FolderMapping* widget, size_t linearIndex)
         if (itemSegment)
         {
             size_t localIndex = linearIndex - itemSegment->firstItemIndex;
-            if (data->listMode)
-            {
-                const int itemHeight = widget->GetListRowHeight();
-                RECT rect = MakeRect(content.left,
-                    content.top + itemSegment->y +
-                        static_cast<LONG>(localIndex * itemHeight) - scroll,
-                    content.right,
-                    content.top + itemSegment->y +
-                        static_cast<LONG>((localIndex + 1) * itemHeight) - scroll);
-                InflateRect(&rect, -widget->Cu(4.0f), -widget->Cu(2.0f));
-                return rect;
-            }
-
-            int columns = std::max(1, data->gridSpan.columns);
-            int col = static_cast<int>(
-                localIndex % static_cast<size_t>(columns));
-            int row = static_cast<int>(
-                localIndex / static_cast<size_t>(columns));
-            int itemWidth = std::max<int>(
-                1, (content.right - content.left) / columns);
-            int cellHeight = FolderMappingCellHeight(widget);
-            return MakeRect(
-                content.left + col * itemWidth,
-                content.top + itemSegment->y + row * cellHeight - scroll,
-                col + 1 == columns
-                    ? content.right
-                    : content.left + (col + 1) * itemWidth,
-                content.top + itemSegment->y +
-                    (row + 1) * cellHeight - scroll);
+            RECT rect = snowdesktop::widget_item_layout::ItemRect(
+                layout, localIndex, scroll);
+            OffsetRect(&rect, 0, itemSegment->y);
+            return rect;
         }
     }
-    if (data->listMode)
-    {
-        const int itemHeight = widget->GetListRowHeight();
-        RECT rect = MakeRect(content.left,
-            content.top + static_cast<LONG>(linearIndex * itemHeight) - scroll,
-            content.right,
-            content.top + static_cast<LONG>((linearIndex + 1) * itemHeight) - scroll);
-        InflateRect(&rect, -widget->Cu(4.0f), -widget->Cu(2.0f));
-        return rect;
-    }
-
-    int columns = std::max(1, data->gridSpan.columns);
-    int col = static_cast<int>(linearIndex % static_cast<size_t>(columns));
-    int row = static_cast<int>(linearIndex / static_cast<size_t>(columns));
-    int itemW = std::max<int>(1, (content.right - content.left) / columns);
-    int cellH = FolderMappingCellHeight(widget);
-    int gapY = FolderMappingAdaptiveGapY(widget);
-    int rowStep = cellH + gapY;
-    return MakeRect(
-        content.left + col * itemW,
-        content.top + row * rowStep - scroll,
-        col + 1 == columns ? content.right : content.left + (col + 1) * itemW,
-        content.top + row * rowStep + cellH - scroll);
+    (void)content;
+    return snowdesktop::widget_item_layout::ItemRect(
+        layout, linearIndex, scroll);
 }
 
 /**
@@ -798,17 +718,12 @@ std::vector<std::unique_ptr<Slot>> FolderMapping::BuildSlots()
         FolderMappingMaxScrollOffset(this));
 
     std::vector<size_t> visibleSlotIndices;
+    const auto localLayout = FolderMappingLocalLayout(this);
     if (data_->dateHeaders && !IsSearchActive())
     {
         EnsureDateLayout();
         const LONG visibleTop = scroll;
         const LONG visibleBottom = scroll + visibleHeight;
-        const int columns = data_->listMode
-            ? 1 : std::max(1, data_->gridSpan.columns);
-        const int itemHeight = data_->listMode
-            ? std::max(1, GetListRowHeight())
-            : std::max(1, FolderMappingCellHeight(this));
-
         for (const auto& segment : dateLayoutCache_)
         {
             if (segment.isHeader ||
@@ -816,53 +731,11 @@ std::vector<std::unique_ptr<Slot>> FolderMapping::BuildSlots()
                 segment.y >= visibleBottom)
                 continue;
 
-            size_t firstInSegment = 0;
-            size_t lastInSegment = segment.itemCount;
-            if (data_->listMode)
-            {
-                firstInSegment = static_cast<size_t>(
-                    std::max<LONG>(
-                        0, (visibleTop - segment.y) /
-                            itemHeight));
-                lastInSegment = std::min(
-                    segment.itemCount,
-                    static_cast<size_t>(std::max<LONG>(
-                        1, (visibleBottom - segment.y +
-                            itemHeight - 1) / itemHeight)));
-            }
-            else
-            {
-                const size_t firstRow =
-                    static_cast<size_t>(std::max<LONG>(
-                        0, (visibleTop - segment.y) /
-                            itemHeight));
-                const size_t lastRow = std::min(
-                    (segment.itemCount +
-                        static_cast<size_t>(columns) - 1) /
-                        static_cast<size_t>(columns),
-                    static_cast<size_t>(std::max<LONG>(
-                        1, (visibleBottom - segment.y +
-                            itemHeight - 1) / itemHeight)));
-                firstInSegment = std::min(
-                    segment.itemCount,
-                    firstRow * static_cast<size_t>(columns));
-                lastInSegment = std::min(
-                    segment.itemCount,
-                    lastRow * static_cast<size_t>(columns));
-            }
-
-            if (firstInSegment > 0)
-                firstInSegment = data_->listMode
-                    ? firstInSegment - 1
-                    : firstInSegment >=
-                        static_cast<size_t>(columns)
-                        ? firstInSegment -
-                            static_cast<size_t>(columns)
-                        : 0;
-            lastInSegment = std::min(
-                segment.itemCount,
-                lastInSegment +
-                    static_cast<size_t>(columns));
+            const auto localRange = snowdesktop::widget_item_layout::
+                VisibleRange(localLayout, segment.itemCount,
+                    scroll - static_cast<int>(segment.y), visibleHeight);
+            const size_t firstInSegment = localRange.first;
+            const size_t lastInSegment = localRange.second;
             for (size_t localIndex = firstInSegment;
                 localIndex < lastInSegment; ++localIndex)
             {
@@ -882,43 +755,10 @@ std::vector<std::unique_ptr<Slot>> FolderMapping::BuildSlots()
     }
     else if (total > 0)
     {
-        size_t firstIndex = 0;
-        size_t lastIndex = total;
-        if (data_->listMode)
-        {
-            const int itemHeight =
-                std::max(1, GetListRowHeight());
-            const int firstRow = std::max(
-                0, scroll / itemHeight - 1);
-            const int lastRow =
-                (scroll + visibleHeight + itemHeight - 1) /
-                    itemHeight + 1;
-            firstIndex = std::min(
-                total, static_cast<size_t>(firstRow));
-            lastIndex = std::min(
-                total, static_cast<size_t>(
-                    std::max(firstRow, lastRow)));
-        }
-        else
-        {
-            const int columns =
-                std::max(1, data_->gridSpan.columns);
-            const int rowStep = std::max(
-                1, FolderMappingCellHeight(this) +
-                    FolderMappingAdaptiveGapY(this));
-            const int firstRow = std::max(
-                0, scroll / rowStep - 1);
-            const int lastRow =
-                (scroll + visibleHeight + rowStep - 1) /
-                    rowStep + 1;
-            firstIndex = std::min(
-                total, static_cast<size_t>(firstRow) *
-                    static_cast<size_t>(columns));
-            lastIndex = std::min(
-                total, static_cast<size_t>(
-                    std::max(firstRow, lastRow)) *
-                        static_cast<size_t>(columns));
-        }
+        const auto range = snowdesktop::widget_item_layout::VisibleRange(
+            localLayout, total, scroll, visibleHeight);
+        const size_t firstIndex = range.first;
+        const size_t lastIndex = range.second;
         visibleSlotIndices.reserve(lastIndex - firstIndex);
         for (size_t idx = firstIndex; idx < lastIndex; ++idx)
             visibleSlotIndices.push_back(idx);
@@ -1035,9 +875,8 @@ size_t FolderMapping::GetSlotCount() const
  */
 int FolderMapping::GetItemHeight() const
 {
-    return (data_ && data_->listMode)
-        ? GetListRowHeight()
-        : FolderMappingCellHeight(const_cast<FolderMapping*>(this));
+    return FolderMappingLocalLayout(
+        const_cast<FolderMapping*>(this)).vertical.cell;
 }
 
 /**
@@ -1047,9 +886,8 @@ int FolderMapping::GetItemHeight() const
  */
 int FolderMapping::GetItemWidth() const
 {
-    if (!data_ || data_->listMode) return WidgetContainer::GetItemWidth();
-    RECT content = FolderMappingContentRect(const_cast<FolderMapping*>(this));
-    return std::max<int>(1, (content.right - content.left) / std::max(1, data_->gridSpan.columns));
+    return FolderMappingLocalLayout(
+        const_cast<FolderMapping*>(this)).horizontal.cell;
 }
 
 /**
@@ -1276,6 +1114,12 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
         item->DrawTitle(
             context, bounds, true, 1.0f, lt);
     context->PopAxisAlignedClip();
+}
+
+RECT FolderMapping::GetMemberLayoutRect(size_t index) const
+{
+    return FolderMappingItemRect(
+        const_cast<FolderMapping*>(this), index);
 }
 
 /**

@@ -1358,7 +1358,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             AppendMenuW(spacingMenu, MF_SEPARATOR, 0, nullptr);
             AppendMenuW(spacingMenu, MF_STRING, kContextSpacingIncrease, _LW("app.menu.inc_spacing"));
             AppendMenuW(spacingMenu, MF_STRING, kContextSpacingDecrease, _LW("app.menu.dec_spacing"));
-            const std::wstring spacingLabel = _LFW("app.menu.icon_spacing_pct",
+            const std::wstring spacingLabel = _LFW("app.menu.layout_spacing_pct",
                 std::to_wstring(currentSpacingPercent));
             AppendMenuW(displaySettingsMenu, MF_POPUP,
                 reinterpret_cast<UINT_PTR>(spacingMenu), spacingLabel.c_str());

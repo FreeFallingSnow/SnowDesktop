@@ -208,10 +208,9 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
     float tw = static_cast<float>(std::max<LONG>(1, textRect.right - textRect.left));
     float th = static_cast<float>(std::max<LONG>(1, textRect.bottom - textRect.top));
 
-    const float fontScale = GetGridCuScaleForBounds(
-        gridPages_, bounds);
-    const float fontSize = ScaleWidgetFontCu(
-        itemFontSizeCu_, fontScale);
+    const auto visualMetrics = GetItemVisualMetrics(bounds);
+    const float fontScale = visualMetrics.fontScale;
+    const float fontSize = visualMetrics.fontSize;
     const float lineHeight = fontSize * 7.0f / 6.0f;
     auto createConfiguredLayout =
         [&](const std::wstring& layoutText,

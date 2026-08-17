@@ -23,7 +23,7 @@
 #include "full_data_backup.h"
 #include "widget_package.h"
 #include "authoring_toolchain.h"
-#include "../widget_spacing_rules.h"
+#include "../layout_spacing_rules.h"
 #include "icon_beautify.h"
 #include "constants.h"
 
@@ -234,10 +234,6 @@ public:
         std::function<void(snowdesktop::IconBeautifyUpdateKind)> callback)
     { iconBeautifySettingsChangedCallback_ = std::move(callback); }
 
-    void SetComponentSpacingMaximumProvider(
-        std::function<float()> provider)
-    { componentSpacingMaximumProvider_ = std::move(provider); }
-
     void SetCategorySettingsChangedCallback(std::function<void()> callback) { categorySettingsChangedCallback_ = std::move(callback); }
 
     /** @brief 设置从组件库向桌面添加 Lua 组件的回调。 */
@@ -260,21 +256,13 @@ public:
         std::function<void(bool)> callback)
     { animationDiagnosticsToggleCallback_ = std::move(callback); }
 
-    void SyncDisplaySettings(float spacingScale, float componentSpacingScale,
+    void SyncDisplaySettings(float spacingScale,
         float fontSizeCu, float listFontSizeCu, float fontWeight,
         int shortcutArrowMode,
         const snowdesktop::IconBeautifySettings& iconBeautifySettings)
     {
-        iconSpacingScale_ = std::clamp(
-            spacingScale,
-            snowdesktop::widget_spacing_rules::kMinimumScale,
-            snowdesktop::widget_spacing_rules::kMaximumScale);
-        const float componentSpacingMaximum =
-            componentSpacingMaximumProvider_
-                ? componentSpacingMaximumProvider_()
-                : snowdesktop::widget_spacing_rules::kMaximumComponentScale;
-        componentSpacingScale_ = snowdesktop::widget_spacing_rules::
-            ClampComponentScale(componentSpacingScale, componentSpacingMaximum);
+        iconSpacingScale_ = snowdesktop::layout_spacing_rules::
+            ClampScale(spacingScale);
         itemFontSizeCu_ = fontSizeCu;
         listItemFontSizeCu_ = listFontSizeCu;
         itemFontWeight_ = fontWeight;
@@ -285,8 +273,6 @@ public:
             iconBeautifySettings_);
         displaySpacingPct_ = static_cast<int>(std::round(
             iconSpacingScale_ * 100.0f));
-        componentSpacingPct_ = static_cast<int>(std::round(
-            componentSpacingScale_ * 100.0f));
     }
 
     /** @} */
@@ -328,7 +314,6 @@ public:
     const CategorySettings& GetCategorySettings() const { return categorySettings_; }
 
     float GetIconSpacingScale() const { return iconSpacingScale_; }
-    float GetComponentSpacingScale() const { return componentSpacingScale_; }
     float GetItemFontSizeCu() const { return itemFontSizeCu_; }
     float GetListItemFontSizeCu() const { return listItemFontSizeCu_; }
     float GetItemFontWeightD() const { return itemFontWeight_; }
@@ -723,7 +708,6 @@ private:
     /// 图标美化预览/提交回调；false 仅刷新，true 持久化。
     std::function<void(snowdesktop::IconBeautifyUpdateKind)>
         iconBeautifySettingsChangedCallback_;
-    std::function<float()> componentSpacingMaximumProvider_;
 
     /// 分类设置变更回调
     std::function<void()> categorySettingsChangedCallback_;
@@ -782,7 +766,6 @@ private:
 
     /// 当前图标间距缩放
     float iconSpacingScale_ = 1.0f;
-    float componentSpacingScale_ = 1.0f;
 
     /// 当前桌面项目字号（cu）
     float itemFontSizeCu_ = kDefaultItemFontSizeCu;
@@ -801,7 +784,6 @@ private:
         iconBeautifyContinuousState_{};
 
     int displaySpacingPct_ = 100;
-    int componentSpacingPct_ = 100;
 
     struct CategoryRuleEditBuffer
     {

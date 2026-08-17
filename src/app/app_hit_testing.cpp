@@ -59,35 +59,12 @@ float DesktopApp::GetWidgetCellScale(const DesktopWidget& widget) const
 int DesktopApp::GetComponentEdgeMargin(
     const GridPage& page, bool vertical) const
 {
-    const float cellScale = CalculateWidgetCellScale(
-        page.cellWidth, page.cellHeight);
-    return snowdesktop::widget_spacing_rules::EffectiveComponentEdgeGap(
-        vertical ? page.marginX : page.marginY,
-        vertical ? page.gapX : page.gapY,
-        cellScale,
-        componentSpacingScale_);
+    return vertical ? page.marginX : page.marginY;
 }
 
 RECT DesktopApp::GetStandaloneWidgetFrameRect(const DesktopWidget& widget) const
 {
-    RECT rect = widget.bounds;
-    const float cellScale = GetWidgetCellScale(widget);
-    for (const auto& page : gridPages_)
-    {
-        if (page.id != widget.gridCell.pageId) continue;
-        int halfGapX = std::max(ScaleWidgetCu(2.0f, cellScale), page.gapX / 2);
-        int halfGapY = std::max(ScaleWidgetCu(2.0f, cellScale), page.gapY / 2);
-        rect.left   -= halfGapX;
-        rect.top    -= halfGapY;
-        rect.right  += halfGapX;
-        rect.bottom += halfGapY;
-        break;
-    }
-    const int inset = snowdesktop::widget_spacing_rules::ScaledComponentInset(
-        cellScale, componentSpacingScale_);
-    if (rect.right - rect.left > inset * 4 && rect.bottom - rect.top > inset * 4)
-        InflateRect(&rect, -inset, -inset);
-    return rect;
+    return widget.bounds;
 }
 
 RECT DesktopApp::GetLuaWidgetHostActionRect(

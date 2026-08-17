@@ -134,15 +134,9 @@ void DesktopApp::LoadLayoutSlots()
         itemFontWeight_ = static_cast<DWRITE_FONT_WEIGHT>(
             static_cast<int>(*document.itemFontWeight));
 
-    if (document.iconSpacing &&
-        *document.iconSpacing >= 0.5f &&
-        *document.iconSpacing <= 2.0f)
-        iconSpacingScale_ = *document.iconSpacing;
-
-    componentSpacingScale_ = snowdesktop::widget_spacing_rules::
-        ClampComponentScale(
-            document.componentSpacing.value_or(1.0f),
-            snowdesktop::widget_spacing_rules::kMaximumComponentScale);
+    iconSpacingScale_ = snowdesktop::layout_spacing_rules::ResolveStoredScale(
+        document.iconSpacing, document.componentSpacing,
+        iconSpacingScale_);
 
     if (document.shortcutArrowMode)
         shortcutArrowMode_ = std::clamp(
@@ -821,7 +815,6 @@ void DesktopApp::SaveLayoutSlots()
          << ",\n  \"listItemFontSizeCu\": " << listItemFontSizeCu_
          << ",\n  \"itemFontWeight\": " << static_cast<int>(itemFontWeight_)
          << ",\n  \"iconSpacing\": " << iconSpacingScale_
-         << ",\n  \"componentSpacing\": " << componentSpacingScale_
          << ",\n  \"shortcutArrowMode\": " << shortcutArrowMode_
          << ",\n  \"iconBeautifyEnabled\": " << (iconBeautifySettings_.enabled ? "true" : "false")
          << ",\n  \"iconBeautifyPreset\": " << static_cast<int>(iconBeautifySettings_.preset)

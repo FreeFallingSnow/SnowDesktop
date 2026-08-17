@@ -485,11 +485,7 @@ int DockContainer::EdgeMargin() const
         if (page)
             return app_->GetComponentEdgeMargin(*page, IsVertical());
     }
-    return snowdesktop::widget_spacing_rules::EffectiveComponentEdgeGap(
-        IsVertical() ? kGridMarginX : kGridMarginY,
-        0,
-        1.0f,
-        app_ ? app_->GetComponentSpacingScale() : 1.0f);
+    return IsVertical() ? kGridMarginX : kGridMarginY;
 }
 
 BarStyle DockContainer::GetInsertionStyle() const

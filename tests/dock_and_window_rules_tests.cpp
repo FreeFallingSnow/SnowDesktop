@@ -21,7 +21,9 @@
 #include "floating_dock_rules.h"
 #include "ole_drag_rules.h"
 #include "display_topology_refresh.h"
-#include "widget_spacing_rules.h"
+#include "item_visual_metrics.h"
+#include "layout_spacing_rules.h"
+#include "widget_item_layout.h"
 
 #include <dwrite.h>
 #include <wrl/client.h>
@@ -308,42 +310,147 @@ int main()
     Check(showWindowPreviews,
         "Dock window previews must remain enabled after settings normalization");
 
-    namespace widgetSpacing = snowdesktop::widget_spacing_rules;
-    const float compactComponentLimit =
-        widgetSpacing::MaximumComponentScaleForPage(40, 40, 2, 2, 1.0f);
-    const float roomyComponentLimit =
-        widgetSpacing::MaximumComponentScaleForPage(40, 40, 20, 20, 1.0f);
-    Check(roomyComponentLimit > compactComponentLimit,
-        "larger actual grid gaps must expand the component range");
-    Check(widgetSpacing::MaximumComponentScaleForCollectionRows(
-            2, 16, 1.0f) == 3.0f,
-        "collection spacing must stop after row gaps are exhausted so the complete last-row title remains visible");
-    Check(widgetSpacing::MaximumComponentScaleForCollectionRows(
-            3, 16, 1.0f) >
-            widgetSpacing::MaximumComponentScaleForCollectionRows(
-                2, 16, 1.0f),
-        "additional collection rows must contribute their real shrinkable gaps to the component range");
-    Check(widgetSpacing::CollectionRowOffsetForComponentSpacing(
-            1, 2, 16, 1.0f, 0.5f) == 4,
-        "smaller component spacing must expand the large collection's vertical row gap symmetrically");
-    Check(widgetSpacing::CollectionRowOffsetForComponentSpacing(
-            1, 2, 16, 1.0f, 2.0f) == -8,
-        "larger component spacing must consume the large collection's vertical row gap before its content cells");
-    Check(widgetSpacing::ClampComponentScale(3.0f, 2.0f) == 2.0f,
-        "component spacing must respect the actual geometry limit");
-    Check(widgetSpacing::ClampComponentScale(
-            4.0f, roomyComponentLimit) == roomyComponentLimit,
-        "component spacing must accept the expanded geometry limit");
-    Check(widgetSpacing::ClampComponentScale(0.5f, roomyComponentLimit) == 0.5f,
-        "component spacing must retain the shared lower bound");
-    Check(widgetSpacing::EffectiveComponentEdgeGap(
-            14, 8, 1.0f, 1.0f) == 14,
-        "component edge gap must include the current visible component inset");
-    Check(widgetSpacing::EffectiveComponentEdgeGap(
-            14, 8, 1.0f, 1.5f) >
-            widgetSpacing::EffectiveComponentEdgeGap(
-                14, 8, 1.0f, 1.0f),
-        "larger component spacing must increase the visible edge gap");
+    namespace itemVisual = snowdesktop;
+    namespace layoutSpacing = snowdesktop::layout_spacing_rules;
+    namespace localLayout = snowdesktop::widget_item_layout;
+
+    const auto pageVisual = itemVisual::ResolvePageItemVisualMetrics(
+        104, 128, kDefaultItemFontSizeCu);
+    const RECT ordinaryItemCells[] = {
+        { 0, 0, 104, pageVisual.minimumGridHeight + 8 },
+        { 0, 0, 116, pageVisual.minimumGridHeight + 12 },
+        { 0, 0, 132, pageVisual.minimumGridHeight + 16 },
+        { 0, 0, 148, pageVisual.minimumGridHeight + 20 },
+        { 0, 0, 164, pageVisual.minimumGridHeight + 24 },
+        { 0, 0, 180, pageVisual.minimumGridHeight + 28 },
+        { 0, 0, 196, pageVisual.minimumGridHeight + 32 },
+    };
+    for (const RECT& cell : ordinaryItemCells)
+    {
+        const RECT icon = itemVisual::ResolveGridItemIconRect(
+            cell, pageVisual);
+        Check(icon.right - icon.left == pageVisual.iconSize &&
+                icon.bottom - icon.top == pageVisual.iconSize,
+            "desktop and all normal file-widget grid contexts must use the exact page icon edge length");
+    }
+    const RECT listRow{ 0, 0, 420, pageVisual.minimumListHeight + 10 };
+    const RECT listIcon = itemVisual::ResolveListItemIconRect(
+        listRow, 8, pageVisual);
+    Check(listIcon.right - listIcon.left == pageVisual.iconSize &&
+            listIcon.bottom - listIcon.top == pageVisual.iconSize,
+        "list rows must use the same page icon edge length as desktop grids");
+
+    const RECT roomyViewport{
+        0, 0,
+        pageVisual.minimumGridWidth * 4 + 160,
+        pageVisual.minimumGridHeight * 3 + 150
+    };
+    const auto compactGaps = localLayout::ResolveGrid(
+        roomyViewport, 4, 3,
+        pageVisual.minimumGridWidth,
+        pageVisual.minimumGridHeight, 0.5f);
+    const auto defaultGaps = localLayout::ResolveGrid(
+        roomyViewport, 4, 3,
+        pageVisual.minimumGridWidth,
+        pageVisual.minimumGridHeight, 1.0f);
+    const auto expandedGaps = localLayout::ResolveGrid(
+        roomyViewport, 4, 3,
+        pageVisual.minimumGridWidth,
+        pageVisual.minimumGridHeight, 2.0f);
+    Check(compactGaps.horizontal.gap <= defaultGaps.horizontal.gap &&
+            defaultGaps.horizontal.gap <= expandedGaps.horizontal.gap &&
+            compactGaps.vertical.gap <= defaultGaps.vertical.gap &&
+            defaultGaps.vertical.gap <= expandedGaps.vertical.gap,
+        "the one layout-spacing value must drive both local grid axes");
+    Check(expandedGaps.horizontal.cell >= pageVisual.minimumGridWidth &&
+            expandedGaps.vertical.cell >= pageVisual.minimumGridHeight,
+        "larger requested gaps must never consume the fixed icon and two-line title cell");
+
+    const RECT tightViewport{
+        0, 0,
+        pageVisual.minimumGridWidth * 3 + 6,
+        pageVisual.minimumGridHeight * 2 + 4
+    };
+    const auto tightDefault = localLayout::ResolveGrid(
+        tightViewport, 3, 2,
+        pageVisual.minimumGridWidth,
+        pageVisual.minimumGridHeight, 1.0f);
+    const auto tightMaximum = localLayout::ResolveGrid(
+        tightViewport, 3, 2,
+        pageVisual.minimumGridWidth,
+        pageVisual.minimumGridHeight, 2.0f);
+    Check(tightMaximum.horizontal.gap == tightDefault.horizontal.gap &&
+            tightMaximum.vertical.gap == tightDefault.vertical.gap &&
+            tightMaximum.horizontal.cell >= pageVisual.minimumGridWidth &&
+            tightMaximum.vertical.cell >= pageVisual.minimumGridHeight,
+        "spacing must saturate at the geometry limit instead of shrinking icons or clipping titles");
+    const RECT tightLast = localLayout::ItemRect(tightMaximum, 5);
+    Check(tightLast.right <= tightViewport.right &&
+            tightLast.bottom <= tightViewport.bottom &&
+            std::abs(tightMaximum.horizontal.edge -
+                (tightViewport.right - tightLast.right)) <= 1 &&
+            std::abs(tightMaximum.vertical.edge -
+                (tightViewport.bottom - tightLast.bottom)) <= 1,
+        "fixed local tracks must retain symmetric edges and keep the final cell inside the viewport");
+
+    const auto narrowTrack = localLayout::ResolveGrid(
+        { 0, 0, pageVisual.minimumGridWidth * 2 + 32, 500 },
+        2, 0, pageVisual.minimumGridWidth,
+        pageVisual.minimumGridHeight, 1.0f);
+    const auto wideTrack = localLayout::ResolveGrid(
+        { 0, 0, pageVisual.minimumGridWidth * 2 + 120, 500 },
+        2, 0, pageVisual.minimumGridWidth,
+        pageVisual.minimumGridHeight, 1.0f);
+    const RECT narrowCell = localLayout::ItemRect(narrowTrack, 0);
+    const RECT wideCell = localLayout::ItemRect(wideTrack, 0);
+    Check(wideCell.right - wideCell.left >
+            narrowCell.right - narrowCell.left &&
+            itemVisual::ResolveGridItemIconRect(
+                wideCell, pageVisual).right -
+                itemVisual::ResolveGridItemIconRect(
+                    wideCell, pageVisual).left == pageVisual.iconSize,
+        "local cell and title width may adapt while the page icon size remains fixed");
+
+    const auto listLayout = localLayout::ResolveList(
+        { 0, 0, 520, 260 },
+        pageVisual.minimumListHeight, 2.0f);
+    const size_t listCount = 18;
+    const int listContentHeight = localLayout::ContentHeight(
+        listLayout, listCount);
+    const int listMaxScroll = std::max(
+        0, listContentHeight - 260);
+    const RECT finalListRow = localLayout::ItemRect(
+        listLayout, listCount - 1, listMaxScroll);
+    const auto finalVisibleRange = localLayout::VisibleRange(
+        listLayout, listCount, listMaxScroll, 260);
+    Check(listLayout.vertical.cell >= pageVisual.minimumListHeight &&
+            finalListRow.bottom <= 260 &&
+            finalVisibleRange.first <= listCount - 1 &&
+            finalVisibleRange.second == listCount,
+        "list row height, scroll extent, final row, and visible range must share one geometry result");
+    Check(localLayout::ScrollOffsetToReveal(
+            { 0, 20, 300, 220 },
+            { 0, 250, 300, 320 }, 100, 500) == 200 &&
+            localLayout::ScrollOffsetToReveal(
+                { 0, 20, 300, 220 },
+                { 0, -30, 300, 40 }, 100, 500) == 50,
+        "keyboard reveal must consume the same item rectangles used for drawing and hit testing");
+
+    Check(layoutSpacing::ResolveStoredScale(
+            1.25f, 1.75f) == 1.25f,
+        "iconSpacing must win when both current and legacy spacing keys exist");
+    Check(layoutSpacing::ResolveStoredScale(
+            std::nullopt, 2.75f) == 2.0f &&
+            layoutSpacing::ResolveStoredScale(
+                std::nullopt, 0.25f) == 0.5f,
+        "legacy componentSpacing-only layouts must migrate into the new supported range");
+    Check(localLayout::MinimumCollectionSpan(
+            false, 1, 1) == std::pair<int, int>{ 1, 1 } &&
+            localLayout::MinimumCollectionSpan(
+                false, 1, 2) == std::pair<int, int>{ 2, 2 } &&
+            localLayout::MinimumCollectionSpan(
+                true, 1, 1) == std::pair<int, int>{ 2, 2 },
+        "legacy expanded and scrolling Collections must normalize to a span that preserves normal icon geometry");
 
     constexpr float standardLineHeight =
         14.0f * 7.0f / 6.0f;

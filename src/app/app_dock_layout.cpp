@@ -67,29 +67,7 @@ void DesktopApp::PrepareDockBackdropForDragTransition()
 
 int DesktopApp::GetGridPageItemIconSize(const GridPage& page) const
 {
-    const int pitchX = page.cellWidth + (page.columns > 1 ? page.gapX : 0);
-    const int pitchY = page.cellHeight + (page.rows > 1 ? page.gapY : 0);
-    const float layoutScale = std::max(0.1f, std::min(
-        static_cast<float>(std::max(1, pitchX)) / static_cast<float>(kCellWidth),
-        static_cast<float>(std::max(1, pitchY)) / static_cast<float>(kMinCellHeight)));
-    const int inset = std::max(1, static_cast<int>(std::round(2.0f * layoutScale)));
-    if (page.cellHeight < static_cast<int>(std::round(50.0f * layoutScale)))
-    {
-        return std::clamp(std::min({
-            static_cast<int>(std::round(32.0f * layoutScale)),
-            std::max(1, page.cellWidth - inset * 2),
-            std::max(1, page.cellHeight - inset * 2) }), 1,
-            snowdesktop::icon_render_rules::kMaximumSourcePixels);
-    }
-    const float fontSize = ScaleWidgetFontCu(
-        itemFontSizeCu_, GetGridPageCuScale(page));
-    const float lineHeight = fontSize * 7.0f / 6.0f;
-    const int textHeight = std::max(1,
-        static_cast<int>(std::floor(lineHeight * 2.0f)) - 1);
-    return std::clamp(std::min(
-        std::max(1, page.cellWidth - inset * 2),
-        std::max(1, page.cellHeight - textHeight - inset * 2)),
-        1, snowdesktop::icon_render_rules::kMaximumSourcePixels);
+    return GetPageItemVisualMetrics(page).iconSize;
 }
 
 void DesktopApp::ApplyDockWorkAreaReservation()

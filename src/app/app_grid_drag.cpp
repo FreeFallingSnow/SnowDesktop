@@ -128,8 +128,23 @@ void DesktopApp::ApplyIconSpacingToPage(GridPage& page)
     const int baseMarginY = std::max(1, static_cast<int>(
         std::round(kGridMarginY * pageCellScale)));
 
+    const int innerWidth = std::max(
+        page.columns, pageW - baseMarginX * 2);
+    const int innerHeight = std::max(
+        page.rows, pageH - baseMarginY * 2);
+    page.itemPitchWidth = std::max(
+        1, static_cast<int>(std::round(
+            static_cast<float>(innerWidth) /
+            static_cast<float>(page.columns))));
+    page.itemPitchHeight = std::max(
+        1, static_cast<int>(std::round(
+            static_cast<float>(innerHeight) /
+            static_cast<float>(page.rows))));
+    const auto visualMetrics = GetPageItemVisualMetrics(page);
+
     auto calculateAxis = [this](int extent, int count, int baseMargin,
-        float gapPercent, int& margin, int& cellSize, int& gap)
+        float gapPercent, int minimumCell,
+        int& margin, int& cellSize, int& gap)
     {
         const int innerExtent = std::max(count, extent - baseMargin * 2);
         if (count <= 1)
@@ -147,7 +162,9 @@ void DesktopApp::ApplyIconSpacingToPage(GridPage& page)
         const int targetGap = std::clamp(
             static_cast<int>(std::round(
                 pitch * gapPercent * iconSpacingScale_)),
-            0, maxGap);
+            0, std::min(maxGap, std::max(0,
+                (innerExtent - count * std::max(1, minimumCell)) /
+                    count)));
 
         // Half an internal gap is retained at each page edge. The remaining
         // area is divided without ever changing the requested row/column count.
@@ -161,8 +178,10 @@ void DesktopApp::ApplyIconSpacingToPage(GridPage& page)
     };
 
     calculateAxis(pageW, page.columns, baseMarginX, kGapPercentX,
+        visualMetrics.minimumGridWidth,
         page.marginX, page.cellWidth, page.gapX);
     calculateAxis(pageH, page.rows, baseMarginY, kGapPercentY,
+        visualMetrics.minimumGridHeight,
         page.marginY, page.cellHeight, page.gapY);
 }
 

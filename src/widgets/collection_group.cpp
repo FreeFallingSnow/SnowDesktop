@@ -13,6 +13,7 @@
 #include "widget_preview_scene.h"
 #include "../l10n.h"
 #include "../item_render_layer_rules.h"
+#include "../widget_item_layout.h"
 #include <algorithm>
 #include <unordered_set>
 
@@ -205,59 +206,36 @@ size_t CollectionGroupTabIndexAtPoint(
     return static_cast<size_t>(-1);
 }
 
-int CollectionGroupCellHeight(CollectionGroup* widget)
+snowdesktop::widget_item_layout::Layout CollectionGroupLocalLayout(
+    CollectionGroup* widget)
 {
-    if (!widget || !widget->GetApp() ||
-        !widget->GetApp()->GetDesktopGrid())
-        return widget ? widget->Cu(kMinCellHeight) : kMinCellHeight;
+    if (!widget || !widget->GetWidgetData() || !widget->GetApp())
+        return {};
     DesktopWidget* data = widget->GetWidgetData();
-    for (const auto& page :
-        widget->GetApp()->GetDesktopGrid()->GetPages())
-        if (data && page.id == data->gridCell.pageId)
-            return page.cellHeight;
-    return widget->Cu(kMinCellHeight);
+    const RECT content = CollectionGroupContentRect(widget);
+    const auto metrics = widget->GetItemVisualMetrics();
+    const float spacing = widget->GetLayoutSpacingScale();
+    if (data->listMode)
+        return snowdesktop::widget_item_layout::ResolveList(
+            content,
+            std::max(widget->GetListRowHeight(),
+                metrics.minimumListHeight), spacing);
+    return snowdesktop::widget_item_layout::ResolveGrid(
+        content, std::max(1, data->gridSpan.columns), 0,
+        metrics.minimumGridWidth, metrics.minimumGridHeight,
+        spacing);
 }
 
 RECT CollectionGroupItemRect(CollectionGroup* widget, size_t index)
 {
     if (!widget || !widget->GetWidgetData()) return {};
     DesktopWidget* data = widget->GetWidgetData();
-    RECT content = CollectionGroupContentRect(widget);
     const int scroll = std::clamp(
         widget->GetScrollOffset(), 0,
         widget->GetMaxScrollOffset());
-
-    if (data->listMode)
-    {
-        const int itemHeight = widget->GetListRowHeight();
-        RECT result = MakeRect(
-            content.left,
-            content.top +
-                static_cast<LONG>(index * itemHeight) - scroll,
-            content.right,
-            content.top +
-                static_cast<LONG>((index + 1) * itemHeight) - scroll);
-        InflateRect(
-            &result, -widget->Cu(4.0f), -widget->Cu(2.0f));
-        return result;
-    }
-
-    const int columns = std::max(1, data->gridSpan.columns);
-    const int column =
-        static_cast<int>(index % columns);
-    const int row =
-        static_cast<int>(index / columns);
-    const int itemWidth = std::max<int>(
-        1, (content.right - content.left) / columns);
-    const int cellHeight =
-        CollectionGroupCellHeight(widget);
-    return MakeRect(
-        content.left + column * itemWidth,
-        content.top + row * cellHeight - scroll,
-        column + 1 == columns
-            ? content.right
-            : content.left + (column + 1) * itemWidth,
-        content.top + (row + 1) * cellHeight - scroll);
+    (void)data;
+    return snowdesktop::widget_item_layout::ItemRect(
+        CollectionGroupLocalLayout(widget), index, scroll);
 }
 
 int CollectionGroupContentHeight(
@@ -266,14 +244,8 @@ int CollectionGroupContentHeight(
     DesktopWidget* data =
         widget ? widget->GetWidgetData() : nullptr;
     if (!data) return 0;
-    if (data->listMode)
-        return static_cast<int>(itemCount) *
-            widget->GetListRowHeight();
-    const int columns =
-        std::max(1, data->gridSpan.columns);
-    const int rows = static_cast<int>(
-        (itemCount + columns - 1) / columns);
-    return rows * CollectionGroupCellHeight(widget);
+    return snowdesktop::widget_item_layout::ContentHeight(
+        CollectionGroupLocalLayout(widget), itemCount);
 }
 
 RECT CollectionGroupListToggleRect(CollectionGroup* widget)
@@ -601,21 +573,14 @@ size_t CollectionGroup::GetSlotCount() const
 
 int CollectionGroup::GetItemHeight() const
 {
-    if (!data_ || data_->listMode)
-        return GetListRowHeight();
-    return CollectionGroupCellHeight(
-        const_cast<CollectionGroup*>(this));
+    return CollectionGroupLocalLayout(
+        const_cast<CollectionGroup*>(this)).vertical.cell;
 }
 
 int CollectionGroup::GetItemWidth() const
 {
-    RECT content = GetContentViewportRect();
-    if (!data_ || data_->listMode)
-        return std::max<int>(
-            1, content.right - content.left);
-    return std::max<int>(
-        1, (content.right - content.left) /
-            std::max(1, data_->gridSpan.columns));
+    return CollectionGroupLocalLayout(
+        const_cast<CollectionGroup*>(this)).horizontal.cell;
 }
 
 bool CollectionGroup::SingleColumn() const
@@ -662,41 +627,11 @@ CollectionGroup::BuildSlots()
     const int visibleHeight =
         std::max<int>(1, content.bottom - content.top);
     const int scroll = GetScrollOffset();
-    size_t firstIndex = 0;
-    size_t lastIndex = count;
-
-    if (data_->listMode)
-    {
-        const int height = GetListRowHeight();
-        const int firstRow =
-            std::max(0, scroll / height - 1);
-        const int lastRow =
-            (scroll + visibleHeight + height - 1) /
-                height + 1;
-        firstIndex = static_cast<size_t>(firstRow);
-        lastIndex = std::min(
-            count, static_cast<size_t>(
-                std::max(firstRow, lastRow)));
-    }
-    else
-    {
-        const int columns =
-            std::max(1, data_->gridSpan.columns);
-        const int height =
-            std::max(1, GetItemHeight());
-        const int firstRow =
-            std::max(0, scroll / height - 1);
-        const int lastRow =
-            (scroll + visibleHeight + height - 1) /
-                height + 1;
-        firstIndex = std::min(
-            count, static_cast<size_t>(
-                firstRow * columns));
-        lastIndex = std::min(
-            count, static_cast<size_t>(
-                std::max(firstRow, lastRow) *
-                columns));
-    }
+    const auto range = snowdesktop::widget_item_layout::VisibleRange(
+        CollectionGroupLocalLayout(this), count,
+        scroll, visibleHeight);
+    const size_t firstIndex = range.first;
+    const size_t lastIndex = range.second;
 
     slots.reserve(lastIndex - firstIndex);
     for (size_t i = firstIndex; i < lastIndex; ++i)
@@ -1226,6 +1161,12 @@ void CollectionGroup::DrawContent(
             context, bounds, true, 1.0f,
             light, activeCollection);
     context->PopAxisAlignedClip();
+}
+
+RECT CollectionGroup::GetMemberLayoutRect(size_t index) const
+{
+    return CollectionGroupItemRect(
+        const_cast<CollectionGroup*>(this), index);
 }
 
 void CollectionGroup::DrawButtons(

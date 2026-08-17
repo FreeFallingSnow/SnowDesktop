@@ -17,6 +17,7 @@
 #include "drop_model.h"
 #include "widget_preview_scene.h"
 #include "../item_render_layer_rules.h"
+#include "../widget_item_layout.h"
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -44,41 +45,37 @@ static RECT CollectionScrollContentRect(Collection* widget)
     return widget->ApplyDetailsHeaderToViewport(body);
 }
 
-/**
- * @brief 获取集合所在的网格页面 cellHeight
- */
-static int CollectionCellHeight(Collection* widget)
+static snowdesktop::PageItemVisualMetrics CollectionVisualMetrics(
+    Collection* widget)
 {
-    if (!widget || !widget->GetApp() || !widget->GetApp()->GetDesktopGrid())
-        return kMinCellHeight;
-    DesktopWidget* data = widget->GetWidgetData();
-    for (const auto& page : widget->GetApp()->GetDesktopGrid()->GetPages())
-        if (data && page.id == data->gridCell.pageId)
-            return page.cellHeight;
-    return kMinCellHeight;
+    if (!widget || !widget->GetApp())
+        return snowdesktop::ResolvePageItemVisualMetrics(
+            kCellWidth, kMinCellHeight, kDefaultItemFontSizeCu);
+    return widget->GetItemVisualMetrics();
 }
 
-/**
- * @brief 计算滚动容器图标模式的纵向间距
- */
-static int CollectionAdaptiveGapY(Collection* widget)
+static snowdesktop::widget_item_layout::Layout CollectionLocalLayout(
+    Collection* widget, int fixedRows = 0)
 {
-    if (!widget) return 0;
+    if (!widget || !widget->GetWidgetData()) return {};
     DesktopWidget* data = widget->GetWidgetData();
-    if (!data || data->listMode) return 0;
-    RECT content = CollectionScrollContentRect(widget);
-    int visibleHeight = content.bottom - content.top;
-    if (visibleHeight <= 0) return 0;
-    int cellH = CollectionCellHeight(widget);
-    if (cellH <= 0 || visibleHeight <= cellH) return 0;
-    int visibleRows = visibleHeight / cellH;
-    if (visibleRows <= 1) return 0;
-    int extraSpace = visibleHeight - visibleRows * cellH;
-    int gapY = extraSpace / (visibleRows - 1);
-    if (gapY < 0) return 0;
-    int maxGap = std::max(1, static_cast<int>(cellH * kGapPercentY));
-    if (gapY > maxGap) return 0;
-    return gapY;
+    const RECT content = data->scrollContainerMode
+        ? CollectionScrollContentRect(widget)
+        : widget->GetBodyRect();
+    const auto metrics = CollectionVisualMetrics(widget);
+    const float spacing = widget->GetLayoutSpacingScale();
+    if (data->listMode)
+    {
+        return snowdesktop::widget_item_layout::ResolveList(
+            content,
+            std::max(widget->GetListRowHeight(),
+                metrics.minimumListHeight),
+            spacing);
+    }
+    return snowdesktop::widget_item_layout::ResolveGrid(
+        content, std::max(1, data->gridSpan.columns), fixedRows,
+        metrics.minimumGridWidth, metrics.minimumGridHeight,
+        spacing);
 }
 
 /**
@@ -88,14 +85,8 @@ static int CollectionScrollContentHeight(Collection* widget, size_t itemCount)
 {
     DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
     if (!data || !data->scrollContainerMode) return 0;
-    if (data->listMode)
-        return static_cast<int>(itemCount) * widget->GetListRowHeight();
-    int columns = std::max(1, data->gridSpan.columns);
-    int rows = static_cast<int>((itemCount + static_cast<size_t>(columns) - 1) / static_cast<size_t>(columns));
-    if (rows <= 0) return 0;
-    int cellH = CollectionCellHeight(widget);
-    int gapY = CollectionAdaptiveGapY(widget);
-    return rows * cellH + (rows - 1) * gapY;
+    return snowdesktop::widget_item_layout::ContentHeight(
+        CollectionLocalLayout(widget), itemCount);
 }
 
 /**
@@ -121,28 +112,9 @@ static RECT CollectionItemRect(Collection* widget, size_t linearIndex)
     if (!data || !data->scrollContainerMode) return {};
     RECT content = CollectionScrollContentRect(widget);
     int scroll = std::clamp(data->scrollOffset, 0, CollectionScrollMaxOffset(widget));
-    if (data->listMode)
-    {
-        const int itemHeight = widget->GetListRowHeight();
-        RECT rect = MakeRect(content.left,
-            content.top + static_cast<LONG>(linearIndex * itemHeight) - scroll,
-            content.right,
-            content.top + static_cast<LONG>((linearIndex + 1) * itemHeight) - scroll);
-        InflateRect(&rect, -widget->Cu(4.0f), -widget->Cu(2.0f));
-        return rect;
-    }
-    int columns = std::max(1, data->gridSpan.columns);
-    int col = static_cast<int>(linearIndex % static_cast<size_t>(columns));
-    int row = static_cast<int>(linearIndex / static_cast<size_t>(columns));
-    int itemW = std::max<int>(1, (content.right - content.left) / columns);
-    int cellH = CollectionCellHeight(widget);
-    int gapY = CollectionAdaptiveGapY(widget);
-    int rowStep = cellH + gapY;
-    return MakeRect(
-        content.left + col * itemW,
-        content.top + row * rowStep - scroll,
-        col + 1 == columns ? content.right : content.left + (col + 1) * itemW,
-        content.top + row * rowStep + cellH - scroll);
+    (void)content;
+    return snowdesktop::widget_item_layout::ItemRect(
+        CollectionLocalLayout(widget), linearIndex, scroll);
 }
 
 static std::pair<size_t, size_t> CollectionVisibleIndexRange(
@@ -158,37 +130,9 @@ static std::pair<size_t, size_t> CollectionVisibleIndexRange(
     const int scroll = std::clamp(
         data->scrollOffset, 0, CollectionScrollMaxOffset(widget));
 
-    if (data->listMode)
-    {
-        const int itemHeight = std::max(1, widget->GetListRowHeight());
-        const int firstRow = std::max(
-            0, scroll / itemHeight - 1);
-        const int lastRow =
-            (scroll + visibleHeight + itemHeight - 1) /
-                itemHeight + 1;
-        return {
-            std::min(itemCount, static_cast<size_t>(firstRow)),
-            std::min(itemCount, static_cast<size_t>(
-                std::max(firstRow, lastRow)))
-        };
-    }
-
-    const int columns = std::max(1, data->gridSpan.columns);
-    const int rowStep = std::max(
-        1, CollectionCellHeight(widget) +
-            CollectionAdaptiveGapY(widget));
-    const int firstRow = std::max(
-        0, scroll / rowStep - 1);
-    const int lastRow =
-        (scroll + visibleHeight + rowStep - 1) /
-            rowStep + 1;
-    return {
-        std::min(itemCount, static_cast<size_t>(
-            firstRow) * static_cast<size_t>(columns)),
-        std::min(itemCount, static_cast<size_t>(
-            std::max(firstRow, lastRow)) *
-                static_cast<size_t>(columns))
-    };
+    return snowdesktop::widget_item_layout::VisibleRange(
+        CollectionLocalLayout(widget), itemCount,
+        scroll, visibleHeight);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -281,32 +225,11 @@ static RECT GetCollectionSlotRect(const Collection* collection, size_t slot, REC
         return GetCollectionCompactSlotRect(collection, slot, body,
             collection->Cu(6.0f));
 
-    // Non-compact: grid-aligned slots matching desktop cell size
-    InflateRect(&body, -collection->Cu(4.0f), -collection->Cu(4.0f));
-    const auto& pages = app->GetDesktopGrid()->GetPages();
-    const GridPage* page = nullptr;
-    for (const auto& p : pages)
-        if (p.id == data->gridCell.pageId) { page = &p; break; }
-    int cellH = page ? page->cellHeight : 96;
-    int gapY = page ? page->gapY : 0;
-    int columns = std::max(1, data->gridSpan.columns);
     int rows = std::max(1, data->gridSpan.rows);
-    int col = (int)(slot % (size_t)columns);
-    int rowIdx = (int)(slot / (size_t)columns);
-    if (rowIdx >= rows) return {};
-    int width = std::max<int>(
-        1, (int)(body.right - body.left) / columns);
-
-    int startY = body.top + gapY / 2 - collection->Cu(8.0f);
-    int rowStep = cellH + gapY;
-    const int rowOffset = snowdesktop::widget_spacing_rules::
-        CollectionRowOffsetForComponentSpacing(
-            rowIdx, rows, gapY, collection->GetCellScale(),
-            collection->GetComponentSpacingScale());
-    const int rowTop = startY + rowIdx * rowStep + rowOffset;
-    return { body.left + col * width, rowTop,
-             col + 1 == columns ? body.right : body.left + (col + 1) * width,
-             rowTop + cellH };
+    (void)body;
+    return snowdesktop::widget_item_layout::ItemRect(
+        CollectionLocalLayout(const_cast<Collection*>(collection), rows),
+        slot);
 }
 
 /// @}
@@ -1018,22 +941,20 @@ BarStyle Collection::GetInsertionStyle() const
 int Collection::GetItemHeight() const
 {
     if (!data_ || !data_->scrollContainerMode) return Cu(136.0f);
-    return data_->listMode
-        ? GetListRowHeight()
-        : CollectionCellHeight(const_cast<Collection*>(this));
+    return CollectionLocalLayout(const_cast<Collection*>(this)).vertical.cell;
+}
+
+RECT Collection::GetMemberLayoutRect(size_t index) const
+{
+    return CollectionItemRect(
+        const_cast<Collection*>(this), index);
 }
 
 int Collection::GetItemWidth() const
 {
     if (!data_ || !data_->scrollContainerMode) return Cu(92.0f);
-    RECT content = CollectionScrollContentRect(const_cast<Collection*>(this));
-    if (data_->listMode)
-    {
-        int w = (int)(content.right - content.left);
-        return std::max(1, w - Cu(8.0f));
-    }
-    int columns = std::max(1, data_->gridSpan.columns);
-    return std::max<int>(1, (content.right - content.left) / columns);
+    return CollectionLocalLayout(
+        const_cast<Collection*>(this)).horizontal.cell;
 }
 
 void Collection::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered)
