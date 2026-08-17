@@ -46,7 +46,8 @@ inline RECT ResolveListItemIconRect(
 }
 
 inline PageItemVisualMetrics ResolvePageItemVisualMetrics(
-    int pitchWidth, int pitchHeight, float itemFontSizeCu)
+    int pitchWidth, int pitchHeight, float itemFontSizeCu,
+    float iconSizeScale = kDefaultItemIconSizeScale)
 {
     PageItemVisualMetrics result;
     result.layoutScale = std::max(0.1f, std::min(
@@ -78,9 +79,22 @@ inline PageItemVisualMetrics ResolvePageItemVisualMetrics(
     const int availableHeight = item_layout_rules::AvailableIconHeight(
         referenceHeight, result.topInset,
         result.titleGap, result.titleHeight);
-    result.iconSize = std::clamp(
+    const int defaultIconSize = std::clamp(
         std::min(availableWidth, availableHeight), 1,
         icon_render_rules::kMaximumSourcePixels);
+    const int maximumIconWidth = std::max(
+        1, std::max(1, pitchWidth) - result.sideInset * 2);
+    const int maximumIconHeight = item_layout_rules::AvailableIconHeight(
+        std::max(1, pitchHeight), result.topInset,
+        result.titleGap, result.titleHeight);
+    const int maximumIconSize = std::clamp(
+        std::min(maximumIconWidth, maximumIconHeight), 1,
+        icon_render_rules::kMaximumSourcePixels);
+    result.iconSize = std::clamp(
+        static_cast<int>(std::round(defaultIconSize * std::clamp(
+            iconSizeScale, kMinimumItemIconSizeScale,
+            kMaximumItemIconSizeScale))),
+        1, maximumIconSize);
     result.minimumGridWidth = result.iconSize + result.sideInset * 2;
     result.minimumGridHeight = result.topInset + result.iconSize +
         result.titleGap + result.titleHeight;

@@ -316,6 +316,77 @@ void DesktopApp::SetIconSpacing(float value)
 }
 
 /**
+ * @brief 轻量预览页面级图标大小。
+ *
+ * 标题字号、两行标题高度、标题间距和本地标题宽度均保持不变；
+ * 仅页面视觉度量中的图标边长以及由它决定的项目总高度发生变化。
+ */
+void DesktopApp::PreviewItemIconSize(float value)
+{
+    const float clamped = std::clamp(value,
+        kMinimumItemIconSizeScale, kMaximumItemIconSizeScale);
+    if (clamped == itemIconSizeScale_) return;
+    itemIconSizeScale_ = clamped;
+    for (auto& page : gridPages_)
+        ApplyIconSpacingToPage(page);
+
+    for (auto& item : items_)
+    {
+        if (item.name.empty()) continue;
+        item.bounds = GetGridRect(
+            gridPages_, item.gridCell, item.gridSpan);
+    }
+    for (auto& widget : widgets_)
+    {
+        if (IsGroupedWidget(widget)) continue;
+        const GridPage* page = FindGridPage(
+            gridPages_, widget.gridCell.pageId);
+        if (page)
+            widget.cellScale = GetGridPageCuScale(*page);
+        widget.bounds = GetGridRect(
+            gridPages_, widget.gridCell, widget.gridSpan);
+    }
+    for (auto& container : containers_)
+    {
+        container->InvalidateSlots();
+    }
+    itemIconSizePreviewActive_ = true;
+    InvalidateDragStaticScene();
+    if (hwnd_)
+    {
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        PresentDesktopPointerUpdate();
+        FlushPendingCompositionCommit();
+    }
+}
+
+/**
+ * @brief 提交页面级图标大小并刷新相关布局与位图分辨率。
+ */
+void DesktopApp::SetItemIconSize(float value)
+{
+    const float clamped = std::clamp(value,
+        kMinimumItemIconSizeScale, kMaximumItemIconSizeScale);
+    const bool changed = clamped != itemIconSizeScale_;
+    if (!changed && !itemIconSizePreviewActive_) return;
+    itemIconSizeScale_ = clamped;
+    for (auto& page : gridPages_)
+        ApplyIconSpacingToPage(page);
+    ApplyDockWorkAreaReservation();
+    LayoutItems();
+    RefreshIconBitmapResolution();
+    InvalidateDockContainers();
+    InvalidateDragStaticScene();
+    SaveLayoutSlots();
+    itemIconSizePreviewActive_ = false;
+    if (floatingDockVisible_)
+        UpdateFloatingDockWindowBounds();
+    if (hwnd_)
+        InvalidateRect(hwnd_, nullptr, TRUE);
+    InvalidateDockRects(TRUE);
+}
+
+/**
  * @brief 以增量方式调整图标间距比例。
  * @param delta 间距变化量。
  */

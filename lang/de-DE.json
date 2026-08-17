@@ -317,6 +317,8 @@
   "app.settings.context_menu_opaque_dark": "Dunkel (undurchsichtig)",
   "app.settings.layout_spacing": "Layoutabstand",
   "app.settings.layout_spacing_hint": "Passt Desktop-Symbole, Widget-Rahmen und Widget-Elemente gemeinsam an. Der wirksame Abstand wird begrenzt, damit Symbole und Titel vollständig sichtbar bleiben.",
+  "app.settings.icon_size": "Symbolgröße",
+  "app.settings.icon_size_hint": "Passt die Größe normaler Symbole auf dem Desktop und in Widgets einheitlich an; Schrift, zweizeiliger Titelbereich und Abstand zwischen Symbol und Titel bleiben unverändert.",
   "app.settings.title_font_size": "Schriftgröße der Symboltitel",
   "app.settings.list_font_size": "Schriftgröße der Liste",
   "app.settings.title_font_weight": "Schriftstärke des Titels",

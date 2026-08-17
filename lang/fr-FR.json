@@ -317,6 +317,8 @@
   "app.settings.context_menu_opaque_dark": "Foncé (Opaque)",
   "app.settings.layout_spacing": "Espacement de la disposition",
   "app.settings.layout_spacing_hint": "Ajuste ensemble les icônes du bureau, les cadres des widgets et leurs éléments. L'espacement effectif est limité afin que les icônes et les titres restent entièrement visibles.",
+  "app.settings.icon_size": "Taille des icônes",
+  "app.settings.icon_size_hint": "Ajuste uniformément la taille des icônes ordinaires sur le bureau et dans les widgets, sans modifier la police, la zone de titre sur deux lignes ni l’espacement entre l’icône et le titre.",
   "app.settings.title_font_size": "Taille de police des titres d’icônes",
   "app.settings.list_font_size": "Taille de police de la liste",
   "app.settings.title_font_weight": "Titre Poids de la police",

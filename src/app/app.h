@@ -1556,6 +1556,11 @@ private:
     /** @brief 轻量预览图标间距，不保存布局或重新求解 Dock。 */
     void PreviewIconSpacing(float value);
     float GetLayoutSpacingScale() const { return iconSpacingScale_; }
+    /** @brief 设置页面级图标大小倍率。 */
+    void SetItemIconSize(float value);
+    /** @brief 轻量预览页面级图标大小，不保存布局。 */
+    void PreviewItemIconSize(float value);
+    float GetItemIconSizeScale() const { return itemIconSizeScale_; }
     /** @brief 调整图标间距比例。 @param delta 间距增量 */
     void AdjustIconSpacing(float delta);
     /** @brief 设置图标标题字号（cu）。 @param valueCu cu 字号 */
@@ -2779,6 +2784,8 @@ private:
     RECT layoutWorkArea_{};
     float iconSpacingScale_ = 1.0f;
     bool iconSpacingPreviewActive_ = false;
+    float itemIconSizeScale_ = kDefaultItemIconSizeScale;
+    bool itemIconSizePreviewActive_ = false;
     float itemFontSizeCu_ = kDefaultItemFontSizeCu;
     float listItemFontSizeCu_ = kDefaultItemFontSizeCu;
     DWRITE_FONT_WEIGHT itemFontWeight_ = DWRITE_FONT_WEIGHT_SEMI_BOLD;

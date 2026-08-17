@@ -886,6 +886,8 @@ void SettingsWindow::Shutdown()
     }
     layoutSpacingPreviewPending_ = false;
     layoutSpacingCommitPending_ = false;
+    itemIconSizePreviewPending_ = false;
+    itemIconSizeCommitPending_ = false;
     if (categorySettingsDirty_)
     {
         NormalizeCategoryRuleBuffers();
@@ -1250,6 +1252,7 @@ void SettingsWindow::Render()
     // Dense mouse moves are coalesced to the newest value, and release wins
     // over a preview queued earlier in this same frame.
     DispatchPendingLayoutSpacingChange();
+    DispatchPendingItemIconSizeChange();
 
     if (pendingClose_)
     {
@@ -2589,6 +2592,46 @@ void SettingsWindow::DrawDisplayPage()
             markChanged();
     }
 
+    BeginSettingRow(_L("app.settings.icon_size"), sliderActionW,
+        _L("app.settings.icon_size_hint"));
+    ImGui::SetNextItemWidth(actionSliderW);
+    const bool iconSizeChanged = ImGui::SliderInt(
+        "##ItemIconSize", &displayIconSizePct_,
+        static_cast<int>(std::round(
+            kMinimumItemIconSizeScale * 100.0f)),
+        static_cast<int>(std::round(
+            kMaximumItemIconSizeScale * 100.0f)),
+        "%d%%", ImGuiSliderFlags_None);
+    if (iconSizeChanged)
+    {
+        itemIconSizeScale_ = displayIconSizePct_ / 100.0f;
+        if (itemIconSizeChangedCallback_)
+            itemIconSizePreviewPending_ = true;
+        else
+            markChanged();
+    }
+    if (ImGui::IsItemDeactivatedAfterEdit() &&
+        itemIconSizeChangedCallback_)
+    {
+        itemIconSizePreviewPending_ = false;
+        itemIconSizeCommitPending_ = true;
+    }
+    ImGui::SameLine();
+    if (BlueButton((std::string(_L("app.settings.restore_default")) +
+        "##ItemIconSizeDefault").c_str(), ImVec2(resetW, 0)))
+    {
+        displayIconSizePct_ = static_cast<int>(std::round(
+            kDefaultItemIconSizeScale * 100.0f));
+        itemIconSizeScale_ = kDefaultItemIconSizeScale;
+        if (itemIconSizeChangedCallback_)
+        {
+            itemIconSizePreviewPending_ = false;
+            itemIconSizeCommitPending_ = true;
+        }
+        else
+            markChanged();
+    }
+
     BeginSettingRow(_L("app.settings.title_font_size"), sliderActionW);
     ImGui::SetNextItemWidth(actionSliderW);
     if (ImGui::SliderFloat("##ItemFontSize", &itemFontSizeCu_,
@@ -2957,6 +3000,27 @@ void SettingsWindow::DispatchPendingLayoutSpacingChange()
     {
         layoutSpacingChangedCallback_(
             iconSpacingScale_,
+            action == snowdesktop::layout_spacing_rules::
+                DeferredChangeAction::Commit);
+    }
+}
+
+void SettingsWindow::DispatchPendingItemIconSizeChange()
+{
+    const auto action = snowdesktop::layout_spacing_rules::
+        ResolveDeferredChangeAction(
+            itemIconSizePreviewPending_,
+            itemIconSizeCommitPending_);
+    if (action == snowdesktop::layout_spacing_rules::
+            DeferredChangeAction::None)
+        return;
+
+    itemIconSizePreviewPending_ = false;
+    itemIconSizeCommitPending_ = false;
+    if (itemIconSizeChangedCallback_)
+    {
+        itemIconSizeChangedCallback_(
+            itemIconSizeScale_,
             action == snowdesktop::layout_spacing_rules::
                 DeferredChangeAction::Commit);
     }

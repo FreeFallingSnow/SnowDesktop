@@ -274,6 +274,8 @@ int main()
             "listItemFontSizeCu" },
         { "component spacing type", "{\"componentSpacing\":\"1.5\"}",
             "componentSpacing" },
+        { "icon size scale type", "{\"iconSizeScale\":\"1.1\"}",
+            "iconSizeScale" },
         { "integer exactness", "{\"shortcutArrowMode\":1.5}",
             "shortcutArrowMode" },
         { "page required field", "{\"pages\":[{\"columns\":4}]}",
@@ -374,10 +376,12 @@ int main()
         "legacy schema and reordered fields decode into one typed document");
     snowdesktop::layout_storage::Document spacingLayout;
     Expect(snowdesktop::layout_storage::ParseDocument(
-            "{\"componentSpacing\":1.5}", spacingLayout, &layoutError) &&
+            "{\"componentSpacing\":1.5,\"iconSizeScale\":1.1}",
+            spacingLayout, &layoutError) &&
             spacingLayout.componentSpacing.has_value() &&
-            *spacingLayout.componentSpacing == 1.5f,
-        "component spacing is decoded as an optional layout setting");
+            *spacingLayout.componentSpacing == 1.5f &&
+            spacingLayout.iconSizeScale.value_or(0.0f) == 1.1f,
+        "component spacing and icon size are decoded as optional layout settings");
     snowdesktop::layout_storage::Document legacyFontLayout;
     Expect(snowdesktop::layout_storage::ParseDocument(
             "{\"itemFontSize\":18,\"listItemFontSize\":16}",
@@ -391,6 +395,7 @@ int main()
         "{\"layoutSchemaVersion\":1,"
         "\"widgetContentOptionsSchemaVersion\":4,"
         "\"itemFontSizeCu\":18,\"listItemFontSizeCu\":16,"
+        "\"iconSizeScale\":1.2,"
         "\"widgets\":[{\"id\":\"details-widget\",\"page\":\"page-a\","
         "\"x\":0,\"y\":0,\"type\":\"folderMapping\","
         "\"showDetails\":true,\"detailShowModified\":true,"
@@ -405,6 +410,7 @@ int main()
             detailsLayout.widgetContentOptionsSchemaVersion.value_or(0) == 4 &&
             detailsLayout.itemFontSizeCu.value_or(0.0f) == 18.0f &&
             detailsLayout.listItemFontSizeCu.value_or(0.0f) == 16.0f &&
+            detailsLayout.iconSizeScale.value_or(0.0f) == 1.2f &&
             detailsLayout.widgets.size() == 1 &&
             detailsLayout.widgets[0].showDetails &&
             detailsLayout.widgets[0].detailShowModified &&
@@ -432,6 +438,7 @@ int main()
             snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
             loadedDetailsLayout.itemFontSizeCu.value_or(0.0f) == 18.0f &&
             loadedDetailsLayout.listItemFontSizeCu.value_or(0.0f) == 16.0f &&
+            loadedDetailsLayout.iconSizeScale.value_or(0.0f) == 1.2f &&
             loadedDetailsLayout.widgets.size() == 1 &&
             loadedDetailsLayout.widgets[0].showDetails &&
             loadedDetailsLayout.widgets[0].detailShowModified &&

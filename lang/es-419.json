@@ -317,6 +317,8 @@
   "app.settings.context_menu_opaque_dark": "Oscuro (opaco)",
   "app.settings.layout_spacing": "Espaciado del diseño",
   "app.settings.layout_spacing_hint": "Ajusta en conjunto los iconos del escritorio, los marcos de los componentes y sus elementos. El espaciado efectivo se limita para mantener visibles los iconos y títulos completos.",
+  "app.settings.icon_size": "Tamaño de los íconos",
+  "app.settings.icon_size_hint": "Ajusta de forma uniforme el tamaño de los íconos normales en el escritorio y los componentes, sin cambiar la fuente, el área de título de dos líneas ni la separación entre ícono y título.",
   "app.settings.title_font_size": "Tamaño de fuente de los títulos de íconos",
   "app.settings.list_font_size": "Tamaño de fuente de la lista",
   "app.settings.title_font_weight": "Grosor de la fuente del título",

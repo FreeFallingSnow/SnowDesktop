@@ -317,6 +317,8 @@
   "app.settings.context_menu_opaque_dark": "Escuro (opaco)",
   "app.settings.layout_spacing": "Espaçamento do layout",
   "app.settings.layout_spacing_hint": "Ajusta em conjunto os ícones da área de trabalho, as molduras dos widgets e seus itens. O espaçamento efetivo é limitado para manter ícones e títulos totalmente visíveis.",
+  "app.settings.icon_size": "Tamanho dos ícones",
+  "app.settings.icon_size_hint": "Ajusta de forma uniforme o tamanho dos ícones comuns na área de trabalho e nos widgets, sem alterar a fonte, a área de título de duas linhas nem o espaço entre ícone e título.",
   "app.settings.title_font_size": "Tamanho da fonte dos títulos dos ícones",
   "app.settings.list_font_size": "Tamanho da fonte da lista",
   "app.settings.title_font_weight": "Peso da fonte do título",

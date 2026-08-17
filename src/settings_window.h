@@ -235,6 +235,11 @@ public:
     {
         layoutSpacingChangedCallback_ = std::move(callback);
     }
+    void SetItemIconSizeChangedCallback(
+        std::function<void(float, bool)> callback)
+    {
+        itemIconSizeChangedCallback_ = std::move(callback);
+    }
     void SetIconBeautifySettingsChangedCallback(
         std::function<void(snowdesktop::IconBeautifyUpdateKind)> callback)
     { iconBeautifySettingsChangedCallback_ = std::move(callback); }
@@ -261,13 +266,16 @@ public:
         std::function<void(bool)> callback)
     { animationDiagnosticsToggleCallback_ = std::move(callback); }
 
-    void SyncDisplaySettings(float spacingScale,
+    void SyncDisplaySettings(float spacingScale, float iconSizeScale,
         float fontSizeCu, float listFontSizeCu, float fontWeight,
         int shortcutArrowMode,
         const snowdesktop::IconBeautifySettings& iconBeautifySettings)
     {
         iconSpacingScale_ = snowdesktop::layout_spacing_rules::
             ClampScale(spacingScale);
+        itemIconSizeScale_ = std::clamp(iconSizeScale,
+            kMinimumItemIconSizeScale,
+            kMaximumItemIconSizeScale);
         itemFontSizeCu_ = fontSizeCu;
         listItemFontSizeCu_ = listFontSizeCu;
         itemFontWeight_ = fontWeight;
@@ -278,8 +286,12 @@ public:
             iconBeautifySettings_);
         displaySpacingPct_ = static_cast<int>(std::round(
             iconSpacingScale_ * 100.0f));
+        displayIconSizePct_ = static_cast<int>(std::round(
+            itemIconSizeScale_ * 100.0f));
         layoutSpacingPreviewPending_ = false;
         layoutSpacingCommitPending_ = false;
+        itemIconSizePreviewPending_ = false;
+        itemIconSizeCommitPending_ = false;
     }
 
     /** @} */
@@ -321,6 +333,7 @@ public:
     const CategorySettings& GetCategorySettings() const { return categorySettings_; }
 
     float GetIconSpacingScale() const { return iconSpacingScale_; }
+    float GetItemIconSizeScale() const { return itemIconSizeScale_; }
     float GetItemFontSizeCu() const { return itemFontSizeCu_; }
     float GetListItemFontSizeCu() const { return listItemFontSizeCu_; }
     float GetItemFontWeightD() const { return itemFontWeight_; }
@@ -426,6 +439,7 @@ private:
     void DrawDisplayPage();
 
     void DispatchPendingLayoutSpacingChange();
+    void DispatchPendingItemIconSizeChange();
 
     void DrawCategorySettingsPage();
     void DrawWidgetPackagesPage();
@@ -715,6 +729,7 @@ private:
     /// 显示设置变更回调
     std::function<void()> displaySettingsChangedCallback_;
     std::function<void(float, bool)> layoutSpacingChangedCallback_;
+    std::function<void(float, bool)> itemIconSizeChangedCallback_;
     /// 图标美化预览/提交回调；false 仅刷新，true 持久化。
     std::function<void(snowdesktop::IconBeautifyUpdateKind)>
         iconBeautifySettingsChangedCallback_;
@@ -783,6 +798,15 @@ private:
     /// 松手提交优先于同一设置帧中尚未派发的预览。
     bool layoutSpacingCommitPending_ = false;
 
+    /// 当前页面级图标大小倍率。
+    float itemIconSizeScale_ = kDefaultItemIconSizeScale;
+
+    /// 将连续图标大小滑动合并到当前设置帧的最后一个预览值。
+    bool itemIconSizePreviewPending_ = false;
+
+    /// 图标大小松手提交优先于同帧预览。
+    bool itemIconSizeCommitPending_ = false;
+
     /// 当前桌面项目字号（cu）
     float itemFontSizeCu_ = kDefaultItemFontSizeCu;
 
@@ -800,6 +824,7 @@ private:
         iconBeautifyContinuousState_{};
 
     int displaySpacingPct_ = 100;
+    int displayIconSizePct_ = 100;
 
     struct CategoryRuleEditBuffer
     {

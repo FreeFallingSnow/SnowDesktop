@@ -57,7 +57,7 @@ snowdesktop::PageItemVisualMetrics DesktopApp::GetPageItemVisualMetrics(
 {
     return snowdesktop::ResolvePageItemVisualMetrics(
         page.itemPitchWidth, page.itemPitchHeight,
-        itemFontSizeCu_);
+        itemFontSizeCu_, itemIconSizeScale_);
 }
 
 snowdesktop::PageItemVisualMetrics DesktopApp::GetItemVisualMetrics(
@@ -73,7 +73,8 @@ snowdesktop::PageItemVisualMetrics DesktopApp::GetItemVisualMetrics(
             return GetPageItemVisualMetrics(page);
     }
     return snowdesktop::ResolvePageItemVisualMetrics(
-        kCellWidth, kMinCellHeight, itemFontSizeCu_);
+        kCellWidth, kMinCellHeight, itemFontSizeCu_,
+        itemIconSizeScale_);
 }
 
 float DesktopApp::GetItemLayoutScale(RECT bounds) const

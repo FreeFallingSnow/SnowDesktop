@@ -317,6 +317,8 @@
   "app.settings.context_menu_opaque_dark": "ダーク(不透明)",
   "app.settings.layout_spacing": "レイアウトの間隔",
   "app.settings.layout_spacing_hint": "デスクトップアイコン、ウィジェット枠、ウィジェット内項目の間隔をまとめて調整します。アイコンとタイトルが完全に表示される範囲で実際の間隔を自動的に制限します。",
+  "app.settings.icon_size": "アイコンサイズ",
+  "app.settings.icon_size_hint": "デスクトップとウィジェットの通常アイコンを同じ比率で調整します。フォント、2行分のタイトル領域、アイコンとタイトルの間隔は変わりません。",
   "app.settings.title_font_size": "アイコンタイトルのフォントサイズ",
   "app.settings.list_font_size": "リストのフォントサイズ",
   "app.settings.title_font_weight": "タイトルのフォントのウェイト",

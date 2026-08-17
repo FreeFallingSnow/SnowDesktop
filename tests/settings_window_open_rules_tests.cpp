@@ -64,12 +64,19 @@ int main(int argc, char** argv)
         const std::size_t physicalCursor = source.find("GetCursorPos(&mp);");
         const std::size_t correctedMousePos = source.find(
             "ImGui::GetIO().MousePos = ImVec2((float)mp.x, (float)mp.y);");
+        const std::size_t imguiRender = source.find("ImGui::Render();");
+        const std::size_t iconSizeDispatch = source.find(
+            "DispatchPendingItemIconSizeChange();");
         Check(!source.empty(), "settings window source is readable");
         Check(newFrame != std::string::npos &&
                 physicalCursor != std::string::npos &&
                 correctedMousePos != std::string::npos &&
                 newFrame < physicalCursor && physicalCursor < correctedMousePos,
             "physical cursor correction follows queued ImGui input processing");
+        Check(imguiRender != std::string::npos &&
+                iconSizeDispatch != std::string::npos &&
+                imguiRender < iconSizeDispatch,
+            "icon-size slider previews are coalesced after the ImGui frame");
 
         const std::string pageGridSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
@@ -95,6 +102,26 @@ int main(int argc, char** argv)
                 widgetBounds < invalidateSlots &&
                 invalidateSlots < synchronousPaint,
             "layout-spacing preview refreshes widget item geometry before synchronous painting");
+
+        const std::size_t iconSizePreviewBegin = pageGridSource.find(
+            "void DesktopApp::PreviewItemIconSize(float value)");
+        const std::size_t iconSizePreviewEnd = pageGridSource.find(
+            "void DesktopApp::SetItemIconSize(float value)",
+            iconSizePreviewBegin);
+        const std::string iconSizePreview =
+            iconSizePreviewBegin == std::string::npos ||
+                iconSizePreviewEnd == std::string::npos
+            ? std::string{}
+            : pageGridSource.substr(iconSizePreviewBegin,
+                iconSizePreviewEnd - iconSizePreviewBegin);
+        const std::size_t refreshSlots = iconSizePreview.find(
+            "container->InvalidateSlots();");
+        const std::size_t paintIconSize = iconSizePreview.find(
+            "PresentDesktopPointerUpdate();");
+        Check(refreshSlots != std::string::npos &&
+                paintIconSize != std::string::npos &&
+                refreshSlots < paintIconSize,
+            "icon-size preview refreshes shared item geometry before synchronous painting");
     }
 
     if (failures == 0)

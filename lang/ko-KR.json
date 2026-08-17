@@ -317,6 +317,8 @@
   "app.settings.context_menu_opaque_dark": "다크(불투명)",
   "app.settings.layout_spacing": "레이아웃 간격",
   "app.settings.layout_spacing_hint": "바탕 화면 아이콘, 위젯 프레임 및 위젯 항목의 간격을 함께 조정합니다. 아이콘과 제목이 완전히 보이도록 실제 간격이 자동으로 제한됩니다.",
+  "app.settings.icon_size": "아이콘 크기",
+  "app.settings.icon_size_hint": "바탕 화면과 위젯의 일반 아이콘 크기를 동일하게 조정하며 글꼴, 두 줄 제목 영역, 아이콘과 제목 사이 간격은 변경하지 않습니다.",
   "app.settings.title_font_size": "아이콘 제목 글꼴 크기",
   "app.settings.list_font_size": "목록 글꼴 크기",
   "app.settings.title_font_weight": "제목 글꼴 무게",

@@ -317,6 +317,8 @@
   "app.settings.context_menu_opaque_dark": "深色（不透明）",
   "app.settings.layout_spacing": "版面間距",
   "app.settings.layout_spacing_hint": "同時調整桌面圖示、元件外框與元件內項目間距；實際間距會在確保圖示與標題完整顯示的範圍內自動限制。",
+  "app.settings.icon_size": "圖示大小",
+  "app.settings.icon_size_hint": "統一調整桌面與元件中的一般圖示大小；標題字號、兩行標題區域及圖示與標題間距保持不變。",
   "app.settings.title_font_size": "圖示標題字號",
   "app.settings.list_font_size": "清單字號",
   "app.settings.title_font_weight": "標題粗細",

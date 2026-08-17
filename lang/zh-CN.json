@@ -317,6 +317,8 @@
     "app.settings.context_menu_opaque_dark": "深色（不透明）",
     "app.settings.layout_spacing": "布局间距",
     "app.settings.layout_spacing_hint": "同时调整桌面图标、组件外框和组件内项目间距；实际间距会在保证图标和标题完整显示的范围内自动限制。",
+    "app.settings.icon_size": "图标大小",
+    "app.settings.icon_size_hint": "统一调整桌面和组件中的普通图标大小；标题字号、两行标题区域和图标与标题间距保持不变。",
     "app.settings.title_font_size": "图标标题字号",
     "app.settings.list_font_size": "列表字号",
     "app.settings.title_font_weight": "标题粗细",

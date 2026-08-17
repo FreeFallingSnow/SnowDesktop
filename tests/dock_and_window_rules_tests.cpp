@@ -331,6 +331,29 @@ int main()
 
     const auto pageVisual = itemVisual::ResolvePageItemVisualMetrics(
         104, 128, kDefaultItemFontSizeCu);
+    const auto smallIconVisual = itemVisual::ResolvePageItemVisualMetrics(
+        104, 128, kDefaultItemFontSizeCu,
+        kMinimumItemIconSizeScale);
+    const auto largeIconVisual = itemVisual::ResolvePageItemVisualMetrics(
+        104, 128, kDefaultItemFontSizeCu,
+        kMaximumItemIconSizeScale);
+    Check(smallIconVisual.iconSize < pageVisual.iconSize &&
+            pageVisual.iconSize < largeIconVisual.iconSize,
+        "the page-level icon-size control must change the ordinary icon edge length");
+    Check(smallIconVisual.fontSize == pageVisual.fontSize &&
+            largeIconVisual.fontSize == pageVisual.fontSize &&
+            smallIconVisual.titleHeight == pageVisual.titleHeight &&
+            largeIconVisual.titleHeight == pageVisual.titleHeight &&
+            smallIconVisual.titleGap == pageVisual.titleGap &&
+            largeIconVisual.titleGap == pageVisual.titleGap,
+        "icon-size changes must preserve font, two-line title area, and title gap");
+    Check(smallIconVisual.minimumGridHeight -
+                smallIconVisual.iconSize ==
+            pageVisual.minimumGridHeight - pageVisual.iconSize &&
+            largeIconVisual.minimumGridHeight -
+                largeIconVisual.iconSize ==
+            pageVisual.minimumGridHeight - pageVisual.iconSize,
+        "the icon plus title region must change height only by the icon edge delta");
     const RECT ordinaryItemCells[] = {
         { 0, 0, 104, pageVisual.minimumGridHeight + 8 },
         { 0, 0, 116, pageVisual.minimumGridHeight + 12 },

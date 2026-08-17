@@ -632,6 +632,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         });
         settingsWindow_->SetDisplaySettingsChangedCallback([this]() {
             SetIconSpacing(settingsWindow_->GetIconSpacingScale());
+            SetItemIconSize(settingsWindow_->GetItemIconSizeScale());
             SetItemFontSize(settingsWindow_->GetItemFontSizeCu());
             SetListItemFontSize(
                 settingsWindow_->GetListItemFontSizeCu());
@@ -644,6 +645,13 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                     SetIconSpacing(spacingScale);
                 else
                     PreviewIconSpacing(spacingScale);
+            });
+        settingsWindow_->SetItemIconSizeChangedCallback(
+            [this](float iconSizeScale, bool commit) {
+                if (commit)
+                    SetItemIconSize(iconSizeScale);
+                else
+                    PreviewItemIconSize(iconSizeScale);
             });
         settingsWindow_->SetIconBeautifySettingsChangedCallback(
             [this](snowdesktop::IconBeautifyUpdateKind updateKind) {
@@ -660,6 +668,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 return widgets_.size() > previousCount;
             });
         settingsWindow_->SyncDisplaySettings(iconSpacingScale_,
+            itemIconSizeScale_,
             itemFontSizeCu_, listItemFontSizeCu_,
             static_cast<float>(itemFontWeight_), shortcutArrowMode_,
             iconBeautifySettings_);

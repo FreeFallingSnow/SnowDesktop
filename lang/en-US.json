@@ -317,6 +317,8 @@
     "app.settings.context_menu_opaque_dark": "Dark (Opaque)",
     "app.settings.layout_spacing": "Layout Spacing",
     "app.settings.layout_spacing_hint": "Adjusts desktop icons, widget frames, and widget items together. Effective spacing is limited to keep icons and titles fully visible.",
+    "app.settings.icon_size": "Icon Size",
+    "app.settings.icon_size_hint": "Adjusts ordinary icon size consistently across the desktop and widgets while keeping the font, two-line title area, and icon-to-title spacing unchanged.",
     "app.settings.title_font_size": "Icon Title Font Size",
     "app.settings.list_font_size": "List Font Size",
     "app.settings.title_font_weight": "Title Font Weight",
