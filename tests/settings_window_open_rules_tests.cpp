@@ -70,6 +70,31 @@ int main(int argc, char** argv)
                 correctedMousePos != std::string::npos &&
                 newFrame < physicalCursor && physicalCursor < correctedMousePos,
             "physical cursor correction follows queued ImGui input processing");
+
+        const std::string pageGridSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_page_grid.cpp");
+        const std::size_t previewBegin = pageGridSource.find(
+            "void DesktopApp::PreviewIconSpacing(float value)");
+        const std::size_t previewEnd = pageGridSource.find(
+            "void DesktopApp::SetIconSpacing(float value)", previewBegin);
+        const std::string preview = previewBegin == std::string::npos ||
+                previewEnd == std::string::npos
+            ? std::string{}
+            : pageGridSource.substr(previewBegin, previewEnd - previewBegin);
+        const std::size_t widgetBounds = preview.find(
+            "widget.bounds = GetGridRect(");
+        const std::size_t invalidateSlots = preview.find(
+            "widgetContainer->InvalidateSlots();");
+        const std::size_t synchronousPaint = preview.find(
+            "PresentDesktopPointerUpdate();");
+        Check(!pageGridSource.empty(), "page-grid source is readable");
+        Check(widgetBounds != std::string::npos &&
+                invalidateSlots != std::string::npos &&
+                synchronousPaint != std::string::npos &&
+                widgetBounds < invalidateSlots &&
+                invalidateSlots < synchronousPaint,
+            "layout-spacing preview refreshes widget item geometry before synchronous painting");
     }
 
     if (failures == 0)

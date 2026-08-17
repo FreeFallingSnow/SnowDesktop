@@ -257,9 +257,11 @@ void DesktopApp::PreviewIconSpacing(float value)
     for (auto& page : gridPages_)
         ApplyIconSpacingToPage(page);
 
-    // A spacing preview changes only geometry. Existing runtime items point
-    // at these model records, so updating their bounds avoids rebuilding all
-    // containers for every one-percent slider step.
+    // A spacing preview changes only geometry. Existing runtime desktop items
+    // point at these model records, so update their bounds directly. Widget
+    // item rectangles are cached by their containers, so invalidate those
+    // caches after updating widget bounds; the synchronous preview paint below
+    // then rebuilds drawing, hit testing, and mosaic geometry from one layout.
     for (auto& item : items_)
     {
         if (item.name.empty()) continue;
@@ -275,6 +277,12 @@ void DesktopApp::PreviewIconSpacing(float value)
             widget.cellScale = GetGridPageCuScale(*page);
         widget.bounds = GetGridRect(
             gridPages_, widget.gridCell, widget.gridSpan);
+    }
+    for (auto& container : containers_)
+    {
+        if (auto* widgetContainer =
+                dynamic_cast<WidgetContainer*>(container.get()))
+            widgetContainer->InvalidateSlots();
     }
     iconSpacingPreviewActive_ = true;
     InvalidateDragStaticScene();
