@@ -16,6 +16,7 @@
 #include "search_match.h"
 #include "widget_preview_scene.h"
 #include "../menu_fluent_glyphs.h"
+#include "../item_render_layer_rules.h"
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -1281,6 +1282,8 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
         }
 
         context->PushAxisAlignedClip(app_->ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        std::vector<std::pair<Item*, RECT>>
+            foregroundTitles;
         for (size_t i = 0; i < slots.size(); ++i)
         {
             size_t idx = slots[i]->GetIndex();
@@ -1301,8 +1304,14 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
                 {
                     RECT bodyRect = GetBodyRect();
                     bool hovered = !preview && !di.selected && PtInRect(&itemRect, app_->lastMousePoint_) && PtInRect(&bodyRect, app_->lastMousePoint_);
+                    const auto titleLayers =
+                        snowdesktop::item_render_layer_rules::
+                            ResolveTitleLayerPlan(di.selected);
                     icon->Draw(context, itemRect, di.selected ? 2 : (hovered ? 1 : 0),
-                        app_->IsLightContentTheme());
+                        lt, titleLayers.drawWithItem);
+                    if (titleLayers.drawInForeground)
+                        foregroundTitles.emplace_back(
+                            icon, itemRect);
                 }
                 continue;
             }
@@ -1315,6 +1324,9 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
                     { di.typeName, di.modifiedTime,
                       di.fileSize, false });
         }
+        for (const auto& [item, bounds] : foregroundTitles)
+            item->DrawTitle(
+                context, bounds, true, 1.0f, lt);
         context->PopAxisAlignedClip();
         return;
     }
@@ -1363,6 +1375,8 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
 
     const auto& slots = GetSlots();
     context->PushAxisAlignedClip(app_->ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    std::vector<std::pair<Item*, RECT>>
+        foregroundTitles;
 
     if (data_->dateHeaders && !searching)
     {
@@ -1409,8 +1423,14 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
             {
                 RECT bodyRect = GetBodyRect();
                 bool hovered = !preview && !di.selected && PtInRect(&itemRect, app_->lastMousePoint_) && PtInRect(&bodyRect, app_->lastMousePoint_);
+                const auto titleLayers =
+                    snowdesktop::item_render_layer_rules::
+                        ResolveTitleLayerPlan(di.selected);
                 icon->Draw(context, itemRect, di.selected ? 2 : (hovered ? 1 : 0),
-                    app_->IsLightContentTheme());
+                    lt, titleLayers.drawWithItem);
+                if (titleLayers.drawInForeground)
+                    foregroundTitles.emplace_back(
+                        icon, itemRect);
             }
             continue;
         }
@@ -1424,6 +1444,9 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
                 { di.typeName, di.modifiedTime,
                   di.fileSize, false });
     }
+    for (const auto& [item, bounds] : foregroundTitles)
+        item->DrawTitle(
+            context, bounds, true, 1.0f, lt);
     context->PopAxisAlignedClip();
 }
 

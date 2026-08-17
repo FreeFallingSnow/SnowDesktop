@@ -19,6 +19,7 @@
 #include "search_match.h"
 #include "widget_preview_scene.h"
 #include "../category_settings.h"
+#include "../item_render_layer_rules.h"
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -1188,6 +1189,8 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
     auto& slots = GetSlots();
     RECT content = FolderMappingContentRect(this);
     bool listMode = data_->listMode;
+    std::vector<std::pair<Item*, RECT>>
+        foregroundTitles;
 
     context->PushAxisAlignedClip(app_->ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     if (data_->dateHeaders && !IsSearchActive())
@@ -1249,8 +1252,13 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
             {
                 RECT bodyRect = GetBodyRect();
                 bool hovered = !preview && !entry.selected && PtInRect(&cell, app_->lastMousePoint_) && PtInRect(&bodyRect, app_->lastMousePoint_);
+                const auto titleLayers =
+                    snowdesktop::item_render_layer_rules::
+                        ResolveTitleLayerPlan(entry.selected);
                 icon->Draw(context, cell, entry.selected ? 2 : (hovered ? 1 : 0),
-                    app_->IsLightContentTheme());
+                    lt, titleLayers.drawWithItem);
+                if (titleLayers.drawInForeground)
+                    foregroundTitles.emplace_back(icon, cell);
             }
             continue;
         }
@@ -1264,6 +1272,9 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
                 { entry.typeName, entry.lastWriteTime,
                   entry.fileSize, entry.isDirectory });
     }
+    for (const auto& [item, bounds] : foregroundTitles)
+        item->DrawTitle(
+            context, bounds, true, 1.0f, lt);
     context->PopAxisAlignedClip();
 }
 

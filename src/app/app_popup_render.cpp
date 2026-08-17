@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../item_render_layer_rules.h"
 
 // Collection-popup rendering.
 
@@ -171,8 +172,12 @@ void DesktopApp::DrawCollectionPopup(
                 PtInRect(&itemRect, lastMousePoint_);
             FolderEntryIcon icon(
                 &entry, dockFolderPopupContainer_.get(), this);
+            const auto titleLayers =
+                snowdesktop::item_render_layer_rules::
+                    ResolveTitleLayerPlan(entry.selected);
             icon.Draw(ctx, itemRect,
-                entry.selected ? 2 : (hovered ? 1 : 0));
+                entry.selected ? 2 : (hovered ? 1 : 0),
+                false, titleLayers.drawWithItem);
         }
         else
         {
@@ -183,9 +188,42 @@ void DesktopApp::DrawCollectionPopup(
                 !items_[itemIndex].selected &&
                 PtInRect(&itemRect, lastMousePoint_);
             DesktopIcon icon(&items_[itemIndex], nullptr, this);
+            const auto titleLayers =
+                snowdesktop::item_render_layer_rules::
+                    ResolveTitleLayerPlan(
+                        items_[itemIndex].selected);
             icon.Draw(ctx, itemRect,
                 items_[itemIndex].selected ? 2 : (hovered ? 1 : 0),
-                false, true, false,
+                false, titleLayers.drawWithItem, false,
+                widget.type == DesktopWidgetType::Collection
+                    ? &widget : nullptr);
+        }
+    }
+    for (size_t i = 0; i < popupItemCount; ++i)
+    {
+        RECT itemRect = GetCollectionPopupItemRect(popupRect_, i);
+        if (itemRect.bottom <= content.top ||
+            itemRect.top >= content.bottom)
+            continue;
+        if (widget.type == DesktopWidgetType::FolderMapping)
+        {
+            FolderEntry& entry =
+                dockFolderPopupWidget_.folderEntries[i];
+            if (!entry.selected) continue;
+            FolderEntryIcon icon(
+                &entry, dockFolderPopupContainer_.get(), this);
+            icon.DrawTitle(ctx, itemRect, true);
+        }
+        else
+        {
+            const size_t itemIndex =
+                FindItemIndexByKey(popupKeys[i]);
+            if (itemIndex == static_cast<size_t>(-1) ||
+                !items_[itemIndex].selected)
+                continue;
+            DesktopIcon icon(&items_[itemIndex], nullptr, this);
+            icon.DrawTitle(
+                ctx, itemRect, true, 1.0f, false,
                 widget.type == DesktopWidgetType::Collection
                     ? &widget : nullptr);
         }

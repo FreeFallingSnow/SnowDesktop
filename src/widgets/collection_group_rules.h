@@ -222,6 +222,33 @@ constexpr int ClampIndependentTabScroll(
         std::max(0, contentWidth - viewportWidth));
 }
 
+struct CategorizedControlMetrics
+{
+    float tabHeightCu = 34.0f;
+    float fontSizeCu = 15.0f;
+    float rowPitchCu = 38.0f;
+    float searchBoxHeightCu = 30.0f;
+    float detailsHeaderHeightCu = 30.0f;
+};
+
+/**
+ * @brief 由同一个标签高度生成标签、搜索框和详细信息表头尺寸。
+ */
+constexpr CategorizedControlMetrics
+ResolveCategorizedControlMetrics(float tabHeightCu)
+{
+    const float height = std::clamp(
+        tabHeightCu, 24.0f, 48.0f);
+    const float controlHeight = height - 4.0f;
+    return {
+        height,
+        height * 15.0f / 34.0f,
+        height + 4.0f,
+        controlHeight,
+        controlHeight
+    };
+}
+
 /**
  * @brief 计算分类组件内容区顶部，依次避让可见标签、搜索框和宿主标签行。
  *

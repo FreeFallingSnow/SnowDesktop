@@ -16,6 +16,7 @@
 #include "app.h"
 #include "drop_model.h"
 #include "widget_preview_scene.h"
+#include "../item_render_layer_rules.h"
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -432,6 +433,8 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
         context->PushAxisAlignedClip(app_->ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
         auto& slots = GetSlots();
+        std::vector<std::pair<Item*, RECT>>
+            foregroundTitles;
         for (const auto& slot : slots)
         {
             if (!slot) continue;
@@ -452,8 +455,13 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 else
                 {
                     bool hovered = !preview && !di.selected && PtInRect(&cell, app_->lastMousePoint_) && PtInRect(&content, app_->lastMousePoint_);
+                    const auto titleLayers =
+                        snowdesktop::item_render_layer_rules::
+                            ResolveTitleLayerPlan(di.selected);
                     icon->Draw(context, cell, di.selected ? 2 : (hovered ? 1 : 0),
-                        app_->IsLightContentTheme(), true, false, data_);
+                        lt, titleLayers.drawWithItem, false, data_);
+                    if (titleLayers.drawInForeground)
+                        foregroundTitles.emplace_back(icon, cell);
                 }
             }
             else
@@ -477,6 +485,9 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 }
             }
         }
+        for (const auto& [item, bounds] : foregroundTitles)
+            item->DrawTitle(
+                context, bounds, true, 1.0f, lt, data_);
         context->PopAxisAlignedClip();
         return;
     }
@@ -487,6 +498,8 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
     const size_t displayItemCount = CollectionItemCount(this);
     size_t inlineCapacity = std::min(
         GetCollectionInlineCapacity(*data_), displayItemCount);
+    std::vector<std::pair<Item*, RECT>>
+        foregroundTitles;
 
     for (size_t i = 0; i < inlineCapacity && i < slots.size(); ++i)
     {
@@ -514,8 +527,13 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
             {
                 RECT bodyRect = GetBodyRect();
                 bool hovered = !preview && PtInRect(&slotRect, app_->lastMousePoint_) != FALSE && !di.selected && PtInRect(&bodyRect, app_->lastMousePoint_);
+                const auto titleLayers =
+                    snowdesktop::item_render_layer_rules::
+                        ResolveTitleLayerPlan(di.selected);
                 icon->Draw(context, slotRect, di.selected ? 2 : (hovered ? 1 : 0),
-                    app_->IsLightContentTheme(), true, false, data_);
+                    lt, titleLayers.drawWithItem, false, data_);
+                if (titleLayers.drawInForeground)
+                    foregroundTitles.emplace_back(icon, slotRect);
             }
         }
     }
@@ -540,7 +558,12 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 }
             }
             if (!hasRemainingIcon && !PtInRect(&allRect, app_->lastMousePoint_))
+            {
+                for (const auto& [item, bounds] : foregroundTitles)
+                    item->DrawTitle(
+                        context, bounds, true, 1.0f, lt, data_);
                 return;
+            }
 
             const RECT mosaicRect = app_->GetItemIconRect(allRect);
             for (int j = 0; j < 4; ++j)
@@ -582,6 +605,9 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 app_->IsLightContentTheme());
         }
     }
+    for (const auto& [item, bounds] : foregroundTitles)
+        item->DrawTitle(
+            context, bounds, true, 1.0f, lt, data_);
 }
 
 /// @}

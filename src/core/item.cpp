@@ -361,7 +361,17 @@ void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, boo
         app_->DrawShortcutArrowOverlay(context, iconRect, opacity);
 
     if (!dragged && drawText)
-        app_->DrawItemText(context, rect, entry_->name, selected, opacity, lightTheme);
+        DrawTitle(context, rect, selected, opacity, lightTheme);
+}
+
+void FolderEntryIcon::DrawTitle(ID2D1RenderTarget* context,
+    RECT rect, bool selected, float opacity,
+    bool lightTheme, const DesktopWidget*)
+{
+    if (!app_ || !entry_ || !context) return;
+    app_->DrawItemText(
+        context, rect, entry_->name,
+        selected, opacity, lightTheme);
 }
 
 /**
@@ -446,6 +456,12 @@ Container* ExternalFileItem::GetContainer() const { return nullptr; }
  * @note ExternalFileItem 仅为文件路径的轻量包装，不参与实际绘制。
  */
 void ExternalFileItem::Draw(ID2D1DeviceContext*, RECT, int) {}
+
+void ExternalFileItem::DrawTitle(
+    ID2D1RenderTarget*, RECT, bool, float,
+    bool, const DesktopWidget*)
+{
+}
 
 /**
  * @brief 创建拖放数据对象（未实现）

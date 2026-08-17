@@ -12,6 +12,7 @@
 #include "search_match.h"
 #include "widget_preview_scene.h"
 #include "../l10n.h"
+#include "../item_render_layer_rules.h"
 #include <algorithm>
 #include <unordered_set>
 
@@ -1153,6 +1154,8 @@ void CollectionGroup::DrawContent(
             activeCollection = &app_->widgets_[activeIndex];
     }
 
+    std::vector<std::pair<Item*, RECT>>
+        foregroundTitles;
     for (const auto& slot : GetSlots())
     {
         if (!slot || !slot->GetItem()) continue;
@@ -1203,14 +1206,25 @@ void CollectionGroup::DrawContent(
                     &row, app_->lastMousePoint_) &&
                 PtInRect(
                     &body, app_->lastMousePoint_);
+            const auto titleLayers =
+                snowdesktop::item_render_layer_rules::
+                    ResolveTitleLayerPlan(
+                        item->selected);
             icon->Draw(
                 context, row,
                 item->selected
                     ? 2
                     : (hovered ? 1 : 0),
-                light, true, false, activeCollection);
+                light, titleLayers.drawWithItem,
+                false, activeCollection);
+            if (titleLayers.drawInForeground)
+                foregroundTitles.emplace_back(icon, row);
         }
     }
+    for (const auto& [item, bounds] : foregroundTitles)
+        item->DrawTitle(
+            context, bounds, true, 1.0f,
+            light, activeCollection);
     context->PopAxisAlignedClip();
 }
 

@@ -13,6 +13,7 @@
 #include "../search_match.h"
 #include "widget_preview_scene.h"
 #include "../l10n.h"
+#include "../item_render_layer_rules.h"
 
 #include <algorithm>
 #include <unordered_set>
@@ -1976,6 +1977,8 @@ void FileGroup::DrawContent(
         context->PushAxisAlignedClip(
             app_->ToD2DRect(content),
             D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        std::vector<std::pair<Item*, RECT>>
+            foregroundTitles;
         for (const auto& slot : GetSlots())
         {
             if (!slot || !slot->GetItem())
@@ -2045,12 +2048,38 @@ void FileGroup::DrawContent(
                     PtInRect(
                         &cell,
                         app_->lastMousePoint_);
-                item->Draw(
-                    context, cell,
-                    item->IsSelected()
-                        ? 2 : (hovered ? 1 : 0));
+                const bool selected =
+                    item->IsSelected();
+                const int state = selected
+                    ? 2 : (hovered ? 1 : 0);
+                const auto titleLayers =
+                    snowdesktop::item_render_layer_rules::
+                        ResolveTitleLayerPlan(selected);
+                if (auto* desktop =
+                        dynamic_cast<DesktopIcon*>(item))
+                {
+                    desktop->Draw(
+                        context, cell, state,
+                        light, titleLayers.drawWithItem);
+                }
+                else if (auto* folder =
+                             dynamic_cast<
+                                 FolderEntryIcon*>(item))
+                {
+                    folder->Draw(
+                        context, cell, state,
+                        light, titleLayers.drawWithItem);
+                }
+                else
+                    item->Draw(context, cell, state);
+                if (titleLayers.drawInForeground)
+                    foregroundTitles.emplace_back(
+                        item, cell);
             }
         }
+        for (const auto& [item, bounds] : foregroundTitles)
+            item->DrawTitle(
+                context, bounds, true, 1.0f, light);
         context->PopAxisAlignedClip();
         return;
     }

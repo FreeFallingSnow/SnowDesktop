@@ -773,6 +773,22 @@ void TestListDetailRules()
             22.5f) == 73,
         "row height applies the same formula at component scale");
 
+    constexpr auto defaultControls =
+        rules::ResolveCategorizedControlMetrics(34.0f);
+    constexpr auto largeControls =
+        rules::ResolveCategorizedControlMetrics(48.0f);
+    Check(defaultControls.fontSizeCu == 15.0f &&
+            defaultControls.searchBoxHeightCu == 30.0f &&
+            defaultControls.detailsHeaderHeightCu ==
+                defaultControls.searchBoxHeightCu,
+        "detail headers share the default categorized font and search-box height");
+    Check(largeControls.fontSizeCu >
+                defaultControls.fontSizeCu &&
+            largeControls.detailsHeaderHeightCu == 44.0f &&
+            largeControls.detailsHeaderHeightCu ==
+                largeControls.searchBoxHeightCu,
+        "detail header font and height scale with categorized tabs and search boxes");
+
     const auto nameOnly = details::BuildColumns(
         299, false, false, false,
         details::kDefaultModifiedPosition,

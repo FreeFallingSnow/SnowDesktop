@@ -78,17 +78,6 @@ inline int RowHeight(
         scaled38 + static_cast<int>(std::ceil(lineDelta)));
 }
 
-inline int HeaderHeight(
-    int scaled28,
-    int scaled10,
-    float currentFontPixels)
-{
-    return std::max(
-        scaled28,
-        static_cast<int>(std::ceil(
-            currentFontPixels * 7.0f / 6.0f)) + scaled10);
-}
-
 struct Columns
 {
     int nameWidth = 0;

@@ -718,20 +718,25 @@ float ScrollingItemWidget::
 float ScrollingItemWidget::
     GetCategorizedTabFontSize() const
 {
-    // 默认标签条高度 34 cu 对应默认字号 15 cu，按比例联动。
-    return GetCategorizedTabHeight() * 15.0f / 34.0f;
+    return snowdesktop::collection_group_rules::
+        ResolveCategorizedControlMetrics(
+            GetCategorizedTabHeight()).fontSizeCu;
 }
 
 float ScrollingItemWidget::
     GetCategorizedTabRowPitch() const
 {
-    return GetCategorizedTabHeight() + 4.0f;
+    return snowdesktop::collection_group_rules::
+        ResolveCategorizedControlMetrics(
+            GetCategorizedTabHeight()).rowPitchCu;
 }
 
 float ScrollingItemWidget::
     GetCategorizedSearchBoxHeight() const
 {
-    return GetCategorizedTabHeight() - 4.0f;
+    return snowdesktop::collection_group_rules::
+        ResolveCategorizedControlMetrics(
+            GetCategorizedTabHeight()).searchBoxHeightCu;
 }
 
 bool ScrollingItemWidget::
@@ -1629,11 +1634,11 @@ int ScrollingItemWidget::GetListRowHeight() const
 
 int ScrollingItemWidget::GetDetailsHeaderHeight() const
 {
-    const float currentFont = app_
-        ? FontCu(app_->listItemFontSizeCu_)
-        : FontCu(kDefaultItemFontSizeCu);
-    return snowdesktop::list_detail_rules::HeaderHeight(
-        Cu(28.0f), Cu(10.0f), currentFont);
+    const auto metrics =
+        snowdesktop::collection_group_rules::
+            ResolveCategorizedControlMetrics(
+                GetCategorizedTabHeight());
+    return Cu(metrics.detailsHeaderHeightCu);
 }
 
 bool ScrollingItemWidget::IsDetailsVisible() const
@@ -1757,7 +1762,8 @@ void ScrollingItemWidget::DrawDetailsHeader(
     };
 
     IDWriteTextFormat* format = GetCuTextFormatWeight(
-        app_->listItemFontSizeCu_, DWRITE_FONT_WEIGHT_SEMI_BOLD, false);
+        GetCategorizedTabFontSize(),
+        DWRITE_FONT_WEIGHT_SEMI_BOLD, false);
     if (!format) format = app_->componentListTextFormat_.Get();
     const D2D1_COLOR_F color = light
         ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f)
