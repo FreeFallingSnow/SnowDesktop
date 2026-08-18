@@ -121,6 +121,7 @@ void DesktopApp::OpenDockFolderPopupAt(
         !IsFolderDockEntry(dockEntries_[entryIndex]))
         return;
 
+    pendingCollectionPopupOpen_.reset();
     DismissActiveContextMenuForPopupTransition();
 
     PreserveDockFolderPopupDragSourceForTransition();
@@ -342,6 +343,9 @@ void DesktopApp::InvalidateCollectionPopupAnimation(
 
 void DesktopApp::FinalizeCloseCollectionPopup()
 {
+    auto pendingOpen =
+        std::move(pendingCollectionPopupOpen_);
+    pendingCollectionPopupOpen_.reset();
     RECT dirty = popupRect_;
     if (!IsRectEmptyRect(popupAnimationCacheRect_))
     {
@@ -388,6 +392,18 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     {
         InflateRect(&dirty, 6, 6);
         InvalidateRect(hwnd_, &dirty, FALSE);
+    }
+    if (pendingOpen && hwnd_ && IsWindow(hwnd_))
+    {
+        const size_t widgetIndex =
+            FindWidgetIndexById(pendingOpen->widgetId);
+        if (widgetIndex < widgets_.size())
+        {
+            OpenCollectionPopupAt(
+                widgetIndex,
+                pendingOpen->anchorPoint,
+                pendingOpen->categoryId);
+        }
     }
 }
 

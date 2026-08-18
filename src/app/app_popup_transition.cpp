@@ -142,23 +142,36 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
         ResolveExistingSourceAction(
             samePopupSource,
             popupAnimation_.IsInteractive(),
-            closingStartedByCurrentPress))
+            closingStartedByCurrentPress &&
+                popupAnimation_.IsClosing()))
     {
     case snowdesktop::popup_animation_rules::
         ExistingSourceAction::CloseExisting:
+        pendingCollectionPopupOpen_.reset();
         CloseCollectionPopup();
         return;
     case snowdesktop::popup_animation_rules::
         ExistingSourceAction::KeepClosing:
         return;
     case snowdesktop::popup_animation_rules::
+        ExistingSourceAction::OpenAfterExistingCloses:
+        pendingCollectionPopupOpen_ =
+            PendingCollectionPopupOpenRequest{
+                widgets_[widgetIndex].id,
+                anchorPoint,
+                categoryId,
+            };
+        return;
+    case snowdesktop::popup_animation_rules::
         ExistingSourceAction::ReopenExisting:
+        pendingCollectionPopupOpen_.reset();
         StartCollectionPopupAnimation(true);
         InvalidateCollectionPopupAnimation(true);
         return;
     case snowdesktop::popup_animation_rules::
         ExistingSourceAction::OpenAtRequestedAnchor:
     default:
+        pendingCollectionPopupOpen_.reset();
         break;
     }
 

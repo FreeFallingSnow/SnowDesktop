@@ -3197,6 +3197,14 @@ private:
     POINT popupAnchorPoint_{};
     std::wstring popupPageId_;
     std::wstring popupCategoryId_;
+    struct PendingCollectionPopupOpenRequest
+    {
+        std::wstring widgetId;
+        POINT anchorPoint{};
+        std::wstring categoryId;
+    };
+    std::optional<PendingCollectionPopupOpenRequest>
+        pendingCollectionPopupOpen_;
     std::unique_ptr<Item> popupMouseDownItem_;
     bool dockFolderPopupOpen_ = false;
     bool dockFolderPopupAvailable_ = false;

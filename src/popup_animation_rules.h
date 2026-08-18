@@ -33,6 +33,7 @@ struct Visual
 enum class ExistingSourceAction
 {
     OpenAtRequestedAnchor,
+    OpenAfterExistingCloses,
     CloseExisting,
     KeepClosing,
     ReopenExisting,
@@ -44,8 +45,11 @@ inline ExistingSourceAction ResolveExistingSourceAction(
     bool closingStartedByCurrentPress = false)
 {
     if (!sameSource)
-        return ExistingSourceAction::
-            OpenAtRequestedAnchor;
+    {
+        return closingStartedByCurrentPress
+            ? ExistingSourceAction::OpenAfterExistingCloses
+            : ExistingSourceAction::OpenAtRequestedAnchor;
+    }
     if (interactive)
         return ExistingSourceAction::CloseExisting;
     return closingStartedByCurrentPress
