@@ -248,6 +248,13 @@ void TestMediaControlsArtwork(const fs::path& repository)
             manifest.find("\"settings.appReference\"") !=
                 std::string::npos,
         "media controls must choose and launch the bound idle application through host APIs");
+    Check(source.find("id = \"launcher.current\"") !=
+            std::string::npos &&
+            source.find("label = launcher and launcher.title") !=
+                std::string::npos &&
+            source.find("lua_widget.media_control.clear_launcher") !=
+                std::string::npos,
+        "media controls menu must show the current launcher and expose an explicit clear action");
     Check(source.find("task.start(\"app.search\"") == std::string::npos &&
             source.find("type = \"appSearch\"") == std::string::npos &&
             source.find("data.subscribe(\"app.indexStatus\"") ==

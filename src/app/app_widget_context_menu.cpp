@@ -820,6 +820,12 @@ void DesktopApp::ShowWidgetContextMenu(
 
     if (command >= kContextLuaWidgetMenuFirst && command <= kContextLuaWidgetMenuLast)
     {
+        // Finish restoring the desktop menu owner before dispatching the Lua
+        // action. The action may synchronously open another interaction
+        // surface (for example the logical-slot picker), which must keep the
+        // focus it establishes.
+        RestoreDesktopWindowLayer();
+        RestoreInteractionInputFocus();
         size_t itemIndex = static_cast<size_t>(command - kContextLuaWidgetMenuFirst);
         if (itemIndex < luaMenuActions.size() && widgetEngine_)
         {
@@ -827,8 +833,6 @@ void DesktopApp::ShowWidgetContextMenu(
                 widgets_[widgetIndex].id, luaMenuActions[itemIndex]);
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
-        RestoreDesktopWindowLayer();
-        RestoreInteractionInputFocus();
         return;
     }
 

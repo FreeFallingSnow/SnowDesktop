@@ -330,10 +330,19 @@ local function menu(_context, _model, request)
     }
     items[#items + 1] = { type = "separator" }
     items[#items + 1] = {
-        id = "launcher.clear",
-        label = l10n.tr("lua_widget.media_control.not_set"),
-        checked = launcher == nil,
+        id = "launcher.current",
+        label = launcher and launcher.title or
+            l10n.tr("lua_widget.media_control.not_set"),
+        checked = true,
+        enabled = false,
     }
+    if launcher then
+        items[#items + 1] = { type = "separator" }
+        items[#items + 1] = {
+            id = "launcher.clear",
+            label = l10n.tr("lua_widget.media_control.clear_launcher"),
+        }
+    end
     return ui.menu(items)
 end
 
