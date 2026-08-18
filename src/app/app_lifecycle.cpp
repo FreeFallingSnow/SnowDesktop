@@ -673,6 +673,14 @@ bool DesktopApp::CreateDesktopOverlayWindow()
         kTaskbarRevealGuardIntervalMs, nullptr);
     StartDockForegroundMonitor();
 
+    // Every replacement overlay is preceded by ResetDesktopWindowResources,
+    // which retires the scheduler tokens owned by the previous HWND. Rebind
+    // here, after the new host is fully initialized, so both display-topology
+    // recovery and Explorer recreation after system resume restore Lua widget
+    // refresh, named-schedule and animation deadlines.
+    if (widgetEngine_)
+        widgetEngine_->RebindHostTimers();
+
     ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
     ReconcileDesktopHoverState(
         snowdesktop::desktop_hover_rules::

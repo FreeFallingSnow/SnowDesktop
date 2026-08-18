@@ -1346,6 +1346,7 @@ if (BUILD_TESTING)
             src/ui_animation_scheduler.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES d2d1 dwrite dwmapi gdi32 shcore user32
+        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS rules window)
 
     snowdesktop_add_test(

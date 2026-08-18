@@ -32,7 +32,11 @@
 #include <wrl/client.h>
 
 #include <climits>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <sstream>
+#include <string>
 
 namespace rules = snowdesktop::dock_window_rules;
 
@@ -46,6 +50,15 @@ void Check(bool condition, const char* message)
     if (condition) return;
     ++failures;
     std::cerr << "FAILED: " << message << '\n';
+}
+
+std::string ReadFile(const std::filesystem::path& path)
+{
+    std::ifstream file(path, std::ios::binary);
+    if (!file) return {};
+    std::ostringstream contents;
+    contents << file.rdbuf();
+    return contents.str();
 }
 
 void CheckRowMargins(
@@ -68,7 +81,7 @@ void CheckRowMargins(
 
 } // namespace
 
-int main()
+int main(int argc, char** argv)
 {
     namespace dockDrop =
         snowdesktop::dock_drop_rules;
@@ -2874,6 +2887,38 @@ int main()
         "different identity must not reuse the visible preview");
     Check(!rules::ShouldFollowDockPreviewAnchor(true, true, false),
         "stable anchor must not move the preview");
+
+    Check(argc == 2, "source root argument is provided");
+    if (argc == 2)
+    {
+        const std::string lifecycleSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_lifecycle.cpp");
+        const std::size_t createBegin = lifecycleSource.find(
+            "bool DesktopApp::CreateDesktopOverlayWindow()");
+        const std::size_t recoverBegin = lifecycleSource.find(
+            "void DesktopApp::RecoverDesktopHostAfterExplorerRestart()",
+            createBegin);
+        const std::string createOverlay =
+            createBegin == std::string::npos ||
+                recoverBegin == std::string::npos
+            ? std::string{}
+            : lifecycleSource.substr(
+                createBegin, recoverBegin - createBegin);
+        const std::size_t hostReady = createOverlay.find(
+            "StartDockForegroundMonitor();");
+        const std::size_t rebind = createOverlay.find(
+            "widgetEngine_->RebindHostTimers();");
+        const std::size_t show = createOverlay.find(
+            "ShowWindow(hwnd_, SW_SHOWNOACTIVATE);");
+        Check(!lifecycleSource.empty(),
+            "application lifecycle source is readable");
+        Check(hostReady != std::string::npos &&
+                rebind != std::string::npos &&
+                show != std::string::npos &&
+                hostReady < rebind && rebind < show,
+            "replacement overlays rebind Lua widget timers after host setup and before display");
+    }
 
     if (failures == 0)
         std::cout << "All Dock and window rule tests passed.\n";
