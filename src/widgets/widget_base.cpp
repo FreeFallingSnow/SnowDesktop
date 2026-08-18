@@ -20,6 +20,7 @@
 #include "widget_chrome_rules.h"
 #include "widget_preview_scene.h"
 #include "../widget_item_layout.h"
+#include "../widget_scroll_rules.h"
 #include <d2d1_1.h>
 #include <wrl/client.h>
 #include "../l10n.h"
@@ -2203,15 +2204,17 @@ void DrawScrollbarAt(ID2D1DeviceContext* context, RECT body, int contentHeight,
     if (contentHeight <= visibleHeight || visibleHeight <= 0) return;
     if (!hovered) return;
 
-    int maxScroll = std::max(0, contentHeight - visibleHeight);
-    if (maxScroll <= 0) return;
+    const auto geometry = snowdesktop::widget_scroll_rules::
+        ResolveScrollbarAxisGeometry(
+            body.top, body.bottom, contentHeight,
+            visibleHeight, scrollOffset, cellScale);
+    if (geometry.maximum <= 0 || geometry.TrackExtent() <= 0) return;
 
     const int trackWidth = std::max(2, static_cast<int>(std::round(5.0f * cellScale)));
     const int trackMargin = std::max(1, static_cast<int>(std::round(2.0f * cellScale)));
     int trackLeft = body.right - trackWidth - trackMargin;
-    int trackTop = body.top + std::max(1, static_cast<int>(std::round(4.0f * cellScale)));
-    int trackBottom = body.bottom - std::max(1, static_cast<int>(std::round(4.0f * cellScale)));
-    int trackHeight = std::max(1, trackBottom - trackTop);
+    const int trackTop = geometry.trackStart;
+    const int trackBottom = geometry.trackEnd;
 
     // Track background
     RECT trackRect = MakeRect(trackLeft, trackTop, trackLeft + trackWidth, trackBottom);
@@ -2227,15 +2230,8 @@ void DrawScrollbarAt(ID2D1DeviceContext* context, RECT body, int contentHeight,
         context->FillRoundedRectangle(rr, trackBrush.Get());
     }
 
-    // Thumb
-    float ratio = std::clamp((float)visibleHeight / (float)contentHeight, 0.08f, 1.0f);
-    float scrollRatio = std::clamp((float)scrollOffset / (float)maxScroll, 0.0f, 1.0f);
-    int thumbHeight = std::max(
-        std::max(8, static_cast<int>(std::round(20.0f * cellScale))),
-        (int)(trackHeight * ratio));
-    int thumbTravel = trackHeight - thumbHeight;
-    int thumbTop = trackTop + (int)(thumbTravel * scrollRatio);
-    RECT thumbRect = MakeRect(trackLeft, thumbTop, trackLeft + trackWidth, thumbTop + thumbHeight);
+    RECT thumbRect = MakeRect(trackLeft, geometry.thumbStart,
+        trackLeft + trackWidth, geometry.thumbEnd);
 
     ComPtr<ID2D1SolidColorBrush> thumbBrush;
     context->CreateSolidColorBrush(
@@ -2256,17 +2252,18 @@ void DrawHorizontalScrollbarAt(ID2D1DeviceContext* context, RECT body,
 {
     if (contentWidth <= visibleWidth || visibleWidth <= 0 || !hovered) return;
 
-    const int maxScroll = std::max(0, contentWidth - visibleWidth);
-    if (maxScroll <= 0) return;
+    const auto geometry = snowdesktop::widget_scroll_rules::
+        ResolveScrollbarAxisGeometry(
+            body.left, body.right, contentWidth,
+            visibleWidth, scrollOffset, cellScale);
+    if (geometry.maximum <= 0 || geometry.TrackExtent() <= 0) return;
 
     const int trackHeight = std::max(
         2, static_cast<int>(std::round(5.0f * cellScale)));
     const int trackMargin = std::max(
         1, static_cast<int>(std::round(2.0f * cellScale)));
-    const int trackLeft = body.left + std::max(
-        1, static_cast<int>(std::round(4.0f * cellScale)));
-    const int trackRight = body.right - std::max(
-        1, static_cast<int>(std::round(4.0f * cellScale)));
+    const int trackLeft = geometry.trackStart;
+    const int trackRight = geometry.trackEnd;
     const int trackTop = body.bottom - trackHeight - trackMargin;
     const int trackWidth = std::max(1, trackRight - trackLeft);
 
@@ -2286,18 +2283,6 @@ void DrawHorizontalScrollbarAt(ID2D1DeviceContext* context, RECT body,
         context->FillRoundedRectangle(track, trackBrush.Get());
     }
 
-    const float ratio = std::clamp(
-        static_cast<float>(visibleWidth) / static_cast<float>(contentWidth),
-        0.08f, 1.0f);
-    const float scrollRatio = std::clamp(
-        static_cast<float>(scrollOffset) / static_cast<float>(maxScroll),
-        0.0f, 1.0f);
-    const int thumbWidth = std::min(trackWidth, std::max(
-        std::max(8, static_cast<int>(std::round(20.0f * cellScale))),
-        static_cast<int>(trackWidth * ratio)));
-    const int thumbLeft = trackLeft + static_cast<int>(
-        (trackWidth - thumbWidth) * scrollRatio);
-
     ComPtr<ID2D1SolidColorBrush> thumbBrush;
     context->CreateSolidColorBrush(
         lightTheme ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.28f)
@@ -2306,8 +2291,8 @@ void DrawHorizontalScrollbarAt(ID2D1DeviceContext* context, RECT body,
     if (thumbBrush)
     {
         const auto thumb = D2D1::RoundedRect(D2D1::RectF(
-            static_cast<float>(thumbLeft), static_cast<float>(trackTop),
-            static_cast<float>(thumbLeft + thumbWidth),
+            static_cast<float>(geometry.thumbStart), static_cast<float>(trackTop),
+            static_cast<float>(geometry.thumbEnd),
             static_cast<float>(trackTop + trackHeight)),
             static_cast<float>(trackHeight) * 0.5f,
             static_cast<float>(trackHeight) * 0.5f);
@@ -2322,9 +2307,16 @@ void DrawHorizontalScrollbarAt(ID2D1DeviceContext* context, RECT body,
  */
 void WidgetContainer::DrawScrollbar(ID2D1DeviceContext* context, bool hovered) const
 {
-    RECT body = GetBodyRect();
-    DrawScrollbarAt(context, body, GetTotalContentHeight(),
-        GetVisibleContentHeight(), GetScrollOffset(), hovered, app_->IsLightContentTheme(), GetCellScale());
+    const RECT viewport = GetContentViewportRect();
+    const int visible = GetVisibleContentHeight();
+    const int content = std::max(
+        GetTotalContentHeight(), visible + GetMaxScrollOffset());
+    const bool active = app_ &&
+        app_->widgetScrollbarDragging_ &&
+        app_->widgetScrollbarDragContainer_ == this;
+    DrawScrollbarAt(context, viewport, content,
+        visible, GetScrollOffset(), hovered || active,
+        app_->IsLightContentTheme(), GetCellScale());
 }
 
 // ── Cached clip geometry ─────────────────────────────────────

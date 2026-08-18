@@ -332,6 +332,9 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         break;
     case WM_CANCELMODE:
     case WM_CAPTURECHANGED:
+        widgetScrollbarDragging_ = false;
+        widgetScrollbarDragContainer_ = nullptr;
+        popupScrollbarDragging_ = false;
         if (widgetEngine_)
             widgetEngine_->CancelInteractionPointerPress();
         break;

@@ -2,6 +2,7 @@
 #include "../desktop_hover_rules.h"
 #include "../steam_app_identity.h"
 #include "../widget_visibility_rules.h"
+#include "../widget_scroll_rules.h"
 
 // Pointer leave, Dock click release and primary-button drag completion.
 
@@ -700,6 +701,74 @@ void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
     int dropPreviewMods = 0;
     bool commitVisualBeforeDrop = false;
     HideDragHintWindow();
+
+    if (popupScrollbarDragging_)
+    {
+        DesktopWidget* popupWidget = dockFolderPopupOpen_
+            ? &dockFolderPopupWidget_
+            : (popupWidgetIndex_ < widgets_.size()
+                ? &widgets_[popupWidgetIndex_] : nullptr);
+        if (popupWidget && IsCollectionPopupInteractive())
+        {
+            const RECT popup = GetCollectionPopupRect(*popupWidget);
+            const RECT viewport = GetCollectionPopupContentRect(popup);
+            const int visible = std::max<int>(
+                1, viewport.bottom - viewport.top);
+            const int maximum = GetCollectionPopupMaxScrollOffset(
+                *popupWidget, popup);
+            const auto geometry = snowdesktop::widget_scroll_rules::
+                ResolveScrollbarAxisGeometry(
+                    viewport.top, viewport.bottom,
+                    visible + maximum, visible,
+                    popupScrollbarDragStartOffset_);
+            popupScrollOffset_ = snowdesktop::widget_scroll_rules::
+                ApplyScrollbarThumbDrag(
+                    popupScrollbarDragStartOffset_,
+                    upPoint.y - popupScrollbarDragStartY_, geometry);
+        }
+        popupScrollbarDragging_ = false;
+        mouseDown_ = false;
+        mouseDownHit_ = nullptr;
+        mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+        ReleaseCapture();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+
+    if (widgetScrollbarDragging_)
+    {
+        WidgetContainer* container = widgetScrollbarDragContainer_;
+        if (container && container->GetWidgetData())
+        {
+            const int maximum = container->GetMaxScrollOffset();
+            const int visible = container->GetVisibleContentHeight();
+            const RECT viewport = container->GetContentViewportRect();
+            const auto geometry = snowdesktop::widget_scroll_rules::
+                ResolveScrollbarAxisGeometry(
+                    viewport.top, viewport.bottom,
+                    visible + maximum, visible,
+                    widgetScrollbarDragStartOffset_,
+                    container->GetCellScale());
+            container->GetWidgetData()->scrollOffset =
+                snowdesktop::widget_scroll_rules::
+                    ApplyScrollbarThumbDrag(
+                        widgetScrollbarDragStartOffset_,
+                        upPoint.y - widgetScrollbarDragStartY_, geometry);
+            if (auto* group = dynamic_cast<FileGroup*>(container))
+                group->InvalidateHostedView();
+            else
+                container->InvalidateSlots();
+        }
+        widgetScrollbarDragging_ = false;
+        widgetScrollbarDragContainer_ = nullptr;
+        mouseDown_ = false;
+        mouseDownHit_ = nullptr;
+        mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+        ReleaseCapture();
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
 
     if (detailColumnResizeActive_)
     {

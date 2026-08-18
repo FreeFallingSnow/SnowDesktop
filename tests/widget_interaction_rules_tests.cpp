@@ -819,6 +819,34 @@ void TestNestedWidgetScrolling()
         "scroll-end transitions do not repeat while already at the boundary");
 }
 
+void TestScrollbarThumbDragging()
+{
+    namespace scroll = snowdesktop::widget_scroll_rules;
+    const auto geometry = scroll::ResolveScrollbarAxisGeometry(
+        100, 300, 800, 200, 300, 1.0f);
+    Check(geometry.maximum == 600 &&
+            geometry.trackStart == 104 && geometry.trackEnd == 296 &&
+            geometry.thumbStart > geometry.trackStart &&
+            geometry.thumbEnd < geometry.trackEnd,
+        "scrollbar geometry stays inside the actual content viewport");
+    Check(scroll::ScrollbarThumbHit(
+            geometry, geometry.thumbStart, 397, 400, 1.0f) &&
+            !scroll::ScrollbarThumbHit(
+                geometry, geometry.thumbStart, 380, 400, 1.0f),
+        "scrollbar dragging uses a forgiving target only at the viewport edge");
+    Check(scroll::ApplyScrollbarThumbDrag(
+            300, geometry.ThumbTravel(), geometry) == 600 &&
+            scroll::ApplyScrollbarThumbDrag(
+                300, -geometry.ThumbTravel(), geometry) == 0,
+        "thumb movement maps to the complete scroll range and clamps at both ends");
+
+    const auto compact = scroll::ResolveScrollbarAxisGeometry(
+        10, 24, 1000, 14, 0, 2.0f);
+    Check(compact.TrackExtent() > 0 &&
+            compact.ThumbExtent() <= compact.TrackExtent(),
+        "compact scrollbars keep their thumb inside the available track");
+}
+
 void TestListDetailRules()
 {
     namespace details = snowdesktop::list_detail_rules;
@@ -979,6 +1007,7 @@ int main()
     TestWidgetDesktopSurfaceVisibility();
     TestDesktopHoverDeactivation();
     TestNestedWidgetScrolling();
+    TestScrollbarThumbDragging();
     TestListDetailRules();
     if (failures != 0)
     {

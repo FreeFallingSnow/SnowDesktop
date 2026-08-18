@@ -518,7 +518,9 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
             };
             const int scrollOff = engine->RuntimeGetScrollOffset(
                 data_->id, ctrl.id);
-            const bool showScrollbar = hovered || !data_->bottomBarHover;
+            const bool showScrollbar = hovered ||
+                !data_->bottomBarHover ||
+                engine->IsHostScrollbarDragging(data_->id);
             if (ctrl.horizontal)
                 DrawHorizontalScrollbarAt(context, viewport,
                     ctrl.contentWidth, ctrl.viewportWidth, scrollOff,

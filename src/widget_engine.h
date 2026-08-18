@@ -1602,6 +1602,9 @@ public:
     std::vector<LuaWidget::HostControl> GetScrollControls(
         const std::wstring& widgetId,
         std::string_view surface = "desktop") const;
+    bool IsHostScrollbarDragging(
+        const std::wstring& widgetId,
+        std::string_view surface = "desktop") const;
     void CloseWidgetPanelSurface(const std::wstring& widgetId,
         std::string_view surface = {});
 
@@ -1621,6 +1624,9 @@ private:
         std::wstring& error);
     size_t HitTestHostInputPosition(const LuaWidget::HostControl& control,
         const std::wstring& widgetId, int x, int y) const;
+    bool HandleHostScrollbarPointer(
+        const std::wstring& widgetId, int x, int y,
+        std::string_view surface, bool finish);
 
     /**
      * @brief 内部加载小部件脚本到沙箱
@@ -1923,6 +1929,17 @@ private:
         std::size_t maximumUtf8Bytes = 0;
     };
     FocusedHostInput focusedHostInput_;
+    struct HostScrollbarDrag
+    {
+        bool active = false;
+        std::wstring widgetId;
+        std::string id;
+        std::string surface = "desktop";
+        bool horizontal = false;
+        int pointerStart = 0;
+        int offsetStart = 0;
+    };
+    HostScrollbarDrag hostScrollbarDrag_;
     struct PressedViewKeyTarget
     {
         std::wstring widgetId;

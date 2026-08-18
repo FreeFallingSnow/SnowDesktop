@@ -1,5 +1,6 @@
 #include "app.h"
 #include "../quick_navigation_rules.h"
+#include "../widget_scroll_rules.h"
 
 // Primary-button press handling and drag-source initialization.
 
@@ -213,6 +214,47 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     if (HandlePageNavClick(pt)) return;
 
     bool ctrl = (wp & MK_CONTROL) != 0;
+
+    if (IsCollectionPopupInteractive())
+    {
+        DesktopWidget* popupWidget = nullptr;
+        bool pressedPopupToggle = false;
+        if (dockFolderPopupOpen_)
+        {
+            popupWidget = &dockFolderPopupWidget_;
+            pressedPopupToggle = pressedOpenPopupFolderToggle;
+        }
+        else if (popupWidgetIndex_ < widgets_.size())
+        {
+            popupWidget = &widgets_[popupWidgetIndex_];
+            pressedPopupToggle = pressedOpenPopupDockToggle;
+        }
+        if (popupWidget && !pressedPopupToggle)
+        {
+            const RECT popup = GetCollectionPopupRect(*popupWidget);
+            const RECT viewport = GetCollectionPopupContentRect(popup);
+            const int visible = std::max<int>(
+                1, viewport.bottom - viewport.top);
+            const int maximum = GetCollectionPopupMaxScrollOffset(
+                *popupWidget, popup);
+            const auto geometry = snowdesktop::widget_scroll_rules::
+                ResolveScrollbarAxisGeometry(
+                    viewport.top, viewport.bottom,
+                    visible + maximum, visible,
+                    popupScrollOffset_);
+            if (snowdesktop::widget_scroll_rules::ScrollbarThumbHit(
+                    geometry, pt.y, pt.x, viewport.right))
+            {
+                popupScrollbarDragging_ = true;
+                popupScrollbarDragStartY_ = pt.y;
+                popupScrollbarDragStartOffset_ = popupScrollOffset_;
+                mouseDownHit_ = nullptr;
+                SetCapture(interactionCaptureHwnd);
+                InvalidateRect(hwnd_, &popup, FALSE);
+                return;
+            }
+        }
+    }
 
     if (IsCollectionPopupInteractive() &&
         dockFolderPopupOpen_ &&
@@ -679,6 +721,34 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 
         WidgetHit wh = wc->HitTestWidget(pt);
         if (wh == WidgetHit::None) continue;
+
+        if (wh != WidgetHit::ResizeHandle &&
+            wh != WidgetHit::MoveHandle)
+        {
+            const int maximum = wc->GetMaxScrollOffset();
+            const int visible = wc->GetVisibleContentHeight();
+            const RECT viewport = wc->GetContentViewportRect();
+            const auto geometry = snowdesktop::widget_scroll_rules::
+                ResolveScrollbarAxisGeometry(
+                    viewport.top, viewport.bottom,
+                    visible + maximum, visible,
+                    wc->GetScrollOffset(), wc->GetCellScale());
+            if (snowdesktop::widget_scroll_rules::ScrollbarThumbHit(
+                    geometry, pt.y, pt.x, viewport.right,
+                    wc->GetCellScale()))
+            {
+                widgetScrollbarDragging_ = true;
+                widgetScrollbarDragContainer_ = wc;
+                widgetScrollbarDragStartY_ = pt.y;
+                widgetScrollbarDragStartOffset_ =
+                    wc->GetScrollOffset();
+                mouseDownWidgetIndex_ = wi;
+                mouseDownHit_ = nullptr;
+                SetCapture(hwnd_);
+                InvalidateRect(hwnd_, &widgets_[wi].bounds, FALSE);
+                return;
+            }
+        }
 
         if (wh == WidgetHit::ResizeHandle)
         {

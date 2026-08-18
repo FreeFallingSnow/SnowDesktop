@@ -251,6 +251,7 @@ void DesktopApp::DrawCollectionPopup(
     bool popupHovered =
         popupAnimation_.IsInteractive() &&
         PtInRect(&popupRect_, lastMousePoint_);
+    popupHovered = popupHovered || popupScrollbarDragging_;
     DrawScrollbarAt(ctx, content, contentHeight, visibleHeight, popupScrollOffset_, popupHovered, IsLightContentTheme());
 
     if (animationApplied)

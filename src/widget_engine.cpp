@@ -14574,6 +14574,9 @@ void WidgetEngine::UnloadWidget(const std::wstring& widgetId)
         widgets_[idx].preview ? &widgets_[idx].previewStorage : nullptr);
     if (focusedHostInput_.active && focusedHostInput_.widgetId == widgetId)
         focusedHostInput_ = {};
+    if (hostScrollbarDrag_.active &&
+        hostScrollbarDrag_.widgetId == widgetId)
+        hostScrollbarDrag_ = {};
     const std::string secretDraftPrefix = WidgetWideToUtf8(widgetId) + "\n";
     std::erase_if(secretSettingDrafts_, [&](auto& item) {
         if (!item.first.starts_with(secretDraftPrefix)) return false;
@@ -19739,19 +19742,22 @@ static void DrawWidgetViewNode(D2DState* state,
         {
             const bool vertical = node.orientation ==
                 ViewOrientation::Vertical;
-            const float trackExtent = node.scrollViewportExtent;
             const float crossExtent = vertical ? clip.width : clip.height;
             const float edgeInset = std::min(2.0f, crossExtent * 0.25f);
             const float barThickness = std::min(3.0f,
                 std::max(0.0f, crossExtent - edgeInset));
-            const float thumbExtent = std::min(trackExtent,
-                std::max(16.0f, trackExtent * trackExtent /
-                    node.scrollContentExtent));
-            const float maximum = node.scrollContentExtent -
-                node.scrollViewportExtent;
-            const float position = maximum > 0.0f
-                ? (trackExtent - thumbExtent) * node.scrollOffset / maximum
-                : 0.0f;
+            const int viewportExtent = std::max(1,
+                static_cast<int>(std::lround(
+                    vertical ? clip.height : clip.width)));
+            const auto scrollbar = snowdesktop::widget_scroll_rules::
+                ResolveScrollbarAxisGeometry(
+                    0, viewportExtent,
+                    std::max(viewportExtent,
+                        static_cast<int>(std::lround(
+                            node.scrollContentExtent))),
+                    viewportExtent,
+                    static_cast<int>(std::lround(node.scrollOffset)),
+                    cumulativeScale);
             const std::uint32_t scrollbarColor =
                 style.foreground.value_or(0xFFFFFF);
             ID2D1SolidColorBrush* trackBrush = GetCachedBrush(state,
@@ -19765,22 +19771,27 @@ static void DrawWidgetViewNode(D2DState* state,
                 const float right = state->widgetRect.left + clip.x +
                     clip.width - edgeInset;
                 trackRect = D2D1::RectF(right - barThickness,
-                    state->widgetRect.top + clip.y, right,
-                    state->widgetRect.top + clip.y + clip.height);
+                    state->widgetRect.top + clip.y + scrollbar.trackStart,
+                    right,
+                    state->widgetRect.top + clip.y + scrollbar.trackEnd);
                 thumbRect = D2D1::RectF(trackRect.left,
-                    trackRect.top + position, trackRect.right,
-                    trackRect.top + position + thumbExtent);
+                    state->widgetRect.top + clip.y + scrollbar.thumbStart,
+                    trackRect.right,
+                    state->widgetRect.top + clip.y + scrollbar.thumbEnd);
             }
             else
             {
                 const float bottom = state->widgetRect.top + clip.y +
                     clip.height - edgeInset;
                 trackRect = D2D1::RectF(
-                    state->widgetRect.left + clip.x,
+                    state->widgetRect.left + clip.x + scrollbar.trackStart,
                     bottom - barThickness,
-                    state->widgetRect.left + clip.x + clip.width, bottom);
-                thumbRect = D2D1::RectF(trackRect.left + position,
-                    trackRect.top, trackRect.left + position + thumbExtent,
+                    state->widgetRect.left + clip.x + scrollbar.trackEnd,
+                    bottom);
+                thumbRect = D2D1::RectF(
+                    state->widgetRect.left + clip.x + scrollbar.thumbStart,
+                    trackRect.top,
+                    state->widgetRect.left + clip.x + scrollbar.thumbEnd,
                     trackRect.bottom);
             }
             if (trackBrush)
@@ -22070,6 +22081,10 @@ bool WidgetEngine::HasInteractionPointerCapture(
 
 void WidgetEngine::CancelInteractionPointerPress(std::string_view surface)
 {
+    if (hostScrollbarDrag_.active &&
+        (surface.empty() || hostScrollbarDrag_.surface ==
+            NormalizeWidgetSurface(surface)))
+        hostScrollbarDrag_ = {};
     for (auto& widget : widgets_)
     {
         if (widget.manifest.apiVersion < 2) continue;
@@ -27959,6 +27974,8 @@ bool WidgetEngine::HandleHostInputPointerMove(
     const std::wstring& widgetId, int x, int y,
     std::string_view surface)
 {
+    if (HandleHostScrollbarPointer(widgetId, x, y, surface, false))
+        return true;
     const int widgetIndex = FindWidget(widgetId);
     if (!IsPanelSurface(surface) && widgetIndex >= 0 &&
         UpdateHostLogicalSlotPointer(widgets_[widgetIndex], x, y))
@@ -28006,6 +28023,8 @@ bool WidgetEngine::HandleHostInputPointerUp(
     const std::wstring& widgetId, int x, int y,
     std::string_view surface)
 {
+    if (HandleHostScrollbarPointer(widgetId, x, y, surface, true))
+        return true;
     if (!IsPanelSurface(surface) && EndHostLogicalSlotPointer(widgetId))
         return true;
     if (!focusedHostInput_.active ||
@@ -28166,6 +28185,80 @@ bool WidgetEngine::RuntimeSetAccessibilityFocus(
         widget.logicalSlotFocus = LuaWidget::LogicalSlotFocus{
             slot->slotId, slot->itemId };
     RuntimeInvalidateHost(widgetId);
+    return true;
+}
+
+bool WidgetEngine::HandleHostScrollbarPointer(
+    const std::wstring& widgetId, int x, int y,
+    std::string_view surface, bool finish)
+{
+    const std::string normalizedSurface = NormalizeWidgetSurface(surface);
+    if (!hostScrollbarDrag_.active ||
+        hostScrollbarDrag_.widgetId != widgetId ||
+        hostScrollbarDrag_.surface != normalizedSurface)
+        return false;
+
+    const HostScrollbarDrag drag = hostScrollbarDrag_;
+    if (finish)
+        hostScrollbarDrag_ = {};
+    const int index = FindWidget(widgetId);
+    if (index < 0)
+        return true;
+    auto& widget = widgets_[index];
+    const auto control = std::find_if(
+        widget.hostControls.rbegin(), widget.hostControls.rend(),
+        [&](const auto& item) {
+            return item.enabled && item.id == drag.id &&
+                HostControlBelongsToSurface(item, normalizedSurface) &&
+                (item.type == LuaWidget::HostControl::Type::Scroll ||
+                    (item.type == LuaWidget::HostControl::Type::Input &&
+                        item.multiline));
+        });
+    if (control == widget.hostControls.rend())
+        return true;
+
+    const int contentExtent = drag.horizontal
+        ? control->contentWidth : control->contentHeight;
+    const int visibleExtent = drag.horizontal
+        ? control->viewportWidth : control->viewportHeight;
+    const int viewportStart = drag.horizontal
+        ? control->rect.left : control->rect.top;
+    const int viewportEnd = drag.horizontal
+        ? control->rect.right : control->rect.bottom;
+    const float scale = CalculateWidgetCellScale(
+        widget.layoutMetrics.gridCellWidth,
+        widget.layoutMetrics.gridCellHeight);
+    const auto geometry = snowdesktop::widget_scroll_rules::
+        ResolveScrollbarAxisGeometry(
+            viewportStart, viewportEnd, contentExtent,
+            visibleExtent, drag.offsetStart, scale);
+    const int pointer = drag.horizontal ? x : y;
+    const int previous = RuntimeGetScrollOffset(
+        widgetId, drag.id, normalizedSurface);
+    const int current = snowdesktop::widget_scroll_rules::
+        ApplyScrollbarThumbDrag(
+            drag.offsetStart, pointer - drag.pointerStart, geometry);
+    ScrollOffsetsForSurface(widget, normalizedSurface)[drag.id] = current;
+    if (current != previous)
+    {
+        if (focusedHostInput_.active &&
+            focusedHostInput_.widgetId == widgetId &&
+            focusedHostInput_.id == drag.id &&
+            focusedHostInput_.surface == normalizedSurface)
+        {
+            focusedHostInput_.caretVisibility.PreserveManualScroll();
+        }
+        if (snowdesktop::widget_scroll_rules::ReachedScrollEnd(
+                previous, current, geometry.maximum))
+        {
+            snowdesktop::widget_runtime::WidgetTrustedGestureScope
+                gestureScope(trustedGestureState_, true);
+            DispatchInteractionAction(widget, drag.id, "scrollEnd",
+                x, y, 0, 0, 0, false, "pointer", 0,
+                std::nullopt, std::nullopt, normalizedSurface);
+        }
+        RuntimeInvalidateHost(widgetId);
+    }
     return true;
 }
 
@@ -29402,6 +29495,14 @@ std::vector<LuaWidget::HostControl> WidgetEngine::GetScrollControls(
     return results;
 }
 
+bool WidgetEngine::IsHostScrollbarDragging(
+    const std::wstring& widgetId, std::string_view surface) const
+{
+    return hostScrollbarDrag_.active &&
+        hostScrollbarDrag_.widgetId == widgetId &&
+        hostScrollbarDrag_.surface == NormalizeWidgetSurface(surface);
+}
+
 bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int y,
     int delta, bool wheel, std::string_view surface)
 {
@@ -29456,6 +29557,49 @@ bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int 
             return true;
         }
         if (wheel) continue;
+        if (it->type == LuaWidget::HostControl::Type::Scroll ||
+            (it->type == LuaWidget::HostControl::Type::Input &&
+                it->multiline))
+        {
+            const int contentExtent = it->horizontal
+                ? it->contentWidth : it->contentHeight;
+            const int visibleExtent = it->horizontal
+                ? it->viewportWidth : it->viewportHeight;
+            const int viewportStart = it->horizontal
+                ? it->rect.left : it->rect.top;
+            const int viewportEnd = it->horizontal
+                ? it->rect.right : it->rect.bottom;
+            const int viewportCrossEnd = it->horizontal
+                ? it->rect.bottom : it->rect.right;
+            const float scale = CalculateWidgetCellScale(
+                widget.layoutMetrics.gridCellWidth,
+                widget.layoutMetrics.gridCellHeight);
+            const int offset = RuntimeGetScrollOffset(
+                widgetId, it->id, normalizedSurface);
+            const auto geometry = snowdesktop::widget_scroll_rules::
+                ResolveScrollbarAxisGeometry(
+                    viewportStart, viewportEnd, contentExtent,
+                    visibleExtent, offset, scale);
+            const int primary = it->horizontal ? x : y;
+            const int cross = it->horizontal ? y : x;
+            if (snowdesktop::widget_scroll_rules::ScrollbarThumbHit(
+                    geometry, primary, cross, viewportCrossEnd, scale))
+            {
+                hostScrollbarDrag_ = {
+                    true, widgetId, it->id, normalizedSurface,
+                    it->horizontal, primary, offset
+                };
+                if (focusedHostInput_.active &&
+                    focusedHostInput_.widgetId == widgetId &&
+                    focusedHostInput_.id == it->id &&
+                    focusedHostInput_.surface == normalizedSurface)
+                {
+                    focusedHostInput_.caretVisibility.PreserveManualScroll();
+                }
+                RuntimeInvalidateHost(widgetId);
+                return true;
+            }
+        }
         if (it->type == LuaWidget::HostControl::Type::Input)
         {
             if (RuntimeFocusHostInput(widgetId, it->id) &&
@@ -29553,6 +29697,10 @@ void WidgetEngine::CloseWidgetPanelSurface(
     {
         BlurHostInput(false);
     }
+    if (hostScrollbarDrag_.active &&
+        hostScrollbarDrag_.widgetId == widgetId &&
+        IsPanelSurface(hostScrollbarDrag_.surface))
+        hostScrollbarDrag_ = {};
     widget.panelActive = false;
     ApplyWidgetHostVisibility(
         widget, widget.desktopVisible || widget.panelActive ||

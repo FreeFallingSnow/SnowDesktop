@@ -3020,6 +3020,13 @@ private:
     WidgetAction widgetAction_ = WidgetAction::None;
     bool middleButtonWidgetMove_ = false;
     bool detailColumnResizeActive_ = false;
+    bool widgetScrollbarDragging_ = false;
+    WidgetContainer* widgetScrollbarDragContainer_ = nullptr;
+    int widgetScrollbarDragStartY_ = 0;
+    int widgetScrollbarDragStartOffset_ = 0;
+    bool popupScrollbarDragging_ = false;
+    int popupScrollbarDragStartY_ = 0;
+    int popupScrollbarDragStartOffset_ = 0;
     snowdesktop::list_detail_rules::Column detailColumnResizeColumn_ =
         snowdesktop::list_detail_rules::Column::None;
     int detailColumnResizeHeaderLeft_ = 0;
