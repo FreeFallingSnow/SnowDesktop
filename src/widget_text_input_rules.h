@@ -22,6 +22,17 @@ private:
     std::string surface_;
 };
 
+class HostInputCaretVisibilityRequest
+{
+public:
+    void Request() noexcept;
+    void PreserveManualScroll() noexcept;
+    bool Consume() noexcept;
+
+private:
+    bool pending_ = false;
+};
+
 std::size_t Utf8BytesForHostText(std::wstring_view text) noexcept;
 std::size_t Utf8ByteOffsetForHostTextOffset(
     std::wstring_view text, std::size_t hostOffset) noexcept;

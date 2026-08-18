@@ -82,6 +82,23 @@ const std::string& DeferredHostInputFocus::ControlId() const noexcept
     return controlId_;
 }
 
+void HostInputCaretVisibilityRequest::Request() noexcept
+{
+    pending_ = true;
+}
+
+void HostInputCaretVisibilityRequest::PreserveManualScroll() noexcept
+{
+    pending_ = false;
+}
+
+bool HostInputCaretVisibilityRequest::Consume() noexcept
+{
+    const bool pending = pending_;
+    pending_ = false;
+    return pending;
+}
+
 std::size_t Utf8BytesForHostText(std::wstring_view text) noexcept
 {
     std::size_t bytes = 0;

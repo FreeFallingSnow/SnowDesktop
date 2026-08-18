@@ -7920,7 +7920,9 @@ static int lua_UiTextArea(lua_State* L)
                 focusedLayout->HitTestTextPosition(
                     hitPosition, trailing, &caretX, &caretY,
                     &caretMetrics));
-            if (hasCaret && s && s->engine)
+            if (hasCaret && s && s->engine &&
+                s->engine->RuntimeConsumeHostInputCaretVisibilityRequest(
+                    BoundWidgetId(L), id))
             {
                 const float caretTop = padding + caretY;
                 const float caretBottom = caretTop +
@@ -26483,6 +26485,7 @@ void WidgetEngine::RuntimeRegisterHostControl(const std::wstring& widgetId,
                 focusedHostInput_.cursor = *cursor;
                 focusedHostInput_.compositionText.clear();
                 focusedHostInput_.compositionCursor = 0;
+                focusedHostInput_.caretVisibility.Request();
             }
         }
     }
@@ -26613,6 +26616,7 @@ bool WidgetEngine::RuntimeFocusHostInput(const std::wstring& widgetId,
                     found->selectAll ? 0 : storedText.size();
                 focusedHostInput_.compositionText.clear();
                 focusedHostInput_.compositionCursor = 0;
+                focusedHostInput_.caretVisibility.Request();
             }
         }
         focusedHostInput_.multiline = found->multiline;
@@ -26645,8 +26649,10 @@ bool WidgetEngine::RuntimeFocusHostInput(const std::wstring& widgetId,
             {
                 focusedHostInput_.selectionAnchor = *anchor;
                 focusedHostInput_.cursor = *cursor;
+                focusedHostInput_.caretVisibility.Request();
             }
         }
+        focusedHostInput_.caretVisibility.Request();
         if (hostInputFocusCallback_)
             hostInputFocusCallback_();
         return true;
@@ -26702,6 +26708,7 @@ bool WidgetEngine::RuntimeFocusHostInput(const std::wstring& widgetId,
     focusedHostInput_.step = found->step;
     focusedHostInput_.maximumUtf8Bytes =
         found->maximumUtf8Bytes;
+    focusedHostInput_.caretVisibility.Request();
     DispatchHostInputAction(widgetId, id,
         focusedHostInput_.focusAction, "focus",
         focusedHostInput_.text, false,
@@ -26911,6 +26918,17 @@ bool WidgetEngine::RuntimeFocusViewTarget(const std::wstring& widgetId,
     if (hostInputFocusCallback_) hostInputFocusCallback_();
     RuntimeInvalidateHost(widgetId);
     return true;
+}
+
+bool WidgetEngine::RuntimeConsumeHostInputCaretVisibilityRequest(
+    const std::wstring& widgetId, const std::string& id)
+{
+    if (!focusedHostInput_.active ||
+        focusedHostInput_.widgetId != widgetId ||
+        focusedHostInput_.id != id ||
+        focusedHostInput_.surface != CurrentWidgetSurface(d2dState_))
+        return false;
+    return focusedHostInput_.caretVisibility.Consume();
 }
 
 void WidgetEngine::BeginHostLogicalSlotPointer(
@@ -27950,6 +27968,7 @@ bool WidgetEngine::HandleHostInputPointerMove(
     }
     focusedHostInput_.cursor = HitTestHostInputPosition(
         *control, widgetId, x, y);
+    focusedHostInput_.caretVisibility.Request();
     RuntimeInvalidateHost(widgetId);
     return true;
 }
@@ -27977,9 +27996,12 @@ bool WidgetEngine::HandleHostInputPointerUp(
                     HostControlBelongsToSurface(item, surface);
             });
         if (control != controls.rend())
+        {
             focusedHostInput_.cursor =
                 HitTestHostInputPosition(
                     *control, widgetId, x, y);
+            focusedHostInput_.caretVisibility.Request();
+        }
     }
     DispatchHostInputSelectionChange(widgetId,
         focusedHostInput_.id,
@@ -28175,6 +28197,7 @@ bool WidgetEngine::RuntimePerformAccessibilityAction(
             focusedHostInput_.selectionAnchor = value.size();
             focusedHostInput_.compositionText.clear();
             focusedHostInput_.compositionCursor = 0;
+            focusedHostInput_.caretVisibility.Request();
         }
 
         if (control->controlled)
@@ -28591,6 +28614,7 @@ bool WidgetEngine::SetHostInputComposition(
     focusedHostInput_.compositionText = text;
     focusedHostInput_.compositionCursor =
         std::min(cursor, text.size());
+    focusedHostInput_.caretVisibility.Request();
     RuntimeInvalidateHost(focusedHostInput_.widgetId);
     return true;
 }
@@ -28628,6 +28652,7 @@ bool WidgetEngine::CommitHostInputComposition(
     {
         focusedHostInput_.compositionText.clear();
         focusedHostInput_.compositionCursor = 0;
+        focusedHostInput_.caretVisibility.Request();
         RuntimeInvalidateHost(focusedHostInput_.widgetId);
         return true;
     }
@@ -28636,6 +28661,7 @@ bool WidgetEngine::CommitHostInputComposition(
         focusedHostInput_.cursor;
     focusedHostInput_.compositionText.clear();
     focusedHostInput_.compositionCursor = 0;
+    focusedHostInput_.caretVisibility.Request();
     if (focusedHostInput_.liveUpdate)
     {
         if (focusedHostInput_.controlled)
@@ -28660,6 +28686,7 @@ void WidgetEngine::ClearHostInputComposition()
         return;
     focusedHostInput_.compositionText.clear();
     focusedHostInput_.compositionCursor = 0;
+    focusedHostInput_.caretVisibility.Request();
     RuntimeInvalidateHost(focusedHostInput_.widgetId);
 }
 
@@ -28714,6 +28741,7 @@ bool WidgetEngine::HandleHostInputChar(wchar_t ch)
     focusedHostInput_.cursor = nextCursor;
     focusedHostInput_.selectionAnchor =
         focusedHostInput_.cursor;
+    focusedHostInput_.caretVisibility.Request();
     if (focusedHostInput_.liveUpdate)
     {
         if (focusedHostInput_.controlled)
@@ -28794,6 +28822,7 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
         if (!shift)
             focusedHostInput_.selectionAnchor =
                 focusedHostInput_.cursor;
+        focusedHostInput_.caretVisibility.Request();
         dispatchSelectionChange();
         RuntimeInvalidateHost(focusedHostInput_.widgetId);
         return true;
@@ -28836,6 +28865,7 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
     {
         focusedHostInput_.selectionAnchor = 0;
         focusedHostInput_.cursor = focusedHostInput_.text.size();
+        focusedHostInput_.caretVisibility.Request();
         dispatchSelectionChange();
         RuntimeInvalidateHost(focusedHostInput_.widgetId);
         return true;
@@ -29099,6 +29129,7 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
 
     if (changed)
     {
+        focusedHostInput_.caretVisibility.Request();
         if (focusedHostInput_.liveUpdate)
         {
             if (focusedHostInput_.controlled)
@@ -29373,6 +29404,13 @@ bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int 
             if (!result.moved)
                 continue;
             offset = result.offset;
+            if (focusedHostInput_.active &&
+                focusedHostInput_.widgetId == widgetId &&
+                focusedHostInput_.id == it->id &&
+                focusedHostInput_.surface == normalizedSurface)
+            {
+                focusedHostInput_.caretVisibility.PreserveManualScroll();
+            }
             const std::string targetKey = it->id;
             {
                 snowdesktop::widget_runtime::WidgetTrustedGestureScope
@@ -29406,6 +29444,7 @@ bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int 
                 focusedHostInput_.selectionAnchor =
                     focusedHostInput_.cursor;
                 focusedHostInput_.pointerSelecting = true;
+                focusedHostInput_.caretVisibility.Request();
                 RuntimeInvalidateHost(widgetId);
             }
             return true;

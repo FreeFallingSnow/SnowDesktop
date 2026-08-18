@@ -96,6 +96,25 @@ void TestDeferredFocusRequest()
     Check(!request.Active() && request.ControlId().empty(),
         "consuming deferred focus clears the request");
 }
+
+void TestCaretVisibilityRequest()
+{
+    using snowdesktop::widget_runtime::HostInputCaretVisibilityRequest;
+
+    HostInputCaretVisibilityRequest request;
+    Check(!request.Consume(),
+        "caret visibility starts without a pending adjustment");
+    request.Request();
+    Check(request.Consume() && !request.Consume(),
+        "caret visibility is consumed once after focus or editing");
+    request.Request();
+    request.PreserveManualScroll();
+    Check(!request.Consume(),
+        "manual multiline scrolling cancels the pending caret adjustment");
+    request.Request();
+    Check(request.Consume(),
+        "later caret movement restores caret-follow scrolling");
+}
 }
 
 int main()
@@ -104,6 +123,7 @@ int main()
     TestBoundedReplacement();
     TestReadOnlyMutationGate();
     TestDeferredFocusRequest();
+    TestCaretVisibilityRequest();
     if (failures != 0)
     {
         std::cerr << failures << " widget text-input rule checks failed\n";

@@ -1538,6 +1538,8 @@ public:
     bool RuntimeGetFocusedHostInput(const std::wstring& widgetId, const std::string& id,
         std::wstring& text, size_t& cursor, size_t& selectionAnchor,
         std::wstring& compositionText, size_t& compositionCursor) const;
+    bool RuntimeConsumeHostInputCaretVisibilityRequest(
+        const std::wstring& widgetId, const std::string& id);
     bool RuntimeIsWidgetSelected(const std::wstring& widgetId) const;
     std::vector<LuaWidgetAccessibilitySnapshot>
         RuntimeAccessibilitySnapshots() const;
@@ -1910,6 +1912,8 @@ private:
         bool numeric = false;
         bool liveUpdate = true;
         bool multiline = false;
+        snowdesktop::widget_runtime::HostInputCaretVisibilityRequest
+            caretVisibility;
         float minimum = 0.0f;
         float maximum = 1.0f;
         float step = 0.01f;
