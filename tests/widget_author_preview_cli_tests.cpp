@@ -342,10 +342,10 @@ return widget.define({
         assert(context.layoutSize.width == layout.contentWidth() and
             context.layoutSize.height == layout.contentHeight() and
             context.layoutSize.width == 288 and
-            context.layoutSize.height == 138,
+            context.layoutSize.height == 120,
             "layoutSize must match the root content coordinate space")
-        assert(layout.vw(50) == 144 and layout.vh(50) == 69 and
-            layout.vmin(50) == 69 and layout.vmax(50) == 144,
+        assert(layout.vw(50) == 144 and layout.vh(50) == 60 and
+            layout.vmin(50) == 60 and layout.vmax(50) == 144,
             "relative layout units must use the root content extents")
         assert(pcall(layout.vw, -1) == false and
             pcall(layout.vh, 101) == false,
