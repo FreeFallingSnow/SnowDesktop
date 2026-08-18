@@ -1,5 +1,6 @@
 -- media-controls/main.lua - API v2 media session controls and app launcher
 local mediaCurrent
+local mediaArtwork
 local appIndexStatus
 
 local fluent = {
@@ -25,6 +26,12 @@ local palettes = {
 
 local settings = {
     fields = {
+        {
+            key = "showArtwork",
+            label = l10n.tr("lua_widget.media_control.show_artwork"),
+            type = "bool",
+            default = true,
+        },
         {
             key = "launcherTitle",
             searchKey = "launcherSearch",
@@ -53,6 +60,18 @@ local function currentSession()
     local session = snapshot.value.session
     if not session or session.playbackStatus == "closed" then return nil end
     return session
+end
+
+local function currentArtwork(session)
+    if not session or not mediaArtwork or
+        storage.get("showArtwork") == "0" then
+        return nil
+    end
+    local snapshot = mediaArtwork:value()
+    if not snapshot.available or not snapshot.value then return nil end
+    local artwork = snapshot.value
+    if artwork.sessionId ~= session.id or not artwork.image then return nil end
+    return artwork
 end
 
 local function clearLauncherResults(model)
@@ -146,6 +165,10 @@ local function setup()
         maxAgeMs = 500,
         whenHidden = "throttle",
     })
+    mediaArtwork = data.subscribe("media.artwork", {
+        maxAgeMs = 500,
+        whenHidden = "throttle",
+    })
 
     if widget.hasFeature("data.app.indexStatus") and
         widget.hasPermission("app.discovery") then
@@ -219,6 +242,7 @@ local function render(_context, model)
     local available = session ~= nil
     local controls = available and session.controls or {}
     local canControl = widget.hasPermission("media.action")
+    local artwork = currentArtwork(session)
 
     local isPlaying = available and session.playbackStatus == "playing"
     if model.pendingState == "playing" then
@@ -264,20 +288,37 @@ local function render(_context, model)
         },
     })
 
-    local titleY = subtitle ~= "" and height * 0.14 or height * 0.25
-    draw.text(layout.cu(18), titleY, title, layout.fontCu(15),
-        palette.title, width - layout.cu(36), true, true)
-    if subtitle ~= "" then
-        draw.text(layout.cu(18), titleY + layout.cu(22), subtitle,
-            layout.fontCu(12), palette.subtitle,
-            width - layout.cu(36), true, true)
-    end
-
     local buttonSize = layout.cu(40)
     local buttonGap = layout.cu(12)
     local total = buttonSize * 3 + buttonGap * 2
     local buttonY = height - buttonSize - layout.cu(8)
     local buttonX = (width - total) / 2
+
+    local textX = layout.cu(18)
+    if artwork then
+        local artworkSize = math.min(layout.cu(52),
+            buttonY - layout.cu(16))
+        if artworkSize >= layout.cu(24) then
+            local artworkY = math.max(layout.cu(8),
+                (buttonY - artworkSize) / 2)
+            draw.imageFit(artwork.image, textX, artworkY,
+                artworkSize, artworkSize, "cover", "center", 1.0, "linear")
+            draw.strokeRect(textX, artworkY, artworkSize, artworkSize,
+                palette.btnText, layout.cu(5), layout.cu(1), 0.16)
+            textX = textX + artworkSize + layout.cu(12)
+        end
+    end
+
+    local titleY = subtitle ~= "" and height * 0.14 or height * 0.25
+    local textWidth = math.max(layout.cu(24),
+        width - textX - layout.cu(18))
+    draw.text(textX, titleY, title, layout.fontCu(15),
+        palette.title, textWidth, true, true)
+    if subtitle ~= "" then
+        draw.text(textX, titleY + layout.cu(22), subtitle,
+            layout.fontCu(12), palette.subtitle,
+            textWidth, true, true)
+    end
 
     drawButton(model, "media.previous", "media.previous", "",
         l10n.tr("lua_widget.media_control.previous"),

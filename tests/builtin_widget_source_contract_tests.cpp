@@ -213,6 +213,30 @@ void TestRemindersRenderPurity(const fs::path& repository)
         "reminders selection cleanup requires dataVersion 3");
 }
 
+void TestMediaControlsArtwork(const fs::path& repository)
+{
+    const std::string source = ReadFile(
+        repository / "widgets" / "media-controls" / "main.lua");
+    const std::string manifest = ReadFile(
+        repository / "widgets" / "media-controls" / "widget.json");
+
+    Check(source.find("data.subscribe(\"media.artwork\"") !=
+            std::string::npos &&
+            manifest.find("\"data.media.artwork\"") !=
+                std::string::npos,
+        "media controls must declare and subscribe to current artwork");
+    Check(source.find("storage.get(\"showArtwork\") == \"0\"") !=
+            std::string::npos &&
+            source.find("lua_widget.media_control.show_artwork") !=
+                std::string::npos,
+        "media artwork must expose a localized visibility setting");
+    Check(source.find("artwork.sessionId ~= session.id") !=
+            std::string::npos &&
+            source.find("draw.imageFit(artwork.image") !=
+                std::string::npos,
+        "media controls must reject stale artwork and draw the host handle");
+}
+
 void TestV2OnlyWidgetActivation(const fs::path& repository)
 {
     const std::string source = ReadFile(
@@ -420,6 +444,7 @@ int main(int argc, char** argv)
     Check(argc == 2, "expected the repository root argument");
     TestPublishedV2Catalog(fs::path(argv[1]));
     TestRemindersRenderPurity(fs::path(argv[1]));
+    TestMediaControlsArtwork(fs::path(argv[1]));
     TestV2OnlyWidgetActivation(fs::path(argv[1]));
     TestPackageResourceRenderPurity(fs::path(argv[1]));
     TestAudioAnalysisSubscriptionOptions(fs::path(argv[1]));
