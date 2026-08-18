@@ -2265,7 +2265,6 @@ void DrawHorizontalScrollbarAt(ID2D1DeviceContext* context, RECT body,
     const int trackLeft = geometry.trackStart;
     const int trackRight = geometry.trackEnd;
     const int trackTop = body.bottom - trackHeight - trackMargin;
-    const int trackWidth = std::max(1, trackRight - trackLeft);
 
     ComPtr<ID2D1SolidColorBrush> trackBrush;
     context->CreateSolidColorBrush(

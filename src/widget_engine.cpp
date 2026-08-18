@@ -19757,7 +19757,8 @@ static void DrawWidgetViewNode(D2DState* state,
                             node.scrollContentExtent))),
                     viewportExtent,
                     static_cast<int>(std::lround(node.scrollOffset)),
-                    cumulativeScale);
+                    CalculateWidgetCellScale(
+                        state->gridCellW, state->gridCellH));
             const std::uint32_t scrollbarColor =
                 style.foreground.value_or(0xFFFFFF);
             ID2D1SolidColorBrush* trackBrush = GetCachedBrush(state,
