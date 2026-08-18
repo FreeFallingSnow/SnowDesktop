@@ -1291,24 +1291,8 @@ int main()
     const auto corruptArchive = root / L"exports" / L"corrupt.snowwidget";
     std::filesystem::copy_file(archive, corruptArchive,
         std::filesystem::copy_options::overwrite_existing, ec);
-    {
-        std::fstream corrupt(corruptArchive,
-            std::ios::binary | std::ios::in | std::ios::out);
-        std::vector<char> bytes((std::istreambuf_iterator<char>(corrupt)),
-            std::istreambuf_iterator<char>());
-        const std::string needle = "function render";
-        const auto found = std::search(bytes.begin(), bytes.end(),
-            needle.begin(), needle.end());
-        if (found != bytes.end())
-        {
-            const auto position = std::distance(bytes.begin(), found);
-            bytes[static_cast<std::size_t>(position)] ^= 0x01;
-            corrupt.clear();
-            corrupt.seekp(0);
-            corrupt.write(bytes.data(),
-                static_cast<std::streamsize>(bytes.size()));
-        }
-    }
+    Expect(CorruptArchivePayload(corruptArchive, "return widget.define"),
+        "widget archive corruption test modifies an archive payload");
     Expect(!manager.ValidateArchive(corruptArchive).Ok(),
         "archive CRC corruption is rejected");
     const auto traversalArchive =
