@@ -2,23 +2,26 @@
 #include "../desktop_keyboard_rules.h"
 
 #include <imm.h>
+#include <shldisp.h>
 
 // Main desktop-window message dispatch.
 
 bool DesktopApp::RequestWindowsShutdownDialog()
 {
-    HWND shellDesktop = desktopWindows_.progman;
-    if (!shellDesktop || !IsWindow(shellDesktop))
-        shellDesktop = GetShellWindow();
-    if (!shellDesktop || !IsWindow(shellDesktop))
-        shellDesktop = FindWindowW(L"Progman", nullptr);
-
-    if (!shellDesktop || !IsWindow(shellDesktop) ||
-        !PostMessageW(
-            shellDesktop, WM_SYSCOMMAND, SC_CLOSE, 0))
+    ComPtr<IShellDispatch> shell;
+    HRESULT result = CoCreateInstance(
+        CLSID_Shell, nullptr,
+        CLSCTX_INPROC_SERVER | CLSCTX_LOCAL_SERVER,
+        IID_PPV_ARGS(&shell));
+    if (SUCCEEDED(result))
+        result = shell->ShutdownWindows();
+    if (FAILED(result))
     {
-        WriteDiagnosticLogEntry(
-            L"Desktop Alt+F4 shutdown dialog request failed");
+        wchar_t message[160]{};
+        wsprintfW(message,
+            L"Desktop Alt+F4 shutdown dialog request failed hr=0x%08X",
+            static_cast<unsigned>(result));
+        WriteDiagnosticLogEntry(message);
         return false;
     }
 
