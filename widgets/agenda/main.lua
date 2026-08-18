@@ -382,7 +382,7 @@ end
 
 local function render(context, model)
     local width = layout.width()
-    local height = layout.contentHeight()
+    local height = layout.height()
     local pad = layout.cu(11)
     local colors = palette(context)
     local mainFont = layout.fontCu(fontSize())
@@ -612,7 +612,7 @@ end
 
 local function panel(context, model)
     local width = layout.width()
-    local height = layout.contentHeight()
+    local height = layout.height()
     local pad = layout.cu(20)
     local colors = palette(context)
     local labelFont = layout.fontCu(12)

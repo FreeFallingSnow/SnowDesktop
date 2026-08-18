@@ -655,8 +655,8 @@
 ---@field migrateStorage? fun(oldVersion: integer, newVersion: integer) Runs before setup when persisted storage must be upgraded.
 ---@field useCustomStyle? boolean
 ---@field followPersonalizationDefault? boolean
----@field showTitle? boolean
----@field bottomBarHover? boolean
+---@field showTitle? boolean Enables the host bottom bar and displays the component title; false leaves the full desktop surface to component content and pointer input.
+---@field bottomBarHover? boolean Shows an enabled host bottom bar only while hovering; defaults to true and has no effect when showTitle is false.
 ---@field bg? integer
 ---@field border? integer
 ---@field alpha? number
@@ -2251,21 +2251,15 @@ function ui.menu(items) end
 ---@class snow.layout
 layout = {}
 
----Full immediate-mode surface width.
 ---@return number
 function layout.width() end
 
----Full immediate-mode surface height, including standalone bottom chrome.
 ---@return number
 function layout.height() end
 
----Root content width used by responsive and declarative layout.
 ---@return number
 function layout.contentWidth() end
 
----Root content height. Standalone desktop widgets exclude the host bottom
----move/resize area even when the bar is titleless or hover-only; auxiliary
----surfaces use their full content frame.
 ---@return number
 function layout.contentHeight() end
 

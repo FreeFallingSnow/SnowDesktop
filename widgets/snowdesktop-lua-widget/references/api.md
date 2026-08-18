@@ -36,13 +36,14 @@ Coordinates passed to drawing and mouse callbacks are local to the component. Th
 ### Script-level flags
 
 ```lua
-showTitle = true        -- display widget.setTitle() value in the bottom bar
-bottomBarHover = true   -- show the bottom bar only while hovering (default: true)
+showTitle = true        -- enable the host bottom bar and display widget.setTitle() in it
+bottomBarHover = true   -- show an enabled bottom bar only while hovering (default: true)
 useCustomStyle = true   -- enable Lua custom background style and the unified appearance panel
 followPersonalizationDefault = true -- follow global appearance until explicitly changed
 ```
 
-The host reads these from the script globals before each render. `showTitle` defaults to `false`.
+The host reads these from the script globals before each render. `showTitle` defaults to `false`,
+which leaves the full component surface available for content and pointer input.
 When `useCustomStyle` is true, the host reads these optional appearance globals
 as script defaults:
 

@@ -758,14 +758,24 @@ void TestBottomBarContentReservation()
         chromeRules::ReservedBottomBarHeight(true, false, 36) == 36,
         "a persistent titled bottom bar must reserve content height");
     Check(
-        chromeRules::ReservedBottomBarHeight(false, false, 36) == 36,
-        "a titleless move handle must reserve content height");
+        chromeRules::ReservedBottomBarHeight(false, false, 36) == 0,
+        "a titleless widget must not reserve a nonexistent bottom bar");
     Check(
-        chromeRules::ReservedBottomBarHeight(true, true, 36) == 36,
-        "a hover bottom bar must reserve content height");
+        chromeRules::ReservedBottomBarHeight(true, true, 36) == 0,
+        "a hover bottom bar must not permanently shrink content");
     Check(
         chromeRules::ReservedBottomBarHeight(false, true, -1) == 0,
         "the reserved bottom bar height must remain non-negative");
+    Check(
+        !chromeRules::HasBottomBar(false) &&
+            chromeRules::HasBottomBar(true),
+        "only titled Lua widgets expose host bottom-bar hit targets");
+    Check(
+        !chromeRules::ShowsBottomBar(false, false, true) &&
+            !chromeRules::ShowsBottomBar(true, true, false) &&
+            chromeRules::ShowsBottomBar(true, true, true) &&
+            chromeRules::ShowsBottomBar(true, false, false),
+        "bottom-bar drawing must respect both ownership and hover mode");
 }
 
 void TestNestedWidgetScrolling()

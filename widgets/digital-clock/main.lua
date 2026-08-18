@@ -62,7 +62,7 @@ local function render()
     loadConfig()
     local t = time.parts(time.now())
     local w = layout.width()
-    local h = layout.contentHeight()
+    local h = layout.height()
     local timeStr
     if showSeconds then
         timeStr = string.format("%02d:%02d:%02d", t.hour, t.min, t.sec)

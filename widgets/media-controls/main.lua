@@ -236,7 +236,7 @@ end
 
 local function render(_context, model)
     local width = layout.width()
-    local height = layout.contentHeight()
+    local height = layout.height()
     local palette = getPalette()
     local session = currentSession()
     local available = session ~= nil

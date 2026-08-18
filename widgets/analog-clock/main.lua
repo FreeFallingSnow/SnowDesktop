@@ -29,7 +29,7 @@ local function render()
     local showSecondHand = storage.get("showSecondHand") ~= "0"
     local showNumbers = storage.get("showNumbers") ~= "0"
     local w = layout.width()
-    local h = layout.contentHeight()
+    local h = layout.height()
     local cx = w / 2
     local cy = h / 2
     local size = math.min(w, h)

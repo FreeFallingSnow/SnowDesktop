@@ -2558,17 +2558,7 @@ static void SetWidgetRectContext(D2DState* state, RECT bounds)
         static_cast<float>(bounds.left), static_cast<float>(bounds.top),
         static_cast<float>(bounds.right), static_cast<float>(bounds.bottom));
     state->layoutContentWidth = static_cast<float>(bounds.right - bounds.left);
-    const int scaledBarHeight = static_cast<int>(std::round(
-        static_cast<float>(state->barHeight) *
-        CalculateWidgetCellScale(
-            std::max(4, state->gridCellW),
-            std::max(4, state->gridCellH))));
-    const int reservedBarHeight = CurrentWidgetSurface(state) == "desktop"
-        ? snowdesktop::widget_chrome_rules::ReservedBottomBarHeight(
-            false, true, scaledBarHeight)
-        : 0;
-    state->layoutContentHeight = std::max(1.0f,
-        static_cast<float>(bounds.bottom - bounds.top - reservedBarHeight));
+    state->layoutContentHeight = static_cast<float>(bounds.bottom - bounds.top);
 }
 
 using snowdesktop::widget_runtime::LuaResourceType;

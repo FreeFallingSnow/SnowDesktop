@@ -6,13 +6,21 @@
 namespace snowdesktop::widget_chrome_rules
 {
 
-constexpr bool ReservesContentForBottomBar(
-    bool /*showTitle*/, bool /*bottomBarHover*/) noexcept
+constexpr bool HasBottomBar(bool showTitle) noexcept
 {
-    // Every standalone Lua widget retains move/resize chrome.  The bar can
-    // appear even when its title is hidden or its normal mode is hover-only,
-    // so those presentation flags must not make the content area overlap it.
-    return true;
+    return showTitle;
+}
+
+constexpr bool ShowsBottomBar(
+    bool showTitle, bool bottomBarHover, bool hovered) noexcept
+{
+    return HasBottomBar(showTitle) && (!bottomBarHover || hovered);
+}
+
+constexpr bool ReservesContentForBottomBar(
+    bool showTitle, bool bottomBarHover) noexcept
+{
+    return HasBottomBar(showTitle) && !bottomBarHover;
 }
 
 inline int ReservedBottomBarHeight(

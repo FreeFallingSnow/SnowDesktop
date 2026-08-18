@@ -174,6 +174,8 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
   声明式/即时渲染、滚动、输入和 action 管线，但由宿主居中显示、绘制遮罩并隔离桌面输入。
   `popover` 由可信桌面手势调用 `widget.openPopover`，并锚定上一棵成功桌面 scene 中的
   稳定 `anchorKey`；回调收到 `context.surface="popover"`。
+  `showTitle=true` 会启用宿主底栏并显示组件标题；默认值 `false` 表示无底栏，完整桌面
+  surface 均由组件内容和指针交互使用。`bottomBarHover` 只控制已启用底栏是否仅悬停显示。
 - `widget.apiInfo()`：返回当前 API 版本、支持版本和 feature ID。
 - `widget.hasFeature(id)`：探测 feature。
 - `widget.context()`：返回逻辑/像素尺寸、DPI、网格跨度、显示器范围、主题、
@@ -1069,8 +1071,7 @@ view.waveform({
 
 树限制为 512 节点、32 层、单节点 4 KiB 文本、全树 64 KiB 文本和最多 256 个交互
 区域；数据图形另有上述逐节点和全树样本额度。未知字段、错误枚举、非连续 children、
-重复 key、NaN/Infinity 和越界值会拒绝整次提交。桌面树只布局在底栏移动/缩放区之上的内容区，
-即使该底栏没有标题或仅在悬停时显示也不会与内容重叠。
+重复 key、NaN/Infinity 和越界值会拒绝整次提交。桌面树只布局在底部标题栏之上的内容区。
 
 宿主现在从同一份可枚举节点契约表读取 44 个已公开节点的名称、所属 feature、默认
 accessibility role、允许属性、直接必需属性和子节点策略。Lua 解析器会在布局前按该表拒绝拼错字段或
@@ -2214,9 +2215,8 @@ HTTPS URL；`http:`、`file:`、自定义 scheme、localhost、局域网和 IP �
 `layout.width/height` 保留现有的完整 surface 渲染尺寸，适合需要覆盖整个即时绘制
 surface 的兼容代码。探测 `layout.relativeUnits` 后，响应式布局应改用
 `layout.contentWidth/contentHeight`；它们与声明式 View Tree 根节点实际收到的内容框
-处于同一坐标系，并与 `widget.context().layoutSize` 一致。独立桌面组件的 content height
-始终扣除宿主底栏的移动/缩放区，包括无标题和悬停显示模式；panel/dialog/popover 则使用
-各自完整内容框。需要覆盖完整即时绘制 surface 的非交互背景仍可使用 `layout.height()`。
+处于同一坐标系，并与 `widget.context().layoutSize` 一致。桌面底栏需要固定占位时，
+content height 已扣除该保留区；panel/dialog/popover 则使用各自完整内容框。
 
 `layout.vw(percent)`、`layout.vh(percent)`、`layout.vmin(percent)` 和
 `layout.vmax(percent)` 接受 0–100 的有限百分比，分别返回根内容宽、高、短边和长边的

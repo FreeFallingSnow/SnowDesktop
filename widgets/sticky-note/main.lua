@@ -147,14 +147,15 @@ end
 local function render()
     loadStyle()
     local width = layout.width()
-    local height = layout.contentHeight()
+    local height = layout.height()
     local padding = layout.cu(14)
+    local bottomBarHeight = layout.cu(layout.barHeight())
     local shape = {
         type = "rect",
         x = padding,
         y = padding,
         width = math.max(1, width - padding * 2),
-        height = math.max(1, height - padding),
+        height = math.max(1, height - padding - bottomBarHeight),
     }
     local color = textColor()
     control.textArea({

@@ -9,6 +9,7 @@
  */
 
 #include "widget.h"
+#include "widget_chrome_rules.h"
 #include "types.h"
 #include "app.h"
 #include "widget_preview_scene.h"
@@ -112,7 +113,7 @@ bool LuaScript::SafeReadFlags(WidgetEngine* engine,
  *   5. 绘制圆角矩形背景与选中边框；
  *   6. 设置裁剪区域，调用脚本引擎的 RenderWidget 执行 Lua 自定义绘制；
  *   7. 从脚本读取 showTitle / bottomBarHover 等标志位；
- *   8. 若不总是显示底部栏，则在非悬停时提前返回；
+ *   8. 若组件无底栏，或悬停底栏当前不可见，则提前返回；
  *   9. 绘制底部渐变条（无自定义样式时）；
  *  10. 若 showTitle 为 true 且存在标题文本，则绘制控件标题；
  *  11. 绘制右下角的缩放手柄（圆角小方块）。
@@ -531,7 +532,8 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
         }
     }
 
-    bool showHandle = data_->bottomBarHover ? hovered : true;
+    const bool showHandle = snowdesktop::widget_chrome_rules::ShowsBottomBar(
+        data_->showTitle, data_->bottomBarHover, hovered);
     if (!showHandle) return;
 
     RECT handle = app_->GetStandaloneWidgetMoveHandleRect(*data_);
