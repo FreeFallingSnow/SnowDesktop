@@ -1120,8 +1120,34 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
         if (static_cast<size_t>(nextIdx) >= inlineCap)
         {
             if (popupWidgetIndex_ != keyboardNavWidgetIndex_)
+            {
+                POINT popupAnchor{
+                    widget.bounds.right - 1,
+                    widget.bounds.bottom - 1,
+                };
+                for (const auto& container : containers_)
+                {
+                    auto* collection =
+                        dynamic_cast<Collection*>(container.get());
+                    if (!collection ||
+                        collection->GetWidgetData() != &widget)
+                        continue;
+                    const RECT allButton =
+                        collection->GetAllButtonRect();
+                    if (!IsRectEmptyRect(allButton))
+                    {
+                        popupAnchor = {
+                            allButton.left +
+                                (allButton.right - allButton.left) / 2,
+                            allButton.top +
+                                (allButton.bottom - allButton.top) / 2,
+                        };
+                    }
+                    break;
+                }
                 OpenCollectionPopupAt(keyboardNavWidgetIndex_,
-                    POINT{ widget.bounds.left, widget.bounds.top });
+                    popupAnchor);
+            }
         }
         else if (popupWidgetIndex_ == keyboardNavWidgetIndex_ &&
             (cols > 1 || rows > 1))   // 紧凑模式保持弹窗常开
