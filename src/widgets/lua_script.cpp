@@ -113,8 +113,8 @@ bool LuaScript::SafeReadFlags(WidgetEngine* engine,
  *   5. 绘制圆角矩形背景与选中边框；
  *   6. 设置裁剪区域，调用脚本引擎的 RenderWidget 执行 Lua 自定义绘制；
  *   7. 从脚本读取 showTitle / bottomBarHover 等标志位；
- *   8. 若组件无底栏，或悬停底栏当前不可见，则提前返回；
- *   9. 绘制底部渐变条（无自定义样式时）；
+ *   8. 按组件底栏与悬停状态决定是否绘制底栏和缩放按钮；
+ *   9. 若底栏可见，绘制底部渐变条（无自定义样式时）；
  *  10. 若 showTitle 为 true 且存在标题文本，则绘制控件标题；
  *  11. 绘制右下角的缩放手柄（圆角小方块）。
  *
@@ -532,68 +532,75 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
         }
     }
 
-    const bool showHandle = snowdesktop::widget_chrome_rules::ShowsBottomBar(
+    const bool showBottomBar = snowdesktop::widget_chrome_rules::ShowsBottomBar(
         data_->showTitle, data_->bottomBarHover, hovered);
-    if (!showHandle) return;
+    const bool showResizeHandle =
+        snowdesktop::widget_chrome_rules::ShowsResizeHandle(
+            data_->showTitle, data_->bottomBarHover, hovered);
+    if (!showBottomBar && !showResizeHandle) return;
 
-    RECT handle = app_->GetStandaloneWidgetMoveHandleRect(*data_);
-    RECT gradientRect = { frame.left, std::max<LONG>(frame.top, frame.bottom - Cu(36.0f)),
-                          frame.right, frame.bottom };
-    if (!customStyle && gradientRect.bottom > gradientRect.top)
+    if (showBottomBar)
     {
-        Microsoft::WRL::ComPtr<ID2D1GradientStopCollection> stops;
-        D2D1_GRADIENT_STOP sd[] = {
-            { 0.0f, D2D1::ColorF(fillColor.r, fillColor.g, fillColor.b, 0.0f) },
-            { 1.0f, D2D1::ColorF(fillColor.r, fillColor.g, fillColor.b, gradientEndA) },
-        };
-        if (SUCCEEDED(context->CreateGradientStopCollection(sd, 2,
-            D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &stops)) && stops)
+        RECT handle = app_->GetStandaloneWidgetMoveHandleRect(*data_);
+        RECT gradientRect = { frame.left, std::max<LONG>(frame.top, frame.bottom - Cu(36.0f)),
+                              frame.right, frame.bottom };
+        if (!customStyle && gradientRect.bottom > gradientRect.top)
         {
-            Microsoft::WRL::ComPtr<ID2D1LinearGradientBrush> brush;
-            if (SUCCEEDED(context->CreateLinearGradientBrush(
-                D2D1::LinearGradientBrushProperties(
-                    D2D1::Point2F(0.0f, static_cast<float>(gradientRect.top)),
-                    D2D1::Point2F(0.0f, static_cast<float>(gradientRect.bottom))),
-                stops.Get(), &brush)) && brush)
+            Microsoft::WRL::ComPtr<ID2D1GradientStopCollection> stops;
+            D2D1_GRADIENT_STOP sd[] = {
+                { 0.0f, D2D1::ColorF(fillColor.r, fillColor.g, fillColor.b, 0.0f) },
+                { 1.0f, D2D1::ColorF(fillColor.r, fillColor.g, fillColor.b, gradientEndA) },
+            };
+            if (SUCCEEDED(context->CreateGradientStopCollection(sd, 2,
+                D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &stops)) && stops)
             {
-                auto* factory = app_->GetD2DFactory();
-                const float radius = static_cast<float>(Cu(12.0f));
-                ID2D1RoundedRectangleGeometry* clipGeo = GetCachedClipGeometry(factory, frame, radius);
-                bool pushed = false;
-                if (clipGeo)
+                Microsoft::WRL::ComPtr<ID2D1LinearGradientBrush> brush;
+                if (SUCCEEDED(context->CreateLinearGradientBrush(
+                    D2D1::LinearGradientBrushProperties(
+                        D2D1::Point2F(0.0f, static_cast<float>(gradientRect.top)),
+                        D2D1::Point2F(0.0f, static_cast<float>(gradientRect.bottom))),
+                    stops.Get(), &brush)) && brush)
                 {
-                    context->PushLayer(D2D1::LayerParameters(
-                        D2D1::RectF(static_cast<float>(frame.left), static_cast<float>(frame.top),
-                            static_cast<float>(frame.right), static_cast<float>(frame.bottom)),
-                        clipGeo), nullptr);
-                    pushed = true;
+                    auto* factory = app_->GetD2DFactory();
+                    const float radius = static_cast<float>(Cu(12.0f));
+                    ID2D1RoundedRectangleGeometry* clipGeo = GetCachedClipGeometry(factory, frame, radius);
+                    bool pushed = false;
+                    if (clipGeo)
+                    {
+                        context->PushLayer(D2D1::LayerParameters(
+                            D2D1::RectF(static_cast<float>(frame.left), static_cast<float>(frame.top),
+                                static_cast<float>(frame.right), static_cast<float>(frame.bottom)),
+                            clipGeo), nullptr);
+                        pushed = true;
+                    }
+                    context->FillRectangle(app_->ToD2DRect(gradientRect), brush.Get());
+                    if (pushed)
+                        context->PopLayer();
                 }
-                context->FillRectangle(app_->ToD2DRect(gradientRect), brush.Get());
-                if (pushed)
-                    context->PopLayer();
             }
+        }
+
+        if (!data_->title.empty())
+        {
+            const float bh = GetBarHeight();
+            RECT titleRect = {
+                handle.left + Cu(4.0f),
+                handle.top + Cu(bh * 0.083f),
+                std::max<LONG>(handle.left + Cu(5.0f), handle.right - Cu(bh * 1.17f)),
+                handle.bottom - Cu(bh * 0.083f)
+            };
+            auto titleWeight = static_cast<DWRITE_FONT_WEIGHT>(
+                std::max<int>(100, static_cast<int>(app_->GetItemFontWeight()) - (lightTheme ? 200 : 0)));
+            IDWriteTextFormat* titleFormat = GetCuTextFormatWeight(bh * 0.542f, titleWeight, false);
+            app_->DrawD2DText(context, data_->title, titleRect,
+                titleFormat ? titleFormat : app_->listItemTextFormat_.Get(),
+                lightTheme
+                    ? D2D1::ColorF(0.11f, 0.13f, 0.17f, 0.96f)
+                    : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f));
         }
     }
 
-    if (data_->showTitle && !data_->title.empty())
-    {
-        const float bh = GetBarHeight();
-        RECT titleRect = {
-            handle.left + Cu(4.0f),
-            handle.top + Cu(bh * 0.083f),
-            std::max<LONG>(handle.left + Cu(5.0f), handle.right - Cu(bh * 1.17f)),
-            handle.bottom - Cu(bh * 0.083f)
-        };
-        auto titleWeight = static_cast<DWRITE_FONT_WEIGHT>(
-            std::max<int>(100, static_cast<int>(app_->GetItemFontWeight()) - (lightTheme ? 200 : 0)));
-        IDWriteTextFormat* titleFormat = GetCuTextFormatWeight(bh * 0.542f, titleWeight, false);
-        app_->DrawD2DText(context, data_->title, titleRect,
-            titleFormat ? titleFormat : app_->listItemTextFormat_.Get(),
-            lightTheme
-                ? D2D1::ColorF(0.11f, 0.13f, 0.17f, 0.96f)
-                : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f));
-    }
-
+    if (!showResizeHandle) return;
     RECT resize = app_->GetStandaloneWidgetResizeHandleRect(*data_);
     const int dot = Cu(GetBarHeight() * 0.333f);
     int cx = resize.left + (resize.right - resize.left) / 2;

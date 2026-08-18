@@ -17,6 +17,12 @@ constexpr bool ShowsBottomBar(
     return HasBottomBar(showTitle) && (!bottomBarHover || hovered);
 }
 
+constexpr bool ShowsResizeHandle(
+    bool showTitle, bool bottomBarHover, bool hovered) noexcept
+{
+    return hovered || (HasBottomBar(showTitle) && !bottomBarHover);
+}
+
 constexpr bool ReservesContentForBottomBar(
     bool showTitle, bool bottomBarHover) noexcept
 {

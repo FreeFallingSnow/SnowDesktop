@@ -769,13 +769,19 @@ void TestBottomBarContentReservation()
     Check(
         !chromeRules::HasBottomBar(false) &&
             chromeRules::HasBottomBar(true),
-        "only titled Lua widgets expose host bottom-bar hit targets");
+        "only titled Lua widgets expose the host move bar");
     Check(
         !chromeRules::ShowsBottomBar(false, false, true) &&
             !chromeRules::ShowsBottomBar(true, true, false) &&
             chromeRules::ShowsBottomBar(true, true, true) &&
             chromeRules::ShowsBottomBar(true, false, false),
         "bottom-bar drawing must respect both ownership and hover mode");
+    Check(
+        !chromeRules::ShowsResizeHandle(false, false, false) &&
+            chromeRules::ShowsResizeHandle(false, false, true) &&
+            chromeRules::ShowsResizeHandle(true, true, true) &&
+            chromeRules::ShowsResizeHandle(true, false, false),
+        "titleless widgets must expose only a hovered resize handle");
 }
 
 void TestNestedWidgetScrolling()

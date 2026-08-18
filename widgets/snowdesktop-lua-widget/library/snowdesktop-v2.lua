@@ -655,7 +655,7 @@
 ---@field migrateStorage? fun(oldVersion: integer, newVersion: integer) Runs before setup when persisted storage must be upgraded.
 ---@field useCustomStyle? boolean
 ---@field followPersonalizationDefault? boolean
----@field showTitle? boolean Enables the host bottom bar and displays the component title; false leaves the full desktop surface to component content and pointer input.
+---@field showTitle? boolean Enables the host bottom move bar and displays the component title; false leaves the full desktop surface to component content except for the resize button shown while hovering.
 ---@field bottomBarHover? boolean Shows an enabled host bottom bar only while hovering; defaults to true and has no effect when showTitle is false.
 ---@field bg? integer
 ---@field border? integer

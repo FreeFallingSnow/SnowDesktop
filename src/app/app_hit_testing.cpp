@@ -173,10 +173,10 @@ WidgetHit DesktopApp::HitTestStandaloneWidget(size_t widgetIndex, POINT pt) cons
 
     RECT frame = GetStandaloneWidgetFrameRect(widget);
     if (!PtInRect(&frame, pt)) return WidgetHit::None;
-    if (!snowdesktop::widget_chrome_rules::HasBottomBar(widget.showTitle))
-        return WidgetHit::Content;
     RECT resize = GetStandaloneWidgetResizeHandleRect(widget);
     if (PtInRect(&resize, pt)) return WidgetHit::ResizeHandle;
+    if (!snowdesktop::widget_chrome_rules::HasBottomBar(widget.showTitle))
+        return WidgetHit::Content;
     RECT move = GetStandaloneWidgetMoveHandleRect(widget);
     if (PtInRect(&move, pt)) return WidgetHit::MoveHandle;
     return WidgetHit::Content;
