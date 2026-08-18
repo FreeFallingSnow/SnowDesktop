@@ -235,6 +235,25 @@ void TestMediaControlsArtwork(const fs::path& repository)
             source.find("draw.imageFit(artwork.image") !=
                 std::string::npos,
         "media controls must reject stale artwork and draw the host handle");
+    Check(source.find("type = \"appReference\"") != std::string::npos &&
+            source.find("binding = \"idlePlayer\"") != std::string::npos &&
+            source.find("slots.binding(\"idlePlayer\")") !=
+                std::string::npos &&
+            manifest.find("\"idlePlayer\"") != std::string::npos &&
+            manifest.find("\"app.reference\"") != std::string::npos,
+        "media controls must persist the idle launcher as an app reference binding");
+    Check(source.find("launcherBinding:pick()") != std::string::npos &&
+            source.find("ref = launcher.reference") != std::string::npos &&
+            manifest.find("\"slots.hostPicker\"") != std::string::npos &&
+            manifest.find("\"settings.appReference\"") !=
+                std::string::npos,
+        "media controls must choose and launch the bound idle application through host APIs");
+    Check(source.find("task.start(\"app.search\"") == std::string::npos &&
+            source.find("type = \"appSearch\"") == std::string::npos &&
+            source.find("data.subscribe(\"app.indexStatus\"") ==
+                std::string::npos &&
+            manifest.find("\"app.discovery\"") == std::string::npos,
+        "media controls must not retain title-based app search or discovery permission");
 }
 
 void TestV2OnlyWidgetActivation(const fs::path& repository)

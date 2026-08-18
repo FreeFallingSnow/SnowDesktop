@@ -3,14 +3,14 @@
   "id": "9ccc7bd1-2a5a-473a-9bf7-a7d9ed5605ef",
   "slug": "media-controls",
   "apiVersion": 2,
-  "dataVersion": 2,
+  "dataVersion": 3,
   "entry": "main.lua",
   "minHostVersion": "1.0.4.0",
   "author": "SnowDesktop",
   "license": "GPL-3.0-only",
   "name": "Media Controls",
   "nameKey": "lua_widget.media_control.name",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Displays and controls the current Windows media session.",
   "descriptionKey": "lua_widget.media_control.description",
   "locales": {
@@ -188,12 +188,22 @@
     "rows": 1
   },
   "resources": {},
+  "slots": {
+    "idlePlayer": {
+      "kind": "binding",
+      "accepts": [
+        "app.reference"
+      ],
+      "operation": "reference",
+      "replacePolicy": "allow",
+      "allowClear": true
+    }
+  },
   "permissions": [
     "media.read"
   ],
   "optionalPermissions": [
     "media.action",
-    "app.discovery",
     "app.launch"
   ],
   "requiredFeatures": [
@@ -208,15 +218,14 @@
     "lifecycle.event",
     "lifecycle.model",
     "l10n.basic",
-    "schedule.basic",
-    "schedule.visibility",
-    "settings.appSearch",
+    "settings.appReference",
+    "slots.hostPicker",
+    "slots.model",
+    "slots.mutation.userGesture",
     "task.media.control",
     "task.start"
   ],
   "optionalFeatures": [
-    "data.app.indexStatus",
-    "task.app.launch",
-    "task.app.search"
+    "task.app.launch"
   ]
 }

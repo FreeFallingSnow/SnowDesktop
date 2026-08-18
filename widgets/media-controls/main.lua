@@ -1,7 +1,7 @@
 -- media-controls/main.lua - API v2 media session controls and app launcher
 local mediaCurrent
 local mediaArtwork
-local appIndexStatus
+local launcherBinding
 
 local fluent = {
     settings = utf8.char(0xF6A9),
@@ -33,11 +33,10 @@ local settings = {
             default = true,
         },
         {
-            key = "launcherTitle",
-            searchKey = "launcherSearch",
+            key = "launcherReference",
             label = l10n.tr("lua_widget.media_control.select_launcher"),
-            type = "appSearch",
-            default = "",
+            type = "appReference",
+            binding = "idlePlayer",
             emptyLabel = l10n.tr("lua_widget.media_control.not_set"),
             noResultsLabel =
                 l10n.tr("lua_widget.media_control.no_search_results"),
@@ -74,56 +73,16 @@ local function currentArtwork(session)
     return artwork
 end
 
-local function clearLauncherResults(model)
-    model.launcherResults = {}
-    model.launcherRef = nil
-    model.launcherDisplayTitle = ""
-    model.catalogRevision = nil
-    model.searchError = nil
+local function currentLauncher()
+    if not launcherBinding then return nil end
+    return launcherBinding:item()
 end
 
-local function startLauncherSearch(model)
-    if not widget.hasFeature("task.app.search") or
-        not widget.hasPermission("app.discovery") then
-        clearLauncherResults(model)
-        model.searchError = "permissionDenied"
-        return
-    end
-    if model.searchTask then return end
-
-    local query = storage.get("launcherSearch") or ""
-    model.launcherQuery = query
-    if query == "" then
-        clearLauncherResults(model)
-        return
-    end
-    if #query > 256 then
-        clearLauncherResults(model)
-        model.searchError = "queryTooLong"
-        return
-    end
-
-    if appIndexStatus then
-        local status = appIndexStatus:value()
-        if not status.available or not status.value or
-            status.value.state ~= "ready" then
-            model.searchRetryPending = true
-            model.searchError = status.error or "appIndexNotReady"
-            return
-        end
-    end
-
-    local taskId, err = task.start("app.search", {
-        query = query,
-        limit = 8,
-        offset = 0,
-    })
-    if taskId then
-        model.searchTask = taskId
-        model.searchRetryPending = false
-        model.searchError = nil
+local function chooseLauncher()
+    if launcherBinding then
+        launcherBinding:pick()
     else
-        model.searchError = err or "searchRejected"
+        widget.openSettings()
     end
 end
 
@@ -144,14 +103,18 @@ local function startMediaAction(model, taskName, pendingState)
 end
 
 local function startLauncher(model)
-    if not model.launcherRef or
-        not widget.hasFeature("task.app.launch") or
+    local launcher = currentLauncher()
+    if not launcher or launcher.availability ~= "available" then
+        chooseLauncher()
+        return
+    end
+    if not widget.hasFeature("task.app.launch") or
         not widget.hasPermission("app.launch") then
         widget.openSettings()
         return
     end
     local taskId, err = task.start("app.launch", {
-        ref = model.launcherRef,
+        ref = launcher.reference,
     })
     if taskId then
         model.launchTask = taskId
@@ -161,6 +124,7 @@ local function startLauncher(model)
 end
 
 local function setup()
+    launcherBinding = slots.binding("idlePlayer")
     mediaCurrent = data.subscribe("media.current", {
         maxAgeMs = 500,
         whenHidden = "throttle",
@@ -170,33 +134,11 @@ local function setup()
         whenHidden = "throttle",
     })
 
-    if widget.hasFeature("data.app.indexStatus") and
-        widget.hasPermission("app.discovery") then
-        appIndexStatus = data.subscribe("app.indexStatus", {
-            maxAgeMs = 1000,
-            whenHidden = "throttle",
-        })
-        schedule.every("launcher-sync", 1000, {
-            whenHidden = "throttle",
-        })
-    end
-
-    local model = {
+    return {
         pendingState = nil,
         mediaTasks = {},
-        searchTask = nil,
         launchTask = nil,
-        searchRetryPending = false,
-        searchError = nil,
-        launcherQuery = storage.get("launcherSearch") or "",
-        launcherResults = {},
-        launcherRef = nil,
-        launcherDisplayTitle = "",
-        selectedLauncherTitle = storage.get("launcherTitle") or "",
-        catalogRevision = nil,
     }
-    startLauncherSearch(model)
-    return model
 end
 
 local function drawButton(model, id, taskName, glyph, label,
@@ -243,6 +185,7 @@ local function render(_context, model)
     local controls = available and session.controls or {}
     local canControl = widget.hasPermission("media.action")
     local artwork = currentArtwork(session)
+    local launcher = currentLauncher()
 
     local isPlaying = available and session.playbackStatus == "playing"
     if model.pendingState == "playing" then
@@ -258,14 +201,10 @@ local function render(_context, model)
     local subtitle = ""
     if available then
         subtitle = session.artist ~= "" and session.artist or session.sourceName
-    elseif model.launcherDisplayTitle ~= "" then
-        subtitle = model.launcherDisplayTitle
-    elseif model.launcherQuery == "" or model.searchError == "permissionDenied" then
-        subtitle = l10n.tr("lua_widget.media_control.configure_launcher")
-    elseif model.searchError and not model.searchRetryPending then
-        subtitle = l10n.tr("lua_widget.media_control.no_search_results")
+    elseif launcher then
+        subtitle = launcher.title
     else
-        subtitle = l10n.tr("lua_widget.media_control.double_click_player")
+        subtitle = l10n.tr("lua_widget.media_control.configure_launcher")
     end
 
     local interactiveHeight = math.max(1, height)
@@ -339,103 +278,13 @@ local function render(_context, model)
         palette)
 end
 
-local function handleSearchCompletion(model, event)
-    if event.taskId ~= model.searchTask then return false end
-    model.searchTask = nil
-    clearLauncherResults(model)
-    if not event.ok or not event.value then
-        model.searchError = event.error or "searchFailed"
-        model.searchRetryPending = event.error == "appIndexNotReady"
-        return true
-    end
-
-    model.launcherResults = event.value.items or {}
-    model.catalogRevision = event.value.catalogRevision
-    local chosen = nil
-    if model.selectedLauncherTitle ~= "" then
-        for _, item in ipairs(model.launcherResults) do
-            if item.title == model.selectedLauncherTitle then
-                chosen = item
-                break
-            end
-        end
-    end
-    chosen = chosen or model.launcherResults[1]
-    if chosen then
-        model.launcherRef = chosen.ref
-        model.launcherDisplayTitle = chosen.title or ""
-    else
-        model.searchError = "notFound"
-    end
-    return true
-end
-
-local function syncLauncher(model)
-    local query = storage.get("launcherSearch") or ""
-    if query ~= model.launcherQuery then
-        if model.searchTask then
-            task.cancel(model.searchTask)
-            model.searchTask = nil
-        end
-        model.launcherQuery = query
-        model.selectedLauncherTitle = ""
-        clearLauncherResults(model)
-        model.searchRetryPending = true
-    end
-
-    local selectedTitle = storage.get("launcherTitle") or ""
-    if selectedTitle ~= model.selectedLauncherTitle then
-        model.selectedLauncherTitle = selectedTitle
-        model.launcherRef = nil
-        model.launcherDisplayTitle = ""
-        for _, item in ipairs(model.launcherResults) do
-            if item.title == selectedTitle then
-                model.launcherRef = item.ref
-                model.launcherDisplayTitle = item.title or ""
-                break
-            end
-        end
-        if selectedTitle ~= "" and not model.launcherRef then
-            model.searchRetryPending = true
-        end
-    end
-
-    if appIndexStatus then
-        local status = appIndexStatus:value()
-        if status.available and status.value and
-            status.value.state == "ready" then
-            if model.catalogRevision and
-                model.catalogRevision ~= status.value.revision then
-                clearLauncherResults(model)
-                model.searchRetryPending = true
-            end
-            if model.searchRetryPending or
-                (model.launcherQuery ~= "" and
-                    not model.searchTask and #model.launcherResults == 0) then
-                startLauncherSearch(model)
-            end
-        end
-    end
-end
-
 local function event(_context, model, value)
-    if value.kind == "schedule" and value.id == "launcher-sync" then
-        syncLauncher(model)
-        return
-    end
-
     if value.kind == "task.complete" then
-        if handleSearchCompletion(model, value) then return end
         if value.taskId == model.launchTask then
             model.launchTask = nil
             if not value.ok then
                 widget.log("warn", "app.launch failed: " ..
                     tostring(value.error))
-                if value.error == "staleReference" or
-                    value.error == "invalidReference" then
-                    clearLauncherResults(model)
-                    model.searchRetryPending = true
-                end
             end
             return
         end
@@ -462,29 +311,15 @@ local function event(_context, model, value)
     elseif value.id == "launcher.open" then
         if not currentSession() then startLauncher(model) end
     elseif value.id == "launcher.configure" then
-        widget.openSettings()
+        chooseLauncher()
     elseif value.id == "launcher.clear" then
-        model.selectedLauncherTitle = ""
-        model.launcherRef = nil
-        model.launcherDisplayTitle = ""
-        storage.remove("launcherTitle")
-    else
-        local index = tonumber(string.match(value.id or "",
-            "^launcher%.select%.(%d+)$"))
-        local item = index and model.launcherResults[index] or nil
-        if item then
-            model.selectedLauncherTitle = item.title or ""
-            model.launcherRef = item.ref
-            model.launcherDisplayTitle = item.title or ""
-            if storage.get("launcherTitle") ~= model.selectedLauncherTitle then
-                storage.set("launcherTitle", model.selectedLauncherTitle)
-            end
-        end
+        if currentLauncher() then launcherBinding:clear() end
     end
 end
 
-local function menu(_context, model, request)
+local function menu(_context, _model, request)
     if request.id ~= "media.menu" then return nil end
+    local launcher = currentLauncher()
     local items = {
         {
             id = "launcher.configure",
@@ -493,37 +328,20 @@ local function menu(_context, model, request)
             iconFont = "fluent",
         },
     }
-    if #model.launcherResults > 0 then
-        items[#items + 1] = { type = "separator" }
-        for index = 1, math.min(5, #model.launcherResults) do
-            local item = model.launcherResults[index]
-            items[#items + 1] = {
-                id = "launcher.select." .. tostring(index),
-                label = item.title or "",
-                checked = item.ref == model.launcherRef,
-            }
-        end
-    end
     items[#items + 1] = { type = "separator" }
     items[#items + 1] = {
         id = "launcher.clear",
         label = l10n.tr("lua_widget.media_control.not_set"),
-        checked = model.launcherRef == nil,
+        checked = launcher == nil,
     }
     return ui.menu(items)
 end
 
 local function migrateStorage(oldVersion, newVersion)
-    if oldVersion >= 2 or newVersion < 2 then return end
-    local query = storage.get("launcherSearch") or ""
-    if query ~= "" then return end
-
-    local oldLauncher = storage.get("launcher") or ""
-    if oldLauncher == "" then return end
-    local displayName = string.match(oldLauncher, "([^/\\]+)$") or oldLauncher
-    displayName = string.gsub(displayName, "%.lnk$", "")
-    displayName = string.gsub(displayName, "%.exe$", "")
-    if displayName ~= "" then storage.set("launcherSearch", displayName) end
+    if oldVersion >= 3 or newVersion < 3 then return end
+    storage.remove("launcher")
+    storage.remove("launcherSearch")
+    storage.remove("launcherTitle")
 end
 
 return widget.define({
