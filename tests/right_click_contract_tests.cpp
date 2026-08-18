@@ -182,7 +182,7 @@ void TestLuaWidgetMenuScope()
 {
     struct MenuItem
     {
-        bool v2Action = false;
+        std::string actionId;
         bool elementContext = false;
         bool separator = false;
         std::vector<MenuItem> children;
@@ -196,12 +196,12 @@ void TestLuaWidgetMenuScope()
         contract::ResolveLuaWidgetMenuScope(true) == Scope::Element,
         "element actions must replace the widget menu at that target");
     const std::vector<MenuItem> nestedComponentMenu = {
-        MenuItem{ false, false, false,
-            { MenuItem{ true, false, false, {} } } }
+        MenuItem{ {}, false, false,
+            { MenuItem{ "component-action", false, false, {} } } }
     };
     const std::vector<MenuItem> nestedElementMenu = {
-        MenuItem{ false, false, false,
-            { MenuItem{ true, true, false, {} } } }
+        MenuItem{ {}, false, false,
+            { MenuItem{ "element-action", true, false, {} } } }
     };
     Check(
         !contract::HasLuaElementMenuAction(nestedComponentMenu) &&

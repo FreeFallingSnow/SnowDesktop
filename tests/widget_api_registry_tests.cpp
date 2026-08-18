@@ -162,7 +162,7 @@ void TestRegistration()
     constexpr FunctionDescriptor functions[] = {
         { "answer", ReturnFortyTwo },
         { "add", Add },
-        { "legacyOnly", Noop, 1, nullptr, 1 },
+        { "bounded", Noop, 2, nullptr, 2 },
     };
 
     lua_pushliteral(state, "sentinel");
@@ -186,7 +186,7 @@ void TestRegistration()
         "answer callback must return its value");
     lua_pop(state, 1);
 
-    lua_getfield(state, -1, "legacyOnly");
+    lua_getfield(state, -1, "bounded");
     Check(lua_isfunction(state, -1),
         "unversioned registration must retain the complete descriptor set");
     lua_pop(state, 1);
@@ -214,32 +214,32 @@ void TestVersionedRegistration()
 {
     LuaState state;
     constexpr FunctionDescriptor functions[] = {
-        { "answer", ReturnFortyTwo, 1 },
-        { "add", Add, 2 },
-        { "legacyOnly", Noop, 1, nullptr, 1 },
+        { "answer", ReturnFortyTwo, 2 },
+        { "add", Add, 3 },
+        { "v2Only", Noop, 2, nullptr, 2 },
     };
-    snowdesktop::widget_api::RegisterLibrary(
-        state, "sample", functions, 1);
-    lua_getglobal(state, "sample");
-    lua_getfield(state, -1, "answer");
-    Check(lua_isfunction(state, -1),
-        "API v1 registration must expose v1 functions");
-    lua_pop(state, 1);
-    lua_getfield(state, -1, "add");
-    Check(lua_isnil(state, -1),
-        "API v1 registration must not expose v2 functions");
-    lua_pop(state, 2);
-
     snowdesktop::widget_api::RegisterLibrary(
         state, "sample", functions, 2);
     lua_getglobal(state, "sample");
     lua_getfield(state, -1, "answer");
     Check(lua_isfunction(state, -1),
-        "API v2 registration must retain unbounded v1 functions");
+        "the current API registration must expose current functions");
     lua_pop(state, 1);
-    lua_getfield(state, -1, "legacyOnly");
+    lua_getfield(state, -1, "add");
     Check(lua_isnil(state, -1),
-        "API v2 registration must hide functions capped at v1");
+        "the current API registration must hide future functions");
+    lua_pop(state, 2);
+
+    snowdesktop::widget_api::RegisterLibrary(
+        state, "sample", functions, 3);
+    lua_getglobal(state, "sample");
+    lua_getfield(state, -1, "answer");
+    Check(lua_isfunction(state, -1),
+        "a future API registration must retain unbounded current functions");
+    lua_pop(state, 1);
+    lua_getfield(state, -1, "v2Only");
+    Check(lua_isnil(state, -1),
+        "a future API registration must hide functions capped at v2");
     lua_pop(state, 2);
 }
 
@@ -265,7 +265,7 @@ void TestV2Contract()
                 v2Libraries.end() &&
             std::find(v2Libraries.begin(), v2Libraries.end(), "imgui") ==
                 v2Libraries.end(),
-        "the executable sandbox catalog must not retain API v1 libraries");
+        "the executable sandbox catalog must not expose removed libraries");
 
     Check(snowdesktop::widget_api::SupportsFeature(
                 "animation.frame") &&

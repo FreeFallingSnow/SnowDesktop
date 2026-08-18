@@ -586,18 +586,12 @@ void TestRealPackageTool(const std::filesystem::path& executable,
             capabilities.Find("executableApiVersions")->IsArray() &&
             capabilities.Find("executableApiVersions")->array.size() == 1 &&
             capabilities.Find("executableApiVersions")->array[0].number == 2 &&
-            capabilities.Find("migrationInputSchemaVersions") &&
-            capabilities.Find("migrationInputSchemaVersions")->IsArray() &&
-            capabilities.Find("migrationInputSchemaVersions")->array.size() == 1 &&
-            capabilities.Find("migrationInputSchemaVersions")->array[0].number == 1 &&
-            capabilities.Find("migrationInputApiVersions") &&
-            capabilities.Find("migrationInputApiVersions")->IsArray() &&
-            capabilities.Find("migrationInputApiVersions")->array.size() == 1 &&
-            capabilities.Find("migrationInputApiVersions")->array[0].number == 1 &&
+            !capabilities.Find("migrationInputSchemaVersions") &&
+            !capabilities.Find("migrationInputApiVersions") &&
             !capabilities.Find("supportedSchemaVersions") &&
             !capabilities.Find("supportedApiVersions") &&
             JsonString(capabilities, "format") == "snowdesktop-widget",
-            "snowwidget capabilities distinguishes executable v2 from migration-only v1");
+            "snowwidget capabilities publishes a v2-only package contract");
     }
     WidgetInspection inspection;
     PackagedWidget package;

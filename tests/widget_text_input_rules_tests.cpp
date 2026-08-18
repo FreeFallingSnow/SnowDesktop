@@ -61,7 +61,7 @@ void TestBoundedReplacement()
     Check(TryApplyHostTextReplacement(
             text, 2, 2, L"笺", 0, cursor) &&
             text == L"1便笺",
-        "a zero limit preserves the API v1 unlimited compatibility path");
+        "a zero limit keeps text replacement unlimited");
 }
 
 void TestReadOnlyMutationGate()

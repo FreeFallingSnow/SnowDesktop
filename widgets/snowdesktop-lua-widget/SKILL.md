@@ -29,8 +29,7 @@ development packages live under `data\widgets\installed` and
    before distributing the Skill. Run `bin\snowwidget.exe api-contract` when
    selecting callable host functions instead of inferring availability from
    documentation prose. Only `executableSchemaVersions` and
-   `executableApiVersions` can run; v1 appears only in the migration-input
-   arrays.
+   `executableApiVersions` can run.
 2. Copy `assets/widget-template` as a complete package directory.
 3. Generate a new UUID for `id`, choose a lowercase hyphenated `slug`, and keep
    the UUID across all versions and channels.
@@ -68,13 +67,7 @@ development packages live under `data\widgets\installed` and
 
 Read `references/api-v2.md` completely before implementing API calls, features,
 resources or troubleshooting. Use `library/snowdesktop-v2.lua` as the LuaLS
-library. Read `references/package-v1.md` only when diagnosing or migrating an
-old schema/API v1 package. The host recognizes v1 only as migration input and
-never executes its entry script; do not create new v1 packages.
-For a validated unpacked v1 package, `snowwidget migrate-v2 <directory>` creates
-a sibling `-v2-draft` package transactionally. It preserves the original entry,
-adds a separate v2 scaffold and migration guide, and refuses to overwrite either
-the source or an existing draft.
+library. The host and authoring tools accept only schema/API v2 packages.
 
 `snowwidget preview` launches the installed SnowDesktop renderer out of process
 and writes a real API v2/D2D PNG; it does not emulate the view tree. A CLI copied
@@ -99,7 +92,7 @@ return widget.define({
 })
 ```
 
-Do not define API v1 globals such as top-level `render`, `onClick`,
+Do not define removed globals such as top-level `render`, `onClick`,
 `getContextMenu`, `imguiRender`, or `onHttpResponse`. The current host
 supports optional `setup(context)` and `dispose(context, model, reason)`;
 `setup` runs once and its return value is passed to `render` or `view`, `event`, and
@@ -554,7 +547,7 @@ default border does not fit the component design.
   Use `false` in `notification.update` to clear image or progress, and an empty
   actions array to clear buttons. Runtime image handles are not accepted.
   Declare `notification.post` as optional when the widget can
-  keep working without it, and never fall back to API v1 `system.notify`.
+  keep working without it, and never fall back to the removed `system.notify`.
 - Create `resource.image/font` handles synchronously at entry scope. Handle
   stable `resource.image: code` / `resource.font: code` load failures; use
   `resource.status` for later ready/error diagnostics and do not poll it for a
@@ -667,8 +660,6 @@ default border does not fit the component design.
 For every package change:
 
 1. Validate the directory with `snowwidget validate` and resolve every error.
-   API v1 migration warnings are expected only for legacy input, never for a
-   new package.
 2. Pack it with `snowwidget pack`, then validate the resulting `.snowwidget`.
 3. Run the repository localization and contract tests.
 4. Preview compact and expanded spans; check text clipping, theme, DPI and

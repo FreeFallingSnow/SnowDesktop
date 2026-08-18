@@ -19,8 +19,6 @@
 
 namespace snowdesktop::widget
 {
-inline constexpr int kLegacyPackageSchemaVersion = 1;
-inline constexpr int kLegacyApiVersion = 1;
 inline constexpr int kPackageSchemaVersion = 2;
 inline constexpr int kHostApiVersion = 2;
 inline constexpr std::uint64_t kMaxArchiveBytes = 20ull * 1024ull * 1024ull;
@@ -251,40 +249,6 @@ struct InvalidPackage
     bool selected = false;
 };
 
-struct LegacyPackage
-{
-    std::filesystem::path scriptPath;
-    std::filesystem::path manifestPath;
-    std::wstring legacyName;
-};
-
-struct LegacyMigrationResult
-{
-    bool ok = false;
-    std::wstring legacyName;
-    std::string packageId;
-    std::filesystem::path backupDirectory;
-    ValidationReport report;
-    std::string error;
-};
-
-struct LegacyLooseImportResult
-{
-    bool ok = false;
-    std::size_t copiedPairs = 0;
-    std::string error;
-};
-
-/**
- * @brief Copy only legacy loose-file component pairs from an old portable
- *        widgets directory into the writable package migration root.
- * @details Folder packages, authoring tools, orphaned Lua files, symbolic
- *          links, junctions and reparse points are never copied.
- */
-LegacyLooseImportResult ImportLegacyLooseWidgetPairs(
-    const std::filesystem::path& sourceWidgets,
-    const std::filesystem::path& destinationWidgets);
-
 struct PackagePaths
 {
     std::filesystem::path builtin;
@@ -408,20 +372,6 @@ public:
         std::string& error);
     bool Uninstall(const std::string& packageId, std::string& error);
 
-    // Only user-authored or third-party loose packages are returned here.
-    // Shipped legacy components are replaced automatically during Initialize.
-    std::vector<LegacyPackage> FindLegacyPackages() const;
-    const std::vector<LegacyMigrationResult>&
-        AutomaticLegacyMigrationResults() const
-    {
-        return automaticLegacyMigrationResults_;
-    }
-    std::filesystem::path PendingLegacyStoragePath() const;
-    std::optional<std::string> ResolveLegacyPackageId(
-        const std::wstring& legacyName) const;
-    LegacyMigrationResult MigrateLegacy(const LegacyPackage& legacy,
-        const std::optional<std::string>& preferredId = std::nullopt);
-
     static std::string Sha256File(const std::filesystem::path& path);
     static std::string GenerateUuid();
 
@@ -464,13 +414,6 @@ private:
         bool allowSourceChange, bool allowPermissionExpansion,
         InstalledPackage& installed,
         std::string& error);
-    std::vector<LegacyPackage> ScanLegacyPackages() const;
-    std::optional<std::string> BundledReplacementId(
-        const LegacyPackage& legacy) const;
-    LegacyMigrationResult ReplaceBundledLegacy(
-        const LegacyPackage& legacy, const std::string& packageId);
-    bool PrepareBundledLegacyStorage(std::string& error);
-    void MigrateBundledLegacyPackages();
     std::filesystem::path CreateStagingPath(const char* purpose) const;
 
     PackagePaths paths_;
@@ -481,10 +424,8 @@ private:
     std::unordered_map<std::string, PermissionDecisionRecord>
         permissionDecisions_;
     std::unordered_set<std::string> developmentOverrides_;
-    std::unordered_map<std::string, std::string> legacyAliases_;
     std::unordered_map<std::string, std::unordered_set<std::string>>
         steamSubscriptionsByAccount_;
-    std::vector<LegacyMigrationResult> automaticLegacyMigrationResults_;
 };
 
 class BuiltinPackageSource final : public IWidgetPackageSource

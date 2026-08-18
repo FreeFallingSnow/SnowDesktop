@@ -106,14 +106,15 @@ void MakePackage(const std::filesystem::path& root, std::string version,
     std::string networkDomains = "",
     std::string entry = "main.lua",
     std::string optionalPermissions = "",
-    int schemaVersion = 1,
-    int apiVersion = 1,
+    int schemaVersion = 2,
+    int apiVersion = 2,
     std::string requiredFeatures = "",
     std::string optionalFeatures = "",
     std::string resources = "",
     std::string slots = "")
 {
-    Write(root / std::filesystem::path(entry), "function render() end\n");
+    Write(root / std::filesystem::path(entry),
+        "return widget.define({render=function() end})\n");
     Write(root / L"assets" / L"label.txt", "asset");
     Write(root / L"widget.json",
         "{\n"
@@ -634,22 +635,16 @@ int main()
             "the shared instance lock is released when the owner exits");
     }
 
-    const auto sourceV1 = root / L"source-v1";
-    MakePackage(sourceV1, "1.0.0",
+    const auto sourcePackage = root / L"source-package";
+    MakePackage(sourcePackage, "1.0.0",
         "3af4c6ab-15d3-4f2a-8b8c-80e57600a87d",
         "\"ui.input\", \"network.http\"", "\"api.example.com\"");
     WidgetPackageValidator validator;
     PackageManifest manifest;
-    auto report = validator.ValidateDirectory(sourceV1, &manifest);
+    auto report = validator.ValidateDirectory(sourcePackage, &manifest);
     Expect(report.Ok(), "valid folder package is accepted");
-    Expect(!IsExecutablePackageContract(manifest),
-        "schema/API v1 is migration input and cannot enter the runtime");
-    Expect(std::any_of(report.issues.begin(), report.issues.end(),
-            [](const ValidationIssue& issue) {
-                return issue.severity == ValidationSeverity::Warning &&
-                    issue.code == "migration.apiV1";
-            }),
-        "legacy package validation emits an explicit API v2 migration diagnostic");
+    Expect(IsExecutablePackageContract(manifest),
+        "validated schema/API v2 packages can enter the runtime");
     Expect(manifest.entry == "main.lua", "entry is parsed");
     Expect(manifest.previewStorage["message"] == "Preview" &&
             manifest.previewStorage["count"] == "3" &&
@@ -748,14 +743,12 @@ int main()
     Expect(!validator.ValidateDirectory(invalidLogicalSlotPackage).Ok(),
         "logical slots reject unknown payload kinds, destructive operations, and excessive capacity");
 
-    const auto legacyLogicalSlotPackage = root / L"logical-slot-legacy";
-    MakePackage(legacyLogicalSlotPackage, "1.0.0",
+    const auto unsupportedV1Package = root / L"unsupported-v1";
+    MakePackage(unsupportedV1Package, "1.0.0",
         "243f1469-cba6-43b3-a471-d18d9162dcb0", "", "", "main.lua",
-        "", 1, 1, "", "", "",
-        "\"primaryApp\": {\"kind\": \"binding\", "
-        "\"accepts\": [\"app.reference\"]}");
-    Expect(!validator.ValidateDirectory(legacyLogicalSlotPackage).Ok(),
-        "schema/API v1 packages cannot declare v2 logical slots");
+        "", 1, 1);
+    Expect(!validator.ValidateDirectory(unsupportedV1Package).Ok(),
+        "schema/API v1 packages are rejected by v2-only validation");
 
     const auto resourcePackage = root / L"resource-package";
     MakePackage(resourcePackage, "2.0.0",
@@ -1041,10 +1034,10 @@ int main()
 
     const auto managerPaths = TestPaths(root / L"manager");
     std::filesystem::create_directories(managerPaths.builtin);
-    std::filesystem::copy(sourceV1, managerPaths.builtin / L"package-test",
+    std::filesystem::copy(sourcePackage, managerPaths.builtin / L"package-test",
         std::filesystem::copy_options::recursive, ec);
     std::filesystem::create_directories(managerPaths.development);
-    std::filesystem::copy(sourceV1,
+    std::filesystem::copy(sourcePackage,
         managerPaths.development / L"package-test",
         std::filesystem::copy_options::recursive, ec);
     WidgetPackageManager manager(managerPaths);
@@ -1086,7 +1079,7 @@ int main()
         "deactivating development restores the source-bound built-in grant");
     InstalledPackage installed;
     report = {};
-    Expect(manager.InstallDirectory(sourceV1, { "local", "package-test" },
+    Expect(manager.InstallDirectory(sourcePackage, { "local", "package-test" },
         false, installed, report, error), "folder package installs");
     Expect(manager.Resolve(manifest.id).has_value() &&
             manager.Resolve(manifest.id)->permissionState ==
@@ -1344,7 +1337,7 @@ int main()
     Expect(developmentCopyManager.Initialize(error),
         "development-copy manager initializes");
     InstalledPackage workshopInstalled;
-    Expect(developmentCopyManager.InstallDirectory(sourceV1,
+    Expect(developmentCopyManager.InstallDirectory(sourcePackage,
             { "steam-workshop", "5080330:123456789" }, false,
             workshopInstalled, report, error),
         "Workshop component installs before creating a development version");
@@ -1477,45 +1470,6 @@ int main()
         "package manager installs through the source contract");
     Expect(catalogInstalled.manifest.version == "1.2.0",
         "source installation activates the requested version");
-
-    const auto portableWidgets = root / L"portable-widget-import" / L"widgets";
-    Write(portableWidgets / L"my_legacy.lua",
-        "function render() end\n");
-    Write(portableWidgets / L"my_legacy.widget.json",
-        "{ \"name\": \"My Legacy Widget\", \"version\": \"1.0.0\" }\n");
-    Write(portableWidgets / L"orphan.lua",
-        "function render() end\n");
-    MakePackage(portableWidgets / L"folder-package", "1.0.0");
-    Write(portableWidgets / L"snowdesktop-lua-widget" / L"SKILL.md",
-        "# Authoring tool\n");
-    Write(portableWidgets / L"README.txt", "not component data\n");
-    const auto importedPortableWidgets =
-        root / L"portable-widget-import" / L"staging-data" / L"widgets";
-    const auto portableImport = ImportLegacyLooseWidgetPairs(
-        portableWidgets, importedPortableWidgets);
-    Expect(portableImport.ok && portableImport.copiedPairs == 1,
-        "portable migration imports only complete legacy loose pairs");
-    Expect(std::filesystem::is_regular_file(
-        importedPortableWidgets / L"my_legacy.lua") &&
-        std::filesystem::is_regular_file(
-            importedPortableWidgets / L"my_legacy.widget.json"),
-        "portable migration preserves the user-authored legacy pair");
-    Expect(!std::filesystem::exists(
-        importedPortableWidgets / L"orphan.lua"),
-        "portable migration ignores orphaned Lua files");
-    Expect(!std::filesystem::exists(
-        importedPortableWidgets / L"folder-package") &&
-        !std::filesystem::exists(
-            importedPortableWidgets / L"snowdesktop-lua-widget") &&
-        !std::filesystem::exists(
-            importedPortableWidgets / L"README.txt"),
-        "portable migration does not copy folder packages or authoring files");
-    const auto missingPortableImport = ImportLegacyLooseWidgetPairs(
-        root / L"portable-widget-import" / L"missing",
-        importedPortableWidgets);
-    Expect(missingPortableImport.ok &&
-        missingPortableImport.copiedPairs == 0,
-        "portable migration accepts a missing legacy widgets directory");
 
     const auto longPathSource =
         root / L"portable-long-path-source";
@@ -1814,130 +1768,6 @@ int main()
     Expect(deletedBackup.ok &&
         !std::filesystem::exists(createdFullBackup.backup.root),
         "complete backup can be deleted from managed storage");
-
-    const auto automaticPaths = TestPaths(root / L"automatic-migration");
-    constexpr const char* analogPackageId =
-        "64107f41-197a-426a-8f86-6eeb020f56b0";
-    MakePackage(automaticPaths.builtin / L"analog-clock", "1.0.0",
-        analogPackageId);
-    Write(automaticPaths.builtin / L"analog_clock.lua",
-        "-- deliberately different from the replacement\n"
-        "function render() error('old shipped component') end\n");
-    Write(automaticPaths.builtin / L"analog_clock.widget.json",
-        "{\n"
-        "  \"name\": \"Analog Clock\",\n"
-        "  \"nameKey\": \"lua_widget.analog_clock.name\",\n"
-        "  \"version\": \"0.9.0\",\n"
-        "  \"permissions\": [\"ui.input\"]\n"
-        "}\n");
-    const auto customLegacyRoot = automaticPaths.installed.parent_path();
-    Write(customLegacyRoot / L"my_widget.lua",
-        "function render() end\n");
-    Write(customLegacyRoot / L"my_widget.widget.json",
-        "{\n"
-        "  \"name\": \"My Widget\",\n"
-        "  \"version\": \"1.0.0\",\n"
-        "  \"permissions\": []\n"
-        "}\n");
-    const auto legacyStorage =
-        automaticPaths.registry.parent_path().parent_path() /
-            L"SnowDesktop.storage.json";
-    const std::string legacyStorageText =
-        "{\n  \"widget-instance.text\": \"keep me\"\n}\n";
-    Write(legacyStorage, legacyStorageText);
-
-    WidgetPackageManager automaticManager(automaticPaths);
-    error.clear();
-    Expect(automaticManager.Initialize(error),
-        "manager initializes while replacing shipped loose components");
-    const auto& automaticMigrations =
-        automaticManager.AutomaticLegacyMigrationResults();
-    Expect(automaticMigrations.size() == 1 &&
-        automaticMigrations.front().ok,
-        "shipped loose component is replaced without user interaction");
-    Expect(!std::filesystem::exists(
-        automaticPaths.builtin / L"analog_clock.lua") &&
-        !std::filesystem::exists(
-            automaticPaths.builtin / L"analog_clock.widget.json"),
-        "replaced shipped loose files are deleted");
-    Expect(automaticManager.ResolveLegacyPackageId(
-        L"analog_clock.lua").value_or("") == analogPackageId,
-        "legacy layout name resolves to the immutable built-in package id");
-    Expect(automaticMigrations.front().backupDirectory.empty(),
-        "shipped component files do not create a permanent migration backup");
-    Expect(std::filesystem::is_empty(automaticPaths.migrations),
-        "migrations directory remains reserved for user-authored components");
-    const auto pendingStorage =
-        automaticManager.PendingLegacyStoragePath();
-    std::ifstream pendingStorageFile(pendingStorage, std::ios::binary);
-    const std::string pendingStorageText(
-        (std::istreambuf_iterator<char>(pendingStorageFile)),
-        std::istreambuf_iterator<char>());
-    Expect(pendingStorageText == legacyStorageText,
-        "legacy instance storage is transactionally staged for engine import");
-
-    const auto userLegacy = automaticManager.FindLegacyPackages();
-    Expect(userLegacy.size() == 1 &&
-        userLegacy.front().legacyName == L"my_widget.lua",
-        "only user-authored loose components are offered in the migration UI");
-    Expect(std::filesystem::exists(customLegacyRoot / L"my_widget.lua"),
-        "user-authored loose component is not changed automatically");
-    const auto userMigration =
-        automaticManager.MigrateLegacy(userLegacy.front());
-    Expect(userMigration.ok,
-        "user-authored loose component migrates after explicit action");
-    Expect(!userMigration.backupDirectory.empty() &&
-        std::filesystem::exists(userMigration.backupDirectory),
-        "explicit user migration retains its recovery backup");
-    Expect(!std::filesystem::exists(customLegacyRoot / L"my_widget.lua"),
-        "explicit user migration removes the loose source after backup");
-
-    // MSIX replaces the read-only application directory as one unit. The old
-    // official loose files therefore no longer exist when the upgraded
-    // process first reads a legacy layout.
-    const auto packagedUpgradePaths =
-        TestPaths(root / L"packaged-folder-only-upgrade");
-    MakePackage(packagedUpgradePaths.builtin / L"analog-clock", "1.0.0",
-        analogPackageId);
-    WidgetPackageManager packagedUpgradeManager(packagedUpgradePaths);
-    error.clear();
-    Expect(packagedUpgradeManager.Initialize(error),
-        "manager initializes for an MSIX folder-only upgrade");
-    Expect(packagedUpgradeManager.AutomaticLegacyMigrationResults().empty(),
-        "folder-only MSIX upgrade does not require retired install files");
-    Expect(packagedUpgradeManager.ResolveLegacyPackageId(
-        L"analog_clock.lua").value_or("") == analogPackageId,
-        "MSIX legacy layout maps to the built-in folder package without loose files");
-
-    // A user may have created a component that happens to use an old official
-    // filename. Its writable loose pair must remain eligible for the migration
-    // wizard instead of being silently rebound to SnowDesktop's package.
-    const auto packagedCollisionPaths =
-        TestPaths(root / L"packaged-custom-name-collision");
-    MakePackage(packagedCollisionPaths.builtin / L"analog-clock", "1.0.0",
-        analogPackageId);
-    const auto collisionRoot =
-        packagedCollisionPaths.installed.parent_path();
-    Write(collisionRoot / L"analog_clock.lua",
-        "function render() end\n");
-    Write(collisionRoot / L"analog_clock.widget.json",
-        "{\n"
-        "  \"name\": \"My Analog Clock\",\n"
-        "  \"version\": \"1.0.0\",\n"
-        "  \"permissions\": []\n"
-        "}\n");
-    WidgetPackageManager packagedCollisionManager(packagedCollisionPaths);
-    error.clear();
-    Expect(packagedCollisionManager.Initialize(error),
-        "manager initializes with a custom legacy filename collision");
-    Expect(!packagedCollisionManager.ResolveLegacyPackageId(
-        L"analog_clock.lua").has_value(),
-        "custom loose component is not mistaken for an MSIX built-in");
-    const auto packagedCollisionLegacy =
-        packagedCollisionManager.FindLegacyPackages();
-    Expect(packagedCollisionLegacy.size() == 1 &&
-        packagedCollisionLegacy.front().legacyName == L"analog_clock.lua",
-        "custom filename collision remains visible to the migration wizard");
 
     std::filesystem::remove_all(root, ec);
     if (failures)

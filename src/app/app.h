@@ -2953,7 +2953,6 @@ private:
     DWORD desktopHostExplorerProcessId_ = 0;
     bool exitRequested_ = false;
     bool startupInitializationComplete_ = false;
-    bool legacyWidgetLayoutMigrationPending_ = false;
     snowdesktop::settings_window_open_rules::RequestState
         settingsWindowOpenRequest_;
     bool customDesktopVisible_ = true;

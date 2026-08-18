@@ -45,8 +45,6 @@ struct WidgetRecord
     std::string packageSourceProvider;
     std::string packageSourceExternalItemId;
     std::string packageSourceUrl;
-    std::string scriptPath;
-    std::string legacyScriptPath;
     std::string activeCategory;
     int scrollOffset = 0;
     int tabScrollOffset = 0;

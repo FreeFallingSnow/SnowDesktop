@@ -221,22 +221,20 @@ struct LuaDesktopItemInfo
  */
 struct LuaWidgetMenuItem
 {
-    int id = 0;                ///< 菜单项标识符，回调时回传
     std::string label;         ///< 菜单项显示文本
     std::string icon;          ///< 可选图标字符
-    std::string iconFont = "fa"; ///< "fa"（兼容默认）或 "fluent"
-    std::string imageResourceName; ///< API v2 包内 image resource 名称
+    std::string iconFont = "fa"; ///< "fa" 或 "fluent"
+    std::string imageResourceName; ///< 包内 image resource 名称
     bool enabled = true;       ///< 是否可用（灰显）
     bool checked = false;      ///< 是否显示选中标记
     bool separator = false;    ///< 是否为分隔线（为 true 时忽略其他字段）
-    bool v2Action = false;
     bool elementContext = false;
     std::string actionId;
     std::string targetKey;
     std::string surface = "desktop";
     snowdesktop::widget_runtime::InteractionValue contextValue;
     std::uint64_t interactionGeneration = 0;
-    std::vector<LuaWidgetMenuItem> children; ///< API v2 子菜单；仅叶子项投递动作
+    std::vector<LuaWidgetMenuItem> children; ///< 子菜单；仅叶子项投递动作
 };
 
 /**
@@ -980,12 +978,6 @@ public:
         const std::wstring& widgetId, int x = -1, int y = -1,
         std::string_view surface = "desktop");
 
-    /**
-     * @brief 触发小部件的菜单项点击回调
-     * @param widgetId 小部件实例 ID
-     * @param menuId 菜单项标识符
-     */
-    void InvokeMenu(const std::wstring& widgetId, int menuId);
     void InvokeMenu(const std::wstring& widgetId,
         const LuaWidgetMenuItem& menuItem);
 
@@ -1155,12 +1147,6 @@ public:
         GetWidgetPackageSource(const std::wstring& packageId);
     static bool IsWidgetPackageAvailable(const std::wstring& packageId);
     static bool IsWidgetPackageInstalled(const std::wstring& packageId);
-    static std::vector<snowdesktop::widget::LegacyPackage>
-        ListLegacyWidgetPackages();
-    static std::optional<std::wstring> ResolveLegacyWidgetPackage(
-        const std::wstring& legacyName);
-    static snowdesktop::widget::LegacyMigrationResult MigrateLegacyWidgetPackage(
-        const snowdesktop::widget::LegacyPackage& legacy);
     static bool SetWidgetPackageEnabled(const std::string& packageId,
         bool enabled, std::string& error);
     static bool CreateWidgetDevelopmentProject(const std::string& packageId,

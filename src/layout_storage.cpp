@@ -317,11 +317,6 @@ bool DecodeWidgets(const JsonValue& root, Document& document,
             !ReadString(object, "packageSourceUrl",
                 path + ".packageSourceUrl",
                 record.packageSourceUrl, error) ||
-            !ReadString(object, "scriptPath", path + ".scriptPath",
-                record.scriptPath, error) ||
-            !ReadString(object, "legacyScriptPath",
-                path + ".legacyScriptPath", record.legacyScriptPath,
-                error) ||
             !ReadString(object, "activeCategory",
                 path + ".activeCategory", record.activeCategory,
                 error) ||

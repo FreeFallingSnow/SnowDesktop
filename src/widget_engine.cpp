@@ -546,24 +546,6 @@ static void LoadStorageFile()
             MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
     }
 
-    // Built-in loose-file replacement creates this short-lived snapshot before
-    // touching package files. Merge only missing keys so current writes win,
-    // commit atomically, then consume it. It never enters migrations/.
-    const auto pending =
-        GetWidgetPackageManager().PendingLegacyStoragePath();
-    ec.clear();
-    if (!std::filesystem::is_regular_file(pending, ec))
-        return;
-    std::unordered_map<std::string, std::string> pendingStorage;
-    if (!ReadStorageMap(pending, pendingStorage))
-        return;
-    for (auto& [key, value] : pendingStorage)
-        g_storage.try_emplace(std::move(key), std::move(value));
-    if (SaveStorageFile())
-    {
-        ec.clear();
-        std::filesystem::remove(pending, ec);
-    }
 }
 
 static bool SaveStorageFile()
@@ -1518,7 +1500,6 @@ static std::string_view EntityReferenceSettingTypeFilter(
 static bool ValidateEntityReferenceSettings(
     const std::vector<LuaWidgetManifest::Setting>& manifestSettings,
     const std::vector<LuaWidgetManifest::Setting>& scriptSettings,
-    int apiVersion,
     const snowdesktop::widget_runtime::LogicalSlotDeclarations& slots,
     std::string& error)
 {
@@ -1528,11 +1509,6 @@ static bool ValidateEntityReferenceSettings(
         for (const auto& setting : settings)
         {
             if (!IsEntityReferenceSettingType(setting.type)) continue;
-            if (apiVersion < 2)
-            {
-                error = setting.type + " settings require API v2";
-                return false;
-            }
             if (setting.binding.empty())
             {
                 error = setting.type + " setting '" + setting.key +
@@ -1575,7 +1551,7 @@ static bool ValidateSettingPresentation(
     const std::vector<LuaWidgetManifest::Setting>& scriptSettings,
     const std::vector<LuaWidgetManifest::SettingGroup>& manifestGroups,
     const std::vector<LuaWidgetManifest::SettingGroup>& scriptGroups,
-    int apiVersion, std::string& error)
+    std::string& error)
 {
     error.clear();
     if (manifestGroups.size() + scriptGroups.size() > 32)
@@ -1630,20 +1606,9 @@ static bool ValidateSettingPresentation(
                     "' references undeclared group '" + setting.group + "'";
                 return false;
             }
-            if (apiVersion < 2 &&
-                (!setting.group.empty() || !setting.description.empty()))
-            {
-                error = "setting groups and descriptions require API v2";
-                return false;
-            }
         }
         return true;
     };
-    if (apiVersion < 2 && !groupIds.empty())
-    {
-        error = "setting groups require API v2";
-        return false;
-    }
     return validateSettings(manifestSettings) &&
         validateSettings(scriptSettings);
 }
@@ -1651,7 +1616,7 @@ static bool ValidateSettingPresentation(
 static bool ValidateSettingConditionsAndConstraints(
     const std::vector<LuaWidgetManifest::Setting>& manifestSettings,
     const std::vector<LuaWidgetManifest::Setting>& scriptSettings,
-    int apiVersion, std::string& error)
+    std::string& error)
 {
     error.clear();
     if (manifestSettings.size() + scriptSettings.size() > 256)
@@ -1766,14 +1731,6 @@ static bool ValidateSettingConditionsAndConstraints(
         const auto& setting = *settingPtr;
         const bool hasConstraints = setting.required ||
             setting.minLength != -1 || setting.maxLength != -1;
-        const bool hasConditions = setting.showWhen.has_value() ||
-            setting.enabledWhen.has_value() || !setting.dependsOn.empty();
-        if (apiVersion < 2 && (hasConstraints || hasConditions ||
-                !setting.validationMessage.empty()))
-        {
-            error = "setting validation and conditions require API v2";
-            return false;
-        }
         const bool textType = setting.type == "text" ||
             setting.type == "url" || setting.type == "date" ||
             setting.type == "time";
@@ -1837,7 +1794,7 @@ static bool ValidateOrdinaryDeclarativeSettings(
     const std::vector<LuaWidgetManifest::Setting>& scriptSettings,
     const std::vector<LuaWidgetManifest::SettingPreset>& manifestPresets,
     const std::vector<LuaWidgetManifest::SettingPreset>& scriptPresets,
-    int apiVersion, std::string& error)
+    std::string& error)
 {
     using snowdesktop::widget_runtime::IsValidDateSettingValue;
     using snowdesktop::widget_runtime::IsValidMultiSelectSettingValue;
@@ -1856,11 +1813,6 @@ static bool ValidateOrdinaryDeclarativeSettings(
                 setting.type == "range" || setting.type == "multiSelect" ||
                 IsFilesystemHandleSettingType(setting.type);
             if (!typed) continue;
-            if (apiVersion < 2)
-            {
-                error = setting.type + " settings require API v2";
-                return false;
-            }
             if (!typedSettings.emplace(setting.key, &setting).second)
             {
                 error = "typed setting key '" + setting.key +
@@ -2029,15 +1981,6 @@ static std::uint64_t BoundWidgetRuntimeToken(lua_State* state)
         ? lua_tointeger(state, -1) : 0;
     lua_pop(state, 1);
     return value > 0 ? static_cast<std::uint64_t>(value) : 0;
-}
-
-static int BoundWidgetApiVersion(lua_State* state)
-{
-    lua_getfield(state, LUA_REGISTRYINDEX, "__widget_api_version");
-    const lua_Integer value = lua_isinteger(state, -1)
-        ? lua_tointeger(state, -1) : 1;
-    lua_pop(state, 1);
-    return std::max(1, static_cast<int>(value));
 }
 
 static std::optional<std::wstring> ResolvePackageAssetWithinRoot(
@@ -7686,20 +7629,12 @@ static int lua_UiTextInput(lua_State* L)
         control.fontSize = fontSize;
         control.padding = padding;
         control.maximumUtf8Bytes = maximumUtf8Bytes;
-        if (BoundWidgetApiVersion(L) >= 2)
+        std::string error;
+        if (!s->engine->RuntimeRegisterV2HostControl(
+                BoundWidgetId(L), std::move(control), error))
         {
-            std::string error;
-            if (!s->engine->RuntimeRegisterV2HostControl(
-                    BoundWidgetId(L), std::move(control), error))
-            {
-                return luaL_error(L, "control.textInput: %s",
-                    error.c_str());
-            }
-        }
-        else
-        {
-            s->engine->RuntimeRegisterHostControl(
-                BoundWidgetId(L), std::move(control));
+            return luaL_error(L, "control.textInput: %s",
+                error.c_str());
         }
     }
 
@@ -7859,20 +7794,12 @@ static int lua_UiTextArea(lua_State* L)
         control.viewportHeight =
             std::max(1, static_cast<int>(std::lround(height)));
         control.maximumUtf8Bytes = maximumUtf8Bytes;
-        if (BoundWidgetApiVersion(L) >= 2)
+        std::string error;
+        if (!s->engine->RuntimeRegisterV2HostControl(
+                BoundWidgetId(L), std::move(control), error))
         {
-            std::string error;
-            if (!s->engine->RuntimeRegisterV2HostControl(
-                    BoundWidgetId(L), std::move(control), error))
-            {
-                return luaL_error(L, "control.textArea: %s",
-                    error.c_str());
-            }
-        }
-        else
-        {
-            s->engine->RuntimeRegisterHostControl(
-                BoundWidgetId(L), std::move(control));
+            return luaL_error(L, "control.textArea: %s",
+                error.c_str());
         }
     }
 
@@ -9487,12 +9414,8 @@ static int lua_CalendarSelectDate(lua_State* L)
 
 static int lua_CalendarDateInfo(lua_State* L)
 {
-    const int apiVersion = BoundWidgetApiVersion(L);
-    if (apiVersion >= 2 && lua_gettop(L) != 1)
+    if (lua_gettop(L) != 1)
         return luaL_error(L, "calendar.dateInfo: expected one date");
-    if (apiVersion < 2 &&
-        !RequirePermission(L, "calendar.read"))
-        return 0;
     const char* value = luaL_checkstring(L, 1);
     auto* state = GetD2D(L);
     const auto info = state && state->engine
@@ -9519,17 +9442,12 @@ static int lua_CalendarDateInfo(lua_State* L)
 
 static int lua_CalendarAddDays(lua_State* L)
 {
-    const int apiVersion = BoundWidgetApiVersion(L);
-    if (apiVersion >= 2 && lua_gettop(L) != 2)
+    if (lua_gettop(L) != 2)
         return luaL_error(L,
             "calendar.addDays: expected a date and offset");
-    if (apiVersion < 2 &&
-        !RequirePermission(L, "calendar.read"))
-        return 0;
     const char* value = luaL_checkstring(L, 1);
     const lua_Integer requestedOffset = luaL_checkinteger(L, 2);
-    if (apiVersion >= 2 &&
-        (requestedOffset < -366000 || requestedOffset > 366000))
+    if (requestedOffset < -366000 || requestedOffset > 366000)
     {
         return luaL_error(L,
             "calendar.addDays: offset must be between -366000 and 366000");
@@ -11175,24 +11093,17 @@ static int lua_DrawIcon(lua_State* L)
     if (!RequirePermission(L, "desktop.read")) return 0;
     auto* s = GetD2D(L);
     std::wstring path;
-    if (BoundWidgetApiVersion(L) >= 2)
+    std::size_t length = 0;
+    const char* raw = luaL_checklstring(L, 1, &length);
+    const std::string reference(raw ? raw : "", length);
+    if (reference.empty() || reference.size() > 128)
+        return luaL_error(L,
+            "draw.icon: reference must contain 1 to 128 bytes");
+    if (s && s->engine)
     {
-        std::size_t length = 0;
-        const char* raw = luaL_checklstring(L, 1, &length);
-        const std::string reference(raw ? raw : "", length);
-        if (reference.empty() || reference.size() > 128)
-            return luaL_error(L,
-                "draw.icon: reference must contain 1 to 128 bytes");
-        if (s && s->engine)
-        {
-            const auto resolved = s->engine->RuntimeResolveItemReference(
-                BoundWidgetId(L), BoundWidgetRuntimeToken(L), reference);
-            if (resolved) path = *resolved;
-        }
-    }
-    else
-    {
-        path = ReadLuaPathArg(L, 1);
+        const auto resolved = s->engine->RuntimeResolveItemReference(
+            BoundWidgetId(L), BoundWidgetRuntimeToken(L), reference);
+        if (resolved) path = *resolved;
     }
     float x = static_cast<float>(luaL_checknumber(L, 2));
     float y = static_cast<float>(luaL_checknumber(L, 3));
@@ -14695,81 +14606,45 @@ void WidgetEngine::ActivateWidgetState(const std::wstring& widgetId)
 
 void WidgetEngine::InvokeSimpleCallback(LuaWidget& widget, const char* callbackName)
 {
-    if (widget.manifest.apiVersion >= 2)
+    if (std::strcmp(callbackName, "onVisible") == 0 ||
+        std::strcmp(callbackName, "onHidden") == 0)
     {
-        if (std::strcmp(callbackName, "onVisible") == 0 ||
-            std::strcmp(callbackName, "onHidden") == 0)
-        {
-            const bool visible = std::strcmp(
-                callbackName, "onVisible") == 0;
-            (void)InvokeLifecycleEvent(widget, "visibility",
-                [visible](lua_State* state) {
-                    lua_pushboolean(state, visible ? 1 : 0);
-                    lua_setfield(state, -2, "visible");
-                });
-        }
-        else if (std::strcmp(callbackName, "onOpen") == 0)
-        {
-            (void)InvokeLifecycleEvent(widget, "action",
-                [](lua_State* state) {
-                    lua_pushliteral(state, "open");
-                    lua_setfield(state, -2, "id");
-                });
-        }
-        else if (std::strcmp(callbackName, "onSelected") == 0)
-        {
-            (void)InvokeLifecycleEvent(widget, "selection",
-                [](lua_State* state) {
-                    lua_pushboolean(state, 1);
-                    lua_setfield(state, -2, "selected");
-                });
-        }
-        else if (std::strcmp(callbackName, "onLanguageChanged") == 0)
-        {
-            (void)InvokeLifecycleEvent(widget, "environment",
-                [](lua_State* state) {
-                    lua_pushliteral(state, "language");
-                    lua_setfield(state, -2, "reason");
-                });
-        }
-        return;
+        const bool visible = std::strcmp(
+            callbackName, "onVisible") == 0;
+        (void)InvokeLifecycleEvent(widget, "visibility",
+            [visible](lua_State* state) {
+                lua_pushboolean(state, visible ? 1 : 0);
+                lua_setfield(state, -2, "visible");
+            });
     }
-    lua_State* state = widget.state;
-    if (!state) return;
-    const std::wstring widgetId = widget.widgetId;
-    const int widgetRef = widget.ref;
-    const RECT bounds = widget.lastBounds;
-    WidgetExecutionContextGuard contextGuard(d2dState_, widgetId);
-    snowdesktop::lua_runtime::StackGuard stackGuard(state);
-    SetWidgetRectContext(d2dState_, bounds);
-    lua_rawgeti(state, LUA_REGISTRYINDEX, widgetRef);
-    if (!lua_istable(state, -1)) { lua_pop(state, 1); return; }
-    lua_getfield(state, -1, callbackName);
-    bool stateChanged = false;
-    if (lua_isfunction(state, -1))
+    else if (std::strcmp(callbackName, "onOpen") == 0)
     {
-        if (snowdesktop::lua_runtime::ProtectedCall(state, 0, 0) != LUA_OK)
-        {
-            const char* error = lua_tostring(state, -1);
-            RuntimeRecordError(widgetId, error ? error : "(callback error)");
-            lua_pop(state, 1);
-        }
-        else
-        {
-            stateChanged = snowdesktop::widget_api::
-                ConsumeTransientStateDirty(state);
-        }
+        (void)InvokeLifecycleEvent(widget, "action",
+            [](lua_State* state) {
+                lua_pushliteral(state, "open");
+                lua_setfield(state, -2, "id");
+            });
     }
-    else
-        lua_pop(state, 1);
-    lua_pop(state, 1);
-    if (stateChanged)
-        RuntimeInvalidateHost(widgetId);
+    else if (std::strcmp(callbackName, "onSelected") == 0)
+    {
+        (void)InvokeLifecycleEvent(widget, "selection",
+            [](lua_State* state) {
+                lua_pushboolean(state, 1);
+                lua_setfield(state, -2, "selected");
+            });
+    }
+    else if (std::strcmp(callbackName, "onLanguageChanged") == 0)
+    {
+        (void)InvokeLifecycleEvent(widget, "environment",
+            [](lua_State* state) {
+                lua_pushliteral(state, "language");
+                lua_setfield(state, -2, "reason");
+            });
+    }
 }
 
 bool WidgetEngine::InitializeWidgetLifecycle(LuaWidget& widget)
 {
-    if (widget.manifest.apiVersion < 2) return true;
     lua_State* state = widget.state;
     if (!state) return false;
     PreviewExecutionScope previewScope(
@@ -14801,8 +14676,7 @@ bool WidgetEngine::InvokeLifecycleEvent(LuaWidget& widget,
     const char* kind,
     const std::function<void(lua_State*)>& pushFields)
 {
-    if (widget.manifest.apiVersion < 2 || !widget.state ||
-        !kind || !*kind)
+    if (!widget.state || !kind || !*kind)
         return false;
     PreviewExecutionScope previewScope(
         widget.preview ? &widget.previewStorage : nullptr);
@@ -14834,7 +14708,7 @@ bool WidgetEngine::InvokeLifecycleEvent(LuaWidget& widget,
 void WidgetEngine::DisposeWidgetLifecycle(
     LuaWidget& widget, const char* reason)
 {
-    if (widget.manifest.apiVersion < 2 || !widget.state) return;
+    if (!widget.state) return;
     PreviewExecutionScope previewScope(
         widget.preview ? &widget.previewStorage : nullptr);
     WidgetExecutionContextGuard contextGuard(d2dState_, widget.widgetId);
@@ -15039,13 +14913,8 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
             pending.manifest.schemaVersion,
             pending.manifest.apiVersion))
     {
-        const bool legacy = pending.manifest.schemaVersion ==
-                snowdesktop::widget::kLegacyPackageSchemaVersion &&
-            pending.manifest.apiVersion ==
-                snowdesktop::widget::kLegacyApiVersion;
-        RuntimeRecordError(widgetId, legacy
-            ? "Widget schema/API v1 is migration-only and cannot execute"
-            : "Widget schema/API contract is not supported by this host");
+        RuntimeRecordError(widgetId,
+            "Widget schema/API contract is not supported by this host");
         return false;
     }
     std::string source = ReadTextFile(path);
@@ -15189,8 +15058,6 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     luaL_requiref(state, LUA_MATHLIBNAME, luaopen_math, 1); lua_pop(state, 1);
     luaL_requiref(state, LUA_UTF8LIBNAME, luaopen_utf8, 1); lua_pop(state, 1);
     RegisterDrawAPI(state);
-    lua_pushinteger(state, pending.manifest.apiVersion);
-    lua_setfield(state, LUA_REGISTRYINDEX, "__widget_api_version");
     lua_pushlightuserdata(state, d2dState_);
     lua_setfield(state, LUA_REGISTRYINDEX, "__d2d_ptr");
     lua_pushlightuserdata(state, quota.get());
@@ -15361,8 +15228,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         scriptSettingGroups, scriptPresets);
     std::string settingsError;
     if (!ValidateEntityReferenceSettings(pending.manifest.settings,
-            scriptSettings, pending.manifest.apiVersion,
-            pending.manifest.logicalSlots, settingsError))
+            scriptSettings, pending.manifest.logicalSlots, settingsError))
     {
         RuntimeRecordError(widgetId, settingsError);
         RecordWidgetHostFailure(widgetId, settingsError, false);
@@ -15372,7 +15238,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     if (!ValidateSettingPresentation(
             pending.manifest.settings, scriptSettings,
             pending.manifest.settingGroups, scriptSettingGroups,
-            pending.manifest.apiVersion, settingsError))
+            settingsError))
     {
         RuntimeRecordError(widgetId, settingsError);
         RecordWidgetHostFailure(widgetId, settingsError, false);
@@ -15381,7 +15247,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     }
     if (!ValidateSettingConditionsAndConstraints(
             pending.manifest.settings, scriptSettings,
-            pending.manifest.apiVersion, settingsError))
+            settingsError))
     {
         RuntimeRecordError(widgetId, settingsError);
         RecordWidgetHostFailure(widgetId, settingsError, false);
@@ -15391,7 +15257,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     if (!ValidateOrdinaryDeclarativeSettings(
             pending.manifest.settings, scriptSettings,
             pending.manifest.presets, scriptPresets,
-            pending.manifest.apiVersion, settingsError))
+            settingsError))
     {
         RuntimeRecordError(widgetId, settingsError);
         RecordWidgetHostFailure(widgetId, settingsError, false);
@@ -15538,8 +15404,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     w.scriptPresets = std::move(scriptPresets);
     w.preview = preview;
     w.previewStorage = std::move(pending.previewStorage);
-    if (w.manifest.apiVersion >= 2 && !preview &&
-        !snowdesktop::widget_runtime::HasStorageOverlay())
+    if (!preview && !snowdesktop::widget_runtime::HasStorageOverlay())
     {
         bool removedPlaintextOpaqueSetting = false;
         const auto purgeOpaqueSettingValues = [&](const auto& settings) {
@@ -20208,42 +20073,15 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     {
         found->lastColumns = std::max(1, columns);
         found->lastRows = std::max(1, rows);
-        if (found->manifest.apiVersion >= 2)
-        {
-            const int currentColumns = found->lastColumns;
-            const int currentRows = found->lastRows;
-            (void)InvokeLifecycleEvent(*found, "resize",
-                [currentColumns, currentRows](lua_State* eventState) {
-                    lua_pushinteger(eventState, currentColumns);
-                    lua_setfield(eventState, -2, "columns");
-                    lua_pushinteger(eventState, currentRows);
-                    lua_setfield(eventState, -2, "rows");
-                });
-        }
-        else
-        {
-            lua_rawgeti(state, LUA_REGISTRYINDEX, found->ref);
-            if (lua_istable(state, -1))
-            {
-                lua_getfield(state, -1, "onSizeChanged");
-                if (lua_isfunction(state, -1))
-                {
-                    lua_pushinteger(state, found->lastColumns);
-                    lua_pushinteger(state, found->lastRows);
-                    if (snowdesktop::lua_runtime::ProtectedCall(
-                            state, 2, 0) != LUA_OK)
-                    {
-                        const char* error = lua_tostring(state, -1);
-                        RuntimeRecordError(widgetId,
-                            error ? error : "(onSizeChanged error)");
-                        lua_pop(state, 1);
-                    }
-                }
-                else
-                    lua_pop(state, 1);
-            }
-            lua_pop(state, 1);
-        }
+        const int currentColumns = found->lastColumns;
+        const int currentRows = found->lastRows;
+        (void)InvokeLifecycleEvent(*found, "resize",
+            [currentColumns, currentRows](lua_State* eventState) {
+                lua_pushinteger(eventState, currentColumns);
+                lua_setfield(eventState, -2, "columns");
+                lua_pushinteger(eventState, currentRows);
+                lua_setfield(eventState, -2, "rows");
+            });
     }
     const bool transitionFrameRequested =
         std::exchange(found->viewTransitionFramePending, false);
@@ -20251,7 +20089,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
         EqualRect(&previousBounds, &bounds) != FALSE &&
         previousColumns == columns && previousRows == rows;
     if (transitionFrameRequested && transitionGeometryUnchanged &&
-        found->manifest.apiVersion >= 2 && found->viewTree)
+        found->viewTree)
     {
         d2dState_->widgetClipDepth = 0;
         const bool transitionActive = DrawWidgetViewTree(
@@ -20278,15 +20116,13 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     std::erase_if(found->hostControls, [](const auto& control) {
         return HostControlBelongsToSurface(control, "desktop");
     });
-    if (found->manifest.apiVersion >= 2)
-        found->interactionRegions.BeginFrame();
+    found->interactionRegions.BeginFrame();
     d2dState_->widgetClipDepth = 0;
 
     lua_rawgeti(state, LUA_REGISTRYINDEX, found->ref);
     if (!lua_istable(state, -1))
     {
-        if (found->manifest.apiVersion >= 2)
-            found->interactionRegions.AbortFrame();
+        found->interactionRegions.AbortFrame();
         lua_pop(state, 1);
         return;
     }
@@ -20719,26 +20555,21 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     lua_getfield(state, -1, "render");
     if (lua_isfunction(state, -1))
     {
-        int argumentCount = 0;
-        if (found->manifest.apiVersion >= 2)
+        const auto pushContext = +[](lua_State* lifecycleState) {
+            (void)lua_WidgetContext(lifecycleState);
+        };
+        if (!found->lifecycle.PushRenderArguments(
+                state, pushContext))
         {
-            const auto pushContext = +[](lua_State* lifecycleState) {
-                (void)lua_WidgetContext(lifecycleState);
-            };
-            if (!found->lifecycle.PushRenderArguments(
-                    state, pushContext))
-            {
-                lua_pop(state, 2);
-                RuntimeRecordError(widgetId,
-                    "Widget lifecycle is not initialized");
-                found->interactionRegions.AbortFrame();
-                found->valid = false;
-                return;
-            }
-            argumentCount = 2;
+            lua_pop(state, 2);
+            RuntimeRecordError(widgetId,
+                "Widget lifecycle is not initialized");
+            found->interactionRegions.AbortFrame();
+            found->valid = false;
+            return;
         }
         if (snowdesktop::lua_runtime::ProtectedCall(
-                state, argumentCount, 0) != LUA_OK)
+                state, 2, 0) != LUA_OK)
         {
             const char* err = lua_tostring(state, -1);
             RuntimeRecordError(widgetId, err ? err : "(render error)");
@@ -20798,8 +20629,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
         if (snowdesktop::widget_api::ConsumeTransientStateDirty(state))
             RuntimeInvalidateHost(widgetId);
         if (const int currentIndex = FindWidget(widgetId);
-            currentIndex >= 0 &&
-            widgets_[currentIndex].manifest.apiVersion >= 2)
+            currentIndex >= 0)
         {
             auto& current = widgets_[currentIndex];
             const auto transition =
@@ -20821,8 +20651,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     }
     else
     {
-        if (found->manifest.apiVersion >= 2)
-            found->interactionRegions.AbortFrame();
+        found->interactionRegions.AbortFrame();
         lua_pop(state, 1);
     }
     while (d2dState_->widgetClipDepth > 0)
@@ -20830,8 +20659,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
         d2dState_->ctx->PopAxisAlignedClip();
         --d2dState_->widgetClipDepth;
     }
-    if (const int currentIndex = FindWidget(widgetId); currentIndex >= 0 &&
-        widgets_[currentIndex].manifest.apiVersion >= 2)
+    if (const int currentIndex = FindWidget(widgetId); currentIndex >= 0)
     {
         auto& current = widgets_[currentIndex];
         if (!RuntimeIsWidgetSelected(current.widgetId) ||
@@ -20871,7 +20699,7 @@ bool WidgetEngine::RenderWidgetPanel(
     const std::string callbackName =
         normalizedSurface == "dialog" ? "dialog" :
         normalizedSurface == "popover" ? "popover" :
-        widget.manifest.apiVersion >= 2 ? "panel" : "renderPanel";
+        "panel";
 
     WidgetExecutionContextGuard contextGuard(d2dState_, widgetId);
     WidgetSurfaceScope surfaceScope(
@@ -20893,7 +20721,7 @@ bool WidgetEngine::RenderWidgetPanel(
     if (transitionFrameRequested && panelWasActive &&
         EqualRect(&previousPanelBounds, &bounds) != FALSE &&
         previousPanelSurface == normalizedSurface &&
-        widget.manifest.apiVersion >= 2 && widget.panelViewTree)
+        widget.panelViewTree)
     {
         d2dState_->widgetClipDepth = 0;
         const bool transitionActive = DrawWidgetViewTree(
@@ -20931,8 +20759,7 @@ bool WidgetEngine::RenderWidgetPanel(
         return HostControlBelongsToSurface(
             control, normalizedSurface);
     });
-    if (widget.manifest.apiVersion >= 2)
-        widget.panelInteractionRegions.BeginFrame();
+    widget.panelInteractionRegions.BeginFrame();
     d2dState_->widgetClipDepth = 0;
 
     const auto restorePanelControls = [this, &widgetId,
@@ -20951,8 +20778,7 @@ bool WidgetEngine::RenderWidgetPanel(
     lua_rawgeti(state, LUA_REGISTRYINDEX, widget.ref);
     if (!lua_istable(state, -1))
     {
-        if (widget.manifest.apiVersion >= 2)
-            widget.panelInteractionRegions.AbortFrame();
+        widget.panelInteractionRegions.AbortFrame();
         restorePanelControls();
         lua_pop(state, 1);
         return false;
@@ -20960,41 +20786,32 @@ bool WidgetEngine::RenderWidgetPanel(
     lua_getfield(state, -1, callbackName.c_str());
     if (!lua_isfunction(state, -1))
     {
-        if (widget.manifest.apiVersion >= 2)
-            widget.panelInteractionRegions.AbortFrame();
+        widget.panelInteractionRegions.AbortFrame();
         restorePanelControls();
         lua_pop(state, 2);
         return false;
     }
-    int argumentCount = 0;
-    if (widget.manifest.apiVersion >= 2)
+    const auto pushContext = +[](lua_State* lifecycleState) {
+        (void)lua_WidgetContext(lifecycleState);
+    };
+    if (!widget.lifecycle.PushRenderArguments(state, pushContext))
     {
-        const auto pushContext = +[](lua_State* lifecycleState) {
-            (void)lua_WidgetContext(lifecycleState);
-        };
-        if (!widget.lifecycle.PushRenderArguments(state, pushContext))
-        {
-            widget.panelInteractionRegions.AbortFrame();
-            restorePanelControls();
-            lua_pop(state, 2);
-            RuntimeRecordError(widgetId, FormatViewValidationDiagnostic(
-                "view.lifecycle",
-                "Widget lifecycle is not initialized"));
-            return false;
-        }
-        argumentCount = 2;
+        widget.panelInteractionRegions.AbortFrame();
+        restorePanelControls();
+        lua_pop(state, 2);
+        RuntimeRecordError(widgetId, FormatViewValidationDiagnostic(
+            "view.lifecycle",
+            "Widget lifecycle is not initialized"));
+        return false;
     }
-    if (widget.manifest.apiVersion >= 2)
-        widget.panelFrameOpen = true;
+    widget.panelFrameOpen = true;
     const bool succeeded = snowdesktop::lua_runtime::ProtectedCall(
-        state, argumentCount,
-        widget.manifest.apiVersion >= 2 ? 1 : 0) == LUA_OK;
+        state, 2, 1) == LUA_OK;
     widget.panelFrameOpen = false;
     bool panelAccepted = succeeded;
     if (!succeeded)
     {
-        if (widget.manifest.apiVersion >= 2)
-            widget.panelInteractionRegions.AbortFrame();
+        widget.panelInteractionRegions.AbortFrame();
         restorePanelControls();
         const char* error = lua_tostring(state, -1);
         RuntimeRecordError(widgetId, FormatViewValidationDiagnostic(
@@ -21002,7 +20819,7 @@ bool WidgetEngine::RenderWidgetPanel(
                 : callbackName + " render error"));
         lua_pop(state, 1);
     }
-    else if (widget.manifest.apiVersion >= 2)
+    else
     {
         while (d2dState_->widgetClipDepth > 0)
         {
@@ -21255,11 +21072,7 @@ bool WidgetEngine::RenderWidgetPanel(
         if (snowdesktop::widget_api::ConsumeTransientStateDirty(state))
             RuntimeInvalidateHost(widgetId);
     }
-    else if (succeeded)
-    {
-        ResolveDeferredHostInputFocus(widgetId, normalizedSurface);
-    }
-    if (!panelAccepted && widget.manifest.apiVersion >= 2)
+    if (!panelAccepted)
     {
         const int currentIndex = FindWidget(widgetId);
         if (currentIndex >= 0)
@@ -21696,35 +21509,11 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
 
     if (timerId == widget.refreshTimerId)
     {
-        if (widget.manifest.apiVersion >= 2)
-        {
-            (void)InvokeLifecycleEvent(widget, "timer",
-                [](lua_State* eventState) {
-                    lua_pushliteral(eventState, "refresh");
-                    lua_setfield(eventState, -2, "name");
-                });
-            RuntimeInvalidateHost(activeWidgetId);
-            return;
-        }
-        lua_rawgeti(state, LUA_REGISTRYINDEX, widget.ref);
-        if (lua_istable(state, -1))
-        {
-            lua_getfield(state, -1, "onTimer");
-            if (lua_isfunction(state, -1))
-            {
-                lua_pushstring(state, "refresh");
-                if (snowdesktop::lua_runtime::ProtectedCall(state, 1, 0) != LUA_OK)
-                {
-                    const char* error = lua_tostring(state, -1);
-                    RuntimeRecordError(activeWidgetId, error ? error : "(onTimer refresh error)");
-                    lua_pop(state, 1);
-                }
-            }
-            else
-                lua_pop(state, 1);
-        }
-        lua_pop(state, 1);
-        (void)snowdesktop::widget_api::ConsumeTransientStateDirty(state);
+        (void)InvokeLifecycleEvent(widget, "timer",
+            [](lua_State* eventState) {
+                lua_pushliteral(eventState, "refresh");
+                lua_setfield(eventState, -2, "name");
+            });
         RuntimeInvalidateHost(activeWidgetId);
         return;
     }
@@ -21752,65 +21541,41 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
         if (!fire)
             continue;
 
-        if (widget.manifest.apiVersion >= 2)
-        {
-            (void)InvokeLifecycleEvent(widget, "schedule",
-                [&fire, wallNowMilliseconds](lua_State* eventState) {
-                    lua_pushlstring(eventState,
-                        fire->name.data(), fire->name.size());
-                    lua_setfield(eventState, -2, "id");
-                    lua_pushinteger(eventState,
-                        static_cast<lua_Integer>(wallNowMilliseconds));
-                    lua_setfield(eventState, -2, "now");
-                    lua_pushinteger(eventState,
-                        static_cast<lua_Integer>(fire->missed));
-                    lua_setfield(eventState, -2, "missed");
-                    lua_pushboolean(eventState,
-                        fire->coalesced ? 1 : 0);
-                    lua_setfield(eventState, -2, "coalesced");
-                    if (fire->timeline)
-                    {
-                        PushInteractionValue(eventState, fire->value);
-                        lua_setfield(eventState, -2, "value");
-                        lua_pushinteger(eventState,
-                            static_cast<lua_Integer>(
-                                fire->timelineIndex));
-                        lua_setfield(eventState, -2, "timelineIndex");
-                        lua_pushinteger(eventState,
-                            static_cast<lua_Integer>(
-                                fire->timelineCount));
-                        lua_setfield(eventState, -2, "timelineCount");
-                        lua_pushboolean(eventState,
-                            fire->timelineEnded ? 1 : 0);
-                        lua_setfield(eventState, -2, "timelineEnded");
-                        lua_pushboolean(eventState,
-                            fire->reload ? 1 : 0);
-                        lua_setfield(eventState, -2, "reload");
-                    }
-                });
-            invoked = true;
-            continue;
-        }
-
-        lua_rawgeti(state, LUA_REGISTRYINDEX, widget.ref);
-        if (lua_istable(state, -1))
-        {
-            lua_getfield(state, -1, "onTimer");
-            if (lua_isfunction(state, -1))
-            {
-                lua_pushstring(state, name.c_str());
-                if (snowdesktop::lua_runtime::ProtectedCall(state, 1, 0) != LUA_OK)
+        (void)InvokeLifecycleEvent(widget, "schedule",
+            [&fire, wallNowMilliseconds](lua_State* eventState) {
+                lua_pushlstring(eventState,
+                    fire->name.data(), fire->name.size());
+                lua_setfield(eventState, -2, "id");
+                lua_pushinteger(eventState,
+                    static_cast<lua_Integer>(wallNowMilliseconds));
+                lua_setfield(eventState, -2, "now");
+                lua_pushinteger(eventState,
+                    static_cast<lua_Integer>(fire->missed));
+                lua_setfield(eventState, -2, "missed");
+                lua_pushboolean(eventState,
+                    fire->coalesced ? 1 : 0);
+                lua_setfield(eventState, -2, "coalesced");
+                if (fire->timeline)
                 {
-                    const char* error = lua_tostring(state, -1);
-                    RuntimeRecordError(activeWidgetId, error ? error : "(onTimer error)");
-                    lua_pop(state, 1);
+                    PushInteractionValue(eventState, fire->value);
+                    lua_setfield(eventState, -2, "value");
+                    lua_pushinteger(eventState,
+                        static_cast<lua_Integer>(
+                            fire->timelineIndex));
+                    lua_setfield(eventState, -2, "timelineIndex");
+                    lua_pushinteger(eventState,
+                        static_cast<lua_Integer>(
+                            fire->timelineCount));
+                    lua_setfield(eventState, -2, "timelineCount");
+                    lua_pushboolean(eventState,
+                        fire->timelineEnded ? 1 : 0);
+                    lua_setfield(eventState, -2, "timelineEnded");
+                    lua_pushboolean(eventState,
+                        fire->reload ? 1 : 0);
+                    lua_setfield(eventState, -2, "reload");
                 }
-                invoked = true;
-            }
-            else
-                lua_pop(state, 1);
-        }
-        lua_pop(state, 1);
+            });
+        invoked = true;
     }
 
     RescheduleNamedTimer(widget);
@@ -21863,9 +21628,7 @@ void WidgetEngine::InvokeMouseEvent(const std::wstring& widgetId, const char* ca
         IsTrustedWidgetGestureCallback(callbackName);
     snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(
         trustedGestureState_, trustedGesture);
-    if (w.manifest.apiVersion >= 2)
-    {
-        const std::string eventSurface =
+    const std::string eventSurface =
             std::strstr(callbackName, "Dialog") != nullptr
                 ? "dialog"
                 : (std::strstr(callbackName, "Popover") != nullptr
@@ -22041,41 +21804,13 @@ void WidgetEngine::InvokeMouseEvent(const std::wstring& widgetId, const char* ca
                     lua_setfield(eventState, -2, "trustedGesture");
                 });
         }
-        return;
-    }
-    const int widgetRef = w.ref;
-    const RECT bounds = w.lastBounds;
-    WidgetExecutionContextGuard contextGuard(d2dState_, widgetId);
-    snowdesktop::lua_runtime::StackGuard stackGuard(state);
-    SetWidgetRectContext(d2dState_, bounds);
-    lua_rawgeti(state, LUA_REGISTRYINDEX, widgetRef);
-    if (!lua_istable(state, -1)) { lua_pop(state, 1); return; }
-    lua_getfield(state, -1, callbackName);
-    if (lua_isfunction(state, -1))
-    {
-        lua_pushinteger(state, x);
-        lua_pushinteger(state, y);
-        lua_pushinteger(state, button);
-        lua_pushinteger(state, delta);
-        if (snowdesktop::lua_runtime::ProtectedCall(state, 4, 0) != LUA_OK)
-        {
-            const char* err = lua_tostring(state, -1);
-            RuntimeRecordError(widgetId, err ? err : "(mouse callback error)");
-            lua_pop(state, 1);
-        }
-    }
-    else
-    {
-        lua_pop(state, 1);
-    }
-    lua_pop(state, 1);
 }
 
 bool WidgetEngine::HasInteractionPointerCapture(
     const std::wstring& widgetId, std::string_view surface) const
 {
     const int index = FindWidget(widgetId);
-    return index >= 0 && widgets_[index].manifest.apiVersion >= 2 &&
+    return index >= 0 &&
         InteractionRegionsForSurface(widgets_[index], surface).
             HasPointerCapture();
 }
@@ -22088,7 +21823,6 @@ void WidgetEngine::CancelInteractionPointerPress(std::string_view surface)
         hostScrollbarDrag_ = {};
     for (auto& widget : widgets_)
     {
-        if (widget.manifest.apiVersion < 2) continue;
         bool changed = false;
         if (surface.empty())
         {
@@ -22120,9 +21854,7 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
     const std::string normalizedSurface =
         NormalizeWidgetSurface(surface);
 
-    if (w.manifest.apiVersion >= 2)
-    {
-        auto& interactionRegions =
+    auto& interactionRegions =
             InteractionRegionsForSurface(w, surface);
         std::string targetKey;
         const auto* requestActionPointer =
@@ -22307,7 +22039,6 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
                             "Widget menu leaf IDs must be unique and contain 1..128 UTF-8 bytes";
                         return false;
                     }
-                    item.v2Action = true;
                     item.elementContext =
                         requestAction.contextMenuScope ==
                         snowdesktop::widget_runtime::InteractionAction::
@@ -22329,120 +22060,18 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
         }
         if (snowdesktop::widget_api::ConsumeTransientStateDirty(state))
             RuntimeInvalidateHost(widgetId);
-        return result;
-    }
-
-    if (!RuntimeHasPermission(widgetId, "ui.contextMenu"))
-        return result;
-    WidgetExecutionContextGuard contextGuard(d2dState_, widgetId);
-    WidgetSurfaceScope surfaceScope(d2dState_,
-        normalizedSurface.c_str());
-    snowdesktop::lua_runtime::StackGuard stackGuard(state);
-    SetWidgetRectContext(d2dState_, BoundsForSurface(w, surface));
-    lua_rawgeti(state, LUA_REGISTRYINDEX, w.ref);
-    if (!lua_istable(state, -1)) { lua_pop(state, 1); return result; }
-    lua_getfield(state, -1, "getContextMenu");
-    if (lua_isfunction(state, -1))
-    {
-        if (snowdesktop::lua_runtime::ProtectedCall(state, 0, 1) == LUA_OK && lua_istable(state, -1))
-        {
-            int count = static_cast<int>(lua_rawlen(state, -1));
-            for (int i = 1; i <= count; ++i)
-            {
-                lua_rawgeti(state, -1, i);
-                if (lua_istable(state, -1))
-                {
-                    LuaWidgetMenuItem item;
-                    lua_getfield(state, -1, "id");
-                    item.id = lua_isinteger(state, -1) ? static_cast<int>(lua_tointeger(state, -1)) : i;
-                    lua_pop(state, 1);
-                    lua_getfield(state, -1, "label");
-                    item.label = lua_isstring(state, -1) ? lua_tostring(state, -1) : "";
-                    lua_pop(state, 1);
-                    lua_getfield(state, -1, "icon");
-                    item.icon = lua_isstring(state, -1) ? lua_tostring(state, -1) : "";
-                    lua_pop(state, 1);
-                    lua_getfield(state, -1, "iconFont");
-                    item.iconFont = lua_isstring(state, -1)
-                        ? lua_tostring(state, -1) : "fa";
-                    lua_pop(state, 1);
-                    lua_getfield(state, -1, "enabled");
-                    item.enabled = lua_isnil(state, -1) ? true : (lua_toboolean(state, -1) != 0);
-                    lua_pop(state, 1);
-                    lua_getfield(state, -1, "separator");
-                    item.separator = lua_toboolean(state, -1) != 0;
-                    lua_pop(state, 1);
-                    if (item.separator || !item.label.empty())
-                        result.push_back(std::move(item));
-                }
-                lua_pop(state, 1);
-            }
-            lua_pop(state, 1);
-        }
-        else
-        {
-            const char* err = lua_tostring(state, -1);
-            if (err)
-                RuntimeRecordError(widgetId, err);
-            lua_pop(state, 1);
-        }
-    }
-    else
-    {
-        lua_pop(state, 1);
-    }
-    lua_pop(state, 1);
     return result;
-}
-
-void WidgetEngine::InvokeMenu(const std::wstring& widgetId, int menuId)
-{
-    if (!RuntimeHasPermission(widgetId, "ui.contextMenu"))
-        return;
-    int idx = FindWidget(widgetId);
-    if (idx < 0) return;
-    auto& w = widgets_[idx];
-    lua_State* state = w.state;
-    if (!state) return;
-    snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(
-        trustedGestureState_, true);
-    WidgetExecutionContextGuard contextGuard(d2dState_, widgetId);
-    snowdesktop::lua_runtime::StackGuard stackGuard(state);
-    SetWidgetRectContext(d2dState_, w.lastBounds);
-    lua_rawgeti(state, LUA_REGISTRYINDEX, w.ref);
-    if (!lua_istable(state, -1)) { lua_pop(state, 1); return; }
-    lua_getfield(state, -1, "onMenu");
-    if (lua_isfunction(state, -1))
-    {
-        lua_pushinteger(state, menuId);
-        if (snowdesktop::lua_runtime::ProtectedCall(state, 1, 0) != LUA_OK)
-        {
-            const char* err = lua_tostring(state, -1);
-            RuntimeRecordError(widgetId, err ? err : "(onMenu error)");
-            lua_pop(state, 1);
-        }
-    }
-    else
-    {
-        lua_pop(state, 1);
-    }
-    lua_pop(state, 1);
 }
 
 void WidgetEngine::InvokeMenu(const std::wstring& widgetId,
     const LuaWidgetMenuItem& menuItem)
 {
-    if (!menuItem.v2Action)
-    {
-        InvokeMenu(widgetId, menuItem.id);
-        return;
-    }
     const int index = FindWidget(widgetId);
     if (index < 0) return;
     auto& widget = widgets_[index];
     auto& interactionRegions = InteractionRegionsForSurface(
         widget, menuItem.surface);
-    if (widget.manifest.apiVersion < 2 || menuItem.actionId.empty() ||
+    if (menuItem.actionId.empty() ||
         interactionRegions.Generation() !=
             menuItem.interactionGeneration ||
         !interactionRegions.Find(menuItem.targetKey))
@@ -23765,21 +23394,13 @@ void WidgetEngine::NotifyCalendarChanged(
     for (const auto& widget : widgets_)
     {
         if (!widget.valid || widget.preview) continue;
-        if (widget.manifest.apiVersion >= 2)
-        {
-            const bool subscribed = std::any_of(
-                widget.dataSubscriptions.begin(),
-                widget.dataSubscriptions.end(),
-                [&topic](const auto& entry) {
-                    return entry.second == topic;
-                });
-            if (!subscribed) continue;
-        }
-        else if (!RuntimeHasPermission(
-                widget.widgetId, "calendar.read"))
-        {
-            continue;
-        }
+        const bool subscribed = std::any_of(
+            widget.dataSubscriptions.begin(),
+            widget.dataSubscriptions.end(),
+            [&topic](const auto& entry) {
+                return entry.second == topic;
+            });
+        if (!subscribed) continue;
         targets.push_back(widget.widgetId);
     }
     for (const auto& widgetId : targets)
@@ -23787,56 +23408,14 @@ void WidgetEngine::NotifyCalendarChanged(
         const int index = FindWidget(widgetId);
         if (index < 0) continue;
         LuaWidget& widget = widgets_[index];
-        if (widget.manifest.apiVersion >= 2)
-        {
-            (void)InvokeLifecycleEvent(widget, "data.change",
-                [&topic, revision](lua_State* eventState) {
-                    lua_pushlstring(eventState, topic.data(), topic.size());
-                    lua_setfield(eventState, -2, "topic");
-                    lua_pushinteger(eventState,
-                        static_cast<lua_Integer>(revision));
-                    lua_setfield(eventState, -2, "revision");
-                });
-            RuntimeInvalidateHost(widgetId);
-            continue;
-        }
-
-        lua_State* state = widget.state;
-        if (!state) continue;
-        const int widgetRef = widget.ref;
-        const RECT bounds = widget.lastBounds;
-        WidgetExecutionContextGuard contextGuard(
-            d2dState_, widgetId);
-        snowdesktop::lua_runtime::StackGuard stackGuard(state);
-        SetWidgetRectContext(d2dState_, bounds);
-        lua_rawgeti(state, LUA_REGISTRYINDEX, widgetRef);
-        if (!lua_istable(state, -1))
-        {
-            lua_pop(state, 1);
-            continue;
-        }
-        lua_getfield(state, -1, "onCalendarChanged");
-        if (lua_isfunction(state, -1))
-        {
-            lua_pushlstring(
-                state, reason.data(), reason.size());
-            if (snowdesktop::lua_runtime::ProtectedCall(state, 1, 0) != LUA_OK)
-            {
-                const char* error =
-                    lua_tostring(state, -1);
-                RuntimeRecordError(
-                    widgetId,
-                    error
-                        ? error
-                        : "(onCalendarChanged error)");
-                lua_pop(state, 1);
-            }
-        }
-        else
-        {
-            lua_pop(state, 1);
-        }
-        lua_pop(state, 1);
+        (void)InvokeLifecycleEvent(widget, "data.change",
+            [&topic, revision](lua_State* eventState) {
+                lua_pushlstring(eventState, topic.data(), topic.size());
+                lua_setfield(eventState, -2, "topic");
+                lua_pushinteger(eventState,
+                    static_cast<lua_Integer>(revision));
+                lua_setfield(eventState, -2, "revision");
+            });
         RuntimeInvalidateHost(widgetId);
     }
 }
@@ -24043,7 +23622,7 @@ WidgetEngine::RuntimeLogicalSlotSurface(const std::wstring& widgetId,
             return candidate.widgetId == widgetId;
         });
     if (widget == widgets_.end() || widget->preview || !widget->valid ||
-        widget->manifest.apiVersion < 2 || !widget->viewTree)
+        !widget->viewTree)
         return std::nullopt;
 
     const auto declaration = widget->logicalSlots.Declarations().find(slotId);
@@ -24179,8 +23758,7 @@ bool WidgetEngine::RuntimeBindHostLogicalSlot(
         [&widgetId](const LuaWidget& candidateWidget) {
             return candidateWidget.widgetId == widgetId;
         });
-    if (widget == widgets_.end() || widget->preview || !widget->valid ||
-        widget->manifest.apiVersion < 2)
+    if (widget == widgets_.end() || widget->preview || !widget->valid)
     {
         error = "logical slot host owner is unavailable";
         return false;
@@ -24351,8 +23929,7 @@ void WidgetEngine::RefreshLogicalSlotAvailability()
         widgetIndex < widgets_.size(); ++widgetIndex)
     {
         auto& widget = widgets_[widgetIndex];
-        if (!widget.valid || widget.preview ||
-            widget.manifest.apiVersion < 2)
+        if (!widget.valid || widget.preview)
             continue;
 
         ChangedWidget changed;
@@ -24465,8 +24042,7 @@ bool WidgetEngine::RuntimeRemoveHostLogicalSlotItem(
         [&widgetId](const LuaWidget& candidate) {
             return candidate.widgetId == widgetId;
         });
-    if (widget == widgets_.end() || widget->preview || !widget->valid ||
-        widget->manifest.apiVersion < 2)
+    if (widget == widgets_.end() || widget->preview || !widget->valid)
     {
         error = "logical slot host owner is unavailable";
         return false;
@@ -24513,8 +24089,7 @@ bool WidgetEngine::RuntimeMoveHostLogicalSlotItem(
         [&widgetId](const LuaWidget& candidate) {
             return candidate.widgetId == widgetId;
         });
-    if (widget == widgets_.end() || widget->preview || !widget->valid ||
-        widget->manifest.apiVersion < 2)
+    if (widget == widgets_.end() || widget->preview || !widget->valid)
     {
         error = "logical slot host owner is unavailable";
         return false;
@@ -24545,8 +24120,7 @@ bool WidgetEngine::RuntimeTransferHostLogicalSlotItem(
         [&widgetId](const LuaWidget& candidate) {
             return candidate.widgetId == widgetId;
         });
-    if (widget == widgets_.end() || widget->preview || !widget->valid ||
-        widget->manifest.apiVersion < 2)
+    if (widget == widgets_.end() || widget->preview || !widget->valid)
     {
         error = "logical slot host owner is unavailable";
         return false;
@@ -24798,7 +24372,6 @@ bool WidgetEngine::RuntimeCanUndoHostLogicalSlot(
             return candidate.widgetId == widgetId;
         });
     return widget != widgets_.end() && !widget->preview && widget->valid &&
-        widget->manifest.apiVersion >= 2 &&
         widget->logicalSlotHistory.CanUndo();
 }
 
@@ -24810,7 +24383,6 @@ bool WidgetEngine::RuntimeCanRedoHostLogicalSlot(
             return candidate.widgetId == widgetId;
         });
     return widget != widgets_.end() && !widget->preview && widget->valid &&
-        widget->manifest.apiVersion >= 2 &&
         widget->logicalSlotHistory.CanRedo();
 }
 
@@ -24902,8 +24474,7 @@ bool WidgetEngine::RuntimeUndoHostLogicalSlot(
         [&widgetId](const LuaWidget& candidate) {
             return candidate.widgetId == widgetId;
         });
-    if (widget == widgets_.end() || widget->preview || !widget->valid ||
-        widget->manifest.apiVersion < 2)
+    if (widget == widgets_.end() || widget->preview || !widget->valid)
     {
         error = "logical slot host owner is unavailable";
         return false;
@@ -24924,8 +24495,7 @@ bool WidgetEngine::RuntimeRedoHostLogicalSlot(
         [&widgetId](const LuaWidget& candidate) {
             return candidate.widgetId == widgetId;
         });
-    if (widget == widgets_.end() || widget->preview || !widget->valid ||
-        widget->manifest.apiVersion < 2)
+    if (widget == widgets_.end() || widget->preview || !widget->valid)
     {
         error = "logical slot host owner is unavailable";
         return false;
@@ -24963,7 +24533,7 @@ bool WidgetEngine::RuntimeSubmitInteractionRegion(
     std::string& error)
 {
     const int index = FindWidget(widgetId);
-    if (index < 0 || widgets_[index].manifest.apiVersion < 2)
+    if (index < 0)
     {
         error = "interaction regions require API v2";
         return false;
@@ -25427,7 +24997,6 @@ void WidgetEngine::UpdateInteractionHover(
 {
     for (auto& widget : widgets_)
     {
-        if (widget.manifest.apiVersion < 2) continue;
         auto& interactionRegions =
             InteractionRegionsForSurface(widget, surface);
         const auto transition = widget.widgetId == widgetId
@@ -25449,7 +25018,6 @@ void WidgetEngine::ClearInteractionHover(std::string_view surface)
 {
     for (auto& widget : widgets_)
     {
-        if (widget.manifest.apiVersion < 2) continue;
         const auto clearSurface = [&](std::string_view targetSurface) {
             auto& regions = InteractionRegionsForSurface(
                 widget, targetSurface);
@@ -25489,7 +25057,7 @@ bool WidgetEngine::RuntimeCanWriteWidgetStorage(
     const std::wstring& widgetId) const
 {
     const int index = FindWidget(widgetId);
-    return index < 0 || widgets_[index].manifest.apiVersion < 2 ||
+    return index < 0 ||
         (!widgets_[index].interactionRegions.FrameOpen() &&
             !widgets_[index].panelFrameOpen);
 }
@@ -25500,7 +25068,7 @@ bool WidgetEngine::RuntimeGetFilesystemSettingHandle(
 {
     handle.clear();
     const int index = FindWidget(widgetId);
-    if (index < 0 || widgets_[index].manifest.apiVersion < 2)
+    if (index < 0)
         return false;
     const LuaWidget& widget = widgets_[index];
     const LuaWidgetManifest::Setting* declared = nullptr;
@@ -25625,7 +25193,7 @@ bool WidgetEngine::RuntimeGetTypedSettingDefault(
 {
     using Value = snowdesktop::widget_runtime::InteractionValue;
     const int index = FindWidget(widgetId);
-    if (index < 0 || widgets_[index].manifest.apiVersion < 2)
+    if (index < 0)
         return false;
     const LuaWidget& widget = widgets_[index];
     const LuaWidgetManifest::Setting* declared = nullptr;
@@ -25731,7 +25299,7 @@ bool WidgetEngine::RuntimeGetSecretReference(
 {
     reference.clear();
     const int index = FindWidget(widgetId);
-    if (index < 0 || widgets_[index].manifest.apiVersion < 2)
+    if (index < 0)
         return false;
     const LuaWidget& widget = widgets_[index];
     const auto declaresPassword = [&](const auto& settings) {
@@ -25755,7 +25323,7 @@ bool WidgetEngine::RuntimeIsEntityReferenceSetting(
     const std::wstring& widgetId, const std::string& key) const
 {
     const int index = FindWidget(widgetId);
-    if (index < 0 || widgets_[index].manifest.apiVersion < 2)
+    if (index < 0)
         return false;
     const LuaWidget& widget = widgets_[index];
     const auto declaresReference = [&](const auto& settings) {
@@ -25774,8 +25342,7 @@ std::vector<std::string> WidgetEngine::RuntimeSecretStorageKeys(
 {
     std::vector<std::string> result;
     const int index = FindWidget(widgetId);
-    if (index < 0 || widgets_[index].preview || !secretStore_ ||
-        widgets_[index].manifest.apiVersion < 2)
+    if (index < 0 || widgets_[index].preview || !secretStore_)
         return result;
     const LuaWidget& widget = widgets_[index];
     const std::string instanceId = WidgetWideToUtf8(widgetId);
@@ -26265,8 +25832,6 @@ std::string WidgetEngine::RuntimeRequestAnimationFrame(
     if (index < 0 || !widgets_[index].state)
         return "hostUnavailable";
     LuaWidget& widget = widgets_[index];
-    if (widget.manifest.apiVersion < 2)
-        return "apiVersion";
     if (widget.preview)
         return "previewUnavailable";
     if (!widget.hostVisible)
@@ -26561,11 +26126,6 @@ bool WidgetEngine::RuntimeRegisterV2HostControl(
     control.surface = surface;
     auto& interactionRegions =
         InteractionRegionsForSurface(widget, surface);
-    if (widget.manifest.apiVersion < 2)
-    {
-        error = "host text controls require API v2";
-        return false;
-    }
     if (!interactionRegions.FrameOpen() && !widget.panelFrameOpen)
     {
         error = "host text controls may only be submitted during render or panel";
@@ -28078,8 +27638,7 @@ WidgetEngine::RuntimeAccessibilitySnapshots() const
     std::vector<LuaWidgetAccessibilitySnapshot> result;
     for (const auto& widget : widgets_)
     {
-        if (!widget.valid || widget.preview || !widget.hostVisible ||
-            widget.manifest.apiVersion < 2)
+        if (!widget.valid || widget.preview || !widget.hostVisible)
             continue;
         LuaWidgetAccessibilitySnapshot snapshot;
         snapshot.widgetId = widget.widgetId;
@@ -28155,7 +27714,6 @@ bool WidgetEngine::RuntimeSetAccessibilityFocus(
     if (index < 0 || !RuntimeIsWidgetSelected(widgetId)) return false;
     auto& widget = widgets_[index];
     if (!widget.valid || widget.preview || !widget.hostVisible ||
-        widget.manifest.apiVersion < 2 ||
         !widget.interactionRegions.IsKeyboardFocusable(nodeKey))
         return false;
 
@@ -28271,7 +27829,7 @@ bool WidgetEngine::RuntimePerformAccessibilityAction(
         return false;
     auto& widget = widgets_[index];
     if (!widget.valid || widget.preview || !widget.hostVisible ||
-        widget.manifest.apiVersion < 2 || request.nodeKey.empty())
+        request.nodeKey.empty())
         return false;
 
     const auto setHostValue = [&](std::wstring value) {
@@ -31429,29 +30987,6 @@ bool WidgetEngine::IsWidgetPackageInstalled(const std::wstring& packageId)
         GetWidgetPackageManager().ContainsPackage(requestedId);
 }
 
-std::vector<snowdesktop::widget::LegacyPackage>
-WidgetEngine::ListLegacyWidgetPackages()
-{
-    return GetWidgetPackageManager().FindLegacyPackages();
-}
-
-std::optional<std::wstring> WidgetEngine::ResolveLegacyWidgetPackage(
-    const std::wstring& legacyName)
-{
-    const auto packageId =
-        GetWidgetPackageManager().ResolveLegacyPackageId(legacyName);
-    return packageId
-        ? std::optional<std::wstring>(Utf8ToWideLocal(*packageId))
-        : std::nullopt;
-}
-
-snowdesktop::widget::LegacyMigrationResult
-WidgetEngine::MigrateLegacyWidgetPackage(
-    const snowdesktop::widget::LegacyPackage& legacy)
-{
-    return GetWidgetPackageManager().MigrateLegacy(legacy);
-}
-
 bool WidgetEngine::SetWidgetPackageEnabled(const std::string& packageId,
     bool enabled, std::string& error)
 {
@@ -32060,12 +31595,6 @@ static bool ReadTypedStorageValue(lua_State* state, int index,
 {
     typed = false;
     error.clear();
-    if (BoundWidgetApiVersion(state) < 2)
-    {
-        encoded = ReadExactStorageString(
-            state, index, "storage.set", "value");
-        return true;
-    }
     if (lua_type(state, index) == LUA_TSTRING)
     {
         encoded = ReadExactStorageString(
@@ -32127,7 +31656,6 @@ static bool IsReservedStorageTransactionKey(const std::string& key)
 static bool BoundSecretSetting(lua_State* state, const std::string& key,
     std::string* reference = nullptr)
 {
-    if (BoundWidgetApiVersion(state) < 2) return false;
     auto* d2d = GetD2D(state);
     std::string value;
     const bool secret = d2d && d2d->engine &&
@@ -32140,7 +31668,6 @@ static bool BoundSecretSetting(lua_State* state, const std::string& key,
 static bool BoundFilesystemHandleSetting(lua_State* state,
     const std::string& key, std::string* handle = nullptr)
 {
-    if (BoundWidgetApiVersion(state) < 2) return false;
     auto* d2d = GetD2D(state);
     std::string value;
     const bool declared = d2d && d2d->engine &&
@@ -32153,7 +31680,6 @@ static bool BoundFilesystemHandleSetting(lua_State* state,
 static bool BoundEntityReferenceSetting(lua_State* state,
     const std::string& key)
 {
-    if (BoundWidgetApiVersion(state) < 2) return false;
     auto* d2d = GetD2D(state);
     return d2d && d2d->engine &&
         d2d->engine->RuntimeIsEntityReferenceSetting(
@@ -32314,8 +31840,7 @@ static void PushStorageTransactionHandle(lua_State* state,
 static int RejectStorageAccessInsideTransaction(lua_State* state,
     const char* api)
 {
-    if (BoundWidgetApiVersion(state) >= 2 &&
-        ActiveLuaStorageTransaction(state))
+    if (ActiveLuaStorageTransaction(state))
     {
         return luaL_error(state,
             "%s cannot be used inside storage.transaction; use tx instead",
@@ -32327,7 +31852,6 @@ static int RejectStorageAccessInsideTransaction(lua_State* state,
 static int RejectStorageWriteDuringRender(lua_State* state,
     const char* api)
 {
-    if (BoundWidgetApiVersion(state) < 2) return 0;
     auto* d2d = GetD2D(state);
     if (d2d && d2d->engine &&
         !d2d->engine->RuntimeCanWriteWidgetStorage(
@@ -32481,16 +32005,6 @@ static int lua_StorageSet(lua_State* L)
             L, key, "storage.set"))
         return rejected;
     const std::string prefix = BoundStoragePrefix(L);
-    if (BoundWidgetApiVersion(L) < 2)
-    {
-        if (!StorageWriteWithinQuota(prefix, key, value))
-            return luaL_error(L, "widget storage quota exceeded");
-        ActiveStorage()[prefix + "." + key] = value;
-        if (!snowdesktop::widget_runtime::HasStorageOverlay())
-            SaveStorageFile();
-        return 0;
-    }
-
     auto& storage = ActiveStorage();
     snowdesktop::widget_runtime::WidgetStorageTransaction transaction(
         storage, prefix);
@@ -32767,13 +32281,6 @@ static int lua_StorageRemove(lua_State* L)
             L, key, "storage.remove"))
         return rejected;
     const std::string prefix = BoundStoragePrefix(L);
-    if (BoundWidgetApiVersion(L) < 2)
-    {
-        ActiveStorage().erase(prefix + "." + key);
-        if (!snowdesktop::widget_runtime::HasStorageOverlay())
-            SaveStorageFile();
-        return 0;
-    }
     auto& storage = ActiveStorage();
     snowdesktop::widget_runtime::WidgetStorageTransaction transaction(
         storage, prefix);
@@ -33324,19 +32831,16 @@ static void PushWidgetL10nAPI(lua_State* L, const LuaWidgetManifest& manifest)
     lua_pushcfunction(L, lua_L10nLanguage);
     lua_setfield(L, -2, "language");
 
-    if (manifest.apiVersion >= 2)
-    {
-        lua_pushcfunction(L, lua_L10nFormatNumber);
-        lua_setfield(L, -2, "formatNumber");
-        lua_pushcfunction(L, lua_L10nFormatBytes);
-        lua_setfield(L, -2, "formatBytes");
-        lua_pushcfunction(L, lua_L10nFormatDuration);
-        lua_setfield(L, -2, "formatDuration");
-        lua_pushcfunction(L, lua_L10nFormatRelativeTime);
-        lua_setfield(L, -2, "formatRelativeTime");
-        lua_pushcfunction(L, lua_L10nFormatList);
-        lua_setfield(L, -2, "formatList");
-    }
+    lua_pushcfunction(L, lua_L10nFormatNumber);
+    lua_setfield(L, -2, "formatNumber");
+    lua_pushcfunction(L, lua_L10nFormatBytes);
+    lua_setfield(L, -2, "formatBytes");
+    lua_pushcfunction(L, lua_L10nFormatDuration);
+    lua_setfield(L, -2, "formatDuration");
+    lua_pushcfunction(L, lua_L10nFormatRelativeTime);
+    lua_setfield(L, -2, "formatRelativeTime");
+    lua_pushcfunction(L, lua_L10nFormatList);
+    lua_setfield(L, -2, "formatList");
 }
 
 void WidgetEngine::RegisterDrawAPI(lua_State* L)

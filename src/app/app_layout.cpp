@@ -294,9 +294,6 @@ void DesktopApp::LoadLayoutSlots()
         const std::string titleModeUtf8 = saved.titleMode.value_or("");
         const bool hasUserRenamed = saved.userRenamed.has_value();
         const bool userRenamed = saved.userRenamed.value_or(false);
-        const std::string scriptUtf8 = !saved.scriptPath.empty()
-            ? saved.scriptPath : saved.legacyScriptPath;
-
         DesktopWidget widget;
         widget.id = Utf8ToWide(saved.id);
         widget.type = WidgetTypeFromJson(Utf8ToWide(saved.type));
@@ -309,20 +306,6 @@ void DesktopApp::LoadLayoutSlots()
         widget.packageSourceExternalItemId = Utf8ToWide(
             saved.packageSourceExternalItemId);
         widget.packageSourceUrl = Utf8ToWide(saved.packageSourceUrl);
-        if (widget.packageId.empty())
-            widget.legacyScriptPath = Utf8ToWide(scriptUtf8);
-        if (widget.packageId.empty() &&
-            !widget.legacyScriptPath.empty())
-        {
-            if (const auto migrated =
-                WidgetEngine::ResolveLegacyWidgetPackage(
-                    widget.legacyScriptPath))
-            {
-                widget.packageId = *migrated;
-                widget.legacyScriptPath.clear();
-                legacyWidgetLayoutMigrationPending_ = true;
-            }
-        }
         CaptureWidgetPackageSource(widget);
 
         if (titleUtf8.empty())
@@ -332,8 +315,7 @@ void DesktopApp::LoadLayoutSlots()
                 widget.title =
                     WidgetEngine::GetWidgetDisplayName(widget.packageId);
                 if (widget.title.empty())
-                    widget.title = !widget.legacyScriptPath.empty()
-                        ? widget.legacyScriptPath : widget.packageId;
+                    widget.title = widget.packageId;
             }
             else if (widget.type == DesktopWidgetType::Guide)
                 widget.title = _LW("app.guide.title");
@@ -929,7 +911,6 @@ void DesktopApp::SaveLayoutSlots()
              << JsonEscapeUtf8(w.packageSourceExternalItemId)
              << "\", \"packageSourceUrl\": \""
              << JsonEscapeUtf8(w.packageSourceUrl)
-             << "\", \"legacyScriptPath\": \"" << JsonEscapeUtf8(w.legacyScriptPath)
              << "\", \"activeCategory\": \"" << JsonEscapeUtf8(w.activeCategoryId)
              << "\", \"page\": \"" << JsonEscapeUtf8(w.gridCell.pageId)
              << "\", \"x\": " << w.gridCell.column

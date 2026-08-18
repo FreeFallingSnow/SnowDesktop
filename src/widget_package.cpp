@@ -581,32 +581,6 @@ std::string Timestamp()
     return buffer;
 }
 
-struct BundledLegacyComponent
-{
-    const wchar_t* filename;
-    const char* nameKey;
-    const char* packageId;
-};
-
-constexpr std::array<BundledLegacyComponent, 8> kBundledLegacyComponents{ {
-    { L"analog_clock.lua", "lua_widget.analog_clock.name",
-        "64107f41-197a-426a-8f86-6eeb020f56b0" },
-    { L"digital_clock.lua", "lua_widget.digital_clock.name",
-        "b731dc11-92fa-404b-abf7-34741cd25277" },
-    { L"media_control.lua", "lua_widget.media_control.name",
-        "9ccc7bd1-2a5a-473a-9bf7-a7d9ed5605ef" },
-    { L"pomodoro.lua", "lua_widget.pomodoro.name",
-        "3fbb18cd-7c46-4a9f-9fe3-3e2c19facb23" },
-    { L"quick_launcher.lua", "lua_widget.quick_launcher.name",
-        "5b22d9ef-3802-48a3-8632-dcf9a3c41668" },
-    { L"rss_reader.lua", "lua_widget.rss_reader.name",
-        "3a8b02f9-560c-49b9-9b22-bc4405d863ea" },
-    { L"sticky_note.lua", "lua_widget.sticky_note.name",
-        "4664f034-3c7c-4469-9a82-44db90f68094" },
-    { L"system_monitor.lua", "lua_widget.system_monitor.name",
-        "7d6803f2-63fd-428d-b947-6e07437ead2a" },
-} };
-
 std::uint32_t Crc32(const unsigned char* data, std::size_t size)
 {
     std::uint32_t crc = 0xffffffffu;
@@ -1239,107 +1213,6 @@ std::optional<PackageDetails> IWidgetPackageSource::GetVersionDetails(
     return std::nullopt;
 }
 
-LegacyLooseImportResult ImportLegacyLooseWidgetPairs(
-    const std::filesystem::path& sourceWidgets,
-    const std::filesystem::path& destinationWidgets)
-{
-    LegacyLooseImportResult result;
-    std::error_code ec;
-    if (!std::filesystem::exists(sourceWidgets, ec))
-    {
-        result.ok = !ec;
-        if (ec) result.error = "cannot inspect legacy component directory: " +
-            ec.message();
-        return result;
-    }
-    if (ec || !std::filesystem::is_directory(sourceWidgets, ec) ||
-        HasReparsePoint(sourceWidgets))
-    {
-        result.error = ec
-            ? "cannot inspect legacy component directory: " + ec.message()
-            : "legacy component source is not a safe directory";
-        return result;
-    }
-
-    std::vector<std::pair<std::filesystem::path, std::filesystem::path>> pairs;
-    for (std::filesystem::directory_iterator it(sourceWidgets, ec), end;
-        !ec && it != end; it.increment(ec))
-    {
-        const auto script = it->path();
-        if (Lower(script.extension().string()) != ".lua")
-            continue;
-        const auto scriptStatus = it->symlink_status(ec);
-        if (ec)
-            break;
-        if (!std::filesystem::is_regular_file(scriptStatus) ||
-            HasReparsePoint(script))
-        {
-            result.error = "legacy component script is not a safe file: " +
-                PathUtf8(script.filename());
-            return result;
-        }
-
-        const auto manifest = script.parent_path() /
-            (script.stem().wstring() + L".widget.json");
-        const auto manifestStatus = std::filesystem::symlink_status(manifest, ec);
-        if (ec)
-        {
-            ec.clear();
-            continue;
-        }
-        if (!std::filesystem::exists(manifestStatus))
-            continue;
-        if (!std::filesystem::is_regular_file(manifestStatus) ||
-            HasReparsePoint(manifest))
-        {
-            result.error = "legacy component manifest is not a safe file: " +
-                PathUtf8(manifest.filename());
-            return result;
-        }
-        pairs.emplace_back(script, manifest);
-    }
-    if (ec)
-    {
-        result.error = "cannot enumerate legacy component directory: " +
-            ec.message();
-        return result;
-    }
-    if (pairs.empty())
-    {
-        result.ok = true;
-        return result;
-    }
-
-    std::filesystem::create_directories(destinationWidgets, ec);
-    if (ec)
-    {
-        result.error = "cannot create legacy component destination: " +
-            ec.message();
-        return result;
-    }
-    for (const auto& [script, manifest] : pairs)
-    {
-        std::filesystem::copy_file(script,
-            destinationWidgets / script.filename(),
-            std::filesystem::copy_options::overwrite_existing, ec);
-        if (!ec)
-        {
-            std::filesystem::copy_file(manifest,
-                destinationWidgets / manifest.filename(),
-                std::filesystem::copy_options::overwrite_existing, ec);
-        }
-        if (ec)
-        {
-            result.error = "cannot copy legacy component pair: " +
-                PathUtf8(script.filename()) + ": " + ec.message();
-            return result;
-        }
-        ++result.copiedPairs;
-    }
-    result.ok = true;
-    return result;
-}
-
 bool ValidationReport::Ok() const
 {
     return std::none_of(issues.begin(), issues.end(), [](const auto& issue) {
@@ -1820,22 +1693,12 @@ bool WidgetPackageValidator::ReadManifest(
             manifest.locales.emplace(locale, std::move(localized));
         }
     }
-    const bool legacyContract =
-        manifest.schemaVersion == kLegacyPackageSchemaVersion &&
-        manifest.apiVersion == kLegacyApiVersion;
     const bool currentContract =
         manifest.schemaVersion == kPackageSchemaVersion &&
         manifest.apiVersion == kHostApiVersion;
-    if (legacyContract)
-    {
-        report.Add(ValidationSeverity::Warning,
-            "migration.apiV1", manifestPath,
-            "schema/API v1 is a transitional compatibility contract; migrate the entry to schema/API v2 and return widget.define({...})");
-    }
-    if (manifest.schemaVersion != kLegacyPackageSchemaVersion &&
-        manifest.schemaVersion != kPackageSchemaVersion)
+    if (manifest.schemaVersion != kPackageSchemaVersion)
         report.Add(ValidationSeverity::Error, "manifest.schemaVersion",
-            manifestPath, "schemaVersion must be 1 or 2");
+            manifestPath, "schemaVersion must be 2");
     if (!IsUuid(manifest.id))
         report.Add(ValidationSeverity::Error, "manifest.id", manifestPath,
             "id must be an immutable UUID");
@@ -1849,19 +1712,16 @@ bool WidgetPackageValidator::ReadManifest(
     if (!IsSemVer(manifest.version))
         report.Add(ValidationSeverity::Error, "manifest.version", manifestPath,
             "version must be SemVer");
-    if (manifest.apiVersion != kLegacyApiVersion &&
-        manifest.apiVersion != kHostApiVersion)
+    if (manifest.apiVersion != kHostApiVersion)
         report.Add(ValidationSeverity::Error, "manifest.apiVersion",
             manifestPath, "apiVersion is not supported by this host");
-    if (!legacyContract && !currentContract &&
-        (manifest.schemaVersion == kLegacyPackageSchemaVersion ||
-            manifest.schemaVersion == kPackageSchemaVersion) &&
-        (manifest.apiVersion == kLegacyApiVersion ||
+    if (!currentContract &&
+        (manifest.schemaVersion == kPackageSchemaVersion ||
             manifest.apiVersion == kHostApiVersion))
     {
         report.Add(ValidationSeverity::Error, "manifest.contractVersion",
             manifestPath,
-            "schemaVersion and apiVersion must both be 1 or both be 2");
+            "schemaVersion and apiVersion must both be 2");
     }
     if (manifest.dataVersion < 1)
         report.Add(ValidationSeverity::Error, "manifest.dataVersion",
@@ -1958,20 +1818,6 @@ bool WidgetPackageValidator::ReadManifest(
             report.Add(ValidationSeverity::Error,
                 "manifest.featureDuplicate", manifestPath,
                 "required and optional features must be unique: " + feature);
-    }
-    if (legacyContract && !uniqueFeatures.empty())
-        report.Add(ValidationSeverity::Error, "manifest.featureVersion",
-            manifestPath,
-            "feature negotiation is only available to schema/API v2 packages");
-    if (legacyContract && !manifest.resources.empty())
-    {
-        report.Add(ValidationSeverity::Error, "manifest.resourceVersion",
-            manifestPath, "resource declarations require schema/API v2");
-    }
-    if (legacyContract && !manifest.logicalSlots.empty())
-    {
-        report.Add(ValidationSeverity::Error, "manifest.slotVersion",
-            manifestPath, "logical slot declarations require schema/API v2");
     }
     return report.Ok();
 }
@@ -2160,7 +2006,6 @@ bool WidgetPackageManager::Initialize(std::string& error)
     }
     if (!LoadRegistry(error)) return false;
     if (!Refresh(error)) return false;
-    MigrateBundledLegacyPackages();
     return true;
 }
 
@@ -2169,7 +2014,6 @@ bool WidgetPackageManager::LoadRegistry(std::string& error)
     registry_.clear();
     permissionDecisions_.clear();
     developmentOverrides_.clear();
-    legacyAliases_.clear();
     steamSubscriptionsByAccount_.clear();
     std::error_code ec;
     if (!std::filesystem::exists(paths_.registry, ec)) return true;
@@ -2275,14 +2119,6 @@ bool WidgetPackageManager::LoadRegistry(std::string& error)
             if (value.IsString() &&
                 WidgetPackageValidator::IsUuid(value.string))
                 developmentOverrides_.insert(value.string);
-    }
-    if (const JsonValue* aliases = root.Find("legacyAliases");
-        aliases && aliases->IsObject())
-    {
-        for (const auto& [name, value] : aliases->object)
-            if (value.IsString() &&
-                WidgetPackageValidator::IsUuid(value.string))
-                legacyAliases_[name] = value.string;
     }
     if (const JsonValue* history = root.Find(
             "steamSubscriptionsByAccount");
@@ -2421,18 +2257,7 @@ bool WidgetPackageManager::SaveRegistry(std::string& error) const
         out << "]}";
     }
     if (!decisions.empty()) out << '\n';
-    out << "  ],\n  \"legacyAliases\": {";
-    std::vector<std::pair<std::string, std::string>> aliases(
-        legacyAliases_.begin(), legacyAliases_.end());
-    std::sort(aliases.begin(), aliases.end());
-    for (std::size_t i = 0; i < aliases.size(); ++i)
-    {
-        if (i) out << ',';
-        out << "\n    \"" << JsonEscape(aliases[i].first) << "\":\""
-            << JsonEscape(aliases[i].second) << '"';
-    }
-    if (!aliases.empty()) out << '\n';
-    out << "  },\n  \"steamSubscriptionsByAccount\": {";
+    out << "  ],\n  \"steamSubscriptionsByAccount\": {";
     std::vector<std::string> accounts;
     accounts.reserve(steamSubscriptionsByAccount_.size());
     for (const auto& [accountId, subscriptions] :
@@ -3714,394 +3539,6 @@ bool WidgetPackageManager::Uninstall(const std::string& packageId,
         return false;
     }
     return Refresh(error);
-}
-
-std::vector<LegacyPackage> WidgetPackageManager::ScanLegacyPackages() const
-{
-    std::vector<LegacyPackage> result;
-    for (const auto& root : { paths_.builtin, paths_.installed.parent_path() })
-    {
-        std::error_code ec;
-        for (std::filesystem::directory_iterator it(root, ec), end;
-            !ec && it != end; it.increment(ec))
-        {
-            std::error_code entryError;
-            if (!it->is_regular_file(entryError) ||
-                Lower(it->path().extension().string()) != ".lua")
-                continue;
-            LegacyPackage package;
-            package.scriptPath = it->path();
-            package.legacyName = it->path().filename().wstring();
-            package.manifestPath = it->path().parent_path() /
-                (it->path().stem().wstring() + L".widget.json");
-            if (!HasReparsePoint(package.scriptPath) &&
-                std::filesystem::is_regular_file(
-                    package.manifestPath, entryError) &&
-                !HasReparsePoint(package.manifestPath))
-                result.push_back(std::move(package));
-        }
-    }
-    std::sort(result.begin(), result.end(),
-        [](const auto& a, const auto& b) {
-            return _wcsicmp(a.legacyName.c_str(), b.legacyName.c_str()) < 0;
-        });
-    return result;
-}
-
-std::optional<std::string> WidgetPackageManager::BundledReplacementId(
-    const LegacyPackage& legacy) const
-{
-    const BundledLegacyComponent* descriptor = nullptr;
-    const auto filename = legacy.scriptPath.filename().wstring();
-    for (const auto& candidate : kBundledLegacyComponents)
-    {
-        if (_wcsicmp(candidate.filename, filename.c_str()) == 0)
-        {
-            descriptor = &candidate;
-            break;
-        }
-    }
-    if (!descriptor) return std::nullopt;
-
-    // Portable and older packaged builds stored shipped and user-authored
-    // loose components in the same directory. The shipped localization key is
-    // the provenance marker that prevents a custom file with a colliding name
-    // from being silently replaced.
-    std::string text;
-    JsonValue root;
-    std::string nameKey;
-    if (!ReadFile(legacy.manifestPath, text, 1024 * 1024) ||
-        !ParseJson(text, root) || !root.IsObject() ||
-        !ReadString(root, "nameKey", nameKey) ||
-        nameKey != descriptor->nameKey)
-        return std::nullopt;
-
-    const auto package = std::find_if(packages_.begin(), packages_.end(),
-        [&](const InstalledPackage& installed) {
-            return installed.builtin &&
-                installed.manifest.id == descriptor->packageId;
-        });
-    if (package == packages_.end()) return std::nullopt;
-    return std::string(descriptor->packageId);
-}
-
-std::vector<LegacyPackage> WidgetPackageManager::FindLegacyPackages() const
-{
-    std::vector<LegacyPackage> result;
-    for (const auto& legacy : ScanLegacyPackages())
-        if (!BundledReplacementId(legacy))
-            result.push_back(legacy);
-    return result;
-}
-
-LegacyMigrationResult WidgetPackageManager::ReplaceBundledLegacy(
-    const LegacyPackage& legacy, const std::string& packageId)
-{
-    LegacyMigrationResult result;
-    result.legacyName = legacy.legacyName;
-    result.packageId = packageId;
-    const auto retirementDirectory =
-        CreateStagingPath("retired-builtin");
-
-    std::error_code ec;
-    std::filesystem::create_directories(retirementDirectory, ec);
-    if (ec)
-    {
-        result.error = "cannot create retirement staging: " + ec.message();
-        return result;
-    }
-    auto stage = [&](const std::filesystem::path& source) {
-        ec.clear();
-        const bool copied = std::filesystem::copy_file(source,
-            retirementDirectory / source.filename(),
-            std::filesystem::copy_options::overwrite_existing, ec);
-        return copied && !ec;
-    };
-    if (!stage(legacy.scriptPath) || !stage(legacy.manifestPath))
-    {
-        result.error = "cannot stage retired built-in component";
-        if (ec) result.error += ": " + ec.message();
-        ec.clear();
-        std::filesystem::remove_all(retirementDirectory, ec);
-        return result;
-    }
-
-    const std::string alias = WideToUtf8(legacy.legacyName);
-    const auto previous = legacyAliases_.find(alias);
-    const std::optional<std::string> previousValue =
-        previous == legacyAliases_.end()
-        ? std::nullopt : std::optional<std::string>(previous->second);
-    legacyAliases_[alias] = packageId;
-    if (!SaveRegistry(result.error))
-    {
-        if (previousValue) legacyAliases_[alias] = *previousValue;
-        else legacyAliases_.erase(alias);
-        ec.clear();
-        std::filesystem::remove_all(retirementDirectory, ec);
-        return result;
-    }
-
-    std::string cleanupError;
-    auto removeOldFile = [&](const std::filesystem::path& path) {
-        ec.clear();
-        const bool removed = std::filesystem::remove(path, ec);
-        if (removed && !ec) return true;
-        cleanupError = "cannot remove replaced built-in file " +
-            PathUtf8(path) + ": " + (ec ? ec.message() : "file not removed");
-        return false;
-    };
-    const bool removedScript = removeOldFile(legacy.scriptPath);
-    const bool removedManifest = removeOldFile(legacy.manifestPath);
-    if (!removedScript || !removedManifest)
-    {
-        // Restore the pair from the timestamped backup so the cleanup remains
-        // retryable at the next launch instead of leaving a half-migrated pair.
-        if (removedScript)
-        {
-            ec.clear();
-            std::filesystem::copy_file(
-                retirementDirectory / legacy.scriptPath.filename(),
-                legacy.scriptPath,
-                std::filesystem::copy_options::overwrite_existing, ec);
-        }
-        if (removedManifest)
-        {
-            ec.clear();
-            std::filesystem::copy_file(
-                retirementDirectory / legacy.manifestPath.filename(),
-                legacy.manifestPath,
-                std::filesystem::copy_options::overwrite_existing, ec);
-        }
-        result.error = std::move(cleanupError);
-        ec.clear();
-        std::filesystem::remove_all(retirementDirectory, ec);
-        return result;
-    }
-
-    ec.clear();
-    std::filesystem::remove_all(retirementDirectory, ec);
-    result.ok = true;
-    result.report.Add(ValidationSeverity::Info, "migration.builtin",
-        legacy.legacyName,
-        "shipped legacy component was replaced by its folder package; "
-        "instance storage is retained");
-    return result;
-}
-
-std::filesystem::path WidgetPackageManager::PendingLegacyStoragePath() const
-{
-    return paths_.registry.parent_path() / L"legacy-storage.pending.json";
-}
-
-bool WidgetPackageManager::PrepareBundledLegacyStorage(std::string& error)
-{
-    const auto pending = PendingLegacyStoragePath();
-    std::error_code ec;
-    if (std::filesystem::is_regular_file(pending, ec))
-        return true;
-
-    const auto storage =
-        paths_.registry.parent_path().parent_path() /
-            L"SnowDesktop.storage.json";
-    ec.clear();
-    if (!std::filesystem::is_regular_file(storage, ec))
-        return true;
-
-    std::string text;
-    if (!ReadFile(storage, text, 16 * 1024 * 1024))
-    {
-        error = "cannot read legacy component storage before replacement";
-        return false;
-    }
-    return AtomicWrite(pending, text, error);
-}
-
-void WidgetPackageManager::MigrateBundledLegacyPackages()
-{
-    automaticLegacyMigrationResults_.clear();
-    std::vector<std::pair<LegacyPackage, std::string>> bundled;
-    for (const auto& legacy : ScanLegacyPackages())
-    {
-        const auto packageId = BundledReplacementId(legacy);
-        if (packageId) bundled.emplace_back(legacy, *packageId);
-    }
-    if (bundled.empty()) return;
-
-    std::string storageError;
-    if (!PrepareBundledLegacyStorage(storageError))
-    {
-        for (const auto& [legacy, packageId] : bundled)
-        {
-            LegacyMigrationResult result;
-            result.legacyName = legacy.legacyName;
-            result.packageId = packageId;
-            result.error = storageError;
-            automaticLegacyMigrationResults_.push_back(std::move(result));
-        }
-        OutputDebugStringA(
-            ("SnowDesktop: automatic built-in widget migration stopped: " +
-                storageError + "\n").c_str());
-        return;
-    }
-
-    for (const auto& [legacy, packageId] : bundled)
-    {
-        auto result = ReplaceBundledLegacy(legacy, packageId);
-        std::ostringstream diagnostic;
-        diagnostic << "SnowDesktop: automatic built-in widget migration "
-            << (result.ok ? "succeeded for " : "failed for ")
-            << WideToUtf8(legacy.legacyName);
-        if (!result.ok) diagnostic << ": " << result.error;
-        diagnostic << '\n';
-        OutputDebugStringA(diagnostic.str().c_str());
-        automaticLegacyMigrationResults_.push_back(std::move(result));
-    }
-}
-
-std::optional<std::string> WidgetPackageManager::ResolveLegacyPackageId(
-    const std::wstring& legacyName) const
-{
-    const std::wstring filename =
-        std::filesystem::path(legacyName).filename().wstring();
-    const std::string name = WideToUtf8(filename);
-    for (const auto& [alias, packageId] : legacyAliases_)
-        if (_stricmp(alias.c_str(), name.c_str()) == 0 &&
-            Resolve(packageId).has_value())
-            return packageId;
-    for (const auto& package : packages_)
-    {
-        if (!package.active || !package.enabled ||
-            package.source.providerId != "legacy-import")
-            continue;
-        if (_stricmp(package.source.externalItemId.c_str(), name.c_str()) == 0)
-            return package.manifest.id;
-    }
-
-    // An MSIX upgrade replaces the read-only install directory atomically, so
-    // shipped loose files from the previous version are already gone before
-    // this process starts. Resolve their old layout names directly to the new
-    // immutable built-in IDs. A real user-authored loose pair with the same
-    // filename always wins and must still go through explicit migration.
-    for (const auto& legacy : ScanLegacyPackages())
-    {
-        if (_wcsicmp(legacy.legacyName.c_str(),
-                filename.c_str()) == 0 &&
-            !BundledReplacementId(legacy))
-        {
-            return std::nullopt;
-        }
-    }
-    for (const auto& descriptor : kBundledLegacyComponents)
-    {
-        if (_wcsicmp(descriptor.filename, filename.c_str()) != 0)
-            continue;
-        const auto replacement = Resolve(descriptor.packageId);
-        if (replacement && replacement->builtin)
-            return std::string(descriptor.packageId);
-    }
-    return std::nullopt;
-}
-
-LegacyMigrationResult WidgetPackageManager::MigrateLegacy(
-    const LegacyPackage& legacy, const std::optional<std::string>& preferredId)
-{
-    if (const auto packageId = BundledReplacementId(legacy))
-        return ReplaceBundledLegacy(legacy, *packageId);
-
-    LegacyMigrationResult result;
-    result.legacyName = legacy.legacyName;
-    std::string text;
-    JsonValue root;
-    PackageManifest manifest;
-    if (!ReadFile(legacy.manifestPath, text, 1024 * 1024) ||
-        !ParseJson(text, root) || !root.IsObject())
-    {
-        result.error = "legacy manifest is missing or invalid";
-        return result;
-    }
-    // Loose legacy scripts remain migration input until their entry point is
-    // rewritten to the API v2 descriptor contract.
-    manifest.schemaVersion = kLegacyPackageSchemaVersion;
-    manifest.id = preferredId && WidgetPackageValidator::IsUuid(*preferredId)
-        ? *preferredId : GenerateUuid();
-    manifest.slug = Lower(WideToUtf8(legacy.scriptPath.stem().wstring()));
-    std::replace_if(manifest.slug.begin(), manifest.slug.end(),
-        [](unsigned char ch) {
-            return !(std::islower(ch) || std::isdigit(ch) || ch == '-');
-        }, '-');
-    manifest.version = "1.0.0";
-    ReadString(root, "version", manifest.version);
-    if (!WidgetPackageValidator::IsSemVer(manifest.version))
-        manifest.version = "1.0.0";
-    manifest.apiVersion = kLegacyApiVersion;
-    manifest.dataVersion = 1;
-    manifest.entry = "main.lua";
-    ReadString(root, "minHostVersion", manifest.minHostVersion);
-    ReadString(root, "name", manifest.name);
-    ReadString(root, "description", manifest.description);
-    ReadString(root, "publisher", manifest.author);
-    ReadString(root, "license", manifest.license);
-    ReadSize(root, "defaultSize", manifest.defaultColumns, manifest.defaultRows);
-    ReadSize(root, "minSize", manifest.minColumns, manifest.minRows);
-    ReadSize(root, "maxSize", manifest.maxColumns, manifest.maxRows);
-    bool arraysValid = true;
-    manifest.permissions = ReadStringArray(root, "permissions", arraysValid);
-    manifest.optionalPermissions =
-        ReadStringArray(root, "optionalPermissions", arraysValid);
-    manifest.networkDomains =
-        ReadStringArray(root, "networkDomains", arraysValid);
-    if (manifest.name.empty()) manifest.name = manifest.slug;
-
-    const auto staging = CreateStagingPath("migration");
-    std::error_code ec;
-    std::filesystem::create_directories(staging, ec);
-    std::string error;
-    if (ec || !std::filesystem::copy_file(legacy.scriptPath,
-        staging / L"main.lua", std::filesystem::copy_options::overwrite_existing,
-        ec) || !AtomicWrite(staging / L"widget.json",
-        ManifestJson(manifest), error))
-    {
-        result.error = error.empty() ? "cannot stage legacy package" : error;
-        return result;
-    }
-    result.report = validator_.ValidateDirectory(staging, &manifest);
-    if (!result.report.Ok())
-    {
-        result.error = "migrated package failed validation";
-        const auto quarantine = paths_.quarantine /
-            (L"migration-" + legacy.scriptPath.stem().wstring() + L"-" +
-                Utf8ToWide(Timestamp()));
-        std::filesystem::rename(staging, quarantine, ec);
-        return result;
-    }
-
-    result.backupDirectory = paths_.migrations /
-        (Utf8ToWide(Timestamp()) + L"-" + legacy.scriptPath.stem().wstring());
-    std::filesystem::create_directories(result.backupDirectory, ec);
-    std::filesystem::copy_file(legacy.scriptPath,
-        result.backupDirectory / legacy.scriptPath.filename(),
-        std::filesystem::copy_options::overwrite_existing, ec);
-    std::filesystem::copy_file(legacy.manifestPath,
-        result.backupDirectory / legacy.manifestPath.filename(),
-        std::filesystem::copy_options::overwrite_existing, ec);
-    if (ec)
-    {
-        result.error = "cannot create migration backup: " + ec.message();
-        return result;
-    }
-    InstalledPackage installed;
-    if (!CommitStagedPackage(staging, manifest,
-        { "legacy-import", WideToUtf8(legacy.legacyName) }, false, false,
-        installed, result.error))
-        return result;
-    result.ok = true;
-    result.packageId = manifest.id;
-    // Old files are never executable again. The timestamped backup remains the
-    // recovery/import source if the author needs to repair the converted package.
-    std::filesystem::remove(legacy.scriptPath, ec);
-    ec.clear();
-    std::filesystem::remove(legacy.manifestPath, ec);
-    return result;
 }
 
 std::string WidgetPackageManager::Sha256File(

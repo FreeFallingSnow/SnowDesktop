@@ -563,7 +563,6 @@ add_custom_command(TARGET SnowDesktop POST_BUILD
 add_executable(snowwidget
     tools/snowwidget/main.cpp
     src/widget_author_lint.cpp
-    src/widget_author_migrate.cpp
     src/widget_author_permissions.cpp
     src/widget_author_test.cpp
     src/widget_api_contract_json.cpp
@@ -1124,7 +1123,6 @@ if (BUILD_TESTING)
         widget_author_tools
         SOURCES
             tests/widget_author_tools_tests.cpp
-            src/widget_author_migrate.cpp
             src/widget_author_permissions.cpp
             src/widget_api_registry.cpp
             src/widget_logical_slot.cpp
@@ -1133,7 +1131,7 @@ if (BUILD_TESTING)
             src/widget_permission_state.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES SnowDesktopLua bcrypt ole32
-        LABELS authoring contract migration permission security widget)
+        LABELS authoring contract permission security widget)
 
     snowdesktop_add_test(
         SnowDesktopWidgetAuthorPreviewCliTests

@@ -1,11 +1,11 @@
 # SnowDesktop Lua 组件 API v2
 
-本文档描述当前宿主已经实现并放入 API v2 沙箱的接口。清单中保留的权限名、
-路线图能力或 API v1 全局库不代表 v2 组件已经可以调用它们。可在运行时使用
+本文档描述当前宿主已经实现并放入 API v2 沙箱的接口。清单中保留的权限名或
+路线图能力不代表组件已经可以调用它们。可在运行时使用
 `widget.apiInfo()`、`widget.hasFeature(id)` 和 `system.capabilities()` 探测能力。
 作者工具的 `snowwidget capabilities` 协议 v2 将可执行契约明确列为
-`executableSchemaVersions:[2]` / `executableApiVersions:[2]`，并将 schema/API v1 仅列在
-`migrationInput*Versions`；不能把迁移输入误解成宿主保留了 v1 执行兼容层。
+`executableSchemaVersions:[2]` / `executableApiVersions:[2]`。宿主、校验、预览和打包
+只接受 schema/API v2。
 
 编辑器类型定义位于 `library/snowdesktop-v2.lua`，其函数签名是本文档的配套
 机器可读契约。
@@ -49,12 +49,6 @@ SnowDesktop 安装目录外的 CLI 可用 `--host <SnowDesktop.exe>` 或 `SNOWDE
 topic/task 目录生成机器可读报告。每个必选/可选声明包含风险类别、是否需要用户同意以及受该权限
 保护的函数、数据或任务；网络段单独列出精确域名、Internet 与 local 范围，并给出与运行时授权
 状态使用同一算法的 scope fingerprint。该命令只分析包声明，不读取或修改用户授权。
-
-运行 `snowwidget migrate-v2 <v1 组件目录> [输出目录]` 会先完整验证 v1 包，再在同级临时目录复制
-完整包，保留原入口，写入独立 `main-v2.lua` scaffold、迁移指南以及指向新入口的 schema/API v2
-manifest，重新通过 v2 包校验后才原子提交。默认输出为 `<原目录>-v2-draft`；源目录和已存在的输出
-永不覆盖。工具只生成结构安全的草案，不假装自动翻译 v1 行为，作者仍需迁移生命周期、API、
-存储、权限、资源、本地化和交互，然后运行 lint/test/preview/validate。
 
 运行 `snowwidget view-contract` 可获得宿主当前公开的声明式视图 JSON 契约。顶层
 `schemaVersion=3` 版本化该导出格式，`apiVersion` 表示组件 API；`nodes`、`properties` 和
@@ -140,7 +134,7 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 `topic/revision`；组件可在该事件中重建依赖日期范围等参数的订阅。
 
 `menu(context, model, request)` 同时用于即时绘制 region 和声明式节点的独立右键菜单。
-不要把 API v1 的全局回调迁入 v2 描述符。
+不要定义已移除的全局回调；入口必须返回 v2 描述符。
 
 ## 已实现能力
 
@@ -1512,8 +1506,8 @@ timeline 跨过多个条目时也只分发最新到期值，并额外返回 `val
 系统时钟在宿主重新计算截止时间时会重新投影到单调时钟，避免用可回拨的 wall clock
 计算经过时长。预览执行使用固定虚拟 wall/monotonic 时钟；schedule 会完成参数校验并
 登记到预览实例，但不创建系统计时器或自行推进时间，对应 feature
-`time.previewClock`。API v1 `onTimer` 只保留在迁移报告中，不进入正式 VM；新 v2 组件不得再
-依赖清单 `refreshIntervalMs` 过渡事件。
+`time.previewClock`。已移除的 `onTimer` 不进入正式 VM；组件不得依赖清单
+`refreshIntervalMs` 过渡事件。
 
 ### `animation`
 
@@ -2056,7 +2050,7 @@ ID，应用重启后会绑定新的 Lua VM generation，错过不超过 24 小�
 `notificationFailed`。组件应把权限放在 `optionalPermissions`，拒绝通知时仍完成自身
 主功能。纯文本通知使用系统托盘；带图片、进度或按钮的通知使用不抢占桌面焦点的宿主通知
 窗。运行时图片句柄不能作为通知图片，操作按钮最多两个且 ID 在单条通知内必须唯一。
-不得使用 API v1 `system.notify` 绕过任务与权限模型。
+不得使用已移除的 `system.notify` 绕过任务与权限模型。
 
 `calendar.create`、`calendar.update`、`calendar.remove` 要求 `calendar.write`，参数只接受严格字段。
 create/update 共用 `title/date/allDay/startMinutes/endMinutes/notes/reminderMinutes`；
@@ -2167,8 +2161,8 @@ HTTPS URL；`http:`、`file:`、自定义 scheme、localhost、局域网和 IP �
 `task.cancel(taskId)` 只接受当前 Lua VM 自己持有的任务。卸载、热重载、撤权和
 宿主关闭会自动取消；热重载使用 VM owner token，旧任务结果不会投递给新 VM。
 预览不会访问系统媒体会话、音频端点、Windows 设置、真实剪贴板或系统通知，而是异步返回确定性 mock。
-媒体参数表只接受上述动作对应字段；其他任务同样拒绝未知字段、错误类型和越界数值。API v1 的
-`media.playPause/next/previous` 不会注册进 v2 VM，不能绕过任务的手势门禁。
+媒体参数表只接受上述动作对应字段；其他任务同样拒绝未知字段、错误类型和越界数值。已移除的
+`media.playPause/next/previous` 不会注册进 VM，不能绕过任务的手势门禁。
 
 ### `draw`
 
@@ -2308,7 +2302,7 @@ DST 规则。未知时区会被拒绝，不会静默回退到本地时区。
 `permission`、`available/reason` 和刷新率或并发上限。`hostAvailable` 只表示宿主包含
 该能力；硬件是否存在、provider 是否 warming/stale 仍由对应数据快照表达。
 CPU、内存、网络、媒体和音频波形等状态应通过 `data.subscribe` 按需订阅，不能使用
-API v1 的同步 `sys` 代替。
+已移除的同步 `sys` 代替。
 在组件预览中，`time.now()`、无参数的 `time.parts/format`、`time.monotonic()` 和
 `system.uptime()` 使用固定虚拟值，保证重复预览不会随等待时间变化；正式实例仍读取
 宿主当前时间。可通过 `time.previewClock` feature 查询该保证。
@@ -2346,8 +2340,8 @@ URL、日期或时间。对应 feature 分别为 `settings.url`、`settings.date
 设置字段可提供不超过 2048 字节的本地化 `description`，宿主在控件下方以辅助文本显示。
 `settings.groups` 按声明顺序定义最多 32 个分组，每组包含稳定 ASCII `id`、本地化 `label`、
 可选 `description`，以及 `collapsible/defaultExpanded`；字段用 `group=id` 加入分组。未分组字段
-保持声明顺序并显示在分组前，同一分组内也保持字段声明顺序。重复 group/field ID、未知 group、
-超长文本或 API v1 声明会使组件加载失败。对应 feature 为 `settings.description`、
+保持声明顺序并显示在分组前，同一分组内也保持字段声明顺序。重复 group/field ID、未知 group 或
+超长文本会使组件加载失败。对应 feature 为 `settings.description`、
 `settings.groups`。
 
 ```lua
@@ -2583,7 +2577,7 @@ view.text({ key = "title", text = "SnowDesktop", font = display })
 
 ## 当前明确未开放
 
-API v2 不提供 API v1 的同步 `desktop`、`media`、`http` 和 `sys` 库，也不提供任意
+当前沙箱不提供已移除的同步 `desktop`、`media`、`http` 和 `sys` 库，也不提供任意
 原始键盘事件、原生 UI Automation 对象、系统路径、Shell verb、进程、WMI、注册表或
 原生句柄。声明式 `view.tree.core`、宿主生成的 UI Automation 语义、元素级交互和独立
 右键菜单已经开放；组件只能声明语义，不能直接操作 UIA Provider。

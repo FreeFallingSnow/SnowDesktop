@@ -326,11 +326,6 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     // already contains more items than the visible grids can create virtual
     // overflow pages during the initial load.
     ReloadItems(false);
-    if (legacyWidgetLayoutMigrationPending_)
-    {
-        SaveLayoutSlots();
-        legacyWidgetLayoutMigrationPending_ = false;
-    }
     StartIconLoader();
     WriteDiagnosticLogEntry(L"LoadDesktopItems ok");
     WriteDiagnosticLogEntry(L"Layout done");
@@ -365,24 +360,6 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     if (settingsWindow_)
     {
         settingsWindow_->SetReloadCallback([this]() {
-            bool migratedLayout = false;
-            for (auto& widget : widgets_)
-            {
-                if (widget.type != DesktopWidgetType::LuaScript ||
-                    !widget.packageId.empty() ||
-                    widget.legacyScriptPath.empty())
-                    continue;
-                if (const auto packageId =
-                    WidgetEngine::ResolveLegacyWidgetPackage(
-                        widget.legacyScriptPath))
-                {
-                    widget.packageId = *packageId;
-                    widget.legacyScriptPath.clear();
-                    migratedLayout = true;
-                }
-            }
-            if (migratedLayout)
-                SaveLayoutSlots();
             ReloadItems();
             if (settingsWindow_)
                 settingsWindow_->SyncDockEnabled(generalSettings_.dockEnabled);
@@ -891,8 +868,6 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         if (settingsWindow_)
         {
             settingsWindow_->SetWidgetEngine(widgetEngine_.get());
-            if (!WidgetEngine::ListLegacyWidgetPackages().empty())
-                settingsWindow_->ShowWidgetMigration();
         }
     }
     else

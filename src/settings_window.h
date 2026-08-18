@@ -124,8 +124,6 @@ public:
     bool ShowDockSettings();
     /** @brief 显示设置窗口并直接切换到外观页面。 */
     bool ShowAppearanceSettings();
-    bool ShowWidgetMigration();
-
     /**
      * @brief 检查窗口当前是否可见
      * @return 窗口已创建且可见时返回 true

@@ -53,7 +53,7 @@ constexpr bool HasLuaElementMenuAction(const MenuItems& items) noexcept
 {
     for (const auto& item : items)
     {
-        if (item.v2Action && item.elementContext && !item.separator)
+        if (!item.actionId.empty() && item.elementContext && !item.separator)
             return true;
         if (!item.children.empty() &&
             HasLuaElementMenuAction(item.children))

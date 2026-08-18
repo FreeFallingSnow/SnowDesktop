@@ -996,12 +996,6 @@ bool SettingsWindow::ShowAppearanceSettings()
     return Show();
 }
 
-bool SettingsWindow::ShowWidgetMigration()
-{
-    activePage_ = 8;
-    return Show();
-}
-
 /**
  * @brief 显示退出确认对话框。
  *
@@ -6848,33 +6842,14 @@ void SettingsWindow::MigrateAllData()
     CoTaskMemFree(selectedPath);
 
     std::filesystem::path sourceData = selectedDirectory;
-    std::filesystem::path sourceLegacyWidgets;
     const std::filesystem::path nestedData =
         selectedDirectory / L"data";
     if (LooksLikeSnowDesktopDataDirectory(nestedData))
-    {
         sourceData = nestedData;
-        sourceLegacyWidgets = selectedDirectory / L"widgets";
-    }
-    else if (_wcsicmp(
-                 selectedDirectory.filename().c_str(), L"data") == 0)
-    {
-        sourceLegacyWidgets =
-            selectedDirectory.parent_path() / L"widgets";
-    }
-
-    std::error_code sourceWidgetsError;
-    if (!std::filesystem::is_directory(
-            sourceLegacyWidgets, sourceWidgetsError))
-    {
-        sourceLegacyWidgets.clear();
-    }
 
     const std::filesystem::path targetData(GetDataDirectoryPath());
     if (!LooksLikeSnowDesktopDataDirectory(sourceData) ||
-        PathsOverlap(sourceData, targetData) ||
-        (!sourceLegacyWidgets.empty() &&
-            PathsOverlap(sourceLegacyWidgets, targetData)))
+        PathsOverlap(sourceData, targetData))
     {
         MessageBoxW(hwnd_, _LW("app.settings.migrate_data_invalid"),
             title, MB_OK | MB_ICONWARNING);
@@ -6910,25 +6885,6 @@ void SettingsWindow::MigrateAllData()
         snowdesktop::migration::CopyDataTree(sourceData, stagingData);
     bool staged = copyResult.ok;
     std::string stageError = copyResult.error;
-    if (staged && !sourceLegacyWidgets.empty())
-    {
-        // Current folder packages and authoring tools beside the executable
-        // are application files, not user data. Only old loose pairs need to
-        // enter the writable migration root; built-ins are rebound to the
-        // installed copy and user-authored pairs remain explicit migrations.
-        const auto legacyImport =
-            snowdesktop::widget::ImportLegacyLooseWidgetPairs(
-                sourceLegacyWidgets, stagingData / L"widgets");
-        staged = legacyImport.ok;
-        if (!staged)
-        {
-            stageError = legacyImport.error.empty()
-                ? "legacy component import failed"
-                : legacyImport.error;
-            OutputDebugStringA(("SnowDesktop: legacy component "
-                "import failed: " + stageError + "\n").c_str());
-        }
-    }
     if (!staged ||
         !LooksLikeSnowDesktopDataDirectory(stagingData))
     {

@@ -1,6 +1,5 @@
 #include "widget_package.h"
 #include "widget_author_lint.h"
-#include "widget_author_migrate.h"
 #include "widget_author_permissions.h"
 #include "widget_author_test.h"
 #include "widget_api_contract_json.h"
@@ -35,8 +34,6 @@ void PrintUsage()
         << "  snowwidget lint <package-directory>\n"
         << "  snowwidget test <package-directory>\n"
         << "  snowwidget permissions <package-directory>\n"
-        << "  snowwidget migrate-v2 <v1-package-directory>"
-           " [output-directory]\n"
         << "  snowwidget preview <package-directory> <output.png>"
            " [--columns N] [--rows N] [--dpi N]"
            " [--locale CODE] [--theme dark|light]"
@@ -313,12 +310,10 @@ int wmain(int argc, wchar_t** argv)
                "\"revision\":2},\"recommendedSchemaVersion\":2,"
                "\"recommendedApiVersion\":2,"
                "\"executableSchemaVersions\":[2],"
-               "\"executableApiVersions\":[2],"
-               "\"migrationInputSchemaVersions\":[1],"
-               "\"migrationInputApiVersions\":[1],\"commands\":["
+               "\"executableApiVersions\":[2],\"commands\":["
                "\"api-contract\",\"system-contract\",\"view-contract\",\"inspect\","
                "\"lint\",\"test\",\"preview\",\"permissions\","
-               "\"migrate-v2\",\"validate\",\"pack\",\"publish-local\"]}"
+               "\"validate\",\"pack\",\"publish-local\"]}"
             << '\n';
         return 0;
     }
@@ -456,23 +451,6 @@ int wmain(int argc, wchar_t** argv)
             BuildPermissionReport(manifest);
         std::cout << permissionReport.json << '\n';
         return permissionReport.ok ? 0 : 1;
-    }
-    if (command == L"migrate-v2")
-    {
-        if ((argc != 3 && argc != 4) ||
-            source.extension() == L".snowwidget")
-        {
-            std::cerr << "{\"ok\":false,\"error\":\"migrate-v2 requires an unpacked v1 directory and optional output directory\"}\n";
-            return 2;
-        }
-        const std::filesystem::path output = argc == 4
-            ? std::filesystem::path(argv[3])
-            : source.parent_path() /
-                (source.filename().wstring() + L"-v2-draft");
-        const auto migration = snowdesktop::widget_authoring::
-            CreateV2MigrationDraft(source, output);
-        std::cout << migration.ToJson() << '\n';
-        return migration.ok ? 0 : 1;
     }
     if (command == L"preview")
     {
