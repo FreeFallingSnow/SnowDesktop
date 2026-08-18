@@ -205,8 +205,8 @@ local function event(_context, _model, value)
     if value.id == "note.focus" then
         control.focus("note")
     elseif value.id == "note.clear" then
+        control.blur("note")
         storage.remove("text")
-        control.focus("note")
         widget.invalidate()
     elseif value.id == "note.resetStyle" then
         resetDefaults()

@@ -111,7 +111,7 @@ void TestPublishedV2Catalog(const fs::path& repository)
     const auto features = QuotedStrings(Section(registry,
         "kHostFeatures = {",
         "using FunctionParameter = SystemFunctionParameterContract;"));
-    Check(features.size() == 199,
+    Check(features.size() == 200,
         "host feature catalog size must match the reviewed v2 contract");
     for (const auto& feature : features)
     {
@@ -183,6 +183,27 @@ void TestPublishedV2Catalog(const fs::path& repository)
         Check(api.find(event) != std::string::npos,
             std::string("view event is absent from API v2 docs: ") + event);
     }
+}
+
+void TestStickyNoteClearBlur(const fs::path& repository)
+{
+    const std::string source = ReadFile(
+        repository / "widgets" / "sticky-note" / "main.lua");
+    const std::string_view clearAction = Section(source,
+        "elseif value.id == \"note.clear\" then",
+        "elseif value.id == \"note.resetStyle\" then");
+    const std::size_t blur = clearAction.find("control.blur(\"note\")");
+    const std::size_t remove = clearAction.find("storage.remove(\"text\")");
+    Check(blur != std::string_view::npos &&
+            remove != std::string_view::npos && blur < remove,
+        "sticky-note clear must blur the editor before removing its storage");
+    Check(clearAction.find("control.focus(") == std::string_view::npos,
+        "sticky-note clear must not restore the blue input focus cue");
+
+    const std::string manifest = ReadFile(
+        repository / "widgets" / "sticky-note" / "widget.json");
+    Check(manifest.find("\"control.blur\"") != std::string::npos,
+        "sticky-note must declare the control.blur host feature");
 }
 
 void TestRemindersRenderPurity(const fs::path& repository)
@@ -470,6 +491,7 @@ int main(int argc, char** argv)
     Check(argc == 2, "expected the repository root argument");
     TestPublishedV2Catalog(fs::path(argv[1]));
     TestRemindersRenderPurity(fs::path(argv[1]));
+    TestStickyNoteClearBlur(fs::path(argv[1]));
     TestMediaControlsArtwork(fs::path(argv[1]));
     TestV2OnlyWidgetActivation(fs::path(argv[1]));
     TestPackageResourceRenderPurity(fs::path(argv[1]));

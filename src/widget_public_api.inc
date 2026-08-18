@@ -120,6 +120,7 @@ SNOW_WIDGET_PUBLIC_FUNCTION("ui", "menu", lua_UiMenu, 2, nullptr, 0)
 SNOW_WIDGET_PUBLIC_FUNCTION("control", "textInput", lua_ControlTextInput, 2, nullptr, 0)
 SNOW_WIDGET_PUBLIC_FUNCTION("control", "textArea", lua_ControlTextArea, 2, nullptr, 0)
 SNOW_WIDGET_PUBLIC_FUNCTION("control", "focus", lua_ControlFocus, 2, nullptr, 0)
+SNOW_WIDGET_PUBLIC_FUNCTION("control", "blur", lua_ControlBlur, 2, nullptr, 0)
 
 SNOW_WIDGET_PUBLIC_FUNCTION("calendar", "selectDate", lua_CalendarSelectDate, 2, nullptr, 0)
 SNOW_WIDGET_PUBLIC_FUNCTION("calendar", "dateInfo", lua_CalendarDateInfo, 1, nullptr, 0)

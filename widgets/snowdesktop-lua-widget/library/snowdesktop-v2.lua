@@ -2240,6 +2240,14 @@ function control.textArea(descriptor) end
 ---@return 'trustedGestureRequired'|'controlNotFound'|'hostUnavailable'|nil error
 function control.focus(key) end
 
+---Commit and blur the matching focused text control from a direct trusted
+---action/menu/open callback. Returns false without changing another control's
+---focus when the key or surface does not match.
+---@param key string
+---@return boolean blurred
+---@return 'trustedGestureRequired'|'controlNotFocused'|'hostUnavailable'|nil error
+function control.blur(key) end
+
 ---@class snow.ui
 ui = {}
 

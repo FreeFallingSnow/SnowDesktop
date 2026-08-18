@@ -302,6 +302,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "calendar.selection") &&
             snowdesktop::widget_api::SupportsFeature(
+                "control.blur") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "control.focus") &&
             snowdesktop::widget_api::SupportsFeature(
                 "control.textArea") &&
@@ -1061,7 +1063,7 @@ void TestPublicApiContract()
 {
     const auto contracts =
         snowdesktop::widget_api::PublicApiFunctionContracts();
-    Check(contracts.size() == 162,
+    Check(contracts.size() == 163,
         "public Lua host API function count must match the reviewed catalog");
 
     std::unordered_set<std::string> sandboxLibraries;

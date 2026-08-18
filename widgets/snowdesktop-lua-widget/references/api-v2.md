@@ -1477,6 +1477,11 @@ task.complete 不能抢走键盘焦点。探测 `view.focus.request` 后，key �
 `hostUnavailable`。对应 feature 为 `control.textInput`、`control.textArea` 和
 `control.focus`；通用声明式目标另要求 `view.focus.request`。
 
+`control.blur(key)` 同样只接受上述可信手势同步栈。它只在 key 与当前 surface 中已聚焦的
+文本控件完全匹配时提交当前值并失焦，从而清除光标、选择和焦点框；不会误清除其他控件的
+焦点。返回 `(blurred, error)`，稳定失败码为 `trustedGestureRequired`、
+`controlNotFocused` 或 `hostUnavailable`，对应 feature 为 `control.blur`。
+
 ### `schedule`
 
 - `schedule.every(id, milliseconds, options?)`：创建或替换一个重复计划。

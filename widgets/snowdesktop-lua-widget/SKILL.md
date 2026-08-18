@@ -614,7 +614,9 @@ default border does not fit the component design.
   Do not use the v1 `ui.scrollArea` compatibility API.
 - Submit storage-bound text editors with `control.textInput/textArea` during
   render. Keep keys stable, set an explicit practical `maxBytes`, and call
-  `control.focus` only inside a direct trusted action or menu callback. After
+  `control.focus` or `control.blur` only inside a direct trusted action or menu
+  callback. `control.blur` commits only the matching focused text control and
+  leaves other focus unchanged. After
   probing `view.focus.request`, the same call may target any enabled focusable
   declarative node, including list/slot items; a newly rendered target resolves
   only after the next successful tree submission. Ordinary

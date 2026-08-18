@@ -1535,6 +1535,9 @@ public:
     bool RuntimeFocusHostInputFromTrustedGesture(
         const std::wstring& widgetId, const std::string& id,
         std::string& error);
+    bool RuntimeBlurHostInputFromTrustedGesture(
+        const std::wstring& widgetId, const std::string& id,
+        std::string& error);
     bool RuntimeGetFocusedHostInput(const std::wstring& widgetId, const std::string& id,
         std::wstring& text, size_t& cursor, size_t& selectionAnchor,
         std::wstring& compositionText, size_t& compositionCursor) const;

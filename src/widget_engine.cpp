@@ -8317,6 +8317,35 @@ static int lua_ControlFocus(lua_State* state)
     return 2;
 }
 
+static int lua_ControlBlur(lua_State* state)
+{
+    if (lua_gettop(state) != 1)
+        return luaL_error(state, "control.blur: expected one key");
+    if (lua_type(state, 1) != LUA_TSTRING)
+        return luaL_error(state, "control.blur: key must be a string");
+    std::size_t length = 0;
+    const char* raw = lua_tolstring(state, 1, &length);
+    const std::string key(raw ? raw : "", length);
+    if (key.empty() || key.size() > 128 ||
+        key.find('\0') != std::string::npos ||
+        !IsValidUtf8Local(key))
+    {
+        return luaL_error(state,
+            "control.blur: key must contain 1 to 128 bytes of valid UTF-8");
+    }
+    auto* d2d = GetD2D(state);
+    std::string error = "hostUnavailable";
+    const bool blurred = d2d && d2d->engine &&
+        d2d->engine->RuntimeBlurHostInputFromTrustedGesture(
+            BoundWidgetId(state), key, error);
+    lua_pushboolean(state, blurred ? 1 : 0);
+    if (blurred)
+        lua_pushnil(state);
+    else
+        lua_pushlstring(state, error.data(), error.size());
+    return 2;
+}
+
 static int lua_UiButton(lua_State* L)
 {
     const char* id = luaL_checkstring(L, 1);
@@ -31184,6 +31213,33 @@ bool WidgetEngine::RuntimeFocusHostInputFromTrustedGesture(
     }
     widgets_[index].deferredHostInputFocus.Request(id, surface);
     RuntimeInvalidateHost(widgetId);
+    return true;
+}
+
+bool WidgetEngine::RuntimeBlurHostInputFromTrustedGesture(
+    const std::wstring& widgetId, const std::string& id,
+    std::string& error)
+{
+    error.clear();
+    if (!trustedGestureState_.Active())
+    {
+        error = "trustedGestureRequired";
+        return false;
+    }
+    if (FindWidget(widgetId) < 0)
+    {
+        error = "hostUnavailable";
+        return false;
+    }
+    if (!focusedHostInput_.active ||
+        focusedHostInput_.widgetId != widgetId ||
+        focusedHostInput_.id != id ||
+        focusedHostInput_.surface != CurrentWidgetSurface(d2dState_))
+    {
+        error = "controlNotFocused";
+        return false;
+    }
+    BlurHostInput(false);
     return true;
 }
 
