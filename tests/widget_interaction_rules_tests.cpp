@@ -630,17 +630,19 @@ void TestWidgetDesktopSurfaceVisibility()
             false, false, true, false),
         "interaction-hidden widget pauses its desktop surface");
     Check(
-        visibilityRules::ShouldPreserveHiddenPageRuntimeState(
-            false, false, true),
-        "a page temporarily missing from the display topology preserves its runtime state");
+        visibilityRules::ShouldKeepTopologyHiddenPageRuntimeActive(
+            false, false, true, true),
+        "a page removed by the display topology keeps its runtime active while its surface is hidden");
     Check(
-        !visibilityRules::ShouldPreserveHiddenPageRuntimeState(
-            true, false, true) &&
-            !visibilityRules::ShouldPreserveHiddenPageRuntimeState(
-                false, true, true) &&
-            !visibilityRules::ShouldPreserveHiddenPageRuntimeState(
-                false, false, false),
-        "ordinary desktop hiding, visible bounds, and non-page surfaces do not preserve hidden-page state");
+        !visibilityRules::ShouldKeepTopologyHiddenPageRuntimeActive(
+            true, false, true, true) &&
+            !visibilityRules::ShouldKeepTopologyHiddenPageRuntimeActive(
+                false, true, true, true) &&
+            !visibilityRules::ShouldKeepTopologyHiddenPageRuntimeActive(
+                false, false, false, true) &&
+            !visibilityRules::ShouldKeepTopologyHiddenPageRuntimeActive(
+                false, false, true, false),
+        "desktop hiding, visible surfaces, virtual pages, and ordinary hidden surfaces do not keep runtimes active");
 }
 
 void TestDesktopHoverDeactivation()

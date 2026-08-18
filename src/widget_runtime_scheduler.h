@@ -123,7 +123,7 @@ public:
 
     bool Request(std::string name, bool reducedMotion = false);
     bool Cancel(std::string_view name);
-    bool SetVisible(bool visible, bool preservePending = false);
+    bool SetVisible(bool visible);
     std::vector<Frame> Consume(TimePoint now);
     void Clear();
     bool HasPending() const noexcept;

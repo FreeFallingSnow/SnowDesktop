@@ -1,5 +1,8 @@
 #pragma once
 
+#include <string>
+#include <unordered_set>
+
 namespace snowdesktop::display_topology_refresh
 {
 enum class Action
@@ -50,5 +53,31 @@ constexpr Action ResolveAction(
     if (windowSynchronizationPending || windowBoundsOutOfSync)
         return Action::ResynchronizeWindow;
     return Action::None;
+}
+
+using PageIdSet = std::unordered_set<std::wstring>;
+
+/**
+ * @brief Track pages that disappeared specifically because the active display
+ *        topology lost a mapped monitor.
+ *
+ * Ordinary virtual pages are absent from both mapped-page snapshots and are
+ * therefore never added. A page stays classified as topology-hidden until a
+ * later display topology maps it again.
+ */
+inline PageIdSet ReconcileHiddenPages(
+    const PageIdSet& hiddenPages,
+    const PageIdSet& previousMappedPages,
+    const PageIdSet& currentMappedPages)
+{
+    PageIdSet result = hiddenPages;
+    for (const auto& pageId : previousMappedPages)
+    {
+        if (!pageId.empty() && !currentMappedPages.contains(pageId))
+            result.insert(pageId);
+    }
+    for (const auto& pageId : currentMappedPages)
+        result.erase(pageId);
+    return result;
 }
 } // namespace snowdesktop::display_topology_refresh

@@ -324,18 +324,11 @@ bool AnimationFrameRequests::Cancel(std::string_view name)
     return removed;
 }
 
-bool AnimationFrameRequests::SetVisible(
-    bool visible, bool preservePending)
+bool AnimationFrameRequests::SetVisible(bool visible)
 {
     if (visible_ == visible) return false;
     visible_ = visible;
-    if (!visible_)
-    {
-        if (preservePending)
-            previousFrames_.clear();
-        else
-            Clear();
-    }
+    if (!visible_) Clear();
     return true;
 }
 

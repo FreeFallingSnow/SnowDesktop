@@ -127,10 +127,12 @@ void DesktopApp::DrawStaticBackground(
         const bool pageUnavailable =
             !widgetData.gridCell.pageId.empty() &&
             FindGridPage(gridPages_, widgetData.gridCell.pageId) == nullptr;
-        const bool preserveHiddenPageRuntimeState =
+        const bool keepTopologyHiddenPageRuntimeActive =
             snowdesktop::widget_visibility_rules::
-                ShouldPreserveHiddenPageRuntimeState(
-                    hiddenMode, hasDesktopBounds, pageUnavailable);
+                ShouldKeepTopologyHiddenPageRuntimeActive(
+                    hiddenMode, desktopSurfaceVisible, pageUnavailable,
+                    displayTopologyHiddenPageIds_.contains(
+                        widgetData.gridCell.pageId));
         // Runtime visibility is semantic state, not a paint-frequency signal.
         // Synchronize it before dirty-region culling because DirectComposition
         // may retain a visible widget without asking the host to redraw it.
@@ -139,7 +141,7 @@ void DesktopApp::DrawStaticBackground(
         {
             widgetEngine_->SetWidgetDesktopVisible(
                 widgetData.id, desktopSurfaceVisible,
-                preserveHiddenPageRuntimeState);
+                keepTopologyHiddenPageRuntimeActive);
         }
         if (!desktopSurfaceVisible)
             continue;

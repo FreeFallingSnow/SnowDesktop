@@ -410,6 +410,14 @@ void DesktopApp::RefreshDisplayTopologyIfChanged()
     bool recreateExpandedOverlay = false;
     if (topologyChanged)
     {
+        snowdesktop::display_topology_refresh::PageIdSet
+            previousMappedPageIds;
+        for (const auto& page : gridPages_)
+        {
+            if (!page.id.empty())
+                previousMappedPageIds.insert(page.id);
+        }
+
         const int newVirtualLeft = GetSystemMetrics(SM_XVIRTUALSCREEN);
         const int newVirtualTop = GetSystemMetrics(SM_YVIRTUALSCREEN);
         const int newVirtualWidth = GetSystemMetrics(SM_CXVIRTUALSCREEN);
@@ -441,6 +449,18 @@ void DesktopApp::RefreshDisplayTopologyIfChanged()
         // first synchronous paint.
         UpdateLayoutWorkArea();
         LayoutItems();
+
+        snowdesktop::display_topology_refresh::PageIdSet
+            currentMappedPageIds;
+        for (const auto& page : gridPages_)
+        {
+            if (!page.id.empty())
+                currentMappedPageIds.insert(page.id);
+        }
+        displayTopologyHiddenPageIds_ =
+            snowdesktop::display_topology_refresh::ReconcileHiddenPages(
+                displayTopologyHiddenPageIds_,
+                previousMappedPageIds, currentMappedPageIds);
     }
 
     if (recreateExpandedOverlay)

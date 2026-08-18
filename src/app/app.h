@@ -2960,6 +2960,7 @@ private:
     bool updatingDisplayTopology_ = false;
     bool displayTopologyWindowSyncPending_ = false;
     std::wstring displayTopologySignature_;
+    std::unordered_set<std::wstring> displayTopologyHiddenPageIds_;
     /** @} */
 
     /** @name 托盘图标 */

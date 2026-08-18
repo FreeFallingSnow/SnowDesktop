@@ -20159,7 +20159,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     SetWidgetRectContext(d2dState_, bounds);
 
     found->desktopVisible = true;
-    found->preserveDesktopAnimationState = false;
+    found->keepRuntimeActiveForHiddenPage = false;
     ApplyWidgetHostVisibility(*found, true);
     if (found->lastColumns != columns || found->lastRows != rows)
     {
@@ -21526,16 +21526,10 @@ void WidgetEngine::TickRuntime()
 }
 
 void WidgetEngine::ApplyWidgetHostVisibility(
-    LuaWidget& widget, bool visible, bool preserveAnimationState)
+    LuaWidget& widget, bool visible)
 {
-    if (!widget.valid)
+    if (!widget.valid || widget.hostVisible == visible)
         return;
-    if (widget.hostVisible == visible)
-    {
-        if (!visible && !preserveAnimationState)
-            StopAnimationFrames(widget);
-        return;
-    }
 
     widget.hostVisible = visible;
     const auto timerNow = widget.preview
@@ -21548,8 +21542,6 @@ void WidgetEngine::ApplyWidgetHostVisibility(
 
     if (visible)
         (void)widget.animationFrames.SetVisible(true);
-    else if (preserveAnimationState)
-        PauseAnimationFrames(widget);
     else
         StopAnimationFrames(widget);
 
@@ -21567,26 +21559,19 @@ void WidgetEngine::ApplyWidgetHostVisibility(
 
 void WidgetEngine::SetWidgetDesktopVisible(
     const std::wstring& widgetId, bool visible,
-    bool preserveAnimationState)
+    bool keepRuntimeActive)
 {
     const int index = FindWidget(widgetId);
     if (index < 0) return;
     auto& widget = widgets_[index];
     if (!widget.valid || widget.preview)
         return;
-    widget.preserveDesktopAnimationState =
-        !visible && preserveAnimationState;
-    if (widget.desktopVisible == visible)
-    {
-        ApplyWidgetHostVisibility(
-            widget, widget.desktopVisible || widget.panelActive,
-            widget.preserveDesktopAnimationState);
-        return;
-    }
+    widget.keepRuntimeActiveForHiddenPage =
+        !visible && keepRuntimeActive;
     widget.desktopVisible = visible;
     ApplyWidgetHostVisibility(
-        widget, widget.desktopVisible || widget.panelActive,
-        widget.preserveDesktopAnimationState);
+        widget, widget.desktopVisible || widget.panelActive ||
+            widget.keepRuntimeActiveForHiddenPage);
 }
 
 void WidgetEngine::SetAllWidgetDesktopVisible(bool visible)
@@ -21595,7 +21580,7 @@ void WidgetEngine::SetAllWidgetDesktopVisible(bool visible)
     {
         if (!widget.valid || widget.preview)
             continue;
-        widget.preserveDesktopAnimationState = false;
+        widget.keepRuntimeActiveForHiddenPage = false;
         widget.desktopVisible = visible;
         ApplyWidgetHostVisibility(
             widget, widget.desktopVisible || widget.panelActive);
@@ -26355,16 +26340,6 @@ void WidgetEngine::StopAnimationFrames(LuaWidget& widget)
     widget.panelViewTransitionFramePending = false;
 }
 
-void WidgetEngine::PauseAnimationFrames(LuaWidget& widget)
-{
-    if (widget.animationTimerId && widgetTimerKillCallback_)
-        widgetTimerKillCallback_(widget.animationTimerId);
-    widget.animationTimerId = 0;
-    (void)widget.animationFrames.SetVisible(false, true);
-    widget.viewTransitionFramePending = false;
-    widget.panelViewTransitionFramePending = false;
-}
-
 bool WidgetEngine::RuntimeSetTimerAt(const std::wstring& widgetId,
     const std::string& name, std::int64_t epochMilliseconds,
     snowdesktop::widget_runtime::ScheduleHiddenPolicy hiddenPolicy)
@@ -29512,8 +29487,8 @@ void WidgetEngine::CloseWidgetPanelSurface(
     }
     widget.panelActive = false;
     ApplyWidgetHostVisibility(
-        widget, widget.desktopVisible || widget.panelActive,
-        widget.preserveDesktopAnimationState);
+        widget, widget.desktopVisible || widget.panelActive ||
+            widget.keepRuntimeActiveForHiddenPage);
     widget.panelSurface = "panel";
     widget.panelViewTransitions.Clear();
     widget.panelViewTransitionFramePending = false;

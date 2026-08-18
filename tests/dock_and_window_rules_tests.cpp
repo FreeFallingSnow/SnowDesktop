@@ -222,6 +222,23 @@ int main()
         "only virtual desktops extending beyond the old layered allocation "
         "must recreate the overlay");
 
+    const displayRefresh::PageIdSet twoMappedPages{
+        L"page-1", L"page-2" };
+    const displayRefresh::PageIdSet oneMappedPage{ L"page-1" };
+    const displayRefresh::PageIdSet noHiddenPages;
+    const auto pageHiddenByContraction =
+        displayRefresh::ReconcileHiddenPages(
+            noHiddenPages, twoMappedPages, oneMappedPage);
+    Check(pageHiddenByContraction.contains(L"page-2") &&
+            !pageHiddenByContraction.contains(L"page-1") &&
+            !pageHiddenByContraction.contains(L"virtual-page"),
+        "display contraction must retain only pages that were previously mapped");
+    const auto pageRestoredByExpansion =
+        displayRefresh::ReconcileHiddenPages(
+            pageHiddenByContraction, oneMappedPage, twoMappedPages);
+    Check(pageRestoredByExpansion.empty(),
+        "display expansion must clear the topology-hidden classification when a page is mapped again");
+
     Check(
         itemLayout::ShouldRelayoutDesktopWidget(
             false, false),
