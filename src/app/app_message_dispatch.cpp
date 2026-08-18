@@ -1,8 +1,31 @@
 #include "app.h"
+#include "../desktop_keyboard_rules.h"
 
 #include <imm.h>
 
 // Main desktop-window message dispatch.
+
+bool DesktopApp::RequestWindowsShutdownDialog()
+{
+    HWND shellDesktop = desktopWindows_.progman;
+    if (!shellDesktop || !IsWindow(shellDesktop))
+        shellDesktop = GetShellWindow();
+    if (!shellDesktop || !IsWindow(shellDesktop))
+        shellDesktop = FindWindowW(L"Progman", nullptr);
+
+    if (!shellDesktop || !IsWindow(shellDesktop) ||
+        !PostMessageW(
+            shellDesktop, WM_SYSCOMMAND, SC_CLOSE, 0))
+    {
+        WriteDiagnosticLogEntry(
+            L"Desktop Alt+F4 shutdown dialog request failed");
+        return false;
+    }
+
+    WriteDiagnosticLogEntry(
+        L"Desktop Alt+F4 requested the Windows shutdown dialog");
+    return true;
+}
 
 bool DesktopApp::HandleShellContextMenuMessage(
     UINT message, WPARAM wParam, LPARAM lParam,
@@ -774,11 +797,29 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     }
     case WM_SYSKEYDOWN:
+    {
+        using snowdesktop::desktop_keyboard_rules::AltF4Action;
+        const AltF4Action altF4Action =
+            snowdesktop::desktop_keyboard_rules::ResolveAltF4Action(
+                true,
+                wp == VK_F4,
+                (static_cast<ULONG_PTR>(lp) &
+                    (ULONG_PTR{1} << 29)) != 0,
+                (static_cast<ULONG_PTR>(lp) &
+                    (ULONG_PTR{1} << 30)) != 0);
+        if (altF4Action != AltF4Action::PassThrough)
+        {
+            if (altF4Action ==
+                AltF4Action::RequestWindowsShutdownDialog)
+                RequestWindowsShutdownDialog();
+            return 0;
+        }
         if ((wp >= 'A' && wp <= 'Z') || (wp >= '0' && wp <= '9'))
             DispatchLuaWidgetViewKeyEvent(wp, true,
                 (static_cast<ULONG_PTR>(lp) &
                     (ULONG_PTR{1} << 30)) != 0);
         break;
+    }
     case WM_SYSCHAR:
     {
         if (wp > 0x7f) break;

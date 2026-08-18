@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../desktop_keyboard_rules.h"
 
 // Static window-procedure dispatch adapters.
 
@@ -271,11 +272,29 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         return 0;
     }
     case WM_SYSKEYDOWN:
+    {
+        using snowdesktop::desktop_keyboard_rules::AltF4Action;
+        const AltF4Action altF4Action =
+            snowdesktop::desktop_keyboard_rules::ResolveAltF4Action(
+                hwnd == inputHwnd_,
+                wp == VK_F4,
+                (static_cast<ULONG_PTR>(lp) &
+                    (ULONG_PTR{1} << 29)) != 0,
+                (static_cast<ULONG_PTR>(lp) &
+                    (ULONG_PTR{1} << 30)) != 0);
+        if (altF4Action != AltF4Action::PassThrough)
+        {
+            if (altF4Action ==
+                AltF4Action::RequestWindowsShutdownDialog)
+                RequestWindowsShutdownDialog();
+            return 0;
+        }
         if ((wp >= 'A' && wp <= 'Z') || (wp >= '0' && wp <= '9'))
             DispatchLuaWidgetViewKeyEvent(wp, true,
                 (static_cast<ULONG_PTR>(lp) &
                     (ULONG_PTR{1} << 30)) != 0);
         break;
+    }
     case WM_SYSCHAR:
     {
         if (wp > 0x7f) break;

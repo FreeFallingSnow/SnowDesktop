@@ -625,6 +625,8 @@ private:
     void AttachInputWindowToDesktopHost(HWND host);
     /** @brief 将键盘焦点交给独立输入窗口。 */
     void FocusDesktopInputWindow();
+    /** @brief 请求 Explorer 桌面显示 Windows 关闭对话框。 @return 请求成功入队返回 true */
+    bool RequestWindowsShutdownDialog();
     /** @brief 将输入法组合文本和候选窗口定位到自绘输入框光标。 */
     void UpdateHostInputImePosition();
     /** @brief 获取 Shell 弹窗/命令使用的顶层 owner，避免使用挂在 Explorer 下的子窗口。 */
