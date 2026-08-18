@@ -260,7 +260,7 @@ local function render(context, model)
         model.editingTaskId = nil
     end
     local w = layout.width()
-    local h = layout.height()
+    local h = layout.contentHeight()
     local pad = layout.cu(14)
     local gap = layout.cu(7)
     local palette = getPalette()

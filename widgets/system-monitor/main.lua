@@ -345,7 +345,7 @@ end
 
 local function render(_context, model)
     local width = layout.width()
-    local height = layout.height()
+    local height = layout.contentHeight()
     local viewportHeight = math.max(1, height)
     local cards, palette = buildCards()
     local columns = math.max(1, layout.columns())

@@ -223,7 +223,7 @@ local function render(context, model)
     syncQueryAndSources(model)
     local colors = palette(context)
     local width = layout.width()
-    local height = layout.height()
+    local height = layout.contentHeight()
     local pad = layout.cu(13)
     local fontSize = currentFontSize()
     local inputHeight = layout.cu(34)
@@ -244,7 +244,7 @@ local function render(context, model)
     })
 
     local listTop = layout.cu(10) + inputHeight + layout.cu(9)
-    local listBottom = height - layout.cu(layout.barHeight() + 5)
+    local listBottom = height - layout.cu(5)
     local viewportHeight = math.max(1, listBottom - listTop)
     local viewport = { type = "rect", x = pad, y = listTop,
         width = width - pad * 2, height = viewportHeight }

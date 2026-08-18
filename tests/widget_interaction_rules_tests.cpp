@@ -758,11 +758,14 @@ void TestBottomBarContentReservation()
         chromeRules::ReservedBottomBarHeight(true, false, 36) == 36,
         "a persistent titled bottom bar must reserve content height");
     Check(
-        chromeRules::ReservedBottomBarHeight(false, false, 36) == 0,
-        "a titleless move handle must float over the content");
+        chromeRules::ReservedBottomBarHeight(false, false, 36) == 36,
+        "a titleless move handle must reserve content height");
     Check(
-        chromeRules::ReservedBottomBarHeight(true, true, 36) == 0,
-        "a hover bottom bar must float over the content");
+        chromeRules::ReservedBottomBarHeight(true, true, 36) == 36,
+        "a hover bottom bar must reserve content height");
+    Check(
+        chromeRules::ReservedBottomBarHeight(false, true, -1) == 0,
+        "the reserved bottom bar height must remain non-negative");
 }
 
 void TestNestedWidgetScrolling()

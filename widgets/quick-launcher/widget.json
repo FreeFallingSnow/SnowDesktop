@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "Quick Launcher",
   "nameKey": "lua_widget.quick_launcher.name",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "description": "Searches SnowDesktop items and quickly opens or locates them.",
   "descriptionKey": "lua_widget.quick_launcher.description",
   "locales": {
@@ -256,6 +256,7 @@
     "interaction.pointerActions",
     "interaction.region",
     "interaction.scroll",
+    "layout.relativeUnits",
     "lifecycle.event",
     "lifecycle.model",
     "l10n.basic",

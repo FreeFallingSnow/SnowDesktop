@@ -422,10 +422,15 @@ void TestAllBuiltinWidgetsUseV2(const fs::path& repository)
                 manifest.find("\"apiVersion\": 2") !=
                     std::string::npos,
             "every built-in package must declare schema/API v2");
+        Check(manifest.find("\"layout.relativeUnits\"") !=
+                std::string::npos,
+            "every built-in package must declare the safe content layout API");
 
         const std::string source = ReadFile(directory / "main.lua");
         Check(source.find("return widget.define(") != std::string::npos,
             "every built-in entry must return a widget.define descriptor");
+        Check(source.find("layout.height()") == std::string::npos,
+            "built-in widget content must not extend beneath the bottom bar");
         for (const std::string_view legacyCall : {
             "sys.", "imgui.", "http.request(", "http.get(",
             "media.current(", "media.playPause(", "media.next(",

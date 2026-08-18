@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "Digital Clock",
   "nameKey": "lua_widget.digital_clock.name",
-  "version": "2.1.2",
+  "version": "2.1.3",
   "description": "Displays a responsive digital clock with date and weekday.",
   "descriptionKey": "lua_widget.digital_clock.description",
   "locales": {
@@ -221,11 +221,12 @@
   },
   "permissions": [],
   "requiredFeatures": [
+    "draw.immediate",
+    "layout.relativeUnits",
     "lifecycle.model",
     "schedule.basic",
     "schedule.visibility",
-    "time.basic",
-    "draw.immediate"
+    "time.basic"
   ],
   "optionalFeatures": []
 }
