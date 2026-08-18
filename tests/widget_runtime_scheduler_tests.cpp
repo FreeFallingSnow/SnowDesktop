@@ -343,6 +343,19 @@ void TestAnimationFrameRequests()
     Check(resumed.size() == 1 &&
             resumed[0].deltaMilliseconds == 0,
         "resuming must not report a catch-up animation delta");
+    Check(requests.Request("page-frame") &&
+            requests.SetVisible(false, true) &&
+            requests.HasPending() &&
+            requests.Consume(
+                start + std::chrono::milliseconds(6000)).empty() &&
+            requests.SetVisible(true),
+        "temporarily unavailable pages must retain pending frame requests without running them");
+    const auto pageResumed = requests.Consume(
+        start + std::chrono::milliseconds(7000));
+    Check(pageResumed.size() == 1 &&
+            pageResumed[0].name == "page-frame" &&
+            pageResumed[0].deltaMilliseconds == 0,
+        "a restored page must resume its retained frame chain without hidden-time catch-up");
     Check(requests.Request("frame-0") && requests.Cancel("frame-0") &&
             !requests.HasPending() && !requests.Cancel("frame-0"),
         "canceling a named next frame must be idempotent");

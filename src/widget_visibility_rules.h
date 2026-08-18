@@ -30,4 +30,12 @@ constexpr bool IsDesktopSurfaceVisible(
         hasDesktopBounds && interactionVisible;
 }
 
+constexpr bool ShouldPreserveHiddenPageRuntimeState(
+    bool desktopHidden,
+    bool hasDesktopBounds,
+    bool pageUnavailable)
+{
+    return !desktopHidden && !hasDesktopBounds && pageUnavailable;
+}
+
 }

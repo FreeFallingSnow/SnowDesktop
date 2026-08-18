@@ -625,6 +625,7 @@ struct LuaWidget
     int lastRows = 1;
     snowdesktop::widget_runtime::LayoutMetrics layoutMetrics;
     bool desktopVisible = false;
+    bool preserveDesktopAnimationState = false;
     bool hostVisible = false;
     bool usesSystemSnapshot = false;
     bool usesMediaSnapshot = false;
@@ -909,7 +910,8 @@ public:
         ID2D1DeviceContext* context, RECT bounds, int columns = 1, int rows = 1);
     /** Synchronize semantic visibility of one widget's desktop surface. */
     void SetWidgetDesktopVisible(
-        const std::wstring& widgetId, bool visible);
+        const std::wstring& widgetId, bool visible,
+        bool preserveAnimationState = false);
     /** Hide or show the desktop surface of every loaded non-preview widget. */
     void SetAllWidgetDesktopVisible(bool visible);
     bool RenderWidgetPanel(const std::wstring& widgetId,
@@ -1703,9 +1705,11 @@ private:
     void ReleaseWidgetTasks(LuaWidget& widget,
         snowdesktop::widget_runtime::TaskBrokerCancelReason reason);
     void EnsureSystemSnapshotServiceStarted();
-    void ApplyWidgetHostVisibility(LuaWidget& widget, bool visible);
+    void ApplyWidgetHostVisibility(LuaWidget& widget, bool visible,
+        bool preserveAnimationState = false);
     void RescheduleNamedTimer(LuaWidget& widget);
     bool ScheduleAnimationFrame(LuaWidget& widget);
+    void PauseAnimationFrames(LuaWidget& widget);
     void StopAnimationFrames(LuaWidget& widget);
 
     D2DState* d2dState_ = nullptr;                     ///< Direct2D 渲染状态管理对象指针

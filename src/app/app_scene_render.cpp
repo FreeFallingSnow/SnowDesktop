@@ -1,4 +1,5 @@
 #include "app.h"
+#include "grid_geometry.h"
 #include "../item_render_layer_rules.h"
 #include "../widget_visibility_rules.h"
 #include "../widgets/collection_group_rules.h"
@@ -123,6 +124,13 @@ void DesktopApp::DrawStaticBackground(
             snowdesktop::widget_visibility_rules::IsDesktopSurfaceVisible(
                 hiddenMode, widgetData.keepWhenDesktopHidden,
                 hasDesktopBounds, interactionVisible);
+        const bool pageUnavailable =
+            !widgetData.gridCell.pageId.empty() &&
+            FindGridPage(gridPages_, widgetData.gridCell.pageId) == nullptr;
+        const bool preserveHiddenPageRuntimeState =
+            snowdesktop::widget_visibility_rules::
+                ShouldPreserveHiddenPageRuntimeState(
+                    hiddenMode, hasDesktopBounds, pageUnavailable);
         // Runtime visibility is semantic state, not a paint-frequency signal.
         // Synchronize it before dirty-region culling because DirectComposition
         // may retain a visible widget without asking the host to redraw it.
@@ -130,7 +138,8 @@ void DesktopApp::DrawStaticBackground(
             widgetData.type == DesktopWidgetType::LuaScript)
         {
             widgetEngine_->SetWidgetDesktopVisible(
-                widgetData.id, desktopSurfaceVisible);
+                widgetData.id, desktopSurfaceVisible,
+                preserveHiddenPageRuntimeState);
         }
         if (!desktopSurfaceVisible)
             continue;
