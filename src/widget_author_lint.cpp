@@ -357,7 +357,11 @@ void LintApiCalls(LintReport& report,
 
     for (std::size_t index = 0; index < tokens.size(); ++index)
     {
-        if (tokens[index].kind == TokenKind::Identifier &&
+        const bool memberAccess = index > 0 &&
+            (IsSymbol(tokens[index - 1], ".") ||
+                IsSymbol(tokens[index - 1], ":"));
+        if (!memberAccess &&
+                tokens[index].kind == TokenKind::Identifier &&
                 tokens[index].text == "require" &&
                 index + 1 < tokens.size() && IsSymbol(tokens[index + 1], "("))
         {

@@ -68,6 +68,18 @@ io.open("secret")
         "lint must reject undeclared permissions, unknown APIs/capabilities, and forbidden sandbox calls");
 }
 
+void TestQualifiedModuleRequire()
+{
+    PackageManifest manifest;
+    manifest.apiVersion = 2;
+    const auto report = LintWidgetSource(manifest, "main.lua", R"lua(
+local history = module.require("modules/history.lua")
+return history
+)lua");
+    Check(report.Ok() && !HasIssue(report, "api.forbidden-global"),
+        "module.require must not be mistaken for the forbidden global require");
+}
+
 void TestViewKeysAndLiteralText()
 {
     PackageManifest manifest;
@@ -114,6 +126,7 @@ int main()
 {
     TestCleanLocalizedSource();
     TestApiPermissionAndSandboxFailures();
+    TestQualifiedModuleRequire();
     TestViewKeysAndLiteralText();
     TestSyntaxFailure();
     std::cout << "widget author lint tests passed\n";
