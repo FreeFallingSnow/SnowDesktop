@@ -22,6 +22,9 @@ local settings = {
         { key = "show_vram", label = l10n.tr("lua_widget.system_monitor.show_vram"), type = "bool", default = true },
         { key = "show_network", label = l10n.tr("lua_widget.system_monitor.show_network"), type = "bool", default = true },
         { key = "show_battery", label = l10n.tr("lua_widget.system_monitor.show_battery"), type = "bool", default = true },
+        { key = "show_storage", label = l10n.tr("lua_widget.system_monitor.show_storage"), type = "bool", default = true },
+        { key = "show_disk_io", label = l10n.tr("lua_widget.system_monitor.show_disk_io"), type = "bool", default = false },
+        { key = "show_uptime", label = l10n.tr("lua_widget.system_monitor.show_uptime"), type = "bool", default = true },
     },
 }
 
@@ -69,26 +72,72 @@ local function usageColor(percent, palette)
     return palette.usageLow
 end
 
+local function formatBytes(bytes)
+    return l10n.formatBytes(math.max(0, bytes or 0), {
+        base = 1024,
+        maximumFractionDigits = 1,
+    })
+end
+
 local function formatRate(bytes)
-    bytes = math.max(0, bytes or 0)
-    if bytes >= 1024 * 1024 then
-        return string.format("%.1f MB/s", bytes / 1024 / 1024)
+    return formatBytes(bytes) .. "/s"
+end
+
+local function formatPercent(value)
+    return l10n.formatNumber(clamp(value), {
+        maximumFractionDigits = 0,
+    }) .. "%"
+end
+
+local function formatUptime(milliseconds)
+    local dayMs = 24 * 60 * 60 * 1000
+    if milliseconds >= dayMs then
+        local days = math.floor(milliseconds / dayMs)
+        local hours = math.floor((milliseconds % dayMs) / (60 * 60 * 1000))
+        return l10n.tr("lua_widget.system_monitor.days_hours",
+            days, hours)
     end
-    if bytes >= 1024 then
-        return string.format("%.0f KB/s", bytes / 1024)
-    end
-    return tostring(math.floor(bytes)) .. " B/s"
+    return l10n.formatDuration(milliseconds, { style = "short" })
 end
 
 local function showCard(name)
     return storage.get("show_" .. name) ~= "0"
 end
 
-local function subscriptionValue(handle)
-    if not handle then return nil end
+local function subscriptionValue(handle, permissionGranted)
+    if permissionGranted == false then return nil, "permission" end
+    if not handle then return nil, "unavailable" end
     local snapshot = handle:value()
-    if snapshot.available then return snapshot.value end
-    return nil
+    if snapshot.available then
+        return snapshot.value, snapshot.stale and "stale" or nil
+    end
+    if snapshot.warmingUp then return nil, "waiting" end
+    if snapshot.error == "permissionDenied" then
+        return nil, "permission"
+    end
+    if snapshot.error == "notPresent" then return nil, "notPresent" end
+    return nil, "unavailable"
+end
+
+local function statusText(status)
+    if not status then return nil end
+    local keys = {
+        waiting = "lua_widget.system_monitor.waiting",
+        stale = "lua_widget.system_monitor.stale",
+        unavailable = "lua_widget.system_monitor.unavailable",
+        permission = "lua_widget.system_monitor.permission_required",
+        notPresent = "lua_widget.system_monitor.not_present",
+    }
+    return l10n.tr(keys[status] or keys.unavailable)
+end
+
+local function detailsWithStatus(details, status)
+    local values = {}
+    if details and details ~= "" then values[#values + 1] = details end
+    local statusValue = statusText(status)
+    if statusValue then values[#values + 1] = statusValue end
+    if #values == 0 then return nil end
+    return l10n.formatList(values)
 end
 
 local function summarizeGpu(value)
@@ -99,6 +148,8 @@ local function summarizeGpu(value)
         usagePercent = 0,
         dedicatedMemoryBytes = 0,
         dedicatedUsedBytes = 0,
+        sharedMemoryBytes = 0,
+        sharedUsedBytes = 0,
         names = {},
     }
     for _, adapter in ipairs(value.adapters) do
@@ -106,19 +157,39 @@ local function summarizeGpu(value)
             adapter.usagePercent or 0)
         local dedicatedTotal = math.max(0,
             adapter.dedicatedMemoryBytes or 0)
-        summary.dedicatedMemoryBytes = math.max(
-            summary.dedicatedMemoryBytes, dedicatedTotal)
-        -- Match the pre-v2 PDH sampling contract: total capacity represents
-        -- the largest dedicated adapter, while usage aggregates every
-        -- GPU Adapter Memory instance exposed by the system.
+        summary.dedicatedMemoryBytes = summary.dedicatedMemoryBytes +
+            dedicatedTotal
         summary.dedicatedUsedBytes = summary.dedicatedUsedBytes +
             math.max(0, adapter.dedicatedUsedBytes or 0)
+        summary.sharedMemoryBytes = summary.sharedMemoryBytes +
+            math.max(0, adapter.sharedMemoryBytes or 0)
+        summary.sharedUsedBytes = summary.sharedUsedBytes +
+            math.max(0, adapter.sharedUsedBytes or 0)
         if adapter.name and adapter.name ~= "" then
             summary.names[#summary.names + 1] = adapter.name
         end
     end
     summary.name = table.concat(summary.names, " · ")
     return summary
+end
+
+local function summarizeStorage(value)
+    if not value or not value.volumes then return nil end
+    local result = { totalBytes = 0, usedBytes = 0, names = {} }
+    for _, volume in ipairs(value.volumes) do
+        if volume.capacityAvailable and (volume.capacityBytes or 0) > 0 then
+            local total = math.max(0, volume.capacityBytes)
+            local free = math.max(0, math.min(total,
+                volume.freeBytes or 0))
+            result.totalBytes = result.totalBytes + total
+            result.usedBytes = result.usedBytes + total - free
+            if volume.displayName and volume.displayName ~= "" then
+                result.names[#result.names + 1] = volume.displayName
+            end
+        end
+    end
+    if result.totalBytes <= 0 then return nil end
+    return result
 end
 
 local function splitWrap(model, text, fontSize, maxWidth)
@@ -145,6 +216,16 @@ local function splitWrap(model, text, fontSize, maxWidth)
     return lines
 end
 
+local function fitFontSize(text, fontSize, minimum, maxWidth, bold)
+    local fitted = fontSize
+    local metrics = draw.measureText(text, fitted, 0, bold == true)
+    while fitted > minimum and metrics.width > maxWidth do
+        fitted = fitted - 1
+        metrics = draw.measureText(text, fitted, 0, bold == true)
+    end
+    return fitted, metrics
+end
+
 local function drawCard(model, x, y, width, height, info, palette)
     draw.rect(x, y, width, height, palette.cardBg,
         layout.cu(10), palette.cardBgA)
@@ -161,7 +242,9 @@ local function drawCard(model, x, y, width, height, info, palette)
         local lineHeight = math.max(layout.cu(12),
             math.floor(height * 0.11))
         for _, line in ipairs(info.lines) do
-            draw.text(x + inset, lineY, line.text, lineHeight,
+            local lineFont = fitFontSize(line.text, lineHeight,
+                layout.fontCu(9), width - inset * 2, false)
+            draw.text(x + inset, lineY, line.text, lineFont,
                 line.color or palette.cardText,
                 width - inset * 2, false, true)
             lineY = lineY + lineHeight + layout.cu(2)
@@ -169,7 +252,9 @@ local function drawCard(model, x, y, width, height, info, palette)
     else
         local valueFont = math.max(layout.fontCu(15),
             math.min(layout.fontCu(24), math.floor(height * 0.18)))
-        local metrics = draw.measureText(info.value, valueFont, 0, true)
+        local metrics = nil
+        valueFont, metrics = fitFontSize(info.value, valueFont,
+            layout.fontCu(10), width - inset * 2, true)
         draw.text(x + (width - metrics.width) / 2,
             y + height * 0.42 - metrics.height / 2,
             info.value, valueFont, palette.cardText, 0, true)
@@ -232,6 +317,29 @@ local function setup()
             whenHidden = "throttle",
         })
     end
+    if widget.hasFeature("data.system.network.status") and
+        widget.hasPermission("system.network.read") then
+        subscriptions.networkStatus = data.subscribe(
+            "system.network.status", {
+                maxAgeMs = 2000,
+                whenHidden = "throttle",
+            })
+    end
+    if widget.hasFeature("data.system.storage.volumes") and
+        widget.hasPermission("system.storage.read") then
+        subscriptions.storage = data.subscribe(
+            "system.storage.volumes", {
+                maxAgeMs = 5000,
+                whenHidden = "throttle",
+            })
+    end
+    if widget.hasFeature("data.system.storage.io") and
+        widget.hasPermission("system.storage.read") then
+        subscriptions.diskIo = data.subscribe("system.storage.io", {
+            maxAgeMs = 1000,
+            whenHidden = "pause",
+        })
+    end
     schedule.every("sub-line", 3000, { whenHidden = "pause" })
     return {
         previousColumns = 0,
@@ -243,24 +351,42 @@ end
 
 local function buildCards()
     local palette = getPalette()
-    local cpu = subscriptionValue(subscriptions.cpu)
-    local memory = subscriptionValue(subscriptions.memory)
-    local gpu = summarizeGpu(subscriptionValue(subscriptions.gpu))
-    local power = subscriptionValue(subscriptions.power)
-    local network = subscriptionValue(subscriptions.network)
+    local cpu, cpuState = subscriptionValue(subscriptions.cpu)
+    local memory, memoryState = subscriptionValue(subscriptions.memory)
+    local gpuValue, gpuState = subscriptionValue(subscriptions.gpu)
+    local gpu = summarizeGpu(gpuValue)
+    if not gpu and not gpuState then gpuState = "notPresent" end
+    local powerPermission = widget.hasPermission("system.power.read")
+    local networkPermission = widget.hasPermission("system.network.read")
+    local storagePermission = widget.hasPermission("system.storage.read")
+    local power, powerState = subscriptionValue(subscriptions.power,
+        powerPermission)
+    local network, networkState = subscriptionValue(subscriptions.network,
+        networkPermission)
+    local networkStatus, networkStatusState = subscriptionValue(
+        subscriptions.networkStatus, networkPermission)
+    local storageValue, storageState = subscriptionValue(
+        subscriptions.storage, storagePermission)
+    local storageSummary = summarizeStorage(storageValue)
+    if not storageSummary and not storageState then
+        storageState = "notPresent"
+    end
+    local diskIo, diskIoState = subscriptionValue(subscriptions.diskIo,
+        storagePermission)
     local cards = {}
 
     if showCard("cpu") then
         local percent = cpu and clamp(cpu.usagePercent) or nil
         cards[#cards + 1] = {
             title = "CPU",
-            value = percent and string.format("%.0f%%", percent) or "—",
+            value = percent and formatPercent(percent) or "—",
             progress = percent and percent / 100 or nil,
             color = usageColor(percent or 0, palette),
-            sub = cpu and cpu.name ~= "" and cpu.name or
+            sub = detailsWithStatus(
+                cpu and cpu.name ~= "" and cpu.name or
                 (cpu and cpu.logicalProcessors and cpu.logicalProcessors > 0 and
                     l10n.tr("lua_widget.system_monitor.threads",
-                        cpu.logicalProcessors) or nil),
+                        cpu.logicalProcessors) or nil), cpuState),
             rotateLines = true,
         }
     end
@@ -269,42 +395,69 @@ local function buildCards()
         local percent = memory and clamp(memory.usagePercent) or nil
         cards[#cards + 1] = {
             title = l10n.tr("lua_widget.system_monitor.memory"),
-            value = percent and string.format("%.0f%%", percent) or "—",
+            value = percent and formatPercent(percent) or "—",
             progress = percent and percent / 100 or nil,
             color = usageColor(percent or 0, palette),
-            sub = memory and memory.totalBytes and memory.totalBytes > 0 and
-                string.format("%.1f / %.1f GB",
-                    memory.usedBytes / 1024 / 1024 / 1024,
-                    memory.totalBytes / 1024 / 1024 / 1024) or nil,
-        }
-    end
-
-    if showCard("gpu") and gpu then
-        local percent = clamp(gpu.usagePercent)
-        cards[#cards + 1] = {
-            title = "GPU",
-            value = string.format("%.0f%%", percent),
-            progress = percent / 100,
-            color = usageColor(percent, palette),
-            sub = gpu.name ~= "" and gpu.name or nil,
+            sub = detailsWithStatus(memory and memory.totalBytes and
+                memory.totalBytes > 0 and l10n.formatList({
+                    formatBytes(memory.usedBytes) .. " / " ..
+                        formatBytes(memory.totalBytes),
+                    l10n.tr("lua_widget.system_monitor.commit",
+                        formatBytes(memory.commitUsedBytes or 0),
+                        formatBytes(memory.commitLimitBytes or 0)),
+                }) or nil, memoryState),
             rotateLines = true,
         }
     end
 
-    if showCard("vram") and gpu then
-        local total = gpu.dedicatedMemoryBytes / 1024 / 1024 / 1024
-        local used = gpu.dedicatedUsedBytes / 1024 / 1024 / 1024
-        local percent = total > 0 and clamp(used / total * 100) or 0
+    if showCard("gpu") then
+        local percent = gpu and clamp(gpu.usagePercent) or nil
         cards[#cards + 1] = {
-            title = l10n.tr("lua_widget.system_monitor.vram"),
-            value = string.format("%.0f%%", percent),
-            progress = percent / 100,
-            color = usageColor(percent, palette),
-            sub = string.format("%.1f / %.1f GB", used, total),
+            title = "GPU",
+            value = percent and formatPercent(percent) or "—",
+            progress = percent and percent / 100 or nil,
+            color = usageColor(percent or 0, palette),
+            sub = detailsWithStatus(gpu and gpu.name ~= "" and
+                gpu.name or nil, gpuState),
+            rotateLines = true,
         }
     end
 
-    if showCard("network") and subscriptions.network then
+    if showCard("vram") then
+        local total = gpu and gpu.dedicatedMemoryBytes or 0
+        local used = gpu and gpu.dedicatedUsedBytes or 0
+        local percent = total > 0 and clamp(used / total * 100) or nil
+        cards[#cards + 1] = {
+            title = l10n.tr("lua_widget.system_monitor.vram"),
+            value = percent and formatPercent(percent) or "—",
+            progress = percent and percent / 100 or nil,
+            color = usageColor(percent or 0, palette),
+            sub = detailsWithStatus(total > 0 and
+                (formatBytes(used) .. " / " .. formatBytes(total)) or nil,
+                gpuState),
+        }
+    end
+
+    if showCard("network") then
+        local connectivity = networkStatus and
+            networkStatus.connectivity or nil
+        local networkDetails = nil
+        if connectivity == "internet" then
+            networkDetails = l10n.tr("lua_widget.system_monitor.online")
+        elseif connectivity == "local" then
+            networkDetails = l10n.tr(
+                "lua_widget.system_monitor.local_only")
+        elseif connectivity == "none" then
+            networkDetails = l10n.tr("lua_widget.system_monitor.offline")
+        end
+        if networkStatus and networkStatus.costKnown and
+            networkStatus.metered then
+            networkDetails = networkDetails and l10n.formatList({
+                networkDetails,
+                l10n.tr("lua_widget.system_monitor.metered"),
+            }) or l10n.tr("lua_widget.system_monitor.metered")
+        end
+        local effectiveNetworkState = networkState or networkStatusState
         cards[#cards + 1] = {
             title = l10n.tr("lua_widget.system_monitor.network"),
             lines = {
@@ -319,33 +472,101 @@ local function buildCards()
                     color = palette.netUp,
                 },
             },
+            sub = detailsWithStatus(networkDetails,
+                effectiveNetworkState),
         }
     end
 
-    if showCard("battery") and power then
-        local percent = clamp(power.batteryPercent)
+    if showCard("battery") then
+        local percent = power and clamp(power.batteryPercent) or nil
         local status = nil
-        if power.charging then
+        if power and power.charging then
             status = l10n.tr("lua_widget.system_monitor.charging")
-        elseif power.acPower then
+        elseif power and power.acPower then
             status = l10n.tr("lua_widget.system_monitor.plugged_in")
-        elseif percent <= 20 then
+        elseif percent and percent <= 20 then
             status = l10n.tr("lua_widget.system_monitor.low_battery")
+        end
+        if power and not power.acPower and
+            (power.estimatedRemainingSeconds or 0) > 0 then
+            local remaining = l10n.tr(
+                "lua_widget.system_monitor.remaining",
+                l10n.formatDuration(
+                    power.estimatedRemainingSeconds * 1000,
+                    { style = "short" }))
+            status = status and l10n.formatList({ status, remaining }) or
+                remaining
         end
         cards[#cards + 1] = {
             title = l10n.tr("lua_widget.system_monitor.battery"),
-            value = string.format("%.0f%%", percent),
-            progress = percent / 100,
-            color = usageColor(100 - percent, palette),
-            sub = status,
+            value = percent and formatPercent(percent) or "—",
+            progress = percent and percent / 100 or nil,
+            color = usageColor(100 - (percent or 100), palette),
+            sub = detailsWithStatus(status, powerState),
+            rotateLines = true,
+        }
+    end
+
+    if showCard("storage") then
+        local percent = storageSummary and clamp(
+            storageSummary.usedBytes / storageSummary.totalBytes * 100) or
+            nil
+        local details = storageSummary and
+            (formatBytes(storageSummary.usedBytes) .. " / " ..
+                formatBytes(storageSummary.totalBytes)) or nil
+        if storageSummary and #storageSummary.names > 0 then
+            details = l10n.formatList({
+                details,
+                l10n.formatList(storageSummary.names),
+            })
+        end
+        cards[#cards + 1] = {
+            title = l10n.tr("lua_widget.system_monitor.storage"),
+            value = percent and formatPercent(percent) or "—",
+            progress = percent and percent / 100 or nil,
+            color = usageColor(percent or 0, palette),
+            sub = detailsWithStatus(details, storageState),
+            rotateLines = true,
+        }
+    end
+
+    if showCard("disk_io") then
+        local percent = diskIo and clamp(diskIo.busyPercent) or nil
+        cards[#cards + 1] = {
+            title = l10n.tr("lua_widget.system_monitor.disk_io"),
+            lines = {
+                {
+                    text = "↓ " .. (diskIo and
+                        formatRate(diskIo.readBytesPerSecond) or "—"),
+                    color = palette.netDown,
+                },
+                {
+                    text = "↑ " .. (diskIo and
+                        formatRate(diskIo.writeBytesPerSecond) or "—"),
+                    color = palette.netUp,
+                },
+            },
+            progress = percent and percent / 100 or nil,
+            color = usageColor(percent or 0, palette),
+            sub = detailsWithStatus(percent and formatPercent(percent) or
+                nil, diskIoState),
+        }
+    end
+
+    if showCard("uptime") then
+        local uptime = system.uptime()
+        cards[#cards + 1] = {
+            title = l10n.tr("lua_widget.system_monitor.uptime"),
+            value = formatUptime(uptime.milliseconds),
+            color = palette.usageLow,
         }
     end
     return cards, palette
 end
 
 local function render(_context, model)
-    local width = layout.width()
-    local height = layout.height()
+    local width = layout.contentWidth()
+    local height = layout.contentHeight()
     local viewportHeight = math.max(1, height)
     local cards, palette = buildCards()
     local columns = math.max(1, layout.columns())
