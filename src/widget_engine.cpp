@@ -14698,6 +14698,8 @@ bool WidgetEngine::InvokeLifecycleEvent(LuaWidget& widget,
         widget.state, widget.ref, pushContext, -1, invoked, error);
     if (!succeeded && !error.empty())
         RuntimeRecordError(widget.widgetId, error);
+    else if (succeeded && invoked)
+        RuntimeRecordSuccess(widget.widgetId);
     const bool stateChanged = snowdesktop::widget_api::
         ConsumeTransientStateDirty(widget.state);
     if ((succeeded && invoked) || stateChanged)
@@ -20489,12 +20491,16 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
         {
             found->interactionRegions.AbortFrame();
             if (!viewError.empty())
+            {
                 RuntimeRecordError(widgetId,
                     FormatViewValidationDiagnostic(
                         viewErrorCode, viewError));
+                RuntimeInvalidateHost(widgetId);
+            }
         }
         else
         {
+            RuntimeRecordSuccess(widgetId);
             const auto transition =
                 found->interactionRegions.CommitFrame();
             if (transition.Changed())
@@ -20564,8 +20570,8 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             lua_pop(state, 2);
             RuntimeRecordError(widgetId,
                 "Widget lifecycle is not initialized");
+            RuntimeInvalidateHost(widgetId);
             found->interactionRegions.AbortFrame();
-            found->valid = false;
             return;
         }
         if (snowdesktop::lua_runtime::ProtectedCall(
@@ -20616,18 +20622,18 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                     }
                 }
             }
-            // mark invalid to avoid repeated attempts
             if (const int currentIndex = FindWidget(widgetId);
                 currentIndex >= 0)
             {
                 widgets_[currentIndex].interactionRegions.AbortFrame();
-                widgets_[currentIndex].valid = false;
             }
             lua_pop(state, 1);
+            RuntimeInvalidateHost(widgetId);
             return;
         }
         if (snowdesktop::widget_api::ConsumeTransientStateDirty(state))
             RuntimeInvalidateHost(widgetId);
+        RuntimeRecordSuccess(widgetId);
         if (const int currentIndex = FindWidget(widgetId);
             currentIndex >= 0)
         {
@@ -21072,8 +21078,11 @@ bool WidgetEngine::RenderWidgetPanel(
         if (snowdesktop::widget_api::ConsumeTransientStateDirty(state))
             RuntimeInvalidateHost(widgetId);
     }
+    if (panelAccepted)
+        RuntimeRecordSuccess(widgetId);
     if (!panelAccepted)
     {
+        RuntimeInvalidateHost(widgetId);
         const int currentIndex = FindWidget(widgetId);
         if (currentIndex >= 0)
         {
@@ -21143,6 +21152,27 @@ void WidgetEngine::OnNotificationAction(
 
 void WidgetEngine::TickRuntime()
 {
+    const auto healthNow = snowdesktop::widget_runtime::
+        RuntimeHealth::Clock::now();
+    std::vector<std::wstring> recoveryTargets;
+    for (auto& widget : widgets_)
+    {
+        const bool memoryQuotaExceeded = widget.quota &&
+            widget.quota->memoryExceeded;
+        if (widget.preview || widget.valid || memoryQuotaExceeded ||
+            !widget.health.BeginRecovery(healthNow))
+        {
+            continue;
+        }
+        widget.valid = true;
+        widgetHostFailures_.erase(widget.widgetId);
+        recoveryTargets.push_back(widget.widgetId);
+        RuntimeAddLog(widget.widgetId, "info",
+            "Automatic runtime recovery probe started");
+    }
+    for (const auto& widgetId : recoveryTargets)
+        RuntimeInvalidateHost(widgetId);
+
     const auto runtimeNow =
         snowdesktop::widget_runtime::WidgetDataBroker::Clock::now();
     if (dataBroker_)
@@ -23300,6 +23330,7 @@ void WidgetEngine::RuntimeRecordError(const std::wstring& widgetId, const std::s
 {
     std::string idUtf8 = WidgetWideToUtf8(widgetId);
     const int index = FindWidget(widgetId);
+    bool openedCircuit = false;
     if (!previewOnly_ && !snowdesktop::widget_runtime::IsDryLoad() &&
         (index < 0 || !widgets_[index].preview))
     {
@@ -23309,8 +23340,10 @@ void WidgetEngine::RuntimeRecordError(const std::wstring& widgetId, const std::s
     if (index >= 0)
     {
         auto& widget = widgets_[index];
+        const bool wasOpen = widget.health.CircuitOpen();
         if (widget.health.RecordError())
             widget.valid = false;
+        openedCircuit = !wasOpen && widget.health.CircuitOpen();
         const bool quotaExceeded = widget.quota &&
             (widget.quota->memoryExceeded ||
                 widget.quota->executionExceeded);
@@ -23320,6 +23353,30 @@ void WidgetEngine::RuntimeRecordError(const std::wstring& widgetId, const std::s
     else
         RecordWidgetHostFailure(widgetId, message);
     RuntimeAddLog(widgetId, "error", message);
+    if (openedCircuit)
+        RuntimeInvalidateHost(widgetId);
+}
+
+void WidgetEngine::RuntimeRecordSuccess(const std::wstring& widgetId)
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0)
+        return;
+    auto& widget = widgets_[index];
+    if (!widget.valid ||
+        (widget.health.ConsecutiveErrors() == 0 &&
+            !widget.health.RecoveryProbe()))
+    {
+        return;
+    }
+    const bool recovered = widget.health.RecoveryProbe();
+    widget.health.RecordSuccess();
+    widgetHostFailures_.erase(widgetId);
+    if (recovered)
+    {
+        RuntimeAddLog(widgetId, "info",
+            "Automatic runtime recovery probe succeeded");
+    }
 }
 
 void WidgetEngine::RecordWidgetHostFailure(

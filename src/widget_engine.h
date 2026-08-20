@@ -1651,6 +1651,7 @@ private:
     void RecordWidgetHostFailure(const std::wstring& widgetId,
         const std::string& message, bool quotaExceeded = false,
         bool circuitOpen = false);
+    void RuntimeRecordSuccess(const std::wstring& widgetId);
     void InvokeSimpleCallback(LuaWidget& widget, const char* callbackName);
     bool InitializeWidgetLifecycle(LuaWidget& widget);
     bool InvokeLifecycleEvent(LuaWidget& widget, const char* kind,
