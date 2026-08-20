@@ -1,6 +1,10 @@
 -- system-monitor/main.lua - API v2 system data subscriptions
 local subscriptions = {}
 local cardLayout = module.require("modules/card_layout.lua")
+local marquee = module.require("modules/marquee.lua")
+
+local marqueeFrameId = "sub-scroll"
+local marqueeSpeed = 24
 
 local fluent = {
     refresh = utf8.char(0xF13D),
@@ -195,30 +199,6 @@ local function summarizeStorage(value)
     return result
 end
 
-local function splitWrap(model, text, fontSize, maxWidth)
-    local cacheKey = text .. "\n" .. tostring(maxWidth) ..
-        "\n" .. tostring(fontSize)
-    local cached = model.wrappedLineCache[cacheKey]
-    if cached then return cached end
-
-    local lines = {}
-    local line = ""
-    for _, codepoint in utf8.codes(text) do
-        local char = utf8.char(codepoint)
-        local candidate = line .. char
-        local metrics = draw.measureText(candidate, fontSize, 0, false)
-        if line ~= "" and metrics.width > maxWidth then
-            lines[#lines + 1] = line
-            line = char
-        else
-            line = candidate
-        end
-    end
-    if line ~= "" then lines[#lines + 1] = line end
-    model.wrappedLineCache[cacheKey] = lines
-    return lines
-end
-
 local function fitFontSize(text, fontSize, minimum, maxWidth, bold)
     local fitted = fontSize
     local metrics = draw.measureText(text, fitted, 0, bold == true)
@@ -227,6 +207,25 @@ local function fitFontSize(text, fontSize, minimum, maxWidth, bold)
         metrics = draw.measureText(text, fitted, 0, bold == true)
     end
     return fitted, metrics
+end
+
+local function drawMarqueeText(model, x, y, text, fontSize, color,
+        viewportWidth)
+    local metrics = draw.measureText(text, fontSize, 0, false)
+    if not marquee.shouldScroll(metrics.width, viewportWidth) then
+        draw.text(x, y, text, fontSize, color, viewportWidth,
+            false, true)
+        return false
+    end
+
+    local offset, cycle = marquee.position(model.marqueeTravel,
+        metrics.width, layout.cu(24))
+    draw.pushClip(x, y, viewportWidth, metrics.height)
+    draw.text(x - offset, y, text, fontSize, color, 0, false, true)
+    draw.text(x - offset + cycle, y, text, fontSize, color, 0,
+        false, true)
+    draw.popClip()
+    return true
 end
 
 local function drawCard(model, x, y, width, height, info, palette)
@@ -277,19 +276,14 @@ local function drawCard(model, x, y, width, height, info, palette)
 
     if info.sub then
         local subWidth = width - layout.cu(16)
-        local subText = info.sub
-        if info.rotateLines then
-            local lines = splitWrap(model, info.sub, subFont, subWidth)
-            if #lines > 1 then
-                subText = lines[(model.subLineIndex % #lines) + 1]
-            end
-        end
-        local metrics = draw.measureText(subText, subFont, subWidth, false)
+        local metrics = draw.measureText(info.sub, subFont, 0, false)
         local subBottom = barY and (barY - layout.cu(4)) or
             (y + height - layout.cu(6))
-        draw.text(x + layout.cu(8), subBottom - metrics.height,
-            subText, subFont, palette.cardSub, subWidth,
-            false, info.rotateLines == true)
+        if drawMarqueeText(model, x + layout.cu(8),
+                subBottom - metrics.height, info.sub, subFont,
+                palette.cardSub, subWidth) then
+            model.marqueeVisible = true
+        end
     end
 end
 
@@ -343,12 +337,12 @@ local function setup()
             whenHidden = "pause",
         })
     end
-    schedule.every("sub-line", 3000, { whenHidden = "pause" })
     return {
         previousColumns = 0,
         previousRows = 0,
-        subLineIndex = 0,
-        wrappedLineCache = {},
+        marqueeTravel = 0,
+        marqueeVisible = false,
+        marqueeFramePending = false,
     }
 end
 
@@ -390,7 +384,6 @@ local function buildCards()
                 (cpu and cpu.logicalProcessors and cpu.logicalProcessors > 0 and
                     l10n.tr("lua_widget.system_monitor.threads",
                         cpu.logicalProcessors) or nil), cpuState),
-            rotateLines = true,
         }
     end
 
@@ -409,7 +402,6 @@ local function buildCards()
                         formatBytes(memory.commitUsedBytes or 0),
                         formatBytes(memory.commitLimitBytes or 0)),
                 }) or nil, memoryState),
-            rotateLines = true,
         }
     end
 
@@ -422,7 +414,6 @@ local function buildCards()
             color = usageColor(percent or 0, palette),
             sub = detailsWithStatus(gpu and gpu.name ~= "" and
                 gpu.name or nil, gpuState),
-            rotateLines = true,
         }
     end
 
@@ -506,7 +497,6 @@ local function buildCards()
             progress = percent and percent / 100 or nil,
             color = usageColor(100 - (percent or 100), palette),
             sub = detailsWithStatus(status, powerState),
-            rotateLines = true,
         }
     end
 
@@ -529,7 +519,6 @@ local function buildCards()
             progress = percent and percent / 100 or nil,
             color = usageColor(percent or 0, palette),
             sub = detailsWithStatus(details, storageState),
-            rotateLines = true,
         }
     end
 
@@ -575,6 +564,7 @@ local function render(_context, model)
     local columns = math.max(1, layout.columns())
     local visibleRows = math.max(1, layout.rows())
     local rows = #cards > 0 and math.ceil(#cards / columns) or 0
+    model.marqueeVisible = false
 
     local inset = layout.cu(4)
     local horizontalGap = layout.cu(4)
@@ -628,6 +618,14 @@ local function render(_context, model)
     end
     draw.popClip()
 
+    if model.marqueeVisible and not model.marqueeFramePending then
+        local accepted = animation.requestFrame(marqueeFrameId)
+        model.marqueeFramePending = accepted
+    elseif not model.marqueeVisible and model.marqueeFramePending then
+        animation.cancelFrame(marqueeFrameId)
+        model.marqueeFramePending = false
+    end
+
     interaction.region({
         key = "system.surface",
         shape = {
@@ -648,8 +646,14 @@ local function render(_context, model)
 end
 
 local function event(_context, model, value)
-    if value.kind == "schedule" and value.id == "sub-line" then
-        model.subLineIndex = model.subLineIndex + 1
+    if value.kind == "frame" and value.id == marqueeFrameId then
+        model.marqueeFramePending = false
+        if model.marqueeVisible then
+            model.marqueeTravel = marquee.advance(model.marqueeTravel,
+                value.deltaMs, marqueeSpeed)
+            local accepted = animation.requestFrame(marqueeFrameId)
+            model.marqueeFramePending = accepted
+        end
         return
     end
     if value.kind ~= "action" then return end
@@ -684,7 +688,10 @@ local function menu(_context, _model, request)
     })
 end
 
-local function dispose()
+local function dispose(_context, model)
+    if model and model.marqueeFramePending then
+        animation.cancelFrame(marqueeFrameId)
+    end
     for _, handle in pairs(subscriptions) do
         handle:unsubscribe()
     end
