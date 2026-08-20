@@ -17,12 +17,12 @@
 | 项目 | 填写内容 |
 |---|---|
 | SnowDesktop 版本 | 1.0.4.0 |
-| Commit / 构建号 | `release/v1.0.4.0`；系统状态 `647428d`；lint 修复 `9ea17a5` |
+| Commit / 构建号 | `release/v1.0.4.0`；系统状态 `647428d`；原生滚动 `c3006e0`；性能测量 `dc3b9b9`；lint 修复 `9ea17a5` |
 | 操作系统与版本 | Windows 11 家庭中文版 10.0.26200（build 26200） |
 | DPI / 显示缩放 | 96 / 120 / 144 DPI |
 | 主题 / 高对比度 | 深色、浅色；高对比度待后续批次 |
-| 测试组件与版本 | 内置 `system-monitor` 2.1.0；非内置 `performance-history` 1.0.0 |
-| 测试人员 | Codex 自动化与预览验收 |
+| 测试组件与版本 | 内置 `system-monitor` 2.3.0；非内置 `performance-history` 1.0.0 |
+| 测试人员 | Codex 自动化、性能采样与用户实机验收 |
 | 测试日期 | 2026-08-20 |
 
 结果栏填写：`P`（通过）、`F`（失败）、`B`（阻塞）或 `N/A`（本轮不适用）。每个 `F` 或 `B`
@@ -49,6 +49,7 @@
 | 01 | 内置 `system-monitor` 2.1.0 | CPU、内存、GPU、电源、网络状态/流量、存储卷/I/O 数据订阅；`system.uptime`；本地化数字/容量/时长/列表；即时绘制、滚动和数据状态包络 | 自动化与预览通过 | `snowwidget lint/validate/preview`；ready/loading/stale/permission-denied；2×1/3×2、96/144 DPI、深浅主题；`scripts/test.bat` 76/76；`scripts/build.bat --reload-shell` | 真实机器数据、现场滚动/菜单和长时间运行 |
 | 01 | 非内置 `performance-history` 1.0.0 | `module.require`；六个 `state` API；`schedule.every`；CPU/内存/GPU/磁盘/下载订阅；`view.box/row/column/scroll/text/badge/sparkline/lineChart`；range/multiSelect 设置 | 自动化与预览通过 | 4/4 包内 Lua 测试；ready/stale/permission-denied/empty；2×2/3×2、96/120/144 DPI、3 个 locale、深浅主题；validate/pack；开发候选同步到 `data/widgets/dev` | 真实桌面实例的采样累积、右键重置、设置变更和权限授权流程 |
 | 01 | `snowwidget lint` | 合法 `module.require()` 与禁用全局 `require()` 的区分 | 缺陷已修复并回归通过 | `SnowDesktopWidgetAuthorLintTests.exe`；实际组件 lint 0 错误/0 警告；提交 `9ea17a5` | 无 |
+| 02 | 内置 `system-monitor` 2.3.0；`draw.marqueeText` | 宿主原生连续滚动、裁剪、位置、相位续接，以及不再以 33 ms 定时器逐帧重绘桌面；实机 CPU/GPU 稳态采样 | 实机性能与视觉通过 | `c3006e0`；`scripts/build.bat --reload-shell`；`scripts/test.bat` 76/76；稳定等待 8 秒后采样 46.79 秒：整机 CPU 2.542%→0.188%，单核等效 63.3%→4.51%，GPU 峰值约 2%→0.25%；用户确认滚动平滑、位置与裁剪无问题 | `draw.marqueeText` 的隐藏暂停、reduced-motion 和合成失败回退仍随 D-19 完整矩阵补验 |
 
 > 组件边界：`performance-history` 的可追踪源码位于
 > `developer_assets/workshop_widgets/performance-history`，发布脚本明确排除整个
@@ -76,7 +77,7 @@
 | D-16 | `draw.image` | 绘制已声明的包内图片资源；核对加载成功、透明通道和无效句柄。 | v1 | — |  |  |
 | D-17 | `draw.imageFit` | 按填充、包含、覆盖或原尺寸策略绘图；核对对齐与插值模式。 | v2 | — |  |  |
 | D-18 | `draw.icon` | 绘制宿主管理的桌面对象引用图标；核对授权、失效引用和拒权路径。 | v1 | `desktop.read` |  |  |
-| D-19 | `draw.marqueeText` | 提交宿主管理的单行溢出滚动文字；核对不溢出时静态绘制、连续循环、稳定 key 相位、局部重绘、隐藏暂停、预览/reduced-motion 静态降级、数量与参数边界，以及滚动帧不重新进入 Lua。 | v2 | — |  |  |
+| D-19 | `draw.marqueeText` | 提交宿主管理的单行溢出滚动文字；核对不溢出时静态绘制、连续循环、稳定 key 相位、局部重绘、隐藏暂停、预览/reduced-motion 静态降级、数量与参数边界，以及滚动帧不重新进入 Lua。 | v2 | — |  | `system-monitor` 2.3.0 的实机连续滚动、裁剪、位置和降载已通过；完整边界与生命周期矩阵待补。 |
 
 ## 2. `interaction` 即时交互 API（6 项）
 
