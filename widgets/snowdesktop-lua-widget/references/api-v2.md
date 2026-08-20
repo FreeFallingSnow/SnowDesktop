@@ -1158,6 +1158,11 @@ LiveSetting、PositionInSet 和 SizeOfSet；关系目标仍在语义树中时还
 `dismissOnEscape` 默认 true。一个实例同时只拥有一个 panel 或 dialog；打开新辅助 surface 会
 关闭旧 surface。dialog 同样尚未导出到桌面 UIA Fragment Provider。
 
+panel、dialog 或 popover 打开后，宿主在其首棵成功场景中自动聚焦 Tab 顺序里的第一个
+可聚焦元素，使方向键、Enter 和空格立即作用于辅助界面；同一打开回调中通过
+`control.focus()` 提交的显式目标优先。该自动聚焦每次打开只执行一次，后续重绘不会在用户按
+Escape 清除焦点后再次抢回；首帧尚无可聚焦元素时会等到首次成功提交此类元素。
+
 探测 `view.surface.popover` 后，`popover(context, model)` 复用辅助 surface 场景管线，但位置
 来自 `widget.openPopover({ anchorKey=... })` 指向的当前成功 desktop scene 元素，而不是鼠标
 坐标或 Lua 提供的任意屏幕坐标。宿主将元素局部命中范围转换为桌面范围，应用 placement、翻转

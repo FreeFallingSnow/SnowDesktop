@@ -237,6 +237,11 @@ void TestKeyboardFocusRules()
             !EnterWidgetKeyboardFocus(
                 3, std::nullopt, false, false, true),
         "plain non-repeated Enter must enter an unfocused widget at its first element");
+    Check(BeginAuxiliarySurfaceKeyboardFocus(3, true, false) == 0 &&
+            !BeginAuxiliarySurfaceKeyboardFocus(0, true, false) &&
+            !BeginAuxiliarySurfaceKeyboardFocus(3, false, false) &&
+            !BeginAuxiliarySurfaceKeyboardFocus(3, true, true),
+        "an opened auxiliary surface must focus its first element exactly once");
     Check(CycleLogicalSlotFocus(3, std::nullopt, false) == 0 &&
             CycleLogicalSlotFocus(3, std::nullopt, true) == 2 &&
             CycleLogicalSlotFocus(3, 2, false) == 0 &&

@@ -45,6 +45,14 @@ inline std::optional<std::size_t> EnterWidgetKeyboardFocus(
     return 0;
 }
 
+inline std::optional<std::size_t> BeginAuxiliarySurfaceKeyboardFocus(
+    std::size_t count, bool pending, bool alreadyFocused)
+{
+    if (count == 0 || !pending || alreadyFocused)
+        return std::nullopt;
+    return 0;
+}
+
 inline std::optional<std::size_t> MoveLogicalSlotItemTarget(
     std::size_t count, std::size_t current, int direction)
 {

@@ -21600,6 +21600,27 @@ bool WidgetEngine::RenderWidgetPanel(
                 }
                 ResolveDeferredHostInputFocus(
                     widgetId, normalizedSurface);
+                const auto initialFocusKeys =
+                    current.panelInteractionRegions.KeyboardFocusableKeys();
+                const auto initialFocus = snowdesktop::widget_runtime::
+                    BeginAuxiliarySurfaceKeyboardFocus(
+                        initialFocusKeys.size(),
+                        current.panelInitialKeyboardFocusPending,
+                        !current.panelViewKeyboardFocusKey.empty());
+                if (!current.panelViewKeyboardFocusKey.empty())
+                {
+                    current.panelInitialKeyboardFocusPending = false;
+                }
+                else if (initialFocus && RuntimeFocusViewTarget(
+                        widgetId, initialFocusKeys[*initialFocus], "keyboard"))
+                {
+                    const int focusedIndex = FindWidget(widgetId);
+                    if (focusedIndex >= 0)
+                    {
+                        widgets_[focusedIndex].
+                            panelInitialKeyboardFocusPending = false;
+                    }
+                }
                 if (current.panelViewTree)
                 {
                     const bool transitionActive = DrawWidgetViewTree(
@@ -29997,6 +30018,7 @@ void WidgetEngine::CloseWidgetPanelSurface(
         widget, widget.desktopVisible || widget.panelActive ||
             widget.keepRuntimeActiveForHiddenPage);
     widget.panelSurface = "panel";
+    widget.panelInitialKeyboardFocusPending = false;
     widget.panelViewTransitions.Clear();
     widget.panelViewTransitionFramePending = false;
     widget.panelViewKeyboardFocusKey.clear();
@@ -30168,6 +30190,12 @@ void WidgetEngine::RuntimeOpenWidgetPanel(
     request.surface = "panel";
     request.width = std::clamp(width, 320, 900);
     request.height = std::clamp(height, 280, 900);
+    if (const int index = FindWidget(widgetId); index >= 0)
+    {
+        widgets_[index].panelInitialKeyboardFocusPending = true;
+        widgets_[index].panelViewKeyboardFocusKey.clear();
+        widgets_[index].panelViewFocusCueVisible = false;
+    }
     openWidgetPanelCallback_(request);
 }
 
@@ -30188,6 +30216,12 @@ void WidgetEngine::RuntimeOpenWidgetDialog(
     request.dismissOnOutside = dismissOnOutside;
     request.dismissOnEscape = dismissOnEscape;
     request.modal = true;
+    if (const int index = FindWidget(widgetId); index >= 0)
+    {
+        widgets_[index].panelInitialKeyboardFocusPending = true;
+        widgets_[index].panelViewKeyboardFocusKey.clear();
+        widgets_[index].panelViewFocusCueVisible = false;
+    }
     openWidgetPanelCallback_(request);
 }
 
@@ -30258,6 +30292,9 @@ bool WidgetEngine::RuntimeOpenWidgetPopover(
     request.height = std::clamp(height, 120, 720);
     request.dismissOnOutside = dismissOnOutside;
     request.dismissOnEscape = dismissOnEscape;
+    widgets_[index].panelInitialKeyboardFocusPending = true;
+    widgets_[index].panelViewKeyboardFocusKey.clear();
+    widgets_[index].panelViewFocusCueVisible = false;
     openWidgetPanelCallback_(request);
     return true;
 }

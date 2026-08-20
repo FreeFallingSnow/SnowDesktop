@@ -1205,17 +1205,20 @@ function widget.setTitle(title) end
 function widget.openSettings() end
 
 ---@param options? SnowWidgetPanelOptions
+---The first successful panel scene automatically receives keyboard focus unless the opening action explicitly calls control.focus().
 function widget.openPanel(options) end
 
 function widget.closePanel() end
 
 ---@param options? SnowWidgetDialogOptions
+---The first successful dialog scene automatically receives keyboard focus unless the opening action explicitly calls control.focus().
 function widget.openDialog(options) end
 
 function widget.closeDialog() end
 
 ---@param options SnowWidgetPopoverOptions
 ---@return boolean opened False outside a trusted desktop gesture or when anchorKey is not in the current successful desktop scene.
+---The first successful popover scene automatically receives keyboard focus unless the opening action explicitly calls control.focus().
 function widget.openPopover(options) end
 
 function widget.closePopover() end

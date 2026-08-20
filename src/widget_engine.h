@@ -703,6 +703,7 @@ struct LuaWidget
     NativeMarqueeSurface panelMarquee;
     std::string panelSurface = "panel";
     bool panelActive = false;
+    bool panelInitialKeyboardFocusPending = false;
     bool panelFrameOpen = false;
     std::uint64_t runtimeToken = 0;
     bool preview = false;
