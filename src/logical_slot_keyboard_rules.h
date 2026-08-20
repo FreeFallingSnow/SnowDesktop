@@ -36,6 +36,15 @@ inline std::optional<std::size_t> CycleLogicalSlotFocus(
     return (*current + 1) % count;
 }
 
+inline std::optional<std::size_t> EnterWidgetKeyboardFocus(
+    std::size_t count, std::optional<std::size_t> current,
+    bool shift, bool alt, bool repeated)
+{
+    if (count == 0 || current || shift || alt || repeated)
+        return std::nullopt;
+    return 0;
+}
+
 inline std::optional<std::size_t> MoveLogicalSlotItemTarget(
     std::size_t count, std::size_t current, int direction)
 {

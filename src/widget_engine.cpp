@@ -28068,6 +28068,14 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
         return found == slotItems.end() ? nullptr : &*found;
     };
 
+    if (key == VK_RETURN)
+    {
+        const auto entry = snowdesktop::widget_runtime::
+            EnterWidgetKeyboardFocus(
+                focusKeys.size(), focusedIndex, shift, alt, repeated);
+        if (entry)
+            return focusTarget(focusKeys[*entry]);
+    }
     if (key == VK_TAB && !alt)
     {
         const auto next = snowdesktop::widget_runtime::CycleLogicalSlotFocus(

@@ -225,6 +225,18 @@ void TestPointerReorderTargets()
 void TestKeyboardFocusRules()
 {
     using namespace snowdesktop::widget_runtime;
+    Check(EnterWidgetKeyboardFocus(
+                3, std::nullopt, false, false, false) == 0 &&
+            !EnterWidgetKeyboardFocus(
+                0, std::nullopt, false, false, false) &&
+            !EnterWidgetKeyboardFocus(3, 1, false, false, false) &&
+            !EnterWidgetKeyboardFocus(
+                3, std::nullopt, true, false, false) &&
+            !EnterWidgetKeyboardFocus(
+                3, std::nullopt, false, true, false) &&
+            !EnterWidgetKeyboardFocus(
+                3, std::nullopt, false, false, true),
+        "plain non-repeated Enter must enter an unfocused widget at its first element");
     Check(CycleLogicalSlotFocus(3, std::nullopt, false) == 0 &&
             CycleLogicalSlotFocus(3, std::nullopt, true) == 2 &&
             CycleLogicalSlotFocus(3, 2, false) == 0 &&
