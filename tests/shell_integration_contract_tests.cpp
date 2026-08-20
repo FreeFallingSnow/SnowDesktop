@@ -58,9 +58,11 @@ int main(int argc, char** argv)
         root / "src" / "settings_window.cpp");
     const std::string messageDispatch = ReadFile(
         root / "src" / "app" / "app_message_dispatch.cpp");
+    const std::string controlDispatch = ReadFile(
+        root / "src" / "app" / "app_desktop_reload.cpp");
     Check(!utils.empty() && !lifecycle.empty() && !settingsApply.empty() &&
             !dockSettings.empty() && !settingsWindow.empty() &&
-            !messageDispatch.empty(),
+            !messageDispatch.empty() && !controlDispatch.empty(),
         "shell integration sources are readable");
 
     const std::string_view ensureDesktop = FunctionBody(utils,
@@ -100,6 +102,12 @@ int main(int argc, char** argv)
             std::string_view::npos &&
             loadDock.find("RequestSystemTaskbar") == std::string_view::npos,
         "loading software settings synchronizes from Windows without overwriting it");
+    const std::string_view syncTaskbar = FunctionBody(settingsApply,
+        "void DesktopApp::SyncSystemTaskbarSettingsFromWindows()",
+        "void DesktopApp::LoadCategorySettingsAndApply()");
+    Check(syncTaskbar.find("FindWindowW(L\"Shell_TrayWnd\", nullptr)") !=
+            std::string_view::npos,
+        "taskbar state is not mirrored while Explorer is unavailable");
 
     const std::string_view controller = FunctionBody(dockSettings,
         "class WindowsShellSettingsController",
@@ -137,12 +145,23 @@ int main(int argc, char** argv)
         ? std::string_view{}
         : std::string_view(messageDispatch).substr(
             settingChange, themeChange - settingChange);
-    Check(settingHandler.find("SyncSystemTaskbarSettingsFromWindows();") !=
-            std::string_view::npos,
-        "external taskbar changes synchronize into SnowDesktop settings");
     Check(settingHandler.find("if (!traySettings && !immersiveColor)\n            ReloadItems(false);") !=
             std::string_view::npos,
         "theme notifications avoid a synchronous desktop item reload");
+
+    const std::string_view controlHandler = FunctionBody(controlDispatch,
+        "LRESULT DesktopApp::HandleControlMessage(",
+        "void DesktopApp::ReloadItems(");
+    Check(controlHandler.find("case WM_SETTINGCHANGE:") !=
+            std::string_view::npos &&
+            controlHandler.find("SyncSystemTaskbarSettingsFromWindows();") !=
+                std::string_view::npos,
+        "the top-level control window synchronizes external taskbar changes");
+    Check(controlHandler.find("case WM_THEMECHANGED:") !=
+            std::string_view::npos &&
+            controlHandler.find("RefreshSystemTaskbarAppearance(false);") !=
+                std::string_view::npos,
+        "the top-level control window refreshes taskbar visuals for system themes");
 
     if (failures == 0)
         std::cout << "Shell integration contract tests passed\n";

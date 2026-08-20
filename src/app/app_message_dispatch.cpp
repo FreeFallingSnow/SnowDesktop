@@ -898,11 +898,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         const bool immersiveColor = settingArea &&
             _wcsicmp(settingArea, L"ImmersiveColorSet") == 0;
 
-        if (traySettings)
-            SyncSystemTaskbarSettingsFromWindows();
-        if (traySettings || immersiveColor)
-            RefreshSystemTaskbarAppearance(false);
-        if (!immersiveColor)
+        if (!traySettings && !immersiveColor)
             ScheduleDisplayTopologyRefresh();
         InvalidateRect(hwnd_, nullptr, FALSE);
         // Explorer also broadcasts this message for view options such as
@@ -913,7 +909,6 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     }
     case WM_THEMECHANGED:
-        RefreshSystemTaskbarAppearance(false);
         InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
     case kShellChangeMessage:

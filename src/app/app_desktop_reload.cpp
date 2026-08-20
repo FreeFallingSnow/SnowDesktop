@@ -470,6 +470,32 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     case WM_DISPLAYCHANGE:
         ScheduleDisplayTopologyRefresh();
         return 0;
+    case WM_SETTINGCHANGE:
+    {
+        const wchar_t* settingArea =
+            reinterpret_cast<const wchar_t*>(lp);
+        const bool traySettings = settingArea &&
+            _wcsicmp(settingArea, L"TraySettings") == 0;
+        const bool immersiveColor = settingArea &&
+            _wcsicmp(settingArea, L"ImmersiveColorSet") == 0;
+        if (!traySettings && !immersiveColor)
+            break;
+
+        if (traySettings)
+        {
+            SyncSystemTaskbarSettingsFromWindows();
+            ScheduleDisplayTopologyRefresh();
+        }
+        RefreshSystemTaskbarAppearance(false);
+        if (hwnd_ && IsWindow(hwnd_))
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        return 0;
+    }
+    case WM_THEMECHANGED:
+        RefreshSystemTaskbarAppearance(false);
+        if (hwnd_ && IsWindow(hwnd_))
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        return 0;
     case WM_DEVICECHANGE:
         switch (wp)
         {

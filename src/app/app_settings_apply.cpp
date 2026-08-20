@@ -299,6 +299,12 @@ void DesktopApp::LoadDockSettingsAndApply()
 
 void DesktopApp::SyncSystemTaskbarSettingsFromWindows()
 {
+    // During Explorer restart ABM_GETSTATE returns zero before Shell_TrayWnd
+    // exists. Treat that interval as unavailable, not as an external request
+    // to disable auto-hide and overwrite the saved software mirror.
+    if (!FindWindowW(L"Shell_TrayWnd", nullptr))
+        return;
+
     const bool autoHide = IsSystemTaskbarAutoHideEnabled();
     const bool centered = IsSystemTaskbarAlignmentCentered();
     if (dockSettings_.systemTaskbarAutoHide == autoHide &&
