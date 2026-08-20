@@ -136,6 +136,44 @@ int main(int argc, char** argv)
             std::string_view::npos,
         "the settings UI does not perform a blocking Shell broadcast");
 
+    const std::size_t taskbarThemeBegin = settingsWindow.find(
+        "int taskbarThemeMode;");
+    const std::size_t systemTaskbarPageCall = settingsWindow.find(
+        "DrawSystemTaskbarPage();", taskbarThemeBegin);
+    const std::string_view taskbarAppearance =
+        taskbarThemeBegin == std::string::npos ||
+            systemTaskbarPageCall == std::string::npos
+        ? std::string_view{}
+        : std::string_view(settingsWindow).substr(
+            taskbarThemeBegin,
+            systemTaskbarPageCall - taskbarThemeBegin);
+    const std::size_t nativeForegroundGuard = taskbarAppearance.find(
+        "if (taskbarThemeMode != 0)");
+    const std::size_t mainForegroundLabel = taskbarAppearance.find(
+        "app.settings.taskbar_foreground_color");
+    Check(nativeForegroundGuard != std::string_view::npos &&
+            mainForegroundLabel != std::string_view::npos &&
+            nativeForegroundGuard < mainForegroundLabel,
+        "Windows-native taskbar mode hides the inactive foreground control");
+    Check(taskbarAppearance.find("app.settings.widget_content_theme") ==
+            std::string_view::npos,
+        "taskbar controls do not reuse the ambiguous widget theme label");
+
+    const std::size_t dynamicRuleBegin = taskbarAppearance.find(
+        "auto drawDynamicTaskbarRule");
+    const std::string_view dynamicRule = dynamicRuleBegin ==
+            std::string_view::npos
+        ? std::string_view{}
+        : taskbarAppearance.substr(dynamicRuleBegin);
+    const std::size_t dynamicNativeGuard = dynamicRule.find(
+        "if (rule.themeMode != SystemTaskbarThemeMode::Native)");
+    const std::size_t dynamicForegroundLabel = dynamicRule.find(
+        "app.settings.taskbar_foreground_color");
+    Check(dynamicNativeGuard != std::string_view::npos &&
+            dynamicForegroundLabel != std::string_view::npos &&
+            dynamicNativeGuard < dynamicForegroundLabel,
+        "Windows-native dynamic rules hide their inactive foreground control");
+
     const std::size_t settingChange = messageDispatch.find(
         "case WM_SETTINGCHANGE:");
     const std::size_t themeChange = messageDispatch.find(

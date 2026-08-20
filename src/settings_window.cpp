@@ -3728,35 +3728,46 @@ void SettingsWindow::DrawPersonalizationPage()
                 "%s", taskbarRuntimeStatus);
         }
 
-    BeginSettingRow(_L("app.settings.widget_content_theme"), controlW);
-        if (taskbarThemeMode == 8)
+        // Windows-native mode disables SnowDesktop's taskbar visual target, so
+        // a foreground override would be stored but could not affect the taskbar.
+        if (taskbarThemeMode != 0)
         {
-            const char* ctNames[] = { _L("app.settings.light"), _L("app.settings.dark") };
-            int ct = dockSettings_.systemTaskbarContentTheme;
-            if (ct < 0)
-                ct = dockSettings_.systemTaskbarAppearance.contentTheme;
-            ImGui::SetNextItemWidth(controlW);
-            if (ImGui::Combo("##ContentThemeTaskbar", &ct,
-                ctNames, IM_ARRAYSIZE(ctNames)))
+            BeginSettingRow(
+                _L("app.settings.taskbar_foreground_color"), controlW);
+            if (taskbarThemeMode == 8)
             {
-                dockSettings_.systemTaskbarContentTheme = ct;
-                dockSettingsDirty_ = true;
-                dockSettingsPreviewDirty_ = true;
-                dockSettingsSaveRequested_ = true;
+                const char* ctNames[] = {
+                    _L("app.settings.light"), _L("app.settings.dark")
+                };
+                int ct = dockSettings_.systemTaskbarContentTheme;
+                if (ct < 0)
+                    ct = dockSettings_.systemTaskbarAppearance.contentTheme;
+                ImGui::SetNextItemWidth(controlW);
+                if (ImGui::Combo("##ContentThemeTaskbar", &ct,
+                    ctNames, IM_ARRAYSIZE(ctNames)))
+                {
+                    dockSettings_.systemTaskbarContentTheme = ct;
+                    dockSettingsDirty_ = true;
+                    dockSettingsPreviewDirty_ = true;
+                    dockSettingsSaveRequested_ = true;
+                }
             }
-        }
-        else
-        {
-            const char* ctNames[] = { _L("app.settings.taskbar_follow_theme"), _L("app.settings.light"), _L("app.settings.dark") };
-            int ct = dockSettings_.systemTaskbarContentTheme + 1;
-            ImGui::SetNextItemWidth(controlW);
-            if (ImGui::Combo("##ContentThemeTaskbar", &ct,
-                ctNames, IM_ARRAYSIZE(ctNames)))
+            else
             {
-                dockSettings_.systemTaskbarContentTheme = ct - 1;
-                dockSettingsDirty_ = true;
-                dockSettingsPreviewDirty_ = true;
-                dockSettingsSaveRequested_ = true;
+                const char* ctNames[] = {
+                    _L("app.settings.taskbar_foreground_auto"),
+                    _L("app.settings.light"), _L("app.settings.dark")
+                };
+                int ct = dockSettings_.systemTaskbarContentTheme + 1;
+                ImGui::SetNextItemWidth(controlW);
+                if (ImGui::Combo("##ContentThemeTaskbar", &ct,
+                    ctNames, IM_ARRAYSIZE(ctNames)))
+                {
+                    dockSettings_.systemTaskbarContentTheme = ct - 1;
+                    dockSettingsDirty_ = true;
+                    dockSettingsPreviewDirty_ = true;
+                    dockSettingsSaveRequested_ = true;
+                }
             }
         }
 
@@ -3827,22 +3838,28 @@ void SettingsWindow::DrawPersonalizationPage()
             dockSettingsSaveRequested_ = true;
         }
 
-        const char* dynamicContentThemeNames[] = {
-            _L("app.settings.taskbar_follow_theme"),
-            _L("app.settings.light"),
-            _L("app.settings.dark")
-        };
-        int contentTheme = std::clamp(rule.contentTheme, -1, 1) + 1;
-        BeginSettingRow(_L("app.settings.widget_content_theme"), controlW);
-        ImGui::SetNextItemWidth(controlW);
-        if (ImGui::Combo("##ContentTheme", &contentTheme,
-            dynamicContentThemeNames,
-            IM_ARRAYSIZE(dynamicContentThemeNames)))
+        // Native rules explicitly hand the taskbar back to Windows; foreground
+        // color is meaningful only while a SnowDesktop appearance is active.
+        if (rule.themeMode != SystemTaskbarThemeMode::Native)
         {
-            rule.contentTheme = contentTheme - 1;
-            dockSettingsDirty_ = true;
-            dockSettingsPreviewDirty_ = true;
-            dockSettingsSaveRequested_ = true;
+            const char* dynamicContentThemeNames[] = {
+                _L("app.settings.taskbar_foreground_auto"),
+                _L("app.settings.light"),
+                _L("app.settings.dark")
+            };
+            int contentTheme = std::clamp(rule.contentTheme, -1, 1) + 1;
+            BeginSettingRow(
+                _L("app.settings.taskbar_foreground_color"), controlW);
+            ImGui::SetNextItemWidth(controlW);
+            if (ImGui::Combo("##ContentTheme", &contentTheme,
+                dynamicContentThemeNames,
+                IM_ARRAYSIZE(dynamicContentThemeNames)))
+            {
+                rule.contentTheme = contentTheme - 1;
+                dockSettingsDirty_ = true;
+                dockSettingsPreviewDirty_ = true;
+                dockSettingsSaveRequested_ = true;
+            }
         }
 
         if (rule.themeMode == SystemTaskbarThemeMode::Custom &&
