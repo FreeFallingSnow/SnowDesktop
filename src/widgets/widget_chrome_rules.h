@@ -37,6 +37,19 @@ inline int ReservedBottomBarHeight(
         : 0;
 }
 
+inline int HostActionContentBottom(
+    bool showTitle, int frameTop, int frameBottom,
+    int moveHandleTop, int handleGap) noexcept
+{
+    const int boundedFrameBottom = std::max(frameTop, frameBottom);
+    if (!HasBottomBar(showTitle))
+        return boundedFrameBottom;
+
+    return std::clamp(
+        moveHandleTop - std::max(0, handleGap),
+        frameTop, boundedFrameBottom);
+}
+
 /**
  * Return the horizontal inset that keeps the bottom-bar edge content inside
  * the rounded widget outline.

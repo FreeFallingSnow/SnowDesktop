@@ -782,6 +782,14 @@ void TestBottomBarContentReservation()
             chromeRules::ShowsResizeHandle(true, true, true) &&
             chromeRules::ShowsResizeHandle(true, false, false),
         "titleless widgets must expose only a hovered resize handle");
+    Check(
+        chromeRules::HostActionContentBottom(
+            false, 0, 110, 80, 5) == 110,
+        "a compact titleless host placeholder may use the full frame height");
+    Check(
+        chromeRules::HostActionContentBottom(
+            true, 0, 110, 80, 5) == 75,
+        "a titled host placeholder must stay clear of its move bar");
 }
 
 void TestNestedWidgetScrolling()

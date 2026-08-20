@@ -96,8 +96,10 @@ RECT DesktopApp::GetLuaWidgetHostActionRect(
     const int buttonHeight = ScaleWidgetCu(31.0f, cellScale);
     const int bottomInset = ScaleWidgetCu(14.0f, cellScale);
     const RECT moveHandle = GetStandaloneWidgetMoveHandleRect(widget);
-    const LONG contentBottom = std::max<LONG>(frame.top,
-        moveHandle.top - ScaleWidgetCu(5.0f, cellScale));
+    const LONG contentBottom = snowdesktop::widget_chrome_rules::
+        HostActionContentBottom(
+            widget.showTitle, frame.top, frame.bottom,
+            moveHandle.top, ScaleWidgetCu(5.0f, cellScale));
     const LONG bottom = std::max<LONG>(frame.top + buttonHeight,
         contentBottom - bottomInset);
     return {
