@@ -294,6 +294,35 @@ void TestRequiredAndOptionalPermissionSemantics()
                 std::vector<std::string>{}, domains),
         "manifests without optional scopes must preserve the v1 fingerprint");
 }
+
+void TestIsolatedExecutionGrant()
+{
+    using snowdesktop::widget::WidgetPermissionBroker;
+    const std::vector<std::string> required = {
+        "system.performance.read", "ui.input"
+    };
+    const std::vector<std::string> optional = {
+        "calendar.read", "ui.input"
+    };
+    const std::vector<std::string> domains = {
+        "example.com", "example.com"
+    };
+    const auto isolated = WidgetPermissionBroker::
+        GrantForIsolatedExecution(required, optional, domains);
+    Check(isolated.runtimeBlock == PermissionRuntimeBlock::None &&
+            isolated.permissions == std::vector<std::string>({
+                "system.performance.read", "ui.input", "calendar.read" }) &&
+            isolated.networkDomains ==
+                std::vector<std::string>{ "example.com" },
+        "isolated preview and dry-load execution must receive every declared scope without duplicates");
+
+    const auto pending = WidgetPermissionBroker::Evaluate(
+        PermissionDecisionState::Pending, required, optional, domains,
+        std::vector<std::string>{}, std::vector<std::string>{});
+    Check(pending.runtimeBlock == PermissionRuntimeBlock::PendingConsent &&
+            pending.permissions.empty() && pending.networkDomains.empty(),
+        "normal execution must continue to enforce pending consent");
+}
 }
 
 int main()
@@ -306,6 +335,7 @@ int main()
     TestConsentSelection();
     TestPermissionBrokerSnapshot();
     TestRequiredAndOptionalPermissionSemantics();
+    TestIsolatedExecutionGrant();
     std::cout << "widget permission state tests passed\n";
     return 0;
 }

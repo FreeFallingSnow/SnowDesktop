@@ -14975,43 +14975,44 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
             pending.manifest.minHostVersion + " or newer");
         return false;
     }
-    if (const auto package =
-        GetWidgetPackageManager().Resolve(pending.packageId))
+    auto grant = snowdesktop::widget::WidgetPermissionBroker::
+        GrantForIsolatedExecution(
+            pending.manifest.permissions,
+            pending.manifest.optionalPermissions,
+            pending.manifest.networkDomains);
+    if (!preview && !snowdesktop::widget_runtime::IsDryLoad())
     {
-        const auto grant = snowdesktop::widget::WidgetPermissionBroker::
-            Evaluate(package->permissionState,
+        if (const auto package =
+            GetWidgetPackageManager().Resolve(pending.packageId))
+        {
+            grant = snowdesktop::widget::WidgetPermissionBroker::Evaluate(
+                package->permissionState,
                 pending.manifest.permissions,
                 pending.manifest.optionalPermissions,
                 pending.manifest.networkDomains,
                 package->grantedPermissions,
                 package->grantedNetworkDomains);
-        switch (grant.runtimeBlock)
-        {
-        case snowdesktop::widget::PermissionRuntimeBlock::PendingConsent:
-            RuntimeRecordError(widgetId,
-                "Widget permission consent is pending");
-            return false;
-        case snowdesktop::widget::PermissionRuntimeBlock::Denied:
-            RuntimeRecordError(widgetId,
-                "Widget permission consent was denied");
-            return false;
-        case snowdesktop::widget::PermissionRuntimeBlock::MissingRequired:
-            RuntimeRecordError(widgetId,
-                "Widget required permissions are not granted");
-            return false;
-        case snowdesktop::widget::PermissionRuntimeBlock::None:
-            break;
         }
-        pending.permissions.insert(
-            grant.permissions.begin(), grant.permissions.end());
     }
-    else
+    switch (grant.runtimeBlock)
     {
-        for (const auto& permission : pending.manifest.permissions)
-            pending.permissions.insert(permission);
-        for (const auto& permission : pending.manifest.optionalPermissions)
-            pending.permissions.insert(permission);
+    case snowdesktop::widget::PermissionRuntimeBlock::PendingConsent:
+        RuntimeRecordError(widgetId,
+            "Widget permission consent is pending");
+        return false;
+    case snowdesktop::widget::PermissionRuntimeBlock::Denied:
+        RuntimeRecordError(widgetId,
+            "Widget permission consent was denied");
+        return false;
+    case snowdesktop::widget::PermissionRuntimeBlock::MissingRequired:
+        RuntimeRecordError(widgetId,
+            "Widget required permissions are not granted");
+        return false;
+    case snowdesktop::widget::PermissionRuntimeBlock::None:
+        break;
     }
+    pending.permissions.insert(
+        grant.permissions.begin(), grant.permissions.end());
 
     if (preview && previewConfiguration && d2dState_)
     {

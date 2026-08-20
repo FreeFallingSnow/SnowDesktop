@@ -35,6 +35,10 @@ public:
         std::span<const std::string> declaredNetworkDomains,
         std::span<const std::string> storedGrantedPermissions,
         std::span<const std::string> storedGrantedNetworkDomains);
+    static PermissionGrantSnapshot GrantForIsolatedExecution(
+        std::span<const std::string> requiredPermissions,
+        std::span<const std::string> optionalPermissions,
+        std::span<const std::string> declaredNetworkDomains);
 
     static PermissionRuntimeBlock ActivationBlock(
         PermissionDecisionState state) noexcept;

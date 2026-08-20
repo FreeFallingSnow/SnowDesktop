@@ -148,6 +148,32 @@ PermissionGrantSnapshot WidgetPermissionBroker::Evaluate(
     return result;
 }
 
+PermissionGrantSnapshot WidgetPermissionBroker::GrantForIsolatedExecution(
+    std::span<const std::string> requiredPermissions,
+    std::span<const std::string> optionalPermissions,
+    std::span<const std::string> declaredNetworkDomains)
+{
+    PermissionGrantSnapshot result;
+    result.runtimeBlock = PermissionRuntimeBlock::None;
+    const auto appendUnique = [](std::vector<std::string>& destination,
+        std::span<const std::string> scopes)
+    {
+        for (const auto& scope : scopes)
+        {
+            if (std::find(destination.begin(), destination.end(), scope) ==
+                destination.end())
+                destination.push_back(scope);
+        }
+    };
+    appendUnique(result.permissions, requiredPermissions);
+    appendUnique(result.permissions, optionalPermissions);
+    appendUnique(result.networkDomains, declaredNetworkDomains);
+    result.requestedScopeFingerprint = ScopeFingerprint(
+        requiredPermissions, optionalPermissions,
+        declaredNetworkDomains);
+    return result;
+}
+
 PermissionRuntimeBlock WidgetPermissionBroker::ActivationBlock(
     PermissionDecisionState state) noexcept
 {
