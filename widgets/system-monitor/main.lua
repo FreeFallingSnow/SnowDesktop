@@ -24,7 +24,7 @@ local settings = {
         { key = "show_battery", label = l10n.tr("lua_widget.system_monitor.show_battery"), type = "bool", default = true },
         { key = "show_storage", label = l10n.tr("lua_widget.system_monitor.show_storage"), type = "bool", default = true },
         { key = "show_disk_io", label = l10n.tr("lua_widget.system_monitor.show_disk_io"), type = "bool", default = false },
-        { key = "show_uptime", label = l10n.tr("lua_widget.system_monitor.show_uptime"), type = "bool", default = true },
+        { key = "show_uptime", label = l10n.tr("lua_widget.system_monitor.show_uptime"), type = "bool", default = false },
     },
 }
 
@@ -101,7 +101,9 @@ local function formatUptime(milliseconds)
 end
 
 local function showCard(name)
-    return storage.get("show_" .. name) ~= "0"
+    local value = storage.get("show_" .. name)
+    if type(value) == "boolean" then return value end
+    return value ~= "0" and value ~= "false"
 end
 
 local function subscriptionValue(handle, permissionGranted)
@@ -157,8 +159,8 @@ local function summarizeGpu(value)
             adapter.usagePercent or 0)
         local dedicatedTotal = math.max(0,
             adapter.dedicatedMemoryBytes or 0)
-        summary.dedicatedMemoryBytes = summary.dedicatedMemoryBytes +
-            dedicatedTotal
+        summary.dedicatedMemoryBytes = math.max(
+            summary.dedicatedMemoryBytes, dedicatedTotal)
         summary.dedicatedUsedBytes = summary.dedicatedUsedBytes +
             math.max(0, adapter.dedicatedUsedBytes or 0)
         summary.sharedMemoryBytes = summary.sharedMemoryBytes +
@@ -619,7 +621,15 @@ local function render(_context, model)
         for index, card in ipairs(cards) do
             local column = (index - 1) % columns
             local row = math.floor((index - 1) / columns)
-            local x = inset + column * (cardWidth + horizontalGap)
+            local cardsBeforeRow = row * columns
+            local cardsInRow = math.min(columns,
+                #cards - cardsBeforeRow)
+            local rowWidth = cardsInRow * cardWidth +
+                math.max(0, cardsInRow - 1) * horizontalGap
+            local rowInset = math.max(0,
+                math.floor((availableWidth - rowWidth) / 2))
+            local x = inset + rowInset +
+                column * (cardWidth + horizontalGap)
             local y = inset + row * (cardHeight + verticalGap) -
                 scroll.offset
             if y + cardHeight > 0 and y < viewportHeight then
