@@ -1,6 +1,6 @@
 -- system-monitor/main.lua - API v2 system data subscriptions
 local subscriptions = {}
-local scrollAlignment = module.require("modules/scroll_alignment.lua")
+local cardLayout = module.require("modules/card_layout.lua")
 
 local fluent = {
     refresh = utf8.char(0xF13D),
@@ -590,9 +590,10 @@ local function render(_context, model)
                 cardHeight + math.max(1, math.floor(cardHeight * 0.10)))
         end
     end
-    local contentHeight = rows > 0 and math.ceil(
-        inset + rows * cardHeight + (rows - 1) * verticalGap + inset) or
-        viewportHeight
+    -- The trailing inset makes the native maximum scroll offset place the
+    -- final row at the same inset from the viewport bottom.
+    local contentHeight = cardLayout.contentHeight(
+        rows, cardHeight, verticalGap, inset, viewportHeight)
 
     local resetScroll = columns ~= model.previousColumns or
         rows ~= model.previousRows
@@ -612,10 +613,6 @@ local function render(_context, model)
     if resetScroll then
         scroll.offset = interaction.setScrollOffset("system.cards", 0)
     end
-    model.scrollOffset = scroll.offset
-    model.scrollMaximum = scroll.maximum
-    model.scrollStep = cardHeight + verticalGap
-
     draw.pushClip(0, 0, width, viewportHeight)
     if rows == 0 then
         draw.text(layout.cu(10), layout.cu(10),
@@ -637,7 +634,7 @@ local function render(_context, model)
     draw.popClip()
 
     interaction.region({
-        key = "system.cards",
+        key = "system.surface",
         shape = {
             type = "rect",
             x = 0,
@@ -646,7 +643,6 @@ local function render(_context, model)
             height = viewportHeight,
         },
         events = {
-            wheel = { id = "system.scroll" },
             contextMenu = { id = "system.menu", scope = "component" },
         },
         accessibility = {
@@ -662,16 +658,7 @@ local function event(_context, model, value)
         return
     end
     if value.kind ~= "action" then return end
-    if value.id == "system.scroll" then
-        local step = model.scrollStep or 0
-        local maximum = model.scrollMaximum or 0
-        local offset = model.scrollOffset or 0
-        if step <= 0 or maximum <= 0 or value.delta == 0 then return end
-        local target = scrollAlignment.target(
-            offset, maximum, step, value.delta)
-        model.scrollOffset = interaction.setScrollOffset(
-            "system.cards", target)
-    elseif value.id == "system.refresh" then
+    if value.id == "system.refresh" then
         widget.invalidate()
     elseif value.id == "system.resetStyle" then
         storage.set("bg", tostring(style.bg))
