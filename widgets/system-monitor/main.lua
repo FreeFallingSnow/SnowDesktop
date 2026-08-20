@@ -573,6 +573,7 @@ local function render(_context, model)
     local viewportHeight = math.max(1, height)
     local cards, palette = buildCards()
     local columns = math.max(1, layout.columns())
+    local visibleRows = math.max(1, layout.rows())
     local rows = #cards > 0 and math.ceil(#cards / columns) or 0
 
     local inset = layout.cu(4)
@@ -581,19 +582,13 @@ local function render(_context, model)
     local availableWidth = width - inset * 2
     local cardWidth = math.floor((availableWidth -
         horizontalGap * (columns - 1)) / columns)
-    local cardHeight = layout.cellHeight()
-    if rows > 0 then
-        local fillHeight = math.floor((viewportHeight - inset * 2 -
-            verticalGap * (rows - 1)) / rows)
-        if fillHeight > cardHeight then
-            cardHeight = math.min(fillHeight,
-                cardHeight + math.max(1, math.floor(cardHeight * 0.10)))
-        end
-    end
+    local cardHeight = cardLayout.cardHeight(rows, visibleRows,
+        layout.cellHeight(), viewportHeight, verticalGap, inset)
     -- The trailing inset makes the native maximum scroll offset place the
     -- final row at the same inset from the viewport bottom.
     local contentHeight = cardLayout.contentHeight(
-        rows, cardHeight, verticalGap, inset, viewportHeight)
+        rows, visibleRows, cardHeight, verticalGap, inset,
+        viewportHeight)
 
     local resetScroll = columns ~= model.previousColumns or
         rows ~= model.previousRows
@@ -623,8 +618,8 @@ local function render(_context, model)
             local column = (index - 1) % columns
             local row = math.floor((index - 1) / columns)
             local x = inset + column * (cardWidth + horizontalGap)
-            local y = inset + row * (cardHeight + verticalGap) -
-                scroll.offset
+            local y = cardLayout.rowTop(row, visibleRows, cardHeight,
+                verticalGap, inset, viewportHeight) - scroll.offset
             if y + cardHeight > 0 and y < viewportHeight then
                 drawCard(model, x, y, cardWidth, cardHeight,
                     card, palette)
