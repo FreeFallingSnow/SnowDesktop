@@ -592,6 +592,35 @@ struct LuaWidget
         std::string slotId;
         std::string itemId;
     };
+
+    struct NativeMarqueeText
+    {
+        std::string key;
+        D2D1_RECT_F viewport{};
+        ComPtr<IDWriteTextLayout> layout;
+        float originX = 0.0f;
+        float originY = 0.0f;
+        float textWidth = 0.0f;
+        float textHeight = 0.0f;
+        float speed = 24.0f;
+        float gap = 24.0f;
+        float offset = 0.0f;
+        int color = 0xFFFFFF;
+        float alpha = 1.0f;
+        bool scrolling = false;
+    };
+
+    struct NativeMarqueeSurface
+    {
+        ComPtr<ID2D1Device> commandDevice;
+        ComPtr<ID2D1CommandList> staticCommands;
+        std::vector<NativeMarqueeText> marquees;
+        std::vector<NativeMarqueeText> pendingMarquees;
+        std::chrono::steady_clock::time_point lastAdvance{};
+        bool collecting = false;
+        bool framePending = false;
+        bool requiresLuaRender = true;
+    };
     std::wstring widgetId;               ///< 小部件实例唯一 ID
     std::string packageId;                ///< 组件包 UUID
     std::filesystem::path packageRoot;    ///< 已校验组件包根目录
@@ -661,6 +690,7 @@ struct LuaWidget
     snowdesktop::widget_runtime::ViewTransitionRuntime viewTransitions;
     bool viewTransitionFramePending = false;
     bool viewIndeterminateProgressActive = false;
+    NativeMarqueeSurface desktopMarquee;
     std::string panelViewKeyboardFocusKey;
     bool panelViewFocusCueVisible = false;
     snowdesktop::widget_runtime::WidgetInteractionRegions
@@ -669,6 +699,7 @@ struct LuaWidget
     snowdesktop::widget_runtime::ViewTransitionRuntime panelViewTransitions;
     bool panelViewTransitionFramePending = false;
     bool panelIndeterminateProgressActive = false;
+    NativeMarqueeSurface panelMarquee;
     std::string panelSurface = "panel";
     bool panelActive = false;
     bool panelFrameOpen = false;
@@ -764,7 +795,8 @@ public:
     using WidgetSelectedProvider = std::function<bool(const std::wstring&)>;
     using SelectedWidgetPackageProvider = std::function<std::wstring()>;
     using WidgetTitleCallback = std::function<void(const std::wstring&, const std::wstring&)>;
-    using InvalidateCallback = std::function<void(const std::wstring&)>;
+    using InvalidateCallback = std::function<void(const std::wstring&,
+        const std::optional<RECT>&, std::string_view)>;
     using DesktopPathAction = std::function<bool(const std::wstring&)>;
     using DesktopRefreshCallback = std::function<void()>;
     using InlineTextEditCallback = std::function<void(const LuaInlineTextEditRequest&)>;
@@ -1364,7 +1396,11 @@ public:
     /**
      * @brief 请求宿主重绘画布
      */
-    void RuntimeInvalidateHost(const std::wstring& widgetId = {});
+    void RuntimeInvalidateHost(const std::wstring& widgetId = {},
+        std::optional<RECT> dirtyRect = std::nullopt,
+        std::string_view surface = {});
+    bool RuntimeSubmitNativeMarquee(const std::wstring& widgetId,
+        LuaWidget::NativeMarqueeText marquee, std::string& error);
     bool RuntimeSubmitInteractionRegion(const std::wstring& widgetId,
         snowdesktop::widget_runtime::InteractionRegion region,
         std::string& error);

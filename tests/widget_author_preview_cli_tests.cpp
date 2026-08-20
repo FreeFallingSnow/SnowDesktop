@@ -315,6 +315,7 @@ std::filesystem::path CreateEnvironmentFixture(
   "permissions": ["system.performance.read"],
   "requiredFeatures": [
     "draw.immediate",
+    "draw.marqueeText",
     "layout.relativeUnits",
     "lifecycle.model",
     "widget.context",
@@ -373,6 +374,26 @@ return widget.define({
     render = function()
         draw.rect(0, 0, layout.width(), layout.height(), 0xE8EEF8, 8, 1)
         draw.text(12, 12, "preview", 16, 0x172033)
+        local scrolling = draw.marqueeText({
+            key = "preview.marquee",
+            x = 12,
+            y = 42,
+            width = 48,
+            height = 20,
+            text = "native marquee preview",
+            size = 14,
+            color = 0x172033,
+        })
+        assert(scrolling == true,
+            "native marquee must report overflowing preview text")
+        assert(pcall(draw.marqueeText, {
+            key = "invalid",
+            x = 0,
+            y = 0,
+            width = 0,
+            height = 20,
+            text = "invalid",
+        }) == false, "native marquee must reject an empty viewport")
     end,
     dispose = function()
         if cpu then cpu:unsubscribe() end

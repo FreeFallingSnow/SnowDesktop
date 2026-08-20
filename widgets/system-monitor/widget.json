@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "System Monitor",
   "nameKey": "lua_widget.system_monitor.name",
-  "version": "2.2.2",
+  "version": "2.3.0",
   "description": "Displays performance, storage, network, power, and uptime status.",
   "descriptionKey": "lua_widget.system_monitor.description",
   "locales": {
@@ -413,12 +413,12 @@
     "system.storage.read"
   ],
   "requiredFeatures": [
-    "animation.frame",
     "data.subscribe",
     "data.system.cpu",
     "data.system.gpu",
     "data.system.memory",
     "draw.immediate",
+    "draw.marqueeText",
     "interaction.contextMenu",
     "interaction.pointerActions",
     "interaction.region",
@@ -428,8 +428,6 @@
     "lifecycle.model",
     "l10n.basic",
     "l10n.format",
-    "schedule.basic",
-    "schedule.visibility",
     "system.uptime"
   ],
   "optionalFeatures": [

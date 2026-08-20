@@ -327,4 +327,25 @@ bool BuildDrawShadowLayers(const DrawRect& bounds, float blur,
     }
     return true;
 }
+
+bool ShouldScrollDrawMarquee(float textWidth, float viewportWidth) noexcept
+{
+    return std::isfinite(textWidth) && std::isfinite(viewportWidth) &&
+        textWidth > 0.0f && viewportWidth > 0.0f &&
+        textWidth > viewportWidth + 0.5f;
+}
+
+float AdvanceDrawMarqueeOffset(float offset, float deltaMilliseconds,
+    float speed, float cycle) noexcept
+{
+    if (!std::isfinite(offset) || !std::isfinite(deltaMilliseconds) ||
+        !std::isfinite(speed) || !std::isfinite(cycle) ||
+        deltaMilliseconds <= 0.0f || speed <= 0.0f || cycle <= 0.0f)
+        return std::isfinite(offset) && offset >= 0.0f ? offset : 0.0f;
+    const float boundedDelta = std::min(deltaMilliseconds, 100.0f);
+    const float advanced = std::fmod(
+        std::max(0.0f, offset) + speed * boundedDelta / 1000.0f,
+        cycle);
+    return advanced >= 0.0f ? advanced : advanced + cycle;
+}
 }

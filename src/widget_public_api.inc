@@ -6,6 +6,7 @@
 
 SNOW_WIDGET_PUBLIC_FUNCTION("draw", "text", lua_DrawText, 1, nullptr, 0)
 SNOW_WIDGET_PUBLIC_FUNCTION("draw", "measureText", lua_MeasureText, 1, nullptr, 0)
+SNOW_WIDGET_PUBLIC_FUNCTION("draw", "marqueeText", lua_DrawMarqueeText, 2, nullptr, 0)
 SNOW_WIDGET_PUBLIC_FUNCTION("draw", "rect", lua_DrawRect, 1, nullptr, 0)
 SNOW_WIDGET_PUBLIC_FUNCTION("draw", "arc", lua_DrawArc, 2, nullptr, 0)
 SNOW_WIDGET_PUBLIC_FUNCTION("draw", "path", lua_DrawPath, 2, nullptr, 0)

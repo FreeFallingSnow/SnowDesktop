@@ -1,12 +1,6 @@
 -- system-monitor/main.lua - API v2 system data subscriptions
 local subscriptions = {}
 local cardLayout = module.require("modules/card_layout.lua")
-local marquee = module.require("modules/marquee.lua")
-
-local marqueeStartFrameId = "sub-scroll-start"
-local marqueeScheduleId = "sub-scroll"
-local marqueeIntervalMs = 100
-local marqueeSpeed = 24
 
 local fluent = {
     refresh = utf8.char(0xF13D),
@@ -211,34 +205,24 @@ local function fitFontSize(text, fontSize, minimum, maxWidth, bold)
     return fitted, metrics
 end
 
-local function drawMarqueeText(model, key, x, y, text, fontSize, color,
+local function drawMarqueeText(key, x, y, text, fontSize, color,
         viewportWidth)
     local metrics = draw.measureText(text, fontSize, 0, false)
-    if not marquee.shouldScroll(metrics.width, viewportWidth) then
-        model.marqueeOffsets[key] = nil
-        model.marqueeCycleLengths[key] = nil
-        draw.text(x, y, text, fontSize, color, viewportWidth,
-            false, true)
-        return false
-    end
-
-    local _, measuredCycle = marquee.position(0, metrics.width,
-        layout.cu(24))
-    local cycle = math.max(model.marqueeCycleLengths[key] or 0,
-        measuredCycle)
-    local offset = (model.marqueeOffsets[key] or 0) % cycle
-    model.marqueeOffsets[key] = offset
-    model.marqueeCycleLengths[key] = cycle
-    model.marqueeCycles[key] = cycle
-    draw.pushClip(x, y, viewportWidth, metrics.height)
-    draw.text(x - offset, y, text, fontSize, color, 0, false, true)
-    draw.text(x - offset + cycle, y, text, fontSize, color, 0,
-        false, true)
-    draw.popClip()
-    return true
+    return draw.marqueeText({
+        key = key,
+        x = x,
+        y = y,
+        width = viewportWidth,
+        height = metrics.height,
+        text = text,
+        size = fontSize,
+        color = color,
+        speed = 24,
+        gap = layout.cu(24),
+    })
 end
 
-local function drawCard(model, x, y, width, height, info, palette)
+local function drawCard(x, y, width, height, info, palette)
     draw.rect(x, y, width, height, palette.cardBg,
         layout.cu(10), palette.cardBgA)
     draw.strokeRect(x, y, width, height, palette.cardBd,
@@ -289,11 +273,9 @@ local function drawCard(model, x, y, width, height, info, palette)
         local metrics = draw.measureText(info.sub, subFont, 0, false)
         local subBottom = barY and (barY - layout.cu(4)) or
             (y + height - layout.cu(6))
-        if drawMarqueeText(model, info.id, x + layout.cu(8),
-                subBottom - metrics.height, info.sub, subFont,
-                palette.cardSub, subWidth) then
-            model.marqueeVisible = true
-        end
+        drawMarqueeText(info.id, x + layout.cu(8),
+            subBottom - metrics.height, info.sub, subFont,
+            palette.cardSub, subWidth)
     end
 end
 
@@ -350,12 +332,6 @@ local function setup()
     return {
         previousColumns = 0,
         previousRows = 0,
-        marqueeOffsets = {},
-        marqueeCycles = {},
-        marqueeCycleLengths = {},
-        marqueeVisible = false,
-        marqueeFramePending = false,
-        marqueeScheduleActive = false,
     }
 end
 
@@ -583,11 +559,6 @@ local function render(_context, model)
     local columns = math.max(1, layout.columns())
     local visibleRows = math.max(1, layout.rows())
     local rows = #cards > 0 and math.ceil(#cards / columns) or 0
-    for key in pairs(model.marqueeCycles) do
-        model.marqueeCycles[key] = nil
-    end
-    model.marqueeVisible = false
-
     local inset = layout.cu(4)
     local horizontalGap = layout.cu(4)
     local verticalGap = layout.cu(4)
@@ -633,21 +604,12 @@ local function render(_context, model)
             local y = cardLayout.rowTop(row, visibleRows, cardHeight,
                 verticalGap, inset, viewportHeight) - scroll.offset
             if y + cardHeight > 0 and y < viewportHeight then
-                drawCard(model, x, y, cardWidth, cardHeight,
+                drawCard(x, y, cardWidth, cardHeight,
                     card, palette)
             end
         end
     end
     draw.popClip()
-
-    if model.marqueeVisible and not model.marqueeScheduleActive and
-        not model.marqueeFramePending then
-        local accepted = animation.requestFrame(marqueeStartFrameId)
-        model.marqueeFramePending = accepted
-    elseif not model.marqueeVisible and model.marqueeFramePending then
-        animation.cancelFrame(marqueeStartFrameId)
-        model.marqueeFramePending = false
-    end
 
     interaction.region({
         key = "system.surface",
@@ -668,32 +630,7 @@ local function render(_context, model)
     })
 end
 
-local function event(_context, model, value)
-    if value.kind == "frame" and value.id == marqueeStartFrameId then
-        model.marqueeFramePending = false
-        if model.marqueeVisible and not model.marqueeScheduleActive then
-            schedule.every(marqueeScheduleId, marqueeIntervalMs, {
-                whenHidden = "pause",
-            })
-            model.marqueeScheduleActive = true
-        end
-        return
-    end
-    if value.kind == "schedule" and value.id == marqueeScheduleId then
-        if not model.marqueeVisible then
-            schedule.cancel(marqueeScheduleId)
-            model.marqueeScheduleActive = false
-        else
-            local deltaMs = marquee.scheduledDelta(
-                marqueeIntervalMs, value.missed)
-            for key, cycle in pairs(model.marqueeCycles) do
-                model.marqueeOffsets[key] = marquee.advance(
-                    model.marqueeOffsets[key] or 0, deltaMs,
-                    marqueeSpeed, cycle)
-            end
-        end
-        return
-    end
+local function event(_context, _model, value)
     if value.kind ~= "action" then return end
     if value.id == "system.refresh" then
         widget.invalidate()
@@ -726,13 +663,7 @@ local function menu(_context, _model, request)
     })
 end
 
-local function dispose(_context, model)
-    if model and model.marqueeFramePending then
-        animation.cancelFrame(marqueeStartFrameId)
-    end
-    if model and model.marqueeScheduleActive then
-        schedule.cancel(marqueeScheduleId)
-    end
+local function dispose(_context, _model)
     for _, handle in pairs(subscriptions) do
         handle:unsubscribe()
     end

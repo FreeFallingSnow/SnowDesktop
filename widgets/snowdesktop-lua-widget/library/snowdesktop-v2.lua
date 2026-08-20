@@ -889,6 +889,21 @@
 ---@field width number
 ---@field height number
 
+---@class SnowMarqueeTextOptions
+---@field key string Stable 1..128-byte key used to preserve the native scroll phase across data refreshes.
+---@field x number Viewport x in desktop render coordinates.
+---@field y number Viewport y in desktop render coordinates.
+---@field width number Positive viewport width.
+---@field height number Positive viewport height; text is vertically centered within it.
+---@field text string Non-empty text up to 4096 UTF-8 bytes.
+---@field size? number Font size from 1 through 512; defaults to 14.
+---@field color? integer RGB color; defaults to white.
+---@field bold? boolean
+---@field speed? number Scroll speed in logical pixels per second from 1 through 512; defaults to 24.
+---@field gap? number Gap between repeated copies from 0 through 4096; defaults to 24.
+---@field alpha? number Opacity from 0 through 1.
+---@field font? SnowFontResource
+
 ---@class SnowDrawPathCommand
 ---@field op 'move'|'line'|'cubic'|'quadratic'|'close'
 ---@field x? number Endpoint x for move, line, cubic, or quadratic.
@@ -2030,6 +2045,11 @@ draw = {}
 ---@param alpha? number
 ---@param font? SnowFontResource
 function draw.text(x, y, text, size, color, maxWidth, bold, singleLine, maxHeight, alpha, font) end
+
+---Draw single-line overflow text with a host-native continuous marquee. Requires draw.marqueeText and a declared required/optional feature. The host caches the remaining immediate drawing and advances visible desktop frames without re-entering Lua.
+---@param options SnowMarqueeTextOptions
+---@return boolean scrolling True when text exceeds the viewport; reduced-motion and preview surfaces still render it statically.
+function draw.marqueeText(options) end
 
 ---@param text string
 ---@param size? number

@@ -2,7 +2,7 @@
 
 本文档用于逐项验证 SnowDesktop Lua 组件宿主 API。清单以
 [`src/widget_public_api.inc`](../src/widget_public_api.inc) 为唯一函数目录基准，覆盖当前公开的
-**20 个宿主库、163 个函数 API**。接口参数、返回值和数据结构以
+**20 个宿主库、164 个函数 API**。接口参数、返回值和数据结构以
 [`widgets/snowdesktop-lua-widget/library/snowdesktop-v2.lua`](../widgets/snowdesktop-lua-widget/library/snowdesktop-v2.lua)
 为准，详细行为说明参见
 [`widgets/snowdesktop-lua-widget/references/api-v2.md`](../widgets/snowdesktop-lua-widget/references/api-v2.md)。
@@ -31,7 +31,7 @@
 
 ## 总体验收门槛
 
-- [x] `snowwidget api-contract` 返回 `ok:true`、`apiVersion:2`，函数总数为 163，且与本表名称逐项一致。
+- [x] `snowwidget api-contract` 返回 `ok:true`、`apiVersion:2`，函数总数为 164，且与本表名称逐项一致。
 - [x] `snowwidget lint <组件目录>` 能识别不存在、版本不匹配或缺少权限声明的调用。
 - [x] `snowwidget preview <组件目录> <输出.png>` 能覆盖预览适用的绘制、视图、资源和状态接口。
 - [ ] 在真实桌面宿主中完成可信手势、辅助 surface、权限、系统数据、异步任务和生命周期测试。
@@ -54,7 +54,7 @@
 > `developer_assets/workshop_widgets/performance-history`，发布脚本明确排除整个
 > `developer_assets/`；运行时仅同步到 `data/widgets/dev`。它不在 `widgets/`，不属于内置组件。
 
-## 1. `draw` 即时绘制 API（18 项）
+## 1. `draw` 即时绘制 API（19 项）
 
 | 编号 | API | 中文说明与验收重点 | 引入版本 | 权限 | 结果 | 证据 / 备注 |
 |---|---|---|---:|---|---|---|
@@ -76,6 +76,7 @@
 | D-16 | `draw.image` | 绘制已声明的包内图片资源；核对加载成功、透明通道和无效句柄。 | v1 | — |  |  |
 | D-17 | `draw.imageFit` | 按填充、包含、覆盖或原尺寸策略绘图；核对对齐与插值模式。 | v2 | — |  |  |
 | D-18 | `draw.icon` | 绘制宿主管理的桌面对象引用图标；核对授权、失效引用和拒权路径。 | v1 | `desktop.read` |  |  |
+| D-19 | `draw.marqueeText` | 提交宿主管理的单行溢出滚动文字；核对不溢出时静态绘制、连续循环、稳定 key 相位、局部重绘、隐藏暂停、预览/reduced-motion 静态降级、数量与参数边界，以及滚动帧不重新进入 Lua。 | v2 | — |  |  |
 
 ## 2. `interaction` 即时交互 API（6 项）
 
@@ -321,7 +322,7 @@
 
 | 分类 | 总数 | P | F | B | N/A | 负责人 / 备注 |
 |---|---:|---:|---:|---:|---:|---|
-| `draw` | 18 |  |  |  |  |  |
+| `draw` | 19 |  |  |  |  |  |
 | `interaction` | 6 |  |  |  |  |  |
 | `view` | 48 |  |  |  |  |  |
 | `widget` | 17 |  |  |  |  |  |
@@ -341,7 +342,7 @@
 | `data` | 1 |  |  |  |  |  |
 | `task` | 2 |  |  |  |  |  |
 | `l10n` | 7 |  |  |  |  |  |
-| **合计** | **163** |  |  |  |  |  |
+| **合计** | **164** |  |  |  |  |  |
 
 最终结论：`□ 通过`　`□ 有条件通过`　`□ 不通过`
 

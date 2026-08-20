@@ -736,7 +736,9 @@ struct D2DState
     float layoutContentHeight = 0.0f;
     DWRITE_FONT_WEIGHT itemFontWeight = DWRITE_FONT_WEIGHT_SEMI_BOLD;
     int widgetClipDepth = 0;
+    std::vector<D2D1_RECT_F> immediateClipRects;
     ComPtr<ID2D1Device> bitmapDevice;
+    ComPtr<ID2D1DeviceContext> immediateCommandContext;
     std::unordered_map<std::string, ComPtr<ID2D1Bitmap1>> imageCache;
     snowdesktop::widget_runtime::WidgetPackageImageCache packageImageCache;
     std::unordered_map<std::string, RuntimeImageResource> runtimeImages;
@@ -2751,12 +2753,22 @@ static int lua_DrawPushClip(lua_State* L)
     float height = std::max(0.0f, static_cast<float>(luaL_checknumber(L, 4)));
     auto* s = GetD2D(L);
     if (!s || !s->ctx) return 0;
-    s->ctx->PushAxisAlignedClip(D2D1::RectF(
+    D2D1_RECT_F clip = D2D1::RectF(
         s->widgetRect.left + x,
         s->widgetRect.top + y,
         s->widgetRect.left + x + width,
-        s->widgetRect.top + y + height),
+        s->widgetRect.top + y + height);
+    if (!s->immediateClipRects.empty())
+    {
+        const auto& parent = s->immediateClipRects.back();
+        clip.left = std::max(clip.left, parent.left);
+        clip.top = std::max(clip.top, parent.top);
+        clip.right = std::min(clip.right, parent.right);
+        clip.bottom = std::min(clip.bottom, parent.bottom);
+    }
+    s->ctx->PushAxisAlignedClip(clip,
         D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    s->immediateClipRects.push_back(clip);
     ++s->widgetClipDepth;
     return 0;
 }
@@ -2766,6 +2778,8 @@ static int lua_DrawPopClip(lua_State* L)
     auto* s = GetD2D(L);
     if (!s || !s->ctx || s->widgetClipDepth <= 0) return 0;
     s->ctx->PopAxisAlignedClip();
+    if (!s->immediateClipRects.empty())
+        s->immediateClipRects.pop_back();
     --s->widgetClipDepth;
     return 0;
 }
@@ -9653,6 +9667,7 @@ static void EnsureBitmapCachesForCurrentDevice(D2DState* state)
     state->ctx->GetDevice(&device);
     if (state->bitmapDevice.Get() == device.Get()) return;
     state->bitmapDevice = std::move(device);
+    state->immediateCommandContext.Reset();
     state->imageCache.clear();
     state->runtimeImageBitmaps.clear();
     state->shellIconCache.clear();
@@ -10201,6 +10216,149 @@ static float LuaDrawAlpha(lua_State* state, int index, const char* api)
     if (!std::isfinite(value) || value < 0.0f || value > 1.0f)
         luaL_error(state, "%s: alpha must be between 0 and 1", api);
     return value;
+}
+
+static int lua_DrawMarqueeText(lua_State* state)
+{
+    constexpr std::string_view api = "draw.marqueeText";
+    luaL_checktype(state, 1, LUA_TTABLE);
+    const int descriptor = lua_absindex(state, 1);
+    std::string error;
+    if (!LuaTableUsesOnlyFields(state, descriptor,
+            { "key", "x", "y", "width", "height", "text", "size",
+                "color", "bold", "speed", "gap", "alpha", "font" },
+            api, error))
+        return luaL_error(state, "%s: %s", api.data(), error.c_str());
+
+    const std::string key = ReadRequiredStringField(
+        state, descriptor, "key");
+    const std::string text = ReadRequiredStringField(
+        state, descriptor, "text");
+    if (key.empty() || key.size() > 128 ||
+        key.find('\0') != std::string::npos || !IsValidUtf8Local(key))
+        return luaL_error(state,
+            "draw.marqueeText: key must be 1 to 128 bytes of valid UTF-8");
+    if (text.empty() || text.size() > 4096 ||
+        text.find('\0') != std::string::npos || !IsValidUtf8Local(text))
+        return luaL_error(state,
+            "draw.marqueeText: text must be 1 to 4096 bytes of valid UTF-8");
+
+    const auto numberField = [state, descriptor](const char* name,
+            float fallback, bool required) {
+        lua_getfield(state, descriptor, name);
+        const float value = lua_isnil(state, -1) && !required
+            ? fallback : static_cast<float>(luaL_checknumber(state, -1));
+        lua_pop(state, 1);
+        return value;
+    };
+    const float x = numberField("x", 0.0f, true);
+    const float y = numberField("y", 0.0f, true);
+    const float width = numberField("width", 0.0f, true);
+    const float height = numberField("height", 0.0f, true);
+    const float size = numberField("size", 14.0f, false);
+    const float speed = numberField("speed", 24.0f, false);
+    const float gap = numberField("gap", 24.0f, false);
+    if (!std::isfinite(x) || !std::isfinite(y) ||
+        !std::isfinite(width) || !std::isfinite(height) ||
+        !std::isfinite(size) || !std::isfinite(speed) ||
+        !std::isfinite(gap) || std::abs(x) > 1'000'000.0f ||
+        std::abs(y) > 1'000'000.0f || width <= 0.0f ||
+        height <= 0.0f || width > 100'000.0f ||
+        height > 100'000.0f || std::abs(x + width) > 1'000'000.0f ||
+        std::abs(y + height) > 1'000'000.0f || size < 1.0f ||
+        size > 512.0f || speed < 1.0f || speed > 512.0f ||
+        gap < 0.0f || gap > 4096.0f)
+        return luaL_error(state,
+            "draw.marqueeText: geometry, size, speed, and gap must be finite and bounded");
+
+    lua_getfield(state, descriptor, "color");
+    const int color = LuaDrawColor(
+        state, -1, 0xFFFFFF, "draw.marqueeText");
+    lua_pop(state, 1);
+    lua_getfield(state, descriptor, "alpha");
+    const float alpha = LuaDrawAlpha(
+        state, -1, "draw.marqueeText");
+    lua_pop(state, 1);
+    lua_getfield(state, descriptor, "bold");
+    if (!lua_isnil(state, -1) && !lua_isboolean(state, -1))
+        return luaL_error(state,
+            "draw.marqueeText: bold must be a boolean");
+    const bool bold = lua_toboolean(state, -1) != 0;
+    lua_pop(state, 1);
+
+    std::optional<std::wstring> privateFontPath;
+    lua_getfield(state, descriptor, "font");
+    if (!lua_isnil(state, -1))
+    {
+        privateFontPath = ResolveResourceHandlePath(
+            state, -1, LuaResourceType::Font);
+        if (!privateFontPath)
+            return luaL_error(state,
+                "draw.marqueeText: invalid font resource handle");
+    }
+    lua_pop(state, 1);
+
+    auto* d2d = GetD2D(state);
+    if (!d2d || !d2d->ctx || !d2d->dwrite || !d2d->engine)
+        return luaL_error(state,
+            "draw.marqueeText: host context is unavailable");
+    IDWriteTextFormat* format = GetCachedTextFormat(d2d, size,
+        bold ? DWRITE_FONT_WEIGHT_BOLD : d2d->itemFontWeight,
+        false, DWRITE_WORD_WRAPPING_NO_WRAP, false, false, false,
+        privateFontPath ? &*privateFontPath : nullptr);
+    if (!format)
+        return luaL_error(state,
+            "draw.marqueeText: text format is unavailable");
+
+    const std::wstring wideText = Utf8ToWideLocal(text);
+    ComPtr<IDWriteTextLayout> layout;
+    if (wideText.empty() || FAILED(d2d->dwrite->CreateTextLayout(
+            wideText.data(), static_cast<UINT32>(wideText.size()), format,
+            100'000.0f, std::max(height, size * 1.5f), &layout)) || !layout)
+        return luaL_error(state,
+            "draw.marqueeText: text layout could not be created");
+    DWRITE_TEXT_METRICS metrics{};
+    if (FAILED(layout->GetMetrics(&metrics)))
+        return luaL_error(state,
+            "draw.marqueeText: text layout could not be measured");
+
+    LuaWidget::NativeMarqueeText marquee;
+    marquee.key = key;
+    marquee.viewport = D2D1::RectF(
+        x + d2d->widgetRect.left,
+        y + d2d->widgetRect.top,
+        x + d2d->widgetRect.left + width,
+        y + d2d->widgetRect.top + height);
+    if (!d2d->immediateClipRects.empty())
+    {
+        const auto& clip = d2d->immediateClipRects.back();
+        marquee.viewport.left = std::max(marquee.viewport.left, clip.left);
+        marquee.viewport.top = std::max(marquee.viewport.top, clip.top);
+        marquee.viewport.right = std::min(marquee.viewport.right, clip.right);
+        marquee.viewport.bottom = std::min(
+            marquee.viewport.bottom, clip.bottom);
+    }
+    marquee.layout = std::move(layout);
+    marquee.originX = x + d2d->widgetRect.left;
+    marquee.originY = y + d2d->widgetRect.top + std::max(
+        0.0f, (height - metrics.height) * 0.5f);
+    marquee.textWidth = metrics.widthIncludingTrailingWhitespace;
+    marquee.textHeight = metrics.height;
+    marquee.speed = speed;
+    marquee.gap = gap;
+    marquee.color = color;
+    marquee.alpha = alpha;
+    marquee.scrolling = marquee.viewport.right > marquee.viewport.left &&
+        marquee.viewport.bottom > marquee.viewport.top &&
+        snowdesktop::widget_runtime::ShouldScrollDrawMarquee(
+            marquee.textWidth, width);
+    if (!d2d->engine->RuntimeSubmitNativeMarquee(
+            BoundWidgetId(state), std::move(marquee), error))
+        return luaL_error(state, "draw.marqueeText: %s", error.c_str());
+    lua_pushboolean(state, snowdesktop::widget_runtime::
+        ShouldScrollDrawMarquee(metrics.widthIncludingTrailingWhitespace,
+            width) ? 1 : 0);
+    return 1;
 }
 
 static ID2D1Bitmap1* ResolveDrawImageBitmap(lua_State* state,
@@ -20026,6 +20184,233 @@ static std::vector<LuaWidget::HostControl> BuildViewHostControls(
     return result;
 }
 
+static bool WidgetDeclaresNativeMarquee(const LuaWidget& widget)
+{
+    constexpr std::string_view feature = "draw.marqueeText";
+    const auto contains = [feature](const std::vector<std::string>& values) {
+        return std::any_of(values.begin(), values.end(),
+            [feature](const std::string& value) {
+                return value == feature;
+            });
+    };
+    return contains(widget.manifest.requiredFeatures) ||
+        contains(widget.manifest.optionalFeatures);
+}
+
+static bool HasActiveNativeMarquee(
+    const LuaWidget::NativeMarqueeSurface& surface) noexcept
+{
+    return std::any_of(surface.marquees.begin(), surface.marquees.end(),
+        [](const LuaWidget::NativeMarqueeText& marquee) {
+            return marquee.scrolling;
+        });
+}
+
+static std::optional<RECT> NativeMarqueeDirtyRect(
+    const LuaWidget::NativeMarqueeSurface& surface)
+{
+    std::optional<RECT> result;
+    for (const auto& marquee : surface.marquees)
+    {
+        if (!marquee.scrolling) continue;
+        RECT current{
+            static_cast<LONG>(std::floor(marquee.viewport.left)),
+            static_cast<LONG>(std::floor(marquee.viewport.top)),
+            static_cast<LONG>(std::ceil(marquee.viewport.right)),
+            static_cast<LONG>(std::ceil(marquee.viewport.bottom)),
+        };
+        if (IsRectEmpty(&current)) continue;
+        if (!result)
+            result = current;
+        else
+        {
+            RECT combined{};
+            UnionRect(&combined, &*result, &current);
+            result = combined;
+        }
+    }
+    return result;
+}
+
+static bool BeginNativeMarqueeCapture(D2DState* state,
+    LuaWidget::NativeMarqueeSurface& surface,
+    ID2D1DeviceContext*& displayContext,
+    ComPtr<ID2D1CommandList>& commands)
+{
+    displayContext = state ? state->ctx : nullptr;
+    surface.pendingMarquees.clear();
+    surface.collecting = false;
+    surface.requiresLuaRender = true;
+    if (!state || !displayContext) return false;
+
+    EnsureBitmapCachesForCurrentDevice(state);
+    if (!state->bitmapDevice) return false;
+    if (!state->immediateCommandContext && FAILED(
+            state->bitmapDevice->CreateDeviceContext(
+                D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
+                &state->immediateCommandContext)))
+        return false;
+    auto* recording = state->immediateCommandContext.Get();
+    if (!recording || FAILED(recording->CreateCommandList(&commands)) ||
+        !commands)
+        return false;
+
+    float dpiX = 96.0f;
+    float dpiY = 96.0f;
+    displayContext->GetDpi(&dpiX, &dpiY);
+    recording->SetDpi(dpiX, dpiY);
+    recording->SetUnitMode(displayContext->GetUnitMode());
+    recording->SetAntialiasMode(displayContext->GetAntialiasMode());
+    recording->SetTextAntialiasMode(
+        displayContext->GetTextAntialiasMode());
+    recording->SetPrimitiveBlend(displayContext->GetPrimitiveBlend());
+    recording->SetTransform(D2D1::Matrix3x2F::Identity());
+    recording->SetTarget(commands.Get());
+    recording->BeginDraw();
+    state->ctx = recording;
+    state->widgetClipDepth = 0;
+    state->immediateClipRects.clear();
+    surface.collecting = true;
+    surface.requiresLuaRender = false;
+    return true;
+}
+
+static bool EndNativeMarqueeCapture(D2DState* state,
+    LuaWidget::NativeMarqueeSurface& surface,
+    ID2D1DeviceContext* displayContext,
+    ID2D1CommandList* commands)
+{
+    if (!state || !surface.collecting || !state->ctx ||
+        !displayContext || !commands)
+        return false;
+    while (state->widgetClipDepth > 0)
+    {
+        state->ctx->PopAxisAlignedClip();
+        --state->widgetClipDepth;
+    }
+    const HRESULT drawResult = state->ctx->EndDraw();
+    state->ctx->SetTarget(nullptr);
+    state->ctx = displayContext;
+    state->immediateClipRects.clear();
+    surface.collecting = false;
+    if (FAILED(drawResult) || FAILED(commands->Close()))
+    {
+        surface.pendingMarquees.clear();
+        surface.requiresLuaRender = true;
+        return false;
+    }
+    return true;
+}
+
+static void AbortNativeMarqueeCapture(D2DState* state,
+    LuaWidget::NativeMarqueeSurface& surface,
+    ID2D1DeviceContext* displayContext,
+    ID2D1CommandList* commands)
+{
+    if (surface.collecting && state && state->ctx)
+    {
+        while (state->widgetClipDepth > 0)
+        {
+            state->ctx->PopAxisAlignedClip();
+            --state->widgetClipDepth;
+        }
+        (void)state->ctx->EndDraw();
+        state->ctx->SetTarget(nullptr);
+    }
+    if (state)
+    {
+        state->ctx = displayContext;
+        state->immediateClipRects.clear();
+    }
+    if (commands) (void)commands->Close();
+    surface.pendingMarquees.clear();
+    surface.collecting = false;
+    surface.requiresLuaRender = true;
+}
+
+static void CommitNativeMarqueeCapture(D2DState* state,
+    LuaWidget::NativeMarqueeSurface& surface,
+    ComPtr<ID2D1CommandList> commands)
+{
+    for (auto& pending : surface.pendingMarquees)
+    {
+        const auto previous = std::find_if(surface.marquees.begin(),
+            surface.marquees.end(), [&pending](const auto& candidate) {
+                return candidate.key == pending.key;
+            });
+        const float cycle = pending.textWidth + pending.gap;
+        if (pending.scrolling && previous != surface.marquees.end() &&
+            std::isfinite(previous->offset) && cycle > 0.0f)
+            pending.offset = std::fmod(previous->offset, cycle);
+    }
+    surface.marquees = std::move(surface.pendingMarquees);
+    surface.pendingMarquees.clear();
+    surface.staticCommands = std::move(commands);
+    surface.commandDevice.Reset();
+    if (state) surface.commandDevice = state->bitmapDevice;
+    surface.lastAdvance = std::chrono::steady_clock::now();
+    surface.framePending = false;
+}
+
+static void DrawNativeMarqueeSurface(D2DState* state,
+    const LuaWidget::NativeMarqueeSurface& surface,
+    bool reducedMotion)
+{
+    if (!state || !state->ctx) return;
+    if (surface.staticCommands)
+        state->ctx->DrawImage(surface.staticCommands.Get());
+    for (const auto& marquee : surface.marquees)
+    {
+        if (!marquee.layout ||
+            marquee.viewport.right <= marquee.viewport.left ||
+            marquee.viewport.bottom <= marquee.viewport.top)
+            continue;
+        auto* brush = GetCachedBrush(
+            state, marquee.color, marquee.alpha);
+        if (!brush) continue;
+        state->ctx->PushAxisAlignedClip(marquee.viewport,
+            D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        const float offset = marquee.scrolling && !reducedMotion
+            ? marquee.offset : 0.0f;
+        const float firstX = marquee.originX - offset;
+        state->ctx->DrawTextLayout(D2D1::Point2F(
+                firstX, marquee.originY),
+            marquee.layout.Get(), brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        if (marquee.scrolling && !reducedMotion)
+        {
+            state->ctx->DrawTextLayout(D2D1::Point2F(
+                    firstX + marquee.textWidth + marquee.gap,
+                    marquee.originY),
+                marquee.layout.Get(), brush,
+                D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        }
+        state->ctx->PopAxisAlignedClip();
+    }
+}
+
+static bool AdvanceNativeMarqueeSurface(
+    LuaWidget::NativeMarqueeSurface& surface,
+    std::chrono::steady_clock::time_point now)
+{
+    if (!HasActiveNativeMarquee(surface)) return false;
+    const float deltaMilliseconds = surface.lastAdvance.time_since_epoch().
+            count() == 0
+        ? 0.0f
+        : static_cast<float>(std::chrono::duration_cast<
+            std::chrono::microseconds>(now - surface.lastAdvance).count()) /
+            1000.0f;
+    surface.lastAdvance = now;
+    for (auto& marquee : surface.marquees)
+    {
+        if (!marquee.scrolling) continue;
+        marquee.offset = snowdesktop::widget_runtime::
+            AdvanceDrawMarqueeOffset(marquee.offset, deltaMilliseconds,
+                marquee.speed, marquee.textWidth + marquee.gap);
+    }
+    surface.framePending = true;
+    return true;
+}
+
 void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring& scriptPath,
     ID2D1DeviceContext* context, RECT bounds, int columns, int rows)
 {
@@ -20115,6 +20500,27 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
         if (transitionActive || found->viewIndeterminateProgressActive)
             (void)ScheduleAnimationFrame(*found);
         return;
+    }
+    const bool nativeMarqueeFrame =
+        std::exchange(found->desktopMarquee.framePending, false);
+    if (nativeMarqueeFrame && transitionGeometryUnchanged &&
+        !found->desktopMarquee.requiresLuaRender &&
+        found->desktopMarquee.staticCommands)
+    {
+        EnsureBitmapCachesForCurrentDevice(d2dState_);
+        if (found->desktopMarquee.commandDevice.Get() ==
+                d2dState_->bitmapDevice.Get())
+        {
+            DrawNativeMarqueeSurface(d2dState_, found->desktopMarquee,
+                found->preview || !widgetTimerRequestCallback_ ||
+                    QueryWidgetSystemEnvironment().reducedMotion);
+            DrawHostViewInteractionOverlays(*found,
+                found->interactionRegions,
+                found->viewKeyboardFocusKey, true);
+            (void)ScheduleAnimationFrame(*found);
+            return;
+        }
+        found->desktopMarquee.requiresLuaRender = true;
     }
     std::erase_if(found->hostControls, [](const auto& control) {
         return HostControlBelongsToSurface(control, "desktop");
@@ -20575,10 +20981,24 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             found->interactionRegions.AbortFrame();
             return;
         }
+        ID2D1DeviceContext* nativeMarqueeDisplayContext = nullptr;
+        ComPtr<ID2D1CommandList> nativeMarqueeCommands;
+        const bool capturingNativeMarquee =
+            WidgetDeclaresNativeMarquee(*found) &&
+            BeginNativeMarqueeCapture(d2dState_,
+                found->desktopMarquee, nativeMarqueeDisplayContext,
+                nativeMarqueeCommands);
         if (snowdesktop::lua_runtime::ProtectedCall(
                 state, 2, 0) != LUA_OK)
         {
             const char* err = lua_tostring(state, -1);
+            if (capturingNativeMarquee)
+            {
+                AbortNativeMarqueeCapture(d2dState_,
+                    found->desktopMarquee,
+                    nativeMarqueeDisplayContext,
+                    nativeMarqueeCommands.Get());
+            }
             RuntimeRecordError(widgetId, err ? err : "(render error)");
             lua_pop(state, 1);
             while (d2dState_->widgetClipDepth > 0)
@@ -20631,6 +21051,30 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             lua_pop(state, 1);
             RuntimeInvalidateHost(widgetId);
             return;
+        }
+        if (capturingNativeMarquee)
+        {
+            if (!EndNativeMarqueeCapture(d2dState_,
+                    found->desktopMarquee,
+                    nativeMarqueeDisplayContext,
+                    nativeMarqueeCommands.Get()))
+            {
+                RuntimeRecordError(widgetId,
+                    "draw.marqueeText: static draw cache could not be recorded");
+                found->interactionRegions.AbortFrame();
+                lua_pop(state, 1);
+                RuntimeInvalidateHost(widgetId);
+                return;
+            }
+            CommitNativeMarqueeCapture(d2dState_,
+                found->desktopMarquee,
+                std::move(nativeMarqueeCommands));
+            DrawNativeMarqueeSurface(d2dState_,
+                found->desktopMarquee,
+                found->preview || !widgetTimerRequestCallback_ ||
+                    QueryWidgetSystemEnvironment().reducedMotion);
+            if (HasActiveNativeMarquee(found->desktopMarquee))
+                (void)ScheduleAnimationFrame(*found);
         }
         if (snowdesktop::widget_api::ConsumeTransientStateDirty(state))
             RuntimeInvalidateHost(widgetId);
@@ -21500,8 +21944,9 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
             widget.viewTransitions.Tick(now);
         const bool panelTransitionFrame =
             widget.panelViewTransitions.Tick(now);
-        const bool animateIndeterminateProgress =
-            !QueryWidgetSystemEnvironment().reducedMotion;
+        const bool reducedMotion =
+            QueryWidgetSystemEnvironment().reducedMotion;
+        const bool animateIndeterminateProgress = !reducedMotion;
         const bool desktopProgressFrame = animateIndeterminateProgress &&
             widget.hostVisible &&
             widget.viewIndeterminateProgressActive;
@@ -21513,6 +21958,9 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
         if ((panelTransitionFrame && widget.panelActive) ||
             panelProgressFrame)
             widget.panelViewTransitionFramePending = true;
+        const bool desktopMarqueeFrame = !reducedMotion &&
+            widget.desktopVisible && AdvanceNativeMarqueeSurface(
+                widget.desktopMarquee, now);
         const auto frames = widget.animationFrames.Consume(now);
         for (const auto& frame : frames)
         {
@@ -21530,10 +21978,15 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
                     lua_setfield(eventState, -2, "deltaMs");
                 });
         }
-        if (desktopTransitionFrame || desktopProgressFrame ||
+        const bool generalAnimationFrame =
+            desktopTransitionFrame || desktopProgressFrame ||
             (panelTransitionFrame && widget.panelActive) ||
-            panelProgressFrame)
+            panelProgressFrame;
+        if (generalAnimationFrame)
             RuntimeInvalidateHost(activeWidgetId);
+        else if (desktopMarqueeFrame && invalidateCallback_)
+            invalidateCallback_(activeWidgetId,
+                NativeMarqueeDirtyRect(widget.desktopMarquee), "desktop");
         (void)ScheduleAnimationFrame(widget);
         return;
     }
@@ -24584,11 +25037,66 @@ void WidgetEngine::RuntimeSetWidgetTitle(const std::wstring& widgetId, const std
         setWidgetTitleCallback_(widgetId, title);
 }
 
-void WidgetEngine::RuntimeInvalidateHost(const std::wstring& widgetId)
+void WidgetEngine::RuntimeInvalidateHost(const std::wstring& widgetId,
+    std::optional<RECT> dirtyRect, std::string_view surface)
 {
     if (snowdesktop::widget_runtime::IsDryLoad()) return;
+    const int index = widgetId.empty() ? -1 : FindWidget(widgetId);
+    if (index >= 0)
+    {
+        auto& widget = widgets_[index];
+        if (surface.empty() || surface == "desktop")
+            widget.desktopMarquee.requiresLuaRender = true;
+        if (surface.empty() || IsPanelSurface(surface))
+            widget.panelMarquee.requiresLuaRender = true;
+    }
     if (invalidateCallback_)
-        invalidateCallback_(widgetId);
+        invalidateCallback_(widgetId, dirtyRect, surface);
+}
+
+bool WidgetEngine::RuntimeSubmitNativeMarquee(
+    const std::wstring& widgetId,
+    LuaWidget::NativeMarqueeText marquee, std::string& error)
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0)
+    {
+        error = "host widget instance is unavailable";
+        return false;
+    }
+    auto& widget = widgets_[index];
+    if (!WidgetDeclaresNativeMarquee(widget))
+    {
+        error = "the package must declare draw.marqueeText as a required or optional feature";
+        return false;
+    }
+    if (CurrentWidgetSurface(d2dState_) != "desktop")
+    {
+        error = "only the desktop render surface is supported";
+        return false;
+    }
+    auto& surface = widget.desktopMarquee;
+    if (!surface.collecting)
+    {
+        error = "the API is only available while the host records render()";
+        return false;
+    }
+    if (surface.pendingMarquees.size() >= 32)
+    {
+        error = "a render may submit at most 32 marquee texts";
+        return false;
+    }
+    if (std::any_of(surface.pendingMarquees.begin(),
+            surface.pendingMarquees.end(), [&marquee](const auto& value) {
+                return value.key == marquee.key;
+            }))
+    {
+        error = "duplicate key: " + marquee.key;
+        return false;
+    }
+    surface.pendingMarquees.push_back(std::move(marquee));
+    error.clear();
+    return true;
 }
 
 bool WidgetEngine::RuntimeSubmitInteractionRegion(
@@ -25922,10 +26430,15 @@ bool WidgetEngine::RuntimeCancelAnimationFrame(
         ((widget.hostVisible && widget.viewIndeterminateProgressActive) ||
             (widget.panelActive &&
                 widget.panelIndeterminateProgressActive));
+    const bool nativeMarqueeActive =
+        !QueryWidgetSystemEnvironment().reducedMotion &&
+        widget.desktopVisible &&
+        HasActiveNativeMarquee(widget.desktopMarquee);
     if (!widget.animationFrames.HasPending() &&
         !widget.viewTransitions.HasActive() &&
         !widget.panelViewTransitions.HasActive() &&
         !indeterminateProgressActive &&
+        !nativeMarqueeActive &&
         widget.animationTimerId)
     {
         if (widgetTimerKillCallback_)
@@ -25990,16 +26503,22 @@ bool WidgetEngine::ScheduleAnimationFrame(LuaWidget& widget)
         ((widget.hostVisible && widget.viewIndeterminateProgressActive) ||
             (widget.panelActive &&
                 widget.panelIndeterminateProgressActive));
-    const bool pending = widget.animationFrames.HasPending() ||
+    const bool nativeMarqueeActive =
+        !QueryWidgetSystemEnvironment().reducedMotion &&
+        widget.desktopVisible &&
+        HasActiveNativeMarquee(widget.desktopMarquee);
+    const bool highRateAnimationPending =
+        widget.animationFrames.HasPending() ||
         widget.viewTransitions.HasActive() ||
         (widget.panelActive && widget.panelViewTransitions.HasActive()) ||
         indeterminateProgressActive;
+    const bool pending = highRateAnimationPending || nativeMarqueeActive;
     if (widget.preview || (!widget.hostVisible && !widget.panelActive) ||
         !pending ||
         !widgetTimerRequestCallback_)
         return false;
     widget.animationTimerId = widgetTimerRequestCallback_(
-        widget.widgetId, 16);
+        widget.widgetId, highRateAnimationPending ? 16 : 33);
     return widget.animationTimerId != 0;
 }
 
@@ -26014,6 +26533,8 @@ void WidgetEngine::StopAnimationFrames(LuaWidget& widget)
     widget.panelViewTransitions.Clear();
     widget.viewTransitionFramePending = false;
     widget.panelViewTransitionFramePending = false;
+    widget.desktopMarquee.framePending = false;
+    widget.desktopMarquee.lastAdvance = {};
 }
 
 bool WidgetEngine::RuntimeSetTimerAt(const std::wstring& widgetId,

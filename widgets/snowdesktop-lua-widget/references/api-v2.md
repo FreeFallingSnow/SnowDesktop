@@ -2180,6 +2180,8 @@ HTTPS URL；`http:`、`file:`、自定义 scheme、localhost、局域网和 IP �
 
 - `draw.text(x, y, text, size?, color?, maxWidth?, bold?, singleLine?,
   maxHeight?, alpha?, font?)`
+- `draw.marqueeText({key, x, y, width, height, text, size?, color?, bold?,
+  speed?, gap?, alpha?, font?}) -> scrolling`
 - `draw.measureText(text, size?, maxWidth?, bold?, font?)`
 - `draw.rect(...)`、`draw.strokeRect(...)`、`draw.line(...)`、`draw.circle(...)`
 - `draw.arc(cx, cy, radius, startDegrees, sweepDegrees, thickness?, color?, alpha?)`
@@ -2198,6 +2200,22 @@ HTTPS URL；`http:`、`file:`、自定义 scheme、localhost、局域网和 IP �
 颜色是 `0xRRGGBB`，透明度单独传入。`draw.image` 在 v2 中只接受
 `resource.image()` 返回的不透明句柄；字体句柄可传给 `draw.text` 和
 `draw.measureText`。
+
+`draw.marqueeText` 用于持续横向滚动的单行溢出文字，对应 feature
+`draw.marqueeText`。组件必须在 `requiredFeatures` 或 `optionalFeatures` 中声明该
+feature，并且只能在桌面 surface 的 `render()` 中调用。`key` 必须在一次 render 中
+唯一且稳定；同一 key 在数据刷新或重新布局后会尽量保留滚动相位。`width/height` 定义
+裁剪视口，文字在视口内纵向居中；文字宽度不超过视口时返回 `false` 并静态绘制，否则
+返回 `true`。`speed` 默认每秒 24 个逻辑像素，`gap` 默认 24；一次 render 最多提交
+32 项，文字最多 4096 个 UTF-8 字节。
+
+宿主会把同一次即时 render 中的其他绘制录制为静态命令，后续滚动帧只重放这份缓存、
+绘制文字并局部刷新 marquee 视口，不重新进入 Lua，也不产生 `frame` 或 `schedule`
+事件。因此持续溢出文字应优先使用此 API，而不是用
+`animation.requestFrame`/`schedule.every` 修改偏移。marquee 作为宿主原生覆盖层绘制在
+该次即时绘制缓存之上；不要依赖在它之后用其他即时绘制内容遮盖文字。数据、交互、主题
+或组件主动失效仍会正常重新执行 render 并更新缓存。组件隐藏时动画暂停；预览、
+reduced-motion 或宿主没有动画调度器时从起点静态显示，但返回值仍只表示是否发生溢出。
 
 上述 `arc/path/gradientRect/shadow/sparkline/imageFit` 属于可探测 feature
 `draw.advanced`，仅注册到 API v2。它们遵守以下确定性边界：

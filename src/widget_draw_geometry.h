@@ -97,4 +97,9 @@ struct DrawShadowLayer
 bool BuildDrawShadowLayers(const DrawRect& bounds, float blur,
     float radius, float offsetX, float offsetY, float alpha,
     std::vector<DrawShadowLayer>& layers, std::string& error) noexcept;
+
+bool ShouldScrollDrawMarquee(float textWidth, float viewportWidth) noexcept;
+
+float AdvanceDrawMarqueeOffset(float offset, float deltaMilliseconds,
+    float speed, float cycle) noexcept;
 }

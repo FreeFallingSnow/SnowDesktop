@@ -446,6 +446,12 @@ default border does not fit the component design.
   while the loop should continue; hidden, preview, and reduced-motion contexts
   reject or cancel frame work. Use `animation.cancelFrame(id)` to stop an
   already pending request.
+- For continuously scrolling single-line overflow text on the desktop render
+  surface, declare and use `draw.marqueeText` instead of advancing offsets with
+  `animation.requestFrame` or `schedule.every`. Give each visible text a stable
+  key. The host caches the remaining immediate drawing, pauses while hidden,
+  honors reduced motion, and advances local repaint frames without re-entering
+  Lua. Treat the marquee as a native overlay above that render's cached drawing.
 - Preview time is deterministic (`time.previewClock`): do not expect preview
   schedules to advance or wait for real deadlines. Use manifest preview data
   to present the intended state.

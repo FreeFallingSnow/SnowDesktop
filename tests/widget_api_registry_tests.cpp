@@ -346,6 +346,7 @@ void TestV2Contract()
                 "data.system.storage.io") &&
             snowdesktop::widget_api::SupportsFeature("draw.advanced") &&
             snowdesktop::widget_api::SupportsFeature("draw.immediate") &&
+            snowdesktop::widget_api::SupportsFeature("draw.marqueeText") &&
             snowdesktop::widget_api::SupportsFeature(
                 "interaction.pointerActions") &&
             snowdesktop::widget_api::SupportsFeature(
@@ -1063,7 +1064,7 @@ void TestPublicApiContract()
 {
     const auto contracts =
         snowdesktop::widget_api::PublicApiFunctionContracts();
-    Check(contracts.size() == 163,
+    Check(contracts.size() == 164,
         "public Lua host API function count must match the reviewed catalog");
 
     std::unordered_set<std::string> sandboxLibraries;

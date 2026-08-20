@@ -142,6 +142,19 @@ void TestShadowBudget()
             0.0f, 0.0f, 1.0f, layers, error),
         "expanded shadows must remain inside the coordinate budget");
 }
+
+void TestMarqueeGeometry()
+{
+    Check(ShouldScrollDrawMarquee(120.0f, 100.0f) &&
+            !ShouldScrollDrawMarquee(100.0f, 100.0f),
+        "marquee text must animate only when it exceeds the viewport");
+    Check(Near(AdvanceDrawMarqueeOffset(
+            118.0f, 250.0f, 24.0f, 120.0f), 0.4f),
+        "marquee catch-up must be capped to avoid a visible jump");
+    Check(Near(AdvanceDrawMarqueeOffset(
+            119.0f, 50.0f, 24.0f, 120.0f), 0.2f),
+        "marquee offsets must wrap continuously within the cycle");
+}
 }
 
 int main()
@@ -151,6 +164,7 @@ int main()
     TestArcSegmentation();
     TestSparklineGeometry();
     TestShadowBudget();
+    TestMarqueeGeometry();
     std::cout << "widget draw geometry tests passed\n";
     return 0;
 }

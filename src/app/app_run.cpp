@@ -711,7 +711,10 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         widgetEngine_->SetWidgetTitleCallback([this](const std::wstring& widgetId, const std::wstring& title) {
             LuaSetWidgetTitle(widgetId, title);
         });
-        widgetEngine_->SetInvalidateCallback([this](const std::wstring& widgetId) {
+        widgetEngine_->SetInvalidateCallback([this](
+                const std::wstring& widgetId,
+                const std::optional<RECT>& requestedDirty,
+                std::string_view surface) {
             if (!hwnd_) return;
             if (widgetId.empty())
             {
@@ -720,7 +723,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 return;
             }
             bool invalidated = false;
-            if (luaWidgetPanelRequest_.widgetId ==
+            if ((surface.empty() || surface != "desktop") &&
+                luaWidgetPanelRequest_.widgetId ==
                     widgetId &&
                 !luaWidgetPanelAnimation_.IsHidden())
             {
@@ -735,15 +739,27 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             {
                 if (widget.id != widgetId || widget.type != DesktopWidgetType::LuaScript)
                     continue;
-                if (customDesktopVisible_ &&
+                if ((surface.empty() || surface == "desktop") &&
+                    customDesktopVisible_ &&
                     (!desktopIconsHidden_ ||
                         widget.keepWhenDesktopHidden))
                 {
-                    RECT dirty =
+                    const RECT widgetFrame =
                         GetStandaloneWidgetFrameRect(widget);
+                    RECT dirty = widgetFrame;
+                    if (requestedDirty)
+                    {
+                        RECT clipped{};
+                        if (!IntersectRect(&clipped, &*requestedDirty,
+                                &widgetFrame))
+                            return;
+                        dirty = clipped;
+                    }
                     if (!IsRectEmpty(&dirty))
                     {
-                        InflateRect(&dirty, 3, 3);
+                        InflateRect(&dirty,
+                            requestedDirty ? 1 : 3,
+                            requestedDirty ? 1 : 3);
                         InvalidateRect(hwnd_, &dirty, FALSE);
                         invalidated = true;
                     }
