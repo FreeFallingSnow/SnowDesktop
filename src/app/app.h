@@ -1014,6 +1014,8 @@ private:
     void ApplyQuickNavigationAppearance();
     /** @brief 加载 Dock 设置。 */
     void LoadDockSettingsAndApply();
+    /** @brief 从 Windows 读取任务栏系统设置并同步到软件配置。 */
+    void SyncSystemTaskbarSettingsFromWindows();
     PersonalizationSettings ResolveSystemTaskbarAppearance(
         const DockSettings& settings) const
     {

@@ -224,6 +224,11 @@ public:
         dockSettings_ = settings;
         NormalizeDockSettings(dockSettings_);
     }
+    void SyncSystemTaskbarSettings(bool autoHide, bool centered)
+    {
+        dockSettings_.systemTaskbarAutoHide = autoHide;
+        dockSettings_.systemTaskbarAlignment = centered ? 1 : 0;
+    }
     void SyncNavigationSettings(const NavigationSettings& settings)
     { navigationSettings_ = settings; }
 

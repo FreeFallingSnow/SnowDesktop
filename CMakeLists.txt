@@ -1316,6 +1316,13 @@ if (BUILD_TESTING)
         LABELS contract shell)
 
     snowdesktop_add_test(
+        SnowDesktopShellIntegrationContractTests
+        shell_integration_contract
+        SOURCES tests/shell_integration_contract_tests.cpp
+        COMMAND_ARGUMENTS ${CMAKE_SOURCE_DIR}
+        LABELS contract shell settings)
+
+    snowdesktop_add_test(
         SnowDesktopShellLaunchWorkerTests
         shell_launch_worker
         SOURCES

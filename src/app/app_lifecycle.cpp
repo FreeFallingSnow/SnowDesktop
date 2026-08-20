@@ -710,11 +710,11 @@ void DesktopApp::RecoverDesktopHostAfterExplorerRestart()
         return;
 
     // These resources belong to the Explorer shell rather than to the custom
-    // desktop window. Restore them even when the native desktop is selected.
+    // desktop window. Restore the tray icon even when the native desktop is
+    // selected, but never push cached taskbar settings back into Windows here.
     if (startupInitializationComplete_)
         AddTrayIcon(true);
-    SetSystemTaskbarAutoHideEnabled(dockSettings_.systemTaskbarAutoHide);
-    SetSystemTaskbarAlignmentCentered(dockSettings_.systemTaskbarAlignment == 1);
+    SyncSystemTaskbarSettingsFromWindows();
     if (controlHwnd_ && IsWindow(controlHwnd_))
         SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
 
@@ -724,6 +724,10 @@ void DesktopApp::RecoverDesktopHostAfterExplorerRestart()
     if (!customDesktopVisible_)
         return;
 
+    // Only an actual Explorer process replacement is allowed to request a new
+    // WorkerW. Ordinary host polling and same-process shell changes stay read-only.
+    if (explorerDesktopRecreatePending_)
+        EnsureDesktopWorkerWindow();
     DesktopWindows current = FindDesktopWindows();
     if (!current.host || !IsWindow(current.host))
         return;

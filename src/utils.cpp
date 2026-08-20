@@ -360,11 +360,26 @@ IDWriteTextFormat* CreateFluentTextFormat(
 // ============================================================================
 
 /**
- * @brief 查找桌面窗口及其子窗口（Progman、DefView、ListView）。
+ * @brief 请求 Explorer 创建承载软件桌面的 WorkerW 窗口。
  *
- * 通过查找 "Progman" 窗口并发送 0x052C 消息触发工作区创建，
- * 然后递归查找 SHELLDLL_DefView 和 SysListView32 子窗口。
- * 如果在 Progman 下未找到 DefView，则通过 EnumWindows 全局查找。
+ * 0x052C 是 Explorer 的未公开消息。重复发送可能重排 WorkerW，并让动态壁纸
+ * 将桌面宿主变化误判为显示拓扑变化，因此只允许在启动或 Explorer 确认重建后调用。
+ */
+bool EnsureDesktopWorkerWindow()
+{
+    const HWND progman = FindWindowW(L"Progman", nullptr);
+    if (!progman)
+        return true;
+    DWORD_PTR unused = 0;
+    return SendMessageTimeoutW(progman, 0x052C, 0, 0,
+        SMTO_ABORTIFHUNG | SMTO_NORMAL, 1000, &unused) != 0;
+}
+
+/**
+ * @brief 只读查找桌面窗口及其子窗口（Progman、DefView、ListView）。
+ *
+ * 如果在 Progman 下未找到 DefView，则通过 EnumWindows 全局查找。该函数不会
+ * 请求 Explorer 创建或重排 WorkerW，因此可用于桌面宿主的周期性健康检查。
  *
  * @return DesktopWindows 结构体，包含 progman、defView、host、listView 句柄。
  */
@@ -372,12 +387,6 @@ DesktopWindows FindDesktopWindows()
 {
     DesktopWindows result{};
     result.progman = FindWindowW(L"Progman", nullptr);
-
-    if (result.progman != nullptr)
-    {
-        DWORD_PTR unused = 0;
-        SendMessageTimeoutW(result.progman, 0x052C, 0, 0, SMTO_NORMAL, 1000, &unused);
-    }
 
     DefViewSearch search{};
     HWND shellProcessWindow = result.progman;

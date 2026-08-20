@@ -142,6 +142,10 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     // Resolve the persisted desktop mode before touching Explorer's icon layer.
     LoadGeneralSettingsAndApply();
 
+    // Creating WorkerW mutates Explorer's desktop window tree. Do this once
+    // before the overlay is created; periodic discovery remains read-only.
+    EnsureDesktopWorkerWindow();
+
     // Find and optionally hide Explorer icon layer.
     desktopWindows_ = FindDesktopWindows();
     if (desktopWindows_.host && IsWindow(desktopWindows_.host))

@@ -113,11 +113,11 @@ inline void NormalizeDockSettings(DockSettings& settings) noexcept
 
 std::wstring GetDockSettingsPath();
 bool IsSystemTaskbarAutoHideEnabled();
-bool SetSystemTaskbarAutoHideEnabled(bool enabled);
+bool RequestSystemTaskbarAutoHideEnabled(bool enabled);
 bool IsSystemTaskbarAlignmentCentered();
-bool SetSystemTaskbarAlignmentCentered(bool centered);
+bool RequestSystemTaskbarAlignmentCentered(bool centered);
 bool IsWindowsSystemLightThemeEnabled();
-bool SetWindowsSystemLightThemeEnabled(bool enabled);
+bool RequestWindowsSystemLightThemeEnabled(bool enabled);
 bool RestartWindowsExplorer();
 PersonalizationSettings MakeTransparentTaskbarAppearance();
 SystemTaskbarBackdropRuntimeState GetSystemTaskbarBackdropRuntimeState();

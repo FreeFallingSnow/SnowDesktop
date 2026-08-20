@@ -287,17 +287,29 @@ void DesktopApp::LoadDockSettingsAndApply()
     DockSettings settings;
     LoadDockSettings(GetDockSettingsPath().c_str(), settings);
     NormalizeDockSettings(settings);
-    SetSystemTaskbarAutoHideEnabled(settings.systemTaskbarAutoHide);
-    settings.systemTaskbarAutoHide = IsSystemTaskbarAutoHideEnabled();
-    SetSystemTaskbarAlignmentCentered(settings.systemTaskbarAlignment == 1);
-    settings.systemTaskbarAlignment = IsSystemTaskbarAlignmentCentered() ? 1 : 0;
     dockSettings_ = settings;
+    SyncSystemTaskbarSettingsFromWindows();
     ApplyFloatingDockHotkey();
     systemTaskbarWindowStateChangedTick_.fetch_add(1,
         std::memory_order_relaxed);
     RefreshSystemTaskbarAppearance(true);
     if (hwnd_ && IsWindow(hwnd_))
         InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+void DesktopApp::SyncSystemTaskbarSettingsFromWindows()
+{
+    const bool autoHide = IsSystemTaskbarAutoHideEnabled();
+    const bool centered = IsSystemTaskbarAlignmentCentered();
+    if (dockSettings_.systemTaskbarAutoHide == autoHide &&
+        dockSettings_.systemTaskbarAlignment == (centered ? 1 : 0))
+        return;
+
+    dockSettings_.systemTaskbarAutoHide = autoHide;
+    dockSettings_.systemTaskbarAlignment = centered ? 1 : 0;
+    SaveDockSettings(GetDockSettingsPath().c_str(), dockSettings_);
+    if (settingsWindow_)
+        settingsWindow_->SyncSystemTaskbarSettings(autoHide, centered);
 }
 
 void DesktopApp::LoadCategorySettingsAndApply()

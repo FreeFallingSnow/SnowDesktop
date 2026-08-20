@@ -890,11 +890,31 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
     case WM_SETTINGCHANGE:
-        ScheduleDisplayTopologyRefresh();
+    {
+        const wchar_t* settingArea =
+            reinterpret_cast<const wchar_t*>(lp);
+        const bool traySettings = settingArea &&
+            _wcsicmp(settingArea, L"TraySettings") == 0;
+        const bool immersiveColor = settingArea &&
+            _wcsicmp(settingArea, L"ImmersiveColorSet") == 0;
+
+        if (traySettings)
+            SyncSystemTaskbarSettingsFromWindows();
+        if (traySettings || immersiveColor)
+            RefreshSystemTaskbarAppearance(false);
+        if (!immersiveColor)
+            ScheduleDisplayTopologyRefresh();
         InvalidateRect(hwnd_, nullptr, FALSE);
-        // Explorer broadcasts this message when view options such as
-        // "Hidden items" change. Re-enumerate both desktop and mapped folders.
-        ReloadItems(false);
+        // Explorer also broadcasts this message for view options such as
+        // "Hidden items". Theme and taskbar notifications do not change the
+        // desktop namespace, so avoid a synchronous full item reload for them.
+        if (!traySettings && !immersiveColor)
+            ReloadItems(false);
+        return 0;
+    }
+    case WM_THEMECHANGED:
+        RefreshSystemTaskbarAppearance(false);
+        InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
     case kShellChangeMessage:
     {

@@ -2470,7 +2470,11 @@ void SettingsWindow::DrawSystemTaskbarPage()
 
     if (DrawSettingCheckbox(_L("app.settings.auto_hide_taskbar"), "##SystemTaskbarAutoHide",
         &dockSettings_.systemTaskbarAutoHide))
+    {
+        RequestSystemTaskbarAutoHideEnabled(
+            dockSettings_.systemTaskbarAutoHide);
         markChanged();
+    }
 
     BeginSettingRow(_L("app.settings.taskbar_alignment"), controlW,
         _L("app.settings.taskbar_alignment_hint"));
@@ -2481,6 +2485,7 @@ void SettingsWindow::DrawSystemTaskbarPage()
         alignmentNames, IM_ARRAYSIZE(alignmentNames)))
     {
         dockSettings_.systemTaskbarAlignment = alignment;
+        RequestSystemTaskbarAlignmentCentered(alignment == 1);
         markChanged();
     }
 
@@ -2501,7 +2506,7 @@ void SettingsWindow::DrawSystemTaskbarPage()
     if (ImGui::Combo("##WindowsSystemTheme", &windowsTheme,
         windowsThemeNames, IM_ARRAYSIZE(windowsThemeNames)))
     {
-        SetWindowsSystemLightThemeEnabled(windowsTheme == 0);
+        RequestWindowsSystemLightThemeEnabled(windowsTheme == 0);
         dockSettingsDirty_ = true;
         dockSettingsPreviewDirty_ = true;
         dockSettingsSaveRequested_ = true;
