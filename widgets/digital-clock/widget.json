@@ -72,7 +72,7 @@
       "lua_widget.digital_clock.am": "AM",
       "lua_widget.digital_clock.pm": "PM",
       "lua_widget.digital_clock.date_format": "{0}年{1}月{2}日",
-      "lua_widget.digital_clock.weekday_format": "{0}",
+      "lua_widget.digital_clock.weekday_format": "星期{0}",
       "lua_widget.digital_clock.sunday": "日",
       "lua_widget.digital_clock.monday": "一",
       "lua_widget.digital_clock.tuesday": "二",
