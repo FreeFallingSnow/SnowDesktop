@@ -250,6 +250,30 @@ void TestStickyNotePresetTextColors(const fs::path& repository)
         "sticky-note must resolve preset text before the global theme fallback");
 }
 
+void TestSystemMonitorMarqueeCadence(const fs::path& repository)
+{
+    const std::string source = ReadFile(
+        repository / "widgets" / "system-monitor" / "main.lua");
+    Check(CountOccurrences(source,
+            "animation.requestFrame(marqueeStartFrameId)") == 1,
+        "system-monitor marquee must not renew a 60 FPS frame loop");
+
+    const std::string_view frame = Section(source,
+        "if value.kind == \"frame\" and value.id == marqueeStartFrameId then",
+        "if value.kind == \"schedule\" and value.id == marqueeScheduleId then");
+    Check(frame.find("schedule.every(marqueeScheduleId, marqueeIntervalMs") !=
+            std::string_view::npos,
+        "system-monitor marquee must hand its one-shot frame to a schedule");
+    Check(frame.find("animation.requestFrame(") == std::string_view::npos,
+        "system-monitor frame callback must not request another frame");
+
+    const std::string manifest = ReadFile(
+        repository / "widgets" / "system-monitor" / "widget.json");
+    Check(manifest.find("\"schedule.basic\"") != std::string::npos &&
+            manifest.find("\"schedule.visibility\"") != std::string::npos,
+        "system-monitor must declare its visibility-aware marquee schedule");
+}
+
 void TestRemindersRenderPurity(const fs::path& repository)
 {
     const std::string source = ReadFile(
@@ -537,6 +561,7 @@ int main(int argc, char** argv)
     TestRemindersRenderPurity(fs::path(argv[1]));
     TestStickyNoteClearBlur(fs::path(argv[1]));
     TestStickyNotePresetTextColors(fs::path(argv[1]));
+    TestSystemMonitorMarqueeCadence(fs::path(argv[1]));
     TestMediaControlsArtwork(fs::path(argv[1]));
     TestV2OnlyWidgetActivation(fs::path(argv[1]));
     TestPackageResourceRenderPurity(fs::path(argv[1]));

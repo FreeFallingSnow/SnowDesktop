@@ -14,6 +14,12 @@ function marquee.advance(offset, deltaMs, speed, cycle)
     return advanced
 end
 
+function marquee.scheduledDelta(intervalMs, missed)
+    local interval = math.max(1, intervalMs or 1)
+    local ticks = math.max(1, math.floor(missed or 0) + 1)
+    return interval * math.min(ticks, 2)
+end
+
 function marquee.position(travel, textWidth, gap)
     local cycle = math.max(1, textWidth or 0) + math.max(0, gap or 0)
     return math.max(0, travel or 0) % cycle, cycle

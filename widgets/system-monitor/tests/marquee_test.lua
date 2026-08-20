@@ -17,6 +17,12 @@ return {
         assert(marquee.advance(118, 250, 24, 120) == 4)
     end,
 
+    ["scheduled scrolling limits catch-up work"] = function()
+        assert(marquee.scheduledDelta(100, 0) == 100)
+        assert(marquee.scheduledDelta(100, 1) == 200)
+        assert(marquee.scheduledDelta(100, 20) == 200)
+    end,
+
     ["position wraps after the text and trailing gap"] = function()
         local offset, cycle = marquee.position(135, 100, 20)
         assert(cycle == 120)

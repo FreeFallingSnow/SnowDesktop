@@ -3,7 +3,9 @@ local subscriptions = {}
 local cardLayout = module.require("modules/card_layout.lua")
 local marquee = module.require("modules/marquee.lua")
 
-local marqueeFrameId = "sub-scroll"
+local marqueeStartFrameId = "sub-scroll-start"
+local marqueeScheduleId = "sub-scroll"
+local marqueeIntervalMs = 100
 local marqueeSpeed = 24
 
 local fluent = {
@@ -353,6 +355,7 @@ local function setup()
         marqueeCycleLengths = {},
         marqueeVisible = false,
         marqueeFramePending = false,
+        marqueeScheduleActive = false,
     }
 end
 
@@ -637,11 +640,12 @@ local function render(_context, model)
     end
     draw.popClip()
 
-    if model.marqueeVisible and not model.marqueeFramePending then
-        local accepted = animation.requestFrame(marqueeFrameId)
+    if model.marqueeVisible and not model.marqueeScheduleActive and
+        not model.marqueeFramePending then
+        local accepted = animation.requestFrame(marqueeStartFrameId)
         model.marqueeFramePending = accepted
     elseif not model.marqueeVisible and model.marqueeFramePending then
-        animation.cancelFrame(marqueeFrameId)
+        animation.cancelFrame(marqueeStartFrameId)
         model.marqueeFramePending = false
     end
 
@@ -665,16 +669,28 @@ local function render(_context, model)
 end
 
 local function event(_context, model, value)
-    if value.kind == "frame" and value.id == marqueeFrameId then
+    if value.kind == "frame" and value.id == marqueeStartFrameId then
         model.marqueeFramePending = false
-        if model.marqueeVisible then
+        if model.marqueeVisible and not model.marqueeScheduleActive then
+            schedule.every(marqueeScheduleId, marqueeIntervalMs, {
+                whenHidden = "pause",
+            })
+            model.marqueeScheduleActive = true
+        end
+        return
+    end
+    if value.kind == "schedule" and value.id == marqueeScheduleId then
+        if not model.marqueeVisible then
+            schedule.cancel(marqueeScheduleId)
+            model.marqueeScheduleActive = false
+        else
+            local deltaMs = marquee.scheduledDelta(
+                marqueeIntervalMs, value.missed)
             for key, cycle in pairs(model.marqueeCycles) do
                 model.marqueeOffsets[key] = marquee.advance(
-                    model.marqueeOffsets[key] or 0, value.deltaMs,
+                    model.marqueeOffsets[key] or 0, deltaMs,
                     marqueeSpeed, cycle)
             end
-            local accepted = animation.requestFrame(marqueeFrameId)
-            model.marqueeFramePending = accepted
         end
         return
     end
@@ -712,7 +728,10 @@ end
 
 local function dispose(_context, model)
     if model and model.marqueeFramePending then
-        animation.cancelFrame(marqueeFrameId)
+        animation.cancelFrame(marqueeStartFrameId)
+    end
+    if model and model.marqueeScheduleActive then
+        schedule.cancel(marqueeScheduleId)
     end
     for _, handle in pairs(subscriptions) do
         handle:unsubscribe()
