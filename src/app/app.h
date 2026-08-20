@@ -108,6 +108,7 @@
 #include <algorithm>
 #include <atomic>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <cstdint>
@@ -317,6 +318,25 @@ struct UiCompositionAnimationOverlay
     ComPtr<IDCompositionSurface> surface;
     RECT bounds{};
     bool active = false;
+};
+
+struct WidgetMarqueeCompositionItem
+{
+    ComPtr<IDCompositionVisual2> clipVisual;
+    ComPtr<IDCompositionVisual2> textVisual;
+    ComPtr<IDCompositionRectangleClip> clip;
+    ComPtr<IDCompositionSurface> surface;
+    float cycle = 0.0f;
+    float speed = 0.0f;
+    float phase = 0.0f;
+    std::chrono::steady_clock::time_point phaseTime{};
+    bool scrolling = false;
+};
+
+struct PendingWidgetMarqueeComposition
+{
+    std::vector<LuaWidget::NativeMarqueeText> marquees;
+    bool reducedMotion = false;
 };
 
 /**
@@ -2058,6 +2078,12 @@ private:
         POINT anchor,
         float fromOpacity, float toOpacity,
         UINT durationMilliseconds);
+    bool QueueWidgetMarqueeComposition(
+        const std::wstring& widgetId,
+        const std::vector<LuaWidget::NativeMarqueeText>& marquees,
+        bool reducedMotion);
+    bool FlushPendingWidgetMarqueeComposition();
+    void ResetWidgetMarqueeComposition();
     bool CommitCompositionAnimationFrame();
     bool FlushPendingCompositionCommit();
     /** @brief 提交并等待桌面/悬浮 Dock 的 DComp 状态真正越过呈现边界。 */
@@ -2563,6 +2589,12 @@ private:
     ComPtr<IDCompositionTarget> dcompTarget_;
     ComPtr<IDCompositionVisual2> dcompVisual_;
     ComPtr<IDCompositionSurface> dcompSurface_;
+    ComPtr<IDCompositionVisual2> widgetMarqueeCompositionLayer_;
+    std::unordered_map<std::wstring,
+        std::unordered_map<std::string, WidgetMarqueeCompositionItem>>
+        widgetMarqueeCompositionItems_;
+    std::unordered_map<std::wstring, PendingWidgetMarqueeComposition>
+        pendingWidgetMarqueeCompositions_;
     UINT compositionWidth_ = 0, compositionHeight_ = 0;
     bool compositionRenderRecoveryPending_ = false;
     bool compositionPaintInProgress_ = false;

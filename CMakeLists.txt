@@ -200,6 +200,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/app_window_dispatch.cpp
     src/app/app_widget_context_menu.cpp
     src/app/app_widget_grouping.cpp
+    src/app/app_widget_marquee_composition.cpp
     src/app/app_widget_placement.cpp
     src/app/app_widget_refresh.cpp
     src/app/drag_drop_controller.cpp

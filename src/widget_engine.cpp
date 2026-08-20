@@ -14656,6 +14656,7 @@ void WidgetEngine::Shutdown()
         d2dState_->shellIconLoader.reset();
     for (auto& widget : widgets_)
     {
+        ClearNativeMarqueeComposition(widget);
         if (widget.valid && widget.hostVisible)
             InvokeSimpleCallback(widget, "onHidden");
         DisposeWidgetLifecycle(widget, "shutdown");
@@ -14759,6 +14760,7 @@ void WidgetEngine::UnloadWidget(const std::wstring& widgetId)
     });
     if (widgets_[idx].hostVisible)
         InvokeSimpleCallback(widgets_[idx], "onHidden");
+    ClearNativeMarqueeComposition(widgets_[idx]);
     DisposeWidgetLifecycle(widgets_[idx], "unload");
     ReleaseWidgetDataSubscriptions(widgets_[idx]);
     ReleaseWidgetTasks(widgets_[idx],
@@ -20457,11 +20459,12 @@ static void CommitNativeMarqueeCapture(D2DState* state,
 
 static void DrawNativeMarqueeSurface(D2DState* state,
     const LuaWidget::NativeMarqueeSurface& surface,
-    bool reducedMotion)
+    bool reducedMotion, bool drawMarquees = true)
 {
     if (!state || !state->ctx) return;
     if (surface.staticCommands)
         state->ctx->DrawImage(surface.staticCommands.Get());
+    if (!drawMarquees) return;
     for (const auto& marquee : surface.marquees)
     {
         if (!marquee.layout ||
@@ -20495,7 +20498,8 @@ static bool AdvanceNativeMarqueeSurface(
     LuaWidget::NativeMarqueeSurface& surface,
     std::chrono::steady_clock::time_point now)
 {
-    if (!HasActiveNativeMarquee(surface)) return false;
+    if (surface.compositionManaged || !HasActiveNativeMarquee(surface))
+        return false;
     const float deltaMilliseconds = surface.lastAdvance.time_since_epoch().
             count() == 0
         ? 0.0f
@@ -21172,11 +21176,16 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             CommitNativeMarqueeCapture(d2dState_,
                 found->desktopMarquee,
                 std::move(nativeMarqueeCommands));
+            const bool reducedMotion = found->preview ||
+                !widgetTimerRequestCallback_ ||
+                QueryWidgetSystemEnvironment().reducedMotion;
+            const bool compositionManaged =
+                SyncNativeMarqueeComposition(*found, reducedMotion);
             DrawNativeMarqueeSurface(d2dState_,
                 found->desktopMarquee,
-                found->preview || !widgetTimerRequestCallback_ ||
-                    QueryWidgetSystemEnvironment().reducedMotion);
-            if (HasActiveNativeMarquee(found->desktopMarquee))
+                reducedMotion, !compositionManaged);
+            if (!compositionManaged &&
+                HasActiveNativeMarquee(found->desktopMarquee))
                 (void)ScheduleAnimationFrame(*found);
         }
         if (snowdesktop::widget_api::ConsumeTransientStateDirty(state))
@@ -22003,6 +22012,8 @@ void WidgetEngine::SetWidgetDesktopVisible(
     widget.keepRuntimeActiveForHiddenPage =
         !visible && keepRuntimeActive;
     widget.desktopVisible = visible;
+    if (!visible)
+        ClearNativeMarqueeComposition(widget);
     ApplyWidgetHostVisibility(
         widget, widget.desktopVisible || widget.panelActive ||
             widget.keepRuntimeActiveForHiddenPage);
@@ -22016,6 +22027,8 @@ void WidgetEngine::SetAllWidgetDesktopVisible(bool visible)
             continue;
         widget.keepRuntimeActiveForHiddenPage = false;
         widget.desktopVisible = visible;
+        if (!visible)
+            ClearNativeMarqueeComposition(widget);
         ApplyWidgetHostVisibility(
             widget, widget.desktopVisible || widget.panelActive);
     }
@@ -22923,6 +22936,7 @@ bool WidgetEngine::ReloadWidget(const std::wstring& widgetId)
 
     // The new VM is now fully loaded. Only then retire the last-known-good VM.
     LuaWidget& old = widgets_[oldIndex];
+    ClearNativeMarqueeComposition(old);
     if (old.hostVisible)
         InvokeSimpleCallback(old, "onHidden");
     DisposeWidgetLifecycle(old, "hotReload");
@@ -26536,6 +26550,7 @@ bool WidgetEngine::RuntimeCancelAnimationFrame(
     const bool nativeMarqueeActive =
         !QueryWidgetSystemEnvironment().reducedMotion &&
         widget.desktopVisible &&
+        !widget.desktopMarquee.compositionManaged &&
         HasActiveNativeMarquee(widget.desktopMarquee);
     if (!widget.animationFrames.HasPending() &&
         !widget.viewTransitions.HasActive() &&
@@ -26609,6 +26624,7 @@ bool WidgetEngine::ScheduleAnimationFrame(LuaWidget& widget)
     const bool nativeMarqueeActive =
         !QueryWidgetSystemEnvironment().reducedMotion &&
         widget.desktopVisible &&
+        !widget.desktopMarquee.compositionManaged &&
         HasActiveNativeMarquee(widget.desktopMarquee);
     const bool highRateAnimationPending =
         widget.animationFrames.HasPending() ||
@@ -26638,6 +26654,26 @@ void WidgetEngine::StopAnimationFrames(LuaWidget& widget)
     widget.panelViewTransitionFramePending = false;
     widget.desktopMarquee.framePending = false;
     widget.desktopMarquee.lastAdvance = {};
+}
+
+bool WidgetEngine::SyncNativeMarqueeComposition(
+    LuaWidget& widget, bool reducedMotion)
+{
+    auto& surface = widget.desktopMarquee;
+    surface.compositionManaged = false;
+    if (widget.preview || !widget.desktopVisible ||
+        !nativeMarqueeSyncCallback_)
+        return false;
+    surface.compositionManaged = nativeMarqueeSyncCallback_(
+        widget.widgetId, surface.marquees, reducedMotion);
+    return surface.compositionManaged;
+}
+
+void WidgetEngine::ClearNativeMarqueeComposition(LuaWidget& widget)
+{
+    widget.desktopMarquee.compositionManaged = false;
+    if (!widget.preview && nativeMarqueeSyncCallback_)
+        (void)nativeMarqueeSyncCallback_(widget.widgetId, {}, true);
 }
 
 bool WidgetEngine::RuntimeSetTimerAt(const std::wstring& widgetId,

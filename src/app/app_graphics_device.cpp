@@ -176,6 +176,7 @@ void DesktopApp::RecreateComponentListTextFormat()
 
 void DesktopApp::ResetCompositionRenderCaches()
 {
+    ResetWidgetMarqueeComposition();
     dragRenderCache_.Reset();
     ResetCollectionPopupAnimationCache();
     ResetLuaWidgetPanelAnimationCache();

@@ -132,6 +132,13 @@ void DesktopApp::OnPaint(const RECT* updateRect)
             return;
         }
 
+        if (!FlushPendingWidgetMarqueeComposition())
+        {
+            RecoverCompositionRenderFailure(
+                L"Widget marquee composition", E_FAIL);
+            return;
+        }
+
         if (!CommitCompositionAnimationFrame())
         {
             RecoverCompositionRenderFailure(

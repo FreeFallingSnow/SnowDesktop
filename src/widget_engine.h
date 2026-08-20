@@ -620,6 +620,7 @@ struct LuaWidget
         bool collecting = false;
         bool framePending = false;
         bool requiresLuaRender = true;
+        bool compositionManaged = false;
     };
     std::wstring widgetId;               ///< 小部件实例唯一 ID
     std::string packageId;                ///< 组件包 UUID
@@ -797,6 +798,9 @@ public:
     using WidgetTitleCallback = std::function<void(const std::wstring&, const std::wstring&)>;
     using InvalidateCallback = std::function<void(const std::wstring&,
         const std::optional<RECT>&, std::string_view)>;
+    using NativeMarqueeSyncCallback = std::function<bool(
+        const std::wstring&, const std::vector<LuaWidget::NativeMarqueeText>&,
+        bool)>;
     using DesktopPathAction = std::function<bool(const std::wstring&)>;
     using DesktopRefreshCallback = std::function<void()>;
     using InlineTextEditCallback = std::function<void(const LuaInlineTextEditRequest&)>;
@@ -843,6 +847,11 @@ public:
     void SetWidgetTitleCallback(WidgetTitleCallback callback) { setWidgetTitleCallback_ = std::move(callback); }
     /** @brief 设置失效回调（请求宿主重绘） */
     void SetInvalidateCallback(InvalidateCallback callback) { invalidateCallback_ = std::move(callback); }
+    /** @brief 设置桌面合成器滚动文字同步回调。 */
+    void SetNativeMarqueeSyncCallback(NativeMarqueeSyncCallback callback)
+    {
+        nativeMarqueeSyncCallback_ = std::move(callback);
+    }
     /** @brief 设置桌面文件打开回调 */
     void SetDesktopOpenCallback(DesktopPathAction callback) { desktopOpenCallback_ = std::move(callback); }
     /** @brief 设置桌面文件揭示回调（在资源管理器中定位） */
@@ -1743,6 +1752,9 @@ private:
     void RescheduleNamedTimer(LuaWidget& widget);
     bool ScheduleAnimationFrame(LuaWidget& widget);
     void StopAnimationFrames(LuaWidget& widget);
+    bool SyncNativeMarqueeComposition(
+        LuaWidget& widget, bool reducedMotion);
+    void ClearNativeMarqueeComposition(LuaWidget& widget);
 
     D2DState* d2dState_ = nullptr;                     ///< Direct2D 渲染状态管理对象指针
     ComPtr<ID2D1DeviceContext> d2dContext_;            ///< Direct2D 设备上下文
@@ -1765,6 +1777,7 @@ private:
     WidgetPanelOpenCallback openWidgetPanelCallback_;
     WidgetPanelCloseCallback closeWidgetPanelCallback_;
     InvalidateCallback invalidateCallback_;            ///< 请求宿主重绘的回调
+    NativeMarqueeSyncCallback nativeMarqueeSyncCallback_;
     DesktopPathAction desktopOpenCallback_;            ///< 打开桌面路径的回调
     DesktopPathAction applicationLaunchCallback_;      ///< 启动已解析应用引用的回调
     DesktopPathAction desktopRevealCallback_;          ///< 在资源管理器中定位路径的回调
