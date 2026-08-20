@@ -2,6 +2,7 @@
 local showWeekday = true
 local showDate = true
 local showSeconds = true
+local use12Hour = false
 local textColor = 0xFFFFFF
 local textOpacity = 1.0
 local clockScale = 1.0
@@ -28,6 +29,7 @@ local settings = {
         { key = "showWeekday", label = l10n.tr("lua_widget.digital_clock.show_weekday"), type = "bool", default = true },
         { key = "showDate", label = l10n.tr("lua_widget.digital_clock.show_date"), type = "bool", default = true },
         { key = "showSeconds", label = l10n.tr("lua_widget.digital_clock.show_seconds"), type = "bool", default = true },
+        { key = "use12Hour", label = l10n.tr("lua_widget.digital_clock.use_12_hour"), type = "bool", default = false },
         { key = "textColor", label = l10n.tr("lua_widget.common.text_color"), type = "color", default = 0xFFFFFF },
         { key = "textOpacity", label = l10n.tr("lua_widget.digital_clock.text_opacity"), type = "float", default = 1.0, min = 0.0, max = 1.0 },
         { key = "scale", label = l10n.tr("lua_widget.common.scale"), type = "float", default = 1.0, min = 0.5, max = 3.0 },
@@ -46,6 +48,8 @@ local function loadConfig()
     showWeekday = storage.get("showWeekday") ~= "0"
     showDate = storage.get("showDate") ~= "0"
     showSeconds = storage.get("showSeconds") ~= "0"
+    local stored12Hour = storage.get("use12Hour")
+    use12Hour = stored12Hour == "1" or stored12Hour == "true"
     textColor = tonumber(storage.get("textColor")) or textColor
     textOpacity = math.max(0.0, math.min(1.0, tonumber(storage.get("textOpacity")) or textOpacity))
     clockScale = tonumber(storage.get("scale")) or clockScale
@@ -65,7 +69,7 @@ local function render()
     local h = layout.height()
     local timeStr
     local language = l10n.language()
-    local twelveHour = language == "en-US"
+    local twelveHour = use12Hour
     local displayHour = t.hour
     local period = ""
     if twelveHour then
