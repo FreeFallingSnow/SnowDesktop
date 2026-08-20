@@ -1273,7 +1273,7 @@ function animation.cancelFrame(id) end
 ---@alias SnowDataHiddenPolicy 'pause'|'throttle'|'continue'
 
 ---@class SnowDataSubscribeOptions
----@field maxAgeMs? integer Requested sampling interval and stale threshold.
+---@field maxAgeMs? integer Requested sampling interval; stale is confirmed only after the following sampling opportunity is also missed.
 ---@field whenHidden? SnowDataHiddenPolicy
 
 ---@class SnowCalendarEventsSubscribeOptions: SnowDataSubscribeOptions

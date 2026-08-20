@@ -73,6 +73,11 @@ struct DataSubscriptionOptions
     std::size_t audioSpectrumBins = 64;
 };
 
+inline constexpr std::int64_t DataSnapshotStaleIntervalCount = 2;
+
+bool IsDataSnapshotStale(std::int64_t nowMs, std::int64_t timestampMs,
+    std::chrono::milliseconds requestedInterval) noexcept;
+
 struct DataSubscriptionResult
 {
     std::uint64_t id = 0;

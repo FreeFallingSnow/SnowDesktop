@@ -15,6 +15,7 @@ using snowdesktop::widget_runtime::DataHiddenPolicy;
 using snowdesktop::widget_runtime::DataProviderDescriptor;
 using snowdesktop::widget_runtime::DataProviderState;
 using snowdesktop::widget_runtime::DataSubscriptionOptions;
+using snowdesktop::widget_runtime::IsDataSnapshotStale;
 using snowdesktop::widget_runtime::WidgetDataBroker;
 
 void Check(bool condition, const char* message)
@@ -50,6 +51,20 @@ DataProviderDescriptor AudioProvider()
         true,
         true,
     };
+}
+
+void TestSnapshotFreshnessConfirmation()
+{
+    Check(IsDataSnapshotStale(1000, 0, 1000ms),
+        "a missing sample timestamp must be stale");
+    Check(IsDataSnapshotStale(1000, 1001, 1000ms),
+        "a future sample timestamp must be stale");
+    Check(!IsDataSnapshotStale(2001, 1000, 1000ms),
+        "ordinary scheduler overrun must not create a one-frame stale state");
+    Check(!IsDataSnapshotStale(3000, 1000, 1000ms),
+        "the second sampling boundary must remain fresh");
+    Check(IsDataSnapshotStale(3001, 1000, 1000ms),
+        "a sample must become stale after two full sampling intervals");
 }
 
 void TestRegistrationAndSharedSampling()
@@ -284,6 +299,7 @@ void TestShutdown()
 
 int main()
 {
+    TestSnapshotFreshnessConfirmation();
     TestRegistrationAndSharedSampling();
     TestVisibilityAndIdleGrace();
     TestGraceReuseAndPermissionRevocation();

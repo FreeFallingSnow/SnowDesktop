@@ -14,6 +14,16 @@ bool ValidDuration(std::chrono::milliseconds value)
 }
 }
 
+bool IsDataSnapshotStale(std::int64_t nowMs, std::int64_t timestampMs,
+    std::chrono::milliseconds requestedInterval) noexcept
+{
+    if (timestampMs <= 0 || nowMs < timestampMs ||
+        requestedInterval.count() <= 0)
+        return true;
+    return nowMs - timestampMs >
+        requestedInterval.count() * DataSnapshotStaleIntervalCount;
+}
+
 bool WidgetDataBroker::RegisterProvider(
     DataProviderDescriptor descriptor, std::string& error)
 {

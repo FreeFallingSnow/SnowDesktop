@@ -39,7 +39,7 @@ Shell、系统数据、存储或其他副作用 API。命令输出文件数、�
 `--data-state` 可为 `ready/empty/loading/error/stale/permission-denied`，用于让全部预览数据订阅
 返回对应的确定性包络；`empty` 保留 `available=true` 但使用空/零值，`error` 返回
 `providerUnavailable`，拒权返回 `permissionDenied`；包络时间戳与 `time.now()` 共用固定预览
-时钟，stale 时间固定落在请求 `maxAgeMs` 之前。以上环境在 Lua `setup()` 前注入，预览
+时钟，stale 时间固定落在两个请求采样周期之前。以上环境在 Lua `setup()` 前注入，预览
 显示器摘要固定标记为 unavailable；accent、无障碍默认值、region、UTC 时区和输入语言也由
 所选 locale 的确定性预览环境提供，不读取开发机对应设置。命令返回包含稳定 `stage`、最终像素
 尺寸、栅格尺寸、DPI、locale、theme 和 dataState 的 JSON。复制到
@@ -1559,7 +1559,8 @@ end
 ```
 
 `data.subscribe(topic, options?)` 返回句柄。`options.maxAgeMs` 为 1–86400000，
-同时表达请求采样周期与快照过期阈值；CPU 最快 500 ms，内存和进程摘要最快 1000 ms，
+表达请求采样周期；快照在连续错过下一次完整采样机会后才标记 `stale=true`，
+不会因为线程调度比请求周期晚几毫秒而短暂过期。CPU 最快 500 ms，内存和进程摘要最快 1000 ms，
 电源、存储卷和显示拓扑最快 2000 ms；存储 I/O、默认音频端点和主音量最快
 1000 ms，媒体三个 topic 最快 500 ms，桌面和日历事件 topic 最快 100 ms，
 音频分析最快 16 ms。`whenHidden` 可为

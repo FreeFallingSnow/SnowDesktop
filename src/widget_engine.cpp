@@ -22939,7 +22939,9 @@ WidgetEngine::RuntimeGetDataSnapshot(
         {
             result.stale = true;
             result.timestampMs = timestampNow -
-                binding->options.requestedInterval.count() - 1;
+                binding->options.requestedInterval.count() *
+                    snowdesktop::widget_runtime::
+                        DataSnapshotStaleIntervalCount - 1;
         }
         return result;
     }
@@ -22974,9 +22976,8 @@ WidgetEngine::RuntimeGetDataSnapshot(
 
     const auto setFreshness = [&](std::int64_t timestamp) {
         result.timestampMs = timestamp;
-        result.stale = timestamp <= 0 || timestampNow < timestamp ||
-            timestampNow - timestamp >
-                binding->options.requestedInterval.count();
+        result.stale = snowdesktop::widget_runtime::IsDataSnapshotStale(
+            timestampNow, timestamp, binding->options.requestedInterval);
     };
     if (result.topic == "system.cpu")
     {
