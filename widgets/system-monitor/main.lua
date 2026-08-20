@@ -209,17 +209,25 @@ local function fitFontSize(text, fontSize, minimum, maxWidth, bold)
     return fitted, metrics
 end
 
-local function drawMarqueeText(model, x, y, text, fontSize, color,
+local function drawMarqueeText(model, key, x, y, text, fontSize, color,
         viewportWidth)
     local metrics = draw.measureText(text, fontSize, 0, false)
     if not marquee.shouldScroll(metrics.width, viewportWidth) then
+        model.marqueeOffsets[key] = nil
+        model.marqueeCycleLengths[key] = nil
         draw.text(x, y, text, fontSize, color, viewportWidth,
             false, true)
         return false
     end
 
-    local offset, cycle = marquee.position(model.marqueeTravel,
-        metrics.width, layout.cu(24))
+    local _, measuredCycle = marquee.position(0, metrics.width,
+        layout.cu(24))
+    local cycle = math.max(model.marqueeCycleLengths[key] or 0,
+        measuredCycle)
+    local offset = (model.marqueeOffsets[key] or 0) % cycle
+    model.marqueeOffsets[key] = offset
+    model.marqueeCycleLengths[key] = cycle
+    model.marqueeCycles[key] = cycle
     draw.pushClip(x, y, viewportWidth, metrics.height)
     draw.text(x - offset, y, text, fontSize, color, 0, false, true)
     draw.text(x - offset + cycle, y, text, fontSize, color, 0,
@@ -279,7 +287,7 @@ local function drawCard(model, x, y, width, height, info, palette)
         local metrics = draw.measureText(info.sub, subFont, 0, false)
         local subBottom = barY and (barY - layout.cu(4)) or
             (y + height - layout.cu(6))
-        if drawMarqueeText(model, x + layout.cu(8),
+        if drawMarqueeText(model, info.id, x + layout.cu(8),
                 subBottom - metrics.height, info.sub, subFont,
                 palette.cardSub, subWidth) then
             model.marqueeVisible = true
@@ -340,7 +348,9 @@ local function setup()
     return {
         previousColumns = 0,
         previousRows = 0,
-        marqueeTravel = 0,
+        marqueeOffsets = {},
+        marqueeCycles = {},
+        marqueeCycleLengths = {},
         marqueeVisible = false,
         marqueeFramePending = false,
     }
@@ -375,6 +385,7 @@ local function buildCards()
     if showCard("cpu") then
         local percent = cpu and clamp(cpu.usagePercent) or nil
         cards[#cards + 1] = {
+            id = "cpu",
             title = "CPU",
             value = percent and formatPercent(percent) or "—",
             progress = percent and percent / 100 or nil,
@@ -390,24 +401,23 @@ local function buildCards()
     if showCard("memory") then
         local percent = memory and clamp(memory.usagePercent) or nil
         cards[#cards + 1] = {
+            id = "memory",
             title = l10n.tr("lua_widget.system_monitor.memory"),
             value = percent and formatPercent(percent) or "—",
             progress = percent and percent / 100 or nil,
             color = usageColor(percent or 0, palette),
             sub = detailsWithStatus(memory and memory.totalBytes and
-                memory.totalBytes > 0 and l10n.formatList({
-                    formatBytes(memory.usedBytes) .. " / " ..
-                        formatBytes(memory.totalBytes),
-                    l10n.tr("lua_widget.system_monitor.commit",
-                        formatBytes(memory.commitUsedBytes or 0),
-                        formatBytes(memory.commitLimitBytes or 0)),
-                }) or nil, memoryState),
+                memory.totalBytes > 0 and
+                    (formatBytes(memory.usedBytes) .. " / " ..
+                        formatBytes(memory.totalBytes)) or nil,
+                memoryState),
         }
     end
 
     if showCard("gpu") then
         local percent = gpu and clamp(gpu.usagePercent) or nil
         cards[#cards + 1] = {
+            id = "gpu",
             title = "GPU",
             value = percent and formatPercent(percent) or "—",
             progress = percent and percent / 100 or nil,
@@ -422,6 +432,7 @@ local function buildCards()
         local used = gpu and gpu.dedicatedUsedBytes or 0
         local percent = total > 0 and clamp(used / total * 100) or nil
         cards[#cards + 1] = {
+            id = "vram",
             title = l10n.tr("lua_widget.system_monitor.vram"),
             value = percent and formatPercent(percent) or "—",
             progress = percent and percent / 100 or nil,
@@ -453,6 +464,7 @@ local function buildCards()
         end
         local effectiveNetworkState = networkState or networkStatusState
         cards[#cards + 1] = {
+            id = "network",
             title = l10n.tr("lua_widget.system_monitor.network"),
             lines = {
                 {
@@ -492,6 +504,7 @@ local function buildCards()
                 remaining
         end
         cards[#cards + 1] = {
+            id = "battery",
             title = l10n.tr("lua_widget.system_monitor.battery"),
             value = percent and formatPercent(percent) or "—",
             progress = percent and percent / 100 or nil,
@@ -514,6 +527,7 @@ local function buildCards()
             })
         end
         cards[#cards + 1] = {
+            id = "storage",
             title = l10n.tr("lua_widget.system_monitor.storage"),
             value = percent and formatPercent(percent) or "—",
             progress = percent and percent / 100 or nil,
@@ -525,6 +539,7 @@ local function buildCards()
     if showCard("disk_io") then
         local percent = diskIo and clamp(diskIo.busyPercent) or nil
         cards[#cards + 1] = {
+            id = "disk_io",
             title = l10n.tr("lua_widget.system_monitor.disk_io"),
             lines = {
                 {
@@ -548,6 +563,7 @@ local function buildCards()
     if showCard("uptime") then
         local uptime = system.uptime()
         cards[#cards + 1] = {
+            id = "uptime",
             title = l10n.tr("lua_widget.system_monitor.uptime"),
             value = formatUptime(uptime.milliseconds),
             color = palette.usageLow,
@@ -564,6 +580,9 @@ local function render(_context, model)
     local columns = math.max(1, layout.columns())
     local visibleRows = math.max(1, layout.rows())
     local rows = #cards > 0 and math.ceil(#cards / columns) or 0
+    for key in pairs(model.marqueeCycles) do
+        model.marqueeCycles[key] = nil
+    end
     model.marqueeVisible = false
 
     local inset = layout.cu(4)
@@ -649,8 +668,11 @@ local function event(_context, model, value)
     if value.kind == "frame" and value.id == marqueeFrameId then
         model.marqueeFramePending = false
         if model.marqueeVisible then
-            model.marqueeTravel = marquee.advance(model.marqueeTravel,
-                value.deltaMs, marqueeSpeed)
+            for key, cycle in pairs(model.marqueeCycles) do
+                model.marqueeOffsets[key] = marquee.advance(
+                    model.marqueeOffsets[key] or 0, value.deltaMs,
+                    marqueeSpeed, cycle)
+            end
             local accepted = animation.requestFrame(marqueeFrameId)
             model.marqueeFramePending = accepted
         end

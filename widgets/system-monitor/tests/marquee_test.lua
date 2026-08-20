@@ -12,9 +12,21 @@ return {
         assert(marquee.advance(16, 0, 24) == 16)
     end,
 
+    ["per-card offset wraps within its stable cycle"] = function()
+        assert(marquee.advance(95, 250, 24, 120) == 101)
+        assert(marquee.advance(118, 250, 24, 120) == 4)
+    end,
+
     ["position wraps after the text and trailing gap"] = function()
         local offset, cycle = marquee.position(135, 100, 20)
         assert(cycle == 120)
         assert(offset == 15)
+    end,
+
+    ["resizing preserves an offset that remains inside the cycle"] = function()
+        local offset = marquee.position(73, 140, 20)
+        assert(offset == 73)
+        local resized = marquee.position(offset, 145, 20)
+        assert(resized == 73)
     end,
 }

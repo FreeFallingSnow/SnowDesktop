@@ -5,9 +5,13 @@ function marquee.shouldScroll(textWidth, viewportWidth)
         math.max(0, viewportWidth or 0)
 end
 
-function marquee.advance(travel, deltaMs, speed)
-    return math.max(0, travel or 0) +
+function marquee.advance(offset, deltaMs, speed, cycle)
+    local advanced = math.max(0, offset or 0) +
         math.max(0, deltaMs or 0) * math.max(0, speed or 0) / 1000
+    if cycle and cycle > 0 then
+        return advanced % cycle
+    end
+    return advanced
 end
 
 function marquee.position(travel, textWidth, gap)
