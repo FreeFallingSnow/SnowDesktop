@@ -1574,6 +1574,12 @@ end
 `available=false,error="notPresent"`。`handle:unsubscribe()` 主动释放；卸载、
 热重载和关闭也会自动释放。
 
+所有轮询采样 provider 都在 API 层统一稳定包络语义：数值、速率和仍处于可用态的
+value 会逐样本更新；从可用态进入 `warmingUp`、不可用或错误态时，必须连续两次采样
+得到相同包络后才发布，单次异常采样继续返回上一份稳定 value 并刷新时间戳；恢复到
+可用态立即发布。桌面、日历、应用索引和文件监听等事件驱动 topic 直接发布权威事件，不人为延迟；
+权限撤销同样立即生效，不参与采样稳定。
+
 `process.summary` 受独立的 `process.summary.read` 保护。value 的 `processes` 固定最多
 12 项，按总机器 CPU 占比、private bytes 和 working set 排序；每项只含进程生命周期内
 稳定的 opaque `id`、用于显示的可执行文件基本名、0–100 的 `cpuPercent`、

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "widget_data_semantic_debounce.h"
 #include "widget_runtime_image.h"
 
 #include <atomic>
@@ -424,6 +425,8 @@ private:
     std::condition_variable condition_;
     std::unordered_map<std::string, TopicSchedule> schedules_;
     std::unordered_set<std::string> changedTopics_;
+    std::unordered_map<std::string, WidgetDataSemanticDebouncer>
+        semanticDebouncers_;
     std::optional<WidgetCpuDataSnapshot> cpu_;
     std::optional<WidgetMemoryDataSnapshot> memory_;
     std::optional<WidgetProcessSummaryDataSnapshot> processSummary_;

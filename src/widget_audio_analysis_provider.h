@@ -1,5 +1,7 @@
 #pragma once
 
+#include "widget_data_semantic_debounce.h"
+
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -83,6 +85,7 @@ private:
 
     mutable std::mutex mutex_;
     std::optional<WidgetAudioAnalysisDataSnapshot> snapshot_;
+    WidgetDataSemanticDebouncer semanticDebouncer_;
     WidgetAudioAnalysisConfiguration configuration_;
     bool changed_ = false;
     std::jthread worker_;

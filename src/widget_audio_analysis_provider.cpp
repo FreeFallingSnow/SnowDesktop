@@ -335,6 +335,7 @@ void WidgetAudioAnalysisProvider::Stop()
     resourcesActive_.store(false);
     std::scoped_lock lock(mutex_);
     snapshot_.reset();
+    semanticDebouncer_.Reset();
     changed_ = false;
 }
 
@@ -372,6 +373,8 @@ void WidgetAudioAnalysisProvider::Publish(
     WidgetAudioAnalysisDataSnapshot snapshot)
 {
     std::scoped_lock lock(mutex_);
+    snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot), snapshot_,
+        semanticDebouncer_);
     snapshot.revision = snapshot_ ? snapshot_->revision + 1 : 1;
     snapshot_ = std::move(snapshot);
     changed_ = true;

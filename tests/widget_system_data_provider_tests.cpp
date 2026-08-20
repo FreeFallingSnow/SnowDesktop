@@ -10,12 +10,15 @@ namespace
 {
 using namespace std::chrono_literals;
 using snowdesktop::widget_runtime::WidgetSystemDataProvider;
+using snowdesktop::widget_runtime::WidgetDataSemanticDebouncer;
+using snowdesktop::widget_runtime::WidgetMemoryDataSnapshot;
 using snowdesktop::widget_runtime::WidgetNetworkStatusDataSnapshot;
 using snowdesktop::widget_runtime::WidgetNetworkStatusDebouncer;
 using snowdesktop::widget_runtime::WidgetDisplayDataSnapshot;
 using snowdesktop::widget_runtime::WidgetDisplayTopologyDataSnapshot;
 using snowdesktop::widget_runtime::WidgetDisplayPixelRectDataSnapshot;
 using snowdesktop::widget_runtime::MatchDisplayByPixelBounds;
+using snowdesktop::widget_runtime::StabilizeWidgetDataEnvelope;
 
 void Check(bool condition, const char* message)
 {
@@ -409,6 +412,51 @@ void TestNetworkStatusDebounce()
         "reset must let the next network state publish immediately");
 }
 
+void TestSampledDataEnvelopeDebounce()
+{
+    WidgetDataSemanticDebouncer debouncer;
+    WidgetMemoryDataSnapshot ready;
+    ready.available = true;
+    ready.usedBytes = 100;
+    ready.timestampMs = 100;
+    std::optional<WidgetMemoryDataSnapshot> previous;
+
+    auto published = StabilizeWidgetDataEnvelope(ready, previous, debouncer);
+    previous = published;
+    Check(published.available && published.usedBytes == 100,
+        "the first sampled envelope must publish immediately");
+
+    WidgetMemoryDataSnapshot updated = ready;
+    updated.usedBytes = 120;
+    updated.timestampMs = 200;
+    published = StabilizeWidgetDataEnvelope(updated, previous, debouncer);
+    previous = published;
+    Check(published.available && published.usedBytes == 120,
+        "numeric values must update without semantic confirmation");
+
+    WidgetMemoryDataSnapshot failed;
+    failed.timestampMs = 300;
+    failed.error = "providerUnavailable";
+    published = StabilizeWidgetDataEnvelope(failed, previous, debouncer);
+    previous = published;
+    Check(published.available && published.usedBytes == 120 &&
+            published.timestampMs == 300,
+        "one failed sample must retain the previous value and refresh time");
+
+    failed.timestampMs = 400;
+    published = StabilizeWidgetDataEnvelope(failed, previous, debouncer);
+    previous = published;
+    Check(!published.available &&
+            published.error == "providerUnavailable",
+        "two matching failed samples must publish the degraded envelope");
+
+    ready.usedBytes = 140;
+    ready.timestampMs = 500;
+    published = StabilizeWidgetDataEnvelope(ready, previous, debouncer);
+    Check(published.available && published.usedBytes == 140,
+        "recovery to an available sample must publish immediately");
+}
+
 void TestCurrentDisplayMatching()
 {
     WidgetDisplayTopologyDataSnapshot topology;
@@ -446,6 +494,7 @@ void TestStopAll()
 int main()
 {
     TestCurrentDisplayMatching();
+    TestSampledDataEnvelopeDebounce();
     TestNetworkStatusDebounce();
     TestTopicLifecycleAndSampling();
     TestStopAll();

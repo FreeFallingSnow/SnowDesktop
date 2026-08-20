@@ -776,6 +776,7 @@ bool WidgetSystemDataProvider::StopTopic(std::string_view topic)
         std::scoped_lock lock(mutex_);
         removed = schedules_.erase(std::string(topic)) > 0;
         if (!removed) return false;
+        semanticDebouncers_.erase(std::string(topic));
         if (topic == MediaArtworkTopic) mediaArtwork_.reset();
         if (topic == ProcessSummaryTopic) processSummary_.reset();
         if (topic == CpuTopic) resetCpuBaseline_.store(true);
@@ -808,6 +809,7 @@ void WidgetSystemDataProvider::StopAll()
         std::scoped_lock lock(mutex_);
         schedules_.clear();
         changedTopics_.clear();
+        semanticDebouncers_.clear();
         networkStatusDebouncer_.Reset();
         mediaArtwork_.reset();
         processSummary_.reset();
@@ -2203,6 +2205,8 @@ void WidgetSystemDataProvider::PublishCpu(
 {
     std::scoped_lock lock(mutex_);
     if (!schedules_.contains(std::string(CpuTopic))) return;
+    snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot), cpu_,
+        semanticDebouncers_[std::string(CpuTopic)]);
     snapshot.revision = cpu_ ? cpu_->revision + 1 : 1;
     cpu_ = std::move(snapshot);
     changedTopics_.insert(std::string(CpuTopic));
@@ -2213,6 +2217,8 @@ void WidgetSystemDataProvider::PublishMemory(
 {
     std::scoped_lock lock(mutex_);
     if (!schedules_.contains(std::string(MemoryTopic))) return;
+    snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot), memory_,
+        semanticDebouncers_[std::string(MemoryTopic)]);
     snapshot.revision = memory_ ? memory_->revision + 1 : 1;
     memory_ = std::move(snapshot);
     changedTopics_.insert(std::string(MemoryTopic));
@@ -2223,6 +2229,9 @@ void WidgetSystemDataProvider::PublishProcessSummary(
 {
     std::scoped_lock lock(mutex_);
     if (!schedules_.contains(std::string(ProcessSummaryTopic))) return;
+    snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot),
+        processSummary_,
+        semanticDebouncers_[std::string(ProcessSummaryTopic)]);
     snapshot.revision = processSummary_
         ? processSummary_->revision + 1 : 1;
     processSummary_ = std::move(snapshot);
@@ -2234,6 +2243,8 @@ void WidgetSystemDataProvider::PublishPower(
 {
     std::scoped_lock lock(mutex_);
     if (!schedules_.contains(std::string(PowerTopic))) return;
+    snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot), power_,
+        semanticDebouncers_[std::string(PowerTopic)]);
     snapshot.revision = power_ ? power_->revision + 1 : 1;
     power_ = std::move(snapshot);
     changedTopics_.insert(std::string(PowerTopic));
@@ -2255,6 +2266,9 @@ void WidgetSystemDataProvider::PublishNetworkTraffic(
 {
     std::scoped_lock lock(mutex_);
     if (!schedules_.contains(std::string(NetworkTrafficTopic))) return;
+    snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot),
+        networkTraffic_,
+        semanticDebouncers_[std::string(NetworkTrafficTopic)]);
     snapshot.revision = networkTraffic_ ? networkTraffic_->revision + 1 : 1;
     networkTraffic_ = std::move(snapshot);
     changedTopics_.insert(std::string(NetworkTrafficTopic));
@@ -2265,6 +2279,8 @@ void WidgetSystemDataProvider::PublishGpu(
 {
     std::scoped_lock lock(mutex_);
     if (!schedules_.contains(std::string(GpuTopic))) return;
+    snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot), gpu_,
+        semanticDebouncers_[std::string(GpuTopic)]);
     snapshot.revision = gpu_ ? gpu_->revision + 1 : 1;
     gpu_ = std::move(snapshot);
     changedTopics_.insert(std::string(GpuTopic));
@@ -2275,6 +2291,9 @@ void WidgetSystemDataProvider::PublishStorageVolumes(
 {
     std::scoped_lock lock(mutex_);
     if (!schedules_.contains(std::string(StorageVolumesTopic))) return;
+    snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot),
+        storageVolumes_,
+        semanticDebouncers_[std::string(StorageVolumesTopic)]);
     snapshot.revision = storageVolumes_ ? storageVolumes_->revision + 1 : 1;
     storageVolumes_ = std::move(snapshot);
     changedTopics_.insert(std::string(StorageVolumesTopic));
@@ -2285,6 +2304,8 @@ void WidgetSystemDataProvider::PublishStorageIo(
 {
     std::scoped_lock lock(mutex_);
     if (!schedules_.contains(std::string(StorageIoTopic))) return;
+    snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot), storageIo_,
+        semanticDebouncers_[std::string(StorageIoTopic)]);
     snapshot.revision = storageIo_ ? storageIo_->revision + 1 : 1;
     storageIo_ = std::move(snapshot);
     changedTopics_.insert(std::string(StorageIoTopic));
@@ -2295,6 +2316,9 @@ void WidgetSystemDataProvider::PublishDisplayTopology(
 {
     std::scoped_lock lock(mutex_);
     if (!schedules_.contains(std::string(DisplayTopologyTopic))) return;
+    snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot),
+        displayTopology_,
+        semanticDebouncers_[std::string(DisplayTopologyTopic)]);
     snapshot.revision = displayTopology_
         ? displayTopology_->revision + 1 : 1;
     displayTopology_ = std::move(snapshot);
@@ -2306,6 +2330,9 @@ void WidgetSystemDataProvider::PublishDisplayCurrent(
 {
     std::scoped_lock lock(mutex_);
     if (!schedules_.contains(std::string(DisplayCurrentTopic))) return;
+    snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot),
+        displayCurrent_,
+        semanticDebouncers_[std::string(DisplayCurrentTopic)]);
     snapshot.revision = displayCurrent_
         ? displayCurrent_->revision + 1 : 1;
     displayCurrent_ = std::move(snapshot);
@@ -2317,6 +2344,9 @@ void WidgetSystemDataProvider::PublishAudioOutputDefault(
 {
     std::scoped_lock lock(mutex_);
     if (!schedules_.contains(std::string(AudioOutputDefaultTopic))) return;
+    snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot),
+        audioOutputDefault_,
+        semanticDebouncers_[std::string(AudioOutputDefaultTopic)]);
     snapshot.revision = audioOutputDefault_
         ? audioOutputDefault_->revision + 1 : 1;
     audioOutputDefault_ = std::move(snapshot);
@@ -2328,6 +2358,9 @@ void WidgetSystemDataProvider::PublishAudioOutputVolume(
 {
     std::scoped_lock lock(mutex_);
     if (!schedules_.contains(std::string(AudioOutputVolumeTopic))) return;
+    snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot),
+        audioOutputVolume_,
+        semanticDebouncers_[std::string(AudioOutputVolumeTopic)]);
     snapshot.revision = audioOutputVolume_
         ? audioOutputVolume_->revision + 1 : 1;
     audioOutputVolume_ = std::move(snapshot);
@@ -2339,6 +2372,9 @@ void WidgetSystemDataProvider::PublishMediaSessions(
 {
     std::scoped_lock lock(mutex_);
     if (!schedules_.contains(std::string(MediaSessionsTopic))) return;
+    snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot),
+        mediaSessions_,
+        semanticDebouncers_[std::string(MediaSessionsTopic)]);
     snapshot.revision = mediaSessions_ ? mediaSessions_->revision + 1 : 1;
     mediaSessions_ = std::move(snapshot);
     changedTopics_.insert(std::string(MediaSessionsTopic));
@@ -2351,7 +2387,6 @@ void WidgetSystemDataProvider::PublishMediaCurrent(
     if (!schedules_.contains(std::string(MediaCurrentTopic))) return;
     WidgetMediaCurrentDataSnapshot current;
     current.timestampMs = snapshot.timestampMs;
-    current.revision = mediaCurrent_ ? mediaCurrent_->revision + 1 : 1;
     if (!snapshot.available)
     {
         current.error = snapshot.error.empty()
@@ -2371,6 +2406,9 @@ void WidgetSystemDataProvider::PublishMediaCurrent(
             current.session = *match;
         }
     }
+    current = StabilizeWidgetDataEnvelope(std::move(current), mediaCurrent_,
+        semanticDebouncers_[std::string(MediaCurrentTopic)]);
+    current.revision = mediaCurrent_ ? mediaCurrent_->revision + 1 : 1;
     mediaCurrent_ = std::move(current);
     changedTopics_.insert(std::string(MediaCurrentTopic));
 }
@@ -2382,7 +2420,6 @@ void WidgetSystemDataProvider::PublishMediaTimeline(
     if (!schedules_.contains(std::string(MediaTimelineTopic))) return;
     WidgetMediaTimelineDataSnapshot timeline;
     timeline.timestampMs = snapshot.timestampMs;
-    timeline.revision = mediaTimeline_ ? mediaTimeline_->revision + 1 : 1;
     if (!snapshot.available)
     {
         timeline.error = snapshot.error.empty()
@@ -2402,11 +2439,13 @@ void WidgetSystemDataProvider::PublishMediaTimeline(
         else
         {
             timeline = match->timeline;
-            timeline.revision = mediaTimeline_
-                ? mediaTimeline_->revision + 1 : 1;
             timeline.timestampMs = snapshot.timestampMs;
         }
     }
+    timeline = StabilizeWidgetDataEnvelope(std::move(timeline),
+        mediaTimeline_,
+        semanticDebouncers_[std::string(MediaTimelineTopic)]);
+    timeline.revision = mediaTimeline_ ? mediaTimeline_->revision + 1 : 1;
     mediaTimeline_ = std::move(timeline);
     changedTopics_.insert(std::string(MediaTimelineTopic));
 }
@@ -2417,11 +2456,13 @@ void WidgetSystemDataProvider::PublishMediaArtwork(
     std::scoped_lock lock(mutex_);
     if (!schedules_.contains(std::string(MediaArtworkTopic))) return;
     WidgetMediaArtworkDataSnapshot artwork = snapshot.artwork;
-    artwork.revision = mediaArtwork_ ? mediaArtwork_->revision + 1 : 1;
     artwork.timestampMs = snapshot.timestampMs;
     if (!snapshot.available && artwork.error.empty())
         artwork.error = snapshot.error.empty()
             ? "mediaSessionQueryFailed" : snapshot.error;
+    artwork = StabilizeWidgetDataEnvelope(std::move(artwork), mediaArtwork_,
+        semanticDebouncers_[std::string(MediaArtworkTopic)]);
+    artwork.revision = mediaArtwork_ ? mediaArtwork_->revision + 1 : 1;
     mediaArtwork_ = std::move(artwork);
     changedTopics_.insert(std::string(MediaArtworkTopic));
 }
