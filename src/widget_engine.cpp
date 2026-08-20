@@ -10218,46 +10218,135 @@ static float LuaDrawAlpha(lua_State* state, int index, const char* api)
     return value;
 }
 
-static int lua_DrawMarqueeText(lua_State* state)
+enum class DrawMarqueeError
 {
-    constexpr std::string_view api = "draw.marqueeText";
-    luaL_checktype(state, 1, LUA_TTABLE);
+    None,
+    Options,
+    Key,
+    Text,
+    Number,
+    Geometry,
+    Color,
+    Alpha,
+    Bold,
+    Font,
+    Host,
+    Format,
+    Layout,
+    Measure,
+    Submit,
+};
+
+static const char* DrawMarqueeErrorMessage(DrawMarqueeError error) noexcept
+{
+    switch (error)
+    {
+    case DrawMarqueeError::Options:
+        return "options must be a closed plain table";
+    case DrawMarqueeError::Key:
+        return "key must be 1 to 128 bytes of valid UTF-8";
+    case DrawMarqueeError::Text:
+        return "text must be 1 to 4096 bytes of valid UTF-8";
+    case DrawMarqueeError::Number:
+        return "x, y, width, height, size, speed, gap, and alpha must be numbers";
+    case DrawMarqueeError::Geometry:
+        return "geometry, size, speed, and gap must be finite and bounded";
+    case DrawMarqueeError::Color:
+        return "color must be an integer between 0 and 0xFFFFFF";
+    case DrawMarqueeError::Alpha:
+        return "alpha must be between 0 and 1";
+    case DrawMarqueeError::Bold:
+        return "bold must be a boolean";
+    case DrawMarqueeError::Font:
+        return "font must be a valid package font resource handle";
+    case DrawMarqueeError::Host:
+        return "host context is unavailable";
+    case DrawMarqueeError::Format:
+        return "text format is unavailable";
+    case DrawMarqueeError::Layout:
+        return "text layout could not be created";
+    case DrawMarqueeError::Measure:
+        return "text layout could not be measured";
+    case DrawMarqueeError::Submit:
+        return "host rejected the marquee submission";
+    case DrawMarqueeError::None:
+        break;
+    }
+    return "unknown error";
+}
+
+static DrawMarqueeError TryDrawMarqueeText(
+    lua_State* state, bool& scrolling)
+{
+    scrolling = false;
+    if (lua_type(state, 1) != LUA_TTABLE)
+        return DrawMarqueeError::Options;
     const int descriptor = lua_absindex(state, 1);
-    std::string error;
+    std::string validationError;
     if (!LuaTableUsesOnlyFields(state, descriptor,
             { "key", "x", "y", "width", "height", "text", "size",
                 "color", "bold", "speed", "gap", "alpha", "font" },
-            api, error))
-        return luaL_error(state, "%s: %s", api.data(), error.c_str());
+            "draw.marqueeText", validationError))
+        return DrawMarqueeError::Options;
 
-    const std::string key = ReadRequiredStringField(
-        state, descriptor, "key");
-    const std::string text = ReadRequiredStringField(
-        state, descriptor, "text");
-    if (key.empty() || key.size() > 128 ||
-        key.find('\0') != std::string::npos || !IsValidUtf8Local(key))
-        return luaL_error(state,
-            "draw.marqueeText: key must be 1 to 128 bytes of valid UTF-8");
-    if (text.empty() || text.size() > 4096 ||
-        text.find('\0') != std::string::npos || !IsValidUtf8Local(text))
-        return luaL_error(state,
-            "draw.marqueeText: text must be 1 to 4096 bytes of valid UTF-8");
-
-    const auto numberField = [state, descriptor](const char* name,
-            float fallback, bool required) {
-        lua_getfield(state, descriptor, name);
-        const float value = lua_isnil(state, -1) && !required
-            ? fallback : static_cast<float>(luaL_checknumber(state, -1));
+    const auto readString = [state, descriptor](
+            const char* field, std::string& value) {
+        lua_getfield(state, descriptor, field);
+        if (lua_type(state, -1) != LUA_TSTRING)
+        {
+            lua_pop(state, 1);
+            return false;
+        }
+        std::size_t length = 0;
+        const char* raw = lua_tolstring(state, -1, &length);
+        value.assign(raw ? raw : "", length);
         lua_pop(state, 1);
-        return value;
+        return raw != nullptr;
     };
-    const float x = numberField("x", 0.0f, true);
-    const float y = numberField("y", 0.0f, true);
-    const float width = numberField("width", 0.0f, true);
-    const float height = numberField("height", 0.0f, true);
-    const float size = numberField("size", 14.0f, false);
-    const float speed = numberField("speed", 24.0f, false);
-    const float gap = numberField("gap", 24.0f, false);
+    std::string key;
+    std::string text;
+    if (!readString("key", key) || key.empty() || key.size() > 128 ||
+        key.find('\0') != std::string::npos || !IsValidUtf8Local(key))
+        return DrawMarqueeError::Key;
+    if (!readString("text", text) || text.empty() || text.size() > 4096 ||
+        text.find('\0') != std::string::npos || !IsValidUtf8Local(text))
+        return DrawMarqueeError::Text;
+
+    const auto readNumber = [state, descriptor](const char* field,
+            float fallback, bool required, float& value) {
+        lua_getfield(state, descriptor, field);
+        if (lua_isnil(state, -1) && !required)
+        {
+            value = fallback;
+            lua_pop(state, 1);
+            return true;
+        }
+        if (lua_type(state, -1) != LUA_TNUMBER)
+        {
+            lua_pop(state, 1);
+            return false;
+        }
+        value = static_cast<float>(lua_tonumber(state, -1));
+        lua_pop(state, 1);
+        return true;
+    };
+    float x = 0.0f;
+    float y = 0.0f;
+    float width = 0.0f;
+    float height = 0.0f;
+    float size = 14.0f;
+    float speed = 24.0f;
+    float gap = 24.0f;
+    float alpha = 1.0f;
+    if (!readNumber("x", 0.0f, true, x) ||
+        !readNumber("y", 0.0f, true, y) ||
+        !readNumber("width", 0.0f, true, width) ||
+        !readNumber("height", 0.0f, true, height) ||
+        !readNumber("size", 14.0f, false, size) ||
+        !readNumber("speed", 24.0f, false, speed) ||
+        !readNumber("gap", 24.0f, false, gap) ||
+        !readNumber("alpha", 1.0f, false, alpha))
+        return DrawMarqueeError::Number;
     if (!std::isfinite(x) || !std::isfinite(y) ||
         !std::isfinite(width) || !std::isfinite(height) ||
         !std::isfinite(size) || !std::isfinite(speed) ||
@@ -10268,21 +10357,29 @@ static int lua_DrawMarqueeText(lua_State* state)
         std::abs(y + height) > 1'000'000.0f || size < 1.0f ||
         size > 512.0f || speed < 1.0f || speed > 512.0f ||
         gap < 0.0f || gap > 4096.0f)
-        return luaL_error(state,
-            "draw.marqueeText: geometry, size, speed, and gap must be finite and bounded");
+        return DrawMarqueeError::Geometry;
+    if (!std::isfinite(alpha) || alpha < 0.0f || alpha > 1.0f)
+        return DrawMarqueeError::Alpha;
 
+    int color = 0xFFFFFF;
     lua_getfield(state, descriptor, "color");
-    const int color = LuaDrawColor(
-        state, -1, 0xFFFFFF, "draw.marqueeText");
-    lua_pop(state, 1);
-    lua_getfield(state, descriptor, "alpha");
-    const float alpha = LuaDrawAlpha(
-        state, -1, "draw.marqueeText");
+    if (!lua_isnil(state, -1))
+    {
+        if (!lua_isinteger(state, -1) || lua_tointeger(state, -1) < 0 ||
+            lua_tointeger(state, -1) > 0xFFFFFF)
+        {
+            lua_pop(state, 1);
+            return DrawMarqueeError::Color;
+        }
+        color = static_cast<int>(lua_tointeger(state, -1));
+    }
     lua_pop(state, 1);
     lua_getfield(state, descriptor, "bold");
     if (!lua_isnil(state, -1) && !lua_isboolean(state, -1))
-        return luaL_error(state,
-            "draw.marqueeText: bold must be a boolean");
+    {
+        lua_pop(state, 1);
+        return DrawMarqueeError::Bold;
+    }
     const bool bold = lua_toboolean(state, -1) != 0;
     lua_pop(state, 1);
 
@@ -10293,37 +10390,34 @@ static int lua_DrawMarqueeText(lua_State* state)
         privateFontPath = ResolveResourceHandlePath(
             state, -1, LuaResourceType::Font);
         if (!privateFontPath)
-            return luaL_error(state,
-                "draw.marqueeText: invalid font resource handle");
+        {
+            lua_pop(state, 1);
+            return DrawMarqueeError::Font;
+        }
     }
     lua_pop(state, 1);
 
     auto* d2d = GetD2D(state);
     if (!d2d || !d2d->ctx || !d2d->dwrite || !d2d->engine)
-        return luaL_error(state,
-            "draw.marqueeText: host context is unavailable");
+        return DrawMarqueeError::Host;
     IDWriteTextFormat* format = GetCachedTextFormat(d2d, size,
         bold ? DWRITE_FONT_WEIGHT_BOLD : d2d->itemFontWeight,
         false, DWRITE_WORD_WRAPPING_NO_WRAP, false, false, false,
         privateFontPath ? &*privateFontPath : nullptr);
-    if (!format)
-        return luaL_error(state,
-            "draw.marqueeText: text format is unavailable");
+    if (!format) return DrawMarqueeError::Format;
 
     const std::wstring wideText = Utf8ToWideLocal(text);
     ComPtr<IDWriteTextLayout> layout;
     if (wideText.empty() || FAILED(d2d->dwrite->CreateTextLayout(
             wideText.data(), static_cast<UINT32>(wideText.size()), format,
             100'000.0f, std::max(height, size * 1.5f), &layout)) || !layout)
-        return luaL_error(state,
-            "draw.marqueeText: text layout could not be created");
+        return DrawMarqueeError::Layout;
     DWRITE_TEXT_METRICS metrics{};
     if (FAILED(layout->GetMetrics(&metrics)))
-        return luaL_error(state,
-            "draw.marqueeText: text layout could not be measured");
+        return DrawMarqueeError::Measure;
 
     LuaWidget::NativeMarqueeText marquee;
-    marquee.key = key;
+    marquee.key = std::move(key);
     marquee.viewport = D2D1::RectF(
         x + d2d->widgetRect.left,
         y + d2d->widgetRect.top,
@@ -10348,16 +10442,25 @@ static int lua_DrawMarqueeText(lua_State* state)
     marquee.gap = gap;
     marquee.color = color;
     marquee.alpha = alpha;
+    scrolling = snowdesktop::widget_runtime::ShouldScrollDrawMarquee(
+        marquee.textWidth, width);
     marquee.scrolling = marquee.viewport.right > marquee.viewport.left &&
-        marquee.viewport.bottom > marquee.viewport.top &&
-        snowdesktop::widget_runtime::ShouldScrollDrawMarquee(
-            marquee.textWidth, width);
+        marquee.viewport.bottom > marquee.viewport.top && scrolling;
+    std::string submitError;
     if (!d2d->engine->RuntimeSubmitNativeMarquee(
-            BoundWidgetId(state), std::move(marquee), error))
-        return luaL_error(state, "draw.marqueeText: %s", error.c_str());
-    lua_pushboolean(state, snowdesktop::widget_runtime::
-        ShouldScrollDrawMarquee(metrics.widthIncludingTrailingWhitespace,
-            width) ? 1 : 0);
+            BoundWidgetId(state), std::move(marquee), submitError))
+        return DrawMarqueeError::Submit;
+    return DrawMarqueeError::None;
+}
+
+static int lua_DrawMarqueeText(lua_State* state)
+{
+    bool scrolling = false;
+    const DrawMarqueeError error = TryDrawMarqueeText(state, scrolling);
+    if (error != DrawMarqueeError::None)
+        return luaL_error(state, "draw.marqueeText: %s",
+            DrawMarqueeErrorMessage(error));
+    lua_pushboolean(state, scrolling ? 1 : 0);
     return 1;
 }
 
