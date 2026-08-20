@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -24,7 +25,9 @@ std::string ReadFile(const std::filesystem::path& path)
         return {};
     std::ostringstream contents;
     contents << file.rdbuf();
-    return contents.str();
+    std::string source = contents.str();
+    source.erase(std::remove(source.begin(), source.end(), '\r'), source.end());
+    return source;
 }
 
 std::string_view FunctionBody(std::string_view source,
