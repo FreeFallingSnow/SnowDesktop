@@ -1,10 +1,13 @@
 -- sticky-note/main.lua - API v2 storage-bound Direct2D note editor
 local descriptor
+local noteTheme = module.require("modules/theme.lua")
 
 local fluent = {
     clear = utf8.char(0xE5E4),
     style = utf8.char(0xF592),
 }
+
+local presetTextColors = noteTheme.presetTextColors
 
 local settings = {
     presets = {
@@ -18,6 +21,7 @@ local settings = {
                 alpha = 1.0,
                 borderAlpha = 0.85,
                 gradientEndA = 0.0,
+                textColor = presetTextColors.classic,
             },
         },
         {
@@ -29,6 +33,7 @@ local settings = {
                 alpha = 1.0,
                 borderAlpha = 0.85,
                 gradientEndA = 0.0,
+                textColor = presetTextColors.white,
             },
         },
         {
@@ -40,6 +45,7 @@ local settings = {
                 alpha = 1.0,
                 borderAlpha = 0.85,
                 gradientEndA = 0.0,
+                textColor = presetTextColors.pink,
             },
         },
         {
@@ -51,6 +57,7 @@ local settings = {
                 alpha = 1.0,
                 borderAlpha = 0.85,
                 gradientEndA = 0.0,
+                textColor = presetTextColors.blue,
             },
         },
         {
@@ -62,6 +69,7 @@ local settings = {
                 alpha = 1.0,
                 borderAlpha = 0.85,
                 gradientEndA = 0.0,
+                textColor = presetTextColors.green,
             },
         },
         {
@@ -73,6 +81,7 @@ local settings = {
                 alpha = 1.0,
                 borderAlpha = 0.85,
                 gradientEndA = 0.0,
+                textColor = presetTextColors.purple,
             },
         },
         {
@@ -84,6 +93,7 @@ local settings = {
                 alpha = 1.0,
                 borderAlpha = 0.95,
                 gradientEndA = 0.0,
+                textColor = presetTextColors.dark,
             },
         },
     },
@@ -121,7 +131,9 @@ end
 
 local function textColor()
     local theme = widget.theme()
-    return theme and theme.contentTheme == 1 and 0x000000 or 0xFFFFFF
+    return noteTheme.resolveTextColor(storage.get("__preset"),
+        storage.get("followPersonalization") == "1",
+        theme and theme.contentTheme or nil)
 end
 
 local function fontSize()
@@ -135,6 +147,7 @@ local function resetDefaults()
     storage.set("alpha", "1")
     storage.set("borderAlpha", "0.85")
     storage.set("gradientEndA", "0")
+    storage.set("textColor", tostring(presetTextColors.classic))
     storage.set("fontSize", "15")
     storage.set("followPersonalization", "1")
     storage.set("__preset", "classic")

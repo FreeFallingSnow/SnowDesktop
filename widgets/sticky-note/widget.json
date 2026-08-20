@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "Sticky Note",
   "nameKey": "lua_widget.sticky_note.name",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "description": "An editable desktop sticky note.",
   "descriptionKey": "lua_widget.sticky_note.description",
   "locales": {

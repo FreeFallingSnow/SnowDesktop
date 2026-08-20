@@ -206,6 +206,50 @@ void TestStickyNoteClearBlur(const fs::path& repository)
         "sticky-note must declare the control.blur host feature");
 }
 
+void TestStickyNotePresetTextColors(const fs::path& repository)
+{
+    const std::string source = ReadFile(
+        repository / "widgets" / "sticky-note" / "main.lua");
+    const std::string themeSource = ReadFile(repository / "widgets" /
+        "sticky-note" / "modules" / "theme.lua");
+    const std::string_view colors = Section(themeSource,
+        "noteTheme.presetTextColors = {", "\n}\n\nfunction");
+    for (const std::string_view preset : {
+        "classic", "white", "pink", "blue", "green", "purple" })
+    {
+        Check(colors.find(std::string(preset) + " = 0x000000") !=
+                std::string_view::npos,
+            "every light sticky-note preset must use black text");
+    }
+    Check(colors.find("dark = 0xFFFFFF") != std::string_view::npos,
+        "the dark sticky-note preset must use white text");
+    Check(CountOccurrences(source,
+            "textColor = presetTextColors.") == 7,
+        "every sticky-note preset must persist its assigned text color");
+
+    Check(source.find(
+            "local noteTheme = module.require(\"modules/theme.lua\")") !=
+            std::string::npos,
+        "sticky-note must load its tested theme color rules");
+    Check(source.find("noteTheme.resolveTextColor(") !=
+            std::string::npos,
+        "sticky-note must resolve rendered text through its theme rules");
+
+    const std::string_view resolveColor = Section(themeSource,
+        "function noteTheme.resolveTextColor(", "\nend\n\nreturn noteTheme");
+    const std::size_t follow = resolveColor.find(
+        "not followsPersonalization");
+    const std::size_t preset = resolveColor.find(
+        "noteTheme.presetTextColors[preset]");
+    const std::size_t contentTheme = resolveColor.find(
+        "contentTheme == 1");
+    Check(follow != std::string_view::npos &&
+            preset != std::string_view::npos &&
+            contentTheme != std::string_view::npos &&
+            follow < preset && preset < contentTheme,
+        "sticky-note must resolve preset text before the global theme fallback");
+}
+
 void TestRemindersRenderPurity(const fs::path& repository)
 {
     const std::string source = ReadFile(
@@ -492,6 +536,7 @@ int main(int argc, char** argv)
     TestPublishedV2Catalog(fs::path(argv[1]));
     TestRemindersRenderPurity(fs::path(argv[1]));
     TestStickyNoteClearBlur(fs::path(argv[1]));
+    TestStickyNotePresetTextColors(fs::path(argv[1]));
     TestMediaControlsArtwork(fs::path(argv[1]));
     TestV2OnlyWidgetActivation(fs::path(argv[1]));
     TestPackageResourceRenderPurity(fs::path(argv[1]));
