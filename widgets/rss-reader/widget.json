@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "RSS Reader",
   "nameKey": "lua_widget.rss_reader.name",
-  "version": "3.0.4",
+  "version": "3.0.5",
   "description": "Subscribes to RSS and Atom feeds, lists headlines and dates, and opens articles on double-click.",
   "descriptionKey": "lua_widget.rss_reader.description",
   "locales": {
@@ -36,6 +36,9 @@
       "lua_widget.rss_reader.preview_article_1": "周末去海边，三天两夜这样安排",
       "lua_widget.rss_reader.preview_article_2": "七个不用大改造的收纳办法",
       "lua_widget.rss_reader.preview_article_3": "公路旅行循环播放的歌单",
+      "lua_widget.rss_reader.preview_date_1": "2026年8月2日",
+      "lua_widget.rss_reader.preview_date_2": "2026年8月1日",
+      "lua_widget.rss_reader.preview_date_3": "2026年7月31日",
       "lua_widget.common.text_color": "文字颜色"
     },
     "en-US": {
@@ -60,6 +63,9 @@
       "lua_widget.rss_reader.preview_article_1": "A Three-Day Weekend by the Coast",
       "lua_widget.rss_reader.preview_article_2": "Seven Small Ways to Tidy Up at Home",
       "lua_widget.rss_reader.preview_article_3": "The Road-Trip Playlist on Repeat",
+      "lua_widget.rss_reader.preview_date_1": "Aug 2, 2026",
+      "lua_widget.rss_reader.preview_date_2": "Aug 1, 2026",
+      "lua_widget.rss_reader.preview_date_3": "Jul 31, 2026",
       "lua_widget.common.text_color": "Text Color"
     },
     "zh-TW": {
@@ -84,6 +90,9 @@
       "lua_widget.rss_reader.preview_article_1": "週末去海邊，三天兩夜這樣安排",
       "lua_widget.rss_reader.preview_article_2": "七個不用大改造的收納辦法",
       "lua_widget.rss_reader.preview_article_3": "公路旅行循環播放的歌單",
+      "lua_widget.rss_reader.preview_date_1": "2026年8月2日",
+      "lua_widget.rss_reader.preview_date_2": "2026年8月1日",
+      "lua_widget.rss_reader.preview_date_3": "2026年7月31日",
       "lua_widget.common.text_color": "文字顏色"
     },
     "ja-JP": {
@@ -108,6 +117,9 @@
       "lua_widget.rss_reader.preview_article_1": "海岸沿いの 3 日間の週末",
       "lua_widget.rss_reader.preview_article_2": "家を片づける 7 つの小さな方法",
       "lua_widget.rss_reader.preview_article_3": "リピートのロードトリップ プレイリスト",
+      "lua_widget.rss_reader.preview_date_1": "2026年8月2日",
+      "lua_widget.rss_reader.preview_date_2": "2026年8月1日",
+      "lua_widget.rss_reader.preview_date_3": "2026年7月31日",
       "lua_widget.common.text_color": "文字色"
     },
     "ko-KR": {
@@ -132,6 +144,9 @@
       "lua_widget.rss_reader.preview_article_1": "해안에서의 3일간의 주말",
       "lua_widget.rss_reader.preview_article_2": "집에서 정리하는 7가지 작은 방법",
       "lua_widget.rss_reader.preview_article_3": "반복되는 도로 여행 재생 목록",
+      "lua_widget.rss_reader.preview_date_1": "2026년 8월 2일",
+      "lua_widget.rss_reader.preview_date_2": "2026년 8월 1일",
+      "lua_widget.rss_reader.preview_date_3": "2026년 7월 31일",
       "lua_widget.common.text_color": "텍스트 색상"
     },
     "de-DE": {
@@ -156,6 +171,9 @@
       "lua_widget.rss_reader.preview_article_1": "Ein dreitägiges Wochenende an der Küste",
       "lua_widget.rss_reader.preview_article_2": "Sieben kleine Möglichkeiten, zu Hause aufzuräumen",
       "lua_widget.rss_reader.preview_article_3": "Die Road-Trip-Playlist in Wiederholung",
+      "lua_widget.rss_reader.preview_date_1": "2. Aug. 2026",
+      "lua_widget.rss_reader.preview_date_2": "1. Aug. 2026",
+      "lua_widget.rss_reader.preview_date_3": "31. Juli 2026",
       "lua_widget.common.text_color": "Textfarbe"
     },
     "fr-FR": {
@@ -180,6 +198,9 @@
       "lua_widget.rss_reader.preview_article_1": "Un week-end de trois jours sur la côte",
       "lua_widget.rss_reader.preview_article_2": "Sept petites façons de ranger à la maison",
       "lua_widget.rss_reader.preview_article_3": "La playlist Road-Trip en répétition",
+      "lua_widget.rss_reader.preview_date_1": "2 août 2026",
+      "lua_widget.rss_reader.preview_date_2": "1 août 2026",
+      "lua_widget.rss_reader.preview_date_3": "31 juillet 2026",
       "lua_widget.common.text_color": "Couleur du texte"
     },
     "es-ES": {
@@ -204,6 +225,9 @@
       "lua_widget.rss_reader.preview_article_1": "Un fin de semana de tres días en la costa",
       "lua_widget.rss_reader.preview_article_2": "Siete pequeñas formas de ordenar en casa",
       "lua_widget.rss_reader.preview_article_3": "La lista de reproducción del viaje por carretera en repetición",
+      "lua_widget.rss_reader.preview_date_1": "2 ago 2026",
+      "lua_widget.rss_reader.preview_date_2": "1 ago 2026",
+      "lua_widget.rss_reader.preview_date_3": "31 jul 2026",
       "lua_widget.common.text_color": "Color del texto"
     },
     "es-419": {
@@ -228,6 +252,9 @@
       "lua_widget.rss_reader.preview_article_1": "Un fin de semana de tres días en la costa",
       "lua_widget.rss_reader.preview_article_2": "Siete pequeñas formas de ordenar en casa",
       "lua_widget.rss_reader.preview_article_3": "La lista de reproducción del viaje por carretera en repetición",
+      "lua_widget.rss_reader.preview_date_1": "2 ago 2026",
+      "lua_widget.rss_reader.preview_date_2": "1 ago 2026",
+      "lua_widget.rss_reader.preview_date_3": "31 jul 2026",
       "lua_widget.common.text_color": "Color del texto"
     },
     "pt-BR": {
@@ -252,6 +279,9 @@
       "lua_widget.rss_reader.preview_article_1": "Um fim de semana de três dias na costa",
       "lua_widget.rss_reader.preview_article_2": "Sete pequenas maneiras de arrumar a casa",
       "lua_widget.rss_reader.preview_article_3": "A lista de reprodução da viagem em repetição",
+      "lua_widget.rss_reader.preview_date_1": "2 de ago. de 2026",
+      "lua_widget.rss_reader.preview_date_2": "1 de ago. de 2026",
+      "lua_widget.rss_reader.preview_date_3": "31 de jul. de 2026",
       "lua_widget.common.text_color": "Cor do texto"
     }
   },
@@ -267,17 +297,20 @@
     "storage": {
       "previewFeedTitle": "Daily Highlights",
       "previewArticle1Title": "A Three-Day Weekend by the Coast",
-      "previewArticle1Date": "Sun, 02 Aug 2026 10:00:00 GMT",
+      "previewArticle1Date": "2026-08-02",
       "previewArticle2Title": "Seven Small Ways to Tidy Up at Home",
-      "previewArticle2Date": "Sat, 01 Aug 2026 18:30:00 GMT",
+      "previewArticle2Date": "2026-08-01",
       "previewArticle3Title": "The Road-Trip Playlist on Repeat",
-      "previewArticle3Date": "Fri, 31 Jul 2026 09:15:00 GMT"
+      "previewArticle3Date": "2026-07-31"
     },
     "storageKeys": {
       "previewFeedTitle": "lua_widget.rss_reader.preview_feed_title",
       "previewArticle1Title": "lua_widget.rss_reader.preview_article_1",
       "previewArticle2Title": "lua_widget.rss_reader.preview_article_2",
-      "previewArticle3Title": "lua_widget.rss_reader.preview_article_3"
+      "previewArticle3Title": "lua_widget.rss_reader.preview_article_3",
+      "previewArticle1Date": "lua_widget.rss_reader.preview_date_1",
+      "previewArticle2Date": "lua_widget.rss_reader.preview_date_2",
+      "previewArticle3Date": "lua_widget.rss_reader.preview_date_3"
     }
   },
   "resources": {},

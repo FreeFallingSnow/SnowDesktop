@@ -22638,7 +22638,7 @@ WidgetEngine::RuntimeGetDataSnapshot(
             result.cpu.warmingUp = false;
             result.cpu.usagePercent = 42.0;
             result.cpu.logicalProcessors = 12;
-            result.cpu.name = "Preview CPU";
+            result.cpu.name = _L("app.widget_preview.api.cpu");
             result.cpu.timestampMs = timestampNow;
         }
         else if (result.topic == "system.memory")
@@ -22703,7 +22703,7 @@ WidgetEngine::RuntimeGetDataSnapshot(
             result.gpu.warmingUp = false;
             result.gpu.timestampMs = timestampNow;
             result.gpu.adapters = {
-                { "adapter-1", "Preview GPU", 38.0,
+                { "adapter-1", _L("app.widget_preview.api.gpu"), 38.0,
                     8ull * 1024 * 1024 * 1024,
                     3ull * 1024 * 1024 * 1024,
                     8ull * 1024 * 1024 * 1024,
@@ -22809,10 +22809,10 @@ WidgetEngine::RuntimeGetDataSnapshot(
             snowdesktop::widget_runtime::WidgetMediaSessionDataSnapshot
                 session;
             session.id = "media-session-preview";
-            session.sourceName = "Preview Player";
-            session.title = "Preview Track";
-            session.artist = "SnowDesktop";
-            session.album = "Widget API v2";
+            session.sourceName = "SnowDesktop";
+            session.title = _L("app.widget_preview.api.media_title");
+            session.artist = _L("app.widget_preview.api.media_artist");
+            session.album = _L("app.widget_preview.api.media_album");
             session.playbackStatus = "playing";
             session.current = true;
             session.controls = { true, true, true, true, true, true,
@@ -22896,9 +22896,14 @@ WidgetEngine::RuntimeGetDataSnapshot(
             result.calendarRangeEnd = binding->options.rangeEnd.empty()
                 ? "2026-10-03" : binding->options.rangeEnd;
             const std::vector<snowdesktop::calendar::CalendarEvent> samples = {
-                { "preview-1", 1, "Preview Review", "2026-08-02",
-                    false, 600, 660, "Preview notes", 15, {} },
-                { "preview-2", 1, "Preview Publish", "2026-08-03",
+                { "preview-1", 1,
+                    _L("app.widget_preview.api.calendar_review"),
+                    "2026-08-02", false, 600, 660,
+                    _L("app.widget_preview.api.calendar_review_notes"),
+                    15, {} },
+                { "preview-2", 1,
+                    _L("app.widget_preview.api.calendar_publish"),
+                    "2026-08-03",
                     true, 0, 0, {}, -1, {} },
             };
             for (const auto& event : samples)

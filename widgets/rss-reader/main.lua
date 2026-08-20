@@ -113,7 +113,9 @@ local function loadPreview(model)
         if not title or title == "" then break end
         model.articles[#model.articles + 1] = {
             title = title,
-            date = storage.get("previewArticle" .. index .. "Date") or "",
+            date = "",
+            displayDate = storage.get(
+                "previewArticle" .. index .. "Date") or "",
             link = storage.get("previewArticle" .. index .. "Link") or "",
             description = storage.get(
                 "previewArticle" .. index .. "Description") or "",
@@ -266,7 +268,8 @@ local function render(context, model)
             numberWidth, true, true)
         draw.text(textX, y + layout.cu(4), article.title,
             layout.fontCu(cfg.fontSize), colors.title, textWidth, false, true)
-        local shortDate = article.date:match("(%d%d? .%l%l%l? %d%d%d%d)") or
+        local shortDate = article.displayDate or
+            article.date:match("(%d%d? .%l%l%l? %d%d%d%d)") or
             article.date:sub(1, 16)
         if shortDate == "" then shortDate = article.link:sub(1, 42) end
         draw.text(textX, y + rowHeight - layout.cu(22), shortDate,

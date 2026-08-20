@@ -13,7 +13,7 @@
   "titleKeys": [
     "lua_widget.reminders.legacy_name"
   ],
-  "version": "2.0.5",
+  "version": "2.0.6",
   "description": "An interactive local ToDo list with quick add, completion, editing, and filtering.",
   "descriptionKey": "lua_widget.reminders.description",
   "locales": {
@@ -100,9 +100,9 @@
       "lua_widget.reminders.clear_completed": "完了した ToDo をクリアする",
       "lua_widget.reminders.complete_all": "すべての ToDo を完了としてマークする",
       "lua_widget.reminders.reopen_all": "すべての ToDo を未完了としてマークする",
-      "lua_widget.reminders.preview_task_1": "花を摘む",
+      "lua_widget.reminders.preview_task_1": "花を買う",
       "lua_widget.reminders.preview_task_2": "金曜日のディナーを予約する",
-      "lua_widget.reminders.preview_task_3": "週末用パック",
+      "lua_widget.reminders.preview_task_3": "週末の荷造りをする",
       "lua_widget.common.font_size": "フォント サイズ"
     },
     "ko-KR": {
@@ -122,9 +122,9 @@
       "lua_widget.reminders.clear_completed": "완료된 할 일 지우기",
       "lua_widget.reminders.complete_all": "모든 할 일을 완료로 표시",
       "lua_widget.reminders.reopen_all": "모든 할 일을 미완료로 표시",
-      "lua_widget.reminders.preview_task_1": "꽃을 줍다",
-      "lua_widget.reminders.preview_task_2": "금요일 저녁 식사 예약\n주말용",
-      "lua_widget.reminders.preview_task_3": "팩",
+      "lua_widget.reminders.preview_task_1": "꽃 사기",
+      "lua_widget.reminders.preview_task_2": "금요일 저녁 예약하기",
+      "lua_widget.reminders.preview_task_3": "주말 짐 싸기",
       "lua_widget.common.font_size": "글꼴 크기"
     },
     "de-DE": {
@@ -144,9 +144,9 @@
       "lua_widget.reminders.clear_completed": "Erledigte Aufgaben löschen",
       "lua_widget.reminders.complete_all": "Alle Aufgaben als erledigt markieren",
       "lua_widget.reminders.reopen_all": "Alle Aufgaben als unvollständig markieren",
-      "lua_widget.reminders.preview_task_1": "Blumen einsammeln",
-      "lua_widget.reminders.preview_task_2": "Abendessen für Freitag reservieren",
-      "lua_widget.reminders.preview_task_3": "Für das Wochenende packen",
+      "lua_widget.reminders.preview_task_1": "Blumen kaufen",
+      "lua_widget.reminders.preview_task_2": "Tisch für Freitagabend reservieren",
+      "lua_widget.reminders.preview_task_3": "Fürs Wochenende packen",
       "lua_widget.common.font_size": "Schriftgröße"
     },
     "fr-FR": {
@@ -166,9 +166,9 @@
       "lua_widget.reminders.clear_completed": "Effacer les tâches terminées",
       "lua_widget.reminders.complete_all": "Marquer toutes les tâches comme terminées",
       "lua_widget.reminders.reopen_all": "Marquer toutes les tâches comme incomplètes",
-      "lua_widget.reminders.preview_task_1": "Ramasser des fleurs",
-      "lua_widget.reminders.preview_task_2": "Réservez le dîner pour vendredi",
-      "lua_widget.reminders.preview_task_3": "Pack pour le week-end",
+      "lua_widget.reminders.preview_task_1": "Acheter des fleurs",
+      "lua_widget.reminders.preview_task_2": "Réserver une table pour vendredi",
+      "lua_widget.reminders.preview_task_3": "Faire sa valise pour le week-end",
       "lua_widget.common.font_size": "Taille de la police"
     },
     "es-ES": {
@@ -188,9 +188,9 @@
       "lua_widget.reminders.clear_completed": "Borrar tareas completadas",
       "lua_widget.reminders.complete_all": "Marcar todas las tareas como completadas",
       "lua_widget.reminders.reopen_all": "Marcar todas las tareas como incompletas",
-      "lua_widget.reminders.preview_task_1": "Recoger flores",
-      "lua_widget.reminders.preview_task_2": "Reservar cena para el viernes",
-      "lua_widget.reminders.preview_task_3": "Preparar el equipaje para el fin de semana",
+      "lua_widget.reminders.preview_task_1": "Comprar flores",
+      "lua_widget.reminders.preview_task_2": "Reservar mesa para el viernes",
+      "lua_widget.reminders.preview_task_3": "Hacer la maleta para el fin de semana",
       "lua_widget.common.font_size": "Tamaño de fuente"
     },
     "es-419": {
@@ -210,9 +210,9 @@
       "lua_widget.reminders.clear_completed": "Borrar tareas pendientes completadas",
       "lua_widget.reminders.complete_all": "Marcar todas las tareas pendientes como completadas",
       "lua_widget.reminders.reopen_all": "Marcar todas las tareas pendientes como incompletas",
-      "lua_widget.reminders.preview_task_1": "Recoger flores",
-      "lua_widget.reminders.preview_task_2": "Reservar cena para el viernes",
-      "lua_widget.reminders.preview_task_3": "Preparar el equipaje para el fin de semana",
+      "lua_widget.reminders.preview_task_1": "Comprar flores",
+      "lua_widget.reminders.preview_task_2": "Reservar mesa para el viernes",
+      "lua_widget.reminders.preview_task_3": "Hacer la maleta para el fin de semana",
       "lua_widget.common.font_size": "Tamaño de fuente"
     },
     "pt-BR": {
@@ -232,9 +232,9 @@
       "lua_widget.reminders.clear_completed": "Limpar tarefas concluídas",
       "lua_widget.reminders.complete_all": "Marcar todas as tarefas como concluídas",
       "lua_widget.reminders.reopen_all": "Marcar todas as tarefas como incompletas",
-      "lua_widget.reminders.preview_task_1": "Pegue flores",
-      "lua_widget.reminders.preview_task_2": "Reserve o jantar para sexta-feira",
-    "lua_widget.reminders.preview_task_3": "Faça as malas para o fim de semana",
+      "lua_widget.reminders.preview_task_1": "Comprar flores",
+      "lua_widget.reminders.preview_task_2": "Reservar uma mesa para sexta-feira",
+      "lua_widget.reminders.preview_task_3": "Fazer as malas para o fim de semana",
       "lua_widget.common.font_size": "Tamanho da fonte"
     }
   },

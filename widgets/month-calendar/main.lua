@@ -157,7 +157,27 @@ local function effectiveWeekStart()
     local mode = storage.get("weekStart") or "locale"
     if mode == "monday" or mode == "1" then return 2 end
     if mode == "sunday" or mode == "2" then return 1 end
-    return l10n.language() == "zh-CN" and 2 or 1
+    local language = l10n.language()
+    if language == "en-US" or language == "zh-TW" or
+        language == "ja-JP" or language == "ko-KR" then
+        return 1
+    end
+    return 2
+end
+
+local function monthName(month)
+    if month == 1 then return l10n.tr("lua_widget.month_calendar.month_1") end
+    if month == 2 then return l10n.tr("lua_widget.month_calendar.month_2") end
+    if month == 3 then return l10n.tr("lua_widget.month_calendar.month_3") end
+    if month == 4 then return l10n.tr("lua_widget.month_calendar.month_4") end
+    if month == 5 then return l10n.tr("lua_widget.month_calendar.month_5") end
+    if month == 6 then return l10n.tr("lua_widget.month_calendar.month_6") end
+    if month == 7 then return l10n.tr("lua_widget.month_calendar.month_7") end
+    if month == 8 then return l10n.tr("lua_widget.month_calendar.month_8") end
+    if month == 9 then return l10n.tr("lua_widget.month_calendar.month_9") end
+    if month == 10 then return l10n.tr("lua_widget.month_calendar.month_10") end
+    if month == 11 then return l10n.tr("lua_widget.month_calendar.month_11") end
+    return l10n.tr("lua_widget.month_calendar.month_12")
 end
 
 local function currentFontSize()
@@ -338,7 +358,7 @@ local function render(context, model)
         todayShape, false)
 
     local title = l10n.tr("lua_widget.month_calendar.month_format",
-        tostring(model.viewYear), tostring(model.viewMonth))
+        tostring(model.viewYear), monthName(model.viewMonth))
     local titleX = nextShape.x + nextShape.width + layout.cu(8)
     local titleWidth = math.max(1,
         todayShape.x - titleX - layout.cu(5))

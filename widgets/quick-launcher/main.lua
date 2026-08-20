@@ -147,7 +147,7 @@ local function queueSearch(model, delay)
     interaction.setScrollOffset("quick-results", 0)
 end
 
-local function setup()
+local function setup(context)
     desktopChanges = data.subscribe("desktop.changes", {
         maxAgeMs = 1000, whenHidden = "pause",
     })
@@ -165,7 +165,16 @@ local function setup()
         searchErrors = {}, selectedRef = nil,
         desktopRevision = nil, appRevision = nil,
     }
-    if model.query ~= "" then
+    if context.preview and model.query ~= "" then
+        model.results.app = {
+            {
+                ref = "preview-app",
+                title = l10n.tr("lua_widget.quick_launcher.preview_result"),
+                preview = true,
+            },
+        }
+        rebuildRows(model)
+    elseif model.query ~= "" then
         schedule.after("quick-search", 1, { whenHidden = "pause" })
     end
     return model
@@ -329,8 +338,13 @@ local function render(context, model)
                 local iconX = pad + layout.cu(6)
                 local iconY = y + math.max(0, (itemHeight - iconSize) / 2) -
                     layout.cu(1)
-                draw.icon(item.ref, iconX, iconY, iconSize,
-                    (selected or hovered) and 1.0 or 0.86)
+                if item.preview then
+                    draw.fluent(fluent.open, iconX, iconY, iconSize,
+                        colors.text)
+                else
+                    draw.icon(item.ref, iconX, iconY, iconSize,
+                        (selected or hovered) and 1.0 or 0.86)
+                end
                 local textX = iconX + iconSize + layout.cu(9)
                 draw.text(textX, y + layout.cu(8), item.title,
                     layout.fontCu(fontSize), colors.text,

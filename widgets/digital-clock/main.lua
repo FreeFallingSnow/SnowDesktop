@@ -64,13 +64,33 @@ local function render()
     local w = layout.width()
     local h = layout.height()
     local timeStr
-    if showSeconds then
-        timeStr = string.format("%02d:%02d:%02d", t.hour, t.min, t.sec)
-    else
-        timeStr = string.format("%02d:%02d", t.hour, t.min)
+    local language = l10n.language()
+    local twelveHour = language == "en-US"
+    local displayHour = t.hour
+    local period = ""
+    if twelveHour then
+        if t.hour < 12 then
+            period = l10n.tr("lua_widget.digital_clock.am")
+        else
+            period = l10n.tr("lua_widget.digital_clock.pm")
+        end
+        displayHour = t.hour % 12
+        if displayHour == 0 then displayHour = 12 end
     end
+    if showSeconds then
+        timeStr = string.format(twelveHour and "%d:%02d:%02d" or
+            "%02d:%02d:%02d", displayHour, t.min, t.sec)
+    else
+        timeStr = string.format(twelveHour and "%d:%02d" or
+            "%02d:%02d", displayHour, t.min)
+    end
+    if period ~= "" then timeStr = timeStr .. " " .. period end
+    local padDate = language ~= "zh-CN" and language ~= "zh-TW" and
+        language ~= "ja-JP" and language ~= "ko-KR"
     local dateStr = l10n.tr("lua_widget.digital_clock.date_format",
-        tostring(t.year), string.format("%02d", t.month), string.format("%02d", t.day))
+        tostring(t.year), padDate and string.format("%02d", t.month) or
+            tostring(t.month), padDate and string.format("%02d", t.day) or
+            tostring(t.day))
     local weekDays = {
         l10n.tr("lua_widget.digital_clock.sunday"),
         l10n.tr("lua_widget.digital_clock.monday"),
