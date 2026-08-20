@@ -634,6 +634,70 @@ std::optional<WidgetDisplayDataSnapshot> MatchDisplayByPixelBounds(
         : std::optional<WidgetDisplayDataSnapshot>(*display);
 }
 
+bool WidgetNetworkStatusDebouncer::SemanticallyEqual(
+    const WidgetNetworkStatusDataSnapshot& left,
+    const WidgetNetworkStatusDataSnapshot& right) noexcept
+{
+    return left.available == right.available &&
+        left.connectivity == right.connectivity &&
+        left.transport == right.transport &&
+        left.costKnown == right.costKnown &&
+        left.metered == right.metered &&
+        left.roaming == right.roaming &&
+        left.overLimit == right.overLimit &&
+        left.error == right.error;
+}
+
+WidgetNetworkStatusDataSnapshot WidgetNetworkStatusDebouncer::Push(
+    WidgetNetworkStatusDataSnapshot snapshot)
+{
+    if (!stable_)
+    {
+        stable_ = snapshot;
+        pending_.reset();
+        pendingConfirmations_ = 0;
+        return snapshot;
+    }
+
+    if (SemanticallyEqual(*stable_, snapshot))
+    {
+        stable_ = snapshot;
+        pending_.reset();
+        pendingConfirmations_ = 0;
+        return snapshot;
+    }
+
+    if (pending_ && SemanticallyEqual(*pending_, snapshot))
+    {
+        ++pendingConfirmations_;
+    }
+    else
+    {
+        pending_ = snapshot;
+        pendingConfirmations_ = 1;
+    }
+
+    if (pendingConfirmations_ >= RequiredConfirmations)
+    {
+        stable_ = snapshot;
+        pending_.reset();
+        pendingConfirmations_ = 0;
+        return snapshot;
+    }
+
+    WidgetNetworkStatusDataSnapshot held = *stable_;
+    held.timestampMs = snapshot.timestampMs;
+    held.revision = snapshot.revision;
+    return held;
+}
+
+void WidgetNetworkStatusDebouncer::Reset() noexcept
+{
+    stable_.reset();
+    pending_.reset();
+    pendingConfirmations_ = 0;
+}
+
 WidgetSystemDataProvider::~WidgetSystemDataProvider()
 {
     StopAll();
@@ -719,6 +783,8 @@ bool WidgetSystemDataProvider::StopTopic(std::string_view topic)
             resetProcessBaseline_.store(true);
         if (topic == NetworkTrafficTopic)
             resetNetworkBaseline_.store(true);
+        if (topic == NetworkStatusTopic)
+            networkStatusDebouncer_.Reset();
         if (topic == GpuTopic)
             closeGpuRequested_.store(true);
         if (topic == StorageIoTopic)
@@ -742,6 +808,7 @@ void WidgetSystemDataProvider::StopAll()
         std::scoped_lock lock(mutex_);
         schedules_.clear();
         changedTopics_.clear();
+        networkStatusDebouncer_.Reset();
         mediaArtwork_.reset();
         processSummary_.reset();
         ++configurationGeneration_;
@@ -2177,6 +2244,7 @@ void WidgetSystemDataProvider::PublishNetworkStatus(
 {
     std::scoped_lock lock(mutex_);
     if (!schedules_.contains(std::string(NetworkStatusTopic))) return;
+    snapshot = networkStatusDebouncer_.Push(std::move(snapshot));
     snapshot.revision = networkStatus_ ? networkStatus_->revision + 1 : 1;
     networkStatus_ = std::move(snapshot);
     changedTopics_.insert(std::string(NetworkStatusTopic));

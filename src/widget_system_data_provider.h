@@ -94,6 +94,25 @@ struct WidgetNetworkStatusDataSnapshot
     std::string error;
 };
 
+class WidgetNetworkStatusDebouncer
+{
+public:
+    static constexpr std::size_t RequiredConfirmations = 2;
+
+    WidgetNetworkStatusDataSnapshot Push(
+        WidgetNetworkStatusDataSnapshot snapshot);
+    void Reset() noexcept;
+
+private:
+    static bool SemanticallyEqual(
+        const WidgetNetworkStatusDataSnapshot& left,
+        const WidgetNetworkStatusDataSnapshot& right) noexcept;
+
+    std::optional<WidgetNetworkStatusDataSnapshot> stable_;
+    std::optional<WidgetNetworkStatusDataSnapshot> pending_;
+    std::size_t pendingConfirmations_ = 0;
+};
+
 struct WidgetNetworkTrafficDataSnapshot
 {
     bool available = false;
@@ -410,6 +429,7 @@ private:
     std::optional<WidgetProcessSummaryDataSnapshot> processSummary_;
     std::optional<WidgetPowerDataSnapshot> power_;
     std::optional<WidgetNetworkStatusDataSnapshot> networkStatus_;
+    WidgetNetworkStatusDebouncer networkStatusDebouncer_;
     std::optional<WidgetNetworkTrafficDataSnapshot> networkTraffic_;
     std::optional<WidgetGpuDataSnapshot> gpu_;
     std::optional<WidgetStorageVolumesDataSnapshot> storageVolumes_;

@@ -10,6 +10,8 @@ namespace
 {
 using namespace std::chrono_literals;
 using snowdesktop::widget_runtime::WidgetSystemDataProvider;
+using snowdesktop::widget_runtime::WidgetNetworkStatusDataSnapshot;
+using snowdesktop::widget_runtime::WidgetNetworkStatusDebouncer;
 using snowdesktop::widget_runtime::WidgetDisplayDataSnapshot;
 using snowdesktop::widget_runtime::WidgetDisplayTopologyDataSnapshot;
 using snowdesktop::widget_runtime::WidgetDisplayPixelRectDataSnapshot;
@@ -369,6 +371,44 @@ void TestTopicLifecycleAndSampling()
         "stopping an inactive topic must report no change");
 }
 
+void TestNetworkStatusDebounce()
+{
+    const auto sample = [](const std::string& connectivity,
+                            std::int64_t timestamp) {
+        WidgetNetworkStatusDataSnapshot result;
+        result.available = true;
+        result.connectivity = connectivity;
+        result.transport = connectivity == "none" ? "none" : "ethernet";
+        result.timestampMs = timestamp;
+        return result;
+    };
+
+    WidgetNetworkStatusDebouncer debouncer;
+    const auto initial = debouncer.Push(sample("internet", 100));
+    Check(initial.connectivity == "internet" && initial.timestampMs == 100,
+        "the first network status sample must publish immediately");
+
+    const auto transient = debouncer.Push(sample("none", 200));
+    Check(transient.connectivity == "internet" && transient.timestampMs == 200,
+        "one contradictory sample must retain the stable network semantics");
+
+    const auto recovered = debouncer.Push(sample("internet", 300));
+    Check(recovered.connectivity == "internet" &&
+            recovered.timestampMs == 300,
+        "a stable sample must clear an unconfirmed candidate");
+
+    const auto firstDisconnect = debouncer.Push(sample("none", 400));
+    const auto confirmedDisconnect = debouncer.Push(sample("none", 500));
+    Check(firstDisconnect.connectivity == "internet" &&
+            confirmedDisconnect.connectivity == "none",
+        "a semantic network change must require two consecutive samples");
+
+    debouncer.Reset();
+    const auto afterReset = debouncer.Push(sample("local", 600));
+    Check(afterReset.connectivity == "local",
+        "reset must let the next network state publish immediately");
+}
+
 void TestCurrentDisplayMatching()
 {
     WidgetDisplayTopologyDataSnapshot topology;
@@ -406,6 +446,7 @@ void TestStopAll()
 int main()
 {
     TestCurrentDisplayMatching();
+    TestNetworkStatusDebounce();
     TestTopicLifecycleAndSampling();
     TestStopAll();
     std::cout << "widget system data provider tests passed\n";

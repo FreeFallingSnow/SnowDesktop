@@ -1593,6 +1593,9 @@ query，不会因 CPU、内存或网络仍有订阅而继续采样 GPU。
 
 网络 status value 包含 `connectivity`（`none/local/internet`）、`transport`
 （`none/ethernet/wifi/cellular/other`）、`costKnown/metered/roaming/overLimit`。
+宿主会对 status 的语义变化做两次连续采样确认：首次状态立即发布，后续只有连续两次
+采样得到相同的新语义才切换；单次相反或异常采样继续返回上一稳定语义，但使用本次
+采样时间戳保持快照新鲜。权限撤销仍由授权层立即生效，不经过此稳定处理。
 traffic value 包含 `connected/receivedBytes/sentBytes/downloadBytesPerSecond/
 uploadBytesPerSecond`，首次差分样本为 `warmingUp=true`。状态和流量是两个独立
 topic；只订阅状态不会启动流量差分采样。两者都不会返回 IP、MAC、SSID、BSSID
