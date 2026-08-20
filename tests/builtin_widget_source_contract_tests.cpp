@@ -271,6 +271,40 @@ void TestSystemMonitorMarqueeCadence(const fs::path& repository)
         "system-monitor must declare native marquee rendering without Lua timers");
 }
 
+void TestAgendaPanelKeyboardActions(const fs::path& repository)
+{
+    const std::string source = ReadFile(
+        repository / "widgets" / "agenda" / "main.lua");
+    const std::string_view button = Section(source,
+        "local function panelButton(", "\nlocal function openDatePicker(");
+    Check(button.find("interaction.region({") != std::string_view::npos &&
+            button.find("click = { id = \"agenda.panel\", value = id }") !=
+                std::string_view::npos &&
+            button.find("accessibility = { role = \"button\", label = label }") !=
+                std::string_view::npos,
+        "agenda panel buttons must use host interaction regions");
+
+    const std::string_view datePicker = Section(source,
+        "local function renderDatePicker(", "\nlocal function panel(");
+    Check(datePicker.find("key = \"agenda.panel.\" .. id") !=
+                std::string_view::npos &&
+            datePicker.find("click = { id = \"agenda.panel\", value = id }") !=
+                std::string_view::npos,
+        "agenda date picker cells must enter the host focus chain");
+
+    Check(source.find("panelHits") == std::string::npos &&
+            source.find("handlePanelClick") == std::string::npos &&
+            source.find("value.kind == \"pointer\" and value.surface == \"panel\"") ==
+                std::string::npos,
+        "agenda panel actions must not fall back to mouse-only coordinate hits");
+    Check(source.find(
+            "value.kind == \"action\" and value.surface == \"panel\"") !=
+                std::string::npos &&
+            source.find("handlePanelAction(model, tostring(value.value or \"\"))") !=
+                std::string::npos,
+        "agenda panel actions must share the element action route");
+}
+
 void TestRemindersRenderPurity(const fs::path& repository)
 {
     const std::string source = ReadFile(
@@ -559,6 +593,7 @@ int main(int argc, char** argv)
     TestStickyNoteClearBlur(fs::path(argv[1]));
     TestStickyNotePresetTextColors(fs::path(argv[1]));
     TestSystemMonitorMarqueeCadence(fs::path(argv[1]));
+    TestAgendaPanelKeyboardActions(fs::path(argv[1]));
     TestMediaControlsArtwork(fs::path(argv[1]));
     TestV2OnlyWidgetActivation(fs::path(argv[1]));
     TestPackageResourceRenderPurity(fs::path(argv[1]));

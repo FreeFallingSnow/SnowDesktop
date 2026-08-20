@@ -53,11 +53,6 @@ local function trim(value)
     return (value or ""):gsub("^%s+", ""):gsub("%s+$", "")
 end
 
-local function pointIn(rect, x, y)
-    return rect and x >= rect.x and x <= rect.x + rect.width and
-        y >= rect.y and y <= rect.y + rect.height
-end
-
 local function todayDate()
     local now = time.parts()
     return string.format("%04d-%02d-%02d", now.year, now.month, now.day)
@@ -194,7 +189,6 @@ local function clearDraft(model)
     if model.pendingPanelTask then task.cancel(model.pendingPanelTask) end
     storage.transaction(clearDraftTransaction)
     model.editorError = nil
-    model.panelHits = {}
     model.pendingPanelTask = nil
     model.datePickerOpen = false
 end
@@ -505,7 +499,12 @@ end
 
 local function panelButton(model, id, label, x, y, width, height,
     colors, primary, enabled)
-    local alpha = enabled == false and 0.22 or (primary and 0.88 or 0.08)
+    local key = "agenda.panel." .. id
+    local hovered = enabled ~= false and interaction.isHovered(key)
+    local pressed = enabled ~= false and interaction.isPressed(key)
+    local alpha = enabled == false and 0.22 or
+        (primary and (pressed and 0.76 or (hovered and 0.96 or 0.88)) or
+            (pressed and 0.16 or (hovered and 0.12 or 0.08)))
     draw.rect(x, y, width, height,
         primary and colors.accent or colors.card, layout.cu(8), alpha)
     draw.strokeRect(x, y, width, height, colors.accent,
@@ -513,10 +512,19 @@ local function panelButton(model, id, label, x, y, width, height,
     centeredText(label, x, y, width, height, layout.fontCu(14),
         primary and colors.inverse or colors.text, true,
         enabled == false and 0.38 or 1.0)
-    model.panelHits[#model.panelHits + 1] = {
-        id = id, x = x, y = y, width = width, height = height,
+    interaction.region({
+        key = key,
+        shape = {
+            type = "roundedRect", x = x, y = y,
+            width = width, height = height, radius = layout.cu(8),
+        },
+        cursor = enabled == false and "default" or "hand",
         enabled = enabled ~= false,
-    }
+        events = {
+            click = { id = "agenda.panel", value = id },
+        },
+        accessibility = { role = "button", label = label },
+    })
 end
 
 local function openDatePicker(model)
@@ -602,11 +610,19 @@ local function renderDatePicker(model, pad, top, fieldWidth, colors)
             layout.fontCu(12), date == selected and colors.inverse or
                 colors.text, date == selected,
             currentMonth and 1.0 or 0.34)
-        model.panelHits[#model.panelHits + 1] = {
-            id = "picker.date:" .. date,
-            x = x, y = y, width = cellWidth, height = cellHeight,
-            enabled = true,
-        }
+        local id = "picker.date:" .. date
+        interaction.region({
+            key = "agenda.panel." .. id,
+            shape = {
+                type = "rect", x = x, y = y,
+                width = cellWidth, height = cellHeight,
+            },
+            cursor = "hand",
+            events = {
+                click = { id = "agenda.panel", value = id },
+            },
+            accessibility = { role = "button", label = date },
+        })
     end
 end
 
@@ -619,7 +635,6 @@ local function panel(context, model)
     local inputFont = layout.fontCu(14)
     local fieldWidth = width - pad * 2
     local inputHeight = layout.cu(38)
-    model.panelHits = {}
     local allDay = storage.get(DRAFT_ALL_DAY) == "1"
     local desiredHeight = model.datePickerOpen and layout.cu(500) or
         (allDay and layout.cu(430) or layout.cu(510))
@@ -775,7 +790,7 @@ end
 local function setup()
     widget.setTitle(l10n.tr("lua_widget.agenda.name"))
     local model = {
-        selectedDate = todayDate(), eventsById = {}, panelHits = {},
+        selectedDate = todayDate(), eventsById = {},
         pendingPanelTask = nil, pendingDeleteTask = nil,
         editorError = nil, datePickerOpen = false, panelOpen = false,
     }
@@ -797,48 +812,43 @@ local function shiftSelectedDate(model, offset)
     end
 end
 
-local function handlePanelClick(model, x, y)
-    for _, hit in ipairs(model.panelHits or {}) do
-        if hit.enabled and pointIn(hit, x, y) then
-            if hit.id == "cancel" then
-                widget.closePanel()
-            elseif hit.id == "save" then
-                saveDraft(model)
-            elseif hit.id == "toggleAllDay" then
-                storage.set(DRAFT_ALL_DAY,
-                    storage.get(DRAFT_ALL_DAY) == "1" and "0" or "1")
-                widget.invalidate()
-            elseif hit.id == "openDatePicker" then
-                openDatePicker(model)
-                widget.invalidate()
-            elseif hit.id == "picker.previous" then
-                shiftPickerMonth(model, -1)
-                widget.invalidate()
-            elseif hit.id == "picker.next" then
-                shiftPickerMonth(model, 1)
-                widget.invalidate()
-            elseif hit.id == "picker.today" then
-                storage.set(DRAFT_DATE, todayDate())
-                model.datePickerOpen = false
-                widget.invalidate()
-            elseif string.sub(hit.id, 1, 12) == "picker.date:" then
-                storage.set(DRAFT_DATE, string.sub(hit.id, 13))
-                model.datePickerOpen = false
-                widget.invalidate()
-            elseif hit.id == "cycleReminder" then
-                local current = tonumber(storage.get(DRAFT_REMINDER)) or 15
-                local nextValue = reminderValues[1]
-                for index, value in ipairs(reminderValues) do
-                    if value == current then
-                        nextValue = reminderValues[index % #reminderValues + 1]
-                        break
-                    end
-                end
-                storage.set(DRAFT_REMINDER, tostring(nextValue))
-                widget.invalidate()
+local function handlePanelAction(model, id)
+    if id == "cancel" then
+        widget.closePanel()
+    elseif id == "save" then
+        saveDraft(model)
+    elseif id == "toggleAllDay" then
+        storage.set(DRAFT_ALL_DAY,
+            storage.get(DRAFT_ALL_DAY) == "1" and "0" or "1")
+        widget.invalidate()
+    elseif id == "openDatePicker" then
+        openDatePicker(model)
+        widget.invalidate()
+    elseif id == "picker.previous" then
+        shiftPickerMonth(model, -1)
+        widget.invalidate()
+    elseif id == "picker.next" then
+        shiftPickerMonth(model, 1)
+        widget.invalidate()
+    elseif id == "picker.today" then
+        storage.set(DRAFT_DATE, todayDate())
+        model.datePickerOpen = false
+        widget.invalidate()
+    elseif string.sub(id, 1, 12) == "picker.date:" then
+        storage.set(DRAFT_DATE, string.sub(id, 13))
+        model.datePickerOpen = false
+        widget.invalidate()
+    elseif id == "cycleReminder" then
+        local current = tonumber(storage.get(DRAFT_REMINDER)) or 15
+        local nextValue = reminderValues[1]
+        for index, value in ipairs(reminderValues) do
+            if value == current then
+                nextValue = reminderValues[index % #reminderValues + 1]
+                break
             end
-            return
         end
+        storage.set(DRAFT_REMINDER, tostring(nextValue))
+        widget.invalidate()
     end
 end
 
@@ -862,9 +872,9 @@ local function event(_context, model, value)
             clearDraft(model)
         end
         return
-    elseif value.kind == "pointer" and value.surface == "panel" and
-        value.action == "click" then
-        handlePanelClick(model, value.x or 0, value.y or 0)
+    elseif value.kind == "action" and value.surface == "panel" and
+        value.id == "agenda.panel" then
+        handlePanelAction(model, tostring(value.value or ""))
         return
     elseif value.kind == "task.complete" then
         if value.taskId == model.pendingPanelTask then
