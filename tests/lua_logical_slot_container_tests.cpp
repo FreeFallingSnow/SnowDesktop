@@ -163,6 +163,18 @@ void TestHostPickerCandidatePolicy()
             picker::MatchesType("file", "file") &&
             !picker::MatchesType("folder", "file"),
         "settings reference pickers must enforce optional file/folder filters");
+    Check(picker::NormalizeApplicationLaunchTarget(
+            L"Contoso.Player_123!App") ==
+            L"shell:AppsFolder\\Contoso.Player_123!App" &&
+            picker::NormalizeApplicationLaunchTarget(
+                L"SHELL:AppsFolder\\Contoso.Player_123!App") ==
+                L"SHELL:AppsFolder\\Contoso.Player_123!App" &&
+            picker::NormalizeApplicationLaunchTarget(
+                L"C:\\Apps\\Player.exe") == L"C:\\Apps\\Player.exe" &&
+            picker::NormalizeApplicationLaunchTarget(
+                L"\\\\server\\Apps\\Player.exe") ==
+                L"\\\\server\\Apps\\Player.exe",
+        "application references must share one launch target normalization policy");
 }
 
 void TestPointerReorderTargets()

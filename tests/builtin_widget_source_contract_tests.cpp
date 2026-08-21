@@ -368,6 +368,14 @@ void TestMediaControlsArtwork(const fs::path& repository)
             manifest.find("\"settings.appReference\"") !=
                 std::string::npos,
         "media controls must choose and launch the bound idle application through host APIs");
+    const std::string_view startLauncher = Section(source,
+        "local function startLauncher(", "\nlocal function setup(");
+    Check(startLauncher.find("if not launcher then") !=
+            std::string_view::npos &&
+            startLauncher.find(
+                "if not launcher or launcher.availability") ==
+                std::string_view::npos,
+        "media controls must reopen the picker only when no launcher is bound");
     Check(source.find("id = \"launcher.current\"") !=
             std::string::npos &&
             source.find("label = launcher and launcher.title") !=

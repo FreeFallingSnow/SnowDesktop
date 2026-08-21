@@ -5,29 +5,6 @@
 
 // Lua widget data conversion and application-service bridge.
 
-namespace
-{
-std::wstring NormalizeLuaApplicationLaunchTarget(
-    const std::wstring& parsingName)
-{
-    if (parsingName.empty()) return {};
-    std::wstring launchTarget = parsingName;
-    const bool hasShellPrefix =
-        launchTarget.size() >= 6 &&
-        _wcsnicmp(launchTarget.c_str(), L"shell:", 6) == 0;
-    const bool hasNamespacePrefix = launchTarget.starts_with(L"::");
-    const bool hasDrivePrefix =
-        launchTarget.size() >= 2 && launchTarget[1] == L':';
-    const bool hasUncPrefix = launchTarget.starts_with(L"\\\\");
-    if (!hasShellPrefix && !hasNamespacePrefix &&
-        !hasDrivePrefix && !hasUncPrefix)
-    {
-        launchTarget = L"shell:AppsFolder\\" + launchTarget;
-    }
-    return launchTarget;
-}
-}
-
 std::string LuaWidgetWideToUtf8(const std::wstring& value)
 {
     if (value.empty()) return {};
@@ -150,8 +127,9 @@ DesktopApp::BuildLuaApplicationSearch(
                 quickNavigationAppEntries_[index];
             if (entry.parsingName.empty())
                 continue;
-            const std::wstring launchPath =
-                NormalizeLuaApplicationLaunchTarget(entry.parsingName);
+            const std::wstring launchPath = snowdesktop::
+                logical_slot_picker_rules::NormalizeApplicationLaunchTarget(
+                    entry.parsingName);
             LuaDesktopItemInfo info;
             info.id = LuaWidgetWideToUtf8(
                 entry.parsingName);
@@ -188,8 +166,9 @@ LuaApplicationCatalogSnapshot DesktopApp::BuildLuaApplicationCatalog()
     {
         if (snapshot.entries.size() >= MaximumEntries)
             break;
-        const std::wstring launchTarget =
-            NormalizeLuaApplicationLaunchTarget(entry.parsingName);
+        const std::wstring launchTarget = snowdesktop::
+            logical_slot_picker_rules::NormalizeApplicationLaunchTarget(
+                entry.parsingName);
         if (launchTarget.empty()) continue;
 
         snowdesktop::widget_runtime::WidgetAppCatalogEntry item;
@@ -311,8 +290,8 @@ DesktopApp::BuildLuaLogicalSlotPickerCandidate(
     if (!LuaLogicalSlotPickerAccepts("app.reference") ||
         entry.parsingName.empty())
         return std::nullopt;
-    const std::wstring target =
-        NormalizeLuaApplicationLaunchTarget(entry.parsingName);
+    const std::wstring target = snowdesktop::logical_slot_picker_rules::
+        NormalizeApplicationLaunchTarget(entry.parsingName);
     if (target.empty()) return std::nullopt;
 
     snowdesktop::widget_runtime::LogicalSlotItem candidate;
@@ -374,7 +353,7 @@ DesktopApp::BuildLuaLogicalSlotPickerCandidate(
     {
         if (entry.itemIndex >= items_.size()) return std::nullopt;
         const DesktopItem& item = items_[entry.itemIndex];
-        const std::wstring target = !item.parsingName.empty()
+        std::wstring target = !item.parsingName.empty()
             ? item.parsingName
             : (!item.layoutKey.empty() ? item.layoutKey
                 : item.desktopIconClsid);
@@ -385,6 +364,12 @@ DesktopApp::BuildLuaLogicalSlotPickerCandidate(
                 !item.parsingName.empty());
         if (kind.empty() || target.empty()) return std::nullopt;
         candidate.kind = std::string(kind);
+        if (candidate.kind == "app.reference")
+        {
+            target = snowdesktop::logical_slot_picker_rules::
+                NormalizeApplicationLaunchTarget(target);
+            if (target.empty()) return std::nullopt;
+        }
         candidate.title = LuaWidgetWideToUtf8(item.name);
         candidate.target = LuaWidgetWideToUtf8(target);
         if (candidate.kind == "filesystem.reference")

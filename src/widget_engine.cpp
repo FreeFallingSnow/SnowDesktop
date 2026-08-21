@@ -14,6 +14,7 @@
 #include "widget_engine.h"
 #include "widget_logical_slot_manifest.h"
 #include "logical_slot_keyboard_rules.h"
+#include "logical_slot_picker_rules.h"
 #include "logical_slot_pointer_rules.h"
 #include "widget_scroll_rules.h"
 #include "data_paths.h"
@@ -13197,8 +13198,9 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                     action.id, false, "staleReference");
                 continue;
             }
-            const std::wstring launchTarget = Utf8ToWideLocal(
-                reference->second.launchTarget);
+            const std::wstring launchTarget = snowdesktop::
+                logical_slot_picker_rules::NormalizeApplicationLaunchTarget(
+                    Utf8ToWideLocal(reference->second.launchTarget));
             const bool accepted = !launchTarget.empty() &&
                 applicationLaunchCallback_ &&
                 applicationLaunchCallback_(launchTarget);
@@ -24611,7 +24613,9 @@ void WidgetEngine::RefreshLogicalSlotAvailability()
                 {
                     if (!catalogReady) continue;
                     const std::wstring target = ToUpperInvariant(
-                        Utf8ToWideLocal(item.target));
+                        snowdesktop::logical_slot_picker_rules::
+                            NormalizeApplicationLaunchTarget(
+                                Utf8ToWideLocal(item.target)));
                     available = !target.empty() &&
                         availableTargets.contains(target);
                     source = "host.catalog";

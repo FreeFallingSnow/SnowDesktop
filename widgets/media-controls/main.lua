@@ -104,8 +104,12 @@ end
 
 local function startLauncher(model)
     local launcher = currentLauncher()
-    if not launcher or launcher.availability ~= "available" then
+    if not launcher then
         chooseLauncher()
+        return
+    end
+    if launcher.availability ~= "available" then
+        widget.log("warn", "bound launcher is unavailable")
         return
     end
     if not widget.hasFeature("task.app.launch") or
