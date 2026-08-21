@@ -329,8 +329,11 @@ struct WidgetMarqueeCompositionItem
     float cycle = 0.0f;
     float speed = 0.0f;
     float phase = 0.0f;
+    float clipWidth = 0.0f;
+    float clipHeight = 0.0f;
     std::chrono::steady_clock::time_point phaseTime{};
     bool scrolling = false;
+    bool visible = true;
 };
 
 struct PendingWidgetMarqueeComposition
@@ -2083,6 +2086,7 @@ private:
         const std::vector<LuaWidget::NativeMarqueeText>& marquees,
         bool reducedMotion);
     bool FlushPendingWidgetMarqueeComposition();
+    bool SyncWidgetMarqueeCompositionVisibility();
     void ResetWidgetMarqueeComposition();
     bool CommitCompositionAnimationFrame();
     bool FlushPendingCompositionCommit();

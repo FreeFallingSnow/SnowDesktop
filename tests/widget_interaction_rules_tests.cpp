@@ -645,6 +645,26 @@ void TestWidgetDesktopSurfaceVisibility()
         "desktop hiding, visible surfaces, virtual pages, and ordinary hidden surfaces do not keep runtimes active");
 }
 
+void TestWidgetPreviewSourceVisibility()
+{
+    Check(
+        visibilityRules::ShouldHideWidgetPreviewSource(
+            true, false, true),
+        "moving a widget must hide independent content owned by the preview source");
+    Check(
+        visibilityRules::ShouldHideWidgetPreviewSource(
+            false, true, true),
+        "resizing a widget must hide independent content owned by the preview source");
+    Check(
+        !visibilityRules::ShouldHideWidgetPreviewSource(
+            false, false, true) &&
+            !visibilityRules::ShouldHideWidgetPreviewSource(
+                true, false, false) &&
+            !visibilityRules::ShouldHideWidgetPreviewSource(
+                false, true, false),
+        "idle widgets and independent content from other widgets must remain visible");
+}
+
 void TestDesktopHoverDeactivation()
 {
     using hoverRules::ReconcileMode;
@@ -1013,6 +1033,7 @@ int main()
     TestGridPlacementInvariants();
     TestHoverOnlyWidgetVisibility();
     TestWidgetDesktopSurfaceVisibility();
+    TestWidgetPreviewSourceVisibility();
     TestDesktopHoverDeactivation();
     TestNestedWidgetScrolling();
     TestScrollbarThumbDragging();

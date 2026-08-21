@@ -40,4 +40,13 @@ constexpr bool ShouldKeepTopologyHiddenPageRuntimeActive(
         pageUnavailable && hiddenByDisplayTopology;
 }
 
+constexpr bool ShouldHideWidgetPreviewSource(
+    bool widgetMoveActive,
+    bool widgetResizeActive,
+    bool isPreviewSource)
+{
+    return isPreviewSource &&
+        (widgetMoveActive || widgetResizeActive);
+}
+
 }

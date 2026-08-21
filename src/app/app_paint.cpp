@@ -138,6 +138,12 @@ void DesktopApp::OnPaint(const RECT* updateRect)
                 L"Widget marquee composition", E_FAIL);
             return;
         }
+        if (!SyncWidgetMarqueeCompositionVisibility())
+        {
+            RecoverCompositionRenderFailure(
+                L"Widget marquee visibility", E_FAIL);
+            return;
+        }
 
         if (!CommitCompositionAnimationFrame())
         {

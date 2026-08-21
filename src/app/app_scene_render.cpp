@@ -147,12 +147,15 @@ void DesktopApp::DrawStaticBackground(
             continue;
         if (!intersectsUpdate(widgetFrame, 2))
             continue;
-        if (widgetAction_ == WidgetAction::Move || widgetAction_ == WidgetAction::Resize)
-        {
-            if (mouseDownWidgetIndex_ < widgets_.size() &&
-                &widgetData == &widgets_[mouseDownWidgetIndex_])
-                continue;
-        }
+        const bool isPreviewSource =
+            mouseDownWidgetIndex_ < widgets_.size() &&
+            &widgetData == &widgets_[mouseDownWidgetIndex_];
+        if (snowdesktop::widget_visibility_rules::
+                ShouldHideWidgetPreviewSource(
+                    widgetAction_ == WidgetAction::Move,
+                    widgetAction_ == WidgetAction::Resize,
+                    isPreviewSource))
+            continue;
 
         bool drawn = false;
         for (auto& c : containers_)

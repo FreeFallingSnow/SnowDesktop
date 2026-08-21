@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../widget_visibility_rules.h"
 
 namespace
 {
@@ -67,6 +68,8 @@ bool DesktopApp::QueueWidgetMarqueeComposition(
     if (!compositionPaintInProgress_)
     {
         if (!FlushPendingWidgetMarqueeComposition())
+            return false;
+        if (!SyncWidgetMarqueeCompositionVisibility())
             return false;
         if (!CommitCompositionAnimationFrame() ||
             !FlushPendingCompositionCommit())
@@ -213,8 +216,14 @@ bool DesktopApp::FlushPendingWidgetMarqueeComposition()
 
             hr = item.clip->SetLeft(0.0f);
             if (SUCCEEDED(hr)) hr = item.clip->SetTop(0.0f);
-            if (SUCCEEDED(hr)) hr = item.clip->SetRight(viewportWidth);
-            if (SUCCEEDED(hr)) hr = item.clip->SetBottom(viewportHeight);
+            item.clipWidth = viewportWidth;
+            item.clipHeight = viewportHeight;
+            if (SUCCEEDED(hr))
+                hr = item.clip->SetRight(
+                    item.visible ? viewportWidth : 0.0f);
+            if (SUCCEEDED(hr))
+                hr = item.clip->SetBottom(
+                    item.visible ? viewportHeight : 0.0f);
             if (SUCCEEDED(hr))
                 hr = item.clipVisual->SetClip(item.clip.Get());
             if (SUCCEEDED(hr))
@@ -273,6 +282,39 @@ bool DesktopApp::FlushPendingWidgetMarqueeComposition()
         }
         if (items.empty())
             widgetMarqueeCompositionItems_.erase(widgetId);
+    }
+    return true;
+}
+
+bool DesktopApp::SyncWidgetMarqueeCompositionVisibility()
+{
+    const bool hasPreviewSource =
+        mouseDownWidgetIndex_ < widgets_.size();
+    const std::wstring* previewSourceId = hasPreviewSource
+        ? &widgets_[mouseDownWidgetIndex_].id
+        : nullptr;
+    for (auto& [widgetId, items] : widgetMarqueeCompositionItems_)
+    {
+        const bool isPreviewSource =
+            previewSourceId && widgetId == *previewSourceId;
+        const bool visible = !snowdesktop::widget_visibility_rules::
+            ShouldHideWidgetPreviewSource(
+                widgetAction_ == WidgetAction::Move,
+                widgetAction_ == WidgetAction::Resize,
+                isPreviewSource);
+        for (auto& [key, item] : items)
+        {
+            (void)key;
+            if (item.visible == visible)
+                continue;
+            if (item.clip &&
+                (FAILED(item.clip->SetRight(
+                    visible ? item.clipWidth : 0.0f)) ||
+                 FAILED(item.clip->SetBottom(
+                    visible ? item.clipHeight : 0.0f))))
+                return false;
+            item.visible = visible;
+        }
     }
     return true;
 }
