@@ -94,7 +94,9 @@ bool DesktopApp::FlushPendingWidgetMarqueeComposition()
         // Keep this layer immediately above the root surface and below popup,
         // drag, and other independent child visuals.
         hr = dcompVisual_->AddVisual(
-            widgetMarqueeCompositionLayer_.Get(), FALSE, nullptr);
+            widgetMarqueeCompositionLayer_.Get(),
+            realtimeWidgetCompositionLayer_ ? TRUE : FALSE,
+            realtimeWidgetCompositionLayer_.Get());
         if (FAILED(hr))
         {
             widgetMarqueeCompositionLayer_.Reset();

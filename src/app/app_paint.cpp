@@ -109,6 +109,7 @@ void DesktopApp::OnPaint(const RECT* updateRect)
             desktopBackdropCompositor_.KeepPanel(
                 floatingDockDesktopBackdropHandoffRect_);
         }
+        KeepRealtimeWidgetBackdropPanels();
         desktopBackdropCompositor_.EndFrame();
         if (forceCompleteGlassCollection)
             desktopBackdropFullCollectionPending_ = false;
@@ -129,6 +130,14 @@ void DesktopApp::OnPaint(const RECT* updateRect)
         if (FAILED(hr))
         {
             RecoverCompositionRenderFailure(L"EndDraw", hr);
+            return;
+        }
+
+        MarkRealtimeWidgetCompositionRootCleared(dcompUpdate);
+        if (!FlushPendingRealtimeWidgetComposition())
+        {
+            RecoverCompositionRenderFailure(
+                L"Realtime widget composition", E_FAIL);
             return;
         }
 

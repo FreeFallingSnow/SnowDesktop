@@ -515,6 +515,7 @@ void DesktopApp::RefreshDisplayTopologyIfChanged()
 
         if (topologyChanged)
         {
+            ResetRealtimeWidgetComposition();
             dcompSurface_.Reset();
             compositionWidth_ = 0;
             compositionHeight_ = 0;

@@ -11604,7 +11604,7 @@ void WidgetEngine::DrainAudioAnalysisChanges()
     {
         return;
     }
-    for (const auto& widget : widgets_)
+    for (auto& widget : widgets_)
     {
         if (!widget.valid || widget.preview) continue;
         const bool subscribed = std::any_of(
@@ -11613,8 +11613,23 @@ void WidgetEngine::DrainAudioAnalysisChanges()
             [](const auto& entry) {
                 return entry.second == "audio.output.analysis";
             });
-        if (subscribed)
+        if (!subscribed)
+            continue;
+
+        const bool independentlyComposed =
+            widget.desktopVisible &&
+            realtimeCompositionCallback_ &&
+            realtimeCompositionCallback_(widget.widgetId, true);
+        if (!independentlyComposed)
+        {
             RuntimeInvalidateHost(widget.widgetId);
+            continue;
+        }
+
+        widget.desktopMarquee.requiresLuaRender = true;
+        if (widget.panelActive)
+            RuntimeInvalidateHost(
+                widget.widgetId, std::nullopt, "panel");
     }
 }
 
@@ -11786,6 +11801,12 @@ void WidgetEngine::DrainFilesystemWatchCompletions()
 
 void WidgetEngine::ReleaseWidgetDataSubscriptions(LuaWidget& widget)
 {
+    const bool hadRealtimeSubscription = std::any_of(
+        widget.dataSubscriptions.begin(),
+        widget.dataSubscriptions.end(),
+        [](const auto& entry) {
+            return entry.second == "audio.output.analysis";
+        });
     if (!dataBroker_)
     {
         for (const auto& [subscriptionId, _] : widget.dataSubscriptions)
@@ -11795,6 +11816,8 @@ void WidgetEngine::ReleaseWidgetDataSubscriptions(LuaWidget& widget)
             filesystemWatchBindings_.erase(subscriptionId);
         }
         widget.dataSubscriptions.clear();
+        if (hadRealtimeSubscription && realtimeCompositionCallback_)
+            (void)realtimeCompositionCallback_(widget.widgetId, false);
         return;
     }
     const auto now = snowdesktop::widget_runtime::WidgetDataBroker::Clock::now();
@@ -11806,6 +11829,8 @@ void WidgetEngine::ReleaseWidgetDataSubscriptions(LuaWidget& widget)
         (void)dataBroker_->Unsubscribe(subscriptionId, now);
     }
     widget.dataSubscriptions.clear();
+    if (hadRealtimeSubscription && realtimeCompositionCallback_)
+        (void)realtimeCompositionCallback_(widget.widgetId, false);
     ApplyWidgetDataBrokerActions();
 }
 
@@ -23189,15 +23214,35 @@ bool WidgetEngine::RuntimeUnsubscribeData(
 {
     if (subscriptionId == 0 || !dataBroker_) return false;
     bool owned = false;
+    std::wstring ownerWidgetId;
+    bool removedRealtimeSubscription = false;
+    bool ownerStillHasRealtimeSubscription = false;
     for (auto& widget : widgets_)
     {
-        if (widget.dataSubscriptions.erase(subscriptionId) > 0)
-        {
-            owned = true;
-            break;
-        }
+        const auto subscription =
+            widget.dataSubscriptions.find(subscriptionId);
+        if (subscription == widget.dataSubscriptions.end())
+            continue;
+        removedRealtimeSubscription =
+            subscription->second == "audio.output.analysis";
+        ownerWidgetId = widget.widgetId;
+        widget.dataSubscriptions.erase(subscription);
+        ownerStillHasRealtimeSubscription = std::any_of(
+            widget.dataSubscriptions.begin(),
+            widget.dataSubscriptions.end(),
+            [](const auto& entry) {
+                return entry.second == "audio.output.analysis";
+            });
+        owned = true;
+        break;
     }
     if (!owned) return false;
+    if (removedRealtimeSubscription &&
+        !ownerStillHasRealtimeSubscription &&
+        realtimeCompositionCallback_)
+    {
+        (void)realtimeCompositionCallback_(ownerWidgetId, false);
+    }
     if (filesystemWatchService_)
         (void)filesystemWatchService_->Stop(subscriptionId);
     filesystemWatchBindings_.erase(subscriptionId);

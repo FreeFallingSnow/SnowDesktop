@@ -1,6 +1,7 @@
 #include "app.h"
 #include "grid_geometry.h"
 #include "../item_render_layer_rules.h"
+#include "../realtime_widget_composition_rules.h"
 #include "../widget_visibility_rules.h"
 #include "../widgets/collection_group_rules.h"
 
@@ -153,18 +154,57 @@ void DesktopApp::DrawStaticBackground(
                 widgetData.id, desktopSurfaceVisible,
                 keepTopologyHiddenPageRuntimeActive);
         }
-        if (!desktopSurfaceVisible)
-            continue;
-        if (!intersectsUpdate(widgetFrame, 2))
-            continue;
         const bool isPreviewSource =
             mouseDownWidgetIndex_ < widgets_.size() &&
             &widgetData == &widgets_[mouseDownWidgetIndex_];
-        if (snowdesktop::widget_visibility_rules::
+        const bool previewSourceHidden =
+            snowdesktop::widget_visibility_rules::
                 ShouldHideWidgetPreviewSource(
                     widgetAction_ == WidgetAction::Move,
                     widgetAction_ == WidgetAction::Resize,
-                    isPreviewSource))
+                    isPreviewSource);
+        const bool realtimeCompositionActive =
+            widgetData.type == DesktopWidgetType::LuaScript &&
+            HasRealtimeWidgetComposition(widgetData.id);
+        const snowdesktop::realtime_widget_composition_rules::SceneState
+            realtimeState{
+                realtimeCompositionActive,
+                desktopSurfaceVisible && !previewSourceHidden,
+                dragSession_.IsActive(),
+                dragDropController_.IsExternalDragActive(),
+                widgetAction_ == WidgetAction::Move ||
+                    widgetAction_ == WidgetAction::Resize,
+                marqueeActive_,
+                GetOpenPopupWidget() != nullptr,
+                !luaWidgetPanelRequest_.widgetId.empty(),
+            };
+        const bool useRealtimeComposition =
+            snowdesktop::realtime_widget_composition_rules::
+                ShouldUseIndependentSurface(realtimeState);
+        if (realtimeCompositionActive)
+        {
+            SetRealtimeWidgetCompositionVisible(
+                widgetData.id, useRealtimeComposition, widgetFrame);
+        }
+        if (!desktopSurfaceVisible)
+            continue;
+        if (useRealtimeComposition)
+        {
+            if (intersectsUpdate(widgetFrame, 2) &&
+                !QueueRealtimeWidgetComposition(
+                    widgetData.id, true))
+            {
+                SetRealtimeWidgetCompositionVisible(
+                    widgetData.id, false, widgetFrame);
+            }
+            else
+            {
+                continue;
+            }
+        }
+        if (!intersectsUpdate(widgetFrame, 2))
+            continue;
+        if (previewSourceHidden)
             continue;
 
         bool drawn = false;

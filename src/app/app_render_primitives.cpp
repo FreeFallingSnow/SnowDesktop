@@ -80,15 +80,22 @@ void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, 
     // 原生毛玻璃由下层 CompositionBackdropBrush 提供，本层只绘制色调和装饰。
     if (p.glassEnabled && registerBackdrop)
     {
+        bool registered = false;
         if (renderingFloatingDock_)
-            floatingDockBackdropCompositor_.AddPanel(
+        {
+            registered = floatingDockBackdropCompositor_.AddPanel(
                 snowdesktop::floating_dock_rules::
                     DesktopRectToWindowRect(
                         frame, floatingDockSourceRect_),
                 radius, p.glassBlurRadius);
+        }
         else
-            desktopBackdropCompositor_.AddPanel(
+        {
+            registered = desktopBackdropCompositor_.AddPanel(
                 frame, radius, p.glassBlurRadius);
+        }
+        if (realtimeCompositionDrawInProgress_ && registered)
+            realtimeBackdropRegisteredDuringDraw_ = true;
     }
 
     if (fill.a > 0.0f)

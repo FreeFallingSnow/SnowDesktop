@@ -125,7 +125,16 @@ bool LuaScript::SafeReadFlags(WidgetEngine* engine,
 void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 {
     DrawInternal(context, rect, state,
-        app_ ? app_->widgetEngine_.get() : nullptr, false);
+        app_ ? app_->widgetEngine_.get() : nullptr, false, true);
+}
+
+void LuaScript::DrawCompositionSurface(
+    ID2D1DeviceContext* context, RECT rect, int state,
+    bool registerBackdrop)
+{
+    DrawInternal(context, rect, state,
+        app_ ? app_->widgetEngine_.get() : nullptr,
+        false, registerBackdrop);
 }
 
 void LuaScript::DrawPreview(ID2D1DeviceContext* context, RECT frame,
@@ -133,12 +142,13 @@ void LuaScript::DrawPreview(ID2D1DeviceContext* context, RECT frame,
 {
     const auto* previous = renderOptions_;
     renderOptions_ = &options;
-    DrawInternal(context, frame, 0, options.luaEngine, true);
+    DrawInternal(context, frame, 0, options.luaEngine, true, false);
     renderOptions_ = previous;
 }
 
 void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
-    int state, WidgetEngine* engine, bool preview)
+    int state, WidgetEngine* engine, bool preview,
+    bool registerBackdrop)
 {
     if (!context || !data_ || !app_) return;
 
@@ -247,7 +257,8 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
 
     app_->DrawWidgetPanelBackground(context, frame, static_cast<float>(Cu(cornerRadiusCu)),
         fillColor, borderColor, selected, selected ? 1.6f : 1.0f,
-        customStyle ? &effectSettings : nullptr, !preview);
+        customStyle ? &effectSettings : nullptr,
+        !preview && registerBackdrop);
 
     context->PushAxisAlignedClip(app_->ToD2DRect(frame), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     if (engine && widgetOk)

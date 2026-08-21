@@ -802,6 +802,8 @@ public:
     using NativeMarqueeSyncCallback = std::function<bool(
         const std::wstring&, const std::vector<LuaWidget::NativeMarqueeText>&,
         bool)>;
+    using RealtimeCompositionCallback = std::function<bool(
+        const std::wstring&, bool)>;
     using DesktopPathAction = std::function<bool(const std::wstring&)>;
     using DesktopRefreshCallback = std::function<void()>;
     using InlineTextEditCallback = std::function<void(const LuaInlineTextEditRequest&)>;
@@ -853,6 +855,12 @@ public:
     void SetNativeMarqueeSyncCallback(NativeMarqueeSyncCallback callback)
     {
         nativeMarqueeSyncCallback_ = std::move(callback);
+    }
+    /** @brief 设置高频桌面组件独立合成表面的启停回调。 */
+    void SetRealtimeCompositionCallback(
+        RealtimeCompositionCallback callback)
+    {
+        realtimeCompositionCallback_ = std::move(callback);
     }
     /** @brief 设置桌面文件打开回调 */
     void SetDesktopOpenCallback(DesktopPathAction callback) { desktopOpenCallback_ = std::move(callback); }
@@ -1792,6 +1800,7 @@ private:
     WidgetPanelCloseCallback closeWidgetPanelCallback_;
     InvalidateCallback invalidateCallback_;            ///< 请求宿主重绘的回调
     NativeMarqueeSyncCallback nativeMarqueeSyncCallback_;
+    RealtimeCompositionCallback realtimeCompositionCallback_;
     DesktopPathAction desktopOpenCallback_;            ///< 打开桌面路径的回调
     DesktopPathAction applicationLaunchCallback_;      ///< 启动已解析应用引用的回调
     DesktopPathAction desktopRevealCallback_;          ///< 在资源管理器中定位路径的回调

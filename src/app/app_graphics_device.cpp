@@ -176,6 +176,7 @@ void DesktopApp::RecreateComponentListTextFormat()
 
 void DesktopApp::ResetCompositionRenderCaches()
 {
+    ResetRealtimeWidgetComposition();
     ResetWidgetMarqueeComposition();
     dragRenderCache_.Reset();
     ResetCollectionPopupAnimationCache();

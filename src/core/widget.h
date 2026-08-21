@@ -993,6 +993,9 @@ class LuaScript : public Widget
 public:
     using Widget::Widget;
     void Draw(ID2D1DeviceContext* context, RECT rect, int state) override;
+    void DrawCompositionSurface(
+        ID2D1DeviceContext* context, RECT rect, int state,
+        bool registerBackdrop);
     void DrawPreview(ID2D1DeviceContext* context, RECT frame,
         const snowdesktop::WidgetRenderOptions& options) override;
 
@@ -1007,7 +1010,7 @@ private:
     bool SafeReadFlags(WidgetEngine* engine, const std::wstring& scriptPath,
         bool& showTitle, bool& bottomBarHover);
     void DrawInternal(ID2D1DeviceContext* context, RECT rect, int state,
-        WidgetEngine* engine, bool preview);
+        WidgetEngine* engine, bool preview, bool registerBackdrop);
 
     ID2D1RoundedRectangleGeometry* GetCachedClipGeometry(ID2D1Factory1* factory,
         const RECT& frame, float radius);

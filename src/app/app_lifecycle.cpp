@@ -207,6 +207,7 @@ void DesktopApp::ResetDesktopWindowResources()
     brushCache_.clear();
     brushCacheContext_ = nullptr;
     placeholderIconCache_.clear();
+    ResetRealtimeWidgetComposition();
     ResetWidgetMarqueeComposition();
     dcompSurface_.Reset();
     dcompVisual_.Reset();

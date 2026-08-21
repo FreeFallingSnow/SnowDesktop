@@ -201,6 +201,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/app_widget_context_menu.cpp
     src/app/app_widget_grouping.cpp
     src/app/app_widget_marquee_composition.cpp
+    src/app/app_widget_realtime_composition.cpp
     src/app/app_widget_placement.cpp
     src/app/app_widget_refresh.cpp
     src/app/drag_drop_controller.cpp
@@ -909,6 +910,14 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32
         LABELS contract data audio widget)
+
+    snowdesktop_add_test(
+        SnowDesktopRealtimeWidgetCompositionRulesTests
+        realtime_widget_composition_rules
+        SOURCES
+            tests/realtime_widget_composition_rules_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS contract render widget)
 
     snowdesktop_add_test(
         SnowDesktopWidgetPackageImageCacheTests

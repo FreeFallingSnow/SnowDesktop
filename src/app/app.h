@@ -342,6 +342,18 @@ struct PendingWidgetMarqueeComposition
     bool reducedMotion = false;
 };
 
+struct RealtimeWidgetCompositionItem
+{
+    ComPtr<IDCompositionVisual2> visual;
+    ComPtr<IDCompositionRectangleClip> clip;
+    ComPtr<IDCompositionSurface> surface;
+    RECT bounds{};
+    UINT width = 0;
+    UINT height = 0;
+    bool visible = false;
+    bool rootCleared = false;
+};
+
 /**
  * @brief SnowDesktop 主应用程序类。
  *
@@ -2096,6 +2108,23 @@ private:
     bool FlushPendingWidgetMarqueeComposition();
     bool SyncWidgetMarqueeCompositionVisibility();
     void ResetWidgetMarqueeComposition();
+    bool QueueRealtimeWidgetComposition(
+        const std::wstring& widgetId,
+        bool refreshBackdrop = false);
+    bool FlushPendingRealtimeWidgetComposition();
+    bool HasRealtimeWidgetComposition(
+        const std::wstring& widgetId) const;
+    void SetRealtimeWidgetCompositionVisible(
+        const std::wstring& widgetId,
+        bool visible,
+        const RECT& bounds);
+    void MarkRealtimeWidgetCompositionRootCleared(
+        const RECT* updateRect);
+    void KeepRealtimeWidgetBackdropPanels();
+    void RemoveRealtimeWidgetComposition(
+        const std::wstring& widgetId,
+        bool invalidateRoot = true);
+    void ResetRealtimeWidgetComposition();
     bool CommitCompositionAnimationFrame();
     bool FlushPendingCompositionCommit();
     /** @brief 提交并等待桌面/悬浮 Dock 的 DComp 状态真正越过呈现边界。 */
@@ -2601,6 +2630,11 @@ private:
     ComPtr<IDCompositionTarget> dcompTarget_;
     ComPtr<IDCompositionVisual2> dcompVisual_;
     ComPtr<IDCompositionSurface> dcompSurface_;
+    ComPtr<IDCompositionVisual2> realtimeWidgetCompositionLayer_;
+    std::unordered_map<std::wstring, RealtimeWidgetCompositionItem>
+        realtimeWidgetCompositionItems_;
+    std::unordered_map<std::wstring, bool>
+        pendingRealtimeWidgetCompositions_;
     ComPtr<IDCompositionVisual2> widgetMarqueeCompositionLayer_;
     std::unordered_map<std::wstring,
         std::unordered_map<std::string, WidgetMarqueeCompositionItem>>
@@ -2610,6 +2644,8 @@ private:
     UINT compositionWidth_ = 0, compositionHeight_ = 0;
     bool compositionRenderRecoveryPending_ = false;
     bool compositionPaintInProgress_ = false;
+    bool realtimeCompositionDrawInProgress_ = false;
+    bool realtimeBackdropRegisteredDuringDraw_ = false;
     /** @brief DWM 原生 backdrop 子窗口。 */
     DesktopBackdropCompositor desktopBackdropCompositor_;
     /** @brief 拖拽静态场景变化后，下一帧必须完整核对原生毛玻璃面板。 */

@@ -776,6 +776,16 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             return QueueWidgetMarqueeComposition(
                 widgetId, marquees, reducedMotion);
         });
+        widgetEngine_->SetRealtimeCompositionCallback([this](
+                const std::wstring& widgetId,
+                bool active) {
+            if (!active)
+            {
+                RemoveRealtimeWidgetComposition(widgetId);
+                return true;
+            }
+            return QueueRealtimeWidgetComposition(widgetId);
+        });
         widgetEngine_->SetDesktopOpenCallback([this](const std::wstring& path) {
             return LuaOpenPath(path);
         });
