@@ -59,6 +59,16 @@ int main(int argc, char** argv)
             rules::NeedsDesktopPaint(
                 PointerVisualLayer::Foreground),
         "desktop icons and foreground overlays still require desktop paint");
+    Check(rules::NeedsBackgroundPaint(
+            PointerVisualLayer::Background) &&
+            !rules::NeedsBackgroundPaint(
+                PointerVisualLayer::Foreground),
+        "only desktop icon feedback belongs to the root surface");
+    Check(rules::NeedsForegroundPaint(
+            PointerVisualLayer::Foreground) &&
+            !rules::NeedsForegroundPaint(
+                PointerVisualLayer::Widget),
+        "only shared overlay feedback belongs to the foreground surface");
 
     Check(argc == 2, "source root argument is provided");
     if (argc == 2)
@@ -79,6 +89,9 @@ int main(int argc, char** argv)
             root / "src" / "app" / "app_pointer_move.cpp");
         const std::string scrolling = ReadFile(
             root / "src" / "app" / "app_scroll_interaction.cpp");
+        const std::string foreground = ReadFile(
+            root / "src" / "app" /
+                "app_desktop_foreground_composition.cpp");
 
         const std::size_t queueBegin = composition.find(
             "bool DesktopApp::QueueDesktopWidgetComposition(");
@@ -140,6 +153,16 @@ int main(int argc, char** argv)
                     "QueueDesktopWidgetComposition(data->id)") !=
                 std::string::npos,
             "widget wheel input must refresh only the owning child surface");
+        Check(foreground.find(
+                "bool DesktopApp::PresentDesktopForegroundComposition(") !=
+                std::string::npos &&
+                pointer.find(
+                    "PresentDesktopForegroundComposition(") !=
+                std::string::npos &&
+                scrolling.find(
+                    "PresentDesktopForegroundComposition(") !=
+                std::string::npos,
+            "high-frequency Dock and popup feedback must update the foreground surface directly");
     }
 
     std::cout << "widget composition layer rules tests passed\n";

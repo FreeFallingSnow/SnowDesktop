@@ -52,8 +52,7 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
                 }
             }
             UpdateHostInputImePosition();
-            InvalidateRect(hwnd_, &content, FALSE);
-            PresentDesktopPointerUpdate();
+            (void)PresentDesktopForegroundComposition(content);
             return;
         }
         return;
@@ -139,8 +138,7 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
             if (!IsRectEmptyRect(title))
                 UnionRect(&dirty, &dirty, &title);
             InflateRect(&dirty, 4, 4);
-            InvalidateRect(hwnd_, &dirty, FALSE);
-            PresentDesktopPointerUpdate();
+            (void)PresentDesktopForegroundComposition(dirty);
             return;
         }
     }
@@ -168,8 +166,7 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
                     popupWidgetIndex_)))
                 UpdateMarqueeSelection(pt);
             (void)refreshDragAfterScroll();
-            InvalidateRect(hwnd_, &popup, FALSE);
-            PresentDesktopPointerUpdate();
+            (void)PresentDesktopForegroundComposition(popup);
             return;
         }
     }

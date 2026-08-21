@@ -719,6 +719,9 @@ private:
     bool RenderDesktopForegroundComposition(
         const RECT* updateRect,
         bool hiddenMode);
+    /** @brief 立即局部更新 Dock、弹窗和交互提示所在的前景 DComp 表面。 */
+    bool PresentDesktopForegroundComposition(
+        const RECT& updateRect);
     /** @brief 释放桌面前景 DComp 视觉和表面。 */
     void ResetDesktopForegroundComposition();
     /** @brief 清理绑定到当前 D2D/DComp 目标的缓存资源。 */

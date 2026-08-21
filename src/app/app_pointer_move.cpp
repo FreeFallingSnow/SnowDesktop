@@ -193,8 +193,7 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                 localX, localY, 1, 0);
         }
         UpdateHostInputImePosition();
-        InvalidateRect(hwnd_, &content, FALSE);
-        PresentDesktopPointerUpdate();
+        (void)PresentDesktopForegroundComposition(content);
         return;
     }
 
@@ -228,9 +227,8 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                 ApplyScrollbarThumbDrag(
                     popupScrollbarDragStartOffset_,
                     current.y - popupScrollbarDragStartY_, geometry);
-            InvalidateRect(hwnd_, &popup, FALSE);
+            (void)PresentDesktopForegroundComposition(popup);
         }
-        PresentDesktopPointerUpdate();
         return;
     }
 
@@ -890,8 +888,14 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         }
         if (navHoverSide_ != oldHover)
         {
-            InvalidateRect(hwnd_, nullptr, FALSE);
-            PresentDesktopPointerUpdate();
+            RECT prevRect{};
+            RECT nextRect{};
+            GetNavButtonRects(prevRect, nextRect);
+            RECT dirty = prevRect;
+            if (!IsRectEmptyRect(nextRect))
+                UnionRect(&dirty, &dirty, &nextRect);
+            InflateRect(&dirty, 4, 4);
+            (void)PresentDesktopForegroundComposition(dirty);
         }
     }
 
@@ -1137,20 +1141,25 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             if (newVisual.widget != oldVisual.widget)
                 refreshWidgetVisual(newVisual);
 
-            RECT dirty{};
+            RECT backgroundDirty{};
+            RECT foregroundDirty{};
             auto includeDesktopVisual = [&](
                     const MouseHoverVisual& visual) {
                 using namespace
                     snowdesktop::widget_composition_layer_rules;
-                if (!NeedsDesktopPaint(visual.layer) ||
-                    IsRectEmptyRect(visual.bounds))
+                RECT* dirty = nullptr;
+                if (NeedsBackgroundPaint(visual.layer))
+                    dirty = &backgroundDirty;
+                else if (NeedsForegroundPaint(visual.layer))
+                    dirty = &foregroundDirty;
+                if (!dirty || IsRectEmptyRect(visual.bounds))
                 {
                     return;
                 }
-                if (IsRectEmptyRect(dirty))
-                    dirty = visual.bounds;
+                if (IsRectEmptyRect(*dirty))
+                    *dirty = visual.bounds;
                 else
-                    UnionRect(&dirty, &dirty, &visual.bounds);
+                    UnionRect(dirty, dirty, &visual.bounds);
             };
             includeDesktopVisual(oldVisual);
             includeDesktopVisual(newVisual);
@@ -1176,28 +1185,47 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                     {
                         if (IsRectEmptyRect(candidate))
                             continue;
-                        if (IsRectEmptyRect(dirty))
-                            dirty = candidate;
+                        if (IsRectEmptyRect(foregroundDirty))
+                            foregroundDirty = candidate;
                         else
-                            UnionRect(&dirty, &dirty, &candidate);
+                            UnionRect(
+                                &foregroundDirty,
+                                &foregroundDirty,
+                                &candidate);
                     }
                 }
-                if (!IsRectEmptyRect(dirty))
-                    InflateRect(&dirty, 4, 4);
+                if (!IsRectEmptyRect(foregroundDirty))
+                    InflateRect(&foregroundDirty, 4, 4);
             }
             using namespace
                 snowdesktop::widget_composition_layer_rules;
-            const bool needsDesktopPaint = marqueeActive_ ||
-                NeedsDesktopPaint(oldVisual.layer) ||
-                NeedsDesktopPaint(newVisual.layer);
-            if (needsDesktopPaint)
+            const bool needsBackgroundPaint = marqueeActive_ ||
+                NeedsBackgroundPaint(oldVisual.layer) ||
+                NeedsBackgroundPaint(newVisual.layer);
+            const bool needsForegroundPaint =
+                NeedsForegroundPaint(oldVisual.layer) ||
+                NeedsForegroundPaint(newVisual.layer);
+            if (needsForegroundPaint && !marqueeActive_)
+            {
+                if (!IsRectEmptyRect(foregroundDirty))
+                {
+                    (void)PresentDesktopForegroundComposition(
+                        foregroundDirty);
+                }
+                else
+                {
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                }
+            }
+            if (needsBackgroundPaint)
             {
                 InvalidateRect(
                     hwnd_,
-                    IsRectEmptyRect(dirty) ? nullptr : &dirty,
+                    IsRectEmptyRect(backgroundDirty)
+                        ? nullptr : &backgroundDirty,
                     FALSE);
             }
-            if (needsDesktopPaint && !marqueeActive_ &&
+            if (needsBackgroundPaint && !marqueeActive_ &&
                 snowdesktop::desktop_hover_rules::
                     ShouldPresentSynchronously(
                         hoverChanged,

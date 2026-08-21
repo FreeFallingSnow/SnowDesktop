@@ -45,4 +45,14 @@ constexpr bool NeedsDesktopPaint(PointerVisualLayer layer)
     return layer == PointerVisualLayer::Background ||
         layer == PointerVisualLayer::Foreground;
 }
+
+constexpr bool NeedsBackgroundPaint(PointerVisualLayer layer)
+{
+    return layer == PointerVisualLayer::Background;
+}
+
+constexpr bool NeedsForegroundPaint(PointerVisualLayer layer)
+{
+    return layer == PointerVisualLayer::Foreground;
+}
 }

@@ -104,6 +104,64 @@ bool DesktopApp::RenderDesktopForegroundComposition(
     return SUCCEEDED(hr);
 }
 
+bool DesktopApp::PresentDesktopForegroundComposition(
+    const RECT& updateRect)
+{
+    if (!hwnd_ || !IsWindow(hwnd_) || IsRectEmpty(&updateRect))
+        return false;
+
+    RECT client{};
+    RECT clipped{};
+    GetClientRect(hwnd_, &client);
+    if (!IntersectRect(&clipped, &updateRect, &client) ||
+        IsRectEmpty(&clipped))
+    {
+        return true;
+    }
+
+    if (compositionPaintInProgress_)
+    {
+        InvalidateRect(hwnd_, &clipped, FALSE);
+        desktopPointerPresentPending_ = true;
+        EnsureUiAnimationFrame();
+        return true;
+    }
+
+    compositionPaintInProgress_ = true;
+    struct PaintScope final
+    {
+        bool& active;
+        ~PaintScope() { active = false; }
+    } paintScope{ compositionPaintInProgress_ };
+
+    desktopBackdropCompositor_.BeginFrame(false);
+    if (!RenderDesktopForegroundComposition(
+            &clipped, desktopIconsHidden_))
+    {
+        desktopBackdropCompositor_.EndFrame();
+        RecoverCompositionRenderFailure(
+            L"Desktop foreground direct update", E_FAIL);
+        return false;
+    }
+
+    if (!IsRectEmpty(&floatingDockDesktopBackdropHandoffRect_))
+    {
+        (void)desktopBackdropCompositor_.KeepPanel(
+            floatingDockDesktopBackdropHandoffRect_);
+    }
+    KeepDesktopWidgetBackdropPanels();
+    desktopBackdropCompositor_.EndFrame();
+
+    if (!CommitCompositionAnimationFrame())
+    {
+        RecoverCompositionRenderFailure(
+            L"Queue desktop foreground direct update", E_FAIL);
+        return false;
+    }
+    compositionRenderRecoveryPending_ = false;
+    return FlushPendingCompositionCommit();
+}
+
 void DesktopApp::ResetDesktopForegroundComposition()
 {
     desktopForegroundCompositionSurface_.Reset();
