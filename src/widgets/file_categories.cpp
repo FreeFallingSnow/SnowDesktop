@@ -14,6 +14,7 @@
 #include "collection_group_rules.h"
 #include "drop_model.h"
 #include "search_match.h"
+#include "widget_chrome_rules.h"
 #include "widget_preview_scene.h"
 #include "../menu_fluent_glyphs.h"
 #include "../item_render_layer_rules.h"
@@ -1294,10 +1295,13 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
             DrawCategorizedTab(
                 context, hitTab, layoutTab, label,
                 active, hovered,
-                app_->keyboardNavFileGroupCategoryTabs_ &&
-                    app_->keyboardNavMemberIndex_ ==
-                        static_cast<int>(i) &&
-                    app_->OwnsWidgetKeyboardNavigation(this));
+                snowdesktop::widget_chrome_rules::
+                    UsesCategorizedControlAccentOutline(
+                        app_->keyboardNavVisualFocus_,
+                        app_->keyboardNavFileGroupCategoryTabs_ &&
+                            app_->keyboardNavMemberIndex_ ==
+                                static_cast<int>(i) &&
+                            app_->OwnsWidgetKeyboardNavigation(this)));
         }
         context->PopAxisAlignedClip();
     }

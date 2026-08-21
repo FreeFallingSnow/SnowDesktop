@@ -21,6 +21,7 @@ void DesktopApp::EnterWidget()
     keyboardNavInsideWidget_ = true;
     keyboardNavWidgetIndex_ = static_cast<size_t>(foundIdx);
     keyboardNavMemberIndex_ = 0;
+    keyboardNavVisualFocus_ = true;
     keyboardNavSearchBox_ = false;
     keyboardNavCollectionGroupTabs_ = false;
     keyboardNavFileGroupCategoryTabs_ = false;
@@ -323,6 +324,7 @@ void DesktopApp::ExitWidget()
     keyboardNavInsideWidget_ = false;
     keyboardNavWidgetIndex_ = static_cast<size_t>(-1);
     keyboardNavMemberIndex_ = -1;
+    keyboardNavVisualFocus_ = false;
     keyboardNavSearchBox_ = false;
     keyboardNavCollectionGroupTabs_ = false;
     keyboardNavFileGroupCategoryTabs_ = false;

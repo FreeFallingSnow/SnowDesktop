@@ -17,6 +17,7 @@
 #include "../menu_fluent_glyphs.h"
 #include "drop_model.h"
 #include "search_match.h"
+#include "widget_chrome_rules.h"
 #include "widget_preview_scene.h"
 #include "../category_settings.h"
 #include "../item_render_layer_rules.h"
@@ -1002,10 +1003,13 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
                     context, tab, layoutTab,
                     FolderMappingTabDisplayText(this, visibleCategoryIds_[i]),
                     active, hovered,
-                    app_->keyboardNavFileGroupCategoryTabs_ &&
-                        app_->keyboardNavMemberIndex_ ==
-                            static_cast<int>(i) &&
-                        app_->OwnsWidgetKeyboardNavigation(this));
+                    snowdesktop::widget_chrome_rules::
+                        UsesCategorizedControlAccentOutline(
+                            app_->keyboardNavVisualFocus_,
+                            app_->keyboardNavFileGroupCategoryTabs_ &&
+                                app_->keyboardNavMemberIndex_ ==
+                                    static_cast<int>(i) &&
+                                app_->OwnsWidgetKeyboardNavigation(this)));
             }
             context->PopAxisAlignedClip();
         }

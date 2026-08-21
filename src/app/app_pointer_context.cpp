@@ -63,6 +63,7 @@ bool DesktopApp::HandlePageNavClick(POINT point)
 void DesktopApp::OnRightButtonUp(LPARAM lp)
 {
     if (renameEdit_ != nullptr) return;
+    keyboardNavVisualFocus_ = false;
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     POINT screenPt = pt;
     ClientToScreen(hwnd_, &screenPt);

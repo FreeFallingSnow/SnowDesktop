@@ -30,9 +30,10 @@ constexpr bool ReservesContentForBottomBar(
 }
 
 constexpr bool UsesCategorizedControlAccentOutline(
-    bool keyboardSelected) noexcept
+    bool keyboardNavigationVisualFocus,
+    bool navigationSelected) noexcept
 {
-    return keyboardSelected;
+    return keyboardNavigationVisualFocus && navigationSelected;
 }
 
 constexpr float CategorizedControlOutlineWidth(

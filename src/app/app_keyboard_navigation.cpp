@@ -443,6 +443,7 @@ void DesktopApp::ScrollWidgetToMember(size_t widgetIndex, int memberIndex)
  */
 void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
 {
+    keyboardNavVisualFocus_ = true;
     if (keyboardNavWidgetIndex_ >= widgets_.size()) return;
     const size_t navigationWidgetIndex =
         keyboardNavWidgetIndex_;

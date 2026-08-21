@@ -10,6 +10,7 @@ void DesktopApp::ClearSelection()
     keyboardNavInsideWidget_ = false;
     keyboardNavWidgetIndex_ = static_cast<size_t>(-1);
     keyboardNavMemberIndex_ = -1;
+    keyboardNavVisualFocus_ = false;
     keyboardNavSearchBox_ = false;
     keyboardNavCollectionGroupTabs_ = false;
     keyboardNavFileGroupCategoryTabs_ = false;
@@ -87,6 +88,9 @@ bool DesktopApp::HasSelectedFilesInWidget(
  */
 void DesktopApp::SyncKeyboardNavFromSelection()
 {
+    // Pointer selection may seed the next arrow-key navigation position, but
+    // it must not display the keyboard-only focus outline.
+    keyboardNavVisualFocus_ = false;
     keyboardNavSearchBox_ = false;
     keyboardNavCollectionGroupTabs_ = false;
     keyboardNavFileGroupCategoryTabs_ = false;

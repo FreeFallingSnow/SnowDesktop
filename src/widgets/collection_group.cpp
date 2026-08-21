@@ -10,6 +10,7 @@
 #include "drop_model.h"
 #include "collection_group_rules.h"
 #include "search_match.h"
+#include "widget_chrome_rules.h"
 #include "widget_preview_scene.h"
 #include "../l10n.h"
 #include "../item_render_layer_rules.h"
@@ -1027,10 +1028,13 @@ void CollectionGroup::DrawContent(
                 CollectionGroupTabDisplayText(
                     this, i),
                 selected, hovered,
-                app_->keyboardNavCollectionGroupTabs_ &&
-                    app_->keyboardNavMemberIndex_ ==
-                        static_cast<int>(i) &&
-                    app_->OwnsWidgetKeyboardNavigation(this));
+                snowdesktop::widget_chrome_rules::
+                    UsesCategorizedControlAccentOutline(
+                        app_->keyboardNavVisualFocus_,
+                        app_->keyboardNavCollectionGroupTabs_ &&
+                            app_->keyboardNavMemberIndex_ ==
+                                static_cast<int>(i) &&
+                            app_->OwnsWidgetKeyboardNavigation(this)));
         }
         context->PopAxisAlignedClip();
     }

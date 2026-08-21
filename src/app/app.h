@@ -2848,6 +2848,7 @@ private:
     bool keyboardNavInsideWidget_ = false;
     size_t keyboardNavWidgetIndex_ = static_cast<size_t>(-1);
     int keyboardNavMemberIndex_ = -1;
+    bool keyboardNavVisualFocus_ = false;
     bool keyboardNavSearchBox_ = false;
     bool keyboardNavCollectionGroupTabs_ = false;
     bool keyboardNavFileGroupCategoryTabs_ = false;

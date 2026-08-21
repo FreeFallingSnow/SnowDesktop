@@ -8,6 +8,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 {
     if (middleButtonWidgetMove_) return;
     if (renameEdit_ != nullptr) return;
+    keyboardNavVisualFocus_ = false;
     popupMouseDownItem_.reset();
     popupDragTargetSlot_.reset();
     pendingGuideAction_ = WidgetHit::None;

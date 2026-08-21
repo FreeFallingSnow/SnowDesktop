@@ -870,9 +870,7 @@ void ScrollingItemWidget::DrawCategorizedTab(
                         0.0f, 0.0f, 0.0f, 0.04f)
                     : D2D1::ColorF(
                         1.0f, 1.0f, 1.0f, 0.06f))),
-        snowdesktop::widget_chrome_rules::
-                UsesCategorizedControlAccentOutline(
-                    keyboardSelected)
+        keyboardSelected
             ? D2D1::ColorF(
                 0.39f, 0.66f, 1.0f, 0.90f)
             : active
@@ -1434,8 +1432,11 @@ void ScrollingItemWidget::DrawSearchBox(ID2D1DeviceContext* context)
     const bool hovered =
         PtInRect(&searchRect, app_->lastMousePoint_) != FALSE;
     const bool keyboardSelected =
-        app_->keyboardNavSearchBox_ &&
-        app_->OwnsWidgetKeyboardNavigation(this);
+        snowdesktop::widget_chrome_rules::
+            UsesCategorizedControlAccentOutline(
+                app_->keyboardNavVisualFocus_,
+                app_->keyboardNavSearchBox_ &&
+                    app_->OwnsWidgetKeyboardNavigation(this));
     const D2D1_COLOR_F foreground = light
         ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.90f)
         : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.97f);

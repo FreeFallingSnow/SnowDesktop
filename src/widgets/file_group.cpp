@@ -9,6 +9,7 @@
 #include "app.h"
 #include "drop_model.h"
 #include "collection_group_rules.h"
+#include "widget_chrome_rules.h"
 #include "../menu_fluent_glyphs.h"
 #include "../search_match.h"
 #include "widget_preview_scene.h"
@@ -2113,10 +2114,13 @@ void FileGroup::DrawContent(
             sources[i] == active,
             !IsPreviewRendering() &&
                 PtInRect(&tab, app_->lastMousePoint_) != FALSE,
-            app_->keyboardNavCollectionGroupTabs_ &&
-                app_->keyboardNavMemberIndex_ ==
-                    static_cast<int>(i) &&
-                app_->OwnsWidgetKeyboardNavigation(this));
+            snowdesktop::widget_chrome_rules::
+                UsesCategorizedControlAccentOutline(
+                    app_->keyboardNavVisualFocus_,
+                    app_->keyboardNavCollectionGroupTabs_ &&
+                        app_->keyboardNavMemberIndex_ ==
+                            static_cast<int>(i) &&
+                        app_->OwnsWidgetKeyboardNavigation(this)));
     }
     context->PopAxisAlignedClip();
 }

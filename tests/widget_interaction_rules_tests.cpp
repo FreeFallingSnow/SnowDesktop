@@ -831,11 +831,12 @@ void TestBottomBarContentReservation()
             true, 0, 110, 80, 5) == 75,
         "a titled host placeholder must stay clear of its move bar");
     Check(
-        chromeRules::UsesCategorizedControlAccentOutline(true) &&
-            !chromeRules::UsesCategorizedControlAccentOutline(false) &&
+        chromeRules::UsesCategorizedControlAccentOutline(true, true) &&
+            !chromeRules::UsesCategorizedControlAccentOutline(false, true) &&
+            !chromeRules::UsesCategorizedControlAccentOutline(true, false) &&
             chromeRules::CategorizedControlOutlineWidth(true) == 2.0f &&
             chromeRules::CategorizedControlOutlineWidth(false) == 1.0f,
-        "keyboard-selected search boxes and tabs use the emphasized accent outline");
+        "only keyboard-selected search boxes and tabs use the emphasized accent outline");
 }
 
 void TestNestedWidgetScrolling()
