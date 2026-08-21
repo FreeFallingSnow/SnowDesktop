@@ -47,6 +47,19 @@ int main(int argc, char** argv)
     Check(!rules::ShouldPresentWidgetSurface(true, true),
         "a move or resize preview source must hide its child surface");
 
+    using rules::PointerVisualLayer;
+    Check(rules::NeedsWidgetSurfaceRefresh(
+            PointerVisualLayer::Widget),
+        "widget hover feedback must refresh its owning child surface");
+    Check(!rules::NeedsDesktopPaint(
+            PointerVisualLayer::Widget),
+        "widget-only hover feedback must not repaint the desktop surfaces");
+    Check(rules::NeedsDesktopPaint(
+            PointerVisualLayer::Background) &&
+            rules::NeedsDesktopPaint(
+                PointerVisualLayer::Foreground),
+        "desktop icons and foreground overlays still require desktop paint");
+
     Check(argc == 2, "source root argument is provided");
     if (argc == 2)
     {
@@ -62,6 +75,10 @@ int main(int argc, char** argv)
                 "app_widget_marquee_composition.cpp");
         const std::string engine = ReadFile(
             root / "src" / "widget_engine.cpp");
+        const std::string pointer = ReadFile(
+            root / "src" / "app" / "app_pointer_move.cpp");
+        const std::string scrolling = ReadFile(
+            root / "src" / "app" / "app_scroll_interaction.cpp");
 
         const std::size_t queueBegin = composition.find(
             "bool DesktopApp::QueueDesktopWidgetComposition(");
@@ -109,6 +126,20 @@ int main(int argc, char** argv)
                 engine.find("realtimeCompositionCallback_") ==
                 std::string::npos,
             "the widget runtime must not contain subscription-based composition promotion");
+        Check(pointer.find(
+                "NeedsWidgetSurfaceRefresh(visual.layer)") !=
+                std::string::npos &&
+                pointer.find(
+                    "QueueDesktopWidgetComposition(visual.widget->id)") !=
+                std::string::npos,
+            "pointer hover must route widget feedback directly to its child surface");
+        Check(scrolling.find(
+                "QueueDesktopWidgetComposition(widgets_[luaWidget].id)") !=
+                std::string::npos &&
+                scrolling.find(
+                    "QueueDesktopWidgetComposition(data->id)") !=
+                std::string::npos,
+            "widget wheel input must refresh only the owning child surface");
     }
 
     std::cout << "widget composition layer rules tests passed\n";

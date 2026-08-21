@@ -52,7 +52,7 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
                 }
             }
             UpdateHostInputImePosition();
-            InvalidateRect(hwnd_, nullptr, FALSE);
+            InvalidateRect(hwnd_, &content, FALSE);
             PresentDesktopPointerUpdate();
             return;
         }
@@ -116,16 +116,16 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
                 localX, localY, 0, delta);
         else
             UpdateHostInputImePosition();
-        InvalidateRect(hwnd_, nullptr, FALSE);
-        PresentDesktopPointerUpdate();
+        (void)QueueDesktopWidgetComposition(widgets_[luaWidget].id);
         return;
     }
 
-    auto refreshDragAfterScroll = [&]()
+    auto refreshDragAfterScroll = [&]() -> bool
     {
-        if (!dragSession_.IsActive()) return;
+        if (!dragSession_.IsActive()) return false;
         RefreshDragTargetAt(pt, currentMods);
         InvalidateDragStaticScene();
+        return true;
     };
 
     if (DockContainer* dock = GetDockContainerAtPoint(pt))
@@ -133,8 +133,13 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         const int delta = GET_WHEEL_DELTA_WPARAM(wp);
         if (dock->ScrollByWheelDelta(pt, delta))
         {
-            refreshDragAfterScroll();
-            InvalidateRect(hwnd_, nullptr, FALSE);
+            (void)refreshDragAfterScroll();
+            RECT dirty = dock->GetVisualPanelBounds(pt);
+            const RECT title = dock->GetHoveredTitleBounds(pt);
+            if (!IsRectEmptyRect(title))
+                UnionRect(&dirty, &dirty, &title);
+            InflateRect(&dirty, 4, 4);
+            InvalidateRect(hwnd_, &dirty, FALSE);
             PresentDesktopPointerUpdate();
             return;
         }
@@ -162,8 +167,8 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
                   marqueeWidgetIndex_ ==
                     popupWidgetIndex_)))
                 UpdateMarqueeSelection(pt);
-            refreshDragAfterScroll();
-            InvalidateRect(hwnd_, nullptr, FALSE);
+            (void)refreshDragAfterScroll();
+            InvalidateRect(hwnd_, &popup, FALSE);
             PresentDesktopPointerUpdate();
             return;
         }
@@ -192,10 +197,14 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
             auto* categorized = dynamic_cast<ScrollingItemWidget*>(wc);
             if (categorized && categorized->TryScrollTabs(pt, delta))
             {
-                refreshDragAfterScroll();
+                const bool dragRefreshed = refreshDragAfterScroll();
                 SaveLayoutSlots();
-                InvalidateRect(hwnd_, nullptr, FALSE);
-                PresentDesktopPointerUpdate();
+                (void)QueueDesktopWidgetComposition(data->id);
+                if (dragRefreshed)
+                {
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    PresentDesktopPointerUpdate();
+                }
                 return;
             }
         }
@@ -216,10 +225,14 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         }
         if (mouseDownHit_ && mouseDownHit_->GetContainer() == wc)
             mouseDownHit_ = nullptr;
-        refreshDragAfterScroll();
+        const bool dragRefreshed = refreshDragAfterScroll();
         SaveLayoutSlots();
-        InvalidateRect(hwnd_, nullptr, FALSE);
-        PresentDesktopPointerUpdate();
+        (void)QueueDesktopWidgetComposition(data->id);
+        if (dragRefreshed)
+        {
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            PresentDesktopPointerUpdate();
+        }
         return;
     }
 }

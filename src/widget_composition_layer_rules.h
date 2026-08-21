@@ -10,6 +10,14 @@ enum class DesktopLayer
     AnimationOverlay,
 };
 
+enum class PointerVisualLayer
+{
+    None,
+    Background,
+    Widget,
+    Foreground,
+};
+
 constexpr int ZOrder(DesktopLayer layer)
 {
     return static_cast<int>(layer);
@@ -25,5 +33,16 @@ constexpr bool ShouldPresentWidgetSurface(
     bool previewSourceHidden)
 {
     return desktopSurfaceVisible && !previewSourceHidden;
+}
+
+constexpr bool NeedsWidgetSurfaceRefresh(PointerVisualLayer layer)
+{
+    return layer == PointerVisualLayer::Widget;
+}
+
+constexpr bool NeedsDesktopPaint(PointerVisualLayer layer)
+{
+    return layer == PointerVisualLayer::Background ||
+        layer == PointerVisualLayer::Foreground;
 }
 }

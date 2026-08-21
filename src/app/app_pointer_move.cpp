@@ -1,6 +1,7 @@
 #include "app.h"
 #include "../desktop_hover_rules.h"
 #include "../collection_titleless_rules.h"
+#include "../widget_composition_layer_rules.h"
 #include "../widget_visibility_rules.h"
 #include "../widget_scroll_rules.h"
 
@@ -192,7 +193,7 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                 localX, localY, 1, 0);
         }
         UpdateHostInputImePosition();
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        InvalidateRect(hwnd_, &content, FALSE);
         PresentDesktopPointerUpdate();
         return;
     }
@@ -256,9 +257,8 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                 group->InvalidateHostedView();
             else
                 container->InvalidateSlots();
-            InvalidateRect(hwnd_, &data->bounds, FALSE);
+            (void)QueueDesktopWidgetComposition(data->id);
         }
-        PresentDesktopPointerUpdate();
         return;
     }
 
@@ -271,8 +271,8 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             continue;
         searchable->UpdateSearchPointerSelection(current);
         UpdateHostInputImePosition();
-        InvalidateRect(hwnd_, nullptr, FALSE);
-        PresentDesktopPointerUpdate();
+        if (DesktopWidget* data = searchable->GetWidgetData())
+            (void)QueueDesktopWidgetComposition(data->id);
         return;
     }
 
@@ -309,10 +309,9 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             default:
                 break;
             }
-            InvalidateRect(hwnd_, &widget.bounds, FALSE);
+            (void)QueueDesktopWidgetComposition(widget.id);
         }
         SetCursor(LoadCursorW(nullptr, IDC_SIZEWE));
-        PresentDesktopPointerUpdate();
         return;
     }
 
@@ -349,8 +348,8 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         // Lua content owns the pointer interaction. Do not fall through to
         // the desktop marquee-selection state machine: a drag inside a Lua
         // widget has meaning only to the widget or its host input control.
-        InvalidateRect(hwnd_, nullptr, FALSE);
-        PresentDesktopPointerUpdate();
+        (void)QueueDesktopWidgetComposition(
+            widgets_[mouseDownWidgetIndex_].id);
         return;
     }
 
@@ -905,6 +904,12 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             int kind = 0;
             size_t index = 0;
             bool continuous = false;
+            const DesktopWidget* widget = nullptr;
+            RECT bounds{};
+            snowdesktop::widget_composition_layer_rules::
+                PointerVisualLayer layer =
+                    snowdesktop::widget_composition_layer_rules::
+                        PointerVisualLayer::None;
         };
         auto sameHoverVisual = [](const MouseHoverVisual& a,
             const MouseHoverVisual& b) {
@@ -934,10 +939,18 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                         if (itemRect.bottom <= content.top || itemRect.top >= content.bottom)
                             continue;
                         if (PtInRect(&itemRect, point))
-                            return { popupWidget, popupWidget, 1, i, false };
+                            return {
+                                popupWidget, popupWidget, 1, i, false,
+                                nullptr, popupRect_,
+                                snowdesktop::widget_composition_layer_rules::
+                                    PointerVisualLayer::Foreground };
                     }
                 }
-                return { popupWidget, popupWidget, 2, 0, true };
+                return {
+                    popupWidget, popupWidget, 2, 0, true,
+                    nullptr, popupRect_,
+                    snowdesktop::widget_composition_layer_rules::
+                        PointerVisualLayer::Foreground };
             }
 
             if (DockContainer* dock = GetDockContainerAtPoint(point))
@@ -945,16 +958,37 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                 if (dock->ContainsInteractivePoint(point))
                 {
                     if (DockEntryItem* entry = dock->EntryAtPoint(point))
-                        return { dock, entry, 8, entry->GetEntryIndex(), true };
+                        return {
+                            dock, entry, 8, entry->GetEntryIndex(), true,
+                            nullptr, {},
+                            snowdesktop::widget_composition_layer_rules::
+                                PointerVisualLayer::Foreground };
                     if (DockRunningItem* item = dock->RunningItemAtPoint(point))
-                        return { dock, item, 12, item->GetRunningIndex(), true };
+                        return {
+                            dock, item, 12, item->GetRunningIndex(), true,
+                            nullptr, {},
+                            snowdesktop::widget_composition_layer_rules::
+                                PointerVisualLayer::Foreground };
                     if (DockFrequentItem* item = dock->FrequentItemAtPoint(point))
-                        return { dock, item, 11, item->GetItemIndex(), true };
+                        return {
+                            dock, item, 11, item->GetItemIndex(), true,
+                            nullptr, {},
+                            snowdesktop::widget_composition_layer_rules::
+                                PointerVisualLayer::Foreground };
                     if (dock->IsWindowsButtonPoint(point))
-                        return { dock, dock, 13, 0, true };
+                        return {
+                            dock, dock, 13, 0, true, nullptr, {},
+                            snowdesktop::widget_composition_layer_rules::
+                                PointerVisualLayer::Foreground };
                     if (dock->IsSearchPoint(point))
-                        return { dock, dock, 9, 0, true };
-                    return { dock, dock, 10, 0, true };
+                        return {
+                            dock, dock, 9, 0, true, nullptr, {},
+                            snowdesktop::widget_composition_layer_rules::
+                                PointerVisualLayer::Foreground };
+                    return {
+                        dock, dock, 10, 0, true, nullptr, {},
+                        snowdesktop::widget_composition_layer_rules::
+                            PointerVisualLayer::Foreground };
                 }
             }
 
@@ -1002,11 +1036,20 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                             if (item &&
                                 (!item->IsSelected() ||
                                     selectedNeedsHover))
-                                return { widgetData, slot.get(), 3, slot->GetIndex(), false };
+                                return {
+                                    widgetData, slot.get(), 3,
+                                    slot->GetIndex(), false,
+                                    widgetData, frame,
+                                    snowdesktop::widget_composition_layer_rules::
+                                        PointerVisualLayer::Widget };
                             break;
                         }
                     }
-                    return { widgetData, widgetData, 4, 0, false };
+                    return {
+                        widgetData, widgetData, 4, 0, false,
+                        widgetData, frame,
+                        snowdesktop::widget_composition_layer_rules::
+                            PointerVisualLayer::Widget };
                 }
 
                 return {
@@ -1014,7 +1057,11 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                     widgetData,
                     5,
                     static_cast<size_t>(hit),
-                    hit != WidgetHit::None
+                    hit != WidgetHit::None,
+                    widgetData,
+                    frame,
+                    snowdesktop::widget_composition_layer_rules::
+                        PointerVisualLayer::Widget
                 };
             }
 
@@ -1027,7 +1074,11 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                     &widgets_[standalone],
                     6,
                     static_cast<size_t>(hit),
-                    hit != WidgetHit::Content && hit != WidgetHit::None
+                    hit != WidgetHit::Content && hit != WidgetHit::None,
+                    &widgets_[standalone],
+                    GetStandaloneWidgetFrameRect(widgets_[standalone]),
+                    snowdesktop::widget_composition_layer_rules::
+                        PointerVisualLayer::Widget
                 };
             }
 
@@ -1043,7 +1094,10 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                     collectedKeysCache_.count(ToUpperInvariant(item->layoutKey)))
                     continue;
                 if (PtInRect(&item->bounds, point))
-                    return { item, item, 7, 0, false };
+                    return {
+                        item, item, 7, 0, false, nullptr, item->bounds,
+                        snowdesktop::widget_composition_layer_rules::
+                            PointerVisualLayer::Background };
             }
 
             return {};
@@ -1068,7 +1122,38 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
             (marqueeActive_ || hoverChanged ||
                 needsContinuousHoverPaint))
         {
+            auto refreshWidgetVisual = [&](
+                    const MouseHoverVisual& visual) {
+                using namespace
+                    snowdesktop::widget_composition_layer_rules;
+                if (!NeedsWidgetSurfaceRefresh(visual.layer) ||
+                    !visual.widget)
+                {
+                    return;
+                }
+                (void)QueueDesktopWidgetComposition(visual.widget->id);
+            };
+            refreshWidgetVisual(oldVisual);
+            if (newVisual.widget != oldVisual.widget)
+                refreshWidgetVisual(newVisual);
+
             RECT dirty{};
+            auto includeDesktopVisual = [&](
+                    const MouseHoverVisual& visual) {
+                using namespace
+                    snowdesktop::widget_composition_layer_rules;
+                if (!NeedsDesktopPaint(visual.layer) ||
+                    IsRectEmptyRect(visual.bounds))
+                {
+                    return;
+                }
+                if (IsRectEmptyRect(dirty))
+                    dirty = visual.bounds;
+                else
+                    UnionRect(&dirty, &dirty, &visual.bounds);
+            };
+            includeDesktopVisual(oldVisual);
+            includeDesktopVisual(newVisual);
             if (dockHoverActive && !marqueeActive_)
             {
                 for (const auto& container : containers_)
@@ -1100,11 +1185,19 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                 if (!IsRectEmptyRect(dirty))
                     InflateRect(&dirty, 4, 4);
             }
-            InvalidateRect(
-                hwnd_,
-                IsRectEmptyRect(dirty) ? nullptr : &dirty,
-                FALSE);
-            if (!marqueeActive_ &&
+            using namespace
+                snowdesktop::widget_composition_layer_rules;
+            const bool needsDesktopPaint = marqueeActive_ ||
+                NeedsDesktopPaint(oldVisual.layer) ||
+                NeedsDesktopPaint(newVisual.layer);
+            if (needsDesktopPaint)
+            {
+                InvalidateRect(
+                    hwnd_,
+                    IsRectEmptyRect(dirty) ? nullptr : &dirty,
+                    FALSE);
+            }
+            if (needsDesktopPaint && !marqueeActive_ &&
                 snowdesktop::desktop_hover_rules::
                     ShouldPresentSynchronously(
                         hoverChanged,
