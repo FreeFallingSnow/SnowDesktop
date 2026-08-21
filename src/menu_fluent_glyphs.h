@@ -19,6 +19,7 @@ inline constexpr wchar_t kNewItem[] = L"\uF10C";
 inline constexpr wchar_t kMoreOptions[] = L"\uF582";
 inline constexpr wchar_t kChevronRight[] = L"\uF2AF"; // chevron_right_16_regular
 inline constexpr wchar_t kCopy[] = L"\uF32B";       // copy_20
+inline constexpr wchar_t kSelectAll[] = L"\uEA86";  // select_all_on_20
 inline constexpr wchar_t kShield[] = L"\uF6BE";     // shield_20
 inline constexpr wchar_t kInfo[] = L"\uF4A3";       // info_20
 inline constexpr wchar_t kShowFrequent[] = L"\uF70F";

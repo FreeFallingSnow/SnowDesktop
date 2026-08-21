@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../menu_fluent_glyphs.h"
 #include "../right_click_contract.h"
 #include "../widgets/lua_logical_slot.h"
 
@@ -100,9 +101,13 @@ bool DesktopApp::ShowHostInputContextMenu(
     SetMenuItemIcon(menu, kContextCutCommand, L"\uf0c4");
     SetMenuItemIcon(menu, kContextCopyCommand, L"\uf0c5");
     SetMenuItemIcon(menu, kContextPasteCommand, L"\uf0ea");
+    SetMenuItemIcon(menu, kContextSelectAllCommand,
+        snowdesktop::menu_fluent_glyphs::kSelectAll,
+        MenuIconFont::FluentRegular);
     SetMenuItemQuickAction(menu, kContextCutCommand);
     SetMenuItemQuickAction(menu, kContextCopyCommand);
     SetMenuItemQuickAction(menu, kContextPasteCommand);
+    SetMenuItemQuickAction(menu, kContextSelectAllCommand);
 
     SetForegroundWindow(hwnd_);
     const UINT command = ShowModernMenu(
