@@ -52,7 +52,6 @@ local settings = {
 
 local statusKeys = {
     warming = "workshop.audio_spectrum.warming",
-    stale = "workshop.audio_spectrum.stale",
     permission = "workshop.audio_spectrum.permission",
     notPresent = "workshop.audio_spectrum.not_present",
     unavailable = "workshop.audio_spectrum.unavailable",
@@ -89,7 +88,7 @@ local function setup()
     local config = readConfig()
     audioAnalysis = data.subscribe("audio.output.analysis", {
         features = { "spectrum" },
-        updateHz = 30,
+        updateHz = 60,
         spectrumBins = config.barCount,
         whenHidden = "pause",
     })
@@ -105,7 +104,7 @@ local function setup()
     return model
 end
 
-local function spectrumNode(model, opacity)
+local function spectrumNode(model)
     local padding = math.max(layout.cu(4), math.min(
         layout.cu(10), layout.vmin(5)))
     return view.spectrum({
@@ -119,7 +118,6 @@ local function spectrumNode(model, opacity)
         fillOpacity = 0.94,
         style = {
             foreground = model.color,
-            opacity = opacity or 1,
         },
         accessibility = {
             label = l10n.tr("workshop.audio_spectrum.spectrum_label"),
@@ -147,19 +145,8 @@ end
 local function viewTree(_context, model)
     capture(model, false)
     if model.status == "ready" or model.status == "silent" or
-        model.status == "warming" then
+        model.status == "warming" or model.status == "stale" then
         return spectrumNode(model)
-    end
-    if model.status == "stale" then
-        return view.stack({
-            key = "audio-spectrum.stale",
-            width = "fill",
-            height = "fill",
-            children = {
-                spectrumNode(model, 0.32),
-                statusNode(model.status),
-            },
-        })
     end
     return statusNode(model.status)
 end
