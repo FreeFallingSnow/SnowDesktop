@@ -175,6 +175,15 @@ void TestHostPickerCandidatePolicy()
                 L"\\\\server\\Apps\\Player.exe") ==
                 L"\\\\server\\Apps\\Player.exe",
         "application references must share one launch target normalization policy");
+    Check(picker::IsFilesystemApplicationLaunchTarget(
+            L"C:\\Users\\Example\\Desktop\\Player.lnk") &&
+            picker::IsFilesystemApplicationLaunchTarget(
+                L"\\\\server\\Apps\\Player.lnk") &&
+            !picker::IsFilesystemApplicationLaunchTarget(
+                L"shell:AppsFolder\\Contoso.Player_123!App") &&
+            !picker::IsFilesystemApplicationLaunchTarget(
+                L"Contoso.Player_123!App"),
+        "filesystem-backed app references must bypass catalog availability checks");
 }
 
 void TestPointerReorderTargets()

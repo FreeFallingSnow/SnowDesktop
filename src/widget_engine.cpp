@@ -24611,14 +24611,29 @@ void WidgetEngine::RefreshLogicalSlotAvailability()
                 std::string source;
                 if (item.kind == "app.reference")
                 {
-                    if (!catalogReady) continue;
-                    const std::wstring target = ToUpperInvariant(
-                        snowdesktop::logical_slot_picker_rules::
+                    const std::wstring target = snowdesktop::
+                        logical_slot_picker_rules::
                             NormalizeApplicationLaunchTarget(
-                                Utf8ToWideLocal(item.target)));
-                    available = !target.empty() &&
-                        availableTargets.contains(target);
-                    source = "host.catalog";
+                                Utf8ToWideLocal(item.target));
+                    if (snowdesktop::logical_slot_picker_rules::
+                            IsFilesystemApplicationLaunchTarget(target))
+                    {
+                        const DWORD attributes = target.empty()
+                            ? INVALID_FILE_ATTRIBUTES
+                            : GetFileAttributesW(target.c_str());
+                        available = attributes != INVALID_FILE_ATTRIBUTES &&
+                            (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+                        source = "host.filesystem";
+                    }
+                    else
+                    {
+                        if (!catalogReady) continue;
+                        const std::wstring catalogTarget =
+                            ToUpperInvariant(target);
+                        available = !catalogTarget.empty() &&
+                            availableTargets.contains(catalogTarget);
+                        source = "host.catalog";
+                    }
                 }
                 else if (item.kind == "filesystem.reference")
                 {

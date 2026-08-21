@@ -21,6 +21,14 @@ inline bool MatchesType(std::string_view requiredType,
     return requiredType.empty() || requiredType == candidateType;
 }
 
+inline bool IsFilesystemApplicationLaunchTarget(
+    std::wstring_view target) noexcept
+{
+    const bool hasDrivePrefix = target.size() >= 2 && target[1] == L':';
+    const bool hasUncPrefix = target.starts_with(L"\\\\");
+    return hasDrivePrefix || hasUncPrefix;
+}
+
 inline std::wstring NormalizeApplicationLaunchTarget(
     std::wstring_view parsingName)
 {
@@ -29,11 +37,10 @@ inline std::wstring NormalizeApplicationLaunchTarget(
     const bool hasShellPrefix = launchTarget.size() >= 6 &&
         _wcsnicmp(launchTarget.c_str(), L"shell:", 6) == 0;
     const bool hasNamespacePrefix = launchTarget.starts_with(L"::");
-    const bool hasDrivePrefix = launchTarget.size() >= 2 &&
-        launchTarget[1] == L':';
-    const bool hasUncPrefix = launchTarget.starts_with(L"\\\\");
+    const bool hasFilesystemTarget =
+        IsFilesystemApplicationLaunchTarget(launchTarget);
     if (!hasShellPrefix && !hasNamespacePrefix &&
-        !hasDrivePrefix && !hasUncPrefix)
+        !hasFilesystemTarget)
     {
         launchTarget = L"shell:AppsFolder\\" + launchTarget;
     }
