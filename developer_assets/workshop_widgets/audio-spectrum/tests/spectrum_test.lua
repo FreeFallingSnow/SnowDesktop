@@ -5,7 +5,7 @@ local function approximately(left, right)
 end
 
 return {
-    ["rising bars attack faster than falling bars release"] = function()
+    ["rising bands attack faster than falling bands release"] = function()
         local rising = spectrum.smooth({ 0.2 }, { 0.8 }, 1, 16, false)
         local falling = spectrum.smooth({ 0.8 }, { 0.2 }, 1, 16, false)
         assert(rising[1] - 0.2 > 0.8 - falling[1])
@@ -38,7 +38,7 @@ return {
         assert(values[1] == 0.4 and values[2] == 0.8)
     end,
 
-    ["display keeps silent bars low and preserves input"] = function()
+    ["display keeps silent amplitudes low and preserves input"] = function()
         local source = { 0, 0.5, -1, math.huge }
         local values = spectrum.display(source, 16)
         assert(#values == 16)
@@ -50,7 +50,37 @@ return {
             source[3] == -1 and source[4] == math.huge)
     end,
 
-    ["device reset discards the previous endpoint bars"] = function()
+    ["mirrored curve is symmetric smooth and bounded"] = function()
+        local source = { 1, 0.6, 0.2, 0.1 }
+        local curve = spectrum.mirroredCurve(source, 16)
+        assert(#curve >= 31 and #curve <= 257)
+        for index = 1, #curve do
+            assert(curve[index] >= 0.018 and curve[index] <= 1)
+            assert(approximately(curve[index], curve[#curve - index + 1]))
+        end
+        local center = math.floor(#curve / 2) + 1
+        assert(curve[center] > curve[1])
+        assert(source[1] == 1 and source[2] == 0.6 and
+            source[3] == 0.2 and source[4] == 0.1)
+    end,
+
+    ["idle curve stays close to its center line"] = function()
+        local curve = spectrum.mirroredCurve({}, 64)
+        for index = 1, #curve do
+            assert(curve[index] >= 0.018 and curve[index] <= 0.045)
+        end
+    end,
+
+    ["inverted curve is bounded and leaves input unchanged"] = function()
+        local source = { 0.2, 2, -1, math.huge }
+        local inverted = spectrum.invert(source)
+        assert(inverted[1] == -0.2 and inverted[2] == -1)
+        assert(inverted[3] == 0 and inverted[4] == 0)
+        assert(source[1] == 0.2 and source[2] == 2 and
+            source[3] == -1 and source[4] == math.huge)
+    end,
+
+    ["device reset discards the previous endpoint levels"] = function()
         local reset = spectrum.smooth({ 1 }, { 0.5 }, 1, 16, true)
         local retained = spectrum.smooth({ 1 }, { 0.5 }, 1, 16, false)
         assert(approximately(reset[1], 0.31))
