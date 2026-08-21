@@ -82,33 +82,22 @@ bool DesktopApp::FlushPendingWidgetMarqueeComposition()
 {
     if (pendingWidgetMarqueeCompositions_.empty())
         return true;
-    if (!dcompDevice_ || !dcompVisual_)
+    if (!dcompDevice_)
         return false;
-
-    if (!widgetMarqueeCompositionLayer_)
-    {
-        HRESULT hr = dcompDevice_->CreateVisual(
-            &widgetMarqueeCompositionLayer_);
-        if (FAILED(hr) || !widgetMarqueeCompositionLayer_)
-            return false;
-        // Keep this layer immediately above the root surface and below popup,
-        // drag, and other independent child visuals.
-        hr = dcompVisual_->AddVisual(
-            widgetMarqueeCompositionLayer_.Get(),
-            realtimeWidgetCompositionLayer_ ? TRUE : FALSE,
-            realtimeWidgetCompositionLayer_.Get());
-        if (FAILED(hr))
-        {
-            widgetMarqueeCompositionLayer_.Reset();
-            return false;
-        }
-    }
 
     auto pending = std::move(pendingWidgetMarqueeCompositions_);
     pendingWidgetMarqueeCompositions_.clear();
     const auto now = std::chrono::steady_clock::now();
     for (auto& [widgetId, request] : pending)
     {
+        const auto parent =
+            desktopWidgetCompositionItems_.find(widgetId);
+        if (parent == desktopWidgetCompositionItems_.end() ||
+            !parent->second.visual)
+        {
+            widgetMarqueeCompositionItems_.erase(widgetId);
+            continue;
+        }
         auto& items = widgetMarqueeCompositionItems_[widgetId];
         std::unordered_set<std::string> liveKeys;
         liveKeys.reserve(request.marquees.size());
@@ -207,7 +196,7 @@ bool DesktopApp::FlushPendingWidgetMarqueeComposition()
                     hr = item.clipVisual->AddVisual(
                         item.textVisual.Get(), TRUE, nullptr);
                 if (SUCCEEDED(hr))
-                    hr = widgetMarqueeCompositionLayer_->AddVisual(
+                    hr = parent->second.visual->AddVisual(
                         item.clipVisual.Get(), TRUE, nullptr);
                 if (FAILED(hr))
                 {
@@ -229,9 +218,13 @@ bool DesktopApp::FlushPendingWidgetMarqueeComposition()
             if (SUCCEEDED(hr))
                 hr = item.clipVisual->SetClip(item.clip.Get());
             if (SUCCEEDED(hr))
-                hr = item.clipVisual->SetOffsetX(marquee.viewport.left);
+                hr = item.clipVisual->SetOffsetX(
+                    marquee.viewport.left -
+                    static_cast<float>(parent->second.bounds.left));
             if (SUCCEEDED(hr))
-                hr = item.clipVisual->SetOffsetY(marquee.viewport.top);
+                hr = item.clipVisual->SetOffsetY(
+                    marquee.viewport.top -
+                    static_cast<float>(parent->second.bounds.top));
             if (SUCCEEDED(hr))
                 hr = item.textVisual->SetOffsetY(0.0f);
             if (SUCCEEDED(hr))
@@ -277,7 +270,7 @@ bool DesktopApp::FlushPendingWidgetMarqueeComposition()
             }
             if (item->second.clipVisual)
             {
-                (void)widgetMarqueeCompositionLayer_->RemoveVisual(
+                (void)parent->second.visual->RemoveVisual(
                     item->second.clipVisual.Get());
             }
             item = items.erase(item);
@@ -297,13 +290,18 @@ bool DesktopApp::SyncWidgetMarqueeCompositionVisibility()
         : nullptr;
     for (auto& [widgetId, items] : widgetMarqueeCompositionItems_)
     {
+        const auto parent =
+            desktopWidgetCompositionItems_.find(widgetId);
         const bool isPreviewSource =
             previewSourceId && widgetId == *previewSourceId;
-        const bool visible = !snowdesktop::widget_visibility_rules::
-            ShouldHideWidgetPreviewSource(
-                widgetAction_ == WidgetAction::Move,
-                widgetAction_ == WidgetAction::Resize,
-                isPreviewSource);
+        const bool visible =
+            parent != desktopWidgetCompositionItems_.end() &&
+            parent->second.visible &&
+            !snowdesktop::widget_visibility_rules::
+                ShouldHideWidgetPreviewSource(
+                    widgetAction_ == WidgetAction::Move,
+                    widgetAction_ == WidgetAction::Resize,
+                    isPreviewSource);
         for (auto& [key, item] : items)
         {
             (void)key;
@@ -325,10 +323,4 @@ void DesktopApp::ResetWidgetMarqueeComposition()
 {
     pendingWidgetMarqueeCompositions_.clear();
     widgetMarqueeCompositionItems_.clear();
-    if (dcompVisual_ && widgetMarqueeCompositionLayer_)
-    {
-        (void)dcompVisual_->RemoveVisual(
-            widgetMarqueeCompositionLayer_.Get());
-    }
-    widgetMarqueeCompositionLayer_.Reset();
 }

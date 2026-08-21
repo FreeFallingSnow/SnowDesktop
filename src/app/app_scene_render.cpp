@@ -1,7 +1,7 @@
 #include "app.h"
 #include "grid_geometry.h"
 #include "../item_render_layer_rules.h"
-#include "../realtime_widget_composition_rules.h"
+#include "../widget_composition_layer_rules.h"
 #include "../widget_visibility_rules.h"
 #include "../widgets/collection_group_rules.h"
 
@@ -163,50 +163,36 @@ void DesktopApp::DrawStaticBackground(
                     widgetAction_ == WidgetAction::Move,
                     widgetAction_ == WidgetAction::Resize,
                     isPreviewSource);
-        const bool realtimeCompositionActive =
-            widgetData.type == DesktopWidgetType::LuaScript &&
-            HasRealtimeWidgetComposition(widgetData.id);
-        const snowdesktop::realtime_widget_composition_rules::SceneState
-            realtimeState{
-                realtimeCompositionActive,
-                desktopSurfaceVisible && !previewSourceHidden,
-                dragSession_.IsActive(),
-                dragDropController_.IsExternalDragActive(),
-                widgetAction_ == WidgetAction::Move ||
-                    widgetAction_ == WidgetAction::Resize,
-                marqueeActive_,
-                GetOpenPopupWidget() != nullptr,
-                !luaWidgetPanelRequest_.widgetId.empty(),
-            };
-        const bool useRealtimeComposition =
-            snowdesktop::realtime_widget_composition_rules::
-                ShouldUseIndependentSurface(realtimeState);
-        if (realtimeCompositionActive)
-        {
-            SetRealtimeWidgetCompositionVisible(
-                widgetData.id, useRealtimeComposition, widgetFrame);
-        }
+        const bool presentWidgetSurface =
+            snowdesktop::widget_composition_layer_rules::
+                ShouldPresentWidgetSurface(
+                    desktopSurfaceVisible, previewSourceHidden);
+        if (HasDesktopWidgetComposition(widgetData.id))
+            SetDesktopWidgetCompositionVisible(
+                widgetData.id, presentWidgetSurface, widgetFrame);
         if (!desktopSurfaceVisible)
             continue;
-        if (useRealtimeComposition)
-        {
-            if (intersectsUpdate(widgetFrame, 2) &&
-                !QueueRealtimeWidgetComposition(
-                    widgetData.id, true))
-            {
-                SetRealtimeWidgetCompositionVisible(
-                    widgetData.id, false, widgetFrame);
-            }
-            else
-            {
-                continue;
-            }
-        }
-        if (!intersectsUpdate(widgetFrame, 2))
-            continue;
-        if (previewSourceHidden)
+        if (!presentWidgetSurface)
             continue;
 
+        const bool fallbackToRoot =
+            desktopWidgetCompositionFallbackIds_.contains(widgetData.id);
+        bool composed = !fallbackToRoot &&
+            HasDesktopWidgetComposition(widgetData.id);
+        if (!fallbackToRoot && intersectsUpdate(widgetFrame, 2))
+        {
+            composed = QueueDesktopWidgetComposition(widgetData.id);
+        }
+        if (composed)
+            continue;
+        if (!intersectsUpdate(widgetFrame, 2))
+            continue;
+
+        // Emergency fallback for a surface allocation or draw failure. The
+        // foreground surface still remains above this root-rendered widget.
+        // Retry the child-surface path on the next invalidation instead of
+        // permanently demoting a widget after one transient device failure.
+        desktopWidgetCompositionFallbackIds_.erase(widgetData.id);
         bool drawn = false;
         for (auto& c : containers_)
         {
@@ -227,37 +213,35 @@ void DesktopApp::DrawStaticBackground(
         }
     }
 
+    if (suppressDesktopWidgetTargets || popupOccludesPointer)
+        lastMousePoint_ = interactionMousePoint;
+}
+
+void DesktopApp::DrawDesktopForeground(
+    ID2D1DeviceContext* ctx,
+    bool hiddenMode)
+{
     for (const auto& container : containers_)
     {
-        auto* dock = dynamic_cast<DockContainer*>(
-            container.get());
+        auto* dock = dynamic_cast<DockContainer*>(container.get());
         if (!dock ||
             (hiddenMode && !dockSettings_.keepWhenDesktopHidden) ||
             !snowdesktop::floating_dock_rules::
                 ShouldRenderDesktopDock(
                     floatingDockDesktopCopySuppressed_,
-                    dock ==
-                        floatingDockContainer_))
+                    dock == floatingDockContainer_))
+        {
             continue;
-        RECT dockVisualBounds =
-            dock->GetInteractiveBounds();
-        const RECT titleBounds =
-            dock->GetHoveredTitleBounds(
-                lastMousePoint_);
-        if (!IsRectEmptyRect(titleBounds))
-            UnionRect(
-                &dockVisualBounds,
-                &dockVisualBounds,
-                &titleBounds);
-        if (!intersectsUpdate(
-                dockVisualBounds, 4))
-            continue;
+        }
         dock->DrawChrome(ctx, lastMousePoint_);
         dock->DrawContents(ctx);
     }
 
-    if (suppressDesktopWidgetTargets || popupOccludesPointer)
-        lastMousePoint_ = interactionMousePoint;
+    DrawDynamicOverlays(ctx, hiddenMode);
+    if (desktopIconsHidden_ && showHiddenHint_)
+        DrawHiddenHintOverlay(ctx);
+    if (showWidgetAddedHint_)
+        DrawWidgetAddedHintOverlay(ctx);
 }
 
 // ── Dynamic overlays (drag preview, dragged items, marquee, nav) ──
@@ -648,38 +632,7 @@ void DesktopApp::RenderFrame(
         brushCache_.clear();
         brushCacheContext_ = ctx;
     }
-    const bool widgetPreviewActive =
-        widgetAction_ == WidgetAction::Move || widgetAction_ == WidgetAction::Resize;
-    const bool desktopMarqueeActive =
-        marqueeActive_ &&
-        !marqueeDockFolderPopup_ &&
-        marqueeWidgetIndex_ >= widgets_.size();
-    if (!hiddenMode &&
-        (dragSession_.IsActive() || widgetPreviewActive || desktopMarqueeActive))
-    {
-        RECT client{};
-        GetClientRect(hwnd_, &client);
-        UINT w = std::max<LONG>(1, client.right - client.left);
-        UINT h = std::max<LONG>(1, client.bottom - client.top);
-
-        bool cacheReady = dragRenderCache_.Ensure(d2dDevice_.Get(), D2D1_SIZE_U{ w, h },
-            dragSession_.StaticSceneRevision(),
-            [&](ID2D1DeviceContext* cacheCtx) {
-                DrawStaticBackground(
-                    cacheCtx, nullptr);
-            });
-        brushCache_.clear();
-        brushCacheContext_ = ctx;
-        if (cacheReady)
-            dragRenderCache_.Draw(ctx);
-        else
-            DrawStaticBackground(
-                ctx, updateRect);
-        DrawDynamicOverlays(ctx);
-        return;
-    }
-
-    // ── Normal path (not dragging) ────────────────────────────
+    // The root surface is the stable desktop background. Widgets and all
+    // foreground interaction content are owned by higher DComp layers.
     DrawStaticBackground(ctx, updateRect, hiddenMode);
-    DrawDynamicOverlays(ctx, hiddenMode);
 }

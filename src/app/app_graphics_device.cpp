@@ -176,8 +176,9 @@ void DesktopApp::RecreateComponentListTextFormat()
 
 void DesktopApp::ResetCompositionRenderCaches()
 {
-    ResetRealtimeWidgetComposition();
     ResetWidgetMarqueeComposition();
+    ResetDesktopWidgetComposition();
+    ResetDesktopForegroundComposition();
     dragRenderCache_.Reset();
     ResetCollectionPopupAnimationCache();
     ResetLuaWidgetPanelAnimationCache();
@@ -225,7 +226,7 @@ HRESULT DesktopApp::CreateOrResizeCompositionSurface()
         const UINT width = static_cast<UINT>(std::max<LONG>(1, client.right - client.left));
         const UINT height = static_cast<UINT>(std::max<LONG>(1, client.bottom - client.top));
         if (dcompSurface_ && compositionWidth_ == width && compositionHeight_ == height)
-            return S_OK;
+            return CreateOrResizeDesktopForegroundCompositionSurface();
 
         ComPtr<IDCompositionSurface> surface;
         HRESULT hr = dcompDevice_->CreateSurface(width, height,
@@ -258,5 +259,5 @@ HRESULT DesktopApp::CreateOrResizeCompositionSurface()
         dcompSurface_ = surface;
         compositionWidth_ = width;
         compositionHeight_ = height;
-        return S_OK;
+        return CreateOrResizeDesktopForegroundCompositionSurface();
     }

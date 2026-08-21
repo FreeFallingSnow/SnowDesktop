@@ -115,6 +115,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/app_container_navigation.cpp
     src/app/app_data_object.cpp
     src/app/app_desktop_enumeration.cpp
+    src/app/app_desktop_foreground_composition.cpp
     src/app/app_desktop_layout.cpp
     src/app/app_desktop_reload.cpp
     src/app/app_dock_drop.cpp
@@ -201,7 +202,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/app_widget_context_menu.cpp
     src/app/app_widget_grouping.cpp
     src/app/app_widget_marquee_composition.cpp
-    src/app/app_widget_realtime_composition.cpp
+    src/app/app_widget_composition.cpp
     src/app/app_widget_placement.cpp
     src/app/app_widget_refresh.cpp
     src/app/drag_drop_controller.cpp
@@ -912,11 +913,12 @@ if (BUILD_TESTING)
         LABELS contract data audio widget)
 
     snowdesktop_add_test(
-        SnowDesktopRealtimeWidgetCompositionRulesTests
-        realtime_widget_composition_rules
+        SnowDesktopWidgetCompositionLayerRulesTests
+        widget_composition_layer_rules
         SOURCES
-            tests/realtime_widget_composition_rules_tests.cpp
+            tests/widget_composition_layer_rules_tests.cpp
         INCLUDE_DIRECTORIES src
+        COMMAND_ARGUMENTS ${CMAKE_SOURCE_DIR}
         LABELS contract render widget)
 
     snowdesktop_add_test(

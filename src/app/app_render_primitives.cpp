@@ -78,12 +78,17 @@ void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, 
     D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(ToD2DRect(frame), radius, radius);
 
     // 原生毛玻璃由下层 CompositionBackdropBrush 提供，本层只绘制色调和装饰。
-    if (p.glassEnabled && registerBackdrop)
+    if (p.glassEnabled && desktopWidgetCompositionDrawInProgress_)
     {
-        bool registered = false;
+        desktopWidgetBackdropRequestedDuringDraw_ = true;
+        desktopWidgetBackdropCornerRadiusDuringDraw_ = radius;
+        desktopWidgetBackdropBlurRadiusDuringDraw_ = p.glassBlurRadius;
+    }
+    else if (p.glassEnabled && registerBackdrop)
+    {
         if (renderingFloatingDock_)
         {
-            registered = floatingDockBackdropCompositor_.AddPanel(
+            floatingDockBackdropCompositor_.AddPanel(
                 snowdesktop::floating_dock_rules::
                     DesktopRectToWindowRect(
                         frame, floatingDockSourceRect_),
@@ -91,11 +96,9 @@ void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, 
         }
         else
         {
-            registered = desktopBackdropCompositor_.AddPanel(
+            desktopBackdropCompositor_.AddPanel(
                 frame, radius, p.glassBlurRadius);
         }
-        if (realtimeCompositionDrawInProgress_ && registered)
-            realtimeBackdropRegisteredDuringDraw_ = true;
     }
 
     if (fill.a > 0.0f)

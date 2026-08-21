@@ -228,7 +228,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         bool wasDragging = dragSession_.IsActive();
         virtualWidth_ = LOWORD(lp);
         virtualHeight_ = HIWORD(lp);
-        ResetRealtimeWidgetComposition();
+        ResetDesktopWidgetComposition();
         dcompSurface_.Reset();
         UpdateLayoutWorkArea();
         LayoutItems();

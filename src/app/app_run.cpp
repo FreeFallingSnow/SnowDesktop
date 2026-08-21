@@ -757,11 +757,18 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                     }
                     if (!IsRectEmpty(&dirty))
                     {
-                        InflateRect(&dirty,
-                            requestedDirty ? 1 : 3,
-                            requestedDirty ? 1 : 3);
-                        InvalidateRect(hwnd_, &dirty, FALSE);
-                        invalidated = true;
+                        if (QueueDesktopWidgetComposition(widgetId))
+                        {
+                            invalidated = true;
+                        }
+                        else
+                        {
+                            InflateRect(&dirty,
+                                requestedDirty ? 1 : 3,
+                                requestedDirty ? 1 : 3);
+                            InvalidateRect(hwnd_, &dirty, FALSE);
+                            invalidated = true;
+                        }
                     }
                 }
                 return;
@@ -775,16 +782,6 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 bool reducedMotion) {
             return QueueWidgetMarqueeComposition(
                 widgetId, marquees, reducedMotion);
-        });
-        widgetEngine_->SetRealtimeCompositionCallback([this](
-                const std::wstring& widgetId,
-                bool active) {
-            if (!active)
-            {
-                RemoveRealtimeWidgetComposition(widgetId);
-                return true;
-            }
-            return QueueRealtimeWidgetComposition(widgetId);
         });
         widgetEngine_->SetDesktopOpenCallback([this](const std::wstring& path) {
             return LuaOpenPath(path);

@@ -342,7 +342,7 @@ struct PendingWidgetMarqueeComposition
     bool reducedMotion = false;
 };
 
-struct RealtimeWidgetCompositionItem
+struct DesktopWidgetCompositionItem
 {
     ComPtr<IDCompositionVisual2> visual;
     ComPtr<IDCompositionRectangleClip> clip;
@@ -351,7 +351,9 @@ struct RealtimeWidgetCompositionItem
     UINT width = 0;
     UINT height = 0;
     bool visible = false;
-    bool rootCleared = false;
+    bool backdropRegistered = false;
+    int backdropCornerRadius = 0;
+    int backdropBlurRadius = 0;
 };
 
 /**
@@ -711,6 +713,14 @@ private:
     void RecreateComponentListTextFormat();
     /** @brief 创建或调整 DirectComposition 表面的大小。 @return S_OK 成功，否则为 HRESULT 错误码 */
     HRESULT CreateOrResizeCompositionSurface();
+    /** @brief 创建或调整位于组件层之上的透明桌面前景表面。 */
+    HRESULT CreateOrResizeDesktopForegroundCompositionSurface();
+    /** @brief 将 Dock、弹窗和交互提示绘制到桌面前景表面。 */
+    bool RenderDesktopForegroundComposition(
+        const RECT* updateRect,
+        bool hiddenMode);
+    /** @brief 释放桌面前景 DComp 视觉和表面。 */
+    void ResetDesktopForegroundComposition();
     /** @brief 清理绑定到当前 D2D/DComp 目标的缓存资源。 */
     void ResetCompositionRenderCaches();
     /** @brief 在 DComp 渲染失败后重置 surface 并安排一次恢复重绘。 */
@@ -729,6 +739,10 @@ private:
         bool hiddenMode = false);
     /** @brief 绘制动态叠加层（拖拽图标、放置预览、选择框等）。 @param ctx D2D 设备上下文 */
     void DrawDynamicOverlays(
+        ID2D1DeviceContext* ctx,
+        bool hiddenMode = false);
+    /** @brief 绘制位于所有组件之上的桌面前景内容。 */
+    void DrawDesktopForeground(
         ID2D1DeviceContext* ctx,
         bool hiddenMode = false);
     /** @brief 绘制翻页导航按钮（左右箭头）。 @param ctx D2D 设备上下文 */
@@ -2108,23 +2122,22 @@ private:
     bool FlushPendingWidgetMarqueeComposition();
     bool SyncWidgetMarqueeCompositionVisibility();
     void ResetWidgetMarqueeComposition();
-    bool QueueRealtimeWidgetComposition(
-        const std::wstring& widgetId,
-        bool refreshBackdrop = false);
-    bool FlushPendingRealtimeWidgetComposition();
-    bool HasRealtimeWidgetComposition(
+    bool QueueDesktopWidgetComposition(
+        const std::wstring& widgetId);
+    bool FlushPendingDesktopWidgetComposition();
+    bool HasDesktopWidgetComposition(
         const std::wstring& widgetId) const;
-    void SetRealtimeWidgetCompositionVisible(
+    void SetDesktopWidgetCompositionVisible(
         const std::wstring& widgetId,
         bool visible,
         const RECT& bounds);
-    void MarkRealtimeWidgetCompositionRootCleared(
-        const RECT* updateRect);
-    void KeepRealtimeWidgetBackdropPanels();
-    void RemoveRealtimeWidgetComposition(
+    void KeepDesktopWidgetBackdropPanels();
+    void RemoveDesktopWidgetComposition(
         const std::wstring& widgetId,
         bool invalidateRoot = true);
-    void ResetRealtimeWidgetComposition();
+    void PruneDesktopWidgetCompositions();
+    bool SyncDesktopWidgetCompositionZOrder();
+    void ResetDesktopWidgetComposition();
     bool CommitCompositionAnimationFrame();
     bool FlushPendingCompositionCommit();
     /** @brief 提交并等待桌面/悬浮 Dock 的 DComp 状态真正越过呈现边界。 */
@@ -2630,12 +2643,18 @@ private:
     ComPtr<IDCompositionTarget> dcompTarget_;
     ComPtr<IDCompositionVisual2> dcompVisual_;
     ComPtr<IDCompositionSurface> dcompSurface_;
-    ComPtr<IDCompositionVisual2> realtimeWidgetCompositionLayer_;
-    std::unordered_map<std::wstring, RealtimeWidgetCompositionItem>
-        realtimeWidgetCompositionItems_;
-    std::unordered_map<std::wstring, bool>
-        pendingRealtimeWidgetCompositions_;
-    ComPtr<IDCompositionVisual2> widgetMarqueeCompositionLayer_;
+    ComPtr<IDCompositionVisual2> desktopForegroundCompositionVisual_;
+    ComPtr<IDCompositionSurface> desktopForegroundCompositionSurface_;
+    UINT desktopForegroundCompositionWidth_ = 0;
+    UINT desktopForegroundCompositionHeight_ = 0;
+    ComPtr<IDCompositionVisual2> desktopWidgetCompositionLayer_;
+    std::unordered_map<std::wstring, DesktopWidgetCompositionItem>
+        desktopWidgetCompositionItems_;
+    std::unordered_set<std::wstring>
+        pendingDesktopWidgetCompositions_;
+    std::vector<std::wstring> desktopWidgetCompositionZOrder_;
+    std::unordered_set<std::wstring>
+        desktopWidgetCompositionFallbackIds_;
     std::unordered_map<std::wstring,
         std::unordered_map<std::string, WidgetMarqueeCompositionItem>>
         widgetMarqueeCompositionItems_;
@@ -2644,8 +2663,10 @@ private:
     UINT compositionWidth_ = 0, compositionHeight_ = 0;
     bool compositionRenderRecoveryPending_ = false;
     bool compositionPaintInProgress_ = false;
-    bool realtimeCompositionDrawInProgress_ = false;
-    bool realtimeBackdropRegisteredDuringDraw_ = false;
+    bool desktopWidgetCompositionDrawInProgress_ = false;
+    bool desktopWidgetBackdropRequestedDuringDraw_ = false;
+    float desktopWidgetBackdropCornerRadiusDuringDraw_ = 0.0f;
+    float desktopWidgetBackdropBlurRadiusDuringDraw_ = 0.0f;
     /** @brief DWM 原生 backdrop 子窗口。 */
     DesktopBackdropCompositor desktopBackdropCompositor_;
     /** @brief 拖拽静态场景变化后，下一帧必须完整核对原生毛玻璃面板。 */
