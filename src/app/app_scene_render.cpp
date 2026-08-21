@@ -116,6 +116,7 @@ void DesktopApp::DrawStaticBackground(
             popupOpen || interactionPinned ||
             snowdesktop::widget_visibility_rules::
                 ShouldRetainForKeyboardNavigation(
+                    keyboardNavVisualFocus_,
                     keyboardNavInsideWidget_,
                     keyboardNavWidgetIndex_,
                     widgetIndex);

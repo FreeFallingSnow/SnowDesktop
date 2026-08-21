@@ -1142,6 +1142,7 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                         interactionPinnedWidgetId_ == w.id) ||
                     snowdesktop::widget_visibility_rules::
                         ShouldRetainForKeyboardNavigation(
+                            keyboardNavVisualFocus_,
                             keyboardNavInsideWidget_,
                             keyboardNavWidgetIndex_,
                             widgetIndex);

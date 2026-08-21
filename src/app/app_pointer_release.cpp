@@ -238,6 +238,7 @@ std::uint64_t DesktopApp::HoverOnlyVisibleMask() const
                 interactionPinnedWidgetId_ == widget.id) ||
             snowdesktop::widget_visibility_rules::
                 ShouldRetainForKeyboardNavigation(
+                    keyboardNavVisualFocus_,
                     keyboardNavInsideWidget_,
                     keyboardNavWidgetIndex_,
                     widgetIndex);

@@ -619,12 +619,14 @@ void TestHoverOnlyWidgetVisibility()
         "pointer hover reveals hover-only widget");
     Check(
         visibilityRules::ShouldRetainForKeyboardNavigation(
-            true, 3, 3) &&
+            true, true, 3, 3) &&
             !visibilityRules::ShouldRetainForKeyboardNavigation(
-                false, 3, 3) &&
+                false, true, 3, 3) &&
             !visibilityRules::ShouldRetainForKeyboardNavigation(
-                true, 3, 4),
-        "only the widget owning active inner keyboard navigation remains retained");
+                true, false, 3, 3) &&
+            !visibilityRules::ShouldRetainForKeyboardNavigation(
+                true, true, 3, 4),
+        "only keyboard-driven inner navigation retains its owning widget");
 }
 
 void TestWidgetDesktopSurfaceVisibility()

@@ -25,11 +25,12 @@ constexpr bool ShouldRenderWidget(
 }
 
 constexpr bool ShouldRetainForKeyboardNavigation(
+    bool keyboardVisualFocus,
     bool insideWidget,
     std::size_t navigationWidgetIndex,
     std::size_t widgetIndex)
 {
-    return insideWidget &&
+    return keyboardVisualFocus && insideWidget &&
         navigationWidgetIndex == widgetIndex;
 }
 
