@@ -9,6 +9,8 @@ local MAX_SENSITIVITY = 3.0
 local DEFAULT_SENSITIVITY = 1.5
 local ATTACK = 0.62
 local RELEASE = 0.18
+local IDLE_MINIMUM = 0.018
+local IDLE_VARIATION = 0.022
 
 local function finiteNumber(value, fallback)
     local number = tonumber(value)
@@ -62,6 +64,19 @@ function M.smooth(previous, values, sensitivity, count, reset)
         local coefficient = target[index] >= before and ATTACK or RELEASE
         result[index] = M.clamp(
             before + (target[index] - before) * coefficient, 0, 1, 0)
+    end
+    return result
+end
+
+function M.display(values, count)
+    local length = M.binCount(count)
+    local source = type(values) == "table" and values or {}
+    local result = {}
+    for index = 1, length do
+        local baseline = IDLE_MINIMUM +
+            ((index * 7) % 11) / 10 * IDLE_VARIATION
+        result[index] = math.max(baseline,
+            M.clamp(source[index], 0, 1, 0))
     end
     return result
 end

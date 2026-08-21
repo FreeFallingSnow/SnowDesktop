@@ -68,7 +68,13 @@ end
 
 local function capture(model, reset)
     local snapshot = audioAnalysis:value()
-    model.status = spectrum.status(snapshot)
+    local status = spectrum.status(snapshot)
+    local timestamp = tonumber(snapshot.timestamp) or 0
+    local changed = reset or timestamp ~= model.lastTimestamp or
+        status ~= model.status
+    model.status = status
+    model.lastTimestamp = timestamp
+    if not changed then return end
     if snapshot.available and type(snapshot.value) == "table" and
         type(snapshot.value.spectrum) == "table" then
         model.values = spectrum.smooth(model.values,
@@ -93,6 +99,7 @@ local function setup()
         sensitivity = config.sensitivity,
         values = spectrum.zeroes(config.barCount),
         status = "warming",
+        lastTimestamp = nil,
     }
     capture(model, true)
     return model
@@ -103,7 +110,7 @@ local function spectrumNode(model, opacity)
         layout.cu(10), layout.vmin(5)))
     return view.spectrum({
         key = "audio-spectrum.bars",
-        values = model.values,
+        values = spectrum.display(model.values, model.barCount),
         min = 0,
         max = 1,
         width = "fill",
@@ -138,7 +145,9 @@ local function statusNode(status)
 end
 
 local function viewTree(_context, model)
-    if model.status == "ready" or model.status == "silent" then
+    capture(model, false)
+    if model.status == "ready" or model.status == "silent" or
+        model.status == "warming" then
         return spectrumNode(model)
     end
     if model.status == "stale" then
@@ -156,10 +165,7 @@ local function viewTree(_context, model)
 end
 
 local function event(_context, model, value)
-    if value.kind == "data.change" and
-        value.topic == "audio.output.analysis" then
-        capture(model, false)
-    elseif value.kind == "environment" then
+    if value.kind == "environment" then
         widget.setTitle(l10n.tr("workshop.audio_spectrum.name"))
     end
 end

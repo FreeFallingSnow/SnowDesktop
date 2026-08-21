@@ -38,6 +38,18 @@ return {
         assert(values[1] == 0.4 and values[2] == 0.8)
     end,
 
+    ["display keeps silent bars low and preserves input"] = function()
+        local source = { 0, 0.5, -1, math.huge }
+        local values = spectrum.display(source, 16)
+        assert(#values == 16)
+        assert(values[1] >= 0.018 and values[1] <= 0.04)
+        assert(values[2] == 0.5)
+        assert(values[3] >= 0.018 and values[3] <= 0.04)
+        assert(values[4] >= 0.018 and values[4] <= 0.04)
+        assert(source[1] == 0 and source[2] == 0.5 and
+            source[3] == -1 and source[4] == math.huge)
+    end,
+
     ["device reset discards the previous endpoint bars"] = function()
         local reset = spectrum.smooth({ 1 }, { 0.5 }, 1, 16, true)
         local retained = spectrum.smooth({ 1 }, { 0.5 }, 1, 16, false)
