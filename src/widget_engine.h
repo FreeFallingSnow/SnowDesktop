@@ -1599,6 +1599,13 @@ public:
     bool GetFocusedHostInputCaretRect(RECT& rect) const;
     bool IsHostInputAt(const std::wstring& widgetId, int x, int y,
         std::string_view surface = "desktop") const;
+    bool PrepareHostInputContextMenu(const std::wstring& widgetId,
+        int x, int y, std::string_view surface,
+        bool clipboardHasText,
+        snowdesktop::widget_runtime::HostInputContextMenuState& state);
+    bool ExecuteHostInputEditCommand(
+        snowdesktop::widget_runtime::HostInputEditCommand command,
+        const char* source = "contextMenu");
     bool IsFocusedHostInputAt(const std::wstring& widgetId, int x, int y,
         std::string_view surface = "desktop") const;
     bool HandleHostInputPointerMove(const std::wstring& widgetId, int x, int y,

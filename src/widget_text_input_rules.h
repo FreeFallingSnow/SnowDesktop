@@ -41,6 +41,30 @@ std::optional<std::size_t> HostTextOffsetFromUtf8ByteOffset(
 
 bool HostInputAllowsMutation(bool enabled, bool readOnly) noexcept;
 
+enum class HostInputEditCommand
+{
+    SelectAll,
+    Cut,
+    Copy,
+    Paste,
+};
+
+struct HostInputContextMenuState
+{
+    bool canSelectAll = false;
+    bool canCut = false;
+    bool canCopy = false;
+    bool canPaste = false;
+};
+
+HostInputContextMenuState ResolveHostInputContextMenuState(
+    std::size_t textLength,
+    std::size_t cursor,
+    std::size_t selectionAnchor,
+    bool enabled,
+    bool readOnly,
+    bool clipboardHasText) noexcept;
+
 bool HostTextReplacementFits(
     const std::wstring& text,
     std::size_t selectionStart,

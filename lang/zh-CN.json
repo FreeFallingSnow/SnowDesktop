@@ -557,6 +557,7 @@
     "app.dock.start_menu": "开始菜单",
     "app.dock.quick_search": "快捷搜索",
     "app.menu.paste": "粘贴",
+    "app.menu.select_all": "全选",
     "app.menu.new": "新建",
     "app.menu.refresh": "刷新",
     "app.menu.more_options": "展开更多选项",

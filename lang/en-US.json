@@ -557,6 +557,7 @@
     "app.dock.start_menu": "Start Menu",
     "app.dock.quick_search": "Quick Search",
     "app.menu.paste": "Paste",
+    "app.menu.select_all": "Select all",
     "app.menu.new": "New",
     "app.menu.refresh": "Refresh",
     "app.menu.more_options": "More Options",

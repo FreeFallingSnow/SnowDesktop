@@ -1437,6 +1437,9 @@ private:
         std::optional<RECT> dockRenameAnchor = std::nullopt,
         std::optional<POINT> luaLocalPoint = std::nullopt,
         std::string_view luaSurface = "desktop");
+    bool ShowHostInputContextMenu(POINT screenPoint,
+        const std::wstring& widgetId, POINT localPoint,
+        std::string_view surface = "desktop");
     /** @brief 显示集合组标签上下文菜单。 */
     void ShowCollectionGroupTabContextMenu(
         POINT screenPoint, size_t groupIndex,

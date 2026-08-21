@@ -76,6 +76,49 @@ void TestReadOnlyMutationGate()
         "disabled controls always reject mutations");
 }
 
+void TestContextMenuState()
+{
+    using snowdesktop::widget_runtime::
+        ResolveHostInputContextMenuState;
+
+    const auto editableSelection = ResolveHostInputContextMenuState(
+        8, 6, 2, true, false, true);
+    Check(editableSelection.canSelectAll &&
+            editableSelection.canCut &&
+            editableSelection.canCopy &&
+            editableSelection.canPaste,
+        "editable selected text exposes every context-menu command");
+
+    const auto caretOnly = ResolveHostInputContextMenuState(
+        8, 4, 4, true, false, true);
+    Check(caretOnly.canSelectAll &&
+            !caretOnly.canCut &&
+            !caretOnly.canCopy &&
+            caretOnly.canPaste,
+        "copy and cut require a selection while paste uses the caret");
+
+    const auto readOnly = ResolveHostInputContextMenuState(
+        8, 8, 0, true, true, true);
+    Check(readOnly.canSelectAll &&
+            !readOnly.canCut &&
+            readOnly.canCopy &&
+            !readOnly.canPaste,
+        "read-only inputs allow selection and copy but reject mutations");
+
+    const auto emptyClipboard = ResolveHostInputContextMenuState(
+        8, 8, 0, true, false, false);
+    Check(!emptyClipboard.canPaste,
+        "paste is disabled when the clipboard has no Unicode text");
+
+    const auto emptyInput = ResolveHostInputContextMenuState(
+        0, 9, 4, true, false, true);
+    Check(!emptyInput.canSelectAll &&
+            !emptyInput.canCut &&
+            !emptyInput.canCopy &&
+            emptyInput.canPaste,
+        "empty inputs expose only an available paste operation");
+}
+
 void TestDeferredFocusRequest()
 {
     using snowdesktop::widget_runtime::DeferredHostInputFocus;
@@ -122,6 +165,7 @@ int main()
     TestUtf8Counting();
     TestBoundedReplacement();
     TestReadOnlyMutationGate();
+    TestContextMenuState();
     TestDeferredFocusRequest();
     TestCaretVisibilityRequest();
     if (failures != 0)

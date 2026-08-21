@@ -97,6 +97,7 @@ constexpr UINT kContextRefreshCommand = 41007;
 constexpr UINT kContextSortByNameCommand = 41008;
 constexpr UINT kContextSortByTypeCommand = 41009;
 constexpr UINT kContextMoreCommand = 41010;
+constexpr UINT kContextSelectAllCommand = 41011;
 constexpr UINT kContextGridAddRow = 41012;
 constexpr UINT kContextGridRemoveRow = 41013;
 constexpr UINT kContextGridAddColumn = 41014;

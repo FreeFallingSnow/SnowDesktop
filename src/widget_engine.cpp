@@ -28868,6 +28868,88 @@ bool WidgetEngine::IsHostInputAt(
     return false;
 }
 
+bool WidgetEngine::PrepareHostInputContextMenu(
+    const std::wstring& widgetId, int x, int y,
+    std::string_view surface, bool clipboardHasText,
+    snowdesktop::widget_runtime::HostInputContextMenuState& state)
+{
+    state = {};
+    const int index = FindWidget(widgetId);
+    if (index < 0)
+        return false;
+
+    const std::string normalizedSurface =
+        NormalizeWidgetSurface(surface);
+    auto& controls = widgets_[index].hostControls;
+    const POINT point{ x, y };
+    auto target = std::find_if(
+        controls.rbegin(), controls.rend(), [&](const auto& control) {
+            return control.type == LuaWidget::HostControl::Type::Input &&
+                control.enabled &&
+                HostControlBelongsToSurface(control, normalizedSurface) &&
+                HostControlContainsPoint(control, point);
+        });
+    if (target == controls.rend())
+        return false;
+
+    const std::string targetId = target->id;
+    const bool alreadyFocused = focusedHostInput_.active &&
+        focusedHostInput_.widgetId == widgetId &&
+        focusedHostInput_.id == targetId &&
+        focusedHostInput_.surface == normalizedSurface;
+    WidgetSurfaceScope surfaceScope(
+        d2dState_, normalizedSurface.c_str());
+    if (!RuntimeFocusHostInput(widgetId, targetId, "pointer"))
+        return false;
+
+    target = std::find_if(
+        controls.rbegin(), controls.rend(), [&](const auto& control) {
+            return control.type == LuaWidget::HostControl::Type::Input &&
+                control.id == targetId &&
+                HostControlBelongsToSurface(control, normalizedSurface);
+        });
+    if (target == controls.rend())
+        return false;
+
+    focusedHostInput_.pointerSelecting = false;
+    if (!alreadyFocused)
+    {
+        const size_t previousCursor = focusedHostInput_.cursor;
+        const size_t previousAnchor =
+            focusedHostInput_.selectionAnchor;
+        focusedHostInput_.cursor = HitTestHostInputPosition(
+            *target, widgetId, x, y);
+        focusedHostInput_.selectionAnchor =
+            focusedHostInput_.cursor;
+        focusedHostInput_.caretVisibility.Request();
+        if (focusedHostInput_.controlledSelection &&
+            (previousCursor != focusedHostInput_.cursor ||
+                previousAnchor != focusedHostInput_.selectionAnchor))
+        {
+            DispatchHostInputSelectionChange(
+                focusedHostInput_.widgetId,
+                focusedHostInput_.id,
+                focusedHostInput_.selectionChangeAction,
+                focusedHostInput_.text,
+                previousAnchor, previousCursor,
+                focusedHostInput_.selectionAnchor,
+                focusedHostInput_.cursor,
+                "contextMenu");
+        }
+    }
+
+    state = snowdesktop::widget_runtime::
+        ResolveHostInputContextMenuState(
+            focusedHostInput_.text.size(),
+            focusedHostInput_.cursor,
+            focusedHostInput_.selectionAnchor,
+            target->enabled,
+            focusedHostInput_.readOnly,
+            clipboardHasText);
+    RuntimeInvalidateHost(widgetId);
+    return true;
+}
+
 bool WidgetEngine::GetFocusedHostInputCaretRect(RECT& rect) const
 {
     rect = {};
@@ -29212,6 +29294,208 @@ bool WidgetEngine::HandleHostInputChar(wchar_t ch)
     return true;
 }
 
+bool WidgetEngine::ExecuteHostInputEditCommand(
+    snowdesktop::widget_runtime::HostInputEditCommand command,
+    const char* source)
+{
+    using snowdesktop::widget_runtime::HostInputEditCommand;
+    if (!focusedHostInput_.active)
+        return false;
+
+    const char* eventSource = source && *source
+        ? source : "contextMenu";
+    focusedHostInput_.pendingHighSurrogate = 0;
+    focusedHostInput_.pointerSelecting = false;
+    focusedHostInput_.cursor = std::min(
+        focusedHostInput_.cursor, focusedHostInput_.text.size());
+    focusedHostInput_.selectionAnchor = std::min(
+        focusedHostInput_.selectionAnchor,
+        focusedHostInput_.text.size());
+
+    const std::wstring previousText = focusedHostInput_.text;
+    const size_t previousCursor = focusedHostInput_.cursor;
+    const size_t previousSelectionAnchor =
+        focusedHostInput_.selectionAnchor;
+    const auto hasSelection = [&]() {
+        return focusedHostInput_.selectionAnchor !=
+            focusedHostInput_.cursor;
+    };
+    const auto selectionStart = [&]() {
+        return std::min(focusedHostInput_.selectionAnchor,
+            focusedHostInput_.cursor);
+    };
+    const auto selectionEnd = [&]() {
+        return std::max(focusedHostInput_.selectionAnchor,
+            focusedHostInput_.cursor);
+    };
+    const auto copySelection = [&]() {
+        if (!hasSelection() || !OpenClipboard(nullptr))
+            return false;
+        bool copied = false;
+        EmptyClipboard();
+        const std::wstring selectedText =
+            focusedHostInput_.text.substr(
+                selectionStart(),
+                selectionEnd() - selectionStart());
+        const SIZE_T bytes =
+            (selectedText.size() + 1) * sizeof(wchar_t);
+        HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, bytes);
+        if (memory)
+        {
+            if (void* target = GlobalLock(memory))
+            {
+                memcpy(target, selectedText.c_str(), bytes);
+                GlobalUnlock(memory);
+                if (SetClipboardData(CF_UNICODETEXT, memory))
+                    copied = true;
+                else
+                    GlobalFree(memory);
+            }
+            else
+                GlobalFree(memory);
+        }
+        CloseClipboard();
+        return copied;
+    };
+    const auto dispatchSelectionChange = [&]() {
+        if (!focusedHostInput_.controlledSelection)
+            return;
+        DispatchHostInputSelectionChange(
+            focusedHostInput_.widgetId,
+            focusedHostInput_.id,
+            focusedHostInput_.selectionChangeAction,
+            focusedHostInput_.text,
+            previousSelectionAnchor, previousCursor,
+            focusedHostInput_.selectionAnchor,
+            focusedHostInput_.cursor, eventSource);
+    };
+
+    bool changed = false;
+    switch (command)
+    {
+    case HostInputEditCommand::SelectAll:
+        focusedHostInput_.selectionAnchor = 0;
+        focusedHostInput_.cursor = focusedHostInput_.text.size();
+        focusedHostInput_.caretVisibility.Request();
+        dispatchSelectionChange();
+        RuntimeInvalidateHost(focusedHostInput_.widgetId);
+        return true;
+
+    case HostInputEditCommand::Copy:
+        (void)copySelection();
+        return true;
+
+    case HostInputEditCommand::Cut:
+        if (snowdesktop::widget_runtime::HostInputAllowsMutation(
+                true, focusedHostInput_.readOnly) &&
+            copySelection())
+        {
+            const size_t start = selectionStart();
+            const size_t end = selectionEnd();
+            focusedHostInput_.text.erase(start, end - start);
+            focusedHostInput_.cursor = start;
+            focusedHostInput_.selectionAnchor = start;
+            changed = true;
+        }
+        break;
+
+    case HostInputEditCommand::Paste:
+    {
+        if (!snowdesktop::widget_runtime::HostInputAllowsMutation(
+                true, focusedHostInput_.readOnly))
+            return true;
+        std::wstring pasted;
+        bool pasteExceededLimit = false;
+        const std::size_t pasteUnitLimit =
+            focusedHostInput_.maximumUtf8Bytes == 0
+            ? (std::numeric_limits<std::size_t>::max)()
+            : focusedHostInput_.maximumUtf8Bytes + 1;
+        if (OpenClipboard(nullptr))
+        {
+            if (HANDLE data = GetClipboardData(CF_UNICODETEXT))
+            {
+                if (const wchar_t* clipboardText =
+                        static_cast<const wchar_t*>(GlobalLock(data)))
+                {
+                    for (const wchar_t* cursor = clipboardText;
+                        *cursor; ++cursor)
+                    {
+                        if (*cursor == L'\r')
+                            continue;
+                        const std::wstring_view normalized =
+                            *cursor == L'\n'
+                            ? (focusedHostInput_.multiline
+                                ? std::wstring_view(L"\n")
+                                : std::wstring_view(L" "))
+                            : (*cursor == L'\t'
+                                ? (focusedHostInput_.multiline
+                                    ? std::wstring_view(L"    ")
+                                    : std::wstring_view(L" "))
+                                : std::wstring_view(cursor, 1));
+                        if (normalized.size() > pasteUnitLimit -
+                                std::min(pasted.size(), pasteUnitLimit))
+                        {
+                            pasteExceededLimit = true;
+                            break;
+                        }
+                        pasted.append(normalized);
+                    }
+                    GlobalUnlock(data);
+                }
+            }
+            CloseClipboard();
+        }
+        if (!pasted.empty() && !pasteExceededLimit)
+        {
+            const size_t start = selectionStart();
+            const size_t end = selectionEnd();
+            size_t nextCursor = focusedHostInput_.cursor;
+            if (snowdesktop::widget_runtime::
+                    TryApplyHostTextReplacement(
+                        focusedHostInput_.text, start, end,
+                        pasted,
+                        focusedHostInput_.maximumUtf8Bytes,
+                        nextCursor))
+            {
+                focusedHostInput_.cursor = nextCursor;
+                focusedHostInput_.selectionAnchor = nextCursor;
+                changed = true;
+            }
+        }
+        break;
+    }
+    }
+
+    if (changed)
+    {
+        focusedHostInput_.caretVisibility.Request();
+        if (focusedHostInput_.liveUpdate)
+        {
+            if (focusedHostInput_.controlled)
+            {
+                DispatchHostInputChange(
+                    focusedHostInput_.widgetId,
+                    focusedHostInput_.id,
+                    focusedHostInput_.changeAction,
+                    previousText, focusedHostInput_.text,
+                    focusedHostInput_.numeric,
+                    focusedHostInput_.minimum,
+                    focusedHostInput_.maximum,
+                    false, false, eventSource);
+            }
+            else
+            {
+                RuntimeSetStorageValue(
+                    focusedHostInput_.widgetId,
+                    focusedHostInput_.storageKey,
+                    WidgetWideToUtf8(focusedHostInput_.text));
+            }
+        }
+        RuntimeInvalidateHost(focusedHostInput_.widgetId);
+    }
+    return true;
+}
+
 bool WidgetEngine::HandleHostInputKey(WPARAM key)
 {
     if (!focusedHostInput_.active) return false;
@@ -29227,6 +29511,23 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
             focusedHostInput_.surface);
         return true;
     }
+    if (ctrl && key == 'A')
+        return ExecuteHostInputEditCommand(
+            snowdesktop::widget_runtime::
+                HostInputEditCommand::SelectAll,
+            "keyboard");
+    if (ctrl && key == 'X')
+        return ExecuteHostInputEditCommand(
+            snowdesktop::widget_runtime::HostInputEditCommand::Cut,
+            "keyboard");
+    if (ctrl && key == 'C')
+        return ExecuteHostInputEditCommand(
+            snowdesktop::widget_runtime::HostInputEditCommand::Copy,
+            "keyboard");
+    if (ctrl && key == 'V')
+        return ExecuteHostInputEditCommand(
+            snowdesktop::widget_runtime::HostInputEditCommand::Paste,
+            "keyboard");
     focusedHostInput_.cursor = std::min(
         focusedHostInput_.cursor, focusedHostInput_.text.size());
     focusedHostInput_.selectionAnchor = std::min(
@@ -29313,106 +29614,6 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
         focusedHostInput_.selectionAnchor =
             focusedHostInput_.cursor;
         changed = true;
-    }
-    else if (ctrl && key == 'A')
-    {
-        focusedHostInput_.selectionAnchor = 0;
-        focusedHostInput_.cursor = focusedHostInput_.text.size();
-        focusedHostInput_.caretVisibility.Request();
-        dispatchSelectionChange();
-        RuntimeInvalidateHost(focusedHostInput_.widgetId);
-        return true;
-    }
-    else if (ctrl && (key == 'C' || key == 'X'))
-    {
-        bool copied = false;
-        if (hasSelection() && OpenClipboard(nullptr))
-        {
-            EmptyClipboard();
-            const std::wstring selectedText =
-                focusedHostInput_.text.substr(
-                    selectionStart(),
-                    selectionEnd() - selectionStart());
-            const SIZE_T bytes =
-                (selectedText.size() + 1) * sizeof(wchar_t);
-            HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, bytes);
-            if (memory)
-            {
-                if (void* target = GlobalLock(memory))
-                {
-                    memcpy(target, selectedText.c_str(), bytes);
-                    GlobalUnlock(memory);
-                    if (SetClipboardData(CF_UNICODETEXT, memory))
-                        copied = true;
-                    else
-                        GlobalFree(memory);
-                }
-                else
-                    GlobalFree(memory);
-            }
-            CloseClipboard();
-        }
-        if (key == 'X' && copied &&
-            snowdesktop::widget_runtime::HostInputAllowsMutation(
-                true, focusedHostInput_.readOnly))
-            changed = eraseSelection();
-    }
-    else if (ctrl && key == 'V')
-    {
-        if (!snowdesktop::widget_runtime::HostInputAllowsMutation(
-                true, focusedHostInput_.readOnly)) return true;
-        std::wstring pasted;
-        bool pasteExceededLimit = false;
-        const std::size_t pasteUnitLimit =
-            focusedHostInput_.maximumUtf8Bytes == 0
-            ? (std::numeric_limits<std::size_t>::max)()
-            : focusedHostInput_.maximumUtf8Bytes + 1;
-        if (OpenClipboard(nullptr))
-        {
-            if (HANDLE data = GetClipboardData(CF_UNICODETEXT))
-            {
-                if (const wchar_t* source = static_cast<const wchar_t*>(GlobalLock(data)))
-                {
-                    for (; *source; ++source)
-                    {
-                        if (*source == L'\r') continue;
-                        const std::wstring_view normalized = *source == L'\n'
-                            ? (focusedHostInput_.multiline
-                                ? std::wstring_view(L"\n")
-                                : std::wstring_view(L" "))
-                            : (*source == L'\t'
-                                ? (focusedHostInput_.multiline
-                                    ? std::wstring_view(L"    ")
-                                    : std::wstring_view(L" "))
-                                : std::wstring_view(source, 1));
-                        if (normalized.size() > pasteUnitLimit -
-                                std::min(pasted.size(), pasteUnitLimit))
-                        {
-                            pasteExceededLimit = true;
-                            break;
-                        }
-                        pasted.append(normalized);
-                    }
-                    GlobalUnlock(data);
-                }
-            }
-            CloseClipboard();
-        }
-        if (!pasted.empty() && !pasteExceededLimit)
-        {
-            const size_t start = selectionStart();
-            const size_t end = selectionEnd();
-            size_t nextCursor = focusedHostInput_.cursor;
-            if (snowdesktop::widget_runtime::TryApplyHostTextReplacement(
-                    focusedHostInput_.text, start, end, pasted,
-                    focusedHostInput_.maximumUtf8Bytes, nextCursor))
-            {
-                focusedHostInput_.cursor = nextCursor;
-                focusedHostInput_.selectionAnchor =
-                    focusedHostInput_.cursor;
-                changed = true;
-            }
-        }
     }
     else if (key == VK_BACK)
     {

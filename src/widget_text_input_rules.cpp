@@ -162,6 +162,26 @@ bool HostInputAllowsMutation(bool enabled, bool readOnly) noexcept
     return enabled && !readOnly;
 }
 
+HostInputContextMenuState ResolveHostInputContextMenuState(
+    std::size_t textLength,
+    std::size_t cursor,
+    std::size_t selectionAnchor,
+    bool enabled,
+    bool readOnly,
+    bool clipboardHasText) noexcept
+{
+    cursor = std::min(cursor, textLength);
+    selectionAnchor = std::min(selectionAnchor, textLength);
+    const bool hasSelection = cursor != selectionAnchor;
+    const bool mutableInput = HostInputAllowsMutation(enabled, readOnly);
+    return {
+        textLength != 0,
+        mutableInput && hasSelection,
+        hasSelection,
+        mutableInput && clipboardHasText,
+    };
+}
+
 bool HostTextReplacementFits(
     const std::wstring& text,
     std::size_t selectionStart,

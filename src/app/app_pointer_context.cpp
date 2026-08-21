@@ -56,6 +56,91 @@ bool DesktopApp::HandlePageNavClick(POINT point)
     return true;
 }
 
+bool DesktopApp::ShowHostInputContextMenu(
+    POINT screenPoint, const std::wstring& widgetId,
+    POINT localPoint, std::string_view surface)
+{
+    if (!widgetEngine_)
+        return false;
+
+    snowdesktop::widget_runtime::HostInputContextMenuState state;
+    if (!widgetEngine_->PrepareHostInputContextMenu(
+            widgetId, localPoint.x, localPoint.y, surface,
+            IsClipboardFormatAvailable(CF_UNICODETEXT) != FALSE,
+            state))
+        return false;
+
+    const std::wstring previousPinnedWidgetId =
+        interactionPinnedWidgetId_;
+    interactionPinnedWidgetId_ = widgetId;
+    ClearSelection();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+
+    PrepareMenuIconsForPoint(screenPoint);
+    HMENU menu = CreatePopupMenu();
+    if (!menu)
+    {
+        interactionPinnedWidgetId_ = previousPinnedWidgetId;
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return true;
+    }
+    const auto flags = [](bool enabled) {
+        return MF_STRING | (enabled ? 0 : MF_GRAYED);
+    };
+    AppendMenuW(menu, flags(state.canCut),
+        kContextCutCommand, _LW("app.menu.cut"));
+    AppendMenuW(menu, flags(state.canCopy),
+        kContextCopyCommand, _LW("app.menu.copy"));
+    AppendMenuW(menu, flags(state.canPaste),
+        kContextPasteCommand, _LW("app.menu.paste"));
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, flags(state.canSelectAll),
+        kContextSelectAllCommand, _LW("app.menu.select_all"));
+
+    SetMenuItemIcon(menu, kContextCutCommand, L"\uf0c4");
+    SetMenuItemIcon(menu, kContextCopyCommand, L"\uf0c5");
+    SetMenuItemIcon(menu, kContextPasteCommand, L"\uf0ea");
+    SetMenuItemQuickAction(menu, kContextCutCommand);
+    SetMenuItemQuickAction(menu, kContextCopyCommand);
+    SetMenuItemQuickAction(menu, kContextPasteCommand);
+
+    SetForegroundWindow(hwnd_);
+    const UINT command = ShowModernMenu(
+        menu, screenPoint, hwnd_);
+    DestroyMenu(menu);
+    ClearMenuIcons();
+    RestoreDesktopWindowLayer();
+    RestoreInteractionInputFocus();
+
+    using snowdesktop::widget_runtime::HostInputEditCommand;
+    switch (command)
+    {
+    case kContextSelectAllCommand:
+        widgetEngine_->ExecuteHostInputEditCommand(
+            HostInputEditCommand::SelectAll);
+        break;
+    case kContextCutCommand:
+        widgetEngine_->ExecuteHostInputEditCommand(
+            HostInputEditCommand::Cut);
+        break;
+    case kContextCopyCommand:
+        widgetEngine_->ExecuteHostInputEditCommand(
+            HostInputEditCommand::Copy);
+        break;
+    case kContextPasteCommand:
+        widgetEngine_->ExecuteHostInputEditCommand(
+            HostInputEditCommand::Paste);
+        break;
+    default:
+        break;
+    }
+
+    interactionPinnedWidgetId_ = previousPinnedWidgetId;
+    UpdateHostInputImePosition();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+    return true;
+}
+
 /**
  * @brief 处理鼠标右键释放事件（显示上下文菜单）
  * @param lp LPARAM（含鼠标坐标）
@@ -81,11 +166,18 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
                     luaWidgetPanelRequest_.widgetId);
                 if (widgetIndex < widgets_.size())
                 {
-                    ShowWidgetContextMenu(screenPt, widgetIndex,
-                        std::nullopt,
-                        POINT{ pt.x - content.left,
-                            pt.y - content.top },
-                        luaWidgetPanelRequest_.surface);
+                    const POINT localPoint{
+                        pt.x - content.left,
+                        pt.y - content.top };
+                    if (!ShowHostInputContextMenu(
+                            screenPt, widgets_[widgetIndex].id,
+                            localPoint,
+                            luaWidgetPanelRequest_.surface))
+                    {
+                        ShowWidgetContextMenu(screenPt, widgetIndex,
+                            std::nullopt, localPoint,
+                            luaWidgetPanelRequest_.surface);
+                    }
                 }
             }
             return;
@@ -202,6 +294,20 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
             ShowDockContextMenu(screenPt);
             return;
         }
+    }
+
+    const size_t standaloneInputWidget =
+        HitTestStandaloneWidgetIndex(pt);
+    if (standaloneInputWidget < widgets_.size() &&
+        widgets_[standaloneInputWidget].type ==
+            DesktopWidgetType::LuaScript)
+    {
+        const RECT frame = GetStandaloneWidgetFrameRect(
+            widgets_[standaloneInputWidget]);
+        if (ShowHostInputContextMenu(
+                screenPt, widgets_[standaloneInputWidget].id,
+                POINT{ pt.x - frame.left, pt.y - frame.top }))
+            return;
     }
 
     // A hover-only widget must remain visible while any context menu opened
