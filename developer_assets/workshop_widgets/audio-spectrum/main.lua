@@ -187,43 +187,20 @@ local function spectrumNode(model)
         style = dataSeriesStyle(model),
         accessibility = dataSeriesAccessibility(false),
     }
-    if model.alignment == "bottom" then
-        common.min = 0
-        common.max = 1
+    local plan = spectrum.seriesPlan(model.alignment)
+    common.min = plan.minimum
+    common.max = plan.maximum
+    if plan.negate then
+        common.values = spectrum.negate(values)
+    end
+    if plan.renderer == "spectrum" then
         return view.spectrum(common)
     end
 
-    local negativeValues = spectrum.negate(values)
-    if model.alignment == "top" then
-        common.values = negativeValues
-        common.min = -1
-        common.max = 0
-        return view.barChart(common)
-    end
-
-    common.min = -1
-    common.max = 1
-    local lower = {
-        key = "audio-spectrum.bars.lower",
-        values = negativeValues,
-        min = -1,
-        max = 1,
-        width = "fill",
-        height = "fill",
-        padding = padding,
-        fillOpacity = 0.94,
-        style = dataSeriesStyle(model),
-        accessibility = dataSeriesAccessibility(true),
-    }
-    return view.stack({
-        key = "audio-spectrum.centered",
-        width = "fill",
-        height = "fill",
-        children = {
-            view.barChart(common),
-            view.barChart(lower),
-        },
-    })
+    -- Center alignment keeps one simple set of bars. A symmetric mirrored
+    -- chart doubles every sample and makes the spectrum look like a waveform;
+    -- using the chart's zero baseline places the same bars at mid-height.
+    return view.barChart(common)
 end
 
 local function statusNode(status)

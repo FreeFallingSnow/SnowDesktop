@@ -41,6 +41,32 @@ function M.alignment(value)
     return "center"
 end
 
+function M.seriesPlan(value)
+    local alignment = M.alignment(value)
+    if alignment == "bottom" then
+        return {
+            renderer = "spectrum",
+            minimum = 0,
+            maximum = 1,
+            negate = false,
+        }
+    end
+    if alignment == "top" then
+        return {
+            renderer = "barChart",
+            minimum = -1,
+            maximum = 0,
+            negate = true,
+        }
+    end
+    return {
+        renderer = "barChart",
+        minimum = -1,
+        maximum = 1,
+        negate = false,
+    }
+end
+
 function M.color(value, fallback)
     local default = finiteNumber(fallback, 0xFFFFFF)
     local color = finiteNumber(value, default)
