@@ -445,6 +445,10 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
 {
     keyboardNavVisualFocus_ = true;
     if (keyboardNavWidgetIndex_ >= widgets_.size()) return;
+    const auto clearSelectionForKeyboardNavigation = [this]() {
+        ClearSelection();
+        keyboardNavVisualFocus_ = true;
+    };
     const size_t navigationWidgetIndex =
         keyboardNavWidgetIndex_;
     auto& widget = widgets_[keyboardNavWidgetIndex_];
@@ -486,7 +490,7 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
         auto focusSearch = [&]() {
             if (!searchAvailable) return;
             group->SetSearchFocused(false);
-            ClearSelection();
+            clearSelectionForKeyboardNavigation();
             keyboardNavInsideWidget_ = true;
             keyboardNavWidgetIndex_ = groupIndex;
             keyboardNavMemberIndex_ = -1;
@@ -498,7 +502,7 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
             bool activate) {
             if (index >= sourceIds.size()) return;
             group->SetSearchFocused(false);
-            ClearSelection();
+            clearSelectionForKeyboardNavigation();
             if (activate)
             {
                 widget.activeCategoryId =
@@ -550,7 +554,7 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
                 index >= categoryIds.size())
                 return;
             group->SetSearchFocused(false);
-            ClearSelection();
+            clearSelectionForKeyboardNavigation();
             if (activate)
             {
                 activeData->activeCategoryId =
@@ -585,7 +589,7 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
         auto selectItem = [&](size_t index) {
             if (index >= itemCount) return;
             group->SetSearchFocused(false);
-            ClearSelection();
+            clearSelectionForKeyboardNavigation();
             if (groupSearching)
             {
                 Item* item =
@@ -768,7 +772,7 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
         auto focusSearch = [&]() {
             if (!searchAvailable) return;
             group->SetSearchFocused(false);
-            ClearSelection();
+            clearSelectionForKeyboardNavigation();
             keyboardNavInsideWidget_ = true;
             keyboardNavWidgetIndex_ = groupWidgetIndex;
             keyboardNavMemberIndex_ = -1;
@@ -780,7 +784,7 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
             bool activate) {
             if (tabIndex >= childIds.size()) return;
             group->SetSearchFocused(false);
-            ClearSelection();
+            clearSelectionForKeyboardNavigation();
             if (activate)
             {
                 widget.activeCategoryId =
@@ -842,7 +846,7 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
                 const size_t itemIndex =
                     FindItemIndexByKey(keys.front());
                 if (itemIndex >= items_.size()) return;
-                ClearSelection();
+                clearSelectionForKeyboardNavigation();
                 items_[itemIndex].selected = true;
                 keyboardNavInsideWidget_ = true;
                 keyboardNavWidgetIndex_ =
@@ -1020,7 +1024,7 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
     auto focusSearch = [&]() {
         if (!searchAvailable) return;
         categorizedWidget->SetSearchFocused(false);
-        ClearSelection();
+        clearSelectionForKeyboardNavigation();
         keyboardNavInsideWidget_ = true;
         keyboardNavWidgetIndex_ = navigationWidgetIndex;
         keyboardNavMemberIndex_ = -1;
@@ -1042,7 +1046,7 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
             index >= categoryIds.size())
             return;
         categorizedWidget->SetSearchFocused(false);
-        ClearSelection();
+        clearSelectionForKeyboardNavigation();
         if (activate)
         {
             widget.activeCategoryId = categoryIds[index];
@@ -1087,7 +1091,7 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
         }
         if (categorizedWidget)
             categorizedWidget->SetSearchFocused(false);
-        ClearSelection();
+        clearSelectionForKeyboardNavigation();
         if (selectedEntryIndex <
             widget.folderEntries.size())
             widget.folderEntries[
