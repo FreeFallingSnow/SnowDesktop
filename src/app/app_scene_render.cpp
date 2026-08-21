@@ -92,8 +92,11 @@ void DesktopApp::DrawStaticBackground(
     }
 
     // Widgets
-    for (auto& widgetData : widgets_)
+    for (size_t widgetIndex = 0;
+         widgetIndex < widgets_.size();
+         ++widgetIndex)
     {
+        auto& widgetData = widgets_[widgetIndex];
         const bool hasDesktopBounds =
             !IsRectEmptyRect(widgetData.bounds);
         // Dock-exclusive and grouped collections deliberately keep an empty
@@ -105,7 +108,7 @@ void DesktopApp::DrawStaticBackground(
             GetStandaloneWidgetFrameRect(widgetData);
         const bool popupOpen =
             popupWidgetIndex_ < widgets_.size() &&
-            &widgetData == &widgets_[popupWidgetIndex_];
+            widgetIndex == popupWidgetIndex_;
         const bool interactionPinned =
             !interactionPinnedWidgetId_.empty() &&
             widgetData.id == interactionPinnedWidgetId_;
@@ -118,6 +121,7 @@ void DesktopApp::DrawStaticBackground(
                 dragDropController_.IsExternalDragActive(),
                 widgetAction_ == WidgetAction::Move,
                 widgetData.selected,
+                HasSelectedFilesInWidget(widgetIndex),
                 interactionRetained,
                 PtInRect(&widgetFrame, lastMousePoint_) != FALSE);
         const bool desktopSurfaceVisible =

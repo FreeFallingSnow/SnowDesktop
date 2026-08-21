@@ -1239,6 +1239,8 @@ private:
      * @return 命中项的索引，未命中返回 -1
      */
     int HitTestItem(POINT pt) const;
+    /** @brief 判断组件或其分组子组件中是否包含选中的文件。 */
+    bool HasSelectedFilesInWidget(size_t widgetIndex) const;
     /**
      * @brief 对坐标点进行命中测试，返回桌面图标对象指针。
      * @param pt 客户端坐标点

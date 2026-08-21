@@ -579,31 +579,43 @@ void TestHoverOnlyWidgetVisibility()
 {
     Check(
         visibilityRules::ShouldRenderWidget(
-            false, false, false, false, false, false, false),
+            false, false, false, false, false, false, false,
+            false),
         "regular widget remains visible while idle");
     Check(
         !visibilityRules::ShouldRenderWidget(
-            true, false, false, false, false, false, false),
+            true, false, false, false, false, false, false,
+            false),
         "hover-only widget remains hidden while idle");
     Check(
         visibilityRules::ShouldRenderWidget(
-            true, true, false, false, false, false, false),
+            true, true, false, false, false, false, false,
+            false),
         "item drag reveals hover-only widget");
     Check(
         visibilityRules::ShouldRenderWidget(
-            true, false, false, true, false, false, false),
+            true, false, false, true, false, false, false,
+            false),
         "widget move reveals hover-only widget");
     Check(
         visibilityRules::ShouldRenderWidget(
-            true, false, false, false, true, false, false),
+            true, false, false, false, true, false, false,
+            false),
         "selected hover-only widget remains visible");
     Check(
         visibilityRules::ShouldRenderWidget(
-            true, false, false, false, false, true, false),
+            true, false, false, false, false, true, false,
+            false),
+        "hover-only widget with selected files remains visible");
+    Check(
+        visibilityRules::ShouldRenderWidget(
+            true, false, false, false, false, false, true,
+            false),
         "retained inner rename reveals hover-only widget");
     Check(
         visibilityRules::ShouldRenderWidget(
-            true, false, false, false, false, false, true),
+            true, false, false, false, false, false, false,
+            true),
         "pointer hover reveals hover-only widget");
 }
 

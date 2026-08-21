@@ -1148,6 +1148,7 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                             dragDropController_.IsExternalDragActive(),
                             widgetAction_ == WidgetAction::Move,
                             w.selected,
+                            HasSelectedFilesInWidget(widgetIndex),
                             interactionRetained,
                             pointerInside);
                 };

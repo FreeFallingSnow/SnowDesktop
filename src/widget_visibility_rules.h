@@ -8,6 +8,7 @@ constexpr bool ShouldRenderWidget(
     bool externalDragActive,
     bool widgetMoveActive,
     bool widgetSelected,
+    bool widgetFileSelected,
     bool interactionRetained,
     bool pointerInside)
 {
@@ -16,6 +17,7 @@ constexpr bool ShouldRenderWidget(
         externalDragActive ||
         widgetMoveActive ||
         widgetSelected ||
+        widgetFileSelected ||
         interactionRetained ||
         pointerInside;
 }

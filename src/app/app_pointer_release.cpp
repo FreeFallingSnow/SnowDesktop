@@ -245,6 +245,7 @@ std::uint64_t DesktopApp::HoverOnlyVisibleMask() const
                     dragDropController_.IsExternalDragActive(),
                     widgetAction_ == WidgetAction::Move,
                     widget.selected,
+                    HasSelectedFilesInWidget(widgetIndex),
                     interactionRetained,
                     PtInRect(&frame, lastMousePoint_) != FALSE))
         {

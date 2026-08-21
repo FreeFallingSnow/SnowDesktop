@@ -14,6 +14,47 @@ void DesktopApp::ClearSelection()
     keyboardNavFileGroupCategoryTabs_ = false;
 }
 
+bool DesktopApp::HasSelectedFilesInWidget(
+    size_t widgetIndex) const
+{
+    if (widgetIndex >= widgets_.size())
+        return false;
+
+    const auto hasDirectSelection = [&](const DesktopWidget& widget) {
+        for (const auto& key : widget.itemKeys)
+        {
+            const size_t itemIndex =
+                FindItemIndexByKey(key);
+            if (itemIndex < items_.size() &&
+                items_[itemIndex].selected)
+                return true;
+        }
+        return std::any_of(
+            widget.folderEntries.begin(),
+            widget.folderEntries.end(),
+            [](const FolderEntry& entry) {
+                return entry.selected;
+            });
+    };
+
+    const auto& widget = widgets_[widgetIndex];
+    if (hasDirectSelection(widget))
+        return true;
+    if (widget.type != DesktopWidgetType::CollectionGroup &&
+        widget.type != DesktopWidgetType::FileGroup)
+        return false;
+
+    for (const auto& childId : widget.childWidgetIds)
+    {
+        const size_t childIndex =
+            FindWidgetIndexById(childId);
+        if (childIndex < widgets_.size() &&
+            hasDirectSelection(widgets_[childIndex]))
+            return true;
+    }
+    return false;
+}
+
 /**
  * @brief 根据当前选中状态同步键盘导航上下文
  *
