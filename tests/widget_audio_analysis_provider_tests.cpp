@@ -1,5 +1,6 @@
 #include "widget_audio_analysis_provider.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
@@ -36,6 +37,10 @@ bool WaitFor(Predicate predicate)
 void TestOnDemandCaptureLifecycle()
 {
     WidgetAudioAnalysisProvider provider;
+    std::atomic<int> wakeCount{ 0 };
+    provider.SetChangedCallback([&wakeCount] {
+        wakeCount.fetch_add(1, std::memory_order_relaxed);
+    });
     Check(provider.Start(20ms) && provider.Running(),
         "the first analysis request must start its capture worker");
     Check(WaitFor([&] {
@@ -72,8 +77,16 @@ void TestOnDemandCaptureLifecycle()
             Check(value >= 0.0 && value <= 1.0,
                 "spectrum bins must stay normalized");
     }
+    Check(wakeCount.load(std::memory_order_relaxed) == 1,
+        "analysis publishes must coalesce into one pending UI wake");
     Check(provider.DrainChanged() && !provider.DrainChanged(),
         "analysis changes must be coalesced and drainable");
+    Check(WaitFor([&wakeCount] {
+            return wakeCount.load(std::memory_order_relaxed) >= 2;
+        }),
+        "draining an analysis change must re-arm the next UI wake");
+    Check(provider.DrainChanged(),
+        "the re-armed UI wake must correspond to a drainable change");
     provider.Stop();
     Check(!provider.Running() && !provider.ResourcesActive() &&
             !provider.Snapshot(),

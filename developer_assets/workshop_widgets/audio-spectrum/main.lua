@@ -103,42 +103,23 @@ local function setup()
     return model
 end
 
-local function curveNode(model, key, values, hidden)
+local function spectrumNode(model)
     local padding = math.max(layout.cu(4), math.min(
-        layout.cu(10), layout.vmin(4)))
-    local thickness = math.max(layout.cu(1.2), math.min(
-        layout.cu(2), layout.vmin(1)))
-    return view.waveform({
-        key = key,
-        values = values,
-        min = -1,
+        layout.cu(10), layout.vmin(5)))
+    return view.spectrum({
+        key = "audio-spectrum.bars",
+        values = spectrum.display(model.values, model.barCount),
+        min = 0,
         max = 1,
         width = "fill",
         height = "fill",
         padding = padding,
-        thickness = thickness,
-        fillOpacity = 0.9,
-        trackOpacity = 0,
+        fillOpacity = 0.94,
         style = {
             foreground = model.color,
         },
         accessibility = {
             label = l10n.tr("workshop.audio_spectrum.spectrum_label"),
-            hidden = hidden,
-        },
-    })
-end
-
-local function spectrumNode(model)
-    local upper = spectrum.mirroredCurve(model.values, model.barCount)
-    return view.stack({
-        key = "audio-spectrum.curves",
-        width = "fill",
-        height = "fill",
-        children = {
-            curveNode(model, "audio-spectrum.upper", upper, false),
-            curveNode(model, "audio-spectrum.lower",
-                spectrum.invert(upper), true),
         },
     })
 end

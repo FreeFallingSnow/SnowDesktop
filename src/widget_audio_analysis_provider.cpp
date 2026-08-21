@@ -319,6 +319,13 @@ bool WidgetAudioAnalysisProvider::Start(
     return true;
 }
 
+void WidgetAudioAnalysisProvider::SetChangedCallback(
+    ChangedCallback callback)
+{
+    std::scoped_lock lock(mutex_);
+    changedCallback_ = std::move(callback);
+}
+
 void WidgetAudioAnalysisProvider::Stop()
 {
     if (worker_.joinable())
@@ -372,12 +379,19 @@ WidgetAudioAnalysisProvider::Configuration() const
 void WidgetAudioAnalysisProvider::Publish(
     WidgetAudioAnalysisDataSnapshot snapshot)
 {
-    std::scoped_lock lock(mutex_);
-    snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot), snapshot_,
-        semanticDebouncer_);
-    snapshot.revision = snapshot_ ? snapshot_->revision + 1 : 1;
-    snapshot_ = std::move(snapshot);
-    changed_ = true;
+    ChangedCallback changedCallback;
+    {
+        std::scoped_lock lock(mutex_);
+        snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot), snapshot_,
+            semanticDebouncer_);
+        snapshot.revision = snapshot_ ? snapshot_->revision + 1 : 1;
+        snapshot_ = std::move(snapshot);
+        if (!changed_)
+            changedCallback = changedCallback_;
+        changed_ = true;
+    }
+    if (changedCallback)
+        changedCallback();
 }
 
 void WidgetAudioAnalysisProvider::WorkerMain(std::stop_token stopToken)

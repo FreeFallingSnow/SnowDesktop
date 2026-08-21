@@ -847,6 +847,16 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             [this](const LogicalSlotPickerRequest& request) {
                 return OpenLuaLogicalSlotPicker(request);
             });
+        const HWND widgetAudioWakeWindow =
+            controlHwnd_ ? controlHwnd_ : hwnd_;
+        widgetEngine_->SetAudioAnalysisWakeCallback(
+            [widgetAudioWakeWindow]() {
+                if (widgetAudioWakeWindow)
+                {
+                    (void)PostMessageW(widgetAudioWakeWindow,
+                        kWidgetAudioAnalysisWakeMessage, 0, 0);
+                }
+            });
         widgetEngine_->SetWidgetTimerRequestCallback([this](const std::wstring& widgetId, UINT intervalMs) -> UINT_PTR {
             if (!hwnd_) return 0;
             const snowdesktop::UiScheduleToken token =

@@ -11434,6 +11434,17 @@ WidgetEngine::~WidgetEngine()
     Shutdown();
 }
 
+void WidgetEngine::SetAudioAnalysisWakeCallback(
+    AudioAnalysisWakeCallback callback)
+{
+    audioAnalysisWakeCallback_ = std::move(callback);
+    if (widgetAudioAnalysisProvider_)
+    {
+        widgetAudioAnalysisProvider_->SetChangedCallback(
+            audioAnalysisWakeCallback_);
+    }
+}
+
 void WidgetEngine::InitializeWidgetDataBroker()
 {
     using snowdesktop::widget_runtime::DataProviderDescriptor;
@@ -11474,6 +11485,8 @@ void WidgetEngine::InitializeWidgetDataBroker()
             snowdesktop::widget_runtime::WidgetSystemDataProvider>();
         widgetAudioAnalysisProvider_ = std::make_unique<
             snowdesktop::widget_runtime::WidgetAudioAnalysisProvider>();
+        widgetAudioAnalysisProvider_->SetChangedCallback(
+            audioAnalysisWakeCallback_);
     }
 }
 
@@ -11582,6 +11595,27 @@ void WidgetEngine::ApplyWidgetDataBrokerActions()
         }
     }
     ReconcileFilesystemWatches();
+}
+
+void WidgetEngine::DrainAudioAnalysisChanges()
+{
+    if (!widgetAudioAnalysisProvider_ ||
+        !widgetAudioAnalysisProvider_->DrainChanged())
+    {
+        return;
+    }
+    for (const auto& widget : widgets_)
+    {
+        if (!widget.valid || widget.preview) continue;
+        const bool subscribed = std::any_of(
+            widget.dataSubscriptions.begin(),
+            widget.dataSubscriptions.end(),
+            [](const auto& entry) {
+                return entry.second == "audio.output.analysis";
+            });
+        if (subscribed)
+            RuntimeInvalidateHost(widget.widgetId);
+    }
 }
 
 void WidgetEngine::ReconcileFilesystemWatches()
@@ -21730,6 +21764,11 @@ void WidgetEngine::OnNotificationAction(
     RuntimeInvalidateHost(owner->widgetId);
 }
 
+void WidgetEngine::OnAudioAnalysisWake()
+{
+    DrainAudioAnalysisChanges();
+}
+
 void WidgetEngine::TickRuntime()
 {
     const auto healthNow = snowdesktop::widget_runtime::
@@ -21868,22 +21907,7 @@ void WidgetEngine::TickRuntime()
                 RuntimeInvalidateHost(widgetId);
         }
     }
-    if (widgetAudioAnalysisProvider_ &&
-        widgetAudioAnalysisProvider_->DrainChanged())
-    {
-        for (const auto& widget : widgets_)
-        {
-            if (!widget.valid || widget.preview) continue;
-            const bool subscribed = std::any_of(
-                widget.dataSubscriptions.begin(),
-                widget.dataSubscriptions.end(),
-                [](const auto& entry) {
-                    return entry.second == "audio.output.analysis";
-                });
-            if (subscribed)
-                RuntimeInvalidateHost(widget.widgetId);
-        }
-    }
+    DrainAudioAnalysisChanges();
     if (calendarService_)
         calendarService_->Tick();
     const bool eventsChanged =

@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <stop_token>
@@ -55,6 +56,7 @@ class WidgetAudioAnalysisProvider
 {
 public:
     using Clock = std::chrono::steady_clock;
+    using ChangedCallback = std::function<void()>;
 
     static constexpr std::size_t DefaultWaveformPoints = 128;
     static constexpr std::size_t MaximumWaveformPoints = 256;
@@ -72,6 +74,7 @@ public:
 
     bool Start(std::chrono::milliseconds interval,
         WidgetAudioAnalysisConfiguration configuration = {});
+    void SetChangedCallback(ChangedCallback callback);
     void Stop();
     std::optional<WidgetAudioAnalysisDataSnapshot> Snapshot() const;
     bool DrainChanged();
@@ -87,6 +90,7 @@ private:
     std::optional<WidgetAudioAnalysisDataSnapshot> snapshot_;
     WidgetDataSemanticDebouncer semanticDebouncer_;
     WidgetAudioAnalysisConfiguration configuration_;
+    ChangedCallback changedCallback_;
     bool changed_ = false;
     std::jthread worker_;
     std::atomic<std::int64_t> intervalMs_{ 33 };

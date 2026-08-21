@@ -224,6 +224,7 @@ constexpr UINT kSteamWorkshopSubscriptionChangedMessage = WM_APP + 11;
 constexpr UINT kDemoIconDecodedMessage = WM_APP + 12;
 constexpr UINT kWidgetConsentResolvedMessage = WM_APP + 13;
 constexpr UINT kWidgetConsentOpenedMessage = WM_APP + 14;
+constexpr UINT kWidgetAudioAnalysisWakeMessage = WM_APP + 15;
 constexpr UINT_PTR kShellChangeTimerId = 2;
 constexpr UINT kShellChangeDebounceMs = 500;
 

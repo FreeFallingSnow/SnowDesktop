@@ -464,6 +464,10 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     case kShellFileOperationCompletedMessage:
         OnShellFileOperationCompleted(lp);
         return 0;
+    case kWidgetAudioAnalysisWakeMessage:
+        if (widgetEngine_)
+            widgetEngine_->OnAudioAnalysisWake();
+        return 0;
     case kActivateExistingInstanceMessage:
         ShowSettingsWindow();
         return 0;

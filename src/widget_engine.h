@@ -816,6 +816,7 @@ public:
         std::function<bool(const LogicalSlotPickerRequest&)>;
     using WidgetTimerRequestCallback = std::function<UINT_PTR(const std::wstring& widgetId, UINT intervalMs)>;
     using WidgetTimerKillCallback = std::function<void(UINT_PTR timerId)>;
+    using AudioAnalysisWakeCallback = std::function<void()>;
 
     /** @brief 设置桌面快照提供者回调 */
     void SetDesktopSnapshotProvider(DesktopSnapshotProvider provider) { desktopSnapshotProvider_ = std::move(provider); }
@@ -885,6 +886,8 @@ public:
     void SetWidgetTimerRequestCallback(WidgetTimerRequestCallback callback) { widgetTimerRequestCallback_ = std::move(callback); }
     /** @brief 设置组件独立刷新定时器关闭回调 */
     void SetWidgetTimerKillCallback(WidgetTimerKillCallback callback) { widgetTimerKillCallback_ = std::move(callback); }
+    /** @brief 设置音频分析线程发布新快照时的 UI 线程唤醒回调。 */
+    void SetAudioAnalysisWakeCallback(AudioAnalysisWakeCallback callback);
     /** @brief 主宿主窗口重建后，将组件刷新与命名定时器重新绑定到新 HWND。 */
     void RebindHostTimers();
 
@@ -958,6 +961,8 @@ public:
         ID2D1DeviceContext* context, RECT bounds,
         std::string_view surface = "panel");
     void TickRuntime();
+    /** @brief 在 UI 线程消费一次已合并的音频分析更新。 */
+    void OnAudioAnalysisWake();
     /**
      * @brief 处理宿主转发的组件调度截止时间到期
      * @param widgetId 触发刷新的小部件实例 ID
@@ -1744,6 +1749,7 @@ private:
     void DisposeWidgetLifecycle(LuaWidget& widget, const char* reason);
     void InitializeWidgetDataBroker();
     void ApplyWidgetDataBrokerActions();
+    void DrainAudioAnalysisChanges();
     void ReconcileFilesystemWatches();
     void DrainFilesystemWatchCompletions();
     void ReleaseWidgetDataSubscriptions(LuaWidget& widget);
@@ -1797,6 +1803,7 @@ private:
     LogicalSlotPickerCallback logicalSlotPickerCallback_;
     WidgetTimerRequestCallback widgetTimerRequestCallback_; ///< 请求宿主为 widget 开独立 timer
     WidgetTimerKillCallback widgetTimerKillCallback_;   ///< 请求宿主关闭 widget 独立 timer
+    AudioAnalysisWakeCallback audioAnalysisWakeCallback_;
     std::unique_ptr<SystemSnapshotService> systemSnapshotService_;
     std::unique_ptr<snowdesktop::widget_runtime::WidgetDataBroker>
         dataBroker_;
