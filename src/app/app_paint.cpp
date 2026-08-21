@@ -15,6 +15,13 @@ void DesktopApp::OnPaint(const RECT* updateRect)
             InvalidateRect(hwnd_, updateRect, FALSE);
         return;
     }
+    if (desktopWidgetCompositionFailurePending_)
+    {
+        desktopWidgetCompositionFailurePending_ = false;
+        RecoverCompositionRenderFailure(
+            L"Desktop widget composition", E_FAIL);
+        return;
+    }
     compositionPaintInProgress_ = true;
     struct PaintScope final
     {
@@ -108,9 +115,14 @@ void DesktopApp::OnPaint(const RECT* updateRect)
         return;
     }
 
-    // One widget surface failure is isolated and root-rendered on the next
-    // paint; unrelated component surfaces remain valid.
-    (void)FlushPendingDesktopWidgetComposition();
+    if (!FlushPendingDesktopWidgetComposition() ||
+        desktopWidgetCompositionFailurePending_)
+    {
+        desktopWidgetCompositionFailurePending_ = false;
+        RecoverCompositionRenderFailure(
+            L"Desktop widget composition", E_FAIL);
+        return;
+    }
 
     if (!RenderDesktopForegroundComposition(
             forceCompleteGlassCollection ? nullptr : dcompUpdate,

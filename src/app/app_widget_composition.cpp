@@ -18,8 +18,14 @@ bool SameRect(const RECT& left, const RECT& right)
 bool DesktopApp::QueueDesktopWidgetComposition(
     const std::wstring& widgetId)
 {
-    if (widgetId.empty() || !dcompDevice_ || !dcompVisual_ || !hwnd_)
+    const auto fail = [&]() {
+        desktopWidgetCompositionFailurePending_ = true;
+        if (hwnd_ && IsWindow(hwnd_))
+            InvalidateRect(hwnd_, nullptr, FALSE);
         return false;
+    };
+    if (widgetId.empty() || !dcompDevice_ || !dcompVisual_ || !hwnd_)
+        return fail();
 
     DesktopWidget* widgetData = nullptr;
     for (auto& widget : widgets_)
@@ -31,7 +37,7 @@ bool DesktopApp::QueueDesktopWidgetComposition(
         }
     }
     if (!widgetData)
-        return false;
+        return fail();
 
     const RECT bounds = GetStandaloneWidgetFrameRect(*widgetData);
     if (IsRectEmptyRect(bounds))
@@ -56,13 +62,13 @@ bool DesktopApp::QueueDesktopWidgetComposition(
         HRESULT hr = dcompDevice_->CreateVisual(
             &desktopWidgetCompositionLayer_);
         if (FAILED(hr) || !desktopWidgetCompositionLayer_)
-            return false;
+            return fail();
         hr = dcompVisual_->AddVisual(
             desktopWidgetCompositionLayer_.Get(), FALSE, nullptr);
         if (FAILED(hr))
         {
             desktopWidgetCompositionLayer_.Reset();
-            return false;
+            return fail();
         }
     }
 
@@ -82,31 +88,29 @@ bool DesktopApp::QueueDesktopWidgetComposition(
         if (FAILED(hr) || !item.visual || !item.clip)
         {
             desktopWidgetCompositionItems_.erase(position);
-            return false;
+            return fail();
         }
         hr = desktopWidgetCompositionLayer_->AddVisual(
             item.visual.Get(), TRUE, nullptr);
         if (FAILED(hr))
         {
             desktopWidgetCompositionItems_.erase(position);
-            return false;
+            return fail();
         }
         item.bounds = bounds;
         item.visible = true;
     }
 
     pendingDesktopWidgetCompositions_.insert(widgetId);
-    desktopWidgetCompositionFallbackIds_.erase(widgetId);
-
     if (compositionPaintInProgress_)
         return true;
     if (!FlushPendingDesktopWidgetComposition())
-        return false;
+        return fail();
     if (!FlushPendingWidgetMarqueeComposition() ||
         !SyncWidgetMarqueeCompositionVisibility())
-        return false;
+        return fail();
     if (!CommitCompositionAnimationFrame())
-        return false;
+        return fail();
     return FlushPendingCompositionCommit();
 }
 
@@ -116,24 +120,16 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
     {
         if (SyncDesktopWidgetCompositionZOrder())
             return true;
-        std::vector<std::wstring> failedWidgetIds;
-        failedWidgetIds.reserve(desktopWidgetCompositionItems_.size());
-        for (const auto& [widgetId, _] :
-             desktopWidgetCompositionItems_)
-        {
-            failedWidgetIds.push_back(widgetId);
-        }
-        for (const auto& widgetId : failedWidgetIds)
-        {
-            RemoveDesktopWidgetComposition(widgetId, false);
-            desktopWidgetCompositionFallbackIds_.insert(widgetId);
-        }
+        desktopWidgetCompositionFailurePending_ = true;
         if (hwnd_ && IsWindow(hwnd_))
             InvalidateRect(hwnd_, nullptr, FALSE);
         return false;
     }
     if (!dcompDevice_ || !desktopWidgetCompositionLayer_)
+    {
+        desktopWidgetCompositionFailurePending_ = true;
         return false;
+    }
 
     auto pending = std::move(pendingDesktopWidgetCompositions_);
     pendingDesktopWidgetCompositions_.clear();
@@ -363,11 +359,8 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         }
         ok = false;
     }
-    for (const auto& widgetId : failedWidgetIds)
-    {
-        RemoveDesktopWidgetComposition(widgetId, false);
-        desktopWidgetCompositionFallbackIds_.insert(widgetId);
-    }
+    if (!failedWidgetIds.empty())
+        desktopWidgetCompositionFailurePending_ = true;
     if (ownsPaintScope)
     {
         KeepDesktopWidgetBackdropPanels();
@@ -428,7 +421,6 @@ void DesktopApp::RemoveDesktopWidgetComposition(
     pendingDesktopWidgetCompositions_.erase(widgetId);
     pendingWidgetMarqueeCompositions_.erase(widgetId);
     widgetMarqueeCompositionItems_.erase(widgetId);
-    desktopWidgetCompositionFallbackIds_.erase(widgetId);
     const auto position = desktopWidgetCompositionItems_.find(widgetId);
     if (position == desktopWidgetCompositionItems_.end())
         return;
@@ -479,10 +471,6 @@ void DesktopApp::PruneDesktopWidgetCompositions()
     }
     for (const auto& widgetId : removedWidgetIds)
         RemoveDesktopWidgetComposition(widgetId, false);
-    std::erase_if(desktopWidgetCompositionFallbackIds_,
-        [&](const std::wstring& widgetId) {
-            return !liveWidgetIds.contains(widgetId);
-        });
 }
 
 bool DesktopApp::SyncDesktopWidgetCompositionZOrder()
@@ -522,7 +510,6 @@ void DesktopApp::ResetDesktopWidgetComposition()
     pendingDesktopWidgetCompositions_.clear();
     desktopWidgetCompositionItems_.clear();
     desktopWidgetCompositionZOrder_.clear();
-    desktopWidgetCompositionFallbackIds_.clear();
     if (dcompVisual_ && desktopWidgetCompositionLayer_)
     {
         (void)dcompVisual_->RemoveVisual(
@@ -531,4 +518,5 @@ void DesktopApp::ResetDesktopWidgetComposition()
     desktopWidgetCompositionLayer_.Reset();
     desktopWidgetCompositionDrawInProgress_ = false;
     desktopWidgetBackdropRequestedDuringDraw_ = false;
+    desktopWidgetCompositionFailurePending_ = false;
 }

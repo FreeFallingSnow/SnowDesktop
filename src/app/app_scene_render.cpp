@@ -175,41 +175,14 @@ void DesktopApp::DrawStaticBackground(
         if (!presentWidgetSurface)
             continue;
 
-        const bool fallbackToRoot =
-            desktopWidgetCompositionFallbackIds_.contains(widgetData.id);
-        bool composed = !fallbackToRoot &&
-            HasDesktopWidgetComposition(widgetData.id);
-        if (!fallbackToRoot && intersectsUpdate(widgetFrame, 2))
+        // A standalone widget is never painted into the root surface. Create
+        // a missing child even when the current root dirty rectangle is
+        // elsewhere; existing children redraw only when their own bounds are
+        // dirty. Any failure is recovered as one composition transaction.
+        if (!HasDesktopWidgetComposition(widgetData.id) ||
+            intersectsUpdate(widgetFrame, 2))
         {
-            composed = QueueDesktopWidgetComposition(widgetData.id);
-        }
-        if (composed)
-            continue;
-        if (!intersectsUpdate(widgetFrame, 2))
-            continue;
-
-        // Emergency fallback for a surface allocation or draw failure. The
-        // foreground surface still remains above this root-rendered widget.
-        // Retry the child-surface path on the next invalidation instead of
-        // permanently demoting a widget after one transient device failure.
-        desktopWidgetCompositionFallbackIds_.erase(widgetData.id);
-        bool drawn = false;
-        for (auto& c : containers_)
-        {
-            auto* wc = dynamic_cast<WidgetContainer*>(c.get());
-            if (!wc || wc->GetWidgetData() != &widgetData) continue;
-            wc->DrawChrome(ctx, lastMousePoint_);
-            drawn = true;
-            break;
-        }
-        if (drawn) continue;
-
-        for (auto& ooItem : items_oo_)
-        {
-            auto* widget = dynamic_cast<Widget*>(ooItem.get());
-            if (!widget || widget->GetWidgetData() != &widgetData) continue;
-            widget->Draw(ctx, widgetData.bounds, widgetData.selected ? 2 : 0);
-            break;
+            (void)QueueDesktopWidgetComposition(widgetData.id);
         }
     }
 

@@ -2653,8 +2653,6 @@ private:
     std::unordered_set<std::wstring>
         pendingDesktopWidgetCompositions_;
     std::vector<std::wstring> desktopWidgetCompositionZOrder_;
-    std::unordered_set<std::wstring>
-        desktopWidgetCompositionFallbackIds_;
     std::unordered_map<std::wstring,
         std::unordered_map<std::string, WidgetMarqueeCompositionItem>>
         widgetMarqueeCompositionItems_;
@@ -2663,6 +2661,7 @@ private:
     UINT compositionWidth_ = 0, compositionHeight_ = 0;
     bool compositionRenderRecoveryPending_ = false;
     bool compositionPaintInProgress_ = false;
+    bool desktopWidgetCompositionFailurePending_ = false;
     bool desktopWidgetCompositionDrawInProgress_ = false;
     bool desktopWidgetBackdropRequestedDuringDraw_ = false;
     float desktopWidgetBackdropCornerRadiusDuringDraw_ = 0.0f;

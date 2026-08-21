@@ -80,6 +80,20 @@ int main(int argc, char** argv)
         Check(scene.find("QueueDesktopWidgetComposition(widgetData.id)") !=
                 std::string::npos,
             "the desktop scene must route visible widgets to child surfaces");
+        const std::size_t rootBegin = scene.find(
+            "void DesktopApp::DrawStaticBackground(");
+        const std::size_t foregroundBegin = scene.find(
+            "void DesktopApp::DrawDesktopForeground(", rootBegin);
+        const std::string rootDraw = rootBegin == std::string::npos ||
+                foregroundBegin == std::string::npos
+            ? std::string{}
+            : scene.substr(rootBegin, foregroundBegin - rootBegin);
+        Check(!rootDraw.empty() &&
+                rootDraw.find("wc->DrawChrome(") == std::string::npos &&
+                rootDraw.find("widget->Draw(") == std::string::npos &&
+                rootDraw.find("Fallback") == std::string::npos &&
+                rootDraw.find("fallback") == std::string::npos,
+            "the root surface must never render a widget fallback");
         Check(invalidation.find(
                 "QueueDesktopWidgetComposition(widgetId)") !=
                 std::string::npos,
