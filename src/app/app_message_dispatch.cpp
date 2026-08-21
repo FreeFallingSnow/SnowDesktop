@@ -450,6 +450,13 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_LBUTTONDBLCLK:
     {
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        const auto clearSelectionAfterAcceptedOpen =
+            [this](bool accepted) {
+                if (!accepted)
+                    return;
+                ClearSelection();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            };
 
         if (!luaWidgetPanelRequest_.widgetId.empty() &&
             luaWidgetPanelAnimation_.IsInteractive())
@@ -519,11 +526,11 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                         dockPendingDoubleClickFrequentItem_ =
                             static_cast<size_t>(-1);
                         dockPendingDoubleClickTick_ = 0;
-                        CloseCollectionPopup();
-                        ClearSelection();
+                        CloseCollectionPopup(false);
                         if (target.available)
-                            shellLaunchWorker_.Enqueue(
-                                hwnd_, target.path);
+                            clearSelectionAfterAcceptedOpen(
+                                shellLaunchWorker_.Enqueue(
+                                    hwnd_, target.path));
                         InvalidateRect(
                             hwnd_, &dockBounds, FALSE);
                         specialDoubleClickHandled = true;
@@ -535,13 +542,14 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                         dockPendingDoubleClickEntry_ = static_cast<size_t>(-1);
                         dockPendingDoubleClickFrequentItem_ = static_cast<size_t>(-1);
                         dockPendingDoubleClickTick_ = 0;
-                        ClearSelection();
                         if (entryIndex < dockEntries_.size())
                         {
                             const size_t itemIndex =
                                 FindItemIndexByKey(dockEntries_[entryIndex].reference);
                             if (itemIndex < items_.size())
-                                LaunchDesktopItem(itemIndex, true);
+                                clearSelectionAfterAcceptedOpen(
+                                    LaunchDesktopItem(
+                                        itemIndex, true));
                         }
                         InvalidateRect(hwnd_, &dockBounds, FALSE);
                         specialDoubleClickHandled = true;
@@ -572,9 +580,10 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                         dockPendingDoubleClickEntry_ = static_cast<size_t>(-1);
                         dockPendingDoubleClickFrequentItem_ = static_cast<size_t>(-1);
                         dockPendingDoubleClickTick_ = 0;
-                        ClearSelection();
                         if (itemIndex < items_.size())
-                            LaunchDesktopItem(itemIndex, true);
+                            clearSelectionAfterAcceptedOpen(
+                                LaunchDesktopItem(
+                                    itemIndex, true));
                         InvalidateRect(hwnd_, &dockBounds, FALSE);
                         specialDoubleClickHandled = true;
                     }
@@ -661,9 +670,9 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     const std::wstring path =
                         dockFolderPopupWidget_.
                             folderEntries[i].fullPath;
-                    shellLaunchWorker_.Enqueue(
-                        hwnd_, path);
-                    CloseCollectionPopup();
+                    if (shellLaunchWorker_.Enqueue(
+                            hwnd_, path))
+                        CloseCollectionPopup();
                     return 0;
                 }
                 return 0;
@@ -687,8 +696,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
                     if (itemIndex != static_cast<size_t>(-1))
                     {
-                        LaunchDesktopItem(itemIndex);
-                        CloseCollectionPopup();
+                        if (LaunchDesktopItem(itemIndex))
+                            CloseCollectionPopup();
                         return 0;
                     }
                 }
@@ -740,7 +749,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     {
                         const size_t itemIndex = FindItemIndexByKey(item->layoutKey);
                         if (itemIndex < items_.size())
-                            LaunchDesktopItem(itemIndex);
+                            clearSelectionAfterAcceptedOpen(
+                                LaunchDesktopItem(itemIndex));
                         return 0;
                     }
                 }
@@ -749,8 +759,9 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     FolderEntry* entry = folderIcon->GetFolderEntry();
                     if (entry)
                     {
-                        shellLaunchWorker_.Enqueue(
-                            hwnd_, entry->fullPath);
+                        clearSelectionAfterAcceptedOpen(
+                            shellLaunchWorker_.Enqueue(
+                                hwnd_, entry->fullPath));
                         return 0;
                     }
                 }
@@ -760,7 +771,9 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         int hit = HitTestItem(pt);
         if (hit >= 0)
         {
-            LaunchDesktopItem(static_cast<size_t>(hit));
+            clearSelectionAfterAcceptedOpen(
+                LaunchDesktopItem(
+                    static_cast<size_t>(hit)));
             return 0;
         }
 
