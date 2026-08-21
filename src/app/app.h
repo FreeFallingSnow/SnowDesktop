@@ -1241,6 +1241,9 @@ private:
     int HitTestItem(POINT pt) const;
     /** @brief 判断组件或其分组子组件中是否包含选中的文件。 */
     bool HasSelectedFilesInWidget(size_t widgetIndex) const;
+    /** @brief 判断可滚动组件是否承载当前组件键盘导航表面。 */
+    bool OwnsWidgetKeyboardNavigation(
+        const ScrollingItemWidget* widget) const;
     /**
      * @brief 对坐标点进行命中测试，返回桌面图标对象指针。
      * @param pt 客户端坐标点
@@ -2845,6 +2848,7 @@ private:
     bool keyboardNavInsideWidget_ = false;
     size_t keyboardNavWidgetIndex_ = static_cast<size_t>(-1);
     int keyboardNavMemberIndex_ = -1;
+    bool keyboardNavSearchBox_ = false;
     bool keyboardNavCollectionGroupTabs_ = false;
     bool keyboardNavFileGroupCategoryTabs_ = false;
     int navHoverSide_ = 0;

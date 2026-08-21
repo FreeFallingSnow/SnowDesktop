@@ -617,6 +617,14 @@ void TestHoverOnlyWidgetVisibility()
             true, false, false, false, false, false, false,
             true),
         "pointer hover reveals hover-only widget");
+    Check(
+        visibilityRules::ShouldRetainForKeyboardNavigation(
+            true, 3, 3) &&
+            !visibilityRules::ShouldRetainForKeyboardNavigation(
+                false, 3, 3) &&
+            !visibilityRules::ShouldRetainForKeyboardNavigation(
+                true, 3, 4),
+        "only the widget owning active inner keyboard navigation remains retained");
 }
 
 void TestWidgetDesktopSurfaceVisibility()
@@ -822,6 +830,12 @@ void TestBottomBarContentReservation()
         chromeRules::HostActionContentBottom(
             true, 0, 110, 80, 5) == 75,
         "a titled host placeholder must stay clear of its move bar");
+    Check(
+        chromeRules::UsesCategorizedControlAccentOutline(true) &&
+            !chromeRules::UsesCategorizedControlAccentOutline(false) &&
+            chromeRules::CategorizedControlOutlineWidth(true) == 2.0f &&
+            chromeRules::CategorizedControlOutlineWidth(false) == 1.0f,
+        "keyboard-selected search boxes and tabs use the emphasized accent outline");
 }
 
 void TestNestedWidgetScrolling()

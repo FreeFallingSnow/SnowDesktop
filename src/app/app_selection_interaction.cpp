@@ -10,8 +10,31 @@ void DesktopApp::ClearSelection()
     keyboardNavInsideWidget_ = false;
     keyboardNavWidgetIndex_ = static_cast<size_t>(-1);
     keyboardNavMemberIndex_ = -1;
+    keyboardNavSearchBox_ = false;
     keyboardNavCollectionGroupTabs_ = false;
     keyboardNavFileGroupCategoryTabs_ = false;
+}
+
+bool DesktopApp::OwnsWidgetKeyboardNavigation(
+    const ScrollingItemWidget* widget) const
+{
+    if (!widget || widget->IsPreviewRendering() ||
+        !keyboardNavInsideWidget_ ||
+        keyboardNavWidgetIndex_ >= widgets_.size())
+        return false;
+
+    const DesktopWidget* data = widget->GetWidgetData();
+    const auto& owner = widgets_[keyboardNavWidgetIndex_];
+    if (data == &owner)
+        return true;
+    if (!widget->IsHosted() ||
+        owner.type != DesktopWidgetType::FileGroup ||
+        !data)
+        return false;
+    return std::find(
+        owner.childWidgetIds.begin(),
+        owner.childWidgetIds.end(),
+        data->id) != owner.childWidgetIds.end();
 }
 
 bool DesktopApp::HasSelectedFilesInWidget(
@@ -64,6 +87,7 @@ bool DesktopApp::HasSelectedFilesInWidget(
  */
 void DesktopApp::SyncKeyboardNavFromSelection()
 {
+    keyboardNavSearchBox_ = false;
     keyboardNavCollectionGroupTabs_ = false;
     keyboardNavFileGroupCategoryTabs_ = false;
     for (size_t wi = 0; wi < widgets_.size(); ++wi)
@@ -216,6 +240,7 @@ void DesktopApp::SyncKeyboardNavFromSelection()
     keyboardNavInsideWidget_ = false;
     keyboardNavWidgetIndex_ = static_cast<size_t>(-1);
     keyboardNavMemberIndex_ = -1;
+    keyboardNavSearchBox_ = false;
     keyboardNavCollectionGroupTabs_ = false;
     keyboardNavFileGroupCategoryTabs_ = false;
 }

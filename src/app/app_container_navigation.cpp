@@ -21,17 +21,22 @@ void DesktopApp::EnterWidget()
     keyboardNavInsideWidget_ = true;
     keyboardNavWidgetIndex_ = static_cast<size_t>(foundIdx);
     keyboardNavMemberIndex_ = 0;
+    keyboardNavSearchBox_ = false;
     keyboardNavCollectionGroupTabs_ = false;
     keyboardNavFileGroupCategoryTabs_ = false;
 
     if (widget.type == DesktopWidgetType::FolderMapping)
     {
         size_t entryIndex = static_cast<size_t>(-1);
+        FolderMapping* mapping = nullptr;
         for (auto& c : containers_)
         {
-            auto* mapping = dynamic_cast<FolderMapping*>(c.get());
-            if (mapping && mapping->GetWidgetData() == &widget)
+            auto* candidate =
+                dynamic_cast<FolderMapping*>(c.get());
+            if (candidate &&
+                candidate->GetWidgetData() == &widget)
             {
+                mapping = candidate;
                 const auto& visibleEntries =
                     mapping->GetVisibleEntryIndices();
                 if (!visibleEntries.empty())
@@ -47,6 +52,15 @@ void DesktopApp::EnterWidget()
         }
         else
         {
+            if (mapping &&
+                !IsRectEmptyRect(
+                    mapping->GetSearchBoxRect()))
+            {
+                keyboardNavMemberIndex_ = -1;
+                keyboardNavSearchBox_ = true;
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return;
+            }
             keyboardNavInsideWidget_ = false;
             keyboardNavWidgetIndex_ = static_cast<size_t>(-1);
             keyboardNavMemberIndex_ = -1;
@@ -309,6 +323,7 @@ void DesktopApp::ExitWidget()
     keyboardNavInsideWidget_ = false;
     keyboardNavWidgetIndex_ = static_cast<size_t>(-1);
     keyboardNavMemberIndex_ = -1;
+    keyboardNavSearchBox_ = false;
     keyboardNavCollectionGroupTabs_ = false;
     keyboardNavFileGroupCategoryTabs_ = false;
 

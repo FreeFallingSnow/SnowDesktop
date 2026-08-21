@@ -29,6 +29,18 @@ constexpr bool ReservesContentForBottomBar(
     return HasBottomBar(showTitle) && !bottomBarHover;
 }
 
+constexpr bool UsesCategorizedControlAccentOutline(
+    bool keyboardSelected) noexcept
+{
+    return keyboardSelected;
+}
+
+constexpr float CategorizedControlOutlineWidth(
+    bool keyboardSelected) noexcept
+{
+    return keyboardSelected ? 2.0f : 1.0f;
+}
+
 inline int ReservedBottomBarHeight(
     bool showTitle, bool bottomBarHover, int scaledBarHeight) noexcept
 {

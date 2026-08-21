@@ -1042,7 +1042,17 @@ void FileGroup::EnsureSourceTabVisible(size_t tabIndex)
         snowdesktop::collection_group_rules::
             ClampIndependentTabScroll(
                 data_->tabScrollOffset,
-                TotalTabWidth(widths), viewport);
+            TotalTabWidth(widths), viewport);
+}
+
+void FileGroup::EnsureCategoryTabVisible(
+    size_t index)
+{
+    auto* source = GetActiveSourceContainer();
+    if (!source) return;
+    HostedFileSourceScope hosted(this, source);
+    if (hosted)
+        source->EnsureCategoryTabVisible(index);
 }
 
 FileGroupEntryItem*
@@ -2102,7 +2112,11 @@ void FileGroup::DrawContent(
             FileGroupSourceTabText(this, i),
             sources[i] == active,
             !IsPreviewRendering() &&
-                PtInRect(&tab, app_->lastMousePoint_) != FALSE);
+                PtInRect(&tab, app_->lastMousePoint_) != FALSE,
+            app_->keyboardNavCollectionGroupTabs_ &&
+                app_->keyboardNavMemberIndex_ ==
+                    static_cast<int>(i) &&
+                app_->OwnsWidgetKeyboardNavigation(this));
     }
     context->PopAxisAlignedClip();
 }

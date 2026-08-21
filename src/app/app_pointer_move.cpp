@@ -1139,7 +1139,12 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                 const bool interactionRetained =
                     popupWidgetIndex_ == widgetIndex ||
                     (!interactionPinnedWidgetId_.empty() &&
-                        interactionPinnedWidgetId_ == w.id);
+                        interactionPinnedWidgetId_ == w.id) ||
+                    snowdesktop::widget_visibility_rules::
+                        ShouldRetainForKeyboardNavigation(
+                            keyboardNavInsideWidget_,
+                            keyboardNavWidgetIndex_,
+                            widgetIndex);
                 const auto shouldRender = [&](bool pointerInside) {
                     return snowdesktop::widget_visibility_rules::
                         ShouldRenderWidget(

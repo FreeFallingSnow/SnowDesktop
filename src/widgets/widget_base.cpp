@@ -842,7 +842,8 @@ void ScrollingItemWidget::DrawCategorizedTab(
     RECT layoutTabRect,
     const std::wstring& label,
     bool active,
-    bool hovered) const
+    bool hovered,
+    bool keyboardSelected) const
 {
     if (!context || !app_ ||
         IsRectEmptyRect(visibleTabRect) ||
@@ -869,7 +870,12 @@ void ScrollingItemWidget::DrawCategorizedTab(
                         0.0f, 0.0f, 0.0f, 0.04f)
                     : D2D1::ColorF(
                         1.0f, 1.0f, 1.0f, 0.06f))),
-        active
+        snowdesktop::widget_chrome_rules::
+                UsesCategorizedControlAccentOutline(
+                    keyboardSelected)
+            ? D2D1::ColorF(
+                0.39f, 0.66f, 1.0f, 0.90f)
+            : active
             ? (light
                 ? D2D1::ColorF(
                     0.0f, 0.0f, 0.0f, 0.52f)
@@ -879,7 +885,10 @@ void ScrollingItemWidget::DrawCategorizedTab(
                 ? D2D1::ColorF(
                     0.0f, 0.0f, 0.0f, 0.14f)
                 : D2D1::ColorF(
-                    1.0f, 1.0f, 1.0f, 0.20f)));
+                    1.0f, 1.0f, 1.0f, 0.20f)),
+        snowdesktop::widget_chrome_rules::
+            CategorizedControlOutlineWidth(
+                keyboardSelected));
 
     // The background follows the visible segment so its remaining corners stay
     // rounded. Text keeps the full tab geometry and is clipped by the tab strip,
@@ -1424,6 +1433,9 @@ void ScrollingItemWidget::DrawSearchBox(ID2D1DeviceContext* context)
     const bool light = app_->IsLightContentTheme();
     const bool hovered =
         PtInRect(&searchRect, app_->lastMousePoint_) != FALSE;
+    const bool keyboardSelected =
+        app_->keyboardNavSearchBox_ &&
+        app_->OwnsWidgetKeyboardNavigation(this);
     const D2D1_COLOR_F foreground = light
         ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.90f)
         : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.97f);
@@ -1443,11 +1455,17 @@ void ScrollingItemWidget::DrawSearchBox(ID2D1DeviceContext* context)
                 : (hovered
                     ? (light ? 0.06f : 0.08f)
                     : (light ? 0.035f : 0.05f))),
-        D2D1::ColorF(
-            stateColor.r, stateColor.g, stateColor.b,
-            searchFocused_
-                ? (light ? 0.52f : 0.62f)
-                : (light ? 0.14f : 0.20f)));
+        keyboardSelected
+            ? D2D1::ColorF(
+                0.39f, 0.66f, 1.0f, 0.90f)
+            : D2D1::ColorF(
+                stateColor.r, stateColor.g, stateColor.b,
+                searchFocused_
+                    ? (light ? 0.52f : 0.62f)
+                    : (light ? 0.14f : 0.20f)),
+        snowdesktop::widget_chrome_rules::
+            CategorizedControlOutlineWidth(
+                keyboardSelected));
 
     IDWriteTextFormat* format =
         GetCuTextFormat(GetCategorizedTabFontSize(), false, false);

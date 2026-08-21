@@ -113,7 +113,12 @@ void DesktopApp::DrawStaticBackground(
             !interactionPinnedWidgetId_.empty() &&
             widgetData.id == interactionPinnedWidgetId_;
         const bool interactionRetained =
-            popupOpen || interactionPinned;
+            popupOpen || interactionPinned ||
+            snowdesktop::widget_visibility_rules::
+                ShouldRetainForKeyboardNavigation(
+                    keyboardNavInsideWidget_,
+                    keyboardNavWidgetIndex_,
+                    widgetIndex);
         const bool interactionVisible =
             snowdesktop::widget_visibility_rules::ShouldRenderWidget(
                 widgetData.showOnHoverOnly,

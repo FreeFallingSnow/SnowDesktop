@@ -389,7 +389,8 @@ public:
         RECT layoutTabRect,
         const std::wstring& label,
         bool active,
-        bool hovered) const;
+        bool hovered,
+        bool keyboardSelected = false) const;
     void SetCategorizedHostOptions(
         int tabRowOffset,
         bool searchVisibilityOverrideActive,
@@ -408,6 +409,10 @@ public:
     }
     virtual std::wstring CategoryIdAtPoint(POINT pt) const { (void)pt; return L""; }
     virtual bool TryScrollTabs(POINT pt, int delta) { (void)pt; (void)delta; return false; }
+    virtual void EnsureCategoryTabVisible(size_t index)
+    {
+        (void)index;
+    }
 
     BarStyle GetInsertionStyle() const override;
 
@@ -545,6 +550,7 @@ public:
     std::wstring CategoryIdAtPoint(POINT pt) const override;
     bool IsPointInTabsRect(POINT pt) const;
     bool TryScrollTabs(POINT pt, int delta) override;
+    void EnsureCategoryTabVisible(size_t index) override;
     std::wstring GetCategoryDisplayLabel(const std::wstring& categoryId) const;
     void InvalidateCategoryCache();
     std::vector<Item*> GetSelectedItems() const override;
@@ -662,6 +668,7 @@ public:
     RECT GetSearchBoxRect() const override;
     std::wstring CategoryIdAtPoint(POINT pt) const override;
     bool TryScrollTabs(POINT pt, int delta) override;
+    void EnsureCategoryTabVisible(size_t index) override;
     const std::vector<size_t>& GetVisibleEntryIndices() const;
     const std::vector<std::wstring>& GetVisibleCategoryIds() const;
     void InvalidateFilterCache();
@@ -885,6 +892,7 @@ public:
     FileGroupEntryItem* GetSourceTabItemAtPoint(POINT pt) const;
     RECT GetSourceTabRectById(const std::wstring& childId) const;
     void EnsureSourceTabVisible(size_t tabIndex);
+    void EnsureCategoryTabVisible(size_t index) override;
     void InvalidateHostedView();
     ScrollingItemWidget* GetActiveSourceContainer() const;
     ScrollingItemWidget* GetSourceContainerById(

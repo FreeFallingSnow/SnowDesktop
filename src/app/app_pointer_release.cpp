@@ -235,7 +235,12 @@ std::uint64_t DesktopApp::HoverOnlyVisibleMask() const
         const bool interactionRetained =
             popupWidgetIndex_ == widgetIndex ||
             (!interactionPinnedWidgetId_.empty() &&
-                interactionPinnedWidgetId_ == widget.id);
+                interactionPinnedWidgetId_ == widget.id) ||
+            snowdesktop::widget_visibility_rules::
+                ShouldRetainForKeyboardNavigation(
+                    keyboardNavInsideWidget_,
+                    keyboardNavWidgetIndex_,
+                    widgetIndex);
         const RECT frame =
             GetStandaloneWidgetFrameRect(widget);
         if (snowdesktop::widget_visibility_rules::

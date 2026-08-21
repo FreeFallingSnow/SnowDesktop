@@ -1293,7 +1293,11 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
             std::wstring label = FileCategoryTabDisplayText(this, categoryIds[i]);
             DrawCategorizedTab(
                 context, hitTab, layoutTab, label,
-                active, hovered);
+                active, hovered,
+                app_->keyboardNavFileGroupCategoryTabs_ &&
+                    app_->keyboardNavMemberIndex_ ==
+                        static_cast<int>(i) &&
+                    app_->OwnsWidgetKeyboardNavigation(this));
         }
         context->PopAxisAlignedClip();
     }
@@ -1519,6 +1523,35 @@ bool FileCategories::TryScrollTabs(POINT pt, int delta)
 
     data_->tabScrollOffset = std::clamp(data_->tabScrollOffset - delta / 2, 0, maxScroll);
     return true;
+}
+
+void FileCategories::EnsureCategoryTabVisible(
+    size_t index)
+{
+    if (!data_ || !data_->showFileCategories)
+        return;
+    RECT tabs = FileCategoryTabsRect(this);
+    const auto& categories = CachedVisibleCategoryIds();
+    if (IsRectEmptyRect(tabs) ||
+        index >= categories.size())
+        return;
+    const int viewport = tabs.right - tabs.left;
+    const auto widths =
+        FileCategoryTabWidths(this, viewport);
+    LONG rawLeft = tabs.left;
+    for (size_t i = 0; i < index; ++i)
+        rawLeft += widths[i];
+    const LONG rawRight = rawLeft + widths[index];
+    if (rawLeft - data_->tabScrollOffset < tabs.left)
+        data_->tabScrollOffset =
+            std::max<int>(0, rawLeft - tabs.left);
+    else if (rawRight - data_->tabScrollOffset > tabs.right)
+        data_->tabScrollOffset =
+            std::max<int>(0, rawRight - tabs.right);
+    data_->tabScrollOffset = std::clamp(
+        data_->tabScrollOffset, 0,
+        std::max(0,
+            FileCategoryTabTotalWidth(widths) - viewport));
 }
 
 /**

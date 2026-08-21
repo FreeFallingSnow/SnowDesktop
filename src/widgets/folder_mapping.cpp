@@ -1001,7 +1001,11 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
                 DrawCategorizedTab(
                     context, tab, layoutTab,
                     FolderMappingTabDisplayText(this, visibleCategoryIds_[i]),
-                    active, hovered);
+                    active, hovered,
+                    app_->keyboardNavFileGroupCategoryTabs_ &&
+                        app_->keyboardNavMemberIndex_ ==
+                            static_cast<int>(i) &&
+                        app_->OwnsWidgetKeyboardNavigation(this));
             }
             context->PopAxisAlignedClip();
         }
@@ -1230,6 +1234,35 @@ bool FolderMapping::TryScrollTabs(POINT pt, int delta)
     data_->tabScrollOffset =
         std::clamp(data_->tabScrollOffset - delta / 2, 0, maxScroll);
     return true;
+}
+
+void FolderMapping::EnsureCategoryTabVisible(
+    size_t index)
+{
+    if (!data_ || !data_->showFileCategories)
+        return;
+    EnsureCategorySnapshot();
+    RECT tabs = FolderMappingTabsRect(this);
+    if (IsRectEmptyRect(tabs) ||
+        index >= visibleCategoryIds_.size())
+        return;
+    const int viewport = tabs.right - tabs.left;
+    const auto widths =
+        FolderMappingTabWidths(this, viewport);
+    LONG rawLeft = tabs.left;
+    for (size_t i = 0; i < index; ++i)
+        rawLeft += widths[i];
+    const LONG rawRight = rawLeft + widths[index];
+    if (rawLeft - data_->tabScrollOffset < tabs.left)
+        data_->tabScrollOffset =
+            std::max<int>(0, rawLeft - tabs.left);
+    else if (rawRight - data_->tabScrollOffset > tabs.right)
+        data_->tabScrollOffset =
+            std::max<int>(0, rawRight - tabs.right);
+    data_->tabScrollOffset = std::clamp(
+        data_->tabScrollOffset, 0,
+        std::max(0,
+            FolderMappingTabTotalWidth(widths) - viewport));
 }
 
 WidgetHit FolderMapping::HitTestWidget(POINT pt) const

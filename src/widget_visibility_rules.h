@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+
 namespace snowdesktop::widget_visibility_rules
 {
 constexpr bool ShouldRenderWidget(
@@ -20,6 +22,15 @@ constexpr bool ShouldRenderWidget(
         widgetFileSelected ||
         interactionRetained ||
         pointerInside;
+}
+
+constexpr bool ShouldRetainForKeyboardNavigation(
+    bool insideWidget,
+    std::size_t navigationWidgetIndex,
+    std::size_t widgetIndex)
+{
+    return insideWidget &&
+        navigationWidgetIndex == widgetIndex;
 }
 
 constexpr bool IsDesktopSurfaceVisible(

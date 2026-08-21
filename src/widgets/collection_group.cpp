@@ -1026,7 +1026,11 @@ void CollectionGroup::DrawContent(
                 layoutTab,
                 CollectionGroupTabDisplayText(
                     this, i),
-                selected, hovered);
+                selected, hovered,
+                app_->keyboardNavCollectionGroupTabs_ &&
+                    app_->keyboardNavMemberIndex_ ==
+                        static_cast<int>(i) &&
+                    app_->OwnsWidgetKeyboardNavigation(this));
         }
         context->PopAxisAlignedClip();
     }

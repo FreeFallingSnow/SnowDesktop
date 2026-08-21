@@ -410,7 +410,25 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         restoreFloatingDockLayer = true;
         if (keyboardNavInsideWidget_)
         {
-            if (keyboardNavWidgetIndex_ < widgets_.size() &&
+            if (keyboardNavSearchBox_ &&
+                keyboardNavWidgetIndex_ < widgets_.size())
+            {
+                for (auto& container : containers_)
+                {
+                    auto* searchable =
+                        dynamic_cast<ScrollingItemWidget*>(
+                            container.get());
+                    if (!searchable ||
+                        searchable->GetWidgetData() !=
+                            &widgets_[keyboardNavWidgetIndex_])
+                        continue;
+                    searchable->SetSearchFocused(true);
+                    UpdateHostInputImePosition();
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    break;
+                }
+            }
+            else if (keyboardNavWidgetIndex_ < widgets_.size() &&
                 ((widgets_[keyboardNavWidgetIndex_].type ==
                       DesktopWidgetType::CollectionGroup &&
                   keyboardNavCollectionGroupTabs_) ||
