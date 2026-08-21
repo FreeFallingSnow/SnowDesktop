@@ -1,5 +1,50 @@
 #include "app.h"
 
+#include <array>
+
+HRESULT DesktopApp::SyncDesktopCompositionRootZOrder()
+{
+    if (!dcompVisual_)
+        return E_UNEXPECTED;
+
+    // IDCompositionVisual::AddVisual has counter-intuitive null-reference
+    // semantics: insertAbove == TRUE puts the child below every sibling.
+    // Reattach every managed root child with an explicit predecessor so the
+    // order stays deterministic regardless of which surface was created or
+    // recovered most recently.
+    const std::array<IDCompositionVisual2*, 6> bottomToTop{
+        desktopWidgetCompositionLayer_.Get(),
+        desktopForegroundCompositionVisual_.Get(),
+        floatingDockDesktopCacheVisual_.Get(),
+        pageNotifyAnimationOverlay_.visual.Get(),
+        popupAnimationOverlay_.visual.Get(),
+        luaWidgetPanelAnimationOverlay_.visual.Get(),
+    };
+
+    for (IDCompositionVisual2* visual : bottomToTop)
+    {
+        if (visual)
+        {
+            const HRESULT hr = dcompVisual_->RemoveVisual(visual);
+            if (FAILED(hr))
+                return hr;
+        }
+    }
+
+    IDCompositionVisual2* predecessor = nullptr;
+    for (IDCompositionVisual2* visual : bottomToTop)
+    {
+        if (!visual)
+            continue;
+        const HRESULT hr = dcompVisual_->AddVisual(
+            visual, TRUE, predecessor);
+        if (FAILED(hr))
+            return hr;
+        predecessor = visual;
+    }
+    return S_OK;
+}
+
 HRESULT DesktopApp::CreateOrResizeDesktopForegroundCompositionSurface()
 {
     if (!dcompDevice_ || !dcompVisual_ || !hwnd_)
@@ -20,8 +65,12 @@ HRESULT DesktopApp::CreateOrResizeDesktopForegroundCompositionSurface()
             return FAILED(hr) ? hr : E_FAIL;
         hr = dcompVisual_->AddVisual(
             desktopForegroundCompositionVisual_.Get(), TRUE, nullptr);
+        if (SUCCEEDED(hr))
+            hr = SyncDesktopCompositionRootZOrder();
         if (FAILED(hr))
         {
+            (void)dcompVisual_->RemoveVisual(
+                desktopForegroundCompositionVisual_.Get());
             desktopForegroundCompositionVisual_.Reset();
             return hr;
         }

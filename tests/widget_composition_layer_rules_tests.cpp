@@ -39,6 +39,9 @@ int main(int argc, char** argv)
     Check(rules::IsAbove(
             DesktopLayer::AnimationOverlay, DesktopLayer::Foreground),
         "animation snapshots must stay above the desktop foreground");
+    Check(rules::NullReferenceInsertsAboveAll(false) &&
+            !rules::NullReferenceInsertsAboveAll(true),
+        "a null DirectComposition reference reverses the intuitive insertAbove order");
 
     Check(rules::ShouldPresentWidgetSurface(true, false),
         "a visible widget must present its child surface");
@@ -92,6 +95,12 @@ int main(int argc, char** argv)
         const std::string foreground = ReadFile(
             root / "src" / "app" /
                 "app_desktop_foreground_composition.cpp");
+        const std::string animationOverlay = ReadFile(
+            root / "src" / "app" /
+                "app_composition_animation_overlay.cpp");
+        const std::string floatingDock = ReadFile(
+            root / "src" / "app" /
+                "app_floating_dock_window.cpp");
 
         const std::size_t queueBegin = composition.find(
             "bool DesktopApp::QueueDesktopWidgetComposition(");
@@ -163,6 +172,57 @@ int main(int argc, char** argv)
                     "PresentDesktopForegroundComposition(") !=
                 std::string::npos,
             "high-frequency Dock and popup feedback must update the foreground surface directly");
+
+        const std::size_t rootZOrderBegin = foreground.find(
+            "HRESULT DesktopApp::SyncDesktopCompositionRootZOrder()");
+        const std::size_t foregroundCreateBegin = foreground.find(
+            "HRESULT DesktopApp::CreateOrResizeDesktopForegroundCompositionSurface()",
+            rootZOrderBegin);
+        const std::string rootZOrder =
+            rootZOrderBegin == std::string::npos ||
+                foregroundCreateBegin == std::string::npos
+            ? std::string{}
+            : foreground.substr(
+                rootZOrderBegin,
+                foregroundCreateBegin - rootZOrderBegin);
+        const auto inRootOrder = [&](const char* token) {
+            return rootZOrder.find(token);
+        };
+        const std::size_t widgetLayer = inRootOrder(
+            "desktopWidgetCompositionLayer_.Get()");
+        const std::size_t foregroundLayer = inRootOrder(
+            "desktopForegroundCompositionVisual_.Get()");
+        const std::size_t dockHandoffLayer = inRootOrder(
+            "floatingDockDesktopCacheVisual_.Get()");
+        const std::size_t pageOverlay = inRootOrder(
+            "pageNotifyAnimationOverlay_.visual.Get()");
+        const std::size_t popupOverlay = inRootOrder(
+            "popupAnimationOverlay_.visual.Get()");
+        const std::size_t luaPanelOverlay = inRootOrder(
+            "luaWidgetPanelAnimationOverlay_.visual.Get()");
+        Check(!rootZOrder.empty() &&
+                widgetLayer < foregroundLayer &&
+                foregroundLayer < dockHandoffLayer &&
+                dockHandoffLayer < pageOverlay &&
+                pageOverlay < popupOverlay &&
+                popupOverlay < luaPanelOverlay &&
+                rootZOrder.find(
+                    "visual, TRUE, predecessor") !=
+                    std::string::npos,
+            "the desktop root tree must explicitly stack widgets below foreground, handoff, and animation overlays");
+        Check(composition.find(
+                "hr = SyncDesktopCompositionRootZOrder();") !=
+                std::string::npos &&
+                foreground.find(
+                    "hr = SyncDesktopCompositionRootZOrder();") !=
+                    std::string::npos &&
+                animationOverlay.find(
+                    "hr = SyncDesktopCompositionRootZOrder();") !=
+                    std::string::npos &&
+                floatingDock.find(
+                    "hr = SyncDesktopCompositionRootZOrder();") !=
+                    std::string::npos,
+            "every managed desktop root visual must resynchronize the global z-order when attached");
     }
 
     std::cout << "widget composition layer rules tests passed\n";

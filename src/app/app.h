@@ -715,6 +715,8 @@ private:
     HRESULT CreateOrResizeCompositionSurface();
     /** @brief 创建或调整位于组件层之上的透明桌面前景表面。 */
     HRESULT CreateOrResizeDesktopForegroundCompositionSurface();
+    /** @brief 按固定的由后向前顺序重新挂接桌面根视觉子层。 */
+    HRESULT SyncDesktopCompositionRootZOrder();
     /** @brief 将 Dock、弹窗和交互提示绘制到桌面前景表面。 */
     bool RenderDesktopForegroundComposition(
         const RECT* updateRect,

@@ -78,8 +78,12 @@ bool DesktopApp::PrepareCompositionAnimationOverlay(
             overlay.scaleTransform.Get());
         hr = dcompVisual_->AddVisual(
             overlay.visual.Get(), TRUE, nullptr);
+        if (SUCCEEDED(hr))
+            hr = SyncDesktopCompositionRootZOrder();
         if (FAILED(hr))
         {
+            (void)dcompVisual_->RemoveVisual(
+                overlay.visual.Get());
             overlay.effect.Reset();
             overlay.scaleTransform.Reset();
             overlay.visual.Reset();

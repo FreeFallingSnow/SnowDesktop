@@ -28,6 +28,13 @@ constexpr bool IsAbove(DesktopLayer candidate, DesktopLayer reference)
     return ZOrder(candidate) > ZOrder(reference);
 }
 
+// DirectComposition reverses the intuitive meaning of insertAbove when no
+// reference visual is supplied: FALSE inserts above every existing sibling.
+constexpr bool NullReferenceInsertsAboveAll(bool insertAbove)
+{
+    return !insertAbove;
+}
+
 constexpr bool ShouldPresentWidgetSurface(
     bool desktopSurfaceVisible,
     bool previewSourceHidden)

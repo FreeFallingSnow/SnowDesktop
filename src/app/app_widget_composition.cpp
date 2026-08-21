@@ -64,9 +64,13 @@ bool DesktopApp::QueueDesktopWidgetComposition(
         if (FAILED(hr) || !desktopWidgetCompositionLayer_)
             return fail();
         hr = dcompVisual_->AddVisual(
-            desktopWidgetCompositionLayer_.Get(), FALSE, nullptr);
+            desktopWidgetCompositionLayer_.Get(), TRUE, nullptr);
+        if (SUCCEEDED(hr))
+            hr = SyncDesktopCompositionRootZOrder();
         if (FAILED(hr))
         {
+            (void)dcompVisual_->RemoveVisual(
+                desktopWidgetCompositionLayer_.Get());
             desktopWidgetCompositionLayer_.Reset();
             return fail();
         }

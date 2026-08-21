@@ -64,13 +64,21 @@ HRESULT DesktopApp::EnsureFloatingDockDesktopCacheVisual()
         if (SUCCEEDED(hr))
             hr = visual->SetEffect(effect.Get());
         if (SUCCEEDED(hr))
+        {
+            floatingDockDesktopCacheVisual_ = visual;
+            floatingDockDesktopCacheEffect_ = effect;
             hr = dcompVisual_->AddVisual(
                 visual.Get(), TRUE, nullptr);
+        }
+        if (SUCCEEDED(hr))
+            hr = SyncDesktopCompositionRootZOrder();
         if (FAILED(hr))
+        {
+            (void)dcompVisual_->RemoveVisual(visual.Get());
+            floatingDockDesktopCacheEffect_.Reset();
+            floatingDockDesktopCacheVisual_.Reset();
             return hr;
-
-        floatingDockDesktopCacheVisual_ = visual;
-        floatingDockDesktopCacheEffect_ = effect;
+        }
     }
 
     HRESULT hr = floatingDockDesktopCacheVisual_->SetOffsetX(
