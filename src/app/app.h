@@ -1331,8 +1331,8 @@ private:
      * @return 命中项的 DesktopIcon 指针，未命中返回 nullptr
      */
     DesktopIcon* HitTestIcon(POINT pt) const;
-    /** @brief 处理鼠标移动消息。 @param wp WPARAM @param lp LPARAM */
-    void OnMouseMove(WPARAM wp, LPARAM lp);
+    /** @brief 处理鼠标移动。 @param wp WPARAM @param point 完整客户端坐标 */
+    void OnMouseMoveAt(WPARAM wp, POINT point);
     /** @brief 鼠标进入其他窗口时清理所有悬浮状态。 */
     void OnMouseLeave();
     /** @brief 处理鼠标左键按下消息。 @param wp WPARAM @param lp LPARAM */

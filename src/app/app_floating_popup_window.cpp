@@ -818,19 +818,22 @@ POINT DesktopApp::FloatingPopupClientToDesktop(
 LRESULT DesktopApp::HandleFloatingPopupMessage(
     HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
-    auto desktopLParam = [&]() {
-        const POINT point = FloatingPopupClientToDesktop(
+    auto desktopPoint = [&]() {
+        return FloatingPopupClientToDesktop(
             POINT{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) });
+    };
+    auto desktopLParam = [&]() {
+        const POINT point = desktopPoint();
         return MAKELPARAM(point.x, point.y);
     };
-    auto latestDesktopPointerLParam = [&]() {
+    auto latestDesktopPointer = [&]() {
         POINT point{};
-        if (GetCursorPos(&point) && hwnd_ && IsWindow(hwnd_))
+        if (GetCursorPos(&point) && hwnd_ && IsWindow(hwnd_) &&
+            ScreenToClient(hwnd_, &point))
         {
-            ScreenToClient(hwnd_, &point);
-            return MAKELPARAM(point.x, point.y);
+            return point;
         }
-        return desktopLParam();
+        return desktopPoint();
     };
 
     switch (msg)
@@ -857,7 +860,7 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         tracking.hwndTrack = hwnd;
         TrackMouseEvent(&tracking);
         handlingFloatingPopupInput_ = true;
-        OnMouseMove(wp, latestDesktopPointerLParam());
+        OnMouseMoveAt(wp, latestDesktopPointer());
         handlingFloatingPopupInput_ = false;
         UpdateFloatingPopupWindowBounds(false);
         PresentPointerInteractionFrame();

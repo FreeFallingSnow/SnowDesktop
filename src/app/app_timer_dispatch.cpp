@@ -306,7 +306,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
         if (TryOpenDwellCollectionPopup(GetTickCount()))
         {
             KillTimer(hwnd_, kCollectionPopupDwellTimerId);
-            OnMouseMove(0, MAKELPARAM(lastMousePoint_.x, lastMousePoint_.y));
+            OnMouseMoveAt(0, lastMousePoint_);
             PresentPointerInteractionFrame();
             InvalidateFloatingDockWindow(true);
         }
@@ -330,10 +330,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
         {
             KillTimer(
                 hwnd_, kCollectionGroupTabDwellTimerId);
-            OnMouseMove(
-                0, MAKELPARAM(
-                    lastMousePoint_.x,
-                    lastMousePoint_.y));
+            OnMouseMoveAt(0, lastMousePoint_);
             PresentPointerInteractionFrame();
             InvalidateFloatingDockWindow(true);
         }
@@ -363,11 +360,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
                     if (route ==
                         DwellTargetRefreshRoute::NativePointer)
                     {
-                        OnMouseMove(
-                            0,
-                            MAKELPARAM(
-                                clientPoint.x,
-                                clientPoint.y));
+                        OnMouseMoveAt(0, clientPoint);
                         return;
                     }
                     if (route !=

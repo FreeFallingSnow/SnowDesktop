@@ -2,7 +2,7 @@
 
 namespace snowdesktop::drag_input_rules
 {
-constexpr bool ShouldSampleLivePointer(
+constexpr bool IsNativeDragActive(
     bool dragSessionActive,
     bool dragTransportActive)
 {
@@ -10,6 +10,16 @@ constexpr bool ShouldSampleLivePointer(
     // captured native drags should follow the physical pointer instead of
     // replaying queued WM_MOUSEMOVE coordinates.
     return dragSessionActive && !dragTransportActive;
+}
+
+constexpr bool ShouldSampleLivePointer(
+    bool nativeDragActive,
+    bool primaryButtonDown)
+{
+    // A queued move can be dispatched after the physical button was released
+    // but before WM_LBUTTONUP reaches the queue head. In that interval the
+    // release message remains authoritative; do not sample a later position.
+    return nativeDragActive && primaryButtonDown;
 }
 
 constexpr bool ShouldCoalesceQueuedMouseMove(

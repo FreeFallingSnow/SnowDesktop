@@ -800,10 +800,15 @@ void TestDesktopHoverDeactivation()
 void TestDragInputSampling()
 {
     Check(
-        dragInputRules::ShouldSampleLivePointer(true, false) &&
-            !dragInputRules::ShouldSampleLivePointer(false, false) &&
-            !dragInputRules::ShouldSampleLivePointer(true, true),
-        "only native drag sessions may replace queued coordinates with the live pointer");
+        dragInputRules::IsNativeDragActive(true, false) &&
+            !dragInputRules::IsNativeDragActive(false, false) &&
+            !dragInputRules::IsNativeDragActive(true, true),
+        "only drag sessions outside OLE transport may use native pointer routing");
+    Check(
+        dragInputRules::ShouldSampleLivePointer(true, true) &&
+            !dragInputRules::ShouldSampleLivePointer(false, true) &&
+            !dragInputRules::ShouldSampleLivePointer(true, false),
+        "live drag sampling must stop after the physical primary button is released");
     Check(
         dragInputRules::ShouldCoalesceQueuedMouseMove(
             true, true, true) &&

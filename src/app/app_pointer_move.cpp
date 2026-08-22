@@ -90,11 +90,10 @@ void DesktopApp::OnMiddleButtonUp(WPARAM wp, LPARAM lp)
     OnLeftButtonUp(wp, lp);
 }
 
-void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
+void DesktopApp::OnMouseMoveAt(WPARAM wp, POINT current)
 {
     (void)wp;
-    const POINT tracePoint{
-        GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+    const POINT tracePoint = current;
     RecordShellHoverTrace(
         ShellHoverTraceEvent::MouseMoveBegin,
         tracePoint);
@@ -108,7 +107,6 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         TrackMouseEvent(&mouseTrack);
     }
 
-    POINT current{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     POINT oldMouse = lastMousePoint_;
     lastMousePoint_ = current;
     UpdateSystemTaskbarRevealGuard();

@@ -126,21 +126,24 @@ void DesktopApp::PaintFloatingDockWindow(
 LRESULT DesktopApp::HandleFloatingDockMessage(
     HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
-    auto desktopLParam = [&]() {
-        const POINT point = FloatingDockClientToDesktop(
+    auto desktopPoint = [&]() {
+        return FloatingDockClientToDesktop(
             POINT{ GET_X_LPARAM(lp),
                 GET_Y_LPARAM(lp) });
+    };
+    auto desktopLParam = [&]() {
+        const POINT point = desktopPoint();
         return MAKELPARAM(point.x, point.y);
     };
-    auto latestDesktopPointerLParam = [&]() {
+    auto latestDesktopPointer = [&]() {
         POINT point{};
         if (GetCursorPos(&point) &&
-            hwnd_ && IsWindow(hwnd_))
+            hwnd_ && IsWindow(hwnd_) &&
+            ScreenToClient(hwnd_, &point))
         {
-            ScreenToClient(hwnd_, &point);
-            return MAKELPARAM(point.x, point.y);
+            return point;
         }
-        return desktopLParam();
+        return desktopPoint();
     };
 
     switch (msg)
@@ -165,8 +168,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         tracking.hwndTrack = hwnd;
         TrackMouseEvent(&tracking);
         handlingFloatingDockInput_ = true;
-        OnMouseMove(wp,
-            latestDesktopPointerLParam());
+        OnMouseMoveAt(wp, latestDesktopPointer());
         handlingFloatingDockInput_ = false;
         // Passive hover is presented once below. Updating the title/input
         // region must not synchronously redraw the same large DComp surface.

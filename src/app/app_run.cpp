@@ -1039,10 +1039,11 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 break;
             }
             const bool nativeDragActive =
-                snowdesktop::drag_input_rules::ShouldSampleLivePointer(
+                snowdesktop::drag_input_rules::IsNativeDragActive(
                     dragSession_.IsActive(),
                     dragDropController_.IsTransportActive());
-            if (msg.message == WM_MOUSEMOVE && nativeDragActive)
+            if (msg.message == WM_MOUSEMOVE &&
+                msg.hwnd == hwnd_ && nativeDragActive)
             {
                 MSG next{};
                 while (PeekMessageW(

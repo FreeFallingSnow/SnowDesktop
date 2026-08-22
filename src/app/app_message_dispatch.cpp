@@ -264,10 +264,15 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_MOUSEMOVE:
     {
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
-        const bool sampleNativeDrag =
-            snowdesktop::drag_input_rules::ShouldSampleLivePointer(
+        const bool nativeDragActive =
+            snowdesktop::drag_input_rules::IsNativeDragActive(
                 dragSession_.IsActive(),
                 dragDropController_.IsTransportActive());
+        const bool primaryButtonDown = nativeDragActive &&
+            (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+        const bool sampleNativeDrag =
+            snowdesktop::drag_input_rules::ShouldSampleLivePointer(
+                nativeDragActive, primaryButtonDown);
         const bool widgetInteractionActive =
             middleButtonWidgetMove_ ||
             widgetAction_ != WidgetAction::None ||
@@ -318,10 +323,14 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                         return 0;
                     }
                 }
-                pt = cursorScreen;
-                if (!ScreenToClient(hwnd_, &pt))
-                    return 0;
-                lp = MAKELPARAM(pt.x, pt.y);
+                POINT sampledClient = cursorScreen;
+                if (!ScreenToClient(hwnd_, &sampledClient))
+                {
+                    if (samplePassiveHover)
+                        return 0;
+                }
+                else
+                    pt = sampledClient;
             }
         }
         if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt) &&
@@ -334,7 +343,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 OnMouseLeave();
             return 0;
         }
-        OnMouseMove(wp, lp);
+        OnMouseMoveAt(wp, pt);
         // Internal drags capture this HWND. Commit the cheap cached drag frame
         // synchronously so a dense WM_MOUSEMOVE queue cannot starve WM_PAINT.
         // Keep this synchronous; routing pointer feedback through
