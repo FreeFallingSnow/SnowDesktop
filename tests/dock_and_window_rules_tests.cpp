@@ -1522,6 +1522,13 @@ int main(int argc, char** argv)
             !floatingPopup::ShouldBeTopmost(true, 1) &&
             !floatingPopup::ShouldBeTopmost(false, 0),
         "native menus must temporarily outrank the shared popup host");
+    const POINT popupAnimationOffset =
+        floatingPopup::AnimationVisualOffset(
+            RECT{ 460, 280, 1260, 880 },
+            RECT{ 440, 250, 1280, 900 });
+    Check(popupAnimationOffset.x == 20 &&
+            popupAnimationOffset.y == 30,
+        "popup animation snapshots must use shared-host local coordinates");
     Check(floatingPopup::ShouldDismissForExternalPointerDown(
             true, false, false),
         "an external application press must dismiss a visible shared popup");

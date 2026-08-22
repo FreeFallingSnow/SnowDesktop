@@ -245,6 +245,14 @@ void DesktopApp::PrepareLuaWidgetPanelAnimationCache()
             });
     if (!ready)
         luaWidgetPanelAnimationCacheRect_ = {};
+    else
+    {
+        (void)PrepareCompositionAnimationOverlay(
+            luaWidgetPanelAnimationOverlay_,
+            luaWidgetPanelAnimationRenderCache_,
+            luaWidgetPanelAnimationCacheRect_,
+            UiCompositionAnimationHost::FloatingPopup);
+    }
     brushCache_.clear();
     brushCacheContext_ = nullptr;
 }

@@ -312,6 +312,12 @@ private:
     std::uint64_t revision_ = 0;       /**< 当前缓存的修订号，用于判断是否需要重绘 */
 };
 
+enum class UiCompositionAnimationHost
+{
+    Desktop,
+    FloatingPopup,
+};
+
 struct UiCompositionAnimationOverlay
 {
     ComPtr<IDCompositionVisual2> visual;
@@ -319,6 +325,8 @@ struct UiCompositionAnimationOverlay
     ComPtr<IDCompositionScaleTransform> scaleTransform;
     ComPtr<IDCompositionSurface> surface;
     RECT bounds{};
+    UiCompositionAnimationHost host =
+        UiCompositionAnimationHost::Desktop;
     bool active = false;
 };
 
@@ -931,6 +939,7 @@ private:
         int code, WPARAM message, LPARAM data);
     bool CreateFloatingPopupWindow();
     void DestroyFloatingPopupWindow();
+    HRESULT SyncFloatingPopupCompositionRootZOrder();
     void ResetFloatingPopupCompositionResources();
     void RecoverFloatingPopupCompositionFailure(
         const wchar_t* stage, HRESULT hr);
@@ -2138,7 +2147,8 @@ private:
     bool PrepareCompositionAnimationOverlay(
         UiCompositionAnimationOverlay& overlay,
         const DragRenderCache& cache,
-        const RECT& bounds);
+        const RECT& bounds,
+        UiCompositionAnimationHost host);
     bool UpdateCompositionAnimationOverlay(
         UiCompositionAnimationOverlay& overlay,
         float scale, POINT anchor, float opacity,

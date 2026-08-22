@@ -280,7 +280,6 @@ void DesktopApp::StartCollectionPopupAnimation(
 {
     if (!reverseClosingAnimation)
         popupAnimation_.ResetHidden();
-    PrepareCollectionPopupAnimationCache();
     if (!snowdesktop::dock_launch_animation::
             SystemAnimationsEnabled())
     {
@@ -288,6 +287,12 @@ void DesktopApp::StartCollectionPopupAnimation(
         ResetCollectionPopupAnimationCache();
         return;
     }
+    // The snapshot visual belongs to the shared topmost popup host. Materialize
+    // and size that host before preparing the animation cache so the snapshot
+    // can be attached to the correct DComp tree instead of falling back to
+    // UI-thread frame rendering.
+    UpdateFloatingPopupWindowBounds(false);
+    PrepareCollectionPopupAnimationCache();
     popupAnimation_.Open(static_cast<std::uint64_t>(
         snowdesktop::UiAnimationScheduler::
             MonotonicMilliseconds()));
@@ -432,14 +437,17 @@ void DesktopApp::CloseCollectionPopup(
     marqueeDockFolderPopup_ = false;
     dockFolderPopupMarqueeInitialSelection_.clear();
 
-    PrepareCollectionPopupAnimationCache();
     if (!snowdesktop::dock_launch_animation::
             SystemAnimationsEnabled())
     {
         FinalizeCloseCollectionPopup();
         return;
     }
-    if (popupAnimationOverlay_.active)
+    UpdateFloatingPopupWindowBounds(false);
+    PrepareCollectionPopupAnimationCache();
+    if (popupAnimationOverlay_.active &&
+        popupAnimationOverlay_.host ==
+            UiCompositionAnimationHost::Desktop)
     {
         ClearDesktopBehindCompositionAnimation(
             popupAnimationCacheRect_);

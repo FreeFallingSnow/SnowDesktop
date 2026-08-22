@@ -382,6 +382,14 @@ void DesktopApp::PrepareCollectionPopupAnimationCache()
             });
     if (!ready)
         popupAnimationCacheRect_ = {};
+    else
+    {
+        (void)PrepareCompositionAnimationOverlay(
+            popupAnimationOverlay_,
+            popupAnimationRenderCache_,
+            popupAnimationCacheRect_,
+            UiCompositionAnimationHost::FloatingPopup);
+    }
 
     // The off-screen draw switches the shared brush cache to its context.
     // Restore lazy creation for the next desktop/floating-Dock frame.

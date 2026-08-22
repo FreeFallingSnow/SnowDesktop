@@ -43,11 +43,44 @@ HRESULT CreateSmoothStepAnimation(
 bool DesktopApp::PrepareCompositionAnimationOverlay(
     UiCompositionAnimationOverlay& overlay,
     const DragRenderCache& cache,
-    const RECT& bounds)
+    const RECT& bounds,
+    UiCompositionAnimationHost host)
 {
     ResetCompositionAnimationOverlay(overlay);
-    if (!dcompDevice_ || !dcompVisual_ || IsRectEmpty(&bounds))
+    if (!dcompDevice_ || IsRectEmpty(&bounds))
         return false;
+
+    IDCompositionVisual2* parentVisual = nullptr;
+    if (host == UiCompositionAnimationHost::FloatingPopup)
+    {
+        if (!floatingPopupHwnd_ ||
+            !IsWindow(floatingPopupHwnd_) ||
+            IsRectEmpty(&floatingPopupWindowBounds_) ||
+            FAILED(CreateOrResizeFloatingPopupCompositionSurface()))
+        {
+            return false;
+        }
+        parentVisual = floatingPopupDcompVisual_.Get();
+    }
+    else
+    {
+        parentVisual = dcompVisual_.Get();
+    }
+    if (!parentVisual)
+        return false;
+
+    if (overlay.visual && overlay.host != host)
+    {
+        IDCompositionVisual2* previousParent =
+            overlay.host == UiCompositionAnimationHost::FloatingPopup
+                ? floatingPopupDcompVisual_.Get()
+                : dcompVisual_.Get();
+        if (previousParent)
+            (void)previousParent->RemoveVisual(overlay.visual.Get());
+        overlay.visual.Reset();
+        overlay.effect.Reset();
+        overlay.scaleTransform.Reset();
+    }
 
     const UINT width = static_cast<UINT>(
         std::max<LONG>(1, bounds.right - bounds.left));
@@ -76,13 +109,17 @@ bool DesktopApp::PrepareCompositionAnimationOverlay(
         overlay.visual->SetEffect(overlay.effect.Get());
         overlay.visual->SetTransform(
             overlay.scaleTransform.Get());
-        hr = dcompVisual_->AddVisual(
+        overlay.host = host;
+        hr = parentVisual->AddVisual(
             overlay.visual.Get(), TRUE, nullptr);
-        if (SUCCEEDED(hr))
+        if (SUCCEEDED(hr) &&
+            host == UiCompositionAnimationHost::Desktop)
             hr = SyncDesktopCompositionRootZOrder();
+        else if (SUCCEEDED(hr))
+            hr = SyncFloatingPopupCompositionRootZOrder();
         if (FAILED(hr))
         {
-            (void)dcompVisual_->RemoveVisual(
+            (void)parentVisual->RemoveVisual(
                 overlay.visual.Get());
             overlay.effect.Reset();
             overlay.scaleTransform.Reset();
@@ -133,8 +170,17 @@ bool DesktopApp::PrepareCompositionAnimationOverlay(
 
     overlay.bounds = bounds;
     overlay.visual->SetContent(overlay.surface.Get());
-    overlay.visual->SetOffsetX(static_cast<float>(bounds.left));
-    overlay.visual->SetOffsetY(static_cast<float>(bounds.top));
+    POINT visualOffset{ bounds.left, bounds.top };
+    if (host == UiCompositionAnimationHost::FloatingPopup)
+    {
+        visualOffset = snowdesktop::floating_popup_rules::
+            AnimationVisualOffset(
+                bounds, floatingPopupWindowBounds_);
+    }
+    overlay.visual->SetOffsetX(
+        static_cast<float>(visualOffset.x));
+    overlay.visual->SetOffsetY(
+        static_cast<float>(visualOffset.y));
     overlay.scaleTransform->SetScaleX(1.0f);
     overlay.scaleTransform->SetScaleY(1.0f);
     overlay.scaleTransform->SetCenterX(0.0f);
@@ -363,13 +409,30 @@ void DesktopApp::PrepareCompositionAnimationOverlayRetirement(
     if (!overlay.active)
         return;
 
+    overlay.active = false;
+    if (overlay.host ==
+        UiCompositionAnimationHost::FloatingPopup)
+    {
+        // Paint the final live popup surface while the snapshot child visual
+        // is still attached. Its caller removes the snapshot in the same
+        // pending DComp transaction, so the shared topmost host never exposes
+        // an empty frame between the two content owners.
+        if (!RenderFloatingPopupCompositionFrame() &&
+            floatingPopupHwnd_ &&
+            IsWindow(floatingPopupHwnd_))
+        {
+            InvalidateRect(
+                floatingPopupHwnd_, nullptr, FALSE);
+        }
+        return;
+    }
+
     // The normal desktop renderer skips popup content while its snapshot
     // overlay is active. Release only that logical suppression first, then
     // paint the final static frame while the snapshot is still attached to
     // the DComp tree. ResetCompositionAnimationOverlay can subsequently
     // retire the snapshot in the same pending DComp transaction, so DWM
     // never observes an empty frame between the two content owners.
-    overlay.active = false;
     ClearDesktopBehindCompositionAnimation(bounds);
 }
 

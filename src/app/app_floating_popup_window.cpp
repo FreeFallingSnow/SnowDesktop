@@ -1,5 +1,7 @@
 #include "app.h"
 
+#include <array>
+
 namespace
 {
 RECT UnionRects(const RECT& first, const RECT& second)
@@ -228,6 +230,44 @@ bool DesktopApp::CreateFloatingPopupWindow()
             floatingPopupHwnd_,
             static_cast<IDropTarget*>(adapter)));
     return true;
+}
+
+HRESULT DesktopApp::SyncFloatingPopupCompositionRootZOrder()
+{
+    if (!floatingPopupDcompVisual_)
+        return E_UNEXPECTED;
+
+    const std::array<IDCompositionVisual2*, 2> bottomToTop{
+        popupAnimationOverlay_.host ==
+                UiCompositionAnimationHost::FloatingPopup
+            ? popupAnimationOverlay_.visual.Get() : nullptr,
+        luaWidgetPanelAnimationOverlay_.host ==
+                UiCompositionAnimationHost::FloatingPopup
+            ? luaWidgetPanelAnimationOverlay_.visual.Get() : nullptr,
+    };
+    for (IDCompositionVisual2* visual : bottomToTop)
+    {
+        if (visual)
+        {
+            const HRESULT hr =
+                floatingPopupDcompVisual_->RemoveVisual(visual);
+            if (FAILED(hr))
+                return hr;
+        }
+    }
+
+    IDCompositionVisual2* predecessor = nullptr;
+    for (IDCompositionVisual2* visual : bottomToTop)
+    {
+        if (!visual)
+            continue;
+        const HRESULT hr = floatingPopupDcompVisual_->AddVisual(
+            visual, TRUE, predecessor);
+        if (FAILED(hr))
+            return hr;
+        predecessor = visual;
+    }
+    return S_OK;
 }
 
 void DesktopApp::ResetFloatingPopupCompositionResources()

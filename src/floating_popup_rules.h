@@ -31,6 +31,16 @@ constexpr bool ShouldBeTopmost(
     return visible && shellPopupMenuLayerDepth == 0;
 }
 
+constexpr POINT AnimationVisualOffset(
+    const RECT& animationBounds,
+    const RECT& hostBounds)
+{
+    return POINT{
+        animationBounds.left - hostBounds.left,
+        animationBounds.top - hostBounds.top,
+    };
+}
+
 constexpr bool ShouldDismissForExternalPointerDown(
     bool popupVisible,
     bool targetBelongsToCurrentProcess,
