@@ -15,14 +15,15 @@ constexpr bool IsNativeDragActive(
 }
 
 constexpr bool ShouldDeferModelReload(
-    bool dragSessionActive,
+    bool retainedDragContext,
     bool dragTransportActive)
 {
-    // Native capture and OLE transport both retain runtime Item/Container
-    // bindings. Replacing the desktop model while either side still owns the
-    // gesture can invalidate the hand-back state or make a long drag perform
-    // an expensive reload inside DoDragDrop's nested message loop.
-    return dragSessionActive || dragTransportActive;
+    // DragSession keeps Item/Container bindings after DeactivateForDrop so a
+    // synchronous Shell target can finish the drop. OLE transport can also
+    // remain on the stack after that context ends. Replacing the desktop model
+    // in either interval can invalidate the hand-back/drop state or perform an
+    // expensive reload inside a nested message loop.
+    return retainedDragContext || dragTransportActive;
 }
 
 constexpr bool ShouldSampleLivePointer(

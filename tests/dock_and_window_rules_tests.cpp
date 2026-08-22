@@ -3914,6 +3914,10 @@ int main(int argc, char** argv)
             desktopReloadSource.find(
                 "ShouldDeferModelReload(",
                 reloadItemsBegin);
+        const std::size_t reloadItemsRetainedContext =
+            desktopReloadSource.find(
+                "dragSession_.HasContext()",
+                reloadItemsDragDeferral);
         const std::size_t reloadItemsPending =
             desktopReloadSource.find(
                 "shellReloadPending_ = true;",
@@ -3936,6 +3940,7 @@ int main(int argc, char** argv)
                 reloadItemsBegin);
         Check(reloadItemsBegin != std::string::npos &&
                 reloadItemsDragDeferral != std::string::npos &&
+                reloadItemsRetainedContext != std::string::npos &&
                 reloadItemsPending != std::string::npos &&
                 reloadItemsRetryTimer != std::string::npos &&
                 reloadItemsClear != std::string::npos &&
@@ -3943,6 +3948,7 @@ int main(int argc, char** argv)
                 reloadFolderEntries != std::string::npos &&
                 reloadDesktopItems != std::string::npos &&
                 reloadItemsDragDeferral < reloadItemsPending &&
+                reloadItemsRetainedContext < reloadItemsPending &&
                 reloadItemsPending < reloadItemsRetryTimer &&
                 reloadItemsRetryTimer < reloadItemsClear &&
                 reloadItemsClear < reloadLayoutSlots &&
@@ -3956,6 +3962,10 @@ int main(int argc, char** argv)
             timerDispatchSource.find(
                 "ShouldDeferModelReload(",
                 shellReloadTimer);
+        const std::size_t shellReloadRetainedContext =
+            timerDispatchSource.find(
+                "dragSession_.HasContext()",
+                shellReloadDragDeferral);
         const std::size_t shellReloadRetry =
             timerDispatchSource.find(
                 "SetTimer(hwnd_, kShellChangeTimerId,",
@@ -3966,9 +3976,11 @@ int main(int argc, char** argv)
                 shellReloadRetry);
         Check(shellReloadTimer != std::string::npos &&
                 shellReloadDragDeferral != std::string::npos &&
+                shellReloadRetainedContext != std::string::npos &&
                 shellReloadRetry != std::string::npos &&
                 shellReloadExecute != std::string::npos &&
                 shellReloadTimer < shellReloadDragDeferral &&
+                shellReloadRetainedContext < shellReloadRetry &&
                 shellReloadDragDeferral < shellReloadRetry &&
                 shellReloadRetry < shellReloadExecute,
             "Shell debounce must keep reload pending while native or OLE drag ownership is active");

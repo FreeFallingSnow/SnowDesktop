@@ -812,7 +812,7 @@ void TestDragInputSampling()
             dragInputRules::ShouldDeferModelReload(true, false) &&
             dragInputRules::ShouldDeferModelReload(false, true) &&
             dragInputRules::ShouldDeferModelReload(true, true),
-        "desktop model reloads must wait for both native and OLE drag ownership to end");
+        "desktop model reloads must wait for retained drop context and OLE transport to end");
     Check(
         dragInputRules::ShouldSampleLivePointer(true, true) &&
             !dragInputRules::ShouldSampleLivePointer(false, true) &&

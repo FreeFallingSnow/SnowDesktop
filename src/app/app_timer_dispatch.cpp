@@ -167,7 +167,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
             return;
         const bool deferForDrag =
             snowdesktop::drag_input_rules::ShouldDeferModelReload(
-                dragSession_.IsActive(),
+                dragSession_.HasContext(),
                 dragDropController_.IsTransportActive());
         if (mouseDown_ || reloading_ || deferForDrag)
         {

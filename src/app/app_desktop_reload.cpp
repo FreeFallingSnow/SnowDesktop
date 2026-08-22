@@ -586,7 +586,7 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
     extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
     const bool deferForDrag =
         snowdesktop::drag_input_rules::ShouldDeferModelReload(
-            dragSession_.IsActive(),
+            dragSession_.HasContext(),
             dragDropController_.IsTransportActive());
     if (shellFileOperationInFlight_ > 0 || deferForDrag)
     {
