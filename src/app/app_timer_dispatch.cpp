@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../drag_input_rules.h"
 #include "../ole_drag_rules.h"
 
 // Desktop animation, dwell and maintenance timer dispatch.
@@ -164,7 +165,11 @@ void DesktopApp::OnTimer(WPARAM timerId)
         KillTimer(hwnd_, kShellChangeTimerId);
         if (shellFileOperationInFlight_ > 0)
             return;
-        if (mouseDown_ || reloading_)
+        const bool deferForDrag =
+            snowdesktop::drag_input_rules::ShouldDeferModelReload(
+                dragSession_.IsActive(),
+                dragDropController_.IsTransportActive());
+        if (mouseDown_ || reloading_ || deferForDrag)
         {
             SetTimer(hwnd_, kShellChangeTimerId,
                 kShellChangeDebounceMs, nullptr);

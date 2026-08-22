@@ -3910,6 +3910,18 @@ int main(int argc, char** argv)
             desktopReloadSource.find(
                 "ClearPopupDragTarget();",
                 reloadItemsBegin);
+        const std::size_t reloadItemsDragDeferral =
+            desktopReloadSource.find(
+                "ShouldDeferModelReload(",
+                reloadItemsBegin);
+        const std::size_t reloadItemsPending =
+            desktopReloadSource.find(
+                "shellReloadPending_ = true;",
+                reloadItemsDragDeferral);
+        const std::size_t reloadItemsRetryTimer =
+            desktopReloadSource.find(
+                "SetTimer(hwnd_, kShellChangeTimerId,",
+                reloadItemsPending);
         const std::size_t reloadLayoutSlots =
             desktopReloadSource.find(
                 "LoadLayoutSlots();",
@@ -3923,14 +3935,43 @@ int main(int argc, char** argv)
                 "LoadDesktopItems();",
                 reloadItemsBegin);
         Check(reloadItemsBegin != std::string::npos &&
+                reloadItemsDragDeferral != std::string::npos &&
+                reloadItemsPending != std::string::npos &&
+                reloadItemsRetryTimer != std::string::npos &&
                 reloadItemsClear != std::string::npos &&
                 reloadLayoutSlots != std::string::npos &&
                 reloadFolderEntries != std::string::npos &&
                 reloadDesktopItems != std::string::npos &&
+                reloadItemsDragDeferral < reloadItemsPending &&
+                reloadItemsPending < reloadItemsRetryTimer &&
+                reloadItemsRetryTimer < reloadItemsClear &&
                 reloadItemsClear < reloadLayoutSlots &&
                 reloadItemsClear < reloadFolderEntries &&
                 reloadItemsClear < reloadDesktopItems,
-            "desktop reload must detach popup handoff wrappers before replacing widget or DesktopItem storage");
+            "desktop reload must defer retained drag bindings, then detach popup handoff wrappers before replacing model storage");
+        const std::size_t shellReloadTimer =
+            timerDispatchSource.find(
+                "timerId == kShellChangeTimerId");
+        const std::size_t shellReloadDragDeferral =
+            timerDispatchSource.find(
+                "ShouldDeferModelReload(",
+                shellReloadTimer);
+        const std::size_t shellReloadRetry =
+            timerDispatchSource.find(
+                "SetTimer(hwnd_, kShellChangeTimerId,",
+                shellReloadDragDeferral);
+        const std::size_t shellReloadExecute =
+            timerDispatchSource.find(
+                "ReloadItems(reloadLayoutFromDisk);",
+                shellReloadRetry);
+        Check(shellReloadTimer != std::string::npos &&
+                shellReloadDragDeferral != std::string::npos &&
+                shellReloadRetry != std::string::npos &&
+                shellReloadExecute != std::string::npos &&
+                shellReloadTimer < shellReloadDragDeferral &&
+                shellReloadDragDeferral < shellReloadRetry &&
+                shellReloadRetry < shellReloadExecute,
+            "Shell debounce must keep reload pending while native or OLE drag ownership is active");
         const std::size_t selfOleEnter =
             oleDropSessionSource.find(
                 "HRESULT DesktopApp::HandleOleDragEnter(");

@@ -808,6 +808,12 @@ void TestDragInputSampling()
             !dragInputRules::IsNativeDragActive(true, true),
         "only drag sessions outside OLE transport may use native pointer routing");
     Check(
+        !dragInputRules::ShouldDeferModelReload(false, false) &&
+            dragInputRules::ShouldDeferModelReload(true, false) &&
+            dragInputRules::ShouldDeferModelReload(false, true) &&
+            dragInputRules::ShouldDeferModelReload(true, true),
+        "desktop model reloads must wait for both native and OLE drag ownership to end");
+    Check(
         dragInputRules::ShouldSampleLivePointer(true, true) &&
             !dragInputRules::ShouldSampleLivePointer(false, true) &&
             !dragInputRules::ShouldSampleLivePointer(true, false),

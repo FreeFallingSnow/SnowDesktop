@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../drag_input_rules.h"
 
 // SID 字符串格式化（S-1-5-21-...），直接按 SID 内存布局解析，
 // 不依赖 sddl.h/ntsecapi，避免 PCH 环境下安全 API 声明不可用的问题。
@@ -583,11 +584,24 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
 void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
 {
     extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
-    if (shellFileOperationInFlight_ > 0)
+    const bool deferForDrag =
+        snowdesktop::drag_input_rules::ShouldDeferModelReload(
+            dragSession_.IsActive(),
+            dragDropController_.IsTransportActive());
+    if (shellFileOperationInFlight_ > 0 || deferForDrag)
     {
         shellReloadPending_ = true;
         shellReloadLayoutFromDiskPending_ =
             shellReloadLayoutFromDiskPending_ || reloadLayoutFromDisk;
+        // OLE clears mouseDown_ before entering its nested loop, so the Shell
+        // debounce timer can no longer use that field as a drag-lifetime
+        // proxy. Keep one pending reload alive until both native and OLE drag
+        // ownership have ended.
+        if (deferForDrag && hwnd_ && IsWindow(hwnd_))
+        {
+            SetTimer(hwnd_, kShellChangeTimerId,
+                kShellChangeDebounceMs, nullptr);
+        }
         return;
     }
     if (reloading_) return;
