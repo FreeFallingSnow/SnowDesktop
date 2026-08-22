@@ -923,6 +923,12 @@ private:
     bool IsLuaPanelHostedByFloatingWindow() const;
     bool ShouldShowFloatingPopupWindow() const;
     RECT CalculateFloatingPopupWindowBounds() const;
+    bool StartFloatingPopupOutsideClickMonitor();
+    void StopFloatingPopupOutsideClickMonitor();
+    void HandleFloatingPopupExternalPointerDown(
+        std::uint32_t generation);
+    static LRESULT CALLBACK FloatingPopupMouseHookProc(
+        int code, WPARAM message, LPARAM data);
     bool CreateFloatingPopupWindow();
     void DestroyFloatingPopupWindow();
     void ResetFloatingPopupCompositionResources();
@@ -3065,6 +3071,16 @@ private:
     bool floatingPopupCompositionRenderRecoveryPending_ = false;
     bool floatingPopupCompositionPaintInProgress_ = false;
     bool floatingPopupDropTargetRegistered_ = false;
+    HHOOK floatingPopupMouseHook_ = nullptr;
+    std::uint32_t floatingPopupMouseHookGeneration_ = 0;
+    inline static std::atomic<HWND>
+        floatingPopupMouseHookNotificationWindow_{ nullptr };
+    inline static std::atomic<std::uint32_t>
+        floatingPopupMouseHookActiveGeneration_{ 0 };
+    inline static std::atomic<LONG>
+        floatingPopupMouseHookScreenX_{ 0 };
+    inline static std::atomic<LONG>
+        floatingPopupMouseHookScreenY_{ 0 };
     /** @brief 快捷导航顶层窗口下方的原生毛玻璃层。 */
     DesktopBackdropCompositor quickNavBackdropCompositor_;
     HWND quickNavigationSearchEdit_ = nullptr;

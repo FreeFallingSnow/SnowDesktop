@@ -1522,6 +1522,23 @@ int main(int argc, char** argv)
             !floatingPopup::ShouldBeTopmost(true, 1) &&
             !floatingPopup::ShouldBeTopmost(false, 0),
         "native menus must temporarily outrank the shared popup host");
+    Check(floatingPopup::ShouldDismissForExternalPointerDown(
+            true, false, false),
+        "an external application press must dismiss a visible shared popup");
+    Check(!floatingPopup::ShouldDismissForExternalPointerDown(
+            true, true, false) &&
+            !floatingPopup::ShouldDismissForExternalPointerDown(
+                false, false, false) &&
+            !floatingPopup::ShouldDismissForExternalPointerDown(
+                true, false, true),
+        "own-process presses, hidden popups and active drags must not trigger external dismissal");
+    Check(floatingPopup::
+            ShouldDismissLuaPanelForExternalPointerDown(
+                true, true, false, false) &&
+            !floatingPopup::
+                ShouldDismissLuaPanelForExternalPointerDown(
+                    true, false, false, false),
+        "Lua panels must preserve their dismiss-on-outside contract for external presses");
     const POINT mappedFloatingPoint =
         floatingDock::WindowPointToDesktopPoint(
             POINT{ 12, 34 }, floatingDockRect);

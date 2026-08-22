@@ -30,4 +30,27 @@ constexpr bool ShouldBeTopmost(
 {
     return visible && shellPopupMenuLayerDepth == 0;
 }
+
+constexpr bool ShouldDismissForExternalPointerDown(
+    bool popupVisible,
+    bool targetBelongsToCurrentProcess,
+    bool dragActive)
+{
+    return popupVisible &&
+        !targetBelongsToCurrentProcess &&
+        !dragActive;
+}
+
+constexpr bool ShouldDismissLuaPanelForExternalPointerDown(
+    bool panelVisible,
+    bool dismissOnOutside,
+    bool targetBelongsToCurrentProcess,
+    bool dragActive)
+{
+    return dismissOnOutside &&
+        ShouldDismissForExternalPointerDown(
+            panelVisible,
+            targetBelongsToCurrentProcess,
+            dragActive);
+}
 }

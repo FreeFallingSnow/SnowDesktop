@@ -34,6 +34,147 @@ bool DesktopApp::ShouldShowFloatingPopupWindow() const
         IsLuaPanelHostedByFloatingWindow());
 }
 
+LRESULT CALLBACK DesktopApp::FloatingPopupMouseHookProc(
+    int code, WPARAM message, LPARAM data)
+{
+    if (code == HC_ACTION &&
+        (message == WM_LBUTTONDOWN ||
+         message == WM_RBUTTONDOWN ||
+         message == WM_MBUTTONDOWN ||
+         message == WM_XBUTTONDOWN))
+    {
+        const auto* event =
+            reinterpret_cast<const MSLLHOOKSTRUCT*>(data);
+        const HWND notificationWindow =
+            floatingPopupMouseHookNotificationWindow_.load();
+        const std::uint32_t generation =
+            floatingPopupMouseHookActiveGeneration_.load();
+        if (event && generation != 0 &&
+            notificationWindow &&
+            IsWindow(notificationWindow))
+        {
+            floatingPopupMouseHookScreenX_.store(event->pt.x);
+            floatingPopupMouseHookScreenY_.store(event->pt.y);
+            PostMessageW(
+                notificationWindow,
+                kFloatingPopupExternalPointerMessage,
+                static_cast<WPARAM>(generation),
+                0);
+        }
+    }
+    return CallNextHookEx(nullptr, code, message, data);
+}
+
+bool DesktopApp::StartFloatingPopupOutsideClickMonitor()
+{
+    if (floatingPopupMouseHook_)
+        return true;
+    if (!floatingPopupHwnd_ ||
+        !IsWindow(floatingPopupHwnd_))
+        return false;
+
+    ++floatingPopupMouseHookGeneration_;
+    if (floatingPopupMouseHookGeneration_ == 0)
+        ++floatingPopupMouseHookGeneration_;
+    floatingPopupMouseHookActiveGeneration_.store(
+        floatingPopupMouseHookGeneration_);
+    floatingPopupMouseHookNotificationWindow_.store(
+        floatingPopupHwnd_);
+    floatingPopupMouseHook_ = SetWindowsHookExW(
+        WH_MOUSE_LL,
+        &DesktopApp::FloatingPopupMouseHookProc,
+        instance_,
+        0);
+    if (floatingPopupMouseHook_)
+        return true;
+
+    floatingPopupMouseHookNotificationWindow_.store(nullptr);
+    floatingPopupMouseHookActiveGeneration_.store(0);
+    WriteDiagnosticLogEntry(
+        L"Floating popup outside-click hook FAILED");
+    return false;
+}
+
+void DesktopApp::StopFloatingPopupOutsideClickMonitor()
+{
+    floatingPopupMouseHookNotificationWindow_.store(nullptr);
+    if (!floatingPopupMouseHook_)
+    {
+        floatingPopupMouseHookActiveGeneration_.store(0);
+        return;
+    }
+    ++floatingPopupMouseHookGeneration_;
+    if (floatingPopupMouseHookGeneration_ == 0)
+        ++floatingPopupMouseHookGeneration_;
+    UnhookWindowsHookEx(floatingPopupMouseHook_);
+    floatingPopupMouseHook_ = nullptr;
+    floatingPopupMouseHookActiveGeneration_.store(0);
+}
+
+void DesktopApp::HandleFloatingPopupExternalPointerDown(
+    std::uint32_t generation)
+{
+    if (generation == 0 ||
+        generation != floatingPopupMouseHookGeneration_ ||
+        !ShouldShowFloatingPopupWindow())
+        return;
+
+    const POINT screenPoint{
+        floatingPopupMouseHookScreenX_.load(),
+        floatingPopupMouseHookScreenY_.load()
+    };
+    HWND targetWindow = WindowFromPoint(screenPoint);
+    if (!targetWindow)
+        return;
+    const DWORD currentProcessId = GetCurrentProcessId();
+    const auto belongsToCurrentProcess =
+        [currentProcessId](HWND window) {
+            DWORD processId = 0;
+            if (window)
+                GetWindowThreadProcessId(window, &processId);
+            return processId != 0 &&
+                processId == currentProcessId;
+        };
+    // The desktop renderer is a child of Explorer's WorkerW. Test the direct
+    // hit first so an in-process desktop/Dock click does not inherit the
+    // external process identity of its shell-owned root.
+    bool targetBelongsToCurrentProcess =
+        belongsToCurrentProcess(targetWindow);
+    if (!targetBelongsToCurrentProcess)
+    {
+        targetBelongsToCurrentProcess =
+            belongsToCurrentProcess(
+                GetAncestor(targetWindow, GA_ROOTOWNER));
+    }
+    const bool dragActive =
+        dragSession_.IsActive() ||
+        dragDropController_.IsExternalDragActive();
+    const bool dismissCollection =
+        snowdesktop::floating_popup_rules::
+            ShouldDismissForExternalPointerDown(
+                IsCollectionPopupHostedByFloatingWindow(),
+                targetBelongsToCurrentProcess,
+                dragActive);
+    const bool dismissLuaPanel =
+        snowdesktop::floating_popup_rules::
+            ShouldDismissLuaPanelForExternalPointerDown(
+                IsLuaPanelHostedByFloatingWindow(),
+                luaWidgetPanelRequest_.dismissOnOutside,
+                targetBelongsToCurrentProcess,
+                dragActive);
+    if (dismissCollection)
+    {
+        pendingCollectionPopupOpen_.reset();
+        CloseCollectionPopup();
+    }
+    if (dismissLuaPanel)
+    {
+        CloseLuaWidgetPanel(
+            luaWidgetPanelRequest_.widgetId,
+            "external-pointer");
+    }
+}
+
 RECT DesktopApp::CalculateFloatingPopupWindowBounds() const
 {
     RECT bounds{};
@@ -121,6 +262,7 @@ void DesktopApp::RecoverFloatingPopupCompositionFailure(
 
 void DesktopApp::DestroyFloatingPopupWindow()
 {
+    StopFloatingPopupOutsideClickMonitor();
     if (floatingPopupDropTargetRegistered_ &&
         floatingPopupHwnd_ && IsWindow(floatingPopupHwnd_))
     {
@@ -344,6 +486,7 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
 {
     if (!ShouldShowFloatingPopupWindow())
     {
+        StopFloatingPopupOutsideClickMonitor();
         if (floatingPopupHwnd_ &&
             IsWindow(floatingPopupHwnd_) &&
             IsWindowVisible(floatingPopupHwnd_))
@@ -360,6 +503,7 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
             L"Floating popup window creation FAILED");
         return;
     }
+    StartFloatingPopupOutsideClickMonitor();
 
     const RECT nextBounds =
         CalculateFloatingPopupWindowBounds();
@@ -543,6 +687,10 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
     {
     case WM_MOUSEACTIVATE:
         return MA_NOACTIVATE;
+    case kFloatingPopupExternalPointerMessage:
+        HandleFloatingPopupExternalPointerDown(
+            static_cast<std::uint32_t>(wp));
+        return 0;
     case WM_NCHITTEST:
         return ShouldShowFloatingPopupWindow()
             ? HTCLIENT : HTTRANSPARENT;
@@ -621,6 +769,7 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         CloseLuaWidgetPanel(L"", "window-close");
         return 0;
     case WM_DESTROY:
+        StopFloatingPopupOutsideClickMonitor();
         if (floatingPopupHwnd_ == hwnd)
             floatingPopupHwnd_ = nullptr;
         return 0;
