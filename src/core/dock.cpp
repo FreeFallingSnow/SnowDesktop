@@ -1632,7 +1632,8 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         p.widgetBorderR, p.widgetBorderG, p.widgetBorderB, p.widgetBorderAlpha);
     if (app_)
         app_->DrawWidgetPanelBackground(context, bounds, panelRadius, fill,
-            D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f), false, 1.0f, &p);
+            D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f), false, 1.0f, &p, true,
+            reinterpret_cast<std::uintptr_t>(this));
 
     if (border.a > 0.0f)
     {

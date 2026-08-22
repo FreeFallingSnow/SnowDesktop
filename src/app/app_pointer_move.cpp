@@ -1327,28 +1327,24 @@ void DesktopApp::OnMouseMoveAt(
                         container.get());
                     if (!dock)
                         continue;
-                    const RECT oldPanel =
-                        dock->GetVisualPanelBounds(oldMouse);
-                    const RECT newPanel =
-                        dock->GetVisualPanelBounds(current);
-                    const RECT oldTitle =
-                        dock->GetHoveredTitleBounds(oldMouse);
-                    const RECT newTitle =
-                        dock->GetHoveredTitleBounds(current);
-                    for (const RECT candidate : {
-                            oldPanel, newPanel,
-                            oldTitle, newTitle })
-                    {
-                        if (IsRectEmptyRect(candidate))
-                            continue;
-                        if (IsRectEmptyRect(foregroundDirty))
-                            foregroundDirty = candidate;
-                        else
-                            UnionRect(
-                                &foregroundDirty,
-                                &foregroundDirty,
-                                &candidate);
-                    }
+                    // Dock hit-testing updates a hysteresis-backed focus
+                    // rect. Reconstructing the old title/panel after resolving
+                    // the current point can therefore miss pixels from the
+                    // last presented frame. Redraw one bounded, focus-neutral
+                    // envelope that covers every magnified icon and every
+                    // possible title position.
+                    const RECT hoverEnvelope =
+                        snowdesktop::floating_dock_rules::
+                            ExpandHostForTitleLayer(
+                                dock->GetInteractiveBounds(),
+                                dockSettings_.position);
+                    if (IsRectEmptyRect(foregroundDirty))
+                        foregroundDirty = hoverEnvelope;
+                    else
+                        UnionRect(
+                            &foregroundDirty,
+                            &foregroundDirty,
+                            &hoverEnvelope);
                 }
                 if (!IsRectEmptyRect(foregroundDirty))
                     InflateRect(&foregroundDirty, 4, 4);

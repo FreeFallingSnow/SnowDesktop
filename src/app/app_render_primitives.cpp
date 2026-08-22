@@ -47,7 +47,8 @@ void DesktopApp::DrawD2DRoundedRectangle(ID2D1RenderTarget* ctx, RECT rect, floa
 
 void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, float radius,
     D2D1_COLOR_F fill, D2D1_COLOR_F border, bool selected, float strokeWidth,
-    const PersonalizationSettings* effectSettings, bool registerBackdrop)
+    const PersonalizationSettings* effectSettings, bool registerBackdrop,
+    std::uintptr_t backdropOwnerKey)
 {
     if (!ctx || IsRectEmptyRect(frame)) return;
     if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
@@ -92,12 +93,14 @@ void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, 
                 snowdesktop::floating_dock_rules::
                     DesktopRectToWindowRect(
                         frame, floatingDockSourceRect_),
-                radius, p.glassBlurRadius);
+                radius, p.glassBlurRadius,
+                backdropOwnerKey);
         }
         else
         {
             desktopBackdropCompositor_.AddPanel(
-                frame, radius, p.glassBlurRadius);
+                frame, radius, p.glassBlurRadius,
+                backdropOwnerKey);
         }
     }
 

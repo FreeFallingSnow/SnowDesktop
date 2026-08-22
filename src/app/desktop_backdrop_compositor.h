@@ -7,6 +7,7 @@
 #include <windows.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -49,8 +50,14 @@ public:
         float anchorX, float anchorY);
     /** @brief 开始收集一帧的玻璃区域。完整帧会在 EndFrame 清理未再次出现的视觉。 */
     void BeginFrame(bool completeCollection);
-    /** @brief 注册或更新一个圆角玻璃面板。 */
-    bool AddPanel(const RECT& frame, float cornerRadius, float blurRadius);
+    /**
+     * @brief 注册或更新一个圆角玻璃面板。
+     * @param ownerKey 非零时作为跨几何变化保持稳定的面板身份；零值保留
+     *        旧的矩形身份语义，供静态面板使用。
+     */
+    bool AddPanel(
+        const RECT& frame, float cornerRadius, float blurRadius,
+        std::uintptr_t ownerKey = 0);
     /** @brief 立即移除指定矩形对应的玻璃面板并同步辅助窗口区域。 */
     bool RemovePanel(const RECT& frame);
     /** @brief 在完整收集帧中保留一个由交接事务临时拥有的面板。 */

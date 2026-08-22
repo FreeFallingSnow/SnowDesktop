@@ -474,4 +474,19 @@ inline bool IsPointInVisibleLayer(
                 desktopPoint) != FALSE);
 }
 
+inline bool IsTooltipOnlyPoint(
+    POINT desktopPoint,
+    const RECT& dockRect,
+    const RECT& popupRect,
+    const RECT& tooltipRect)
+{
+    if (IsRectEmpty(&tooltipRect) ||
+        !PtInRect(&tooltipRect, desktopPoint))
+        return false;
+    if (PtInRect(&dockRect, desktopPoint))
+        return false;
+    return IsRectEmpty(&popupRect) ||
+        !PtInRect(&popupRect, desktopPoint);
+}
+
 } // namespace snowdesktop::floating_dock_rules

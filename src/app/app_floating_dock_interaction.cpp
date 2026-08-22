@@ -404,7 +404,9 @@ void DesktopApp::CloseFloatingDock(
             desktopBackdropCompositor_.AddPanel(
                 desktopDockPanelRect,
                 desktopPanelRadius,
-                glassSettings.glassBlurRadius) &&
+                glassSettings.glassBlurRadius,
+                reinterpret_cast<std::uintptr_t>(
+                    floatingDockContainer_)) &&
             desktopBackdropCompositor_.SetPanelOpacity(
                 desktopDockPanelRect, 0.0f);
         // This is only the invisible target staging step. Do not submit its

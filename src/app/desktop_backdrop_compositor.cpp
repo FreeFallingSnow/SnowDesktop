@@ -12,6 +12,8 @@
  */
 #include "desktop_backdrop_compositor.h"
 
+#include "desktop_backdrop_update_rules.h"
+
 #include <d2d1_1.h>
 #include <d2d1effects.h>
 #include <DispatcherQueue.h>
@@ -213,6 +215,7 @@ struct DesktopBackdropCompositor::Impl
     struct PanelVisual
     {
         RECT frame{};
+        std::uintptr_t ownerKey = 0;
         int cornerRadius = 0;
         int blurRadius = 0;
         wuc::SpriteVisual visual{nullptr};
@@ -773,8 +776,9 @@ void DesktopBackdropCompositor::BeginFrame(bool completeCollection)
     impl_->SyncWindowPlacement();
 }
 
-bool DesktopBackdropCompositor::AddPanel(const RECT& frame, float cornerRadius,
-    float blurRadius)
+bool DesktopBackdropCompositor::AddPanel(
+    const RECT& frame, float cornerRadius,
+    float blurRadius, std::uintptr_t ownerKey)
 {
     if (!impl_->available || frame.right <= frame.left || frame.bottom <= frame.top)
         return false;
@@ -784,13 +788,17 @@ bool DesktopBackdropCompositor::AddPanel(const RECT& frame, float cornerRadius,
     try
     {
         auto existing = std::find_if(impl_->panels.begin(), impl_->panels.end(),
-            [&frame](const Impl::PanelVisual& panel) {
-                return EqualRect(&panel.frame, &frame) != FALSE;
+            [&frame, ownerKey](const Impl::PanelVisual& panel) {
+                return snowdesktop::desktop_backdrop_update_rules::
+                    PanelIdentityMatches(
+                        panel.ownerKey, panel.frame,
+                        ownerKey, frame);
             });
         if (existing == impl_->panels.end())
         {
             Impl::PanelVisual panel{};
             panel.frame = frame;
+            panel.ownerKey = ownerKey;
             panel.cornerRadius = cornerKey;
             panel.blurRadius = blurKey;
             panel.visual = impl_->compositor.CreateSpriteVisual();
@@ -801,6 +809,12 @@ bool DesktopBackdropCompositor::AddPanel(const RECT& frame, float cornerRadius,
             impl_->panels.push_back(std::move(panel));
             existing = std::prev(impl_->panels.end());
         }
+
+        // A moving Dock keeps one SpriteVisual and changes its geometry in
+        // place. Treating every magnified RECT as a new identity leaves all
+        // earlier rectangles alive during partial frames, causing the native
+        // backdrop region and per-move work to grow without bound.
+        existing->frame = frame;
 
         if (existing->blurRadius != blurKey || !existing->visual.Brush())
         {

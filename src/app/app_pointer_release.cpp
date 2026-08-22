@@ -188,6 +188,12 @@ void DesktopApp::ReconcileDesktopHoverState(
         {
             lastMousePoint_ = activateHover
                 ? cursorPoint : baseCursorPoint;
+            // A stale floating-Dock leave may have consumed tracking before
+            // the cursor reached the base desktop surface. Keep the title
+            // HRGN synchronized with the repaired point before presenting so
+            // an old visual/input island cannot outlive the hover state.
+            if (refreshActiveHover)
+                UpdateFloatingDockWindowBounds(false);
             PresentPassiveHoverVisualChange();
             RecordShellHoverTrace(
                 activateHover

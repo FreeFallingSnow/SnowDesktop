@@ -287,6 +287,48 @@ int main(int argc, char** argv)
             backdropClientRect),
         "an invalidated drag scene must fully reconcile backdrop panels");
 
+    const RECT firstBackdropFrame{100, 900, 600, 980};
+    const RECT shiftedBackdropFrame{96, 870, 608, 980};
+    constexpr std::uintptr_t firstBackdropOwner = 0x101;
+    constexpr std::uintptr_t secondBackdropOwner = 0x202;
+    Check(
+        backdropUpdate::PanelIdentityMatches(
+            firstBackdropOwner, firstBackdropFrame,
+            firstBackdropOwner, shiftedBackdropFrame) &&
+        !backdropUpdate::PanelIdentityMatches(
+            firstBackdropOwner, firstBackdropFrame,
+            secondBackdropOwner, firstBackdropFrame) &&
+        !backdropUpdate::PanelIdentityMatches(
+            firstBackdropOwner, firstBackdropFrame,
+            0, firstBackdropFrame) &&
+        backdropUpdate::PanelIdentityMatches(
+            0, firstBackdropFrame,
+            0, firstBackdropFrame) &&
+        !backdropUpdate::PanelIdentityMatches(
+            0, firstBackdropFrame,
+            0, shiftedBackdropFrame),
+        "stable backdrop owners must update across geometry changes without colliding with another owner or legacy rectangle identity");
+    RECT simulatedDockPanel = firstBackdropFrame;
+    std::size_t simulatedDockPanelCount = 1;
+    for (int step = 0; step < 1000; ++step)
+    {
+        const RECT nextFrame{
+            100 - step % 17,
+            900 - step % 31,
+            600 + step % 19,
+            980
+        };
+        if (!backdropUpdate::PanelIdentityMatches(
+                firstBackdropOwner, simulatedDockPanel,
+                firstBackdropOwner, nextFrame))
+        {
+            ++simulatedDockPanelCount;
+        }
+        simulatedDockPanel = nextFrame;
+    }
+    Check(simulatedDockPanelCount == 1,
+        "one thousand Dock geometry updates with one stable owner must keep one backdrop panel identity");
+
     Check(
         displayRefresh::ResolveAction(false, false, false) ==
             displayRefresh::Action::None,
@@ -1881,6 +1923,28 @@ int main(int argc, char** argv)
             floatingPopupRect,
             RECT{}),
         "points outside every visible floating layer are genuine leaves");
+    const RECT floatingTooltipRect{ 120, 840, 280, 890 };
+    Check(floatingDock::IsTooltipOnlyPoint(
+              POINT{ 180, 860 },
+              floatingDockRect,
+              floatingPopupRect,
+              floatingTooltipRect) &&
+            !floatingDock::IsTooltipOnlyPoint(
+                POINT{ 150, 930 },
+                floatingDockRect,
+                floatingPopupRect,
+                floatingTooltipRect) &&
+            !floatingDock::IsTooltipOnlyPoint(
+                POINT{ 300, 600 },
+                floatingDockRect,
+                floatingPopupRect,
+                RECT{ 260, 560, 360, 660 }) &&
+            !floatingDock::IsTooltipOnlyPoint(
+                POINT{ 20, 20 },
+                floatingDockRect,
+                floatingPopupRect,
+                RECT{}),
+        "only the visual title chip outside interactive Dock and popup regions may pass through input");
     Check(!floatingDock::ShouldRenderDesktopDock(
             true, true),
         "only the Dock mirrored by the floating host must be hidden");
@@ -3329,6 +3393,12 @@ int main(int argc, char** argv)
         const std::string dockContainerSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "core" /
                 "dock.cpp");
+        const std::string backdropCompositorSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "desktop_backdrop_compositor.cpp");
+        const std::string renderPrimitivesSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_render_primitives.cpp");
         Check(CountOccurrences(
                   dragHintWindowSource,
                   "SetWindowPos(hintHwnd_, HWND_TOPMOST") == 2 &&
@@ -3350,6 +3420,50 @@ int main(int argc, char** argv)
                   "freeCell = ClampGridCellToFitPage(") !=
                     std::string::npos,
             "desktop widget moves and Dock widget previews/commits must share full-span edge anchoring");
+        const std::size_t dockHoverDirtyBegin =
+            pointerMoveSource.find(
+                "if (dockHoverActive && !marqueeActive_)");
+        const std::size_t dockHoverDirtyEnd =
+            pointerMoveSource.find(
+                "using namespace\n                snowdesktop::widget_composition_layer_rules;",
+                dockHoverDirtyBegin);
+        const std::string dockHoverDirtySource =
+            dockHoverDirtyBegin == std::string::npos ||
+                dockHoverDirtyEnd == std::string::npos
+            ? std::string{}
+            : pointerMoveSource.substr(
+                dockHoverDirtyBegin,
+                dockHoverDirtyEnd - dockHoverDirtyBegin);
+        Check(!dockHoverDirtySource.empty() &&
+                dockHoverDirtySource.find(
+                    "ExpandHostForTitleLayer(") !=
+                    std::string::npos &&
+                dockHoverDirtySource.find(
+                    "dock->GetInteractiveBounds()") !=
+                    std::string::npos &&
+                dockHoverDirtySource.find(
+                    "GetVisualPanelBounds(oldMouse)") ==
+                    std::string::npos &&
+                dockHoverDirtySource.find(
+                    "GetHoveredTitleBounds(oldMouse)") ==
+                    std::string::npos,
+            "desktop Dock hover must clear one focus-neutral envelope instead of reconstructing stale geometry after hysteresis changes");
+        Check(backdropCompositorSource.find(
+                  "PanelIdentityMatches(") !=
+                    std::string::npos &&
+                backdropCompositorSource.find(
+                  "existing->frame = frame;") !=
+                    std::string::npos &&
+                dockContainerSource.find(
+                  "reinterpret_cast<std::uintptr_t>(this)") !=
+                    std::string::npos &&
+                CountOccurrences(
+                  renderPrimitivesSource,
+                  "backdropOwnerKey") >= 4 &&
+                floatingDockInteractionSource.find(
+                  "reinterpret_cast<std::uintptr_t>(\n                    floatingDockContainer_)") !=
+                    std::string::npos,
+            "Dock backdrop rendering and floating handoff must reuse a stable owner while updating the panel rectangle in place");
         const std::size_t widgetGestureGuard =
             pointerMoveSource.find(
                 "const bool activeWidgetGesture =");
@@ -3904,7 +4018,10 @@ int main(int argc, char** argv)
                     "WindowFromPoint(cursorScreen) == hwnd") !=
                     std::string::npos &&
                 floatingLeaveHandler.find(
-                    "tracking.dwFlags = TME_LEAVE;") ==
+                    "tracking.dwFlags = TME_LEAVE;") !=
+                    std::string::npos &&
+                floatingLeaveHandler.find(
+                    "tracking.hwndTrack = hwnd;") !=
                     std::string::npos &&
                 floatingLeaveHandler.find(
                     "OnMouseMoveAt(") ==
@@ -3913,15 +4030,37 @@ int main(int argc, char** argv)
                     "PresentPointerInteractionFrame(") ==
                     std::string::npos &&
                 floatingLeaveHandler.find(
-                    "ShouldPresentRetainedMouseLeave(") !=
+                    "ShouldPresentRetainedMouseLeave(") ==
                     std::string::npos &&
                 floatingLeaveHandler.find(
-                    "UpdateFloatingDockWindowBounds(false);") !=
+                    "UpdateFloatingDockWindowBounds(") ==
                     std::string::npos &&
                 floatingLeaveHandler.find(
-                    "InvalidateFloatingDockWindow(true);") !=
+                    "InvalidateFloatingDockWindow(") ==
                     std::string::npos,
-            "a retained floating-Dock leave must verify the real HWND and converge once without rearming");
+            "a retained floating-Dock leave must rearm only after an exact HWND hit and have no state, region, or presentation side effects");
+        const std::size_t floatingHitTestBegin =
+            floatingDockRenderSource.find(
+                "case WM_NCHITTEST:");
+        const std::size_t floatingHitTestEnd =
+            floatingDockRenderSource.find(
+                "case WM_ERASEBKGND:",
+                floatingHitTestBegin);
+        const std::string floatingHitTestHandler =
+            floatingHitTestBegin == std::string::npos ||
+                floatingHitTestEnd == std::string::npos
+            ? std::string{}
+            : floatingDockRenderSource.substr(
+                floatingHitTestBegin,
+                floatingHitTestEnd - floatingHitTestBegin);
+        Check(!floatingHitTestHandler.empty() &&
+                floatingHitTestHandler.find(
+                    "IsTooltipOnlyPoint(") !=
+                    std::string::npos &&
+                floatingHitTestHandler.find(
+                    "return HTTRANSPARENT;") !=
+                    std::string::npos,
+            "the floating Dock title must remain visual-only and pass mouse input to the paired desktop surface");
         const std::size_t onMouseLeaveBegin =
             pointerReleaseSource.find(
                 "void DesktopApp::OnMouseLeave()");
@@ -3966,8 +4105,11 @@ int main(int argc, char** argv)
                     std::string::npos &&
                 pointerReleaseSource.find(
                   "TryGetBaseDesktopHoverPointFromCursor(") !=
+                    std::string::npos &&
+                pointerReleaseSource.find(
+                  "if (refreshActiveHover)\n                UpdateFloatingDockWindowBounds(false);") !=
                     std::string::npos,
-            "periodic hover recovery must refresh active coordinates only from uncaptured base desktop surfaces");
+            "periodic hover recovery must refresh active coordinates and the floating title region only from uncaptured base desktop surfaces");
         Check(dockContainerSource.find(
                   "bool DockContainer::IsMagnificationSuppressed() const") !=
                     std::string::npos &&

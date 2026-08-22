@@ -887,7 +887,6 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
             WindowFromPoint(cursor) == hwnd)
             return 0;
         OnMouseLeave();
-        InvalidateFloatingPopupWindow(true);
         return 0;
     }
     case WM_LBUTTONDOWN:

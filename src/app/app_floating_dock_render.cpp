@@ -161,9 +161,31 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
     case WM_MOUSEACTIVATE:
         return MA_NOACTIVATE;
     case WM_NCHITTEST:
-        return floatingDockVisible_ &&
-                !floatingDockClosePending_
-            ? HTCLIENT : HTTRANSPARENT;
+    {
+        if (!floatingDockVisible_ ||
+            floatingDockClosePending_)
+            return HTTRANSPARENT;
+        POINT hitDesktopPoint{
+            GET_X_LPARAM(lp),
+            GET_Y_LPARAM(lp)
+        };
+        if (hwnd_ && IsWindow(hwnd_) &&
+            ScreenToClient(hwnd_, &hitDesktopPoint) &&
+            snowdesktop::floating_dock_rules::
+                IsTooltipOnlyPoint(
+                    hitDesktopPoint,
+                    floatingDockRect_,
+                    floatingDockPopupRect_,
+                    floatingDockTooltipRect_))
+        {
+            // The title chip is visual feedback, not an interaction surface.
+            // Passing its hit through lets an upward exit reach the paired
+            // desktop window and prevents an invisible stale title region
+            // from intercepting left or right button input.
+            return HTTRANSPARENT;
+        }
+        return HTCLIENT;
+    }
     case WM_ERASEBKGND:
         return 1;
     case WM_PAINT:
@@ -215,39 +237,19 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         {
             if (WindowFromPoint(cursorScreen) == hwnd)
             {
-                POINT cursor = cursorScreen;
-                if (ScreenToClient(hwnd, &cursor))
-                {
-                    cursor = FloatingDockClientToDesktop(cursor);
-                    const bool pointerPositionChanged =
-                        cursor.x != lastMousePoint_.x ||
-                        cursor.y != lastMousePoint_.y;
-                    const bool widgetInteractionActive =
-                        middleButtonWidgetMove_ ||
-                        widgetAction_ != WidgetAction::None ||
-                        detailColumnResizeActive_ ||
-                        luaWidgetPanelMouseDown_;
-                    const bool passiveHover =
-                        snowdesktop::desktop_hover_rules::
-                            ShouldResamplePassiveMouseMove(
-                                mouseDown_,
-                                dragSession_.IsActive(),
-                                widgetInteractionActive);
-                    lastMousePoint_ = cursor;
-                    if (snowdesktop::desktop_hover_rules::
-                            ShouldPresentRetainedMouseLeave(
-                                passiveHover,
-                                pointerPositionChanged))
-                    {
-                        UpdateFloatingDockWindowBounds(false);
-                        InvalidateFloatingDockWindow(true);
-                    }
-                }
+                // A region update can consume the current leave subscription
+                // while the pointer still resolves to this exact HWND. Restore
+                // only that subscription. Mutating hover state, geometry or
+                // presentation here would let the region update post another
+                // leave and recreate the input-starving feedback loop.
+                TRACKMOUSEEVENT tracking{ sizeof(tracking) };
+                tracking.dwFlags = TME_LEAVE;
+                tracking.hwndTrack = hwnd;
+                TrackMouseEvent(&tracking);
                 return 0;
             }
         }
         OnMouseLeave();
-        InvalidateFloatingDockWindow(true);
         return 0;
     }
     case WM_LBUTTONDOWN:

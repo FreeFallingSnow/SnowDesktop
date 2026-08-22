@@ -786,7 +786,8 @@ private:
     void DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, float radius,
         D2D1_COLOR_F fill, D2D1_COLOR_F border, bool selected, float strokeWidth,
         const PersonalizationSettings* effectSettings = nullptr,
-        bool registerBackdrop = true);
+        bool registerBackdrop = true,
+        std::uintptr_t backdropOwnerKey = 0);
     /** @brief 在圆角区域内绘制稳定平铺的低透明亚克力颗粒。 */
     void DrawAcrylicNoise(ID2D1DeviceContext* ctx, RECT frame, float radius,
         bool lightTheme, POINT screenOrigin);
