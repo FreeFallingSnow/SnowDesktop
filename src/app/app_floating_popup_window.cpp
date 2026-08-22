@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../drag_input_rules.h"
 
 #include <array>
 #include <bit>
@@ -827,8 +828,17 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         return MAKELPARAM(point.x, point.y);
     };
     auto latestDesktopPointer = [&]() {
+        const bool nativeDragActive =
+            snowdesktop::drag_input_rules::IsNativeDragActive(
+                dragSession_.IsActive(),
+                dragDropController_.IsTransportActive());
+        const bool primaryButtonDown =
+            (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
         POINT point{};
-        if (GetCursorPos(&point) && hwnd_ && IsWindow(hwnd_) &&
+        if (snowdesktop::drag_input_rules::
+                ShouldSampleFloatingWindowPointer(
+                    nativeDragActive, primaryButtonDown) &&
+            GetCursorPos(&point) && hwnd_ && IsWindow(hwnd_) &&
             ScreenToClient(hwnd_, &point))
         {
             return point;

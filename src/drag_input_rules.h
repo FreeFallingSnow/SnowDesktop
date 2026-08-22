@@ -22,6 +22,17 @@ constexpr bool ShouldSampleLivePointer(
     return nativeDragActive && primaryButtonDown;
 }
 
+constexpr bool ShouldSampleFloatingWindowPointer(
+    bool nativeDragActive,
+    bool primaryButtonDown)
+{
+    // Floating surfaces normally reconcile hover with the physical cursor.
+    // During a native drag, however, a queued move may arrive after the
+    // physical release but before WM_LBUTTONUP. Preserve that release barrier
+    // by falling back to the queued point until the button-up is dispatched.
+    return !nativeDragActive || primaryButtonDown;
+}
+
 constexpr bool IsNativeDragMessageSurface(
     bool mainDesktopWindow,
     bool floatingDockWindow,

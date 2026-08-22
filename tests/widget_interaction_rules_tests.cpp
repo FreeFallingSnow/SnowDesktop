@@ -813,6 +813,12 @@ void TestDragInputSampling()
             !dragInputRules::ShouldSampleLivePointer(true, false),
         "live drag sampling must stop after the physical primary button is released");
     Check(
+        dragInputRules::ShouldSampleFloatingWindowPointer(true, true) &&
+            !dragInputRules::ShouldSampleFloatingWindowPointer(true, false) &&
+            dragInputRules::ShouldSampleFloatingWindowPointer(false, true) &&
+            dragInputRules::ShouldSampleFloatingWindowPointer(false, false),
+        "floating windows must keep ordinary live hover sampling but preserve a queued native-drag release point");
+    Check(
         dragInputRules::IsNativeDragMessageSurface(
             true, false, false) &&
         dragInputRules::IsNativeDragMessageSurface(
