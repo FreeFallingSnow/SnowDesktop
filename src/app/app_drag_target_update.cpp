@@ -544,15 +544,15 @@ bool DesktopApp::UpdateDragPageNavigation(POINT clientPoint)
     GetNavButtonRects(prevRect, nextRect);
 
     int navSide = 0;
-    const bool hasPrev = pageOffset_ > 0;
-    const bool hasNext = pageOffset_ < MaxPageOffset();
     // 悬停检测不限制 hasPrev/hasNext，让置灰按钮也有 hover 视觉反馈
     if (PtInRect(&prevRect, clientPoint)) navSide = -1;
     else if (PtInRect(&nextRect, clientPoint)) navSide = 1;
     navHoverSide_ = navSide;
 
     // 自动翻页仅在可操作方向触发
-    const bool navEnabled = (navSide == -1 && hasPrev) || (navSide == 1 && hasNext);
+    const bool navEnabled =
+        (navSide == -1 && pageOffset_ > 0) ||
+        (navSide == 1 && pageOffset_ < MaxPageOffset());
     if (navSide == 0 || !navEnabled)
     {
         navAutoFlipDir_ = 0;
@@ -571,6 +571,7 @@ bool DesktopApp::UpdateDragPageNavigation(POINT clientPoint)
         return true;
 
     const int newOffset = NextNonEmptyOffset(pageOffset_, navSide);
+    navAutoFlipTick_ = now;
     if (newOffset == pageOffset_)
         return true;
 
@@ -587,8 +588,6 @@ bool DesktopApp::UpdateDragPageNavigation(POINT clientPoint)
     if (hasInternalItems && !groupedEntryDrag)
         MigrateSelectedItemsToLastMonitorPage();
     LayoutItems();
-
-    navAutoFlipTick_ = now;
     if (!dragSession_.IsActive() || (hasInternalItems && dragSession_.Items().empty()))
     {
         mouseDownHit_ = nullptr;

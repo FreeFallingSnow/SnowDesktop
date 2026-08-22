@@ -13,6 +13,7 @@
 #include "dock_window_rules.h"
 #include "dock_window_preview.h"
 #include "dock_window_transition.h"
+#include "page_navigation_rules.h"
 #include "dock_settings_rules.h"
 #include "desktop_item_reference_migration.h"
 #include "app/desktop_backdrop_update_rules.h"
@@ -116,6 +117,41 @@ int main(int argc, char** argv)
         snowdesktop::desktop_window_discovery_rules;
     namespace oleDrag =
         snowdesktop::ole_drag_rules;
+    namespace pageNavigation =
+        snowdesktop::page_navigation_rules;
+
+    int maximumPageChecks = 0;
+    const int maximumOffset = pageNavigation::MaximumOffset(
+        8, 3,
+        [&maximumPageChecks](std::size_t pageIndex) {
+            ++maximumPageChecks;
+            return pageIndex == 7;
+        });
+    Check(maximumOffset == 5 && maximumPageChecks == 1,
+        "maximum page offset must stop after finding the last populated overflow page");
+    int sparsePageChecks = 0;
+    const int sparseMaximumOffset = pageNavigation::MaximumOffset(
+        8, 3,
+        [&sparsePageChecks](std::size_t pageIndex) {
+            ++sparsePageChecks;
+            return pageIndex == 4;
+        });
+    Check(sparseMaximumOffset == 2 && sparsePageChecks == 4,
+        "maximum page offset must preserve sparse-page results while scanning backward");
+    Check(pageNavigation::NextNonEmptyOffset(
+            1, 1, 8, 3,
+            [](std::size_t pageIndex) {
+                return pageIndex == 4;
+            }) == 2 &&
+        pageNavigation::NextNonEmptyOffset(
+            5, -1, 8, 3,
+            [](std::size_t pageIndex) {
+                return pageIndex == 4;
+            }) == 2 &&
+        pageNavigation::NextNonEmptyOffset(
+            2, 1, 8, 3,
+            [](std::size_t) { return false; }) == 2,
+        "page navigation must find sparse pages in either direction and preserve the source offset on a miss");
 
     Check(
         desktopWindowDiscovery::IsExplorerDesktopViewProcess(
@@ -3226,6 +3262,9 @@ int main(int argc, char** argv)
         const std::string dragTargetUpdateSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_drag_target_update.cpp");
+        const std::string pageGridSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_page_grid.cpp");
         Check(floatingPopupSource.find("CreateTargetForHwnd") !=
                     std::string::npos &&
                 floatingPopupSource.find("RegisterDragDrop") !=
@@ -3480,6 +3519,55 @@ int main(int argc, char** argv)
                 dockDwellTimerKill != std::string::npos &&
                 dockDwellIdleGuard < dockDwellTimerKill,
             "idle Dock handoff cleanup must return before touching the window timer");
+        const std::size_t dragPageNavigation =
+            dragTargetUpdateSource.find(
+                "bool DesktopApp::UpdateDragPageNavigation(");
+        const std::size_t dragPageNextHit =
+            dragTargetUpdateSource.find(
+                "PtInRect(&nextRect, clientPoint)",
+                dragPageNavigation);
+        const std::size_t dragPageMaximum =
+            dragTargetUpdateSource.find(
+                "MaxPageOffset()",
+                dragPageNavigation);
+        const std::size_t dragPageScan =
+            dragTargetUpdateSource.find(
+                "NextNonEmptyOffset(pageOffset_, navSide)",
+                dragPageNavigation);
+        const std::size_t dragPageRetryThrottle =
+            dragTargetUpdateSource.find(
+                "navAutoFlipTick_ = now;",
+                dragPageScan);
+        const std::size_t dragPageNoTarget =
+            dragTargetUpdateSource.find(
+                "if (newOffset == pageOffset_)",
+                dragPageScan);
+        Check(dragPageNavigation != std::string::npos &&
+                dragPageNextHit != std::string::npos &&
+                dragPageMaximum != std::string::npos &&
+                dragPageNextHit < dragPageMaximum,
+            "drag page navigation must hit-test its buttons before scanning page content");
+        Check(dragPageScan != std::string::npos &&
+                dragPageRetryThrottle != std::string::npos &&
+                dragPageNoTarget != std::string::npos &&
+                dragPageRetryThrottle < dragPageNoTarget,
+            "an empty drag page-navigation scan must be throttled before the next pointer sample");
+        const std::size_t pageHasContent =
+            pageGridSource.find(
+                "bool DesktopApp::PageHasContent(");
+        const std::size_t widgetPageMatch =
+            pageGridSource.find(
+                "w.gridCell.pageId == pageId",
+                pageHasContent);
+        const std::size_t groupedWidgetCheck =
+            pageGridSource.find(
+                "IsGroupedWidget(w)",
+                pageHasContent);
+        Check(pageHasContent != std::string::npos &&
+                widgetPageMatch != std::string::npos &&
+                groupedWidgetCheck != std::string::npos &&
+                widgetPageMatch < groupedWidgetCheck,
+            "page content checks must reject widgets on other pages before resolving group membership");
         Check(pointerMoveSource.find(
                   "*dragPreviewSynced = true;") !=
                     std::string::npos &&

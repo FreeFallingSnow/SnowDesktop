@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../page_navigation_rules.h"
 #include "../widgets/collection_group_rules.h"
 #include "../widgets/guide_widget_rules.h"
 
@@ -674,8 +675,8 @@ bool DesktopApp::PageHasContent(const std::wstring& pageId) const
     for (const auto& item : items_)
         if (!item.name.empty() && item.gridCell.pageId == pageId) return true;
     for (const auto& w : widgets_)
-        if (!IsGroupedWidget(w) &&
-            w.gridCell.pageId == pageId) return true;
+        if (w.gridCell.pageId == pageId &&
+            !IsGroupedWidget(w)) return true;
     return false;
 }
 
@@ -724,18 +725,12 @@ bool DesktopApp::RemoveRedundantGuideWidgets()
  */
 int DesktopApp::NextNonEmptyOffset(int fromOffset, int direction) const
 {
-    if (savedPageIds_.empty() || gridPages_.empty()) return fromOffset;
-    const int visiblePageCount = static_cast<int>(std::min(savedPageIds_.size(), gridPages_.size()));
-    int offset = fromOffset;
-    while (true)
-    {
-        offset += direction;
-        if (offset < 0 || offset > static_cast<int>(savedPageIds_.size()) - visiblePageCount)
-            return fromOffset;
-        size_t pageIdx = static_cast<size_t>((visiblePageCount - 1) + offset);
-        if (pageIdx < savedPageIds_.size() && PageHasContent(savedPageIds_[pageIdx]))
-            return offset;
-    }
+    return snowdesktop::page_navigation_rules::NextNonEmptyOffset(
+        fromOffset, direction,
+        savedPageIds_.size(), gridPages_.size(),
+        [this](std::size_t pageIndex) {
+            return PageHasContent(savedPageIds_[pageIndex]);
+        });
 }
 
 /**
@@ -744,17 +739,11 @@ int DesktopApp::NextNonEmptyOffset(int fromOffset, int direction) const
  */
 int DesktopApp::MaxPageOffset() const
 {
-    if (savedPageIds_.empty() || gridPages_.empty()) return 0;
-    const int visiblePageCount = static_cast<int>(std::min(savedPageIds_.size(), gridPages_.size()));
-    const int rawMax = std::max(0, static_cast<int>(savedPageIds_.size()) - visiblePageCount);
-    int result = 0;
-    for (int off = 1; off <= rawMax; ++off)
-    {
-        size_t pageIdx = static_cast<size_t>((visiblePageCount - 1) + off);
-        if (pageIdx < savedPageIds_.size() && PageHasContent(savedPageIds_[pageIdx]))
-            result = off;
-    }
-    return result;
+    return snowdesktop::page_navigation_rules::MaximumOffset(
+        savedPageIds_.size(), gridPages_.size(),
+        [this](std::size_t pageIndex) {
+            return PageHasContent(savedPageIds_[pageIndex]);
+        });
 }
 
 std::wstring DesktopApp::GetPageDisplayName(int index) const
