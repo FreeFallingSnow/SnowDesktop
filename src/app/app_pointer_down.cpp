@@ -474,7 +474,6 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     [this]() {
                         ToggleWindowsStartMenu();
                     },
-                    true,
                     FloatingDockCloseFocusPolicy::PreserveCurrent);
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;

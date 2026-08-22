@@ -888,13 +888,11 @@ private:
     bool EnsureFloatingDockVisibleForAssociatedSurface(
         POINT anchorScreen);
     void CloseFloatingDock(
-        bool closeDockPopup = true,
         FloatingDockCloseFocusPolicy focusPolicy =
             FloatingDockCloseFocusPolicy::RestorePrevious);
     /** @brief 完成悬浮 Dock 到桌面 Dock 的无闪烁交接后执行动作。 */
     void CloseFloatingDockThen(
         std::function<void()> action,
-        bool closeDockPopup = true,
         FloatingDockCloseFocusPolicy focusPolicy =
             FloatingDockCloseFocusPolicy::RestorePrevious);
     void CompleteFloatingDockCloseHandoff();

@@ -3055,6 +3055,35 @@ int main(int argc, char** argv)
                   "SelectFloatingDockContainerForMonitor(") !=
                     std::string::npos,
             "Dock-associated surfaces must reveal the floating Dock on their monitor");
+        Check(floatingDockInteractionSource.find(
+                  "CloseCollectionPopup();") ==
+                    std::string::npos &&
+                floatingDockInteractionSource.find(
+                  "FinalizeCloseCollectionPopup();") ==
+                    std::string::npos,
+            "closing the floating Dock must not own or finalize a shared popup");
+        const std::size_t finalizePopupBegin =
+            popupLifecycleSource.find(
+                "void DesktopApp::FinalizeCloseCollectionPopup()");
+        const std::size_t closePopupBegin =
+            popupLifecycleSource.find(
+                "void DesktopApp::CloseCollectionPopup(",
+                finalizePopupBegin);
+        const std::string finalizePopupSource =
+            finalizePopupBegin != std::string::npos &&
+                    closePopupBegin != std::string::npos
+                ? popupLifecycleSource.substr(
+                    finalizePopupBegin,
+                    closePopupBegin - finalizePopupBegin)
+                : std::string{};
+        Check(!finalizePopupSource.empty() &&
+                finalizePopupSource.find(
+                    "UpdateFloatingDockWindowBounds();") ==
+                    std::string::npos &&
+                finalizePopupSource.find(
+                    "InvalidateFloatingDockWindow(true);") ==
+                    std::string::npos,
+            "finalizing a shared popup must not repaint or resize the floating Dock");
         Check(popupTransitionSource.find(
                   "EnsureFloatingDockVisibleForAssociatedSurface(") !=
                     std::string::npos &&

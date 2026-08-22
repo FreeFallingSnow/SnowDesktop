@@ -405,14 +405,6 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     popupPageId_.clear();
     popupCategoryId_.clear();
     popupRect_ = {};
-    if (floatingDockVisible_)
-    {
-        floatingDockContainer_ =
-            SelectFloatingDockContainerForMonitor(
-                floatingDockMonitor_);
-        UpdateFloatingDockWindowBounds();
-        InvalidateFloatingDockWindow(true);
-    }
     InvalidateDragStaticScene();
     if (hwnd_ && IsWindow(hwnd_) &&
         !IsRectEmptyRect(dirty))

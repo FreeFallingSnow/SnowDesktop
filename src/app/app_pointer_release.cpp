@@ -611,7 +611,6 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
                     command(DockWindowTransitionCapturePolicy::
                         SnapshotPreferred);
                 },
-                true,
                 FloatingDockCloseFocusPolicy::PreserveCurrent);
         };
 

@@ -313,7 +313,6 @@ EnsureFloatingDockVisibleForAssociatedSurface(
 }
 
 void DesktopApp::CloseFloatingDock(
-    bool closeDockPopup,
     FloatingDockCloseFocusPolicy focusPolicy)
 {
     if (floatingDockHoverTailToken_)
@@ -343,18 +342,6 @@ void DesktopApp::CloseFloatingDock(
     // to the desktop HWND. Suppress that same target until the real pointer
     // leaves it.
     DismissDockWindowPreviewUntilLeave();
-    if (closeDockPopup && popupAnchoredToDock_ &&
-        GetOpenPopupWidget())
-    {
-        // Clear the popup state directly through the shared close path, while
-        // keeping this host marked visible until that path has rebuilt any
-        // grouped runtime container.
-        CloseCollectionPopup();
-        // The floating host is hidden in this same call, so it cannot present
-        // the remaining close frames. Finalize here instead of letting those
-        // frames leak onto the desktop-hosted Dock copy.
-        FinalizeCloseCollectionPopup();
-    }
     const RECT desktopDockRect =
         floatingDockContainer_
             ? floatingDockContainer_->
@@ -380,9 +367,9 @@ void DesktopApp::CloseFloatingDock(
     if (floatingDockHoverHandoffPending_)
         lastMousePoint_ = handoffPointer;
 
-    // Freeze the hand-off cache from the final floating state after popup
-    // teardown and pointer reconciliation. Both HWND targets will reference
-    // this same surface until the desktop main surface has caught up.
+    // Freeze the hand-off cache from the final floating state after pointer
+    // reconciliation. Popup state belongs to the independent shared popup
+    // host and must not participate in this Dock surface transaction.
     if (!RenderFloatingDockCompositionFrame())
     {
         WriteDiagnosticLogEntry(
@@ -486,7 +473,6 @@ void DesktopApp::CloseFloatingDock(
 
 void DesktopApp::CloseFloatingDockThen(
     std::function<void()> action,
-    bool closeDockPopup,
     FloatingDockCloseFocusPolicy focusPolicy)
 {
     const bool floatingWindowVisible =
@@ -504,7 +490,7 @@ void DesktopApp::CloseFloatingDockThen(
     }
 
     floatingDockPostCloseAction_ = std::move(action);
-    CloseFloatingDock(closeDockPopup, focusPolicy);
+    CloseFloatingDock(focusPolicy);
 }
 
 void DesktopApp::CompleteFloatingDockCloseHandoff()
@@ -652,10 +638,7 @@ void DesktopApp::FinishFloatingDockCloseHandoff()
 void DesktopApp::ToggleFloatingDock()
 {
     if (floatingDockVisible_)
-        // A hotkey toggle changes only the Dock host. Keep an anchored popup
-        // alive so the reverse hand-off mirrors ShowFloatingDock instead of
-        // turning a surface transition into a popup-close command.
-        CloseFloatingDock(false);
+        CloseFloatingDock();
     else
         ShowFloatingDock();
 }

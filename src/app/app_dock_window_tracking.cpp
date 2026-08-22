@@ -1075,7 +1075,6 @@ void DesktopApp::ActivateDockWindowFromPreviewAnimated(HWND window)
                 command(DockWindowTransitionCapturePolicy::
                     SnapshotPreferred);
             },
-            true,
             FloatingDockCloseFocusPolicy::PreserveCurrent);
         return;
     }
@@ -1097,7 +1096,6 @@ void DesktopApp::ActivateDockWindowFromPreview(HWND window)
             [this, window]() {
                 ActivateDockWindowFromPreview(window);
             },
-            true,
             FloatingDockCloseFocusPolicy::PreserveCurrent);
         return;
     }
