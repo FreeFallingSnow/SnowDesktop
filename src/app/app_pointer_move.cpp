@@ -867,6 +867,17 @@ void DesktopApp::OnMouseMoveAt(
                 if (nativeDragResumed)
                     return;
 
+                // Ordinary completion, Escape and failure paths do not resume
+                // the custom ghost, but they must still release objects that
+                // can retain Shell drag UI before any reload or layout work.
+                dataObj.Reset();
+                POINT finishedOlePoint{};
+                if (TryGetNativeDragResumePointFromCursor(
+                        finishedOlePoint))
+                {
+                    SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+                }
+
                 if (hr == DRAGDROP_S_DROP && oleEffect == DROPEFFECT_MOVE
                     && !dragDropController_.SelfDragReturned() &&
                     payload.hasDesktopIcons)

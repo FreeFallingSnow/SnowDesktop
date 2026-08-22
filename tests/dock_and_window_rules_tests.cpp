@@ -3858,6 +3858,36 @@ int main(int argc, char** argv)
                 resetOleCursor < restoreCapture &&
                 restoreCapture < restoreNativeVisual,
             "native drag feedback must resume only after OLE ownership and its effect cursor have ended");
+        const std::size_t nativeResumeReturn =
+            pointerMoveSource.find(
+                "if (nativeDragResumed)",
+                restoreNativeVisual);
+        const std::size_t finishOleDataRelease =
+            pointerMoveSource.find(
+                "dataObj.Reset();",
+                releaseOleData + 1);
+        const std::size_t finishOleSurfaceCheck =
+            pointerMoveSource.find(
+                "TryGetNativeDragResumePointFromCursor(",
+                finishOleDataRelease);
+        const std::size_t finishOleCursorReset =
+            pointerMoveSource.find(
+                "SetCursor(LoadCursorW(nullptr, IDC_ARROW));",
+                finishOleSurfaceCheck);
+        const std::size_t finishOlePostProcessing =
+            pointerMoveSource.find(
+                "if (hr == DRAGDROP_S_DROP",
+                finishOleCursorReset);
+        Check(nativeResumeReturn != std::string::npos &&
+                finishOleDataRelease != std::string::npos &&
+                finishOleSurfaceCheck != std::string::npos &&
+                finishOleCursorReset != std::string::npos &&
+                finishOlePostProcessing != std::string::npos &&
+                nativeResumeReturn < finishOleDataRelease &&
+                finishOleDataRelease < finishOleSurfaceCheck &&
+                finishOleSurfaceCheck < finishOleCursorReset &&
+                finishOleCursorReset < finishOlePostProcessing,
+            "every terminal OLE path must release Shell drag data before post-processing and reset its cursor only on a native resume surface");
         const std::size_t cancelDragBegin =
             dragLifecycleSource.find(
                 "void DesktopApp::CancelActiveItemDrag()");
