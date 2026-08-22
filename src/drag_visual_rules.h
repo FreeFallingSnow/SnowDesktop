@@ -27,6 +27,35 @@ constexpr bool ShouldCompactPreview(
     return itemCount > 1;
 }
 
+constexpr bool IsPreviewInputRegionReady(
+    bool pointerHoleRequired,
+    bool pointerHoleCreated,
+    bool pointerHoleCombined) noexcept
+{
+    return !pointerHoleRequired ||
+        (pointerHoleCreated && pointerHoleCombined);
+}
+
+constexpr bool ShouldSkipPreviewFallbackCandidate(
+    bool visible,
+    bool enabled,
+    bool cloaked,
+    bool presentationOnly) noexcept
+{
+    return !visible || !enabled || cloaked || presentationOnly;
+}
+
+constexpr bool PreviewFallbackRegionContainsPoint(
+    int regionType,
+    bool pointInRegion) noexcept
+{
+    // GetWindowRgn reports ERROR both for windows without an explicit region
+    // and for an API failure. Keep the ordinary rectangular-window fallback,
+    // but never treat a documented empty region as a hit.
+    return regionType == ERROR ||
+        (regionType != NULLREGION && pointInRegion);
+}
+
 constexpr bool EqualRect(
     const RECT& left, const RECT& right) noexcept
 {

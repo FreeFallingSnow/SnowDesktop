@@ -1525,6 +1525,39 @@ int main(int argc, char** argv)
             dragVisual::kMaximumStackedPreviewItems == 4 &&
             dragVisual::kStackedPreviewOffset > 0,
         "multi-item drag previews must use a bounded compact stack");
+    Check(dragVisual::IsPreviewInputRegionReady(
+              false, false, false) &&
+            dragVisual::IsPreviewInputRegionReady(
+              true, true, true) &&
+            !dragVisual::IsPreviewInputRegionReady(
+              true, false, false) &&
+            !dragVisual::IsPreviewInputRegionReady(
+              true, true, false),
+        "a preview input region must not be applied unless its required pointer hole was created and combined");
+    Check(!dragVisual::ShouldSkipPreviewFallbackCandidate(
+              true, true, false, false) &&
+            dragVisual::ShouldSkipPreviewFallbackCandidate(
+              false, true, false, false) &&
+            dragVisual::ShouldSkipPreviewFallbackCandidate(
+              true, false, false, false) &&
+            dragVisual::ShouldSkipPreviewFallbackCandidate(
+              true, true, true, false) &&
+            dragVisual::ShouldSkipPreviewFallbackCandidate(
+              true, true, false, true),
+        "manual preview fallback must ignore unavailable and presentation-only windows");
+    Check(dragVisual::PreviewFallbackRegionContainsPoint(
+              ERROR, false) &&
+            !dragVisual::PreviewFallbackRegionContainsPoint(
+              NULLREGION, true) &&
+            dragVisual::PreviewFallbackRegionContainsPoint(
+              SIMPLEREGION, true) &&
+            !dragVisual::PreviewFallbackRegionContainsPoint(
+              SIMPLEREGION, false) &&
+            dragVisual::PreviewFallbackRegionContainsPoint(
+              COMPLEXREGION, true) &&
+            !dragVisual::PreviewFallbackRegionContainsPoint(
+              COMPLEXREGION, false),
+        "manual preview fallback must preserve rectangular windows and reject points outside explicit or empty regions");
     const RECT appliedPreviewBounds{100, 200, 180, 280};
     const RECT movedPreviewBounds{101, 200, 181, 280};
     const RECT resizedPreviewBounds{100, 200, 181, 280};

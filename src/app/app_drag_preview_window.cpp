@@ -423,36 +423,53 @@ void DesktopApp::SyncDragPreviewWindow()
         inputHole.x != dragPreviewInputHole_.x ||
         inputHole.y != dragPreviewInputHole_.y)
     {
+        const bool pointerHoleRequired =
+            inputHole.x >= 0 && inputHole.y >= 0 &&
+            inputHole.x < static_cast<LONG>(width) &&
+            inputHole.y < static_cast<LONG>(height);
         HRGN windowRegion = CreateRectRgn(
             0, 0,
             static_cast<int>(width),
             static_cast<int>(height));
-        if (windowRegion)
+        if (!windowRegion)
         {
-            if (inputHole.x >= 0 && inputHole.y >= 0 &&
-                inputHole.x < static_cast<LONG>(width) &&
-                inputHole.y < static_cast<LONG>(height))
-            {
-                HRGN pointerHole = CreateRectRgn(
-                    inputHole.x, inputHole.y,
-                    inputHole.x + 1, inputHole.y + 1);
-                if (pointerHole)
-                {
-                    CombineRgn(
-                        windowRegion, windowRegion,
-                        pointerHole, RGN_DIFF);
-                    DeleteObject(pointerHole);
-                }
-            }
-            if (SetWindowRgn(
-                    dragPreviewHwnd_, windowRegion, FALSE))
-            {
-                // SetWindowRgn transfers ownership on success.
-                dragPreviewInputHole_ = inputHole;
-            }
-            else
-                DeleteObject(windowRegion);
+            dragPreviewInputHole_ = { -1, -1 };
+            HideDragPreviewWindow();
+            return;
         }
+
+        bool pointerHoleCreated = !pointerHoleRequired;
+        bool pointerHoleCombined = !pointerHoleRequired;
+        if (pointerHoleRequired)
+        {
+            HRGN pointerHole = CreateRectRgn(
+                inputHole.x, inputHole.y,
+                inputHole.x + 1, inputHole.y + 1);
+            pointerHoleCreated = pointerHole != nullptr;
+            if (pointerHole)
+            {
+                pointerHoleCombined = CombineRgn(
+                    windowRegion, windowRegion,
+                    pointerHole, RGN_DIFF) != ERROR;
+                DeleteObject(pointerHole);
+            }
+        }
+
+        if (!snowdesktop::drag_visual_rules::
+                IsPreviewInputRegionReady(
+                    pointerHoleRequired,
+                    pointerHoleCreated,
+                    pointerHoleCombined) ||
+            !SetWindowRgn(
+                dragPreviewHwnd_, windowRegion, FALSE))
+        {
+            DeleteObject(windowRegion);
+            dragPreviewInputHole_ = { -1, -1 };
+            HideDragPreviewWindow();
+            return;
+        }
+        // SetWindowRgn transfers ownership on success.
+        dragPreviewInputHole_ = inputHole;
     }
 
     const bool needsRender =
@@ -491,13 +508,24 @@ HWND DesktopApp::ResolveWindowBelowDragPreviewAt(
          candidate;
          candidate = GetWindow(candidate, GW_HWNDNEXT))
     {
-        if (!IsWindowVisible(candidate))
-            continue;
+        const bool presentationOnly =
+            candidate == dragPreviewHwnd_ ||
+            candidate == hintHwnd_ ||
+            desktopBackdropCompositor_.IsBackdropWindow(candidate) ||
+            floatingDockBackdropCompositor_.IsBackdropWindow(candidate) ||
+            quickNavBackdropCompositor_.IsBackdropWindow(candidate);
         DWORD cloaked = 0;
-        if (SUCCEEDED(DwmGetWindowAttribute(
+        const bool isCloaked =
+            SUCCEEDED(DwmGetWindowAttribute(
                 candidate, DWMWA_CLOAKED,
                 &cloaked, sizeof(cloaked))) &&
-            cloaked != 0)
+            cloaked != 0;
+        if (snowdesktop::drag_visual_rules::
+                ShouldSkipPreviewFallbackCandidate(
+                    IsWindowVisible(candidate) != FALSE,
+                    IsWindowEnabled(candidate) != FALSE,
+                    isCloaked,
+                    presentationOnly))
             continue;
         RECT windowRect{};
         if (!GetWindowRect(candidate, &windowRect) ||
@@ -511,13 +539,13 @@ HWND DesktopApp::ResolveWindowBelowDragPreviewAt(
             const POINT localPoint{
                 screenPoint.x - windowRect.left,
                 screenPoint.y - windowRect.top };
-            const bool outsideRegion =
-                regionType != ERROR &&
-                regionType != NULLREGION &&
-                !PtInRegion(region,
-                    localPoint.x, localPoint.y);
+            const bool pointInRegion =
+                PtInRegion(region,
+                    localPoint.x, localPoint.y) != FALSE;
             DeleteObject(region);
-            if (outsideRegion)
+            if (!snowdesktop::drag_visual_rules::
+                    PreviewFallbackRegionContainsPoint(
+                        regionType, pointInRegion))
                 continue;
         }
         return candidate;
