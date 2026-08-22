@@ -55,6 +55,7 @@ bool DesktopApp::IsDesktopInteractionSurfaceWindow(
 
     if (belongsTo(floatingDockHwnd_) ||
         belongsTo(floatingPopupHwnd_) ||
+        belongsTo(dragPreviewHwnd_) ||
         belongsTo(quickNavigationHwnd_))
         return true;
     if (dockWindowPreview_ &&
@@ -92,7 +93,7 @@ bool DesktopApp::IsExternalDropWindowAt(POINT clientPoint) const
 {
     POINT screenPoint = clientPoint;
     ClientToScreen(hwnd_, &screenPoint);
-    HWND hit = WindowFromPoint(screenPoint);
+    HWND hit = ResolveWindowBelowDragPreviewAt(screenPoint);
     if (!hit) return false;
     HWND root = GetAncestor(hit, GA_ROOT);
     if (!root) root = hit;

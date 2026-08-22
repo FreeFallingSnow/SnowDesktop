@@ -128,6 +128,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/app_dock_window_tracking.cpp
     src/app/app_drag_hint_window.cpp
     src/app/app_drag_lifecycle.cpp
+    src/app/app_drag_preview_window.cpp
     src/app/app_drag_target_update.cpp
     src/app/app_drop_data_extraction.cpp
     src/app/app_drop_execution.cpp

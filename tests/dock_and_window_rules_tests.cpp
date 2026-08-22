@@ -1479,29 +1479,22 @@ int main(int argc, char** argv)
         "a desktop-hosted preview must still enter the topmost band explicitly");
     const RECT floatingDockRect{ 100, 900, 700, 980 };
     const RECT floatingPopupRect{ 240, 500, 560, 892 };
-    const RECT outsideDockSource{ 10, 10, 60, 60 };
-    const auto outsideDock = dragVisual::ExcludeRect(
-        outsideDockSource, floatingDockRect);
-    Check(outsideDock.count == 1 &&
-            EqualRect(&outsideDock.rects[0],
-                &outsideDockSource),
-        "a drag visual outside the floating Dock must retain one complete desktop fragment");
-    const auto insideDock = dragVisual::ExcludeRect(
-        RECT{ 120, 920, 180, 960 }, floatingDockRect);
-    Check(insideDock.count == 0,
-        "the desktop surface must not retain a duplicate drag visual fully owned by the floating Dock");
-    const auto crossingDock = dragVisual::ExcludeRect(
-        RECT{ 80, 880, 180, 960 }, floatingDockRect);
-    Check(crossingDock.count == 2 &&
-            crossingDock.rects[0].left == 80 &&
-            crossingDock.rects[0].top == 880 &&
-            crossingDock.rects[0].right == 180 &&
-            crossingDock.rects[0].bottom == 900 &&
-            crossingDock.rects[1].left == 80 &&
-            crossingDock.rects[1].top == 900 &&
-            crossingDock.rects[1].right == 100 &&
-            crossingDock.rects[1].bottom == 960,
-        "a crossing drag visual must keep only the non-Dock desktop fragments");
+    Check((dragVisual::kPreviewWindowExStyle &
+              WS_EX_NOACTIVATE) != 0 &&
+            (dragVisual::kPreviewWindowExStyle &
+              WS_EX_TRANSPARENT) != 0 &&
+            (dragVisual::kPreviewWindowExStyle &
+              WS_EX_TOPMOST) == 0,
+        "the drag preview must pass input without activating and enter the topmost band explicitly");
+    Check(dragVisual::ShouldShowPreview(
+              true, true, true) &&
+            !dragVisual::ShouldShowPreview(
+              false, true, true) &&
+            !dragVisual::ShouldShowPreview(
+              true, false, true) &&
+            !dragVisual::ShouldShowPreview(
+              true, true, false),
+        "the independent drag preview must follow the drag session visibility contract");
     Check(dragVisual::DropPreviewBelongsToRenderSurface(
               true, true, true) &&
             !dragVisual::DropPreviewBelongsToRenderSurface(
@@ -3089,6 +3082,15 @@ int main(int argc, char** argv)
         const std::string oleDropSessionSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_ole_drop_session.cpp");
+        const std::string dragPreviewSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_drag_preview_window.cpp");
+        const std::string dragLifecycleSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_drag_lifecycle.cpp");
+        const std::string oleDropRoutingSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_ole_drop_routing.cpp");
         Check(floatingPopupSource.find("CreateTargetForHwnd") !=
                     std::string::npos &&
                 floatingPopupSource.find("RegisterDragDrop") !=
@@ -3221,15 +3223,41 @@ int main(int argc, char** argv)
                     std::string::npos,
             "collection popups and Lua panels must render through the shared popup surface");
         Check(sceneSource.find(
-                  "dragSession_.IsVisualVisible()") !=
+                  "ResolveDraggedBounds(") ==
                     std::string::npos &&
                 sceneSource.find(
-                  "ExcludeRect(") !=
+                  "ExcludeRect(") ==
                     std::string::npos &&
                 sceneSource.find(
                   "DropPreviewBelongsToRenderSurface(") !=
                     std::string::npos,
-            "drag visuals and Dock guidance must exclude their lower desktop duplicates");
+            "desktop, Dock and popup surfaces must render guidance without another drag ghost copy");
+        Check(dragPreviewSource.find(
+                  "CreateTargetForHwnd") !=
+                    std::string::npos &&
+                dragPreviewSource.find(
+                  "ResolveDraggedBounds(") !=
+                    std::string::npos &&
+                dragPreviewSource.find(
+                  "dragPreviewRenderRevision_") !=
+                    std::string::npos &&
+                dragPreviewSource.find(
+                  "SetWindowPos(") !=
+                    std::string::npos &&
+                dragPreviewSource.find(
+                  "HWND_TOPMOST") !=
+                    std::string::npos,
+            "the drag ghost must use one cached compact topmost DComp surface");
+        Check(dragLifecycleSource.find(
+                  "SyncDragPreviewWindow();") !=
+                    std::string::npos &&
+                oleDropRoutingSource.find(
+                  "ResolveWindowBelowDragPreviewAt(screenPoint)") !=
+                    std::string::npos &&
+                oleDropRoutingSource.find(
+                  "belongsTo(dragPreviewHwnd_)") !=
+                    std::string::npos,
+            "pointer presentation and external OLE routing must account for the transparent preview host");
         Check(pointerMoveSource.find(
                   "dragSession_.SetVisualVisible(false);") !=
                     std::string::npos &&

@@ -179,6 +179,7 @@ void DesktopApp::ResetCompositionRenderCaches()
     ResetWidgetMarqueeComposition();
     ResetDesktopWidgetComposition();
     ResetDesktopForegroundComposition();
+    ResetDragPreviewCompositionResources();
     dragRenderCache_.Reset();
     ResetCollectionPopupAnimationCache();
     ResetLuaWidgetPanelAnimationCache();

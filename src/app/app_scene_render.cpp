@@ -554,49 +554,6 @@ void DesktopApp::DrawDynamicOverlays(
         }
     }
 
-    // Dragged items at offset
-    if (dragSession_.IsVisualVisible() &&
-        !dragSession_.Items().empty())
-    {
-        POINT current = dragSession_.CurrentPoint();
-        const auto& dragItems = dragSession_.Items();
-        for (size_t itemIndex = 0;
-            itemIndex < dragItems.size(); ++itemIndex)
-        {
-            Item* item = dragItems[itemIndex];
-            if (!item) continue;
-            RECT bounds = item->GetBounds();
-            if (IsRectEmptyRect(bounds)) continue;
-
-            RECT draggedBounds = dragSession_.ResolveDraggedBounds(
-                itemIndex, bounds, current);
-            const bool excludeFloatingDockCopy =
-                !renderingFloatingDock_ &&
-                !renderingFloatingPopup_ &&
-                floatingDockDesktopCopySuppressed_ &&
-                !IsRectEmptyRect(floatingDockRect_);
-            if (!excludeFloatingDockCopy)
-            {
-                item->Draw(ctx, draggedBounds, 3);
-                continue;
-            }
-
-            const auto fragments =
-                snowdesktop::drag_visual_rules::ExcludeRect(
-                    draggedBounds, floatingDockRect_);
-            for (std::size_t fragmentIndex = 0;
-                 fragmentIndex < fragments.count;
-                 ++fragmentIndex)
-            {
-                ctx->PushAxisAlignedClip(
-                    ToD2DRect(fragments.rects[fragmentIndex]),
-                    D2D1_ANTIALIAS_MODE_ALIASED);
-                item->Draw(ctx, draggedBounds, 3);
-                ctx->PopAxisAlignedClip();
-            }
-        }
-    }
-
     const bool popupMarquee = marqueeDockFolderPopup_ ||
         (marqueeWidgetIndex_ < widgets_.size() &&
          marqueeWidgetIndex_ == popupWidgetIndex_);

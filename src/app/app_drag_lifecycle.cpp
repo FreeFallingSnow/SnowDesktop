@@ -61,6 +61,7 @@ void DesktopApp::PresentDesktopPointerUpdate()
 
 void DesktopApp::PresentOleDragInteractionFrame()
 {
+    SyncDragPreviewWindow();
     OnPaint();
     InvalidateFloatingDockWindow(true);
     InvalidateFloatingPopupWindow(true);
@@ -75,6 +76,10 @@ void DesktopApp::PresentOleDragInteractionFrame()
 
 void DesktopApp::PresentPointerInteractionFrame()
 {
+    // Move the cached compact drag surface before any desktop or Dock paint.
+    // This keeps the ghost attached to the input message even when the
+    // larger feedback surfaces need more time to redraw.
+    SyncDragPreviewWindow();
     const bool widgetPreviewActive =
         widgetAction_ == WidgetAction::Move ||
         widgetAction_ == WidgetAction::Resize;
@@ -211,6 +216,7 @@ void DesktopApp::EndDragSession()
     collectionGroupTabDwellId_.clear();
     collectionGroupTabDwellTick_ = 0;
     dragSession_.End();
+    HideDragPreviewWindow();
     ClearDockFolderPopupDragSourceSnapshot();
     dragRenderCache_.Reset();
     // 清除拖放预览缓存
@@ -224,6 +230,7 @@ void DesktopApp::EndDragSession()
 
 void DesktopApp::CommitDragVisualEndBeforeShellOperation()
 {
+    HideDragPreviewWindow();
     dragRenderCache_.Reset();
     PresentPassiveHoverVisualChange();
     // The ordinary hover path must never wait for DWM. Shell operations are a

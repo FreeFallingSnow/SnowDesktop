@@ -28,6 +28,7 @@ DesktopApp::~DesktopApp()
     dockWindowTransition_.reset();
     dockWindowPreview_.reset();
     UnregisterFloatingDockHotkey();
+    DestroyDragPreviewWindow();
     DestroyFloatingDockWindow();
     StopQuickNavigationAppIndexing();
     StopDemoIconLoader();
@@ -189,6 +190,7 @@ void DesktopApp::ResetDesktopWindowResources()
     }
 
     DestroyDragHintWindow();
+    DestroyDragPreviewWindow();
     DestroyFloatingPopupWindow();
     DestroyFloatingDockWindow();
     DestroyQuickNavigationWindow();

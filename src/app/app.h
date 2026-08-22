@@ -639,6 +639,7 @@ private:
     static LRESULT CALLBACK QuickNavigationWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     static LRESULT CALLBACK FloatingDockWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     static LRESULT CALLBACK FloatingPopupWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+    static LRESULT CALLBACK DragPreviewWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     /**
      * @brief 主窗口消息分发处理。
      * @param hwnd 窗口句柄
@@ -659,6 +660,7 @@ private:
     LRESULT HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     LRESULT HandleFloatingDockMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     LRESULT HandleFloatingPopupMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+    LRESULT HandleDragPreviewMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     /** @brief 创建桌面覆盖窗口，挂载到 Explorer 桌面上层。 @return 成功返回 true */
     bool CreateDesktopOverlayWindow();
     /** @brief 重置桌面窗口相关的 D2D/DComp 资源（窗口尺寸变化或设备丢失时调用）。 */
@@ -880,6 +882,17 @@ private:
     void PresentDesktopPointerUpdate();
     /** @brief 同步呈现桌面拖动及浮动 Dock 指针反馈。 */
     void PresentPointerInteractionFrame();
+    bool CreateDragPreviewWindow();
+    void DestroyDragPreviewWindow();
+    void HideDragPreviewWindow();
+    void ResetDragPreviewCompositionResources();
+    HRESULT CreateOrResizeDragPreviewCompositionSurface(
+        UINT width, UINT height);
+    bool RenderDragPreviewCompositionFrame(
+        const RECT& desktopBounds);
+    void SyncDragPreviewWindow();
+    HWND ResolveWindowBelowDragPreviewAt(
+        POINT screenPoint) const;
     void PrepareDockBackdropForDragTransition();
     bool CreateFloatingDockWindow();
     void DestroyFloatingDockWindow();
@@ -2991,6 +3004,7 @@ private:
     HWND quickNavigationHwnd_ = nullptr;
     HWND floatingDockHwnd_ = nullptr;
     HWND floatingPopupHwnd_ = nullptr;
+    HWND dragPreviewHwnd_ = nullptr;
     HWND floatingDockHotkeyHwnd_ = nullptr;
     HWND desktopPassthroughHotkeyHwnd_ = nullptr;
     HWND floatingDockEdgeSwipeHwnd_ = nullptr;
@@ -3070,6 +3084,14 @@ private:
     bool floatingDockCompositionRenderRecoveryPending_ = false;
     bool floatingDockCompositionPaintInProgress_ = false;
     bool floatingDockDropTargetRegistered_ = false;
+    ComPtr<IDCompositionTarget> dragPreviewDcompTarget_;
+    ComPtr<IDCompositionVisual2> dragPreviewDcompVisual_;
+    ComPtr<IDCompositionSurface> dragPreviewDcompSurface_;
+    RECT dragPreviewContentBounds_{};
+    UINT dragPreviewCompWidth_ = 0;
+    UINT dragPreviewCompHeight_ = 0;
+    std::uint64_t dragPreviewRenderRevision_ = 0;
+    bool dragPreviewCompositionPaintInProgress_ = false;
     ComPtr<IDCompositionTarget> floatingPopupDcompTarget_;
     ComPtr<IDCompositionVisual2> floatingPopupDcompVisual_;
     ComPtr<IDCompositionSurface> floatingPopupDcompSurface_;
