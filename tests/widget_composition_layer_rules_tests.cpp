@@ -183,29 +183,6 @@ int main(int argc, char** argv)
         Check(queue.find("widget.type") == std::string::npos &&
                 queue.find("audio.output.analysis") == std::string::npos,
             "child-surface ownership must not depend on widget type or data subscription");
-        const std::size_t widgetDragUpdateBegin = composition.find(
-            "bool DesktopApp::UpdateDesktopWidgetDragComposition(");
-        const std::size_t widgetDragEndBegin = composition.find(
-            "void DesktopApp::EndDesktopWidgetDragComposition()",
-            widgetDragUpdateBegin);
-        const std::string widgetDragUpdate =
-            widgetDragUpdateBegin == std::string::npos ||
-                    widgetDragEndBegin == std::string::npos
-                ? std::string{}
-                : composition.substr(
-                    widgetDragUpdateBegin,
-                    widgetDragEndBegin - widgetDragUpdateBegin);
-        Check(!widgetDragUpdate.empty() &&
-                widgetDragUpdate.find("SetOffsetX(") !=
-                    std::string::npos &&
-                widgetDragUpdate.find("SetOffsetY(") !=
-                    std::string::npos &&
-                widgetDragUpdate.find("BeginDraw(") ==
-                    std::string::npos &&
-                pointer.find(
-                    "UpdateDesktopWidgetDragComposition(") !=
-                    std::string::npos,
-            "continuous widget dragging must reuse its child visual without redrawing the widget surface");
         Check(scene.find("QueueDesktopWidgetComposition(widgetData.id)") !=
                 std::string::npos,
             "the desktop scene must route visible widgets to child surfaces");

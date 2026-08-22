@@ -226,8 +226,6 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         auto& item = composition->second;
         const RECT oldBounds = item.bounds;
         const bool boundsChanged = !SameRect(oldBounds, bounds);
-        const bool dragVisualActive =
-            desktopWidgetDragCompositionId_ == widgetId;
 
         if (!item.surface || item.width != width || item.height != height)
         {
@@ -326,15 +324,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
             (void)desktopBackdropCompositor_.RemovePanel(oldBounds);
             item.backdropRegistered = false;
         }
-        if (dragVisualActive)
-        {
-            if (item.backdropRegistered)
-            {
-                (void)desktopBackdropCompositor_.RemovePanel(bounds);
-                item.backdropRegistered = false;
-            }
-        }
-        else if (backdropRequested)
+        if (backdropRequested)
         {
             const bool backdropChanged =
                 !item.backdropRegistered || boundsChanged ||
@@ -358,21 +348,11 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         }
 
         item.bounds = bounds;
-        const LONG visualLeft = bounds.left +
-            (dragVisualActive
-                ? desktopWidgetDragCompositionOrigin_.x -
-                    widgetDragVisualAnchor_.x
-                : 0);
-        const LONG visualTop = bounds.top +
-            (dragVisualActive
-                ? desktopWidgetDragCompositionOrigin_.y -
-                    widgetDragVisualAnchor_.y
-                : 0);
         hr = item.visual->SetContent(item.surface.Get());
         if (SUCCEEDED(hr))
-            hr = item.visual->SetOffsetX(static_cast<float>(visualLeft));
+            hr = item.visual->SetOffsetX(static_cast<float>(bounds.left));
         if (SUCCEEDED(hr))
-            hr = item.visual->SetOffsetY(static_cast<float>(visualTop));
+            hr = item.visual->SetOffsetY(static_cast<float>(bounds.top));
         if (SUCCEEDED(hr))
             hr = item.clip->SetRight(
                 item.visible ? static_cast<float>(width) : 0.0f);
@@ -459,87 +439,6 @@ bool DesktopApp::HasDesktopWidgetComposition(
     return desktopWidgetCompositionItems_.contains(widgetId);
 }
 
-bool DesktopApp::UpdateDesktopWidgetDragComposition(
-    const std::wstring& widgetId,
-    POINT widgetOrigin)
-{
-    const auto position =
-        desktopWidgetCompositionItems_.find(widgetId);
-    if (position == desktopWidgetCompositionItems_.end() ||
-        !position->second.visual ||
-        !position->second.surface ||
-        !position->second.clip)
-    {
-        return false;
-    }
-    if (!desktopWidgetDragCompositionId_.empty() &&
-        desktopWidgetDragCompositionId_ != widgetId)
-    {
-        EndDesktopWidgetDragComposition();
-    }
-
-    auto& item = position->second;
-    const LONG visualLeft = item.bounds.left +
-        widgetOrigin.x - widgetDragVisualAnchor_.x;
-    const LONG visualTop = item.bounds.top +
-        widgetOrigin.y - widgetDragVisualAnchor_.y;
-    HRESULT hr = item.visual->SetOffsetX(
-        static_cast<float>(visualLeft));
-    if (SUCCEEDED(hr))
-        hr = item.visual->SetOffsetY(
-            static_cast<float>(visualTop));
-    if (SUCCEEDED(hr))
-        hr = item.clip->SetRight(static_cast<float>(item.width));
-    if (SUCCEEDED(hr))
-        hr = item.clip->SetBottom(static_cast<float>(item.height));
-    if (FAILED(hr))
-        return false;
-
-    if (item.backdropRegistered)
-    {
-        (void)desktopBackdropCompositor_.RemovePanel(item.bounds);
-        item.backdropRegistered = false;
-    }
-    item.visible = true;
-    desktopWidgetDragCompositionId_ = widgetId;
-    desktopWidgetDragCompositionOrigin_ = widgetOrigin;
-    return true;
-}
-
-void DesktopApp::EndDesktopWidgetDragComposition()
-{
-    if (!desktopWidgetDragCompositionId_.empty())
-    {
-        const auto position = desktopWidgetCompositionItems_.find(
-            desktopWidgetDragCompositionId_);
-        if (position != desktopWidgetCompositionItems_.end())
-        {
-            auto& item = position->second;
-            if (item.visual)
-            {
-                (void)item.visual->SetOffsetX(
-                    static_cast<float>(item.bounds.left));
-                (void)item.visual->SetOffsetY(
-                    static_cast<float>(item.bounds.top));
-            }
-            if (item.clip)
-            {
-                (void)item.clip->SetRight(0.0f);
-                (void)item.clip->SetBottom(0.0f);
-            }
-            item.visible = false;
-        }
-    }
-    desktopWidgetDragCompositionId_.clear();
-    desktopWidgetDragCompositionOrigin_ = {};
-    presentedWidgetDragFeedback_ = {};
-}
-
-bool DesktopApp::HasDesktopWidgetDragComposition() const
-{
-    return !desktopWidgetDragCompositionId_.empty();
-}
-
 void DesktopApp::SetDesktopWidgetCompositionVisible(
     const std::wstring& widgetId,
     bool visible,
@@ -548,8 +447,6 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
     (void)bounds;
     const auto position = desktopWidgetCompositionItems_.find(widgetId);
     if (position == desktopWidgetCompositionItems_.end())
-        return;
-    if (!visible && desktopWidgetDragCompositionId_ == widgetId)
         return;
     auto& item = position->second;
     if (item.visible == visible)
@@ -588,12 +485,6 @@ void DesktopApp::RemoveDesktopWidgetComposition(
     const auto position = desktopWidgetCompositionItems_.find(widgetId);
     if (position == desktopWidgetCompositionItems_.end())
         return;
-    if (desktopWidgetDragCompositionId_ == widgetId)
-    {
-        desktopWidgetDragCompositionId_.clear();
-        desktopWidgetDragCompositionOrigin_ = {};
-        presentedWidgetDragFeedback_ = {};
-    }
     const RECT bounds = position->second.bounds;
     if (position->second.backdropRegistered)
         (void)desktopBackdropCompositor_.RemovePanel(bounds);
@@ -677,8 +568,6 @@ bool DesktopApp::SyncDesktopWidgetCompositionZOrder()
 
 void DesktopApp::ResetDesktopWidgetComposition()
 {
-    desktopWidgetDragCompositionId_.clear();
-    desktopWidgetDragCompositionOrigin_ = {};
     presentedWidgetDragFeedback_ = {};
     pendingDesktopWidgetCompositions_.clear();
     desktopWidgetCompositionItems_.clear();

@@ -3872,18 +3872,10 @@ int main(int argc, char** argv)
             dragLifecycleSource.rfind(
                 "if (widgetDragFeedbackChanged)",
                 widgetForegroundPresent);
-        const std::size_t widgetOffsetOnlyPresent =
-            dragLifecycleSource.find(
-                "HasDesktopWidgetDragComposition()",
-                widgetForegroundPresent);
         const std::size_t widgetRootPresentFallback =
             dragLifecycleSource.find(
                 "if (immediateDesktopPresent &&",
                 widgetForegroundPresent);
-        const std::size_t widgetVisualMove =
-            pointerMoveSource.find(
-                "UpdateDesktopWidgetDragComposition(",
-                widgetMovePreview);
         Check(widgetTransitionPaint != std::string::npos &&
                 widgetResizePreview != std::string::npos &&
                 widgetTransitionPaint < widgetResizePreview &&
@@ -3891,20 +3883,15 @@ int main(int argc, char** argv)
                 widgetResizeHotPath.find(
                     "InvalidateRect(hwnd_, nullptr") ==
                     std::string::npos &&
-                widgetVisualMove != std::string::npos &&
                 widgetFeedbackGate != std::string::npos &&
                 widgetForegroundPresent != std::string::npos &&
-                widgetOffsetOnlyPresent != std::string::npos &&
                 widgetRootPresentFallback != std::string::npos &&
                 widgetFeedbackGate < widgetForegroundPresent &&
                 widgetForegroundPresent < widgetRootPresentFallback &&
-                pointerReleaseSource.find(
-                    "EndDesktopWidgetDragComposition();") !=
-                    std::string::npos &&
                 dragLifecycleSource.find(
                     "immediateFloatingDockPresent ||") !=
                     std::string::npos,
-            "widget moves must update a child visual continuously and redraw shared feedback only when its target changes");
+            "widget gestures must redraw shared feedback and force Dock presentation only when their target changes");
         const std::size_t desktopGridHitTest =
             desktopGridSource.find(
                 "HitRegion DesktopGrid::HitTestAtPoint(");

@@ -147,18 +147,11 @@ void DesktopApp::PresentPointerInteractionFrame(
         {
             // Grid, Dock and group feedback lives on the shared foreground
             // surface. Redraw it only when the logical target changes; plain
-            // pointer movement is handled by the widget child visual below.
+            // pointer movement inside one target has no visual work.
             RECT client{};
             GetClientRect(hwnd_, &client);
             widgetInteractionPresented =
                 PresentDesktopForegroundComposition(client);
-        }
-        else if (widgetAction_ == WidgetAction::Move &&
-            HasDesktopWidgetDragComposition())
-        {
-            widgetInteractionPresented =
-                CommitCompositionAnimationFrame() &&
-                FlushPendingCompositionCommit();
         }
         else
         {
