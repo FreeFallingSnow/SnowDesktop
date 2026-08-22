@@ -76,6 +76,14 @@ public:
     const std::wstring& CurrentTarget() const { return currentTarget_; }
     const std::wstring& SuppressedTarget() const { return suppressedTarget_; }
     bool TimerArmed() const { return timerArmed_; }
+    bool IsIdle() const
+    {
+        return currentTarget_.empty() &&
+            pendingTarget_.empty() &&
+            shownTarget_.empty() &&
+            suppressedTarget_.empty() &&
+            !timerArmed_;
+    }
 
 private:
     std::wstring currentTarget_;
@@ -112,6 +120,7 @@ public:
     void ScheduleHide();
     void KeepVisible();
     bool IsVisible() const;
+    bool IsCleared() const;
     bool IsShowingWindow(HWND window) const;
     bool ContainsInteractionPoint(POINT screenPoint) const;
     HWND GetWindow() const { return hwnd_; }
@@ -154,4 +163,5 @@ private:
     UINT dpi_ = 96;
     POINT transitionOriginScreen_{};
     bool hasTransitionOrigin_ = false;
+    bool hideTimerArmed_ = false;
 };

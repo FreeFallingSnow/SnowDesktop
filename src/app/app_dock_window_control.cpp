@@ -338,6 +338,15 @@ void DesktopApp::OnDockWindowPreviewHoverTimer()
 
 void DesktopApp::HideDockWindowPreview()
 {
+    const bool previewCleared =
+        !dockWindowPreview_ ||
+        dockWindowPreview_->IsCleared();
+    if (previewCleared &&
+        dockWindowPreviewHover_.IsIdle() &&
+        dockWindowPreviewKey_.empty() &&
+        IsRectEmpty(&dockWindowPreviewAnchorScreen_))
+        return;
+
     if (hwnd_)
         KillTimer(hwnd_, kDockWindowPreviewHoverTimerId);
     if (dockWindowPreview_)

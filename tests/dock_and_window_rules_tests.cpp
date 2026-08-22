@@ -2901,6 +2901,10 @@ int main(int argc, char** argv)
                 previewCloseButton.left,
         "the preview close target must scale with monitor DPI");
 
+    DockWindowPreview clearedPreview;
+    Check(clearedPreview.IsCleared(),
+        "a new Dock preview must already satisfy its cleared invariant");
+
     namespace renameLayout =
         snowdesktop::dock_rename_layout;
     const RECT renameWorkArea{ 0, 0, 1920, 1080 };
@@ -3044,9 +3048,12 @@ int main(int argc, char** argv)
         "right Dock preview must keep a triangular pointer path open");
 
     DockPreviewHoverController hover;
+    Check(hover.IsIdle(),
+        "a new Dock preview hover controller must be idle");
     DockPreviewHoverTransition transition =
         hover.UpdateTarget(L"WORD@PRIMARY", false, false);
-    Check(transition.armTimer && hover.TimerArmed(),
+    Check(transition.armTimer && hover.TimerArmed() &&
+            !hover.IsIdle(),
         "entering a preview target must arm the hover timer");
     transition = hover.UpdateTarget(
         L"WORD@PRIMARY", false, false);
@@ -3076,6 +3083,8 @@ int main(int argc, char** argv)
         "re-entering after leave must arm a fresh hover timer");
 
     hover.Reset();
+    Check(hover.IsIdle(),
+        "resetting Dock preview hover state must make cleanup idempotent");
     hover.UpdateTarget(L"WORD@PRIMARY", false, false);
     transition = hover.UpdateTarget(
         L"EDGE@PRIMARY", false, false);
@@ -3339,6 +3348,28 @@ int main(int argc, char** argv)
                   "luaPanelBelongsToCurrentSurface") !=
                     std::string::npos,
             "collection popups and Lua panels must render through the shared popup surface");
+        const std::size_t dockPreviewHide =
+            dockPreviewSource.find(
+                "void DesktopApp::HideDockWindowPreview()");
+        const std::size_t dockPreviewIdleGuard =
+            dockPreviewSource.find(
+                "dockWindowPreviewHover_.IsIdle()",
+                dockPreviewHide);
+        const std::size_t dockPreviewClearedGuard =
+            dockPreviewSource.find(
+                "dockWindowPreview_->IsCleared()",
+                dockPreviewHide);
+        const std::size_t dockPreviewTimerKill =
+            dockPreviewSource.find(
+                "KillTimer(hwnd_, kDockWindowPreviewHoverTimerId)",
+                dockPreviewHide);
+        Check(dockPreviewHide != std::string::npos &&
+                dockPreviewIdleGuard != std::string::npos &&
+                dockPreviewClearedGuard != std::string::npos &&
+                dockPreviewTimerKill != std::string::npos &&
+                dockPreviewIdleGuard < dockPreviewTimerKill &&
+                dockPreviewClearedGuard < dockPreviewTimerKill,
+            "repeated drag movement must skip Dock preview teardown after its presentation state is already idle");
         Check(sceneSource.find(
                   "ResolveDraggedBounds(") ==
                     std::string::npos &&

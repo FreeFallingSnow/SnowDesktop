@@ -786,11 +786,14 @@ void DockWindowPreview::UpdateAnchor(
 
 void DockWindowPreview::Hide()
 {
+    if (IsCleared())
+        return;
     if (hwnd_)
     {
         KillTimer(hwnd_, kHideTimerId);
         ShowWindow(hwnd_, SW_HIDE);
     }
+    hideTimerArmed_ = false;
     UnregisterThumbnails();
     items_.clear();
     cardRects_.clear();
@@ -818,8 +821,9 @@ void DockWindowPreview::ScheduleHide()
     }
     if (IsPointerInTransitionRegion(pointer))
     {
-        SetTimer(hwnd_, kHideTimerId,
-            kTransitionHideDelayMs, nullptr);
+        if (SetTimer(hwnd_, kHideTimerId,
+                kTransitionHideDelayMs, nullptr) != 0)
+            hideTimerArmed_ = true;
         return;
     }
     Hide();
@@ -829,6 +833,7 @@ void DockWindowPreview::KeepVisible()
 {
     if (hwnd_)
         KillTimer(hwnd_, kHideTimerId);
+    hideTimerArmed_ = false;
     POINT pointer{};
     if (GetCursorPos(&pointer) &&
         RectContainsScreenPoint(anchorScreen_, pointer))
@@ -841,6 +846,22 @@ void DockWindowPreview::KeepVisible()
 bool DockWindowPreview::IsVisible() const
 {
     return hwnd_ && IsWindowVisible(hwnd_);
+}
+
+bool DockWindowPreview::IsCleared() const
+{
+    return !IsVisible() &&
+        items_.empty() &&
+        cardRects_.empty() &&
+        thumbnailRects_.empty() &&
+        thumbnails_.empty() &&
+        panelSize_.cx == 0 &&
+        panelSize_.cy == 0 &&
+        hoveredIndex_ == -1 &&
+        hoveredCloseIndex_ == -1 &&
+        !trackingMouse_ &&
+        !hasTransitionOrigin_ &&
+        !hideTimerArmed_;
 }
 
 bool DockWindowPreview::IsShowingWindow(HWND window) const
@@ -1091,8 +1112,9 @@ void DockWindowPreview::HideIfPointerOutside()
     }
     if (IsPointerInTransitionRegion(pointer))
     {
-        SetTimer(hwnd_, kHideTimerId,
-            kTransitionHideDelayMs, nullptr);
+        if (SetTimer(hwnd_, kHideTimerId,
+                kTransitionHideDelayMs, nullptr) != 0)
+            hideTimerArmed_ = true;
         return;
     }
     Hide();
@@ -1171,7 +1193,10 @@ LRESULT CALLBACK DockWindowPreview::WindowProc(
     case WM_NCDESTROY:
         SetWindowLongPtrW(window, GWLP_USERDATA, 0);
         if (preview->hwnd_ == window)
+        {
             preview->hwnd_ = nullptr;
+            preview->hideTimerArmed_ = false;
+        }
         break;
     default:
         break;
