@@ -54,6 +54,7 @@
 #include "../floating_popup_rules.h"
 #include "../widget_composition_layer_rules.h"
 #include "../desktop_hover_rules.h"
+#include "../desktop_drop_cache.h"
 #include "../shell_launch_worker.h"
 #include "desktop_item_reference_migration.h"
 #include "category_settings.h"
@@ -3215,6 +3216,8 @@ private:
     DragSession dragSession_;
     DragDropController dragDropController_{dragSession_};
     DragRenderCache dragRenderCache_;
+    mutable snowdesktop::desktop_drop_cache::
+        BestCellEntry bestDropCellCache_;
     std::uint64_t presentedDragFeedbackRevision_ = 0;
     int presentedDragNavHoverSide_ = 0;
     int dragGroupOriginX_ = 0;

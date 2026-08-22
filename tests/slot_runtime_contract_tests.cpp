@@ -527,9 +527,14 @@ void TestDragSessionVisualVisibilityFollowsOleOwnership()
     Check(session.SetVisualVisible(true) &&
             session.IsVisualVisible(),
         "re-entering SnowDesktop must restore the custom visual");
+    const std::uint64_t activeRevision =
+        session.StaticSceneRevision();
     session.DeactivateForDrop();
-    Check(!session.IsVisualVisible() && session.HasContext(),
-        "drop execution must hide the visual while preserving commit context");
+    Check(!session.IsActive() &&
+            !session.IsVisualVisible() &&
+            session.HasContext() &&
+            session.StaticSceneRevision() != activeRevision,
+        "drop execution must cross an inactive revision barrier while preserving commit context");
     session.End();
     Check(!session.IsVisualVisible() && !session.HasContext(),
         "ending a drag must clear both visual and commit state");

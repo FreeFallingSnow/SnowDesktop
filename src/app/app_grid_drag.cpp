@@ -369,23 +369,41 @@ std::vector<DesktopApp::PendingGridMove> DesktopApp::BuildSelectedMove(GridCell 
  */
 GridCell DesktopApp::FindBestDropCell(GridCell targetCell) const
 {
-    if (!BuildSelectedMove(targetCell).empty()) return targetCell;
+    const POINT current = dragSession_.CurrentPoint();
+    const POINT mouseDown = dragSession_.MouseDownPoint();
+    const auto direction =
+        snowdesktop::desktop_drop_cache::
+            ResolveSearchDirection(
+                static_cast<long long>(current.x) -
+                    mouseDown.x,
+                static_cast<long long>(current.y) -
+                    mouseDown.y);
+    const snowdesktop::desktop_drop_cache::BestCellKey cacheKey{
+        targetCell,
+        direction,
+        dragSession_.StaticSceneRevision() };
+    GridCell cachedCell;
+    const bool cacheActive = dragSession_.IsActive();
+    if (bestDropCellCache_.TryGet(
+            cacheActive, cacheKey, cachedCell))
+        return cachedCell;
+    const auto finish = [this, cacheActive, &cacheKey](
+                            const GridCell& result) {
+        bestDropCellCache_.Store(
+            cacheActive, cacheKey, result);
+        return result;
+    };
+
+    if (!BuildSelectedMove(targetCell).empty())
+        return finish(targetCell);
 
     const GridPage* page = FindGridPage(gridPages_, targetCell.pageId);
-    if (!page) return targetCell;
+    if (!page) return finish(targetCell);
     const int maxCol = page->columns - 1;
     const int maxRow = page->rows - 1;
 
-    POINT current = dragSession_.CurrentPoint();
-    POINT mouseDown = dragSession_.MouseDownPoint();
-    int dx = current.x - mouseDown.x;
-    int dy = current.y - mouseDown.y;
-    int primaryCol = 0, primaryRow = 0;
-    if (std::abs(dx) >= std::abs(dy))
-        primaryCol = (dx >= 0) ? 1 : -1;
-    else
-        primaryRow = (dy >= 0) ? 1 : -1;
-    if (primaryCol == 0 && primaryRow == 0) primaryCol = 1;
+    const int primaryCol = direction.column;
+    const int primaryRow = direction.row;
 
     for (int dist = 1; dist <= 8; ++dist)
     {
@@ -393,7 +411,8 @@ GridCell DesktopApp::FindBestDropCell(GridCell targetCell) const
         probe.column += primaryCol * dist;
         probe.row += primaryRow * dist;
         if (probe.column < 0 || probe.column > maxCol || probe.row < 0 || probe.row > maxRow) break;
-        if (!BuildSelectedMove(probe).empty()) return probe;
+        if (!BuildSelectedMove(probe).empty())
+            return finish(probe);
     }
 
     int oppCol = -primaryCol, oppRow = -primaryRow;
@@ -403,7 +422,8 @@ GridCell DesktopApp::FindBestDropCell(GridCell targetCell) const
         probe.column += oppCol * dist;
         probe.row += oppRow * dist;
         if (probe.column < 0 || probe.column > maxCol || probe.row < 0 || probe.row > maxRow) break;
-        if (!BuildSelectedMove(probe).empty()) return probe;
+        if (!BuildSelectedMove(probe).empty())
+            return finish(probe);
     }
 
     for (int dist = 1; dist <= 6; ++dist)
@@ -417,11 +437,12 @@ GridCell DesktopApp::FindBestDropCell(GridCell targetCell) const
                 probe.column += dc;
                 probe.row += dr;
                 if (probe.column < 0 || probe.column > maxCol || probe.row < 0 || probe.row > maxRow) continue;
-                if (!BuildSelectedMove(probe).empty()) return probe;
+                if (!BuildSelectedMove(probe).empty())
+                    return finish(probe);
             }
         }
     }
-    return targetCell;
+    return finish(targetCell);
 }
 
 /**

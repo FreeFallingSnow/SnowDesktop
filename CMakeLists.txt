@@ -1371,6 +1371,13 @@ if (BUILD_TESTING)
         LABELS rules window)
 
     snowdesktop_add_test(
+        SnowDesktopDesktopDropCacheTests
+        desktop_drop_cache
+        SOURCES tests/desktop_drop_cache_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS contract interaction layout)
+
+    snowdesktop_add_test(
         SnowDesktopUiAnimationSchedulerTests
         ui_animation_scheduler
         SOURCES
