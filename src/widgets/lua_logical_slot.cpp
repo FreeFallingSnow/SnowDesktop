@@ -115,6 +115,14 @@ bool DrawDropIndicator(ID2D1DeviceContext* context,
     }
     return true;
 }
+
+bool SameBounds(const RECT& left, const RECT& right) noexcept
+{
+    return left.left == right.left &&
+        left.top == right.top &&
+        left.right == right.right &&
+        left.bottom == right.bottom;
+}
 }
 
 LuaLogicalSlotContainer::LuaLogicalSlotContainer(
@@ -162,41 +170,130 @@ LuaLogicalSlotContainer::ItemAtPoint(POINT point) const
 std::vector<std::unique_ptr<Slot>>
 LuaLogicalSlotContainer::BuildSlots()
 {
+    const bool baseCacheWasValid = slotsValid_;
+    std::optional<LogicalSlotHostSurface> providedSurface;
+    const LogicalSlotHostSurface* surface =
+        slotBuildSurfaceOverride_;
+    if (!surface)
+    {
+        providedSurface = Surface();
+        if (!providedSurface)
+        {
+            if (baseCacheWasValid)
+                InvalidateSlots();
+            cachedSlotLayout_.reset();
+            return {};
+        }
+        surface = &*providedSurface;
+    }
+
+    auto slots = BuildSlotsForSurface(*surface);
+    // Container::GetSlots only calls BuildSlots while its cache is invalid.
+    // A direct public BuildSlots call made against a valid base cache returns
+    // an independent vector; invalidate that old cache instead of claiming
+    // the new layout snapshot belongs to it.
+    if (baseCacheWasValid)
+    {
+        InvalidateSlots();
+        cachedSlotLayout_.reset();
+    }
+    else
+        RememberSlotLayout(*surface);
+    return slots;
+}
+
+std::vector<std::unique_ptr<Slot>>
+LuaLogicalSlotContainer::BuildSlotsForSurface(
+    const LogicalSlotHostSurface& surface)
+{
     std::vector<std::unique_ptr<Slot>> slots;
-    const auto surface = Surface();
-    if (!surface) return slots;
     const SlotFeedbackIdentity feedbackIdentity{
         SlotFeedbackRole::LuaLogical,
-        surface->bounds,
-        surface->revision,
-        static_cast<std::uint32_t>(surface->kind),
+        surface.bounds,
+        surface.revision,
+        static_cast<std::uint32_t>(surface.kind),
     };
 
-    if (surface->kind ==
+    if (surface.kind ==
         snowdesktop::widget_runtime::LogicalSlotKind::Collection)
     {
-        slots.reserve(surface->items.size() + 1);
+        slots.reserve(surface.items.size() + 1);
         for (std::size_t index = 0;
-            index < surface->items.size(); ++index)
+            index < surface.items.size(); ++index)
         {
             slots.push_back(std::make_unique<Slot>(
-                this, surface->items[index].bounds, index,
+                this, surface.items[index].bounds, index,
                 SlotLifetime::ContainerCache, feedbackIdentity));
         }
-        if (surface->itemCount < surface->capacity)
+        if (surface.itemCount < surface.capacity)
         {
             slots.push_back(std::make_unique<Slot>(
-                this, surface->bounds, surface->items.size(),
+                this, surface.bounds, surface.items.size(),
                 SlotLifetime::ContainerCache, feedbackIdentity));
         }
     }
     else
     {
         slots.push_back(std::make_unique<Slot>(
-            this, surface->bounds, 0,
+            this, surface.bounds, 0,
             SlotLifetime::ContainerCache, feedbackIdentity));
     }
     return slots;
+}
+
+bool LuaLogicalSlotContainer::MatchesCachedSlotLayout(
+    const LogicalSlotHostSurface& surface) const
+{
+    if (!cachedSlotLayout_ ||
+        cachedSlotLayout_->kind != surface.kind ||
+        cachedSlotLayout_->revision != surface.revision ||
+        cachedSlotLayout_->capacity != surface.capacity ||
+        cachedSlotLayout_->itemCount != surface.itemCount ||
+        !SameBounds(cachedSlotLayout_->bounds, surface.bounds) ||
+        cachedSlotLayout_->items.size() != surface.items.size())
+        return false;
+
+    for (std::size_t index = 0; index < surface.items.size(); ++index)
+    {
+        if (cachedSlotLayout_->items[index].itemId !=
+                surface.items[index].itemId ||
+            !SameBounds(cachedSlotLayout_->items[index].bounds,
+                surface.items[index].bounds))
+            return false;
+    }
+    return true;
+}
+
+void LuaLogicalSlotContainer::RememberSlotLayout(
+    const LogicalSlotHostSurface& surface)
+{
+    SlotLayoutSnapshot snapshot;
+    snapshot.kind = surface.kind;
+    snapshot.revision = surface.revision;
+    snapshot.capacity = surface.capacity;
+    snapshot.itemCount = surface.itemCount;
+    snapshot.bounds = surface.bounds;
+    snapshot.items = surface.items;
+    cachedSlotLayout_ = std::move(snapshot);
+}
+
+const std::vector<std::unique_ptr<Slot>>&
+LuaLogicalSlotContainer::SlotsForSurface(
+    const LogicalSlotHostSurface& surface)
+{
+    if (!MatchesCachedSlotLayout(surface))
+        InvalidateSlots();
+
+    struct SurfaceOverrideScope final
+    {
+        const LogicalSlotHostSurface*& target;
+        const LogicalSlotHostSurface* previous;
+        ~SurfaceOverrideScope() { target = previous; }
+    } surfaceOverride{
+        slotBuildSurfaceOverride_, slotBuildSurfaceOverride_
+    };
+    slotBuildSurfaceOverride_ = &surface;
+    return GetSlots();
 }
 
 RECT LuaLogicalSlotContainer::GetBounds() const
@@ -208,10 +305,18 @@ RECT LuaLogicalSlotContainer::GetBounds() const
 BarStyle LuaLogicalSlotContainer::GetInsertionStyle() const
 {
     const auto surface = Surface();
-    if (!surface || surface->items.size() < 2)
+    return surface
+        ? InsertionStyleForSurface(*surface)
+        : BarStyle::HBar;
+}
+
+BarStyle LuaLogicalSlotContainer::InsertionStyleForSurface(
+    const LogicalSlotHostSurface& surface)
+{
+    if (surface.items.size() < 2)
         return BarStyle::HBar;
-    const RECT& first = surface->items[0].bounds;
-    const RECT& second = surface->items[1].bounds;
+    const RECT& first = surface.items[0].bounds;
+    const RECT& second = surface.items[1].bounds;
     const LONG deltaX = std::abs(
         (second.left + second.right) - (first.left + first.right));
     const LONG deltaY = std::abs(
@@ -263,8 +368,7 @@ HitRegion LuaLogicalSlotContainer::HitTestDrag(
     if (!surface || !PtInRect(&surface->bounds, point))
         return HitRegion::None;
 
-    InvalidateSlots();
-    const auto& slots = GetSlots();
+    const auto& slots = SlotsForSurface(*surface);
     if (slots.empty()) return HitRegion::Blocked;
     if (surface->kind ==
         snowdesktop::widget_runtime::LogicalSlotKind::Binding)
@@ -273,7 +377,7 @@ HitRegion LuaLogicalSlotContainer::HitTestDrag(
         return HitRegion::Empty;
     }
 
-    const BarStyle style = GetInsertionStyle();
+    const BarStyle style = InsertionStyleForSurface(*surface);
     for (std::size_t index = 0;
         index < surface->items.size() && index < slots.size(); ++index)
     {
@@ -341,13 +445,18 @@ void LuaLogicalSlotContainer::DrawDropPreview(
     const auto surface = Surface();
     if (!surface)
     {
-        slot->DrawDropIndicator(context, region);
+        slot->DrawDropIndicatorWithStyle(
+            context, region, BarStyle::HBar);
         return;
     }
+    const BarStyle insertionStyle =
+        InsertionStyleForSurface(*surface);
     const bool styledSurface = DrawDropSurface(context, *surface);
     const bool styledIndicator = DrawDropIndicator(
-        context, *surface, slot, region, GetInsertionStyle());
+        context, *surface, slot, region,
+        insertionStyle);
     if (!styledIndicator &&
         !(region == HitRegion::Empty && styledSurface))
-        slot->DrawDropIndicator(context, region);
+        slot->DrawDropIndicatorWithStyle(
+            context, region, insertionStyle);
 }

@@ -223,7 +223,17 @@ void Slot::DrawDropIndicator(ID2D1DeviceContext* ctx, HitRegion region, float it
         region == HitRegion::Handoff || region == HitRegion::Blocked)
         return;
 
-    BarStyle style = parent_->GetInsertionStyle();
+    DrawDropIndicatorWithStyle(
+        ctx, region, parent_->GetInsertionStyle(), itemPad);
+}
+
+void Slot::DrawDropIndicatorWithStyle(ID2D1DeviceContext* ctx,
+    HitRegion region, BarStyle insertionStyle, float itemPad) const
+{
+    if (!ctx || region == HitRegion::None ||
+        region == HitRegion::Handoff || region == HitRegion::Blocked)
+        return;
+
     const float lineWidth = 3.0f;
     const D2D1_COLOR_F blue = D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.92f);
 
@@ -245,7 +255,7 @@ void Slot::DrawDropIndicator(ID2D1DeviceContext* ctx, HitRegion region, float it
             ctx->FillRectangle(rf, fillBrush.Get());
         ctx->DrawRectangle(rf, brush.Get(), 2.0f);
     }
-    else if (style == BarStyle::VBar)
+    else if (insertionStyle == BarStyle::VBar)
     {
         float x;
         if (region == HitRegion::SortBefore)

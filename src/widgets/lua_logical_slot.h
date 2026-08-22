@@ -70,12 +70,35 @@ public:
     std::optional<ItemHit> ItemAtPoint(POINT point) const;
 
 private:
+    struct SlotLayoutSnapshot
+    {
+        snowdesktop::widget_runtime::LogicalSlotKind kind =
+            snowdesktop::widget_runtime::LogicalSlotKind::Binding;
+        std::uint64_t revision = 0;
+        std::size_t capacity = 0;
+        std::size_t itemCount = 0;
+        RECT bounds{};
+        std::vector<LogicalSlotHostSurface::ItemRegion> items;
+    };
+
     std::optional<LogicalSlotHostSurface> Surface() const;
     static bool AcceptsKind(const LogicalSlotHostSurface& surface,
         std::string_view kind);
+    std::vector<std::unique_ptr<Slot>> BuildSlotsForSurface(
+        const LogicalSlotHostSurface& surface);
+    static BarStyle InsertionStyleForSurface(
+        const LogicalSlotHostSurface& surface);
+    const std::vector<std::unique_ptr<Slot>>& SlotsForSurface(
+        const LogicalSlotHostSurface& surface);
+    bool MatchesCachedSlotLayout(
+        const LogicalSlotHostSurface& surface) const;
+    void RememberSlotLayout(
+        const LogicalSlotHostSurface& surface);
 
     std::wstring widgetId_;
     std::string slotId_;
     SurfaceProvider provider_;
     DropCommitter committer_;
+    const LogicalSlotHostSurface* slotBuildSurfaceOverride_ = nullptr;
+    std::optional<SlotLayoutSnapshot> cachedSlotLayout_;
 };

@@ -143,9 +143,12 @@ void TestCapacityAndBindingPolicy()
 void TestLuaDragFeedbackUsesCommittedSurfaceIdentity()
 {
     auto surface = CollectionSurface();
+    int providerCalls = 0;
     LuaLogicalSlotContainer container(
         L"widget-1", "favorites",
-        [&surface]() -> std::optional<LogicalSlotHostSurface> {
+        [&surface, &providerCalls]() ->
+            std::optional<LogicalSlotHostSurface> {
+            ++providerCalls;
             return surface;
         }, {});
     DragSession session;
@@ -161,12 +164,15 @@ void TestLuaDragFeedbackUsesCommittedSurfaceIdentity()
         session.PresentationRevision();
     const std::uint64_t firstGeneration =
         container.GetSlotGeneration();
+    Check(providerCalls == 1,
+        "one Lua hit test must consume exactly one fresh surface snapshot");
 
     Slot* equivalent = nullptr;
     const HitRegion equivalentRegion =
         container.HitTestDrag({150, 165}, equivalent);
-    Check(container.GetSlotGeneration() != firstGeneration,
-        "Lua hit testing currently rebuilds its cached Slot generation");
+    Check(providerCalls == 2 && equivalent == first &&
+            container.GetSlotGeneration() == firstGeneration,
+        "an unchanged Lua layout must reuse its cached Slot generation and allocation");
     Check(!session.UpdateTarget(
             &container, equivalent, equivalentRegion) &&
             session.PresentationRevision() == firstPresentation &&
@@ -177,7 +183,9 @@ void TestLuaDragFeedbackUsesCommittedSurfaceIdentity()
     Slot* revised = nullptr;
     const HitRegion revisedRegion =
         container.HitTestDrag({150, 165}, revised);
-    Check(session.UpdateTarget(
+    Check(providerCalls == 3 &&
+            container.GetSlotGeneration() != firstGeneration &&
+            session.UpdateTarget(
             &container, revised, revisedRegion),
         "a committed Lua surface revision must refresh feedback");
 
@@ -196,6 +204,100 @@ void TestLuaDragFeedbackUsesCommittedSurfaceIdentity()
     Check(session.UpdateTarget(
             &container, resizedSurface, resizedRegion),
         "a Lua slotSurface bounds change must refresh feedback even when the target item is unchanged");
+}
+
+void TestStableLuaHitStressAndLayoutInvalidation()
+{
+    auto surface = CollectionSurface();
+    int providerCalls = 0;
+    LuaLogicalSlotContainer container(
+        L"widget-1", "favorites",
+        [&surface, &providerCalls]() ->
+            std::optional<LogicalSlotHostSurface> {
+            ++providerCalls;
+            return surface;
+        }, {});
+    DragSession session;
+    session.Begin(nullptr, {}, {}, POINT{}, POINT{});
+
+    Slot* stableSlot = nullptr;
+    const HitRegion stableRegion =
+        container.HitTestDrag({150, 165}, stableSlot);
+    Check(stableSlot && stableRegion == HitRegion::SortBefore &&
+            session.UpdateTarget(
+                &container, stableSlot, stableRegion),
+        "the stress fixture must establish one Lua drag target");
+    const std::uint64_t stableGeneration =
+        container.GetSlotGeneration();
+    const std::uint64_t stablePresentation =
+        session.PresentationRevision();
+
+    constexpr int kStableHitCount = 10000;
+    for (int index = 0; index < kStableHitCount; ++index)
+    {
+        Slot* repeated = nullptr;
+        const HitRegion region =
+            container.HitTestDrag({150, 165}, repeated);
+        Check(region == stableRegion && repeated == stableSlot &&
+                container.GetSlotGeneration() == stableGeneration,
+            "stable Lua hit tests must reuse the exact cached Slot");
+        Check(!session.UpdateTarget(
+                    &container, repeated, region) &&
+                session.PresentationRevision() == stablePresentation,
+            "stable Lua hit tests must not advance drag presentation");
+    }
+    Check(providerCalls == kStableHitCount + 1,
+        "each stable Lua hit must read one fresh surface without duplicate provider calls");
+    const int callsBeforePreview = providerCalls;
+    container.DrawDropPreview(
+        nullptr, stableSlot, stableRegion);
+    Check(providerCalls == callsBeforePreview + 1,
+        "one Lua drop-preview draw must reuse one surface snapshot for style and orientation");
+    session.End();
+
+    auto expectLayoutRebuild = [&](const char* message) {
+        const std::uint64_t previousGeneration =
+            container.GetSlotGeneration();
+        Slot* changed = nullptr;
+        (void)container.HitTestDrag({150, 165}, changed);
+        Check(container.GetSlotGeneration() != previousGeneration,
+            message);
+    };
+
+    ++surface.revision;
+    expectLayoutRebuild(
+        "a revised Lua surface must invalidate the cached layout");
+    surface.items[1].bounds.left += 1;
+    expectLayoutRebuild(
+        "changed Lua item bounds must invalidate the cached layout");
+    surface.bounds.right += 1;
+    expectLayoutRebuild(
+        "changed Lua surface bounds must invalidate the cached layout");
+    std::swap(surface.items[0].itemId, surface.items[1].itemId);
+    expectLayoutRebuild(
+        "changed Lua item identity order must invalidate the cached layout");
+
+    const std::uint64_t beforeFull = container.GetSlotGeneration();
+    surface.capacity = surface.itemCount;
+    Slot* fullSlot = nullptr;
+    Check(container.HitTestDrag({150, 260}, fullSlot) ==
+            HitRegion::Blocked && !fullSlot &&
+            container.GetSlotGeneration() != beforeFull,
+        "a newly full Lua collection must remove its trailing drop slot");
+
+    surface.capacity = 3;
+    const RECT layoutA = surface.items[1].bounds;
+    surface.items[1].bounds.left += 20;
+    container.InvalidateSlots();
+    (void)container.GetSlots();
+    const std::uint64_t genericLayoutGeneration =
+        container.GetSlotGeneration();
+    surface.items[1].bounds = layoutA;
+    Slot* restored = nullptr;
+    Check(container.HitTestDrag({150, 165}, restored) ==
+            HitRegion::SortBefore && restored &&
+            container.GetSlotGeneration() != genericLayoutGeneration,
+        "a generic lazy rebuild must update the layout snapshot before an earlier layout returns");
 }
 
 void TestHostPickerCandidatePolicy()
@@ -360,6 +462,7 @@ int main()
     TestCollectionHitAndCommitBoundary();
     TestCapacityAndBindingPolicy();
     TestLuaDragFeedbackUsesCommittedSurfaceIdentity();
+    TestStableLuaHitStressAndLayoutInvalidation();
     TestHostPickerCandidatePolicy();
     TestPointerReorderTargets();
     TestKeyboardFocusRules();
