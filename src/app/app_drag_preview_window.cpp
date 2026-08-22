@@ -35,7 +35,6 @@ void DesktopApp::ResetDragPreviewCompositionResources()
     dragPreviewDcompSurface_.Reset();
     dragPreviewCompWidth_ = 0;
     dragPreviewCompHeight_ = 0;
-    dragPreviewInputHole_ = { -1, -1 };
     dragPreviewItemIndices_.clear();
     dragPreviewItemBounds_.clear();
     dragPreviewRenderRevision_ = 0;
@@ -411,66 +410,13 @@ void DesktopApp::SyncDragPreviewWindow()
         dragPreviewWindowBoundsValid_ = true;
     }
 
-    // HTTRANSPARENT only forwards ordinary mouse messages within the UI
-    // thread; OLE selects its IDropTarget from the window under the cursor.
-    // Keep one transparent hit-test pixel out of this top-level window's
-    // region so a self drag that returns from another application continues
-    // to address the real desktop, Dock or popup target below the ghost.
-    const POINT inputHole{
-        current.x - contentBounds.left,
-        current.y - contentBounds.top };
-    if (geometryChanged ||
-        inputHole.x != dragPreviewInputHole_.x ||
-        inputHole.y != dragPreviewInputHole_.y)
-    {
-        const bool pointerHoleRequired =
-            inputHole.x >= 0 && inputHole.y >= 0 &&
-            inputHole.x < static_cast<LONG>(width) &&
-            inputHole.y < static_cast<LONG>(height);
-        HRGN windowRegion = CreateRectRgn(
-            0, 0,
-            static_cast<int>(width),
-            static_cast<int>(height));
-        if (!windowRegion)
-        {
-            dragPreviewInputHole_ = { -1, -1 };
-            HideDragPreviewWindow();
-            return;
-        }
-
-        bool pointerHoleCreated = !pointerHoleRequired;
-        bool pointerHoleCombined = !pointerHoleRequired;
-        if (pointerHoleRequired)
-        {
-            HRGN pointerHole = CreateRectRgn(
-                inputHole.x, inputHole.y,
-                inputHole.x + 1, inputHole.y + 1);
-            pointerHoleCreated = pointerHole != nullptr;
-            if (pointerHole)
-            {
-                pointerHoleCombined = CombineRgn(
-                    windowRegion, windowRegion,
-                    pointerHole, RGN_DIFF) != ERROR;
-                DeleteObject(pointerHole);
-            }
-        }
-
-        if (!snowdesktop::drag_visual_rules::
-                IsPreviewInputRegionReady(
-                    pointerHoleRequired,
-                    pointerHoleCreated,
-                    pointerHoleCombined) ||
-            !SetWindowRgn(
-                dragPreviewHwnd_, windowRegion, FALSE))
-        {
-            DeleteObject(windowRegion);
-            dragPreviewInputHole_ = { -1, -1 };
-            HideDragPreviewWindow();
-            return;
-        }
-        // SetWindowRgn transfers ownership on success.
-        dragPreviewInputHole_ = inputHole;
-    }
+    // Native input stays captured and external-window classification already
+    // resolves below this presentation-only HWND. While OLE owns routing the
+    // custom preview is hidden before DoDragDrop starts and remains hidden
+    // until that nested loop has fully unwound. A moving one-pixel window
+    // region is therefore unnecessary; avoiding SetWindowRgn here also avoids
+    // the synchronous WM_WINDOWPOSCHANGING/WM_WINDOWPOSCHANGED pair it emits
+    // for every pointer pixel.
 
     const bool needsRender =
         !dragPreviewDcompSurface_ ||

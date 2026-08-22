@@ -1525,15 +1525,6 @@ int main(int argc, char** argv)
             dragVisual::kMaximumStackedPreviewItems == 4 &&
             dragVisual::kStackedPreviewOffset > 0,
         "multi-item drag previews must use a bounded compact stack");
-    Check(dragVisual::IsPreviewInputRegionReady(
-              false, false, false) &&
-            dragVisual::IsPreviewInputRegionReady(
-              true, true, true) &&
-            !dragVisual::IsPreviewInputRegionReady(
-              true, false, false) &&
-            !dragVisual::IsPreviewInputRegionReady(
-              true, true, false),
-        "a preview input region must not be applied unless its required pointer hole was created and combined");
     Check(!dragVisual::ShouldSkipPreviewFallbackCandidate(
               true, true, false, false) &&
             dragVisual::ShouldSkipPreviewFallbackCandidate(
@@ -3360,10 +3351,10 @@ int main(int argc, char** argv)
                   "SetWindowPos(") !=
                     std::string::npos &&
                 dragPreviewSource.find(
-                  "SetWindowRgn(") !=
+                  "SetWindowRgn(") ==
                     std::string::npos &&
                 dragPreviewSource.find(
-                  "RGN_DIFF") !=
+                  "RGN_DIFF") ==
                     std::string::npos &&
                 dragPreviewSource.find(
                   "ShouldApplyPreviewWindowPlacement(") !=
@@ -3374,7 +3365,7 @@ int main(int argc, char** argv)
                 dragPreviewSource.find(
                   "dragPreviewWindowBounds_") !=
                     std::string::npos,
-            "the drag ghost must use one cached compact DComp surface with an OLE hit-test hole and cached placement policy");
+            "the drag ghost must use one cached compact DComp surface and cached placement without rebuilding a window region per pointer pixel");
         Check(dragLifecycleSource.find(
                   "SyncDragPreviewWindow();") !=
                     std::string::npos &&

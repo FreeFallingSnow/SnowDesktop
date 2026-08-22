@@ -27,15 +27,6 @@ constexpr bool ShouldCompactPreview(
     return itemCount > 1;
 }
 
-constexpr bool IsPreviewInputRegionReady(
-    bool pointerHoleRequired,
-    bool pointerHoleCreated,
-    bool pointerHoleCombined) noexcept
-{
-    return !pointerHoleRequired ||
-        (pointerHoleCreated && pointerHoleCombined);
-}
-
 constexpr bool ShouldSkipPreviewFallbackCandidate(
     bool visible,
     bool enabled,

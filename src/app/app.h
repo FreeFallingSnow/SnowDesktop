@@ -3104,7 +3104,6 @@ private:
     bool dragPreviewWindowBoundsValid_ = false;
     UINT dragPreviewCompWidth_ = 0;
     UINT dragPreviewCompHeight_ = 0;
-    POINT dragPreviewInputHole_{ -1, -1 };
     std::vector<std::size_t> dragPreviewItemIndices_;
     std::vector<RECT> dragPreviewItemBounds_;
     std::uint64_t dragPreviewRenderRevision_ = 0;
