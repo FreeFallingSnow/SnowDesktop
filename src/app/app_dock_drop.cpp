@@ -398,6 +398,8 @@ void DesktopApp::MoveDockItemsToDesktop(
         {
             freeCell.column = startSlot / std::max(1, targetPage->rows);
             freeCell.row = startSlot % std::max(1, targetPage->rows);
+            freeCell = ClampGridCellToFitPage(
+                *targetPage, freeCell, span);
         }
         if (!targetPage ||
             !GridAreaFitsPage(*targetPage, freeCell, span) ||

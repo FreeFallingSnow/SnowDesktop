@@ -675,8 +675,9 @@ void DesktopApp::OnMouseMoveAt(
             const GridPage* page = FindGridPage(gridPages_, cell.pageId);
             if (page)
             {
-                cell.column = std::clamp(cell.column, 0, page->columns - widgetDragOriginalSpan_.columns);
-                cell.row    = std::clamp(cell.row,    0, page->rows    - widgetDragOriginalSpan_.rows);
+                cell = ClampGridCellToFitPage(
+                    *page, cell,
+                    widgetDragOriginalSpan_);
             }
             widgetPreviewCell_ = cell;
         }

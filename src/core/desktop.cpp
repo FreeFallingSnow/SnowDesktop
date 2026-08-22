@@ -557,8 +557,11 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
                 landing.pageId = requested.pageId;
                 landing.column = startSlot / std::max(1, targetPage->rows);
                 landing.row = startSlot % std::max(1, targetPage->rows);
+                landing = ClampGridCellToFitPage(
+                    *targetPage, landing, span);
                 RECT bounds = GetGridRect(app_->gridPages_, landing, span);
-                // 命中格被占用（或跨距越界）时不再寻找其他可选位置，绘制红色禁止框。
+                // 与桌面组件拖拽一致：边缘处收回起点并保留原跨度。命中区域
+                // 被占用（或组件大于整页）时不寻找其他位置，绘制红色禁止框。
                 if (!GridAreaFitsPage(*targetPage, landing, span) ||
                     app_->AreGridSlotsMarked(usedSlots, landing, span))
                 {

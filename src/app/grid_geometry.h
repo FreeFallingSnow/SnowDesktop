@@ -28,6 +28,27 @@ inline bool GridAreaFitsPage(const GridPage& page, const GridCell& cell, GridSpa
 }
 
 /**
+ * @brief 在不改变跨度的前提下，将网格起点收回到页面范围内。
+ *
+ * 用于组件拖拽：指针命中页面右侧或下侧、剩余行列不足时移动起点，避免
+ * GetGridRect 为适配边界缩小预览区域。跨度大于整页时仍锚定到零点，由调用方
+ * 按自身规则拒绝或限制该放置。
+ */
+inline GridCell ClampGridCellToFitPage(
+    const GridPage& page, GridCell cell, GridSpan span)
+{
+    span.columns = std::max(1, span.columns);
+    span.rows = std::max(1, span.rows);
+    cell.column = std::clamp(
+        cell.column, 0,
+        std::max(0, page.columns - span.columns));
+    cell.row = std::clamp(
+        cell.row, 0,
+        std::max(0, page.rows - span.rows));
+    return cell;
+}
+
+/**
  * @brief 根据屏幕坐标查找所在的网格页面。
  * @param point 客户区坐标。
  * @return 指向对应 GridPage 的指针，未找到时返回第一个页面或 nullptr。

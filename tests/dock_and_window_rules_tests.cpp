@@ -349,6 +349,31 @@ int main(int argc, char** argv)
             false, true),
         "Dock-exclusive widgets must not be displaced back onto the desktop");
 
+    GridPage dockWidgetTargetPage;
+    dockWidgetTargetPage.id = L"dock-widget-target";
+    dockWidgetTargetPage.workArea = { 0, 0, 640, 480 };
+    dockWidgetTargetPage.columns = 8;
+    dockWidgetTargetPage.rows = 6;
+    dockWidgetTargetPage.cellWidth = 80;
+    dockWidgetTargetPage.cellHeight = 80;
+    dockWidgetTargetPage.itemPitchWidth = 80;
+    dockWidgetTargetPage.itemPitchHeight = 80;
+    dockWidgetTargetPage.marginX = 0;
+    dockWidgetTargetPage.marginY = 0;
+    const GridSpan dockWidgetSpan{ 3, 2 };
+    const GridCell clampedDockWidgetCell =
+        ClampGridCellToFitPage(
+            dockWidgetTargetPage,
+            { dockWidgetTargetPage.id, 7, 5 },
+            dockWidgetSpan);
+    Check(clampedDockWidgetCell.column == 5 &&
+            clampedDockWidgetCell.row == 4 &&
+            GridAreaFitsPage(
+                dockWidgetTargetPage,
+                clampedDockWidgetCell,
+                dockWidgetSpan),
+        "Dock widget drops at the page edge must move the anchor instead of shrinking the original span");
+
     Check(
         popupLayout::PreferredColumnCount(
             0, 5) == 3 &&
@@ -2136,6 +2161,20 @@ int main(int argc, char** argv)
             !rules::ShouldDispatchDockDoubleClickPress(true),
         "running-app double clicks must replay the missing second press while "
         "launch and folder double-click actions remain single-purpose");
+    Check(rules::IsMatchingPendingDockDoubleClickRelease(
+                4, noDockEntry, 4, noDockEntry,
+                250, 500) &&
+            rules::IsMatchingPendingDockDoubleClickRelease(
+                noDockEntry, 7, noDockEntry, 7,
+                500, 500) &&
+            !rules::IsMatchingPendingDockDoubleClickRelease(
+                noDockEntry, noDockEntry,
+                noDockEntry, noDockEntry,
+                100, 500) &&
+            !rules::IsMatchingPendingDockDoubleClickRelease(
+                4, noDockEntry, 4, noDockEntry,
+                501, 500),
+        "release-based Dock double-click fallback must match one real item within the system interval");
     int foregroundSequence = 0;
     int foregroundChecks = 0;
     int primaryForegroundStep = 0;
@@ -3245,6 +3284,12 @@ int main(int argc, char** argv)
         const std::string messageDispatchSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_message_dispatch.cpp");
+        const std::string dragHintWindowSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_drag_hint_window.cpp");
+        const std::string dockDropSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_dock_drop.cpp");
         const std::string desktopLayoutSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_desktop_layout.cpp");
@@ -3272,6 +3317,27 @@ int main(int argc, char** argv)
         const std::string desktopGridSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "core" /
                 "desktop.cpp");
+        Check(CountOccurrences(
+                  dragHintWindowSource,
+                  "SetWindowPos(hintHwnd_, HWND_TOPMOST") == 2 &&
+                dragHintWindowSource.find(
+                  "SetWindowPos(hintHwnd_, nullptr") ==
+                    std::string::npos,
+            "drag hints must be raised above the floating Dock on both cached and rebuilt frames");
+        Check(pointerReleaseSource.find(
+                  "IsMatchingPendingDockDoubleClickRelease(") !=
+                    std::string::npos,
+            "Dock releases must retain a cross-HWND double-click fallback");
+        Check(pointerMoveSource.find(
+                  "cell = ClampGridCellToFitPage(") !=
+                    std::string::npos &&
+                desktopGridSource.find(
+                  "landing = ClampGridCellToFitPage(") !=
+                    std::string::npos &&
+                dockDropSource.find(
+                  "freeCell = ClampGridCellToFitPage(") !=
+                    std::string::npos,
+            "desktop widget moves and Dock widget previews/commits must share full-span edge anchoring");
         const std::string oleDropSessionSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_ole_drop_session.cpp");

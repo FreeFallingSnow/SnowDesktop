@@ -502,6 +502,16 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
         waitForDoubleClick =
             pressedWindowAction ==
                 snowdesktop::dock_window_rules::DockClickAction::Launch;
+    const bool matchingPendingDoubleClick =
+        snowdesktop::dock_window_rules::
+            IsMatchingPendingDockDoubleClickRelease(
+                pressedEntryIndex,
+                pressedFrequentItemIndex,
+                dockPendingDoubleClickEntry_,
+                dockPendingDoubleClickFrequentItem_,
+                GetTickCount() -
+                    dockPendingDoubleClickTick_,
+                GetDoubleClickTime());
 
     // 在激活外部应用前完整结束本次桌面交互，避免鼠标捕获、选择高亮或
     // 拖拽预览跨到新前台窗口后仍残留。
@@ -544,6 +554,39 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
             InvalidateRect(hwnd_, nullptr, FALSE);
             UpdateWindow(hwnd_);
         }
+    }
+
+    // A click can begin on the desktop Dock copy and finish its pair on the
+    // floating Dock HWND. In that case Windows emits two ordinary click
+    // sequences instead of WM_LBUTTONDBLCLK. Complete the same action on the
+    // second release so folders and closed items still require exactly two
+    // clicks across either surface.
+    if (matchingPendingDoubleClick &&
+        (folderEntry || waitForDoubleClick))
+    {
+        dockPendingDoubleClickEntry_ =
+            static_cast<size_t>(-1);
+        dockPendingDoubleClickFrequentItem_ =
+            static_cast<size_t>(-1);
+        dockPendingDoubleClickTick_ = 0;
+        dockSuppressClickReleaseEntry_ =
+            static_cast<size_t>(-1);
+        if (folderEntry &&
+            pressedEntryIndex < dockEntries_.size())
+        {
+            const auto target = ResolveDockFolderTarget(
+                dockEntries_[pressedEntryIndex]);
+            CloseCollectionPopup(false);
+            if (target.available)
+                shellLaunchWorker_.Enqueue(
+                    hwnd_, target.path);
+        }
+        else if (appItemIndex < items_.size() &&
+            LaunchDesktopItem(appItemIndex, true))
+        {
+            ClearSelection();
+        }
+        return true;
     }
 
     if (waitForDoubleClick)

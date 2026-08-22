@@ -159,6 +159,34 @@ constexpr bool ShouldSuppressDockClickRelease(
 }
 
 /**
+ * @brief 判断两次释放是否属于同一个 Dock 项的双击。
+ *
+ * 固定 Dock 与悬浮 Dock 使用不同 HWND。两次点击跨越这两个表面时，Windows
+ * 不一定生成 WM_LBUTTONDBLCLK，因此释放阶段还需要按稳定条目身份和系统双击
+ * 时间补做判定。哨兵值不能彼此匹配，否则两个“无条目”会被误判为双击。
+ */
+constexpr bool IsMatchingPendingDockDoubleClickRelease(
+    std::size_t pressedEntryIndex,
+    std::size_t pressedFrequentItemIndex,
+    std::size_t pendingEntryIndex,
+    std::size_t pendingFrequentItemIndex,
+    unsigned long elapsed,
+    unsigned long doubleClickTime) noexcept
+{
+    constexpr std::size_t noItem =
+        static_cast<std::size_t>(-1);
+    const bool sameEntry =
+        pressedEntryIndex != noItem &&
+        pressedEntryIndex == pendingEntryIndex;
+    const bool sameFrequentItem =
+        pressedFrequentItemIndex != noItem &&
+        pressedFrequentItemIndex ==
+            pendingFrequentItemIndex;
+    return elapsed <= doubleClickTime &&
+        (sameEntry || sameFrequentItem);
+}
+
+/**
  * @brief 未执行专用双击动作时，把 WM_LBUTTONDBLCLK 重放为第二次按下。
  *
  * Windows 会用 WM_LBUTTONDBLCLK 替代第二个 WM_LBUTTONDOWN。若正在运行

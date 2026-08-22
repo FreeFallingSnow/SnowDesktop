@@ -176,10 +176,13 @@ void DesktopApp::ShowDragHintWindowScreen(
     {
         const POINT windowPos = ResolveDragHintWindowPosition(
             screenPoint, hintRasterSize_, monitorInfo.rcWork, dpi);
-        SetWindowPos(hintHwnd_, nullptr,
+        // The floating Dock can re-enter the topmost band while presenting a
+        // composition frame. Raise the hint on every cached move so it stays
+        // above both the fixed and floating Dock surfaces.
+        SetWindowPos(hintHwnd_, HWND_TOPMOST,
             windowPos.x, windowPos.y, 0, 0,
             SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER |
-                SWP_NOZORDER | SWP_NOSENDCHANGING | SWP_SHOWWINDOW);
+                SWP_NOSENDCHANGING | SWP_SHOWWINDOW);
         return;
     }
 
@@ -357,8 +360,8 @@ void DesktopApp::ShowDragHintWindowScreen(
     hintRasterSize_ = windowSize;
     hintRasterDpi_ = dpi;
     hintRasterValid_ = true;
-    SetWindowPos(hintHwnd_, nullptr, 0, 0, 0, 0,
+    SetWindowPos(hintHwnd_, HWND_TOPMOST, 0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
-            SWP_NOOWNERZORDER | SWP_NOZORDER |
+            SWP_NOOWNERZORDER |
             SWP_NOSENDCHANGING | SWP_SHOWWINDOW);
 }
