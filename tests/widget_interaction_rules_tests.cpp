@@ -1,5 +1,6 @@
 #include "widgets/collection_group_rules.h"
 #include "desktop_hover_rules.h"
+#include "drag_input_rules.h"
 #include "widget_scroll_rules.h"
 #include "widget_visibility_rules.h"
 #include "widgets/widget_chrome_rules.h"
@@ -20,6 +21,8 @@ namespace visibilityRules =
     snowdesktop::widget_visibility_rules;
 namespace hoverRules =
     snowdesktop::desktop_hover_rules;
+namespace dragInputRules =
+    snowdesktop::drag_input_rules;
 namespace chromeRules =
     snowdesktop::widget_chrome_rules;
 namespace guideRules =
@@ -794,6 +797,25 @@ void TestDesktopHoverDeactivation()
         "hover restoration requires both a desktop surface and a cleared state");
 }
 
+void TestDragInputSampling()
+{
+    Check(
+        dragInputRules::ShouldSampleLivePointer(true, false) &&
+            !dragInputRules::ShouldSampleLivePointer(false, false) &&
+            !dragInputRules::ShouldSampleLivePointer(true, true),
+        "only native drag sessions may replace queued coordinates with the live pointer");
+    Check(
+        dragInputRules::ShouldCoalesceQueuedMouseMove(
+            true, true, true) &&
+            !dragInputRules::ShouldCoalesceQueuedMouseMove(
+                false, true, true) &&
+            !dragInputRules::ShouldCoalesceQueuedMouseMove(
+                true, false, true) &&
+            !dragInputRules::ShouldCoalesceQueuedMouseMove(
+                true, true, false),
+        "native drag coalescing must stop at another window or message kind");
+}
+
 void TestBottomBarContentReservation()
 {
     Check(
@@ -1064,6 +1086,7 @@ int main()
     TestWidgetDesktopSurfaceVisibility();
     TestWidgetPreviewSourceVisibility();
     TestDesktopHoverDeactivation();
+    TestDragInputSampling();
     TestNestedWidgetScrolling();
     TestScrollbarThumbDragging();
     TestListDetailRules();

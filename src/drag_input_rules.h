@@ -1,0 +1,24 @@
+#pragma once
+
+namespace snowdesktop::drag_input_rules
+{
+constexpr bool ShouldSampleLivePointer(
+    bool dragSessionActive,
+    bool dragTransportActive)
+{
+    // OLE owns screen-point routing once a transport starts. Before that,
+    // captured native drags should follow the physical pointer instead of
+    // replaying queued WM_MOUSEMOVE coordinates.
+    return dragSessionActive && !dragTransportActive;
+}
+
+constexpr bool ShouldCoalesceQueuedMouseMove(
+    bool nativeDragActive,
+    bool sameWindow,
+    bool nextMessageIsMouseMove)
+{
+    // The caller only inspects the queue head. This preserves ordering with
+    // button, key, timer and window messages while dropping superseded points.
+    return nativeDragActive && sameWindow && nextMessageIsMouseMove;
+}
+}

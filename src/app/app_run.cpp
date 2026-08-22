@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../drag_input_rules.h"
 
 #include <commoncontrols.h>
 #include <imm.h>
@@ -1036,6 +1037,31 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             {
                 running = false;
                 break;
+            }
+            const bool nativeDragActive =
+                snowdesktop::drag_input_rules::ShouldSampleLivePointer(
+                    dragSession_.IsActive(),
+                    dragDropController_.IsTransportActive());
+            if (msg.message == WM_MOUSEMOVE && nativeDragActive)
+            {
+                MSG next{};
+                while (PeekMessageW(
+                    &next, nullptr, 0, 0, PM_NOREMOVE))
+                {
+                    if (!snowdesktop::drag_input_rules::
+                            ShouldCoalesceQueuedMouseMove(
+                                nativeDragActive,
+                                next.hwnd == msg.hwnd,
+                                next.message == WM_MOUSEMOVE))
+                    {
+                        break;
+                    }
+                    if (!PeekMessageW(
+                        &msg, nullptr, 0, 0, PM_REMOVE))
+                    {
+                        break;
+                    }
+                }
             }
             TranslateMessage(&msg);
             DispatchMessageW(&msg);

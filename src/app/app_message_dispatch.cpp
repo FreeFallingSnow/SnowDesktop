@@ -1,5 +1,6 @@
 #include "app.h"
 #include "../desktop_keyboard_rules.h"
+#include "../drag_input_rules.h"
 
 #include <imm.h>
 #include <shldisp.h>
@@ -263,49 +264,65 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_MOUSEMOVE:
     {
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        const bool sampleNativeDrag =
+            snowdesktop::drag_input_rules::ShouldSampleLivePointer(
+                dragSession_.IsActive(),
+                dragDropController_.IsTransportActive());
         const bool widgetInteractionActive =
             middleButtonWidgetMove_ ||
             widgetAction_ != WidgetAction::None ||
             detailColumnResizeActive_ ||
             luaWidgetPanelMouseDown_;
-        if (snowdesktop::desktop_hover_rules::
+        const bool samplePassiveHover =
+            snowdesktop::desktop_hover_rules::
                 ShouldResamplePassiveMouseMove(
                     mouseDown_,
                     dragSession_.IsActive(),
-                    widgetInteractionActive))
+                    widgetInteractionActive);
+        if (sampleNativeDrag || samplePassiveHover)
         {
-            // TrackPopupMenuEx and asynchronous Shell dialogs can leave old
-            // WM_MOUSEMOVE messages queued for this HWND. Their lParam points
-            // may cross a hover-only widget long after the physical pointer
-            // has stopped elsewhere, producing show/leave/hide loops. Passive
-            // hover has no historical gesture state to preserve, so always
-            // use the live cursor and verify the paired desktop surface.
+            // Costly frames and modal Shell loops can leave old WM_MOUSEMOVE
+            // messages queued for this HWND. Native item drags must follow the
+            // physical pointer; passive hover additionally verifies that the
+            // sample still belongs to the paired desktop surface.
             POINT cursorScreen{};
             if (!GetCursorPos(&cursorScreen))
-                return 0;
-            const HWND hitWindow =
-                WindowFromPoint(cursorScreen);
-            const bool pointerOnContentWindow =
-                IsSameWindowTree(hwnd_, hitWindow);
-            const bool pointerOnPairedBackdropWindow =
-                desktopBackdropCompositor_.
-                    IsBackdropWindow(hitWindow);
-            if (!snowdesktop::desktop_hover_rules::
-                    ShouldRetainHoverAcrossMouseLeave(
-                        pointerOnContentWindow,
-                        pointerOnPairedBackdropWindow))
             {
-                if (lastMousePoint_.x != LONG_MIN ||
-                    lastMousePoint_.y != LONG_MIN)
-                {
-                    OnMouseLeave();
-                }
-                return 0;
+                // A captured drag must keep making progress even if the live
+                // sample fails transiently. Passive hover has no equivalent
+                // gesture state, so retain its existing drop-on-failure rule.
+                if (samplePassiveHover)
+                    return 0;
             }
-            pt = cursorScreen;
-            if (!ScreenToClient(hwnd_, &pt))
-                return 0;
-            lp = MAKELPARAM(pt.x, pt.y);
+            else
+            {
+                if (samplePassiveHover)
+                {
+                    const HWND hitWindow =
+                        WindowFromPoint(cursorScreen);
+                    const bool pointerOnContentWindow =
+                        IsSameWindowTree(hwnd_, hitWindow);
+                    const bool pointerOnPairedBackdropWindow =
+                        desktopBackdropCompositor_.
+                            IsBackdropWindow(hitWindow);
+                    if (!snowdesktop::desktop_hover_rules::
+                            ShouldRetainHoverAcrossMouseLeave(
+                                pointerOnContentWindow,
+                                pointerOnPairedBackdropWindow))
+                    {
+                        if (lastMousePoint_.x != LONG_MIN ||
+                            lastMousePoint_.y != LONG_MIN)
+                        {
+                            OnMouseLeave();
+                        }
+                        return 0;
+                    }
+                }
+                pt = cursorScreen;
+                if (!ScreenToClient(hwnd_, &pt))
+                    return 0;
+                lp = MAKELPARAM(pt.x, pt.y);
+            }
         }
         if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt) &&
             GetCapture() != hwnd_ && !mouseDown_ &&
