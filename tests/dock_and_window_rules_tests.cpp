@@ -1577,6 +1577,17 @@ int main(int argc, char** argv)
     Check(mappedFloatingPoint.x == 112 &&
             mappedFloatingPoint.y == 934,
         "floating-window input must map back to desktop coordinates");
+    const RECT associatedPopupRect =
+        floatingDock::DockAssociatedPopupInteractionRect(
+            true, floatingPopupRect);
+    const RECT unrelatedPopupRect =
+        floatingDock::DockAssociatedPopupInteractionRect(
+            false, floatingPopupRect);
+    Check(EqualRect(
+            &associatedPopupRect,
+            &floatingPopupRect) != FALSE &&
+            IsRectEmpty(&unrelatedPopupRect) != FALSE,
+        "only a shared popup anchored to the Dock may extend the floating Dock interaction surface");
     const RECT previewPanelRect{ 260, 620, 540, 860 };
     Check(!floatingDock::ShouldDismissForPointerDown(
             false, false, POINT{ 150, 930 },

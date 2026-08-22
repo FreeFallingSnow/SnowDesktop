@@ -420,6 +420,15 @@ inline RECT DesktopRectToWindowRect(
     return desktopRect;
 }
 
+inline RECT DockAssociatedPopupInteractionRect(
+    bool anchoredToDock,
+    const RECT& hostedPopupRect)
+{
+    return anchoredToDock
+        ? hostedPopupRect
+        : RECT{};
+}
+
 inline bool ShouldDismissForPointerDown(
     bool dragging,
     bool contextMenuActive,

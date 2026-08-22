@@ -186,6 +186,11 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
             quickNavigationOpen_
                 ? quickNavigationRect_
                 : RECT{};
+        const RECT dockPopupInteractionRect =
+            snowdesktop::floating_dock_rules::
+                DockAssociatedPopupInteractionRect(
+                    popupAnchoredToDock_,
+                    floatingPopupCollectionRegion_);
         if (snowdesktop::floating_dock_rules::
                 ShouldDismissForPointerDown(
                     dragSession_.IsActive() ||
@@ -193,7 +198,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
                     HasActiveContextMenuSession(),
                     desktopPoint,
                     floatingDockRect_,
-                    floatingDockPopupRect_,
+                    dockPopupInteractionRect,
                     previewDesktopRect,
                     quickNavigationInteractionRect))
         {
