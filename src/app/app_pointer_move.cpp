@@ -604,57 +604,58 @@ void DesktopApp::OnMouseMoveAt(
         widgetDockInsertIndex_ = 0;
 
         // ── 跨页翻页：检测导航按钮悬停 + 自动翻页 ──
-        if (MaxPageOffset() > 0)
+        int navSide = 0;
+        int maximumOffset = 0;
+        if (!gridPages_.empty() &&
+            savedPageIds_.size() > gridPages_.size())
         {
             RECT prevRect, nextRect;
             GetNavButtonRects(prevRect, nextRect);
-
-            int navSide = 0;
             if (PtInRect(&prevRect, current)) navSide = -1;
             else if (PtInRect(&nextRect, current)) navSide = 1;
-            navHoverSide_ = navSide;
-
-            const bool hasPrev = pageOffset_ > 0;
-            const bool hasNext = pageOffset_ < MaxPageOffset();
-            const bool navEnabled = (navSide == -1 && hasPrev) || (navSide == 1 && hasNext);
-
-            if (navSide != 0 && navEnabled)
+            if (navSide != 0)
             {
-                const DWORD now = GetTickCount();
-                if (navAutoFlipDir_ != navSide)
-                {
-                    navAutoFlipDir_ = navSide;
-                    navAutoFlipTick_ = now;
-                }
-                else if (now - navAutoFlipTick_ > 500)
-                {
-                    // 触发翻页
-                    int newOffset = NextNonEmptyOffset(pageOffset_, navSide);
-                    if (newOffset != pageOffset_)
-                    {
-                        // 保存迁移前组件实际 bounds（含页面渲染尺寸差异）
-                        RECT oldWidgetBounds = widgets_[mouseDownWidgetIndex_].bounds;
-                        pageOffset_ = newOffset;
-                        ApplyPageMapping();
-                        LayoutItems();
-                        // 用实际 bounds 差值补偿 group origin + mouseDown，保持视觉连续性
-                        RECT newWidgetBounds = widgets_[mouseDownWidgetIndex_].bounds;
-                        const int dx = newWidgetBounds.left - oldWidgetBounds.left;
-                        const int dy = newWidgetBounds.top  - oldWidgetBounds.top;
-                        dragGroupOriginX_ += dx;
-                        dragGroupOriginY_ += dy;
-                        mouseDownPoint_.x += dx;
-                        mouseDownPoint_.y += dy;
-                        InvalidateDragStaticScene();
-                        InvalidateRect(hwnd_, nullptr, TRUE);
-                    }
-                    navAutoFlipTick_ = now;
-                }
+                maximumOffset = MaxPageOffset();
+                if (maximumOffset <= 0)
+                    navSide = 0;
             }
-            else
+        }
+        navHoverSide_ = navSide;
+
+        const bool navEnabled =
+            (navSide == -1 && pageOffset_ > 0) ||
+            (navSide == 1 && pageOffset_ < maximumOffset);
+        if (navSide != 0 && navEnabled)
+        {
+            const DWORD now = GetTickCount();
+            if (navAutoFlipDir_ != navSide)
             {
-                navAutoFlipDir_ = 0;
-                navAutoFlipTick_ = 0;
+                navAutoFlipDir_ = navSide;
+                navAutoFlipTick_ = now;
+            }
+            else if (now - navAutoFlipTick_ > 500)
+            {
+                // 触发翻页
+                int newOffset = NextNonEmptyOffset(pageOffset_, navSide);
+                if (newOffset != pageOffset_)
+                {
+                    // 保存迁移前组件实际 bounds（含页面渲染尺寸差异）
+                    RECT oldWidgetBounds = widgets_[mouseDownWidgetIndex_].bounds;
+                    pageOffset_ = newOffset;
+                    ApplyPageMapping();
+                    LayoutItems();
+                    // 用实际 bounds 差值补偿 group origin + mouseDown，保持视觉连续性
+                    RECT newWidgetBounds = widgets_[mouseDownWidgetIndex_].bounds;
+                    const int dx = newWidgetBounds.left - oldWidgetBounds.left;
+                    const int dy = newWidgetBounds.top  - oldWidgetBounds.top;
+                    dragGroupOriginX_ += dx;
+                    dragGroupOriginY_ += dy;
+                    mouseDownPoint_.x += dx;
+                    mouseDownPoint_.y += dy;
+                    InvalidateDragStaticScene();
+                    InvalidateRect(hwnd_, nullptr, TRUE);
+                }
+                navAutoFlipTick_ = now;
             }
         }
         else

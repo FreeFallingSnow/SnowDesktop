@@ -3568,6 +3568,48 @@ int main(int argc, char** argv)
                 groupedWidgetCheck != std::string::npos &&
                 widgetPageMatch < groupedWidgetCheck,
             "page content checks must reject widgets on other pages before resolving group membership");
+        const std::size_t widgetPageNavigation =
+            pointerMoveSource.find(
+                "// ── 跨页翻页：检测导航按钮悬停 + 自动翻页 ──");
+        const std::size_t widgetPageNavigationEnd =
+            pointerMoveSource.find(
+                "POINT adjusted =",
+                widgetPageNavigation);
+        const std::string widgetPageNavigationSource =
+            widgetPageNavigation != std::string::npos &&
+                    widgetPageNavigationEnd != std::string::npos
+                ? pointerMoveSource.substr(
+                    widgetPageNavigation,
+                    widgetPageNavigationEnd -
+                        widgetPageNavigation)
+                : std::string{};
+        const std::size_t widgetPageHit =
+            widgetPageNavigationSource.find(
+                "PtInRect(&nextRect, current)");
+        const std::size_t widgetPageMaximum =
+            widgetPageNavigationSource.find(
+                "MaxPageOffset()");
+        const std::size_t repeatedWidgetPageMaximum =
+            widgetPageNavigationSource.find(
+                "MaxPageOffset()",
+                widgetPageMaximum == std::string::npos
+                    ? 0 : widgetPageMaximum + 1);
+        const std::size_t emptyWidgetPageGuard =
+            widgetPageNavigationSource.find(
+                "if (maximumOffset <= 0)",
+                widgetPageMaximum);
+        const std::size_t clearWidgetPageSide =
+            widgetPageNavigationSource.find(
+                "navSide = 0;",
+                emptyWidgetPageGuard);
+        Check(!widgetPageNavigationSource.empty() &&
+                widgetPageHit != std::string::npos &&
+                widgetPageMaximum != std::string::npos &&
+                widgetPageHit < widgetPageMaximum &&
+                repeatedWidgetPageMaximum == std::string::npos &&
+                emptyWidgetPageGuard != std::string::npos &&
+                clearWidgetPageSide != std::string::npos,
+            "widget drag page navigation must scan page content only once and only after a button hit");
         Check(pointerMoveSource.find(
                   "*dragPreviewSynced = true;") !=
                     std::string::npos &&
