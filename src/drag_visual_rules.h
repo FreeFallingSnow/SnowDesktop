@@ -27,6 +27,39 @@ constexpr bool ShouldCompactPreview(
     return itemCount > 1;
 }
 
+constexpr bool EqualRect(
+    const RECT& left, const RECT& right) noexcept
+{
+    return left.left == right.left &&
+        left.top == right.top &&
+        left.right == right.right &&
+        left.bottom == right.bottom;
+}
+
+constexpr bool ShouldApplyPreviewWindowPlacement(
+    bool visible, bool cacheValid,
+    const RECT& applied, const RECT& requested) noexcept
+{
+    return !visible || !cacheValid ||
+        !EqualRect(applied, requested);
+}
+
+struct PreviewWindowZOrderPolicy
+{
+    HWND insertAfter = nullptr;
+    UINT flags = SWP_NOACTIVATE;
+};
+
+constexpr PreviewWindowZOrderPolicy
+ResolvePreviewWindowZOrderPolicy(bool visible) noexcept
+{
+    return visible
+        ? PreviewWindowZOrderPolicy{
+            nullptr, SWP_NOACTIVATE | SWP_NOZORDER }
+        : PreviewWindowZOrderPolicy{
+            HWND_TOPMOST, SWP_NOACTIVATE };
+}
+
 constexpr bool DropPreviewBelongsToRenderSurface(
     bool renderingFloatingDock,
     bool floatingDockOwnsDesktopCopy,

@@ -19,6 +19,7 @@ bool DesktopApp::CreateDragPreviewWindow()
         nullptr, nullptr, instance_, this);
     if (!dragPreviewHwnd_)
         return false;
+    dragPreviewWindowBoundsValid_ = false;
 
     const BOOL disableTransitions = TRUE;
     DwmSetWindowAttribute(
@@ -39,6 +40,7 @@ void DesktopApp::ResetDragPreviewCompositionResources()
     dragPreviewItemBounds_.clear();
     dragPreviewRenderRevision_ = 0;
     dragPreviewContentBounds_ = {};
+    dragPreviewWindowBoundsValid_ = false;
 }
 
 void DesktopApp::HideDragPreviewWindow()
@@ -62,6 +64,8 @@ void DesktopApp::DestroyDragPreviewWindow()
     if (dragPreviewHwnd_ && IsWindow(dragPreviewHwnd_))
         DestroyWindow(dragPreviewHwnd_);
     dragPreviewHwnd_ = nullptr;
+    dragPreviewWindowBounds_ = {};
+    dragPreviewWindowBoundsValid_ = false;
 }
 
 HRESULT DesktopApp::CreateOrResizeDragPreviewCompositionSurface(
@@ -364,13 +368,48 @@ void DesktopApp::SyncDragPreviewWindow()
     const bool geometryChanged =
         width != dragPreviewCompWidth_ ||
         height != dragPreviewCompHeight_;
-    SetWindowPos(
-        dragPreviewHwnd_, HWND_TOPMOST,
-        screenOrigin.x, screenOrigin.y,
-        static_cast<int>(width),
-        static_cast<int>(height),
-        SWP_NOACTIVATE |
-            (geometryChanged ? 0 : SWP_NOSIZE));
+    const RECT requestedWindowBounds{
+        screenOrigin.x,
+        screenOrigin.y,
+        screenOrigin.x + static_cast<LONG>(width),
+        screenOrigin.y + static_cast<LONG>(height),
+    };
+    const bool previewWasVisible =
+        IsWindowVisible(dragPreviewHwnd_) != FALSE;
+    if (snowdesktop::drag_visual_rules::
+            ShouldApplyPreviewWindowPlacement(
+                previewWasVisible,
+                dragPreviewWindowBoundsValid_,
+                dragPreviewWindowBounds_,
+                requestedWindowBounds))
+    {
+        const auto zOrder = snowdesktop::drag_visual_rules::
+            ResolvePreviewWindowZOrderPolicy(
+                previewWasVisible);
+        const bool placementSizeChanged =
+            !dragPreviewWindowBoundsValid_ ||
+            dragPreviewWindowBounds_.right -
+                    dragPreviewWindowBounds_.left !=
+                static_cast<LONG>(width) ||
+            dragPreviewWindowBounds_.bottom -
+                    dragPreviewWindowBounds_.top !=
+                static_cast<LONG>(height);
+        const UINT placementFlags = zOrder.flags |
+            (placementSizeChanged ? 0 : SWP_NOSIZE);
+        if (!SetWindowPos(
+                dragPreviewHwnd_, zOrder.insertAfter,
+                screenOrigin.x, screenOrigin.y,
+                static_cast<int>(width),
+                static_cast<int>(height),
+                placementFlags))
+        {
+            dragPreviewWindowBoundsValid_ = false;
+            HideDragPreviewWindow();
+            return;
+        }
+        dragPreviewWindowBounds_ = requestedWindowBounds;
+        dragPreviewWindowBoundsValid_ = true;
+    }
 
     // HTTRANSPARENT only forwards ordinary mouse messages within the UI
     // thread; OLE selects its IDropTarget from the window under the cursor.
@@ -434,7 +473,7 @@ void DesktopApp::SyncDragPreviewWindow()
         // compositor can start presenting the ghost immediately.
         FlushPendingCompositionCommit();
     }
-    if (!IsWindowVisible(dragPreviewHwnd_))
+    if (!previewWasVisible)
         ShowWindow(dragPreviewHwnd_, SW_SHOWNOACTIVATE);
 }
 

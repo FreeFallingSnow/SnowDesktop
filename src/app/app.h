@@ -3095,6 +3095,8 @@ private:
     ComPtr<IDCompositionVisual2> dragPreviewDcompVisual_;
     ComPtr<IDCompositionSurface> dragPreviewDcompSurface_;
     RECT dragPreviewContentBounds_{};
+    RECT dragPreviewWindowBounds_{};
+    bool dragPreviewWindowBoundsValid_ = false;
     UINT dragPreviewCompWidth_ = 0;
     UINT dragPreviewCompHeight_ = 0;
     POINT dragPreviewInputHole_{ -1, -1 };

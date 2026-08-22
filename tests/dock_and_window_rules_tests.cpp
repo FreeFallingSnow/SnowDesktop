@@ -1500,6 +1500,34 @@ int main(int argc, char** argv)
             dragVisual::kMaximumStackedPreviewItems == 4 &&
             dragVisual::kStackedPreviewOffset > 0,
         "multi-item drag previews must use a bounded compact stack");
+    const RECT appliedPreviewBounds{100, 200, 180, 280};
+    const RECT movedPreviewBounds{101, 200, 181, 280};
+    const RECT resizedPreviewBounds{100, 200, 181, 280};
+    Check(dragVisual::ShouldApplyPreviewWindowPlacement(
+              true, false,
+              appliedPreviewBounds, appliedPreviewBounds) &&
+            dragVisual::ShouldApplyPreviewWindowPlacement(
+              false, true,
+              appliedPreviewBounds, appliedPreviewBounds) &&
+            !dragVisual::ShouldApplyPreviewWindowPlacement(
+              true, true,
+              appliedPreviewBounds, appliedPreviewBounds) &&
+            dragVisual::ShouldApplyPreviewWindowPlacement(
+              true, true,
+              appliedPreviewBounds, movedPreviewBounds) &&
+            dragVisual::ShouldApplyPreviewWindowPlacement(
+              true, true,
+              appliedPreviewBounds, resizedPreviewBounds),
+        "drag preview placement must reapply only for first show, re-show, movement, or resize");
+    const auto hiddenPreviewZOrder =
+        dragVisual::ResolvePreviewWindowZOrderPolicy(false);
+    const auto visiblePreviewZOrder =
+        dragVisual::ResolvePreviewWindowZOrderPolicy(true);
+    Check(hiddenPreviewZOrder.insertAfter == HWND_TOPMOST &&
+            (hiddenPreviewZOrder.flags & SWP_NOZORDER) == 0 &&
+            visiblePreviewZOrder.insertAfter == nullptr &&
+            (visiblePreviewZOrder.flags & SWP_NOZORDER) != 0,
+        "a newly shown drag preview must enter topmost while visible movement preserves Z order");
     Check(dragVisual::DropPreviewBelongsToRenderSurface(
               true, true, true) &&
             !dragVisual::DropPreviewBelongsToRenderSurface(
@@ -3291,6 +3319,23 @@ int main(int argc, char** argv)
                   "ShowDragHintWindow(current, hint);\n        InvalidateRect(hwnd_, nullptr, FALSE);") ==
                     std::string::npos,
             "ordinary drag movement must not invalidate the full desktop after every pointer pixel");
+        const std::size_t pointerLiveUpdate =
+            pointerMoveSource.find(
+                "dragSession_.UpdatePoint(current);");
+        const std::size_t pointerPreviewSync =
+            pointerMoveSource.find(
+                "SyncDragPreviewWindow();",
+                pointerLiveUpdate);
+        const std::size_t pointerExternalHit =
+            pointerMoveSource.find(
+                "IsExternalDropWindowAt(current)",
+                pointerPreviewSync);
+        Check(pointerLiveUpdate != std::string::npos &&
+                pointerPreviewSync != std::string::npos &&
+                pointerExternalHit != std::string::npos &&
+                pointerLiveUpdate < pointerPreviewSync &&
+                pointerPreviewSync < pointerExternalHit,
+            "the drag preview and OLE input hole must reach the live point before external-window hit testing");
         Check(pointerMoveSource.find(
                   "dragSession_.SetVisualVisible(false);") !=
                     std::string::npos &&

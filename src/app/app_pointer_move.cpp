@@ -688,8 +688,7 @@ void DesktopApp::OnMouseMoveAt(WPARAM wp, POINT current)
         if (GetAsyncKeyState(VK_SHIFT) & 0x8000)   currentMods |= MK_SHIFT;
         dragSession_.UpdateActionFromMods(currentMods);
 
-        POINT screenPt = current;
-        ClientToScreen(hwnd_, &screenPt);
+        SyncDragPreviewWindow();
         bool overExternal = IsExternalDropWindowAt(current);
 
         if (overExternal)
