@@ -80,6 +80,10 @@ void DesktopApp::OnMouseLeave()
         lastMousePoint_ = { LONG_MIN, LONG_MIN };
         if (widgetEngine_)
             widgetEngine_->ClearInteractionHover();
+        // The title is part of the floating HWND region. Shrink that input
+        // island before presenting the cleared frame so an invisible stale
+        // tooltip cannot continue intercepting mouse input.
+        UpdateFloatingDockWindowBounds(false);
         PresentPassiveHoverVisualChange();
         RecordShellHoverTrace(
             ShellHoverTraceEvent::MouseLeaveEnd);
@@ -145,16 +149,50 @@ void DesktopApp::ReconcileDesktopHoverState(
         const bool passiveHoverCleared =
             lastMousePoint_.x == LONG_MIN &&
             lastMousePoint_.y == LONG_MIN;
-        if (snowdesktop::desktop_hover_rules::
+        const bool activateHover =
+            snowdesktop::desktop_hover_rules::
                 ShouldActivateFromSurfaceSample(
                     true, passiveHoverCleared, mode,
-                    foregroundSettled))
+                    foregroundSettled);
+        POINT baseCursorPoint{};
+        const bool pointerOnBaseDesktopSurface =
+            !passiveHoverCleared &&
+            TryGetBaseDesktopHoverPointFromCursor(
+                baseCursorPoint);
+        const bool pointerPositionChanged =
+            pointerOnBaseDesktopSurface &&
+            (baseCursorPoint.x != lastMousePoint_.x ||
+                baseCursorPoint.y != lastMousePoint_.y);
+        const bool widgetInteractionActive =
+            middleButtonWidgetMove_ ||
+            widgetAction_ != WidgetAction::None ||
+            detailColumnResizeActive_ ||
+            luaWidgetPanelMouseDown_;
+        const bool passiveHoverAllowed =
+            snowdesktop::desktop_hover_rules::
+                ShouldResamplePassiveMouseMove(
+                    mouseDown_,
+                    dragSession_.IsActive(),
+                    widgetInteractionActive);
+        const bool refreshActiveHover =
+            snowdesktop::desktop_hover_rules::
+                ShouldRefreshActiveHoverFromSurfaceSample(
+                    pointerOnBaseDesktopSurface,
+                    passiveHoverCleared,
+                    pointerPositionChanged,
+                    passiveHoverAllowed,
+                    mode,
+                    foregroundSettled);
+        if (activateHover || refreshActiveHover)
         {
-            lastMousePoint_ = cursorPoint;
+            lastMousePoint_ = activateHover
+                ? cursorPoint : baseCursorPoint;
             PresentPassiveHoverVisualChange();
             RecordShellHoverTrace(
-                ShellHoverTraceEvent::ReconcileActivate,
-                cursorPoint);
+                activateHover
+                    ? ShellHoverTraceEvent::ReconcileActivate
+                    : ShellHoverTraceEvent::ReconcileRefresh,
+                lastMousePoint_);
         }
         else
         {
@@ -363,6 +401,7 @@ void DesktopApp::FlushShellHoverTrace()
         case ShellHoverTraceEvent::ReconcileBegin: return L"reconcile-begin";
         case ShellHoverTraceEvent::ReconcileSuspended: return L"reconcile-suspended";
         case ShellHoverTraceEvent::ReconcileActivate: return L"reconcile-activate";
+        case ShellHoverTraceEvent::ReconcileRefresh: return L"reconcile-refresh";
         case ShellHoverTraceEvent::ReconcileClear: return L"reconcile-clear";
         case ShellHoverTraceEvent::ReconcileNoChange: return L"reconcile-no-change";
         case ShellHoverTraceEvent::PaintBegin: return L"paint-begin";

@@ -723,6 +723,14 @@ void TestDesktopHoverDeactivation()
                 false, false, true),
         "only passive mouse moves may replace queued message coordinates with the live cursor");
     Check(
+        hoverRules::ShouldPresentRetainedMouseLeave(
+            true, true) &&
+            !hoverRules::ShouldPresentRetainedMouseLeave(
+                true, false) &&
+            !hoverRules::ShouldPresentRetainedMouseLeave(
+                false, true),
+        "retained leaves must present exactly one changed passive pointer sample");
+    Check(
         hoverRules::ShouldReconcileFromSurfaceSample(
             false, false, false) &&
             hoverRules::ShouldReconcileFromSurfaceSample(
@@ -802,6 +810,34 @@ void TestDesktopHoverDeactivation()
             !hoverRules::ShouldActivateFromSurfaceSample(
                 true, false, ReconcileMode::AllowImmediateActivation, true),
         "hover restoration requires both a desktop surface and a cleared state");
+    Check(
+        hoverRules::ShouldRefreshActiveHoverFromSurfaceSample(
+            true, false, true, true,
+            ReconcileMode::AllowImmediateActivation, false) &&
+            hoverRules::ShouldRefreshActiveHoverFromSurfaceSample(
+                true, false, true, true,
+                ReconcileMode::AllowActivationAfterForegroundSettle, true),
+        "an active hover may follow a changed base-desktop sample after activation is allowed");
+    Check(
+        !hoverRules::ShouldRefreshActiveHoverFromSurfaceSample(
+            false, false, true, true,
+            ReconcileMode::AllowImmediateActivation, true) &&
+            !hoverRules::ShouldRefreshActiveHoverFromSurfaceSample(
+                true, true, true, true,
+                ReconcileMode::AllowImmediateActivation, true) &&
+            !hoverRules::ShouldRefreshActiveHoverFromSurfaceSample(
+                true, false, false, true,
+                ReconcileMode::AllowImmediateActivation, true) &&
+            !hoverRules::ShouldRefreshActiveHoverFromSurfaceSample(
+                true, false, true, false,
+                ReconcileMode::AllowImmediateActivation, true) &&
+            !hoverRules::ShouldRefreshActiveHoverFromSurfaceSample(
+                true, false, true, true,
+                ReconcileMode::DeactivateOnly, true) &&
+            !hoverRules::ShouldRefreshActiveHoverFromSurfaceSample(
+                true, false, true, true,
+                ReconcileMode::AllowActivationAfterForegroundSettle, false),
+        "active-hover fallback must reject bridges, cleared state, unchanged points, gestures, and unsettled samples");
 }
 
 void TestDragInputSampling()

@@ -825,6 +825,7 @@ private:
         ReconcileBegin,
         ReconcileSuspended,
         ReconcileActivate,
+        ReconcileRefresh,
         ReconcileClear,
         ReconcileNoChange,
         PaintBegin,
@@ -3310,10 +3311,14 @@ private:
     bool IsExternalDropWindowAt(POINT clientPoint) const;
     /** @brief 判断指定窗口是否为已知的桌面表面窗口。 @param window 窗口句柄 @return 是则返回 true */
     bool IsKnownDesktopSurfaceWindow(HWND window) const;
+    /** @brief 判断窗口是否属于不含浮动桥接层的基础桌面 hover 表面。 */
+    bool IsBaseDesktopHoverSurfaceWindow(HWND window) const;
     /** @brief 判断窗口是否属于会产生桌面 hover 的 SnowDesktop 交互表面。 */
     bool IsDesktopInteractionSurfaceWindow(HWND window) const;
     /** @brief 读取光标并在其位于桌面交互表面时转换为主窗口客户区坐标。 */
     bool TryGetDesktopHoverPointFromCursor(POINT& point) const;
+    /** @brief 读取光标并仅在基础桌面表面上转换为主窗口客户区坐标。 */
+    bool TryGetBaseDesktopHoverPointFromCursor(POINT& point) const;
     /** @brief 读取光标并仅在其位于可恢复原生拖拽的窗口上时返回客户区坐标。 */
     bool TryGetNativeDragResumePointFromCursor(POINT& point) const;
     /** @brief 判断两个窗口是否位于同一窗口树中。 @param parent 父窗口 @param window 子窗口 @return 是则返回 true */

@@ -193,9 +193,11 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
     case WM_MOUSELEAVE:
     {
         // Hiding the floating HWND generates a synthetic leave before the
-        // desktop HWND receives its hand-off move. Preserve the already-hot
-        // Dock item across that window boundary instead of clearing and then
-        // replaying the same hover transition.
+        // desktop HWND receives its hand-off move. Dynamic title/rounded HRGN
+        // updates can also post a stale leave while User32 still resolves the
+        // pointer to this HWND. Retain that sample, but never rearm tracking or
+        // replay full input from inside WM_MOUSELEAVE: the region can change
+        // again during presentation and otherwise create a posted-message loop.
         if (floatingDockHoverHandoffPending_ &&
             !floatingDockVisible_)
         {
@@ -208,34 +210,39 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
             floatingDockHoverHandoffPending_ = false;
             floatingDockHoverHandoffRect_ = {};
         }
-        POINT cursor{};
-        if (GetCursorPos(&cursor))
+        POINT cursorScreen{};
+        if (GetCursorPos(&cursorScreen))
         {
-            ScreenToClient(hwnd, &cursor);
-            cursor =
-                FloatingDockClientToDesktop(
-                    cursor);
-            if (snowdesktop::
-                    floating_dock_rules::
-                        IsPointInVisibleLayer(
-                            cursor,
-                            floatingDockRect_,
-                            floatingDockPopupRect_,
-                            floatingDockTooltipRect_))
+            if (WindowFromPoint(cursorScreen) == hwnd)
             {
-                TRACKMOUSEEVENT tracking{ sizeof(tracking) };
-                tracking.dwFlags = TME_LEAVE;
-                tracking.hwndTrack = hwnd;
-                TrackMouseEvent(&tracking);
-                handlingFloatingDockInput_ = true;
-                bool dragPreviewSynced = false;
-                OnMouseMoveAt(
-                    0, cursor,
-                    &dragPreviewSynced);
-                handlingFloatingDockInput_ = false;
-                UpdateFloatingDockWindowBounds(false);
-                PresentPointerInteractionFrame(
-                    dragPreviewSynced);
+                POINT cursor = cursorScreen;
+                if (ScreenToClient(hwnd, &cursor))
+                {
+                    cursor = FloatingDockClientToDesktop(cursor);
+                    const bool pointerPositionChanged =
+                        cursor.x != lastMousePoint_.x ||
+                        cursor.y != lastMousePoint_.y;
+                    const bool widgetInteractionActive =
+                        middleButtonWidgetMove_ ||
+                        widgetAction_ != WidgetAction::None ||
+                        detailColumnResizeActive_ ||
+                        luaWidgetPanelMouseDown_;
+                    const bool passiveHover =
+                        snowdesktop::desktop_hover_rules::
+                            ShouldResamplePassiveMouseMove(
+                                mouseDown_,
+                                dragSession_.IsActive(),
+                                widgetInteractionActive);
+                    lastMousePoint_ = cursor;
+                    if (snowdesktop::desktop_hover_rules::
+                            ShouldPresentRetainedMouseLeave(
+                                passiveHover,
+                                pointerPositionChanged))
+                    {
+                        UpdateFloatingDockWindowBounds(false);
+                        InvalidateFloatingDockWindow(true);
+                    }
+                }
                 return 0;
             }
         }

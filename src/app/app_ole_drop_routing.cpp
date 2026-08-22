@@ -36,6 +36,36 @@ bool DesktopApp::IsKnownDesktopSurfaceWindow(HWND window) const
     return window == desktop || root == desktop;
 }
 
+bool DesktopApp::IsBaseDesktopHoverSurfaceWindow(
+    HWND window) const
+{
+    if (!window)
+        return false;
+    if (desktopBackdropCompositor_.IsBackdropWindow(window))
+        return true;
+
+    HWND root = GetAncestor(window, GA_ROOT);
+    if (!root)
+        root = window;
+    if (window == hwnd_ || root == hwnd_ ||
+        IsSameWindowTree(hwnd_, window))
+        return true;
+
+    const auto belongsTo = [window, root](HWND candidate) {
+        return candidate &&
+            (window == candidate || root == candidate ||
+                IsChild(candidate, window));
+    };
+    if (belongsTo(desktopWindows_.host) ||
+        belongsTo(desktopWindows_.progman) ||
+        belongsTo(desktopWindows_.defView) ||
+        belongsTo(desktopWindows_.listView))
+        return true;
+
+    const HWND desktop = GetDesktopWindow();
+    return window == desktop || root == desktop;
+}
+
 bool DesktopApp::IsDesktopInteractionSurfaceWindow(
     HWND window) const
 {
@@ -77,6 +107,21 @@ bool DesktopApp::TryGetDesktopHoverPointFromCursor(
         !GetCursorPos(&screenPoint))
         return false;
     if (!IsDesktopInteractionSurfaceWindow(
+            WindowFromPoint(screenPoint)))
+        return false;
+
+    point = screenPoint;
+    return ScreenToClient(hwnd_, &point) != FALSE;
+}
+
+bool DesktopApp::TryGetBaseDesktopHoverPointFromCursor(
+    POINT& point) const
+{
+    POINT screenPoint{};
+    if (!hwnd_ || !IsWindow(hwnd_) ||
+        !GetCursorPos(&screenPoint))
+        return false;
+    if (!IsBaseDesktopHoverSurfaceWindow(
             WindowFromPoint(screenPoint)))
         return false;
 

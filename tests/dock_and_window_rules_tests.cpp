@@ -3884,29 +3884,87 @@ int main(int argc, char** argv)
                 floatingLeaveEnd - floatingLeaveBegin);
         Check(!desktopLeaveHandler.empty() &&
                 desktopLeaveHandler.find(
-                    "tracking.dwFlags = TME_LEAVE;") !=
+                    "tracking.dwFlags = TME_LEAVE;") ==
                     std::string::npos &&
                 desktopLeaveHandler.find(
-                    "OnMouseMoveAt(") !=
+                    "OnMouseMoveAt(") ==
                     std::string::npos &&
                 desktopLeaveHandler.find(
-                    "PresentPointerInteractionFrame(") !=
+                    "PresentPointerInteractionFrame(") ==
+                    std::string::npos &&
+                desktopLeaveHandler.find(
+                    "ShouldPresentRetainedMouseLeave(") !=
+                    std::string::npos &&
+                desktopLeaveHandler.find(
+                    "PresentPassiveHoverVisualChange();") !=
                     std::string::npos,
-            "a retained desktop-surface leave must rearm tracking and replay the live pointer frame");
+            "a retained desktop-surface leave must converge once without rearming or replaying input");
         Check(!floatingLeaveHandler.empty() &&
                 floatingLeaveHandler.find(
-                    "tracking.dwFlags = TME_LEAVE;") !=
+                    "WindowFromPoint(cursorScreen) == hwnd") !=
                     std::string::npos &&
                 floatingLeaveHandler.find(
-                    "OnMouseMoveAt(") !=
+                    "tracking.dwFlags = TME_LEAVE;") ==
+                    std::string::npos &&
+                floatingLeaveHandler.find(
+                    "OnMouseMoveAt(") ==
+                    std::string::npos &&
+                floatingLeaveHandler.find(
+                    "PresentPointerInteractionFrame(") ==
+                    std::string::npos &&
+                floatingLeaveHandler.find(
+                    "ShouldPresentRetainedMouseLeave(") !=
                     std::string::npos &&
                 floatingLeaveHandler.find(
                     "UpdateFloatingDockWindowBounds(false);") !=
                     std::string::npos &&
                 floatingLeaveHandler.find(
-                    "PresentPointerInteractionFrame(") !=
+                    "InvalidateFloatingDockWindow(true);") !=
                     std::string::npos,
-            "a retained floating-Dock leave must rearm tracking and reconcile its live title region and frame");
+            "a retained floating-Dock leave must verify the real HWND and converge once without rearming");
+        const std::size_t onMouseLeaveBegin =
+            pointerReleaseSource.find(
+                "void DesktopApp::OnMouseLeave()");
+        const std::size_t onMouseLeaveEnd =
+            pointerReleaseSource.find(
+                "void DesktopApp::ReconcileDesktopHoverState(",
+                onMouseLeaveBegin);
+        const std::string onMouseLeaveHandler =
+            onMouseLeaveBegin == std::string::npos ||
+                onMouseLeaveEnd == std::string::npos
+            ? std::string{}
+            : pointerReleaseSource.substr(
+                onMouseLeaveBegin,
+                onMouseLeaveEnd - onMouseLeaveBegin);
+        const std::size_t clearPointer =
+            onMouseLeaveHandler.find(
+                "lastMousePoint_ = { LONG_MIN, LONG_MIN };");
+        const std::size_t shrinkFloatingRegion =
+            onMouseLeaveHandler.find(
+                "UpdateFloatingDockWindowBounds(false);");
+        const std::size_t presentClearedHover =
+            onMouseLeaveHandler.find(
+                "PresentPassiveHoverVisualChange();");
+        Check(!onMouseLeaveHandler.empty() &&
+                clearPointer != std::string::npos &&
+                shrinkFloatingRegion != std::string::npos &&
+                presentClearedHover != std::string::npos &&
+                clearPointer < shrinkFloatingRegion &&
+                shrinkFloatingRegion < presentClearedHover,
+            "clearing hover must remove the floating title input region before presenting its empty frame");
+        Check(oleDropRoutingSource.find(
+                  "bool DesktopApp::IsBaseDesktopHoverSurfaceWindow(") !=
+                    std::string::npos &&
+                oleDropRoutingSource.find(
+                  "bool DesktopApp::TryGetBaseDesktopHoverPointFromCursor(") !=
+                    std::string::npos &&
+                pointerReleaseSource.find(
+                  "ShouldRefreshActiveHoverFromSurfaceSample(") !=
+                    std::string::npos &&
+                pointerReleaseSource.find(
+                  "TryGetBaseDesktopHoverPointFromCursor(") !=
+                    std::string::npos,
+            "periodic hover recovery must refresh active coordinates only from base desktop surfaces");
         Check(dockContainerSource.find(
                   "bool DockContainer::IsMagnificationSuppressed() const") !=
                     std::string::npos &&
