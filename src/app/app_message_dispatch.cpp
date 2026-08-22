@@ -343,13 +343,14 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 OnMouseLeave();
             return 0;
         }
-        OnMouseMoveAt(wp, pt);
+        bool dragPreviewSynced = false;
+        OnMouseMoveAt(wp, pt, &dragPreviewSynced);
         // Internal drags capture this HWND. Commit the cheap cached drag frame
         // synchronously so a dense WM_MOUSEMOVE queue cannot starve WM_PAINT.
         // Keep this synchronous; routing pointer feedback through
         // UiAnimationScheduler makes drag/Dock hover trail the pointer
         // (f29a882 regression).
-        PresentPointerInteractionFrame();
+        PresentPointerInteractionFrame(dragPreviewSynced);
         return 0;
     }
     case WM_MOUSELEAVE:

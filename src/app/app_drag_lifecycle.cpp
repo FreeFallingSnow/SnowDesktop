@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../drag_visual_rules.h"
 #include "../widget_visibility_rules.h"
 
 // Drag-scene invalidation, presentation and session teardown.
@@ -71,12 +72,16 @@ void DesktopApp::PresentOleDragInteractionFrame()
     FlushPendingCompositionCommit();
 }
 
-void DesktopApp::PresentPointerInteractionFrame()
+void DesktopApp::PresentPointerInteractionFrame(
+    bool dragPreviewAlreadySynced)
 {
     // Move the cached compact drag surface before any desktop or Dock paint.
     // This keeps the ghost attached to the input message even when the
     // larger feedback surfaces need more time to redraw.
-    SyncDragPreviewWindow();
+    if (snowdesktop::drag_visual_rules::
+            ShouldSyncPreviewBeforePresentation(
+                dragPreviewAlreadySynced))
+        SyncDragPreviewWindow();
     RefreshDragPresentationAnchor();
     const bool widgetPreviewActive =
         widgetAction_ == WidgetAction::Move ||

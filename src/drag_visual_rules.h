@@ -21,6 +21,12 @@ constexpr bool ShouldShowPreview(
     return active && visualVisible && hasItems;
 }
 
+constexpr bool ShouldSyncPreviewBeforePresentation(
+    bool alreadySyncedForInput) noexcept
+{
+    return !alreadySyncedForInput;
+}
+
 constexpr bool ShouldCompactPreview(
     std::size_t itemCount) noexcept
 {

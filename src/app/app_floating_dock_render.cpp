@@ -178,12 +178,16 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         tracking.hwndTrack = hwnd;
         TrackMouseEvent(&tracking);
         handlingFloatingDockInput_ = true;
-        OnMouseMoveAt(wp, latestDesktopPointer());
+        bool dragPreviewSynced = false;
+        OnMouseMoveAt(
+            wp, latestDesktopPointer(),
+            &dragPreviewSynced);
         handlingFloatingDockInput_ = false;
         // Passive hover is presented once below. Updating the title/input
         // region must not synchronously redraw the same large DComp surface.
         UpdateFloatingDockWindowBounds(false);
-        PresentPointerInteractionFrame();
+        PresentPointerInteractionFrame(
+            dragPreviewSynced);
         return 0;
     }
     case WM_MOUSELEAVE:

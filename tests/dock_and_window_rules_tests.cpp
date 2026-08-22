@@ -1520,6 +1520,9 @@ int main(int argc, char** argv)
             !dragVisual::ShouldShowPreview(
               true, true, false),
         "the independent drag preview must follow the drag session visibility contract");
+    Check(dragVisual::ShouldSyncPreviewBeforePresentation(false) &&
+            !dragVisual::ShouldSyncPreviewBeforePresentation(true),
+        "presentation must sync the drag preview exactly when the current input path has not already done so");
     Check(!dragVisual::ShouldCompactPreview(1) &&
             dragVisual::ShouldCompactPreview(2) &&
             dragVisual::kMaximumStackedPreviewItems == 4 &&
@@ -3382,6 +3385,22 @@ int main(int argc, char** argv)
                   "belongsTo(dragPreviewHwnd_)") !=
                     std::string::npos,
             "pointer and OLE presentation must separate ghost movement from changed drop feedback");
+        Check(pointerMoveSource.find(
+                  "*dragPreviewSynced = true;") !=
+                    std::string::npos &&
+                dragLifecycleSource.find(
+                  "ShouldSyncPreviewBeforePresentation(") !=
+                    std::string::npos &&
+                messageDispatchSource.find(
+                  "PresentPointerInteractionFrame(dragPreviewSynced);") !=
+                    std::string::npos &&
+                floatingDockRenderSource.find(
+                  "&dragPreviewSynced") !=
+                    std::string::npos &&
+                floatingPopupSource.find(
+                  "&dragPreviewSynced") !=
+                    std::string::npos,
+            "each WM_MOUSEMOVE surface must reuse the preview sync already performed for that input sample");
         Check(pointerMoveSource.find(
                   "ShowDragHintWindow(current, hint);\n        InvalidateRect(hwnd_, nullptr, FALSE);") ==
                     std::string::npos,

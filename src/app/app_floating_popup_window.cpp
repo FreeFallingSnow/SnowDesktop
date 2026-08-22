@@ -870,10 +870,14 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         tracking.hwndTrack = hwnd;
         TrackMouseEvent(&tracking);
         handlingFloatingPopupInput_ = true;
-        OnMouseMoveAt(wp, latestDesktopPointer());
+        bool dragPreviewSynced = false;
+        OnMouseMoveAt(
+            wp, latestDesktopPointer(),
+            &dragPreviewSynced);
         handlingFloatingPopupInput_ = false;
         UpdateFloatingPopupWindowBounds(false);
-        PresentPointerInteractionFrame();
+        PresentPointerInteractionFrame(
+            dragPreviewSynced);
         return 0;
     }
     case WM_MOUSELEAVE:

@@ -91,8 +91,12 @@ void DesktopApp::OnMiddleButtonUpAt(WPARAM wp, POINT point)
     OnLeftButtonUpAt(wp, point);
 }
 
-void DesktopApp::OnMouseMoveAt(WPARAM wp, POINT current)
+void DesktopApp::OnMouseMoveAt(
+    WPARAM wp, POINT current,
+    bool* dragPreviewSynced)
 {
+    if (dragPreviewSynced)
+        *dragPreviewSynced = false;
     (void)wp;
     const POINT tracePoint = current;
     RecordShellHoverTrace(
@@ -690,6 +694,8 @@ void DesktopApp::OnMouseMoveAt(WPARAM wp, POINT current)
         dragSession_.UpdateActionFromMods(currentMods);
 
         SyncDragPreviewWindow();
+        if (dragPreviewSynced)
+            *dragPreviewSynced = true;
         bool overExternal = IsExternalDropWindowAt(current);
 
         if (overExternal)

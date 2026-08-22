@@ -885,7 +885,8 @@ private:
     /** @brief 在当前输入消息内同步呈现已失效的桌面指针反馈。 */
     void PresentDesktopPointerUpdate();
     /** @brief 同步呈现桌面拖动及浮动 Dock 指针反馈。 */
-    void PresentPointerInteractionFrame();
+    void PresentPointerInteractionFrame(
+        bool dragPreviewAlreadySynced = false);
     bool CreateDragPreviewWindow();
     void DestroyDragPreviewWindow();
     void HideDragPreviewWindow();
@@ -1337,7 +1338,9 @@ private:
      */
     DesktopIcon* HitTestIcon(POINT pt) const;
     /** @brief 处理鼠标移动。 @param wp WPARAM @param point 完整客户端坐标 */
-    void OnMouseMoveAt(WPARAM wp, POINT point);
+    void OnMouseMoveAt(
+        WPARAM wp, POINT point,
+        bool* dragPreviewSynced = nullptr);
     /** @brief 鼠标进入其他窗口时清理所有悬浮状态。 */
     void OnMouseLeave();
     /** @brief 处理鼠标左键按下消息。 @param wp WPARAM @param lp LPARAM */
