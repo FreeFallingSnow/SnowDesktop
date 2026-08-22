@@ -303,6 +303,27 @@ void DesktopApp::OnDockWindowPreviewHoverTimer()
         CollectDockWindowPreviewItems(target.identity);
     if (previewItems.empty())
         return;
+
+    if (!target.floatingLayer)
+    {
+        const POINT anchorCenter{
+            (target.anchorScreen.left +
+                target.anchorScreen.right) / 2,
+            (target.anchorScreen.top +
+                target.anchorScreen.bottom) / 2
+        };
+        if (EnsureFloatingDockVisibleForAssociatedSurface(
+                anchorCenter))
+        {
+            DockWindowPreviewTarget floatingTarget;
+            if (ResolveDockWindowPreviewTarget(
+                    cursorClient, floatingTarget) &&
+                floatingTarget.targetToken == observedToken)
+            {
+                target = std::move(floatingTarget);
+            }
+        }
+    }
     dockWindowPreviewKey_ = target.targetToken;
     dockWindowPreviewAnchorScreen_ = target.anchorScreen;
     dockWindowPreview_->Show(

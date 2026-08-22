@@ -28,6 +28,13 @@ inline bool HasAnySummonTrigger(
     return hotkeyEnabled || edgeSwipeEnabled;
 }
 
+inline bool ShouldSummonForDockSurface(
+    bool sourceBelongsToDock,
+    bool floatingDockVisible)
+{
+    return sourceBelongsToDock && !floatingDockVisible;
+}
+
 inline bool ShouldUseFloatingDockLogicalForeground(
     bool keyboardSessionActive,
     bool actualWindowOwnedByCurrentProcess,

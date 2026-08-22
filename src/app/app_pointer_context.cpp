@@ -193,6 +193,9 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
 
     if (DockContainer* dock = GetDockContainerAtPoint(pt))
     {
+        EnsureFloatingDockVisibleForAssociatedSurface(
+            screenPt);
+
         if (DockEntryItem* dockItem = dock->EntryAtPoint(pt))
         {
             const size_t entryIndex = dockItem->GetEntryIndex();

@@ -175,6 +175,30 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
         break;
     }
 
+    if (DockContainer* dock =
+            GetDockContainerAtPoint(anchorPoint))
+    {
+        if (DockEntryItem* dockItem =
+                dock->EntryAtPoint(anchorPoint);
+            dockItem &&
+            dockItem->GetEntryType() ==
+                DockEntryType::Collection &&
+            dockItem->GetReference() ==
+                widgets_[widgetIndex].id)
+        {
+            POINT anchorScreen = anchorPoint;
+            if (hwnd_ && IsWindow(hwnd_))
+                ClientToScreen(hwnd_, &anchorScreen);
+            else
+            {
+                anchorScreen.x += virtualLeft_;
+                anchorScreen.y += virtualTop_;
+            }
+            EnsureFloatingDockVisibleForAssociatedSurface(
+                anchorScreen);
+        }
+    }
+
     PreserveDockFolderPopupDragSourceForTransition();
     dockFolderPopupOpen_ = false;
     dockFolderPopupAvailable_ = false;

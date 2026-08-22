@@ -2,10 +2,13 @@
 
 // Floating-Dock visibility, pointer mapping and interaction state.
 
-void DesktopApp::ShowFloatingDock()
+void DesktopApp::ShowFloatingDock(
+    HMONITOR preferredMonitor)
 {
     WriteDiagnosticLogEntry(
-        L"Floating Dock shortcut received");
+        preferredMonitor
+            ? L"Floating Dock associated surface reveal received"
+            : L"Floating Dock shortcut received");
     if (!generalSettings_.dockEnabled)
     {
         WriteDiagnosticLogEntry(
@@ -23,8 +26,10 @@ void DesktopApp::ShowFloatingDock()
 
     // Layout rebuilding may replace every runtime DockContainer. Resolve the
     // pointer at the last possible moment and never retain it while hidden.
-    floatingDockContainer_ =
-        SelectFloatingDockContainerAtCursor();
+    floatingDockContainer_ = preferredMonitor
+        ? SelectFloatingDockContainerForMonitor(
+            preferredMonitor)
+        : SelectFloatingDockContainerAtCursor();
     if (!floatingDockContainer_)
     {
         WriteDiagnosticLogEntry(
@@ -288,6 +293,23 @@ void DesktopApp::ShowFloatingDock()
     // later desktop repaint from retiring it before the asynchronous shared
     // compositor commit has landed.
     BeginFloatingDockKeyboardSession();
+}
+
+bool DesktopApp::
+EnsureFloatingDockVisibleForAssociatedSurface(
+    POINT anchorScreen)
+{
+    if (!snowdesktop::floating_dock_rules::
+            ShouldSummonForDockSurface(
+                true, floatingDockVisible_))
+    {
+        return floatingDockVisible_;
+    }
+
+    const HMONITOR monitor = MonitorFromPoint(
+        anchorScreen, MONITOR_DEFAULTTONEAREST);
+    ShowFloatingDock(monitor);
+    return floatingDockVisible_;
 }
 
 void DesktopApp::CloseFloatingDock(

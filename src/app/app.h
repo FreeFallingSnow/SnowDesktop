@@ -883,7 +883,10 @@ private:
     void PrepareDockBackdropForDragTransition();
     bool CreateFloatingDockWindow();
     void DestroyFloatingDockWindow();
-    void ShowFloatingDock();
+    void ShowFloatingDock(
+        HMONITOR preferredMonitor = nullptr);
+    bool EnsureFloatingDockVisibleForAssociatedSurface(
+        POINT anchorScreen);
     void CloseFloatingDock(
         bool closeDockPopup = true,
         FloatingDockCloseFocusPolicy focusPolicy =

@@ -1456,6 +1456,13 @@ int main(int argc, char** argv)
         "floating Dock uses SetWindowPos to stay topmost instead of fixing WS_EX_TOPMOST to its window style");
     Check((floatingDock::kWindowExStyle & WS_EX_NOACTIVATE) != 0,
         "the floating Dock must not steal foreground activation");
+    Check(floatingDock::ShouldSummonForDockSurface(
+            true, false) &&
+            !floatingDock::ShouldSummonForDockSurface(
+                true, true) &&
+            !floatingDock::ShouldSummonForDockSurface(
+                false, false),
+        "a Dock-associated popup must summon only a hidden floating Dock");
     const DockWindowPreviewZOrderPolicy floatingPreviewZOrder =
         ResolveDockWindowPreviewZOrderPolicy(true, false);
     Check(floatingPreviewZOrder.insertAfter == nullptr &&
@@ -2973,6 +2980,21 @@ int main(int argc, char** argv)
         const std::string floatingDockSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_floating_dock_window.cpp");
+        const std::string floatingDockInteractionSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_floating_dock_interaction.cpp");
+        const std::string popupTransitionSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_popup_transition.cpp");
+        const std::string popupLifecycleSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_popup_lifecycle.cpp");
+        const std::string dockPreviewSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_dock_window_control.cpp");
+        const std::string pointerContextSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_pointer_context.cpp");
         const std::string sceneSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_scene_render.cpp");
@@ -2988,6 +3010,34 @@ int main(int argc, char** argv)
                   "const RECT nextPopupRect{};") !=
                     std::string::npos,
             "the floating Dock host must not reserve or render collection popup space");
+        Check(floatingDockInteractionSource.find(
+                  "EnsureFloatingDockVisibleForAssociatedSurface(") !=
+                    std::string::npos &&
+                floatingDockInteractionSource.find(
+                  "SelectFloatingDockContainerForMonitor(") !=
+                    std::string::npos,
+            "Dock-associated surfaces must reveal the floating Dock on their monitor");
+        Check(popupTransitionSource.find(
+                  "EnsureFloatingDockVisibleForAssociatedSurface(") !=
+                    std::string::npos &&
+                popupLifecycleSource.find(
+                  "EnsureFloatingDockVisibleForAssociatedSurface(") !=
+                    std::string::npos,
+            "collection and folder popups opened from the Dock must reveal its floating host");
+        Check(dockPreviewSource.find(
+                  "EnsureFloatingDockVisibleForAssociatedSurface(") !=
+                    std::string::npos &&
+                dockPreviewSource.find(
+                  "ResolveDockWindowPreviewTarget(") !=
+                    std::string::npos &&
+                dockPreviewSource.find(
+                  "target = std::move(floatingTarget)") !=
+                    std::string::npos,
+            "task thumbnails must reveal the floating Dock and refresh their moved anchor");
+        Check(pointerContextSource.find(
+                  "EnsureFloatingDockVisibleForAssociatedSurface(") !=
+                    std::string::npos,
+            "context menus opened from the Dock must reveal its floating host");
         Check(sceneSource.find(
                   "collectionHostedByFloatingPopup") !=
                     std::string::npos &&

@@ -124,6 +124,27 @@ void DesktopApp::OpenDockFolderPopupAt(
     pendingCollectionPopupOpen_.reset();
     DismissActiveContextMenuForPopupTransition();
 
+    if (DockContainer* dock =
+            GetDockContainerAtPoint(anchorPoint))
+    {
+        if (DockEntryItem* dockItem =
+                dock->EntryAtPoint(anchorPoint);
+            dockItem &&
+            dockItem->GetEntryIndex() == entryIndex)
+        {
+            POINT anchorScreen = anchorPoint;
+            if (hwnd_ && IsWindow(hwnd_))
+                ClientToScreen(hwnd_, &anchorScreen);
+            else
+            {
+                anchorScreen.x += virtualLeft_;
+                anchorScreen.y += virtualTop_;
+            }
+            EnsureFloatingDockVisibleForAssociatedSurface(
+                anchorScreen);
+        }
+    }
+
     PreserveDockFolderPopupDragSourceForTransition();
     const DockEntry entry = dockEntries_[entryIndex];
     const auto target = ResolveDockFolderTarget(entry);
