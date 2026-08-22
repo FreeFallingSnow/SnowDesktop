@@ -826,8 +826,6 @@ void DesktopApp::OnMouseMoveAt(WPARAM wp, POINT current)
         Container* targetContainer = nullptr;
         Slot* targetSlot = nullptr;
         HitRegion targetRegion = HitRegion::None;
-        popupDragTargetSlot_.reset();
-
         const bool popupHit =
             !suppressDesktopWidgetTargets &&
             !groupedEntryDrag &&

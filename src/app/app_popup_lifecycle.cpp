@@ -445,6 +445,9 @@ void DesktopApp::CloseCollectionPopup(
             entry.selected = false;
     }
     ClearPopupMouseDownItem();
+    if (dragSession_.IsActive() &&
+        dragSession_.TargetSlot() == popupDragTargetSlot_.get())
+        dragSession_.UpdateTarget(nullptr, nullptr, HitRegion::None);
     popupDragTargetSlot_.reset();
     marqueeActive_ = false;
     marqueeDockFolderPopup_ = false;

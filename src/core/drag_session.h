@@ -11,9 +11,50 @@
 
 #include "drop_model.h"
 #include "container.h"
+#include "slot.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <utility>
+
+namespace snowdesktop::drag_target
+{
+struct SlotFeedbackKey
+{
+    bool present = false;
+    Container* parent = nullptr;
+    RECT bounds{};
+    std::size_t index = 0;
+    bool hasItem = false;
+    bool transient = false;
+
+    static SlotFeedbackKey From(Slot* slot)
+    {
+        if (!slot) return {};
+        return {
+            true,
+            slot->GetParent(),
+            slot->GetBounds(),
+            slot->GetIndex(),
+            slot->GetItem() != nullptr,
+            slot->IsTransientDragTarget(),
+        };
+    }
+
+    bool operator==(const SlotFeedbackKey& other) const
+    {
+        return present == other.present &&
+            parent == other.parent &&
+            bounds.left == other.bounds.left &&
+            bounds.top == other.bounds.top &&
+            bounds.right == other.bounds.right &&
+            bounds.bottom == other.bounds.bottom &&
+            index == other.index &&
+            hasItem == other.hasItem &&
+            transient == other.transient;
+    }
+};
+}
 
 /**
  * @class DragSession
@@ -122,6 +163,7 @@ public:
         targetContainer_ = nullptr;
         targetSlot_ = nullptr;
         targetSlotGeneration_ = 0;
+        targetSlotFeedbackKey_ = {};
         targetRegion_ = HitRegion::None;
         presentationAnchorValid_ = false;
         presentationAnchorCell_ = {};
@@ -269,21 +311,24 @@ public:
     bool UpdateTarget(Container* targetContainer, Slot* targetSlot, HitRegion targetRegion)
     {
         const std::uint64_t nextGeneration =
-            targetContainer && targetSlot
+            targetContainer && targetSlot &&
+                !targetSlot->IsTransientDragTarget()
                 ? targetContainer->GetSlotGeneration()
                 : 0;
-        const bool changed =
+        const auto nextFeedbackKey =
+            snowdesktop::drag_target::SlotFeedbackKey::From(targetSlot);
+        const bool presentationChanged =
             targetContainer_ != targetContainer ||
-            targetSlot_ != targetSlot ||
-            targetSlotGeneration_ != nextGeneration ||
+            !(targetSlotFeedbackKey_ == nextFeedbackKey) ||
             targetRegion_ != targetRegion;
         targetContainer_ = targetContainer;
         targetSlot_ = targetSlot;
         targetSlotGeneration_ = nextGeneration;
+        targetSlotFeedbackKey_ = nextFeedbackKey;
         targetRegion_ = targetRegion;
-        if (changed)
+        if (presentationChanged)
             InvalidatePresentation();
-        return changed;
+        return presentationChanged;
     }
 
     /**
@@ -361,6 +406,7 @@ public:
         targetContainer_ = nullptr;
         targetSlot_ = nullptr;
         targetSlotGeneration_ = 0;
+        targetSlotFeedbackKey_ = {};
         targetRegion_ = HitRegion::None;
         presentationAnchorValid_ = false;
         presentationAnchorCell_ = {};
@@ -385,6 +431,7 @@ public:
         targetContainer_ = nullptr;
         targetSlot_ = nullptr;
         targetSlotGeneration_ = 0;
+        targetSlotFeedbackKey_ = {};
         targetRegion_ = HitRegion::None;
         presentationAnchorValid_ = false;
         presentationAnchorCell_ = {};
@@ -436,6 +483,7 @@ public:
         targetContainer_ = nullptr;
         targetSlot_ = nullptr;
         targetSlotGeneration_ = 0;
+        targetSlotFeedbackKey_ = {};
         targetRegion_ = HitRegion::None;
         presentationAnchorValid_ = false;
         presentationAnchorCell_ = {};
@@ -460,6 +508,8 @@ private:
     {
         if (!targetSlot_)
             return true;
+        if (targetSlot_->IsTransientDragTarget())
+            return true;
         return targetContainer_ &&
             targetContainer_->GetSlotGeneration() ==
                 targetSlotGeneration_;
@@ -481,6 +531,7 @@ private:
     Container* targetContainer_ = nullptr;   /**< 目标容器指针 */
     Slot* targetSlot_ = nullptr;             /**< 目标插槽指针 */
     std::uint64_t targetSlotGeneration_ = 0; /**< 目标插槽所属缓存代次 */
+    snowdesktop::drag_target::SlotFeedbackKey targetSlotFeedbackKey_; /**< 值语义反馈键 */
     HitRegion targetRegion_ = HitRegion::None; /**< 目标命中区域类型 */
     bool presentationAnchorValid_ = false;     /**< 桌面请求网格是否参与当前呈现键 */
     GridCell presentationAnchorCell_;          /**< 应用拖拽热点偏移后的桌面请求网格 */

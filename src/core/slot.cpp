@@ -29,8 +29,9 @@ using Microsoft::WRL::ComPtr;
  *
  * 初始化插槽所属容器、边界矩形和索引，此时插槽内尚无项目(item_ 为 nullptr)。
  */
-Slot::Slot(Container* parent, RECT bounds, size_t index)
-    : parent_(parent), bounds_(bounds), index_(index)
+Slot::Slot(Container* parent, RECT bounds, size_t index,
+    SlotLifetime lifetime)
+    : parent_(parent), bounds_(bounds), index_(index), lifetime_(lifetime)
 {
     assert(parent_ != nullptr);
     assert(
@@ -68,6 +69,17 @@ void Slot::SetItem(Item* item) { item_ = item; }
  * @return size_t 索引值
  */
 size_t Slot::GetIndex() const { return index_; }
+
+void Slot::RebindTransientDragTarget(Container* parent, RECT bounds,
+    size_t index, Item* item)
+{
+    assert(lifetime_ == SlotLifetime::TransientDragTarget);
+    assert(parent != nullptr);
+    parent_ = parent;
+    bounds_ = bounds;
+    index_ = index;
+    item_ = item;
+}
 
 /**
  * @brief 判断插槽是否为空

@@ -19,6 +19,13 @@
 class Container;
 class Item;
 
+/** @brief Slot 的存储生命周期；临时拖拽目标不受 Container 缓存代次约束。 */
+enum class SlotLifetime
+{
+    ContainerCache,
+    TransientDragTarget,
+};
+
 /**
  * @brief 拖放命中区域枚举
  *
@@ -56,7 +63,8 @@ public:
      * @param bounds 槽位在屏幕上的边界矩形（像素坐标）
      * @param index  当前槽位在父容器子槽位列表中的索引
      */
-    Slot(Container* parent, RECT bounds, size_t index);
+    Slot(Container* parent, RECT bounds, size_t index,
+        SlotLifetime lifetime = SlotLifetime::ContainerCache);
 
     /**
      * @brief 获取所属父容器
@@ -87,6 +95,19 @@ public:
      * @return 从 0 开始的索引值
      */
     size_t GetIndex() const;
+
+    /** @brief 返回当前 Slot 是否由拖拽命中路径临时持有。 */
+    bool IsTransientDragTarget() const
+    {
+        return lifetime_ == SlotLifetime::TransientDragTarget;
+    }
+
+    /**
+     * @brief 原地更新临时拖拽目标，避免每个移动采样重新分配 Slot。
+     * @note 仅允许对 TransientDragTarget 生命周期的 Slot 调用。
+     */
+    void RebindTransientDragTarget(Container* parent, RECT bounds,
+        size_t index, Item* item = nullptr);
 
     /**
      * @brief 检查槽位是否为空
@@ -150,4 +171,5 @@ private:
     RECT bounds_;       ///< 槽位边界矩形（屏幕像素坐标）
     size_t index_;      ///< 在父容器中的索引
     Item* item_ = nullptr; ///< 持有的 Item 指针，nullptr 表示空槽位
+    SlotLifetime lifetime_ = SlotLifetime::ContainerCache;
 };

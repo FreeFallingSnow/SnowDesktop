@@ -1,5 +1,6 @@
 #include "app.h"
 #include "../core/drag_source_rebind.h"
+#include "../core/transient_drag_slot.h"
 
 // Drag-target resolution, popup hit testing and page-navigation dwell.
 
@@ -12,8 +13,6 @@ void DesktopApp::RefreshDragTargetAt(POINT clientPoint, int mods)
     Container* targetContainer = nullptr;
     Slot* targetSlot = nullptr;
     HitRegion targetRegion = HitRegion::None;
-    popupDragTargetSlot_.reset();
-
     const bool suppressDesktopWidgetTargets =
         SuppressDesktopWidgetDragTargets();
     const bool groupedEntryDrag =
@@ -207,12 +206,9 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
                     &virtualItem,
                     &content))
                 visibleItem = content;
-            popupDragTargetSlot_ =
-                std::make_unique<Slot>(
-                    targetContainer,
-                    visibleItem, 0);
-            targetSlot =
-                popupDragTargetSlot_.get();
+            targetSlot = BindTransientDragSlot(
+                popupDragTargetSlot_, targetContainer,
+                visibleItem, 0);
             targetRegion =
                 HitRegion::SortBefore;
             return true;
@@ -246,27 +242,18 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
                         GetMemberItem(i);
                 if (!handoffItem)
                     continue;
-                popupDragTargetSlot_ =
-                    std::make_unique<Slot>(
-                        targetContainer,
-                        snowdesktop::popup_drag_rules::
-                            HandoffIndicatorBounds(
-                                itemRect),
-                        i);
-                popupDragTargetSlot_->SetItem(
-                    handoffItem);
-                targetSlot =
-                    popupDragTargetSlot_.get();
+                targetSlot = BindTransientDragSlot(
+                    popupDragTargetSlot_, targetContainer,
+                    snowdesktop::popup_drag_rules::
+                        HandoffIndicatorBounds(itemRect),
+                    i, handoffItem);
                 targetRegion = HitRegion::Handoff;
                 return true;
             }
 
-            popupDragTargetSlot_ =
-                std::make_unique<Slot>(
-                    targetContainer,
-                    itemRect, i);
-            targetSlot =
-                popupDragTargetSlot_.get();
+            targetSlot = BindTransientDragSlot(
+                popupDragTargetSlot_, targetContainer,
+                itemRect, i);
             targetRegion =
                 client.x <
                     itemRect.left +
@@ -342,13 +329,9 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
             std::numeric_limits<
                 long long>::max())
         {
-            popupDragTargetSlot_ =
-                std::make_unique<Slot>(
-                    targetContainer,
-                    nearestBounds,
-                    nearestIndex);
-            targetSlot =
-                popupDragTargetSlot_.get();
+            targetSlot = BindTransientDragSlot(
+                popupDragTargetSlot_, targetContainer,
+                nearestBounds, nearestIndex);
             targetRegion =
                 nearestRegion;
         }
@@ -401,11 +384,9 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
                 &virtualItem,
                 &content))
             visibleItem = content;
-        popupDragTargetSlot_ =
-            std::make_unique<Slot>(
-                popupContainer,
-                visibleItem, 0);
-        targetSlot = popupDragTargetSlot_.get();
+        targetSlot = BindTransientDragSlot(
+            popupDragTargetSlot_, popupContainer,
+            visibleItem, 0);
         targetRegion =
             HitRegion::SortBefore;
         return true;
@@ -451,10 +432,9 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
             region = client.x < itemRect.left + (itemRect.right - itemRect.left) / 2
                 ? HitRegion::SortBefore : HitRegion::SortAfter;
         }
-        popupDragTargetSlot_ = std::make_unique<Slot>(popupContainer, slotBounds, slotIndex);
-        if (handoffItem)
-            popupDragTargetSlot_->SetItem(handoffItem);
-        targetSlot = popupDragTargetSlot_.get();
+        targetSlot = BindTransientDragSlot(
+            popupDragTargetSlot_, popupContainer,
+            slotBounds, slotIndex, handoffItem);
         targetRegion = region;
         return true;
     }
@@ -495,8 +475,9 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
     if (bestDistanceSquared == std::numeric_limits<long long>::max())
         return true;
 
-    popupDragTargetSlot_ = std::make_unique<Slot>(popupContainer, slotBounds, slotIndex);
-    targetSlot = popupDragTargetSlot_.get();
+    targetSlot = BindTransientDragSlot(
+        popupDragTargetSlot_, popupContainer,
+        slotBounds, slotIndex);
     targetRegion = region;
     return true;
 }

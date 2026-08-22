@@ -5,6 +5,7 @@
 
 #include "widget.h"
 #include "slot.h"
+#include "../core/transient_drag_slot.h"
 #include "types.h"
 #include "app.h"
 #include "drop_model.h"
@@ -884,9 +885,8 @@ HitRegion CollectionGroup::HitTestDrag(
     if (tabIndex != static_cast<size_t>(-1))
     {
         RECT tab = CollectionGroupTabRect(this, tabIndex);
-        tabDropSlot_ = std::make_unique<Slot>(
-            this, tab, tabIndex);
-        outSlot = tabDropSlot_.get();
+        outSlot = BindTransientDragSlot(
+            tabDropSlot_, this, tab, tabIndex);
         return pt.x < tab.left +
                 (tab.right - tab.left) / 2
             ? HitRegion::SortBefore

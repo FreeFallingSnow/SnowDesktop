@@ -434,6 +434,33 @@ void TestDragSessionRejectsInvalidatedSlots()
     Check(session.TargetSlot() == rebuilt,
         "a rebuilt slot can be rebound explicitly");
 
+    auto transient = std::make_unique<Slot>(
+        &container, RECT{0, 0, 100, 100}, 0,
+        SlotLifetime::TransientDragTarget);
+    Check(session.UpdateTarget(
+            &container, transient.get(),
+            HitRegion::SortBefore),
+        "switching from a cached slot to a transient target must refresh feedback");
+    const std::uint64_t transientRevision =
+        session.PresentationRevision();
+    auto equivalentTransient = std::make_unique<Slot>(
+        &container, RECT{0, 0, 100, 100}, 0,
+        SlotLifetime::TransientDragTarget);
+    Check(!session.UpdateTarget(
+            &container, equivalentTransient.get(),
+            HitRegion::SortBefore) &&
+            session.PresentationRevision() == transientRevision,
+        "reallocating the same logical transient target must not redraw feedback");
+    equivalentTransient->RebindTransientDragTarget(
+        &container, RECT{100, 0, 200, 100}, 1);
+    Check(session.UpdateTarget(
+            &container, equivalentTransient.get(),
+            HitRegion::SortBefore),
+        "reusing a transient address for another logical target must refresh feedback");
+    container.InvalidateSlots();
+    Check(session.TargetSlot() == equivalentTransient.get(),
+        "container cache invalidation must not reject an independently owned transient target");
+
     session.DetachRuntimeBindings();
     Check(session.Source() == nullptr &&
             session.Items().empty() &&

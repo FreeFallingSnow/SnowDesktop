@@ -5,6 +5,7 @@
 
 #include "widget.h"
 #include "slot.h"
+#include "../core/transient_drag_slot.h"
 #include "types.h"
 #include "app.h"
 #include "drop_model.h"
@@ -1601,9 +1602,8 @@ HitRegion FileGroup::HitTestDrag(
     if (sourceTab != static_cast<size_t>(-1))
     {
         RECT tab = FileGroupSourceTabRect(this, sourceTab);
-        sourceTabDropSlot_ = std::make_unique<Slot>(
-            this, tab, sourceTab);
-        outSlot = sourceTabDropSlot_.get();
+        outSlot = BindTransientDragSlot(
+            sourceTabDropSlot_, this, tab, sourceTab);
         dropPreviewBounds_ = tab;
         dropPreviewIndex_ = sourceTab;
         dropPreviewValid_ = true;
@@ -1627,17 +1627,12 @@ HitRegion FileGroup::HitTestDrag(
                 pt, searchSlot);
         if (!searchSlot) return result;
         hostedDropItem_.reset();
-        hostedDropSlot_ = std::make_unique<Slot>(
-            this, searchSlot->GetBounds(),
-            searchSlot->GetIndex());
         if (auto item = CloneHostedItem(
                 searchSlot->GetItem(), this, app_))
         {
             item->SetBounds(
                 searchSlot->GetBounds());
             hostedDropItem_ = std::move(item);
-            hostedDropSlot_->SetItem(
-                hostedDropItem_.get());
         }
         dropPreviewBounds_ =
             searchSlot->GetBounds();
@@ -1646,7 +1641,10 @@ HitRegion FileGroup::HitTestDrag(
         dropPreviewItemPad_ = ResolveInsertionItemPad(
             this, searchSlot, result);
         dropPreviewValid_ = true;
-        outSlot = hostedDropSlot_.get();
+        outSlot = BindTransientDragSlot(
+            hostedDropSlot_, this,
+            searchSlot->GetBounds(), searchSlot->GetIndex(),
+            hostedDropItem_.get());
         return result;
     }
 
@@ -1662,23 +1660,21 @@ HitRegion FileGroup::HitTestDrag(
         return result;
 
     hostedDropItem_.reset();
-    hostedDropSlot_ = std::make_unique<Slot>(
-        this, sourceSlot->GetBounds(),
-        sourceSlot->GetIndex());
     if (auto item = CloneHostedItem(
             sourceSlot->GetItem(), this, app_))
     {
         item->SetBounds(sourceSlot->GetBounds());
         hostedDropItem_ = std::move(item);
-        hostedDropSlot_->SetItem(
-            hostedDropItem_.get());
     }
     dropPreviewBounds_ = sourceSlot->GetBounds();
     dropPreviewIndex_ = sourceSlot->GetIndex();
     dropPreviewItemPad_ = ResolveInsertionItemPad(
         source, sourceSlot, result);
     dropPreviewValid_ = true;
-    outSlot = hostedDropSlot_.get();
+    outSlot = BindTransientDragSlot(
+        hostedDropSlot_, this,
+        sourceSlot->GetBounds(), sourceSlot->GetIndex(),
+        hostedDropItem_.get());
     return result;
 }
 
