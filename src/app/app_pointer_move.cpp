@@ -115,98 +115,108 @@ void DesktopApp::OnMouseMoveAt(
     POINT oldMouse = lastMousePoint_;
     lastMousePoint_ = current;
     UpdateSystemTaskbarRevealGuard();
-    UpdateDockWindowPreview(current);
-
-    if (widgetEngine_)
+    const bool activeWidgetGesture =
+        (widgetAction_ == WidgetAction::Move ||
+         widgetAction_ == WidgetAction::Resize) &&
+        mouseDownWidgetIndex_ < widgets_.size();
+    if (!activeWidgetGesture)
     {
-        bool interactionHoverRouted = false;
-        if (!luaWidgetPanelRequest_.widgetId.empty() &&
-            luaWidgetPanelAnimation_.IsInteractive())
+        // Once a component owns the captured pointer, Dock previews, Lua
+        // hover routing and popup dwell state cannot consume this sample.
+        // Keep them out of the per-pixel component drag path; the transition
+        // into Move/Resize clears their last visible state once below.
+        UpdateDockWindowPreview(current);
+
+        if (widgetEngine_)
         {
-            widgetEngine_->ClearInteractionHover("desktop");
-            const RECT content = GetLuaWidgetPanelContentRect();
-            const std::string& surface =
-                luaWidgetPanelRequest_.surface;
-            if (PtInRect(&content, current))
+            bool interactionHoverRouted = false;
+            if (!luaWidgetPanelRequest_.widgetId.empty() &&
+                luaWidgetPanelAnimation_.IsInteractive())
             {
-                widgetEngine_->UpdateInteractionHover(
-                    luaWidgetPanelRequest_.widgetId,
-                    current.x - content.left,
-                    current.y - content.top, surface);
-                interactionHoverRouted = true;
+                widgetEngine_->ClearInteractionHover("desktop");
+                const RECT content = GetLuaWidgetPanelContentRect();
+                const std::string& surface =
+                    luaWidgetPanelRequest_.surface;
+                if (PtInRect(&content, current))
+                {
+                    widgetEngine_->UpdateInteractionHover(
+                        luaWidgetPanelRequest_.widgetId,
+                        current.x - content.left,
+                        current.y - content.top, surface);
+                    interactionHoverRouted = true;
+                }
+                else
+                    widgetEngine_->ClearInteractionHover(surface);
             }
             else
-                widgetEngine_->ClearInteractionHover(surface);
-        }
-        else
-        {
-            const size_t interactionWidget =
-                HitTestStandaloneWidgetIndex(current);
-            if (interactionWidget < widgets_.size() &&
-                widgets_[interactionWidget].type ==
-                    DesktopWidgetType::LuaScript &&
-                HitTestStandaloneWidget(interactionWidget, current) ==
-                    WidgetHit::Content)
             {
-                const RECT frame = GetStandaloneWidgetFrameRect(
-                    widgets_[interactionWidget]);
-                widgetEngine_->EnsureWidgetLoaded(
-                    widgets_[interactionWidget].id,
-                    widgets_[interactionWidget].packageId);
-                widgetEngine_->UpdateInteractionHover(
-                    widgets_[interactionWidget].id,
-                    current.x - frame.left,
-                    current.y - frame.top);
-                interactionHoverRouted = true;
+                const size_t interactionWidget =
+                    HitTestStandaloneWidgetIndex(current);
+                if (interactionWidget < widgets_.size() &&
+                    widgets_[interactionWidget].type ==
+                        DesktopWidgetType::LuaScript &&
+                    HitTestStandaloneWidget(interactionWidget, current) ==
+                        WidgetHit::Content)
+                {
+                    const RECT frame = GetStandaloneWidgetFrameRect(
+                        widgets_[interactionWidget]);
+                    widgetEngine_->EnsureWidgetLoaded(
+                        widgets_[interactionWidget].id,
+                        widgets_[interactionWidget].packageId);
+                    widgetEngine_->UpdateInteractionHover(
+                        widgets_[interactionWidget].id,
+                        current.x - frame.left,
+                        current.y - frame.top);
+                    interactionHoverRouted = true;
+                }
             }
+            if (!interactionHoverRouted)
+                widgetEngine_->ClearInteractionHover();
         }
-        if (!interactionHoverRouted)
-            widgetEngine_->ClearInteractionHover();
-    }
 
-    if (luaWidgetPanelMouseDown_ &&
-        !luaWidgetPanelRequest_.widgetId.empty() &&
-        widgetEngine_)
-    {
-        const RECT content =
-            GetLuaWidgetPanelContentRect();
-        const int localX =
-            current.x - content.left;
-        const int localY =
-            current.y - content.top;
-        const std::string& surface =
-            luaWidgetPanelRequest_.surface;
-        const bool handled =
-            widgetEngine_->HandleHostInputPointerMove(
-                luaWidgetPanelRequest_.widgetId,
-                localX, localY, surface);
-        const bool pointerCaptured =
-            widgetEngine_->HasInteractionPointerCapture(
-                luaWidgetPanelRequest_.widgetId, surface);
-        if (!handled &&
-            (PtInRect(&content, current) || pointerCaptured))
+        if (luaWidgetPanelMouseDown_ &&
+            !luaWidgetPanelRequest_.widgetId.empty() &&
+            widgetEngine_)
         {
-            const char* eventName = surface == "dialog"
-                ? "onDialogMouseMove"
-                : (surface == "popover"
-                    ? "onPopoverMouseMove"
-                    : "onPanelMouseMove");
-            widgetEngine_->InvokeMouseEvent(
-                luaWidgetPanelRequest_.widgetId,
-                eventName,
-                localX, localY, 1, 0);
+            const RECT content =
+                GetLuaWidgetPanelContentRect();
+            const int localX =
+                current.x - content.left;
+            const int localY =
+                current.y - content.top;
+            const std::string& surface =
+                luaWidgetPanelRequest_.surface;
+            const bool handled =
+                widgetEngine_->HandleHostInputPointerMove(
+                    luaWidgetPanelRequest_.widgetId,
+                    localX, localY, surface);
+            const bool pointerCaptured =
+                widgetEngine_->HasInteractionPointerCapture(
+                    luaWidgetPanelRequest_.widgetId, surface);
+            if (!handled &&
+                (PtInRect(&content, current) || pointerCaptured))
+            {
+                const char* eventName = surface == "dialog"
+                    ? "onDialogMouseMove"
+                    : (surface == "popover"
+                        ? "onPopoverMouseMove"
+                        : "onPanelMouseMove");
+                widgetEngine_->InvokeMouseEvent(
+                    luaWidgetPanelRequest_.widgetId,
+                    eventName,
+                    localX, localY, 1, 0);
+            }
+            UpdateHostInputImePosition();
+            (void)PresentDesktopForegroundComposition(content);
+            return;
         }
-        UpdateHostInputImePosition();
-        (void)PresentDesktopForegroundComposition(content);
-        return;
-    }
 
-    if (!luaWidgetPanelRequest_.widgetId.empty() &&
-        luaWidgetPanelRequest_.modal)
-    {
-        PresentDesktopPointerUpdate();
-        return;
-    }
+        if (!luaWidgetPanelRequest_.widgetId.empty() &&
+            luaWidgetPanelRequest_.modal)
+        {
+            PresentDesktopPointerUpdate();
+            return;
+        }
 
     if (popupScrollbarDragging_ && IsCollectionPopupInteractive())
     {
@@ -460,8 +470,9 @@ void DesktopApp::OnMouseMoveAt(
         }
     }
 
-    UpdateCollectionPopupDwell(current);
-    UpdateCollectionGroupTabDwell(current);
+        UpdateCollectionPopupDwell(current);
+        UpdateCollectionGroupTabDwell(current);
+    }
 
     if (mouseDown_ && !dragSession_.IsActive()
         && (widgetAction_ == WidgetAction::PendingMove || widgetAction_ == WidgetAction::PendingResize)
@@ -473,6 +484,9 @@ void DesktopApp::OnMouseMoveAt(
             widgetAction_ = WidgetAction::Move;
         else if (widgetAction_ == WidgetAction::PendingResize)
             widgetAction_ = WidgetAction::Resize;
+        if (widgetEngine_)
+            widgetEngine_->ClearInteractionHover();
+        HideDockWindowPreview();
         InvalidateRect(hwnd_, nullptr, FALSE);
     }
 

@@ -3338,6 +3338,41 @@ int main(int argc, char** argv)
                   "freeCell = ClampGridCellToFitPage(") !=
                     std::string::npos,
             "desktop widget moves and Dock widget previews/commits must share full-span edge anchoring");
+        const std::size_t widgetGestureGuard =
+            pointerMoveSource.find(
+                "const bool activeWidgetGesture =");
+        const std::size_t widgetGestureInactiveBranch =
+            pointerMoveSource.find(
+                "if (!activeWidgetGesture)",
+                widgetGestureGuard);
+        const std::size_t guardedDockPreview =
+            pointerMoveSource.find(
+                "UpdateDockWindowPreview(current);",
+                widgetGestureInactiveBranch);
+        const std::size_t guardedLuaHover =
+            pointerMoveSource.find(
+                "if (widgetEngine_)",
+                guardedDockPreview);
+        const std::size_t guardedPopupDwell =
+            pointerMoveSource.find(
+                "UpdateCollectionPopupDwell(current);",
+                guardedLuaHover);
+        const std::size_t widgetGestureThreshold =
+            pointerMoveSource.find(
+                "WidgetAction::PendingMove ||",
+                guardedPopupDwell);
+        Check(widgetGestureGuard != std::string::npos &&
+                widgetGestureInactiveBranch != std::string::npos &&
+                guardedDockPreview != std::string::npos &&
+                guardedLuaHover != std::string::npos &&
+                guardedPopupDwell != std::string::npos &&
+                widgetGestureThreshold != std::string::npos &&
+                widgetGestureGuard < widgetGestureInactiveBranch &&
+                widgetGestureInactiveBranch < guardedDockPreview &&
+                guardedDockPreview < guardedLuaHover &&
+                guardedLuaHover < guardedPopupDwell &&
+                guardedPopupDwell < widgetGestureThreshold,
+            "active widget drags must bypass unrelated Dock, Lua hover and popup dwell work");
         const std::string oleDropSessionSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_ole_drop_session.cpp");
