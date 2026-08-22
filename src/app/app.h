@@ -312,11 +312,8 @@ private:
     std::uint64_t revision_ = 0;       /**< 当前缓存的修订号，用于判断是否需要重绘 */
 };
 
-enum class UiCompositionAnimationHost
-{
-    Desktop,
-    FloatingPopup,
-};
+using UiCompositionAnimationHost =
+    snowdesktop::widget_composition_layer_rules::CompositionHost;
 
 struct UiCompositionAnimationOverlay
 {

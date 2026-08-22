@@ -43,6 +43,21 @@ int main(int argc, char** argv)
             !rules::NullReferenceInsertsAboveAll(true),
         "a null DirectComposition reference reverses the intuitive insertAbove order");
 
+    using rules::CompositionHost;
+    Check(rules::BelongsToCompositionRoot(
+            CompositionHost::Desktop,
+            CompositionHost::Desktop) &&
+            rules::BelongsToCompositionRoot(
+                CompositionHost::FloatingPopup,
+                CompositionHost::FloatingPopup) &&
+            !rules::BelongsToCompositionRoot(
+                CompositionHost::FloatingPopup,
+                CompositionHost::Desktop) &&
+            !rules::BelongsToCompositionRoot(
+                CompositionHost::Desktop,
+                CompositionHost::FloatingPopup),
+        "composition roots must reject visuals owned by another host");
+
     Check(rules::ShouldPresentWidgetSurface(true, false),
         "a visible widget must present its child surface");
     Check(!rules::ShouldPresentWidgetSurface(false, false),
@@ -238,11 +253,11 @@ int main(int argc, char** argv)
         const std::size_t dockHandoffLayer = inRootOrder(
             "floatingDockDesktopCacheVisual_.Get()");
         const std::size_t pageOverlay = inRootOrder(
-            "pageNotifyAnimationOverlay_.visual.Get()");
+            "desktopOverlayVisual(pageNotifyAnimationOverlay_)");
         const std::size_t popupOverlay = inRootOrder(
-            "popupAnimationOverlay_.visual.Get()");
+            "desktopOverlayVisual(popupAnimationOverlay_)");
         const std::size_t luaPanelOverlay = inRootOrder(
-            "luaWidgetPanelAnimationOverlay_.visual.Get()");
+            "desktopOverlayVisual(luaWidgetPanelAnimationOverlay_)");
         Check(!rootZOrder.empty() &&
                 widgetLayer < foregroundLayer &&
                 foregroundLayer < dockHandoffLayer &&
@@ -253,6 +268,41 @@ int main(int argc, char** argv)
                     "visual, TRUE, predecessor") !=
                     std::string::npos,
             "the desktop root tree must explicitly stack widgets below foreground, handoff, and animation overlays");
+        Check(rootZOrder.find(
+                "BelongsToCompositionRoot(") !=
+                    std::string::npos &&
+                rootZOrder.find(
+                    "UiCompositionAnimationHost::Desktop") !=
+                    std::string::npos,
+            "the desktop root tree must exclude floating-popup animation visuals");
+        Check(rootZOrder.find("removedFromRoot") !=
+                    std::string::npos &&
+                rootZOrder.find("restoreRemovedPrefix(index)") !=
+                    std::string::npos &&
+                rootZOrder.find("attachedToRoot") !=
+                    std::string::npos &&
+                rootZOrder.find("FAILED(addFailure)") !=
+                    std::string::npos,
+            "a failed root reorder must reattach visuals instead of leaving a partial tree");
+        const std::size_t floatingRootZOrderBegin = floatingPopup.find(
+            "HRESULT DesktopApp::SyncFloatingPopupCompositionRootZOrder()");
+        const std::size_t floatingRootResetBegin = floatingPopup.find(
+            "void DesktopApp::ResetFloatingPopupCompositionResources()",
+            floatingRootZOrderBegin);
+        const std::string floatingRootZOrder =
+            floatingRootZOrderBegin == std::string::npos ||
+                floatingRootResetBegin == std::string::npos
+            ? std::string{}
+            : floatingPopup.substr(
+                floatingRootZOrderBegin,
+                floatingRootResetBegin - floatingRootZOrderBegin);
+        Check(floatingRootZOrder.find(
+                "BelongsToCompositionRoot(") !=
+                    std::string::npos &&
+                floatingRootZOrder.find(
+                    "UiCompositionAnimationHost::FloatingPopup") !=
+                    std::string::npos,
+            "the shared popup root must exclude desktop animation visuals");
         Check(composition.find(
                 "hr = SyncDesktopCompositionRootZOrder();") !=
                 std::string::npos &&

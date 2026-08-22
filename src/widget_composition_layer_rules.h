@@ -20,6 +20,19 @@ enum class PointerVisualLayer
     Foreground,
 };
 
+enum class CompositionHost
+{
+    Desktop,
+    FloatingPopup,
+};
+
+constexpr bool BelongsToCompositionRoot(
+    CompositionHost visualHost,
+    CompositionHost rootHost)
+{
+    return visualHost == rootHost;
+}
+
 constexpr int ZOrder(DesktopLayer layer)
 {
     return static_cast<int>(layer);

@@ -12,35 +12,134 @@ HRESULT DesktopApp::SyncDesktopCompositionRootZOrder()
     // Reattach every managed root child with an explicit predecessor so the
     // order stays deterministic regardless of which surface was created or
     // recovered most recently.
+    const auto desktopOverlayVisual = [](
+        const UiCompositionAnimationOverlay& overlay)
+        -> IDCompositionVisual2* {
+        return snowdesktop::widget_composition_layer_rules::
+                BelongsToCompositionRoot(
+                    overlay.host,
+                    UiCompositionAnimationHost::Desktop)
+            ? overlay.visual.Get() : nullptr;
+    };
     const std::array<IDCompositionVisual2*, 6> bottomToTop{
         desktopWidgetCompositionLayer_.Get(),
         desktopForegroundCompositionVisual_.Get(),
         floatingDockDesktopCacheVisual_.Get(),
-        pageNotifyAnimationOverlay_.visual.Get(),
-        popupAnimationOverlay_.visual.Get(),
-        luaWidgetPanelAnimationOverlay_.visual.Get(),
+        desktopOverlayVisual(pageNotifyAnimationOverlay_),
+        desktopOverlayVisual(popupAnimationOverlay_),
+        desktopOverlayVisual(luaWidgetPanelAnimationOverlay_),
     };
 
-    for (IDCompositionVisual2* visual : bottomToTop)
+    std::array<bool, 6> removedFromRoot{};
+    const auto restoreRemovedPrefix = [&](std::size_t end) {
+        IDCompositionVisual2* predecessor = nullptr;
+        HRESULT restoreHr = S_OK;
+        for (std::size_t index = 0; index < end; ++index)
+        {
+            IDCompositionVisual2* visual = bottomToTop[index];
+            if (!visual || !removedFromRoot[index])
+                continue;
+            const HRESULT hr = dcompVisual_->AddVisual(
+                visual, TRUE, predecessor);
+            if (SUCCEEDED(hr))
+                predecessor = visual;
+            else if (SUCCEEDED(restoreHr))
+                restoreHr = hr;
+        }
+        return restoreHr;
+    };
+
+    for (std::size_t index = 0;
+         index < bottomToTop.size(); ++index)
     {
+        IDCompositionVisual2* visual = bottomToTop[index];
         if (visual)
         {
             const HRESULT hr = dcompVisual_->RemoveVisual(visual);
             if (FAILED(hr))
+            {
+                const HRESULT restoreHr =
+                    restoreRemovedPrefix(index);
+                if (FAILED(restoreHr))
+                {
+                    wchar_t message[160]{};
+                    wsprintfW(
+                        message,
+                        L"Desktop root z-order rollback FAILED "
+                        L"hr=0x%08X after remove hr=0x%08X",
+                        static_cast<unsigned>(restoreHr),
+                        static_cast<unsigned>(hr));
+                    WriteDiagnosticLogEntry(message);
+                }
                 return hr;
+            }
+            removedFromRoot[index] = true;
         }
     }
 
     IDCompositionVisual2* predecessor = nullptr;
-    for (IDCompositionVisual2* visual : bottomToTop)
+    std::array<bool, 6> attachedToRoot{};
+    HRESULT addFailure = S_OK;
+    for (std::size_t index = 0;
+         index < bottomToTop.size(); ++index)
     {
+        IDCompositionVisual2* visual = bottomToTop[index];
         if (!visual)
             continue;
         const HRESULT hr = dcompVisual_->AddVisual(
             visual, TRUE, predecessor);
         if (FAILED(hr))
-            return hr;
+        {
+            if (SUCCEEDED(addFailure))
+                addFailure = hr;
+            continue;
+        }
+        attachedToRoot[index] = true;
         predecessor = visual;
+    }
+
+    if (FAILED(addFailure))
+    {
+        // A transient AddVisual failure must not strand every later visual
+        // outside the tree. Insert missing children in their original slots;
+        // an existing predecessor keeps already-restored siblings ordered.
+        predecessor = nullptr;
+        HRESULT restoreHr = S_OK;
+        for (std::size_t index = 0;
+             index < bottomToTop.size(); ++index)
+        {
+            IDCompositionVisual2* visual = bottomToTop[index];
+            if (!visual)
+                continue;
+            if (attachedToRoot[index])
+            {
+                predecessor = visual;
+                continue;
+            }
+            const HRESULT hr = dcompVisual_->AddVisual(
+                visual, TRUE, predecessor);
+            if (SUCCEEDED(hr))
+            {
+                attachedToRoot[index] = true;
+                predecessor = visual;
+            }
+            else if (SUCCEEDED(restoreHr))
+            {
+                restoreHr = hr;
+            }
+        }
+        if (FAILED(restoreHr))
+        {
+            wchar_t message[160]{};
+            wsprintfW(
+                message,
+                L"Desktop root z-order reattach FAILED "
+                L"hr=0x%08X after add hr=0x%08X",
+                static_cast<unsigned>(restoreHr),
+                static_cast<unsigned>(addFailure));
+            WriteDiagnosticLogEntry(message);
+        }
+        return addFailure;
     }
     return S_OK;
 }

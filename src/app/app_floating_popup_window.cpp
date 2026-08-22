@@ -238,11 +238,15 @@ HRESULT DesktopApp::SyncFloatingPopupCompositionRootZOrder()
         return E_UNEXPECTED;
 
     const std::array<IDCompositionVisual2*, 2> bottomToTop{
-        popupAnimationOverlay_.host ==
-                UiCompositionAnimationHost::FloatingPopup
+        snowdesktop::widget_composition_layer_rules::
+                BelongsToCompositionRoot(
+                    popupAnimationOverlay_.host,
+                    UiCompositionAnimationHost::FloatingPopup)
             ? popupAnimationOverlay_.visual.Get() : nullptr,
-        luaWidgetPanelAnimationOverlay_.host ==
-                UiCompositionAnimationHost::FloatingPopup
+        snowdesktop::widget_composition_layer_rules::
+                BelongsToCompositionRoot(
+                    luaWidgetPanelAnimationOverlay_.host,
+                    UiCompositionAnimationHost::FloatingPopup)
             ? luaWidgetPanelAnimationOverlay_.visual.Get() : nullptr,
     };
     for (IDCompositionVisual2* visual : bottomToTop)
