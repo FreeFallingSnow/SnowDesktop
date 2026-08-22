@@ -1561,6 +1561,11 @@ int main(int argc, char** argv)
             !dragVisual::PreviewFallbackRegionContainsPoint(
               COMPLEXREGION, false),
         "manual preview fallback must preserve rectangular windows and reject points outside explicit or empty regions");
+    Check(!dragVisual::PreviewFallbackNeedsExactRegionCheck(ERROR) &&
+            !dragVisual::PreviewFallbackNeedsExactRegionCheck(NULLREGION) &&
+            !dragVisual::PreviewFallbackNeedsExactRegionCheck(SIMPLEREGION) &&
+            dragVisual::PreviewFallbackNeedsExactRegionCheck(COMPLEXREGION),
+        "only complex window regions require allocating and testing an exact fallback region");
     const RECT appliedPreviewBounds{100, 200, 180, 280};
     const RECT movedPreviewBounds{101, 200, 181, 280};
     const RECT resizedPreviewBounds{100, 200, 181, 280};
@@ -3369,6 +3374,34 @@ int main(int argc, char** argv)
                   "dragPreviewWindowBounds_") !=
                     std::string::npos,
             "the drag ghost must use one cached compact DComp surface and cached placement without rebuilding a window region per pointer pixel");
+        const std::size_t fallbackResolver =
+            dragPreviewSource.find(
+                "ResolveWindowBelowDragPreviewAt(");
+        const std::size_t fallbackGeometry =
+            dragPreviewSource.find(
+                "GetWindowRect(candidate, &windowRect)",
+                fallbackResolver);
+        const std::size_t fallbackCloak =
+            dragPreviewSource.find(
+                "DwmGetWindowAttribute(",
+                fallbackGeometry);
+        const std::size_t fallbackRegionBounds =
+            dragPreviewSource.find(
+                "GetWindowRgnBox(candidate, &regionBounds)",
+                fallbackCloak);
+        const std::size_t fallbackExactRegion =
+            dragPreviewSource.find(
+                "CreateRectRgn(0, 0, 0, 0)",
+                fallbackRegionBounds);
+        Check(fallbackResolver != std::string::npos &&
+                fallbackGeometry != std::string::npos &&
+                fallbackCloak != std::string::npos &&
+                fallbackRegionBounds != std::string::npos &&
+                fallbackExactRegion != std::string::npos &&
+                fallbackGeometry < fallbackCloak &&
+                fallbackCloak < fallbackRegionBounds &&
+                fallbackRegionBounds < fallbackExactRegion,
+            "preview fallback must reject off-point windows before DWM queries and allocate exact regions only after a bounding-box hit");
         Check(dragLifecycleSource.find(
                   "SyncDragPreviewWindow();") !=
                     std::string::npos &&

@@ -472,6 +472,14 @@ HWND DesktopApp::ResolveWindowBelowDragPreviewAt(
          candidate;
          candidate = GetWindow(candidate, GW_HWNDNEXT))
     {
+        if (!IsWindowVisible(candidate) ||
+            !IsWindowEnabled(candidate))
+            continue;
+        RECT windowRect{};
+        if (!GetWindowRect(candidate, &windowRect) ||
+            !PtInRect(&windowRect, screenPoint))
+            continue;
+
         const bool presentationOnly =
             IsDragPresentationOnlyWindow(candidate);
         DWORD cloaked = 0;
@@ -482,31 +490,38 @@ HWND DesktopApp::ResolveWindowBelowDragPreviewAt(
             cloaked != 0;
         if (snowdesktop::drag_visual_rules::
                 ShouldSkipPreviewFallbackCandidate(
-                    IsWindowVisible(candidate) != FALSE,
-                    IsWindowEnabled(candidate) != FALSE,
-                    isCloaked,
+                    true, true, isCloaked,
                     presentationOnly))
             continue;
-        RECT windowRect{};
-        if (!GetWindowRect(candidate, &windowRect) ||
-            !PtInRect(&windowRect, screenPoint))
-            continue;
 
-        HRGN region = CreateRectRgn(0, 0, 0, 0);
-        if (!region)
-            return nullptr;
-        const int regionType = GetWindowRgn(candidate, region);
         const POINT localPoint{
             screenPoint.x - windowRect.left,
             screenPoint.y - windowRect.top };
-        const bool pointInRegion =
-            PtInRegion(region,
-                localPoint.x, localPoint.y) != FALSE;
-        DeleteObject(region);
+        RECT regionBounds{};
+        const int regionType =
+            GetWindowRgnBox(candidate, &regionBounds);
         if (!snowdesktop::drag_visual_rules::
                 PreviewFallbackRegionContainsPoint(
-                    regionType, pointInRegion))
+                    regionType,
+                    PtInRect(&regionBounds, localPoint) != FALSE))
             continue;
+        if (snowdesktop::drag_visual_rules::
+                PreviewFallbackNeedsExactRegionCheck(regionType))
+        {
+            HRGN region = CreateRectRgn(0, 0, 0, 0);
+            if (!region)
+                return nullptr;
+            const int exactRegionType =
+                GetWindowRgn(candidate, region);
+            const bool pointInRegion =
+                PtInRegion(region,
+                    localPoint.x, localPoint.y) != FALSE;
+            DeleteObject(region);
+            if (!snowdesktop::drag_visual_rules::
+                    PreviewFallbackRegionContainsPoint(
+                        exactRegionType, pointInRegion))
+                continue;
+        }
         return candidate;
     }
     return nullptr;

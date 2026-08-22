@@ -62,6 +62,12 @@ constexpr bool PreviewFallbackRegionContainsPoint(
         (regionType != NULLREGION && pointInRegion);
 }
 
+constexpr bool PreviewFallbackNeedsExactRegionCheck(
+    int regionType) noexcept
+{
+    return regionType == COMPLEXREGION;
+}
+
 constexpr bool EqualRect(
     const RECT& left, const RECT& right) noexcept
 {
