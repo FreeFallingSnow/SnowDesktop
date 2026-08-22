@@ -4,6 +4,7 @@
 #include "logical_slot_keyboard_rules.h"
 
 #include "core/item.h"
+#include "core/drag_session.h"
 
 #include <array>
 #include <cstdlib>
@@ -43,6 +44,7 @@ LogicalSlotHostSurface CollectionSurface(bool full = false)
     surface.slotId = "favorites";
     surface.kind =
         snowdesktop::widget_runtime::LogicalSlotKind::Collection;
+    surface.revision = 1;
     surface.capacity = full ? 2 : 3;
     surface.itemCount = 2;
     surface.accepts = { "desktop.item", "filesystem.reference" };
@@ -136,6 +138,64 @@ void TestCapacityAndBindingPolicy()
     const auto bindingHit = bindingContainer.ItemAtPoint({ 50, 50 });
     Check(bindingHit && !bindingHit->canRemove,
         "a binding with allowClear=false must disable host removal");
+}
+
+void TestLuaDragFeedbackUsesCommittedSurfaceIdentity()
+{
+    auto surface = CollectionSurface();
+    LuaLogicalSlotContainer container(
+        L"widget-1", "favorites",
+        [&surface]() -> std::optional<LogicalSlotHostSurface> {
+            return surface;
+        }, {});
+    DragSession session;
+    session.Begin(nullptr, {}, {}, POINT{}, POINT{});
+
+    Slot* first = nullptr;
+    const HitRegion firstRegion =
+        container.HitTestDrag({150, 165}, first);
+    Check(first && session.UpdateTarget(
+            &container, first, firstRegion),
+        "the first Lua logical target must publish feedback");
+    const std::uint64_t firstPresentation =
+        session.PresentationRevision();
+    const std::uint64_t firstGeneration =
+        container.GetSlotGeneration();
+
+    Slot* equivalent = nullptr;
+    const HitRegion equivalentRegion =
+        container.HitTestDrag({150, 165}, equivalent);
+    Check(container.GetSlotGeneration() != firstGeneration,
+        "Lua hit testing currently rebuilds its cached Slot generation");
+    Check(!session.UpdateTarget(
+            &container, equivalent, equivalentRegion) &&
+            session.PresentationRevision() == firstPresentation &&
+            session.TargetSlot() == equivalent,
+        "an unchanged committed Lua surface must keep feedback stable while rebinding the latest Slot");
+
+    ++surface.revision;
+    Slot* revised = nullptr;
+    const HitRegion revisedRegion =
+        container.HitTestDrag({150, 165}, revised);
+    Check(session.UpdateTarget(
+            &container, revised, revisedRegion),
+        "a committed Lua surface revision must refresh feedback");
+
+    surface.items[1].bounds.left += 5;
+    Slot* moved = nullptr;
+    const HitRegion movedRegion =
+        container.HitTestDrag({150, 165}, moved);
+    Check(session.UpdateTarget(
+            &container, moved, movedRegion),
+        "a Lua target geometry change must refresh feedback without pointer identity");
+
+    surface.bounds.right += 10;
+    Slot* resizedSurface = nullptr;
+    const HitRegion resizedRegion =
+        container.HitTestDrag({150, 165}, resizedSurface);
+    Check(session.UpdateTarget(
+            &container, resizedSurface, resizedRegion),
+        "a Lua slotSurface bounds change must refresh feedback even when the target item is unchanged");
 }
 
 void TestHostPickerCandidatePolicy()
@@ -299,6 +359,7 @@ int main()
 {
     TestCollectionHitAndCommitBoundary();
     TestCapacityAndBindingPolicy();
+    TestLuaDragFeedbackUsesCommittedSurfaceIdentity();
     TestHostPickerCandidatePolicy();
     TestPointerReorderTargets();
     TestKeyboardFocusRules();

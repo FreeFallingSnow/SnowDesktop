@@ -165,6 +165,12 @@ LuaLogicalSlotContainer::BuildSlots()
     std::vector<std::unique_ptr<Slot>> slots;
     const auto surface = Surface();
     if (!surface) return slots;
+    const SlotFeedbackIdentity feedbackIdentity{
+        SlotFeedbackRole::LuaLogical,
+        surface->bounds,
+        surface->revision,
+        static_cast<std::uint32_t>(surface->kind),
+    };
 
     if (surface->kind ==
         snowdesktop::widget_runtime::LogicalSlotKind::Collection)
@@ -174,18 +180,21 @@ LuaLogicalSlotContainer::BuildSlots()
             index < surface->items.size(); ++index)
         {
             slots.push_back(std::make_unique<Slot>(
-                this, surface->items[index].bounds, index));
+                this, surface->items[index].bounds, index,
+                SlotLifetime::ContainerCache, feedbackIdentity));
         }
         if (surface->itemCount < surface->capacity)
         {
             slots.push_back(std::make_unique<Slot>(
-                this, surface->bounds, surface->items.size()));
+                this, surface->bounds, surface->items.size(),
+                SlotLifetime::ContainerCache, feedbackIdentity));
         }
     }
     else
     {
         slots.push_back(std::make_unique<Slot>(
-            this, surface->bounds, 0));
+            this, surface->bounds, 0,
+            SlotLifetime::ContainerCache, feedbackIdentity));
     }
     return slots;
 }

@@ -15,43 +15,53 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <utility>
 
 namespace snowdesktop::drag_target
 {
 struct SlotFeedbackKey
 {
-    bool present = false;
-    Container* parent = nullptr;
+    SlotFeedbackRole role = SlotFeedbackRole::None;
     RECT bounds{};
+    RECT scopeBounds{};
     std::size_t index = 0;
+    std::uint64_t revision = 0;
+    std::uint32_t variant = 0;
     bool hasItem = false;
-    bool transient = false;
 
-    static SlotFeedbackKey From(Slot* slot)
+    static std::optional<SlotFeedbackKey> From(Slot* slot)
     {
-        if (!slot) return {};
-        return {
-            true,
-            slot->GetParent(),
+        if (!slot) return std::nullopt;
+        const auto& identity = slot->GetFeedbackIdentity();
+        if (identity.role == SlotFeedbackRole::None)
+            return std::nullopt;
+        return SlotFeedbackKey{
+            identity.role,
             slot->GetBounds(),
+            identity.scopeBounds,
             slot->GetIndex(),
+            identity.revision,
+            identity.variant,
             slot->GetItem() != nullptr,
-            slot->IsTransientDragTarget(),
         };
     }
 
     bool operator==(const SlotFeedbackKey& other) const
     {
-        return present == other.present &&
-            parent == other.parent &&
+        return role == other.role &&
             bounds.left == other.bounds.left &&
             bounds.top == other.bounds.top &&
             bounds.right == other.bounds.right &&
             bounds.bottom == other.bounds.bottom &&
+            scopeBounds.left == other.scopeBounds.left &&
+            scopeBounds.top == other.scopeBounds.top &&
+            scopeBounds.right == other.scopeBounds.right &&
+            scopeBounds.bottom == other.scopeBounds.bottom &&
             index == other.index &&
-            hasItem == other.hasItem &&
-            transient == other.transient;
+            revision == other.revision &&
+            variant == other.variant &&
+            hasItem == other.hasItem;
     }
 };
 }
@@ -163,6 +173,7 @@ public:
         targetContainer_ = nullptr;
         targetSlot_ = nullptr;
         targetSlotGeneration_ = 0;
+        targetSlotGenerationTracked_ = false;
         targetSlotFeedbackKey_ = {};
         targetRegion_ = HitRegion::None;
         presentationAnchorValid_ = false;
@@ -310,20 +321,29 @@ public:
      */
     bool UpdateTarget(Container* targetContainer, Slot* targetSlot, HitRegion targetRegion)
     {
-        const std::uint64_t nextGeneration =
+        const bool nextGenerationTracked =
             targetContainer && targetSlot &&
-                !targetSlot->IsTransientDragTarget()
+            !targetSlot->IsTransientDragTarget();
+        const std::uint64_t nextGeneration =
+            nextGenerationTracked
                 ? targetContainer->GetSlotGeneration()
                 : 0;
         const auto nextFeedbackKey =
             snowdesktop::drag_target::SlotFeedbackKey::From(targetSlot);
+        const bool slotChanged =
+            targetSlotFeedbackKey_ || nextFeedbackKey
+                ? targetSlotFeedbackKey_ != nextFeedbackKey
+                : targetSlot_ != targetSlot ||
+                    targetSlotGeneration_ != nextGeneration ||
+                    targetSlotGenerationTracked_ != nextGenerationTracked;
         const bool presentationChanged =
             targetContainer_ != targetContainer ||
-            !(targetSlotFeedbackKey_ == nextFeedbackKey) ||
+            slotChanged ||
             targetRegion_ != targetRegion;
         targetContainer_ = targetContainer;
         targetSlot_ = targetSlot;
         targetSlotGeneration_ = nextGeneration;
+        targetSlotGenerationTracked_ = nextGenerationTracked;
         targetSlotFeedbackKey_ = nextFeedbackKey;
         targetRegion_ = targetRegion;
         if (presentationChanged)
@@ -406,6 +426,7 @@ public:
         targetContainer_ = nullptr;
         targetSlot_ = nullptr;
         targetSlotGeneration_ = 0;
+        targetSlotGenerationTracked_ = false;
         targetSlotFeedbackKey_ = {};
         targetRegion_ = HitRegion::None;
         presentationAnchorValid_ = false;
@@ -431,6 +452,7 @@ public:
         targetContainer_ = nullptr;
         targetSlot_ = nullptr;
         targetSlotGeneration_ = 0;
+        targetSlotGenerationTracked_ = false;
         targetSlotFeedbackKey_ = {};
         targetRegion_ = HitRegion::None;
         presentationAnchorValid_ = false;
@@ -483,6 +505,7 @@ public:
         targetContainer_ = nullptr;
         targetSlot_ = nullptr;
         targetSlotGeneration_ = 0;
+        targetSlotGenerationTracked_ = false;
         targetSlotFeedbackKey_ = {};
         targetRegion_ = HitRegion::None;
         presentationAnchorValid_ = false;
@@ -508,7 +531,7 @@ private:
     {
         if (!targetSlot_)
             return true;
-        if (targetSlot_->IsTransientDragTarget())
+        if (!targetSlotGenerationTracked_)
             return true;
         return targetContainer_ &&
             targetContainer_->GetSlotGeneration() ==
@@ -531,7 +554,8 @@ private:
     Container* targetContainer_ = nullptr;   /**< 目标容器指针 */
     Slot* targetSlot_ = nullptr;             /**< 目标插槽指针 */
     std::uint64_t targetSlotGeneration_ = 0; /**< 目标插槽所属缓存代次 */
-    snowdesktop::drag_target::SlotFeedbackKey targetSlotFeedbackKey_; /**< 值语义反馈键 */
+    bool targetSlotGenerationTracked_ = false; /**< 是否由 Container 缓存代次约束 */
+    std::optional<snowdesktop::drag_target::SlotFeedbackKey> targetSlotFeedbackKey_; /**< 显式角色的值语义反馈键 */
     HitRegion targetRegion_ = HitRegion::None; /**< 目标命中区域类型 */
     bool presentationAnchorValid_ = false;     /**< 桌面请求网格是否参与当前呈现键 */
     GridCell presentationAnchorCell_;          /**< 应用拖拽热点偏移后的桌面请求网格 */

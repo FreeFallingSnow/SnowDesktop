@@ -208,7 +208,7 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
                 visibleItem = content;
             targetSlot = BindTransientDragSlot(
                 popupDragTargetSlot_, targetContainer,
-                visibleItem, 0);
+                visibleItem, 0, SlotFeedbackRole::Popup);
             targetRegion =
                 HitRegion::SortBefore;
             return true;
@@ -246,14 +246,14 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
                     popupDragTargetSlot_, targetContainer,
                     snowdesktop::popup_drag_rules::
                         HandoffIndicatorBounds(itemRect),
-                    i, handoffItem);
+                    i, SlotFeedbackRole::Popup, handoffItem);
                 targetRegion = HitRegion::Handoff;
                 return true;
             }
 
             targetSlot = BindTransientDragSlot(
                 popupDragTargetSlot_, targetContainer,
-                itemRect, i);
+                itemRect, i, SlotFeedbackRole::Popup);
             targetRegion =
                 client.x <
                     itemRect.left +
@@ -331,7 +331,8 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
         {
             targetSlot = BindTransientDragSlot(
                 popupDragTargetSlot_, targetContainer,
-                nearestBounds, nearestIndex);
+                nearestBounds, nearestIndex,
+                SlotFeedbackRole::Popup);
             targetRegion =
                 nearestRegion;
         }
@@ -386,7 +387,7 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
             visibleItem = content;
         targetSlot = BindTransientDragSlot(
             popupDragTargetSlot_, popupContainer,
-            visibleItem, 0);
+            visibleItem, 0, SlotFeedbackRole::Popup);
         targetRegion =
             HitRegion::SortBefore;
         return true;
@@ -434,7 +435,8 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
         }
         targetSlot = BindTransientDragSlot(
             popupDragTargetSlot_, popupContainer,
-            slotBounds, slotIndex, handoffItem);
+            slotBounds, slotIndex, SlotFeedbackRole::Popup,
+            handoffItem);
         targetRegion = region;
         return true;
     }
@@ -477,7 +479,7 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
 
     targetSlot = BindTransientDragSlot(
         popupDragTargetSlot_, popupContainer,
-        slotBounds, slotIndex);
+        slotBounds, slotIndex, SlotFeedbackRole::Popup);
     targetRegion = region;
     return true;
 }

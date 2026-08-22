@@ -11,13 +11,16 @@
  * DragSession 按父容器、索引和几何值保存，不再依赖本次分配得到的地址。
  */
 inline Slot* BindTransientDragSlot(std::unique_ptr<Slot>& storage,
-    Container* parent, RECT bounds, size_t index, Item* item = nullptr)
+    Container* parent, RECT bounds, size_t index,
+    SlotFeedbackRole feedbackRole, Item* item = nullptr)
 {
     if (!storage)
     {
         storage = std::make_unique<Slot>(parent, bounds, index,
-            SlotLifetime::TransientDragTarget);
+            SlotLifetime::TransientDragTarget,
+            SlotFeedbackIdentity{feedbackRole, bounds, 0, 0});
     }
-    storage->RebindTransientDragTarget(parent, bounds, index, item);
+    storage->RebindTransientDragTarget(
+        parent, bounds, index, feedbackRole, item);
     return storage.get();
 }

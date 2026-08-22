@@ -1603,7 +1603,8 @@ HitRegion FileGroup::HitTestDrag(
     {
         RECT tab = FileGroupSourceTabRect(this, sourceTab);
         outSlot = BindTransientDragSlot(
-            sourceTabDropSlot_, this, tab, sourceTab);
+            sourceTabDropSlot_, this, tab, sourceTab,
+            SlotFeedbackRole::FileGroupSourceTab);
         dropPreviewBounds_ = tab;
         dropPreviewIndex_ = sourceTab;
         dropPreviewValid_ = true;
@@ -1644,6 +1645,7 @@ HitRegion FileGroup::HitTestDrag(
         outSlot = BindTransientDragSlot(
             hostedDropSlot_, this,
             searchSlot->GetBounds(), searchSlot->GetIndex(),
+            SlotFeedbackRole::FileGroupHosted,
             hostedDropItem_.get());
         return result;
     }
@@ -1674,6 +1676,7 @@ HitRegion FileGroup::HitTestDrag(
     outSlot = BindTransientDragSlot(
         hostedDropSlot_, this,
         sourceSlot->GetBounds(), sourceSlot->GetIndex(),
+        SlotFeedbackRole::FileGroupHosted,
         hostedDropItem_.get());
     return result;
 }

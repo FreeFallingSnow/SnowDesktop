@@ -886,7 +886,8 @@ HitRegion CollectionGroup::HitTestDrag(
     {
         RECT tab = CollectionGroupTabRect(this, tabIndex);
         outSlot = BindTransientDragSlot(
-            tabDropSlot_, this, tab, tabIndex);
+            tabDropSlot_, this, tab, tabIndex,
+            SlotFeedbackRole::CollectionGroupTab);
         return pt.x < tab.left +
                 (tab.right - tab.left) / 2
             ? HitRegion::SortBefore

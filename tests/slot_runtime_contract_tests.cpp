@@ -428,15 +428,19 @@ void TestDragSessionRejectsInvalidatedSlots()
 
     Slot* rebuilt =
         container.GetSlots().front().get();
-    session.UpdateTarget(
-        &container, rebuilt,
-        HitRegion::SortAfter);
+    Check(session.UpdateTarget(
+            &container, rebuilt,
+            HitRegion::SortBefore),
+        "rebinding equal cached geometry from a new generation must refresh feedback");
     Check(session.TargetSlot() == rebuilt,
         "a rebuilt slot can be rebound explicitly");
 
     auto transient = std::make_unique<Slot>(
         &container, RECT{0, 0, 100, 100}, 0,
-        SlotLifetime::TransientDragTarget);
+        SlotLifetime::TransientDragTarget,
+        SlotFeedbackIdentity{
+            SlotFeedbackRole::Popup,
+            RECT{0, 0, 100, 100}, 0, 0});
     Check(session.UpdateTarget(
             &container, transient.get(),
             HitRegion::SortBefore),
@@ -445,18 +449,37 @@ void TestDragSessionRejectsInvalidatedSlots()
         session.PresentationRevision();
     auto equivalentTransient = std::make_unique<Slot>(
         &container, RECT{0, 0, 100, 100}, 0,
-        SlotLifetime::TransientDragTarget);
+        SlotLifetime::TransientDragTarget,
+        SlotFeedbackIdentity{
+            SlotFeedbackRole::Popup,
+            RECT{0, 0, 100, 100}, 0, 0});
     Check(!session.UpdateTarget(
             &container, equivalentTransient.get(),
             HitRegion::SortBefore) &&
-            session.PresentationRevision() == transientRevision,
+            session.PresentationRevision() == transientRevision &&
+            session.TargetSlot() == equivalentTransient.get(),
         "reallocating the same logical transient target must not redraw feedback");
     equivalentTransient->RebindTransientDragTarget(
-        &container, RECT{100, 0, 200, 100}, 1);
+        &container, RECT{100, 0, 200, 100}, 1,
+        SlotFeedbackRole::Popup);
     Check(session.UpdateTarget(
             &container, equivalentTransient.get(),
             HitRegion::SortBefore),
         "reusing a transient address for another logical target must refresh feedback");
+    equivalentTransient->RebindTransientDragTarget(
+        &container, RECT{0, 0, 100, 100}, 0,
+        SlotFeedbackRole::FileGroupSourceTab);
+    Check(session.UpdateTarget(
+            &container, equivalentTransient.get(),
+            HitRegion::SortBefore),
+        "changing transient geometry back must refresh feedback");
+    equivalentTransient->RebindTransientDragTarget(
+        &container, RECT{0, 0, 100, 100}, 0,
+        SlotFeedbackRole::FileGroupHosted);
+    Check(session.UpdateTarget(
+            &container, equivalentTransient.get(),
+            HitRegion::SortBefore),
+        "equal transient geometry with a different role must refresh feedback");
     container.InvalidateSlots();
     Check(session.TargetSlot() == equivalentTransient.get(),
         "container cache invalidation must not reject an independently owned transient target");

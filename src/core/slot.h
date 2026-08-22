@@ -13,6 +13,7 @@
 #pragma once
 #include <windows.h>
 #include <d2d1_1.h>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -24,6 +25,26 @@ enum class SlotLifetime
 {
     ContainerCache,
     TransientDragTarget,
+};
+
+/** @brief 只有显式角色的 Slot 才使用值语义判断反馈是否变化。 */
+enum class SlotFeedbackRole
+{
+    None,
+    Popup,
+    CollectionGroupTab,
+    FileGroupSourceTab,
+    FileGroupHosted,
+    LuaLogical,
+};
+
+/** @brief 不含运行时裸指针的 Slot 反馈身份补充信息。 */
+struct SlotFeedbackIdentity
+{
+    SlotFeedbackRole role = SlotFeedbackRole::None;
+    RECT scopeBounds{};
+    std::uint64_t revision = 0;
+    std::uint32_t variant = 0;
 };
 
 /**
@@ -64,7 +85,8 @@ public:
      * @param index  当前槽位在父容器子槽位列表中的索引
      */
     Slot(Container* parent, RECT bounds, size_t index,
-        SlotLifetime lifetime = SlotLifetime::ContainerCache);
+        SlotLifetime lifetime = SlotLifetime::ContainerCache,
+        SlotFeedbackIdentity feedbackIdentity = {});
 
     /**
      * @brief 获取所属父容器
@@ -102,12 +124,18 @@ public:
         return lifetime_ == SlotLifetime::TransientDragTarget;
     }
 
+    const SlotFeedbackIdentity& GetFeedbackIdentity() const
+    {
+        return feedbackIdentity_;
+    }
+
     /**
      * @brief 原地更新临时拖拽目标，避免每个移动采样重新分配 Slot。
      * @note 仅允许对 TransientDragTarget 生命周期的 Slot 调用。
      */
     void RebindTransientDragTarget(Container* parent, RECT bounds,
-        size_t index, Item* item = nullptr);
+        size_t index, SlotFeedbackRole feedbackRole,
+        Item* item = nullptr);
 
     /**
      * @brief 检查槽位是否为空
@@ -172,4 +200,5 @@ private:
     size_t index_;      ///< 在父容器中的索引
     Item* item_ = nullptr; ///< 持有的 Item 指针，nullptr 表示空槽位
     SlotLifetime lifetime_ = SlotLifetime::ContainerCache;
+    SlotFeedbackIdentity feedbackIdentity_;
 };
