@@ -674,9 +674,22 @@ std::vector<RECT> DockContainer::GetElementBaseRects() const
     return candidates;
 }
 
+bool DockContainer::IsMagnificationSuppressed() const
+{
+    if (!app_)
+        return true;
+    return snowdesktop::dock_magnification::
+        ShouldSuppressMagnification(
+            app_->dragSession_.IsActive(),
+            app_->widgetAction_ ==
+                DesktopApp::WidgetAction::Move,
+            app_->widgetAction_ ==
+                DesktopApp::WidgetAction::Resize);
+}
+
 RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer) const
 {
-    if (!app_ || app_->dragSession_.IsActive())
+    if (IsMagnificationSuppressed())
     {
         magnificationFocusRect_ = {};
         return RECT{};
@@ -966,7 +979,7 @@ RECT DockContainer::GetElementVisualRect(
 RECT DockContainer::GetVisualPanelBounds(POINT pointer) const
 {
     RECT panel = GetBounds();
-    if (!app_ || app_->dragSession_.IsActive())
+    if (IsMagnificationSuppressed())
         return panel;
 
     const RECT focus = ResolveMagnificationFocusRect(pointer);
@@ -1095,7 +1108,7 @@ RECT DockContainer::PositionTitleTooltipBounds(
 RECT DockContainer::GetHoveredTitleBounds(
     POINT pointer) const
 {
-    if (!app_ || app_->dragSession_.IsActive())
+    if (IsMagnificationSuppressed())
         return RECT{};
 
     std::wstring title;
@@ -1202,7 +1215,7 @@ bool DockContainer::ContainsInteractivePoint(POINT pt) const
 RECT DockContainer::GetInteractiveBounds() const
 {
     const RECT bounds = GetBounds();
-    if (!app_ || app_->dragSession_.IsActive())
+    if (IsMagnificationSuppressed())
         return bounds;
     return snowdesktop::dock_magnification::ExpandInteractionBounds(
         bounds, app_->dockSettings_.position, ItemIconSize());
@@ -1276,7 +1289,7 @@ int DockContainer::GetMaxScrollOffset(const RECT& bounds) const
 bool DockContainer::IsPointInScrollViewport(POINT point) const
 {
     RECT viewport = GetScrollViewport(GetBounds());
-    if (app_ && !app_->dragSession_.IsActive())
+    if (!IsMagnificationSuppressed())
     {
         viewport = snowdesktop::dock_magnification::
             ExpandPerpendicularBounds(viewport,
@@ -1746,7 +1759,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
                 logoLeft + paneSize + paneGap, logoTop + paneSize + paneGap,
                 logoLeft + logoSize, logoTop + logoSize), windowsBrush.Get());
         }
-        if (hovered && !app_->dragSession_.IsActive())
+        if (hovered && !IsMagnificationSuppressed())
         {
             hoveredTitle = _LW("app.dock.start_menu");
         }
@@ -1944,7 +1957,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
             return;
         const RECT visualBounds = visualRectFor(itemBounds);
         item->Draw(context, visualBounds, item->IsSelected() ? 2 : 0);
-        if (hovered && !app_->dragSession_.IsActive())
+        if (hovered && !IsMagnificationSuppressed())
         {
             hoveredTitle = item->GetTitle();
         }
@@ -2069,7 +2082,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
                 if (hovered != focusedPass) continue;
                 item->Draw(context, visualRectFor(itemBounds),
                     item->IsSelected() ? 2 : 0);
-                if (hovered && !app_->dragSession_.IsActive())
+                if (hovered && !IsMagnificationSuppressed())
                     hoveredTitle = item->GetTitle();
             }
         };
@@ -2162,7 +2175,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
             const RECT recycleVisual = visualRectFor(recycleBounds);
             recycleBin->Draw(context, recycleVisual,
                 recycleBin->IsSelected() ? 2 : 0);
-            if (hovered && !app_->dragSession_.IsActive())
+            if (hovered && !IsMagnificationSuppressed())
             {
                 hoveredTitle = recycleBin->GetTitle();
             }
@@ -2221,7 +2234,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
             brush.Get(), searchStroke, roundedStroke.Get());
     }
 
-    if (searchHovered && !app_->dragSession_.IsActive())
+    if (searchHovered && !IsMagnificationSuppressed())
     {
         hoveredTitle = _LW("app.dock.quick_search");
     }

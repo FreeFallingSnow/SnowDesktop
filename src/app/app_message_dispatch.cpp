@@ -378,11 +378,36 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                         pointerOnContentWindow,
                         pointerOnPairedBackdropWindow))
             {
+                TRACKMOUSEEVENT tracking{ sizeof(tracking) };
+                tracking.dwFlags = TME_LEAVE;
+                tracking.hwndTrack = hwnd_;
+                TrackMouseEvent(&tracking);
                 POINT cursorClient = cursorScreen;
                 if (ScreenToClient(
                         hwnd_, &cursorClient))
                 {
-                    lastMousePoint_ = cursorClient;
+                    const bool widgetInteractionActive =
+                        middleButtonWidgetMove_ ||
+                        widgetAction_ != WidgetAction::None ||
+                        detailColumnResizeActive_ ||
+                        luaWidgetPanelMouseDown_;
+                    if (snowdesktop::desktop_hover_rules::
+                            ShouldResamplePassiveMouseMove(
+                                mouseDown_,
+                                dragSession_.IsActive(),
+                                widgetInteractionActive))
+                    {
+                        bool dragPreviewSynced = false;
+                        OnMouseMoveAt(
+                            0, cursorClient,
+                            &dragPreviewSynced);
+                        PresentPointerInteractionFrame(
+                            dragPreviewSynced);
+                    }
+                    else
+                    {
+                        lastMousePoint_ = cursorClient;
+                    }
                 }
                 return 0;
             }

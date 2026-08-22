@@ -18,6 +18,16 @@ constexpr int kMinimumFocusSwitchHysteresisPixels = 3;
 constexpr int kMaximumFocusSwitchHysteresisPixels = 8;
 constexpr int kFocusExitHysteresisPixels = 5;
 
+inline constexpr bool ShouldSuppressMagnification(
+    bool itemDragActive,
+    bool widgetMoveActive,
+    bool widgetResizeActive)
+{
+    return itemDragActive ||
+        widgetMoveActive ||
+        widgetResizeActive;
+}
+
 inline int FocusSwitchHysteresisPixels(int itemPitch)
 {
     return std::clamp(

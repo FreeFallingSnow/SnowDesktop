@@ -2599,6 +2599,15 @@ int main(int argc, char** argv)
         "Dock launch bounce must complete at least two cycles");
 
     namespace magnification = snowdesktop::dock_magnification;
+    Check(!magnification::ShouldSuppressMagnification(
+              false, false, false) &&
+            magnification::ShouldSuppressMagnification(
+              true, false, false) &&
+            magnification::ShouldSuppressMagnification(
+              false, true, false) &&
+            magnification::ShouldSuppressMagnification(
+              false, false, true),
+        "Dock magnification must be disabled for item drags and widget move or resize gestures");
     Check(std::abs(
             magnification::ScaleForAxisDistance(0, 76) -
             magnification::kFocusScale) < 0.001f,
@@ -3317,6 +3326,9 @@ int main(int argc, char** argv)
         const std::string desktopGridSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "core" /
                 "desktop.cpp");
+        const std::string dockContainerSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "core" /
+                "dock.cpp");
         Check(CountOccurrences(
                   dragHintWindowSource,
                   "SetWindowPos(hintHwnd_, HWND_TOPMOST") == 2 &&
@@ -3842,6 +3854,75 @@ int main(int argc, char** argv)
                   "&dragPreviewSynced") !=
                     std::string::npos,
             "each WM_MOUSEMOVE surface must reuse the preview sync already performed for that input sample");
+        const std::size_t desktopLeaveBegin =
+            messageDispatchSource.find(
+                "case WM_MOUSELEAVE:");
+        const std::size_t desktopLeaveEnd =
+            messageDispatchSource.find(
+                "case WM_LBUTTONUP:",
+                desktopLeaveBegin);
+        const std::string desktopLeaveHandler =
+            desktopLeaveBegin == std::string::npos ||
+                desktopLeaveEnd == std::string::npos
+            ? std::string{}
+            : messageDispatchSource.substr(
+                desktopLeaveBegin,
+                desktopLeaveEnd - desktopLeaveBegin);
+        const std::size_t floatingLeaveBegin =
+            floatingDockRenderSource.find(
+                "case WM_MOUSELEAVE:");
+        const std::size_t floatingLeaveEnd =
+            floatingDockRenderSource.find(
+                "case WM_LBUTTONDOWN:",
+                floatingLeaveBegin);
+        const std::string floatingLeaveHandler =
+            floatingLeaveBegin == std::string::npos ||
+                floatingLeaveEnd == std::string::npos
+            ? std::string{}
+            : floatingDockRenderSource.substr(
+                floatingLeaveBegin,
+                floatingLeaveEnd - floatingLeaveBegin);
+        Check(!desktopLeaveHandler.empty() &&
+                desktopLeaveHandler.find(
+                    "tracking.dwFlags = TME_LEAVE;") !=
+                    std::string::npos &&
+                desktopLeaveHandler.find(
+                    "OnMouseMoveAt(") !=
+                    std::string::npos &&
+                desktopLeaveHandler.find(
+                    "PresentPointerInteractionFrame(") !=
+                    std::string::npos,
+            "a retained desktop-surface leave must rearm tracking and replay the live pointer frame");
+        Check(!floatingLeaveHandler.empty() &&
+                floatingLeaveHandler.find(
+                    "tracking.dwFlags = TME_LEAVE;") !=
+                    std::string::npos &&
+                floatingLeaveHandler.find(
+                    "OnMouseMoveAt(") !=
+                    std::string::npos &&
+                floatingLeaveHandler.find(
+                    "UpdateFloatingDockWindowBounds(false);") !=
+                    std::string::npos &&
+                floatingLeaveHandler.find(
+                    "PresentPointerInteractionFrame(") !=
+                    std::string::npos,
+            "a retained floating-Dock leave must rearm tracking and reconcile its live title region and frame");
+        Check(dockContainerSource.find(
+                  "bool DockContainer::IsMagnificationSuppressed() const") !=
+                    std::string::npos &&
+                dockContainerSource.find(
+                  "ShouldSuppressMagnification(") !=
+                    std::string::npos &&
+                dockContainerSource.find(
+                  "DesktopApp::WidgetAction::Move") !=
+                    std::string::npos &&
+                dockContainerSource.find(
+                  "DesktopApp::WidgetAction::Resize") !=
+                    std::string::npos &&
+                CountOccurrences(
+                  dockContainerSource,
+                  "IsMagnificationSuppressed()") >= 9,
+            "Dock geometry, hit testing, and titles must share drag and widget-gesture magnification suppression");
         Check(pointerMoveSource.find(
                   "ShowDragHintWindow(current, hint);\n        InvalidateRect(hwnd_, nullptr, FALSE);") ==
                     std::string::npos,

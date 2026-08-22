@@ -147,6 +147,7 @@ private:
         Trailing,
     };
 
+    bool IsMagnificationSuppressed() const;
     bool IsVertical() const;
     bool IsEdgeAttached() const;
     void RefreshEntryGroupCounts() const;

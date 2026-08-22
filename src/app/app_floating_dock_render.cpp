@@ -222,7 +222,22 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
                             floatingDockRect_,
                             floatingDockPopupRect_,
                             floatingDockTooltipRect_))
+            {
+                TRACKMOUSEEVENT tracking{ sizeof(tracking) };
+                tracking.dwFlags = TME_LEAVE;
+                tracking.hwndTrack = hwnd;
+                TrackMouseEvent(&tracking);
+                handlingFloatingDockInput_ = true;
+                bool dragPreviewSynced = false;
+                OnMouseMoveAt(
+                    0, cursor,
+                    &dragPreviewSynced);
+                handlingFloatingDockInput_ = false;
+                UpdateFloatingDockWindowBounds(false);
+                PresentPointerInteractionFrame(
+                    dragPreviewSynced);
                 return 0;
+            }
         }
         OnMouseLeave();
         InvalidateFloatingDockWindow(true);
