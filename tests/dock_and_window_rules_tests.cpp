@@ -1495,6 +1495,11 @@ int main(int argc, char** argv)
             !dragVisual::ShouldShowPreview(
               true, true, false),
         "the independent drag preview must follow the drag session visibility contract");
+    Check(!dragVisual::ShouldCompactPreview(1) &&
+            dragVisual::ShouldCompactPreview(2) &&
+            dragVisual::kMaximumStackedPreviewItems == 4 &&
+            dragVisual::kStackedPreviewOffset > 0,
+        "multi-item drag previews must use a bounded compact stack");
     Check(dragVisual::DropPreviewBelongsToRenderSurface(
               true, true, true) &&
             !dragVisual::DropPreviewBelongsToRenderSurface(
@@ -3242,12 +3247,21 @@ int main(int argc, char** argv)
                   "dragPreviewRenderRevision_") !=
                     std::string::npos &&
                 dragPreviewSource.find(
+                  "kMaximumStackedPreviewItems") !=
+                    std::string::npos &&
+                dragPreviewSource.find(
                   "SetWindowPos(") !=
+                    std::string::npos &&
+                dragPreviewSource.find(
+                  "SetWindowRgn(") !=
+                    std::string::npos &&
+                dragPreviewSource.find(
+                  "RGN_DIFF") !=
                     std::string::npos &&
                 dragPreviewSource.find(
                   "HWND_TOPMOST") !=
                     std::string::npos,
-            "the drag ghost must use one cached compact topmost DComp surface");
+            "the drag ghost must use one cached compact topmost DComp surface with an OLE hit-test hole");
         Check(dragLifecycleSource.find(
                   "SyncDragPreviewWindow();") !=
                     std::string::npos &&

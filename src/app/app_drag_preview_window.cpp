@@ -34,6 +34,9 @@ void DesktopApp::ResetDragPreviewCompositionResources()
     dragPreviewDcompSurface_.Reset();
     dragPreviewCompWidth_ = 0;
     dragPreviewCompHeight_ = 0;
+    dragPreviewInputHole_ = { -1, -1 };
+    dragPreviewItemIndices_.clear();
+    dragPreviewItemBounds_.clear();
     dragPreviewRenderRevision_ = 0;
     dragPreviewContentBounds_ = {};
 }
@@ -160,21 +163,24 @@ bool DesktopApp::RenderDragPreviewCompositionFrame(
 
     brushCache_.clear();
     brushCacheContext_ = context.Get();
-    const POINT current = dragSession_.CurrentPoint();
     const auto& dragItems = dragSession_.Items();
-    for (std::size_t itemIndex = 0;
-         itemIndex < dragItems.size(); ++itemIndex)
+    const std::size_t previewItemCount = std::min(
+        dragPreviewItemIndices_.size(),
+        dragPreviewItemBounds_.size());
+    for (std::size_t previewIndex = 0;
+         previewIndex < previewItemCount; ++previewIndex)
     {
+        const std::size_t itemIndex =
+            dragPreviewItemIndices_[previewIndex];
+        if (itemIndex >= dragItems.size())
+            continue;
         Item* item = dragItems[itemIndex];
         if (!item)
             continue;
-        const RECT itemBounds = item->GetBounds();
-        if (IsRectEmptyRect(itemBounds))
-            continue;
-        const RECT draggedBounds =
-            dragSession_.ResolveDraggedBounds(
-                itemIndex, itemBounds, current);
-        item->Draw(context.Get(), draggedBounds, 3);
+        item->Draw(
+            context.Get(),
+            dragPreviewItemBounds_[previewIndex],
+            3);
     }
     context->SetTransform(D2D1::Matrix3x2F::Identity());
     context.Reset();
@@ -210,9 +216,12 @@ void DesktopApp::SyncDragPreviewWindow()
         return;
     }
 
-    RECT contentBounds{};
-    bool hasContent = false;
     const POINT current = dragSession_.CurrentPoint();
+    std::size_t validItemCount = 0;
+    std::size_t firstValidIndex = dragItems.size();
+    RECT firstValidBounds{};
+    std::size_t primaryItemIndex = dragItems.size();
+    RECT primaryBounds{};
     for (std::size_t itemIndex = 0;
          itemIndex < dragItems.size(); ++itemIndex)
     {
@@ -225,27 +234,112 @@ void DesktopApp::SyncDragPreviewWindow()
         const RECT draggedBounds =
             dragSession_.ResolveDraggedBounds(
                 itemIndex, itemBounds, current);
-        if (!hasContent)
+        ++validItemCount;
+        if (firstValidIndex == dragItems.size())
         {
-            contentBounds = draggedBounds;
-            hasContent = true;
+            firstValidIndex = itemIndex;
+            firstValidBounds = draggedBounds;
         }
-        else
+        if (primaryItemIndex == dragItems.size() &&
+            PtInRect(&draggedBounds, current))
         {
-            contentBounds.left = std::min(
-                contentBounds.left, draggedBounds.left);
-            contentBounds.top = std::min(
-                contentBounds.top, draggedBounds.top);
-            contentBounds.right = std::max(
-                contentBounds.right, draggedBounds.right);
-            contentBounds.bottom = std::max(
-                contentBounds.bottom, draggedBounds.bottom);
+            primaryItemIndex = itemIndex;
+            primaryBounds = draggedBounds;
         }
     }
-    if (!hasContent)
+    if (validItemCount == 0)
     {
         HideDragPreviewWindow();
         return;
+    }
+    if (primaryItemIndex == dragItems.size())
+    {
+        primaryItemIndex = firstValidIndex;
+        primaryBounds = firstValidBounds;
+    }
+
+    dragPreviewItemIndices_.clear();
+    dragPreviewItemBounds_.clear();
+    dragPreviewItemIndices_.reserve(
+        snowdesktop::drag_visual_rules::
+            kMaximumStackedPreviewItems);
+    dragPreviewItemBounds_.reserve(
+        snowdesktop::drag_visual_rules::
+            kMaximumStackedPreviewItems);
+    if (!snowdesktop::drag_visual_rules::ShouldCompactPreview(
+            validItemCount))
+    {
+        dragPreviewItemIndices_.push_back(firstValidIndex);
+        dragPreviewItemBounds_.push_back(firstValidBounds);
+    }
+    else
+    {
+        constexpr std::size_t kMaximumSecondaryItems =
+            snowdesktop::drag_visual_rules::
+                kMaximumStackedPreviewItems - 1;
+        std::array<std::size_t,
+            kMaximumSecondaryItems> secondaryIndices{};
+        std::array<RECT,
+            kMaximumSecondaryItems> secondaryBounds{};
+        std::size_t secondaryCount = 0;
+        for (std::size_t itemIndex = 0;
+             itemIndex < dragItems.size() &&
+             secondaryCount < kMaximumSecondaryItems;
+             ++itemIndex)
+        {
+            Item* item = dragItems[itemIndex];
+            if (!item || itemIndex == primaryItemIndex)
+                continue;
+            const RECT itemBounds = item->GetBounds();
+            if (IsRectEmptyRect(itemBounds))
+                continue;
+            secondaryIndices[secondaryCount] = itemIndex;
+            secondaryBounds[secondaryCount] =
+                dragSession_.ResolveDraggedBounds(
+                    itemIndex, itemBounds, current);
+            ++secondaryCount;
+        }
+
+        for (std::size_t stackIndex = 0;
+             stackIndex < secondaryCount;
+             ++stackIndex)
+        {
+            const RECT sourceBounds =
+                secondaryBounds[stackIndex];
+            const LONG depth = static_cast<LONG>(
+                secondaryCount - stackIndex);
+            const LONG left = primaryBounds.left -
+                depth * snowdesktop::drag_visual_rules::
+                    kStackedPreviewOffset;
+            const LONG top = primaryBounds.top -
+                depth * snowdesktop::drag_visual_rules::
+                    kStackedPreviewOffset;
+            dragPreviewItemIndices_.push_back(
+                secondaryIndices[stackIndex]);
+            dragPreviewItemBounds_.push_back({
+                left,
+                top,
+                left + sourceBounds.right - sourceBounds.left,
+                top + sourceBounds.bottom - sourceBounds.top });
+        }
+        dragPreviewItemIndices_.push_back(primaryItemIndex);
+        dragPreviewItemBounds_.push_back(primaryBounds);
+    }
+
+    RECT contentBounds = dragPreviewItemBounds_.front();
+    for (std::size_t index = 1;
+         index < dragPreviewItemBounds_.size(); ++index)
+    {
+        const RECT& itemBounds =
+            dragPreviewItemBounds_[index];
+        contentBounds.left = std::min(
+            contentBounds.left, itemBounds.left);
+        contentBounds.top = std::min(
+            contentBounds.top, itemBounds.top);
+        contentBounds.right = std::max(
+            contentBounds.right, itemBounds.right);
+        contentBounds.bottom = std::max(
+            contentBounds.bottom, itemBounds.bottom);
     }
 
     // Preserve icon shadows and Dock bounce overdraw without allocating a
@@ -277,6 +371,50 @@ void DesktopApp::SyncDragPreviewWindow()
         static_cast<int>(height),
         SWP_NOACTIVATE |
             (geometryChanged ? 0 : SWP_NOSIZE));
+
+    // HTTRANSPARENT only forwards ordinary mouse messages within the UI
+    // thread; OLE selects its IDropTarget from the window under the cursor.
+    // Keep one transparent hit-test pixel out of this top-level window's
+    // region so a self drag that returns from another application continues
+    // to address the real desktop, Dock or popup target below the ghost.
+    const POINT inputHole{
+        current.x - contentBounds.left,
+        current.y - contentBounds.top };
+    if (geometryChanged ||
+        inputHole.x != dragPreviewInputHole_.x ||
+        inputHole.y != dragPreviewInputHole_.y)
+    {
+        HRGN windowRegion = CreateRectRgn(
+            0, 0,
+            static_cast<int>(width),
+            static_cast<int>(height));
+        if (windowRegion)
+        {
+            if (inputHole.x >= 0 && inputHole.y >= 0 &&
+                inputHole.x < static_cast<LONG>(width) &&
+                inputHole.y < static_cast<LONG>(height))
+            {
+                HRGN pointerHole = CreateRectRgn(
+                    inputHole.x, inputHole.y,
+                    inputHole.x + 1, inputHole.y + 1);
+                if (pointerHole)
+                {
+                    CombineRgn(
+                        windowRegion, windowRegion,
+                        pointerHole, RGN_DIFF);
+                    DeleteObject(pointerHole);
+                }
+            }
+            if (SetWindowRgn(
+                    dragPreviewHwnd_, windowRegion, FALSE))
+            {
+                // SetWindowRgn transfers ownership on success.
+                dragPreviewInputHole_ = inputHole;
+            }
+            else
+                DeleteObject(windowRegion);
+        }
+    }
 
     const bool needsRender =
         !dragPreviewDcompSurface_ ||
