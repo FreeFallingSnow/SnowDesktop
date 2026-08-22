@@ -83,11 +83,11 @@ void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
-void DesktopApp::OnMiddleButtonUp(WPARAM wp, LPARAM lp)
+void DesktopApp::OnMiddleButtonUpAt(WPARAM wp, POINT point)
 {
     if (!middleButtonWidgetMove_) return;
     middleButtonWidgetMove_ = false;
-    OnLeftButtonUp(wp, lp);
+    OnLeftButtonUpAt(wp, point);
 }
 
 void DesktopApp::OnMouseMoveAt(WPARAM wp, POINT current)

@@ -436,7 +436,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             widgetAction_ == WidgetAction::None &&
             !luaWidgetPanelMouseDown_)
             return 0;
-        OnLeftButtonUp(wp, lp);
+        OnLeftButtonUpAt(wp, pt);
         InvalidateFloatingDockWindow(true);
         return 0;
     }
@@ -448,7 +448,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             !middleButtonWidgetMove_ &&
             widgetAction_ == WidgetAction::None)
             return 0;
-        OnMiddleButtonUp(wp, lp);
+        OnMiddleButtonUpAt(wp, pt);
         return 0;
     }
     case WM_MOUSEWHEEL:

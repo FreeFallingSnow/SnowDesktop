@@ -1339,12 +1339,12 @@ private:
     void OnLeftButtonDown(WPARAM wp, LPARAM lp);
     /** @brief 清理弹窗临时按下项及所有指向它的交互裸指针。 */
     void ClearPopupMouseDownItem();
-    /** @brief 处理鼠标左键释放消息。 @param wp WPARAM @param lp LPARAM */
-    void OnLeftButtonUp(WPARAM wp, LPARAM lp);
+    /** @brief 处理鼠标左键释放消息。 @param wp WPARAM @param point 完整客户端坐标 */
+    void OnLeftButtonUpAt(WPARAM wp, POINT point);
     /** @brief 处理中键按下，在组件任意位置开始移动。 */
     void OnMiddleButtonDown(WPARAM wp, LPARAM lp);
     /** @brief 处理中键释放，完成组件移动。 */
-    void OnMiddleButtonUp(WPARAM wp, LPARAM lp);
+    void OnMiddleButtonUpAt(WPARAM wp, POINT point);
     /** @brief 处理鼠标右键释放消息（弹出上下文菜单）。 @param lp LPARAM */
     void OnRightButtonUp(LPARAM lp);
     /** @brief 处理键盘按键消息。 @return 消息是否由应用消费。 */
@@ -2557,6 +2557,11 @@ private:
      * @param mods 修饰键状态
      */
     void RefreshDragTargetAt(POINT clientPoint, int mods);
+    /**
+     * @brief 仅按给定坐标更新拖拽 point 和 target，不触发导航、提示或呈现。
+     * @note 用于 button-up/OLE Drop 的最终坐标重新命中。
+     */
+    void ResolveCurrentDragTargetAt(POINT clientPoint);
     /**
      * @brief 获取独立模式部件的框架矩形。
      * @param widget 部件引用

@@ -3054,6 +3054,9 @@ int main(int argc, char** argv)
         const std::string floatingDockSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_floating_dock_window.cpp");
+        const std::string floatingDockRenderSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_floating_dock_render.cpp");
         const std::string floatingDockInteractionSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_floating_dock_interaction.cpp");
@@ -3075,6 +3078,9 @@ int main(int argc, char** argv)
         const std::string pointerReleaseSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_pointer_release.cpp");
+        const std::string messageDispatchSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_message_dispatch.cpp");
         const std::string desktopLayoutSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_desktop_layout.cpp");
@@ -3096,6 +3102,9 @@ int main(int argc, char** argv)
         const std::string oleDropRoutingSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_ole_drop_routing.cpp");
+        const std::string dragTargetUpdateSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_drag_target_update.cpp");
         Check(floatingPopupSource.find("CreateTargetForHwnd") !=
                     std::string::npos &&
                 floatingPopupSource.find("RegisterDragDrop") !=
@@ -3295,6 +3304,112 @@ int main(int argc, char** argv)
                   "dragSession_.SetVisualVisible(false);") !=
                     std::string::npos,
             "self OLE handoff must hide the custom ghost and restore it only after re-entry");
+
+        const std::size_t resolverBegin =
+            dragTargetUpdateSource.find(
+                "void DesktopApp::ResolveCurrentDragTargetAt(");
+        const std::size_t resolverEnd =
+            dragTargetUpdateSource.find(
+                "void DesktopApp::RefreshDragTargetAt(",
+                resolverBegin);
+        const std::string finalTargetResolver =
+            resolverBegin == std::string::npos ||
+                resolverEnd == std::string::npos
+            ? std::string{}
+            : dragTargetUpdateSource.substr(
+                resolverBegin, resolverEnd - resolverBegin);
+        Check(finalTargetResolver.find(
+                  "dragSession_.UpdatePoint(clientPoint);") !=
+                    std::string::npos &&
+                finalTargetResolver.find(
+                  "ResolveInternalTarget(") !=
+                    std::string::npos &&
+                finalTargetResolver.find(
+                  "ResolveExternalTarget(") !=
+                    std::string::npos &&
+                finalTargetResolver.find(
+                  "dragSession_.UpdateTarget(") !=
+                    std::string::npos,
+            "final-point resolution must update both point and target for native and external transports");
+        Check(finalTargetResolver.find("UpdateDragPageNavigation(") ==
+                    std::string::npos &&
+                finalTargetResolver.find("Dwell") ==
+                    std::string::npos &&
+                finalTargetResolver.find("ShowDragHintWindow") ==
+                    std::string::npos &&
+                finalTargetResolver.find("Present") ==
+                    std::string::npos &&
+                finalTargetResolver.find("DoDragDrop") ==
+                    std::string::npos,
+            "final-point resolution must not trigger navigation, dwell, hint, presentation, or a new OLE loop");
+
+        const std::size_t releaseBegin =
+            pointerReleaseSource.find(
+                "void DesktopApp::OnLeftButtonUpAt(");
+        const std::size_t releaseEnd =
+            pointerReleaseSource.find("\n}", releaseBegin);
+        const std::string releaseHandler =
+            releaseBegin == std::string::npos ||
+                releaseEnd == std::string::npos
+            ? std::string{}
+            : pointerReleaseSource.substr(
+                releaseBegin, releaseEnd - releaseBegin);
+        const std::size_t clickRelease = releaseHandler.find(
+            "HandleDockClickRelease(upPoint)");
+        const std::size_t externalRelease = releaseHandler.find(
+            "IsExternalDropWindowAt(upPoint)");
+        const std::size_t finalReleaseResolve = releaseHandler.find(
+            "ResolveCurrentDragTargetAt(upPoint);");
+        const std::size_t dockRemoval = releaseHandler.find(
+            "GetDockDragOutRemovalHint(upPoint)");
+        const std::size_t deactivateDrop = releaseHandler.find(
+            "dragSession_.DeactivateForDrop();");
+        Check(clickRelease != std::string::npos &&
+                externalRelease != std::string::npos &&
+                finalReleaseResolve != std::string::npos &&
+                dockRemoval != std::string::npos &&
+                deactivateDrop != std::string::npos &&
+                clickRelease < externalRelease &&
+                externalRelease < finalReleaseResolve &&
+                finalReleaseResolve < dockRemoval &&
+                dockRemoval < deactivateDrop,
+            "native release must reject an external endpoint and re-hit the final point before removal or commit");
+        Check(releaseHandler.find("GET_X_LPARAM") ==
+                    std::string::npos &&
+                messageDispatchSource.find(
+                  "OnLeftButtonUpAt(wp, pt);") !=
+                    std::string::npos &&
+                floatingDockRenderSource.find(
+                  "wp, desktopPoint());") !=
+                    std::string::npos &&
+                floatingPopupSource.find(
+                  "OnLeftButtonUpAt(wp, desktopPoint());") !=
+                    std::string::npos,
+            "button-up endpoints must preserve full POINT coordinates across every desktop surface");
+
+        const std::size_t oleDropBegin =
+            oleDropSessionSource.find(
+                "HRESULT DesktopApp::HandleOleDrop(");
+        const std::string oleDropHandler =
+            oleDropBegin == std::string::npos
+            ? std::string{}
+            : oleDropSessionSource.substr(oleDropBegin);
+        const std::size_t oleClientPoint = oleDropHandler.find(
+            "ScreenPointToClient(point)");
+        const std::size_t oleFinalResolve = oleDropHandler.find(
+            "ResolveCurrentDragTargetAt(clientPoint);");
+        const std::size_t oleBlocked = oleDropHandler.find(
+            "if (dragSession_.TargetRegion() == HitRegion::Blocked)");
+        const std::size_t oleEndExternal = oleDropHandler.find(
+            "dragDropController_.EndExternalDrag();");
+        Check(oleClientPoint != std::string::npos &&
+                oleFinalResolve != std::string::npos &&
+                oleBlocked != std::string::npos &&
+                oleEndExternal != std::string::npos &&
+                oleClientPoint < oleFinalResolve &&
+                oleFinalResolve < oleBlocked &&
+                oleBlocked < oleEndExternal,
+            "OLE Drop must re-hit its authoritative POINTL before blocked handling or ending transport state");
     }
 
     if (failures == 0)

@@ -399,15 +399,27 @@ HRESULT DesktopApp::HandleOleDrop(
     navAutoFlipDir_ = 0;
     navAutoFlipTick_ = 0;
 
+    POINT clientPoint = ScreenPointToClient(point);
+    ResolveCurrentDragTargetAt(clientPoint);
+
     if (dragSession_.TargetRegion() == HitRegion::Blocked)
     {
-        dragDropController_.EndExternalDrag();
+        if (dragDropController_.IsSelfDragActive())
+        {
+            dragDropController_.MarkSelfDragReturned();
+            dragDropController_.EndSelfDrag();
+        }
+        else
+        {
+            dragDropController_.EndExternalDrag();
+        }
+        mouseDown_ = false;
+        mouseDownHit_ = nullptr;
+        ReleaseCapture();
         *effect = DROPEFFECT_NONE;
         EndDragSession();
         return S_OK;
     }
-
-    POINT clientPoint = ScreenPointToClient(point);
 
     if (dragDropController_.IsSelfDragActive())
     {

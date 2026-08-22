@@ -4,7 +4,7 @@
 
 // Drag-target resolution, popup hit testing and page-navigation dwell.
 
-void DesktopApp::RefreshDragTargetAt(POINT clientPoint, int mods)
+void DesktopApp::ResolveCurrentDragTargetAt(POINT clientPoint)
 {
     if (!dragSession_.IsActive()) return;
 
@@ -13,42 +13,75 @@ void DesktopApp::RefreshDragTargetAt(POINT clientPoint, int mods)
     Container* targetContainer = nullptr;
     Slot* targetSlot = nullptr;
     HitRegion targetRegion = HitRegion::None;
-    const bool suppressDesktopWidgetTargets =
-        SuppressDesktopWidgetDragTargets();
-    const bool groupedEntryDrag =
-        dragSession_.SourceList().
-            hasCollectionGroupEntries ||
-        dragSession_.SourceList().
-            hasFileGroupEntries;
-    const bool popupHit =
-        !suppressDesktopWidgetTargets &&
-        !groupedEntryDrag &&
-        HitTestPopupForDrag(clientPoint, targetContainer, targetSlot, targetRegion);
-
-    if (!popupHit && !targetContainer)
+    if (dragDropController_.IsExternalDragActive())
     {
-        const DragTargetResolution resolved =
-            dragDropController_.ResolveInternalTarget(
-                containers_, clientPoint,
-                [&](const Container& candidate) {
-                    if (desktopIconsHidden_ &&
-                        !IsRetainedContainer(&candidate))
-                        return false;
-                    return !suppressDesktopWidgetTargets ||
-                        (!dynamic_cast<const DesktopGrid*>(&candidate) &&
-                         !dynamic_cast<const WidgetContainer*>(&candidate));
-                });
-        targetContainer = resolved.container;
-        targetSlot = resolved.slot;
-        targetRegion = resolved.region;
+        if (!HitTestPopupForDrag(
+                clientPoint, targetContainer,
+                targetSlot, targetRegion))
+        {
+            const DragTargetResolution resolved =
+                dragDropController_.ResolveExternalTarget(
+                    containers_, clientPoint,
+                    [&](const Container& candidate) {
+                        return !desktopIconsHidden_ ||
+                            IsRetainedContainer(&candidate);
+                    });
+            targetContainer = resolved.container;
+            targetSlot = resolved.slot;
+            targetRegion = resolved.region;
+        }
+    }
+    else
+    {
+        const bool suppressDesktopWidgetTargets =
+            SuppressDesktopWidgetDragTargets();
+        const bool groupedEntryDrag =
+            dragSession_.SourceList().
+                hasCollectionGroupEntries ||
+            dragSession_.SourceList().
+                hasFileGroupEntries;
+        const bool popupHit =
+            !suppressDesktopWidgetTargets &&
+            !groupedEntryDrag &&
+            HitTestPopupForDrag(
+                clientPoint, targetContainer,
+                targetSlot, targetRegion);
+        if (!popupHit)
+        {
+            const DragTargetResolution resolved =
+                dragDropController_.ResolveInternalTarget(
+                    containers_, clientPoint,
+                    [&](const Container& candidate) {
+                        if (desktopIconsHidden_ &&
+                            !IsRetainedContainer(&candidate))
+                            return false;
+                        return !suppressDesktopWidgetTargets ||
+                            (!dynamic_cast<const DesktopGrid*>(&candidate) &&
+                             !dynamic_cast<const WidgetContainer*>(&candidate));
+                    });
+            targetContainer = resolved.container;
+            targetSlot = resolved.slot;
+            targetRegion = resolved.region;
+        }
     }
 
     dragSession_.UpdateTarget(targetContainer, targetSlot, targetRegion);
+}
+
+void DesktopApp::RefreshDragTargetAt(POINT clientPoint, int mods)
+{
+    if (!dragSession_.IsActive()) return;
+
+    ResolveCurrentDragTargetAt(clientPoint);
 
     std::wstring hint;
-    if (targetContainer && targetRegion != HitRegion::None)
-        hint = targetContainer->GetDragHint(targetSlot, targetRegion,
+    if (dragSession_.TargetContainer() &&
+        dragSession_.TargetRegion() != HitRegion::None)
+    {
+        hint = dragSession_.TargetContainer()->GetDragHint(
+            dragSession_.TargetSlot(), dragSession_.TargetRegion(),
             dragSession_.Items(), dragSession_.Source(), mods);
+    }
     ShowDragHintWindow(clientPoint, hint);
     InvalidateFloatingDockWindow(true);
 }

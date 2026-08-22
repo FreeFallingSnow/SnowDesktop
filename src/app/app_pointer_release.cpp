@@ -701,11 +701,10 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
     return true;
 }
 
-void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
+void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
 {
     if (middleButtonWidgetMove_) return;
     (void)wp;
-    POINT upPoint{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     int dropPreviewMods = 0;
     bool commitVisualBeforeDrop = false;
     HideDragHintWindow();
@@ -1126,6 +1125,16 @@ void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
     // Dock 项轻微拖动后仍落回原项时，按单击处理而不是吞掉本次操作。
     if (HandleDockClickRelease(upPoint))
         goto cleanup;
+
+    if (IsExternalDropWindowAt(upPoint))
+    {
+        dragSession_.UpdatePoint(upPoint);
+        dragSession_.UpdateTarget(
+            nullptr, nullptr, HitRegion::None);
+        goto cleanup;
+    }
+
+    ResolveCurrentDragTargetAt(upPoint);
 
     if (!GetDockDragOutRemovalHint(upPoint).empty())
     {

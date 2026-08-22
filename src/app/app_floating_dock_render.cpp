@@ -222,8 +222,8 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         return 0;
     case WM_LBUTTONUP:
         handlingFloatingDockInput_ = true;
-        OnLeftButtonUp(
-            wp, desktopLParam());
+        OnLeftButtonUpAt(
+            wp, desktopPoint());
         handlingFloatingDockInput_ = false;
         UpdateFloatingDockWindowBounds();
         InvalidateFloatingDockWindow(true);
@@ -236,7 +236,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         OnMiddleButtonDown(wp, desktopLParam());
         return 0;
     case WM_MBUTTONUP:
-        OnMiddleButtonUp(wp, desktopLParam());
+        OnMiddleButtonUpAt(wp, desktopPoint());
         return 0;
     case WM_RBUTTONUP:
         OnRightButtonUp(desktopLParam());

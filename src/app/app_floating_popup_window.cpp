@@ -884,7 +884,7 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         return 0;
     case WM_LBUTTONUP:
         handlingFloatingPopupInput_ = true;
-        OnLeftButtonUp(wp, desktopLParam());
+        OnLeftButtonUpAt(wp, desktopPoint());
         handlingFloatingPopupInput_ = false;
         UpdateFloatingPopupWindowBounds();
         return 0;
@@ -902,7 +902,7 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         OnMiddleButtonDown(wp, desktopLParam());
         return 0;
     case WM_MBUTTONUP:
-        OnMiddleButtonUp(wp, desktopLParam());
+        OnMiddleButtonUpAt(wp, desktopPoint());
         return 0;
     case WM_RBUTTONUP:
         OnRightButtonUp(desktopLParam());
