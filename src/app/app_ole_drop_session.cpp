@@ -307,7 +307,8 @@ HRESULT DesktopApp::HandleOleDrop(
         if (dragDropController_.IsSelfDragActive())
         {
             dragDropController_.MarkSelfDragReturned();
-            dragDropController_.EndSelfDrag();
+            // The DoDragDrop owner ends SelfOle only after this callback has
+            // returned, keeping nested reload/model guards active meanwhile.
         }
         else
         {
@@ -339,9 +340,11 @@ HRESULT DesktopApp::HandleOleDrop(
                      dockFolderPopupTarget) &&
                     dockFolderPopupOpen_)
                     RefreshDockFolderPopup();
-            };
+        };
         dragDropController_.MarkSelfDragReturned();
-        dragDropController_.EndSelfDrag();
+        // SelfOle is owned by the surrounding DoDragDrop call. Retain that
+        // transport through every synchronous Drop callback and unwind it at
+        // the single outer call site after the Shell has released the stack.
         mouseDown_ = false;
         mouseDownHit_ = nullptr;
         ReleaseCapture();

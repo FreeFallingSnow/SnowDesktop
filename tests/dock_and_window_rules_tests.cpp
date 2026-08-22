@@ -4352,10 +4352,16 @@ int main(int argc, char** argv)
         const std::size_t oleDropBegin =
             oleDropSessionSource.find(
                 "HRESULT DesktopApp::HandleOleDrop(");
+        const std::size_t oleDropEnd =
+            oleDropSessionSource.find(
+                "HRESULT DesktopApp::HandleOleQueryContinueDrag(",
+                oleDropBegin);
         const std::string oleDropHandler =
-            oleDropBegin == std::string::npos
+            oleDropBegin == std::string::npos ||
+                oleDropEnd == std::string::npos
             ? std::string{}
-            : oleDropSessionSource.substr(oleDropBegin);
+            : oleDropSessionSource.substr(
+                oleDropBegin, oleDropEnd - oleDropBegin);
         const std::size_t oleClientPoint = oleDropHandler.find(
             "ScreenPointToClient(point)");
         const std::size_t oleFinalResolve = oleDropHandler.find(
@@ -4372,6 +4378,19 @@ int main(int argc, char** argv)
                 oleFinalResolve < oleBlocked &&
                 oleBlocked < oleEndExternal,
             "OLE Drop must re-hit its authoritative POINTL before blocked handling or ending transport state");
+        const std::size_t outerEndSelf =
+            pointerMoveSource.find(
+                "dragDropController_.EndSelfDrag();",
+                doDragDrop);
+        Check(oleDropHandler.find(
+                  "dragDropController_.MarkSelfDragReturned();") !=
+                    std::string::npos &&
+                oleDropHandler.find(
+                  "dragDropController_.EndSelfDrag();") ==
+                    std::string::npos &&
+                outerEndSelf != std::string::npos &&
+                doDragDrop < outerEndSelf,
+            "self Drop callbacks must retain OLE transport ownership until the outer DoDragDrop call unwinds");
     }
 
     if (failures == 0)
