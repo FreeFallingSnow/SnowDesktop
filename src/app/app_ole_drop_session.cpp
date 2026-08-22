@@ -1156,30 +1156,10 @@ HRESULT DesktopApp::HandleOleQueryContinueDrag(
         dragDropController_.IsSelfDragActive() &&
         dragDropController_.SelfDragReturned() &&
         TryGetNativeDragResumePointFromCursor(desktopPoint);
-    const auto action = snowdesktop::ole_drag_rules::
-        SelectQueryContinueDragAction(
-            escapePressed != FALSE,
-            (keyState & MK_LBUTTON) != 0,
-            dragDropController_.IsSelfDragActive(),
-            dragDropController_.SelfDragReturned(),
-            pointerOnDesktopSurface);
-    switch (action)
-    {
-    case snowdesktop::ole_drag_rules::
-            QueryContinueDragAction::Cancel:
-        return DRAGDROP_S_CANCEL;
-    case snowdesktop::ole_drag_rules::
-            QueryContinueDragAction::Drop:
-        return DRAGDROP_S_DROP;
-    case snowdesktop::ole_drag_rules::
-            QueryContinueDragAction::ResumeNative:
-        dragDropController_.RequestSelfDragNativeResume();
-        return DRAGDROP_S_CANCEL;
-    case snowdesktop::ole_drag_rules::
-            QueryContinueDragAction::ContinueOle:
-    default:
-        return S_OK;
-    }
+    return dragDropController_.QueryContinueSelfDrag(
+        escapePressed != FALSE,
+        (keyState & MK_LBUTTON) != 0,
+        pointerOnDesktopSurface);
 }
 
 /**

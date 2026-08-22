@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+
 namespace snowdesktop::drag_input_rules
 {
 constexpr bool IsNativeDragActive(
@@ -59,5 +61,42 @@ constexpr bool ShouldCoalesceQueuedMouseMove(
     // The caller only inspects the queue head. This preserves ordering with
     // button, key, timer and window messages while dropping superseded points.
     return nativeDragActive && sameWindow && nextMessageIsMouseMove;
+}
+
+template <typename Message, typename PeekNext, typename RemoveNext,
+    typename SameWindow, typename IsMouseMove>
+std::size_t CoalesceQueuedMouseMoves(
+    bool nativeDragActive,
+    bool nativeDragMessageSurface,
+    Message& current,
+    PeekNext&& peekNext,
+    RemoveNext&& removeNext,
+    SameWindow&& sameWindow,
+    IsMouseMove&& isMouseMove)
+{
+    if (!ShouldStartQueuedMouseMoveCoalescing(
+            nativeDragActive,
+            nativeDragMessageSurface,
+            isMouseMove(current)))
+    {
+        return 0;
+    }
+
+    std::size_t coalesced = 0;
+    Message next{};
+    while (peekNext(next))
+    {
+        if (!ShouldCoalesceQueuedMouseMove(
+                nativeDragActive,
+                sameWindow(current, next),
+                isMouseMove(next)))
+        {
+            break;
+        }
+        if (!removeNext(current))
+            break;
+        ++coalesced;
+    }
+    return coalesced;
 }
 }

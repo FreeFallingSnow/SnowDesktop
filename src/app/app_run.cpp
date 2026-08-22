@@ -1050,31 +1050,27 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                             msg.hwnd == floatingDockHwnd_,
                         floatingPopupHwnd_ != nullptr &&
                             msg.hwnd == floatingPopupHwnd_);
-            if (snowdesktop::drag_input_rules::
-                    ShouldStartQueuedMouseMoveCoalescing(
-                        nativeDragActive,
-                        nativeDragMessageSurface,
-                        msg.message == WM_MOUSEMOVE))
-            {
-                MSG next{};
-                while (PeekMessageW(
-                    &next, nullptr, 0, 0, PM_NOREMOVE))
-                {
-                    if (!snowdesktop::drag_input_rules::
-                            ShouldCoalesceQueuedMouseMove(
-                                nativeDragActive,
-                                next.hwnd == msg.hwnd,
-                                next.message == WM_MOUSEMOVE))
-                    {
-                        break;
-                    }
-                    if (!PeekMessageW(
-                        &msg, nullptr, 0, 0, PM_REMOVE))
-                    {
-                        break;
-                    }
-                }
-            }
+            snowdesktop::drag_input_rules::
+                CoalesceQueuedMouseMoves(
+                    nativeDragActive,
+                    nativeDragMessageSurface,
+                    msg,
+                    [](MSG& next) {
+                        return PeekMessageW(
+                            &next, nullptr, 0, 0,
+                            PM_NOREMOVE) != FALSE;
+                    },
+                    [](MSG& next) {
+                        return PeekMessageW(
+                            &next, nullptr, 0, 0,
+                            PM_REMOVE) != FALSE;
+                    },
+                    [](const MSG& left, const MSG& right) {
+                        return left.hwnd == right.hwnd;
+                    },
+                    [](const MSG& message) {
+                        return message.message == WM_MOUSEMOVE;
+                    });
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
             // Pointer-driven desktop/Dock pixels must enter their own DComp

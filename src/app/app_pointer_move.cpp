@@ -4,6 +4,7 @@
 #include "../widget_composition_layer_rules.h"
 #include "../widget_visibility_rules.h"
 #include "../widget_scroll_rules.h"
+#include "../ole_drag_rules.h"
 
 // Middle-button behavior and pointer-move drag updates.
 
@@ -766,30 +767,36 @@ void DesktopApp::OnMouseMoveAt(WPARAM wp, POINT current)
                         dragDropController_.
                             SelfDragNativeResumeRequested();
                     dragDropController_.EndSelfDrag();
-                    if (!nativeResumeRequested)
-                        break;
-
                     POINT resumePoint{};
                     const bool overDesktopSurface =
+                        nativeResumeRequested &&
                         TryGetNativeDragResumePointFromCursor(
                             resumePoint);
                     const bool primaryButtonDown =
+                        nativeResumeRequested &&
                         (GetAsyncKeyState(VK_LBUTTON) &
                             0x8000) != 0;
-                    if (!overDesktopSurface)
+                    const auto unwindAction =
+                        snowdesktop::ole_drag_rules::
+                            SelectSelfOleUnwindAction(
+                                nativeResumeRequested,
+                                overDesktopSurface,
+                                primaryButtonDown,
+                                dragSession_.IsActive() &&
+                                    !dragSession_.Items().empty());
+                    if (unwindAction == snowdesktop::
+                            ole_drag_rules::SelfOleUnwindAction::
+                                RestartOle)
                     {
                         // The pointer can cross the boundary again while OLE
                         // is unwinding. If the initiating button is still
                         // held, immediately give ownership back to a fresh OLE
                         // loop so an external release cannot be lost.
-                        if (primaryButtonDown &&
-                            dragSession_.IsActive() &&
-                            !dragSession_.Items().empty())
-                            continue;
-                        break;
+                        continue;
                     }
-                    if (!dragSession_.IsActive() ||
-                        dragSession_.Items().empty())
+                    if (unwindAction == snowdesktop::
+                            ole_drag_rules::SelfOleUnwindAction::
+                                FinishOle)
                         break;
 
                     // DoDragDrop has fully unwound at this point. Release its
@@ -803,7 +810,9 @@ void DesktopApp::OnMouseMoveAt(WPARAM wp, POINT current)
                     }
                     dataObj.Reset();
                     SetCursor(LoadCursorW(nullptr, IDC_ARROW));
-                    if (primaryButtonDown)
+                    if (unwindAction == snowdesktop::
+                            ole_drag_rules::SelfOleUnwindAction::
+                                ResumeNativeHeld)
                     {
                         const bool restoreFloatingDockCapture =
                             nativeCaptureHwnd ==

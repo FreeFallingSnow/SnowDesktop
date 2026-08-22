@@ -10,9 +10,12 @@
 #include "app/rename_controller.h"
 #include "app/selection_controller.h"
 #include "app/tray_icon_controller.h"
+#include "drag_input_rules.h"
+#include "ole_drag_rules.h"
 
 #include <algorithm>
 #include <cstdint>
+#include <deque>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -1110,6 +1113,199 @@ void TestDragDropControllerOwnsTransportTransitions()
         "ending external transport must clear transient ingress metadata");
 }
 
+void TestQueuedNativeDragMovesCoalesceAtOrderingBarriers()
+{
+    ContractContainer source(
+        BarStyle::VBar,
+        snowdesktop::slot_contract::SlotSurfaceKind::Desktop);
+    ContractItem item(RECT{0, 0, 40, 40});
+    DragSourceList sourceList;
+    sourceList.BindRuntimeOrigin(&source);
+    sourceList.hasDesktopIcons = true;
+
+    DragSession session;
+    session.Begin(
+        &source, {&item}, std::move(sourceList),
+        POINT{}, POINT{});
+    DragDropController controller(session);
+    const bool nativeDragActive =
+        snowdesktop::drag_input_rules::IsNativeDragActive(
+            session.IsActive(), controller.IsTransportActive());
+
+    const HWND mainWindow = reinterpret_cast<HWND>(
+        static_cast<std::uintptr_t>(1));
+    const HWND floatingDock = reinterpret_cast<HWND>(
+        static_cast<std::uintptr_t>(2));
+    const HWND floatingPopup = reinterpret_cast<HWND>(
+        static_cast<std::uintptr_t>(3));
+    std::deque<MSG> queue;
+    LPARAM moveOrdinal = 0;
+    const auto appendMoves = [&](HWND window, int count) {
+        for (int index = 0; index < count; ++index)
+        {
+            MSG message{};
+            message.hwnd = window;
+            message.message = WM_MOUSEMOVE;
+            message.lParam = moveOrdinal++;
+            queue.push_back(message);
+        }
+    };
+    const auto appendBarrier = [&](HWND window, UINT kind, LPARAM token) {
+        MSG message{};
+        message.hwnd = window;
+        message.message = kind;
+        message.lParam = token;
+        queue.push_back(message);
+    };
+
+    appendMoves(mainWindow, 4000);
+    appendBarrier(mainWindow, WM_TIMER, -1);
+    appendMoves(mainWindow, 3000);
+    appendBarrier(mainWindow, WM_KEYDOWN, -2);
+    queue.back().wParam = VK_ESCAPE;
+    appendMoves(floatingDock, 2000);
+    appendMoves(floatingPopup, 1000);
+    appendBarrier(floatingPopup, WM_LBUTTONUP, -3);
+
+    std::vector<MSG> dispatched;
+    std::size_t coalesced = 0;
+    while (!queue.empty())
+    {
+        MSG current = queue.front();
+        queue.pop_front();
+        const bool nativeSurface =
+            snowdesktop::drag_input_rules::
+                IsNativeDragMessageSurface(
+                    current.hwnd == mainWindow,
+                    current.hwnd == floatingDock,
+                    current.hwnd == floatingPopup);
+        coalesced += snowdesktop::drag_input_rules::
+            CoalesceQueuedMouseMoves(
+                nativeDragActive,
+                nativeSurface,
+                current,
+                [&](MSG& next) {
+                    if (queue.empty()) return false;
+                    next = queue.front();
+                    return true;
+                },
+                [&](MSG& next) {
+                    if (queue.empty()) return false;
+                    next = queue.front();
+                    queue.pop_front();
+                    return true;
+                },
+                [](const MSG& left, const MSG& right) {
+                    return left.hwnd == right.hwnd;
+                },
+                [](const MSG& message) {
+                    return message.message == WM_MOUSEMOVE;
+                });
+        dispatched.push_back(current);
+    }
+
+    Check(nativeDragActive && moveOrdinal == 10000 &&
+            coalesced == 9996 && dispatched.size() == 7,
+        "a long native drag queue must collapse 10000 moves to one move per ordered segment");
+    Check(dispatched.size() == 7 &&
+            dispatched[0].message == WM_MOUSEMOVE &&
+            dispatched[0].hwnd == mainWindow &&
+            dispatched[0].lParam == 3999 &&
+            dispatched[1].message == WM_TIMER &&
+            dispatched[2].message == WM_MOUSEMOVE &&
+            dispatched[2].lParam == 6999 &&
+            dispatched[3].message == WM_KEYDOWN &&
+            dispatched[3].wParam == VK_ESCAPE &&
+            dispatched[4].message == WM_MOUSEMOVE &&
+            dispatched[4].hwnd == floatingDock &&
+            dispatched[4].lParam == 8999 &&
+            dispatched[5].message == WM_MOUSEMOVE &&
+            dispatched[5].hwnd == floatingPopup &&
+            dispatched[5].lParam == 9999 &&
+            dispatched[6].message == WM_LBUTTONUP,
+        "move coalescing must preserve timer, Escape, cross-window, and button-up ordering barriers");
+}
+
+void TestSelfOleReturnCancelsTransportBeforeNativeResume()
+{
+    using snowdesktop::ole_drag_rules::SelfOleUnwindAction;
+    using snowdesktop::ole_drag_rules::SelectSelfOleUnwindAction;
+
+    ContractContainer source(
+        BarStyle::VBar,
+        snowdesktop::slot_contract::SlotSurfaceKind::Desktop);
+    ContractItem item(RECT{0, 0, 40, 40});
+    DragSourceList sourceList;
+    sourceList.BindRuntimeOrigin(&source);
+    sourceList.hasDesktopIcons = true;
+    DragSession session;
+    session.Begin(
+        &source, {&item}, std::move(sourceList),
+        POINT{}, POINT{});
+    DragDropController controller(session);
+
+    controller.BeginSelfDrag();
+    controller.MarkSelfDragReturned();
+    const HRESULT heldReturn = controller.QueryContinueSelfDrag(
+        false, true, true);
+    Check(heldReturn == DRAGDROP_S_CANCEL &&
+            controller.SelfDragNativeResumeRequested() &&
+            SelectSelfOleUnwindAction(
+                true, true, true, true) ==
+                SelfOleUnwindAction::ResumeNativeHeld,
+        "an internal return with the button held must cancel OLE and latch native resume");
+    controller.EndSelfDrag();
+    Check(!controller.IsTransportActive() &&
+            snowdesktop::drag_input_rules::IsNativeDragActive(
+                session.IsActive(), controller.IsTransportActive()),
+        "native input must become eligible only after self OLE transport has ended");
+
+    controller.BeginSelfDrag();
+    controller.MarkSelfDragReturned();
+    const HRESULT releasedReturn = controller.QueryContinueSelfDrag(
+        false, false, true);
+    Check(releasedReturn == DRAGDROP_S_CANCEL &&
+            controller.SelfDragNativeResumeRequested() &&
+            SelectSelfOleUnwindAction(
+                true, true, false, true) ==
+                SelfOleUnwindAction::ReleaseNative,
+        "a button release during internal return must cancel OLE before one native release");
+
+    controller.BeginSelfDrag();
+    controller.MarkSelfDragReturned();
+    const HRESULT escaped = controller.QueryContinueSelfDrag(
+        true, true, true);
+    Check(escaped == DRAGDROP_S_CANCEL &&
+            !controller.SelfDragNativeResumeRequested() &&
+            SelectSelfOleUnwindAction(
+                false, true, true, true) ==
+                SelfOleUnwindAction::FinishOle,
+        "Escape must cancel OLE without latching a native resume or release");
+
+    controller.BeginSelfDrag();
+    controller.MarkSelfDragReturned();
+    controller.ClearSelfDragReturned();
+    Check(controller.QueryContinueSelfDrag(
+              false, true, true) == S_OK &&
+            !controller.SelfDragNativeResumeRequested(),
+        "a cleared transient return must continue OLE instead of resuming native input");
+    Check(controller.QueryContinueSelfDrag(
+              false, false, false) == DRAGDROP_S_DROP &&
+            !controller.SelfDragNativeResumeRequested(),
+        "a release outside SnowDesktop must remain an OLE drop");
+
+    Check(SelectSelfOleUnwindAction(
+              true, false, true, true) ==
+                SelfOleUnwindAction::RestartOle &&
+            SelectSelfOleUnwindAction(
+              true, false, false, true) ==
+                SelfOleUnwindAction::FinishOle &&
+            SelectSelfOleUnwindAction(
+              true, true, true, false) ==
+                SelfOleUnwindAction::FinishOle,
+        "OLE unwind must restart only for an active held gesture that crossed outside again");
+}
+
 void TestOleAdapterOwnsComBoundary()
 {
     FakeOleDragDropHandler handler;
@@ -1314,6 +1510,8 @@ int main()
     TestEveryDragSourceSurvivesPageTurnRebindMatrix();
     TestDragTargetResolutionUsesContractAndZOrder();
     TestDragDropControllerOwnsTransportTransitions();
+    TestQueuedNativeDragMovesCoalesceAtOrderingBarriers();
+    TestSelfOleReturnCancelsTransportBeforeNativeResume();
     TestOleAdapterOwnsComBoundary();
     TestTrayCallbackClassification();
     TestSelectionControllerCoversEveryRegisteredRange();

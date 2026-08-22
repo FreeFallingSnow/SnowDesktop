@@ -31,6 +31,10 @@ public:
     void MarkSelfDragReturned();
     void ClearSelfDragReturned();
     void RequestSelfDragNativeResume();
+    HRESULT QueryContinueSelfDrag(
+        bool escapePressed,
+        bool primaryButtonDown,
+        bool pointerOnDesktopSurface);
     void EndSelfDrag();
     bool IsSelfDragActive() const;
     bool SelfDragReturned() const;

@@ -1,4 +1,5 @@
 #include "drag_drop_controller.h"
+#include "../ole_drag_rules.h"
 
 #include <algorithm>
 #include <utility>
@@ -32,6 +33,34 @@ void DragDropController::RequestSelfDragNativeResume()
         selfDragReturned_)
     {
         selfDragNativeResumeRequested_ = true;
+    }
+}
+
+HRESULT DragDropController::QueryContinueSelfDrag(
+    bool escapePressed,
+    bool primaryButtonDown,
+    bool pointerOnDesktopSurface)
+{
+    using snowdesktop::ole_drag_rules::QueryContinueDragAction;
+    const auto action = snowdesktop::ole_drag_rules::
+        SelectQueryContinueDragAction(
+            escapePressed,
+            primaryButtonDown,
+            IsSelfDragActive(),
+            SelfDragReturned(),
+            pointerOnDesktopSurface);
+    switch (action)
+    {
+    case QueryContinueDragAction::Cancel:
+        return DRAGDROP_S_CANCEL;
+    case QueryContinueDragAction::Drop:
+        return DRAGDROP_S_DROP;
+    case QueryContinueDragAction::ResumeNative:
+        RequestSelfDragNativeResume();
+        return DRAGDROP_S_CANCEL;
+    case QueryContinueDragAction::ContinueOle:
+    default:
+        return S_OK;
     }
 }
 

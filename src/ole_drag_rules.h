@@ -18,6 +18,14 @@ enum class QueryContinueDragAction
     ResumeNative,
 };
 
+enum class SelfOleUnwindAction
+{
+    FinishOle,
+    RestartOle,
+    ResumeNativeHeld,
+    ReleaseNative,
+};
+
 constexpr bool IsExternalDropSurface(
     bool hasHitWindow,
     bool isDesktopInteractionSurface,
@@ -56,6 +64,25 @@ constexpr QueryContinueDragAction SelectQueryContinueDragAction(
     if (!primaryButtonDown)
         return QueryContinueDragAction::Drop;
     return QueryContinueDragAction::ContinueOle;
+}
+
+constexpr SelfOleUnwindAction SelectSelfOleUnwindAction(
+    bool nativeResumeRequested,
+    bool pointerOnDesktopSurface,
+    bool primaryButtonDown,
+    bool gestureActive) noexcept
+{
+    if (!nativeResumeRequested || !gestureActive)
+        return SelfOleUnwindAction::FinishOle;
+    if (!pointerOnDesktopSurface)
+    {
+        return primaryButtonDown
+            ? SelfOleUnwindAction::RestartOle
+            : SelfOleUnwindAction::FinishOle;
+    }
+    return primaryButtonDown
+        ? SelfOleUnwindAction::ResumeNativeHeld
+        : SelfOleUnwindAction::ReleaseNative;
 }
 
 } // namespace snowdesktop::ole_drag_rules
