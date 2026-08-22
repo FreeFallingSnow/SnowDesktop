@@ -872,7 +872,8 @@ void DesktopApp::OnMouseMoveAt(
                 // can retain Shell drag UI before any reload or layout work.
                 dataObj.Reset();
                 POINT finishedOlePoint{};
-                if (TryGetNativeDragResumePointFromCursor(
+                if (dragDropController_.SelfDragReturned() ||
+                    TryGetNativeDragResumePointFromCursor(
                         finishedOlePoint))
                 {
                     SetCursor(LoadCursorW(nullptr, IDC_ARROW));
