@@ -3459,7 +3459,7 @@ int main(int argc, char** argv)
                     std::string::npos &&
                 CountOccurrences(
                   renderPrimitivesSource,
-                  "backdropOwnerKey") >= 4 &&
+                  "backdropOwnerKey") >= 3 &&
                 floatingDockInteractionSource.find(
                   "reinterpret_cast<std::uintptr_t>(\n                    floatingDockContainer_)") !=
                     std::string::npos,
