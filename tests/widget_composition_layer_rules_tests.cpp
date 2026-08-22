@@ -73,6 +73,23 @@ int main(int argc, char** argv)
                 PointerVisualLayer::Widget),
         "only shared overlay feedback belongs to the foreground surface");
 
+    Check(!rules::ShouldDeferWidgetSurfaceDraw(false, false, false) &&
+            rules::ShouldDeferWidgetSurfaceDraw(true, false, false) &&
+            rules::ShouldDeferWidgetSurfaceDraw(false, true, false) &&
+            rules::ShouldDeferWidgetSurfaceDraw(false, false, true),
+        "a widget child surface must wait for every host surface to leave BeginDraw");
+    Check(rules::SurfaceIncludesDesktop("") &&
+            rules::SurfaceIncludesDesktop("desktop") &&
+            !rules::SurfaceIncludesDesktop("panel") &&
+            !rules::SurfaceIncludesDesktop("popover"),
+        "auxiliary-surface invalidation must not redraw the desktop widget surface");
+    Check(rules::SurfaceIncludesAuxiliary("") &&
+            rules::SurfaceIncludesAuxiliary("panel") &&
+            rules::SurfaceIncludesAuxiliary("dialog") &&
+            rules::SurfaceIncludesAuxiliary("popover") &&
+            !rules::SurfaceIncludesAuxiliary("desktop"),
+        "desktop-only invalidation must not redraw an auxiliary surface");
+
     Check(argc == 2, "source root argument is provided");
     if (argc == 2)
     {
@@ -101,6 +118,9 @@ int main(int argc, char** argv)
         const std::string floatingDock = ReadFile(
             root / "src" / "app" /
                 "app_floating_dock_window.cpp");
+        const std::string floatingPopup = ReadFile(
+            root / "src" / "app" /
+                "app_floating_popup_window.cpp");
 
         const std::size_t queueBegin = composition.find(
             "bool DesktopApp::QueueDesktopWidgetComposition(");
@@ -137,6 +157,16 @@ int main(int argc, char** argv)
                 "QueueDesktopWidgetComposition(widgetId)") !=
                 std::string::npos,
             "Lua invalidations must update the owning child surface directly");
+        Check(invalidation.find(
+                "SurfaceIncludesDesktop(surface)") !=
+                std::string::npos &&
+                invalidation.find(
+                    "SurfaceIncludesAuxiliary(surface)") !=
+                    std::string::npos &&
+                invalidation.find(
+                    "InvalidateFloatingPopupWindow(false)") !=
+                    std::string::npos,
+            "Lua invalidation must preserve its desktop or auxiliary surface scope");
         Check(marquee.find(
                 "parent->second.visual->AddVisual(") !=
                 std::string::npos &&
@@ -172,6 +202,19 @@ int main(int argc, char** argv)
                     "PresentDesktopForegroundComposition(") !=
                 std::string::npos,
             "high-frequency Dock and popup feedback must update the foreground surface directly");
+        Check(queue.find("ShouldDeferWidgetSurfaceDraw(") !=
+                std::string::npos &&
+                floatingPopup.find(
+                    "FlushPendingDesktopWidgetComposition()") !=
+                    std::string::npos,
+            "widget child draws must defer during popup BeginDraw and flush after popup EndDraw");
+        Check(composition.find(
+                "failure.retry ? L\"recreating\"") !=
+                    std::string::npos &&
+                composition.find(
+                    "pendingDesktopWidgetCompositions_.insert(failure.widgetId)") !=
+                    std::string::npos,
+            "one widget draw failure must recreate only its child surface");
 
         const std::size_t rootZOrderBegin = foreground.find(
             "HRESULT DesktopApp::SyncDesktopCompositionRootZOrder()");

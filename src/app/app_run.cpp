@@ -734,23 +734,30 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 return;
             }
             bool invalidated = false;
-            if ((surface.empty() || surface != "desktop") &&
+            if (snowdesktop::widget_composition_layer_rules::
+                    SurfaceIncludesAuxiliary(surface) &&
                 luaWidgetPanelRequest_.widgetId ==
                     widgetId &&
                 !luaWidgetPanelAnimation_.IsHidden())
             {
-                RECT dirty =
-                    GetLuaWidgetPanelRect();
-                InflateRect(&dirty, 3, 3);
-                InvalidateRect(
-                    hwnd_, &dirty, FALSE);
+                if (IsLuaPanelHostedByFloatingWindow())
+                {
+                    InvalidateFloatingPopupWindow(false);
+                }
+                else
+                {
+                    RECT dirty = GetLuaWidgetPanelRect();
+                    InflateRect(&dirty, 3, 3);
+                    InvalidateRect(hwnd_, &dirty, FALSE);
+                }
                 invalidated = true;
             }
             for (const auto& widget : widgets_)
             {
                 if (widget.id != widgetId || widget.type != DesktopWidgetType::LuaScript)
                     continue;
-                if ((surface.empty() || surface == "desktop") &&
+                if (snowdesktop::widget_composition_layer_rules::
+                        SurfaceIncludesDesktop(surface) &&
                     customDesktopVisible_ &&
                     (!desktopIconsHidden_ ||
                         widget.keepWhenDesktopHidden))

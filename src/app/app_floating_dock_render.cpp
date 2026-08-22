@@ -86,6 +86,12 @@ bool DesktopApp::RenderFloatingDockCompositionFrame()
             L"EndDraw", hr);
         return false;
     }
+    const bool deferredWidgetsFlushed =
+        FlushPendingDesktopWidgetComposition() &&
+        FlushPendingWidgetMarqueeComposition() &&
+        SyncWidgetMarqueeCompositionVisibility();
+    if (!deferredWidgetsFlushed && hwnd_ && IsWindow(hwnd_))
+        InvalidateRect(hwnd_, nullptr, FALSE);
     if (!CommitCompositionAnimationFrame())
     {
         RecoverFloatingDockCompositionFailure(

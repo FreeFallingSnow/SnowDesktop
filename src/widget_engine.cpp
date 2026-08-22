@@ -25224,6 +25224,18 @@ void WidgetEngine::RuntimeInvalidateHost(const std::wstring& widgetId,
     std::optional<RECT> dirtyRect, std::string_view surface)
 {
     if (snowdesktop::widget_runtime::IsDryLoad()) return;
+    // Calls made while evaluating or interacting with an auxiliary surface
+    // belong to that surface unless the caller explicitly names another one.
+    // Keeping an empty surface here used to invalidate the panel and the
+    // desktop copy together, which could attempt a second DComp BeginDraw
+    // while the shared popup surface was still being rendered.
+    if (surface.empty())
+    {
+        const std::string_view currentSurface =
+            CurrentWidgetSurface(d2dState_);
+        if (IsPanelSurface(currentSurface))
+            surface = currentSurface;
+    }
     const int index = widgetId.empty() ? -1 : FindWidget(widgetId);
     if (index >= 0)
     {

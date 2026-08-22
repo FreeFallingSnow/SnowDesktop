@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string_view>
+
 namespace snowdesktop::widget_composition_layer_rules
 {
 enum class DesktopLayer
@@ -61,5 +63,25 @@ constexpr bool NeedsBackgroundPaint(PointerVisualLayer layer)
 constexpr bool NeedsForegroundPaint(PointerVisualLayer layer)
 {
     return layer == PointerVisualLayer::Foreground;
+}
+
+constexpr bool ShouldDeferWidgetSurfaceDraw(
+    bool desktopPaintInProgress,
+    bool floatingDockPaintInProgress,
+    bool floatingPopupPaintInProgress)
+{
+    return desktopPaintInProgress || floatingDockPaintInProgress ||
+        floatingPopupPaintInProgress;
+}
+
+constexpr bool SurfaceIncludesDesktop(std::string_view surface)
+{
+    return surface.empty() || surface == "desktop";
+}
+
+constexpr bool SurfaceIncludesAuxiliary(std::string_view surface)
+{
+    return surface.empty() || surface == "panel" ||
+        surface == "dialog" || surface == "popover";
 }
 }

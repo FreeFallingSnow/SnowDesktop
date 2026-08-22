@@ -264,6 +264,17 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
             L"EndDraw", hr);
         return false;
     }
+
+    // A panel callback or a re-entrant provider wake may request a desktop
+    // widget update while this popup surface owns BeginDraw. The queue defers
+    // that work; consume it only after the popup surface has left Draw state.
+    // A widget-local retry must not prevent the popup frame from presenting.
+    const bool deferredWidgetsFlushed =
+        FlushPendingDesktopWidgetComposition() &&
+        FlushPendingWidgetMarqueeComposition() &&
+        SyncWidgetMarqueeCompositionVisibility();
+    if (!deferredWidgetsFlushed && hwnd_ && IsWindow(hwnd_))
+        InvalidateRect(hwnd_, nullptr, FALSE);
     if (!CommitCompositionAnimationFrame())
     {
         RecoverFloatingPopupCompositionFailure(
@@ -599,7 +610,6 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         handlingFloatingPopupInput_ = true;
         OnMouseWheel(wp, lp);
         handlingFloatingPopupInput_ = false;
-        InvalidateFloatingPopupWindow(true);
         return 0;
     case WM_DISPLAYCHANGE:
     case WM_DPICHANGED:

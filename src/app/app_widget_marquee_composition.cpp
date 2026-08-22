@@ -65,7 +65,11 @@ bool DesktopApp::QueueWidgetMarqueeComposition(
     pendingWidgetMarqueeCompositions_.insert_or_assign(
         widgetId, std::move(pending));
 
-    if (!compositionPaintInProgress_)
+    if (!snowdesktop::widget_composition_layer_rules::
+            ShouldDeferWidgetSurfaceDraw(
+                compositionPaintInProgress_,
+                floatingDockCompositionPaintInProgress_,
+                floatingPopupCompositionPaintInProgress_))
     {
         if (!FlushPendingWidgetMarqueeComposition())
             return false;

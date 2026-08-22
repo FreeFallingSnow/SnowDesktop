@@ -9,6 +9,14 @@ bool SameRect(const RECT& left, const RECT& right)
 {
     return EqualRect(&left, &right) != FALSE;
 }
+
+struct DesktopWidgetSurfaceFailure
+{
+    std::wstring widgetId;
+    const wchar_t* stage = L"Render";
+    HRESULT hr = E_FAIL;
+    bool retry = true;
+};
 }
 
 // Every desktop widget owns a compact DirectComposition child surface. The
@@ -106,7 +114,11 @@ bool DesktopApp::QueueDesktopWidgetComposition(
     }
 
     pendingDesktopWidgetCompositions_.insert(widgetId);
-    if (compositionPaintInProgress_)
+    if (snowdesktop::widget_composition_layer_rules::
+            ShouldDeferWidgetSurfaceDraw(
+                compositionPaintInProgress_,
+                floatingDockCompositionPaintInProgress_,
+                floatingPopupCompositionPaintInProgress_))
         return true;
     if (!FlushPendingDesktopWidgetComposition())
         return fail();
@@ -144,8 +156,8 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         desktopBackdropCompositor_.BeginFrame(false);
     }
 
-    bool ok = true;
-    std::vector<std::wstring> failedWidgetIds;
+    bool structuralOk = true;
+    std::vector<DesktopWidgetSurfaceFailure> surfaceFailures;
     for (const auto& widgetId : pending)
     {
         auto composition = desktopWidgetCompositionItems_.find(widgetId);
@@ -193,8 +205,8 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         }
         if (!widgetData || (!widgetContainer && !widgetItem))
         {
-            failedWidgetIds.push_back(widgetId);
-            ok = false;
+            surfaceFailures.push_back({
+                widgetId, L"Resolve owner", E_UNEXPECTED, false });
             continue;
         }
 
@@ -205,8 +217,8 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
             rawWidth > static_cast<LONG>(kMaximumWidgetSurfaceDimension) ||
             rawHeight > static_cast<LONG>(kMaximumWidgetSurfaceDimension))
         {
-            failedWidgetIds.push_back(widgetId);
-            ok = false;
+            surfaceFailures.push_back({
+                widgetId, L"Validate bounds", E_INVALIDARG, false });
             continue;
         }
         const UINT width = static_cast<UINT>(rawWidth);
@@ -225,8 +237,9 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
                 &surface);
             if (FAILED(hr) || !surface)
             {
-                failedWidgetIds.push_back(widgetId);
-                ok = false;
+                surfaceFailures.push_back({
+                    widgetId, L"CreateSurface",
+                    FAILED(hr) ? hr : E_FAIL, true });
                 continue;
             }
             item.surface = std::move(surface);
@@ -241,8 +254,9 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
             reinterpret_cast<void**>(&rawContext), &updateOffset);
         if (FAILED(hr) || !rawContext)
         {
-            failedWidgetIds.push_back(widgetId);
-            ok = false;
+            surfaceFailures.push_back({
+                widgetId, L"BeginDraw",
+                FAILED(hr) ? hr : E_FAIL, true });
             continue;
         }
 
@@ -300,8 +314,8 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         brushCacheContext_ = nullptr;
         if (FAILED(endDrawHr))
         {
-            failedWidgetIds.push_back(widgetId);
-            ok = false;
+            surfaceFailures.push_back({
+                widgetId, L"EndDraw", endDrawHr, true });
             continue;
         }
 
@@ -347,33 +361,76 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
                 item.visible ? static_cast<float>(height) : 0.0f);
         if (FAILED(hr))
         {
-            failedWidgetIds.push_back(widgetId);
-            ok = false;
+            surfaceFailures.push_back({
+                widgetId, L"Update visual", hr, true });
         }
     }
 
     if (!SyncDesktopWidgetCompositionZOrder())
     {
-        failedWidgetIds.clear();
-        failedWidgetIds.reserve(desktopWidgetCompositionItems_.size());
-        for (const auto& [widgetId, _] :
-             desktopWidgetCompositionItems_)
-        {
-            failedWidgetIds.push_back(widgetId);
-        }
-        ok = false;
-    }
-    if (!failedWidgetIds.empty())
         desktopWidgetCompositionFailurePending_ = true;
+        structuralOk = false;
+    }
+
+    // A child surface can fail independently (for example after a stale
+    // BeginDraw). Recreate only that surface and preserve the desktop root,
+    // foreground, sibling widgets and popup host. A device-wide or tree
+    // failure still reaches the structural recovery path above/at Commit.
+    for (const auto& failure : surfaceFailures)
+    {
+        wchar_t message[256]{};
+        wsprintfW(message,
+            L"Desktop widget %s FAILED hr=0x%08X; %s child surface",
+            failure.stage,
+            static_cast<unsigned>(failure.hr),
+            failure.retry ? L"recreating" : L"dropping");
+        WriteDiagnosticLogEntry(message);
+
+        const auto position =
+            desktopWidgetCompositionItems_.find(failure.widgetId);
+        if (position == desktopWidgetCompositionItems_.end())
+            continue;
+        if (!failure.retry)
+        {
+            const RECT dirty = position->second.bounds;
+            if (position->second.backdropRegistered)
+            {
+                (void)desktopBackdropCompositor_.RemovePanel(
+                    position->second.bounds);
+            }
+            if (desktopWidgetCompositionLayer_ && position->second.visual)
+            {
+                (void)desktopWidgetCompositionLayer_->RemoveVisual(
+                    position->second.visual.Get());
+            }
+            desktopWidgetCompositionItems_.erase(position);
+            desktopWidgetCompositionZOrder_.clear();
+            if (hwnd_ && IsWindow(hwnd_))
+                InvalidateRect(hwnd_, &dirty, FALSE);
+            continue;
+        }
+
+        auto& item = position->second;
+        item.surface.Reset();
+        item.width = 0;
+        item.height = 0;
+        pendingDesktopWidgetCompositions_.insert(failure.widgetId);
+        if (hwnd_ && IsWindow(hwnd_))
+        {
+            RECT dirty = item.bounds;
+            InflateRect(&dirty, 1, 1);
+            InvalidateRect(hwnd_, &dirty, FALSE);
+        }
+    }
     if (ownsPaintScope)
     {
         KeepDesktopWidgetBackdropPanels();
         desktopBackdropCompositor_.EndFrame();
         compositionPaintInProgress_ = false;
     }
-    if (!ok && hwnd_ && IsWindow(hwnd_))
+    if (!structuralOk && hwnd_ && IsWindow(hwnd_))
         InvalidateRect(hwnd_, nullptr, FALSE);
-    return ok;
+    return structuralOk;
 }
 
 bool DesktopApp::HasDesktopWidgetComposition(

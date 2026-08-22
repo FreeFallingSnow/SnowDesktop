@@ -52,6 +52,7 @@
 #include "dock_rename_layout.h"
 #include "floating_dock_rules.h"
 #include "../floating_popup_rules.h"
+#include "../widget_composition_layer_rules.h"
 #include "../desktop_hover_rules.h"
 #include "../shell_launch_worker.h"
 #include "desktop_item_reference_migration.h"
