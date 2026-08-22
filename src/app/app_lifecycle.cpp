@@ -143,6 +143,8 @@ void DesktopApp::ResetDesktopWindowResources()
     if (dockWindowTransition_)
         dockWindowTransition_->Cancel();
     CancelAllDockWindowActivationObservations();
+    CancelCollectionPopupDwell();
+    CancelCollectionGroupTabDwell();
     nativeGlassPanelReadyLogged_ = false;
     if (hwnd_ && IsWindow(hwnd_))
     {
@@ -154,8 +156,6 @@ void DesktopApp::ResetDesktopWindowResources()
         KillTimer(hwnd_, kWidgetRefreshTimerId);
         StopRecycleBinWatcher();
         StopSteamWorkshopWatcher();
-        KillTimer(hwnd_, kCollectionPopupDwellTimerId);
-        KillTimer(hwnd_, kCollectionGroupTabDwellTimerId);
         KillTimer(hwnd_, kOleDragUiPumpTimerId);
         CancelUiAnimationFrame();
         if (pageNotifyFadeOutToken_)

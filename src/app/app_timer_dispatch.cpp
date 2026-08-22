@@ -292,20 +292,11 @@ void DesktopApp::OnTimer(WPARAM timerId)
     }
     else if (timerId == kCollectionPopupDwellTimerId)
     {
-        const size_t candidate =
-            popupDwellController_.Candidate();
-        if (!dragSession_.IsActive() ||
-            candidate >= widgets_.size() ||
-            candidate == popupWidgetIndex_)
-        {
-            popupDwellController_.Reset();
-            KillTimer(hwnd_, kCollectionPopupDwellTimerId);
+        if (!collectionPopupDwellTimerArmed_)
             return;
-        }
 
         if (TryOpenDwellCollectionPopup(GetTickCount()))
         {
-            KillTimer(hwnd_, kCollectionPopupDwellTimerId);
             OnMouseMoveAt(0, lastMousePoint_);
             PresentPointerInteractionFrame();
             InvalidateFloatingDockWindow(true);
@@ -313,23 +304,11 @@ void DesktopApp::OnTimer(WPARAM timerId)
     }
     else if (timerId == kCollectionGroupTabDwellTimerId)
     {
-        if (!dragSession_.IsActive() ||
-            collectionGroupTabDwellWidgetIndex_ >=
-                widgets_.size() ||
-            collectionGroupTabDwellId_.empty())
-        {
-            collectionGroupTabDwellWidgetIndex_ =
-                static_cast<size_t>(-1);
-            collectionGroupTabDwellId_.clear();
-            KillTimer(
-                hwnd_, kCollectionGroupTabDwellTimerId);
+        if (!collectionGroupTabDwellTimerArmed_)
             return;
-        }
 
         if (TryActivateCollectionGroupTab(GetTickCount()))
         {
-            KillTimer(
-                hwnd_, kCollectionGroupTabDwellTimerId);
             OnMouseMoveAt(0, lastMousePoint_);
             PresentPointerInteractionFrame();
             InvalidateFloatingDockWindow(true);

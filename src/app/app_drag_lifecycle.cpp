@@ -238,15 +238,8 @@ void DesktopApp::ResetDockHandoffDwell()
 void DesktopApp::EndDragSession()
 {
     ResetDockHandoffDwell();
-    if (hwnd_)
-    {
-        KillTimer(
-            hwnd_, kCollectionGroupTabDwellTimerId);
-    }
-    collectionGroupTabDwellWidgetIndex_ =
-        static_cast<size_t>(-1);
-    collectionGroupTabDwellId_.clear();
-    collectionGroupTabDwellTick_ = 0;
+    CancelCollectionPopupDwell();
+    CancelCollectionGroupTabDwell();
     dragSession_.End();
     presentedDragFeedbackRevision_ = 0;
     presentedDragNavHoverSide_ = 0;
@@ -276,9 +269,6 @@ void DesktopApp::ClearDockPressedState()
 void DesktopApp::CancelActiveItemDrag()
 {
     HideDragHintWindow();
-    popupDwellController_.Reset();
-    if (hwnd_)
-        KillTimer(hwnd_, kCollectionPopupDwellTimerId);
     navHoverSide_ = 0;
     navAutoFlipDir_ = 0;
     navAutoFlipTick_ = 0;

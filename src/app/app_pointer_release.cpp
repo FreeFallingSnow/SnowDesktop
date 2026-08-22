@@ -50,17 +50,9 @@ void DesktopApp::OnMouseLeave()
     navAutoFlipDir_ = 0;
     navAutoFlipTick_ = 0;
 
-    popupDwellController_.Reset();
-    collectionGroupTabDwellWidgetIndex_ =
-        static_cast<size_t>(-1);
-    collectionGroupTabDwellId_.clear();
-    collectionGroupTabDwellTick_ = 0;
+    CancelCollectionPopupDwell();
+    CancelCollectionGroupTabDwell();
     ResetDockHandoffDwell();
-    if (hwnd_)
-    {
-        KillTimer(hwnd_, kCollectionPopupDwellTimerId);
-        KillTimer(hwnd_, kCollectionGroupTabDwellTimerId);
-    }
 
     // Capture-based dragging continues to receive coordinates outside the
     // window. Preserve that pointer state, but clear passive hover immediately.
@@ -1448,8 +1440,6 @@ cleanup:
     dockFolderPopupMarqueeInitialSelection_.clear();
     pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
     pendingCtrlToggleWidgetItem_ = nullptr;
-    popupDwellController_.Reset();
-    KillTimer(hwnd_, kCollectionPopupDwellTimerId);
     navHoverSide_ = 0;
     navAutoFlipDir_ = 0;
     navAutoFlipTick_ = 0;

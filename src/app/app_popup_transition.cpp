@@ -133,6 +133,8 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
         widgets_[widgetIndex].type != DesktopWidgetType::Collection)
         return;
 
+    CancelCollectionPopupDwell();
+
     DismissActiveContextMenuForPopupTransition();
 
     const bool samePopupSource =
@@ -276,7 +278,6 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
     popupRect_ = GetCollectionPopupRect(widgets_[widgetIndex]);
     popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
         GetCollectionPopupMaxScrollOffset(widgets_[widgetIndex], popupRect_));
-    popupDwellController_.Reset();
     StartCollectionPopupAnimation();
     if (floatingDockVisible_)
     {

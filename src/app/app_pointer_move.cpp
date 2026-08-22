@@ -731,13 +731,8 @@ void DesktopApp::OnMouseMoveAt(
                 navAutoFlipDir_ = 0;
                 navAutoFlipTick_ = 0;
                 ResetDockHandoffDwell();
-                popupDwellController_.Reset();
-                KillTimer(hwnd_, kCollectionPopupDwellTimerId);
-                collectionGroupTabDwellWidgetIndex_ =
-                    static_cast<size_t>(-1);
-                collectionGroupTabDwellId_.clear();
-                collectionGroupTabDwellTick_ = 0;
-                KillTimer(hwnd_, kCollectionGroupTabDwellTimerId);
+                CancelCollectionPopupDwell();
+                CancelCollectionGroupTabDwell();
 
                 // OLE now owns feedback while the pointer is over another
                 // application. Clear both the custom ghost and the last

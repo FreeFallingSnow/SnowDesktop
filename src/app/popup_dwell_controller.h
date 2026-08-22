@@ -45,6 +45,10 @@ public:
     }
 
     std::size_t Candidate() const { return candidate_; }
+    bool IsIdle() const
+    {
+        return candidate_ == NoCandidate && startedAt_ == 0;
+    }
 
 private:
     std::size_t candidate_ = NoCandidate;

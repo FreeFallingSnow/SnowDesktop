@@ -1473,7 +1473,10 @@ void TestRenameControllerKeepsTargetsExclusive()
 void TestPopupDwellControllerHandlesCandidateChanges()
 {
     PopupDwellController controller;
+    Check(controller.IsIdle(),
+        "a new popup dwell controller must be idle");
     Check(controller.Track(4, 100) &&
+            !controller.IsIdle() &&
             !controller.IsReady(149, 50) &&
             controller.IsReady(150, 50),
         "popup dwell must mature only after the configured delay");
@@ -1496,6 +1499,7 @@ void TestPopupDwellControllerHandlesCandidateChanges()
     controller.Reset();
     Check(controller.Candidate() ==
             PopupDwellController::NoCandidate &&
+            controller.IsIdle() &&
             !controller.IsReady(1000, 0),
         "reset popup dwell must remove both candidate and readiness");
 }

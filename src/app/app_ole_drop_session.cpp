@@ -27,13 +27,8 @@ HRESULT DesktopApp::HandleOleDragEnter(
                 nullptr, nullptr, HitRegion::None);
         }
         ResetDockHandoffDwell();
-        popupDwellController_.Reset();
-        KillTimer(hwnd_, kCollectionPopupDwellTimerId);
-        collectionGroupTabDwellWidgetIndex_ =
-            static_cast<size_t>(-1);
-        collectionGroupTabDwellId_.clear();
-        collectionGroupTabDwellTick_ = 0;
-        KillTimer(hwnd_, kCollectionGroupTabDwellTimerId);
+        CancelCollectionPopupDwell();
+        CancelCollectionGroupTabDwell();
         HideDragHintWindow();
         *effect = DROPEFFECT_NONE;
         PresentOleDragInteractionFrame();
@@ -272,14 +267,8 @@ HRESULT DesktopApp::HandleOleDragLeave()
         if (!dragDropController_.SelfDragNativeResumeRequested())
             dragDropController_.ClearSelfDragReturned();
         ResetDockHandoffDwell();
-        popupDwellController_.Reset();
-        KillTimer(hwnd_, kCollectionPopupDwellTimerId);
-        collectionGroupTabDwellWidgetIndex_ =
-            static_cast<size_t>(-1);
-        collectionGroupTabDwellId_.clear();
-        collectionGroupTabDwellTick_ = 0;
-        KillTimer(
-            hwnd_, kCollectionGroupTabDwellTimerId);
+        CancelCollectionPopupDwell();
+        CancelCollectionGroupTabDwell();
         dragSession_.UpdateTarget(nullptr, nullptr, HitRegion::None);
         dragSession_.SetVisualVisible(false);
         HideDragHintWindow();

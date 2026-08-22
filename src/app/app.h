@@ -1422,8 +1422,12 @@ private:
     bool CanCurrentDragUseCollectionPopup() const;
     /** @brief 更新集合弹出面板的悬停停留计时。 @param point 当前鼠标位置 */
     void UpdateCollectionPopupDwell(POINT point);
+    void EnsureCollectionPopupDwellTimerArmed();
+    void CancelCollectionPopupDwell();
     /** @brief 拖动条目时更新集合组标签的悬停切换计时。 */
     void UpdateCollectionGroupTabDwell(POINT point);
+    void EnsureCollectionGroupTabDwellTimerArmed();
+    void CancelCollectionGroupTabDwell();
     /** @brief 尝试切换到当前悬停的集合组标签。 */
     bool TryActivateCollectionGroupTab(DWORD now);
     /**
@@ -3452,10 +3456,12 @@ private:
         dockFolderPopupMarqueeInitialSelection_;
     /** @brief 悬停打开：拖拽中悬停在集合"全部"按钮上 */
     PopupDwellController popupDwellController_;
+    bool collectionPopupDwellTimerArmed_ = false;
     size_t collectionGroupTabDwellWidgetIndex_ =
         static_cast<size_t>(-1);
     std::wstring collectionGroupTabDwellId_;
     DWORD collectionGroupTabDwellTick_ = 0;
+    bool collectionGroupTabDwellTimerArmed_ = false;
     std::unique_ptr<Slot> popupDragTargetSlot_;
     /** @} */
 

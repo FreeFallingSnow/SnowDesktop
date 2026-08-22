@@ -65,6 +65,22 @@ std::string ReadFile(const std::filesystem::path& path)
     return contents.str();
 }
 
+std::size_t CountOccurrences(
+    const std::string& text,
+    const std::string& needle)
+{
+    if (needle.empty()) return 0;
+    std::size_t count = 0;
+    std::size_t offset = 0;
+    while ((offset = text.find(needle, offset)) !=
+        std::string::npos)
+    {
+        ++count;
+        offset += needle.size();
+    }
+    return count;
+}
+
 void CheckRowMargins(
     const DockWindowPreviewGrid& grid,
     const std::vector<RECT>& cards,
@@ -3265,6 +3281,12 @@ int main(int argc, char** argv)
         const std::string pageGridSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_page_grid.cpp");
+        const std::string popupDwellInteractionSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_popup_dwell_interaction.cpp");
+        const std::string timerDispatchSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_timer_dispatch.cpp");
         Check(floatingPopupSource.find("CreateTargetForHwnd") !=
                     std::string::npos &&
                 floatingPopupSource.find("RegisterDragDrop") !=
@@ -3519,6 +3541,87 @@ int main(int argc, char** argv)
                 dockDwellTimerKill != std::string::npos &&
                 dockDwellIdleGuard < dockDwellTimerKill,
             "idle Dock handoff cleanup must return before touching the window timer");
+        Check(CountOccurrences(
+                  popupDwellInteractionSource,
+                  "SetTimer(") == 2 &&
+                CountOccurrences(
+                  popupDwellInteractionSource,
+                  "KillTimer(") == 2 &&
+                popupDwellInteractionSource.find(
+                  "EnsureCollectionPopupDwellTimerArmed()") !=
+                    std::string::npos &&
+                popupDwellInteractionSource.find(
+                  "CancelCollectionPopupDwell()") !=
+                    std::string::npos &&
+                popupDwellInteractionSource.find(
+                  "EnsureCollectionGroupTabDwellTimerArmed()") !=
+                    std::string::npos &&
+                popupDwellInteractionSource.find(
+                  "CancelCollectionGroupTabDwell()") !=
+                    std::string::npos,
+            "collection dwell timers must be armed and canceled only through their centralized state helpers");
+        const std::size_t tryOpenPopupDwell =
+            popupDwellInteractionSource.find(
+                "bool DesktopApp::TryOpenDwellCollectionPopup(");
+        const std::size_t hiddenPopupCandidate =
+            popupDwellInteractionSource.find(
+                "if (desktopIconsHidden_ &&",
+                tryOpenPopupDwell);
+        const std::size_t hiddenPopupCancel =
+            popupDwellInteractionSource.find(
+                "CancelCollectionPopupDwell();",
+                hiddenPopupCandidate);
+        const std::size_t popupReadiness =
+            popupDwellInteractionSource.find(
+                "popupDwellController_.IsReady(",
+                hiddenPopupCandidate);
+        Check(tryOpenPopupDwell != std::string::npos &&
+                hiddenPopupCandidate != std::string::npos &&
+                hiddenPopupCancel != std::string::npos &&
+                popupReadiness != std::string::npos &&
+                hiddenPopupCancel < popupReadiness,
+            "an ineligible hidden popup candidate must cancel its repeating timer instead of polling forever");
+        const std::size_t popupTimerDispatch =
+            timerDispatchSource.find(
+                "timerId == kCollectionPopupDwellTimerId");
+        const std::size_t popupTimerStaleGuard =
+            timerDispatchSource.find(
+                "if (!collectionPopupDwellTimerArmed_)",
+                popupTimerDispatch);
+        const std::size_t popupTimerOpen =
+            timerDispatchSource.find(
+                "TryOpenDwellCollectionPopup(",
+                popupTimerDispatch);
+        const std::size_t groupTimerDispatch =
+            timerDispatchSource.find(
+                "timerId == kCollectionGroupTabDwellTimerId");
+        const std::size_t groupTimerStaleGuard =
+            timerDispatchSource.find(
+                "if (!collectionGroupTabDwellTimerArmed_)",
+                groupTimerDispatch);
+        const std::size_t groupTimerActivate =
+            timerDispatchSource.find(
+                "TryActivateCollectionGroupTab(",
+                groupTimerDispatch);
+        Check(popupTimerDispatch != std::string::npos &&
+                popupTimerStaleGuard != std::string::npos &&
+                popupTimerOpen != std::string::npos &&
+                popupTimerStaleGuard < popupTimerOpen &&
+                groupTimerDispatch != std::string::npos &&
+                groupTimerStaleGuard != std::string::npos &&
+                groupTimerActivate != std::string::npos &&
+                groupTimerStaleGuard < groupTimerActivate,
+            "queued dwell timer messages must stop at the armed-state guard after cancellation");
+        Check(dragLifecycleSource.find(
+                  "CancelCollectionPopupDwell();") !=
+                    std::string::npos &&
+                dragLifecycleSource.find(
+                  "CancelCollectionGroupTabDwell();") !=
+                    std::string::npos &&
+                popupTransitionSource.find(
+                  "CancelCollectionPopupDwell();") !=
+                    std::string::npos,
+            "drag-session teardown and popup opening must close both dwell timer state loops");
         const std::size_t dragPageNavigation =
             dragTargetUpdateSource.find(
                 "bool DesktopApp::UpdateDragPageNavigation(");
@@ -3787,8 +3890,24 @@ int main(int argc, char** argv)
             cancelDragHandler.find("EndDragSession();");
         const std::size_t cancelClearPopupItem =
             cancelDragHandler.find("ClearPopupMouseDownItem();");
-        Check(cancelDragHandler.find(
-                  "popupDwellController_.Reset();") !=
+        const std::size_t endDragBegin =
+            dragLifecycleSource.find(
+                "void DesktopApp::EndDragSession()");
+        const std::size_t endDragEnd =
+            dragLifecycleSource.find(
+                "void DesktopApp::ClearDockPressedState()",
+                endDragBegin);
+        const std::string endDragHandler =
+            endDragBegin == std::string::npos ||
+                endDragEnd == std::string::npos
+            ? std::string{}
+            : dragLifecycleSource.substr(
+                endDragBegin, endDragEnd - endDragBegin);
+        Check(endDragHandler.find(
+                  "CancelCollectionPopupDwell();") !=
+                    std::string::npos &&
+                endDragHandler.find(
+                  "CancelCollectionGroupTabDwell();") !=
                     std::string::npos &&
                 cancelDragHandler.find(
                   "ClearPopupMouseDownItem();") !=
