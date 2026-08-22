@@ -1750,7 +1750,7 @@ int main(int argc, char** argv)
             !floatingDock::
                 NeedsImmediatePointerPresent(
                     false, false, false),
-        "item drags, widget previews and marquees must synchronously present pointer frames");
+        "drag feedback changes, widget previews and marquees must synchronously present pointer frames");
     // 回归保护：f29a882 删掉 ShouldPresentPointerFrame 后，hover/拖拽帧全部
     // 交给 UiAnimationScheduler，快速扫过时 Dock 放大和拖拽虚影晚一帧。
     Check(floatingDock::
@@ -3265,13 +3265,23 @@ int main(int argc, char** argv)
         Check(dragLifecycleSource.find(
                   "SyncDragPreviewWindow();") !=
                     std::string::npos &&
+                dragLifecycleSource.find(
+                  "PresentationRevision()") !=
+                    std::string::npos &&
+                dragLifecycleSource.find(
+                  "PresentOleDragInteractionFrame()") !=
+                    std::string::npos &&
                 oleDropRoutingSource.find(
                   "ResolveWindowBelowDragPreviewAt(screenPoint)") !=
                     std::string::npos &&
                 oleDropRoutingSource.find(
                   "belongsTo(dragPreviewHwnd_)") !=
                     std::string::npos,
-            "pointer presentation and external OLE routing must account for the transparent preview host");
+            "pointer and OLE presentation must separate ghost movement from changed drop feedback");
+        Check(pointerMoveSource.find(
+                  "ShowDragHintWindow(current, hint);\n        InvalidateRect(hwnd_, nullptr, FALSE);") ==
+                    std::string::npos,
+            "ordinary drag movement must not invalidate the full desktop after every pointer pixel");
         Check(pointerMoveSource.find(
                   "dragSession_.SetVisualVisible(false);") !=
                     std::string::npos &&

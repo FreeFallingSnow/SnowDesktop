@@ -373,9 +373,24 @@ void TestDragSessionRejectsInvalidatedSlots()
         &container, {NonOwningItemToken()},
         std::move(sourceList),
         POINT{}, POINT{});
-    session.UpdateTarget(
+    const std::uint64_t beginPresentationRevision =
+        session.PresentationRevision();
+    session.UpdatePoint({ 5, 7 });
+    Check(session.PresentationRevision() ==
+            beginPresentationRevision,
+        "pure pointer motion must not invalidate drop feedback");
+    Check(session.UpdateTarget(
         &container, slot,
-        HitRegion::SortBefore);
+        HitRegion::SortBefore),
+        "binding a new target must invalidate drop feedback");
+    const std::uint64_t targetPresentationRevision =
+        session.PresentationRevision();
+    Check(!session.UpdateTarget(
+            &container, slot,
+            HitRegion::SortBefore) &&
+            session.PresentationRevision() ==
+                targetPresentationRevision,
+        "repeating the same target must preserve the drop-feedback revision");
 
     Check(session.TargetSlot() == slot &&
             session.TargetRegion() ==

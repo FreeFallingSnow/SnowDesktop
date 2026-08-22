@@ -427,6 +427,13 @@ void DesktopApp::SyncDragPreviewWindow()
         HideDragPreviewWindow();
         return;
     }
+    if (needsRender)
+    {
+        // Submit the compact surface before any desktop/Dock feedback paint.
+        // The outer pointer message may still have larger work to do, but the
+        // compositor can start presenting the ghost immediately.
+        FlushPendingCompositionCommit();
+    }
     if (!IsWindowVisible(dragPreviewHwnd_))
         ShowWindow(dragPreviewHwnd_, SW_SHOWNOACTIVATE);
 }

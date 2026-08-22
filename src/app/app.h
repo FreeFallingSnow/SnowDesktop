@@ -3199,6 +3199,8 @@ private:
     DragSession dragSession_;
     DragDropController dragDropController_{dragSession_};
     DragRenderCache dragRenderCache_;
+    std::uint64_t presentedDragFeedbackRevision_ = 0;
+    int presentedDragNavHoverSide_ = 0;
     int dragGroupOriginX_ = 0;
     int dragGroupOriginY_ = 0;
     // ── 拖放预览缓存（避免每帧重建 BuildDropPreviewList） ──

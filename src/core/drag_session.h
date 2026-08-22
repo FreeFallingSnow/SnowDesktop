@@ -87,6 +87,12 @@ public:
     /** @brief 获取当前静态场景修订版本号，用于缓存一致性判断 */
     std::uint64_t StaticSceneRevision() const { return staticSceneRevision_; }
 
+    /** @brief 获取放置反馈修订号；纯指针位移不会改变此值。 */
+    std::uint64_t PresentationRevision() const
+    {
+        return presentationRevision_;
+    }
+
     /**
      * @brief 开始一次新的拖拽会话
      * @param source      拖拽源容器指针
@@ -258,15 +264,24 @@ public:
      * @param targetSlot      目标插槽指针
      * @param targetRegion    命中区域类型
      */
-    void UpdateTarget(Container* targetContainer, Slot* targetSlot, HitRegion targetRegion)
+    bool UpdateTarget(Container* targetContainer, Slot* targetSlot, HitRegion targetRegion)
     {
-        targetContainer_ = targetContainer;
-        targetSlot_ = targetSlot;
-        targetSlotGeneration_ =
+        const std::uint64_t nextGeneration =
             targetContainer && targetSlot
                 ? targetContainer->GetSlotGeneration()
                 : 0;
+        const bool changed =
+            targetContainer_ != targetContainer ||
+            targetSlot_ != targetSlot ||
+            targetSlotGeneration_ != nextGeneration ||
+            targetRegion_ != targetRegion;
+        targetContainer_ = targetContainer;
+        targetSlot_ = targetSlot;
+        targetSlotGeneration_ = nextGeneration;
         targetRegion_ = targetRegion;
+        if (changed)
+            InvalidatePresentation();
+        return changed;
     }
 
     /**
@@ -361,6 +376,7 @@ public:
         ++staticSceneRevision_;
         if (staticSceneRevision_ == 0)
             staticSceneRevision_ = 1;
+        InvalidatePresentation();
     }
 
     /**
@@ -391,6 +407,13 @@ public:
     }
 
 private:
+    void InvalidatePresentation()
+    {
+        ++presentationRevision_;
+        if (presentationRevision_ == 0)
+            presentationRevision_ = 1;
+    }
+
     bool TargetSlotGenerationIsCurrent() const
     {
         if (!targetSlot_)
@@ -418,4 +441,5 @@ private:
     std::uint64_t targetSlotGeneration_ = 0; /**< 目标插槽所属缓存代次 */
     HitRegion targetRegion_ = HitRegion::None; /**< 目标命中区域类型 */
     std::uint64_t staticSceneRevision_ = 1;  /**< 静态场景修订版本号，用于拖拽缓存一致性判断 */
+    std::uint64_t presentationRevision_ = 1; /**< 放置反馈修订号，不随纯指针移动递增 */
 };

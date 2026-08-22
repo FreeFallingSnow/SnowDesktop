@@ -61,10 +61,7 @@ void DesktopApp::PresentDesktopPointerUpdate()
 
 void DesktopApp::PresentOleDragInteractionFrame()
 {
-    SyncDragPreviewWindow();
-    OnPaint();
-    InvalidateFloatingDockWindow(true);
-    InvalidateFloatingPopupWindow(true);
+    PresentPointerInteractionFrame();
 
     // A self drag reaches these callbacks from DoDragDrop's nested message
     // loop. The outer application pump therefore cannot perform its normal
@@ -83,10 +80,32 @@ void DesktopApp::PresentPointerInteractionFrame()
     const bool widgetPreviewActive =
         widgetAction_ == WidgetAction::Move ||
         widgetAction_ == WidgetAction::Resize;
+    const bool itemDragActive = dragSession_.IsActive();
+    const std::uint64_t feedbackRevision =
+        itemDragActive
+            ? dragSession_.PresentationRevision()
+            : 0;
+    const bool itemDragFeedbackChanged =
+        itemDragActive &&
+        (feedbackRevision !=
+             presentedDragFeedbackRevision_ ||
+         navHoverSide_ !=
+             presentedDragNavHoverSide_);
+    if (itemDragActive)
+    {
+        presentedDragFeedbackRevision_ =
+            feedbackRevision;
+        presentedDragNavHoverSide_ = navHoverSide_;
+    }
+    else
+    {
+        presentedDragFeedbackRevision_ = 0;
+        presentedDragNavHoverSide_ = 0;
+    }
     const bool immediateDesktopPresent =
         snowdesktop::floating_dock_rules::
             NeedsImmediatePointerPresent(
-                dragSession_.IsActive(),
+                itemDragFeedbackChanged,
                 widgetPreviewActive,
                 marqueeActive_);
     if (immediateDesktopPresent &&
@@ -184,7 +203,9 @@ void DesktopApp::PresentPointerInteractionFrame()
                     });
         }
     }
-    if (ShouldShowFloatingPopupWindow())
+    if (ShouldShowFloatingPopupWindow() &&
+        (!itemDragActive ||
+         itemDragFeedbackChanged))
         InvalidateFloatingPopupWindow(true);
 }
 
@@ -216,6 +237,8 @@ void DesktopApp::EndDragSession()
     collectionGroupTabDwellId_.clear();
     collectionGroupTabDwellTick_ = 0;
     dragSession_.End();
+    presentedDragFeedbackRevision_ = 0;
+    presentedDragNavHoverSide_ = 0;
     HideDragPreviewWindow();
     ClearDockFolderPopupDragSourceSnapshot();
     dragRenderCache_.Reset();

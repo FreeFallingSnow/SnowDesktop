@@ -325,11 +325,11 @@ inline bool ShouldInvalidateDesktopHover(
  * @brief 需要在当前指针消息结束前同步提交的交互状态。
  */
 inline bool NeedsImmediatePointerPresent(
-    bool itemDragActive,
+    bool itemDragFeedbackChanged,
     bool widgetPreviewActive,
     bool marqueeActive)
 {
-    return itemDragActive ||
+    return itemDragFeedbackChanged ||
         widgetPreviewActive ||
         marqueeActive;
 }

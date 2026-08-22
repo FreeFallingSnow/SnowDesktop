@@ -862,7 +862,6 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                 dragSession_.Items(), dragSession_.Source(), currentMods);
 
         ShowDragHintWindow(current, hint);
-        InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
 
