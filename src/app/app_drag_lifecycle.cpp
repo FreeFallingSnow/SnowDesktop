@@ -220,6 +220,11 @@ void DesktopApp::PresentPointerInteractionFrame(
  */
 void DesktopApp::ResetDockHandoffDwell()
 {
+    if (snowdesktop::dock_drop_rules::IsDockHandoffDwellIdle(
+            dockHandoffDwellIndex_,
+            dockHandoffDwellStartTick_,
+            dockHandoffDwellReady_))
+        return;
     if (hwnd_)
         KillTimer(hwnd_, kDockHandoffDwellTimerId);
     dockHandoffDwellIndex_ = static_cast<size_t>(-1);

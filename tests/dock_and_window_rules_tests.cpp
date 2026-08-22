@@ -1382,6 +1382,15 @@ int main(int argc, char** argv)
             false, false, true),
         "Collection popup dwell and insertion must share payload compatibility");
     Check(
+        dockDrop::IsDockHandoffDwellIdle(
+            static_cast<size_t>(-1), 0, false) &&
+        !dockDrop::IsDockHandoffDwellIdle(0, 0, false) &&
+        !dockDrop::IsDockHandoffDwellIdle(
+            static_cast<size_t>(-1), 1, false) &&
+        !dockDrop::IsDockHandoffDwellIdle(
+            static_cast<size_t>(-1), 0, true),
+        "Dock handoff cleanup may be skipped only for the complete canonical idle state");
+    Check(
         folderRules::OpenPopupNeedsRefreshAfterDrop(
             true, false, false, true, false) &&
         folderRules::OpenPopupNeedsRefreshAfterDrop(
@@ -3455,6 +3464,22 @@ int main(int argc, char** argv)
                   "belongsTo(dragPreviewHwnd_)") !=
                     std::string::npos,
             "pointer and OLE presentation must separate ghost movement from changed drop feedback");
+        const std::size_t resetDockDwell =
+            dragLifecycleSource.find(
+                "void DesktopApp::ResetDockHandoffDwell()");
+        const std::size_t dockDwellIdleGuard =
+            dragLifecycleSource.find(
+                "IsDockHandoffDwellIdle(",
+                resetDockDwell);
+        const std::size_t dockDwellTimerKill =
+            dragLifecycleSource.find(
+                "KillTimer(hwnd_, kDockHandoffDwellTimerId)",
+                resetDockDwell);
+        Check(resetDockDwell != std::string::npos &&
+                dockDwellIdleGuard != std::string::npos &&
+                dockDwellTimerKill != std::string::npos &&
+                dockDwellIdleGuard < dockDwellTimerKill,
+            "idle Dock handoff cleanup must return before touching the window timer");
         Check(pointerMoveSource.find(
                   "*dragPreviewSynced = true;") !=
                     std::string::npos &&

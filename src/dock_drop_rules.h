@@ -148,4 +148,15 @@ inline bool CanUseCollectionPopup(
     return externalDragActive || !sourceEmpty;
 }
 
+// Resetting an already-empty dwell state on every pointer sample only repeats
+// a User32 timer lookup. The index is the primary state: every arming path sets
+// it before SetTimer, and only the reset path restores the sentinel.
+inline bool IsDockHandoffDwellIdle(
+    size_t index, DWORD startTick, bool ready) noexcept
+{
+    return index == static_cast<size_t>(-1) &&
+        startTick == 0 &&
+        !ready;
+}
+
 } // namespace snowdesktop::dock_drop_rules
