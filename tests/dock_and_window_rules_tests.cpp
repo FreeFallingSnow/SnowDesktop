@@ -3296,9 +3296,15 @@ int main(int argc, char** argv)
                   "RGN_DIFF") !=
                     std::string::npos &&
                 dragPreviewSource.find(
-                  "HWND_TOPMOST") !=
+                  "ShouldApplyPreviewWindowPlacement(") !=
+                    std::string::npos &&
+                dragPreviewSource.find(
+                  "ResolvePreviewWindowZOrderPolicy(") !=
+                    std::string::npos &&
+                dragPreviewSource.find(
+                  "dragPreviewWindowBounds_") !=
                     std::string::npos,
-            "the drag ghost must use one cached compact topmost DComp surface with an OLE hit-test hole");
+            "the drag ghost must use one cached compact DComp surface with an OLE hit-test hole and cached placement policy");
         Check(dragLifecycleSource.find(
                   "SyncDragPreviewWindow();") !=
                     std::string::npos &&
