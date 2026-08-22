@@ -1120,6 +1120,78 @@ void TestDragDropControllerOwnsTransportTransitions()
         "ending external transport must clear transient ingress metadata");
 }
 
+void TestModelReloadDeferralCoversRetainedDragLifecycle()
+{
+    ContractContainer source(
+        BarStyle::VBar,
+        snowdesktop::slot_contract::SlotSurfaceKind::Desktop);
+    ContractItem item(RECT{0, 0, 40, 40});
+    DragSession session;
+    DragDropController controller(session);
+    const auto shouldDeferReload = [&]()
+    {
+        return snowdesktop::drag_input_rules::ShouldDeferModelReload(
+            session.HasContext(), controller.IsTransportActive());
+    };
+
+    session.Begin(
+        &source, {&item}, {}, POINT{}, POINT{});
+    controller.BeginSelfDrag();
+    session.DeactivateForDrop();
+    Check(!session.IsActive() && session.HasContext() &&
+            shouldDeferReload(),
+        "a synchronous drop must defer model reload after the active flag clears");
+
+    controller.EndSelfDrag();
+    Check(shouldDeferReload(),
+        "ending OLE first must still defer reload while the drop context is retained");
+    session.End();
+    Check(!shouldDeferReload(),
+        "model reload may resume only after both drag owners have released state");
+
+    int completedReloads = 0;
+    bool reloadPending = false;
+    for (int iteration = 0; iteration < 10000; ++iteration)
+    {
+        session.Begin(
+            &source, {&item}, {}, POINT{}, POINT{});
+        controller.BeginSelfDrag();
+
+        for (int request = 0; request < 4; ++request)
+        {
+            if (shouldDeferReload())
+                reloadPending = true;
+            else
+                ++completedReloads;
+        }
+
+        if ((iteration & 1) == 0)
+        {
+            session.DeactivateForDrop();
+            session.End();
+            Check(shouldDeferReload(),
+                "transport ownership must defer reload after the session ends first");
+            controller.EndSelfDrag();
+        }
+        else
+        {
+            controller.EndSelfDrag();
+            session.DeactivateForDrop();
+            Check(shouldDeferReload(),
+                "retained session context must defer reload after OLE ends first");
+            session.End();
+        }
+
+        if (reloadPending && !shouldDeferReload())
+        {
+            reloadPending = false;
+            ++completedReloads;
+        }
+    }
+    Check(!reloadPending && completedReloads == 10000,
+        "10000 alternating unwind orders must coalesce repeated reload requests and release each one exactly once");
+}
+
 void TestOwnedTransientDragTargetBoundsMemberWrappers()
 {
     ContractContainer container(
@@ -1683,6 +1755,7 @@ int main()
     TestEveryDragSourceSurvivesPageTurnRebindMatrix();
     TestDragTargetResolutionUsesContractAndZOrder();
     TestDragDropControllerOwnsTransportTransitions();
+    TestModelReloadDeferralCoversRetainedDragLifecycle();
     TestOwnedTransientDragTargetBoundsMemberWrappers();
     TestQueuedNativeDragMovesCoalesceAtOrderingBarriers();
     TestSelfOleReturnCancelsTransportBeforeNativeResume();
