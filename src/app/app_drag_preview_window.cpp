@@ -494,6 +494,24 @@ void DesktopApp::SyncDragPreviewWindow()
         ShowWindow(dragPreviewHwnd_, SW_SHOWNOACTIVATE);
 }
 
+bool DesktopApp::IsDragPresentationOnlyWindow(HWND window) const
+{
+    if (!window) return false;
+    if (window == dragPreviewHwnd_ ||
+        window == hintHwnd_ ||
+        desktopBackdropCompositor_.IsBackdropWindow(window) ||
+        floatingDockBackdropCompositor_.IsBackdropWindow(window) ||
+        quickNavBackdropCompositor_.IsBackdropWindow(window) ||
+        (dockWindowTransition_ &&
+            dockWindowTransition_->IsPresentationWindow(window)))
+        return true;
+
+    const DWORD extendedStyle = static_cast<DWORD>(
+        GetWindowLongPtrW(window, GWL_EXSTYLE));
+    return snowdesktop::drag_visual_rules::
+        IsLayeredTransparentPresentationWindow(extendedStyle);
+}
+
 HWND DesktopApp::ResolveWindowBelowDragPreviewAt(
     POINT screenPoint) const
 {
@@ -509,11 +527,7 @@ HWND DesktopApp::ResolveWindowBelowDragPreviewAt(
          candidate = GetWindow(candidate, GW_HWNDNEXT))
     {
         const bool presentationOnly =
-            candidate == dragPreviewHwnd_ ||
-            candidate == hintHwnd_ ||
-            desktopBackdropCompositor_.IsBackdropWindow(candidate) ||
-            floatingDockBackdropCompositor_.IsBackdropWindow(candidate) ||
-            quickNavBackdropCompositor_.IsBackdropWindow(candidate);
+            IsDragPresentationOnlyWindow(candidate);
         DWORD cloaked = 0;
         const bool isCloaked =
             SUCCEEDED(DwmGetWindowAttribute(
@@ -533,21 +547,20 @@ HWND DesktopApp::ResolveWindowBelowDragPreviewAt(
             continue;
 
         HRGN region = CreateRectRgn(0, 0, 0, 0);
-        if (region)
-        {
-            const int regionType = GetWindowRgn(candidate, region);
-            const POINT localPoint{
-                screenPoint.x - windowRect.left,
-                screenPoint.y - windowRect.top };
-            const bool pointInRegion =
-                PtInRegion(region,
-                    localPoint.x, localPoint.y) != FALSE;
-            DeleteObject(region);
-            if (!snowdesktop::drag_visual_rules::
-                    PreviewFallbackRegionContainsPoint(
-                        regionType, pointInRegion))
-                continue;
-        }
+        if (!region)
+            return nullptr;
+        const int regionType = GetWindowRgn(candidate, region);
+        const POINT localPoint{
+            screenPoint.x - windowRect.left,
+            screenPoint.y - windowRect.top };
+        const bool pointInRegion =
+            PtInRegion(region,
+                localPoint.x, localPoint.y) != FALSE;
+        DeleteObject(region);
+        if (!snowdesktop::drag_visual_rules::
+                PreviewFallbackRegionContainsPoint(
+                    regionType, pointInRegion))
+            continue;
         return candidate;
     }
     return nullptr;

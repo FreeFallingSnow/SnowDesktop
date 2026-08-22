@@ -895,6 +895,7 @@ private:
     bool RenderDragPreviewCompositionFrame(
         const RECT& desktopBounds);
     void SyncDragPreviewWindow();
+    bool IsDragPresentationOnlyWindow(HWND window) const;
     HWND ResolveWindowBelowDragPreviewAt(
         POINT screenPoint) const;
     void PrepareDockBackdropForDragTransition();

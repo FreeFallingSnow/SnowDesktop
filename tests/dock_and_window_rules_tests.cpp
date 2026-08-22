@@ -1545,6 +1545,15 @@ int main(int argc, char** argv)
             dragVisual::ShouldSkipPreviewFallbackCandidate(
               true, true, false, true),
         "manual preview fallback must ignore unavailable and presentation-only windows");
+    Check(dragVisual::IsLayeredTransparentPresentationWindow(
+              WS_EX_LAYERED | WS_EX_TRANSPARENT) &&
+            dragVisual::IsLayeredTransparentPresentationWindow(
+              kDockWindowTransitionExStyle) &&
+            !dragVisual::IsLayeredTransparentPresentationWindow(
+              WS_EX_LAYERED) &&
+            !dragVisual::IsLayeredTransparentPresentationWindow(
+              WS_EX_TRANSPARENT),
+        "manual preview fallback must match the system passthrough semantics of layered transparent presentation windows");
     Check(dragVisual::PreviewFallbackRegionContainsPoint(
               ERROR, false) &&
             !dragVisual::PreviewFallbackRegionContainsPoint(

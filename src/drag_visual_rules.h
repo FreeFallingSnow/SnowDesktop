@@ -45,6 +45,15 @@ constexpr bool ShouldSkipPreviewFallbackCandidate(
     return !visible || !enabled || cloaked || presentationOnly;
 }
 
+constexpr bool IsLayeredTransparentPresentationWindow(
+    DWORD extendedStyle) noexcept
+{
+    constexpr DWORD kPassthroughStyle =
+        WS_EX_LAYERED | WS_EX_TRANSPARENT;
+    return (extendedStyle & kPassthroughStyle) ==
+        kPassthroughStyle;
+}
+
 constexpr bool PreviewFallbackRegionContainsPoint(
     int regionType,
     bool pointInRegion) noexcept
