@@ -2432,6 +2432,7 @@ private:
         const std::wstring& categoryId = L"",
         bool closingStartedByCurrentPress = false);
     void OpenDockFolderPopupAt(size_t entryIndex, POINT anchorPoint);
+    void ClearDockFolderPopupEntries();
     bool HasActiveContextMenuSession() const;
     void DismissActiveContextMenuForPopupTransition();
     bool TryActivateDockPopupFromMenuPointerPress(

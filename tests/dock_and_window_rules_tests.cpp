@@ -3857,6 +3857,10 @@ int main(int argc, char** argv)
             popupLifecycleSource.find(
                 "dockFolderPopupWidget_ = DesktopWidget{};",
                 openDockPopupBegin);
+        const std::size_t openDockPopupIconClear =
+            popupLifecycleSource.find(
+                "ClearDockFolderPopupEntries();",
+                openDockPopupBegin);
         const std::size_t finalizePopupClear =
             popupLifecycleSource.find(
                 "ClearPopupDragTarget();",
@@ -3864,6 +3868,10 @@ int main(int argc, char** argv)
         const std::size_t finalizePopupReset =
             popupLifecycleSource.find(
                 "dockFolderPopupContainer_.reset();",
+                finalizePopupBegin);
+        const std::size_t finalizePopupIconClear =
+            popupLifecycleSource.find(
+                "ClearDockFolderPopupEntries();",
                 finalizePopupBegin);
         const std::size_t openCollectionPopupBegin =
             popupTransitionSource.find(
@@ -3876,6 +3884,10 @@ int main(int argc, char** argv)
             popupTransitionSource.find(
                 "dockFolderPopupContainer_.reset();",
                 openCollectionPopupBegin);
+        const std::size_t openCollectionPopupIconClear =
+            popupTransitionSource.find(
+                "ClearDockFolderPopupEntries();",
+                openCollectionPopupBegin);
         const std::size_t refreshFolderPopupBegin =
             popupTransitionSource.find(
                 "void DesktopApp::RefreshDockFolderPopup()");
@@ -3887,25 +3899,61 @@ int main(int argc, char** argv)
             popupTransitionSource.find(
                 "EnumerateFolderMappingEntries(",
                 refreshFolderPopupBegin);
+        const std::size_t refreshFolderPopupIconClear =
+            popupTransitionSource.find(
+                "ClearDockFolderPopupEntries();",
+                refreshFolderPopupRewrite);
+        const std::size_t refreshFolderPopupContainer =
+            popupTransitionSource.find(
+                "dockFolderPopupContainer_ =",
+                refreshFolderPopupIconClear);
+        const std::size_t clearPopupEntriesBegin =
+            popupLifecycleSource.find(
+                "void DesktopApp::ClearDockFolderPopupEntries()");
+        const std::size_t clearPopupEntriesD2D =
+            popupLifecycleSource.find(
+                "EraseD2DIconCacheForBitmap(entry.iconBitmap);",
+                clearPopupEntriesBegin);
+        const std::size_t clearPopupEntriesModel =
+            popupLifecycleSource.find(
+                "dockFolderPopupWidget_.folderEntries.clear();",
+                clearPopupEntriesBegin);
         Check(openDockPopupBegin != std::string::npos &&
                 openDockPopupClear != std::string::npos &&
                 openDockPopupRewrite != std::string::npos &&
+                openDockPopupIconClear != std::string::npos &&
                 openDockPopupClear < openDockPopupRewrite &&
+                openDockPopupIconClear < openDockPopupRewrite &&
                 finalizePopupBegin != std::string::npos &&
                 finalizePopupClear != std::string::npos &&
                 finalizePopupReset != std::string::npos &&
+                finalizePopupIconClear != std::string::npos &&
                 finalizePopupClear < finalizePopupReset &&
+                finalizePopupReset < finalizePopupIconClear &&
                 openCollectionPopupBegin != std::string::npos &&
                 openCollectionPopupClear != std::string::npos &&
                 openCollectionPopupReset != std::string::npos &&
+                openCollectionPopupIconClear != std::string::npos &&
                 openCollectionPopupClear <
                     openCollectionPopupReset &&
+                openCollectionPopupReset <
+                    openCollectionPopupIconClear &&
                 refreshFolderPopupBegin != std::string::npos &&
                 refreshFolderPopupClear != std::string::npos &&
                 refreshFolderPopupRewrite != std::string::npos &&
+                refreshFolderPopupIconClear != std::string::npos &&
+                refreshFolderPopupContainer != std::string::npos &&
                 refreshFolderPopupClear <
-                    refreshFolderPopupRewrite,
-            "popup model replacement must detach transient drag targets before invalidating their parent or member storage");
+                    refreshFolderPopupRewrite &&
+                refreshFolderPopupRewrite <
+                    refreshFolderPopupIconClear &&
+                refreshFolderPopupIconClear <
+                    refreshFolderPopupContainer &&
+                clearPopupEntriesBegin != std::string::npos &&
+                clearPopupEntriesD2D != std::string::npos &&
+                clearPopupEntriesModel != std::string::npos &&
+                clearPopupEntriesD2D < clearPopupEntriesModel,
+            "popup replacement must detach drag targets and erase D2D icon keys before destroying folder-entry bitmaps");
         const std::size_t reloadItemsBegin =
             desktopReloadSource.find(
                 "void DesktopApp::ReloadItems(");

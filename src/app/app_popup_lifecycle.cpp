@@ -167,6 +167,7 @@ void DesktopApp::OpenDockFolderPopupAt(
     popupAnchorPoint_ = anchorPoint;
     popupCategoryId_.clear();
 
+    ClearDockFolderPopupEntries();
     dockFolderPopupWidget_ = DesktopWidget{};
     dockFolderPopupWidget_.type =
         DesktopWidgetType::FolderMapping;
@@ -398,7 +399,7 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     dockFolderPopupContainer_.reset();
     dockFolderPopupDragItems_.clear();
     dockFolderPopupMarqueeInitialSelection_.clear();
-    dockFolderPopupWidget_.folderEntries.clear();
+    ClearDockFolderPopupEntries();
     marqueeDockFolderPopup_ = false;
     popupScrollOffset_ = 0;
     popupHasAnchor_ = false;
@@ -427,6 +428,17 @@ void DesktopApp::FinalizeCloseCollectionPopup()
                 pendingOpen->categoryId);
         }
     }
+}
+
+void DesktopApp::ClearDockFolderPopupEntries()
+{
+    // FolderEntry releases its HBITMAP in the destructor, while the shared
+    // D2D cache is keyed by that handle value. Remove both raw/beautified GPU
+    // entries first so repeated popup lifecycles cannot retain stale bitmaps
+    // or alias a newly allocated GDI handle to an old icon.
+    for (const auto& entry : dockFolderPopupWidget_.folderEntries)
+        EraseD2DIconCacheForBitmap(entry.iconBitmap);
+    dockFolderPopupWidget_.folderEntries.clear();
 }
 
 void DesktopApp::CloseCollectionPopup(

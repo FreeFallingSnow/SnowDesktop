@@ -210,7 +210,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
     dockFolderPopupMarqueeInitialSelection_.clear();
     dockFolderPopupSourceId_.clear();
     dockFolderPopupMappingWidgetId_.clear();
-    dockFolderPopupWidget_.folderEntries.clear();
+    ClearDockFolderPopupEntries();
     popupWidgetIndex_ = widgetIndex;
     popupScrollOffset_ = 0;
     popupHasAnchor_ = anchorPoint.x != LONG_MIN || anchorPoint.y != LONG_MIN;
@@ -590,7 +590,7 @@ void DesktopApp::RefreshDockFolderPopup()
         }
     }
     else
-        dockFolderPopupWidget_.folderEntries.clear();
+        ClearDockFolderPopupEntries();
     dockFolderPopupContainer_ =
         std::make_unique<FolderMapping>(
             &dockFolderPopupWidget_, this);
