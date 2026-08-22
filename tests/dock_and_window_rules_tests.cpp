@@ -3846,6 +3846,43 @@ int main(int argc, char** argv)
                   "ShowDragHintWindow(current, hint);\n        InvalidateRect(hwnd_, nullptr, FALSE);") ==
                     std::string::npos,
             "ordinary drag movement must not invalidate the full desktop after every pointer pixel");
+        const std::size_t widgetTransitionPaint =
+            pointerMoveSource.find(
+                "PresentDesktopPointerUpdate();",
+                widgetGestureThreshold);
+        const std::size_t widgetResizePreview =
+            pointerMoveSource.find(
+                "// Widget resize preview",
+                widgetTransitionPaint);
+        const std::size_t widgetMovePreview =
+            pointerMoveSource.find(
+                "// Widget drag preview",
+                widgetResizePreview);
+        const std::string widgetResizeHotPath =
+            widgetResizePreview != std::string::npos &&
+                    widgetMovePreview != std::string::npos
+                ? pointerMoveSource.substr(
+                    widgetResizePreview,
+                    widgetMovePreview - widgetResizePreview)
+                : std::string{};
+        const std::size_t widgetForegroundPresent =
+            dragLifecycleSource.find(
+                "PresentDesktopForegroundComposition(client);");
+        const std::size_t widgetRootPresentFallback =
+            dragLifecycleSource.find(
+                "if (immediateDesktopPresent &&",
+                widgetForegroundPresent);
+        Check(widgetTransitionPaint != std::string::npos &&
+                widgetResizePreview != std::string::npos &&
+                widgetTransitionPaint < widgetResizePreview &&
+                !widgetResizeHotPath.empty() &&
+                widgetResizeHotPath.find(
+                    "InvalidateRect(hwnd_, nullptr") ==
+                    std::string::npos &&
+                widgetForegroundPresent != std::string::npos &&
+                widgetRootPresentFallback != std::string::npos &&
+                widgetForegroundPresent < widgetRootPresentFallback,
+            "widget gestures must establish the source state once and present later samples through the foreground composition");
         const std::size_t desktopGridHitTest =
             desktopGridSource.find(
                 "HitRegion DesktopGrid::HitTestAtPoint(");

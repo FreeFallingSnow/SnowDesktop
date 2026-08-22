@@ -114,7 +114,20 @@ void DesktopApp::PresentPointerInteractionFrame(
                 itemDragFeedbackChanged,
                 widgetPreviewActive,
                 marqueeActive_);
+    bool widgetForegroundPresented = false;
+    if (widgetPreviewActive && hwnd_ && IsWindow(hwnd_))
+    {
+        // The source widget is hidden by the synchronous transition paint.
+        // During the captured gesture only the foreground overlay changes, so
+        // keep dense pointer samples away from the root surface and unrelated
+        // widget composition queues.
+        RECT client{};
+        GetClientRect(hwnd_, &client);
+        widgetForegroundPresented =
+            PresentDesktopForegroundComposition(client);
+    }
     if (immediateDesktopPresent &&
+        !widgetForegroundPresented &&
         hwnd_ && IsWindow(hwnd_))
     {
         InvalidateRect(hwnd_, nullptr, FALSE);

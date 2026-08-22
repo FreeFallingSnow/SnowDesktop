@@ -488,6 +488,10 @@ void DesktopApp::OnMouseMoveAt(
             widgetEngine_->ClearInteractionHover();
         HideDockWindowPreview();
         InvalidateRect(hwnd_, nullptr, FALSE);
+        // The transition paint hides the source widget composition and
+        // establishes the initial overlay. Later samples can update only the
+        // foreground composition without walking the complete desktop scene.
+        PresentDesktopPointerUpdate();
     }
 
     // Widget resize preview
@@ -514,7 +518,6 @@ void DesktopApp::OnMouseMoveAt(
             widgetPreviewSpan_ = span;
         }
         ShowDragHintWindow(current, _LW("core.drag.resize_widget"));
-        InvalidateRect(hwnd_, nullptr, TRUE);
         return;
     }
 
@@ -586,7 +589,6 @@ void DesktopApp::OnMouseMoveAt(
                 _LW(movingCollection
                     ? "core.drag.move_collection_group"
                     : "core.drag.move_file_group"));
-            InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
         widgetCollectionGroupTargetIndex_ =
@@ -610,7 +612,6 @@ void DesktopApp::OnMouseMoveAt(
             widgetDockTargetContainer_ = dock;
             widgetDockInsertIndex_ = dock->GetInsertIndexAtPoint(current);
             ShowDragHintWindow(current, _LW("core.drag.move_collection_dock"));
-            InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
         widgetDockTarget_ = false;
@@ -668,6 +669,7 @@ void DesktopApp::OnMouseMoveAt(
                     mouseDownPoint_.y += dy;
                     InvalidateDragStaticScene();
                     InvalidateRect(hwnd_, nullptr, TRUE);
+                    PresentDesktopPointerUpdate();
                 }
                 navAutoFlipTick_ = now;
             }
@@ -696,7 +698,6 @@ void DesktopApp::OnMouseMoveAt(
             widgetPreviewCell_ = cell;
         }
         ShowDragHintWindow(current, _LW("core.drag.move_widget"));
-        InvalidateRect(hwnd_, nullptr, TRUE);
         return;
     }
 
