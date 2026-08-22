@@ -712,6 +712,10 @@ void DesktopApp::OnMouseMoveAt(WPARAM wp, POINT current)
                 const HWND nativeCaptureHwnd = GetCapture();
 
                 HideDragHintWindow();
+                // Crossing into another process proves that this is a drag,
+                // not a Dock click. Do not carry raw pressed-container
+                // pointers through DoDragDrop's rebuilding message loop.
+                ClearDockPressedState();
                 ReleaseCapture();
                 mouseDown_ = false;
                 mouseDownHit_ = nullptr;
@@ -901,7 +905,7 @@ void DesktopApp::OnMouseMoveAt(WPARAM wp, POINT current)
                 if (!dragDropController_.SelfDragReturned())
                 {
                     ClearSelection();
-                    EndDragSession();
+                    CancelActiveItemDrag();
                     ReloadItems();
                     if (dockFolderPopupSource &&
                         dockFolderPopupOpen_)
@@ -911,7 +915,7 @@ void DesktopApp::OnMouseMoveAt(WPARAM wp, POINT current)
                 {
                     SaveLayoutSlots();
                     ClearSelection();
-                    EndDragSession();
+                    CancelActiveItemDrag();
                     InvalidateRect(hwnd_, nullptr, FALSE);
                 }
                 return;

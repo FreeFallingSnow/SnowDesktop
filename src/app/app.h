@@ -801,6 +801,8 @@ private:
     void ResetDockHandoffDwell();
     /** @brief 结束当前拖拽会话，清理拖拽状态。 */
     void EndDragSession();
+    /** @brief 清除 Dock 按下态，避免拖拽越界后退化为点击。 */
+    void ClearDockPressedState();
     /** @brief 取消当前原生项目拖拽，并清理输入捕获与驻留状态。 */
     void CancelActiveItemDrag();
     /** @brief 在同步 Shell 放置前提交拖拽结束帧并移除已隐藏组件的毛玻璃。 */

@@ -3461,22 +3461,65 @@ int main(int argc, char** argv)
             : dragLifecycleSource.substr(
                 cancelDragBegin,
                 cancelDragEnd - cancelDragBegin);
+        const std::size_t clearDockPressBegin =
+            dragLifecycleSource.find(
+                "void DesktopApp::ClearDockPressedState()");
+        const std::size_t clearDockPressEnd =
+            dragLifecycleSource.find(
+                "void DesktopApp::CancelActiveItemDrag()",
+                clearDockPressBegin);
+        const std::string clearDockPressHandler =
+            clearDockPressBegin == std::string::npos ||
+                clearDockPressEnd == std::string::npos
+            ? std::string{}
+            : dragLifecycleSource.substr(
+                clearDockPressBegin,
+                clearDockPressEnd - clearDockPressBegin);
+        const std::size_t cancelEndSession =
+            cancelDragHandler.find("EndDragSession();");
+        const std::size_t cancelClearPopupItem =
+            cancelDragHandler.find("ClearPopupMouseDownItem();");
         Check(cancelDragHandler.find(
                   "popupDwellController_.Reset();") !=
+                    std::string::npos &&
+                cancelDragHandler.find(
+                  "ClearPopupMouseDownItem();") !=
+                    std::string::npos &&
+                cancelDragHandler.find(
+                  "popupDragTargetSlot_.reset();") !=
                     std::string::npos &&
                 cancelDragHandler.find(
                   "mouseDown_ = false;") !=
                     std::string::npos &&
                 cancelDragHandler.find(
+                  "ClearDockPressedState();") !=
+                    std::string::npos &&
+                clearDockPressHandler.find(
+                  "dockPressedEntry_ = static_cast<size_t>(-1);") !=
+                    std::string::npos &&
+                clearDockPressHandler.find(
+                  "dockPressedContainer_ = nullptr;") !=
+                    std::string::npos &&
+                cancelDragHandler.find(
+                  "marqueeActive_ = false;") !=
+                    std::string::npos &&
+                cancelDragHandler.find(
                   "EndDragSession();") !=
                     std::string::npos &&
+                cancelEndSession < cancelClearPopupItem &&
                 cancelDragHandler.find(
                   "ReleaseCapture();") !=
                     std::string::npos &&
                 keyboardInputSource.find(
                   "if (dragSession_.IsActive())\n        {\n            CancelActiveItemDrag();") !=
+                    std::string::npos &&
+                pointerMoveSource.find(
+                  "ClearSelection();\n                    CancelActiveItemDrag();\n                    ReloadItems();") !=
+                    std::string::npos &&
+                pointerMoveSource.find(
+                  "ClearDockPressedState();\n                ReleaseCapture();") !=
                     std::string::npos,
-            "Escape must completely cancel a resumed native item drag before handling popup state");
+            "Escape and terminal OLE exits must clear every pressed item-drag state before a later button-up");
 
         const std::size_t resolverBegin =
             dragTargetUpdateSource.find(

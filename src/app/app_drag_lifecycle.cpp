@@ -252,11 +252,19 @@ void DesktopApp::EndDragSession()
         InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
+void DesktopApp::ClearDockPressedState()
+{
+    dockPressedEntry_ = static_cast<size_t>(-1);
+    dockPressedFrequentItem_ = static_cast<size_t>(-1);
+    dockPressedRunningAppKey_.clear();
+    dockPressedWindowAction_ =
+        snowdesktop::dock_window_rules::DockClickAction::None;
+    dockPressedTargetWindow_ = nullptr;
+    dockPressedContainer_ = nullptr;
+}
+
 void DesktopApp::CancelActiveItemDrag()
 {
-    if (!dragSession_.IsActive())
-        return;
-
     HideDragHintWindow();
     popupDwellController_.Reset();
     if (hwnd_)
@@ -270,7 +278,17 @@ void DesktopApp::CancelActiveItemDrag()
     pendingCtrlToggleDesktopIndex_ =
         static_cast<size_t>(-1);
     pendingCtrlToggleWidgetItem_ = nullptr;
+    ClearDockPressedState();
+    marqueeActive_ = false;
+    marqueeWidgetIndex_ = static_cast<size_t>(-1);
+    marqueeDockFolderPopup_ = false;
     EndDragSession();
+    // End the session before destroying popup-owned Item/Slot wrappers that
+    // may still be referenced by its source or target lists.
+    ClearPopupMouseDownItem();
+    popupDragTargetSlot_.reset();
+    dockFolderPopupDragItems_.clear();
+    dockFolderPopupMarqueeInitialSelection_.clear();
     ReleaseCapture();
     InvalidateDragStaticScene();
 }
