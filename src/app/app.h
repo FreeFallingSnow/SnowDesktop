@@ -932,7 +932,8 @@ private:
     bool StartFloatingPopupOutsideClickMonitor();
     void StopFloatingPopupOutsideClickMonitor();
     void HandleFloatingPopupExternalPointerDown(
-        std::uint32_t generation);
+        std::uint32_t generation,
+        std::uint64_t screenPointPayload);
     static LRESULT CALLBACK FloatingPopupMouseHookProc(
         int code, WPARAM message, LPARAM data);
     bool CreateFloatingPopupWindow();
@@ -3087,10 +3088,6 @@ private:
         floatingPopupMouseHookNotificationWindow_{ nullptr };
     inline static std::atomic<std::uint32_t>
         floatingPopupMouseHookActiveGeneration_{ 0 };
-    inline static std::atomic<LONG>
-        floatingPopupMouseHookScreenX_{ 0 };
-    inline static std::atomic<LONG>
-        floatingPopupMouseHookScreenY_{ 0 };
     /** @brief 快捷导航顶层窗口下方的原生毛玻璃层。 */
     DesktopBackdropCompositor quickNavBackdropCompositor_;
     HWND quickNavigationSearchEdit_ = nullptr;

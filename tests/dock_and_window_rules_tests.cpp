@@ -1536,6 +1536,18 @@ int main(int argc, char** argv)
     Check(popupAnimationOffset.x == 20 &&
             popupAnimationOffset.y == 30,
         "popup animation snapshots must use shared-host local coordinates");
+    const POINT externalPointerPoint{ -123456, 234567 };
+    const std::uint64_t externalPointerPayload =
+        floatingPopup::PackScreenPoint(
+            externalPointerPoint);
+    const POINT restoredExternalPointerPoint =
+        floatingPopup::UnpackScreenPoint(
+            externalPointerPayload);
+    Check(restoredExternalPointerPoint.x ==
+                externalPointerPoint.x &&
+            restoredExternalPointerPoint.y ==
+                externalPointerPoint.y,
+        "each popup hook notification must preserve its full signed screen coordinate snapshot");
     const RECT collectionPopupBounds{ 10, 20, 110, 120 };
     const RECT luaPanelBounds{ 200, 220, 320, 360 };
     Check(floatingPopup::IsPointOnHostedPopupSurface(
@@ -3041,6 +3053,19 @@ int main(int argc, char** argv)
                 floatingPopupSource.find("RegisterDragDrop") !=
                     std::string::npos,
             "the shared popup host must own an independent DComp target and OLE drop surface");
+        Check(floatingPopupSource.find(
+                  "PackScreenPoint(event->pt)") !=
+                    std::string::npos &&
+                floatingPopupSource.find(
+                  "UnpackScreenPoint(screenPointPayload)") !=
+                    std::string::npos &&
+                floatingPopupSource.find(
+                  "floatingPopupMouseHookScreenX_") ==
+                    std::string::npos &&
+                floatingPopupSource.find(
+                  "floatingPopupMouseHookScreenY_") ==
+                    std::string::npos,
+            "each queued popup outside-click notification must own its pointer coordinate payload");
         Check(floatingDockSource.find(
                   "ReserveCollectionPopupEnvelope") ==
                     std::string::npos &&
@@ -3084,6 +3109,29 @@ int main(int argc, char** argv)
                     "InvalidateFloatingDockWindow(true);") ==
                     std::string::npos,
             "finalizing a shared popup must not repaint or resize the floating Dock");
+        const std::size_t refreshPopupGeometryBegin =
+            popupTransitionSource.find(
+                "void DesktopApp::RefreshDockFolderPopupGeometry()");
+        const std::size_t commitPopupStateBegin =
+            popupTransitionSource.find(
+                "CommitDockFolderPopupStateToSource()",
+                refreshPopupGeometryBegin);
+        const std::string refreshPopupGeometrySource =
+            refreshPopupGeometryBegin != std::string::npos &&
+                    commitPopupStateBegin != std::string::npos
+                ? popupTransitionSource.substr(
+                    refreshPopupGeometryBegin,
+                    commitPopupStateBegin -
+                        refreshPopupGeometryBegin)
+                : std::string{};
+        Check(!refreshPopupGeometrySource.empty() &&
+                refreshPopupGeometrySource.find(
+                    "UpdateFloatingDockWindowBounds();") ==
+                    std::string::npos &&
+                refreshPopupGeometrySource.find(
+                    "InvalidateFloatingDockWindow(true);") ==
+                    std::string::npos,
+            "shared popup geometry refresh must not resize or repaint the floating Dock");
         Check(popupTransitionSource.find(
                   "EnsureFloatingDockVisibleForAssociatedSurface(") !=
                     std::string::npos &&

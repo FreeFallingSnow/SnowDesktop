@@ -1,6 +1,7 @@
 #include "app.h"
 
 #include <array>
+#include <bit>
 
 namespace
 {
@@ -55,13 +56,16 @@ LRESULT CALLBACK DesktopApp::FloatingPopupMouseHookProc(
             notificationWindow &&
             IsWindow(notificationWindow))
         {
-            floatingPopupMouseHookScreenX_.store(event->pt.x);
-            floatingPopupMouseHookScreenY_.store(event->pt.y);
+            static_assert(sizeof(LPARAM) == sizeof(std::uint64_t),
+                "SnowDesktop popup input payload requires the supported x64 build");
+            const std::uint64_t screenPointPayload =
+                snowdesktop::floating_popup_rules::
+                    PackScreenPoint(event->pt);
             PostMessageW(
                 notificationWindow,
                 kFloatingPopupExternalPointerMessage,
                 static_cast<WPARAM>(generation),
-                0);
+                std::bit_cast<LPARAM>(screenPointPayload));
         }
     }
     return CallNextHookEx(nullptr, code, message, data);
@@ -114,17 +118,17 @@ void DesktopApp::StopFloatingPopupOutsideClickMonitor()
 }
 
 void DesktopApp::HandleFloatingPopupExternalPointerDown(
-    std::uint32_t generation)
+    std::uint32_t generation,
+    std::uint64_t screenPointPayload)
 {
     if (generation == 0 ||
         generation != floatingPopupMouseHookGeneration_ ||
         !ShouldShowFloatingPopupWindow())
         return;
 
-    const POINT screenPoint{
-        floatingPopupMouseHookScreenX_.load(),
-        floatingPopupMouseHookScreenY_.load()
-    };
+    const POINT screenPoint =
+        snowdesktop::floating_popup_rules::
+            UnpackScreenPoint(screenPointPayload);
     POINT desktopPoint = screenPoint;
     const bool hasDesktopPoint =
         hwnd_ && IsWindow(hwnd_) &&
@@ -261,27 +265,117 @@ HRESULT DesktopApp::SyncFloatingPopupCompositionRootZOrder()
                     UiCompositionAnimationHost::FloatingPopup)
             ? luaWidgetPanelAnimationOverlay_.visual.Get() : nullptr,
     };
-    for (IDCompositionVisual2* visual : bottomToTop)
+
+    std::array<bool, 2> removedFromRoot{};
+    const auto restoreRemovedPrefix = [&](std::size_t end) {
+        IDCompositionVisual2* predecessor = nullptr;
+        HRESULT restoreHr = S_OK;
+        for (std::size_t index = 0; index < end; ++index)
+        {
+            IDCompositionVisual2* visual = bottomToTop[index];
+            if (!visual || !removedFromRoot[index])
+                continue;
+            const HRESULT hr =
+                floatingPopupDcompVisual_->AddVisual(
+                    visual, TRUE, predecessor);
+            if (SUCCEEDED(hr))
+                predecessor = visual;
+            else if (SUCCEEDED(restoreHr))
+                restoreHr = hr;
+        }
+        return restoreHr;
+    };
+
+    for (std::size_t index = 0;
+         index < bottomToTop.size(); ++index)
     {
+        IDCompositionVisual2* visual = bottomToTop[index];
         if (visual)
         {
             const HRESULT hr =
                 floatingPopupDcompVisual_->RemoveVisual(visual);
             if (FAILED(hr))
+            {
+                const HRESULT restoreHr =
+                    restoreRemovedPrefix(index);
+                if (FAILED(restoreHr))
+                {
+                    wchar_t message[176]{};
+                    wsprintfW(
+                        message,
+                        L"Floating popup root z-order rollback FAILED "
+                        L"hr=0x%08X after remove hr=0x%08X",
+                        static_cast<unsigned>(restoreHr),
+                        static_cast<unsigned>(hr));
+                    WriteDiagnosticLogEntry(message);
+                }
                 return hr;
+            }
+            removedFromRoot[index] = true;
         }
     }
 
     IDCompositionVisual2* predecessor = nullptr;
-    for (IDCompositionVisual2* visual : bottomToTop)
+    std::array<bool, 2> attachedToRoot{};
+    HRESULT addFailure = S_OK;
+    for (std::size_t index = 0;
+         index < bottomToTop.size(); ++index)
     {
+        IDCompositionVisual2* visual = bottomToTop[index];
         if (!visual)
             continue;
         const HRESULT hr = floatingPopupDcompVisual_->AddVisual(
             visual, TRUE, predecessor);
         if (FAILED(hr))
-            return hr;
+        {
+            if (SUCCEEDED(addFailure))
+                addFailure = hr;
+            continue;
+        }
+        attachedToRoot[index] = true;
         predecessor = visual;
+    }
+
+    if (FAILED(addFailure))
+    {
+        predecessor = nullptr;
+        HRESULT restoreHr = S_OK;
+        for (std::size_t index = 0;
+             index < bottomToTop.size(); ++index)
+        {
+            IDCompositionVisual2* visual = bottomToTop[index];
+            if (!visual)
+                continue;
+            if (attachedToRoot[index])
+            {
+                predecessor = visual;
+                continue;
+            }
+            const HRESULT hr =
+                floatingPopupDcompVisual_->AddVisual(
+                    visual, TRUE, predecessor);
+            if (SUCCEEDED(hr))
+            {
+                attachedToRoot[index] = true;
+                predecessor = visual;
+            }
+            else if (SUCCEEDED(restoreHr))
+            {
+                restoreHr = hr;
+            }
+        }
+        if (FAILED(restoreHr))
+        {
+            wchar_t message[176]{};
+            wsprintfW(
+                message,
+                L"Floating popup root z-order reattach FAILED "
+                L"hr=0x%08X after add hr=0x%08X",
+                static_cast<unsigned>(restoreHr),
+                static_cast<unsigned>(addFailure));
+            WriteDiagnosticLogEntry(message);
+        }
+        return addFailure;
     }
     return S_OK;
 }
@@ -745,7 +839,8 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         return MA_NOACTIVATE;
     case kFloatingPopupExternalPointerMessage:
         HandleFloatingPopupExternalPointerDown(
-            static_cast<std::uint32_t>(wp));
+            static_cast<std::uint32_t>(wp),
+            std::bit_cast<std::uint64_t>(lp));
         return 0;
     case WM_NCHITTEST:
         return ShouldShowFloatingPopupWindow()

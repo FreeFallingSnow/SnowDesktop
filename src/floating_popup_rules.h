@@ -2,6 +2,9 @@
 
 #include <windows.h>
 
+#include <bit>
+#include <cstdint>
+
 namespace snowdesktop::floating_popup_rules
 {
 inline constexpr DWORD kWindowExStyle =
@@ -38,6 +41,24 @@ constexpr POINT AnimationVisualOffset(
     return POINT{
         animationBounds.left - hostBounds.left,
         animationBounds.top - hostBounds.top,
+    };
+}
+
+constexpr std::uint64_t PackScreenPoint(POINT point)
+{
+    return static_cast<std::uint64_t>(
+               static_cast<std::uint32_t>(point.x)) |
+        (static_cast<std::uint64_t>(
+             static_cast<std::uint32_t>(point.y)) << 32);
+}
+
+constexpr POINT UnpackScreenPoint(std::uint64_t packed)
+{
+    return POINT{
+        static_cast<LONG>(std::bit_cast<std::int32_t>(
+            static_cast<std::uint32_t>(packed))),
+        static_cast<LONG>(std::bit_cast<std::int32_t>(
+            static_cast<std::uint32_t>(packed >> 32))),
     };
 }
 

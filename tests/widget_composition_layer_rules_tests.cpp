@@ -303,6 +303,16 @@ int main(int argc, char** argv)
                     "UiCompositionAnimationHost::FloatingPopup") !=
                     std::string::npos,
             "the shared popup root must exclude desktop animation visuals");
+        Check(floatingRootZOrder.find("removedFromRoot") !=
+                    std::string::npos &&
+                floatingRootZOrder.find(
+                    "restoreRemovedPrefix(index)") !=
+                    std::string::npos &&
+                floatingRootZOrder.find("attachedToRoot") !=
+                    std::string::npos &&
+                floatingRootZOrder.find("FAILED(addFailure)") !=
+                    std::string::npos,
+            "a failed shared-popup root reorder must reattach visuals instead of leaving a partial tree");
         Check(composition.find(
                 "hr = SyncDesktopCompositionRootZOrder();") !=
                 std::string::npos &&

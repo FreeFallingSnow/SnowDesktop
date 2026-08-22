@@ -608,11 +608,6 @@ void DesktopApp::RefreshDockFolderPopupGeometry()
             dockFolderPopupWidget_,
             popupRect_));
     InvalidateDragStaticScene();
-    if (floatingDockVisible_)
-    {
-        UpdateFloatingDockWindowBounds();
-        InvalidateFloatingDockWindow(true);
-    }
     if (hwnd_ && IsWindow(hwnd_))
         InvalidateRect(hwnd_, nullptr, TRUE);
     UpdateFloatingPopupWindowBounds(true);
@@ -641,11 +636,6 @@ void DesktopApp::RefreshOpenCollectionPopupGeometry()
             widgets_[popupWidgetIndex_],
             popupRect_));
     InvalidateDragStaticScene();
-    if (floatingDockVisible_)
-    {
-        UpdateFloatingDockWindowBounds();
-        InvalidateFloatingDockWindow(true);
-    }
     UpdateFloatingPopupWindowBounds(true);
     if (hwnd_ && IsWindow(hwnd_))
         InvalidateRect(hwnd_, nullptr, TRUE);
