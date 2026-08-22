@@ -1325,6 +1325,8 @@ private:
     void OnMouseLeave();
     /** @brief 处理鼠标左键按下消息。 @param wp WPARAM @param lp LPARAM */
     void OnLeftButtonDown(WPARAM wp, LPARAM lp);
+    /** @brief 清理弹窗临时按下项及所有指向它的交互裸指针。 */
+    void ClearPopupMouseDownItem();
     /** @brief 处理鼠标左键释放消息。 @param wp WPARAM @param lp LPARAM */
     void OnLeftButtonUp(WPARAM wp, LPARAM lp);
     /** @brief 处理中键按下，在组件任意位置开始移动。 */

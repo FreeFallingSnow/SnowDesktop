@@ -2995,6 +2995,15 @@ int main(int argc, char** argv)
         const std::string pointerContextSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_pointer_context.cpp");
+        const std::string pointerDownSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_pointer_down.cpp");
+        const std::string pointerReleaseSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_pointer_release.cpp");
+        const std::string desktopLayoutSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_desktop_layout.cpp");
         const std::string sceneSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_scene_render.cpp");
@@ -3038,6 +3047,25 @@ int main(int argc, char** argv)
                   "EnsureFloatingDockVisibleForAssociatedSurface(") !=
                     std::string::npos,
             "context menus opened from the Dock must reveal its floating host");
+        Check(pointerContextSource.find(
+                  "if (mouseDownHit_ == popupItem)") !=
+                    std::string::npos &&
+                pointerContextSource.find(
+                  "popupMouseDownItem_.reset();") !=
+                    std::string::npos &&
+                popupLifecycleSource.find(
+                  "ClearPopupMouseDownItem();") !=
+                    std::string::npos &&
+                pointerDownSource.find(
+                  "ClearPopupMouseDownItem();") !=
+                    std::string::npos &&
+                pointerReleaseSource.find(
+                  "ClearPopupMouseDownItem();") !=
+                    std::string::npos &&
+                desktopLayoutSource.find(
+                  "ClearPopupMouseDownItem();") !=
+                    std::string::npos,
+            "popup item teardown must clear borrowed pointer state before releasing its wrapper");
         Check(sceneSource.find(
                   "collectionHostedByFloatingPopup") !=
                     std::string::npos &&

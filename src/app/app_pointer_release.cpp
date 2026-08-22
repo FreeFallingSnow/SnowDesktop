@@ -1434,7 +1434,7 @@ void DesktopApp::OnLeftButtonUp(WPARAM wp, LPARAM lp)
 
 cleanup:
     EndDragSession();
-    popupMouseDownItem_.reset();
+    ClearPopupMouseDownItem();
     popupDragTargetSlot_.reset();
     dockFolderPopupDragItems_.clear();
     dockFolderPopupMarqueeInitialSelection_.clear();

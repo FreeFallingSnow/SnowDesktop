@@ -452,7 +452,7 @@ void DesktopApp::CloseCollectionPopup(
              dockFolderPopupWidget_.folderEntries)
             entry.selected = false;
     }
-    popupMouseDownItem_.reset();
+    ClearPopupMouseDownItem();
     popupDragTargetSlot_.reset();
     marqueeActive_ = false;
     marqueeDockFolderPopup_ = false;

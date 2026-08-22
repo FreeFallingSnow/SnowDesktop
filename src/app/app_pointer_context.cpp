@@ -5,6 +5,16 @@
 
 // Page-navigation clicks and right-button context dispatch.
 
+void DesktopApp::ClearPopupMouseDownItem()
+{
+    Item* const popupItem = popupMouseDownItem_.get();
+    if (mouseDownHit_ == popupItem)
+        mouseDownHit_ = nullptr;
+    if (pendingCtrlToggleWidgetItem_ == popupItem)
+        pendingCtrlToggleWidgetItem_ = nullptr;
+    popupMouseDownItem_.reset();
+}
+
 bool DesktopApp::HandlePageNavClick(POINT point)
 {
     if (gridPages_.empty()) return false;
