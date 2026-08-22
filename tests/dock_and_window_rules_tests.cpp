@@ -3184,6 +3184,12 @@ int main(int argc, char** argv)
         const std::string pointerMoveSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_pointer_move.cpp");
+        const std::string hitTestingSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_hit_testing.cpp");
+        const std::string desktopGridSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "core" /
+                "desktop.cpp");
         const std::string oleDropSessionSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_ole_drop_session.cpp");
@@ -3438,6 +3444,37 @@ int main(int argc, char** argv)
                   "ShowDragHintWindow(current, hint);\n        InvalidateRect(hwnd_, nullptr, FALSE);") ==
                     std::string::npos,
             "ordinary drag movement must not invalidate the full desktop after every pointer pixel");
+        const std::size_t desktopGridHitTest =
+            desktopGridSource.find(
+                "HitRegion DesktopGrid::HitTestAtPoint(");
+        const std::size_t desktopGridCellFilter =
+            desktopGridSource.find(
+                "item.gridCell.pageId != page->id",
+                desktopGridHitTest);
+        const std::size_t desktopGridKeyNormalize =
+            desktopGridSource.find(
+                "ToUpperInvariant(item.layoutKey)",
+                desktopGridHitTest);
+        const std::size_t iconHitTest =
+            hitTestingSource.find(
+                "DesktopIcon* DesktopApp::HitTestIcon(");
+        const std::size_t iconGeometryFilter =
+            hitTestingSource.find(
+                "if (!PtInRect(&selRect, pt)) continue;",
+                iconHitTest);
+        const std::size_t iconKeyNormalize =
+            hitTestingSource.find(
+                "ToUpperInvariant(di->layoutKey)",
+                iconHitTest);
+        Check(desktopGridHitTest != std::string::npos &&
+                desktopGridCellFilter != std::string::npos &&
+                desktopGridKeyNormalize != std::string::npos &&
+                desktopGridCellFilter < desktopGridKeyNormalize &&
+                iconHitTest != std::string::npos &&
+                iconGeometryFilter != std::string::npos &&
+                iconKeyNormalize != std::string::npos &&
+                iconGeometryFilter < iconKeyNormalize,
+            "desktop hit tests must reject nonmatching geometry before allocating normalized layout keys");
         const std::size_t pointerLiveUpdate =
             pointerMoveSource.find(
                 "dragSession_.UpdatePoint(current);");
