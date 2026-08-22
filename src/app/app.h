@@ -25,6 +25,7 @@
 #include "drop_model.h"
 #include "drag_session.h"
 #include "drag_target_resolver.h"
+#include "owned_transient_drag_target.h"
 #include "settings_window.h"
 #include "settings_window_open_rules.h"
 #include "navigation_settings.h"
@@ -802,6 +803,8 @@ private:
     void ResetDockHandoffDwell();
     /** @brief 结束当前拖拽会话，清理拖拽状态。 */
     void EndDragSession();
+    /** @brief 解除弹窗拖拽目标引用，再释放其有界成员缓存。 */
+    void ClearPopupDragTarget();
     /** @brief 清除 Dock 按下态，避免拖拽越界后退化为点击。 */
     void ClearDockPressedState();
     /** @brief 取消当前原生项目拖拽，并清理输入捕获与驻留状态。 */
@@ -3462,7 +3465,7 @@ private:
     std::wstring collectionGroupTabDwellId_;
     DWORD collectionGroupTabDwellTick_ = 0;
     bool collectionGroupTabDwellTimerArmed_ = false;
-    std::unique_ptr<Slot> popupDragTargetSlot_;
+    snowdesktop::OwnedTransientDragTarget popupDragTarget_;
     /** @} */
 
     /** @name Lua 组件附加面板 */

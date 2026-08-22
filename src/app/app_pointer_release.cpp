@@ -1435,7 +1435,6 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
 cleanup:
     EndDragSession();
     ClearPopupMouseDownItem();
-    popupDragTargetSlot_.reset();
     dockFolderPopupDragItems_.clear();
     dockFolderPopupMarqueeInitialSelection_.clear();
     pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);

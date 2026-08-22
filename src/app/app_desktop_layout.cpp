@@ -81,7 +81,7 @@ void DesktopApp::RebuildContainersAndItems()
     pendingCtrlToggleWidgetItem_ = nullptr;
     dockPressedContainer_ = nullptr;
     widgetDockTargetContainer_ = nullptr;
-    popupDragTargetSlot_.reset();
+    ClearPopupDragTarget();
     ClearPopupMouseDownItem();
 
     floatingDockContainer_ = nullptr;

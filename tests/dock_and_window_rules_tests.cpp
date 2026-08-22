@@ -3248,6 +3248,9 @@ int main(int argc, char** argv)
         const std::string desktopLayoutSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_desktop_layout.cpp");
+        const std::string desktopReloadSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_desktop_reload.cpp");
         const std::string sceneSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_scene_render.cpp");
@@ -3781,6 +3784,153 @@ int main(int argc, char** argv)
                 pointerLiveUpdate < pointerPreviewSync &&
                 pointerPreviewSync < pointerExternalHit,
             "the drag preview and OLE input hole must reach the live point before external-window hit testing");
+        const std::size_t popupHitBegin =
+            dragTargetUpdateSource.find(
+                "bool DesktopApp::HitTestPopupForDrag(");
+        const std::size_t popupHitEnd =
+            dragTargetUpdateSource.find(
+                "bool DesktopApp::UpdateDragPageNavigation(",
+                popupHitBegin);
+        const std::string popupHitHandler =
+            popupHitBegin == std::string::npos ||
+                popupHitEnd == std::string::npos
+            ? std::string{}
+            : dragTargetUpdateSource.substr(
+                popupHitBegin,
+                popupHitEnd - popupHitBegin);
+        const std::size_t firstOwnedHandoff =
+            popupHitHandler.find(
+                "popupDragTarget_.BindHandoff(");
+        const std::size_t secondOwnedHandoff =
+            popupHitHandler.find(
+                "popupDragTarget_.BindHandoff(",
+                firstOwnedHandoff == std::string::npos
+                    ? 0 : firstOwnedHandoff + 1);
+        Check(!popupHitHandler.empty() &&
+                firstOwnedHandoff != std::string::npos &&
+                secondOwnedHandoff != std::string::npos &&
+                popupHitHandler.find("GetMemberItem(") ==
+                    std::string::npos,
+            "popup handoff hit testing must reuse owned target wrappers instead of appending drag-source wrappers per mouse sample");
+        const std::size_t clearPopupTargetBegin =
+            dragLifecycleSource.find(
+                "void DesktopApp::ClearPopupDragTarget()");
+        const std::size_t clearPopupTargetEnd =
+            dragLifecycleSource.find(
+                "void DesktopApp::EndDragSession()",
+                clearPopupTargetBegin);
+        const std::string clearPopupTargetHandler =
+            clearPopupTargetBegin == std::string::npos ||
+                clearPopupTargetEnd == std::string::npos
+            ? std::string{}
+            : dragLifecycleSource.substr(
+                clearPopupTargetBegin,
+                clearPopupTargetEnd - clearPopupTargetBegin);
+        const std::size_t detachPopupTarget =
+            clearPopupTargetHandler.find(
+                "dragSession_.UpdateTarget(");
+        const std::size_t resetPopupTarget =
+            clearPopupTargetHandler.find(
+                "popupDragTarget_.Reset();");
+        Check(!clearPopupTargetHandler.empty() &&
+                clearPopupTargetHandler.find(
+                    "if (popupTarget &&") !=
+                    std::string::npos &&
+                detachPopupTarget != std::string::npos &&
+                resetPopupTarget != std::string::npos &&
+                detachPopupTarget < resetPopupTarget &&
+                clearPopupTargetHandler.find(
+                    "dragSession_.IsActive()") ==
+                    std::string::npos,
+            "popup target teardown must detach active or deactivated drop context before releasing owned wrappers");
+        const std::size_t openDockPopupBegin =
+            popupLifecycleSource.find(
+                "void DesktopApp::OpenDockFolderPopupAt(");
+        const std::size_t openDockPopupClear =
+            popupLifecycleSource.find(
+                "ClearPopupDragTarget();",
+                openDockPopupBegin);
+        const std::size_t openDockPopupRewrite =
+            popupLifecycleSource.find(
+                "dockFolderPopupWidget_ = DesktopWidget{};",
+                openDockPopupBegin);
+        const std::size_t finalizePopupClear =
+            popupLifecycleSource.find(
+                "ClearPopupDragTarget();",
+                finalizePopupBegin);
+        const std::size_t finalizePopupReset =
+            popupLifecycleSource.find(
+                "dockFolderPopupContainer_.reset();",
+                finalizePopupBegin);
+        const std::size_t openCollectionPopupBegin =
+            popupTransitionSource.find(
+                "void DesktopApp::OpenCollectionPopupAt(");
+        const std::size_t openCollectionPopupClear =
+            popupTransitionSource.find(
+                "ClearPopupDragTarget();",
+                openCollectionPopupBegin);
+        const std::size_t openCollectionPopupReset =
+            popupTransitionSource.find(
+                "dockFolderPopupContainer_.reset();",
+                openCollectionPopupBegin);
+        const std::size_t refreshFolderPopupBegin =
+            popupTransitionSource.find(
+                "void DesktopApp::RefreshDockFolderPopup()");
+        const std::size_t refreshFolderPopupClear =
+            popupTransitionSource.find(
+                "ClearPopupDragTarget();",
+                refreshFolderPopupBegin);
+        const std::size_t refreshFolderPopupRewrite =
+            popupTransitionSource.find(
+                "EnumerateFolderMappingEntries(",
+                refreshFolderPopupBegin);
+        Check(openDockPopupBegin != std::string::npos &&
+                openDockPopupClear != std::string::npos &&
+                openDockPopupRewrite != std::string::npos &&
+                openDockPopupClear < openDockPopupRewrite &&
+                finalizePopupBegin != std::string::npos &&
+                finalizePopupClear != std::string::npos &&
+                finalizePopupReset != std::string::npos &&
+                finalizePopupClear < finalizePopupReset &&
+                openCollectionPopupBegin != std::string::npos &&
+                openCollectionPopupClear != std::string::npos &&
+                openCollectionPopupReset != std::string::npos &&
+                openCollectionPopupClear <
+                    openCollectionPopupReset &&
+                refreshFolderPopupBegin != std::string::npos &&
+                refreshFolderPopupClear != std::string::npos &&
+                refreshFolderPopupRewrite != std::string::npos &&
+                refreshFolderPopupClear <
+                    refreshFolderPopupRewrite,
+            "popup model replacement must detach transient drag targets before invalidating their parent or member storage");
+        const std::size_t reloadItemsBegin =
+            desktopReloadSource.find(
+                "void DesktopApp::ReloadItems(");
+        const std::size_t reloadItemsClear =
+            desktopReloadSource.find(
+                "ClearPopupDragTarget();",
+                reloadItemsBegin);
+        const std::size_t reloadLayoutSlots =
+            desktopReloadSource.find(
+                "LoadLayoutSlots();",
+                reloadItemsBegin);
+        const std::size_t reloadFolderEntries =
+            desktopReloadSource.find(
+                "EnumerateFolderMappingEntries(widget);",
+                reloadItemsBegin);
+        const std::size_t reloadDesktopItems =
+            desktopReloadSource.find(
+                "LoadDesktopItems();",
+                reloadItemsBegin);
+        Check(reloadItemsBegin != std::string::npos &&
+                reloadItemsClear != std::string::npos &&
+                reloadLayoutSlots != std::string::npos &&
+                reloadFolderEntries != std::string::npos &&
+                reloadDesktopItems != std::string::npos &&
+                reloadItemsClear < reloadLayoutSlots &&
+                reloadItemsClear < reloadFolderEntries &&
+                reloadItemsClear < reloadDesktopItems,
+            "desktop reload must detach popup handoff wrappers before replacing widget or DesktopItem storage");
         const std::size_t selfOleEnter =
             oleDropSessionSource.find(
                 "HRESULT DesktopApp::HandleOleDragEnter(");
@@ -3933,6 +4083,10 @@ int main(int argc, char** argv)
             ? std::string{}
             : dragLifecycleSource.substr(
                 endDragBegin, endDragEnd - endDragBegin);
+        const std::size_t endDragSessionState =
+            endDragHandler.find("dragSession_.End();");
+        const std::size_t endDragPopupTarget =
+            endDragHandler.find("ClearPopupDragTarget();");
         Check(endDragHandler.find(
                   "CancelCollectionPopupDwell();") !=
                     std::string::npos &&
@@ -3942,9 +4096,12 @@ int main(int argc, char** argv)
                 cancelDragHandler.find(
                   "ClearPopupMouseDownItem();") !=
                     std::string::npos &&
-                cancelDragHandler.find(
-                  "popupDragTargetSlot_.reset();") !=
+                endDragHandler.find(
+                  "ClearPopupDragTarget();") !=
                     std::string::npos &&
+                endDragSessionState != std::string::npos &&
+                endDragPopupTarget != std::string::npos &&
+                endDragSessionState < endDragPopupTarget &&
                 cancelDragHandler.find(
                   "mouseDown_ = false;") !=
                     std::string::npos &&

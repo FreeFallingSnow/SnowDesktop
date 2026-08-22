@@ -239,8 +239,8 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
                     &virtualItem,
                     &content))
                 visibleItem = content;
-            targetSlot = BindTransientDragSlot(
-                popupDragTargetSlot_, targetContainer,
+            targetSlot = popupDragTarget_.BindPlacement(
+                targetContainer,
                 visibleItem, 0, SlotFeedbackRole::Popup);
             targetRegion =
                 HitRegion::SortBefore;
@@ -270,22 +270,25 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
                         true, entry.selected) &&
                 PtInRect(&handoffRect, client))
             {
-                Item* handoffItem =
-                    dockFolderPopupContainer_->
-                        GetMemberItem(i);
-                if (!handoffItem)
-                    continue;
-                targetSlot = BindTransientDragSlot(
-                    popupDragTargetSlot_, targetContainer,
+                targetSlot = popupDragTarget_.BindHandoff(
+                    targetContainer,
                     snowdesktop::popup_drag_rules::
                         HandoffIndicatorBounds(itemRect),
-                    i, SlotFeedbackRole::Popup, handoffItem);
+                    i, SlotFeedbackRole::Popup,
+                    &entry,
+                    [&]() -> std::unique_ptr<Item> {
+                        return std::make_unique<
+                            FolderEntryIcon>(
+                                &entry,
+                                dockFolderPopupContainer_.get(),
+                                this);
+                    });
                 targetRegion = HitRegion::Handoff;
                 return true;
             }
 
-            targetSlot = BindTransientDragSlot(
-                popupDragTargetSlot_, targetContainer,
+            targetSlot = popupDragTarget_.BindPlacement(
+                targetContainer,
                 itemRect, i, SlotFeedbackRole::Popup);
             targetRegion =
                 client.x <
@@ -362,8 +365,8 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
             std::numeric_limits<
                 long long>::max())
         {
-            targetSlot = BindTransientDragSlot(
-                popupDragTargetSlot_, targetContainer,
+            targetSlot = popupDragTarget_.BindPlacement(
+                targetContainer,
                 nearestBounds, nearestIndex,
                 SlotFeedbackRole::Popup);
             targetRegion =
@@ -405,7 +408,6 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
     size_t slotIndex = 0;
     RECT slotBounds = content;
     HitRegion region = HitRegion::Empty;
-    Item* handoffItem = nullptr;
 
     if (popupKeys.empty())
     {
@@ -418,8 +420,8 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
                 &virtualItem,
                 &content))
             visibleItem = content;
-        targetSlot = BindTransientDragSlot(
-            popupDragTargetSlot_, popupContainer,
+        targetSlot = popupDragTarget_.BindPlacement(
+            popupContainer,
             visibleItem, 0, SlotFeedbackRole::Popup);
         targetRegion =
             HitRegion::SortBefore;
@@ -448,7 +450,6 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
             if (PtInRect(&handoffRect, client))
             {
                 region = HitRegion::Handoff;
-                handoffItem = popupContainer->GetMemberItem(i);
                 // Keep the icon-sized activation area, but present the same
                 // full-cell handoff feedback used by desktop widgets.
                 slotBounds =
@@ -466,10 +467,24 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
             region = client.x < itemRect.left + (itemRect.right - itemRect.left) / 2
                 ? HitRegion::SortBefore : HitRegion::SortAfter;
         }
-        targetSlot = BindTransientDragSlot(
-            popupDragTargetSlot_, popupContainer,
-            slotBounds, slotIndex, SlotFeedbackRole::Popup,
-            handoffItem);
+        if (region == HitRegion::Handoff)
+        {
+            targetSlot = popupDragTarget_.BindHandoff(
+                popupContainer, slotBounds, slotIndex,
+                SlotFeedbackRole::Popup,
+                &items_[itemIndex],
+                [&]() -> std::unique_ptr<Item> {
+                    return std::make_unique<DesktopIcon>(
+                        &items_[itemIndex],
+                        popupContainer, this);
+                });
+        }
+        else
+        {
+            targetSlot = popupDragTarget_.BindPlacement(
+                popupContainer, slotBounds, slotIndex,
+                SlotFeedbackRole::Popup);
+        }
         targetRegion = region;
         return true;
     }
@@ -510,8 +525,8 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
     if (bestDistanceSquared == std::numeric_limits<long long>::max())
         return true;
 
-    targetSlot = BindTransientDragSlot(
-        popupDragTargetSlot_, popupContainer,
+    targetSlot = popupDragTarget_.BindPlacement(
+        popupContainer,
         slotBounds, slotIndex, SlotFeedbackRole::Popup);
     targetRegion = region;
     return true;

@@ -202,6 +202,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
     }
 
     PreserveDockFolderPopupDragSourceForTransition();
+    ClearPopupDragTarget();
     dockFolderPopupOpen_ = false;
     dockFolderPopupAvailable_ = false;
     dockFolderPopupContainer_.reset();
@@ -542,6 +543,7 @@ void DesktopApp::RefreshDockFolderPopup()
     shellDockFolderPopupRefreshPending_ = false;
     if (!dockFolderPopupOpen_) return;
     PreserveDockFolderPopupDragSourceForTransition();
+    ClearPopupDragTarget();
     dockFolderPopupDragItems_.clear();
     dockFolderPopupMarqueeInitialSelection_.clear();
     for (auto& entry : dockFolderPopupWidget_.folderEntries)

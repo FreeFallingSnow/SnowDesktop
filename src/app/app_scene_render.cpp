@@ -395,7 +395,7 @@ void DesktopApp::DrawDynamicOverlays(
             GetOpenPopupWidget();
         const bool popupTarget = wc && openPopupWidget &&
             wc->GetWidgetData() == openPopupWidget &&
-            targetSlot == popupDragTargetSlot_.get();
+            targetSlot == popupDragTarget_.Get();
         const bool targetUsesPopupLayer =
             snowdesktop::popup_drag_rules::
                 ResolveDropPreviewLayer(popupTarget) ==

@@ -10,7 +10,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     if (renameEdit_ != nullptr) return;
     keyboardNavVisualFocus_ = false;
     ClearPopupMouseDownItem();
-    popupDragTargetSlot_.reset();
+    ClearPopupDragTarget();
     pendingGuideAction_ = WidgetHit::None;
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     if (!luaWidgetPanelRequest_.widgetId.empty() &&

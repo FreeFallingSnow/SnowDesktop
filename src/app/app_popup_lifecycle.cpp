@@ -146,6 +146,7 @@ void DesktopApp::OpenDockFolderPopupAt(
     }
 
     PreserveDockFolderPopupDragSourceForTransition();
+    ClearPopupDragTarget();
     const DockEntry entry = dockEntries_[entryIndex];
     const auto target = ResolveDockFolderTarget(entry);
     const std::wstring sourceId =
@@ -388,6 +389,7 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     if (popupWidgetIndex_ == static_cast<size_t>(-1) &&
         !dockFolderPopupOpen_)
         return;
+    ClearPopupDragTarget();
     popupWidgetIndex_ = static_cast<size_t>(-1);
     dockFolderPopupOpen_ = false;
     dockFolderPopupAvailable_ = false;
@@ -445,10 +447,7 @@ void DesktopApp::CloseCollectionPopup(
             entry.selected = false;
     }
     ClearPopupMouseDownItem();
-    if (dragSession_.IsActive() &&
-        dragSession_.TargetSlot() == popupDragTargetSlot_.get())
-        dragSession_.UpdateTarget(nullptr, nullptr, HitRegion::None);
-    popupDragTargetSlot_.reset();
+    ClearPopupDragTarget();
     marqueeActive_ = false;
     marqueeDockFolderPopup_ = false;
     dockFolderPopupMarqueeInitialSelection_.clear();

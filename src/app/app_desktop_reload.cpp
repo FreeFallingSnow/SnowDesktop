@@ -591,6 +591,7 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
         return;
     }
     if (reloading_) return;
+    ClearPopupDragTarget();
     if (hwnd_ && IsWindow(hwnd_))
         KillTimer(hwnd_, kShellChangeTimerId);
     shellReloadPending_ = false;

@@ -233,6 +233,23 @@ void DesktopApp::ResetDockHandoffDwell()
 }
 
 /**
+ * @brief 解除会话对弹窗临时目标的引用并释放其成员包装对象。
+ *
+ * DeactivateForDrop 会保留目标用于同步提交，因此这里不能只检查活动态。
+ */
+void DesktopApp::ClearPopupDragTarget()
+{
+    Slot* popupTarget = popupDragTarget_.Get();
+    if (popupTarget &&
+        dragSession_.TargetSlot() == popupTarget)
+    {
+        dragSession_.UpdateTarget(
+            nullptr, nullptr, HitRegion::None);
+    }
+    popupDragTarget_.Reset();
+}
+
+/**
  * @brief 结束当前拖拽会话，重置拖拽渲染缓存
  */
 void DesktopApp::EndDragSession()
@@ -241,6 +258,7 @@ void DesktopApp::EndDragSession()
     CancelCollectionPopupDwell();
     CancelCollectionGroupTabDwell();
     dragSession_.End();
+    ClearPopupDragTarget();
     presentedDragFeedbackRevision_ = 0;
     presentedDragNavHoverSide_ = 0;
     HideDragPreviewWindow();
@@ -286,7 +304,6 @@ void DesktopApp::CancelActiveItemDrag()
     // End the session before destroying popup-owned Item/Slot wrappers that
     // may still be referenced by its source or target lists.
     ClearPopupMouseDownItem();
-    popupDragTargetSlot_.reset();
     dockFolderPopupDragItems_.clear();
     dockFolderPopupMarqueeInitialSelection_.clear();
     ReleaseCapture();

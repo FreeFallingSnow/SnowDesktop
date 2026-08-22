@@ -3,6 +3,7 @@
 #include "core/drag_session.h"
 #include "core/drag_target_resolver.h"
 #include "core/item.h"
+#include "core/owned_transient_drag_target.h"
 #include "core/slot.h"
 #include "app/drag_drop_controller.h"
 #include "app/ole_drag_drop_adapter.h"
@@ -14,6 +15,7 @@
 #include "ole_drag_rules.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <deque>
 #include <iostream>
@@ -1118,6 +1120,168 @@ void TestDragDropControllerOwnsTransportTransitions()
         "ending external transport must clear transient ingress metadata");
 }
 
+void TestOwnedTransientDragTargetBoundsMemberWrappers()
+{
+    ContractContainer container(
+        BarStyle::VBar,
+        snowdesktop::slot_contract::
+            SlotSurfaceKind::Collection);
+    ContractItem sourceItem(RECT{0, 0, 40, 40});
+    DragSession session;
+    session.Begin(
+        &container, {&sourceItem}, {}, POINT{}, POINT{});
+    snowdesktop::OwnedTransientDragTarget target;
+    std::array<Item*, 2> itemByIndex{};
+    Slot* stableSlot = nullptr;
+    int factoryCalls = 0;
+    std::array<int, 3> memberIdentities{};
+    bool slotStayedStable = true;
+    bool itemStayedStable = true;
+    bool sessionStayedBound = true;
+
+    for (int iteration = 0; iteration < 10000; ++iteration)
+    {
+        const std::size_t index =
+            static_cast<std::size_t>(iteration % 2);
+        const RECT bounds{
+            static_cast<LONG>(index * 100), 0,
+            static_cast<LONG>((index + 1) * 100), 100 };
+        Slot* slot = target.BindHandoff(
+            &container, bounds, index,
+            SlotFeedbackRole::Popup,
+            &memberIdentities[index],
+            [&]() -> std::unique_ptr<Item> {
+                ++factoryCalls;
+                return std::make_unique<ContractItem>(bounds);
+            });
+        session.UpdateTarget(
+            &container, slot, HitRegion::Handoff);
+        if (!stableSlot)
+            stableSlot = slot;
+        else if (slot != stableSlot)
+            slotStayedStable = false;
+        if (!itemByIndex[index])
+            itemByIndex[index] = slot->GetItem();
+        else if (slot->GetItem() != itemByIndex[index])
+            itemStayedStable = false;
+        sessionStayedBound = sessionStayedBound &&
+            session.TargetSlot() == stableSlot &&
+            session.TargetSlot()->GetItem() == slot->GetItem();
+    }
+
+    Check(slotStayedStable && itemStayedStable &&
+            sessionStayedBound &&
+            factoryCalls == 2 &&
+            target.OwnedItemCount() == 2,
+        "10000 alternating popup handoff hits must retain one stable wrapper per logical member");
+
+    Slot* thirdMember = target.BindHandoff(
+        &container, RECT{200, 0, 300, 100}, 2,
+        SlotFeedbackRole::Popup,
+        &memberIdentities[2],
+        [&]() -> std::unique_ptr<Item> {
+            ++factoryCalls;
+            return std::make_unique<ContractItem>(
+                RECT{200, 0, 300, 100});
+        });
+    session.UpdateTarget(
+        &container, thirdMember, HitRegion::Handoff);
+    Slot* cachedSecondMember = target.BindHandoff(
+        &container, RECT{100, 0, 200, 100}, 1,
+        SlotFeedbackRole::Popup,
+        &memberIdentities[1],
+        [&]() -> std::unique_ptr<Item> {
+            ++factoryCalls;
+            return std::make_unique<ContractItem>(
+                RECT{100, 0, 200, 100});
+        });
+    session.UpdateTarget(
+        &container, cachedSecondMember,
+        HitRegion::Handoff);
+    Slot* evictedFirstMember = target.BindHandoff(
+        &container, RECT{0, 0, 100, 100}, 0,
+        SlotFeedbackRole::Popup,
+        &memberIdentities[0],
+        [&]() -> std::unique_ptr<Item> {
+            ++factoryCalls;
+            return std::make_unique<ContractItem>(
+                RECT{0, 0, 100, 100});
+        });
+    session.UpdateTarget(
+        &container, evictedFirstMember,
+        HitRegion::Handoff);
+    Check(thirdMember == stableSlot &&
+            cachedSecondMember == stableSlot &&
+            evictedFirstMember == stableSlot &&
+            session.TargetSlot() == stableSlot &&
+            session.TargetSlot()->GetItem() != nullptr &&
+            factoryCalls == 4 &&
+            target.OwnedItemCount() == 2,
+        "walking across three popup members must evict inactive wrappers while keeping the active session target valid");
+
+    Slot* placement = target.BindPlacement(
+        &container, RECT{0, 0, 100, 100}, 0,
+        SlotFeedbackRole::Popup);
+    session.UpdateTarget(
+        &container, placement, HitRegion::SortBefore);
+    Check(placement == stableSlot &&
+            placement->GetItem() == nullptr &&
+            session.TargetSlot() == placement &&
+            target.OwnedItemCount() == 2,
+        "leaving handoff must detach the Slot without invalidating bounded cached members");
+
+    bool generationSlotStayedStable = true;
+    bool generationCacheStayedBounded = true;
+    for (int generation = 0; generation < 10000; ++generation)
+    {
+        container.InvalidateSlots();
+        Slot* nextGeneration = target.BindHandoff(
+            &container, RECT{0, 0, 100, 100}, 0,
+            SlotFeedbackRole::Popup,
+            &memberIdentities[0],
+            [&]() -> std::unique_ptr<Item> {
+                ++factoryCalls;
+                return std::make_unique<ContractItem>(
+                    RECT{0, 0, 100, 100});
+            });
+        session.UpdateTarget(
+            &container, nextGeneration,
+            HitRegion::Handoff);
+        generationSlotStayedStable =
+            generationSlotStayedStable &&
+            nextGeneration == stableSlot &&
+            nextGeneration->GetItem() != nullptr &&
+            session.TargetSlot() == stableSlot &&
+            session.TargetSlot()->GetItem() ==
+                nextGeneration->GetItem();
+        generationCacheStayedBounded =
+            generationCacheStayedBounded &&
+            target.OwnedItemCount() == 1;
+    }
+    Check(generationSlotStayedStable &&
+            generationCacheStayedBounded &&
+            factoryCalls == 10004,
+        "10000 container generations must replace the previous epoch without accumulating handoff wrappers");
+
+    Item* committedTargetItem =
+        session.TargetSlot()->GetItem();
+    session.DeactivateForDrop();
+    Check(!session.IsActive() &&
+            session.HasContext() &&
+            session.TargetSlot() == stableSlot &&
+            session.TargetSlot()->GetItem() ==
+                committedTargetItem,
+        "deactivating for a synchronous drop must retain the transient target until the commit context is detached");
+    session.UpdateTarget(
+        nullptr, nullptr, HitRegion::None);
+    target.Reset();
+    Check(session.TargetSlot() == nullptr &&
+            target.Get() == nullptr &&
+            target.OwnedItemCount() == 0,
+        "popup teardown must detach an inactive drop context before destroying the transient target");
+    session.End();
+}
+
 void TestQueuedNativeDragMovesCoalesceAtOrderingBarriers()
 {
     ContractContainer source(
@@ -1519,6 +1683,7 @@ int main()
     TestEveryDragSourceSurvivesPageTurnRebindMatrix();
     TestDragTargetResolutionUsesContractAndZOrder();
     TestDragDropControllerOwnsTransportTransitions();
+    TestOwnedTransientDragTargetBoundsMemberWrappers();
     TestQueuedNativeDragMovesCoalesceAtOrderingBarriers();
     TestSelfOleReturnCancelsTransportBeforeNativeResume();
     TestOleAdapterOwnsComBoundary();
