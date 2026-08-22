@@ -77,6 +77,7 @@ void DesktopApp::PresentPointerInteractionFrame()
     // This keeps the ghost attached to the input message even when the
     // larger feedback surfaces need more time to redraw.
     SyncDragPreviewWindow();
+    RefreshDragPresentationAnchor();
     const bool widgetPreviewActive =
         widgetAction_ == WidgetAction::Move ||
         widgetAction_ == WidgetAction::Resize;

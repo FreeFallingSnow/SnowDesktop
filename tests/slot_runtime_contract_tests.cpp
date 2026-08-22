@@ -392,6 +392,29 @@ void TestDragSessionRejectsInvalidatedSlots()
                 targetPresentationRevision,
         "repeating the same target must preserve the drop-feedback revision");
 
+    const std::uint64_t stableTargetRevision =
+        session.PresentationRevision();
+    Check(session.UpdatePresentationAnchor(
+            GridCell{L"primary", 2, 3}) &&
+            session.PresentationRevision() !=
+                stableTargetRevision,
+        "binding an effective desktop landing cell must invalidate drop feedback");
+    const std::uint64_t anchorRevision =
+        session.PresentationRevision();
+    Check(!session.UpdatePresentationAnchor(
+            GridCell{L"primary", 2, 3}) &&
+            session.PresentationRevision() ==
+                anchorRevision,
+        "repeating the same effective landing cell must preserve drop feedback");
+    Check(session.UpdatePresentationAnchor(
+            GridCell{L"primary", 3, 3}) &&
+            session.PresentationRevision() !=
+                anchorRevision,
+        "an effective landing cell change must refresh feedback even when the hit slot is unchanged");
+    Check(session.ClearPresentationAnchor() &&
+            !session.ClearPresentationAnchor(),
+        "leaving the desktop target must clear its presentation anchor exactly once");
+
     Check(session.TargetSlot() == slot &&
             session.TargetRegion() ==
                 HitRegion::SortBefore,

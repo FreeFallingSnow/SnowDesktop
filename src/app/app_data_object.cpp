@@ -17,6 +17,42 @@ POINT DesktopApp::GetDragTargetPoint(POINT current) const
     };
 }
 
+void DesktopApp::RefreshDragPresentationAnchor()
+{
+    if (!dragSession_.IsActive())
+    {
+        dragSession_.ClearPresentationAnchor();
+        return;
+    }
+
+    Container* target = dragSession_.TargetContainer();
+    const HitRegion region = dragSession_.TargetRegion();
+    if (target != GetDesktopGrid() ||
+        region == HitRegion::None ||
+        region == HitRegion::Handoff ||
+        region == HitRegion::Blocked)
+    {
+        dragSession_.ClearPresentationAnchor();
+        return;
+    }
+
+    const DragSourceList& sourceList = dragSession_.SourceList();
+    const bool usePointerCell =
+        sourceList.Empty() ||
+        !sourceList.origin ||
+        sourceList.hasCollectionGroupEntries ||
+        sourceList.hasFileGroupEntries ||
+        (sourceList.hasOriginWidget &&
+            sourceList.originWidgetType ==
+                DesktopWidgetType::CollectionGroup);
+    const POINT current = dragSession_.CurrentPoint();
+    const POINT anchorPoint = usePointerCell
+        ? current
+        : GetDragTargetPoint(current);
+    dragSession_.UpdatePresentationAnchor(
+        CellFromPointForDrag(anchorPoint));
+}
+
 /**
  * @brief 为选中的桌面项创建 IDataObject（用于拖拽/剪贴板）。
  * @return COM 数据对象，失败返回 nullptr。

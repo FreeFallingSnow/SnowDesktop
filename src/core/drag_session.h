@@ -123,6 +123,8 @@ public:
         targetSlot_ = nullptr;
         targetSlotGeneration_ = 0;
         targetRegion_ = HitRegion::None;
+        presentationAnchorValid_ = false;
+        presentationAnchorCell_ = {};
         InvalidateStaticScene();
     }
 
@@ -285,6 +287,40 @@ public:
     }
 
     /**
+     * @brief 更新桌面放置反馈使用的请求网格。
+     *
+     * 鼠标命中槽使用指针位置，而桌面放置还会应用拖拽组热点偏移。
+     * 两者可在不同时间跨格；请求网格必须独立进入呈现键，避免命中槽
+     * 尚未变化时继续显示上一格的落点。
+     */
+    bool UpdatePresentationAnchor(const GridCell& cell)
+    {
+        if (cell.pageId.empty())
+            return ClearPresentationAnchor();
+        const bool changed =
+            !presentationAnchorValid_ ||
+            presentationAnchorCell_.pageId != cell.pageId ||
+            presentationAnchorCell_.column != cell.column ||
+            presentationAnchorCell_.row != cell.row;
+        presentationAnchorValid_ = true;
+        presentationAnchorCell_ = cell;
+        if (changed)
+            InvalidatePresentation();
+        return changed;
+    }
+
+    /** @brief 清除非桌面目标不再使用的请求网格呈现键。 */
+    bool ClearPresentationAnchor()
+    {
+        if (!presentationAnchorValid_)
+            return false;
+        presentationAnchorValid_ = false;
+        presentationAnchorCell_ = {};
+        InvalidatePresentation();
+        return true;
+    }
+
+    /**
      * @brief 重新绑定拖拽源（用于跨容器拖拽时的源切换等场景）
      * @param source      新的源容器指针
      * @param items       新的被拖拽项列表
@@ -326,6 +362,8 @@ public:
         targetSlot_ = nullptr;
         targetSlotGeneration_ = 0;
         targetRegion_ = HitRegion::None;
+        presentationAnchorValid_ = false;
+        presentationAnchorCell_ = {};
         InvalidateStaticScene();
     }
 
@@ -348,6 +386,8 @@ public:
         targetSlot_ = nullptr;
         targetSlotGeneration_ = 0;
         targetRegion_ = HitRegion::None;
+        presentationAnchorValid_ = false;
+        presentationAnchorCell_ = {};
         InvalidateStaticScene();
     }
 
@@ -397,6 +437,8 @@ public:
         targetSlot_ = nullptr;
         targetSlotGeneration_ = 0;
         targetRegion_ = HitRegion::None;
+        presentationAnchorValid_ = false;
+        presentationAnchorCell_ = {};
         action_ = DropAction::Move;
         mouseDownPoint_ = {};
         visualMouseDownPoint_ = {};
@@ -440,6 +482,8 @@ private:
     Slot* targetSlot_ = nullptr;             /**< 目标插槽指针 */
     std::uint64_t targetSlotGeneration_ = 0; /**< 目标插槽所属缓存代次 */
     HitRegion targetRegion_ = HitRegion::None; /**< 目标命中区域类型 */
+    bool presentationAnchorValid_ = false;     /**< 桌面请求网格是否参与当前呈现键 */
+    GridCell presentationAnchorCell_;          /**< 应用拖拽热点偏移后的桌面请求网格 */
     std::uint64_t staticSceneRevision_ = 1;  /**< 静态场景修订版本号，用于拖拽缓存一致性判断 */
     std::uint64_t presentationRevision_ = 1; /**< 放置反馈修订号，不随纯指针移动递增 */
 };
