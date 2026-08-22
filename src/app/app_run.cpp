@@ -1042,8 +1042,19 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 snowdesktop::drag_input_rules::IsNativeDragActive(
                     dragSession_.IsActive(),
                     dragDropController_.IsTransportActive());
-            if (msg.message == WM_MOUSEMOVE &&
-                msg.hwnd == hwnd_ && nativeDragActive)
+            const bool nativeDragMessageSurface =
+                snowdesktop::drag_input_rules::
+                    IsNativeDragMessageSurface(
+                        msg.hwnd == hwnd_,
+                        floatingDockHwnd_ != nullptr &&
+                            msg.hwnd == floatingDockHwnd_,
+                        floatingPopupHwnd_ != nullptr &&
+                            msg.hwnd == floatingPopupHwnd_);
+            if (snowdesktop::drag_input_rules::
+                    ShouldStartQueuedMouseMoveCoalescing(
+                        nativeDragActive,
+                        nativeDragMessageSurface,
+                        msg.message == WM_MOUSEMOVE))
             {
                 MSG next{};
                 while (PeekMessageW(

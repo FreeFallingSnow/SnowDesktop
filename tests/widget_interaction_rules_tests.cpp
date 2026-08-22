@@ -813,6 +813,26 @@ void TestDragInputSampling()
             !dragInputRules::ShouldSampleLivePointer(true, false),
         "live drag sampling must stop after the physical primary button is released");
     Check(
+        dragInputRules::IsNativeDragMessageSurface(
+            true, false, false) &&
+        dragInputRules::IsNativeDragMessageSurface(
+            false, true, false) &&
+        dragInputRules::IsNativeDragMessageSurface(
+            false, false, true) &&
+        !dragInputRules::IsNativeDragMessageSurface(
+            false, false, false),
+        "native drag message coalescing must cover the desktop, floating Dock, and floating popup windows");
+    Check(
+        dragInputRules::ShouldStartQueuedMouseMoveCoalescing(
+            true, true, true) &&
+        !dragInputRules::ShouldStartQueuedMouseMoveCoalescing(
+            false, true, true) &&
+        !dragInputRules::ShouldStartQueuedMouseMoveCoalescing(
+            true, false, true) &&
+        !dragInputRules::ShouldStartQueuedMouseMoveCoalescing(
+            true, true, false),
+        "native drag coalescing must start only for a move on an eligible input surface");
+    Check(
         dragInputRules::ShouldCoalesceQueuedMouseMove(
             true, true, true) &&
             !dragInputRules::ShouldCoalesceQueuedMouseMove(

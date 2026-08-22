@@ -22,6 +22,24 @@ constexpr bool ShouldSampleLivePointer(
     return nativeDragActive && primaryButtonDown;
 }
 
+constexpr bool IsNativeDragMessageSurface(
+    bool mainDesktopWindow,
+    bool floatingDockWindow,
+    bool floatingPopupWindow)
+{
+    return mainDesktopWindow ||
+        floatingDockWindow || floatingPopupWindow;
+}
+
+constexpr bool ShouldStartQueuedMouseMoveCoalescing(
+    bool nativeDragActive,
+    bool nativeDragMessageSurface,
+    bool messageIsMouseMove)
+{
+    return nativeDragActive &&
+        nativeDragMessageSurface && messageIsMouseMove;
+}
+
 constexpr bool ShouldCoalesceQueuedMouseMove(
     bool nativeDragActive,
     bool sameWindow,
