@@ -245,11 +245,6 @@ void DesktopApp::PrepareLuaWidgetPanelAnimationCache()
             });
     if (!ready)
         luaWidgetPanelAnimationCacheRect_ = {};
-    else
-        PrepareCompositionAnimationOverlay(
-            luaWidgetPanelAnimationOverlay_,
-            luaWidgetPanelAnimationRenderCache_,
-            luaWidgetPanelAnimationCacheRect_);
     brushCache_.clear();
     brushCacheContext_ = nullptr;
 }

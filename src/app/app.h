@@ -51,6 +51,7 @@
 #include "dock_launch_animation.h"
 #include "dock_rename_layout.h"
 #include "floating_dock_rules.h"
+#include "../floating_popup_rules.h"
 #include "../desktop_hover_rules.h"
 #include "../shell_launch_worker.h"
 #include "desktop_item_reference_migration.h"
@@ -631,6 +632,7 @@ private:
      */
     static LRESULT CALLBACK QuickNavigationWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     static LRESULT CALLBACK FloatingDockWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+    static LRESULT CALLBACK FloatingPopupWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     /**
      * @brief 主窗口消息分发处理。
      * @param hwnd 窗口句柄
@@ -650,6 +652,7 @@ private:
      */
     LRESULT HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     LRESULT HandleFloatingDockMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+    LRESULT HandleFloatingPopupMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     /** @brief 创建桌面覆盖窗口，挂载到 Explorer 桌面上层。 @return 成功返回 true */
     bool CreateDesktopOverlayWindow();
     /** @brief 重置桌面窗口相关的 D2D/DComp 资源（窗口尺寸变化或设备丢失时调用）。 */
@@ -915,6 +918,25 @@ private:
     bool RenderFloatingDockCompositionFrame();
     void PaintFloatingDockWindow(HWND hwnd);
     POINT FloatingDockClientToDesktop(POINT point) const;
+    bool IsCollectionPopupHostedByFloatingWindow() const;
+    bool IsLuaPanelHostedByFloatingWindow() const;
+    bool ShouldShowFloatingPopupWindow() const;
+    RECT CalculateFloatingPopupWindowBounds() const;
+    bool CreateFloatingPopupWindow();
+    void DestroyFloatingPopupWindow();
+    void ResetFloatingPopupCompositionResources();
+    void RecoverFloatingPopupCompositionFailure(
+        const wchar_t* stage, HRESULT hr);
+    void UpdateFloatingPopupWindowBounds(
+        bool immediatePresent = true);
+    void ApplyFloatingPopupLayerPolicy();
+    void InvalidateFloatingPopupWindow(
+        bool immediatePresent = false);
+    HRESULT CreateOrResizeFloatingPopupCompositionSurface();
+    bool RenderFloatingPopupCompositionFrame();
+    bool PresentFloatingPopupComposition();
+    void PaintFloatingPopupWindow(HWND hwnd);
+    POINT FloatingPopupClientToDesktop(POINT point) const;
     int GetGridPageItemIconSize(const GridPage& page) const;
     void CommitDockDrop(const std::vector<Item*>& sourceItems, Container* origin,
         DockContainer* targetDock, size_t insertIndex, int mods);
@@ -2945,6 +2967,7 @@ private:
     HWND floatingDockInputHwnd_ = nullptr;
     HWND quickNavigationHwnd_ = nullptr;
     HWND floatingDockHwnd_ = nullptr;
+    HWND floatingPopupHwnd_ = nullptr;
     HWND floatingDockHotkeyHwnd_ = nullptr;
     HWND desktopPassthroughHotkeyHwnd_ = nullptr;
     HWND floatingDockEdgeSwipeHwnd_ = nullptr;
@@ -2998,6 +3021,8 @@ private:
     std::function<void()> floatingDockPostCloseAction_;
     bool renderingFloatingDock_ = false;
     bool handlingFloatingDockInput_ = false;
+    bool renderingFloatingPopup_ = false;
+    bool handlingFloatingPopupInput_ = false;
     /** @brief 浮动 Dock 被动 hover 最近一次同步提交时刻（8ms 限频用）。 */
     ULONGLONG floatingDockLastPointerPresentTick_ = 0;
     snowdesktop::UiScheduleToken floatingDockHoverTailToken_ = 0;
@@ -3022,6 +3047,18 @@ private:
     bool floatingDockCompositionRenderRecoveryPending_ = false;
     bool floatingDockCompositionPaintInProgress_ = false;
     bool floatingDockDropTargetRegistered_ = false;
+    ComPtr<IDCompositionTarget> floatingPopupDcompTarget_;
+    ComPtr<IDCompositionVisual2> floatingPopupDcompVisual_;
+    ComPtr<IDCompositionSurface> floatingPopupDcompSurface_;
+    RECT floatingPopupWindowBounds_{};
+    RECT floatingPopupCollectionRegion_{};
+    RECT floatingPopupLuaPanelRegion_{};
+    UINT floatingPopupCompWidth_ = 0;
+    UINT floatingPopupCompHeight_ = 0;
+    bool floatingPopupModalRegion_ = false;
+    bool floatingPopupCompositionRenderRecoveryPending_ = false;
+    bool floatingPopupCompositionPaintInProgress_ = false;
+    bool floatingPopupDropTargetRegistered_ = false;
     /** @brief 快捷导航顶层窗口下方的原生毛玻璃层。 */
     DesktopBackdropCompositor quickNavBackdropCompositor_;
     HWND quickNavigationSearchEdit_ = nullptr;

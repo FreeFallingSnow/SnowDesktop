@@ -189,6 +189,7 @@ void DesktopApp::ResetDesktopWindowResources()
     }
 
     DestroyDragHintWindow();
+    DestroyFloatingPopupWindow();
     DestroyFloatingDockWindow();
     DestroyQuickNavigationWindow();
     if (inputHwnd_ && IsWindow(inputHwnd_))

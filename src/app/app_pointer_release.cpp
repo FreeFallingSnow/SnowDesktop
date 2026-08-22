@@ -71,7 +71,9 @@ void DesktopApp::OnMouseLeave()
         snowdesktop::desktop_hover_rules::
             OwnsInteractionCapture(
                 captureWindow,
-                hwnd_, floatingDockHwnd_);
+                hwnd_, floatingDockHwnd_) ||
+        (captureWindow != nullptr &&
+         captureWindow == floatingPopupHwnd_);
     const bool canClearPassiveHover =
         snowdesktop::desktop_hover_rules::CanClearPassiveHover(
             ownsInteractionCapture,

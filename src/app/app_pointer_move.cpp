@@ -98,7 +98,8 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
     RecordShellHoverTrace(
         ShellHoverTraceEvent::MouseMoveBegin,
         tracePoint);
-    if (!handlingFloatingDockInput_)
+    if (!handlingFloatingDockInput_ &&
+        !handlingFloatingPopupInput_)
     {
         TRACKMOUSEEVENT mouseTrack{};
         mouseTrack.cbSize = sizeof(mouseTrack);
@@ -1116,7 +1117,8 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
         const bool invalidateDesktopHover =
             snowdesktop::floating_dock_rules::
                 ShouldInvalidateDesktopHover(
-                    handlingFloatingDockInput_);
+                    handlingFloatingDockInput_ ||
+                    handlingFloatingPopupInput_);
         const bool dockHoverActive =
             (oldVisual.kind >= 8 &&
                 oldVisual.kind <= 13) ||

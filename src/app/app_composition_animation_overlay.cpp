@@ -258,6 +258,9 @@ bool DesktopApp::FlushPendingCompositionCommit()
     if (floatingDockVisible_)
         RecoverFloatingDockCompositionFailure(
             L"Batched DComp Commit", hr);
+    if (ShouldShowFloatingPopupWindow())
+        RecoverFloatingPopupCompositionFailure(
+            L"Batched DComp Commit", hr);
     EnsureUiAnimationFrame();
     return false;
 }

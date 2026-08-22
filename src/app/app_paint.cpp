@@ -176,5 +176,6 @@ void DesktopApp::OnPaint(const RECT* updateRect)
     compositionRenderRecoveryPending_ = false;
     if (widgetAccessibilityProvider_)
         widgetAccessibilityProvider_->RefreshEvents();
+    UpdateFloatingPopupWindowBounds(false);
     RecordShellHoverTrace(ShellHoverTraceEvent::PaintEnd);
 }

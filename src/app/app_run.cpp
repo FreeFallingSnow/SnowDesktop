@@ -240,6 +240,17 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             kFloatingDockWindowClassName;
         RegisterClassExW(&dock);
     }
+    {
+        WNDCLASSEXW popup{};
+        popup.cbSize = sizeof(popup);
+        popup.style = CS_DBLCLKS;
+        popup.lpfnWndProc = FloatingPopupWndProc;
+        popup.hInstance = instance;
+        popup.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        popup.hbrBackground = nullptr;
+        popup.lpszClassName = kFloatingPopupWindowClassName;
+        RegisterClassExW(&popup);
+    }
 
     hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP | WS_EX_LAYERED,
         wc.lpszClassName, L"SnowDesktop",

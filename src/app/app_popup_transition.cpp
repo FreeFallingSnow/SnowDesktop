@@ -272,6 +272,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
         InflateRect(&dirty, 6, 6);
         InvalidateRect(hwnd_, &dirty, FALSE);
     }
+    UpdateFloatingPopupWindowBounds(true);
 }
 
 void DesktopApp::ShowDockFolderPopupSortMenu(
@@ -590,15 +591,12 @@ void DesktopApp::RefreshDockFolderPopupGeometry()
     }
     if (hwnd_ && IsWindow(hwnd_))
         InvalidateRect(hwnd_, nullptr, TRUE);
+    UpdateFloatingPopupWindowBounds(true);
 }
 
 void DesktopApp::RefreshOpenCollectionPopupGeometry()
 {
-    if (!floatingDockVisible_ ||
-        !floatingDockHwnd_ ||
-        !IsWindow(floatingDockHwnd_) ||
-        !popupAnchoredToDock_ ||
-        !GetOpenPopupWidget())
+    if (!GetOpenPopupWidget())
         return;
 
     if (dockFolderPopupOpen_)
@@ -619,8 +617,12 @@ void DesktopApp::RefreshOpenCollectionPopupGeometry()
             widgets_[popupWidgetIndex_],
             popupRect_));
     InvalidateDragStaticScene();
-    UpdateFloatingDockWindowBounds();
-    InvalidateFloatingDockWindow(true);
+    if (floatingDockVisible_)
+    {
+        UpdateFloatingDockWindowBounds();
+        InvalidateFloatingDockWindow(true);
+    }
+    UpdateFloatingPopupWindowBounds(true);
     if (hwnd_ && IsWindow(hwnd_))
         InvalidateRect(hwnd_, nullptr, TRUE);
 }

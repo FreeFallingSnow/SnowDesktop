@@ -37,6 +37,7 @@ void DesktopApp::EnsureUiAnimationFrame()
                         ResetCollectionPopupAnimationCache();
                         if (hwnd_ && IsWindow(hwnd_))
                             InvalidateRect(hwnd_, &dirty, FALSE);
+                        UpdateFloatingPopupWindowBounds(true);
                     }
                     else if (UpdateCollectionPopupCompositionAnimation(
                             false))
@@ -82,6 +83,7 @@ void DesktopApp::EnsureUiAnimationFrame()
                                 luaWidgetPanelAnimationOverlay_, dirty);
                             ResetLuaWidgetPanelAnimationCache();
                             InvalidateRect(hwnd_, &dirty, FALSE);
+                            UpdateFloatingPopupWindowBounds(true);
                         }
                         else if (
                             UpdateLuaWidgetPanelCompositionAnimation(false))
@@ -90,9 +92,7 @@ void DesktopApp::EnsureUiAnimationFrame()
                         }
                         else
                         {
-                            RECT dirty = GetLuaWidgetPanelRect();
-                            InflateRect(&dirty, 3, 3);
-                            InvalidateRect(hwnd_, &dirty, FALSE);
+                            InvalidateFloatingPopupWindow(true);
                         }
                     }
 

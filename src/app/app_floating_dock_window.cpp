@@ -261,147 +261,7 @@ CalculateFloatingDockStableSourceRect() const
                             dockRect,
                             dockSettings_.position));
 
-    RECT popupWork = layoutWorkArea_;
-    const POINT dockCenter{
-        (dockRect.left + dockRect.right) / 2,
-        (dockRect.top + dockRect.bottom) / 2
-    };
-    for (const auto& page : gridPages_)
-    {
-        if (PtInRect(&page.bounds, dockCenter))
-        {
-            popupWork = page.workArea;
-            break;
-        }
-    }
-
-    const int workWidth = std::max<LONG>(
-        1, popupWork.right - popupWork.left);
-    const int workHeight = std::max<LONG>(
-        1, popupWork.bottom - popupWork.top);
-    const int cellWidth =
-        GetCollectionPopupCellWidth();
-    const int cellHeight =
-        GetCollectionPopupCellHeight();
-    const int availableWidth =
-        std::max(1, workWidth - 24);
-    const int maxWidth =
-        std::min(560, availableWidth);
-    const int popupContentWidth =
-        std::max(1, maxWidth -
-            kCollectionPopupPaddingX * 2);
-    const int maxColumns = std::max(
-        1, (popupContentWidth +
-                kCollectionPopupGapX) /
-            std::max(1, cellWidth +
-                kCollectionPopupGapX));
-    const int maxHeight =
-        std::max(1, workHeight - 24);
-
-    SIZE maximumPopupSize{};
-    for (const DockEntry& entry : dockEntries_)
-    {
-        const bool folderEntry =
-            IsFolderDockEntry(entry);
-        int itemCount = 0;
-        if (entry.type ==
-                DockEntryType::Collection)
-        {
-            const size_t widgetIndex =
-                FindWidgetIndexById(entry.reference);
-            if (widgetIndex >= widgets_.size())
-                continue;
-            itemCount = static_cast<int>(
-                GetPopupItemKeys(
-                    widgets_[widgetIndex]).size());
-        }
-        else if (folderEntry)
-        {
-            // A folder stack is re-enumerated on open. Reserve the full
-            // clamped popup envelope so a large directory cannot resize or
-            // clip the floating Dock host after it becomes visible.
-            maximumPopupSize.cx = std::max(
-                maximumPopupSize.cx,
-                static_cast<LONG>(maxWidth));
-            maximumPopupSize.cy = std::max(
-                maximumPopupSize.cy,
-                static_cast<LONG>(maxHeight));
-            continue;
-        }
-        else
-            continue;
-
-        int columns =
-            snowdesktop::
-                collection_popup_layout::
-                    PreferredColumnCount(
-                        static_cast<size_t>(
-                            itemCount),
-                        maxColumns);
-        int rows =
-            snowdesktop::
-                collection_popup_layout::
-                    RequiredRowCount(
-                        static_cast<size_t>(
-                            itemCount),
-                        columns);
-        auto widthForColumns =
-            [&](int count) {
-                return
-                    kCollectionPopupPaddingX * 2 +
-                    count * cellWidth +
-                    std::max(0, count - 1) *
-                        kCollectionPopupGapX;
-            };
-        auto heightForRows =
-            [&](int count) {
-                return
-                    kCollectionPopupHeaderHeight +
-                    count * cellHeight +
-                    std::max(0, count - 1) *
-                        kCollectionPopupGapY +
-                    kCollectionPopupBottomPadding;
-            };
-        int width =
-            widthForColumns(columns);
-        int height =
-            heightForRows(rows);
-        if (itemCount > 0 &&
-            height > maxHeight &&
-            columns < maxColumns)
-        {
-            columns = maxColumns;
-            rows =
-                snowdesktop::
-                    collection_popup_layout::
-                        RequiredRowCount(
-                            static_cast<size_t>(
-                                itemCount),
-                            columns);
-            width =
-                widthForColumns(columns);
-            height =
-                heightForRows(rows);
-        }
-        maximumPopupSize.cx = std::max(
-            maximumPopupSize.cx,
-            static_cast<LONG>(
-                std::min(width, availableWidth)));
-        maximumPopupSize.cy = std::max(
-            maximumPopupSize.cy,
-            static_cast<LONG>(
-                std::min(height, maxHeight)));
-    }
-
-    const RECT popupEnvelope =
-        snowdesktop::floating_dock_rules::
-            ReserveCollectionPopupEnvelope(
-                dockRect, popupWork,
-                dockSettings_.position,
-                maximumPopupSize);
-    return snowdesktop::floating_dock_rules::
-        UnionNonEmptyRects(
-            sourceRect, popupEnvelope);
+    return sourceRect;
 }
 
 void DesktopApp::UpdateFloatingDockWindowBounds(
@@ -423,28 +283,11 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         floatingDockContainer_->
             GetHoveredTitleBounds(
                 lastMousePoint_);
-    RECT nextPopupRect{};
-    if (popupAnchoredToDock_)
-    {
-        if (const DesktopWidget* popupWidget =
-                GetOpenPopupWidget())
-            nextPopupRect =
-                GetCollectionPopupRect(*popupWidget);
-    }
-    // The host allocation must always contain the real popup envelope. Dock
-    // entries can gain items, or the popup can anchor to a hovered slot, after
-    // the initial reveal, so expand the stable source rect instead of keeping
-    // a stale smaller host that clips the popup until the next refresh.
+    const RECT nextPopupRect{};
+    // Collection and folder popups live in the shared floating popup host.
+    // This window retains only the Dock and its hover-title layer.
     RECT requiredSourceRect =
         CalculateFloatingDockStableSourceRect();
-    if (!IsRectEmpty(&nextPopupRect))
-    {
-        requiredSourceRect =
-            snowdesktop::floating_dock_rules::
-                UnionNonEmptyRects(
-                    requiredSourceRect,
-                    nextPopupRect);
-    }
     const RECT previousSourceRect =
         floatingDockSourceRect_;
     if (IsRectEmpty(&floatingDockSourceRect_))

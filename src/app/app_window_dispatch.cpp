@@ -85,6 +85,29 @@ LRESULT CALLBACK DesktopApp::FloatingDockWndProc(
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
+LRESULT CALLBACK DesktopApp::FloatingPopupWndProc(
+    HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    DesktopApp* app = nullptr;
+    if (msg == WM_NCCREATE)
+    {
+        auto* create = reinterpret_cast<CREATESTRUCTW*>(lp);
+        app = static_cast<DesktopApp*>(create->lpCreateParams);
+        SetWindowLongPtrW(
+            hwnd, GWLP_USERDATA,
+            reinterpret_cast<LONG_PTR>(app));
+    }
+    else
+    {
+        app = reinterpret_cast<DesktopApp*>(
+            GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    }
+    if (app)
+        return app->HandleFloatingPopupMessage(
+            hwnd, msg, wp, lp);
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
 /**
  * @brief 独立键盘输入窗口的静态窗口过程。
  */

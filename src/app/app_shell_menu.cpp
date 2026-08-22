@@ -148,6 +148,7 @@ void DesktopApp::ShowDesktopBackgroundContextMenu(POINT screenPoint)
 void DesktopApp::RestoreDesktopWindowLayer()
 {
     ApplyFloatingDockLayerPolicy();
+    ApplyFloatingPopupLayerPolicy();
     if (!hwnd_ || !IsWindow(hwnd_))
         return;
     POINT origin{ virtualLeft_, virtualTop_ };
@@ -210,6 +211,7 @@ void DesktopApp::BeginShellPopupMenuLayer()
     RecordShellHoverTrace(
         ShellHoverTraceEvent::MenuBegin);
     ApplyFloatingDockLayerPolicy();
+    ApplyFloatingPopupLayerPolicy();
 }
 
 void DesktopApp::EndShellPopupMenuLayer()
@@ -223,6 +225,7 @@ void DesktopApp::EndShellPopupMenuLayer()
     if (shellPopupMenuLayerDepth_ == 0)
         shellHoverTraceMenuEndTick_ = GetTickCount64();
     ApplyFloatingDockLayerPolicy();
+    ApplyFloatingPopupLayerPolicy();
     RefocusFloatingDockKeyboardSession();
     if (shellPopupMenuLayerDepth_ == 0)
     {

@@ -19,6 +19,7 @@
 #include "app/native_menu_presentation_rules.h"
 #include "desktop_window_discovery_rules.h"
 #include "floating_dock_rules.h"
+#include "floating_popup_rules.h"
 #include "ole_drag_rules.h"
 #include "display_topology_refresh.h"
 #include "item_visual_metrics.h"
@@ -87,6 +88,8 @@ int main(int argc, char** argv)
         snowdesktop::dock_drop_rules;
     namespace floatingDock =
         snowdesktop::floating_dock_rules;
+    namespace floatingPopup =
+        snowdesktop::floating_popup_rules;
     namespace folderRules =
         snowdesktop::dock_folder_rules;
     namespace folderSort =
@@ -1423,14 +1426,6 @@ int main(int argc, char** argv)
         "a desktop-hosted preview must still enter the topmost band explicitly");
     const RECT floatingDockRect{ 100, 900, 700, 980 };
     const RECT floatingPopupRect{ 240, 500, 560, 892 };
-    const RECT floatingHostRect =
-        floatingDock::UnionNonEmptyRects(
-            floatingDockRect, floatingPopupRect);
-    Check(floatingHostRect.left == 100 &&
-            floatingHostRect.top == 500 &&
-            floatingHostRect.right == 700 &&
-            floatingHostRect.bottom == 980,
-        "the compact host must contain both Dock and collection popup");
     const RECT bottomTitleHost =
         floatingDock::ExpandHostForTitleLayer(
             floatingDockRect,
@@ -1464,45 +1459,31 @@ int main(int argc, char** argv)
             floatingBorderOverdraw.bottom ==
                 floatingDockRect.bottom + 2,
         "floating layers must preserve the desktop glass-border overdraw");
-    const RECT popupReserveWork{
-        0, 0, 1920, 1080
-    };
-    const SIZE popupReserveSize{
-        560, 420
-    };
-    const RECT bottomPopupReserve =
-        floatingDock::
-            ReserveCollectionPopupEnvelope(
-                floatingDockRect,
-                popupReserveWork,
-                DockPosition::Bottom,
-                popupReserveSize);
-    Check(bottomPopupReserve.top <
-            floatingDockRect.top &&
-            bottomPopupReserve.left <
-                floatingDockRect.left &&
-            bottomPopupReserve.right >
-                floatingDockRect.right,
-        "the stable bottom host must reserve popup capacity above the Dock");
-    const RECT rightPopupReserve =
-        floatingDock::
-            ReserveCollectionPopupEnvelope(
-                floatingDockRect,
-                popupReserveWork,
-                DockPosition::Right,
-                popupReserveSize);
-    Check(rightPopupReserve.left <
-            floatingDockRect.left &&
-            rightPopupReserve.top <
-                floatingDockRect.top &&
-            rightPopupReserve.bottom >
-                floatingDockRect.bottom,
-        "the stable right host must reserve popup capacity before the Dock");
+    Check((floatingPopup::kWindowExStyle &
+            WS_EX_TOPMOST) == 0 &&
+            (floatingPopup::kWindowExStyle &
+                WS_EX_NOACTIVATE) != 0 &&
+            (floatingPopup::kWindowExStyle &
+                WS_EX_TOOLWINDOW) != 0,
+        "the shared popup host must be no-activate and enter the topmost band dynamically");
+    Check(floatingPopup::HostsCollectionPopup(true) &&
+            !floatingPopup::HostsCollectionPopup(false) &&
+            floatingPopup::HostsLuaPanel(true) &&
+            !floatingPopup::HostsLuaPanel(false),
+        "the shared popup host must own every collection popup and Lua panel");
+    Check(floatingPopup::ShouldShow(true, false) &&
+            floatingPopup::ShouldShow(false, true) &&
+            !floatingPopup::ShouldShow(false, false),
+        "the shared popup host must remain visible while either hosted layer is open");
+    Check(floatingPopup::ShouldBeTopmost(true, 0) &&
+            !floatingPopup::ShouldBeTopmost(true, 1) &&
+            !floatingPopup::ShouldBeTopmost(false, 0),
+        "native menus must temporarily outrank the shared popup host");
     const POINT mappedFloatingPoint =
         floatingDock::WindowPointToDesktopPoint(
-            POINT{ 12, 34 }, floatingHostRect);
+            POINT{ 12, 34 }, floatingDockRect);
     Check(mappedFloatingPoint.x == 112 &&
-            mappedFloatingPoint.y == 534,
+            mappedFloatingPoint.y == 934,
         "floating-window input must map back to desktop coordinates");
     const RECT previewPanelRect{ 260, 620, 540, 860 };
     Check(!floatingDock::ShouldDismissForPointerDown(
@@ -2918,6 +2899,35 @@ int main(int argc, char** argv)
                 show != std::string::npos &&
                 hostReady < rebind && rebind < show,
             "replacement overlays rebind Lua widget timers after host setup and before display");
+
+        const std::string floatingPopupSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_floating_popup_window.cpp");
+        const std::string floatingDockSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_floating_dock_window.cpp");
+        const std::string sceneSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_scene_render.cpp");
+        Check(floatingPopupSource.find("CreateTargetForHwnd") !=
+                    std::string::npos &&
+                floatingPopupSource.find("RegisterDragDrop") !=
+                    std::string::npos,
+            "the shared popup host must own an independent DComp target and OLE drop surface");
+        Check(floatingDockSource.find(
+                  "ReserveCollectionPopupEnvelope") ==
+                    std::string::npos &&
+                floatingDockSource.find(
+                  "const RECT nextPopupRect{};") !=
+                    std::string::npos,
+            "the floating Dock host must not reserve or render collection popup space");
+        Check(sceneSource.find(
+                  "collectionHostedByFloatingPopup") !=
+                    std::string::npos &&
+                sceneSource.find(
+                  "luaPanelBelongsToCurrentSurface") !=
+                    std::string::npos,
+            "collection popups and Lua panels must render through the shared popup surface");
     }
 
     if (failures == 0)

@@ -15,6 +15,7 @@ constexpr wchar_t kInputWindowClassName[] = L"SnowDesktopInputWindow";
 constexpr wchar_t kHintWindowClassName[] = L"SnowDesktopDragHintWindow";
 constexpr wchar_t kQuickNavigationWindowClassName[] = L"SnowDesktopQuickNavigationWindow";
 constexpr wchar_t kFloatingDockWindowClassName[] = L"SnowDesktopFloatingDockWindow";
+constexpr wchar_t kFloatingPopupWindowClassName[] = L"SnowDesktopFloatingPopupWindow";
 constexpr wchar_t kHiddenBySnowDesktopProp[] = L"SnowDesktop.HiddenExplorerIconLayer";
 
 // ── 透明色键值 ────────────────────────────────

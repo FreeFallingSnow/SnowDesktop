@@ -43,6 +43,7 @@ void DesktopApp::InvalidateDragStaticScene()
 void DesktopApp::PresentDesktopPointerUpdate()
 {
     if (handlingFloatingDockInput_ ||
+        handlingFloatingPopupInput_ ||
         !hwnd_ || !IsWindow(hwnd_))
         return;
     if (!compositionPaintInProgress_)
@@ -62,6 +63,7 @@ void DesktopApp::PresentOleDragInteractionFrame()
 {
     OnPaint();
     InvalidateFloatingDockWindow(true);
+    InvalidateFloatingPopupWindow(true);
 
     // A self drag reaches these callbacks from DoDragDrop's nested message
     // loop. The outer application pump therefore cannot perform its normal
@@ -177,6 +179,8 @@ void DesktopApp::PresentPointerInteractionFrame()
                     });
         }
     }
+    if (ShouldShowFloatingPopupWindow())
+        InvalidateFloatingPopupWindow(true);
 }
 
 /**
@@ -245,6 +249,7 @@ void DesktopApp::PresentPassiveHoverVisualChange()
             UpdateWindow(hwnd_);
     }
     InvalidateFloatingDockWindow(true);
+    InvalidateFloatingPopupWindow(true);
 }
 
 /**

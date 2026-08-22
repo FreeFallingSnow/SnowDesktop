@@ -272,6 +272,7 @@ void DesktopApp::OpenDockFolderPopupAt(
     }
     InvalidateDragStaticScene();
     InvalidateRect(hwnd_, nullptr, TRUE);
+    UpdateFloatingPopupWindowBounds(true);
 }
 
 void DesktopApp::StartCollectionPopupAnimation(
@@ -324,7 +325,8 @@ void DesktopApp::InvalidateCollectionPopupAnimation(
                 InvalidateRect(hwnd_, &dirty, FALSE);
             }
         }
-        else if (!(popupAnchoredToDock_ &&
+        else if (!IsCollectionPopupHostedByFloatingWindow() &&
+                 !(popupAnchoredToDock_ &&
                    floatingDockDesktopCopySuppressed_) &&
                  !IsRectEmptyRect(popupRect_))
         {
@@ -334,11 +336,10 @@ void DesktopApp::InvalidateCollectionPopupAnimation(
                 hwnd_, &dirty, FALSE);
         }
     }
-    // Animation frames may be coalesced when the UI thread is busy. Forcing
-    // UpdateWindow here would make every timer tick synchronously redraw the
-    // complete floating Dock surface and is the main source of frame stalls.
-    InvalidateFloatingDockWindow(
-        invalidateStaticScene);
+    // The popup owns an independent compact DComp surface. Animation frames
+    // therefore never repaint either the desktop foreground or floating Dock.
+    UpdateFloatingPopupWindowBounds(false);
+    InvalidateFloatingPopupWindow(true);
 }
 
 void DesktopApp::FinalizeCloseCollectionPopup()
@@ -393,6 +394,7 @@ void DesktopApp::FinalizeCloseCollectionPopup()
         InflateRect(&dirty, 6, 6);
         InvalidateRect(hwnd_, &dirty, FALSE);
     }
+    UpdateFloatingPopupWindowBounds(true);
     if (pendingOpen && hwnd_ && IsWindow(hwnd_))
     {
         const size_t widgetIndex =

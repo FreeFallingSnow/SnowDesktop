@@ -54,6 +54,7 @@ bool DesktopApp::IsDesktopInteractionSurfaceWindow(
     };
 
     if (belongsTo(floatingDockHwnd_) ||
+        belongsTo(floatingPopupHwnd_) ||
         belongsTo(quickNavigationHwnd_))
         return true;
     if (dockWindowPreview_ &&

@@ -168,6 +168,14 @@ bool DesktopApp::PresentDesktopForegroundComposition(
         return true;
     }
 
+    if (ShouldShowFloatingPopupWindow())
+    {
+        const bool popupPresented =
+            PresentFloatingPopupComposition();
+        if (handlingFloatingPopupInput_)
+            return popupPresented;
+    }
+
     if (compositionPaintInProgress_)
     {
         InvalidateRect(hwnd_, &clipped, FALSE);

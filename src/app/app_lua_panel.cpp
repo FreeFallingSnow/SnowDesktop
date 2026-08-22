@@ -33,6 +33,7 @@ void DesktopApp::OpenLuaWidgetPanel(
                 ResetLuaWidgetPanelAnimationCache();
                 InvalidateRect(hwnd_, nullptr, FALSE);
             }
+            UpdateFloatingPopupWindowBounds(true);
             return;
         }
         FinalizeCloseLuaWidgetPanel();
@@ -105,6 +106,7 @@ void DesktopApp::OpenLuaWidgetPanel(
     else
         ResetLuaWidgetPanelAnimationCache();
     InvalidateRect(hwnd_, nullptr, FALSE);
+    UpdateFloatingPopupWindowBounds(true);
 }
 
 void DesktopApp::FinalizeCloseLuaWidgetPanel()
@@ -133,6 +135,7 @@ void DesktopApp::FinalizeCloseLuaWidgetPanel()
     luaWidgetPanelMouseDown_ = false;
     ReleaseCapture();
     UpdateHostInputImePosition();
+    UpdateFloatingPopupWindowBounds(true);
     if (hwnd_ && IsWindow(hwnd_))
         InvalidateRect(hwnd_, nullptr, FALSE);
 }
@@ -181,4 +184,5 @@ void DesktopApp::CloseLuaWidgetPanel(
         EnsureUiAnimationFrame();
     }
     InvalidateRect(hwnd_, nullptr, FALSE);
+    UpdateFloatingPopupWindowBounds(true);
 }

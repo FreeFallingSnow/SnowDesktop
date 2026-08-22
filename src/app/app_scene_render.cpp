@@ -270,7 +270,10 @@ void DesktopApp::DrawDynamicOverlays(
     };
 
     // Widget drag/resize preview
-    if ((widgetAction_ == WidgetAction::Move || widgetAction_ == WidgetAction::Resize) && mouseDownWidgetIndex_ < widgets_.size())
+    if (!renderingFloatingPopup_ &&
+        (widgetAction_ == WidgetAction::Move ||
+         widgetAction_ == WidgetAction::Resize) &&
+        mouseDownWidgetIndex_ < widgets_.size())
     {
         if (widgetAction_ == WidgetAction::Move &&
             widgetCollectionGroupTargetIndex_ <
@@ -465,14 +468,21 @@ void DesktopApp::DrawDynamicOverlays(
 
     // Blue insertion bars and green handoff boxes for the desktop, widgets and
     // Dock are part of the background interaction layer.
-    drawDropPreviewLayer(false);
+    if (!renderingFloatingPopup_)
+        drawDropPreviewLayer(false);
 
+    const bool collectionHostedByFloatingPopup =
+        IsCollectionPopupHostedByFloatingWindow();
     const bool popupBelongsToCurrentSurface =
-        renderingFloatingDock_
-            ? popupAnchoredToDock_ &&
+        renderingFloatingPopup_
+            ? collectionHostedByFloatingPopup
+            : renderingFloatingDock_
+            ? !collectionHostedByFloatingPopup &&
+                popupAnchoredToDock_ &&
                 floatingDockVisible_
-            : !(popupAnchoredToDock_ &&
-                floatingDockDesktopCopySuppressed_);
+            : !collectionHostedByFloatingPopup &&
+                !(popupAnchoredToDock_ &&
+                    floatingDockDesktopCopySuppressed_);
     if (popupBelongsToCurrentSurface &&
         (!hiddenMode || IsOpenPopupRetained()) &&
         GetOpenPopupWidget())
@@ -492,9 +502,15 @@ void DesktopApp::DrawDynamicOverlays(
 
     // A target resolved inside the open popup must remain visible on top of
     // that popup, while every other target stays covered by it.
-    drawDropPreviewLayer(true);
+    if (popupBelongsToCurrentSurface)
+        drawDropPreviewLayer(true);
 
-    if (!renderingFloatingDock_ &&
+    const bool luaPanelBelongsToCurrentSurface =
+        renderingFloatingPopup_
+            ? IsLuaPanelHostedByFloatingWindow()
+            : !renderingFloatingDock_ &&
+                !IsLuaPanelHostedByFloatingWindow();
+    if (luaPanelBelongsToCurrentSurface &&
         !luaWidgetPanelRequest_.widgetId.empty())
     {
         bool renderLuaPanel = !hiddenMode;
@@ -541,7 +557,13 @@ void DesktopApp::DrawDynamicOverlays(
         }
     }
 
-    if (marqueeActive_)
+    const bool popupMarquee = marqueeDockFolderPopup_ ||
+        (marqueeWidgetIndex_ < widgets_.size() &&
+         marqueeWidgetIndex_ == popupWidgetIndex_);
+    const bool marqueeBelongsToCurrentSurface = popupMarquee
+        ? popupBelongsToCurrentSurface
+        : !renderingFloatingPopup_;
+    if (marqueeActive_ && marqueeBelongsToCurrentSurface)
     {
         if (!marqueeDockFolderPopup_ &&
             marqueeWidgetIndex_ >= widgets_.size())
@@ -559,10 +581,6 @@ void DesktopApp::DrawDynamicOverlays(
             marqueeWidgetIndex_ < widgets_.size())
         {
             RECT viewport = GetMarqueeViewportRect();
-            const bool popupMarquee =
-                marqueeDockFolderPopup_ ||
-                marqueeWidgetIndex_ ==
-                    popupWidgetIndex_;
             D2D1_MATRIX_3X2_F
                 marqueePreviousTransform{};
             const bool marqueeAnimationApplied =
@@ -588,7 +606,8 @@ void DesktopApp::DrawDynamicOverlays(
         }
     }
 
-    if (!hiddenMode && !renderingFloatingDock_)
+    if (!hiddenMode && !renderingFloatingDock_ &&
+        !renderingFloatingPopup_)
     {
         DrawPageNavButtons(ctx);
         DrawPageNotify(ctx);

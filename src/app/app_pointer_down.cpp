@@ -59,7 +59,12 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             mouseDown_ = true;
             mouseDownPoint_ = pt;
             luaWidgetPanelMouseDown_ = true;
-            SetCapture(hwnd_);
+            SetCapture(
+                handlingFloatingPopupInput_ &&
+                    floatingPopupHwnd_ &&
+                    IsWindow(floatingPopupHwnd_)
+                ? floatingPopupHwnd_
+                : hwnd_);
             if (!widgetEngine_ ||
                 !widgetEngine_->HandleHostUiPointer(
                     luaWidgetPanelRequest_.widgetId,
@@ -133,6 +138,11 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         IsWindow(floatingDockHwnd_))
         interactionCaptureHwnd =
             floatingDockHwnd_;
+    else if (handlingFloatingPopupInput_ &&
+        floatingPopupHwnd_ &&
+        IsWindow(floatingPopupHwnd_))
+        interactionCaptureHwnd =
+            floatingPopupHwnd_;
     dockPressedContainer_ = pointDock;
     // Dock is an app switcher: do not move focus away from the current app before
     // deciding whether this click should minimize or restore it. The decision
