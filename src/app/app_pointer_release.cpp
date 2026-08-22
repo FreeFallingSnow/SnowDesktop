@@ -960,6 +960,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
     // ── Widget action completion ────────────────────────────
     if (widgetAction_ != WidgetAction::None && mouseDownWidgetIndex_ < widgets_.size())
     {
+        EndDesktopWidgetDragComposition();
         if (widgetAction_ == WidgetAction::Move)
         {
             const auto movingPayload = snowdesktop::slot_contract::

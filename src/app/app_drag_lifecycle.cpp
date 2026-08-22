@@ -108,31 +108,81 @@ void DesktopApp::PresentPointerInteractionFrame(
         presentedDragFeedbackRevision_ = 0;
         presentedDragNavHoverSide_ = 0;
     }
+    snowdesktop::widget_composition_layer_rules::
+        WidgetDragFeedbackState widgetDragFeedback{};
+    widgetDragFeedback.active = widgetPreviewActive;
+    widgetDragFeedback.resize =
+        widgetAction_ == WidgetAction::Resize;
+    widgetDragFeedback.pageId = widgetPreviewCell_.pageId;
+    widgetDragFeedback.column = widgetPreviewCell_.column;
+    widgetDragFeedback.row = widgetPreviewCell_.row;
+    widgetDragFeedback.columns = widgetPreviewSpan_.columns;
+    widgetDragFeedback.rows = widgetPreviewSpan_.rows;
+    widgetDragFeedback.dockTarget = widgetDockTarget_;
+    widgetDragFeedback.dockOwner = reinterpret_cast<std::uintptr_t>(
+        widgetDockTargetContainer_);
+    widgetDragFeedback.dockInsertIndex = widgetDockInsertIndex_;
+    widgetDragFeedback.groupTargetIndex =
+        widgetCollectionGroupTargetIndex_;
+    widgetDragFeedback.groupInsertIndex =
+        widgetCollectionGroupInsertIndex_;
+    widgetDragFeedback.navigationSide = navHoverSide_;
+    const bool widgetDragFeedbackChanged =
+        snowdesktop::widget_composition_layer_rules::
+            NeedsWidgetDragFeedbackPresent(
+                presentedWidgetDragFeedback_,
+                widgetDragFeedback);
+    if (!widgetPreviewActive)
+        presentedWidgetDragFeedback_ = {};
     const bool immediateDesktopPresent =
         snowdesktop::floating_dock_rules::
             NeedsImmediatePointerPresent(
                 itemDragFeedbackChanged,
                 widgetPreviewActive,
                 marqueeActive_);
-    bool widgetForegroundPresented = false;
+    bool widgetInteractionPresented = false;
     if (widgetPreviewActive && hwnd_ && IsWindow(hwnd_))
     {
-        // The source widget is hidden by the synchronous transition paint.
-        // During the captured gesture only the foreground overlay changes, so
-        // keep dense pointer samples away from the root surface and unrelated
-        // widget composition queues.
-        RECT client{};
-        GetClientRect(hwnd_, &client);
-        widgetForegroundPresented =
-            PresentDesktopForegroundComposition(client);
+        if (widgetDragFeedbackChanged)
+        {
+            // Grid, Dock and group feedback lives on the shared foreground
+            // surface. Redraw it only when the logical target changes; plain
+            // pointer movement is handled by the widget child visual below.
+            RECT client{};
+            GetClientRect(hwnd_, &client);
+            widgetInteractionPresented =
+                PresentDesktopForegroundComposition(client);
+        }
+        else if (widgetAction_ == WidgetAction::Move &&
+            HasDesktopWidgetDragComposition())
+        {
+            widgetInteractionPresented =
+                CommitCompositionAnimationFrame() &&
+                FlushPendingCompositionCommit();
+        }
+        else
+        {
+            widgetInteractionPresented = true;
+        }
     }
+    bool desktopFallbackPresented = false;
     if (immediateDesktopPresent &&
-        !widgetForegroundPresented &&
+        (!widgetPreviewActive || !widgetInteractionPresented) &&
         hwnd_ && IsWindow(hwnd_))
     {
         InvalidateRect(hwnd_, nullptr, FALSE);
         PresentDesktopPointerUpdate();
+        desktopFallbackPresented = true;
     }
+    if (widgetPreviewActive && widgetDragFeedbackChanged &&
+        (widgetInteractionPresented || desktopFallbackPresented))
+    {
+        presentedWidgetDragFeedback_ =
+            std::move(widgetDragFeedback);
+    }
+    const bool immediateFloatingDockPresent =
+        immediateDesktopPresent &&
+        (!widgetPreviewActive || widgetDragFeedbackChanged);
     if (floatingDockVisible_)
     {
         const void* hoverOwner = nullptr;
@@ -183,7 +233,7 @@ void DesktopApp::PresentPointerInteractionFrame(
                 ShouldPresentPointerFrame(
                     now,
                     floatingDockLastPointerPresentTick_,
-                    immediateDesktopPresent ||
+                    immediateFloatingDockPresent ||
                         hoverTargetChanged);
         if (presentNow)
         {
@@ -224,7 +274,9 @@ void DesktopApp::PresentPointerInteractionFrame(
     }
     if (ShouldShowFloatingPopupWindow() &&
         (!itemDragActive ||
-         itemDragFeedbackChanged))
+         itemDragFeedbackChanged) &&
+        (!widgetPreviewActive ||
+         widgetDragFeedbackChanged))
         InvalidateFloatingPopupWindow(true);
 }
 

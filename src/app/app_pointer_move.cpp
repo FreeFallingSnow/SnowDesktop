@@ -80,6 +80,8 @@ void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
     widgetPreviewSpan_ = widgetDragOriginalSpan_;
     dragGroupOriginX_ = widgets_[widgetIndex].bounds.left;
     dragGroupOriginY_ = widgets_[widgetIndex].bounds.top;
+    widgetDragVisualAnchor_ = {
+        dragGroupOriginX_, dragGroupOriginY_ };
     SetCapture(hwnd_);
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
@@ -527,6 +529,16 @@ void DesktopApp::OnMouseMoveAt(
         extern inline int SlotFromCell(const std::vector<GridPage>&, const GridCell&);
         extern inline const GridPage* FindGridPage(const std::vector<GridPage>&, const std::wstring&);
 
+        const POINT widgetVisualOrigin{
+            dragGroupOriginX_ +
+                (current.x - mouseDownPoint_.x),
+            dragGroupOriginY_ +
+                (current.y - mouseDownPoint_.y)
+        };
+        (void)UpdateDesktopWidgetDragComposition(
+            widgets_[mouseDownWidgetIndex_].id,
+            widgetVisualOrigin);
+
         const DesktopWidgetType movingType =
             widgets_[mouseDownWidgetIndex_].type;
         const auto movingPayload = snowdesktop::slot_contract::
@@ -670,6 +682,9 @@ void DesktopApp::OnMouseMoveAt(
                     InvalidateDragStaticScene();
                     InvalidateRect(hwnd_, nullptr, TRUE);
                     PresentDesktopPointerUpdate();
+                    (void)UpdateDesktopWidgetDragComposition(
+                        widgets_[mouseDownWidgetIndex_].id,
+                        widgetVisualOrigin);
                 }
                 navAutoFlipTick_ = now;
             }

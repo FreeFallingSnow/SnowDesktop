@@ -3868,10 +3868,22 @@ int main(int argc, char** argv)
         const std::size_t widgetForegroundPresent =
             dragLifecycleSource.find(
                 "PresentDesktopForegroundComposition(client);");
+        const std::size_t widgetFeedbackGate =
+            dragLifecycleSource.rfind(
+                "if (widgetDragFeedbackChanged)",
+                widgetForegroundPresent);
+        const std::size_t widgetOffsetOnlyPresent =
+            dragLifecycleSource.find(
+                "HasDesktopWidgetDragComposition()",
+                widgetForegroundPresent);
         const std::size_t widgetRootPresentFallback =
             dragLifecycleSource.find(
                 "if (immediateDesktopPresent &&",
                 widgetForegroundPresent);
+        const std::size_t widgetVisualMove =
+            pointerMoveSource.find(
+                "UpdateDesktopWidgetDragComposition(",
+                widgetMovePreview);
         Check(widgetTransitionPaint != std::string::npos &&
                 widgetResizePreview != std::string::npos &&
                 widgetTransitionPaint < widgetResizePreview &&
@@ -3879,10 +3891,20 @@ int main(int argc, char** argv)
                 widgetResizeHotPath.find(
                     "InvalidateRect(hwnd_, nullptr") ==
                     std::string::npos &&
+                widgetVisualMove != std::string::npos &&
+                widgetFeedbackGate != std::string::npos &&
                 widgetForegroundPresent != std::string::npos &&
+                widgetOffsetOnlyPresent != std::string::npos &&
                 widgetRootPresentFallback != std::string::npos &&
-                widgetForegroundPresent < widgetRootPresentFallback,
-            "widget gestures must establish the source state once and present later samples through the foreground composition");
+                widgetFeedbackGate < widgetForegroundPresent &&
+                widgetForegroundPresent < widgetRootPresentFallback &&
+                pointerReleaseSource.find(
+                    "EndDesktopWidgetDragComposition();") !=
+                    std::string::npos &&
+                dragLifecycleSource.find(
+                    "immediateFloatingDockPresent ||") !=
+                    std::string::npos,
+            "widget moves must update a child visual continuously and redraw shared feedback only when its target changes");
         const std::size_t desktopGridHitTest =
             desktopGridSource.find(
                 "HitRegion DesktopGrid::HitTestAtPoint(");

@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
+#include <string>
 #include <string_view>
 
 namespace snowdesktop::widget_composition_layer_rules
@@ -25,6 +28,32 @@ enum class CompositionHost
     Desktop,
     FloatingPopup,
 };
+
+struct WidgetDragFeedbackState
+{
+    bool active = false;
+    bool resize = false;
+    std::wstring pageId;
+    int column = 0;
+    int row = 0;
+    int columns = 1;
+    int rows = 1;
+    bool dockTarget = false;
+    std::uintptr_t dockOwner = 0;
+    std::size_t dockInsertIndex = 0;
+    std::size_t groupTargetIndex = static_cast<std::size_t>(-1);
+    std::size_t groupInsertIndex = static_cast<std::size_t>(-1);
+    int navigationSide = 0;
+
+    bool operator==(const WidgetDragFeedbackState&) const = default;
+};
+
+inline bool NeedsWidgetDragFeedbackPresent(
+    const WidgetDragFeedbackState& presented,
+    const WidgetDragFeedbackState& current)
+{
+    return current.active && presented != current;
+}
 
 constexpr bool BelongsToCompositionRoot(
     CompositionHost visualHost,

@@ -668,6 +668,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             RECT bounds = widgets_[wi].bounds;
             dragGroupOriginX_ = bounds.left;
             dragGroupOriginY_ = bounds.top;
+            widgetDragVisualAnchor_ = {
+                dragGroupOriginX_, dragGroupOriginY_ };
             mouseDownWidgetIndex_ = wi;
             mouseDownHit_ = nullptr;
             SetCapture(hwnd_);
@@ -787,6 +789,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             RECT bounds = widgets_[wi].bounds;
             dragGroupOriginX_ = bounds.left;
             dragGroupOriginY_ = bounds.top;
+            widgetDragVisualAnchor_ = {
+                dragGroupOriginX_, dragGroupOriginY_ };
             mouseDownWidgetIndex_ = wi;
             mouseDownHit_ = nullptr;
             SetCapture(hwnd_);

@@ -105,6 +105,38 @@ int main(int argc, char** argv)
             !rules::SurfaceIncludesAuxiliary("desktop"),
         "desktop-only invalidation must not redraw an auxiliary surface");
 
+    rules::WidgetDragFeedbackState presentedFeedback{};
+    rules::WidgetDragFeedbackState currentFeedback{};
+    currentFeedback.active = true;
+    currentFeedback.pageId = L"page-a";
+    Check(rules::NeedsWidgetDragFeedbackPresent(
+            presentedFeedback, currentFeedback),
+        "the first active widget drag target must present its feedback");
+    presentedFeedback = currentFeedback;
+    Check(!rules::NeedsWidgetDragFeedbackPresent(
+            presentedFeedback, currentFeedback),
+        "pointer-only movement inside one widget drag target must not redraw feedback");
+    currentFeedback.column = 1;
+    Check(rules::NeedsWidgetDragFeedbackPresent(
+            presentedFeedback, currentFeedback),
+        "moving to another widget grid cell must redraw feedback");
+    presentedFeedback = currentFeedback;
+    currentFeedback.dockTarget = true;
+    currentFeedback.dockOwner = 1;
+    currentFeedback.dockInsertIndex = 2;
+    Check(rules::NeedsWidgetDragFeedbackPresent(
+            presentedFeedback, currentFeedback),
+        "changing the widget Dock insertion target must redraw feedback");
+    presentedFeedback = currentFeedback;
+    currentFeedback.navigationSide = 1;
+    Check(rules::NeedsWidgetDragFeedbackPresent(
+            presentedFeedback, currentFeedback),
+        "changing widget page navigation feedback must redraw it");
+    currentFeedback.active = false;
+    Check(!rules::NeedsWidgetDragFeedbackPresent(
+            presentedFeedback, currentFeedback),
+        "an inactive widget gesture must not request another feedback frame");
+
     Check(argc == 2, "source root argument is provided");
     if (argc == 2)
     {
@@ -151,6 +183,29 @@ int main(int argc, char** argv)
         Check(queue.find("widget.type") == std::string::npos &&
                 queue.find("audio.output.analysis") == std::string::npos,
             "child-surface ownership must not depend on widget type or data subscription");
+        const std::size_t widgetDragUpdateBegin = composition.find(
+            "bool DesktopApp::UpdateDesktopWidgetDragComposition(");
+        const std::size_t widgetDragEndBegin = composition.find(
+            "void DesktopApp::EndDesktopWidgetDragComposition()",
+            widgetDragUpdateBegin);
+        const std::string widgetDragUpdate =
+            widgetDragUpdateBegin == std::string::npos ||
+                    widgetDragEndBegin == std::string::npos
+                ? std::string{}
+                : composition.substr(
+                    widgetDragUpdateBegin,
+                    widgetDragEndBegin - widgetDragUpdateBegin);
+        Check(!widgetDragUpdate.empty() &&
+                widgetDragUpdate.find("SetOffsetX(") !=
+                    std::string::npos &&
+                widgetDragUpdate.find("SetOffsetY(") !=
+                    std::string::npos &&
+                widgetDragUpdate.find("BeginDraw(") ==
+                    std::string::npos &&
+                pointer.find(
+                    "UpdateDesktopWidgetDragComposition(") !=
+                    std::string::npos,
+            "continuous widget dragging must reuse its child visual without redrawing the widget surface");
         Check(scene.find("QueueDesktopWidgetComposition(widgetData.id)") !=
                 std::string::npos,
             "the desktop scene must route visible widgets to child surfaces");

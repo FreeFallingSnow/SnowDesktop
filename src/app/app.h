@@ -2205,6 +2205,13 @@ private:
     bool FlushPendingDesktopWidgetComposition();
     bool HasDesktopWidgetComposition(
         const std::wstring& widgetId) const;
+    /** @brief 仅更新活动组件视觉的位置，不重绘其 surface。 */
+    bool UpdateDesktopWidgetDragComposition(
+        const std::wstring& widgetId,
+        POINT widgetOrigin);
+    /** @brief 结束连续组件拖拽视觉并恢复静态组件视觉状态。 */
+    void EndDesktopWidgetDragComposition();
+    bool HasDesktopWidgetDragComposition() const;
     void SetDesktopWidgetCompositionVisible(
         const std::wstring& widgetId,
         bool visible,
@@ -2740,6 +2747,8 @@ private:
     ComPtr<IDCompositionVisual2> desktopWidgetCompositionLayer_;
     std::unordered_map<std::wstring, DesktopWidgetCompositionItem>
         desktopWidgetCompositionItems_;
+    std::wstring desktopWidgetDragCompositionId_;
+    POINT desktopWidgetDragCompositionOrigin_{};
     std::unordered_set<std::wstring>
         pendingDesktopWidgetCompositions_;
     std::vector<std::wstring> desktopWidgetCompositionZOrder_;
@@ -3268,6 +3277,9 @@ private:
     GridSpan widgetDragOriginalSpan_{};
     GridCell widgetPreviewCell_{};
     GridSpan widgetPreviewSpan_{};
+    POINT widgetDragVisualAnchor_{};
+    snowdesktop::widget_composition_layer_rules::WidgetDragFeedbackState
+        presentedWidgetDragFeedback_{};
     bool widgetPreviewOccupied_ = false;
     bool widgetDockTarget_ = false;
     DockContainer* widgetDockTargetContainer_ = nullptr;
