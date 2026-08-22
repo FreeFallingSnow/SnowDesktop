@@ -145,6 +145,7 @@ enum class IconLoadPhase { Phase1, Phase2 };
 
 struct IconLoadTask {
     uint64_t serial = 0;
+    uint64_t popupGeneration = 0;
     std::wstring requestKey;
     std::wstring layoutKey;
     std::wstring widgetId;
@@ -241,6 +242,7 @@ struct DockRunningAppInfo
 
 struct IconLoadResult {
     uint64_t serial = 0;
+    uint64_t popupGeneration = 0;
     std::wstring requestKey;
     std::wstring layoutKey;
     std::wstring widgetId;
@@ -2283,6 +2285,7 @@ private:
     void StartIconLoader();
     void StopIconLoader();
     void BeginIconLoadGeneration();
+    void CancelDockFolderPopupIconLoads();
     int GetShellIconBitmapSizeForPage(const std::wstring& pageId) const;
     int GetMaximumShellIconBitmapSize() const;
     void RefreshIconBitmapResolution();
@@ -3614,6 +3617,7 @@ private:
     std::unordered_set<std::wstring> iconLoaderPendingKeys_;
     std::atomic<bool> iconLoaderRunning_{false};
     uint64_t iconLoadSerial_ = 0;
+    uint64_t dockFolderPopupIconGeneration_ = 1;
 
     std::unordered_map<std::uint64_t, ComPtr<ID2D1Bitmap>> placeholderIconCache_;
     /** @} */

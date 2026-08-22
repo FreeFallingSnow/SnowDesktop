@@ -1,5 +1,6 @@
 #include "app.h"
 #include "../drag_input_rules.h"
+#include "../popup_icon_load_rules.h"
 
 // SID 字符串格式化（S-1-5-21-...），直接按 SID 内存布局解析，
 // 不依赖 sddl.h/ntsecapi，避免 PCH 环境下安全 API 声明不可用的问题。
@@ -873,6 +874,9 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
 
 void DesktopApp::EnqueueIconLoad(IconLoadTask task)
 {
+    const bool dockFolderPopupTask =
+        !task.isDesktopItem &&
+        task.widgetId == kDockFolderPopupWidgetId;
     if (task.requestedSize <= 0)
     {
         if (task.isDesktopItem)
@@ -901,17 +905,24 @@ void DesktopApp::EnqueueIconLoad(IconLoadTask task)
             task.requestedSize = GetShellIconBitmapSizeForPage(pageId);
         }
     }
-    if (task.requestKey.empty())
-    {
-        const std::wstring& identity = task.isDesktopItem ? task.layoutKey : task.folderPath;
-        task.requestKey = std::to_wstring(task.serial) + L"\n" +
-            (task.isDesktopItem ? L"D\n" : L"F\n") + task.widgetId + L"\n" +
-            ToUpperInvariant(identity) + L"\n" +
-            (task.phase == IconLoadPhase::Phase1 ? L"1" : L"2") + L"\n" +
-            std::to_wstring(task.requestedSize);
-    }
     {
         std::lock_guard<std::mutex> lock(iconLoaderMutex_);
+        if (dockFolderPopupTask)
+            task.popupGeneration =
+                dockFolderPopupIconGeneration_;
+        if (task.requestKey.empty())
+        {
+            const std::wstring& identity = task.isDesktopItem
+                ? task.layoutKey : task.folderPath;
+            task.requestKey = std::to_wstring(task.serial) + L"\n" +
+                (task.isDesktopItem ? L"D\n" : L"F\n") +
+                task.widgetId + L"\n" +
+                ToUpperInvariant(identity) + L"\n" +
+                (task.phase == IconLoadPhase::Phase1
+                    ? L"1" : L"2") + L"\n" +
+                std::to_wstring(task.requestedSize) + L"\n" +
+                std::to_wstring(task.popupGeneration);
+        }
         if (!iconLoaderPendingKeys_.insert(task.requestKey).second)
             return;
         iconLoaderQueue_.push_back(std::move(task));
@@ -925,11 +936,21 @@ void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
     if (!result) return;
 
     std::unique_ptr<IconLoadResult> resultGuard(result);
+    std::uint64_t currentPopupGeneration = 0;
     {
         std::lock_guard<std::mutex> lock(iconLoaderMutex_);
         iconLoaderPendingKeys_.erase(result->requestKey);
+        currentPopupGeneration =
+            dockFolderPopupIconGeneration_;
     }
-    if (result->serial != iconLoadSerial_)
+    const bool dockFolderPopupResult =
+        !result->isDesktopItem &&
+        result->widgetId == kDockFolderPopupWidgetId;
+    if (result->serial != iconLoadSerial_ ||
+        snowdesktop::popup_icon_load_rules::ShouldRejectResult(
+            dockFolderPopupResult,
+            result->popupGeneration,
+            currentPopupGeneration))
     {
         if (result->bitmap) DeleteObject(result->bitmap);
         result->bitmap = nullptr;

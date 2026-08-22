@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../popup_icon_load_rules.h"
 #include "../shortcut_application_rules.h"
 
 // Asynchronous icon-loading lifecycle.
@@ -364,6 +365,7 @@ void DesktopApp::StartIconLoader()
             {
                 auto* result = new IconLoadResult();
                 result->serial = task.serial;
+                result->popupGeneration = task.popupGeneration;
                 result->requestKey = std::move(task.requestKey);
                 result->layoutKey = std::move(task.layoutKey);
                 result->widgetId = std::move(task.widgetId);
@@ -525,6 +527,20 @@ void DesktopApp::BeginIconLoadGeneration()
     ++iconLoadSerial_;
     iconLoaderQueue_.clear();
     iconLoaderPendingKeys_.clear();
+}
+
+void DesktopApp::CancelDockFolderPopupIconLoads()
+{
+    std::lock_guard<std::mutex> lock(iconLoaderMutex_);
+    dockFolderPopupIconGeneration_ =
+        snowdesktop::popup_icon_load_rules::NextGeneration(
+            dockFolderPopupIconGeneration_);
+    snowdesktop::popup_icon_load_rules::CancelQueuedTasks(
+        iconLoaderQueue_, iconLoaderPendingKeys_,
+        [](const IconLoadTask& task) {
+            return !task.isDesktopItem &&
+                task.widgetId == kDockFolderPopupWidgetId;
+        });
 }
 
 void DesktopApp::SetSoftwareDesktopEnabled(bool enabled, bool persist)

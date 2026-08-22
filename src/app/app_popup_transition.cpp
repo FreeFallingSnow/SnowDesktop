@@ -201,6 +201,8 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
         }
     }
 
+    if (dockFolderPopupOpen_)
+        CancelDockFolderPopupIconLoads();
     PreserveDockFolderPopupDragSourceForTransition();
     ClearPopupDragTarget();
     dockFolderPopupOpen_ = false;
@@ -542,6 +544,7 @@ void DesktopApp::RefreshDockFolderPopup()
     }
     shellDockFolderPopupRefreshPending_ = false;
     if (!dockFolderPopupOpen_) return;
+    CancelDockFolderPopupIconLoads();
     PreserveDockFolderPopupDragSourceForTransition();
     ClearPopupDragTarget();
     dockFolderPopupDragItems_.clear();

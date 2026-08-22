@@ -8,11 +8,15 @@
 #include "widgets/guide_widget_rules.h"
 #include "pending_drop_rules.h"
 #include "list_detail_rules.h"
+#include "popup_icon_load_rules.h"
 
 #include <algorithm>
+#include <deque>
 #include <iostream>
+#include <limits>
 #include <set>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -856,6 +860,59 @@ void TestDragInputSampling()
         "native drag coalescing must stop at another window or message kind");
 }
 
+void TestPopupIconLoadCancellationRules()
+{
+    struct Task
+    {
+        bool popup = false;
+        std::wstring requestKey;
+    };
+
+    std::deque<Task> queue;
+    std::unordered_set<std::wstring> pendingKeys;
+    const auto append = [&](bool popup, std::wstring key)
+    {
+        pendingKeys.insert(key);
+        queue.push_back(Task{popup, std::move(key)});
+    };
+    append(false, L"ordinary-before");
+    for (int index = 0; index < 10000; ++index)
+        append(true, L"popup-queued-" + std::to_wstring(index));
+    append(false, L"ordinary-after");
+    pendingKeys.insert(L"popup-in-flight");
+    pendingKeys.insert(L"popup-posted");
+
+    const std::size_t removed =
+        snowdesktop::popup_icon_load_rules::CancelQueuedTasks(
+            queue, pendingKeys,
+            [](const Task& task) { return task.popup; });
+    Check(removed == 10000 && queue.size() == 2 &&
+            queue[0].requestKey == L"ordinary-before" &&
+            queue[1].requestKey == L"ordinary-after",
+        "popup cancellation must remove 10000 queued tasks without reordering other icon work");
+    Check(pendingKeys.size() == 4 &&
+            pendingKeys.contains(L"ordinary-before") &&
+            pendingKeys.contains(L"ordinary-after") &&
+            pendingKeys.contains(L"popup-in-flight") &&
+            pendingKeys.contains(L"popup-posted"),
+        "popup cancellation must erase only exact queued keys and retain in-flight or posted keys");
+
+    namespace popupRules =
+        snowdesktop::popup_icon_load_rules;
+    const std::uint64_t currentGeneration = 43;
+    Check(popupRules::NextGeneration(42) == currentGeneration &&
+            popupRules::NextGeneration(
+                std::numeric_limits<std::uint64_t>::max()) == 1,
+        "popup generations must advance and skip the reserved zero epoch after wraparound");
+    Check(popupRules::ShouldRejectResult(
+                true, 42, currentGeneration) &&
+            !popupRules::ShouldRejectResult(
+                true, currentGeneration, currentGeneration) &&
+            !popupRules::ShouldRejectResult(
+                false, 42, currentGeneration),
+        "only stale popup results must be rejected by the popup epoch gate");
+}
+
 void TestDragHintRasterRules()
 {
     bool valid = false;
@@ -1168,6 +1225,7 @@ int main()
     TestWidgetPreviewSourceVisibility();
     TestDesktopHoverDeactivation();
     TestDragInputSampling();
+    TestPopupIconLoadCancellationRules();
     TestDragHintRasterRules();
     TestNestedWidgetScrolling();
     TestScrollbarThumbDragging();

@@ -3251,6 +3251,12 @@ int main(int argc, char** argv)
         const std::string desktopReloadSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_desktop_reload.cpp");
+        const std::string iconLoaderSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_icon_loader.cpp");
+        const std::string appHeaderSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app.h");
         const std::string dockWindowTrackingSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_dock_window_tracking.cpp");
@@ -3861,6 +3867,10 @@ int main(int argc, char** argv)
             popupLifecycleSource.find(
                 "ClearDockFolderPopupEntries();",
                 openDockPopupBegin);
+        const std::size_t openDockPopupLoadCancel =
+            popupLifecycleSource.find(
+                "CancelDockFolderPopupIconLoads();",
+                openDockPopupBegin);
         const std::size_t finalizePopupClear =
             popupLifecycleSource.find(
                 "ClearPopupDragTarget();",
@@ -3872,6 +3882,14 @@ int main(int argc, char** argv)
         const std::size_t finalizePopupIconClear =
             popupLifecycleSource.find(
                 "ClearDockFolderPopupEntries();",
+                finalizePopupBegin);
+        const std::size_t finalizePopupLoadCancel =
+            popupLifecycleSource.find(
+                "CancelDockFolderPopupIconLoads();",
+                finalizePopupBegin);
+        const std::size_t finalizePopupEmptyGuard =
+            popupLifecycleSource.find(
+                "!dockFolderPopupOpen_)",
                 finalizePopupBegin);
         const std::size_t openCollectionPopupBegin =
             popupTransitionSource.find(
@@ -3888,6 +3906,10 @@ int main(int argc, char** argv)
             popupTransitionSource.find(
                 "ClearDockFolderPopupEntries();",
                 openCollectionPopupBegin);
+        const std::size_t openCollectionPopupLoadCancel =
+            popupTransitionSource.find(
+                "CancelDockFolderPopupIconLoads();",
+                openCollectionPopupBegin);
         const std::size_t refreshFolderPopupBegin =
             popupTransitionSource.find(
                 "void DesktopApp::RefreshDockFolderPopup()");
@@ -3895,6 +3917,18 @@ int main(int argc, char** argv)
             popupTransitionSource.find(
                 "ClearPopupDragTarget();",
                 refreshFolderPopupBegin);
+        const std::size_t refreshFolderPopupShellGuard =
+            popupTransitionSource.find(
+                "if (shellFileOperationInFlight_ > 0)",
+                refreshFolderPopupBegin);
+        const std::size_t refreshFolderPopupOpenGuard =
+            popupTransitionSource.find(
+                "if (!dockFolderPopupOpen_) return;",
+                refreshFolderPopupBegin);
+        const std::size_t refreshFolderPopupLoadCancel =
+            popupTransitionSource.find(
+                "CancelDockFolderPopupIconLoads();",
+                refreshFolderPopupOpenGuard);
         const std::size_t refreshFolderPopupRewrite =
             popupTransitionSource.find(
                 "EnumerateFolderMappingEntries(",
@@ -3918,22 +3952,46 @@ int main(int argc, char** argv)
             popupLifecycleSource.find(
                 "dockFolderPopupWidget_.folderEntries.clear();",
                 clearPopupEntriesBegin);
+        const std::size_t closePopupIconLifecycleBegin =
+            popupLifecycleSource.find(
+                "void DesktopApp::CloseCollectionPopup(");
+        const std::size_t closePopupClosingGuard =
+            popupLifecycleSource.find(
+                "if (popupAnimation_.IsClosing())",
+                closePopupIconLifecycleBegin);
+        const std::size_t closePopupLoadCancel =
+            popupLifecycleSource.find(
+                "CancelDockFolderPopupIconLoads();",
+                closePopupClosingGuard);
+        const std::size_t closePopupAnimation =
+            popupLifecycleSource.find(
+                "SystemAnimationsEnabled()",
+                closePopupLoadCancel);
         Check(openDockPopupBegin != std::string::npos &&
                 openDockPopupClear != std::string::npos &&
                 openDockPopupRewrite != std::string::npos &&
                 openDockPopupIconClear != std::string::npos &&
+                openDockPopupLoadCancel != std::string::npos &&
                 openDockPopupClear < openDockPopupRewrite &&
+                openDockPopupLoadCancel < openDockPopupIconClear &&
                 openDockPopupIconClear < openDockPopupRewrite &&
                 finalizePopupBegin != std::string::npos &&
                 finalizePopupClear != std::string::npos &&
                 finalizePopupReset != std::string::npos &&
                 finalizePopupIconClear != std::string::npos &&
+                finalizePopupLoadCancel != std::string::npos &&
+                finalizePopupEmptyGuard != std::string::npos &&
+                finalizePopupEmptyGuard < finalizePopupLoadCancel &&
+                finalizePopupLoadCancel < finalizePopupClear &&
                 finalizePopupClear < finalizePopupReset &&
                 finalizePopupReset < finalizePopupIconClear &&
                 openCollectionPopupBegin != std::string::npos &&
                 openCollectionPopupClear != std::string::npos &&
                 openCollectionPopupReset != std::string::npos &&
                 openCollectionPopupIconClear != std::string::npos &&
+                openCollectionPopupLoadCancel != std::string::npos &&
+                openCollectionPopupLoadCancel <
+                    openCollectionPopupClear &&
                 openCollectionPopupClear <
                     openCollectionPopupReset &&
                 openCollectionPopupReset <
@@ -3941,8 +3999,17 @@ int main(int argc, char** argv)
                 refreshFolderPopupBegin != std::string::npos &&
                 refreshFolderPopupClear != std::string::npos &&
                 refreshFolderPopupRewrite != std::string::npos &&
+                refreshFolderPopupShellGuard != std::string::npos &&
+                refreshFolderPopupOpenGuard != std::string::npos &&
+                refreshFolderPopupLoadCancel != std::string::npos &&
                 refreshFolderPopupIconClear != std::string::npos &&
                 refreshFolderPopupContainer != std::string::npos &&
+                refreshFolderPopupShellGuard <
+                    refreshFolderPopupOpenGuard &&
+                refreshFolderPopupOpenGuard <
+                    refreshFolderPopupLoadCancel &&
+                refreshFolderPopupLoadCancel <
+                    refreshFolderPopupClear &&
                 refreshFolderPopupClear <
                     refreshFolderPopupRewrite &&
                 refreshFolderPopupRewrite <
@@ -3952,8 +4019,102 @@ int main(int argc, char** argv)
                 clearPopupEntriesBegin != std::string::npos &&
                 clearPopupEntriesD2D != std::string::npos &&
                 clearPopupEntriesModel != std::string::npos &&
-                clearPopupEntriesD2D < clearPopupEntriesModel,
-            "popup replacement must detach drag targets and erase D2D icon keys before destroying folder-entry bitmaps");
+                clearPopupEntriesD2D < clearPopupEntriesModel &&
+                closePopupIconLifecycleBegin != std::string::npos &&
+                closePopupClosingGuard != std::string::npos &&
+                closePopupLoadCancel != std::string::npos &&
+                closePopupAnimation != std::string::npos &&
+                closePopupClosingGuard < closePopupLoadCancel &&
+                closePopupLoadCancel < closePopupAnimation,
+            "popup replacement must cancel stale icon work, detach drag targets, and erase D2D keys before destroying entry bitmaps");
+        const std::size_t cancelPopupLoadsBegin =
+            iconLoaderSource.find(
+                "void DesktopApp::CancelDockFolderPopupIconLoads()");
+        const std::size_t cancelPopupLoadsGeneration =
+            iconLoaderSource.find(
+                "popup_icon_load_rules::NextGeneration(",
+                cancelPopupLoadsBegin);
+        const std::size_t cancelPopupLoadsQueue =
+            iconLoaderSource.find(
+                "popup_icon_load_rules::CancelQueuedTasks(",
+                cancelPopupLoadsGeneration);
+        const std::size_t workerPopupGenerationCopy =
+            iconLoaderSource.find(
+                "result->popupGeneration = task.popupGeneration;");
+        const std::size_t workerPostResult =
+            iconLoaderSource.find(
+                "PostMessageW(hwnd_, kIconLoadedMessage",
+                workerPopupGenerationCopy);
+        const std::size_t enqueueIconBegin =
+            desktopReloadSource.find(
+                "void DesktopApp::EnqueueIconLoad(");
+        const std::size_t enqueuePopupGeneration =
+            desktopReloadSource.find(
+                "task.popupGeneration =",
+                enqueueIconBegin);
+        const std::size_t enqueueGenerationKey =
+            desktopReloadSource.find(
+                "std::to_wstring(task.popupGeneration)",
+                enqueuePopupGeneration);
+        const std::size_t enqueuePendingKey =
+            desktopReloadSource.find(
+                "iconLoaderPendingKeys_.insert(task.requestKey)",
+                enqueueGenerationKey);
+        const std::size_t enqueueQueuePush =
+            desktopReloadSource.find(
+                "iconLoaderQueue_.push_back(std::move(task));",
+                enqueuePendingKey);
+        const std::size_t onIconLoadedBegin =
+            desktopReloadSource.find(
+                "void DesktopApp::OnIconLoaded(");
+        const std::size_t onIconLoadedPendingErase =
+            desktopReloadSource.find(
+                "iconLoaderPendingKeys_.erase(result->requestKey);",
+                onIconLoadedBegin);
+        const std::size_t onIconLoadedGenerationGate =
+            desktopReloadSource.find(
+                "popup_icon_load_rules::ShouldRejectResult(",
+                onIconLoadedPendingErase);
+        const std::size_t onIconLoadedModelScan =
+            desktopReloadSource.find(
+                "bool matched = false;",
+                onIconLoadedGenerationGate);
+        const std::size_t firstPopupGenerationField =
+            appHeaderSource.find("uint64_t popupGeneration = 0;");
+        const std::size_t secondPopupGenerationField =
+            appHeaderSource.find(
+                "uint64_t popupGeneration = 0;",
+                firstPopupGenerationField + 1);
+        const std::size_t popupGenerationOwner =
+            appHeaderSource.find(
+                "uint64_t dockFolderPopupIconGeneration_ = 1;");
+        Check(cancelPopupLoadsBegin != std::string::npos &&
+                cancelPopupLoadsGeneration != std::string::npos &&
+                cancelPopupLoadsQueue != std::string::npos &&
+                cancelPopupLoadsGeneration < cancelPopupLoadsQueue &&
+                workerPopupGenerationCopy != std::string::npos &&
+                workerPostResult != std::string::npos &&
+                workerPopupGenerationCopy < workerPostResult &&
+                enqueueIconBegin != std::string::npos &&
+                enqueuePopupGeneration != std::string::npos &&
+                enqueueGenerationKey != std::string::npos &&
+                enqueuePendingKey != std::string::npos &&
+                enqueueQueuePush != std::string::npos &&
+                enqueuePopupGeneration < enqueueGenerationKey &&
+                enqueueGenerationKey < enqueuePendingKey &&
+                enqueuePendingKey < enqueueQueuePush &&
+                onIconLoadedBegin != std::string::npos &&
+                onIconLoadedPendingErase != std::string::npos &&
+                onIconLoadedGenerationGate != std::string::npos &&
+                onIconLoadedModelScan != std::string::npos &&
+                onIconLoadedPendingErase <
+                    onIconLoadedGenerationGate &&
+                onIconLoadedGenerationGate <
+                    onIconLoadedModelScan &&
+                firstPopupGenerationField != std::string::npos &&
+                secondPopupGenerationField != std::string::npos &&
+                popupGenerationOwner != std::string::npos,
+            "popup icon work must carry a generation through queue, worker, and stale-result rejection before model access");
         const std::size_t reloadItemsBegin =
             desktopReloadSource.find(
                 "void DesktopApp::ReloadItems(");

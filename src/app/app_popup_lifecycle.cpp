@@ -167,6 +167,7 @@ void DesktopApp::OpenDockFolderPopupAt(
     popupAnchorPoint_ = anchorPoint;
     popupCategoryId_.clear();
 
+    CancelDockFolderPopupIconLoads();
     ClearDockFolderPopupEntries();
     dockFolderPopupWidget_ = DesktopWidget{};
     dockFolderPopupWidget_.type =
@@ -390,6 +391,8 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     if (popupWidgetIndex_ == static_cast<size_t>(-1) &&
         !dockFolderPopupOpen_)
         return;
+    if (dockFolderPopupOpen_)
+        CancelDockFolderPopupIconLoads();
     ClearPopupDragTarget();
     popupWidgetIndex_ = static_cast<size_t>(-1);
     dockFolderPopupOpen_ = false;
@@ -450,6 +453,8 @@ void DesktopApp::CloseCollectionPopup(
     if (popupAnimation_.IsClosing())
         return;
 
+    if (dockFolderPopupOpen_)
+        CancelDockFolderPopupIconLoads();
     PreserveDockFolderPopupDragSourceForTransition();
     if (clearSelection)
     {
