@@ -11,6 +11,8 @@ void DesktopApp::DrawCollectionPopup(
     if (!ctx || !openWidget) return;
 
     const DesktopWidget& widget = *openWidget;
+    const auto popupMetrics =
+        GetCollectionPopupLayoutMetrics(widget);
     popupRect_ = GetCollectionPopupRect(widget);
     popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
         GetCollectionPopupMaxScrollOffset(widget, popupRect_));
@@ -73,16 +75,27 @@ void DesktopApp::DrawCollectionPopup(
 
     std::vector<std::wstring> popupKeys =
         GetPopupItemKeys(widget);
-    DrawD2DRoundedRectangle(ctx, popupRect_, 18.0f,
+    DrawD2DRoundedRectangle(
+        ctx, popupRect_, 18.0f * popupMetrics.scale,
         D2D1::ColorF(0.08f, 0.10f, 0.13f, 1.0f),
-        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f), 1.4f);
+        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f),
+        std::max(1.0f, 1.4f * popupMetrics.scale));
 
-    RECT titleRect = MakeRect(popupRect_.left + 22, popupRect_.top + 18,
-        popupRect_.right - 22, popupRect_.top + 44);
+    RECT titleRect = MakeRect(
+        popupRect_.left + snowdesktop::collection_popup_layout::
+            ScaleDimension(22, popupMetrics.scale),
+        popupRect_.top + snowdesktop::collection_popup_layout::
+            ScaleDimension(18, popupMetrics.scale),
+        popupRect_.right - snowdesktop::collection_popup_layout::
+            ScaleDimension(22, popupMetrics.scale),
+        popupRect_.top + snowdesktop::collection_popup_layout::
+            ScaleDimension(44, popupMetrics.scale));
     if (dockFolderPopupOpen_)
         titleRect.right =
             GetDockFolderPopupSortButtonRect(
-                popupRect_).left - 10;
+                popupRect_).left -
+            snowdesktop::collection_popup_layout::
+                ScaleDimension(10, popupMetrics.scale);
     std::wstring title = ShouldUseDemoCollectionIdentity(&widget)
         ? GetDemoCollectionCategoryTitle(widget)
         : (widget.title.empty()
@@ -106,7 +119,7 @@ void DesktopApp::DrawCollectionPopup(
                 &sortRect,
                 lastMousePoint_) != FALSE;
         DrawD2DRoundedRectangle(
-            ctx, sortRect, 8.0f,
+            ctx, sortRect, 8.0f * popupMetrics.scale,
             hovered
                 ? D2D1::ColorF(
                     1.0f, 1.0f, 1.0f, 0.16f)
@@ -243,10 +256,11 @@ void DesktopApp::DrawCollectionPopup(
     }
 
     // Scrollbar — same style as widget content areas
-    const int cellH = GetCollectionPopupCellHeight();
+    const int cellH = popupMetrics.cellHeight;
     int columns = std::max(1, GetCollectionPopupColumnCount(popupRect_));
     int rows = (static_cast<int>(popupItemCount) + columns - 1) / columns;
-    int contentHeight = rows * cellH + std::max(0, rows - 1) * kCollectionPopupGapY;
+    int contentHeight = rows * cellH +
+        std::max(0, rows - 1) * popupMetrics.gapY;
     int visibleHeight = std::max(1, (int)(content.bottom - content.top));
     bool popupHovered =
         popupAnimation_.IsInteractive() &&

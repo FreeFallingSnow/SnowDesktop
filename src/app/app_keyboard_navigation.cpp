@@ -1394,20 +1394,20 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
         popupWidgetIndex_ < widgets_.size())
     {
         RECT rPopup = popupRect_;
-        int popupCols = GetCollectionPopupColumnCount(rPopup);
-        int popupRow = nextIdx / std::max(1, popupCols);
-        int cellH = kMinCellHeight;
-        for (const auto& page : gridPages_)
-            if (page.id == popupPageId_) { cellH = page.cellHeight; break; }
         RECT content = GetCollectionPopupContentRect(rPopup);
         int viewH = std::max(1, static_cast<int>(content.bottom - content.top));
-        int targetY = popupRow * cellH;
+        const RECT targetRect = GetCollectionPopupItemRect(
+            rPopup, static_cast<size_t>(nextIdx));
+        const int targetTop = targetRect.top - content.top +
+            popupScrollOffset_;
+        const int targetBottom = targetRect.bottom - content.top +
+            popupScrollOffset_;
         int maxPopupScroll = GetCollectionPopupMaxScrollOffset(
             widgets_[keyboardNavWidgetIndex_], rPopup);
-        if (targetY < popupScrollOffset_)
-            popupScrollOffset_ = targetY;
-        else if (targetY + cellH > popupScrollOffset_ + viewH)
-            popupScrollOffset_ = targetY + cellH - viewH;
+        if (targetTop < popupScrollOffset_)
+            popupScrollOffset_ = targetTop;
+        else if (targetBottom > popupScrollOffset_ + viewH)
+            popupScrollOffset_ = targetBottom - viewH;
         popupScrollOffset_ = std::clamp(popupScrollOffset_, 0, maxPopupScroll);
     }
 

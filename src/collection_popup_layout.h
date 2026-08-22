@@ -1,6 +1,9 @@
 #pragma once
 
+#include "constants.h"
+
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 
 namespace snowdesktop::collection_popup_layout
@@ -9,6 +12,68 @@ namespace snowdesktop::collection_popup_layout
 inline constexpr int kMaximumColumns = 5;
 inline constexpr int kEmptyColumns = 3;
 inline constexpr int kEmptyRows = 2;
+
+struct Metrics
+{
+    float scale = 1.0f;
+    int cellWidth = kCellWidth;
+    int cellHeight = kMinCellHeight;
+    int paddingX = kCollectionPopupPaddingX;
+    int headerHeight = kCollectionPopupHeaderHeight;
+    int bottomPadding = kCollectionPopupBottomPadding;
+    int gapX = kCollectionPopupGapX;
+    int gapY = kCollectionPopupGapY;
+    int edgeMargin = 12;
+    int anchorGap = 12;
+    int maximumWidth = 560;
+};
+
+inline int ScaleDimension(int value, float scale)
+{
+    if (!std::isfinite(scale))
+        scale = 1.0f;
+    return std::max(1, static_cast<int>(std::round(
+        static_cast<float>(value) * std::clamp(scale, 0.1f, 8.0f))));
+}
+
+/**
+ * @brief Resolve popup geometry from the visual metrics of its owning page.
+ *
+ * Page cells can become smaller than the icon-and-title visual block when old
+ * layout data or custom spacing is restored. Popup cells must preserve at
+ * least that complete block, while enlarged pages must not be capped back to
+ * the 92x116 baseline.
+ */
+inline Metrics ResolveMetrics(
+    int pageCellWidth,
+    int pageCellHeight,
+    int minimumVisualWidth,
+    int minimumVisualHeight,
+    float pageScale)
+{
+    Metrics result;
+    result.scale = std::isfinite(pageScale)
+        ? std::clamp(pageScale, 0.1f, 8.0f)
+        : 1.0f;
+    result.cellWidth = std::max({
+        1, pageCellWidth, minimumVisualWidth });
+    result.cellHeight = std::max({
+        1, pageCellHeight, minimumVisualHeight });
+    result.paddingX = ScaleDimension(
+        kCollectionPopupPaddingX, result.scale);
+    result.headerHeight = ScaleDimension(
+        kCollectionPopupHeaderHeight, result.scale);
+    result.bottomPadding = ScaleDimension(
+        kCollectionPopupBottomPadding, result.scale);
+    result.gapX = ScaleDimension(
+        kCollectionPopupGapX, result.scale);
+    result.gapY = ScaleDimension(
+        kCollectionPopupGapY, result.scale);
+    result.edgeMargin = ScaleDimension(12, result.scale);
+    result.anchorGap = ScaleDimension(12, result.scale);
+    result.maximumWidth = ScaleDimension(560, result.scale);
+    return result;
+}
 
 inline int PreferredColumnCount(
     std::size_t itemCount, int maximumColumns)

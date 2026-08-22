@@ -36,6 +36,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <string>
 
@@ -286,6 +287,48 @@ int main(int argc, char** argv)
             popupLayout::RequiredRowCount(
                 1, 1) == 1,
         "non-empty collection popups must retain their content-driven size");
+    const auto standardPopupMetrics =
+        popupLayout::ResolveMetrics(
+            92, 116, 84, 108, 1.0f);
+    Check(
+        standardPopupMetrics.cellWidth == 92 &&
+            standardPopupMetrics.cellHeight == 116 &&
+            standardPopupMetrics.paddingX == 18 &&
+            standardPopupMetrics.headerHeight == 54 &&
+            standardPopupMetrics.gapX == 10 &&
+            standardPopupMetrics.gapY == 8 &&
+            standardPopupMetrics.maximumWidth == 560,
+        "standard collection popup geometry must retain its baseline dimensions");
+    const auto enlargedPopupMetrics =
+        popupLayout::ResolveMetrics(
+            138, 174, 132, 168, 1.5f);
+    Check(
+        enlargedPopupMetrics.cellWidth == 138 &&
+            enlargedPopupMetrics.cellHeight == 174 &&
+            enlargedPopupMetrics.paddingX == 27 &&
+            enlargedPopupMetrics.headerHeight == 81 &&
+            enlargedPopupMetrics.gapX == 15 &&
+            enlargedPopupMetrics.gapY == 12 &&
+            enlargedPopupMetrics.maximumWidth == 840,
+        "enlarged page popups must preserve page cell size and scale their chrome");
+    const auto constrainedPopupMetrics =
+        popupLayout::ResolveMetrics(
+            70, 90, 86, 112, 0.75f);
+    Check(
+        constrainedPopupMetrics.cellWidth == 86 &&
+            constrainedPopupMetrics.cellHeight == 112 &&
+            constrainedPopupMetrics.gapY == 6,
+        "popup rows must remain large enough for the complete icon and title block");
+    const auto invalidScalePopupMetrics =
+        popupLayout::ResolveMetrics(
+            -10, -20, 0, 0,
+            std::numeric_limits<float>::quiet_NaN());
+    Check(
+        invalidScalePopupMetrics.scale == 1.0f &&
+            invalidScalePopupMetrics.cellWidth == 1 &&
+            invalidScalePopupMetrics.cellHeight == 1 &&
+            invalidScalePopupMetrics.gapY == 8,
+        "invalid popup page metrics must fall back to finite baseline chrome");
     Check(
         popupLayout::AllowsMarqueeStart(
             true, false, false),

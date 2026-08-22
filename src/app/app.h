@@ -2499,13 +2499,18 @@ private:
     bool CopyTextToClipboard(const std::wstring& text);
     /** @brief 获取集合弹出面板的矩形。 @param widget 部件引用 @return 面板矩形 */
     RECT GetCollectionPopupRect(const DesktopWidget& widget) const;
+    const GridPage* ResolveCollectionPopupPage(
+        const DesktopWidget& widget) const;
+    snowdesktop::collection_popup_layout::Metrics
+        GetCollectionPopupLayoutMetrics(
+            const DesktopWidget& widget) const;
+    snowdesktop::collection_popup_layout::Metrics
+        GetOpenCollectionPopupLayoutMetrics() const;
     RECT GetDockFolderPopupSortButtonRect(const RECT& popup) const;
     /** @brief 获取集合弹出面板中内容区域的矩形。 @param popup 面板矩形 @return 内容矩形 */
     RECT GetCollectionPopupContentRect(const RECT& popup) const;
     /** @brief 获取集合弹出面板中的列数。 @param popup 面板矩形 @return 列数 */
     int GetCollectionPopupColumnCount(const RECT& popup) const;
-    int GetCollectionPopupCellWidth() const;
-    int GetCollectionPopupCellHeight() const;
     /** @brief 获取集合弹出面板中的行数。 @param widget 部件引用 @param popup 面板矩形 @return 行数 */
     int GetCollectionPopupRowCount(const DesktopWidget& widget, const RECT& popup) const;
     /** @brief 获取集合弹出面板中内容的最大滚动偏移。 @param widget 部件引用 @param popup 面板矩形 @return 最大滚动偏移 */
