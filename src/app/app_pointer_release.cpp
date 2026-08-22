@@ -169,6 +169,7 @@ void DesktopApp::ReconcileDesktopHoverState(
             detailColumnResizeActive_ ||
             luaWidgetPanelMouseDown_;
         const bool passiveHoverAllowed =
+            GetCapture() == nullptr &&
             snowdesktop::desktop_hover_rules::
                 ShouldResamplePassiveMouseMove(
                     mouseDown_,

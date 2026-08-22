@@ -3962,9 +3962,12 @@ int main(int argc, char** argv)
                   "ShouldRefreshActiveHoverFromSurfaceSample(") !=
                     std::string::npos &&
                 pointerReleaseSource.find(
+                  "GetCapture() == nullptr &&") !=
+                    std::string::npos &&
+                pointerReleaseSource.find(
                   "TryGetBaseDesktopHoverPointFromCursor(") !=
                     std::string::npos,
-            "periodic hover recovery must refresh active coordinates only from base desktop surfaces");
+            "periodic hover recovery must refresh active coordinates only from uncaptured base desktop surfaces");
         Check(dockContainerSource.find(
                   "bool DockContainer::IsMagnificationSuppressed() const") !=
                     std::string::npos &&
