@@ -3251,6 +3251,9 @@ int main(int argc, char** argv)
         const std::string desktopReloadSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_desktop_reload.cpp");
+        const std::string dockWindowTrackingSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_dock_window_tracking.cpp");
         const std::string sceneSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_scene_render.cpp");
@@ -3955,6 +3958,34 @@ int main(int argc, char** argv)
                 reloadItemsClear < reloadFolderEntries &&
                 reloadItemsClear < reloadDesktopItems,
             "desktop reload must defer retained drag bindings, then detach popup handoff wrappers before replacing model storage");
+        const std::size_t dockRefreshBegin =
+            dockWindowTrackingSource.find(
+                "void DesktopApp::RefreshDockRunningWindows(");
+        const std::size_t dockRefreshDragDeferral =
+            dockWindowTrackingSource.find(
+                "ShouldDeferModelReload(",
+                dockRefreshBegin);
+        const std::size_t dockRefreshRetainedContext =
+            dockWindowTrackingSource.find(
+                "dragSession_.HasContext()",
+                dockRefreshDragDeferral);
+        const std::size_t dockRefreshModelRead =
+            dockWindowTrackingSource.find(
+                "PruneDockPendingCloseWindows();",
+                dockRefreshBegin);
+        const std::size_t dockRefreshModelReplace =
+            dockWindowTrackingSource.find(
+                "dockUnpinnedRunningApps_ = std::move(runningApps);",
+                dockRefreshBegin);
+        Check(dockRefreshBegin != std::string::npos &&
+                dockRefreshDragDeferral != std::string::npos &&
+                dockRefreshRetainedContext != std::string::npos &&
+                dockRefreshModelRead != std::string::npos &&
+                dockRefreshModelReplace != std::string::npos &&
+                dockRefreshDragDeferral < dockRefreshModelRead &&
+                dockRefreshRetainedContext < dockRefreshModelRead &&
+                dockRefreshModelRead < dockRefreshModelReplace,
+            "Dock running-item refresh must retain drag-bound item wrappers until native and OLE ownership end");
         const std::size_t shellReloadTimer =
             timerDispatchSource.find(
                 "timerId == kShellChangeTimerId");

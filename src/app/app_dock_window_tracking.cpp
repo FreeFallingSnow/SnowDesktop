@@ -1,5 +1,6 @@
 #include "app.h"
 #include "dock_platform_helpers.h"
+#include "../drag_input_rules.h"
 
 // Running-window discovery, visual state and activation behavior.
 
@@ -360,6 +361,17 @@ DockWindowVisualState DesktopApp::GetDockWindowVisualState(size_t itemIndex) con
 void DesktopApp::RefreshDockRunningWindows(
     bool invalidateChanged, HWND preferredWindow)
 {
+    // Dock slots own the DockEntryItem/DockRunningItem wrappers retained by a
+    // DragSession. The OLE nested loop continues to dispatch maintenance
+    // timers after capture and mouseDown_ are cleared, so rebuilding the
+    // running-app model here would invalidate those source pointers before
+    // native hand-back or synchronous drop completion.
+    if (snowdesktop::drag_input_rules::ShouldDeferModelReload(
+            dragSession_.HasContext(),
+            dragDropController_.IsTransportActive()))
+    {
+        return;
+    }
     PruneDockPendingCloseWindows();
     struct DockWindowTarget
     {
