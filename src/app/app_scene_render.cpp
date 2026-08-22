@@ -1,6 +1,7 @@
 #include "app.h"
 #include "grid_geometry.h"
 #include "../item_render_layer_rules.h"
+#include "../drag_visual_rules.h"
 #include "../widget_composition_layer_rules.h"
 #include "../widget_visibility_rules.h"
 #include "../widgets/collection_group_rules.h"
@@ -372,6 +373,21 @@ void DesktopApp::DrawDynamicOverlays(
             targetRegion == HitRegion::None)
             return;
 
+        if (!popupLayer)
+        {
+            const bool targetIsFloatingDock =
+                floatingDockContainer_ &&
+                targetContainer == floatingDockContainer_;
+            if (!snowdesktop::drag_visual_rules::
+                    DropPreviewBelongsToRenderSurface(
+                        renderingFloatingDock_,
+                        floatingDockDesktopCopySuppressed_,
+                        targetIsFloatingDock))
+            {
+                return;
+            }
+        }
+
         RECT clipViewport{};
         RECT popupTargetRect{};
         auto* wc = dynamic_cast<WidgetContainer*>(targetContainer);
@@ -539,7 +555,8 @@ void DesktopApp::DrawDynamicOverlays(
     }
 
     // Dragged items at offset
-    if (dragSession_.IsActive() && !dragSession_.Items().empty())
+    if (dragSession_.IsVisualVisible() &&
+        !dragSession_.Items().empty())
     {
         POINT current = dragSession_.CurrentPoint();
         const auto& dragItems = dragSession_.Items();
@@ -553,7 +570,30 @@ void DesktopApp::DrawDynamicOverlays(
 
             RECT draggedBounds = dragSession_.ResolveDraggedBounds(
                 itemIndex, bounds, current);
-            item->Draw(ctx, draggedBounds, 3);
+            const bool excludeFloatingDockCopy =
+                !renderingFloatingDock_ &&
+                !renderingFloatingPopup_ &&
+                floatingDockDesktopCopySuppressed_ &&
+                !IsRectEmptyRect(floatingDockRect_);
+            if (!excludeFloatingDockCopy)
+            {
+                item->Draw(ctx, draggedBounds, 3);
+                continue;
+            }
+
+            const auto fragments =
+                snowdesktop::drag_visual_rules::ExcludeRect(
+                    draggedBounds, floatingDockRect_);
+            for (std::size_t fragmentIndex = 0;
+                 fragmentIndex < fragments.count;
+                 ++fragmentIndex)
+            {
+                ctx->PushAxisAlignedClip(
+                    ToD2DRect(fragments.rects[fragmentIndex]),
+                    D2D1_ANTIALIAS_MODE_ALIASED);
+                item->Draw(ctx, draggedBounds, 3);
+                ctx->PopAxisAlignedClip();
+            }
         }
     }
 

@@ -29,6 +29,12 @@ public:
     /** @brief 判断当前是否处于拖拽激活状态 */
     bool IsActive() const { return active_; }
 
+    /** @brief 自绘拖拽虚影当前是否应当显示。 */
+    bool IsVisualVisible() const
+    {
+        return active_ && visualVisible_;
+    }
+
     /** @brief 拖拽是否仍保留可供释放提交使用的坐标上下文。 */
     bool HasContext() const { return hasContext_; }
 
@@ -95,6 +101,7 @@ public:
         POINT mouseDown, POINT current)
     {
         active_ = true;
+        visualVisible_ = true;
         hasContext_ = true;
         source_ = source;
         items_ = std::move(items);
@@ -120,6 +127,20 @@ public:
     void UpdatePoint(POINT current)
     {
         currentPoint_ = current;
+    }
+
+    /**
+     * @brief 切换应用自绘虚影的可见性。
+     *
+     * 自拖拽进入其他应用后由 OLE 接管反馈，此时会话仍需保留源数据和
+     * 坐标上下文，但 SnowDesktop 的虚影必须隐藏，直到重新 DragEnter。
+     */
+    bool SetVisualVisible(bool visible)
+    {
+        if (!active_ || visualVisible_ == visible)
+            return false;
+        visualVisible_ = visible;
+        return true;
     }
 
     /** @brief 设置由应用层在真实渲染项上采集的拖拽视觉边界。 */
@@ -326,6 +347,7 @@ public:
     {
         if (!active_) return;
         active_ = false;
+        visualVisible_ = false;
         InvalidateStaticScene();
     }
 
@@ -349,6 +371,7 @@ public:
     void End()
     {
         active_ = false;
+        visualVisible_ = false;
         hasContext_ = false;
         source_ = nullptr;
         items_.clear();
@@ -378,6 +401,7 @@ private:
     }
 
     bool active_ = false;                    /**< 拖拽会话是否处于激活状态 */
+    bool visualVisible_ = false;             /**< 应用自绘拖拽虚影是否可见 */
     bool hasContext_ = false;                /**< 是否保留释放提交所需的拖拽上下文 */
     Container* source_ = nullptr;            /**< 拖拽源容器指针 */
     std::vector<Item*> items_;              /**< 被拖拽的 Item 指针列表 */

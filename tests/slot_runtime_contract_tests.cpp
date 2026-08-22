@@ -415,6 +415,35 @@ void TestDragSessionRejectsInvalidatedSlots()
         "container tree rebuilds must detach every target binding");
 }
 
+void TestDragSessionVisualVisibilityFollowsOleOwnership()
+{
+    DragSession session;
+    session.Begin(
+        nullptr, {NonOwningItemToken()}, {},
+        POINT{10, 20}, POINT{10, 20});
+    Check(session.IsVisualVisible(),
+        "a newly started internal drag must show its custom visual");
+
+    Check(session.SetVisualVisible(false) &&
+            !session.IsVisualVisible(),
+        "OLE handoff must be able to hide the custom visual without ending the session");
+    Check(!session.SetVisualVisible(false),
+        "repeating the same visual state must be a no-op");
+    Check(session.IsActive() && session.HasContext() &&
+            session.Items().size() == 1,
+        "hiding the visual must retain the live drag payload and context");
+
+    Check(session.SetVisualVisible(true) &&
+            session.IsVisualVisible(),
+        "re-entering SnowDesktop must restore the custom visual");
+    session.DeactivateForDrop();
+    Check(!session.IsVisualVisible() && session.HasContext(),
+        "drop execution must hide the visual while preserving commit context");
+    session.End();
+    Check(!session.IsVisualVisible() && !session.HasContext(),
+        "ending a drag must clear both visual and commit state");
+}
+
 void TestListDragCanAnchorVisualAndLandingToPointer()
 {
     ContractContainer source(BarStyle::HBar);
@@ -1169,6 +1198,7 @@ int main()
     TestHitRegionsUseContainerOrientation();
     TestExecuteDropDelegatesOnce();
     TestDragSessionRejectsInvalidatedSlots();
+    TestDragSessionVisualVisibilityFollowsOleOwnership();
     TestListDragCanAnchorVisualAndLandingToPointer();
     TestEverySurfaceRetainsStableDragMetadata();
     TestEveryRegisteredSurfaceOriginLifecycle();

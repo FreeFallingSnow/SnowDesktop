@@ -716,10 +716,14 @@ void DesktopApp::OnMouseMove(WPARAM wp, LPARAM lp)
                 navAutoFlipTick_ = 0;
 
                 dragDropController_.BeginSelfDrag();
-
-                InvalidateRect(hwnd_, nullptr, FALSE);
-                UpdateWindow(hwnd_);
-                FlushPendingCompositionCommit();
+                // OLE now owns feedback while the pointer is over another
+                // application. Clear both the custom ghost and the last
+                // SnowDesktop drop indicator before entering its nested loop;
+                // DragEnter restores the ghost if the pointer comes back.
+                dragSession_.SetVisualVisible(false);
+                dragSession_.UpdateTarget(
+                    nullptr, nullptr, HitRegion::None);
+                PresentOleDragInteractionFrame();
 
                 const bool oleUiPumpStarted =
                     hwnd_ && IsWindow(hwnd_) &&

@@ -14,6 +14,7 @@ HRESULT DesktopApp::HandleOleDragEnter(
         POINT client = ScreenPointToClient(point);
         if (dragSession_.IsActive())
         {
+            dragSession_.SetVisualVisible(true);
             dragSession_.UpdatePoint(client);
             dragSession_.UpdateActionFromMods(static_cast<int>(keyState & (MK_CONTROL | MK_ALT | MK_SHIFT)));
         }
@@ -205,6 +206,7 @@ HRESULT DesktopApp::HandleOleDragOver(
         POINT client = ScreenPointToClient(point);
         if (dragSession_.IsActive())
         {
+            dragSession_.SetVisualVisible(true);
             dragSession_.UpdatePoint(client);
             dragSession_.UpdateActionFromMods(static_cast<int>(keyState & (MK_CONTROL | MK_ALT | MK_SHIFT)));
         }
@@ -364,6 +366,7 @@ HRESULT DesktopApp::HandleOleDragLeave()
         KillTimer(
             hwnd_, kCollectionGroupTabDwellTimerId);
         dragSession_.UpdateTarget(nullptr, nullptr, HitRegion::None);
+        dragSession_.SetVisualVisible(false);
         HideDragHintWindow();
         PresentOleDragInteractionFrame();
         return S_OK;

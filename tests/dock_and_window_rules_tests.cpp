@@ -20,6 +20,7 @@
 #include "desktop_window_discovery_rules.h"
 #include "floating_dock_rules.h"
 #include "floating_popup_rules.h"
+#include "drag_visual_rules.h"
 #include "ole_drag_rules.h"
 #include "display_topology_refresh.h"
 #include "item_visual_metrics.h"
@@ -91,6 +92,8 @@ int main(int argc, char** argv)
         snowdesktop::floating_dock_rules;
     namespace floatingPopup =
         snowdesktop::floating_popup_rules;
+    namespace dragVisual =
+        snowdesktop::drag_visual_rules;
     namespace folderRules =
         snowdesktop::dock_folder_rules;
     namespace folderSort =
@@ -1476,6 +1479,38 @@ int main(int argc, char** argv)
         "a desktop-hosted preview must still enter the topmost band explicitly");
     const RECT floatingDockRect{ 100, 900, 700, 980 };
     const RECT floatingPopupRect{ 240, 500, 560, 892 };
+    const RECT outsideDockSource{ 10, 10, 60, 60 };
+    const auto outsideDock = dragVisual::ExcludeRect(
+        outsideDockSource, floatingDockRect);
+    Check(outsideDock.count == 1 &&
+            EqualRect(&outsideDock.rects[0],
+                &outsideDockSource),
+        "a drag visual outside the floating Dock must retain one complete desktop fragment");
+    const auto insideDock = dragVisual::ExcludeRect(
+        RECT{ 120, 920, 180, 960 }, floatingDockRect);
+    Check(insideDock.count == 0,
+        "the desktop surface must not retain a duplicate drag visual fully owned by the floating Dock");
+    const auto crossingDock = dragVisual::ExcludeRect(
+        RECT{ 80, 880, 180, 960 }, floatingDockRect);
+    Check(crossingDock.count == 2 &&
+            crossingDock.rects[0].left == 80 &&
+            crossingDock.rects[0].top == 880 &&
+            crossingDock.rects[0].right == 180 &&
+            crossingDock.rects[0].bottom == 900 &&
+            crossingDock.rects[1].left == 80 &&
+            crossingDock.rects[1].top == 900 &&
+            crossingDock.rects[1].right == 100 &&
+            crossingDock.rects[1].bottom == 960,
+        "a crossing drag visual must keep only the non-Dock desktop fragments");
+    Check(dragVisual::DropPreviewBelongsToRenderSurface(
+              true, true, true) &&
+            !dragVisual::DropPreviewBelongsToRenderSurface(
+              false, true, true) &&
+            dragVisual::DropPreviewBelongsToRenderSurface(
+              false, true, false) &&
+            !dragVisual::DropPreviewBelongsToRenderSurface(
+              true, true, false),
+        "Dock drop guidance must have exactly one owning render surface");
     const RECT bottomTitleHost =
         floatingDock::ExpandHostForTitleLayer(
             floatingDockRect,
@@ -3048,6 +3083,12 @@ int main(int argc, char** argv)
         const std::string sceneSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_scene_render.cpp");
+        const std::string pointerMoveSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_pointer_move.cpp");
+        const std::string oleDropSessionSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_ole_drop_session.cpp");
         Check(floatingPopupSource.find("CreateTargetForHwnd") !=
                     std::string::npos &&
                 floatingPopupSource.find("RegisterDragDrop") !=
@@ -3179,6 +3220,29 @@ int main(int argc, char** argv)
                   "luaPanelBelongsToCurrentSurface") !=
                     std::string::npos,
             "collection popups and Lua panels must render through the shared popup surface");
+        Check(sceneSource.find(
+                  "dragSession_.IsVisualVisible()") !=
+                    std::string::npos &&
+                sceneSource.find(
+                  "ExcludeRect(") !=
+                    std::string::npos &&
+                sceneSource.find(
+                  "DropPreviewBelongsToRenderSurface(") !=
+                    std::string::npos,
+            "drag visuals and Dock guidance must exclude their lower desktop duplicates");
+        Check(pointerMoveSource.find(
+                  "dragSession_.SetVisualVisible(false);") !=
+                    std::string::npos &&
+                pointerMoveSource.find(
+                  "PresentOleDragInteractionFrame();") !=
+                    std::string::npos &&
+                oleDropSessionSource.find(
+                  "dragSession_.SetVisualVisible(true);") !=
+                    std::string::npos &&
+                oleDropSessionSource.find(
+                  "dragSession_.SetVisualVisible(false);") !=
+                    std::string::npos,
+            "self OLE handoff must hide the custom ghost and restore it only after re-entry");
     }
 
     if (failures == 0)
