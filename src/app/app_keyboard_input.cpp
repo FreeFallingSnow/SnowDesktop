@@ -451,7 +451,13 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     case VK_ESCAPE:
         handled = true;
         restoreFloatingDockLayer = true;
-        if (!luaWidgetPanelRequest_.widgetId.empty())
+        if (dragSession_.IsActive())
+        {
+            CancelActiveItemDrag();
+            ClearSelection();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+        else if (!luaWidgetPanelRequest_.widgetId.empty())
         {
             if (luaWidgetPanelRequest_.dismissOnEscape)
                 CloseLuaWidgetPanel(

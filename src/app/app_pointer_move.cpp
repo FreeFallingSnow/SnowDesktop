@@ -703,6 +703,13 @@ void DesktopApp::OnMouseMoveAt(WPARAM wp, POINT current)
                         dockFolderPopupContainer_.get();
                 auto* sourceWidget = dynamic_cast<WidgetContainer*>(dragSession_.Source());
                 DesktopWidget* sourceWidgetData = sourceWidget ? sourceWidget->GetWidgetData() : nullptr;
+                const std::wstring sourceWidgetId =
+                    sourceWidgetData ? sourceWidgetData->id : L"";
+                const bool sourceFolderMapping =
+                    sourceWidgetData &&
+                    sourceWidgetData->type ==
+                        DesktopWidgetType::FolderMapping;
+                const HWND nativeCaptureHwnd = GetCapture();
 
                 HideDragHintWindow();
                 ReleaseCapture();
@@ -711,35 +718,139 @@ void DesktopApp::OnMouseMoveAt(WPARAM wp, POINT current)
                 navHoverSide_ = 0;
                 navAutoFlipDir_ = 0;
                 navAutoFlipTick_ = 0;
+                ResetDockHandoffDwell();
+                popupDwellController_.Reset();
+                KillTimer(hwnd_, kCollectionPopupDwellTimerId);
+                collectionGroupTabDwellWidgetIndex_ =
+                    static_cast<size_t>(-1);
+                collectionGroupTabDwellId_.clear();
+                collectionGroupTabDwellTick_ = 0;
+                KillTimer(hwnd_, kCollectionGroupTabDwellTimerId);
 
-                dragDropController_.BeginSelfDrag();
                 // OLE now owns feedback while the pointer is over another
                 // application. Clear both the custom ghost and the last
                 // SnowDesktop drop indicator before entering its nested loop;
-                // DragEnter restores the ghost if the pointer comes back.
+                // native feedback is restored only after DoDragDrop returns.
                 dragSession_.SetVisualVisible(false);
                 dragSession_.UpdateTarget(
                     nullptr, nullptr, HitRegion::None);
                 PresentOleDragInteractionFrame();
 
-                const bool oleUiPumpStarted =
+                bool oleUiPumpStarted =
                     hwnd_ && IsWindow(hwnd_) &&
                     SetTimer(
                         hwnd_, kOleDragUiPumpTimerId,
                         kOleDragUiPumpIntervalMs,
                         nullptr) != 0;
 
-                DWORD oleEffect = DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
                 OleDragDropAdapter* oleAdapter =
                     EnsureOleDragDropAdapter();
-                HRESULT hr = oleAdapter
-                    ? DoDragDrop(dataObj.Get(),
-                        static_cast<IDropSource*>(oleAdapter),
-                        oleEffect, &oleEffect)
-                    : E_OUTOFMEMORY;
+                DWORD oleEffect = DROPEFFECT_NONE;
+                HRESULT hr = E_OUTOFMEMORY;
+                bool nativeDragResumed = false;
+                for (;;)
+                {
+                    dragDropController_.BeginSelfDrag();
+                    oleEffect = DROPEFFECT_COPY |
+                        DROPEFFECT_MOVE | DROPEFFECT_LINK;
+                    hr = oleAdapter
+                        ? DoDragDrop(dataObj.Get(),
+                            static_cast<IDropSource*>(oleAdapter),
+                            oleEffect, &oleEffect)
+                        : E_OUTOFMEMORY;
+                    const bool nativeResumeRequested =
+                        dragDropController_.
+                            SelfDragNativeResumeRequested();
+                    dragDropController_.EndSelfDrag();
+                    if (!nativeResumeRequested)
+                        break;
+
+                    POINT resumePoint{};
+                    const bool overDesktopSurface =
+                        TryGetNativeDragResumePointFromCursor(
+                            resumePoint);
+                    const bool primaryButtonDown =
+                        (GetAsyncKeyState(VK_LBUTTON) &
+                            0x8000) != 0;
+                    if (!overDesktopSurface)
+                    {
+                        // The pointer can cross the boundary again while OLE
+                        // is unwinding. If the initiating button is still
+                        // held, immediately give ownership back to a fresh OLE
+                        // loop so an external release cannot be lost.
+                        if (primaryButtonDown &&
+                            dragSession_.IsActive() &&
+                            !dragSession_.Items().empty())
+                            continue;
+                        break;
+                    }
+                    if (!dragSession_.IsActive() ||
+                        dragSession_.Items().empty())
+                        break;
+
+                    // DoDragDrop has fully unwound at this point. Release its
+                    // data object and reset the Shell effect cursor before the
+                    // custom ghost becomes visible again.
+                    if (oleUiPumpStarted && hwnd_ &&
+                        IsWindow(hwnd_))
+                    {
+                        KillTimer(hwnd_, kOleDragUiPumpTimerId);
+                        oleUiPumpStarted = false;
+                    }
+                    dataObj.Reset();
+                    SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+                    if (primaryButtonDown)
+                    {
+                        const bool restoreFloatingDockCapture =
+                            nativeCaptureHwnd ==
+                                floatingDockHwnd_ &&
+                            floatingDockVisible_ &&
+                            IsWindow(nativeCaptureHwnd) &&
+                            IsWindowVisible(nativeCaptureHwnd);
+                        const bool restoreFloatingPopupCapture =
+                            nativeCaptureHwnd ==
+                                floatingPopupHwnd_ &&
+                            IsWindow(nativeCaptureHwnd) &&
+                            IsWindowVisible(nativeCaptureHwnd);
+                        HWND restoreCapture =
+                            restoreFloatingDockCapture ||
+                                restoreFloatingPopupCapture
+                            ? nativeCaptureHwnd : hwnd_;
+                        SetCapture(restoreCapture);
+                        if (GetCapture() != restoreCapture &&
+                            restoreCapture != hwnd_)
+                        {
+                            restoreCapture = hwnd_;
+                            SetCapture(restoreCapture);
+                        }
+                        if (GetCapture() == restoreCapture)
+                        {
+                            mouseDown_ = true;
+                            mouseDownHit_ = nullptr;
+                            dragSession_.SetVisualVisible(true);
+                            OnMouseMoveAt(0, resumePoint);
+                        }
+                        else
+                        {
+                            CancelActiveItemDrag();
+                        }
+                    }
+                    else
+                    {
+                        // The button may be released in the short interval
+                        // between QueryContinueDrag and DoDragDrop returning.
+                        // Commit exactly once at the live native point without
+                        // reacquiring capture or flashing the custom ghost.
+                        OnLeftButtonUpAt(0, resumePoint);
+                    }
+                    PresentPointerInteractionFrame();
+                    nativeDragResumed = true;
+                    break;
+                }
                 if (oleUiPumpStarted && hwnd_ && IsWindow(hwnd_))
                     KillTimer(hwnd_, kOleDragUiPumpTimerId);
-                dragDropController_.EndSelfDrag();
+                if (nativeDragResumed)
+                    return;
 
                 if (hr == DRAGDROP_S_DROP && oleEffect == DROPEFFECT_MOVE
                     && !dragDropController_.SelfDragReturned() &&
@@ -772,12 +883,14 @@ void DesktopApp::OnMouseMoveAt(WPARAM wp, POINT current)
                     SaveLayoutSlots();
                 }
 
-                if (!dragDropController_.SelfDragReturned() && sourceWidgetData
-                    && sourceWidgetData->type == DesktopWidgetType::FolderMapping)
+                if (!dragDropController_.SelfDragReturned() &&
+                    sourceFolderMapping)
                 {
                     for (size_t i = 0; i < widgets_.size(); ++i)
                     {
-                        if (&widgets_[i] == sourceWidgetData)
+                        if (widgets_[i].id == sourceWidgetId &&
+                            widgets_[i].type ==
+                                DesktopWidgetType::FolderMapping)
                         {
                             RefreshFolderMappingWidget(i);
                             break;

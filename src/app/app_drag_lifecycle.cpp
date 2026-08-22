@@ -252,6 +252,29 @@ void DesktopApp::EndDragSession()
         InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
+void DesktopApp::CancelActiveItemDrag()
+{
+    if (!dragSession_.IsActive())
+        return;
+
+    HideDragHintWindow();
+    popupDwellController_.Reset();
+    if (hwnd_)
+        KillTimer(hwnd_, kCollectionPopupDwellTimerId);
+    navHoverSide_ = 0;
+    navAutoFlipDir_ = 0;
+    navAutoFlipTick_ = 0;
+    mouseDown_ = false;
+    mouseDownHit_ = nullptr;
+    mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+    pendingCtrlToggleDesktopIndex_ =
+        static_cast<size_t>(-1);
+    pendingCtrlToggleWidgetItem_ = nullptr;
+    EndDragSession();
+    ReleaseCapture();
+    InvalidateDragStaticScene();
+}
+
 void DesktopApp::CommitDragVisualEndBeforeShellOperation()
 {
     HideDragPreviewWindow();

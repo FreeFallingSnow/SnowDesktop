@@ -801,6 +801,8 @@ private:
     void ResetDockHandoffDwell();
     /** @brief 结束当前拖拽会话，清理拖拽状态。 */
     void EndDragSession();
+    /** @brief 取消当前原生项目拖拽，并清理输入捕获与驻留状态。 */
+    void CancelActiveItemDrag();
     /** @brief 在同步 Shell 放置前提交拖拽结束帧并移除已隐藏组件的毛玻璃。 */
     void CommitDragVisualEndBeforeShellOperation();
     /** @brief 同步呈现被动悬浮可见性变化。 */
@@ -3291,6 +3293,8 @@ private:
     bool IsDesktopInteractionSurfaceWindow(HWND window) const;
     /** @brief 读取光标并在其位于桌面交互表面时转换为主窗口客户区坐标。 */
     bool TryGetDesktopHoverPointFromCursor(POINT& point) const;
+    /** @brief 读取光标并仅在其位于可恢复原生拖拽的窗口上时返回客户区坐标。 */
+    bool TryGetNativeDragResumePointFromCursor(POINT& point) const;
     /** @brief 判断两个窗口是否位于同一窗口树中。 @param parent 父窗口 @param window 子窗口 @return 是则返回 true */
     static bool IsSameWindowTree(HWND parent, HWND window);
     /**

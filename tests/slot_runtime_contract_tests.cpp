@@ -1055,13 +1055,33 @@ void TestDragDropControllerOwnsTransportTransitions()
     controller.BeginSelfDrag();
     Check(controller.IsSelfDragActive() &&
             controller.IsTransportActive() &&
-            !controller.SelfDragReturned(),
+            !controller.SelfDragReturned() &&
+            !controller.SelfDragNativeResumeRequested(),
         "starting a self OLE drag must reset and own the return state");
     controller.MarkSelfDragReturned();
+    controller.ClearSelfDragReturned();
+    Check(!controller.SelfDragReturned(),
+        "leaving a self target before cancellation must clear the transient return state");
+    controller.MarkSelfDragReturned();
+    controller.RequestSelfDragNativeResume();
+    controller.ClearSelfDragReturned();
     controller.EndSelfDrag();
     Check(!controller.IsTransportActive() &&
-            controller.SelfDragReturned(),
-        "ending self transport must preserve its completion result for the caller");
+            controller.SelfDragReturned() &&
+            controller.SelfDragNativeResumeRequested(),
+        "ending self transport must preserve its latched native-resume result for the caller");
+
+    for (int iteration = 0; iteration < 10000; ++iteration)
+    {
+        controller.BeginSelfDrag();
+        controller.MarkSelfDragReturned();
+        controller.RequestSelfDragNativeResume();
+        controller.EndSelfDrag();
+        Check(!controller.IsTransportActive() &&
+                controller.SelfDragReturned() &&
+                controller.SelfDragNativeResumeRequested(),
+            "repeated self OLE hand-backs must not accumulate or lose transport state");
+    }
 
     controller.BeginExternalDrag({3});
     controller.ContinueExternalDrag();

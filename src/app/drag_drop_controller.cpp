@@ -7,6 +7,7 @@ void DragDropController::BeginSelfDrag()
 {
     transport_ = Transport::SelfOle;
     selfDragReturned_ = false;
+    selfDragNativeResumeRequested_ = false;
     externalSummary_ = {};
 }
 
@@ -14,6 +15,24 @@ void DragDropController::MarkSelfDragReturned()
 {
     if (transport_ == Transport::SelfOle)
         selfDragReturned_ = true;
+}
+
+void DragDropController::ClearSelfDragReturned()
+{
+    if (transport_ == Transport::SelfOle &&
+        !selfDragNativeResumeRequested_)
+    {
+        selfDragReturned_ = false;
+    }
+}
+
+void DragDropController::RequestSelfDragNativeResume()
+{
+    if (transport_ == Transport::SelfOle &&
+        selfDragReturned_)
+    {
+        selfDragNativeResumeRequested_ = true;
+    }
 }
 
 void DragDropController::EndSelfDrag()
@@ -32,11 +51,17 @@ bool DragDropController::SelfDragReturned() const
     return selfDragReturned_;
 }
 
+bool DragDropController::SelfDragNativeResumeRequested() const
+{
+    return selfDragNativeResumeRequested_;
+}
+
 void DragDropController::BeginExternalDrag(
     ExternalDragSummary summary)
 {
     transport_ = Transport::ExternalOle;
     selfDragReturned_ = false;
+    selfDragNativeResumeRequested_ = false;
     externalSummary_ = std::move(summary);
 }
 

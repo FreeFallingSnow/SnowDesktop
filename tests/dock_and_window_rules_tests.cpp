@@ -151,6 +151,31 @@ int main(int argc, char** argv)
             false, true) ==
             oleDrag::DwellTargetRefreshRoute::AwaitExternalOleCallback,
         "Dock dwell must not re-enter native drag handling from an OLE loop");
+    Check(
+        oleDrag::SelectQueryContinueDragAction(
+            true, true, true, true, true) ==
+            oleDrag::QueryContinueDragAction::Cancel &&
+        oleDrag::SelectQueryContinueDragAction(
+            false, true, true, true, true) ==
+            oleDrag::QueryContinueDragAction::ResumeNative &&
+        oleDrag::SelectQueryContinueDragAction(
+            false, false, true, true, true) ==
+            oleDrag::QueryContinueDragAction::ResumeNative,
+        "self OLE source continuation must prioritize Escape, then hand pressed or released internal returns back to native input");
+    Check(
+        oleDrag::SelectQueryContinueDragAction(
+            false, true, true, true, false) ==
+            oleDrag::QueryContinueDragAction::ContinueOle &&
+        oleDrag::SelectQueryContinueDragAction(
+            false, true, true, false, true) ==
+            oleDrag::QueryContinueDragAction::ContinueOle &&
+        oleDrag::SelectQueryContinueDragAction(
+            false, true, false, true, true) ==
+            oleDrag::QueryContinueDragAction::ContinueOle &&
+        oleDrag::SelectQueryContinueDragAction(
+            false, false, true, true, false) ==
+            oleDrag::QueryContinueDragAction::Drop,
+        "self OLE source continuation must wait for a live internal return and drop only after an external release");
 
     Check(
         nativeMenuPresentation::ShouldFlushAfterOwnerMessage(
@@ -3127,6 +3152,9 @@ int main(int argc, char** argv)
         const std::string dragLifecycleSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_drag_lifecycle.cpp");
+        const std::string keyboardInputSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_keyboard_input.cpp");
         const std::string oleDropRoutingSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_ole_drop_routing.cpp");
@@ -3342,19 +3370,113 @@ int main(int argc, char** argv)
                 pointerLiveUpdate < pointerPreviewSync &&
                 pointerPreviewSync < pointerExternalHit,
             "the drag preview and OLE input hole must reach the live point before external-window hit testing");
-        Check(pointerMoveSource.find(
+        const std::size_t selfOleEnter =
+            oleDropSessionSource.find(
+                "HRESULT DesktopApp::HandleOleDragEnter(");
+        const std::size_t selfOleOver =
+            oleDropSessionSource.find(
+                "HRESULT DesktopApp::HandleOleDragOver(",
+                selfOleEnter);
+        const std::size_t selfOleLeave =
+            oleDropSessionSource.find(
+                "HRESULT DesktopApp::HandleOleDragLeave(",
+                selfOleOver);
+        const std::string selfOleEnterHandler =
+            selfOleEnter == std::string::npos ||
+                selfOleOver == std::string::npos
+            ? std::string{}
+            : oleDropSessionSource.substr(
+                selfOleEnter, selfOleOver - selfOleEnter);
+        const std::string selfOleOverHandler =
+            selfOleOver == std::string::npos ||
+                selfOleLeave == std::string::npos
+            ? std::string{}
+            : oleDropSessionSource.substr(
+                selfOleOver, selfOleLeave - selfOleOver);
+        Check(selfOleEnterHandler.find(
+                  "MarkSelfDragReturned();") !=
+                    std::string::npos &&
+                selfOleEnterHandler.find(
                   "dragSession_.SetVisualVisible(false);") !=
                     std::string::npos &&
-                pointerMoveSource.find(
-                  "PresentOleDragInteractionFrame();") !=
+                selfOleEnterHandler.find(
+                  "*effect = DROPEFFECT_NONE;") !=
                     std::string::npos &&
-                oleDropSessionSource.find(
-                  "dragSession_.SetVisualVisible(true);") !=
+                selfOleEnterHandler.find(
+                  "dragSession_.SetVisualVisible(true);") ==
                     std::string::npos &&
-                oleDropSessionSource.find(
+                selfOleOverHandler.find(
                   "dragSession_.SetVisualVisible(false);") !=
+                    std::string::npos &&
+                selfOleOverHandler.find(
+                  "dragSession_.SetVisualVisible(true);") ==
                     std::string::npos,
-            "self OLE handoff must hide the custom ghost and restore it only after re-entry");
+            "self OLE callbacks must keep custom feedback hidden while requesting a native hand-back");
+
+        const std::size_t doDragDrop =
+            pointerMoveSource.find(
+                "DoDragDrop(dataObj.Get()");
+        const std::size_t resumeOutcome =
+            pointerMoveSource.find(
+                "SelfDragNativeResumeRequested()",
+                doDragDrop);
+        const std::size_t releaseOleData =
+            pointerMoveSource.find(
+                "dataObj.Reset();", resumeOutcome);
+        const std::size_t resetOleCursor =
+            pointerMoveSource.find(
+                "SetCursor(LoadCursorW(nullptr, IDC_ARROW));",
+                releaseOleData);
+        const std::size_t restoreCapture =
+            pointerMoveSource.find(
+                "SetCapture(restoreCapture);",
+                resetOleCursor);
+        const std::size_t restoreNativeVisual =
+            pointerMoveSource.find(
+                "dragSession_.SetVisualVisible(true);",
+                restoreCapture);
+        Check(doDragDrop != std::string::npos &&
+                resumeOutcome != std::string::npos &&
+                releaseOleData != std::string::npos &&
+                resetOleCursor != std::string::npos &&
+                restoreCapture != std::string::npos &&
+                restoreNativeVisual != std::string::npos &&
+                doDragDrop < resumeOutcome &&
+                resumeOutcome < releaseOleData &&
+                releaseOleData < resetOleCursor &&
+                resetOleCursor < restoreCapture &&
+                restoreCapture < restoreNativeVisual,
+            "native drag feedback must resume only after OLE ownership and its effect cursor have ended");
+        const std::size_t cancelDragBegin =
+            dragLifecycleSource.find(
+                "void DesktopApp::CancelActiveItemDrag()");
+        const std::size_t cancelDragEnd =
+            dragLifecycleSource.find(
+                "void DesktopApp::CommitDragVisualEndBeforeShellOperation()",
+                cancelDragBegin);
+        const std::string cancelDragHandler =
+            cancelDragBegin == std::string::npos ||
+                cancelDragEnd == std::string::npos
+            ? std::string{}
+            : dragLifecycleSource.substr(
+                cancelDragBegin,
+                cancelDragEnd - cancelDragBegin);
+        Check(cancelDragHandler.find(
+                  "popupDwellController_.Reset();") !=
+                    std::string::npos &&
+                cancelDragHandler.find(
+                  "mouseDown_ = false;") !=
+                    std::string::npos &&
+                cancelDragHandler.find(
+                  "EndDragSession();") !=
+                    std::string::npos &&
+                cancelDragHandler.find(
+                  "ReleaseCapture();") !=
+                    std::string::npos &&
+                keyboardInputSource.find(
+                  "if (dragSession_.IsActive())\n        {\n            CancelActiveItemDrag();") !=
+                    std::string::npos,
+            "Escape must completely cancel a resumed native item drag before handling popup state");
 
         const std::size_t resolverBegin =
             dragTargetUpdateSource.find(

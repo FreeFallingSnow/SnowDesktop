@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../ole_drag_rules.h"
 #include "../widgets/lua_logical_slot.h"
 
 // OLE drag-enter/over/leave/drop session handling.
@@ -14,68 +15,27 @@ HRESULT DesktopApp::HandleOleDragEnter(
         POINT client = ScreenPointToClient(point);
         if (dragSession_.IsActive())
         {
-            dragSession_.SetVisualVisible(true);
+            // Stay entirely under OLE ownership until DoDragDrop unwinds.
+            // Showing the native ghost here leaves both the Shell cursor and
+            // our preview active, and its top-level HWND can also become the
+            // next stale OLE hit target.
+            dragSession_.SetVisualVisible(false);
             dragSession_.UpdatePoint(client);
-            dragSession_.UpdateActionFromMods(static_cast<int>(keyState & (MK_CONTROL | MK_ALT | MK_SHIFT)));
+            dragSession_.UpdateActionFromMods(static_cast<int>(
+                keyState & (MK_CONTROL | MK_ALT | MK_SHIFT)));
+            dragSession_.UpdateTarget(
+                nullptr, nullptr, HitRegion::None);
         }
-        UpdateCollectionPopupDwell(client);
-        UpdateCollectionGroupTabDwell(client);
-        const bool suppressDesktopWidgetTargets = SuppressDesktopWidgetDragTargets();
-        const bool groupedEntryDrag =
-            dragSession_.SourceList().
-                hasCollectionGroupEntries ||
-            dragSession_.SourceList().
-                hasFileGroupEntries;
-        if (!suppressDesktopWidgetTargets && !UpdateDragPageNavigation(client))
-        {
-            *effect = DROPEFFECT_NONE;
-            HideDragHintWindow();
-            PresentOleDragInteractionFrame();
-            return S_OK;
-        }
-
-        // OO hit-test：优先检查集合弹窗（弹窗遮挡的容器不应被穿透命中）
-        Container* targetContainer = nullptr;
-        Slot* targetSlot = nullptr;
-        HitRegion targetRegion = HitRegion::None;
-        const bool popupHit =
-            !suppressDesktopWidgetTargets &&
-            !groupedEntryDrag &&
-            HitTestPopupForDrag(client, targetContainer, targetSlot, targetRegion);
-        if (!popupHit)
-        {
-            const DragTargetResolution resolved =
-                dragDropController_.ResolveInternalTarget(
-                    containers_, client,
-                    [&](const Container& candidate) {
-                        if (desktopIconsHidden_ &&
-                            !IsRetainedContainer(&candidate))
-                            return false;
-                        return !suppressDesktopWidgetTargets ||
-                            (!dynamic_cast<const DesktopGrid*>(&candidate) &&
-                             !dynamic_cast<const WidgetContainer*>(&candidate));
-                    });
-            targetContainer = resolved.container;
-            targetSlot = resolved.slot;
-            targetRegion = resolved.region;
-        }
-        dragSession_.UpdateTarget(targetContainer, targetSlot, targetRegion);
-
-        int mods = 0;
-        if (keyState & MK_CONTROL) mods |= MK_CONTROL;
-        if (keyState & MK_ALT)     mods |= MK_ALT;
-        if (keyState & MK_SHIFT)   mods |= MK_SHIFT;
-
-        std::wstring hint;
-        if (const std::wstring removalHint = GetDockDragOutRemovalHint(client);
-            !removalHint.empty())
-            hint = removalHint;
-        else if (targetContainer && targetRegion != HitRegion::None)
-            hint = targetContainer->GetDragHint(targetSlot, targetRegion,
-                dragSession_.Items(), dragSession_.Source(), mods);
-        ShowDragHintWindowScreen({ point.x, point.y }, hint);
-        *effect = targetRegion == HitRegion::Blocked
-            ? DROPEFFECT_NONE : DROPEFFECT_COPY | DROPEFFECT_MOVE;
+        ResetDockHandoffDwell();
+        popupDwellController_.Reset();
+        KillTimer(hwnd_, kCollectionPopupDwellTimerId);
+        collectionGroupTabDwellWidgetIndex_ =
+            static_cast<size_t>(-1);
+        collectionGroupTabDwellId_.clear();
+        collectionGroupTabDwellTick_ = 0;
+        KillTimer(hwnd_, kCollectionGroupTabDwellTimerId);
+        HideDragHintWindow();
+        *effect = DROPEFFECT_NONE;
         PresentOleDragInteractionFrame();
         return S_OK;
     }
@@ -208,69 +168,18 @@ HRESULT DesktopApp::HandleOleDragOver(
         POINT client = ScreenPointToClient(point);
         if (dragSession_.IsActive())
         {
-            dragSession_.SetVisualVisible(true);
+            // DragEnter requested a native hand-back. Keep this callback
+            // cheap and keep both custom feedback HWNDs hidden while OLE is
+            // still deciding whether to leave its nested loop.
+            dragSession_.SetVisualVisible(false);
             dragSession_.UpdatePoint(client);
-            dragSession_.UpdateActionFromMods(static_cast<int>(keyState & (MK_CONTROL | MK_ALT | MK_SHIFT)));
+            dragSession_.UpdateActionFromMods(static_cast<int>(
+                keyState & (MK_CONTROL | MK_ALT | MK_SHIFT)));
+            dragSession_.UpdateTarget(
+                nullptr, nullptr, HitRegion::None);
         }
-        UpdateCollectionPopupDwell(client);
-        UpdateCollectionGroupTabDwell(client);
-        const bool suppressDesktopWidgetTargets = SuppressDesktopWidgetDragTargets();
-        const bool groupedEntryDrag =
-            dragSession_.SourceList().
-                hasCollectionGroupEntries ||
-            dragSession_.SourceList().
-                hasFileGroupEntries;
-        if (!suppressDesktopWidgetTargets && !UpdateDragPageNavigation(client))
-        {
-            *effect = DROPEFFECT_NONE;
-            HideDragHintWindow();
-            PresentOleDragInteractionFrame();
-            return S_OK;
-        }
-
-        // OO hit-test：优先检查集合弹窗（弹窗遮挡的容器不应被穿透命中）
-        Container* targetContainer = nullptr;
-        Slot* targetSlot = nullptr;
-        HitRegion targetRegion = HitRegion::None;
-        const bool popupHit =
-            !suppressDesktopWidgetTargets &&
-            !groupedEntryDrag &&
-            HitTestPopupForDrag(client, targetContainer, targetSlot, targetRegion);
-        if (!popupHit)
-        {
-            const DragTargetResolution resolved =
-                dragDropController_.ResolveInternalTarget(
-                    containers_, client,
-                    [&](const Container& candidate) {
-                        if (desktopIconsHidden_ &&
-                            !IsRetainedContainer(&candidate))
-                            return false;
-                        return !suppressDesktopWidgetTargets ||
-                            (!dynamic_cast<const DesktopGrid*>(&candidate) &&
-                             !dynamic_cast<const WidgetContainer*>(&candidate));
-                    });
-            targetContainer = resolved.container;
-            targetSlot = resolved.slot;
-            targetRegion = resolved.region;
-        }
-        dragSession_.UpdateTarget(targetContainer, targetSlot, targetRegion);
-
-        int mods = 0;
-        if (keyState & MK_CONTROL) mods |= MK_CONTROL;
-        if (keyState & MK_ALT)     mods |= MK_ALT;
-        if (keyState & MK_SHIFT)   mods |= MK_SHIFT;
-
-        std::wstring hint;
-        if (const std::wstring removalHint = GetDockDragOutRemovalHint(client);
-            !removalHint.empty())
-            hint = removalHint;
-        else if (targetContainer && targetRegion != HitRegion::None)
-            hint = targetContainer->GetDragHint(targetSlot, targetRegion,
-                dragSession_.Items(), dragSession_.Source(), mods);
-        ShowDragHintWindowScreen({ point.x, point.y }, hint);
-        *effect = targetRegion == HitRegion::Blocked
-            ? DROPEFFECT_NONE : DROPEFFECT_COPY | DROPEFFECT_MOVE;
-        PresentOleDragInteractionFrame();
+        HideDragHintWindow();
+        *effect = DROPEFFECT_NONE;
         return S_OK;
     }
 
@@ -360,6 +269,8 @@ HRESULT DesktopApp::HandleOleDragLeave()
     navAutoFlipTick_ = 0;
     if (dragDropController_.IsSelfDragActive())
     {
+        if (!dragDropController_.SelfDragNativeResumeRequested())
+            dragDropController_.ClearSelfDragReturned();
         ResetDockHandoffDwell();
         popupDwellController_.Reset();
         KillTimer(hwnd_, kCollectionPopupDwellTimerId);
@@ -1240,9 +1151,35 @@ HRESULT DesktopApp::HandleOleDrop(
 HRESULT DesktopApp::HandleOleQueryContinueDrag(
     BOOL escapePressed, DWORD keyState)
 {
-    if (escapePressed) return DRAGDROP_S_CANCEL;
-    if ((keyState & (MK_LBUTTON | MK_RBUTTON)) == 0) return DRAGDROP_S_DROP;
-    return S_OK;
+    POINT desktopPoint{};
+    const bool pointerOnDesktopSurface =
+        dragDropController_.IsSelfDragActive() &&
+        dragDropController_.SelfDragReturned() &&
+        TryGetNativeDragResumePointFromCursor(desktopPoint);
+    const auto action = snowdesktop::ole_drag_rules::
+        SelectQueryContinueDragAction(
+            escapePressed != FALSE,
+            (keyState & MK_LBUTTON) != 0,
+            dragDropController_.IsSelfDragActive(),
+            dragDropController_.SelfDragReturned(),
+            pointerOnDesktopSurface);
+    switch (action)
+    {
+    case snowdesktop::ole_drag_rules::
+            QueryContinueDragAction::Cancel:
+        return DRAGDROP_S_CANCEL;
+    case snowdesktop::ole_drag_rules::
+            QueryContinueDragAction::Drop:
+        return DRAGDROP_S_DROP;
+    case snowdesktop::ole_drag_rules::
+            QueryContinueDragAction::ResumeNative:
+        dragDropController_.RequestSelfDragNativeResume();
+        return DRAGDROP_S_CANCEL;
+    case snowdesktop::ole_drag_rules::
+            QueryContinueDragAction::ContinueOle:
+    default:
+        return S_OK;
+    }
 }
 
 /**
@@ -1251,6 +1188,15 @@ HRESULT DesktopApp::HandleOleQueryContinueDrag(
  */
 HRESULT DesktopApp::HandleOleGiveFeedback(DWORD)
 {
+    if (dragDropController_.IsSelfDragActive() &&
+        dragDropController_.SelfDragReturned())
+    {
+        // DragEnter has selected the native hand-back path. Remove OLE's
+        // effect-overlay cursor immediately; the custom ghost is still kept
+        // hidden until DoDragDrop has returned.
+        SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+        return S_OK;
+    }
     return DRAGDROP_S_USEDEFAULTCURSORS;
 }
 

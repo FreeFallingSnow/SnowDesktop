@@ -84,6 +84,34 @@ bool DesktopApp::TryGetDesktopHoverPointFromCursor(
     return ScreenToClient(hwnd_, &point) != FALSE;
 }
 
+bool DesktopApp::TryGetNativeDragResumePointFromCursor(
+    POINT& point) const
+{
+    POINT screenPoint{};
+    if (!hwnd_ || !IsWindow(hwnd_) ||
+        !GetCursorPos(&screenPoint))
+        return false;
+
+    HWND hit = WindowFromPoint(screenPoint);
+    HWND root = hit ? GetAncestor(hit, GA_ROOT) : nullptr;
+    if (!root)
+        root = hit;
+    const auto belongsTo = [hit, root](HWND candidate) {
+        return candidate &&
+            (hit == candidate || root == candidate ||
+                IsChild(candidate, hit));
+    };
+    if (!belongsTo(hwnd_) &&
+        !belongsTo(floatingDockHwnd_) &&
+        !belongsTo(floatingPopupHwnd_))
+    {
+        return false;
+    }
+
+    point = screenPoint;
+    return ScreenToClient(hwnd_, &point) != FALSE;
+}
+
 /**
  * @brief 判断指定点是否位于外部可放置窗口上
  * @param clientPoint 客户端坐标点
