@@ -1536,6 +1536,24 @@ int main(int argc, char** argv)
     Check(popupAnimationOffset.x == 20 &&
             popupAnimationOffset.y == 30,
         "popup animation snapshots must use shared-host local coordinates");
+    const RECT collectionPopupBounds{ 10, 20, 110, 120 };
+    const RECT luaPanelBounds{ 200, 220, 320, 360 };
+    Check(floatingPopup::IsPointOnHostedPopupSurface(
+            POINT{ 40, 60 }, collectionPopupBounds,
+            luaPanelBounds) &&
+            floatingPopup::IsPointOnHostedPopupSurface(
+                POINT{ 250, 300 }, collectionPopupBounds,
+                luaPanelBounds) &&
+            floatingPopup::IsPointOnHostedPopupSurface(
+                POINT{ 8, 60 }, collectionPopupBounds,
+                luaPanelBounds),
+        "collection content, Lua panels and their host shadow margin must count as owned popup input");
+    Check(!floatingPopup::IsPointOnHostedPopupSurface(
+            POINT{ 150, 180 }, collectionPopupBounds,
+            luaPanelBounds) &&
+            !floatingPopup::IsPointOnHostedPopupSurface(
+                POINT{ 0, 0 }, RECT{}, RECT{}),
+        "points outside every non-empty hosted region must remain external popup input");
     Check(floatingPopup::ShouldDismissForExternalPointerDown(
             true, false, false),
         "an external application press must dismiss a visible shared popup");

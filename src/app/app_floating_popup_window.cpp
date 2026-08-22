@@ -125,8 +125,19 @@ void DesktopApp::HandleFloatingPopupExternalPointerDown(
         floatingPopupMouseHookScreenX_.load(),
         floatingPopupMouseHookScreenY_.load()
     };
+    POINT desktopPoint = screenPoint;
+    const bool hasDesktopPoint =
+        hwnd_ && IsWindow(hwnd_) &&
+        ScreenToClient(hwnd_, &desktopPoint);
+    const bool pointOnHostedPopup =
+        hasDesktopPoint &&
+        snowdesktop::floating_popup_rules::
+            IsPointOnHostedPopupSurface(
+                desktopPoint,
+                floatingPopupCollectionRegion_,
+                floatingPopupLuaPanelRegion_);
     HWND targetWindow = WindowFromPoint(screenPoint);
-    if (!targetWindow)
+    if (!targetWindow && !pointOnHostedPopup)
         return;
     const DWORD currentProcessId = GetCurrentProcessId();
     const auto belongsToCurrentProcess =
@@ -141,6 +152,7 @@ void DesktopApp::HandleFloatingPopupExternalPointerDown(
     // hit first so an in-process desktop/Dock click does not inherit the
     // external process identity of its shell-owned root.
     bool targetBelongsToCurrentProcess =
+        pointOnHostedPopup ||
         belongsToCurrentProcess(targetWindow);
     if (!targetBelongsToCurrentProcess)
     {

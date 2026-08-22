@@ -41,6 +41,30 @@ constexpr POINT AnimationVisualOffset(
     };
 }
 
+constexpr bool ContainsHostedPopupPoint(
+    const RECT& bounds,
+    POINT point,
+    LONG padding = 3)
+{
+    return bounds.right > bounds.left &&
+        bounds.bottom > bounds.top &&
+        point.x >= bounds.left - padding &&
+        point.x < bounds.right + padding &&
+        point.y >= bounds.top - padding &&
+        point.y < bounds.bottom + padding;
+}
+
+constexpr bool IsPointOnHostedPopupSurface(
+    POINT point,
+    const RECT& collectionBounds,
+    const RECT& luaPanelBounds)
+{
+    return ContainsHostedPopupPoint(
+            collectionBounds, point) ||
+        ContainsHostedPopupPoint(
+            luaPanelBounds, point);
+}
+
 constexpr bool ShouldDismissForExternalPointerDown(
     bool popupVisible,
     bool targetBelongsToCurrentProcess,
