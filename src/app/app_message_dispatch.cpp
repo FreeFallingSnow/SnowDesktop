@@ -926,11 +926,13 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             widgetEngine_->CancelInteractionPointerPress();
         break;
     case WM_DISPLAYCHANGE:
+        InvalidateDragHintRaster();
         ScheduleDisplayTopologyRefresh();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
     case WM_SETTINGCHANGE:
     {
+        InvalidateDragHintRaster();
         const wchar_t* settingArea =
             reinterpret_cast<const wchar_t*>(lp);
         const bool traySettings = settingArea &&
@@ -948,7 +950,9 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             ReloadItems(false);
         return 0;
     }
+    case WM_FONTCHANGE:
     case WM_THEMECHANGED:
+        InvalidateDragHintRaster();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
     case kShellChangeMessage:

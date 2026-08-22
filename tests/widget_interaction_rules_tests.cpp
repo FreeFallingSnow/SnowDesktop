@@ -1,6 +1,7 @@
 #include "widgets/collection_group_rules.h"
 #include "desktop_hover_rules.h"
 #include "drag_input_rules.h"
+#include "drag_hint_rules.h"
 #include "widget_scroll_rules.h"
 #include "widget_visibility_rules.h"
 #include "widgets/widget_chrome_rules.h"
@@ -23,6 +24,8 @@ namespace hoverRules =
     snowdesktop::desktop_hover_rules;
 namespace dragInputRules =
     snowdesktop::drag_input_rules;
+namespace dragHintRules =
+    snowdesktop::drag_hint_rules;
 namespace chromeRules =
     snowdesktop::widget_chrome_rules;
 namespace guideRules =
@@ -821,6 +824,47 @@ void TestDragInputSampling()
         "native drag coalescing must stop at another window or message kind");
 }
 
+void TestDragHintRasterRules()
+{
+    bool valid = false;
+    unsigned cachedDpi = 0;
+    int renderCount = 0;
+    for (int i = 0; i < 1000; ++i)
+    {
+        const bool sameText = i != 0;
+        if (!dragHintRules::ShouldReuseRaster(
+                valid, sameText, cachedDpi, 96))
+        {
+            ++renderCount;
+            valid = true;
+            cachedDpi = 96;
+        }
+    }
+    Check(renderCount == 1,
+        "repeated OLE drag hints with the same text and DPI must render once");
+    Check(
+        !dragHintRules::ShouldReuseRaster(true, false, 96, 96) &&
+            !dragHintRules::ShouldReuseRaster(true, true, 96, 144) &&
+            !dragHintRules::ShouldReuseRaster(false, true, 96, 96),
+        "text, DPI, and raster validity changes must invalidate the drag hint cache");
+
+    const auto bottomRight = dragHintRules::ResolveWindowPosition(
+        {1910, 1070}, {200, 40}, {0, 0, 1920, 1080},
+        48, 22, 8);
+    Check(bottomRight.x == 1712 && bottomRight.y == 1032,
+        "drag hints must remain inside the monitor work-area margins");
+    const auto negativeMonitor = dragHintRules::ResolveWindowPosition(
+        {-1910, -1070}, {200, 40}, {-1920, -1080, 0, 0},
+        48, 22, 8);
+    Check(negativeMonitor.x >= -1912 && negativeMonitor.y >= -1072,
+        "drag hint placement must preserve negative virtual-screen coordinates");
+    const auto tinyWorkArea = dragHintRules::ResolveWindowPosition(
+        {90, 10}, {200, 40}, {0, 0, 100, 20},
+        48, 22, 8);
+    Check(tinyWorkArea.x == -50 && tinyWorkArea.y == -10,
+        "undersized work areas must center overflow without invalid clamp bounds");
+}
+
 void TestBottomBarContentReservation()
 {
     Check(
@@ -1092,6 +1136,7 @@ int main()
     TestWidgetPreviewSourceVisibility();
     TestDesktopHoverDeactivation();
     TestDragInputSampling();
+    TestDragHintRasterRules();
     TestNestedWidgetScrolling();
     TestScrollbarThumbDragging();
     TestListDetailRules();

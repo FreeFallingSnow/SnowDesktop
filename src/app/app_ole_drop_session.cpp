@@ -29,6 +29,7 @@ HRESULT DesktopApp::HandleOleDragEnter(
         if (!suppressDesktopWidgetTargets && !UpdateDragPageNavigation(client))
         {
             *effect = DROPEFFECT_NONE;
+            HideDragHintWindow();
             PresentOleDragInteractionFrame();
             return S_OK;
         }
@@ -127,6 +128,7 @@ HRESULT DesktopApp::HandleOleDragEnter(
     if (!UpdateDragPageNavigation(client))
     {
         *effect = DROPEFFECT_NONE;
+        HideDragHintWindow();
         PresentOleDragInteractionFrame();
         return S_OK;
     }
@@ -221,6 +223,7 @@ HRESULT DesktopApp::HandleOleDragOver(
         if (!suppressDesktopWidgetTargets && !UpdateDragPageNavigation(client))
         {
             *effect = DROPEFFECT_NONE;
+            HideDragHintWindow();
             PresentOleDragInteractionFrame();
             return S_OK;
         }
@@ -283,6 +286,7 @@ HRESULT DesktopApp::HandleOleDragOver(
     if (!UpdateDragPageNavigation(client))
     {
         *effect = DROPEFFECT_NONE;
+        HideDragHintWindow();
         PresentOleDragInteractionFrame();
         return S_OK;
     }

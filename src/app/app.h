@@ -3349,8 +3349,13 @@ private:
     std::wstring dragHint_;
     HWND hintHwnd_ = nullptr;
     std::wstring hintTextCache_;
+    SIZE hintRasterSize_{};
+    UINT hintRasterDpi_ = 0;
+    bool hintRasterValid_ = false;
     /** @brief 确保拖拽提示窗口已创建。 @return 成功返回 true */
     bool EnsureDragHintWindow();
+    /** @brief 使已提交的拖拽提示位图缓存失效。 */
+    void InvalidateDragHintRaster();
     /** @brief 同步拖拽提示与悬浮 Dock 的 owner 关系。 */
     void SyncDragHintWindowOwner();
     /** @brief 在客户端坐标位置显示拖拽提示。 @param clientPoint 客户端坐标 @param text 提示文本 */

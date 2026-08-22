@@ -1,12 +1,75 @@
 #include "app.h"
+#include "../drag_hint_rules.h"
+
+#include <algorithm>
 
 // Drag-hint popup window lifecycle and rendering.
+
+namespace
+{
+UINT ResolveDragHintDpi(HMONITOR monitor, HWND fallbackWindow)
+{
+    UINT dpiX = USER_DEFAULT_SCREEN_DPI;
+    UINT dpiY = USER_DEFAULT_SCREEN_DPI;
+    if (monitor && SUCCEEDED(GetDpiForMonitor(
+            monitor, MDT_EFFECTIVE_DPI, &dpiX, &dpiY)) &&
+        dpiY > 0)
+    {
+        return dpiY;
+    }
+    if (fallbackWindow && IsWindow(fallbackWindow))
+    {
+        const UINT windowDpi = GetDpiForWindow(fallbackWindow);
+        if (windowDpi > 0)
+            return windowDpi;
+    }
+    return USER_DEFAULT_SCREEN_DPI;
+}
+
+int ScaleDragHintMetric(int value, UINT dpi)
+{
+    return std::max(1, MulDiv(
+        value, static_cast<int>(dpi), USER_DEFAULT_SCREEN_DPI));
+}
+
+POINT ResolveDragHintWindowPosition(
+    POINT anchor,
+    SIZE windowSize,
+    RECT workArea,
+    UINT dpi)
+{
+    const auto resolved =
+        snowdesktop::drag_hint_rules::ResolveWindowPosition(
+            {anchor.x, anchor.y},
+            {windowSize.cx, windowSize.cy},
+            {workArea.left, workArea.top,
+                workArea.right, workArea.bottom},
+            ScaleDragHintMetric(48, dpi),
+            ScaleDragHintMetric(22, dpi),
+            ScaleDragHintMetric(8, dpi));
+    return {resolved.x, resolved.y};
+}
+
+bool IsValidPreviousGdiObject(HGDIOBJ object)
+{
+    return object && object != HGDI_ERROR;
+}
+}
+
+void DesktopApp::InvalidateDragHintRaster()
+{
+    hintRasterValid_ = false;
+    hintTextCache_.clear();
+    hintRasterSize_ = {};
+    hintRasterDpi_ = 0;
+}
 
 bool DesktopApp::EnsureDragHintWindow()
 {
     if (hintHwnd_ && IsWindow(hintHwnd_))
         return true;
     hintHwnd_ = nullptr;
+    InvalidateDragHintRaster();
     const HWND owner =
         floatingDockVisible_ && floatingDockHwnd_ &&
             IsWindow(floatingDockHwnd_)
@@ -37,165 +100,52 @@ void DesktopApp::SyncDragHintWindowOwner()
     }
 }
 
-/**
- * @brief 隐藏拖拽提示窗口
- */
 void DesktopApp::HideDragHintWindow()
 {
-    if (hintHwnd_ && IsWindow(hintHwnd_))
+    // Keep the last successfully submitted layered bitmap. OLE can produce
+    // short Leave/Enter transitions; re-entry with the same key can show and
+    // move the cached raster without rebuilding any GDI resources.
+    if (hintHwnd_ && IsWindow(hintHwnd_) &&
+        IsWindowVisible(hintHwnd_))
+    {
         ShowWindow(hintHwnd_, SW_HIDE);
-    hintTextCache_.clear();
+    }
 }
 
-/**
- * @brief 销毁拖拽提示窗口
- */
 void DesktopApp::DestroyDragHintWindow()
 {
     if (hintHwnd_ && IsWindow(hintHwnd_))
         DestroyWindow(hintHwnd_);
     hintHwnd_ = nullptr;
+    InvalidateDragHintRaster();
 }
 
-/**
- * @brief 显示拖拽提示窗口（客户端坐标版本）
- * @param clientPoint 客户端坐标点
- * @param text 提示文本内容
- */
-void DesktopApp::ShowDragHintWindow(POINT clientPoint, const std::wstring& text)
+void DesktopApp::ShowDragHintWindow(
+    POINT clientPoint,
+    const std::wstring& text)
 {
     if (text.empty())
     {
         HideDragHintWindow();
         return;
     }
-
-    // Skip expensive GDI rebuild if text hasn't changed — just move the window
-    if (text == hintTextCache_ &&
-        hintHwnd_ && IsWindow(hintHwnd_) &&
-        IsWindowVisible(hintHwnd_))
-    {
-        SyncDragHintWindowOwner();
-        POINT screenPoint = clientPoint;
-        ClientToScreen(hwnd_, &screenPoint);
-        SetWindowPos(hintHwnd_, HWND_TOPMOST,
-            screenPoint.x + 48, screenPoint.y + 22,
-            0, 0, SWP_NOSIZE | SWP_NOACTIVATE |
-                SWP_NOOWNERZORDER | SWP_SHOWWINDOW);
-        return;
-    }
-    hintTextCache_ = text;
-
-    if (!EnsureDragHintWindow())
+    if (!hwnd_ || !IsWindow(hwnd_))
     {
         HideDragHintWindow();
         return;
     }
-    SyncDragHintWindowOwner();
-
     POINT screenPoint = clientPoint;
-    ClientToScreen(hwnd_, &screenPoint);
-
-    HDC screenDc = GetDC(nullptr);
-    HFONT font = CreateFontW(-15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-    HGDIOBJ oldFont = SelectObject(screenDc, font);
-    SIZE textSize{};
-    GetTextExtentPoint32W(screenDc, text.c_str(), static_cast<int>(text.size()), &textSize);
-    SelectObject(screenDc, oldFont);
-
-    int width = std::clamp(static_cast<int>(textSize.cx + 24), 130, 520);
-    int height = std::clamp(static_cast<int>(textSize.cy + 14), 32, 46);
-    POINT windowPos{ screenPoint.x + 48, screenPoint.y + 22 };
-
-    HMONITOR monitor = MonitorFromPoint(screenPoint, MONITOR_DEFAULTTONEAREST);
-    MONITORINFO monitorInfo{};
-    monitorInfo.cbSize = sizeof(monitorInfo);
-    if (monitor && GetMonitorInfoW(monitor, &monitorInfo))
+    if (!ClientToScreen(hwnd_, &screenPoint))
     {
-        windowPos.x = std::clamp<LONG>(windowPos.x, monitorInfo.rcWork.left + 8,
-            monitorInfo.rcWork.right - static_cast<LONG>(width) - 8);
-        windowPos.y = std::clamp<LONG>(windowPos.y, monitorInfo.rcWork.top + 8,
-            monitorInfo.rcWork.bottom - static_cast<LONG>(height) - 8);
-    }
-
-    BITMAPINFO bitmapInfo{};
-    bitmapInfo.bmiHeader.biSize = sizeof(bitmapInfo.bmiHeader);
-    bitmapInfo.bmiHeader.biWidth = width;
-    bitmapInfo.bmiHeader.biHeight = -height;
-    bitmapInfo.bmiHeader.biPlanes = 1;
-    bitmapInfo.bmiHeader.biBitCount = 32;
-    bitmapInfo.bmiHeader.biCompression = BI_RGB;
-
-    void* bits = nullptr;
-    HBITMAP bitmap = CreateDIBSection(screenDc, &bitmapInfo, DIB_RGB_COLORS, &bits, nullptr, 0);
-    if (!bitmap || !bits)
-    {
-        DeleteObject(font);
-        ReleaseDC(nullptr, screenDc);
         HideDragHintWindow();
         return;
     }
-
-    auto* pixels = static_cast<std::uint32_t*>(bits);
-    auto argb = [](std::uint8_t a, std::uint8_t r, std::uint8_t g, std::uint8_t b) -> std::uint32_t {
-        return (static_cast<std::uint32_t>(a) << 24) |
-            (static_cast<std::uint32_t>(r) << 16) |
-            (static_cast<std::uint32_t>(g) << 8) |
-            static_cast<std::uint32_t>(b);
-    };
-
-    const std::uint32_t bg = argb(255, 255, 255, 255);
-    const std::uint32_t bd = argb(255, 205, 211, 220);
-    for (int y = 0; y < height; ++y)
-        for (int x = 0; x < width; ++x)
-            pixels[(y * width) + x] = (x == 0 || y == 0 || x == width - 1 || y == height - 1) ? bd : bg;
-
-    HDC memoryDc = CreateCompatibleDC(screenDc);
-    HGDIOBJ oldBmp = SelectObject(memoryDc, bitmap);
-    HGDIOBJ oldMFont = SelectObject(memoryDc, font);
-    SetBkMode(memoryDc, TRANSPARENT);
-    SetTextColor(memoryDc, RGB(25, 32, 42));
-    RECT textRect{ 10, 0, width - 10, height };
-    DrawTextW(memoryDc, text.c_str(), -1, &textRect, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
-
-    for (int i = 0; i < width * height; ++i)
-    {
-        std::uint32_t pixel = pixels[i];
-        std::uint8_t r = static_cast<std::uint8_t>((pixel >> 16) & 0xff);
-        std::uint8_t g = static_cast<std::uint8_t>((pixel >> 8) & 0xff);
-        std::uint8_t b = static_cast<std::uint8_t>(pixel & 0xff);
-        pixels[i] = argb(255, r, g, b);
-    }
-
-    POINT sourcePoint{ 0, 0 };
-    SIZE windowSize{ width, height };
-    BLENDFUNCTION blend{};
-    blend.BlendOp = AC_SRC_OVER;
-    blend.SourceConstantAlpha = 255;
-    blend.AlphaFormat = AC_SRC_ALPHA;
-
-    UpdateLayeredWindow(hintHwnd_, screenDc, &windowPos, &windowSize,
-        memoryDc, &sourcePoint, 0, &blend, ULW_ALPHA);
-    SetWindowPos(hintHwnd_, HWND_TOPMOST, 0, 0, 0, 0,
-        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
-            SWP_NOOWNERZORDER | SWP_SHOWWINDOW);
-
-    SelectObject(memoryDc, oldMFont);
-    SelectObject(memoryDc, oldBmp);
-    DeleteDC(memoryDc);
-    DeleteObject(bitmap);
-    DeleteObject(font);
-    ReleaseDC(nullptr, screenDc);
+    ShowDragHintWindowScreen(screenPoint, text);
 }
 
-/**
- * @brief 显示拖拽提示窗口（屏幕坐标版本）
- * @param screenPoint 屏幕坐标点
- * @param text 提示文本内容
- */
-void DesktopApp::ShowDragHintWindowScreen(POINT screenPoint, const std::wstring& text)
+void DesktopApp::ShowDragHintWindowScreen(
+    POINT screenPoint,
+    const std::wstring& text)
 {
     if (text.empty() || !EnsureDragHintWindow())
     {
@@ -204,29 +154,84 @@ void DesktopApp::ShowDragHintWindowScreen(POINT screenPoint, const std::wstring&
     }
     SyncDragHintWindowOwner();
 
+    const HMONITOR monitor = MonitorFromPoint(
+        screenPoint, MONITOR_DEFAULTTONEAREST);
+    const UINT dpi = ResolveDragHintDpi(monitor, hwnd_);
+    MONITORINFO monitorInfo{sizeof(monitorInfo)};
+    if (!monitor || !GetMonitorInfoW(monitor, &monitorInfo))
+    {
+        monitorInfo.rcWork = {
+            GetSystemMetrics(SM_XVIRTUALSCREEN),
+            GetSystemMetrics(SM_YVIRTUALSCREEN),
+            GetSystemMetrics(SM_XVIRTUALSCREEN) +
+                GetSystemMetrics(SM_CXVIRTUALSCREEN),
+            GetSystemMetrics(SM_YVIRTUALSCREEN) +
+                GetSystemMetrics(SM_CYVIRTUALSCREEN),
+        };
+    }
+
+    if (snowdesktop::drag_hint_rules::ShouldReuseRaster(
+            hintRasterValid_, text == hintTextCache_,
+            hintRasterDpi_, dpi))
+    {
+        const POINT windowPos = ResolveDragHintWindowPosition(
+            screenPoint, hintRasterSize_, monitorInfo.rcWork, dpi);
+        SetWindowPos(hintHwnd_, nullptr,
+            windowPos.x, windowPos.y, 0, 0,
+            SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER |
+                SWP_NOZORDER | SWP_NOSENDCHANGING | SWP_SHOWWINDOW);
+        return;
+    }
+
     HDC screenDc = GetDC(nullptr);
-    HFONT font = CreateFontW(-15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+    if (!screenDc)
+    {
+        InvalidateDragHintRaster();
+        HideDragHintWindow();
+        return;
+    }
+    HFONT font = CreateFontW(
+        -ScaleDragHintMetric(15, dpi), 0, 0, 0,
+        FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
         CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-    HGDIOBJ oldFont = SelectObject(screenDc, font);
-    SIZE textSize{};
-    GetTextExtentPoint32W(screenDc, text.c_str(), static_cast<int>(text.size()), &textSize);
-    SelectObject(screenDc, oldFont);
-
-    int width = std::clamp(static_cast<int>(textSize.cx + 24), 130, 520);
-    int height = std::clamp(static_cast<int>(textSize.cy + 14), 32, 46);
-    POINT windowPos{ screenPoint.x + 48, screenPoint.y + 22 };
-
-    HMONITOR monitor = MonitorFromPoint(screenPoint, MONITOR_DEFAULTTONEAREST);
-    MONITORINFO monitorInfo{};
-    monitorInfo.cbSize = sizeof(monitorInfo);
-    if (monitor && GetMonitorInfoW(monitor, &monitorInfo))
+    if (!font)
     {
-        windowPos.x = std::clamp<LONG>(windowPos.x, monitorInfo.rcWork.left + 8,
-            monitorInfo.rcWork.right - static_cast<LONG>(width) - 8);
-        windowPos.y = std::clamp<LONG>(windowPos.y, monitorInfo.rcWork.top + 8,
-            monitorInfo.rcWork.bottom - static_cast<LONG>(height) - 8);
+        ReleaseDC(nullptr, screenDc);
+        InvalidateDragHintRaster();
+        HideDragHintWindow();
+        return;
     }
+
+    const HGDIOBJ oldScreenFont = SelectObject(screenDc, font);
+    SIZE textSize{};
+    const bool measured =
+        IsValidPreviousGdiObject(oldScreenFont) &&
+        GetTextExtentPoint32W(
+            screenDc, text.c_str(),
+            static_cast<int>(text.size()), &textSize) != FALSE;
+    if (IsValidPreviousGdiObject(oldScreenFont))
+        SelectObject(screenDc, oldScreenFont);
+    if (!measured)
+    {
+        DeleteObject(font);
+        ReleaseDC(nullptr, screenDc);
+        InvalidateDragHintRaster();
+        HideDragHintWindow();
+        return;
+    }
+
+    const int width = std::clamp(
+        static_cast<int>(textSize.cx) + ScaleDragHintMetric(24, dpi),
+        ScaleDragHintMetric(130, dpi),
+        ScaleDragHintMetric(520, dpi));
+    const int height = std::clamp(
+        static_cast<int>(textSize.cy) + ScaleDragHintMetric(14, dpi),
+        ScaleDragHintMetric(32, dpi),
+        ScaleDragHintMetric(46, dpi));
+    SIZE windowSize{width, height};
+    POINT windowPos = ResolveDragHintWindowPosition(
+        screenPoint, windowSize, monitorInfo.rcWork, dpi);
 
     BITMAPINFO bitmapInfo{};
     bitmapInfo.bmiHeader.biSize = sizeof(bitmapInfo.bmiHeader);
@@ -237,70 +242,123 @@ void DesktopApp::ShowDragHintWindowScreen(POINT screenPoint, const std::wstring&
     bitmapInfo.bmiHeader.biCompression = BI_RGB;
 
     void* bits = nullptr;
-    HBITMAP bitmap = CreateDIBSection(screenDc, &bitmapInfo, DIB_RGB_COLORS, &bits, nullptr, 0);
+    HBITMAP bitmap = CreateDIBSection(
+        screenDc, &bitmapInfo, DIB_RGB_COLORS,
+        &bits, nullptr, 0);
     if (!bitmap || !bits)
     {
+        if (bitmap)
+            DeleteObject(bitmap);
         DeleteObject(font);
         ReleaseDC(nullptr, screenDc);
+        InvalidateDragHintRaster();
+        HideDragHintWindow();
+        return;
+    }
+    HDC memoryDc = CreateCompatibleDC(screenDc);
+    if (!memoryDc)
+    {
+        DeleteObject(bitmap);
+        DeleteObject(font);
+        ReleaseDC(nullptr, screenDc);
+        InvalidateDragHintRaster();
+        HideDragHintWindow();
+        return;
+    }
+    const HGDIOBJ oldBitmap = SelectObject(memoryDc, bitmap);
+    const HGDIOBJ oldMemoryFont = SelectObject(memoryDc, font);
+    if (!IsValidPreviousGdiObject(oldBitmap) ||
+        !IsValidPreviousGdiObject(oldMemoryFont))
+    {
+        if (IsValidPreviousGdiObject(oldMemoryFont))
+            SelectObject(memoryDc, oldMemoryFont);
+        if (IsValidPreviousGdiObject(oldBitmap))
+            SelectObject(memoryDc, oldBitmap);
+        DeleteDC(memoryDc);
+        DeleteObject(bitmap);
+        DeleteObject(font);
+        ReleaseDC(nullptr, screenDc);
+        InvalidateDragHintRaster();
         HideDragHintWindow();
         return;
     }
 
     auto* pixels = static_cast<std::uint32_t*>(bits);
-    auto argb = [](std::uint8_t a, std::uint8_t r, std::uint8_t g, std::uint8_t b) -> std::uint32_t {
+    auto argb = [](
+        std::uint8_t a, std::uint8_t r,
+        std::uint8_t g, std::uint8_t b) -> std::uint32_t {
         return (static_cast<std::uint32_t>(a) << 24) |
             (static_cast<std::uint32_t>(r) << 16) |
             (static_cast<std::uint32_t>(g) << 8) |
             static_cast<std::uint32_t>(b);
     };
-
-    const std::uint32_t bg = argb(255, 255, 255, 255);
-    const std::uint32_t bd = argb(255, 205, 211, 220);
+    const std::uint32_t background = argb(255, 255, 255, 255);
+    const std::uint32_t border = argb(255, 205, 211, 220);
     for (int y = 0; y < height; ++y)
+    {
         for (int x = 0; x < width; ++x)
-            pixels[(y * width) + x] = (x == 0 || y == 0 || x == width - 1 || y == height - 1) ? bd : bg;
+        {
+            pixels[(y * width) + x] =
+                x == 0 || y == 0 ||
+                x == width - 1 || y == height - 1
+                ? border : background;
+        }
+    }
 
-    HDC memoryDc = CreateCompatibleDC(screenDc);
-    HGDIOBJ oldBmp = SelectObject(memoryDc, bitmap);
-    HGDIOBJ oldMFont = SelectObject(memoryDc, font);
     SetBkMode(memoryDc, TRANSPARENT);
     SetTextColor(memoryDc, RGB(25, 32, 42));
-    RECT textRect{ 10, 0, width - 10, height };
-    DrawTextW(memoryDc, text.c_str(), -1, &textRect, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+    const int horizontalPadding = ScaleDragHintMetric(10, dpi);
+    RECT textRect{
+        horizontalPadding, 0,
+        width - horizontalPadding, height};
+    const int drawnHeight = DrawTextW(
+        memoryDc, text.c_str(), -1, &textRect,
+        DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
 
     for (int i = 0; i < width * height; ++i)
     {
-        std::uint32_t pixel = pixels[i];
-        std::uint8_t r = static_cast<std::uint8_t>((pixel >> 16) & 0xff);
-        std::uint8_t g = static_cast<std::uint8_t>((pixel >> 8) & 0xff);
-        std::uint8_t b = static_cast<std::uint8_t>(pixel & 0xff);
-        pixels[i] = argb(255, r, g, b);
+        const std::uint32_t pixel = pixels[i];
+        const std::uint8_t red = static_cast<std::uint8_t>(
+            (pixel >> 16) & 0xff);
+        const std::uint8_t green = static_cast<std::uint8_t>(
+            (pixel >> 8) & 0xff);
+        const std::uint8_t blue = static_cast<std::uint8_t>(
+            pixel & 0xff);
+        pixels[i] = argb(255, red, green, blue);
     }
 
-    POINT sourcePoint{ 0, 0 };
-    SIZE windowSize{ width, height };
+    POINT sourcePoint{0, 0};
     BLENDFUNCTION blend{};
     blend.BlendOp = AC_SRC_OVER;
     blend.SourceConstantAlpha = 255;
     blend.AlphaFormat = AC_SRC_ALPHA;
+    const bool updated = drawnHeight > 0 &&
+        UpdateLayeredWindow(
+            hintHwnd_, screenDc, &windowPos, &windowSize,
+            memoryDc, &sourcePoint, 0, &blend, ULW_ALPHA) != FALSE;
 
-    UpdateLayeredWindow(hintHwnd_, screenDc, &windowPos, &windowSize,
-        memoryDc, &sourcePoint, 0, &blend, ULW_ALPHA);
-    SetWindowPos(hintHwnd_, HWND_TOPMOST, 0, 0, 0, 0,
-        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
-            SWP_NOOWNERZORDER | SWP_SHOWWINDOW);
-
-    SelectObject(memoryDc, oldMFont);
-    SelectObject(memoryDc, oldBmp);
+    SelectObject(memoryDc, oldMemoryFont);
+    SelectObject(memoryDc, oldBitmap);
     DeleteDC(memoryDc);
     DeleteObject(bitmap);
     DeleteObject(font);
     ReleaseDC(nullptr, screenDc);
+
+    if (!updated)
+    {
+        InvalidateDragHintRaster();
+        HideDragHintWindow();
+        return;
+    }
+
+    // Publish only after the layered pixels have been accepted. A failed
+    // render must never make stale pixels eligible for the move-only path.
+    hintTextCache_ = text;
+    hintRasterSize_ = windowSize;
+    hintRasterDpi_ = dpi;
+    hintRasterValid_ = true;
+    SetWindowPos(hintHwnd_, nullptr, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
+            SWP_NOOWNERZORDER | SWP_NOZORDER |
+            SWP_NOSENDCHANGING | SWP_SHOWWINDOW);
 }
-
-// ── Widget context menu ────────────────────────────────────
-
-/**
- * @brief 显示 Lua 小部件的编辑器宿主页
- * @param widgetIndex 小部件索引
- */
