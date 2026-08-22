@@ -213,16 +213,32 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         const RECT bounds = GetStandaloneWidgetFrameRect(*widgetData);
         const LONG rawWidth = bounds.right - bounds.left;
         const LONG rawHeight = bounds.bottom - bounds.top;
+        constexpr LONG surfaceOverdraw = static_cast<LONG>(
+            snowdesktop::widget_composition_layer_rules::
+                kWidgetSurfaceBorderOverdraw);
+        constexpr LONG maximumLogicalSurfaceDimension =
+            static_cast<LONG>(kMaximumWidgetSurfaceDimension) -
+            surfaceOverdraw * 2;
         if (rawWidth <= 0 || rawHeight <= 0 ||
-            rawWidth > static_cast<LONG>(kMaximumWidgetSurfaceDimension) ||
-            rawHeight > static_cast<LONG>(kMaximumWidgetSurfaceDimension))
+            rawWidth > maximumLogicalSurfaceDimension ||
+            rawHeight > maximumLogicalSurfaceDimension)
         {
             surfaceFailures.push_back({
                 widgetId, L"Validate bounds", E_INVALIDARG, false });
             continue;
         }
-        const UINT width = static_cast<UINT>(rawWidth);
-        const UINT height = static_cast<UINT>(rawHeight);
+        const LONG surfaceLeft = static_cast<LONG>(
+            snowdesktop::widget_composition_layer_rules::
+                WidgetSurfaceOrigin(bounds.left));
+        const LONG surfaceTop = static_cast<LONG>(
+            snowdesktop::widget_composition_layer_rules::
+                WidgetSurfaceOrigin(bounds.top));
+        const UINT width = static_cast<UINT>(
+            snowdesktop::widget_composition_layer_rules::
+                WidgetSurfaceExtent(rawWidth));
+        const UINT height = static_cast<UINT>(
+            snowdesktop::widget_composition_layer_rules::
+                WidgetSurfaceExtent(rawHeight));
         auto& item = composition->second;
         const RECT oldBounds = item.bounds;
         const bool boundsChanged = !SameRect(oldBounds, bounds);
@@ -265,8 +281,8 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         context->SetDpi(96.0f, 96.0f);
         context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
         context->SetTransform(D2D1::Matrix3x2F::Translation(
-            static_cast<float>(updateOffset.x - bounds.left),
-            static_cast<float>(updateOffset.y - bounds.top)));
+            static_cast<float>(updateOffset.x - surfaceLeft),
+            static_cast<float>(updateOffset.y - surfaceTop)));
         context->Clear(D2D1::ColorF(0, 0, 0, 0));
 
         desktopWidgetCompositionDrawInProgress_ = true;
@@ -350,9 +366,9 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         item.bounds = bounds;
         hr = item.visual->SetContent(item.surface.Get());
         if (SUCCEEDED(hr))
-            hr = item.visual->SetOffsetX(static_cast<float>(bounds.left));
+            hr = item.visual->SetOffsetX(static_cast<float>(surfaceLeft));
         if (SUCCEEDED(hr))
-            hr = item.visual->SetOffsetY(static_cast<float>(bounds.top));
+            hr = item.visual->SetOffsetY(static_cast<float>(surfaceTop));
         if (SUCCEEDED(hr))
             hr = item.clip->SetRight(
                 item.visible ? static_cast<float>(width) : 0.0f);

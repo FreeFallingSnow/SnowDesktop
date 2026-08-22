@@ -224,11 +224,17 @@ bool DesktopApp::FlushPendingWidgetMarqueeComposition()
             if (SUCCEEDED(hr))
                 hr = item.clipVisual->SetOffsetX(
                     marquee.viewport.left -
-                    static_cast<float>(parent->second.bounds.left));
+                    static_cast<float>(snowdesktop::
+                        widget_composition_layer_rules::
+                            WidgetSurfaceOrigin(
+                                parent->second.bounds.left)));
             if (SUCCEEDED(hr))
                 hr = item.clipVisual->SetOffsetY(
                     marquee.viewport.top -
-                    static_cast<float>(parent->second.bounds.top));
+                    static_cast<float>(snowdesktop::
+                        widget_composition_layer_rules::
+                            WidgetSurfaceOrigin(
+                                parent->second.bounds.top)));
             if (SUCCEEDED(hr))
                 hr = item.textVisual->SetOffsetY(0.0f);
             if (SUCCEEDED(hr))

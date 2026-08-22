@@ -64,6 +64,11 @@ int main(int argc, char** argv)
         "a hidden widget must hide its child surface");
     Check(!rules::ShouldPresentWidgetSurface(true, true),
         "a move or resize preview source must hide its child surface");
+    Check(rules::kWidgetSurfaceBorderOverdraw == 2 &&
+            rules::WidgetSurfaceOrigin(120) == 118 &&
+            rules::WidgetSurfaceOrigin(-120) == -122 &&
+            rules::WidgetSurfaceExtent(80) == 84,
+        "compact widget surfaces must reserve two pixels around every border");
 
     using rules::PointerVisualLayer;
     Check(rules::NeedsWidgetSurfaceRefresh(
@@ -262,6 +267,14 @@ int main(int argc, char** argv)
                     "pendingDesktopWidgetCompositions_.insert(failure.widgetId)") !=
                     std::string::npos,
             "one widget draw failure must recreate only its child surface");
+        Check(composition.find(
+                "WidgetSurfaceExtent(rawWidth)") != std::string::npos &&
+                composition.find(
+                    "WidgetSurfaceOrigin(bounds.left)") !=
+                    std::string::npos &&
+                marquee.find(
+                    "WidgetSurfaceOrigin(") != std::string::npos,
+            "widget content and child marquees must share the padded surface origin");
 
         const std::size_t rootZOrderBegin = foreground.find(
             "HRESULT DesktopApp::SyncDesktopCompositionRootZOrder()");
