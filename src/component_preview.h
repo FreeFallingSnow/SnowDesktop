@@ -127,6 +127,8 @@ public:
     Window(const Window&) = delete;
     Window& operator=(const Window&) = delete;
 
+    /** Start the menu-scoped Wallpaper Engine capture before a preview opens. */
+    void PrefetchDesktopWallpaperBackdrop(HWND owner, POINT screenPoint);
     bool Show(const Model& model, const RECT& menuBounds,
         HWND owner, UINT dpi, bool lightTheme,
         ApplyHandler onApply = {}, const RECT& itemBounds = {},
@@ -164,9 +166,15 @@ public:
     bool BlurEnabledForTesting() const { return blurEnabled_; }
 
 private:
+    enum class WallpaperBackdropLoadResult
+    {
+        Ready,
+        WaitingForCapture,
+    };
+
     bool EnsureCreated(HWND owner);
     bool RenderCurrent();
-    bool LoadDesktopWallpaperBackdrop();
+    WallpaperBackdropLoadResult LoadDesktopWallpaperBackdrop();
     void StartWallpaperEngineBackdropCapture(const RECT& monitorBounds);
     void FinishWallpaperEngineBackdropCapture(std::uint64_t generation);
     void CancelWallpaperEngineBackdropCapture(bool wait);
@@ -228,6 +236,7 @@ private:
         std::atomic_bool cancelled = false;
         std::mutex mutex;
         widget_preview::Wallpaper wallpaper;
+        RECT requestedBounds{};
         RECT desktopBounds{};
         std::uint64_t generation = 0;
         bool completed = false;
@@ -237,7 +246,11 @@ private:
     std::thread wallpaperEngineCaptureThread_;
     std::uint64_t wallpaperEngineCaptureGeneration_ = 0;
     std::shared_ptr<const widget_preview::Wallpaper>
+        wallpaperEngineCache_;
+    RECT wallpaperEngineCacheBounds_{};
+    std::shared_ptr<const widget_preview::Wallpaper>
         desktopWallpaperEngineFrame_;
+    bool waitingForWallpaperEngineFrame_ = false;
     std::vector<POINT> committedPositions_;
 };
 

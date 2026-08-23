@@ -35,41 +35,6 @@ constexpr UINT_PTR kHideTimer = 2;
 constexpr UINT kWallpaperEngineFrameReady = WM_APP + 0x349;
 constexpr DWORD kWallpaperEngineCaptureTimeoutMs = 2500;
 
-struct WallpaperEngineFrameCache
-{
-    std::mutex mutex;
-    std::shared_ptr<const widget_preview::Wallpaper> wallpaper;
-    RECT desktopBounds{};
-};
-
-WallpaperEngineFrameCache& AppWallpaperEngineFrameCache()
-{
-    static WallpaperEngineFrameCache cache;
-    return cache;
-}
-
-std::shared_ptr<const widget_preview::Wallpaper>
-LoadCachedWallpaperEngineFrame(const RECT& desktopBounds)
-{
-    auto& cache = AppWallpaperEngineFrameCache();
-    std::lock_guard lock(cache.mutex);
-    if (!cache.wallpaper || cache.wallpaper->pixels.empty() ||
-        !EqualRect(&cache.desktopBounds, &desktopBounds))
-        return {};
-    return cache.wallpaper;
-}
-
-void StoreCachedWallpaperEngineFrame(
-    std::shared_ptr<const widget_preview::Wallpaper> wallpaper,
-    const RECT& desktopBounds)
-{
-    if (!wallpaper || wallpaper->pixels.empty()) return;
-    auto& cache = AppWallpaperEngineFrameCache();
-    std::lock_guard lock(cache.mutex);
-    cache.wallpaper = std::move(wallpaper);
-    cache.desktopBounds = desktopBounds;
-}
-
 struct ScopedComApartment
 {
     ScopedComApartment()
@@ -494,6 +459,19 @@ Window::~Window()
     Close();
 }
 
+void Window::PrefetchDesktopWallpaperBackdrop(
+    HWND owner, POINT screenPoint)
+{
+    if (!EnsureCreated(owner)) return;
+    const HMONITOR selectedMonitor = MonitorFromPoint(
+        screenPoint, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO monitor{ sizeof(monitor) };
+    if (!selectedMonitor ||
+        !GetMonitorInfoW(selectedMonitor, &monitor))
+        return;
+    StartWallpaperEngineBackdropCapture(monitor.rcMonitor);
+}
+
 bool Window::EnsureCreated(HWND owner)
 {
     static const bool registered = [] {
@@ -547,6 +525,7 @@ bool Window::Show(const Model& model, const RECT& menuBounds,
         effectiveAppearance);
     onApply_ = std::move(onApply);
     componentHovered_ = false;
+    waitingForWallpaperEngineFrame_ = false;
     currentCard_ = std::min(currentCard_, model_.cards.size() - 1);
     if (!IsWindowVisible(hwnd_))
     {
@@ -557,7 +536,15 @@ bool Window::Show(const Model& model, const RECT& menuBounds,
                 [](const Card& value) {
                     return value.useDesktopWallpaperStage;
                 }))
-            LoadDesktopWallpaperBackdrop();
+        {
+            if (LoadDesktopWallpaperBackdrop() ==
+                WallpaperBackdropLoadResult::WaitingForCapture)
+            {
+                waitingForWallpaperEngineFrame_ = true;
+                ApplyWindowAppearance();
+                return true;
+            }
+        }
     }
     ApplyWindowAppearance();
     if (!RenderCurrent())
@@ -625,6 +612,7 @@ void Window::ScheduleHide()
     if (!hwnd_ || !IsWindow(hwnd_)) return;
     KillTimer(hwnd_, kOpenTimer);
     pendingModel_ = {};
+    waitingForWallpaperEngineFrame_ = false;
     if (IsWindowVisible(hwnd_))
         SetTimer(hwnd_, kHideTimer,
             modern_menu::kSubmenuCloseDelayMs, nullptr);
@@ -634,13 +622,13 @@ void Window::Hide()
 {
     if (hwnd_ && IsWindow(hwnd_))
     {
-        CancelWallpaperEngineBackdropCapture(false);
         KillTimer(hwnd_, kHideTimer);
         KillTimer(hwnd_, kOpenTimer);
         ShowWindow(hwnd_, SW_HIDE);
         desktopWallpaper_ = {};
         desktopWallpaperBounds_ = {};
         desktopWallpaperEngineFrame_.reset();
+        waitingForWallpaperEngineFrame_ = false;
     }
 }
 
@@ -658,7 +646,10 @@ void Window::Close()
     pendingOnApply_ = {};
     desktopWallpaper_ = {};
     desktopWallpaperBounds_ = {};
+    wallpaperEngineCache_.reset();
+    wallpaperEngineCacheBounds_ = {};
     desktopWallpaperEngineFrame_.reset();
+    waitingForWallpaperEngineFrame_ = false;
 }
 
 RECT Window::OptionBoundsForTesting(
@@ -688,7 +679,8 @@ std::wstring Window::ModelIdentity(const Model& model) const
     return result;
 }
 
-bool Window::LoadDesktopWallpaperBackdrop()
+Window::WallpaperBackdropLoadResult
+Window::LoadDesktopWallpaperBackdrop()
 {
     const POINT anchor{
         (menuBounds_.left + menuBounds_.right) / 2,
@@ -698,18 +690,46 @@ bool Window::LoadDesktopWallpaperBackdrop()
         MONITOR_DEFAULTTONEAREST);
     MONITORINFO monitor{ sizeof(monitor) };
     if (!selectedMonitor || !GetMonitorInfoW(selectedMonitor, &monitor))
-        return false;
+        return WallpaperBackdropLoadResult::Ready;
     const int width = monitor.rcMonitor.right - monitor.rcMonitor.left;
     const int height = monitor.rcMonitor.bottom - monitor.rcMonitor.top;
-    if (width <= 0 || height <= 0) return false;
+    if (width <= 0 || height <= 0)
+        return WallpaperBackdropLoadResult::Ready;
 
-    desktopWallpaperEngineFrame_ =
-        LoadCachedWallpaperEngineFrame(monitor.rcMonitor);
-    if (desktopWallpaperEngineFrame_)
+    if (wallpaperEngineCaptureState_)
     {
+        bool completed = false;
+        std::uint64_t generation = 0;
+        {
+            std::lock_guard lock(wallpaperEngineCaptureState_->mutex);
+            completed = wallpaperEngineCaptureState_->completed;
+            generation = wallpaperEngineCaptureState_->generation;
+        }
+        if (completed)
+            FinishWallpaperEngineBackdropCapture(generation);
+    }
+
+    if (wallpaperEngineCache_ &&
+        EqualRect(&wallpaperEngineCacheBounds_, &monitor.rcMonitor))
+    {
+        desktopWallpaperEngineFrame_ = wallpaperEngineCache_;
         desktopWallpaperBounds_ = monitor.rcMonitor;
-        StartWallpaperEngineBackdropCapture(monitor.rcMonitor);
-        return true;
+        return WallpaperBackdropLoadResult::Ready;
+    }
+
+    if (wallpaperEngineCaptureState_)
+    {
+        bool completed = false;
+        RECT requestedBounds{};
+        {
+            std::lock_guard lock(wallpaperEngineCaptureState_->mutex);
+            completed = wallpaperEngineCaptureState_->completed;
+            requestedBounds =
+                wallpaperEngineCaptureState_->requestedBounds;
+        }
+        if (!completed &&
+            EqualRect(&requestedBounds, &monitor.rcMonitor))
+            return WallpaperBackdropLoadResult::WaitingForCapture;
     }
 
     StaticWallpaperSettings settings = ReadLegacyWallpaperSettings();
@@ -800,8 +820,7 @@ bool Window::LoadDesktopWallpaperBackdrop()
             ToOpaquePixel(settings.backgroundColor));
     }
     desktopWallpaperBounds_ = monitor.rcMonitor;
-    StartWallpaperEngineBackdropCapture(monitor.rcMonitor);
-    return !desktopWallpaper_.pixels.empty();
+    return WallpaperBackdropLoadResult::Ready;
 }
 
 void Window::StartWallpaperEngineBackdropCapture(
@@ -826,6 +845,7 @@ void Window::StartWallpaperEngineBackdropCapture(
 
     auto state = std::make_shared<WallpaperEngineCaptureState>();
     state->generation = ++wallpaperEngineCaptureGeneration_;
+    state->requestedBounds = monitorBounds;
     wallpaperEngineCaptureState_ = state;
     const HWND notifyWindow = hwnd_;
     wallpaperEngineCaptureThread_ = std::thread(
@@ -879,16 +899,32 @@ void Window::FinishWallpaperEngineBackdropCapture(
     if (wallpaperEngineCaptureThread_.joinable())
         wallpaperEngineCaptureThread_.join();
     wallpaperEngineCaptureState_.reset();
-    if (!apply || !hwnd_ || !IsWindowVisible(hwnd_))
+    const bool waitingForFrame = waitingForWallpaperEngineFrame_;
+    waitingForWallpaperEngineFrame_ = false;
+    if (apply)
+    {
+        auto sharedWallpaper =
+            std::make_shared<widget_preview::Wallpaper>(
+                std::move(wallpaper));
+        wallpaperEngineCache_ = sharedWallpaper;
+        wallpaperEngineCacheBounds_ = desktopBounds;
+        if (hwnd_ &&
+            (IsWindowVisible(hwnd_) || waitingForFrame))
+        {
+            desktopWallpaper_ = {};
+            desktopWallpaperEngineFrame_ =
+                std::move(sharedWallpaper);
+            desktopWallpaperBounds_ = desktopBounds;
+            if (RenderCurrent() && waitingForFrame)
+                ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+        }
         return;
-    auto sharedWallpaper =
-        std::make_shared<widget_preview::Wallpaper>(std::move(wallpaper));
-    desktopWallpaper_ = {};
-    desktopWallpaperEngineFrame_ = sharedWallpaper;
-    desktopWallpaperBounds_ = desktopBounds;
-    StoreCachedWallpaperEngineFrame(
-        std::move(sharedWallpaper), desktopBounds);
-    RenderCurrent();
+    }
+    if (!waitingForFrame || !hwnd_ || model_.Empty())
+        return;
+    LoadDesktopWallpaperBackdrop();
+    if (RenderCurrent())
+        ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
 }
 
 void Window::CancelWallpaperEngineBackdropCapture(bool wait)

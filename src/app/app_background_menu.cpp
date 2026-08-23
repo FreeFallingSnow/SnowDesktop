@@ -346,6 +346,34 @@ UINT AddCommandForPreviewCommand(UINT command)
     return 0;
 }
 
+bool IsAddWidgetMenuCommand(UINT command)
+{
+    if (AddCommandForPreviewCommand(command) != 0)
+        return true;
+    if (command >= kContextAddLuaWidgetFirst &&
+        command < kContextAddLuaWidgetFirst +
+            static_cast<UINT>(kLuaWidgetMenuPageSize))
+        return true;
+    switch (command)
+    {
+    case kContextAddCollectionWidget:
+    case kContextAddCollectionGroupWidget:
+    case kContextAddFileGroupWidget:
+    case kContextAddFileCategoryWidget:
+    case kContextAddFolderMappingWidget:
+    case kContextAddLuaWidgetSearch:
+    case kContextAddLuaWidgetFilterAll:
+    case kContextAddLuaWidgetFilterBuiltin:
+    case kContextAddLuaWidgetFilterInstalled:
+    case kContextAddLuaWidgetFilterDevelopment:
+    case kContextAddLuaWidgetPreviousPage:
+    case kContextAddLuaWidgetNextPage:
+        return true;
+    default:
+        return false;
+    }
+}
+
 bool ReplaceAddWidgetSubmenu(
     std::vector<snowdesktop::modern_menu::Item>& rootItems,
     std::vector<snowdesktop::modern_menu::Item> replacement)
@@ -1182,6 +1210,8 @@ void DesktopApp::ShowAddWidgetMenu(POINT screenPoint)
 {
     lastContextMenuScreenPoint_ = screenPoint;
     PrepareMenuIconsForPoint(screenPoint);
+    snowdesktop::component_preview::Window previewWindow;
+    previewWindow.PrefetchDesktopWallpaperBackdrop(hwnd_, screenPoint);
     const auto allLuaWidgets = BuildLuaWidgetMenuEntries();
     std::wstring luaSearch;
     LuaWidgetMenuFilter luaFilter = LuaWidgetMenuFilter::All;
@@ -1190,7 +1220,6 @@ void DesktopApp::ShowAddWidgetMenu(POINT screenPoint)
     size_t luaPage = 0;
     auto items = BuildAddWidgetMenuItems(
         allLuaWidgets, luaWidgets, luaPage, luaSearch, luaFilter);
-    snowdesktop::component_preview::Window previewWindow;
     UINT previewCacheCommand = 0;
     std::wstring previewCachePackage;
     snowdesktop::component_preview::Model previewCache;
@@ -1253,7 +1282,7 @@ void DesktopApp::ShowAddWidgetMenu(POINT screenPoint)
             luaPage = 0;
             luaWidgets = FilterLuaWidgetMenuEntries(
                 allLuaWidgets, luaSearch, luaFilter);
-            previewWindow.Close();
+            previewWindow.Hide();
             previewCacheCommand = 0;
             previewCachePackage.clear();
             previewCache = {};
@@ -1284,7 +1313,7 @@ void DesktopApp::ShowAddWidgetMenu(POINT screenPoint)
         luaPage = 0;
         luaWidgets = FilterLuaWidgetMenuEntries(
             allLuaWidgets, luaSearch, luaFilter);
-        previewWindow.Close();
+        previewWindow.Hide();
         previewCacheCommand = 0;
         previewCachePackage.clear();
         previewCache = {};
@@ -1724,6 +1753,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     gridAdjustmentMenuAnchorValid_ = false;
     SetForegroundWindow(hwnd_);
     snowdesktop::component_preview::Window previewWindow;
+    bool wallpaperPrefetchStarted = false;
     UINT previewCacheCommand = 0;
     std::wstring previewCachePackage;
     snowdesktop::component_preview::Model previewCache;
@@ -1777,7 +1807,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             luaPage = 0;
             luaWidgets = FilterLuaWidgetMenuEntries(
                 allLuaWidgets, luaSearch, luaFilter);
-            previewWindow.Close();
+            previewWindow.Hide();
             previewCacheCommand = 0;
             previewCachePackage.clear();
             previewCache = {};
@@ -1808,7 +1838,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         luaPage = 0;
         luaWidgets = FilterLuaWidgetMenuEntries(
             allLuaWidgets, luaSearch, luaFilter);
-        previewWindow.Close();
+        previewWindow.Hide();
         previewCacheCommand = 0;
         previewCachePackage.clear();
         previewCache = {};
@@ -1817,6 +1847,19 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
                 luaPage, luaSearch, luaFilter));
     };
     auto previewWidgetMenuItem = [&](const snowdesktop::modern_menu::HoverInfo& hover) {
+        if (!wallpaperPrefetchStarted &&
+            IsAddWidgetMenuCommand(hover.command))
+        {
+            const POINT capturePoint{
+                (hover.popupScreenRect.left +
+                    hover.popupScreenRect.right) / 2,
+                (hover.popupScreenRect.top +
+                    hover.popupScreenRect.bottom) / 2,
+            };
+            previewWindow.PrefetchDesktopWallpaperBackdrop(
+                hwnd_, capturePoint);
+            wallpaperPrefetchStarted = true;
+        }
         if (hover.command != 0)
             previewAnchor = hover;
     };
