@@ -182,8 +182,12 @@ void DesktopApp::DrawCollectionPopup(
                 widget.folderSortAscending
                     ? L" ↑" : L" ↓";
         }
+        RECT sortTextRect = sortRect;
+        OffsetRect(
+            &sortTextRect, 0,
+            headerBounds.sortLabelOffsetY);
         DrawD2DTextEllipsis(
-            ctx, sortLabel, sortRect,
+            ctx, sortLabel, sortTextRect,
             itemTextFormat_.Get(),
             popupTextColor(0.88f),
             DWRITE_TEXT_ALIGNMENT_CENTER,

@@ -575,7 +575,11 @@ int main(int argc, char** argv)
                 headerBounds.titleTop + headerBounds.titleBottom -
                 headerBounds.sortButtonTop -
                 headerBounds.sortButtonBottom) <= 1,
-            "folder popup title and sort label must share a vertical center");
+            "folder popup title and sort button must share a vertical center");
+        Check(
+            headerBounds.sortLabelOffsetY ==
+                popupLayout::ScaleDimension(2, scale),
+            "folder popup sort labels must retain their downward optical offset");
     }
     Check(
         popupLayout::AllowsMarqueeStart(

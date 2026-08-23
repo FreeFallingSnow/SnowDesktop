@@ -34,6 +34,7 @@ struct HeaderVerticalBounds
     int titleBottom = 44;
     int sortButtonTop = 14;
     int sortButtonBottom = 48;
+    int sortLabelOffsetY = 2;
 };
 
 inline int ScaleDimension(int value, float scale)
@@ -54,6 +55,7 @@ inline HeaderVerticalBounds ResolveHeaderVerticalBounds(float scale)
     result.sortButtonTop = result.titleTop +
         (result.titleBottom - result.titleTop - sortButtonHeight) / 2;
     result.sortButtonBottom = result.sortButtonTop + sortButtonHeight;
+    result.sortLabelOffsetY = ScaleDimension(2, scale);
     return result;
 }
 
