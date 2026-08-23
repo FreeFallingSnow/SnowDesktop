@@ -36,6 +36,26 @@ inline HotEdgeRailVisibility ResolveHotEdgeRailVisibility(
     };
 }
 
+inline bool NeedsDragHintPresent(
+    bool dragging,
+    int currentSide,
+    const RECT& currentBounds,
+    int presentedSide,
+    const RECT& presentedBounds) noexcept
+{
+    if (!dragging)
+    {
+        currentSide = 0;
+    }
+    else if (currentSide != -1 && currentSide != 1)
+    {
+        currentSide = 0;
+    }
+
+    return currentSide != presentedSide ||
+        !EqualRect(&currentBounds, &presentedBounds);
+}
+
 inline int HotEdgeWidth(UINT dpi) noexcept
 {
     return std::max(1, MulDiv(

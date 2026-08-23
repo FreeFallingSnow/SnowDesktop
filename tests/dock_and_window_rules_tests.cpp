@@ -188,6 +188,22 @@ int main(int argc, char** argv)
                 !boundaryDragRails.next &&
                 !passiveRail.previous && passiveRail.next,
             "dragging must reveal every available page rail before the pointer reaches an edge");
+        const RECT dragHintAtTop{ 120, 100, 480, 144 };
+        const RECT dragHintLower{ 120, 130, 480, 174 };
+        const RECT hiddenDragHint{};
+        Check(!pageNavigation::NeedsDragHintPresent(
+                    true, -1, dragHintAtTop,
+                    -1, dragHintAtTop) &&
+                pageNavigation::NeedsDragHintPresent(
+                    true, -1, dragHintLower,
+                    -1, dragHintAtTop) &&
+                pageNavigation::NeedsDragHintPresent(
+                    true, 0, hiddenDragHint,
+                    -1, dragHintAtTop) &&
+                pageNavigation::NeedsDragHintPresent(
+                    false, 0, hiddenDragHint,
+                    -1, dragHintAtTop),
+            "drag dwell hints must redraw when their bounds move or when the hint disappears");
         Check(pageNavigation::ShortcutMatches(
                 MOD_CONTROL, VK_PRIOR,
                 MOD_CONTROL, VK_PRIOR) &&
@@ -4215,6 +4231,26 @@ int main(int argc, char** argv)
                 immediateDragHint != std::string::npos &&
                 dragDwellText != std::string::npos,
             "dragging must show available rails before edge entry and reveal the dwell-to-page hint immediately on entry");
+        const std::size_t movingDragHint =
+            dragLifecycleSource.find(
+                "NeedsDragHintPresent(");
+        const std::size_t clearOldDragHint =
+            dragLifecycleSource.find(
+                "addDirty(presentedDragNavHintBounds_);",
+                movingDragHint);
+        const std::size_t drawNewDragHint =
+            dragLifecycleSource.find(
+                "addDirty(pageNavDragHintBounds);",
+                clearOldDragHint);
+        const std::size_t presentMovingDragHint =
+            dragLifecycleSource.find(
+                "PresentDesktopForegroundComposition(dirty);",
+                drawNewDragHint);
+        Check(movingDragHint != std::string::npos &&
+                clearOldDragHint != std::string::npos &&
+                drawNewDragHint != std::string::npos &&
+                presentMovingDragHint != std::string::npos,
+            "moving a drag dwell hint must redraw both its old and new bounds to prevent trails");
         const std::size_t desktopLeaveBegin =
             messageDispatchSource.find(
                 "case WM_MOUSELEAVE:");

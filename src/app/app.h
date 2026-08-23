@@ -3263,6 +3263,8 @@ private:
         BestCellEntry bestDropCellCache_;
     std::uint64_t presentedDragFeedbackRevision_ = 0;
     int presentedDragNavHoverSide_ = 0;
+    int presentedDragNavHintSide_ = 0;
+    RECT presentedDragNavHintBounds_{};
     int dragGroupOriginX_ = 0;
     int dragGroupOriginY_ = 0;
     // ── 拖放预览缓存（避免每帧重建 BuildDropPreviewList） ──

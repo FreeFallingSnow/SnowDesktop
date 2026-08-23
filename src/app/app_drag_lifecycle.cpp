@@ -1,5 +1,6 @@
 #include "app.h"
 #include "../drag_visual_rules.h"
+#include "../page_navigation_rules.h"
 #include "../widget_visibility_rules.h"
 
 // Drag-scene invalidation, presentation and session teardown.
@@ -87,6 +88,28 @@ void DesktopApp::PresentPointerInteractionFrame(
         widgetAction_ == WidgetAction::Move ||
         widgetAction_ == WidgetAction::Resize;
     const bool itemDragActive = dragSession_.IsActive();
+    const bool pageNavDragActive =
+        widgetAction_ == WidgetAction::Move ||
+        itemDragActive ||
+        dragDropController_.IsTransportActive();
+    const int pageNavDragHintSide =
+        pageNavDragActive && navHotEdgeHover_ &&
+            (navHoverSide_ == -1 || navHoverSide_ == 1)
+        ? navHoverSide_
+        : 0;
+    RECT pageNavDragHintBounds{};
+    if (pageNavDragHintSide != 0)
+    {
+        pageNavDragHintBounds = GetPageNavHotEdgeHintBounds(
+            pageNavDragHintSide, lastMousePoint_);
+    }
+    const bool pageNavDragHintChanged =
+        snowdesktop::page_navigation_rules::NeedsDragHintPresent(
+            pageNavDragActive,
+            pageNavDragHintSide,
+            pageNavDragHintBounds,
+            presentedDragNavHintSide_,
+            presentedDragNavHintBounds_);
     const std::uint64_t feedbackRevision =
         itemDragActive
             ? dragSession_.PresentationRevision()
@@ -166,6 +189,57 @@ void DesktopApp::PresentPointerInteractionFrame(
         InvalidateRect(hwnd_, nullptr, FALSE);
         PresentDesktopPointerUpdate();
         desktopFallbackPresented = true;
+    }
+    bool pageNavDragHintPresented =
+        pageNavDragHintChanged &&
+        ((widgetPreviewActive && widgetDragFeedbackChanged &&
+             widgetInteractionPresented) ||
+            desktopFallbackPresented);
+    if (pageNavDragHintChanged &&
+        !pageNavDragHintPresented &&
+        hwnd_ && IsWindow(hwnd_))
+    {
+        RECT dirty{};
+        bool hasDirty = false;
+        const auto addDirty = [&](const RECT& bounds) {
+            if (IsRectEmptyRect(bounds))
+                return;
+            if (!hasDirty)
+            {
+                dirty = bounds;
+                hasDirty = true;
+            }
+            else
+            {
+                RECT merged{};
+                UnionRect(&merged, &dirty, &bounds);
+                dirty = merged;
+            }
+        };
+        addDirty(presentedDragNavHintBounds_);
+        addDirty(pageNavDragHintBounds);
+        if (hasDirty)
+        {
+            InflateRect(&dirty, 4, 4);
+            pageNavDragHintPresented =
+                PresentDesktopForegroundComposition(dirty);
+            if (!pageNavDragHintPresented)
+            {
+                InvalidateRect(hwnd_, &dirty, FALSE);
+                PresentDesktopPointerUpdate();
+                pageNavDragHintPresented = true;
+                desktopFallbackPresented = true;
+            }
+        }
+        else
+        {
+            pageNavDragHintPresented = true;
+        }
+    }
+    if (pageNavDragHintChanged && pageNavDragHintPresented)
+    {
+        presentedDragNavHintSide_ = pageNavDragHintSide;
+        presentedDragNavHintBounds_ = pageNavDragHintBounds;
     }
     if (widgetPreviewActive && widgetDragFeedbackChanged &&
         (widgetInteractionPresented || desktopFallbackPresented))
