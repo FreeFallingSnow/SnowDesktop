@@ -1,15 +1,20 @@
 #include "widget_audio_analysis_provider.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <numbers>
 #include <thread>
+#include <vector>
 
 namespace
 {
 using namespace std::chrono_literals;
 using snowdesktop::widget_runtime::ProjectWidgetAudioAnalysisSnapshot;
+using snowdesktop::widget_runtime::ComputeWidgetAudioSpectrum;
 using snowdesktop::widget_runtime::WidgetAudioAnalysisConfiguration;
 using snowdesktop::widget_runtime::WidgetAudioAnalysisDataSnapshot;
 using snowdesktop::widget_runtime::WidgetAudioAnalysisProvider;
@@ -32,6 +37,50 @@ bool WaitFor(Predicate predicate)
         std::this_thread::sleep_for(10ms);
     }
     return predicate();
+}
+
+std::vector<double> SineWave(double frequency, std::size_t sampleCount)
+{
+    constexpr double SampleRate = 48000.0;
+    std::vector<double> samples(sampleCount);
+    for (std::size_t index = 0; index < sampleCount; ++index)
+    {
+        samples[index] = 0.8 * std::sin(2.0 * std::numbers::pi *
+            frequency * static_cast<double>(index) / SampleRate);
+    }
+    return samples;
+}
+
+std::size_t PeakIndex(const std::vector<double>& values)
+{
+    return static_cast<std::size_t>(std::distance(values.begin(),
+        std::max_element(values.begin(), values.end())));
+}
+
+void TestLogarithmicSpectrumDistribution()
+{
+    const auto bass = ComputeWidgetAudioSpectrum(
+        SineWave(100.0, 4096), 48000, 64);
+    const auto mid = ComputeWidgetAudioSpectrum(
+        SineWave(1000.0, 4096), 48000, 64);
+    const auto treble = ComputeWidgetAudioSpectrum(
+        SineWave(8000.0, 4096), 48000, 64);
+    const auto bassPeak = PeakIndex(bass);
+    const auto midPeak = PeakIndex(mid);
+    const auto treblePeak = PeakIndex(treble);
+    Check(bass.size() == 64 && mid.size() == 64 && treble.size() == 64,
+        "spectrum analysis must return the requested number of bands");
+    Check(bassPeak >= 5 && bassPeak <= 18 &&
+            midPeak >= 26 && midPeak <= 43 &&
+            treblePeak >= 50 && treblePeak <= 62 &&
+            bassPeak < midPeak && midPeak < treblePeak,
+        "logarithmic bands must spread bass, midrange, and treble across the width");
+    for (const auto* values : { &bass, &mid, &treble })
+    {
+        for (const double value : *values)
+            Check(value >= 0.0 && value <= 1.0,
+                "logarithmic spectrum bands must remain normalized");
+    }
 }
 
 void TestOnDemandCaptureLifecycle()
@@ -120,6 +169,7 @@ void TestSubscriptionProjection()
 
 int main()
 {
+    TestLogarithmicSpectrumDistribution();
     TestSubscriptionProjection();
     TestOnDemandCaptureLifecycle();
     std::cout << "widget audio analysis provider tests passed\n";

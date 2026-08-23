@@ -177,30 +177,43 @@ local function spectrumNode(model)
     local padding = math.max(layout.cu(4), math.min(
         layout.cu(10), layout.vmin(5)))
     local values = spectrum.display(model.values, model.barCount)
-    local common = {
-        key = "audio-spectrum.bars",
-        values = values,
-        width = "fill",
-        height = "fill",
-        padding = padding,
-        fillOpacity = 0.94,
-        style = dataSeriesStyle(model),
-        accessibility = dataSeriesAccessibility(false),
-    }
     local plan = spectrum.seriesPlan(model.alignment)
-    common.min = plan.minimum
-    common.max = plan.maximum
-    if plan.negate then
-        common.values = spectrum.negate(values)
-    end
-    if plan.renderer == "spectrum" then
-        return view.spectrum(common)
+    local function properties(key, seriesValues, hidden, trackOpacity)
+        return {
+            key = key,
+            values = seriesValues,
+            width = "fill",
+            height = "fill",
+            padding = padding,
+            fillOpacity = 0.94,
+            trackOpacity = trackOpacity,
+            min = plan.minimum,
+            max = plan.maximum,
+            style = dataSeriesStyle(model),
+            accessibility = dataSeriesAccessibility(hidden),
+        }
     end
 
-    -- Center alignment keeps one simple set of bars. A symmetric mirrored
-    -- chart doubles every sample and makes the spectrum look like a waveform;
-    -- using the chart's zero baseline places the same bars at mid-height.
-    return view.barChart(common)
+    if plan.renderer == "spectrum" then
+        return view.spectrum(properties(
+            "audio-spectrum.bars", values, false, nil))
+    end
+
+    if plan.negate then values = spectrum.negate(values) end
+    local primary = view.barChart(properties(
+        "audio-spectrum.bars", values, false, 1))
+    if not plan.mirror then return primary end
+
+    return view.stack({
+        key = "audio-spectrum.centered",
+        width = "fill",
+        height = "fill",
+        children = {
+            primary,
+            view.barChart(properties("audio-spectrum.reflection",
+                spectrum.negate(values), true, 0)),
+        },
+    })
 end
 
 local function statusNode(status)

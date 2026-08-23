@@ -28,21 +28,24 @@ return {
         assert(spectrum.alignment("sideways") == "center")
     end,
 
-    ["alignment plans keep one non mirrored bar series"] = function()
+    ["alignment plans mirror only the centered bar series"] = function()
         local bottom = spectrum.seriesPlan("bottom")
         assert(bottom.renderer == "spectrum")
         assert(bottom.minimum == 0 and bottom.maximum == 1)
         assert(bottom.negate == false)
+        assert(bottom.mirror == false)
 
         local center = spectrum.seriesPlan("center")
         assert(center.renderer == "barChart")
         assert(center.minimum == -1 and center.maximum == 1)
         assert(center.negate == false)
+        assert(center.mirror == true)
 
         local top = spectrum.seriesPlan("top")
         assert(top.renderer == "barChart")
         assert(top.minimum == -1 and top.maximum == 0)
         assert(top.negate == true)
+        assert(top.mirror == false)
     end,
 
     ["bar colors are finite rounded rgb values"] = function()

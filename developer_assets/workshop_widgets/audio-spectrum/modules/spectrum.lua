@@ -49,6 +49,7 @@ function M.seriesPlan(value)
             minimum = 0,
             maximum = 1,
             negate = false,
+            mirror = false,
         }
     end
     if alignment == "top" then
@@ -57,6 +58,7 @@ function M.seriesPlan(value)
             minimum = -1,
             maximum = 0,
             negate = true,
+            mirror = false,
         }
     end
     return {
@@ -64,6 +66,7 @@ function M.seriesPlan(value)
         minimum = -1,
         maximum = 1,
         negate = false,
+        mirror = true,
     }
 end
 

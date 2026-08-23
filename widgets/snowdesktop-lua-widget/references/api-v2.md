@@ -1644,7 +1644,8 @@ Windows 友好 `name` 和 `state`；`audio.output.volume` 包含匹配的 `endpo
 `audio.output.analysis` 使用独立 WASAPI loopback 线程。默认 value 返回 128 点
 `waveform`、64 个 `spectrum` bin、`rms/peak/silent/deviceChanged`、不透明
 `endpointId` 及源 `sampleRate/channels`。waveform 已下混为 mono 且限制在 -1–1，
-频谱和电平限制在 0–1；Lua 不取得 PCM、无限历史或每进程音频。
+频谱使用 40 Hz 至 16 kHz（受源 Nyquist 频率限制）的对数频带，使低频、中频和高频在
+可视宽度上按听感展开；频谱和电平限制在 0–1。Lua 不取得 PCM、无限历史或每进程音频。
 
 订阅可通过 `features` 选择 1–4 个不重复的 `waveform/rms/peak/spectrum`；未选择的
 派生字段不会出现在 value 中。`waveformPoints` 为 16–256，`spectrumBins` 为 16–128，

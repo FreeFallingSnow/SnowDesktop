@@ -52,6 +52,10 @@ WidgetAudioAnalysisDataSnapshot ProjectWidgetAudioAnalysisSnapshot(
     const WidgetAudioAnalysisDataSnapshot& snapshot,
     const WidgetAudioAnalysisConfiguration& configuration);
 
+std::vector<double> ComputeWidgetAudioSpectrum(
+    const std::vector<double>& samples, unsigned int sampleRate,
+    std::size_t spectrumBins);
+
 class WidgetAudioAnalysisProvider
 {
 public:

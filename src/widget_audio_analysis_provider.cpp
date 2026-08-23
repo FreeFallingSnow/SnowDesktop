@@ -7,7 +7,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <cstring>
+#include <new>
 #include <numbers>
 #include <utility>
 
@@ -16,6 +18,81 @@ namespace snowdesktop::widget_runtime
 namespace
 {
 using Microsoft::WRL::ComPtr;
+
+constexpr double LowerSpectrumFrequency = 40.0;
+constexpr double UpperSpectrumFrequency = 16000.0;
+constexpr std::size_t MaximumSpectrumWindow = 2048;
+
+class DefaultRenderEndpointNotification final : public IMMNotificationClient
+{
+public:
+    explicit DefaultRenderEndpointNotification(HANDLE eventHandle) noexcept
+        : eventHandle_(eventHandle)
+    {
+    }
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(
+        REFIID interfaceId, void** object) noexcept override
+    {
+        if (!object) return E_POINTER;
+        *object = nullptr;
+        if (interfaceId == __uuidof(IUnknown) ||
+            interfaceId == __uuidof(IMMNotificationClient))
+        {
+            *object = static_cast<IMMNotificationClient*>(this);
+            AddRef();
+            return S_OK;
+        }
+        return E_NOINTERFACE;
+    }
+
+    ULONG STDMETHODCALLTYPE AddRef() noexcept override
+    {
+        return references_.fetch_add(1, std::memory_order_relaxed) + 1;
+    }
+
+    ULONG STDMETHODCALLTYPE Release() noexcept override
+    {
+        const ULONG remaining =
+            references_.fetch_sub(1, std::memory_order_acq_rel) - 1;
+        if (remaining == 0) delete this;
+        return remaining;
+    }
+
+    HRESULT STDMETHODCALLTYPE OnDefaultDeviceChanged(EDataFlow flow,
+        ERole role, LPCWSTR) noexcept override
+    {
+        if (flow == eRender && role == eMultimedia && eventHandle_)
+            SetEvent(eventHandle_);
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE OnDeviceAdded(LPCWSTR) noexcept override
+    {
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE OnDeviceRemoved(LPCWSTR) noexcept override
+    {
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE OnDeviceStateChanged(
+        LPCWSTR, DWORD) noexcept override
+    {
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE OnPropertyValueChanged(
+        LPCWSTR, const PROPERTYKEY) noexcept override
+    {
+        return S_OK;
+    }
+
+private:
+    std::atomic<ULONG> references_{ 1 };
+    HANDLE eventHandle_ = nullptr;
+};
 
 std::int64_t TimestampMilliseconds()
 {
@@ -61,6 +138,38 @@ std::vector<double> Resample(
             (values[right] - values[left]) * fraction;
     }
     return result;
+}
+
+void TransformSpectrum(std::vector<std::complex<double>>& values)
+{
+    const std::size_t count = values.size();
+    for (std::size_t index = 1, reversed = 0; index < count; ++index)
+    {
+        std::size_t bit = count >> 1;
+        for (; reversed & bit; bit >>= 1) reversed ^= bit;
+        reversed ^= bit;
+        if (index < reversed) std::swap(values[index], values[reversed]);
+    }
+    for (std::size_t length = 2; length <= count; length <<= 1)
+    {
+        const double angle = -2.0 * std::numbers::pi /
+            static_cast<double>(length);
+        const std::complex<double> step(
+            std::cos(angle), std::sin(angle));
+        for (std::size_t offset = 0; offset < count; offset += length)
+        {
+            std::complex<double> factor(1.0, 0.0);
+            for (std::size_t index = 0; index < length / 2; ++index)
+            {
+                const auto even = values[offset + index];
+                const auto odd = values[offset + index + length / 2] *
+                    factor;
+                values[offset + index] = even + odd;
+                values[offset + index + length / 2] = even - odd;
+                factor *= step;
+            }
+        }
+    }
 }
 
 std::string OpaqueEndpointId(IMMDevice* endpoint)
@@ -231,33 +340,9 @@ WidgetAudioAnalysisDataSnapshot Analyze(
             total / static_cast<double>(end - begin), -1.0, 1.0);
     }
 
-    const std::size_t fftSize = std::min<std::size_t>(samples.size(), 256);
-    const std::size_t fftStart = samples.size() - fftSize;
-    if (fftSize > 1)
-    {
-        for (std::size_t bin = 0;
-            bin < snapshot.spectrum.size(); ++bin)
-        {
-            double real = 0.0;
-            double imaginary = 0.0;
-            for (std::size_t index = 0; index < fftSize; ++index)
-            {
-                const double window = 0.5 - 0.5 * std::cos(
-                    2.0 * std::numbers::pi * static_cast<double>(index) /
-                    static_cast<double>(fftSize - 1));
-                const double angle = -2.0 * std::numbers::pi *
-                    static_cast<double>(bin * index) /
-                    static_cast<double>(fftSize);
-                const double value = samples[fftStart + index] * window;
-                real += value * std::cos(angle);
-                imaginary += value * std::sin(angle);
-            }
-            const double magnitude =
-                std::sqrt(real * real + imaginary * imaginary) *
-                4.0 / static_cast<double>(fftSize);
-            snapshot.spectrum[bin] = std::clamp(magnitude, 0.0, 1.0);
-        }
-    }
+    if (configuration.spectrum)
+        snapshot.spectrum = ComputeWidgetAudioSpectrum(samples,
+            sampleRate, configuration.spectrumBins);
     return snapshot;
 }
 
@@ -272,6 +357,95 @@ bool WaitInterruptible(std::stop_token stopToken,
     }
     return stopToken.stop_requested();
 }
+}
+
+std::vector<double> ComputeWidgetAudioSpectrum(
+    const std::vector<double>& samples, unsigned int sampleRate,
+    std::size_t spectrumBins)
+{
+    std::vector<double> result(spectrumBins, 0.0);
+    if (samples.size() < 2 || sampleRate == 0 || spectrumBins == 0)
+        return result;
+
+    const std::size_t available = std::min(
+        samples.size(), MaximumSpectrumWindow);
+    std::size_t fftSize = 1;
+    while ((fftSize << 1) <= available) fftSize <<= 1;
+    if (fftSize < 2) return result;
+
+    const std::size_t start = samples.size() - fftSize;
+    std::vector<std::complex<double>> transformed(fftSize);
+    double windowSum = 0.0;
+    for (std::size_t index = 0; index < fftSize; ++index)
+    {
+        const double window = fftSize > 1
+            ? 0.5 - 0.5 * std::cos(
+                2.0 * std::numbers::pi * static_cast<double>(index) /
+                static_cast<double>(fftSize - 1))
+            : 1.0;
+        transformed[index] = std::clamp(
+            samples[start + index], -1.0, 1.0) * window;
+        windowSum += window;
+    }
+    TransformSpectrum(transformed);
+
+    const std::size_t lastFftBin = fftSize / 2;
+    std::vector<double> magnitudes(lastFftBin + 1, 0.0);
+    const double scale = windowSum > 0.0 ? 2.0 / windowSum : 0.0;
+    for (std::size_t index = 1; index <= lastFftBin; ++index)
+    {
+        magnitudes[index] = std::clamp(
+            std::abs(transformed[index]) * scale, 0.0, 1.0);
+    }
+
+    const double frequencyStep = static_cast<double>(sampleRate) /
+        static_cast<double>(fftSize);
+    const double lower = std::max(
+        LowerSpectrumFrequency, frequencyStep);
+    const double upper = std::min(
+        UpperSpectrumFrequency, static_cast<double>(sampleRate) * 0.5);
+    if (upper <= lower) return result;
+    const double ratio = upper / lower;
+
+    for (std::size_t band = 0; band < spectrumBins; ++band)
+    {
+        const double lowerEdge = lower * std::pow(ratio,
+            static_cast<double>(band) /
+                static_cast<double>(spectrumBins));
+        const double upperEdge = lower * std::pow(ratio,
+            static_cast<double>(band + 1) /
+                static_cast<double>(spectrumBins));
+        const std::size_t first = std::max<std::size_t>(1,
+            static_cast<std::size_t>(std::ceil(lowerEdge / frequencyStep)));
+        const std::size_t last = std::min(lastFftBin,
+            static_cast<std::size_t>(std::floor(upperEdge / frequencyStep)));
+        if (first <= last)
+        {
+            double peak = 0.0;
+            double total = 0.0;
+            for (std::size_t index = first; index <= last; ++index)
+            {
+                peak = std::max(peak, magnitudes[index]);
+                total += magnitudes[index];
+            }
+            const double average = total /
+                static_cast<double>(last - first + 1);
+            result[band] = std::clamp(
+                peak * 0.7 + average * 0.3, 0.0, 1.0);
+            continue;
+        }
+
+        const double center = std::sqrt(lowerEdge * upperEdge) /
+            frequencyStep;
+        const std::size_t left = std::clamp<std::size_t>(
+            static_cast<std::size_t>(center), 1, lastFftBin);
+        const std::size_t right = std::min(left + 1, lastFftBin);
+        const double fraction = std::clamp(
+            center - static_cast<double>(left), 0.0, 1.0);
+        result[band] = magnitudes[left] +
+            (magnitudes[right] - magnitudes[left]) * fraction;
+    }
+    return result;
 }
 
 WidgetAudioAnalysisDataSnapshot ProjectWidgetAudioAnalysisSnapshot(
@@ -403,18 +577,41 @@ void WidgetAudioAnalysisProvider::WorkerMain(std::stop_token stopToken)
     while (!stopToken.stop_requested())
     {
         ComPtr<IMMDeviceEnumerator> enumerator;
+        ComPtr<IMMNotificationClient> endpointNotification;
         ComPtr<IMMDevice> endpoint;
         ComPtr<IAudioClient> audioClient;
         ComPtr<IAudioCaptureClient> captureClient;
         WAVEFORMATEX* format = nullptr;
         HANDLE eventHandle = nullptr;
+        HANDLE endpointChangeEvent = nullptr;
+        bool endpointNotificationRegistered = false;
         std::string error;
 
         if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
                 CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&enumerator))))
             error = "audioEnumeratorUnavailable";
-        else if (FAILED(enumerator->GetDefaultAudioEndpoint(
-                     eRender, eMultimedia, &endpoint)) || !endpoint)
+        if (error.empty())
+        {
+            endpointChangeEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+            auto* notification = endpointChangeEvent
+                ? new (std::nothrow) DefaultRenderEndpointNotification(
+                    endpointChangeEvent)
+                : nullptr;
+            if (!notification)
+                error = "audioEndpointNotificationUnavailable";
+            else
+            {
+                endpointNotification.Attach(notification);
+                if (FAILED(enumerator->RegisterEndpointNotificationCallback(
+                        endpointNotification.Get())))
+                    error = "audioEndpointNotificationUnavailable";
+                else
+                    endpointNotificationRegistered = true;
+            }
+        }
+        if (error.empty() &&
+            (FAILED(enumerator->GetDefaultAudioEndpoint(
+                 eRender, eMultimedia, &endpoint)) || !endpoint))
             error = "notPresent";
         else if (FAILED(endpoint->Activate(__uuidof(IAudioClient),
                      CLSCTX_INPROC_SERVER, nullptr,
@@ -458,7 +655,11 @@ void WidgetAudioAnalysisProvider::WorkerMain(std::stop_token stopToken)
             failed.timestampMs = TimestampMilliseconds();
             failed.error = std::move(error);
             Publish(std::move(failed));
+            if (endpointNotificationRegistered)
+                enumerator->UnregisterEndpointNotificationCallback(
+                    endpointNotification.Get());
             if (eventHandle) CloseHandle(eventHandle);
+            if (endpointChangeEvent) CloseHandle(endpointChangeEvent);
             if (format) CoTaskMemFree(format);
             if (WaitInterruptible(stopToken, std::chrono::seconds(1))) break;
             continue;
@@ -489,12 +690,18 @@ void WidgetAudioAnalysisProvider::WorkerMain(std::stop_token stopToken)
             const HANDLE events[] = {
                 eventHandle,
                 static_cast<HANDLE>(stopEvent_),
+                endpointChangeEvent,
             };
             const DWORD waitResult = WaitForMultipleObjects(
                 static_cast<DWORD>(std::size(events)),
                 events, FALSE, 100);
             if (waitResult == WAIT_OBJECT_0 + 1)
                 break;
+            if (waitResult == WAIT_OBJECT_0 + 2)
+            {
+                reconnect = true;
+                break;
+            }
             if (waitResult != WAIT_OBJECT_0 && waitResult != WAIT_TIMEOUT)
             {
                 reconnect = true;
@@ -537,7 +744,11 @@ void WidgetAudioAnalysisProvider::WorkerMain(std::stop_token stopToken)
 
         audioClient->Stop();
         resourcesActive_.store(false);
+        if (endpointNotificationRegistered)
+            enumerator->UnregisterEndpointNotificationCallback(
+                endpointNotification.Get());
         CloseHandle(eventHandle);
+        CloseHandle(endpointChangeEvent);
         CoTaskMemFree(format);
         if (!stopToken.stop_requested())
         {
