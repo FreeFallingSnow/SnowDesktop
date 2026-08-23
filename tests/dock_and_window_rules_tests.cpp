@@ -1886,6 +1886,22 @@ int main(int argc, char** argv)
     Check(popupAnimationOffset.x == 20 &&
             popupAnimationOffset.y == 30,
         "popup animation snapshots must use shared-host local coordinates");
+    const RECT survivingAnimationBounds{ 920, 260, 1320, 660 };
+    const RECT unionPopupHost{ 400, 180, 1340, 900 };
+    const RECT survivingPopupHost{ 900, 240, 1340, 680 };
+    const POINT unionAnimationOffset =
+        floatingPopup::AnimationVisualOffset(
+            survivingAnimationBounds, unionPopupHost);
+    const POINT rebasedAnimationOffset =
+        floatingPopup::AnimationVisualOffset(
+            survivingAnimationBounds, survivingPopupHost);
+    Check(unionPopupHost.left + unionAnimationOffset.x ==
+                survivingPopupHost.left +
+                    rebasedAnimationOffset.x &&
+            unionPopupHost.top + unionAnimationOffset.y ==
+                survivingPopupHost.top +
+                    rebasedAnimationOffset.y,
+        "a surviving popup animation must keep its desktop position when the shared host shrinks after the other popup closes");
     const POINT externalPointerPoint{ -123456, 234567 };
     const std::uint64_t externalPointerPayload =
         floatingPopup::PackScreenPoint(

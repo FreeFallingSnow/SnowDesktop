@@ -814,6 +814,36 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
     floatingPopupLuaPanelRegion_ = nextLuaPanelRegion;
     floatingPopupModalRegion_ = nextModalRegion;
 
+    if (boundsChanged)
+    {
+        const auto rebaseAnimationOverlay =
+            [&](UiCompositionAnimationOverlay& overlay) {
+                if (!overlay.active || !overlay.visual ||
+                    overlay.host !=
+                        UiCompositionAnimationHost::FloatingPopup)
+                {
+                    return;
+                }
+                // Overlay bounds stay in desktop coordinates, while their
+                // visual offsets are local to the shared popup HWND. When a
+                // closing popup leaves an opening popup behind, the host
+                // shrinks from A union B to B. Rebase every surviving child
+                // before moving the host so it keeps the same screen position
+                // instead of being shifted outside the new window region.
+                const POINT offset =
+                    snowdesktop::floating_popup_rules::
+                        AnimationVisualOffset(
+                            overlay.bounds, nextBounds);
+                overlay.visual->SetOffsetX(
+                    static_cast<float>(offset.x));
+                overlay.visual->SetOffsetY(
+                    static_cast<float>(offset.y));
+            };
+        rebaseAnimationOverlay(popupAnimationOverlay_);
+        rebaseAnimationOverlay(
+            luaWidgetPanelAnimationOverlay_);
+    }
+
     const bool topmost =
         snowdesktop::floating_popup_rules::ShouldBeTopmost(
             true, shellPopupMenuLayerDepth_);
