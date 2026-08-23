@@ -429,16 +429,31 @@ inline RECT DockAssociatedPopupInteractionRect(
         : RECT{};
 }
 
+inline bool DockAssociatedPopupOwnsPointerDown(
+    bool anchoredToDock,
+    bool popupOpen,
+    bool pointerPressClaimed)
+{
+    // The popup hook and the Dock sampler observe the same physical press on
+    // independent message paths. The live-popup state covers a sampler that
+    // wins the race; the one-shot claim covers an instant popup finalizer that
+    // wins it and clears the anchor before the sampler runs.
+    return pointerPressClaimed ||
+        (anchoredToDock && popupOpen);
+}
+
 inline bool ShouldDismissForPointerDown(
     bool dragging,
     bool contextMenuActive,
+    bool associatedPopupOwnsPointerDown,
     POINT desktopPoint,
     const RECT& dockRect,
     const RECT& popupRect,
     const RECT& previewRect,
     const RECT& siblingInteractionRect = RECT{})
 {
-    if (dragging || contextMenuActive)
+    if (dragging || contextMenuActive ||
+        associatedPopupOwnsPointerDown)
         return false;
     // While a menu owns the mouse loop, its item presses are outside the Dock
     // rects but must still reach the menu command instead of tearing the host

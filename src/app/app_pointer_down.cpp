@@ -201,6 +201,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     pressedDockCollectionWidgetIndex,
                     PtInRect(&popup, pt) != FALSE))
         {
+            ClaimDockAssociatedPopupPointerPress();
             CloseCollectionPopup();
             collectionPopupClosedByPointerDown = true;
         }
@@ -213,7 +214,10 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 dockFolderPopupWidget_);
         if (!PtInRect(&popup, pt) &&
             !pressedOpenPopupFolderToggle)
+        {
+            ClaimDockAssociatedPopupPointerPress();
             CloseCollectionPopup();
+        }
     }
 
     const bool quickNavigationWasOpen =

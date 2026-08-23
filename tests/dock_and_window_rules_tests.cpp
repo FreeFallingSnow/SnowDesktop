@@ -1956,50 +1956,65 @@ int main(int argc, char** argv)
             &floatingPopupRect) != FALSE &&
             IsRectEmpty(&unrelatedPopupRect) != FALSE,
         "only a shared popup anchored to the Dock may extend the floating Dock interaction surface");
+    const bool liveAssociatedPopupOwnsPointerDown =
+        floatingDock::DockAssociatedPopupOwnsPointerDown(
+            true, true, false);
+    const bool finalizedAssociatedPopupOwnsPointerDown =
+        floatingDock::DockAssociatedPopupOwnsPointerDown(
+            false, false, true);
+    Check(liveAssociatedPopupOwnsPointerDown &&
+            finalizedAssociatedPopupOwnsPointerDown &&
+            !floatingDock::DockAssociatedPopupOwnsPointerDown(
+                true, false, false) &&
+            !floatingDock::DockAssociatedPopupOwnsPointerDown(
+                false, true, false),
+        "a Dock-associated popup or its one-shot press claim must exclusively own the physical dismiss press");
     const RECT previewPanelRect{ 260, 620, 540, 860 };
     Check(!floatingDock::ShouldDismissForPointerDown(
-            false, false, POINT{ 150, 930 },
+            false, false, false, POINT{ 150, 930 },
             floatingDockRect, floatingPopupRect,
             previewPanelRect),
         "a click in the Dock must keep the floating host open");
     Check(!floatingDock::ShouldDismissForPointerDown(
-            false, false, POINT{ 300, 600 },
+            false, false, false, POINT{ 300, 600 },
             floatingDockRect, floatingPopupRect,
             previewPanelRect),
         "a click in the collection popup must keep the host open");
     Check(!floatingDock::ShouldDismissForPointerDown(
-            false, false, POINT{ 300, 700 },
+            false, false, false, POINT{ 300, 700 },
             floatingDockRect, floatingPopupRect,
             previewPanelRect),
         "a press on the thumbnail preview panel must keep the floating host open");
     const RECT quickNavigationRect{ 600, 200, 1000, 700 };
     Check(!floatingDock::ShouldDismissForPointerDown(
-            false, false, POINT{ 800, 300 },
+            false, false, false, POINT{ 800, 300 },
             floatingDockRect, floatingPopupRect,
             previewPanelRect, quickNavigationRect),
         "a press in Quick Navigation must keep its floating Dock host open");
-    Check(floatingDock::ShouldDismissForPointerDown(
-            false, false, POINT{ 800, 300 },
-            floatingDockRect, floatingPopupRect,
-            previewPanelRect),
-        "the floating Dock independently dismisses presses on another surface");
-    Check(floatingDock::ShouldDismissForPointerDown(
-            false, false, POINT{ 20, 20 },
-            floatingDockRect, floatingPopupRect,
-            previewPanelRect),
-        "an external click must dismiss the floating host");
-    Check(floatingDock::ShouldDismissForPointerDown(
-            false, false, POINT{ 300, 400 },
-            floatingDockRect, floatingPopupRect,
-            previewPanelRect),
-        "a press between the preview panel and the Dock must still dismiss");
     Check(!floatingDock::ShouldDismissForPointerDown(
-            false, true, POINT{ 20, 20 },
+            false, false, liveAssociatedPopupOwnsPointerDown,
+            POINT{ 800, 300 },
+            floatingDockRect, floatingPopupRect,
+            previewPanelRect),
+        "the press that dismisses a Dock-associated popup must not also dismiss its floating Dock");
+    Check(!floatingDock::ShouldDismissForPointerDown(
+            false, false, finalizedAssociatedPopupOwnsPointerDown,
+            POINT{ 20, 20 },
+            floatingDockRect, RECT{},
+            previewPanelRect),
+        "an instant popup finalizer must preserve the one-shot Dock dismissal claim");
+    Check(floatingDock::ShouldDismissForPointerDown(
+            false, false, false, POINT{ 20, 20 },
+            floatingDockRect, RECT{},
+            previewPanelRect),
+        "the next independent external press may dismiss the floating Dock after its popup is gone");
+    Check(!floatingDock::ShouldDismissForPointerDown(
+            false, true, false, POINT{ 20, 20 },
             floatingDockRect, floatingPopupRect,
             previewPanelRect),
         "an active context menu must suspend floating-host auto dismissal");
     Check(!floatingDock::ShouldDismissForPointerDown(
-            true, false, POINT{ 20, 20 },
+            true, false, false, POINT{ 20, 20 },
             floatingDockRect, floatingPopupRect,
             previewPanelRect),
         "active drags must suspend floating-host auto dismissal");
