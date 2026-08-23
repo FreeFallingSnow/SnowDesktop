@@ -26,6 +26,15 @@ struct StageStyle
     float cornerRadius = 0.0f;
 };
 
+/** Pixel-space crop within a larger deterministic wallpaper composition. */
+struct WallpaperViewport
+{
+    int canvasWidth = 0;
+    int canvasHeight = 0;
+    int offsetX = 0;
+    int offsetY = 0;
+};
+
 inline constexpr std::size_t AcrylicNoiseSize = 64;
 using AcrylicNoisePixels = std::array<std::uint32_t,
     AcrylicNoiseSize * AcrylicNoiseSize>;
@@ -33,12 +42,16 @@ using AcrylicNoisePixels = std::array<std::uint32_t,
 /** Generate the deterministic, theme-aware preview wallpaper. */
 Wallpaper GenerateWallpaper(int width, int height, bool lightTheme);
 
+/** Generate an exact crop from a larger wallpaper composition. */
+Wallpaper GenerateWallpaper(int width, int height, bool lightTheme,
+    const WallpaperViewport& viewport);
+
 /** Generate the same fixed acrylic texture used by live widget panels. */
 AcrylicNoisePixels GenerateAcrylicNoise(bool lightTheme);
 
 /** Draw the sharp wallpaper and, when requested, its clipped blurred layer. */
 bool DrawStage(ID2D1DeviceContext* context, const RECT& bounds,
-    const StageStyle& style);
+    const StageStyle& style, const WallpaperViewport& viewport = {});
 
 /** Draw a one-shot acrylic texture for the out-of-process author preview. */
 void DrawAcrylicNoise(ID2D1DeviceContext* context, const RECT& bounds,

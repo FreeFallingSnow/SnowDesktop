@@ -44,6 +44,26 @@ int main()
             GenerateWallpaper(96, -1, true).pixels.empty(),
         "preview wallpaper handles minimum and invalid dimensions");
 
+    const Wallpaper full = GenerateWallpaper(240, 180, false);
+    const Wallpaper crop = GenerateWallpaper(80, 60, false,
+        { 240, 180, 47, 33 });
+    bool cropMatches = crop.width == 80 && crop.height == 60;
+    for (int y = 0; y < crop.height && cropMatches; ++y)
+    {
+        for (int x = 0; x < crop.width; ++x)
+        {
+            if (crop.pixels[static_cast<std::size_t>(y) * crop.width + x] !=
+                full.pixels[static_cast<std::size_t>(y + 33) * full.width +
+                    x + 47])
+            {
+                cropMatches = false;
+                break;
+            }
+        }
+    }
+    Check(cropMatches,
+        "preview wallpaper crops preserve one continuous composition");
+
     const AcrylicNoisePixels darkNoise = GenerateAcrylicNoise(false);
     const AcrylicNoisePixels repeatedNoise = GenerateAcrylicNoise(false);
     const AcrylicNoisePixels lightNoise = GenerateAcrylicNoise(true);

@@ -507,7 +507,9 @@ DesktopApp::RenderWidgetMenuPreview(
     const std::shared_ptr<snowdesktop::WidgetPreviewScene>& scene,
     const std::wstring& rootWidgetId,
     const std::unordered_map<std::string, std::string>& previewStorage,
-    int width, int height, UINT dpi, bool hovered)
+    int width, int height, UINT dpi,
+    const snowdesktop::component_preview::StagePlacement& stage,
+    bool hovered)
 {
     using snowdesktop::component_preview::Bitmap;
     Bitmap result;
@@ -605,21 +607,16 @@ DesktopApp::RenderWidgetMenuPreview(
                 stageAppearance.contentTheme = storedTheme[0] - '0';
         }
     }
-    const bool lightStage =
-        globalAppearance.backgroundPreset == kAppearancePresetLight ||
-        globalAppearance.backgroundPreset == kAppearancePresetGlassLight ||
-        globalAppearance.backgroundPreset == kAppearancePresetAcrylicLight ||
-        (globalAppearance.backgroundPreset == kAppearancePresetCustom &&
-            globalAppearance.contentTheme == 1);
-
     context->BeginDraw();
     context->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
     const RECT stageBounds{ 0, 0, width, height };
     snowdesktop::widget_preview::DrawStage(context.Get(), stageBounds,
-        { lightStage, stageAppearance.glassEnabled,
+        { stage.lightTheme, stageAppearance.glassEnabled,
             stageAppearance.glassBlurRadius,
             static_cast<float>(ScaleWidgetCu(
-                globalAppearance.cornerRadius, data->cellScale)) });
+                globalAppearance.cornerRadius, data->cellScale)) },
+        { stage.canvasWidth, stage.canvasHeight,
+            stage.offsetX, stage.offsetY });
     context->SetTransform(D2D1::Matrix3x2F::Translation(
         static_cast<float>(-desktopFrame.left),
         static_cast<float>(-desktopFrame.top)));
@@ -714,6 +711,12 @@ DesktopApp::BuildAddWidgetMenuPreview(
     const PersonalizationSettings appearance = settingsWindow_
         ? settingsWindow_->GetPersonalization()
         : PersonalizationSettings::DarkPreset();
+    const bool previewStageLight =
+        appearance.backgroundPreset == kAppearancePresetLight ||
+        appearance.backgroundPreset == kAppearancePresetGlassLight ||
+        appearance.backgroundPreset == kAppearancePresetAcrylicLight ||
+        (appearance.backgroundPreset == kAppearancePresetCustom &&
+            appearance.contentTheme == 1);
     const std::wstring appearanceKey =
         std::to_wstring(menuIconDpi_) + L":" +
         std::to_wstring(menuLightTheme_) + L":" +
@@ -843,6 +846,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
             1, desktopFrame.right - desktopFrame.left);
         card.previewHeight = std::max<LONG>(
             1, desktopFrame.bottom - desktopFrame.top);
+        card.lightStage = previewStageLight;
         card.sizeLabel = _LFW("app.widget_preview.size",
             std::to_wstring(card.columns), std::to_wstring(card.rows));
         card.cacheKey = modeKey + L":" + appearanceKey + L":" +
@@ -852,6 +856,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
             std::to_wstring(rootData ? rootData->cellScale : 1.0f);
         card.render = [this, scene, rootId, storage](
                 int width, int height, UINT dpi,
+                const snowdesktop::component_preview::StagePlacement& stage,
                 const snowdesktop::component_preview::ApplySettings& settings,
                 bool hovered) {
             if (DesktopWidget* preview = scene->FindWidget(rootId))
@@ -863,7 +868,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
                 preview->showSearchBox = settings.showSearchBox;
             }
             return RenderWidgetMenuPreview(
-                scene, rootId, storage, width, height, dpi, hovered);
+                scene, rootId, storage, width, height, dpi, stage, hovered);
         };
         if (rootData)
         {

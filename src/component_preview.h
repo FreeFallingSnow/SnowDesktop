@@ -64,6 +64,16 @@ struct Option
     std::wstring onLabel;
 };
 
+/** Location of the component viewport within the complete preview card stage. */
+struct StagePlacement
+{
+    int canvasWidth = 0;
+    int canvasHeight = 0;
+    int offsetX = 0;
+    int offsetY = 0;
+    bool lightTheme = false;
+};
+
 struct Card
 {
     std::wstring title;
@@ -74,10 +84,12 @@ struct Card
     /// Exact physical pixel size of the component frame on the target grid.
     int previewWidth = 0;
     int previewHeight = 0;
+    bool lightStage = false;
     /// Includes component/mode/DPI/menu theme/personalization identity.
     std::wstring cacheKey;
     /// Called only after the exact final card viewport is known.
     std::function<Bitmap(int width, int height, UINT dpi,
+        const StagePlacement& stage,
         const ApplySettings& settings, bool hovered)> render;
     ApplySettings applySettings;
     std::vector<Option> options;
@@ -128,6 +140,8 @@ public:
     RECT OptionBoundsForTesting(
         OptionSetting setting, bool value) const;
     RECT ApplyBoundsForTesting() const { return applyRect_; }
+    RECT CardBoundsForTesting() const { return cardRect_; }
+    RECT PreviewBoundsForTesting() const { return previewRect_; }
     RECT CloseBoundsForTesting() const { return closeRect_; }
     RECT PreviousBoundsForTesting() const { return previousButton_; }
     RECT PreviousGlyphBoundsForTesting() const
@@ -162,6 +176,7 @@ private:
     RECT previousButton_{};
     RECT nextButton_{};
     RECT pagerRect_{};
+    RECT cardRect_{};
     RECT previewRect_{};
     RECT applyRect_{};
     RECT closeRect_{};

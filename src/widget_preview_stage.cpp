@@ -62,6 +62,12 @@ D2D1_RECT_F ToD2DRect(const RECT& rect)
 
 Wallpaper GenerateWallpaper(int width, int height, bool lightTheme)
 {
+    return GenerateWallpaper(width, height, lightTheme, {});
+}
+
+Wallpaper GenerateWallpaper(int width, int height, bool lightTheme,
+    const WallpaperViewport& viewport)
+{
     Wallpaper wallpaper;
     if (width <= 0 || height <= 0)
         return wallpaper;
@@ -84,14 +90,20 @@ Wallpaper GenerateWallpaper(int width, int height, bool lightTheme)
             { 0.94f, 0.92f, 0.74f, 1.20f, Hex(0xF59E0B) },
         } };
 
+    const int canvasWidth = viewport.canvasWidth > 0
+        ? viewport.canvasWidth : width;
+    const int canvasHeight = viewport.canvasHeight > 0
+        ? viewport.canvasHeight : height;
     for (int y = 0; y < height; ++y)
     {
-        const float normalizedY = (static_cast<float>(y) + 0.5f) /
-            static_cast<float>(height);
+        const float normalizedY =
+            (static_cast<float>(viewport.offsetY + y) + 0.5f) /
+            static_cast<float>(canvasHeight);
         for (int x = 0; x < width; ++x)
         {
-            const float normalizedX = (static_cast<float>(x) + 0.5f) /
-                static_cast<float>(width);
+            const float normalizedX =
+                (static_cast<float>(viewport.offsetX + x) + 0.5f) /
+                static_cast<float>(canvasWidth);
             // A restrained diagonal lift prevents the four radial fields from
             // collapsing into a flat average at very small preview sizes.
             const float diagonal = std::clamp(
@@ -150,14 +162,14 @@ AcrylicNoisePixels GenerateAcrylicNoise(bool lightTheme)
 }
 
 bool DrawStage(ID2D1DeviceContext* context, const RECT& bounds,
-    const StageStyle& style)
+    const StageStyle& style, const WallpaperViewport& viewport)
 {
     const int width = bounds.right - bounds.left;
     const int height = bounds.bottom - bounds.top;
     if (!context || width <= 0 || height <= 0)
         return false;
     const Wallpaper wallpaper = GenerateWallpaper(
-        width, height, style.lightTheme);
+        width, height, style.lightTheme, viewport);
     if (wallpaper.pixels.empty()) return false;
 
     const D2D1_BITMAP_PROPERTIES1 bitmapProperties =

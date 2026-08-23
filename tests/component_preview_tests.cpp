@@ -82,6 +82,7 @@ int wmain()
     const RECT menuBounds{ 120, 100, 280, 420 };
     int renderCount = 0;
     bool oldFrameVisibleDuringReplacement = false;
+    StagePlacement renderedStage;
     for (UINT dpi : { 96u, 120u, 144u, 192u })
     {
         Model model;
@@ -92,13 +93,17 @@ int wmain()
         card.sizeLabel = L"3 x 2";
         const int expectedWidth = 276 + static_cast<int>(dpi / 24);
         const int expectedHeight = 232 + static_cast<int>(dpi / 32);
+        const bool expectedLightStage = (dpi / 24) % 2 == 0;
         card.previewWidth = expectedWidth;
         card.previewHeight = expectedHeight;
+        card.lightStage = expectedLightStage;
         card.cacheKey = L"mode:" + std::to_wstring(dpi);
         card.render = [&, expectedWidth, expectedHeight, dpi](
             int width, int height, UINT callbackDpi,
+            const StagePlacement& stage,
             const ApplySettings&, bool) {
             ++renderCount;
+            renderedStage = stage;
             Expect(width == expectedWidth && height == expectedHeight,
                 "renderer receives the exact desktop component size");
             Expect(callbackDpi == dpi,
@@ -114,6 +119,19 @@ int wmain()
             "preview frame commits successfully");
         Expect(IsWindowVisible(window.Handle()) != FALSE,
             "preview remains visible after commit");
+
+        const RECT cardBounds = window.CardBoundsForTesting();
+        const RECT previewBounds = window.PreviewBoundsForTesting();
+        Expect(renderedStage.canvasWidth ==
+                    cardBounds.right - cardBounds.left &&
+                renderedStage.canvasHeight ==
+                    cardBounds.bottom - cardBounds.top &&
+                renderedStage.offsetX ==
+                    previewBounds.left - cardBounds.left &&
+                renderedStage.offsetY ==
+                    previewBounds.top - cardBounds.top &&
+                renderedStage.lightTheme == expectedLightStage,
+            "component renderer receives its exact position in the full card stage");
 
         const RECT closeButton = window.CloseBoundsForTesting();
         Expect(!IsRectEmpty(&closeButton),
@@ -131,6 +149,16 @@ int wmain()
             "cached preview frame recommits successfully");
         Expect(renderCount == beforeCachedShow,
             "component render callback is cached by mode and DPI");
+
+        Model oppositeStageModel = model;
+        oppositeStageModel.cards[0].lightStage = !expectedLightStage;
+        const int beforeStageChange = renderCount;
+        Expect(window.Show(oppositeStageModel, menuBounds, nullptr, dpi,
+                (dpi / 24) % 2 == 0),
+            "preview recommits after its card stage theme changes");
+        Expect(renderCount == beforeStageChange + 1 &&
+                renderedStage.lightTheme == !expectedLightStage,
+            "card stage theme participates in model and frame caching");
     }
 
     Expect(oldFrameVisibleDuringReplacement,
@@ -149,6 +177,7 @@ int wmain()
     filledRowsCard.previewHeight = 180;
     filledRowsCard.cacheKey = L"rows:filled";
     filledRowsCard.render = [](int width, int height, UINT,
+            const StagePlacement&,
             const ApplySettings&, bool) {
         return SolidBitmap(width, height, 0xff304860u);
     };
@@ -189,6 +218,7 @@ int wmain()
     firstPage.applySettings.rows = 2;
     bool hoveredFrameRendered = false;
     firstPage.render = [&](int width, int height, UINT,
+            const StagePlacement&,
             const ApplySettings&, bool hovered) {
         ++firstPageRenders;
         hoveredFrameRendered = hoveredFrameRendered || hovered;
@@ -202,6 +232,7 @@ int wmain()
     secondPage.applySettings.listMode = true;
     secondPage.applySettings.scrollContainerMode = true;
     secondPage.render = [&](int width, int height, UINT,
+            const StagePlacement&,
             const ApplySettings&, bool) {
         ++secondPageRenders;
         return SolidBitmap(width, height, 0xff604020u);
@@ -272,6 +303,7 @@ int wmain()
         L"Layout", L"Icons", L"List" });
     bool optionRenderUsedListMode = false;
     optionCard.render = [&](int width, int height, UINT,
+            const StagePlacement&,
             const ApplySettings& settings, bool) {
         optionRenderUsedListMode = settings.listMode;
         return SolidBitmap(width, height, 0xff305070u);
@@ -315,6 +347,7 @@ int wmain()
     bool collectionRenderScrolling = false;
     bool collectionRenderList = false;
     collectionCard.render = [&](int width, int height, UINT,
+            const StagePlacement&,
             const ApplySettings& settings, bool) {
         collectionRenderScrolling = settings.scrollContainerMode;
         collectionRenderList = settings.listMode;
@@ -394,6 +427,7 @@ int wmain()
     replacementModel.cards[0].cacheKey = L"options:replacement";
     bool replacementRendered = false;
     replacementModel.cards[0].render = [&](int width, int height, UINT,
+            const StagePlacement&,
             const ApplySettings&, bool) {
         replacementRendered = true;
         return SolidBitmap(width, height, 0xff507030u);

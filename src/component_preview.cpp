@@ -2,6 +2,7 @@
 
 #include "menu_icon_render.h"
 #include "modern_menu_appearance_rules.h"
+#include "widget_preview_stage.h"
 
 #include <dwmapi.h>
 #include <windowsx.h>
@@ -482,7 +483,10 @@ std::wstring Window::ModelIdentity(const Model& model) const
     std::wstring result = model.title + L"|" +
         std::to_wstring(model.cards.size());
     for (const Card& card : model.cards)
-        result += L"|" + card.cacheKey;
+    {
+        result += L"|" + card.cacheKey +
+            (card.lightStage ? L":stage-light" : L":stage-dark");
+    }
     return result;
 }
 
@@ -600,6 +604,7 @@ bool Window::RenderCurrent()
     std::fill_n(pixels, static_cast<size_t>(width_) * height_, 0u);
 
     const auto palette = menu_icon::ResolvePalette(lightTheme_);
+    const auto cardPalette = menu_icon::ResolvePalette(card.lightStage);
     RECT panel{ 0, 0, width_, height_ };
     Fill(dc, panel, palette.background);
 
@@ -639,14 +644,52 @@ bool Window::RenderCurrent()
     const int previewLeft = (width_ - previewWidth) / 2;
     previewRect_ = { previewLeft, cardTop + previewInset,
         previewLeft + previewWidth, cardTop + previewInset + previewHeight };
-    // Keep the viewport material transparent.  The component renderer owns
-    // every pixel inside it, including a fully transparent clock background.
-    RoundedOutline(dc, previewRect_, Scale(6, dpi_), palette.separator);
+    const int metadataTop = previewRect_.bottom + controlsHeight;
+    cardRect_ = { padding, cardTop, width_ - padding,
+        metadataTop + metadataHeight + previewInset };
+    const int cardWidth = cardRect_.right - cardRect_.left;
+    const int cardHeight = cardRect_.bottom - cardRect_.top;
+    const int cardRadius = Scale(8, dpi_);
+    const auto wallpaper = snowdesktop::widget_preview::GenerateWallpaper(
+        cardWidth, cardHeight, card.lightStage);
+    Bitmap cardStage;
+    cardStage.width = wallpaper.width;
+    cardStage.height = wallpaper.height;
+    cardStage.pixels = wallpaper.pixels;
+    for (int y = 0; y < cardStage.height; ++y)
+    {
+        for (int x = 0; x < cardStage.width; ++x)
+        {
+            if (!IsInsideRoundedPanel(
+                    x, y, cardStage.width, cardStage.height, cardRadius))
+            {
+                cardStage.pixels[
+                    static_cast<size_t>(y) * cardStage.width + x] = 0;
+            }
+        }
+    }
+    DrawBitmap(dc, cardStage, cardRect_);
 
-    const std::wstring frameCacheKey = card.cacheKey.empty()
+    const StagePlacement stagePlacement{
+        cardWidth, cardHeight,
+        previewRect_.left - cardRect_.left,
+        previewRect_.top - cardRect_.top,
+        card.lightStage };
+    RoundedOutline(dc, previewRect_, Scale(6, dpi_),
+        cardPalette.separator);
+
+    std::wstring frameCacheKey = card.cacheKey.empty()
         ? std::wstring{}
         : card.cacheKey + SettingsCacheSuffix(
             card.applySettings, componentHovered_);
+    if (!frameCacheKey.empty())
+    {
+        frameCacheKey += L":stage:" + std::to_wstring(cardWidth) + L"x" +
+            std::to_wstring(cardHeight) + L"@" +
+            std::to_wstring(stagePlacement.offsetX) + L"," +
+            std::to_wstring(stagePlacement.offsetY) +
+            (stagePlacement.lightTheme ? L":light" : L":dark");
+    }
     Bitmap rendered;
     if (!frameCacheKey.empty())
     {
@@ -657,7 +700,7 @@ bool Window::RenderCurrent()
     if (rendered.pixels.empty() && card.render)
     {
         rendered = card.render(previewWidth, previewHeight, dpi_,
-            card.applySettings, componentHovered_);
+            stagePlacement, card.applySettings, componentHovered_);
         if (!frameCacheKey.empty() && !rendered.pixels.empty())
         {
             if (cardFrameCache_.size() >= 128)
@@ -686,18 +729,18 @@ bool Window::RenderCurrent()
         RECT statusRect{ previousButton_.right, pagerRect_.top,
             nextButton_.left, pagerRect_.bottom };
         RoundedBox(dc, previousButton_, Scale(6, dpi_),
-            palette.hoverBackground, palette.separator);
+            cardPalette.hoverBackground, cardPalette.separator);
         RoundedBox(dc, nextButton_, Scale(6, dpi_),
-            palette.hoverBackground, palette.separator);
+            cardPalette.hoverBackground, cardPalette.separator);
         DrawCenteredGlyph(dc, glyphFont,
-            currentCard_ > 0 ? palette.text : palette.disabledText,
+            currentCard_ > 0 ? cardPalette.text : cardPalette.disabledText,
             L'\u2039', previousButton_, previousGlyphRect_);
-        DrawCenteredText(dc, bodyFont, palette.text,
+        DrawCenteredText(dc, bodyFont, cardPalette.text,
             std::to_wstring(currentCard_ + 1) + L" / " +
                 std::to_wstring(model_.cards.size()), statusRect);
         DrawCenteredGlyph(dc, glyphFont,
             currentCard_ + 1 < model_.cards.size()
-                ? palette.text : palette.disabledText,
+                ? cardPalette.text : cardPalette.disabledText,
             L'\u203a', nextButton_, nextGlyphRect_);
         controlsY = pagerRect_.bottom + controlMargin;
     }
@@ -718,33 +761,31 @@ bool Window::RenderCurrent()
         RECT labelRect{ row.left, row.top,
             offRect.left - Scale(8, dpi_), row.bottom };
         const bool enabled = OptionValue(card.applySettings, option.setting);
-        DrawWrappedText(dc, bodyFont, palette.text, option.label, labelRect,
+        DrawWrappedText(dc, bodyFont, cardPalette.text,
+            option.label, labelRect,
             DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         const int capsuleRadius = optionHeight / 2;
         RoundedBox(dc, offRect, capsuleRadius,
-            enabled ? palette.background : palette.hoverBackground,
-            enabled ? palette.separator : palette.accent);
+            enabled ? cardPalette.background : cardPalette.hoverBackground,
+            enabled ? cardPalette.separator : cardPalette.accent);
         RoundedBox(dc, onRect, capsuleRadius,
-            enabled ? palette.hoverBackground : palette.background,
-            enabled ? palette.accent : palette.separator);
+            enabled ? cardPalette.hoverBackground : cardPalette.background,
+            enabled ? cardPalette.accent : cardPalette.separator);
         DrawCenteredText(dc, bodyFont,
-            enabled ? palette.disabledText : palette.accent,
+            enabled ? cardPalette.disabledText : cardPalette.accent,
             option.offLabel, offRect);
         DrawCenteredText(dc, bodyFont,
-            enabled ? palette.accent : palette.disabledText,
+            enabled ? cardPalette.accent : cardPalette.disabledText,
             option.onLabel, onRect);
         optionHits_.push_back({ offRect, option.setting, false });
         optionHits_.push_back({ onRect, option.setting, true });
         controlsY = row.bottom;
     }
 
-    const int metadataTop = previewRect_.bottom + controlsHeight;
-    RECT cardRect{ padding, cardTop, width_ - padding,
-        metadataTop + metadataHeight + previewInset };
     applyRect_ = {};
-    RoundedOutline(dc, cardRect, Scale(8, dpi_), palette.separator);
-    const int metadataLeft = cardRect.left + metadataHorizontalPadding;
-    const int metadataRight = cardRect.right - metadataHorizontalPadding;
+    RoundedOutline(dc, cardRect_, cardRadius, cardPalette.separator);
+    const int metadataLeft = cardRect_.left + metadataHorizontalPadding;
+    const int metadataRight = cardRect_.right - metadataHorizontalPadding;
     int metadataY = metadataTop +
         (metadataHeight ? metadataTopPadding : 0);
     if (hasCardHeader)
@@ -757,14 +798,14 @@ bool Window::RenderCurrent()
             badge.left = std::max(
                 badge.left, badge.right - Scale(58, dpi_));
             RoundedBox(dc, badge, Scale(7, dpi_),
-                palette.hoverBackground, palette.separator);
-            DrawCenteredText(dc, bodyFont, palette.disabledText,
+                cardPalette.hoverBackground, cardPalette.separator);
+            DrawCenteredText(dc, bodyFont, cardPalette.disabledText,
                 card.sizeLabel, badge);
             cardTitle.right = badge.left - Scale(6, dpi_);
         }
         if (HasVisibleText(card.title))
         {
-            DrawWrappedText(dc, cardTitleFont, palette.text, card.title,
+            DrawWrappedText(dc, cardTitleFont, cardPalette.text, card.title,
                 cardTitle, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
         }
         metadataY += cardHeaderHeight;
@@ -774,7 +815,7 @@ bool Window::RenderCurrent()
         if (hasCardHeader) metadataY += Scale(2, dpi_);
         RECT descriptionRect{ metadataLeft, metadataY, metadataRight,
             metadataY + descriptionHeight };
-        DrawWrappedText(dc, bodyFont, palette.disabledText,
+        DrawWrappedText(dc, bodyFont, cardPalette.disabledText,
             card.description, descriptionRect);
         metadataY = descriptionRect.bottom;
     }

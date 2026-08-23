@@ -1533,7 +1533,9 @@ private:
         const std::shared_ptr<snowdesktop::WidgetPreviewScene>& scene,
         const std::wstring& rootWidgetId,
         const std::unordered_map<std::string, std::string>& previewStorage,
-        int width, int height, UINT dpi, bool hovered);
+        int width, int height, UINT dpi,
+        const snowdesktop::component_preview::StagePlacement& stage,
+        bool hovered);
     /** @brief 显示 Dock 栏体上下文菜单。 @param screenPoint 屏幕坐标 */
     void ShowDockContextMenu(POINT screenPoint);
     /** @brief 显示 Dock 运行区应用上下文菜单。 */
