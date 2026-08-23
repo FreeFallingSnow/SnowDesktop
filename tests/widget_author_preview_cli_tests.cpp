@@ -144,6 +144,42 @@ struct RgbaBitmap
     std::vector<std::uint8_t> pixels;
 };
 
+std::array<std::uint8_t, 4> PixelAt(
+    const RgbaBitmap& bitmap, UINT x, UINT y)
+{
+    Check(x < bitmap.width && y < bitmap.height,
+        "preview pixel coordinate is in bounds");
+    const std::size_t offset =
+        (static_cast<std::size_t>(y) * bitmap.width + x) * 4;
+    return {
+        bitmap.pixels[offset], bitmap.pixels[offset + 1],
+        bitmap.pixels[offset + 2], bitmap.pixels[offset + 3] };
+}
+
+std::size_t CountDifferingPixels(const RgbaBitmap& first,
+    const RgbaBitmap& second, const RECT& bounds)
+{
+    Check(first.width == second.width && first.height == second.height &&
+            bounds.left >= 0 && bounds.top >= 0 &&
+            bounds.right <= static_cast<LONG>(first.width) &&
+            bounds.bottom <= static_cast<LONG>(first.height) &&
+            bounds.left < bounds.right && bounds.top < bounds.bottom,
+        "preview difference bounds are valid");
+    std::size_t differences = 0;
+    for (LONG y = bounds.top; y < bounds.bottom; ++y)
+    {
+        for (LONG x = bounds.left; x < bounds.right; ++x)
+        {
+            if (PixelAt(first, static_cast<UINT>(x), static_cast<UINT>(y)) !=
+                PixelAt(second, static_cast<UINT>(x), static_cast<UINT>(y)))
+            {
+                ++differences;
+            }
+        }
+    }
+    return differences;
+}
+
 void WriteSolidBmp(const std::filesystem::path& path,
     std::uint8_t red, std::uint8_t green, std::uint8_t blue)
 {
@@ -550,18 +586,17 @@ int wmain(int argc, wchar_t** argv)
         CheckOpaquePreview(glassOutput, 192, 240);
     const RgbaBitmap customMaterialAcrylic =
         CheckOpaquePreview(acrylicOutput, 192, 240);
-    const auto materialPixelAt = [](const RgbaBitmap& bitmap,
-                                    UINT x, UINT y) {
-        const std::size_t offset =
-            (static_cast<std::size_t>(y) * bitmap.width + x) * 4;
-        return std::array<std::uint8_t, 4>{
-            bitmap.pixels[offset], bitmap.pixels[offset + 1],
-            bitmap.pixels[offset + 2], bitmap.pixels[offset + 3] };
-    };
-    Check(materialPixelAt(transparent, 0, 0) ==
-            materialPixelAt(customMaterialGlass, 0, 0) &&
-            materialPixelAt(transparent, 96, 16) !=
-                materialPixelAt(customMaterialGlass, 96, 16),
+    constexpr RECT unobscuredPanelSample{ 8, 8, 184, 40 };
+    Check(PixelAt(transparent, 0, 0) ==
+            PixelAt(customMaterialGlass, 0, 0) &&
+            PixelAt(transparent, 191, 0) ==
+                PixelAt(customMaterialGlass, 191, 0) &&
+            PixelAt(transparent, 0, 239) ==
+                PixelAt(customMaterialGlass, 0, 239) &&
+            PixelAt(transparent, 191, 239) ==
+                PixelAt(customMaterialGlass, 191, 239) &&
+            CountDifferingPixels(transparent, customMaterialGlass,
+                unobscuredPanelSample) > 512,
         "custom glass blurs only the rounded panel interior");
     Check(customMaterialGlass.pixels != customMaterialAcrylic.pixels,
         "custom acrylic adds one stable noise layer over custom glass");
@@ -601,17 +636,16 @@ int wmain(int argc, wchar_t** argv)
                 materialPreviews[index - 1].pixels,
             "normal, glass, and acrylic material previews remain distinct");
     }
-    const auto pixelAt = [](const RgbaBitmap& bitmap, UINT x, UINT y) {
-        const std::size_t offset =
-            (static_cast<std::size_t>(y) * bitmap.width + x) * 4;
-        return std::array<std::uint8_t, 4>{
-            bitmap.pixels[offset], bitmap.pixels[offset + 1],
-            bitmap.pixels[offset + 2], bitmap.pixels[offset + 3] };
-    };
-    Check(pixelAt(materialPreviews[0], 0, 0) ==
-            pixelAt(materialPreviews[2], 0, 0) &&
-            pixelAt(materialPreviews[0], 96, 16) !=
-                pixelAt(materialPreviews[2], 96, 16),
+    Check(PixelAt(materialPreviews[0], 0, 0) ==
+            PixelAt(materialPreviews[2], 0, 0) &&
+            PixelAt(materialPreviews[0], 191, 0) ==
+                PixelAt(materialPreviews[2], 191, 0) &&
+            PixelAt(materialPreviews[0], 0, 239) ==
+                PixelAt(materialPreviews[2], 0, 239) &&
+            PixelAt(materialPreviews[0], 191, 239) ==
+                PixelAt(materialPreviews[2], 191, 239) &&
+            CountDifferingPixels(materialPreviews[0], materialPreviews[2],
+                unobscuredPanelSample) > 512,
         "glass blur changes the panel interior without blurring its rounded corner");
     Check(materialPreviews[0].pixels != materialPreviews[2].pixels &&
             materialPreviews[2].pixels != materialPreviews[4].pixels &&
