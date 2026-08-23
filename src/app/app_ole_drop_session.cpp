@@ -260,6 +260,7 @@ HRESULT DesktopApp::HandleOleDragOver(
 HRESULT DesktopApp::HandleOleDragLeave()
 {
     navHoverSide_ = 0;
+    navHotEdgeHover_ = false;
     navAutoFlipDir_ = 0;
     navAutoFlipTick_ = 0;
     if (dragDropController_.IsSelfDragActive())
@@ -296,6 +297,7 @@ HRESULT DesktopApp::HandleOleDrop(
     if (!effect) return E_POINTER;
     HideDragHintWindow();
     navHoverSide_ = 0;
+    navHotEdgeHover_ = false;
     navAutoFlipDir_ = 0;
     navAutoFlipTick_ = 0;
 

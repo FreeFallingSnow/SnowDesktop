@@ -1,5 +1,6 @@
 #include "app.h"
 #include "../menu_fluent_glyphs.h"
+#include "../page_navigation_rules.h"
 #include "../right_click_contract.h"
 #include "../widgets/lua_logical_slot.h"
 
@@ -23,22 +24,40 @@ bool DesktopApp::HandlePageNavClick(POINT point)
     const bool hasPrev = pageOffset_ > 0;
     const bool hasNext = pageOffset_ < MaxPageOffset();
 
-    RECT prevRect, nextRect;
+    RECT prevRect{};
+    RECT nextRect{};
+    RECT prevEdge{};
+    RECT nextEdge{};
     GetNavButtonRects(prevRect, nextRect);
-
-    int delta = 0;
-    if (PtInRect(&prevRect, point)) delta = -1;
-    else if (PtInRect(&nextRect, point)) delta = 1;
-
-    // 点击落在导航按钮区域内但方向不可用 → 拦截点击（不穿透到下方图标）
-    if (delta != 0 && !((delta == -1 && hasPrev) || (delta == 1 && hasNext)))
-        return true;
+    GetNavHotEdgeRects(prevEdge, nextEdge);
+    const auto target = snowdesktop::page_navigation_rules::
+        HitTestPointerTarget(
+            point, prevRect, nextRect, prevEdge, nextEdge);
+    const int delta = snowdesktop::page_navigation_rules::
+        PointerTargetDirection(target);
     if (delta == 0) return false;
+
+    const bool directionAvailable =
+        (delta == -1 && hasPrev) ||
+        (delta == 1 && hasNext);
+    if (!directionAvailable)
+    {
+        // Preserve the existing disabled-button shield, but leave inactive
+        // edge pixels available to the desktop below.
+        return snowdesktop::page_navigation_rules::
+            IsButtonTarget(target);
+    }
 
     int newOffset = NextNonEmptyOffset(pageOffset_, delta);
     if (newOffset == pageOffset_) return false;
 
     bool wasDragging = dragSession_.IsActive();
+    if (!wasDragging)
+    {
+        NavigatePageOffset(delta);
+        return true;
+    }
+
     const POINT oldGroupOrigin{
         dragGroupOriginX_, dragGroupOriginY_ };
     pageOffset_ = newOffset;

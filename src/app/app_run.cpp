@@ -495,6 +495,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                             dockSettings_.floatingHotkeyVirtualKey))
                         return floatingDockHotkeyRegistered_;
                     break;
+                case HotkeySettingTarget::PagePrevious:
+                case HotkeySettingTarget::PageNext:
+                    return true;
                 case HotkeySettingTarget::None:
                     return false;
                 }

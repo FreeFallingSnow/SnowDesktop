@@ -767,6 +767,8 @@ private:
         bool hiddenMode = false);
     /** @brief 绘制翻页导航按钮（左右箭头）。 @param ctx D2D 设备上下文 */
     void DrawPageNavButtons(ID2D1DeviceContext* ctx);
+    /** @brief 绘制全高翻页热边的悬停提示。 */
+    void DrawPageNavHotEdgeHint(ID2D1DeviceContext* ctx);
     /** @brief 绘制换页通知覆盖层（左上角角标，类似电视台换台）。 @param ctx D2D 设备上下文 */
     void DrawPageNotify(
         ID2D1DeviceContext* ctx,
@@ -800,6 +802,12 @@ private:
     void ShowPageNotify(const std::wstring& text);
     /** @brief 获取左右翻页导航按钮的矩形区域。 @param[out] outPrev 上一页按钮矩形 @param[out] outNext 下一页按钮矩形 */
     void GetNavButtonRects(RECT& outPrev, RECT& outNext) const;
+    /** @brief 获取末屏完整高度的左右翻页热边。 */
+    void GetNavHotEdgeRects(RECT& outPrev, RECT& outNext) const;
+    /** @brief 获取末屏用于翻页导航的显示器页面。 */
+    const GridPage* GetPageNavigationGridPage() const;
+    /** @brief 获取指定热边提示的重绘范围。 */
+    RECT GetPageNavHotEdgeHintBounds(int side, POINT point) const;
     /** @brief 使拖拽静态场景缓存失效，下次拖拽时重建缓存。 */
     void InvalidateDragStaticScene();
     /** @brief 停止 Dock 驻留计时并清空当前驻留目标。 */
@@ -1371,6 +1379,8 @@ private:
     void OnRightButtonUp(LPARAM lp);
     /** @brief 处理键盘按键消息。 @return 消息是否由应用消费。 */
     bool OnKeyDown(WPARAM key, bool repeated = false);
+    /** @brief 在桌面根输入上下文中处理可配置的本地翻页按键。 */
+    bool TryHandlePageNavigationKey(WPARAM key, bool repeated = false);
     /** @brief 向当前聚焦的 Lua 声明式元素投递受限按键事件。 */
     void DispatchLuaWidgetViewKeyEvent(
         WPARAM key, bool pressed, bool repeated);
@@ -3017,6 +3027,7 @@ private:
     bool keyboardNavCollectionGroupTabs_ = false;
     bool keyboardNavFileGroupCategoryTabs_ = false;
     int navHoverSide_ = 0;
+    bool navHotEdgeHover_ = false;
     DWORD navAutoFlipTick_ = 0;
     int navAutoFlipDir_ = 0;
     // ── 换页通知覆盖层（电视台换台式角标） ──

@@ -140,6 +140,52 @@ int main(int argc, char** argv)
     namespace pageNavigation =
         snowdesktop::page_navigation_rules;
 
+    {
+        RECT previousEdge{};
+        RECT nextEdge{};
+        pageNavigation::BuildHotEdgeRects(
+            { 100, 50, 1100, 850 }, 144,
+            previousEdge, nextEdge);
+        Check(previousEdge.left == 100 &&
+                previousEdge.right == 112 &&
+                previousEdge.top == 50 &&
+                previousEdge.bottom == 850 &&
+                nextEdge.left == 1088 &&
+                nextEdge.right == 1100 &&
+                pageNavigation::HotEdgeWidth(96) == 8 &&
+                pageNavigation::HotEdgeWidth(144) == 12,
+            "page navigation hot edges must span the work area and scale from eight DIPs");
+
+        const RECT previousButton{ 100, 400, 140, 496 };
+        const RECT nextButton{ 1060, 400, 1100, 496 };
+        Check(pageNavigation::HitTestPointerTarget(
+                { 105, 430 }, previousButton, nextButton,
+                previousEdge, nextEdge) ==
+                    pageNavigation::PointerTarget::PreviousButton &&
+                pageNavigation::HitTestPointerTarget(
+                    { 105, 100 }, previousButton, nextButton,
+                    previousEdge, nextEdge) ==
+                    pageNavigation::PointerTarget::PreviousEdge &&
+                pageNavigation::HitTestPointerTarget(
+                    { 1095, 700 }, previousButton, nextButton,
+                    previousEdge, nextEdge) ==
+                    pageNavigation::PointerTarget::NextEdge &&
+                pageNavigation::PointerTargetDirection(
+                    pageNavigation::PointerTarget::PreviousEdge) == -1 &&
+                pageNavigation::PointerTargetDirection(
+                    pageNavigation::PointerTarget::NextButton) == 1,
+            "page navigation buttons must win over overlapping full-height edge targets");
+        Check(pageNavigation::ShortcutMatches(
+                MOD_CONTROL, VK_PRIOR,
+                MOD_CONTROL, VK_PRIOR) &&
+                !pageNavigation::ShortcutMatches(
+                    MOD_CONTROL, VK_PRIOR,
+                    MOD_CONTROL | MOD_SHIFT, VK_PRIOR) &&
+                !pageNavigation::ShortcutMatches(
+                    0, VK_PRIOR, 0, VK_NEXT),
+            "page navigation shortcuts must match the exact modifier set and virtual key");
+    }
+
     int maximumPageChecks = 0;
     const int maximumOffset = pageNavigation::MaximumOffset(
         8, 3,
@@ -4020,7 +4066,7 @@ int main(int argc, char** argv)
                 "bool DesktopApp::UpdateDragPageNavigation(");
         const std::size_t dragPageNextHit =
             dragTargetUpdateSource.find(
-                "PtInRect(&nextRect, clientPoint)",
+                "HitTestPointerTarget(",
                 dragPageNavigation);
         const std::size_t dragPageMaximum =
             dragTargetUpdateSource.find(
@@ -4042,7 +4088,7 @@ int main(int argc, char** argv)
                 dragPageNextHit != std::string::npos &&
                 dragPageMaximum != std::string::npos &&
                 dragPageNextHit < dragPageMaximum,
-            "drag page navigation must hit-test its buttons before scanning page content");
+            "drag page navigation must hit-test its buttons and hot edges before scanning page content");
         Check(dragPageScan != std::string::npos &&
                 dragPageRetryThrottle != std::string::npos &&
                 dragPageNoTarget != std::string::npos &&
@@ -4081,7 +4127,7 @@ int main(int argc, char** argv)
                 : std::string{};
         const std::size_t widgetPageHit =
             widgetPageNavigationSource.find(
-                "PtInRect(&nextRect, current)");
+                "HitTestPointerTarget(");
         const std::size_t widgetPageMaximum =
             widgetPageNavigationSource.find(
                 "MaxPageOffset()");
@@ -4092,7 +4138,7 @@ int main(int argc, char** argv)
                     ? 0 : widgetPageMaximum + 1);
         const std::size_t emptyWidgetPageGuard =
             widgetPageNavigationSource.find(
-                "if (maximumOffset <= 0)",
+                "if (maximumOffset <= 0 ||",
                 widgetPageMaximum);
         const std::size_t clearWidgetPageSide =
             widgetPageNavigationSource.find(
@@ -4105,7 +4151,7 @@ int main(int argc, char** argv)
                 repeatedWidgetPageMaximum == std::string::npos &&
                 emptyWidgetPageGuard != std::string::npos &&
                 clearWidgetPageSide != std::string::npos,
-            "widget drag page navigation must scan page content only once and only after a button hit");
+            "widget drag page navigation must scan page content only once and only after a button or hot-edge hit");
         Check(pointerMoveSource.find(
                   "*dragPreviewSynced = true;") !=
                     std::string::npos &&

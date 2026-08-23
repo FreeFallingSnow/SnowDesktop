@@ -87,6 +87,8 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
         settings.doubleClickHideDesktop = val;
     if (ReadBoolField(text, "desktopPassthroughHotkeyEnabled", val))
         settings.desktopPassthroughHotkeyEnabled = val;
+    if (ReadBoolField(text, "pageNavigationKeyboardEnabled", val))
+        settings.pageNavigationKeyboardEnabled = val;
     if (ReadBoolField(text, "widgetDeveloperToolsEnabled", val))
         settings.widgetDeveloperToolsEnabled = val;
     int hotkeyValue = 0;
@@ -102,6 +104,32 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
         hotkeyValue > 0 && hotkeyValue <= 0xFF)
     {
         settings.desktopPassthroughHotkeyVirtualKey =
+            static_cast<UINT>(hotkeyValue);
+    }
+    if (ReadIntField(text, "pageNavigationPreviousModifiers",
+            hotkeyValue))
+    {
+        settings.pageNavigationPreviousModifiers =
+            static_cast<UINT>(hotkeyValue) &
+            (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN);
+    }
+    if (ReadIntField(text, "pageNavigationPreviousVirtualKey",
+            hotkeyValue) && hotkeyValue >= 0 && hotkeyValue <= 0xFF)
+    {
+        settings.pageNavigationPreviousVirtualKey =
+            static_cast<UINT>(hotkeyValue);
+    }
+    if (ReadIntField(text, "pageNavigationNextModifiers",
+            hotkeyValue))
+    {
+        settings.pageNavigationNextModifiers =
+            static_cast<UINT>(hotkeyValue) &
+            (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN);
+    }
+    if (ReadIntField(text, "pageNavigationNextVirtualKey",
+            hotkeyValue) && hotkeyValue >= 0 && hotkeyValue <= 0xFF)
+    {
+        settings.pageNavigationNextVirtualKey =
             static_cast<UINT>(hotkeyValue);
     }
     int theme = 0;
@@ -140,6 +168,17 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
          << settings.desktopPassthroughHotkeyModifiers << ",\n";
     file << "  \"desktopPassthroughHotkeyVirtualKey\": "
          << settings.desktopPassthroughHotkeyVirtualKey << ",\n";
+    file << "  \"pageNavigationKeyboardEnabled\": "
+         << (settings.pageNavigationKeyboardEnabled ? "true" : "false")
+         << ",\n";
+    file << "  \"pageNavigationPreviousModifiers\": "
+         << settings.pageNavigationPreviousModifiers << ",\n";
+    file << "  \"pageNavigationPreviousVirtualKey\": "
+         << settings.pageNavigationPreviousVirtualKey << ",\n";
+    file << "  \"pageNavigationNextModifiers\": "
+         << settings.pageNavigationNextModifiers << ",\n";
+    file << "  \"pageNavigationNextVirtualKey\": "
+         << settings.pageNavigationNextVirtualKey << ",\n";
     file << "  \"quickNavTheme\": " << settings.quickNavTheme << ",\n";
     file << "  \"collectionPopupTheme\": "
          << settings.collectionPopupTheme << ",\n";

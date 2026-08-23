@@ -1,6 +1,81 @@
 #include "app.h"
+#include "../page_navigation_rules.h"
 
 // Top-level keyboard command dispatch.
+
+bool DesktopApp::TryHandlePageNavigationKey(
+    WPARAM key, bool repeated)
+{
+    if (!generalSettings_.pageNavigationKeyboardEnabled ||
+        key == VK_CONTROL || key == VK_MENU || key == VK_SHIFT ||
+        renameEdit_ != nullptr || quickNavigationOpen_ ||
+        IsCollectionPopupInteractive() || dragSession_.IsActive() ||
+        !luaWidgetPanelRequest_.widgetId.empty())
+        return false;
+
+    if (widgetEngine_ && widgetEngine_->HasFocusedHostInput())
+        return false;
+    for (const auto& container : containers_)
+    {
+        const auto* searchable =
+            dynamic_cast<const ScrollingItemWidget*>(container.get());
+        if (searchable && searchable->IsSearchFocused())
+            return false;
+    }
+
+    UINT pressedModifiers = 0;
+    if ((GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0)
+        pressedModifiers |= MOD_CONTROL;
+    if ((GetAsyncKeyState(VK_MENU) & 0x8000) != 0)
+        pressedModifiers |= MOD_ALT;
+    if ((GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0)
+        pressedModifiers |= MOD_SHIFT;
+    if ((GetAsyncKeyState(VK_LWIN) & 0x8000) != 0 ||
+        (GetAsyncKeyState(VK_RWIN) & 0x8000) != 0)
+        pressedModifiers |= MOD_WIN;
+
+    using snowdesktop::page_navigation_rules::ShortcutMatches;
+    const UINT virtualKey = static_cast<UINT>(key);
+    const bool matchesPrevious = ShortcutMatches(
+        generalSettings_.pageNavigationPreviousModifiers,
+        generalSettings_.pageNavigationPreviousVirtualKey,
+        pressedModifiers, virtualKey);
+    const bool matchesNext = ShortcutMatches(
+        generalSettings_.pageNavigationNextModifiers,
+        generalSettings_.pageNavigationNextVirtualKey,
+        pressedModifiers, virtualKey);
+    if (!matchesPrevious && !matchesNext)
+        return false;
+
+    const auto conflictsWith = [&](UINT modifiers,
+        UINT configuredVirtualKey) {
+        return ShortcutMatches(
+            modifiers, configuredVirtualKey,
+            pressedModifiers, virtualKey);
+    };
+    const bool configuredConflict =
+        (matchesPrevious && matchesNext) ||
+        (navigationSettings_.enabled && conflictsWith(
+            navigationSettings_.modifiers,
+            navigationSettings_.virtualKey)) ||
+        (generalSettings_.desktopPassthroughHotkeyEnabled &&
+            conflictsWith(
+                generalSettings_.desktopPassthroughHotkeyModifiers,
+                generalSettings_.desktopPassthroughHotkeyVirtualKey)) ||
+        (generalSettings_.dockEnabled &&
+            dockSettings_.floatingShortcutMode &&
+            conflictsWith(
+                dockSettings_.floatingHotkeyModifiers,
+                dockSettings_.floatingHotkeyVirtualKey));
+    if (configuredConflict)
+        return false;
+
+    // A configured key remains consumed at page boundaries and on repeats,
+    // but only a fresh physical press may initiate one page transition.
+    if (!repeated)
+        NavigatePageOffset(matchesPrevious ? -1 : 1);
+    return true;
+}
 
 void DesktopApp::DispatchLuaWidgetViewKeyEvent(
     WPARAM key, bool pressed, bool repeated)

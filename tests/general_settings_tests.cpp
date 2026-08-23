@@ -39,6 +39,11 @@ int main()
     saved.agentSkillTargetMask = 0x15;
     saved.quickNavTheme = kFourThemeAcrylicDark;
     saved.collectionPopupTheme = kFourThemeAcrylicLight;
+    saved.pageNavigationKeyboardEnabled = false;
+    saved.pageNavigationPreviousModifiers = MOD_CONTROL;
+    saved.pageNavigationPreviousVirtualKey = VK_HOME;
+    saved.pageNavigationNextModifiers = MOD_ALT;
+    saved.pageNavigationNextVirtualKey = VK_END;
     strcpy_s(saved.language, "zh-CN");
     Check(SaveGeneralSettings(path.c_str(), saved),
         "general settings save succeeds");
@@ -51,20 +56,29 @@ int main()
         loaded.agentSkillTargetMask == 0x15 &&
         loaded.quickNavTheme == kFourThemeAcrylicDark &&
         loaded.collectionPopupTheme == kFourThemeAcrylicLight &&
+        !loaded.pageNavigationKeyboardEnabled &&
+        loaded.pageNavigationPreviousModifiers == MOD_CONTROL &&
+        loaded.pageNavigationPreviousVirtualKey == VK_HOME &&
+        loaded.pageNavigationNextModifiers == MOD_ALT &&
+        loaded.pageNavigationNextVirtualKey == VK_END &&
         std::strcmp(loaded.language, "zh-CN") == 0,
-        "general flags, four-theme selections, and Agent Skill targets persist");
+        "general flags, page keys, four-theme selections, and Agent Skill targets persist");
 
     {
         std::ofstream invalid(path, std::ios::binary | std::ios::trunc);
         invalid << "{\n"
                    "  \"collectionPopupTheme\": 99,\n"
+                   "  \"pageNavigationPreviousVirtualKey\": 999,\n"
+                   "  \"pageNavigationNextVirtualKey\": -1,\n"
                    "  \"language\": \"system\"\n"
                    "}\n";
     }
     GeneralSettings clamped;
     Check(LoadGeneralSettings(path.c_str(), clamped) &&
-            clamped.collectionPopupTheme == kFourThemeAcrylicLight,
-        "collection popup theme clamps invalid persisted values");
+            clamped.collectionPopupTheme == kFourThemeAcrylicLight &&
+            clamped.pageNavigationPreviousVirtualKey == VK_PRIOR &&
+            clamped.pageNavigationNextVirtualKey == VK_NEXT,
+        "general settings reject invalid persisted themes and page keys");
 
     {
         std::ofstream legacy(path, std::ios::binary | std::ios::trunc);
@@ -76,9 +90,14 @@ int main()
     Check(!migrated.demoModeEnabled &&
         !migrated.widgetDeveloperToolsEnabled &&
         migrated.collectionPopupTheme == kFourThemeDark &&
+        migrated.pageNavigationKeyboardEnabled &&
+        migrated.pageNavigationPreviousModifiers == 0 &&
+        migrated.pageNavigationPreviousVirtualKey == VK_PRIOR &&
+        migrated.pageNavigationNextModifiers == 0 &&
+        migrated.pageNavigationNextVirtualKey == VK_NEXT &&
         migrated.agentSkillTargetMask ==
             GeneralSettings::kAllAgentSkillTargetsMask,
-        "legacy settings preserve the dark popup and existing defaults");
+        "legacy settings preserve the dark popup and page-navigation defaults");
 
     Check(FourThemeSelectionFromAppearancePreset(
             kAppearancePresetDark) == kFourThemeDark &&

@@ -346,6 +346,7 @@ void DesktopApp::CancelActiveItemDrag()
 {
     HideDragHintWindow();
     navHoverSide_ = 0;
+    navHotEdgeHover_ = false;
     navAutoFlipDir_ = 0;
     navAutoFlipTick_ = 0;
     mouseDown_ = false;

@@ -1477,6 +1477,10 @@ namespace
             return "app.settings.desktop_passthrough_hotkey";
         case HotkeySettingTarget::FloatingDock:
             return "app.settings.dock_bar";
+        case HotkeySettingTarget::PagePrevious:
+            return "app.settings.page_navigation_previous";
+        case HotkeySettingTarget::PageNext:
+            return "app.settings.page_navigation_next";
         case HotkeySettingTarget::None:
         default:
             return "";
@@ -1563,6 +1567,16 @@ void SettingsWindow::CommitHotkeyCapture(
         dockSettings_.floatingHotkeyVirtualKey = virtualKey;
         dockSettingsDirty_ = true;
         dockSettingsSaveRequested_ = true;
+        break;
+    case HotkeySettingTarget::PagePrevious:
+        generalSettings_.pageNavigationPreviousModifiers = modifiers;
+        generalSettings_.pageNavigationPreviousVirtualKey = virtualKey;
+        generalSettingsDirty_ = true;
+        break;
+    case HotkeySettingTarget::PageNext:
+        generalSettings_.pageNavigationNextModifiers = modifiers;
+        generalSettings_.pageNavigationNextVirtualKey = virtualKey;
+        generalSettingsDirty_ = true;
         break;
     case HotkeySettingTarget::None:
         return;
@@ -1753,6 +1767,18 @@ HotkeySettingTarget SettingsWindow::FindInternalHotkeyConflict(
         matches(dockSettings_.floatingHotkeyModifiers,
             dockSettings_.floatingHotkeyVirtualKey))
         return HotkeySettingTarget::FloatingDock;
+    if (target != HotkeySettingTarget::PagePrevious &&
+        generalSettings_.pageNavigationKeyboardEnabled &&
+        matches(
+            generalSettings_.pageNavigationPreviousModifiers,
+            generalSettings_.pageNavigationPreviousVirtualKey))
+        return HotkeySettingTarget::PagePrevious;
+    if (target != HotkeySettingTarget::PageNext &&
+        generalSettings_.pageNavigationKeyboardEnabled &&
+        matches(
+            generalSettings_.pageNavigationNextModifiers,
+            generalSettings_.pageNavigationNextVirtualKey))
+        return HotkeySettingTarget::PageNext;
     return HotkeySettingTarget::None;
 }
 
@@ -1770,12 +1796,16 @@ void SettingsWindow::DrawHotkeyRecorder(
         CancelHotkeyCapture();
 
     const bool capturing = hotkeyCaptureTarget_ == target;
+    const bool localDesktopHotkey =
+        target == HotkeySettingTarget::PagePrevious ||
+        target == HotkeySettingTarget::PageNext;
     const HotkeySettingTarget internalConflict =
         enabled && !capturing
             ? FindInternalHotkeyConflict(
                 target, modifiers, virtualKey)
             : HotkeySettingTarget::None;
     const bool systemAvailable =
+        localDesktopHotkey ||
         !enabled || capturing || virtualKey == 0 ||
         internalConflict != HotkeySettingTarget::None ||
         !hotkeyAvailabilityCallback_
@@ -1834,7 +1864,7 @@ void SettingsWindow::DrawHotkeyRecorder(
         statusDetails = _L("app.settings.hotkey_conflict_system");
         statusColor = ImVec4(0.80f, 0.12f, 0.12f, 1.0f);
     }
-    else if (modifiers == 0)
+    else if (modifiers == 0 && !localDesktopHotkey)
     {
         statusText = _L("app.settings.hotkey_status_no_modifier");
         statusDetails = _L("app.settings.hotkey_no_modifier_warning");
@@ -2276,6 +2306,31 @@ void SettingsWindow::DrawGeneralPage()
 
     ImGui::Spacing();
     ImGui::SeparatorText(_L("app.settings.desktop_interact"));
+    ImGui::Spacing();
+
+    if (DrawSettingCheckbox(
+            _L("app.settings.page_navigation_keyboard"),
+            "##PageNavigationKeyboardEnabled",
+            &generalSettings_.pageNavigationKeyboardEnabled))
+        generalSettingsDirty_ = true;
+    ImGui::Indent();
+    DrawHotkeyRecorder(
+        HotkeySettingTarget::PagePrevious,
+        _L("app.settings.page_navigation_previous"),
+        "##PageNavigationPreviousKey",
+        generalSettings_.pageNavigationKeyboardEnabled,
+        generalSettings_.pageNavigationPreviousModifiers,
+        generalSettings_.pageNavigationPreviousVirtualKey,
+        0, VK_PRIOR);
+    DrawHotkeyRecorder(
+        HotkeySettingTarget::PageNext,
+        _L("app.settings.page_navigation_next"),
+        "##PageNavigationNextKey",
+        generalSettings_.pageNavigationKeyboardEnabled,
+        generalSettings_.pageNavigationNextModifiers,
+        generalSettings_.pageNavigationNextVirtualKey,
+        0, VK_NEXT);
+    ImGui::Unindent();
     ImGui::Spacing();
 
     if (DrawSettingCheckbox(

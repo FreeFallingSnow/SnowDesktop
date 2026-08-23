@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../page_navigation_rules.h"
 #include "../core/drag_source_rebind.h"
 #include "../core/transient_drag_slot.h"
 
@@ -543,6 +544,7 @@ bool DesktopApp::UpdateDragPageNavigation(POINT clientPoint)
     if (desktopIconsHidden_)
     {
         navHoverSide_ = 0;
+        navHotEdgeHover_ = false;
         navAutoFlipDir_ = 0;
         navAutoFlipTick_ = 0;
         return dragSession_.IsActive();
@@ -550,19 +552,33 @@ bool DesktopApp::UpdateDragPageNavigation(POINT clientPoint)
     if (!dragSession_.IsActive())
     {
         navHoverSide_ = 0;
+        navHotEdgeHover_ = false;
         navAutoFlipDir_ = 0;
         navAutoFlipTick_ = 0;
         return false;
     }
 
-    RECT prevRect, nextRect;
+    RECT prevRect{}, nextRect{};
+    RECT prevEdge{}, nextEdge{};
     GetNavButtonRects(prevRect, nextRect);
+    GetNavHotEdgeRects(prevEdge, nextEdge);
 
-    int navSide = 0;
+    const auto target = snowdesktop::page_navigation_rules::
+        HitTestPointerTarget(
+            clientPoint, prevRect, nextRect,
+            prevEdge, nextEdge);
+    int navSide = snowdesktop::page_navigation_rules::
+        PointerTargetDirection(target);
+    const bool navHotEdge = snowdesktop::page_navigation_rules::
+        IsEdgeTarget(target);
     // 悬停检测不限制 hasPrev/hasNext，让置灰按钮也有 hover 视觉反馈
-    if (PtInRect(&prevRect, clientPoint)) navSide = -1;
-    else if (PtInRect(&nextRect, clientPoint)) navSide = 1;
+    const bool directionAvailable =
+        (navSide == -1 && pageOffset_ > 0) ||
+        (navSide == 1 && pageOffset_ < MaxPageOffset());
+    if (navHotEdge && !directionAvailable)
+        navSide = 0;
     navHoverSide_ = navSide;
+    navHotEdgeHover_ = navSide != 0 && navHotEdge;
 
     // 自动翻页仅在可操作方向触发
     const bool navEnabled =

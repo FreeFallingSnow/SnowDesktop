@@ -21,6 +21,11 @@ struct GeneralSettings
     bool desktopPassthroughHotkeyEnabled = false;
     UINT desktopPassthroughHotkeyModifiers = MOD_CONTROL | MOD_ALT;
     UINT desktopPassthroughHotkeyVirtualKey = VK_OEM_3;
+    bool pageNavigationKeyboardEnabled = true;
+    UINT pageNavigationPreviousModifiers = 0;
+    UINT pageNavigationPreviousVirtualKey = VK_PRIOR;
+    UINT pageNavigationNextModifiers = 0;
+    UINT pageNavigationNextVirtualKey = VK_NEXT;
     int quickNavTheme = 1;
     // 0=dark, 1=light, 2=dark acrylic, 3=light acrylic.
     // Dark preserves the legacy collection-popup appearance when absent.

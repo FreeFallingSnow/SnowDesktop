@@ -61,6 +61,8 @@ enum class HotkeySettingTarget
     QuickNavigation,
     DesktopPassthrough,
     FloatingDock,
+    PagePrevious,
+    PageNext,
 };
 
 /**

@@ -854,6 +854,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     {
         const bool repeated =
             (static_cast<ULONG_PTR>(lp) & (ULONG_PTR{1} << 30)) != 0;
+        if (TryHandlePageNavigationKey(wp, repeated))
+            return 0;
         DispatchLuaWidgetViewKeyEvent(wp, true,
             repeated);
         OnKeyDown(wp, repeated);
@@ -877,6 +879,11 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 RequestWindowsShutdownDialog();
             return 0;
         }
+        if (TryHandlePageNavigationKey(
+                wp,
+                (static_cast<ULONG_PTR>(lp) &
+                    (ULONG_PTR{1} << 30)) != 0))
+            return 0;
         if ((wp >= 'A' && wp <= 'Z') || (wp >= '0' && wp <= '9'))
             DispatchLuaWidgetViewKeyEvent(wp, true,
                 (static_cast<ULONG_PTR>(lp) &
