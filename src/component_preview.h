@@ -1,11 +1,13 @@
 #pragma once
 
 #include "modern_menu.h"
+#include "widget_preview_stage.h"
 
 #include <windows.h>
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -72,6 +74,7 @@ struct StagePlacement
     int offsetX = 0;
     int offsetY = 0;
     bool lightTheme = false;
+    const widget_preview::Wallpaper* wallpaper = nullptr;
 };
 
 struct Card
@@ -85,6 +88,8 @@ struct Card
     int previewWidth = 0;
     int previewHeight = 0;
     bool lightStage = false;
+    /// Current monitor wallpaper shared by the full card and component crop.
+    std::shared_ptr<const widget_preview::Wallpaper> stageWallpaper;
     /// Includes component/mode/DPI/menu theme/personalization identity.
     std::wstring cacheKey;
     /// Called only after the exact final card viewport is known.

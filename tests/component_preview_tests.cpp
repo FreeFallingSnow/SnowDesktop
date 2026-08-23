@@ -256,6 +256,11 @@ int wmain()
             IsVisuallyCentered(window.NextGlyphBoundsForTesting(),
                 window.NextBoundsForTesting()),
         "the visible paging chevrons are centered in their buttons");
+    const RECT pagedCard = window.CardBoundsForTesting();
+    Expect(window.PreviousBoundsForTesting().top >= pagedCard.bottom &&
+            window.NextBoundsForTesting().top >= pagedCard.bottom &&
+            window.ApplyBoundsForTesting().top >= pagedCard.bottom,
+        "paging and apply controls sit below the wallpaper card");
     RECT pagedBounds{};
     GetClientRect(window.Handle(), &pagedBounds);
     SendMessageW(window.Handle(), WM_MOUSEMOVE, 0,
@@ -317,6 +322,11 @@ int wmain()
         OptionSetting::ListMode, true);
     Expect(!IsRectEmpty(&optionListModeButton),
         "same-size preview exposes its list control");
+    Expect(optionListModeButton.top >=
+                window.CardBoundsForTesting().bottom &&
+            window.ApplyBoundsForTesting().top >=
+                window.CardBoundsForTesting().bottom,
+        "same-size options and apply control sit below the wallpaper card");
     SendMessageW(window.Handle(), WM_LBUTTONUP, 0,
         MAKELPARAM(
             (optionListModeButton.left + optionListModeButton.right) / 2,

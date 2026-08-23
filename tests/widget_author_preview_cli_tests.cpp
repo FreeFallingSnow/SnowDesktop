@@ -144,6 +144,40 @@ struct RgbaBitmap
     std::vector<std::uint8_t> pixels;
 };
 
+void WriteSolidBmp(const std::filesystem::path& path,
+    std::uint8_t red, std::uint8_t green, std::uint8_t blue)
+{
+    constexpr LONG width = 8;
+    constexpr LONG height = 8;
+    BITMAPFILEHEADER fileHeader{};
+    BITMAPINFOHEADER infoHeader{};
+    infoHeader.biSize = sizeof(infoHeader);
+    infoHeader.biWidth = width;
+    infoHeader.biHeight = height;
+    infoHeader.biPlanes = 1;
+    infoHeader.biBitCount = 32;
+    infoHeader.biCompression = BI_RGB;
+    infoHeader.biSizeImage = width * height * 4;
+    fileHeader.bfType = 0x4d42;
+    fileHeader.bfOffBits = sizeof(fileHeader) + sizeof(infoHeader);
+    fileHeader.bfSize = fileHeader.bfOffBits + infoHeader.biSizeImage;
+    const std::uint32_t pixel = 0xff000000u |
+        static_cast<std::uint32_t>(blue) |
+        (static_cast<std::uint32_t>(green) << 8) |
+        (static_cast<std::uint32_t>(red) << 16);
+    std::vector<std::uint32_t> pixels(
+        static_cast<std::size_t>(width) * height, pixel);
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    Check(static_cast<bool>(output), "custom background BMP is created");
+    output.write(reinterpret_cast<const char*>(&fileHeader),
+        sizeof(fileHeader));
+    output.write(reinterpret_cast<const char*>(&infoHeader),
+        sizeof(infoHeader));
+    output.write(reinterpret_cast<const char*>(pixels.data()),
+        static_cast<std::streamsize>(pixels.size() * sizeof(pixel)));
+    Check(static_cast<bool>(output), "custom background BMP is written");
+}
+
 RgbaBitmap ReadPng(const std::filesystem::path& path)
 {
     using Microsoft::WRL::ComPtr;
@@ -441,6 +475,25 @@ int wmain(int argc, wchar_t** argv)
         "SnowDesktop preview host exists");
 
     TemporaryDirectory temporary;
+    const auto background = temporary.path / L"author-background.bmp";
+    WriteSolidBmp(background, 18, 126, 214);
+    const auto backgroundOutput = temporary.path / L"custom-background.png";
+    const auto backgroundSource = repository / L"widgets" / L"analog-clock";
+    const auto [backgroundExit, backgroundJson] = Run(snowwidget, {
+        L"preview", backgroundSource.wstring(), backgroundOutput.wstring(),
+        L"--background", background.wstring(), L"--host", host.wstring() });
+    Check(backgroundExit == 0 &&
+            backgroundJson.find("\"background\":") != std::string::npos &&
+            backgroundJson.find("author-background.bmp") !=
+                std::string::npos,
+        "preview reports the developer-selected background image");
+    const RgbaBitmap selectedBackground = ReadPng(backgroundOutput);
+    Check(selectedBackground.pixels[0] == 18 &&
+            selectedBackground.pixels[1] == 126 &&
+            selectedBackground.pixels[2] == 214 &&
+            selectedBackground.pixels[3] == 255,
+        "transparent preview pixels reveal the selected author background");
+
     const auto output = temporary.path / L"analog-clock.png";
     const auto source = repository / L"widgets" / L"analog-clock";
     const auto [exitCode, json] = Run(snowwidget, {
@@ -648,6 +701,17 @@ int wmain(int argc, wchar_t** argv)
             conflictJson.find("cannot be used together") !=
                 std::string::npos,
         "preview rejects simultaneous theme and appearance options");
+
+    const auto [missingBackgroundExit, missingBackgroundJson] =
+        Run(snowwidget, {
+            L"preview", source.wstring(), invalidOutput.wstring(),
+            L"--background", (temporary.path / L"missing.jpg").wstring(),
+            L"--host", host.wstring() });
+    Check(missingBackgroundExit != 0 &&
+            missingBackgroundJson.find(
+                "\"stage\":\"request.background\"") !=
+                std::string::npos,
+        "preview rejects a missing or undecodable author background");
 
     std::cout << "widget author preview CLI tests passed\n";
     CoUninitialize();

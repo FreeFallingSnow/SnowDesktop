@@ -27,7 +27,7 @@ int main()
     Check(dark.pixels == repeated.pixels,
         "preview wallpaper generation is deterministic");
     Check(dark.pixels == light.pixels,
-        "all component appearances share one landscape wallpaper");
+        "the compatibility background is appearance-independent");
     Check(std::all_of(dark.pixels.begin(), dark.pixels.end(),
             [](std::uint32_t pixel) { return (pixel >> 24) == 0xffu; }) &&
           std::all_of(light.pixels.begin(), light.pixels.end(),
@@ -38,7 +38,7 @@ int main()
     const std::unordered_set<std::uint32_t> lightColors(
         light.pixels.begin(), light.pixels.end());
     Check(darkColors.size() > 512 && lightColors.size() > 512,
-        "preview wallpaper retains a varied multicolor field");
+        "neutral preview fallback retains enough visual detail for blur");
     Check(GenerateWallpaper(1, 1, false).pixels.size() == 1 &&
             GenerateWallpaper(0, 72, false).pixels.empty() &&
             GenerateWallpaper(96, -1, true).pixels.empty(),
@@ -63,6 +63,40 @@ int main()
     }
     Check(cropMatches,
         "preview wallpaper crops preserve one continuous composition");
+
+    Wallpaper selectedSource;
+    selectedSource.width = 240;
+    selectedSource.height = 180;
+    selectedSource.pixels.resize(240u * 180u);
+    for (int y = 0; y < selectedSource.height; ++y)
+    {
+        for (int x = 0; x < selectedSource.width; ++x)
+        {
+            selectedSource.pixels[static_cast<std::size_t>(y) *
+                selectedSource.width + x] = 0xff000000u |
+                static_cast<std::uint32_t>(x) |
+                (static_cast<std::uint32_t>(y) << 8) |
+                (static_cast<std::uint32_t>((x + y) & 0xff) << 16);
+        }
+    }
+    const Wallpaper selectedFull = GenerateWallpaper(
+        selectedSource, 240, 180);
+    const Wallpaper selectedCrop = GenerateWallpaper(
+        selectedSource, 80, 60, { 240, 180, 47, 33 });
+    Check(selectedCrop.pixels.front() ==
+            selectedFull.pixels[33u * 240u + 47u] &&
+            selectedCrop.pixels.back() ==
+            selectedFull.pixels[92u * 240u + 126u],
+        "an explicit wallpaper preserves the shared card crop");
+    Check(WallpaperFingerprint(selectedSource) ==
+            WallpaperFingerprint(selectedSource) &&
+            WallpaperFingerprint(selectedSource) !=
+                WallpaperFingerprint(dark),
+        "wallpaper fingerprints are stable and source-sensitive");
+    Wallpaper white{ 1, 1, { 0xffffffffu } };
+    Wallpaper black{ 1, 1, { 0xff000000u } };
+    Check(WallpaperIsLight(white) && !WallpaperIsLight(black),
+        "wallpaper luminance selects contrasting card chrome");
 
     const AcrylicNoisePixels darkNoise = GenerateAcrylicNoise(false);
     const AcrylicNoisePixels repeatedNoise = GenerateAcrylicNoise(false);

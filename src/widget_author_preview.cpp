@@ -479,7 +479,9 @@ std::string PreviewRenderResult::ToJson() const
         << ",\"locale\":" << JsonString(locale)
         << ",\"theme\":" << JsonString(theme)
         << ",\"appearance\":" << JsonString(appearance)
-        << ",\"dataState\":" << JsonString(dataState) << '}';
+        << ",\"dataState\":" << JsonString(dataState)
+        << ",\"background\":"
+        << JsonString(WideToUtf8(backgroundImage.wstring())) << '}';
     return output.str();
 }
 
@@ -495,6 +497,7 @@ PreviewRenderResult RenderWidgetPreview(
     result.theme = request.theme;
     result.appearance = request.appearance;
     result.dataState = request.dataState;
+    result.backgroundImage = request.backgroundImage;
 
     const auto appearance = ParseAppearance(request.appearance);
     if (!appearance)
@@ -508,6 +511,18 @@ PreviewRenderResult RenderWidgetPreview(
         result.stage = "request.theme";
         result.error = "preview theme does not match the appearance";
         return result;
+    }
+    widget_preview::Wallpaper background;
+    if (!request.backgroundImage.empty())
+    {
+        background = widget_preview::LoadWallpaperImage(
+            request.backgroundImage);
+        if (background.pixels.empty())
+        {
+            result.stage = "request.background";
+            result.error = "preview background cannot be decoded";
+            return result;
+        }
     }
     const auto parseDataState = [](std::string_view state)
         -> std::optional<LuaWidgetPreviewDataState> {
@@ -667,7 +682,8 @@ PreviewRenderResult RenderWidgetPreview(
             resolvedStyle.material.glassEnabled,
             resolvedStyle.material.glassBlurRadius,
             std::max(0.0f,
-                resolvedStyle.theme.cornerRadius * dpiScale) });
+                resolvedStyle.theme.cornerRadius * dpiScale) }, {},
+        background.pixels.empty() ? nullptr : &background);
     DrawHostBackground(
         context.Get(), resolvedStyle, bounds, dpiScale);
     engine.RenderWidget(kPreviewWidgetId, L"", context.Get(), bounds,
@@ -757,7 +773,7 @@ int TryRunWidgetAuthorPreviewHostCommand(bool& handled)
     handled = true;
     PreviewRenderResult result;
     std::filesystem::path resultPath;
-    if (argumentCount < 12)
+    if (argumentCount < 13)
     {
         result.stage = "request.arguments";
         result.error = "invalid widget preview host arguments";
@@ -772,6 +788,7 @@ int TryRunWidgetAuthorPreviewHostCommand(bool& handled)
     request.theme = WideToUtf8(arguments[9]);
     request.appearance = WideToUtf8(arguments[10]);
     request.dataState = WideToUtf8(arguments[11]);
+    request.backgroundImage = arguments[12];
     int dpi = 0;
     if (!ParsePositiveInteger(arguments[4], 1, 8, request.columns) ||
         !ParsePositiveInteger(arguments[5], 1, 8, request.rows) ||
@@ -785,7 +802,7 @@ int TryRunWidgetAuthorPreviewHostCommand(bool& handled)
         return 2;
     }
     request.dpi = static_cast<unsigned>(dpi);
-    for (int index = 12; index < argumentCount; ++index)
+    for (int index = 13; index < argumentCount; ++index)
     {
         const std::wstring_view pair(arguments[index]);
         const std::size_t equals = pair.find(L'=');

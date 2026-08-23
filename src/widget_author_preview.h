@@ -18,6 +18,7 @@ struct PreviewRenderRequest
     std::string theme = "dark";
     std::string appearance = "dark";
     std::string dataState = "ready";
+    std::filesystem::path backgroundImage;
     std::unordered_map<std::string, std::string> storage;
 };
 
@@ -36,6 +37,7 @@ struct PreviewRenderResult
     std::string theme;
     std::string appearance;
     std::string dataState;
+    std::filesystem::path backgroundImage;
 
     std::string ToJson() const;
 };

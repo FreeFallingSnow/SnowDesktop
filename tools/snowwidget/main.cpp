@@ -40,6 +40,7 @@ void PrintUsage()
            " [--appearance dark|light|glass-dark|glass-light|acrylic-dark|acrylic-light]"
            " [--theme dark|light]"
            " [--data-state ready|empty|loading|error|stale|permission-denied]"
+           " [--background image-file]"
            " [--storage key=value] [--host SnowDesktop.exe]\n"
         << "  snowwidget validate <package-directory>\n"
         << "  snowwidget pack <package-directory> <output.snowwidget>\n"
@@ -227,6 +228,7 @@ int RunPreviewHost(const std::filesystem::path& host,
     std::wstring_view theme,
     std::wstring_view appearance,
     std::wstring_view dataState,
+    const std::filesystem::path& backgroundImage,
     const std::vector<std::wstring>& storage)
 {
     const auto resultPath = CreateResultPath();
@@ -252,6 +254,7 @@ int RunPreviewHost(const std::filesystem::path& host,
     append(theme);
     append(appearance);
     append(dataState);
+    append(backgroundImage.wstring());
     for (const auto& pair : storage) append(pair);
 
     STARTUPINFOW startup{};
@@ -488,6 +491,7 @@ int wmain(int argc, wchar_t** argv)
         std::wstring theme = L"dark";
         std::wstring appearance = L"dark";
         std::wstring dataState = L"ready";
+        std::filesystem::path backgroundImage;
         bool themeSpecified = false;
         bool appearanceSpecified = false;
         std::filesystem::path explicitHost;
@@ -499,7 +503,8 @@ int wmain(int argc, wchar_t** argv)
                     option == L"--dpi" || option == L"--storage" ||
                     option == L"--host" || option == L"--locale" ||
                     option == L"--theme" || option == L"--appearance" ||
-                    option == L"--data-state") &&
+                    option == L"--data-state" ||
+                    option == L"--background") &&
                 index + 1 >= argc)
             {
                 std::cerr << "{\"ok\":false,\"error\":\"preview option is missing its value\"}\n";
@@ -600,6 +605,8 @@ int wmain(int argc, wchar_t** argv)
             }
             else if (option == L"--host")
                 explicitHost = argv[++index];
+            else if (option == L"--background")
+                backgroundImage = argv[++index];
             else
             {
                 std::cerr << "{\"ok\":false,\"error\":\"unknown preview option\"}\n";
@@ -622,7 +629,7 @@ int wmain(int argc, wchar_t** argv)
         }
         return RunPreviewHost(*host, source, output,
             columns, rows, dpi, locale, theme, appearance,
-            dataState, storage);
+            dataState, backgroundImage, storage);
     }
     if (command == L"pack")
     {

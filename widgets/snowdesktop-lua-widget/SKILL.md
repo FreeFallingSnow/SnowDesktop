@@ -59,7 +59,8 @@ development packages live under `data\widgets\installed` and
 11. Run `snowwidget lint <directory>`, `snowwidget test <directory>`, and
     `snowwidget preview <directory> <preview.png>` at the default size. Repeat
     preview with relevant `--columns`, `--rows`, `--dpi`, `--locale`,
-    `--appearance`, `--data-state`, and `--storage` values, then run
+    `--appearance`, `--background`, `--data-state`, and `--storage` values,
+    then run
     `snowwidget validate <directory>` and
     `snowwidget pack <directory> <name.snowwidget>`.
 12. In the repository, also run `scripts\test.bat`, the standard Release build,
@@ -71,8 +72,9 @@ library. The host and authoring tools accept only schema/API v2 packages.
 
 `snowwidget preview` launches the installed SnowDesktop renderer out of process
 and writes a real API v2/D2D PNG; it does not emulate the view tree. The PNG is
-complete and opaque: it includes the deterministic colorful preview stage,
-the resolved normal/glass/acrylic material, and the component content. Use
+complete and opaque: it includes the developer-selected background, the
+resolved normal/glass/acrylic material, and the component content. Pass
+`--background <image-file>` when generating the final package preview. Use
 `--appearance dark|light|glass-dark|glass-light|acrylic-dark|acrylic-light`;
 legacy `--theme dark|light` remains a shorthand and cannot be combined with
 `--appearance`. A CLI copied outside the SnowDesktop directory may need `--host
@@ -80,7 +82,8 @@ legacy `--theme dark|light` remains a shorthand and cannot be combined with
 `--data-state` to exercise ready, empty, loading, error, stale, and
 permission-denied subscription envelopes. Generate the final PNG with
 `preview` before running `pack`; `pack` only validates and archives the preview
-declared by the manifest.
+declared by the manifest. It does not package the source background unless the
+manifest separately declares that file as a component resource.
 
 ## Required entry
 

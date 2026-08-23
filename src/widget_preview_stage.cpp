@@ -1,15 +1,17 @@
 #include "widget_preview_stage.h"
 
-#include "resource.h"
-
 #include <d2d1effects.h>
+#include <shobjidl.h>
 #include <wincodec.h>
 #include <wrl/client.h>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cwchar>
+#include <filesystem>
 #include <limits>
+#include <string>
 
 namespace snowdesktop::widget_preview
 {
@@ -33,36 +35,27 @@ struct ScopedCom
     HRESULT result = E_FAIL;
 };
 
-Wallpaper LoadLandscapeResource()
+Wallpaper DecodeWallpaperFile(const std::filesystem::path& path)
 {
     Wallpaper result;
-    const HMODULE module = GetModuleHandleW(nullptr);
-    const HRSRC resource = FindResourceW(module,
-        MAKEINTRESOURCEW(IDR_WIDGET_PREVIEW_LANDSCAPE), RT_RCDATA);
-    if (!resource) return result;
-    const HGLOBAL loaded = LoadResource(module, resource);
-    const DWORD resourceSize = SizeofResource(module, resource);
-    auto* bytes = static_cast<BYTE*>(LockResource(loaded));
-    if (!loaded || !bytes || resourceSize == 0) return result;
+    if (path.empty()) return result;
 
     ScopedCom com;
     if (FAILED(com.result) && com.result != RPC_E_CHANGED_MODE)
         return result;
     ComPtr<IWICImagingFactory> factory;
-    ComPtr<IWICStream> stream;
     ComPtr<IWICBitmapDecoder> decoder;
     ComPtr<IWICBitmapFrameDecode> frame;
     ComPtr<IWICFormatConverter> converter;
     if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
             CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) || !factory ||
-        FAILED(factory->CreateStream(&stream)) || !stream ||
-        FAILED(stream->InitializeFromMemory(bytes, resourceSize)) ||
-        FAILED(factory->CreateDecoderFromStream(stream.Get(), nullptr,
-            WICDecodeMetadataCacheOnLoad, &decoder)) || !decoder ||
+        FAILED(factory->CreateDecoderFromFilename(path.c_str(), nullptr,
+            GENERIC_READ, WICDecodeMetadataCacheOnLoad, &decoder)) ||
+        !decoder ||
         FAILED(decoder->GetFrame(0, &frame)) || !frame ||
         FAILED(factory->CreateFormatConverter(&converter)) || !converter ||
         FAILED(converter->Initialize(frame.Get(),
-            GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr,
+            GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr,
             0.0, WICBitmapPaletteTypeCustom)))
     {
         return result;
@@ -88,6 +81,66 @@ Wallpaper LoadLandscapeResource()
             reinterpret_cast<BYTE*>(result.pixels.data()))))
     {
         return {};
+    }
+    // Preview PNGs are intentionally opaque. Composite transparent author
+    // images over a restrained blue-gray instead of preserving alpha.
+    constexpr std::uint8_t backdropB = 45;
+    constexpr std::uint8_t backdropG = 39;
+    constexpr std::uint8_t backdropR = 32;
+    for (std::uint32_t& pixel : result.pixels)
+    {
+        const unsigned alpha = (pixel >> 24) & 0xffu;
+        const auto composite = [alpha](unsigned foreground,
+                                   unsigned background) {
+            return (foreground * alpha + background * (255u - alpha) +
+                127u) / 255u;
+        };
+        const unsigned blue = composite(pixel & 0xffu, backdropB);
+        const unsigned green = composite((pixel >> 8) & 0xffu, backdropG);
+        const unsigned red = composite((pixel >> 16) & 0xffu, backdropR);
+        pixel = 0xff000000u | blue | (green << 8) | (red << 16);
+    }
+    return result;
+}
+
+Wallpaper DefaultWallpaperSource()
+{
+    Wallpaper result;
+    result.width = 640;
+    result.height = 360;
+    result.pixels.resize(static_cast<std::size_t>(result.width) *
+        result.height);
+    for (int y = 0; y < result.height; ++y)
+    {
+        const float ny = static_cast<float>(y) /
+            static_cast<float>(result.height - 1);
+        for (int x = 0; x < result.width; ++x)
+        {
+            const float nx = static_cast<float>(x) /
+                static_cast<float>(result.width - 1);
+            const auto glow = [](float xValue, float yValue,
+                                  float centerX, float centerY,
+                                  float spread) {
+                const float dx = xValue - centerX;
+                const float dy = yValue - centerY;
+                return std::exp(-(dx * dx + dy * dy) / spread);
+            };
+            const float blueGlow = glow(nx, ny, 0.20f, 0.18f, 0.15f);
+            const float tealGlow = glow(nx, ny, 0.84f, 0.72f, 0.20f);
+            const float warmGlow = glow(nx, ny, 0.72f, 0.12f, 0.10f);
+            const auto channel = [](float value) {
+                return static_cast<unsigned>(std::lround(
+                    std::clamp(value, 0.0f, 255.0f)));
+            };
+            const unsigned red = channel(24.0f + 20.0f * blueGlow +
+                14.0f * warmGlow + 4.0f * nx);
+            const unsigned green = channel(30.0f + 34.0f * tealGlow +
+                16.0f * blueGlow + 5.0f * (1.0f - ny));
+            const unsigned blue = channel(42.0f + 54.0f * blueGlow +
+                26.0f * tealGlow + 7.0f * warmGlow);
+            result.pixels[static_cast<std::size_t>(y) * result.width + x] =
+                0xff000000u | blue | (green << 8) | (red << 16);
+        }
     }
     return result;
 }
@@ -141,6 +194,147 @@ D2D1_RECT_F ToD2DRect(const RECT& rect)
 }
 }
 
+Wallpaper LoadWallpaperImage(const std::filesystem::path& path)
+{
+    return DecodeWallpaperFile(path);
+}
+
+Wallpaper LoadDesktopWallpaper(HWND anchorWindow)
+{
+    ScopedCom com;
+    if (FAILED(com.result) && com.result != RPC_E_CHANGED_MODE)
+        return {};
+
+    ComPtr<IDesktopWallpaper> desktopWallpaper;
+    if (SUCCEEDED(CoCreateInstance(CLSID_DesktopWallpaper, nullptr,
+            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&desktopWallpaper))) &&
+        desktopWallpaper)
+    {
+        HMONITOR targetMonitor = anchorWindow
+            ? MonitorFromWindow(anchorWindow, MONITOR_DEFAULTTOPRIMARY)
+            : MonitorFromPoint(POINT{}, MONITOR_DEFAULTTOPRIMARY);
+        MONITORINFO targetInfo{};
+        targetInfo.cbSize = sizeof(targetInfo);
+        GetMonitorInfoW(targetMonitor, &targetInfo);
+
+        LPWSTR selectedId = nullptr;
+        UINT monitorCount = 0;
+        if (SUCCEEDED(desktopWallpaper->GetMonitorDevicePathCount(
+                &monitorCount)))
+        {
+            long long bestArea = -1;
+            for (UINT index = 0; index < monitorCount; ++index)
+            {
+                LPWSTR monitorId = nullptr;
+                if (FAILED(desktopWallpaper->GetMonitorDevicePathAt(
+                        index, &monitorId)) || !monitorId)
+                    continue;
+                RECT monitorRect{};
+                RECT intersection{};
+                long long area = 0;
+                if (SUCCEEDED(desktopWallpaper->GetMonitorRECT(
+                        monitorId, &monitorRect)) &&
+                    IntersectRect(&intersection, &targetInfo.rcMonitor,
+                        &monitorRect))
+                {
+                    area = static_cast<long long>(
+                        intersection.right - intersection.left) *
+                        (intersection.bottom - intersection.top);
+                }
+                if (area > bestArea)
+                {
+                    if (selectedId) CoTaskMemFree(selectedId);
+                    selectedId = monitorId;
+                    bestArea = area;
+                }
+                else
+                {
+                    CoTaskMemFree(monitorId);
+                }
+            }
+        }
+
+        LPWSTR imagePath = nullptr;
+        HRESULT wallpaperResult = desktopWallpaper->GetWallpaper(
+            selectedId, &imagePath);
+        if (selectedId) CoTaskMemFree(selectedId);
+        if (SUCCEEDED(wallpaperResult) && imagePath && *imagePath)
+        {
+            Wallpaper image = DecodeWallpaperFile(imagePath);
+            CoTaskMemFree(imagePath);
+            if (!image.pixels.empty()) return image;
+        }
+        else if (imagePath)
+        {
+            CoTaskMemFree(imagePath);
+        }
+
+        COLORREF background = RGB(32, 39, 45);
+        if (SUCCEEDED(desktopWallpaper->GetBackgroundColor(&background)))
+        {
+            Wallpaper solid;
+            solid.width = 1;
+            solid.height = 1;
+            solid.pixels.push_back(0xff000000u |
+                static_cast<std::uint32_t>(GetBValue(background)) |
+                (static_cast<std::uint32_t>(GetGValue(background)) << 8) |
+                (static_cast<std::uint32_t>(GetRValue(background)) << 16));
+            return solid;
+        }
+    }
+
+    std::wstring legacyPath(32768, L'\0');
+    if (SystemParametersInfoW(SPI_GETDESKWALLPAPER,
+            static_cast<UINT>(legacyPath.size()), legacyPath.data(), 0))
+    {
+        legacyPath.resize(std::wcslen(legacyPath.c_str()));
+        if (!legacyPath.empty())
+            return DecodeWallpaperFile(legacyPath);
+    }
+    return {};
+}
+
+std::uint64_t WallpaperFingerprint(const Wallpaper& wallpaper)
+{
+    if (wallpaper.width <= 0 || wallpaper.height <= 0 ||
+        wallpaper.pixels.empty())
+        return 0;
+    std::uint64_t hash = 1469598103934665603ull;
+    const auto mix = [&hash](std::uint64_t value) {
+        hash ^= value;
+        hash *= 1099511628211ull;
+    };
+    mix(static_cast<std::uint64_t>(wallpaper.width));
+    mix(static_cast<std::uint64_t>(wallpaper.height));
+    const std::size_t step = std::max<std::size_t>(
+        1, wallpaper.pixels.size() / 4096);
+    for (std::size_t index = 0; index < wallpaper.pixels.size();
+         index += step)
+        mix(wallpaper.pixels[index]);
+    mix(wallpaper.pixels.back());
+    return hash;
+}
+
+bool WallpaperIsLight(const Wallpaper& wallpaper)
+{
+    if (wallpaper.pixels.empty()) return false;
+    std::uint64_t luminance = 0;
+    std::size_t samples = 0;
+    const std::size_t step = std::max<std::size_t>(
+        1, wallpaper.pixels.size() / 4096);
+    for (std::size_t index = 0; index < wallpaper.pixels.size();
+         index += step)
+    {
+        const std::uint32_t pixel = wallpaper.pixels[index];
+        const unsigned blue = pixel & 0xffu;
+        const unsigned green = (pixel >> 8) & 0xffu;
+        const unsigned red = (pixel >> 16) & 0xffu;
+        luminance += 54u * red + 183u * green + 19u * blue;
+        ++samples;
+    }
+    return samples > 0 && luminance / samples > 150u * 256u;
+}
+
 Wallpaper GenerateWallpaper(int width, int height, bool lightTheme)
 {
     return GenerateWallpaper(width, height, lightTheme, {});
@@ -149,15 +343,24 @@ Wallpaper GenerateWallpaper(int width, int height, bool lightTheme)
 Wallpaper GenerateWallpaper(int width, int height, bool lightTheme,
     const WallpaperViewport& viewport)
 {
+    (void)lightTheme;
+    static const Wallpaper source = DefaultWallpaperSource();
+    return GenerateWallpaper(source, width, height, viewport);
+}
+
+Wallpaper GenerateWallpaper(const Wallpaper& source, int width, int height,
+    const WallpaperViewport& viewport)
+{
     Wallpaper wallpaper;
     if (width <= 0 || height <= 0)
         return wallpaper;
-    (void)lightTheme;
+    if (source.width <= 0 || source.height <= 0 || source.pixels.empty() ||
+        source.pixels.size() < static_cast<std::size_t>(source.width) *
+            source.height)
+        return wallpaper;
     wallpaper.width = width;
     wallpaper.height = height;
     wallpaper.pixels.resize(static_cast<std::size_t>(width) * height);
-    static const Wallpaper source = LoadLandscapeResource();
-    if (source.pixels.empty()) return {};
     const int canvasWidth = viewport.canvasWidth > 0
         ? viewport.canvasWidth : width;
     const int canvasHeight = viewport.canvasHeight > 0
@@ -211,30 +414,32 @@ AcrylicNoisePixels GenerateAcrylicNoise(bool lightTheme)
 }
 
 bool DrawStage(ID2D1DeviceContext* context, const RECT& bounds,
-    const StageStyle& style, const WallpaperViewport& viewport)
+    const StageStyle& style, const WallpaperViewport& viewport,
+    const Wallpaper* source)
 {
     const int width = bounds.right - bounds.left;
     const int height = bounds.bottom - bounds.top;
     if (!context || width <= 0 || height <= 0)
         return false;
-    const Wallpaper wallpaper = GenerateWallpaper(
-        width, height, style.lightTheme, viewport);
+    const Wallpaper wallpaper = source && !source->pixels.empty()
+        ? GenerateWallpaper(*source, width, height, viewport)
+        : GenerateWallpaper(width, height, style.lightTheme, viewport);
     if (wallpaper.pixels.empty()) return false;
 
     const D2D1_BITMAP_PROPERTIES1 bitmapProperties =
         D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE,
             D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
                 D2D1_ALPHA_MODE_PREMULTIPLIED), 96.0f, 96.0f);
-    ComPtr<ID2D1Bitmap1> source;
+    ComPtr<ID2D1Bitmap1> sourceBitmap;
     if (FAILED(context->CreateBitmap(
             D2D1::SizeU(static_cast<UINT32>(width),
                 static_cast<UINT32>(height)),
             wallpaper.pixels.data(),
             static_cast<UINT32>(width * sizeof(std::uint32_t)),
-            &bitmapProperties, &source)) || !source)
+            &bitmapProperties, &sourceBitmap)) || !sourceBitmap)
         return false;
 
-    context->DrawBitmap(source.Get(), ToD2DRect(bounds), 1.0f,
+    context->DrawBitmap(sourceBitmap.Get(), ToD2DRect(bounds), 1.0f,
         D2D1_INTERPOLATION_MODE_LINEAR);
     if (!style.glassEnabled || style.blurRadius <= 0.0f)
         return true;
@@ -243,7 +448,7 @@ bool DrawStage(ID2D1DeviceContext* context, const RECT& bounds,
     if (FAILED(context->CreateEffect(CLSID_D2D1GaussianBlur, &blur)) ||
         !blur)
         return true;
-    blur->SetInput(0, source.Get());
+    blur->SetInput(0, sourceBitmap.Get());
     blur->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION,
         std::clamp(style.blurRadius, 0.0f, 48.0f));
     blur->SetValue(D2D1_GAUSSIANBLUR_PROP_OPTIMIZATION,

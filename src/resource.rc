@@ -8,6 +8,3 @@ IDR_FA_FONT RCDATA "../assets/fonts/fa-solid-900.ttf"
 
 // Microsoft Fluent System Icons Regular, embedded under the MIT license
 IDR_FLUENT_REGULAR_FONT RCDATA "../assets/fonts/FluentSystemIcons-Regular.ttf"
-
-// Shared landscape used behind in-app and exported widget previews
-IDR_WIDGET_PREVIEW_LANDSCAPE RCDATA "../assets/preview/widget-preview-landscape.png"

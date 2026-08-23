@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstdint>
+#include <filesystem>
 #include <vector>
 
 namespace snowdesktop::widget_preview
@@ -40,19 +41,36 @@ inline constexpr std::size_t AcrylicNoiseSize = 64;
 using AcrylicNoisePixels = std::array<std::uint32_t,
     AcrylicNoiseSize * AcrylicNoiseSize>;
 
-/** Generate the deterministic shared preview landscape. */
+/** Decode an author-selected image and composite any transparency to opaque. */
+Wallpaper LoadWallpaperImage(const std::filesystem::path& path);
+
+/** Resolve the current image for the monitor containing anchorWindow. */
+Wallpaper LoadDesktopWallpaper(HWND anchorWindow);
+
+/** Stable sampled identity used to invalidate preview frame caches. */
+std::uint64_t WallpaperFingerprint(const Wallpaper& wallpaper);
+
+/** True when dark card chrome is more legible over the sampled image. */
+bool WallpaperIsLight(const Wallpaper& wallpaper);
+
+/** Generate the neutral compatibility stage used when no image is supplied. */
 Wallpaper GenerateWallpaper(int width, int height, bool lightTheme);
 
 /** Generate an exact crop from a larger wallpaper composition. */
 Wallpaper GenerateWallpaper(int width, int height, bool lightTheme,
     const WallpaperViewport& viewport);
 
+/** Center-cover an explicit wallpaper into the requested stage crop. */
+Wallpaper GenerateWallpaper(const Wallpaper& source, int width, int height,
+    const WallpaperViewport& viewport = {});
+
 /** Generate the same fixed acrylic texture used by live widget panels. */
 AcrylicNoisePixels GenerateAcrylicNoise(bool lightTheme);
 
 /** Draw the sharp wallpaper and, when requested, its clipped blurred layer. */
 bool DrawStage(ID2D1DeviceContext* context, const RECT& bounds,
-    const StageStyle& style, const WallpaperViewport& viewport = {});
+    const StageStyle& style, const WallpaperViewport& viewport = {},
+    const Wallpaper* source = nullptr);
 
 /** Draw a one-shot acrylic texture for the out-of-process author preview. */
 void DrawAcrylicNoise(ID2D1DeviceContext* context, const RECT& bounds,

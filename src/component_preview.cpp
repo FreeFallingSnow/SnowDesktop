@@ -485,7 +485,10 @@ std::wstring Window::ModelIdentity(const Model& model) const
     for (const Card& card : model.cards)
     {
         result += L"|" + card.cacheKey +
-            (card.lightStage ? L":stage-light" : L":stage-dark");
+            (card.lightStage ? L":stage-light" : L":stage-dark") + L":" +
+            std::to_wstring(widget_preview::WallpaperFingerprint(
+                card.stageWallpaper ? *card.stageWallpaper :
+                    widget_preview::Wallpaper{}));
     }
     return result;
 }
@@ -507,10 +510,6 @@ bool Window::RenderCurrent()
             [&](const Option& option) {
                 return IsOptionVisible(card, option);
             }));
-    const int controlsHeight =
-        (pagerHeight ? pagerHeight + controlMargin * 2 : 0) +
-        static_cast<int>(visibleOptionCount) *
-            (optionHeight + controlMargin);
     const int previewWidth = std::max(1, card.previewWidth);
     const int previewHeight = std::max(1, card.previewHeight);
     width_ = std::max(Scale(360, dpi_),
@@ -555,7 +554,7 @@ bool Window::RenderCurrent()
     if (measureDc) DeleteDC(measureDc);
 
     int metadataHeight = 0;
-    if (hasCardHeader || hasDescription || hasApplyButton)
+    if (hasCardHeader || hasDescription)
     {
         metadataHeight = metadataTopPadding + metadataBottomPadding;
         if (hasCardHeader)
@@ -565,18 +564,18 @@ bool Window::RenderCurrent()
             if (hasCardHeader) metadataHeight += Scale(2, dpi_);
             metadataHeight += descriptionHeight;
         }
-        if (hasApplyButton)
-        {
-            if (hasCardHeader || hasDescription)
-                metadataHeight += Scale(6, dpi_);
-            metadataHeight += applyButtonHeight;
-        }
     }
+    const int externalControlsHeight =
+        (pagerHeight ? gap + pagerHeight : 0) +
+        (visibleOptionCount ? gap +
+            static_cast<int>(visibleOptionCount) * optionHeight +
+            static_cast<int>(visibleOptionCount - 1) * controlMargin : 0) +
+        (hasApplyButton ? gap + applyButtonHeight : 0);
     height_ = padding + titleHeight +
         (introductionHeight ? Scale(4, dpi_) + introductionHeight : 0) +
         (resizeHintHeight ? Scale(2, dpi_) + resizeHintHeight : 0) +
-        gap + previewInset + previewHeight + controlsHeight + metadataHeight +
-        previewInset + padding;
+        gap + previewInset + previewHeight + metadataHeight + previewInset +
+        externalControlsHeight + padding;
 
     BITMAPINFO info{};
     info.bmiHeader.biSize = sizeof(info.bmiHeader);
@@ -644,14 +643,18 @@ bool Window::RenderCurrent()
     const int previewLeft = (width_ - previewWidth) / 2;
     previewRect_ = { previewLeft, cardTop + previewInset,
         previewLeft + previewWidth, cardTop + previewInset + previewHeight };
-    const int metadataTop = previewRect_.bottom + controlsHeight;
+    const int metadataTop = previewRect_.bottom;
     cardRect_ = { padding, cardTop, width_ - padding,
         metadataTop + metadataHeight + previewInset };
     const int cardWidth = cardRect_.right - cardRect_.left;
     const int cardHeight = cardRect_.bottom - cardRect_.top;
     const int cardRadius = Scale(8, dpi_);
-    const auto wallpaper = snowdesktop::widget_preview::GenerateWallpaper(
-        cardWidth, cardHeight, card.lightStage);
+    const auto wallpaper = card.stageWallpaper &&
+            !card.stageWallpaper->pixels.empty()
+        ? snowdesktop::widget_preview::GenerateWallpaper(
+            *card.stageWallpaper, cardWidth, cardHeight)
+        : snowdesktop::widget_preview::GenerateWallpaper(
+            cardWidth, cardHeight, card.lightStage);
     Bitmap cardStage;
     cardStage.width = wallpaper.width;
     cardStage.height = wallpaper.height;
@@ -674,7 +677,8 @@ bool Window::RenderCurrent()
         cardWidth, cardHeight,
         previewRect_.left - cardRect_.left,
         previewRect_.top - cardRect_.top,
-        card.lightStage };
+        card.lightStage,
+        card.stageWallpaper.get() };
     RoundedOutline(dc, previewRect_, Scale(6, dpi_),
         cardPalette.separator);
 
@@ -710,7 +714,7 @@ bool Window::RenderCurrent()
     }
     DrawBitmap(dc, rendered, previewRect_);
 
-    int controlsY = previewRect_.bottom;
+    int controlsY = cardRect_.bottom;
     previousButton_ = {};
     nextButton_ = {};
     previousGlyphRect_ = {};
@@ -718,9 +722,9 @@ bool Window::RenderCurrent()
     pagerRect_ = {};
     if (pagerHeight)
     {
-        controlsY += controlMargin;
-        pagerRect_ = { padding + previewInset, controlsY,
-            width_ - padding - previewInset, controlsY + pagerHeight };
+        controlsY += gap;
+        pagerRect_ = { padding, controlsY,
+            width_ - padding, controlsY + pagerHeight };
         const int buttonWidth = Scale(42, dpi_);
         previousButton_ = pagerRect_;
         previousButton_.right = previousButton_.left + buttonWidth;
@@ -729,29 +733,31 @@ bool Window::RenderCurrent()
         RECT statusRect{ previousButton_.right, pagerRect_.top,
             nextButton_.left, pagerRect_.bottom };
         RoundedBox(dc, previousButton_, Scale(6, dpi_),
-            cardPalette.hoverBackground, cardPalette.separator);
+            palette.hoverBackground, palette.separator);
         RoundedBox(dc, nextButton_, Scale(6, dpi_),
-            cardPalette.hoverBackground, cardPalette.separator);
+            palette.hoverBackground, palette.separator);
         DrawCenteredGlyph(dc, glyphFont,
-            currentCard_ > 0 ? cardPalette.text : cardPalette.disabledText,
+            currentCard_ > 0 ? palette.text : palette.disabledText,
             L'\u2039', previousButton_, previousGlyphRect_);
-        DrawCenteredText(dc, bodyFont, cardPalette.text,
+        DrawCenteredText(dc, bodyFont, palette.text,
             std::to_wstring(currentCard_ + 1) + L" / " +
                 std::to_wstring(model_.cards.size()), statusRect);
         DrawCenteredGlyph(dc, glyphFont,
             currentCard_ + 1 < model_.cards.size()
-                ? cardPalette.text : cardPalette.disabledText,
+                ? palette.text : palette.disabledText,
             L'\u203a', nextButton_, nextGlyphRect_);
-        controlsY = pagerRect_.bottom + controlMargin;
+        controlsY = pagerRect_.bottom;
     }
 
     optionHits_.clear();
+    bool firstOption = true;
     for (const Option& option : card.options)
     {
         if (!IsOptionVisible(card, option)) continue;
-        controlsY += controlMargin;
-        RECT row{ padding + previewInset, controlsY,
-            width_ - padding - previewInset, controlsY + optionHeight };
+        controlsY += firstOption ? gap : controlMargin;
+        firstOption = false;
+        RECT row{ padding, controlsY,
+            width_ - padding, controlsY + optionHeight };
         const int choiceWidth = Scale(70, dpi_);
         const int choiceGap = Scale(6, dpi_);
         RECT onRect{ row.right - choiceWidth, row.top,
@@ -761,21 +767,21 @@ bool Window::RenderCurrent()
         RECT labelRect{ row.left, row.top,
             offRect.left - Scale(8, dpi_), row.bottom };
         const bool enabled = OptionValue(card.applySettings, option.setting);
-        DrawWrappedText(dc, bodyFont, cardPalette.text,
+        DrawWrappedText(dc, bodyFont, palette.text,
             option.label, labelRect,
             DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         const int capsuleRadius = optionHeight / 2;
         RoundedBox(dc, offRect, capsuleRadius,
-            enabled ? cardPalette.background : cardPalette.hoverBackground,
-            enabled ? cardPalette.separator : cardPalette.accent);
+            enabled ? palette.background : palette.hoverBackground,
+            enabled ? palette.separator : palette.accent);
         RoundedBox(dc, onRect, capsuleRadius,
-            enabled ? cardPalette.hoverBackground : cardPalette.background,
-            enabled ? cardPalette.accent : cardPalette.separator);
+            enabled ? palette.hoverBackground : palette.background,
+            enabled ? palette.accent : palette.separator);
         DrawCenteredText(dc, bodyFont,
-            enabled ? cardPalette.disabledText : cardPalette.accent,
+            enabled ? palette.disabledText : palette.accent,
             option.offLabel, offRect);
         DrawCenteredText(dc, bodyFont,
-            enabled ? cardPalette.accent : cardPalette.disabledText,
+            enabled ? palette.accent : palette.disabledText,
             option.onLabel, onRect);
         optionHits_.push_back({ offRect, option.setting, false });
         optionHits_.push_back({ onRect, option.setting, true });
@@ -821,9 +827,9 @@ bool Window::RenderCurrent()
     }
     if (hasApplyButton)
     {
-        if (hasCardHeader || hasDescription) metadataY += Scale(6, dpi_);
-        applyRect_ = { metadataLeft, metadataY, metadataRight,
-            metadataY + applyButtonHeight };
+        controlsY += gap;
+        applyRect_ = { padding, controlsY, width_ - padding,
+            controlsY + applyButtonHeight };
         RoundedBox(dc, applyRect_, Scale(8, dpi_),
             palette.accent, palette.accent);
         DrawCenteredText(dc, cardTitleFont, RGB(255, 255, 255),

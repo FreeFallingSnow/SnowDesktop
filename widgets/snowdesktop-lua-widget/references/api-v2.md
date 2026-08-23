@@ -37,8 +37,10 @@ Shell、系统数据、存储或其他副作用 API。命令输出文件数、�
 存储；`--storage key=value` 可重复覆盖预览值，`--columns/--rows` 必须落在清单尺寸范围内，
 `--dpi` 支持 96–480，`--locale` 选择宿主已安装语言。`--appearance` 可为
 `dark/light/glass-dark/glass-light/acrylic-dark/acrylic-light`；旧参数 `--theme dark/light`
-继续作为普通深/浅外观的简写，但不能和 `--appearance` 同时使用。输出 PNG 始终包含确定性的
-彩色预览背景、解析后的普通/毛玻璃/亚克力材质层和组件内容，像素完全不透明；组件自定义材质
+继续作为普通深/浅外观的简写，但不能和 `--appearance` 同时使用。生成最终打包预览时应通过
+`--background <图片文件>` 显式选择背景；该图片只参与合成，不会被 `pack` 自动加入组件包。
+未指定时使用中性的兼容背景。输出 PNG 始终包含背景、解析后的普通/毛玻璃/亚克力材质层和组件
+内容，像素完全不透明；组件自定义材质
 优先，`followPersonalization` 则回到所选宿主外观。应先用 `preview` 生成清单声明的最终预览图，
 再运行 `pack`；`pack` 只校验和归档现有预览文件，不会启动宿主或改写源码目录。
 `--data-state` 可为 `ready/empty/loading/error/stale/permission-denied`，用于让全部预览数据订阅
@@ -47,7 +49,7 @@ Shell、系统数据、存储或其他副作用 API。命令输出文件数、�
 时钟，stale 时间固定落在两个请求采样周期之前。以上环境在 Lua `setup()` 前注入，预览
 显示器摘要固定标记为 unavailable；accent、无障碍默认值、region、UTC 时区和输入语言也由
 所选 locale 的确定性预览环境提供，不读取开发机对应设置。命令返回包含稳定 `stage`、最终像素
-尺寸、栅格尺寸、DPI、locale、基础 theme、appearance 和 dataState 的 JSON。复制到
+尺寸、栅格尺寸、DPI、locale、基础 theme、appearance、dataState 和 background 的 JSON。复制到
 SnowDesktop 安装目录外的 CLI 可用 `--host <SnowDesktop.exe>` 或 `SNOWDESKTOP_HOST` 指定宿主。
 
 运行 `snowwidget permissions <组件目录>` 可从宿主同一权限 descriptor、公共函数目录和 system
