@@ -972,6 +972,10 @@ private:
     void UpdateFloatingPopupWindowBounds(
         bool immediatePresent = true);
     void ApplyFloatingPopupLayerPolicy();
+    /** @brief 创建、同步或移除集合弹窗窗口下方的原生毛玻璃层。 */
+    void UpdateCollectionPopupBackdrop();
+    /** @brief 将集合弹窗当前开关动画变换同步到原生毛玻璃层。 */
+    void ApplyCollectionPopupBackdropAnimationFrame();
     void InvalidateFloatingPopupWindow(
         bool immediatePresent = false);
     HRESULT CreateOrResizeFloatingPopupCompositionSurface();
@@ -1130,6 +1134,8 @@ private:
     void SetSoftwareDesktopEnabled(bool enabled, bool persist);
     /** @brief 根据全局继承或快捷搜索覆盖项解析并应用主题。 */
     void ApplyQuickNavigationAppearance();
+    /** @brief 根据全局继承或独立覆盖项解析集合组件与 Dock 弹窗主题。 */
+    void ApplyCollectionPopupAppearance();
     /** @brief 加载 Dock 设置。 */
     void LoadDockSettingsAndApply();
     /** @brief 从 Windows 读取任务栏系统设置并同步到软件配置。 */
@@ -2850,6 +2856,11 @@ private:
     float quickNavBlurRadius_ = 24.0f;
     PersonalizationSettings quickNavAppearance_ =
         MakeQuickNavigationAppearancePreset(kAppearancePresetLight);
+    bool collectionPopupLightTheme_ = false;
+    bool collectionPopupGlassTheme_ = false;
+    float collectionPopupBlurRadius_ = 24.0f;
+    PersonalizationSettings collectionPopupAppearance_ =
+        MakeQuickNavigationAppearancePreset(kAppearancePresetDark);
     bool desktopIconsHidden_ = false;
     bool showHiddenHint_ = false;
     DWORD hiddenHintStartTick_ = 0;
@@ -3143,6 +3154,8 @@ private:
         floatingPopupMouseHookNotificationWindow_{ nullptr };
     inline static std::atomic<std::uint32_t>
         floatingPopupMouseHookActiveGeneration_{ 0 };
+    /** @brief 集合组件与 Dock 弹窗窗口下方的原生毛玻璃层。 */
+    DesktopBackdropCompositor collectionPopupBackdropCompositor_;
     /** @brief 快捷导航顶层窗口下方的原生毛玻璃层。 */
     DesktopBackdropCompositor quickNavBackdropCompositor_;
     HWND quickNavigationSearchEdit_ = nullptr;

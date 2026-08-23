@@ -3423,6 +3423,12 @@ int main(int argc, char** argv)
         const std::string floatingPopupSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_floating_popup_window.cpp");
+        const std::string popupRenderSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_popup_render.cpp");
+        const std::string compositionAnimationSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_composition_animation_overlay.cpp");
         const std::string floatingDockSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_floating_dock_window.cpp");
@@ -3637,6 +3643,45 @@ int main(int argc, char** argv)
                 floatingPopupSource.find("RegisterDragDrop") !=
                     std::string::npos,
             "the shared popup host must own an independent DComp target and OLE drop surface");
+        Check(floatingPopupSource.find(
+                  "collectionPopupBackdropCompositor_.InitializePopup(") !=
+                    std::string::npos &&
+                floatingPopupSource.find(
+                  "collectionPopupBackdropCompositor_.Reattach(") !=
+                    std::string::npos &&
+                floatingPopupSource.find(
+                  "collectionPopupBackdropCompositor_.Reset();") !=
+                    std::string::npos &&
+                floatingPopupSource.find(
+                  "collectionPopupBackdropCompositor_.SetPopupTopmost(") !=
+                    std::string::npos,
+            "the collection popup backdrop must follow the shared host lifecycle and z-order");
+        Check(compositionAnimationSource.find(
+                  "ApplyCollectionPopupBackdropAnimationFrame();") !=
+                    std::string::npos &&
+                compositionAnimationSource.find(
+                  "if (collectionPopupGlassTheme_)\n        return false;") !=
+                    std::string::npos,
+            "acrylic popup animation must update content and native backdrop from scheduler frames");
+        Check(popupRenderSource.find(
+                  "DrawWidgetPanelBackground(") !=
+                    std::string::npos &&
+                popupRenderSource.find(
+                  "collectionPopupAppearance_") !=
+                    std::string::npos &&
+                CountOccurrences(
+                  popupRenderSource,
+                  "collectionPopupLightTheme_") >= 7 &&
+                popupRenderSource.find(
+                  "IsLightContentTheme()") == std::string::npos,
+            "collection and Dock popups must render every foreground state from their independent theme");
+        Check(dragPreviewSource.find(
+                  "collectionPopupBackdropCompositor_.IsBackdropWindow(window)") !=
+                    std::string::npos &&
+                CountOccurrences(
+                  oleDropRoutingSource,
+                  "collectionPopupBackdropCompositor_.IsBackdropWindow(") == 2,
+            "the collection popup backdrop must remain presentation-only for drag and OLE routing");
         Check(floatingPopupSource.find(
                   "PackScreenPoint(event->pt)") !=
                     std::string::npos &&

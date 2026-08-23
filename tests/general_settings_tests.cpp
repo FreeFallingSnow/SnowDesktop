@@ -1,4 +1,5 @@
 #include "general_settings.h"
+#include "personalization.h"
 
 #include <windows.h>
 
@@ -36,6 +37,8 @@ int main()
     saved.demoModeEnabled = true;
     saved.widgetDeveloperToolsEnabled = true;
     saved.agentSkillTargetMask = 0x15;
+    saved.quickNavTheme = kFourThemeAcrylicDark;
+    saved.collectionPopupTheme = kFourThemeAcrylicLight;
     strcpy_s(saved.language, "zh-CN");
     Check(SaveGeneralSettings(path.c_str(), saved),
         "general settings save succeeds");
@@ -46,8 +49,22 @@ int main()
     Check(loaded.demoModeEnabled &&
         loaded.widgetDeveloperToolsEnabled &&
         loaded.agentSkillTargetMask == 0x15 &&
+        loaded.quickNavTheme == kFourThemeAcrylicDark &&
+        loaded.collectionPopupTheme == kFourThemeAcrylicLight &&
         std::strcmp(loaded.language, "zh-CN") == 0,
-        "demo mode, developer tools visibility, and Agent Skill targets persist");
+        "general flags, four-theme selections, and Agent Skill targets persist");
+
+    {
+        std::ofstream invalid(path, std::ios::binary | std::ios::trunc);
+        invalid << "{\n"
+                   "  \"collectionPopupTheme\": 99,\n"
+                   "  \"language\": \"system\"\n"
+                   "}\n";
+    }
+    GeneralSettings clamped;
+    Check(LoadGeneralSettings(path.c_str(), clamped) &&
+            clamped.collectionPopupTheme == kFourThemeAcrylicLight,
+        "collection popup theme clamps invalid persisted values");
 
     {
         std::ofstream legacy(path, std::ios::binary | std::ios::trunc);
@@ -58,9 +75,33 @@ int main()
         "legacy general settings still load");
     Check(!migrated.demoModeEnabled &&
         !migrated.widgetDeveloperToolsEnabled &&
+        migrated.collectionPopupTheme == kFourThemeDark &&
         migrated.agentSkillTargetMask ==
             GeneralSettings::kAllAgentSkillTargetsMask,
-        "legacy settings default to demo mode off, hidden developer tools, and all Skill targets selected");
+        "legacy settings preserve the dark popup and existing defaults");
+
+    Check(FourThemeSelectionFromAppearancePreset(
+            kAppearancePresetDark) == kFourThemeDark &&
+        FourThemeSelectionFromAppearancePreset(
+            kAppearancePresetLight) == kFourThemeLight &&
+        FourThemeSelectionFromAppearancePreset(
+            kAppearancePresetGlassDark) == kFourThemeAcrylicDark &&
+        FourThemeSelectionFromAppearancePreset(
+            kAppearancePresetAcrylicDark) == kFourThemeAcrylicDark &&
+        FourThemeSelectionFromAppearancePreset(
+            kAppearancePresetGlassLight) == kFourThemeAcrylicLight &&
+        FourThemeSelectionFromAppearancePreset(
+            kAppearancePresetAcrylicLight) == kFourThemeAcrylicLight,
+        "six global themes map to the four overlay themes");
+    Check(AppearancePresetFromFourThemeSelection(kFourThemeDark) ==
+            kAppearancePresetDark &&
+        AppearancePresetFromFourThemeSelection(kFourThemeLight) ==
+            kAppearancePresetLight &&
+        AppearancePresetFromFourThemeSelection(kFourThemeAcrylicDark) ==
+            kAppearancePresetAcrylicDark &&
+        AppearancePresetFromFourThemeSelection(kFourThemeAcrylicLight) ==
+            kAppearancePresetAcrylicLight,
+        "four overlay themes map back to stable appearance preset IDs");
 
     std::filesystem::remove(path, error);
     if (failures == 0)

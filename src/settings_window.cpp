@@ -3298,13 +3298,11 @@ void SettingsWindow::DrawPersonalizationPage()
             personalization_.contextMenuStyle;
         if (presetIds[presetIndex] == kAppearancePresetCustom)
         {
-            switch (NormalizeAppearancePresetId(previousPreset))
-            {
-            case kAppearancePresetLight: generalSettings_.quickNavTheme = 1; break;
-            case kAppearancePresetAcrylicDark: generalSettings_.quickNavTheme = 2; break;
-            case kAppearancePresetAcrylicLight: generalSettings_.quickNavTheme = 3; break;
-            default: generalSettings_.quickNavTheme = 0; break;
-            }
+            const int inheritedFourTheme =
+                FourThemeSelectionFromAppearancePreset(
+                    NormalizeAppearancePresetId(previousPreset));
+            generalSettings_.quickNavTheme = inheritedFourTheme;
+            generalSettings_.collectionPopupTheme = inheritedFourTheme;
             generalSettingsDirty_ = true;
             personalization_.backgroundPreset = kAppearancePresetCustom;
         }
@@ -3333,6 +3331,13 @@ void SettingsWindow::DrawPersonalizationPage()
     BeginSettingRow(_L("app.settings.quick_nav_theme"), controlW);
     ImGui::SetNextItemWidth(controlW);
     if (ImGui::Combo("##QuickNavTheme", &generalSettings_.quickNavTheme,
+        quickNavThemeNames, IM_ARRAYSIZE(quickNavThemeNames)))
+        generalSettingsDirty_ = true;
+
+    BeginSettingRow(_L("app.settings.collection_popup_theme"), controlW);
+    ImGui::SetNextItemWidth(controlW);
+    if (ImGui::Combo("##CollectionPopupTheme",
+        &generalSettings_.collectionPopupTheme,
         quickNavThemeNames, IM_ARRAYSIZE(quickNavThemeNames)))
         generalSettingsDirty_ = true;
 

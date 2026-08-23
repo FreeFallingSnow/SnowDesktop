@@ -1,4 +1,5 @@
 #include "app.h"
+#include "quick_navigation_theme.h"
 #include "../item_render_layer_rules.h"
 
 // Collection-popup rendering.
@@ -13,6 +14,13 @@ void DesktopApp::DrawCollectionPopup(
     const DesktopWidget& widget = *openWidget;
     const auto popupMetrics =
         GetCollectionPopupLayoutMetrics(widget);
+    const QuickNavTheme& popupTheme = collectionPopupLightTheme_
+        ? kQuickNavLight : kQuickNavDark;
+    const auto popupTextColor = [&](float alpha) {
+        D2D1_COLOR_F color = popupTheme.popupTitle;
+        color.a *= std::clamp(alpha, 0.0f, 1.0f);
+        return color;
+    };
     popupRect_ = GetCollectionPopupRect(widget);
     popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
         GetCollectionPopupMaxScrollOffset(widget, popupRect_));
@@ -75,11 +83,25 @@ void DesktopApp::DrawCollectionPopup(
 
     std::vector<std::wstring> popupKeys =
         GetPopupItemKeys(widget);
-    DrawD2DRoundedRectangle(
+    DrawWidgetPanelBackground(
         ctx, popupRect_, 18.0f * popupMetrics.scale,
-        D2D1::ColorF(0.08f, 0.10f, 0.13f, 1.0f),
-        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f),
-        std::max(1.0f, 1.4f * popupMetrics.scale));
+        D2D1::ColorF(
+            collectionPopupAppearance_.widgetBgR,
+            collectionPopupAppearance_.widgetBgG,
+            collectionPopupAppearance_.widgetBgB,
+            std::clamp(
+                collectionPopupAppearance_.widgetAlpha,
+                0.0f, 1.0f)),
+        D2D1::ColorF(
+            collectionPopupAppearance_.widgetBorderR,
+            collectionPopupAppearance_.widgetBorderG,
+            collectionPopupAppearance_.widgetBorderB,
+            std::clamp(
+                collectionPopupAppearance_.widgetBorderAlpha,
+                0.0f, 1.0f)),
+        false,
+        std::max(1.0f, 1.4f * popupMetrics.scale),
+        &collectionPopupAppearance_, false);
 
     RECT titleRect = MakeRect(
         popupRect_.left + snowdesktop::collection_popup_layout::
@@ -103,8 +125,7 @@ void DesktopApp::DrawCollectionPopup(
     DrawD2DTextEllipsis(
         ctx, title, titleRect,
         itemTextFormat_.Get(),
-        D2D1::ColorF(
-            1.0f, 1.0f, 1.0f, 1.0f),
+        popupTextColor(1.0f),
         DWRITE_TEXT_ALIGNMENT_LEADING,
         DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
@@ -121,13 +142,14 @@ void DesktopApp::DrawCollectionPopup(
         DrawD2DRoundedRectangle(
             ctx, sortRect, 8.0f * popupMetrics.scale,
             hovered
-                ? D2D1::ColorF(
-                    1.0f, 1.0f, 1.0f, 0.16f)
-                : D2D1::ColorF(
-                    1.0f, 1.0f, 1.0f, 0.08f),
-            D2D1::ColorF(
-                1.0f, 1.0f, 1.0f,
-                hovered ? 0.34f : 0.20f),
+                ? popupTextColor(
+                    collectionPopupLightTheme_ ? 0.10f : 0.16f)
+                : popupTextColor(
+                    collectionPopupLightTheme_ ? 0.05f : 0.08f),
+            popupTextColor(
+                hovered
+                    ? (collectionPopupLightTheme_ ? 0.24f : 0.34f)
+                    : (collectionPopupLightTheme_ ? 0.12f : 0.20f)),
             1.0f);
 
         std::wstring sortLabel =
@@ -162,8 +184,7 @@ void DesktopApp::DrawCollectionPopup(
         DrawD2DTextEllipsis(
             ctx, sortLabel, sortRect,
             itemTextFormat_.Get(),
-            D2D1::ColorF(
-                1.0f, 1.0f, 1.0f, 0.88f),
+            popupTextColor(0.88f),
             DWRITE_TEXT_ALIGNMENT_CENTER,
             DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     }
@@ -190,7 +211,8 @@ void DesktopApp::DrawCollectionPopup(
                     ResolveTitleLayerPlan(entry.selected);
             icon.Draw(ctx, itemRect,
                 entry.selected ? 2 : (hovered ? 1 : 0),
-                false, titleLayers.drawWithItem);
+                collectionPopupLightTheme_,
+                titleLayers.drawWithItem);
         }
         else
         {
@@ -207,7 +229,8 @@ void DesktopApp::DrawCollectionPopup(
                         items_[itemIndex].selected);
             icon.Draw(ctx, itemRect,
                 items_[itemIndex].selected ? 2 : (hovered ? 1 : 0),
-                false, titleLayers.drawWithItem, false,
+                collectionPopupLightTheme_,
+                titleLayers.drawWithItem, false,
                 widget.type == DesktopWidgetType::Collection
                     ? &widget : nullptr);
         }
@@ -225,7 +248,9 @@ void DesktopApp::DrawCollectionPopup(
             if (!entry.selected) continue;
             FolderEntryIcon icon(
                 &entry, dockFolderPopupContainer_.get(), this);
-            icon.DrawTitle(ctx, itemRect, true);
+            icon.DrawTitle(
+                ctx, itemRect, true, 1.0f,
+                collectionPopupLightTheme_);
         }
         else
         {
@@ -236,7 +261,8 @@ void DesktopApp::DrawCollectionPopup(
                 continue;
             DesktopIcon icon(&items_[itemIndex], nullptr, this);
             icon.DrawTitle(
-                ctx, itemRect, true, 1.0f, false,
+                ctx, itemRect, true, 1.0f,
+                collectionPopupLightTheme_,
                 widget.type == DesktopWidgetType::Collection
                     ? &widget : nullptr);
         }
@@ -250,7 +276,7 @@ void DesktopApp::DrawCollectionPopup(
             ? _LW("widget.folder_mapping.empty")
             : _LW("widget.folder_mapping.unavailable");
         DrawD2DTextEllipsis(ctx, status, content, itemTextFormat_.Get(),
-            D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.68f),
+            popupTextColor(0.68f),
             DWRITE_TEXT_ALIGNMENT_CENTER,
             DWRITE_PARAGRAPH_ALIGNMENT_CENTER, false);
     }
@@ -266,7 +292,10 @@ void DesktopApp::DrawCollectionPopup(
         popupAnimation_.IsInteractive() &&
         PtInRect(&popupRect_, lastMousePoint_);
     popupHovered = popupHovered || popupScrollbarDragging_;
-    DrawScrollbarAt(ctx, content, contentHeight, visibleHeight, popupScrollOffset_, popupHovered, IsLightContentTheme());
+    DrawScrollbarAt(
+        ctx, content, contentHeight, visibleHeight,
+        popupScrollOffset_, popupHovered,
+        collectionPopupLightTheme_);
 
     if (animationApplied)
         ctx->SetTransform(previousTransform);

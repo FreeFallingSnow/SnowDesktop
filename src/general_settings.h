@@ -22,6 +22,9 @@ struct GeneralSettings
     UINT desktopPassthroughHotkeyModifiers = MOD_CONTROL | MOD_ALT;
     UINT desktopPassthroughHotkeyVirtualKey = VK_OEM_3;
     int quickNavTheme = 1;
+    // 0=dark, 1=light, 2=dark acrylic, 3=light acrylic.
+    // Dark preserves the legacy collection-popup appearance when absent.
+    int collectionPopupTheme = 0;
     bool dockEnabled = false;
     bool widgetDeveloperToolsEnabled = false;
     int agentSkillTargetMask = kAllAgentSkillTargetsMask;

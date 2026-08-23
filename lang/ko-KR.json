@@ -941,6 +941,7 @@
   "app.run.other_version_unknown_path": "사용할 수 없음",
   "app.settings.glass_enabled": "젖빛 유리 배경",
   "app.settings.quick_nav_theme": "빠른 탐색 테마",
+  "app.settings.collection_popup_theme": "위젯 및 Dock 팝업 테마",
   "app.settings.widget_layout": "위젯 레이아웃",
   "app.settings.recent_logs": "최근 로그",
   "app.settings.widget_editor": "위젯 편집기",

@@ -95,6 +95,8 @@ bool DesktopApp::IsDesktopInteractionSurfaceWindow(
         desktopBackdropCompositor_.IsBackdropWindow(root) ||
         floatingDockBackdropCompositor_.IsBackdropWindow(window) ||
         floatingDockBackdropCompositor_.IsBackdropWindow(root) ||
+        collectionPopupBackdropCompositor_.IsBackdropWindow(window) ||
+        collectionPopupBackdropCompositor_.IsBackdropWindow(root) ||
         quickNavBackdropCompositor_.IsBackdropWindow(window) ||
         quickNavBackdropCompositor_.IsBackdropWindow(root);
 }

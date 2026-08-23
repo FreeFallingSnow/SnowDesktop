@@ -941,6 +941,7 @@
   "app.run.other_version_unknown_path": "無法讀取",
   "app.settings.glass_enabled": "毛玻璃背景",
   "app.settings.quick_nav_theme": "快速導航主題",
+  "app.settings.collection_popup_theme": "元件與 Dock 彈出視窗主題",
   "app.settings.widget_layout": "元件佈局",
   "app.settings.recent_logs": "最近日誌",
   "app.settings.widget_editor": "元件編輯",

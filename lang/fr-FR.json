@@ -941,6 +941,7 @@
   "app.run.other_version_unknown_path": "Indisponible",
   "app.settings.glass_enabled": "Fond de verre dépoli",
   "app.settings.quick_nav_theme": "Thème de navigation rapide",
+  "app.settings.collection_popup_theme": "Thème des fenêtres contextuelles des widgets et du Dock",
   "app.settings.widget_layout": "Disposition des widgets",
   "app.settings.recent_logs": "Journaux récents",
   "app.settings.widget_editor": "Éditeur de widgets",

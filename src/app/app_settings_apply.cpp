@@ -235,9 +235,14 @@ void DesktopApp::LoadGeneralSettingsAndApply()
     }
     Locale::Instance().SetLanguage(generalSettings_.language);
     generalSettings_.dockEnabled = dockEnabled;
-    generalSettings_.quickNavTheme = std::clamp(generalSettings_.quickNavTheme, 0, 3);
+    generalSettings_.quickNavTheme =
+        NormalizeFourThemeSelection(generalSettings_.quickNavTheme);
+    generalSettings_.collectionPopupTheme =
+        NormalizeFourThemeSelection(
+            generalSettings_.collectionPopupTheme);
     SetSoftwareDesktopEnabled(generalSettings_.softwareDesktopEnabled, false);
     ApplyQuickNavigationAppearance();
+    ApplyCollectionPopupAppearance();
     if (demoModeEnabled != generalSettings_.demoModeEnabled)
     {
         InvalidateDragStaticScene();
@@ -260,12 +265,9 @@ void DesktopApp::ApplyQuickNavigationAppearance()
         globalAppearance = PersonalizationSettings::DarkPreset();
         LoadPersonalization(GetPersonalizationPath().c_str(), globalAppearance);
     }
-    constexpr int quickNavPresetIds[] = {
-        kAppearancePresetDark, kAppearancePresetLight,
-        kAppearancePresetAcrylicDark, kAppearancePresetAcrylicLight
-    };
     const int presetId = globalAppearance.backgroundPreset == kAppearancePresetCustom
-        ? quickNavPresetIds[std::clamp(generalSettings_.quickNavTheme, 0, 3)]
+        ? AppearancePresetFromFourThemeSelection(
+            generalSettings_.quickNavTheme)
         : globalAppearance.backgroundPreset;
     const PersonalizationSettings appearance =
         MakeQuickNavigationAppearancePreset(presetId);
@@ -280,6 +282,44 @@ void DesktopApp::ApplyQuickNavigationAppearance()
     quickNavAppearance_ = appearance;
     if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
         UpdateQuickNavigationBackdrop();
+}
+
+void DesktopApp::ApplyCollectionPopupAppearance()
+{
+    PersonalizationSettings globalAppearance;
+    if (settingsWindow_)
+    {
+        globalAppearance = settingsWindow_->GetPersonalization();
+    }
+    else
+    {
+        globalAppearance = PersonalizationSettings::DarkPreset();
+        LoadPersonalization(
+            GetPersonalizationPath().c_str(), globalAppearance);
+    }
+
+    const int selection =
+        globalAppearance.backgroundPreset == kAppearancePresetCustom
+        ? NormalizeFourThemeSelection(
+            generalSettings_.collectionPopupTheme)
+        : FourThemeSelectionFromAppearancePreset(
+            NormalizeAppearancePresetId(
+                globalAppearance.backgroundPreset));
+    const int presetId =
+        AppearancePresetFromFourThemeSelection(selection);
+    collectionPopupAppearance_ =
+        MakeQuickNavigationAppearancePreset(presetId);
+    collectionPopupLightTheme_ =
+        collectionPopupAppearance_.contentTheme == 1;
+    collectionPopupGlassTheme_ =
+        collectionPopupAppearance_.glassEnabled;
+    collectionPopupBlurRadius_ = std::clamp(
+        collectionPopupAppearance_.glassBlurRadius,
+        4.0f, 48.0f);
+
+    UpdateCollectionPopupBackdrop();
+    if (GetOpenPopupWidget())
+        InvalidateFloatingPopupWindow(true);
 }
 
 void DesktopApp::LoadDockSettingsAndApply()

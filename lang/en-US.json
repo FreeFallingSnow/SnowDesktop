@@ -941,6 +941,7 @@
     "app.run.other_version_unknown_path": "Unavailable",
     "app.settings.glass_enabled": "Frosted Glass Background",
     "app.settings.quick_nav_theme": "Quick Nav Theme",
+    "app.settings.collection_popup_theme": "Widget & Dock Popup Theme",
     "app.settings.widget_layout": "Widget Layout",
     "app.settings.recent_logs": "Recent Logs",
     "app.settings.widget_editor": "Widget Editor",

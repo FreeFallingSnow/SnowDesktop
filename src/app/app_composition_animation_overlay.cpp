@@ -460,6 +460,7 @@ void DesktopApp::ResetCompositionAnimationOverlay(
 bool DesktopApp::UpdateCollectionPopupCompositionAnimation(
     bool commit)
 {
+    ApplyCollectionPopupBackdropAnimationFrame();
     if (!popupAnimationOverlay_.active)
         return false;
     const auto visual = popupAnimation_.GetVisual();
@@ -504,6 +505,11 @@ bool DesktopApp::UpdateLuaWidgetPanelCompositionAnimation(
 
 bool DesktopApp::StartCollectionPopupCompositionAnimation()
 {
+    // The native backdrop lives in a separate composition target. Keep
+    // acrylic popups on the scheduler-driven path so both targets receive
+    // the same scale sample on every frame.
+    if (collectionPopupGlassTheme_)
+        return false;
     if (!popupAnimationOverlay_.active ||
         !popupAnimation_.IsAnimating())
         return false;

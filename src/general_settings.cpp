@@ -110,6 +110,8 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
         if (theme >= 4) theme -= 2;
         settings.quickNavTheme = std::clamp(theme, 0, 3);
     }
+    if (ReadIntField(text, "collectionPopupTheme", theme))
+        settings.collectionPopupTheme = std::clamp(theme, 0, 3);
     int agentSkillTargetMask = 0;
     if (ReadIntField(text, "agentSkillTargetMask", agentSkillTargetMask) &&
         agentSkillTargetMask >= 0 &&
@@ -139,6 +141,8 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
     file << "  \"desktopPassthroughHotkeyVirtualKey\": "
          << settings.desktopPassthroughHotkeyVirtualKey << ",\n";
     file << "  \"quickNavTheme\": " << settings.quickNavTheme << ",\n";
+    file << "  \"collectionPopupTheme\": "
+         << settings.collectionPopupTheme << ",\n";
     file << "  \"widgetDeveloperToolsEnabled\": "
          << (settings.widgetDeveloperToolsEnabled ? "true" : "false")
          << ",\n";

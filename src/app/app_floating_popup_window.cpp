@@ -414,6 +414,7 @@ void DesktopApp::RecoverFloatingPopupCompositionFailure(
 void DesktopApp::DestroyFloatingPopupWindow()
 {
     StopFloatingPopupOutsideClickMonitor();
+    collectionPopupBackdropCompositor_.Reset();
     if (floatingPopupDropTargetRegistered_ &&
         floatingPopupHwnd_ && IsWindow(floatingPopupHwnd_))
     {
@@ -623,13 +624,98 @@ void DesktopApp::ApplyFloatingPopupLayerPolicy()
         (GetWindowLongPtrW(
             floatingPopupHwnd_, GWL_EXSTYLE) &
             WS_EX_TOPMOST) != 0;
-    if (isTopmost == shouldBeTopmost)
+    if (isTopmost != shouldBeTopmost)
+    {
+        SetWindowPos(
+            floatingPopupHwnd_,
+            shouldBeTopmost ? HWND_TOPMOST : HWND_NOTOPMOST,
+            0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
+    collectionPopupBackdropCompositor_.
+        SetPopupTopmost(shouldBeTopmost);
+}
+
+void DesktopApp::ApplyCollectionPopupBackdropAnimationFrame()
+{
+    if (!collectionPopupBackdropCompositor_.IsAvailable())
         return;
-    SetWindowPos(
-        floatingPopupHwnd_,
-        shouldBeTopmost ? HWND_TOPMOST : HWND_NOTOPMOST,
-        0, 0, 0, 0,
-        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+
+    const auto visual = popupAnimation_.GetVisual();
+    POINT anchor{
+        (popupRect_.left + popupRect_.right) / 2,
+        (popupRect_.top + popupRect_.bottom) / 2,
+    };
+    if (popupHasAnchor_)
+    {
+        anchor.x = std::clamp(
+            popupAnchorPoint_.x, popupRect_.left, popupRect_.right);
+        anchor.y = std::clamp(
+            popupAnchorPoint_.y, popupRect_.top, popupRect_.bottom);
+    }
+    collectionPopupBackdropCompositor_.SetVisualTransform(
+        visual.scale, visual.visible ? 1.0f : 0.0f,
+        static_cast<float>(
+            anchor.x - floatingPopupWindowBounds_.left),
+        static_cast<float>(
+            anchor.y - floatingPopupWindowBounds_.top));
+    collectionPopupBackdropCompositor_.SetVisible(
+        visual.visible && ShouldShowFloatingPopupWindow() &&
+        floatingPopupHwnd_ &&
+        IsWindowVisible(floatingPopupHwnd_));
+}
+
+void DesktopApp::UpdateCollectionPopupBackdrop()
+{
+    const DesktopWidget* popup = GetOpenPopupWidget();
+    if (!collectionPopupGlassTheme_ || !popup ||
+        !floatingPopupHwnd_ || !IsWindow(floatingPopupHwnd_) ||
+        IsRectEmpty(&floatingPopupWindowBounds_))
+    {
+        collectionPopupBackdropCompositor_.Reset();
+        return;
+    }
+
+    const bool topmost =
+        snowdesktop::floating_popup_rules::ShouldBeTopmost(
+            true, shellPopupMenuLayerDepth_);
+    if (!collectionPopupBackdropCompositor_.IsAvailable())
+    {
+        const bool initiallyVisible =
+            IsWindowVisible(floatingPopupHwnd_) != FALSE &&
+            popupAnimation_.GetVisual().visible;
+        if (!collectionPopupBackdropCompositor_.InitializePopup(
+                floatingPopupHwnd_, topmost, initiallyVisible))
+        {
+            std::wstring message =
+                L"Collection popup native backdrop unavailable: ";
+            message += collectionPopupBackdropCompositor_.LastError();
+            WriteDiagnosticLogEntry(message.c_str());
+            return;
+        }
+        WriteDiagnosticLogEntry(
+            L"Collection popup native CompositionBackdropBrush initialized");
+    }
+    else
+    {
+        collectionPopupBackdropCompositor_.SetPopupTopmost(topmost);
+        collectionPopupBackdropCompositor_.Reattach(
+            floatingPopupHwnd_);
+    }
+
+    RECT panel = GetCollectionPopupRect(*popup);
+    OffsetRect(
+        &panel,
+        -floatingPopupWindowBounds_.left,
+        -floatingPopupWindowBounds_.top);
+    const float cornerRadius = 18.0f *
+        GetCollectionPopupLayoutMetrics(*popup).scale;
+    collectionPopupBackdropCompositor_.BeginFrame(true);
+    collectionPopupBackdropCompositor_.AddPanel(
+        panel, cornerRadius, collectionPopupBlurRadius_,
+        reinterpret_cast<std::uintptr_t>(this));
+    collectionPopupBackdropCompositor_.EndFrame();
+    ApplyCollectionPopupBackdropAnimationFrame();
 }
 
 void DesktopApp::UpdateFloatingPopupWindowBounds(
@@ -638,6 +724,7 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
     if (!ShouldShowFloatingPopupWindow())
     {
         StopFloatingPopupOutsideClickMonitor();
+        collectionPopupBackdropCompositor_.Reset();
         if (floatingPopupHwnd_ &&
             IsWindow(floatingPopupHwnd_) &&
             IsWindowVisible(floatingPopupHwnd_))
@@ -716,6 +803,8 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
         ApplyFloatingPopupLayerPolicy();
     }
 
+    UpdateCollectionPopupBackdrop();
+
     if (!wasVisible || boundsChanged || regionChanged)
     {
         HRGN windowRegion = CreateRectRgn(0, 0, 0, 0);
@@ -772,6 +861,7 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
             0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE |
                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        ApplyCollectionPopupBackdropAnimationFrame();
         wchar_t message[224]{};
         wsprintfW(
             message,

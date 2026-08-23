@@ -941,6 +941,7 @@
   "app.run.other_version_unknown_path": "利用不可",
   "app.settings.glass_enabled": "すりガラスの背景",
   "app.settings.quick_nav_theme": "クイック ナビゲーション テーマ",
+  "app.settings.collection_popup_theme": "ウィジェットと Dock のポップアップ テーマ",
   "app.settings.widget_layout": "ウィジェットのレイアウト",
   "app.settings.recent_logs": "最近のログ",
   "app.settings.widget_editor": "ウィジェット エディター",

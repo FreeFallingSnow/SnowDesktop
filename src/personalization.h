@@ -21,6 +21,56 @@ constexpr int kAppearancePresetAcrylicLight = 11;
 // component preset lists.
 constexpr int kAppearancePresetTaskbarTransparent = 12;
 
+// Compact four-theme selection shared by independent overlay surfaces.
+constexpr int kFourThemeDark = 0;
+constexpr int kFourThemeLight = 1;
+constexpr int kFourThemeAcrylicDark = 2;
+constexpr int kFourThemeAcrylicLight = 3;
+
+/** @brief Clamp a persisted four-theme selection without changing its wire values. */
+constexpr int NormalizeFourThemeSelection(int selection)
+{
+    return selection < kFourThemeDark
+        ? kFourThemeDark
+        : selection > kFourThemeAcrylicLight
+        ? kFourThemeAcrylicLight
+        : selection;
+}
+
+/** @brief Map one of the six global presets to the four independent overlay themes. */
+constexpr int FourThemeSelectionFromAppearancePreset(int presetId)
+{
+    switch (presetId)
+    {
+    case kAppearancePresetLight:
+        return kFourThemeLight;
+    case kAppearancePresetGlassDark:
+    case kAppearancePresetAcrylicDark:
+        return kFourThemeAcrylicDark;
+    case kAppearancePresetGlassLight:
+    case kAppearancePresetAcrylicLight:
+        return kFourThemeAcrylicLight;
+    default:
+        return kFourThemeDark;
+    }
+}
+
+/** @brief Convert a persisted four-theme selection back to an appearance preset ID. */
+constexpr int AppearancePresetFromFourThemeSelection(int selection)
+{
+    switch (NormalizeFourThemeSelection(selection))
+    {
+    case kFourThemeLight:
+        return kAppearancePresetLight;
+    case kFourThemeAcrylicDark:
+        return kAppearancePresetAcrylicDark;
+    case kFourThemeAcrylicLight:
+        return kAppearancePresetAcrylicLight;
+    default:
+        return kAppearancePresetDark;
+    }
+}
+
 /**
  * @brief 个性化设置结构体
  * @details 存储桌面组件的颜色与透明度外观参数，包含预设工厂方法。

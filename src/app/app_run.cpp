@@ -393,6 +393,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         settingsWindow_->SetRestartCallback([this]() { RequestRestart(); });
         settingsWindow_->SetInvalidateCallback([this]() {
             ApplyQuickNavigationAppearance();
+            ApplyCollectionPopupAppearance();
             if (quickNavigationOpen_)
                 InvalidateQuickNavigationWindow();
             if (dockSettings_.systemTaskbarFollowPersonalization ||

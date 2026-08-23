@@ -941,6 +941,7 @@
   "app.run.other_version_unknown_path": "Nicht verfügbar",
   "app.settings.glass_enabled": "Hintergrund aus Milchglas",
   "app.settings.quick_nav_theme": "Design der Schnellnavigation",
+  "app.settings.collection_popup_theme": "Design für Widget- und Dock-Pop-ups",
   "app.settings.widget_layout": "Widget-Layout",
   "app.settings.recent_logs": "Aktuelle Protokolle",
   "app.settings.widget_editor": "Widget-Editor",

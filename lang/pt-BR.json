@@ -941,6 +941,7 @@
   "app.run.other_version_unknown_path": "Caminho desconhecido",
   "app.settings.glass_enabled": "Fundo de vidro fosco",
   "app.settings.quick_nav_theme": "Tema de navegação rápida",
+  "app.settings.collection_popup_theme": "Tema dos pop-ups de widgets e do Dock",
   "app.settings.widget_layout": "Layout do widget",
   "app.settings.recent_logs": "Registros recentes",
   "app.settings.widget_editor": "Editor de widgets",
