@@ -90,8 +90,8 @@ struct Card
     bool lightStage = false;
     /// Optional fixed stage shared by the full card and component crop.
     std::shared_ptr<const widget_preview::Wallpaper> stageWallpaper;
-    /// Freeze the composed desktop monitor before this preview becomes visible.
-    bool captureDesktopStage = false;
+    /// Recreate the current static Windows wallpaper behind the preview card.
+    bool useDesktopWallpaperStage = false;
     /// Includes component/mode/DPI/menu theme/personalization identity.
     std::wstring cacheKey;
     /// Called only after the exact final card viewport is known.
@@ -163,7 +163,7 @@ public:
 private:
     bool EnsureCreated(HWND owner);
     bool RenderCurrent();
-    bool CaptureDesktopBackdrop();
+    bool LoadDesktopWallpaperBackdrop();
     void SelectRelative(int delta);
     void SetOption(OptionSetting setting, bool value);
     void ApplyCurrent();
@@ -215,8 +215,8 @@ private:
         modern_menu::Appearance::FollowSystem;
     ApplyHandler pendingOnApply_;
     std::unordered_map<std::wstring, Bitmap> cardFrameCache_;
-    widget_preview::Wallpaper desktopBackdrop_;
-    RECT desktopBackdropBounds_{};
+    widget_preview::Wallpaper desktopWallpaper_;
+    RECT desktopWallpaperBounds_{};
     std::vector<POINT> committedPositions_;
 };
 

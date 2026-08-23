@@ -296,6 +296,113 @@ Wallpaper GenerateWallpaper(const Wallpaper& source, int width, int height,
     return wallpaper;
 }
 
+Wallpaper RenderWallpaperRegion(const Wallpaper& source,
+    const RECT& canvasBounds, const RECT& targetBounds,
+    WallpaperPosition position, std::uint32_t backgroundColor)
+{
+    Wallpaper result;
+    const int canvasWidth = canvasBounds.right - canvasBounds.left;
+    const int canvasHeight = canvasBounds.bottom - canvasBounds.top;
+    const int targetWidth = targetBounds.right - targetBounds.left;
+    const int targetHeight = targetBounds.bottom - targetBounds.top;
+    if (canvasWidth <= 0 || canvasHeight <= 0 || targetWidth <= 0 ||
+        targetHeight <= 0 || source.width <= 0 || source.height <= 0 ||
+        source.pixels.size() < static_cast<std::size_t>(source.width) *
+            source.height)
+    {
+        return result;
+    }
+
+    result.width = targetWidth;
+    result.height = targetHeight;
+    result.pixels.assign(static_cast<std::size_t>(targetWidth) *
+        targetHeight, backgroundColor | 0xff000000u);
+
+    if (position == WallpaperPosition::Tile)
+    {
+        const auto positiveRemainder = [](int value, int divisor) {
+            const int remainder = value % divisor;
+            return remainder < 0 ? remainder + divisor : remainder;
+        };
+        for (int y = 0; y < targetHeight; ++y)
+        {
+            const int screenY = targetBounds.top + y;
+            if (screenY < canvasBounds.top || screenY >= canvasBounds.bottom)
+                continue;
+            const int sourceY = positiveRemainder(
+                screenY - canvasBounds.top, source.height);
+            for (int x = 0; x < targetWidth; ++x)
+            {
+                const int screenX = targetBounds.left + x;
+                if (screenX < canvasBounds.left ||
+                    screenX >= canvasBounds.right)
+                    continue;
+                const int sourceX = positiveRemainder(
+                    screenX - canvasBounds.left, source.width);
+                result.pixels[static_cast<std::size_t>(y) * targetWidth + x] =
+                    source.pixels[static_cast<std::size_t>(sourceY) *
+                        source.width + sourceX] | 0xff000000u;
+            }
+        }
+        return result;
+    }
+
+    float destinationWidth = static_cast<float>(source.width);
+    float destinationHeight = static_cast<float>(source.height);
+    if (position == WallpaperPosition::Stretch)
+    {
+        destinationWidth = static_cast<float>(canvasWidth);
+        destinationHeight = static_cast<float>(canvasHeight);
+    }
+    else if (position == WallpaperPosition::Fit ||
+             position == WallpaperPosition::Fill ||
+             position == WallpaperPosition::Span)
+    {
+        const float horizontalScale = static_cast<float>(canvasWidth) /
+            static_cast<float>(source.width);
+        const float verticalScale = static_cast<float>(canvasHeight) /
+            static_cast<float>(source.height);
+        const float scale = position == WallpaperPosition::Fit
+            ? std::min(horizontalScale, verticalScale)
+            : std::max(horizontalScale, verticalScale);
+        destinationWidth *= scale;
+        destinationHeight *= scale;
+    }
+    const float destinationLeft = static_cast<float>(canvasBounds.left) +
+        (static_cast<float>(canvasWidth) - destinationWidth) * 0.5f;
+    const float destinationTop = static_cast<float>(canvasBounds.top) +
+        (static_cast<float>(canvasHeight) - destinationHeight) * 0.5f;
+
+    for (int y = 0; y < targetHeight; ++y)
+    {
+        const float screenY = static_cast<float>(targetBounds.top + y) + 0.5f;
+        if (screenY < destinationTop ||
+            screenY >= destinationTop + destinationHeight ||
+            screenY < static_cast<float>(canvasBounds.top) ||
+            screenY >= static_cast<float>(canvasBounds.bottom))
+            continue;
+        const float sourceY =
+            (screenY - destinationTop) * source.height /
+                destinationHeight - 0.5f;
+        for (int x = 0; x < targetWidth; ++x)
+        {
+            const float screenX =
+                static_cast<float>(targetBounds.left + x) + 0.5f;
+            if (screenX < destinationLeft ||
+                screenX >= destinationLeft + destinationWidth ||
+                screenX < static_cast<float>(canvasBounds.left) ||
+                screenX >= static_cast<float>(canvasBounds.right))
+                continue;
+            const float sourceX =
+                (screenX - destinationLeft) * source.width /
+                    destinationWidth - 0.5f;
+            result.pixels[static_cast<std::size_t>(y) * targetWidth + x] =
+                SampleBilinear(source, sourceX, sourceY);
+        }
+    }
+    return result;
+}
+
 Wallpaper CropWallpaper(const Wallpaper& source, const RECT& sourceBounds,
     const RECT& targetBounds)
 {

@@ -5,7 +5,9 @@
 #include "widget_preview_stage.h"
 
 #include <dwmapi.h>
+#include <shobjidl_core.h>
 #include <windowsx.h>
+#include <wrl/client.h>
 
 #include <algorithm>
 #include <cwctype>
@@ -17,10 +19,66 @@ namespace snowdesktop::component_preview
 namespace
 {
 
+using Microsoft::WRL::ComPtr;
+
 constexpr wchar_t kPreviewWindowClass[] =
     L"SnowDesktop.ComponentPreviewPopup";
 constexpr UINT_PTR kOpenTimer = 1;
 constexpr UINT_PTR kHideTimer = 2;
+
+struct ScopedComApartment
+{
+    ScopedComApartment()
+        : result(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED))
+    {
+    }
+
+    ~ScopedComApartment()
+    {
+        if (result == S_OK || result == S_FALSE)
+            CoUninitialize();
+    }
+
+    HRESULT result = E_FAIL;
+};
+
+widget_preview::WallpaperPosition ToWallpaperPosition(
+    DESKTOP_WALLPAPER_POSITION position)
+{
+    switch (position)
+    {
+    case DWPOS_CENTER:
+        return widget_preview::WallpaperPosition::Center;
+    case DWPOS_TILE:
+        return widget_preview::WallpaperPosition::Tile;
+    case DWPOS_STRETCH:
+        return widget_preview::WallpaperPosition::Stretch;
+    case DWPOS_FIT:
+        return widget_preview::WallpaperPosition::Fit;
+    case DWPOS_SPAN:
+        return widget_preview::WallpaperPosition::Span;
+    case DWPOS_FILL:
+    default:
+        return widget_preview::WallpaperPosition::Fill;
+    }
+}
+
+std::uint32_t ToOpaquePixel(COLORREF color)
+{
+    return 0xff000000u |
+        (static_cast<std::uint32_t>(GetRValue(color)) << 16) |
+        (static_cast<std::uint32_t>(GetGValue(color)) << 8) |
+        static_cast<std::uint32_t>(GetBValue(color));
+}
+
+RECT VirtualDesktopBounds()
+{
+    const int left = GetSystemMetrics(SM_XVIRTUALSCREEN);
+    const int top = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    return { left, top,
+        left + GetSystemMetrics(SM_CXVIRTUALSCREEN),
+        top + GetSystemMetrics(SM_CYVIRTUALSCREEN) };
+}
 
 int Scale(int value, UINT dpi)
 {
@@ -375,13 +433,13 @@ bool Window::Show(const Model& model, const RECT& menuBounds,
     currentCard_ = std::min(currentCard_, model_.cards.size() - 1);
     if (!IsWindowVisible(hwnd_))
     {
-        desktopBackdrop_ = {};
-        desktopBackdropBounds_ = {};
+        desktopWallpaper_ = {};
+        desktopWallpaperBounds_ = {};
         if (std::any_of(model_.cards.begin(), model_.cards.end(),
                 [](const Card& value) {
-                    return value.captureDesktopStage;
+                    return value.useDesktopWallpaperStage;
                 }))
-            CaptureDesktopBackdrop();
+            LoadDesktopWallpaperBackdrop();
     }
     ApplyWindowAppearance();
     if (!RenderCurrent())
@@ -461,8 +519,8 @@ void Window::Hide()
         KillTimer(hwnd_, kHideTimer);
         KillTimer(hwnd_, kOpenTimer);
         ShowWindow(hwnd_, SW_HIDE);
-        desktopBackdrop_ = {};
-        desktopBackdropBounds_ = {};
+        desktopWallpaper_ = {};
+        desktopWallpaperBounds_ = {};
     }
 }
 
@@ -477,8 +535,8 @@ void Window::Close()
     onApply_ = {};
     pendingModel_ = {};
     pendingOnApply_ = {};
-    desktopBackdrop_ = {};
-    desktopBackdropBounds_ = {};
+    desktopWallpaper_ = {};
+    desktopWallpaperBounds_ = {};
 }
 
 RECT Window::OptionBoundsForTesting(
@@ -503,65 +561,109 @@ std::wstring Window::ModelIdentity(const Model& model) const
             std::to_wstring(widget_preview::WallpaperFingerprint(
                 card.stageWallpaper ? *card.stageWallpaper :
                     widget_preview::Wallpaper{})) +
-            (card.captureDesktopStage ? L":desktop-capture" : L"");
+            (card.useDesktopWallpaperStage ? L":desktop-wallpaper" : L"");
     }
     return result;
 }
 
-bool Window::CaptureDesktopBackdrop()
+bool Window::LoadDesktopWallpaperBackdrop()
 {
     const POINT anchor{
         (menuBounds_.left + menuBounds_.right) / 2,
         (menuBounds_.top + menuBounds_.bottom) / 2,
     };
+    const HMONITOR selectedMonitor = MonitorFromPoint(anchor,
+        MONITOR_DEFAULTTONEAREST);
     MONITORINFO monitor{ sizeof(monitor) };
-    if (!GetMonitorInfoW(MonitorFromPoint(anchor,
-            MONITOR_DEFAULTTONEAREST), &monitor))
+    if (!selectedMonitor || !GetMonitorInfoW(selectedMonitor, &monitor))
         return false;
     const int width = monitor.rcMonitor.right - monitor.rcMonitor.left;
     const int height = monitor.rcMonitor.bottom - monitor.rcMonitor.top;
     if (width <= 0 || height <= 0) return false;
 
-    HDC screen = GetDC(nullptr);
-    HDC memory = screen ? CreateCompatibleDC(screen) : nullptr;
-    BITMAPINFO info{};
-    info.bmiHeader.biSize = sizeof(info.bmiHeader);
-    info.bmiHeader.biWidth = width;
-    info.bmiHeader.biHeight = -height;
-    info.bmiHeader.biPlanes = 1;
-    info.bmiHeader.biBitCount = 32;
-    info.bmiHeader.biCompression = BI_RGB;
-    void* rawPixels = nullptr;
-    HBITMAP bitmap = screen ? CreateDIBSection(screen, &info,
-        DIB_RGB_COLORS, &rawPixels, nullptr, 0) : nullptr;
-    if (!screen || !memory || !bitmap || !rawPixels)
-    {
-        if (bitmap) DeleteObject(bitmap);
-        if (memory) DeleteDC(memory);
-        if (screen) ReleaseDC(nullptr, screen);
+    ScopedComApartment com;
+    if (FAILED(com.result) && com.result != RPC_E_CHANGED_MODE)
         return false;
-    }
-    HGDIOBJ oldBitmap = SelectObject(memory, bitmap);
-    const BOOL captured = BitBlt(memory, 0, 0, width, height, screen,
-        monitor.rcMonitor.left, monitor.rcMonitor.top,
-        SRCCOPY | CAPTUREBLT);
-    GdiFlush();
-    if (captured)
+    ComPtr<IDesktopWallpaper> wallpaperApi;
+    if (FAILED(CoCreateInstance(CLSID_DesktopWallpaper, nullptr,
+            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wallpaperApi))) ||
+        !wallpaperApi)
+        return false;
+
+    COLORREF backgroundColor = RGB(0, 0, 0);
+    wallpaperApi->GetBackgroundColor(&backgroundColor);
+    DESKTOP_WALLPAPER_POSITION systemPosition = DWPOS_FILL;
+    wallpaperApi->GetPosition(&systemPosition);
+    const widget_preview::WallpaperPosition position =
+        ToWallpaperPosition(systemPosition);
+
+    std::wstring monitorId;
+    UINT monitorCount = 0;
+    if (SUCCEEDED(wallpaperApi->GetMonitorDevicePathCount(&monitorCount)))
     {
-        desktopBackdrop_.width = width;
-        desktopBackdrop_.height = height;
-        auto* pixels = static_cast<const std::uint32_t*>(rawPixels);
-        desktopBackdrop_.pixels.assign(pixels,
-            pixels + static_cast<std::size_t>(width) * height);
-        for (std::uint32_t& pixel : desktopBackdrop_.pixels)
-            pixel |= 0xff000000u;
-        desktopBackdropBounds_ = monitor.rcMonitor;
+        for (UINT index = 0; index < monitorCount; ++index)
+        {
+            LPWSTR rawMonitorId = nullptr;
+            if (FAILED(wallpaperApi->GetMonitorDevicePathAt(
+                    index, &rawMonitorId)) || !rawMonitorId)
+                continue;
+            RECT candidate{};
+            const bool matches = SUCCEEDED(wallpaperApi->GetMonitorRECT(
+                    rawMonitorId, &candidate)) &&
+                MonitorFromRect(&candidate, MONITOR_DEFAULTTONULL) ==
+                    selectedMonitor;
+            if (matches)
+                monitorId = rawMonitorId;
+            CoTaskMemFree(rawMonitorId);
+            if (matches) break;
+        }
     }
-    if (oldBitmap) SelectObject(memory, oldBitmap);
-    DeleteObject(bitmap);
-    DeleteDC(memory);
-    ReleaseDC(nullptr, screen);
-    return captured != FALSE;
+
+    LPWSTR rawWallpaperPath = nullptr;
+    HRESULT pathResult = wallpaperApi->GetWallpaper(
+        position == widget_preview::WallpaperPosition::Span
+            ? nullptr
+            : (monitorId.empty() ? nullptr : monitorId.c_str()),
+        &rawWallpaperPath);
+    if ((FAILED(pathResult) || pathResult == S_FALSE ||
+            !rawWallpaperPath || !*rawWallpaperPath) &&
+        position == widget_preview::WallpaperPosition::Span &&
+        !monitorId.empty())
+    {
+        if (rawWallpaperPath) CoTaskMemFree(rawWallpaperPath);
+        rawWallpaperPath = nullptr;
+        pathResult = wallpaperApi->GetWallpaper(
+            monitorId.c_str(), &rawWallpaperPath);
+    }
+    const std::filesystem::path wallpaperPath =
+        SUCCEEDED(pathResult) && rawWallpaperPath
+        ? std::filesystem::path(rawWallpaperPath)
+        : std::filesystem::path{};
+    if (rawWallpaperPath) CoTaskMemFree(rawWallpaperPath);
+
+    const widget_preview::Wallpaper source =
+        widget_preview::LoadWallpaperImage(wallpaperPath);
+    if (source.pixels.empty())
+    {
+        desktopWallpaper_.width = width;
+        desktopWallpaper_.height = height;
+        desktopWallpaper_.pixels.assign(
+            static_cast<std::size_t>(width) * height,
+            ToOpaquePixel(backgroundColor));
+    }
+    else
+    {
+        const RECT canvasBounds =
+            position == widget_preview::WallpaperPosition::Tile ||
+                position == widget_preview::WallpaperPosition::Span
+            ? VirtualDesktopBounds()
+            : monitor.rcMonitor;
+        desktopWallpaper_ = widget_preview::RenderWallpaperRegion(
+            source, canvasBounds, monitor.rcMonitor, position,
+            ToOpaquePixel(backgroundColor));
+    }
+    desktopWallpaperBounds_ = monitor.rcMonitor;
+    return !desktopWallpaper_.pixels.empty();
 }
 
 bool Window::RenderCurrent()
@@ -716,12 +818,12 @@ bool Window::RenderCurrent()
     const int cardHeight = cardRect_.bottom - cardRect_.top;
     const int cardRadius = Scale(8, dpi_);
     snowdesktop::widget_preview::Wallpaper wallpaper;
-    if (card.captureDesktopStage && !desktopBackdrop_.pixels.empty())
+    if (card.useDesktopWallpaperStage && !desktopWallpaper_.pixels.empty())
     {
         RECT screenCard = cardRect_;
         OffsetRect(&screenCard, destination.x, destination.y);
         wallpaper = snowdesktop::widget_preview::CropWallpaper(
-            desktopBackdrop_, desktopBackdropBounds_, screenCard);
+            desktopWallpaper_, desktopWallpaperBounds_, screenCard);
     }
     if (wallpaper.pixels.empty() && card.stageWallpaper &&
         !card.stageWallpaper->pixels.empty())
@@ -734,7 +836,7 @@ bool Window::RenderCurrent()
         wallpaper = snowdesktop::widget_preview::GenerateWallpaper(
             cardWidth, cardHeight, card.lightStage);
     }
-    const bool lightStage = card.captureDesktopStage
+    const bool lightStage = card.useDesktopWallpaperStage
         ? snowdesktop::widget_preview::WallpaperIsLight(wallpaper)
         : card.lightStage;
     const auto cardPalette = menu_icon::ResolvePalette(lightStage);

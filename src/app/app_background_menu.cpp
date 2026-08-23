@@ -840,7 +840,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
         card.previewHeight = std::max<LONG>(
             1, desktopFrame.bottom - desktopFrame.top);
         card.lightStage = false;
-        card.captureDesktopStage = true;
+        card.useDesktopWallpaperStage = true;
         card.sizeLabel = _LFW("app.widget_preview.size",
             std::to_wstring(card.columns), std::to_wstring(card.rows));
         card.cacheKey = modeKey + L":" + appearanceKey + L":" +

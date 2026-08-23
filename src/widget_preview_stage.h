@@ -37,6 +37,17 @@ struct WallpaperViewport
     int offsetY = 0;
 };
 
+/** Windows desktop wallpaper placement modes used by the in-app preview. */
+enum class WallpaperPosition
+{
+    Center,
+    Tile,
+    Stretch,
+    Fit,
+    Fill,
+    Span,
+};
+
 inline constexpr std::size_t AcrylicNoiseSize = 64;
 using AcrylicNoisePixels = std::array<std::uint32_t,
     AcrylicNoiseSize * AcrylicNoiseSize>;
@@ -60,6 +71,11 @@ Wallpaper GenerateWallpaper(int width, int height, bool lightTheme,
 /** Center-cover an explicit wallpaper into the requested stage crop. */
 Wallpaper GenerateWallpaper(const Wallpaper& source, int width, int height,
     const WallpaperViewport& viewport = {});
+
+/** Render a screen-space region using Windows desktop placement semantics. */
+Wallpaper RenderWallpaperRegion(const Wallpaper& source,
+    const RECT& canvasBounds, const RECT& targetBounds,
+    WallpaperPosition position, std::uint32_t backgroundColor);
 
 /** Copy an exact physical-pixel screen rectangle without rescaling. */
 Wallpaper CropWallpaper(const Wallpaper& source, const RECT& sourceBounds,

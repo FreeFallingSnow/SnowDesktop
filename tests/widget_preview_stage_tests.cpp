@@ -98,6 +98,85 @@ int main()
     Check(WallpaperIsLight(white) && !WallpaperIsLight(black),
         "wallpaper luminance selects contrasting card chrome");
 
+    Wallpaper placementSource;
+    placementSource.width = 2;
+    placementSource.height = 2;
+    placementSource.pixels = {
+        0xff100001u, 0xff200002u,
+        0xff300003u, 0xff400004u,
+    };
+    constexpr std::uint32_t placementBackground = 0xffabcdefu;
+    const RECT placementCanvas{ 0, 0, 4, 4 };
+    const Wallpaper centered = RenderWallpaperRegion(placementSource,
+        placementCanvas, placementCanvas, WallpaperPosition::Center,
+        placementBackground);
+    Check(centered.pixels[0] == placementBackground &&
+            centered.pixels[5] == placementSource.pixels[0] &&
+            centered.pixels[10] == placementSource.pixels[3] &&
+            centered.pixels[15] == placementBackground,
+        "center placement preserves native pixels and desktop borders");
+
+    const Wallpaper tiled = RenderWallpaperRegion(placementSource,
+        { -2, -1, 4, 3 }, { 0, 0, 4, 3 }, WallpaperPosition::Tile,
+        placementBackground);
+    Check(tiled.pixels == std::vector<std::uint32_t>{
+            placementSource.pixels[2], placementSource.pixels[3],
+            placementSource.pixels[2], placementSource.pixels[3],
+            placementSource.pixels[0], placementSource.pixels[1],
+            placementSource.pixels[0], placementSource.pixels[1],
+            placementSource.pixels[2], placementSource.pixels[3],
+            placementSource.pixels[2], placementSource.pixels[3] },
+        "tile placement remains anchored to virtual desktop coordinates");
+
+    const Wallpaper stretched = RenderWallpaperRegion(placementSource,
+        placementCanvas, placementCanvas, WallpaperPosition::Stretch,
+        placementBackground);
+    Check(stretched.pixels.front() == placementSource.pixels.front() &&
+            stretched.pixels[3] == placementSource.pixels[1] &&
+            stretched.pixels[12] == placementSource.pixels[2] &&
+            stretched.pixels.back() == placementSource.pixels.back(),
+        "stretch placement maps every source corner to the monitor");
+
+    Wallpaper wideSource{ 2, 1,
+        { 0xff0000ffu, 0xffff0000u } };
+    const Wallpaper fitted = RenderWallpaperRegion(wideSource,
+        placementCanvas, placementCanvas, WallpaperPosition::Fit,
+        placementBackground);
+    Check(std::all_of(fitted.pixels.begin(), fitted.pixels.begin() + 4,
+            [](std::uint32_t pixel) {
+                return pixel == placementBackground;
+            }) &&
+          std::all_of(fitted.pixels.end() - 4, fitted.pixels.end(),
+            [](std::uint32_t pixel) {
+                return pixel == placementBackground;
+            }) &&
+          fitted.pixels[4] != placementBackground,
+        "fit placement uses the Windows desktop color for letterboxing");
+    const Wallpaper filled = RenderWallpaperRegion(wideSource,
+        placementCanvas, placementCanvas, WallpaperPosition::Fill,
+        placementBackground);
+    Check(std::none_of(filled.pixels.begin(), filled.pixels.end(),
+            [](std::uint32_t pixel) {
+                return pixel == placementBackground;
+            }),
+        "fill placement covers the monitor while preserving aspect ratio");
+
+    const RECT spanCanvas{ -4, 0, 8, 6 };
+    const Wallpaper spanFull = RenderWallpaperRegion(selectedSource,
+        spanCanvas, spanCanvas, WallpaperPosition::Span,
+        placementBackground);
+    const RECT spanRightBounds{ 0, 0, 8, 6 };
+    const Wallpaper spanRight = RenderWallpaperRegion(selectedSource,
+        spanCanvas, spanRightBounds, WallpaperPosition::Span,
+        placementBackground);
+    Check(spanRight.pixels == CropWallpaper(
+            spanFull, spanCanvas, spanRightBounds).pixels,
+        "span placement preserves one continuous multi-monitor composition");
+    Check(RenderWallpaperRegion(placementSource, { 0, 0, 0, 4 },
+            placementCanvas, WallpaperPosition::Fill,
+            placementBackground).pixels.empty(),
+        "desktop wallpaper placement rejects invalid canvas dimensions");
+
     Wallpaper monitor;
     monitor.width = 4;
     monitor.height = 3;
@@ -112,10 +191,10 @@ int main()
             positionedCrop.pixels == std::vector<std::uint32_t>{
                 0xff000007u, 0xff000008u,
                 0xff00000bu, 0xff00000cu },
-        "screen capture crop preserves physical position without scaling");
+        "desktop wallpaper crop preserves physical position without scaling");
     Check(CropWallpaper(monitor, { 0, 0, 4, 3 },
             { 3, 2, 5, 3 }).pixels.empty(),
-        "screen capture crop rejects rectangles outside the monitor frame");
+        "desktop wallpaper crop rejects rectangles outside the monitor frame");
 
     const AcrylicNoisePixels darkNoise = GenerateAcrylicNoise(false);
     const AcrylicNoisePixels repeatedNoise = GenerateAcrylicNoise(false);
