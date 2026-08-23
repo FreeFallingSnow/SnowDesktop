@@ -161,7 +161,8 @@ std::optional<std::filesystem::path> FindPreviewHost(
 
 std::wstring QuoteWindowsArgument(std::wstring_view argument)
 {
-    if (argument.find_first_of(L" \t\n\v\"") == std::wstring_view::npos)
+    if (!argument.empty() &&
+        argument.find_first_of(L" \t\n\v\"") == std::wstring_view::npos)
         return std::wstring(argument);
     std::wstring result = L"\"";
     std::size_t slashes = 0;
