@@ -3,10 +3,14 @@
 
 #include <windows.h>
 
+#include <atomic>
+#include <chrono>
 #include <cstdlib>
+#include <functional>
 #include <iostream>
 #include <optional>
 #include <string>
+#include <thread>
 
 namespace
 {
@@ -38,6 +42,24 @@ snowdesktop::component_preview::Bitmap SolidBitmap(
     bitmap.pixels.assign(
         static_cast<size_t>(width) * height, color);
     return bitmap;
+}
+
+bool PumpMessagesUntil(
+    const std::function<bool()>& predicate, DWORD timeoutMs)
+{
+    const ULONGLONG deadline = GetTickCount64() + timeoutMs;
+    do
+    {
+        MSG message{};
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+        {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+        if (predicate()) return true;
+        Sleep(1);
+    } while (GetTickCount64() < deadline);
+    return predicate();
 }
 
 } // namespace
@@ -477,5 +499,119 @@ int wmain()
         Expect(position.x != 0 || position.y != 0,
             "no layered-window commit passes through (0,0)");
     window.Close();
+
+    Model wallpaperModel;
+    wallpaperModel.title = L"Prefetched wallpaper";
+    Card wallpaperCard;
+    wallpaperCard.title = L"Wallpaper component";
+    wallpaperCard.previewWidth = 120;
+    wallpaperCard.previewHeight = 80;
+    wallpaperCard.cacheKey = L"wallpaper:prefetch";
+    wallpaperCard.useDesktopWallpaperStage = true;
+    wallpaperCard.render = [](int width, int height, UINT,
+            const StagePlacement&, const ApplySettings&, bool) {
+        return SolidBitmap(width, height, 0x80406080u);
+    };
+    wallpaperModel.cards.push_back(std::move(wallpaperCard));
+
+    std::atomic_int successfulCaptureCount = 0;
+    std::atomic_bool successfulCaptureStarted = false;
+    std::atomic_bool releaseSuccessfulCapture = false;
+    Window successfulPrefetch([&](const RECT& desktopBounds, DWORD,
+            const std::atomic_bool* cancelled) {
+        ++successfulCaptureCount;
+        successfulCaptureStarted.store(true, std::memory_order_relaxed);
+        while (!releaseSuccessfulCapture.load(std::memory_order_relaxed) &&
+            !(cancelled && cancelled->load(std::memory_order_relaxed)))
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        WallpaperBackdropCaptureResult result;
+        if (cancelled && cancelled->load(std::memory_order_relaxed))
+            return result;
+        result.wallpaper.width = 1;
+        result.wallpaper.height = 1;
+        result.wallpaper.pixels = { 0xff204080u };
+        result.desktopBounds = desktopBounds;
+        return result;
+    });
+    successfulPrefetch.PrefetchDesktopWallpaperBackdrop(
+        nullptr, POINT{ 160, 160 });
+    Expect(PumpMessagesUntil([&] {
+                return successfulCaptureStarted.load(
+                    std::memory_order_relaxed);
+            }, 500),
+        "fake wallpaper capture starts without Wallpaper Engine");
+    Expect(successfulPrefetch.Show(wallpaperModel, menuBounds, nullptr,
+            96, false),
+        "preview accepts a pending prefetched wallpaper");
+    Expect(successfulPrefetch.WaitingForWallpaperEngineFrameForTesting() &&
+            IsWindowVisible(successfulPrefetch.Handle()) == FALSE,
+        "first preview stays hidden while wallpaper prefetch is pending");
+    releaseSuccessfulCapture.store(true, std::memory_order_relaxed);
+    Expect(PumpMessagesUntil([&] {
+                return IsWindowVisible(successfulPrefetch.Handle()) != FALSE;
+            }, 1000),
+        "successful prefetch reveals the waiting first preview");
+    Expect(successfulPrefetch.HasWallpaperEngineCacheForTesting() &&
+            successfulCaptureCount.load(std::memory_order_relaxed) == 1,
+        "successful prefetch is cached once for the menu lifetime");
+    successfulPrefetch.Hide();
+    Expect(successfulPrefetch.Show(wallpaperModel, menuBounds, nullptr,
+            96, false) &&
+            IsWindowVisible(successfulPrefetch.Handle()) != FALSE &&
+            successfulCaptureCount.load(std::memory_order_relaxed) == 1,
+        "later previews reuse the menu-scoped wallpaper frame");
+    successfulPrefetch.Close();
+    Expect(!successfulPrefetch.HasWallpaperEngineCacheForTesting(),
+        "closing the menu preview releases its wallpaper frame");
+
+    std::atomic_bool releaseFailedCapture = false;
+    Window failedPrefetch([&](const RECT&, DWORD,
+            const std::atomic_bool* cancelled) {
+        while (!releaseFailedCapture.load(std::memory_order_relaxed) &&
+            !(cancelled && cancelled->load(std::memory_order_relaxed)))
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        return WallpaperBackdropCaptureResult{};
+    });
+    failedPrefetch.PrefetchDesktopWallpaperBackdrop(
+        nullptr, POINT{ 160, 160 });
+    Expect(failedPrefetch.Show(wallpaperModel, menuBounds, nullptr,
+            96, false) &&
+            failedPrefetch.WaitingForWallpaperEngineFrameForTesting() &&
+            IsWindowVisible(failedPrefetch.Handle()) == FALSE,
+        "failed prefetch also defers the first preview while pending");
+    releaseFailedCapture.store(true, std::memory_order_relaxed);
+    Expect(PumpMessagesUntil([&] {
+                return IsWindowVisible(failedPrefetch.Handle()) != FALSE;
+            }, 1500) &&
+            !failedPrefetch.HasWallpaperEngineCacheForTesting(),
+        "failed prefetch reveals the preview with its static fallback");
+    failedPrefetch.Close();
+
+    std::atomic_bool cancellableCaptureStarted = false;
+    std::atomic_bool captureObservedCancellation = false;
+    Window cancellablePrefetch([&](const RECT&, DWORD,
+            const std::atomic_bool* cancelled) {
+        cancellableCaptureStarted.store(true, std::memory_order_relaxed);
+        while (!(cancelled &&
+            cancelled->load(std::memory_order_relaxed)))
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        captureObservedCancellation.store(true,
+            std::memory_order_relaxed);
+        return WallpaperBackdropCaptureResult{};
+    });
+    cancellablePrefetch.PrefetchDesktopWallpaperBackdrop(
+        nullptr, POINT{ 160, 160 });
+    Expect(PumpMessagesUntil([&] {
+                return cancellableCaptureStarted.load(
+                    std::memory_order_relaxed);
+            }, 500),
+        "cancellable fake prefetch starts");
+    const auto closeStarted = std::chrono::steady_clock::now();
+    cancellablePrefetch.Close();
+    const auto closeElapsed = std::chrono::steady_clock::now() -
+        closeStarted;
+    Expect(captureObservedCancellation.load(std::memory_order_relaxed) &&
+            closeElapsed < std::chrono::milliseconds(750),
+        "closing the menu cancels and joins a pending prefetch promptly");
     return 0;
 }

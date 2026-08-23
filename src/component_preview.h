@@ -26,6 +26,16 @@ struct Bitmap
     std::vector<std::uint32_t> pixels;
 };
 
+struct WallpaperBackdropCaptureResult
+{
+    widget_preview::Wallpaper wallpaper;
+    RECT desktopBounds{};
+};
+
+using WallpaperBackdropCaptureHandler = std::function<
+    WallpaperBackdropCaptureResult(const RECT&, DWORD,
+        const std::atomic_bool*)>;
+
 enum class ApplyKind
 {
     None,
@@ -122,7 +132,7 @@ class Window
 public:
     using ApplyHandler = std::function<void(const ApplySettings&)>;
 
-    Window() = default;
+    explicit Window(WallpaperBackdropCaptureHandler captureHandler = {});
     ~Window();
     Window(const Window&) = delete;
     Window& operator=(const Window&) = delete;
@@ -164,6 +174,15 @@ public:
     RECT NextBoundsForTesting() const { return nextButton_; }
     RECT NextGlyphBoundsForTesting() const { return nextGlyphRect_; }
     bool BlurEnabledForTesting() const { return blurEnabled_; }
+    bool HasWallpaperEngineCacheForTesting() const
+    {
+        return wallpaperEngineCache_ &&
+            !wallpaperEngineCache_->pixels.empty();
+    }
+    bool WaitingForWallpaperEngineFrameForTesting() const
+    {
+        return waitingForWallpaperEngineFrame_;
+    }
 
 private:
     enum class WallpaperBackdropLoadResult
@@ -245,6 +264,7 @@ private:
         wallpaperEngineCaptureState_;
     std::thread wallpaperEngineCaptureThread_;
     std::uint64_t wallpaperEngineCaptureGeneration_ = 0;
+    WallpaperBackdropCaptureHandler wallpaperBackdropCaptureHandler_;
     std::shared_ptr<const widget_preview::Wallpaper>
         wallpaperEngineCache_;
     RECT wallpaperEngineCacheBounds_{};

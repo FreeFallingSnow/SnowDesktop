@@ -1,7 +1,10 @@
 #include "app/wallpaper_engine_capture.h"
 
+#include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <iostream>
+#include <thread>
 #include <vector>
 
 namespace
@@ -21,6 +24,34 @@ void Check(bool condition, const char* message)
 int main()
 {
     using snowdesktop::wallpaper_engine_capture::CropFrameToDesktopRegion;
+    using snowdesktop::wallpaper_engine_capture::CancellableWaitResult;
+    using snowdesktop::wallpaper_engine_capture::WaitForHandleOrCancellation;
+
+    HANDLE waitEvent = CreateEventW(nullptr, TRUE, TRUE, nullptr);
+    Check(waitEvent != nullptr,
+        "cancellable wait test event is available");
+    Check(WaitForHandleOrCancellation(waitEvent, 100) ==
+            CancellableWaitResult::Signaled,
+        "cancellable wait reports a signaled handle");
+    ResetEvent(waitEvent);
+    Check(WaitForHandleOrCancellation(waitEvent, 20) ==
+            CancellableWaitResult::TimedOut,
+        "cancellable wait preserves finite timeouts");
+    std::atomic_bool cancelWait = false;
+    std::thread cancelThread([&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        cancelWait.store(true, std::memory_order_relaxed);
+    });
+    const auto waitStarted = std::chrono::steady_clock::now();
+    const auto cancelledResult = WaitForHandleOrCancellation(
+        waitEvent, 2000, &cancelWait);
+    const auto cancelledElapsed = std::chrono::steady_clock::now() -
+        waitStarted;
+    cancelThread.join();
+    CloseHandle(waitEvent);
+    Check(cancelledResult == CancellableWaitResult::Cancelled &&
+            cancelledElapsed < std::chrono::milliseconds(750),
+        "cancellable wait exits promptly without consuming its full timeout");
 
     const std::vector<std::uint32_t> source{
         0x00112233u, 0x00445566u, 0x00778899u, 0x00aabbccu,

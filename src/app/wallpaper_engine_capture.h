@@ -36,6 +36,18 @@ struct Result
     std::wstring error;
 };
 
+enum class CancellableWaitResult
+{
+    Signaled,
+    TimedOut,
+    Cancelled,
+    Failed,
+};
+
+/** Wait for a handle while polling an optional cancellation flag. */
+CancellableWaitResult WaitForHandleOrCancellation(HANDLE handle,
+    DWORD timeoutMs, const std::atomic_bool* cancelled = nullptr);
+
 /**
  * Capture one Wallpaper Engine Present for the requested physical monitor.
  * The injected producer is enabled with a zero periodic interval, so only an

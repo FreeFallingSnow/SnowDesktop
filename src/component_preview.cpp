@@ -454,6 +454,11 @@ using DwmExtendFrameIntoClientAreaFn = HRESULT(WINAPI*)(
 
 } // namespace
 
+Window::Window(WallpaperBackdropCaptureHandler captureHandler)
+    : wallpaperBackdropCaptureHandler_(std::move(captureHandler))
+{
+}
+
 Window::~Window()
 {
     Close();
@@ -826,8 +831,29 @@ Window::LoadDesktopWallpaperBackdrop()
 void Window::StartWallpaperEngineBackdropCapture(
     const RECT& monitorBounds)
 {
-#if defined(SNOWDESKTOP_ENABLE_WALLPAPER_ENGINE_CAPTURE)
     if (!hwnd_ || !IsWindow(hwnd_))
+        return;
+    WallpaperBackdropCaptureHandler captureHandler =
+        wallpaperBackdropCaptureHandler_;
+#if defined(SNOWDESKTOP_ENABLE_WALLPAPER_ENGINE_CAPTURE)
+    if (!captureHandler)
+    {
+        captureHandler = [](const RECT& bounds, DWORD timeoutMs,
+                             const std::atomic_bool* cancelled) {
+            WallpaperBackdropCaptureResult capture;
+            auto result =
+                wallpaper_engine_capture::CaptureOneShotForMonitor(
+                    bounds, timeoutMs, cancelled);
+            capture.wallpaper.width = result.backdrop.width;
+            capture.wallpaper.height = result.backdrop.height;
+            capture.wallpaper.pixels =
+                std::move(result.backdrop.pixels);
+            capture.desktopBounds = result.backdrop.desktopBounds;
+            return capture;
+        };
+    }
+#endif
+    if (!captureHandler)
         return;
     if (wallpaperEngineCaptureThread_.joinable())
     {
@@ -849,29 +875,24 @@ void Window::StartWallpaperEngineBackdropCapture(
     wallpaperEngineCaptureState_ = state;
     const HWND notifyWindow = hwnd_;
     wallpaperEngineCaptureThread_ = std::thread(
-        [state, monitorBounds, notifyWindow] {
-            auto result = wallpaper_engine_capture::CaptureOneShotForMonitor(
+        [state, monitorBounds, notifyWindow,
+            captureHandler = std::move(captureHandler)] {
+            auto result = captureHandler(
                 monitorBounds, kWallpaperEngineCaptureTimeoutMs,
                 &state->cancelled);
             {
                 std::lock_guard lock(state->mutex);
                 if (!state->cancelled.load(std::memory_order_relaxed) &&
-                    !result.backdrop.Empty())
+                    !result.wallpaper.pixels.empty())
                 {
-                    state->wallpaper.width = result.backdrop.width;
-                    state->wallpaper.height = result.backdrop.height;
-                    state->wallpaper.pixels =
-                        std::move(result.backdrop.pixels);
-                    state->desktopBounds = result.backdrop.desktopBounds;
+                    state->wallpaper = std::move(result.wallpaper);
+                    state->desktopBounds = result.desktopBounds;
                 }
                 state->completed = true;
             }
             PostMessageW(notifyWindow, kWallpaperEngineFrameReady,
                 static_cast<WPARAM>(state->generation), 0);
         });
-#else
-    (void)monitorBounds;
-#endif
 }
 
 void Window::FinishWallpaperEngineBackdropCapture(

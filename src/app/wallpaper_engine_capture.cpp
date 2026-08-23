@@ -26,6 +26,36 @@
 
 namespace snowdesktop::wallpaper_engine_capture
 {
+
+CancellableWaitResult WaitForHandleOrCancellation(HANDLE handle,
+    DWORD timeoutMs, const std::atomic_bool* cancelled)
+{
+    if (!handle || handle == INVALID_HANDLE_VALUE)
+        return CancellableWaitResult::Failed;
+    const ULONGLONG deadline = GetTickCount64() + timeoutMs;
+    for (;;)
+    {
+        if (cancelled &&
+            cancelled->load(std::memory_order_relaxed))
+            return CancellableWaitResult::Cancelled;
+        const ULONGLONG now = GetTickCount64();
+        if (now >= deadline)
+            return CancellableWaitResult::TimedOut;
+        const DWORD remaining = static_cast<DWORD>(
+            std::min<ULONGLONG>(deadline - now, MAXDWORD));
+        const DWORD slice = cancelled
+            ? std::min<DWORD>(remaining, 20)
+            : remaining;
+        const DWORD result = WaitForSingleObject(handle, slice);
+        if (result == WAIT_OBJECT_0)
+            return CancellableWaitResult::Signaled;
+        if (result == WAIT_FAILED)
+            return CancellableWaitResult::Failed;
+        if (result != WAIT_TIMEOUT)
+            return CancellableWaitResult::Failed;
+    }
+}
+
 namespace
 {
 
@@ -413,8 +443,43 @@ std::filesystem::path HookPath(ProcessArchitecture architecture)
             : L"SnowDesktopWallpaperHook.dll");
 }
 
+void ReapRemoteInjection(HANDLE process, HANDLE thread, void* remotePath)
+{
+    try
+    {
+        std::thread([process, thread, remotePath] {
+            WaitForSingleObject(thread, INFINITE);
+            if (remotePath)
+                VirtualFreeEx(process, remotePath, 0, MEM_RELEASE);
+            CloseHandle(thread);
+            CloseHandle(process);
+        }).detach();
+    }
+    catch (...)
+    {
+        CloseHandle(thread);
+        CloseHandle(process);
+    }
+}
+
+void ReapProcess(HANDLE process)
+{
+    try
+    {
+        std::thread([process] {
+            WaitForSingleObject(process, INFINITE);
+            CloseHandle(process);
+        }).detach();
+    }
+    catch (...)
+    {
+        CloseHandle(process);
+    }
+}
+
 bool InjectDirect(DWORD processId, const std::filesystem::path& dllPath,
-    DWORD waitMs, std::wstring& error)
+    DWORD waitMs, const std::atomic_bool* cancelled,
+    std::wstring& error)
 {
     HANDLE process = OpenProcess(PROCESS_CREATE_THREAD |
         PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION |
@@ -449,26 +514,37 @@ bool InjectDirect(DWORD processId, const std::filesystem::path& dllPath,
         CloseHandle(process);
         return false;
     }
-    const DWORD waitResult = WaitForSingleObject(thread, waitMs);
+    const CancellableWaitResult waitResult =
+        WaitForHandleOrCancellation(thread, waitMs, cancelled);
     DWORD remoteModule = 0;
-    const bool loaded = waitResult == WAIT_OBJECT_0 &&
+    const bool loaded = waitResult == CancellableWaitResult::Signaled &&
         GetExitCodeThread(thread, &remoteModule) && remoteModule != 0;
-    CloseHandle(thread);
-    if (waitResult == WAIT_OBJECT_0)
+    if (waitResult == CancellableWaitResult::Signaled)
+    {
+        CloseHandle(thread);
         VirtualFreeEx(process, remotePath, 0, MEM_RELEASE);
-    CloseHandle(process);
+        CloseHandle(process);
+    }
+    else
+    {
+        ReapRemoteInjection(process, thread, remotePath);
+    }
     if (!loaded)
     {
-        error = waitResult == WAIT_TIMEOUT
-            ? L"Wallpaper Engine hook injection timed out"
-            : L"Wallpaper Engine hook DLL did not load";
+        if (waitResult == CancellableWaitResult::Cancelled)
+            error = L"Wallpaper Engine hook injection was cancelled";
+        else if (waitResult == CancellableWaitResult::TimedOut)
+            error = L"Wallpaper Engine hook injection timed out";
+        else
+            error = L"Wallpaper Engine hook DLL did not load";
         return false;
     }
     return true;
 }
 
 bool Inject32(DWORD processId, const std::filesystem::path& dllPath,
-    DWORD waitMs, std::wstring& error)
+    DWORD waitMs, const std::atomic_bool* cancelled,
+    std::wstring& error)
 {
     const std::filesystem::path directory = ApplicationDirectory();
     const std::filesystem::path injector = directory /
@@ -496,18 +572,35 @@ bool Inject32(DWORD processId, const std::filesystem::path& dllPath,
         return false;
     }
     CloseHandle(process.hThread);
-    const DWORD waitResult = WaitForSingleObject(process.hProcess, waitMs);
+    const CancellableWaitResult waitResult =
+        WaitForHandleOrCancellation(
+            process.hProcess, waitMs, cancelled);
     DWORD exitCode = STILL_ACTIVE;
-    const bool completed = waitResult == WAIT_OBJECT_0 &&
+    const bool completed =
+        waitResult == CancellableWaitResult::Signaled &&
         GetExitCodeProcess(process.hProcess, &exitCode);
-    if (!completed && waitResult == WAIT_TIMEOUT)
+    if (!completed && waitResult == CancellableWaitResult::TimedOut)
+    {
         TerminateProcess(process.hProcess, ERROR_TIMEOUT);
-    CloseHandle(process.hProcess);
+        WaitForSingleObject(process.hProcess, INFINITE);
+        CloseHandle(process.hProcess);
+    }
+    else if (!completed)
+    {
+        ReapProcess(process.hProcess);
+    }
+    else
+    {
+        CloseHandle(process.hProcess);
+    }
     if (!completed || exitCode != 0)
     {
-        error = !completed
-            ? L"32-bit Wallpaper Engine hook injection timed out"
-            : L"32-bit Wallpaper Engine hook injection failed (code " +
+        if (waitResult == CancellableWaitResult::Cancelled)
+            error = L"32-bit Wallpaper Engine hook injection was cancelled";
+        else if (!completed)
+            error = L"32-bit Wallpaper Engine hook injection timed out";
+        else
+            error = L"32-bit Wallpaper Engine hook injection failed (code " +
                 std::to_wstring(exitCode) + L")";
         return false;
     }
@@ -595,8 +688,11 @@ public:
         Shutdown();
     }
 
-    bool Start(DWORD waitMs, std::wstring& error)
+    bool Start(DWORD waitMs, const std::atomic_bool* cancelled,
+        std::wstring& error)
     {
+        if (IsCancelled(cancelled))
+            return false;
         if (!OpenMapping())
         {
             ProcessArchitecture architecture{};
@@ -612,12 +708,13 @@ public:
                 return false;
             }
             const bool injected = architecture == ProcessArchitecture::x86
-                ? Inject32(processId_, hookPath, waitMs, error)
-                : InjectDirect(processId_, hookPath, waitMs, error);
+                ? Inject32(processId_, hookPath, waitMs, cancelled, error)
+                : InjectDirect(processId_, hookPath, waitMs, cancelled, error);
             if (!injected)
                 return false;
             const ULONGLONG deadline = GetTickCount64() + waitMs;
-            while (!OpenMapping() && GetTickCount64() < deadline)
+            while (!IsCancelled(cancelled) && !OpenMapping() &&
+                GetTickCount64() < deadline)
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
         if (!state_)
@@ -968,7 +1065,7 @@ Result CaptureOneShotForMonitor(const RECT& monitorBounds,
         const DWORD startupWait = static_cast<DWORD>(
             std::clamp<ULONGLONG>(remaining, 250, 5000));
         std::wstring sessionError;
-        if (!session.Start(startupWait, sessionError))
+        if (!session.Start(startupWait, cancelled, sessionError))
         {
             if (!sessionError.empty())
                 result.error = std::move(sessionError);
