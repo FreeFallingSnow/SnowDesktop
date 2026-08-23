@@ -245,6 +245,9 @@ RECT DesktopApp::GetDockFolderPopupSortButtonRect(
     const RECT& popup) const
 {
     const auto metrics = GetOpenCollectionPopupLayoutMetrics();
+    const auto headerBounds =
+        snowdesktop::collection_popup_layout::
+            ResolveHeaderVerticalBounds(metrics.scale);
     const int width = std::min(
         snowdesktop::collection_popup_layout::ScaleDimension(
             104, metrics.scale),
@@ -256,12 +259,10 @@ RECT DesktopApp::GetDockFolderPopupSortButtonRect(
     return MakeRect(
         popup.right - snowdesktop::collection_popup_layout::
             ScaleDimension(16, metrics.scale) - width,
-        popup.top + snowdesktop::collection_popup_layout::
-            ScaleDimension(11, metrics.scale),
+        popup.top + headerBounds.sortButtonTop,
         popup.right - snowdesktop::collection_popup_layout::
             ScaleDimension(16, metrics.scale),
-        popup.top + snowdesktop::collection_popup_layout::
-            ScaleDimension(45, metrics.scale));
+        popup.top + headerBounds.sortButtonBottom);
 }
 
 int DesktopApp::GetCollectionPopupColumnCount(const RECT& popup) const

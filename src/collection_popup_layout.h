@@ -28,12 +28,33 @@ struct Metrics
     int maximumWidth = 560;
 };
 
+struct HeaderVerticalBounds
+{
+    int titleTop = 18;
+    int titleBottom = 44;
+    int sortButtonTop = 14;
+    int sortButtonBottom = 48;
+};
+
 inline int ScaleDimension(int value, float scale)
 {
     if (!std::isfinite(scale))
         scale = 1.0f;
     return std::max(1, static_cast<int>(std::round(
         static_cast<float>(value) * std::clamp(scale, 0.1f, 8.0f))));
+}
+
+inline HeaderVerticalBounds ResolveHeaderVerticalBounds(float scale)
+{
+    HeaderVerticalBounds result;
+    result.titleTop = ScaleDimension(18, scale);
+    result.titleBottom = ScaleDimension(44, scale);
+
+    const int sortButtonHeight = ScaleDimension(34, scale);
+    result.sortButtonTop = result.titleTop +
+        (result.titleBottom - result.titleTop - sortButtonHeight) / 2;
+    result.sortButtonBottom = result.sortButtonTop + sortButtonHeight;
+    return result;
 }
 
 /**

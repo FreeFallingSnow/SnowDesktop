@@ -566,6 +566,17 @@ int main(int argc, char** argv)
             invalidScalePopupMetrics.cellHeight == 1 &&
             invalidScalePopupMetrics.gapY == 8,
         "invalid popup page metrics must fall back to finite baseline chrome");
+    for (const float scale : { 0.75f, 1.0f, 1.25f, 1.5f, 2.0f })
+    {
+        const auto headerBounds =
+            popupLayout::ResolveHeaderVerticalBounds(scale);
+        Check(
+            std::abs(
+                headerBounds.titleTop + headerBounds.titleBottom -
+                headerBounds.sortButtonTop -
+                headerBounds.sortButtonBottom) <= 1,
+            "folder popup title and sort label must share a vertical center");
+    }
     Check(
         popupLayout::AllowsMarqueeStart(
             true, false, false),
