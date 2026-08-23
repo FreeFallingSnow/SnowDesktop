@@ -1902,6 +1902,9 @@ private:
      * @return 调整后的目标点
      */
     POINT GetDragTargetPoint(POINT current) const;
+    /** @brief 按来源锚定语义解析桌面请求格。 */
+    GridCell ResolveDesktopRequestCell(
+        const DragSourceList& sourceList, POINT current) const;
     /** @brief 按当前目标与拖拽热点刷新桌面放置反馈的语义网格。 */
     void RefreshDragPresentationAnchor();
     /** @brief 为选中的桌面项创建拖拽数据对象。 @return COM 数据对象 */

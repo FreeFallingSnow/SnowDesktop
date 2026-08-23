@@ -590,6 +590,38 @@ void TestListDragCanAnchorVisualAndLandingToPointer()
         "a new ordinary drag must restore the original grab-offset policy");
 }
 
+void TestDesktopPlacementPolicyMatchesSourceSemantics()
+{
+    using Surface = snowdesktop::slot_contract::
+        SlotSurfaceKind;
+    ContractContainer desktop(
+        BarStyle::HBar, Surface::Desktop);
+    ContractContainer dock(
+        BarStyle::HBar, Surface::Dock);
+
+    DragSourceList dockWidget;
+    dockWidget.BindRuntimeOrigin(&dock);
+    dockWidget.entries.push_back({});
+    dockWidget.hasWidgets = true;
+    Check(dockWidget.UsesPointerDesktopPlacement(),
+        "Dock sources must resolve desktop placement from the pointer cell");
+    Check(!dockWidget.SupportsDesktopShellHandoff(),
+        "widget payloads must not advertise a Shell handoff target");
+
+    DragSourceList dockFile;
+    dockFile.BindRuntimeOrigin(&dock);
+    dockFile.entries.push_back({});
+    Check(dockFile.UsesPointerDesktopPlacement() &&
+            dockFile.SupportsDesktopShellHandoff(),
+        "path-backed Dock entries must keep pointer placement and Shell handoff support");
+
+    DragSourceList desktopItems;
+    desktopItems.BindRuntimeOrigin(&desktop);
+    desktopItems.entries.push_back({});
+    Check(!desktopItems.UsesPointerDesktopPlacement(),
+        "ordinary desktop drags must preserve their group-origin grab offset");
+}
+
 void TestEverySurfaceRetainsStableDragMetadata()
 {
     using Surface =
@@ -1749,6 +1781,7 @@ int main()
     TestDragSessionRejectsInvalidatedSlots();
     TestDragSessionVisualVisibilityFollowsOleOwnership();
     TestListDragCanAnchorVisualAndLandingToPointer();
+    TestDesktopPlacementPolicyMatchesSourceSemantics();
     TestEverySurfaceRetainsStableDragMetadata();
     TestEveryRegisteredSurfaceOriginLifecycle();
     TestDropActionModifiers();

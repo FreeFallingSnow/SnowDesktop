@@ -1331,7 +1331,9 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
                     kDesktopIconClsidRecycleBin) == 0)
             {
                 MoveDockItemsToDesktop(dragSession_.Items(),
-                    CellFromPointForDrag(dragSession_.CurrentPoint()));
+                    ResolveDesktopRequestCell(
+                        dragSession_.SourceList(),
+                        dragSession_.CurrentPoint()));
                 SaveLayoutSlots();
                 ClearSelection();
                 EndDragSession();

@@ -17,6 +17,14 @@ POINT DesktopApp::GetDragTargetPoint(POINT current) const
     };
 }
 
+GridCell DesktopApp::ResolveDesktopRequestCell(
+    const DragSourceList& sourceList, POINT current) const
+{
+    if (sourceList.UsesPointerDesktopPlacement())
+        return CellFromPoint(current);
+    return CellFromPointForDrag(GetDragTargetPoint(current));
+}
+
 void DesktopApp::RefreshDragPresentationAnchor()
 {
     if (!dragSession_.IsActive())
@@ -37,20 +45,9 @@ void DesktopApp::RefreshDragPresentationAnchor()
     }
 
     const DragSourceList& sourceList = dragSession_.SourceList();
-    const bool usePointerCell =
-        sourceList.Empty() ||
-        !sourceList.origin ||
-        sourceList.hasCollectionGroupEntries ||
-        sourceList.hasFileGroupEntries ||
-        (sourceList.hasOriginWidget &&
-            sourceList.originWidgetType ==
-                DesktopWidgetType::CollectionGroup);
     const POINT current = dragSession_.CurrentPoint();
-    const POINT anchorPoint = usePointerCell
-        ? current
-        : GetDragTargetPoint(current);
     dragSession_.UpdatePresentationAnchor(
-        CellFromPointForDrag(anchorPoint));
+        ResolveDesktopRequestCell(sourceList, current));
 }
 
 /**

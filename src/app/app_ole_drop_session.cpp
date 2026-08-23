@@ -418,7 +418,10 @@ HRESULT DesktopApp::HandleOleDrop(
                 _wcsicmp(targetDesktopItem->desktopIconClsid.c_str(),
                     kDesktopIconClsidRecycleBin) == 0)
             {
-                MoveDockItemsToDesktop(dragSession_.Items(), CellFromPointForDrag(clientPoint));
+                MoveDockItemsToDesktop(
+                    dragSession_.Items(),
+                    ResolveDesktopRequestCell(
+                        dragSession_.SourceList(), clientPoint));
                 SaveLayoutSlots();
                 ClearSelection();
                 EndDragSession();

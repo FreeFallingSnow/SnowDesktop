@@ -188,7 +188,9 @@ void DesktopGrid::OnItemsDropped(const std::vector<Item*>& sourceItems, Containe
 
     if (dynamic_cast<DockContainer*>(origin))
     {
-        GridCell target = app_->CellFromPointForDrag(app_->dragSession_.CurrentPoint());
+        GridCell target = app_->ResolveDesktopRequestCell(
+            app_->dragSession_.SourceList(),
+            app_->dragSession_.CurrentPoint());
         app_->MoveDockItemsToDesktop(sourceItems, target);
         return;
     }
@@ -307,7 +309,12 @@ HitRegion DesktopGrid::HitTestDrag(POINT pt, Slot*& outSlot)
             ? HitRegion::None
             : HitRegion::Empty;
     }
-    if (region == HitRegion::SortBefore && app_)
+    const bool supportsShellHandoff =
+        !app_ || !app_->dragSession_.IsActive() ||
+        app_->dragSession_.SourceList().
+            SupportsDesktopShellHandoff();
+    if (region == HitRegion::SortBefore && app_ &&
+        supportsShellHandoff)
     {
         // Check for Handoff: mouse on an unselected icon
         int hit = app_->HitTestItem(pt);
@@ -448,19 +455,8 @@ std::wstring DesktopGrid::GetDragHint(Slot* slot, HitRegion region,
     if (altDown)  return _LW("core.drag.release_shortcut_here");
     if (ctrlDown) return _LW("core.drag.release_copy_here");
 
-    auto* originWidget =
-        dynamic_cast<WidgetContainer*>(origin);
-    DesktopWidget* originData = originWidget
-        ? originWidget->GetWidgetData()
-        : nullptr;
-    const POINT targetPoint =
-        originData &&
-        originData->type ==
-            DesktopWidgetType::CollectionGroup
-            ? dragPoint
-            : app_->GetDragTargetPoint(dragPoint);
     GridCell bestCell = app_->FindBestDropCell(
-        app_->CellFromPointForDrag(targetPoint));
+        app_->ResolveDesktopRequestCell(sourceList, dragPoint));
 
     // When dragging from a widget (not from desktop itself), the selected items
     // are not in the desktop items_ — check cell occupancy directly instead.
@@ -510,7 +506,8 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
         });
         if (hasWidgetEntry)
         {
-            GridCell requested = app_->CellFromPointForDrag(dragPoint);
+            GridCell requested = app_->ResolveDesktopRequestCell(
+                app_->dragSession_.SourceList(), dragPoint);
             const GridPage* targetPage = FindGridPage(app_->gridPages_, requested.pageId);
             if (!targetPage) return;
 

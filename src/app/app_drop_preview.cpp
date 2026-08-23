@@ -465,14 +465,8 @@ DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& sourceLis
             IsAutoCollectFileCategorySource(sourceList))
             return preview;
 
-        const bool usePointerCell =
-            sourceList.hasOriginWidget &&
-            sourceList.originWidgetType ==
-                DesktopWidgetType::CollectionGroup;
-        POINT adjusted = !sourceList.origin || usePointerCell
-            ? dropPoint
-            : GetDragTargetPoint(dropPoint);
-        GridCell targetCell = CellFromPointForDrag(adjusted);
+        GridCell targetCell = ResolveDesktopRequestCell(
+            sourceList, dropPoint);
         bool internalMove = !IsDropFileBacked(sourceList, preview.targetKind, preview.action);
         if (internalMove)
             targetCell = FindBestDropCell(targetCell);

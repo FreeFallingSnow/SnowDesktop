@@ -285,6 +285,31 @@ struct DragSourceList
     bool Empty() const { return entries.empty(); }
 
     /**
+     * @brief 桌面放置是否直接以鼠标所在格为请求落点。
+     *
+     * Dock、外部来源和组条目在落桌面时没有可复用的桌面项目左上角，
+     * 必须按鼠标中心命中；普通桌面项目仍保留抓取点相对组原点的偏移。
+     */
+    bool UsesPointerDesktopPlacement() const
+    {
+        using Surface = snowdesktop::slot_contract::
+            SlotSurfaceKind;
+        return Empty() || !origin ||
+            SourceSurfaceKind() == Surface::Dock ||
+            hasCollectionGroupEntries ||
+            UsesFileGroupSourceInsertion() ||
+            (hasOriginWidget &&
+                originWidgetType ==
+                    DesktopWidgetType::CollectionGroup);
+    }
+
+    /** @brief 当前载荷是否能够交给桌面 Shell 图标处理。 */
+    bool SupportsDesktopShellHandoff() const
+    {
+        return !hasWidgets;
+    }
+
+    /**
      * @brief 是否应按文件组来源标签的插入语义处理。
      *
      * 除文件组自身的来源标签外，Dock 中的映射文件夹组件也会作为一个
