@@ -62,6 +62,14 @@ constexpr POINT UnpackScreenPoint(std::uint64_t packed)
     };
 }
 
+constexpr bool IsCurrentPointerNotification(
+    std::uint32_t notificationGeneration,
+    std::uint32_t currentGeneration)
+{
+    return notificationGeneration != 0 &&
+        notificationGeneration == currentGeneration;
+}
+
 constexpr bool ContainsHostedPopupPoint(
     const RECT& bounds,
     POINT point,

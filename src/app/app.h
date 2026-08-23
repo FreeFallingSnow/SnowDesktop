@@ -978,6 +978,7 @@ private:
     RECT CalculateFloatingPopupWindowBounds() const;
     bool StartFloatingPopupOutsideClickMonitor();
     void StopFloatingPopupOutsideClickMonitor();
+    void AdvanceFloatingPopupContentGeneration();
     void HandleFloatingPopupExternalPointerDown(
         std::uint32_t generation,
         std::uint64_t screenPointPayload);

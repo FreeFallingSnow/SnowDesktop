@@ -1893,6 +1893,10 @@ int main(int argc, char** argv)
             restoredExternalPointerPoint.y ==
                 externalPointerPoint.y,
         "each popup hook notification must preserve its full signed screen coordinate snapshot");
+    Check(floatingPopup::IsCurrentPointerNotification(41, 41) &&
+            !floatingPopup::IsCurrentPointerNotification(41, 42) &&
+            !floatingPopup::IsCurrentPointerNotification(0, 0),
+        "a queued outside-click may affect only the popup content generation that existed at button-down");
     const RECT collectionPopupBounds{ 10, 20, 110, 120 };
     const RECT luaPanelBounds{ 200, 220, 320, 360 };
     Check(floatingPopup::IsPointOnHostedPopupSurface(
@@ -3811,6 +3815,28 @@ int main(int argc, char** argv)
                   "widgetEngine_->CancelInteractionPointerPress(\n                luaWidgetPanelRequest_.surface);") !=
                     std::string::npos,
             "an old Lua panel finalizer must not release a later component press capture");
+        const std::size_t advancePopupGeneration =
+            floatingPopupSource.find(
+                "void DesktopApp::AdvanceFloatingPopupContentGeneration()");
+        const std::size_t updateActiveGeneration =
+            floatingPopupSource.find(
+                "floatingPopupMouseHookActiveGeneration_.store(",
+                advancePopupGeneration);
+        const std::size_t luaResumeClosingPanel =
+            luaPanelSource.find(
+                "AdvanceFloatingPopupContentGeneration();");
+        const std::size_t luaPublishFreshPanel =
+            luaPanelSource.find(
+                "AdvanceFloatingPopupContentGeneration();\n    luaWidgetPanelRequest_ = request;",
+                luaResumeClosingPanel);
+        Check(advancePopupGeneration != std::string::npos &&
+                updateActiveGeneration != std::string::npos &&
+                floatingPopupSource.find(
+                  "IsCurrentPointerNotification(") !=
+                    std::string::npos &&
+                luaResumeClosingPanel != std::string::npos &&
+                luaPublishFreshPanel != std::string::npos,
+            "publishing a new or resumed Lua panel must invalidate outside-click notifications queued for older popup contents");
         const std::size_t luaFinalizeBegin = luaPanelSource.find(
             "void DesktopApp::FinalizeCloseLuaWidgetPanel(");
         const std::size_t luaFinalizeEnd = luaPanelSource.find(

@@ -118,12 +118,29 @@ void DesktopApp::StopFloatingPopupOutsideClickMonitor()
     floatingPopupMouseHookActiveGeneration_.store(0);
 }
 
+void DesktopApp::AdvanceFloatingPopupContentGeneration()
+{
+    ++floatingPopupMouseHookGeneration_;
+    if (floatingPopupMouseHookGeneration_ == 0)
+        ++floatingPopupMouseHookGeneration_;
+    if (floatingPopupMouseHook_)
+    {
+        // A low-level pointer notification is queued asynchronously. Keep it
+        // tied to the popup contents that existed at the physical button-down
+        // so it cannot dismiss a Lua panel created by that same click.
+        floatingPopupMouseHookActiveGeneration_.store(
+            floatingPopupMouseHookGeneration_);
+    }
+}
+
 void DesktopApp::HandleFloatingPopupExternalPointerDown(
     std::uint32_t generation,
     std::uint64_t screenPointPayload)
 {
-    if (generation == 0 ||
-        generation != floatingPopupMouseHookGeneration_ ||
+    if (!snowdesktop::floating_popup_rules::
+            IsCurrentPointerNotification(
+                generation,
+                floatingPopupMouseHookGeneration_) ||
         !ShouldShowFloatingPopupWindow())
         return;
 

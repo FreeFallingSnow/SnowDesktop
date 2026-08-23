@@ -44,6 +44,7 @@ void DesktopApp::OpenLuaWidgetPanel(
                 request.surface &&
             luaWidgetPanelAnimation_.IsClosing())
         {
+            AdvanceFloatingPopupContentGeneration();
             luaWidgetPanelRequest_ = request;
             if (snowdesktop::dock_launch_animation::
                     SystemAnimationsEnabled())
@@ -73,6 +74,7 @@ void DesktopApp::OpenLuaWidgetPanel(
         FinalizeCloseLuaWidgetPanel();
         return;
     }
+    AdvanceFloatingPopupContentGeneration();
     luaWidgetPanelRequest_ = request;
     luaWidgetPanelAnchorPoint_ =
         lastMousePoint_;
