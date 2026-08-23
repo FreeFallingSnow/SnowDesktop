@@ -36,7 +36,9 @@ void PrintUsage()
         << "  snowwidget permissions <package-directory>\n"
         << "  snowwidget preview <package-directory> <output.png>"
            " [--columns N] [--rows N] [--dpi N]"
-           " [--locale CODE] [--theme dark|light]"
+           " [--locale CODE]"
+           " [--appearance dark|light|glass-dark|glass-light|acrylic-dark|acrylic-light]"
+           " [--theme dark|light]"
            " [--data-state ready|empty|loading|error|stale|permission-denied]"
            " [--storage key=value] [--host SnowDesktop.exe]\n"
         << "  snowwidget validate <package-directory>\n"
@@ -223,6 +225,7 @@ int RunPreviewHost(const std::filesystem::path& host,
     int columns, int rows, int dpi,
     std::wstring_view locale,
     std::wstring_view theme,
+    std::wstring_view appearance,
     std::wstring_view dataState,
     const std::vector<std::wstring>& storage)
 {
@@ -247,6 +250,7 @@ int RunPreviewHost(const std::filesystem::path& host,
     append(resultPath->wstring());
     append(locale);
     append(theme);
+    append(appearance);
     append(dataState);
     for (const auto& pair : storage) append(pair);
 
@@ -482,7 +486,10 @@ int wmain(int argc, wchar_t** argv)
         int dpi = 96;
         std::wstring locale = L"en-US";
         std::wstring theme = L"dark";
+        std::wstring appearance = L"dark";
         std::wstring dataState = L"ready";
+        bool themeSpecified = false;
+        bool appearanceSpecified = false;
         std::filesystem::path explicitHost;
         std::vector<std::wstring> storage;
         for (int index = 4; index < argc; ++index)
@@ -491,7 +498,8 @@ int wmain(int argc, wchar_t** argv)
             if ((option == L"--columns" || option == L"--rows" ||
                     option == L"--dpi" || option == L"--storage" ||
                     option == L"--host" || option == L"--locale" ||
-                    option == L"--theme" || option == L"--data-state") &&
+                    option == L"--theme" || option == L"--appearance" ||
+                    option == L"--data-state") &&
                 index + 1 >= argc)
             {
                 std::cerr << "{\"ok\":false,\"error\":\"preview option is missing its value\"}\n";
@@ -543,12 +551,40 @@ int wmain(int argc, wchar_t** argv)
             }
             else if (option == L"--theme")
             {
+                if (appearanceSpecified)
+                {
+                    std::cerr << "{\"ok\":false,\"error\":\"theme and appearance cannot be used together\"}\n";
+                    return 2;
+                }
+                themeSpecified = true;
                 theme = argv[++index];
                 if (theme != L"dark" && theme != L"light")
                 {
                     std::cerr << "{\"ok\":false,\"error\":\"theme must be dark or light\"}\n";
                     return 2;
                 }
+                appearance = theme;
+            }
+            else if (option == L"--appearance")
+            {
+                if (themeSpecified)
+                {
+                    std::cerr << "{\"ok\":false,\"error\":\"theme and appearance cannot be used together\"}\n";
+                    return 2;
+                }
+                appearanceSpecified = true;
+                appearance = argv[++index];
+                if (appearance != L"dark" && appearance != L"light" &&
+                    appearance != L"glass-dark" &&
+                    appearance != L"glass-light" &&
+                    appearance != L"acrylic-dark" &&
+                    appearance != L"acrylic-light")
+                {
+                    std::cerr << "{\"ok\":false,\"error\":\"appearance must be dark, light, glass-dark, glass-light, acrylic-dark, or acrylic-light\"}\n";
+                    return 2;
+                }
+                theme = appearance.ends_with(L"light")
+                    ? L"light" : L"dark";
             }
             else if (option == L"--data-state")
             {
@@ -585,7 +621,8 @@ int wmain(int argc, wchar_t** argv)
             return 1;
         }
         return RunPreviewHost(*host, source, output,
-            columns, rows, dpi, locale, theme, dataState, storage);
+            columns, rows, dpi, locale, theme, appearance,
+            dataState, storage);
     }
     if (command == L"pack")
     {

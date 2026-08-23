@@ -22899,23 +22899,26 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
             readBool("glassEnabled", glassEnabled, false);
             readBool("acrylicEnabled", acrylicEnabled, false);
 
-            const std::string prefix = WidgetWideToUtf8(widgetId) + ".";
             auto readStoredColor = [&](const char* key, float& r, float& g, float& b) {
-                auto it = g_storage.find(prefix + key);
-                if (it == g_storage.end()) return;
-                int val = std::atoi(it->second.c_str());
+                const std::string value =
+                    RuntimeGetStorageValue(widgetId, key);
+                if (value.empty()) return;
+                int val = std::atoi(value.c_str());
                 r = ((val >> 16) & 0xFF) / 255.0f;
                 g = ((val >> 8) & 0xFF) / 255.0f;
                 b = (val & 0xFF) / 255.0f;
             };
             auto readStoredFloat = [&](const char* key, float& out) {
-                auto it = g_storage.find(prefix + key);
-                if (it != g_storage.end()) out = static_cast<float>(std::atof(it->second.c_str()));
+                const std::string value =
+                    RuntimeGetStorageValue(widgetId, key);
+                if (!value.empty())
+                    out = static_cast<float>(std::atof(value.c_str()));
             };
             auto readStoredBool = [&](const char* key, bool& out) {
-                auto it = g_storage.find(prefix + key);
-                if (it != g_storage.end())
-                    out = it->second == "1" || it->second == "true";
+                const std::string value =
+                    RuntimeGetStorageValue(widgetId, key);
+                if (!value.empty())
+                    out = value == "1" || value == "true";
             };
             readStoredColor("bg", bgR, bgG, bgB);
             readStoredColor("border", borderR, borderG, borderB);

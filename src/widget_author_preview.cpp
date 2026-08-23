@@ -3,8 +3,10 @@
 #include "constants.h"
 #include "data_paths.h"
 #include "l10n.h"
+#include "personalization.h"
 #include "widget_engine.h"
 #include "widget_package.h"
+#include "widget_preview_stage.h"
 
 #include <d2d1_1.h>
 #include <d3d11.h>
@@ -283,30 +285,123 @@ bool SavePng(const std::filesystem::path& output,
     return true;
 }
 
-void DrawHostBackground(ID2D1DeviceContext* context,
-    WidgetEngine& engine, const RECT& bounds, float scale)
+struct PreviewAppearance
 {
-    LuaWidgetTheme theme = engine.RuntimeGetWidgetTheme(kPreviewWidgetId);
-    if (engine.HasCustomStyle(kPreviewWidgetId))
+    PersonalizationSettings settings;
+    std::string theme;
+    bool lightStage = false;
+};
+
+std::optional<PreviewAppearance> ParseAppearance(std::string_view name)
+{
+    if (name == "dark")
+        return PreviewAppearance{
+            PersonalizationSettings::DarkPreset(), "dark", false };
+    if (name == "light")
+        return PreviewAppearance{
+            PersonalizationSettings::LightPreset(), "light", true };
+    if (name == "glass-dark")
+        return PreviewAppearance{
+            PersonalizationSettings::GlassDarkPreset(), "dark", false };
+    if (name == "glass-light")
+        return PreviewAppearance{
+            PersonalizationSettings::GlassLightPreset(), "light", true };
+    if (name == "acrylic-dark")
+        return PreviewAppearance{
+            PersonalizationSettings::AcrylicDarkPreset(), "dark", false };
+    if (name == "acrylic-light")
+        return PreviewAppearance{
+            PersonalizationSettings::AcrylicLightPreset(), "light", true };
+    return std::nullopt;
+}
+
+LuaWidgetTheme ThemeFromAppearance(const PersonalizationSettings& settings)
+{
+    const auto rgb = [](float red, float green, float blue) {
+        const auto channel = [](float value) {
+            return static_cast<int>(std::lround(
+                std::clamp(value, 0.0f, 1.0f) * 255.0f));
+        };
+        return (channel(red) << 16) | (channel(green) << 8) |
+            channel(blue);
+    };
+    LuaWidgetTheme theme;
+    theme.bg = rgb(settings.widgetBgR, settings.widgetBgG,
+        settings.widgetBgB);
+    theme.border = rgb(settings.widgetBorderR, settings.widgetBorderG,
+        settings.widgetBorderB);
+    theme.alpha = settings.widgetAlpha;
+    theme.borderAlpha = settings.widgetBorderAlpha;
+    theme.gradientEndA = settings.gradientEndA;
+    theme.cornerRadius = settings.cornerRadius;
+    theme.contentTheme = settings.contentTheme;
+    return theme;
+}
+
+struct ResolvedPreviewStyle
+{
+    LuaWidgetTheme theme;
+    PersonalizationSettings material;
+    bool lightStage = false;
+};
+
+ResolvedPreviewStyle ResolvePreviewStyle(WidgetEngine& engine,
+    const PreviewAppearance& appearance)
+{
+    ResolvedPreviewStyle resolved;
+    resolved.theme = engine.RuntimeGetWidgetTheme(kPreviewWidgetId);
+    resolved.material = appearance.settings;
+    resolved.lightStage = appearance.lightStage;
+    bool customStyle = engine.HasCustomStyle(kPreviewWidgetId);
+    if (customStyle)
     {
+        const std::string follow = engine.RuntimeGetStorageValue(
+            kPreviewWidgetId, "followPersonalization");
+        if (follow == "1" || follow == "true") customStyle = false;
+    }
+    if (!customStyle)
+        resolved.theme = ThemeFromAppearance(appearance.settings);
+    if (customStyle)
+    {
+        resolved.material = PersonalizationSettings::DarkPreset();
+        resolved.material.glassBlurRadius =
+            appearance.settings.glassBlurRadius;
+        resolved.material.contentTheme = appearance.settings.contentTheme;
+        resolved.theme.cornerRadius = appearance.settings.cornerRadius;
         float bgR = 0.0f, bgG = 0.0f, bgB = 0.0f;
         float borderR = 1.0f, borderG = 1.0f, borderB = 1.0f;
-        float gradient = theme.gradientEndA;
+        float gradient = resolved.theme.gradientEndA;
         bool glass = false, acrylic = false;
         if (engine.ReadCustomColors(kPreviewWidgetId,
-                bgR, bgG, bgB, theme.alpha,
-                borderR, borderG, borderB, theme.borderAlpha,
+                bgR, bgG, bgB, resolved.theme.alpha,
+                borderR, borderG, borderB, resolved.theme.borderAlpha,
                 gradient, glass, acrylic))
         {
-            theme.bg = (static_cast<int>(std::lround(bgR * 255.0f)) << 16) |
+            resolved.theme.bg =
+                (static_cast<int>(std::lround(bgR * 255.0f)) << 16) |
                 (static_cast<int>(std::lround(bgG * 255.0f)) << 8) |
                 static_cast<int>(std::lround(bgB * 255.0f));
-            theme.border =
+            resolved.theme.border =
                 (static_cast<int>(std::lround(borderR * 255.0f)) << 16) |
                 (static_cast<int>(std::lround(borderG * 255.0f)) << 8) |
                 static_cast<int>(std::lround(borderB * 255.0f));
+            resolved.theme.gradientEndA = gradient;
+            resolved.material.glassEnabled = glass;
+            resolved.material.acrylicEnabled = glass && acrylic;
         }
+        const std::string storedTheme = engine.RuntimeGetStorageValue(
+            kPreviewWidgetId, "__contentTheme");
+        if (storedTheme == "0" || storedTheme == "1")
+            resolved.material.contentTheme = storedTheme[0] - '0';
+        resolved.theme.contentTheme = resolved.material.contentTheme;
     }
+    return resolved;
+}
+
+void DrawHostBackground(ID2D1DeviceContext* context,
+    const ResolvedPreviewStyle& resolved, const RECT& bounds, float scale)
+{
+    const LuaWidgetTheme& theme = resolved.theme;
     const auto color = [](int rgb, float alpha) {
         return D2D1::ColorF(
             static_cast<float>((rgb >> 16) & 0xff) / 255.0f,
@@ -327,9 +422,25 @@ void DrawHostBackground(ID2D1DeviceContext* context,
             static_cast<float>(bounds.top),
             static_cast<float>(bounds.right),
             static_cast<float>(bounds.bottom)), radius, radius);
-    context->FillRoundedRectangle(rounded, fill.Get());
-    context->DrawRoundedRectangle(rounded, border.Get(),
-        std::max(1.0f, scale));
+    if (theme.alpha > 0.0f)
+        context->FillRoundedRectangle(rounded, fill.Get());
+    if (resolved.material.glassEnabled &&
+        resolved.material.acrylicEnabled)
+    {
+        snowdesktop::widget_preview::DrawAcrylicNoise(
+            context, bounds, radius,
+            resolved.material.contentTheme == 1);
+    }
+    if (theme.borderAlpha > 0.0f)
+    {
+        const float strokeWidth = std::max(1.0f, scale);
+        const bool glassDrawn = resolved.material.glassEnabled &&
+            snowdesktop::widget_preview::DrawGlassBorder(context, bounds,
+                radius, color(theme.border, theme.borderAlpha), strokeWidth);
+        if (!glassDrawn)
+            context->DrawRoundedRectangle(
+                rounded, border.Get(), strokeWidth);
+    }
 }
 
 std::string FirstValidationError(
@@ -367,6 +478,7 @@ std::string PreviewRenderResult::ToJson() const
         << ",\"dpi\":" << dpi
         << ",\"locale\":" << JsonString(locale)
         << ",\"theme\":" << JsonString(theme)
+        << ",\"appearance\":" << JsonString(appearance)
         << ",\"dataState\":" << JsonString(dataState) << '}';
     return output.str();
 }
@@ -381,12 +493,20 @@ PreviewRenderResult RenderWidgetPreview(
     result.dpi = request.dpi;
     result.locale = request.locale;
     result.theme = request.theme;
+    result.appearance = request.appearance;
     result.dataState = request.dataState;
 
-    if (request.theme != "dark" && request.theme != "light")
+    const auto appearance = ParseAppearance(request.appearance);
+    if (!appearance)
+    {
+        result.stage = "request.appearance";
+        result.error = "preview appearance is not supported";
+        return result;
+    }
+    if (request.theme != appearance->theme)
     {
         result.stage = "request.theme";
-        result.error = "preview theme must be dark or light";
+        result.error = "preview theme does not match the appearance";
         return result;
     }
     const auto parseDataState = [](std::string_view state)
@@ -524,14 +644,7 @@ PreviewRenderResult RenderWidgetPreview(
     previewConfiguration.surface.monitorAvailable = false;
     previewConfiguration.surface.primaryMonitor = false;
     previewConfiguration.dataState = *dataState;
-    if (request.theme == "light")
-    {
-        previewConfiguration.theme.bg = 0xF4F6FA;
-        previewConfiguration.theme.border = 0xFFFFFF;
-        previewConfiguration.theme.alpha = 0.78f;
-        previewConfiguration.theme.borderAlpha = 0.65f;
-        previewConfiguration.theme.contentTheme = 1;
-    }
+    previewConfiguration.theme = ThemeFromAppearance(appearance->settings);
     if (!engine.EnsureWidgetDirectoryPreviewLoaded(kPreviewWidgetId,
             request.sourceDirectory, request.storage,
             &previewConfiguration))
@@ -545,9 +658,18 @@ PreviewRenderResult RenderWidgetPreview(
         return result;
     }
     const RECT bounds{ 0, 0, result.width, result.height };
+    const ResolvedPreviewStyle resolvedStyle =
+        ResolvePreviewStyle(engine, *appearance);
     context->BeginDraw();
     context->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
-    DrawHostBackground(context.Get(), engine, bounds, dpiScale);
+    snowdesktop::widget_preview::DrawStage(context.Get(), bounds,
+        { resolvedStyle.lightStage,
+            resolvedStyle.material.glassEnabled,
+            resolvedStyle.material.glassBlurRadius,
+            std::max(0.0f,
+                resolvedStyle.theme.cornerRadius * dpiScale) });
+    DrawHostBackground(
+        context.Get(), resolvedStyle, bounds, dpiScale);
     engine.RenderWidget(kPreviewWidgetId, L"", context.Get(), bounds,
         request.columns, request.rows);
     graphicsResult = context->EndDraw();
@@ -635,7 +757,7 @@ int TryRunWidgetAuthorPreviewHostCommand(bool& handled)
     handled = true;
     PreviewRenderResult result;
     std::filesystem::path resultPath;
-    if (argumentCount < 11)
+    if (argumentCount < 12)
     {
         result.stage = "request.arguments";
         result.error = "invalid widget preview host arguments";
@@ -648,7 +770,8 @@ int TryRunWidgetAuthorPreviewHostCommand(bool& handled)
     resultPath = arguments[7];
     request.locale = WideToUtf8(arguments[8]);
     request.theme = WideToUtf8(arguments[9]);
-    request.dataState = WideToUtf8(arguments[10]);
+    request.appearance = WideToUtf8(arguments[10]);
+    request.dataState = WideToUtf8(arguments[11]);
     int dpi = 0;
     if (!ParsePositiveInteger(arguments[4], 1, 8, request.columns) ||
         !ParsePositiveInteger(arguments[5], 1, 8, request.rows) ||
@@ -662,7 +785,7 @@ int TryRunWidgetAuthorPreviewHostCommand(bool& handled)
         return 2;
     }
     request.dpi = static_cast<unsigned>(dpi);
-    for (int index = 11; index < argumentCount; ++index)
+    for (int index = 12; index < argumentCount; ++index)
     {
         const std::wstring_view pair(arguments[index]);
         const std::size_t equals = pair.find(L'=');

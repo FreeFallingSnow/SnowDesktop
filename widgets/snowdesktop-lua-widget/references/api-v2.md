@@ -35,14 +35,19 @@ Shell、系统数据、存储或其他副作用 API。命令输出文件数、�
 预览宿主，以 `WidgetEngine::InitPreview` 注册完整 API v2 沙箱，执行入口、生命周期和 render/view，
 通过离屏 D2D/WIC 输出 PNG。它使用隔离的 manifest `previewData.storage` 覆盖层，不写实例持久化
 存储；`--storage key=value` 可重复覆盖预览值，`--columns/--rows` 必须落在清单尺寸范围内，
-`--dpi` 支持 96–480，`--locale` 选择宿主已安装语言，`--theme` 可为 `dark/light`。
+`--dpi` 支持 96–480，`--locale` 选择宿主已安装语言。`--appearance` 可为
+`dark/light/glass-dark/glass-light/acrylic-dark/acrylic-light`；旧参数 `--theme dark/light`
+继续作为普通深/浅外观的简写，但不能和 `--appearance` 同时使用。输出 PNG 始终包含确定性的
+彩色预览背景、解析后的普通/毛玻璃/亚克力材质层和组件内容，像素完全不透明；组件自定义材质
+优先，`followPersonalization` 则回到所选宿主外观。应先用 `preview` 生成清单声明的最终预览图，
+再运行 `pack`；`pack` 只校验和归档现有预览文件，不会启动宿主或改写源码目录。
 `--data-state` 可为 `ready/empty/loading/error/stale/permission-denied`，用于让全部预览数据订阅
 返回对应的确定性包络；`empty` 保留 `available=true` 但使用空/零值，`error` 返回
 `providerUnavailable`，拒权返回 `permissionDenied`；包络时间戳与 `time.now()` 共用固定预览
 时钟，stale 时间固定落在两个请求采样周期之前。以上环境在 Lua `setup()` 前注入，预览
 显示器摘要固定标记为 unavailable；accent、无障碍默认值、region、UTC 时区和输入语言也由
 所选 locale 的确定性预览环境提供，不读取开发机对应设置。命令返回包含稳定 `stage`、最终像素
-尺寸、栅格尺寸、DPI、locale、theme 和 dataState 的 JSON。复制到
+尺寸、栅格尺寸、DPI、locale、基础 theme、appearance 和 dataState 的 JSON。复制到
 SnowDesktop 安装目录外的 CLI 可用 `--host <SnowDesktop.exe>` 或 `SNOWDESKTOP_HOST` 指定宿主。
 
 运行 `snowwidget permissions <组件目录>` 可从宿主同一权限 descriptor、公共函数目录和 system

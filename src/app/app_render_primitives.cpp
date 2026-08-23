@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../widget_preview_stage.h"
 
 // Reusable Direct2D drawing primitives.
 
@@ -143,7 +144,8 @@ void DesktopApp::DrawAcrylicNoise(ID2D1DeviceContext* ctx, RECT frame,
     if (!ctx || IsRectEmptyRect(frame))
         return;
 
-    constexpr UINT kNoiseSize = 64;
+    constexpr UINT kNoiseSize = static_cast<UINT>(
+        snowdesktop::widget_preview::AcrylicNoiseSize);
     const std::uintptr_t contextKey =
         reinterpret_cast<std::uintptr_t>(ctx) & ~std::uintptr_t{1};
     const std::uintptr_t cacheKey = contextKey |
@@ -154,23 +156,8 @@ void DesktopApp::DrawAcrylicNoise(ID2D1DeviceContext* ctx, RECT frame,
         if (acrylicNoiseBrushCache_.size() >= 8)
             acrylicNoiseBrushCache_.clear();
 
-        std::array<std::uint32_t, kNoiseSize * kNoiseSize> pixels{};
-        std::uint32_t state = 0x534E4F57u; // "SNOW", fixed seed.
-        for (std::uint32_t& pixel : pixels)
-        {
-            state ^= state << 13;
-            state ^= state >> 17;
-            state ^= state << 5;
-            // System acrylic uses a very subtle texture. Keep alpha between
-            // roughly 0.8% and 3.1%, with polarity selected by content theme.
-            const std::uint8_t alpha = static_cast<std::uint8_t>(
-                2u + ((state >> 24) & 0x06u));
-            const std::uint8_t channel = lightTheme ? 0u : alpha;
-            pixel = (static_cast<std::uint32_t>(alpha) << 24) |
-                (static_cast<std::uint32_t>(channel) << 16) |
-                (static_cast<std::uint32_t>(channel) << 8) |
-                static_cast<std::uint32_t>(channel);
-        }
+        const auto pixels =
+            snowdesktop::widget_preview::GenerateAcrylicNoise(lightTheme);
 
         D2D1_BITMAP_PROPERTIES1 bitmapProperties =
             D2D1::BitmapProperties1(

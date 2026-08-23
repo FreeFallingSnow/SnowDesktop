@@ -16,6 +16,7 @@ struct PreviewRenderRequest
     unsigned dpi = 96;
     std::string locale = "en-US";
     std::string theme = "dark";
+    std::string appearance = "dark";
     std::string dataState = "ready";
     std::unordered_map<std::string, std::string> storage;
 };
@@ -33,6 +34,7 @@ struct PreviewRenderResult
     unsigned dpi = 0;
     std::string locale;
     std::string theme;
+    std::string appearance;
     std::string dataState;
 
     std::string ToJson() const;

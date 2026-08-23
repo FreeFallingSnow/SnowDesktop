@@ -3,6 +3,7 @@
 #include "../menu_fluent_glyphs.h"
 #include "../modern_menu.h"
 #include "../search_match.h"
+#include "../widget_preview_stage.h"
 
 #include <cstring>
 #include <unordered_map>
@@ -563,8 +564,62 @@ DesktopApp::RenderWidgetMenuPreview(
     std::unique_ptr<Widget> widget = CreateWidget(data, this);
     if (!widget) return {};
 
+    const PersonalizationSettings globalAppearance = settingsWindow_
+        ? settingsWindow_->GetPersonalization()
+        : PersonalizationSettings::DarkPreset();
+    PersonalizationSettings stageAppearance = globalAppearance;
+    bool customStyle = false;
+    if (previewEngine)
+    {
+        customStyle = previewEngine->HasCustomStyle(data->id);
+        if (customStyle)
+        {
+            const std::string follow = previewEngine->RuntimeGetStorageValue(
+                data->id, "followPersonalization");
+            if (follow == "1" || follow == "true")
+                customStyle = false;
+        }
+        if (customStyle)
+        {
+            stageAppearance = PersonalizationSettings::DarkPreset();
+            float bgR = 0.0f, bgG = 0.0f, bgB = 0.0f, alpha = 0.0f;
+            float borderR = 0.0f, borderG = 0.0f, borderB = 0.0f;
+            float borderAlpha = 0.0f;
+            float gradientEndA = stageAppearance.gradientEndA;
+            bool glass = false, acrylic = false;
+            if (previewEngine->ReadCustomColors(data->id,
+                    bgR, bgG, bgB, alpha,
+                    borderR, borderG, borderB, borderAlpha,
+                    gradientEndA, glass, acrylic))
+            {
+                stageAppearance.glassEnabled = glass;
+                stageAppearance.acrylicEnabled = glass && acrylic;
+            }
+            stageAppearance.glassBlurRadius =
+                globalAppearance.glassBlurRadius;
+            stageAppearance.contentTheme = globalAppearance.contentTheme;
+            const std::string storedTheme =
+                previewEngine->RuntimeGetStorageValue(
+                    data->id, "__contentTheme");
+            if (storedTheme == "0" || storedTheme == "1")
+                stageAppearance.contentTheme = storedTheme[0] - '0';
+        }
+    }
+    const bool lightStage =
+        globalAppearance.backgroundPreset == kAppearancePresetLight ||
+        globalAppearance.backgroundPreset == kAppearancePresetGlassLight ||
+        globalAppearance.backgroundPreset == kAppearancePresetAcrylicLight ||
+        (globalAppearance.backgroundPreset == kAppearancePresetCustom &&
+            globalAppearance.contentTheme == 1);
+
     context->BeginDraw();
     context->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+    const RECT stageBounds{ 0, 0, width, height };
+    snowdesktop::widget_preview::DrawStage(context.Get(), stageBounds,
+        { lightStage, stageAppearance.glassEnabled,
+            stageAppearance.glassBlurRadius,
+            static_cast<float>(ScaleWidgetCu(
+                globalAppearance.cornerRadius, data->cellScale)) });
     context->SetTransform(D2D1::Matrix3x2F::Translation(
         static_cast<float>(-desktopFrame.left),
         static_cast<float>(-desktopFrame.top)));
@@ -670,8 +725,10 @@ DesktopApp::BuildAddWidgetMenuPreview(
         std::to_wstring(appearance.cornerRadius) + L":" +
         std::to_wstring(appearance.barHeight) + L":" +
         std::to_wstring(appearance.categorizedTabHeight) + L":" +
+        std::to_wstring(appearance.backgroundPreset) + L":" +
         std::to_wstring(appearance.glassEnabled) + L":" +
         std::to_wstring(appearance.acrylicEnabled) + L":" +
+        std::to_wstring(appearance.glassBlurRadius) + L":" +
         std::to_wstring(appearance.contentTheme);
 
     auto makeScene = [&](bool applications = false) {

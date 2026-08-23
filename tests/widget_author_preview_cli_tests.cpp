@@ -12,6 +12,7 @@
 #include <iostream>
 #include <limits>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace
@@ -174,6 +175,27 @@ RgbaBitmap ReadPng(const std::filesystem::path& path)
               static_cast<UINT>(bitmap.pixels.size()),
               bitmap.pixels.data())),
         "preview PNG pixels are decoded");
+    return bitmap;
+}
+
+RgbaBitmap CheckOpaquePreview(const std::filesystem::path& path,
+    UINT expectedWidth, UINT expectedHeight)
+{
+    const RgbaBitmap bitmap = ReadPng(path);
+    Check(bitmap.width == expectedWidth && bitmap.height == expectedHeight,
+        "preview stage preserves the expected pixel dimensions");
+    std::unordered_set<std::uint32_t> colors;
+    for (std::size_t offset = 0; offset < bitmap.pixels.size(); offset += 4)
+    {
+        Check(bitmap.pixels[offset + 3] == 0xff,
+            "preview stage makes every exported pixel opaque");
+        colors.insert(
+            (static_cast<std::uint32_t>(bitmap.pixels[offset]) << 16) |
+            (static_cast<std::uint32_t>(bitmap.pixels[offset + 1]) << 8) |
+            static_cast<std::uint32_t>(bitmap.pixels[offset + 2]));
+    }
+    Check(colors.size() > 128,
+        "preview stage retains a varied multicolor background");
     return bitmap;
 }
 
@@ -430,9 +452,131 @@ int wmain(int argc, wchar_t** argv)
             json.find("\"stage\":\"complete\"") != std::string::npos &&
             json.find("\"columns\":2") != std::string::npos &&
             json.find("\"rows\":2") != std::string::npos &&
-            json.find("\"dpi\":144") != std::string::npos,
+            json.find("\"dpi\":144") != std::string::npos &&
+            json.find("\"theme\":\"dark\"") != std::string::npos &&
+            json.find("\"appearance\":\"dark\"") != std::string::npos,
         "snowwidget preview reports a completed real API v2 render");
     CheckPng(output);
+    const RgbaBitmap customDark = CheckOpaquePreview(output, 288, 360);
+
+    const auto customGlassOutput =
+        temporary.path / L"analog-clock-custom-glass.png";
+    const auto [customGlassExit, customGlassJson] = Run(snowwidget, {
+        L"preview", source.wstring(), customGlassOutput.wstring(),
+        L"--dpi", L"144", L"--storage", L"showNumbers=1",
+        L"--appearance", L"glass-dark", L"--host", host.wstring() });
+    Check(customGlassExit == 0 &&
+            customGlassJson.find("\"appearance\":\"glass-dark\"") !=
+                std::string::npos &&
+            CheckOpaquePreview(customGlassOutput, 288, 360).pixels ==
+                customDark.pixels,
+        "a component custom transparent style overrides the host material");
+
+    const auto transparentOutput = temporary.path / L"transparent.png";
+    const auto glassOutput = temporary.path / L"glass.png";
+    const auto acrylicOutput = temporary.path / L"acrylic.png";
+    const auto [transparentExit, transparentJson] = Run(snowwidget, {
+        L"preview", source.wstring(), transparentOutput.wstring(),
+        L"--appearance", L"dark", L"--host", host.wstring() });
+    const auto [glassExit, glassJson] = Run(snowwidget, {
+        L"preview", source.wstring(), glassOutput.wstring(),
+        L"--appearance", L"dark", L"--storage", L"glassEnabled=1",
+        L"--host", host.wstring() });
+    const auto [acrylicExit, acrylicJson] = Run(snowwidget, {
+        L"preview", source.wstring(), acrylicOutput.wstring(),
+        L"--appearance", L"dark", L"--storage", L"glassEnabled=1",
+        L"--storage", L"acrylicEnabled=1", L"--host", host.wstring() });
+    Check(transparentExit == 0 && glassExit == 0 && acrylicExit == 0 &&
+            transparentJson.find("\"ok\":true") != std::string::npos &&
+            glassJson.find("\"ok\":true") != std::string::npos &&
+            acrylicJson.find("\"ok\":true") != std::string::npos,
+        "transparent, glass, and acrylic custom materials render");
+    const RgbaBitmap transparent =
+        CheckOpaquePreview(transparentOutput, 192, 240);
+    const RgbaBitmap customMaterialGlass =
+        CheckOpaquePreview(glassOutput, 192, 240);
+    const RgbaBitmap customMaterialAcrylic =
+        CheckOpaquePreview(acrylicOutput, 192, 240);
+    const auto materialPixelAt = [](const RgbaBitmap& bitmap,
+                                    UINT x, UINT y) {
+        const std::size_t offset =
+            (static_cast<std::size_t>(y) * bitmap.width + x) * 4;
+        return std::array<std::uint8_t, 4>{
+            bitmap.pixels[offset], bitmap.pixels[offset + 1],
+            bitmap.pixels[offset + 2], bitmap.pixels[offset + 3] };
+    };
+    Check(materialPixelAt(transparent, 0, 0) ==
+            materialPixelAt(customMaterialGlass, 0, 0) &&
+            materialPixelAt(transparent, 96, 16) !=
+                materialPixelAt(customMaterialGlass, 96, 16),
+        "custom glass blurs only the rounded panel interior");
+    Check(customMaterialGlass.pixels != customMaterialAcrylic.pixels,
+        "custom acrylic adds one stable noise layer over custom glass");
+
+    constexpr std::array<std::wstring_view, 6> appearances{
+        L"dark", L"light", L"glass-dark", L"glass-light",
+        L"acrylic-dark", L"acrylic-light" };
+    constexpr std::array<std::string_view, 6> appearanceNames{
+        "dark", "light", "glass-dark", "glass-light",
+        "acrylic-dark", "acrylic-light" };
+    constexpr std::array<std::string_view, 6> appearanceThemes{
+        "dark", "light", "dark", "light", "dark", "light" };
+    std::vector<RgbaBitmap> materialPreviews;
+    for (std::size_t index = 0; index < appearances.size(); ++index)
+    {
+        const auto materialOutput = temporary.path /
+            (L"material-" + std::wstring(appearances[index]) + L".png");
+        const auto [materialExit, materialJson] = Run(snowwidget, {
+            L"preview", source.wstring(), materialOutput.wstring(),
+            L"--appearance", std::wstring(appearances[index]),
+            L"--storage", L"followPersonalization=1",
+            L"--host", host.wstring() });
+        const std::string expectedAppearance = "\"appearance\":\"" +
+            std::string(appearanceNames[index]) + "\"";
+        const std::string expectedTheme = "\"theme\":\"" +
+            std::string(appearanceThemes[index]) + "\"";
+        Check(materialExit == 0 &&
+                materialJson.find(expectedAppearance) != std::string::npos &&
+                materialJson.find(expectedTheme) != std::string::npos,
+            "each supported appearance reports its canonical JSON identity");
+        materialPreviews.push_back(
+            CheckOpaquePreview(materialOutput, 192, 240));
+    }
+    for (std::size_t index = 1; index < materialPreviews.size(); ++index)
+    {
+        Check(materialPreviews[index].pixels !=
+                materialPreviews[index - 1].pixels,
+            "normal, glass, and acrylic material previews remain distinct");
+    }
+    const auto pixelAt = [](const RgbaBitmap& bitmap, UINT x, UINT y) {
+        const std::size_t offset =
+            (static_cast<std::size_t>(y) * bitmap.width + x) * 4;
+        return std::array<std::uint8_t, 4>{
+            bitmap.pixels[offset], bitmap.pixels[offset + 1],
+            bitmap.pixels[offset + 2], bitmap.pixels[offset + 3] };
+    };
+    Check(pixelAt(materialPreviews[0], 0, 0) ==
+            pixelAt(materialPreviews[2], 0, 0) &&
+            pixelAt(materialPreviews[0], 96, 120) !=
+                pixelAt(materialPreviews[2], 96, 120),
+        "glass blur changes the panel interior without blurring its rounded corner");
+    Check(materialPreviews[0].pixels != materialPreviews[2].pixels &&
+            materialPreviews[2].pixels != materialPreviews[4].pixels &&
+            materialPreviews[1].pixels != materialPreviews[3].pixels &&
+            materialPreviews[3].pixels != materialPreviews[5].pixels,
+        "normal, glass, and acrylic are distinct in both stage palettes");
+
+    const auto repeatedAcrylicOutput =
+        temporary.path / L"material-acrylic-dark-repeat.png";
+    const auto [repeatedAcrylicExit, repeatedAcrylicJson] = Run(snowwidget, {
+        L"preview", source.wstring(), repeatedAcrylicOutput.wstring(),
+        L"--appearance", L"acrylic-dark", L"--storage",
+        L"followPersonalization=1", L"--host", host.wstring() });
+    Check(repeatedAcrylicExit == 0 &&
+            repeatedAcrylicJson.find("\"ok\":true") != std::string::npos &&
+            CheckOpaquePreview(repeatedAcrylicOutput, 192, 240).pixels ==
+                materialPreviews[4].pixels,
+        "acrylic preview noise and composition are deterministic");
 
     const auto pomodoroOutput = temporary.path / L"pomodoro.png";
     const auto pomodoroSource = repository / L"widgets" / L"pomodoro";
@@ -460,6 +604,8 @@ int wmain(int argc, wchar_t** argv)
                 std::string::npos &&
             environmentJson.find("\"theme\":\"light\"") !=
                 std::string::npos &&
+            environmentJson.find("\"appearance\":\"light\"") !=
+                std::string::npos &&
             environmentJson.find("\"dataState\":\"stale\"") !=
                 std::string::npos &&
             std::filesystem::is_regular_file(environmentOutput),
@@ -484,6 +630,24 @@ int wmain(int argc, wchar_t** argv)
             invalidStateJson.find("data state must be") !=
                 std::string::npos,
         "preview rejects an unknown deterministic data state");
+
+    const auto [invalidAppearanceExit, invalidAppearanceJson] =
+        Run(snowwidget, {
+            L"preview", source.wstring(), invalidOutput.wstring(),
+            L"--appearance", L"vibrant", L"--host", host.wstring() });
+    Check(invalidAppearanceExit == 2 &&
+            invalidAppearanceJson.find("appearance must be") !=
+                std::string::npos,
+        "preview rejects an unknown appearance");
+
+    const auto [conflictExit, conflictJson] = Run(snowwidget, {
+        L"preview", source.wstring(), invalidOutput.wstring(),
+        L"--theme", L"dark", L"--appearance", L"light",
+        L"--host", host.wstring() });
+    Check(conflictExit == 2 &&
+            conflictJson.find("cannot be used together") !=
+                std::string::npos,
+        "preview rejects simultaneous theme and appearance options");
 
     std::cout << "widget author preview CLI tests passed\n";
     CoUninitialize();

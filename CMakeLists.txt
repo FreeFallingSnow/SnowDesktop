@@ -239,6 +239,7 @@ set(SNOWDESKTOP_SOURCES
     src/category_settings.cpp
     src/component_preview.cpp
     src/widget_author_preview.cpp
+    src/widget_preview_stage.cpp
     src/widget_preview_scene.cpp
     src/widget_preview_scene_model.cpp
     src/l10n.cpp
@@ -1421,6 +1422,16 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src src/core
         LINK_LIBRARIES gdi32 user32
         LABELS integration ui preview)
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetPreviewStageTests
+        widget_preview_stage
+        SOURCES
+            tests/widget_preview_stage_tests.cpp
+            src/widget_preview_stage.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES d2d1 dxguid
+        LABELS contract render ui preview)
 
     snowdesktop_add_test(
         SnowDesktopSteamWorkshopManagerTests
