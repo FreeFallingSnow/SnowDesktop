@@ -51,9 +51,9 @@
 | 01 | `snowwidget lint` | 合法 `module.require()` 与禁用全局 `require()` 的区分 | 缺陷已修复并回归通过 | `SnowDesktopWidgetAuthorLintTests.exe`；实际组件 lint 0 错误/0 警告；提交 `9ea17a5` | 无 |
 | 02 | 内置 `system-monitor` 2.3.0；`draw.marqueeText` | 宿主原生连续滚动、裁剪、位置、相位续接，以及不再以 33 ms 定时器逐帧重绘桌面；实机 CPU/GPU 稳态采样 | 实机性能与视觉通过 | `c3006e0`；`scripts/build.bat --reload-shell`；`scripts/test.bat` 76/76；稳定等待 8 秒后采样 46.79 秒：整机 CPU 2.542%→0.188%，单核等效 63.3%→4.51%，GPU 峰值约 2%→0.25%；用户确认滚动平滑、位置与裁剪无问题 | `draw.marqueeText` 的隐藏暂停、reduced-motion 和合成失败回退仍随 D-19 完整矩阵补验 |
 
-> 组件边界：`performance-history` 的可追踪源码位于
-> `developer_assets/workshop_widgets/performance-history`，发布脚本明确排除整个
-> `developer_assets/`；运行时仅同步到 `data/widgets/dev`。它不在 `widgets/`，不属于内置组件。
+> 历史组件边界：批次 01 执行时，`performance-history` 的可追踪源码位于
+> `developer_assets/workshop_widgets/performance-history`，运行时仅同步到 `data/widgets/dev`。
+> 该开发组件现已从仓库移除；上表仅保留当时的验收证据，它从未属于 `widgets/` 中的内置组件。
 
 ## 1. `draw` 即时绘制 API（19 项）
 
