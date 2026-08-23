@@ -872,6 +872,8 @@ private:
      * @return 拖拽会话仍可继续时返回 true
      */
     bool UpdateDragPageNavigation(POINT clientPoint);
+    /** @brief 更新组件拖拽期间的热边反馈和延迟翻页。 */
+    void UpdateWidgetDragPageNavigation(POINT clientPoint);
 
     // ── Data ────────────────────────────────────────────────
     /** @brief 从 Explorer 加载桌面项数据（IShellFolder 枚举）。 */

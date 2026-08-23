@@ -4122,10 +4122,10 @@ int main(int argc, char** argv)
             "page content checks must reject widgets on other pages before resolving group membership");
         const std::size_t widgetPageNavigation =
             pointerMoveSource.find(
-                "// ── 跨页翻页：检测导航热边悬停 + 自动翻页 ──");
+                "void DesktopApp::UpdateWidgetDragPageNavigation(");
         const std::size_t widgetPageNavigationEnd =
             pointerMoveSource.find(
-                "POINT adjusted =",
+                "void DesktopApp::OnMouseMoveAt(",
                 widgetPageNavigation);
         const std::string widgetPageNavigationSource =
             widgetPageNavigation != std::string::npos &&
@@ -4162,6 +4162,43 @@ int main(int argc, char** argv)
                 emptyWidgetPageGuard != std::string::npos &&
                 clearWidgetPageSide != std::string::npos,
             "widget drag page navigation must scan page content only once and only after a hot-edge hit");
+        const std::size_t widgetMoveBranch =
+            pointerMoveSource.find("// Widget drag preview");
+        const std::size_t widgetDragNavUpdate =
+            pointerMoveSource.find(
+                "UpdateWidgetDragPageNavigation(current);",
+                widgetMoveBranch);
+        const std::size_t widgetGroupTarget =
+            pointerMoveSource.find(
+                "const size_t groupTarget",
+                widgetMoveBranch);
+        const std::size_t widgetDockTarget =
+            pointerMoveSource.find(
+                "DockContainer* dock",
+                widgetMoveBranch);
+        Check(widgetMoveBranch != std::string::npos &&
+                widgetDragNavUpdate != std::string::npos &&
+                widgetGroupTarget != std::string::npos &&
+                widgetDockTarget != std::string::npos &&
+                widgetDragNavUpdate < widgetGroupTarget &&
+                widgetDragNavUpdate < widgetDockTarget,
+            "widget drag hot-edge feedback must run before group and Dock targets can return early");
+        const std::size_t itemDragBranch =
+            pointerMoveSource.find(
+                "if (dragSession_.IsActive() && !dragSession_.Items().empty())");
+        const std::size_t itemTargetSuppression =
+            pointerMoveSource.find(
+                "const bool suppressDesktopWidgetTargets =",
+                itemDragBranch);
+        const std::size_t itemDragNavUpdate =
+            pointerMoveSource.find(
+                "UpdateDragPageNavigation(current)",
+                itemTargetSuppression);
+        Check(itemDragBranch != std::string::npos &&
+                itemTargetSuppression != std::string::npos &&
+                itemDragNavUpdate != std::string::npos &&
+                itemTargetSuppression < itemDragNavUpdate,
+            "item drag hot-edge feedback must remain active when desktop widget drop targets are suppressed");
         Check(pointerMoveSource.find(
                   "*dragPreviewSynced = true;") !=
                     std::string::npos &&

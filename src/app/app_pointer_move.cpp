@@ -93,6 +93,83 @@ void DesktopApp::OnMiddleButtonUpAt(WPARAM wp, POINT point)
     OnLeftButtonUpAt(wp, point);
 }
 
+void DesktopApp::UpdateWidgetDragPageNavigation(POINT clientPoint)
+{
+    int navSide = 0;
+    int maximumOffset = 0;
+    if (!gridPages_.empty() &&
+        savedPageIds_.size() > gridPages_.size())
+    {
+        RECT previousEdge{};
+        RECT nextEdge{};
+        GetNavHotEdgeRects(previousEdge, nextEdge);
+        const auto target = snowdesktop::page_navigation_rules::
+            HitTestPointerTarget(
+                clientPoint, previousEdge, nextEdge);
+        navSide = snowdesktop::page_navigation_rules::
+            PointerTargetDirection(target);
+        if (navSide != 0)
+        {
+            maximumOffset = MaxPageOffset();
+            const bool directionAvailable =
+                (navSide == -1 && pageOffset_ > 0) ||
+                (navSide == 1 &&
+                    pageOffset_ < maximumOffset);
+            if (maximumOffset <= 0 || !directionAvailable)
+                navSide = 0;
+        }
+    }
+    SetPageNavHotEdgeHover(navSide);
+
+    const bool navEnabled =
+        (navSide == -1 && pageOffset_ > 0) ||
+        (navSide == 1 && pageOffset_ < maximumOffset);
+    if (navSide == 0 || !navEnabled)
+    {
+        navAutoFlipDir_ = 0;
+        navAutoFlipTick_ = 0;
+        return;
+    }
+
+    const DWORD now = GetTickCount();
+    if (navAutoFlipDir_ != navSide)
+    {
+        navAutoFlipDir_ = navSide;
+        navAutoFlipTick_ = now;
+        return;
+    }
+    if (now - navAutoFlipTick_ <=
+        snowdesktop::page_navigation_rules::
+            kHotEdgeHintDelayMs)
+        return;
+
+    const int newOffset =
+        NextNonEmptyOffset(pageOffset_, navSide);
+    navAutoFlipTick_ = now;
+    if (newOffset == pageOffset_)
+        return;
+
+    const RECT oldWidgetBounds =
+        widgets_[mouseDownWidgetIndex_].bounds;
+    pageOffset_ = newOffset;
+    ApplyPageMapping();
+    LayoutItems();
+    RefreshPageNavHotEdgeHoverAt(clientPoint);
+    const RECT newWidgetBounds =
+        widgets_[mouseDownWidgetIndex_].bounds;
+    const int dx =
+        newWidgetBounds.left - oldWidgetBounds.left;
+    const int dy =
+        newWidgetBounds.top - oldWidgetBounds.top;
+    dragGroupOriginX_ += dx;
+    dragGroupOriginY_ += dy;
+    mouseDownPoint_.x += dx;
+    mouseDownPoint_.y += dy;
+    InvalidateDragStaticScene();
+    InvalidateRect(hwnd_, nullptr, TRUE);
+    PresentDesktopPointerUpdate();
+}
+
 void DesktopApp::OnMouseMoveAt(
     WPARAM wp, POINT current,
     bool* dragPreviewSynced)
@@ -529,6 +606,10 @@ void DesktopApp::OnMouseMoveAt(
         extern inline int SlotFromCell(const std::vector<GridPage>&, const GridCell&);
         extern inline const GridPage* FindGridPage(const std::vector<GridPage>&, const std::wstring&);
 
+        // 热边反馈和翻页优先于组件、集合与 Dock 拖放目标；这些目标仍可
+        // 同时保留自己的反馈，但不能让提前返回吞掉蓝线。
+        UpdateWidgetDragPageNavigation(current);
+
         const DesktopWidgetType movingType =
             widgets_[mouseDownWidgetIndex_].type;
         const auto movingPayload = snowdesktop::slot_contract::
@@ -619,75 +700,6 @@ void DesktopApp::OnMouseMoveAt(
         widgetDockTarget_ = false;
         widgetDockTargetContainer_ = nullptr;
         widgetDockInsertIndex_ = 0;
-
-        // ── 跨页翻页：检测导航热边悬停 + 自动翻页 ──
-        int navSide = 0;
-        int maximumOffset = 0;
-        if (!gridPages_.empty() &&
-            savedPageIds_.size() > gridPages_.size())
-        {
-            RECT prevEdge{}, nextEdge{};
-            GetNavHotEdgeRects(prevEdge, nextEdge);
-            const auto target = snowdesktop::page_navigation_rules::
-                HitTestPointerTarget(current, prevEdge, nextEdge);
-            navSide = snowdesktop::page_navigation_rules::
-                PointerTargetDirection(target);
-            if (navSide != 0)
-            {
-                maximumOffset = MaxPageOffset();
-                const bool directionAvailable =
-                    (navSide == -1 && pageOffset_ > 0) ||
-                    (navSide == 1 && pageOffset_ < maximumOffset);
-                if (maximumOffset <= 0 || !directionAvailable)
-                    navSide = 0;
-            }
-        }
-        SetPageNavHotEdgeHover(navSide);
-
-        const bool navEnabled =
-            (navSide == -1 && pageOffset_ > 0) ||
-            (navSide == 1 && pageOffset_ < maximumOffset);
-        if (navSide != 0 && navEnabled)
-        {
-            const DWORD now = GetTickCount();
-            if (navAutoFlipDir_ != navSide)
-            {
-                navAutoFlipDir_ = navSide;
-                navAutoFlipTick_ = now;
-            }
-            else if (now - navAutoFlipTick_ > 500)
-            {
-                // 触发翻页
-                int newOffset = NextNonEmptyOffset(pageOffset_, navSide);
-                if (newOffset != pageOffset_)
-                {
-                    // 保存迁移前组件实际 bounds（含页面渲染尺寸差异）
-                    RECT oldWidgetBounds = widgets_[mouseDownWidgetIndex_].bounds;
-                    pageOffset_ = newOffset;
-                    ApplyPageMapping();
-                    LayoutItems();
-                    RefreshPageNavHotEdgeHoverAt(current);
-                    // 用实际 bounds 差值补偿 group origin + mouseDown，保持视觉连续性
-                    RECT newWidgetBounds = widgets_[mouseDownWidgetIndex_].bounds;
-                    const int dx = newWidgetBounds.left - oldWidgetBounds.left;
-                    const int dy = newWidgetBounds.top  - oldWidgetBounds.top;
-                    dragGroupOriginX_ += dx;
-                    dragGroupOriginY_ += dy;
-                    mouseDownPoint_.x += dx;
-                    mouseDownPoint_.y += dy;
-                    InvalidateDragStaticScene();
-                    InvalidateRect(hwnd_, nullptr, TRUE);
-                    PresentDesktopPointerUpdate();
-                }
-                navAutoFlipTick_ = now;
-            }
-        }
-        else
-        {
-            SetPageNavHotEdgeHover(0);
-            navAutoFlipDir_ = 0;
-            navAutoFlipTick_ = 0;
-        }
 
         POINT adjusted = {
             dragGroupOriginX_ + (current.x - mouseDownPoint_.x),
@@ -976,13 +988,9 @@ void DesktopApp::OnMouseMoveAt(
                 hasCollectionGroupEntries ||
             dragSession_.SourceList().
                 hasFileGroupEntries;
-        if (suppressDesktopWidgetTargets)
-        {
-            SetPageNavHotEdgeHover(0);
-            navAutoFlipDir_ = 0;
-            navAutoFlipTick_ = 0;
-        }
-        else if (!UpdateDragPageNavigation(current))
+        // 热边属于拖拽导航层，不受桌面组件目标抑制规则影响。
+        // 即使当前元素只能拖出 Dock，也要显示蓝线并允许切换页面。
+        if (!UpdateDragPageNavigation(current))
             return;
 
         // OO hit testing: iterate all containers in reverse (topmost first)
