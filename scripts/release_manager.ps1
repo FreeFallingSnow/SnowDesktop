@@ -518,6 +518,10 @@ function Sync-ReleaseRepository {
         foreach ($name in @(
                 "SnowDesktop.exe",
                 "SnowDesktopTaskbarHook.dll",
+                "SnowDesktopWallpaperHook.dll",
+                "SnowDesktopWallpaperHook32.dll",
+                "SnowDesktopWallpaperInjector32.exe",
+                "THIRD_PARTY_NOTICES.md",
                 "README.md",
                 "README.en.md")) {
             $source = Join-Path $temporary $name
@@ -534,6 +538,14 @@ function Sync-ReleaseRepository {
             Copy-Item `
                 -LiteralPath $license `
                 -Destination (Join-Path $releaseRepository "LICENSE") `
+                -Force
+        }
+        $thirdPartyLicenses = Join-Path $temporary "licenses"
+        if (Test-Path -LiteralPath $thirdPartyLicenses -PathType Container) {
+            Copy-Item `
+                -LiteralPath $thirdPartyLicenses `
+                -Destination (Join-Path $releaseRepository "licenses") `
+                -Recurse `
                 -Force
         }
 

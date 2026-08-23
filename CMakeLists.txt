@@ -213,6 +213,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/tray_icon_controller.cpp
     src/app/widget_notification_presenter.cpp
     src/app/desktop_backdrop_compositor.cpp
+    src/app/wallpaper_engine_capture.cpp
     src/atomic_file.cpp
     src/dock_window_preview.cpp
     src/dock_window_transition.cpp
@@ -337,6 +338,13 @@ set(LUA_SOURCES
     third_party/lua/lstrlib.c third_party/lua/ltable.c third_party/lua/ltablib.c
     third_party/lua/ltm.c third_party/lua/lundump.c third_party/lua/lutf8lib.c
     third_party/lua/lvm.c third_party/lua/lzio.c
+)
+
+set(MINHOOK64_SOURCES
+    third_party/minhook/src/buffer.c
+    third_party/minhook/src/hook.c
+    third_party/minhook/src/trampoline.c
+    third_party/minhook/src/hde/hde64.c
 )
 
 add_library(SnowDesktopImgui STATIC ${IMGUI_SOURCES})
@@ -482,6 +490,31 @@ if (MSVC)
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     target_compile_options(SnowDesktopTaskbarHook PRIVATE
         /W4 /permissive- /EHsc /utf-8)
+
+    add_library(SnowDesktopWallpaperHook SHARED
+        src/wallpaper_hook/wallpaper_hook.cpp
+        src/wallpaper_hook/wallpaper_hook_protocol.h
+        ${MINHOOK64_SOURCES}
+    )
+    target_compile_features(SnowDesktopWallpaperHook PRIVATE cxx_std_20)
+    target_include_directories(SnowDesktopWallpaperHook PRIVATE
+        src/wallpaper_hook
+        third_party/minhook/include
+        third_party/minhook/src
+        third_party/minhook/src/hde
+    )
+    target_compile_definitions(SnowDesktopWallpaperHook PRIVATE
+        _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN
+        _CRT_SECURE_NO_WARNINGS WINVER=0x0A00 _WIN32_WINNT=0x0A00)
+    target_link_libraries(SnowDesktopWallpaperHook PRIVATE
+        d3d9 d3d11 dxgi user32)
+    set_property(TARGET SnowDesktopWallpaperHook PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(SnowDesktopWallpaperHook PRIVATE
+        /W4 /permissive- /EHsc /utf-8)
+    set_source_files_properties(${MINHOOK64_SOURCES} PROPERTIES
+        COMPILE_OPTIONS
+            "/wd4100;/wd4201;/wd4244;/wd4267;/wd4310;/wd4701")
 endif()
 
 add_executable(SnowDesktop WIN32
@@ -492,6 +525,11 @@ add_executable(SnowDesktop WIN32
 if (TARGET SnowDesktopTaskbarHook)
     add_dependencies(SnowDesktop SnowDesktopTaskbarHook SnowDesktopCppWinRT)
     target_include_directories(SnowDesktop PRIVATE "${CPPWINRT_OUTPUT_DIR}")
+endif()
+if (TARGET SnowDesktopWallpaperHook)
+    add_dependencies(SnowDesktop SnowDesktopWallpaperHook)
+    target_compile_definitions(SnowDesktop PRIVATE
+        SNOWDESKTOP_ENABLE_WALLPAPER_ENGINE_CAPTURE=1)
 endif()
 
 target_compile_features(SnowDesktop PRIVATE cxx_std_20)
@@ -1433,6 +1471,16 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES d2d1 dxguid ole32 windowscodecs
         LABELS contract render ui preview)
+
+    snowdesktop_add_test(
+        SnowDesktopWallpaperEngineCaptureTests
+        wallpaper_engine_capture
+        SOURCES
+            tests/wallpaper_engine_capture_tests.cpp
+            src/app/wallpaper_engine_capture.cpp
+        INCLUDE_DIRECTORIES src src/app
+        LINK_LIBRARIES d3d11 dxgi user32
+        LABELS contract integration render preview)
 
     snowdesktop_add_test(
         SnowDesktopSteamWorkshopManagerTests

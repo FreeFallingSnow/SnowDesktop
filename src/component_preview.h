@@ -5,10 +5,13 @@
 
 #include <windows.h>
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -164,6 +167,9 @@ private:
     bool EnsureCreated(HWND owner);
     bool RenderCurrent();
     bool LoadDesktopWallpaperBackdrop();
+    void StartWallpaperEngineBackdropCapture(const RECT& monitorBounds);
+    void FinishWallpaperEngineBackdropCapture(std::uint64_t generation);
+    void CancelWallpaperEngineBackdropCapture(bool wait);
     void SelectRelative(int delta);
     void SetOption(OptionSetting setting, bool value);
     void ApplyCurrent();
@@ -217,6 +223,22 @@ private:
     std::unordered_map<std::wstring, Bitmap> cardFrameCache_;
     widget_preview::Wallpaper desktopWallpaper_;
     RECT desktopWallpaperBounds_{};
+    struct WallpaperEngineCaptureState
+    {
+        std::atomic_bool cancelled = false;
+        std::mutex mutex;
+        widget_preview::Wallpaper wallpaper;
+        RECT desktopBounds{};
+        std::uint64_t generation = 0;
+        bool completed = false;
+    };
+    std::shared_ptr<WallpaperEngineCaptureState>
+        wallpaperEngineCaptureState_;
+    std::thread wallpaperEngineCaptureThread_;
+    std::uint64_t wallpaperEngineCaptureGeneration_ = 0;
+    widget_preview::Wallpaper wallpaperEngineCache_;
+    RECT wallpaperEngineCacheBounds_{};
+    ULONGLONG wallpaperEngineCacheTick_ = 0;
     std::vector<POINT> committedPositions_;
 };
 

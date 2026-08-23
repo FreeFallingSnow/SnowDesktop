@@ -107,6 +107,9 @@ function Copy-Payload {
     $requiredFiles = @(
         (Join-Path $buildOutput "SnowDesktop.exe"),
         (Join-Path $buildOutput "SnowDesktopTaskbarHook.dll"),
+        (Join-Path $buildOutput "SnowDesktopWallpaperHook.dll"),
+        (Join-Path $buildOutput "SnowDesktopWallpaperHook32.dll"),
+        (Join-Path $buildOutput "SnowDesktopWallpaperInjector32.exe"),
         (Join-Path $repositoryRoot "LICENSE"),
         (Join-Path $repositoryRoot "THIRD_PARTY_NOTICES.md"),
         (Join-Path $repositoryRoot "README.md"),
@@ -130,6 +133,14 @@ function Copy-Payload {
     Copy-Item -LiteralPath $fluentIconsLicense `
         -Destination (Join-Path $licensesDestination `
             "FluentSystemIcons-LICENSE.txt") -Force
+    $minHookLicense = Join-Path $repositoryRoot `
+        "third_party\minhook\LICENSE.txt"
+    if (-not (Test-Path -LiteralPath $minHookLicense -PathType Leaf)) {
+        throw "Required MinHook license was not found: $minHookLicense"
+    }
+    Copy-Item -LiteralPath $minHookLicense `
+        -Destination (Join-Path $licensesDestination `
+            "MinHook-LICENSE.txt") -Force
 
     Copy-Directory `
         -Source (Join-Path $repositoryRoot "widgets") `

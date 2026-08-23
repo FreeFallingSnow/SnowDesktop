@@ -57,12 +57,31 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 echo.
+echo === Configuring 32-bit Wallpaper Engine one-shot capture helper ===
+cmake -B .build\wallpaper_hook32 -S src\wallpaper_hook -A Win32 "-DSNOWDESKTOP_OUTPUT_DIR=%CD%/.build/Release"
+if %ERRORLEVEL% NEQ 0 (
+    echo 32-bit Wallpaper Engine helper configure FAILED
+    exit /b 1
+)
+
+echo.
+echo === Building 32-bit Wallpaper Engine Hook and injector ===
+cmake --build .build\wallpaper_hook32 --config Release --target SnowDesktopWallpaperHook32 SnowDesktopWallpaperInjector32
+if %ERRORLEVEL% NEQ 0 (
+    echo 32-bit Wallpaper Engine helper build FAILED
+    exit /b 1
+)
+
+echo.
 echo === Build complete ===
 echo SnowDesktop.exe: .build\Release\SnowDesktop.exe
 echo Steam bridge: .build\Release\SnowDesktopSteamBridge.exe
 echo Workshop manager: .build\Release\SnowDesktopWorkshopManager.exe
 echo Widget package tool: .build\Release\snowwidget.exe
 echo Taskbar appearance Hook: .build\Release\SnowDesktopTaskbarHook.dll
+echo Wallpaper Engine 64-bit Hook: .build\Release\SnowDesktopWallpaperHook.dll
+echo Wallpaper Engine 32-bit Hook: .build\Release\SnowDesktopWallpaperHook32.dll
+echo Wallpaper Engine 32-bit injector: .build\Release\SnowDesktopWallpaperInjector32.exe
 echo.
 echo For a version release, run scripts\release.bat to open the unified release center.
 echo Agent and automation usage is available through scripts\release.bat COMMAND.
