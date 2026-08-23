@@ -66,6 +66,30 @@ inline RECT ExpandFocusRetentionBounds(RECT visualBounds)
     return visualBounds;
 }
 
+/**
+ * @brief Expand the passive-hover presentation gate through focus retention.
+ *
+ * The interaction bounds already cover the largest magnified wave. The focus
+ * resolver can keep that wave alive for a few more pixels, so pointer-driven
+ * presentation must keep running through the same exit margin. Otherwise the
+ * first point outside the interaction bounds can render a retained focus and
+ * the following point has no Dock hover owner left to submit its clearing
+ * frame.
+ */
+inline RECT ExpandHoverPresentationBounds(RECT interactionBounds)
+{
+    return ExpandFocusRetentionBounds(interactionBounds);
+}
+
+inline bool ShouldTrackHoverPresentation(
+    RECT interactionBounds, POINT previous, POINT current)
+{
+    const RECT presentationBounds =
+        ExpandHoverPresentationBounds(interactionBounds);
+    return PtInRect(&presentationBounds, previous) != FALSE ||
+        PtInRect(&presentationBounds, current) != FALSE;
+}
+
 inline float SmoothStep(float progress)
 {
     progress = std::clamp(progress, 0.0f, 1.0f);

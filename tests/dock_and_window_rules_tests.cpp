@@ -35,6 +35,7 @@
 #include <wrl/client.h>
 
 #include <climits>
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -2869,6 +2870,101 @@ int main(int argc, char** argv)
             expandedIsland.right > baseIsland.right &&
             expandedIsland.top < baseIsland.top,
         "the Dock island interaction area must cover the expanded wave");
+    const std::array<DockPosition, 4> dockPositions{
+        DockPosition::Bottom,
+        DockPosition::Top,
+        DockPosition::Left,
+        DockPosition::Right,
+    };
+    const std::array<int, 8> magnificationIconSizes{
+        1, 32, 64, 77, 96, 128, 192, 256,
+    };
+    const std::array<float, 4> magnificationScales{
+        1.0f,
+        magnification::kSecondNeighborScale,
+        magnification::kFirstNeighborScale,
+        magnification::kFocusScale,
+    };
+    bool hoverPresentationCoversRetainedFocus = true;
+    for (const int iconSize : magnificationIconSizes)
+    {
+        const int maximumAxisShift =
+            magnification::MaximumAxisShift(iconSize);
+        for (const DockPosition position : dockPositions)
+        {
+            const RECT interactionBounds =
+                magnification::ExpandInteractionBounds(
+                    baseIsland, position, iconSize);
+            const RECT presentationBounds =
+                magnification::ExpandHoverPresentationBounds(
+                    interactionBounds);
+            for (const float scale : magnificationScales)
+            {
+                for (const int axisShift : {
+                        -maximumAxisShift,
+                        maximumAxisShift })
+                {
+                    const RECT maximumVisual =
+                        magnification::MagnifyRect(
+                            baseIsland, position,
+                            scale, iconSize,
+                            axisShift);
+                    const RECT retainedVisual =
+                        magnification::ExpandFocusRetentionBounds(
+                            maximumVisual);
+                    hoverPresentationCoversRetainedFocus =
+                        hoverPresentationCoversRetainedFocus &&
+                        presentationBounds.left <= retainedVisual.left &&
+                        presentationBounds.top <= retainedVisual.top &&
+                        presentationBounds.right >= retainedVisual.right &&
+                        presentationBounds.bottom >= retainedVisual.bottom;
+                }
+            }
+        }
+    }
+    Check(hoverPresentationCoversRetainedFocus,
+        "Dock hover presentation must continue through every retained maximum-focus pixel in all four orientations");
+    const RECT bottomPresentationBounds =
+        magnification::ExpandHoverPresentationBounds(
+            expandedIsland);
+    const LONG bottomPresentationCenter =
+        (bottomPresentationBounds.left +
+            bottomPresentationBounds.right) / 2;
+    const POINT firstRetentionOnlyPoint{
+        bottomPresentationCenter,
+        expandedIsland.top - 1,
+    };
+    const POINT lastTrackedPoint{
+        bottomPresentationCenter,
+        bottomPresentationBounds.top,
+    };
+    const POINT firstFullyExitedPoint{
+        bottomPresentationCenter,
+        bottomPresentationBounds.top - 1,
+    };
+    Check(!PtInRect(
+              &expandedIsland,
+              firstRetentionOnlyPoint) &&
+            PtInRect(
+              &bottomPresentationBounds,
+              firstRetentionOnlyPoint) &&
+            magnification::ShouldTrackHoverPresentation(
+              expandedIsland,
+              firstRetentionOnlyPoint,
+              POINT{
+                  firstRetentionOnlyPoint.x,
+                  firstRetentionOnlyPoint.y - 1 }) &&
+            magnification::ShouldTrackHoverPresentation(
+              expandedIsland,
+              lastTrackedPoint,
+              firstFullyExitedPoint) &&
+            !magnification::ShouldTrackHoverPresentation(
+              expandedIsland,
+              firstFullyExitedPoint,
+              POINT{
+                  firstFullyExitedPoint.x,
+                  firstFullyExitedPoint.y - 1 }),
+        "slow upward exit must present every retention-shell sample and the final clearing transition exactly once");
     const RECT bottomViewport =
         magnification::ExpandPerpendicularBounds(
             baseIsland, DockPosition::Bottom, 64);
@@ -3448,6 +3544,16 @@ int main(int argc, char** argv)
                     "GetHoveredTitleBounds(oldMouse)") ==
                     std::string::npos,
             "desktop Dock hover must clear one focus-neutral envelope instead of reconstructing stale geometry after hysteresis changes");
+        Check(pointerMoveSource.find(
+                  "ShouldTrackHoverPresentation(") !=
+                    std::string::npos &&
+                pointerMoveSource.find(
+                  "dockHoverPresentationTracked;") !=
+                    std::string::npos &&
+                pointerMoveSource.find(
+                  "NeedsForegroundPaint(newVisual.layer) ||\n                dockHoverActive;") !=
+                    std::string::npos,
+            "desktop Dock hover must keep presenting the foreground until focus exit retention has fully cleared");
         Check(backdropCompositorSource.find(
                   "PanelIdentityMatches(") !=
                     std::string::npos &&

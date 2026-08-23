@@ -1,6 +1,7 @@
 #include "app.h"
 #include "../desktop_hover_rules.h"
 #include "../collection_titleless_rules.h"
+#include "../dock_magnification.h"
 #include "../widget_composition_layer_rules.h"
 #include "../widget_visibility_rules.h"
 #include "../widget_scroll_rules.h"
@@ -1264,10 +1265,31 @@ void DesktopApp::OnMouseMoveAt(
 
         const MouseHoverVisual oldVisual = findHoverVisual(oldMouse);
         const MouseHoverVisual newVisual = findHoverVisual(current);
+        bool dockHoverPresentationTracked = false;
+        for (const auto& container : containers_)
+        {
+            auto* dock = dynamic_cast<DockContainer*>(
+                container.get());
+            if (!dock ||
+                (desktopIconsHidden_ &&
+                    !IsRetainedContainer(dock)))
+            {
+                continue;
+            }
+            if (snowdesktop::dock_magnification::
+                    ShouldTrackHoverPresentation(
+                        dock->GetInteractiveBounds(),
+                        oldMouse, current))
+            {
+                dockHoverPresentationTracked = true;
+                break;
+            }
+        }
         const bool hoverChanged = !sameHoverVisual(oldVisual, newVisual);
         const bool needsContinuousHoverPaint =
             (oldVisual.owner && oldVisual.continuous) ||
-            (newVisual.owner && newVisual.continuous);
+            (newVisual.owner && newVisual.continuous) ||
+            dockHoverPresentationTracked;
         const bool invalidateDesktopHover =
             snowdesktop::floating_dock_rules::
                 ShouldInvalidateDesktopHover(
@@ -1277,7 +1299,8 @@ void DesktopApp::OnMouseMoveAt(
             (oldVisual.kind >= 8 &&
                 oldVisual.kind <= 13) ||
             (newVisual.kind >= 8 &&
-                newVisual.kind <= 13);
+                newVisual.kind <= 13) ||
+            dockHoverPresentationTracked;
         if (invalidateDesktopHover &&
             (marqueeActive_ || hoverChanged ||
                 needsContinuousHoverPaint))
@@ -1356,7 +1379,8 @@ void DesktopApp::OnMouseMoveAt(
                 NeedsBackgroundPaint(newVisual.layer);
             const bool needsForegroundPaint =
                 NeedsForegroundPaint(oldVisual.layer) ||
-                NeedsForegroundPaint(newVisual.layer);
+                NeedsForegroundPaint(newVisual.layer) ||
+                dockHoverActive;
             if (needsForegroundPaint && !marqueeActive_)
             {
                 if (!IsRectEmptyRect(foregroundDirty))
