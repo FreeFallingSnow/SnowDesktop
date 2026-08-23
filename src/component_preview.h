@@ -18,6 +18,15 @@
 namespace snowdesktop::component_preview
 {
 
+namespace detail
+{
+
+/** Pixel-center coverage for the antialiased rounded-rectangle rasterizer. */
+float RoundedRectangleCoverage(float sampleX, float sampleY,
+    float left, float top, float right, float bottom, float radius);
+
+} // namespace detail
+
 struct Bitmap
 {
     int width = 0;

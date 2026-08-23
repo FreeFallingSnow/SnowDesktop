@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cwchar>
 #include <cwctype>
 #include <filesystem>
@@ -23,6 +24,28 @@
 
 namespace snowdesktop::component_preview
 {
+
+float detail::RoundedRectangleCoverage(float sampleX, float sampleY,
+    float left, float top, float right, float bottom, float radius)
+{
+    const float halfWidth = std::max(0.0f, (right - left) * 0.5f);
+    const float halfHeight = std::max(0.0f, (bottom - top) * 0.5f);
+    if (halfWidth <= 0.0f || halfHeight <= 0.0f)
+        return 0.0f;
+    const float resolvedRadius = std::clamp(
+        radius, 0.0f, std::min(halfWidth, halfHeight));
+    const float centerX = (left + right) * 0.5f;
+    const float centerY = (top + bottom) * 0.5f;
+    const float qx = std::fabs(sampleX - centerX) -
+        (halfWidth - resolvedRadius);
+    const float qy = std::fabs(sampleY - centerY) -
+        (halfHeight - resolvedRadius);
+    const float signedDistance =
+        std::hypot(std::max(qx, 0.0f), std::max(qy, 0.0f)) +
+        std::min(std::max(qx, qy), 0.0f) - resolvedRadius;
+    return std::clamp(0.5f - signedDistance, 0.0f, 1.0f);
+}
+
 namespace
 {
 
@@ -178,31 +201,101 @@ void Fill(HDC dc, const RECT& rect, COLORREF color)
     }
 }
 
-void RoundedBox(HDC dc, const RECT& rect, int radius,
-    COLORREF fill, COLORREF border)
+void BlendRgb(std::uint32_t& pixel, COLORREF color, float coverage)
 {
-    HBRUSH brush = CreateSolidBrush(fill);
-    HPEN pen = CreatePen(PS_SOLID, 1, border);
-    HGDIOBJ oldBrush = brush ? SelectObject(dc, brush) : nullptr;
-    HGDIOBJ oldPen = pen ? SelectObject(dc, pen) : nullptr;
-    RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom,
-        radius * 2, radius * 2);
-    if (oldPen) SelectObject(dc, oldPen);
-    if (oldBrush) SelectObject(dc, oldBrush);
-    if (pen) DeleteObject(pen);
-    if (brush) DeleteObject(brush);
+    coverage = std::clamp(coverage, 0.0f, 1.0f);
+    if (coverage <= 0.0f) return;
+    const float inverse = 1.0f - coverage;
+    const auto mix = [&](unsigned destination, unsigned source) {
+        return static_cast<std::uint32_t>(std::clamp(
+            std::lround(destination * inverse + source * coverage),
+            0L, 255L));
+    };
+    const std::uint32_t alpha = pixel & 0xff000000u;
+    const std::uint32_t blue = mix(pixel & 0xffu, GetBValue(color));
+    const std::uint32_t green = mix(
+        (pixel >> 8) & 0xffu, GetGValue(color));
+    const std::uint32_t red = mix(
+        (pixel >> 16) & 0xffu, GetRValue(color));
+    pixel = alpha | blue | (green << 8) | (red << 16);
 }
 
-void RoundedOutline(HDC dc, const RECT& rect, int radius, COLORREF border)
+void RoundedBox(std::uint32_t* pixels, int width, int height,
+    const RECT& rect, int radius, COLORREF fill, COLORREF border)
 {
-    HPEN pen = CreatePen(PS_SOLID, 1, border);
-    HGDIOBJ oldPen = pen ? SelectObject(dc, pen) : nullptr;
-    HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
-    RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom,
-        radius * 2, radius * 2);
-    if (oldBrush) SelectObject(dc, oldBrush);
-    if (oldPen) SelectObject(dc, oldPen);
-    if (pen) DeleteObject(pen);
+    if (!pixels || width <= 0 || height <= 0 || IsRectEmpty(&rect))
+        return;
+    GdiFlush();
+    const int left = std::clamp(static_cast<int>(rect.left), 0, width);
+    const int top = std::clamp(static_cast<int>(rect.top), 0, height);
+    const int right = std::clamp(static_cast<int>(rect.right), 0, width);
+    const int bottom = std::clamp(static_cast<int>(rect.bottom), 0, height);
+    const float outerRadius = static_cast<float>(std::max(0, radius));
+    const float innerRadius = std::max(0.0f, outerRadius - 1.0f);
+    for (int y = top; y < bottom; ++y)
+    {
+        for (int x = left; x < right; ++x)
+        {
+            const float sampleX = static_cast<float>(x) + 0.5f;
+            const float sampleY = static_cast<float>(y) + 0.5f;
+            const float outerCoverage = detail::RoundedRectangleCoverage(
+                sampleX, sampleY,
+                static_cast<float>(rect.left),
+                static_cast<float>(rect.top),
+                static_cast<float>(rect.right),
+                static_cast<float>(rect.bottom), outerRadius);
+            if (outerCoverage <= 0.0f) continue;
+            const float innerCoverage = detail::RoundedRectangleCoverage(
+                sampleX, sampleY,
+                static_cast<float>(rect.left + 1),
+                static_cast<float>(rect.top + 1),
+                static_cast<float>(rect.right - 1),
+                static_cast<float>(rect.bottom - 1), innerRadius);
+            std::uint32_t& pixel = pixels[
+                static_cast<std::size_t>(y) * width + x];
+            BlendRgb(pixel, border, outerCoverage);
+            BlendRgb(pixel, fill, innerCoverage);
+        }
+    }
+}
+
+void RoundedOutline(std::uint32_t* pixels, int width, int height,
+    const RECT& rect, int radius, COLORREF border)
+{
+    if (!pixels || width <= 0 || height <= 0 || IsRectEmpty(&rect))
+        return;
+    GdiFlush();
+    const int left = std::clamp(static_cast<int>(rect.left), 0, width);
+    const int top = std::clamp(static_cast<int>(rect.top), 0, height);
+    const int right = std::clamp(static_cast<int>(rect.right), 0, width);
+    const int bottom = std::clamp(static_cast<int>(rect.bottom), 0, height);
+    const float outerRadius = static_cast<float>(std::max(0, radius));
+    const float innerRadius = std::max(0.0f, outerRadius - 1.0f);
+    for (int y = top; y < bottom; ++y)
+    {
+        for (int x = left; x < right; ++x)
+        {
+            const float sampleX = static_cast<float>(x) + 0.5f;
+            const float sampleY = static_cast<float>(y) + 0.5f;
+            const float outerCoverage = detail::RoundedRectangleCoverage(
+                sampleX, sampleY,
+                static_cast<float>(rect.left),
+                static_cast<float>(rect.top),
+                static_cast<float>(rect.right),
+                static_cast<float>(rect.bottom), outerRadius);
+            const float innerCoverage = detail::RoundedRectangleCoverage(
+                sampleX, sampleY,
+                static_cast<float>(rect.left + 1),
+                static_cast<float>(rect.top + 1),
+                static_cast<float>(rect.right - 1),
+                static_cast<float>(rect.bottom - 1), innerRadius);
+            const float coverage = std::clamp(
+                outerCoverage - innerCoverage, 0.0f, 1.0f);
+            if (coverage <= 0.0f) continue;
+            BlendRgb(pixels[static_cast<std::size_t>(y) * width + x],
+                border, coverage);
+        }
+    }
 }
 
 void DrawCenteredText(HDC dc, HFONT font, COLORREF color,
@@ -347,13 +440,18 @@ void DrawBitmap(HDC destination, const Bitmap& image, const RECT& bounds)
     DeleteObject(bitmap);
 }
 
-bool IsInsideRoundedPanel(int x, int y, int width, int height, int radius)
+void ApplyPremultipliedCoverage(std::uint32_t& pixel, float coverage)
 {
-    const int nearestX = std::clamp(x, radius, width - radius - 1);
-    const int nearestY = std::clamp(y, radius, height - radius - 1);
-    const int dx = x - nearestX;
-    const int dy = y - nearestY;
-    return dx * dx + dy * dy <= radius * radius;
+    coverage = std::clamp(coverage, 0.0f, 1.0f);
+    const auto scale = [&](unsigned channel) {
+        return static_cast<std::uint32_t>(std::clamp(
+            std::lround(channel * coverage), 0L, 255L));
+    };
+    const std::uint32_t blue = scale(pixel & 0xffu);
+    const std::uint32_t green = scale((pixel >> 8) & 0xffu);
+    const std::uint32_t red = scale((pixel >> 16) & 0xffu);
+    const std::uint32_t alpha = scale((pixel >> 24) & 0xffu);
+    pixel = blue | (green << 8) | (red << 16) | (alpha << 24);
 }
 
 bool SameRgb(std::uint32_t pixel, COLORREF color)
@@ -1158,12 +1256,15 @@ bool Window::RenderCurrent()
     {
         for (int x = 0; x < cardStage.width; ++x)
         {
-            if (!IsInsideRoundedPanel(
-                    x, y, cardStage.width, cardStage.height, cardRadius))
-            {
-                cardStage.pixels[
-                    static_cast<size_t>(y) * cardStage.width + x] = 0;
-            }
+            const float coverage = detail::RoundedRectangleCoverage(
+                static_cast<float>(x) + 0.5f,
+                static_cast<float>(y) + 0.5f,
+                0.0f, 0.0f,
+                static_cast<float>(cardStage.width),
+                static_cast<float>(cardStage.height),
+                static_cast<float>(cardRadius));
+            ApplyPremultipliedCoverage(cardStage.pixels[
+                static_cast<size_t>(y) * cardStage.width + x], coverage);
         }
     }
     DrawBitmap(dc, cardStage, cardRect_);
@@ -1174,7 +1275,7 @@ bool Window::RenderCurrent()
         previewRect_.top - cardRect_.top,
         lightStage,
         &wallpaper };
-    RoundedOutline(dc, previewRect_, Scale(6, dpi_),
+    RoundedOutline(pixels, width_, height_, previewRect_, Scale(6, dpi_),
         cardPalette.separator);
 
     std::wstring frameCacheKey = card.cacheKey.empty()
@@ -1211,7 +1312,8 @@ bool Window::RenderCurrent()
         }
     }
     DrawBitmap(dc, rendered, previewRect_);
-    RoundedOutline(dc, cardRect_, cardRadius, cardPalette.separator);
+    RoundedOutline(pixels, width_, height_, cardRect_, cardRadius,
+        cardPalette.separator);
 
     int controlsY = cardRect_.bottom;
     previousButton_ = {};
@@ -1231,9 +1333,9 @@ bool Window::RenderCurrent()
         nextButton_.left = nextButton_.right - buttonWidth;
         RECT statusRect{ previousButton_.right, pagerRect_.top,
             nextButton_.left, pagerRect_.bottom };
-        RoundedBox(dc, previousButton_, Scale(6, dpi_),
+        RoundedBox(pixels, width_, height_, previousButton_, Scale(6, dpi_),
             palette.hoverBackground, palette.separator);
-        RoundedBox(dc, nextButton_, Scale(6, dpi_),
+        RoundedBox(pixels, width_, height_, nextButton_, Scale(6, dpi_),
             palette.hoverBackground, palette.separator);
         DrawCenteredGlyph(dc, glyphFont,
             currentCard_ > 0 ? palette.text : palette.disabledText,
@@ -1266,7 +1368,7 @@ bool Window::RenderCurrent()
                 RECT badge = cardTitle;
                 badge.left = std::max(
                     badge.left, badge.right - Scale(58, dpi_));
-                RoundedBox(dc, badge, Scale(7, dpi_),
+                RoundedBox(pixels, width_, height_, badge, Scale(7, dpi_),
                     palette.hoverBackground, palette.separator);
                 DrawCenteredText(dc, bodyFont, palette.disabledText,
                     card.sizeLabel, badge);
@@ -1313,10 +1415,10 @@ bool Window::RenderCurrent()
             option.label, labelRect,
             DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         const int capsuleRadius = optionHeight / 2;
-        RoundedBox(dc, offRect, capsuleRadius,
+        RoundedBox(pixels, width_, height_, offRect, capsuleRadius,
             enabled ? palette.background : palette.hoverBackground,
             enabled ? palette.separator : palette.accent);
-        RoundedBox(dc, onRect, capsuleRadius,
+        RoundedBox(pixels, width_, height_, onRect, capsuleRadius,
             enabled ? palette.hoverBackground : palette.background,
             enabled ? palette.accent : palette.separator);
         DrawCenteredText(dc, bodyFont,
@@ -1336,7 +1438,7 @@ bool Window::RenderCurrent()
         controlsY += gap;
         applyRect_ = { padding, controlsY, width_ - padding,
             controlsY + applyButtonHeight };
-        RoundedBox(dc, applyRect_, Scale(8, dpi_),
+        RoundedBox(pixels, width_, height_, applyRect_, Scale(8, dpi_),
             palette.accent, palette.accent);
         DrawCenteredText(dc, cardTitleFont, RGB(255, 255, 255),
             model_.applyLabel, applyRect_);
@@ -1347,6 +1449,7 @@ bool Window::RenderCurrent()
     if (bodyFont) DeleteObject(bodyFont);
     if (glyphFont) DeleteObject(glyphFont);
 
+    GdiFlush();
     const int radius = Scale(10, dpi_);
     const unsigned contentAlpha = blurEnabled_ ? 246u : 255u;
     const unsigned materialAlpha = blurEnabled_
@@ -1358,13 +1461,20 @@ bool Window::RenderCurrent()
         {
             std::uint32_t& pixel = pixels[
                 static_cast<size_t>(y) * width_ + x];
-            if (!IsInsideRoundedPanel(x, y, width_, height_, radius))
+            const float coverage = detail::RoundedRectangleCoverage(
+                static_cast<float>(x) + 0.5f,
+                static_cast<float>(y) + 0.5f,
+                0.0f, 0.0f, static_cast<float>(width_),
+                static_cast<float>(height_), static_cast<float>(radius));
+            if (coverage <= 0.0f)
             {
                 pixel = 0;
                 continue;
             }
-            const unsigned alpha = SameRgb(pixel, palette.background)
+            const unsigned baseAlpha = SameRgb(pixel, palette.background)
                 ? materialAlpha : contentAlpha;
+            const unsigned alpha = static_cast<unsigned>(std::clamp(
+                std::lround(baseAlpha * coverage), 0L, 255L));
             const unsigned blue = (pixel & 0xFFu) * alpha / 255u;
             const unsigned green = ((pixel >> 8) & 0xFFu) * alpha / 255u;
             const unsigned red = ((pixel >> 16) & 0xFFu) * alpha / 255u;
@@ -1372,10 +1482,10 @@ bool Window::RenderCurrent()
         }
     }
 
-    HRGN region = CreateRoundRectRgn(0, 0, width_ + 1, height_ + 1,
-        radius * 2, radius * 2);
-    if (region && !SetWindowRgn(hwnd_, region, FALSE))
-        DeleteObject(region);
+    // A GDI window region is binary and would clip away the partial-alpha
+    // edge pixels produced above.  Let the layered window's alpha channel
+    // define the rounded outline instead.
+    SetWindowRgn(hwnd_, nullptr, FALSE);
 
     SIZE size{ width_, height_ };
     POINT source{};

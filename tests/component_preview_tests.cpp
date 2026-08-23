@@ -68,6 +68,26 @@ int wmain()
 {
     using namespace snowdesktop::component_preview;
 
+    bool hasPartialRoundedCoverage = false;
+    for (int y = 0; y < 20; ++y)
+    {
+        for (int x = 0; x < 20; ++x)
+        {
+            const float coverage = detail::RoundedRectangleCoverage(
+                static_cast<float>(x) + 0.5f,
+                static_cast<float>(y) + 0.5f,
+                0.0f, 0.0f, 20.0f, 20.0f, 6.0f);
+            hasPartialRoundedCoverage = hasPartialRoundedCoverage ||
+                (coverage > 0.0f && coverage < 1.0f);
+        }
+    }
+    Expect(detail::RoundedRectangleCoverage(
+               0.5f, 0.5f, 0.0f, 0.0f, 20.0f, 20.0f, 6.0f) == 0.0f &&
+            detail::RoundedRectangleCoverage(
+                10.5f, 10.5f, 0.0f, 0.0f, 20.0f, 20.0f, 6.0f) == 1.0f &&
+            hasPartialRoundedCoverage,
+        "rounded preview surfaces include antialiased edge coverage");
+
     snowdesktop::WidgetPreviewScene scene;
     scene.AddItem({ L"sample-a", L"Sample A", L"A",
         L"documents", L"today", false });
