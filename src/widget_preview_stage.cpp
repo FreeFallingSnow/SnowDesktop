@@ -1,14 +1,12 @@
 #include "widget_preview_stage.h"
 
 #include <d2d1effects.h>
-#include <shobjidl.h>
 #include <wincodec.h>
 #include <wrl/client.h>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <cwchar>
 #include <filesystem>
 #include <limits>
 #include <string>
@@ -199,101 +197,6 @@ Wallpaper LoadWallpaperImage(const std::filesystem::path& path)
     return DecodeWallpaperFile(path);
 }
 
-Wallpaper LoadDesktopWallpaper(HWND anchorWindow)
-{
-    ScopedCom com;
-    if (FAILED(com.result) && com.result != RPC_E_CHANGED_MODE)
-        return {};
-
-    ComPtr<IDesktopWallpaper> desktopWallpaper;
-    if (SUCCEEDED(CoCreateInstance(CLSID_DesktopWallpaper, nullptr,
-            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&desktopWallpaper))) &&
-        desktopWallpaper)
-    {
-        HMONITOR targetMonitor = anchorWindow
-            ? MonitorFromWindow(anchorWindow, MONITOR_DEFAULTTOPRIMARY)
-            : MonitorFromPoint(POINT{}, MONITOR_DEFAULTTOPRIMARY);
-        MONITORINFO targetInfo{};
-        targetInfo.cbSize = sizeof(targetInfo);
-        GetMonitorInfoW(targetMonitor, &targetInfo);
-
-        LPWSTR selectedId = nullptr;
-        UINT monitorCount = 0;
-        if (SUCCEEDED(desktopWallpaper->GetMonitorDevicePathCount(
-                &monitorCount)))
-        {
-            long long bestArea = -1;
-            for (UINT index = 0; index < monitorCount; ++index)
-            {
-                LPWSTR monitorId = nullptr;
-                if (FAILED(desktopWallpaper->GetMonitorDevicePathAt(
-                        index, &monitorId)) || !monitorId)
-                    continue;
-                RECT monitorRect{};
-                RECT intersection{};
-                long long area = 0;
-                if (SUCCEEDED(desktopWallpaper->GetMonitorRECT(
-                        monitorId, &monitorRect)) &&
-                    IntersectRect(&intersection, &targetInfo.rcMonitor,
-                        &monitorRect))
-                {
-                    area = static_cast<long long>(
-                        intersection.right - intersection.left) *
-                        (intersection.bottom - intersection.top);
-                }
-                if (area > bestArea)
-                {
-                    if (selectedId) CoTaskMemFree(selectedId);
-                    selectedId = monitorId;
-                    bestArea = area;
-                }
-                else
-                {
-                    CoTaskMemFree(monitorId);
-                }
-            }
-        }
-
-        LPWSTR imagePath = nullptr;
-        HRESULT wallpaperResult = desktopWallpaper->GetWallpaper(
-            selectedId, &imagePath);
-        if (selectedId) CoTaskMemFree(selectedId);
-        if (SUCCEEDED(wallpaperResult) && imagePath && *imagePath)
-        {
-            Wallpaper image = DecodeWallpaperFile(imagePath);
-            CoTaskMemFree(imagePath);
-            if (!image.pixels.empty()) return image;
-        }
-        else if (imagePath)
-        {
-            CoTaskMemFree(imagePath);
-        }
-
-        COLORREF background = RGB(32, 39, 45);
-        if (SUCCEEDED(desktopWallpaper->GetBackgroundColor(&background)))
-        {
-            Wallpaper solid;
-            solid.width = 1;
-            solid.height = 1;
-            solid.pixels.push_back(0xff000000u |
-                static_cast<std::uint32_t>(GetBValue(background)) |
-                (static_cast<std::uint32_t>(GetGValue(background)) << 8) |
-                (static_cast<std::uint32_t>(GetRValue(background)) << 16));
-            return solid;
-        }
-    }
-
-    std::wstring legacyPath(32768, L'\0');
-    if (SystemParametersInfoW(SPI_GETDESKWALLPAPER,
-            static_cast<UINT>(legacyPath.size()), legacyPath.data(), 0))
-    {
-        legacyPath.resize(std::wcslen(legacyPath.c_str()));
-        if (!legacyPath.empty())
-            return DecodeWallpaperFile(legacyPath);
-    }
-    return {};
-}
-
 std::uint64_t WallpaperFingerprint(const Wallpaper& wallpaper)
 {
     if (wallpaper.width <= 0 || wallpaper.height <= 0 ||
@@ -391,6 +294,39 @@ Wallpaper GenerateWallpaper(const Wallpaper& source, int width, int height,
         }
     }
     return wallpaper;
+}
+
+Wallpaper CropWallpaper(const Wallpaper& source, const RECT& sourceBounds,
+    const RECT& targetBounds)
+{
+    Wallpaper result;
+    const int sourceWidth = sourceBounds.right - sourceBounds.left;
+    const int sourceHeight = sourceBounds.bottom - sourceBounds.top;
+    const int targetWidth = targetBounds.right - targetBounds.left;
+    const int targetHeight = targetBounds.bottom - targetBounds.top;
+    if (sourceWidth <= 0 || sourceHeight <= 0 || targetWidth <= 0 ||
+        targetHeight <= 0 || source.width != sourceWidth ||
+        source.height != sourceHeight ||
+        source.pixels.size() < static_cast<std::size_t>(sourceWidth) *
+            sourceHeight || targetBounds.left < sourceBounds.left ||
+        targetBounds.top < sourceBounds.top ||
+        targetBounds.right > sourceBounds.right ||
+        targetBounds.bottom > sourceBounds.bottom)
+        return result;
+    result.width = targetWidth;
+    result.height = targetHeight;
+    result.pixels.resize(static_cast<std::size_t>(targetWidth) *
+        targetHeight);
+    const int sourceX = targetBounds.left - sourceBounds.left;
+    const int sourceY = targetBounds.top - sourceBounds.top;
+    for (int y = 0; y < targetHeight; ++y)
+    {
+        const auto* row = source.pixels.data() +
+            static_cast<std::size_t>(sourceY + y) * sourceWidth + sourceX;
+        std::copy_n(row, targetWidth, result.pixels.data() +
+            static_cast<std::size_t>(y) * targetWidth);
+    }
+    return result;
 }
 
 AcrylicNoisePixels GenerateAcrylicNoise(bool lightTheme)

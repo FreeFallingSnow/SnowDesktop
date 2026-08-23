@@ -98,6 +98,25 @@ int main()
     Check(WallpaperIsLight(white) && !WallpaperIsLight(black),
         "wallpaper luminance selects contrasting card chrome");
 
+    Wallpaper monitor;
+    monitor.width = 4;
+    monitor.height = 3;
+    monitor.pixels = {
+        0xff000001u, 0xff000002u, 0xff000003u, 0xff000004u,
+        0xff000005u, 0xff000006u, 0xff000007u, 0xff000008u,
+        0xff000009u, 0xff00000au, 0xff00000bu, 0xff00000cu,
+    };
+    const Wallpaper positionedCrop = CropWallpaper(monitor,
+        { -1920, 0, -1916, 3 }, { -1918, 1, -1916, 3 });
+    Check(positionedCrop.width == 2 && positionedCrop.height == 2 &&
+            positionedCrop.pixels == std::vector<std::uint32_t>{
+                0xff000007u, 0xff000008u,
+                0xff00000bu, 0xff00000cu },
+        "screen capture crop preserves physical position without scaling");
+    Check(CropWallpaper(monitor, { 0, 0, 4, 3 },
+            { 3, 2, 5, 3 }).pixels.empty(),
+        "screen capture crop rejects rectangles outside the monitor frame");
+
     const AcrylicNoisePixels darkNoise = GenerateAcrylicNoise(false);
     const AcrylicNoisePixels repeatedNoise = GenerateAcrylicNoise(false);
     const AcrylicNoisePixels lightNoise = GenerateAcrylicNoise(true);

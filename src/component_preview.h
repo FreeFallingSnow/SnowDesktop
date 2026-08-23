@@ -88,8 +88,10 @@ struct Card
     int previewWidth = 0;
     int previewHeight = 0;
     bool lightStage = false;
-    /// Current monitor wallpaper shared by the full card and component crop.
+    /// Optional fixed stage shared by the full card and component crop.
     std::shared_ptr<const widget_preview::Wallpaper> stageWallpaper;
+    /// Freeze the composed desktop monitor before this preview becomes visible.
+    bool captureDesktopStage = false;
     /// Includes component/mode/DPI/menu theme/personalization identity.
     std::wstring cacheKey;
     /// Called only after the exact final card viewport is known.
@@ -147,6 +149,7 @@ public:
     RECT ApplyBoundsForTesting() const { return applyRect_; }
     RECT CardBoundsForTesting() const { return cardRect_; }
     RECT PreviewBoundsForTesting() const { return previewRect_; }
+    RECT MetadataBoundsForTesting() const { return metadataRect_; }
     RECT CloseBoundsForTesting() const { return closeRect_; }
     RECT PreviousBoundsForTesting() const { return previousButton_; }
     RECT PreviousGlyphBoundsForTesting() const
@@ -160,6 +163,7 @@ public:
 private:
     bool EnsureCreated(HWND owner);
     bool RenderCurrent();
+    bool CaptureDesktopBackdrop();
     void SelectRelative(int delta);
     void SetOption(OptionSetting setting, bool value);
     void ApplyCurrent();
@@ -183,6 +187,7 @@ private:
     RECT pagerRect_{};
     RECT cardRect_{};
     RECT previewRect_{};
+    RECT metadataRect_{};
     RECT applyRect_{};
     RECT closeRect_{};
     RECT previousGlyphRect_{};
@@ -210,6 +215,8 @@ private:
         modern_menu::Appearance::FollowSystem;
     ApplyHandler pendingOnApply_;
     std::unordered_map<std::wstring, Bitmap> cardFrameCache_;
+    widget_preview::Wallpaper desktopBackdrop_;
+    RECT desktopBackdropBounds_{};
     std::vector<POINT> committedPositions_;
 };
 

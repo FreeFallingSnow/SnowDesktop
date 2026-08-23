@@ -44,9 +44,6 @@ using AcrylicNoisePixels = std::array<std::uint32_t,
 /** Decode an author-selected image and composite any transparency to opaque. */
 Wallpaper LoadWallpaperImage(const std::filesystem::path& path);
 
-/** Resolve the current image for the monitor containing anchorWindow. */
-Wallpaper LoadDesktopWallpaper(HWND anchorWindow);
-
 /** Stable sampled identity used to invalidate preview frame caches. */
 std::uint64_t WallpaperFingerprint(const Wallpaper& wallpaper);
 
@@ -63,6 +60,10 @@ Wallpaper GenerateWallpaper(int width, int height, bool lightTheme,
 /** Center-cover an explicit wallpaper into the requested stage crop. */
 Wallpaper GenerateWallpaper(const Wallpaper& source, int width, int height,
     const WallpaperViewport& viewport = {});
+
+/** Copy an exact physical-pixel screen rectangle without rescaling. */
+Wallpaper CropWallpaper(const Wallpaper& source, const RECT& sourceBounds,
+    const RECT& targetBounds);
 
 /** Generate the same fixed acrylic texture used by live widget panels. */
 AcrylicNoisePixels GenerateAcrylicNoise(bool lightTheme);

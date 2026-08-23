@@ -373,6 +373,16 @@ bool Window::Show(const Model& model, const RECT& menuBounds,
     onApply_ = std::move(onApply);
     componentHovered_ = false;
     currentCard_ = std::min(currentCard_, model_.cards.size() - 1);
+    if (!IsWindowVisible(hwnd_))
+    {
+        desktopBackdrop_ = {};
+        desktopBackdropBounds_ = {};
+        if (std::any_of(model_.cards.begin(), model_.cards.end(),
+                [](const Card& value) {
+                    return value.captureDesktopStage;
+                }))
+            CaptureDesktopBackdrop();
+    }
     ApplyWindowAppearance();
     if (!RenderCurrent())
         return false;
@@ -451,6 +461,8 @@ void Window::Hide()
         KillTimer(hwnd_, kHideTimer);
         KillTimer(hwnd_, kOpenTimer);
         ShowWindow(hwnd_, SW_HIDE);
+        desktopBackdrop_ = {};
+        desktopBackdropBounds_ = {};
     }
 }
 
@@ -465,6 +477,8 @@ void Window::Close()
     onApply_ = {};
     pendingModel_ = {};
     pendingOnApply_ = {};
+    desktopBackdrop_ = {};
+    desktopBackdropBounds_ = {};
 }
 
 RECT Window::OptionBoundsForTesting(
@@ -488,9 +502,66 @@ std::wstring Window::ModelIdentity(const Model& model) const
             (card.lightStage ? L":stage-light" : L":stage-dark") + L":" +
             std::to_wstring(widget_preview::WallpaperFingerprint(
                 card.stageWallpaper ? *card.stageWallpaper :
-                    widget_preview::Wallpaper{}));
+                    widget_preview::Wallpaper{})) +
+            (card.captureDesktopStage ? L":desktop-capture" : L"");
     }
     return result;
+}
+
+bool Window::CaptureDesktopBackdrop()
+{
+    const POINT anchor{
+        (menuBounds_.left + menuBounds_.right) / 2,
+        (menuBounds_.top + menuBounds_.bottom) / 2,
+    };
+    MONITORINFO monitor{ sizeof(monitor) };
+    if (!GetMonitorInfoW(MonitorFromPoint(anchor,
+            MONITOR_DEFAULTTONEAREST), &monitor))
+        return false;
+    const int width = monitor.rcMonitor.right - monitor.rcMonitor.left;
+    const int height = monitor.rcMonitor.bottom - monitor.rcMonitor.top;
+    if (width <= 0 || height <= 0) return false;
+
+    HDC screen = GetDC(nullptr);
+    HDC memory = screen ? CreateCompatibleDC(screen) : nullptr;
+    BITMAPINFO info{};
+    info.bmiHeader.biSize = sizeof(info.bmiHeader);
+    info.bmiHeader.biWidth = width;
+    info.bmiHeader.biHeight = -height;
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+    void* rawPixels = nullptr;
+    HBITMAP bitmap = screen ? CreateDIBSection(screen, &info,
+        DIB_RGB_COLORS, &rawPixels, nullptr, 0) : nullptr;
+    if (!screen || !memory || !bitmap || !rawPixels)
+    {
+        if (bitmap) DeleteObject(bitmap);
+        if (memory) DeleteDC(memory);
+        if (screen) ReleaseDC(nullptr, screen);
+        return false;
+    }
+    HGDIOBJ oldBitmap = SelectObject(memory, bitmap);
+    const BOOL captured = BitBlt(memory, 0, 0, width, height, screen,
+        monitor.rcMonitor.left, monitor.rcMonitor.top,
+        SRCCOPY | CAPTUREBLT);
+    GdiFlush();
+    if (captured)
+    {
+        desktopBackdrop_.width = width;
+        desktopBackdrop_.height = height;
+        auto* pixels = static_cast<const std::uint32_t*>(rawPixels);
+        desktopBackdrop_.pixels.assign(pixels,
+            pixels + static_cast<std::size_t>(width) * height);
+        for (std::uint32_t& pixel : desktopBackdrop_.pixels)
+            pixel |= 0xff000000u;
+        desktopBackdropBounds_ = monitor.rcMonitor;
+    }
+    if (oldBitmap) SelectObject(memory, oldBitmap);
+    DeleteObject(bitmap);
+    DeleteDC(memory);
+    ReleaseDC(nullptr, screen);
+    return captured != FALSE;
 }
 
 bool Window::RenderCurrent()
@@ -542,13 +613,9 @@ bool Window::RenderCurrent()
         HasVisibleText(card.sizeLabel);
     const bool hasDescription = HasVisibleText(card.description);
     const bool hasApplyButton = HasVisibleText(model_.applyLabel);
-    const int metadataHorizontalPadding = Scale(10, dpi_);
-    const int metadataTopPadding = Scale(8, dpi_);
-    const int metadataBottomPadding = Scale(8, dpi_);
     const int cardHeaderHeight = hasCardHeader ? Scale(21, dpi_) : 0;
     const int descriptionHeight = MeasureTextHeight(measureDc, bodyFont,
-        card.description,
-        width_ - (padding + metadataHorizontalPadding) * 2,
+        card.description, textWidth,
         DT_LEFT | DT_WORDBREAK);
     const int applyButtonHeight = hasApplyButton ? Scale(32, dpi_) : 0;
     if (measureDc) DeleteDC(measureDc);
@@ -556,7 +623,6 @@ bool Window::RenderCurrent()
     int metadataHeight = 0;
     if (hasCardHeader || hasDescription)
     {
-        metadataHeight = metadataTopPadding + metadataBottomPadding;
         if (hasCardHeader)
             metadataHeight += cardHeaderHeight;
         if (hasDescription)
@@ -567,6 +633,7 @@ bool Window::RenderCurrent()
     }
     const int externalControlsHeight =
         (pagerHeight ? gap + pagerHeight : 0) +
+        (metadataHeight ? gap + metadataHeight : 0) +
         (visibleOptionCount ? gap +
             static_cast<int>(visibleOptionCount) * optionHeight +
             static_cast<int>(visibleOptionCount - 1) * controlMargin : 0) +
@@ -574,8 +641,9 @@ bool Window::RenderCurrent()
     height_ = padding + titleHeight +
         (introductionHeight ? Scale(4, dpi_) + introductionHeight : 0) +
         (resizeHintHeight ? Scale(2, dpi_) + resizeHintHeight : 0) +
-        gap + previewInset + previewHeight + metadataHeight + previewInset +
+        gap + previewInset + previewHeight + previewInset +
         externalControlsHeight + padding;
+    POINT destination = ResolvePosition(menuBounds_, dpi_);
 
     BITMAPINFO info{};
     info.bmiHeader.biSize = sizeof(info.bmiHeader);
@@ -603,7 +671,6 @@ bool Window::RenderCurrent()
     std::fill_n(pixels, static_cast<size_t>(width_) * height_, 0u);
 
     const auto palette = menu_icon::ResolvePalette(lightTheme_);
-    const auto cardPalette = menu_icon::ResolvePalette(card.lightStage);
     RECT panel{ 0, 0, width_, height_ };
     Fill(dc, panel, palette.background);
 
@@ -643,18 +710,34 @@ bool Window::RenderCurrent()
     const int previewLeft = (width_ - previewWidth) / 2;
     previewRect_ = { previewLeft, cardTop + previewInset,
         previewLeft + previewWidth, cardTop + previewInset + previewHeight };
-    const int metadataTop = previewRect_.bottom;
     cardRect_ = { padding, cardTop, width_ - padding,
-        metadataTop + metadataHeight + previewInset };
+        previewRect_.bottom + previewInset };
     const int cardWidth = cardRect_.right - cardRect_.left;
     const int cardHeight = cardRect_.bottom - cardRect_.top;
     const int cardRadius = Scale(8, dpi_);
-    const auto wallpaper = card.stageWallpaper &&
-            !card.stageWallpaper->pixels.empty()
-        ? snowdesktop::widget_preview::GenerateWallpaper(
-            *card.stageWallpaper, cardWidth, cardHeight)
-        : snowdesktop::widget_preview::GenerateWallpaper(
+    snowdesktop::widget_preview::Wallpaper wallpaper;
+    if (card.captureDesktopStage && !desktopBackdrop_.pixels.empty())
+    {
+        RECT screenCard = cardRect_;
+        OffsetRect(&screenCard, destination.x, destination.y);
+        wallpaper = snowdesktop::widget_preview::CropWallpaper(
+            desktopBackdrop_, desktopBackdropBounds_, screenCard);
+    }
+    if (wallpaper.pixels.empty() && card.stageWallpaper &&
+        !card.stageWallpaper->pixels.empty())
+    {
+        wallpaper = snowdesktop::widget_preview::GenerateWallpaper(
+            *card.stageWallpaper, cardWidth, cardHeight);
+    }
+    if (wallpaper.pixels.empty())
+    {
+        wallpaper = snowdesktop::widget_preview::GenerateWallpaper(
             cardWidth, cardHeight, card.lightStage);
+    }
+    const bool lightStage = card.captureDesktopStage
+        ? snowdesktop::widget_preview::WallpaperIsLight(wallpaper)
+        : card.lightStage;
+    const auto cardPalette = menu_icon::ResolvePalette(lightStage);
     Bitmap cardStage;
     cardStage.width = wallpaper.width;
     cardStage.height = wallpaper.height;
@@ -677,8 +760,8 @@ bool Window::RenderCurrent()
         cardWidth, cardHeight,
         previewRect_.left - cardRect_.left,
         previewRect_.top - cardRect_.top,
-        card.lightStage,
-        card.stageWallpaper.get() };
+        lightStage,
+        &wallpaper };
     RoundedOutline(dc, previewRect_, Scale(6, dpi_),
         cardPalette.separator);
 
@@ -692,7 +775,10 @@ bool Window::RenderCurrent()
             std::to_wstring(cardHeight) + L"@" +
             std::to_wstring(stagePlacement.offsetX) + L"," +
             std::to_wstring(stagePlacement.offsetY) +
-            (stagePlacement.lightTheme ? L":light" : L":dark");
+            (stagePlacement.lightTheme ? L":light" : L":dark") + L":" +
+            std::to_wstring(
+                snowdesktop::widget_preview::WallpaperFingerprint(
+                    wallpaper));
     }
     Bitmap rendered;
     if (!frameCacheKey.empty())
@@ -713,6 +799,7 @@ bool Window::RenderCurrent()
         }
     }
     DrawBitmap(dc, rendered, previewRect_);
+    RoundedOutline(dc, cardRect_, cardRadius, cardPalette.separator);
 
     int controlsY = cardRect_.bottom;
     previousButton_ = {};
@@ -747,6 +834,49 @@ bool Window::RenderCurrent()
                 ? palette.text : palette.disabledText,
             L'\u203a', nextButton_, nextGlyphRect_);
         controlsY = pagerRect_.bottom;
+    }
+
+    metadataRect_ = {};
+    if (metadataHeight)
+    {
+        controlsY += gap;
+        metadataRect_ = { padding, controlsY, width_ - padding,
+            controlsY + metadataHeight };
+        const int metadataLeft = padding;
+        const int metadataRight = width_ - padding;
+        int metadataY = controlsY;
+        if (hasCardHeader)
+        {
+            RECT cardTitle{ metadataLeft, metadataY, metadataRight,
+                metadataY + cardHeaderHeight };
+            if (HasVisibleText(card.sizeLabel))
+            {
+                RECT badge = cardTitle;
+                badge.left = std::max(
+                    badge.left, badge.right - Scale(58, dpi_));
+                RoundedBox(dc, badge, Scale(7, dpi_),
+                    palette.hoverBackground, palette.separator);
+                DrawCenteredText(dc, bodyFont, palette.disabledText,
+                    card.sizeLabel, badge);
+                cardTitle.right = badge.left - Scale(6, dpi_);
+            }
+            if (HasVisibleText(card.title))
+            {
+                DrawWrappedText(dc, cardTitleFont, palette.text, card.title,
+                    cardTitle, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
+            }
+            metadataY += cardHeaderHeight;
+        }
+        if (hasDescription)
+        {
+            if (hasCardHeader) metadataY += Scale(2, dpi_);
+            RECT descriptionRect{ metadataLeft, metadataY, metadataRight,
+                metadataY + descriptionHeight };
+            DrawWrappedText(dc, bodyFont, palette.disabledText,
+                card.description, descriptionRect);
+            metadataY = descriptionRect.bottom;
+        }
+        controlsY = metadataY;
     }
 
     optionHits_.clear();
@@ -789,42 +919,6 @@ bool Window::RenderCurrent()
     }
 
     applyRect_ = {};
-    RoundedOutline(dc, cardRect_, cardRadius, cardPalette.separator);
-    const int metadataLeft = cardRect_.left + metadataHorizontalPadding;
-    const int metadataRight = cardRect_.right - metadataHorizontalPadding;
-    int metadataY = metadataTop +
-        (metadataHeight ? metadataTopPadding : 0);
-    if (hasCardHeader)
-    {
-        RECT cardTitle{ metadataLeft, metadataY, metadataRight,
-            metadataY + cardHeaderHeight };
-        if (HasVisibleText(card.sizeLabel))
-        {
-            RECT badge = cardTitle;
-            badge.left = std::max(
-                badge.left, badge.right - Scale(58, dpi_));
-            RoundedBox(dc, badge, Scale(7, dpi_),
-                cardPalette.hoverBackground, cardPalette.separator);
-            DrawCenteredText(dc, bodyFont, cardPalette.disabledText,
-                card.sizeLabel, badge);
-            cardTitle.right = badge.left - Scale(6, dpi_);
-        }
-        if (HasVisibleText(card.title))
-        {
-            DrawWrappedText(dc, cardTitleFont, cardPalette.text, card.title,
-                cardTitle, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
-        }
-        metadataY += cardHeaderHeight;
-    }
-    if (hasDescription)
-    {
-        if (hasCardHeader) metadataY += Scale(2, dpi_);
-        RECT descriptionRect{ metadataLeft, metadataY, metadataRight,
-            metadataY + descriptionHeight };
-        DrawWrappedText(dc, bodyFont, cardPalette.disabledText,
-            card.description, descriptionRect);
-        metadataY = descriptionRect.bottom;
-    }
     if (hasApplyButton)
     {
         controlsY += gap;
@@ -871,7 +965,6 @@ bool Window::RenderCurrent()
     if (region && !SetWindowRgn(hwnd_, region, FALSE))
         DeleteObject(region);
 
-    POINT destination = ResolvePosition(menuBounds_, dpi_);
     SIZE size{ width_, height_ };
     POINT source{};
     BLENDFUNCTION blend{

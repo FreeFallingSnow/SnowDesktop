@@ -259,8 +259,9 @@ int wmain()
     const RECT pagedCard = window.CardBoundsForTesting();
     Expect(window.PreviousBoundsForTesting().top >= pagedCard.bottom &&
             window.NextBoundsForTesting().top >= pagedCard.bottom &&
+            window.MetadataBoundsForTesting().top >= pagedCard.bottom &&
             window.ApplyBoundsForTesting().top >= pagedCard.bottom,
-        "paging and apply controls sit below the wallpaper card");
+        "paging, metadata, and apply controls sit below the captured card");
     RECT pagedBounds{};
     GetClientRect(window.Handle(), &pagedBounds);
     SendMessageW(window.Handle(), WM_MOUSEMOVE, 0,

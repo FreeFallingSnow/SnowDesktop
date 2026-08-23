@@ -727,16 +727,6 @@ DesktopApp::BuildAddWidgetMenuPreview(
         std::to_wstring(appearance.acrylicEnabled) + L":" +
         std::to_wstring(appearance.glassBlurRadius) + L":" +
         std::to_wstring(appearance.contentTheme);
-    auto previewWallpaper = std::make_shared<
-        snowdesktop::widget_preview::Wallpaper>(
-            snowdesktop::widget_preview::LoadDesktopWallpaper(hwnd_));
-    if (previewWallpaper->pixels.empty()) previewWallpaper.reset();
-    const std::wstring wallpaperKey = std::to_wstring(
-        previewWallpaper
-            ? snowdesktop::widget_preview::WallpaperFingerprint(
-                *previewWallpaper)
-            : 0);
-
     auto makeScene = [&](bool applications = false) {
         auto scene = std::make_shared<snowdesktop::WidgetPreviewScene>();
         const std::wstring fileTitles[] = {
@@ -849,14 +839,11 @@ DesktopApp::BuildAddWidgetMenuPreview(
             1, desktopFrame.right - desktopFrame.left);
         card.previewHeight = std::max<LONG>(
             1, desktopFrame.bottom - desktopFrame.top);
-        card.lightStage = previewWallpaper &&
-            snowdesktop::widget_preview::WallpaperIsLight(
-                *previewWallpaper);
-        card.stageWallpaper = previewWallpaper;
+        card.lightStage = false;
+        card.captureDesktopStage = true;
         card.sizeLabel = _LFW("app.widget_preview.size",
             std::to_wstring(card.columns), std::to_wstring(card.rows));
         card.cacheKey = modeKey + L":" + appearanceKey + L":" +
-            wallpaperKey + L":" +
             (previewPage ? previewPage->id : L"fallback") + L":" +
             std::to_wstring(card.previewWidth) + L"x" +
             std::to_wstring(card.previewHeight) + L":" +
