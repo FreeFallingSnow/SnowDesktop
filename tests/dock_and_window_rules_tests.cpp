@@ -4010,6 +4010,25 @@ int main(int argc, char** argv)
                   "dockAssociatedPopupPointerPressClaimed_") ==
                     std::string::npos,
             "popup and floating Dock lifecycles must observe one outside press independently without ownership claims or cross-close calls");
+        const std::size_t dockPointerSamplerBegin =
+            floatingDockLifecycleSource.find(
+                "void DesktopApp::UpdateFloatingDockEdgeSwipe()");
+        const std::string dockPointerSamplerSource =
+            dockPointerSamplerBegin == std::string::npos
+                ? std::string{}
+                : floatingDockLifecycleSource.substr(
+                    dockPointerSamplerBegin);
+        const std::size_t outsideDockClose =
+            dockPointerSamplerSource.find(
+                "CloseFloatingDock(");
+        const std::size_t preserveOutsideForeground =
+            dockPointerSamplerSource.find(
+                "FloatingDockCloseFocusPolicy::PreserveCurrent",
+                outsideDockClose);
+        Check(!dockPointerSamplerSource.empty() &&
+                outsideDockClose != std::string::npos &&
+                preserveOutsideForeground != std::string::npos,
+            "outside-click dismissal must preserve the foreground selected by the physical click");
         const std::size_t closeFloatingDockBegin =
             floatingDockInteractionSource.find(
                 "void DesktopApp::CloseFloatingDock(");

@@ -203,7 +203,12 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
                     previewDesktopRect,
                     quickNavigationInteractionRect))
         {
-            CloseFloatingDock();
+            // A physical outside click owns the foreground transition. Do not
+            // restore the window that preceded the floating Dock: doing so can
+            // race the clicked window's activation and force two DWM/backdrop
+            // source changes through the shared close handoff.
+            CloseFloatingDock(
+                FloatingDockCloseFocusPolicy::PreserveCurrent);
             floatingDockEdgeSwipeDetector_.Reset();
             return;
         }
