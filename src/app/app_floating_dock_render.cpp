@@ -305,8 +305,13 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         UpdateFloatingDockWindowBounds();
         InvalidateFloatingDockWindow(true);
         return 0;
-    case WM_DISPLAYCHANGE:
     case WM_DPICHANGED:
+        // Dock geometry is also already expressed in physical desktop pixels.
+        // A cross-monitor handoff changes the reusable HWND's DPI but must not
+        // turn that ordinary move into a Dock close.
+        InvalidateFloatingDockWindow(false);
+        return 0;
+    case WM_DISPLAYCHANGE:
         CloseFloatingDock();
         return 0;
     case WM_CLOSE:

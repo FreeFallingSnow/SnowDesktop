@@ -1121,8 +1121,17 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         OnMouseWheel(wp, lp);
         handlingFloatingPopupInput_ = false;
         return 0;
-    case WM_DISPLAYCHANGE:
     case WM_DPICHANGED:
+        // This reusable no-activate host is positioned in physical desktop
+        // pixels by UpdateFloatingPopupWindowBounds. Moving it to a monitor
+        // with another DPI therefore emits WM_DPICHANGED during the owning
+        // SetWindowPos call. Applying the suggested rectangle would scale the
+        // model-owned bounds a second time, while closing here interrupts the
+        // newly published popup. Preserve the content and let the outer bounds
+        // update submit the target monitor's frame after SetWindowPos returns.
+        InvalidateFloatingPopupWindow(false);
+        return 0;
+    case WM_DISPLAYCHANGE:
         CloseCollectionPopup(false);
         CloseLuaWidgetPanel(L"", "display-change");
         return 0;

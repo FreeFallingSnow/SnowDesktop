@@ -4028,6 +4028,72 @@ int main(int argc, char** argv)
                   "floatingPopupMouseHookScreenY_") ==
                     std::string::npos,
             "each queued popup outside-click notification must own its pointer coordinate payload");
+        const std::size_t popupDpiChangeBegin =
+            floatingPopupSource.find("case WM_DPICHANGED:");
+        const std::size_t popupDisplayChangeBegin =
+            floatingPopupSource.find(
+                "case WM_DISPLAYCHANGE:", popupDpiChangeBegin);
+        const std::size_t popupCloseBegin =
+            floatingPopupSource.find(
+                "case WM_CLOSE:", popupDisplayChangeBegin);
+        const std::string popupDpiChangeHandler =
+            popupDpiChangeBegin != std::string::npos &&
+                    popupDisplayChangeBegin != std::string::npos
+                ? floatingPopupSource.substr(
+                    popupDpiChangeBegin,
+                    popupDisplayChangeBegin - popupDpiChangeBegin)
+                : std::string{};
+        const std::string popupDisplayChangeHandler =
+            popupDisplayChangeBegin != std::string::npos &&
+                    popupCloseBegin != std::string::npos
+                ? floatingPopupSource.substr(
+                    popupDisplayChangeBegin,
+                    popupCloseBegin - popupDisplayChangeBegin)
+                : std::string{};
+        const std::size_t dockDpiChangeBegin =
+            floatingDockRenderSource.find("case WM_DPICHANGED:");
+        const std::size_t dockDisplayChangeBegin =
+            floatingDockRenderSource.find(
+                "case WM_DISPLAYCHANGE:", dockDpiChangeBegin);
+        const std::size_t dockCloseBegin =
+            floatingDockRenderSource.find(
+                "case WM_CLOSE:", dockDisplayChangeBegin);
+        const std::string dockDpiChangeHandler =
+            dockDpiChangeBegin != std::string::npos &&
+                    dockDisplayChangeBegin != std::string::npos
+                ? floatingDockRenderSource.substr(
+                    dockDpiChangeBegin,
+                    dockDisplayChangeBegin - dockDpiChangeBegin)
+                : std::string{};
+        const std::string dockDisplayChangeHandler =
+            dockDisplayChangeBegin != std::string::npos &&
+                    dockCloseBegin != std::string::npos
+                ? floatingDockRenderSource.substr(
+                    dockDisplayChangeBegin,
+                    dockCloseBegin - dockDisplayChangeBegin)
+                : std::string{};
+        Check(!popupDpiChangeHandler.empty() &&
+                popupDpiChangeHandler.find(
+                  "InvalidateFloatingPopupWindow(false);") !=
+                    std::string::npos &&
+                popupDpiChangeHandler.find(
+                  "CloseCollectionPopup(") == std::string::npos &&
+                popupDpiChangeHandler.find(
+                  "CloseLuaWidgetPanel(") == std::string::npos &&
+                popupDisplayChangeHandler.find(
+                  "CloseCollectionPopup(false);") !=
+                    std::string::npos &&
+                popupDisplayChangeHandler.find(
+                  "CloseLuaWidgetPanel(") != std::string::npos &&
+                !dockDpiChangeHandler.empty() &&
+                dockDpiChangeHandler.find(
+                  "InvalidateFloatingDockWindow(false);") !=
+                    std::string::npos &&
+                dockDpiChangeHandler.find(
+                  "CloseFloatingDock(") == std::string::npos &&
+                dockDisplayChangeHandler.find(
+                  "CloseFloatingDock();") != std::string::npos,
+            "cross-monitor DPI migration must preserve reusable popup and Dock hosts while a real display change may dismiss them");
         Check(floatingDockSource.find(
                   "ReserveCollectionPopupEnvelope") ==
                     std::string::npos &&
