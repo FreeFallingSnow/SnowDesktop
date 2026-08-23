@@ -56,6 +56,7 @@ void DesktopApp::DestroyQuickNavigationWindow()
         quickNavigationSearchFont_ = nullptr;
     }
     ResetQuickNavCompositionResources();
+    quickNavDcompScaleTransform_.Reset();
     quickNavDcompEffect_ = nullptr;
     if (quickNavDcompVisual_)
         quickNavDcompVisual_ = nullptr;
@@ -760,14 +761,19 @@ void DesktopApp::OpenQuickNavigation(
                 static_cast<std::uint64_t>(
                     snowdesktop::UiAnimationScheduler::
                         MonotonicMilliseconds()));
-            EnsureUiAnimationFrame();
+            if (!StartQuickNavigationCompositionAnimation())
+            {
+                ApplyQuickNavigationAnimationFrame();
+                EnsureUiAnimationFrame();
+            }
         }
         else
         {
             quickNavigationAnimation_.
                 ShowImmediately();
         }
-        ApplyQuickNavigationAnimationFrame();
+        if (!quickNavigationAnimationCompositorDriven_)
+            ApplyQuickNavigationAnimationFrame();
         if (quickNavigationSearchEdit_ &&
             IsWindow(quickNavigationSearchEdit_))
         {
@@ -883,14 +889,19 @@ void DesktopApp::OpenQuickNavigation(
             static_cast<std::uint64_t>(
                 snowdesktop::UiAnimationScheduler::
                     MonotonicMilliseconds()));
-        EnsureUiAnimationFrame();
+        if (!StartQuickNavigationCompositionAnimation())
+        {
+            ApplyQuickNavigationAnimationFrame();
+            EnsureUiAnimationFrame();
+        }
     }
     else
     {
         quickNavigationAnimation_.
             ShowImmediately();
     }
-    ApplyQuickNavigationAnimationFrame();
+    if (!quickNavigationAnimationCompositorDriven_)
+        ApplyQuickNavigationAnimationFrame();
     if (quickNavigationSearchEdit_ && IsWindow(quickNavigationSearchEdit_))
     {
         SetForegroundWindow(quickNavigationSearchEdit_);
@@ -979,9 +990,12 @@ void DesktopApp::CloseQuickNavigation()
         FinalizeCloseQuickNavigation();
         return;
     }
-    EnsureUiAnimationFrame();
-    InvalidateQuickNavigationWindow();
-    ApplyQuickNavigationAnimationFrame();
+    if (!StartQuickNavigationCompositionAnimation())
+    {
+        ApplyQuickNavigationAnimationFrame();
+        EnsureUiAnimationFrame();
+        InvalidateQuickNavigationWindow();
+    }
 }
 
 void DesktopApp::CloseQuickNavigationThen(
@@ -1000,6 +1014,9 @@ void DesktopApp::CloseQuickNavigationThen(
 
 void DesktopApp::ApplyQuickNavigationAnimationFrame()
 {
+    if (quickNavigationAnimationCompositorDriven_)
+        return;
+
     const auto visual =
         quickNavigationAnimation_.GetVisual();
     const float anchorX = static_cast<float>(
@@ -1023,17 +1040,6 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
         if (quickNavigationHwnd_ &&
             IsWindow(quickNavigationHwnd_))
         {
-            const D2D1_MATRIX_3X2_F transform =
-                D2D1::Matrix3x2F::Scale(
-                    visual.scale,
-                    visual.scale,
-                    D2D1::Point2F(
-                        static_cast<float>(
-                            quickNavigationAnimationAnchorPoint_.x -
-                            quickNavigationRect_.left),
-                        static_cast<float>(
-                            quickNavigationAnimationAnchorPoint_.y -
-                            quickNavigationRect_.top)));
             quickNavDcompVisual_->SetOffsetX(
                 static_cast<float>(
                     quickNavigationRect_.left -
@@ -1042,8 +1048,21 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
                 static_cast<float>(
                     quickNavigationRect_.top -
                     quickNavigationHostRect_.top));
-            quickNavDcompVisual_->SetTransform(
-                transform);
+            if (quickNavDcompScaleTransform_)
+            {
+                quickNavDcompScaleTransform_->SetCenterX(
+                    static_cast<float>(
+                        quickNavigationAnimationAnchorPoint_.x -
+                        quickNavigationRect_.left));
+                quickNavDcompScaleTransform_->SetCenterY(
+                    static_cast<float>(
+                        quickNavigationAnimationAnchorPoint_.y -
+                        quickNavigationRect_.top));
+                quickNavDcompScaleTransform_->SetScaleX(
+                    visual.scale);
+                quickNavDcompScaleTransform_->SetScaleY(
+                    visual.scale);
+            }
             if (quickNavDcompEffect_)
             {
                 quickNavDcompEffect_->SetOpacity(

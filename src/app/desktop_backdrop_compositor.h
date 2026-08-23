@@ -61,6 +61,13 @@ public:
         float anchorX, float anchorY,
         std::uint32_t durationMilliseconds,
         float normalizedStartSlope = 0.0f);
+    /** @brief 由 Windows Composition 自驱根视觉缩放和透明度。 */
+    [[nodiscard]] bool StartVisualTransformAnimation(
+        float fromScale, float toScale,
+        float fromOpacity, float toOpacity,
+        float anchorX, float anchorY,
+        std::uint32_t durationMilliseconds,
+        float normalizedStartSlope = 0.0f);
     /** @brief 开始收集一帧的玻璃区域。完整帧会在 EndFrame 清理未再次出现的视觉。 */
     void BeginFrame(bool completeCollection);
     /**

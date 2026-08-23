@@ -106,7 +106,8 @@ void DesktopApp::EnsureUiAnimationFrame()
     }
 
     if (!quickNavigationAnimationFrameToken_ &&
-        quickNavigationAnimation_.IsAnimating())
+        quickNavigationAnimation_.IsAnimating() &&
+        !quickNavigationAnimationCompositorDriven_)
     {
         quickNavigationAnimationFrameToken_ =
             uiAnimationScheduler_.StartAnimation(

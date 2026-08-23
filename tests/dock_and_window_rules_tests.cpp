@@ -3639,6 +3639,12 @@ int main(int argc, char** argv)
         const std::string backdropCompositorSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "desktop_backdrop_compositor.cpp");
+        const std::string quickNavigationWindowSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_quick_navigation_window.cpp");
+        const std::string animationSchedulerSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_animation_scheduler.cpp");
         const std::string renderPrimitivesSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_render_primitives.cpp");
@@ -3816,6 +3822,25 @@ int main(int argc, char** argv)
                   "root.StartAnimation(L\"Scale\", animation)") !=
                     std::string::npos,
             "acrylic popup scale must run on the compositor and use scheduler frames only as fallback");
+        Check(compositionAnimationSource.find(
+                  "bool DesktopApp::StartQuickNavigationCompositionAnimation()") !=
+                    std::string::npos &&
+                compositionAnimationSource.find(
+                  "StartVisualTransformAnimation(") !=
+                    std::string::npos &&
+                backdropCompositorSource.find(
+                  "CreateScalarKeyFrameAnimation()") !=
+                    std::string::npos &&
+                backdropCompositorSource.find(
+                  "root.StartAnimation(L\"Opacity\", opacityAnimation)") !=
+                    std::string::npos &&
+                CountOccurrences(
+                  quickNavigationWindowSource,
+                  "StartQuickNavigationCompositionAnimation()") == 3 &&
+                animationSchedulerSource.find(
+                  "!quickNavigationAnimationCompositorDriven_") !=
+                    std::string::npos,
+            "acrylic quick navigation transforms must run on both compositors and use scheduler frames only as fallback");
         Check(compositionAnimationSource.find(
                   "ScaleSegmentNormalizedStartSlope(") !=
                     std::string::npos &&

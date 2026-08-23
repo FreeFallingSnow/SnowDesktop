@@ -80,6 +80,13 @@ void DesktopApp::EnsureQuickNavTextFormats()
  */
 void DesktopApp::ResetQuickNavCompositionResources()
 {
+    if (quickNavigationAnimationCompletionToken_)
+    {
+        uiAnimationScheduler_.Cancel(
+            quickNavigationAnimationCompletionToken_);
+    }
+    quickNavigationAnimationCompletionToken_ = 0;
+    quickNavigationAnimationCompositorDriven_ = false;
     brushCache_.clear();
     brushCacheContext_ = nullptr;
     quickNavSysIconCache_.clear();
@@ -198,6 +205,28 @@ HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
                 L"QuickNav SetEffect FAILED hr=0x%08X",
                 static_cast<unsigned>(hr));
             WriteDiagnosticLogEntry(buf);
+            return hr;
+        }
+    }
+    if (!quickNavDcompScaleTransform_)
+    {
+        HRESULT hr = quickNavDcompDevice_->CreateScaleTransform(
+            &quickNavDcompScaleTransform_);
+        if (FAILED(hr) || !quickNavDcompScaleTransform_)
+        {
+            wchar_t buf[128];
+            wsprintfW(
+                buf,
+                L"QuickNav CreateScaleTransform FAILED hr=0x%08X",
+                static_cast<unsigned>(hr));
+            WriteDiagnosticLogEntry(buf);
+            return FAILED(hr) ? hr : E_FAIL;
+        }
+        hr = quickNavDcompVisual_->SetTransform(
+            quickNavDcompScaleTransform_.Get());
+        if (FAILED(hr))
+        {
+            quickNavDcompScaleTransform_.Reset();
             return hr;
         }
     }

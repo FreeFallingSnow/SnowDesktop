@@ -385,6 +385,143 @@ bool DesktopApp::FlushPendingQuickNavigationCompositionCommit()
     return false;
 }
 
+bool DesktopApp::StartQuickNavigationCompositionAnimation()
+{
+    if (!quickNavigationAnimation_.IsAnimating())
+        return false;
+
+    if (quickNavigationAnimationCompletionToken_)
+    {
+        uiAnimationScheduler_.Cancel(
+            quickNavigationAnimationCompletionToken_);
+    }
+    quickNavigationAnimationCompletionToken_ = 0;
+    if (quickNavigationAnimationFrameToken_)
+    {
+        uiAnimationScheduler_.Cancel(
+            quickNavigationAnimationFrameToken_);
+    }
+    quickNavigationAnimationFrameToken_ = 0;
+    quickNavigationAnimationCompositorDriven_ = false;
+
+    // Snap both compositor trees to the same logical frame before attaching
+    // native animations. This also disconnects a previous animation during a
+    // rapid open/close reversal and hides the native search edit until rest.
+    ApplyQuickNavigationAnimationFrame();
+    if (!quickNavDcompDevice_ || !quickNavDcompVisual_ ||
+        !quickNavDcompEffect_ || !quickNavDcompScaleTransform_)
+    {
+        return false;
+    }
+
+    const auto visual = quickNavigationAnimation_.GetVisual();
+    const bool opening = quickNavigationAnimation_.IsOpening();
+    const float targetScale = opening
+        ? 1.0f
+        : snowdesktop::quick_navigation_animation_rules::
+            kMinimumScale;
+    const float targetOpacity = opening ? 1.0f : 0.0f;
+    const float normalizedStartSlope =
+        snowdesktop::quick_navigation_animation_rules::
+            SegmentNormalizedStartSlope(
+                visual.progress, opening);
+    const float remaining = opening
+        ? 1.0f - visual.progress : visual.progress;
+    const UINT duration = std::max<UINT>(
+        1, static_cast<UINT>(std::lround(
+            remaining * static_cast<float>(opening
+                ? snowdesktop::quick_navigation_animation_rules::
+                    kOpenDurationMs
+                : snowdesktop::quick_navigation_animation_rules::
+                    kCloseDurationMs))));
+
+    bool backdropAnimationStarted = false;
+    if (quickNavGlassTheme_ &&
+        quickNavBackdropCompositor_.IsAvailable())
+    {
+        backdropAnimationStarted =
+            quickNavBackdropCompositor_.
+                StartVisualTransformAnimation(
+                    visual.scale, targetScale,
+                    visual.opacity, targetOpacity,
+                    static_cast<float>(
+                        quickNavigationAnimationAnchorPoint_.x -
+                        quickNavigationHostRect_.left),
+                    static_cast<float>(
+                        quickNavigationAnimationAnchorPoint_.y -
+                        quickNavigationHostRect_.top),
+                    duration, normalizedStartSlope);
+        if (!backdropAnimationStarted)
+            return false;
+    }
+
+    Microsoft::WRL::ComPtr<IDCompositionAnimation> scaleAnimation;
+    Microsoft::WRL::ComPtr<IDCompositionAnimation> opacityAnimation;
+    HRESULT hr = CreateSmoothStepAnimation(
+        quickNavDcompDevice_.Get(), visual.scale, targetScale,
+        duration, &scaleAnimation, normalizedStartSlope);
+    if (SUCCEEDED(hr))
+    {
+        hr = CreateSmoothStepAnimation(
+            quickNavDcompDevice_.Get(), visual.opacity, targetOpacity,
+            duration, &opacityAnimation, normalizedStartSlope);
+    }
+    if (SUCCEEDED(hr))
+    {
+        hr = quickNavDcompScaleTransform_->SetScaleX(
+            scaleAnimation.Get());
+    }
+    if (SUCCEEDED(hr))
+    {
+        hr = quickNavDcompScaleTransform_->SetScaleY(
+            scaleAnimation.Get());
+    }
+    if (SUCCEEDED(hr))
+        hr = quickNavDcompEffect_->SetOpacity(opacityAnimation.Get());
+    if (FAILED(hr) || !CommitQuickNavigationCompositionFrame())
+    {
+        ApplyQuickNavigationAnimationFrame();
+        return false;
+    }
+
+    quickNavigationAnimationCompositorDriven_ = true;
+    quickNavigationAnimationCompletionToken_ =
+        uiAnimationScheduler_.ScheduleOnce(
+            duration + 2,
+            [this](snowdesktop::UiScheduleToken token) {
+                if (quickNavigationAnimationCompletionToken_ != token)
+                    return;
+                quickNavigationAnimationCompletionToken_ = 0;
+                quickNavigationAnimationCompositorDriven_ = false;
+                quickNavigationAnimation_.Advance(
+                    static_cast<std::uint64_t>(
+                        snowdesktop::UiAnimationScheduler::
+                            MonotonicMilliseconds()));
+                if (!quickNavigationAnimation_.IsAnimating() &&
+                    quickNavigationAnimation_.IsHidden())
+                {
+                    FinalizeCloseQuickNavigation();
+                    return;
+                }
+                if (quickNavigationAnimation_.IsAnimating())
+                {
+                    if (StartQuickNavigationCompositionAnimation())
+                        return;
+                    ApplyQuickNavigationAnimationFrame();
+                    EnsureUiAnimationFrame();
+                    return;
+                }
+                ApplyQuickNavigationAnimationFrame();
+            });
+    if (!quickNavigationAnimationCompletionToken_)
+    {
+        quickNavigationAnimationCompositorDriven_ = false;
+        ApplyQuickNavigationAnimationFrame();
+        return false;
+    }
+    return true;
+}
+
 void DesktopApp::FlushNativeMenuPresentation()
 {
     if (!snowdesktop::native_menu_presentation_rules::

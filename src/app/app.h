@@ -1235,6 +1235,8 @@ private:
         std::function<void()> action);
     /** @brief 将快速导航动画的当前视觉状态同步到内容、毛玻璃和搜索框。 */
     void ApplyQuickNavigationAnimationFrame();
+    /** @brief 尝试由系统合成器自驱快速导航内容与毛玻璃动画。 */
+    bool StartQuickNavigationCompositionAnimation();
     /** @brief 动画结束后释放快速导航窗口和临时数据。 */
     void FinalizeCloseQuickNavigation();
     /** @brief 创建快速导航窗口。 @return 成功返回 true */
@@ -3201,6 +3203,7 @@ private:
     ComPtr<IDCompositionTarget> quickNavDcompTarget_;
     ComPtr<IDCompositionVisual2> quickNavDcompVisual_;
     ComPtr<IDCompositionEffectGroup> quickNavDcompEffect_;
+    ComPtr<IDCompositionScaleTransform> quickNavDcompScaleTransform_;
     ComPtr<IDCompositionSurface> quickNavDcompSurface_;
     UINT quickNavCompWidth_ = 0;
     UINT quickNavCompHeight_ = 0;
@@ -3558,6 +3561,9 @@ private:
     bool quickNavigationTopmost_ = true;
     snowdesktop::quick_navigation_animation_rules::State
         quickNavigationAnimation_;
+    snowdesktop::UiScheduleToken
+        quickNavigationAnimationCompletionToken_ = 0;
+    bool quickNavigationAnimationCompositorDriven_ = false;
     QuickNavigationInvocationSource quickNavigationInvocationSource_ =
         QuickNavigationInvocationSource::Pointer;
     std::function<void()> quickNavigationPostCloseAction_;

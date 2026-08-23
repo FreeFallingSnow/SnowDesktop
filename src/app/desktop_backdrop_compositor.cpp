@@ -842,6 +842,19 @@ bool DesktopBackdropCompositor::StartVisualScaleAnimation(
     std::uint32_t durationMilliseconds,
     float normalizedStartSlope)
 {
+    return StartVisualTransformAnimation(
+        fromScale, toScale, opacity, opacity,
+        anchorX, anchorY, durationMilliseconds,
+        normalizedStartSlope);
+}
+
+bool DesktopBackdropCompositor::StartVisualTransformAnimation(
+    float fromScale, float toScale,
+    float fromOpacity, float toOpacity,
+    float anchorX, float anchorY,
+    std::uint32_t durationMilliseconds,
+    float normalizedStartSlope)
+{
     if (!impl_ || !impl_->available || !impl_->root ||
         !impl_->compositor || durationMilliseconds == 0 ||
         !impl_->contentWindow || !IsWindow(impl_->contentWindow))
@@ -851,8 +864,10 @@ bool DesktopBackdropCompositor::StartVisualScaleAnimation(
         std::clamp(fromScale, 0.01f, 1.0f);
     const float clampedTo =
         std::clamp(toScale, 0.01f, 1.0f);
-    const float clampedOpacity =
-        std::clamp(opacity, 0.0f, 1.0f);
+    const float clampedFromOpacity =
+        std::clamp(fromOpacity, 0.0f, 1.0f);
+    const float clampedToOpacity =
+        std::clamp(toOpacity, 0.0f, 1.0f);
     const float clampedStartSlope =
         std::clamp(normalizedStartSlope, 0.0f, 2.0f);
 
@@ -877,17 +892,27 @@ bool DesktopBackdropCompositor::StartVisualScaleAnimation(
             1.0f,
             wfn::float3{ clampedTo, clampedTo, 1.0f },
             easing);
+        auto opacityAnimation =
+            impl_->compositor.CreateScalarKeyFrameAnimation();
+        opacityAnimation.Duration(wf::TimeSpan{
+            static_cast<std::int64_t>(
+                durationMilliseconds) * 10'000LL });
+        opacityAnimation.InsertKeyFrame(
+            0.0f, clampedFromOpacity);
+        opacityAnimation.InsertKeyFrame(
+            1.0f, clampedToOpacity, easing);
 
         impl_->root.CenterPoint(wfn::float3{
             anchorX, anchorY, 0.0f });
-        impl_->root.Opacity(clampedOpacity);
         impl_->SetAnimationPathRegionExpanded(
             std::min(clampedFrom, clampedTo) < 0.9995f);
-        // Keep the final value as the base property. Direct assignment also
-        // disconnects a prior Scale animation before a rapid reversal.
+        // Keep final values as the base properties. Direct assignments also
+        // disconnect prior animations before a rapid reversal.
         impl_->root.Scale(wfn::float3{
             clampedTo, clampedTo, 1.0f });
+        impl_->root.Opacity(clampedToOpacity);
         impl_->root.StartAnimation(L"Scale", animation);
+        impl_->root.StartAnimation(L"Opacity", opacityAnimation);
         impl_->RequestCommit();
         return true;
     }
@@ -900,6 +925,7 @@ bool DesktopBackdropCompositor::StartVisualScaleAnimation(
     {
         impl_->root.Scale(wfn::float3{
             clampedFrom, clampedFrom, 1.0f });
+        impl_->root.Opacity(clampedFromOpacity);
         impl_->SetAnimationPathRegionExpanded(
             clampedFrom < 0.9995f);
         impl_->RequestCommit();

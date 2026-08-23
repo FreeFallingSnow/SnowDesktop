@@ -428,6 +428,16 @@ void TestAnimationRules()
             kMinimumScale) < 80.0f,
         "the panel edge contracts toward the Dock search icon");
     Check(NearlyEqual(
+            SegmentNormalizedStartSlope(0.0f, true), 0.0f) &&
+            NearlyEqual(
+                SegmentNormalizedStartSlope(1.0f, false), 0.0f),
+        "terminal smoothstep segments start at rest");
+    Check(NearlyEqual(
+            SegmentNormalizedStartSlope(0.5f, true), 1.5f) &&
+            NearlyEqual(
+                SegmentNormalizedStartSlope(0.5f, false), 1.5f),
+        "open and close compositor segments preserve midpoint velocity");
+    Check(NearlyEqual(
             ScaleCoordinate(
                 640.0f, 1200.0f, 1.0f),
             640.0f),
@@ -458,6 +468,9 @@ void TestAnimationRules()
             closing.scale,
             state.GetVisual().scale),
         "reopening keeps scale continuous");
+    Check(SegmentNormalizedStartSlope(
+            closing.progress, true) > 0.0f,
+        "a reversed compositor segment carries forward its current velocity");
     state.Advance(2000);
     Check(!state.IsAnimating(),
         "reopened animation completes");
