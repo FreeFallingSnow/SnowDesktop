@@ -1,5 +1,6 @@
-#include <cstdlib>
 #include <array>
+#include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -25,7 +26,9 @@ std::string ReadFile(const fs::path& path)
     Check(file.good(), "unable to read built-in widget source");
     std::ostringstream stream;
     stream << file.rdbuf();
-    return stream.str();
+    std::string source = stream.str();
+    source.erase(std::remove(source.begin(), source.end(), '\r'), source.end());
+    return source;
 }
 
 std::string_view Section(const std::string& source,

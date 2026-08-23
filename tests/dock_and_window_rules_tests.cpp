@@ -34,8 +34,9 @@
 #include <dwrite.h>
 #include <wrl/client.h>
 
-#include <climits>
+#include <algorithm>
 #include <array>
+#include <climits>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -63,7 +64,9 @@ std::string ReadFile(const std::filesystem::path& path)
     if (!file) return {};
     std::ostringstream contents;
     contents << file.rdbuf();
-    return contents.str();
+    std::string source = contents.str();
+    source.erase(std::remove(source.begin(), source.end(), '\r'), source.end());
+    return source;
 }
 
 std::size_t CountOccurrences(
