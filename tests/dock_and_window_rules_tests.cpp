@@ -4011,6 +4011,97 @@ int main(int argc, char** argv)
                   "FinalizeCloseCollectionPopup();") ==
                     std::string::npos,
             "closing the floating Dock must not own or finalize a shared popup");
+        const std::size_t closeFloatingDockBegin =
+            floatingDockInteractionSource.find(
+                "void DesktopApp::CloseFloatingDock(");
+        const std::size_t closeFloatingDockEnd =
+            floatingDockInteractionSource.find(
+                "void DesktopApp::CloseFloatingDockThen(",
+                closeFloatingDockBegin);
+        const std::string closeFloatingDockSource =
+            closeFloatingDockBegin != std::string::npos &&
+                    closeFloatingDockEnd != std::string::npos
+                ? floatingDockInteractionSource.substr(
+                    closeFloatingDockBegin,
+                    closeFloatingDockEnd - closeFloatingDockBegin)
+                : std::string{};
+        const std::size_t closeDesktopCacheVisible =
+            closeFloatingDockSource.find(
+                "floatingDockDesktopCacheEffect_->SetOpacity(1.0f)");
+        const std::size_t closeFloatingContentHidden =
+            closeFloatingDockSource.find(
+                "floatingDockDcompEffect_->SetOpacity(0.0f)",
+                closeDesktopCacheVisible);
+        const std::size_t closeContentCommit =
+            closeFloatingDockSource.find(
+                "FlushPendingCompositionCommit()",
+                closeFloatingContentHidden);
+        const std::size_t closeDesktopGlassVisible =
+            closeFloatingDockSource.find(
+                "desktopBackdropCompositor_.SetPanelOpacity(",
+                closeContentCommit);
+        const std::size_t closeFloatingGlassHidden =
+            closeFloatingDockSource.find(
+                "SetVisualOpacity(0.0f)",
+                closeDesktopGlassVisible);
+        const std::size_t closeGlassCommit =
+            closeFloatingDockSource.find(
+                "CommitVisualChangesAndNotify(",
+                closeFloatingGlassHidden);
+        const std::size_t closeDeferredReturn =
+            closeFloatingDockSource.find(
+                "if (deferBackdropHandoff)",
+                closeGlassCommit);
+        Check(!closeFloatingDockSource.empty() &&
+                closeDesktopCacheVisible != std::string::npos &&
+                closeFloatingContentHidden != std::string::npos &&
+                closeContentCommit != std::string::npos &&
+                closeDesktopGlassVisible != std::string::npos &&
+                closeFloatingGlassHidden != std::string::npos &&
+                closeGlassCommit != std::string::npos &&
+                closeDeferredReturn != std::string::npos &&
+                closeDesktopCacheVisible < closeFloatingContentHidden &&
+                closeFloatingContentHidden < closeContentCommit &&
+                closeContentCommit < closeDesktopGlassVisible &&
+                closeDesktopGlassVisible < closeFloatingGlassHidden &&
+                closeFloatingGlassHidden < closeGlassCommit &&
+                closeGlassCommit < closeDeferredReturn,
+            "floating Dock close must queue content and glass ownership changes before awaiting either channel");
+        const std::size_t completeFloatingDockBegin =
+            floatingDockInteractionSource.find(
+                "void DesktopApp::CompleteFloatingDockCloseHandoff()");
+        const std::size_t completeFloatingDockEnd =
+            floatingDockInteractionSource.find(
+                "void DesktopApp::FinishFloatingDockCloseHandoff()",
+                completeFloatingDockBegin);
+        const std::string completeFloatingDockSource =
+            completeFloatingDockBegin != std::string::npos &&
+                    completeFloatingDockEnd != std::string::npos
+                ? floatingDockInteractionSource.substr(
+                    completeFloatingDockBegin,
+                    completeFloatingDockEnd - completeFloatingDockBegin)
+                : std::string{};
+        const std::size_t closeContentFence =
+            completeFloatingDockSource.find(
+                "WaitForCompositionPresentation(");
+        const std::size_t closePopupPair =
+            completeFloatingDockSource.find(
+                "floatingDockBackdropCompositor_.HidePopupWindowPair(",
+                closeContentFence);
+        Check(!completeFloatingDockSource.empty() &&
+                closeContentFence != std::string::npos &&
+                closePopupPair != std::string::npos &&
+                closeContentFence < closePopupPair &&
+                completeFloatingDockSource.find(
+                    "floatingDockDesktopCacheEffect_->SetOpacity(1.0f)") ==
+                        std::string::npos &&
+                completeFloatingDockSource.find(
+                    "floatingDockDcompEffect_->SetOpacity(0.0f)") ==
+                        std::string::npos &&
+                completeFloatingDockSource.find(
+                    "ShowWindow(floatingDockHwnd_, SW_HIDE)") ==
+                        std::string::npos,
+            "floating Dock completion must fence the paired state and hide its content/backdrop windows together");
         const std::size_t finalizePopupBegin =
             popupLifecycleSource.find(
                 "void DesktopApp::FinalizeCloseCollectionPopup()");

@@ -382,10 +382,9 @@ void DesktopApp::CloseFloatingDock(
         IsWindow(floatingDockHwnd_))
         ValidateRect(floatingDockHwnd_, nullptr);
 
-    // Stage an invisible desktop glass panel, then exchange its opacity with
-    // the floating root in the shared Windows Composition transaction. The
-    // floating D2D content remains the only content copy during this glass
-    // hand-off and sees one continuous backdrop underneath it.
+    // Stage the desktop glass target without presenting it. The content and
+    // glass ownership exchanges are queued together below, matching the
+    // reveal path and Quick Navigation's paired content/backdrop updates.
     const PersonalizationSettings& glassSettings =
         floatingDockPersonalization_;
     const float desktopPanelRadius =
@@ -396,11 +395,11 @@ void DesktopApp::CloseFloatingDock(
         glassSettings.glassEnabled &&
         desktopBackdropCompositor_.IsAvailable() &&
         floatingDockBackdropCompositor_.IsAvailable();
-    bool deferBackdropHandoff = false;
+    bool stagedDesktopGlass = false;
     if (canTransferGlass)
     {
         desktopBackdropCompositor_.BeginFrame(false);
-        const bool stagedDesktopGlass =
+        stagedDesktopGlass =
             desktopBackdropCompositor_.AddPanel(
                 desktopDockPanelRect,
                 desktopPanelRadius,
@@ -413,42 +412,7 @@ void DesktopApp::CloseFloatingDock(
         // zero opacity on its own; the desktop/floating opacity exchange below
         // is the single shared-compositor commit for this hand-off.
         desktopBackdropCompositor_.EndFrame(false);
-        if (stagedDesktopGlass)
-        {
-            // Do not present the zero-opacity staging panel on its own. Queue
-            // the glass ownership exchange now, then let the desktop D2D
-            // paint below commit both hand-offs before the single final DWM
-            // barrier. Separate barriers here made close visibly happen in
-            // three steps: glass changed first, content followed later.
-            desktopBackdropCompositor_.SetPanelOpacity(
-                desktopDockPanelRect, 1.0f);
-            floatingDockBackdropCompositor_.
-                SetVisualOpacity(0.0f);
-            const HWND notifyWindow =
-                controlHwnd_ && IsWindow(controlHwnd_)
-                    ? controlHwnd_ : hwnd_;
-            const UINT_PTR commitToken =
-                ++floatingDockBackdropCommitToken_;
-            deferBackdropHandoff =
-                floatingDockBackdropCompositor_.
-                    CommitVisualChangesAndNotify(
-                        notifyWindow,
-                        kFloatingDockBackdropCommitMessage,
-                        commitToken);
-            floatingDockBackdropCleanupPending_ =
-                deferBackdropHandoff;
-            if (!deferBackdropHandoff)
-            {
-                // Older compositors do not expose a completion callback. Use
-                // the DWM barrier before beginning the DComp content hand-off
-                // so this compatibility path still cannot skip the glass
-                // ownership frame.
-                floatingDockBackdropCompositor_.
-                    CommitVisualChanges();
-                DwmFlush();
-            }
-        }
-        else
+        if (!stagedDesktopGlass)
         {
             floatingDockBackdropCompositor_.
                 SetVisible(false);
@@ -460,13 +424,73 @@ void DesktopApp::CloseFloatingDock(
             SetVisible(false);
     }
 
+    // Queue the reverse of ShowFloatingDock's content exchange without
+    // waiting for DComp in isolation. Waiting here used to make WinComp hide
+    // the floating glass for a complete frame while its content HWND remained
+    // visible. Both channels now receive one logical close state before any
+    // asynchronous completion is observed.
+    HRESULT concealHr = floatingDockDesktopCacheEffect_
+        ? floatingDockDesktopCacheEffect_->SetOpacity(1.0f)
+        : E_UNEXPECTED;
+    if (SUCCEEDED(concealHr))
+    {
+        concealHr = floatingDockDcompEffect_
+            ? floatingDockDcompEffect_->SetOpacity(0.0f)
+            : E_UNEXPECTED;
+    }
+    if (SUCCEEDED(concealHr))
+    {
+        CommitCompositionAnimationFrame();
+        concealHr = FlushPendingCompositionCommit()
+            ? S_OK : E_FAIL;
+    }
+    if (FAILED(concealHr))
+    {
+        wchar_t message[176]{};
+        wsprintfW(message,
+            L"Floating Dock paired conceal FAILED hr=0x%08X",
+            static_cast<unsigned>(concealHr));
+        WriteDiagnosticLogEntry(message);
+    }
+
+    bool deferBackdropHandoff = false;
+    if (stagedDesktopGlass)
+    {
+        desktopBackdropCompositor_.SetPanelOpacity(
+            desktopDockPanelRect, 1.0f);
+        floatingDockBackdropCompositor_.
+            SetVisualOpacity(0.0f);
+        const HWND notifyWindow =
+            controlHwnd_ && IsWindow(controlHwnd_)
+                ? controlHwnd_ : hwnd_;
+        const UINT_PTR commitToken =
+            ++floatingDockBackdropCommitToken_;
+        deferBackdropHandoff =
+            floatingDockBackdropCompositor_.
+                CommitVisualChangesAndNotify(
+                    notifyWindow,
+                    kFloatingDockBackdropCommitMessage,
+                    commitToken);
+        floatingDockBackdropCleanupPending_ =
+            deferBackdropHandoff;
+        if (!deferBackdropHandoff)
+        {
+            // Older compositors do not expose a completion callback. Both
+            // ownership exchanges are already queued, so one compatibility
+            // barrier covers the paired close state.
+            floatingDockBackdropCompositor_.
+                CommitVisualChanges();
+            DwmFlush();
+        }
+    }
+
     floatingDockRevealPending_ = false;
     floatingDockLastPointerPresentTick_ = 0;
     if (deferBackdropHandoff)
     {
-        // Keep the floating content and its old glass paired until WinComp
-        // confirms that the desktop glass target is live. The completion
-        // message performs the DComp content exchange on the UI thread.
+        // Both content and glass exchanges are already queued. The completion
+        // message fences the content frame and hides the two popup-owned HWNDs
+        // together; it does not initiate a second visible ownership phase.
         floatingDockClosePending_ = true;
         return;
     }
@@ -500,42 +524,23 @@ void DesktopApp::CompleteFloatingDockCloseHandoff()
     const RECT desktopDockRect =
         floatingDockCloseDesktopRect_;
 
-    // First move the exact floating surface to the desktop child visual. If
-    // DWM presents the two HWND targets on adjacent frames, both copies are
-    // pixel-identical (including the current hover state), so no second Dock
-    // or empty panel can be perceived.
-    HRESULT concealHr = floatingDockDesktopCacheEffect_
-        ? floatingDockDesktopCacheEffect_->SetOpacity(1.0f)
-        : E_UNEXPECTED;
-    if (SUCCEEDED(concealHr))
+    // CloseFloatingDock queued the content exchange beside the WinComp glass
+    // exchange. Fence that already-submitted DComp state before withdrawing
+    // the popup-owned windows; do not create a second visible close phase.
+    if (!WaitForCompositionPresentation(
+            L"Floating Dock paired conceal"))
     {
-        concealHr = floatingDockDcompEffect_
-            ? floatingDockDcompEffect_->SetOpacity(0.0f)
-            : E_UNEXPECTED;
-    }
-    if (SUCCEEDED(concealHr))
-    {
-        CommitCompositionAnimationFrame();
-        concealHr = WaitForCompositionPresentation(
-                L"Floating Dock cached conceal")
-            ? S_OK : E_FAIL;
-    }
-    if (FAILED(concealHr))
-    {
-        wchar_t message[176]{};
-        wsprintfW(message,
-            L"Floating Dock cached conceal FAILED hr=0x%08X",
-            static_cast<unsigned>(concealHr));
-        WriteDiagnosticLogEntry(message);
+        WriteDiagnosticLogEntry(
+            L"Floating Dock paired conceal did not complete");
     }
 
     floatingDockVisible_ = false;
     floatingDockPointerPresentPending_ = false;
-    if (floatingDockHwnd_ &&
-        IsWindow(floatingDockHwnd_))
-    {
-        ShowWindow(floatingDockHwnd_, SW_HIDE);
-    }
+    // The content HWND and its backdrop helper belong to this Dock lifecycle.
+    // Hide them in one User32 transaction so a late WinComp presentation can
+    // never expose a helper-only glass frame over the desktop cache.
+    floatingDockBackdropCompositor_.HidePopupWindowPair(
+        floatingDockHwnd_);
     floatingDockDesktopBackdropHandoffRect_ = {};
 
     // Mirror the reveal transaction on the same desktop target: retire the
