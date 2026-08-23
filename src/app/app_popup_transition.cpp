@@ -181,6 +181,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
     case snowdesktop::popup_animation_rules::
         ExistingSourceAction::ReopenExisting:
         pendingCollectionPopupOpen_.reset();
+        AdvanceFloatingPopupContentGeneration();
         StartCollectionPopupAnimation(true);
         InvalidateCollectionPopupAnimation(true);
         return;
@@ -190,6 +191,12 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
         pendingCollectionPopupOpen_.reset();
         break;
     }
+
+    // The low-level outside-click notification is posted asynchronously.
+    // Bind it to the collection content that existed at button-down so the
+    // press which requested this popup cannot dismiss the newly published
+    // content after its release handler returns.
+    AdvanceFloatingPopupContentGeneration();
 
     if (DockContainer* dock =
             GetDockContainerAtPoint(anchorPoint))

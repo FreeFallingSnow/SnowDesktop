@@ -157,6 +157,7 @@ void DesktopApp::OpenDockFolderPopupAt(
         popupAnimation_.IsClosing() &&
         dockFolderPopupOpen_ &&
         dockFolderPopupSourceId_ == sourceId;
+    AdvanceFloatingPopupContentGeneration();
     dockFolderPopupOpen_ = true;
     dockFolderPopupAvailable_ = target.available;
     dockFolderPopupSourceId_ = sourceId;

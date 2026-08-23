@@ -3939,6 +3939,24 @@ int main(int argc, char** argv)
                 luaResumeClosingPanel != std::string::npos &&
                 luaPublishFreshPanel != std::string::npos,
             "publishing a new or resumed Lua panel must invalidate outside-click notifications queued for older popup contents");
+        const std::size_t collectionReopenGeneration =
+            popupTransitionSource.find(
+                "ExistingSourceAction::ReopenExisting:\n"
+                "        pendingCollectionPopupOpen_.reset();\n"
+                "        AdvanceFloatingPopupContentGeneration();");
+        const std::size_t collectionPublishGeneration =
+            popupTransitionSource.find(
+                "AdvanceFloatingPopupContentGeneration();\n\n"
+                "    if (DockContainer* dock =",
+                collectionReopenGeneration);
+        const std::size_t folderPopupGeneration =
+            popupLifecycleSource.find(
+                "AdvanceFloatingPopupContentGeneration();\n"
+                "    dockFolderPopupOpen_ = true;");
+        Check(collectionReopenGeneration != std::string::npos &&
+                collectionPublishGeneration != std::string::npos &&
+                folderPopupGeneration != std::string::npos,
+            "publishing a new, resumed, or Dock-folder collection popup must invalidate outside-click notifications queued for older popup contents");
         const std::size_t luaFinalizeBegin = luaPanelSource.find(
             "void DesktopApp::FinalizeCloseLuaWidgetPanel(");
         const std::size_t luaFinalizeEnd = luaPanelSource.find(
