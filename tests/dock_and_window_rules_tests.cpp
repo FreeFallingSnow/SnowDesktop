@@ -1875,6 +1875,22 @@ int main(int argc, char** argv)
             !floatingPopup::ShouldRevealHost(true, true) &&
             !floatingPopup::ShouldRevealHost(true, false),
         "a hidden shared popup host must remain concealed during staging and reveal only after a present request");
+    Check(!floatingPopup::
+              ShouldCancelPointerPressForHostMessage(
+                  true, 101u, 202u, true, false) &&
+            floatingPopup::
+              ShouldCancelPointerPressForHostMessage(
+                  true, 101u, 101u, true, false) &&
+            floatingPopup::
+              ShouldCancelPointerPressForHostMessage(
+                  true, 101u, 0u, false, false) &&
+            !floatingPopup::
+              ShouldCancelPointerPressForHostMessage(
+                  false, 101u, 101u, true, true) &&
+            floatingPopup::
+              ShouldCancelPointerPressForHostMessage(
+                  false, 101u, 101u, true, false),
+        "an old popup host cancel message must not clear a press whose capture has transferred to another owned host");
     Check(floatingPopup::ShouldBeTopmost(true, 0) &&
             !floatingPopup::ShouldBeTopmost(true, 1) &&
             !floatingPopup::ShouldBeTopmost(false, 0),

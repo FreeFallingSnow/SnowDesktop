@@ -198,6 +198,22 @@ void DesktopApp::HandleFloatingPopupExternalPointerDown(
                 luaWidgetPanelRequest_.dismissOnOutside,
                 targetBelongsToCurrentProcess,
                 dragActive);
+    if (dismissCollection || dismissLuaPanel)
+    {
+        wchar_t message[320]{};
+        swprintf_s(
+            message,
+            L"Popup input trace: external-pointer generation=%u current=%u target=%p owned=%d collection=%d lua=%d dismissCollection=%d dismissLua=%d",
+            generation,
+            floatingPopupMouseHookGeneration_,
+            targetWindow,
+            targetBelongsToCurrentProcess ? 1 : 0,
+            IsCollectionPopupHostedByFloatingWindow() ? 1 : 0,
+            IsLuaPanelHostedByFloatingWindow() ? 1 : 0,
+            dismissCollection ? 1 : 0,
+            dismissLuaPanel ? 1 : 0);
+        WriteDiagnosticLogEntry(message);
+    }
     if (dismissCollection)
     {
         pendingCollectionPopupOpen_.reset();
@@ -1058,14 +1074,26 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
     case WM_CANCELMODE:
     case WM_CAPTURECHANGED:
         ForgetLuaWidgetPanelCapture(hwnd);
-        if (msg == WM_CANCELMODE ||
-            !IsOwnedPointerCaptureWindow(
-                reinterpret_cast<HWND>(lp)))
         {
-            if (CanCancelPointerPressAfterCaptureLoss())
-            {
-                CancelPointerPressWithoutCaptureRelease();
-            }
+            const HWND currentCapture = GetCapture();
+            const HWND nextCapture =
+                reinterpret_cast<HWND>(lp);
+            const bool shouldCancel =
+                snowdesktop::floating_popup_rules::
+                    ShouldCancelPointerPressForHostMessage(
+                        msg == WM_CANCELMODE,
+                        hwnd,
+                        currentCapture,
+                        IsOwnedPointerCaptureWindow(
+                            currentCapture),
+                        IsOwnedPointerCaptureWindow(
+                            nextCapture));
+            if (!shouldCancel)
+                return 0;
+        }
+        if (CanCancelPointerPressAfterCaptureLoss())
+        {
+            CancelPointerPressWithoutCaptureRelease();
         }
         return 0;
     case WM_LBUTTONDBLCLK:

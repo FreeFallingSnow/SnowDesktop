@@ -31,6 +31,18 @@ void DesktopApp::OpenLuaWidgetPanel(
 {
     if (request.widgetId.empty())
         return;
+    {
+        wchar_t message[320]{};
+        swprintf_s(
+            message,
+            L"Popup input trace: lua-open widget=%ls surface=%hs generation=%u collection=%d currentLua=%d",
+            request.widgetId.c_str(),
+            request.surface.c_str(),
+            floatingPopupMouseHookGeneration_,
+            GetOpenPopupWidget() ? 1 : 0,
+            luaWidgetPanelRequest_.widgetId.empty() ? 0 : 1);
+        WriteDiagnosticLogEntry(message);
+    }
     if (luaWidgetPanelFinalizing_)
     {
         pendingLuaWidgetPanelOpen_ = request;
@@ -204,7 +216,6 @@ void DesktopApp::CloseLuaWidgetPanel(
     const std::wstring& widgetId,
     const char* reason)
 {
-    (void)reason;
     if (luaWidgetPanelFinalizing_)
     {
         if (pendingLuaWidgetPanelOpen_ &&
@@ -222,6 +233,19 @@ void DesktopApp::CloseLuaWidgetPanel(
         return;
     if (luaWidgetPanelAnimation_.IsClosing())
         return;
+    {
+        wchar_t message[320]{};
+        swprintf_s(
+            message,
+            L"Popup input trace: lua-close widget=%ls reason=%hs generation=%u collection=%d capture=%p focus=%p",
+            luaWidgetPanelRequest_.widgetId.c_str(),
+            reason ? reason : "",
+            floatingPopupMouseHookGeneration_,
+            GetOpenPopupWidget() ? 1 : 0,
+            GetCapture(),
+            GetFocus());
+        WriteDiagnosticLogEntry(message);
+    }
     const bool panelPressActive =
         luaWidgetPanelMouseDown_ ||
         luaWidgetPanelCaptureHwnd_ != nullptr;

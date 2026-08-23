@@ -38,6 +38,25 @@ constexpr bool ShouldRevealHost(
     return !wasVisible && immediatePresent;
 }
 
+template <typename Handle>
+constexpr bool ShouldCancelPointerPressForHostMessage(
+    bool cancelMode,
+    Handle receivingHost,
+    Handle currentCapture,
+    bool currentCaptureOwnedByApp,
+    bool nextCaptureOwnedByApp)
+{
+    if (!cancelMode)
+        return !nextCaptureOwnedByApp;
+
+    // Hiding one popup host can emit WM_CANCELMODE after the physical press
+    // has already transferred capture to another SnowDesktop host. That old
+    // window no longer owns the press and must not clear the new host's state.
+    return currentCapture == Handle{} ||
+        currentCapture == receivingHost ||
+        !currentCaptureOwnedByApp;
+}
+
 constexpr bool ShouldBeTopmost(
     bool visible,
     int shellPopupMenuLayerDepth)

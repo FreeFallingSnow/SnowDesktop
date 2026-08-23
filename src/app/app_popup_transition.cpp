@@ -129,6 +129,19 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
     POINT anchorPoint, const std::wstring& categoryId,
     bool closingStartedByCurrentPress)
 {
+    {
+        wchar_t message[320]{};
+        swprintf_s(
+            message,
+            L"Popup input trace: collection-open index=%llu generation=%u lua=%d currentCollection=%d mouseDown=%d capture=%p",
+            static_cast<unsigned long long>(widgetIndex),
+            floatingPopupMouseHookGeneration_,
+            luaWidgetPanelRequest_.widgetId.empty() ? 0 : 1,
+            GetOpenPopupWidget() ? 1 : 0,
+            mouseDown_ ? 1 : 0,
+            GetCapture());
+        WriteDiagnosticLogEntry(message);
+    }
     if (widgetIndex >= widgets_.size() ||
         widgets_[widgetIndex].type != DesktopWidgetType::Collection)
         return;
