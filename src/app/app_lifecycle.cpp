@@ -179,9 +179,12 @@ void DesktopApp::ResetDesktopWindowResources()
         else
             popupAnimation_.ResetHidden();
         if (!luaWidgetPanelRequest_.widgetId.empty())
-            FinalizeCloseLuaWidgetPanel();
+            FinalizeCloseLuaWidgetPanel(false);
         else
+        {
+            pendingLuaWidgetPanelOpen_.reset();
             luaWidgetPanelAnimation_.ResetHidden();
+        }
         if (dropTargetRegistered_)
             RevokeDragDrop(hwnd_);
     }

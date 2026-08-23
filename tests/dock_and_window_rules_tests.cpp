@@ -3777,15 +3777,79 @@ int main(int argc, char** argv)
                   "root.StartAnimation(L\"Scale\", animation)") !=
                     std::string::npos,
             "acrylic popup scale must run on the compositor and use scheduler frames only as fallback");
-        Check(CountOccurrences(
-                  luaPanelSource, "ReleaseCapture();") == 1 &&
+        Check(compositionAnimationSource.find(
+                  "ScaleSegmentNormalizedStartSlope(") !=
+                    std::string::npos &&
+                compositionAnimationSource.find(
+                  "uiAnimationScheduler_.Cancel(\n            popupAnimationFrameToken_);") !=
+                    std::string::npos &&
+                compositionAnimationSource.find(
+                  "uiAnimationScheduler_.Cancel(\n            luaPanelAnimationFrameToken_);") !=
+                    std::string::npos &&
+                backdropCompositorSource.find(
+                  "clampedStartSlope / 3.0f") !=
+                    std::string::npos &&
+                backdropCompositorSource.find(
+                  "L\"backdrop.restore_scale_animation\"") <
+                backdropCompositorSource.find(
+                  "impl_->Reset();",
+                  backdropCompositorSource.find(
+                    "L\"backdrop.restore_scale_animation\"")),
+            "rapid popup reversals must retain the global easing curve, retire fallback frames, and destroy a faulted backdrop");
+        Check(luaPanelSource.find("ReleaseCapture();") ==
+                    std::string::npos &&
+                CountOccurrences(
+                  luaPanelSource,
+                  "ReleaseCapturePreservingPointerState();") == 1 &&
                 CountOccurrences(
                   luaPanelSource,
                   "ReleaseLuaWidgetPanelCaptureIfOwned();") >= 2 &&
                 pointerDownSource.find(
                   "luaWidgetPanelCaptureHwnd_ = panelCaptureHost;") !=
+                    std::string::npos &&
+                luaPanelSource.find(
+                  "widgetEngine_->CancelInteractionPointerPress(\n                luaWidgetPanelRequest_.surface);") !=
                     std::string::npos,
             "an old Lua panel finalizer must not release a later component press capture");
+        const std::size_t luaFinalizeBegin = luaPanelSource.find(
+            "void DesktopApp::FinalizeCloseLuaWidgetPanel(");
+        const std::size_t luaFinalizeEnd = luaPanelSource.find(
+            "void DesktopApp::CloseLuaWidgetPanel(", luaFinalizeBegin);
+        const std::string luaFinalizeHandler =
+            luaFinalizeBegin == std::string::npos ||
+                luaFinalizeEnd == std::string::npos
+            ? std::string{}
+            : luaPanelSource.substr(
+                luaFinalizeBegin,
+                luaFinalizeEnd - luaFinalizeBegin);
+        const std::size_t luaDetachRequest =
+            luaFinalizeHandler.find(
+                "luaWidgetPanelRequest_ = {};");
+        const std::size_t luaCloseSurface =
+            luaFinalizeHandler.find(
+                "widgetEngine_->CloseWidgetPanelSurface(");
+        const std::size_t luaClosedCallback =
+            luaFinalizeHandler.find(
+                "widgetEngine_->InvokeMouseEvent(",
+                luaCloseSurface);
+        Check(luaPanelSource.find(
+                  "if (luaWidgetPanelFinalizing_)") !=
+                    std::string::npos &&
+                luaPanelSource.find(
+                  "pendingLuaWidgetPanelOpen_ = request;") !=
+                    std::string::npos &&
+                luaPanelSource.find(
+                  "luaWidgetPanelRequest_.surface ==\n                request.surface") !=
+                    std::string::npos &&
+                luaDetachRequest != std::string::npos &&
+                luaCloseSurface != std::string::npos &&
+                luaClosedCallback != std::string::npos &&
+                luaDetachRequest < luaCloseSurface &&
+                luaCloseSurface < luaClosedCallback &&
+                lifecycleSource.find(
+                  "FinalizeCloseLuaWidgetPanel(false);") !=
+                    std::string::npos,
+            "Lua panel replacement must detach the old surface before callbacks, preserve latest-wins requests, and suppress reopen during teardown");
         Check(popupRenderSource.find(
                   "DrawWidgetPanelBackground(") !=
                     std::string::npos &&
@@ -5082,6 +5146,20 @@ int main(int argc, char** argv)
                 finishOleSurfaceCheck < finishOleCursorReset &&
                 finishOleCursorReset < finishOlePostProcessing,
             "every terminal OLE path must release Shell drag data before post-processing and reset its cursor after self-return or on a native resume surface");
+        const std::size_t cancelPressBegin =
+            dragLifecycleSource.find(
+                "void DesktopApp::CancelPointerPressWithoutCaptureRelease()");
+        const std::size_t cancelPressEnd =
+            dragLifecycleSource.find(
+                "void DesktopApp::ReleaseCapturePreservingPointerState()",
+                cancelPressBegin);
+        const std::string cancelPressHandler =
+            cancelPressBegin == std::string::npos ||
+                cancelPressEnd == std::string::npos
+            ? std::string{}
+            : dragLifecycleSource.substr(
+                cancelPressBegin,
+                cancelPressEnd - cancelPressBegin);
         const std::size_t cancelDragBegin =
             dragLifecycleSource.find(
                 "void DesktopApp::CancelActiveItemDrag()");
@@ -5101,7 +5179,7 @@ int main(int argc, char** argv)
                 "void DesktopApp::ClearDockPressedState()");
         const std::size_t clearDockPressEnd =
             dragLifecycleSource.find(
-                "void DesktopApp::CancelActiveItemDrag()",
+                "bool DesktopApp::HasCancelablePointerPressState()",
                 clearDockPressBegin);
         const std::string clearDockPressHandler =
             clearDockPressBegin == std::string::npos ||
@@ -5111,9 +5189,9 @@ int main(int argc, char** argv)
                 clearDockPressBegin,
                 clearDockPressEnd - clearDockPressBegin);
         const std::size_t cancelEndSession =
-            cancelDragHandler.find("EndDragSession();");
+            cancelPressHandler.find("EndDragSession();");
         const std::size_t cancelClearPopupItem =
-            cancelDragHandler.find("ClearPopupMouseDownItem();");
+            cancelPressHandler.find("ClearPopupMouseDownItem();");
         const std::size_t endDragBegin =
             dragLifecycleSource.find(
                 "void DesktopApp::EndDragSession()");
@@ -5137,7 +5215,7 @@ int main(int argc, char** argv)
                 endDragHandler.find(
                   "CancelCollectionGroupTabDwell();") !=
                     std::string::npos &&
-                cancelDragHandler.find(
+                cancelPressHandler.find(
                   "ClearPopupMouseDownItem();") !=
                     std::string::npos &&
                 endDragHandler.find(
@@ -5146,10 +5224,10 @@ int main(int argc, char** argv)
                 endDragSessionState != std::string::npos &&
                 endDragPopupTarget != std::string::npos &&
                 endDragSessionState < endDragPopupTarget &&
-                cancelDragHandler.find(
+                cancelPressHandler.find(
                   "mouseDown_ = false;") !=
                     std::string::npos &&
-                cancelDragHandler.find(
+                cancelPressHandler.find(
                   "ClearDockPressedState();") !=
                     std::string::npos &&
                 clearDockPressHandler.find(
@@ -5161,13 +5239,16 @@ int main(int argc, char** argv)
                 clearDockPressHandler.find(
                   "dockPressedClosedCollectionPopup_ = false;") !=
                     std::string::npos &&
-                cancelDragHandler.find(
+                cancelPressHandler.find(
                   "marqueeActive_ = false;") !=
                     std::string::npos &&
-                cancelDragHandler.find(
+                cancelPressHandler.find(
                   "EndDragSession();") !=
                     std::string::npos &&
                 cancelEndSession < cancelClearPopupItem &&
+                cancelDragHandler.find(
+                  "CancelPointerPressWithoutCaptureRelease();") !=
+                    std::string::npos &&
                 cancelDragHandler.find(
                   "ReleaseCapture();") !=
                     std::string::npos &&
@@ -5178,9 +5259,49 @@ int main(int argc, char** argv)
                   "ClearSelection();\n                    CancelActiveItemDrag();\n                    ReloadItems();") !=
                     std::string::npos &&
                 pointerMoveSource.find(
-                  "ClearDockPressedState();\n                ReleaseCapture();") !=
+                  "ClearDockPressedState();\n                ReleaseCapturePreservingPointerState();") !=
                     std::string::npos,
             "Escape and terminal OLE exits must clear every pressed item-drag state before a later button-up");
+        Check(cancelPressHandler.find(
+                  "widgetAction_ = WidgetAction::None;") !=
+                    std::string::npos &&
+                cancelPressHandler.find(
+                  "widgetScrollbarDragging_ = false;") !=
+                    std::string::npos &&
+                cancelPressHandler.find(
+                  "luaWidgetPanelMouseDown_ = false;") !=
+                    std::string::npos &&
+                cancelPressHandler.find(
+                  "searchable->EndSearchPointerSelection();") !=
+                    std::string::npos &&
+                cancelPressHandler.find(
+                  "pressedDockItem->SetSelected(false);") !=
+                    std::string::npos &&
+                dragLifecycleSource.find(
+                  "expectedCaptureReleaseDepth_ == 0") !=
+                    std::string::npos &&
+                dragLifecycleSource.find(
+                  "!dragDropController_.IsTransportActive()") !=
+                    std::string::npos &&
+                dragLifecycleSource.find(
+                  "return window &&") !=
+                    std::string::npos &&
+                messageDispatchSource.find(
+                  "!IsOwnedPointerCaptureWindow(") !=
+                    std::string::npos &&
+                messageDispatchSource.find(
+                  "CanCancelPointerPressAfterCaptureLoss()") !=
+                    std::string::npos &&
+                floatingDockRenderSource.find(
+                  "CanCancelPointerPressAfterCaptureLoss()") !=
+                    std::string::npos &&
+                floatingPopupSource.find(
+                  "CanCancelPointerPressAfterCaptureLoss()") !=
+                    std::string::npos &&
+                CountOccurrences(
+                  pointerMoveSource,
+                  "ReleaseCapturePreservingPointerState();") >= 1,
+            "unexpected capture loss must cancel the complete local press while preserving OLE-owned handoffs");
         Check(pointerDownSource.find(
                   "dockPressedClosedCollectionPopup_ =\n                        collectionPopupClosedByPointerDown;") !=
                     std::string::npos &&

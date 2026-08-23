@@ -530,8 +530,16 @@ struct DesktopBackdropCompositor::Impl
         available = false;
         panels.clear();
         blurFactories.clear();
-        if (target)
-            target.Root(nullptr);
+        try
+        {
+            if (target)
+                target.Root(nullptr);
+        }
+        catch (...)
+        {
+            // Destruction must continue even if the compositor target is
+            // already faulted; otherwise its helper HWND can remain visible.
+        }
         root = nullptr;
         target = nullptr;
         // The compositor and dispatcher queue are shared by every backdrop
@@ -768,7 +776,8 @@ void DesktopBackdropCompositor::SetVisualTransform(
 bool DesktopBackdropCompositor::StartVisualScaleAnimation(
     float fromScale, float toScale, float opacity,
     float anchorX, float anchorY,
-    std::uint32_t durationMilliseconds)
+    std::uint32_t durationMilliseconds,
+    float normalizedStartSlope)
 {
     if (!impl_ || !impl_->available || !impl_->root ||
         !impl_->compositor || durationMilliseconds == 0 ||
@@ -781,13 +790,17 @@ bool DesktopBackdropCompositor::StartVisualScaleAnimation(
         std::clamp(toScale, 0.01f, 1.0f);
     const float clampedOpacity =
         std::clamp(opacity, 0.0f, 1.0f);
+    const float clampedStartSlope =
+        std::clamp(normalizedStartSlope, 0.0f, 2.0f);
 
     HRESULT animationHr = E_UNEXPECTED;
     try
     {
         const auto easing =
             impl_->compositor.CreateCubicBezierEasingFunction(
-                wfn::float2{ 1.0f / 3.0f, 0.0f },
+                wfn::float2{
+                    1.0f / 3.0f,
+                    clampedStartSlope / 3.0f },
                 wfn::float2{ 2.0f / 3.0f, 1.0f });
         auto animation =
             impl_->compositor.CreateVector3KeyFrameAnimation();
@@ -833,6 +846,7 @@ bool DesktopBackdropCompositor::StartVisualScaleAnimation(
         impl_->SetError(
             L"backdrop.restore_scale_animation",
             winrt::to_hresult());
+        impl_->Reset();
         return false;
     }
     impl_->lastError = FormatHresult(

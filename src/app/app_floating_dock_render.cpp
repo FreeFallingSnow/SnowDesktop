@@ -269,13 +269,13 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
     case WM_CANCELMODE:
     case WM_CAPTURECHANGED:
         if (msg == WM_CANCELMODE ||
-            (reinterpret_cast<HWND>(lp) != hwnd_ &&
-             reinterpret_cast<HWND>(lp) != floatingDockHwnd_ &&
-             reinterpret_cast<HWND>(lp) != floatingPopupHwnd_))
+            !IsOwnedPointerCaptureWindow(
+                reinterpret_cast<HWND>(lp)))
         {
-            ClearDockPressedState();
-            if (widgetEngine_)
-                widgetEngine_->CancelInteractionPointerPress();
+            if (CanCancelPointerPressAfterCaptureLoss())
+            {
+                CancelPointerPressWithoutCaptureRelease();
+            }
         }
         return 0;
     case WM_LBUTTONDBLCLK:

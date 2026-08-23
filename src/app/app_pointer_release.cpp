@@ -1258,7 +1258,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
     dragSession_.DeactivateForDrop();
     mouseDown_ = false;
     mouseDownHit_ = nullptr;
-    ReleaseCapture();
+    ReleaseCapturePreservingPointerState();
     if (commitVisualBeforeDrop)
         CommitDragVisualEndBeforeShellOperation();
 

@@ -7,7 +7,8 @@ HRESULT CreateSmoothStepAnimation(
     IDCompositionDesktopDevice* device,
     float from, float to,
     UINT durationMilliseconds,
-    IDCompositionAnimation** animation)
+    IDCompositionAnimation** animation,
+    float normalizedStartSlope = 0.0f)
 {
     if (!device || !animation || durationMilliseconds == 0)
         return E_INVALIDARG;
@@ -16,17 +17,25 @@ HRESULT CreateSmoothStepAnimation(
     HRESULT hr = device->CreateAnimation(&result);
     const double duration =
         static_cast<double>(durationMilliseconds) / 1000.0;
-    const float delta = to - from;
+    const double delta =
+        static_cast<double>(to) - static_cast<double>(from);
+    const double startSlope = std::clamp(
+        static_cast<double>(normalizedStartSlope), 0.0, 2.0);
+    const double startVelocity =
+        delta * startSlope / duration;
     if (SUCCEEDED(hr))
     {
         hr = result->AddCubic(
             0.0,
             from,
-            0.0f,
-            static_cast<float>(3.0 * delta /
-                (duration * duration)),
-            static_cast<float>(-2.0 * delta /
-                (duration * duration * duration)));
+            static_cast<float>(startVelocity),
+            static_cast<float>(
+                3.0 * delta / (duration * duration) -
+                2.0 * startVelocity / duration),
+            static_cast<float>(
+                -2.0 * delta /
+                    (duration * duration * duration) +
+                startVelocity / (duration * duration)));
     }
     if (SUCCEEDED(hr))
         hr = result->End(duration, to);
@@ -225,7 +234,8 @@ bool DesktopApp::AnimateCompositionAnimationOverlay(
     float fromScale, float toScale,
     POINT anchor,
     float fromOpacity, float toOpacity,
-    UINT durationMilliseconds)
+    UINT durationMilliseconds,
+    float normalizedScaleStartSlope)
 {
     if (!overlay.active || !overlay.visual ||
         !overlay.effect || !overlay.scaleTransform ||
@@ -239,7 +249,8 @@ bool DesktopApp::AnimateCompositionAnimationOverlay(
     Microsoft::WRL::ComPtr<IDCompositionAnimation> opacityAnimation;
     HRESULT hr = CreateSmoothStepAnimation(
         dcompDevice_.Get(), fromScale, toScale,
-        durationMilliseconds, &scaleAnimation);
+        durationMilliseconds, &scaleAnimation,
+        normalizedScaleStartSlope);
     if (SUCCEEDED(hr))
     {
         hr = CreateSmoothStepAnimation(
@@ -512,9 +523,17 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
         uiAnimationScheduler_.Cancel(
             popupAnimationCompletionToken_);
     popupAnimationCompletionToken_ = 0;
+    if (popupAnimationFrameToken_)
+        uiAnimationScheduler_.Cancel(
+            popupAnimationFrameToken_);
+    popupAnimationFrameToken_ = 0;
 
     const auto visual = popupAnimation_.GetVisual();
     const bool opening = popupAnimation_.IsInteractive();
+    const float normalizedScaleStartSlope =
+        snowdesktop::popup_animation_rules::
+            ScaleSegmentNormalizedStartSlope(
+                visual.progress, opening);
     const float remaining = opening
         ? 1.0f - visual.progress : visual.progress;
     const UINT duration = std::max<UINT>(
@@ -549,7 +568,8 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
                         anchor.x - floatingPopupWindowBounds_.left),
                     static_cast<float>(
                         anchor.y - floatingPopupWindowBounds_.top),
-                    duration);
+                    duration,
+                    normalizedScaleStartSlope);
         if (!backdropAnimationStarted)
             return false;
     }
@@ -558,7 +578,8 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
             visual.scale,
             opening ? 1.0f :
                 snowdesktop::popup_animation_rules::kMinimumScale,
-            anchor, 1.0f, 1.0f, duration))
+            anchor, 1.0f, 1.0f, duration,
+            normalizedScaleStartSlope))
     {
         if (backdropAnimationStarted)
             ApplyCollectionPopupBackdropAnimationFrame();
@@ -617,10 +638,18 @@ bool DesktopApp::StartLuaWidgetPanelCompositionAnimation()
             luaWidgetPanelAnimationCompletionToken_);
     }
     luaWidgetPanelAnimationCompletionToken_ = 0;
+    if (luaPanelAnimationFrameToken_)
+        uiAnimationScheduler_.Cancel(
+            luaPanelAnimationFrameToken_);
+    luaPanelAnimationFrameToken_ = 0;
 
     const auto visual = luaWidgetPanelAnimation_.GetVisual();
     const bool opening =
         luaWidgetPanelAnimation_.IsInteractive();
+    const float normalizedScaleStartSlope =
+        snowdesktop::popup_animation_rules::
+            ScaleSegmentNormalizedStartSlope(
+                visual.progress, opening);
     const float remaining = opening
         ? 1.0f - visual.progress : visual.progress;
     const UINT duration = std::max<UINT>(
@@ -643,7 +672,8 @@ bool DesktopApp::StartLuaWidgetPanelCompositionAnimation()
             visual.scale,
             opening ? 1.0f :
                 snowdesktop::popup_animation_rules::kMinimumScale,
-            anchor, 1.0f, 1.0f, duration))
+            anchor, 1.0f, 1.0f, duration,
+            normalizedScaleStartSlope))
         return false;
 
     luaWidgetPanelAnimationCompositorDriven_ = true;

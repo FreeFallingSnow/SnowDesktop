@@ -12,7 +12,7 @@ void DesktopApp::ReleaseLuaWidgetPanelCaptureIfOwned()
             ShouldReleaseRecordedPanelCapture(
                 recordedCapture, GetCapture()))
     {
-        ReleaseCapture();
+        ReleaseCapturePreservingPointerState();
     }
 }
 
@@ -31,10 +31,17 @@ void DesktopApp::OpenLuaWidgetPanel(
 {
     if (request.widgetId.empty())
         return;
+    if (luaWidgetPanelFinalizing_)
+    {
+        pendingLuaWidgetPanelOpen_ = request;
+        return;
+    }
     if (!luaWidgetPanelRequest_.widgetId.empty())
     {
         if (luaWidgetPanelRequest_.widgetId ==
                 request.widgetId &&
+            luaWidgetPanelRequest_.surface ==
+                request.surface &&
             luaWidgetPanelAnimation_.IsClosing())
         {
             luaWidgetPanelRequest_ = request;
@@ -62,7 +69,9 @@ void DesktopApp::OpenLuaWidgetPanel(
             UpdateFloatingPopupWindowBounds(true);
             return;
         }
+        pendingLuaWidgetPanelOpen_ = request;
         FinalizeCloseLuaWidgetPanel();
+        return;
     }
     luaWidgetPanelRequest_ = request;
     luaWidgetPanelAnchorPoint_ =
@@ -110,16 +119,6 @@ void DesktopApp::OpenLuaWidgetPanel(
     {
         luaWidgetPanelAnimation_.ShowImmediately();
     }
-    if (widgetEngine_)
-    {
-        const char* openedEvent = request.surface == "dialog"
-            ? "onDialogOpened"
-            : (request.surface == "popover"
-                ? "onPopoverOpened" : "onPanelOpened");
-        widgetEngine_->InvokeMouseEvent(
-            request.widgetId, openedEvent,
-            0, 0, 0, 0);
-    }
     if (animate)
     {
         UpdateFloatingPopupWindowBounds(false);
@@ -134,26 +133,34 @@ void DesktopApp::OpenLuaWidgetPanel(
         ResetLuaWidgetPanelAnimationCache();
     InvalidateRect(hwnd_, nullptr, FALSE);
     UpdateFloatingPopupWindowBounds(true);
+    if (widgetEngine_)
+    {
+        const char* openedEvent = request.surface == "dialog"
+            ? "onDialogOpened"
+            : (request.surface == "popover"
+                ? "onPopoverOpened" : "onPanelOpened");
+        // This is deliberately the last operation. Lua may synchronously
+        // close or replace the panel from its opened callback.
+        widgetEngine_->InvokeMouseEvent(
+            request.widgetId, openedEvent,
+            0, 0, 0, 0);
+    }
 }
 
-void DesktopApp::FinalizeCloseLuaWidgetPanel()
+void DesktopApp::FinalizeCloseLuaWidgetPanel(
+    bool allowPendingOpen)
 {
+    if (luaWidgetPanelFinalizing_)
+        return;
+    luaWidgetPanelFinalizing_ = true;
     const std::wstring closingId =
         luaWidgetPanelRequest_.widgetId;
     const std::string closingSurface =
         luaWidgetPanelRequest_.surface;
-    if (!closingId.empty() && widgetEngine_)
-    {
-        const char* closedEvent = closingSurface == "dialog"
-            ? "onDialogClosed"
-            : (closingSurface == "popover"
-                ? "onPopoverClosed" : "onPanelClosed");
-        widgetEngine_->InvokeMouseEvent(
-            closingId, closedEvent,
-            0, 0, 0, 0);
-        widgetEngine_->CloseWidgetPanelSurface(
-            closingId, closingSurface);
-    }
+    if (luaPanelAnimationFrameToken_)
+        uiAnimationScheduler_.Cancel(
+            luaPanelAnimationFrameToken_);
+    luaPanelAnimationFrameToken_ = 0;
     luaWidgetPanelAnimation_.ResetHidden();
     ResetLuaWidgetPanelAnimationCache();
     luaWidgetPanelRequest_ = {};
@@ -165,6 +172,30 @@ void DesktopApp::FinalizeCloseLuaWidgetPanel()
     UpdateFloatingPopupWindowBounds(true);
     if (hwnd_ && IsWindow(hwnd_))
         InvalidateRect(hwnd_, nullptr, FALSE);
+
+    if (!closingId.empty() && widgetEngine_)
+    {
+        const char* closedEvent = closingSurface == "dialog"
+            ? "onDialogClosed"
+            : (closingSurface == "popover"
+                ? "onPopoverClosed" : "onPanelClosed");
+        // Remove the old surface before notifying Lua. Any panel requested by
+        // the callback is deferred until every old-surface cleanup completes.
+        widgetEngine_->CloseWidgetPanelSurface(
+            closingId, closingSurface);
+        widgetEngine_->InvokeMouseEvent(
+            closingId, closedEvent,
+            0, 0, 0, 0);
+    }
+
+    if (!allowPendingOpen)
+        pendingLuaWidgetPanelOpen_.reset();
+    auto pending = std::move(
+        pendingLuaWidgetPanelOpen_);
+    pendingLuaWidgetPanelOpen_.reset();
+    luaWidgetPanelFinalizing_ = false;
+    if (pending)
+        OpenLuaWidgetPanel(*pending);
 }
 
 void DesktopApp::CloseLuaWidgetPanel(
@@ -172,6 +203,16 @@ void DesktopApp::CloseLuaWidgetPanel(
     const char* reason)
 {
     (void)reason;
+    if (luaWidgetPanelFinalizing_)
+    {
+        if (pendingLuaWidgetPanelOpen_ &&
+            (widgetId.empty() ||
+             pendingLuaWidgetPanelOpen_->widgetId == widgetId))
+        {
+            pendingLuaWidgetPanelOpen_.reset();
+        }
+        return;
+    }
     if (luaWidgetPanelRequest_.widgetId.empty() ||
         (!widgetId.empty() &&
          widgetId !=
@@ -179,6 +220,20 @@ void DesktopApp::CloseLuaWidgetPanel(
         return;
     if (luaWidgetPanelAnimation_.IsClosing())
         return;
+    const bool panelPressActive =
+        luaWidgetPanelMouseDown_ ||
+        luaWidgetPanelCaptureHwnd_ != nullptr;
+    if (panelPressActive)
+    {
+        mouseDown_ = false;
+        mouseDownHit_ = nullptr;
+        mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+        if (widgetEngine_)
+        {
+            widgetEngine_->CancelInteractionPointerPress(
+                luaWidgetPanelRequest_.surface);
+        }
+    }
     if (widgetEngine_)
         widgetEngine_->BlurHostInput(false);
     luaWidgetPanelMouseDown_ = false;

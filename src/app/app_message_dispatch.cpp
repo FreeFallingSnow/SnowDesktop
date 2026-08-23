@@ -949,17 +949,14 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_CAPTURECHANGED:
         ForgetLuaWidgetPanelCapture(hwnd);
         if (msg == WM_CANCELMODE ||
-            (reinterpret_cast<HWND>(lp) != hwnd_ &&
-             reinterpret_cast<HWND>(lp) != floatingDockHwnd_ &&
-             reinterpret_cast<HWND>(lp) != floatingPopupHwnd_))
+            !IsOwnedPointerCaptureWindow(
+                reinterpret_cast<HWND>(lp)))
         {
-            ClearDockPressedState();
+            if (CanCancelPointerPressAfterCaptureLoss())
+            {
+                CancelPointerPressWithoutCaptureRelease();
+            }
         }
-        widgetScrollbarDragging_ = false;
-        widgetScrollbarDragContainer_ = nullptr;
-        popupScrollbarDragging_ = false;
-        if (widgetEngine_)
-            widgetEngine_->CancelInteractionPointerPress();
         break;
     case WM_DISPLAYCHANGE:
         InvalidateDragHintRaster();

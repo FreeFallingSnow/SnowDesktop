@@ -52,7 +52,8 @@ public:
     [[nodiscard]] bool StartVisualScaleAnimation(
         float fromScale, float toScale, float opacity,
         float anchorX, float anchorY,
-        std::uint32_t durationMilliseconds);
+        std::uint32_t durationMilliseconds,
+        float normalizedStartSlope = 0.0f);
     /** @brief 开始收集一帧的玻璃区域。完整帧会在 EndFrame 清理未再次出现的视觉。 */
     void BeginFrame(bool completeCollection);
     /**

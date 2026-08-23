@@ -818,6 +818,16 @@ private:
     void ClearPopupDragTarget();
     /** @brief 清除 Dock 按下态，避免拖拽越界后退化为点击。 */
     void ClearDockPressedState();
+    /** @brief 当前是否仍有需要在异常捕获丢失时撤销的按压状态。 */
+    [[nodiscard]] bool HasCancelablePointerPressState() const;
+    /** @brief 捕获目标是否仍属于桌面、浮动 Dock 或共享弹窗宿主。 */
+    [[nodiscard]] bool IsOwnedPointerCaptureWindow(HWND window) const;
+    /** @brief 捕获丢失是否可由本地输入层收尾，而非 OLE/放置事务所有。 */
+    [[nodiscard]] bool CanCancelPointerPressAfterCaptureLoss() const;
+    /** @brief 清理按压/拖拽状态，但不再次调用 ReleaseCapture。 */
+    void CancelPointerPressWithoutCaptureRelease();
+    /** @brief 主动释放捕获，同时抑制同步 WM_CAPTURECHANGED 的取消分支。 */
+    void ReleaseCapturePreservingPointerState();
     /** @brief 取消当前原生项目拖拽，并清理输入捕获与驻留状态。 */
     void CancelActiveItemDrag();
     /** @brief 在同步 Shell 放置前提交拖拽结束帧并移除已隐藏组件的毛玻璃。 */
@@ -2195,7 +2205,8 @@ private:
     void CloseLuaWidgetPanel(
         const std::wstring& widgetId = L"",
         const char* reason = "dismissed");
-    void FinalizeCloseLuaWidgetPanel();
+    void FinalizeCloseLuaWidgetPanel(
+        bool allowPendingOpen = true);
     void ReleaseLuaWidgetPanelCaptureIfOwned();
     void ForgetLuaWidgetPanelCapture(HWND hostWindow);
     /** @brief 在动画开始前将完整弹窗录制到 GPU 位图。 */
@@ -2216,7 +2227,8 @@ private:
         float fromScale, float toScale,
         POINT anchor,
         float fromOpacity, float toOpacity,
-        UINT durationMilliseconds);
+        UINT durationMilliseconds,
+        float normalizedScaleStartSlope = 0.0f);
     bool QueueWidgetMarqueeComposition(
         const std::wstring& widgetId,
         const std::vector<LuaWidget::NativeMarqueeText>& marquees,
@@ -3243,6 +3255,9 @@ private:
     // 组件统一调度令牌：token -> widgetId（manifest 刷新与命名定时器共用）
     std::unordered_map<UINT_PTR, std::wstring> widgetTimerIds_;
     bool mouseDown_ = false;
+    // Native OLE hand-off releases capture synchronously while retaining the
+    // drag session. Its WM_CAPTURECHANGED must not be treated as an abort.
+    unsigned expectedCaptureReleaseDepth_ = 0;
     POINT mouseDownPoint_{};
     Item* mouseDownHit_ = nullptr;
     WidgetHit pendingGuideAction_ = WidgetHit::None;
@@ -3530,6 +3545,9 @@ private:
     POINT luaWidgetPanelAnchorPoint_{};
     bool luaWidgetPanelMouseDown_ = false;
     HWND luaWidgetPanelCaptureHwnd_ = nullptr;
+    bool luaWidgetPanelFinalizing_ = false;
+    std::optional<LuaWidgetPanelRequest>
+        pendingLuaWidgetPanelOpen_;
     /** @} */
 
     /** @name 快速导航 */

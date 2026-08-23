@@ -758,7 +758,7 @@ void DesktopApp::OnMouseMoveAt(
                 // not a Dock click. Do not carry raw pressed-container
                 // pointers through DoDragDrop's rebuilding message loop.
                 ClearDockPressedState();
-                ReleaseCapture();
+                ReleaseCapturePreservingPointerState();
                 mouseDown_ = false;
                 mouseDownHit_ = nullptr;
                 SetPageNavHotEdgeHover(0);

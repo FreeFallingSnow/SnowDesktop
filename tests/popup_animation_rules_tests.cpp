@@ -18,6 +18,16 @@ bool NearlyEqual(float left, float right, float tolerance = 0.0001f)
 {
     return std::fabs(left - right) <= tolerance;
 }
+
+float EvaluateSegmentCurve(
+    float normalizedStartSlope, float progress)
+{
+    const float remaining = 1.0f - progress;
+    return 3.0f * remaining * remaining * progress *
+            (normalizedStartSlope / 3.0f) +
+        3.0f * remaining * progress * progress +
+        progress * progress * progress;
+}
 }
 
 int main()
@@ -50,6 +60,41 @@ int main()
     Check(EaseInOutSmooth(0.25f) < 0.25f &&
           EaseInOutSmooth(0.75f) > 0.75f,
         "scale easing slows at both endpoints");
+    Check(NearlyEqual(
+            ScaleSegmentNormalizedStartSlope(0.0f, true),
+            0.0f) &&
+          NearlyEqual(
+            ScaleSegmentNormalizedStartSlope(1.0f, false),
+            0.0f),
+        "full popup transitions start with zero endpoint velocity");
+    const float segmentStarts[] = { 0.2f, 0.5f, 0.8f };
+    const float segmentSamples[] = { 0.25f, 0.5f, 0.75f };
+    for (const bool opening : { false, true })
+    {
+        const float targetProgress = opening ? 1.0f : 0.0f;
+        for (const float segmentStart : segmentStarts)
+        {
+            const float fromScale =
+                ScaleForProgress(segmentStart);
+            const float toScale =
+                ScaleForProgress(targetProgress);
+            const float slope =
+                ScaleSegmentNormalizedStartSlope(
+                    segmentStart, opening);
+            for (const float sample : segmentSamples)
+            {
+                const float segmentScale = fromScale +
+                    (toScale - fromScale) *
+                        EvaluateSegmentCurve(slope, sample);
+                const float globalScale = ScaleForProgress(
+                    segmentStart +
+                    (targetProgress - segmentStart) * sample);
+                Check(NearlyEqual(
+                        segmentScale, globalScale, 0.0002f),
+                    "a reversed compositor segment stays on the global scale curve");
+            }
+        }
+    }
     Check(kOpenDurationMs <= 90 &&
           kCloseDurationMs <= 90,
         "popup scale animation stays responsive");

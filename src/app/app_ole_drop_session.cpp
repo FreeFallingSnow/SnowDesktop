@@ -316,7 +316,7 @@ HRESULT DesktopApp::HandleOleDrop(
         }
         mouseDown_ = false;
         mouseDownHit_ = nullptr;
-        ReleaseCapture();
+        ReleaseCapturePreservingPointerState();
         *effect = DROPEFFECT_NONE;
         EndDragSession();
         return S_OK;
@@ -347,7 +347,7 @@ HRESULT DesktopApp::HandleOleDrop(
         // the single outer call site after the Shell has released the stack.
         mouseDown_ = false;
         mouseDownHit_ = nullptr;
-        ReleaseCapture();
+        ReleaseCapturePreservingPointerState();
         int dropPreviewMods = 0;
         if (keyState & MK_CONTROL) dropPreviewMods |= MK_CONTROL;
         if (keyState & MK_ALT)     dropPreviewMods |= MK_ALT;

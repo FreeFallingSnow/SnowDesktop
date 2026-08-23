@@ -1014,13 +1014,13 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
     case WM_CAPTURECHANGED:
         ForgetLuaWidgetPanelCapture(hwnd);
         if (msg == WM_CANCELMODE ||
-            (reinterpret_cast<HWND>(lp) != hwnd_ &&
-             reinterpret_cast<HWND>(lp) != floatingDockHwnd_ &&
-             reinterpret_cast<HWND>(lp) != floatingPopupHwnd_))
+            !IsOwnedPointerCaptureWindow(
+                reinterpret_cast<HWND>(lp)))
         {
-            ClearDockPressedState();
-            if (widgetEngine_)
-                widgetEngine_->CancelInteractionPointerPress();
+            if (CanCancelPointerPressAfterCaptureLoss())
+            {
+                CancelPointerPressWithoutCaptureRelease();
+            }
         }
         return 0;
     case WM_LBUTTONDBLCLK:

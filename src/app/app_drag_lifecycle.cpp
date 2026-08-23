@@ -417,30 +417,137 @@ void DesktopApp::ClearDockPressedState()
     dockPressedClosedCollectionPopup_ = false;
 }
 
-void DesktopApp::CancelActiveItemDrag()
+bool DesktopApp::HasCancelablePointerPressState() const
 {
+    return mouseDown_ || mouseDownHit_ != nullptr ||
+        dragSession_.IsActive() ||
+        dockPressedEntry_ != static_cast<size_t>(-1) ||
+        dockPressedFrequentItem_ != static_cast<size_t>(-1) ||
+        !dockPressedRunningAppKey_.empty() ||
+        dockPressedWindowAction_ !=
+            snowdesktop::dock_window_rules::DockClickAction::None ||
+        dockPressedTargetWindow_ != nullptr ||
+        dockPressedContainer_ != nullptr ||
+        dockPressedClosedCollectionPopup_ ||
+        pendingGuideAction_ != WidgetHit::None ||
+        marqueeActive_ ||
+        widgetAction_ != WidgetAction::None ||
+        middleButtonWidgetMove_ ||
+        detailColumnResizeActive_ ||
+        widgetScrollbarDragging_ ||
+        popupScrollbarDragging_ ||
+        luaWidgetPanelMouseDown_ ||
+        popupMouseDownItem_ != nullptr;
+}
+
+bool DesktopApp::IsOwnedPointerCaptureWindow(HWND window) const
+{
+    return window &&
+        (window == hwnd_ ||
+         window == floatingDockHwnd_ ||
+         window == floatingPopupHwnd_);
+}
+
+bool DesktopApp::CanCancelPointerPressAfterCaptureLoss() const
+{
+    const bool retainedDropCommit =
+        dragSession_.HasContext() &&
+        !dragSession_.IsActive();
+    return expectedCaptureReleaseDepth_ == 0 &&
+        !dragDropController_.IsTransportActive() &&
+        !retainedDropCommit &&
+        HasCancelablePointerPressState();
+}
+
+void DesktopApp::CancelPointerPressWithoutCaptureRelease()
+{
+    const bool layoutNeedsSave =
+        widgetScrollbarDragging_ ||
+        detailColumnResizeActive_;
+    const bool dockItemPressed = dockPressedContainer_ &&
+        (dockPressedEntry_ != static_cast<size_t>(-1) ||
+         dockPressedFrequentItem_ != static_cast<size_t>(-1) ||
+         !dockPressedRunningAppKey_.empty());
+    Item* const pressedDockItem =
+        dockItemPressed ? mouseDownHit_ : nullptr;
     HideDragHintWindow();
     SetPageNavHotEdgeHover(0);
     navAutoFlipDir_ = 0;
     navAutoFlipTick_ = 0;
+    ResetDockHandoffDwell();
+    CancelCollectionPopupDwell();
+    CancelCollectionGroupTabDwell();
     mouseDown_ = false;
     mouseDownHit_ = nullptr;
     mouseDownWidgetIndex_ = static_cast<size_t>(-1);
     pendingCtrlToggleDesktopIndex_ =
         static_cast<size_t>(-1);
+    pendingCtrlToggleWidgetIndex_ =
+        static_cast<size_t>(-1);
     pendingCtrlToggleWidgetItem_ = nullptr;
+    pendingGuideAction_ = WidgetHit::None;
+    if (pressedDockItem)
+        pressedDockItem->SetSelected(false);
     ClearDockPressedState();
     marqueeActive_ = false;
     marqueeWidgetIndex_ = static_cast<size_t>(-1);
     marqueeDockFolderPopup_ = false;
-    EndDragSession();
+    for (auto& container : containers_)
+    {
+        if (auto* searchable =
+                dynamic_cast<ScrollingItemWidget*>(container.get());
+            searchable && searchable->IsSearchPointerSelecting())
+        {
+            searchable->EndSearchPointerSelection();
+        }
+    }
+    widgetAction_ = WidgetAction::None;
+    middleButtonWidgetMove_ = false;
+    detailColumnResizeActive_ = false;
+    detailColumnResizeColumn_ =
+        snowdesktop::list_detail_rules::Column::None;
+    detailColumnResizeHeaderLeft_ = 0;
+    detailColumnResizeHeaderWidth_ = 1;
+    widgetScrollbarDragging_ = false;
+    widgetScrollbarDragContainer_ = nullptr;
+    popupScrollbarDragging_ = false;
+    luaWidgetPanelMouseDown_ = false;
+    widgetDockTarget_ = false;
+    widgetDockTargetContainer_ = nullptr;
+    widgetDockInsertIndex_ = 0;
+    widgetCollectionGroupTargetIndex_ =
+        static_cast<size_t>(-1);
+    widgetCollectionGroupInsertIndex_ =
+        static_cast<size_t>(-1);
+    if (dragSession_.IsActive())
+        EndDragSession();
     // End the session before destroying popup-owned Item/Slot wrappers that
     // may still be referenced by its source or target lists.
     ClearPopupMouseDownItem();
     dockFolderPopupDragItems_.clear();
     dockFolderPopupMarqueeInitialSelection_.clear();
-    ReleaseCapture();
+    if (widgetEngine_)
+        widgetEngine_->CancelInteractionPointerPress();
+    if (layoutNeedsSave)
+        SaveLayoutSlots();
     InvalidateDragStaticScene();
+    if (hwnd_ && IsWindow(hwnd_))
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    InvalidateFloatingDockWindow();
+    InvalidateFloatingPopupWindow();
+}
+
+void DesktopApp::ReleaseCapturePreservingPointerState()
+{
+    ++expectedCaptureReleaseDepth_;
+    ReleaseCapture();
+    --expectedCaptureReleaseDepth_;
+}
+
+void DesktopApp::CancelActiveItemDrag()
+{
+    CancelPointerPressWithoutCaptureRelease();
+    ReleaseCapture();
 }
 
 void DesktopApp::CommitDragVisualEndBeforeShellOperation()
