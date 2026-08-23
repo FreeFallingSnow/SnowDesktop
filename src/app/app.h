@@ -954,7 +954,6 @@ private:
     void ToggleFloatingDock();
     void ApplyFloatingDockHotkey();
     void UnregisterFloatingDockHotkey();
-    void ClaimDockAssociatedPopupPointerPress();
     void UpdateFloatingDockEdgeSwipe();
     DockContainer* SelectFloatingDockContainerAtCursor() const;
     DockContainer* SelectFloatingDockContainerForMonitor(
@@ -3085,7 +3084,6 @@ private:
     snowdesktop::floating_dock_rules::EdgeSwipeDetector
         floatingDockEdgeSwipeDetector_;
     UINT floatingDockPointerButtonsDown_ = 0;
-    bool dockAssociatedPopupPointerPressClaimed_ = false;
     DockContainer* floatingDockContainer_ = nullptr;
     HMONITOR floatingDockMonitor_ = nullptr;
     RECT floatingDockSourceRect_{};

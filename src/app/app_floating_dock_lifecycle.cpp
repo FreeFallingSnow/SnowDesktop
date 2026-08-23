@@ -19,7 +19,6 @@ void DesktopApp::UnregisterFloatingDockHotkey()
     floatingDockEdgeSwipeHwnd_ = nullptr;
     floatingDockEdgeSwipeDetector_.Reset();
     floatingDockPointerButtonsDown_ = 0;
-    dockAssociatedPopupPointerPressClaimed_ = false;
 }
 
 void DesktopApp::ApplyFloatingDockHotkey()
@@ -93,16 +92,6 @@ void DesktopApp::ApplyFloatingDockHotkey()
     }
 }
 
-void DesktopApp::ClaimDockAssociatedPopupPointerPress()
-{
-    if (floatingDockVisible_ &&
-        popupAnchoredToDock_ &&
-        GetOpenPopupWidget())
-    {
-        dockAssociatedPopupPointerPressClaimed_ = true;
-    }
-}
-
 void DesktopApp::UpdateFloatingDockEdgeSwipe()
 {
     constexpr UINT leftButtonBit = 1u << 0;
@@ -133,15 +122,6 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
             (floatingDockPointerButtonsDown_ &
                 leftButtonBit) == 0) ||
         (pressedSinceLastSample & leftButtonBit) != 0;
-    const bool popupPointerPressClaimed =
-        dockAssociatedPopupPointerPressClaimed_;
-    dockAssociatedPopupPointerPressClaimed_ = false;
-    const bool associatedPopupOwnsPointerDown =
-        snowdesktop::floating_dock_rules::
-            DockAssociatedPopupOwnsPointerDown(
-                popupAnchoredToDock_,
-                GetOpenPopupWidget() != nullptr,
-                popupPointerPressClaimed);
     floatingDockPointerButtonsDown_ = buttonsDown;
     if ((buttonsDown & leftButtonBit) == 0 &&
         !mouseDown_)
@@ -217,7 +197,6 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
                     dragSession_.IsActive() ||
                         dragDropController_.IsExternalDragActive(),
                     HasActiveContextMenuSession(),
-                    associatedPopupOwnsPointerDown,
                     desktopPoint,
                     floatingDockRect_,
                     dockPopupInteractionRect,

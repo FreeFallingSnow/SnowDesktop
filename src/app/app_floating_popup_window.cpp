@@ -200,7 +200,6 @@ void DesktopApp::HandleFloatingPopupExternalPointerDown(
                 dragActive);
     if (dismissCollection)
     {
-        ClaimDockAssociatedPopupPointerPress();
         pendingCollectionPopupOpen_.reset();
         CloseCollectionPopup();
     }
