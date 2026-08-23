@@ -655,6 +655,7 @@ add_custom_command(TARGET SnowDesktop POST_BUILD
 include(CTest)
 if (BUILD_TESTING)
     set(SNOWDESKTOP_TEST_TARGETS)
+    set(SNOWDESKTOP_CORE_TEST_TARGETS)
 
     function(snowdesktop_add_test TEST_TARGET TEST_NAME)
         set(multiValueArgs
@@ -716,6 +717,11 @@ if (BUILD_TESTING)
         list(APPEND SNOWDESKTOP_TEST_TARGETS ${TEST_TARGET})
         set(SNOWDESKTOP_TEST_TARGETS
             "${SNOWDESKTOP_TEST_TARGETS}" PARENT_SCOPE)
+        if ("core" IN_LIST SNOW_TEST_LABELS)
+            list(APPEND SNOWDESKTOP_CORE_TEST_TARGETS ${TEST_TARGET})
+            set(SNOWDESKTOP_CORE_TEST_TARGETS
+                "${SNOWDESKTOP_CORE_TEST_TARGETS}" PARENT_SCOPE)
+        endif()
     endfunction()
 
     snowdesktop_add_test(
@@ -734,7 +740,7 @@ if (BUILD_TESTING)
             src/single_instance.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES bcrypt ole32 shell32 user32 version
-        LABELS integration data)
+        LABELS core integration data)
 
     snowdesktop_add_test(
         SnowDesktopHttpSecurityTests
@@ -744,7 +750,7 @@ if (BUILD_TESTING)
             src/http_runtime.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES shlwapi winhttp ws2_32
-        LABELS contract security)
+        LABELS core contract security)
 
     snowdesktop_add_test(
         SnowDesktopLuaRuntimeTests
@@ -754,7 +760,7 @@ if (BUILD_TESTING)
             src/lua_runtime.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES SnowDesktopLua
-        LABELS contract lua widget)
+        LABELS core contract lua widget)
 
     snowdesktop_add_test(
         SnowDesktopWidgetApiRegistryTests
@@ -767,7 +773,7 @@ if (BUILD_TESTING)
             src/widget_system_contract_json.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES SnowDesktopLua
-        LABELS contract lua widget)
+        LABELS core contract lua widget)
 
     snowdesktop_add_test(
         SnowDesktopWidgetL10nFormatTests
@@ -1001,7 +1007,7 @@ if (BUILD_TESTING)
             src/widget_permission_state.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES bcrypt
-        LABELS contract security widget)
+        LABELS core contract security widget)
 
     snowdesktop_add_test(
         SnowDesktopApplicationRestartPolicyTests
@@ -1037,7 +1043,7 @@ if (BUILD_TESTING)
             src/l10n.cpp
         INCLUDE_DIRECTORIES src
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
-        LABELS contract l10n)
+        LABELS core contract l10n)
 
     snowdesktop_add_test(
         SnowDesktopGeneralSettingsTests
@@ -1046,7 +1052,7 @@ if (BUILD_TESTING)
             tests/general_settings_tests.cpp
             src/general_settings.cpp
         INCLUDE_DIRECTORIES src
-        LABELS contract settings)
+        LABELS core contract settings)
 
     snowdesktop_add_test(
         SnowDesktopDemoModeRulesTests
@@ -1084,7 +1090,7 @@ if (BUILD_TESTING)
             src/l10n.cpp
         INCLUDE_DIRECTORIES src src/core
         LINK_LIBRARIES d2d1 ole32 shell32 user32 uuid
-        LABELS contract interaction slot integration)
+        LABELS core contract interaction slot integration)
 
     snowdesktop_add_test(
         SnowDesktopWidgetInteractionRulesTests
@@ -1144,7 +1150,7 @@ if (BUILD_TESTING)
             tests/widget_view_contract_tests.cpp
             src/widget_view_contract.cpp
         INCLUDE_DIRECTORIES src
-        LABELS contract layout lua widget)
+        LABELS core contract layout lua widget)
     target_sources(SnowDesktopWidgetViewContractTests PRIVATE
         src/widget_view_contract_json.cpp)
 
@@ -1265,7 +1271,7 @@ if (BUILD_TESTING)
         builtin_widget_source_contract
         SOURCES tests/builtin_widget_source_contract_tests.cpp
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
-        LABELS contract lua render storage widget)
+        LABELS core contract lua render storage widget)
 
     snowdesktop_add_test(
         SnowDesktopWidgetLogicalSlotTests
@@ -1373,7 +1379,7 @@ if (BUILD_TESTING)
         shell_integration_contract
         SOURCES tests/shell_integration_contract_tests.cpp
         COMMAND_ARGUMENTS ${CMAKE_SOURCE_DIR}
-        LABELS contract shell settings)
+        LABELS core contract shell settings)
 
     snowdesktop_add_test(
         SnowDesktopShellLaunchWorkerTests
@@ -1407,7 +1413,7 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES d2d1 dwrite dwmapi gdi32 shcore user32
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
-        LABELS rules window)
+        LABELS core rules window)
 
     snowdesktop_add_test(
         SnowDesktopDesktopDropCacheTests
@@ -1527,6 +1533,9 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LABELS rules animation)
 
+    add_custom_target(
+        SnowDesktopCoreTests
+        DEPENDS ${SNOWDESKTOP_CORE_TEST_TARGETS})
     add_custom_target(
         SnowDesktopTests
         DEPENDS ${SNOWDESKTOP_TEST_TARGETS})

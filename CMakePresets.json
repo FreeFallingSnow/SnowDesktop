@@ -61,6 +61,16 @@
       "targets": [
         "SnowDesktopTests"
       ]
+    },
+    {
+      "name": "core-tests",
+      "displayName": "Release core tests",
+      "configurePreset": "tests",
+      "configuration": "Release",
+      "jobs": 2,
+      "targets": [
+        "SnowDesktopCoreTests"
+      ]
     }
   ],
   "testPresets": [
@@ -68,6 +78,20 @@
       "name": "tests",
       "configurePreset": "tests",
       "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "core-tests",
+      "displayName": "Release core tests",
+      "configurePreset": "tests",
+      "configuration": "Release",
+      "filter": {
+        "include": {
+          "label": "^core$"
+        }
+      },
       "output": {
         "outputOnFailure": true
       }
