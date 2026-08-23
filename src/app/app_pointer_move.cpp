@@ -369,9 +369,15 @@ void DesktopApp::OnMouseMoveAt(
 
     if (detailColumnResizeActive_)
     {
-        if (mouseDownWidgetIndex_ < widgets_.size())
+        DesktopWidget* resizedWidget =
+            detailColumnResizePopup_
+            ? GetOpenPopupWidget()
+            : (mouseDownWidgetIndex_ < widgets_.size()
+                ? &widgets_[mouseDownWidgetIndex_]
+                : nullptr);
+        if (resizedWidget)
         {
-            auto& widget = widgets_[mouseDownWidgetIndex_];
+            auto& widget = *resizedWidget;
             const float proposed = static_cast<float>(
                 current.x - detailColumnResizeHeaderLeft_) /
                 static_cast<float>(detailColumnResizeHeaderWidth_);
@@ -400,7 +406,17 @@ void DesktopApp::OnMouseMoveAt(
             default:
                 break;
             }
-            (void)QueueDesktopWidgetComposition(widget.id);
+            if (detailColumnResizePopup_)
+            {
+                const RECT popup =
+                    GetCollectionPopupRect(widget);
+                (void)PresentDesktopForegroundComposition(
+                    popup);
+            }
+            else
+            {
+                (void)QueueDesktopWidgetComposition(widget.id);
+            }
         }
         SetCursor(LoadCursorW(nullptr, IDC_SIZEWE));
         return;

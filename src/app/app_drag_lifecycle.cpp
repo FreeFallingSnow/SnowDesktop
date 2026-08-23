@@ -464,6 +464,10 @@ void DesktopApp::CancelPointerPressWithoutCaptureRelease()
     const bool layoutNeedsSave =
         widgetScrollbarDragging_ ||
         detailColumnResizeActive_;
+    const bool commitDockFolderPopupResize =
+        detailColumnResizeActive_ &&
+        detailColumnResizePopup_ &&
+        dockFolderPopupOpen_;
     const bool dockItemPressed = dockPressedContainer_ &&
         (dockPressedEntry_ != static_cast<size_t>(-1) ||
          dockPressedFrequentItem_ != static_cast<size_t>(-1) ||
@@ -504,6 +508,7 @@ void DesktopApp::CancelPointerPressWithoutCaptureRelease()
     widgetAction_ = WidgetAction::None;
     middleButtonWidgetMove_ = false;
     detailColumnResizeActive_ = false;
+    detailColumnResizePopup_ = false;
     detailColumnResizeColumn_ =
         snowdesktop::list_detail_rules::Column::None;
     detailColumnResizeHeaderLeft_ = 0;
@@ -528,7 +533,9 @@ void DesktopApp::CancelPointerPressWithoutCaptureRelease()
     dockFolderPopupMarqueeInitialSelection_.clear();
     if (widgetEngine_)
         widgetEngine_->CancelInteractionPointerPress();
-    if (layoutNeedsSave)
+    if (commitDockFolderPopupResize)
+        CommitDockFolderPopupStateToSource();
+    else if (layoutNeedsSave)
         SaveLayoutSlots();
     InvalidateDragStaticScene();
     if (hwnd_ && IsWindow(hwnd_))

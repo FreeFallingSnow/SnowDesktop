@@ -524,6 +524,11 @@ int main(int argc, char** argv)
             popupLayout::RequiredRowCount(
                 1, 1) == 1,
         "non-empty collection popups must retain their content-driven size");
+    Check(
+        popupLayout::RequiredListRowCount(0) == 5 &&
+            popupLayout::RequiredListRowCount(3) == 5 &&
+            popupLayout::RequiredListRowCount(8) == 8,
+        "list collection popups must retain a five-row minimum height without clipping larger lists");
     const auto standardPopupMetrics =
         popupLayout::ResolveMetrics(
             92, 116, 84, 108, 1.0f, 34);
@@ -1327,6 +1332,15 @@ int main(int argc, char** argv)
             insertionClip.bottom ==
                 popupContent.bottom,
         "popup insertion clipping must preserve vertical scroll boundaries");
+    const RECT listInsertionClip =
+        popupDrag::ExpandInsertionClipVertically(
+            popupContent, popupBounds, 7);
+    Check(
+        listInsertionClip.top == 47 &&
+            listInsertionClip.bottom == 209 &&
+            listInsertionClip.left == popupContent.left &&
+            listInsertionClip.right == popupContent.right,
+        "list popup insertion clipping must reserve top and bottom indicator gutters");
     constexpr float indicatorWidth = 3.0f;
     constexpr float itemPad = 5.0f;
     const float firstIndicatorLeft =
@@ -1345,6 +1359,28 @@ int main(int argc, char** argv)
                 static_cast<float>(
                     insertionClip.right),
         "first-column and last-column popup insertion bars must remain fully visible");
+    const RECT listRowBounds{ 18, 80, 302, 118 };
+    Check(
+        !popupDrag::IsAfterInsertionMidpoint(
+            listRowBounds, POINT{ 280, 90 }, true) &&
+            popupDrag::IsAfterInsertionMidpoint(
+                listRowBounds, POINT{ 20, 110 }, true) &&
+            !popupDrag::IsAfterInsertionMidpoint(
+                listRowBounds, POINT{ 40, 110 }, false) &&
+            popupDrag::IsAfterInsertionMidpoint(
+                listRowBounds, POINT{ 280, 90 }, false),
+        "list popup rows must resolve insertion halves vertically while grids remain horizontal");
+    const long long listLeadingDistance =
+        popupDrag::InsertionEdgeDistanceSquared(
+            listRowBounds, listRowBounds,
+            POINT{ 160, 125 }, true, false, 3);
+    const long long listTrailingDistance =
+        popupDrag::InsertionEdgeDistanceSquared(
+            listRowBounds, listRowBounds,
+            POINT{ 160, 125 }, true, true, 3);
+    Check(
+        listTrailingDistance < listLeadingDistance,
+        "the blank area below the last list row must resolve to its trailing insertion edge");
 
     Check(
         popupDrag::ResolveDropPreviewLayer(false) ==

@@ -40,6 +40,65 @@ constexpr bool CanHandoffToItem(
     return itemAvailable && !itemSelected;
 }
 
+/** List rows insert vertically; icon grids insert horizontally. */
+template <typename Rect, typename Point>
+constexpr bool IsAfterInsertionMidpoint(
+    const Rect& itemBounds,
+    const Point& point,
+    bool listMode)
+{
+    return listMode
+        ? point.y >= itemBounds.top +
+            (itemBounds.bottom - itemBounds.top) / 2
+        : point.x >= itemBounds.left +
+            (itemBounds.right - itemBounds.left) / 2;
+}
+
+/**
+ * Measures a pointer against a leading/trailing insertion edge while keeping
+ * the perpendicular distance inside the visible portion of a clipped item.
+ */
+template <typename Rect, typename Point>
+constexpr long long InsertionEdgeDistanceSquared(
+    const Rect& itemBounds,
+    const Rect& visibleBounds,
+    const Point& point,
+    bool listMode,
+    bool after,
+    long gutter)
+{
+    gutter = std::max(0L, gutter);
+    long long primary = 0;
+    long long perpendicular = 0;
+    if (listMode)
+    {
+        const long edge = after
+            ? itemBounds.bottom + gutter
+            : itemBounds.top - gutter;
+        primary = static_cast<long long>(point.y) - edge;
+        if (point.x < visibleBounds.left)
+            perpendicular = static_cast<long long>(
+                visibleBounds.left) - point.x;
+        else if (point.x >= visibleBounds.right)
+            perpendicular = static_cast<long long>(point.x) -
+                visibleBounds.right + 1;
+    }
+    else
+    {
+        const long edge = after
+            ? itemBounds.right + gutter
+            : itemBounds.left - gutter;
+        primary = static_cast<long long>(point.x) - edge;
+        if (point.y < visibleBounds.top)
+            perpendicular = static_cast<long long>(
+                visibleBounds.top) - point.y;
+        else if (point.y >= visibleBounds.bottom)
+            perpendicular = static_cast<long long>(point.y) -
+                visibleBounds.bottom + 1;
+    }
+    return primary * primary + perpendicular * perpendicular;
+}
+
 /** Popup handoff activation may be icon-sized, but its feedback is cell-sized. */
 template <typename Rect>
 constexpr Rect HandoffIndicatorBounds(
@@ -67,6 +126,23 @@ constexpr Rect ExpandInsertionClipHorizontally(
     content.right = std::min(
         popup.right,
         content.right + gutter);
+    return content;
+}
+
+/** Keeps the first/last horizontal insertion bars visible for list rows. */
+template <typename Rect>
+constexpr Rect ExpandInsertionClipVertically(
+    Rect content,
+    const Rect& popup,
+    long gutter)
+{
+    gutter = std::max(0L, gutter);
+    content.top = std::max(
+        popup.top,
+        content.top - gutter);
+    content.bottom = std::min(
+        popup.bottom,
+        content.bottom + gutter);
     return content;
 }
 

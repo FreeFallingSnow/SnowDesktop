@@ -299,24 +299,36 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 
             const RECT content =
                 GetCollectionPopupContentRect(popup);
-            const auto popupMetrics =
-                GetOpenCollectionPopupLayoutMetrics();
-            const RECT detailsHeader{
-                content.left,
-                popup.top + popupMetrics.headerHeight,
-                content.right,
-                content.top,
-            };
-            if (snowdesktop::collection_popup_layout::
-                    DetailsVisible(
-                        dockFolderPopupWidget_.listMode,
-                        dockFolderPopupWidget_.detailShowModified,
-                        dockFolderPopupWidget_.detailShowType,
-                        dockFolderPopupWidget_.detailShowSize) &&
+            const RECT detailsHeader =
+                GetCollectionPopupDetailsHeaderRect(popup);
+            if (!IsRectEmptyRect(detailsHeader) &&
                 PtInRect(&detailsHeader, pt))
             {
-                mouseDown_ = false;
                 mouseDownHit_ = nullptr;
+                const auto divider =
+                    HitTestCollectionPopupDetailsDivider(
+                        pt, popup);
+                if (divider != snowdesktop::list_detail_rules::
+                        Column::None)
+                {
+                    detailColumnResizeActive_ = true;
+                    detailColumnResizePopup_ = true;
+                    detailColumnResizeColumn_ = divider;
+                    detailColumnResizeHeaderLeft_ =
+                        detailsHeader.left;
+                    detailColumnResizeHeaderWidth_ =
+                        std::max<int>(
+                            1, detailsHeader.right -
+                                detailsHeader.left);
+                    mouseDownWidgetIndex_ =
+                        static_cast<size_t>(-1);
+                    SetCapture(interactionCaptureHwnd);
+                    SetCursor(LoadCursorW(nullptr, IDC_SIZEWE));
+                }
+                else
+                {
+                    mouseDown_ = false;
+                }
                 return;
             }
             bool clickedPopupItem = false;
@@ -410,24 +422,36 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 
         std::vector<std::wstring> popupKeys = GetPopupItemKeys(widgets_[popupWidgetIndex_]);
         RECT content = GetCollectionPopupContentRect(popup);
-        const auto popupMetrics =
-            GetOpenCollectionPopupLayoutMetrics();
-        const RECT detailsHeader{
-            content.left,
-            popup.top + popupMetrics.headerHeight,
-            content.right,
-            content.top,
-        };
-        if (snowdesktop::collection_popup_layout::
-                DetailsVisible(
-                    widgets_[popupWidgetIndex_].listMode,
-                    widgets_[popupWidgetIndex_].detailShowModified,
-                    widgets_[popupWidgetIndex_].detailShowType,
-                    widgets_[popupWidgetIndex_].detailShowSize) &&
+        const RECT detailsHeader =
+            GetCollectionPopupDetailsHeaderRect(popup);
+        if (!IsRectEmptyRect(detailsHeader) &&
             PtInRect(&detailsHeader, pt))
         {
-            mouseDown_ = false;
             mouseDownHit_ = nullptr;
+            const auto divider =
+                HitTestCollectionPopupDetailsDivider(
+                    pt, popup);
+            if (divider != snowdesktop::list_detail_rules::
+                    Column::None)
+            {
+                detailColumnResizeActive_ = true;
+                detailColumnResizePopup_ = true;
+                detailColumnResizeColumn_ = divider;
+                detailColumnResizeHeaderLeft_ =
+                    detailsHeader.left;
+                detailColumnResizeHeaderWidth_ =
+                    std::max<int>(
+                        1, detailsHeader.right -
+                            detailsHeader.left);
+                mouseDownWidgetIndex_ =
+                    static_cast<size_t>(-1);
+                SetCapture(interactionCaptureHwnd);
+                SetCursor(LoadCursorW(nullptr, IDC_SIZEWE));
+            }
+            else
+            {
+                mouseDown_ = false;
+            }
             return;
         }
         bool clickedPopupItem = false;
@@ -873,6 +897,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 list->GetContentViewportRect());
             if (IsRectEmptyRect(header)) return;
             detailColumnResizeActive_ = true;
+            detailColumnResizePopup_ = false;
             if (wh == WidgetHit::DetailsModifiedDivider)
             {
                 detailColumnResizeColumn_ =

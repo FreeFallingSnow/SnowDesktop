@@ -85,9 +85,11 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
             PreferredColumnCount(
                 itemCount, maxColumns);
     int rows =
-        snowdesktop::collection_popup_layout::
-            RequiredRowCount(
-                itemCount, columns);
+        listMode
+        ? snowdesktop::collection_popup_layout::
+            RequiredListRowCount(itemCount)
+        : snowdesktop::collection_popup_layout::
+            RequiredRowCount(itemCount, columns);
     const int maxHeight = std::max(
         1, workHeight - metrics.edgeMargin * 2);
     auto popupWidthForColumns = [&](int columnCount) {
@@ -284,6 +286,57 @@ RECT DesktopApp::GetCollectionPopupContentRect(const RECT& popup) const
         top,
         popup.right - metrics.paddingX,
         popup.bottom - metrics.bottomPadding);
+}
+
+RECT DesktopApp::GetCollectionPopupDetailsHeaderRect(
+    const RECT& popup) const
+{
+    const DesktopWidget* widget = GetOpenPopupWidget();
+    if (!widget ||
+        !snowdesktop::collection_popup_layout::DetailsVisible(
+            widget->listMode,
+            widget->detailShowModified,
+            widget->detailShowType,
+            widget->detailShowSize))
+    {
+        return {};
+    }
+
+    const auto metrics = GetOpenCollectionPopupLayoutMetrics();
+    const RECT content = GetCollectionPopupContentRect(popup);
+    return MakeRect(
+        content.left,
+        popup.top + metrics.headerHeight,
+        content.right,
+        content.top);
+}
+
+snowdesktop::list_detail_rules::Column
+DesktopApp::HitTestCollectionPopupDetailsDivider(
+    POINT point, const RECT& popup) const
+{
+    const DesktopWidget* widget = GetOpenPopupWidget();
+    if (!widget) return snowdesktop::list_detail_rules::Column::None;
+
+    const RECT header = GetCollectionPopupDetailsHeaderRect(popup);
+    if (IsRectEmptyRect(header) || !PtInRect(&header, point))
+        return snowdesktop::list_detail_rules::Column::None;
+
+    const int width = std::max<int>(1, header.right - header.left);
+    const auto columns = snowdesktop::list_detail_rules::BuildColumns(
+        width,
+        widget->detailShowModified,
+        widget->detailShowType,
+        widget->detailShowSize,
+        widget->detailModifiedPosition,
+        widget->detailTypePosition,
+        widget->detailSizePosition);
+    const auto metrics = GetOpenCollectionPopupLayoutMetrics();
+    return snowdesktop::list_detail_rules::HitDivider(
+        columns,
+        point.x - header.left,
+        snowdesktop::collection_popup_layout::ScaleDimension(
+            4, metrics.scale));
 }
 
 RECT DesktopApp::GetDockFolderPopupSortButtonRect(

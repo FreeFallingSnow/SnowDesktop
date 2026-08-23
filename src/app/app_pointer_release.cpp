@@ -858,7 +858,11 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
     if (detailColumnResizeActive_)
     {
         const size_t widgetIndex = mouseDownWidgetIndex_;
+        const bool popupResize = detailColumnResizePopup_;
+        const bool dockFolderPopupResize =
+            popupResize && dockFolderPopupOpen_;
         detailColumnResizeActive_ = false;
+        detailColumnResizePopup_ = false;
         detailColumnResizeColumn_ =
             snowdesktop::list_detail_rules::Column::None;
         detailColumnResizeHeaderLeft_ = 0;
@@ -867,8 +871,21 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ = static_cast<size_t>(-1);
         ReleaseCapture();
-        SaveLayoutSlots();
-        if (widgetIndex < widgets_.size())
+        if (dockFolderPopupResize)
+            CommitDockFolderPopupStateToSource();
+        else
+            SaveLayoutSlots();
+        if (popupResize)
+        {
+            if (DesktopWidget* popupWidget = GetOpenPopupWidget())
+            {
+                const RECT popup =
+                    GetCollectionPopupRect(*popupWidget);
+                (void)PresentDesktopForegroundComposition(
+                    popup);
+            }
+        }
+        else if (widgetIndex < widgets_.size())
             InvalidateRect(hwnd_, &widgets_[widgetIndex].bounds, FALSE);
         return;
     }

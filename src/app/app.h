@@ -2603,6 +2603,11 @@ private:
     snowdesktop::collection_popup_layout::Metrics
         GetOpenCollectionPopupLayoutMetrics() const;
     RECT GetDockFolderPopupSortButtonRect(const RECT& popup) const;
+    RECT GetCollectionPopupDetailsHeaderRect(
+        const RECT& popup) const;
+    snowdesktop::list_detail_rules::Column
+        HitTestCollectionPopupDetailsDivider(
+            POINT point, const RECT& popup) const;
     /** @brief 获取集合弹出面板中内容区域的矩形。 @param popup 面板矩形 @return 内容矩形 */
     RECT GetCollectionPopupContentRect(const RECT& popup) const;
     /** @brief 获取集合弹出面板中的列数。 @param popup 面板矩形 @return 列数 */
@@ -3316,6 +3321,7 @@ private:
     WidgetAction widgetAction_ = WidgetAction::None;
     bool middleButtonWidgetMove_ = false;
     bool detailColumnResizeActive_ = false;
+    bool detailColumnResizePopup_ = false;
     bool widgetScrollbarDragging_ = false;
     WidgetContainer* widgetScrollbarDragContainer_ = nullptr;
     int widgetScrollbarDragStartY_ = 0;

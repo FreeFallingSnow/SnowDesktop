@@ -420,12 +420,16 @@ void DesktopApp::DrawDynamicOverlays(
                     GetCollectionPopupRect(
                         *openPopupWidget);
                 popupTargetRect = popup;
-                clipViewport =
-                    snowdesktop::popup_drag_rules::
+                const RECT content =
+                    GetCollectionPopupContentRect(popup);
+                clipViewport = openPopupWidget->listMode
+                    ? snowdesktop::popup_drag_rules::
+                        ExpandInsertionClipVertically(
+                            content, popup,
+                            kCollectionPopupGapY / 2 + 2)
+                    : snowdesktop::popup_drag_rules::
                         ExpandInsertionClipHorizontally(
-                            GetCollectionPopupContentRect(
-                                popup),
-                            popup,
+                            content, popup,
                             kCollectionPopupGapX / 2 + 2);
             }
             else

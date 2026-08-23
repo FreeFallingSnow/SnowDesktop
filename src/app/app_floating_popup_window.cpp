@@ -1028,6 +1028,8 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
     case WM_NCHITTEST:
         return ShouldShowFloatingPopupWindow()
             ? HTCLIENT : HTTRANSPARENT;
+    case WM_SETCURSOR:
+        return HandleMessage(hwnd_, msg, wp, lp);
     case WM_ERASEBKGND:
         return 1;
     case WM_PAINT:

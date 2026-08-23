@@ -293,12 +293,12 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
                 targetContainer,
                 itemRect, i, SlotFeedbackRole::Popup);
             targetRegion =
-                client.x <
-                    itemRect.left +
-                        (itemRect.right -
-                         itemRect.left) / 2
-                ? HitRegion::SortBefore
-                : HitRegion::SortAfter;
+                snowdesktop::popup_drag_rules::
+                    IsAfterInsertionMidpoint(
+                        itemRect, client,
+                        dockFolderPopupWidget_.listMode)
+                ? HitRegion::SortAfter
+                : HitRegion::SortBefore;
             return true;
         }
 
@@ -321,12 +321,6 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
                     &clipped, &itemRect,
                     &content))
                 continue;
-            const LONG edgeXs[] = {
-                itemRect.left -
-                    kCollectionPopupGapX / 2,
-                itemRect.right +
-                    kCollectionPopupGapX / 2,
-            };
             const HitRegion edgeRegions[] = {
                 HitRegion::SortBefore,
                 HitRegion::SortAfter,
@@ -334,24 +328,19 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
             for (size_t edge = 0;
                 edge < 2; ++edge)
             {
-                const long long dx =
-                    static_cast<long long>(
-                        client.x) -
-                    edgeXs[edge];
-                long long dy = 0;
-                if (client.y < clipped.top)
-                    dy =
-                        static_cast<long long>(
-                            clipped.top) -
-                        client.y;
-                else if (client.y >=
-                    clipped.bottom)
-                    dy =
-                        static_cast<long long>(
-                            client.y) -
-                        clipped.bottom + 1;
+                const bool after = edge != 0;
+                const auto popupMetrics =
+                    GetOpenCollectionPopupLayoutMetrics();
+                const long gutter =
+                    dockFolderPopupWidget_.listMode
+                    ? popupMetrics.gapY / 2
+                    : popupMetrics.gapX / 2;
                 const long long distance =
-                    dx * dx + dy * dy;
+                    snowdesktop::popup_drag_rules::
+                        InsertionEdgeDistanceSquared(
+                            itemRect, clipped, client,
+                            dockFolderPopupWidget_.listMode,
+                            after, gutter);
                 if (distance >=
                     bestDistanceSquared)
                     continue;
@@ -468,8 +457,12 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
             slotBounds = itemRect;
         if (region != HitRegion::Handoff)
         {
-            region = client.x < itemRect.left + (itemRect.right - itemRect.left) / 2
-                ? HitRegion::SortBefore : HitRegion::SortAfter;
+            region = snowdesktop::popup_drag_rules::
+                    IsAfterInsertionMidpoint(
+                        itemRect, client,
+                        widgets_[popupWidgetIndex_].listMode)
+                ? HitRegion::SortAfter
+                : HitRegion::SortBefore;
         }
         if (region == HitRegion::Handoff)
         {
@@ -501,23 +494,25 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
         if (!IntersectRect(&clipped, &itemRect, &content))
             continue;
 
-        const LONG edgeXs[] = {
-            itemRect.left - kCollectionPopupGapX / 2,
-            itemRect.right + kCollectionPopupGapX / 2,
-        };
         const HitRegion edgeRegions[] = {
             HitRegion::SortBefore,
             HitRegion::SortAfter,
         };
         for (size_t edge = 0; edge < 2; ++edge)
         {
-            const long long dx = static_cast<long long>(client.x) - edgeXs[edge];
-            long long dy = 0;
-            if (client.y < clipped.top)
-                dy = static_cast<long long>(clipped.top) - client.y;
-            else if (client.y >= clipped.bottom)
-                dy = static_cast<long long>(client.y) - clipped.bottom + 1;
-            const long long distanceSquared = dx * dx + dy * dy;
+            const bool after = edge != 0;
+            const auto popupMetrics =
+                GetOpenCollectionPopupLayoutMetrics();
+            const bool listMode =
+                widgets_[popupWidgetIndex_].listMode;
+            const long gutter = listMode
+                ? popupMetrics.gapY / 2
+                : popupMetrics.gapX / 2;
+            const long long distanceSquared =
+                snowdesktop::popup_drag_rules::
+                    InsertionEdgeDistanceSquared(
+                        itemRect, clipped, client,
+                        listMode, after, gutter);
             if (distanceSquared >= bestDistanceSquared) continue;
             bestDistanceSquared = distanceSquared;
             slotIndex = i;

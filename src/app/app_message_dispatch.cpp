@@ -118,13 +118,32 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         if (LOWORD(lp) != HTCLIENT) break;
         bool resizeCursor = detailColumnResizeActive_;
         bool cursorPointAvailable = false;
+        bool pointInsideCollectionPopup = false;
         POINT point{};
         if (!resizeCursor && GetCursorPos(&point) &&
             ScreenToClient(hwnd_, &point))
         {
             cursorPointAvailable = true;
+            if (IsCollectionPopupInteractive())
+            {
+                if (const DesktopWidget* popupWidget =
+                        GetOpenPopupWidget())
+                {
+                    const RECT popup =
+                        GetCollectionPopupRect(*popupWidget);
+                    pointInsideCollectionPopup =
+                        PtInRect(&popup, point) != FALSE;
+                    resizeCursor =
+                        HitTestCollectionPopupDetailsDivider(
+                            point, popup) !=
+                        snowdesktop::list_detail_rules::
+                            Column::None;
+                }
+            }
             for (auto it = containers_.rbegin();
-                 it != containers_.rend(); ++it)
+                 !resizeCursor &&
+                    !pointInsideCollectionPopup &&
+                    it != containers_.rend(); ++it)
             {
                 if (desktopIconsHidden_ &&
                     !IsRetainedContainer(it->get()))

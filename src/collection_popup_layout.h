@@ -14,6 +14,7 @@ namespace snowdesktop::collection_popup_layout
 inline constexpr int kMaximumColumns = 5;
 inline constexpr int kEmptyColumns = 3;
 inline constexpr int kEmptyRows = 2;
+inline constexpr int kMinimumListRows = 5;
 
 struct Metrics
 {
@@ -158,6 +159,13 @@ inline int RequiredRowCount(
         1, (static_cast<int>(itemCount) +
                columns - 1) /
             columns);
+}
+
+inline int RequiredListRowCount(std::size_t itemCount)
+{
+    return std::max(
+        kMinimumListRows,
+        static_cast<int>(itemCount));
 }
 
 /**
