@@ -197,6 +197,26 @@ Wallpaper LoadWallpaperImage(const std::filesystem::path& path)
     return DecodeWallpaperFile(path);
 }
 
+WallpaperPosition WallpaperPositionFromLegacySettings(
+    int wallpaperStyle, bool tileWallpaper)
+{
+    if (tileWallpaper) return WallpaperPosition::Tile;
+    switch (wallpaperStyle)
+    {
+    case 2:
+        return WallpaperPosition::Stretch;
+    case 6:
+        return WallpaperPosition::Fit;
+    case 10:
+        return WallpaperPosition::Fill;
+    case 22:
+        return WallpaperPosition::Span;
+    case 0:
+    default:
+        return WallpaperPosition::Center;
+    }
+}
+
 std::uint64_t WallpaperFingerprint(const Wallpaper& wallpaper)
 {
     if (wallpaper.width <= 0 || wallpaper.height <= 0 ||

@@ -48,6 +48,10 @@ enum class WallpaperPosition
     Span,
 };
 
+/** Translate legacy WallpaperStyle/TileWallpaper values used by Windows. */
+WallpaperPosition WallpaperPositionFromLegacySettings(
+    int wallpaperStyle, bool tileWallpaper);
+
 inline constexpr std::size_t AcrylicNoiseSize = 64;
 using AcrylicNoisePixels = std::array<std::uint32_t,
     AcrylicNoiseSize * AcrylicNoiseSize>;

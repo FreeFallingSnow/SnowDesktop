@@ -1421,7 +1421,7 @@ if (BUILD_TESTING)
             src/widget_preview_scene.cpp
             src/widget_preview_scene_model.cpp
         INCLUDE_DIRECTORIES src src/core
-        LINK_LIBRARIES d2d1 dxguid gdi32 ole32 user32 uuid windowscodecs
+        LINK_LIBRARIES advapi32 d2d1 dxguid gdi32 ole32 user32 uuid windowscodecs
         LABELS integration ui preview)
 
     snowdesktop_add_test(

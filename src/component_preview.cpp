@@ -10,9 +10,13 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <array>
+#include <cwchar>
 #include <cwctype>
+#include <filesystem>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace snowdesktop::component_preview
 {
@@ -78,6 +82,79 @@ RECT VirtualDesktopBounds()
     return { left, top,
         left + GetSystemMetrics(SM_CXVIRTUALSCREEN),
         top + GetSystemMetrics(SM_CYVIRTUALSCREEN) };
+}
+
+std::wstring ReadCurrentUserString(
+    const wchar_t* subkey, const wchar_t* valueName)
+{
+    DWORD byteCount = 0;
+    if (RegGetValueW(HKEY_CURRENT_USER, subkey, valueName,
+            RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ, nullptr, nullptr,
+            &byteCount) != ERROR_SUCCESS || byteCount < sizeof(wchar_t))
+        return {};
+    std::vector<wchar_t> buffer(
+        static_cast<std::size_t>(byteCount) / sizeof(wchar_t) + 1, L'\0');
+    if (RegGetValueW(HKEY_CURRENT_USER, subkey, valueName,
+            RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ, nullptr, buffer.data(),
+            &byteCount) != ERROR_SUCCESS)
+        return {};
+    return std::wstring(buffer.data());
+}
+
+int ParseInteger(const std::wstring& text, int fallback)
+{
+    if (text.empty()) return fallback;
+    wchar_t* end = nullptr;
+    const long value = std::wcstol(text.c_str(), &end, 10);
+    return end && end != text.c_str() ? static_cast<int>(value) : fallback;
+}
+
+COLORREF ReadLegacyDesktopColor()
+{
+    const std::wstring value = ReadCurrentUserString(
+        L"Control Panel\\Colors", L"Background");
+    unsigned red = 0;
+    unsigned green = 0;
+    unsigned blue = 0;
+    if (swscanf_s(value.c_str(), L"%u %u %u",
+            &red, &green, &blue) != 3)
+        return RGB(0, 0, 0);
+    return RGB(std::min(red, 255u), std::min(green, 255u),
+        std::min(blue, 255u));
+}
+
+struct StaticWallpaperSettings
+{
+    std::filesystem::path path;
+    widget_preview::WallpaperPosition position =
+        widget_preview::WallpaperPosition::Fill;
+    COLORREF backgroundColor = RGB(0, 0, 0);
+};
+
+StaticWallpaperSettings ReadLegacyWallpaperSettings()
+{
+    StaticWallpaperSettings settings;
+    std::array<wchar_t, 32768> wallpaperPath{};
+    if (SystemParametersInfoW(SPI_GETDESKWALLPAPER,
+            static_cast<UINT>(wallpaperPath.size()), wallpaperPath.data(), 0) &&
+        wallpaperPath[0])
+    {
+        settings.path = wallpaperPath.data();
+    }
+    else
+    {
+        settings.path = ReadCurrentUserString(
+            L"Control Panel\\Desktop", L"WallPaper");
+    }
+    const int wallpaperStyle = ParseInteger(ReadCurrentUserString(
+        L"Control Panel\\Desktop", L"WallpaperStyle"), 10);
+    const bool tileWallpaper = ParseInteger(ReadCurrentUserString(
+        L"Control Panel\\Desktop", L"TileWallpaper"), 0) != 0;
+    settings.position =
+        widget_preview::WallpaperPositionFromLegacySettings(
+            wallpaperStyle, tileWallpaper);
+    settings.backgroundColor = ReadLegacyDesktopColor();
+    return settings;
 }
 
 int Scale(int value, UINT dpi)
@@ -581,25 +658,28 @@ bool Window::LoadDesktopWallpaperBackdrop()
     const int height = monitor.rcMonitor.bottom - monitor.rcMonitor.top;
     if (width <= 0 || height <= 0) return false;
 
+    StaticWallpaperSettings settings = ReadLegacyWallpaperSettings();
     ScopedComApartment com;
-    if (FAILED(com.result) && com.result != RPC_E_CHANGED_MODE)
-        return false;
     ComPtr<IDesktopWallpaper> wallpaperApi;
-    if (FAILED(CoCreateInstance(CLSID_DesktopWallpaper, nullptr,
-            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wallpaperApi))) ||
-        !wallpaperApi)
-        return false;
+    if ((SUCCEEDED(com.result) || com.result == RPC_E_CHANGED_MODE) &&
+        FAILED(CoCreateInstance(CLSID_DesktopWallpaper, nullptr,
+            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wallpaperApi))))
+        wallpaperApi.Reset();
 
-    COLORREF backgroundColor = RGB(0, 0, 0);
-    wallpaperApi->GetBackgroundColor(&backgroundColor);
-    DESKTOP_WALLPAPER_POSITION systemPosition = DWPOS_FILL;
-    wallpaperApi->GetPosition(&systemPosition);
-    const widget_preview::WallpaperPosition position =
-        ToWallpaperPosition(systemPosition);
+    if (wallpaperApi)
+    {
+        COLORREF backgroundColor{};
+        if (SUCCEEDED(wallpaperApi->GetBackgroundColor(&backgroundColor)))
+            settings.backgroundColor = backgroundColor;
+        DESKTOP_WALLPAPER_POSITION systemPosition{};
+        if (SUCCEEDED(wallpaperApi->GetPosition(&systemPosition)))
+            settings.position = ToWallpaperPosition(systemPosition);
+    }
 
     std::wstring monitorId;
     UINT monitorCount = 0;
-    if (SUCCEEDED(wallpaperApi->GetMonitorDevicePathCount(&monitorCount)))
+    if (wallpaperApi && SUCCEEDED(
+            wallpaperApi->GetMonitorDevicePathCount(&monitorCount)))
     {
         for (UINT index = 0; index < monitorCount; ++index)
         {
@@ -619,48 +699,51 @@ bool Window::LoadDesktopWallpaperBackdrop()
         }
     }
 
-    LPWSTR rawWallpaperPath = nullptr;
-    HRESULT pathResult = wallpaperApi->GetWallpaper(
-        position == widget_preview::WallpaperPosition::Span
-            ? nullptr
-            : (monitorId.empty() ? nullptr : monitorId.c_str()),
-        &rawWallpaperPath);
-    if ((FAILED(pathResult) || pathResult == S_FALSE ||
-            !rawWallpaperPath || !*rawWallpaperPath) &&
-        position == widget_preview::WallpaperPosition::Span &&
-        !monitorId.empty())
+    if (wallpaperApi)
     {
+        LPWSTR rawWallpaperPath = nullptr;
+        HRESULT pathResult = wallpaperApi->GetWallpaper(
+            settings.position == widget_preview::WallpaperPosition::Span
+                ? nullptr
+                : (monitorId.empty() ? nullptr : monitorId.c_str()),
+            &rawWallpaperPath);
+        if ((FAILED(pathResult) || pathResult == S_FALSE ||
+                !rawWallpaperPath || !*rawWallpaperPath) &&
+            settings.position == widget_preview::WallpaperPosition::Span &&
+            !monitorId.empty())
+        {
+            if (rawWallpaperPath) CoTaskMemFree(rawWallpaperPath);
+            rawWallpaperPath = nullptr;
+            pathResult = wallpaperApi->GetWallpaper(
+                monitorId.c_str(), &rawWallpaperPath);
+        }
+        if (pathResult == S_OK)
+            settings.path = rawWallpaperPath
+                ? std::filesystem::path(rawWallpaperPath)
+                : std::filesystem::path{};
         if (rawWallpaperPath) CoTaskMemFree(rawWallpaperPath);
-        rawWallpaperPath = nullptr;
-        pathResult = wallpaperApi->GetWallpaper(
-            monitorId.c_str(), &rawWallpaperPath);
     }
-    const std::filesystem::path wallpaperPath =
-        SUCCEEDED(pathResult) && rawWallpaperPath
-        ? std::filesystem::path(rawWallpaperPath)
-        : std::filesystem::path{};
-    if (rawWallpaperPath) CoTaskMemFree(rawWallpaperPath);
 
     const widget_preview::Wallpaper source =
-        widget_preview::LoadWallpaperImage(wallpaperPath);
+        widget_preview::LoadWallpaperImage(settings.path);
     if (source.pixels.empty())
     {
         desktopWallpaper_.width = width;
         desktopWallpaper_.height = height;
         desktopWallpaper_.pixels.assign(
             static_cast<std::size_t>(width) * height,
-            ToOpaquePixel(backgroundColor));
+            ToOpaquePixel(settings.backgroundColor));
     }
     else
     {
         const RECT canvasBounds =
-            position == widget_preview::WallpaperPosition::Tile ||
-                position == widget_preview::WallpaperPosition::Span
+            settings.position == widget_preview::WallpaperPosition::Tile ||
+                settings.position == widget_preview::WallpaperPosition::Span
             ? VirtualDesktopBounds()
             : monitor.rcMonitor;
         desktopWallpaper_ = widget_preview::RenderWallpaperRegion(
-            source, canvasBounds, monitor.rcMonitor, position,
-            ToOpaquePixel(backgroundColor));
+            source, canvasBounds, monitor.rcMonitor, settings.position,
+            ToOpaquePixel(settings.backgroundColor));
     }
     desktopWallpaperBounds_ = monitor.rcMonitor;
     return !desktopWallpaper_.pixels.empty();

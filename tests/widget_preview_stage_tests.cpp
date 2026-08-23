@@ -97,6 +97,19 @@ int main()
     Wallpaper black{ 1, 1, { 0xff000000u } };
     Check(WallpaperIsLight(white) && !WallpaperIsLight(black),
         "wallpaper luminance selects contrasting card chrome");
+    Check(WallpaperPositionFromLegacySettings(0, false) ==
+            WallpaperPosition::Center &&
+          WallpaperPositionFromLegacySettings(2, false) ==
+            WallpaperPosition::Stretch &&
+          WallpaperPositionFromLegacySettings(6, false) ==
+            WallpaperPosition::Fit &&
+          WallpaperPositionFromLegacySettings(10, false) ==
+            WallpaperPosition::Fill &&
+          WallpaperPositionFromLegacySettings(22, false) ==
+            WallpaperPosition::Span &&
+          WallpaperPositionFromLegacySettings(10, true) ==
+            WallpaperPosition::Tile,
+        "legacy Windows wallpaper values map to every placement mode");
 
     Wallpaper placementSource;
     placementSource.width = 2;
