@@ -87,6 +87,13 @@ struct DockRecord
     int folderSortMode = 0;
     bool folderSortAscending = true;
     std::vector<std::string> folderItems;
+    bool listMode = false;
+    bool detailShowModified = false;
+    bool detailShowType = false;
+    bool detailShowSize = false;
+    std::optional<float> detailModifiedPosition;
+    std::optional<float> detailTypePosition;
+    std::optional<float> detailSizePosition;
 };
 
 struct Document

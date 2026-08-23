@@ -864,6 +864,48 @@ void DesktopApp::ShowWidgetContextMenu(
         return;
     }
 
+    const auto refreshOpenPopupDisplay = [&]() {
+        const DesktopWidget& source =
+            widgets_[widgetIndex];
+        if (dockFolderPopupOpen_ &&
+            dockFolderPopupMappingWidgetId_ ==
+                source.id)
+        {
+            dockFolderPopupWidget_.listMode =
+                source.listMode;
+            dockFolderPopupWidget_.showDetails =
+                source.showDetails;
+            dockFolderPopupWidget_.detailShowModified =
+                source.detailShowModified;
+            dockFolderPopupWidget_.detailShowType =
+                source.detailShowType;
+            dockFolderPopupWidget_.detailShowSize =
+                source.detailShowSize;
+            dockFolderPopupWidget_.detailModifiedPosition =
+                source.detailModifiedPosition;
+            dockFolderPopupWidget_.detailTypePosition =
+                source.detailTypePosition;
+            dockFolderPopupWidget_.detailSizePosition =
+                source.detailSizePosition;
+            dockFolderPopupWidget_.contentSortColumn =
+                source.contentSortColumn;
+            dockFolderPopupWidget_.contentSortAscending =
+                source.contentSortAscending;
+            popupScrollOffset_ = 0;
+            if (dockFolderPopupContainer_)
+                dockFolderPopupContainer_->
+                    InvalidateSlots();
+            RefreshDockFolderPopupGeometry();
+            return;
+        }
+        if (!dockFolderPopupOpen_ &&
+            popupWidgetIndex_ == widgetIndex)
+        {
+            popupScrollOffset_ = 0;
+            RefreshOpenCollectionPopupGeometry();
+        }
+    };
+
     bool needsDesktopFocus = true;
     switch (command)
     {
@@ -898,6 +940,7 @@ void DesktopApp::ShowWidgetContextMenu(
             }
         }
         SaveLayoutSlots();
+        refreshOpenPopupDisplay();
         InvalidateRect(hwnd_, nullptr, TRUE);
         break;
     case kContextWidgetDetailModified:
@@ -973,6 +1016,7 @@ void DesktopApp::ShowWidgetContextMenu(
             }
         }
         SaveLayoutSlots();
+        refreshOpenPopupDisplay();
         InvalidateRect(hwnd_, nullptr, TRUE);
         break;
     }

@@ -632,6 +632,29 @@ void DesktopApp::LoadLayoutSlots()
         entry.folderItemKeys.reserve(saved.folderItems.size());
         for (const auto& key : saved.folderItems)
             entry.folderItemKeys.push_back(Utf8ToWide(key));
+        entry.listMode = saved.listMode;
+        entry.detailShowModified = saved.detailShowModified;
+        entry.detailShowType = saved.detailShowType;
+        entry.detailShowSize = saved.detailShowSize;
+        const auto positions = snowdesktop::list_detail_rules::
+            NormalizePositions(
+                entry.detailShowModified,
+                entry.detailShowType,
+                entry.detailShowSize,
+                {
+                    saved.detailModifiedPosition.value_or(
+                        snowdesktop::list_detail_rules::
+                            kDefaultModifiedPosition),
+                    saved.detailTypePosition.value_or(
+                        snowdesktop::list_detail_rules::
+                            kDefaultTypePosition),
+                    saved.detailSizePosition.value_or(
+                        snowdesktop::list_detail_rules::
+                            kDefaultSizePosition),
+                });
+        entry.detailModifiedPosition = positions.modified;
+        entry.detailTypePosition = positions.type;
+        entry.detailSizePosition = positions.size;
         if (!entry.reference.empty() &&
             !(entry.type == DockEntryType::DesktopItem &&
                 snowdesktop::shell_item_visibility::IsAlwaysHidden(
@@ -993,6 +1016,20 @@ void DesktopApp::SaveLayoutSlots()
              << ", \"folderSortAscending\": "
              << (entry.folderSortAscending
                     ? "true" : "false")
+             << ", \"listMode\": "
+             << (entry.listMode ? "true" : "false")
+             << ", \"detailShowModified\": "
+             << (entry.detailShowModified ? "true" : "false")
+             << ", \"detailShowType\": "
+             << (entry.detailShowType ? "true" : "false")
+             << ", \"detailShowSize\": "
+             << (entry.detailShowSize ? "true" : "false")
+             << ", \"detailModifiedPosition\": "
+             << entry.detailModifiedPosition
+             << ", \"detailTypePosition\": "
+             << entry.detailTypePosition
+             << ", \"detailSizePosition\": "
+             << entry.detailSizePosition
              << ", \"folderItems\": [";
         for (size_t j = 0;
             j < entry.folderItemKeys.size(); ++j)

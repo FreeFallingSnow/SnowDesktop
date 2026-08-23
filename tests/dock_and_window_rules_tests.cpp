@@ -526,16 +526,29 @@ int main(int argc, char** argv)
         "non-empty collection popups must retain their content-driven size");
     const auto standardPopupMetrics =
         popupLayout::ResolveMetrics(
-            92, 116, 84, 108, 1.0f);
+            92, 116, 84, 108, 1.0f, 34);
     Check(
         standardPopupMetrics.cellWidth == 92 &&
             standardPopupMetrics.cellHeight == 116 &&
+            standardPopupMetrics.minimumListHeight == 34 &&
             standardPopupMetrics.paddingX == 18 &&
             standardPopupMetrics.headerHeight == 54 &&
             standardPopupMetrics.gapX == 10 &&
             standardPopupMetrics.gapY == 8 &&
             standardPopupMetrics.maximumWidth == 560,
         "standard collection popup geometry must retain its baseline dimensions");
+    Check(
+        popupLayout::DetailsVisible(
+            true, true, false, false) &&
+            !popupLayout::DetailsVisible(
+                false, true, true, true) &&
+            !popupLayout::DetailsVisible(
+                true, false, false, false) &&
+            popupLayout::ResolveListRowHeight(
+                standardPopupMetrics, 16.0f) >= 38 &&
+            popupLayout::ResolveDetailsHeaderHeight(
+                standardPopupMetrics) == 30,
+        "popup detail headers require list mode and list rows retain the shared compact metrics");
     const auto enlargedPopupMetrics =
         popupLayout::ResolveMetrics(
             138, 174, 132, 168, 1.5f);

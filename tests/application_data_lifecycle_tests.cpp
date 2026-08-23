@@ -329,6 +329,14 @@ int main()
         { "dock required field",
             "{\"dockEntries\":[{\"type\":\"item\"}]}",
             "dockEntries[0].ref" },
+        { "dock popup list mode type",
+            "{\"dockEntries\":[{\"type\":\"item\",\"ref\":\"a\","
+            "\"listMode\":\"yes\"}]}",
+            "dockEntries[0].listMode" },
+        { "dock popup detail position type",
+            "{\"dockEntries\":[{\"type\":\"item\",\"ref\":\"a\","
+            "\"detailModifiedPosition\":\"0.25\"}]}",
+            "dockEntries[0].detailModifiedPosition" },
         { "navigation array type", "{\"navTabOrder\":[\"w\",false]}",
             "navTabOrder[1]" },
         { "icon beautify shape type",
@@ -468,6 +476,27 @@ int main()
             loadedDetailsLayout.widgets[0].contentSortColumn == "size" &&
             loadedDetailsLayout.widgets[0].largeFolderTitleless,
         "list font and detail view fields round-trip through layout storage");
+    snowdesktop::layout_storage::Document dockPopupLayout;
+    Expect(snowdesktop::layout_storage::ParseDocument(
+            "{\"dockEntries\":[{\"type\":\"item\",\"ref\":\"folder-a\","
+            "\"listMode\":true,\"detailShowModified\":true,"
+            "\"detailShowType\":false,\"detailShowSize\":true,"
+            "\"detailModifiedPosition\":0.24,"
+            "\"detailTypePosition\":0.58,"
+            "\"detailSizePosition\":0.82}]}",
+            dockPopupLayout, &layoutError) &&
+            dockPopupLayout.dockEntries.size() == 1 &&
+            dockPopupLayout.dockEntries[0].listMode &&
+            dockPopupLayout.dockEntries[0].detailShowModified &&
+            !dockPopupLayout.dockEntries[0].detailShowType &&
+            dockPopupLayout.dockEntries[0].detailShowSize &&
+            dockPopupLayout.dockEntries[0].
+                detailModifiedPosition.value_or(0.0f) == 0.24f &&
+            dockPopupLayout.dockEntries[0].
+                detailTypePosition.value_or(0.0f) == 0.58f &&
+            dockPopupLayout.dockEntries[0].
+                detailSizePosition.value_or(0.0f) == 0.82f,
+        "direct Dock folders retain their popup list and detail view settings");
     snowdesktop::layout_storage::Document legacyBeautifyLayout;
     Expect(snowdesktop::layout_storage::ParseDocument(
             "{\"iconBeautifyEnabled\":true,\"iconBeautifyMode\":0}",

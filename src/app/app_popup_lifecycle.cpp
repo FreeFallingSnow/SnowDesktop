@@ -187,6 +187,31 @@ void DesktopApp::OpenDockFolderPopupAt(
             entry.folderSortAscending;
     dockFolderPopupWidget_.itemKeys =
         entry.folderItemKeys;
+    dockFolderPopupWidget_.listMode =
+        entry.listMode;
+    dockFolderPopupWidget_.detailShowModified =
+        entry.detailShowModified;
+    dockFolderPopupWidget_.detailShowType =
+        entry.detailShowType;
+    dockFolderPopupWidget_.detailShowSize =
+        entry.detailShowSize;
+    dockFolderPopupWidget_.detailModifiedPosition =
+        entry.detailModifiedPosition;
+    dockFolderPopupWidget_.detailTypePosition =
+        entry.detailTypePosition;
+    dockFolderPopupWidget_.detailSizePosition =
+        entry.detailSizePosition;
+    dockFolderPopupWidget_.showDetails =
+        snowdesktop::list_detail_rules::HasMetadataColumns(
+            entry.detailShowModified,
+            entry.detailShowType,
+            entry.detailShowSize);
+    dockFolderPopupWidget_.contentSortColumn =
+        snowdesktop::list_detail_rules::
+            FromLegacyFolderSortMode(
+                dockFolderPopupWidget_.folderSortMode);
+    dockFolderPopupWidget_.contentSortAscending =
+        dockFolderPopupWidget_.folderSortAscending;
     dockFolderPopupWidget_.gridCell =
         { kDockPageId, 0, 0 };
     if (entry.type == DockEntryType::FolderMapping)
@@ -210,6 +235,26 @@ void DesktopApp::OpenDockFolderPopupAt(
             dockFolderPopupWidget_.itemKeys =
                 widgets_[widgetIndex].
                     itemKeys;
+            dockFolderPopupWidget_.listMode =
+                widgets_[widgetIndex].listMode;
+            dockFolderPopupWidget_.showDetails =
+                widgets_[widgetIndex].showDetails;
+            dockFolderPopupWidget_.detailShowModified =
+                widgets_[widgetIndex].detailShowModified;
+            dockFolderPopupWidget_.detailShowType =
+                widgets_[widgetIndex].detailShowType;
+            dockFolderPopupWidget_.detailShowSize =
+                widgets_[widgetIndex].detailShowSize;
+            dockFolderPopupWidget_.detailModifiedPosition =
+                widgets_[widgetIndex].detailModifiedPosition;
+            dockFolderPopupWidget_.detailTypePosition =
+                widgets_[widgetIndex].detailTypePosition;
+            dockFolderPopupWidget_.detailSizePosition =
+                widgets_[widgetIndex].detailSizePosition;
+            dockFolderPopupWidget_.contentSortColumn =
+                widgets_[widgetIndex].contentSortColumn;
+            dockFolderPopupWidget_.contentSortAscending =
+                widgets_[widgetIndex].contentSortAscending;
         }
     }
     else

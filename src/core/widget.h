@@ -294,7 +294,8 @@ public:
         bool iconIsMediaThumbnail,
         std::wstring_view demoIdentity = {},
         const DesktopWidget* demoCollection = nullptr,
-        const ListItemDetails& details = {}) const;
+        const ListItemDetails& details = {},
+        std::optional<bool> lightTheme = std::nullopt) const;
 
     int GetListRowHeight() const;
     int GetDetailsHeaderHeight() const;
@@ -302,7 +303,8 @@ public:
     RECT ApplyDetailsHeaderToViewport(RECT viewport) const;
     RECT GetDetailsHeaderRectFromViewport(RECT viewport) const;
     void DrawDetailsHeader(
-        ID2D1DeviceContext* context, RECT itemViewport) const;
+        ID2D1DeviceContext* context, RECT itemViewport,
+        std::optional<bool> lightTheme = std::nullopt) const;
     WidgetHit HitTestDetailsHeader(
         POINT point, RECT itemViewport) const;
     virtual const DesktopWidget* GetDetailsSortData() const;
@@ -437,7 +439,8 @@ private:
         size_t& compositionStart,
         size_t& compositionLength) const;
     void DrawListItemTitle(ID2D1DeviceContext* context, RECT cell,
-        RECT iconRect, const std::wstring& title) const;
+        RECT iconRect, const std::wstring& title,
+        bool lightTheme) const;
     snowdesktop::list_detail_rules::Columns GetDetailsColumns(
         int availableWidth) const;
     int categorizedTabRowOffset_ = 0;

@@ -195,6 +195,36 @@ void DesktopApp::DrawCollectionPopup(
     }
 
     RECT content = GetCollectionPopupContentRect(popupRect_);
+    DesktopWidget popupListStyle;
+    popupListStyle.type = widget.type;
+    popupListStyle.bounds = popupRect_;
+    popupListStyle.cellScale = popupMetrics.scale;
+    popupListStyle.listMode = widget.listMode;
+    popupListStyle.showDetails = widget.showDetails;
+    popupListStyle.detailShowModified =
+        widget.detailShowModified;
+    popupListStyle.detailShowType =
+        widget.detailShowType;
+    popupListStyle.detailShowSize =
+        widget.detailShowSize;
+    popupListStyle.detailModifiedPosition =
+        widget.detailModifiedPosition;
+    popupListStyle.detailTypePosition =
+        widget.detailTypePosition;
+    popupListStyle.detailSizePosition =
+        widget.detailSizePosition;
+    popupListStyle.contentSortColumn =
+        widget.contentSortColumn;
+    popupListStyle.contentSortAscending =
+        widget.contentSortAscending;
+    Collection popupListRenderer(
+        &popupListStyle, this);
+    popupListRenderer.SetHostedFrame(&popupRect_);
+    if (widget.listMode)
+    {
+        popupListRenderer.DrawDetailsHeader(
+            ctx, content, collectionPopupLightTheme_);
+    }
     ctx->PushAxisAlignedClip(ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     const size_t popupItemCount = GetPopupItemCount(widget);
     for (size_t i = 0; i < popupItemCount; ++i)
@@ -205,6 +235,25 @@ void DesktopApp::DrawCollectionPopup(
         if (widget.type == DesktopWidgetType::FolderMapping)
         {
             FolderEntry& entry = dockFolderPopupWidget_.folderEntries[i];
+            if (widget.listMode)
+            {
+                popupListRenderer.DrawListItem(
+                    ctx, itemRect,
+                    entry.iconBitmap,
+                    entry.sysIconIndex,
+                    entry.name,
+                    entry.selected,
+                    entry.iconIsMediaThumbnail,
+                    {}, nullptr,
+                    {
+                        entry.typeName,
+                        entry.lastWriteTime,
+                        entry.fileSize,
+                        entry.isDirectory,
+                    },
+                    collectionPopupLightTheme_);
+                continue;
+            }
             const bool hovered =
                 popupAnimation_.IsInteractive() &&
                 !entry.selected &&
@@ -223,6 +272,38 @@ void DesktopApp::DrawCollectionPopup(
         {
             size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
             if (itemIndex == static_cast<size_t>(-1)) continue;
+            if (widget.listMode)
+            {
+                DesktopItem& item = items_[itemIndex];
+                const bool useDemoIdentity =
+                    ShouldUseDemoCollectionIdentity(
+                        &widget);
+                const std::wstring_view demoIdentity =
+                    !useDemoIdentity
+                    ? std::wstring_view{}
+                    : (item.layoutKey.empty()
+                        ? std::wstring_view(
+                            item.parsingName)
+                        : std::wstring_view(
+                            item.layoutKey));
+                popupListRenderer.DrawListItem(
+                    ctx, itemRect,
+                    item.iconBitmap,
+                    item.sysIconIndex,
+                    item.name,
+                    item.selected,
+                    item.iconIsMediaThumbnail,
+                    demoIdentity,
+                    &widget,
+                    {
+                        item.typeName,
+                        item.modifiedTime,
+                        item.fileSize,
+                        false,
+                    },
+                    collectionPopupLightTheme_);
+                continue;
+            }
             bool hovered =
                 popupAnimation_.IsInteractive() &&
                 !items_[itemIndex].selected &&
@@ -242,6 +323,7 @@ void DesktopApp::DrawCollectionPopup(
     }
     for (size_t i = 0; i < popupItemCount; ++i)
     {
+        if (widget.listMode) break;
         RECT itemRect = GetCollectionPopupItemRect(popupRect_, i);
         if (itemRect.bottom <= content.top ||
             itemRect.top >= content.bottom)
@@ -287,12 +369,10 @@ void DesktopApp::DrawCollectionPopup(
     }
 
     // Scrollbar — same style as widget content areas
-    const int cellH = popupMetrics.cellHeight;
-    int columns = std::max(1, GetCollectionPopupColumnCount(popupRect_));
-    int rows = (static_cast<int>(popupItemCount) + columns - 1) / columns;
-    int contentHeight = rows * cellH +
-        std::max(0, rows - 1) * popupMetrics.gapY;
     int visibleHeight = std::max(1, (int)(content.bottom - content.top));
+    int contentHeight = visibleHeight +
+        GetCollectionPopupMaxScrollOffset(
+            widget, popupRect_);
     bool popupHovered =
         popupAnimation_.IsInteractive() &&
         PtInRect(&popupRect_, lastMousePoint_);

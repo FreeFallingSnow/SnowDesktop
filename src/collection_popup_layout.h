@@ -1,6 +1,8 @@
 #pragma once
 
 #include "constants.h"
+#include "font_cu_rules.h"
+#include "list_detail_rules.h"
 
 #include <algorithm>
 #include <cmath>
@@ -18,6 +20,7 @@ struct Metrics
     float scale = 1.0f;
     int cellWidth = kCellWidth;
     int cellHeight = kMinCellHeight;
+    int minimumListHeight = 1;
     int paddingX = kCollectionPopupPaddingX;
     int headerHeight = kCollectionPopupHeaderHeight;
     int bottomPadding = kCollectionPopupBottomPadding;
@@ -72,7 +75,8 @@ inline Metrics ResolveMetrics(
     int pageCellHeight,
     int minimumVisualWidth,
     int minimumVisualHeight,
-    float pageScale)
+    float pageScale,
+    int minimumListHeight = 1)
 {
     Metrics result;
     result.scale = std::isfinite(pageScale)
@@ -82,6 +86,7 @@ inline Metrics ResolveMetrics(
         1, pageCellWidth, minimumVisualWidth });
     result.cellHeight = std::max({
         1, pageCellHeight, minimumVisualHeight });
+    result.minimumListHeight = std::max(1, minimumListHeight);
     result.paddingX = ScaleDimension(
         kCollectionPopupPaddingX, result.scale);
     result.headerHeight = ScaleDimension(
@@ -96,6 +101,38 @@ inline Metrics ResolveMetrics(
     result.anchorGap = ScaleDimension(12, result.scale);
     result.maximumWidth = ScaleDimension(560, result.scale);
     return result;
+}
+
+inline bool DetailsVisible(
+    bool listMode,
+    bool showModified,
+    bool showType,
+    bool showSize)
+{
+    return listMode && list_detail_rules::HasMetadataColumns(
+        showModified, showType, showSize);
+}
+
+inline int ResolveListRowHeight(
+    const Metrics& metrics,
+    float listItemFontSizeCu)
+{
+    const float currentFont = font_cu_rules::Scale(
+        listItemFontSizeCu, metrics.scale);
+    const float defaultFont = font_cu_rules::Scale(
+        kItemFontSize, metrics.scale);
+    return std::max(
+        metrics.minimumListHeight,
+        list_detail_rules::RowHeight(
+            ScaleDimension(36, metrics.scale),
+            ScaleDimension(38, metrics.scale),
+            currentFont,
+            defaultFont));
+}
+
+inline int ResolveDetailsHeaderHeight(const Metrics& metrics)
+{
+    return ScaleDimension(30, metrics.scale);
 }
 
 inline int PreferredColumnCount(

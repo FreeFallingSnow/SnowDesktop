@@ -1597,7 +1597,9 @@ private:
         std::optional<RECT> dockRenameAnchor = std::nullopt,
         std::optional<size_t> dockMappingEntryIndex =
             std::nullopt,
-        bool dockApplicationItem = false);
+        bool dockApplicationItem = false,
+        std::optional<size_t> dockEntryIndex =
+            std::nullopt);
     /** @brief 显示外壳扩展上下文菜单。 @param screenPoint 屏幕坐标 @param itemIndex 桌面项索引（可选，-1 表示背景） */
     void ShowShellContextMenu(POINT screenPoint, int itemIndex = -1,
         bool keepQuickNavigationOpen = false,
@@ -2611,6 +2613,8 @@ private:
     int GetCollectionPopupMaxScrollOffset(const DesktopWidget& widget, const RECT& popup) const;
     /** @brief 获取集合弹出面板中指定项的矩形。 @param popup 面板矩形 @param linearIndex 项索引 @return 项矩形 */
     RECT GetCollectionPopupItemRect(const RECT& popup, size_t linearIndex) const;
+    RECT GetCollectionPopupItemIconRect(const RECT& itemRect) const;
+    RECT GetCollectionPopupItemTextRect(const RECT& itemRect) const;
     /** @brief 处理鼠标滚轮消息。 @param wp WPARAM @param lp LPARAM */
     void OnMouseWheel(WPARAM wp, LPARAM lp);
     /**

@@ -539,6 +539,19 @@ struct DockEntry
         snowdesktop::folder_sort_rules::kName;
     bool folderSortAscending = true;
     std::vector<std::wstring> folderItemKeys;
+    // Direct folder items have no source widget. Persist the popup display
+    // options on the Dock entry so they can use the same list/detail view as
+    // widget-backed folder popups.
+    bool listMode = false;
+    bool detailShowModified = false;
+    bool detailShowType = false;
+    bool detailShowSize = false;
+    float detailModifiedPosition =
+        snowdesktop::list_detail_rules::kDefaultModifiedPosition;
+    float detailTypePosition =
+        snowdesktop::list_detail_rules::kDefaultTypePosition;
+    float detailSizePosition =
+        snowdesktop::list_detail_rules::kDefaultSizePosition;
 };
 
 struct DockUsageRecord

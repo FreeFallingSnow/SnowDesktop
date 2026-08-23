@@ -594,6 +594,26 @@ void DesktopApp::RefreshDockFolderPopup()
                     source.folderSortAscending;
             dockFolderPopupWidget_.itemKeys =
                 source.itemKeys;
+            dockFolderPopupWidget_.listMode =
+                source.listMode;
+            dockFolderPopupWidget_.showDetails =
+                source.showDetails;
+            dockFolderPopupWidget_.detailShowModified =
+                source.detailShowModified;
+            dockFolderPopupWidget_.detailShowType =
+                source.detailShowType;
+            dockFolderPopupWidget_.detailShowSize =
+                source.detailShowSize;
+            dockFolderPopupWidget_.detailModifiedPosition =
+                source.detailModifiedPosition;
+            dockFolderPopupWidget_.detailTypePosition =
+                source.detailTypePosition;
+            dockFolderPopupWidget_.detailSizePosition =
+                source.detailSizePosition;
+            dockFolderPopupWidget_.contentSortColumn =
+                source.contentSortColumn;
+            dockFolderPopupWidget_.contentSortAscending =
+                source.contentSortAscending;
         }
         else
         {
@@ -695,6 +715,26 @@ CommitDockFolderPopupStateToSource()
                     folderSortAscending;
             source.itemKeys =
                 dockFolderPopupWidget_.itemKeys;
+            source.listMode =
+                dockFolderPopupWidget_.listMode;
+            source.showDetails =
+                dockFolderPopupWidget_.showDetails;
+            source.detailShowModified =
+                dockFolderPopupWidget_.detailShowModified;
+            source.detailShowType =
+                dockFolderPopupWidget_.detailShowType;
+            source.detailShowSize =
+                dockFolderPopupWidget_.detailShowSize;
+            source.detailModifiedPosition =
+                dockFolderPopupWidget_.detailModifiedPosition;
+            source.detailTypePosition =
+                dockFolderPopupWidget_.detailTypePosition;
+            source.detailSizePosition =
+                dockFolderPopupWidget_.detailSizePosition;
+            source.contentSortColumn =
+                dockFolderPopupWidget_.contentSortColumn;
+            source.contentSortAscending =
+                dockFolderPopupWidget_.contentSortAscending;
             RefreshFolderMappingWidget(
                 sourceIndex);
             SaveLayoutSlots();
@@ -725,6 +765,20 @@ CommitDockFolderPopupStateToSource()
                 folderSortAscending;
         entry.folderItemKeys =
             dockFolderPopupWidget_.itemKeys;
+        entry.listMode =
+            dockFolderPopupWidget_.listMode;
+        entry.detailShowModified =
+            dockFolderPopupWidget_.detailShowModified;
+        entry.detailShowType =
+            dockFolderPopupWidget_.detailShowType;
+        entry.detailShowSize =
+            dockFolderPopupWidget_.detailShowSize;
+        entry.detailModifiedPosition =
+            dockFolderPopupWidget_.detailModifiedPosition;
+        entry.detailTypePosition =
+            dockFolderPopupWidget_.detailTypePosition;
+        entry.detailSizePosition =
+            dockFolderPopupWidget_.detailSizePosition;
         SaveLayoutSlots();
         return;
     }
@@ -770,6 +824,11 @@ void DesktopApp::SortDockFolderPopupContents(
             mode;
         dockFolderPopupWidget_.
             folderSortAscending = ascending;
+        dockFolderPopupWidget_.contentSortColumn =
+            snowdesktop::list_detail_rules::
+                FromLegacyFolderSortMode(mode);
+        dockFolderPopupWidget_.contentSortAscending =
+            ascending;
         snowdesktop::folder_sort_rules::
             StableSort(
                 dockFolderPopupWidget_.

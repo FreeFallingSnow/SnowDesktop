@@ -434,7 +434,27 @@ bool DecodeDockEntries(const JsonValue& root, Document& document,
                 path + ".folderSortAscending",
                 record.folderSortAscending, error) ||
             !ReadStringArray(object, "folderItems",
-                path + ".folderItems", record.folderItems, error))
+                path + ".folderItems", record.folderItems, error) ||
+            !ReadBoolean(object, "listMode",
+                path + ".listMode", record.listMode, error) ||
+            !ReadBoolean(object, "detailShowModified",
+                path + ".detailShowModified",
+                record.detailShowModified, error) ||
+            !ReadBoolean(object, "detailShowType",
+                path + ".detailShowType",
+                record.detailShowType, error) ||
+            !ReadBoolean(object, "detailShowSize",
+                path + ".detailShowSize",
+                record.detailShowSize, error) ||
+            !ReadOptionalFloat(object, "detailModifiedPosition",
+                path + ".detailModifiedPosition",
+                record.detailModifiedPosition, error) ||
+            !ReadOptionalFloat(object, "detailTypePosition",
+                path + ".detailTypePosition",
+                record.detailTypePosition, error) ||
+            !ReadOptionalFloat(object, "detailSizePosition",
+                path + ".detailSizePosition",
+                record.detailSizePosition, error))
         {
             return false;
         }

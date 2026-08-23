@@ -265,7 +265,8 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
             const RECT handoffRect =
                 snowdesktop::popup_drag_rules::
                     HandoffActivationBounds(
-                        GetItemIconRect(itemRect));
+                        GetCollectionPopupItemIconRect(
+                            itemRect));
             if (snowdesktop::popup_drag_rules::
                     CanHandoffToItem(
                         true, entry.selected) &&
@@ -444,7 +445,9 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
                     itemIndex != static_cast<size_t>(-1) &&
                         items_[itemIndex].selected))
         {
-            RECT iconRect = GetItemIconRect(itemRect);
+            RECT iconRect =
+                GetCollectionPopupItemIconRect(
+                    itemRect);
             const RECT handoffRect =
                 snowdesktop::popup_drag_rules::
                     HandoffActivationBounds(iconRect);

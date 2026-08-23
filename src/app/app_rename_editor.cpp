@@ -197,7 +197,8 @@ BeginRenameDockFolderPopupEntry(
         GetCollectionPopupItemRect(
             popup, memberIndex);
     RECT rect =
-        GetItemTextRect(itemRect, true);
+        GetCollectionPopupItemTextRect(
+            itemRect);
     if (IsRectEmptyRect(rect))
     {
         renameController_.Reset();
@@ -210,11 +211,13 @@ BeginRenameDockFolderPopupEntry(
         reinterpret_cast<POINT*>(
             &screenRect), 2);
 
-    const DWORD style =
+    DWORD style =
         WS_POPUP | WS_VISIBLE |
-        ES_AUTOVSCROLL |
-        ES_MULTILINE | ES_CENTER |
-        ES_WANTRETURN;
+        ES_AUTOVSCROLL;
+    style |= dockFolderPopupWidget_.listMode
+        ? ES_LEFT
+        : (ES_MULTILINE | ES_CENTER |
+            ES_WANTRETURN);
     renameEdit_ = CreateWindowExW(
         WS_EX_CLIENTEDGE |
             WS_EX_TOOLWINDOW |

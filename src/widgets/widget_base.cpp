@@ -1752,13 +1752,15 @@ const DesktopWidget* ScrollingItemWidget::GetDetailsSortData() const
 }
 
 void ScrollingItemWidget::DrawDetailsHeader(
-    ID2D1DeviceContext* context, RECT itemViewport) const
+    ID2D1DeviceContext* context, RECT itemViewport,
+    std::optional<bool> lightTheme) const
 {
     if (!app_ || !context || !IsDetailsVisible()) return;
     RECT header = GetDetailsHeaderRectFromViewport(itemViewport);
     if (IsRectEmptyRect(header)) return;
 
-    const bool light = app_->IsLightContentTheme();
+    const bool light = lightTheme.value_or(
+        app_->IsLightContentTheme());
     RECT separator = MakeRect(
         header.left, header.bottom - 1,
         header.right, header.bottom);
@@ -1948,7 +1950,8 @@ static std::wstring FormatListFileSize(
 }
 
 void ScrollingItemWidget::DrawListItemTitle(ID2D1DeviceContext* context,
-    RECT cell, RECT iconRect, const std::wstring& title) const
+    RECT cell, RECT iconRect, const std::wstring& title,
+    bool lightTheme) const
 {
     if (!app_ || !context || title.empty()) return;
     RECT textRect = MakeRect(iconRect.right + Cu(6.0f), cell.top + Cu(2.0f),
@@ -2003,7 +2006,7 @@ void ScrollingItemWidget::DrawListItemTitle(ID2D1DeviceContext* context,
             D2D1::Point2F(static_cast<float>(textRect.left),
                 static_cast<float>(textRect.top)),
             D2D1::SizeF(width, height), layoutScale, 1.0f,
-            app_->IsLightContentTheme(), true);
+            lightTheme, true);
 }
 
 /**
@@ -2021,17 +2024,19 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
     const std::wstring& name, bool selected,
     bool iconIsMediaThumbnail, std::wstring_view demoIdentity,
     const DesktopWidget* demoCollection,
-    const ListItemDetails& details) const
+    const ListItemDetails& details,
+    std::optional<bool> lightTheme) const
 {
     if (!app_ || !context || IsRectEmptyRect(cell)) return;
 
+    const bool light = lightTheme.value_or(
+        app_->IsLightContentTheme());
     bool hovered = PtInRect(&cell, app_->lastMousePoint_) != FALSE;
     if (hovered && !selected)
     {
-        const bool lt = app_->IsLightContentTheme();
         app_->DrawD2DRoundedRectangle(context, cell, static_cast<float>(Cu(6.0f)),
-            lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.06f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f),
-            lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.12f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f));
+            light ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.06f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f),
+            light ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.12f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f));
     }
     if (selected)
         app_->DrawD2DRoundedRectangle(context, cell, static_cast<float>(Cu(6.0f)),
@@ -2075,7 +2080,8 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
             ? app_->GetDemoCollectionIdentityTitle(
                 *demoCollection, demoIdentity)
             : app_->GetDemoIdentityTitle(demoIdentity));
-    DrawListItemTitle(context, nameCell, iconRect, title);
+    DrawListItemTitle(
+        context, nameCell, iconRect, title, light);
 
     if (!IsDetailsVisible() || !demoIdentity.empty()) return;
 
@@ -2097,7 +2103,6 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
     IDWriteTextFormat* format = GetCuTextFormatWeight(
         app_->listItemFontSizeCu_, app_->itemFontWeight_, false);
     if (!format) format = app_->componentListTextFormat_.Get();
-    const bool light = app_->IsLightContentTheme();
     const D2D1_COLOR_F color = light
         ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.66f)
         : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.66f);
@@ -2153,7 +2158,9 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
             rect, rect.left + Cu(4.0f), visualMetrics);
         app_->DrawPrivacyFaIcon(context, iconRect, isDir);
         if (showLabel)
-            DrawListItemTitle(context, rect, iconRect, label);
+            DrawListItemTitle(
+                context, rect, iconRect, label,
+                app_->IsLightContentTheme());
         return;
     }
 

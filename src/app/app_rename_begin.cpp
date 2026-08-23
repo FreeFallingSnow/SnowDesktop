@@ -266,16 +266,31 @@ void DesktopApp::BeginRenameSelected(
         renameController_.Reset();
         return;
     }
-    RECT textRect = GetItemTextRect(itemBounds, true);
+    const bool popupListRename =
+        !dockFolderPopupOpen_ &&
+        popupWidgetIndex_ < widgets_.size() &&
+        IsCollectionPopupInteractive() &&
+        widgets_[popupWidgetIndex_].listMode;
+    RECT textRect = popupListRename
+        ? GetCollectionPopupItemTextRect(
+            itemBounds)
+        : GetItemTextRect(itemBounds, true);
     InflateRect(&textRect, 2, 2);
     RECT screenRect = textRect;
     MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&screenRect), 2);
 
+    DWORD renameStyle =
+        WS_POPUP | WS_VISIBLE |
+        ES_AUTOVSCROLL;
+    renameStyle |= popupListRename
+        ? ES_LEFT
+        : (ES_MULTILINE | ES_CENTER |
+            ES_WANTRETURN);
     renameEdit_ = CreateWindowExW(
         WS_EX_CLIENTEDGE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
         L"EDIT",
         items_[selectedIndex].name.c_str(),
-        WS_POPUP | WS_VISIBLE | ES_MULTILINE | ES_CENTER | ES_AUTOVSCROLL | ES_WANTRETURN,
+        renameStyle,
         screenRect.left, screenRect.top,
         screenRect.right - screenRect.left, screenRect.bottom - screenRect.top,
         hwnd_, nullptr, instance_, nullptr);

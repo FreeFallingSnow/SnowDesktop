@@ -250,7 +250,8 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
                                     ? std::optional<size_t>(
                                           entryIndex)
                                     : std::nullopt,
-                                true);
+                                true,
+                                entryIndex);
                     }
                 }
                 else
