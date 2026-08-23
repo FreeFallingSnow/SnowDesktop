@@ -130,9 +130,12 @@ local function capture(model, force, reset)
         model.values = spectrum.zeroes(model.barCount)
     elseif snapshot.available and type(snapshot.value) == "table" and
         type(snapshot.value.spectrum) == "table" then
+        local deviceReset = reset or snapshot.value.deviceChanged == true
+        model.rangeEnd = spectrum.adaptiveRange(snapshot.value.spectrum,
+            deviceReset and nil or model.rangeEnd)
         model.values = spectrum.smooth(model.values,
             snapshot.value.spectrum, model.sensitivity, model.barCount,
-            reset or snapshot.value.deviceChanged == true)
+            deviceReset, model.rangeEnd)
     else
         model.values = spectrum.zeroes(model.barCount)
     end
@@ -154,6 +157,7 @@ local function setup(context)
         values = spectrum.zeroes(config.barCount),
         status = "warming",
         lastTimestamp = nil,
+        rangeEnd = CAPTURE_BINS,
         preview = context.preview == true,
     }
     capture(model, true, true)

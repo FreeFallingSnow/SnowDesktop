@@ -84,6 +84,41 @@ return {
         assert(source[128] == 1)
     end,
 
+    ["normalization stretches the active range across all bars"] = function()
+        local source = {}
+        for index = 1, 128 do source[index] = 0 end
+        source[32] = 1
+        local values = spectrum.normalize(source, 1, 64, 32)
+        assert(#values == 64)
+        assert(values[64] == 1)
+        assert(values[16] == 0)
+    end,
+
+    ["adaptive range expands quickly and contracts slowly"] = function()
+        local bass = {}
+        local treble = {}
+        for index = 1, 128 do
+            bass[index] = 0
+            treble[index] = 0
+        end
+        bass[20] = 1
+        treble[110] = 1
+        local contracted = spectrum.adaptiveRange(bass, 128)
+        local expanded = spectrum.adaptiveRange(treble, 64)
+        assert(contracted < 128 and contracted > 100)
+        assert(expanded > 90 and expanded < 128)
+        assert(expanded - 64 > 128 - contracted)
+    end,
+
+    ["adaptive range ignores tiny high frequency noise"] = function()
+        local source = {}
+        for index = 1, 128 do source[index] = 0 end
+        source[20] = 1
+        source[128] = 0.01
+        local range = spectrum.adaptiveRange(source, nil)
+        assert(range < 128 and range > 100)
+    end,
+
     ["display keeps silent bars low and preserves input"] = function()
         local source = { 0, 0.5, -1, math.huge }
         local values = spectrum.display(source, 16)

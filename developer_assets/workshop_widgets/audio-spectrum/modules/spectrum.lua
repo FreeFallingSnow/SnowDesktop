@@ -10,6 +10,11 @@ local DEFAULT_SENSITIVITY = 1.5
 local ATTACK = 0.62
 local RELEASE = 0.18
 local IDLE_MINIMUM = 0.018
+local RANGE_ENERGY_PERCENTILE = 0.97
+local RANGE_MINIMUM_FRACTION = 0.45
+local RANGE_PADDING_FRACTION = 0.05
+local RANGE_EXPAND = 0.55
+local RANGE_CONTRACT = 0.04
 
 local function finiteNumber(value, fallback)
     local number = tonumber(value)
@@ -82,18 +87,69 @@ function M.zeroes(count)
     return result
 end
 
-function M.normalize(values, sensitivity, count)
+function M.adaptiveRange(values, previous)
+    local source = type(values) == "table" and values or {}
+    local length = #source
+    if length == 0 then return 0 end
+    local minimum = math.max(1,
+        math.floor(length * RANGE_MINIMUM_FRACTION + 0.5))
+    local before = math.floor(M.clamp(previous,
+        minimum, length, length) + 0.5)
+    local energy = 0
+    local samples = {}
+    for index = 1, length do
+        local value = M.clamp(source[index], 0, 1, 0)
+        samples[index] = value
+        energy = energy + value * value
+    end
+    if energy <= 0.000001 then return before end
+
+    local threshold = energy * RANGE_ENERGY_PERCENTILE
+    local accumulated = 0
+    local target = minimum
+    for index = 1, length do
+        accumulated = accumulated + samples[index] * samples[index]
+        if accumulated >= threshold then
+            target = index
+            break
+        end
+    end
+    target = math.max(minimum, math.min(length,
+        target + math.ceil(length * RANGE_PADDING_FRACTION)))
+    if math.abs(target - before) <= 1 then return target end
+    local coefficient = target > before and
+        RANGE_EXPAND or RANGE_CONTRACT
+    return math.max(minimum, math.min(length,
+        math.floor(before + (target - before) * coefficient + 0.5)))
+end
+
+function M.normalize(values, sensitivity, count, sourceLimit)
     local length = M.binCount(count)
     local gain = M.sensitivity(sensitivity)
     local source = type(values) == "table" and values or {}
     local sourceLength = #source
+    local activeLength = sourceLength
+    if sourceLimit ~= nil and sourceLength > 0 then
+        activeLength = math.floor(M.clamp(sourceLimit,
+            1, sourceLength, sourceLength) + 0.5)
+    end
     local result = {}
     for index = 1, length do
         local value = 0
-        if sourceLength > length then
-            local first = math.floor((index - 1) * sourceLength / length) + 1
+        if sourceLimit ~= nil and activeLength > 0 and
+            activeLength < length then
+            local position = length == 1 and 1 or 1 +
+                (index - 1) * (activeLength - 1) / (length - 1)
+            local left = math.max(1, math.floor(position))
+            local right = math.min(activeLength, left + 1)
+            local fraction = position - left
+            local leftValue = M.clamp(source[left], 0, 1, 0)
+            local rightValue = M.clamp(source[right], 0, 1, 0)
+            value = leftValue + (rightValue - leftValue) * fraction
+        elseif activeLength > length then
+            local first = math.floor((index - 1) * activeLength / length) + 1
             local last = math.max(first,
-                math.floor(index * sourceLength / length))
+                math.floor(index * activeLength / length))
             local total = 0
             local peak = 0
             for sourceIndex = first, last do
@@ -110,8 +166,8 @@ function M.normalize(values, sensitivity, count)
     return result
 end
 
-function M.smooth(previous, values, sensitivity, count, reset)
-    local target = M.normalize(values, sensitivity, count)
+function M.smooth(previous, values, sensitivity, count, reset, sourceLimit)
+    local target = M.normalize(values, sensitivity, count, sourceLimit)
     local source = type(previous) == "table" and previous or {}
     local result = {}
     for index = 1, #target do
