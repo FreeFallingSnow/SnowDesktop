@@ -1417,11 +1417,12 @@ if (BUILD_TESTING)
             tests/component_preview_tests.cpp
             src/component_preview.cpp
             src/menu_icon_render.cpp
+            src/resource.rc
             src/widget_preview_stage.cpp
             src/widget_preview_scene.cpp
             src/widget_preview_scene_model.cpp
         INCLUDE_DIRECTORIES src src/core
-        LINK_LIBRARIES d2d1 dxguid gdi32 user32
+        LINK_LIBRARIES d2d1 dxguid gdi32 ole32 user32 windowscodecs
         LABELS integration ui preview)
 
     snowdesktop_add_test(
@@ -1429,9 +1430,10 @@ if (BUILD_TESTING)
         widget_preview_stage
         SOURCES
             tests/widget_preview_stage_tests.cpp
+            src/resource.rc
             src/widget_preview_stage.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES d2d1 dxguid
+        LINK_LIBRARIES d2d1 dxguid ole32 windowscodecs
         LABELS contract render ui preview)
 
     snowdesktop_add_test(

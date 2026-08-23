@@ -1,11 +1,15 @@
 #include "widget_preview_stage.h"
 
+#include "resource.h"
+
 #include <d2d1effects.h>
+#include <wincodec.h>
 #include <wrl/client.h>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 
 namespace snowdesktop::widget_preview
 {
@@ -13,43 +17,120 @@ namespace
 {
 using Microsoft::WRL::ComPtr;
 
-struct Rgb
+struct ScopedCom
 {
-    float r = 0.0f;
-    float g = 0.0f;
-    float b = 0.0f;
+    ScopedCom()
+        : result(CoInitializeEx(nullptr, COINIT_MULTITHREADED))
+    {
+    }
+
+    ~ScopedCom()
+    {
+        if (result == S_OK || result == S_FALSE)
+            CoUninitialize();
+    }
+
+    HRESULT result = E_FAIL;
 };
 
-struct Blob
+Wallpaper LoadLandscapeResource()
 {
-    float x = 0.0f;
-    float y = 0.0f;
-    float radius = 1.0f;
-    float strength = 1.0f;
-    Rgb color;
-};
+    Wallpaper result;
+    const HMODULE module = GetModuleHandleW(nullptr);
+    const HRSRC resource = FindResourceW(module,
+        MAKEINTRESOURCEW(IDR_WIDGET_PREVIEW_LANDSCAPE), RT_RCDATA);
+    if (!resource) return result;
+    const HGLOBAL loaded = LoadResource(module, resource);
+    const DWORD resourceSize = SizeofResource(module, resource);
+    auto* bytes = static_cast<BYTE*>(LockResource(loaded));
+    if (!loaded || !bytes || resourceSize == 0) return result;
 
-constexpr Rgb Hex(std::uint32_t rgb)
+    ScopedCom com;
+    if (FAILED(com.result) && com.result != RPC_E_CHANGED_MODE)
+        return result;
+    ComPtr<IWICImagingFactory> factory;
+    ComPtr<IWICStream> stream;
+    ComPtr<IWICBitmapDecoder> decoder;
+    ComPtr<IWICBitmapFrameDecode> frame;
+    ComPtr<IWICFormatConverter> converter;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) || !factory ||
+        FAILED(factory->CreateStream(&stream)) || !stream ||
+        FAILED(stream->InitializeFromMemory(bytes, resourceSize)) ||
+        FAILED(factory->CreateDecoderFromStream(stream.Get(), nullptr,
+            WICDecodeMetadataCacheOnLoad, &decoder)) || !decoder ||
+        FAILED(decoder->GetFrame(0, &frame)) || !frame ||
+        FAILED(factory->CreateFormatConverter(&converter)) || !converter ||
+        FAILED(converter->Initialize(frame.Get(),
+            GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr,
+            0.0, WICBitmapPaletteTypeCustom)))
+    {
+        return result;
+    }
+    UINT width = 0;
+    UINT height = 0;
+    if (FAILED(converter->GetSize(&width, &height)) ||
+        width == 0 || height == 0 ||
+        width > static_cast<UINT>(std::numeric_limits<int>::max()) ||
+        height > static_cast<UINT>(std::numeric_limits<int>::max()))
+    {
+        return result;
+    }
+    result.width = static_cast<int>(width);
+    result.height = static_cast<int>(height);
+    result.pixels.resize(static_cast<std::size_t>(width) * height);
+    const UINT stride = width * sizeof(std::uint32_t);
+    const std::size_t byteCount = result.pixels.size() *
+        sizeof(std::uint32_t);
+    if (byteCount > std::numeric_limits<UINT>::max() ||
+        FAILED(converter->CopyPixels(nullptr, stride,
+            static_cast<UINT>(byteCount),
+            reinterpret_cast<BYTE*>(result.pixels.data()))))
+    {
+        return {};
+    }
+    return result;
+}
+
+std::uint8_t Channel(std::uint32_t pixel, unsigned shift)
 {
-    return {
-        static_cast<float>((rgb >> 16) & 0xffu) / 255.0f,
-        static_cast<float>((rgb >> 8) & 0xffu) / 255.0f,
-        static_cast<float>(rgb & 0xffu) / 255.0f,
+    return static_cast<std::uint8_t>((pixel >> shift) & 0xffu);
+}
+
+std::uint32_t SampleBilinear(
+    const Wallpaper& source, float sourceX, float sourceY)
+{
+    sourceX = std::clamp(sourceX, 0.0f,
+        static_cast<float>(source.width - 1));
+    sourceY = std::clamp(sourceY, 0.0f,
+        static_cast<float>(source.height - 1));
+    const int x0 = static_cast<int>(std::floor(sourceX));
+    const int y0 = static_cast<int>(std::floor(sourceY));
+    const int x1 = std::min(x0 + 1, source.width - 1);
+    const int y1 = std::min(y0 + 1, source.height - 1);
+    const float tx = sourceX - static_cast<float>(x0);
+    const float ty = sourceY - static_cast<float>(y0);
+    const auto pixelAt = [&](int x, int y) {
+        return source.pixels[static_cast<std::size_t>(y) *
+            source.width + x];
     };
-}
-
-std::uint8_t ToByte(float value)
-{
-    return static_cast<std::uint8_t>(std::lround(
-        std::clamp(value, 0.0f, 1.0f) * 255.0f));
-}
-
-std::uint32_t ToOpaqueBgra(const Rgb& color)
-{
-    return static_cast<std::uint32_t>(ToByte(color.b)) |
-        (static_cast<std::uint32_t>(ToByte(color.g)) << 8) |
-        (static_cast<std::uint32_t>(ToByte(color.r)) << 16) |
-        0xff000000u;
+    const std::uint32_t samples[] = {
+        pixelAt(x0, y0), pixelAt(x1, y0),
+        pixelAt(x0, y1), pixelAt(x1, y1) };
+    const float weights[] = {
+        (1.0f - tx) * (1.0f - ty), tx * (1.0f - ty),
+        (1.0f - tx) * ty, tx * ty };
+    std::uint32_t result = 0xff000000u;
+    for (const unsigned shift : { 0u, 8u, 16u })
+    {
+        float value = 0.0f;
+        for (std::size_t index = 0; index < 4; ++index)
+            value += static_cast<float>(Channel(samples[index], shift)) *
+                weights[index];
+        result |= static_cast<std::uint32_t>(
+            std::lround(std::clamp(value, 0.0f, 255.0f))) << shift;
+    }
+    return result;
 }
 
 D2D1_RECT_F ToD2DRect(const RECT& rect)
@@ -71,29 +152,25 @@ Wallpaper GenerateWallpaper(int width, int height, bool lightTheme,
     Wallpaper wallpaper;
     if (width <= 0 || height <= 0)
         return wallpaper;
+    (void)lightTheme;
     wallpaper.width = width;
     wallpaper.height = height;
     wallpaper.pixels.resize(static_cast<std::size_t>(width) * height);
-
-    const Rgb base = lightTheme ? Hex(0xEEF4FF) : Hex(0x10162F);
-    const std::array<Blob, 4> blobs = lightTheme
-        ? std::array<Blob, 4>{ {
-            { 0.04f, 0.08f, 0.76f, 1.32f, Hex(0xC4B5FD) },
-            { 0.96f, 0.04f, 0.72f, 1.24f, Hex(0x67E8F9) },
-            { 0.10f, 0.98f, 0.78f, 1.18f, Hex(0xFDA4AF) },
-            { 0.94f, 0.92f, 0.74f, 1.12f, Hex(0xFCD34D) },
-        } }
-        : std::array<Blob, 4>{ {
-            { 0.04f, 0.08f, 0.76f, 1.42f, Hex(0x7C3AED) },
-            { 0.96f, 0.04f, 0.72f, 1.34f, Hex(0x0EA5E9) },
-            { 0.10f, 0.98f, 0.78f, 1.28f, Hex(0xEC4899) },
-            { 0.94f, 0.92f, 0.74f, 1.20f, Hex(0xF59E0B) },
-        } };
-
+    static const Wallpaper source = LoadLandscapeResource();
+    if (source.pixels.empty()) return {};
     const int canvasWidth = viewport.canvasWidth > 0
         ? viewport.canvasWidth : width;
     const int canvasHeight = viewport.canvasHeight > 0
         ? viewport.canvasHeight : height;
+    const float scale = std::max(
+        static_cast<float>(canvasWidth) / source.width,
+        static_cast<float>(canvasHeight) / source.height);
+    const float visibleWidth = static_cast<float>(canvasWidth) / scale;
+    const float visibleHeight = static_cast<float>(canvasHeight) / scale;
+    const float sourceLeft =
+        (static_cast<float>(source.width) - visibleWidth) * 0.5f;
+    const float sourceTop =
+        (static_cast<float>(source.height) - visibleHeight) * 0.5f;
     for (int y = 0; y < height; ++y)
     {
         const float normalizedY =
@@ -104,38 +181,10 @@ Wallpaper GenerateWallpaper(int width, int height, bool lightTheme,
             const float normalizedX =
                 (static_cast<float>(viewport.offsetX + x) + 0.5f) /
                 static_cast<float>(canvasWidth);
-            // A restrained diagonal lift prevents the four radial fields from
-            // collapsing into a flat average at very small preview sizes.
-            const float diagonal = std::clamp(
-                (normalizedX + (1.0f - normalizedY)) * 0.5f, 0.0f, 1.0f);
-            Rgb accumulated{
-                base.r * (1.05f + diagonal * 0.10f),
-                base.g * (1.05f + diagonal * 0.08f),
-                base.b * (1.05f + diagonal * 0.06f),
-            };
-            float totalWeight = 1.05f;
-            for (const Blob& blob : blobs)
-            {
-                const float dx = normalizedX - blob.x;
-                const float dy = normalizedY - blob.y;
-                const float distanceSquared = dx * dx + dy * dy;
-                const float radiusSquared = blob.radius * blob.radius;
-                float falloff = std::max(
-                    0.0f, 1.0f - distanceSquared / radiusSquared);
-                falloff = falloff * falloff * (3.0f - 2.0f * falloff);
-                const float weight = falloff * blob.strength;
-                accumulated.r += blob.color.r * weight;
-                accumulated.g += blob.color.g * weight;
-                accumulated.b += blob.color.b * weight;
-                totalWeight += weight;
-            }
-            const Rgb result{
-                accumulated.r / totalWeight,
-                accumulated.g / totalWeight,
-                accumulated.b / totalWeight,
-            };
             wallpaper.pixels[static_cast<std::size_t>(y) * width + x] =
-                ToOpaqueBgra(result);
+                SampleBilinear(source,
+                    sourceLeft + normalizedX * visibleWidth - 0.5f,
+                    sourceTop + normalizedY * visibleHeight - 0.5f);
         }
     }
     return wallpaper;

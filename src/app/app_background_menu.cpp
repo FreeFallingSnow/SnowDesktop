@@ -711,12 +711,6 @@ DesktopApp::BuildAddWidgetMenuPreview(
     const PersonalizationSettings appearance = settingsWindow_
         ? settingsWindow_->GetPersonalization()
         : PersonalizationSettings::DarkPreset();
-    const bool previewStageLight =
-        appearance.backgroundPreset == kAppearancePresetLight ||
-        appearance.backgroundPreset == kAppearancePresetGlassLight ||
-        appearance.backgroundPreset == kAppearancePresetAcrylicLight ||
-        (appearance.backgroundPreset == kAppearancePresetCustom &&
-            appearance.contentTheme == 1);
     const std::wstring appearanceKey =
         std::to_wstring(menuIconDpi_) + L":" +
         std::to_wstring(menuLightTheme_) + L":" +
@@ -846,7 +840,9 @@ DesktopApp::BuildAddWidgetMenuPreview(
             1, desktopFrame.right - desktopFrame.left);
         card.previewHeight = std::max<LONG>(
             1, desktopFrame.bottom - desktopFrame.top);
-        card.lightStage = previewStageLight;
+        // The selected landscape is shared by every appearance. Its lower
+        // half is dark enough that light card chrome stays readable.
+        card.lightStage = false;
         card.sizeLabel = _LFW("app.widget_preview.size",
             std::to_wstring(card.columns), std::to_wstring(card.rows));
         card.cacheKey = modeKey + L":" + appearanceKey + L":" +

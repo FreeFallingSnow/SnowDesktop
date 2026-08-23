@@ -20,6 +20,7 @@ struct Wallpaper
 
 struct StageStyle
 {
+    /// Retained for material compatibility; the shared landscape is invariant.
     bool lightTheme = false;
     bool glassEnabled = false;
     float blurRadius = 0.0f;
@@ -39,7 +40,7 @@ inline constexpr std::size_t AcrylicNoiseSize = 64;
 using AcrylicNoisePixels = std::array<std::uint32_t,
     AcrylicNoiseSize * AcrylicNoiseSize>;
 
-/** Generate the deterministic, theme-aware preview wallpaper. */
+/** Generate the deterministic shared preview landscape. */
 Wallpaper GenerateWallpaper(int width, int height, bool lightTheme);
 
 /** Generate an exact crop from a larger wallpaper composition. */

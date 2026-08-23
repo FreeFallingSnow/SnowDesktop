@@ -26,8 +26,8 @@ int main()
         "preview wallpaper preserves its requested dimensions");
     Check(dark.pixels == repeated.pixels,
         "preview wallpaper generation is deterministic");
-    Check(dark.pixels != light.pixels,
-        "dark and light wallpaper palettes remain distinct");
+    Check(dark.pixels == light.pixels,
+        "all component appearances share one landscape wallpaper");
     Check(std::all_of(dark.pixels.begin(), dark.pixels.end(),
             [](std::uint32_t pixel) { return (pixel >> 24) == 0xffu; }) &&
           std::all_of(light.pixels.begin(), light.pixels.end(),
