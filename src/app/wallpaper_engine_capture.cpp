@@ -266,6 +266,14 @@ int OutputWindowPriority(HWND window)
     return 1;
 }
 
+bool IsCloneOutputWindow(HWND window)
+{
+    std::array<wchar_t, 64> className{};
+    return window && GetClassNameW(window, className.data(),
+            static_cast<int>(className.size())) &&
+        _wcsicmp(className.data(), L"WPECloneView") == 0;
+}
+
 std::vector<OutputWindow> DiscoverOutputWindows(const RECT& monitorBounds,
     const std::vector<ProcessEntry>& processes)
 {
@@ -633,7 +641,7 @@ public:
     }
 
     bool TryReadBestFrame(const RECT& monitorBounds,
-        Backdrop& backdrop, std::wstring& error)
+        bool allowCloneRemap, Backdrop& backdrop, std::wstring& error)
     {
         if (!state_)
             return false;
@@ -650,6 +658,7 @@ public:
         {
             std::size_t index = 0;
             std::int64_t score = 0;
+            bool remapToMonitor = false;
         };
         std::vector<Candidate> candidates;
         const LONG observedCount = state_->slot_count;
@@ -665,11 +674,13 @@ public:
                 continue;
             const std::int64_t area =
                 IntersectionArea(slot.desktop_rect, monitorBounds);
-            if (area <= 0)
+            const bool remapToMonitor = area <= 0 && allowCloneRemap;
+            if (area <= 0 && !remapToMonitor)
                 continue;
             candidates.push_back({ index,
-                area * 8 + OutputWindowPriority(
-                    reinterpret_cast<HWND>(slot.output_window)) });
+                std::max<std::int64_t>(area, 0) * 8 + OutputWindowPriority(
+                    reinterpret_cast<HWND>(slot.output_window)),
+                remapToMonitor });
         }
         std::sort(candidates.begin(), candidates.end(),
             [](const Candidate& left, const Candidate& right) {
@@ -677,7 +688,8 @@ public:
             });
         for (const Candidate& candidate : candidates)
         {
-            if (ReadFrame(candidate.index, monitorBounds, backdrop, error))
+            if (ReadFrame(candidate.index, monitorBounds,
+                    candidate.remapToMonitor, backdrop, error))
                 return true;
         }
         return false;
@@ -728,7 +740,7 @@ private:
     }
 
     bool ReadFrame(std::size_t index, const RECT& monitorBounds,
-        Backdrop& backdrop, std::wstring& error)
+        bool remapToMonitor, Backdrop& backdrop, std::wstring& error)
     {
         SharedFrameSlot& published = state_->slots[index];
         const DXGI_FORMAT format =
@@ -836,10 +848,13 @@ private:
         InterlockedExchange64(&published.consumed_frame_number,
             published.frame_number);
 
+        const RECT sourceDesktopBounds = remapToMonitor
+            ? monitorBounds
+            : published.desktop_rect;
         backdrop = CropFrameToDesktopRegion(pixels.data(),
             static_cast<int>(description.Width),
             static_cast<int>(description.Height),
-            published.desktop_rect, monitorBounds);
+            sourceDesktopBounds, monitorBounds);
         if (backdrop.Empty())
         {
             error = L"Wallpaper Engine frame does not cover the preview monitor";
@@ -918,6 +933,11 @@ Result CaptureOneShotForMonitor(const RECT& monitorBounds,
     if (outputs.empty())
         return result;
     result.wallpaperEngineDetected = true;
+    const bool allowCloneRemap = std::any_of(
+        outputs.begin(), outputs.end(),
+        [](const OutputWindow& output) {
+            return IsCloneOutputWindow(output.window);
+        });
 
     std::vector<DWORD> captureProcesses;
     for (const OutputWindow& output : outputs)
@@ -956,8 +976,8 @@ Result CaptureOneShotForMonitor(const RECT& monitorBounds,
         }
         while (!IsCancelled(cancelled) && GetTickCount64() < deadline)
         {
-            if (session.TryReadBestFrame(
-                    monitorBounds, result.backdrop, sessionError))
+            if (session.TryReadBestFrame(monitorBounds,
+                    allowCloneRemap, result.backdrop, sessionError))
             {
                 result.error.clear();
                 return result;
