@@ -4046,6 +4046,11 @@ int main(int argc, char** argv)
         const std::size_t closeDesktopCacheVisible =
             closeFloatingDockSource.find(
                 "floatingDockDesktopCacheEffect_->SetOpacity(1.0f)");
+        const std::size_t closeHandoffRectRefresh =
+            closeFloatingDockSource.find(
+                "floatingDockDesktopBackdropHandoffRect_ =",
+                closeFloatingDockSource.find(
+                    "desktopBackdropCompositor_.EndFrame(false);"));
         const std::size_t closeFloatingContentHidden =
             closeFloatingDockSource.find(
                 "floatingDockDcompEffect_->SetOpacity(0.0f)",
@@ -4071,6 +4076,7 @@ int main(int argc, char** argv)
                 "if (deferBackdropHandoff)",
                 closeGlassCommit);
         Check(!closeFloatingDockSource.empty() &&
+                closeHandoffRectRefresh != std::string::npos &&
                 closeDesktopCacheVisible != std::string::npos &&
                 closeFloatingContentHidden != std::string::npos &&
                 closeContentCommit != std::string::npos &&
@@ -4078,6 +4084,7 @@ int main(int argc, char** argv)
                 closeFloatingGlassHidden != std::string::npos &&
                 closeGlassCommit != std::string::npos &&
                 closeDeferredReturn != std::string::npos &&
+                closeHandoffRectRefresh < closeDesktopCacheVisible &&
                 closeDesktopCacheVisible < closeFloatingContentHidden &&
                 closeFloatingContentHidden < closeContentCommit &&
                 closeContentCommit < closeDesktopGlassVisible &&
@@ -4085,6 +4092,11 @@ int main(int argc, char** argv)
                 closeFloatingGlassHidden < closeGlassCommit &&
                 closeGlassCommit < closeDeferredReturn,
             "floating Dock close must queue content and glass ownership changes before awaiting either channel");
+        Check(closeHandoffRectRefresh != std::string::npos &&
+                closeFloatingDockSource.find(
+                    "desktopDockPanelRect;",
+                    closeHandoffRectRefresh) != std::string::npos,
+            "floating Dock close must retain the staged desktop glass at its current rectangle during intervening desktop paints");
         const std::size_t completeFloatingDockBegin =
             floatingDockInteractionSource.find(
                 "void DesktopApp::CompleteFloatingDockCloseHandoff()");

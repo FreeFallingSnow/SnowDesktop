@@ -412,6 +412,16 @@ void DesktopApp::CloseFloatingDock(
         // zero opacity on its own; the desktop/floating opacity exchange below
         // is the single shared-compositor commit for this hand-off.
         desktopBackdropCompositor_.EndFrame(false);
+        if (stagedDesktopGlass)
+        {
+            // AddPanel reuses the Dock owner's SpriteVisual and moves it to
+            // the current panel rectangle. A desktop pointer press can queue
+            // a complete desktop paint while this close hand-off is pending;
+            // KeepPanel must use the moved rectangle or that paint will
+            // collect the invisible destination before the opacity exchange.
+            floatingDockDesktopBackdropHandoffRect_ =
+                desktopDockPanelRect;
+        }
         if (!stagedDesktopGlass)
         {
             floatingDockBackdropCompositor_.
