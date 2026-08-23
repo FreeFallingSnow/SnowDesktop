@@ -557,8 +557,8 @@ int wmain(int argc, wchar_t** argv)
     };
     Check(pixelAt(materialPreviews[0], 0, 0) ==
             pixelAt(materialPreviews[2], 0, 0) &&
-            pixelAt(materialPreviews[0], 96, 120) !=
-                pixelAt(materialPreviews[2], 96, 120),
+            pixelAt(materialPreviews[0], 96, 16) !=
+                pixelAt(materialPreviews[2], 96, 16),
         "glass blur changes the panel interior without blurring its rounded corner");
     Check(materialPreviews[0].pixels != materialPreviews[2].pixels &&
             materialPreviews[2].pixels != materialPreviews[4].pixels &&
