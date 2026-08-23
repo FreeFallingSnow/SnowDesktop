@@ -35,6 +35,41 @@ constexpr UINT_PTR kHideTimer = 2;
 constexpr UINT kWallpaperEngineFrameReady = WM_APP + 0x349;
 constexpr DWORD kWallpaperEngineCaptureTimeoutMs = 2500;
 
+struct WallpaperEngineFrameCache
+{
+    std::mutex mutex;
+    std::shared_ptr<const widget_preview::Wallpaper> wallpaper;
+    RECT desktopBounds{};
+};
+
+WallpaperEngineFrameCache& AppWallpaperEngineFrameCache()
+{
+    static WallpaperEngineFrameCache cache;
+    return cache;
+}
+
+std::shared_ptr<const widget_preview::Wallpaper>
+LoadCachedWallpaperEngineFrame(const RECT& desktopBounds)
+{
+    auto& cache = AppWallpaperEngineFrameCache();
+    std::lock_guard lock(cache.mutex);
+    if (!cache.wallpaper || cache.wallpaper->pixels.empty() ||
+        !EqualRect(&cache.desktopBounds, &desktopBounds))
+        return {};
+    return cache.wallpaper;
+}
+
+void StoreCachedWallpaperEngineFrame(
+    std::shared_ptr<const widget_preview::Wallpaper> wallpaper,
+    const RECT& desktopBounds)
+{
+    if (!wallpaper || wallpaper->pixels.empty()) return;
+    auto& cache = AppWallpaperEngineFrameCache();
+    std::lock_guard lock(cache.mutex);
+    cache.wallpaper = std::move(wallpaper);
+    cache.desktopBounds = desktopBounds;
+}
+
 struct ScopedComApartment
 {
     ScopedComApartment()
@@ -517,7 +552,7 @@ bool Window::Show(const Model& model, const RECT& menuBounds,
     {
         desktopWallpaper_ = {};
         desktopWallpaperBounds_ = {};
-        desktopWallpaperIsEngineFrame_ = false;
+        desktopWallpaperEngineFrame_.reset();
         if (std::any_of(model_.cards.begin(), model_.cards.end(),
                 [](const Card& value) {
                     return value.useDesktopWallpaperStage;
@@ -603,18 +638,9 @@ void Window::Hide()
         KillTimer(hwnd_, kHideTimer);
         KillTimer(hwnd_, kOpenTimer);
         ShowWindow(hwnd_, SW_HIDE);
-        if (desktopWallpaperIsEngineFrame_ &&
-            !desktopWallpaper_.pixels.empty())
-        {
-            wallpaperEngineCache_ = std::move(desktopWallpaper_);
-            wallpaperEngineCacheBounds_ = desktopWallpaperBounds_;
-        }
-        else
-        {
-            desktopWallpaper_ = {};
-            desktopWallpaperBounds_ = {};
-        }
-        desktopWallpaperIsEngineFrame_ = false;
+        desktopWallpaper_ = {};
+        desktopWallpaperBounds_ = {};
+        desktopWallpaperEngineFrame_.reset();
     }
 }
 
@@ -632,9 +658,7 @@ void Window::Close()
     pendingOnApply_ = {};
     desktopWallpaper_ = {};
     desktopWallpaperBounds_ = {};
-    wallpaperEngineCache_ = {};
-    wallpaperEngineCacheBounds_ = {};
-    desktopWallpaperIsEngineFrame_ = false;
+    desktopWallpaperEngineFrame_.reset();
 }
 
 RECT Window::OptionBoundsForTesting(
@@ -679,16 +703,14 @@ bool Window::LoadDesktopWallpaperBackdrop()
     const int height = monitor.rcMonitor.bottom - monitor.rcMonitor.top;
     if (width <= 0 || height <= 0) return false;
 
-    if (EqualRect(&wallpaperEngineCacheBounds_, &monitor.rcMonitor) &&
-        !wallpaperEngineCache_.pixels.empty())
+    desktopWallpaperEngineFrame_ =
+        LoadCachedWallpaperEngineFrame(monitor.rcMonitor);
+    if (desktopWallpaperEngineFrame_)
     {
-        desktopWallpaper_ = std::move(wallpaperEngineCache_);
         desktopWallpaperBounds_ = monitor.rcMonitor;
-        desktopWallpaperIsEngineFrame_ = true;
         StartWallpaperEngineBackdropCapture(monitor.rcMonitor);
         return true;
     }
-    desktopWallpaperIsEngineFrame_ = false;
 
     StaticWallpaperSettings settings = ReadLegacyWallpaperSettings();
     ScopedComApartment com;
@@ -859,10 +881,13 @@ void Window::FinishWallpaperEngineBackdropCapture(
     wallpaperEngineCaptureState_.reset();
     if (!apply || !hwnd_ || !IsWindowVisible(hwnd_))
         return;
-    desktopWallpaper_ = std::move(wallpaper);
+    auto sharedWallpaper =
+        std::make_shared<widget_preview::Wallpaper>(std::move(wallpaper));
+    desktopWallpaper_ = {};
+    desktopWallpaperEngineFrame_ = sharedWallpaper;
     desktopWallpaperBounds_ = desktopBounds;
-    wallpaperEngineCacheBounds_ = desktopBounds;
-    desktopWallpaperIsEngineFrame_ = true;
+    StoreCachedWallpaperEngineFrame(
+        std::move(sharedWallpaper), desktopBounds);
     RenderCurrent();
 }
 
@@ -1041,12 +1066,17 @@ bool Window::RenderCurrent()
     const int cardHeight = cardRect_.bottom - cardRect_.top;
     const int cardRadius = Scale(8, dpi_);
     snowdesktop::widget_preview::Wallpaper wallpaper;
-    if (card.useDesktopWallpaperStage && !desktopWallpaper_.pixels.empty())
+    const widget_preview::Wallpaper* desktopWallpaper =
+        desktopWallpaperEngineFrame_
+        ? desktopWallpaperEngineFrame_.get()
+        : &desktopWallpaper_;
+    if (card.useDesktopWallpaperStage &&
+        !desktopWallpaper->pixels.empty())
     {
         RECT screenCard = cardRect_;
         OffsetRect(&screenCard, destination.x, destination.y);
         wallpaper = snowdesktop::widget_preview::CropWallpaper(
-            desktopWallpaper_, desktopWallpaperBounds_, screenCard);
+            *desktopWallpaper, desktopWallpaperBounds_, screenCard);
     }
     if (wallpaper.pixels.empty() && card.stageWallpaper &&
         !card.stageWallpaper->pixels.empty())

@@ -236,9 +236,8 @@ private:
         wallpaperEngineCaptureState_;
     std::thread wallpaperEngineCaptureThread_;
     std::uint64_t wallpaperEngineCaptureGeneration_ = 0;
-    widget_preview::Wallpaper wallpaperEngineCache_;
-    RECT wallpaperEngineCacheBounds_{};
-    bool desktopWallpaperIsEngineFrame_ = false;
+    std::shared_ptr<const widget_preview::Wallpaper>
+        desktopWallpaperEngineFrame_;
     std::vector<POINT> committedPositions_;
 };
 
