@@ -238,7 +238,7 @@ private:
     std::uint64_t wallpaperEngineCaptureGeneration_ = 0;
     widget_preview::Wallpaper wallpaperEngineCache_;
     RECT wallpaperEngineCacheBounds_{};
-    ULONGLONG wallpaperEngineCacheTick_ = 0;
+    bool desktopWallpaperIsEngineFrame_ = false;
     std::vector<POINT> committedPositions_;
 };
 
