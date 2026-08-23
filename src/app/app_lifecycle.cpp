@@ -13,6 +13,7 @@ DesktopApp::~DesktopApp()
     quickNavigationAnimationFrameToken_ = 0;
     dockBounceAnimationFrameToken_ = 0;
     pageNotifyAnimationFrameToken_ = 0;
+    navHotEdgeHintToken_ = 0;
     pointerRecoveryFrameToken_ = 0;
     floatingDockHoverTailToken_ = 0;
     desktopPointerPresentPending_ = false;
@@ -161,6 +162,12 @@ void DesktopApp::ResetDesktopWindowResources()
         if (pageNotifyFadeOutToken_)
             uiAnimationScheduler_.Cancel(pageNotifyFadeOutToken_);
         pageNotifyFadeOutToken_ = 0;
+        if (navHotEdgeHintToken_)
+            uiAnimationScheduler_.Cancel(navHotEdgeHintToken_);
+        navHotEdgeHintToken_ = 0;
+        navHotEdgeHintVisible_ = false;
+        navHotEdgeHover_ = false;
+        navHoverSide_ = 0;
         KillTimer(hwnd_, kTaskbarRevealGuardTimerId);
         for (const auto& [timerId, _] : widgetTimerIds_)
             uiAnimationScheduler_.Cancel(timerId);

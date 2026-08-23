@@ -24,15 +24,11 @@ bool DesktopApp::HandlePageNavClick(POINT point)
     const bool hasPrev = pageOffset_ > 0;
     const bool hasNext = pageOffset_ < MaxPageOffset();
 
-    RECT prevRect{};
-    RECT nextRect{};
     RECT prevEdge{};
     RECT nextEdge{};
-    GetNavButtonRects(prevRect, nextRect);
     GetNavHotEdgeRects(prevEdge, nextEdge);
     const auto target = snowdesktop::page_navigation_rules::
-        HitTestPointerTarget(
-            point, prevRect, nextRect, prevEdge, nextEdge);
+        HitTestPointerTarget(point, prevEdge, nextEdge);
     const int delta = snowdesktop::page_navigation_rules::
         PointerTargetDirection(target);
     if (delta == 0) return false;
@@ -41,12 +37,7 @@ bool DesktopApp::HandlePageNavClick(POINT point)
         (delta == -1 && hasPrev) ||
         (delta == 1 && hasNext);
     if (!directionAvailable)
-    {
-        // Preserve the existing disabled-button shield, but leave inactive
-        // edge pixels available to the desktop below.
-        return snowdesktop::page_navigation_rules::
-            IsButtonTarget(target);
-    }
+        return false;
 
     int newOffset = NextNonEmptyOffset(pageOffset_, delta);
     if (newOffset == pageOffset_) return false;
@@ -64,6 +55,7 @@ bool DesktopApp::HandlePageNavClick(POINT point)
     ApplyPageMapping();
     if (wasDragging) MigrateSelectedItemsToLastMonitorPage();
     LayoutItems();
+    RefreshPageNavHotEdgeHoverAt(point);
     if (wasDragging && !dragSession_.IsActive())
     {
         mouseDownHit_ = nullptr;

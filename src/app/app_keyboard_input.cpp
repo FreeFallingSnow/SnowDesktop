@@ -55,6 +55,16 @@ bool DesktopApp::TryHandlePageNavigationKey(
     };
     const bool configuredConflict =
         (matchesPrevious && matchesNext) ||
+        (matchesPrevious &&
+            snowdesktop::page_navigation_rules::
+                IsReservedDesktopSingleKey(
+                    generalSettings_.pageNavigationPreviousModifiers,
+                    generalSettings_.pageNavigationPreviousVirtualKey)) ||
+        (matchesNext &&
+            snowdesktop::page_navigation_rules::
+                IsReservedDesktopSingleKey(
+                    generalSettings_.pageNavigationNextModifiers,
+                    generalSettings_.pageNavigationNextVirtualKey)) ||
         (navigationSettings_.enabled && conflictsWith(
             navigationSettings_.modifiers,
             navigationSettings_.virtualKey)) ||

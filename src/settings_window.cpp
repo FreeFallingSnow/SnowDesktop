@@ -29,6 +29,7 @@
 #include "full_data_backup.h"
 #include "http_runtime.h"
 #include "portable_data_migration.h"
+#include "page_navigation_rules.h"
 
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -1804,14 +1805,20 @@ void SettingsWindow::DrawHotkeyRecorder(
             ? FindInternalHotkeyConflict(
                 target, modifiers, virtualKey)
             : HotkeySettingTarget::None;
-    const bool systemAvailable =
-        localDesktopHotkey ||
-        !enabled || capturing || virtualKey == 0 ||
-        internalConflict != HotkeySettingTarget::None ||
-        !hotkeyAvailabilityCallback_
-            ? true
-            : hotkeyAvailabilityCallback_(
+    const bool desktopActionConflict =
+        localDesktopHotkey && enabled && !capturing &&
+        snowdesktop::page_navigation_rules::
+            IsReservedDesktopSingleKey(modifiers, virtualKey);
+    bool systemAvailable = false;
+    if (!desktopActionConflict)
+    {
+        systemAvailable = localDesktopHotkey || !enabled || capturing ||
+            virtualKey == 0 ||
+            internalConflict != HotkeySettingTarget::None ||
+            !hotkeyAvailabilityCallback_ ||
+            hotkeyAvailabilityCallback_(
                 target, modifiers, virtualKey);
+    }
 
     NavigationSettings displaySettings;
     displaySettings.modifiers = modifiers;

@@ -606,7 +606,6 @@ void DesktopApp::DrawDynamicOverlays(
     if (!hiddenMode && !renderingFloatingDock_ &&
         !renderingFloatingPopup_)
     {
-        DrawPageNavButtons(ctx);
         DrawPageNavHotEdgeHint(ctx);
         DrawPageNotify(ctx);
     }

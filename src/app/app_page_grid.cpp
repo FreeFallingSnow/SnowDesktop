@@ -758,6 +758,7 @@ void DesktopApp::NavigatePageOffset(int delta)
     pageOffset_ = NextNonEmptyOffset(pageOffset_, delta);
     ApplyPageMapping();
     LayoutItems();
+    RefreshPageNavHotEdgeHoverAt(lastMousePoint_);
     if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
     RestoreDesktopWindowLayer();
 }
@@ -767,6 +768,7 @@ void DesktopApp::JumpToPageOffset(int targetOffset)
     pageOffset_ = std::clamp(targetOffset, 0, MaxPageOffset());
     ApplyPageMapping();
     LayoutItems();
+    RefreshPageNavHotEdgeHoverAt(lastMousePoint_);
     if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
     RestoreDesktopWindowLayer();
 }

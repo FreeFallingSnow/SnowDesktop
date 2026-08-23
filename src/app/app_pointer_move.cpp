@@ -620,38 +620,29 @@ void DesktopApp::OnMouseMoveAt(
         widgetDockTargetContainer_ = nullptr;
         widgetDockInsertIndex_ = 0;
 
-        // ── 跨页翻页：检测导航按钮悬停 + 自动翻页 ──
+        // ── 跨页翻页：检测导航热边悬停 + 自动翻页 ──
         int navSide = 0;
-        bool navHotEdge = false;
         int maximumOffset = 0;
         if (!gridPages_.empty() &&
             savedPageIds_.size() > gridPages_.size())
         {
-            RECT prevRect{}, nextRect{};
             RECT prevEdge{}, nextEdge{};
-            GetNavButtonRects(prevRect, nextRect);
             GetNavHotEdgeRects(prevEdge, nextEdge);
             const auto target = snowdesktop::page_navigation_rules::
-                HitTestPointerTarget(
-                    current, prevRect, nextRect,
-                    prevEdge, nextEdge);
+                HitTestPointerTarget(current, prevEdge, nextEdge);
             navSide = snowdesktop::page_navigation_rules::
                 PointerTargetDirection(target);
-            navHotEdge = snowdesktop::page_navigation_rules::
-                IsEdgeTarget(target);
             if (navSide != 0)
             {
                 maximumOffset = MaxPageOffset();
                 const bool directionAvailable =
                     (navSide == -1 && pageOffset_ > 0) ||
                     (navSide == 1 && pageOffset_ < maximumOffset);
-                if (maximumOffset <= 0 ||
-                    (navHotEdge && !directionAvailable))
+                if (maximumOffset <= 0 || !directionAvailable)
                     navSide = 0;
             }
         }
-        navHoverSide_ = navSide;
-        navHotEdgeHover_ = navSide != 0 && navHotEdge;
+        SetPageNavHotEdgeHover(navSide);
 
         const bool navEnabled =
             (navSide == -1 && pageOffset_ > 0) ||
@@ -675,6 +666,7 @@ void DesktopApp::OnMouseMoveAt(
                     pageOffset_ = newOffset;
                     ApplyPageMapping();
                     LayoutItems();
+                    RefreshPageNavHotEdgeHoverAt(current);
                     // 用实际 bounds 差值补偿 group origin + mouseDown，保持视觉连续性
                     RECT newWidgetBounds = widgets_[mouseDownWidgetIndex_].bounds;
                     const int dx = newWidgetBounds.left - oldWidgetBounds.left;
@@ -692,8 +684,7 @@ void DesktopApp::OnMouseMoveAt(
         }
         else
         {
-            navHoverSide_ = 0;
-            navHotEdgeHover_ = false;
+            SetPageNavHotEdgeHover(0);
             navAutoFlipDir_ = 0;
             navAutoFlipTick_ = 0;
         }
@@ -760,8 +751,7 @@ void DesktopApp::OnMouseMoveAt(
                 ReleaseCapture();
                 mouseDown_ = false;
                 mouseDownHit_ = nullptr;
-                navHoverSide_ = 0;
-                navHotEdgeHover_ = false;
+                SetPageNavHotEdgeHover(0);
                 navAutoFlipDir_ = 0;
                 navAutoFlipTick_ = 0;
                 ResetDockHandoffDwell();
@@ -988,8 +978,7 @@ void DesktopApp::OnMouseMoveAt(
                 hasFileGroupEntries;
         if (suppressDesktopWidgetTargets)
         {
-            navHoverSide_ = 0;
-            navHotEdgeHover_ = false;
+            SetPageNavHotEdgeHover(0);
             navAutoFlipDir_ = 0;
             navAutoFlipTick_ = 0;
         }
@@ -1053,32 +1042,10 @@ void DesktopApp::OnMouseMoveAt(
     {
         int oldHover = navHoverSide_;
         const bool oldHotEdge = navHotEdgeHover_;
-        navHoverSide_ = 0;
-        navHotEdgeHover_ = false;
-        if (MaxPageOffset() > 0 || pageOffset_ > 0)
-        {
-            RECT prevRect{}, nextRect{};
-            RECT prevEdge{}, nextEdge{};
-            GetNavButtonRects(prevRect, nextRect);
-            GetNavHotEdgeRects(prevEdge, nextEdge);
-            const auto target = snowdesktop::page_navigation_rules::
-                HitTestPointerTarget(
-                    current, prevRect, nextRect,
-                    prevEdge, nextEdge);
-            const int direction = snowdesktop::page_navigation_rules::
-                PointerTargetDirection(target);
-            const bool available =
-                (direction == -1 && pageOffset_ > 0) ||
-                (direction == 1 && pageOffset_ < MaxPageOffset());
-            if (available)
-            {
-                navHoverSide_ = direction;
-                navHotEdgeHover_ =
-                    snowdesktop::page_navigation_rules::
-                        IsEdgeTarget(target);
-            }
-        }
+        const bool oldHintVisible = navHotEdgeHintVisible_;
+        RefreshPageNavHotEdgeHoverAt(current);
         const bool movingHotEdgeHint =
+            navHotEdgeHintVisible_ && oldHintVisible &&
             navHotEdgeHover_ && oldHotEdge &&
             navHoverSide_ == oldHover &&
             oldMouse.y != current.y;
@@ -1086,11 +1053,8 @@ void DesktopApp::OnMouseMoveAt(
             navHotEdgeHover_ != oldHotEdge ||
             movingHotEdgeHint)
         {
-            RECT prevRect{};
-            RECT nextRect{};
             RECT prevEdge{};
             RECT nextEdge{};
-            GetNavButtonRects(prevRect, nextRect);
             GetNavHotEdgeRects(prevEdge, nextEdge);
             RECT dirty{};
             auto addDirty = [&](RECT value) {
@@ -1098,22 +1062,19 @@ void DesktopApp::OnMouseMoveAt(
                 if (IsRectEmptyRect(dirty)) dirty = value;
                 else UnionRect(&dirty, &dirty, &value);
             };
-            if (!oldHotEdge || !navHotEdgeHover_)
-            {
-                addDirty(prevRect);
-                addDirty(nextRect);
-            }
             if (oldHotEdge)
             {
                 addDirty(oldHover < 0 ? prevEdge : nextEdge);
-                addDirty(GetPageNavHotEdgeHintBounds(
-                    oldHover, oldMouse));
+                if (oldHintVisible)
+                    addDirty(GetPageNavHotEdgeHintBounds(
+                        oldHover, oldMouse));
             }
             if (navHotEdgeHover_)
             {
                 addDirty(navHoverSide_ < 0 ? prevEdge : nextEdge);
-                addDirty(GetPageNavHotEdgeHintBounds(
-                    navHoverSide_, current));
+                if (navHotEdgeHintVisible_)
+                    addDirty(GetPageNavHotEdgeHintBounds(
+                        navHoverSide_, current));
             }
             InflateRect(&dirty, 4, 4);
             if (!IsRectEmptyRect(dirty))

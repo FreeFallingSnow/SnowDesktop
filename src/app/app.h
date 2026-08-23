@@ -765,8 +765,6 @@ private:
     void DrawDesktopForeground(
         ID2D1DeviceContext* ctx,
         bool hiddenMode = false);
-    /** @brief 绘制翻页导航按钮（左右箭头）。 @param ctx D2D 设备上下文 */
-    void DrawPageNavButtons(ID2D1DeviceContext* ctx);
     /** @brief 绘制全高翻页热边的悬停提示。 */
     void DrawPageNavHotEdgeHint(ID2D1DeviceContext* ctx);
     /** @brief 绘制换页通知覆盖层（左上角角标，类似电视台换台）。 @param ctx D2D 设备上下文 */
@@ -800,14 +798,16 @@ private:
     std::wstring GetGlassBackendStatusText() const;
     /** @brief 触发换页通知（记录文本与时间戳，安排淡出截止时间）。 @param text 通知文本 */
     void ShowPageNotify(const std::wstring& text);
-    /** @brief 获取左右翻页导航按钮的矩形区域。 @param[out] outPrev 上一页按钮矩形 @param[out] outNext 下一页按钮矩形 */
-    void GetNavButtonRects(RECT& outPrev, RECT& outNext) const;
     /** @brief 获取末屏完整高度的左右翻页热边。 */
     void GetNavHotEdgeRects(RECT& outPrev, RECT& outNext) const;
     /** @brief 获取末屏用于翻页导航的显示器页面。 */
     const GridPage* GetPageNavigationGridPage() const;
     /** @brief 获取指定热边提示的重绘范围。 */
     RECT GetPageNavHotEdgeHintBounds(int side, POINT point) const;
+    /** @brief 更新翻页热边悬停方向并管理延迟文字提示。 */
+    void SetPageNavHotEdgeHover(int side);
+    /** @brief 按当前指针位置和翻页边界重新计算热边悬停。 */
+    void RefreshPageNavHotEdgeHoverAt(POINT point);
     /** @brief 使拖拽静态场景缓存失效，下次拖拽时重建缓存。 */
     void InvalidateDragStaticScene();
     /** @brief 停止 Dock 驻留计时并清空当前驻留目标。 */
@@ -3028,6 +3028,8 @@ private:
     bool keyboardNavFileGroupCategoryTabs_ = false;
     int navHoverSide_ = 0;
     bool navHotEdgeHover_ = false;
+    bool navHotEdgeHintVisible_ = false;
+    snowdesktop::UiScheduleToken navHotEdgeHintToken_ = 0;
     DWORD navAutoFlipTick_ = 0;
     int navAutoFlipDir_ = 0;
     // ── 换页通知覆盖层（电视台换台式角标） ──

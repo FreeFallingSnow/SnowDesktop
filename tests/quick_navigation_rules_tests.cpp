@@ -200,6 +200,28 @@ void TestPinyinInitials()
         "initial sort must use pinyin and preserve stable ties");
 }
 
+void TestExtendedNavigationKeyNames()
+{
+    const auto formatKey = [](UINT virtualKey) {
+        NavigationSettings settings;
+        settings.modifiers = 0;
+        settings.virtualKey = virtualKey;
+        return FormatNavigationHotkey(settings);
+    };
+
+    const std::wstring pageUp = formatKey(VK_PRIOR);
+    const std::wstring pageDown = formatKey(VK_NEXT);
+    Check(!pageUp.empty() && pageUp != formatKey(VK_NUMPAD9),
+        "Page Up must not be displayed as numeric keypad 9");
+    Check(!pageDown.empty() && pageDown != formatKey(VK_NUMPAD3),
+        "Page Down must not be displayed as numeric keypad 3");
+    Check(formatKey(VK_LEFT) != formatKey(VK_NUMPAD4) &&
+            formatKey(VK_RIGHT) != formatKey(VK_NUMPAD6) &&
+            formatKey(VK_UP) != formatKey(VK_NUMPAD8) &&
+            formatKey(VK_DOWN) != formatKey(VK_NUMPAD2),
+        "arrow keys must not be displayed as numeric keypad keys");
+}
+
 void TestApplicationIconCacheIdentity()
 {
     const std::wstring first =
@@ -503,6 +525,7 @@ void TestAnimatedPointerHitRules()
 int main()
 {
     TestViewModePersistenceValues();
+    TestExtendedNavigationKeyNames();
     TestViewModeFilePersistence();
     TestPinyinInitials();
     TestApplicationIconCacheIdentity();

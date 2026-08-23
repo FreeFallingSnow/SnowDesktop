@@ -26,25 +26,6 @@ const GridPage* DesktopApp::GetPageNavigationGridPage() const
     return targetPage;
 }
 
-void DesktopApp::GetNavButtonRects(RECT& outPrev, RECT& outNext) const
-{
-    outPrev = {};
-    outNext = {};
-    const GridPage* targetPage = GetPageNavigationGridPage();
-    if (!targetPage) return;
-
-    constexpr LONG buttonW = 40, buttonH = 96, padX = 0;
-    const LONG cy = (targetPage->workArea.top + targetPage->workArea.bottom) / 2;
-    const LONG halfH = buttonH / 2;
-
-    outPrev = MakeRect(
-        targetPage->workArea.left + padX, cy - halfH,
-        targetPage->workArea.left + padX + buttonW, cy + halfH);
-    outNext = MakeRect(
-        targetPage->workArea.right - padX - buttonW, cy - halfH,
-        targetPage->workArea.right - padX, cy + halfH);
-}
-
 void DesktopApp::GetNavHotEdgeRects(
     RECT& outPrev, RECT& outNext) const
 {
@@ -66,7 +47,7 @@ RECT DesktopApp::GetPageNavHotEdgeHintBounds(
     const float scale = std::max(
         1.0f, static_cast<float>(page->dpiX) /
             static_cast<float>(USER_DEFAULT_SCREEN_DPI));
-    const LONG width = static_cast<LONG>(280.0f * scale);
+    const LONG width = static_cast<LONG>(360.0f * scale);
     const LONG height = static_cast<LONG>(44.0f * scale);
     const LONG gap = static_cast<LONG>(8.0f * scale);
     RECT previousEdge{};
@@ -91,84 +72,65 @@ RECT DesktopApp::GetPageNavHotEdgeHintBounds(
     return MakeRect(left, top, left + width, top + height);
 }
 
-void DesktopApp::DrawPageNavButtons(ID2D1DeviceContext* ctx)
+void DesktopApp::SetPageNavHotEdgeHover(int side)
 {
-    if (MaxPageOffset() <= 0) return;
-    if (gridPages_.empty()) return;
+    if (side != -1 && side != 1)
+        side = 0;
+    if (navHoverSide_ == side &&
+        navHotEdgeHover_ == (side != 0))
+        return;
 
-    // 默认隐藏翻页按钮；仅在换页通知期间或拖拽悬停时显示，提示用户按钮位置
-    const bool dragging = (dragSession_.IsActive() &&
-        (!dragSession_.Items().empty() ||
-            dragDropController_.IsTransportActive())) ||
-        widgetAction_ == WidgetAction::Move;
-    const bool hovering =
-        navHoverSide_ != 0 && !navHotEdgeHover_;
-    if (!pageNotifyActive_ && !dragging && !hovering) return;
+    if (navHotEdgeHintToken_)
+        uiAnimationScheduler_.Cancel(navHotEdgeHintToken_);
+    navHotEdgeHintToken_ = 0;
+    navHoverSide_ = side;
+    navHotEdgeHover_ = side != 0;
+    navHotEdgeHintVisible_ = false;
+    if (side == 0) return;
 
-    const bool hasPrev = pageOffset_ > 0;
-    const bool hasNext = pageOffset_ < MaxPageOffset();
+    navHotEdgeHintToken_ =
+        uiAnimationScheduler_.ScheduleOnce(
+            snowdesktop::page_navigation_rules::
+                kHotEdgeHintDelayMs,
+            [this, side](snowdesktop::UiScheduleToken token) {
+                if (navHotEdgeHintToken_ != token)
+                    return;
+                navHotEdgeHintToken_ = 0;
+                if (!navHotEdgeHover_ ||
+                    navHoverSide_ != side)
+                    return;
+                navHotEdgeHintVisible_ = true;
+                RECT dirty = GetPageNavHotEdgeHintBounds(
+                    side, lastMousePoint_);
+                InflateRect(&dirty, 4, 4);
+                if (!PresentDesktopForegroundComposition(dirty) &&
+                    hwnd_ && IsWindow(hwnd_))
+                {
+                    InvalidateRect(hwnd_, &dirty, FALSE);
+                    PresentDesktopPointerUpdate();
+                }
+            });
+}
 
-    RECT prevRect, nextRect;
-    GetNavButtonRects(prevRect, nextRect);
-
-    auto drawArrow = [&](const RECT& rect, const std::wstring& arrow, bool enabled, bool hovered) {
-        D2D1_RECT_F d2dRect = D2D1::RectF(
-            static_cast<float>(rect.left), static_cast<float>(rect.top),
-            static_cast<float>(rect.right), static_cast<float>(rect.bottom));
-
-        if (enabled)
-        {
-            float bgAlpha = hovered ? 1.0f : 0.85f;
-            ComPtr<ID2D1SolidColorBrush> bg;
-            ctx->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, bgAlpha), &bg);
-            if (bg) ctx->FillRoundedRectangle(
-                D2D1::RoundedRect(d2dRect, 8.0f, 8.0f), bg.Get());
-
-            ComPtr<ID2D1SolidColorBrush> borderBrush;
-            ctx->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.12f), &borderBrush);
-            if (borderBrush) ctx->DrawRoundedRectangle(
-                D2D1::RoundedRect(d2dRect, 8.0f, 8.0f), borderBrush.Get(), 1.0f);
-        }
-        else
-        {
-            // 置灰：半透明深色背景
-            ComPtr<ID2D1SolidColorBrush> bg;
-            ctx->CreateSolidColorBrush(D2D1::ColorF(0.3f, 0.3f, 0.3f, 0.35f), &bg);
-            if (bg) ctx->FillRoundedRectangle(
-                D2D1::RoundedRect(d2dRect, 8.0f, 8.0f), bg.Get());
-        }
-
-        float textAlpha = enabled ? (hovered ? 1.0f : 0.65f) : 0.3f;
-        ComPtr<ID2D1SolidColorBrush> textBrush;
-        ctx->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, textAlpha), &textBrush);
-        if (!textBrush || !dwriteFactory_) return;
-
-        float w = static_cast<float>(rect.right - rect.left);
-        float h = static_cast<float>(rect.bottom - rect.top);
-
-        ComPtr<IDWriteTextFormat> arrowFmt;
-        dwriteFactory_->CreateTextFormat(L"Segoe UI Symbol", nullptr,
-            DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-            DWRITE_FONT_STRETCH_NORMAL, 24.0f, L"", &arrowFmt);
-        if (!arrowFmt) return;
-        arrowFmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-        arrowFmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-
-        ComPtr<IDWriteTextLayout> layout;
-        if (SUCCEEDED(dwriteFactory_->CreateTextLayout(arrow.c_str(),
-            static_cast<UINT32>(arrow.size()), arrowFmt.Get(), w, h, &layout)) && layout)
-        {
-            ctx->DrawTextLayout(
-                D2D1::Point2F(static_cast<float>(rect.left), static_cast<float>(rect.top)),
-                layout.Get(), textBrush.Get());
-        }
-    };
-
-    bool hoverPrev = hovering && navHoverSide_ == -1;
-    bool hoverNext = hovering && navHoverSide_ == 1;
-
-    drawArrow(prevRect, L"\u25C0", hasPrev, dragging || hoverPrev);
-    drawArrow(nextRect, L"\u25B6", hasNext, dragging || hoverNext);
+void DesktopApp::RefreshPageNavHotEdgeHoverAt(POINT point)
+{
+    lastMousePoint_ = point;
+    int side = 0;
+    if (!desktopIconsHidden_ &&
+        (MaxPageOffset() > 0 || pageOffset_ > 0))
+    {
+        RECT previousEdge{};
+        RECT nextEdge{};
+        GetNavHotEdgeRects(previousEdge, nextEdge);
+        const auto target = snowdesktop::page_navigation_rules::
+            HitTestPointerTarget(point, previousEdge, nextEdge);
+        const int direction = snowdesktop::page_navigation_rules::
+            PointerTargetDirection(target);
+        if ((direction == -1 && pageOffset_ > 0) ||
+            (direction == 1 && pageOffset_ < MaxPageOffset()))
+            side = direction;
+    }
+    SetPageNavHotEdgeHover(side);
 }
 
 void DesktopApp::DrawPageNavHotEdgeHint(
@@ -191,32 +153,19 @@ void DesktopApp::DrawPageNavHotEdgeHint(
 
     RECT previousEdge{};
     RECT nextEdge{};
-    RECT previousButton{};
-    RECT nextButton{};
     GetNavHotEdgeRects(previousEdge, nextEdge);
-    GetNavButtonRects(previousButton, nextButton);
     const RECT edge = navHoverSide_ < 0
         ? previousEdge : nextEdge;
-    const RECT button = navHoverSide_ < 0
-        ? previousButton : nextButton;
 
     ComPtr<ID2D1SolidColorBrush> accentBrush;
     ctx->CreateSolidColorBrush(
         D2D1::ColorF(0.18f, 0.45f, 0.90f, 0.72f),
         &accentBrush);
     if (accentBrush)
-    {
-        RECT topRail = edge;
-        topRail.bottom = std::clamp(
-            button.top, edge.top, edge.bottom);
-        RECT bottomRail = edge;
-        bottomRail.top = std::clamp(
-            button.bottom, edge.top, edge.bottom);
-        if (!IsRectEmptyRect(topRail))
-            ctx->FillRectangle(ToD2DRect(topRail), accentBrush.Get());
-        if (!IsRectEmptyRect(bottomRail))
-            ctx->FillRectangle(ToD2DRect(bottomRail), accentBrush.Get());
-    }
+        ctx->FillRectangle(ToD2DRect(edge), accentBrush.Get());
+
+    if (!navHotEdgeHintVisible_)
+        return;
 
     const UINT modifiers = navHoverSide_ < 0
         ? generalSettings_.pageNavigationPreviousModifiers

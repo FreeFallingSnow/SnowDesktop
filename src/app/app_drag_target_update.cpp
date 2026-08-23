@@ -534,7 +534,7 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
 }
 
 /**
- * @brief 更新拖拽翻页按钮的悬停和自动翻页状态
+ * @brief 更新拖拽翻页热边的悬停和自动翻页状态
  * @param clientPoint 当前鼠标客户端坐标
  * @return 拖拽会话仍可继续时返回 true
  */
@@ -543,42 +543,32 @@ bool DesktopApp::UpdateDragPageNavigation(POINT clientPoint)
     lastMousePoint_ = clientPoint;
     if (desktopIconsHidden_)
     {
-        navHoverSide_ = 0;
-        navHotEdgeHover_ = false;
+        SetPageNavHotEdgeHover(0);
         navAutoFlipDir_ = 0;
         navAutoFlipTick_ = 0;
         return dragSession_.IsActive();
     }
     if (!dragSession_.IsActive())
     {
-        navHoverSide_ = 0;
-        navHotEdgeHover_ = false;
+        SetPageNavHotEdgeHover(0);
         navAutoFlipDir_ = 0;
         navAutoFlipTick_ = 0;
         return false;
     }
 
-    RECT prevRect{}, nextRect{};
     RECT prevEdge{}, nextEdge{};
-    GetNavButtonRects(prevRect, nextRect);
     GetNavHotEdgeRects(prevEdge, nextEdge);
 
     const auto target = snowdesktop::page_navigation_rules::
-        HitTestPointerTarget(
-            clientPoint, prevRect, nextRect,
-            prevEdge, nextEdge);
+        HitTestPointerTarget(clientPoint, prevEdge, nextEdge);
     int navSide = snowdesktop::page_navigation_rules::
         PointerTargetDirection(target);
-    const bool navHotEdge = snowdesktop::page_navigation_rules::
-        IsEdgeTarget(target);
-    // 悬停检测不限制 hasPrev/hasNext，让置灰按钮也有 hover 视觉反馈
     const bool directionAvailable =
         (navSide == -1 && pageOffset_ > 0) ||
         (navSide == 1 && pageOffset_ < MaxPageOffset());
-    if (navHotEdge && !directionAvailable)
+    if (!directionAvailable)
         navSide = 0;
-    navHoverSide_ = navSide;
-    navHotEdgeHover_ = navSide != 0 && navHotEdge;
+    SetPageNavHotEdgeHover(navSide);
 
     // 自动翻页仅在可操作方向触发
     const bool navEnabled =
@@ -619,6 +609,7 @@ bool DesktopApp::UpdateDragPageNavigation(POINT clientPoint)
     if (hasInternalItems && !groupedEntryDrag)
         MigrateSelectedItemsToLastMonitorPage();
     LayoutItems();
+    RefreshPageNavHotEdgeHoverAt(clientPoint);
     if (!dragSession_.IsActive() || (hasInternalItems && dragSession_.Items().empty()))
     {
         mouseDownHit_ = nullptr;

@@ -156,25 +156,24 @@ int main(int argc, char** argv)
                 pageNavigation::HotEdgeWidth(144) == 12,
             "page navigation hot edges must span the work area and scale from eight DIPs");
 
-        const RECT previousButton{ 100, 400, 140, 496 };
-        const RECT nextButton{ 1060, 400, 1100, 496 };
         Check(pageNavigation::HitTestPointerTarget(
-                { 105, 430 }, previousButton, nextButton,
+                { 105, 100 },
                 previousEdge, nextEdge) ==
-                    pageNavigation::PointerTarget::PreviousButton &&
-                pageNavigation::HitTestPointerTarget(
-                    { 105, 100 }, previousButton, nextButton,
-                    previousEdge, nextEdge) ==
                     pageNavigation::PointerTarget::PreviousEdge &&
                 pageNavigation::HitTestPointerTarget(
-                    { 1095, 700 }, previousButton, nextButton,
+                    { 1095, 700 },
                     previousEdge, nextEdge) ==
                     pageNavigation::PointerTarget::NextEdge &&
+                pageNavigation::HitTestPointerTarget(
+                    { 500, 400 },
+                    previousEdge, nextEdge) ==
+                    pageNavigation::PointerTarget::None &&
                 pageNavigation::PointerTargetDirection(
                     pageNavigation::PointerTarget::PreviousEdge) == -1 &&
                 pageNavigation::PointerTargetDirection(
-                    pageNavigation::PointerTarget::NextButton) == 1,
-            "page navigation buttons must win over overlapping full-height edge targets");
+                    pageNavigation::PointerTarget::NextEdge) == 1 &&
+                pageNavigation::kHotEdgeHintDelayMs == 500,
+            "page navigation must expose only full-height edge targets with a half-second hint delay");
         Check(pageNavigation::ShortcutMatches(
                 MOD_CONTROL, VK_PRIOR,
                 MOD_CONTROL, VK_PRIOR) &&
@@ -184,6 +183,17 @@ int main(int argc, char** argv)
                 !pageNavigation::ShortcutMatches(
                     0, VK_PRIOR, 0, VK_NEXT),
             "page navigation shortcuts must match the exact modifier set and virtual key");
+        Check(pageNavigation::IsReservedDesktopSingleKey(
+                    0, VK_RETURN) &&
+                pageNavigation::IsReservedDesktopSingleKey(
+                    0, VK_LEFT) &&
+                pageNavigation::IsReservedDesktopSingleKey(
+                    0, VK_F2) &&
+                !pageNavigation::IsReservedDesktopSingleKey(
+                    MOD_CONTROL, VK_LEFT) &&
+                !pageNavigation::IsReservedDesktopSingleKey(
+                    0, VK_PRIOR),
+            "page navigation must reject unmodified desktop action keys but allow modified arrows and Page Up");
     }
 
     int maximumPageChecks = 0;
@@ -4088,7 +4098,7 @@ int main(int argc, char** argv)
                 dragPageNextHit != std::string::npos &&
                 dragPageMaximum != std::string::npos &&
                 dragPageNextHit < dragPageMaximum,
-            "drag page navigation must hit-test its buttons and hot edges before scanning page content");
+            "drag page navigation must hit-test its hot edges before scanning page content");
         Check(dragPageScan != std::string::npos &&
                 dragPageRetryThrottle != std::string::npos &&
                 dragPageNoTarget != std::string::npos &&
@@ -4112,7 +4122,7 @@ int main(int argc, char** argv)
             "page content checks must reject widgets on other pages before resolving group membership");
         const std::size_t widgetPageNavigation =
             pointerMoveSource.find(
-                "// ── 跨页翻页：检测导航按钮悬停 + 自动翻页 ──");
+                "// ── 跨页翻页：检测导航热边悬停 + 自动翻页 ──");
         const std::size_t widgetPageNavigationEnd =
             pointerMoveSource.find(
                 "POINT adjusted =",
@@ -4151,7 +4161,7 @@ int main(int argc, char** argv)
                 repeatedWidgetPageMaximum == std::string::npos &&
                 emptyWidgetPageGuard != std::string::npos &&
                 clearWidgetPageSide != std::string::npos,
-            "widget drag page navigation must scan page content only once and only after a button or hot-edge hit");
+            "widget drag page navigation must scan page content only once and only after a hot-edge hit");
         Check(pointerMoveSource.find(
                   "*dragPreviewSynced = true;") !=
                     std::string::npos &&

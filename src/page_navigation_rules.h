@@ -9,12 +9,11 @@ namespace snowdesktop::page_navigation_rules
 {
 
 constexpr int kHotEdgeWidthDip = 8;
+constexpr UINT kHotEdgeHintDelayMs = 500;
 
 enum class PointerTarget
 {
     None,
-    PreviousButton,
-    NextButton,
     PreviousEdge,
     NextEdge,
 };
@@ -58,17 +57,9 @@ inline void BuildHotEdgeRects(
 
 inline PointerTarget HitTestPointerTarget(
     POINT point,
-    const RECT& previousButton,
-    const RECT& nextButton,
     const RECT& previousEdge,
     const RECT& nextEdge) noexcept
 {
-    // The existing buttons remain authoritative where they overlap the new
-    // full-height edge strips, including their disabled click shielding.
-    if (PtInRect(&previousButton, point))
-        return PointerTarget::PreviousButton;
-    if (PtInRect(&nextButton, point))
-        return PointerTarget::NextButton;
     if (PtInRect(&previousEdge, point))
         return PointerTarget::PreviousEdge;
     if (PtInRect(&nextEdge, point))
@@ -80,22 +71,14 @@ inline int PointerTargetDirection(PointerTarget target) noexcept
 {
     switch (target)
     {
-    case PointerTarget::PreviousButton:
     case PointerTarget::PreviousEdge:
         return -1;
-    case PointerTarget::NextButton:
     case PointerTarget::NextEdge:
         return 1;
     case PointerTarget::None:
     default:
         return 0;
     }
-}
-
-inline bool IsButtonTarget(PointerTarget target) noexcept
-{
-    return target == PointerTarget::PreviousButton ||
-        target == PointerTarget::NextButton;
 }
 
 inline bool IsEdgeTarget(PointerTarget target) noexcept
@@ -108,6 +91,28 @@ inline UINT NormalizeModifiers(UINT modifiers) noexcept
 {
     return modifiers &
         (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN);
+}
+
+inline bool IsReservedDesktopSingleKey(
+    UINT modifiers, UINT virtualKey) noexcept
+{
+    if (NormalizeModifiers(modifiers) != 0)
+        return false;
+    switch (virtualKey)
+    {
+    case VK_F2:
+    case VK_F5:
+    case VK_DELETE:
+    case VK_RETURN:
+    case VK_ESCAPE:
+    case VK_LEFT:
+    case VK_UP:
+    case VK_RIGHT:
+    case VK_DOWN:
+        return true;
+    default:
+        return false;
+    }
 }
 
 inline bool ShortcutMatches(

@@ -345,8 +345,7 @@ void DesktopApp::ClearDockPressedState()
 void DesktopApp::CancelActiveItemDrag()
 {
     HideDragHintWindow();
-    navHoverSide_ = 0;
-    navHotEdgeHover_ = false;
+    SetPageNavHotEdgeHover(0);
     navAutoFlipDir_ = 0;
     navAutoFlipTick_ = 0;
     mouseDown_ = false;

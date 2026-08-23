@@ -46,8 +46,7 @@ void DesktopApp::OnMouseLeave()
         dockWindowPreview_->ScheduleHide();
     else
         HideDockWindowPreview();
-    navHoverSide_ = 0;
-    navHotEdgeHover_ = false;
+    SetPageNavHotEdgeHover(0);
     navAutoFlipDir_ = 0;
     navAutoFlipTick_ = 0;
 
@@ -581,8 +580,7 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
     marqueeActive_ = false;
     marqueeWidgetIndex_ = static_cast<size_t>(-1);
     marqueeDockFolderPopup_ = false;
-    navHoverSide_ = 0;
-    navHotEdgeHover_ = false;
+    SetPageNavHotEdgeHover(0);
     navAutoFlipDir_ = 0;
     navAutoFlipTick_ = 0;
     ReleaseCapture();
@@ -1196,8 +1194,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
         marqueeWidgetIndex_ = static_cast<size_t>(-1);
         marqueeDockFolderPopup_ = false;
         dockFolderPopupMarqueeInitialSelection_.clear();
-        navHoverSide_ = 0;
-        navHotEdgeHover_ = false;
+        RefreshPageNavHotEdgeHoverAt(upPoint);
         navAutoFlipDir_ = 0;
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ = static_cast<size_t>(-1);
@@ -1531,8 +1528,7 @@ cleanup:
     dockFolderPopupMarqueeInitialSelection_.clear();
     pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
     pendingCtrlToggleWidgetItem_ = nullptr;
-    navHoverSide_ = 0;
-    navHotEdgeHover_ = false;
+    RefreshPageNavHotEdgeHoverAt(upPoint);
     navAutoFlipDir_ = 0;
     navAutoFlipTick_ = 0;
     mouseDown_ = false;
