@@ -30,6 +30,7 @@ struct Metrics
     int edgeMargin = 12;
     int anchorGap = 12;
     int maximumWidth = 560;
+    int maximumHeight = 640;
 };
 
 struct HeaderVerticalBounds
@@ -101,7 +102,19 @@ inline Metrics ResolveMetrics(
     result.edgeMargin = ScaleDimension(12, result.scale);
     result.anchorGap = ScaleDimension(12, result.scale);
     result.maximumWidth = ScaleDimension(560, result.scale);
+    result.maximumHeight = ScaleDimension(640, result.scale);
     return result;
+}
+
+inline int ResolveMaximumHeight(
+    const Metrics& metrics,
+    int workHeight)
+{
+    const int availableHeight = std::max(
+        1, workHeight - metrics.edgeMargin * 2);
+    return std::min(
+        availableHeight,
+        std::max(1, metrics.maximumHeight));
 }
 
 inline bool DetailsVisible(

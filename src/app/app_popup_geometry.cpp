@@ -90,8 +90,10 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
             RequiredListRowCount(itemCount)
         : snowdesktop::collection_popup_layout::
             RequiredRowCount(itemCount, columns);
-    const int maxHeight = std::max(
-        1, workHeight - metrics.edgeMargin * 2);
+    const int maxHeight =
+        snowdesktop::collection_popup_layout::
+            ResolveMaximumHeight(
+                metrics, workHeight);
     auto popupWidthForColumns = [&](int columnCount) {
         if (listMode)
             return maxWidth;

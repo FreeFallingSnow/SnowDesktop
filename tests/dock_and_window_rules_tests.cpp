@@ -540,8 +540,15 @@ int main(int argc, char** argv)
             standardPopupMetrics.headerHeight == 54 &&
             standardPopupMetrics.gapX == 10 &&
             standardPopupMetrics.gapY == 8 &&
-            standardPopupMetrics.maximumWidth == 560,
+            standardPopupMetrics.maximumWidth == 560 &&
+            standardPopupMetrics.maximumHeight == 640,
         "standard collection popup geometry must retain its baseline dimensions");
+    Check(
+        popupLayout::ResolveMaximumHeight(
+            standardPopupMetrics, 1080) == 640 &&
+            popupLayout::ResolveMaximumHeight(
+                standardPopupMetrics, 480) == 456,
+        "collection popups must scroll at a scaled 640-pixel cap while still fitting smaller work areas");
     Check(
         popupLayout::DetailsVisible(
             true, true, false, false) &&
@@ -564,7 +571,10 @@ int main(int argc, char** argv)
             enlargedPopupMetrics.headerHeight == 81 &&
             enlargedPopupMetrics.gapX == 15 &&
             enlargedPopupMetrics.gapY == 12 &&
-            enlargedPopupMetrics.maximumWidth == 840,
+            enlargedPopupMetrics.maximumWidth == 840 &&
+            enlargedPopupMetrics.maximumHeight == 960 &&
+            popupLayout::ResolveMaximumHeight(
+                enlargedPopupMetrics, 1440) == 960,
         "enlarged page popups must preserve page cell size and scale their chrome");
     const auto constrainedPopupMetrics =
         popupLayout::ResolveMetrics(
