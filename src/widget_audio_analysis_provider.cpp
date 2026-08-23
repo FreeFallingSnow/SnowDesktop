@@ -19,8 +19,8 @@ namespace
 {
 using Microsoft::WRL::ComPtr;
 
-constexpr double LowerSpectrumFrequency = 40.0;
-constexpr double UpperSpectrumFrequency = 16000.0;
+constexpr double LowerSpectrumFrequency = 20.0;
+constexpr double UpperSpectrumFrequency = 8000.0;
 constexpr std::size_t MaximumSpectrumWindow = 2048;
 
 class DefaultRenderEndpointNotification final : public IMMNotificationClient

@@ -64,14 +64,14 @@ void TestLogarithmicSpectrumDistribution()
     const auto mid = ComputeWidgetAudioSpectrum(
         SineWave(1000.0, 4096), 48000, 64);
     const auto treble = ComputeWidgetAudioSpectrum(
-        SineWave(8000.0, 4096), 48000, 64);
+        SineWave(4000.0, 4096), 48000, 64);
     const auto bassPeak = PeakIndex(bass);
     const auto midPeak = PeakIndex(mid);
     const auto treblePeak = PeakIndex(treble);
     Check(bass.size() == 64 && mid.size() == 64 && treble.size() == 64,
         "spectrum analysis must return the requested number of bands");
-    Check(bassPeak >= 5 && bassPeak <= 18 &&
-            midPeak >= 26 && midPeak <= 43 &&
+    Check(bassPeak >= 12 && bassPeak <= 24 &&
+            midPeak >= 35 && midPeak <= 49 &&
             treblePeak >= 50 && treblePeak <= 62 &&
             bassPeak < midPeak && midPeak < treblePeak,
         "logarithmic bands must spread bass, midrange, and treble across the width");

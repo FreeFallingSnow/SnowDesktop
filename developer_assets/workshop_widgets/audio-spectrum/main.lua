@@ -66,7 +66,7 @@ local settings = {
                 l10n.tr("workshop.audio_spectrum.align_center"),
                 l10n.tr("workshop.audio_spectrum.align_top"),
             },
-            default = "center",
+            default = "bottom",
             group = "appearance",
         },
         {

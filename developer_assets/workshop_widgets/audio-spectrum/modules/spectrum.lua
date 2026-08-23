@@ -154,10 +154,10 @@ function M.preview(count, sensitivity)
     for index = 1, length do
         local position = (index - 1) / math.max(1, length - 1)
         local envelope = 0.035 +
-            0.72 * bell(position, 0.12, 0.095) +
-            0.50 * bell(position, 0.34, 0.13) +
-            0.34 * bell(position, 0.58, 0.12) +
-            0.20 * bell(position, 0.79, 0.10)
+            0.72 * bell(position, 0.22, 0.14) +
+            0.50 * bell(position, 0.48, 0.15) +
+            0.34 * bell(position, 0.70, 0.12) +
+            0.14 * bell(position, 0.88, 0.08)
         local ripple = 0.78 + 0.22 *
             (0.5 + 0.5 * math.sin(index * 2.17 + 0.4))
         result[index] = M.clamp(envelope * ripple * gain,
