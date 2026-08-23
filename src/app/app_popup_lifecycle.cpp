@@ -74,6 +74,7 @@ TryActivateDockPopupFromMenuPointerPress(
     }
 
     DismissActiveContextMenuForPopupTransition();
+    dockPressedClosedCollectionPopup_ = false;
     if (suppressPointerRelease)
         dockSuppressClickReleaseEntry_ = entryIndex;
 

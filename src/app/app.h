@@ -2196,6 +2196,8 @@ private:
         const std::wstring& widgetId = L"",
         const char* reason = "dismissed");
     void FinalizeCloseLuaWidgetPanel();
+    void ReleaseLuaWidgetPanelCaptureIfOwned();
+    void ForgetLuaWidgetPanelCapture(HWND hostWindow);
     /** @brief 在动画开始前将完整弹窗录制到 GPU 位图。 */
     void PrepareCollectionPopupAnimationCache();
     /** @brief 释放弹窗动画位图。 */
@@ -2994,6 +2996,7 @@ private:
         dockPressedWindowAction_ =
             snowdesktop::dock_window_rules::DockClickAction::None;
     HWND dockPressedTargetWindow_ = nullptr;
+    bool dockPressedClosedCollectionPopup_ = false;
     size_t dockPendingDoubleClickEntry_ = static_cast<size_t>(-1);
     size_t dockPendingDoubleClickFrequentItem_ = static_cast<size_t>(-1);
     DWORD dockPendingDoubleClickTick_ = 0;
@@ -3526,6 +3529,7 @@ private:
     RECT luaWidgetPanelRect_{};
     POINT luaWidgetPanelAnchorPoint_{};
     bool luaWidgetPanelMouseDown_ = false;
+    HWND luaWidgetPanelCaptureHwnd_ = nullptr;
     /** @} */
 
     /** @name 快速导航 */

@@ -131,6 +131,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         // suppression, so retire it after the physical press has ended.
         dockSuppressClickReleaseEntry_ =
             static_cast<size_t>(-1);
+        ClearDockPressedState();
     }
 
     POINT cursor{};

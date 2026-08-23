@@ -145,7 +145,8 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
             samePopupSource,
             popupAnimation_.IsInteractive(),
             closingStartedByCurrentPress &&
-                popupAnimation_.IsClosing()))
+                popupAnimation_.IsClosing(),
+            popupAnimation_.IsClosing()))
     {
     case snowdesktop::popup_animation_rules::
         ExistingSourceAction::CloseExisting:

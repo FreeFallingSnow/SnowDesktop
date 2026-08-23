@@ -266,9 +266,27 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         UpdateFloatingDockWindowBounds();
         InvalidateFloatingDockWindow(true);
         return 0;
+    case WM_CANCELMODE:
+    case WM_CAPTURECHANGED:
+        if (msg == WM_CANCELMODE ||
+            (reinterpret_cast<HWND>(lp) != hwnd_ &&
+             reinterpret_cast<HWND>(lp) != floatingDockHwnd_ &&
+             reinterpret_cast<HWND>(lp) != floatingPopupHwnd_))
+        {
+            ClearDockPressedState();
+            if (widgetEngine_)
+                widgetEngine_->CancelInteractionPointerPress();
+        }
+        return 0;
     case WM_LBUTTONDBLCLK:
-        return HandleMessage(
+    {
+        handlingFloatingDockInput_ = true;
+        const LRESULT result = HandleMessage(
             hwnd_, msg, wp, desktopLParam());
+        handlingFloatingDockInput_ = false;
+        InvalidateFloatingDockWindow(true);
+        return result;
+    }
     case WM_MBUTTONDOWN:
     case WM_MBUTTONDBLCLK:
         OnMiddleButtonDown(wp, desktopLParam());

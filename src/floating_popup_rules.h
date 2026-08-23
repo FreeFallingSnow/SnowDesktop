@@ -108,4 +108,13 @@ constexpr bool ShouldDismissLuaPanelForExternalPointerDown(
             targetBelongsToCurrentProcess,
             dragActive);
 }
+
+template <typename Handle>
+constexpr bool ShouldReleaseRecordedPanelCapture(
+    Handle recordedCapture,
+    Handle currentCapture)
+{
+    return recordedCapture != Handle{} &&
+        recordedCapture == currentCapture;
+}
 }

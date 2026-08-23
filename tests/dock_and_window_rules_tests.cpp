@@ -1921,6 +1921,13 @@ int main(int argc, char** argv)
             !floatingPopup::ShouldDismissForExternalPointerDown(
                 true, false, true),
         "own-process presses, hidden popups and active drags must not trigger external dismissal");
+    Check(floatingPopup::ShouldReleaseRecordedPanelCapture(
+              101u, 101u) &&
+            !floatingPopup::ShouldReleaseRecordedPanelCapture(
+                101u, 202u) &&
+            !floatingPopup::ShouldReleaseRecordedPanelCapture(
+                0u, 0u),
+        "Lua panel teardown may release only its recorded non-null capture host");
     Check(floatingPopup::
             ShouldDismissLuaPanelForExternalPointerDown(
                 true, true, false, false) &&
@@ -3518,6 +3525,9 @@ int main(int argc, char** argv)
         const std::string compositionAnimationSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_composition_animation_overlay.cpp");
+        const std::string luaPanelSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_lua_panel.cpp");
         const std::string floatingDockSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_floating_dock_window.cpp");
@@ -3746,15 +3756,36 @@ int main(int argc, char** argv)
                     std::string::npos &&
                 floatingPopupSource.find(
                   "collectionPopupBackdropCompositor_.SetPopupTopmost(") !=
+                    std::string::npos &&
+                floatingPopupSource.find(
+                  "collectionPopupBackdropCompositor_.SetVisible(false);") !=
                     std::string::npos,
-            "the collection popup backdrop must follow the shared host lifecycle and z-order");
+            "the collection popup backdrop must follow the shared host lifecycle, cache hidden resources, and preserve z-order");
         Check(compositionAnimationSource.find(
                   "ApplyCollectionPopupBackdropAnimationFrame();") !=
                     std::string::npos &&
                 compositionAnimationSource.find(
-                  "if (collectionPopupGlassTheme_)\n        return false;") !=
+                  "StartVisualScaleAnimation(") !=
+                    std::string::npos &&
+                compositionAnimationSource.find(
+                  "if (collectionPopupGlassTheme_)\n        return false;") ==
+                    std::string::npos &&
+                backdropCompositorSource.find(
+                  "CreateVector3KeyFrameAnimation()") !=
+                    std::string::npos &&
+                backdropCompositorSource.find(
+                  "root.StartAnimation(L\"Scale\", animation)") !=
                     std::string::npos,
-            "acrylic popup animation must update content and native backdrop from scheduler frames");
+            "acrylic popup scale must run on the compositor and use scheduler frames only as fallback");
+        Check(CountOccurrences(
+                  luaPanelSource, "ReleaseCapture();") == 1 &&
+                CountOccurrences(
+                  luaPanelSource,
+                  "ReleaseLuaWidgetPanelCaptureIfOwned();") >= 2 &&
+                pointerDownSource.find(
+                  "luaWidgetPanelCaptureHwnd_ = panelCaptureHost;") !=
+                    std::string::npos,
+            "an old Lua panel finalizer must not release a later component press capture");
         Check(popupRenderSource.find(
                   "DrawWidgetPanelBackground(") !=
                     std::string::npos &&
@@ -5127,6 +5158,9 @@ int main(int argc, char** argv)
                 clearDockPressHandler.find(
                   "dockPressedContainer_ = nullptr;") !=
                     std::string::npos &&
+                clearDockPressHandler.find(
+                  "dockPressedClosedCollectionPopup_ = false;") !=
+                    std::string::npos &&
                 cancelDragHandler.find(
                   "marqueeActive_ = false;") !=
                     std::string::npos &&
@@ -5147,6 +5181,38 @@ int main(int argc, char** argv)
                   "ClearDockPressedState();\n                ReleaseCapture();") !=
                     std::string::npos,
             "Escape and terminal OLE exits must clear every pressed item-drag state before a later button-up");
+        Check(pointerDownSource.find(
+                  "dockPressedClosedCollectionPopup_ =\n                        collectionPopupClosedByPointerDown;") !=
+                    std::string::npos &&
+                pointerReleaseSource.find(
+                  "const bool pressedClosedCollectionPopup =") !=
+                    std::string::npos &&
+                pointerReleaseSource.find(
+                  "widgetIndex, point, L\"\",\n                    pressedClosedCollectionPopup") !=
+                    std::string::npos &&
+                popupTransitionSource.find(
+                  "popupAnimation_.IsClosing()))") !=
+                    std::string::npos,
+            "Dock collection release must preserve a down-phase close and queue the latest switch target");
+        const std::size_t floatingDockDoubleClickBegin =
+            floatingDockRenderSource.find(
+                "case WM_LBUTTONDBLCLK:");
+        const std::size_t floatingDockMiddleClickBegin =
+            floatingDockRenderSource.find(
+                "case WM_MBUTTONDOWN:",
+                floatingDockDoubleClickBegin);
+        const std::string floatingDockDoubleClickHandler =
+            floatingDockDoubleClickBegin == std::string::npos ||
+                    floatingDockMiddleClickBegin == std::string::npos
+                ? std::string{}
+                : floatingDockRenderSource.substr(
+                    floatingDockDoubleClickBegin,
+                    floatingDockMiddleClickBegin -
+                        floatingDockDoubleClickBegin);
+        Check(CountOccurrences(
+                  floatingDockDoubleClickHandler,
+                  "handlingFloatingDockInput_") >= 2,
+            "floating Dock double-click replay must retain the floating input capture context");
 
         const std::size_t resolverBegin =
             dragTargetUpdateSource.find(

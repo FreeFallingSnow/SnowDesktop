@@ -6,6 +6,7 @@
 
 void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 {
+    dockPressedClosedCollectionPopup_ = false;
     if (middleButtonWidgetMove_) return;
     if (renameEdit_ != nullptr) return;
     keyboardNavVisualFocus_ = false;
@@ -59,12 +60,16 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             mouseDown_ = true;
             mouseDownPoint_ = pt;
             luaWidgetPanelMouseDown_ = true;
-            SetCapture(
+            const HWND panelCaptureHost =
                 handlingFloatingPopupInput_ &&
                     floatingPopupHwnd_ &&
                     IsWindow(floatingPopupHwnd_)
                 ? floatingPopupHwnd_
-                : hwnd_);
+                : hwnd_;
+            luaWidgetPanelCaptureHwnd_ = nullptr;
+            SetCapture(panelCaptureHost);
+            if (GetCapture() == panelCaptureHost)
+                luaWidgetPanelCaptureHwnd_ = panelCaptureHost;
             if (!widgetEngine_ ||
                 !widgetEngine_->HandleHostUiPointer(
                     luaWidgetPanelRequest_.widgetId,
@@ -495,6 +500,13 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 if (!ctrl) ClearSelection();
                 dockItem->SetSelected(true);
                 dockPressedEntry_ = dockItem->GetEntryIndex();
+                if (dockPressedEntry_ < dockEntries_.size() &&
+                    dockEntries_[dockPressedEntry_].type ==
+                        DockEntryType::Collection)
+                {
+                    dockPressedClosedCollectionPopup_ =
+                        collectionPopupClosedByPointerDown;
+                }
                 if (dockPressedEntry_ < dockEntries_.size() &&
                     dockEntries_[dockPressedEntry_].type ==
                         DockEntryType::DesktopItem)

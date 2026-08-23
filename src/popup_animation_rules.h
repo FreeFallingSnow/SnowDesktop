@@ -42,11 +42,13 @@ enum class ExistingSourceAction
 inline ExistingSourceAction ResolveExistingSourceAction(
     bool sameSource,
     bool interactive,
-    bool closingStartedByCurrentPress = false)
+    bool closingStartedByCurrentPress = false,
+    bool existingSourceClosing = false)
 {
     if (!sameSource)
     {
-        return closingStartedByCurrentPress
+        return closingStartedByCurrentPress ||
+                existingSourceClosing
             ? ExistingSourceAction::OpenAfterExistingCloses
             : ExistingSourceAction::OpenAtRequestedAnchor;
     }

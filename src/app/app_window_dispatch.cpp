@@ -403,6 +403,14 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         break;
     case WM_CANCELMODE:
     case WM_CAPTURECHANGED:
+        ForgetLuaWidgetPanelCapture(hwnd);
+        if (msg == WM_CANCELMODE ||
+            (reinterpret_cast<HWND>(lp) != hwnd_ &&
+             reinterpret_cast<HWND>(lp) != floatingDockHwnd_ &&
+             reinterpret_cast<HWND>(lp) != floatingPopupHwnd_))
+        {
+            ClearDockPressedState();
+        }
         widgetScrollbarDragging_ = false;
         widgetScrollbarDragContainer_ = nullptr;
         popupScrollbarDragging_ = false;

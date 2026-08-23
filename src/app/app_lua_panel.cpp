@@ -1,6 +1,30 @@
 #include "app.h"
 
+#include <utility>
+
 // Lua widget panel lifecycle.
+
+void DesktopApp::ReleaseLuaWidgetPanelCaptureIfOwned()
+{
+    const HWND recordedCapture =
+        std::exchange(luaWidgetPanelCaptureHwnd_, nullptr);
+    if (snowdesktop::floating_popup_rules::
+            ShouldReleaseRecordedPanelCapture(
+                recordedCapture, GetCapture()))
+    {
+        ReleaseCapture();
+    }
+}
+
+void DesktopApp::ForgetLuaWidgetPanelCapture(
+    HWND hostWindow)
+{
+    if (!hostWindow ||
+        luaWidgetPanelCaptureHwnd_ != hostWindow)
+        return;
+    luaWidgetPanelCaptureHwnd_ = nullptr;
+    luaWidgetPanelMouseDown_ = false;
+}
 
 void DesktopApp::OpenLuaWidgetPanel(
     const LuaWidgetPanelRequest& request)
@@ -136,7 +160,7 @@ void DesktopApp::FinalizeCloseLuaWidgetPanel()
     luaWidgetPanelRect_ = {};
     luaWidgetPanelAnchorPoint_ = {};
     luaWidgetPanelMouseDown_ = false;
-    ReleaseCapture();
+    ReleaseLuaWidgetPanelCaptureIfOwned();
     UpdateHostInputImePosition();
     UpdateFloatingPopupWindowBounds(true);
     if (hwnd_ && IsWindow(hwnd_))
@@ -158,7 +182,7 @@ void DesktopApp::CloseLuaWidgetPanel(
     if (widgetEngine_)
         widgetEngine_->BlurHostInput(false);
     luaWidgetPanelMouseDown_ = false;
-    ReleaseCapture();
+    ReleaseLuaWidgetPanelCaptureIfOwned();
     UpdateHostInputImePosition();
     if (!snowdesktop::dock_launch_animation::
             SystemAnimationsEnabled())

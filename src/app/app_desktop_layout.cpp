@@ -79,7 +79,7 @@ void DesktopApp::RebuildContainersAndItems()
     // destroyed. Clear them before releasing containers and item wrappers.
     mouseDownHit_ = nullptr;
     pendingCtrlToggleWidgetItem_ = nullptr;
-    dockPressedContainer_ = nullptr;
+    ClearDockPressedState();
     widgetDockTargetContainer_ = nullptr;
     ClearPopupDragTarget();
     ClearPopupMouseDownItem();

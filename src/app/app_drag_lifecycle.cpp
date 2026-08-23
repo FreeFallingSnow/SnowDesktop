@@ -414,6 +414,7 @@ void DesktopApp::ClearDockPressedState()
         snowdesktop::dock_window_rules::DockClickAction::None;
     dockPressedTargetWindow_ = nullptr;
     dockPressedContainer_ = nullptr;
+    dockPressedClosedCollectionPopup_ = false;
 }
 
 void DesktopApp::CancelActiveItemDrag()

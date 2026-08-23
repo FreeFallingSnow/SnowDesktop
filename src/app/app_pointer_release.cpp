@@ -479,6 +479,8 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
     const size_t pressedFrequentItemIndex = dockPressedFrequentItem_;
     const auto pressedWindowAction = dockPressedWindowAction_;
     const HWND pressedTargetWindow = dockPressedTargetWindow_;
+    const bool pressedClosedCollectionPopup =
+        dockPressedClosedCollectionPopup_;
     std::optional<RECT> pressedAnchorScreen;
     if (mouseDownHit_ && hwnd_)
     {
@@ -570,13 +572,7 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
     mouseDownWidgetIndex_ = static_cast<size_t>(-1);
     pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
     pendingCtrlToggleWidgetItem_ = nullptr;
-    dockPressedEntry_ = static_cast<size_t>(-1);
-    dockPressedFrequentItem_ = static_cast<size_t>(-1);
-    dockPressedRunningAppKey_.clear();
-    dockPressedWindowAction_ =
-        snowdesktop::dock_window_rules::DockClickAction::None;
-    dockPressedTargetWindow_ = nullptr;
-    dockPressedContainer_ = nullptr;
+    ClearDockPressedState();
     marqueeActive_ = false;
     marqueeWidgetIndex_ = static_cast<size_t>(-1);
     marqueeDockFolderPopup_ = false;
@@ -742,7 +738,8 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
                 CloseCollectionPopup();
             else
                 OpenCollectionPopupAt(
-                    widgetIndex, point);
+                    widgetIndex, point, L"",
+                    pressedClosedCollectionPopup);
         }
     }
     else if (folderEntry)
@@ -922,7 +919,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
         }
         luaWidgetPanelMouseDown_ = false;
         mouseDown_ = false;
-        ReleaseCapture();
+        ReleaseLuaWidgetPanelCaptureIfOwned();
         UpdateHostInputImePosition();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
@@ -1098,13 +1095,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
     {
         if (HandleDockClickRelease(upPoint))
             return;
-        dockPressedEntry_ = static_cast<size_t>(-1);
-        dockPressedFrequentItem_ = static_cast<size_t>(-1);
-        dockPressedRunningAppKey_.clear();
-        dockPressedWindowAction_ =
-            snowdesktop::dock_window_rules::DockClickAction::None;
-        dockPressedTargetWindow_ = nullptr;
-        dockPressedContainer_ = nullptr;
+        ClearDockPressedState();
         if (mouseDownWidgetIndex_ < widgets_.size() &&
             widgets_[mouseDownWidgetIndex_].type ==
                 DesktopWidgetType::LuaScript &&
@@ -1533,13 +1524,7 @@ cleanup:
     navAutoFlipTick_ = 0;
     mouseDown_ = false;
     mouseDownHit_ = nullptr;
-    dockPressedEntry_ = static_cast<size_t>(-1);
-    dockPressedFrequentItem_ = static_cast<size_t>(-1);
-    dockPressedRunningAppKey_.clear();
-    dockPressedWindowAction_ =
-        snowdesktop::dock_window_rules::DockClickAction::None;
-    dockPressedTargetWindow_ = nullptr;
-    dockPressedContainer_ = nullptr;
+    ClearDockPressedState();
     marqueeWidgetIndex_ = static_cast<size_t>(-1);
     marqueeDockFolderPopup_ = false;
     ReleaseCapture();

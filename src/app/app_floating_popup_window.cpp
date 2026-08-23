@@ -414,6 +414,7 @@ void DesktopApp::RecoverFloatingPopupCompositionFailure(
 void DesktopApp::DestroyFloatingPopupWindow()
 {
     StopFloatingPopupOutsideClickMonitor();
+    ForgetLuaWidgetPanelCapture(floatingPopupHwnd_);
     collectionPopupBackdropCompositor_.Reset();
     if (floatingPopupDropTargetRegistered_ &&
         floatingPopupHwnd_ && IsWindow(floatingPopupHwnd_))
@@ -641,6 +642,16 @@ void DesktopApp::ApplyCollectionPopupBackdropAnimationFrame()
     if (!collectionPopupBackdropCompositor_.IsAvailable())
         return;
 
+    if (popupAnimationCompositorDriven_ &&
+        popupAnimation_.IsAnimating())
+    {
+        collectionPopupBackdropCompositor_.SetVisible(
+            ShouldShowFloatingPopupWindow() &&
+            floatingPopupHwnd_ &&
+            IsWindowVisible(floatingPopupHwnd_));
+        return;
+    }
+
     const auto visual = popupAnimation_.GetVisual();
     POINT anchor{
         (popupRect_.left + popupRect_.right) / 2,
@@ -668,11 +679,19 @@ void DesktopApp::ApplyCollectionPopupBackdropAnimationFrame()
 void DesktopApp::UpdateCollectionPopupBackdrop()
 {
     const DesktopWidget* popup = GetOpenPopupWidget();
-    if (!collectionPopupGlassTheme_ || !popup ||
-        !floatingPopupHwnd_ || !IsWindow(floatingPopupHwnd_) ||
-        IsRectEmpty(&floatingPopupWindowBounds_))
+    if (!collectionPopupGlassTheme_)
     {
         collectionPopupBackdropCompositor_.Reset();
+        return;
+    }
+    if (!floatingPopupHwnd_ || !IsWindow(floatingPopupHwnd_))
+    {
+        collectionPopupBackdropCompositor_.Reset();
+        return;
+    }
+    if (!popup || IsRectEmpty(&floatingPopupWindowBounds_))
+    {
+        collectionPopupBackdropCompositor_.SetVisible(false);
         return;
     }
 
@@ -724,7 +743,7 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
     if (!ShouldShowFloatingPopupWindow())
     {
         StopFloatingPopupOutsideClickMonitor();
-        collectionPopupBackdropCompositor_.Reset();
+        collectionPopupBackdropCompositor_.SetVisible(false);
         if (floatingPopupHwnd_ &&
             IsWindow(floatingPopupHwnd_) &&
             IsWindowVisible(floatingPopupHwnd_))
@@ -990,6 +1009,19 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         OnLeftButtonUpAt(wp, desktopPoint());
         handlingFloatingPopupInput_ = false;
         UpdateFloatingPopupWindowBounds();
+        return 0;
+    case WM_CANCELMODE:
+    case WM_CAPTURECHANGED:
+        ForgetLuaWidgetPanelCapture(hwnd);
+        if (msg == WM_CANCELMODE ||
+            (reinterpret_cast<HWND>(lp) != hwnd_ &&
+             reinterpret_cast<HWND>(lp) != floatingDockHwnd_ &&
+             reinterpret_cast<HWND>(lp) != floatingPopupHwnd_))
+        {
+            ClearDockPressedState();
+            if (widgetEngine_)
+                widgetEngine_->CancelInteractionPointerPress();
+        }
         return 0;
     case WM_LBUTTONDBLCLK:
     {

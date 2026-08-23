@@ -505,11 +505,6 @@ bool DesktopApp::UpdateLuaWidgetPanelCompositionAnimation(
 
 bool DesktopApp::StartCollectionPopupCompositionAnimation()
 {
-    // The native backdrop lives in a separate composition target. Keep
-    // acrylic popups on the scheduler-driven path so both targets receive
-    // the same scale sample on every frame.
-    if (collectionPopupGlassTheme_)
-        return false;
     if (!popupAnimationOverlay_.active ||
         !popupAnimation_.IsAnimating())
         return false;
@@ -538,13 +533,37 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
         anchor.y = std::clamp(
             popupAnchorPoint_.y, popupRect_.top, popupRect_.bottom);
     }
+    bool backdropAnimationStarted = false;
+    if (collectionPopupGlassTheme_ &&
+        collectionPopupBackdropCompositor_.IsAvailable())
+    {
+        backdropAnimationStarted =
+            collectionPopupBackdropCompositor_.
+                StartVisualScaleAnimation(
+                    visual.scale,
+                    opening ? 1.0f :
+                        snowdesktop::popup_animation_rules::
+                            kMinimumScale,
+                    1.0f,
+                    static_cast<float>(
+                        anchor.x - floatingPopupWindowBounds_.left),
+                    static_cast<float>(
+                        anchor.y - floatingPopupWindowBounds_.top),
+                    duration);
+        if (!backdropAnimationStarted)
+            return false;
+    }
     if (!AnimateCompositionAnimationOverlay(
             popupAnimationOverlay_,
             visual.scale,
             opening ? 1.0f :
                 snowdesktop::popup_animation_rules::kMinimumScale,
             anchor, 1.0f, 1.0f, duration))
+    {
+        if (backdropAnimationStarted)
+            ApplyCollectionPopupBackdropAnimationFrame();
         return false;
+    }
 
     popupAnimationCompositorDriven_ = true;
     popupAnimationCompletionToken_ =
@@ -558,6 +577,7 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
                 popupAnimation_.Advance(static_cast<std::uint64_t>(
                     snowdesktop::UiAnimationScheduler::
                         MonotonicMilliseconds()));
+                ApplyCollectionPopupBackdropAnimationFrame();
                 if (popupAnimation_.IsAnimating())
                 {
                     if (StartCollectionPopupCompositionAnimation())
@@ -580,6 +600,7 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
     if (!popupAnimationCompletionToken_)
     {
         popupAnimationCompositorDriven_ = false;
+        ApplyCollectionPopupBackdropAnimationFrame();
         return false;
     }
     return true;

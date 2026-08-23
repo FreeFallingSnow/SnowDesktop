@@ -713,6 +713,8 @@ void DesktopBackdropCompositor::Reattach(HWND contentWindow)
 {
     if (!impl_->available || !contentWindow || !IsWindow(contentWindow))
         return;
+    if (impl_->contentWindow == contentWindow)
+        return;
     impl_->contentWindow = contentWindow;
     impl_->SyncWindowPlacement();
 }
@@ -761,6 +763,81 @@ void DesktopBackdropCompositor::SetVisualTransform(
     {
         impl_->SetError(_LW("backdrop.update_panel"), error.code());
     }
+}
+
+bool DesktopBackdropCompositor::StartVisualScaleAnimation(
+    float fromScale, float toScale, float opacity,
+    float anchorX, float anchorY,
+    std::uint32_t durationMilliseconds)
+{
+    if (!impl_ || !impl_->available || !impl_->root ||
+        !impl_->compositor || durationMilliseconds == 0 ||
+        !impl_->contentWindow || !IsWindow(impl_->contentWindow))
+        return false;
+
+    const float clampedFrom =
+        std::clamp(fromScale, 0.01f, 1.0f);
+    const float clampedTo =
+        std::clamp(toScale, 0.01f, 1.0f);
+    const float clampedOpacity =
+        std::clamp(opacity, 0.0f, 1.0f);
+
+    HRESULT animationHr = E_UNEXPECTED;
+    try
+    {
+        const auto easing =
+            impl_->compositor.CreateCubicBezierEasingFunction(
+                wfn::float2{ 1.0f / 3.0f, 0.0f },
+                wfn::float2{ 2.0f / 3.0f, 1.0f });
+        auto animation =
+            impl_->compositor.CreateVector3KeyFrameAnimation();
+        animation.Duration(wf::TimeSpan{
+            static_cast<std::int64_t>(
+                durationMilliseconds) * 10'000LL });
+        animation.InsertKeyFrame(
+            0.0f,
+            wfn::float3{ clampedFrom, clampedFrom, 1.0f });
+        animation.InsertKeyFrame(
+            1.0f,
+            wfn::float3{ clampedTo, clampedTo, 1.0f },
+            easing);
+
+        impl_->root.CenterPoint(wfn::float3{
+            anchorX, anchorY, 0.0f });
+        impl_->root.Opacity(clampedOpacity);
+        impl_->SetAnimationPathRegionExpanded(
+            std::min(clampedFrom, clampedTo) < 0.9995f);
+        // Keep the final value as the base property. Direct assignment also
+        // disconnects a prior Scale animation before a rapid reversal.
+        impl_->root.Scale(wfn::float3{
+            clampedTo, clampedTo, 1.0f });
+        impl_->root.StartAnimation(L"Scale", animation);
+        impl_->RequestCommit();
+        return true;
+    }
+    catch (...)
+    {
+        animationHr = winrt::to_hresult();
+    }
+
+    try
+    {
+        impl_->root.Scale(wfn::float3{
+            clampedFrom, clampedFrom, 1.0f });
+        impl_->SetAnimationPathRegionExpanded(
+            clampedFrom < 0.9995f);
+        impl_->RequestCommit();
+    }
+    catch (...)
+    {
+        impl_->SetError(
+            L"backdrop.restore_scale_animation",
+            winrt::to_hresult());
+        return false;
+    }
+    impl_->lastError = FormatHresult(
+        L"backdrop.animate_scale", animationHr);
+    return false;
 }
 
 void DesktopBackdropCompositor::BeginFrame(bool completeCollection)

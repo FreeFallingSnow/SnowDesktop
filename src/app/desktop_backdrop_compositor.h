@@ -48,6 +48,11 @@ public:
     void SetVisualTransform(
         float scale, float opacity,
         float anchorX, float anchorY);
+    /** @brief 由 Windows Composition 自驱根视觉缩放，避免 UI 线程逐帧提交。 */
+    [[nodiscard]] bool StartVisualScaleAnimation(
+        float fromScale, float toScale, float opacity,
+        float anchorX, float anchorY,
+        std::uint32_t durationMilliseconds);
     /** @brief 开始收集一帧的玻璃区域。完整帧会在 EndFrame 清理未再次出现的视觉。 */
     void BeginFrame(bool completeCollection);
     /**

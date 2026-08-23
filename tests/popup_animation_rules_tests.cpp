@@ -119,6 +119,10 @@ int main()
     Check(ResolveExistingSourceAction(false, false, true) ==
             ExistingSourceAction::OpenAfterExistingCloses,
         "a desktop collection switch waits for the old close animation");
+    Check(ResolveExistingSourceAction(
+              false, false, false, true) ==
+            ExistingSourceAction::OpenAfterExistingCloses,
+        "a later Dock switch replaces the pending target instead of interrupting an existing close");
     Check(ResolveExistingSourceAction(true, true) ==
             ExistingSourceAction::CloseExisting,
         "clicking an open collection from another anchor closes it");
