@@ -87,15 +87,19 @@
 - 每个编译成功的代码尝试都必须独立提交，且必须在继续下一轮代码修改前创建 Commit；不得把多个
   已经分别编译通过的尝试压成一个版本分支 Commit。编译失败的中间状态不得提交，应继续修改到
   下一次编译通过后再创建一个 `try` Commit。
-- `try` Commit 的首行必须同时包含“编译通过，待验证”和
+- 除下述纯组件更新外，`try` Commit 的首行必须同时包含“编译通过，待验证”和
   `build passed, validation pending`，例如：
 
   ```text
   try(icon): 尝试调整高分辨率图标加载（编译通过，待验证） / Try adjusting high-resolution icon loading (build passed, validation pending)
   ```
 
+- 纯组件更新不执行宿主编译；尚待 SnowDesktop 实际场景验证时，应使用 `try(widget)` Commit，
+  首行同时包含“组件验证通过，待实机验证”和 `widget checks passed, runtime validation pending`。
+  正文必须写明实际通过的组件级检查、尚未运行的目标场景验证和已知限制，不得声称宿主编译通过。
 - `try` Commit 正文必须写明：实际通过的编译命令、已运行的测试、尚未运行的目标场景验证、已知
-  限制。只通过定向目标编译时必须写出目标名，不得笼统写成 Release 构建通过。
+  限制。纯组件更新按上一条记录组件级检查；只通过定向目标编译时必须写出目标名，不得笼统写成
+  Release 构建通过。
 - 一个尝试后续完成实际验证且无需再改代码时，使用独立的 `verify` Commit 记录验证对象、步骤、
   结果以及对应的 `try` Commit 哈希；允许使用空 Commit 作为纯验证记录。验证失败时也应使用
   `verify` Commit 如实记录失败结论，再由后续 `try` Commit 保存下一次编译通过的调整。
@@ -141,6 +145,11 @@
 
 ## 构建与验证
 
+- 仅修改 SnowDesktop Lua 组件包，且未修改宿主原生代码、公共组件 API、CMake 或构建脚本时，
+  属于纯组件更新：无需运行 `scripts/build.bat` 编译宿主，也无需运行 `scripts/test.bat` 的宿主完整
+  测试。应改用 `snowwidget lint`、组件测试、包校验和打包等组件级入口完成与改动相匹配的验证，
+  并在 Commit 和交付说明中如实记录实际执行的命令与结果。只要改动越出组件包边界，仍须遵守
+  下列标准构建与完整测试要求。
 - Release 构建的标准验证入口是 `scripts/build.bat`。
 - 在报告构建通过前，必须实际运行 `scripts/build.bat` 并确认 `.build\Release\SnowDesktop.exe` 成功生成。
 - `scripts/build.bat` 默认不得终止 SnowDesktop 或 Explorer。若应用或 Hook DLL 被占用，Agent 可在
