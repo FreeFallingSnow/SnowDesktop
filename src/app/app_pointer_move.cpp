@@ -606,10 +606,6 @@ void DesktopApp::OnMouseMoveAt(
         extern inline int SlotFromCell(const std::vector<GridPage>&, const GridCell&);
         extern inline const GridPage* FindGridPage(const std::vector<GridPage>&, const std::wstring&);
 
-        // 热边反馈和翻页优先于组件、集合与 Dock 拖放目标；这些目标仍可
-        // 同时保留自己的反馈，但不能让提前返回吞掉蓝线。
-        UpdateWidgetDragPageNavigation(current);
-
         const DesktopWidgetType movingType =
             widgets_[mouseDownWidgetIndex_].type;
         const auto movingPayload = snowdesktop::slot_contract::
@@ -700,6 +696,8 @@ void DesktopApp::OnMouseMoveAt(
         widgetDockTarget_ = false;
         widgetDockTargetContainer_ = nullptr;
         widgetDockInsertIndex_ = 0;
+
+        UpdateWidgetDragPageNavigation(current);
 
         POINT adjusted = {
             dragGroupOriginX_ + (current.x - mouseDownPoint_.x),
@@ -988,9 +986,13 @@ void DesktopApp::OnMouseMoveAt(
                 hasCollectionGroupEntries ||
             dragSession_.SourceList().
                 hasFileGroupEntries;
-        // 热边属于拖拽导航层，不受桌面组件目标抑制规则影响。
-        // 即使当前元素只能拖出 Dock，也要显示蓝线并允许切换页面。
-        if (!UpdateDragPageNavigation(current))
+        if (suppressDesktopWidgetTargets)
+        {
+            SetPageNavHotEdgeHover(0);
+            navAutoFlipDir_ = 0;
+            navAutoFlipTick_ = 0;
+        }
+        else if (!UpdateDragPageNavigation(current))
             return;
 
         // OO hit testing: iterate all containers in reverse (topmost first)

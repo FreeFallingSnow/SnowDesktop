@@ -704,6 +704,7 @@
   "app.navigation.edge_next": "Cliquez pour accéder à la page suivante",
   "app.navigation.edge_previous_with_key": "Cliquez pour accéder à la page précédente · {0}",
   "app.navigation.edge_next_with_key": "Cliquez pour accéder à la page suivante · {0}",
+  "app.navigation.edge_drag_dwell": "Maintenez ici pour changer de page",
   "app.menu.next_page": "Page suivante",
   "app.menu.goto_page": "Aller à",
   "app.menu.add_page": "Nouvelle page",

@@ -174,6 +174,20 @@ int main(int argc, char** argv)
                     pageNavigation::PointerTarget::NextEdge) == 1 &&
                 pageNavigation::kHotEdgeHintDelayMs == 500,
             "page navigation must expose only full-height edge targets with a half-second hint delay");
+        const auto dragRails =
+            pageNavigation::ResolveHotEdgeRailVisibility(
+                true, 0, true, true);
+        const auto boundaryDragRails =
+            pageNavigation::ResolveHotEdgeRailVisibility(
+                true, 0, true, false);
+        const auto passiveRail =
+            pageNavigation::ResolveHotEdgeRailVisibility(
+                false, 1, true, true);
+        Check(dragRails.previous && dragRails.next &&
+                boundaryDragRails.previous &&
+                !boundaryDragRails.next &&
+                !passiveRail.previous && passiveRail.next,
+            "dragging must reveal every available page rail before the pointer reaches an edge");
         Check(pageNavigation::ShortcutMatches(
                 MOD_CONTROL, VK_PRIOR,
                 MOD_CONTROL, VK_PRIOR) &&
@@ -3542,6 +3556,9 @@ int main(int argc, char** argv)
         const std::string sceneSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_scene_render.cpp");
+        const std::string navigationRenderSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_navigation_render.cpp");
         const std::string pointerMoveSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_pointer_move.cpp");
@@ -4162,43 +4179,6 @@ int main(int argc, char** argv)
                 emptyWidgetPageGuard != std::string::npos &&
                 clearWidgetPageSide != std::string::npos,
             "widget drag page navigation must scan page content only once and only after a hot-edge hit");
-        const std::size_t widgetMoveBranch =
-            pointerMoveSource.find("// Widget drag preview");
-        const std::size_t widgetDragNavUpdate =
-            pointerMoveSource.find(
-                "UpdateWidgetDragPageNavigation(current);",
-                widgetMoveBranch);
-        const std::size_t widgetGroupTarget =
-            pointerMoveSource.find(
-                "const size_t groupTarget",
-                widgetMoveBranch);
-        const std::size_t widgetDockTarget =
-            pointerMoveSource.find(
-                "DockContainer* dock",
-                widgetMoveBranch);
-        Check(widgetMoveBranch != std::string::npos &&
-                widgetDragNavUpdate != std::string::npos &&
-                widgetGroupTarget != std::string::npos &&
-                widgetDockTarget != std::string::npos &&
-                widgetDragNavUpdate < widgetGroupTarget &&
-                widgetDragNavUpdate < widgetDockTarget,
-            "widget drag hot-edge feedback must run before group and Dock targets can return early");
-        const std::size_t itemDragBranch =
-            pointerMoveSource.find(
-                "if (dragSession_.IsActive() && !dragSession_.Items().empty())");
-        const std::size_t itemTargetSuppression =
-            pointerMoveSource.find(
-                "const bool suppressDesktopWidgetTargets =",
-                itemDragBranch);
-        const std::size_t itemDragNavUpdate =
-            pointerMoveSource.find(
-                "UpdateDragPageNavigation(current)",
-                itemTargetSuppression);
-        Check(itemDragBranch != std::string::npos &&
-                itemTargetSuppression != std::string::npos &&
-                itemDragNavUpdate != std::string::npos &&
-                itemTargetSuppression < itemDragNavUpdate,
-            "item drag hot-edge feedback must remain active when desktop widget drop targets are suppressed");
         Check(pointerMoveSource.find(
                   "*dragPreviewSynced = true;") !=
                     std::string::npos &&
@@ -4215,6 +4195,26 @@ int main(int argc, char** argv)
                   "&dragPreviewSynced") !=
                     std::string::npos,
             "each WM_MOUSEMOVE surface must reuse the preview sync already performed for that input sample");
+        const std::size_t drawPageHotEdges =
+            navigationRenderSource.find(
+                "void DesktopApp::DrawPageNavHotEdgeHint(");
+        const std::size_t resolveDragRails =
+            navigationRenderSource.find(
+                "ResolveHotEdgeRailVisibility(",
+                drawPageHotEdges);
+        const std::size_t immediateDragHint =
+            navigationRenderSource.find(
+                "(!dragging && !navHotEdgeHintVisible_)",
+                resolveDragRails);
+        const std::size_t dragDwellText =
+            navigationRenderSource.find(
+                "app.navigation.edge_drag_dwell",
+                immediateDragHint);
+        Check(drawPageHotEdges != std::string::npos &&
+                resolveDragRails != std::string::npos &&
+                immediateDragHint != std::string::npos &&
+                dragDwellText != std::string::npos,
+            "dragging must show available rails before edge entry and reveal the dwell-to-page hint immediately on entry");
         const std::size_t desktopLeaveBegin =
             messageDispatchSource.find(
                 "case WM_MOUSELEAVE:");

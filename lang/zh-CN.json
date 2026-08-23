@@ -704,6 +704,7 @@
     "app.navigation.edge_next": "点击切换到下一页",
     "app.navigation.edge_previous_with_key": "点击切换到上一页 · {0}",
     "app.navigation.edge_next_with_key": "点击切换到下一页 · {0}",
+    "app.navigation.edge_drag_dwell": "停留翻页",
     "app.menu.next_page": "下一页",
     "app.menu.goto_page": "跳转到",
     "app.menu.add_page": "新增页",

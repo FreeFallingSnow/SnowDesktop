@@ -704,6 +704,7 @@
   "app.navigation.edge_next": "Klicken, um zur nächsten Seite zu wechseln",
   "app.navigation.edge_previous_with_key": "Klicken für die vorherige Seite · {0}",
   "app.navigation.edge_next_with_key": "Klicken für die nächste Seite · {0}",
+  "app.navigation.edge_drag_dwell": "Zum Blättern hier verweilen",
   "app.menu.next_page": "Nächste Seite",
   "app.menu.goto_page": "Gehe zu",
   "app.menu.add_page": "Neue Seite",

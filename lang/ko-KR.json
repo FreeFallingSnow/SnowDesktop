@@ -704,6 +704,7 @@
   "app.navigation.edge_next": "클릭하여 다음 페이지로 이동",
   "app.navigation.edge_previous_with_key": "클릭하여 이전 페이지로 이동 · {0}",
   "app.navigation.edge_next_with_key": "클릭하여 다음 페이지로 이동 · {0}",
+  "app.navigation.edge_drag_dwell": "여기에 머물러 페이지 전환",
   "app.menu.next_page": "다음 페이지",
   "app.menu.goto_page": "바로가기",
   "app.menu.add_page": "새 페이지",

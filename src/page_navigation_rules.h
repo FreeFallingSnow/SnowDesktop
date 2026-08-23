@@ -18,6 +18,24 @@ enum class PointerTarget
     NextEdge,
 };
 
+struct HotEdgeRailVisibility
+{
+    bool previous = false;
+    bool next = false;
+};
+
+inline HotEdgeRailVisibility ResolveHotEdgeRailVisibility(
+    bool dragging,
+    int hoverSide,
+    bool previousAvailable,
+    bool nextAvailable) noexcept
+{
+    return {
+        previousAvailable && (dragging || hoverSide == -1),
+        nextAvailable && (dragging || hoverSide == 1),
+    };
+}
+
 inline int HotEdgeWidth(UINT dpi) noexcept
 {
     return std::max(1, MulDiv(

@@ -597,9 +597,6 @@ bool DesktopApp::UpdateDragPageNavigation(POINT clientPoint)
         return true;
 
     const bool hasInternalItems = !dragSession_.Items().empty();
-    const bool migrateDesktopItems =
-        hasInternalItems &&
-        !SuppressDesktopWidgetDragTargets();
     const bool groupedEntryDrag =
         dragSession_.SourceList().
             hasCollectionGroupEntries ||
@@ -609,7 +606,7 @@ bool DesktopApp::UpdateDragPageNavigation(POINT clientPoint)
         dragGroupOriginX_, dragGroupOriginY_ };
     pageOffset_ = newOffset;
     ApplyPageMapping();
-    if (migrateDesktopItems && !groupedEntryDrag)
+    if (hasInternalItems && !groupedEntryDrag)
         MigrateSelectedItemsToLastMonitorPage();
     LayoutItems();
     RefreshPageNavHotEdgeHoverAt(clientPoint);
@@ -621,7 +618,7 @@ bool DesktopApp::UpdateDragPageNavigation(POINT clientPoint)
     }
 
     InvalidateDragStaticScene();
-    if (migrateDesktopItems && !groupedEntryDrag)
+    if (hasInternalItems && !groupedEntryDrag)
     {
         UpdateDragGroupOrigin();
         dragSession_.AdjustForGroupOriginChange(

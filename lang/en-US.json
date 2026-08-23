@@ -704,6 +704,7 @@
     "app.navigation.edge_next": "Click to go to the next page",
     "app.navigation.edge_previous_with_key": "Click to go to the previous page · {0}",
     "app.navigation.edge_next_with_key": "Click to go to the next page · {0}",
+    "app.navigation.edge_drag_dwell": "Pause here to switch pages",
     "app.menu.next_page": "Next Page",
     "app.menu.goto_page": "Go To",
     "app.menu.add_page": "New Page",

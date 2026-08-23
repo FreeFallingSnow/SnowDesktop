@@ -136,14 +136,23 @@ void DesktopApp::RefreshPageNavHotEdgeHoverAt(POINT point)
 void DesktopApp::DrawPageNavHotEdgeHint(
     ID2D1DeviceContext* ctx)
 {
-    if (!ctx || !navHotEdgeHover_ ||
-        (navHoverSide_ != -1 && navHoverSide_ != 1))
-        return;
+    if (!ctx) return;
+    const bool dragging =
+        widgetAction_ == WidgetAction::Move ||
+        dragSession_.IsActive() ||
+        dragDropController_.IsTransportActive();
+    const bool hovering =
+        navHotEdgeHover_ &&
+        (navHoverSide_ == -1 || navHoverSide_ == 1);
+    if (!dragging && !hovering) return;
 
-    const bool enabled = navHoverSide_ < 0
-        ? pageOffset_ > 0
-        : pageOffset_ < MaxPageOffset();
-    if (!enabled) return;
+    const auto rails = snowdesktop::page_navigation_rules::
+        ResolveHotEdgeRailVisibility(
+            dragging,
+            hovering ? navHoverSide_ : 0,
+            pageOffset_ > 0,
+            pageOffset_ < MaxPageOffset());
+    if (!rails.previous && !rails.next) return;
 
     const GridPage* page = GetPageNavigationGridPage();
     if (!page) return;
@@ -154,17 +163,25 @@ void DesktopApp::DrawPageNavHotEdgeHint(
     RECT previousEdge{};
     RECT nextEdge{};
     GetNavHotEdgeRects(previousEdge, nextEdge);
-    const RECT edge = navHoverSide_ < 0
-        ? previousEdge : nextEdge;
 
     ComPtr<ID2D1SolidColorBrush> accentBrush;
     ctx->CreateSolidColorBrush(
         D2D1::ColorF(0.18f, 0.45f, 0.90f, 0.72f),
         &accentBrush);
     if (accentBrush)
-        ctx->FillRectangle(ToD2DRect(edge), accentBrush.Get());
+    {
+        if (rails.previous)
+            ctx->FillRectangle(
+                ToD2DRect(previousEdge), accentBrush.Get());
+        if (rails.next)
+            ctx->FillRectangle(
+                ToD2DRect(nextEdge), accentBrush.Get());
+    }
 
-    if (!navHotEdgeHintVisible_)
+    const bool hoveredDirectionVisible = hovering &&
+        (navHoverSide_ < 0 ? rails.previous : rails.next);
+    if (!hoveredDirectionVisible ||
+        (!dragging && !navHotEdgeHintVisible_))
         return;
 
     const UINT modifiers = navHoverSide_ < 0
@@ -174,7 +191,11 @@ void DesktopApp::DrawPageNavHotEdgeHint(
         ? generalSettings_.pageNavigationPreviousVirtualKey
         : generalSettings_.pageNavigationNextVirtualKey;
     std::wstring message;
-    if (generalSettings_.pageNavigationKeyboardEnabled &&
+    if (dragging)
+    {
+        message = _LW("app.navigation.edge_drag_dwell");
+    }
+    else if (generalSettings_.pageNavigationKeyboardEnabled &&
         virtualKey != 0)
     {
         NavigationSettings displaySettings;

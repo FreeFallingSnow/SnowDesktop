@@ -704,6 +704,7 @@
   "app.navigation.edge_next": "クリックして次のページに移動",
   "app.navigation.edge_previous_with_key": "クリックして前のページに移動 · {0}",
   "app.navigation.edge_next_with_key": "クリックして次のページに移動 · {0}",
+  "app.navigation.edge_drag_dwell": "ここで少し待つとページを切り替え",
   "app.menu.next_page": "次のページ",
   "app.menu.goto_page": "に移動",
   "app.menu.add_page": "新しいページ",
