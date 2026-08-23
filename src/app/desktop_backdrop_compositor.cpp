@@ -743,6 +743,69 @@ void DesktopBackdropCompositor::SetVisible(bool visible)
         ShowWindow(impl_->backdropWindow, SW_HIDE);
 }
 
+void DesktopBackdropCompositor::HidePopupWindowPair(
+    HWND contentWindow)
+{
+    const bool contentValid =
+        contentWindow && IsWindow(contentWindow);
+    if (!impl_)
+    {
+        if (contentValid)
+            ShowWindow(contentWindow, SW_HIDE);
+        return;
+    }
+
+    HWND backdropWindow =
+        impl_->popupMode &&
+        impl_->backdropWindow &&
+        IsWindow(impl_->backdropWindow)
+            ? impl_->backdropWindow
+            : nullptr;
+    bool hiddenTogether = false;
+    if (contentValid && backdropWindow &&
+        impl_->contentWindow == contentWindow)
+    {
+        constexpr UINT hideFlags =
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+            SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_HIDEWINDOW;
+        HDWP deferred = BeginDeferWindowPos(2);
+        if (deferred)
+        {
+            deferred = DeferWindowPos(
+                deferred, contentWindow, nullptr,
+                0, 0, 0, 0, hideFlags);
+        }
+        if (deferred)
+        {
+            deferred = DeferWindowPos(
+                deferred, backdropWindow, nullptr,
+                0, 0, 0, 0, hideFlags);
+        }
+        if (deferred)
+        {
+            hiddenTogether =
+                EndDeferWindowPos(deferred) != FALSE;
+        }
+    }
+
+    if (!hiddenTogether)
+    {
+        if (contentValid)
+            ShowWindow(contentWindow, SW_HIDE);
+        if (backdropWindow)
+            ShowWindow(backdropWindow, SW_HIDE);
+    }
+
+    if (impl_->popupMode)
+    {
+        impl_->visible = false;
+        // A scale animation temporarily expands the helper HWND region. Both
+        // popup-owned windows are hidden now, so restoring the cached panel
+        // region cannot expose an intermediate glass frame.
+        impl_->SetAnimationPathRegionExpanded(false);
+    }
+}
+
 void DesktopBackdropCompositor::SetVisualTransform(
     float scale, float opacity,
     float anchorX, float anchorY)

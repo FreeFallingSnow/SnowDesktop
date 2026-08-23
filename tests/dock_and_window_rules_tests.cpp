@@ -3800,6 +3800,73 @@ int main(int argc, char** argv)
                   backdropCompositorSource.find(
                     "L\"backdrop.restore_scale_animation\"")),
             "rapid popup reversals must retain the global easing curve, retire fallback frames, and destroy a faulted backdrop");
+        const std::size_t hidePopupPairBegin =
+            backdropCompositorSource.find(
+                "void DesktopBackdropCompositor::HidePopupWindowPair(");
+        const std::size_t hidePopupPairEnd =
+            backdropCompositorSource.find(
+                "void DesktopBackdropCompositor::SetVisualTransform(",
+                hidePopupPairBegin);
+        const std::string hidePopupPairSource =
+            hidePopupPairBegin != std::string::npos &&
+                    hidePopupPairEnd != std::string::npos
+                ? backdropCompositorSource.substr(
+                    hidePopupPairBegin,
+                    hidePopupPairEnd - hidePopupPairBegin)
+                : std::string{};
+        const std::size_t pairModeGuard =
+            hidePopupPairSource.find("impl_->popupMode &&");
+        const std::size_t pairIdentityGuard =
+            hidePopupPairSource.find(
+                "impl_->contentWindow == contentWindow");
+        const std::size_t pairBegin =
+            hidePopupPairSource.find("BeginDeferWindowPos(2)");
+        const std::size_t pairContent =
+            hidePopupPairSource.find(
+                "deferred, contentWindow, nullptr", pairBegin);
+        const std::size_t pairBackdrop =
+            hidePopupPairSource.find(
+                "deferred, backdropWindow, nullptr", pairContent);
+        const std::size_t pairEnd =
+            hidePopupPairSource.find(
+                "EndDeferWindowPos(deferred)", pairBackdrop);
+        const std::size_t pairFallback =
+            hidePopupPairSource.find(
+                "if (!hiddenTogether)", pairEnd);
+        const std::size_t fallbackContent =
+            hidePopupPairSource.find(
+                "ShowWindow(contentWindow, SW_HIDE)",
+                pairFallback);
+        const std::size_t fallbackBackdrop =
+            hidePopupPairSource.find(
+                "ShowWindow(backdropWindow, SW_HIDE)",
+                fallbackContent);
+        const std::size_t pairHiddenState =
+            hidePopupPairSource.find(
+                "impl_->visible = false;", fallbackBackdrop);
+        Check(!hidePopupPairSource.empty() &&
+                pairModeGuard != std::string::npos &&
+                pairIdentityGuard != std::string::npos &&
+                pairBegin != std::string::npos &&
+                pairContent != std::string::npos &&
+                pairBackdrop != std::string::npos &&
+                pairEnd != std::string::npos &&
+                pairFallback != std::string::npos &&
+                fallbackContent != std::string::npos &&
+                fallbackBackdrop != std::string::npos &&
+                pairHiddenState != std::string::npos &&
+                pairModeGuard < pairBegin &&
+                pairIdentityGuard < pairBegin &&
+                pairBegin < pairContent &&
+                pairContent < pairBackdrop &&
+                pairBackdrop < pairEnd &&
+                pairEnd < pairFallback &&
+                pairFallback < fallbackContent &&
+                fallbackContent < fallbackBackdrop &&
+                fallbackBackdrop < pairHiddenState &&
+                hidePopupPairSource.find(
+                  "SWP_HIDEWINDOW") != std::string::npos,
+            "a popup backdrop must hide with its content host in one popup-only window transaction");
         Check(luaPanelSource.find("ReleaseCapture();") ==
                     std::string::npos &&
                 CountOccurrences(
@@ -3932,25 +3999,132 @@ int main(int argc, char** argv)
         const std::size_t finalizePopupBegin =
             popupLifecycleSource.find(
                 "void DesktopApp::FinalizeCloseCollectionPopup()");
-        const std::size_t closePopupBegin =
+        const std::size_t finalizePopupEnd =
             popupLifecycleSource.find(
-                "void DesktopApp::CloseCollectionPopup(",
+                "void DesktopApp::ClearDockFolderPopupEntries()",
                 finalizePopupBegin);
         const std::string finalizePopupSource =
             finalizePopupBegin != std::string::npos &&
-                    closePopupBegin != std::string::npos
+                    finalizePopupEnd != std::string::npos
                 ? popupLifecycleSource.substr(
                     finalizePopupBegin,
-                    closePopupBegin - finalizePopupBegin)
+                    finalizePopupEnd - finalizePopupBegin)
                 : std::string{};
         Check(!finalizePopupSource.empty() &&
                 finalizePopupSource.find(
-                    "UpdateFloatingDockWindowBounds();") ==
+                    "UpdateFloatingDockWindowBounds(") ==
                     std::string::npos &&
                 finalizePopupSource.find(
-                    "InvalidateFloatingDockWindow(true);") ==
+                    "InvalidateFloatingDockWindow(") ==
+                    std::string::npos &&
+                finalizePopupSource.find(
+                    "RenderFloatingDockCompositionFrame(") ==
+                    std::string::npos &&
+                finalizePopupSource.find(
+                    "floatingDockBackdropCompositor_") ==
+                    std::string::npos &&
+                finalizePopupSource.find(
+                    "floatingDockHwnd_") ==
                     std::string::npos,
             "finalizing a shared popup must not repaint or resize the floating Dock");
+        const std::size_t updatePopupBoundsBegin =
+            floatingPopupSource.find(
+                "void DesktopApp::UpdateFloatingPopupWindowBounds(");
+        const std::size_t updatePopupBoundsEnd =
+            floatingPopupSource.find(
+                "void DesktopApp::PaintFloatingPopupWindow(",
+                updatePopupBoundsBegin);
+        const std::string updatePopupBoundsSource =
+            updatePopupBoundsBegin != std::string::npos &&
+                    updatePopupBoundsEnd != std::string::npos
+                ? floatingPopupSource.substr(
+                    updatePopupBoundsBegin,
+                    updatePopupBoundsEnd - updatePopupBoundsBegin)
+                : std::string{};
+        const std::size_t noPopupSurfaces =
+            updatePopupBoundsSource.find(
+                "if (!ShouldShowFloatingPopupWindow())");
+        const std::size_t stopPopupMonitor =
+            updatePopupBoundsSource.find(
+                "StopFloatingPopupOutsideClickMonitor();",
+                noPopupSurfaces);
+        const std::size_t hidePopupPair =
+            updatePopupBoundsSource.find(
+                "collectionPopupBackdropCompositor_.HidePopupWindowPair(\n            floatingPopupHwnd_);",
+                stopPopupMonitor);
+        const std::size_t clearPopupBounds =
+            updatePopupBoundsSource.find(
+                "floatingPopupWindowBounds_ = {};",
+                hidePopupPair);
+        const std::size_t createPopupWindow =
+            updatePopupBoundsSource.find(
+                "if (!CreateFloatingPopupWindow())",
+                clearPopupBounds);
+        Check(!updatePopupBoundsSource.empty() &&
+                noPopupSurfaces != std::string::npos &&
+                stopPopupMonitor != std::string::npos &&
+                hidePopupPair != std::string::npos &&
+                clearPopupBounds != std::string::npos &&
+                createPopupWindow != std::string::npos &&
+                noPopupSurfaces < stopPopupMonitor &&
+                stopPopupMonitor < hidePopupPair &&
+                hidePopupPair < clearPopupBounds &&
+                clearPopupBounds < createPopupWindow,
+            "the shared popup host may hide only after its own live surface set becomes empty");
+        const std::size_t nativePopupAnimationBegin =
+            compositionAnimationSource.find(
+                "bool DesktopApp::StartCollectionPopupCompositionAnimation()");
+        const std::size_t nativePopupAnimationEnd =
+            compositionAnimationSource.find(
+                "bool DesktopApp::StartLuaWidgetPanelCompositionAnimation()",
+                nativePopupAnimationBegin);
+        const std::string nativePopupAnimationSource =
+            nativePopupAnimationBegin != std::string::npos &&
+                    nativePopupAnimationEnd != std::string::npos
+                ? compositionAnimationSource.substr(
+                    nativePopupAnimationBegin,
+                    nativePopupAnimationEnd - nativePopupAnimationBegin)
+                : std::string{};
+        const std::size_t nativePopupCompletion =
+            nativePopupAnimationSource.find(
+                "uiAnimationScheduler_.ScheduleOnce(");
+        const std::size_t nativePopupAdvance =
+            nativePopupAnimationSource.find(
+                "popupAnimation_.Advance(",
+                nativePopupCompletion);
+        const std::size_t nativePopupTerminalGuard =
+            nativePopupAnimationSource.find(
+                "if (!popupAnimation_.IsAnimating() &&",
+                nativePopupAdvance);
+        const std::size_t nativePopupHidden =
+            nativePopupAnimationSource.find(
+                "popupAnimation_.IsHidden())",
+                nativePopupTerminalGuard);
+        const std::size_t nativePopupBackdropApply =
+            nativePopupAnimationSource.find(
+                "ApplyCollectionPopupBackdropAnimationFrame();",
+                nativePopupAdvance);
+        const std::size_t nativePopupFinalize =
+            nativePopupAnimationSource.find(
+                "FinalizeCloseCollectionPopup();",
+                nativePopupHidden);
+        const std::size_t nativePopupHiddenReturn =
+            nativePopupAnimationSource.find(
+                "return;", nativePopupFinalize);
+        Check(!nativePopupAnimationSource.empty() &&
+                nativePopupCompletion != std::string::npos &&
+                nativePopupAdvance != std::string::npos &&
+                nativePopupTerminalGuard != std::string::npos &&
+                nativePopupHidden != std::string::npos &&
+                nativePopupFinalize != std::string::npos &&
+                nativePopupHiddenReturn != std::string::npos &&
+                nativePopupBackdropApply != std::string::npos &&
+                nativePopupAdvance < nativePopupTerminalGuard &&
+                nativePopupTerminalGuard < nativePopupHidden &&
+                nativePopupHidden < nativePopupFinalize &&
+                nativePopupFinalize < nativePopupHiddenReturn &&
+                nativePopupHiddenReturn < nativePopupBackdropApply,
+            "a native close completion must reach popup finalization before any helper-only hidden frame");
         const std::size_t refreshPopupGeometryBegin =
             popupTransitionSource.find(
                 "void DesktopApp::RefreshDockFolderPopupGeometry()");

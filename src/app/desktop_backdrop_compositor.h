@@ -44,6 +44,13 @@ public:
     void Reattach(HWND contentWindow);
     /** @brief 显示或隐藏独立的 backdrop 辅助窗口。 */
     void SetVisible(bool visible);
+    /**
+     * @brief 在一个延迟窗口事务中同时隐藏 popup 内容窗口和 backdrop。
+     *
+     * 合成资源会保留，供下次弹窗打开时复用。若 popup backdrop 尚未
+     * 初始化或批处理失败，仍会在返回前完成两个窗口的降级隐藏。
+     */
+    void HidePopupWindowPair(HWND contentWindow);
     /** @brief 同步根视觉围绕指定内容坐标的缩放与透明度。 */
     void SetVisualTransform(
         float scale, float opacity,

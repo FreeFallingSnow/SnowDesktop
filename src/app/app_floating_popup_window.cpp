@@ -760,11 +760,8 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
     if (!ShouldShowFloatingPopupWindow())
     {
         StopFloatingPopupOutsideClickMonitor();
-        collectionPopupBackdropCompositor_.SetVisible(false);
-        if (floatingPopupHwnd_ &&
-            IsWindow(floatingPopupHwnd_) &&
-            IsWindowVisible(floatingPopupHwnd_))
-            ShowWindow(floatingPopupHwnd_, SW_HIDE);
+        collectionPopupBackdropCompositor_.HidePopupWindowPair(
+            floatingPopupHwnd_);
         floatingPopupWindowBounds_ = {};
         floatingPopupCollectionRegion_ = {};
         floatingPopupLuaPanelRegion_ = {};

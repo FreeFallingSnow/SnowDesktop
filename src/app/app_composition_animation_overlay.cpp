@@ -598,17 +598,22 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
                 popupAnimation_.Advance(static_cast<std::uint64_t>(
                     snowdesktop::UiAnimationScheduler::
                         MonotonicMilliseconds()));
+                // A hidden collection popup is retired by its own finalizer.
+                // Do not hide the backdrop helper here first: the finalizer
+                // closes it together with the shared popup host when no other
+                // popup content remains.
+                if (!popupAnimation_.IsAnimating() &&
+                    popupAnimation_.IsHidden())
+                {
+                    FinalizeCloseCollectionPopup();
+                    return;
+                }
                 ApplyCollectionPopupBackdropAnimationFrame();
                 if (popupAnimation_.IsAnimating())
                 {
                     if (StartCollectionPopupCompositionAnimation())
                         return;
                     EnsureUiAnimationFrame();
-                    return;
-                }
-                if (popupAnimation_.IsHidden())
-                {
-                    FinalizeCloseCollectionPopup();
                     return;
                 }
                 const RECT dirty = popupAnimationCacheRect_;
