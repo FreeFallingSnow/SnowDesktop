@@ -1870,6 +1870,11 @@ int main(int argc, char** argv)
             floatingPopup::ShouldShow(false, true) &&
             !floatingPopup::ShouldShow(false, false),
         "the shared popup host must remain visible while either hosted layer is open");
+    Check(floatingPopup::ShouldRevealHost(false, true) &&
+            !floatingPopup::ShouldRevealHost(false, false) &&
+            !floatingPopup::ShouldRevealHost(true, true) &&
+            !floatingPopup::ShouldRevealHost(true, false),
+        "a hidden shared popup host must remain concealed during staging and reveal only after a present request");
     Check(floatingPopup::ShouldBeTopmost(true, 0) &&
             !floatingPopup::ShouldBeTopmost(true, 1) &&
             !floatingPopup::ShouldBeTopmost(false, 0),

@@ -27,6 +27,17 @@ constexpr bool ShouldShow(
     return hostsCollectionPopup || hostsLuaPanel;
 }
 
+constexpr bool ShouldRevealHost(
+    bool wasVisible,
+    bool immediatePresent)
+{
+    // A hidden shared host can still own the last popup type's committed
+    // DComp surface. Keep staging passes hidden until the new content has
+    // been presented, otherwise the stale surface is exposed once while
+    // switching between collection and Lua popups.
+    return !wasVisible && immediatePresent;
+}
+
 constexpr bool ShouldBeTopmost(
     bool visible,
     int shellPopupMenuLayerDepth)

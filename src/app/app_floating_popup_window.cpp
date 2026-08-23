@@ -886,7 +886,8 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
     if (!rendered)
         InvalidateRect(floatingPopupHwnd_, nullptr, FALSE);
 
-    if (!wasVisible)
+    if (snowdesktop::floating_popup_rules::ShouldRevealHost(
+            wasVisible, immediatePresent))
     {
         SetWindowPos(
             floatingPopupHwnd_,
